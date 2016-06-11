@@ -12,7 +12,7 @@
 %token <keyword> TIMES "times"
 %token <keyword> BOX "box"
 %token <keyword> IS "is"
-%token <keyword> RETURNS "returns"
+%token <keyword> RETURNS "->"
 %token <keyword> RETURN "return"
 %token <integer> NUMBER "number"
 %token <ident> IDENT "identifier"
@@ -27,7 +27,12 @@
 
 program:
   %empty
-| program statement
+| statements
+;
+
+statements:
+  statement
+| statements statement
 ;
 
 statement:
@@ -35,35 +40,46 @@ statement:
 | declaration
 ;
 
+string: STRING;
+number: NUMBER;
+ident: IDENT;
+
 expression:
-  STRING
-| IDENT
-| NUMBER
-| application
+  string
+| number
+| ident
 | function
+| application
 | conditional
-| expression operator expression
+| math
 | '(' expression ')'
 ;
 
-operator:
-  '+'
-| '-'
-| '/'
-| '*'
-;
-
-function:
-  PROGRAM "(" arguments ")" DO program DONE
-;
-
-application:
-  IDENT "(" arguments ")"
+math:
+  expression '+' expression
+| expression '-' expression
+| expression '/' expression
+| expression '*' expression
 ;
 
 arguments:
-  IDENT
-| arguments "," IDENT
+  %empty
+| declaration
+| arguments ',' declaration
+;
+
+function:
+  PROGRAM '(' arguments ')' DO program DONE
+;
+
+application:
+  ident '(' call ')'
+;
+
+call:
+  %empty
+| expression
+| arguments ',' expression
 ;
 
 conditional:
@@ -72,11 +88,13 @@ conditional:
 ;
 
 type:
-  IDENT
-| "(" arguments ")" RETURNS IDENT
+  ':' ident
+| ':' '(' arguments ')' RETURNS ident
 ;
 
+
 declaration:
-  IDENT "=" expression
-| IDENT ":" type "=" expression
+  ident type
+| ident '=' expression
+| ident type '=' expression
 ;
