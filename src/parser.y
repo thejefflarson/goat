@@ -64,8 +64,8 @@ math:
 
 arguments:
   %empty
-| declaration
-| arguments ',' declaration
+| ident
+| arguments ',' ident
 ;
 
 function:
@@ -73,13 +73,13 @@ function:
 ;
 
 application:
-  ident '(' call ')'
+  ident '.' '(' call ')'
 ;
 
 call:
   %empty
 | expression
-| arguments ',' expression
+| call ',' expression
 ;
 
 conditional:
@@ -91,7 +91,6 @@ type:
   ':' ident
 | ':' '(' arguments ')' RETURNS ident
 ;
-
 
 declaration:
   ident type
