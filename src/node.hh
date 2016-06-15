@@ -3,32 +3,23 @@
 #include <vector>
 
 namespace goat {
-namespace nodes {
+namespace node {
 
 class Node {
+public:
   virtual void Compile() = 0;
 };
 
-class Integer : Node {
-  Integer(char *str, size_t length) : value_(str, length) {};
-  void Compile();
+class SimpleNode : Node {
+public:
+  SimpleNode(char *str, size_t length) : value_(str, length) {};
 private:
   std::string value_;
 };
 
-class Identifier : Node {
-  Identifier(char *str, size_t length) : value_(str, length) {};
-  void Compile();
-private:
-  std::string value_;
-};
-
-class String : Node {
-  String(char *str, size_t length) : value_(str, length) {};
-  void Compile();
-private:
-  std::string value_;
-};
+class Integer : SimpleNode {};
+class Identifier : SimpleNode {};
+class String : SimpleNode {};
 
 }
 }
