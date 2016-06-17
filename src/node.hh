@@ -25,7 +25,11 @@ class Identifier : SimpleNode {};
 class String : SimpleNode {};
 
 class Program : Node {
-
+public:
+  Program(vector<unique_ptr<Node>> nodes) : nodes_(move(nodes)) {};
+  Program() : nodes_() {};
+private:
+  vector<unique_ptr<Node>> nodes_;
 };
 
 class Function : Node {
@@ -39,4 +43,5 @@ private:
   unique_ptr<Program> program;
 };
 
-}}
+}
+}
