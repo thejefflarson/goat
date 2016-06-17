@@ -1,6 +1,9 @@
 #include <stdint.h>
 #include <string>
 #include <vector>
+#include <memory>
+
+using namespace std;
 
 namespace goat {
 namespace node {
@@ -14,12 +17,26 @@ class SimpleNode : Node {
 public:
   SimpleNode(char *str, size_t length) : value_(str, length) {};
 private:
-  std::string value_;
+  string value_;
 };
 
-class Integer : SimpleNode {};
+class Number : SimpleNode {};
 class Identifier : SimpleNode {};
 class String : SimpleNode {};
 
-}
-}
+class Program : Node {
+
+};
+
+class Function : Node {
+public:
+  Function(vector<unique_ptr<Node>> arguments,
+           unique_ptr<Program> program) :
+    arguments(move(arguments)),
+    program(move(program)) {};
+private:
+  vector<unique_ptr<Node>> arguments;
+  unique_ptr<Program> program;
+};
+
+}}
