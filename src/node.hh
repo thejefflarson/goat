@@ -30,6 +30,7 @@ public:
   Program(vector<unique_ptr<Node>> nodes) :
     nodes_(move(nodes)) {};
   Program() : nodes_() {};
+  void Compile();
 private:
   vector<unique_ptr<Node>> nodes_;
 };
@@ -51,6 +52,25 @@ public:
     arguments_(move(arguments)) {};
 private:
   vector<unique_ptr<Node>> arguments_;
+};
+
+class Conditional : Node {
+public:
+  Conditional(unique_ptr<Node> expression,
+              unique_ptr<Program> true_block,
+              unique_ptr<Program> false_block) :
+    expression_(move(expression)),
+    true_block_(move(true_block)),
+    false_block_(move(false_block)) {};
+  Conditional(unique_ptr<Node> expression,
+              unique_ptr<Program> true_block) :
+    expression_(move(expression)),
+    true_block_(move(true_block)),
+    false_block_(unique_ptr<Program>(new Program())){};
+private:
+  unique_ptr<Node> expression_;
+  unique_ptr<Program> true_block_;
+  unique_ptr<Program> false_block_;
 };
 
 }
