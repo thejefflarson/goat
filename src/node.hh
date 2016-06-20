@@ -21,9 +21,20 @@ private:
   string value_;
 };
 
-class Number : SimpleNode {};
-class Identifier : SimpleNode {};
-class String : SimpleNode {};
+class Number : SimpleNode {
+public:
+  void Compile();
+};
+
+class Identifier : SimpleNode {
+public:
+  void Compile();
+};
+
+class String : SimpleNode {
+public:
+  void Compile();
+};
 
 class Program : Node {
 public:
@@ -41,6 +52,7 @@ public:
            unique_ptr<Program> program) :
     arguments_(move(arguments)),
     program_(move(program)) {};
+  void Compile();
 private:
   vector<unique_ptr<Node>> arguments_;
   unique_ptr<Program> program_;
@@ -50,6 +62,7 @@ class Application : Node {
 public:
   Application(vector<unique_ptr<Node>> arguments) :
     arguments_(move(arguments)) {};
+  void Compile();
 private:
   vector<unique_ptr<Node>> arguments_;
 };
@@ -67,10 +80,34 @@ public:
     expression_(move(expression)),
     true_block_(move(true_block)),
     false_block_(unique_ptr<Program>(new Program())){};
+  void Compile();
 private:
   unique_ptr<Node> expression_;
   unique_ptr<Program> true_block_;
   unique_ptr<Program> false_block_;
+};
+
+enum Ops {
+  Addition = 0,
+  Subtraction,
+  Division,
+  Multiplication
+};
+
+class Operation : Node {
+public:
+  Operation(unique_ptr<Node> lhs,
+            unique_ptr<Node> rhs,
+            Ops op) :
+    lhs_(move(lhs)),
+    rhs_(move(rhs)),
+    op_(op) {};
+
+  void Compile();
+private:
+  unique_ptr<Node> lhs_;
+  unique_ptr<Node> rhs_;
+  Ops op_;
 };
 
 }
