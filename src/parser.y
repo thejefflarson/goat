@@ -1,3 +1,4 @@
+%skeleton "lalr1.cc"
 %define api.namespace {goat}
 %define api.token.constructor
 %define api.value.type variant
