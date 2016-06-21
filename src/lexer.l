@@ -1,5 +1,6 @@
 %{
-#include "parser.tab.h"
+#include "parser.tab.hh"
+using namespace goat;
 %}
 
 %option bison-bridge
@@ -8,57 +9,55 @@
 %%
 
 program {
-  return PROGRAM;
+  return parser::make_PROGRAM();
 }
 
 if {
-  return IF;
+  return parser::make_IF();
 }
 
 do {
-  return DO;
+  return parser::make_DO();
 }
 
 done {
-  return DONE;
+  return parser::make_DONE();
 }
 
 start at {
-  return START_AT;
+  return parser::make_START_AT();
 }
 
 repeat {
-  return REPEAT;
+  return parser::make_REPEAT();
 }
 
 times {
-  return TIMES;
+  return parser::make_TIMES();
 }
 
 box {
-  return BOX;
+  return parser::make_BOX();
 }
 
 is {
-  return IS;
+  return parser::make_IS();
 }
 
 -> {
-  return RETURNS;
+  return parser::make_RETURNS();
 }
 
 return {
-  return RETURN;
+  return parser::make_RETURN();
 }
 
 -?[[:digit:]]+"."[[:digit:]]* {
-  yylval->num = atoi(yytext);
-  return NUMBER;
+  return parser::make_NUMBER(strtod(yytext));
 }
 
 [[:alnum:]]+ {
-  yylval->id = strdup(yytext);
-  return IDENT;
+  return parser::make_IDENT(yytext);
 }
 
 "="|"("|")"|"*"|"/"|"+"|"-"|":" {

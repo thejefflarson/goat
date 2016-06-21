@@ -1,22 +1,28 @@
+%define api.namespace {goat}
+%define api.token.constructor
+%define api.value.type variant
+%define parse.assert
 
+%define parse.trace
 %define parse.error verbose
 
-%token <keyword> PROGRAM "program"
-%token <keyword> IF "if"
-%token <keyword> THEN "then"
-%token <keyword> ELSE "else"
-%token <keyword> DO "do"
-%token <keyword> DONE "done"
-%token <keyword> START_AT "start at"
-%token <keyword> REPEAT "repeat"
-%token <keyword> TIMES "times"
-%token <keyword> BOX "box"
-%token <keyword> IS "is"
-%token <keyword> RETURNS "->"
-%token <keyword> RETURN "return"
-%token <integer> NUMBER "number"
-%token <ident> IDENT "identifier"
+%token PROGRAM "program"
+%token IF "if"
+%token THEN "then"
+%token ELSE "else"
+%token DO "do"
+%token DONE "done"
+%token START_AT "start at"
+%token REPEAT "repeat"
+%token TIMES "times"
+%token BOX "box"
+%token IS "is"
+%token RETURNS "->"
+%token RETURN "return"
+%token <double> NUMBER "number"
+%token <string> IDENT "identifier"
 %token <string> STRING "string"
+%printer { yyoutput << $$; } <*>;
 
 %left '+' '-'
 %left '*' '/'
