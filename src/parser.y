@@ -40,10 +40,10 @@ program:
 
 statements: { $$ = new vector(); }
   statement
-| statements statement { $$->push_back(unique_ptr<Node>($1)); }
+| statements statement
 ;
 
-statement:
+statement: { $$->push_back(unique_ptr<Node>($1)); }
   expression
 | declaration
 ;
