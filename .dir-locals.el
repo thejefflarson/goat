@@ -2,4 +2,4 @@
 ;;; For more information see (info "(emacs) Directory Variables")
 
 ((c++-mode
-  (flycheck-clang-language-standard . "c++14")))
+  (flycheck-clang-language-standard . "c++1y")))
