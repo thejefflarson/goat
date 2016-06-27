@@ -1,6 +1,7 @@
 %{
-#include "parser.tab.hh"
+#include "parser.hh"
 using namespace goat;
+static parser::location loc;
 %}
 
 %option bison-bridge
@@ -9,55 +10,55 @@ using namespace goat;
 %%
 
 program {
-  return parser::make_PROGRAM();
+  return parser::make_PROGRAM(loc);
 }
 
 if {
-  return parser::make_IF();
+  return parser::make_IF(loc);
 }
 
 do {
-  return parser::make_DO();
+  return parser::make_DO(loc);
 }
 
 done {
-  return parser::make_DONE();
+  return parser::make_DONE(loc);
 }
 
 start at {
-  return parser::make_START_AT();
+  return parser::make_START_AT(loc);
 }
 
 repeat {
-  return parser::make_REPEAT();
+  return parser::make_REPEAT(loc);
 }
 
 times {
-  return parser::make_TIMES();
+  return parser::make_TIMES(loc);
 }
 
 box {
-  return parser::make_BOX();
+  return parser::make_BOX(loc);
 }
 
 is {
-  return parser::make_IS();
+  return parser::make_IS(loc);
 }
 
 -> {
-  return parser::make_RETURNS();
+  return parser::make_RETURNS(loc);
 }
 
 return {
-  return parser::make_RETURN();
+  return parser::make_RETURN(loc);
 }
 
 -?[[:digit:]]+"."[[:digit:]]* {
-  return parser::make_NUMBER(strtod(yytext));
+  return parser::make_NUMBER(strtod(yytext), loc);
 }
 
 [[:alnum:]]+ {
-  return parser::make_IDENT(yytext);
+  return parser::make_IDENT(yytext, loc);
 }
 
 "="|"("|")"|"*"|"/"|"+"|"-"|":" {

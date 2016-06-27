@@ -110,5 +110,40 @@ private:
   Ops op_;
 };
 
+class Type : Node {
+public:
+  Type(unique_ptr<Identifier> ident) :
+    ident_(move(ident)) {};
+  Type(unique_ptr<Identifier> ident,
+       vector<unique_ptr<Identifier>> arguments) :
+    ident_(move(ident)),
+    args_(move(arguments)) {};
+private:
+  unique_ptr<Identifier> ident_;
+  vector<unique_ptr<Identifier>> args_;
+};
+
+class Declaration : Node {
+public:
+  Declaration(unique_ptr<Identifier> ident,
+              unique_ptr<Type> type) :
+    ident_(move(ident)),
+    type_(move(type)) {};
+  Declaration(unique_ptr<Identifier> ident,
+              unique_ptr<Node> expr) :
+    ident_(move(ident)),
+    expr_(move(expr)) {};
+  Declaration(unique_ptr<Identifier> ident,
+              unique_ptr<Type> type,
+              unique_ptr<Node> expr) :
+    ident_(move(ident)),
+    type_(move(type)),
+    expr_(move(expr)){};
+private:
+  unique_ptr<Identifier> ident_;
+  unique_ptr<Type> type_;
+  unique_ptr<Node> expr_;
+};
+
 }
 }
