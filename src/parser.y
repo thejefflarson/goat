@@ -34,13 +34,13 @@
 %%
 
 program:
-  %empty
-| statements
+  %empty { $$ = unique_ptr<Node>(new Program()); }
+| statements { $$ = unique_ptr<Node>(new Program(unique_ptr<vector>($1))); }
 ;
 
-statements:
+statements: { $$ = new vector(); }
   statement
-| statements statement
+| statements statement { $$->push_back(unique_ptr<Node>($1)); }
 ;
 
 statement:
