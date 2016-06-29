@@ -48,9 +48,9 @@ statement: { $$->push_back(unique_ptr<Node>($1)); }
 | declaration
 ;
 
-string: STRING;
-number: NUMBER;
-ident: IDENT;
+string: STRING { $$ = unique_ptr<String>(new String($1)); }
+number: NUMBER { $$ = unique_ptr<Number>(new Number($1)); }
+ident: IDENT   { $$ = unique_ptr<Ident>(new Ident($1)); }
 
 expression:
   string

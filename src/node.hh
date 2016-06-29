@@ -13,27 +13,28 @@ public:
   virtual void Compile() = 0;
 };
 
-class SimpleNode : Node {
+class Number : Node {
 public:
-  SimpleNode(char *str, size_t length) :
-    value_(str, length) {};
+  Number(double value) : value_(value) {}
+  void Compile();
+private:
+  double value_;
+};
+
+class Identifier : Node {
+public:
+  Identifier(string value) : value_(value) {}
+  void Compile();
 private:
   string value_;
 };
 
-class Number : SimpleNode {
+class String : Node {
 public:
+  String(string value) : value_(value) {}
   void Compile();
-};
-
-class Identifier : SimpleNode {
-public:
-  void Compile();
-};
-
-class String : SimpleNode {
-public:
-  void Compile();
+private:
+  string value_;
 };
 
 class Program : Node {
