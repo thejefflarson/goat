@@ -1,3 +1,12 @@
+%{
+#include <string>
+#include <vector>
+#include <memory>
+#include "node.hh"
+using namespace std;
+using namespace goat::node;
+%}
+
 %skeleton "lalr1.cc"
 %defines
 %define api.namespace {goat}
@@ -26,6 +35,13 @@
 %token <string> STRING "string"
 %printer { yyoutput << $$; } <*>;
 
+%type <unique_ptr<Program>> program statements;
+%type <unique_ptr<vector<unique_ptr<Node>>>> statement;
+%type <unique_ptr<String>> string;
+%type <unique_ptr<Number>> number;
+%type <unique_ptr<Identifier>> ident;
+
+
 %left '+' '-'
 %left '*' '/'
 
@@ -34,23 +50,24 @@
 %%
 
 program:
-  %empty { $$ = unique_ptr<Node>(new Program()); }
-| statements { $$ = unique_ptr<Node>(new Program(unique_ptr<vector>($1))); }
+  %empty { $$ = unique_ptr<Program>(new Program()); }
+| statements { $$ = unique_ptr<Program>(new Program($1)); }
 ;
 
-statements: { $$ = new vector(); }
-  statement
-| statements statement
+statements:
+  statement { $$ = unique_ptr<vector<unique_ptr<Node>>>(new vector());
+              $$->push_back($<statement>1); }
+| statements statement { $1->push_back($<statement>2); }
 ;
 
-statement: { $$->push_back(unique_ptr<Node>($1)); }
+statement:
   expression
 | declaration
 ;
 
 string: STRING { $$ = unique_ptr<String>(new String($1)); }
 number: NUMBER { $$ = unique_ptr<Number>(new Number($1)); }
-ident: IDENT   { $$ = unique_ptr<Ident>(new Ident($1)); }
+ident: IDENT   { $$ = unique_ptr<Identifier>(new Identifier($1)); }
 
 expression:
   string
@@ -72,8 +89,8 @@ math:
 
 arguments:
   %empty
-| ident
-| arguments ',' ident
+| expression
+| arguments ',' expression
 ;
 
 function:
