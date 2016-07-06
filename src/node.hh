@@ -8,6 +8,9 @@ using namespace std;
 namespace goat {
 namespace node {
 
+class Node;
+typedef vector<unique_ptr<Node>> NodeList;
+
 class Node {
 public:
   virtual void Compile() = 0;
@@ -39,33 +42,32 @@ private:
 
 class Program : Node {
 public:
-  Program(vector<unique_ptr<Node>> nodes) :
-    nodes_(move(nodes)) {};
   Program() : nodes_() {};
+  void push_back(unique_ptr<Node> it) { nodes_.push_back(move(it)); }
   void Compile();
 private:
-  vector<unique_ptr<Node>> nodes_;
+  NodeList nodes_;
 };
 
 class Function : Node {
 public:
-  Function(vector<unique_ptr<Node>> arguments,
+  Function(NodeList arguments,
            unique_ptr<Program> program) :
     arguments_(move(arguments)),
     program_(move(program)) {};
   void Compile();
 private:
-  vector<unique_ptr<Node>> arguments_;
+  NodeList arguments_;
   unique_ptr<Program> program_;
 };
 
 class Application : Node {
 public:
-  Application(vector<unique_ptr<Node>> arguments) :
+  Application(NodeList arguments) :
     arguments_(move(arguments)) {};
   void Compile();
 private:
-  vector<unique_ptr<Node>> arguments_;
+  NodeList arguments_;
 };
 
 class Conditional : Node {

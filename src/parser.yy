@@ -36,7 +36,7 @@ using namespace goat::node;
 %printer { yyoutput << $$; } <*>;
 
 %type <unique_ptr<Program>> program statements;
-%type <unique_ptr<vector<unique_ptr<Node>>>> statement;
+%type <unique_ptr<Node>> statement;
 %type <unique_ptr<String>> string;
 %type <unique_ptr<Number>> number;
 %type <unique_ptr<Identifier>> ident;
@@ -50,13 +50,12 @@ using namespace goat::node;
 %%
 
 program:
-  %empty { $$ = unique_ptr<Program>(new Program()); }
-| statements { $$ = unique_ptr<Program>(new Program($1)); }
+  %empty
+| statements
 ;
 
 statements:
-  statement { $$ = unique_ptr<vector<unique_ptr<Node>>>(new vector());
-              $$->push_back($<statement>1); }
+  statement { $$ = unique_ptr<Program>(new Program()); $$->push_back($<statement>1); }
 | statements statement { $1->push_back($<statement>2); }
 ;
 

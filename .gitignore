@@ -1,4 +1,5 @@
 lex.yy.c
 parser.output
-parser.tab.c
-parser.tab.h
+parser.tab.cc
+parser.tab.hh
+stack.hh
