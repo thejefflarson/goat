@@ -14,6 +14,7 @@ typedef vector<shared_ptr<Node>> NodeList;
 class Node {
 public:
   virtual void Compile() = 0;
+  virtual ~Node() = default;
 };
 
 class Number : Node {
