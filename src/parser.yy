@@ -35,11 +35,11 @@ using namespace goat::node;
 %token <string> STRING "string"
 %printer { yyoutput << $$; } <*>;
 
-%type <unique_ptr<Program>> program statements;
-%type <unique_ptr<Node>> statement;
-%type <unique_ptr<String>> string;
-%type <unique_ptr<Number>> number;
-%type <unique_ptr<Identifier>> ident;
+%type <shared_ptr<Program>> program statements;
+%type <shared_ptr<Node>> statement;
+%type <shared_ptr<String>> string;
+%type <shared_ptr<Number>> number;
+%type <shared_ptr<Identifier>> ident;
 
 
 %left '+' '-'
@@ -55,8 +55,8 @@ program:
 ;
 
 statements:
-  statement { $$ = unique_ptr<Program>(new Program()); $$->push_back($<statement>1); }
-| statements statement { $1->push_back($<statement>2); }
+  statement { $$ = make_shared<Program>(); $$->push_back(move($1)); }
+| statements statement { $1->push_back(move($2)); }
 ;
 
 statement:
@@ -64,9 +64,9 @@ statement:
 | declaration
 ;
 
-string: STRING { $$ = unique_ptr<String>(new String($1)); }
-number: NUMBER { $$ = unique_ptr<Number>(new Number($1)); }
-ident: IDENT   { $$ = unique_ptr<Identifier>(new Identifier($1)); }
+string: STRING { $$ = make_shared<String>($1); }
+number: NUMBER { $$ = make_shared<Number>($1); }
+ident: IDENT   { $$ = make_shared<Identifier>($1); }
 
 expression:
   string

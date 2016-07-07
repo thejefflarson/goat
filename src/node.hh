@@ -9,7 +9,7 @@ namespace goat {
 namespace node {
 
 class Node;
-typedef vector<unique_ptr<Node>> NodeList;
+typedef vector<shared_ptr<Node>> NodeList;
 
 class Node {
 public:
@@ -43,7 +43,7 @@ private:
 class Program : Node {
 public:
   Program() : nodes_() {};
-  void push_back(unique_ptr<Node> it) { nodes_.push_back(move(it)); }
+  void push_back(shared_ptr<Node> it) { nodes_.push_back(it); }
   void Compile();
 private:
   NodeList nodes_;
