@@ -21,12 +21,13 @@ public:
 class Node {
 public:
   virtual ~Node() = default;
-  void accept(Visitor v) { v.visit(this); };
+  virtual void accept(Visitor &v) = 0;
 };
 
 class Number : public Node {
 public:
   Number(double value) : value_(value) {}
+  void accept(Visitor &v) { v.visit(this); }
 private:
   double value_;
 };
@@ -34,6 +35,7 @@ private:
 class Identifier : public Node {
 public:
   Identifier(string value) : value_(value) {}
+  void accept(Visitor &v) { v.visit(this); }
 private:
   string value_;
 };
@@ -41,14 +43,16 @@ private:
 class String : public Node {
 public:
   String(string value) : value_(value) {}
+  void accept(Visitor &v) { v.visit(this); }
 private:
   string value_;
 };
 
 class Program : public Node {
 public:
-  Program() : nodes_() {};
+  Program() : nodes_() {}
   void push_back(shared_ptr<Node> it) { nodes_.push_back(it); }
+  void accept(Visitor &v) { v.visit(this); }
 private:
   NodeList nodes_;
 };
@@ -58,7 +62,8 @@ public:
   Function(NodeList arguments,
            unique_ptr<Program> program) :
     arguments_(move(arguments)),
-    program_(move(program)) {};
+    program_(move(program)) {}
+  void accept(Visitor &v) { v.visit(this); }
 private:
   NodeList arguments_;
   unique_ptr<Program> program_;
@@ -67,7 +72,8 @@ private:
 class Application : public Node {
 public:
   Application(NodeList arguments) :
-    arguments_(move(arguments)) {};
+    arguments_(move(arguments)) {}
+  void accept(Visitor &v) { v.visit(this); }
 private:
   NodeList arguments_;
 };
@@ -79,12 +85,13 @@ public:
               unique_ptr<Program> false_block) :
     expression_(move(expression)),
     true_block_(move(true_block)),
-    false_block_(move(false_block)) {};
+    false_block_(move(false_block)) {}
   Conditional(unique_ptr<Node> expression,
               unique_ptr<Program> true_block) :
     expression_(move(expression)),
     true_block_(move(true_block)),
-    false_block_(unique_ptr<Program>(new Program())){};
+    false_block_(unique_ptr<Program>(new Program())) {}
+  void accept(Visitor &v) { v.visit(this); }
 private:
   unique_ptr<Node> expression_;
   unique_ptr<Program> true_block_;
@@ -105,7 +112,8 @@ public:
             Ops op) :
     lhs_(move(lhs)),
     rhs_(move(rhs)),
-    op_(op) {};
+    op_(op) {}
+  void accept(Visitor &v) { v.visit(this); }
 private:
   unique_ptr<Node> lhs_;
   unique_ptr<Node> rhs_;
@@ -119,7 +127,8 @@ public:
   Type(unique_ptr<Identifier> ident,
        vector<unique_ptr<Identifier>> arguments) :
     ident_(move(ident)),
-    args_(move(arguments)) {};
+    args_(move(arguments)) {}
+  void accept(Visitor &v) { v.visit(this); }
 private:
   unique_ptr<Identifier> ident_;
   vector<unique_ptr<Identifier>> args_;
@@ -130,17 +139,18 @@ public:
   Declaration(unique_ptr<Identifier> ident,
               unique_ptr<Type> type) :
     ident_(move(ident)),
-    type_(move(type)) {};
+    type_(move(type)) {}
   Declaration(unique_ptr<Identifier> ident,
               unique_ptr<Node> expr) :
     ident_(move(ident)),
-    expr_(move(expr)) {};
+    expr_(move(expr)) {}
   Declaration(unique_ptr<Identifier> ident,
               unique_ptr<Type> type,
               unique_ptr<Node> expr) :
     ident_(move(ident)),
     type_(move(type)),
-    expr_(move(expr)){};
+    expr_(move(expr)) {}
+  void accept(Visitor &v) { v.visit(this); }
 private:
   unique_ptr<Identifier> ident_;
   unique_ptr<Type> type_;
