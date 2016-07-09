@@ -9,8 +9,9 @@ namespace goat {
 namespace node {
 
 class Node;
-typedef vector<shared_ptr<Node>> NodeList;
-
+typedef shared_ptr<vector<shared_ptr<Node>>> NodeList;
+class Type;
+typedef shared_ptr<vector<shared_ptr<Type>>> TypeList;
 
 class Visitor {
 public:
@@ -26,47 +27,53 @@ public:
 
 class Number : public Node {
 public:
-  Number(double value) : value_(value) {}
+  Number(const double value) : value_(value) {}
   void accept(Visitor &v) { v.visit(this); }
+  double value() const { return value_; }
 private:
-  double value_;
+  const double value_;
 };
 
 class Identifier : public Node {
 public:
-  Identifier(string value) : value_(value) {}
+  Identifier(const string value) : value_(value) {}
   void accept(Visitor &v) { v.visit(this); }
+  const string & value() const { return value_; }
 private:
-  string value_;
+  const string value_;
 };
 
 class String : public Node {
 public:
-  String(string value) : value_(value) {}
+  String(const string value) : value_(value) {}
   void accept(Visitor &v) { v.visit(this); }
+  const string & value() const { return value_; }
 private:
-  string value_;
+  const string value_;
 };
 
 class Program : public Node {
 public:
   Program() : nodes_() {}
-  void push_back(shared_ptr<Node> it) { nodes_.push_back(it); }
+  void push_back(shared_ptr<Node> it) { nodes_->push_back(move(it)); }
   void accept(Visitor &v) { v.visit(this); }
+  const NodeList nodes() const { return nodes_; }
 private:
   NodeList nodes_;
 };
 
 class Function : public Node {
 public:
-  Function(NodeList arguments,
-           unique_ptr<Program> program) :
+  Function(const NodeList arguments,
+           const shared_ptr<Program> program) :
     arguments_(move(arguments)),
     program_(move(program)) {}
   void accept(Visitor &v) { v.visit(this); }
+  const NodeList arguments() const { return arguments_; }
+  const shared_ptr<Program> program() const { return program_; }
 private:
-  NodeList arguments_;
-  unique_ptr<Program> program_;
+  const NodeList arguments_;
+  const shared_ptr<Program> program_;
 };
 
 class Application : public Node {
@@ -74,28 +81,32 @@ public:
   Application(NodeList arguments) :
     arguments_(move(arguments)) {}
   void accept(Visitor &v) { v.visit(this); }
+  const NodeList arguments() const { return arguments_; }
 private:
-  NodeList arguments_;
+  const NodeList arguments_;
 };
 
 class Conditional : public Node {
 public:
-  Conditional(unique_ptr<Node> expression,
-              unique_ptr<Program> true_block,
-              unique_ptr<Program> false_block) :
+  Conditional(shared_ptr<Node> expression,
+              shared_ptr<Program> true_block,
+              shared_ptr<Program> false_block) :
     expression_(move(expression)),
     true_block_(move(true_block)),
     false_block_(move(false_block)) {}
-  Conditional(unique_ptr<Node> expression,
-              unique_ptr<Program> true_block) :
+  Conditional(shared_ptr<Node> expression,
+              shared_ptr<Program> true_block) :
     expression_(move(expression)),
     true_block_(move(true_block)),
-    false_block_(unique_ptr<Program>(new Program())) {}
+    false_block_(shared_ptr<Program>(new Program())) {}
   void accept(Visitor &v) { v.visit(this); }
+  const shared_ptr<Node> expression() const { return expression_; }
+  const shared_ptr<Program> true_block() const { return true_block_; }
+  const shared_ptr<Program> false_block() const { return false_block_; }
 private:
-  unique_ptr<Node> expression_;
-  unique_ptr<Program> true_block_;
-  unique_ptr<Program> false_block_;
+  const shared_ptr<Node> expression_;
+  const shared_ptr<Program> true_block_;
+  const shared_ptr<Program> false_block_;
 };
 
 enum Ops {
@@ -107,54 +118,63 @@ enum Ops {
 
 class Operation : public Node {
 public:
-  Operation(unique_ptr<Node> lhs,
-            unique_ptr<Node> rhs,
+  Operation(shared_ptr<Node> lhs,
+            shared_ptr<Node> rhs,
             Ops op) :
     lhs_(move(lhs)),
     rhs_(move(rhs)),
     op_(op) {}
   void accept(Visitor &v) { v.visit(this); }
+  const shared_ptr<Node> left() const { return lhs_; }
+  const shared_ptr<Node> right() const { return rhs_; }
+  Ops operation() const { return op_; }
 private:
-  unique_ptr<Node> lhs_;
-  unique_ptr<Node> rhs_;
-  Ops op_;
+  const shared_ptr<Node> lhs_;
+  const shared_ptr<Node> rhs_;
+  const Ops op_;
 };
 
 class Type : public Node {
 public:
-  Type(unique_ptr<Identifier> ident) :
+  Type(shared_ptr<Identifier> ident) :
     ident_(move(ident)) {};
-  Type(unique_ptr<Identifier> ident,
-       vector<unique_ptr<Identifier>> arguments) :
+  Type(shared_ptr<Identifier> ident,
+       shared_ptr<vector<shared_ptr<Type>>> arguments) :
     ident_(move(ident)),
     args_(move(arguments)) {}
   void accept(Visitor &v) { v.visit(this); }
+  const shared_ptr<Identifier> ident() const { return ident_; }
+  const TypeList arguments() const { return args_; }
 private:
-  unique_ptr<Identifier> ident_;
-  vector<unique_ptr<Identifier>> args_;
+  shared_ptr<Identifier> ident_;
+  TypeList args_;
 };
 
 class Declaration : public Node {
 public:
-  Declaration(unique_ptr<Identifier> ident,
-              unique_ptr<Type> type) :
+  Declaration(shared_ptr<Identifier> ident,
+              shared_ptr<Type> type) :
     ident_(move(ident)),
-    type_(move(type)) {}
-  Declaration(unique_ptr<Identifier> ident,
-              unique_ptr<Node> expr) :
+    type_(type) {}
+  Declaration(shared_ptr<Identifier> ident,
+              shared_ptr<Node> expr) :
     ident_(move(ident)),
     expr_(move(expr)) {}
-  Declaration(unique_ptr<Identifier> ident,
-              unique_ptr<Type> type,
-              unique_ptr<Node> expr) :
+  Declaration(shared_ptr<Identifier> ident,
+              shared_ptr<Type> type,
+              shared_ptr<Node> expr) :
     ident_(move(ident)),
     type_(move(type)),
     expr_(move(expr)) {}
   void accept(Visitor &v) { v.visit(this); }
+  const shared_ptr<Identifier> ident() const { return ident_; }
+  const shared_ptr<Type> type() const { return type_; }
+  const shared_ptr<Node> expression() { return expr_; }
+  void set_type(shared_ptr<Type> type) { type_ = type; }
 private:
-  unique_ptr<Identifier> ident_;
-  unique_ptr<Type> type_;
-  unique_ptr<Node> expr_;
+  const shared_ptr<Identifier> ident_;
+  shared_ptr<Type> type_;
+  const shared_ptr<Node> expr_;
 };
 
 }
