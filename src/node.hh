@@ -146,8 +146,8 @@ public:
   const shared_ptr<Identifier> ident() const { return ident_; }
   const TypeList arguments() const { return args_; }
 private:
-  shared_ptr<Identifier> ident_;
-  TypeList args_;
+  const shared_ptr<Identifier> ident_;
+  const TypeList args_;
 };
 
 class Declaration : public Node {
