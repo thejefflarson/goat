@@ -70,7 +70,7 @@ expressions:
 
 string: STRING { $$ = make_shared<String>($1); }
 number: NUMBER { $$ = make_shared<Number>($1); }
-ident: IDENT   { $$ = make_shared<Identifier>($1); }
+ident: IDENT { $$ = make_shared<Identifier>($1); }
 
 expression:
   string { $$ = $1; }
