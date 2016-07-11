@@ -15,14 +15,14 @@ typedef shared_ptr<vector<shared_ptr<Type>>> TypeList;
 
 class Visitor {
 public:
-  virtual ~Visitor() = default;
+  virtual ~Visitor() {};
   virtual void visit(Node *node) = 0;
 };
 
 class Node {
 public:
-  virtual ~Node() = default;
-  virtual void accept(Visitor &v) = 0;
+  virtual ~Node() {};
+  virtual void accept(Visitor &v);
 };
 
 class Number : public Node {
@@ -64,25 +64,29 @@ private:
 
 class Function : public Node {
 public:
-  Function(const NodeList arguments,
+  Function(const TypeList arguments,
            const shared_ptr<Program> program) :
     arguments_(move(arguments)),
     program_(move(program)) {}
   void accept(Visitor &v) { v.visit(this); }
-  const NodeList arguments() const { return arguments_; }
+  const TypeList arguments() const { return arguments_; }
   const shared_ptr<Program> program() const { return program_; }
 private:
-  const NodeList arguments_;
+  const TypeList arguments_;
   const shared_ptr<Program> program_;
 };
 
 class Application : public Node {
 public:
-  Application(NodeList arguments) :
+  Application(shared_ptr<Identifier> ident,
+              NodeList arguments) :
+    ident_(move(ident)),
     arguments_(move(arguments)) {}
   void accept(Visitor &v) { v.visit(this); }
+  const shared_ptr<Identifier> ident() const { return ident_; }
   const NodeList arguments() const { return arguments_; }
 private:
+  const shared_ptr<Identifier> ident_;
   const NodeList arguments_;
 };
 
@@ -139,7 +143,7 @@ public:
   Type(shared_ptr<Identifier> ident) :
     ident_(move(ident)) {};
   Type(shared_ptr<Identifier> ident,
-       shared_ptr<vector<shared_ptr<Type>>> arguments) :
+       TypeList arguments) :
     ident_(move(ident)),
     args_(move(arguments)) {}
   void accept(Visitor &v) { v.visit(this); }
