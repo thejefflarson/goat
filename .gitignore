@@ -3,3 +3,7 @@ parser.output
 parser.tab.cc
 parser.tab.hh
 stack.hh
+.waf*
+build
+Makefile
+.lock*
