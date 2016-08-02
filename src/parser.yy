@@ -2,10 +2,13 @@
 #include <string>
 #include <vector>
 #include <memory>
+%}
+
+%code requires {
 #include "node.hh"
 using namespace std;
 using namespace goat::node;
-%}
+}
 
 %skeleton "lalr1.cc"
 %defines
