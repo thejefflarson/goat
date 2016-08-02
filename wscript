@@ -12,7 +12,7 @@ def configure(conf):
 
 def build(bld):
     bld.shlib(
-        source=bld.path.ant_glob('src/*.(l|cc|yy)'),
+        source=bld.path.ant_glob('src/*.(l|cc|yc)'),
         target='goat',
         includes='src',
         use='G'

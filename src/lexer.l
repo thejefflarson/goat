@@ -1,5 +1,5 @@
 %{
-#include "parser.tab.h"
+#include "parser.tab.hh"
 using namespace goat;
 static location loc;
 %}
