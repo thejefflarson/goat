@@ -11,7 +11,9 @@ using namespace goat::node;
 }
 
 %skeleton "lalr1.cc"
+%require "3.0.4"
 %defines
+%locations
 %define api.namespace {goat}
 %define api.token.constructor
 %define api.value.type variant

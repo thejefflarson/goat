@@ -1,7 +1,7 @@
 %{
 #include "parser.tab.h"
 using namespace goat;
-static parser::location loc;
+static location loc;
 %}
 
 %option bison-bridge
@@ -25,7 +25,7 @@ done {
   return parser::make_DONE(loc);
 }
 
-start at {
+"start at" {
   return parser::make_START_AT(loc);
 }
 
