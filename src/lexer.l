@@ -1,4 +1,5 @@
 %{
+#include "driver.hh"
 #include "parser.tab.hh"
 using namespace goat;
 static location loc;
@@ -31,7 +32,6 @@ return                           return parser::make_RETURN(loc);
 [[:alnum:]]+                     return parser::make_IDENT(yytext, loc);
 "="|"("|")"|"*"|"/"|"+"|"-"|":"  return yytext[0];
 [\n]+                            loc.lines(yyleng); loc.step();
-{blank}+                         loc.step();
-
+[ \t]+                           loc.step();
 
 %%

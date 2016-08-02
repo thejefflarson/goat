@@ -1,3 +1,6 @@
+#ifndef GOAT_NODE_HH
+#define GOAT_NODE_HH
+
 #include <stdint.h>
 #include <string>
 #include <vector>
@@ -183,3 +186,4 @@ private:
 
 }
 }
+#endif
