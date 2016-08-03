@@ -48,6 +48,7 @@
   LPAREN '('
   RPAREN ')'
 ;
+
 %token <double> NUMBER "number"
 %token <std::string> IDENT "identifier"
 %token <std::string> STRING "string"
@@ -67,7 +68,6 @@
 %type <node::TypeList> idents;
 %type <std::shared_ptr<node::Declaration>> declaration;
 %type <std::shared_ptr<node::Type>> type;
-
 
 %left '+' '-'
 %left '*' '/'
@@ -144,3 +144,9 @@ declaration:
 | ident '=' expression { $$ = std::make_shared<node::Declaration>($1, $3); }
 | ident ':' type '=' expression { $$ = std::make_shared<node::Declaration>($1, $3, $5); }
 ;
+
+%%
+
+void goat::parser::error(const location_type& l, const std::string& m) {
+  std::cout << l << m << std::endl;
+}

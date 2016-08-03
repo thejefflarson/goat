@@ -7,7 +7,6 @@
 #include "node.hh"
 #include "parser.tab.hh"
 
-
 // this is a silly place to put this, bison
 #define YY_DECL goat::parser::symbol_type yylex()
 YY_DECL;
@@ -15,7 +14,7 @@ YY_DECL;
 namespace goat {
 namespace driver {
 
-void parse(std::unique_ptr<std::istream> const &parse);
+void parse(std::unique_ptr<std::istream> const &src);
 
 }
 }
