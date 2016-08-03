@@ -8,13 +8,13 @@
 #include "parser.tab.hh"
 
 // this is a silly place to put this, bison
-#define YY_DECL goat::parser::symbol_type yylex(goat::location loc)
+#define YY_DECL goat::parser::symbol_type yylex(void *yyscanner, goat::location &loc, std::unique_ptr<std::istream> &src)
 YY_DECL;
 
 namespace goat {
 namespace driver {
 
-void parse(std::unique_ptr<std::istream> const &src);
+void parse(std::unique_ptr<std::istream> &src);
 
 }
 }

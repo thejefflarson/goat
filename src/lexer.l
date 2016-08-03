@@ -2,13 +2,12 @@
 #include "driver.hh"
 #include "parser.tab.hh"
 using namespace goat;
-static location loc;
 %}
 
-%option noyywrap debug
+%option noyywrap debug reentrant
 
 %{
-  # define YY_USER_ACTION  loc.columns(yyleng);
+  # define YY_USER_ACTION loc.columns(yyleng);
 %}
 
 %%
@@ -46,3 +45,7 @@ return        return parser::make_RETURN(loc);
 }
 
 %%
+
+void goat::driver::parse(std::unique_ptr<std::istream> &str) {
+
+}

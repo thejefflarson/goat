@@ -20,9 +20,12 @@
 %define api.token.constructor
 %define api.value.type variant
 %define parse.assert
-
 %define parse.trace
 %define parse.error verbose
+
+%param {void *scanner}
+%param {goat::location &loc}
+%param {std::unique_ptr<std::istream> &src}
 
 %token
   END 0 "end of file"
