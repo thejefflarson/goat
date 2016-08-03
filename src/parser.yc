@@ -6,8 +6,6 @@
 
 %code requires {
 #include "node.hh"
-using namespace std;
-using namespace goat::node;
 }
 
 %code {
@@ -40,23 +38,23 @@ using namespace goat::node;
 %token RETURNS "->"
 %token RETURN "return"
 %token <double> NUMBER "number"
-%token <string> IDENT "identifier"
-%token <string> STRING "string"
+%token <std::string> IDENT "identifier"
+%token <std::string> STRING "string"
 %printer { yyoutput << $$; } <*>;
 
-%type <shared_ptr<Program>> program expressions;
-%type <shared_ptr<Node>> expression;
-%type <shared_ptr<String>> string;
-%type <shared_ptr<Number>> number;
-%type <shared_ptr<Identifier>> ident;
-%type <shared_ptr<Operation>> math;
-%type <NodeList> arguments;
-%type <shared_ptr<Function>> function;
-%type <shared_ptr<Application>> application;
-%type <shared_ptr<Conditional>> conditional;
-%type <TypeList> idents;
-%type <shared_ptr<Declaration>> declaration;
-%type <shared_ptr<Type>> type;
+%type <std::shared_ptr<node::Program>> program expressions;
+%type <std::shared_ptr<node::Node>> expression;
+%type <std::shared_ptr<node::String>> string;
+%type <std::shared_ptr<node::Number>> number;
+%type <std::shared_ptr<node::Identifier>> ident;
+%type <std::shared_ptr<node::Operation>> math;
+%type <node::NodeList> arguments;
+%type <std::shared_ptr<node::Function>> function;
+%type <std::shared_ptr<node::Application>> application;
+%type <std::shared_ptr<node::Conditional>> conditional;
+%type <node::TypeList> idents;
+%type <std::shared_ptr<node::Declaration>> declaration;
+%type <std::shared_ptr<node::Type>> type;
 
 
 %left '+' '-'
@@ -68,18 +66,18 @@ using namespace goat::node;
 %%
 
 program:
-  %empty { $$ = make_shared<Program>(); }
+  %empty { $$ = std::make_shared<node::Program>(); }
 | expressions
 ;
 
 expressions:
-  expression { $$ = make_shared<Program>(); $$->push_back(move($1)); }
-| expressions expression { $1->push_back(move($2)); }
+  expression { $$ = std::make_shared<node::Program>(); $$->push_back(std::move($1)); }
+| expressions expression { $1->push_back(std::move($2)); }
 ;
 
-string: STRING { $$ = make_shared<String>($1); }
-number: NUMBER { $$ = make_shared<Number>($1); }
-ident: IDENT { $$ = make_shared<Identifier>($1); }
+string: STRING { $$ = std::make_shared<node::String>($1); }
+number: NUMBER { $$ = std::make_shared<node::Number>($1); }
+ident: IDENT { $$ = std::make_shared<node::Identifier>($1); }
 
 expression:
   string { $$ = $1; }
@@ -94,43 +92,43 @@ expression:
 ;
 
 math:
-  expression '+' expression { $$ = make_shared<Operation>($1, $3, Addition); }
-| expression '-' expression { $$ = make_shared<Operation>($1, $3, Subtraction); }
-| expression '/' expression { $$ = make_shared<Operation>($1, $3, Division); }
-| expression '*' expression { $$ = make_shared<Operation>($1, $3, Multiplication); }
+  expression '+' expression { $$ = std::make_shared<node::Operation>($1, $3, node::Addition); }
+| expression '-' expression { $$ = std::make_shared<node::Operation>($1, $3, node::Subtraction); }
+| expression '/' expression { $$ = std::make_shared<node::Operation>($1, $3, node::Division); }
+| expression '*' expression { $$ = std::make_shared<node::Operation>($1, $3, node::Multiplication); }
 ;
 
 arguments:
-  %empty { $$ = NodeList(); }
-| expression { $$ = NodeList(); $$->push_back(move($1)); }
-| arguments ',' expression { $1->push_back(move($3)); }
+  %empty { $$ = node::NodeList(); }
+| expression { $$ = node::NodeList(); $$->push_back(std::move($1)); }
+| arguments ',' expression { $1->push_back(std::move($3)); }
 ;
 
 function:
-  PROGRAM '(' idents ')' DO program DONE { $$ = make_shared<Function>($3, $6); }
+  PROGRAM '(' idents ')' DO program DONE { $$ = std::make_shared<node::Function>($3, $6); }
 ;
 
 application:
-  ident '(' arguments ')' { $$ = make_shared<Application>($1, $3); }
+  ident '(' arguments ')' { $$ = std::make_shared<node::Application>($1, $3); }
 ;
 
 conditional:
-  IF expression THEN program DONE { $$ = make_shared<Conditional>($2, $4); }
-| IF expression THEN program ELSE program DONE { $$ = make_shared<Conditional>($2, $4, $6); }
+  IF expression THEN program DONE { $$ = std::make_shared<node::Conditional>($2, $4); }
+| IF expression THEN program ELSE program DONE { $$ = std::make_shared<node::Conditional>($2, $4, $6); }
 ;
 
 idents:
-  ident { $$ = TypeList(); $$->push_back(make_shared<Type>(move($1))); }
-| idents ',' ident { $1->push_back(make_shared<Type>(move($3))); }
+  ident { $$ = node::TypeList(); $$->push_back(std::make_shared<node::Type>(std::move($1))); }
+| idents ',' ident { $1->push_back(std::make_shared<node::Type>(std::move($3))); }
 ;
 
 type:
-  ident { $$ = make_shared<Type>($1); }
-| '(' idents ')' RETURNS ident { $$ = make_shared<Type>($5, $2); }
+  ident { $$ = std::make_shared<node::Type>($1); }
+| '(' idents ')' RETURNS ident { $$ = std::make_shared<node::Type>($5, $2); }
 ;
 
 declaration:
-  ident ':' type { $$ = make_shared<Declaration>($1, $3); }
-| ident '=' expression { $$ = make_shared<Declaration>($1, $3); }
-| ident ':' type '=' expression { $$ = make_shared<Declaration>($1, $3, $5); }
+  ident ':' type { $$ = std::make_shared<node::Declaration>($1, $3); }
+| ident '=' expression { $$ = std::make_shared<node::Declaration>($1, $3); }
+| ident ':' type '=' expression { $$ = std::make_shared<node::Declaration>($1, $3, $5); }
 ;

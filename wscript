@@ -2,11 +2,11 @@
 
 
 def options(opts):
-    opts.load("compiler_cxx bison flex clang_compilation_database")
+    opts.load("compiler_cxx bison flex")
 
 
 def configure(conf):
-    conf.load("compiler_cxx bison flex clang_compilation_database")
+    conf.load("compiler_cxx bison flex")
     conf.check_cxx(uselib_store='G', cxxflags='-std=c++14')
 
 
