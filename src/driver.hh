@@ -3,6 +3,8 @@
 
 #include <istream>
 #include <memory>
+
+#include "node.hh"
 #include "parser.tab.hh"
 
 using namespace std;
