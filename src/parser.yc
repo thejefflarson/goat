@@ -24,22 +24,34 @@
 %define parse.trace
 %define parse.error verbose
 
-%token PROGRAM "program"
-%token IF "if"
-%token THEN "then"
-%token ELSE "else"
-%token DO "do"
-%token DONE "done"
-%token START_AT "start at"
-%token REPEAT "repeat"
-%token TIMES "times"
-%token BOX "box"
-%token IS "is"
-%token RETURNS "->"
-%token RETURN "return"
+%token
+  END 0 "end of file"
+  PROGRAM "program"
+  IF "if"
+  THEN "then"
+  ELSE "else"
+  DO "do"
+  DONE "done"
+  START_AT "start at"
+  REPEAT "repeat"
+  TIMES "times"
+  BOX "box"
+  IS "is"
+  RETURNS "->"
+  RETURN "return"
+  EQUALS '='
+  COLON ':'
+  PLUS '+'
+  MINUS '-'
+  STAR '*'
+  SLASH '/'
+  LPAREN '('
+  RPAREN ')'
+;
 %token <double> NUMBER "number"
 %token <std::string> IDENT "identifier"
 %token <std::string> STRING "string"
+
 %printer { yyoutput << $$; } <*>;
 
 %type <std::shared_ptr<node::Program>> program expressions;

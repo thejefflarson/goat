@@ -23,7 +23,7 @@ public:
 class Node {
 public:
   virtual ~Node() {};
-  virtual void accept(Visitor &v);
+  virtual void accept(Visitor &v) = 0;
 };
 
 class Number : public Node {
