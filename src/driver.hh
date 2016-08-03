@@ -8,7 +8,7 @@
 #include "parser.tab.hh"
 
 // this is a silly place to put this, bison
-#define YY_DECL goat::parser::symbol_type yylex()
+#define YY_DECL goat::parser::symbol_type yylex(goat::location loc)
 YY_DECL;
 
 namespace goat {
