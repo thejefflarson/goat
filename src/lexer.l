@@ -60,7 +60,6 @@ int driver::parse(std::shared_ptr<std::istream> src,
                   std::shared_ptr<goat::node::Program> result) {
   location loc;
   yyscan_t scanner;
-  std::shared_ptr<node::Program> result;
   yylex_init_extra(src, &scanner);
   parser parser(scanner, loc, result);
   int ret = parser.parse();
