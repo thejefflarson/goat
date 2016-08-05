@@ -14,7 +14,8 @@ YY_DECL;
 namespace goat {
 namespace driver {
 
-  std::shared_ptr<goat::node::Program> parse(std::shared_ptr<std::istream> src);
+int parse(std::shared_ptr<std::istream> src,
+          std::shared_ptr<goat::node::Program> result);
 
 }
 }
