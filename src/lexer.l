@@ -56,7 +56,8 @@ return        return parser::make_RETURN(loc);
 %%
 
 using namespace goat;
-std::shared_ptr<node::Program> driver::parse(std::shared_ptr<std::istream> src) {
+int driver::parse(std::shared_ptr<std::istream> src,
+                  std::shared_ptr<goat::node::Program> result) {
   location loc;
   yyscan_t scanner;
   std::shared_ptr<node::Program> result;
@@ -64,5 +65,5 @@ std::shared_ptr<node::Program> driver::parse(std::shared_ptr<std::istream> src) 
   parser parser(scanner, loc, result);
   int ret = parser.parse();
   yylex_destroy(scanner);
-  return result;
+  return ret;
 }
