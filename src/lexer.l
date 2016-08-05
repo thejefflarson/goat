@@ -7,7 +7,16 @@ using namespace goat;
 %option noyywrap debug reentrant
 
 %{
-  # define YY_USER_ACTION loc.columns(yyleng);
+#define YY_USER_ACTION loc.columns(yyleng);
+#define YY_EXTRA_TYPE std::shared_ptr<std::istream>
+%}
+
+%{
+#define YY_INPUT(buf, result, max_size) {\
+  auto src = yyget_extra(yyscanner); \
+  src->read(buf, max_size); \
+  result = (src->good() == false); \
+}
 %}
 
 %%
@@ -46,6 +55,14 @@ return        return parser::make_RETURN(loc);
 
 %%
 
-void goat::driver::parse(std::unique_ptr<std::istream> &str) {
-
+using namespace goat;
+std::shared_ptr<node::Program> driver::parse(std::shared_ptr<std::istream> src) {
+  location loc;
+  yyscan_t scanner;
+  std::shared_ptr<node::Program> result;
+  yylex_init_extra(src, &scanner);
+  parser parser(scanner, loc, result);
+  int ret = parser.parse();
+  yylex_destroy(scanner);
+  return result;
 }
