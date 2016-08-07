@@ -18,6 +18,4 @@ def build(bld):
         use='G'
     )
 
-
-def test():
-    pass
+    #bld.recurse('test')

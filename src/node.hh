@@ -143,8 +143,8 @@ class Type : public Node {
 public:
   Type(std::shared_ptr<Identifier> ident) :
     ident_(std::move(ident)) {};
-  Type(std::shared_ptr<Identifier> ident,
-       TypeList arguments) :
+  Type(TypeList arguments,
+       std::shared_ptr<Identifier> ident) :
     ident_(std::move(ident)),
     args_(std::move(arguments)) {}
   void accept(Visitor &v) { v.visit(this); }
