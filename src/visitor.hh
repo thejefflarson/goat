@@ -9,17 +9,17 @@ class Visitor {
 public:
   virtual ~Visitor() {};
   // TODO: maybe these should be const?
-  virtual void visit(Node &node) = 0;
-  virtual void visit(Number &number) = 0;
-  virtual void visit(Identifier &identifier) = 0;
-  virtual void visit(String &string) = 0;
-  virtual void visit(Program &program) = 0;
-  virtual void visit(Function &function) = 0;
-  virtual void visit(Application &application) = 0;
-  virtual void visit(Conditional &conditional) = 0;
-  virtual void visit(Operation &operation) = 0;
-  virtual void visit(Type &type) = 0;
-  virtual void visit(Declaration &declaration) = 0;
+  virtual void visit(const Node &node) = 0;
+  virtual void visit(const Number &number) = 0;
+  virtual void visit(const Identifier &identifier) = 0;
+  virtual void visit(const String &string) = 0;
+  virtual void visit(const Program &program) = 0;
+  virtual void visit(const Function &function) = 0;
+  virtual void visit(const Application &application) = 0;
+  virtual void visit(const Conditional &conditional) = 0;
+  virtual void visit(const Operation &operation) = 0;
+  virtual void visit(const Type &type) = 0;
+  virtual void visit(const Declaration &declaration) = 0;
 };
 
 }

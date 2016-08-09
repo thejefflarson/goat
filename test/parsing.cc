@@ -6,9 +6,8 @@
 
 using namespace goat::node;
 
-
 template<typename T>
-inline void list_accept(T list, Visitor &v) {
+inline void list_accept(const T list, Visitor &v) {
   for(auto i : *list) {
     i->accept(v);
   }
@@ -16,54 +15,54 @@ inline void list_accept(T list, Visitor &v) {
 
 class PrintingVisitor : public Visitor {
 public:
-  void visit(Number &number) {
+  void visit(const Number &number) {
     std::cout << "Number " << number.value() << std::endl;
   }
 
-  void visit(Identifier &identifier) {
+  void visit(const Identifier &identifier) {
     std::cout << "Identifier " << identifier.value() << std::endl;
   }
 
-  void visit(String &string) {
+  void visit(const String &string) {
     std::cout << "String " << string.value() << std::endl;
   }
 
-  void visit(Program &program) {
+  void visit(const Program &program) {
     std::cout << "Program" << std::endl;
     list_accept(program.nodes(), *this);
   }
 
-  void visit(Function &function) {
+  void visit(const Function &function) {
     std::cout << "Function" << std::endl;
     list_accept(function.arguments(), *this);
     function.program()->accept(*this);
   }
 
-  void visit(Application &application) {
+  void visit(const Application &application) {
     std::cout << "Application" << std::endl;
     application.ident()->accept(*this);
   }
 
-  void visit(Conditional &conditional) {
+  void visit(const Conditional &conditional) {
     std::cout << "Conditional" << std::endl;
     conditional.expression()->accept(*this);
     conditional.true_block()->accept(*this);
     conditional.false_block()->accept(*this);
   }
 
-  void visit(Operation &operation) {
+  void visit(const Operation &operation) {
     std::cout << "Operation" << std::endl;
     operation.left()->accept(*this);
     operation.right()->accept(*this);
   }
 
-  void visit(Type &type) {
+  void visit(const Type &type) {
     std::cout << "Type" << std::endl;
     type.ident()->accept(*this);
     list_accept(type.arguments(), *this);
   }
 
-  void visit(Declaration &declaration) {
+  void visit(const Declaration &declaration) {
     std::cout << "Declaration" << std::endl;
     declaration.ident()->accept(*this);
     declaration.type()->accept(*this);

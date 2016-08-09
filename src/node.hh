@@ -168,11 +168,10 @@ public:
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const std::shared_ptr<Type> type() const { return type_; }
-  const std::shared_ptr<Node> expression() { return expr_; }
-  void set_type(std::shared_ptr<Type> type) { type_ = type; }
+  const std::shared_ptr<Node> expression() const { return expr_; }
 private:
   const std::shared_ptr<Identifier> ident_;
-  std::shared_ptr<Type> type_;
+  const std::shared_ptr<Type> type_;
   const std::shared_ptr<Node> expr_;
 };
 
