@@ -14,22 +14,16 @@ typedef std::shared_ptr<std::vector<std::shared_ptr<Node>>> NodeList;
 class Type;
 typedef std::shared_ptr<std::vector<std::shared_ptr<Type>>> TypeList;
 
-class Visitor {
-public:
-  virtual ~Visitor() {};
-  virtual void visit(Node *node) = 0;
-};
-
 class Node {
 public:
   virtual ~Node() {};
-  virtual void accept(Visitor &v) = 0;
+  virtual void accept(class Visitor &v) = 0;
 };
 
 class Number : public Node {
 public:
   Number(const double value) : value_(value) {}
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   double value() const { return value_; }
 private:
   const double value_;
@@ -38,7 +32,7 @@ private:
 class Identifier : public Node {
 public:
   Identifier(const std::string value) : value_(value) {}
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   const std::string & value() const { return value_; }
 private:
   const std::string value_;
@@ -47,7 +41,7 @@ private:
 class String : public Node {
 public:
   String(const std::string value) : value_(value) {}
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   const std::string & value() const { return value_; }
 private:
   const std::string value_;
@@ -57,7 +51,7 @@ class Program : public Node {
 public:
   Program() : nodes_() {}
   void push_back(std::shared_ptr<Node> it) { nodes_->push_back(std::move(it)); }
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   const NodeList nodes() const { return nodes_; }
 private:
   NodeList nodes_;
@@ -69,7 +63,7 @@ public:
            const std::shared_ptr<Program> program) :
     arguments_(std::move(arguments)),
     program_(std::move(program)) {}
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   const TypeList arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
 private:
@@ -83,7 +77,7 @@ public:
               NodeList arguments) :
     ident_(std::move(ident)),
     arguments_(std::move(arguments)) {}
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const NodeList arguments() const { return arguments_; }
 private:
@@ -104,7 +98,7 @@ public:
     expression_(std::move(expression)),
     true_block_(std::move(true_block)),
     false_block_(std::shared_ptr<Program>(new Program())) {}
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   const std::shared_ptr<Node> expression() const { return expression_; }
   const std::shared_ptr<Program> true_block() const { return true_block_; }
   const std::shared_ptr<Program> false_block() const { return false_block_; }
@@ -129,7 +123,7 @@ public:
     lhs_(std::move(lhs)),
     rhs_(std::move(rhs)),
     op_(op) {}
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   const std::shared_ptr<Node> left() const { return lhs_; }
   const std::shared_ptr<Node> right() const { return rhs_; }
   Ops operation() const { return op_; }
@@ -147,7 +141,7 @@ public:
        std::shared_ptr<Identifier> ident) :
     ident_(std::move(ident)),
     args_(std::move(arguments)) {}
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const TypeList arguments() const { return args_; }
 private:
@@ -171,7 +165,7 @@ public:
     ident_(std::move(ident)),
     type_(std::move(type)),
     expr_(std::move(expr)) {}
-  void accept(Visitor &v) { v.visit(this); }
+  void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const std::shared_ptr<Type> type() const { return type_; }
   const std::shared_ptr<Node> expression() { return expr_; }
