@@ -1,9 +1,9 @@
+#include <sstream>
 #include "node.hh"
 #include "visitor.hh"
 #include "driver.hh"
 
-#include <iostream>
-
+using namespace std;
 using namespace goat::node;
 
 template<typename T>
@@ -71,5 +71,8 @@ public:
 };
 
 int main() {
-
+  std::shared_ptr<Program> p;
+  std::string program = "a = 1 program hello(a) do a = 1 done";
+  auto s =  make_shared<std::stringstream>(program);
+  goat::driver::parse(s, p);
 }
