@@ -49,8 +49,8 @@ private:
 
 class Program : public Node {
 public:
-  Program() : nodes_() {}
-  void push_back(std::shared_ptr<Node> it) { nodes_->push_back(std::move(it)); }
+  Program() : nodes_(std::make_shared<std::vector<std::shared_ptr<Node>>>()) {}
+  void push_back(std::shared_ptr<Node> it) { nodes_->push_back(it); }
   void accept(Visitor &v);
   const NodeList nodes() const { return nodes_; }
 private:
@@ -61,8 +61,8 @@ class Function : public Node {
 public:
   Function(const TypeList arguments,
            const std::shared_ptr<Program> program) :
-    arguments_(std::move(arguments)),
-    program_(std::move(program)) {}
+    arguments_(arguments),
+    program_(program) {}
   void accept(Visitor &v);
   const TypeList arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
@@ -75,8 +75,8 @@ class Application : public Node {
 public:
   Application(std::shared_ptr<Identifier> ident,
               NodeList arguments) :
-    ident_(std::move(ident)),
-    arguments_(std::move(arguments)) {}
+    ident_(ident),
+    arguments_(arguments) {}
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const NodeList arguments() const { return arguments_; }
@@ -90,13 +90,13 @@ public:
   Conditional(std::shared_ptr<Node> expression,
               std::shared_ptr<Program> true_block,
               std::shared_ptr<Program> false_block) :
-    expression_(std::move(expression)),
-    true_block_(std::move(true_block)),
-    false_block_(std::move(false_block)) {}
+    expression_(expression),
+    true_block_(true_block),
+    false_block_(false_block) {}
   Conditional(std::shared_ptr<Node> expression,
               std::shared_ptr<Program> true_block) :
-    expression_(std::move(expression)),
-    true_block_(std::move(true_block)),
+    expression_(expression),
+    true_block_(true_block),
     false_block_(std::shared_ptr<Program>(new Program())) {}
   void accept(Visitor &v);
   const std::shared_ptr<Node> expression() const { return expression_; }
@@ -153,18 +153,18 @@ class Declaration : public Node {
 public:
   Declaration(std::shared_ptr<Identifier> ident,
               std::shared_ptr<Type> type) :
-    ident_(std::move(ident)),
+    ident_(ident),
     type_(type) {}
   Declaration(std::shared_ptr<Identifier> ident,
               std::shared_ptr<Node> expr) :
-    ident_(std::move(ident)),
-    expr_(std::move(expr)) {}
+    ident_(ident),
+    expr_(expr) {}
   Declaration(std::shared_ptr<Identifier> ident,
               std::shared_ptr<Type> type,
               std::shared_ptr<Node> expr) :
-    ident_(std::move(ident)),
-    type_(std::move(type)),
-    expr_(std::move(expr)) {}
+    ident_(ident),
+    type_(type),
+    expr_(expr) {}
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const std::shared_ptr<Type> type() const { return type_; }

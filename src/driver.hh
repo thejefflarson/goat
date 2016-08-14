@@ -15,7 +15,7 @@ namespace goat {
 namespace driver {
 
 int parse(std::shared_ptr<std::istream> src,
-          std::shared_ptr<goat::node::Program> result);
+          std::shared_ptr<goat::node::Program> &result);
 
 }
 }

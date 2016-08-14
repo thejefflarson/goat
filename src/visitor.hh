@@ -9,7 +9,7 @@ class Visitor {
 public:
   virtual ~Visitor() {};
   // TODO: maybe these should be const?
-  virtual void visit(const Node &node) = 0;
+  //virtual void visit(const Node &node) = 0;
   virtual void visit(const Number &number) = 0;
   virtual void visit(const Identifier &identifier) = 0;
   virtual void visit(const String &string) = 0;

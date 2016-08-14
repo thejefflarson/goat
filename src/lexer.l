@@ -1,4 +1,6 @@
 %{
+#include <memory>
+
 #include "driver.hh"
 #include "parser.tab.hh"
 using namespace goat;
@@ -15,7 +17,7 @@ using namespace goat;
 #define YY_INPUT(buf, result, max_size) {\
   auto src = yyget_extra(yyscanner); \
   src->read(buf, max_size); \
-  result = (src->good() == false); \
+  result = src->good() ? YY_NULL : 0; \
 }
 %}
 
@@ -57,7 +59,7 @@ return        return parser::make_RETURN(loc);
 
 using namespace goat;
 int driver::parse(std::shared_ptr<std::istream> src,
-                  std::shared_ptr<goat::node::Program> result) {
+                  std::shared_ptr<goat::node::Program> &result) {
   location loc;
   yyscan_t scanner;
   yylex_init_extra(src, &scanner);

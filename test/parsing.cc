@@ -15,6 +15,7 @@ inline void list_accept(const T list, Visitor &v) {
 
 class PrintingVisitor : public Visitor {
 public:
+  PrintingVisitor() {}
   void visit(const Number &number) {
     std::cout << "Number " << number.value() << std::endl;
   }
@@ -71,8 +72,11 @@ public:
 };
 
 int main() {
-  std::shared_ptr<Program> p;
-  std::string program = "a = 1 program hello(a) do a = 1 done";
+  std::shared_ptr<Program> p = make_shared<Program>();
+  std::string program = "a = ";
   auto s =  make_shared<std::stringstream>(program);
-  goat::driver::parse(s, p);
+  int r = goat::driver::parse(s, p);
+  printf("%i\n", r);
+  PrintingVisitor print;
+  print.visit(*p);
 }

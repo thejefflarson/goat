@@ -88,8 +88,8 @@ program:
 ;
 
 expressions:
-  expression { $$ = std::make_shared<node::Program>(); $$->push_back(std::move($expression)); }
-| expressions[exprs] expression { $exprs->push_back(std::move($expression)); }
+  expression { $$ = std::make_shared<node::Program>(); $$->push_back($expression); }
+| expressions[exprs] expression { $exprs->push_back($expression); }
 ;
 
 string: STRING { $$ = std::make_shared<node::String>($1); }
@@ -117,8 +117,8 @@ math:
 
 arguments:
   %empty { $$ = node::NodeList(); }
-| expression { $$ = node::NodeList(); $$->push_back(std::move($expression)); }
-| arguments[args] ',' expression { $args->push_back(std::move($expression)); }
+| expression { $$ = node::NodeList(); $$->push_back($expression); }
+| arguments[args] ',' expression { $args->push_back($expression); }
 ;
 
 function:
@@ -126,7 +126,7 @@ function:
 ;
 
 application:
-  ident '(' arguments ')' { $$ = std::make_shared<node::Application>($ident, $arguments); }
+  ident '.' '(' arguments ')' { $$ = std::make_shared<node::Application>($ident, $arguments); }
 ;
 
 conditional:
@@ -135,8 +135,8 @@ conditional:
 ;
 
 idents:
-  ident { $$ = node::TypeList(); $$->push_back(std::make_shared<node::Type>(std::move($ident))); }
-| idents[ids] ',' ident { $ids->push_back(std::make_shared<node::Type>(std::move($ident))); }
+  ident { $$ = node::TypeList(); $$->push_back(std::make_shared<node::Type>($ident)); }
+| idents[ids] ',' ident { $ids->push_back(std::make_shared<node::Type>($ident)); }
 ;
 
 type:
