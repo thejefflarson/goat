@@ -97,7 +97,7 @@ public:
               std::shared_ptr<Program> true_block) :
     expression_(expression),
     true_block_(true_block),
-    false_block_(std::shared_ptr<Program>(new Program())) {}
+    false_block_(std::make_shared<Program>()) {}
   void accept(Visitor &v);
   const std::shared_ptr<Node> expression() const { return expression_; }
   const std::shared_ptr<Program> true_block() const { return true_block_; }
@@ -120,8 +120,8 @@ public:
   Operation(std::shared_ptr<Node> lhs,
             std::shared_ptr<Node> rhs,
             Ops op) :
-    lhs_(std::move(lhs)),
-    rhs_(std::move(rhs)),
+    lhs_(lhs),
+    rhs_(rhs),
     op_(op) {}
   void accept(Visitor &v);
   const std::shared_ptr<Node> left() const { return lhs_; }
@@ -136,11 +136,12 @@ private:
 class Type : public Node {
 public:
   Type(std::shared_ptr<Identifier> ident) :
-    ident_(std::move(ident)) {};
+    ident_(ident),
+    args_(std::make_shared<std::vector<std::shared_ptr<Type>>>()) {};
   Type(TypeList arguments,
        std::shared_ptr<Identifier> ident) :
-    ident_(std::move(ident)),
-    args_(std::move(arguments)) {}
+    ident_(ident),
+    args_(arguments) {}
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const TypeList arguments() const { return args_; }
