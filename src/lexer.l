@@ -17,15 +17,17 @@ using namespace goat;
 #define YY_INPUT(buf, result, max_size) {\
   auto src = yyget_extra(yyscanner); \
   src->read(buf, max_size); \
-  result = src->good() ? YY_NULL : 0; \
+  result = src->good() ? YY_NULL : src->gcount(); \
 }
 %}
 
+%x call
 %%
 
 %{
   loc.step();
 %}
+
 <<EOF>>       return parser::make_END(loc);
 program       return parser::make_PROGRAM(loc);
 if            return parser::make_IF(loc);
@@ -38,19 +40,28 @@ box           return parser::make_BOX(loc);
 is            return parser::make_IS(loc);
 ->            return parser::make_RETURNS(loc);
 return        return parser::make_RETURN(loc);
-[[:alnum:]]+  return parser::make_IDENT(yytext, loc);
-"="           return parser::make_EQUALS(loc);
+
+[[:alpha:]][[:alnum:]]+? {
+/* We make the lexer a little smarter because of a shift reduce conflict
+   in the grammar. We need to distinguish between a grouping parenthesis
+   and a function call, so we use a start condition for that */
+  BEGIN(call); return parser::make_IDENT(yytext, loc);
+}
+<INITIAL,call>"=" { BEGIN(INITIAL); return parser::make_EQUALS(loc); }
+<INITIAL,call>"*" { BEGIN(INITIAL); return parser::make_STAR(loc); }
+<INITIAL,call>"/" { BEGIN(INITIAL); return parser::make_SLASH(loc); }
+<INITIAL,call>"+" { BEGIN(INITIAL); return parser::make_PLUS(loc); }
+<INITIAL,call>"-" { BEGIN(INITIAL); return parser::make_MINUS(loc); }
+<INITIAL,call>":" { BEGIN(INITIAL); return parser::make_COLON(loc); }
+<INITIAL,call>"," { BEGIN(INITIAL); return parser::make_COMMA(loc); }
+<call>"("         { BEGIN(INITIAL); return parser::make_CALL(loc); }
 "("           return parser::make_LPAREN(loc);
 ")"           return parser::make_RPAREN(loc);
-"*"           return parser::make_STAR(loc);
-"/"           return parser::make_SLASH(loc);
-"+"           return parser::make_PLUS(loc);
-"-"           return parser::make_MINUS(loc);
-":"           return parser::make_COLON(loc);
+
 [\n]+         loc.lines(yyleng); loc.step();
 [ \t]+        loc.step();
 
--?[[:digit:]]+"."[[:digit:]]* {
+-?[[:digit:]]+("."[[:digit:]]*)? {
   // todo check for overflow
   return parser::make_NUMBER(strtod(yytext, NULL), loc);
 }
@@ -64,6 +75,7 @@ int driver::parse(std::shared_ptr<std::istream> src,
   yyscan_t scanner;
   yylex_init_extra(src, &scanner);
   parser parser(scanner, loc, result);
+  parser.set_debug_level(1);
   int ret = parser.parse();
   yylex_destroy(scanner);
   return ret;
