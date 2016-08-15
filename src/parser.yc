@@ -28,32 +28,30 @@
 %param {goat::location &loc}
 %parse-param {std::shared_ptr<goat::node::Program> result}
 
-%token
-  END 0 "end of file"
-  PROGRAM "program"
-  IF "if"
-  THEN "then"
-  ELSE "else"
-  DO "do"
-  DONE "done"
-  START_AT "start at"
-  REPEAT "repeat"
-  TIMES "times"
-  BOX "box"
-  IS "is"
-  RETURNS "->"
-  RETURN "return"
-  EQUALS '='
-  COLON ':'
-  PLUS '+'
-  MINUS '-'
-  STAR '*'
-  SLASH '/'
-  LPAREN '('
-  CALL '('
-  RPAREN ')'
-  COMMA ','
-;
+%token END 0 "end of file"
+%token PROGRAM "program"
+%token IF "if"
+%token THEN "then"
+%token ELSE "else"
+%token DO "do"
+%token DONE "done"
+%token START_AT "start at"
+%token REPEAT "repeat"
+%token TIMES "times"
+%token BOX "box"
+%token IS "is"
+%token RETURNS "->"
+%token RETURN "return"
+%token EQUALS "="
+%token COLON ":"
+%token PLUS "+"
+%token MINUS "-"
+%token STAR "*"
+%token SLASH "/"
+%token LPAREN "("
+%token CALL "function call"
+%token RPAREN ")"
+%token COMMA ","
 
 %token <double> NUMBER "number"
 %token <std::string> IDENT "identifier"
@@ -75,10 +73,10 @@
 %type <std::shared_ptr<node::Declaration>> declaration;
 %type <std::shared_ptr<node::Type>> type;
 
-%nonassoc EQUALS
-%left PLUS MINUS
-%left STAR SLASH
-%left COLON
+%nonassoc "="
+%left "+" "-"
+%left "*" "/"
+%left ":"
 %right THEN ELSE
 
 %%
@@ -108,14 +106,14 @@ expression:
 | application { $$ = $1; }
 | conditional { $$ = $1; }
 | math { $$ = $1; }
-| LPAREN expression RPAREN { $$ = $2; }
+| '(' expression ')' { $$ = $2; }
 ;
 
 math:
-  expression[left] PLUS expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Addition); }
-| expression[left] MINUS expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Subtraction); }
-| expression[left] SLASH expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Division); }
-| expression[left] STAR expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Multiplication); }
+  expression[left] "+" expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Addition); }
+| expression[left] "-" expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Subtraction); }
+| expression[left] "/" expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Division); }
+| expression[left] "*" expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Multiplication); }
 ;
 
 arguments:
@@ -125,11 +123,11 @@ arguments:
 ;
 
 function:
-  PROGRAM LPAREN idents RPAREN DO program DONE { $$ = std::make_shared<node::Function>($idents, $program); }
+  PROGRAM "(" idents ")" DO program DONE { $$ = std::make_shared<node::Function>($idents, $program); }
 ;
 
 application:
-  ident CALL arguments RPAREN { $$ = std::make_shared<node::Application>($ident, $arguments); }
+  ident CALL arguments ")" { $$ = std::make_shared<node::Application>($ident, $arguments); }
 ;
 
 conditional:
@@ -145,13 +143,13 @@ idents:
 
 type:
   ident { $$ = std::make_shared<node::Type>($ident); }
-| LPAREN idents RPAREN RETURNS ident { $$ = std::make_shared<node::Type>($idents, $ident); }
+| "(" idents ")" "->" ident { $$ = std::make_shared<node::Type>($idents, $ident); }
 ;
 
 declaration:
-  ident COLON type { $$ = std::make_shared<node::Declaration>($ident, $type); }
-| ident EQUALS expression { $$ = std::make_shared<node::Declaration>($ident, $expression); }
-| ident COLON type EQUALS expression { $$ = std::make_shared<node::Declaration>($ident, $type, $expression); }
+  ident ":" type { $$ = std::make_shared<node::Declaration>($ident, $type); }
+| ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression); }
+| ident ":" type "=" expression { $$ = std::make_shared<node::Declaration>($ident, $type, $expression); }
 ;
 
 %%
