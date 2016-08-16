@@ -26,7 +26,7 @@
 
 %param {void *scanner}
 %param {goat::location &loc}
-%parse-param {std::shared_ptr<goat::node::Program> result}
+%parse-param {std::shared_ptr<goat::node::Program> &result}
 
 %token END 0 "end of file"
 %token PROGRAM "program"
@@ -81,7 +81,7 @@
 
 %%
 %start start;
-start: program { result = $1; }
+start: program { result = $program; }
 
 program:
   %empty { $$ = std::make_shared<node::Program>(); }
