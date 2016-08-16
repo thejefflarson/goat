@@ -73,8 +73,8 @@ public:
 
 int main() {
   std::shared_ptr<Program> p = make_shared<Program>();
-  std::string program = "a= ()";
-  auto s =  make_shared<std::stringstream>(program);
+  std::string program = "a = 1";
+  auto s = make_shared<std::stringstream>(program);
   int r = goat::driver::parse(s, p);
   printf("%i\n", r);
   PrintingVisitor print;

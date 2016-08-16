@@ -1,0 +1,10 @@
+#! /bin/env python
+
+
+def build(bld):
+    bld.program(
+        source="parsing.cc",
+        target="parsing",
+        use="goat",
+        includes="../src"
+    )
