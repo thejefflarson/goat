@@ -3,8 +3,8 @@
 
 def build(bld):
     bld.program(
-        source='parsing.cc',
-        use='goat',
-        includes='../src',
-        target='parsing'
+        source="parsing.cc",
+        target="parsing",
+        use="goat",
+        includes="../src"
     )

@@ -7,7 +7,10 @@ def options(opts):
 
 def configure(conf):
     conf.load("compiler_cxx bison flex")
-    conf.check_cxx(uselib_store='G', cxxflags=['-std=c++14', '-g', '-Wall'])
+    conf.check_cxx(
+        uselib_store='G',
+        cxxflags=['-std=c++14', '-g', '-Wall', '-O0']
+    )
 
 
 def build(bld):
