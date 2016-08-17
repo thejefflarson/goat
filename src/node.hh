@@ -11,9 +11,9 @@ namespace goat {
 namespace node {
 
 class Node;
-typedef std::shared_ptr<std::vector<std::shared_ptr<Node>>> NodeList;
+typedef std::vector<std::shared_ptr<Node>> NodeList;
 class Type;
-typedef std::shared_ptr<std::vector<std::shared_ptr<Type>>> TypeList;
+typedef std::vector<std::shared_ptr<Type>> TypeList;
 
 class Node {
 public:
@@ -50,43 +50,40 @@ private:
 
 class Program : public Node {
 public:
-  Program() : nodes_(std::make_shared<std::vector<std::shared_ptr<Node>>>()) {}
+  Program() : nodes_(std::make_shared<NodeList>()) {}
   void push_back(std::shared_ptr<Node> it) { nodes_->push_back(it); }
   void accept(Visitor &v);
-  const NodeList nodes() const { return nodes_; }
-  ~Program(){
-    std::cout << "DELETING" << std::endl;
-  }
+  const std::shared_ptr<NodeList> nodes() const { return nodes_; }
 private:
-  NodeList nodes_;
+  std::shared_ptr<NodeList> nodes_;
 };
 
 class Function : public Node {
 public:
-  Function(const TypeList arguments,
+  Function(const std::shared_ptr<TypeList> arguments,
            const std::shared_ptr<Program> program) :
     arguments_(arguments),
     program_(program) {}
   void accept(Visitor &v);
-  const TypeList arguments() const { return arguments_; }
+  const std::shared_ptr<TypeList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
 private:
-  const TypeList arguments_;
+  const std::shared_ptr<TypeList> arguments_;
   const std::shared_ptr<Program> program_;
 };
 
 class Application : public Node {
 public:
   Application(std::shared_ptr<Identifier> ident,
-              NodeList arguments) :
+              std::shared_ptr<NodeList> arguments) :
     ident_(ident),
     arguments_(arguments) {}
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
-  const NodeList arguments() const { return arguments_; }
+  const std::shared_ptr<NodeList> arguments() const { return arguments_; }
 private:
   const std::shared_ptr<Identifier> ident_;
-  const NodeList arguments_;
+  const std::shared_ptr<NodeList> arguments_;
 };
 
 class Conditional : public Node {
@@ -137,21 +134,22 @@ private:
   const Ops op_;
 };
 
+// TODO: think about splitting this into different classes based on different
+// kinds of types.
 class Type : public Node {
 public:
   Type(std::shared_ptr<Identifier> ident) :
-    ident_(ident),
-    args_(std::make_shared<std::vector<std::shared_ptr<Type>>>()) {};
-  Type(TypeList arguments,
+    ident_(ident) {};
+  Type(std::shared_ptr<TypeList> arguments,
        std::shared_ptr<Identifier> ident) :
     ident_(ident),
     args_(arguments) {}
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
-  const TypeList arguments() const { return args_; }
+  const std::shared_ptr<TypeList> arguments() const { return args_; }
 private:
   const std::shared_ptr<Identifier> ident_;
-  const TypeList args_;
+  const std::shared_ptr<TypeList> args_;
 };
 
 class Declaration : public Node {

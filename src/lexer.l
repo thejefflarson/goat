@@ -21,43 +21,36 @@ using namespace goat;
 }
 %}
 
-%x call
+ident [a-zA-Z\x80-\xff_][a-zA-Z0-9\x80-\xff_]*
+
 %%
 
 %{
   loc.step();
 %}
 
-<<EOF>>       return parser::make_END(loc);
-program       return parser::make_PROGRAM(loc);
-if            return parser::make_IF(loc);
-do            return parser::make_DO(loc);
-done          return parser::make_DONE(loc);
-"start at"    return parser::make_START_AT(loc);
-repeat        return parser::make_REPEAT(loc);
-times         return parser::make_TIMES(loc);
-->            return parser::make_RETURNS(loc);
-return        return parser::make_RETURN(loc);
-
-[[:alpha:]][[:alnum:]]+? {
-/* We make the lexer a little smarter because of a shift reduce conflict
-   in the grammar. We need to distinguish between a grouping parenthesis
-   and a function call, so we use a start condition for that */
-  BEGIN(call); return parser::make_IDENT(yytext, loc);
-}
-<INITIAL,call>"=" { BEGIN(INITIAL); return parser::make_EQUALS(loc); }
-<INITIAL,call>"*" { BEGIN(INITIAL); return parser::make_STAR(loc); }
-<INITIAL,call>"/" { BEGIN(INITIAL); return parser::make_SLASH(loc); }
-<INITIAL,call>"+" { BEGIN(INITIAL); return parser::make_PLUS(loc); }
-<INITIAL,call>"-" { BEGIN(INITIAL); return parser::make_MINUS(loc); }
-<INITIAL,call>":" { BEGIN(INITIAL); return parser::make_COLON(loc); }
-<INITIAL,call>"," { BEGIN(INITIAL); return parser::make_COMMA(loc); }
-<call>"("         { BEGIN(INITIAL); return parser::make_CALL(loc); }
-"("           return parser::make_LPAREN(loc);
-")"           return parser::make_RPAREN(loc);
-
-[\n]+         loc.lines(yyleng); loc.step();
-[ \t]+        loc.step();
+<<EOF>>    return parser::make_END(loc);
+program    return parser::make_PROGRAM(loc);
+if         return parser::make_IF(loc);
+do         return parser::make_DO(loc);
+done       return parser::make_DONE(loc);
+"start at" return parser::make_START_AT(loc);
+repeat     return parser::make_REPEAT(loc);
+times      return parser::make_TIMES(loc);
+->         return parser::make_RETURNS(loc);
+return     return parser::make_RETURN(loc);
+{ident}    return parser::make_IDENT(yytext, loc);
+"="        return parser::make_EQUALS(loc);
+"*"        return parser::make_STAR(loc);
+"/"        return parser::make_SLASH(loc);
+"+"        return parser::make_PLUS(loc);
+"-"        return parser::make_MINUS(loc);
+":"        return parser::make_COLON(loc);
+","        return parser::make_COMMA(loc);
+"("        return parser::make_LPAREN(loc);
+")"        return parser::make_RPAREN(loc);
+[\n]+      loc.lines(yyleng); loc.step();
+[ \t]+     loc.step();
 
 -?[[:digit:]]+("."[[:digit:]]*)? {
   // todo check for overflow
@@ -73,7 +66,7 @@ int driver::parse(std::shared_ptr<std::istream> src,
   yyscan_t scanner;
   yylex_init_extra(src, &scanner);
   parser parser(scanner, loc, result);
-  parser.set_debug_level(1);
+  //parser.set_debug_level(1);
   int ret = parser.parse();
   yylex_destroy(scanner);
   return ret;

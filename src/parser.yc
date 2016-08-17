@@ -63,20 +63,23 @@
 %type <std::shared_ptr<node::Number>> number;
 %type <std::shared_ptr<node::Identifier>> ident;
 %type <std::shared_ptr<node::Operation>> math;
-%type <node::NodeList> arguments;
+%type <std::shared_ptr<node::NodeList>> arguments;
 %type <std::shared_ptr<node::Function>> function;
 %type <std::shared_ptr<node::Application>> application;
 %type <std::shared_ptr<node::Conditional>> conditional;
-%type <node::TypeList> idents;
+%type <std::shared_ptr<node::TypeList>> idents;
 %type <std::shared_ptr<node::Declaration>> declaration;
 %type <std::shared_ptr<node::Type>> type;
 
+%precedence IDENT
 %nonassoc "="
 %left "+" "-"
 %left "*" "/"
 %left ":"
 %right THEN ELSE
+%precedence "("
 
+%expect 0
 %%
 %start start;
 start: program { result = $program; }
@@ -98,13 +101,13 @@ ident: IDENT { $$ = std::make_shared<node::Identifier>($1); }
 expression:
   string { $$ = $1; }
 | number { $$ = $1; }
-| ident { $$ = $1; }
+| %prec IDENT ident { $$ = $1; }
 | declaration { $$ = $1; }
 | function { $$ = $1; }
 | application { $$ = $1; }
 | conditional { $$ = $1; }
 | math { $$ = $1; }
-| '(' expression ')' { $$ = $2; }
+| "(" expression ")" { $$ = $2; }
 ;
 
 math:
@@ -115,8 +118,8 @@ math:
 ;
 
 arguments:
-  %empty { $$ = node::NodeList(); }
-| expression { $$ = node::NodeList(); $$->push_back($expression); }
+  %empty { $$ = std::make_shared<node::NodeList>(); }
+| expression { $$ = std::make_shared<node::NodeList>(); $$->push_back($expression); }
 | arguments[args] COMMA expression { $args->push_back($expression); }
 ;
 
@@ -125,7 +128,7 @@ function:
 ;
 
 application:
-  ident CALL arguments ")" { $$ = std::make_shared<node::Application>($ident, $arguments); }
+  ident "(" arguments ")" { $$ = std::make_shared<node::Application>($ident, $arguments); }
 ;
 
 conditional:
@@ -134,8 +137,8 @@ conditional:
 ;
 
 idents:
-  %empty { $$ = node::TypeList(); }
-| ident { $$ = node::TypeList(); $$->push_back(std::make_shared<node::Type>($ident)); }
+  %empty { $$ = std::make_shared<node::TypeList>(); }
+| ident { $$ = std::make_shared<node::TypeList>(); $$->push_back(std::make_shared<node::Type>($ident)); }
 | idents[ids] COMMA ident { $ids->push_back(std::make_shared<node::Type>($ident)); }
 ;
 

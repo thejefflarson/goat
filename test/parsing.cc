@@ -60,22 +60,23 @@ public:
   void visit(const Type &type) {
     std::cout << "Type" << std::endl;
     type.ident()->accept(*this);
-    list_accept(type.arguments(), *this);
+    if(type.arguments()) list_accept(type.arguments(), *this);
   }
 
   void visit(const Declaration &declaration) {
     std::cout << "Declaration" << std::endl;
     declaration.ident()->accept(*this);
-    declaration.type()->accept(*this);
-    declaration.expression()->accept(*this);
+    if(declaration.type()) declaration.type()->accept(*this);
+    if(declaration.expression()) declaration.expression()->accept(*this);
   }
 };
 
 int main() {
   std::shared_ptr<Program> p;
-  std::string program = "1 + 1";
+  std::string program = "a : (Int) -> Float = program() do b done";
   auto s = make_shared<std::stringstream>(program);
   int r = goat::driver::parse(s, p);
+  if(r) return EXIT_FAILURE;
   PrintingVisitor print;
   print.visit(*p);
 }
