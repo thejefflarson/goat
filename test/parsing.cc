@@ -42,6 +42,7 @@ public:
   void visit(const Application &application) {
     std::cout << "Application" << std::endl;
     application.ident()->accept(*this);
+    list_accept(application.arguments(), *this);
   }
 
   void visit(const Conditional &conditional) {
@@ -73,7 +74,7 @@ public:
 
 int main() {
   std::shared_ptr<Program> p;
-  std::string program = "a : (Int) -> Float = program() do b done";
+  std::string program = "a : (Int) -> Float = program(a) do b(1 + 1) done";
   auto s = make_shared<std::stringstream>(program);
   int r = goat::driver::parse(s, p);
   if(r) return EXIT_FAILURE;
