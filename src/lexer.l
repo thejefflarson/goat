@@ -73,7 +73,7 @@ int driver::parse(std::shared_ptr<std::istream> src,
   yyscan_t scanner;
   yylex_init_extra(src, &scanner);
   parser parser(scanner, loc, result);
-  //parser.set_debug_level(1);
+  parser.set_debug_level(1);
   int ret = parser.parse();
   yylex_destroy(scanner);
   return ret;

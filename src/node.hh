@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <iostream>
 
 namespace goat {
 namespace node {
@@ -16,7 +17,7 @@ typedef std::shared_ptr<std::vector<std::shared_ptr<Type>>> TypeList;
 
 class Node {
 public:
-  virtual ~Node() {};
+  virtual ~Node() = default;
   virtual void accept(class Visitor &v) = 0;
 };
 
@@ -53,6 +54,9 @@ public:
   void push_back(std::shared_ptr<Node> it) { nodes_->push_back(it); }
   void accept(Visitor &v);
   const NodeList nodes() const { return nodes_; }
+  ~Program(){
+    std::cout << "DELETING" << std::endl;
+  }
 private:
   NodeList nodes_;
 };

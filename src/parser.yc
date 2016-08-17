@@ -83,7 +83,7 @@ start: program { result = $program; }
 
 program:
   %empty { $$ = std::make_shared<node::Program>(); }
-| expressions
+| expressions { $$ = $1; }
 ;
 
 expressions:
