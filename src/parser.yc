@@ -38,8 +38,6 @@
 %token START_AT "start at"
 %token REPEAT "repeat"
 %token TIMES "times"
-%token BOX "box"
-%token IS "is"
 %token RETURNS "->"
 %token RETURN "return"
 %token EQUALS "="
