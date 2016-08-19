@@ -57,18 +57,20 @@
 
 %printer { yyoutput << $$; } <*>;
 
-%type <std::shared_ptr<node::Program>> program expressions;
+%type <std::shared_ptr<node::Program>> program;
 %type <std::shared_ptr<node::Node>> expression;
 %type <std::shared_ptr<node::String>> string;
 %type <std::shared_ptr<node::Number>> number;
 %type <std::shared_ptr<node::Identifier>> ident;
 %type <std::shared_ptr<node::Operation>> math;
 %type <std::shared_ptr<node::NodeList>> arguments;
+%type <std::shared_ptr<node::NodeList>> expressions;
+%type <std::shared_ptr<node::NodeList>> statements;
 %type <std::shared_ptr<node::Function>> function;
 %type <std::shared_ptr<node::Application>> application;
 %type <std::shared_ptr<node::Conditional>> conditional;
 %type <std::shared_ptr<node::TypeList>> idents;
-%type <std::shared_ptr<node::Declaration>> declaration;
+%type <std::shared_ptr<node::Declaration>> declaration statement;
 
 %type <std::shared_ptr<node::Type>> type;
 
@@ -93,11 +95,11 @@ program: { $$ = std::make_shared<node::Program>(); }
 
 statements:
   statement { $$ = std::make_shared<node::NodeList>(); $$->push_back($statement); }
-| statements[stmts] statement { $stmts->push_back($stmts); }
+| statements[stmts] statement { $stmts->push_back($statement); }
 ;
 
 statement:
-  declaration { $$ = 1; }
+  declaration { $$ = $1; }
 ;
 
 expressions:
