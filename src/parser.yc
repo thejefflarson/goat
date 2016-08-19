@@ -87,10 +87,10 @@
 %start start;
 start: program { result = $program; }
 
-program: { $$ = std::make_shared<node::Program>(); }
-  %empty
-| expressions { $$->push_back($1); }
-| statements { $$->push_back($1); }
+program:
+  %empty  { $$ = std::make_shared<node::Program>(); }
+| expressions { $$ = std::make_shared<node::Program>(); $$->push_back($1); }
+| statements { $$ = std::make_shared<node::Program>(); $$->push_back($1); }
 ;
 
 statements:
