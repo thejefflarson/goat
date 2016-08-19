@@ -69,6 +69,7 @@
 %type <std::shared_ptr<node::Conditional>> conditional;
 %type <std::shared_ptr<node::TypeList>> idents;
 %type <std::shared_ptr<node::Declaration>> declaration;
+
 %type <std::shared_ptr<node::Type>> type;
 
 %precedence IDENT
@@ -84,13 +85,23 @@
 %start start;
 start: program { result = $program; }
 
-program:
-  %empty { $$ = std::make_shared<node::Program>(); }
-| expressions { $$ = $1; }
+program: { $$ = std::make_shared<node::Program>(); }
+  %empty
+| expressions { $$->push_back($1); }
+| statements { $$->push_back($1); }
+;
+
+statements:
+  statement { $$ = std::make_shared<node::NodeList>(); $$->push_back($statement); }
+| statements[stmts] statement { $stmts->push_back($stmts); }
+;
+
+statement:
+  declaration { $$ = 1; }
 ;
 
 expressions:
-  expression { $$ = std::make_shared<node::Program>(); $$->push_back($expression); }
+  expression { $$ = std::make_shared<node::NodeList>(); $$->push_back($expression); }
 | expressions[exprs] expression { $exprs->push_back($expression); }
 ;
 
@@ -102,7 +113,6 @@ expression:
   string { $$ = $1; }
 | number { $$ = $1; }
 | %prec IDENT ident { $$ = $1; }
-| declaration { $$ = $1; }
 | function { $$ = $1; }
 | application { $$ = $1; }
 | conditional { $$ = $1; }

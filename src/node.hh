@@ -51,7 +51,9 @@ private:
 class Program : public Node {
 public:
   Program() : nodes_(std::make_shared<NodeList>()) {}
-  void push_back(std::shared_ptr<Node> it) { nodes_->push_back(it); }
+  void push_back(std::shared_ptr<NodeList> it) {
+    nodes_->insert(nodes_->end(), it->begin(), it->end());
+  }
   void accept(Visitor &v);
   const std::shared_ptr<NodeList> nodes() const { return nodes_; }
 private:
