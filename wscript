@@ -14,7 +14,7 @@ def configure(conf):
 
 
 def build(bld):
-    bld.shlib(
+    bld.stlib(
         source=bld.path.ant_glob('src/*.(l|cc|yc)'),
         target='goat',
         includes='src',

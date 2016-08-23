@@ -74,7 +74,7 @@ public:
 
 int main() {
   std::shared_ptr<Program> p;
-  std::string program = "a : (Int) -> Float = program(a) do b(1 + 1) done";
+  std::string program = "a = program(a) do b(1 + 1) done";
   auto s = make_shared<std::stringstream>(program);
   int r = goat::driver::parse(s, p);
   if(r) return EXIT_FAILURE;
