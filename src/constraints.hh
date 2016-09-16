@@ -8,6 +8,21 @@
 namespace goat {
 namespace inference {
 
+class TypeVariable {
+  TypeVariable(std::string id) : id_(id) {}
+private:
+  std::string id_;
+};
+
+class TypeVariableFactory {
+  TypeVariableFactory() : last_("a") {}
+  std::unique_ptr<TypeVariable> create(std::string id);
+  std::unique_ptr<TypeVariable> next();
+private:
+  std::string last_;
+  std::set<std::string> used_;
+};
+
 class Constraint {
 
 };
@@ -24,6 +39,9 @@ private:
 
 class Constrainer : public node::Visitor {
 
+private:
+  ConstraintSet constraints_;
+  TypeVariableFactory type_factory_;
 };
 
 }
