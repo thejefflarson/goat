@@ -16,15 +16,27 @@ private:
 
 class TypeVariableFactory {
   TypeVariableFactory() : last_("a") {}
-  std::unique_ptr<TypeVariable> create(std::string id);
-  std::unique_ptr<TypeVariable> next();
+  std::shared_ptr<TypeVariable> create(std::string id);
+  std::shared_ptr<TypeVariable> next();
 private:
   std::string last_;
   std::set<std::string> used_;
 };
 
-class Constraint {
+enum ConstraintRelation {
+  Equality,
+  ExplicitInstance,
+  ImplicitInstance
+};
 
+class Constraint {
+  Constraint(ConstraintRelation relation,
+             std::vector<std::shared_ptr<TypeVariable>> variables) :
+    relation_(relation),
+    variables_(variables) {}
+private:
+  ConstraintRelation relation_;
+  std::vector<std::shared_ptr<TypeVariable>> variables_;
 };
 
 class ConstraintSet {
