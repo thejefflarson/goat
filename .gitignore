@@ -7,3 +7,4 @@ stack.hh
 build
 Makefile
 .lock*
+.#*
