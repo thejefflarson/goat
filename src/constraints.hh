@@ -14,10 +14,19 @@ private:
   std::string id_;
 };
 
+class FunctionType {
+  FunctionType(std::vector<TypeVariable> in, TypeVariable ret) :
+    in_(in),
+    ret_(ret) {}
+private:
+  std::vector<TypeVariable> in_;
+  TypeVariable ret_;
+};
+
 class TypeVariableFactory {
   TypeVariableFactory() : last_("a") {}
-  std::shared_ptr<TypeVariable> create(std::string id);
-  std::shared_ptr<TypeVariable> next();
+  TypeVariable create(std::string id);
+  TypeVariable next();
 private:
   std::string last_;
   std::set<std::string> used_;
@@ -31,22 +40,22 @@ enum ConstraintRelation {
 
 class Constraint {
   Constraint(ConstraintRelation relation,
-             std::vector<std::shared_ptr<TypeVariable>> variables) :
+             std::vector<TypeVariable> variables) :
     relation_(relation),
     variables_(variables) {}
 private:
   ConstraintRelation relation_;
-  std::vector<std::shared_ptr<TypeVariable>> variables_;
+  std::vector<TypeVariable> variables_;
 };
 
 class ConstraintSet {
   ConstraintSet() : constraints_() {}
-  void add(std::unique_ptr<Constraint> constraint) {
-    constraints_.insert(std::move(constraint));
+  void add(Constraint constraint) {
+    constraints_.insert(constraint);
   }
 
 private:
-  std::set<std::unique_ptr<Constraint>> constraints_;
+  std::set<Constraint> constraints_;
 };
 
 class Constrainer : public node::Visitor {
