@@ -8,3 +8,4 @@ build
 Makefile
 .lock*
 .#*
+.DS_Store
