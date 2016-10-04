@@ -8,4 +8,4 @@
             (setq flycheck-clang-include-path
                   (list (concat dir "build/src")
                         (concat dir "src")))))
-  (flycheck-clang-language-standard . "c++1y")))
+  (flycheck-clang-language-standard . "c++14")))

@@ -1,3 +1,5 @@
+%require "3.0.4"
+
 %{
 #include <string>
 #include <vector>
@@ -13,7 +15,6 @@
 }
 
 %skeleton "lalr1.cc"
-%require "3.0.4"
 %defines
 %locations
 %define api.namespace {goat}
