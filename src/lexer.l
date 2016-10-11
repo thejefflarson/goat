@@ -57,6 +57,7 @@ return     return parser::make_RETURN(loc);
   return parser::make_NUMBER(strtod(yytext, NULL), loc);
 }
 
+
 %%
 
 using namespace goat;
