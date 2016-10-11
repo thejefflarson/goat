@@ -7,7 +7,7 @@
 
 namespace goat {
 namespace inference {
-
+// Note: this is just a language; create an AST and parse it...
 class TypeVariable {
   TypeVariable(std::string id) : id_(id) {}
 private:
