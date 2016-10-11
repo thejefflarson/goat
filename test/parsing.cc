@@ -78,6 +78,7 @@ bool test(const std::string program, const Program &result) {
   std::shared_ptr<Program> p;
   auto s = make_shared<std::stringstream>(program);
   int r = goat::driver::parse(s, p);
+  if(r != 0) return false;
   bool equal = result == *p;
 
   if(!equal) {
@@ -86,7 +87,7 @@ bool test(const std::string program, const Program &result) {
     print.visit(*p);
   }
 
-  return r == 0 && equal;
+  return equal;
 }
 
 void test_empty() {

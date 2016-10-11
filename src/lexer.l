@@ -57,7 +57,7 @@ return     return parser::make_RETURN(loc);
   return parser::make_NUMBER(strtod(yytext, NULL), loc);
 }
 
-
+.          throw parser::syntax_error(loc, "invalid character");
 %%
 
 using namespace goat;
