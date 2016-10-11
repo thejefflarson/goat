@@ -1,20 +1,29 @@
 #ifndef GOAT_CONSTRAINTS_HH
 #define GOAT_CONSTRAINTS_HH
 
-#include "visitor.hh"
 #include <set>
 #include <memory>
+#include <string>
+#include <vector>
+
+#include "visitor.hh"
 
 namespace goat {
 namespace inference {
+
 // Note: this is just a language; create an AST and parse it...
-class TypeVariable {
+class TypeNode {
+public:
+  virtual ~TypeNode() = default;
+};
+
+class TypeVariable : public TypeNode {
   TypeVariable(std::string id) : id_(id) {}
 private:
   std::string id_;
 };
 
-class FunctionType {
+class FunctionType : public TypeNode {
   FunctionType(std::vector<TypeVariable> in, TypeVariable ret) :
     in_(in),
     ret_(ret) {}
@@ -40,12 +49,12 @@ enum ConstraintRelation {
 
 class Constraint {
   Constraint(ConstraintRelation relation,
-             std::vector<TypeVariable> variables) :
+             std::vector<TypeNode> variables) :
     relation_(relation),
     variables_(variables) {}
 private:
   ConstraintRelation relation_;
-  std::vector<TypeVariable> variables_;
+  std::vector<TypeNode> variables_;
 };
 
 class ConstraintSet {

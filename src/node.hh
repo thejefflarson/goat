@@ -19,6 +19,14 @@ class Node {
 public:
   virtual ~Node() = default;
   virtual void accept(class Visitor &v) = 0;
+  bool operator==(const Node &b) const {
+    if(typeid(*this) != typeid(b)) return false;
+    return equals(b);
+  }
+  bool operator!=(const Node &b) const {
+    return !(*this == b);
+  }
+  virtual bool equals(const Node &) const = 0;
 };
 
 class Number : public Node {
@@ -26,6 +34,7 @@ public:
   Number(const double value) : value_(value) {}
   void accept(Visitor &v);
   double value() const { return value_; }
+  bool equals(const Node &b) const;
 private:
   const double value_;
 };
@@ -35,6 +44,7 @@ public:
   Identifier(const std::string value) : value_(value) {}
   void accept(Visitor &v);
   const std::string & value() const { return value_; }
+  bool equals(const Node &b) const;
 private:
   const std::string value_;
 };
@@ -44,6 +54,7 @@ public:
   String(const std::string value) : value_(value) {}
   void accept(Visitor &v);
   const std::string & value() const { return value_; }
+  bool equals(const Node &b) const;
 private:
   const std::string value_;
 };
@@ -56,6 +67,7 @@ public:
   }
   void accept(Visitor &v);
   const std::shared_ptr<NodeList> nodes() const { return nodes_; }
+  bool equals(const Node &b) const;
 private:
   std::shared_ptr<NodeList> nodes_;
 };
@@ -69,6 +81,7 @@ public:
   void accept(Visitor &v);
   const std::shared_ptr<TypeList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
+  bool equals(const Node &b) const;
 private:
   const std::shared_ptr<TypeList> arguments_;
   const std::shared_ptr<Program> program_;
@@ -83,6 +96,7 @@ public:
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const std::shared_ptr<NodeList> arguments() const { return arguments_; }
+  bool equals(const Node &b) const;
 private:
   const std::shared_ptr<Identifier> ident_;
   const std::shared_ptr<NodeList> arguments_;
@@ -105,6 +119,7 @@ public:
   const std::shared_ptr<Node> expression() const { return expression_; }
   const std::shared_ptr<Program> true_block() const { return true_block_; }
   const std::shared_ptr<Program> false_block() const { return false_block_; }
+  bool equals(const Node &b) const;
 private:
   const std::shared_ptr<Node> expression_;
   const std::shared_ptr<Program> true_block_;
@@ -130,6 +145,7 @@ public:
   const std::shared_ptr<Node> left() const { return lhs_; }
   const std::shared_ptr<Node> right() const { return rhs_; }
   Ops operation() const { return op_; }
+  bool equals(const Node &b) const;
 private:
   const std::shared_ptr<Node> lhs_;
   const std::shared_ptr<Node> rhs_;
@@ -149,6 +165,7 @@ public:
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const std::shared_ptr<TypeList> arguments() const { return args_; }
+  bool equals(const Node &b) const;
 private:
   const std::shared_ptr<Identifier> ident_;
   const std::shared_ptr<TypeList> args_;
@@ -174,6 +191,7 @@ public:
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const std::shared_ptr<Type> type() const { return type_; }
   const std::shared_ptr<Node> expression() const { return expr_; }
+  bool equals(const Node &b) const;
 private:
   const std::shared_ptr<Identifier> ident_;
   const std::shared_ptr<Type> type_;

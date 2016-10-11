@@ -2,6 +2,7 @@
 #include "node.hh"
 #include "visitor.hh"
 #include "driver.hh"
+#include "tap.h"
 
 using namespace std;
 using namespace goat::node;
@@ -72,12 +73,40 @@ public:
   }
 };
 
-int main() {
+
+bool test(const std::string program, const Program &result) {
   std::shared_ptr<Program> p;
-  std::string program = "a = program(a) do b(1 + 1) done";
   auto s = make_shared<std::stringstream>(program);
   int r = goat::driver::parse(s, p);
-  if(r) return EXIT_FAILURE;
-  PrintingVisitor print;
-  print.visit(*p);
+  bool equal = result == *p;
+
+  if(!equal) {
+    PrintingVisitor print;
+    print.visit(result);
+    print.visit(*p);
+  }
+
+  return r == 0 && equal;
+}
+
+void test_empty() {
+  Program p;
+  ok(test("", p), "Parses an empty string");
+}
+
+void test_literals() {
+  Program p;
+  auto args = make_shared<NodeList>();
+  args->push_back(make_shared<Number>(1));
+  p.push_back(args);
+  ok(test("1", p), "Parses a number");
+  args->clear();
+  args->push_back(make_shared<String>("Why hello!"));
+  ok(test("\"Why hello!\"", p), "Parses a string");
+}
+
+int main() {
+  start_test;
+  test_empty();
+  test_literals();
 }
