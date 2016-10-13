@@ -96,7 +96,7 @@ program:
 
 statements:
   statement { $$ = std::make_shared<node::NodeList>(); $$->push_back($statement); }
-| statements[stmts] statement { $stmts->push_back($statement); }
+| statements[stmts] statement { $$ = $stmts; $$->push_back($statement); }
 ;
 
 statement:
@@ -105,7 +105,7 @@ statement:
 
 expressions:
   expression { $$ = std::make_shared<node::NodeList>(); $$->push_back($expression); }
-| expressions[exprs] expression { $exprs->push_back($expression); }
+| expressions[exprs] expression { $$ = $exprs; $$->push_back($expression); }
 ;
 
 string: STRING { $$ = std::make_shared<node::String>($1); }
@@ -152,7 +152,7 @@ conditional:
 idents:
   %empty { $$ = std::make_shared<node::TypeList>(); }
 | ident { $$ = std::make_shared<node::TypeList>(); $$->push_back(std::make_shared<node::Type>($ident)); }
-| idents[ids] COMMA ident { $ids->push_back(std::make_shared<node::Type>($ident)); }
+| idents[ids] COMMA ident { $$ = $ids; $$->push_back(std::make_shared<node::Type>($ident)); }
 ;
 
 type:

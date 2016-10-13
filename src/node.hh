@@ -152,12 +152,13 @@ private:
   const Ops op_;
 };
 
-// TODO: think about splitting this into different classes based on different
+// TODO: split this into different classes based on different
 // kinds of types.
 class Type : public Node {
 public:
   Type(std::shared_ptr<Identifier> ident) :
-    identifier_(ident) {};
+    identifier_(ident),
+    arguments_(std::make_shared<TypeList>()) {} // less than ideal
   Type(std::shared_ptr<TypeList> arguments,
        std::shared_ptr<Identifier> ident) :
     identifier_(ident),

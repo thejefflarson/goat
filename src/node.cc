@@ -81,7 +81,8 @@ bool Operation::equals(const Node &b) const {
 
 bool Type::equals(const Node &b) const {
   const Type *c = static_cast<const Type *>(&b);
-  return *identifier_ == *c->identifier_ && *arguments_ == *c->arguments_;
+  return *identifier_ == *c->identifier_ &&
+    compare_vectors(arguments_, c->arguments_);
 }
 
 bool Declaration::equals(const Node &b) const {
