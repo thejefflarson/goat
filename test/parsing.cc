@@ -97,7 +97,7 @@ void test_empty() {
   ok(test("", p), "Parses an empty string");
 }
 
-bool literal(std::string program, std::shared_ptr<Node> a) {
+bool program(std::string program, std::shared_ptr<Node> a) {
   Program p;
   auto args = make_shared<NodeList>();
   args->push_back(a);
@@ -106,14 +106,33 @@ bool literal(std::string program, std::shared_ptr<Node> a) {
 }
 
 void test_literals() {
-  ok(literal("1", make_shared<Number>(1)), "Parses a number.");
-  ok(literal("a", make_shared<Identifier>("a")), "Parses an identifier");
-  ok(literal("\"Why hello!\"", make_shared<String>("\"Why hello!\"")),
+  ok(program("1", make_shared<Number>(1)), "Parses a number.");
+  ok(program("a", make_shared<Identifier>("a")), "Parses an identifier");
+  ok(program("\"Why hello!\"", make_shared<String>("\"Why hello!\"")),
      "Parses a string");
+}
+
+void test_math() {
+  auto math =
+    make_shared<Operation>(
+      make_shared<Operation>(
+        make_shared<Number>(1),
+        make_shared<Number>(1),
+        Subtraction),
+      make_shared<Operation>(
+        make_shared<Number>(2),
+        make_shared<Operation>(
+          make_shared<Number>(3),
+          make_shared<Number>(4),
+          Multiplication),
+        Division),
+      Addition);
+  ok(program("1 - 1 + 2 / (3 * 4)", math), "Parses math");
 }
 
 int main() {
   start_test;
   test_empty();
   test_literals();
+  test_math();
 }

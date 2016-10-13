@@ -39,7 +39,7 @@ repeat     return parser::make_REPEAT(loc);
 times      return parser::make_TIMES(loc);
 ->         return parser::make_RETURNS(loc);
 return     return parser::make_RETURN(loc);
-{ident}    return parser::make_IDENT(strdup(yytext), loc);
+{ident}    return parser::make_IDENT(yytext, loc);
 "="        return parser::make_EQUALS(loc);
 "*"        return parser::make_STAR(loc);
 "/"        return parser::make_SLASH(loc);
@@ -57,7 +57,7 @@ return     return parser::make_RETURN(loc);
   return parser::make_NUMBER(strtod(yytext, NULL), loc);
 }
 
-\"([^\\\"]|\\.)*\"  return parser::make_STRING(strdup(yytext), loc);
+\"([^\\\"]|\\.)*\"  return parser::make_STRING(yytext, loc);
 .          throw parser::syntax_error(loc, "invalid character");
 %%
 
