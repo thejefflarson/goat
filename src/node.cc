@@ -52,19 +52,19 @@ bool compare_vectors(T &a, T &b) {
 
 bool Program::equals(const Node &b) const {
   const Program *c = static_cast<const Program *>(&b);
-  return compare_vectors(this->nodes_, c->nodes());
+  return compare_vectors(this->nodes_, c->nodes_);
 }
 
 bool Function::equals(const Node &b) const {
   const Function *c = static_cast<const Function *>(&b);
-  return compare_vectors(arguments_, c->arguments()) &&
+  return compare_vectors(arguments_, c->arguments_) &&
     *program_ == *c->program_;
 }
 
 bool Application::equals(const Node &b) const {
   const Application *c = static_cast<const Application *>(&b);
   return *ident_ == *c->ident() &&
-    compare_vectors(arguments_, c->arguments());
+    compare_vectors(arguments_, c->arguments_);
 }
 
 bool Conditional::equals(const Node &b) const {
@@ -81,12 +81,12 @@ bool Operation::equals(const Node &b) const {
 
 bool Type::equals(const Node &b) const {
   const Type *c = static_cast<const Type *>(&b);
-  return *ident_ == *c->ident_ && *args_ == *c->args_;
+  return *identifier_ == *c->identifier_ && *arguments_ == *c->arguments_;
 }
 
 bool Declaration::equals(const Node &b) const {
   const Declaration *c = static_cast<const Declaration *>(&b);
-  return *ident_ == *c->ident_ &&
+  return *identifier_ == *c->identifier_ &&
     *type_ == *c->type_ &&
-    *expr_ == *c->expr_;
+    *expression_ == *c->expression_;
 }

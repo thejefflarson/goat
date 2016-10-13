@@ -157,45 +157,45 @@ private:
 class Type : public Node {
 public:
   Type(std::shared_ptr<Identifier> ident) :
-    ident_(ident) {};
+    identifier_(ident) {};
   Type(std::shared_ptr<TypeList> arguments,
        std::shared_ptr<Identifier> ident) :
-    ident_(ident),
-    args_(arguments) {}
+    identifier_(ident),
+    arguments_(arguments) {}
   void accept(Visitor &v);
-  const std::shared_ptr<Identifier> ident() const { return ident_; }
-  const std::shared_ptr<TypeList> arguments() const { return args_; }
+  const std::shared_ptr<Identifier> identifier() const { return identifier_; }
+  const std::shared_ptr<TypeList> arguments() const { return arguments_; }
   bool equals(const Node &b) const;
 private:
-  const std::shared_ptr<Identifier> ident_;
-  const std::shared_ptr<TypeList> args_;
+  const std::shared_ptr<Identifier> identifier_;
+  const std::shared_ptr<TypeList> arguments_;
 };
 
 class Declaration : public Node {
 public:
   Declaration(std::shared_ptr<Identifier> ident,
               std::shared_ptr<Type> type) :
-    ident_(ident),
+    identifier_(ident),
     type_(type) {}
   Declaration(std::shared_ptr<Identifier> ident,
-              std::shared_ptr<Node> expr) :
-    ident_(ident),
-    expr_(expr) {}
+              std::shared_ptr<Node> expression) :
+    identifier_(ident),
+    expression_(expression) {}
   Declaration(std::shared_ptr<Identifier> ident,
               std::shared_ptr<Type> type,
-              std::shared_ptr<Node> expr) :
-    ident_(ident),
+              std::shared_ptr<Node> expression) :
+    identifier_(ident),
     type_(type),
-    expr_(expr) {}
+    expression_(expression) {}
   void accept(Visitor &v);
-  const std::shared_ptr<Identifier> ident() const { return ident_; }
+  const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<Type> type() const { return type_; }
-  const std::shared_ptr<Node> expression() const { return expr_; }
+  const std::shared_ptr<Node> expression() const { return expression_; }
   bool equals(const Node &b) const;
 private:
-  const std::shared_ptr<Identifier> ident_;
+  const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<Type> type_;
-  const std::shared_ptr<Node> expr_;
+  const std::shared_ptr<Node> expression_;
 };
 
 }
