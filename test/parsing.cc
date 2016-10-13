@@ -83,7 +83,9 @@ bool test(const std::string program, const Program &result) {
 
   if(!equal) {
     PrintingVisitor print;
+    std::cout << "Result:" << std::endl;
     print.visit(result);
+    std::cout << "Should be:" << std::endl;
     print.visit(*p);
   }
 
@@ -95,15 +97,19 @@ void test_empty() {
   ok(test("", p), "Parses an empty string");
 }
 
-void test_literals() {
+bool literal(std::string program, std::shared_ptr<Node> a) {
   Program p;
   auto args = make_shared<NodeList>();
-  args->push_back(make_shared<Number>(1));
+  args->push_back(a);
   p.push_back(args);
-  ok(test("1", p), "Parses a number");
-  args->clear();
-  args->push_back(make_shared<String>("Why hello!"));
-  ok(test("\"Why hello!\"", p), "Parses a string");
+  return test(program, p);
+}
+
+void test_literals() {
+  ok(literal("1", make_shared<Number>(1)), "Parses a number.");
+  ok(literal("a", make_shared<Identifier>("a")), "Parses an identifier");
+  ok(literal("\"Why hello!\"", make_shared<String>("\"Why hello!\"")),
+     "Parses a string");
 }
 
 int main() {

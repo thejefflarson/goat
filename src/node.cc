@@ -20,21 +20,22 @@ accept(Type)
 accept(Declaration)
 
 template<typename T>
-inline bool simple_equals(const T *a, const Node &b) {
+inline bool string_equals(const T *a, const Node &b) {
   const T *c = static_cast<const T *>(&b);
-  return a->value() == c->value();
+  return a->value().compare(c->value()) == 0;
 }
 
 bool String::equals(const Node &b) const {
-  return simple_equals(this, b);
+  return string_equals(this, b);
 }
 
 bool Identifier::equals(const Node &b) const {
-  return simple_equals(this, b);
+  return string_equals(this, b);
 }
 
 bool Number::equals(const Node &b) const {
-  return simple_equals(this, b);
+  const Number *c = static_cast<const Number *>(&b);
+  return value_ == c->value_;
 }
 
 template<typename T>
