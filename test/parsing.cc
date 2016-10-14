@@ -59,16 +59,9 @@ public:
     operation.right()->accept(*this);
   }
 
-  void visit(const Type &type) {
-    std::cout << "Type" << std::endl;
-    type.identifier()->accept(*this);
-    if(type.arguments()) list_accept(type.arguments(), *this);
-  }
-
   void visit(const Declaration &declaration) {
     std::cout << "Declaration" << std::endl;
     declaration.identifier()->accept(*this);
-    if(declaration.type()) declaration.type()->accept(*this);
     if(declaration.expression()) declaration.expression()->accept(*this);
   }
 };
@@ -130,7 +123,7 @@ void test_math() {
   ok(program("1 - 1 + 2 / (3 * 4)", math), "Parses math");
 }
 
-void test_function(){
+void test_function() {
   auto exprs = make_shared<NodeList>();
   exprs->push_back(make_shared<Identifier>("b"));
   exprs->push_back(make_shared<Operation>(make_shared<Number>(1),
@@ -140,9 +133,9 @@ void test_function(){
                                               exprs);
   ok(program("a(b, 1 + 2)", application), "Parses a function application");
 
-  auto args = make_shared<TypeList>();
-  args->push_back(make_shared<Type>(make_shared<Identifier>("a")));
-  args->push_back(make_shared<Type>(make_shared<Identifier>("b")));
+  auto args = make_shared<IdentifierList>();
+  args->push_back(make_shared<Identifier>("a"));
+  args->push_back(make_shared<Identifier>("b"));
   auto fn = make_shared<Function>(args, make_shared<Program>());
   ok(program("program(a, b) do done", fn), "Parses a function declaration");
 }

@@ -70,10 +70,8 @@
 %type <std::shared_ptr<node::Function>> function;
 %type <std::shared_ptr<node::Application>> application;
 %type <std::shared_ptr<node::Conditional>> conditional;
-%type <std::shared_ptr<node::TypeList>> idents;
+%type <std::shared_ptr<node::IdentifierList>> idents;
 %type <std::shared_ptr<node::Declaration>> declaration statement;
-
-%type <std::shared_ptr<node::Type>> type;
 
 %precedence IDENT
 %nonassoc "="
@@ -150,21 +148,13 @@ conditional:
 ;
 
 idents:
-  %empty { $$ = std::make_shared<node::TypeList>(); }
-| ident { $$ = std::make_shared<node::TypeList>(); $$->push_back(std::make_shared<node::Type>($ident)); }
-| idents[ids] COMMA ident { $$ = $ids; $$->push_back(std::make_shared<node::Type>($ident)); }
-;
-
-type:
-  ident { $$ = std::make_shared<node::Type>($ident); }
-| "(" idents ")" "->" ident { $$ = std::make_shared<node::Type>($idents, $ident); }
+  %empty { $$ = std::make_shared<node::IdentifierList>(); }
+| ident { $$ = std::make_shared<node::IdentifierList>(); $$->push_back($ident); }
+| idents[ids] COMMA ident { $$ = $ids; $$->push_back($ident); }
 ;
 
 declaration:
-  ident ":" type { $$ = std::make_shared<node::Declaration>($ident, $type); }
-| ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression); }
-| ident ":" type "=" expression { $$ = std::make_shared<node::Declaration>($ident, $type, $expression); }
-;
+  ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression); }
 
 %%
 

@@ -16,7 +16,6 @@ accept(Function)
 accept(Application)
 accept(Conditional)
 accept(Operation)
-accept(Type)
 accept(Declaration)
 
 template<typename T>
@@ -79,15 +78,9 @@ bool Operation::equals(const Node &b) const {
   return *lhs_ == *c->lhs_ && *rhs_ == *c->rhs_ && op_ == c->op_;
 }
 
-bool Type::equals(const Node &b) const {
-  const Type *c = static_cast<const Type *>(&b);
-  return *identifier_ == *c->identifier_ &&
-    compare_vectors(arguments_, c->arguments_);
-}
-
 bool Declaration::equals(const Node &b) const {
   const Declaration *c = static_cast<const Declaration *>(&b);
   return *identifier_ == *c->identifier_ &&
-    *type_ == *c->type_ &&
+    expression_ == c->expression_ &&
     *expression_ == *c->expression_;
 }

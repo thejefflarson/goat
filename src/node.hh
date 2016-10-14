@@ -12,8 +12,8 @@ namespace node {
 
 class Node;
 typedef std::vector<std::shared_ptr<Node>> NodeList;
-class Type;
-typedef std::vector<std::shared_ptr<Type>> TypeList;
+class Identifier;
+typedef std::vector<std::shared_ptr<Identifier>> IdentifierList;
 
 class Node {
 public:
@@ -74,16 +74,16 @@ private:
 
 class Function : public Node {
 public:
-  Function(const std::shared_ptr<TypeList> arguments,
+  Function(const std::shared_ptr<IdentifierList> arguments,
            const std::shared_ptr<Program> program) :
     arguments_(arguments),
     program_(program) {}
   void accept(Visitor &v);
-  const std::shared_ptr<TypeList> arguments() const { return arguments_; }
+  const std::shared_ptr<IdentifierList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
   bool equals(const Node &b) const;
 private:
-  const std::shared_ptr<TypeList> arguments_;
+  const std::shared_ptr<IdentifierList> arguments_;
   const std::shared_ptr<Program> program_;
 };
 
@@ -152,50 +152,18 @@ private:
   const Ops op_;
 };
 
-// TODO: split this into different classes based on different
-// kinds of types.
-class Type : public Node {
-public:
-  Type(std::shared_ptr<Identifier> ident) :
-    identifier_(ident),
-    arguments_(std::make_shared<TypeList>()) {} // less than ideal
-  Type(std::shared_ptr<TypeList> arguments,
-       std::shared_ptr<Identifier> ident) :
-    identifier_(ident),
-    arguments_(arguments) {}
-  void accept(Visitor &v);
-  const std::shared_ptr<Identifier> identifier() const { return identifier_; }
-  const std::shared_ptr<TypeList> arguments() const { return arguments_; }
-  bool equals(const Node &b) const;
-private:
-  const std::shared_ptr<Identifier> identifier_;
-  const std::shared_ptr<TypeList> arguments_;
-};
-
 class Declaration : public Node {
 public:
   Declaration(std::shared_ptr<Identifier> ident,
-              std::shared_ptr<Type> type) :
-    identifier_(ident),
-    type_(type) {}
-  Declaration(std::shared_ptr<Identifier> ident,
               std::shared_ptr<Node> expression) :
     identifier_(ident),
-    expression_(expression) {}
-  Declaration(std::shared_ptr<Identifier> ident,
-              std::shared_ptr<Type> type,
-              std::shared_ptr<Node> expression) :
-    identifier_(ident),
-    type_(type),
     expression_(expression) {}
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
-  const std::shared_ptr<Type> type() const { return type_; }
   const std::shared_ptr<Node> expression() const { return expression_; }
   bool equals(const Node &b) const;
 private:
   const std::shared_ptr<Identifier> identifier_;
-  const std::shared_ptr<Type> type_;
   const std::shared_ptr<Node> expression_;
 };
 

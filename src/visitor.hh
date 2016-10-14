@@ -16,7 +16,6 @@ public:
   virtual void visit(const Application &application) = 0;
   virtual void visit(const Conditional &conditional) = 0;
   virtual void visit(const Operation &operation) = 0;
-  virtual void visit(const Type &type) = 0;
   virtual void visit(const Declaration &declaration) = 0;
 };
 
