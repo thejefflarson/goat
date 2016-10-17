@@ -9,7 +9,10 @@ def configure(conf):
     conf.load("compiler_cxx bison flex")
     conf.check_cxx(
         uselib_store='G',
-        cxxflags=['-std=c++14', '-g', '-Wall', '-O0']
+        cxxflags=['-std=c++14', '-g', '-Wall', '-O0',
+                  '-fsanitize=address',
+                  '-fno-omit-frame-pointer'],
+        ldflags='-fsanitize=address'
     )
 
 

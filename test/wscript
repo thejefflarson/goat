@@ -5,6 +5,8 @@ def build(bld):
     bld.program(
         source="parsing.cc",
         target="parsing",
-        use="goat",
+        use='goat',
+        cxxflags=['-fprofile-instr-generate', '-fcoverage-mapping'],
+        ldflags='--coverage',
         includes="../src"
     )
