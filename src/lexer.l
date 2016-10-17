@@ -32,6 +32,8 @@ ident [a-zA-Z\x80-\xff_][a-zA-Z0-9\x80-\xff_]*
 <<EOF>>    return parser::make_END(loc);
 program    return parser::make_PROGRAM(loc);
 if         return parser::make_IF(loc);
+then       return parser::make_THEN(loc);
+else       return parser::make_ELSE(loc);
 do         return parser::make_DO(loc);
 done       return parser::make_DONE(loc);
 "start at" return parser::make_START_AT(loc);

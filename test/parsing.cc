@@ -140,10 +140,31 @@ void test_function() {
   ok(program("program(a, b) do done", fn), "Parses a function declaration");
 }
 
+void test_conditional() {
+  auto true_block = make_shared<Program>();
+  auto true_nodes = make_shared<NodeList>();
+  true_nodes->push_back(make_shared<Identifier>("b"));
+  true_block->push_back(true_nodes);
+
+  auto false_block = make_shared<Program>();
+  auto false_nodes = make_shared<NodeList>();
+  false_nodes->push_back(make_shared<Identifier>("c"));
+  false_block->push_back(false_nodes);
+
+  ok(program("if a then b else c done", make_shared<Conditional>(
+               make_shared<Identifier>("a"),
+               true_block,
+               false_block)), "Parses a conditional");
+  ok(program("if a then b done", make_shared<Conditional>(
+               make_shared<Identifier>("a"),
+               true_block)), "Parses a true branch conditional");
+}
+
 int main() {
   start_test;
   test_empty();
   test_literals();
   test_math();
   test_function();
+  test_conditional();
 }
