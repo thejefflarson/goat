@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "node.hh"
 #include "visitor.hh"
 
 namespace goat {
@@ -15,21 +16,39 @@ namespace inference {
 class TypeNode {
 public:
   virtual ~TypeNode() = default;
+  bool operator==(const TypeNode &b) const {
+    if(typeid(*this) != typeid(b)) return false;
+    return equals(b);
+  }
+  bool operator!=(const TypeNode &b) const {
+    return !(*this == b);
+  }
+  virtual bool equals(const TypeNode &b) const = 0;
 };
 
 class TypeVariable : public TypeNode {
-  TypeVariable(std::string id) : id_(id) {}
+  TypeVariable(std::string id,
+               std::shared_ptr<node::Identifier> ident) :
+    id_(id),
+    ident_(ident) {}
+  bool equals(const TypeNode &b) const;
 private:
   std::string id_;
+  std::shared_ptr<node::Identifier> ident_;
 };
 
 class FunctionType : public TypeNode {
-  FunctionType(std::vector<TypeVariable> in, TypeVariable ret) :
+  FunctionType(std::vector<TypeVariable> in,
+               TypeVariable ret,
+               std::shared_ptr<node::Identifier> ident) :
     in_(in),
-    ret_(ret) {}
+    ret_(ret),
+    ident_(ident) {}
+  bool equals(const TypeNode &b) const;
 private:
   std::vector<TypeVariable> in_;
   TypeVariable ret_;
+  std::shared_ptr<node::Identifier> ident_;
 };
 
 class TypeVariableFactory {
