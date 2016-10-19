@@ -1,5 +1,5 @@
-#ifndef GOAT_NODE_HH
-#define GOAT_NODE_HH
+#ifndef SRC_NODE_HH_
+#define SRC_NODE_HH_
 
 #include <stdint.h>
 #include <string>
@@ -16,7 +16,7 @@ class Identifier;
 typedef std::vector<std::shared_ptr<Identifier>> IdentifierList;
 
 class Node {
-public:
+ public:
   virtual ~Node() = default;
   virtual void accept(class Visitor &v) = 0;
   bool operator==(const Node &b) const {
@@ -30,37 +30,37 @@ public:
 };
 
 class Number : public Node {
-public:
+ public:
   Number(const double value) : value_(value) {}
   void accept(Visitor &v);
   double value() const { return value_; }
   bool equals(const Node &b) const;
-private:
+ private:
   const double value_;
 };
 
 class Identifier : public Node {
-public:
+ public:
   Identifier(const std::string value) : value_(value) {}
   void accept(Visitor &v);
   const std::string & value() const { return value_; }
   bool equals(const Node &b) const;
-private:
+ private:
   const std::string value_;
 };
 
 class String : public Node {
-public:
+ public:
   String(const std::string value) : value_(value) {}
   void accept(Visitor &v);
   const std::string & value() const { return value_; }
   bool equals(const Node &b) const;
-private:
+ private:
   const std::string value_;
 };
 
 class Program : public Node {
-public:
+ public:
   Program() : nodes_(std::make_shared<NodeList>()) {}
   void push_back(std::shared_ptr<NodeList> it) {
     nodes_->insert(nodes_->end(), it->begin(), it->end());
@@ -68,12 +68,12 @@ public:
   void accept(Visitor &v);
   const std::shared_ptr<NodeList> nodes() const { return nodes_; }
   bool equals(const Node &b) const;
-private:
+ private:
   std::shared_ptr<NodeList> nodes_;
 };
 
 class Function : public Node {
-public:
+ public:
   Function(const std::shared_ptr<IdentifierList> arguments,
            const std::shared_ptr<Program> program) :
     arguments_(arguments),
@@ -82,13 +82,13 @@ public:
   const std::shared_ptr<IdentifierList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
   bool equals(const Node &b) const;
-private:
+ private:
   const std::shared_ptr<IdentifierList> arguments_;
   const std::shared_ptr<Program> program_;
 };
 
 class Application : public Node {
-public:
+ public:
   Application(std::shared_ptr<Identifier> ident,
               std::shared_ptr<NodeList> arguments) :
     ident_(ident),
@@ -97,13 +97,13 @@ public:
   const std::shared_ptr<Identifier> ident() const { return ident_; }
   const std::shared_ptr<NodeList> arguments() const { return arguments_; }
   bool equals(const Node &b) const;
-private:
+ private:
   const std::shared_ptr<Identifier> ident_;
   const std::shared_ptr<NodeList> arguments_;
 };
 
 class Conditional : public Node {
-public:
+ public:
   Conditional(std::shared_ptr<Node> expression,
               std::shared_ptr<Program> true_block,
               std::shared_ptr<Program> false_block) :
@@ -120,7 +120,7 @@ public:
   const std::shared_ptr<Program> true_block() const { return true_block_; }
   const std::shared_ptr<Program> false_block() const { return false_block_; }
   bool equals(const Node &b) const;
-private:
+ private:
   const std::shared_ptr<Node> expression_;
   const std::shared_ptr<Program> true_block_;
   const std::shared_ptr<Program> false_block_;
@@ -134,7 +134,7 @@ enum Ops {
 };
 
 class Operation : public Node {
-public:
+ public:
   Operation(std::shared_ptr<Node> lhs,
             std::shared_ptr<Node> rhs,
             Ops op) :
@@ -146,14 +146,14 @@ public:
   const std::shared_ptr<Node> right() const { return rhs_; }
   Ops operation() const { return op_; }
   bool equals(const Node &b) const;
-private:
+ private:
   const std::shared_ptr<Node> lhs_;
   const std::shared_ptr<Node> rhs_;
   const Ops op_;
 };
 
 class Declaration : public Node {
-public:
+ public:
   Declaration(std::shared_ptr<Identifier> ident,
               std::shared_ptr<Node> expression) :
     identifier_(ident),
@@ -162,11 +162,11 @@ public:
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<Node> expression() const { return expression_; }
   bool equals(const Node &b) const;
-private:
+ private:
   const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<Node> expression_;
 };
 
 }
 }
-#endif
+#endif // SRC_NODE_HH_

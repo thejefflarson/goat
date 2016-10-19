@@ -2,7 +2,7 @@
 #include "node.hh"
 #include "visitor.hh"
 
-using namespace goat::node;
+using goat::node;
 #define accept(kls)                             \
   void kls::accept(Visitor &v) {                \
     v.visit(*this);                             \
@@ -38,8 +38,8 @@ bool Number::equals(const Node &b) const {
 }
 
 template<typename T>
-bool compare_vectors(T &a, T &b) {
-  if(a->size() != b->size())
+bool compare_vectors(const T &a, const T &b) {
+  if (a->size() != b->size())
     return false;
 
   auto eq = [](const std::shared_ptr<Node> &a, const std::shared_ptr<Node> &b) {
