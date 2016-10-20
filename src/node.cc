@@ -2,7 +2,9 @@
 #include "node.hh"
 #include "visitor.hh"
 
-using goat::node;
+namespace goat {
+namespace node {
+
 #define accept(kls)                             \
   void kls::accept(Visitor &v) {                \
     v.visit(*this);                             \
@@ -84,3 +86,6 @@ bool Declaration::equals(const Node &b) const {
     expression_ == c->expression_ &&
     *expression_ == *c->expression_;
 }
+
+}  // namespace node
+}  // namespace goat
