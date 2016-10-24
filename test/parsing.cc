@@ -66,11 +66,6 @@ public:
   }
 };
 
-class EqualityVisitor {
-
-}
-
-
 bool test(const std::string program, const Program &result) {
   std::shared_ptr<Program> p;
   auto s = make_shared<std::stringstream>(program);
@@ -103,7 +98,7 @@ bool program(std::string program, std::shared_ptr<Node> a) {
 }
 
 void test_literals() {
-  ok(program("1", make_shared<Number>(1)), "Parses a number.");
+  ok(program("1", make_shared<Number>(1)), "Parses a number");
   ok(program("a", make_shared<Identifier>("a")), "Parses an identifier");
   ok(program("\"Why hello!\"", make_shared<String>("\"Why hello!\"")),
      "Parses a string");

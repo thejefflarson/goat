@@ -38,15 +38,15 @@ class TypeVariable : public TypeNode {
 };
 
 class FunctionType : public TypeNode {
-  FunctionType(std::vector<TypeVariable> in,
+  FunctionType(std::vector<std::unique_ptr<TypeVariable>> in,
                TypeVariable ret,
                std::shared_ptr<node::Identifier> ident) :
-    in_(in),
+    in_(std::move(in)),
     ret_(ret),
     ident_(ident) {}
   bool equals(const TypeNode &b) const;
  private:
-  std::vector<TypeVariable> in_;
+  std::vector<std::unique_ptr<TypeVariable>> in_;
   TypeVariable ret_;
   std::shared_ptr<node::Identifier> ident_;
 };
