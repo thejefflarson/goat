@@ -66,6 +66,10 @@ public:
   }
 };
 
+class EqualityVisitor {
+
+}
+
 
 bool test(const std::string program, const Program &result) {
   std::shared_ptr<Program> p;
