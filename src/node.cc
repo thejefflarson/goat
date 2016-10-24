@@ -74,5 +74,5 @@ bool Declaration::equals(const Node &b) const {
     expression_ == c->expression_ &&
     *expression_ == *c->expression_;
 }
-}
-}
+}  // namespace node
+}  // namespace goat
