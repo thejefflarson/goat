@@ -64,13 +64,13 @@
 %type <std::shared_ptr<node::Number>> number;
 %type <std::shared_ptr<node::Identifier>> ident;
 %type <std::shared_ptr<node::Operation>> math;
-%type <std::shared_ptr<node::NodeList>> arguments;
+%type <std::shared_ptr<node::Argument>> argument;
+%type <std::shared_ptr<node::ArgumentList>> arguments;
 %type <std::shared_ptr<node::NodeList>> expressions;
 %type <std::shared_ptr<node::NodeList>> statements;
 %type <std::shared_ptr<node::Function>> function;
 %type <std::shared_ptr<node::Application>> application;
 %type <std::shared_ptr<node::Conditional>> conditional;
-%type <std::shared_ptr<node::IdentifierList>> idents;
 %type <std::shared_ptr<node::Declaration>> declaration statement;
 
 %precedence IDENT
@@ -128,29 +128,27 @@ math:
 | expression[left] "*" expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Multiplication); }
 ;
 
-arguments:
-  %empty { $$ = std::make_shared<node::NodeList>(); }
-| expression { $$ = std::make_shared<node::NodeList>(); $$->push_back($expression); }
-| arguments[args] COMMA expression { $$ = $args; $args->push_back($expression); }
+argument:
+  ident COLON expression {  $$ = std::make_shared<node::Argument>($ident, $expression); }
 ;
 
-function:
-  PROGRAM "(" idents ")" DO program DONE { $$ = std::make_shared<node::Function>($idents, $program); }
+arguments:
+  %empty { $$ = std::make_shared<node::ArgumentList>(); }
+| argument { $$ = std::make_shared<node::ArgumentList>(); $$->push_back($argument); }
+| arguments[args] COMMA argument { $$ = $args; $args->push_back($argument); }
 ;
 
 application:
   ident "(" arguments ")" { $$ = std::make_shared<node::Application>($ident, $arguments); }
 ;
 
+function:
+  PROGRAM "(" arguments ")" DO program DONE { $$ = std::make_shared<node::Function>($arguments, $program); }
+;
+
 conditional:
   IF expression THEN program DONE { $$ = std::make_shared<node::Conditional>($expression, $program); }
 | IF expression THEN program[true] ELSE program[false] DONE { $$ = std::make_shared<node::Conditional>($expression, $true, $false); }
-;
-
-idents:
-  %empty { $$ = std::make_shared<node::IdentifierList>(); }
-| ident { $$ = std::make_shared<node::IdentifierList>(); $$->push_back($ident); }
-| idents[ids] COMMA ident { $$ = $ids; $$->push_back($ident); }
 ;
 
 declaration:
