@@ -34,6 +34,12 @@ public:
     list_accept(program.nodes(), *this);
   }
 
+  void visit(const Argument &argument) {
+    std::cout << "Argument" << std::endl;
+    argument.identifier()->accept(*this);
+    argument.expression()->accept(*this);
+  }
+
   void visit(const Function &function) {
     std::cout << "Function" << std::endl;
     list_accept(function.arguments(), *this);
@@ -65,7 +71,6 @@ public:
     if(declaration.expression()) declaration.expression()->accept(*this);
   }
 };
-
 
 bool test(const std::string program, const Program &result) {
   std::shared_ptr<Program> p;
@@ -99,7 +104,7 @@ bool program(std::string program, std::shared_ptr<Node> a) {
 }
 
 void test_literals() {
-  ok(program("1", make_shared<Number>(1)), "Parses a number.");
+  ok(program("1", make_shared<Number>(1)), "Parses a number");
   ok(program("a", make_shared<Identifier>("a")), "Parses an identifier");
   ok(program("\"Why hello!\"", make_shared<String>("\"Why hello!\"")),
      "Parses a string");
@@ -124,20 +129,25 @@ void test_math() {
 }
 
 void test_function() {
-  auto exprs = make_shared<NodeList>();
-  exprs->push_back(make_shared<Identifier>("b"));
-  exprs->push_back(make_shared<Operation>(make_shared<Number>(1),
-                                          make_shared<Number>(2),
-                                          Addition));
+  auto args = make_shared<ArgumentList>();
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("c"),
+                                         make_shared<Identifier>("b")));
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("d"),
+                                         make_shared<Operation>(
+                                           make_shared<Number>(1),
+                                           make_shared<Number>(2),
+                                           Addition)));
   auto application = make_shared<Application>(make_shared<Identifier>("a"),
-                                              exprs);
-  ok(program("a(b, 1 + 2)", application), "Parses a function application");
+                                              args);
+  ok(program("a(c: b, d: 1+2)", application), "Parses a function application");
 
-  auto args = make_shared<IdentifierList>();
-  args->push_back(make_shared<Identifier>("a"));
-  args->push_back(make_shared<Identifier>("b"));
+  args = make_shared<ArgumentList>();
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("a"),
+                                        make_shared<Number>(10)));
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("b"),
+                                        make_shared<Number>(20)));
   auto fn = make_shared<Function>(args, make_shared<Program>());
-  ok(program("program(a, b) do done", fn), "Parses a function declaration");
+  ok(program("program(a: 10, b: 20) do done", fn), "Parses a function declaration");
 }
 
 void test_conditional() {

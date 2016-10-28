@@ -38,15 +38,15 @@ class TypeVariable : public TypeNode {
 };
 
 class FunctionType : public TypeNode {
-  FunctionType(std::vector<TypeVariable> in,
+  FunctionType(std::vector<std::unique_ptr<TypeVariable>> in,
                TypeVariable ret,
                std::shared_ptr<node::Identifier> ident) :
-    in_(in),
+    in_(std::move(in)),
     ret_(ret),
     ident_(ident) {}
   bool equals(const TypeNode &b) const;
  private:
-  std::vector<TypeVariable> in_;
+  std::vector<std::unique_ptr<TypeVariable>> in_;
   TypeVariable ret_;
   std::shared_ptr<node::Identifier> ident_;
 };
@@ -68,9 +68,9 @@ enum ConstraintRelation {
 
 class Constraint {
   Constraint(ConstraintRelation relation,
-             std::vector<TypeNode> variables) :
+             std::vector<std::unique_ptr<TypeNode>> variables) :
     relation_(relation),
-    variables_(variables) {}
+    variables_(std::move(variables)) {}
     bool operator==(const Constraint &b) const {
       return relation_ == b.relation_ && variables_ == b.variables_;
     }
@@ -79,16 +79,16 @@ class Constraint {
     }
  private:
   ConstraintRelation relation_;
-  std::vector<TypeNode> variables_;
+  std::vector<std::unique_ptr<TypeNode>> variables_;
 };
 
 class ConstraintSet {
   ConstraintSet() : constraints_() {}
-  void add(Constraint &constraint) {
-    constraints_.insert(constraint);
+  void add(std::unique_ptr<Constraint> constraint) {
+    constraints_.insert(std::move(constraint));
   }
  private:
-  std::set<Constraint> constraints_;
+  std::set<std::unique_ptr<Constraint>> constraints_;
 };
 
 class Constrainer : public node::Visitor {
