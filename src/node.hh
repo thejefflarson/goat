@@ -1,5 +1,5 @@
-#ifndef SRC_NODE_HH_
-#define SRC_NODE_HH_
+#ifndef GOAT_NODE_HH_
+#define GOAT_NODE_HH_
 
 #include <stdint.h>
 #include <string>
@@ -169,4 +169,4 @@ class Declaration : public Node {
 
 }
 }
-#endif // SRC_NODE_HH_
+#endif // GOAT_NODE_HH_
