@@ -12,8 +12,8 @@ namespace node {
 
 class Node;
 typedef std::vector<std::shared_ptr<Node>> NodeList;
-class Identifier;
-typedef std::vector<std::shared_ptr<Identifier>> IdentifierList;
+class Argument;
+typedef std::vector<std::shared_ptr<Argument>> ArgumentList;
 
 class Node {
  public:
@@ -73,34 +73,49 @@ class Program : public Node {
   std::shared_ptr<NodeList> nodes_;
 };
 
+class Argument : public Node {
+ public:
+  Argument(const std::shared_ptr<Identifier> ident,
+           const std::shared_ptr<Node> expression) :
+    identifier_(ident),
+    expression_(expression) {}
+  void accept(Visitor &v);
+  const std::shared_ptr<Identifier> identifier() const { return identifier_; }
+  const std::shared_ptr<Node> expression() const { return expression_; }
+ private:
+  bool equals(const Node &b) const;
+  const std::shared_ptr<Identifier> identifier_;
+  const std::shared_ptr<Node> expression_;
+};
+
 class Function : public Node {
  public:
-  Function(const std::shared_ptr<IdentifierList> arguments,
+  Function(const std::shared_ptr<ArgumentList> arguments,
            const std::shared_ptr<Program> program) :
     arguments_(arguments),
     program_(program) {}
   void accept(Visitor &v);
-  const std::shared_ptr<IdentifierList> arguments() const { return arguments_; }
+  const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
  private:
   bool equals(const Node &b) const;
-  const std::shared_ptr<IdentifierList> arguments_;
+  const std::shared_ptr<ArgumentList> arguments_;
   const std::shared_ptr<Program> program_;
 };
 
 class Application : public Node {
  public:
   Application(std::shared_ptr<Identifier> ident,
-              std::shared_ptr<NodeList> arguments) :
+              std::shared_ptr<ArgumentList> arguments) :
     ident_(ident),
     arguments_(arguments) {}
   void accept(Visitor &v);
   const std::shared_ptr<Identifier> ident() const { return ident_; }
-  const std::shared_ptr<NodeList> arguments() const { return arguments_; }
+  const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
  private:
   bool equals(const Node &b) const;
   const std::shared_ptr<Identifier> ident_;
-  const std::shared_ptr<NodeList> arguments_;
+  const std::shared_ptr<ArgumentList> arguments_;
 };
 
 class Conditional : public Node {
