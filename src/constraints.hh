@@ -13,6 +13,7 @@ namespace goat {
 namespace inference {
 
 // Note: this is just a language; create an AST and parse it...
+// generate a set of constraints and then use union-find to infer
 class TypeNode {
  public:
   virtual ~TypeNode() = default;
