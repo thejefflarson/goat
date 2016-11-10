@@ -1,10 +1,14 @@
 #include <vector>
 #include "node.hh"
 #include "visitor.hh"
+#include "util.hh"
 
 namespace goat {
 namespace node {
+<<<<<<< HEAD
 
+=======
+>>>>>>> dc344c5... Constraints implementation and utility function.
 #define accept(kls)                             \
   void kls::accept(Visitor &v) {                \
     v.visit(*this);                             \
@@ -39,33 +43,21 @@ bool Number::equals(const Node &b) const {
   return value_ == c->value_;
 }
 
-template<typename T>
-bool compare_vectors(const T &a, const T &b) {
-  if (a->size() != b->size())
-    return false;
-
-  auto eq = [](const std::shared_ptr<Node> &a, const std::shared_ptr<Node> &b) {
-    return *a == *b;
-  };
-
-  return std::equal(a->begin(), a->end(), b->begin(), eq);
-}
-
 bool Program::equals(const Node &b) const {
   const Program *c = static_cast<const Program *>(&b);
-  return compare_vectors(this->nodes_, c->nodes_);
+  return util::compare_vector_pointers(nodes_, c->nodes_);
 }
 
 bool Function::equals(const Node &b) const {
   const Function *c = static_cast<const Function *>(&b);
-  return compare_vectors(arguments_, c->arguments_) &&
+  return util::compare_vector_pointers(arguments_, c->arguments_) &&
     *program_ == *c->program_;
 }
 
 bool Application::equals(const Node &b) const {
   const Application *c = static_cast<const Application *>(&b);
   return *ident_ == *c->ident() &&
-    compare_vectors(arguments_, c->arguments_);
+    util::compare_vector_pointers(arguments_, c->arguments_);
 }
 
 bool Conditional::equals(const Node &b) const {
@@ -86,6 +78,11 @@ bool Declaration::equals(const Node &b) const {
     expression_ == c->expression_ &&
     *expression_ == *c->expression_;
 }
+<<<<<<< HEAD
 
 }  // namespace node
 }  // namespace goat
+=======
+}
+}
+>>>>>>> dc344c5... Constraints implementation and utility function.
