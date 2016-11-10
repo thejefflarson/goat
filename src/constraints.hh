@@ -33,7 +33,6 @@ class Type : public TypeNode {
 };
 
 class FunctionType : public TypeNode {
-<<<<<<< HEAD
  public:
   FunctionType(std::vector<std::unique_ptr<Type>> in,
                Type ret) :
@@ -43,19 +42,6 @@ class FunctionType : public TypeNode {
  private:
   std::vector<std::unique_ptr<Type>> in_;
   Type ret_;
-=======
-  FunctionType(std::vector<std::unique_ptr<TypeVariable>> in,
-               TypeVariable ret,
-               std::shared_ptr<node::Identifier> ident) :
-    in_(std::move(in)),
-    ret_(ret),
-    ident_(ident) {}
-  bool equals(const TypeNode &b) const;
- private:
-  std::vector<std::unique_ptr<TypeVariable>> in_;
-  TypeVariable ret_;
-  std::shared_ptr<node::Identifier> ident_;
->>>>>>> 39946fe0b12c3d7a4ea5c365c1974dc8790e01e8
 };
 
 class TypeVariableFactory {
@@ -96,16 +82,6 @@ class ConstraintSet {
   }
  private:
   std::set<std::unique_ptr<Constraint>> constraints_;
-<<<<<<< HEAD
-=======
-};
-
-class Constrainer : public node::Visitor {
-
- private:
-  ConstraintSet constraints_;
-  TypeVariableFactory type_factory_;
->>>>>>> 39946fe0b12c3d7a4ea5c365c1974dc8790e01e8
 };
 
 }  // namespace inference
