@@ -28,7 +28,10 @@ class Node {
   bool operator!=(const Node &b) const {
     return !(*this == b);
   }
+<<<<<<< HEAD
   virtual inference::Type type();
+=======
+>>>>>>> 39946fe0b12c3d7a4ea5c365c1974dc8790e01e8
  private:
   virtual bool equals(const Node &) const = 0;
 };
@@ -93,12 +96,19 @@ class Program : public Node {
   std::shared_ptr<NodeList> nodes_;
 };
 
+<<<<<<< HEAD
 class Argument : public Typed, public Node {
  public:
   Argument(const std::shared_ptr<Identifier> ident,
            const std::shared_ptr<Node> expression,
            inference::Type type) :
     Typed(type),
+=======
+class Argument : public Node {
+ public:
+  Argument(const std::shared_ptr<Identifier> ident,
+           const std::shared_ptr<Node> expression) :
+>>>>>>> 39946fe0b12c3d7a4ea5c365c1974dc8790e01e8
     identifier_(ident),
     expression_(expression) {}
   void accept(Visitor &v);
@@ -110,12 +120,19 @@ class Argument : public Typed, public Node {
   const std::shared_ptr<Node> expression_;
 };
 
+<<<<<<< HEAD
 class Function : public Typed, public Node {
  public:
   Function(const std::shared_ptr<ArgumentList> arguments,
            const std::shared_ptr<Program> program,
            inference::Type type) :
     Typed(type),
+=======
+class Function : public Node {
+ public:
+  Function(const std::shared_ptr<ArgumentList> arguments,
+           const std::shared_ptr<Program> program) :
+>>>>>>> 39946fe0b12c3d7a4ea5c365c1974dc8790e01e8
     arguments_(arguments),
     program_(program) {}
   void accept(Visitor &v);
@@ -130,9 +147,13 @@ class Function : public Typed, public Node {
 class Application : public Typed, public Node {
  public:
   Application(std::shared_ptr<Identifier> ident,
+<<<<<<< HEAD
               std::shared_ptr<ArgumentList> arguments,
               inference::Type type) :
     Typed(type),
+=======
+              std::shared_ptr<ArgumentList> arguments) :
+>>>>>>> 39946fe0b12c3d7a4ea5c365c1974dc8790e01e8
     ident_(ident),
     arguments_(arguments) {}
   void accept(Visitor &v);
