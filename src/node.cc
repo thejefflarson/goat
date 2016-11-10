@@ -1,7 +1,7 @@
 #include <vector>
 #include "node.hh"
-#include "visitor.hh"
 #include "util.hh"
+#include "visitor.hh"
 
 namespace goat {
 namespace node {

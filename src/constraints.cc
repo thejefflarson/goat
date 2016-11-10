@@ -5,8 +5,8 @@
 namespace goat {
 namespace inference {
 
-bool TypeVariable::equals(const TypeNode &b) const {
-  const TypeVariable *c = static_cast<const TypeVariable *>(&b);
+bool Type::equals(const TypeNode &b) const {
+  const Type *c = static_cast<const Type *>(&b);
   return id_ == c->id_;
 }
 
