@@ -44,8 +44,9 @@ class FunctionType : public TypeNode {
   Type ret_;
 };
 
-class TypeVariableFactory {
-  TypeVariableFactory() : last_("a") {}
+class TypeFactory {
+ public:
+  TypeFactory() : last_("a") {}
   Type next();
  private:
   std::string last_;

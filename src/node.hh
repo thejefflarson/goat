@@ -53,7 +53,7 @@ class Number : public Typed, public Node {
   const double value_;
 };
 
-  class Identifier : public Typed, public Node {
+class Identifier : public Typed, public Node {
  public:
   Identifier(const std::string value,
              inference::Type type) :
@@ -66,7 +66,7 @@ class Number : public Typed, public Node {
   const std::string value_;
 };
 
-  class String : public Typed, public Node {
+class String : public Typed, public Node {
  public:
   String(const std::string value) :
     Typed(inference::Type("String")),

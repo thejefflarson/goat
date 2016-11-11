@@ -1,11 +1,13 @@
 #include <sstream>
+#include "constraints.hh"
+#include "driver.hh"
 #include "node.hh"
 #include "visitor.hh"
-#include "driver.hh"
 #include "tap.h"
 
 using namespace std;
 using namespace goat::node;
+using namespace goat::inference;
 
 template<typename T>
 inline void list_accept(const T list, Visitor &v) {
@@ -104,8 +106,9 @@ bool program(std::string program, std::shared_ptr<Node> a) {
 }
 
 void test_literals() {
+  TypeFactory typer;
   ok(program("1", make_shared<Number>(1)), "Parses a number");
-  ok(program("a", make_shared<Identifier>("a")), "Parses an identifier");
+  ok(program("a", make_shared<Identifier>("a", typer.next())), "Parses an identifier");
   ok(program("\"Why hello!\"", make_shared<String>("\"Why hello!\"")),
      "Parses a string");
 }
@@ -129,44 +132,51 @@ void test_math() {
 }
 
 void test_function() {
+  TypeFactory typer;
   auto args = make_shared<ArgumentList>();
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("c"),
-                                         make_shared<Identifier>("b")));
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("d"),
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("c", typer.next()),
+                                        make_shared<Identifier>("b", typer.next()),
+                                        typer.next()));
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("d", typer.next()),
                                          make_shared<Operation>(
                                            make_shared<Number>(1),
                                            make_shared<Number>(2),
-                                           Addition)));
-  auto application = make_shared<Application>(make_shared<Identifier>("a"),
-                                              args);
+                                           Addition),
+                                        typer.next()));
+  auto application = make_shared<Application>(make_shared<Identifier>("a", typer.next()),
+                                              args,
+                                              typer.next());
   ok(program("a(c: b, d: 1+2)", application), "Parses a function application");
 
   args = make_shared<ArgumentList>();
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("a"),
-                                        make_shared<Number>(10)));
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("b"),
-                                        make_shared<Number>(20)));
-  auto fn = make_shared<Function>(args, make_shared<Program>());
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("a", typer.next()),
+                                        make_shared<Number>(10),
+                                        typer.next()));
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("b", typer.next()),
+                                        make_shared<Number>(20),
+                                        typer.next()));
+  auto fn = make_shared<Function>(args, make_shared<Program>(), typer.next());
   ok(program("program(a: 10, b: 20) do done", fn), "Parses a function declaration");
 }
 
 void test_conditional() {
+  TypeFactory typer;
   auto true_block = make_shared<Program>();
   auto true_nodes = make_shared<NodeList>();
-  true_nodes->push_back(make_shared<Identifier>("b"));
+  true_nodes->push_back(make_shared<Identifier>("b", typer.next()));
   true_block->push_back(true_nodes);
 
   auto false_block = make_shared<Program>();
   auto false_nodes = make_shared<NodeList>();
-  false_nodes->push_back(make_shared<Identifier>("c"));
+  false_nodes->push_back(make_shared<Identifier>("c", typer.next()));
   false_block->push_back(false_nodes);
 
   ok(program("if a then b else c done", make_shared<Conditional>(
-               make_shared<Identifier>("a"),
+               make_shared<Identifier>("a", typer.next()),
                true_block,
                false_block)), "Parses a conditional");
   ok(program("if a then b done", make_shared<Conditional>(
-               make_shared<Identifier>("a"),
+               make_shared<Identifier>("a", typer.next()),
                true_block)), "Parses a true branch conditional");
 }
 

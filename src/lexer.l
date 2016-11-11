@@ -3,6 +3,7 @@
 
 #include "driver.hh"
 #include "parser.tab.hh"
+#include "constraints.hh"
 using namespace goat;
 %}
 
@@ -69,7 +70,8 @@ int driver::parse(std::shared_ptr<std::istream> src,
   location loc;
   yyscan_t scanner;
   yylex_init_extra(src, &scanner);
-  parser parser(scanner, loc, result);
+  inference::TypeFactory typer;
+  parser parser(scanner, loc, result, typer);
   //parser.set_debug_level(1);
   int ret = parser.parse();
   yylex_destroy(scanner);
