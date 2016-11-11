@@ -1,10 +1,18 @@
 #include <vector>
 #include "node.hh"
+#include "util.hh"
 #include "visitor.hh"
 #include "util.hh"
 
 namespace goat {
 namespace node {
+<<<<<<< HEAD
+<<<<<<< HEAD
+
+=======
+>>>>>>> dc344c5... Constraints implementation and utility function.
+=======
+>>>>>>> 39946fe0b12c3d7a4ea5c365c1974dc8790e01e8
 #define accept(kls)                             \
   void kls::accept(Visitor &v) {                \
     v.visit(*this);                             \
@@ -81,5 +89,14 @@ bool Declaration::equals(const Node &b) const {
     expression_ == c->expression_ &&
     *expression_ == *c->expression_;
 }
+<<<<<<< HEAD
+<<<<<<< HEAD
+
+=======
+>>>>>>> 39946fe0b12c3d7a4ea5c365c1974dc8790e01e8
 }  // namespace node
 }  // namespace goat
+=======
+}
+}
+>>>>>>> dc344c5... Constraints implementation and utility function.

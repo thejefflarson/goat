@@ -6,9 +6,6 @@
 #include <string>
 #include <vector>
 
-#include "node.hh"
-#include "visitor.hh"
-
 namespace goat {
 namespace inference {
 
@@ -27,38 +24,32 @@ class TypeNode {
   virtual bool equals(const TypeNode &b) const = 0;
 };
 
-class TypeVariable : public TypeNode {
-  TypeVariable(std::string id,
-               std::shared_ptr<node::Identifier> ident) :
-    id_(id),
-    ident_(ident) {}
+class Type : public TypeNode {
+ public:
+  Type(std::string id) :
+    id_(id) {}
   bool equals(const TypeNode &b) const;
  private:
   std::string id_;
-  std::shared_ptr<node::Identifier> ident_;
 };
 
 class FunctionType : public TypeNode {
-  FunctionType(std::vector<std::unique_ptr<TypeVariable>> in,
-               TypeVariable ret,
-               std::shared_ptr<node::Identifier> ident) :
+ public:
+  FunctionType(std::vector<std::unique_ptr<Type>> in,
+               Type ret) :
     in_(std::move(in)),
-    ret_(ret),
-    ident_(ident) {}
+    ret_(ret) {}
   bool equals(const TypeNode &b) const;
  private:
-  std::vector<std::unique_ptr<TypeVariable>> in_;
-  TypeVariable ret_;
-  std::shared_ptr<node::Identifier> ident_;
+  std::vector<std::unique_ptr<Type>> in_;
+  Type ret_;
 };
 
 class TypeVariableFactory {
   TypeVariableFactory() : last_("a") {}
-  TypeVariable create(std::string id);
-  TypeVariable next();
+  Type next();
  private:
   std::string last_;
-  std::set<std::string> used_;
 };
 
 enum ConstraintRelation {
@@ -68,6 +59,7 @@ enum ConstraintRelation {
 };
 
 class Constraint {
+ public:
   Constraint(ConstraintRelation relation,
              std::vector<std::unique_ptr<TypeNode>> variables) :
     relation_(relation),
@@ -84,19 +76,13 @@ class Constraint {
 };
 
 class ConstraintSet {
+ public:
   ConstraintSet() : constraints_() {}
   void add(std::unique_ptr<Constraint> constraint) {
     constraints_.insert(std::move(constraint));
   }
  private:
   std::set<std::unique_ptr<Constraint>> constraints_;
-};
-
-class Constrainer : public node::Visitor {
-
- private:
-  ConstraintSet constraints_;
-  TypeVariableFactory type_factory_;
 };
 
 }  // namespace inference

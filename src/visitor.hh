@@ -6,7 +6,7 @@ namespace goat {
 namespace node {
 
 class Visitor {
-public:
+ public:
   virtual ~Visitor() {};
   virtual void visit(const Number &number) = 0;
   virtual void visit(const Identifier &identifier) = 0;
