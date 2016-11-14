@@ -49,7 +49,7 @@ bool Program::equals(const Node &b) const {
 
 const inference::Type Program::type() const {
   if(nodes_->size() > 0) {
-    return nodes_->end()->get()->type();
+    return nodes_->back()->type();
   } else {
     return inference::Type("()");
   }

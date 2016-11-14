@@ -29,6 +29,7 @@ class Type : public TypeNode {
   Type(std::string id) :
     id_(id) {}
   bool equals(const TypeNode &b) const;
+  std::string id() const { return id_; };
  private:
   std::string id_;
 };

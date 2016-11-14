@@ -32,12 +32,12 @@ public:
   }
 
   void visit(const Program &program) {
-    std::cout << "Program" << std::endl;
+    std::cout << "Program (" << program.type().id() << ")" << std::endl;
     list_accept(program.nodes(), *this);
   }
 
   void visit(const Argument &argument) {
-    std::cout << "Argument" << std::endl;
+    std::cout << "Argument (" << argument.type().id() << ")" << std::endl;
     argument.identifier()->accept(*this);
     argument.expression()->accept(*this);
   }
