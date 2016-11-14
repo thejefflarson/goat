@@ -47,10 +47,10 @@ class FunctionType : public TypeNode {
 
 class TypeFactory {
  public:
-  TypeFactory() : last_("a") {}
+  TypeFactory() : last_(1) {}
   Type next();
  private:
-  std::string last_;
+  uint32_t last_;
 };
 
 enum ConstraintRelation {

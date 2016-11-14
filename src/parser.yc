@@ -154,7 +154,7 @@ conditional:
 ;
 
 declaration:
-  ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression); }
+  ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression, typer.next()); }
 
 %%
 
