@@ -47,6 +47,14 @@ bool Program::equals(const Node &b) const {
   return util::compare_vector_pointers(nodes_, c->nodes_);
 }
 
+const inference::Type Program::type() const {
+  if(nodes_->size() > 0) {
+    return nodes_->back()->type();
+  } else {
+    return inference::Type("()");
+  }
+}
+
 bool Argument::equals(const Node &b) const {
   const Argument *c = static_cast<const Argument *>(&b);
   return *identifier_ == *c->identifier_ &&
@@ -70,6 +78,10 @@ bool Conditional::equals(const Node &b) const {
   return *expression_ == *c->expression_ &&
     *true_block_ == *c->true_block_ &&
     *false_block_ == *c->false_block_;
+}
+
+const inference::Type Conditional::type() const {
+  return true_block_->type();
 }
 
 bool Operation::equals(const Node &b) const {

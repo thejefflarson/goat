@@ -10,6 +10,7 @@ namespace goat {
 namespace inference {
 
 // Note: this is just a language; create an AST and parse it...
+// generate a set of constraints and then use union-find to infer
 class TypeNode {
  public:
   virtual ~TypeNode() = default;
@@ -28,6 +29,7 @@ class Type : public TypeNode {
   Type(std::string id) :
     id_(id) {}
   bool equals(const TypeNode &b) const;
+  std::string id() const { return id_; };
  private:
   std::string id_;
 };
@@ -46,10 +48,10 @@ class FunctionType : public TypeNode {
 
 class TypeFactory {
  public:
-  TypeFactory() : last_("a") {}
+  TypeFactory() : last_(1) {}
   Type next();
  private:
-  std::string last_;
+  uint32_t last_;
 };
 
 enum ConstraintRelation {
