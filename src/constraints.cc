@@ -1,7 +1,7 @@
 #include "constraints.hh"
 #include "util.hh"
 #include <memory>
-#include <sstream>
+#include <string>
 
 namespace goat {
 namespace inference {
@@ -17,11 +17,18 @@ bool FunctionType::equals(const TypeNode &b) const {
     util::compare_vector_pointers(&in_, &c->in_);
 }
 
+const char *alpha = "abcdefghijklmnopqrstuvwxyz";
+const uint8_t len = 26;
 Type TypeFactory::next() {
   last_++;
-  std::stringstream stream;
-  stream << last_ << std::hex;
-  return Type(stream.str());
+  uint32_t current = last_;
+  std::string accum;
+  while(current > 0) {
+    uint8_t index = current % len;
+    accum.push_back(alpha[index]);
+    current /= len;
+  }
+  return Type(accum);
 }
 
 }
