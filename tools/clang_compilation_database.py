@@ -59,7 +59,6 @@ def write_compilation_database(ctx):
         f_node = task.inputs[0]
         filename = os.path.relpath(f_node.abspath(), directory)
         cmd = " ".join(map(quote, cmd))
-        print(cmd)
         entry = {
             "directory": directory,
             "command": cmd,
