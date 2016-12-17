@@ -1,43 +1,45 @@
 #include "typing_visitor.hh"
+
 using namespace goat;
+using namespace goat::node;
 using namespace goat::inference;
 
-void TypingVisitor::visit(const node::Number &number) {
+void TypingVisitor::visit(const Number &number) {
 
 }
 
-void TypingVisitor::visit(const node::Identifier &identifier) {
+void TypingVisitor::visit(const Identifier &identifier) {
 
 }
 
-void TypingVisitor::visit(const node::String &string) {
+void TypingVisitor::visit(const String &string) {
 
 }
 
-void TypingVisitor::visit(const node::Program &program) {
+void TypingVisitor::visit(const Program &program) {
 
 }
 
-void TypingVisitor::visit(const node::Argument &function) {
+void TypingVisitor::visit(const Argument &argument) {
 
 }
 
-void TypingVisitor::visit(const node::Function &function) {
+void TypingVisitor::visit(const Function &function) {
 
 }
 
-void TypingVisitor::visit(const node::Application &application) {
+void TypingVisitor::visit(const Application &application) {
 
 }
 
-void TypingVisitor::visit(const node::Conditional &conditional) {
+void TypingVisitor::visit(const Conditional &conditional) {
 
 }
 
-void TypingVisitor::visit(const node::Operation &operation) {
+void TypingVisitor::visit(const Operation &operation) {
 
 }
 
-void TypingVisitor::visit(const node::Declaration &declaration) {
+void TypingVisitor::visit(const Declaration &declaration) {
 
 }

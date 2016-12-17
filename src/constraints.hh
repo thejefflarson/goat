@@ -4,6 +4,7 @@
 #include <set>
 #include <memory>
 #include <string>
+#include <typeinfo>
 #include <vector>
 
 namespace goat {

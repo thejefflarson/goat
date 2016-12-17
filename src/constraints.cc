@@ -17,16 +17,15 @@ bool FunctionType::equals(const TypeNode &b) const {
     util::compare_vector_pointers(&in_, &c->in_);
 }
 
-const char *alpha = "abcdefghijklmnopqrstuvwxyz";
-const uint8_t len = 26;
+std::string alpha = "abcdefghijklmnopqrstuvwxyz";
 Type TypeFactory::next() {
   last_++;
   uint32_t current = last_;
   std::string accum;
   while(current > 0) {
-    uint8_t index = current % len;
+    uint8_t index = current % alpha.length();
     accum.push_back(alpha[index]);
-    current /= len;
+    current /= alpha.length();
   }
   return Type(accum);
 }

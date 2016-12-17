@@ -15,7 +15,7 @@ public:
   void visit(const node::Identifier &identifier);
   void visit(const node::String &string);
   void visit(const node::Program &program);
-  void visit(const node::Argument &function);
+  void visit(const node::Argument &argument);
   void visit(const node::Function &function);
   void visit(const node::Application &application);
   void visit(const node::Conditional &conditional);
