@@ -7,9 +7,9 @@
 namespace goat {
 namespace node {
 
-#define accept(kls)                             \
-  void kls::accept(Visitor &v) {                \
-    v.visit(*this);                             \
+#define accept(kls)              \
+  void kls::accept(Visitor &v) { \
+    v.visit(*this);              \
   }
 
 accept(Number)

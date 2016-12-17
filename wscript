@@ -14,6 +14,7 @@ def configure(conf):
                   '-fno-omit-frame-pointer'],
         ldflags='-fsanitize=address'
     )
+    conf.load("clang_compilation_database", tooldir="./tools/")
 
 
 def build(bld):

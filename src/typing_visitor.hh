@@ -10,7 +10,7 @@ namespace inference {
 
 class TypingVisitor : public node::Visitor {
 public:
-  TypingVisitor() : monomorphic_() {};
+  TypingVisitor() : monomorphic_(), constraints_() {};
   void visit(const node::Number &number);
   void visit(const node::Identifier &identifier);
   void visit(const node::String &string);
@@ -23,6 +23,7 @@ public:
   void visit(const node::Declaration &declaration);
 private:
   std::set<Type> monomorphic_;
+  ConstraintSet constraints_;
 };
 
 } // inference
