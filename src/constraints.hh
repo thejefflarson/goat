@@ -22,6 +22,9 @@ class TypeNode {
   bool operator!=(const TypeNode &b) const {
     return !(*this == b);
   }
+  bool operator<(const TypeNode &b) const {
+    return *this != b;
+  }
   virtual bool equals(const TypeNode &b) const = 0;
 };
 

@@ -21,11 +21,14 @@ void TypingVisitor::visit(const Program &program) {
 }
 
 void TypingVisitor::visit(const Argument &argument) {
-
+  monomorphic_.insert(argument.type());
 }
 
 void TypingVisitor::visit(const Function &function) {
-
+  auto before = monomorphic_;
+  list_accept(function.arguments(), *this);
+  function.program()->accept(*this);
+  monomorphic_ = before;
 }
 
 void TypingVisitor::visit(const Application &application) {

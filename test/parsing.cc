@@ -9,13 +9,6 @@ using namespace std;
 using namespace goat::node;
 using namespace goat::inference;
 
-template<typename T>
-inline void list_accept(const T list, Visitor &v) {
-  for(auto i : *list) {
-    i->accept(v);
-  }
-}
-
 class PrintingVisitor : public Visitor {
 public:
   PrintingVisitor() {}
