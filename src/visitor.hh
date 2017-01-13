@@ -12,13 +12,20 @@ class Visitor {
   virtual void visit(const Identifier &identifier) = 0;
   virtual void visit(const String &string) = 0;
   virtual void visit(const Program &program) = 0;
-  virtual void visit(const Argument &function) = 0;
+  virtual void visit(const Argument &argument) = 0;
   virtual void visit(const Function &function) = 0;
   virtual void visit(const Application &application) = 0;
   virtual void visit(const Conditional &conditional) = 0;
   virtual void visit(const Operation &operation) = 0;
   virtual void visit(const Declaration &declaration) = 0;
 };
+
+template<typename T>
+inline void list_accept(const T list, Visitor &v) {
+  for(auto i : *list) {
+    i->accept(v);
+  }
+}
 
 }
 }

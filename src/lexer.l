@@ -11,13 +11,13 @@ using namespace goat;
 
 %{
 #define YY_USER_ACTION loc.columns(yyleng);
-#define YY_EXTRA_TYPE std::shared_ptr<std::istream>
+#define YY_EXTRA_TYPE std::istream *
 %}
 
 %{
 #define YY_INPUT(buf, result, max_size) {\
   auto src = yyget_extra(yyscanner); \
-  src->read(buf, max_size); \
+  src->get(buf, max_size); \
   result = src->good() ? YY_NULL : src->gcount(); \
 }
 %}
@@ -65,7 +65,7 @@ return     return parser::make_RETURN(loc);
 %%
 
 using namespace goat;
-int driver::parse(std::shared_ptr<std::istream> src,
+int driver::parse(std::istream *src,
                   std::shared_ptr<goat::node::Program> &result) {
   location loc;
   yyscan_t scanner;

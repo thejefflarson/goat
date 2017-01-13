@@ -70,8 +70,9 @@ public:
 
 bool test(const std::string program, const Program &result) {
   std::shared_ptr<Program> p;
-  auto s = make_shared<std::stringstream>(program);
-  int r = goat::driver::parse(s, p);
+  auto s = std::stringstream(program);
+  int r = goat::driver::parse(&s, p);
+
   if(r != 0) return false;
   bool equal = result == *p;
 
