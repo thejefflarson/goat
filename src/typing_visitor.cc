@@ -18,12 +18,14 @@ void TypingVisitor::visit(const node::Program &program) {
 
 }
 
-void TypingVisitor::visit(const node::Argument &function) {
-
+void TypingVisitor::visit(const node::Argument &argument) {
+  monomorphic_.insert(argument.type());
 }
 
 void TypingVisitor::visit(const node::Function &function) {
+  auto before = monomorphic_;
 
+  monomorphic_ = before;
 }
 
 void TypingVisitor::visit(const node::Application &application) {

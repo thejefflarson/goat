@@ -5,6 +5,11 @@
 #include <vector>
 
 namespace goat {
+
+namespace node {
+class Visitor;
+}
+
 namespace util {
 template<typename T>
 bool compare_vector_pointers(const T &a, const T &b) {
@@ -17,6 +22,10 @@ bool compare_vector_pointers(const T &a, const T &b) {
 
   return std::equal(a->begin(), a->end(), b->begin(), eq);
 }
+
+template<typename T>
+inline void list_accept(const T list, node::Visitor &v);
+
 }
 }
 #endif
