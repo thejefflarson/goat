@@ -1,5 +1,6 @@
 #include "inference.hh"
 #include "util.hh"
+#include <cstdint>
 #include <memory>
 #include <string>
 

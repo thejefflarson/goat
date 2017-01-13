@@ -1,5 +1,5 @@
-#ifndef SRC_CONSTRAINTS_HH_
-#define SRC_CONSTRAINTS_HH_
+#ifndef SRC_INFERENCE_HH_
+#define SRC_INFERENCE_HH_
 
 #include <set>
 #include <memory>
@@ -7,6 +7,7 @@
 #include <typeinfo>
 #include <vector>
 #include "util.hh"
+#include "node.hh"
 #include "visitor.hh"
 
 namespace goat {
@@ -87,7 +88,11 @@ class Constraint {
 
 class TypingVisitor : public node::Visitor {
 public:
-  TypingVisitor() : monomorphic_(), constraints_(), assumptions_() {};
+  TypingVisitor() :
+    monomorphic_(),
+    constraints_(),
+    assumptions_(),
+    typer_() {};
   void visit(const node::Number &number);
   void visit(const node::Identifier &identifier);
   void visit(const node::String &string);
@@ -102,10 +107,11 @@ private:
   std::set<Type> monomorphic_;
   std::set<Constraint> constraints_;
   std::set<node::Identifier> assumptions_;
+  TypeFactory typer_;
 };
 
 
 }  // namespace inference
 }  // namespace goat
 
-#endif  // SRC_CONSTRAINTS_HH_
+#endif  // SRC_INFERENCE_HH_
