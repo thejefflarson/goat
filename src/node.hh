@@ -76,7 +76,7 @@ class String : public Node {
   const std::string value_;
 };
 
-// a block the type is the same as the last node on the list
+// For a block the type is the same as the last node on the list.
 class Program : public Node {
  public:
   Program() :
