@@ -1,10 +1,14 @@
-#ifndef SRC_CONSTRAINTS_HH_
-#define SRC_CONSTRAINTS_HH_
+#ifndef SRC_INFERENCE_HH_
+#define SRC_INFERENCE_HH_
 
 #include <set>
 #include <memory>
 #include <string>
+#include <typeinfo>
 #include <vector>
+#include "util.hh"
+#include "node.hh"
+#include "visitor.hh"
 
 namespace goat {
 namespace inference {
@@ -21,6 +25,9 @@ class TypeNode {
   bool operator!=(const TypeNode &b) const {
     return !(*this == b);
   }
+  bool operator<(const TypeNode &b) const {
+    return *this != b;
+  }
   virtual bool equals(const TypeNode &b) const = 0;
 };
 
@@ -36,13 +43,13 @@ class Type : public TypeNode {
 
 class FunctionType : public TypeNode {
  public:
-  FunctionType(std::vector<std::unique_ptr<Type>> in,
+  FunctionType(std::vector<Type> in,
                Type ret) :
-    in_(std::move(in)),
+    in_(in),
     ret_(ret) {}
   bool equals(const TypeNode &b) const;
  private:
-  std::vector<std::unique_ptr<Type>> in_;
+  std::vector<Type> in_;
   Type ret_;
 };
 
@@ -67,7 +74,8 @@ class Constraint {
     relation_(relation),
     variables_(std::move(variables)) {}
     bool operator==(const Constraint &b) const {
-      return relation_ == b.relation_ && variables_ == b.variables_;
+      return relation_ == b.relation_ &&
+        util::compare_vector_pointers(&variables_, &b.variables_);
     }
     bool operator!=(const Constraint&b) const {
       return !(*this == b);
@@ -77,17 +85,33 @@ class Constraint {
   std::vector<std::unique_ptr<TypeNode>> variables_;
 };
 
-class ConstraintSet {
- public:
-  ConstraintSet() : constraints_() {}
-  void add(std::unique_ptr<Constraint> constraint) {
-    constraints_.insert(std::move(constraint));
-  }
- private:
-  std::set<std::unique_ptr<Constraint>> constraints_;
+
+class TypingVisitor : public node::Visitor {
+public:
+  TypingVisitor() :
+    monomorphic_(),
+    constraints_(),
+    assumptions_(),
+    typer_() {};
+  void visit(const node::Number &number);
+  void visit(const node::Identifier &identifier);
+  void visit(const node::String &string);
+  void visit(const node::Program &program);
+  void visit(const node::Argument &argument);
+  void visit(const node::Function &function);
+  void visit(const node::Application &application);
+  void visit(const node::Conditional &conditional);
+  void visit(const node::Operation &operation);
+  void visit(const node::Declaration &declaration);
+private:
+  std::set<Type> monomorphic_;
+  std::set<Constraint> constraints_;
+  std::set<node::Identifier> assumptions_;
+  TypeFactory typer_;
 };
+
 
 }  // namespace inference
 }  // namespace goat
 
-#endif  // SRC_CONSTRAINTS_HH_
+#endif  // SRC_INFERENCE_HH_

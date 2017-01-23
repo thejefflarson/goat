@@ -11,7 +11,6 @@
 }
 
 %code {
-#include "constraints.hh"
 #include "driver.hh"
 }
 
@@ -29,7 +28,6 @@
 %param {void *scanner}
 %param {goat::location &loc}
 %parse-param {std::shared_ptr<goat::node::Program> &result}
-%parse-param {inference::TypeFactory typer}
 
 %token END 0 "end of file"
 %token PROGRAM "program"
@@ -110,7 +108,7 @@ expressions:
 
 string: STRING { $$ = std::make_shared<node::String>($1); }
 number: NUMBER { $$ = std::make_shared<node::Number>($1); }
-ident: IDENT { $$ = std::make_shared<node::Identifier>($1, typer.next()); }
+ident: IDENT { $$ = std::make_shared<node::Identifier>($1); }
 
 expression:
   string { $$ = $1; }
@@ -131,7 +129,7 @@ math:
 ;
 
 argument:
-  ident COLON expression {  $$ = std::make_shared<node::Argument>($ident, $expression, typer.next()); }
+  ident COLON expression {  $$ = std::make_shared<node::Argument>($ident, $expression); }
 ;
 
 arguments:
@@ -141,11 +139,11 @@ arguments:
 ;
 
 application:
-  ident "(" arguments ")" { $$ = std::make_shared<node::Application>($ident, $arguments, typer.next()); }
+  ident "(" arguments ")" { $$ = std::make_shared<node::Application>($ident, $arguments); }
 ;
 
 function:
-  PROGRAM "(" arguments ")" DO program DONE { $$ = std::make_shared<node::Function>($arguments, $program, typer.next()); }
+  PROGRAM "(" arguments ")" DO program DONE { $$ = std::make_shared<node::Function>($arguments, $program); }
 ;
 
 conditional:
@@ -154,7 +152,7 @@ conditional:
 ;
 
 declaration:
-  ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression, typer.next()); }
+  ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression); }
 
 %%
 
