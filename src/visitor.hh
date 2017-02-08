@@ -1,9 +1,19 @@
 #ifndef GOAT_VISITOR_HH
 #define GOAT_VISITOR_HH
 
-#include "node.hh"
 namespace goat {
 namespace node {
+
+class Number;
+class Identifier;
+class String;
+class Program;
+class Argument;
+class Function;
+class Application;
+class Conditional;
+class Operation;
+class Declaration;
 
 class Visitor {
  public:

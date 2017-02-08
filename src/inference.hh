@@ -8,7 +8,6 @@
 #include <unordered_map>
 #include <vector>
 #include "util.hh"
-#include "node.hh"
 #include "visitor.hh"
 
 namespace goat {
