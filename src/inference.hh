@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <typeinfo>
+#include <unordered_map>
 #include <vector>
 #include "util.hh"
 #include "node.hh"
@@ -15,42 +16,21 @@ namespace inference {
 
 // Note: this is just a language; create an AST and parse it...
 // generate a set of constraints and then use union-find to infer
-class TypeNode {
- public:
-  virtual ~TypeNode() = default;
-  bool operator==(const TypeNode &b) const {
-    if (typeid(*this) != typeid(b)) return false;
-    return equals(b);
-  }
-  bool operator!=(const TypeNode &b) const {
-    return !(*this == b);
-  }
-  bool operator<(const TypeNode &b) const {
-    return *this != b;
-  }
-  virtual bool equals(const TypeNode &b) const = 0;
-};
-
-class Type : public TypeNode {
+class Type {
  public:
   Type(std::string id) :
     id_(id) {}
-  bool equals(const TypeNode &b) const;
-  std::string id() const { return id_; };
- private:
+  bool operator==(const Type &b) const {
+    return id_ == b.id_;
+  }
+  bool operator!=(const Type &b) const {
+    return !(*this == b);
+  }
+  bool operator<(const Type &b) const {
+    return *this != b;
+  }
+private:
   std::string id_;
-};
-
-class FunctionType : public TypeNode {
- public:
-  FunctionType(std::vector<Type> in,
-               Type ret) :
-    in_(in),
-    ret_(ret) {}
-  bool equals(const TypeNode &b) const;
- private:
-  std::vector<Type> in_;
-  Type ret_;
 };
 
 class TypeFactory {
@@ -70,9 +50,9 @@ enum ConstraintRelation {
 class Constraint {
  public:
   Constraint(ConstraintRelation relation,
-             std::vector<std::unique_ptr<TypeNode>> variables) :
+             std::vector<Type> variables) :
     relation_(relation),
-    variables_(std::move(variables)) {}
+    variables_(variables) {}
     bool operator==(const Constraint &b) const {
       return relation_ == b.relation_ &&
         util::compare_vector_pointers(&variables_, &b.variables_);
@@ -82,7 +62,7 @@ class Constraint {
     }
  private:
   ConstraintRelation relation_;
-  std::vector<std::unique_ptr<TypeNode>> variables_;
+  std::vector<Type> variables_;
 };
 
 
@@ -106,7 +86,7 @@ public:
 private:
   std::set<Type> monomorphic_;
   std::set<Constraint> constraints_;
-  std::set<node::Identifier> assumptions_;
+  std::unordered_map<node::Identifier &, Type> assumptions_;
   TypeFactory typer_;
 };
 

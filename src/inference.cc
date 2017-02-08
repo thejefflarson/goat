@@ -8,17 +8,6 @@ using namespace goat;
 using namespace goat::inference;
 using namespace goat::node;
 
-bool Type::equals(const TypeNode &b) const {
-  const Type *c = static_cast<const Type *>(&b);
-  return id_ == c->id_;
-}
-
-bool FunctionType::equals(const TypeNode &b) const {
-  const FunctionType *c = static_cast<const FunctionType *>(&b);
-  return ret_ == c->ret_ &&
-    util::compare_vector_pointers(&in_, &c->in_);
-}
-
 std::string alpha = "abcdefghijklmnopqrstuvwxyz";
 Type TypeFactory::next() {
   last_++;
@@ -37,7 +26,7 @@ void TypingVisitor::visit(const Number &number) {
 }
 
 void TypingVisitor::visit(const Identifier &identifier) {
-  assumptions_.insert(identifier);
+  assumptions_.insert(identifier, typer_.next());
 }
 
 void TypingVisitor::visit(const String &string) {
@@ -60,9 +49,14 @@ void TypingVisitor::visit(const Function &function) {
 }
 
 void TypingVisitor::visit(const Application &application) {
+  for(auto i : *application.arguments()) {
+    i->accept(*this);
+    constraints.insert()
+  }
+
   constraints_.insert(Constraint(Equality,
-                                 { std::make_unique<Type>(application.ident()->type()),
-                                   std::make_unique<Type>(application.type()) }));
+                                 { application.ident()->type(),
+                                   typer_.next() }));
 }
 
 void TypingVisitor::visit(const Conditional &conditional) {
