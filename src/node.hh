@@ -15,7 +15,7 @@ class Node {
  public:
   virtual ~Node() = default;
   virtual void accept(class Visitor &v) const = 0;
-  virtual const inference::Type type() const = 0;
+  virtual const std::unique_ptr<inference::Type> type() const = 0;
   bool operator==(const Node &b) const {
     if(typeid(*this) != typeid(b)) return false;
     return equals(b);
@@ -35,11 +35,13 @@ class Number : public Node {
     type_("Number") {}
   void accept(Visitor &v) const;
   const double value() const { return value_; }
-  const inference::Type type() const { return type_; };
+  const std::unique_ptr<inference::NumberType> type() const {
+    return std::make_unique<inference::NumberType>(type_);
+  }
  private:
   bool equals(const Node &b) const;
   const double value_;
-  const inference::Type type_;
+  const inference::NumberType type_;
 };
 
 class Identifier : public Node {

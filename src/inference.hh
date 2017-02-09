@@ -17,10 +17,10 @@ namespace inference {
 // generate a set of constraints and then use union-find to infer
 class Type {
  public:
-  Type(std::string id) :
-    id_(id) {}
+  virtual ~Type() = default;
   bool operator==(const Type &b) const {
-    return id_ == b.id_;
+    if(typeid(*this) != typeid(b)) return false;
+    return equals(b);
   }
   bool operator!=(const Type &b) const {
     return !(*this == b);
@@ -29,13 +29,37 @@ class Type {
     return *this != b;
   }
 private:
+  virtual bool equals(const Node &) const = 0;
   std::string id_;
+};
+
+class TypeVariable : Type {
+  Type(std::string id) :
+    id_(id) {}
+private:
+  std::string id_;
+};
+
+class NumberType : Type {
+
+};
+
+class StringType : Type {
+
+};
+
+class BoolType : Type {
+
+};
+
+class FunctionType : Type {
+
 };
 
 class TypeFactory {
  public:
   TypeFactory() : last_(1) {}
-  Type next();
+  TypeVar next();
  private:
   uint32_t last_;
 };
@@ -49,7 +73,7 @@ enum ConstraintRelation {
 class Constraint {
  public:
   Constraint(ConstraintRelation relation,
-             std::vector<Type> variables) :
+             std::pair<Type, Type> variables) :
     relation_(relation),
     variables_(variables) {}
     bool operator==(const Constraint &b) const {
@@ -61,7 +85,7 @@ class Constraint {
     }
  private:
   ConstraintRelation relation_;
-  std::vector<Type> variables_;
+  std::pair<Type, Type> variables_;
 };
 
 
