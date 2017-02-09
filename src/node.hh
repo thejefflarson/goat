@@ -26,7 +26,7 @@ class Node {
  private:
   virtual bool equals(const Node &) const = 0;
 };
-typedef std::vector<std::shared_ptr<Node>> NodeList;
+using NodeList = std::vector<std::shared_ptr<Node>>;
 
 class Number : public Node {
  public:
@@ -105,7 +105,7 @@ class Argument : public Node {
   const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<Node> expression_;
 };
-typedef std::vector<std::shared_ptr<Argument>> ArgumentList;
+using ArgumentList = std::vector<std::shared_ptr<Argument>>;
 
 class Function : public Node {
  public:

@@ -15,51 +15,55 @@ namespace inference {
 
 // Note: this is just a language; create an AST and parse it...
 // generate a set of constraints and then use union-find to infer
-class Type {
+class AbstractType {
  public:
-  virtual ~Type() = default;
-  bool operator==(const Type &b) const {
+  virtual ~AbstractType() = default;
+  bool operator==(const AbstractType &b) const {
     if(typeid(*this) != typeid(b)) return false;
     return equals(b);
   }
-  bool operator!=(const Type &b) const {
+  bool operator!=(const AbstractType &b) const {
     return !(*this == b);
   }
-  bool operator<(const Type &b) const {
+  bool operator<(const AbstractType &b) const {
     return *this != b;
   }
 private:
-  virtual bool equals(const Node &) const = 0;
-  std::string id_;
+  bool equals(const AbstractType &) const { return true; };
 };
 
-class TypeVariable : Type {
-  Type(std::string id) :
+class TypeVariable : AbstractType {
+  TypeVariable(std::string id) :
     id_(id) {}
 private:
+  bool equals(const TypeVariable &b) const { return id_ == b.id_; }
   std::string id_;
 };
 
-class NumberType : Type {
+class NumberType : AbstractType {};
+class StringType : AbstractType {};
+class BoolType : AbstractType {};
 
-};
+class FunctionType;
+using Type = util::Variant<TypeVariable,
+                           NumberType,
+                           StringType,
+                           BoolType,
+                           FunctionType>;
 
-class StringType : Type {
-
-};
-
-class BoolType : Type {
-
-};
-
-class FunctionType : Type {
-
+class FunctionType : AbstractType {
+  FunctionType(std::vector<Type> types, TypeVariable ret) :
+    types_(types),
+    ret_(ret) {}
+private:
+  std::vector<Type> types_;
+  TypeVariable ret_;
 };
 
 class TypeFactory {
  public:
   TypeFactory() : last_(1) {}
-  TypeVar next();
+  TypeVariable next();
  private:
   uint32_t last_;
 };
