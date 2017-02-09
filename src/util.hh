@@ -50,7 +50,7 @@ struct variant_helper<First, Types...> {
 
   static void copy(std::type_index t, const void *old_data, void *new_data) {
     if(t == std::type_index(typeid(First))) {
-      new (new_data) First(*reinterpret_cast<First *>(old_data));
+      new (new_data) First(*reinterpret_cast<const First *>(old_data));
     } else {
        variant_helper<Types...>::copy(t, old_data, new_data);
     }
@@ -72,6 +72,55 @@ struct variant_helper<> {
   static void move(std::type_index t, void *old_data, void *new_data) {}
 };
 
+template<typename Function, typename Variant, typename Return, typename... Types>
+struct variant_visitor;
+
+template<typename Function, typename Variant, typename Return,
+         typename First, typename... Types>
+struct variant_visitor<Function, Variant, Return, First, Types...> {
+  static Return visit(Variant& variant, Function&& fn) {
+    if(variant.template is<First>()) {
+      return fn(variant);
+    } else {
+      return variant_visitor<Function, Variant, Return, Types...>::visit(
+        variant, std::forward<Function>(fn)
+      );
+    }
+  }
+};
+
+template<typename Function, typename Variant, typename Return, typename Type>
+struct variant_visitor<Function, Variant, Return, Type> {
+  static Return visit(Variant& variant, Function&& fn) {
+    return fn(variant);
+  }
+};
+
+template<typename Variant, typename... Types>
+struct equality_variant_visitor;
+
+template<typename Variant, typename First, typename... Types>
+struct equality_variant_visitor<Variant, First, Types...> {
+  static bool visit(Variant& v0, Variant& v1) {
+    if(v0.template is<First>()) {
+      if(v1.template is<First>()) {
+        return v1.template get<First> == v0.template get<First>();
+      } else {
+
+      }
+    } else {
+
+    }
+  }
+};
+
+template<typename Variant, typename First>
+struct equality_variant_visitor<Variant, First> {
+  static bool visit(Variant& variant,) {
+    return fn(variant);
+  }
+};
+
 
 template<typename... Types>
 class Variant {
@@ -79,7 +128,7 @@ public:
   Variant() = delete;
   // WARNING: no check if an invalid type is here.
   template<typename T>
-  Variant(T& t) : type_(typeid(T)) {
+  Variant(T t) : type_(typeid(T)) {
     new (&data_) T(std::forward<T>(t));
   }
 
@@ -106,6 +155,14 @@ public:
     Variant<Types...> tmp(other);
     move_assign(std::move(tmp));
     return *this;
+  }
+
+  bool operator==(Variant<Types...> &other) {
+    if(type_ != other.type_) {
+      return false;
+    } else {
+      return
+    }
   }
 
   ~Variant() {
