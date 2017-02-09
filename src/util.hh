@@ -24,7 +24,11 @@ bool compare_vector_pointers(const T &a, const T &b) {
 }
 
 template<typename T>
-inline void list_accept(const T list, node::Visitor &v);
+void list_accept(const T list, node::Visitor &v) {
+  for(auto i : *list) {
+    i->accept(v);
+  }
+}
 
 }
 }

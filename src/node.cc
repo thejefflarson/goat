@@ -7,9 +7,9 @@
 namespace goat {
 namespace node {
 
-#define accept(kls)              \
-  void kls::accept(Visitor &v) { \
-    v.visit(*this);              \
+#define accept(kls)                    \
+  void kls::accept(Visitor &v) const { \
+    v.visit(*this);                    \
   }
 
 accept(Number)
@@ -61,7 +61,7 @@ bool Function::equals(const Node &b) const {
 
 bool Application::equals(const Node &b) const {
   const Application *c = static_cast<const Application *>(&b);
-  return *ident_ == *c->ident() &&
+  return *identifier_ == *c->identifier() &&
     util::compare_vector_pointers(arguments_, c->arguments_);
 }
 

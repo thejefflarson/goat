@@ -30,13 +30,6 @@ class Visitor {
   virtual void visit(const Declaration &declaration) = 0;
 };
 
-template<typename T>
-inline void list_accept(const T list, Visitor &v) {
-  for(auto i : *list) {
-    i->accept(v);
-  }
-}
-
 }
 }
 

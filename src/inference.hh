@@ -54,7 +54,7 @@ class Constraint {
     variables_(variables) {}
     bool operator==(const Constraint &b) const {
       return relation_ == b.relation_ &&
-        util::compare_vector_pointers(&variables_, &b.variables_);
+        variables_ == b.variables_;
     }
     bool operator!=(const Constraint&b) const {
       return !(*this == b);
@@ -70,8 +70,7 @@ public:
   TypingVisitor() :
     monomorphic_(),
     constraints_(),
-    assumptions_(),
-    typer_() {};
+    assumptions_() {};
   void visit(const node::Number &number);
   void visit(const node::Identifier &identifier);
   void visit(const node::String &string);
@@ -85,8 +84,7 @@ public:
 private:
   std::set<Type> monomorphic_;
   std::set<Constraint> constraints_;
-  std::unordered_map<node::Identifier &, Type> assumptions_;
-  TypeFactory typer_;
+  std::unordered_map<std::string, Type> assumptions_;
 };
 
 

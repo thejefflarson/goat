@@ -7,6 +7,7 @@
 %}
 
 %code requires {
+#include "inference.hh"
 #include "node.hh"
 }
 
@@ -28,6 +29,7 @@
 %param {void *scanner}
 %param {goat::location &loc}
 %parse-param {std::shared_ptr<goat::node::Program> &result}
+%parse-param {goat::inference::TypeFactory &typer}
 
 %token END 0 "end of file"
 %token PROGRAM "program"
@@ -108,7 +110,7 @@ expressions:
 
 string: STRING { $$ = std::make_shared<node::String>($1); }
 number: NUMBER { $$ = std::make_shared<node::Number>($1); }
-ident: IDENT { $$ = std::make_shared<node::Identifier>($1); }
+ident: IDENT { $$ = std::make_shared<node::Identifier>($1, typer.next()); }
 
 expression:
   string { $$ = $1; }
@@ -143,7 +145,7 @@ application:
 ;
 
 function:
-  PROGRAM "(" arguments ")" DO program DONE { $$ = std::make_shared<node::Function>($arguments, $program); }
+  PROGRAM "(" arguments ")" DO program DONE { $$ = std::make_shared<node::Function>($arguments, $program, typer.next()); }
 ;
 
 conditional:

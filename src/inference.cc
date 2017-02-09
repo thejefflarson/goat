@@ -1,4 +1,5 @@
 #include "inference.hh"
+#include "node.hh"
 #include "util.hh"
 #include <cstdint>
 #include <memory>
@@ -26,7 +27,7 @@ void TypingVisitor::visit(const Number &number) {
 }
 
 void TypingVisitor::visit(const Identifier &identifier) {
-  assumptions_.insert(identifier, typer_.next());
+  assumptions_.insert({identifier.value(), identifier.type()});
 }
 
 void TypingVisitor::visit(const String &string) {
@@ -43,7 +44,7 @@ void TypingVisitor::visit(const Argument &argument) {
 
 void TypingVisitor::visit(const Function &function) {
   auto before = monomorphic_;
-  list_accept(function.arguments(), *this);
+  util::list_accept(function.arguments(), *this);
   function.program()->accept(*this);
   monomorphic_ = before;
 }
@@ -51,12 +52,12 @@ void TypingVisitor::visit(const Function &function) {
 void TypingVisitor::visit(const Application &application) {
   for(auto i : *application.arguments()) {
     i->accept(*this);
-    constraints.insert()
+    //  constraints.insert()
   }
 
-  constraints_.insert(Constraint(Equality,
-                                 { application.ident()->type(),
-                                   typer_.next() }));
+  //constraints_.insert(Constraint(Equality,
+  //                               { application.ident()->type(),
+  //                                 typer_.next() }));
 }
 
 void TypingVisitor::visit(const Conditional &conditional) {
