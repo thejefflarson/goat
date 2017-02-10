@@ -10,7 +10,7 @@ using namespace goat::inference;
 using namespace goat::node;
 
 std::string alpha = "abcdefghijklmnopqrstuvwxyz";
-Type TypeFactory::next() {
+TypeVariable TypeFactory::next() {
   last_++;
   uint32_t current = last_;
   std::string accum;
@@ -19,7 +19,7 @@ Type TypeFactory::next() {
     accum.push_back(alpha[index]);
     current /= alpha.length();
   }
-  return Type(accum);
+  return TypeVariable(accum);
 }
 
 void TypingVisitor::visit(const Number &number) {

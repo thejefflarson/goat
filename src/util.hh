@@ -2,6 +2,7 @@
 #define SRC_UTIL_H_
 
 #include <memory>
+#include <new>
 #include <typeindex>
 #include <type_traits>
 #include <vector>
@@ -13,7 +14,7 @@ class Visitor;
 }
 
 namespace util {
-template<typename T>
+template <typename T>
 bool compare_vector_pointers(const T &a, const T &b) {
   if (a->size() != b->size())
     return false;
@@ -25,7 +26,7 @@ bool compare_vector_pointers(const T &a, const T &b) {
   return std::equal(a->begin(), a->end(), b->begin(), eq);
 }
 
-template<typename T>
+template <typename T>
 void list_accept(const T list, node::Visitor &v) {
   for(auto i : *list) {
     i->accept(v);
@@ -35,10 +36,10 @@ void list_accept(const T list, node::Visitor &v) {
 // Simple variant class to help with rust style pattern
 // matching, extremely limited on purpose. Inspiration
 // drawn from mapbox variant
-template<typename... Types>
+template <typename... Types>
 struct variant_helper;
 
-template<typename First, typename... Types>
+template <typename First, typename... Types>
 struct variant_helper<First, Types...> {
   static void destroy(std::type_index t, void *data) {
     if(t == std::type_index(typeid(First))) {
@@ -65,22 +66,23 @@ struct variant_helper<First, Types...> {
   }
 };
 
-template<>
+template <>
 struct variant_helper<> {
   static void destroy(std::type_index t, void *data) {}
   static void copy(std::type_index t, const void *old_data, void *new_data) {}
   static void move(std::type_index t, void *old_data, void *new_data) {}
 };
 
-template<typename Function, typename Variant, typename Return, typename... Types>
+template <typename Function, typename Variant,
+          typename Return, typename... Types>
 struct variant_visitor;
 
-template<typename Function, typename Variant, typename Return,
-         typename First, typename... Types>
+template <typename Function, typename Variant, typename Return,
+          typename First, typename... Types>
 struct variant_visitor<Function, Variant, Return, First, Types...> {
-  static Return visit(Variant& variant, Function&& fn) {
+  static Return visit(const Variant& variant, Function&& fn) {
     if(variant.template is<First>()) {
-      return fn(variant);
+      return fn(variant.template get<First>());
     } else {
       return variant_visitor<Function, Variant, Return, Types...>::visit(
         variant, std::forward<Function>(fn)
@@ -89,46 +91,67 @@ struct variant_visitor<Function, Variant, Return, First, Types...> {
   }
 };
 
-template<typename Function, typename Variant, typename Return, typename Type>
+template <typename Function, typename Variant, typename Return, typename Type>
 struct variant_visitor<Function, Variant, Return, Type> {
-  static Return visit(Variant& variant, Function&& fn) {
-    return fn(variant);
+  static Return visit(const Variant& variant, Function&& fn) {
+    return fn(variant.template get<Type>());
   }
 };
 
-template<typename Variant, typename... Types>
-struct equality_variant_visitor;
-
-template<typename Variant, typename First, typename... Types>
-struct equality_variant_visitor<Variant, First, Types...> {
-  static bool visit(Variant& v0, Variant& v1) {
-    if(v0.template is<First>()) {
-      if(v1.template is<First>()) {
-        return v1.template get<First> == v0.template get<First>();
-      } else {
-
-      }
-    } else {
-
-    }
+struct equal {
+  template <typename T>
+  bool call(const T& lhs, const T& rhs) {
+    return lhs == rhs;
   }
 };
 
-template<typename Variant, typename First>
-struct equality_variant_visitor<Variant, First> {
-  static bool visit(Variant& variant,) {
-    return fn(variant);
+struct less {
+  template <typename T>
+  bool call(const T& lhs, const T& rhs) {
+    return lhs < rhs;
   }
 };
 
+template <typename Variant, typename Compare>
+class Comparer {
+public:
+  explicit Comparer(const Variant& variant) :
+    variant_(variant) {}
+  Comparer& operator=(const Comparer&) = delete;
 
-template<typename... Types>
+  template <typename T>
+  bool operator()(T& other) {
+    const T& value = variant_.template get<T>();
+    return Compare().call(value, other);
+  }
+
+private:
+  Variant const& variant_;
+};
+
+
+// from https://stackoverflow.com/questions/17032310/how-to-make-a-variadic-is-same
+template<typename T, typename... Rest>
+struct is_any : std::false_type {};
+
+template<typename T, typename First>
+struct is_any<T, First> : std::is_same<T, First> {};
+
+template<typename T, typename First, typename... Rest>
+struct is_any<T, First, Rest...>
+    : std::integral_constant<bool, std::is_same<T, First>::value ||
+                             is_any<T, Rest...>::value> {};
+
+template <typename... Types>
 class Variant {
 public:
-  Variant() = delete;
-  // WARNING: no check if an invalid type is here.
-  template<typename T>
-  Variant(T t) : type_(typeid(T)) {
+  Variant() : type_(typeid(first)) {
+    new (&data_) first();
+  };
+
+  template<typename T,
+           typename = std::enable_if_t<is_any<T, Types...>::value>>
+  Variant(T &&t) : type_(typeid(T)) {
     new (&data_) T(std::forward<T>(t));
   }
 
@@ -146,22 +169,56 @@ public:
   }
 
   template<typename T>
-  T& get() {
-    return *reinterpret_cast<T*>(data_);
+  const T& get() const {
+    return *reinterpret_cast<const T*>(&data_);
+  }
+
+  Variant<Types...>&& operator=(Variant<Types...> &&other) {
+    Variant<Types...> temp(std::move(other));
+    move_assign(std::move(temp));
+    return *this;
+  }
+
+  Variant<Types...>& operator=(const Variant<Types...> &other) {
+    copy_assign(other);
+    return *this;
+  }
+
+  template<typename T>
+  Variant<Types...>& operator=(T &&other) {
+    Variant<Types...> tmp(std::forward<T>(other));
+    move_assign(std::move(tmp));
+    return *this;
   }
 
   template<typename T>
   Variant<Types...>& operator=(T &other) {
     Variant<Types...> tmp(other);
-    move_assign(std::move(tmp));
+    copy_assign(std::move(tmp));
     return *this;
   }
 
-  bool operator==(Variant<Types...> &other) {
-    if(type_ != other.type_) {
-      return false;
+  bool operator==(const Variant<Types...> &other) const {
+     if(type_ != other.type_) {
+       return false;
+     } else {
+        return variant_visitor<Comparer<Variant, equal>,
+                               Variant<Types...>, bool,
+                               Types...>::visit(
+                                 other, Comparer<Variant, equal>(*this)
+                               );
+     }
+  }
+
+  bool operator<(const Variant<Types...> &other) const {
+    if(type_ < other.type_) {
+      return true;
     } else {
-      return
+      return variant_visitor<Comparer<Variant, less>,
+                             Variant<Types...>, bool,
+                             Types...>::visit(
+                               other, Comparer<Variant, less>(*this)
+                             );
     }
   }
 
@@ -169,18 +226,20 @@ public:
     helper_t::destroy(type_, &data_);
   }
 private:
-  void move_assign(Variant<Types...> &&other) {
+  void move_assign(const Variant<Types...> &&other) {
     helper_t::destroy(type_, &data_);
     helper_t::move(other.type_, &other.data_, &data_);
     type_ = other.type_;
   }
 
-  void copy_assign(Variant<Types...> const &other) {
+  void copy_assign(const Variant<Types...> &other) {
     helper_t::destroy(type_, &data_);
     helper_t::copy(other.type_, &other.data_, &data_);
     type_ = other.type_;
   }
 
+  using types = std::tuple<Types...>;
+  using first = typename std::tuple_element<0, types>::type;
   using data_t = typename std::aligned_union<1, Types...>::type;
   using helper_t = variant_helper<Types...>;
   data_t data_;

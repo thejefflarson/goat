@@ -33,7 +33,7 @@ class Number : public Node {
   Number(const double value) :
     value_(value),
     type_(inference::NumberType()) {}
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const double value() const { return value_; }
   const inference::Type type() const {  return type_; }
  private:
@@ -48,11 +48,11 @@ class Identifier : public Node {
              inference::Type type) :
     value_(value),
     type_(type) {}
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const std::string value() const { return value_; }
   const inference::Type type() const { return type_; };
  private:
-  bool equals(const Node &b) const;
+  bool equals(const Node& b) const;
   const std::string value_;
   const inference::Type type_;
 };
@@ -62,11 +62,11 @@ class String : public Node {
   String(const std::string value) :
     value_(value),
     type_(inference::StringType()) {}
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const std::string value() const { return value_; }
   const inference::Type type() const { return type_; };
  private:
-  bool equals(const Node &b) const;
+  bool equals(const Node& b) const;
   const std::string value_;
   const inference::Type type_;
 };
@@ -79,12 +79,12 @@ class Program : public Node {
   void push_back(std::shared_ptr<NodeList> it) {
     nodes_->insert(nodes_->end(), it->begin(), it->end());
   }
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const std::shared_ptr<NodeList> nodes() const { return nodes_; }
   const inference::Type type() const { return nodes_->size() > 0 ?
-      nodes_->back()->type() : inference::Type(""); }
+      nodes_->back()->type() : inference::Type(inference::NoType()); }
  private:
-  bool equals(const Node &b) const;
+  bool equals(const Node& b) const;
   std::shared_ptr<NodeList> nodes_;
 };
 
@@ -94,12 +94,12 @@ class Argument : public Node {
            const std::shared_ptr<Node> expression) :
     identifier_(ident),
     expression_(expression) {}
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<Node> expression() const { return expression_; }
   const inference::Type type() const { return identifier_->type(); }
  private:
-  bool equals(const Node &b) const;
+  bool equals(const Node& b) const;
   const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<Node> expression_;
 };
@@ -113,7 +113,7 @@ class Function : public Node {
     arguments_(arguments),
     program_(program),
     type_(type) {}
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
   const inference::Type type() const { return type_; }
@@ -130,12 +130,12 @@ class Application : public Node {
               std::shared_ptr<ArgumentList> arguments) :
     identifier_(ident),
     arguments_(arguments) {}
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const inference::Type type() const { return identifier_->type(); }
  private:
-  bool equals(const Node &b) const;
+  bool equals(const Node& b) const;
   const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<ArgumentList> arguments_;
 };
@@ -153,13 +153,13 @@ class Conditional : public Node {
     expression_(expression),
     true_block_(true_block),
     false_block_(std::make_shared<Program>()) {}
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const std::shared_ptr<Node> expression() const { return expression_; }
   const std::shared_ptr<Program> true_block() const { return true_block_; }
   const std::shared_ptr<Program> false_block() const { return false_block_; }
   const inference::Type type() const { return true_block_->type(); }
  private:
-  bool equals(const Node &b) const;
+  bool equals(const Node& b) const;
   const std::shared_ptr<Node> expression_;
   const std::shared_ptr<Program> true_block_;
   const std::shared_ptr<Program> false_block_;
@@ -180,13 +180,15 @@ class Operation : public Node {
     lhs_(lhs),
     rhs_(rhs),
     op_(op) {}
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const std::shared_ptr<Node> left() const { return lhs_; }
   const std::shared_ptr<Node> right() const { return rhs_; }
   Ops operation() const { return op_; }
-  const inference::Type type() const { return inference::Type("Number"); }
+  const inference::Type type() const {
+    return inference::Type(inference::NumberType());
+  }
  private:
-  bool equals(const Node &b) const;
+  bool equals(const Node& b) const;
   const std::shared_ptr<Node> lhs_;
   const std::shared_ptr<Node> rhs_;
   const Ops op_;
@@ -198,12 +200,12 @@ class Declaration : public Node {
               std::shared_ptr<Node> expression) :
     identifier_(ident),
     expression_(expression) {}
-  void accept(Visitor &v) const;
+  void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<Node> expression() const { return expression_; }
   const inference::Type type() const { return identifier_->type(); }
  private:
-  bool equals(const Node &b) const;
+  bool equals(const Node& b) const;
   const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<Node> expression_;
 };

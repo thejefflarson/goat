@@ -32,7 +32,8 @@ private:
   bool equals(const AbstractType &) const { return true; };
 };
 
-class TypeVariable : AbstractType {
+class TypeVariable : public AbstractType {
+public:
   TypeVariable(std::string id) :
     id_(id) {}
 private:
@@ -40,18 +41,21 @@ private:
   std::string id_;
 };
 
-class NumberType : AbstractType {};
-class StringType : AbstractType {};
-class BoolType : AbstractType {};
+class NumberType : public AbstractType {};
+class StringType : public AbstractType {};
+class BoolType : public AbstractType {};
+class NoType : public AbstractType {};
 
 class FunctionType;
 using Type = util::Variant<TypeVariable,
                            NumberType,
                            StringType,
                            BoolType,
+                           NoType,
                            FunctionType>;
 
-class FunctionType : AbstractType {
+class FunctionType : public AbstractType {
+public:
   FunctionType(std::vector<Type> types, TypeVariable ret) :
     types_(types),
     ret_(ret) {}
