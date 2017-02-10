@@ -103,6 +103,8 @@ bool program(std::string program, std::shared_ptr<Node> a) {
 
 void test_literals() {
   TypeFactory typer;
+  Identifier ident = Identifier("a", typer.next());
+  ok(ident.type().is<TypeVariable>(), "Returns the right type.");
   ok(program("1", make_shared<Number>(1)), "Parses a number");
   ok(program("a", make_shared<Identifier>("a", typer.next())),
      "Parses an identifier");
