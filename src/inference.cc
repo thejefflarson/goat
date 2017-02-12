@@ -37,11 +37,10 @@ void TypingVisitor::visit(const String &string) {
 }
 
 void TypingVisitor::visit(const Program &program) {
-
+  util::list_accept(program.nodes(), *this);
 }
 
 void TypingVisitor::visit(const Argument &argument) {
-  assert(argument.type().is<inference::TypeVariable>());
   monomorphic_.insert(argument.type());
 }
 
@@ -50,19 +49,38 @@ void TypingVisitor::visit(const Function &function) {
   util::list_accept(function.arguments(), *this);
   function.program()->accept(*this);
   monomorphic_ = before;
+
+  for(auto i : *function.arguments()) {
+    std::shared_ptr<Identifier> ident = i->identifier();
+    Type var = assumptions_.find(ident->value())->second;
+    constraints_.insert(Constraint(Relation::Equality, { ident->type(), var }));
+    assumptions_.erase(ident->value());
+  }
 }
 
 void TypingVisitor::visit(const Application &application) {
+  // invariant: this needs to be a function type.
+  assert(application.type().is<inference::FunctionType>());
+  inference::FunctionType type = application.type().get<inference::FunctionType>();
+  // invariant: these need to be the same size.
+  assert(application.arguments()->size() != type.types().size());
+
+  size_t j = 0;
   for(auto i : *application.arguments()) {
-    i->accept(*this);
+    j++;
+    constraints_.insert(Constraint(Relation::Equality,
+                                   { type.types().at(j),
+                                       i->type() }));
   }
-  constraints_.insert(Constraint(Equality,
+  constraints_.insert(Constraint(Relation::Equality,
                                  { application.identifier()->type(),
                                      application.type() }));
 }
 
 void TypingVisitor::visit(const Conditional &conditional) {
-
+  constraints_.insert(Constraint(Relation::Equality,
+                                 { conditional.true_type(),
+                                     conditional.false_type()}));
 }
 
 
@@ -71,5 +89,8 @@ void TypingVisitor::visit(const Operation &operation) {
 }
 
 void TypingVisitor::visit(const Declaration &declaration) {
-
+  constraints_.insert(Constraint(Relation::Implicit,
+                                  { declaration.identifier()->type(),
+                                      declaration.expression()->type() },
+                                  monomorphic_));
 }

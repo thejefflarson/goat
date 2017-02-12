@@ -1,11 +1,13 @@
 #ifndef GOAT_NODE_HH_
 #define GOAT_NODE_HH_
 
+#include <cassert>
+#include <iostream>
+#include <memory>
 #include <stdint.h>
 #include <string>
 #include <vector>
-#include <memory>
-#include <iostream>
+
 #include "inference.hh"
 
 namespace goat {
@@ -45,9 +47,9 @@ class Number : public Node {
 class Identifier : public Node {
  public:
   Identifier(const std::string value,
-             inference::Type type) :
+             inference::TypeVariable type) :
     value_(value),
-    type_(type) {}
+    type_(std::forward<inference::TypeVariable>(type)) {}
   void accept(Visitor& v) const;
   const std::string value() const { return value_; }
   const inference::Type type() const { return type_; };
@@ -109,10 +111,10 @@ class Function : public Node {
  public:
   Function(const std::shared_ptr<ArgumentList> arguments,
            const std::shared_ptr<Program> program,
-           inference::Type type) :
+           inference::FunctionType type) :
     arguments_(arguments),
     program_(program),
-    type_(type) {}
+    type_(std::forward<inference::FunctionType>(type)) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
@@ -127,17 +129,20 @@ class Function : public Node {
 class Application : public Node {
  public:
   Application(std::shared_ptr<Identifier> ident,
-              std::shared_ptr<ArgumentList> arguments) :
+              std::shared_ptr<ArgumentList> arguments,
+              inference::TypeVariable type) :
     identifier_(ident),
-    arguments_(arguments) {}
+    arguments_(arguments),
+    type_(std::forward<inference::TypeVariable>(type)) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
-  const inference::Type type() const { return identifier_->type(); }
+  const inference::Type type() const { return type_; }
  private:
   bool equals(const Node& b) const;
   const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<ArgumentList> arguments_;
+  const inference::Type type_;
 };
 
 class Conditional : public Node {
@@ -157,7 +162,9 @@ class Conditional : public Node {
   const std::shared_ptr<Node> expression() const { return expression_; }
   const std::shared_ptr<Program> true_block() const { return true_block_; }
   const std::shared_ptr<Program> false_block() const { return false_block_; }
-  const inference::Type type() const { return true_block_->type(); }
+  const inference::Type type() const { return true_type(); }
+  const inference::Type true_type() const { return true_block_->type(); }
+  const inference::Type false_type() const { return true_block_->type(); }
  private:
   bool equals(const Node& b) const;
   const std::shared_ptr<Node> expression_;

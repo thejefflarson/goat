@@ -145,7 +145,7 @@ void test_function() {
                                            Addition)));
   auto application = make_shared<Application>(
     make_shared<Identifier>("a", typer.next()),
-    args);
+    args, typer.next());
   ok(program("a(c: b, d: 1+2)", application), "Parses a function application");
 
   args = make_shared<ArgumentList>();
@@ -155,7 +155,8 @@ void test_function() {
   args->push_back(make_shared<Argument>(make_shared<Identifier>("b",
                                                                 typer.next()),
                                         make_shared<Number>(20)));
-  auto fn = make_shared<Function>(args, make_shared<Program>(), typer.next());
+  auto fn = make_shared<Function>(args, make_shared<Program>(), FunctionType({
+        typer.next(), typer.next()}, typer.next()));
   ok(program("program(a: 10, b: 20) do done", fn),
      "Parses a function declaration");
 }

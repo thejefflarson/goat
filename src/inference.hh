@@ -1,8 +1,9 @@
 #ifndef SRC_INFERENCE_HH_
 #define SRC_INFERENCE_HH_
 
-#include <set>
+#include <cassert>
 #include <memory>
+#include <set>
 #include <string>
 #include <typeinfo>
 #include <unordered_map>
@@ -74,18 +75,24 @@ class TypeFactory {
   uint32_t last_;
 };
 
-enum ConstraintRelation {
+enum class Relation {
   Equality,
-  ExplicitInstance,
-  ImplicitInstance
+  Explicit,
+  Implicit
 };
 
 class Constraint {
  public:
-  Constraint(ConstraintRelation relation,
+  Constraint(Relation relation,
              std::pair<Type, Type> variables) :
     relation_(relation),
     variables_(variables) {}
+  Constraint(Relation relation,
+             std::pair<Type, Type> variables,
+             std::set<Type> monomorphic) :
+    relation_(relation),
+    variables_(variables),
+    monomorphic_(monomorphic) { assert(relation == Relation::Implicit); }
   bool operator==(const Constraint &b) const {
     return relation_ == b.relation_ &&
       variables_ == b.variables_;
@@ -99,9 +106,11 @@ class Constraint {
     return relation_ != b.relation_ && variables_ < b.variables_;
   }
  private:
-  ConstraintRelation relation_;
+  Relation relation_;
   std::pair<Type, Type> variables_;
+  std::set<Type> monomorphic_;
 };
+
 
 
 class TypingVisitor : public node::Visitor {
