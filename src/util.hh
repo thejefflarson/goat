@@ -1,8 +1,10 @@
 #ifndef SRC_UTIL_H_
 #define SRC_UTIL_H_
 
+#include <algorithm>
 #include <memory>
 #include <new>
+#include <tuple>
 #include <typeindex>
 #include <type_traits>
 #include <vector>
@@ -114,7 +116,7 @@ struct less {
 
 template <typename Variant, typename Compare>
 class Comparer {
-public:
+ public:
   explicit Comparer(const Variant& variant) :
     variant_(variant) {}
   Comparer& operator=(const Comparer&) = delete;
@@ -125,7 +127,7 @@ public:
     return Compare().call(value, other);
   }
 
-private:
+ private:
   Variant const& variant_;
 };
 
@@ -144,7 +146,7 @@ struct is_any<T, First, Rest...>
 
 template <typename... Types>
 class Variant {
-public:
+ public:
   Variant() : type_(typeid(first)) {
     new (&data_) first();
   };
@@ -225,7 +227,7 @@ public:
   ~Variant() {
     helper_t::destroy(type_, &data_);
   }
-private:
+ private:
   void move_assign(const Variant<Types...> &&other) {
     helper_t::destroy(type_, &data_);
     helper_t::move(other.type_, &other.data_, &data_);

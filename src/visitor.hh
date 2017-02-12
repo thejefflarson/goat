@@ -15,9 +15,10 @@ class Conditional;
 class Operation;
 class Declaration;
 
+
 class Visitor {
  public:
-  virtual ~Visitor() {};
+  virtual ~Visitor() {}
   virtual void visit(const Number &number) = 0;
   virtual void visit(const Identifier &identifier) = 0;
   virtual void visit(const String &string) = 0;

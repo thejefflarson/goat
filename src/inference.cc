@@ -1,9 +1,11 @@
-#include "inference.hh"
-#include "node.hh"
-#include "util.hh"
+#include <cassert>
 #include <cstdint>
 #include <memory>
 #include <string>
+
+#include "inference.hh"
+#include "node.hh"
+#include "util.hh"
 
 using namespace goat;
 using namespace goat::inference;
@@ -39,6 +41,7 @@ void TypingVisitor::visit(const Program &program) {
 }
 
 void TypingVisitor::visit(const Argument &argument) {
+  assert(argument.type().is<inference::TypeVariable>());
   monomorphic_.insert(argument.type());
 }
 
@@ -52,12 +55,10 @@ void TypingVisitor::visit(const Function &function) {
 void TypingVisitor::visit(const Application &application) {
   for(auto i : *application.arguments()) {
     i->accept(*this);
-    //  constraints.insert()
   }
-
-  //constraints_.insert(Constraint(Equality,
-  //                               { application.ident()->type(),
-  //                                 typer_.next() }));
+  constraints_.insert(Constraint(Equality,
+                                 { application.identifier()->type(),
+                                     application.type() }));
 }
 
 void TypingVisitor::visit(const Conditional &conditional) {

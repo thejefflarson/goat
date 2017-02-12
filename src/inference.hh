@@ -6,6 +6,7 @@
 #include <string>
 #include <typeinfo>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include "util.hh"
 #include "visitor.hh"
@@ -28,15 +29,15 @@ class AbstractType {
   bool operator<(const AbstractType &b) const {
     return *this != b;
   }
-private:
+ private:
   bool equals(const AbstractType &) const { return true; };
 };
 
 class TypeVariable : public AbstractType {
-public:
+ public:
   TypeVariable(std::string id) :
     id_(id) {}
-private:
+ private:
   bool equals(const TypeVariable &b) const { return id_ == b.id_; }
   std::string id_;
 };
@@ -55,11 +56,12 @@ using Type = util::Variant<TypeVariable,
                            FunctionType>;
 
 class FunctionType : public AbstractType {
-public:
+ public:
   FunctionType(std::vector<Type> types, TypeVariable ret) :
     types_(types),
     ret_(ret) {}
-private:
+  const std::vector<Type>& types() { return types_; };
+ private:
   std::vector<Type> types_;
   TypeVariable ret_;
 };
@@ -84,13 +86,18 @@ class Constraint {
              std::pair<Type, Type> variables) :
     relation_(relation),
     variables_(variables) {}
-    bool operator==(const Constraint &b) const {
-      return relation_ == b.relation_ &&
-        variables_ == b.variables_;
-    }
-    bool operator!=(const Constraint&b) const {
-      return !(*this == b);
-    }
+  bool operator==(const Constraint &b) const {
+    return relation_ == b.relation_ &&
+      variables_ == b.variables_;
+  }
+
+  bool operator!=(const Constraint &b) const {
+    return !(*this == b);
+  }
+
+  bool operator<(const Constraint &b) const {
+    return relation_ != b.relation_ && variables_ < b.variables_;
+  }
  private:
   ConstraintRelation relation_;
   std::pair<Type, Type> variables_;
@@ -98,11 +105,12 @@ class Constraint {
 
 
 class TypingVisitor : public node::Visitor {
-public:
+ public:
   TypingVisitor() :
     monomorphic_(),
     constraints_(),
-    assumptions_() {};
+    assumptions_(),
+    typer_() {}
   void visit(const node::Number &number);
   void visit(const node::Identifier &identifier);
   void visit(const node::String &string);
@@ -113,10 +121,11 @@ public:
   void visit(const node::Conditional &conditional);
   void visit(const node::Operation &operation);
   void visit(const node::Declaration &declaration);
-private:
+ private:
   std::set<Type> monomorphic_;
   std::set<Constraint> constraints_;
   std::unordered_map<std::string, Type> assumptions_;
+  TypeFactory typer_;
 };
 
 
