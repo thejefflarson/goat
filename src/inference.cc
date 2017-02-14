@@ -42,6 +42,8 @@ void TypingVisitor::visit(const Program &program) {
 
 void TypingVisitor::visit(const Argument &argument) {
   monomorphic_.insert(argument.type());
+  argument.identifier()->accept(*this);
+  argument.expression()->accept(*this);
 }
 
 void TypingVisitor::visit(const Function &function) {
@@ -56,6 +58,7 @@ void TypingVisitor::visit(const Function &function) {
     constraints_.insert(Constraint(Relation::Equality, { ident->type(), var }));
     assumptions_.erase(ident->value());
   }
+  function.program()->accept(*this);
 }
 
 void TypingVisitor::visit(const Application &application) {
@@ -75,17 +78,22 @@ void TypingVisitor::visit(const Application &application) {
   constraints_.insert(Constraint(Relation::Equality,
                                  { application.identifier()->type(),
                                      application.type() }));
+  util::list_accept(application.arguments(), *this);
 }
 
 void TypingVisitor::visit(const Conditional &conditional) {
   constraints_.insert(Constraint(Relation::Equality,
                                  { conditional.true_type(),
                                      conditional.false_type()}));
+  conditional.expression()->accept(*this);
+  conditional.true_block()->accept(*this);
+  conditional.false_block()->accept(*this);
 }
 
 
 void TypingVisitor::visit(const Operation &operation) {
-
+  operation.left()->accept(*this);
+  operation.right()->accept(*this);
 }
 
 void TypingVisitor::visit(const Declaration &declaration) {
@@ -93,4 +101,6 @@ void TypingVisitor::visit(const Declaration &declaration) {
                                   { declaration.identifier()->type(),
                                       declaration.expression()->type() },
                                   monomorphic_));
+  declaration.identifier()->accept(*this);
+  if(declaration.expression()) declaration.expression()->accept(*this);
 }

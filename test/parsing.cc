@@ -182,6 +182,27 @@ void test_conditional() {
                true_block)), "Parses a true branch conditional");
 }
 
+void test_constraints() {
+  std::shared_ptr<Program> p;
+  auto s = std::stringstream("a = 10 b = 20 c = a + b d = program(a:1, b:1) do a + b done");
+  int r = goat::driver::parse(&s, p);
+
+  if(r != 0) {
+    std::cout << "ugh!" << std::endl;
+  };
+
+  auto visitor = TypingVisitor();
+  visitor.visit(*p);
+  auto constraints = visitor.constraints();
+  for(auto i : constraints) {
+    Type first = i.variables().first;
+    Type second = i.variables().second;
+    if(first.is<TypeVariable>())
+      std::cout << first.get<TypeVariable>().id() << std::endl;
+  }
+}
+
+
 int main() {
   start_test;
   test_empty();
@@ -189,4 +210,6 @@ int main() {
   test_math();
   test_function();
   test_conditional();
+  // eventually these should be in their own file
+  test_constraints();
 }

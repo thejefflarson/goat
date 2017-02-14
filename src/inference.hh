@@ -38,6 +38,7 @@ class TypeVariable : public AbstractType {
  public:
   TypeVariable(std::string id) :
     id_(id) {}
+  const std::string& id() const { return id_; }
  private:
   bool equals(const TypeVariable &b) const { return id_ == b.id_; }
   std::string id_;
@@ -105,6 +106,9 @@ class Constraint {
   bool operator<(const Constraint &b) const {
     return relation_ != b.relation_ && variables_ < b.variables_;
   }
+
+  Relation relation() { return relation_; }
+  std::pair<Type, Type> variables() { return variables_; }
  private:
   Relation relation_;
   std::pair<Type, Type> variables_;
@@ -130,6 +134,7 @@ class TypingVisitor : public node::Visitor {
   void visit(const node::Conditional &conditional);
   void visit(const node::Operation &operation);
   void visit(const node::Declaration &declaration);
+  const std::set<Constraint>& constraints() const { return constraints_; }
  private:
   std::set<Type> monomorphic_;
   std::set<Constraint> constraints_;
