@@ -13,7 +13,7 @@ using namespace goat::node;
 
 std::string alpha = "abcdefghijklmnopqrstuvwxyz";
 TypeVariable TypeFactory::next() {
-  last_++;
+  if(last_ == 0){ last_++; return TypeVariable("a"); }
   uint32_t current = last_;
   std::string accum;
   while(current > 0) {
@@ -21,6 +21,7 @@ TypeVariable TypeFactory::next() {
     accum.push_back(alpha[index]);
     current /= alpha.length();
   }
+  last_++;
   return TypeVariable(accum);
 }
 
