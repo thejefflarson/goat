@@ -62,8 +62,12 @@ class FunctionType : public AbstractType {
   FunctionType(std::vector<Type> types, TypeVariable ret) :
     types_(types),
     ret_(ret) {}
-  const std::vector<Type>& types() { return types_; };
+  const std::vector<Type>& types() const { return types_; };
+  const TypeVariable ret() const { return ret_; }
  private:
+  bool equals(FunctionType &b) const {
+    return types_ == b.types_ && ret_ == b.ret_;
+  }
   std::vector<Type> types_;
   TypeVariable ret_;
 };
@@ -104,7 +108,7 @@ class Constraint {
   }
 
   bool operator<(const Constraint &b) const {
-    return relation_ != b.relation_ && variables_ < b.variables_;
+    return variables_ < b.variables_;
   }
 
   Relation relation() { return relation_; }
@@ -114,8 +118,6 @@ class Constraint {
   std::pair<Type, Type> variables_;
   std::set<Type> monomorphic_;
 };
-
-
 
 class TypingVisitor : public node::Visitor {
  public:

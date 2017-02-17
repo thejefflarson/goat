@@ -145,7 +145,7 @@ void test_function() {
                                            Addition)));
   auto application = make_shared<Application>(
     make_shared<Identifier>("a", typer.next()),
-    args, typer.next());
+    args, FunctionType({typer.next(), typer.next()}, typer.next()));
   ok(program("a(c: b, d: 1+2)", application), "Parses a function application");
 
   args = make_shared<ArgumentList>();
@@ -155,8 +155,7 @@ void test_function() {
   args->push_back(make_shared<Argument>(make_shared<Identifier>("b",
                                                                 typer.next()),
                                         make_shared<Number>(20)));
-  auto fn = make_shared<Function>(args, make_shared<Program>(), FunctionType({
-        typer.next(), typer.next()}, typer.next()));
+  auto fn = make_shared<Function>(args, make_shared<Program>(), typer.next());
   ok(program("program(a: 10, b: 20) do done", fn),
      "Parses a function declaration");
 }
@@ -184,22 +183,40 @@ void test_conditional() {
 
 void test_constraints() {
   std::shared_ptr<Program> p;
-  auto s = std::stringstream("d = program(a: 1, b: 1) do c = a + b done a = d(a: a, b: b) ");
+  auto s = std::stringstream("b = 1 a = 1");
   int r = goat::driver::parse(&s, p);
 
   if(r != 0) {
     std::cout << "ugh!" << std::endl;
     return;
   };
-
+  auto printer = PrintingVisitor();
+  printer.visit(*p);
   auto visitor = TypingVisitor();
   visitor.visit(*p);
   auto constraints = visitor.constraints();
+  std::cout << constraints.size();
   for(auto i : constraints) {
     Type first = i.variables().first;
     Type second = i.variables().second;
-    if(first.is<TypeVariable>())
-      std::cout << first.get<TypeVariable>().id() << std::endl;
+    assert(first.is<TypeVariable>());
+    std::cout << first.get<TypeVariable>().id() << " = ";
+
+    if(second.is<FunctionType>()) {
+      std::cout << "returning " << second.get<FunctionType>().ret().id();
+    } else if(second.is<NumberType>()) {
+      std::cout << "Number";
+    } else if(second.is<TypeVariable>()) {
+      std::cout << second.get<TypeVariable>().id();
+    } else if(second.is<NoType>()) {
+      std::cout << "()";
+    } else if(second.is<StringType>()) {
+      std::cout << "String";
+    } else if(second.is<BoolType>()) {
+      std::cout << "Bool";
+    }
+
+    std::cout << std::endl;
   }
 }
 
@@ -212,5 +229,5 @@ int main() {
   test_function();
   test_conditional();
   // eventually these should be in their own file
-  //test_constraints();
+  test_constraints();
 }

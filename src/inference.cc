@@ -54,11 +54,11 @@ void TypingVisitor::visit(const Function &function) {
 
   for(auto i : *function.arguments()) {
     std::shared_ptr<Identifier> ident = i->identifier();
+    if(assumptions_.find(ident->value()) == assumptions_.end()) std::cout << "uhoh" << std::endl;
     Type var = assumptions_.find(ident->value())->second;
     constraints_.insert(Constraint(Relation::Equality, { ident->type(), var }));
     assumptions_.erase(ident->value());
   }
-  function.program()->accept(*this);
 }
 
 void TypingVisitor::visit(const Application &application) {
@@ -66,18 +66,20 @@ void TypingVisitor::visit(const Application &application) {
   assert(application.type().is<inference::FunctionType>());
   inference::FunctionType type = application.type().get<inference::FunctionType>();
   // invariant: these need to be the same size.
-  assert(application.arguments()->size() != type.types().size());
+  assert(application.arguments()->size() == type.types().size());
 
   size_t j = 0;
   for(auto i : *application.arguments()) {
-    j++;
     constraints_.insert(Constraint(Relation::Equality,
                                    { type.types().at(j),
                                        i->type() }));
+    j++;
   }
-  constraints_.insert(Constraint(Relation::Equality,
+  auto t = constraints_.insert(Constraint(Relation::Equality,
                                  { application.identifier()->type(),
                                      application.type() }));
+  std::cout << t.second << std::endl;
+  std::cout << constraints_.size() << std::endl;
   util::list_accept(application.arguments(), *this);
 }
 
@@ -101,6 +103,7 @@ void TypingVisitor::visit(const Declaration &declaration) {
                                   { declaration.identifier()->type(),
                                       declaration.expression()->type() },
                                   monomorphic_));
+
   declaration.identifier()->accept(*this);
   if(declaration.expression()) declaration.expression()->accept(*this);
 }

@@ -131,18 +131,18 @@ arguments:
 ;
 
 application:
-  ident "(" arguments ")" { $$ = std::make_shared<node::Application>($ident, $arguments, typer.next()); }
-;
-
-function:
-  PROGRAM "(" arguments ")" DO program DONE {
+  ident "(" arguments ")" {
     std::vector<inference::Type> types;
     for(auto i : * $arguments) {
       types.push_back(i->type());
     }
     inference::FunctionType type = inference::FunctionType(types, typer.next());
-    $$ = std::make_shared<node::Function>($arguments, $program, type);
+    $$ = std::make_shared<node::Application>($ident, $arguments, type);
   }
+;
+
+function:
+  PROGRAM "(" arguments ")" DO program DONE { $$ = std::make_shared<node::Function>($arguments, $program, typer.next()); }
 ;
 
 conditional:
