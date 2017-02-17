@@ -181,9 +181,9 @@ void test_conditional() {
                true_block)), "Parses a true branch conditional");
 }
 
-void test_constraints() {
+void test_inference() {
   std::shared_ptr<Program> p;
-  auto s = std::stringstream("b = 1 a = 1");
+  auto s = std::stringstream("b = 1 a = 1 c = program(a:1, b:1) do a + b done c(a: a, b: b)");
   int r = goat::driver::parse(&s, p);
 
   if(r != 0) {
@@ -220,6 +220,15 @@ void test_constraints() {
   }
 }
 
+void test_constraints() {
+  auto constraints = std::set<Constraint>();
+  auto typer = TypeFactory();
+  auto did = constraints.insert(Constraint(Relation::Equality, {typer.next(), typer.next()}));
+  ok(did.second, "Inserted a constraint");
+  did = constraints.insert(Constraint(Relation::Equality, {typer.next(), typer.next()}));
+  ok(did.second, "Inserted another constraint");
+}
+
 
 int main() {
   start_test;
@@ -229,5 +238,6 @@ int main() {
   test_function();
   test_conditional();
   // eventually these should be in their own file
+  test_inference();
   test_constraints();
 }

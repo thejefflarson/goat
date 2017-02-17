@@ -5,6 +5,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <iostream>
 #include <typeinfo>
 #include <unordered_map>
 #include <utility>
@@ -28,10 +29,12 @@ class AbstractType {
     return !(*this == b);
   }
   bool operator<(const AbstractType &b) const {
-    return *this != b;
+    if(typeid(*this) != typeid(b)) return true;
+    return less(b);
   }
  private:
-  bool equals(const AbstractType &) const { return true; };
+  virtual bool equals(const AbstractType &b) const { return true; }
+  virtual bool less(const AbstractType &b) const { return false; }
 };
 
 class TypeVariable : public AbstractType {
@@ -40,7 +43,14 @@ class TypeVariable : public AbstractType {
     id_(id) {}
   const std::string& id() const { return id_; }
  private:
-  bool equals(const TypeVariable &b) const { return id_ == b.id_; }
+  bool equals(const AbstractType &b) const {
+    auto c = *static_cast<const TypeVariable *>(&b);
+    return id_ == c.id_;
+  }
+  bool less(const AbstractType &b) const {
+    auto c = *static_cast<const TypeVariable *>(&b);
+    return id_ < c.id_;
+  }
   std::string id_;
 };
 
@@ -65,8 +75,13 @@ class FunctionType : public AbstractType {
   const std::vector<Type>& types() const { return types_; };
   const TypeVariable ret() const { return ret_; }
  private:
-  bool equals(FunctionType &b) const {
-    return types_ == b.types_ && ret_ == b.ret_;
+  bool equals(const AbstractType &b) const {
+    auto c = *static_cast<const FunctionType *>(&b);
+    return types_ == c.types_ && ret_ == c.ret_;
+  }
+  bool less(const AbstractType &b) const {
+    auto c = *static_cast<const FunctionType *>(&b);
+    return types_ < c.types_ || ret_ < c.ret_;
   }
   std::vector<Type> types_;
   TypeVariable ret_;
@@ -74,7 +89,7 @@ class FunctionType : public AbstractType {
 
 class TypeFactory {
  public:
-  TypeFactory() : last_(1) {}
+  TypeFactory() : last_(0) {}
   TypeVariable next();
  private:
   uint32_t last_;
