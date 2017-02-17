@@ -184,11 +184,12 @@ void test_conditional() {
 
 void test_constraints() {
   std::shared_ptr<Program> p;
-  auto s = std::stringstream("a = 10 b = 20 c = a + b d = program(a:1, b:1) do a + b done");
+  auto s = std::stringstream("d = program(a: 1, b: 1) do c = a + b done a = d(a: a, b: b) ");
   int r = goat::driver::parse(&s, p);
 
   if(r != 0) {
     std::cout << "ugh!" << std::endl;
+    return;
   };
 
   auto visitor = TypingVisitor();
@@ -211,5 +212,5 @@ int main() {
   test_function();
   test_conditional();
   // eventually these should be in their own file
-  test_constraints();
+  //test_constraints();
 }

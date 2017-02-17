@@ -11,11 +11,11 @@ def configure(conf):
         uselib_store='G',
         cxxflags=['-std=c++14', '-g', '-Wall', '-O0',
                   '-fsanitize=address',
-                  '-fno-omit-frame-pointer',
-                  '-fprofile-instr-generate',
-                  '-fprofile-arcs',
-                  '-ftest-coverage'],
-        ldflags=['-fsanitize=address', '--coverage']
+                  '-fno-omit-frame-pointer'],
+                  #'-fprofile-instr-generate',
+                  #'-fprofile-arcs',
+                  #'-ftest-coverage'],
+        ldflags=['-fsanitize=address']#, '--coverage']
     )
     conf.load("clang_compilation_database", tooldir="./tools/")
 
