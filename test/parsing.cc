@@ -183,41 +183,17 @@ void test_conditional() {
 
 void test_inference() {
   std::shared_ptr<Program> p;
-  auto s = std::stringstream("b = 1 a = 1 c = program(a:1, b:1) do a + b done c(a: a, b: b)");
+  auto s = std::stringstream("a = 1");
   int r = goat::driver::parse(&s, p);
 
   if(r != 0) {
     std::cout << "ugh!" << std::endl;
     return;
   };
-  auto printer = PrintingVisitor();
-  printer.visit(*p);
   auto visitor = TypingVisitor();
   visitor.visit(*p);
   auto constraints = visitor.constraints();
-  std::cout << constraints.size();
-  for(auto i : constraints) {
-    Type first = i.variables().first;
-    Type second = i.variables().second;
-    assert(first.is<TypeVariable>());
-    std::cout << first.get<TypeVariable>().id() << " = ";
-
-    if(second.is<FunctionType>()) {
-      std::cout << "returning " << second.get<FunctionType>().ret().id();
-    } else if(second.is<NumberType>()) {
-      std::cout << "Number";
-    } else if(second.is<TypeVariable>()) {
-      std::cout << second.get<TypeVariable>().id();
-    } else if(second.is<NoType>()) {
-      std::cout << "()";
-    } else if(second.is<StringType>()) {
-      std::cout << "String";
-    } else if(second.is<BoolType>()) {
-      std::cout << "Bool";
-    }
-
-    std::cout << std::endl;
-  }
+  ok(constraints.size() == 1, "Generates constraints");
 }
 
 void test_constraints() {
