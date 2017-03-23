@@ -152,6 +152,7 @@ class TypingVisitor : public node::Visitor {
   void visit(const node::Operation &operation);
   void visit(const node::Declaration &declaration);
   const std::set<Constraint>& constraints() const { return constraints_; }
+  std::set<Constraints> solve();
  private:
   std::set<Type> monomorphic_;
   std::set<Constraint> constraints_;

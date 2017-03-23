@@ -108,3 +108,19 @@ void TypingVisitor::visit(const Declaration &declaration) {
   declaration.identifier()->accept(*this);
   if(declaration.expression()) declaration.expression()->accept(*this);
 }
+
+std::set<Constraint> TypingVisitor::solve() {
+  std::set<Constraint> ret;
+  auto working_set = constraints_;
+  for(auto it : working_set) {
+    switch(it.relation()) {
+    case Relation::Equality:
+      ret.insert(it);
+      break;
+    case Relation::Explicit:
+      break;
+    case Relation::Implicit:
+      break;
+    }
+  }
+}
