@@ -115,6 +115,8 @@ std::set<Constraint> TypingVisitor::solve() {
   for(auto it : working_set) {
     switch(it.relation()) {
     case Relation::Equality:
+      // needs to be a mgu: http://www.mathcs.duq.edu/simon/Fall04/notes-7-4/node6.html
+      // http://www.cs.bu.edu/~snyder/publications/UnifChapter.pdf
       ret.insert(it);
       break;
     case Relation::Explicit:
