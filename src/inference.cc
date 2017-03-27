@@ -109,20 +109,63 @@ void TypingVisitor::visit(const Declaration &declaration) {
   if(declaration.expression()) declaration.expression()->accept(*this);
 }
 
-std::set<Constraint> TypingVisitor::solve() {
-  std::set<Constraint> ret;
+
+std::set<Substitution> unify(Constraint& relation) {
+  auto vars = relation.variables();
+  Type s = vars.first;
+  Type t = vars.second;
+  auto err = Substitution(TypeVariable("error"));
+
+  if(s == t)
+    return std::set<Substitution>();
+
+  if(s.is<TypeVariable>() && !t.is<TypeVariable>()) {
+    auto c = Constraint(Relation::Equality, {t, s});
+    return unify(c);
+  }
+
+  if(s.is<FunctionType>() && t.is<FunctionType>()) {
+    std::set<Substitution> ret;
+    const FunctionType &st = s.get<FunctionType>();
+    const FunctionType &tt = t.get<FunctionType>();
+    if(st.types().size() != tt.types().size()) {
+      ret.insert(err);
+      return ret;
+    }
+    auto ttiter = tt.types().begin();
+    for(auto sitter = st.types().begin(); sitter != st.types().end(); sitter++) {
+      auto constraint = Constraint(Relation::Equality, {*sitter, *ttiter});
+      auto result = unify(constraint);
+      ret.insert(result.begin(), result.end());
+      ttiter++;
+    }
+    return ret;
+  }
+
+  // occurs check
+}
+
+std::set<Substitution> TypingVisitor::solve() {
+  std::set<Substitution> ret;
   auto working_set = constraints_;
   for(auto it : working_set) {
     switch(it.relation()) {
-    case Relation::Equality:
-      // needs to be a mgu: http://www.mathcs.duq.edu/simon/Fall04/notes-7-4/node6.html
-      // http://www.cs.bu.edu/~snyder/publications/UnifChapter.pdf
-      ret.insert(it);
+    case Relation::Equality: {
+      auto unified = unify(it);
+      ret.insert(unified.begin(), unified.end());
       break;
+    }
     case Relation::Explicit:
       break;
     case Relation::Implicit:
       break;
     }
   }
+  auto error = Substitution(TypeVariable("error"));
+  if(ret.find(error) != ret.end()) {
+    auto err = std::set<Substitution>();
+    err.insert(error);
+    return err;
+  }
+  return ret;
 }

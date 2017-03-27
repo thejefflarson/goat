@@ -67,6 +67,11 @@ using Type = util::Variant<TypeVariable,
                            NoType,
                            FunctionType>;
 
+using ConcreteType = util::Variant<NoType,
+                                   NumberType,
+                                   StringType,
+                                   BoolType>;
+
 class FunctionType : public AbstractType {
  public:
   FunctionType(std::vector<Type> types, TypeVariable ret) :
@@ -134,6 +139,34 @@ class Constraint {
   std::set<Type> monomorphic_;
 };
 
+class Substitution {
+public:
+  Substitution(TypeVariable s, ConcreteType t) :
+    error_(false),
+    s_(s),
+    t_(t) {}
+  Substitution(TypeVariable s) :
+    error_(true),
+    s_(s),
+    t_() {}
+  bool is_error() { return error_; }
+  bool operator==(const Substitution &b) const {
+    return s_ == b.s_ && t_ == b.t_;
+  }
+
+  bool operator!=(const Substitution &b) const {
+    return !(*this == b);
+  }
+
+  bool operator<(const Substitution &b) const {
+    return s_ < b.s_ || t_ < b.t_;
+  }
+private:
+  bool error_;
+  TypeVariable s_;
+  ConcreteType t_;
+};
+
 class TypingVisitor : public node::Visitor {
  public:
   TypingVisitor() :
@@ -152,7 +185,7 @@ class TypingVisitor : public node::Visitor {
   void visit(const node::Operation &operation);
   void visit(const node::Declaration &declaration);
   const std::set<Constraint>& constraints() const { return constraints_; }
-  std::set<Constraints> solve();
+  std::set<Substitution> solve();
  private:
   std::set<Type> monomorphic_;
   std::set<Constraint> constraints_;
