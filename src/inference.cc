@@ -142,7 +142,9 @@ std::set<Substitution> unify(Constraint& relation) {
     return ret;
   }
 
-  // occurs check
+  // occurs check / eliminate rule
+
+  return {err};
 }
 
 std::set<Substitution> TypingVisitor::solve() {
