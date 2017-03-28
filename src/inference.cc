@@ -130,20 +130,27 @@ bool occurs(TypeVariable t, Type in) {
   }
 }
 
+Constraint substitute(TypeVariable s, Type t, Constraint& relation) {
+
+}
+
 std::set<Substitution> unify(Constraint& relation) {
   auto vars = relation.variables();
   Type s = vars.first;
   Type t = vars.second;
   auto err = Substitution(TypeVariable("error"));
 
+  // Delete rule
   if(s == t)
     return std::set<Substitution>();
 
+  // Orient rule
   if(s.is<TypeVariable>() && !t.is<TypeVariable>()) {
     auto c = Constraint(Relation::Equality, {t, s});
     return unify(c);
   }
 
+  // Decompose rule
   if(s.is<FunctionType>() && t.is<FunctionType>()) {
     std::set<Substitution> ret;
     const FunctionType &st = s.get<FunctionType>();
@@ -162,11 +169,14 @@ std::set<Substitution> unify(Constraint& relation) {
     return ret;
   }
 
-  // occurs check / eliminate rule
-  assert(s.is<TypeVariable>());
-  auto var = s.get<TypeVariable>();
-  if(!occurs(var, t)) {
-    // todo
+  // Eliminate rule
+  if(s.is<TypeVariable>()) {
+    auto var = s.get<TypeVariable>();
+    if(!occurs(var, t)) {
+      auto subst = substitute(var, t, relation);
+      auto res = unify(subst);
+      return {res.begin(), res.end()};
+    }
   }
   return {err};
 }

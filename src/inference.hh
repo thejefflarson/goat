@@ -67,11 +67,6 @@ using Type = util::Variant<TypeVariable,
                            NoType,
                            FunctionType>;
 
-using ConcreteType = util::Variant<NoType,
-                                   NumberType,
-                                   StringType,
-                                   BoolType>;
-
 class FunctionType : public AbstractType {
  public:
   FunctionType(std::vector<Type> types, TypeVariable ret) :
@@ -141,7 +136,7 @@ class Constraint {
 
 class Substitution {
 public:
-  Substitution(TypeVariable s, ConcreteType t) :
+  Substitution(TypeVariable s, Type t) :
     error_(false),
     s_(s),
     t_(t) {}
@@ -164,7 +159,7 @@ public:
 private:
   bool error_;
   TypeVariable s_;
-  ConcreteType t_;
+  Type t_;
 };
 
 class TypingVisitor : public node::Visitor {
