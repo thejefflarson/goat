@@ -163,6 +163,11 @@ std::set<Substitution> unify(Constraint& relation) {
   }
 
   // occurs check / eliminate rule
+  assert(s.is<TypeVariable>());
+  auto var = s.get<TypeVariable>();
+  if(!occurs(var, t)) {
+    // todo
+  }
   return {err};
 }
 
