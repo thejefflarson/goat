@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <type_traits>
 
 #include "inference.hh"
 #include "node.hh"
@@ -109,6 +110,25 @@ void TypingVisitor::visit(const Declaration &declaration) {
   if(declaration.expression()) declaration.expression()->accept(*this);
 }
 
+bool occurs(TypeVariable t, Type in) {
+  if(in.is<TypeVariable>()) {
+    return t == in.get<TypeVariable>();
+  } else if(in.is<NumberType>()
+            || in.is<StringType>()
+            || in.is<BoolType>()
+            || in.is<NoType>()) {
+    return false;
+  } else if(in.is<FunctionType>()) {
+    auto f = in.get<FunctionType>();
+    bool accum = true;
+    for(auto v : f.types()) {
+      accum = accum && occurs(t, v);
+    }
+    return accum;
+  } else {
+    return false; // TODO: report compiler error
+  }
+}
 
 std::set<Substitution> unify(Constraint& relation) {
   auto vars = relation.variables();
@@ -142,6 +162,7 @@ std::set<Substitution> unify(Constraint& relation) {
     return ret;
   }
 
+  //if
   // occurs check
 }
 
