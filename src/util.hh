@@ -212,6 +212,10 @@ class Variant {
      }
   }
 
+  bool operator!=(const Variant<Types...> &other) const {
+    return !(*this == other);
+  }
+
   bool operator<(const Variant<Types...> &other) const {
     if(type_ < other.type_) {
       return true;

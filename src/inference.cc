@@ -130,8 +130,38 @@ bool occurs(TypeVariable t, Type in) {
   }
 }
 
-Constraint substitute(TypeVariable s, Type t, Constraint& relation) {
+Constraint substitute(Type s, Type t) {
+  assert(s.is<TypeVariable>()); // TODO: report compiler error
+  if(t.is<TypeVariable>()) {
+    if(s == t) {
+      return Constraint(Relation::Equality, {s, s});
+    } else {
+      return Constraint(Relation::Equality, {s, t});
+    }
+  } else if(t.is<NumberType>()
+            || t.is<StringType>()
+            || t.is<BoolType>()
+            || t.is<NoType>()) {
+    return Constraint(Relation::Equality, {s, t});
+  } else if(t.is<FunctionType>()) {
+    std::vector<Type> args;
+    auto fn = t.get<FunctionType>();
+    for(auto v : fn.types()) {
+      if(s != v) {
+        args.push_back(v);
+      } else {
+        args.push_back(s);
+      }
+    }
 
+    auto f = FunctionType(args, s == fn.ret() ? s : fn.ret());
+    return Constraint(Relation::Equality, {s, Type(f)})
+  } else {
+    assert("Logic error.");
+    // silence warnings
+    auto e = TypeVariable("err");
+    return Constraint(Relation::Equality, {TypeVariable("Err"), })
+  }
 }
 
 std::set<Substitution> unify(Constraint& relation) {
@@ -173,7 +203,7 @@ std::set<Substitution> unify(Constraint& relation) {
   if(s.is<TypeVariable>()) {
     auto var = s.get<TypeVariable>();
     if(!occurs(var, t)) {
-      auto subst = substitute(var, t, relation);
+      auto subst = substitute(var, t);
       auto res = unify(subst);
       return {res.begin(), res.end()};
     }
