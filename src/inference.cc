@@ -154,13 +154,13 @@ Constraint substitute(Type s, Type t) {
       }
     }
 
-    auto f = FunctionType(args, s == fn.ret() ? s : fn.ret());
-    return Constraint(Relation::Equality, {s, Type(f)})
+    auto ret = std::make_shared<Type>(s == fn.ret() ? s : fn.ret());
+    return Constraint(Relation::Equality, {s, FunctionType(args, ret)});
   } else {
     assert("Logic error.");
     // silence warnings
     auto e = TypeVariable("err");
-    return Constraint(Relation::Equality, {TypeVariable("Err"), })
+    return Constraint(Relation::Equality, {TypeVariable("Err"), TypeVariable("Error")});
   }
 }
 
@@ -203,9 +203,9 @@ std::set<Substitution> unify(Constraint& relation) {
   if(s.is<TypeVariable>()) {
     auto var = s.get<TypeVariable>();
     if(!occurs(var, t)) {
-      auto subst = substitute(var, t);
+      auto subst = substitute(s, t);
       auto res = unify(subst);
-      return {res.begin(), res.end()};
+      return std::set<Substitution>(res.begin(), res.end());
     }
   }
   return {err};

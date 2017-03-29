@@ -145,7 +145,8 @@ void test_function() {
                                            Addition)));
   auto application = make_shared<Application>(
     make_shared<Identifier>("a", typer.next()),
-    args, FunctionType({typer.next(), typer.next()}, typer.next()));
+    args, FunctionType({typer.next(), typer.next()},
+                       make_shared<goat::inference::Type>(typer.next())));
   ok(program("a(c: b, d: 1+2)", application), "Parses a function application");
 
   args = make_shared<ArgumentList>();

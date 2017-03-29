@@ -69,11 +69,11 @@ using Type = util::Variant<TypeVariable,
 
 class FunctionType : public AbstractType {
  public:
-  FunctionType(std::vector<Type> types, Type ret) :
+  FunctionType(std::vector<Type> types, std::shared_ptr<Type> ret) :
     types_(types),
-    ret_(ret) {}
+    ret_(std::move(ret)) {}
   const std::vector<Type>& types() const { return types_; };
-  const Type ret() const { return ret_; }
+  const Type& ret() const { return *ret_; }
  private:
   bool equals(const AbstractType &b) const {
     auto c = *static_cast<const FunctionType *>(&b);
@@ -84,7 +84,7 @@ class FunctionType : public AbstractType {
     return types_ < c.types_ || ret_ < c.ret_;
   }
   std::vector<Type> types_;
-  Type ret_;
+  std::shared_ptr<Type> ret_;
 };
 
 class TypeFactory {
@@ -143,7 +143,7 @@ public:
   Substitution(TypeVariable s) :
     error_(true),
     s_(s),
-    t_() {}
+    t_(TypeVariable("error")) {}
   bool is_error() { return error_; }
   bool operator==(const Substitution &b) const {
     return s_ == b.s_ && t_ == b.t_;
