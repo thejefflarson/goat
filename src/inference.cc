@@ -157,9 +157,6 @@ Constraint substitute(Type s, Type t) {
     return Constraint(Relation::Equality, {s, FunctionType(args)});
   } else {
     assert("Logic error.");
-    // silence warnings
-    auto e = TypeVariable("err");
-    return Constraint(Relation::Equality, {TypeVariable("Err"), TypeVariable("Error")});
   }
 }
 
