@@ -164,7 +164,7 @@ std::set<Substitution> unify(Constraint& relation) {
   auto vars = relation.variables();
   Type s = vars.first;
   Type t = vars.second;
-  auto err = Substitution(TypeVariable("error"));
+  auto err = Substitution::error();
 
   // Delete rule
   if(s == t)
@@ -204,6 +204,7 @@ std::set<Substitution> unify(Constraint& relation) {
       return std::set<Substitution>(res.begin(), res.end());
     }
   }
+
   return {err};
 }
 
@@ -223,7 +224,7 @@ std::set<Substitution> TypingVisitor::solve() {
       break;
     }
   }
-  auto error = Substitution(TypeVariable("error"));
+  auto error = Substitution::error();
   if(ret.find(error) != ret.end()) {
     auto err = std::set<Substitution>();
     err.insert(error);

@@ -138,10 +138,7 @@ public:
     error_(false),
     s_(s),
     t_(t) {}
-  Substitution(TypeVariable s) :
-    error_(true),
-    s_(s),
-    t_(TypeVariable("error")) {}
+  static Substitution error() { return Subsitution(TypeVariable("error")); }
   bool is_error() { return error_; }
   bool operator==(const Substitution &b) const {
     return s_ == b.s_ && t_ == b.t_;
@@ -155,6 +152,10 @@ public:
     return s_ < b.s_ || t_ < b.t_;
   }
 private:
+  Substitution(TypeVariable s) :
+    error_(true),
+    s_(s),
+    t_(TypeVariable("error")) {}
   bool error_;
   TypeVariable s_;
   Type t_;
