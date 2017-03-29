@@ -70,7 +70,7 @@ void TypingVisitor::visit(const Application &application) {
   // invariant: these need to be the same size.
   assert(application.arguments()->size() == type.types().size());
 
-  size_t j = 0;
+  uint64_t j = 0;
   for(auto i : *application.arguments()) {
     constraints_.insert(Constraint(Relation::Equality,
                                    { type.types().at(j),
@@ -226,9 +226,7 @@ std::set<Substitution> TypingVisitor::solve() {
   }
   auto error = Substitution::error();
   if(ret.find(error) != ret.end()) {
-    auto err = std::set<Substitution>();
-    err.insert(error);
-    return err;
+    return {error};
   }
   return ret;
 }
