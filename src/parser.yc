@@ -136,7 +136,8 @@ application:
     for(auto i : * $arguments) {
       types.push_back(i->type());
     }
-    auto f = inference::FunctionType(types, std::make_shared<inference::Type>(typer.next()));
+    types.push_back(typer.next());
+    auto f = inference::FunctionType(types);
     $$ = std::make_shared<node::Application>($ident, $arguments, f);
   }
 ;

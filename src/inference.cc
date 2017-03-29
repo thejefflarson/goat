@@ -154,8 +154,7 @@ Constraint substitute(Type s, Type t) {
       }
     }
 
-    auto ret = std::make_shared<Type>(s == fn.ret() ? s : fn.ret());
-    return Constraint(Relation::Equality, {s, FunctionType(args, ret)});
+    return Constraint(Relation::Equality, {s, FunctionType(args)});
   } else {
     assert("Logic error.");
     // silence warnings
