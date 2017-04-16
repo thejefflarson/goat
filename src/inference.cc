@@ -278,7 +278,7 @@ std::set<Substitution> TypingVisitor::solve() {
       } else {
         fvars = freevars(it.variables().second);
         mono.erase(fvars.begin(), fvars.end());
-        working_set.insert(Constraint(Relation::Implicit, it.variables(), mono));
+        working_set.insert(Constraint(Relation::Explicit, it.variables(), mono));
       }
       break;
     }
