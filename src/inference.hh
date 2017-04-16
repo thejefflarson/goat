@@ -99,6 +99,37 @@ enum class Relation {
   Implicit
 };
 
+class Substitution {
+public:
+  Substitution(Type s, Type t) :
+    error_(false),
+    s_(s),
+    t_(t) {}
+  static Substitution error() { return Substitution(TypeVariable("error")); }
+  bool is_error() { return error_; }
+  bool operator==(const Substitution &b) const {
+    return s_ == b.s_ && t_ == b.t_;
+  }
+
+  bool operator!=(const Substitution &b) const {
+    return !(*this == b);
+  }
+
+  bool operator<(const Substitution &b) const {
+    return s_ < b.s_ || t_ < b.t_;
+  }
+
+  Type operator()(Type in) const;
+private:
+  Substitution(Type s) :
+    error_(true),
+    s_(s),
+    t_(TypeVariable("error")) {}
+  bool error_;
+  Type s_;
+  Type t_;
+};
+
 class Constraint {
  public:
   Constraint(Relation relation,
@@ -133,37 +164,6 @@ class Constraint {
   Relation relation_;
   std::pair<Type, Type> variables_;
   std::set<Type> monomorphic_;
-};
-
-class Substitution {
-public:
-  Substitution(Type s, Type t) :
-    error_(false),
-    s_(s),
-    t_(t) {}
-  static Substitution error() { return Subsitution(TypeVariable("error")); }
-  bool is_error() { return error_; }
-  bool operator==(const Substitution &b) const {
-    return s_ == b.s_ && t_ == b.t_;
-  }
-
-  bool operator!=(const Substitution &b) const {
-    return !(*this == b);
-  }
-
-  bool operator<(const Substitution &b) const {
-    return s_ < b.s_ || t_ < b.t_;
-  }
-
-  Type operator()(Type in) const;
-private:
-  Substitution(Type s) :
-    error_(true),
-    s_(s),
-    t_(TypeVariable("error")) {}
-  bool error_;
-  Type s_;
-  Type t_;
 };
 
 class TypingVisitor : public node::Visitor {

@@ -161,7 +161,7 @@ Type Substitution::operator()(Type in) const {
 
     return FunctionType(args);
   } else {
-    assert("Logic error.");
+    return in;
   }
 }
 
@@ -224,7 +224,7 @@ std::set<Substitution> TypingVisitor::solve() {
       auto tmp = std::set<Constraint>();
       for(auto c : working_set) {
         for(auto s : unified) {
-          tmp.insert(c.apply(s))
+          tmp.insert(c.apply(s));
         }
       }
       working_set = tmp;
@@ -233,15 +233,15 @@ std::set<Substitution> TypingVisitor::solve() {
     }
     case Relation::Explicit:
       // TODO: implement freevars and generalize
-      auto fvars = freevars(it.variables().second);
-      auto mono = it.monomorphic();
-      auto intxs = std::set_intersection(std::sort(fvars.begin(), fvars.end()),
-                                         std::sort(mono.begin(), mono.end()));
-      if(intxs.count() == 0) {
-        auto cons = Constraint(Relation::Implicit, it.variables().first,
-                               generalize(it.monomorphic(), it.variables().second));
-        working_set.insert(cons);
-      }
+      // auto fvars = freevars(it.variables().second);
+      // auto mono = it.monomorphic();
+      // auto intxs = std::set_intersection(std::sort(fvars.begin(), fvars.end()),
+      //                                    std::sort(mono.begin(), mono.end()));
+      // if(intxs.count() == 0) {
+      //   auto cons = Constraint(Relation::Implicit, it.variables().first,
+      //                          generalize(it.monomorphic(), it.variables().second));
+      //   working_set.insert(cons);
+      // }
       break;
     case Relation::Implicit:
 
