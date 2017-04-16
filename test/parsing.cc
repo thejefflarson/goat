@@ -194,6 +194,7 @@ void test_inference() {
   visitor.visit(*p);
   auto constraints = visitor.constraints();
   ok(constraints.size() == 1, "Generates constraints");
+  visitor.solve();
 }
 
 void test_constraints() {

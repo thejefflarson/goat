@@ -240,15 +240,12 @@ std::set<TypeVariable> Constraint::activevars() const {
   return ret;
 }
 
-Type generalize(std::set<Type> vars, std::set<Type> env) {
-  return {};
-}
-
 std::set<Substitution> TypingVisitor::solve() {
   std::set<Substitution> ret;
   auto working_set = constraints_;
   while(!working_set.empty()) {
-    auto it = *working_set.erase(working_set.begin());
+    auto it = *working_set.find(*working_set.begin());
+    working_set.erase(working_set.begin());
     switch(it.relation()) {
     case Relation::Equality: {
       auto unified = it.unify();
@@ -263,27 +260,30 @@ std::set<Substitution> TypingVisitor::solve() {
       break;
     }
     case Relation::Explicit: {
-      auto fvars = freevars(it.variables().second);
-      auto mono = it.monomorphic();
-      mono.erase(fvars.begin(), fvars.end());
+      std::set<TypeVariable> fvars = freevars(it.variables().second);
+      std::set<TypeVariable> mono = it.monomorphic();
+      fvars.erase(mono.begin(), mono.end());
       std::set<TypeVariable> all;
       for(auto c : working_set) {
-        auto v = c.activevars();
+        std::set<TypeVariable> v = c.activevars();
         all.insert(v.begin(), v.end());
       }
       std::set<TypeVariable> intxs;
-      std::set_intersection(mono.begin(), mono.end(),
-                            all.begin(), all.end(), intxs.begin());
+      std::set_intersection(fvars.begin(), fvars.end(),
+                            all.begin(), all.end(),
+                            std::inserter(intxs, intxs.end()));
       if(intxs.size() == 0) {
         auto cons = Constraint(Relation::Implicit, it.variables());
         working_set.insert(cons);
       } else {
+        fvars = freevars(it.variables().second);
+        mono.erase(fvars.begin(), fvars.end());
         working_set.insert(Constraint(Relation::Implicit, it.variables(), mono));
       }
       break;
     }
     case Relation::Implicit:
-      working_set.insert(Constraint(Relation::Explicit, it.variables()));
+      working_set.insert(Constraint(Relation::Equality, it.variables()));
       break;
     }
   }
