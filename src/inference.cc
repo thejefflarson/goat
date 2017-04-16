@@ -44,7 +44,8 @@ void TypingVisitor::visit(const Program &program) {
 }
 
 void TypingVisitor::visit(const Argument &argument) {
-  monomorphic_.insert(argument.type());
+  assert(argument.type().is<TypeVariable>());
+  monomorphic_.insert(argument.type().get<TypeVariable>());
   argument.identifier()->accept(*this);
   argument.expression()->accept(*this);
 }
@@ -117,17 +118,17 @@ Constraint Constraint::apply(Substitution s) const {
   if (monomorphic_.empty()) {
     return Constraint(relation_, {left, right});
   } else {
-    auto tmp = std::set<Type>();
+    auto tmp = std::set<TypeVariable>();
     for(auto m : monomorphic_) {
-      tmp.insert(s(m));
+      tmp.insert(s(TypeVariable(m)).get<TypeVariable>());
     }
     return Constraint(relation_, {left, right}, tmp);
   }
 }
 
-bool occurs(TypeVariable t, Type in) {
+bool TypeVariable::occurs(Type in) const {
   if(in.is<TypeVariable>()) {
-    return t == in.get<TypeVariable>();
+    return *this == in.get<TypeVariable>();
   } else if(in.is<NumberType>()
             || in.is<StringType>()
             || in.is<BoolType>()
@@ -137,7 +138,7 @@ bool occurs(TypeVariable t, Type in) {
     auto f = in.get<FunctionType>();
     bool accum = true;
     for(auto v : f.types()) {
-      accum = accum && occurs(t, v);
+      accum = accum && this->occurs(v);
     }
     return accum;
   } else {
@@ -165,8 +166,8 @@ Type Substitution::operator()(Type in) const {
   }
 }
 
-std::set<Substitution> unify(Constraint& relation) {
-  auto vars = relation.variables();
+std::set<Substitution> Constraint::unify() const {
+  auto vars = variables_;
   Type s = vars.first;
   Type t = vars.second;
 
@@ -175,9 +176,8 @@ std::set<Substitution> unify(Constraint& relation) {
     return std::set<Substitution>();
 
   // Orient rule
-  if(s.is<TypeVariable>() && !t.is<TypeVariable>()) {
-    auto c = Constraint(Relation::Equality, {t, s});
-    return unify(c);
+  if(!s.is<TypeVariable>() && t.is<TypeVariable>()) {
+    return Constraint(Relation::Equality, {t, s}).unify();
   }
 
   // Decompose rule
@@ -192,7 +192,7 @@ std::set<Substitution> unify(Constraint& relation) {
     auto ttiter = tt.types().begin();
     for(auto sitter = st.types().begin(); sitter != st.types().end(); sitter++) {
       auto constraint = Constraint(Relation::Equality, {*sitter, *ttiter});
-      auto result = unify(constraint);
+      auto result = constraint.unify();
       ret.insert(result.begin(), result.end());
       ttiter++;
     }
@@ -202,15 +202,46 @@ std::set<Substitution> unify(Constraint& relation) {
   // Eliminate rule
   if(s.is<TypeVariable>()) {
     auto var = s.get<TypeVariable>();
-    if(!occurs(var, t)) {
+    if(!var.occurs(t)) {
       auto subst = Constraint(Relation::Equality,
                               {Substitution(s, t)(s), t});
-      auto res = unify(subst);
+      auto res = subst.unify();
       return std::set<Substitution>(res.begin(), res.end());
     }
   }
 
   return std::set<Substitution>();
+}
+
+std::set<TypeVariable> freevars(Type in) {
+  if(in.is<TypeVariable>()) {
+    return {in.get<TypeVariable>()};
+  } else if(in.is<FunctionType>()){
+    std::set<TypeVariable> ret;
+    for(auto t : in.get<FunctionType>().types()) {
+      auto vars = freevars(in);
+      ret.insert(vars.begin(), vars.end());
+    }
+    return ret;
+  } else {
+    return {};
+  }
+}
+
+std::set<TypeVariable> Constraint::activevars() const {
+  auto left = freevars(variables_.first);
+  auto right = freevars(variables_.second);
+  if(relation_ == Relation::Explicit) {
+    right.erase(monomorphic_.begin(), monomorphic_.end());
+  }
+  std::set<TypeVariable> ret;
+  ret.insert(left.begin(), left.end());
+  ret.insert(right.begin(), right.end());
+  return ret;
+}
+
+Type generalize(std::set<Type> vars, std::set<Type> env) {
+  return {};
 }
 
 std::set<Substitution> TypingVisitor::solve() {
@@ -220,8 +251,8 @@ std::set<Substitution> TypingVisitor::solve() {
     auto it = *working_set.erase(working_set.begin());
     switch(it.relation()) {
     case Relation::Equality: {
-      auto unified = unify(it);
-      auto tmp = std::set<Constraint>();
+      auto unified = it.unify();
+      std::set<Constraint> tmp;
       for(auto c : working_set) {
         for(auto s : unified) {
           tmp.insert(c.apply(s));
@@ -231,20 +262,28 @@ std::set<Substitution> TypingVisitor::solve() {
       ret.insert(unified.begin(), unified.end());
       break;
     }
-    case Relation::Explicit:
-      // TODO: implement freevars and generalize
-      // auto fvars = freevars(it.variables().second);
-      // auto mono = it.monomorphic();
-      // auto intxs = std::set_intersection(std::sort(fvars.begin(), fvars.end()),
-      //                                    std::sort(mono.begin(), mono.end()));
-      // if(intxs.count() == 0) {
-      //   auto cons = Constraint(Relation::Implicit, it.variables().first,
-      //                          generalize(it.monomorphic(), it.variables().second));
-      //   working_set.insert(cons);
-      // }
+    case Relation::Explicit: {
+      auto fvars = freevars(it.variables().second);
+      auto mono = it.monomorphic();
+      mono.erase(fvars.begin(), fvars.end());
+      std::set<TypeVariable> all;
+      for(auto c : working_set) {
+        auto v = c.activevars();
+        all.insert(v.begin(), v.end());
+      }
+      std::set<TypeVariable> intxs;
+      std::set_intersection(mono.begin(), mono.end(),
+                            all.begin(), all.end(), intxs.begin());
+      if(intxs.size() == 0) {
+        auto cons = Constraint(Relation::Implicit, it.variables());
+        working_set.insert(cons);
+      } else {
+        working_set.insert(Constraint(Relation::Implicit, it.variables(), mono));
+      }
       break;
+    }
     case Relation::Implicit:
-
+      working_set.insert(Constraint(Relation::Explicit, it.variables()));
       break;
     }
   }

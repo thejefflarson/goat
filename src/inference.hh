@@ -37,11 +37,25 @@ class AbstractType {
   virtual bool less(const AbstractType &b) const { return false; }
 };
 
+class NumberType : public AbstractType {};
+class StringType : public AbstractType {};
+class BoolType : public AbstractType {};
+class NoType : public AbstractType {};
+class FunctionType;
+class TypeVariable;
+using Type = util::Variant<TypeVariable,
+                           NumberType,
+                           StringType,
+                           BoolType,
+                           NoType,
+                           FunctionType>;
+
 class TypeVariable : public AbstractType {
  public:
   TypeVariable(std::string id) :
     id_(id) {}
   const std::string& id() const { return id_; }
+  bool occurs(Type in) const;
  private:
   bool equals(const AbstractType &b) const {
     auto c = *static_cast<const TypeVariable *>(&b);
@@ -53,19 +67,6 @@ class TypeVariable : public AbstractType {
   }
   std::string id_;
 };
-
-class NumberType : public AbstractType {};
-class StringType : public AbstractType {};
-class BoolType : public AbstractType {};
-class NoType : public AbstractType {};
-
-class FunctionType;
-using Type = util::Variant<TypeVariable,
-                           NumberType,
-                           StringType,
-                           BoolType,
-                           NoType,
-                           FunctionType>;
 
 class FunctionType : public AbstractType {
  public:
@@ -138,7 +139,7 @@ class Constraint {
     variables_(variables) {}
   Constraint(Relation relation,
              std::pair<Type, Type> variables,
-             std::set<Type> monomorphic) :
+             std::set<TypeVariable> monomorphic) :
     relation_(relation),
     variables_(variables),
     monomorphic_(monomorphic) { assert(relation == Relation::Implicit); }
@@ -158,12 +159,14 @@ class Constraint {
 
   Relation relation() const { return relation_; }
   std::pair<Type, Type> variables() const { return variables_; }
-  std::set<Type> monomorphic() const { return monomorphic_; }
+  std::set<TypeVariable> monomorphic() const { return monomorphic_; }
+  std::set<TypeVariable> activevars() const;
   Constraint apply(Substitution s) const;
+  std::set<Substitution> unify() const;
  private:
   Relation relation_;
   std::pair<Type, Type> variables_;
-  std::set<Type> monomorphic_;
+  std::set<TypeVariable> monomorphic_;
 };
 
 class TypingVisitor : public node::Visitor {
@@ -186,7 +189,7 @@ class TypingVisitor : public node::Visitor {
   const std::set<Constraint>& constraints() const { return constraints_; }
   std::set<Substitution> solve();
  private:
-  std::set<Type> monomorphic_;
+  std::set<TypeVariable> monomorphic_;
   std::set<Constraint> constraints_;
   std::unordered_map<std::string, Type> assumptions_;
   TypeFactory typer_;
