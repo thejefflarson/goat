@@ -111,6 +111,7 @@ class Constraint {
     relation_(relation),
     variables_(variables),
     monomorphic_(monomorphic) { assert(relation == Relation::Implicit); }
+
   bool operator==(const Constraint &b) const {
     return relation_ == b.relation_ &&
       variables_ == b.variables_;
@@ -124,8 +125,10 @@ class Constraint {
     return variables_ < b.variables_;
   }
 
-  Relation relation() { return relation_; }
-  std::pair<Type, Type> variables() { return variables_; }
+  Relation relation() const { return relation_; }
+  std::pair<Type, Type> variables() const { return variables_; }
+  std::set<Type> monomorphic() const { return monomorphic_; }
+  Constraint apply(Substitution s) const;
  private:
   Relation relation_;
   std::pair<Type, Type> variables_;
@@ -134,7 +137,7 @@ class Constraint {
 
 class Substitution {
 public:
-  Substitution(TypeVariable s, Type t) :
+  Substitution(Type s, Type t) :
     error_(false),
     s_(s),
     t_(t) {}
@@ -151,13 +154,15 @@ public:
   bool operator<(const Substitution &b) const {
     return s_ < b.s_ || t_ < b.t_;
   }
+
+  Type operator()(Type in) const;
 private:
-  Substitution(TypeVariable s) :
+  Substitution(Type s) :
     error_(true),
     s_(s),
     t_(TypeVariable("error")) {}
   bool error_;
-  TypeVariable s_;
+  Type s_;
   Type t_;
 };
 

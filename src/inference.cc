@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <memory>
@@ -110,6 +111,20 @@ void TypingVisitor::visit(const Declaration &declaration) {
   if(declaration.expression()) declaration.expression()->accept(*this);
 }
 
+Constraint Constraint::apply(Substitution s) const {
+  auto left = s(variables_.first);
+  auto right = s(variables_.second);
+  if (monomorphic_.empty()) {
+    return Constraint(relation_, {left, right});
+  } else {
+    auto tmp = std::set<Type>();
+    for(auto m : monomorphic_) {
+      tmp.insert(s(m));
+    }
+    return Constraint(relation_, {left, right}, tmp);
+  }
+}
+
 bool occurs(TypeVariable t, Type in) {
   if(in.is<TypeVariable>()) {
     return t == in.get<TypeVariable>();
@@ -130,31 +145,21 @@ bool occurs(TypeVariable t, Type in) {
   }
 }
 
-Constraint substitute(Type s, Type t) {
-  assert(s.is<TypeVariable>()); // TODO: report compiler error
-  if(t.is<TypeVariable>()) {
-    if(s == t) {
-      return Constraint(Relation::Equality, {s, s});
-    } else {
-      return Constraint(Relation::Equality, {s, t});
-    }
-  } else if(t.is<NumberType>()
-            || t.is<StringType>()
-            || t.is<BoolType>()
-            || t.is<NoType>()) {
-    return Constraint(Relation::Equality, {s, t});
-  } else if(t.is<FunctionType>()) {
+Type Substitution::operator()(Type in) const {
+  if(s_ == in) {
+    return t_;
+  } else if(t_.is<FunctionType>()) {
     std::vector<Type> args;
-    auto fn = t.get<FunctionType>();
+    auto fn = t_.get<FunctionType>();
     for(auto v : fn.types()) {
-      if(s != v) {
+      if(Type(s_) != v) {
         args.push_back(v);
       } else {
-        args.push_back(s);
+        args.push_back(Substitution(s_, t_)(in));
       }
     }
 
-    return Constraint(Relation::Equality, {s, FunctionType(args)});
+    return FunctionType(args);
   } else {
     assert("Logic error.");
   }
@@ -164,7 +169,6 @@ std::set<Substitution> unify(Constraint& relation) {
   auto vars = relation.variables();
   Type s = vars.first;
   Type t = vars.second;
-  auto err = Substitution::error();
 
   // Delete rule
   if(s == t)
@@ -182,7 +186,7 @@ std::set<Substitution> unify(Constraint& relation) {
     const FunctionType &st = s.get<FunctionType>();
     const FunctionType &tt = t.get<FunctionType>();
     if(st.types().size() != tt.types().size()) {
-      ret.insert(err);
+      ret.insert(Substitution::error());
       return ret;
     }
     auto ttiter = tt.types().begin();
@@ -199,28 +203,48 @@ std::set<Substitution> unify(Constraint& relation) {
   if(s.is<TypeVariable>()) {
     auto var = s.get<TypeVariable>();
     if(!occurs(var, t)) {
-      auto subst = substitute(s, t);
+      auto subst = Constraint(Relation::Equality,
+                              {Substitution(s, t)(s), t});
       auto res = unify(subst);
       return std::set<Substitution>(res.begin(), res.end());
     }
   }
 
-  return {err};
+  return std::set<Substitution>();
 }
 
 std::set<Substitution> TypingVisitor::solve() {
   std::set<Substitution> ret;
   auto working_set = constraints_;
-  for(auto it : working_set) {
+  while(!working_set.empty()) {
+    auto it = *working_set.erase(working_set.begin());
     switch(it.relation()) {
     case Relation::Equality: {
       auto unified = unify(it);
+      auto tmp = std::set<Constraint>();
+      for(auto c : working_set) {
+        for(auto s : unified) {
+          tmp.insert(c.apply(s))
+        }
+      }
+      working_set = tmp;
       ret.insert(unified.begin(), unified.end());
       break;
     }
     case Relation::Explicit:
+      // TODO: implement freevars and generalize
+      auto fvars = freevars(it.variables().second);
+      auto mono = it.monomorphic();
+      auto intxs = std::set_intersection(std::sort(fvars.begin(), fvars.end()),
+                                         std::sort(mono.begin(), mono.end()));
+      if(intxs.count() == 0) {
+        auto cons = Constraint(Relation::Implicit, it.variables().first,
+                               generalize(it.monomorphic(), it.variables().second));
+        working_set.insert(cons);
+      }
       break;
     case Relation::Implicit:
+
       break;
     }
   }
