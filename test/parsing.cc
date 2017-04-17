@@ -181,15 +181,16 @@ void test_conditional() {
                true_block)), "Parses a true branch conditional");
 }
 
-void test_inference() {
+std::shared_ptr<Program> parse_program(std::string program) {
   std::shared_ptr<Program> p;
-  auto s = std::stringstream("a = 1");
+  auto s = std::stringstream(program);
   int r = goat::driver::parse(&s, p);
+  ok(r == 0, "Parses program");
+  return p;
+}
 
-  if(r != 0) {
-    std::cout << "ugh!" << std::endl;
-    return;
-  };
+void test_inference() {
+  auto p = parse_program("a = 1");
   auto visitor = TypingVisitor();
   visitor.visit(*p);
   auto constraints = visitor.constraints();
@@ -200,6 +201,11 @@ void test_inference() {
   auto subst = *substitutions.begin();
   ok(subst.left() == p->type(), "Assigns the right variable");
   ok(subst.right().is<NumberType>(), "Is a number");
+  auto q = parse_program("a = 1 b = a");
+  visitor = TypingVisitor();
+  visitor.visit(*q);
+  substitutions = visitor.solve();
+  ok(substitutions.size() == 2, "Generates multiple substitions");
 }
 
 void test_constraints() {
