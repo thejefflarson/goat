@@ -121,6 +121,8 @@ public:
   }
 
   Type operator()(Type in) const;
+  Type left() const { return s_; }
+  Type right() const { return t_; }
 private:
   Substitution(Type s) :
     error_(true),

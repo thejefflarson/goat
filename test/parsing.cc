@@ -194,7 +194,12 @@ void test_inference() {
   visitor.visit(*p);
   auto constraints = visitor.constraints();
   ok(constraints.size() == 1, "Generates constraints");
-  visitor.solve();
+  auto substitutions = visitor.solve();
+  ok(p->type().is<TypeVariable>(), "The type is a variable");
+  ok(substitutions.size() == 1, "Has a substitution");
+  auto subst = *substitutions.begin();
+  ok(subst.left() == p->type(), "Assigns the right variable");
+  ok(subst.right().is<NumberType>(), "Is a number");
 }
 
 void test_constraints() {

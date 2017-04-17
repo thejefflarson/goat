@@ -203,14 +203,11 @@ std::set<Substitution> Constraint::unify() const {
   if(s.is<TypeVariable>()) {
     auto var = s.get<TypeVariable>();
     if(!var.occurs(t)) {
-      auto subst = Constraint(Relation::Equality,
-                              {Substitution(s, t)(s), t});
-      auto res = subst.unify();
-      return std::set<Substitution>(res.begin(), res.end());
+      return {Substitution(s, t)};
     }
   }
 
-  return std::set<Substitution>();
+  return {};
 }
 
 std::set<TypeVariable> freevars(Type in) {
