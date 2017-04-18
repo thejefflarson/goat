@@ -212,11 +212,10 @@ void test_inference() {
   substitutions = visitor.solve();
   ok(substitutions.size() == 2, "Generates function substitution");
   auto it = substitutions.begin();
-  std::cout << (*it).left().get<TypeVariable>().id();
-//  ok((*it).right().is<NumberType>(), "Function definition is a number");
+  ok((*it).right().is<FunctionType>(), "Function definition is a function type");
+//ok((*it).right().get<FunctionType>().types()[0].is<NumberType>(), "Function return is a number");
   it++;
-  std::cout << (*it).left().get<TypeVariable>().id();
-//  ok((*it).right().is<FunctionType>(), "Function application is a number");
+  ok((*it).right().is<NumberType>(), "Function application is a number");
 }
 
 void test_constraints() {
@@ -227,7 +226,6 @@ void test_constraints() {
   did = constraints.insert(Constraint(Relation::Equality, {typer.next(), typer.next()}));
   ok(did.second, "Inserted another constraint");
 }
-
 
 int main() {
   start_test;

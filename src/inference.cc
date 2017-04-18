@@ -79,11 +79,9 @@ void TypingVisitor::visit(const Application &application) {
                                        i->type() }));
     j++;
   }
-  auto t = constraints_.insert(Constraint(Relation::Equality,
+  constraints_.insert(Constraint(Relation::Equality,
                                  { application.identifier()->type(),
                                      application.type() }));
-  std::cout << t.second << std::endl;
-  std::cout << constraints_.size() << std::endl;
   util::list_accept(application.arguments(), *this);
 }
 
