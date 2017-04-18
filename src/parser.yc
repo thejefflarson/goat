@@ -143,7 +143,9 @@ application:
 ;
 
 function:
-  PROGRAM "(" arguments ")" DO program DONE { $$ = std::make_shared<node::Function>($arguments, $program, typer.next()); }
+  PROGRAM "(" arguments ")" DO program DONE {
+    $$ = std::make_shared<node::Function>($arguments, $program, typer.next());
+  }
 ;
 
 conditional:

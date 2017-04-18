@@ -63,6 +63,8 @@ void TypingVisitor::visit(const Function &function) {
     constraints_.insert(Constraint(Relation::Equality, { ident->type(), var }));
     assumptions_.erase(ident->value());
   }
+  constraints_.insert(Constraint(Relation::Equality, {function.type(),
+          function.program()->type()}));
 }
 
 void TypingVisitor::visit(const Application &application) {
@@ -82,7 +84,6 @@ void TypingVisitor::visit(const Application &application) {
   constraints_.insert(Constraint(Relation::Equality,
                                  { application.identifier()->type(),
                                      application.type() }));
-  util::list_accept(application.arguments(), *this);
 }
 
 void TypingVisitor::visit(const Conditional &conditional) {
