@@ -206,14 +206,15 @@ void test_inference() {
   visitor.visit(*p);
   substitutions = visitor.solve();
   ok(substitutions.size() == 2, "Generates multiple substitions");
-  p = parse_program("a = program() do 1 + 2 done a()");
+  p = parse_program("a = program() do 1 + 2 done b = a()");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
   ok(substitutions.size() == 2, "Generates function substitution");
   auto it = substitutions.begin();
+  std::cout << substitutions.size() << std::endl;
   ok((*it).right().is<FunctionType>(), "Function definition is a function type");
-//ok((*it).right().get<FunctionType>().types()[0].is<NumberType>(), "Function return is a number");
+  ok((*it).right().get<FunctionType>().types()[0].is<NumberType>(), "Function return is a number");
   it++;
   ok((*it).right().is<NumberType>(), "Function application is a number");
 }
