@@ -189,36 +189,71 @@ std::shared_ptr<Program> parse_program(std::string program) {
   return p;
 }
 
+void print_type(Type t) {
+  if(t.is<TypeVariable>()) {
+    std::cout << t.get<TypeVariable>().id();
+  } else if(t.is<NumberType>()) {
+    std::cout << "Number";
+  } else if(t.is<StringType>()){
+    std::cout << "String";
+  } else if(t.is<BoolType>()){
+    std::cout << "Bool";
+  } else if(t.is<NoType>()){
+    std::cout << "nil";
+  } else if(t.is<FunctionType>()) {
+    auto f = t.get<FunctionType>();
+    std::cout << "(";
+    for(auto a : f.types())
+      print_type(a);
+    std::cout << ")";
+  } else {
+    std::cout << "wauh";
+  }
+
+}
+
 void test_inference() {
-  auto p = parse_program("a = 1");
+  // auto p = parse_program("a = 1");
+  // auto visitor = TypingVisitor();
+  // visitor.visit(*p);
+  // auto constraints = visitor.constraints();
+  // ok(constraints.size() == 1, "Generates constraints");
+  // auto substitutions = visitor.solve();
+  // ok(p->type().is<TypeVariable>(), "The type is a variable");
+  // ok(substitutions.size() == 1, "Has a substitution");
+  // auto subst = *substitutions.begin();
+  // ok(subst.left() == p->type(), "Assigns the right variable");
+  // ok(subst.right().is<NumberType>(), "Is a number");
+  // p = parse_program("a = 1 b = a");
+  // visitor = TypingVisitor();
+  // visitor.visit(*p);
+  // substitutions = visitor.solve();
+  // ok(substitutions.size() == 2, "Generates multiple substitions");
+  auto p = parse_program("a = program() do 1 + 2 done a()");
   auto visitor = TypingVisitor();
   visitor.visit(*p);
-  auto constraints = visitor.constraints();
-  ok(constraints.size() == 1, "Generates constraints");
   auto substitutions = visitor.solve();
-  ok(p->type().is<TypeVariable>(), "The type is a variable");
-  ok(substitutions.size() == 1, "Has a substitution");
-  auto subst = *substitutions.begin();
-  ok(subst.left() == p->type(), "Assigns the right variable");
-  ok(subst.right().is<NumberType>(), "Is a number");
-  p = parse_program("a = 1 b = a");
-  visitor = TypingVisitor();
-  visitor.visit(*p);
-  substitutions = visitor.solve();
-  ok(substitutions.size() == 2, "Generates multiple substitions");
-  p = parse_program("a = program() do 1 + 2 done b = a()");
-  visitor = TypingVisitor();
-  visitor.visit(*p);
-  substitutions = visitor.solve();
-  ok(substitutions.size() == 3, "Generates function substitution");
-  auto it = substitutions.begin();
   std::cout << substitutions.size() << std::endl;
+//  ok(substitutions.size() == 2, "Generates function substitution");
+
+  int i = 0;
+  for(auto s : substitutions) {
+    print_type(s.left());
+    std::cout << " = ";
+    print_type(s.right());
+    std::cout << std::endl;
+    if(s.is_error())
+      std::cout << "Error!";
+    i++;
+  }
+  //auto it = substitutions.begin();
+  std::cout << i << std::endl;
   //ok((*it).right().is<FunctionType>(), "Function definition is a function type");
   //ok((*it).right().get<FunctionType>().types()[0].is<NumberType>(), "Function return is a number");
-  it++;
+  // it++;
   //ok((*it).right().is<NumberType>(), "Function application is a number");
   //it++;
-  ok((*it).right().is<NumberType>(), "Function application is a number");
+  //ok((*it).right().is<NumberType>(), "Function application is a number");
 }
 
 void test_constraints() {
@@ -232,12 +267,12 @@ void test_constraints() {
 
 int main() {
   start_test;
-  test_empty();
-  test_literals();
-  test_math();
-  test_function();
-  test_conditional();
+  //test_empty();
+  //test_literals();
+  //test_math();
+  //test_function();
+  //test_conditional();
   // eventually these should be in their own file
   test_inference();
-  test_constraints();
+  // test_constraints();
 }

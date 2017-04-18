@@ -252,7 +252,8 @@ std::set<Substitution> TypingVisitor::solve() {
         }
       }
       working_set = tmp;
-      ret.insert(unified.begin(), unified.end());
+      for(auto s : unified)
+        ret.insert(s);
       break;
     }
     case Relation::Explicit: {
