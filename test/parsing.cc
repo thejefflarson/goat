@@ -201,11 +201,22 @@ void test_inference() {
   auto subst = *substitutions.begin();
   ok(subst.left() == p->type(), "Assigns the right variable");
   ok(subst.right().is<NumberType>(), "Is a number");
-  auto q = parse_program("a = 1 b = a");
+  p = parse_program("a = 1 b = a");
   visitor = TypingVisitor();
-  visitor.visit(*q);
+  visitor.visit(*p);
   substitutions = visitor.solve();
   ok(substitutions.size() == 2, "Generates multiple substitions");
+  p = parse_program("a = program() do 1 + 2 done a()");
+  visitor = TypingVisitor();
+  visitor.visit(*p);
+  substitutions = visitor.solve();
+  ok(substitutions.size() == 2, "Generates function substitution");
+  auto it = substitutions.begin();
+  std::cout << (*it).left().get<TypeVariable>().id();
+//  ok((*it).right().is<NumberType>(), "Function definition is a number");
+  it++;
+  std::cout << (*it).left().get<TypeVariable>().id();
+//  ok((*it).right().is<FunctionType>(), "Function application is a number");
 }
 
 void test_constraints() {

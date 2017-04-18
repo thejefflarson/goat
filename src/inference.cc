@@ -70,7 +70,7 @@ void TypingVisitor::visit(const Application &application) {
   assert(application.type().is<inference::FunctionType>());
   inference::FunctionType type = application.type().get<inference::FunctionType>();
   // invariant: these need to be the same size.
-  assert(application.arguments()->size() == type.types().size());
+  assert(application.arguments()->size() == type.types().size() - 1);
 
   uint64_t j = 0;
   for(auto i : *application.arguments()) {
