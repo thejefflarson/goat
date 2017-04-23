@@ -51,29 +51,31 @@ void TypingVisitor::visit(const Argument &argument) {
 }
 
 void TypingVisitor::visit(const Function &function) {
-  auto before = monomorphic_;
+  auto assumptions = assumptions_;
+  auto monomorphic = monomorphic_;
+  for(auto a : *function.arguments())
+    assumptions_.erase(a->identifier()->value());
   util::list_accept(function.arguments(), *this);
   function.program()->accept(*this);
-  monomorphic_ = before;
 
   for(auto i : *function.arguments()) {
-    std::shared_ptr<Identifier> ident = i->identifier();
+    auto ident = i->identifier();
     if(assumptions_.find(ident->value()) == assumptions_.end()) std::cout << "uhoh" << std::endl;
-    Type var = assumptions_.find(ident->value())->second;
+    auto var = assumptions_.find(ident->value())->second;
     constraints_.insert(Constraint(Relation::Equality, { ident->type(), var }));
-    assumptions_.erase(ident->value());
   }
 
   constraints_.insert(Constraint(Relation::Equality, {
     function.type().get<FunctionType>().ret(),
     function.program()->type()
    }));
+   monomorphic_ = monomorphic;
+   assumptions_ = assumptions;
 }
 
 void TypingVisitor::visit(const Application &application) {
   auto maybe_type = assumptions_.find(application.identifier()->value());
   assert(maybe_type != assumptions_.end());
-
   constraints_.insert(Constraint(Relation::Equality,
                                  { application.type(),
                                      maybe_type->second }));
@@ -111,7 +113,7 @@ void TypingVisitor::visit(const Declaration &declaration) {
                                   { declaration.identifier()->type(),
                                       type },
                                   monomorphic_));
-
+  assumptions_.erase(declaration.identifier()->value());
   declaration.identifier()->accept(*this);
   declaration.expression()->accept(*this);
 }

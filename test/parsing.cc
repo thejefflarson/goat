@@ -231,7 +231,7 @@ void test_inference() {
   visitor.visit(*p);
   auto substitutions = visitor.solve();
   ok(substitutions.size() == 2, "Generates multiple substitions");
-  p = parse_program("a = program(b: 1) do b + 2 done c = 3 a(b: c)");
+  p = parse_program("b = 3 a = program(b: 1) do b + 2 done a(b: b)");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
