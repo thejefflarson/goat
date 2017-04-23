@@ -90,6 +90,10 @@ void TypingVisitor::visit(const Conditional &conditional) {
 
 
 void TypingVisitor::visit(const Operation &operation) {
+  constraints_.insert(Constraint(Relation::Equality, {operation.left()->type(),
+          NumberType()}));
+  // constraints_.insert(Constraint(Relation::Equality, {operation.right()->type(),
+  //        NumberType()}));
   operation.left()->accept(*this);
   operation.right()->accept(*this);
 }
@@ -243,7 +247,6 @@ std::set<Substitution> TypingVisitor::solve() {
   while(!working_set.empty()) {
     auto it = *working_set.begin();
     working_set.erase(it);
-
     switch(it.relation()) {
     case Relation::Equality: {
       auto unified = it.unify();
