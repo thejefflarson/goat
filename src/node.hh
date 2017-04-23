@@ -111,10 +111,10 @@ class Function : public Node {
  public:
   Function(const std::shared_ptr<ArgumentList> arguments,
            const std::shared_ptr<Program> program,
-           inference::TypeVariable type) :
+           inference::FunctionType type) :
     arguments_(arguments),
     program_(program),
-    type_(std::forward<inference::TypeVariable>(type)) {}
+    type_(std::forward<inference::FunctionType>(type)) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
@@ -130,10 +130,10 @@ class Application : public Node {
  public:
   Application(std::shared_ptr<Identifier> ident,
               std::shared_ptr<ArgumentList> arguments,
-              inference::FunctionType type) :
+              inference::TypeVariable type) :
     identifier_(ident),
     arguments_(arguments),
-    type_(std::forward<inference::FunctionType>(type)) {}
+    type_(std::forward<inference::TypeVariable>(type)) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }

@@ -40,9 +40,7 @@ void TypingVisitor::visit(const String &string) {
 }
 
 void TypingVisitor::visit(const Program &program) {
-  auto before = assumptions_;
   util::list_accept(program.nodes(), *this);
-  assumptions_ = before;
 }
 
 void TypingVisitor::visit(const Argument &argument) {
@@ -65,27 +63,20 @@ void TypingVisitor::visit(const Function &function) {
     constraints_.insert(Constraint(Relation::Equality, { ident->type(), var }));
     assumptions_.erase(ident->value());
   }
-  constraints_.insert(Constraint(Relation::Equality, {function.type(),
-          function.program()->type()}));
+
+  constraints_.insert(Constraint(Relation::Equality, {
+    function.type().get<FunctionType>().ret(),
+    function.program()->type()
+   }));
 }
 
 void TypingVisitor::visit(const Application &application) {
-  // invariant: this needs to be a function type.
-  assert(application.type().is<inference::FunctionType>());
-  inference::FunctionType type = application.type().get<inference::FunctionType>();
-  // invariant: these need to be the same size.
-  assert(application.arguments()->size() == type.types().size() - 1);
+  auto maybe_type = assumptions_.find(application.identifier()->value());
+  assert(maybe_type != assumptions_.end());
 
-  uint64_t j = 0;
-  for(auto i : *application.arguments()) {
-    constraints_.insert(Constraint(Relation::Equality,
-                                   { type.types().at(j),
-                                       i->type() }));
-    j++;
-  }
   constraints_.insert(Constraint(Relation::Equality,
-                                 { application.identifier()->type(),
-                                     application.type() }));
+                                 { application.type(),
+                                     maybe_type->second }));
 }
 
 void TypingVisitor::visit(const Conditional &conditional) {
@@ -111,6 +102,7 @@ void TypingVisitor::visit(const Declaration &declaration) {
     if(assumptions_.find(it->value()) != assumptions_.end())
       type = assumptions_.find(it->value())->second;
   }
+
   constraints_.insert(Constraint(Relation::Implicit,
                                   { declaration.identifier()->type(),
                                       type },
@@ -157,14 +149,14 @@ bool TypeVariable::occurs(Type in) const {
 Type Substitution::operator()(Type in) const {
   if(s_ == in) {
     return t_;
-  } else if(t_.is<FunctionType>()) {
+  } else if(in.is<FunctionType>()) {
     std::vector<Type> args;
-    auto fn = t_.get<FunctionType>();
+    auto fn = in.get<FunctionType>();
     for(auto v : fn.types()) {
       if(Type(s_) != v) {
         args.push_back(v);
       } else {
-        args.push_back(Substitution(s_, t_)(in));
+        args.push_back(Substitution(s_, t_)(v));
       }
     }
 
@@ -181,7 +173,7 @@ std::set<Substitution> Constraint::unify() const {
 
   // Delete rule
   if(s == t)
-    return std::set<Substitution>();
+    return {};
 
   // Orient rule
   if(!s.is<TypeVariable>() && t.is<TypeVariable>()) {
@@ -214,8 +206,8 @@ std::set<Substitution> Constraint::unify() const {
       return {Substitution(s, t)};
     }
   }
-
-  return {};
+  std::cout << "Error!" << std::endl;
+  return {Substitution::error()};
 }
 
 std::set<TypeVariable> freevars(Type in) {
@@ -249,20 +241,23 @@ std::set<Substitution> TypingVisitor::solve() {
   std::set<Substitution> ret;
   auto working_set = constraints_;
   while(!working_set.empty()) {
-    auto it = *working_set.find(*working_set.begin());
-    working_set.erase(working_set.begin());
+    auto it = *working_set.begin();
+    working_set.erase(it);
+
     switch(it.relation()) {
     case Relation::Equality: {
       auto unified = it.unify();
-      std::set<Constraint> tmp;
-      for(auto c : working_set) {
-        for(auto s : unified) {
-          tmp.insert(c.apply(s));
+      if(unified.size() > 0) {
+        std::set<Constraint> tmp;
+        for(auto c : working_set) {
+          for(auto s : unified) {
+            tmp.insert(c.apply(s));
+          }
         }
+        working_set = tmp;
+        for(auto s : unified)
+          ret.insert(s);
       }
-      working_set = tmp;
-      for(auto s : unified)
-        ret.insert(s);
       break;
     }
     case Relation::Explicit: {

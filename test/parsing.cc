@@ -145,7 +145,7 @@ void test_function() {
                                            Addition)));
   auto application = make_shared<Application>(
     make_shared<Identifier>("a", typer.next()),
-    args, FunctionType({typer.next(), typer.next(), typer.next()}));
+    args, typer.next());
   ok(program("a(c: b, d: 1+2)", application), "Parses a function application");
 
   args = make_shared<ArgumentList>();
@@ -155,7 +155,8 @@ void test_function() {
   args->push_back(make_shared<Argument>(make_shared<Identifier>("b",
                                                                 typer.next()),
                                         make_shared<Number>(20)));
-  auto fn = make_shared<Function>(args, make_shared<Program>(), typer.next());
+  auto fn = make_shared<Function>(args, make_shared<Program>(),
+                                  FunctionType({typer.next(), typer.next()}));
   ok(program("program(a: 10, b: 20) do done", fn),
      "Parses a function declaration");
 }
@@ -203,13 +204,14 @@ void print_type(Type t) {
   } else if(t.is<FunctionType>()) {
     auto f = t.get<FunctionType>();
     std::cout << "(";
-    for(auto a : f.types())
+    for(auto a : f.types()) {
       print_type(a);
+      std::cout << ", ";
+    }
     std::cout << ")";
   } else {
     std::cout << "wauh";
   }
-
 }
 
 void test_inference() {
@@ -228,15 +230,33 @@ void test_inference() {
   auto visitor = TypingVisitor();
   visitor.visit(*p);
   auto substitutions = visitor.solve();
-  // ok(substitutions.size() == 2, "Generates multiple substitions");
-  //auto p = parse_program("a = program() do c = 1 + 2 c done d = a() d");
-  //auto visitor = TypingVisitor();
-  //visitor.visit(*p);
-  //auto substitutions = visitor.solve();
-  //std::cout << substitutions.size() << std::endl;
+  ok(substitutions.size() == 2, "Generates multiple substitions");
+  p = parse_program("a = program(b: 1) do b + 2 done c = 3 a(b: c)");
+  visitor = TypingVisitor();
+  visitor.visit(*p);
+  substitutions = visitor.solve();
+  std::cout << substitutions.size() << std::endl;
+  std::cout << visitor.constraints().size() << std::endl;
   //  ok(substitutions.size() == 2, "Generates function substitution");
 
-  int i = 0;
+
+  for(auto s : visitor.constraints()) {
+    print_type(s.variables().first);
+    switch(s.relation()) {
+    case Relation::Implicit:
+      std::cout << " <= ";
+      break;
+    case Relation::Equality:
+      std::cout << " = ";
+      break;
+    case Relation::Explicit:
+      std::cout << " < ";
+    }
+    print_type(s.variables().second);
+    std::cout << std::endl;
+  }
+  std::cout << "subs" << std::endl;
+
   for(auto s : substitutions) {
     print_type(s.left());
     std::cout << " = ";
@@ -244,10 +264,8 @@ void test_inference() {
     std::cout << std::endl;
     if(s.is_error())
       std::cout << "Error!";
-    i++;
   }
   //auto it = substitutions.begin();
-  std::cout << i << std::endl;
   //ok((*it).right().is<FunctionType>(), "Function definition is a function type");
   //ok((*it).right().get<FunctionType>().types()[0].is<NumberType>(), "Function return is a number");
   // it++;
