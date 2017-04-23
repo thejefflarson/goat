@@ -92,11 +92,6 @@ class TypeFactory {
   uint32_t last_;
 };
 
-enum class Relation {
-  Equality,
-  Explicit,
-  Implicit
-};
 
 class Substitution {
 public:
@@ -131,6 +126,12 @@ private:
   Type t_;
 };
 
+enum class Relation {
+  Equality = 1,
+  Explicit = 2,
+  Implicit = 3
+};
+
 class Constraint {
  public:
   Constraint(Relation relation,
@@ -154,7 +155,7 @@ class Constraint {
   }
 
   bool operator<(const Constraint &b) const {
-    return variables_ < b.variables_;
+    return relation_ < b.relation_ || variables_ < b.variables_;
   }
 
   Relation relation() const { return relation_; }

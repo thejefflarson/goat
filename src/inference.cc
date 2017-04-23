@@ -58,13 +58,6 @@ void TypingVisitor::visit(const Function &function) {
   util::list_accept(function.arguments(), *this);
   function.program()->accept(*this);
 
-  for(auto i : *function.arguments()) {
-    auto ident = i->identifier();
-    if(assumptions_.find(ident->value()) == assumptions_.end()) std::cout << "uhoh" << std::endl;
-    auto var = assumptions_.find(ident->value())->second;
-    constraints_.insert(Constraint(Relation::Equality, { ident->type(), var }));
-  }
-
   constraints_.insert(Constraint(Relation::Equality, {
     function.type().get<FunctionType>().ret(),
     function.program()->type()
@@ -79,6 +72,7 @@ void TypingVisitor::visit(const Application &application) {
   constraints_.insert(Constraint(Relation::Equality,
                                  { application.type(),
                                      maybe_type->second }));
+  util::list_accept(application.arguments(), *this);
 }
 
 void TypingVisitor::visit(const Conditional &conditional) {
@@ -90,12 +84,11 @@ void TypingVisitor::visit(const Conditional &conditional) {
   conditional.false_block()->accept(*this);
 }
 
-
 void TypingVisitor::visit(const Operation &operation) {
   constraints_.insert(Constraint(Relation::Equality, {operation.left()->type(),
           NumberType()}));
-  // constraints_.insert(Constraint(Relation::Equality, {operation.right()->type(),
-  //        NumberType()}));
+  constraints_.insert(Constraint(Relation::Equality, {operation.right()->type(),
+          NumberType()}));
   operation.left()->accept(*this);
   operation.right()->accept(*this);
 }
