@@ -224,17 +224,17 @@ void test_inference() {
   // auto subst = *substitutions.begin();
   // ok(subst.left() == p->type(), "Assigns the right variable");
   // ok(subst.right().is<NumberType>(), "Is a number");
-  // p = parse_program("a = 1 b = a");
-  // visitor = TypingVisitor();
-  // visitor.visit(*p);
-  // substitutions = visitor.solve();
-  // ok(substitutions.size() == 2, "Generates multiple substitions");
-  auto p = parse_program("a = program() do 1 + 2 done a()");
+  auto p = parse_program("a = 1 b = a");
   auto visitor = TypingVisitor();
   visitor.visit(*p);
   auto substitutions = visitor.solve();
-  std::cout << substitutions.size() << std::endl;
-//  ok(substitutions.size() == 2, "Generates function substitution");
+  // ok(substitutions.size() == 2, "Generates multiple substitions");
+  //auto p = parse_program("a = program() do c = 1 + 2 c done d = a() d");
+  //auto visitor = TypingVisitor();
+  //visitor.visit(*p);
+  //auto substitutions = visitor.solve();
+  //std::cout << substitutions.size() << std::endl;
+  //  ok(substitutions.size() == 2, "Generates function substitution");
 
   int i = 0;
   for(auto s : substitutions) {

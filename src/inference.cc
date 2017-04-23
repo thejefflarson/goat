@@ -40,7 +40,9 @@ void TypingVisitor::visit(const String &string) {
 }
 
 void TypingVisitor::visit(const Program &program) {
+  auto before = assumptions_;
   util::list_accept(program.nodes(), *this);
+  assumptions_ = before;
 }
 
 void TypingVisitor::visit(const Argument &argument) {
@@ -102,13 +104,20 @@ void TypingVisitor::visit(const Operation &operation) {
 }
 
 void TypingVisitor::visit(const Declaration &declaration) {
+  auto expr = declaration.expression().get();
+  auto type = expr->type();
+  if(typeid(*expr) == typeid(Identifier)) {
+    auto it = dynamic_cast<Identifier *>(expr);
+    if(assumptions_.find(it->value()) != assumptions_.end())
+      type = assumptions_.find(it->value())->second;
+  }
   constraints_.insert(Constraint(Relation::Implicit,
                                   { declaration.identifier()->type(),
-                                      declaration.expression()->type() },
+                                      type },
                                   monomorphic_));
 
   declaration.identifier()->accept(*this);
-  if(declaration.expression()) declaration.expression()->accept(*this);
+  declaration.expression()->accept(*this);
 }
 
 Constraint Constraint::apply(Substitution s) const {
