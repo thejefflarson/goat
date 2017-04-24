@@ -6,7 +6,7 @@
 using namespace goat;
 %}
 
-%option noyywrap debug reentrant
+%option noyywrap debug reentrant nounput noinput
 
 %{
 #define YY_USER_ACTION loc.columns(yyleng);
