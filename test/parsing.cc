@@ -216,22 +216,22 @@ void print_type(Type t) {
 }
 
 void test_inference() {
-  // auto p = parse_program("a = 1");
-  // auto visitor = TypingVisitor();
-  // visitor.visit(*p);
-  // auto constraints = visitor.constraints();
-  // ok(constraints.size() == 1, "Generates constraints");
-  // auto substitutions = visitor.solve();
-  // ok(p->type().is<TypeVariable>(), "The type is a variable");
-  // ok(substitutions.size() == 1, "Has a substitution");
-  // auto subst = *substitutions.begin();
-  // ok(subst.left() == p->type(), "Assigns the right variable");
-  // ok(subst.right().is<NumberType>(), "Is a number");
-  auto p = parse_program("a = 1 b = a");
+  auto p = parse_program("a = 1");
   auto visitor = TypingVisitor();
   visitor.visit(*p);
+  auto constraints = visitor.constraints();
+  ok(constraints.size() == 1, "Generates constraints");
   auto substitutions = visitor.solve();
-  p = parse_program("b = 1 a = program(b: 1) do b + 2 done a(b: b)");
+  ok(p->type().is<TypeVariable>(), "The type is a variable");
+  ok(substitutions.size() == 1, "Has a substitution");
+  auto subst = *substitutions.begin();
+  ok(subst.left() == p->type(), "Assigns the right variable");
+  ok(subst.right().is<NumberType>(), "Is a number");
+  p = parse_program("a = 1 b = a");
+  visitor = TypingVisitor();
+  visitor.visit(*p);
+  substitutions = visitor.solve();
+  p = parse_program("b = 1 a = program(b: 1) do b + 2 done a(b: 2)");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
@@ -296,11 +296,11 @@ void test_constraints() {
 
 int main() {
   start_test;
-  //test_empty();
-  //test_literals();
-  //test_math();
-  //test_function();
-  //test_conditional();
+  test_empty();
+  test_literals();
+  test_math();
+  test_function();
+  test_conditional();
   // eventually these should be in their own file
   test_inference();
   test_constraints();
