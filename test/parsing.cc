@@ -1,4 +1,5 @@
 #include <sstream>
+#include <typeinfo>
 #include "driver.hh"
 #include "inference.hh"
 #include "node.hh"
@@ -230,10 +231,10 @@ void test_inference() {
   auto visitor = TypingVisitor();
   visitor.visit(*p);
   auto substitutions = visitor.solve();
-  p = parse_program("b = 3 a = program(b: 1) do b + 2 done a(b: b)");
+  p = parse_program("b = 3 a = program(b: 1) do b + 2 done x = a(b: b)");
   visitor = TypingVisitor();
   visitor.visit(*p);
-  //substitutions = visitor.solve();
+  substitutions = visitor.solve();
   //std::cout << substitutions.size() << std::endl;
   //std::cout << visitor.constraints().size() << std::endl;
   //  ok(substitutions.size() == 2, "Generates function substitution");
@@ -280,6 +281,12 @@ void test_constraints() {
   ok(did.second, "Inserted a constraint");
   did = constraints.insert(Constraint(Relation::Equality, {typer.next(), typer.next()}));
   ok(did.second, "Inserted another constraint");
+  constraints = std::set<Constraint>();
+  constraints.insert(Constraint(Relation::Implicit, {NumberType(), NumberType()}));
+  ok(constraints.size() == 1, "Inserted a number type constraint");
+  auto it = *constraints.begin();
+  constraints.erase(it);
+  ok(constraints.size() == 0, "Deleted a number type constraint");
 }
 
 int main() {
@@ -291,5 +298,5 @@ int main() {
   //test_conditional();
   // eventually these should be in their own file
   test_inference();
-  // test_constraints();
+  test_constraints();
 }

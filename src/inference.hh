@@ -27,7 +27,7 @@ class AbstractType {
     return !(*this == b);
   }
   bool operator<(const AbstractType &b) const {
-    if(typeid(*this) != typeid(b)) return true;
+    if(typeid(*this) != typeid(b)) return this < &b;
     return less(b);
   }
  private:
@@ -92,7 +92,6 @@ class TypeFactory {
   uint32_t last_;
 };
 
-
 class Substitution {
 public:
   Substitution(Type s, Type t) :
@@ -128,8 +127,8 @@ private:
 
 enum class Relation {
   Equality = 1,
-  Explicit = 2,
-  Implicit = 3
+  Implicit = 2,
+  Explicit = 3
 };
 
 class Constraint {
@@ -137,7 +136,8 @@ class Constraint {
   Constraint(Relation relation,
              std::pair<Type, Type> variables) :
     relation_(relation),
-    variables_(variables) {}
+    variables_(variables),
+    monomorphic_() {}
   Constraint(Relation relation,
              std::pair<Type, Type> variables,
              std::set<TypeVariable> monomorphic) :

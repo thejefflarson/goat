@@ -32,7 +32,11 @@ void TypingVisitor::visit(const Number &number) {
 }
 
 void TypingVisitor::visit(const Identifier &identifier) {
-  assumptions_.insert({identifier.value(), identifier.type()});
+  if(!assumptions_.insert({identifier.value(), identifier.type()}).second) {
+    constraints_.insert(Constraint(Relation::Implicit, {
+          identifier.type(),
+            assumptions_.find(identifier.value())->second}, monomorphic_));
+  };
 }
 
 void TypingVisitor::visit(const String &string) {
@@ -57,7 +61,6 @@ void TypingVisitor::visit(const Function &function) {
     assumptions_.erase(a->identifier()->value());
   util::list_accept(function.arguments(), *this);
   function.program()->accept(*this);
-
   constraints_.insert(Constraint(Relation::Equality, {
     function.type().get<FunctionType>().ret(),
     function.program()->type()
@@ -67,11 +70,7 @@ void TypingVisitor::visit(const Function &function) {
 }
 
 void TypingVisitor::visit(const Application &application) {
-  auto maybe_type = assumptions_.find(application.identifier()->value());
-  assert(maybe_type != assumptions_.end());
-  constraints_.insert(Constraint(Relation::Equality,
-                                 { application.type(),
-                                     maybe_type->second }));
+  application.identifier()->accept(*this);
   util::list_accept(application.arguments(), *this);
 }
 
@@ -94,19 +93,11 @@ void TypingVisitor::visit(const Operation &operation) {
 }
 
 void TypingVisitor::visit(const Declaration &declaration) {
-  auto expr = declaration.expression().get();
-  auto type = expr->type();
-  if(typeid(*expr) == typeid(Identifier)) {
-    auto it = dynamic_cast<Identifier *>(expr);
-    if(assumptions_.find(it->value()) != assumptions_.end())
-      type = assumptions_.find(it->value())->second;
-  }
-
+  assumptions_.erase(declaration.identifier()->value());
   constraints_.insert(Constraint(Relation::Implicit,
                                   { declaration.identifier()->type(),
-                                      type },
+                                      declaration.expression()->type() },
                                   monomorphic_));
-  assumptions_.erase(declaration.identifier()->value());
   declaration.identifier()->accept(*this);
   declaration.expression()->accept(*this);
 }
