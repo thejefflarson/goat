@@ -109,8 +109,12 @@ Constraint Constraint::apply(Substitution s) const {
     return Constraint(relation_, {left, right});
   } else {
     auto tmp = std::set<TypeVariable>();
-    for(auto m : monomorphic_) {
-      tmp.insert(s(TypeVariable(m)).get<TypeVariable>());
+    for(TypeVariable m : monomorphic_) {
+      Type n = TypeVariable(m.id());
+      Type v = s(n);
+      if(v.is<TypeVariable>()) {
+        tmp.insert(v.get<TypeVariable>());
+      }
     }
     return Constraint(relation_, {left, right}, tmp);
   }
@@ -232,7 +236,7 @@ std::set<Substitution> TypingVisitor::solve() {
   auto working_set = constraints_;
   while(!working_set.empty()) {
     auto it = *working_set.begin();
-    working_set.erase(it);
+    working_set.erase(working_set.begin());
     switch(it.relation()) {
     case Relation::Equality: {
       auto unified = it.unify();

@@ -231,7 +231,7 @@ void test_inference() {
   auto visitor = TypingVisitor();
   visitor.visit(*p);
   auto substitutions = visitor.solve();
-  p = parse_program("b = 3 a = program(b: 1) do b + 2 done x = a(b: b)");
+  p = parse_program("b = 1 a = program(b: 1) do b + 2 done a(b: b)");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
@@ -281,12 +281,17 @@ void test_constraints() {
   ok(did.second, "Inserted a constraint");
   did = constraints.insert(Constraint(Relation::Equality, {typer.next(), typer.next()}));
   ok(did.second, "Inserted another constraint");
-  constraints = std::set<Constraint>();
-  constraints.insert(Constraint(Relation::Implicit, {NumberType(), NumberType()}));
-  ok(constraints.size() == 1, "Inserted a number type constraint");
-  auto it = *constraints.begin();
+  did = constraints.insert(Constraint(Relation::Implicit, {typer.next(), typer.next()}));
+  ok(did.second, "Inserted a different constraint");
+  Type t = typer.next();
+  auto a = Constraint(Relation::Equality, {t, NumberType()});
+  auto b = Constraint(Relation::Equality, {t, NumberType()});
+  ok(a == b, "Two constraints are equal");
+  constraints.insert(Constraint(Relation::Equality, {t, FunctionType({typer.next(), typer.next()})}));
+  ok(constraints.size() == 4, "Inserted a number type constraint");
+  auto it = constraints.begin();
   constraints.erase(it);
-  ok(constraints.size() == 0, "Deleted a number type constraint");
+  ok(constraints.size() == 3, "Deleted a number type constraint");
 }
 
 int main() {

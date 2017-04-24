@@ -147,7 +147,8 @@ class Constraint {
 
   bool operator==(const Constraint &b) const {
     return relation_ == b.relation_ &&
-      variables_ == b.variables_;
+      variables_ == b.variables_ &&
+      monomorphic_ == b.monomorphic_;
   }
 
   bool operator!=(const Constraint &b) const {
@@ -155,7 +156,9 @@ class Constraint {
   }
 
   bool operator<(const Constraint &b) const {
-    return relation_ < b.relation_ || variables_ < b.variables_;
+    return relation_ < b.relation_ ||
+      variables_ < b.variables_ ||
+      monomorphic_ < b.monomorphic_;
   }
 
   Relation relation() const { return relation_; }
