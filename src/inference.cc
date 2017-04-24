@@ -34,8 +34,9 @@ void TypingVisitor::visit(const Number &number) {
 void TypingVisitor::visit(const Identifier &identifier) {
   if(!assumptions_.insert({identifier.value(), identifier.type()}).second) {
     constraints_.insert(Constraint(Relation::Implicit, {
-          identifier.type(),
-            assumptions_.find(identifier.value())->second}, monomorphic_));
+      identifier.type(),
+      assumptions_.find(identifier.value())->second
+    }, monomorphic_));
   };
 }
 
@@ -52,6 +53,10 @@ void TypingVisitor::visit(const Argument &argument) {
   monomorphic_.insert(argument.type().get<TypeVariable>());
   argument.identifier()->accept(*this);
   argument.expression()->accept(*this);
+  constraints_.insert(Constraint(Relation::Equality, {
+    argument.identifier()->type(),
+    argument.expression()->type()
+  }));
 }
 
 void TypingVisitor::visit(const Function &function) {
@@ -64,9 +69,9 @@ void TypingVisitor::visit(const Function &function) {
   constraints_.insert(Constraint(Relation::Equality, {
     function.type().get<FunctionType>().ret(),
     function.program()->type()
-   }));
-   monomorphic_ = monomorphic;
-   assumptions_ = assumptions;
+  }));
+  monomorphic_ = monomorphic;
+  assumptions_ = assumptions;
 }
 
 void TypingVisitor::visit(const Application &application) {
@@ -75,29 +80,34 @@ void TypingVisitor::visit(const Application &application) {
 }
 
 void TypingVisitor::visit(const Conditional &conditional) {
-  constraints_.insert(Constraint(Relation::Equality,
-                                 { conditional.true_type(),
-                                     conditional.false_type()}));
+  constraints_.insert(Constraint(Relation::Equality, {
+    conditional.true_type(),
+    conditional.false_type()
+  }));
   conditional.expression()->accept(*this);
   conditional.true_block()->accept(*this);
   conditional.false_block()->accept(*this);
 }
 
 void TypingVisitor::visit(const Operation &operation) {
-  constraints_.insert(Constraint(Relation::Equality, {operation.left()->type(),
-          NumberType()}));
-  constraints_.insert(Constraint(Relation::Equality, {operation.right()->type(),
-          NumberType()}));
+  constraints_.insert(Constraint(Relation::Equality, {
+    operation.left()->type(),
+    NumberType()
+  }));
+  constraints_.insert(Constraint(Relation::Equality, {
+    operation.right()->type(),
+    NumberType()
+  }));
   operation.left()->accept(*this);
   operation.right()->accept(*this);
 }
 
 void TypingVisitor::visit(const Declaration &declaration) {
   assumptions_.erase(declaration.identifier()->value());
-  constraints_.insert(Constraint(Relation::Implicit,
-                                  { declaration.identifier()->type(),
-                                      declaration.expression()->type() },
-                                  monomorphic_));
+  constraints_.insert(Constraint(Relation::Implicit, {
+    declaration.identifier()->type(),
+    declaration.expression()->type()
+  }, monomorphic_));
   declaration.identifier()->accept(*this);
   declaration.expression()->accept(*this);
 }
@@ -114,6 +124,8 @@ Constraint Constraint::apply(Substitution s) const {
       Type v = s(n);
       if(v.is<TypeVariable>()) {
         tmp.insert(v.get<TypeVariable>());
+      } else {
+        tmp.insert(m);
       }
     }
     return Constraint(relation_, {left, right}, tmp);

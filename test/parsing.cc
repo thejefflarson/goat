@@ -231,7 +231,7 @@ void test_inference() {
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
-  p = parse_program("b = 1 a = program(b: 1) do b + 2 done a(b: 2)");
+  p = parse_program("b = 1 a = program(b: 1) do b done a(b: b)");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
@@ -265,13 +265,6 @@ void test_inference() {
     if(s.is_error())
       std::cout << "Error!";
   }
-  //auto it = substitutions.begin();
-  //ok((*it).right().is<FunctionType>(), "Function definition is a function type");
-  //ok((*it).right().get<FunctionType>().types()[0].is<NumberType>(), "Function return is a number");
-  // it++;
-  //ok((*it).right().is<NumberType>(), "Function application is a number");
-  //it++;
-  //ok((*it).right().is<NumberType>(), "Function application is a number");
 }
 
 void test_constraints() {
