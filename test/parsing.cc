@@ -227,20 +227,35 @@ void test_inference() {
   auto subst = *substitutions.begin();
   ok(subst.left() == p->type(), "Assigns the right variable");
   ok(subst.right().is<NumberType>(), "Is a number");
+
+  p = parse_program("a = 'Hello'");
+  visitor = TypingVisitor();
+  visitor.visit(*p);
+  constraints = visitor.constraints();
+  substitutions = visitor.solve();
+  subst = *substitutions.begin();
+  ok(subst.right().is<StringType>(), "Infers a string type");
+
+
   p = parse_program("a = 1 b = a");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
+  // for(auto a : substitutions) {
+  //   ok(a.left().is<TypeVariable>(), "Substitution is assignment");
+  //   ok(a.right().is<NumberType>(), "Substitution is a number");
+  // }
+
   p = parse_program("b = 1 a = program(b: 1) do b done a(b: b)");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
-  //std::cout << substitutions.size() << std::endl;
-  //std::cout << visitor.constraints().size() << std::endl;
-  //  ok(substitutions.size() == 2, "Generates function substitution");
+  std::cout << substitutions.size() << std::endl;
+  std::cout << visitor.constraints().size() << std::endl;
 
 
   for(auto s : visitor.constraints()) {
+    std::cout << "# ";
     print_type(s.variables().first);
     switch(s.relation()) {
     case Relation::Implicit:
@@ -258,6 +273,7 @@ void test_inference() {
   std::cout << "subs" << std::endl;
 
   for(auto s : substitutions) {
+    std::cout << "# ";
     print_type(s.left());
     std::cout << " = ";
     print_type(s.right());
