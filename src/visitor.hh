@@ -15,20 +15,23 @@ class Conditional;
 class Operation;
 class Declaration;
 
+#define VisitorMethods \
+  void visit(const node::Number &number); \
+  void visit(const node::Identifier &identifier); \
+  void visit(const node::String &string); \
+  void visit(const node::Program &program); \
+  void visit(const node::Argument &argument); \
+  void visit(const node::Function &function); \
+  void visit(const node::Application &application); \
+  void visit(const node::Conditional &conditional); \
+  void visit(const node::Operation &operation); \
+  void visit(const node::Declaration &declaration);
+
 
 class Visitor {
  public:
   virtual ~Visitor() {}
-  virtual void visit(const Number &number) = 0;
-  virtual void visit(const Identifier &identifier) = 0;
-  virtual void visit(const String &string) = 0;
-  virtual void visit(const Program &program) = 0;
-  virtual void visit(const Argument &argument) = 0;
-  virtual void visit(const Function &function) = 0;
-  virtual void visit(const Application &application) = 0;
-  virtual void visit(const Conditional &conditional) = 0;
-  virtual void visit(const Operation &operation) = 0;
-  virtual void visit(const Declaration &declaration) = 0;
+  VisitorMethods
 };
 
 }
