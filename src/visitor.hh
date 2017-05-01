@@ -31,7 +31,16 @@ class Declaration;
 class Visitor {
  public:
   virtual ~Visitor() {}
-  VisitorMethods
+  virtual void visit(const node::Number &number) = 0;
+  virtual void visit(const node::Identifier &identifier) = 0;
+  virtual void visit(const node::String &string) = 0;
+  virtual void visit(const node::Program &program) = 0;
+  virtual void visit(const node::Argument &argument) = 0;
+  virtual void visit(const node::Function &function) = 0;
+  virtual void visit(const node::Application &application) = 0;
+  virtual void visit(const node::Conditional &conditional) = 0;
+  virtual void visit(const node::Operation &operation) = 0;
+  virtual void visit(const node::Declaration &declaration) = 0;
 };
 
 }

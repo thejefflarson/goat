@@ -7,10 +7,13 @@ def options(opts):
 
 def configure(conf):
     conf.load("compiler_cxx bison flex")
+    for arg in ['--cxxflags', '--ldflags', '--libs core', '--system-libs']:
+        conf.check_cfg(path='llvm-config', args=arg,
+                       package='', uselib_store='LLVM')
+
     conf.check_cxx(
-        uselib_store='G',
-        cxxflags=['-std=c++14', '-g', '-Wall', '-O0',
-                  '-fsanitize=address',
+        uselib_store='ASAN',
+        cxxflags=['-fsanitize=address', '-std=c++14',
                   '-fno-omit-frame-pointer'],
         ldflags=['-fsanitize=address']
     )
@@ -22,7 +25,7 @@ def build(bld):
         source=bld.path.ant_glob('src/*.(l|cc|yc)'),
         target='goat',
         includes='src',
-        use='G'
+        use='LLVM ASAN'
     )
 
     bld.recurse('test')

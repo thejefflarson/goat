@@ -2,6 +2,7 @@
 
 using namespace goat;
 using namespace node;
+using namespace compiling;
 using namespace inference;
 
 void CompilingVisitor::visit(const Number &number) {

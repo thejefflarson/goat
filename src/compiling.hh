@@ -1,6 +1,8 @@
 #ifndef SRC_COMPILING_
 #define SRC_COMPILING_
 
+#include "llvm/IR/LLVMContext.h"
+
 #include "inference.hh"
 #include "node.hh"
 #include "visitor.hh"
@@ -18,7 +20,7 @@ public:
 private:
   std::set<inference::Substitution> substitutions_;
   std::set<node::Identifier> scope_;
-  LLVMContext context_;
+  llvm::LLVMContext context_;
 };
 
 }
