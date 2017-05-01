@@ -41,7 +41,6 @@
 %token START_AT "start at"
 %token REPEAT "repeat"
 %token TIMES "times"
-%token RETURNS "->"
 %token RETURN "return"
 %token EQUALS "="
 %token COLON ":"
@@ -50,7 +49,6 @@
 %token STAR "*"
 %token SLASH "/"
 %token LPAREN "("
-%token CALL "function call"
 %token RPAREN ")"
 %token COMMA ","
 

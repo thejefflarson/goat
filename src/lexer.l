@@ -39,7 +39,6 @@ done       return parser::make_DONE(loc);
 "start at" return parser::make_START_AT(loc);
 repeat     return parser::make_REPEAT(loc);
 times      return parser::make_TIMES(loc);
-->         return parser::make_RETURNS(loc);
 return     return parser::make_RETURN(loc);
 {ident}    return parser::make_IDENT(yytext, loc);
 "="        return parser::make_EQUALS(loc);
