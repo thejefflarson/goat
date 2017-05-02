@@ -11,10 +11,25 @@ def configure(conf):
         conf.check_cfg(path='llvm-config', args=arg,
                        package='', uselib_store='LLVM')
 
+    conf.env['CXXFLAGS_LLVM'].remove('-std=c++11')
+
     conf.check_cxx(
         uselib_store='ASAN',
         cxxflags=['-fsanitize=address', '-std=c++14',
-                  '-fno-omit-frame-pointer'],
+                  '-fno-omit-frame-pointer',
+                  # llvm recommended warnings
+                  '-Wall',
+                  '-W',
+                  '-Wno-unused-parameter',
+                  '-Wwrite-strings',
+                  '-Wcast-qual',
+                  '-Wmissing-field-initializers',
+                  '-Wno-long-long',
+                  '-Wcovered-switch-default',
+                  '-Wnon-virtual-dtor',
+                  '-Wdelete-non-virtual-dtor',
+                  '-Wstring-conversion',
+                  '-Werror=date-time'],
         ldflags=['-fsanitize=address']
     )
     conf.load("clang_compilation_database", tooldir="./tools/")

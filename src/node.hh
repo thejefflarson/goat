@@ -36,7 +36,7 @@ class Number : public Node {
     value_(value),
     type_(inference::NumberType()) {}
   void accept(Visitor& v) const;
-  const double value() const { return value_; }
+  double value() const { return value_; }
   const inference::Type type() const {  return type_; }
  private:
   bool equals(const Node &b) const;
