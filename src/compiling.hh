@@ -20,7 +20,8 @@ public:
     context_(),
     builder_(context_),
     module_(llvm::make_unique<llvm::Module>("Goat Compiler", context_)),
-    scope_() {}
+    scope_(),
+    current_() {}
   VisitorMethods
 private:
   std::set<inference::Substitution> substitutions_;
@@ -28,6 +29,7 @@ private:
   llvm::IRBuilder<> builder_;
   std::unique_ptr<llvm::Module> module_;
   std::map<std::string, llvm::Value *> scope_;
+  llvm::Value *current_;
 };
 
 }

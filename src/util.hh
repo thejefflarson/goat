@@ -79,6 +79,13 @@ template <typename Function, typename Variant,
           typename Return, typename... Types>
 struct variant_visitor;
 
+template <typename Function, typename Variant, typename Return, typename Type>
+struct variant_visitor<Function, Variant, Return, Type> {
+  static Return visit(const Variant& variant, Function&& fn) {
+    return fn(variant.template get<Type>());
+  }
+};
+
 template <typename Function, typename Variant, typename Return,
           typename First, typename... Types>
 struct variant_visitor<Function, Variant, Return, First, Types...> {
@@ -90,13 +97,6 @@ struct variant_visitor<Function, Variant, Return, First, Types...> {
         variant, std::forward<Function>(fn)
       );
     }
-  }
-};
-
-template <typename Function, typename Variant, typename Return, typename Type>
-struct variant_visitor<Function, Variant, Return, Type> {
-  static Return visit(const Variant& variant, Function&& fn) {
-    return fn(variant.template get<Type>());
   }
 };
 
