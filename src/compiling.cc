@@ -9,7 +9,6 @@ using namespace node;
 using namespace compiling;
 using namespace inference;
 
-
 void CompilingVisitor::visit(const Number &number) {
   current_ = llvm::ConstantFP::get(context_, llvm::APFloat(number.value()));
 }

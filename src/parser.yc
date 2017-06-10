@@ -135,14 +135,14 @@ application:
 ;
 
 function:
-  PROGRAM "(" arguments ")" DO program DONE {
+  PROGRAM ident "(" arguments ")" DO program DONE {
     std::vector<inference::Type> types;
     for(auto i : * $arguments) {
       types.push_back(i->type());
     }
     types.push_back(typer.next());
     auto f = inference::FunctionType(types);
-    $$ = std::make_shared<node::Function>($arguments, $program, f);
+    $$ = std::make_shared<node::Function>($ident, $arguments, $program, f);
   }
 ;
 

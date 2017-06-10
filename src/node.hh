@@ -109,18 +109,23 @@ using ArgumentList = std::vector<std::shared_ptr<Argument>>;
 
 class Function : public Node {
  public:
-  Function(const std::shared_ptr<ArgumentList> arguments,
+  Function(const std::shared_ptr<Identifier> ident,
+           const std::shared_ptr<ArgumentList> arguments,
            const std::shared_ptr<Program> program,
            inference::FunctionType type) :
+    identifier_(ident),
     arguments_(arguments),
     program_(program),
     type_(std::forward<inference::FunctionType>(type)) {}
   void accept(Visitor& v) const;
+  const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
+  const std::string id() const;
   const inference::Type type() const { return type_; }
  private:
   bool equals(const Node &b) const;
+  const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<ArgumentList> arguments_;
   const std::shared_ptr<Program> program_;
   const inference::Type type_;

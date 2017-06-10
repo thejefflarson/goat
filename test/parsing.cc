@@ -156,9 +156,10 @@ void test_function() {
   args->push_back(make_shared<Argument>(make_shared<Identifier>("b",
                                                                 typer.next()),
                                         make_shared<Number>(20)));
-  auto fn = make_shared<Function>(args, make_shared<Program>(),
+  auto ident = make_shared<Identifier>("a", typer.next());
+  auto fn = make_shared<Function>(ident, args, make_shared<Program>(),
                                   FunctionType({typer.next(), typer.next()}));
-  ok(program("program(a: 10, b: 20) do done", fn),
+  ok(program("program a(a: 10, b: 20) do done", fn),
      "Parses a function declaration");
 }
 
@@ -246,7 +247,7 @@ void test_inference() {
   //   ok(a.right().is<NumberType>(), "Substitution is a number");
   // }
 
-  p = parse_program("b = 1 a = program(b: 1) do b done a(b: b)");
+  p = parse_program("b = 1 program a(b: 1) do b done a(b: b)");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
