@@ -12,6 +12,7 @@ def configure(conf):
                        package='', uselib_store='LLVM')
 
     conf.env['CXXFLAGS_LLVM'].remove('-std=c++11')
+    conf.env['CXXFLAGS_LLVM'].remove('-fno-exceptions')
 
     conf.check_cxx(
         uselib_store='ASAN',
@@ -25,10 +26,8 @@ def configure(conf):
                   '-Wcast-qual',
                   '-Wmissing-field-initializers',
                   '-Wno-long-long',
-                  '-Wcovered-switch-default',
                   '-Wnon-virtual-dtor',
                   '-Wdelete-non-virtual-dtor',
-                  '-Wstring-conversion',
                   '-Werror=date-time'],
         ldflags=['-fsanitize=address']
     )
