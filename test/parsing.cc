@@ -247,7 +247,7 @@ void test_inference() {
   //   ok(a.right().is<NumberType>(), "Substitution is a number");
   // }
 
-  p = parse_program("b = 1 program a(b: 1) do b done a(b: b)");
+  p = parse_program("b = 'hello' program a(b: 'yo') do b done a(b: b)");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
