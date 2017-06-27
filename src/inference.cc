@@ -52,6 +52,7 @@ void TypingVisitor::visit(const Argument &argument) {
   assert(argument.type().is<TypeVariable>());
   monomorphic_.insert(argument.type().get<TypeVariable>());
   argument.identifier()->accept(*this);
+  if(argument.expression() == nullptr) return;
   argument.expression()->accept(*this);
   constraints_.insert(Constraint(Relation::Equality, {
     argument.identifier()->type(),

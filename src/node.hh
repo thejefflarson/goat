@@ -96,6 +96,9 @@ class Argument : public Node {
            const std::shared_ptr<Node> expression) :
     identifier_(ident),
     expression_(expression) {}
+  Argument(const std::shared_ptr<Identifier> ident) :
+    identifier_(ident),
+    expression_(nullptr) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<Node> expression() const { return expression_; }
