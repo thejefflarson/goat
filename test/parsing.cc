@@ -238,7 +238,7 @@ void test_inference() {
   ok(subst.right().is<StringType>(), "Infers a string type");
 
 
-  p = parse_program("a = 1 b = a");
+  p = parse_program("a = 1 b = a program c(a: 10) do b = c b(a: a - 1) done");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();
@@ -247,7 +247,7 @@ void test_inference() {
   //   ok(a.right().is<NumberType>(), "Substitution is a number");
   // }
 
-  p = parse_program("b = 'hello' program a(b: 'yo') do b done a(b: b)");
+  p = parse_program("b = program c() do 'a' done program a(b: program b() do 'a' done) do b done a(b: b)");
   visitor = TypingVisitor();
   visitor.visit(*p);
   substitutions = visitor.solve();

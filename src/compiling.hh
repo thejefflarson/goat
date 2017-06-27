@@ -19,7 +19,7 @@ public:
     substitutions_(substitutions),
     context_(),
     builder_(context_),
-    module_(llvm::make_unique<llvm::Module>("Goat Compiler", context_)),
+    module_(llvm::make_unique<llvm::Module>("Goat", context_)),
     scope_(),
     current_() {}
   VisitorMethods
