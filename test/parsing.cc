@@ -237,7 +237,6 @@ void test_inference() {
   subst = *substitutions.begin();
   ok(subst.right().is<StringType>(), "Infers a string type");
 
-
   p = parse_program("a = 1 b = 'a' c = b c = a");
   visitor = TypingVisitor();
   visitor.visit(*p);

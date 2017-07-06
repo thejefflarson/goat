@@ -12,7 +12,8 @@
 using namespace goat;
 using namespace goat::inference;
 using namespace goat::node;
-
+// this should be more like:
+// http://www.cs.cornell.edu/courses/cs3110/2016fa/l/17-inference/notes.html
 std::string alpha = "abcdefghijklmnopqrstuvwxyz";
 TypeVariable TypeFactory::next() {
   if(last_ == 0){ last_++; return TypeVariable("a"); }
@@ -84,6 +85,10 @@ void TypingVisitor::visit(const Conditional &conditional) {
   constraints_.insert(Constraint(Relation::Equality, {
     conditional.true_type(),
     conditional.false_type()
+  }));
+  constraints_.insert(Constraint(Relation::Equality, {
+    conditional.expression()->type(),
+    BoolType()
   }));
   conditional.expression()->accept(*this);
   conditional.true_block()->accept(*this);
@@ -267,12 +272,12 @@ std::set<Substitution> TypingVisitor::solve() {
       break;
     }
     case Relation::Explicit: {
-      std::set<TypeVariable> fvars = freevars(it.variables().second);
-      std::set<TypeVariable> mono = it.monomorphic();
+      auto fvars = freevars(it.variables().second);
+      auto mono = it.monomorphic();
       fvars.erase(mono.begin(), mono.end());
       std::set<TypeVariable> all;
       for(auto c : working_set) {
-        std::set<TypeVariable> v = c.activevars();
+        auto v = c.activevars();
         all.insert(v.begin(), v.end());
       }
       std::set<TypeVariable> intxs;
@@ -283,9 +288,7 @@ std::set<Substitution> TypingVisitor::solve() {
         auto cons = Constraint(Relation::Implicit, it.variables());
         working_set.insert(cons);
       } else {
-        fvars = freevars(it.variables().second);
-        mono.erase(fvars.begin(), fvars.end());
-        working_set.insert(Constraint(Relation::Explicit, it.variables(), mono));
+        working_set.insert(it);
       }
       break;
     }

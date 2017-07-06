@@ -120,7 +120,7 @@ math:
 
 argument:
   ident { $$ = std::make_shared<node::Argument>($ident); }
-|  ident COLON expression { $$ = std::make_shared<node::Argument>($ident, $expression); }
+| ident COLON expression { $$ = std::make_shared<node::Argument>($ident, $expression); }
 ;
 
 arguments:
