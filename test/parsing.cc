@@ -1,7 +1,7 @@
 #include <sstream>
 #include <typeinfo>
 #include "driver.hh"
-#include "inference.hh"
+#include "inferer.hh"
 #include "node.hh"
 #include "util.hh"
 #include "visitor.hh"
@@ -12,9 +12,9 @@ using namespace goat::node;
 using namespace goat::inference;
 using namespace goat::util;
 
-class PrintingVisitor : public Visitor {
+class Printer : public Visitor {
 public:
-  PrintingVisitor() {}
+  Printer() {}
   void visit(const Number &number) {
     std::cout << "Number " << number.value() << std::endl;
   }
@@ -79,7 +79,7 @@ bool test(const std::string program, const Program &result) {
   bool equal = result == *p;
 
   if(!equal) {
-    PrintingVisitor print;
+    Printer print;
     std::cout << "Result:" << std::endl;
     print.visit(result);
     std::cout << "Should be:" << std::endl;
@@ -218,7 +218,7 @@ void print_type(Type t) {
 
 void test_inference() {
   auto p = parse_program("a = 1");
-  auto visitor = TypingVisitor();
+  auto visitor = Inferer();
   visitor.visit(*p);
   auto constraints = visitor.constraints();
   ok(constraints.size() == 1, "Generates constraints");
@@ -230,7 +230,7 @@ void test_inference() {
   ok(subst.right().is<NumberType>(), "Is a number");
 
   p = parse_program("a = 'Hello'");
-  visitor = TypingVisitor();
+  visitor = Inferer();
   visitor.visit(*p);
   constraints = visitor.constraints();
   substitutions = visitor.solve();
@@ -238,7 +238,7 @@ void test_inference() {
   ok(subst.right().is<StringType>(), "Infers a string type");
 
   p = parse_program("a = 1 b = 'a' c = b c = a");
-  visitor = TypingVisitor();
+  visitor = Inferer();
   visitor.visit(*p);
   substitutions = visitor.solve();
   // for(auto a : substitutions) {
@@ -257,16 +257,6 @@ void test_inference() {
   for(auto s : visitor.constraints()) {
     std::cout << "# ";
     print_type(s.variables().first);
-    switch(s.relation()) {
-    case Relation::Implicit:
-      std::cout << " <= ";
-      break;
-    case Relation::Equality:
-      std::cout << " = ";
-      break;
-    case Relation::Explicit:
-      std::cout << " < ";
-    }
     print_type(s.variables().second);
     std::cout << std::endl;
   }
@@ -286,17 +276,17 @@ void test_inference() {
 void test_constraints() {
   auto constraints = std::set<Constraint>();
   auto typer = TypeFactory();
-  auto did = constraints.insert(Constraint(Relation::Equality, {typer.next(), typer.next()}));
+  auto did = constraints.insert(Constraint({typer.next(), typer.next()}));
   ok(did.second, "Inserted a constraint");
-  did = constraints.insert(Constraint(Relation::Equality, {typer.next(), typer.next()}));
+  did = constraints.insert(Constraint({typer.next(), typer.next()}));
   ok(did.second, "Inserted another constraint");
-  did = constraints.insert(Constraint(Relation::Implicit, {typer.next(), typer.next()}));
+  did = constraints.insert(Constraint({typer.next(), typer.next()}));
   ok(did.second, "Inserted a different constraint");
   Type t = typer.next();
-  auto a = Constraint(Relation::Equality, {t, NumberType()});
-  auto b = Constraint(Relation::Equality, {t, NumberType()});
+  auto a = Constraint({t, NumberType()});
+  auto b = Constraint({t, NumberType()});
   ok(a == b, "Two constraints are equal");
-  constraints.insert(Constraint(Relation::Equality, {t, FunctionType({typer.next(), typer.next()})}));
+  constraints.insert(Constraint({t, FunctionType({typer.next(), typer.next()})}));
   ok(constraints.size() == 4, "Inserted a number type constraint");
   auto it = constraints.begin();
   constraints.erase(it);

@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "inference.hh"
+#include "inferer.hh"
 
 namespace goat {
 namespace node {
@@ -46,17 +46,21 @@ class Number : public Node {
 
 class Identifier : public Node {
  public:
-  Identifier(const std::string value,
-             inference::TypeVariable type) :
+  Identifier(const std::string value) :
     value_(value),
-    type_(std::forward<inference::TypeVariable>(type)) {}
+    type_(inference::NoType()),
+    internal_name_() {}
   void accept(Visitor& v) const;
-  const std::string value() const { return value_; }
+  const std::string name() const { return name_; }
+  const std::string internal_name() const { return internal_name_; }
   const inference::Type type() const { return type_; };
+  void set_type(inference::TypeVariable type) { type_ = type; };
+  void set_name(std::string name) { internal_name_ = name; };
  private:
   bool equals(const Node& b) const;
   const std::string value_;
-  const inference::Type type_;
+  inference::Type type_;
+  std::string internal_name_;
 };
 
 class String : public Node {
@@ -114,43 +118,43 @@ class Function : public Node {
  public:
   Function(const std::shared_ptr<Identifier> ident,
            const std::shared_ptr<ArgumentList> arguments,
-           const std::shared_ptr<Program> program,
-           inference::FunctionType type) :
+           const std::shared_ptr<Program> program) :
     identifier_(ident),
     arguments_(arguments),
     program_(program),
-    type_(std::forward<inference::FunctionType>(type)) {}
+    type_(inference::NoType) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
   const std::string id() const;
   const inference::Type type() const { return type_; }
+  void set_type(inference::FunctionType type) { type_ = type; }
  private:
   bool equals(const Node &b) const;
   const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<ArgumentList> arguments_;
   const std::shared_ptr<Program> program_;
-  const inference::Type type_;
+  inference::Type type_;
 };
 
 class Application : public Node {
  public:
   Application(std::shared_ptr<Identifier> ident,
-              std::shared_ptr<ArgumentList> arguments,
-              inference::TypeVariable type) :
+              std::shared_ptr<ArgumentList> arguments) :
     identifier_(ident),
     arguments_(arguments),
-    type_(std::forward<inference::TypeVariable>(type)) {}
+    type_(inference::NoType()) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const inference::Type type() const { return type_; }
+  void set_type(inference::TypeVariable type) { type_ = type; };
  private:
   bool equals(const Node& b) const;
   const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<ArgumentList> arguments_;
-  const inference::Type type_;
+  inference::Type type_;
 };
 
 class Conditional : public Node {

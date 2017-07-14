@@ -28,12 +28,13 @@ bool compare_vector_pointers(const T &a, const T &b) {
   return std::equal(a->begin(), a->end(), b->begin(), eq);
 }
 
-template <typename T>
-void list_accept(const T list, node::Visitor &v) {
-  for(auto i : *list) {
-    i->accept(v);
-  }
-}
+class Namer {
+ public:
+  Namer() : last_(0) {}
+  std::string next();
+ private:
+  uint32_t last_;
+};
 
 // Simple variant class to help with rust style pattern
 // matching, extremely limited on purpose. Inspiration

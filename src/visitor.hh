@@ -27,7 +27,6 @@ class Declaration;
   void visit(const node::Operation &operation); \
   void visit(const node::Declaration &declaration);
 
-
 class Visitor {
  public:
   virtual ~Visitor() {}
@@ -42,6 +41,13 @@ class Visitor {
   virtual void visit(const node::Operation &operation) = 0;
   virtual void visit(const node::Declaration &declaration) = 0;
 };
+
+template <typename T>
+void list_accept(const T list, node::Visitor &v) {
+  for(auto i : *list) {
+    i->accept(v);
+  }
+}
 
 }
 }

@@ -1,11 +1,11 @@
-#ifndef SRC_COMPILING_
-#define SRC_COMPILING_
+#ifndef SRC_COMPILER_
+#define SRC_COMPILER_
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 
-#include "inference.hh"
+#include "inferer.hh"
 #include "node.hh"
 #include "visitor.hh"
 
@@ -13,7 +13,7 @@ namespace goat {
 namespace compiling {
 
 // The actual compiler!
-class CompilingVisitor : public node::Visitor {
+class Compiler : public node::Visitor {
 public:
   CompilingVisitor(std::set<inference::Substitution> substitutions) :
     substitutions_(substitutions),

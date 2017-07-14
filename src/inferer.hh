@@ -1,5 +1,5 @@
-#ifndef SRC_INFERENCE_HH_
-#define SRC_INFERENCE_HH_
+#ifndef SRC_INFERER_
+#define SRC_INFERER_
 
 #include <cassert>
 #include <memory>
@@ -7,7 +7,6 @@
 #include <string>
 #include <iostream>
 #include <typeinfo>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 #include "util.hh"
@@ -125,30 +124,12 @@ private:
   Type t_;
 };
 
-enum class Relation {
-  Equality = 1,
-  Implicit = 2,
-  Explicit = 3
-};
-
 class Constraint {
  public:
-  Constraint(Relation relation,
-             std::pair<Type, Type> variables) :
-    relation_(relation),
-    variables_(variables),
-    monomorphic_() {}
-  Constraint(Relation relation,
-             std::pair<Type, Type> variables,
-             std::set<TypeVariable> monomorphic) :
-    relation_(relation),
-    variables_(variables),
-    monomorphic_(monomorphic) { assert(relation == Relation::Implicit); }
-
+  Constraint(std::pair<Type, Type> variables) :
+    relation_(relation)
   bool operator==(const Constraint &b) const {
-    return relation_ == b.relation_ &&
-      variables_ == b.variables_ &&
-      monomorphic_ == b.monomorphic_;
+    return variables_ == b.variables_;
   }
 
   bool operator!=(const Constraint &b) const {
@@ -156,37 +137,27 @@ class Constraint {
   }
 
   bool operator<(const Constraint &b) const {
-    return relation_ < b.relation_ ||
-      variables_ < b.variables_ ||
-      monomorphic_ < b.monomorphic_;
+    return variables_ < b.variables_;
   }
 
-  Relation relation() const { return relation_; }
   std::pair<Type, Type> variables() const { return variables_; }
-  std::set<TypeVariable> monomorphic() const { return monomorphic_; }
   std::set<TypeVariable> activevars() const;
   Constraint apply(Substitution s) const;
   std::set<Substitution> unify() const;
  private:
-  Relation relation_;
   std::pair<Type, Type> variables_;
-  std::set<TypeVariable> monomorphic_;
 };
 
-class TypingVisitor : public node::Visitor {
+class Inferer : public node::Visitor {
  public:
   TypingVisitor() :
-    monomorphic_(),
     constraints_(),
-    assumptions_(),
     typer_() {}
   VisitorMethods
   const std::set<Constraint>& constraints() const { return constraints_; }
   std::set<Substitution> solve();
  private:
-  std::set<TypeVariable> monomorphic_;
   std::set<Constraint> constraints_;
-  std::unordered_map<std::string, Type> assumptions_;
   TypeFactory typer_;
 };
 
@@ -194,4 +165,4 @@ class TypingVisitor : public node::Visitor {
 }  // namespace inference
 }  // namespace goat
 
-#endif  // SRC_INFERENCE_HH_
+#endif  // SRC_INFERER_HH_

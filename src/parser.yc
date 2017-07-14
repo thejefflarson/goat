@@ -7,7 +7,7 @@
 %}
 
 %code requires {
-#include "inference.hh"
+#include "inferer.hh"
 #include "node.hh"
 }
 
@@ -97,7 +97,7 @@ expressions:
 
 string: STRING { $$ = std::make_shared<node::String>($1); }
 number: NUMBER { $$ = std::make_shared<node::Number>($1); }
-ident: IDENT { $$ = std::make_shared<node::Identifier>($1, typer.next()); }
+ident: IDENT { $$ = std::make_shared<node::Identifier>($1); }
 
 expression:
   string { $$ = $1; }
@@ -131,19 +131,13 @@ arguments:
 
 application:
   ident "(" arguments ")" {
-    $$ = std::make_shared<node::Application>($ident, $arguments, typer.next());
+    $$ = std::make_shared<node::Application>($ident, $arguments);
   }
 ;
 
 function:
   PROGRAM ident "(" arguments ")" DO program DONE {
-    std::vector<inference::Type> types;
-    for(auto i : * $arguments) {
-      types.push_back(i->type());
-    }
-    types.push_back(typer.next());
-    auto f = inference::FunctionType(types);
-    $$ = std::make_shared<node::Function>($ident, $arguments, $program, f);
+    $$ = std::make_shared<node::Function>($ident, $arguments, $program);
   }
 ;
 

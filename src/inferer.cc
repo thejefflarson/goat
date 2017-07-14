@@ -5,7 +5,7 @@
 #include <string>
 #include <type_traits>
 
-#include "inference.hh"
+#include "inferer.hh"
 #include "node.hh"
 #include "util.hh"
 
@@ -28,11 +28,11 @@ TypeVariable TypeFactory::next() {
   return TypeVariable(accum);
 }
 
-void TypingVisitor::visit(const Number &number) {
+void Inferer::visit(const Number &number) {
 
 }
 
-void TypingVisitor::visit(const Identifier &identifier) {
+void Inferer::visit(const Identifier &identifier) {
   if(!assumptions_.insert({identifier.value(), identifier.type()}).second) {
     constraints_.insert(Constraint(Relation::Implicit, {
       identifier.type(),
@@ -41,15 +41,15 @@ void TypingVisitor::visit(const Identifier &identifier) {
   };
 }
 
-void TypingVisitor::visit(const String &string) {
+void Inferer::visit(const String &string) {
 
 }
 
-void TypingVisitor::visit(const Program &program) {
+void Inferer::visit(const Program &program) {
   util::list_accept(program.nodes(), *this);
 }
 
-void TypingVisitor::visit(const Argument &argument) {
+void Inferer::visit(const Argument &argument) {
   assert(argument.type().is<TypeVariable>());
   monomorphic_.insert(argument.type().get<TypeVariable>());
   argument.identifier()->accept(*this);
@@ -61,7 +61,7 @@ void TypingVisitor::visit(const Argument &argument) {
   }));
 }
 
-void TypingVisitor::visit(const Function &function) {
+void Inferer::visit(const Function &function) {
   auto assumptions = assumptions_;
   auto monomorphic = monomorphic_;
   for(auto a : *function.arguments())
@@ -76,12 +76,12 @@ void TypingVisitor::visit(const Function &function) {
   assumptions_ = assumptions;
 }
 
-void TypingVisitor::visit(const Application &application) {
+void Inferer::visit(const Application &application) {
   application.identifier()->accept(*this);
   util::list_accept(application.arguments(), *this);
 }
 
-void TypingVisitor::visit(const Conditional &conditional) {
+void Inferer::visit(const Conditional &conditional) {
   constraints_.insert(Constraint(Relation::Equality, {
     conditional.true_type(),
     conditional.false_type()
@@ -95,7 +95,7 @@ void TypingVisitor::visit(const Conditional &conditional) {
   conditional.false_block()->accept(*this);
 }
 
-void TypingVisitor::visit(const Operation &operation) {
+void Inferer::visit(const Operation &operation) {
   constraints_.insert(Constraint(Relation::Equality, {
     operation.left()->type(),
     NumberType()
@@ -108,7 +108,7 @@ void TypingVisitor::visit(const Operation &operation) {
   operation.right()->accept(*this);
 }
 
-void TypingVisitor::visit(const Declaration &declaration) {
+void Inferer::visit(const Declaration &declaration) {
   assumptions_.erase(declaration.identifier()->value());
   constraints_.insert(Constraint(Relation::Implicit, {
     declaration.identifier()->type(),
@@ -249,7 +249,7 @@ std::set<TypeVariable> Constraint::activevars() const {
   return ret;
 }
 
-std::set<Substitution> TypingVisitor::solve() {
+std::set<Substitution> Inferer::solve() {
   std::set<Substitution> ret;
   auto working_set = constraints_;
   while(!working_set.empty()) {
