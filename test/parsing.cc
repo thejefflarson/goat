@@ -66,7 +66,7 @@ public:
   void visit(const Declaration &declaration) {
     std::cout << "Declaration" << std::endl;
     declaration.identifier()->accept(*this);
-    if(declaration.expression()) declaration.expression()->accept(*this);
+    declaration.expression()->accept(*this);
   }
 };
 
@@ -103,11 +103,10 @@ bool program(std::string program, std::shared_ptr<Node> a) {
 }
 
 void test_literals() {
-  TypeFactory typer;
-  Identifier ident = Identifier("a", typer.next());
+  Identifier ident = Identifier("a");
   ok(ident.type().is<TypeVariable>(), "Returns the right type.");
   ok(program("1", make_shared<Number>(1)), "Parses a number");
-  ok(program("a", make_shared<Identifier>("a", typer.next())),
+  ok(program("a", make_shared<Identifier>("a")),
      "Parses an identifier");
   ok(program("\"Why hello!\"", make_shared<String>("\"Why hello!\"")),
      "Parses a string");
@@ -132,55 +131,45 @@ void test_math() {
 }
 
 void test_function() {
-  TypeFactory typer;
   auto args = make_shared<ArgumentList>();
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("c",
-                                                                typer.next()),
-                                        make_shared<Identifier>("b",
-                                                                typer.next())));
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("d",
-                                                                typer.next()),
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("c"),
+                                        make_shared<Identifier>("b")));
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("d"),
                                          make_shared<Operation>(
                                            make_shared<Number>(1),
                                            make_shared<Number>(2),
                                            Addition)));
-  auto application = make_shared<Application>(
-    make_shared<Identifier>("a", typer.next()),
-    args, typer.next());
+  auto application = make_shared<Application>(make_shared<Identifier>("a"),
+                                              args);
   ok(program("a(c: b, d: 1+2)", application), "Parses a function application");
 
   args = make_shared<ArgumentList>();
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("a",
-                                                                typer.next()),
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("a"),
                                         make_shared<Number>(10)));
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("b",
-                                                                typer.next()),
+  args->push_back(make_shared<Argument>(make_shared<Identifier>("b"),
                                         make_shared<Number>(20)));
-  auto ident = make_shared<Identifier>("a", typer.next());
-  auto fn = make_shared<Function>(ident, args, make_shared<Program>(),
-                                  FunctionType({typer.next(), typer.next()}));
-  ok(program("program a(a: 10, b: 20) do done", fn),
+  auto fn = make_shared<Function>(args, make_shared<Program>());
+  ok(program("program (a: 10, b: 20) do done", fn),
      "Parses a function declaration");
 }
 
 void test_conditional() {
-  TypeFactory typer;
   auto true_block = make_shared<Program>();
   auto true_nodes = make_shared<NodeList>();
-  true_nodes->push_back(make_shared<Identifier>("b", typer.next()));
+  true_nodes->push_back(make_shared<Identifier>("b"));
   true_block->push_back(true_nodes);
 
   auto false_block = make_shared<Program>();
   auto false_nodes = make_shared<NodeList>();
-  false_nodes->push_back(make_shared<Identifier>("c", typer.next()));
+  false_nodes->push_back(make_shared<Identifier>("c"));
   false_block->push_back(false_nodes);
 
   ok(program("if a then b else c done", make_shared<Conditional>(
-               make_shared<Identifier>("a", typer.next()),
+               make_shared<Identifier>("a"),
                true_block,
                false_block)), "Parses a conditional");
   ok(program("if a then b done", make_shared<Conditional>(
-               make_shared<Identifier>("a", typer.next()),
+               make_shared<Identifier>("a"),
                true_block)), "Parses a true branch conditional");
 }
 
@@ -275,22 +264,22 @@ void test_inference() {
 
 void test_constraints() {
   auto constraints = std::set<Constraint>();
-  auto typer = TypeFactory();
-  auto did = constraints.insert(Constraint({typer.next(), typer.next()}));
-  ok(did.second, "Inserted a constraint");
-  did = constraints.insert(Constraint({typer.next(), typer.next()}));
-  ok(did.second, "Inserted another constraint");
-  did = constraints.insert(Constraint({typer.next(), typer.next()}));
-  ok(did.second, "Inserted a different constraint");
-  Type t = typer.next();
-  auto a = Constraint({t, NumberType()});
-  auto b = Constraint({t, NumberType()});
-  ok(a == b, "Two constraints are equal");
-  constraints.insert(Constraint({t, FunctionType({typer.next(), typer.next()})}));
-  ok(constraints.size() == 4, "Inserted a number type constraint");
-  auto it = constraints.begin();
-  constraints.erase(it);
-  ok(constraints.size() == 3, "Deleted a number type constraint");
+  // auto namer = Namer();
+  // auto did = constraints.insert(Constraint({namer.next(), namer.next()}));
+  // ok(did.second, "Inserted a constraint");
+  // did = constraints.insert(Constraint({namer.next(), namer.next()}));
+  // ok(did.second, "Inserted another constraint");
+  // did = constraints.insert(Constraint({namer.next(), namer.next()}));
+  // ok(did.second, "Inserted a different constraint");
+  // Type t = namer.next();
+  // auto a = Constraint({t, NumberType()});
+  // auto b = Constraint({t, NumberType()});
+  // ok(a == b, "Two constraints are equal");
+  // constraints.insert(Constraint({t, FunctionType({namer.next(), namer.next()})}));
+  // ok(constraints.size() == 4, "Inserted a number type constraint");
+  // auto it = constraints.begin();
+  // constraints.erase(it);
+  // ok(constraints.size() == 3, "Deleted a number type constraint");
 }
 
 int main() {

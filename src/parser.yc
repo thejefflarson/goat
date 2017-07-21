@@ -29,7 +29,6 @@
 %param {void *scanner}
 %param {goat::location &loc}
 %parse-param {std::shared_ptr<goat::node::Program> &result}
-%parse-param {goat::inference::TypeFactory &typer}
 
 %token END 0 "end of file"
 %token PROGRAM "program"
@@ -136,8 +135,8 @@ application:
 ;
 
 function:
-  PROGRAM ident "(" arguments ")" DO program DONE {
-    $$ = std::make_shared<node::Function>($ident, $arguments, $program);
+  PROGRAM "(" arguments ")" DO program DONE {
+    $$ = std::make_shared<node::Function>($arguments, $program);
   }
 ;
 

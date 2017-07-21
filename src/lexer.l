@@ -67,9 +67,8 @@ int driver::parse(std::istream *src,
                   std::shared_ptr<node::Program> &result) {
   location loc;
   yyscan_t scanner;
-  inference::TypeFactory typer;
   yylex_init_extra(src, &scanner);
-  parser parser(scanner, loc, result, typer);
+  parser parser(scanner, loc, result);
   //parser.set_debug_level(1);
   int ret = parser.parse();
   yylex_destroy(scanner);

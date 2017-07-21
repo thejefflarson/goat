@@ -14,19 +14,6 @@ using namespace goat::inference;
 using namespace goat::node;
 // this should be more like:
 // http://www.cs.cornell.edu/courses/cs3110/2016fa/l/17-inference/notes.html
-std::string alpha = "abcdefghijklmnopqrstuvwxyz";
-TypeVariable TypeFactory::next() {
-  if(last_ == 0){ last_++; return TypeVariable("a"); }
-  uint32_t current = last_;
-  std::string accum;
-  while(current > 0) {
-    uint8_t index = current % alpha.length();
-    accum.push_back(alpha[index]);
-    current /= alpha.length();
-  }
-  last_++;
-  return TypeVariable(accum);
-}
 
 void Inferer::visit(const Number &number) {
 

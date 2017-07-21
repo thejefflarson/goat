@@ -1,9 +1,12 @@
 #ifndef GOAT_VISITOR_HH
 #define GOAT_VISITOR_HH
 
+#include <memory>
+
 namespace goat {
 namespace node {
 
+class Node;
 class Number;
 class Identifier;
 class String;
@@ -48,6 +51,14 @@ void list_accept(const T list, node::Visitor &v) {
     i->accept(v);
   }
 }
+
+class TreeCloner : Visitor {
+ public:
+  TreeCloner() : child_(nullptr) {}
+  VisitorMethods
+ private:
+  std::shared_ptr<node::Node> child_;
+};
 
 }
 }

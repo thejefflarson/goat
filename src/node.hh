@@ -46,21 +46,30 @@ class Number : public Node {
 
 class Identifier : public Node {
  public:
-  Identifier(const std::string value) :
-    value_(value),
-    type_(inference::NoType()),
-    internal_name_() {}
+  Identifier(const std::string name) :
+    value_(name),
+    internal_value_(),
+    type_(inference::NoType()) {}
+  Identifier(const std::string name,
+             const std::string internal_name) :
+    value_(name),
+    internal_value_(internal_name),
+    type_(inference::NoType()) {}
+  Identifier(const std::string name,
+             const std::string internal_name,
+             inference::Type type) :
+    value_(name),
+    internal_value_(internal_name),
+    type_(type) {}
   void accept(Visitor& v) const;
-  const std::string name() const { return name_; }
-  const std::string internal_name() const { return internal_name_; }
+  const std::string value() const { return value_; }
+  const std::string internal_value() const { return internal_value_; }
   const inference::Type type() const { return type_; };
-  void set_type(inference::TypeVariable type) { type_ = type; };
-  void set_name(std::string name) { internal_name_ = name; };
  private:
   bool equals(const Node& b) const;
   const std::string value_;
-  inference::Type type_;
-  std::string internal_name_;
+  const std::string internal_value_;
+  const inference::Type type_;
 };
 
 class String : public Node {
@@ -116,23 +125,24 @@ using ArgumentList = std::vector<std::shared_ptr<Argument>>;
 
 class Function : public Node {
  public:
-  Function(const std::shared_ptr<Identifier> ident,
-           const std::shared_ptr<ArgumentList> arguments,
+  Function(const std::shared_ptr<ArgumentList> arguments,
            const std::shared_ptr<Program> program) :
-    identifier_(ident),
     arguments_(arguments),
     program_(program),
-    type_(inference::NoType) {}
+    type_(inference::NoType()) {}
+  Function(const std::shared_ptr<ArgumentList> arguments,
+           const std::shared_ptr<Program> program,
+           inference::Type type) :
+    arguments_(arguments),
+    program_(program),
+    type_(type) {}
   void accept(Visitor& v) const;
-  const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const std::shared_ptr<Program> program() const { return program_; }
   const std::string id() const;
   const inference::Type type() const { return type_; }
-  void set_type(inference::FunctionType type) { type_ = type; }
  private:
   bool equals(const Node &b) const;
-  const std::shared_ptr<Identifier> identifier_;
   const std::shared_ptr<ArgumentList> arguments_;
   const std::shared_ptr<Program> program_;
   inference::Type type_;
@@ -145,11 +155,16 @@ class Application : public Node {
     identifier_(ident),
     arguments_(arguments),
     type_(inference::NoType()) {}
+  Application(std::shared_ptr<Identifier> ident,
+              std::shared_ptr<ArgumentList> arguments,
+              inference::Type type) :
+    identifier_(ident),
+    arguments_(arguments),
+    type_(type) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
   const inference::Type type() const { return type_; }
-  void set_type(inference::TypeVariable type) { type_ = type; };
  private:
   bool equals(const Node& b) const;
   const std::shared_ptr<Identifier> identifier_;

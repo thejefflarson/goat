@@ -83,14 +83,6 @@ class FunctionType : public AbstractType {
   std::vector<Type> types_;
 };
 
-class TypeFactory {
- public:
-  TypeFactory() : last_(0) {}
-  TypeVariable next();
- private:
-  uint32_t last_;
-};
-
 class Substitution {
 public:
   Substitution(Type s, Type t) :
@@ -127,7 +119,7 @@ private:
 class Constraint {
  public:
   Constraint(std::pair<Type, Type> variables) :
-    relation_(relation)
+    variables_(variables) {}
   bool operator==(const Constraint &b) const {
     return variables_ == b.variables_;
   }
@@ -150,15 +142,15 @@ class Constraint {
 
 class Inferer : public node::Visitor {
  public:
-  TypingVisitor() :
+  Inferer() :
     constraints_(),
-    typer_() {}
+    namer_() {}
   VisitorMethods
   const std::set<Constraint>& constraints() const { return constraints_; }
   std::set<Substitution> solve();
  private:
   std::set<Constraint> constraints_;
-  TypeFactory typer_;
+  util::Namer namer_;
 };
 
 
