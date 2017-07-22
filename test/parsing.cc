@@ -264,22 +264,34 @@ void test_inference() {
 
 void test_constraints() {
   auto constraints = std::set<Constraint>();
-  // auto namer = Namer();
-  // auto did = constraints.insert(Constraint({namer.next(), namer.next()}));
-  // ok(did.second, "Inserted a constraint");
-  // did = constraints.insert(Constraint({namer.next(), namer.next()}));
-  // ok(did.second, "Inserted another constraint");
-  // did = constraints.insert(Constraint({namer.next(), namer.next()}));
-  // ok(did.second, "Inserted a different constraint");
-  // Type t = namer.next();
-  // auto a = Constraint({t, NumberType()});
-  // auto b = Constraint({t, NumberType()});
-  // ok(a == b, "Two constraints are equal");
-  // constraints.insert(Constraint({t, FunctionType({namer.next(), namer.next()})}));
-  // ok(constraints.size() == 4, "Inserted a number type constraint");
-  // auto it = constraints.begin();
-  // constraints.erase(it);
-  // ok(constraints.size() == 3, "Deleted a number type constraint");
+  auto namer = Namer();
+  auto did = constraints.insert(Constraint({
+    TypeVariable(namer.next()),
+    TypeVariable(namer.next())
+  }));
+  ok(did.second, "Inserted a constraint");
+  did = constraints.insert(Constraint({
+    TypeVariable(namer.next()),
+    TypeVariable(namer.next())
+  }));
+  ok(did.second, "Inserted another constraint");
+  did = constraints.insert(Constraint({
+    TypeVariable(namer.next()),
+    TypeVariable(namer.next())
+  }));
+  ok(did.second, "Inserted a different constraint");
+  Type t = TypeVariable(namer.next());
+  auto a = Constraint({t, NumberType()});
+  auto b = Constraint({t, NumberType()});
+  ok(a == b, "Two constraints are equal");
+  constraints.insert(Constraint({t, FunctionType({
+    TypeVariable(namer.next()),
+    TypeVariable(namer.next())
+  })}));
+  ok(constraints.size() == 4, "Inserted a FunctionType type constraint");
+  auto it = constraints.begin();
+  constraints.erase(it);
+  ok(constraints.size() == 3, "Deleted a FunctionType constraint");
 }
 
 int main() {

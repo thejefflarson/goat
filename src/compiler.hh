@@ -15,7 +15,7 @@ namespace compiling {
 // The actual compiler!
 class Compiler : public node::Visitor {
 public:
-  CompilingVisitor(std::set<inference::Substitution> substitutions) :
+  Compiler(std::set<inference::Substitution> substitutions) :
     substitutions_(substitutions),
     context_(),
     builder_(context_),

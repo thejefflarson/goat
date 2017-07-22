@@ -11,7 +11,7 @@
 namespace goat {
 namespace renaming {
 
-class Renamer : public node::Visitor {
+class Renamer : public node::TreeCloner {
  public:
   Renamer(node::Program root) :
     names_(),
@@ -21,7 +21,6 @@ class Renamer : public node::Visitor {
  VisitorMethods
  private:
   std::map<std::string, std::string> names_;
-  std::map<std::string, std::string> scope_;
   util::Namer namer_;
   node::Program root_;
   std::shared_ptr<node::Node> child_;

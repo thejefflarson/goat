@@ -20,12 +20,11 @@ void Inferer::visit(const Number &number) {
 }
 
 void Inferer::visit(const Identifier &identifier) {
-  if(!assumptions_.insert({identifier.value(), identifier.type()}).second) {
-    constraints_.insert(Constraint(Relation::Implicit, {
-      identifier.type(),
-      assumptions_.find(identifier.value())->second
-    }, monomorphic_));
-  };
+// TODO: think hard about scoping rules.
+//  constraints_.insert(Constraint({
+//    identifier.type(),
+//    scope_.find(identifier.value())->second
+//  }));
 }
 
 void Inferer::visit(const String &string) {
@@ -33,47 +32,40 @@ void Inferer::visit(const String &string) {
 }
 
 void Inferer::visit(const Program &program) {
-  util::list_accept(program.nodes(), *this);
+  node::list_accept(program.nodes(), *this);
 }
 
 void Inferer::visit(const Argument &argument) {
   assert(argument.type().is<TypeVariable>());
-  monomorphic_.insert(argument.type().get<TypeVariable>());
   argument.identifier()->accept(*this);
   if(argument.expression() == nullptr) return;
   argument.expression()->accept(*this);
-  constraints_.insert(Constraint(Relation::Equality, {
+  constraints_.insert(Constraint({
     argument.identifier()->type(),
     argument.expression()->type()
   }));
 }
 
 void Inferer::visit(const Function &function) {
-  auto assumptions = assumptions_;
-  auto monomorphic = monomorphic_;
-  for(auto a : *function.arguments())
-    assumptions_.erase(a->identifier()->value());
-  util::list_accept(function.arguments(), *this);
+  node::list_accept(function.arguments(), *this);
   function.program()->accept(*this);
-  constraints_.insert(Constraint(Relation::Equality, {
+  constraints_.insert(Constraint({
     function.type().get<FunctionType>().ret(),
     function.program()->type()
   }));
-  monomorphic_ = monomorphic;
-  assumptions_ = assumptions;
 }
 
 void Inferer::visit(const Application &application) {
   application.identifier()->accept(*this);
-  util::list_accept(application.arguments(), *this);
+  node::list_accept(application.arguments(), *this);
 }
 
 void Inferer::visit(const Conditional &conditional) {
-  constraints_.insert(Constraint(Relation::Equality, {
+  constraints_.insert(Constraint({
     conditional.true_type(),
     conditional.false_type()
   }));
-  constraints_.insert(Constraint(Relation::Equality, {
+  constraints_.insert(Constraint({
     conditional.expression()->type(),
     BoolType()
   }));
@@ -83,11 +75,11 @@ void Inferer::visit(const Conditional &conditional) {
 }
 
 void Inferer::visit(const Operation &operation) {
-  constraints_.insert(Constraint(Relation::Equality, {
+  constraints_.insert(Constraint({
     operation.left()->type(),
     NumberType()
   }));
-  constraints_.insert(Constraint(Relation::Equality, {
+  constraints_.insert(Constraint({
     operation.right()->type(),
     NumberType()
   }));
@@ -96,11 +88,10 @@ void Inferer::visit(const Operation &operation) {
 }
 
 void Inferer::visit(const Declaration &declaration) {
-  assumptions_.erase(declaration.identifier()->value());
-  constraints_.insert(Constraint(Relation::Implicit, {
+  constraints_.insert(Constraint({
     declaration.identifier()->type(),
     declaration.expression()->type()
-  }, monomorphic_));
+  }));
   declaration.identifier()->accept(*this);
   declaration.expression()->accept(*this);
 }
@@ -108,21 +99,7 @@ void Inferer::visit(const Declaration &declaration) {
 Constraint Constraint::apply(Substitution s) const {
   auto left = s(variables_.first);
   auto right = s(variables_.second);
-  if (monomorphic_.empty()) {
-    return Constraint(relation_, {left, right});
-  } else {
-    auto tmp = std::set<TypeVariable>();
-    for(TypeVariable m : monomorphic_) {
-      Type n = TypeVariable(m.id());
-      Type v = s(n);
-      if(v.is<TypeVariable>()) {
-        tmp.insert(v.get<TypeVariable>());
-      } else {
-        tmp.insert(m);
-      }
-    }
-    return Constraint(relation_, {left, right}, tmp);
-  }
+  return Constraint({left, right});
 }
 
 bool TypeVariable::occurs(Type in) const {
@@ -176,7 +153,7 @@ std::set<Substitution> Constraint::unify() const {
 
   // Orient rule
   if(!s.is<TypeVariable>() && t.is<TypeVariable>()) {
-    return Constraint(Relation::Equality, {t, s}).unify();
+    return Constraint({t, s}).unify();
   }
 
   // Decompose rule
@@ -190,7 +167,7 @@ std::set<Substitution> Constraint::unify() const {
     }
     auto ttiter = tt.types().begin();
     for(auto sitter = st.types().begin(); sitter != st.types().end(); sitter++) {
-      auto constraint = Constraint(Relation::Equality, {*sitter, *ttiter});
+      auto constraint = Constraint({*sitter, *ttiter});
       auto result = constraint.unify();
       ret.insert(result.begin(), result.end());
       ttiter++;
@@ -227,9 +204,6 @@ std::set<TypeVariable> freevars(Type in) {
 std::set<TypeVariable> Constraint::activevars() const {
   auto left = freevars(variables_.first);
   auto right = freevars(variables_.second);
-  if(relation_ == Relation::Explicit) {
-    right.erase(monomorphic_.begin(), monomorphic_.end());
-  }
   std::set<TypeVariable> ret;
   ret.insert(left.begin(), left.end());
   ret.insert(right.begin(), right.end());
@@ -242,46 +216,17 @@ std::set<Substitution> Inferer::solve() {
   while(!working_set.empty()) {
     auto it = *working_set.begin();
     working_set.erase(working_set.begin());
-    switch(it.relation()) {
-    case Relation::Equality: {
-      auto unified = it.unify();
-      if(unified.size() > 0) {
-        std::set<Constraint> tmp;
-        for(auto c : working_set) {
-          for(auto s : unified) {
-            tmp.insert(c.apply(s));
-          }
-        }
-        working_set = tmp;
-        for(auto s : unified)
-          ret.insert(s);
-      }
-      break;
-    }
-    case Relation::Explicit: {
-      auto fvars = freevars(it.variables().second);
-      auto mono = it.monomorphic();
-      fvars.erase(mono.begin(), mono.end());
-      std::set<TypeVariable> all;
+    auto unified = it.unify();
+    if(unified.size() > 0) {
+      std::set<Constraint> tmp;
       for(auto c : working_set) {
-        auto v = c.activevars();
-        all.insert(v.begin(), v.end());
+        for(auto s : unified) {
+          tmp.insert(c.apply(s));
+        }
       }
-      std::set<TypeVariable> intxs;
-      std::set_intersection(fvars.begin(), fvars.end(),
-                            all.begin(), all.end(),
-                            std::inserter(intxs, intxs.end()));
-      if(intxs.size() == 0) {
-        auto cons = Constraint(Relation::Implicit, it.variables());
-        working_set.insert(cons);
-      } else {
-        working_set.insert(it);
-      }
-      break;
-    }
-    case Relation::Implicit:
-      working_set.insert(Constraint(Relation::Equality, it.variables()));
-      break;
+      working_set = tmp;
+      for(auto s : unified)
+        ret.insert(s);
     }
   }
   auto error = Substitution::error();
