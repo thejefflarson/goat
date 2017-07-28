@@ -5,6 +5,11 @@
 
 using namespace goat::node;
 
+std::shared_ptr<Program> TreeCloner::clone(std::shared_ptr<node::Program> program) {
+  program->accept(*this);
+  return std::static_pointer_cast<Program>(child_);
+}
+
 void TreeCloner::visit(const node::Number &number) {
   child_ = std::make_shared<node::Number>(number);
 }
@@ -24,6 +29,7 @@ void TreeCloner::visit(const node::Program &program) {
     list->push_back(child_);
   }
   auto new_program = std::make_shared<node::Program>();
+  new_program->push_back(list);
   child_ = new_program;
 }
 

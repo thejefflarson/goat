@@ -52,10 +52,11 @@ void list_accept(const T list, node::Visitor &v) {
   }
 }
 
-class TreeCloner : Visitor {
+class TreeCloner : public Visitor {
  public:
   TreeCloner() : child_(nullptr) {}
   VisitorMethods
+  std::shared_ptr<node::Program> clone(std::shared_ptr<node::Program> program);
  private:
   std::shared_ptr<node::Node> child_;
 };

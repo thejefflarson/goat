@@ -50,7 +50,8 @@ bool Program::equals(const Node &b) const {
 bool Argument::equals(const Node &b) const {
   const Argument *c = static_cast<const Argument *>(&b);
   return *identifier_ == *c->identifier_ &&
-    *expression_ == *c->expression_;
+    ((expression_ == nullptr && c->expression_ == nullptr) ||
+     *expression_ == *c->expression_);
 }
 
 bool Function::equals(const Node &b) const {
@@ -80,8 +81,8 @@ bool Operation::equals(const Node &b) const {
 bool Declaration::equals(const Node &b) const {
   const Declaration *c = static_cast<const Declaration *>(&b);
   return *identifier_ == *c->identifier_ &&
-    expression_ == c->expression_ &&
-    *expression_ == *c->expression_;
+    ((expression_ == nullptr && c->expression_ == nullptr) ||
+     *expression_ == *c->expression_);
 }
 
 }  // namespace node

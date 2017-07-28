@@ -16,7 +16,10 @@ def configure(conf):
 
     conf.check_cxx(
         uselib_store='ASAN',
-        cxxflags=['-fsanitize=address', '-std=c++14',
+        cxxflags=[#'-fsanitize=address',
+                  '-std=c++14',
+                  '-g',
+                  '-O0',
                   '-fno-omit-frame-pointer',
                   # llvm recommended warnings
                   '-Wall',
@@ -28,8 +31,8 @@ def configure(conf):
                   '-Wno-long-long',
                   '-Wnon-virtual-dtor',
                   '-Wdelete-non-virtual-dtor',
-                  '-Werror=date-time'],
-        ldflags=['-fsanitize=address']
+                  '-Werror=date-time']#,
+        #ldflags=['-fsanitize=address']
     )
     conf.load("clang_compilation_database", tooldir="./tools/")
 
