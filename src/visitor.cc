@@ -10,6 +10,10 @@ std::shared_ptr<Program> TreeCloner::clone(std::shared_ptr<node::Program> progra
   return std::static_pointer_cast<Program>(child_);
 }
 
+void TreeCloner::visit(const node::EmptyExpression &empty) {
+  child_ = std::make_shared<node::EmptyExpression>();
+}
+
 void TreeCloner::visit(const node::Number &number) {
   child_ = std::make_shared<node::Number>(number);
 }

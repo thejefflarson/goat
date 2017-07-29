@@ -12,6 +12,7 @@ namespace node {
     v.visit(*this);                    \
   }
 
+accept(EmptyExpression)
 accept(Number)
 accept(Identifier)
 accept(String)
@@ -81,7 +82,7 @@ bool Operation::equals(const Node &b) const {
 bool Declaration::equals(const Node &b) const {
   const Declaration *c = static_cast<const Declaration *>(&b);
   return *identifier_ == *c->identifier_ &&
-    ((expression_ == nullptr && c->expression_ == nullptr) ||
+    ((expression_ == nullptr || c->expression_ == nullptr) ||
      *expression_ == *c->expression_);
 }
 

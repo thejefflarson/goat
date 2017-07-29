@@ -7,6 +7,7 @@ namespace goat {
 namespace node {
 
 class Node;
+class EmptyExpression;
 class Number;
 class Identifier;
 class String;
@@ -19,6 +20,7 @@ class Operation;
 class Declaration;
 
 #define VisitorMethods \
+  void visit(const node::EmptyExpression &empty); \
   void visit(const node::Number &number); \
   void visit(const node::Identifier &identifier); \
   void visit(const node::String &string); \
@@ -33,6 +35,7 @@ class Declaration;
 class Visitor {
  public:
   virtual ~Visitor() {}
+  virtual void visit(const node::EmptyExpression &empty) = 0;
   virtual void visit(const node::Number &number) = 0;
   virtual void visit(const node::Identifier &identifier) = 0;
   virtual void visit(const node::String &string) = 0;

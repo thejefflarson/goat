@@ -30,6 +30,17 @@ class Node {
 };
 using NodeList = std::vector<std::shared_ptr<Node>>;
 
+// Empty node that we use in place of a null pointer to help out things like
+// comparisons.
+class EmptyExpression : public Node {
+ public:
+  EmptyExpression() {}
+  void accept(Visitor &v) const;
+  const inference::Type type() const { return inference::NoType(); };
+private:
+  bool equals(const Node &b) const { return true; }
+};
+
 class Number : public Node {
  public:
   Number(const double value) :
@@ -111,7 +122,7 @@ class Argument : public Node {
     expression_(expression) {}
   Argument(const std::shared_ptr<Identifier> ident) :
     identifier_(ident),
-    expression_(nullptr) {}
+    expression_(std::make_shared<EmptyExpression>()) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<Node> expression() const { return expression_; }

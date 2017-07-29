@@ -15,6 +15,10 @@ using namespace goat::util;
 class Printer : public Visitor {
 public:
   Printer() {}
+  void visit(const EmptyExpression &empty) {
+    std::cout << "Empty" << std::endl;
+  }
+
   void visit(const Number &number) {
     std::cout << "Number " << number.value() << std::endl;
   }

@@ -14,6 +14,9 @@ using namespace goat::inference;
 using namespace goat::node;
 // this should be more like:
 // http://www.cs.cornell.edu/courses/cs3110/2016fa/l/17-inference/notes.html
+void Inferer::visit(const EmptyExpression &empty) {
+
+}
 
 void Inferer::visit(const Number &number) {
 
