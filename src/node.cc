@@ -35,7 +35,9 @@ bool String::equals(const Node &b) const {
 }
 
 bool Identifier::equals(const Node &b) const {
-  return string_equals(this, b);
+  const Identifier *c = static_cast<const Identifier *>(&b);
+  return string_equals(this, b) &&
+    internal_value_ == c->internal_value_;
 }
 
 bool Number::equals(const Node &b) const {
