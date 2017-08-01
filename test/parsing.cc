@@ -3,13 +3,16 @@
 #include "driver.hh"
 #include "inferer.hh"
 #include "node.hh"
+#include "renamer.hh"
+#include "tap.h"
 #include "util.hh"
 #include "visitor.hh"
-#include "tap.h"
+
 
 using namespace std;
 using namespace goat::node;
 using namespace goat::inference;
+using namespace goat::renaming;
 using namespace goat::util;
 
 class Printer : public Visitor {
@@ -24,7 +27,9 @@ public:
   }
 
   void visit(const Identifier &identifier) {
-    std::cout << "Identifier " << identifier.value() << std::endl;
+    std::cout << "Identifier " <<
+      identifier.value() << "Internal" <<
+      identifier.internal_value() << std::endl;
   }
 
   void visit(const String &string) {
@@ -186,14 +191,22 @@ std::shared_ptr<Program> parse_program(std::string program) {
 }
 
 void test_cloner() {
-  auto program = parse_program("c(a)");
+  auto program = parse_program("a = 1 b = a c = program(a: 1) do a done c(a)");
   auto cloned = TreeCloner().clone(program);
-  auto printer = Printer();
-  std::cout << "PROGRAM" << std::endl;
-  printer.visit(*program);
-  std::cout << "CLONED" << std::endl;
-  printer.visit(*cloned);
+
   ok(*program == *cloned, "Tree cloner can clone a node");
+}
+
+void test_renamer() {
+  auto program = parse_program("a");
+  auto renamed = Renamer().rename(program);
+  auto program2 = std::make_shared<Program>();
+  auto expressions = std::make_shared<NodeList>();
+  expressions->push_back(std::make_shared<Identifier>("a"));
+  program2->push_back(expressions);
+  auto renamed2 = Renamer().rename(program2);
+  Printer().visit(*renamed2);
+  ok(*renamed == *renamed2, "Renamer renames nodes.");
 }
 
 void print_type(Type t) {
@@ -314,6 +327,7 @@ int main() {
   test_empty();
   test_literals();
   test_cloner();
+  test_renamer();
   test_math();
   test_function();
   test_conditional();

@@ -4,6 +4,10 @@
 using namespace goat;
 using namespace renaming;
 
+std::shared_ptr<node::Program> Renamer::rename(std::shared_ptr<node::Program> program) {
+  return TreeCloner::clone(program);
+}
+
 void Renamer::visit(const node::Identifier &identifier) {
   assert(names_[identifier.value() != map::end]);
   child_ = std::make_shared<node::Identifier>(identifier.value(), names_[identifier.value()]);

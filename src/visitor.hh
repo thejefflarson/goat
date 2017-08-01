@@ -60,7 +60,7 @@ class TreeCloner : public Visitor {
   TreeCloner() : child_(nullptr) {}
   VisitorMethods
   std::shared_ptr<node::Program> clone(std::shared_ptr<node::Program> program);
- private:
+ protected:
   std::shared_ptr<node::Node> child_;
 };
 

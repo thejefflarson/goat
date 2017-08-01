@@ -13,17 +13,17 @@ namespace renaming {
 
 class Renamer : public node::TreeCloner {
  public:
-  Renamer(node::Program root) :
+  Renamer() :
+    TreeCloner(),
     names_(),
-    namer_(),
-    root_(root),
-    child_(nullptr) {}
- VisitorMethods
+    namer_() {}
+  void visit(const node::Declaration &declaration);
+  void visit(const node::Function &function);
+  void visit(const node::Identifier &identifier);
+  std::shared_ptr<node::Program> rename(std::shared_ptr<node::Program> program);
  private:
   std::map<std::string, std::string> names_;
   util::Namer namer_;
-  node::Program root_;
-  std::shared_ptr<node::Node> child_;
 };
 
 } // namespace inference
