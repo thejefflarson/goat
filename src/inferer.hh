@@ -7,6 +7,7 @@
 #include <string>
 #include <iostream>
 #include <typeinfo>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include "util.hh"
@@ -140,7 +141,7 @@ class Constraint {
   std::pair<Type, Type> variables_;
 };
 
-class Inferer : public node::Visitor {
+class Inferer : public node::TreeCloner {
  public:
   Inferer() :
     constraints_(),
@@ -151,8 +152,8 @@ class Inferer : public node::Visitor {
  private:
   std::set<Constraint> constraints_;
   util::Namer namer_;
+  std::unordered_map<std::string, Type> scope_;
 };
-
 
 }  // namespace inference
 }  // namespace goat

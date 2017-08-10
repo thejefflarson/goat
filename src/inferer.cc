@@ -14,53 +14,81 @@ using namespace goat::inference;
 using namespace goat::node;
 // this should be more like:
 // http://www.cs.cornell.edu/courses/cs3110/2016fa/l/17-inference/notes.html
-void Inferer::visit(const EmptyExpression &empty) {
-
-}
-
-void Inferer::visit(const Number &number) {
-
-}
-
 void Inferer::visit(const Identifier &identifier) {
-// TODO: think hard about scoping rules.
-//  constraints_.insert(Constraint({
-//    identifier.type(),
-//    scope_.find(identifier.value())->second
-//  }));
-}
+  assert(scope_.find(identifier.value()) != std::unordered_map::end);
+  auto type = scope_.find(identifier.internal_value())->second;
+  assert(type.is<TypeVariable>());
 
-void Inferer::visit(const String &string) {
+  constraints_.insert(Constraint({
+    identifier.type(),
+    type
+  }));
 
-}
-
-void Inferer::visit(const Program &program) {
-  node::list_accept(program.nodes(), *this);
+  child_ = std::make_shared<node::Identifier>(
+    identifier.value(),
+    identifier.internal_value(),
+    type
+  );
 }
 
 void Inferer::visit(const Argument &argument) {
-  assert(argument.type().is<TypeVariable>());
   argument.identifier()->accept(*this);
-  if(argument.expression() == nullptr) return;
+  auto ident = child_;
+  if(*argument.expression() == EmptyExpression()) {
+    child_ = std::make_shared<Argument>(ident);
+    return;
+  }
   argument.expression()->accept(*this);
+  auto expression = child_;
   constraints_.insert(Constraint({
     argument.identifier()->type(),
     argument.expression()->type()
   }));
+  child_ = std::make_shared<Argument>(ident, expression);
 }
 
 void Inferer::visit(const Function &function) {
-  node::list_accept(function.arguments(), *this);
+  auto args = std::make_shared<ArgumentList>();
+  auto types = std::vector<Type>();
+  for(auto argument : *function.arguments()) {
+    auto var = argument->identifier()->internal_value();
+    scope_[var] = TypeVariable(namer_.next());
+    types.push_back(scope_[var]);
+    argument->accept(*this);
+    args->push_back(std::static_pointer_cast<Argument>(child_));
+  }
   function.program()->accept(*this);
+  auto program = std::static_pointer_cast<Program>(child_);
+  Type ret = TypeVariable(namer_.next());
+  types.push_back(ret);
   constraints_.insert(Constraint({
-    function.type().get<FunctionType>().ret(),
-    function.program()->type()
+    ret,
+    program->type()
   }));
+  child_ = std::make_shared<Function>(args, program, types);
 }
 
 void Inferer::visit(const Application &application) {
+  auto args = std::make_shared<ArgumentList>();
   application.identifier()->accept(*this);
-  node::list_accept(application.arguments(), *this);
+  auto ident = std::static_pointer_cast<Identifier>(child_);
+  auto types = std::vector<Type>();
+  for(auto argument : *application.arguments()) {
+    argument->accept(*this);
+    auto arg = std::static_pointer_cast<Argument>(child_);
+    auto type = arg->type();
+    types.push_back(type);
+    args->push_back(arg);
+  }
+
+  types.push_back(TypeVariable(namer_.next()));
+  Type type = FunctionType(types);
+  constraints_.insert(Constraint({
+    ident->type(),
+    type
+  }));
+
+  child_ = std::make_shared<Application>(ident, args, type);
 }
 
 void Inferer::visit(const Conditional &conditional) {
@@ -73,8 +101,12 @@ void Inferer::visit(const Conditional &conditional) {
     BoolType()
   }));
   conditional.expression()->accept(*this);
+  auto expr = child_;
   conditional.true_block()->accept(*this);
+  auto true_block = child_;
   conditional.false_block()->accept(*this);
+  auto false_block = child_;
+  child_ = std::make_shared<Conditional>(expr, true_block, false_block);
 }
 
 void Inferer::visit(const Operation &operation) {
@@ -87,16 +119,23 @@ void Inferer::visit(const Operation &operation) {
     NumberType()
   }));
   operation.left()->accept(*this);
+  auto left = child_;
   operation.right()->accept(*this);
+  auto right = child_;
+  child_ = std::make_shared<Operation>(left, right, operation.operation());
 }
 
 void Inferer::visit(const Declaration &declaration) {
-  constraints_.insert(Constraint({
-    declaration.identifier()->type(),
-    declaration.expression()->type()
-  }));
+  scope_[declaration.identifier()->internal_value()] = TypeVariable(namer_.next());
   declaration.identifier()->accept(*this);
+  auto ident = child_;
   declaration.expression()->accept(*this);
+  auto expr = child_;
+  constraints_.insert(Constraint({
+    ident->type(),
+    expr->type()
+  }));
+  child_ = std::make_shared<Declaration>(ident, expr);
 }
 
 Constraint Constraint::apply(Substitution s) const {
