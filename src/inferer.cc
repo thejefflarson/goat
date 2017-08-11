@@ -12,8 +12,12 @@
 using namespace goat;
 using namespace goat::inference;
 using namespace goat::node;
-// this should be more like:
-// http://www.cs.cornell.edu/courses/cs3110/2016fa/l/17-inference/notes.html
+
+void Inferer::visit(const Program &program) {
+  TreeCloner::visit(program);
+};
+
+
 void Inferer::visit(const Identifier &identifier) {
   assert(scope_.find(identifier.value()) != std::unordered_map::end);
   auto type = scope_.find(identifier.internal_value())->second;
@@ -33,7 +37,7 @@ void Inferer::visit(const Identifier &identifier) {
 
 void Inferer::visit(const Argument &argument) {
   argument.identifier()->accept(*this);
-  auto ident = child_;
+  auto ident = std::static_pointer_cast<Identifier>(child_);
   if(*argument.expression() == EmptyExpression()) {
     child_ = std::make_shared<Argument>(ident);
     return;
@@ -57,6 +61,7 @@ void Inferer::visit(const Function &function) {
     argument->accept(*this);
     args->push_back(std::static_pointer_cast<Argument>(child_));
   }
+
   function.program()->accept(*this);
   auto program = std::static_pointer_cast<Program>(child_);
   Type ret = TypeVariable(namer_.next());
@@ -65,7 +70,8 @@ void Inferer::visit(const Function &function) {
     ret,
     program->type()
   }));
-  child_ = std::make_shared<Function>(args, program, types);
+
+  child_ = std::make_shared<Function>(args, program, FunctionType(types));
 }
 
 void Inferer::visit(const Application &application) {
@@ -96,17 +102,24 @@ void Inferer::visit(const Conditional &conditional) {
     conditional.true_type(),
     conditional.false_type()
   }));
+
   constraints_.insert(Constraint({
     conditional.expression()->type(),
     BoolType()
   }));
+
   conditional.expression()->accept(*this);
   auto expr = child_;
   conditional.true_block()->accept(*this);
   auto true_block = child_;
   conditional.false_block()->accept(*this);
   auto false_block = child_;
-  child_ = std::make_shared<Conditional>(expr, true_block, false_block);
+
+  child_ = std::make_shared<Conditional>(
+    expr,
+    std::static_pointer_cast<Program>(true_block),
+    std::static_pointer_cast<Program>(false_block)
+  );
 }
 
 void Inferer::visit(const Operation &operation) {
@@ -114,14 +127,17 @@ void Inferer::visit(const Operation &operation) {
     operation.left()->type(),
     NumberType()
   }));
+
   constraints_.insert(Constraint({
     operation.right()->type(),
     NumberType()
   }));
+
   operation.left()->accept(*this);
   auto left = child_;
   operation.right()->accept(*this);
   auto right = child_;
+
   child_ = std::make_shared<Operation>(left, right, operation.operation());
 }
 
@@ -131,11 +147,16 @@ void Inferer::visit(const Declaration &declaration) {
   auto ident = child_;
   declaration.expression()->accept(*this);
   auto expr = child_;
+
   constraints_.insert(Constraint({
     ident->type(),
     expr->type()
   }));
-  child_ = std::make_shared<Declaration>(ident, expr);
+
+  child_ = std::make_shared<Declaration>(
+    std::static_pointer_cast<Identifier>(ident),
+    expr
+  );
 }
 
 Constraint Constraint::apply(Substitution s) const {

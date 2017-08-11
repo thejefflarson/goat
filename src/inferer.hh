@@ -41,11 +41,11 @@ class BoolType : public AbstractType {};
 class NoType : public AbstractType {};
 class FunctionType;
 class TypeVariable;
-using Type = util::Variant<TypeVariable,
+using Type = util::Variant<NoType,
+                           TypeVariable,
                            NumberType,
                            StringType,
                            BoolType,
-                           NoType,
                            FunctionType>;
 
 class TypeVariable : public AbstractType {
@@ -146,7 +146,14 @@ class Inferer : public node::TreeCloner {
   Inferer() :
     constraints_(),
     namer_() {}
-  VisitorMethods
+  void visit(const node::Program &program);
+  void visit(const node::Identifier &identifier);
+  void visit(const node::Argument &argument);
+  void visit(const node::Function &function);
+  void visit(const node::Application &application);
+  void visit(const node::Conditional &conditional);
+  void visit(const node::Declaration &declaration);
+  void visit(const node::Operation &operation);
   const std::set<Constraint>& constraints() const { return constraints_; }
   std::set<Substitution> solve();
  private:

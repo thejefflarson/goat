@@ -233,7 +233,7 @@ class Variant {
     helper_t::destroy(type_, &data_);
   }
  private:
-  void move_assign(const Variant<Types...> &&other) {
+  void move_assign(Variant<Types...> &&other) {
     helper_t::destroy(type_, &data_);
     helper_t::move(other.type_, &other.data_, &data_);
     type_ = other.type_;
