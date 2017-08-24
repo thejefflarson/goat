@@ -13,21 +13,14 @@ using namespace goat;
 using namespace goat::inference;
 using namespace goat::node;
 
-void Inferer::visit(const Program &program) {
-  TreeCloner::visit(program);
-};
-
+std::shared_ptr<node::Program> Inferer::infer(std::shared_ptr<node::Program> program) {
+  return clone(program);
+}
 
 void Inferer::visit(const Identifier &identifier) {
-  assert(scope_.find(identifier.value()) != std::unordered_map::end);
+  assert(scope_.find(identifier.internal_value()) != scope_.end());
   auto type = scope_.find(identifier.internal_value())->second;
   assert(type.is<TypeVariable>());
-
-  constraints_.insert(Constraint({
-    identifier.type(),
-    type
-  }));
-
   child_ = std::make_shared<node::Identifier>(
     identifier.value(),
     identifier.internal_value(),
@@ -123,20 +116,20 @@ void Inferer::visit(const Conditional &conditional) {
 }
 
 void Inferer::visit(const Operation &operation) {
-  constraints_.insert(Constraint({
-    operation.left()->type(),
-    NumberType()
-  }));
-
-  constraints_.insert(Constraint({
-    operation.right()->type(),
-    NumberType()
-  }));
-
   operation.left()->accept(*this);
   auto left = child_;
+  constraints_.insert(Constraint({
+    left->type(),
+    NumberType()
+  }));
+
+
   operation.right()->accept(*this);
   auto right = child_;
+  constraints_.insert(Constraint({
+    right->type(),
+    NumberType()
+  }));
 
   child_ = std::make_shared<Operation>(left, right, operation.operation());
 }

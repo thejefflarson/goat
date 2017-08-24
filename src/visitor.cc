@@ -94,7 +94,9 @@ void TreeCloner::visit(const node::Operation &operation) {
 }
 
 void TreeCloner::visit(const node::Declaration &declaration) {
+  declaration.expression()->accept(*this);
+  auto expr = child_;
   declaration.identifier()->accept(*this);
   auto ident = std::static_pointer_cast<Identifier>(child_);
-  child_ = std::make_shared<Declaration>(ident, declaration.expression());
+  child_ = std::make_shared<Declaration>(ident, expr);
 }

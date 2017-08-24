@@ -146,7 +146,6 @@ class Inferer : public node::TreeCloner {
   Inferer() :
     constraints_(),
     namer_() {}
-  void visit(const node::Program &program);
   void visit(const node::Identifier &identifier);
   void visit(const node::Argument &argument);
   void visit(const node::Function &function);
@@ -154,6 +153,7 @@ class Inferer : public node::TreeCloner {
   void visit(const node::Conditional &conditional);
   void visit(const node::Declaration &declaration);
   void visit(const node::Operation &operation);
+  std::shared_ptr<node::Program> infer(std::shared_ptr<node::Program> program);
   const std::set<Constraint>& constraints() const { return constraints_; }
   std::set<Substitution> solve();
  private:

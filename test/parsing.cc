@@ -15,6 +15,30 @@ using namespace goat::inference;
 using namespace goat::renaming;
 using namespace goat::util;
 
+void print_type(Type t) {
+  if(t.is<TypeVariable>()) {
+    std::cout << t.get<TypeVariable>().id();
+  } else if(t.is<NumberType>()) {
+    std::cout << "Number";
+  } else if(t.is<StringType>()){
+    std::cout << "String";
+  } else if(t.is<BoolType>()){
+    std::cout << "Bool";
+  } else if(t.is<NoType>()){
+    std::cout << "NoType";
+  } else if(t.is<FunctionType>()) {
+    auto f = t.get<FunctionType>();
+    std::cout << "(";
+    for(auto a : f.types()) {
+      print_type(a);
+      std::cout << ", ";
+    }
+    std::cout << ")";
+  } else {
+    std::cout << "wauh";
+  }
+}
+
 class Printer : public Visitor {
 public:
   Printer() {}
@@ -27,9 +51,12 @@ public:
   }
 
   void visit(const Identifier &identifier) {
-    std::cout << "Identifier " <<
-      identifier.value() << " Internal " <<
-      identifier.internal_value() << std::endl;
+    std::cout <<
+      "Identifier " << identifier.value() <<
+      " Internal " << identifier.internal_value() <<
+      " Type ";
+    print_type(identifier.type());
+    std::cout << std::endl;
   }
 
   void visit(const String &string) {
@@ -209,40 +236,17 @@ void test_renamer() {
   ok(*renamed == *renamed2, "Renamer renames nodes.");
 }
 
-void print_type(Type t) {
-  if(t.is<TypeVariable>()) {
-    std::cout << t.get<TypeVariable>().id();
-  } else if(t.is<NumberType>()) {
-    std::cout << "Number";
-  } else if(t.is<StringType>()){
-    std::cout << "String";
-  } else if(t.is<BoolType>()){
-    std::cout << "Bool";
-  } else if(t.is<NoType>()){
-    std::cout << "NoType";
-  } else if(t.is<FunctionType>()) {
-    auto f = t.get<FunctionType>();
-    std::cout << "(";
-    for(auto a : f.types()) {
-      print_type(a);
-      std::cout << ", ";
-    }
-    std::cout << ")";
-  } else {
-    std::cout << "wauh";
-  }
-}
-
 void test_inference() {
-  auto p = parse_program("a = 1");
+  auto p = parse_program("a = 1 b = 1 c = a + b");
   p = Renamer().rename(p);
   Printer().visit(*p);
-  auto visitor = Inferer();
-  visitor.visit(*p);
-  auto constraints = visitor.constraints();
+  auto inferer = Inferer();
+  auto i = inferer.infer(p);
+
+  auto constraints = inferer.constraints();
   std::cout << constraints.size() << std::endl;
   //ok(constraints.size() == 2, "Generates constraints");
-  auto substitutions = visitor.solve();
+  auto substitutions = inferer.solve();
   //ok(p->type().is<TypeVariable>(), "The type is a variable");
   //ok(substitutions.size() == 1, "Has a substitution");
   //auto subst = *substitutions.begin();
@@ -271,10 +275,10 @@ void test_inference() {
 //  visitor.visit(*p);
 //  substitutions = visitor.solve();
   std::cout << substitutions.size() << std::endl;
-  std::cout << visitor.constraints().size() << std::endl;
+  std::cout << inferer.constraints().size() << std::endl;
 
 
-  for(auto s : visitor.constraints()) {
+  for(auto s : inferer.constraints()) {
     std::cout << "# ";
     print_type(s.variables().first);
     std::cout << " = ";
