@@ -123,7 +123,6 @@ void Inferer::visit(const Operation &operation) {
     NumberType()
   }));
 
-
   operation.right()->accept(*this);
   auto right = child_;
   constraints_.insert(Constraint({

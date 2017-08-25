@@ -218,7 +218,7 @@ std::shared_ptr<Program> parse_program(std::string program) {
 }
 
 void test_cloner() {
-  auto program = parse_program("a = 1 b = a c = program(a: 1) do a done c(a)");
+  auto program = parse_program("a = 1 b = a c = program(a: 1) do a done d = c(a)");
   auto cloned = TreeCloner().clone(program);
 
   ok(*program == *cloned, "Tree cloner can clone a node");
@@ -237,7 +237,7 @@ void test_renamer() {
 }
 
 void test_inference() {
-  auto p = parse_program("a = 1 b = 1 c = a + b");
+  auto p = parse_program("f = \"string\" a = 1 b = 1 c = program(a: a, b: b) do a + b done d = c(a: a, b: b)");
   p = Renamer().rename(p);
   Printer().visit(*p);
   auto inferer = Inferer();
