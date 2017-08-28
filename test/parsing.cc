@@ -8,7 +8,6 @@
 #include "util.hh"
 #include "visitor.hh"
 
-
 using namespace std;
 using namespace goat::node;
 using namespace goat::inference;
@@ -237,7 +236,7 @@ void test_renamer() {
 }
 
 void test_inference() {
-  auto p = parse_program("f = \"string\" a = 1 b = 1 c = program(a: a, b: b) do a + b done d = c(a: a, b: b)");
+  auto p = parse_program("a = if 1 then 1 else 0 done");
   p = Renamer().rename(p);
   Printer().visit(*p);
   auto inferer = Inferer();
