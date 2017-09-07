@@ -100,18 +100,14 @@ class String : public Node {
 // For a block the type is the same as the last node on the list.
 class Program : public Node {
  public:
-  Program() :
-    nodes_(std::make_shared<NodeList>()) {}
-  void push_back(std::shared_ptr<NodeList> it) {
-    nodes_->insert(nodes_->end(), it->begin(), it->end());
-  }
+  Program(std::shared_ptr<Node> expression) :
+    expression_(expression) {}
   void accept(Visitor& v) const;
-  const std::shared_ptr<NodeList> nodes() const { return nodes_; }
-  const inference::Type type() const { return nodes_->size() > 0 ?
-      nodes_->back()->type() : inference::Type(inference::NoType()); }
+  const std::shared_ptr<Node> expression() const { return expression_; }
+  const inference::Type type() const { return expression_->type(); }
  private:
   bool equals(const Node& b) const;
-  std::shared_ptr<NodeList> nodes_;
+  std::shared_ptr<Node> expression_;
 };
 
 class Argument : public Node {
@@ -242,16 +238,20 @@ class Operation : public Node {
 class Declaration : public Node {
  public:
   Declaration(std::shared_ptr<Identifier> ident,
+              std::shared_ptr<Node> value,
               std::shared_ptr<Node> expression) :
     identifier_(ident),
+    value_(value),
     expression_(expression) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
   const std::shared_ptr<Node> expression() const { return expression_; }
+  const std::shared_ptr<Node> value() const { return value_; }
   const inference::Type type() const { return identifier_->type(); }
  private:
   bool equals(const Node& b) const;
   const std::shared_ptr<Identifier> identifier_;
+  const std::shared_ptr<Node> value_;
   const std::shared_ptr<Node> expression_;
 };
 

@@ -236,7 +236,7 @@ void test_renamer() {
 }
 
 void test_inference() {
-  auto p = parse_program("a = if 1 then 1 else 0 done");
+  auto p = parse_program("a = 1 b = a c = program(a: a) do a + b done d = c(a: 1)");
   p = Renamer().rename(p);
   Printer().visit(*p);
   auto inferer = Inferer();

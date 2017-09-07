@@ -136,10 +136,11 @@ class Constraint {
   std::pair<Type, Type> variables() const { return variables_; }
   std::set<TypeVariable> activevars() const;
   Constraint apply(Substitution s) const;
-  std::set<Substitution> unify() const;
+  static std::set<Substitution> unify(std::set<Constraint> constraints_);
  private:
   std::pair<Type, Type> variables_;
 };
+
 
 class Inferer : public node::TreeCloner {
  public:

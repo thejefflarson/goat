@@ -27,14 +27,8 @@ void TreeCloner::visit(const node::String &string) {
 }
 
 void TreeCloner::visit(const node::Program &program) {
-  auto list = std::make_shared<NodeList>();
-  for(auto i : *program.nodes()) {
-    i->accept(*this);
-    list->push_back(child_);
-  }
-  auto new_program = std::make_shared<node::Program>();
-  new_program->push_back(list);
-  child_ = new_program;
+  program.expression()->accept(*this);
+  child_ = std::make_shared<node::Program>(child_);
 }
 
 void TreeCloner::visit(const node::Argument &argument) {
@@ -94,9 +88,11 @@ void TreeCloner::visit(const node::Operation &operation) {
 }
 
 void TreeCloner::visit(const node::Declaration &declaration) {
-  declaration.expression()->accept(*this);
-  auto expr = child_;
   declaration.identifier()->accept(*this);
   auto ident = std::static_pointer_cast<Identifier>(child_);
-  child_ = std::make_shared<Declaration>(ident, expr);
+  declaration.value()->accept(*this);
+  auto value = child_;
+  declaration.expression()->accept(*this);
+  auto expr = child_;
+  child_ = std::make_shared<Declaration>(ident, value, expr);
 }

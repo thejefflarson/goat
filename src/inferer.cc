@@ -18,7 +18,7 @@ std::shared_ptr<node::Program> Inferer::infer(std::shared_ptr<node::Program> pro
 }
 
 void Inferer::visit(const Identifier &identifier) {
-  assert(scope_.find(identifier.internal_value()) != scope_.end());
+  assert(scope_.fi-nd(identifier.internal_value()) != scope_.end());
   auto type = scope_.find(identifier.internal_value())->second;
   assert(type.is<TypeVariable>());
   child_ = std::make_shared<node::Identifier>(
@@ -197,46 +197,55 @@ Type Substitution::operator()(Type in) const {
   }
 }
 
-std::set<Substitution> Constraint::unify() const {
-  auto vars = variables_;
-  Type s = vars.first;
-  Type t = vars.second;
-
-  // Delete rule
-  if(s == t)
+std::set<Substitution> Constraint::unify(std::set<Constraint> constraints) {
+  auto c = constraints.begin();
+  if(c == constraints.end())
     return {};
+  auto constraint = *c;
+  constraints.erase(c);
+  auto vars = constraint.variables_;
+  Type t = vars.first;
+  Type tq = vars.second;
 
-  // Orient rule
-  if(!s.is<TypeVariable>() && t.is<TypeVariable>()) {
-    return Constraint({t, s}).unify();
-  }
+  if(t == tq)
+    return unify(constraints);
 
-  // Decompose rule
-  if(s.is<FunctionType>() && t.is<FunctionType>()) {
-    std::set<Substitution> ret;
-    const FunctionType &st = s.get<FunctionType>();
-    const FunctionType &tt = t.get<FunctionType>();
-    if(st.types().size() != tt.types().size()) {
-      ret.insert(Substitution::error());
-      return ret;
-    }
-    auto ttiter = tt.types().begin();
-    for(auto sitter = st.types().begin(); sitter != st.types().end(); sitter++) {
-      auto constraint = Constraint({*sitter, *ttiter});
-      auto result = constraint.unify();
-      ret.insert(result.begin(), result.end());
-      ttiter++;
-    }
-    return ret;
-  }
-
-  // Eliminate rule
-  if(s.is<TypeVariable>()) {
-    auto var = s.get<TypeVariable>();
-    if(!var.occurs(t)) {
-      return {Substitution(s, t)};
+  if(t.is<TypeVariable>()) {
+    if(!t.get<TypeVariable>().occurs(tq)) {
+      auto subs = Substitution(t, tq);
+      std::set<Constraint> consts;
+      for (auto c : constraints) {
+        consts.insert(Constraint({
+          subs(c.variables_.first),
+          subs(c.variables_.second)
+        }));
+      }
+      std::set<Substitution> substitutions = unify(consts);
+      substitutions.insert(subs);
+      return substitutions;
     }
   }
+
+  if(tq.is<TypeVariable>()) {
+    constraints.insert(Constraint({tq, t}));
+    return unify(constraints);
+  }
+
+  if(t.is<FunctionType>() && tq.is<FunctionType>()) {
+    auto tf = t.get<FunctionType>();
+    auto tqf = tq.get<FunctionType>();
+    if(tf.types().size() != tqf.types().size()) {
+      return {Substitution::error()};
+    }
+    auto tqfiter = tqf.types().begin();
+    for(auto tfiter = tf.types().begin();
+        tfiter != tf.types().end();
+        tfiter++, tqfiter++) {
+      constraints.insert(Constraint({*tfiter, *tqfiter}));
+    }
+    return unify(constraints);
+  }
+
   std::cout << "Error!" << std::endl;
   return {Substitution::error()};
 }
@@ -266,27 +275,5 @@ std::set<TypeVariable> Constraint::activevars() const {
 }
 
 std::set<Substitution> Inferer::solve() {
-  std::set<Substitution> ret;
-  auto working_set = constraints_;
-  while(!working_set.empty()) {
-    auto it = *working_set.begin();
-    working_set.erase(working_set.begin());
-    auto unified = it.unify();
-    if(unified.size() > 0) {
-      std::set<Constraint> tmp;
-      for(auto c : working_set) {
-        for(auto s : unified) {
-          tmp.insert(c.apply(s));
-        }
-      }
-      working_set = tmp;
-      for(auto s : unified)
-        ret.insert(s);
-    }
-  }
-  auto error = Substitution::error();
-  if(ret.find(error) != ret.end()) {
-    return {error};
-  }
-  return ret;
+  return Constraint::unify(constraints_);
 }

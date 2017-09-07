@@ -86,7 +86,7 @@ start: program { result = $program; }
 
 program:
   %empty  { $$ = std::make_shared<node::Program>(); }
-| expressions { $$ = std::make_shared<node::Program>(); $$->push_back($1); }
+| expression { $$ = std::make_shared<node::Program>($1); }
 ;
 
 expressions:
@@ -147,7 +147,8 @@ conditional:
 
 declaration:
   ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression); }
-
+| ident "=" expression[value] expression[expr] { $$ = std::make_shared<node::Declaration>($ident, $value, $expr); }
+;
 %%
 
 void goat::parser::error(const location_type& l, const std::string& m) {

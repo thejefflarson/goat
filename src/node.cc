@@ -47,7 +47,7 @@ bool Number::equals(const Node &b) const {
 
 bool Program::equals(const Node &b) const {
   const Program *c = static_cast<const Program *>(&b);
-  return util::compare_vector_pointers(nodes_, c->nodes_);
+  return expression_ == c->expression_;
 }
 
 bool Argument::equals(const Node &b) const {
@@ -84,8 +84,8 @@ bool Operation::equals(const Node &b) const {
 bool Declaration::equals(const Node &b) const {
   const Declaration *c = static_cast<const Declaration *>(&b);
   return *identifier_ == *c->identifier_ &&
-    ((expression_ == nullptr || c->expression_ == nullptr) ||
-     *expression_ == *c->expression_);
+    *expression_ == *c->expression_ &&
+    *value_ == *c->value_;
 }
 
 }  // namespace node
