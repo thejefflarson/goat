@@ -65,18 +65,21 @@
 %type <std::shared_ptr<node::Operation>> math;
 %type <std::shared_ptr<node::Argument>> argument;
 %type <std::shared_ptr<node::ArgumentList>> arguments;
-%type <std::shared_ptr<node::NodeList>> expressions;
 %type <std::shared_ptr<node::Function>> function;
 %type <std::shared_ptr<node::Application>> application;
 %type <std::shared_ptr<node::Conditional>> conditional;
 %type <std::shared_ptr<node::Declaration>> declaration;
 
-%precedence IDENT
 %nonassoc "="
 %left "+" "-"
 %left "*" "/"
 %left ":"
 %right THEN ELSE
+%precedence IDENT
+%precedence PROGRAM
+%precedence IF
+%precedence STRING
+%precedence NUMBER
 %precedence "("
 
 %expect 0
@@ -89,23 +92,18 @@ program:
 | expression { $$ = std::make_shared<node::Program>($1); }
 ;
 
-expressions:
-  expression { $$ = std::make_shared<node::NodeList>(); $$->push_back($expression); }
-| expressions[exprs] expression { $$ = $exprs; $$->push_back($expression); }
-;
-
 string: STRING { $$ = std::make_shared<node::String>($1); }
 number: NUMBER { $$ = std::make_shared<node::Number>($1); }
 ident: IDENT { $$ = std::make_shared<node::Identifier>($1); }
 
 expression:
-  string { $$ = $1; }
-| number { $$ = $1; }
+  string %prec STRING { $$ = $1; }
+| number %prec NUMBER { $$ = $1; }
 | ident %prec IDENT { $$ = $1; }
 | declaration { $$ = $1; }
-| function { $$ = $1; }
+| function %prec PROGRAM { $$ = $1; }
 | application { $$ = $1; }
-| conditional { $$ = $1; }
+| conditional %prec IF { $$ = $1; }
 | math { $$ = $1; }
 | "(" expression ")" { $$ = $2; }
 ;
