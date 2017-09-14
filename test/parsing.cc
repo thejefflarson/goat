@@ -222,7 +222,7 @@ void test_renamer() {
 }
 
 void test_inference() {
-  auto p = parse_program("a = 1; b = a; c = program(a: a) do a + b done; d = c(a: 1)");
+  auto p = parse_program("a = 1; b = a");
   p = Renamer().rename(p);
   Printer().visit(*p);
   auto inferer = Inferer();
