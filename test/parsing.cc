@@ -206,7 +206,7 @@ std::shared_ptr<Program> parse_program(std::string program) {
 }
 
 void test_cloner() {
-  auto program = parse_program("a = 1 b = a");
+  auto program = parse_program("a = 1; b = a; c = program(a: 1) do a done; d = a(a: b)");
   auto cloned = TreeCloner().clone(program);
 
   ok(*program == *cloned, "Tree cloner can clone a node");
@@ -222,7 +222,7 @@ void test_renamer() {
 }
 
 void test_inference() {
-  auto p = parse_program("a = 1 b = a c = program(a: a) do a + b done d = c(a: 1)");
+  auto p = parse_program("a = 1; b = a; c = program(a: a) do a + b done; d = c(a: 1)");
   p = Renamer().rename(p);
   Printer().visit(*p);
   auto inferer = Inferer();
@@ -321,10 +321,10 @@ int main() {
   test_literals();
   test_math();
   test_cloner();
-//  test_renamer();
-//  test_function();
-//  test_conditional();
+  test_renamer();
+  test_function();
+  test_conditional();
 // eventually these should be in their own file
-//  test_inference();
-//  test_constraints();
+  test_inference();
+  test_constraints();
 }
