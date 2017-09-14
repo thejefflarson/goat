@@ -137,16 +137,20 @@ void Inferer::visit(const Declaration &declaration) {
   scope_[declaration.identifier()->internal_value()] = TypeVariable(namer_.next());
   declaration.identifier()->accept(*this);
   auto ident = child_;
-  declaration.expression()->accept(*this);
-  auto expr = child_;
+  declaration.value()->accept(*this);
+  auto value = child_;
 
   constraints_.insert(Constraint({
     ident->type(),
-    expr->type()
+    value->type()
   }));
+
+  declaration.expression()->accept(*this);
+  auto expr = child_;
 
   child_ = std::make_shared<Declaration>(
     std::static_pointer_cast<Identifier>(ident),
+    value,
     expr
   );
 }

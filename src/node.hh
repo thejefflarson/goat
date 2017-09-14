@@ -100,6 +100,7 @@ class String : public Node {
 // For a block the type is the same as the last node on the list.
 class Program : public Node {
  public:
+  Program() : expression_(std::make_shared<EmptyExpression>()) {}
   Program(std::shared_ptr<Node> expression) :
     expression_(expression) {}
   void accept(Visitor& v) const;

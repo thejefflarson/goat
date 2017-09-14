@@ -47,6 +47,7 @@ return     return parser::make_RETURN(loc);
 "+"        return parser::make_PLUS(loc);
 "-"        return parser::make_MINUS(loc);
 ":"        return parser::make_COLON(loc);
+";"        return parser::make_SEMI(loc);
 ","        return parser::make_COMMA(loc);
 "("        return parser::make_LPAREN(loc);
 ")"        return parser::make_RPAREN(loc);

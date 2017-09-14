@@ -43,6 +43,7 @@
 %token RETURN "return"
 %token EQUALS "="
 %token COLON ":"
+%token SEMI ";"
 %token PLUS "+"
 %token MINUS "-"
 %token STAR "*"
@@ -74,12 +75,8 @@
 %left "+" "-"
 %left "*" "/"
 %left ":"
+%left ";"
 %right THEN ELSE
-%precedence IDENT
-%precedence PROGRAM
-%precedence IF
-%precedence STRING
-%precedence NUMBER
 %precedence "("
 
 %expect 0
@@ -97,13 +94,13 @@ number: NUMBER { $$ = std::make_shared<node::Number>($1); }
 ident: IDENT { $$ = std::make_shared<node::Identifier>($1); }
 
 expression:
-  string %prec STRING { $$ = $1; }
-| number %prec NUMBER { $$ = $1; }
-| ident %prec IDENT { $$ = $1; }
+  string { $$ = $1; }
+| number { $$ = $1; }
+| ident { $$ = $1; }
 | declaration { $$ = $1; }
-| function %prec PROGRAM { $$ = $1; }
+| function { $$ = $1; }
 | application { $$ = $1; }
-| conditional %prec IF { $$ = $1; }
+| conditional { $$ = $1; }
 | math { $$ = $1; }
 | "(" expression ")" { $$ = $2; }
 ;
@@ -144,8 +141,8 @@ conditional:
 ;
 
 declaration:
-  ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression); }
-| ident "=" expression[value] expression[expr] { $$ = std::make_shared<node::Declaration>($ident, $value, $expr); }
+  ident "=" expression { $$ = std::make_shared<node::Declaration>($ident, $expression, $ident); }
+| ident "=" expression[value] ";" expression[expr] { $$ = std::make_shared<node::Declaration>($ident, $value, $expr); }
 ;
 %%
 

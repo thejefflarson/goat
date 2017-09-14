@@ -47,14 +47,13 @@ bool Number::equals(const Node &b) const {
 
 bool Program::equals(const Node &b) const {
   const Program *c = static_cast<const Program *>(&b);
-  return expression_ == c->expression_;
+  return *expression_ == *c->expression_;
 }
 
 bool Argument::equals(const Node &b) const {
   const Argument *c = static_cast<const Argument *>(&b);
   return *identifier_ == *c->identifier_ &&
-    ((expression_ == nullptr && c->expression_ == nullptr) ||
-     *expression_ == *c->expression_);
+    *expression_ == *c->expression_;
 }
 
 bool Function::equals(const Node &b) const {
