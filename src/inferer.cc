@@ -18,7 +18,7 @@ std::shared_ptr<node::Program> Inferer::infer(std::shared_ptr<node::Program> pro
 }
 
 void Inferer::visit(const Identifier &identifier) {
-  assert(scope_.fi-nd(identifier.internal_value()) != scope_.end());
+  assert(scope_.find(identifier.internal_value()) != scope_.end());
   auto type = scope_.find(identifier.internal_value())->second;
   assert(type.is<TypeVariable>());
   child_ = std::make_shared<node::Identifier>(
