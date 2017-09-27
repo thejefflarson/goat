@@ -1,3 +1,5 @@
+#include <gsl/gsl>
+
 #include "node.hh"
 #include "renamer.hh"
 
@@ -9,7 +11,7 @@ std::shared_ptr<node::Program> Renamer::rename(std::shared_ptr<node::Program> pr
 }
 
 void Renamer::visit(const node::Identifier &identifier) {
-  assert(names_[identifier.value()] != names_.end());
+  Expects(names_.find(identifier.value()) != names_.end());
   std::cout << names_[identifier.value()] << std::endl;
   child_ = std::make_shared<node::Identifier>(identifier.value(),
                                               names_[identifier.value()]);

@@ -13,6 +13,7 @@ def configure(conf):
 
     conf.env['CXXFLAGS_LLVM'].remove('-std=c++11')
     conf.env['CXXFLAGS_LLVM'].remove('-fno-exceptions')
+    conf.env['CXXFLAGS_LLVM'].append('-I./deps/GSL/include')
 
     conf.check_cxx(
         uselib_store='ASAN',
@@ -41,7 +42,7 @@ def build(bld):
     bld.stlib(
         source=bld.path.ant_glob('src/*.(l|cc|yc)'),
         target='goat',
-        includes='src',
+        includes=['src', 'deps/GSL/include'],
         use='LLVM ASAN'
     )
 

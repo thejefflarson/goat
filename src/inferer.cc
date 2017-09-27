@@ -1,9 +1,10 @@
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <type_traits>
+
+#include <gsl/gsl>
 
 #include "inferer.hh"
 #include "node.hh"
@@ -18,9 +19,9 @@ std::shared_ptr<node::Program> Inferer::infer(std::shared_ptr<node::Program> pro
 }
 
 void Inferer::visit(const Identifier &identifier) {
-  assert(scope_.find(identifier.internal_value()) != scope_.end());
+  Expects(scope_.find(identifier.internal_value()) != scope_.end());
   auto type = scope_.find(identifier.internal_value())->second;
-  assert(type.is<TypeVariable>());
+  Expects(type.is<TypeVariable>());
   child_ = std::make_shared<node::Identifier>(
     identifier.value(),
     identifier.internal_value(),
