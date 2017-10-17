@@ -69,16 +69,16 @@ void Inferer::visit(const Function &function) {
 }
 
 void Inferer::visit(const Application &application) {
-  auto args = std::make_shared<ArgumentList>();
+  auto args = std::make_shared<Labels>();
   application.identifier()->accept(*this);
   auto ident = std::static_pointer_cast<Identifier>(child_);
   auto types = std::vector<Type>();
-  for(auto argument : *application.arguments()) {
-    argument->accept(*this);
-    auto arg = std::static_pointer_cast<Argument>(child_);
+  for(auto l : *application.labels()) {
+    l.second->accept(*this);
+    auto arg = std::static_pointer_cast<Label>(child_);
     auto type = arg->type();
     types.push_back(type);
-    args->push_back(arg);
+    args->insert({arg->name(), arg});
   }
 
   types.push_back(TypeVariable(namer_.next()));

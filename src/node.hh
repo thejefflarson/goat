@@ -3,6 +3,7 @@
 
 #include <cassert>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <stdint.h>
 #include <string>
@@ -156,27 +157,44 @@ class Function : public Node {
   inference::Type type_;
 };
 
+class Label : public Node {
+ public:
+  Label(std::string name,
+        std::shared_ptr<Node> expression) :
+    name_(name),
+    expression_(expression) {}
+  void accept(Visitor& v) const;
+  const std::string name() const { return name_; }
+  const std::shared_ptr<Node> expression() const { return expression_; }
+  const inference::Type type() const { return expression_->type(); }
+ private:
+  bool equals(const Node &b) const;
+  std::string name_;
+  std::shared_ptr<Node> expression_;
+};
+
+using Labels = std::map<std::string, std::shared_ptr<Label>>;
 class Application : public Node {
  public:
   Application(std::shared_ptr<Identifier> ident,
-              std::shared_ptr<ArgumentList> arguments) :
+              std::shared_ptr<Labels> labels) :
     identifier_(ident),
-    arguments_(arguments),
+    labels_(labels),
     type_(inference::NoType()) {}
   Application(std::shared_ptr<Identifier> ident,
-              std::shared_ptr<ArgumentList> arguments,
+              std::shared_ptr<Labels> labels,
               inference::Type type) :
     identifier_(ident),
-    arguments_(arguments),
+    labels_(labels),
     type_(type) {}
   void accept(Visitor& v) const;
   const std::shared_ptr<Identifier> identifier() const { return identifier_; }
-  const std::shared_ptr<ArgumentList> arguments() const { return arguments_; }
+  const std::shared_ptr<Labels> labels() const { return labels_; }
   const inference::Type type() const { return type_; }
  private:
   bool equals(const Node& b) const;
   const std::shared_ptr<Identifier> identifier_;
-  const std::shared_ptr<ArgumentList> arguments_;
+  const std::shared_ptr<Labels> labels_;
   inference::Type type_;
 };
 

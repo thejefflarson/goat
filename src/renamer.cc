@@ -12,7 +12,6 @@ std::shared_ptr<node::Program> Renamer::rename(std::shared_ptr<node::Program> pr
 
 void Renamer::visit(const node::Identifier &identifier) {
   Expects(names_.find(identifier.value()) != names_.end());
-  std::cout << names_[identifier.value()] << std::endl;
   child_ = std::make_shared<node::Identifier>(identifier.value(),
                                               names_[identifier.value()]);
 }
@@ -20,7 +19,9 @@ void Renamer::visit(const node::Identifier &identifier) {
 void Renamer::visit(const node::Function &function) {
   auto names = names_;
   for(auto a : *function.arguments()) {
+    std::cout << a->identifier()->value() << std::endl;
     names_[a->identifier()->value()] = namer_.next();
+    std::cout << names_[a->identifier()->value()] << std::endl;
   }
   TreeCloner::visit(function);
   names_ = names;
