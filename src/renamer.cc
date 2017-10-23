@@ -19,9 +19,7 @@ void Renamer::visit(const node::Identifier &identifier) {
 void Renamer::visit(const node::Function &function) {
   auto names = names_;
   for(auto a : *function.arguments()) {
-    std::cout << a->identifier()->value() << std::endl;
     names_[a->identifier()->value()] = namer_.next();
-    std::cout << names_[a->identifier()->value()] << std::endl;
   }
   TreeCloner::visit(function);
   names_ = names;

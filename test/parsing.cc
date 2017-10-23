@@ -63,18 +63,24 @@ public:
   }
 
   void visit(const Program &program) {
-    std::cout << "Program" << std::endl;
+    std::cout << "Program ";
+    print_type(program.type());
+    std::cout << std::endl;
     program.expression()->accept(*this);
   }
 
   void visit(const Argument &argument) {
-    std::cout << "Argument" << std::endl;
+    std::cout << "Argument ";
+    print_type(argument.type());
+    std::cout << std::endl;
     argument.identifier()->accept(*this);
     if(argument.expression()) argument.expression()->accept(*this);
   }
 
   void visit(const Function &function) {
-    std::cout << "Function" << std::endl;
+    std::cout << "Function ";
+    print_type(function.type());
+    std::cout << std::endl;
     list_accept(function.arguments(), *this);
     function.program()->accept(*this);
   }
@@ -145,7 +151,7 @@ bool program(std::string program, std::shared_ptr<Node> a) {
 
 void test_literals() {
   Identifier ident = Identifier("a");
-  //ok(ident.type().is<TypeVariable>(), "Returns the right type.");
+  ok(ident.type().is<NoType>(), "Returns the right type.");
   ok(program("1", make_shared<Number>(1)), "Parses a number");
   ok(program("a", make_shared<Identifier>("a")),
      "Parses an identifier");
@@ -234,11 +240,11 @@ void test_renamer() {
 }
 
 void test_inference() {
-  auto p = parse_program("c = program(a: 1) do a done; d = c(a: 1)");
+  auto p = parse_program("a = 1; b = program(a) do 'test' done; c = b(a: a)");
   p = Renamer().rename(p);
-  Printer().visit(*p);
   auto inferer = Inferer();
   auto i = inferer.infer(p);
+  Printer().visit(*i);
 
   auto constraints = inferer.constraints();
   std::cout << constraints.size() << std::endl;
@@ -274,7 +280,6 @@ void test_inference() {
   std::cout << substitutions.size() << std::endl;
   std::cout << inferer.constraints().size() << std::endl;
 
-
   for(auto s : inferer.constraints()) {
     std::cout << "# ";
     print_type(s.variables().first);
@@ -282,8 +287,8 @@ void test_inference() {
     print_type(s.variables().second);
     std::cout << std::endl;
   }
-  std::cout << "subs" << std::endl;
 
+  std::cout << "subs" << std::endl;
   for(auto s : substitutions) {
     std::cout << "# ";
     print_type(s.left());

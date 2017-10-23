@@ -31,18 +31,19 @@ void Inferer::visit(const Identifier &identifier) {
 
 void Inferer::visit(const Argument &argument) {
   argument.identifier()->accept(*this);
-  auto ident = std::static_pointer_cast<Identifier>(child_);
+  auto identifier = std::static_pointer_cast<Identifier>(child_);
   if(*argument.expression() == EmptyExpression()) {
-    child_ = std::make_shared<Argument>(ident);
+    child_ = std::make_shared<Argument>(identifier);
     return;
   }
   argument.expression()->accept(*this);
   auto expression = child_;
+
   constraints_.insert(Constraint({
-    argument.identifier()->type(),
-    argument.expression()->type()
+    identifier->type(),
+    expression->type()
   }));
-  child_ = std::make_shared<Argument>(ident, expression);
+  child_ = std::make_shared<Argument>(identifier, expression);
 }
 
 void Inferer::visit(const Function &function) {
@@ -60,6 +61,7 @@ void Inferer::visit(const Function &function) {
   auto program = std::static_pointer_cast<Program>(child_);
   Type ret = TypeVariable(namer_.next());
   types.push_back(ret);
+
   constraints_.insert(Constraint({
     ret,
     program->type()
@@ -83,6 +85,7 @@ void Inferer::visit(const Application &application) {
 
   types.push_back(TypeVariable(namer_.next()));
   Type type = FunctionType(types);
+
   constraints_.insert(Constraint({
     ident->type(),
     type
@@ -220,10 +223,7 @@ std::set<Substitution> Constraint::unify(std::set<Constraint> constraints) {
       auto subs = Substitution(t, tq);
       std::set<Constraint> consts;
       for (auto c : constraints) {
-        consts.insert(Constraint({
-          subs(c.variables_.first),
-          subs(c.variables_.second)
-        }));
+        consts.insert(c.apply(subs));
       }
       std::set<Substitution> substitutions = unify(consts);
       substitutions.insert(subs);
