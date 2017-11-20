@@ -67,6 +67,9 @@
 %type <std::shared_ptr<node::Argument>> argument;
 %type <std::shared_ptr<node::ArgumentList>> arguments;
 %type <std::shared_ptr<node::Function>> function;
+%type <std::string> name;
+%type <std::shared_ptr<node::Label>> label;
+%type <std::shared_ptr<node::Labels>> labels;
 %type <std::shared_ptr<node::Application>> application;
 %type <std::shared_ptr<node::Conditional>> conditional;
 %type <std::shared_ptr<node::Declaration>> declaration;
@@ -92,6 +95,7 @@ program:
 string: STRING { $$ = std::make_shared<node::String>($1); }
 number: NUMBER { $$ = std::make_shared<node::Number>($1); }
 ident: IDENT { $$ = std::make_shared<node::Identifier>($1); }
+name: IDENT { $$ = $1; }
 
 expression:
   string { $$ = $1; }
@@ -112,6 +116,28 @@ math:
 | expression[left] "*" expression[right] { $$ = std::make_shared<node::Operation>($left, $right, node::Multiplication); }
 ;
 
+label:
+  name COLON expression { $$ = std::make_shared<node::Label>($name, $expression); }
+;
+
+labels:
+  %empty { $$ = std::make_shared<node::Labels>(); }
+| label {
+    $$ = std::make_shared<node::Labels>();
+    $$->insert({$label->name(), $label});
+  }
+| labels[labs] COMMA label {
+    $$ = $labs;
+    $$->insert({$label->name(), $label});
+  }
+;
+
+application:
+  ident "(" labels ")" {
+    $$ = std::make_shared<node::Application>($ident, $labels);
+  }
+;
+
 argument:
   ident { $$ = std::make_shared<node::Argument>($ident); }
 | ident COLON expression { $$ = std::make_shared<node::Argument>($ident, $expression); }
@@ -121,12 +147,6 @@ arguments:
   %empty { $$ = std::make_shared<node::ArgumentList>(); }
 | argument { $$ = std::make_shared<node::ArgumentList>(); $$->push_back($argument); }
 | arguments[args] COMMA argument { $$ = $args; $args->push_back($argument); }
-;
-
-application:
-  ident "(" arguments ")" {
-    $$ = std::make_shared<node::Application>($ident, $arguments);
-  }
 ;
 
 function:

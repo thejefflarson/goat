@@ -14,6 +14,7 @@ class String;
 class Program;
 class Argument;
 class Function;
+class Label;
 class Application;
 class Conditional;
 class Operation;
@@ -27,6 +28,7 @@ class Declaration;
   void visit(const node::Program &program); \
   void visit(const node::Argument &argument); \
   void visit(const node::Function &function); \
+  void visit(const node::Label &label); \
   void visit(const node::Application &application); \
   void visit(const node::Conditional &conditional); \
   void visit(const node::Operation &operation); \
@@ -42,6 +44,7 @@ class Visitor {
   virtual void visit(const node::Program &program) = 0;
   virtual void visit(const node::Argument &argument) = 0;
   virtual void visit(const node::Function &function) = 0;
+  virtual void visit(const node::Label &label) = 0;
   virtual void visit(const node::Application &application) = 0;
   virtual void visit(const node::Conditional &conditional) = 0;
   virtual void visit(const node::Operation &operation) = 0;

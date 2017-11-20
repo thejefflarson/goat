@@ -63,26 +63,40 @@ public:
   }
 
   void visit(const Program &program) {
-    std::cout << "Program" << std::endl;
+    std::cout << "Program ";
+    print_type(program.type());
+    std::cout << std::endl;
     program.expression()->accept(*this);
   }
 
   void visit(const Argument &argument) {
-    std::cout << "Argument" << std::endl;
+    std::cout << "Argument ";
+    print_type(argument.type());
+    std::cout << std::endl;
     argument.identifier()->accept(*this);
     if(argument.expression()) argument.expression()->accept(*this);
   }
 
   void visit(const Function &function) {
-    std::cout << "Function" << std::endl;
+    std::cout << "Function ";
+    print_type(function.type());
+    std::cout << std::endl;
     list_accept(function.arguments(), *this);
     function.program()->accept(*this);
+  }
+
+  void visit(const Label &label) {
+    std::cout << "Label" << std::endl;
+    std::cout << "Name " << label.name();
+    label.expression()->accept(*this);
   }
 
   void visit(const Application &application) {
     std::cout << "Application" << std::endl;
     application.identifier()->accept(*this);
-    list_accept(application.arguments(), *this);
+    for(auto l : *application.labels()) {
+      l.second->accept(*this);
+    }
   }
 
   void visit(const Conditional &conditional) {
@@ -101,6 +115,7 @@ public:
   void visit(const Declaration &declaration) {
     std::cout << "Declaration" << std::endl;
     declaration.identifier()->accept(*this);
+    declaration.value()->accept(*this);
     declaration.expression()->accept(*this);
   }
 };
@@ -136,7 +151,7 @@ bool program(std::string program, std::shared_ptr<Node> a) {
 
 void test_literals() {
   Identifier ident = Identifier("a");
-  //ok(ident.type().is<TypeVariable>(), "Returns the right type.");
+  ok(ident.type().is<NoType>(), "Returns the right type.");
   ok(program("1", make_shared<Number>(1)), "Parses a number");
   ok(program("a", make_shared<Identifier>("a")),
      "Parses an identifier");
@@ -163,24 +178,24 @@ void test_math() {
 }
 
 void test_function() {
-  auto args = make_shared<ArgumentList>();
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("c"),
-                                        make_shared<Identifier>("b")));
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("d"),
+  auto args = make_shared<Labels>();
+  args->insert({"c", make_shared<Label>("c",
+                                        make_shared<Identifier>("b"))});
+  args->insert({"d", make_shared<Label>("d",
                                          make_shared<Operation>(
                                            make_shared<Number>(1),
                                            make_shared<Number>(2),
-                                           Addition)));
+                                           Addition))});
   auto application = make_shared<Application>(make_shared<Identifier>("a"),
                                               args);
   ok(program("a(c: b, d: 1+2)", application), "Parses a function application");
 
-  args = make_shared<ArgumentList>();
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("a"),
+  auto args2 = make_shared<ArgumentList>();
+  args2->push_back(make_shared<Argument>(make_shared<Identifier>("a"),
                                         make_shared<Number>(10)));
-  args->push_back(make_shared<Argument>(make_shared<Identifier>("b"),
+  args2->push_back(make_shared<Argument>(make_shared<Identifier>("b"),
                                         make_shared<Number>(20)));
-  auto fn = make_shared<Function>(args, make_shared<Program>());
+  auto fn = make_shared<Function>(args2, make_shared<Program>());
   ok(program("program (a: 10, b: 20) do done", fn),
      "Parses a function declaration");
 }
@@ -206,27 +221,30 @@ std::shared_ptr<Program> parse_program(std::string program) {
 }
 
 void test_cloner() {
-  auto program = parse_program("a = 1; b = a; c = program(a: 1) do a done; d = a(a: b)");
+  auto program = parse_program("d = a(a: b)");
   auto cloned = TreeCloner().clone(program);
-
+  Printer().visit(*program);
+  Printer().visit(*cloned);
   ok(*program == *cloned, "Tree cloner can clone a node");
 }
 
 void test_renamer() {
-  auto program = parse_program("a");
+  auto program = parse_program("a = 1");
   auto renamed = Renamer().rename(program);
-  auto program2 = std::make_shared<Program>(std::make_shared<Identifier>("a"));
+  auto decl = std::make_shared<Declaration>(std::make_shared<Identifier>("a"),
+                                            std::make_shared<Number>(1),
+                                            std::make_shared<Identifier>("a"));
+  auto program2 = std::make_shared<Program>(decl);
   auto renamed2 = Renamer().rename(program2);
-  Printer().visit(*renamed2);
   ok(*renamed == *renamed2, "Renamer renames nodes.");
 }
 
 void test_inference() {
-  auto p = parse_program("c = program(a: 1) do a done; d = c(a: 1)");
+  auto p = parse_program("a = 1; b = program(a) do 'test' done; c = b(a: a)");
   p = Renamer().rename(p);
-  Printer().visit(*p);
   auto inferer = Inferer();
   auto i = inferer.infer(p);
+  Printer().visit(*i);
 
   auto constraints = inferer.constraints();
   std::cout << constraints.size() << std::endl;
@@ -262,7 +280,6 @@ void test_inference() {
   std::cout << substitutions.size() << std::endl;
   std::cout << inferer.constraints().size() << std::endl;
 
-
   for(auto s : inferer.constraints()) {
     std::cout << "# ";
     print_type(s.variables().first);
@@ -270,8 +287,8 @@ void test_inference() {
     print_type(s.variables().second);
     std::cout << std::endl;
   }
-  std::cout << "subs" << std::endl;
 
+  std::cout << "subs" << std::endl;
   for(auto s : substitutions) {
     std::cout << "# ";
     print_type(s.left());

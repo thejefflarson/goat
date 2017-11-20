@@ -55,13 +55,20 @@ void TreeCloner::visit(const node::Function &function) {
   );
 }
 
+void TreeCloner::visit(const node::Label &label) {
+  label.expression()->accept(*this);
+  auto expression = std::static_pointer_cast<Node>(child_);
+  child_ = std::make_shared<node::Label>(label.name(), expression);
+}
+
 void TreeCloner::visit(const node::Application &application) {
-  auto args = std::make_shared<ArgumentList>();
+  auto args = std::make_shared<Labels>();
   application.identifier()->accept(*this);
   auto ident = child_;
-  for(auto a : *application.arguments()) {
-    a->accept(*this);
-    args->push_back(std::static_pointer_cast<Argument>(child_));
+  for(auto l : *application.labels()) {
+    l.second->accept(*this);
+    auto label = std::static_pointer_cast<Label>(child_);
+    args->insert({label->name(), label});
   }
   child_ = std::make_shared<Application>(
     std::static_pointer_cast<Identifier>(ident),

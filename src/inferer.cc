@@ -1,9 +1,10 @@
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <type_traits>
+
+#include <gsl/gsl>
 
 #include "inferer.hh"
 #include "node.hh"
@@ -18,9 +19,9 @@ std::shared_ptr<node::Program> Inferer::infer(std::shared_ptr<node::Program> pro
 }
 
 void Inferer::visit(const Identifier &identifier) {
-  assert(scope_.find(identifier.internal_value()) != scope_.end());
+  Expects(scope_.find(identifier.internal_value()) != scope_.end());
   auto type = scope_.find(identifier.internal_value())->second;
-  assert(type.is<TypeVariable>());
+  Expects(type.is<TypeVariable>());
   child_ = std::make_shared<node::Identifier>(
     identifier.value(),
     identifier.internal_value(),
@@ -30,18 +31,19 @@ void Inferer::visit(const Identifier &identifier) {
 
 void Inferer::visit(const Argument &argument) {
   argument.identifier()->accept(*this);
-  auto ident = std::static_pointer_cast<Identifier>(child_);
+  auto identifier = std::static_pointer_cast<Identifier>(child_);
   if(*argument.expression() == EmptyExpression()) {
-    child_ = std::make_shared<Argument>(ident);
+    child_ = std::make_shared<Argument>(identifier);
     return;
   }
   argument.expression()->accept(*this);
   auto expression = child_;
+
   constraints_.insert(Constraint({
-    argument.identifier()->type(),
-    argument.expression()->type()
+    identifier->type(),
+    expression->type()
   }));
-  child_ = std::make_shared<Argument>(ident, expression);
+  child_ = std::make_shared<Argument>(identifier, expression);
 }
 
 void Inferer::visit(const Function &function) {
@@ -59,6 +61,7 @@ void Inferer::visit(const Function &function) {
   auto program = std::static_pointer_cast<Program>(child_);
   Type ret = TypeVariable(namer_.next());
   types.push_back(ret);
+
   constraints_.insert(Constraint({
     ret,
     program->type()
@@ -68,20 +71,21 @@ void Inferer::visit(const Function &function) {
 }
 
 void Inferer::visit(const Application &application) {
-  auto args = std::make_shared<ArgumentList>();
+  auto args = std::make_shared<Labels>();
   application.identifier()->accept(*this);
   auto ident = std::static_pointer_cast<Identifier>(child_);
   auto types = std::vector<Type>();
-  for(auto argument : *application.arguments()) {
-    argument->accept(*this);
-    auto arg = std::static_pointer_cast<Argument>(child_);
+  for(auto l : *application.labels()) {
+    l.second->accept(*this);
+    auto arg = std::static_pointer_cast<Label>(child_);
     auto type = arg->type();
     types.push_back(type);
-    args->push_back(arg);
+    args->insert({arg->name(), arg});
   }
 
   types.push_back(TypeVariable(namer_.next()));
   Type type = FunctionType(types);
+
   constraints_.insert(Constraint({
     ident->type(),
     type
@@ -219,10 +223,7 @@ std::set<Substitution> Constraint::unify(std::set<Constraint> constraints) {
       auto subs = Substitution(t, tq);
       std::set<Constraint> consts;
       for (auto c : constraints) {
-        consts.insert(Constraint({
-          subs(c.variables_.first),
-          subs(c.variables_.second)
-        }));
+        consts.insert(c.apply(subs));
       }
       std::set<Substitution> substitutions = unify(consts);
       substitutions.insert(subs);

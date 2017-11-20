@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <vector>
 #include "node.hh"
 #include "util.hh"
@@ -18,6 +19,7 @@ accept(Identifier)
 accept(String)
 accept(Program)
 accept(Function)
+accept(Label)
 accept(Application)
 accept(Conditional)
 accept(Operation)
@@ -62,10 +64,23 @@ bool Function::equals(const Node &b) const {
     *program_ == *c->program_;
 }
 
+bool Label::equals(const Node &b) const {
+  const Label *c = static_cast<const Label *>(&b);
+  return name_ == c->name_ &&
+    *expression_ == *c->expression_;
+}
+
 bool Application::equals(const Node &b) const {
   const Application *c = static_cast<const Application *>(&b);
+  if(labels_->size() != c->labels_->size())
+    return false;
+
+  auto eq = [](const auto &a, const auto &b) {
+    return a.first == b.first && *a.second == *b.second;
+  };
+
   return *identifier_ == *c->identifier() &&
-    util::compare_vector_pointers(arguments_, c->arguments_);
+    std::equal(labels_->begin(), labels_->end(), c->labels_->begin(), eq);
 }
 
 bool Conditional::equals(const Node &b) const {
