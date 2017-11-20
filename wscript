@@ -12,7 +12,6 @@ def configure(conf):
                        package='', uselib_store='LLVM')
 
     conf.env['CXXFLAGS_LLVM'].remove('-std=c++11')
-    conf.env['CXXFLAGS_LLVM'].remove('-fno-exceptions')
 
     conf.check_cxx(
         uselib_store='ASAN',
