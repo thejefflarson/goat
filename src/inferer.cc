@@ -175,9 +175,9 @@ bool TypeVariable::occurs(Type in) const {
     return false;
   } else if(in.is<FunctionType>()) {
     auto f = in.get<FunctionType>();
-    bool accum = true;
+    bool accum = false;
     for(auto v : f.types()) {
-      accum = accum && this->occurs(v);
+      accum = accum || this->occurs(v);
     }
     return accum;
   } else {
@@ -218,6 +218,11 @@ std::set<Substitution> Constraint::unify(std::set<Constraint> constraints) {
   if(t == tq)
     return unify(constraints);
 
+  if(tq.is<TypeVariable>()) {
+    constraints.insert(Constraint({tq, t}));
+    return unify(constraints);
+  }
+
   if(t.is<TypeVariable>()) {
     if(!t.get<TypeVariable>().occurs(tq)) {
       auto subs = Substitution(t, tq);
@@ -229,11 +234,6 @@ std::set<Substitution> Constraint::unify(std::set<Constraint> constraints) {
       substitutions.insert(subs);
       return substitutions;
     }
-  }
-
-  if(tq.is<TypeVariable>()) {
-    constraints.insert(Constraint({tq, t}));
-    return unify(constraints);
   }
 
   if(t.is<FunctionType>() && tq.is<FunctionType>()) {

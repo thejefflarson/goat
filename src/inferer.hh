@@ -90,7 +90,7 @@ public:
     error_(false),
     s_(s),
     t_(t) {}
-  static Substitution error() { return Substitution(TypeVariable("error")); }
+  static Substitution error() { return Substitution(); }
   bool is_error() { return error_; }
   bool operator==(const Substitution &b) const {
     return s_ == b.s_ && t_ == b.t_;
@@ -108,9 +108,9 @@ public:
   Type left() const { return s_; }
   Type right() const { return t_; }
 private:
-  Substitution(Type s) :
+  Substitution() :
     error_(true),
-    s_(s),
+    s_(TypeVariable("error")),
     t_(TypeVariable("error")) {}
   bool error_;
   Type s_;

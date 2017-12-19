@@ -35,7 +35,7 @@ class Declaration;
   void visit(const node::Declaration &declaration);
 
 class Visitor {
- public:
+public:
   virtual ~Visitor() {}
   virtual void visit(const node::EmptyExpression &empty) = 0;
   virtual void visit(const node::Number &number) = 0;
@@ -59,11 +59,11 @@ void list_accept(const T list, node::Visitor &v) {
 }
 
 class TreeCloner : public Visitor {
- public:
+public:
   TreeCloner() : child_(nullptr) {}
   VisitorMethods
   std::shared_ptr<node::Program> clone(std::shared_ptr<node::Program> program);
- protected:
+protected:
   std::shared_ptr<node::Node> child_;
 };
 
