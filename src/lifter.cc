@@ -5,7 +5,7 @@ using namespace goat::lifter;
 
 std::shared_ptr<Program> Lifter::lift(std::shared_ptr<node::Program> program) {
   root_ = program;
-  return visit(&*program);
+  visit(*program);
 }
 
 void Lifter::visit(const node::Program &program) {
