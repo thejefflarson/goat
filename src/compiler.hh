@@ -1,9 +1,9 @@
 #ifndef SRC_COMPILER_
 #define SRC_COMPILER_
 
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
 
 #include "inferer.hh"
 #include "node.hh"

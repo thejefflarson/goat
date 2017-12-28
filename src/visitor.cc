@@ -5,33 +5,98 @@
 
 using namespace goat::node;
 
-std::shared_ptr<Program> TreeCloner::clone(std::shared_ptr<node::Program> program) {
+void Visitor::visit(const EmptyExpression &empty) {
+
+}
+
+void Visitor::visit(const Number &number) {
+
+}
+
+void Visitor::visit(const Identifier &identifier) {
+
+}
+
+void Visitor::visit(const String &string) {
+
+}
+
+void Visitor::visit(const Program &program) {
+  program.expression()->accept(*this);
+}
+
+void Visitor::visit(const Argument &argument) {
+  argument.identifier()->accept(*this);
+  if(argument.expression() != nullptr) {
+    argument.expression()->accept(*this);
+  }
+}
+
+void Visitor::visit(const Function &function) {
+  for(auto a : *function.arguments()) {
+    a->accept(*this);
+  }
+  function.program()->accept(*this);
+}
+
+void Visitor::visit(const Label &label) {
+  label.expression()->accept(*this);
+}
+
+void Visitor::visit(const Application &application) {
+  application.identifier()->accept(*this);
+
+  for(auto l : *application.labels()) {
+    l.second->accept(*this);
+  }
+}
+
+void Visitor::visit(const Conditional &conditional) {
+  conditional.expression()->accept(*this);
+  conditional.true_block()->accept(*this);
+  conditional.false_block()->accept(*this);
+}
+
+void Visitor::visit(const Operation &operation) {
+  operation.left()->accept(*this);
+  operation.right()->accept(*this);
+}
+
+void Visitor::visit(const Declaration &declaration) {
+  declaration.identifier()->accept(*this);
+  declaration.value()->accept(*this);
+  declaration.expression()->accept(*this);
+}
+
+
+
+std::shared_ptr<Program> TreeCloner::clone(std::shared_ptr<Program> program) {
   program->accept(*this);
   return std::static_pointer_cast<Program>(child_);
 }
 
-void TreeCloner::visit(const node::EmptyExpression &empty) {
-  child_ = std::make_shared<node::EmptyExpression>();
+void TreeCloner::visit(const EmptyExpression &empty) {
+  child_ = std::make_shared<EmptyExpression>();
 }
 
-void TreeCloner::visit(const node::Number &number) {
-  child_ = std::make_shared<node::Number>(number);
+void TreeCloner::visit(const Number &number) {
+  child_ = std::make_shared<Number>(number);
 }
 
-void TreeCloner::visit(const node::Identifier &identifier) {
-  child_ = std::make_shared<node::Identifier>(identifier);
+void TreeCloner::visit(const Identifier &identifier) {
+  child_ = std::make_shared<Identifier>(identifier);
 }
 
-void TreeCloner::visit(const node::String &string) {
-  child_ = std::make_shared<node::String>(string);
+void TreeCloner::visit(const String &string) {
+  child_ = std::make_shared<String>(string);
 }
 
-void TreeCloner::visit(const node::Program &program) {
+void TreeCloner::visit(const Program &program) {
   program.expression()->accept(*this);
-  child_ = std::make_shared<node::Program>(child_);
+  child_ = std::make_shared<Program>(child_);
 }
 
-void TreeCloner::visit(const node::Argument &argument) {
+void TreeCloner::visit(const Argument &argument) {
   argument.identifier()->accept(*this);
   auto ident = std::static_pointer_cast<Identifier>(child_);
   if(argument.expression() != nullptr) {
@@ -42,7 +107,7 @@ void TreeCloner::visit(const node::Argument &argument) {
   }
 }
 
-void TreeCloner::visit(const node::Function &function) {
+void TreeCloner::visit(const Function &function) {
   auto args = std::make_shared<ArgumentList>();
   for(auto a : *function.arguments()) {
     a->accept(*this);
@@ -55,13 +120,13 @@ void TreeCloner::visit(const node::Function &function) {
   );
 }
 
-void TreeCloner::visit(const node::Label &label) {
+void TreeCloner::visit(const Label &label) {
   label.expression()->accept(*this);
   auto expression = std::static_pointer_cast<Node>(child_);
-  child_ = std::make_shared<node::Label>(label.name(), expression);
+  child_ = std::make_shared<Label>(label.name(), expression);
 }
 
-void TreeCloner::visit(const node::Application &application) {
+void TreeCloner::visit(const Application &application) {
   auto args = std::make_shared<Labels>();
   application.identifier()->accept(*this);
   auto ident = child_;
@@ -76,7 +141,7 @@ void TreeCloner::visit(const node::Application &application) {
   );
 }
 
-void TreeCloner::visit(const node::Conditional &conditional) {
+void TreeCloner::visit(const Conditional &conditional) {
   conditional.expression()->accept(*this);
   auto expression = child_;
   conditional.true_block()->accept(*this);
@@ -86,7 +151,7 @@ void TreeCloner::visit(const node::Conditional &conditional) {
   child_ = std::make_shared<Conditional>(expression, true_block, false_block);
 }
 
-void TreeCloner::visit(const node::Operation &operation) {
+void TreeCloner::visit(const Operation &operation) {
   operation.left()->accept(*this);
   auto left = child_;
   operation.right()->accept(*this);
@@ -94,7 +159,7 @@ void TreeCloner::visit(const node::Operation &operation) {
   child_ = std::make_shared<Operation>(left, right, operation.operation());
 }
 
-void TreeCloner::visit(const node::Declaration &declaration) {
+void TreeCloner::visit(const Declaration &declaration) {
   declaration.identifier()->accept(*this);
   auto ident = std::static_pointer_cast<Identifier>(child_);
   declaration.value()->accept(*this);
