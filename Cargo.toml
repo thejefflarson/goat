@@ -1,0 +1,10 @@
+[package]
+name = "goat"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+
+[dependencies]
+error-chain = "0.11.0"
+llvm-sys = "50.0.1"
+pest = "1.0.0-beta.17"
+pest_derive = "1.0.0-beta.17"
