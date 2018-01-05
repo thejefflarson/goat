@@ -22,18 +22,8 @@ def configure(conf):
             '-std=c++17',
             '-g',
             '-O0',
-            '-fno-omit-frame-pointer',
-            # llvm recommended warnings
-            '-Wall',
-            '-W',
-            '-Wno-unused-parameter',
-            '-Wwrite-strings',
-            '-Wcast-qual',
-            '-Wmissing-field-initializers',
-            '-Wno-long-long',
-            '-Wnon-virtual-dtor',
-            '-Wdelete-non-virtual-dtor',
-            '-Werror=date-time']#,
+            '-fno-omit-frame-pointer'
+        ]#,
         #ldflags=['-fsanitize=address']
     )
     conf.load("clang_compilation_database", tooldir="./tools/")

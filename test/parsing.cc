@@ -1,5 +1,6 @@
 #include <sstream>
 #include <typeinfo>
+#include <variant>
 #include "driver.hh"
 #include "inferer.hh"
 #include "node.hh"
@@ -13,29 +14,38 @@ using namespace goat::node;
 using namespace goat::inference;
 using namespace goat::renaming;
 using namespace goat::util;
+void print_type(Type t);
 
-void print_type(Type t) {
-  if(t.is<TypeVariable>()) {
-    std::cout << t.get<TypeVariable>().id();
-  } else if(t.is<NumberType>()) {
-    std::cout << "Number";
-  } else if(t.is<StringType>()){
-    std::cout << "String";
-  } else if(t.is<BoolType>()){
-    std::cout << "Bool";
-  } else if(t.is<NoType>()){
-    std::cout << "NoType";
-  } else if(t.is<FunctionType>()) {
-    auto f = t.get<FunctionType>();
+struct TypePrinter {
+  void operator()(TypeVariable arg) {
+    std::cout << arg.id();
+  }
+  void operator()(NumberType arg) {
+    std::cout << "Number" << std::endl;
+  }
+  void operator()(StringType arg) {
+    std::cout << "String" << std::endl;
+  }
+  void operator()(BoolType arg) {
+    std::cout << "Bool" << std::endl;
+  }
+  void operator()(NoType arg) {
+    std::cout << "None" << std::endl;
+  }
+  void operator()(FunctionType arg) {
     std::cout << "(";
-    for(auto a : f.types()) {
+    for(auto a : arg.types()) {
       print_type(a);
       std::cout << ", ";
     }
     std::cout << ")";
-  } else {
-    std::cout << "wauh";
   }
+};
+
+
+void print_type(Type t) {
+  TypePrinter printer;
+  std::visit(printer);
 }
 
 class Printer : public Visitor {
@@ -151,7 +161,7 @@ bool program(std::string program, std::shared_ptr<Node> a) {
 
 void test_literals() {
   Identifier ident = Identifier("a");
-  ok(ident.type().is<NoType>(), "Returns the right type.");
+  ok(std::holds_alternative<NoType>(ident.type()), "Returns the right type.");
   ok(program("1", make_shared<Number>(1)), "Parses a number");
   ok(program("a", make_shared<Identifier>("a")),
      "Parses an identifier");

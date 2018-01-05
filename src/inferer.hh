@@ -9,6 +9,7 @@
 #include <typeinfo>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 #include "util.hh"
 #include "visitor.hh"
@@ -41,12 +42,12 @@ class BoolType : public AbstractType {};
 class NoType : public AbstractType {};
 class FunctionType;
 class TypeVariable;
-using Type = util::Variant<NoType,
-                           TypeVariable,
-                           NumberType,
-                           StringType,
-                           BoolType,
-                           FunctionType>;
+using Type = std::variant<NoType,
+                          TypeVariable,
+                          NumberType,
+                          StringType,
+                          BoolType,
+                          FunctionType>;
 
 class TypeVariable : public AbstractType {
  public:

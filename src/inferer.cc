@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <variant>
 
 #include <gsl/gsl>
 
@@ -21,7 +22,7 @@ std::shared_ptr<node::Program> Inferer::infer(std::shared_ptr<node::Program> pro
 void Inferer::visit(const Identifier &identifier) {
   Expects(scope_.find(identifier.internal_value()) != scope_.end());
   auto type = scope_.find(identifier.internal_value())->second;
-  Expects(type.is<TypeVariable>());
+  Expects(std::holds_alternative<TypeVariable>(type));
   child_ = std::make_shared<node::Identifier>(
     identifier.value(),
     identifier.internal_value(),
@@ -166,31 +167,35 @@ Constraint Constraint::apply(Substitution s) const {
 }
 
 bool TypeVariable::occurs(Type in) const {
-  if(in.is<TypeVariable>()) {
-    return *this == in.get<TypeVariable>();
-  } else if(in.is<NumberType>()
-            || in.is<StringType>()
-            || in.is<BoolType>()
-            || in.is<NoType>()) {
-    return false;
-  } else if(in.is<FunctionType>()) {
-    auto f = in.get<FunctionType>();
-    bool accum = false;
-    for(auto v : f.types()) {
-      accum = accum || this->occurs(v);
-    }
-    return accum;
-  } else {
-    return false; // TODO: report compiler error
-  }
+  return std::visit([this](auto&& arg) {
+      using T = std::decay_t<decltype(arg)>;
+      if constexpr (std::is_same_v<T, TypeVariable>) {
+        return *this = arg;
+      } else if constexpr (
+        std::is_same_v<T, NumberType>
+        || std::is_same_v<T, StringType>
+        || std::is_same_v<T, BoolType>
+        || std::is_same_v<T, NoType>
+      ) {
+        return false;
+      } else if constexpr (std::is_same_v<T, FunctionType>) {
+        bool accum = false;
+          for(auto v : arg.types()) {
+            accum = accum || this->occurs(v);
+          }
+          return accum;
+      } else {
+        return false;
+      }
+    }, in);
 }
 
 Type Substitution::operator()(Type in) const {
   if(s_ == in) {
     return t_;
-  } else if(in.is<FunctionType>()) {
+  } else if(std::holds_alternative<FunctionType>(in)) {
     std::vector<Type> args;
-    auto fn = in.get<FunctionType>();
+    auto fn = std::get<FunctionType>(in);
     for(auto v : fn.types()) {
       if(Type(s_) != v) {
         args.push_back(v);
@@ -218,12 +223,12 @@ std::set<Substitution> Constraint::unify(std::set<Constraint> constraints) {
   if(t == tq)
     return unify(constraints);
 
-  if(tq.is<TypeVariable>()) {
+  if(std::holds_altertive<TypeVariable>(tq)) {
     constraints.insert(Constraint({tq, t}));
     return unify(constraints);
   }
 
-  if(t.is<TypeVariable>()) {
+  if(std::hold_alternative<TypeVariable>(t)) {
     if(!t.get<TypeVariable>().occurs(tq)) {
       auto subs = Substitution(t, tq);
       std::set<Constraint> consts;
@@ -236,9 +241,9 @@ std::set<Substitution> Constraint::unify(std::set<Constraint> constraints) {
     }
   }
 
-  if(t.is<FunctionType>() && tq.is<FunctionType>()) {
-    auto tf = t.get<FunctionType>();
-    auto tqf = tq.get<FunctionType>();
+  if(std::holds_alternative<FunctionType>(t) && std::holds_alternative<FunctionType>(tq)) {
+    auto tf = std::get<FunctionType>(t);
+    auto tqf = std::get<FunctionType>(tq);
     if(tf.types().size() != tqf.types().size()) {
       return {Substitution::error()};
     }
@@ -256,11 +261,11 @@ std::set<Substitution> Constraint::unify(std::set<Constraint> constraints) {
 }
 
 std::set<TypeVariable> freevars(Type in) {
-  if(in.is<TypeVariable>()) {
-    return {in.get<TypeVariable>()};
-  } else if(in.is<FunctionType>()){
+  if(std::holds_alternative<TypeVariable>(in)) {
+    return {std::get<TypeVariable>(in)};
+  } else if(std::holds_alternative<FunctionType>(in)){
     std::set<TypeVariable> ret;
-    for(auto t : in.get<FunctionType>().types()) {
+    for(auto t : std::get<FunctionType>(in).types()) {
       auto vars = freevars(in);
       ret.insert(vars.begin(), vars.end());
     }
