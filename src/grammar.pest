@@ -1,0 +1,59 @@
+goat = { soi ~ expr? ~ eoi }
+
+program_lit = _{ "program" }
+if_lit = _{ "if" }
+then_lit = _{ "then" }
+else_lit = _{ "else" }
+do_lit = _{ "do" }
+done_lit = _{ "done" }
+start_at_lit = _{ "start at" }
+repeat_lit = _{ "repeat" }
+times_lit = _{ "times" }
+return_lit = { "return" }
+equals = { "=" }
+colon = { "|" }
+semi = { ";" }
+plus = { "+" }
+minus = { "-" }
+star = { "*" }
+slash = { "/" }
+lte = { "<=" }
+gte = { ">=" }
+lt = { "<" }
+gt = { ">" }
+infix = {
+  plus |
+  minus |
+  star |
+  slash |
+  lt |
+  lte |
+  gt |
+  gte
+}
+
+lparen = { "(" }
+rparen = { ")" }
+comma = { "," }
+digit = _{ '0'..'9' }
+int = _{ digit+ }
+number = @{ int ~ "." ~ int? }
+
+newline = _{ "\n" | "\r\n" }
+whitespace = _{ " " | "\t" | newline }
+comment = _{ "#" ~ (!newline ~ any)* }
+
+raw_string = { (!"\"" ~ any)+ }
+string = @{ "\"" ~ raw_string ~ "\"" }
+
+ident = @{ ('a'..'z' | 'A'..'Z') ~ !(whitespace | "\"") }
+
+value = _{ number | string | lparen ~ expr ~ rparen }
+expr = _{ value | declaration | function | application | conditional | math | lparen ~ expr ~ rparen }
+declaration = { ident ~ equals ~ expr ~ expr }
+arguments = _{ expr ~ (comma ~ expr)* }
+function = { program_lit ~ lparen ~ arguments? ~ rparen ~ do_lit ~ expr? ~ done_lit }
+labels = _{ ident ~ (comma ~ ident)* }
+application = { ident ~ lparen ~ labels? ~ rparen }
+conditional = { if_lit ~ expr ~ then_lit ~ expr ~ (else_lit ~ expr)? ~ done_lit }
+math = { expr ~ infix ~ expr }
