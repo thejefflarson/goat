@@ -9,7 +9,10 @@ done_lit = _{ "done" }
 start_at_lit = _{ "start at" }
 repeat_lit = _{ "repeat" }
 times_lit = _{ "times" }
-return_lit = { "return" }
+true_lit = _{ "true" }
+false_lit = _{ "false" }
+boolean = { true_lit | false_lit }
+return_lit = _{ "return" }
 equals = { "=" }
 colon = { "|" }
 semi = { ";" }
@@ -48,12 +51,14 @@ string = @{ "\"" ~ raw_string ~ "\"" }
 
 ident = @{ ('a'..'z' | 'A'..'Z') ~ !(whitespace | "\"") }
 
-value = _{ number | string | lparen ~ expr ~ rparen }
-expr = _{ value | declaration | function | application | conditional | math | lparen ~ expr ~ rparen }
+value = _{ number | string | boolean | ident }
+expr = _{ value | declaration | function | application | conditional | math }
 declaration = { ident ~ equals ~ expr ~ expr }
 arguments = _{ expr ~ (comma ~ expr)* }
 function = { program_lit ~ lparen ~ arguments? ~ rparen ~ do_lit ~ expr? ~ done_lit }
 labels = _{ ident ~ (comma ~ ident)* }
 application = { ident ~ lparen ~ labels? ~ rparen }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ (else_lit ~ expr)? ~ done_lit }
-math = { expr ~ infix ~ expr }
+term = _{ value | application }
+math = { term ~ more_math? }
+more_math = _{ infix ~ term ~ more_math }
