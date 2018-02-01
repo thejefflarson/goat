@@ -6,6 +6,7 @@ extern crate llvm_sys;
 
 pub mod parser;
 pub mod ast;
+pub mod types;
 
 #[cfg(test)]
 mod tests {

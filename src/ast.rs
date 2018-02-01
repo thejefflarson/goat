@@ -1,5 +1,9 @@
+use types::Ty;
+
 pub struct Identifier {
-    name: String
+    name: String,
+    internal: Option<String>,
+    ty: Option<Ty>
 }
 
 pub struct Argument {
