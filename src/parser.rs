@@ -39,7 +39,7 @@ mod tests {
     fn parses_strings() {
         parses_to! {
             parser: GoatParser,
-            input: "\"hello\"",
+            input: r#""hello""#,
             rule: Rule::string,
             tokens: [string(0, 7)]
         }
