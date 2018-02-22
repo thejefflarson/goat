@@ -40,7 +40,7 @@ rparen = { ")" }
 comma = { "," }
 digit = _{ '0'..'9' }
 int = _{ digit+ }
-number = @{ int ~ "." ~ int? }
+number = @{ int ~ "."? ~ int? }
 
 newline = _{ "\n" | "\r\n" }
 whitespace = _{ " " | "\t" | newline }

@@ -3,12 +3,12 @@ use types::Ty;
 pub struct Identifier {
     name: String,
     internal: Option<String>,
-    ty: Option<Ty>
+    ty: Option<Ty>,
 }
 
 pub struct Argument {
     identifier: Identifier,
-    expression: Option<Box<Expr>>
+    expression: Option<Box<Expr>>,
 }
 
 enum Op {
