@@ -1,12 +1,15 @@
+use types::Ty;
+
 #[derive(Hash, Eq, PartialEq, Debug)]
 pub struct Identifier {
     name: String,
-    internal: Option<String>
+    internal: Option<String>,
+    ty: Option<Ty>,
 }
 
 pub struct Argument {
     identifier: Identifier,
-    expression: Option<Box<Expr>>
+    expression: Option<Box<Expr>>,
 }
 
 enum Op {
