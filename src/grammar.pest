@@ -35,9 +35,9 @@ infix = {
   gte
 }
 
-lparen = { "(" }
-rparen = { ")" }
-comma = { "," }
+lparen = _{ "(" }
+rparen = _{ ")" }
+comma = _{ "," }
 digit = _{ '0'..'9' }
 int = _{ digit+ }
 number = @{ int ~ "."? ~ int? }
@@ -49,16 +49,19 @@ comment = _{ "#" ~ (!newline ~ any)* }
 raw_string = { (!"\"" ~ any)+ }
 string = @{ "\"" ~ raw_string ~ "\"" }
 
-ident = @{ ('a'..'z' | 'A'..'Z') ~ !(whitespace | "\"") }
+alpha = _{ ('a'..'z' | 'A'..'Z') }
+alpha_num = _{ alpha | '0' .. '9' }
+
+ident = @{ ('a'..'z' | 'A'..'Z') ~ (alpha | alpha_num)* }
 
 value = _{ number | string | boolean | ident }
 expr = _{ value | declaration | function | application | conditional | math }
 declaration = { ident ~ equals ~ expr ~ expr }
-arguments = _{ expr ~ (comma ~ expr)* }
-function = { program_lit ~ lparen ~ arguments? ~ rparen ~ do_lit ~ expr? ~ done_lit }
-labels = _{ ident ~ (comma ~ ident)* }
-application = { ident ~ lparen ~ labels? ~ rparen }
+labels = { ident ~ (comma ~ ident)* }
+function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
+arguments = { expr ~ (comma ~ expr)* }
+application = { ident ~ lparen ~ arguments? ~ rparen }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ (else_lit ~ expr)? ~ done_lit }
-term = _{ value | application }
+term = _{ ident | number | application }
 math = { term ~ more_math? }
 more_math = _{ infix ~ term ~ more_math }
