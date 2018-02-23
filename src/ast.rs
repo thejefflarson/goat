@@ -1,5 +1,7 @@
+#[derive(Hash, Eq, PartialEq, Debug)]
 pub struct Identifier {
-    name: String
+    name: String,
+    internal: Option<String>
 }
 
 pub struct Argument {
@@ -30,5 +32,5 @@ enum Expr {
     Application(Identifier, Vec<Box<Expr>>),
     Conditional(Box<Expr>, Box<Expr>),
     Operation(Box<Expr>, Op, Box<Expr>),
-    Declaration(Identifier, Box<Expr>),
+    Declaration(Identifier, Box<Expr>, Option<Box<Expr>>),
 }
