@@ -48,7 +48,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_boolean() {
+    fn parses_booleans() {
         parses_to! {
             parser: GoatParser,
             input: "true",
@@ -65,7 +65,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_ident() {
+    fn parses_idents() {
         parses_to! {
             parser: GoatParser,
             input: "a",
@@ -89,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_function() {
+    fn parses_functions() {
         parses_to! {
             parser: GoatParser,
             input: "a, b",
@@ -109,6 +109,13 @@ mod tests {
             input: "program(a) do a done",
             rule: Rule::function,
             tokens: [function(0, 20, [labels(8, 9, [ident(8, 9)]), ident(14, 15)])]
+        }
+
+        parses_to! {
+            parser: GoatParser,
+            input: "a(1, true, b, program(a) do a done)",
+            rule: Rule::application,
+            tokens: [application(0, 20)]
         }
     }
 }
