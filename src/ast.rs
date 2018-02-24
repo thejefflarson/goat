@@ -1,5 +1,6 @@
 use types::Ty;
 
+#[derive(Hash, Eq, PartialEq, Debug)]
 pub struct Identifier {
     name: String,
     internal: Option<String>,
@@ -34,5 +35,5 @@ enum Expr {
     Application(Identifier, Vec<Box<Expr>>),
     Conditional(Box<Expr>, Box<Expr>),
     Operation(Box<Expr>, Op, Box<Expr>),
-    Declaration(Identifier, Box<Expr>),
+    Declaration(Identifier, Box<Expr>, Option<Box<Expr>>),
 }
