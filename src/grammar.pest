@@ -38,7 +38,7 @@ lte = { "<=" }
 gte = { ">=" }
 lt = { "<" }
 gt = { ">" }
-infix = {
+infix = _{
   plus |
   minus |
   star |
@@ -76,6 +76,6 @@ function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit
 arguments = { expr ~ (comma ~ expr)* }
 application = { ident ~ lparen ~ arguments? ~ rparen }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ (else_lit ~ expr)? ~ done_lit }
-term = _{ ident | number | application }
-math = { term ~ more_math? }
-more_math = _{ infix ~ term ~ more_math }
+term = _{ ident | number | application | lparen ~ math ~ rparen }
+math = { term ~ more_math* }
+more_math = _{ infix ~ term }

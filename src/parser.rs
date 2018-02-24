@@ -89,12 +89,51 @@ mod tests {
     }
 
     #[test]
+    fn parses_math() {
+        parses_to! {
+            parser: GoatParser,
+            input: "1 + 2",
+            rule: Rule::math,
+            tokens: [math(0, 5, [number(0, 1), plus(2, 3), number(4, 5)])]
+        }
+
+        parses_to! {
+            parser: GoatParser,
+            input: "1 + (3 - 5)",
+            rule: Rule::math,
+            tokens: [
+                math(0, 11, [
+                    number(0, 1),
+                    plus(2, 3),
+                    math(5, 10, [
+                        number(5, 6),
+                        minus(7, 8),
+                        number(9, 10)
+                    ])
+                ])
+            ]
+        }
+    }
+
+    #[test]
     fn parses_declarations() {
         parses_to! {
             parser: GoatParser,
             input: "a = b",
             rule: Rule::declaration,
             tokens: [declaration(0, 5, [ident(0, 1), ident(4, 5)])]
+        }
+
+        parses_to! {
+            parser: GoatParser,
+            input: "a = b a",
+            rule: Rule::declaration,
+            tokens: [
+                declaration(0, 7, [
+                    ident(0, 1),
+                    ident(4, 5),
+                    ident(6, 7)
+                ])]
         }
     }
 
