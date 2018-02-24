@@ -89,6 +89,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_declaration() {
+        parses_to! {
+            parser: GoatParser,
+            input: "a = b",
+            rule: Rule::declaration,
+            tokens: [declaration(0, 5, [ident(0, 1), ident(4, 5)])]
+        }
+    }
+
+    #[test]
     fn parses_function() {
         parses_to! {
             parser: GoatParser,
