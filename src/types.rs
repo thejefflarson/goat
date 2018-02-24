@@ -1,3 +1,4 @@
+#[derive(Hash, Eq, PartialEq, Debug)]
 pub enum Ty {
     None,
     Number,

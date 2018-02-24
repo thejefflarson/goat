@@ -13,9 +13,23 @@ true_lit = _{ "true" }
 false_lit = _{ "false" }
 boolean = { true_lit | false_lit }
 return_lit = _{ "return" }
-equals = { "=" }
-colon = { "|" }
-semi = { ";" }
+keywords = {
+  program_lit |
+  if_lit |
+  then_lit |
+  else_lit |
+  do_lit |
+  done_lit |
+  start_at_lit |
+  repeat_lit |
+  times_lit |
+  boolean |
+  return_lit
+}
+
+equals = _{ "=" }
+colon = _{ ":" }
+semi = _{ ";" }
 plus = { "+" }
 minus = { "-" }
 star = { "*" }
@@ -52,11 +66,11 @@ string = @{ "\"" ~ raw_string ~ "\"" }
 alpha = _{ ('a'..'z' | 'A'..'Z') }
 alpha_num = _{ alpha | '0' .. '9' }
 
-ident = @{ ('a'..'z' | 'A'..'Z') ~ (alpha | alpha_num)* }
+ident = @{ !keywords ~ ('a'..'z' | 'A'..'Z') ~ (alpha | alpha_num)* }
 
 value = _{ number | string | boolean | ident }
 expr = _{ value | declaration | function | application | conditional | math }
-declaration = { ident ~ equals ~ expr ~ expr }
+declaration = { ident ~ equals ~ expr ~ expr? }
 labels = { ident ~ (comma ~ ident)* }
 function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
 arguments = { expr ~ (comma ~ expr)* }

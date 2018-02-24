@@ -126,12 +126,15 @@ mod tests {
             input: "a(1, true, b, program(a) do a done)",
             rule: Rule::application,
             tokens: [
-                application(0, 20, [
-                    arguments(2, 19, [
+                application(0, 35, [
+                    ident(0, 1),
+                    arguments(2, 34, [
                         number(2, 3),
-                        boolean(6, 9),
-                        ident(10, 11),
-                        function(13, 19)
+                        boolean(5, 9),
+                        ident(11, 12),
+                        function(14, 34, [
+                            labels(22, 23, [ident(22, 23)]), ident(28, 29)
+                        ])
                     ])
                 ])
             ]
