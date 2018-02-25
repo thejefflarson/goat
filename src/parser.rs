@@ -65,7 +65,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_idents() {
+    fn parses_identifiers() {
         parses_to! {
             parser: GoatParser,
             input: "a",
@@ -85,33 +85,6 @@ mod tests {
             input: "a9",
             rule: Rule::ident,
             tokens: [ident(0, 2)]
-        }
-    }
-
-    #[test]
-    fn parses_math() {
-        parses_to! {
-            parser: GoatParser,
-            input: "1 + 2",
-            rule: Rule::math,
-            tokens: [math(0, 5, [number(0, 1), plus(2, 3), number(4, 5)])]
-        }
-
-        parses_to! {
-            parser: GoatParser,
-            input: "1 + (3 - 5)",
-            rule: Rule::math,
-            tokens: [
-                math(0, 11, [
-                    number(0, 1),
-                    plus(2, 3),
-                    math(5, 10, [
-                        number(5, 6),
-                        minus(7, 8),
-                        number(9, 10)
-                    ])
-                ])
-            ]
         }
     }
 
@@ -159,7 +132,9 @@ mod tests {
             rule: Rule::function,
             tokens: [function(0, 20, [labels(8, 9, [ident(8, 9)]), ident(14, 15)])]
         }
-
+    }
+    #[test]
+    fn parses_applications() {
         parses_to! {
             parser: GoatParser,
             input: "a(1, true, b, program(a) do a done)",
@@ -174,6 +149,49 @@ mod tests {
                         function(14, 34, [
                             labels(22, 23, [ident(22, 23)]), ident(28, 29)
                         ])
+                    ])
+                ])
+            ]
+        }
+    }
+
+    #[test]
+    fn parses_conditional() {
+        parses_to! {
+            parser: GoatParser,
+            input: "if true then 1 else 0 done",
+            rule: Rule::conditional,
+            tokens: [
+                conditional(0, 26, [
+                    boolean(3,7),
+                    number(13, 14),
+                    number(20, 21)
+                ])
+            ]
+        }
+    }
+
+    #[test]
+    fn parses_math() {
+        parses_to! {
+            parser: GoatParser,
+            input: "1 + 2",
+            rule: Rule::math,
+            tokens: [math(0, 5, [number(0, 1), plus(2, 3), number(4, 5)])]
+        }
+
+        parses_to! {
+            parser: GoatParser,
+            input: "1 + (3 - 5)",
+            rule: Rule::math,
+            tokens: [
+                math(0, 11, [
+                    number(0, 1),
+                    plus(2, 3),
+                    math(5, 10, [
+                        number(5, 6),
+                        minus(7, 8),
+                        number(9, 10)
                     ])
                 ])
             ]
