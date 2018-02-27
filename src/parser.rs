@@ -1,3 +1,4 @@
+use pest::Parser;
 #[cfg(debug_assertions)]
 const _GRAMMAR: &'static str = include_str!("grammar.pest");
 
@@ -8,7 +9,6 @@ pub struct GoatParser;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pest::Parser;
 
     #[test]
     fn parses_empty() {
