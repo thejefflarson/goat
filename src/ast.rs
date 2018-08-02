@@ -13,44 +13,48 @@ pub struct Identifier<'a> {
 #[derive(Debug)]
 pub struct Label<'a> {
     identifier: Identifier<'a>,
-    expression: Option<Expr<'a>>,
+    expression: Option<Ast<'a>>,
 }
 
 #[derive(Debug)]
-pub enum Expr<'a> {
+pub enum Ast<'a> {
     Empty,
     Number(Span<'a>),
     Identifier(Identifier<'a>),
     Str(Span<'a>),
-    Program(Box<Expr<'a>>),
+    Program(Box<Ast<'a>>),
     Function(Vec<Label<'a>>),
-    Application(Identifier<'a>, Vec<Box<Expr<'a>>>),
-    Conditional(Box<Expr<'a>>, Box<Expr<'a>>),
-    Plus(Box<Expr<'a>>, Box<Expr<'a>>),
-    Minus(Box<Expr<'a>>, Box<Expr<'a>>),
-    Mult(Box<Expr<'a>>, Box<Expr<'a>>),
-    Div(Box<Expr<'a>>, Box<Expr<'a>>),
-    Lte(Box<Expr<'a>>, Box<Expr<'a>>),
-    Gte(Box<Expr<'a>>, Box<Expr<'a>>),
-    Lt(Box<Expr<'a>>, Box<Expr<'a>>),
-    Gt(Box<Expr<'a>>, Box<Expr<'a>>),
-    Declaration(Identifier<'a>, Box<Expr<'a>>, Option<Box<Expr<'a>>>),
+    Application(Identifier<'a>, Vec<Box<Ast<'a>>>),
+    Conditional(Box<Ast<'a>>, Box<Ast<'a>>),
+    Plus(Box<Ast<'a>>, Box<Ast<'a>>),
+    Minus(Box<Ast<'a>>, Box<Ast<'a>>),
+    Mult(Box<Ast<'a>>, Box<Ast<'a>>),
+    Div(Box<Ast<'a>>, Box<Ast<'a>>),
+    Lte(Box<Ast<'a>>, Box<Ast<'a>>),
+    Gte(Box<Ast<'a>>, Box<Ast<'a>>),
+    Lt(Box<Ast<'a>>, Box<Ast<'a>>),
+    Gt(Box<Ast<'a>>, Box<Ast<'a>>),
+    Declaration(Identifier<'a>, Box<Ast<'a>>, Option<Box<Ast<'a>>>),
 }
 
-fn child<'a>(pair: Pair<'a, Rule>) -> Result<Expr<'a>, String> {
+fn child<'a>(pair: Pair<'a, Rule>) -> Result<Ast<'a>, String> {
     match pair.as_rule() {
-        Rule::goat => pair
-            .into_inner()
-            .next()
-            .ok_or(String::from(""))
-            .and_then(|it| to_ast(it)),
-        Rule::number => Ok(Expr::Number(pair.into_span())),
+        Rule::goat => {
+            let inner = pair.into_inner().next();
+            match inner {
+                None => Ok(Ast::Empty),
+                Some(pair) => Ast::from_pair(pair),
+            }
+        }
+        Rule::number => Ok(Ast::Number(pair.into_span())),
         _ => unimplemented!(),
     }
 }
 
-fn to_ast<'a>(pair: Pair<'a, Rule>) -> Result<Expr<'a>, String> {
-    child(pair)
+impl<'i> Ast<'i> {
+    fn from_pair<'a: 'i>(pair: Pair<'a, Rule>) -> Result<Self, String> {
+        child(pair)
+    }
 }
 
 #[cfg(test)]
@@ -62,13 +66,13 @@ mod tests {
     fn converts_empty() {
         let pairs = GoatParser::parse(Rule::goat, "").unwrap().nth(0).unwrap();
         println!("{:x?}", pairs.clone());
-        to_ast(pairs).unwrap();
+        Ast::from_pair(pairs).unwrap();
     }
 
     #[test]
     fn converts_number() {
         let pairs = GoatParser::parse(Rule::goat, "1").unwrap().nth(0).unwrap();
         println!("{:?}", pairs.clone());
-        to_ast(pairs).unwrap();
+        Ast::from_pair(pairs).unwrap();
     }
 }
