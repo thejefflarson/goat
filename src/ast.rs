@@ -37,24 +37,20 @@ pub enum Expr<'a> {
     Declaration(Identifier<'a>, Box<Expr<'a>>, Option<Box<Expr<'a>>>),
 }
 
-pub trait Ast {
-    fn to_ast(&self) -> Result<Expr, &str>;
-}
-
-fn child<'a>(pair: &Pair<'a, Rule>) -> Result<Expr<'a>, &'a str> {
+fn child<'a>(pair: Pair<'a, Rule>) -> Result<Expr<'a>, String> {
     match pair.as_rule() {
-        Rule::goat => pair.into_inner()
+        Rule::goat => pair
+            .into_inner()
             .next()
-            .ok_or(Err(""))
-            .map(|it| it.to_ast()),
+            .ok_or(String::from(""))
+            .and_then(|it| to_ast(it)),
+        Rule::number => Ok(Expr::Number(pair.into_span())),
         _ => unimplemented!(),
     }
 }
 
-impl<'a> Ast for Pair<'a, Rule> {
-    fn to_ast(&self) -> Result<Expr, &str> {
-        child(self)
-    }
+fn to_ast<'a>(pair: Pair<'a, Rule>) -> Result<Expr<'a>, String> {
+    child(pair)
 }
 
 #[cfg(test)]
@@ -65,13 +61,14 @@ mod tests {
     #[test]
     fn converts_empty() {
         let pairs = GoatParser::parse(Rule::goat, "").unwrap().nth(0).unwrap();
-        pairs.to_ast().unwrap();
+        println!("{:x?}", pairs.clone());
+        to_ast(pairs).unwrap();
     }
 
     #[test]
     fn converts_number() {
         let pairs = GoatParser::parse(Rule::goat, "1").unwrap().nth(0).unwrap();
-        println!("{:?}", pairs.to_ast());
-        pairs.to_ast().unwrap();
+        println!("{:?}", pairs.clone());
+        to_ast(pairs).unwrap();
     }
 }
