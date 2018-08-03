@@ -58,7 +58,7 @@ number = @{ int ~ "."? ~ int? }
 
 newline = _{ "\n" | "\r\n" }
 whitespace = _{ " " | "\t" | newline }
-comment = _{ "#" ~ (!newline ~ any)* }
+comment = _{ "#" ~ (!newline ~ any)* ~ newline }
 
 raw_string = { (!"\"" ~ any)+ }
 string = @{ "\"" ~ raw_string ~ "\"" }
