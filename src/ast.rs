@@ -60,7 +60,17 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
                     .collect(),
             )
         }
-        //Rule::application => {}
+        Rule::application => {
+            let mut inner = pair.into_inner();
+            let ident = inner.next().unwrap();
+            let arguments = inner.map(|it| Box::new(Ast::new(it))).collect();
+            Ast::Application(
+                Identifier {
+                    name: ident.into_span(),
+                },
+                arguments,
+            )
+        }
         _ => unimplemented!(),
     }
 }
@@ -87,10 +97,11 @@ mod tests {
 
     #[test]
     fn converts_number() {
-        let pairs = GoatParser::parse(Rule::goat, "1").unwrap().nth(0).unwrap();
+        let prog = "1";
+        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
         println!("{:?}", pairs.clone());
         let ast = Ast::new(pairs);
-        let start = Position::from_start("1");
+        let start = Position::from_start(prog);
         let end = start.clone().match_string("1").unwrap();
         assert_eq!(ast, Ast::Program(Box::new(Ast::Number(start.span(&end)))))
     }
