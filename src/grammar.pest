@@ -64,7 +64,8 @@ raw_string = { (!"\"" ~ any)+ }
 string = @{ "\"" ~ raw_string ~ "\"" }
 
 alpha = _{ ('a'..'z' | 'A'..'Z') }
-alpha_num = _{ alpha | '0' .. '9' }
+alpha_num = _{ alpha | digit }
+// unicode = { XID_START ~ XID_CONTINUE* } // <- use this when pest updates
 
 ident = @{ !keywords ~ ('a'..'z' | 'A'..'Z') ~ (alpha | alpha_num)* }
 

@@ -7,12 +7,12 @@ pub struct Identifier<'a> {
     name: Span<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Label<'a> {
     identifier: Identifier<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Ast<'a> {
     Empty,
     Number(Span<'a>),
@@ -33,24 +33,24 @@ pub enum Ast<'a> {
     Declaration(Identifier<'a>, Box<Ast<'a>>, Option<Box<Ast<'a>>>),
 }
 
-fn child<'a>(pair: Pair<'a, Rule>) -> Result<Ast<'a>, String> {
+fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
     match pair.as_rule() {
         Rule::goat => {
             let inner = pair.into_inner().next();
-            match inner {
-                None => Ok(Ast::Empty),
+            let node = match inner {
+                None => Ast::Empty,
                 Some(pair) => Ast::new(pair),
-            }.map(|i| Ast::Program(Box::new(i)))
+            };
+            Ast::Program(Box::new(node))
         }
-        Rule::number => Ok(Ast::Number(pair.into_span())),
-        Rule::ident => Ok(Ast::Identifier(Identifier {
+        Rule::number => Ast::Number(pair.into_span()),
+        Rule::ident => Ast::Identifier(Identifier {
             name: pair.into_span(),
-        })),
-        Rule::string => Ok(Ast::Str(pair.into_span())),
+        }),
+        Rule::string => Ast::Str(pair.into_span()),
         Rule::function => {
             let labels = pair.into_inner().next().unwrap().into_inner();
-
-            Ok(Ast::Function(
+            Ast::Function(
                 labels
                     .map(|label| Label {
                         identifier: Identifier {
@@ -58,7 +58,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Result<Ast<'a>, String> {
                         },
                     })
                     .collect(),
-            ))
+            )
         }
         //Rule::application => {}
         _ => unimplemented!(),
@@ -66,7 +66,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Result<Ast<'a>, String> {
 }
 
 impl<'i> Ast<'i> {
-    fn new<'a: 'i>(pair: Pair<'a, Rule>) -> Result<Self, String> {
+    fn new<'a: 'i>(pair: Pair<'a, Rule>) -> Self {
         child(pair)
     }
 }
@@ -75,19 +75,24 @@ impl<'i> Ast<'i> {
 mod tests {
     use super::*;
     use pest::Parser;
+    use pest::Position;
 
     #[test]
     fn converts_empty() {
         let pairs = GoatParser::parse(Rule::goat, "").unwrap().nth(0).unwrap();
         println!("{:x?}", pairs.clone());
-        Ast::new(pairs).unwrap();
+        let ast = Ast::new(pairs);
+        assert_eq!(ast, Ast::Program(Box::new(Ast::Empty)));
     }
 
     #[test]
     fn converts_number() {
         let pairs = GoatParser::parse(Rule::goat, "1").unwrap().nth(0).unwrap();
         println!("{:?}", pairs.clone());
-        Ast::new(pairs).unwrap();
+        let ast = Ast::new(pairs);
+        let start = Position::from_start("1");
+        let end = start.clone().match_string("1").unwrap();
+        assert_eq!(ast, Ast::Program(Box::new(Ast::Number(start.span(&end)))))
     }
 
     #[test]
@@ -97,7 +102,7 @@ mod tests {
             .nth(0)
             .unwrap();
 
-        let ast = Ast::new(pairs).unwrap();
+        let ast = Ast::new(pairs);
         println!("{:#?}", ast)
     }
 }
