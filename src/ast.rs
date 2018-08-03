@@ -1,5 +1,5 @@
 use parser::*;
-use pest::iterators::{Pair, Pairs};
+use pest::iterators::Pair;
 use pest::Span;
 use types::Ty;
 
@@ -8,6 +8,16 @@ pub struct Identifier<'a> {
     name: Span<'a>,
     internal: Option<String>,
     ty: Option<Ty>,
+}
+
+impl<'a> Identifier<'a> {
+    fn new(name: Span<'a>) -> Self {
+        Identifier {
+            name,
+            internal: None,
+            ty: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -43,16 +53,18 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Result<Ast<'a>, String> {
             let inner = pair.into_inner().next();
             match inner {
                 None => Ok(Ast::Empty),
-                Some(pair) => Ast::from_pair(pair),
-            }
+                Some(pair) => Ast::new(pair),
+            }.map(|i| Ast::Program(Box::new(i)))
         }
         Rule::number => Ok(Ast::Number(pair.into_span())),
+        Rule::ident => Ok(Ast::Identifier(Identifier::new(pair.into_span()))),
+        Rule::string => Ok(Ast::Str(pair.into_span())),
         _ => unimplemented!(),
     }
 }
 
 impl<'i> Ast<'i> {
-    fn from_pair<'a: 'i>(pair: Pair<'a, Rule>) -> Result<Self, String> {
+    fn new<'a: 'i>(pair: Pair<'a, Rule>) -> Result<Self, String> {
         child(pair)
     }
 }
@@ -66,13 +78,13 @@ mod tests {
     fn converts_empty() {
         let pairs = GoatParser::parse(Rule::goat, "").unwrap().nth(0).unwrap();
         println!("{:x?}", pairs.clone());
-        Ast::from_pair(pairs).unwrap();
+        Ast::new(pairs).unwrap();
     }
 
     #[test]
     fn converts_number() {
         let pairs = GoatParser::parse(Rule::goat, "1").unwrap().nth(0).unwrap();
         println!("{:?}", pairs.clone());
-        Ast::from_pair(pairs).unwrap();
+        Ast::new(pairs).unwrap();
     }
 }
