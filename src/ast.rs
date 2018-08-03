@@ -21,7 +21,7 @@ pub enum Ast<'a> {
     Program(Box<Ast<'a>>),
     Function(Vec<Label<'a>>),
     Application(Identifier<'a>, Vec<Box<Ast<'a>>>),
-    Conditional(Box<Ast<'a>>, Box<Ast<'a>>),
+    Conditional(Box<Ast<'a>>, Box<Ast<'a>>, Option<Box<Ast<'a>>>),
     Plus(Box<Ast<'a>>, Box<Ast<'a>>),
     Minus(Box<Ast<'a>>, Box<Ast<'a>>),
     Mult(Box<Ast<'a>>, Box<Ast<'a>>),
@@ -70,6 +70,13 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
                 },
                 arguments,
             )
+        }
+        Rule::conditional => {
+            let mut inner = pair.into_inner();
+            let cond = Ast::new(inner.next().unwrap());
+            let then = Ast::new(inner.next().unwrap());
+            let els = inner.next().map(|i| Box::new(Ast::new(i)));
+            Ast::Conditional(Box::new(cond), Box::new(then), els)
         }
         _ => unimplemented!(),
     }
