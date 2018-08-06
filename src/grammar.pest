@@ -69,12 +69,12 @@ alpha_num = _{ alpha | digit }
 
 ident = @{ !keywords ~ ('a'..'z' | 'A'..'Z') ~ (alpha | alpha_num)* }
 
-term = _{ number | ident | string | boolean | declaration | function | conditional | lparen ~ expr ~ rparen }
+term = _{ number | ident | string | boolean | declaration | application | function | conditional | lparen ~ expr ~ rparen }
 declaration = { ident ~ equals ~ expr ~ expr? }
 labels = { ident ~ (comma ~ ident)* }
 function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
 arguments = { expr ~ (comma ~ expr)* }
-application = { ident ~ (lparen ~ arguments? ~ rparen)* }
+application = { ident ~ (lparen ~ arguments? ~ rparen)+ }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ (else_lit ~ expr)? ~ done_lit }
 expr = { term ~ more_math* }
 more_math = _{ infix ~ term }
