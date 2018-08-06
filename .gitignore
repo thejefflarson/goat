@@ -1,13 +1,4 @@
-lex.yy.c
-parser.output
-parser.tab.cc
-parser.tab.hh
-stack.hh
-.waf*
-build
-Makefile
-.lock*
-.#*
 .DS_Store
-__pycache__
-*.pyc
+/target/
+**/*.rs.bk
+Cargo.lock

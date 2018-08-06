@@ -1,0 +1,80 @@
+goat = { soi ~ expr? ~ eoi }
+
+program_lit = _{ "program" }
+if_lit = _{ "if" }
+then_lit = _{ "then" }
+else_lit = _{ "else" }
+do_lit = _{ "do" }
+done_lit = _{ "done" }
+start_at_lit = _{ "start at" }
+repeat_lit = _{ "repeat" }
+times_lit = _{ "times" }
+true_lit = _{ "true" }
+false_lit = _{ "false" }
+boolean = { true_lit | false_lit }
+return_lit = _{ "return" }
+keywords = {
+  program_lit |
+  if_lit |
+  then_lit |
+  else_lit |
+  do_lit |
+  done_lit |
+  start_at_lit |
+  repeat_lit |
+  times_lit |
+  boolean |
+  return_lit
+}
+
+equals = _{ "=" }
+colon = _{ ":" }
+semi = _{ ";" }
+plus = { "+" }
+minus = { "-" }
+multiply = { "*" }
+divide = { "/" }
+lte = { "<=" }
+gte = { ">=" }
+lt = { "<" }
+gt = { ">" }
+infix = _{
+  plus |
+  minus |
+  multiply |
+  divide |
+  lt |
+  lte |
+  gt |
+  gte
+}
+
+lparen = _{ "(" }
+rparen = _{ ")" }
+comma = _{ "," }
+digit = _{ '0'..'9' }
+int = _{ digit+ }
+number = @{ int ~ "."? ~ int? }
+
+newline = _{ "\n" | "\r\n" }
+whitespace = _{ " " | "\t" | newline }
+comment = _{ "#" ~ (!newline ~ any)* ~ newline }
+
+raw_string = { (!"\"" ~ any)+ }
+string = @{ "\"" ~ raw_string ~ "\"" }
+
+alpha = _{ ('a'..'z' | 'A'..'Z') }
+alpha_num = _{ alpha | digit }
+// unicode = { XID_START ~ XID_CONTINUE* } // <- use this when pest updates
+
+ident = @{ !keywords ~ ('a'..'z' | 'A'..'Z') ~ (alpha | alpha_num)* }
+
+term = _{ number | ident | string | boolean | declaration | application | function | conditional | lparen ~ expr ~ rparen }
+declaration = { ident ~ equals ~ expr ~ expr? }
+labels = { ident ~ (comma ~ ident)* }
+function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
+arguments = { expr ~ (comma ~ expr)* }
+application = { ident ~ (lparen ~ arguments? ~ rparen)+ }
+conditional = { if_lit ~ expr ~ then_lit ~ expr ~ (else_lit ~ expr)? ~ done_lit }
+expr = { term ~ more_math* }
+more_math = _{ infix ~ term }
