@@ -1,5 +1,6 @@
 use parser::*;
 use pest::iterators::Pair;
+use pest::prec_climber::{Assoc, Operator, PrecClimber};
 use pest::Span;
 
 #[derive(Hash, Eq, PartialEq, Debug)]
@@ -19,7 +20,7 @@ pub enum Ast<'a> {
     Identifier(Identifier<'a>),
     Str(Span<'a>),
     Program(Box<Ast<'a>>),
-    Function(Vec<Label<'a>>),
+    Function(Vec<Label<'a>>, Box<Ast<'a>>),
     Application(Identifier<'a>, Vec<Box<Ast<'a>>>),
     Conditional(Box<Ast<'a>>, Box<Ast<'a>>, Option<Box<Ast<'a>>>),
     Plus(Box<Ast<'a>>, Box<Ast<'a>>),
@@ -43,13 +44,15 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             };
             Ast::Program(Box::new(node))
         }
+        Rule::string => Ast::Str(pair.into_span()),
         Rule::number => Ast::Number(pair.into_span()),
         Rule::ident => Ast::Identifier(Identifier {
             name: pair.into_span(),
         }),
-        Rule::string => Ast::Str(pair.into_span()),
         Rule::function => {
-            let labels = pair.into_inner().next().unwrap().into_inner();
+            let mut inner = pair.into_inner();
+            let labels = inner.next().unwrap().into_inner();
+            let block = inner.next().unwrap();
             Ast::Function(
                 labels
                     .map(|label| Label {
@@ -58,6 +61,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
                         },
                     })
                     .collect(),
+                Box::new(Ast::new(block)),
             )
         }
         Rule::application => {
@@ -77,6 +81,19 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             let then = Ast::new(inner.next().unwrap());
             let els = inner.next().map(|i| Box::new(Ast::new(i)));
             Ast::Conditional(Box::new(cond), Box::new(then), els)
+        }
+        Rule::expr => {
+            let climber = PrecClimber::new(vec![
+                Operator::new(Rule::plus, Assoc::Left) | Operator::new(Rule::minus, Assoc::Left),
+                Operator::new(Rule::multiply, Assoc::Left)
+                    | Operator::new(Rule::divide, Assoc::Left),
+            ]);
+
+            let infix = |lhs: Ast<'a>, op: Pair<'a, Rule>, rhs: Ast<'a>| match op.as_rule() {
+                Rule::plus => Ast::Plus(Box::new(lhs), Box::new(rhs)),
+                _ => unreachable!(),
+            };
+            climber.climb(pair.into_inner(), Ast::new, infix)
         }
         _ => unimplemented!(),
     }
@@ -106,7 +123,7 @@ mod tests {
     fn converts_number() {
         let prog = "1";
         let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
-        println!("{:?}", pairs.clone());
+        println!("{:#?}", pairs.clone());
         let ast = Ast::new(pairs);
         let start = Position::from_start(prog);
         let end = start.clone().match_string("1").unwrap();
@@ -120,6 +137,17 @@ mod tests {
             .nth(0)
             .unwrap();
 
+        let ast = Ast::new(pairs);
+        println!("{:#?}", ast)
+    }
+
+    #[test]
+    fn converts_math() {
+        GoatParser::parse(Rule::goat, "1 + 1").map_err(|e| println!("{}", e));
+        let pairs = GoatParser::parse(Rule::goat, "1 + 1")
+            .unwrap()
+            .nth(0)
+            .unwrap();
         let ast = Ast::new(pairs);
         println!("{:#?}", ast)
     }

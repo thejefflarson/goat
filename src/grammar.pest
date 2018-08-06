@@ -32,8 +32,8 @@ colon = _{ ":" }
 semi = _{ ";" }
 plus = { "+" }
 minus = { "-" }
-star = { "*" }
-slash = { "/" }
+multiply = { "*" }
+divide = { "/" }
 lte = { "<=" }
 gte = { ">=" }
 lt = { "<" }
@@ -41,8 +41,8 @@ gt = { ">" }
 infix = _{
   plus |
   minus |
-  star |
-  slash |
+  multiply |
+  divide |
   lt |
   lte |
   gt |
@@ -69,14 +69,12 @@ alpha_num = _{ alpha | digit }
 
 ident = @{ !keywords ~ ('a'..'z' | 'A'..'Z') ~ (alpha | alpha_num)* }
 
-value = _{ number | string | boolean | ident }
-expr = _{ value | declaration | function | application | conditional | math }
+term = _{ number | ident | string | boolean | declaration | function | conditional | lparen ~ expr ~ rparen }
 declaration = { ident ~ equals ~ expr ~ expr? }
 labels = { ident ~ (comma ~ ident)* }
 function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
 arguments = { expr ~ (comma ~ expr)* }
-application = { ident ~ lparen ~ arguments? ~ rparen }
+application = { ident ~ (lparen ~ arguments? ~ rparen)* }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ (else_lit ~ expr)? ~ done_lit }
-term = _{ ident | number | application | lparen ~ math ~ rparen }
-math = { term ~ more_math* }
+expr = { term ~ more_math* }
 more_math = _{ infix ~ term }

@@ -94,7 +94,12 @@ mod tests {
             parser: GoatParser,
             input: "a = b",
             rule: Rule::declaration,
-            tokens: [declaration(0, 5, [ident(0, 1), ident(4, 5)])]
+            tokens: [
+                declaration(0, 5, [
+                    ident(0, 1),
+                    expr(4, 5, [ident(4, 5)])
+                ])
+            ]
         }
 
         parses_to! {
@@ -104,9 +109,10 @@ mod tests {
             tokens: [
                 declaration(0, 7, [
                     ident(0, 1),
-                    ident(4, 5),
-                    ident(6, 7)
-                ])]
+                    expr(4, 6, [ident(4, 5)]),
+                    expr(6, 7, [ident(6, 7)])
+                ])
+            ]
         }
     }
 
@@ -130,7 +136,12 @@ mod tests {
             parser: GoatParser,
             input: "program(a) do a done",
             rule: Rule::function,
-            tokens: [function(0, 20, [labels(8, 9, [ident(8, 9)]), ident(14, 15)])]
+            tokens: [
+                function(0, 20, [
+                    labels(8, 9, [ident(8, 9)]),
+                    expr(14, 16, [ident(14, 15)])
+                ])
+            ]
         }
     }
     #[test]
@@ -143,11 +154,14 @@ mod tests {
                 application(0, 35, [
                     ident(0, 1),
                     arguments(2, 34, [
-                        number(2, 3),
-                        boolean(5, 9),
-                        ident(11, 12),
-                        function(14, 34, [
-                            labels(22, 23, [ident(22, 23)]), ident(28, 29)
+                        expr(2, 3, [number(2, 3)]),
+                        expr(5, 9, [boolean(5, 9)]),
+                        expr(11, 12, [ident(11, 12)]),
+                        expr(14, 34, [
+                            function(14, 34, [
+                                labels(22, 23, [ident(22, 23)]),
+                                expr(28, 30, [ident(28, 29)])
+                            ])
                         ])
                     ])
                 ])
@@ -163,9 +177,9 @@ mod tests {
             rule: Rule::conditional,
             tokens: [
                 conditional(0, 26, [
-                    boolean(3,7),
-                    number(13, 14),
-                    number(20, 21)
+                    expr(3, 8, [boolean(3,7)]),
+                    expr(13, 15, [number(13, 14)]),
+                    expr(20, 22, [number(20, 21)])
                 ])
             ]
         }
@@ -176,19 +190,19 @@ mod tests {
         parses_to! {
             parser: GoatParser,
             input: "1 + 2",
-            rule: Rule::math,
-            tokens: [math(0, 5, [number(0, 1), plus(2, 3), number(4, 5)])]
+            rule: Rule::expr,
+            tokens: [expr(0, 5, [number(0, 1), plus(2, 3), number(4, 5)])]
         }
 
         parses_to! {
             parser: GoatParser,
             input: "1 + (3 - 5)",
-            rule: Rule::math,
+            rule: Rule::expr,
             tokens: [
-                math(0, 11, [
+                expr(0, 11, [
                     number(0, 1),
                     plus(2, 3),
-                    math(5, 10, [
+                    expr(5, 10, [
                         number(5, 6),
                         minus(7, 8),
                         number(9, 10)
