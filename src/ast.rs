@@ -59,8 +59,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
                         identifier: Identifier {
                             name: label.into_span(),
                         },
-                    })
-                    .collect(),
+                    }).collect(),
                 Box::new(Ast::new(block)),
             )
         }
@@ -84,6 +83,10 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
         }
         Rule::expr => {
             let climber = PrecClimber::new(vec![
+                Operator::new(Rule::lt, Assoc::Left)
+                    | Operator::new(Rule::lte, Assoc::Left)
+                    | Operator::new(Rule::gt, Assoc::Left)
+                    | Operator::new(Rule::gt, Assoc::Left),
                 Operator::new(Rule::plus, Assoc::Left) | Operator::new(Rule::minus, Assoc::Left),
                 Operator::new(Rule::multiply, Assoc::Left)
                     | Operator::new(Rule::divide, Assoc::Left),
@@ -91,6 +94,14 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
 
             let infix = |lhs: Ast<'a>, op: Pair<'a, Rule>, rhs: Ast<'a>| match op.as_rule() {
                 Rule::plus => Ast::Plus(Box::new(lhs), Box::new(rhs)),
+                Rule::minus => Ast::Minus(Box::new(lhs), Box::new(rhs)),
+                Rule::multiply => Ast::Mult(Box::new(lhs), Box::new(rhs)),
+                Rule::divide => Ast::Div(Box::new(lhs), Box::new(rhs)),
+                Rule::lte => Ast::Lte(Box::new(lhs), Box::new(rhs)),
+                Rule::lt => Ast::Lt(Box::new(lhs), Box::new(rhs)),
+                Rule::gte => Ast::Gte(Box::new(lhs), Box::new(rhs)),
+                Rule::gt => Ast::Gt(Box::new(lhs), Box::new(rhs)),
+
                 _ => unreachable!(),
             };
             climber.climb(pair.into_inner(), Ast::new, infix)
@@ -102,6 +113,47 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
 impl<'i> Ast<'i> {
     fn new<'a: 'i>(pair: Pair<'a, Rule>) -> Self {
         child(pair)
+    }
+}
+
+trait Visitor<T> {
+    fn visit_empty(&self) -> T;
+    fn visit_number(&self, number: &Span) -> T;
+    fn visit_string(&self, string: &Span) -> T;
+    fn visit_identifier(&self, identifier: &Identifier) -> T;
+    fn visit_program(&self, ast: &Box<Ast>) -> T;
+    fn visit_function(&self, labels: &Vec<Label>, program: &Box<Ast>) -> T;
+    fn visit_application(&self, identifier: &Identifier, arguments: &Vec<Box<Ast>>) -> T;
+    fn visit_conditional(
+        &self,
+        true_branch: &Box<Ast>,
+        false_branch: &Box<Ast>,
+        else_branch: &Box<Ast>,
+    ) -> T;
+    fn visit_declaration(
+        &self,
+        identifier: &Identifier,
+        rhs: &Box<Ast>,
+        rest: &Option<Box<Ast>>,
+    ) -> T;
+    fn visit_plus(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
+    fn visit_minus(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
+    fn visit_mult(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
+    fn visit_div(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
+    fn visit_lte(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
+    fn visti_gte(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
+    fn visit_lt(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
+    fn visit_gt(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
+    fn visit(&self, ast: Ast) -> T {
+        match ast {
+            Ast::Empty => self.visit_empty(),
+            Ast::Number(n) => self.visit_number(&n),
+            Ast::Str(s) => self.visit_string(&s),
+            Ast::Identifier(i) => self.visit_identifier(&i),
+            Ast::Program(p) => self.visit_program(&p),
+            Ast::Function(l, p) => self.visit_function(&l, &p),
+            _ => unimplemented!(),
+        }
     }
 }
 
@@ -143,7 +195,6 @@ mod tests {
 
     #[test]
     fn converts_math() {
-        GoatParser::parse(Rule::goat, "1 + 1").map_err(|e| println!("{}", e));
         let pairs = GoatParser::parse(Rule::goat, "1 + 1")
             .unwrap()
             .nth(0)
