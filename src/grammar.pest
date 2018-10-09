@@ -1,4 +1,4 @@
-goat = { soi ~ expr? ~ eoi }
+goat = { SOI ~ expr? ~ EOI }
 
 program_lit = _{ "program" }
 if_lit = _{ "if" }
@@ -52,22 +52,21 @@ infix = _{
 lparen = _{ "(" }
 rparen = _{ ")" }
 comma = _{ "," }
-digit = _{ '0'..'9' }
-int = _{ digit+ }
-number = @{ int ~ "."? ~ int? }
+number = @{ "-"?
+    ~ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*)
+    ~ ("." ~ ASCII_DIGIT*)?
+}
 
 newline = _{ "\n" | "\r\n" }
 whitespace = _{ " " | "\t" | newline }
-comment = _{ "#" ~ (!newline ~ any)* ~ newline }
+comment = _{ "#" ~ (!newline ~ ANY)* ~ newline }
 
-raw_string = { (!"\"" ~ any)+ }
+raw_string = { (!"\"" ~ ANY)+ }
 string = @{ "\"" ~ raw_string ~ "\"" }
 
-alpha = _{ ('a'..'z' | 'A'..'Z') }
-alpha_num = _{ alpha | digit }
-// unicode = { XID_START ~ XID_CONTINUE* } // <- use this when pest updates
+unicode = _{ XID_START ~ XID_CONTINUE* }
 
-ident = @{ !keywords ~ ('a'..'z' | 'A'..'Z') ~ (alpha | alpha_num)* }
+ident = @{ !keywords ~ unicode* }
 
 term = _{ number | ident | string | boolean | declaration | application | function | conditional | lparen ~ expr ~ rparen }
 declaration = { ident ~ equals ~ expr ~ expr? }

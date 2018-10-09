@@ -123,12 +123,13 @@ trait Visitor<T> {
     fn visit_identifier(&self, identifier: &Identifier) -> T;
     fn visit_program(&self, ast: &Box<Ast>) -> T;
     fn visit_function(&self, labels: &Vec<Label>, program: &Box<Ast>) -> T;
+    fn visit_label(&self, label: &Label) -> T;
     fn visit_application(&self, identifier: &Identifier, arguments: &Vec<Box<Ast>>) -> T;
     fn visit_conditional(
         &self,
         true_branch: &Box<Ast>,
         false_branch: &Box<Ast>,
-        else_branch: &Box<Ast>,
+        else_branch: &Option<Box<Ast>>,
     ) -> T;
     fn visit_declaration(
         &self,
@@ -152,6 +153,11 @@ trait Visitor<T> {
             Ast::Identifier(i) => self.visit_identifier(&i),
             Ast::Program(p) => self.visit_program(&p),
             Ast::Function(l, p) => self.visit_function(&l, &p),
+            Ast::Application(i, a) => self.visit_application(&i, &a),
+            Ast::Conditional(t, f, e) => self.visit_conditional(&t, &f, &e),
+            Ast::Declaration(i, r, rst) => self.visit_declaration(&i, &r, &rst),
+            Ast::Plus(lhs, rhs) => self.visit_plus(&lhs, &rhs),
+            Ast::Minus(lhs, rhs) => self.visit_minus(&lhs, &rhs),
             _ => unimplemented!(),
         }
     }
