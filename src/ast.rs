@@ -142,7 +142,7 @@ trait Visitor<T> {
     fn visit_mult(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
     fn visit_div(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
     fn visit_lte(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
-    fn visti_gte(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
+    fn visit_gte(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
     fn visit_lt(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
     fn visit_gt(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
     fn visit(&self, ast: Ast) -> T {
@@ -158,7 +158,12 @@ trait Visitor<T> {
             Ast::Declaration(i, r, rst) => self.visit_declaration(&i, &r, &rst),
             Ast::Plus(lhs, rhs) => self.visit_plus(&lhs, &rhs),
             Ast::Minus(lhs, rhs) => self.visit_minus(&lhs, &rhs),
-            _ => unimplemented!(),
+            Ast::Mult(lhs, rhs) => self.visit_mult(&lhs, &rhs),
+            Ast::Div(lhs, rhs) => self.visit_div(&lhs, &rhs),
+            Ast::Lte(lhs, rhs) => self.visit_lte(&lhs, &rhs),
+            Ast::Gte(lhs, rhs) => self.visit_gte(&lhs, &rhs),
+            Ast::Lt(lhs, rhs) => self.visit_lt(&lhs, &rhs),
+            Ast::Gt(lhs, rhs) => self.visit_gt(&lhs, &rhs),
         }
     }
 }
@@ -183,9 +188,12 @@ mod tests {
         let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
         println!("{:#?}", pairs.clone());
         let ast = Ast::new(pairs);
-        let start = Position::from_start(prog);
-        let end = start.clone().match_string("1").unwrap();
-        assert_eq!(ast, Ast::Program(Box::new(Ast::Number(start.span(&end)))))
+        let span = GoatParser::parse(Rule::number, prog)
+            .unwrap()
+            .nth(0)
+            .unwrap()
+            .as_span();
+        assert_eq!(ast, Ast::Program(Box::new(Ast::Number(span))))
     }
 
     #[test]

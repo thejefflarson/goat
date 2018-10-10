@@ -57,16 +57,15 @@ number = @{ "-"?
     ~ ("." ~ ASCII_DIGIT*)?
 }
 
-newline = _{ "\n" | "\r\n" }
-whitespace = _{ " " | "\t" | newline }
-comment = _{ "#" ~ (!newline ~ ANY)* ~ newline }
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+comment = _{ "#" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
 
 raw_string = { (!"\"" ~ ANY)+ }
 string = @{ "\"" ~ raw_string ~ "\"" }
 
 unicode = _{ XID_START ~ XID_CONTINUE* }
 
-ident = @{ !keywords ~ unicode* }
+ident = @{ !keywords ~ unicode+ }
 
 term = _{ number | ident | string | boolean | declaration | application | function | conditional | lparen ~ expr ~ rparen }
 declaration = { ident ~ equals ~ expr ~ expr? }
