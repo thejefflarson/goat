@@ -1,4 +1,3 @@
-use pest::Parser;
 #[cfg(debug_assertions)]
 const _GRAMMAR: &str = include_str!("grammar.pest");
 
