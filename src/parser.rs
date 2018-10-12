@@ -16,7 +16,7 @@ mod tests {
             parser: GoatParser,
             input: "",
             rule: Rule::goat,
-            tokens: [goat(0, 0)]
+            tokens: [goat(0, 0, [EOI(0, 0)])]
         }
     }
 
@@ -165,6 +165,15 @@ mod tests {
                         ])
                     ])
                 ])
+            ]
+        }
+
+        parses_to! {
+            parser: GoatParser,
+            input: "a()",
+            rule: Rule::application,
+            tokens: [
+                application(0, 3, [ident(0,1)])
             ]
         }
     }

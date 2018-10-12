@@ -53,7 +53,7 @@ lparen = _{ "(" }
 rparen = _{ ")" }
 comma = _{ "," }
 number = @{ "-"?
-    ~ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*)
+    ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*)
     ~ ("." ~ ASCII_DIGIT*)?
 }
 
@@ -73,6 +73,7 @@ labels = { ident ~ (comma ~ ident)* }
 function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
 arguments = { expr ~ (comma ~ expr)* }
 application = { ident ~ (lparen ~ arguments? ~ rparen)+ }
-conditional = { if_lit ~ expr ~ then_lit ~ expr ~ (else_lit ~ expr)? ~ done_lit }
+else_branch = _{ else_lit ~ expr }
+conditional = { if_lit ~ expr ~ then_lit ~ expr ~ else_branch? ~ done_lit }
 expr = { term ~ more_math* }
 more_math = _{ infix ~ term }

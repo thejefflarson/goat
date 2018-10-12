@@ -106,6 +106,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             };
             climber.climb(pair.into_inner(), Ast::new, infix)
         }
+        Rule::EOI => Ast::Empty,
         _ => unimplemented!(),
     }
 }
