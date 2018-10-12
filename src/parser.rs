@@ -1,6 +1,6 @@
 use pest::Parser;
 #[cfg(debug_assertions)]
-const _GRAMMAR: &'static str = include_str!("grammar.pest");
+const _GRAMMAR: &str = include_str!("grammar.pest");
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]

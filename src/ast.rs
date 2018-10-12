@@ -86,7 +86,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
                 Operator::new(Rule::lt, Assoc::Left)
                     | Operator::new(Rule::lte, Assoc::Left)
                     | Operator::new(Rule::gt, Assoc::Left)
-                    | Operator::new(Rule::gt, Assoc::Left),
+                    | Operator::new(Rule::gte, Assoc::Left),
                 Operator::new(Rule::plus, Assoc::Left) | Operator::new(Rule::minus, Assoc::Left),
                 Operator::new(Rule::multiply, Assoc::Left)
                     | Operator::new(Rule::divide, Assoc::Left),
