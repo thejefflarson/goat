@@ -6,6 +6,16 @@ use pest::Span;
 #[derive(Hash, Eq, PartialEq, Debug)]
 pub struct Identifier<'a> {
     name: Span<'a>,
+    internal: String,
+}
+
+impl<'a> Identifier<'a> {
+    fn new(name: Span<'a>) -> Self {
+        Identifier {
+            name: name.clone(),
+            internal: String::from(name.as_str()),
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -46,9 +56,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
         }
         Rule::string => Ast::Str(pair.into_span()),
         Rule::number => Ast::Number(pair.into_span()),
-        Rule::ident => Ast::Identifier(Identifier {
-            name: pair.into_span(),
-        }),
+        Rule::ident => Ast::Identifier(Identifier::new(pair.into_span())),
         Rule::function => {
             let mut inner = pair.into_inner();
             let labels = inner.next().unwrap().into_inner();
@@ -56,9 +64,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             Ast::Function(
                 labels
                     .map(|label| Label {
-                        identifier: Identifier {
-                            name: label.into_span(),
-                        },
+                        identifier: Identifier::new(label.into_span()),
                     }).collect(),
                 Box::new(Ast::new(block)),
             )
@@ -67,12 +73,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             let mut inner = pair.into_inner();
             let ident = inner.next().unwrap();
             let arguments = inner.map(|it| Box::new(Ast::new(it))).collect();
-            Ast::Application(
-                Identifier {
-                    name: ident.into_span(),
-                },
-                arguments,
-            )
+            Ast::Application(Identifier::new(ident.into_span()), arguments)
         }
         Rule::conditional => {
             let mut inner = pair.into_inner();
@@ -173,7 +174,6 @@ trait Visitor<T> {
 mod tests {
     use super::*;
     use pest::Parser;
-    use pest::Position;
 
     #[test]
     fn converts_empty() {
