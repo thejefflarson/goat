@@ -23,6 +23,12 @@ pub struct Label<'a> {
     identifier: Identifier<'a>,
 }
 
+impl<'a> Label<'a> {
+    fn new(identifier: Identifier<'a>) -> Self {
+        Label { identifier }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum Ast<'a> {
     Empty,
@@ -63,9 +69,8 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             let block = inner.next().unwrap();
             Ast::Function(
                 labels
-                    .map(|label| Label {
-                        identifier: Identifier::new(label.into_span()),
-                    }).collect(),
+                    .map(|label| Label::new(Identifier::new(label.into_span())))
+                    .collect(),
                 Box::new(Ast::new(block)),
             )
         }
@@ -118,56 +123,143 @@ impl<'i> Ast<'i> {
     }
 }
 
-trait Visitor<T> {
-    fn visit_empty(&self) -> T;
-    fn visit_number(&self, number: &Span) -> T;
-    fn visit_string(&self, string: &Span) -> T;
-    fn visit_identifier(&self, identifier: &Identifier) -> T;
-    fn visit_program(&self, ast: &Box<Ast>) -> T;
-    fn visit_function(&self, labels: &Vec<Label>, program: &Box<Ast>) -> T;
-    fn visit_label(&self, label: &Label) -> T;
-    fn visit_application(&self, identifier: &Identifier, arguments: &Vec<Box<Ast>>) -> T;
+pub trait Visitor {
+    type Output;
+    fn visit_empty(&self) -> Self::Output;
+    fn visit_number(&self, number: &Span) -> Self::Output;
+    fn visit_string(&self, string: &Span) -> Self::Output;
+    fn visit_identifier(&self, identifier: &Identifier) -> Self::Output;
+    fn visit_program(&self, ast: Box<Ast>) -> Self::Output;
+    fn visit_function(&self, labels: &Vec<Label>, program: Box<Ast>) -> Self::Output;
+    fn visit_label(&self, label: &Label) -> Self::Output;
+    fn visit_application(&self, identifier: &Identifier, arguments: Vec<Box<Ast>>) -> Self::Output;
     fn visit_conditional(
         &self,
-        true_branch: &Box<Ast>,
-        false_branch: &Box<Ast>,
-        else_branch: &Option<Box<Ast>>,
-    ) -> T;
+        true_branch: Box<Ast>,
+        false_branch: Box<Ast>,
+        else_branch: Option<Box<Ast>>,
+    ) -> Self::Output;
     fn visit_declaration(
         &self,
         identifier: &Identifier,
-        rhs: &Box<Ast>,
-        rest: &Option<Box<Ast>>,
-    ) -> T;
-    fn visit_plus(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
-    fn visit_minus(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
-    fn visit_mult(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
-    fn visit_div(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
-    fn visit_lte(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
-    fn visit_gte(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
-    fn visit_lt(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
-    fn visit_gt(&self, lhs: &Box<Ast>, rhs: &Box<Ast>) -> T;
-    fn visit(&self, ast: Ast) -> T {
+        rhs: Box<Ast>,
+        rest: Option<Box<Ast>>,
+    ) -> Self::Output;
+    fn visit_plus(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    fn visit_minus(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    fn visit_mult(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    fn visit_div(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    fn visit_lte(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    fn visit_gte(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    fn visit_lt(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    fn visit_gt(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    fn visit(&self, ast: Ast) -> Self::Output {
         match ast {
             Ast::Empty => self.visit_empty(),
             Ast::Number(n) => self.visit_number(&n),
             Ast::Str(s) => self.visit_string(&s),
             Ast::Identifier(i) => self.visit_identifier(&i),
-            Ast::Program(p) => self.visit_program(&p),
-            Ast::Function(l, p) => self.visit_function(&l, &p),
-            Ast::Application(i, a) => self.visit_application(&i, &a),
-            Ast::Conditional(t, f, e) => self.visit_conditional(&t, &f, &e),
-            Ast::Declaration(i, r, rst) => self.visit_declaration(&i, &r, &rst),
-            Ast::Plus(lhs, rhs) => self.visit_plus(&lhs, &rhs),
-            Ast::Minus(lhs, rhs) => self.visit_minus(&lhs, &rhs),
-            Ast::Mult(lhs, rhs) => self.visit_mult(&lhs, &rhs),
-            Ast::Div(lhs, rhs) => self.visit_div(&lhs, &rhs),
-            Ast::Lte(lhs, rhs) => self.visit_lte(&lhs, &rhs),
-            Ast::Gte(lhs, rhs) => self.visit_gte(&lhs, &rhs),
-            Ast::Lt(lhs, rhs) => self.visit_lt(&lhs, &rhs),
-            Ast::Gt(lhs, rhs) => self.visit_gt(&lhs, &rhs),
+            Ast::Program(p) => self.visit_program(p),
+            Ast::Function(l, p) => self.visit_function(&l, p),
+            Ast::Application(i, a) => self.visit_application(&i, a),
+            Ast::Conditional(t, f, e) => self.visit_conditional(t, f, e),
+            Ast::Declaration(i, r, rst) => self.visit_declaration(&i, r, rst),
+            Ast::Plus(lhs, rhs) => self.visit_plus(lhs, rhs),
+            Ast::Minus(lhs, rhs) => self.visit_minus(lhs, rhs),
+            Ast::Mult(lhs, rhs) => self.visit_mult(lhs, rhs),
+            Ast::Div(lhs, rhs) => self.visit_div(lhs, rhs),
+            Ast::Lte(lhs, rhs) => self.visit_lte(lhs, rhs),
+            Ast::Gte(lhs, rhs) => self.visit_gte(lhs, rhs),
+            Ast::Lt(lhs, rhs) => self.visit_lt(lhs, rhs),
+            Ast::Gt(lhs, rhs) => self.visit_gt(lhs, rhs),
         }
     }
+}
+
+pub fn fold_empty<T: Folder + ?Sized>(_folder: &T) -> Ast {
+    Ast::Empty
+}
+
+pub fn fold_span<'b, 'a: 'b, T: Folder + ?Sized>(_folder: &'b T, number: &'a Span<'a>) -> Span<'a> {
+    number.clone()
+}
+
+pub fn fold_identifier<'b, 'a: 'b, T: Folder + ?Sized>(
+    _folder: &'b T,
+    identifier: &'a Identifier<'a>,
+) -> Identifier<'a> {
+    identifier.clone()
+}
+
+pub fn fold_program<T: Folder + ?Sized>(folder: &T, program: Box<Ast>) -> Box<Ast> {
+    folder.fold(program)
+}
+
+pub fn fold_label<T: Folder + ?Sized>(folder: &T, label: Label) -> Label {
+    let identifier = label.fold_identifier(label.identifier);
+    Label::new(identifier)
+}
+
+pub fn fold_function<T: Folder + ?Sized>(
+    folder: &T,
+    labels: &Vec<Label>,
+    program: Box<Ast>,
+) -> Box<Ast> {
+    let program = folder.fold_program(program);
+    let labels: Vec<Label> = labels.map(|l| l.clone()).collect();
+    Box::new(Ast::Function(labels, program))
+}
+
+pub trait Folder {
+    fn fold_empty(&self) -> Ast {
+        fold_empty(self)
+    }
+
+    fn fold_number<'b, 'a: 'b>(&'b self, number: &'a Span<'a>) -> Span<'a> {
+        fold_span(self, number)
+    }
+
+    fn fold_string<'b, 'a: 'b>(&'b self, string: &'a Span<'a>) -> Span<'a> {
+        fold_span(self, string)
+    }
+
+    fn fold_identifier<'b, 'a: 'b>(&'b self, identifier: &'a Identifier<'a>) -> Identifier<'a> {
+        fold_identifier(self, identifier)
+    }
+
+    fn fold_program(&self, program: Box<Ast>) -> Box<Ast> {
+        fold_program(self, program)
+    }
+
+    fn fold_label(&self, label: Label) -> Label {
+        fold_label(self, label)
+    }
+
+    fn fold_function(&self, labels: &Vec<Label>, program: Box<Ast>) -> Box<Ast> {
+        fold_function(self, labels, program)
+    }
+    // fn visit_label(&self, label: &Label) -> Self::Output;
+    // fn visit_application(&self, identifier: &Identifier, arguments: Vec<Box<Ast>>) -> Self::Output;
+    // fn visit_conditional(
+    //     &self,
+    //     true_branch: Box<Ast>,
+    //     false_branch: Box<Ast>,
+    //     else_branch: Option<Box<Ast>>,
+    // ) -> Self::Output;
+    // fn visit_declaration(
+    //     &self,
+    //     identifier: &Identifier,
+    //     rhs: Box<Ast>,
+    //     rest: Option<Box<Ast>>,
+    // ) -> Self::Output;
+    // fn visit_plus(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    // fn visit_minus(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    // fn visit_mult(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    // fn visit_div(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    // fn visit_lte(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    // fn visit_gte(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    // fn visit_lt(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+    // fn visit_gt(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
 }
 
 #[cfg(test)]
