@@ -206,7 +206,7 @@ pub fn fold_function<T: Folder + ?Sized>(
     program: Box<Ast>,
 ) -> Box<Ast> {
     let program = folder.fold_program(program);
-    let labels: Vec<Label> = labels.map(|l| l.clone()).collect();
+    let labels: Vec<Label> = labels.iter().map(|l| l.clone()).collect();
     Box::new(Ast::Function(labels, program))
 }
 
