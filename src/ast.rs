@@ -3,7 +3,7 @@ use pest::iterators::Pair;
 use pest::prec_climber::{Assoc, Operator, PrecClimber};
 use pest::Span;
 
-#[derive(Hash, Eq, PartialEq, Debug)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub struct Identifier<'a> {
     name: Span<'a>,
     internal: String,
@@ -18,7 +18,7 @@ impl<'a> Identifier<'a> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Label<'a> {
     identifier: Identifier<'a>,
 }
@@ -186,27 +186,33 @@ pub fn fold_span<'b, 'a: 'b, T: Folder + ?Sized>(_folder: &'b T, number: &'a Spa
 
 pub fn fold_identifier<'b, 'a: 'b, T: Folder + ?Sized>(
     _folder: &'b T,
-    identifier: &'a Identifier<'a>,
+    identifier: Identifier<'a>,
 ) -> Identifier<'a> {
     identifier.clone()
 }
 
-pub fn fold_program<T: Folder + ?Sized>(folder: &T, program: Box<Ast>) -> Box<Ast> {
-    folder.fold(program)
+pub fn fold_program<'b, 'a: 'b, T: Folder + ?Sized>(
+    folder: &'b T,
+    program: Box<Ast<'a>>,
+) -> Box<Ast<'a>> {
+    unimplemented!()
 }
 
-pub fn fold_label<T: Folder + ?Sized>(folder: &T, label: Label) -> Label {
-    let identifier = label.fold_identifier(label.identifier);
+pub fn fold_label<'b, 'a: 'b, T: Folder + ?Sized>(folder: &'b T, label: Label<'a>) -> Label<'a> {
+    let identifier = folder.fold_identifier(label.identifier);
     Label::new(identifier)
 }
 
-pub fn fold_function<T: Folder + ?Sized>(
-    folder: &T,
-    labels: &Vec<Label>,
-    program: Box<Ast>,
-) -> Box<Ast> {
+pub fn fold_function<'b, 'a: 'b, T: Folder + ?Sized>(
+    folder: &'b T,
+    labels: &Vec<Label<'a>>,
+    program: Box<Ast<'a>>,
+) -> Box<Ast<'a>> {
     let program = folder.fold_program(program);
-    let labels: Vec<Label> = labels.iter().map(|l| l.clone()).collect();
+    let labels: Vec<Label<'a>> = labels
+        .iter()
+        .map(|l| folder.fold_label(l.clone()))
+        .collect();
     Box::new(Ast::Function(labels, program))
 }
 
@@ -223,21 +229,26 @@ pub trait Folder {
         fold_span(self, string)
     }
 
-    fn fold_identifier<'b, 'a: 'b>(&'b self, identifier: &'a Identifier<'a>) -> Identifier<'a> {
+    fn fold_identifier<'b, 'a: 'b>(&'b self, identifier: Identifier<'a>) -> Identifier<'a> {
         fold_identifier(self, identifier)
     }
 
-    fn fold_program(&self, program: Box<Ast>) -> Box<Ast> {
+    fn fold_program<'b, 'a: 'b>(&'b self, program: Box<Ast<'a>>) -> Box<Ast<'a>> {
         fold_program(self, program)
     }
 
-    fn fold_label(&self, label: Label) -> Label {
+    fn fold_label<'b, 'a: 'b>(&'b self, label: Label<'a>) -> Label<'a> {
         fold_label(self, label)
     }
 
-    fn fold_function(&self, labels: &Vec<Label>, program: Box<Ast>) -> Box<Ast> {
+    fn fold_function<'b, 'a: 'b>(
+        &'b self,
+        labels: &Vec<Label<'a>>,
+        program: Box<Ast<'a>>,
+    ) -> Box<Ast<'a>> {
         fold_function(self, labels, program)
     }
+
     // fn visit_label(&self, label: &Label) -> Self::Output;
     // fn visit_application(&self, identifier: &Identifier, arguments: Vec<Box<Ast>>) -> Self::Output;
     // fn visit_conditional(
