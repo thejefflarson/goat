@@ -84,7 +84,7 @@ mod tests {
 
         parses_to! {
             parser: GoatParser,
-            input: "aA",
+            input: "a_",
             rule: Rule::ident,
             tokens: [ident(0, 2)]
         }
@@ -94,6 +94,13 @@ mod tests {
             input: "a9",
             rule: Rule::ident,
             tokens: [ident(0, 2)]
+        }
+
+        parses_to! {
+            parser: GoatParser,
+            input: "نامهای",
+            rule: Rule::ident,
+            tokens: [ident(0, 12)]
         }
     }
 
