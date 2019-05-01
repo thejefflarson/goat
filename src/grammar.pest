@@ -58,7 +58,7 @@ number = @{ "-"?
 }
 
 WHITESPACE = _{ " " | "\t" | NEWLINE }
-COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
+COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
 
 raw_string = { (!"\"" ~ ANY)+ }
 string = @{ "\"" ~ raw_string ~ "\"" }

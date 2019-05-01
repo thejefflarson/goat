@@ -20,6 +20,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_comment() {
+        parses_to! {
+            parser: GoatParser,
+            input: "# comment",
+            rule: Rule::goat,
+            tokens: [goat(0, 9, [EOI(9, 9)])]
+        }
+    }
+
+    #[test]
     fn parses_numbers() {
         parses_to! {
             parser: GoatParser,
