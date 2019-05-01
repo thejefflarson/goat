@@ -4,6 +4,6 @@ version = "0.1.0"
 authors = ["Jeff Larson <thejefflarson@gmail.com>"]
 
 [dependencies]
-llvm-sys = "70.0.0"
+llvm-sys = "80.0.0"
 pest = "2.0.0"
 pest_derive = "2.0.0"

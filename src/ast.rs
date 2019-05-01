@@ -36,9 +36,19 @@ pub enum Ast<'a> {
     Identifier(Identifier<'a>),
     Str(Span<'a>),
     Program(Box<Ast<'a>>),
-    Function(Vec<Label<'a>>, Box<Ast<'a>>),
-    Application(Identifier<'a>, Vec<Box<Ast<'a>>>),
-    Conditional(Box<Ast<'a>>, Box<Ast<'a>>, Option<Box<Ast<'a>>>),
+    Function {
+        labels: Vec<Label<'a>>,
+        body: Box<Ast<'a>>,
+    },
+    Application {
+        identifier: Identifier<'a>,
+        arguments: Vec<Box<Ast<'a>>>,
+    },
+    Conditional {
+        condition: Box<Ast<'a>>,
+        true_branch: Box<Ast<'a>>,
+        else_branch: Option<Box<Ast<'a>>>,
+    },
     Plus(Box<Ast<'a>>, Box<Ast<'a>>),
     Minus(Box<Ast<'a>>, Box<Ast<'a>>),
     Mult(Box<Ast<'a>>, Box<Ast<'a>>),
@@ -47,7 +57,11 @@ pub enum Ast<'a> {
     Gte(Box<Ast<'a>>, Box<Ast<'a>>),
     Lt(Box<Ast<'a>>, Box<Ast<'a>>),
     Gt(Box<Ast<'a>>, Box<Ast<'a>>),
-    Declaration(Identifier<'a>, Box<Ast<'a>>, Option<Box<Ast<'a>>>),
+    Declaration {
+        identifier: Identifier<'a>,
+        body: Box<Ast<'a>>,
+        rest: Option<Box<Ast<'a>>>,
+    },
 }
 
 fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
@@ -60,32 +74,39 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             };
             Ast::Program(Box::new(node))
         }
-        Rule::string => Ast::Str(pair.into_span()),
-        Rule::number => Ast::Number(pair.into_span()),
-        Rule::ident => Ast::Identifier(Identifier::new(pair.into_span())),
+        Rule::string => Ast::Str(pair.as_span()),
+        Rule::number => Ast::Number(pair.as_span()),
+        Rule::ident => Ast::Identifier(Identifier::new(pair.as_span())),
         Rule::function => {
             let mut inner = pair.into_inner();
             let labels = inner.next().unwrap().into_inner();
             let block = inner.next().unwrap();
-            Ast::Function(
-                labels
-                    .map(|label| Label::new(Identifier::new(label.into_span())))
+            Ast::Function {
+                labels: labels
+                    .map(|label| Label::new(Identifier::new(label.as_span())))
                     .collect(),
-                Box::new(Ast::new(block)),
-            )
+                body: Box::new(Ast::new(block)),
+            }
         }
         Rule::application => {
             let mut inner = pair.into_inner();
             let ident = inner.next().unwrap();
             let arguments = inner.map(|it| Box::new(Ast::new(it))).collect();
-            Ast::Application(Identifier::new(ident.into_span()), arguments)
+            Ast::Application {
+                identifier: Identifier::new(ident.as_span()),
+                arguments,
+            }
         }
         Rule::conditional => {
             let mut inner = pair.into_inner();
             let cond = Ast::new(inner.next().unwrap());
             let then = Ast::new(inner.next().unwrap());
-            let els = inner.next().map(|i| Box::new(Ast::new(i)));
-            Ast::Conditional(Box::new(cond), Box::new(then), els)
+            let else_branch = inner.next().map(|i| Box::new(Ast::new(i)));
+            Ast::Conditional {
+                condition: Box::new(cond),
+                true_branch: Box::new(then),
+                else_branch,
+            }
         }
         Rule::expr => {
             let climber = PrecClimber::new(vec![
@@ -135,8 +156,8 @@ pub trait Visitor {
     fn visit_application(&self, identifier: &Identifier, arguments: Vec<Box<Ast>>) -> Self::Output;
     fn visit_conditional(
         &self,
+        condition: Box<Ast>,
         true_branch: Box<Ast>,
-        false_branch: Box<Ast>,
         else_branch: Option<Box<Ast>>,
     ) -> Self::Output;
     fn visit_declaration(
@@ -160,10 +181,21 @@ pub trait Visitor {
             Ast::Str(s) => self.visit_string(&s),
             Ast::Identifier(i) => self.visit_identifier(&i),
             Ast::Program(p) => self.visit_program(p),
-            Ast::Function(l, p) => self.visit_function(&l, p),
-            Ast::Application(i, a) => self.visit_application(&i, a),
-            Ast::Conditional(t, f, e) => self.visit_conditional(t, f, e),
-            Ast::Declaration(i, r, rst) => self.visit_declaration(&i, r, rst),
+            Ast::Function { labels: l, body: p } => self.visit_function(&l, p),
+            Ast::Application {
+                identifier: i,
+                arguments: a,
+            } => self.visit_application(&i, a),
+            Ast::Conditional {
+                condition: c,
+                true_branch: t,
+                else_branch: e,
+            } => self.visit_conditional(c, t, e),
+            Ast::Declaration {
+                identifier: i,
+                body: b,
+                rest: r,
+            } => self.visit_declaration(&i, b, r),
             Ast::Plus(lhs, rhs) => self.visit_plus(lhs, rhs),
             Ast::Minus(lhs, rhs) => self.visit_minus(lhs, rhs),
             Ast::Mult(lhs, rhs) => self.visit_mult(lhs, rhs),
@@ -213,7 +245,10 @@ pub fn fold_function<'b, 'a: 'b, T: Folder + ?Sized>(
         .iter()
         .map(|l| folder.fold_label(l.clone()))
         .collect();
-    Box::new(Ast::Function(labels, program))
+    Box::new(Ast::Function {
+        labels: labels,
+        body: program,
+    })
 }
 
 pub trait Folder {
