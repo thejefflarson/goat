@@ -2,6 +2,7 @@ use parser::*;
 use pest::iterators::Pair;
 use pest::prec_climber::{Assoc, Operator, PrecClimber};
 use pest::Span;
+use std::cell::RefCell;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub struct Identifier<'a> {
@@ -17,8 +18,11 @@ impl<'a> Identifier<'a> {
         }
     }
 
-    fn rename(&mut self, name: String) {
-        self.internal = name;
+    fn rename(&self, name: String) -> Self {
+        Identifier {
+            name: self.name.clone(),
+            internal: name,
+        }
     }
 }
 
@@ -329,12 +333,12 @@ pub trait Folder<'a> {
 
 struct Env {}
 const ALPHA: &str = "abcdefghijklmnopqrstuvwxyz";
-struct Rewriter {
+struct Namer {
     last: usize,
 }
-impl Rewriter {
+impl Namer {
     fn new() -> Self {
-        Rewriter { last: 0 }
+        Namer { last: 0 }
     }
 
     fn next(&mut self) -> String {
@@ -354,7 +358,25 @@ impl Rewriter {
     }
 }
 
-impl<'a> Folder<'a> for Rewriter {}
+struct Rewriter {
+    namer: RefCell<Namer>,
+}
+
+impl Rewriter {
+    fn new() -> Self {
+        Rewriter {
+            namer: RefCell::new(Namer::new()),
+        }
+    }
+}
+
+impl<'a> Folder<'a> for Rewriter {
+    fn visit_identifier(&self, identifier: Identifier<'a>) -> Ast<'a> {
+        let mut namer = self.namer.borrow_mut();
+        let var = namer.next();
+        Ast::Identifier(identifier.rename(var))
+    }
+}
 
 #[cfg(test)]
 mod tests {
