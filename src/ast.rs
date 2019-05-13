@@ -358,19 +358,19 @@ impl Namer {
     }
 }
 
-struct Rewriter {
+struct Renamer {
     namer: RefCell<Namer>,
 }
 
-impl Rewriter {
+impl Renamer {
     fn new() -> Self {
-        Rewriter {
+        Renamer {
             namer: RefCell::new(Namer::new()),
         }
     }
 }
 
-impl<'a> Folder<'a> for Rewriter {
+impl<'a> Folder<'a> for Renamer {
     fn visit_identifier(&self, identifier: Identifier<'a>) -> Ast<'a> {
         let mut namer = self.namer.borrow_mut();
         let var = namer.next();
@@ -430,7 +430,7 @@ mod tests {
         let id = "b";
         let pairs = GoatParser::parse(Rule::goat, id).unwrap().nth(0).unwrap();
         let ast = Ast::new(pairs.clone());
-        let rewrite = Rewriter::new().visit(ast);
+        let rewrite = Renamer::new().visit(ast);
         let ident = GoatParser::parse(Rule::ident, id)
             .unwrap()
             .nth(0)
