@@ -241,7 +241,7 @@ pub trait Folder<'a> {
     }
 
     fn visit_program(&self, ast: Box<Ast<'a>>) -> Ast<'a> {
-        self.visit(*ast)
+        Ast::Program(Box::new(self.visit(*ast)))
     }
 
     fn visit_function(&self, labels: Vec<Label<'a>>, program: Box<Ast<'a>>) -> Ast<'a> {
@@ -423,5 +423,34 @@ mod tests {
             .unwrap();
         let ast = Ast::new(pairs);
         println!("{:#?}", ast)
+    }
+
+    #[test]
+    fn rewrites_ast() {
+        let id = "b";
+        let pairs = GoatParser::parse(Rule::goat, id).unwrap().nth(0).unwrap();
+        let ast = Ast::new(pairs.clone());
+        let rewrite = Rewriter::new().visit(ast);
+        let ident = GoatParser::parse(Rule::ident, id)
+            .unwrap()
+            .nth(0)
+            .unwrap()
+            .as_span();
+
+        assert_eq!(
+            Ast::new(pairs),
+            Ast::Program(Box::new(Ast::Identifier(Identifier {
+                internal: "b".to_string(),
+                name: ident.clone()
+            })))
+        );
+
+        assert_eq!(
+            rewrite,
+            Ast::Program(Box::new(Ast::Identifier(Identifier {
+                internal: "a".to_string(),
+                name: ident
+            })))
+        );
     }
 }
