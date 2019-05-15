@@ -62,14 +62,14 @@ mod tests {
             parser: GoatParser,
             input: "true",
             rule: Rule::boolean,
-            tokens: [boolean(0, 4)]
+            tokens: [boolean(0, 4, [true_lit(0, 4)])]
         }
 
         parses_to! {
             parser: GoatParser,
             input: "false",
             rule: Rule::boolean,
-            tokens: [boolean(0, 5)]
+            tokens: [boolean(0, 5, [false_lit(0, 5)])]
         }
     }
 
@@ -171,7 +171,7 @@ mod tests {
                     ident(0, 1),
                     arguments(2, 34, [
                         expr(2, 3, [number(2, 3)]),
-                        expr(5, 9, [boolean(5, 9)]),
+                        expr(5, 9, [boolean(5, 9, [true_lit(5, 9)])]),
                         expr(11, 12, [ident(11, 12)]),
                         expr(14, 34, [
                             function(14, 34, [
@@ -202,7 +202,7 @@ mod tests {
             rule: Rule::conditional,
             tokens: [
                 conditional(0, 26, [
-                    expr(3, 8, [boolean(3,7)]),
+                    expr(3, 8, [boolean(3, 7, [true_lit(3, 7)])]),
                     expr(13, 15, [number(13, 14)]),
                     expr(20, 22, [number(20, 21)])
                 ])

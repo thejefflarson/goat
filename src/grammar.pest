@@ -9,11 +9,11 @@ done_lit = _{ "done" }
 start_at_lit = _{ "start at" }
 repeat_lit = _{ "repeat" }
 times_lit = _{ "times" }
-true_lit = _{ "true" }
-false_lit = _{ "false" }
+true_lit = { "true" }
+false_lit = { "false" }
 boolean = { true_lit | false_lit }
 return_lit = _{ "return" }
-keywords = {
+keywords = _{
   program_lit |
   if_lit |
   then_lit |

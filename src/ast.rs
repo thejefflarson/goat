@@ -38,11 +38,18 @@ impl<'a> Label<'a> {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
+pub enum Bool {
+    True,
+    False,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Ast<'a> {
     Empty,
     Number(Span<'a>),
     Identifier(Identifier<'a>),
     Str(Span<'a>),
+    Bool(Bool),
     Program(Box<Ast<'a>>),
     Function {
         labels: Vec<Label<'a>>,
@@ -85,6 +92,9 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
         Rule::string => Ast::Str(pair.as_span()),
         Rule::number => Ast::Number(pair.as_span()),
         Rule::ident => Ast::Identifier(Identifier::new(pair.as_span())),
+        Rule::boolean => child(pair.into_inner().nth(0).unwrap()),
+        Rule::true_lit => Ast::Bool(Bool::True),
+        Rule::false_lit => Ast::Bool(Bool::False),
         Rule::function => {
             let mut inner = pair.into_inner();
             let labels = inner.next().unwrap().into_inner();
@@ -136,18 +146,19 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
                 Rule::lt => Ast::Lt(Box::new(lhs), Box::new(rhs)),
                 Rule::gte => Ast::Gte(Box::new(lhs), Box::new(rhs)),
                 Rule::gt => Ast::Gt(Box::new(lhs), Box::new(rhs)),
-
                 _ => unreachable!(),
             };
             climber.climb(pair.into_inner(), Ast::new, infix)
         }
         Rule::EOI => Ast::Empty,
-        _ => unimplemented!(),
+        Rule::true_lit => Ast::Bool(Bool::True),
+        Rule::false_lit => Ast::Bool(Bool::False),
+        _ => panic!("Couldn't build {:?}", message = pair),
     }
 }
 
 impl<'i> Ast<'i> {
-    fn new<'a: 'i>(pair: Pair<'a, Rule>) -> Self {
+    pub fn new<'a: 'i>(pair: Pair<'a, Rule>) -> Self {
         child(pair)
     }
 }
@@ -183,6 +194,7 @@ macro_rules! visit_impl {
             Ast::Gte(lhs, rhs) => $self.visit_gte(lhs, rhs),
             Ast::Lt(lhs, rhs) => $self.visit_lt(lhs, rhs),
             Ast::Gt(lhs, rhs) => $self.visit_gt(lhs, rhs),
+            Ast::Bool(b) => $self.visit_bool(b),
         }
     };
 }
@@ -193,6 +205,7 @@ pub trait Visitor {
     fn visit_empty(&self) -> Self::Output;
     fn visit_number(&self, number: Span) -> Self::Output;
     fn visit_string(&self, string: Span) -> Self::Output;
+    fn visit_bool(&self, b: Bool) -> Self::Output;
     fn visit_identifier(&self, identifier: Identifier) -> Self::Output;
     fn visit_program(&self, ast: Box<Ast>) -> Self::Output;
     fn visit_function(&self, labels: Vec<Label>, program: Box<Ast>) -> Self::Output;
@@ -238,6 +251,10 @@ pub trait Folder<'a> {
 
     fn visit_identifier(&self, identifier: Identifier<'a>) -> Ast<'a> {
         Ast::Identifier(identifier.clone())
+    }
+
+    fn visit_bool(&self, b: Bool) -> Ast<'a> {
+        Ast::Bool(b)
     }
 
     fn visit_program(&self, ast: Box<Ast<'a>>) -> Ast<'a> {
@@ -358,12 +375,12 @@ impl Namer {
     }
 }
 
-struct Renamer {
+pub struct Renamer {
     namer: RefCell<Namer>,
 }
 
 impl Renamer {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Renamer {
             namer: RefCell::new(Namer::new()),
         }
@@ -452,5 +469,13 @@ mod tests {
                 name: ident
             })))
         );
+    }
+
+    #[test]
+    fn parses_mixed_types_in_booleans() {
+        let math = "r<false<r";
+        let pairs = GoatParser::parse(Rule::goat, math).unwrap().nth(0).unwrap();
+        let ast = Ast::new(pairs.clone());
+        let rewrite = Renamer::new().visit(ast);
     }
 }
