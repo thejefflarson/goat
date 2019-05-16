@@ -151,8 +151,6 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             climber.climb(pair.into_inner(), Ast::new, infix)
         }
         Rule::EOI => Ast::Empty,
-        Rule::true_lit => Ast::Bool(Bool::True),
-        Rule::false_lit => Ast::Bool(Bool::False),
         _ => panic!("Couldn't build {:?}", message = pair),
     }
 }
@@ -472,10 +470,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_mixed_types_in_booleans() {
-        let math = "r<false<r";
+    fn parses_boolean_comparisons() {
+        let math = "true<false";
         let pairs = GoatParser::parse(Rule::goat, math).unwrap().nth(0).unwrap();
-        let ast = Ast::new(pairs.clone());
-        let rewrite = Renamer::new().visit(ast);
+        let ast = Ast::new(pairs);
+        let rewrite = Renamer::new().visit(ast.clone());
+
+        assert_eq!(
+            rewrite,
+            Ast::Program(Box::new(Ast::Lt(
+                Box::new(Ast::Bool(Bool::True)),
+                Box::new(Ast::Bool(Bool::False))
+            )))
+        );
     }
 }
