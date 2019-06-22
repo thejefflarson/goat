@@ -1,4 +1,4 @@
-use crate::ast::*;
+use crate::ast::{Ast, Bool, Identifier, Label};
 use pest::Span;
 
 #[macro_export]
