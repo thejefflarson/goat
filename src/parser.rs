@@ -5,6 +5,8 @@ const _GRAMMAR: &str = include_str!("grammar.pest");
 #[grammar = "grammar.pest"]
 pub struct GoatParser;
 
+pub fn parse() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
