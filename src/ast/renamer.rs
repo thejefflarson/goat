@@ -1,3 +1,6 @@
+use ast::{Ast, Folder, Identifier};
+use std::cell::RefCell;
+
 const ALPHA: &str = "abcdefghijklmnopqrstuvwxyz";
 struct Namer {
     last: usize,
@@ -47,6 +50,8 @@ impl<'a> Folder<'a> for Renamer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ast::Bool;
+    use parser::{GoatParser, Rule};
     use pest::Parser;
     #[test]
     fn rewrites_ast() {
