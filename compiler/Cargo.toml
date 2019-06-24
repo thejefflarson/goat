@@ -1,0 +1,11 @@
+[package]
+name = "goat_compiler"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+llvm-sys = "80.0.0"
+
+goat_parser = { path = "../parser" }
+goat_checker = { path = "../checker" }

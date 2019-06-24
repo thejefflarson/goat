@@ -1,6 +1,5 @@
-
 [package]
-name = "goat-fuzz"
+name = "goat_fuzz"
 version = "0.0.1"
 authors = ["Automatically generated"]
 publish = false
@@ -8,8 +7,9 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
-[dependencies.goat]
-path = ".."
+[dependencies.goat_parser]
+path = "../parser"
+
 [dependencies.libfuzzer-sys]
 git = "https://github.com/rust-fuzz/libfuzzer-sys.git"
 

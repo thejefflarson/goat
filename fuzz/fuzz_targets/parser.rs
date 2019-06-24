@@ -1,10 +1,10 @@
 #![no_main]
 #[macro_use]
 extern crate libfuzzer_sys;
-extern crate goat;
-use goat::ast::*;
-use goat::parser::*;
-use goat::Parser;
+extern crate goat_parser;
+use goat_parser::ast::*;
+use goat_parser::parser::*;
+use goat_parser::Parser;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(s) = std::str::from_utf8(data) {

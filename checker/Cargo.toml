@@ -1,0 +1,9 @@
+[package]
+name = "goat_checker"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+edition = "2018"
+
+
+[dependencies]
+goat_parser = { path = "../parser" }

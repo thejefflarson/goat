@@ -1,10 +1,6 @@
-[package]
-name = "goat"
-version = "0.1.0"
-authors = ["Jeff Larson <thejefflarson@gmail.com>"]
-edition = "2018"
-
-[dependencies]
-llvm-sys = "80.0.0"
-pest = "2.0.0"
-pest_derive = "2.0.0"
+[workspace]
+members = [
+    "parser",
+    "checker",
+    "compiler"
+]
