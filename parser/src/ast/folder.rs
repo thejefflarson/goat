@@ -1,6 +1,14 @@
 use crate::ast::{Ast, Bool, Identifier, Label};
 use pest::Span;
 
+macro_rules! fold_op {
+    ($name:ident, $enum:ident) => {
+        fn $name(&self, lhs: Ast<'a>, rhs: Ast<'a>) -> Ast<'a> {
+            Ast::$enum(Box::new(self.visit(lhs)), Box::new(self.visit(rhs)))
+        }
+    }
+}
+
 /// Folders transform an ast into a new tree.
 pub trait Folder<'a> {
     fn visit_empty(&self) -> Ast<'a> {
@@ -23,11 +31,11 @@ pub trait Folder<'a> {
         Ast::Bool(b)
     }
 
-    fn visit_program(&self, ast: Box<Ast<'a>>) -> Ast<'a> {
-        Ast::Program(Box::new(self.visit(*ast)))
+    fn visit_program(&self, ast: Ast<'a>) -> Ast<'a> {
+        Ast::Program(Box::new(self.visit(ast)))
     }
 
-    fn visit_function(&self, labels: Vec<Label<'a>>, program: Box<Ast<'a>>) -> Ast<'a> {
+    fn visit_function(&self, labels: Vec<Label<'a>>, program: Ast<'a>) -> Ast<'a> {
         let body = Box::new(Folder::visit_program(self, program));
         Ast::Function {
             labels: labels.clone(),
@@ -35,14 +43,10 @@ pub trait Folder<'a> {
         }
     }
 
-    fn visit_application(
-        &self,
-        identifier: Identifier<'a>,
-        arguments: Vec<Box<Ast<'a>>>,
-    ) -> Ast<'a> {
-        let mut args: Vec<Box<Ast<'a>>> = vec![];
+    fn visit_application(&self, identifier: Identifier<'a>, arguments: Vec<Ast<'a>>) -> Ast<'a> {
+        let mut args: Vec<Ast<'a>> = vec![];
         for arg in arguments {
-            args.push(Box::new(self.visit(*arg)))
+            args.push(self.visit(arg))
         }
 
         Ast::Application {
@@ -53,13 +57,13 @@ pub trait Folder<'a> {
 
     fn visit_conditional(
         &self,
-        condition: Box<Ast<'a>>,
-        true_branch: Box<Ast<'a>>,
+        condition: Ast<'a>,
+        true_branch: Ast<'a>,
         else_branch: Option<Box<Ast<'a>>>,
     ) -> Ast<'a> {
         Ast::Conditional {
-            condition: Box::new(self.visit(*condition)),
-            true_branch: Box::new(self.visit(*true_branch)),
+            condition: Box::new(self.visit(condition)),
+            true_branch: Box::new(self.visit(true_branch)),
             else_branch: else_branch.and_then(|x| Some(Box::new(self.visit(*x)))),
         }
     }
@@ -67,47 +71,24 @@ pub trait Folder<'a> {
     fn visit_declaration(
         &self,
         identifier: Identifier<'a>,
-        body: Box<Ast<'a>>,
+        body: Ast<'a>,
         rest: Option<Box<Ast<'a>>>,
     ) -> Ast<'a> {
         Ast::Declaration {
             identifier: identifier.clone(),
-            body: Box::new(self.visit(*body)),
+            body: Box::new(self.visit(body)),
             rest: rest.and_then(|x| Some(Box::new(self.visit(*x)))),
         }
     }
 
-    fn visit_plus(&self, lhs: Box<Ast<'a>>, rhs: Box<Ast<'a>>) -> Ast<'a> {
-        Ast::Plus(Box::new(self.visit(*lhs)), Box::new(self.visit(*rhs)))
-    }
-
-    fn visit_minus(&self, lhs: Box<Ast<'a>>, rhs: Box<Ast<'a>>) -> Ast<'a> {
-        Ast::Minus(Box::new(self.visit(*lhs)), Box::new(self.visit(*rhs)))
-    }
-
-    fn visit_mult(&self, lhs: Box<Ast<'a>>, rhs: Box<Ast<'a>>) -> Ast<'a> {
-        Ast::Mult(Box::new(self.visit(*lhs)), Box::new(self.visit(*rhs)))
-    }
-
-    fn visit_div(&self, lhs: Box<Ast<'a>>, rhs: Box<Ast<'a>>) -> Ast<'a> {
-        Ast::Div(Box::new(self.visit(*lhs)), Box::new(self.visit(*rhs)))
-    }
-
-    fn visit_lte(&self, lhs: Box<Ast<'a>>, rhs: Box<Ast<'a>>) -> Ast<'a> {
-        Ast::Lte(Box::new(self.visit(*lhs)), Box::new(self.visit(*rhs)))
-    }
-
-    fn visit_gte(&self, lhs: Box<Ast<'a>>, rhs: Box<Ast<'a>>) -> Ast<'a> {
-        Ast::Gte(Box::new(self.visit(*lhs)), Box::new(self.visit(*rhs)))
-    }
-
-    fn visit_lt(&self, lhs: Box<Ast<'a>>, rhs: Box<Ast<'a>>) -> Ast<'a> {
-        Ast::Lt(Box::new(self.visit(*lhs)), Box::new(self.visit(*rhs)))
-    }
-
-    fn visit_gt(&self, lhs: Box<Ast<'a>>, rhs: Box<Ast<'a>>) -> Ast<'a> {
-        Ast::Gt(Box::new(self.visit(*lhs)), Box::new(self.visit(*rhs)))
-    }
+    fold_op!(visit_plus, Plus);
+    fold_op!(visit_minus, Minus);
+    fold_op!(visit_mult, Mult);
+    fold_op!(visit_div, Div);
+    fold_op!(visit_lte, Lte);
+    fold_op!(visit_gte, Gte);
+    fold_op!(visit_lt, Lt);
+    fold_op!(visit_gt, Gt);
 
     fn visit(&self, ast: Ast<'a>) -> Ast<'a> {
         visit_impl!(self, ast)

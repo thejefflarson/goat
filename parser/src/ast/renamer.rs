@@ -3,14 +3,13 @@ use crate::ast::{Ast, Identifier};
 use std::cell::RefCell;
 
 const ALPHA: &str = "abcdefghijklmnopqrstuvwxyz";
+
+#[derive(Default)]
 struct Namer {
     last: usize,
 }
-impl Namer {
-    fn new() -> Self {
-        Namer { last: 0 }
-    }
 
+impl Namer {
     fn next(&mut self) -> String {
         if self.last == 0 {
             self.last += 1;
@@ -28,15 +27,14 @@ impl Namer {
     }
 }
 
+#[derive(Default)]
 pub struct Renamer {
     namer: RefCell<Namer>,
 }
 
 impl Renamer {
     pub fn new() -> Self {
-        Renamer {
-            namer: RefCell::new(Namer::new()),
-        }
+        Default::default()
     }
 }
 

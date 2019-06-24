@@ -9,8 +9,8 @@ macro_rules! visit_impl {
             Ast::Number(n) => $self.visit_number(n),
             Ast::Str(s) => $self.visit_string(s),
             Ast::Identifier(i) => $self.visit_identifier(i),
-            Ast::Program(p) => $self.visit_program(p),
-            Ast::Function { labels: l, body: p } => $self.visit_function(l, p),
+            Ast::Program(p) => $self.visit_program(*p),
+            Ast::Function { labels: l, body: p } => $self.visit_function(l, *p),
             Ast::Application {
                 identifier: i,
                 arguments: a,
@@ -19,23 +19,29 @@ macro_rules! visit_impl {
                 condition: c,
                 true_branch: t,
                 else_branch: e,
-            } => $self.visit_conditional(c, t, e),
+            } => $self.visit_conditional(*c, *t, e),
             Ast::Declaration {
                 identifier: i,
                 body: b,
                 rest: r,
-            } => $self.visit_declaration(i, b, r),
-            Ast::Plus(lhs, rhs) => $self.visit_plus(lhs, rhs),
-            Ast::Minus(lhs, rhs) => $self.visit_minus(lhs, rhs),
-            Ast::Mult(lhs, rhs) => $self.visit_mult(lhs, rhs),
-            Ast::Div(lhs, rhs) => $self.visit_div(lhs, rhs),
-            Ast::Lte(lhs, rhs) => $self.visit_lte(lhs, rhs),
-            Ast::Gte(lhs, rhs) => $self.visit_gte(lhs, rhs),
-            Ast::Lt(lhs, rhs) => $self.visit_lt(lhs, rhs),
-            Ast::Gt(lhs, rhs) => $self.visit_gt(lhs, rhs),
+            } => $self.visit_declaration(i, *b, r),
+            Ast::Plus(lhs, rhs) => $self.visit_plus(*lhs, *rhs),
+            Ast::Minus(lhs, rhs) => $self.visit_minus(*lhs, *rhs),
+            Ast::Mult(lhs, rhs) => $self.visit_mult(*lhs, *rhs),
+            Ast::Div(lhs, rhs) => $self.visit_div(*lhs, *rhs),
+            Ast::Lte(lhs, rhs) => $self.visit_lte(*lhs, *rhs),
+            Ast::Gte(lhs, rhs) => $self.visit_gte(*lhs, *rhs),
+            Ast::Lt(lhs, rhs) => $self.visit_lt(*lhs, *rhs),
+            Ast::Gt(lhs, rhs) => $self.visit_gt(*lhs, *rhs),
             Ast::Bool(b) => $self.visit_bool(b),
         }
     };
+}
+
+macro_rules! visit_op {
+    ($name:ident) => {
+        fn $name(&self, lhs: Ast, rhs: Ast) -> Self::Output;
+    }
 }
 
 /// Visitors traverse an ast to build a single output.
@@ -46,29 +52,31 @@ pub trait Visitor {
     fn visit_string(&self, string: Span) -> Self::Output;
     fn visit_bool(&self, b: Bool) -> Self::Output;
     fn visit_identifier(&self, identifier: Identifier) -> Self::Output;
-    fn visit_program(&self, ast: Box<Ast>) -> Self::Output;
-    fn visit_function(&self, labels: Vec<Label>, program: Box<Ast>) -> Self::Output;
-    fn visit_application(&self, identifier: Identifier, arguments: Vec<Box<Ast>>) -> Self::Output;
+    fn visit_program(&self, ast: Ast) -> Self::Output;
+    fn visit_function(&self, labels: Vec<Label>, program: Ast) -> Self::Output;
+    fn visit_application(&self, identifier: Identifier, arguments: Vec<Ast>) -> Self::Output;
     fn visit_conditional(
         &self,
-        condition: Box<Ast>,
-        true_branch: Box<Ast>,
+        condition: Ast,
+        true_branch: Ast,
         else_branch: Option<Box<Ast>>,
     ) -> Self::Output;
     fn visit_declaration(
         &self,
         identifier: Identifier,
-        body: Box<Ast>,
+        body: Ast,
         rest: Option<Box<Ast>>,
     ) -> Self::Output;
-    fn visit_plus(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
-    fn visit_minus(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
-    fn visit_mult(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
-    fn visit_div(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
-    fn visit_lte(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
-    fn visit_gte(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
-    fn visit_lt(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
-    fn visit_gt(&self, lhs: Box<Ast>, rhs: Box<Ast>) -> Self::Output;
+
+    visit_op!(visit_plus);
+    visit_op!(visit_minus);
+    visit_op!(visit_mult);
+    visit_op!(visit_div);
+    visit_op!(visit_lte);
+    visit_op!(visit_gte);
+    visit_op!(visit_lt);
+    visit_op!(visit_gt);
+
     fn visit(&self, ast: Ast) -> Self::Output {
         visit_impl!(self, ast)
     }
