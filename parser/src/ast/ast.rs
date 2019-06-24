@@ -10,7 +10,7 @@ pub struct Identifier<'a> {
 }
 
 impl<'a> Identifier<'a> {
-    fn new(name: Span<'a>) -> Self {
+    pub(super) fn new(name: Span<'a>) -> Self {
         Identifier {
             name: name.clone(),
             internal: String::from(name.as_str()),

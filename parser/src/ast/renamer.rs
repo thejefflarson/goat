@@ -68,18 +68,16 @@ mod tests {
 
         assert_eq!(
             Ast::new(pairs),
-            Ast::Program(Box::new(Ast::Identifier(Identifier {
-                internal: "b".to_string(),
-                name: ident.clone()
-            })))
+            Ast::Program(Box::new(Ast::Identifier(
+                Identifier::new(ident.clone()).rename("b".to_string())
+            )))
         );
 
         assert_eq!(
             rewrite,
-            Ast::Program(Box::new(Ast::Identifier(Identifier {
-                internal: "a".to_string(),
-                name: ident
-            })))
+            Ast::Program(Box::new(Ast::Identifier(
+                Identifier::new(ident.clone()).rename("a".to_string())
+            )))
         );
     }
 
