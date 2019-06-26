@@ -9,3 +9,4 @@ llvm-sys = "80.0.0"
 
 goat_parser = { path = "../parser" }
 goat_checker = { path = "../checker" }
+failure = "0.1.5"
