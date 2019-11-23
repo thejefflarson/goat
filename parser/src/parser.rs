@@ -1,5 +1,5 @@
 use crate::ast::Ast;
-use failure::Error;
+use pest::error::Error;
 use pest::Parser;
 
 #[cfg(debug_assertions)]
@@ -9,7 +9,16 @@ const _GRAMMAR: &str = include_str!("grammar.pest");
 #[grammar = "grammar.pest"]
 pub struct GoatParser;
 
-pub fn parse<'a>(source: &'a str) -> Result<Ast<'a>, Error> {
+#[derive(Debug)]
+pub struct ParseError(Error<Rule>);
+
+impl From<Error<Rule>> for ParseError {
+    fn from(error: Error<Rule>) -> Self {
+        ParseError(error)
+    }
+}
+
+pub fn parse<'a>(source: &'a str) -> Result<Ast<'a>, ParseError> {
     let pairs = GoatParser::parse(Rule::goat, source).map(|mut p| p.nth(0))?;
     Ok(Ast::new(pairs.unwrap()))
 }

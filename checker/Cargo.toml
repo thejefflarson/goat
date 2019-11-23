@@ -7,4 +7,3 @@ edition = "2018"
 
 [dependencies]
 goat_parser = { path = "../parser" }
-failure = "0.1.5"
