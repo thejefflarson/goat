@@ -104,8 +104,11 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
         Rule::true_lit => Ast::Bool(Bool::True),
         Rule::false_lit => Ast::Bool(Bool::False),
         Rule::function => {
+            let t = pair.clone();
             let mut inner = pair.into_inner();
+            println!("{:?}", t);
             let labels = inner.next().unwrap().into_inner();
+            println!("{:?}", labels);
             let block = inner.next().unwrap();
             Ast::Function {
                 labels: labels
@@ -198,7 +201,7 @@ mod tests {
 
     #[test]
     fn converts_function() {
-        let pairs = GoatParser::parse(Rule::goat, "program(a, b) do a done")
+        let pairs = GoatParser::parse(Rule::goat, "program( ) do a done")
             .unwrap()
             .nth(0)
             .unwrap();

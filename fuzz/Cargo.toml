@@ -7,11 +7,11 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+[dependencies]
+afl = "0.4"
+
 [dependencies.goat_parser]
 path = "../parser"
-
-[dependencies.libfuzzer-sys]
-git = "https://github.com/rust-fuzz/libfuzzer-sys.git"
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -19,4 +19,4 @@ members = ["."]
 
 [[bin]]
 name = "parser"
-path = "fuzz_targets/parser.rs"
+path = "fuzz_targets/afl.rs"
