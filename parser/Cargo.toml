@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 pest = "2.0.0"
 pest_derive = "2.0.0"
+either = "1.5.3"

@@ -12,6 +12,8 @@ use pest::iterators::Pair;
 use pest::prec_climber::{Assoc, Operator, PrecClimber};
 use pest::Span;
 
+use either::*;
+
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub struct Identifier<'a> {
     name: Span<'a>,
@@ -104,17 +106,14 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
         Rule::true_lit => Ast::Bool(Bool::True),
         Rule::false_lit => Ast::Bool(Bool::False),
         Rule::function => {
-            let t = pair.clone();
-            let mut inner = pair.into_inner();
-            println!("{:?}", t);
-            let labels = inner.next().unwrap().into_inner();
-            println!("{:?}", labels);
-            let block = inner.next().unwrap();
+            let inner = pair.into_inner();
+            let labels_block = inner.map(|pair| match pair.as_rule() {
+                Rule::labels => Left(pair.into_inner().map(|label| Label::new(Identifier::new(label.as_span()))).collect::<Vec<Label>>()),
+                _ => Right(Ast::new(pair)),
+            }).next().unwrap();
             Ast::Function {
-                labels: labels
-                    .map(|label| Label::new(Identifier::new(label.as_span())))
-                    .collect(),
-                body: Box::new(Ast::new(block)),
+                labels: labels_block.clone().left().unwrap_or(vec![]),
+                body: Box::new(labels_block.right().unwrap_or(Ast::Empty)),
             }
         }
         Rule::application => {
