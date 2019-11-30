@@ -11,6 +11,7 @@ use crate::parser::*;
 use pest::iterators::Pair;
 use pest::prec_climber::{Assoc, Operator, PrecClimber};
 use pest::Span;
+
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub struct Identifier<'a> {
     name: Span<'a>,

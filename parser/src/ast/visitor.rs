@@ -49,12 +49,16 @@ macro_rules! visit_op {
 pub trait Visitor {
     type Output;
     fn visit_empty(&self) -> Self::Output;
+
     fn visit_number(&self, number: Span) -> Self::Output;
     fn visit_string(&self, string: Span) -> Self::Output;
     fn visit_bool(&self, b: Bool) -> Self::Output;
     fn visit_identifier(&self, identifier: Identifier) -> Self::Output;
     fn visit_program(&self, ast: Ast) -> Self::Output;
     fn visit_function(&self, function: Function) -> Self::Output;
+    // Labels are special. Implementors of this trait need to manually handle them in
+    // `visit_function`
+    fn visit_label(&self, label: Function) -> Self::Output;
     fn visit_application(&self, identifier: Identifier, arguments: Vec<Ast>) -> Self::Output;
     fn visit_conditional(
         &self,

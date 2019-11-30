@@ -1,3 +1,4 @@
+use crate::ast::Label;
 use crate::ast::{Ast, Bool, Function, Identifier};
 use pest::Span;
 
@@ -35,11 +36,21 @@ pub trait Folder<'a> {
         Ast::Program(Box::new(self.visit(ast)))
     }
 
+    fn visit_label(&self, label: Label<'a>) -> Label<'a> {
+        label.clone()
+    }
+
     fn visit_function(&self, function: Function<'a>) -> Ast<'a> {
         let body = function
             .body
-            .and_then(|body| Some(Box::new(Folder::visit_program(self, *body))));
-        Ast::Function(Function::new(function.labels.clone(), body))
+            .map(|body| Box::new(Folder::visit(self, *body)));
+        let labels = function.labels.map(|labels| {
+            labels
+                .into_iter()
+                .map(|label| Folder::visit_label(self, label))
+                .collect()
+        });
+        Ast::Function(Function::new(labels, body))
     }
 
     fn visit_application(&self, identifier: Identifier<'a>, arguments: Vec<Ast<'a>>) -> Ast<'a> {
