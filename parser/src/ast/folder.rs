@@ -1,4 +1,4 @@
-use crate::ast::{Ast, Bool, Identifier, Label};
+use crate::ast::{Ast, Bool, Function, Identifier};
 use pest::Span;
 
 macro_rules! fold_op {
@@ -35,12 +35,11 @@ pub trait Folder<'a> {
         Ast::Program(Box::new(self.visit(ast)))
     }
 
-    fn visit_function(&self, labels: Vec<Label<'a>>, program: Ast<'a>) -> Ast<'a> {
-        let body = Box::new(Folder::visit_program(self, program));
-        Ast::Function {
-            labels: labels.clone(),
-            body,
-        }
+    fn visit_function(&self, function: Function<'a>) -> Ast<'a> {
+        let body = function
+            .body
+            .and_then(|body| Some(Box::new(Folder::visit_program(self, *body))));
+        Ast::Function(Function::new(function.labels.clone(), body))
     }
 
     fn visit_application(&self, identifier: Identifier<'a>, arguments: Vec<Ast<'a>>) -> Ast<'a> {

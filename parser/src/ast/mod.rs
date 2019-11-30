@@ -11,9 +11,6 @@ use crate::parser::*;
 use pest::iterators::Pair;
 use pest::prec_climber::{Assoc, Operator, PrecClimber};
 use pest::Span;
-
-use either::*;
-
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub struct Identifier<'a> {
     name: Span<'a>,
@@ -54,6 +51,18 @@ pub enum Bool {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
+pub struct Function<'a> {
+    labels: Option<Vec<Label<'a>>>,
+    body: Option<Box<Ast<'a>>>,
+}
+
+impl<'a> Function<'a> {
+    fn new(labels: Option<Vec<Label<'a>>>, body: Option<Box<Ast<'a>>>) -> Self {
+        Function { labels, body }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Ast<'a> {
     Empty,
     Number(Span<'a>),
@@ -61,10 +70,7 @@ pub enum Ast<'a> {
     Str(Span<'a>),
     Bool(Bool),
     Program(Box<Ast<'a>>),
-    Function {
-        labels: Vec<Label<'a>>,
-        body: Box<Ast<'a>>,
-    },
+    Function(Function<'a>),
     Application {
         identifier: Identifier<'a>,
         arguments: Vec<Ast<'a>>,
@@ -107,14 +113,27 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
         Rule::false_lit => Ast::Bool(Bool::False),
         Rule::function => {
             let inner = pair.into_inner();
-            let labels_block = inner.map(|pair| match pair.as_rule() {
-                Rule::labels => Left(pair.into_inner().map(|label| Label::new(Identifier::new(label.as_span()))).collect::<Vec<Label>>()),
-                _ => Right(Ast::new(pair)),
-            }).next().unwrap();
-            Ast::Function {
-                labels: labels_block.clone().left().unwrap_or(vec![]),
-                body: Box::new(labels_block.right().unwrap_or(Ast::Empty)),
-            }
+            let ret = inner.fold(
+                Function {
+                    labels: None,
+                    body: None,
+                },
+                |mut func, pair| match pair.as_rule() {
+                    Rule::labels => {
+                        func.labels = Some(
+                            pair.into_inner()
+                                .map(|label| Label::new(Identifier::new(label.as_span())))
+                                .collect::<Vec<Label>>(),
+                        );
+                        func
+                    }
+                    _ => {
+                        func.body = Some(Box::new(Ast::new(pair)));
+                        func
+                    }
+                },
+            );
+            Ast::Function(ret)
         }
         Rule::application => {
             let mut inner = pair.into_inner();
@@ -161,7 +180,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             climber.climb(pair.into_inner(), Ast::new, infix)
         }
         Rule::EOI => Ast::Empty,
-        _ => panic!("Couldn't build {:?}", message = pair),
+        _ => panic!("Couldn't build {:?}", pair),
     }
 }
 
@@ -179,7 +198,6 @@ mod tests {
     #[test]
     fn converts_empty() {
         let pairs = GoatParser::parse(Rule::goat, "").unwrap().nth(0).unwrap();
-        println!("{:x?}", pairs.clone());
         let ast = Ast::new(pairs);
         assert_eq!(ast, Ast::Program(Box::new(Ast::Empty)));
     }
@@ -188,7 +206,6 @@ mod tests {
     fn converts_number() {
         let prog = "1";
         let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
-        println!("{:#?}", pairs.clone());
         let ast = Ast::new(pairs);
         let span = GoatParser::parse(Rule::number, prog)
             .unwrap()
@@ -200,21 +217,44 @@ mod tests {
 
     #[test]
     fn converts_function() {
-        let pairs = GoatParser::parse(Rule::goat, "program( ) do a done")
-            .unwrap()
-            .nth(0)
-            .unwrap();
+        let prog = "program( ) do a done";
+        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
         let ast = Ast::new(pairs);
-        println!("{:#?}", ast)
+
+        assert_eq!(
+            ast,
+            Ast::Program(Box::new(Ast::Function(Function::new(
+                None,
+                Some(Box::new(Ast::Identifier(Identifier {
+                    name: Span::new(prog, 14, 15).unwrap(),
+                    internal: String::from("a"),
+                },)))
+            ))))
+        )
     }
 
     #[test]
     fn converts_math() {
-        let pairs = GoatParser::parse(Rule::goat, "1 + 1")
-            .unwrap()
-            .nth(0)
-            .unwrap();
+        let prog = "1 + 1";
+        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
         let ast = Ast::new(pairs);
-        println!("{:#?}", ast)
+        assert_eq!(
+            ast,
+            Ast::Program(Box::new(Ast::Plus(
+                Box::new(Ast::Number(Span::new(prog, 0, 1).unwrap())),
+                Box::new(Ast::Number(Span::new(prog, 4, 5).unwrap())),
+            )),)
+        )
+    }
+
+    #[test]
+    fn converts_empty_function() {
+        let prog = "program( ) do   done";
+        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
+        let ast = Ast::new(pairs);
+        assert_eq!(
+            ast,
+            Ast::Program(Box::new(Ast::Function(Function::new(None, None))))
+        )
     }
 }

@@ -1,4 +1,5 @@
-use crate::ast::{Ast, Bool, Identifier, Label};
+use crate::ast::Function;
+use crate::ast::{Ast, Bool, Identifier};
 use pest::Span;
 
 #[macro_export]
@@ -10,7 +11,7 @@ macro_rules! visit_impl {
             Ast::Str(s) => $self.visit_string(s),
             Ast::Identifier(i) => $self.visit_identifier(i),
             Ast::Program(p) => $self.visit_program(*p),
-            Ast::Function { labels: l, body: p } => $self.visit_function(l, *p),
+            Ast::Function(f) => $self.visit_function(f),
             Ast::Application {
                 identifier: i,
                 arguments: a,
@@ -53,7 +54,7 @@ pub trait Visitor {
     fn visit_bool(&self, b: Bool) -> Self::Output;
     fn visit_identifier(&self, identifier: Identifier) -> Self::Output;
     fn visit_program(&self, ast: Ast) -> Self::Output;
-    fn visit_function(&self, labels: Vec<Label>, program: Ast) -> Self::Output;
+    fn visit_function(&self, function: Function) -> Self::Output;
     fn visit_application(&self, identifier: Identifier, arguments: Vec<Ast>) -> Self::Output;
     fn visit_conditional(
         &self,

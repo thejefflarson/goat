@@ -19,4 +19,4 @@ members = ["."]
 
 [[bin]]
 name = "parser"
-path = "fuzz_targets/afl.rs"
+path = "fuzz_targets/parser.rs"
