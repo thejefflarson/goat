@@ -4,6 +4,8 @@ pub enum Ty {
     Number,
     String,
     Bool,
-    Function(Vec<Box<Ty>>),
+    Record,
+    Array,
+    Function(Box<Ty>, Box<Ty>),
     Variable(String),
 }
