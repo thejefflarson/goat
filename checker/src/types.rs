@@ -1,11 +1,12 @@
-#[derive(Hash, Eq, PartialEq, Debug, Clone)]
+#[derive(Eq, PartialEq, Debug)]
 pub enum Ty {
     None,
     Number,
     String,
     Bool,
-    Record,
-    Array,
-    Function(Box<Ty>, Box<Ty>),
+    Union,
+    Record(Box<Ty>),
+    Array(Box<Ty>),
+    Function(Box<Vec<Ty>>, Box<Ty>),
     Variable(String),
 }
