@@ -22,7 +22,9 @@ impl Namer {
             accum.push(ALPHA.chars().nth(idx).unwrap());
             current /= ALPHA.len()
         }
-        self.last += 1;
+        self.last = self.last
+            .checked_add(1)
+            .expect("Namer counter overflow: too many unique identifiers");
         accum
     }
 }

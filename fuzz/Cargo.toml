@@ -8,10 +8,18 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-afl = "0.4"
+afl = "0.15"
 
 [dependencies.goat_parser]
 path = "../parser"
+
+[dependencies.goat_checker]
+path = "../checker"
+
+[profile.release]
+opt-level = 1
+debug = true
+overflow-checks = true
 
 # Prevent this from interfering with workspaces
 [workspace]

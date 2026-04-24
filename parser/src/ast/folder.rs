@@ -2,6 +2,12 @@ use crate::ast::Label;
 use crate::ast::{Ast, Bool, Function, Identifier};
 use pest::Span;
 
+const MAX_FOLD_DEPTH: usize = 200;
+
+thread_local! {
+    static FOLD_DEPTH: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
 macro_rules! fold_op {
     ($name:ident, $enum:ident) => {
         fn $name(&self, lhs: Ast<'a>, rhs: Ast<'a>) -> Ast<'a> {
@@ -101,6 +107,13 @@ pub trait Folder<'a> {
     fold_op!(visit_gt, Gt);
 
     fn visit(&self, ast: Ast<'a>) -> Ast<'a> {
-        visit_impl!(self, ast)
+        let depth = FOLD_DEPTH.with(|d| d.get());
+        if depth >= MAX_FOLD_DEPTH {
+            panic!("AST exceeds maximum traversal depth");
+        }
+        FOLD_DEPTH.with(|d| d.set(depth + 1));
+        let result = visit_impl!(self, ast);
+        FOLD_DEPTH.with(|d| d.set(depth));
+        result
     }
 }
