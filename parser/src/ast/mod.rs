@@ -96,8 +96,19 @@ pub enum Ast<'a> {
     },
 }
 
+const MAX_PARSE_DEPTH: usize = 200;
+
+thread_local! {
+    static PARSE_DEPTH: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
 fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
-    match pair.as_rule() {
+    let depth = PARSE_DEPTH.with(|d| d.get());
+    if depth >= MAX_PARSE_DEPTH {
+        panic!("Input exceeds maximum parse depth");
+    }
+    PARSE_DEPTH.with(|d| d.set(depth + 1));
+    let result = match pair.as_rule() {
         Rule::goat => {
             let inner = pair.into_inner().next();
             let node = match inner {
@@ -180,9 +191,22 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             };
             climber.climb(pair.into_inner(), Ast::new, infix)
         }
+        Rule::declaration => {
+            let mut inner = pair.into_inner();
+            let identifier = Identifier::new(inner.next().unwrap().as_span());
+            let body = Ast::new(inner.next().unwrap());
+            let rest = inner.next().map(|p| Box::new(Ast::new(p)));
+            Ast::Declaration {
+                identifier,
+                body: Box::new(body),
+                rest,
+            }
+        }
         Rule::EOI => Ast::Empty,
-        _ => panic!("Couldn't build {:?}", pair),
-    }
+        _ => panic!("Unexpected grammar rule in AST construction"),
+    };
+    PARSE_DEPTH.with(|d| d.set(depth));
+    result
 }
 
 impl<'i> Ast<'i> {

@@ -18,7 +18,19 @@ impl From<Error<Rule>> for ParseError {
     }
 }
 
+/// Maximum accepted source length (1 MiB).  Inputs larger than this are
+/// rejected before the PEG engine runs to prevent unbounded memory/CPU use.
+pub const MAX_INPUT_LEN: usize = 1 << 20;
+
 pub fn parse<'a>(source: &'a str) -> Result<Ast<'a>, ParseError> {
+    if source.len() > MAX_INPUT_LEN {
+        return Err(ParseError(pest::error::Error::new_from_pos(
+            pest::error::ErrorVariant::CustomError {
+                message: String::from("input exceeds maximum allowed length"),
+            },
+            pest::Position::from_start(source),
+        )));
+    }
     let pairs = GoatParser::parse(Rule::goat, source).map(|mut p| p.nth(0))?;
     Ok(Ast::new(pairs.unwrap()))
 }

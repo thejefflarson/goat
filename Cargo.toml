@@ -4,3 +4,6 @@ members = [
     "checker",
     "compiler"
 ]
+
+[profile.release]
+overflow-checks = true

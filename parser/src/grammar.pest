@@ -41,10 +41,10 @@ infix = _{
   minus |
   multiply |
   divide |
-  lt |
   lte |
-  gt |
-  gte
+  lt |
+  gte |
+  gt
 }
 
 lparen = _{ "(" }
@@ -58,12 +58,12 @@ number = @{ "-"?
 WHITESPACE = _{ " " | "\t" | NEWLINE }
 COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
 
-raw_string = { (!"\"" ~ ANY)+ }
+raw_string = { (!"\"" ~ !('\u{0000}'..'\u{001F}') ~ ANY)+ }
 string = @{ "\"" ~ raw_string ~ "\"" }
 
-unicode = _{ XID_START ~ XID_CONTINUE* }
+unicode = _{ XID_START ~ XID_CONTINUE{0, 254} }
 
-ident = @{ !keywords ~ unicode+ }
+ident = @{ !keywords ~ unicode }
 
 // Actual grammar
 goat = { SOI ~ expr? ~ EOI }
