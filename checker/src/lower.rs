@@ -9,8 +9,9 @@ use crate::error::GoatError;
 use crate::hir::{BinOp, Expr, ExprId, ExprKind, Param, Span, Symbol};
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
-use pest::iterators::Pair;
+use pest::iterators::{Pair, Pairs};
 use std::collections::HashMap;
+use std::iter::Peekable;
 
 pub struct Lowered {
     pub root: Expr,
@@ -90,19 +91,20 @@ impl Lower {
         body.unwrap_or_else(|| self.node(span, ExprKind::Unit))
     }
 
-    /// Lower an `expr` pair — a flat `term (op term)*` list — into a
-    /// precedence-correct tree.
+    /// Lower an `expr` pair — a flat list of operands and operators — into a
+    /// precedence-correct tree. Each operand is a primary followed by zero or
+    /// more postfix field accesses; the grammar leaves those `access` pairs as
+    /// siblings, so [`Self::lower_operand`] consumes them before the next
+    /// operator.
     fn lower_expr(&mut self, pair: Pair<Rule>) -> Expr {
-        let mut inner = pair.into_inner();
-        let first = inner.next().expect("expr has at least one term");
-        let mut operands = vec![self.lower_primary(first)];
+        let mut inner = pair.into_inner().peekable();
+        let mut operands = vec![self.lower_operand(&mut inner)];
         let mut ops: Vec<(BinOp, Span)> = Vec::new();
 
         while let Some(op_pair) = inner.next() {
             let op = bin_op(op_pair.as_rule());
             let op_span = span_of(&op_pair);
-            let rhs_pair = inner.next().expect("an operator is followed by a term");
-            let rhs = self.lower_primary(rhs_pair);
+            let rhs = self.lower_operand(&mut inner);
 
             while let Some((top, _)) = ops.last() {
                 if prec(*top) >= prec(op) {
@@ -119,6 +121,29 @@ impl Lower {
             self.reduce(&mut operands, &mut ops);
         }
         operands.pop().expect("exactly one operand remains")
+    }
+
+    /// Lower one operand: a primary, then any trailing `.field` accesses.
+    fn lower_operand(&mut self, inner: &mut Peekable<Pairs<Rule>>) -> Expr {
+        let primary = inner.next().expect("an operand begins with a primary");
+        let mut expr = self.lower_primary(primary);
+        while inner.peek().is_some_and(|p| p.as_rule() == Rule::access) {
+            let access = inner.next().expect("peeked an access");
+            let label_pair = access
+                .into_inner()
+                .next()
+                .expect("access is `.` then an identifier");
+            let span = Span::new(expr.span.start, span_of(&label_pair).end);
+            let label = label_pair.as_str().to_string();
+            expr = self.node(
+                span,
+                ExprKind::Field {
+                    record: Box::new(expr),
+                    label,
+                },
+            );
+        }
+        expr
     }
 
     /// Fold the top operator and its two operands into one `Bin` node.
@@ -167,6 +192,7 @@ impl Lower {
                 let name = pair.as_str().to_string();
                 self.var(span, name)
             }
+            Rule::record => self.lower_record(pair),
             Rule::declaration => self.lower_declaration(pair),
             Rule::function => self.lower_function(pair),
             Rule::application => self.lower_application(pair),
@@ -280,6 +306,23 @@ impl Lower {
             );
         }
         expr
+    }
+
+    fn lower_record(&mut self, pair: Pair<Rule>) -> Expr {
+        let span = span_of(&pair);
+        let mut fields = Vec::new();
+        for field in pair.into_inner() {
+            debug_assert_eq!(field.as_rule(), Rule::field);
+            let mut it = field.into_inner();
+            let label = it
+                .next()
+                .expect("a field begins with a label")
+                .as_str()
+                .to_string();
+            let value = self.lower_expr(it.next().expect("a field has a value"));
+            fields.push((label, value));
+        }
+        self.node(span, ExprKind::Record { fields })
     }
 
     fn lower_conditional(&mut self, pair: Pair<Rule>) -> Expr {

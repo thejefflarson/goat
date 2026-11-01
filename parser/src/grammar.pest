@@ -49,6 +49,9 @@ infix = _{
 
 lparen = _{ "(" }
 rparen = _{ ")" }
+lbrace = _{ "{" }
+rbrace = _{ "}" }
+dot = _{ "." }
 comma = _{ "," }
 number = @{ "-"?
     ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*)
@@ -69,10 +72,18 @@ ident = @{ !keywords ~ unicode+ }
 goat = { SOI ~ expr? ~ EOI }
 expr = { term ~ more_math* }
 more_math = _{ infix ~ term }
+// A term is a primary followed by any number of postfix field accesses, so
+// `.field` binds tighter than the infix operators. Because `term` and
+// `primary` are both silent, a bare primary with no accesses produces exactly
+// the same tree as before.
+term = _{ primary ~ access* }
+access = { dot ~ ident }
 // Order matters: pest is a PEG, so longer/more-specific alternatives come
 // first. `declaration` (`ident = ...`) and `application` (`ident(...)`) both
 // begin with an identifier, so a bare `ident` must be tried last.
-term = _{ number | string | boolean | declaration | application | function | conditional | ident | lparen ~ expr ~ rparen }
+primary = _{ number | string | boolean | declaration | application | function | conditional | record | ident | lparen ~ expr ~ rparen }
+record = { lbrace ~ (field ~ (comma ~ field)*)? ~ rbrace }
+field = { ident ~ colon ~ expr }
 declaration = { ident ~ equals ~ expr ~ expr? }
 labels = { ident ~ (comma ~ ident)* }
 function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }

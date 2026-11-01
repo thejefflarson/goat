@@ -120,6 +120,37 @@ mod tests {
     }
 
     #[test]
+    fn records_infer_and_access() {
+        assert_eq!(type_of("{x: 1, y: 2}").unwrap(), "{x: Number, y: Number}");
+        assert_eq!(type_of("p = {x: 1, y: true} p.x").unwrap(), "Number");
+        assert_eq!(type_of("p = {x: 1, y: true} p.y").unwrap(), "Bool");
+        // nested records
+        assert_eq!(
+            type_of("line = {from: {x: 0}, to: {x: 10}} line.to.x").unwrap(),
+            "Number"
+        );
+    }
+
+    #[test]
+    fn record_field_errors() {
+        // accessing a field the record does not have
+        assert!(type_of("p = {x: 1} p.z").is_err());
+        // a field used as the wrong type
+        assert!(type_of("p = {x: 1} p.x + true").is_err());
+    }
+
+    #[test]
+    fn record_field_access_is_row_polymorphic() {
+        // `program(p) do p.x done` accepts any record with an `x` field, so it
+        // applies to records of different shapes.
+        let src = "getx = program(p) do p.x done \
+                   a = getx({x: 1, y: 2}) \
+                   b = getx({x: 9, z: true}) \
+                   a + b";
+        assert_eq!(type_of(src).unwrap(), "Number");
+    }
+
+    #[test]
     fn conditional_branches_must_agree() {
         assert_eq!(type_of("if true then 1 else 2 done").unwrap(), "Number");
         assert!(type_of("if true then 1 else false done").is_err());

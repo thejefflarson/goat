@@ -1,10 +1,11 @@
-//! The type language: monomorphic types, and type schemes for let-polymorphism.
+//! The type language: monomorphic types, rows for records, and type schemes
+//! for let-polymorphism.
 
 use std::collections::BTreeSet;
 use std::fmt;
 
-/// A unification variable. Resolved to a concrete type by the inferer's
-/// substitution.
+/// A unification variable. The same numbering space is shared by type variables
+/// and row variables; any given id is only ever used in one role.
 pub type TypeVar = u32;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,6 +21,23 @@ pub enum Ty {
     /// A function from positional argument types to a result type. Goat's
     /// `program(a, b) do ... done`.
     Func(Vec<Ty>, Box<Ty>),
+    /// A record: a collection of labeled fields, represented as a [`Row`]. This
+    /// is the scoped-labels foundation — a record literal is a closed row, and
+    /// field access unifies against an open one.
+    Record(Row),
+}
+
+/// A row of record fields. Either closed ([`Row::Empty`] tail), open on a row
+/// variable ([`Row::Var`]), or a field prepended to a smaller row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Row {
+    Empty,
+    Var(TypeVar),
+    Extend {
+        label: String,
+        field: Box<Ty>,
+        rest: Box<Row>,
+    },
 }
 
 impl Ty {
@@ -27,7 +45,8 @@ impl Ty {
         Ty::Func(args, Box::new(ret))
     }
 
-    /// The free type variables of this type, in ascending order.
+    /// The free variables of this type (type and row variables alike), in
+    /// ascending order.
     pub fn free_vars(&self, out: &mut BTreeSet<TypeVar>) {
         match self {
             Ty::Var(v) => {
@@ -39,6 +58,22 @@ impl Ty {
                     a.free_vars(out);
                 }
                 ret.free_vars(out);
+            }
+            Ty::Record(row) => row.free_vars(out),
+        }
+    }
+}
+
+impl Row {
+    pub fn free_vars(&self, out: &mut BTreeSet<TypeVar>) {
+        match self {
+            Row::Empty => {}
+            Row::Var(v) => {
+                out.insert(*v);
+            }
+            Row::Extend { field, rest, .. } => {
+                field.free_vars(out);
+                rest.free_vars(out);
             }
         }
     }
@@ -62,12 +97,41 @@ impl fmt::Display for Ty {
                 }
                 write!(f, ") -> {ret}")
             }
+            Ty::Record(row) => {
+                write!(f, "{{")?;
+                row.fmt_fields(f, true)?;
+                write!(f, "}}")
+            }
         }
     }
 }
 
-/// Render a type variable as a short greek-ish name (`t0`, `t1`, ...) so error
-/// messages and inferred-type output stay readable.
+impl Row {
+    /// Format the fields of a row inside its enclosing braces. `first` tracks
+    /// whether a separator is needed before the next field.
+    fn fmt_fields(&self, f: &mut fmt::Formatter<'_>, first: bool) -> fmt::Result {
+        match self {
+            Row::Empty => Ok(()),
+            Row::Var(v) => {
+                if first {
+                    write!(f, "{}", name_of(*v))
+                } else {
+                    write!(f, " | {}", name_of(*v))
+                }
+            }
+            Row::Extend { label, field, rest } => {
+                if !first {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{label}: {field}")?;
+                rest.fmt_fields(f, false)
+            }
+        }
+    }
+}
+
+/// Render a type variable as a short name (`t0`, `t1`, ...) so error messages
+/// and inferred-type output stay readable.
 fn name_of(v: TypeVar) -> String {
     format!("t{v}")
 }

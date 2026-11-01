@@ -2,12 +2,20 @@
 //!
 //! The inferer walks the tree, generating and immediately solving equality
 //! constraints through [`Inferer::unify`] (which maintains a substitution from
-//! type variables to types). Declarations are generalized so let-bound names
-//! are polymorphic; function parameters stay monomorphic within the body.
+//! type and row variables to types and rows). Declarations are generalized so
+//! let-bound names are polymorphic; function parameters stay monomorphic within
+//! the body.
+//!
+//! Records use row types with scoped-label unification (Leijen): to unify a
+//! record carrying field `l` against another record, [`Inferer::rewrite_row`]
+//! surfaces `l` in the other row — extending an open row (one ending in a row
+//! variable) with `l` when needed — then the field types and the remaining rows
+//! unify. Field access unifies the record against an open row `{l: t | rest}`,
+//! so it accepts any record that has at least field `l`.
 
 use crate::error::GoatError;
 use crate::hir::{Expr, ExprId, ExprKind, Span, Symbol};
-use crate::ty::{Scheme, Ty, TypeVar};
+use crate::ty::{Row, Scheme, Ty, TypeVar};
 use std::collections::{BTreeSet, HashMap};
 
 /// The result of checking a program: the program's own type, plus the resolved
@@ -40,16 +48,25 @@ pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
 struct Inferer {
     next: TypeVar,
     subst: HashMap<TypeVar, Ty>,
+    row_subst: HashMap<TypeVar, Row>,
     env: HashMap<Symbol, Scheme>,
     node_types: HashMap<ExprId, Ty>,
     errors: Vec<GoatError>,
 }
 
 impl Inferer {
-    fn fresh(&mut self) -> Ty {
+    fn fresh_id(&mut self) -> TypeVar {
         let v = self.next;
         self.next += 1;
-        Ty::Var(v)
+        v
+    }
+
+    fn fresh(&mut self) -> Ty {
+        Ty::Var(self.fresh_id())
+    }
+
+    fn fresh_row(&mut self) -> Row {
+        Row::Var(self.fresh_id())
     }
 
     /// Follow the substitution to the type's current best-known form.
@@ -63,7 +80,23 @@ impl Inferer {
                 args.iter().map(|a| self.resolve(a)).collect(),
                 Box::new(self.resolve(ret)),
             ),
+            Ty::Record(row) => Ty::Record(self.resolve_row(row)),
             other => other.clone(),
+        }
+    }
+
+    fn resolve_row(&self, row: &Row) -> Row {
+        match row {
+            Row::Var(v) => match self.row_subst.get(v) {
+                Some(r) => self.resolve_row(r),
+                None => Row::Var(*v),
+            },
+            Row::Extend { label, field, rest } => Row::Extend {
+                label: label.clone(),
+                field: Box::new(self.resolve(field)),
+                rest: Box::new(self.resolve_row(rest)),
+            },
+            Row::Empty => Row::Empty,
         }
     }
 
@@ -103,6 +136,9 @@ impl Inferer {
                 }
                 self.unify(a_ret, b_ret, span);
             }
+            (Ty::Record(a_row), Ty::Record(b_row)) => {
+                self.unify_row(a_row, b_row, span);
+            }
             _ => {
                 self.errors.push(GoatError::new(
                     span,
@@ -112,9 +148,86 @@ impl Inferer {
         }
     }
 
+    fn unify_row(&mut self, a: &Row, b: &Row, span: Span) {
+        let a = self.resolve_row(a);
+        let b = self.resolve_row(b);
+        match (&a, &b) {
+            (Row::Empty, Row::Empty) => {}
+            (Row::Var(x), Row::Var(y)) if x == y => {}
+            (Row::Var(x), other) | (other, Row::Var(x)) => {
+                if occurs_row(*x, other) {
+                    self.errors.push(GoatError::new(
+                        span,
+                        "cannot construct an infinite record type".to_string(),
+                    ));
+                } else {
+                    self.row_subst.insert(*x, other.clone());
+                }
+            }
+            (Row::Extend { label, field, rest }, _) => match self.rewrite_row(label, &b) {
+                Some((b_field, b_rest)) => {
+                    self.unify(field, &b_field, span);
+                    self.unify_row(rest, &b_rest, span);
+                }
+                None => {
+                    self.errors.push(GoatError::new(
+                        span,
+                        format!("record is missing field `{label}`"),
+                    ));
+                }
+            },
+            (Row::Empty, Row::Extend { label, .. }) => {
+                self.errors.push(GoatError::new(
+                    span,
+                    format!("record has an unexpected field `{label}`"),
+                ));
+            }
+        }
+    }
+
+    /// Surface `label` in `row`, returning its field type and the row without
+    /// it. An open row (ending in a row variable) is grown with a fresh field;
+    /// a closed row missing the label yields `None`. Differing labels ahead of
+    /// `label` keep their position, which is what makes labels scoped.
+    fn rewrite_row(&mut self, label: &str, row: &Row) -> Option<(Ty, Row)> {
+        match self.resolve_row(row) {
+            Row::Empty => None,
+            Row::Extend {
+                label: l2,
+                field,
+                rest,
+            } => {
+                if l2 == label {
+                    Some((*field, *rest))
+                } else {
+                    let (f, r) = self.rewrite_row(label, &rest)?;
+                    Some((
+                        f,
+                        Row::Extend {
+                            label: l2,
+                            field,
+                            rest: Box::new(r),
+                        },
+                    ))
+                }
+            }
+            Row::Var(v) => {
+                let field = self.fresh();
+                let rest = self.fresh_row();
+                let grown = Row::Extend {
+                    label: label.to_string(),
+                    field: Box::new(field.clone()),
+                    rest: Box::new(rest.clone()),
+                };
+                self.row_subst.insert(v, grown);
+                Some((field, rest))
+            }
+        }
+    }
+
     fn instantiate(&mut self, scheme: &Scheme) -> Ty {
-        let mapping: HashMap<TypeVar, Ty> =
-            scheme.vars.iter().map(|v| (*v, self.fresh())).collect();
+        let mapping: HashMap<TypeVar, TypeVar> =
+            scheme.vars.iter().map(|v| (*v, self.fresh_id())).collect();
         subst_vars(&scheme.ty, &mapping)
     }
 
@@ -228,6 +341,34 @@ impl Inferer {
                     Ty::Number
                 }
             }
+            ExprKind::Record { fields } => {
+                let field_tys: Vec<(String, Ty)> = fields
+                    .iter()
+                    .map(|(label, value)| (label.clone(), self.infer(value)))
+                    .collect();
+                // Build the closed row back-to-front so field order is kept.
+                let mut row = Row::Empty;
+                for (label, ty) in field_tys.into_iter().rev() {
+                    row = Row::Extend {
+                        label,
+                        field: Box::new(ty),
+                        rest: Box::new(row),
+                    };
+                }
+                Ty::Record(row)
+            }
+            ExprKind::Field { record, label } => {
+                let record_ty = self.infer(record);
+                let field_ty = self.fresh();
+                let rest = self.fresh_row();
+                let expected = Ty::Record(Row::Extend {
+                    label: label.clone(),
+                    field: Box::new(field_ty.clone()),
+                    rest: Box::new(rest),
+                });
+                self.unify(&record_ty, &expected, expr.span);
+                field_ty
+            }
         }
     }
 }
@@ -236,17 +377,39 @@ fn occurs(var: TypeVar, ty: &Ty) -> bool {
     match ty {
         Ty::Var(v) => *v == var,
         Ty::Func(args, ret) => args.iter().any(|a| occurs(var, a)) || occurs(var, ret),
+        Ty::Record(row) => occurs_row(var, row),
         _ => false,
     }
 }
 
-fn subst_vars(ty: &Ty, mapping: &HashMap<TypeVar, Ty>) -> Ty {
+fn occurs_row(var: TypeVar, row: &Row) -> bool {
+    match row {
+        Row::Empty => false,
+        Row::Var(v) => *v == var,
+        Row::Extend { field, rest, .. } => occurs(var, field) || occurs_row(var, rest),
+    }
+}
+
+fn subst_vars(ty: &Ty, mapping: &HashMap<TypeVar, TypeVar>) -> Ty {
     match ty {
-        Ty::Var(v) => mapping.get(v).cloned().unwrap_or(Ty::Var(*v)),
+        Ty::Var(v) => Ty::Var(mapping.get(v).copied().unwrap_or(*v)),
         Ty::Func(args, ret) => Ty::Func(
             args.iter().map(|a| subst_vars(a, mapping)).collect(),
             Box::new(subst_vars(ret, mapping)),
         ),
+        Ty::Record(row) => Ty::Record(subst_row(row, mapping)),
         other => other.clone(),
+    }
+}
+
+fn subst_row(row: &Row, mapping: &HashMap<TypeVar, TypeVar>) -> Row {
+    match row {
+        Row::Empty => Row::Empty,
+        Row::Var(v) => Row::Var(mapping.get(v).copied().unwrap_or(*v)),
+        Row::Extend { label, field, rest } => Row::Extend {
+            label: label.clone(),
+            field: Box::new(subst_vars(field, mapping)),
+            rest: Box::new(subst_row(rest, mapping)),
+        },
     }
 }

@@ -30,6 +30,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_records_and_field_access() {
+        use pest::Parser;
+        for src in [
+            "{x: 1, y: 2}",
+            "{}",
+            "p.x",
+            "p.x.y",
+            "{a: {b: 1}}",
+            "f(1).x",
+            "{point: {x: 1, y: 2}}.point.x",
+        ] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_ok(),
+                "failed to parse: {src}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_empty() {
         parses_to! {
             parser: GoatParser,

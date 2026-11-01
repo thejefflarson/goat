@@ -105,4 +105,13 @@ pub enum ExprKind {
         lhs: Box<Expr>,
         rhs: Box<Expr>,
     },
+    /// `{label: value, ...}` — a record literal (a closed row).
+    Record {
+        fields: Vec<(String, Expr)>,
+    },
+    /// `record.label` — field access.
+    Field {
+        record: Box<Expr>,
+        label: String,
+    },
 }
