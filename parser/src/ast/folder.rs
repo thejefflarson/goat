@@ -7,7 +7,7 @@ macro_rules! fold_op {
         fn $name(&self, lhs: Ast<'a>, rhs: Ast<'a>) -> Ast<'a> {
             Ast::$enum(Box::new(self.visit(lhs)), Box::new(self.visit(rhs)))
         }
-    }
+    };
 }
 
 /// Folders transform an ast into a new tree.
@@ -17,11 +17,11 @@ pub trait Folder<'a> {
     }
 
     fn visit_number(&self, number: Span<'a>) -> Ast<'a> {
-        Ast::Number(number.clone())
+        Ast::Number(number)
     }
 
     fn visit_string(&self, string: Span<'a>) -> Ast<'a> {
-        Ast::Str(string.clone())
+        Ast::Str(string)
     }
 
     fn visit_identifier(&self, identifier: Identifier<'a>) -> Ast<'a> {
@@ -74,7 +74,7 @@ pub trait Folder<'a> {
         Ast::Conditional {
             condition: Box::new(self.visit(condition)),
             true_branch: Box::new(self.visit(true_branch)),
-            else_branch: else_branch.and_then(|x| Some(Box::new(self.visit(*x)))),
+            else_branch: else_branch.map(|x| Box::new(self.visit(*x))),
         }
     }
 
@@ -87,7 +87,7 @@ pub trait Folder<'a> {
         Ast::Declaration {
             identifier: identifier.clone(),
             body: Box::new(self.visit(body)),
-            rest: rest.and_then(|x| Some(Box::new(self.visit(*x)))),
+            rest: rest.map(|x| Box::new(self.visit(*x))),
         }
     }
 

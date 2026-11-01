@@ -55,26 +55,26 @@ mod tests {
     #[test]
     fn rewrites_ast() {
         let id = "b";
-        let pairs = GoatParser::parse(Rule::goat, id).unwrap().nth(0).unwrap();
+        let pairs = GoatParser::parse(Rule::goat, id).unwrap().next().unwrap();
         let ast = Ast::new(pairs.clone());
         let rewrite = Renamer::new().visit(ast);
         let ident = GoatParser::parse(Rule::ident, id)
             .unwrap()
-            .nth(0)
+            .next()
             .unwrap()
             .as_span();
 
         assert_eq!(
             Ast::new(pairs),
             Ast::Program(Box::new(Ast::Identifier(
-                Identifier::new(ident.clone()).rename("b".to_string())
+                Identifier::new(ident).rename("b".to_string())
             )))
         );
 
         assert_eq!(
             rewrite,
             Ast::Program(Box::new(Ast::Identifier(
-                Identifier::new(ident.clone()).rename("a".to_string())
+                Identifier::new(ident).rename("a".to_string())
             )))
         );
     }
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn parses_boolean_comparisons() {
         let math = "true<false";
-        let pairs = GoatParser::parse(Rule::goat, math).unwrap().nth(0).unwrap();
+        let pairs = GoatParser::parse(Rule::goat, math).unwrap().next().unwrap();
         let ast = Ast::new(pairs);
         let rewrite = Renamer::new().visit(ast.clone());
 

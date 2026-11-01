@@ -42,7 +42,7 @@ macro_rules! visit_impl {
 macro_rules! visit_op {
     ($name:ident) => {
         fn $name(&self, lhs: Ast, rhs: Ast) -> Self::Output;
-    }
+    };
 }
 
 /// Visitors traverse an ast to build a single output.

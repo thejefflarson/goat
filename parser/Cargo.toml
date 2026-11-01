@@ -2,8 +2,8 @@
 name = "goat_parser"
 version = "0.1.0"
 authors = ["Jeff Larson <thejefflarson@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-pest = "2.0.0"
-pest_derive = "2.0.0"
+pest = "2.9"
+pest_derive = "2.9"

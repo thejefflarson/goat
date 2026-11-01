@@ -1,6 +1,7 @@
 use crate::ast::Ast;
 use pest::error::Error;
 use pest::Parser;
+use std::fmt;
 
 #[cfg(debug_assertions)]
 const _GRAMMAR: &str = include_str!("grammar.pest");
@@ -12,6 +13,14 @@ pub struct GoatParser;
 #[derive(Debug)]
 pub struct ParseError(Error<Rule>);
 
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 impl From<Error<Rule>> for ParseError {
     fn from(error: Error<Rule>) -> Self {
         ParseError(error)
@@ -19,7 +28,7 @@ impl From<Error<Rule>> for ParseError {
 }
 
 pub fn parse<'a>(source: &'a str) -> Result<Ast<'a>, ParseError> {
-    let pairs = GoatParser::parse(Rule::goat, source).map(|mut p| p.nth(0))?;
+    let pairs = GoatParser::parse(Rule::goat, source).map(|mut p| p.next())?;
     Ok(Ast::new(pairs.unwrap()))
 }
 

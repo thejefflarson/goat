@@ -2,7 +2,7 @@
 name = "goat_compiler"
 version = "0.1.0"
 authors = ["Jeff Larson <thejefflarson@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 llvm-sys = "90.0.0"

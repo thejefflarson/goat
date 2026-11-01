@@ -9,7 +9,7 @@ pub use self::visitor::Visitor;
 
 use crate::parser::*;
 use pest::iterators::Pair;
-use pest::prec_climber::{Assoc, Operator, PrecClimber};
+use pest::pratt_parser::{Assoc, Op, PrattParser};
 use pest::Span;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -21,14 +21,14 @@ pub struct Identifier<'a> {
 impl<'a> Identifier<'a> {
     pub(super) fn new(name: Span<'a>) -> Self {
         Identifier {
-            name: name.clone(),
             internal: String::from(name.as_str()),
+            name,
         }
     }
 
     pub(super) fn rename(&self, name: String) -> Self {
         Identifier {
-            name: self.name.clone(),
+            name: self.name,
             internal: name,
         }
     }
@@ -109,7 +109,7 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
         Rule::string => Ast::Str(pair.as_span()),
         Rule::number => Ast::Number(pair.as_span()),
         Rule::ident => Ast::Identifier(Identifier::new(pair.as_span())),
-        Rule::boolean => child(pair.into_inner().nth(0).unwrap()),
+        Rule::boolean => child(pair.into_inner().next().unwrap()),
         Rule::true_lit => Ast::Bool(Bool::True),
         Rule::false_lit => Ast::Bool(Bool::False),
         Rule::function => {
@@ -157,28 +157,28 @@ fn child<'a>(pair: Pair<'a, Rule>) -> Ast<'a> {
             }
         }
         Rule::expr => {
-            let climber = PrecClimber::new(vec![
-                Operator::new(Rule::lt, Assoc::Left)
-                    | Operator::new(Rule::lte, Assoc::Left)
-                    | Operator::new(Rule::gt, Assoc::Left)
-                    | Operator::new(Rule::gte, Assoc::Left),
-                Operator::new(Rule::plus, Assoc::Left) | Operator::new(Rule::minus, Assoc::Left),
-                Operator::new(Rule::multiply, Assoc::Left)
-                    | Operator::new(Rule::divide, Assoc::Left),
-            ]);
+            let pratt = PrattParser::new()
+                .op(Op::infix(Rule::lt, Assoc::Left)
+                    | Op::infix(Rule::lte, Assoc::Left)
+                    | Op::infix(Rule::gt, Assoc::Left)
+                    | Op::infix(Rule::gte, Assoc::Left))
+                .op(Op::infix(Rule::plus, Assoc::Left) | Op::infix(Rule::minus, Assoc::Left))
+                .op(Op::infix(Rule::multiply, Assoc::Left) | Op::infix(Rule::divide, Assoc::Left));
 
-            let infix = |lhs: Ast<'a>, op: Pair<'a, Rule>, rhs: Ast<'a>| match op.as_rule() {
-                Rule::plus => Ast::Plus(Box::new(lhs), Box::new(rhs)),
-                Rule::minus => Ast::Minus(Box::new(lhs), Box::new(rhs)),
-                Rule::multiply => Ast::Mult(Box::new(lhs), Box::new(rhs)),
-                Rule::divide => Ast::Div(Box::new(lhs), Box::new(rhs)),
-                Rule::lte => Ast::Lte(Box::new(lhs), Box::new(rhs)),
-                Rule::lt => Ast::Lt(Box::new(lhs), Box::new(rhs)),
-                Rule::gte => Ast::Gte(Box::new(lhs), Box::new(rhs)),
-                Rule::gt => Ast::Gt(Box::new(lhs), Box::new(rhs)),
-                _ => unreachable!(),
-            };
-            climber.climb(pair.into_inner(), Ast::new, infix)
+            pratt
+                .map_primary(Ast::new)
+                .map_infix(|lhs, op, rhs| match op.as_rule() {
+                    Rule::plus => Ast::Plus(Box::new(lhs), Box::new(rhs)),
+                    Rule::minus => Ast::Minus(Box::new(lhs), Box::new(rhs)),
+                    Rule::multiply => Ast::Mult(Box::new(lhs), Box::new(rhs)),
+                    Rule::divide => Ast::Div(Box::new(lhs), Box::new(rhs)),
+                    Rule::lte => Ast::Lte(Box::new(lhs), Box::new(rhs)),
+                    Rule::lt => Ast::Lt(Box::new(lhs), Box::new(rhs)),
+                    Rule::gte => Ast::Gte(Box::new(lhs), Box::new(rhs)),
+                    Rule::gt => Ast::Gt(Box::new(lhs), Box::new(rhs)),
+                    _ => unreachable!(),
+                })
+                .parse(pair.into_inner())
         }
         Rule::EOI => Ast::Empty,
         _ => panic!("Couldn't build {:?}", pair),
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn converts_empty() {
-        let pairs = GoatParser::parse(Rule::goat, "").unwrap().nth(0).unwrap();
+        let pairs = GoatParser::parse(Rule::goat, "").unwrap().next().unwrap();
         let ast = Ast::new(pairs);
         assert_eq!(ast, Ast::Program(Box::new(Ast::Empty)));
     }
@@ -206,11 +206,11 @@ mod tests {
     #[test]
     fn converts_number() {
         let prog = "1";
-        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
+        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().next().unwrap();
         let ast = Ast::new(pairs);
         let span = GoatParser::parse(Rule::number, prog)
             .unwrap()
-            .nth(0)
+            .next()
             .unwrap()
             .as_span();
         assert_eq!(ast, Ast::Program(Box::new(Ast::Number(span))))
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn converts_function() {
         let prog = "program( ) do a done";
-        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
+        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().next().unwrap();
         let ast = Ast::new(pairs);
 
         assert_eq!(
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn converts_math() {
         let prog = "1 + 1";
-        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
+        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().next().unwrap();
         let ast = Ast::new(pairs);
         assert_eq!(
             ast,
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn converts_empty_function() {
         let prog = "program( ) do   done";
-        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().nth(0).unwrap();
+        let pairs = GoatParser::parse(Rule::goat, prog).unwrap().next().unwrap();
         let ast = Ast::new(pairs);
         assert_eq!(
             ast,

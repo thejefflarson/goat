@@ -8,7 +8,7 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-afl = "0.4"
+afl = "0.15"
 
 [dependencies.goat_parser]
 path = "../parser"
