@@ -1,0 +1,5 @@
+# Functions are values: pass one to another function.
+apply = program(f, x) do f(x) done
+double = program(n) do n * 2 done
+
+apply(double, 21)

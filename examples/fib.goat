@@ -1,0 +1,8 @@
+# The tenth Fibonacci number, by recursion.
+fib = program(n) do
+  if n < 2 then n
+  else fib(n - 1) + fib(n - 2)
+  done
+done
+
+fib(10)

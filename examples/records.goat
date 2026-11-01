@@ -1,0 +1,8 @@
+# Records group named fields. Field access is row-polymorphic: `distance`
+# works on any record that has `x` and `y`.
+origin = {x: 0, y: 0}
+spot = {x: 3, y: 4, name: "corner"}
+
+# (no sqrt yet, so just sum the coordinates)
+sum = program(p) do p.x + p.y done
+sum(spot)
