@@ -4,12 +4,5 @@ members = [
     "parser",
     "checker",
     "compiler",
-]
-# The compiler crate binds to a system LLVM (llvm-sys), which is not always
-# installed. Default commands operate on the frontend crates so the workspace
-# builds and tests without LLVM present; build the backend explicitly with
-# `cargo build -p goat_compiler` once LLVM is available.
-default-members = [
-    "parser",
-    "checker",
+    "cli",
 ]
