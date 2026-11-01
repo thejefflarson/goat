@@ -8,8 +8,8 @@
 use crate::error::GoatError;
 use crate::hir::{BinOp, Expr, ExprId, ExprKind, Param, Span, Symbol};
 use goat_parser::parser::{GoatParser, Rule};
-use pest::iterators::Pair;
 use pest::Parser;
+use pest::iterators::Pair;
 use std::collections::HashMap;
 
 pub struct Lowered {

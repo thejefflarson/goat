@@ -2,7 +2,7 @@
 name = "goat_parser"
 version = "0.1.0"
 authors = ["Jeff Larson <thejefflarson@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 pest = "2.9"

@@ -3,6 +3,7 @@ name = "goat_fuzz"
 version = "0.0.1"
 authors = ["Automatically generated"]
 publish = false
+edition = "2024"
 
 [package.metadata]
 cargo-fuzz = true
@@ -10,13 +11,13 @@ cargo-fuzz = true
 [dependencies]
 afl = "0.15"
 
-[dependencies.goat_parser]
-path = "../parser"
+[dependencies.goat_checker]
+path = "../checker"
 
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]
 
 [[bin]]
-name = "parser"
-path = "fuzz_targets/parser.rs"
+name = "check"
+path = "fuzz_targets/check.rs"

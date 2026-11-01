@@ -1,6 +1,4 @@
-use crate::ast::Ast;
 use pest::error::Error;
-use pest::Parser;
 use std::fmt;
 
 #[cfg(debug_assertions)]
@@ -25,11 +23,6 @@ impl From<Error<Rule>> for ParseError {
     fn from(error: Error<Rule>) -> Self {
         ParseError(error)
     }
-}
-
-pub fn parse<'a>(source: &'a str) -> Result<Ast<'a>, ParseError> {
-    let pairs = GoatParser::parse(Rule::goat, source).map(|mut p| p.next())?;
-    Ok(Ast::new(pairs.unwrap()))
 }
 
 #[cfg(test)]
