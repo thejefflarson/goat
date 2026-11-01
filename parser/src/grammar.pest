@@ -11,18 +11,25 @@ true_lit = { "true" }
 false_lit = { "false" }
 boolean = { true_lit | false_lit }
 return_lit = _{ "return" }
-keywords = _{
-  program_lit |
-  if_lit |
-  then_lit |
-  else_lit |
-  do_lit |
-  done_lit |
-  start_at_lit |
-  repeat_lit |
-  times_lit |
-  boolean |
-  return_lit
+// A reserved word, but only when it stands alone: the trailing `!XID_CONTINUE`
+// is a word boundary, so identifiers that merely begin with a keyword — `done`
+// vs `doner`, `do` vs `double`, `if` vs `ifx` — are still valid names. `done`
+// is listed before `do` because PEG alternation commits to the first match,
+// and `do` would otherwise shadow it.
+keyword = _{
+  ( program_lit
+  | if_lit
+  | then_lit
+  | else_lit
+  | done_lit
+  | do_lit
+  | start_at_lit
+  | repeat_lit
+  | times_lit
+  | true_lit
+  | false_lit
+  | return_lit
+  ) ~ !XID_CONTINUE
 }
 
 equals = _{ "=" }
@@ -66,7 +73,7 @@ string = @{ "\"" ~ raw_string ~ "\"" }
 
 unicode = _{ XID_START ~ XID_CONTINUE* }
 
-ident = @{ !keywords ~ unicode+ }
+ident = @{ !keyword ~ unicode+ }
 
 // Actual grammar
 goat = { SOI ~ expr? ~ EOI }
