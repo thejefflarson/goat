@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs for the same ref so a fast push doesn't pile up jobs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runner ships a stable Rust toolchain; just add the components we
+      # lint with.
+      - name: Add clippy and rustfmt
+        run: rustup component add clippy rustfmt
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      # Builds and lints the default workspace members (parser, checker). The
+      # compiler crate is excluded there until it moves off a system LLVM.
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
