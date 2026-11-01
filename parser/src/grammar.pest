@@ -69,7 +69,10 @@ ident = @{ !keywords ~ unicode+ }
 goat = { SOI ~ expr? ~ EOI }
 expr = { term ~ more_math* }
 more_math = _{ infix ~ term }
-term = _{ number | ident | string | boolean | declaration | application | function | conditional | lparen ~ expr ~ rparen }
+// Order matters: pest is a PEG, so longer/more-specific alternatives come
+// first. `declaration` (`ident = ...`) and `application` (`ident(...)`) both
+// begin with an identifier, so a bare `ident` must be tried last.
+term = _{ number | string | boolean | declaration | application | function | conditional | ident | lparen ~ expr ~ rparen }
 declaration = { ident ~ equals ~ expr ~ expr? }
 labels = { ident ~ (comma ~ ident)* }
 function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
