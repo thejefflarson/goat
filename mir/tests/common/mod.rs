@@ -87,3 +87,50 @@ pub fn record_ty() -> MTy {
 pub fn alloc_record(n: i64) -> Expr {
     Expr::AllocRecord(RECORD, vec![int(n)])
 }
+
+pub fn mul(a: Expr, b: Expr) -> Expr {
+    Expr::BinInt(IntOp::Mul, Box::new(a), Box::new(b))
+}
+
+pub fn drop_(n: u32) -> Expr {
+    Expr::Drop(Local(n))
+}
+
+pub fn call_closure(closure: Expr, args: Vec<Expr>) -> Expr {
+    Expr::CallClosure(Box::new(closure), args)
+}
+
+pub fn closure_ty(sig: u32) -> MTy {
+    MTy::Ptr(HeapKind::Closure(SigId(sig)))
+}
+
+/// A closure body whose environment is `env` and whose signature is `SigId(0)`.
+pub fn closure_fn(
+    params: Vec<(u32, MTy)>,
+    env: u32,
+    captures: Vec<MTy>,
+    ret: MTy,
+    body: Expr,
+) -> Func {
+    Func {
+        env: Some(Env {
+            local: Local(env),
+            sig: SigId(0),
+            captures,
+        }),
+        ..func_with(params, ret, body)
+    }
+}
+
+pub const FNS: LayoutId = LayoutId(2);
+
+/// Adds signature 0, `(sig_params) -> Int`, and a record of two such closures.
+pub fn with_closures(mut p: Program, sig_params: Vec<MTy>) -> Program {
+    p.sigs = vec![Sig {
+        params: sig_params,
+        ret: MTy::Int,
+    }];
+    p.layouts
+        .push(Layout::Record(vec![closure_ty(0), closure_ty(0)]));
+    p
+}
