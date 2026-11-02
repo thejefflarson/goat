@@ -3,7 +3,7 @@ use goat_mir::*;
 
 fn run_src(src: &str) -> (Program, Value) {
     let checked = check(src).expect("checks");
-    let p = mono(&checked);
+    let p = mono(&checked).expect("lowers");
     assert_eq!(verify(&p), Ok(()), "{src}");
     let out = run(&p).expect("runs");
     assert_eq!(out.live_allocations, 0);
@@ -99,4 +99,136 @@ fn polymorphic_binding_gets_one_function_per_instantiation() {
 fn repeated_instantiation_is_memoized() {
     let src = "id = program(x) do x done id(1) + id(2) + id(3)";
     assert_eq!(run_src(src).0.funcs.len(), 2);
+}
+
+fn errors(src: &str) -> Vec<String> {
+    let checked = check(src).expect("checks");
+    mono(&checked)
+        .expect_err("rejected")
+        .into_iter()
+        .map(|e| e.message)
+        .collect()
+}
+
+fn has_tail_call(e: &Expr) -> bool {
+    match e {
+        Expr::TailCall(..) => true,
+        Expr::Let(_, v, b) => has_tail_call(v) || has_tail_call(b),
+        Expr::If(_, t, f) => has_tail_call(t) || has_tail_call(f),
+        _ => false,
+    }
+}
+
+#[test]
+fn known_function_passed_as_value() {
+    let src = "double = program(x) do x * 2 done \
+               apply = program(f, x) do f(x) done \
+               apply(double, 21)";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(42.0));
+    assert!(p.funcs.iter().any(|f| f.env.is_some()));
+}
+
+#[test]
+fn function_parameter_used_more_than_once_or_not_at_all() {
+    let twice = "double = program(x) do x * 2 done \
+                 twice = program(f, x) do f(f(x)) done twice(double, 5)";
+    assert_eq!(value(twice), num(20.0));
+    let skip = "double = program(x) do x * 2 done \
+                pick = program(f, c) do if c then f(1) else 0 done done \
+                pick(double, false) + pick(double, true)";
+    assert_eq!(value(skip), num(2.0));
+}
+
+#[test]
+fn function_bound_to_a_local_and_returned() {
+    let src = "double = program(x) do x * 2 done \
+               choose = program(c) do if c then double else double done done \
+               g = choose(true)  g(4)";
+    assert_eq!(value(src), num(8.0));
+    assert_eq!(
+        value("double = program(x) do x * 2 done  g = double  g(3)"),
+        num(6.0)
+    );
+}
+
+#[test]
+fn polymorphic_function_value_is_specialized_per_use() {
+    let src = "id = program(x) do x done \
+               apply = program(f, x) do f(x) done \
+               n = apply(id, 3) \
+               b = apply(id, true) \
+               n";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(3.0));
+    assert!(p.sigs.len() >= 2);
+}
+
+#[test]
+fn trailing_function_binding_is_a_value() {
+    let checked = check("double = program(x) do x * 2 done").expect("checks");
+    let p = mono(&checked).expect("lowers");
+    assert_eq!(verify(&p), Ok(()));
+}
+
+#[test]
+fn tail_recursive_accumulator_runs_in_constant_stack() {
+    let src = "sum = program(n, acc) do if n < 1 then acc else sum(n - 1, acc + n) done done \
+               sum(1000, 0)";
+    let checked = check(src).expect("checks");
+    let p = mono(&checked).expect("lowers");
+    assert_eq!(verify(&p), Ok(()));
+    assert!(p.funcs.iter().any(|f| has_tail_call(&f.body)));
+    let out = run_with_depth(&p, 8).expect("constant stack");
+    assert_eq!(out.value, num(500500.0));
+    assert_eq!(out.live_allocations, 0);
+}
+
+#[test]
+fn tail_call_releases_closure_parameters() {
+    let src = "double = program(x) do x * 2 done \
+               loop = program(f, n) do if n < 1 then f(n) else loop(f, n - 1) done done \
+               loop(double, 500)";
+    let checked = check(src).expect("checks");
+    let p = mono(&checked).expect("lowers");
+    assert_eq!(verify(&p), Ok(()));
+    let out = run_with_depth(&p, 8).expect("constant stack");
+    assert_eq!(out.value, num(0.0));
+    assert_eq!(out.live_allocations, 0);
+}
+
+#[test]
+fn captured_local_is_a_spanned_error() {
+    let src = "make = program(a) do inner = program(x) do x + a done inner(1) done make(2)";
+    let checked = check(src).expect("checks");
+    let errs = mono(&checked).expect_err("rejected");
+    assert_eq!(errs.len(), 1);
+    assert_eq!(
+        errs[0].message,
+        "`a` is captured from an enclosing scope; closures are not supported yet (Phase 4)"
+    );
+    assert_eq!(&src[errs[0].span.start..errs[0].span.end], "a");
+}
+
+#[test]
+fn captured_top_level_value_is_a_spanned_error() {
+    let errs = errors("a = 2  f = program(x) do x + a done  f(1)");
+    assert_eq!(errs.len(), 1);
+    assert!(errs[0].starts_with("`a` is captured"), "{errs:?}");
+}
+
+#[test]
+fn records_and_strings_are_not_supported_yet() {
+    for src in [
+        "r = {a: 1}  r.a",
+        "\"hi\"",
+        "id = program(x) do x done  id(\"hi\")",
+    ] {
+        let errs = errors(src);
+        assert!(!errs.is_empty(), "{src}");
+        assert!(
+            errs.iter().all(|m| m.ends_with("are not supported yet")),
+            "{src}: {errs:?}"
+        );
+    }
 }
