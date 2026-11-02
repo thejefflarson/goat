@@ -66,7 +66,7 @@ number = @{ (ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)?) | ("." ~ ASCII_DIGIT+) }
 WHITESPACE = _{ " " | "\t" | NEWLINE }
 COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
 
-raw_string = { (!"\"" ~ ANY)* }
+raw_string = { ("\\" ~ ANY | !"\"" ~ ANY)* }
 string = @{ "\"" ~ raw_string ~ "\"" }
 
 unicode = _{ XID_START ~ XID_CONTINUE* }
