@@ -26,8 +26,7 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
 
-      # Builds and lints the default workspace members (parser, checker). The
-      # compiler crate is excluded there until it moves off a system LLVM.
+      # Builds and lints every workspace member.
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 

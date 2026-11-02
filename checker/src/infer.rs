@@ -150,7 +150,7 @@ impl Inferer {
                     return;
                 }
                 for (x, y) in a_args.iter().zip(b_args) {
-                    self.unify(x, y, span);
+                    self.unify(y, x, span);
                 }
                 self.unify(a_ret, b_ret, span);
             }
@@ -160,7 +160,7 @@ impl Inferer {
             _ => {
                 self.errors.push(GoatError::new(
                     span,
-                    format!("type mismatch: expected `{a}`, found `{b}`"),
+                    format!("type mismatch: expected `{b}`, found `{a}`"),
                 ));
             }
         }
@@ -190,14 +190,14 @@ impl Inferer {
                 None => {
                     self.errors.push(GoatError::new(
                         span,
-                        format!("record is missing field `{label}`"),
+                        format!("record has an unexpected field `{label}`"),
                     ));
                 }
             },
             (Row::Empty, Row::Extend { label, .. }) => {
                 self.errors.push(GoatError::new(
                     span,
-                    format!("record has an unexpected field `{label}`"),
+                    format!("record is missing field `{label}`"),
                 ));
             }
         }
@@ -271,6 +271,30 @@ impl Inferer {
         out
     }
 
+    /// Give each function binding in the `Let` chain from `expr` a monomorphic
+    /// type up front, so bodies can use bindings not yet inferred (self and
+    /// mutual recursion). Each is generalized when its own `Let` is reached.
+    fn seed_function_group(&mut self, expr: &Expr) {
+        let mut cursor = Some(expr);
+        while let Some(Expr {
+            kind:
+                ExprKind::Let {
+                    symbol,
+                    value,
+                    rest,
+                    ..
+                },
+            ..
+        }) = cursor
+        {
+            if matches!(value.kind, ExprKind::Func { .. }) && !self.env.contains_key(symbol) {
+                let ty = self.fresh();
+                self.env.insert(*symbol, Scheme::mono(ty));
+            }
+            cursor = rest.as_deref();
+        }
+    }
+
     fn infer(&mut self, expr: &Expr) -> Ty {
         let ty = self.infer_kind(expr);
         self.node_types.insert(expr.id, ty.clone());
@@ -317,12 +341,13 @@ impl Inferer {
                 match else_branch {
                     Some(else_expr) => {
                         let else_ty = self.infer(else_expr);
-                        self.unify(&then_ty, &else_ty, expr.span);
+                        self.unify(&else_ty, &then_ty, else_expr.span);
                         then_ty
                     }
-                    // Without an else branch the conditional is a statement: its
-                    // value is Unit and the then-branch's value is discarded.
-                    None => Ty::Unit,
+                    None => {
+                        self.unify(&then_ty, &Ty::Unit, then_branch.span);
+                        Ty::Unit
+                    }
                 }
             }
             ExprKind::Let {
@@ -331,13 +356,17 @@ impl Inferer {
                 rest,
                 ..
             } => {
-                // Bind a fresh monomorphic type before checking the value so the
-                // value may refer to itself (recursion).
-                let rec = self.fresh();
-                self.env.insert(*symbol, Scheme::mono(rec.clone()));
+                if matches!(value.kind, ExprKind::Func { .. }) {
+                    self.seed_function_group(expr);
+                }
                 let value_ty = self.infer(value);
-                self.unify(&rec, &value_ty, value.span);
-                self.env.remove(symbol);
+                let rec = match self.env.remove(symbol) {
+                    Some(seed) => {
+                        self.unify(&value_ty, &seed.ty, value.span);
+                        seed.ty
+                    }
+                    None => value_ty,
+                };
 
                 let scheme = self.generalize(&rec);
                 self.env.insert(*symbol, scheme.clone());
