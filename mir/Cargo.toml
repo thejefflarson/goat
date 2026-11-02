@@ -5,3 +5,4 @@ authors = ["Jeff Larson <thejefflarson@gmail.com>"]
 edition = "2024"
 
 [dependencies]
+goat_checker = { version = "0.1.0", path = "../checker" }
