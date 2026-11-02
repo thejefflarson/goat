@@ -50,6 +50,7 @@ struct Inferer {
     subst: HashMap<TypeVar, Ty>,
     row_subst: HashMap<TypeVar, Row>,
     env: HashMap<Symbol, Scheme>,
+    params: HashMap<Symbol, String>,
     node_types: HashMap<ExprId, Ty>,
     errors: Vec<GoatError>,
 }
@@ -97,6 +98,45 @@ impl Inferer {
                 rest: Box::new(self.resolve_row(rest)),
             },
             Row::Empty => Row::Empty,
+        }
+    }
+
+    /// For a parameter or a field chain off one, the parameter's name and the
+    /// written path (`m`, `m.id`).
+    fn param_path(&self, expr: &Expr) -> Option<(String, String)> {
+        match &expr.kind {
+            ExprKind::Var { symbol, name } => self
+                .params
+                .contains_key(symbol)
+                .then(|| (name.clone(), name.clone())),
+            ExprKind::Field { record, label } => {
+                let (root, path) = self.param_path(record)?;
+                Some((root, format!("{path}.{label}")))
+            }
+            _ => None,
+        }
+    }
+
+    /// Unify the type of `used`, which the surrounding expression needs to be
+    /// `expected`. When `used` is a parameter (or a field of one) that an
+    /// earlier use already fixed, a failure is the monomorphic-parameter
+    /// limitation, so say that instead of a bare mismatch.
+    fn unify_use(&mut self, used: &Expr, actual: &Ty, expected: &Ty, span: Span) {
+        let reused = !matches!(self.resolve(actual), Ty::Var(_));
+        let before = self.errors.len();
+        self.unify(actual, expected, span);
+        if reused
+            && self.errors.len() > before
+            && let Some((root, path)) = self.param_path(used)
+        {
+            self.errors.truncate(before);
+            let what = if path == root { "it" } else { path.as_str() };
+            self.errors.push(GoatError::new(
+                span,
+                format!(
+                    "`{root}` is a parameter, so {what} can only be used at one type here; bind it with `=` instead"
+                ),
+            ));
         }
     }
 
@@ -297,10 +337,12 @@ impl Inferer {
                 let arg_tys: Vec<Ty> = params.iter().map(|_| self.fresh()).collect();
                 for (param, ty) in params.iter().zip(&arg_tys) {
                     self.env.insert(param.symbol, Scheme::mono(ty.clone()));
+                    self.params.insert(param.symbol, param.name.clone());
                 }
                 let ret = self.infer(body);
                 for param in params {
                     self.env.remove(&param.symbol);
+                    self.params.remove(&param.symbol);
                 }
                 Ty::func(arg_tys, ret)
             }
@@ -309,7 +351,7 @@ impl Inferer {
                 let arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
                 let ret = self.fresh();
                 let expected = Ty::func(arg_tys, ret.clone());
-                self.unify(&callee_ty, &expected, expr.span);
+                self.unify_use(callee, &callee_ty, &expected, expr.span);
                 ret
             }
             ExprKind::If {
@@ -318,7 +360,7 @@ impl Inferer {
                 else_branch,
             } => {
                 let cond_ty = self.infer(cond);
-                self.unify(&cond_ty, &Ty::Bool, cond.span);
+                self.unify_use(cond, &cond_ty, &Ty::Bool, cond.span);
                 let then_ty = self.infer(then_branch);
                 match else_branch {
                     Some(else_expr) => {
@@ -362,8 +404,8 @@ impl Inferer {
             ExprKind::Bin { op, lhs, rhs } => {
                 let lhs_ty = self.infer(lhs);
                 let rhs_ty = self.infer(rhs);
-                self.unify(&lhs_ty, &Ty::Number, lhs.span);
-                self.unify(&rhs_ty, &Ty::Number, rhs.span);
+                self.unify_use(lhs, &lhs_ty, &Ty::Number, lhs.span);
+                self.unify_use(rhs, &rhs_ty, &Ty::Number, rhs.span);
                 if op.is_comparison() {
                     Ty::Bool
                 } else {

@@ -172,6 +172,41 @@ mod tests {
     }
 
     #[test]
+    fn reusing_a_parameter_at_two_types_names_the_parameter() {
+        assert_eq!(
+            type_of("use = program(m) do a = m.id + 1\n if m.id then 1 else 2 done done use(1)")
+                .unwrap_err(),
+            "`m` is a parameter, so m.id can only be used at one type here; bind it with `=` instead"
+        );
+        assert_eq!(
+            type_of("both = program(f) do a = f(1)\n b = f(true)\n b done").unwrap_err(),
+            "`f` is a parameter, so it can only be used at one type here; bind it with `=` instead"
+        );
+        assert_eq!(
+            type_of("use2 = program(g) do a = g({x: 1})\n b = g({x: 2, y: 3})\n b done use2(1)")
+                .unwrap_err(),
+            "`g` is a parameter, so it can only be used at one type here; bind it with `=` instead"
+        );
+    }
+
+    #[test]
+    fn ordinary_mismatches_and_bound_functions_keep_their_messages() {
+        assert_eq!(
+            type_of("1 + true").unwrap_err(),
+            "type mismatch: expected `Number`, found `Bool`"
+        );
+        assert_eq!(
+            type_of("f = program(x) do x done\n a = f(1)\n b = f(true)\n b").unwrap(),
+            "Bool"
+        );
+        assert_eq!(
+            type_of("f = program(n) do n + 1 done\n g = program(h) do h(true) done\n g(f)")
+                .unwrap_err(),
+            "type mismatch: expected `Number`, found `Bool`"
+        );
+    }
+
+    #[test]
     fn missing_field_is_reported_as_missing() {
         assert_eq!(
             type_of("{x: 1}.y").unwrap_err(),
