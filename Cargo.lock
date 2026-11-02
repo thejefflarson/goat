@@ -331,6 +331,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "goat_mir"
+version = "0.1.0"
+
+[[package]]
 name = "goat_parser"
 version = "0.1.0"
 dependencies = [
