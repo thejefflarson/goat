@@ -49,6 +49,19 @@ mod tests {
     }
 
     #[test]
+    fn calling_a_non_function_is_a_clear_error() {
+        assert!(type_of("1(2)").unwrap_err().contains("is not a function"));
+        // the sequencing-mistake shape: `(…)` right after an expression
+        assert!(
+            type_of("x = 1 (2)")
+                .unwrap_err()
+                .contains("is not a function")
+        );
+        // a real call still works
+        assert_eq!(type_of("f = program(x) do x done f(1)").unwrap(), "Number");
+    }
+
+    #[test]
     fn literals() {
         assert_eq!(type_of("1").unwrap(), "Number");
         assert_eq!(type_of("1.5").unwrap(), "Number");
@@ -396,6 +409,6 @@ mod tests {
 
     #[test]
     fn moderately_nested_expression_still_checks() {
-        assert_eq!(type_of(&chain(500)).unwrap(), "Number");
+        assert_eq!(type_of(&chain(200)).unwrap(), "Number");
     }
 }

@@ -341,6 +341,16 @@ impl Inferer {
         ty
     }
 
+    #[cold]
+    fn report_not_callable(&mut self, span: Span, ty: &Ty) {
+        self.errors.push(GoatError::new(
+            span,
+            format!(
+                "`{ty}` is not a function and can't be called; a `(…)` right after an expression is read as a call"
+            ),
+        ));
+    }
+
     fn infer_kind(&mut self, expr: &Expr) -> Ty {
         match &expr.kind {
             ExprKind::Unit => Ty::Unit,
@@ -368,8 +378,17 @@ impl Inferer {
                 let callee_ty = self.infer(callee);
                 let arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
                 let ret = self.fresh();
-                let expected = Ty::func(arg_tys, ret.clone());
-                self.unify_use(callee, &callee_ty, &expected, expr.span);
+                match self.resolve(&callee_ty) {
+                    Ty::Func(..) | Ty::Var(_) => {
+                        let expected = Ty::func(arg_tys, ret.clone());
+                        self.unify_use(callee, &callee_ty, &expected, expr.span);
+                    }
+                    // A `(…)` immediately after an expression is read as a
+                    // call, so calling a non-function is often a sequencing
+                    // mistake. Reporting lives in a cold helper to keep this
+                    // deeply-recursed match's stack frame small.
+                    other => self.report_not_callable(callee.span, &other),
+                }
                 ret
             }
             ExprKind::If {

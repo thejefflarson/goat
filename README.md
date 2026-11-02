@@ -34,6 +34,11 @@ Types are inferred — you never write a type annotation. The checker is
 Hindley-Milner with **row-polymorphic records** (scoped labels), so a function
 like `program(p) do p.x done` works on *any* record that has an `x`.
 
+A `(…)` immediately after an expression is a **call** — `f(x)` calls `f`. A
+grouped expression therefore can't start a new statement right after another
+one; `1 (2)` reads as "call `1` with `2`" (and `1` is not a function, so you get
+a clear error saying so).
+
 ## Toolchain
 
 ```console

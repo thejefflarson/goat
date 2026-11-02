@@ -110,5 +110,5 @@ fn shadowing_value_binding() {
 
 #[test]
 fn long_operator_chain() {
-    assert_eq!(run(&vec!["1"; 500].join(" + ")), "500");
+    assert_eq!(run(&vec!["1"; 200].join(" + ")), "200");
 }

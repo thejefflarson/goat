@@ -15,7 +15,10 @@ use std::iter::Peekable;
 
 /// Deepest expression tree lowering accepts; deeper input would overflow the
 /// recursive passes (inference, codegen) that walk the tree.
-const MAX_DEPTH: usize = 1000;
+// Kept well below the depth at which recursive inference/codegen overflows a
+// small (2 MB) thread stack, so any expression the checker accepts is safe to
+// walk. No real program nests this deep; pathological input gets a clean error.
+const MAX_DEPTH: usize = 256;
 
 pub struct Lowered {
     pub root: Expr,
