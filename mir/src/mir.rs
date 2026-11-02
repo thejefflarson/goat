@@ -113,6 +113,10 @@ pub enum Callee {
 /// Using a pointer-typed `Local` moves it; `Field`, `Payload`, `Capture` and
 /// `Switch` borrow their operand, and a pointer they load is a fresh owned
 /// reference (an implicit `Dup`).
+///
+/// `Unpack` is the consuming destructure: it moves the fields out of a cell
+/// the local solely owns, leaving the local as a reuse token that exactly one
+/// of `ReuseVariant` or `Free` must consume.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Const(Const),
@@ -132,6 +136,9 @@ pub enum Expr {
     Field(Local, usize),
     AllocVariant(LayoutId, u32, Vec<Expr>),
     Payload(Local, u32, usize),
+    Unpack(Local, u32, Vec<Local>, Box<Expr>),
+    ReuseVariant(Local, LayoutId, u32, Vec<Expr>),
+    Free(Local),
     StrLit(DataId),
     Dup(Local),
     Drop(Local),

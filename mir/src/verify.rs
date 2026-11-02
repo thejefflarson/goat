@@ -30,6 +30,9 @@ pub enum ErrorKind {
     BadFieldIndex(usize),
     BadCapture(usize),
     BadTag(u32),
+    NotUnique(Local),
+    NotAToken(Local),
+    ReuseSizeMismatch { from: LayoutId, to: LayoutId },
     DuplicateSwitchArm(u32),
     TailCallNotInTail,
     UnexpectedEnv(FuncId),
@@ -68,6 +71,7 @@ pub fn verify(program: &Program) -> Result<(), Vec<VerifyError>> {
 #[derive(Clone, Copy, PartialEq)]
 enum Own {
     Live(u32),
+    Token,
     Dropped,
     Moved,
 }
@@ -76,7 +80,8 @@ impl Own {
     fn agrees_with(self, other: Own) -> bool {
         match (self, other) {
             (Own::Live(a), Own::Live(b)) => a == b,
-            (Own::Live(_), _) | (_, Own::Live(_)) => false,
+            (Own::Token, Own::Token) => true,
+            (Own::Live(_) | Own::Token, _) | (_, Own::Live(_) | Own::Token) => false,
             _ => true,
         }
     }
@@ -138,7 +143,7 @@ impl<'a> Checker<'a> {
     fn report_leaks(&mut self, mut locals: Vec<Local>) {
         locals.sort();
         for local in locals {
-            if matches!(self.own.get(&local), Some(Own::Live(_))) {
+            if matches!(self.own.get(&local), Some(Own::Live(_) | Own::Token)) {
                 self.err(ErrorKind::Leak(local));
             }
         }
@@ -183,11 +188,35 @@ impl<'a> Checker<'a> {
                 self.err(ErrorKind::UseAfterDrop(local));
                 None
             }
-            Some(Own::Moved) => {
+            Some(Own::Moved | Own::Token) => {
                 self.err(ErrorKind::UseAfterMove(local));
                 None
             }
             _ => Some(ty),
+        }
+    }
+
+    /// Consumes a reuse token, returning the layout of the cell it came from.
+    fn take_token(&mut self, local: Local) -> Option<LayoutId> {
+        let kind = match (self.types.get(&local), self.own.get(&local)) {
+            (None, _) => {
+                self.err(ErrorKind::UnboundLocal(local));
+                return None;
+            }
+            (Some(MTy::Ptr(HeapKind::Variant(l) | HeapKind::List(l))), Some(Own::Token)) => {
+                Some(*l)
+            }
+            _ => None,
+        };
+        match kind {
+            Some(l) => {
+                self.own.insert(local, Own::Moved);
+                Some(l)
+            }
+            None => {
+                self.err(ErrorKind::NotAToken(local));
+                None
+            }
         }
     }
 
@@ -457,6 +486,72 @@ impl<'a> Checker<'a> {
                 self.args(fields, expected);
                 Ty::Val(MTy::Ptr(HeapKind::Variant(*layout)))
             }
+            Expr::Unpack(x, tag, binds, body) => {
+                let payload = match self.borrow_ptr(*x) {
+                    Some(HeapKind::Variant(l) | HeapKind::List(l)) => {
+                        self.variant_tags(l).and_then(|tags| {
+                            let found = tags.get(*tag as usize);
+                            if found.is_none() {
+                                self.err(ErrorKind::BadTag(*tag));
+                            }
+                            found
+                        })
+                    }
+                    Some(other) => {
+                        self.err(ErrorKind::NotAVariant(MTy::Ptr(other)));
+                        None
+                    }
+                    None => None,
+                };
+                if self.own.get(x) != Some(&Own::Live(1)) {
+                    self.err(ErrorKind::NotUnique(*x));
+                } else {
+                    self.own.insert(*x, Own::Token);
+                }
+                if let Some(payload) = payload {
+                    if payload.len() != binds.len() {
+                        self.err(ErrorKind::ArityMismatch {
+                            expected: payload.len(),
+                            found: binds.len(),
+                        });
+                    }
+                    for (bind, ty) in binds.iter().zip(payload) {
+                        self.bind(*bind, *ty);
+                    }
+                }
+                let result = self.expr(body, tail);
+                if result != Ty::Never {
+                    self.report_leaks(binds.clone());
+                }
+                for bind in binds {
+                    self.own.remove(bind);
+                }
+                result
+            }
+            Expr::ReuseVariant(x, layout, tag, fields) => {
+                let tags = self.variant_tags(*layout);
+                let expected = match tags.map(|t| t.get(*tag as usize)) {
+                    Some(Some(payload)) => Some(payload.as_slice()),
+                    Some(None) => {
+                        self.err(ErrorKind::BadTag(*tag));
+                        None
+                    }
+                    None => None,
+                };
+                self.args(fields, expected);
+                if let Some(from) = self.take_token(*x)
+                    && let (Some(Layout::Variant(old)), Some(to)) =
+                        (self.program.layouts.get(from.0 as usize), tags)
+                    && max_payload(old) != max_payload(to)
+                {
+                    self.err(ErrorKind::ReuseSizeMismatch { from, to: *layout });
+                }
+                Ty::Val(MTy::Ptr(HeapKind::Variant(*layout)))
+            }
+            Expr::Free(x) => {
+                self.take_token(*x);
+                Ty::Val(MTy::Unit)
+            }
             Expr::Payload(x, tag, i) => match self.borrow_ptr(*x) {
                 Some(HeapKind::Variant(l) | HeapKind::List(l)) => {
                     let Some(tags) = self.variant_tags(l) else {
@@ -505,4 +600,8 @@ impl<'a> Checker<'a> {
         self.expect(b, operand);
         Ty::Val(result)
     }
+}
+
+fn max_payload(tags: &[Vec<MTy>]) -> usize {
+    tags.iter().map(Vec::len).max().unwrap_or(0)
 }

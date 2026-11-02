@@ -171,3 +171,86 @@ fn rejects_non_bool_condition_and_mismatched_branches() {
     let errors = kinds(&main_returning_int(body));
     assert_eq!(errors.len(), 2, "{errors:?}");
 }
+
+fn unpack_then(body: Expr) -> Program {
+    let unpack = Expr::Unpack(Local(0), 1, vec![Local(1)], Box::new(body));
+    main_returning_int(let_(
+        0,
+        Expr::AllocVariant(VARIANT, 1, vec![int(5)]),
+        unpack,
+    ))
+}
+
+#[test]
+fn unpack_token_must_be_consumed_by_free_or_reuse() {
+    let freed = let_(2, Expr::Free(Local(0)), local(1));
+    assert_eq!(verify(&unpack_then(freed)), Ok(()));
+
+    let reused = let_(
+        2,
+        Expr::ReuseVariant(Local(0), VARIANT, 1, vec![int(9)]),
+        let_(3, Expr::Drop(Local(2)), local(1)),
+    );
+    assert_eq!(verify(&unpack_then(reused)), Ok(()));
+
+    assert_eq!(
+        kinds(&unpack_then(local(1))),
+        vec![ErrorKind::Leak(Local(0))]
+    );
+}
+
+#[test]
+fn unpack_token_cannot_be_used_as_a_value() {
+    let errors = kinds(&unpack_then(let_(2, Expr::Drop(Local(0)), local(1))));
+    assert!(
+        errors.contains(&ErrorKind::UseAfterMove(Local(0))),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn reuse_and_free_require_a_token() {
+    let body = let_(
+        0,
+        Expr::AllocVariant(VARIANT, 1, vec![int(5)]),
+        let_(1, Expr::Free(Local(0)), int(0)),
+    );
+    assert!(kinds(&main_returning_int(body)).contains(&ErrorKind::NotAToken(Local(0))));
+}
+
+#[test]
+fn unpack_requires_sole_ownership() {
+    let body = let_(
+        0,
+        Expr::AllocVariant(VARIANT, 1, vec![int(5)]),
+        let_(
+            2,
+            Expr::Dup(Local(0)),
+            Expr::Unpack(
+                Local(0),
+                1,
+                vec![Local(1)],
+                Box::new(let_(3, Expr::Free(Local(0)), local(1))),
+            ),
+        ),
+    );
+    assert!(kinds(&main_returning_int(body)).contains(&ErrorKind::NotUnique(Local(0))));
+}
+
+#[test]
+fn reuse_rejects_a_differently_sized_cell() {
+    let mut p = unpack_then(let_(
+        2,
+        Expr::ReuseVariant(Local(0), LayoutId(2), 0, vec![int(1), int(2)]),
+        let_(3, Expr::Drop(Local(2)), local(1)),
+    ));
+    p.layouts
+        .push(Layout::Variant(vec![vec![MTy::Int, MTy::Int]]));
+    assert_eq!(
+        kinds(&p),
+        vec![ErrorKind::ReuseSizeMismatch {
+            from: VARIANT,
+            to: LayoutId(2)
+        }]
+    );
+}
