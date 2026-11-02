@@ -380,4 +380,22 @@ mod tests {
             "duplicate parameter `a`"
         );
     }
+
+    fn chain(n: usize) -> String {
+        vec!["1"; n].join(" + ")
+    }
+
+    #[test]
+    fn deeply_nested_expression_is_a_clean_error() {
+        let Err(errors) = check(&chain(100_000)) else {
+            panic!("expected an error");
+        };
+        assert_eq!(errors[0].message, "expression nested too deeply");
+        assert_eq!(errors[0].span.start, 0);
+    }
+
+    #[test]
+    fn moderately_nested_expression_still_checks() {
+        assert_eq!(type_of(&chain(500)).unwrap(), "Number");
+    }
 }
