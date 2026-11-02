@@ -27,10 +27,12 @@ pub enum InterpError {
 
 /// `live_allocations` counts heap objects still allocated when the entry
 /// function returned, including its result if that is a pointer.
+/// `allocations` counts every non-immortal object ever allocated.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Outcome {
     pub value: Value,
     pub live_allocations: usize,
+    pub allocations: usize,
 }
 
 pub fn run(program: &Program) -> Result<Outcome, InterpError> {
@@ -43,6 +45,7 @@ pub fn run_with_depth(program: &Program, max_depth: usize) -> Result<Outcome, In
         max_depth,
         slots: Vec::new(),
         live: 0,
+        allocations: 0,
         strings: HashMap::new(),
     };
     let entry = Pending {
@@ -54,6 +57,7 @@ pub fn run_with_depth(program: &Program, max_depth: usize) -> Result<Outcome, In
     Ok(Outcome {
         value,
         live_allocations: interp.live,
+        allocations: interp.allocations,
     })
 }
 
@@ -112,6 +116,7 @@ struct Interp<'p> {
     max_depth: usize,
     slots: Vec<Option<Obj>>,
     live: usize,
+    allocations: usize,
     strings: HashMap<DataId, usize>,
 }
 
@@ -119,6 +124,7 @@ impl Interp<'_> {
     fn alloc(&mut self, body: Body, rc: u32) -> Value {
         if rc != IMMORTAL {
             self.live += 1;
+            self.allocations += 1;
         }
         self.slots.push(Some(Obj { rc, body }));
         Value::Ptr(self.slots.len() - 1)
@@ -345,6 +351,51 @@ impl Interp<'_> {
             Expr::AllocVariant(_, tag, fields) => {
                 let fields = self.values(fields, frame, depth)?;
                 self.alloc(Body::Variant(*tag, fields), 1)
+            }
+            Expr::Unpack(x, tag, binds, body) => {
+                let Value::Ptr(addr) = frame.get(*x)? else {
+                    return Err(InterpError::Malformed("unpack of non-pointer"));
+                };
+                let obj = self.obj(addr)?;
+                let Body::Variant(t, fields) = &obj.body else {
+                    return Err(InterpError::Malformed("unpack of non-variant"));
+                };
+                if t != tag || fields.len() != binds.len() {
+                    return Err(InterpError::Malformed("unpack tag"));
+                }
+                let fields = fields.clone();
+                if obj.rc == 1 {
+                    if let Some(Some(obj)) = self.slots.get_mut(addr) {
+                        obj.body = Body::Variant(*tag, Vec::new());
+                    }
+                } else {
+                    for field in &fields {
+                        self.retain(*field)?;
+                    }
+                    self.release(Value::Ptr(addr))?;
+                    frame.locals.insert(*x, Value::Unit);
+                }
+                frame.locals.extend(binds.iter().copied().zip(fields));
+                return self.eval(body, frame, depth);
+            }
+            Expr::ReuseVariant(x, _, tag, fields) => {
+                let fields = self.values(fields, frame, depth)?;
+                match frame.get(*x)? {
+                    Value::Ptr(addr) => {
+                        if let Some(Some(obj)) = self.slots.get_mut(addr) {
+                            obj.body = Body::Variant(*tag, fields);
+                        }
+                        Value::Ptr(addr)
+                    }
+                    _ => self.alloc(Body::Variant(*tag, fields), 1),
+                }
+            }
+            Expr::Free(x) => {
+                if let Value::Ptr(addr) = frame.get(*x)? {
+                    self.slots[addr] = None;
+                    self.live -= 1;
+                }
+                Value::Unit
             }
             Expr::Payload(x, tag, i) => {
                 let variant = frame.get(*x)?;

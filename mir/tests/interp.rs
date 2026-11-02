@@ -15,7 +15,8 @@ fn adds_two_numbers_with_no_live_allocations() {
         run_verified(&p),
         Outcome {
             value: Value::Int(3),
-            live_allocations: 0
+            live_allocations: 0,
+            allocations: 0
         }
     );
 }

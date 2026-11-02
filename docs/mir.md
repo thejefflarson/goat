@@ -9,8 +9,9 @@ so those are settled here before code depends on them. The one-way-door choices
 are recorded as ADRs ([0001](adr/0001-number-representation.md) numbers,
 [0002](adr/0002-object-header.md) object header) and summarized below.
 
-Status: design spec for Phase 1.5. No code depends on it until #11 builds the
-crate and #13 validates it with hand-written hard cases.
+Status: design spec for Phase 1.5, implemented by the `goat_mir` crate (`mir/`)
+and validated by the five hand-written hard cases in `mir/tests/hard_cases.rs`
+(see Hard cases below).
 
 ## Values and types
 
@@ -61,8 +62,9 @@ After mono every record/variant type is closed, so each has a fixed layout
 keyed by `LayoutId`:
 
 - **Record:** `[header][field0][field1]…`, fields sorted by label, each at its
-  natural width, 8-byte aligned. `Field(rec, offset)` is a load at a constant
-  offset.
+  natural width, 8-byte aligned. `Field(rec, index)` names the field by
+  **index** into the layout, not by byte offset: offsets depend on the target's
+  pointer and number widths, so each backend computes them from the layout.
 - **Variant:** `[header][tag: u32][payload…]`. Each tag label gets one global
   tag number; `match` loads the tag and `br_table`s. Nullary tags may be
   immortal static objects.
@@ -95,6 +97,28 @@ implicit:
 - `Drop(local)` for an owned local that is otherwise unused, at scope end and at
   the start of each branch that does not consume it.
 - The last use of an owned local transfers ownership (no `Dup`).
+
+Loads and destructuring come in two forms, settled by the `map` hard case:
+
+- **Borrowing loads** — `Field`, `Payload`, `Capture`, and `Switch`'s scrutinee
+  — leave the source owned by its local. A pointer they load is a fresh owned
+  reference (an implicit `Dup`), so a read never invalidates its source.
+- **Consuming destructure** — `Unpack(x, tag, binds, body)` — requires `x` to
+  be its sole owner (`Live(1)`). It moves the payload fields into `binds` as
+  owned locals and turns `x` into a **reuse token** that exactly one of
+  `ReuseVariant(x, layout, tag, fields)` or `Free(x)` must consume; any other
+  use, or leaving it unconsumed, is a verifier error.
+
+Implicit-dup loads alone cannot express `rc == 1` reuse: loading a child bumps
+its count, so the child of a unique cell is never unique and the recursion in
+`map` always copies. `Unpack` is Perceus's `drop-reuse`. At runtime, if the cell
+has `rc == 1` the fields move out with no RC traffic and the token is the
+hollow cell, which `ReuseVariant` refills in place and `Free` releases; if the
+cell is shared, `Unpack` increments each field, decrements the cell, and the
+token is empty, so `ReuseVariant` allocates fresh and `Free` does nothing. Both
+paths are the same MIR, so the verifier checks ownership once and uniqueness is
+a runtime fact. `ReuseVariant` requires the token's cell and the new layout to
+have the same maximum payload size, which keeps reuse to same-sized cells.
 
 ## Closures
 
@@ -157,8 +181,12 @@ enum Expr {
     CallClosure(closure, args),                // unknown callee: call_indirect
     TailCall(Callee, args),
     MakeClosure(FuncId, captures),
-    AllocRecord(LayoutId, fields), Field(rec, offset),
-    AllocVariant(tag, payload),                // Phase 7
+    AllocRecord(LayoutId, fields), Field(rec, index),
+    AllocVariant(LayoutId, tag, payload),      // Phase 7
+    Payload(variant, tag, index),              // borrowing load, like Field
+    Unpack(x, tag, binds, body),               // consuming destructure -> token
+    ReuseVariant(token, LayoutId, tag, payload), Free(token),
+    Capture(index),                            // read a closure capture
     StrLit(DataId),
     Dup(Local), Drop(Local),                   // Phase 6, inserted by the RC pass
     Trap(message),
@@ -166,6 +194,52 @@ enum Expr {
 ```
 
 `Unit`-typed sub-expressions are erased during lowering to wasm.
+
+## Hard cases and their wasm lowering
+
+Each is a hand-built `goat_mir::Program` in `mir/tests/hard_cases.rs`, accepted
+by the verifier and run by the interpreter with zero live allocations at exit.
+`rc` ops below are the inline sequences from the header; "static" means an
+immortal object.
+
+1. **Closure capturing an outer value.** `MakeClosure(f, [r])` moves `r` into
+   the capture slot; the callee reads it with `Capture(0)` (an implicit dup)
+   and drops `env` before returning. Lowering: `alloc(16 + 8*ncaptures)`, store
+   `rc=1`, `drop_fn`, the table index of `f`, and the captures. Each closure
+   signature is a wasm type `(env: i32, args…) -> ret`; `CallClosure` loads
+   `code` from `env+12` and does `call_indirect`, passing the closure pointer
+   as the first argument. `Capture(i)` is a load at `env + 16 + 8*i` followed by
+   an `rc` increment if the capture is a pointer. `drop_fn` decrements each
+   pointer capture and frees the closure.
+2. **Self-recursive local closure.** The body calls itself through `env`, the
+   closure it was called with, so the closure never stores itself and the
+   capture list has no cycle. A tail call (`go(n-1, acc+k)`) passes `env`
+   straight on (ownership moves, no `Dup`) and lowers to `return_call_indirect`
+   with the same `env`; the non-tail form `Dup`s `env` before the call and
+   `Drop`s after. Stack depth is constant for the tail form (tested at 1000
+   iterations against an interpreter depth limit of 128).
+3. **Recursive `length` over `Empty | Link`.** `Switch` on the tag becomes
+   `local.get xs; i32.load (tag); br_table`. The `Link` arm is `Unpack`: load
+   the head and tail from the payload slots, then `Free` the cell (when unique)
+   or decrement it and increment the tail (when shared), selected by one
+   `rc == 1` test. The recursion is `call`; an accumulator form would use
+   `TailCall` and `return_call`. Nullary tags (`Empty`) may be static objects, in which case
+   `Unpack` and `Drop` never see them.
+4. **`map` with in-place reuse.** The `Link` arm is `Unpack`, then a closure
+   call on the head, a recursive `map` on the tail, and `ReuseVariant`. Lowering
+   emits `if (rc == 1)` once at `Unpack`: the unique path loads the fields and
+   keeps the cell's address in a wasm local as the token; the shared path
+   increments both fields, decrements the cell, and sets the token to 0.
+   `ReuseVariant` becomes `if (token != 0) { store tag + fields into token }
+   else { alloc + store }`, and `Free` becomes `if (token != 0) { free }`. A
+   unique list is mapped with no allocation beyond the closure; a shared list
+   leaves the original intact (both tested).
+5. **Record of functions called as `r.f(x)`.** `AllocRecord` of two closures
+   stores them at their field offsets; `Field(r, 0)` is a load plus `rc`
+   increment, and the call is exactly case 1's `call_indirect` path with the
+   loaded closure as `env`. `r` is dropped after the last call. Top-level
+   functions placed in the record use their static immortal closures, so no
+   allocation or `rc` traffic happens for them.
 
 ## Validation (how we know this is right)
 
