@@ -16,7 +16,10 @@ use std::{env, fs};
 const RUNTIME_C: &str = r#"
 #include <stdio.h>
 extern void goat_entry(void);
-void goat_print_number(double x) { printf("%g\n", x); }
+void goat_print_number(double x) {
+    if (x > -1e18 && x < 1e18 && x == (double)(long long)x) printf("%lld\n", (long long)x);
+    else printf("%.15g\n", x);
+}
 void goat_print_bool(long b) { printf("%s\n", b ? "true" : "false"); }
 int main(void) { goat_entry(); return 0; }
 "#;

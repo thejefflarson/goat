@@ -8,7 +8,10 @@ use std::{env, fs};
 const RUNTIME_C: &str = r#"
 #include <stdio.h>
 extern void goat_entry(void);
-void goat_print_number(double x) { printf("%g\n", x); }
+void goat_print_number(double x) {
+    if (x > -1e18 && x < 1e18 && x == (double)(long long)x) printf("%lld\n", (long long)x);
+    else printf("%.15g\n", x);
+}
 void goat_print_bool(long b) { printf("%s\n", b ? "true" : "false"); }
 int main(void) { goat_entry(); return 0; }
 "#;
@@ -45,6 +48,14 @@ fn arithmetic() {
     assert_eq!(run("1 + 2 * 3"), "7");
     assert_eq!(run("(1 + 2) * 3"), "9");
     assert_eq!(run("10 / 4"), "2.5");
+}
+
+#[test]
+fn numbers_print_without_exponent() {
+    assert_eq!(run("1000000"), "1000000");
+    assert_eq!(run("123456789"), "123456789");
+    assert_eq!(run("0.5"), "0.5");
+    assert_eq!(run("0.1 + 0.2"), "0.3");
 }
 
 #[test]
@@ -95,4 +106,9 @@ fn mutual_recursion_either_order() {
 #[test]
 fn shadowing_value_binding() {
     assert_eq!(run("score = 1  score = score + 1  score"), "2");
+}
+
+#[test]
+fn long_operator_chain() {
+    assert_eq!(run(&vec!["1"; 500].join(" + ")), "500");
 }

@@ -13,6 +13,10 @@ use pest::iterators::{Pair, Pairs};
 use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
 
+/// Deepest expression tree lowering accepts; deeper input would overflow the
+/// recursive passes (inference, codegen) that walk the tree.
+const MAX_DEPTH: usize = 1000;
+
 pub struct Lowered {
     pub root: Expr,
     pub errors: Vec<GoatError>,
@@ -44,6 +48,7 @@ struct Lower {
     /// earlier name in the group, which shadows it.
     grouped: HashMap<usize, Option<Symbol>>,
     errors: Vec<GoatError>,
+    depth: usize,
 }
 
 impl Lower {
@@ -105,6 +110,24 @@ impl Lower {
     /// siblings, so [`Self::lower_operand`] consumes them before the next
     /// operator.
     fn lower_expr(&mut self, pair: Pair<Rule>) -> Expr {
+        let added = pair.clone().into_inner().count() / 2 + 1;
+        if self.depth + added > MAX_DEPTH {
+            let span = pair
+                .clone()
+                .into_inner()
+                .next()
+                .map_or_else(|| span_of(&pair), |first| span_of(&first));
+            self.errors
+                .push(GoatError::new(span, "expression nested too deeply"));
+            return self.node(span, ExprKind::Unit);
+        }
+        self.depth += added;
+        let expr = self.lower_expr_chain(pair);
+        self.depth -= added;
+        expr
+    }
+
+    fn lower_expr_chain(&mut self, pair: Pair<Rule>) -> Expr {
         let mut inner = pair.into_inner().peekable();
         let mut operands = vec![self.lower_operand(&mut inner)];
         let mut ops: Vec<(BinOp, Span)> = Vec::new();
@@ -233,8 +256,8 @@ impl Lower {
             }
             Rule::string => {
                 let raw = pair.as_str();
-                let inner = &raw[1..raw.len() - 1];
-                self.node(span, ExprKind::Str(inner.to_string()))
+                let decoded = self.decode_string(span, &raw[1..raw.len() - 1]);
+                self.node(span, ExprKind::Str(decoded))
             }
             Rule::boolean => {
                 let is_true = pair.as_str() == "true";
@@ -250,6 +273,29 @@ impl Lower {
             Rule::conditional => self.lower_conditional(pair),
             other => unreachable!("unexpected term rule {other:?}"),
         }
+    }
+
+    fn decode_string(&mut self, span: Span, inner: &str) -> String {
+        let mut out = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some(other) => self.errors.push(GoatError::new(
+                    span,
+                    format!("unknown escape `\\{other}` in string"),
+                )),
+                None => unreachable!("grammar pairs every backslash with a character"),
+            }
+        }
+        out
     }
 
     fn var(&mut self, span: Span, name: String) -> Expr {
@@ -443,5 +489,35 @@ fn prec(op: BinOp) -> u8 {
         BinOp::Mul | BinOp::Div => 3,
         BinOp::Add | BinOp::Sub => 2,
         BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn string_value(source: &str) -> Result<String, String> {
+        let lowered = lower(source).map_err(|e| e.message)?;
+        if let Some(e) = lowered.errors.first() {
+            return Err(e.message.clone());
+        }
+        match lowered.root.kind {
+            ExprKind::Str(s) => Ok(s),
+            other => panic!("expected a string, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decodes_escapes() {
+        assert_eq!(string_value(r#""say \"hi\"""#).unwrap(), "say \"hi\"");
+        assert_eq!(string_value(r#""line\nbreak""#).unwrap(), "line\nbreak");
+        assert_eq!(string_value(r#""a\tb""#).unwrap(), "a\tb");
+        assert_eq!(string_value(r#""\\""#).unwrap(), "\\");
+    }
+
+    #[test]
+    fn rejects_unknown_escape() {
+        let err = string_value(r#""bad \q""#).unwrap_err();
+        assert!(err.contains("unknown escape `\\q`"), "{err}");
     }
 }
