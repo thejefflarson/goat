@@ -215,17 +215,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cranelift"
-version = "0.137.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34915124e6d716c40c317c86a3fb97b8484da096f937fc5b8c6ebf0df6ba14cd"
-dependencies = [
- "cranelift-codegen",
- "cranelift-frontend",
- "cranelift-module",
-]
-
-[[package]]
 name = "cranelift-assembler-x64"
 version = "0.137.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -355,18 +344,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a92e743f35915d55cd3d3178aab483661f78c2f9274aa704f29be69e3789c5bd"
 
 [[package]]
-name = "cranelift-module"
-version = "0.137.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1fc79497db837c8433435264d34eec0fd5e0db56dc41ffc1a3d096dad28e572"
-dependencies = [
- "anyhow",
- "cranelift-codegen",
- "cranelift-control",
- "hashbrown 0.17.1",
-]
-
-[[package]]
 name = "cranelift-native"
 version = "0.137.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -375,22 +352,6 @@ dependencies = [
  "cranelift-codegen",
  "libc",
  "mach2",
- "target-lexicon",
-]
-
-[[package]]
-name = "cranelift-object"
-version = "0.137.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c38304b64d440315410ae0229340dd2087bed7d7e8411a7bb72b4b6a2132db05"
-dependencies = [
- "anyhow",
- "cranelift-codegen",
- "cranelift-control",
- "cranelift-module",
- "gimli",
- "log",
- "object",
  "target-lexicon",
 ]
 
@@ -724,19 +685,6 @@ dependencies = [
  "goat_mir",
  "tempfile",
  "wasmtime",
-]
-
-[[package]]
-name = "goat_compiler"
-version = "0.1.0"
-dependencies = [
- "cranelift",
- "cranelift-module",
- "cranelift-native",
- "cranelift-object",
- "goat_checker",
- "goat_parser",
- "tempfile",
 ]
 
 [[package]]

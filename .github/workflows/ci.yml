@@ -32,3 +32,18 @@ jobs:
 
       - name: Test
         run: cargo test
+
+  # Keeps the front end and wasm backend buildable for wasm32 so the compiler
+  # can run in a browser or embedded host.
+  wasm32:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Build for wasm32
+        run: >
+          cargo build -p goat_parser -p goat_checker -p goat_mir -p goat_wasm
+          -p goat --target wasm32-unknown-unknown

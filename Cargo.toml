@@ -6,6 +6,5 @@ members = [
     "mir",
     "wasm",
     "goat",
-    "compiler",
     "cli",
 ]
