@@ -1,0 +1,13 @@
+[package]
+name = "goat_wasm"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+edition = "2024"
+
+[dependencies]
+goat_mir = { path = "../mir" }
+wasm-encoder = "0.263.0"
+
+[dev-dependencies]
+wasmparser = "0.263.0"
+wasmprinter = "0.263.0"
