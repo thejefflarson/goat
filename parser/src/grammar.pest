@@ -60,15 +60,13 @@ lbrace = _{ "{" }
 rbrace = _{ "}" }
 dot = _{ "." }
 comma = _{ "," }
-number = @{ "-"?
-    ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*)
-    ~ ("." ~ ASCII_DIGIT*)?
-}
+// No leading sign: `5 -1` is the subtraction `5 - 1`.
+number = @{ (ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)?) | ("." ~ ASCII_DIGIT+) }
 
 WHITESPACE = _{ " " | "\t" | NEWLINE }
 COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
 
-raw_string = { (!"\"" ~ ANY)+ }
+raw_string = { (!"\"" ~ ANY)* }
 string = @{ "\"" ~ raw_string ~ "\"" }
 
 unicode = _{ XID_START ~ XID_CONTINUE* }
@@ -79,22 +77,21 @@ ident = @{ !keyword ~ unicode+ }
 goat = { SOI ~ expr? ~ EOI }
 expr = { term ~ more_math* }
 more_math = _{ infix ~ term }
-// A term is a primary followed by any number of postfix field accesses, so
-// `.field` binds tighter than the infix operators. Because `term` and
-// `primary` are both silent, a bare primary with no accesses produces exactly
-// the same tree as before.
-term = _{ primary ~ access* }
+// `negation` keeps its operand's postfixes inside it, so `-f(x)` is `-(f(x))`.
+term = _{ negation | primary ~ postfix* }
+postfix = _{ access | call }
 access = { dot ~ ident }
+call = { lparen ~ arguments? ~ rparen }
+negation = { minus ~ (negation | primary ~ postfix*) }
 // Order matters: pest is a PEG, so longer/more-specific alternatives come
-// first. `declaration` (`ident = ...`) and `application` (`ident(...)`) both
-// begin with an identifier, so a bare `ident` must be tried last.
-primary = _{ number | string | boolean | declaration | application | function | conditional | record | ident | lparen ~ expr ~ rparen }
-record = { lbrace ~ (field ~ (comma ~ field)*)? ~ rbrace }
+// first. `declaration` (`ident = ...`) begins with an identifier, so a bare
+// `ident` must be tried after it.
+primary = _{ number | string | boolean | declaration | function | conditional | record | ident | lparen ~ expr ~ rparen }
+record = { lbrace ~ (field ~ (comma ~ field)* ~ comma?)? ~ rbrace }
 field = { ident ~ colon ~ expr }
 declaration = { ident ~ equals ~ expr ~ expr? }
 labels = { ident ~ (comma ~ ident)* }
 function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
-arguments = { expr ~ (comma ~ expr)* }
-application = { ident ~ (lparen ~ arguments? ~ rparen)+ }
+arguments = { expr ~ (comma ~ expr)* ~ comma? }
 else_branch = _{ else_lit ~ expr }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ else_branch? ~ done_lit }

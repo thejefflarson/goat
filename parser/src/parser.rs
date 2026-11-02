@@ -219,22 +219,24 @@ mod tests {
         }
     }
     #[test]
-    fn parses_applications() {
+    fn parses_calls() {
         parses_to! {
             parser: GoatParser,
             input: "a(1, true, b, program(a) do a done)",
-            rule: Rule::application,
+            rule: Rule::expr,
             tokens: [
-                application(0, 35, [
+                expr(0, 35, [
                     ident(0, 1),
-                    arguments(2, 34, [
-                        expr(2, 3, [number(2, 3)]),
-                        expr(5, 9, [boolean(5, 9, [true_lit(5, 9)])]),
-                        expr(11, 12, [ident(11, 12)]),
-                        expr(14, 34, [
-                            function(14, 34, [
-                                labels(22, 23, [ident(22, 23)]),
-                                expr(28, 30, [ident(28, 29)])
+                    call(1, 35, [
+                        arguments(2, 34, [
+                            expr(2, 3, [number(2, 3)]),
+                            expr(5, 9, [boolean(5, 9, [true_lit(5, 9)])]),
+                            expr(11, 12, [ident(11, 12)]),
+                            expr(14, 34, [
+                                function(14, 34, [
+                                    labels(22, 23, [ident(22, 23)]),
+                                    expr(28, 30, [ident(28, 29)])
+                                ])
                             ])
                         ])
                     ])
@@ -245,10 +247,73 @@ mod tests {
         parses_to! {
             parser: GoatParser,
             input: "a()",
-            rule: Rule::application,
+            rule: Rule::expr,
+            tokens: [expr(0, 3, [ident(0, 1), call(1, 3)])]
+        }
+
+        // Calls and accesses interleave on any callee.
+        parses_to! {
+            parser: GoatParser,
+            input: "s.f(1)(2)",
+            rule: Rule::expr,
             tokens: [
-                application(0, 3, [ident(0,1)])
+                expr(0, 9, [
+                    ident(0, 1),
+                    access(1, 3, [ident(2, 3)]),
+                    call(3, 6, [arguments(4, 5, [expr(4, 5, [number(4, 5)])])]),
+                    call(6, 9, [arguments(7, 8, [expr(7, 8, [number(7, 8)])])])
+                ])
             ]
+        }
+    }
+
+    #[test]
+    fn grouped_expression_is_not_a_call() {
+        parses_to! {
+            parser: GoatParser,
+            input: "(1 + 2) < 3",
+            rule: Rule::expr,
+            tokens: [
+                expr(0, 11, [
+                    expr(1, 6, [number(1, 2), plus(3, 4), number(5, 6)]),
+                    lt(8, 9),
+                    number(10, 11)
+                ])
+            ]
+        }
+    }
+
+    #[test]
+    fn number_has_no_sign() {
+        use pest::Parser;
+        parses_to! {
+            parser: GoatParser,
+            input: "5 -1",
+            rule: Rule::expr,
+            tokens: [expr(0, 4, [number(0, 1), minus(2, 3), number(3, 4)])]
+        }
+        parses_to! {
+            parser: GoatParser,
+            input: "-3",
+            rule: Rule::expr,
+            tokens: [expr(0, 2, [negation(0, 2, [minus(0, 1), number(1, 2)])])]
+        }
+        for src in [".5", "007", "0.5", "-f(x).y", "--3"] {
+            assert!(GoatParser::parse(Rule::goat, src).is_ok(), "failed: {src}");
+        }
+    }
+
+    #[test]
+    fn parses_empty_string_and_trailing_commas() {
+        use pest::Parser;
+        for src in [r#""""#, "{x: 1,}", "f(1,)", "f(1, 2,)"] {
+            assert!(GoatParser::parse(Rule::goat, src).is_ok(), "failed: {src}");
+        }
+        for src in ["{,}", "f(,)"] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_err(),
+                "accepted: {src}"
+            );
         }
     }
 

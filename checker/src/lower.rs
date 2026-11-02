@@ -93,7 +93,7 @@ impl Lower {
 
     /// Lower an `expr` pair — a flat list of operands and operators — into a
     /// precedence-correct tree. Each operand is a primary followed by zero or
-    /// more postfix field accesses; the grammar leaves those `access` pairs as
+    /// more postfix accesses and calls; the grammar leaves those `access` pairs as
     /// siblings, so [`Self::lower_operand`] consumes them before the next
     /// operator.
     fn lower_expr(&mut self, pair: Pair<Rule>) -> Expr {
@@ -123,27 +123,71 @@ impl Lower {
         operands.pop().expect("exactly one operand remains")
     }
 
-    /// Lower one operand: a primary, then any trailing `.field` accesses.
     fn lower_operand(&mut self, inner: &mut Peekable<Pairs<Rule>>) -> Expr {
-        let primary = inner.next().expect("an operand begins with a primary");
-        let mut expr = self.lower_primary(primary);
-        while inner.peek().is_some_and(|p| p.as_rule() == Rule::access) {
-            let access = inner.next().expect("peeked an access");
-            let label_pair = access
-                .into_inner()
-                .next()
-                .expect("access is `.` then an identifier");
-            let span = Span::new(expr.span.start, span_of(&label_pair).end);
-            let label = label_pair.as_str().to_string();
-            expr = self.node(
-                span,
-                ExprKind::Field {
-                    record: Box::new(expr),
-                    label,
-                },
-            );
+        let first = inner.next().expect("an operand begins with a primary");
+        if first.as_rule() == Rule::negation {
+            return self.lower_negation(first);
+        }
+        let expr = self.lower_primary(first);
+        self.lower_postfixes(expr, inner)
+    }
+
+    /// `a.b(x).c` nests as `((a.b)(x)).c`.
+    fn lower_postfixes(&mut self, mut expr: Expr, inner: &mut Peekable<Pairs<Rule>>) -> Expr {
+        while let Some(postfix) =
+            inner.next_if(|p| matches!(p.as_rule(), Rule::access | Rule::call))
+        {
+            let span = Span::new(expr.span.start, span_of(&postfix).end);
+            expr = match postfix.as_rule() {
+                Rule::access => {
+                    let label = postfix
+                        .into_inner()
+                        .next()
+                        .expect("access is `.` then an identifier")
+                        .as_str()
+                        .to_string();
+                    self.node(
+                        span,
+                        ExprKind::Field {
+                            record: Box::new(expr),
+                            label,
+                        },
+                    )
+                }
+                _ => {
+                    let args = postfix
+                        .into_inner()
+                        .flat_map(|a| a.into_inner())
+                        .map(|a| self.lower_expr(a))
+                        .collect();
+                    self.node(
+                        span,
+                        ExprKind::App {
+                            callee: Box::new(expr),
+                            args,
+                        },
+                    )
+                }
+            };
         }
         expr
+    }
+
+    /// `-x` is `0 - x`: the HIR has no negation node.
+    fn lower_negation(&mut self, pair: Pair<Rule>) -> Expr {
+        let span = span_of(&pair);
+        let mut inner = pair.into_inner().peekable();
+        let minus = inner.next().expect("negation begins with `-`");
+        let operand = self.lower_operand(&mut inner);
+        let zero = self.node(span_of(&minus), ExprKind::Number(0.0));
+        self.node(
+            span,
+            ExprKind::Bin {
+                op: BinOp::Sub,
+                lhs: Box::new(zero),
+                rhs: Box::new(operand),
+            },
+        )
     }
 
     /// Fold the top operator and its two operands into one `Bin` node.
@@ -195,7 +239,6 @@ impl Lower {
             Rule::record => self.lower_record(pair),
             Rule::declaration => self.lower_declaration(pair),
             Rule::function => self.lower_function(pair),
-            Rule::application => self.lower_application(pair),
             Rule::conditional => self.lower_conditional(pair),
             other => unreachable!("unexpected term rule {other:?}"),
         }
@@ -272,54 +315,23 @@ impl Lower {
         )
     }
 
-    fn lower_application(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
-        let mut inner = pair.into_inner();
-        let ident = inner.next().expect("application starts with a name");
-        let callee = {
-            let ispan = span_of(&ident);
-            self.var(ispan, ident.as_str().to_string())
-        };
-
-        // Each `arguments` child is one call group: `f(a)(b)` nests as
-        // `(f(a))(b)`. A group with no arguments produces no `arguments` pair.
-        let mut groups: Vec<Vec<Expr>> = Vec::new();
-        for args_pair in inner {
-            debug_assert_eq!(args_pair.as_rule(), Rule::arguments);
-            let args = args_pair.into_inner().map(|p| self.lower_expr(p)).collect();
-            groups.push(args);
-        }
-        // The grammar guarantees at least one `(...)` group, but a single empty
-        // group leaves `groups` empty; model that as one call with no args.
-        if groups.is_empty() {
-            groups.push(Vec::new());
-        }
-
-        let mut expr = callee;
-        for args in groups {
-            expr = self.node(
-                span,
-                ExprKind::App {
-                    callee: Box::new(expr),
-                    args,
-                },
-            );
-        }
-        expr
-    }
-
     fn lower_record(&mut self, pair: Pair<Rule>) -> Expr {
         let span = span_of(&pair);
         let mut fields = Vec::new();
         for field in pair.into_inner() {
             debug_assert_eq!(field.as_rule(), Rule::field);
             let mut it = field.into_inner();
-            let label = it
-                .next()
-                .expect("a field begins with a label")
-                .as_str()
-                .to_string();
+            let label_pair = it.next().expect("a field begins with a label");
+            let label_span = span_of(&label_pair);
+            let label = label_pair.as_str().to_string();
             let value = self.lower_expr(it.next().expect("a field has a value"));
+            if fields.iter().any(|(l, _)| *l == label) {
+                self.errors.push(GoatError::new(
+                    label_span,
+                    format!("duplicate field `{label}` in record"),
+                ));
+                continue;
+            }
             fields.push((label, value));
         }
         self.node(span, ExprKind::Record { fields })

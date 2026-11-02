@@ -212,4 +212,57 @@ mod tests {
         };
         assert_eq!(typed.node_types[&body.id], Ty::Var(quantified));
     }
+
+    #[test]
+    fn calls_on_any_callee() {
+        let src = "vec = {add: program(p, q) do p.x + q.x done} vec.add({x: 1}, {x: 2})";
+        assert_eq!(type_of(src).unwrap(), "Number");
+        // chained calls and accesses nest left to right
+        assert_eq!(
+            type_of("f = program(x) do program(y) do x + y done done f(1)(2)").unwrap(),
+            "Number"
+        );
+        assert_eq!(
+            type_of("a = {b: {c: program(x) do x done}} a.b.c(1)").unwrap(),
+            "Number"
+        );
+        // a call result can be accessed
+        assert_eq!(
+            type_of("f = program() do {x: true} done f().x").unwrap(),
+            "Bool"
+        );
+        // a grouped expression is not a call
+        assert_eq!(type_of("(1 + 2) < 3").unwrap(), "Bool");
+        // calling a non-function is a checker error, not a panic
+        assert!(type_of("1(2)").is_err());
+    }
+
+    #[test]
+    fn negation_and_subtraction() {
+        assert_eq!(type_of("-3").unwrap(), "Number");
+        assert_eq!(type_of("--3").unwrap(), "Number");
+        assert_eq!(type_of("a = 1 1 - a").unwrap(), "Number");
+        // `5 -1` is the subtraction `5 - 1`, never `5` followed by `-1`
+        assert_eq!(type_of("5 -1").unwrap(), "Number");
+        assert_eq!(type_of("5 - -1").unwrap(), "Number");
+        // negation binds tighter than `*` and applies to a whole postfix chain
+        assert_eq!(type_of("p = {x: 2} 3 * -p.x").unwrap(), "Number");
+        assert!(type_of("-true").is_err());
+    }
+
+    #[test]
+    fn duplicate_record_labels_are_rejected() {
+        let err = type_of("{x: 1, x: 2}").unwrap_err();
+        assert!(err.contains("duplicate") && err.contains("`x`"), "{err}");
+        assert!(type_of("{x: 1, y: 2}").is_ok());
+    }
+
+    #[test]
+    fn empty_string_and_lenient_literals() {
+        assert_eq!(type_of("\"\"").unwrap(), "String");
+        assert_eq!(type_of(".5").unwrap(), "Number");
+        assert_eq!(type_of("007").unwrap(), "Number");
+        assert_eq!(type_of("{x: 1,}").unwrap(), "{x: Number}");
+        assert_eq!(type_of("f = program(a) do a done f(1,)").unwrap(), "Number");
+    }
 }
