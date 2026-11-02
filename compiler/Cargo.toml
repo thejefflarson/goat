@@ -12,3 +12,6 @@ cranelift = "0.137"
 cranelift-module = "0.137"
 cranelift-object = "0.137"
 cranelift-native = "0.137"
+
+[dev-dependencies]
+tempfile = "3"

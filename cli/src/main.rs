@@ -52,12 +52,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("run") => {
             let file = args.get(2).ok_or("usage: goat run FILE")?;
             let dir = temp_dir()?;
-            let exe = dir.join("program");
+            let exe = dir.path().join("program");
             build(file, &exe)?;
             let status = Command::new(&exe)
                 .status()
                 .map_err(|e| format!("could not run compiled program: {e}"))?;
-            let _ = fs::remove_dir_all(&dir);
             Ok(match status.code() {
                 None => ExitCode::FAILURE,
                 Some(0) => ExitCode::SUCCESS,
@@ -93,8 +92,8 @@ fn build(file: &str, out: &Path) -> Result<(), String> {
     let object = goat_compiler::compile(&checked).map_err(|e| format!("codegen: {e}"))?;
 
     let dir = temp_dir()?;
-    let obj_path = dir.join("program.o");
-    let rt_path = dir.join("runtime.c");
+    let obj_path = dir.path().join("program.o");
+    let rt_path = dir.path().join("runtime.c");
     fs::write(&obj_path, &object).map_err(|e| format!("writing object: {e}"))?;
     fs::write(&rt_path, RUNTIME_C).map_err(|e| format!("writing runtime: {e}"))?;
 
@@ -105,7 +104,6 @@ fn build(file: &str, out: &Path) -> Result<(), String> {
         .arg(out)
         .status()
         .map_err(|e| format!("could not invoke the C linker ({}): {e}", cc()))?;
-    let _ = fs::remove_dir_all(&dir);
     if !status.success() {
         return Err("linking failed".to_string());
     }
@@ -130,12 +128,12 @@ fn default_output(file: &str) -> PathBuf {
     PathBuf::from(Path::new(file).file_stem().unwrap_or_default())
 }
 
-/// A fresh temporary directory unique to this process and call.
-fn temp_dir() -> Result<PathBuf, String> {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = env::temp_dir().join(format!("goat-{}-{}", std::process::id(), n));
-    fs::create_dir_all(&dir).map_err(|e| format!("creating temp dir: {e}"))?;
-    Ok(dir)
+// A randomly-named temp dir created with O_EXCL (via tempfile), so another
+// local user can't pre-create a predictable name on a shared /tmp to redirect
+// our writes. It deletes itself when the returned handle drops.
+fn temp_dir() -> Result<tempfile::TempDir, String> {
+    tempfile::Builder::new()
+        .prefix("goat-")
+        .tempdir()
+        .map_err(|e| format!("creating temp dir: {e}"))
 }

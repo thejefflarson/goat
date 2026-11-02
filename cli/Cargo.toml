@@ -11,3 +11,4 @@ path = "src/main.rs"
 [dependencies]
 goat_checker = { path = "../checker" }
 goat_compiler = { path = "../compiler" }
+tempfile = "3"
