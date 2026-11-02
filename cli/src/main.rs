@@ -1,28 +1,14 @@
 //! `goat` — the command-line driver.
 //!
 //! - `goat check FILE`   parse and type-check, printing the program's type.
-//! - `goat build FILE [-o OUT]`  compile to a native executable.
-//! - `goat run FILE`     compile to a temporary executable and run it.
+//! - `goat build FILE [-o OUT]`  compile to a WebAssembly module.
+//! - `goat run FILE`     compile and run under wasmtime.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 use std::{env, fs};
 
-/// The C runtime: it provides `main`, which calls the compiled program's
-/// `goat_entry`, plus the print builtins the generated code calls. Cranelift's
-/// object backend already applies each platform's C symbol convention (the
-/// leading underscore on macOS), so plain C names match it on macOS and Linux
-/// alike.
-const RUNTIME_C: &str = r#"
-#include <stdio.h>
-extern void goat_entry(void);
-void goat_print_number(double x) {
-    if (x > -1e18 && x < 1e18 && x == (double)(long long)x) printf("%lld\n", (long long)x);
-    else printf("%.15g\n", x);
-}
-void goat_print_bool(long b) { printf("%s\n", b ? "true" : "false"); }
-int main(void) { goat_entry(); return 0; }
-"#;
+use wasmtime::{Config, Engine, Linker, Module, Store};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -40,31 +26,24 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     match command {
         Some("check") => {
             let file = args.get(2).ok_or("usage: goat check FILE")?;
-            let (source, checked) = check(file)?;
-            let _ = source;
+            let source = read(file)?;
+            let checked = goat_checker::check(&source)
+                .map_err(|errors| render_errors(file, &source, &errors))?;
             println!("{}", checked.typed.root_ty);
             Ok(ExitCode::SUCCESS)
         }
         Some("build") => {
             let file = args.get(2).ok_or("usage: goat build FILE [-o OUT]")?;
             let out = parse_out_flag(&args[3..]).unwrap_or_else(|| default_output(file));
-            build(file, &out)?;
+            let wasm = build(file)?;
+            fs::write(&out, wasm).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
             eprintln!("goat: wrote {}", out.display());
             Ok(ExitCode::SUCCESS)
         }
         Some("run") => {
             let file = args.get(2).ok_or("usage: goat run FILE")?;
-            let dir = temp_dir()?;
-            let exe = dir.path().join("program");
-            build(file, &exe)?;
-            let status = Command::new(&exe)
-                .status()
-                .map_err(|e| format!("could not run compiled program: {e}"))?;
-            Ok(match status.code() {
-                None => ExitCode::FAILURE,
-                Some(0) => ExitCode::SUCCESS,
-                Some(code) => ExitCode::from(code as u8),
-            })
+            execute(&build(file)?)?;
+            Ok(ExitCode::SUCCESS)
         }
         _ => {
             eprintln!("usage: goat <check|build|run> FILE [-o OUT]");
@@ -73,48 +52,52 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     }
 }
 
-/// Read and type-check a file, rendering any diagnostics against the source.
-fn check(file: &str) -> Result<(String, goat_checker::Checked), String> {
-    let source = fs::read_to_string(file).map_err(|e| format!("cannot read {file}: {e}"))?;
-    match goat_checker::check(&source) {
-        Ok(checked) => Ok((source, checked)),
-        Err(errors) => {
-            let rendered: Vec<String> = errors.iter().map(|e| e.render(&source)).collect();
-            Err(format!(
-                "{} error(s) in {file}:\n{}",
-                errors.len(),
-                rendered.join("\n")
-            ))
-        }
-    }
+fn read(file: &str) -> Result<String, String> {
+    fs::read_to_string(file).map_err(|e| format!("cannot read {file}: {e}"))
 }
 
-/// Compile `file` to a native executable at `out`.
-fn build(file: &str, out: &Path) -> Result<(), String> {
-    let (_source, checked) = check(file)?;
-    let object = goat_compiler::compile(&checked).map_err(|e| format!("codegen: {e}"))?;
-
-    let dir = temp_dir()?;
-    let obj_path = dir.path().join("program.o");
-    let rt_path = dir.path().join("runtime.c");
-    fs::write(&obj_path, &object).map_err(|e| format!("writing object: {e}"))?;
-    fs::write(&rt_path, RUNTIME_C).map_err(|e| format!("writing runtime: {e}"))?;
-
-    let status = Command::new(cc())
-        .arg(&obj_path)
-        .arg(&rt_path)
-        .arg("-o")
-        .arg(out)
-        .status()
-        .map_err(|e| format!("could not invoke the C linker ({}): {e}", cc()))?;
-    if !status.success() {
-        return Err("linking failed".to_string());
-    }
-    Ok(())
+fn render_errors(file: &str, source: &str, errors: &[goat_checker::GoatError]) -> String {
+    let rendered: Vec<String> = errors.iter().map(|e| e.render(source)).collect();
+    format!(
+        "{} error(s) in {file}:\n{}",
+        errors.len(),
+        rendered.join("\n")
+    )
 }
 
-fn cc() -> String {
-    env::var("CC").unwrap_or_else(|_| "cc".to_string())
+fn build(file: &str) -> Result<Vec<u8>, String> {
+    let source = read(file)?;
+    goat::compile(&source).map_err(|errors| render_errors(file, &source, &errors))
+}
+
+/// Instantiate `wasm` under wasmtime and run its entry export. A trap becomes
+/// an error, so the process exits non-zero.
+fn execute(wasm: &[u8]) -> Result<(), String> {
+    let mut config = Config::new();
+    config.wasm_tail_call(true);
+    let engine = Engine::new(&config).map_err(|e| format!("engine: {e}"))?;
+    let module = Module::new(&engine, wasm).map_err(|e| format!("invalid module: {e}"))?;
+
+    let mut linker = Linker::new(&engine);
+    linker
+        .func_wrap("goat", "print_number", |x: f64| {
+            println!("{}", goat::format_number(x))
+        })
+        .map_err(|e| e.to_string())?;
+    linker
+        .func_wrap("goat", "print_bool", |b: i32| {
+            println!("{}", goat::format_bool(b != 0))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut store = Store::new(&engine, ());
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .map_err(|e| format!("instantiate: {e}"))?;
+    let entry = instance
+        .get_typed_func::<(), ()>(&mut store, "goat_entry")
+        .map_err(|e| format!("missing entry point: {e}"))?;
+    entry.call(&mut store, ()).map_err(|e| format!("trap: {e}"))
 }
 
 fn parse_out_flag(args: &[String]) -> Option<PathBuf> {
@@ -128,15 +111,5 @@ fn parse_out_flag(args: &[String]) -> Option<PathBuf> {
 }
 
 fn default_output(file: &str) -> PathBuf {
-    PathBuf::from(Path::new(file).file_stem().unwrap_or_default())
-}
-
-// A randomly-named temp dir created with O_EXCL (via tempfile), so another
-// local user can't pre-create a predictable name on a shared /tmp to redirect
-// our writes. It deletes itself when the returned handle drops.
-fn temp_dir() -> Result<tempfile::TempDir, String> {
-    tempfile::Builder::new()
-        .prefix("goat-")
-        .tempdir()
-        .map_err(|e| format!("creating temp dir: {e}"))
+    Path::new(file).with_extension("wasm")
 }

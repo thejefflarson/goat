@@ -1,0 +1,10 @@
+[package]
+name = "goat"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+edition = "2024"
+
+[dependencies]
+goat_checker = { path = "../checker" }
+goat_mir = { path = "../mir" }
+goat_wasm = { path = "../wasm" }
