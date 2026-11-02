@@ -29,9 +29,11 @@ right of `score = …` is ambiguous. ML resolves this with an explicit
   each other (and themselves) regardless of definition order, with no keyword.
 - **Value bindings are sequential and shadow:** a non-function binding's value
   is resolved in the enclosing scope, so `x = x + 1` reads the previous `x`.
-- A function body sees every function in its scope, plus the value bindings in
-  effect where its group begins — **not** value bindings introduced later in the
-  scope. Name resolution stays static.
+- A function body sees every function in its scope (the whole group, order-free),
+  plus the value bindings that **textually precede it** — not value bindings
+  introduced after it. Name resolution stays static. (Ratified from the initial
+  "where its group begins" wording to this more permissive, intuitive rule —
+  you see what is above you — which the implementation adopts.)
 
 ## Consequences
 
