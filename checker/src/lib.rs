@@ -156,4 +156,60 @@ mod tests {
         assert!(type_of("if true then 1 else false done").is_err());
         assert!(type_of("if 1 then 2 else 3 done").is_err());
     }
+
+    /// The contract mono relies on: a let-bound symbol's scheme, `Var`
+    /// use sites typed at their instantiation, and the generalized body still
+    /// mentioning the scheme's quantified variable.
+    #[test]
+    fn schemes_and_instantiated_node_types() {
+        use crate::hir::ExprKind;
+        use crate::ty::Ty;
+
+        let checked = check("id = program(x) do x done\na = id(1)\nb = id(true)\nb").unwrap();
+        let typed = &checked.typed;
+
+        let ExprKind::Let {
+            symbol: id_sym,
+            value: id_value,
+            rest: Some(rest_a),
+            ..
+        } = &checked.root.kind
+        else {
+            panic!("expected `id` let");
+        };
+        let ExprKind::Let {
+            value: a_value,
+            rest: Some(rest_b),
+            ..
+        } = &rest_a.kind
+        else {
+            panic!("expected `a` let");
+        };
+        let ExprKind::Let { value: b_value, .. } = &rest_b.kind else {
+            panic!("expected `b` let");
+        };
+
+        let scheme = &typed.schemes[id_sym];
+        assert_eq!(scheme.vars.len(), 1);
+        let quantified = scheme.vars[0];
+        assert_eq!(
+            scheme.ty,
+            Ty::Func(vec![Ty::Var(quantified)], Box::new(Ty::Var(quantified)))
+        );
+
+        let callee_ty = |call: &crate::hir::Expr| {
+            let ExprKind::App { callee, .. } = &call.kind else {
+                panic!("expected a call");
+            };
+            assert!(matches!(&callee.kind, ExprKind::Var { symbol, .. } if symbol == id_sym));
+            typed.node_types[&callee.id].to_string()
+        };
+        assert_eq!(callee_ty(a_value), "(Number) -> Number");
+        assert_eq!(callee_ty(b_value), "(Bool) -> Bool");
+
+        let ExprKind::Func { body, .. } = &id_value.kind else {
+            panic!("expected a function");
+        };
+        assert_eq!(typed.node_types[&body.id], Ty::Var(quantified));
+    }
 }

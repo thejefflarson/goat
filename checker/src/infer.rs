@@ -23,6 +23,11 @@ use std::collections::{BTreeSet, HashMap};
 pub struct Typed {
     pub root_ty: Ty,
     pub node_types: HashMap<ExprId, Ty>,
+    /// The generalized scheme of every `let`-bound symbol. A `Var` use site's
+    /// node type is the scheme instantiated at that use; nodes inside the
+    /// binding's value still mention the scheme's quantified variables.
+    /// `Symbol`s are unique per binding site, so they key this map alone.
+    pub schemes: HashMap<Symbol, Scheme>,
 }
 
 pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
@@ -35,9 +40,21 @@ pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
             .iter()
             .map(|(id, t)| (*id, inf.resolve(t)))
             .collect();
+        let schemes = inf
+            .schemes
+            .iter()
+            .map(|(symbol, s)| {
+                let scheme = Scheme {
+                    vars: s.vars.clone(),
+                    ty: inf.resolve(&s.ty),
+                };
+                (*symbol, scheme)
+            })
+            .collect();
         Ok(Typed {
             root_ty,
             node_types,
+            schemes,
         })
     } else {
         Err(inf.errors)
@@ -51,6 +68,7 @@ struct Inferer {
     row_subst: HashMap<TypeVar, Row>,
     env: HashMap<Symbol, Scheme>,
     node_types: HashMap<ExprId, Ty>,
+    schemes: HashMap<Symbol, Scheme>,
     errors: Vec<GoatError>,
 }
 
@@ -323,6 +341,7 @@ impl Inferer {
 
                 let scheme = self.generalize(&rec);
                 self.env.insert(*symbol, scheme.clone());
+                self.schemes.insert(*symbol, scheme.clone());
                 let result = match rest {
                     Some(rest) => self.infer(rest),
                     None => self.instantiate(&scheme),
