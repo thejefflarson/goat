@@ -84,3 +84,20 @@ fn identifier_may_start_with_a_keyword() {
     // `double` begins with the keyword `do`; this must still be a valid name.
     assert_eq!(run("double = program(n) do n * 2 done  double(21)"), "42");
 }
+
+#[test]
+fn mutual_recursion_either_order() {
+    let even_first = "is_even = program(n) do if n < 1 then true else is_odd(n - 1) done done \
+                      is_odd = program(n) do if n < 1 then false else is_even(n - 1) done done \
+                      is_even(10)";
+    let odd_first = "is_odd = program(n) do if n < 1 then false else is_even(n - 1) done done \
+                     is_even = program(n) do if n < 1 then true else is_odd(n - 1) done done \
+                     is_even(7)";
+    assert_eq!(run(even_first), "true");
+    assert_eq!(run(odd_first), "false");
+}
+
+#[test]
+fn shadowing_value_binding() {
+    assert_eq!(run("score = 1  score = score + 1  score"), "2");
+}

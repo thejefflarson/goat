@@ -59,7 +59,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 .map_err(|e| format!("could not run compiled program: {e}"))?;
             let _ = fs::remove_dir_all(&dir);
             Ok(match status.code() {
-                Some(0) | None => ExitCode::SUCCESS,
+                None => ExitCode::FAILURE,
+                Some(0) => ExitCode::SUCCESS,
                 Some(code) => ExitCode::from(code as u8),
             })
         }

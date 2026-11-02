@@ -10,7 +10,7 @@ use crate::hir::{BinOp, Expr, ExprId, ExprKind, Param, Span, Symbol};
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
 
 pub struct Lowered {
@@ -39,6 +39,10 @@ struct Lower {
     next_symbol: Symbol,
     next_expr_id: ExprId,
     scopes: Vec<HashMap<String, Symbol>>,
+    /// Function bindings seen by a group pre-pass, keyed by the start of the
+    /// binding's name: `Some` is its reserved symbol, `None` a repeat of an
+    /// earlier name in the group, which shadows it.
+    grouped: HashMap<usize, Option<Symbol>>,
     errors: Vec<GoatError>,
 }
 
@@ -65,11 +69,15 @@ impl Lower {
 
     fn bind(&mut self, name: &str) -> Symbol {
         let symbol = self.fresh_symbol();
+        self.bind_as(name, symbol);
+        symbol
+    }
+
+    fn bind_as(&mut self, name: &str, symbol: Symbol) {
         self.scopes
             .last_mut()
             .expect("a scope is always open while binding")
             .insert(name.to_string(), symbol);
-        symbol
     }
 
     /// Resolve a use to the nearest enclosing binding, innermost scope first.
@@ -218,11 +226,24 @@ impl Lower {
         let value_pair = inner.next().expect("declaration has a value");
         let rest_pair = inner.next();
 
-        // Bind the name in a fresh scope before lowering the value, so a
-        // declaration can refer to itself (recursion, e.g. `fib`).
         self.scopes.push(HashMap::new());
-        let symbol = self.bind(&name);
-        let value = self.lower_expr(value_pair);
+        let (symbol, value) = if is_program_literal(&value_pair) {
+            let start = span_of(&name_pair).start;
+            if !self.grouped.contains_key(&start) {
+                self.bind_function_group(&name_pair, rest_pair.clone());
+            }
+            let symbol = match self.grouped.remove(&start).flatten() {
+                Some(symbol) => {
+                    self.bind_as(&name, symbol);
+                    symbol
+                }
+                None => self.bind(&name),
+            };
+            (symbol, self.lower_expr(value_pair))
+        } else {
+            let value = self.lower_expr(value_pair);
+            (self.bind(&name), value)
+        };
         let rest = rest_pair.map(|p| self.lower_expr(p));
         self.scopes.pop();
 
@@ -237,6 +258,39 @@ impl Lower {
         )
     }
 
+    /// Bind every function name in the declaration chain starting at `first`
+    /// before any body is lowered, so bodies can call each other in any order.
+    fn bind_function_group(&mut self, first: &Pair<Rule>, mut rest: Option<Pair<Rule>>) {
+        let mut seen = HashSet::new();
+        self.reserve(first, &mut seen);
+        while let Some(expr) = rest.take() {
+            let mut kids = expr.into_inner();
+            let (Some(decl), None) = (kids.next(), kids.next()) else {
+                break;
+            };
+            if decl.as_rule() != Rule::declaration {
+                break;
+            }
+            let mut parts = decl.into_inner();
+            let name_pair = parts.next().expect("declaration starts with a name");
+            let value = parts.next().expect("declaration has a value");
+            rest = parts.next();
+            if is_program_literal(&value) {
+                self.reserve(&name_pair, &mut seen);
+            }
+        }
+    }
+
+    fn reserve(&mut self, name_pair: &Pair<Rule>, seen: &mut HashSet<String>) {
+        let name = name_pair.as_str();
+        let reserved = seen.insert(name.to_string()).then(|| {
+            let symbol = self.fresh_symbol();
+            self.bind_as(name, symbol);
+            symbol
+        });
+        self.grouped.insert(span_of(name_pair).start, reserved);
+    }
+
     fn lower_function(&mut self, pair: Pair<Rule>) -> Expr {
         let span = span_of(&pair);
         self.scopes.push(HashMap::new());
@@ -248,6 +302,12 @@ impl Lower {
                     for label in child.into_inner() {
                         let pspan = span_of(&label);
                         let name = label.as_str().to_string();
+                        if self.scopes.last().is_some_and(|s| s.contains_key(&name)) {
+                            self.errors.push(GoatError::new(
+                                pspan,
+                                format!("duplicate parameter `{name}`"),
+                            ));
+                        }
                         let symbol = self.bind(&name);
                         params.push(Param {
                             symbol,
@@ -340,6 +400,11 @@ impl Lower {
             },
         )
     }
+}
+
+fn is_program_literal(expr: &Pair<Rule>) -> bool {
+    let mut kids = expr.clone().into_inner();
+    matches!((kids.next(), kids.next()), (Some(p), None) if p.as_rule() == Rule::function)
 }
 
 fn span_of(pair: &Pair<Rule>) -> Span {

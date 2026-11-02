@@ -156,4 +156,84 @@ mod tests {
         assert!(type_of("if true then 1 else false done").is_err());
         assert!(type_of("if 1 then 2 else 3 done").is_err());
     }
+
+    #[test]
+    fn mismatch_reads_expected_then_found_on_the_offending_span() {
+        let errors = check("1 + true").err().expect("type error");
+        assert_eq!(
+            errors[0].message,
+            "type mismatch: expected `Number`, found `Bool`"
+        );
+        assert_eq!((errors[0].span.start, errors[0].span.end), (4, 8));
+        assert_eq!(
+            type_of("add = program(a, b) do a + b done add(1, true)").unwrap_err(),
+            "type mismatch: expected `Number`, found `Bool`"
+        );
+    }
+
+    #[test]
+    fn missing_field_is_reported_as_missing() {
+        assert_eq!(
+            type_of("{x: 1}.y").unwrap_err(),
+            "record is missing field `y`"
+        );
+    }
+
+    #[test]
+    fn conditional_without_else_must_be_unit() {
+        assert_eq!(
+            type_of("if true then 1 done").unwrap_err(),
+            "type mismatch: expected `Unit`, found `Number`"
+        );
+        assert_eq!(
+            type_of("nop = program() do done if true then nop() done").unwrap(),
+            "Unit"
+        );
+    }
+
+    #[test]
+    fn mutual_recursion_works_in_either_order() {
+        let even_first = "is_even = program(n) do if n < 1 then true else is_odd(n - 1) done done \
+                          is_odd = program(n) do if n < 1 then false else is_even(n - 1) done done \
+                          is_even(4)";
+        let odd_first = "is_odd = program(n) do if n < 1 then false else is_even(n - 1) done done \
+                         is_even = program(n) do if n < 1 then true else is_odd(n - 1) done done \
+                         is_even(4)";
+        assert_eq!(type_of(even_first).unwrap(), "Bool");
+        assert_eq!(type_of(odd_first).unwrap(), "Bool");
+    }
+
+    #[test]
+    fn mutual_recursion_rejects_ill_typed_calls() {
+        let src = "f = program(n) do g(true) done g = program(n) do n + 1 done f(1)";
+        assert!(type_of(src).is_err());
+    }
+
+    #[test]
+    fn value_bindings_shadow() {
+        assert_eq!(
+            type_of("score = 1 score = score + 1 score").unwrap(),
+            "Number"
+        );
+        assert_eq!(
+            type_of("score = score + 1").unwrap_err(),
+            "unknown name `score`"
+        );
+        assert_eq!(
+            type_of("ones = Link(1, ones)").unwrap_err(),
+            "unknown name `Link`"
+        );
+        assert_eq!(
+            type_of("ones = {a: ones}").unwrap_err(),
+            "unknown name `ones`"
+        );
+    }
+
+    #[test]
+    fn duplicate_parameter_is_an_error() {
+        assert_eq!(
+            type_of("program(a, a) do a done").unwrap_err(),
+            "duplicate parameter `a`"
+        );
+    }
 }
