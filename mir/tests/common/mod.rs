@@ -40,6 +40,43 @@ pub fn program(funcs: Vec<Func>) -> Program {
     }
 }
 
+pub fn float(x: f64) -> Expr {
+    Expr::Const(Const::Float(x))
+}
+
+pub fn boolean(b: bool) -> Expr {
+    Expr::Const(Const::Bool(b))
+}
+
+pub fn bin_float(op: FloatOp, a: Expr, b: Expr) -> Expr {
+    Expr::BinFloat(op, Box::new(a), Box::new(b))
+}
+
+pub fn sub(a: Expr, b: Expr) -> Expr {
+    Expr::BinInt(IntOp::Sub, Box::new(a), Box::new(b))
+}
+
+pub fn cmp(op: CmpOp, a: Expr, b: Expr) -> Expr {
+    Expr::Cmp(op, Box::new(a), Box::new(b))
+}
+
+pub fn if_(c: Expr, t: Expr, e: Expr) -> Expr {
+    Expr::If(Box::new(c), Box::new(t), Box::new(e))
+}
+
+pub fn call(f: u32, args: Vec<Expr>) -> Expr {
+    Expr::CallDirect(FuncId(f), args)
+}
+
+pub fn func_with(params: Vec<(u32, MTy)>, ret: MTy, body: Expr) -> Func {
+    Func {
+        params: params.into_iter().map(|(n, t)| (Local(n), t)).collect(),
+        env: None,
+        ret,
+        body,
+    }
+}
+
 pub const RECORD: LayoutId = LayoutId(0);
 pub const VARIANT: LayoutId = LayoutId(1);
 
