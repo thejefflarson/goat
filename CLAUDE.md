@@ -19,9 +19,9 @@ wrong state unrepresentable *before* you reach for a comment.
 
 ## Working norms
 
-- **Branches.** Mainline is `master`. Current integration branch for the
-  compiler revival is `revival`; sprint PRs target `revival`, which merges to
-  `master` when green.
+- **Branches.** Mainline is `master`. Work on short-lived feature branches off
+  `master`, open a PR to `master`, and merge on green. (The earlier `revival`
+  integration branch has been folded into `master` and retired.)
 - **Tracker.** GitHub issues (`thejefflarson/goat`). Decisions that outlive a
   ticket go in `docs/adr/`.
 - **Gates (CI-enforced).** `cargo fmt --all -- --check`,
