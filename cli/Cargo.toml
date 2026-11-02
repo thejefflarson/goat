@@ -9,6 +9,9 @@ name = "goat"
 path = "src/main.rs"
 
 [dependencies]
+goat = { version = "0.1.0", path = "../goat" }
 goat_checker = { path = "../checker" }
-goat_compiler = { path = "../compiler" }
-tempfile = "3"
+wasmtime = "50.0.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"

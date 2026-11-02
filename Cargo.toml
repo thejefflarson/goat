@@ -5,6 +5,7 @@ members = [
     "checker",
     "mir",
     "wasm",
+    "goat",
     "compiler",
     "cli",
 ]
