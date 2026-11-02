@@ -14,4 +14,6 @@ goat_checker = { path = "../checker" }
 wasmtime = "50.0.1"
 
 [dev-dependencies]
+bolero = { version = "=0.13.4", default-features = false, features = ["std"] }
+goat_mir = { path = "../mir" }
 tempfile = "3.27.0"

@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{env, fs};
 
-use wasmtime::{Config, Engine, Linker, Module, Store};
-
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     match run(&args) {
@@ -70,34 +68,13 @@ fn build(file: &str) -> Result<Vec<u8>, String> {
     goat::compile(&source).map_err(|errors| render_errors(file, &source, &errors))
 }
 
-/// Instantiate `wasm` under wasmtime and run its entry export. A trap becomes
-/// an error, so the process exits non-zero.
+/// Run `wasm` under wasmtime and print what the program emitted. A trap
+/// becomes an error, so the process exits non-zero.
 fn execute(wasm: &[u8]) -> Result<(), String> {
-    let mut config = Config::new();
-    config.wasm_tail_call(true);
-    let engine = Engine::new(&config).map_err(|e| format!("engine: {e}"))?;
-    let module = Module::new(&engine, wasm).map_err(|e| format!("invalid module: {e}"))?;
-
-    let mut linker = Linker::new(&engine);
-    linker
-        .func_wrap("goat", "print_number", |x: f64| {
-            println!("{}", goat::format_number(x))
-        })
-        .map_err(|e| e.to_string())?;
-    linker
-        .func_wrap("goat", "print_bool", |b: i32| {
-            println!("{}", goat::format_bool(b != 0))
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut store = Store::new(&engine, ());
-    let instance = linker
-        .instantiate(&mut store, &module)
-        .map_err(|e| format!("instantiate: {e}"))?;
-    let entry = instance
-        .get_typed_func::<(), ()>(&mut store, "goat_entry")
-        .map_err(|e| format!("missing entry point: {e}"))?;
-    entry.call(&mut store, ()).map_err(|e| format!("trap: {e}"))
+    for line in goat_cli::execute(wasm)? {
+        println!("{line}");
+    }
+    Ok(())
 }
 
 fn parse_out_flag(args: &[String]) -> Option<PathBuf> {

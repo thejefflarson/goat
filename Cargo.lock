@@ -718,8 +718,10 @@ dependencies = [
 name = "goat_cli"
 version = "0.1.0"
 dependencies = [
+ "bolero",
  "goat",
  "goat_checker",
+ "goat_mir",
  "tempfile",
  "wasmtime",
 ]
