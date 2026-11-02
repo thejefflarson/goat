@@ -107,3 +107,8 @@ fn mutual_recursion_either_order() {
 fn shadowing_value_binding() {
     assert_eq!(run("score = 1  score = score + 1  score"), "2");
 }
+
+#[test]
+fn long_operator_chain() {
+    assert_eq!(run(&vec!["1"; 500].join(" + ")), "500");
+}
