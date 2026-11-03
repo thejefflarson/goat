@@ -26,6 +26,7 @@ $ goat run examples/fib.goat
 - Numbers, booleans, strings, and the unit value.
 - `name = value  rest` — bindings, which may be recursive.
 - `program(a, b) do ... done` — first-class functions; `f(x, y)` calls them.
+  `function` is an accepted synonym for `program`.
 - `if c then a else b done` — conditionals.
 - `{x: 1, y: 2}` — records, with field access `point.x`.
 - Arithmetic `+ - * /` and comparisons `< <= > >=`.
@@ -33,6 +34,10 @@ $ goat run examples/fib.goat
 Types are inferred — you never write a type annotation. The checker is
 Hindley-Milner with **row-polymorphic records** (scoped labels), so a function
 like `program(p) do p.x done` works on *any* record that has an `x`.
+
+To have a language model read or write goat, give it [`docs/llm.md`](docs/llm.md)
+— the whole language as it runs today, written for a model with no training data
+on goat.
 
 A `(…)` immediately after an expression is a **call** — `f(x)` calls `f`. A
 grouped expression therefore can't start a new statement right after another

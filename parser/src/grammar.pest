@@ -1,4 +1,4 @@
-program_lit = _{ "program" }
+function_lit = _{ "program" | "function" }
 if_lit = _{ "if" }
 then_lit = _{ "then" }
 else_lit = _{ "else" }
@@ -17,7 +17,7 @@ return_lit = _{ "return" }
 // is listed before `do` because PEG alternation commits to the first match,
 // and `do` would otherwise shadow it.
 keyword = _{
-  ( program_lit
+  ( function_lit
   | if_lit
   | then_lit
   | else_lit
@@ -91,7 +91,7 @@ record = { lbrace ~ (field ~ (comma ~ field)* ~ comma?)? ~ rbrace }
 field = { ident ~ colon ~ expr }
 declaration = { ident ~ equals ~ expr ~ expr? }
 labels = { ident ~ (comma ~ ident)* }
-function = { program_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
+function = { function_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
 arguments = { expr ~ (comma ~ expr)* ~ comma? }
 else_branch = _{ else_lit ~ expr }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ else_branch? ~ done_lit }
