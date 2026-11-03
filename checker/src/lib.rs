@@ -62,6 +62,38 @@ mod tests {
     }
 
     #[test]
+    fn capturing_closures_type_check() {
+        let curried = "add = program(a) do program(b) do a + b done done add(1)(2)";
+        assert_eq!(type_of(curried).unwrap(), "Number");
+
+        let recursive = "outer = program(n) do \
+                           go = program(k) do if k < 1 then 0 else n + go(k - 1) done done \
+                           go(3) \
+                         done \
+                         outer(10)";
+        assert_eq!(type_of(recursive).unwrap(), "Number");
+
+        let polymorphic_apply = "apply = program(f, x) do f(x) done \
+                                 n = 10 \
+                                 t = true \
+                                 addn = program(x) do x + n done \
+                                 pick = program(b) do if t then b else false done done \
+                                 if apply(pick, true) then apply(addn, 1) else 0 done";
+        assert_eq!(type_of(polymorphic_apply).unwrap(), "Number");
+
+        let record_of_functions = "k = 10 \
+                                   r = {f: program(x) do x + k done, g: program(x) do x * k done} \
+                                   r.f(3) + r.g(2)";
+        assert_eq!(type_of(record_of_functions).unwrap(), "Number");
+    }
+
+    #[test]
+    fn capturing_closures_reject_ill_typed_calls() {
+        assert!(type_of("add = program(a) do program(b) do a + b done done add(1)(true)").is_err());
+        assert!(type_of("k = 10 f = program(x) do x + k done f(true)").is_err());
+    }
+
+    #[test]
     fn literals() {
         assert_eq!(type_of("1").unwrap(), "Number");
         assert_eq!(type_of("1.5").unwrap(), "Number");
