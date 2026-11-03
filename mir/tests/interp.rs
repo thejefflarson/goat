@@ -16,7 +16,8 @@ fn adds_two_numbers_with_no_live_allocations() {
         Outcome {
             value: Value::Int(3),
             live_allocations: 0,
-            allocations: 0
+            allocations: 0,
+            root_string: None
         }
     );
 }
@@ -186,4 +187,32 @@ fn switch_selects_arm_by_tag_and_reads_payload() {
     );
     let out = run_verified(&program(vec![func(MTy::Int, body)]));
     assert_eq!((out.value, out.live_allocations), (Value::Int(7), 0));
+}
+
+#[test]
+fn string_literal_root_carries_its_bytes_and_is_immortal() {
+    let mut p = program(vec![func(MTy::Ptr(HeapKind::Str), Expr::StrLit(DataId(0)))]);
+    p.data = vec![b"hello".to_vec()];
+    let out = run_verified(&p);
+    assert_eq!(out.root_string, Some(b"hello".to_vec()));
+    assert_eq!((out.live_allocations, out.allocations), (0, 0));
+}
+
+#[test]
+fn empty_string_root_is_some_empty() {
+    let mut p = program(vec![func(MTy::Ptr(HeapKind::Str), Expr::StrLit(DataId(0)))]);
+    p.data = vec![Vec::new()];
+    assert_eq!(run_verified(&p).root_string, Some(Vec::new()));
+}
+
+#[test]
+fn string_literal_with_missing_data_is_malformed() {
+    let p = program(vec![func(MTy::Ptr(HeapKind::Str), Expr::StrLit(DataId(0)))]);
+    assert_eq!(run(&p), Err(InterpError::Malformed("unknown data")));
+}
+
+#[test]
+fn non_string_roots_have_no_string() {
+    let out = run_verified(&program(vec![func(MTy::Int, int(1))]));
+    assert_eq!(out.root_string, None);
 }
