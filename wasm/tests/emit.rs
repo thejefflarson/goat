@@ -417,3 +417,14 @@ fn direct_tail_recursion_becomes_return_call() {
     let text = wat(&tail_recursive_direct());
     assert!(text.contains("return_call 3"), "{text}");
 }
+
+fn mono_program(src: &str) -> Program {
+    let checked = goat_checker::check(src).expect("program type-checks");
+    mono(&checked).expect("program monomorphizes")
+}
+
+#[test]
+fn mono_capturing_closure_matches_golden() {
+    let p = mono_program("add = program(a) do program(b) do a + b done done  add(1)(2)");
+    golden("capturing_closure", &p);
+}
