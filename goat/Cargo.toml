@@ -8,3 +8,6 @@ edition = "2024"
 goat_checker = { path = "../checker" }
 goat_mir = { path = "../mir" }
 goat_wasm = { path = "../wasm" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
