@@ -1,0 +1,5 @@
+# A function can capture variables from the scope around it.
+add = program(a) do program(b) do a + b done done
+add_ten = add(10)
+
+add_ten(5)

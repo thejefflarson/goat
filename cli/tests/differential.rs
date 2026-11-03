@@ -116,11 +116,70 @@ fn row_polymorphic_field_access() {
 }
 
 #[test]
+fn curried_capture() {
+    assert_eq!(
+        run("add = program(a) do program(b) do a + b done done  add(1)(2)"),
+        "3"
+    );
+}
+
+#[test]
+fn recursive_closure_capturing_an_outer_parameter() {
+    let src = "outer = program(n) do \
+                 go = program(k) do if k < 1 then 0 else n + go(k - 1) done done \
+                 go(3) \
+               done \
+               outer(10)";
+    assert_eq!(run(src), "30");
+}
+
+#[test]
+fn capturing_closures_through_a_polymorphic_apply() {
+    let src = "apply = program(f, x) do f(x) done \
+               n = 10 \
+               t = true \
+               addn = program(x) do x + n done \
+               pick = program(b) do if t then b else false done done \
+               if apply(pick, true) then apply(addn, 1) else 0 done";
+    assert_eq!(run(src), "11");
+}
+
+#[test]
+fn record_of_capturing_functions() {
+    let src = "k = 10 \
+               r = {f: program(x) do x + k done, g: program(x) do x * k done} \
+               r.f(3) + r.g(2)";
+    assert_eq!(run(src), "33");
+}
+
+#[test]
+fn closures_capture_closures_and_records() {
+    let twice = "double = program(n) do n * 2 done \
+                 twice = program(f) do program(x) do f(f(x)) done done \
+                 twice(double)(5)";
+    assert_eq!(run(twice), "20");
+    let record = "p = {x: 1, y: 2}  f = program(z) do p.x + p.y + z done  f(3) + f(4)";
+    assert_eq!(run(record), "13");
+}
+
+#[test]
+fn nested_mutual_recursion_with_captures() {
+    let src = "outer = program(m) do \
+                 is_even = program(n) do if n < m then true else is_odd(n - m) done done \
+                 is_odd = program(n) do if n < m then false else is_even(n - m) done done \
+                 is_even(10) \
+               done \
+               outer(1)";
+    assert_eq!(run(src), "true");
+}
+
+#[test]
 fn examples_print_the_expected_output() {
     for (file, expected) in [
         ("fib.goat", "55"),
         ("higher_order.goat", "42"),
         ("records.goat", "7"),
+        ("closures.goat", "15"),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
         let src = fs::read_to_string(&path).unwrap();

@@ -2,23 +2,23 @@
 //! `(binding, ground type)` specialization.
 
 use crate::mir::*;
-use goat_checker::hir::{self, BinOp, ExprKind, Param, Span, Symbol};
+use goat_checker::hir::{self, BinOp, ExprId, ExprKind, Param, Span, Symbol};
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
 use goat_checker::{Checked, GoatError};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type Subst = HashMap<TypeVar, Ty>;
 
 /// Lower a checked program to MIR. Constructs whose runtime support has not
-/// landed yet (ADR 0005) and captured variables (until closures land) come back
-/// as spanned diagnostics; well-typed input never panics.
+/// landed yet (ADR 0005) come back as spanned diagnostics; well-typed input
+/// never panics.
 pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
-    let mut funcs = HashMap::new();
-    collect_funcs(&checked.root, &mut funcs);
+    let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root);
     let mut m = Mono {
         typed: &checked.typed,
-        funcs,
+        lambdas,
+        var_tys,
         specs: Vec::new(),
         out: vec![None],
         work: Vec::new(),
@@ -31,8 +31,9 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     let mut cx = FnCx::new(Subst::new());
     let root_ty = m.ground(&checked.typed.root_ty, &cx.subst);
     let mut ret = m.lower_ty(&root_ty, checked.root.span);
-    let mut body = m.expr(&mut cx, &checked.root, true);
-    if matches!(ret, MTy::Ptr(HeapKind::Record(_))) {
+    let owned = ret.is_ptr();
+    let mut body = m.expr(&mut cx, &checked.root, !owned);
+    if owned {
         // The program's value has no consumer, so release it here.
         let result = cx.fresh();
         let release = Expr::Let(
@@ -50,8 +51,8 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         body,
     });
 
-    while let Some((id, symbol, subst)) = m.work.pop() {
-        let func = m.specialize_body(symbol, subst);
+    while let Some((id, target, subst, capture_tys)) = m.work.pop() {
+        let func = m.specialize_body(target, subst, capture_tys);
         m.out[id.0 as usize] = Some(func);
     }
 
@@ -80,44 +81,180 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     })
 }
 
-fn collect_funcs<'a>(e: &'a hir::Expr, out: &mut HashMap<Symbol, (&'a [Param], &'a hir::Expr)>) {
-    match &e.kind {
-        ExprKind::Let {
-            symbol,
-            value,
-            rest,
-            ..
-        } => {
-            if let ExprKind::Func { params, body } = &value.kind {
-                out.insert(*symbol, (params, body));
+/// A function literal's identity: a `name = program(...)` binding, or an
+/// anonymous literal keyed by its expression.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Target {
+    Named(Symbol),
+    Anon(ExprId),
+}
+
+#[derive(Clone)]
+struct Lambda<'a> {
+    params: &'a [Param],
+    body: &'a hir::Expr,
+    /// The literal's type, in terms of the type variables its body is checked
+    /// against.
+    ty: &'a Ty,
+    /// The enclosing variables the closure holds, in `Capture` index order.
+    /// Function bindings are never captured: each use re-materializes them.
+    captures: Vec<Symbol>,
+}
+
+struct Collector<'a> {
+    typed: &'a Typed,
+    lambdas: HashMap<Target, Lambda<'a>>,
+    free: Vec<(Target, Vec<Symbol>)>,
+    var_tys: HashMap<Symbol, &'a Ty>,
+}
+
+/// Find every function literal, its captures, and the type template of every
+/// variable a closure might capture.
+fn collect_lambdas<'a>(
+    typed: &'a Typed,
+    root: &'a hir::Expr,
+) -> (HashMap<Target, Lambda<'a>>, HashMap<Symbol, &'a Ty>) {
+    let mut c = Collector {
+        typed,
+        lambdas: HashMap::new(),
+        free: Vec::new(),
+        var_tys: HashMap::new(),
+    };
+    c.walk(root);
+    resolve_captures(&mut c.lambdas, &c.free);
+    (c.lambdas, c.var_tys)
+}
+
+impl<'a> Collector<'a> {
+    fn walk(&mut self, e: &'a hir::Expr) {
+        let typed = self.typed;
+        match &e.kind {
+            ExprKind::Let {
+                symbol,
+                value,
+                rest,
+                ..
+            } => {
+                match &value.kind {
+                    ExprKind::Func { params, body } => {
+                        let ty = &typed.schemes[symbol].ty;
+                        self.lambda(Target::Named(*symbol), ty, params, body);
+                    }
+                    _ => {
+                        self.var_tys.insert(*symbol, &typed.node_types[&value.id]);
+                        self.walk(value);
+                    }
+                }
+                if let Some(rest) = rest {
+                    self.walk(rest);
+                }
             }
-            collect_funcs(value, out);
-            if let Some(rest) = rest {
-                collect_funcs(rest, out);
+            ExprKind::Func { params, body } => {
+                self.lambda(Target::Anon(e.id), &typed.node_types[&e.id], params, body);
+            }
+            _ => for_each_child(e, &mut |c| self.walk(c)),
+        }
+    }
+
+    fn lambda(&mut self, target: Target, ty: &'a Ty, params: &'a [Param], body: &'a hir::Expr) {
+        if let Ty::Func(args, _) = ty {
+            for (param, ty) in params.iter().zip(args) {
+                self.var_tys.insert(param.symbol, ty);
             }
         }
-        ExprKind::Func { body, .. } => collect_funcs(body, out),
+        let mut free = free_symbols(params, body);
+        if let Target::Named(me) = target {
+            free.retain(|s| *s != me);
+        }
+        self.free.push((target, free));
+        self.lambdas.insert(
+            target,
+            Lambda {
+                params,
+                body,
+                ty,
+                captures: Vec::new(),
+            },
+        );
+        self.walk(body);
+    }
+}
+
+/// Fix each literal's capture list: its free variables, where a referenced
+/// function binding contributes that function's captures instead of itself.
+/// Lists only grow and keep their order, so mutually recursive functions
+/// settle on a common set.
+fn resolve_captures(lambdas: &mut HashMap<Target, Lambda>, free: &[(Target, Vec<Symbol>)]) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (target, symbols) in free {
+            let mut captures = lambdas[target].captures.clone();
+            let before = captures.len();
+            for s in symbols {
+                let wanted = match lambdas.get(&Target::Named(*s)) {
+                    Some(function) => function.captures.clone(),
+                    None => vec![*s],
+                };
+                for c in wanted {
+                    if !captures.contains(&c) {
+                        captures.push(c);
+                    }
+                }
+            }
+            changed |= captures.len() != before;
+            lambdas.get_mut(target).expect("collected").captures = captures;
+        }
+    }
+}
+
+/// The symbols `body` uses that neither it nor `params` bind, in order of
+/// first use.
+fn free_symbols(params: &[Param], body: &hir::Expr) -> Vec<Symbol> {
+    fn scan(e: &hir::Expr, used: &mut Vec<Symbol>, bound: &mut HashSet<Symbol>) {
+        match &e.kind {
+            ExprKind::Var { symbol, .. } if !used.contains(symbol) => used.push(*symbol),
+            ExprKind::Let { symbol, .. } => {
+                bound.insert(*symbol);
+            }
+            ExprKind::Func { params, .. } => bound.extend(params.iter().map(|p| p.symbol)),
+            _ => {}
+        }
+        for_each_child(e, &mut |c| scan(c, used, bound));
+    }
+    let mut used = Vec::new();
+    let mut bound: HashSet<_> = params.iter().map(|p| p.symbol).collect();
+    scan(body, &mut used, &mut bound);
+    used.retain(|s| !bound.contains(s));
+    used
+}
+
+fn for_each_child<'a>(e: &'a hir::Expr, f: &mut impl FnMut(&'a hir::Expr)) {
+    match &e.kind {
+        ExprKind::Let { value, rest, .. } => {
+            f(value);
+            rest.iter().for_each(|r| f(r));
+        }
+        ExprKind::Func { body, .. } => f(body),
         ExprKind::App { callee, args } => {
-            collect_funcs(callee, out);
-            args.iter().for_each(|a| collect_funcs(a, out));
+            f(callee);
+            args.iter().for_each(f);
         }
         ExprKind::If {
             cond,
             then_branch,
             else_branch,
         } => {
-            collect_funcs(cond, out);
-            collect_funcs(then_branch, out);
-            if let Some(e) = else_branch {
-                collect_funcs(e, out);
-            }
+            f(cond);
+            f(then_branch);
+            else_branch.iter().for_each(|e| f(e));
         }
         ExprKind::Bin { lhs, rhs, .. } => {
-            collect_funcs(lhs, out);
-            collect_funcs(rhs, out);
+            f(lhs);
+            f(rhs);
         }
-        ExprKind::Record { fields } => fields.iter().for_each(|(_, v)| collect_funcs(v, out)),
-        ExprKind::Field { record, .. } => collect_funcs(record, out),
+        ExprKind::Record { fields } => fields.iter().for_each(|(_, v)| f(v)),
+        ExprKind::Field { record, .. } => f(record),
         ExprKind::Unit
         | ExprKind::Number(_)
         | ExprKind::Str(_)
@@ -126,12 +263,22 @@ fn collect_funcs<'a>(e: &'a hir::Expr, out: &mut HashMap<Symbol, (&'a [Param], &
     }
 }
 
+/// One specialization of a function literal: its use type and the ground types
+/// of its captures fix the body.
+struct Spec {
+    target: Target,
+    ty: Ty,
+    capture_tys: Vec<Ty>,
+    id: FuncId,
+}
+
 struct Mono<'a> {
     typed: &'a Typed,
-    funcs: HashMap<Symbol, (&'a [Param], &'a hir::Expr)>,
-    specs: Vec<(Symbol, Ty, FuncId)>,
+    lambdas: HashMap<Target, Lambda<'a>>,
+    var_tys: HashMap<Symbol, &'a Ty>,
+    specs: Vec<Spec>,
     out: Vec<Option<Func>>,
-    work: Vec<(FuncId, Symbol, Subst)>,
+    work: Vec<(FuncId, Target, Subst, Vec<Ty>)>,
     sigs: Vec<Sig>,
     layouts: Vec<Layout>,
     /// The zero-capture closure wrapper for each function used as a value. The
@@ -143,8 +290,14 @@ struct Mono<'a> {
 struct FnCx {
     subst: Subst,
     locals: HashMap<Symbol, Local>,
-    /// Owned closure locals in scope; each tail leaf drops them.
+    /// Owned pointer locals in scope, including a closure's `env`; each tail
+    /// leaf drops them.
     live: Vec<Local>,
+    /// The `Capture` index of each captured variable.
+    captures: HashMap<Symbol, usize>,
+    /// A capturing function's own name and `env`; the name refers to the
+    /// closure being run, never to a stored capture.
+    self_env: Option<(Symbol, Local)>,
     next: u32,
 }
 
@@ -154,6 +307,8 @@ impl FnCx {
             subst,
             locals: HashMap::new(),
             live: Vec::new(),
+            captures: HashMap::new(),
+            self_env: None,
             next: 0,
         }
     }
@@ -259,22 +414,69 @@ impl Mono<'_> {
         }
     }
 
-    fn specialize(&mut self, cx: &FnCx, symbol: Symbol, use_id: hir::ExprId) -> (FuncId, Ty) {
+    fn specialize(&mut self, cx: &FnCx, target: Target, use_id: ExprId) -> (FuncId, Ty) {
         let use_ty = self.ground(&self.typed.node_types[&use_id], &cx.subst);
-        if let Some((_, _, id)) = self
+        let Lambda { ty, captures, .. } = self.lambdas[&target].clone();
+        let capture_tys: Vec<Ty> = captures
+            .iter()
+            .map(|c| self.ground(self.var_tys[c], &cx.subst))
+            .collect();
+        if let Some(spec) = self
             .specs
             .iter()
-            .find(|(s, t, _)| *s == symbol && *t == use_ty)
+            .find(|s| s.target == target && s.ty == use_ty && s.capture_tys == capture_tys)
         {
-            return (*id, use_ty);
+            return (spec.id, use_ty);
         }
         let id = FuncId(self.out.len() as u32);
         self.out.push(None);
-        self.specs.push((symbol, use_ty.clone(), id));
+
+        // The body also mentions the enclosing scope's type variables; the
+        // captured variables' ground types recover them.
         let mut subst = Subst::new();
-        match_ty(&self.typed.schemes[&symbol].ty, &use_ty, &mut subst);
-        self.work.push((id, symbol, subst));
+        match_ty(ty, &use_ty, &mut subst);
+        for (c, capture_ty) in captures.iter().zip(&capture_tys) {
+            match_ty(self.var_tys[c], capture_ty, &mut subst);
+        }
+        self.work.push((id, target, subst, capture_tys.clone()));
+        self.specs.push(Spec {
+            target,
+            ty: use_ty.clone(),
+            capture_tys,
+            id,
+        });
         (id, use_ty)
+    }
+
+    /// The closure value of `target` at a use site: a static closure when it
+    /// captures nothing, else a fresh heap closure over the captured variables.
+    fn closure_value(&mut self, cx: &mut FnCx, target: Target, use_id: ExprId, span: Span) -> Expr {
+        let (id, ty) = self.specialize(cx, target, use_id);
+        let captures = self.lambdas[&target].captures.clone();
+        if captures.is_empty() {
+            return self.closure_of(id, &ty, span);
+        }
+        let values = captures
+            .into_iter()
+            .map(|c| self.variable_value(cx, c, span))
+            .collect();
+        Expr::MakeClosure(id, values)
+    }
+
+    /// An owned reference to a captured or local variable.
+    fn variable_value(&mut self, cx: &mut FnCx, symbol: Symbol, span: Span) -> Expr {
+        if let Some(&local) = cx.locals.get(&symbol) {
+            return if cx.live.contains(&local) {
+                self.use_closure(cx, local)
+            } else {
+                Expr::Local(local)
+            };
+        }
+        if let Some(&index) = cx.captures.get(&symbol) {
+            return Expr::Capture(index);
+        }
+        self.error(span, "a variable is used before it is defined");
+        Expr::Trap(String::new())
     }
 
     /// A zero-capture closure over `target`: a wrapper that takes the closure
@@ -315,10 +517,15 @@ impl Mono<'_> {
         Expr::MakeClosure(wrapper, Vec::new())
     }
 
-    fn specialize_body(&mut self, symbol: Symbol, subst: Subst) -> Func {
-        let (params, body) = self.funcs[&symbol];
-        let Ty::Func(arg_tys, ret_ty) = &self.typed.schemes[&symbol].ty else {
-            unreachable!("function binding without a function type");
+    fn specialize_body(&mut self, target: Target, subst: Subst, capture_tys: Vec<Ty>) -> Func {
+        let Lambda {
+            params,
+            body,
+            ty,
+            captures,
+        } = self.lambdas[&target].clone();
+        let Ty::Func(arg_tys, ret_ty) = ty else {
+            unreachable!("function literal without a function type");
         };
         let mut cx = FnCx::new(subst);
         let mut mparams = Vec::new();
@@ -333,11 +540,44 @@ impl Mono<'_> {
             mparams.push((local, mty));
         }
         let ret = self.ground(ret_ty, &cx.subst);
+        let env = if captures.is_empty() {
+            None
+        } else {
+            Some(self.bind_env(&mut cx, target, ty, &captures, &capture_tys, body.span))
+        };
         Func {
             params: mparams,
-            env: None,
+            env,
             ret: self.lower_ty(&ret, body.span),
             body: self.expr(&mut cx, body, true),
+        }
+    }
+
+    /// Give a capturing function its `env` parameter. The function owns `env`,
+    /// so it is released at every exit like any other pointer local.
+    fn bind_env(
+        &mut self,
+        cx: &mut FnCx,
+        target: Target,
+        ty: &Ty,
+        captures: &[Symbol],
+        capture_tys: &[Ty],
+        span: Span,
+    ) -> Env {
+        let ty = self.ground(ty, &cx.subst);
+        let MTy::Ptr(HeapKind::Closure(sig)) = self.lower_ty(&ty, span) else {
+            unreachable!("function type lowers to a closure");
+        };
+        let local = cx.fresh();
+        cx.live.push(local);
+        cx.captures = captures.iter().copied().zip(0..).collect();
+        if let Target::Named(symbol) = target {
+            cx.self_env = Some((symbol, local));
+        }
+        Env {
+            local,
+            sig,
+            captures: capture_tys.iter().map(|t| self.lower_ty(t, span)).collect(),
         }
     }
 
@@ -365,25 +605,14 @@ impl Mono<'_> {
             ExprKind::Unit => self.leaf(cx, Expr::Const(Const::Unit), tail),
             ExprKind::Number(n) => self.leaf(cx, Expr::Const(Const::Float(*n)), tail),
             ExprKind::Bool(b) => self.leaf(cx, Expr::Const(Const::Bool(*b)), tail),
-            ExprKind::Var { symbol, name } => {
-                let value = if let Some(&local) = cx.locals.get(symbol) {
-                    if cx.live.contains(&local) {
-                        self.use_closure(cx, local)
-                    } else {
-                        Expr::Local(local)
+            ExprKind::Var { symbol, .. } => {
+                let function = Target::Named(*symbol);
+                let value = match cx.self_env {
+                    Some((me, env)) if me == *symbol => self.use_closure(cx, env),
+                    _ if self.lambdas.contains_key(&function) => {
+                        self.closure_value(cx, function, e.id, e.span)
                     }
-                } else if self.funcs.contains_key(symbol) {
-                    let (id, ty) = self.specialize(cx, *symbol, e.id);
-                    self.closure_of(id, &ty, e.span)
-                } else {
-                    self.error(
-                        e.span,
-                        format!(
-                            "`{name}` is captured from an enclosing scope; \
-                             closures are not supported yet (Phase 4)"
-                        ),
-                    );
-                    Expr::Trap(String::new())
+                    _ => self.variable_value(cx, *symbol, e.span),
                 };
                 self.leaf(cx, value, tail)
             }
@@ -410,8 +639,8 @@ impl Mono<'_> {
                     return match rest {
                         Some(rest) => self.expr(cx, rest, tail),
                         None => {
-                            let (id, ty) = self.specialize(cx, *symbol, value.id);
-                            let closure = self.closure_of(id, &ty, e.span);
+                            let function = Target::Named(*symbol);
+                            let closure = self.closure_value(cx, function, value.id, e.span);
                             self.leaf(cx, closure, tail)
                         }
                     };
@@ -459,11 +688,8 @@ impl Mono<'_> {
                 self.leaf(cx, value, tail)
             }
             ExprKind::Func { .. } => {
-                self.error(
-                    e.span,
-                    "function literals outside a `name = program(...)` binding are not supported yet",
-                );
-                Expr::Trap(String::new())
+                let closure = self.closure_value(cx, Target::Anon(e.id), e.id, e.span);
+                self.leaf(cx, closure, tail)
             }
             ExprKind::Str(_) => self.unsupported(e.span, "strings"),
             ExprKind::Record { fields } => {
@@ -513,8 +739,13 @@ impl Mono<'_> {
 
     fn app(&mut self, cx: &mut FnCx, callee: &hir::Expr, args: &[hir::Expr], tail: bool) -> Expr {
         let direct = match &callee.kind {
-            ExprKind::Var { symbol, .. } if self.funcs.contains_key(symbol) => {
-                Some(self.specialize(cx, *symbol, callee.id).0)
+            ExprKind::Var { symbol, .. }
+                if self
+                    .lambdas
+                    .get(&Target::Named(*symbol))
+                    .is_some_and(|f| f.captures.is_empty()) =>
+            {
+                Some(self.specialize(cx, Target::Named(*symbol), callee.id).0)
             }
             _ => None,
         };
