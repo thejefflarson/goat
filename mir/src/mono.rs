@@ -2,11 +2,12 @@
 //! `(binding, ground type)` specialization.
 
 use crate::mir::*;
+use goat_checker::captures::for_each_child;
 use goat_checker::hir::{self, BinOp, ExprId, ExprKind, Param, Span, Symbol};
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
-use goat_checker::{Checked, GoatError};
-use std::collections::{HashMap, HashSet};
+use goat_checker::{Checked, GoatError, Target};
+use std::collections::HashMap;
 
 type Subst = HashMap<TypeVar, Ty>;
 
@@ -14,7 +15,7 @@ type Subst = HashMap<TypeVar, Ty>;
 /// landed yet (ADR 0005) come back as spanned diagnostics; well-typed input
 /// never panics.
 pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
-    let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root);
+    let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut m = Mono {
         typed: &checked.typed,
         lambdas,
@@ -81,14 +82,6 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     })
 }
 
-/// A function literal's identity: a `name = program(...)` binding, or an
-/// anonymous literal keyed by its expression.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Target {
-    Named(Symbol),
-    Anon(ExprId),
-}
-
 #[derive(Clone)]
 struct Lambda<'a> {
     params: &'a [Param],
@@ -103,8 +96,8 @@ struct Lambda<'a> {
 
 struct Collector<'a> {
     typed: &'a Typed,
+    captures: &'a HashMap<Target, Vec<Symbol>>,
     lambdas: HashMap<Target, Lambda<'a>>,
-    free: Vec<(Target, Vec<Symbol>)>,
     var_tys: HashMap<Symbol, &'a Ty>,
 }
 
@@ -113,15 +106,15 @@ struct Collector<'a> {
 fn collect_lambdas<'a>(
     typed: &'a Typed,
     root: &'a hir::Expr,
+    captures: &'a HashMap<Target, Vec<Symbol>>,
 ) -> (HashMap<Target, Lambda<'a>>, HashMap<Symbol, &'a Ty>) {
     let mut c = Collector {
         typed,
+        captures,
         lambdas: HashMap::new(),
-        free: Vec::new(),
         var_tys: HashMap::new(),
     };
     c.walk(root);
-    resolve_captures(&mut c.lambdas, &c.free);
     (c.lambdas, c.var_tys)
 }
 
@@ -162,71 +155,17 @@ impl<'a> Collector<'a> {
                 self.var_tys.insert(param.symbol, ty);
             }
         }
-        let mut free = free_symbols(params, body);
-        if let Target::Named(me) = target {
-            free.retain(|s| *s != me);
-        }
-        self.free.push((target, free));
         self.lambdas.insert(
             target,
             Lambda {
                 params,
                 body,
                 ty,
-                captures: Vec::new(),
+                captures: self.captures[&target].clone(),
             },
         );
         self.walk(body);
     }
-}
-
-/// Fix each literal's capture list: its free variables, where a referenced
-/// function binding contributes that function's captures instead of itself.
-/// Lists only grow and keep their order, so mutually recursive functions
-/// settle on a common set.
-fn resolve_captures(lambdas: &mut HashMap<Target, Lambda>, free: &[(Target, Vec<Symbol>)]) {
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (target, symbols) in free {
-            let mut captures = lambdas[target].captures.clone();
-            let before = captures.len();
-            for s in symbols {
-                let wanted = match lambdas.get(&Target::Named(*s)) {
-                    Some(function) => function.captures.clone(),
-                    None => vec![*s],
-                };
-                for c in wanted {
-                    if !captures.contains(&c) {
-                        captures.push(c);
-                    }
-                }
-            }
-            changed |= captures.len() != before;
-            lambdas.get_mut(target).expect("collected").captures = captures;
-        }
-    }
-}
-
-/// The symbols `body` uses that neither it nor `params` bind, in order of
-/// first use.
-fn free_symbols(params: &[Param], body: &hir::Expr) -> Vec<Symbol> {
-    fn scan(e: &hir::Expr, used: &mut Vec<Symbol>, bound: &mut HashSet<Symbol>) {
-        match &e.kind {
-            ExprKind::Var { symbol, .. } if !used.contains(symbol) => used.push(*symbol),
-            ExprKind::Let { symbol, .. } => {
-                bound.insert(*symbol);
-            }
-            ExprKind::Func { params, .. } => bound.extend(params.iter().map(|p| p.symbol)),
-            _ => {}
-        }
-        for_each_child(e, &mut |c| scan(c, used, bound));
-    }
-    let mut used = Vec::new();
-    let mut bound: HashSet<_> = params.iter().map(|p| p.symbol).collect();
-    scan(body, &mut used, &mut bound);
-    used.retain(|s| !bound.contains(s));
-    used
 }
 
 /// The first expression in `e` that refers to `symbol`.
@@ -241,40 +180,6 @@ fn first_use(e: &hir::Expr, symbol: Symbol) -> Option<ExprId> {
         }
     });
     found
-}
-
-fn for_each_child<'a>(e: &'a hir::Expr, f: &mut impl FnMut(&'a hir::Expr)) {
-    match &e.kind {
-        ExprKind::Let { value, rest, .. } => {
-            f(value);
-            rest.iter().for_each(|r| f(r));
-        }
-        ExprKind::Func { body, .. } => f(body),
-        ExprKind::App { callee, args } => {
-            f(callee);
-            args.iter().for_each(f);
-        }
-        ExprKind::If {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            f(cond);
-            f(then_branch);
-            else_branch.iter().for_each(|e| f(e));
-        }
-        ExprKind::Bin { lhs, rhs, .. } => {
-            f(lhs);
-            f(rhs);
-        }
-        ExprKind::Record { fields } => fields.iter().for_each(|(_, v)| f(v)),
-        ExprKind::Field { record, .. } => f(record),
-        ExprKind::Unit
-        | ExprKind::Number(_)
-        | ExprKind::Str(_)
-        | ExprKind::Bool(_)
-        | ExprKind::Var { .. } => {}
-    }
 }
 
 /// One specialization of a function literal: its use type and the ground types
@@ -472,13 +377,13 @@ impl Mono<'_> {
         }
         let values = captures
             .into_iter()
-            .map(|c| self.variable_value(cx, c, span))
+            .map(|c| self.variable_value(cx, c))
             .collect();
         Expr::MakeClosure(id, values)
     }
 
     /// An owned reference to a captured or local variable.
-    fn variable_value(&mut self, cx: &mut FnCx, symbol: Symbol, span: Span) -> Expr {
+    fn variable_value(&mut self, cx: &mut FnCx, symbol: Symbol) -> Expr {
         if let Some(&local) = cx.locals.get(&symbol) {
             return if cx.live.contains(&local) {
                 self.use_closure(cx, local)
@@ -489,8 +394,7 @@ impl Mono<'_> {
         if let Some(&index) = cx.captures.get(&symbol) {
             return Expr::Capture(index);
         }
-        self.error(span, "a variable is used before it is defined");
-        Expr::Trap(String::new())
+        unreachable!("the checker rejects a use of a function before its captures are bound")
     }
 
     /// A zero-capture closure over `target`: a wrapper that takes the closure
@@ -653,7 +557,7 @@ impl Mono<'_> {
                     _ if self.lambdas.contains_key(&function) => {
                         self.closure_value(cx, function, e.id, e.span)
                     }
-                    _ => self.variable_value(cx, *symbol, e.span),
+                    _ => self.variable_value(cx, *symbol),
                 };
                 self.leaf(cx, value, tail)
             }

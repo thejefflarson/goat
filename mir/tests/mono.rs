@@ -388,10 +388,14 @@ fn root_closure_result_is_released() {
 }
 
 #[test]
-fn closure_used_before_its_capture_exists_is_an_error() {
-    let src = "f = program() do g() done  x = f()  m = 5  g = program() do m done  x";
-    let errs = errors(src);
-    assert_eq!(errs, ["a variable is used before it is defined"]);
+fn closure_called_once_its_capture_exists_runs() {
+    for src in [
+        "f = program() do g() done  m = 5  g = program() do m done  f()",
+        "f = program() do g() done  m = 5  g = program() do m done  x = f()  x",
+        "m = 5  f = program() do g() done  g = program() do m done  f()",
+    ] {
+        assert_eq!(value(src), num(5.0), "{src}");
+    }
 }
 
 #[test]

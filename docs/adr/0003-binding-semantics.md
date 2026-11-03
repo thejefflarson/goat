@@ -52,5 +52,12 @@ right of `score = …` is ambiguous. ML resolves this with an explicit
 - Strengthens ADR 0002's no-cycle story: a value binding cannot name itself, so
   reference cycles in data are unconstructable; only functions self-reference,
   and (Phase 4) a closure references its binding via `env`, never storing itself.
+- Order-free functions leave one hole name resolution cannot see: a function can
+  read a value defined above it that is still unbound when the function runs
+  (`f = program() do g() done  x = f()  m = 5  g = program() do m done`). The
+  checker rejects a use of a function, as a call or as a value, while any value
+  it captures (directly or through the functions it calls) has not yet been
+  bound. Defining such a function is fine; only running or taking it early is
+  not.
 - Out of scope: cross-scope mutual recursion and recursive *values* (lazy
   `letrec` over data) remain unsupported.
