@@ -70,7 +70,7 @@ impl Gen<'_> {
         let choice = if depth >= 4 {
             self.byte() % 2
         } else {
-            self.byte() % 6
+            self.byte() % 8
         };
         match choice {
             0 => self.byte().to_string(),
@@ -103,6 +103,8 @@ impl Gen<'_> {
                 self.numbers.pop();
                 format!("{name} = ({value})\n0 + ({rest})")
             }
+            6 => self.closure(depth),
+            7 => self.curried_closure(depth),
             _ if !self.functions.is_empty() => {
                 let i = self.byte() as usize % self.functions.len();
                 let (name, arity) = self.functions[i].clone();
@@ -111,6 +113,48 @@ impl Gen<'_> {
             }
             _ => format!("-({})", self.number(depth + 1)),
         }
+    }
+
+    /// An in-scope name for a closure body to reference, or `0` at top level.
+    /// Closure bodies also use their own parameter: a returned closure that
+    /// ignores its parameter or captures nothing currently fails to compile.
+    fn captured_number(&mut self) -> String {
+        if self.numbers.is_empty() {
+            return "0".into();
+        }
+        let i = self.byte() as usize % self.numbers.len();
+        self.numbers[i].clone()
+    }
+
+    /// A local `program` whose body sees every number in scope, so it captures.
+    fn closure(&mut self, depth: u8) -> String {
+        let name = self.fresh();
+        let param = self.fresh();
+        let captured = self.captured_number();
+        self.numbers.push(param.clone());
+        let body = self.number(depth + 1);
+        self.numbers.pop();
+        let body = format!("{param} + ({captured} + ({body}))");
+        let arg = self.number(depth + 1);
+        format!("{name} = program({param}) do {body} done\n0 + ({name}({arg}))")
+    }
+
+    /// A function returning a function: the inner body captures the outer
+    /// parameter, and the returned closure outlives the call that made it.
+    fn curried_closure(&mut self, depth: u8) -> String {
+        let (make, made) = (self.fresh(), self.fresh());
+        let (outer, inner) = (self.fresh(), self.fresh());
+        self.numbers.push(outer.clone());
+        self.numbers.push(inner.clone());
+        let body = self.number(depth + 1);
+        self.numbers.pop();
+        self.numbers.pop();
+        let body = format!("{inner} + ({outer} + ({body}))");
+        let (first, second) = (self.number(depth + 1), self.number(depth + 1));
+        format!(
+            "{make} = program({outer}) do program({inner}) do {body} done done\n\
+             {made} = {make}({first})\n0 + ({made}({second}))"
+        )
     }
 
     fn boolean(&mut self, depth: u8) -> String {
@@ -155,4 +199,18 @@ pub fn generate(data: &[u8]) -> String {
         functions: Vec::new(),
     }
     .program()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generator_emits_nested_capturing_closures() {
+        let nested = (0u8..=255)
+            .map(|seed| generate(&[seed, 0, 7, 3, 7, 1, 7, 4, 6, 2, 6, 5, 6, 9]))
+            .filter(|src| src.contains("do program("))
+            .count();
+        assert!(nested > 0, "no curried closure generated");
+    }
 }
