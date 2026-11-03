@@ -251,6 +251,31 @@ fn curried_capture() {
 }
 
 #[test]
+fn returned_closure_ignoring_its_parameter() {
+    let src = "mk = program(a) do program(b) do a + (6) done done \
+               m = mk(2) \
+               0 + (m(9))";
+    assert_eq!(run_src(src).1, num(8.0));
+}
+
+#[test]
+fn returned_closure_capturing_nothing() {
+    let src = "mk = program(a) do program(b) do b done done \
+               m = mk(2) \
+               0 + (m(9))";
+    assert_eq!(run_src(src).1, num(9.0));
+}
+
+#[test]
+fn polymorphic_value_binding_captured_by_a_closure() {
+    let src = "mk = program(a) do program(b) do b done done \
+               m = mk(2) \
+               g = program(x) do m(x) + 1 done \
+               g(4)";
+    assert_eq!(run_src(src).1, num(5.0));
+}
+
+#[test]
 fn recursive_closure_calls_itself_through_env() {
     let src = "outer = program(n) do \
                  go = program(k) do if k < 1 then 0 else n + go(k - 1) done done \

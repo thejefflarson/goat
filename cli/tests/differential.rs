@@ -174,6 +174,66 @@ fn nested_mutual_recursion_with_captures() {
 }
 
 #[test]
+fn returned_closure_ignoring_its_parameter() {
+    let src = "mk = program(a) do program(b) do a + (6) done done \
+               m = mk(2) \
+               0 + (m(9))";
+    assert_eq!(run(src), "8");
+}
+
+#[test]
+fn returned_closure_capturing_nothing() {
+    let src = "mk = program(a) do program(b) do b done done \
+               m = mk(2) \
+               0 + (m(9))";
+    assert_eq!(run(src), "9");
+}
+
+#[test]
+fn returned_closure_ignoring_its_parameter_and_capturing_nothing() {
+    let src = "mk = program(a) do program(b) do 7 done done \
+               m = mk(2) \
+               0 + (m(9))";
+    assert_eq!(run(src), "7");
+}
+
+#[test]
+fn recursive_closure_capturing_nothing() {
+    let src = "outer = program(a) do \
+                 count = program(k) do if k < 1 then 0 else 1 + count(k - 1) done done \
+                 count \
+               done \
+               m = outer(5) \
+               0 + (m(4))";
+    assert_eq!(run(src), "4");
+}
+
+#[test]
+fn ignored_parameter_closures_through_apply() {
+    let src = "apply = program(f, x) do f(x) done \
+               n = 10 \
+               const = program(x) do n done \
+               apply(const, 1) + apply(program(y) do 3 done, true)";
+    assert_eq!(run(src), "13");
+}
+
+#[test]
+fn polymorphic_value_binding_captured_by_a_closure() {
+    let src = "mk = program(a) do program(b) do b done done \
+               m = mk(2) \
+               g = program(x) do m(x) + 1 done \
+               g(4)";
+    assert_eq!(run(src), "5");
+}
+
+#[test]
+fn anonymous_closures_ignoring_their_parameter() {
+    let src = "mk = program(a) do program(b) do program(c) do a done done done \
+               0 + (mk(4)(5)(6))";
+    assert_eq!(run(src), "4");
+}
+
+#[test]
 fn examples_print_the_expected_output() {
     for (file, expected) in [
         ("fib.goat", "55"),
