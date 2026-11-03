@@ -9,5 +9,6 @@ goat_mir = { path = "../mir" }
 wasm-encoder = "0.263.0"
 
 [dev-dependencies]
+goat_checker = { path = "../checker" }
 wasmparser = "0.263.0"
 wasmprinter = "0.263.0"
