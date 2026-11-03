@@ -165,7 +165,7 @@ fn heap_starts_after_the_aligned_data_segment() {
     p.data = vec![vec![0; 13]];
     let text = wat(&p);
     assert!(
-        text.contains("(global (;0;) (mut i32) i32.const 24)"),
+        text.contains("(global (;0;) (mut i32) i32.const 40)"),
         "{text}"
     );
 }
@@ -427,4 +427,137 @@ fn mono_program(src: &str) -> Program {
 fn mono_capturing_closure_matches_golden() {
     let p = mono_program("add = program(a) do program(b) do a + b done done  add(1)(2)");
     golden("capturing_closure", &p);
+}
+
+const STR: MTy = MTy::Ptr(HeapKind::Str);
+
+fn string_root() -> Program {
+    let mut p = program(vec![func(STR, Expr::StrLit(DataId(0)))]);
+    p.data = vec![b"hi".to_vec()];
+    p
+}
+
+#[test]
+fn string_root_matches_golden() {
+    golden("string", &string_root());
+}
+
+#[test]
+fn string_literals_are_immortal_objects_in_the_data_segment() {
+    let mut p = program(vec![func(STR, Expr::StrLit(DataId(1)))]);
+    p.data = vec![b"hi".to_vec(), b"hello world".to_vec()];
+    let text = wat(&p);
+    let object = |rc: &str, len: &str, bytes: &str, pad: &str| format!("{rc}{len}{bytes}{pad}");
+    let first = object(
+        "\\ff\\ff\\ff\\ff\\00\\00\\00\\00",
+        "\\02\\00\\00\\00",
+        "hi",
+        "\\00\\00",
+    );
+    let second = object(
+        "\\ff\\ff\\ff\\ff\\00\\00\\00\\00",
+        "\\0b\\00\\00\\00",
+        "hello world",
+        "\\00",
+    );
+    assert!(
+        text.contains(&format!("{first}{second}")),
+        "objects are 8-aligned and adjacent\n{text}"
+    );
+    assert!(
+        text.contains("i32.const 24"),
+        "second literal address\n{text}"
+    );
+    assert!(
+        text.contains("(global (;0;) (mut i32) i32.const 48)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn print_string_is_imported_only_for_a_string_root() {
+    let with = wat(&string_root());
+    assert!(
+        with.contains("(import \"goat\" \"print_string\" (func (;2;) (type 1) (param i32)))"),
+        "{with}"
+    );
+    assert!(with.contains("call 2"), "{with}");
+    for other in [arithmetic(), point_sum(), apply_double()] {
+        assert!(!wat(&other).contains("print_string"));
+    }
+}
+
+#[test]
+fn string_programs_shift_every_function_index_by_the_extra_import() {
+    let mut p = program(vec![
+        func(STR, call(1, vec![])),
+        func(STR, Expr::StrLit(DataId(0))),
+    ]);
+    p.data = vec![b"hi".to_vec()];
+    let text = wat(&p);
+    assert!(
+        text.contains("call 4"),
+        "callee is func 1 + 3 imports\n{text}"
+    );
+    assert!(text.contains("(export \"goat_entry\" (func 5))"), "{text}");
+}
+
+#[test]
+fn string_programs_index_closure_bodies_past_three_imports() {
+    let mut p = apply_double();
+    p.funcs[0] = func(
+        STR,
+        let_(
+            0,
+            call(2, vec![Expr::MakeClosure(FuncId(1), vec![]), int(21)]),
+            Expr::StrLit(DataId(0)),
+        ),
+    );
+    p.data = vec![b"hi".to_vec()];
+    let text = wat(&p);
+    assert!(
+        text.contains("call 5"),
+        "apply is func 2 + 3 imports\n{text}"
+    );
+    assert!(
+        text.contains("(i32.const 0) func 7 4"),
+        "table holds the noop helper (func 7) and double (func 1 + 3 imports)\n{text}"
+    );
+}
+
+#[test]
+fn dropping_a_string_local_emits() {
+    let body = let_(
+        0,
+        Expr::StrLit(DataId(0)),
+        let_(1, drop_(0), Expr::StrLit(DataId(0))),
+    );
+    let mut p = program(vec![func(STR, body)]);
+    p.data = vec![b"hi".to_vec()];
+    emit_valid(&p);
+}
+
+#[test]
+fn a_missing_data_entry_is_malformed() {
+    let p = program(vec![func(STR, Expr::StrLit(DataId(0)))]);
+    assert!(matches!(emit(&p), Err(EmitError::Malformed(_))));
+}
+
+#[test]
+fn only_a_string_heap_root_is_printable() {
+    let p = program(vec![func(record_ty(), alloc_record(1))]);
+    assert!(matches!(emit(&p), Err(EmitError::Unsupported(_))));
+}
+
+#[test]
+fn mono_string_programs_emit_valid_modules() {
+    for src in [
+        "\"hi\"",
+        "s = \"hi\"  s",
+        "id = program(x) do x done  id(\"hi\")",
+        "pick = program(b) do if b then \"hi\" else \"yo\" done done  pick(true)",
+    ] {
+        let text = wat(&mono_program(src));
+        assert!(text.contains("print_string"), "{src}\n{text}");
+    }
 }

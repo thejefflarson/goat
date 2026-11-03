@@ -10,9 +10,9 @@ use wasm_encoder::{
 };
 
 const DATA_BASE: u32 = 8;
-const IMPORTS: u32 = 2;
 const PRINT_NUMBER: u32 = 0;
 const PRINT_BOOL: u32 = 1;
+const PRINT_STRING: u32 = 2;
 const HEAP_GLOBAL: u32 = 0;
 const IMMORTAL: i32 = -1;
 
@@ -26,6 +26,8 @@ mod layout {
     pub const CODE: u32 = DROP_FN + POINTER;
     pub const CAPTURES: u32 = (CODE + POINTER).next_multiple_of(SLOT);
     pub const STATIC_CLOSURE: u32 = CAPTURES;
+    pub const STR_LEN: u32 = HEADER;
+    pub const STR_BYTES: u32 = STR_LEN + 4;
 
     pub fn slot(base: u32, index: usize) -> u32 {
         base + SLOT * index as u32
@@ -116,12 +118,25 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     }
     func_types.push(entry_ty);
 
-    let data_len = program.data.concat().len() as u32;
-    let static_base = (DATA_BASE + data_len).next_multiple_of(8);
-    let helper_base = IMPORTS + program.funcs.len() as u32 + 1;
+    let prints_string = program
+        .funcs
+        .get(program.entry.0 as usize)
+        .is_some_and(|root| root.ret == MTy::Ptr(HeapKind::Str));
+    let imports = if prints_string { 3 } else { 2 };
+
+    let mut data = Vec::new();
+    let mut strings = Vec::new();
+    for bytes in &program.data {
+        strings.push(DATA_BASE + data.len() as u32);
+        data.extend(string_object(bytes));
+    }
+    let static_base = DATA_BASE + data.len() as u32;
+    let helper_base = imports + program.funcs.len() as u32 + 1;
     let mut shared = Shared {
         program,
         types,
+        imports,
+        strings,
         helpers: Vec::new(),
         helper_base,
         table: Vec::new(),
@@ -134,7 +149,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     for func in &program.funcs {
         bodies.push(lower_func(&mut shared, func)?);
     }
-    bodies.push(entry_wrapper(program)?);
+    bodies.push(entry_wrapper(program, imports)?);
 
     let drop_ty = shared.drop_type();
     let mut next_helper = 0;
@@ -145,12 +160,10 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         next_helper += 1;
     }
 
-    let mut data: Vec<u8> = program.data.concat();
-    data.resize((static_base - DATA_BASE) as usize, 0);
     if !shared.statics.is_empty() {
         let noop = shared.noop_slot();
         for f in shared.statics.clone() {
-            let code = shared.table_slot(IMPORTS + f.0);
+            let code = shared.table_slot(imports + f.0);
             for word in [IMMORTAL as u32, 0, noop, code] {
                 data.extend(word.to_le_bytes());
             }
@@ -161,10 +174,13 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     let mut module = Module::new();
     module.section(&shared.types.section());
 
-    let mut imports = ImportSection::new();
-    imports.import("goat", "print_number", EntityType::Function(print_number));
-    imports.import("goat", "print_bool", EntityType::Function(print_bool));
-    module.section(&imports);
+    let mut import_section = ImportSection::new();
+    import_section.import("goat", "print_number", EntityType::Function(print_number));
+    import_section.import("goat", "print_bool", EntityType::Function(print_bool));
+    if prints_string {
+        import_section.import("goat", "print_string", EntityType::Function(print_bool));
+    }
+    module.section(&import_section);
 
     let mut functions = FunctionSection::new();
     for ty in &func_types {
@@ -211,7 +227,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     exports.export(
         "goat_entry",
         ExportKind::Func,
-        IMPORTS + program.funcs.len() as u32,
+        imports + program.funcs.len() as u32,
     );
     module.section(&exports);
 
@@ -238,6 +254,18 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     Ok(module.finish())
 }
 
+/// An immortal string: the count never reaches zero, so it is never freed.
+fn string_object(bytes: &[u8]) -> Vec<u8> {
+    let start = layout::STR_BYTES as usize;
+    let mut object = vec![0; (start + bytes.len()).next_multiple_of(8)];
+    let mut put =
+        |offset: u32, word: &[u8]| object[offset as usize..][..word.len()].copy_from_slice(word);
+    put(layout::RC, &IMMORTAL.to_le_bytes());
+    put(layout::STR_LEN, &(bytes.len() as u32).to_le_bytes());
+    put(layout::STR_BYTES, bytes);
+    object
+}
+
 /// A closure body takes its environment as an extra leading `i32` parameter.
 fn func_signature(func: &Func) -> (Vec<ValType>, Vec<ValType>) {
     let mut params = Vec::new();
@@ -259,6 +287,10 @@ enum Helper {
 struct Shared<'a> {
     program: &'a Program,
     types: Types,
+    /// Imported functions precede the program's own in the index space.
+    imports: u32,
+    /// Absolute address of each `Program.data` string object.
+    strings: Vec<u32>,
     helpers: Vec<Helper>,
     helper_base: u32,
     /// Function indices, in table order.
@@ -412,6 +444,7 @@ fn release(shared: &mut Shared, p: u32, kind: HeapKind, out: &mut Code) -> Resul
     let dropper = match kind {
         HeapKind::Closure(_) => None,
         HeapKind::Record(l) => Some(shared.helper(Helper::RecordDrop(l))),
+        HeapKind::Str => Some(shared.helper(Helper::Noop)),
         _ => return Err(EmitError::Unsupported("dropping this heap object")),
     };
     adjust_rc(p, Instruction::I32Sub, out);
@@ -466,7 +499,7 @@ impl Types {
 }
 
 /// An `Int` root prints through `print_number`, since both are numbers.
-fn entry_wrapper(program: &Program) -> Result<Function, EmitError> {
+fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError> {
     let root = program
         .funcs
         .get(program.entry.0 as usize)
@@ -475,7 +508,7 @@ fn entry_wrapper(program: &Program) -> Result<Function, EmitError> {
         return Err(EmitError::Malformed("entry function takes parameters"));
     }
     let mut f = Function::new([]);
-    f.instruction(&Instruction::Call(IMPORTS + program.entry.0));
+    f.instruction(&Instruction::Call(imports + program.entry.0));
     match root.ret {
         MTy::Float => {
             f.instruction(&Instruction::Call(PRINT_NUMBER));
@@ -488,6 +521,9 @@ fn entry_wrapper(program: &Program) -> Result<Function, EmitError> {
             f.instruction(&Instruction::Call(PRINT_BOOL));
         }
         MTy::Unit => {}
+        MTy::Ptr(HeapKind::Str) => {
+            f.instruction(&Instruction::Call(PRINT_STRING));
+        }
         MTy::Ptr(_) => return Err(EmitError::Unsupported("heap-valued root")),
     }
     f.instruction(&Instruction::End);
@@ -645,7 +681,7 @@ impl FuncCx<'_, '_> {
             self.shared.helper(Helper::Noop)
         };
         let drop_slot = self.shared.table_slot(drop_fn);
-        let code_slot = self.shared.table_slot(IMPORTS + f.0);
+        let code_slot = self.shared.table_slot(self.shared.imports + f.0);
         for (offset, slot) in [(layout::DROP_FN, drop_slot), (layout::CODE, code_slot)] {
             out.extend([
                 Instruction::LocalGet(ptr),
@@ -798,7 +834,7 @@ impl FuncCx<'_, '_> {
                     .get(f.0 as usize)
                     .ok_or(EmitError::UnknownFunc(*f))?;
                 self.direct_args(*f, args, out)?;
-                out.push(Instruction::Call(IMPORTS + f.0));
+                out.push(Instruction::Call(self.shared.imports + f.0));
                 Ok(Some(callee.ret))
             }
             Expr::CallClosure(closure, args) => {
@@ -813,7 +849,7 @@ impl FuncCx<'_, '_> {
             }
             Expr::TailCall(Callee::Direct(f), args) => {
                 self.direct_args(*f, args, out)?;
-                out.push(Instruction::ReturnCall(IMPORTS + f.0));
+                out.push(Instruction::ReturnCall(self.shared.imports + f.0));
                 Ok(None)
             }
             Expr::TailCall(Callee::Closure(closure), args) => {
@@ -884,8 +920,16 @@ impl FuncCx<'_, '_> {
             | Expr::Payload(..)
             | Expr::Unpack(..)
             | Expr::ReuseVariant(..)
-            | Expr::Free(_)
-            | Expr::StrLit(_) => Err(EmitError::Unsupported("heap objects")),
+            | Expr::Free(_) => Err(EmitError::Unsupported("heap objects")),
+            Expr::StrLit(d) => {
+                let address = *self
+                    .shared
+                    .strings
+                    .get(d.0 as usize)
+                    .ok_or(EmitError::Malformed("unknown data"))?;
+                out.push(Instruction::I32Const(address as i32));
+                Ok(Some(MTy::Ptr(HeapKind::Str)))
+            }
         }
     }
 
