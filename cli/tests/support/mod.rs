@@ -23,13 +23,15 @@ pub fn interpret(src: &str) -> (Vec<String>, usize) {
     (printed, outcome.live_allocations)
 }
 
-pub fn compiled(src: &str) -> Vec<String> {
+/// What the compiled wasm prints, and its live allocations after `goat_entry`.
+pub fn compiled(src: &str) -> (Vec<String>, u32) {
     let wasm = goat::compile(src).expect("program compiles");
-    goat_cli::execute(&wasm).expect("wasm runs")
+    let run = goat_cli::run(&wasm).expect("wasm runs");
+    (run.printed, run.live_allocs)
 }
 
-/// Run `src` both ways, assert they agree and the interpreter leaks nothing,
-/// and return the printed output joined by newlines.
+/// Run `src` both ways, assert they agree and neither side leaks, and return
+/// the printed output joined by newlines.
 pub fn run(src: &str) -> String {
     run_with(src, |printed| printed)
 }
@@ -39,11 +41,9 @@ pub fn run(src: &str) -> String {
 pub fn run_with(src: &str, tamper: impl FnOnce(Vec<String>) -> Vec<String>) -> String {
     let (expected, live) = interpret(src);
     assert_eq!(live, 0, "interpreter leaked allocations for: {src}");
-    assert_eq!(
-        tamper(compiled(src)),
-        expected,
-        "wasm differs from interp: {src}"
-    );
+    let (printed, wasm_live) = compiled(src);
+    assert_eq!(wasm_live, 0, "wasm leaked allocations for: {src}");
+    assert_eq!(tamper(printed), expected, "wasm differs from interp: {src}");
     expected.join("\n")
 }
 

@@ -683,6 +683,7 @@ dependencies = [
  "goat",
  "goat_checker",
  "goat_mir",
+ "goat_wasm",
  "tempfile",
  "wasmtime",
 ]

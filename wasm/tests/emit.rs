@@ -20,6 +20,16 @@ fn wat(p: &Program) -> String {
     wasmprinter::print_bytes(emit_valid(p)).expect("prints")
 }
 
+/// The text of function `index`, up to the next function.
+fn func_body(text: &str, index: u32) -> &str {
+    let start = text
+        .find(&format!("(func (;{index};)"))
+        .expect("function exists");
+    let rest = &text[start..];
+    let len = rest[1..].find("(func (;").map_or(rest.len(), |n| n + 1);
+    &rest[..len]
+}
+
 fn golden(name: &str, p: &Program) {
     let actual = wat(p);
     let path = format!("{}/tests/golden/{name}.wat", env!("CARGO_MANIFEST_DIR"));
@@ -150,7 +160,10 @@ fn module_shape() {
         "(import \"goat\" \"print_number\" (func (;0;) (type 0) (param f64)))",
         "(import \"goat\" \"print_bool\" (func (;1;) (type 1) (param i32)))",
         "(memory (;0;) 1)",
-        "(global (;0;) (mut i32) i32.const 8)",
+        "(global (;0;) (mut i32) i32.const 232)",
+        "(global (;1;) (mut i32) i32.const 0)",
+        "(export \"goat_alloc\" (func 4))",
+        "(export \"goat_live_allocs\" (func 6))",
         "(export \"memory\" (memory 0))",
         "(export \"goat_entry\" (func 3))",
         "(data (;0;) (i32.const 8) \"\")",
@@ -165,7 +178,7 @@ fn heap_starts_after_the_aligned_data_segment() {
     p.data = vec![vec![0; 13]];
     let text = wat(&p);
     assert!(
-        text.contains("(global (;0;) (mut i32) i32.const 40)"),
+        text.contains("(global (;0;) (mut i32) i32.const 264)"),
         "{text}"
     );
 }
@@ -366,6 +379,27 @@ fn standalone_record_matches_golden() {
 }
 
 #[test]
+fn allocator_runtime_is_exported_and_records_allocate_and_free_through_it() {
+    let text = wat(&point_sum());
+    for expected in [
+        "(export \"goat_alloc\" (func 4))",
+        "(export \"goat_live_allocs\" (func 6))",
+    ] {
+        assert!(text.contains(expected), "missing {expected}\n{text}");
+    }
+    let root = func_body(&text, 2);
+    assert!(
+        root.contains("call 4"),
+        "allocates through goat_alloc\n{root}"
+    );
+    assert!(root.contains("call 5"), "releases through free\n{root}");
+    assert!(
+        func_body(&text, 5).contains("memory.fill"),
+        "free poisons the block\n{text}"
+    );
+}
+
+#[test]
 fn apply_double_matches_golden() {
     golden("apply_double", &apply_double());
 }
@@ -391,8 +425,9 @@ fn a_function_value_used_twice_shares_one_static_closure() {
         call(2, vec![Expr::MakeClosure(FuncId(1), vec![]), int(2)]),
     );
     let text = wat(&p);
-    assert_eq!(text.matches("i32.const 8\n").count(), 2, "{text}");
-    assert!(!text.contains("i32.const 24\n"), "{text}");
+    let root = func_body(&text, 2);
+    assert_eq!(root.matches("i32.const 8\n").count(), 2, "{text}");
+    assert!(!root.contains("i32.const 24\n"), "{text}");
 }
 
 #[test]
@@ -465,11 +500,11 @@ fn string_literals_are_immortal_objects_in_the_data_segment() {
         "objects are 8-aligned and adjacent\n{text}"
     );
     assert!(
-        text.contains("i32.const 24"),
+        func_body(&text, 3).contains("i32.const 24"),
         "second literal address\n{text}"
     );
     assert!(
-        text.contains("(global (;0;) (mut i32) i32.const 48)"),
+        text.contains("(global (;0;) (mut i32) i32.const 272)"),
         "{text}"
     );
 }
@@ -520,8 +555,8 @@ fn string_programs_index_closure_bodies_past_three_imports() {
         "apply is func 2 + 3 imports\n{text}"
     );
     assert!(
-        text.contains("(i32.const 0) func 7 4"),
-        "table holds the noop helper (func 7) and double (func 1 + 3 imports)\n{text}"
+        text.contains("(i32.const 0) func 10 4"),
+        "table holds the noop helper (func 10) and double (func 1 + 3 imports)\n{text}"
     );
 }
 

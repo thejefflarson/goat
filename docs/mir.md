@@ -82,6 +82,13 @@ budget** (microcontrollers, which cannot afford 64 KB `memory.grow` steps). A
 target declares its heap strategy; MIR does not assume `memory.grow` is cheap or
 even available.
 
+The wasm backend implements the free-list strategy (`wasm/src/allocator.rs`).
+`alloc` records the block's size class in the header's `_pad` word, so `free`
+needs no size from the caller; a freed block has `rc == 0` and a poisoned
+payload, which turns a second release into a trap. The live-allocation count
+(`goat_live_allocs`) moves only on a real `alloc` and `free`, never for
+immortal objects.
+
 ## Ownership convention
 
 Start with **owned parameters** (Perceus): a callee consumes the pointers it is

@@ -1,6 +1,6 @@
 //! Differential tests: every program runs through the MIR interpreter (the
 //! oracle) and through the compiled wasm under wasmtime, and both must print
-//! the same thing. The interpreter must also leave no heap object live.
+//! the same thing. Neither side may leave a heap object live.
 
 use std::fs;
 

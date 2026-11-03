@@ -9,11 +9,14 @@ use wasm_encoder::{
     TableType, TypeSection, ValType,
 };
 
+mod allocator;
+
+use allocator::FreeList;
+
 const DATA_BASE: u32 = 8;
 const PRINT_NUMBER: u32 = 0;
 const PRINT_BOOL: u32 = 1;
 const PRINT_STRING: u32 = 2;
-const HEAP_GLOBAL: u32 = 0;
 const IMMORTAL: i32 = -1;
 
 /// wasm32 object layout (`docs/mir.md`); every offset below derives from these.
@@ -21,7 +24,9 @@ mod layout {
     const POINTER: u32 = 4;
     pub const SLOT: u32 = 8;
     pub const RC: u32 = 0;
+    pub const CLASS: u32 = 4;
     pub const HEADER: u32 = 8;
+    pub const LINK: u32 = HEADER;
     pub const DROP_FN: u32 = HEADER;
     pub const CODE: u32 = DROP_FN + POINTER;
     pub const CAPTURES: u32 = (CODE + POINTER).next_multiple_of(SLOT);
@@ -117,6 +122,10 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         func_types.push(types.intern(params, results));
     }
     func_types.push(entry_ty);
+    let alloc_ty = types.intern(vec![ValType::I32], vec![ValType::I32]);
+    let live_ty = types.intern(vec![], vec![ValType::I32]);
+    let free_ty = types.intern(vec![ValType::I32], vec![]);
+    func_types.extend([alloc_ty, free_ty, live_ty]);
 
     let prints_string = program
         .funcs
@@ -131,7 +140,8 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         data.extend(string_object(bytes));
     }
     let static_base = DATA_BASE + data.len() as u32;
-    let helper_base = imports + program.funcs.len() as u32 + 1;
+    let runtime_base = imports + program.funcs.len() as u32 + 1;
+    let helper_base = runtime_base + allocator::FUNCTIONS;
     let mut shared = Shared {
         program,
         types,
@@ -139,10 +149,12 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         strings,
         helpers: Vec::new(),
         helper_base,
+        free_fn: runtime_base + 1,
         table: Vec::new(),
         statics: Vec::new(),
         static_base,
         indirect: false,
+        alloc_fn: runtime_base,
     };
 
     let mut bodies = Vec::new();
@@ -169,7 +181,17 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
             }
         }
     }
-    let heap_start = (DATA_BASE + data.len() as u32).next_multiple_of(8);
+    let free_lists = FreeList {
+        table: (DATA_BASE + data.len() as u32).next_multiple_of(8),
+    };
+    let heap_start = free_lists.table + allocator::TABLE_BYTES;
+    let runtime = [
+        free_lists.alloc(),
+        free_lists.free(),
+        free_lists.live_allocs(),
+    ];
+    let entry_index = program.funcs.len();
+    bodies.splice(entry_index + 1..entry_index + 1, runtime);
 
     let mut module = Module::new();
     module.section(&shared.types.section());
@@ -220,6 +242,14 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         },
         &ConstExpr::i32_const(heap_start as i32),
     );
+    globals.global(
+        GlobalType {
+            val_type: ValType::I32,
+            mutable: true,
+            shared: false,
+        },
+        &ConstExpr::i32_const(0),
+    );
     module.section(&globals);
 
     let mut exports = ExportSection::new();
@@ -229,6 +259,8 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         ExportKind::Func,
         imports + program.funcs.len() as u32,
     );
+    exports.export("goat_alloc", ExportKind::Func, shared.alloc_fn);
+    exports.export("goat_live_allocs", ExportKind::Func, shared.alloc_fn + 2);
     module.section(&exports);
 
     if table_len > 0 {
@@ -293,6 +325,8 @@ struct Shared<'a> {
     strings: Vec<u32>,
     helpers: Vec<Helper>,
     helper_base: u32,
+    alloc_fn: u32,
+    free_fn: u32,
     /// Function indices, in table order.
     table: Vec<u32>,
     statics: Vec<FuncId>,
@@ -382,7 +416,7 @@ fn helper_body(shared: &mut Shared, helper: Helper) -> Result<Function, EmitErro
     Ok(f)
 }
 
-fn memarg(offset: u32, align: u32) -> MemArg {
+pub(crate) fn memarg(offset: u32, align: u32) -> MemArg {
     MemArg {
         offset: offset.into(),
         align,
@@ -407,7 +441,7 @@ fn store(ty: MTy, offset: u32) -> Option<Instruction<'static>> {
     }
 }
 
-fn rc_load() -> Instruction<'static> {
+pub(crate) fn rc_load() -> Instruction<'static> {
     Instruction::I32Load(memarg(layout::RC, 2))
 }
 
@@ -416,14 +450,27 @@ fn rc_store() -> Instruction<'static> {
 }
 
 /// Opens an `if` that adds `delta` to the count of the object in wasm local
-/// `p`, skipping immortal objects; the caller closes it.
-fn adjust_rc(p: u32, delta: Instruction<'static>, out: &mut Code) {
+/// `p`, skipping immortal objects; the caller closes it. A decrement of a
+/// count already at zero traps: only a freed block has `rc == 0`.
+fn adjust_rc(p: u32, delta: Instruction<'static>, traps_at_zero: bool, out: &mut Code) {
     out.extend([
         Instruction::LocalGet(p),
         rc_load(),
         Instruction::I32Const(IMMORTAL),
         Instruction::I32Ne,
         Instruction::If(BlockType::Empty),
+    ]);
+    if traps_at_zero {
+        out.extend([
+            Instruction::LocalGet(p),
+            rc_load(),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::Unreachable,
+            Instruction::End,
+        ]);
+    }
+    out.extend([
         Instruction::LocalGet(p),
         Instruction::LocalGet(p),
         rc_load(),
@@ -434,12 +481,13 @@ fn adjust_rc(p: u32, delta: Instruction<'static>, out: &mut Code) {
 }
 
 fn retain(p: u32, out: &mut Code) {
-    adjust_rc(p, Instruction::I32Add, out);
+    adjust_rc(p, Instruction::I32Add, false, out);
     out.push(Instruction::End);
 }
 
-/// Memory is never reclaimed yet: a count that reaches zero runs the object's
-/// drop function, which releases its children.
+/// A count that reaches zero runs the object's drop function, which releases
+/// its children, and then returns the block to the allocator. A count already
+/// at zero is a double release and traps.
 fn release(shared: &mut Shared, p: u32, kind: HeapKind, out: &mut Code) -> Result<(), EmitError> {
     let dropper = match kind {
         HeapKind::Closure(_) => None,
@@ -447,7 +495,7 @@ fn release(shared: &mut Shared, p: u32, kind: HeapKind, out: &mut Code) -> Resul
         HeapKind::Str => Some(shared.helper(Helper::Noop)),
         _ => return Err(EmitError::Unsupported("dropping this heap object")),
     };
-    adjust_rc(p, Instruction::I32Sub, out);
+    adjust_rc(p, Instruction::I32Sub, true, out);
     out.extend([
         Instruction::LocalGet(p),
         rc_load(),
@@ -470,7 +518,12 @@ fn release(shared: &mut Shared, p: u32, kind: HeapKind, out: &mut Code) -> Resul
             ]);
         }
     }
-    out.extend([Instruction::End, Instruction::End]);
+    out.extend([
+        Instruction::LocalGet(p),
+        Instruction::Call(shared.free_fn),
+        Instruction::End,
+        Instruction::End,
+    ]);
     Ok(())
 }
 
@@ -608,18 +661,13 @@ impl FuncCx<'_, '_> {
         Ok(Some(temps))
     }
 
-    /// Bump-allocates an object with `rc = 1` and returns the local holding it.
+    /// Allocates an object with `rc = 1` and returns the local holding it.
     fn allocate(&mut self, size: u32, out: &mut Code) -> u32 {
         let ptr = self.scratch(ValType::I32);
         out.extend([
-            Instruction::GlobalGet(HEAP_GLOBAL),
-            Instruction::LocalTee(ptr),
             Instruction::I32Const(size as i32),
-            Instruction::I32Add,
-            Instruction::GlobalSet(HEAP_GLOBAL),
-            Instruction::LocalGet(ptr),
-            Instruction::I32Const(1),
-            rc_store(),
+            Instruction::Call(self.shared.alloc_fn),
+            Instruction::LocalSet(ptr),
         ]);
         ptr
     }
