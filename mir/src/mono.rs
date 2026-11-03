@@ -3,7 +3,7 @@
 
 use crate::mir::*;
 use goat_checker::captures::for_each_child;
-use goat_checker::hir::{self, BinOp, ExprId, ExprKind, Param, Span, Symbol};
+use goat_checker::hir::{self, BinOp, ExprId, ExprKind, Param, Symbol};
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target};
@@ -13,7 +13,7 @@ type Subst = HashMap<TypeVar, Ty>;
 
 /// Lower a checked program to MIR. Constructs whose runtime support has not
 /// landed yet (ADR 0005) come back as spanned diagnostics; well-typed input
-/// never panics.
+/// never panics. No construct is staged out at present.
 pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut m = Mono {
@@ -27,15 +27,17 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         layouts: Vec::new(),
         wrappers: HashMap::new(),
         errors: Vec::new(),
+        data: Vec::new(),
     };
 
     let mut cx = FnCx::new(Subst::new());
     let root_ty = m.ground(&checked.typed.root_ty, &cx.subst);
-    let mut ret = m.lower_ty(&root_ty, checked.root.span);
-    let owned = ret.is_ptr();
+    let mut ret = m.lower_ty(&root_ty);
+    let owned = ret.is_ptr() && ret != MTy::Ptr(HeapKind::Str);
     let mut body = m.expr(&mut cx, &checked.root, !owned);
     if owned {
-        // The program's value has no consumer, so release it here.
+        // The program's value has no consumer, so release it here. A string
+        // root is handed to the host instead.
         let result = cx.fresh();
         let release = Expr::Let(
             cx.fresh(),
@@ -78,7 +80,7 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         entry: FuncId(0),
         layouts: m.layouts,
         sigs: m.sigs,
-        data: Vec::new(),
+        data: m.data,
     })
 }
 
@@ -204,6 +206,7 @@ struct Mono<'a> {
     /// wrappers are the funcref-table members: the functions with an `env`.
     wrappers: HashMap<FuncId, FuncId>,
     errors: Vec<GoatError>,
+    data: Vec<Vec<u8>>,
 }
 
 struct FnCx {
@@ -284,24 +287,28 @@ impl Mono<'_> {
         }
     }
 
-    fn error(&mut self, span: Span, message: impl Into<String>) {
-        self.errors.push(GoatError::new(span, message));
+    fn intern(&mut self, s: &str) -> DataId {
+        let bytes = s.as_bytes();
+        let index = self
+            .data
+            .iter()
+            .position(|d| d == bytes)
+            .unwrap_or_else(|| {
+                self.data.push(bytes.to_vec());
+                self.data.len() - 1
+            });
+        DataId(index as u32)
     }
 
-    fn unsupported(&mut self, span: Span, what: &str) -> Expr {
-        self.error(span, format!("{what} are not supported yet"));
-        Expr::Trap(String::new())
-    }
-
-    fn lower_ty(&mut self, ty: &Ty, span: Span) -> MTy {
+    fn lower_ty(&mut self, ty: &Ty) -> MTy {
         match ty {
             Ty::Number => MTy::Float,
             Ty::Bool => MTy::Bool,
             Ty::Unit => MTy::Unit,
             Ty::Func(args, ret) => {
                 let sig = Sig {
-                    params: args.iter().map(|a| self.lower_ty(a, span)).collect(),
-                    ret: self.lower_ty(ret, span),
+                    params: args.iter().map(|a| self.lower_ty(a)).collect(),
+                    ret: self.lower_ty(ret),
                 };
                 let id = self.sigs.iter().position(|s| *s == sig).unwrap_or_else(|| {
                     self.sigs.push(sig);
@@ -312,7 +319,7 @@ impl Mono<'_> {
             Ty::Record(row) => {
                 let mut fields = Vec::new();
                 for (_, field) in ground_fields(row) {
-                    fields.push(self.lower_ty(field, span));
+                    fields.push(self.lower_ty(field));
                 }
                 let layout = Layout::Record(fields);
                 let id = self
@@ -325,10 +332,7 @@ impl Mono<'_> {
                     });
                 MTy::Ptr(HeapKind::Record(LayoutId(id as u32)))
             }
-            Ty::Str => {
-                self.unsupported(span, "strings");
-                MTy::Unit
-            }
+            Ty::Str => MTy::Ptr(HeapKind::Str),
             Ty::Var(_) => unreachable!("type variable survived grounding"),
         }
     }
@@ -369,11 +373,11 @@ impl Mono<'_> {
 
     /// The closure value of `target` at a use site: a static closure when it
     /// captures nothing, else a fresh heap closure over the captured variables.
-    fn closure_value(&mut self, cx: &mut FnCx, target: Target, use_id: ExprId, span: Span) -> Expr {
+    fn closure_value(&mut self, cx: &mut FnCx, target: Target, use_id: ExprId) -> Expr {
         let (id, ty) = self.specialize(cx, target, use_id);
         let captures = self.lambdas[&target].captures.clone();
         if captures.is_empty() {
-            return self.closure_of(id, &ty, span);
+            return self.closure_of(id, &ty);
         }
         let values = captures
             .into_iter()
@@ -399,11 +403,11 @@ impl Mono<'_> {
 
     /// A zero-capture closure over `target`: a wrapper that takes the closure
     /// as `env`, drops it, and tail-calls `target`.
-    fn closure_of(&mut self, target: FuncId, ty: &Ty, span: Span) -> Expr {
+    fn closure_of(&mut self, target: FuncId, ty: &Ty) -> Expr {
         let wrapper = match self.wrappers.get(&target) {
             Some(&w) => w,
             None => {
-                let MTy::Ptr(HeapKind::Closure(sig)) = self.lower_ty(ty, span) else {
+                let MTy::Ptr(HeapKind::Closure(sig)) = self.lower_ty(ty) else {
                     unreachable!("function type lowers to a closure");
                 };
                 let Sig { params, ret } = self.sigs[sig.0 as usize].clone();
@@ -451,7 +455,7 @@ impl Mono<'_> {
             let local = cx.fresh();
             cx.locals.insert(param.symbol, local);
             let ty = self.ground(ty, &cx.subst);
-            let mty = self.lower_ty(&ty, param.span);
+            let mty = self.lower_ty(&ty);
             if mty.is_ptr() {
                 cx.live.push(local);
             }
@@ -461,12 +465,12 @@ impl Mono<'_> {
         let env = if captures.is_empty() {
             None
         } else {
-            Some(self.bind_env(&mut cx, target, ty, &captures, &capture_tys, body.span))
+            Some(self.bind_env(&mut cx, target, ty, &captures, &capture_tys))
         };
         Func {
             params: mparams,
             env,
-            ret: self.lower_ty(&ret, body.span),
+            ret: self.lower_ty(&ret),
             body: self.expr(&mut cx, body, true),
         }
     }
@@ -480,10 +484,9 @@ impl Mono<'_> {
         ty: &Ty,
         captures: &[Symbol],
         capture_tys: &[Ty],
-        span: Span,
     ) -> Env {
         let ty = self.ground(ty, &cx.subst);
-        let MTy::Ptr(HeapKind::Closure(sig)) = self.lower_ty(&ty, span) else {
+        let MTy::Ptr(HeapKind::Closure(sig)) = self.lower_ty(&ty) else {
             unreachable!("function type lowers to a closure");
         };
         let local = cx.fresh();
@@ -495,7 +498,7 @@ impl Mono<'_> {
         Env {
             local,
             sig,
-            captures: capture_tys.iter().map(|t| self.lower_ty(t, span)).collect(),
+            captures: capture_tys.iter().map(|t| self.lower_ty(t)).collect(),
         }
     }
 
@@ -555,7 +558,7 @@ impl Mono<'_> {
                 let value = match cx.self_env {
                     Some((me, env)) if me == *symbol => self.use_closure(cx, env),
                     _ if self.lambdas.contains_key(&function) => {
-                        self.closure_value(cx, function, e.id, e.span)
+                        self.closure_value(cx, function, e.id)
                     }
                     _ => self.variable_value(cx, *symbol),
                 };
@@ -585,7 +588,7 @@ impl Mono<'_> {
                         Some(rest) => self.expr(cx, rest, tail),
                         None => {
                             let function = Target::Named(*symbol);
-                            let closure = self.closure_value(cx, function, value.id, e.span);
+                            let closure = self.closure_value(cx, function, value.id);
                             self.leaf(cx, closure, tail)
                         }
                     };
@@ -594,7 +597,7 @@ impl Mono<'_> {
                     self.instantiate_binding(cx, *symbol, rest);
                 }
                 let ty = self.ground(&self.typed.node_types[&value.id], &cx.subst);
-                let owned = self.lower_ty(&ty, value.span).is_ptr();
+                let owned = self.lower_ty(&ty).is_ptr();
                 let value = self.expr(cx, value, false);
                 let local = cx.fresh();
                 cx.locals.insert(*symbol, local);
@@ -636,13 +639,16 @@ impl Mono<'_> {
                 self.leaf(cx, value, tail)
             }
             ExprKind::Func { .. } => {
-                let closure = self.closure_value(cx, Target::Anon(e.id), e.id, e.span);
+                let closure = self.closure_value(cx, Target::Anon(e.id), e.id);
                 self.leaf(cx, closure, tail)
             }
-            ExprKind::Str(_) => self.unsupported(e.span, "strings"),
+            ExprKind::Str(s) => {
+                let data = self.intern(s);
+                self.leaf(cx, Expr::StrLit(data), tail)
+            }
             ExprKind::Record { fields } => {
                 let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
-                let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty, e.span) else {
+                let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty) else {
                     unreachable!("record type lowers to a record pointer");
                 };
                 let mut order: Vec<_> = fields.iter().collect();

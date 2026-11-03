@@ -28,11 +28,13 @@ pub enum InterpError {
 /// `live_allocations` counts heap objects still allocated when the entry
 /// function returned, including its result if that is a pointer.
 /// `allocations` counts every non-immortal object ever allocated.
+/// `root_string` holds the bytes of the entry's result when it is a string.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Outcome {
     pub value: Value,
     pub live_allocations: usize,
     pub allocations: usize,
+    pub root_string: Option<Vec<u8>>,
 }
 
 pub fn run(program: &Program) -> Result<Outcome, InterpError> {
@@ -54,8 +56,10 @@ pub fn run_with_depth(program: &Program, max_depth: usize) -> Result<Outcome, In
         args: Vec::new(),
     };
     let value = interp.call(entry, 0)?;
+    let root_string = interp.root_string(value)?;
     Ok(Outcome {
         value,
+        root_string,
         live_allocations: interp.live,
         allocations: interp.allocations,
     })
@@ -64,7 +68,7 @@ pub fn run_with_depth(program: &Program, max_depth: usize) -> Result<Outcome, In
 enum Body {
     Record(Vec<Value>),
     Variant(u32, Vec<Value>),
-    Str,
+    Str(DataId),
     Closure(FuncId, Vec<Value>),
 }
 
@@ -77,7 +81,7 @@ impl Obj {
     fn children(&self) -> impl Iterator<Item = usize> + '_ {
         let fields: &[Value] = match &self.body {
             Body::Record(f) | Body::Variant(_, f) | Body::Closure(_, f) => f,
-            Body::Str => &[],
+            Body::Str(_) => &[],
         };
         fields.iter().filter_map(|v| match v {
             Value::Ptr(a) => Some(*a),
@@ -136,6 +140,21 @@ impl Interp<'_> {
             Some(None) => Err(InterpError::UseAfterFree(addr)),
             None => Err(InterpError::Malformed("dangling pointer")),
         }
+    }
+
+    fn root_string(&self, value: Value) -> Result<Option<Vec<u8>>, InterpError> {
+        let Value::Ptr(addr) = value else {
+            return Ok(None);
+        };
+        let Body::Str(data) = self.obj(addr)?.body else {
+            return Ok(None);
+        };
+        self.program
+            .data
+            .get(data.0 as usize)
+            .cloned()
+            .map(Some)
+            .ok_or(InterpError::Malformed("unknown data"))
     }
 
     fn retain(&mut self, value: Value) -> Result<Value, InterpError> {
@@ -404,7 +423,7 @@ impl Interp<'_> {
             Expr::StrLit(d) => match self.strings.get(d) {
                 Some(&addr) => Value::Ptr(addr),
                 None => {
-                    let Value::Ptr(addr) = self.alloc(Body::Str, IMMORTAL) else {
+                    let Value::Ptr(addr) = self.alloc(Body::Str(*d), IMMORTAL) else {
                         unreachable!("alloc returns a pointer");
                     };
                     self.strings.insert(*d, addr);

@@ -101,15 +101,6 @@ fn repeated_instantiation_is_memoized() {
     assert_eq!(run_src(src).0.funcs.len(), 2);
 }
 
-fn errors(src: &str) -> Vec<String> {
-    let checked = check(src).expect("checks");
-    mono(&checked)
-        .expect_err("rejected")
-        .into_iter()
-        .map(|e| e.message)
-        .collect()
-}
-
 fn has_tail_call(e: &Expr) -> bool {
     match e {
         Expr::TailCall(..) => true,
@@ -398,16 +389,69 @@ fn closure_called_once_its_capture_exists_runs() {
     }
 }
 
+fn lowered(src: &str) -> Program {
+    let p = mono(&check(src).expect("checks")).expect("lowers");
+    assert_eq!(verify(&p), Ok(()), "{src}");
+    p
+}
+
+fn root_string(src: &str) -> Option<Vec<u8>> {
+    let out = run(&lowered(src)).expect("runs");
+    assert_eq!(out.live_allocations, 0, "{src}");
+    out.root_string
+}
+
 #[test]
-fn strings_are_not_supported_yet() {
-    for src in ["\"hi\"", "id = program(x) do x done  id(\"hi\")"] {
-        let errs = errors(src);
-        assert!(!errs.is_empty(), "{src}");
-        assert!(
-            errs.iter().all(|m| m.ends_with("are not supported yet")),
-            "{src}: {errs:?}"
-        );
+fn string_literal_is_a_data_segment_root() {
+    let p = lowered("\"hi\"");
+    assert_eq!(p.data, vec![b"hi".to_vec()]);
+    let root = &p.funcs[0];
+    assert_eq!(root.ret, MTy::Ptr(HeapKind::Str));
+    assert_eq!(root.body, Expr::StrLit(DataId(0)));
+}
+
+#[test]
+fn string_roots_render_through_bindings_and_calls() {
+    for src in [
+        "\"hi\"",
+        "s = \"hi\"  s",
+        "id = program(x) do x done  id(\"hi\")",
+        "pick = program(b) do if b then \"hi\" else \"yo\" done done  pick(true)",
+    ] {
+        assert_eq!(root_string(src), Some(b"hi".to_vec()), "{src}");
     }
+}
+
+#[test]
+fn empty_and_non_ascii_strings_keep_their_bytes() {
+    assert_eq!(root_string("\"a\\nb\""), Some(b"a\nb".to_vec()));
+    assert_eq!(root_string("\"\""), Some(Vec::new()));
+    assert_eq!(
+        root_string("\"h\u{e9}\""),
+        Some("h\u{e9}".as_bytes().to_vec())
+    );
+}
+
+#[test]
+fn identical_literals_share_one_data_entry() {
+    let p = lowered("a = \"x\"  b = \"x\"  c = \"y\"  b");
+    assert_eq!(p.data, vec![b"x".to_vec(), b"y".to_vec()]);
+}
+
+#[test]
+fn strings_inside_records_are_released_with_the_record() {
+    let src = "r = {name: \"hi\", n: 1}  r.n";
+    assert_eq!(value(src), num(1.0));
+    assert_eq!(
+        root_string("r = {name: \"hi\", n: 1}  r.name"),
+        Some(b"hi".to_vec())
+    );
+    let p = lowered("{name: \"hi\"}");
+    assert_eq!(
+        p.layouts,
+        vec![Layout::Record(vec![MTy::Ptr(HeapKind::Str)])]
+    );
+    assert_eq!(run(&p).expect("runs").root_string, None);
 }
 
 #[test]
