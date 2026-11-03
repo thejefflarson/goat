@@ -1,39 +1,52 @@
 //! The goat type checker: parse → lower (name resolution) → Hindley-Milner
 //! inference. The entry point is [`check`].
 
+pub mod captures;
 pub mod error;
 pub mod hir;
 pub mod infer;
 pub mod lower;
+mod order;
 pub mod ty;
 
+pub use captures::Target;
 pub use error::GoatError;
 pub use hir::Expr;
 pub use infer::Typed;
 pub use ty::Ty;
 
+use hir::Symbol;
+use std::collections::HashMap;
+
 /// A successfully checked program: its name-resolved tree and inferred types.
 pub struct Checked {
     pub root: Expr,
     pub typed: Typed,
+    /// What each function literal captures, in `Capture` index order.
+    pub captures: HashMap<Target, Vec<Symbol>>,
 }
 
 /// Parse, name-resolve, and type-check `source`.
 ///
 /// Returns every diagnostic found. Lowering (name resolution) and inference
-/// errors are reported together; a parse error is returned on its own.
+/// errors are reported together; a parse error is returned on its own. The
+/// binding-order check runs only on a program that type-checks.
 pub fn check(source: &str) -> Result<Checked, Vec<GoatError>> {
     let lowered = lower::lower(source).map_err(|e| vec![e])?;
     if !lowered.errors.is_empty() {
         return Err(lowered.errors);
     }
-    match infer::infer(&lowered.root) {
-        Ok(typed) => Ok(Checked {
-            root: lowered.root,
-            typed,
-        }),
-        Err(errors) => Err(errors),
+    let typed = infer::infer(&lowered.root)?;
+    let captures = captures::capture_sets(&lowered.root);
+    let errors = order::check(&lowered.root, &captures);
+    if !errors.is_empty() {
+        return Err(errors);
     }
+    Ok(Checked {
+        root: lowered.root,
+        typed,
+        captures,
+    })
 }
 
 #[cfg(test)]
@@ -424,6 +437,97 @@ mod tests {
             type_of("program(a, a) do a done").unwrap_err(),
             "duplicate parameter `a`"
         );
+    }
+
+    /// The single error of a program rejected for use before definition: its
+    /// message and the source text its span covers.
+    fn order_error(source: &str) -> (String, &str) {
+        let errors = check(source).err().expect("rejected");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        let span = errors[0].span;
+        (errors[0].message.clone(), &source[span.start..span.end])
+    }
+
+    #[test]
+    fn function_run_before_a_value_it_reads_is_rejected() {
+        let src = "f = program() do g() done  x = f()  m = 5  g = program() do m done  x";
+        let errors = check(src).err().expect("rejected");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, "`f` uses `m` before it is defined");
+        assert_eq!(errors[0].span.start, src.find("f()  m").unwrap());
+        assert_eq!(errors[0].span.end, errors[0].span.start + 1);
+    }
+
+    #[test]
+    fn function_value_taken_before_a_value_it_reads_is_rejected() {
+        let src = "f = program() do g() done  h = f  m = 5  g = program() do m done  h()";
+        assert_eq!(
+            order_error(src),
+            ("`f` uses `m` before it is defined".to_string(), "f")
+        );
+    }
+
+    #[test]
+    fn program_literal_built_before_a_value_it_reads_is_rejected() {
+        let src = "apply = program(h) do h() done \
+                   z = apply(program() do g() done) \
+                   m = 5 \
+                   g = program() do m done \
+                   z";
+        assert_eq!(
+            order_error(src),
+            (
+                "this program uses `m` before it is defined".to_string(),
+                "program() do g() done"
+            )
+        );
+    }
+
+    #[test]
+    fn order_is_checked_in_every_scope() {
+        let src = "outer = program() do \
+                     f = program() do g() done \
+                     x = f() \
+                     m = 5 \
+                     g = program() do m done \
+                     x \
+                   done \
+                   outer()";
+        assert_eq!(
+            order_error(src),
+            ("`f` uses `m` before it is defined".to_string(), "f")
+        );
+    }
+
+    #[test]
+    fn functions_may_run_once_their_values_are_defined() {
+        for src in [
+            "f = program() do g() done  m = 5  g = program() do m done  f()",
+            "m = 5  f = program() do g() done  g = program() do m done  f()",
+            "m = 5  g = program() do m done  f = program() do g() done  f()",
+            "f = program() do g() done  m = 5  g = program() do m done  x = f()  x",
+            "g = program() do 0 done  m = 5  x = f()  f = program() do m done  x",
+            "f = program() do g() done  g = program() do 1 done  f()",
+            "m = 5  f = program() do g() done  h = f  g = program() do m done  h()",
+            "outer = program() do \
+               f = program() do g() done \
+               m = 5 \
+               g = program() do m done \
+               f() \
+             done \
+             outer()",
+        ] {
+            assert_eq!(type_of(src).unwrap(), "Number", "{src}");
+        }
+    }
+
+    #[test]
+    fn mutual_recursion_with_earlier_values_still_checks() {
+        let src = "limit = 4 \
+                   is_even = program(n) do if n < 1 then true else is_odd(n - 1) done done \
+                   is_odd = program(n) do if n < 1 then false else is_even(n - 1) done done \
+                   is_even(limit)";
+        assert_eq!(type_of(src).unwrap(), "Bool");
     }
 
     fn chain(n: usize) -> String {
