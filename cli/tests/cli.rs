@@ -56,6 +56,16 @@ fn number_formatting_matches_the_old_runtime() {
 }
 
 #[test]
+fn function_is_a_synonym_for_program() {
+    let with_program =
+        "apply = program(f, x) do f(x) done\ndbl = program(n) do n * 2 done\napply(dbl, 21)";
+    let with_function =
+        "apply = function(f, x) do f(x) done\ndbl = function(n) do n * 2 done\napply(dbl, 21)";
+    assert_eq!(stdout_of(with_program), "42");
+    assert_eq!(stdout_of(with_function), "42");
+}
+
+#[test]
 fn a_trap_exits_non_zero() {
     let out = run_source("trap.goat", "f = program(n) do f(n) + 1 done\n\nf(1)");
     assert!(!out.status.success());

@@ -53,13 +53,21 @@ mod tests {
         use pest::Parser;
         // A word boundary guards the keyword check, so names that merely begin
         // with a keyword are valid identifiers.
-        for name in ["double", "doner", "ifx", "thenable", "truthy", "programmer"] {
+        for name in [
+            "double",
+            "doner",
+            "ifx",
+            "thenable",
+            "truthy",
+            "programmer",
+            "functions",
+        ] {
             let pairs = GoatParser::parse(Rule::ident, name);
             assert!(pairs.is_ok(), "{name} should be a valid identifier");
             assert_eq!(pairs.unwrap().as_str(), name);
         }
         // Bare keywords are still reserved.
-        for kw in ["do", "done", "if", "then", "program"] {
+        for kw in ["do", "done", "if", "then", "program", "function"] {
             assert!(
                 GoatParser::parse(Rule::ident, kw).is_err(),
                 "{kw} should be reserved"
@@ -216,6 +224,19 @@ mod tests {
                     expr(14, 16, [ident(14, 15)])
                 ])
             ]
+        }
+    }
+
+    #[test]
+    fn program_and_function_are_synonyms() {
+        use pest::Parser;
+        // `function` introduces a function literal identically to `program`; the
+        // keyword is silent, so both lower to the same `function` node.
+        for src in ["program(a) do a done", "function(a) do a done"] {
+            assert!(
+                GoatParser::parse(Rule::function, src).is_ok(),
+                "failed to parse function literal: {src}"
+            );
         }
     }
     #[test]
