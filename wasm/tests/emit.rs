@@ -343,6 +343,28 @@ fn tail_recursive_direct() -> Program {
     ])
 }
 
+fn point_sum() -> Program {
+    let mut p = program(vec![func(
+        MTy::Int,
+        let_(
+            0,
+            Expr::AllocRecord(LayoutId(2), vec![int(3), int(4)]),
+            let_(
+                1,
+                add(Expr::Field(Local(0), 0), Expr::Field(Local(0), 1)),
+                let_(2, drop_(0), local(1)),
+            ),
+        ),
+    )]);
+    p.layouts.push(Layout::Record(vec![MTy::Int, MTy::Int]));
+    p
+}
+
+#[test]
+fn standalone_record_matches_golden() {
+    golden("point_sum", &point_sum());
+}
+
 #[test]
 fn apply_double_matches_golden() {
     golden("apply_double", &apply_double());

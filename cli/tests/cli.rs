@@ -39,6 +39,11 @@ fn runs_the_examples() {
         concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/higher_order.goat"),
     ]);
     assert_eq!(String::from_utf8(higher.stdout).unwrap(), "42\n");
+    let records = goat(&[
+        "run",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/records.goat"),
+    ]);
+    assert_eq!(String::from_utf8(records.stdout).unwrap(), "7\n");
 }
 
 #[test]
