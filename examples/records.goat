@@ -1,8 +1,8 @@
-# Records group named fields. Field access is row-polymorphic: `distance`
+# Records group named fields. Field access is row-polymorphic: `sum`
 # works on any record that has `x` and `y`.
 origin = {x: 0, y: 0}
-spot = {x: 3, y: 4, name: "corner"}
+spot = {x: 3, y: 4, z: 5}
 
 # (no sqrt yet, so just sum the coordinates)
 sum = program(p) do p.x + p.y done
-sum(spot)
+sum(origin) + sum(spot)

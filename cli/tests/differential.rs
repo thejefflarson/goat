@@ -97,8 +97,31 @@ fn records() {
 }
 
 #[test]
+fn multi_field_record() {
+    assert_eq!(run("p = {a: 1, b: 2, c: 3}  p.a + p.b * p.c"), "7");
+}
+
+#[test]
+fn deeply_nested_record() {
+    let src = "line = {from: {x: 1, y: 2}, to: {x: 10, y: 20}} \
+               line.to.x - line.from.x + line.to.y - line.from.y";
+    assert_eq!(run(src), "27");
+}
+
+#[test]
+fn row_polymorphic_field_access() {
+    let src = "sum = program(p) do p.x + p.y done \
+               sum({x: 1, y: 2}) + sum({x: 3, y: 4, z: 5, w: 6})";
+    assert_eq!(run(src), "10");
+}
+
+#[test]
 fn examples_print_the_expected_output() {
-    for (file, expected) in [("fib.goat", "55"), ("higher_order.goat", "42")] {
+    for (file, expected) in [
+        ("fib.goat", "55"),
+        ("higher_order.goat", "42"),
+        ("records.goat", "7"),
+    ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
         let src = fs::read_to_string(&path).unwrap();
         assert_eq!(run(&src), expected, "{file}");
