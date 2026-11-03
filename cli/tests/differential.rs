@@ -241,9 +241,18 @@ fn examples_print_the_expected_output() {
         ("records.goat", "7"),
         ("closures.goat", "15"),
         ("closure_shapes.goat", "77"),
+        ("hello.goat", "hello, world"),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
         let src = fs::read_to_string(&path).unwrap();
         assert_eq!(run(&src), expected, "{file}");
     }
+}
+
+#[test]
+fn string_literals_print_verbatim() {
+    assert_eq!(run("\"hello\""), "hello");
+    assert_eq!(run("s = \"hi\"\ns"), "hi");
+    assert_eq!(run("\"a\\nb\\tc\""), "a\nb\tc");
+    assert_eq!(run("\"\""), "");
 }

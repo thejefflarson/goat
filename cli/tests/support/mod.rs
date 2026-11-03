@@ -13,7 +13,12 @@ pub fn interpret(src: &str) -> (Vec<String>, usize) {
         Value::Float(x) => vec![goat::format_number(x)],
         Value::Bool(b) => vec![goat::format_bool(b).to_string()],
         Value::Unit => Vec::new(),
-        Value::Ptr(_) => panic!("heap-valued root"),
+        Value::Ptr(_) => {
+            let bytes = outcome
+                .root_string
+                .expect("only string roots are supported");
+            vec![String::from_utf8(bytes).expect("string root is UTF-8")]
+        }
     };
     (printed, outcome.live_allocations)
 }

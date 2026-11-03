@@ -47,6 +47,17 @@ fn runs_the_examples() {
 }
 
 #[test]
+fn runs_the_hello_example() {
+    let hello = goat(&[
+        "run",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/hello.goat"),
+    ]);
+    assert!(hello.status.success());
+    assert_eq!(String::from_utf8(hello.stdout).unwrap(), "hello, world\n");
+    assert_eq!(stdout_of("\"hi\""), "hi");
+}
+
+#[test]
 fn number_formatting_matches_the_old_runtime() {
     assert_eq!(stdout_of("1 + 2 * 3"), "7");
     assert_eq!(stdout_of("1000000"), "1000000");
