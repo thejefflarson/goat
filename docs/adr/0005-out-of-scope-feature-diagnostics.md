@@ -34,3 +34,5 @@ that disappears as later phases land.
 - No panic or silent miscompile for in-progress features; the message tells a
   user it is a staging gap, not their mistake.
 - Each such diagnostic is removed by the phase that implements the feature.
+  Phase 4 removes the mono capture and anonymous-literal diagnostics (ADR 0006);
+  records landed in Phase 3; strings remain until Phase 5.
