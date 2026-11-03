@@ -113,6 +113,17 @@ fn deep_tail_recursion_runs_in_constant_stack() {
 }
 
 #[test]
+fn records() {
+    assert_eq!(run("p = {x: 1, y: 2}  p.x + p.y"), "3");
+    let nested = "line = {from: {x: 1, y: 2}, to: {x: 3, y: 4}}  line.to.x + line.from.y";
+    assert_eq!(run(nested), "5");
+    let getx = "getx = program(p) do p.x done  \
+                getx({x: 1, y: 2}) + getx({a: 0, x: 9, z: true})";
+    assert_eq!(run(getx), "10");
+    assert_eq!(run("p = {x: 1}"), "");
+}
+
+#[test]
 fn examples_print_the_expected_output() {
     for (file, expected) in [("fib.goat", "55"), ("higher_order.goat", "42")] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));

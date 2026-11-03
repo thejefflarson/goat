@@ -218,12 +218,8 @@ fn captured_top_level_value_is_a_spanned_error() {
 }
 
 #[test]
-fn records_and_strings_are_not_supported_yet() {
-    for src in [
-        "r = {a: 1}  r.a",
-        "\"hi\"",
-        "id = program(x) do x done  id(\"hi\")",
-    ] {
+fn strings_are_not_supported_yet() {
+    for src in ["\"hi\"", "id = program(x) do x done  id(\"hi\")"] {
         let errs = errors(src);
         assert!(!errs.is_empty(), "{src}");
         assert!(
@@ -231,4 +227,79 @@ fn records_and_strings_are_not_supported_yet() {
             "{src}: {errs:?}"
         );
     }
+}
+
+#[test]
+fn record_literal_and_field() {
+    assert_eq!(value("p = {x: 1, y: 2}  p.x"), num(1.0));
+    assert_eq!(value("p = {y: 2, x: 1}  p.y - p.x"), num(1.0));
+    assert_eq!(value("{x: 5}.x"), num(5.0));
+}
+
+#[test]
+fn record_layout_sorts_labels() {
+    let (p, _) = run_src("p = {b: true, a: 1}  p.a");
+    assert_eq!(p.layouts, vec![Layout::Record(vec![MTy::Float, MTy::Bool])]);
+}
+
+#[test]
+fn nested_records() {
+    let src = "line = {from: {x: 0, y: 0}, to: {x: 3, y: 4}}  line.to.x + line.from.y";
+    assert_eq!(value(src), num(3.0));
+    assert_eq!(value("{a: {b: {c: 7}}}.a.b.c"), num(7.0));
+}
+
+#[test]
+fn top_level_record_result_is_released() {
+    let (_, v) = run_src("p = {x: 1}");
+    assert_eq!(v, Value::Unit);
+    assert_eq!(value("{a: {b: 1}}"), Value::Unit);
+}
+
+#[test]
+fn records_through_calls() {
+    let src = "mk = program(n) do {v: n, w: n + 1} done  r = mk(4)  r.v + r.w";
+    assert_eq!(value(src), num(9.0));
+    let src = "pick = program(r) do r.b done  pick({a: 1, b: 2})";
+    assert_eq!(value(src), num(2.0));
+}
+
+#[test]
+fn row_polymorphic_access_specializes_per_layout() {
+    let src = "getx = program(p) do p.x done  getx({x: 1, y: 2}) + getx({x: 9, z: true})";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(10.0));
+    assert_eq!(p.layouts.len(), 2);
+    let field_indices: Vec<_> = p.funcs.iter().skip(1).map(field_index).collect();
+    assert_eq!(field_indices, [Some(0), Some(0)]);
+    let param_layouts: Vec<_> = p.funcs.iter().skip(1).map(|f| f.params[0].1).collect();
+    assert_ne!(param_layouts[0], param_layouts[1]);
+}
+
+#[test]
+fn row_polymorphic_access_uses_per_type_index() {
+    let src = "getx = program(p) do p.x done  getx({a: 0, x: 3}) + getx({x: 4, z: 1})";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(7.0));
+    let mut indices: Vec<_> = p.funcs.iter().skip(1).filter_map(field_index).collect();
+    indices.sort();
+    assert_eq!(indices, [0, 1]);
+}
+
+#[test]
+fn records_and_field_values_drop_cleanly_in_branches() {
+    let src = "f = program(r) do if r.a < 1 then r.b else r.a done done f({a: 0, b: 5})";
+    assert_eq!(value(src), num(5.0));
+}
+
+fn field_index(f: &Func) -> Option<usize> {
+    fn find(e: &Expr) -> Option<usize> {
+        match e {
+            Expr::Field(_, i) => Some(*i),
+            Expr::Let(_, a, b) => find(a).or_else(|| find(b)),
+            Expr::If(c, a, b) => find(c).or_else(|| find(a)).or_else(|| find(b)),
+            _ => None,
+        }
+    }
+    find(&f.body)
 }
