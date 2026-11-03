@@ -23,6 +23,22 @@ pub fn format_bool(b: bool) -> &'static str {
     if b { "true" } else { "false" }
 }
 
+#[cfg(kani)]
+mod proofs {
+    use super::format_bool;
+
+    #[kani::proof]
+    fn format_bool_matches_spec() {
+        let b: bool = kani::any();
+        let text = format_bool(b).as_bytes();
+        if b {
+            assert!(matches!(text, [b't', b'r', b'u', b'e']));
+        } else {
+            assert!(matches!(text, [b'f', b'a', b'l', b's', b'e']));
+        }
+    }
+}
+
 fn format_g15(x: f64) -> String {
     if x.is_nan() {
         return "nan".to_string();

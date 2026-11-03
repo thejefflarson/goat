@@ -36,6 +36,34 @@ mod layout {
     }
 }
 
+#[cfg(kani)]
+mod proofs {
+    use super::layout::{HEADER, SLOT, object_size, slot};
+
+    /// Largest slot count for which `object_size(HEADER, n)` fits in a `u32`
+    /// after rounding up to 8 bytes.
+    const MAX_SLOTS: usize = ((u32::MAX - HEADER) / SLOT) as usize;
+
+    #[kani::proof]
+    fn slot_never_overflows() {
+        let index: usize = kani::any();
+        kani::assume(index <= MAX_SLOTS);
+        let offset = slot(HEADER, index);
+        assert!(offset >= HEADER);
+        assert_eq!(offset % SLOT, 0);
+    }
+
+    #[kani::proof]
+    fn object_size_is_aligned_and_covers_slots() {
+        let slots: usize = kani::any();
+        kani::assume(slots <= MAX_SLOTS);
+        let size = object_size(HEADER, slots);
+        assert_eq!(size % 8, 0);
+        assert!(size >= HEADER);
+        assert!(size >= slot(HEADER, slots));
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum EmitError {
     Unsupported(&'static str),

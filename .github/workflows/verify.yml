@@ -1,0 +1,26 @@
+name: Verify
+
+# Kani bounded proofs. Nightly and manual only: not part of the per-PR gates,
+# so a slow or flaky proof never blocks a merge.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  kani:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Kani installs and pins its own nightly toolchain on first run.
+      - name: Install Kani
+        run: |
+          cargo install --locked kani-verifier --version 0.68.0
+          cargo kani setup
+
+      - name: Prove
+        run: cargo kani -p goat_wasm -p goat
