@@ -115,31 +115,19 @@ impl Gen<'_> {
         }
     }
 
-    /// An in-scope name for a closure body to reference, or `0` at top level.
-    /// Closure bodies also use their own parameter: a returned closure that
-    /// ignores its parameter or captures nothing currently fails to compile.
-    fn captured_number(&mut self) -> String {
-        if self.numbers.is_empty() {
-            return "0".into();
-        }
-        let i = self.byte() as usize % self.numbers.len();
-        self.numbers[i].clone()
-    }
-
-    /// A local `program` whose body sees every number in scope, so it captures.
+    /// A local `program` whose body sees every number in scope, so it may
+    /// capture, and may ignore its own parameter.
     fn closure(&mut self, depth: u8) -> String {
         let name = self.fresh();
         let param = self.fresh();
-        let captured = self.captured_number();
         self.numbers.push(param.clone());
         let body = self.number(depth + 1);
         self.numbers.pop();
-        let body = format!("{param} + ({captured} + ({body}))");
         let arg = self.number(depth + 1);
         format!("{name} = program({param}) do {body} done\n0 + ({name}({arg}))")
     }
 
-    /// A function returning a function: the inner body captures the outer
+    /// A function returning a function: the inner body may capture the outer
     /// parameter, and the returned closure outlives the call that made it.
     fn curried_closure(&mut self, depth: u8) -> String {
         let (make, made) = (self.fresh(), self.fresh());
@@ -149,7 +137,6 @@ impl Gen<'_> {
         let body = self.number(depth + 1);
         self.numbers.pop();
         self.numbers.pop();
-        let body = format!("{inner} + ({outer} + ({body}))");
         let (first, second) = (self.number(depth + 1), self.number(depth + 1));
         format!(
             "{make} = program({outer}) do program({inner}) do {body} done done\n\

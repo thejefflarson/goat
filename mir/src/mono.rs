@@ -229,6 +229,20 @@ fn free_symbols(params: &[Param], body: &hir::Expr) -> Vec<Symbol> {
     used
 }
 
+/// The first expression in `e` that refers to `symbol`.
+fn first_use(e: &hir::Expr, symbol: Symbol) -> Option<ExprId> {
+    if matches!(&e.kind, ExprKind::Var { symbol: s, .. } if *s == symbol) {
+        return Some(e.id);
+    }
+    let mut found = None;
+    for_each_child(e, &mut |c| {
+        if found.is_none() {
+            found = first_use(c, symbol);
+        }
+    });
+    found
+}
+
 fn for_each_child<'a>(e: &'a hir::Expr, f: &mut impl FnMut(&'a hir::Expr)) {
     match &e.kind {
         ExprKind::Let { value, rest, .. } => {
@@ -581,6 +595,33 @@ impl Mono<'_> {
         }
     }
 
+    /// Pin the type variables a value binding generalizes over (`m = mk(2)`
+    /// is polymorphic in whatever `mk` leaves open) to the instantiation its
+    /// first use in `rest` picks. The binding is evaluated once, so its value,
+    /// and the type of any closure capturing it, must be lowered at that
+    /// type; defaulting the variables to `Unit` would disagree with the use.
+    fn instantiate_binding(&self, cx: &mut FnCx, symbol: Symbol, rest: &hir::Expr) {
+        let Some(scheme) = self
+            .typed
+            .schemes
+            .get(&symbol)
+            .filter(|s| !s.vars.is_empty())
+        else {
+            return;
+        };
+        let Some(first_use) = first_use(rest, symbol) else {
+            return;
+        };
+        let use_ty = self.ground(&self.typed.node_types[&first_use], &cx.subst);
+        let mut found = Subst::new();
+        match_ty(&scheme.ty, &use_ty, &mut found);
+        for v in &scheme.vars {
+            if let Some(ty) = found.remove(v) {
+                cx.subst.entry(*v).or_insert(ty);
+            }
+        }
+    }
+
     /// Finish a leaf: in tail position, release the closure locals still in
     /// scope once `value` is computed.
     fn leaf(&self, cx: &mut FnCx, value: Expr, tail: bool) -> Expr {
@@ -644,6 +685,9 @@ impl Mono<'_> {
                             self.leaf(cx, closure, tail)
                         }
                     };
+                }
+                if let Some(rest) = rest {
+                    self.instantiate_binding(cx, *symbol, rest);
                 }
                 let ty = self.ground(&self.typed.node_types[&value.id], &cx.subst);
                 let owned = self.lower_ty(&ty, value.span).is_ptr();
