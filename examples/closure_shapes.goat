@@ -1,0 +1,22 @@
+# Closures in four shapes. The program's value is the last expression.
+
+# Curried: the inner function captures `a`.
+add = program(a) do program(b) do a + b done done
+
+# Recursive: `go` captures the outer parameter `n` and calls itself.
+repeat_add = program(n) do
+  go = program(k) do if k < 1 then 0 else n + go(k - 1) done done
+  go(3)
+done
+
+# Polymorphic: `apply` takes closures at two different types.
+apply = program(f, x) do f(x) done
+offset = 10
+flag = true
+addn = program(x) do x + offset done
+pick = program(b) do if flag then b else false done done
+
+# A record of closures, called as `r.f(x)`.
+r = {f: program(x) do x + offset done, g: program(x) do x * offset done}
+
+add(1)(2) + repeat_add(10) + apply(addn, 1) + r.f(3) + r.g(2)

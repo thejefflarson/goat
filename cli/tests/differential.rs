@@ -180,6 +180,7 @@ fn examples_print_the_expected_output() {
         ("higher_order.goat", "42"),
         ("records.goat", "7"),
         ("closures.goat", "15"),
+        ("closure_shapes.goat", "77"),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
         let src = fs::read_to_string(&path).unwrap();
