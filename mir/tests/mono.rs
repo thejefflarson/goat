@@ -197,24 +197,176 @@ fn tail_call_releases_closure_parameters() {
     assert_eq!(out.live_allocations, 0);
 }
 
-#[test]
-fn captured_local_is_a_spanned_error() {
-    let src = "make = program(a) do inner = program(x) do x + a done inner(1) done make(2)";
-    let checked = check(src).expect("checks");
-    let errs = mono(&checked).expect_err("rejected");
-    assert_eq!(errs.len(), 1);
-    assert_eq!(
-        errs[0].message,
-        "`a` is captured from an enclosing scope; closures are not supported yet (Phase 4)"
-    );
-    assert_eq!(&src[errs[0].span.start..errs[0].span.end], "a");
+fn contains(e: &Expr, pred: &impl Fn(&Expr) -> bool) -> bool {
+    if pred(e) {
+        return true;
+    }
+    match e {
+        Expr::Let(_, a, b) | Expr::BinFloat(_, a, b) | Expr::Cmp(_, a, b) => {
+            contains(a, pred) || contains(b, pred)
+        }
+        Expr::If(c, a, b) => contains(c, pred) || contains(a, pred) || contains(b, pred),
+        Expr::CallDirect(_, args) | Expr::MakeClosure(_, args) => {
+            args.iter().any(|a| contains(a, pred))
+        }
+        Expr::CallClosure(callee, args) => {
+            contains(callee, pred) || args.iter().any(|a| contains(a, pred))
+        }
+        Expr::TailCall(callee, args) => {
+            let in_callee = match callee {
+                Callee::Closure(c) => contains(c, pred),
+                Callee::Direct(_) => false,
+            };
+            in_callee || args.iter().any(|a| contains(a, pred))
+        }
+        _ => false,
+    }
+}
+
+fn capturing(p: &Program) -> impl Iterator<Item = &Func> {
+    p.funcs
+        .iter()
+        .filter(|f| f.env.as_ref().is_some_and(|e| !e.captures.is_empty()))
 }
 
 #[test]
-fn captured_top_level_value_is_a_spanned_error() {
-    let errs = errors("a = 2  f = program(x) do x + a done  f(1)");
-    assert_eq!(errs.len(), 1);
-    assert!(errs[0].starts_with("`a` is captured"), "{errs:?}");
+fn capturing_literal_emits_make_closure_and_capture() {
+    let src = "add = program(a) do program(b) do a + b done done  add(1)(2)";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(3.0));
+
+    let adder = capturing(&p).next().expect("a capturing closure body");
+    assert_eq!(adder.env.as_ref().unwrap().captures, vec![MTy::Float]);
+    assert!(contains(&adder.body, &|e| matches!(e, Expr::Capture(0))));
+    let makes = |e: &Expr| matches!(e, Expr::MakeClosure(_, c) if c.len() == 1);
+    assert!(p.funcs.iter().any(|f| contains(&f.body, &makes)));
+}
+
+#[test]
+fn curried_capture() {
+    assert_eq!(
+        value("add = program(a) do program(b) do a + b done done  add(1)(2)"),
+        num(3.0)
+    );
+}
+
+#[test]
+fn recursive_closure_calls_itself_through_env() {
+    let src = "outer = program(n) do \
+                 go = program(k) do if k < 1 then 0 else n + go(k - 1) done done \
+                 go(3) \
+               done \
+               outer(10)";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(30.0));
+    let go = capturing(&p).next().expect("go captures n");
+    assert!(contains(&go.body, &|e| matches!(e, Expr::CallClosure(..))));
+    assert!(!contains(&go.body, &|e| matches!(e, Expr::CallDirect(..))));
+}
+
+#[test]
+fn closures_through_a_polymorphic_apply() {
+    let src = "apply = program(f, x) do f(x) done \
+               n = 10 \
+               t = true \
+               addn = program(x) do x + n done \
+               pick = program(b) do if t then b else false done done \
+               if apply(pick, true) then apply(addn, 1) else 0 done";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(11.0));
+    let applies = p
+        .funcs
+        .iter()
+        .filter(|f| f.env.is_none() && f.params.len() == 2 && f.params[0].1.is_ptr())
+        .count();
+    assert_eq!(applies, 2, "one apply per ground type");
+}
+
+#[test]
+fn record_of_capturing_functions() {
+    let src = "k = 10 \
+               r = {f: program(x) do x + k done, g: program(x) do x * k done} \
+               r.f(3) + r.g(2)";
+    assert_eq!(value(src), num(33.0));
+}
+
+#[test]
+fn closure_capturing_a_closure() {
+    let src = "double = program(n) do n * 2 done \
+               twice = program(f) do program(x) do f(f(x)) done done \
+               twice(double)(5)";
+    assert_eq!(value(src), num(20.0));
+}
+
+#[test]
+fn captured_record_is_shared_and_released() {
+    let src = "p = {x: 1, y: 2} \
+               f = program(z) do p.x + p.y + z done \
+               f(3) + f(4)";
+    assert_eq!(value(src), num(13.0));
+}
+
+#[test]
+fn anonymous_literal_as_argument() {
+    let src = "apply = program(f, x) do f(x) done \
+               k = 3 \
+               apply(program(y) do y + 1 done, 2) + apply(program(y) do y * k done, 2)";
+    assert_eq!(value(src), num(9.0));
+}
+
+#[test]
+fn anonymous_literal_specializes_per_ground_type() {
+    let src = "make = program(x) do program() do x done done \
+               if make(true)() then make(5)() else 0 done";
+    assert_eq!(value(src), num(5.0));
+}
+
+#[test]
+fn nested_mutual_recursion_shares_captures() {
+    let src = "outer = program(m) do \
+                 is_even = program(n) do if n < m then true else is_odd(n - m) done done \
+                 is_odd = program(n) do if n < m then false else is_even(n - m) done done \
+                 is_even(10) \
+               done \
+               outer(1)";
+    assert_eq!(value(src), Value::Bool(true));
+}
+
+#[test]
+fn type_variables_of_the_enclosing_scope_reach_the_body() {
+    let src = "outer = program(x) do f = program() do y = x  0 done  f() done \
+               outer({a: 1}) + outer(2)";
+    assert_eq!(value(src), num(0.0));
+}
+
+#[test]
+fn closures_in_tail_position_release_their_captures() {
+    let src = "p = {x: 1} \
+               f = program(y) do p.x + y done \
+               f(2)";
+    assert_eq!(value(src), num(3.0));
+}
+
+#[test]
+fn unused_capturing_closure_is_released() {
+    let src = "p = {x: 1} \
+               f = program(y) do p.x + y done \
+               g = f \
+               1";
+    assert_eq!(value(src), num(1.0));
+}
+
+#[test]
+fn root_closure_result_is_released() {
+    let src = "add = program(a) do program(b) do a + b done done  add(1)";
+    assert_eq!(value(src), Value::Unit);
+}
+
+#[test]
+fn closure_used_before_its_capture_exists_is_an_error() {
+    let src = "f = program() do g() done  x = f()  m = 5  g = program() do m done  x";
+    let errs = errors(src);
+    assert_eq!(errs, ["a variable is used before it is defined"]);
 }
 
 #[test]
