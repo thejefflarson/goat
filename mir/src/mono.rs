@@ -2,6 +2,7 @@
 //! `(binding, ground type)` specialization.
 
 use crate::mir::*;
+use crate::rc::insert_rc;
 use goat_checker::captures::for_each_child;
 use goat_checker::hir::{self, BinOp, ExprId, ExprKind, Param, Symbol};
 use goat_checker::infer::Typed;
@@ -11,9 +12,10 @@ use std::collections::HashMap;
 
 type Subst = HashMap<TypeVar, Ty>;
 
-/// Lower a checked program to MIR. Constructs whose runtime support has not
-/// landed yet (ADR 0005) come back as spanned diagnostics; well-typed input
-/// never panics. No construct is staged out at present.
+/// Lower a checked program to MIR and insert its reference counting.
+/// Constructs whose runtime support has not landed yet (ADR 0005) come back as
+/// spanned diagnostics; well-typed input never panics. No construct is staged
+/// out at present.
 pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut m = Mono {
@@ -32,21 +34,11 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
 
     let mut cx = FnCx::new(Subst::new());
     let root_ty = m.ground(&checked.typed.root_ty, &cx.subst);
-    let mut ret = m.lower_ty(&root_ty);
-    let owned = ret.is_ptr() && ret != MTy::Ptr(HeapKind::Str);
-    let mut body = m.expr(&mut cx, &checked.root, !owned);
-    if owned {
-        // The program's value has no consumer, so release it here. A string
-        // root is handed to the host instead.
-        let result = cx.fresh();
-        let release = Expr::Let(
-            cx.fresh(),
-            Box::new(Expr::Drop(result)),
-            Box::new(Expr::Const(Const::Unit)),
-        );
-        body = Expr::Let(result, Box::new(body), Box::new(release));
-        ret = MTy::Unit;
-    }
+    let ret = m.lower_ty(&root_ty);
+    // A pointer root is dropped after it is computed (see `rc::insert_rc`), so
+    // it cannot end in a tail call; a string root is handed to the host.
+    let discarded = ret.is_ptr() && ret != MTy::Ptr(HeapKind::Str);
+    let body = m.expr(&mut cx, &checked.root, !discarded);
     m.out[0] = Some(Func {
         params: vec![],
         env: None,
@@ -71,7 +63,7 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         return Err(m.errors);
     }
 
-    Ok(Program {
+    let mut program = Program {
         funcs: m
             .out
             .into_iter()
@@ -81,7 +73,9 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         layouts: m.layouts,
         sigs: m.sigs,
         data: m.data,
-    })
+    };
+    insert_rc(&mut program);
+    Ok(program)
 }
 
 #[derive(Clone)]
@@ -212,9 +206,6 @@ struct Mono<'a> {
 struct FnCx {
     subst: Subst,
     locals: HashMap<Symbol, Local>,
-    /// Owned pointer locals in scope, including a closure's `env`; each tail
-    /// leaf drops them.
-    live: Vec<Local>,
     /// The `Capture` index of each captured variable.
     captures: HashMap<Symbol, usize>,
     /// A capturing function's own name and `env`; the name refers to the
@@ -228,7 +219,6 @@ impl FnCx {
         FnCx {
             subst,
             locals: HashMap::new(),
-            live: Vec::new(),
             captures: HashMap::new(),
             self_env: None,
             next: 0,
@@ -386,14 +376,10 @@ impl Mono<'_> {
         Expr::MakeClosure(id, values)
     }
 
-    /// An owned reference to a captured or local variable.
+    /// A captured or local variable's value.
     fn variable_value(&mut self, cx: &mut FnCx, symbol: Symbol) -> Expr {
         if let Some(&local) = cx.locals.get(&symbol) {
-            return if cx.live.contains(&local) {
-                self.use_closure(cx, local)
-            } else {
-                Expr::Local(local)
-            };
+            return Expr::Local(local);
         }
         if let Some(&index) = cx.captures.get(&symbol) {
             return Expr::Capture(index);
@@ -402,7 +388,7 @@ impl Mono<'_> {
     }
 
     /// A zero-capture closure over `target`: a wrapper that takes the closure
-    /// as `env`, drops it, and tail-calls `target`.
+    /// as `env` and tail-calls `target`.
     fn closure_of(&mut self, target: FuncId, ty: &Ty) -> Expr {
         let wrapper = match self.wrappers.get(&target) {
             Some(&w) => w,
@@ -413,13 +399,9 @@ impl Mono<'_> {
                 let Sig { params, ret } = self.sigs[sig.0 as usize].clone();
                 let env = Local(params.len() as u32);
                 let locals: Vec<_> = (0..params.len() as u32).map(Local).collect();
-                let body = Expr::Let(
-                    Local(env.0 + 1),
-                    Box::new(Expr::Drop(env)),
-                    Box::new(Expr::TailCall(
-                        Callee::Direct(target),
-                        locals.iter().map(|l| Expr::Local(*l)).collect(),
-                    )),
+                let body = Expr::TailCall(
+                    Callee::Direct(target),
+                    locals.iter().map(|l| Expr::Local(*l)).collect(),
                 );
                 let id = FuncId(self.out.len() as u32);
                 self.out.push(Some(Func {
@@ -456,9 +438,6 @@ impl Mono<'_> {
             cx.locals.insert(param.symbol, local);
             let ty = self.ground(ty, &cx.subst);
             let mty = self.lower_ty(&ty);
-            if mty.is_ptr() {
-                cx.live.push(local);
-            }
             mparams.push((local, mty));
         }
         let ret = self.ground(ret_ty, &cx.subst);
@@ -475,8 +454,7 @@ impl Mono<'_> {
         }
     }
 
-    /// Give a capturing function its `env` parameter. The function owns `env`,
-    /// so it is released at every exit like any other pointer local.
+    /// Give a capturing function its `env` parameter.
     fn bind_env(
         &mut self,
         cx: &mut FnCx,
@@ -490,7 +468,6 @@ impl Mono<'_> {
             unreachable!("function type lowers to a closure");
         };
         let local = cx.fresh();
-        cx.live.push(local);
         cx.captures = captures.iter().copied().zip(0..).collect();
         if let Target::Named(symbol) = target {
             cx.self_env = Some((symbol, local));
@@ -529,40 +506,20 @@ impl Mono<'_> {
         }
     }
 
-    /// Finish a leaf: in tail position, release the closure locals still in
-    /// scope once `value` is computed.
-    fn leaf(&self, cx: &mut FnCx, value: Expr, tail: bool) -> Expr {
-        if !tail || cx.live.is_empty() {
-            return value;
-        }
-        let result = cx.fresh();
-        let mut body = Expr::Local(result);
-        for l in cx.live.clone().into_iter().rev() {
-            body = Expr::Let(cx.fresh(), Box::new(Expr::Drop(l)), Box::new(body));
-        }
-        Expr::Let(result, Box::new(value), Box::new(body))
-    }
-
-    /// A fresh owned reference to closure local `l`, which stays live.
-    fn use_closure(&self, cx: &mut FnCx, l: Local) -> Expr {
-        Expr::Let(cx.fresh(), Box::new(Expr::Dup(l)), Box::new(Expr::Local(l)))
-    }
-
     fn expr(&mut self, cx: &mut FnCx, e: &hir::Expr, tail: bool) -> Expr {
         match &e.kind {
-            ExprKind::Unit => self.leaf(cx, Expr::Const(Const::Unit), tail),
-            ExprKind::Number(n) => self.leaf(cx, Expr::Const(Const::Float(*n)), tail),
-            ExprKind::Bool(b) => self.leaf(cx, Expr::Const(Const::Bool(*b)), tail),
+            ExprKind::Unit => Expr::Const(Const::Unit),
+            ExprKind::Number(n) => Expr::Const(Const::Float(*n)),
+            ExprKind::Bool(b) => Expr::Const(Const::Bool(*b)),
             ExprKind::Var { symbol, .. } => {
                 let function = Target::Named(*symbol);
-                let value = match cx.self_env {
-                    Some((me, env)) if me == *symbol => self.use_closure(cx, env),
+                match cx.self_env {
+                    Some((me, env)) if me == *symbol => Expr::Local(env),
                     _ if self.lambdas.contains_key(&function) => {
                         self.closure_value(cx, function, e.id)
                     }
                     _ => self.variable_value(cx, *symbol),
-                };
-                self.leaf(cx, value, tail)
+                }
             }
             ExprKind::App { callee, args } => self.app(cx, callee, args, tail),
             ExprKind::If {
@@ -574,7 +531,7 @@ impl Mono<'_> {
                 Box::new(self.expr(cx, then_branch, tail)),
                 Box::new(match else_branch {
                     Some(e) => self.expr(cx, e, tail),
-                    None => self.leaf(cx, Expr::Const(Const::Unit), tail),
+                    None => Expr::Const(Const::Unit),
                 }),
             ),
             ExprKind::Let {
@@ -586,38 +543,16 @@ impl Mono<'_> {
                 if matches!(value.kind, ExprKind::Func { .. }) {
                     return match rest {
                         Some(rest) => self.expr(cx, rest, tail),
-                        None => {
-                            let function = Target::Named(*symbol);
-                            let closure = self.closure_value(cx, function, value.id);
-                            self.leaf(cx, closure, tail)
-                        }
+                        None => self.closure_value(cx, Target::Named(*symbol), value.id),
                     };
                 }
                 if let Some(rest) = rest {
                     self.instantiate_binding(cx, *symbol, rest);
                 }
-                let ty = self.ground(&self.typed.node_types[&value.id], &cx.subst);
-                let owned = self.lower_ty(&ty).is_ptr();
                 let value = self.expr(cx, value, false);
                 let local = cx.fresh();
                 cx.locals.insert(*symbol, local);
                 let rest = match rest {
-                    Some(rest) if owned => {
-                        cx.live.push(local);
-                        let body = self.expr(cx, rest, tail);
-                        cx.live.pop();
-                        if tail {
-                            body
-                        } else {
-                            let result = cx.fresh();
-                            let release = Expr::Let(
-                                cx.fresh(),
-                                Box::new(Expr::Drop(local)),
-                                Box::new(Expr::Local(result)),
-                            );
-                            Expr::Let(result, Box::new(body), Box::new(release))
-                        }
-                    }
                     Some(rest) => self.expr(cx, rest, tail),
                     None => Expr::Local(local),
                 };
@@ -626,7 +561,7 @@ impl Mono<'_> {
             ExprKind::Bin { op, lhs, rhs } => {
                 let a = Box::new(self.expr(cx, lhs, false));
                 let b = Box::new(self.expr(cx, rhs, false));
-                let value = match op {
+                match op {
                     BinOp::Add => Expr::BinFloat(FloatOp::Add, a, b),
                     BinOp::Sub => Expr::BinFloat(FloatOp::Sub, a, b),
                     BinOp::Mul => Expr::BinFloat(FloatOp::Mul, a, b),
@@ -635,17 +570,10 @@ impl Mono<'_> {
                     BinOp::Lte => Expr::Cmp(CmpOp::Le, a, b),
                     BinOp::Gt => Expr::Cmp(CmpOp::Gt, a, b),
                     BinOp::Gte => Expr::Cmp(CmpOp::Ge, a, b),
-                };
-                self.leaf(cx, value, tail)
+                }
             }
-            ExprKind::Func { .. } => {
-                let closure = self.closure_value(cx, Target::Anon(e.id), e.id);
-                self.leaf(cx, closure, tail)
-            }
-            ExprKind::Str(s) => {
-                let data = self.intern(s);
-                self.leaf(cx, Expr::StrLit(data), tail)
-            }
+            ExprKind::Func { .. } => self.closure_value(cx, Target::Anon(e.id), e.id),
+            ExprKind::Str(s) => Expr::StrLit(self.intern(s)),
             ExprKind::Record { fields } => {
                 let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
                 let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty) else {
@@ -657,7 +585,7 @@ impl Mono<'_> {
                     .into_iter()
                     .map(|(_, v)| self.expr(cx, v, false))
                     .collect();
-                self.leaf(cx, Expr::AllocRecord(layout, values), tail)
+                Expr::AllocRecord(layout, values)
             }
             ExprKind::Field { record, label } => {
                 let ty = self.ground(&self.typed.node_types[&record.id], &cx.subst);
@@ -671,22 +599,14 @@ impl Mono<'_> {
                     ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
                     _ => None,
                 };
-                let value = match borrowed {
+                match borrowed {
                     Some(local) => Expr::Field(local, index),
                     None => {
-                        let (rec, field, release) = (cx.fresh(), cx.fresh(), cx.fresh());
+                        let rec = cx.fresh();
                         let source = self.expr(cx, record, false);
-                        let drop = Expr::Let(
-                            release,
-                            Box::new(Expr::Drop(rec)),
-                            Box::new(Expr::Local(field)),
-                        );
-                        let load =
-                            Expr::Let(field, Box::new(Expr::Field(rec, index)), Box::new(drop));
-                        Expr::Let(rec, Box::new(source), Box::new(load))
+                        Expr::Let(rec, Box::new(source), Box::new(Expr::Field(rec, index)))
                     }
-                };
-                self.leaf(cx, value, tail)
+                }
             }
         }
     }
@@ -714,35 +634,7 @@ impl Mono<'_> {
                 Callee::Closure(c) => Expr::CallClosure(c, args),
             };
         }
-        if cx.live.is_empty() {
-            return Expr::TailCall(target, args);
-        }
-
-        // Closure locals are released before the tail call, so the callee and
-        // arguments are evaluated into temporaries first.
-        let mut bindings = Vec::new();
-        let target = match target {
-            Callee::Closure(c) => {
-                let t = cx.fresh();
-                bindings.push((t, *c));
-                Callee::Closure(Box::new(Expr::Local(t)))
-            }
-            direct => direct,
-        };
-        let mut temps = Vec::new();
-        for arg in args {
-            let t = cx.fresh();
-            bindings.push((t, arg));
-            temps.push(Expr::Local(t));
-        }
-        let mut body = Expr::TailCall(target, temps);
-        for l in cx.live.clone() {
-            body = Expr::Let(cx.fresh(), Box::new(Expr::Drop(l)), Box::new(body));
-        }
-        for (t, value) in bindings.into_iter().rev() {
-            body = Expr::Let(t, Box::new(value), Box::new(body));
-        }
-        body
+        Expr::TailCall(target, args)
     }
 }
 

@@ -144,3 +144,53 @@ pub enum Expr {
     Drop(Local),
     Trap(String),
 }
+
+impl Expr {
+    /// Calls `f` on each direct subexpression, in evaluation order.
+    pub fn for_each_child(&self, f: &mut impl FnMut(&Expr)) {
+        match self {
+            Expr::Const(_)
+            | Expr::Local(_)
+            | Expr::Capture(_)
+            | Expr::Field(..)
+            | Expr::Payload(..)
+            | Expr::Free(_)
+            | Expr::StrLit(_)
+            | Expr::Dup(_)
+            | Expr::Drop(_)
+            | Expr::Trap(_) => {}
+            Expr::Let(_, a, b)
+            | Expr::BinInt(_, a, b)
+            | Expr::BinFloat(_, a, b)
+            | Expr::Cmp(_, a, b) => {
+                f(a);
+                f(b);
+            }
+            Expr::If(c, t, o) => {
+                f(c);
+                f(t);
+                f(o);
+            }
+            Expr::Switch(_, arms, default) => {
+                arms.iter().for_each(|(_, b)| f(b));
+                f(default);
+            }
+            Expr::CallDirect(_, args)
+            | Expr::MakeClosure(_, args)
+            | Expr::AllocRecord(_, args)
+            | Expr::AllocVariant(_, _, args)
+            | Expr::ReuseVariant(_, _, _, args) => args.iter().for_each(f),
+            Expr::CallClosure(c, args) => {
+                f(c);
+                args.iter().for_each(f);
+            }
+            Expr::TailCall(callee, args) => {
+                if let Callee::Closure(c) = callee {
+                    f(c);
+                }
+                args.iter().for_each(f);
+            }
+            Expr::Unpack(_, _, _, body) => f(body),
+        }
+    }
+}
