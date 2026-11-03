@@ -23,14 +23,26 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         out: vec![None],
         work: Vec::new(),
         sigs: Vec::new(),
+        layouts: Vec::new(),
         wrappers: HashMap::new(),
         errors: Vec::new(),
     };
 
     let mut cx = FnCx::new(Subst::new());
     let root_ty = m.ground(&checked.typed.root_ty, &cx.subst);
-    let ret = m.lower_ty(&root_ty, checked.root.span);
-    let body = m.expr(&mut cx, &checked.root, true);
+    let mut ret = m.lower_ty(&root_ty, checked.root.span);
+    let mut body = m.expr(&mut cx, &checked.root, true);
+    if matches!(ret, MTy::Ptr(HeapKind::Record(_))) {
+        // The program's value has no consumer, so release it here.
+        let result = cx.fresh();
+        let release = Expr::Let(
+            cx.fresh(),
+            Box::new(Expr::Drop(result)),
+            Box::new(Expr::Const(Const::Unit)),
+        );
+        body = Expr::Let(result, Box::new(body), Box::new(release));
+        ret = MTy::Unit;
+    }
     m.out[0] = Some(Func {
         params: vec![],
         env: None,
@@ -62,7 +74,7 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
             .map(|f| f.expect("func lowered"))
             .collect(),
         entry: FuncId(0),
-        layouts: Vec::new(),
+        layouts: m.layouts,
         sigs: m.sigs,
         data: Vec::new(),
     })
@@ -121,6 +133,7 @@ struct Mono<'a> {
     out: Vec<Option<Func>>,
     work: Vec<(FuncId, Symbol, Subst)>,
     sigs: Vec<Sig>,
+    layouts: Vec<Layout>,
     /// The zero-capture closure wrapper for each function used as a value. The
     /// wrappers are the funcref-table members: the functions with an `env`.
     wrappers: HashMap<FuncId, FuncId>,
@@ -166,14 +179,34 @@ impl Mono<'_> {
         }
     }
 
+    /// Ground `row` into a closed row with its fields stably sorted by label,
+    /// the order of its layout slots.
     fn ground_row(&self, row: &Row, subst: &Subst) -> Row {
+        let mut fields = Vec::new();
+        self.flatten_row(row, subst, &mut fields);
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        fields
+            .into_iter()
+            .rev()
+            .fold(Row::Empty, |rest, (label, field)| Row::Extend {
+                label,
+                field: Box::new(field),
+                rest: Box::new(rest),
+            })
+    }
+
+    fn flatten_row(&self, row: &Row, subst: &Subst, out: &mut Vec<(String, Ty)>) {
         match row {
-            Row::Empty | Row::Var(_) => Row::Empty,
-            Row::Extend { label, field, rest } => Row::Extend {
-                label: label.clone(),
-                field: Box::new(self.ground(field, subst)),
-                rest: Box::new(self.ground_row(rest, subst)),
-            },
+            Row::Empty => {}
+            Row::Var(v) => {
+                if let Some(Ty::Record(bound)) = subst.get(v) {
+                    self.flatten_row(bound, subst, out);
+                }
+            }
+            Row::Extend { label, field, rest } => {
+                out.push((label.clone(), self.ground(field, subst)));
+                self.flatten_row(rest, subst, out);
+            }
         }
     }
 
@@ -202,8 +235,24 @@ impl Mono<'_> {
                 });
                 MTy::Ptr(HeapKind::Closure(SigId(id as u32)))
             }
-            Ty::Str | Ty::Record(_) => {
-                self.unsupported(span, "strings and records");
+            Ty::Record(row) => {
+                let mut fields = Vec::new();
+                for (_, field) in ground_fields(row) {
+                    fields.push(self.lower_ty(field, span));
+                }
+                let layout = Layout::Record(fields);
+                let id = self
+                    .layouts
+                    .iter()
+                    .position(|l| *l == layout)
+                    .unwrap_or_else(|| {
+                        self.layouts.push(layout);
+                        self.layouts.len() - 1
+                    });
+                MTy::Ptr(HeapKind::Record(LayoutId(id as u32)))
+            }
+            Ty::Str => {
+                self.unsupported(span, "strings");
                 MTy::Unit
             }
             Ty::Var(_) => unreachable!("type variable survived grounding"),
@@ -417,7 +466,48 @@ impl Mono<'_> {
                 Expr::Trap(String::new())
             }
             ExprKind::Str(_) => self.unsupported(e.span, "strings"),
-            ExprKind::Record { .. } | ExprKind::Field { .. } => self.unsupported(e.span, "records"),
+            ExprKind::Record { fields } => {
+                let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+                let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty, e.span) else {
+                    unreachable!("record type lowers to a record pointer");
+                };
+                let mut order: Vec<_> = fields.iter().collect();
+                order.sort_by(|a, b| a.0.cmp(&b.0));
+                let values = order
+                    .into_iter()
+                    .map(|(_, v)| self.expr(cx, v, false))
+                    .collect();
+                self.leaf(cx, Expr::AllocRecord(layout, values), tail)
+            }
+            ExprKind::Field { record, label } => {
+                let ty = self.ground(&self.typed.node_types[&record.id], &cx.subst);
+                let Ty::Record(row) = &ty else {
+                    unreachable!("field access on a non-record");
+                };
+                let index = ground_fields(row)
+                    .position(|(l, _)| l == label)
+                    .expect("checked record has the field");
+                let borrowed = match &record.kind {
+                    ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
+                    _ => None,
+                };
+                let value = match borrowed {
+                    Some(local) => Expr::Field(local, index),
+                    None => {
+                        let (rec, field, release) = (cx.fresh(), cx.fresh(), cx.fresh());
+                        let source = self.expr(cx, record, false);
+                        let drop = Expr::Let(
+                            release,
+                            Box::new(Expr::Drop(rec)),
+                            Box::new(Expr::Local(field)),
+                        );
+                        let load =
+                            Expr::Let(field, Box::new(Expr::Field(rec, index)), Box::new(drop));
+                        Expr::Let(rec, Box::new(source), Box::new(load))
+                    }
+                };
+                self.leaf(cx, value, tail)
+            }
         }
     }
 
@@ -484,7 +574,49 @@ fn match_ty(template: &Ty, actual: &Ty, subst: &mut Subst) {
             }
             match_ty(tr, ar, subst);
         }
-        (Ty::Record(_), _) => {}
+        (Ty::Record(template), Ty::Record(actual)) => {
+            let mut rest: Vec<_> = ground_fields(actual).collect();
+            let mut row = template;
+            loop {
+                match row {
+                    Row::Extend {
+                        label,
+                        field,
+                        rest: next,
+                    } => {
+                        if let Some(at) = rest.iter().position(|(l, _)| *l == label) {
+                            match_ty(field, rest.remove(at).1, subst);
+                        }
+                        row = next;
+                    }
+                    Row::Var(v) => {
+                        let tail =
+                            rest.into_iter()
+                                .rev()
+                                .fold(Row::Empty, |r, (l, f)| Row::Extend {
+                                    label: l.clone(),
+                                    field: Box::new(f.clone()),
+                                    rest: Box::new(r),
+                                });
+                        subst.insert(*v, Ty::Record(tail));
+                        break;
+                    }
+                    Row::Empty => break,
+                }
+            }
+        }
         (t, a) => debug_assert_eq!(t, a, "template does not match use site"),
     }
+}
+
+/// The `(label, type)` pairs of a ground row, in layout order.
+fn ground_fields(row: &Row) -> impl Iterator<Item = (&String, &Ty)> {
+    let mut next = Some(row);
+    std::iter::from_fn(move || match next? {
+        Row::Extend { label, field, rest } => {
+            next = Some(rest);
+            Some((label, &**field))
+        }
+        Row::Empty | Row::Var(_) => None,
+    })
 }
