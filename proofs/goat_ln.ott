@@ -1,0 +1,142 @@
+% goat_ln.ott -- the locally-nameless mechanization core (B2, issue #70).
+%
+% Relationship to goat.ott:
+%   goat.ott is the typeset spec, the lockstep twin of docs/semantics.md: n-ary
+%   program/application, n-ary arrow, record literals as lists. This file is the
+%   SOURCE FROM WHICH Coq is generated. It cannot be goat.ott directly, for two
+%   reasons the B1 source itself flags ("realized in B2, not here"):
+%     1. metalib/LNgen needs the term-variable metavar marked
+%        `repr-locally-nameless`; goat.ott leaves it plain so the typeset spec
+%        stays readable.
+%     2. The n-ary multi-binder must be given a concrete encoding. B2 chooses
+%        internal currying to a SINGLE-binder lambda (docs/semantics.md section
+%        10, option (a) -- the cheapest for LNgen): `program` binds one
+%        parameter and the arrow is unary. The surface n-ary forms
+%        `program(x1,...,xk)` / `e(e1,...,ek)` / `(T1,...,Tk) -> T` are the
+%        k-fold iteration of this core, reconnected by the uncurry/arity lemmas
+%        that B3 (#71) carries. The cost -- a surface/core gap -- is the
+%        documented price of (a); the win is that the entire single-binder
+%        metalib infrastructure (open/close/subst/fv, cofinite lc) and LNgen's
+%        emitted lemmas apply unchanged.
+%
+% Type and row variables are a free-variable set with named substitution, NOT
+% term binders (ADR 0008). In this B2 core they are `nat`; refining them to
+% metalib `atom` with atom-set free-variable functions is a B3 step. The two
+% lemmas B2 proves do not depend on that choice.
+
+metavar termvar, x, y, z, f, g ::=
+  {{ repr-locally-nameless }}
+  {{ com term variable (locally-nameless) }}
+  {{ lex alphanum }}
+
+metavar typvar, a, b ::= {{ coq nat }}
+  {{ com free type variable }}
+metavar rowvar, r, s ::= {{ coq nat }}
+  {{ com free row variable }}
+metavar label, l ::= {{ coq nat }}
+  {{ com record label }}
+metavar num, n ::= {{ coq nat }}
+  {{ com numeral constant }}
+
+grammar
+
+typ, T :: 'typ_' ::= {{ com monotype }}
+  | Number        ::   :: Number
+  | Bool          ::   :: Bool
+  | ( T1 ) -> T2  ::   :: Arrow   {{ com unary (curried) function; see header }}
+  | { R }         ::   :: Record
+  | a             ::   :: Var
+  | ( T )         :: S :: Paren   {{ coq [[T]] }}
+
+row, R :: 'row_' ::= {{ com row (scoped labels, duplicates allowed) }}
+  | nil           ::   :: Empty
+  | r             ::   :: Var
+  | l : T ; R     ::   :: Ext
+
+exp, e :: 'e_' ::= {{ com term }}
+  | x                        ::   :: fvar  {{ com variable }}
+  | n                        ::   :: num
+  | true                     ::   :: true
+  | false                    ::   :: false
+  | program ( x ) do e done  ::   :: abs
+    (+ bind x in e +)        {{ com single-binder abstraction }}
+  | e1 ( e2 )                ::   :: app
+  | x = e1  e2               ::   :: let
+    (+ bind x in e2 +)       {{ com bind x in e2 only }}
+  | ( e )                    :: S :: paren {{ coq [[e]] }}
+  | e1 [ x := e2 ]           :: M :: subst {{ coq (subst_exp [[e2]] [[x]] [[e1]]) }}
+
+substitutions
+  single exp x :: subst
+
+freevars
+  exp x :: fv
+
+grammar
+  formula :: 'formula_' ::=
+    | judgement ::   :: judgement
+    | l1 <> l2  ::   :: label_neq {{ coq [[l1]] <> [[l2]] }}
+      {{ tex [[l1]] \neq [[l2]] }}
+
+defns
+Jequiv :: '' ::=
+% row equivalence (Leijen scoped labels; mutual typ/row)
+
+defn
+T1 ~= T2 :: :: teq :: 'teq_'
+  {{ tex [[T1]] \cong [[T2]] }} by
+
+  --------------- :: num
+  Number ~= Number
+
+  ----------- :: bool
+  Bool ~= Bool
+
+  ----- :: var
+  a ~= a
+
+  T1 ~= T1'
+  T2 ~= T2'
+  ------------------------------- :: arrow
+  ( T1 ) -> T2 ~= ( T1' ) -> T2'
+
+  R ~= R'
+  --------------- :: rec
+  { R } ~= { R' }
+
+  T1 ~= T2
+  T2 ~= T3
+  -------- :: trans
+  T1 ~= T3
+
+  T1 ~= T2
+  -------- :: sym
+  T2 ~= T1
+
+defn
+R1 ~= R2 :: :: req :: 'req_'
+  {{ tex [[R1]] \cong [[R2]] }} by
+
+  ---------- :: empty
+  nil ~= nil
+
+  ----- :: var
+  r ~= r
+
+  T ~= T'
+  R ~= R'
+  ------------------------- :: head
+  l : T ; R ~= l : T' ; R'
+
+  l <> l'
+  ------------------------------------------- :: swap
+  l : T ; l' : T' ; R ~= l' : T' ; l : T ; R
+
+  R1 ~= R2
+  R2 ~= R3
+  -------- :: trans
+  R1 ~= R3
+
+  R1 ~= R2
+  -------- :: sym
+  R2 ~= R1

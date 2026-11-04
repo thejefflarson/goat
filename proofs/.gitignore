@@ -1,0 +1,18 @@
+# Coq build artifacts. The sources (*.ott, *.v) and the generated-and-committed
+# Goat_ott.v are tracked; everything coqc/coq_makefile emits is not.
+*.vo
+*.vok
+*.vos
+*.glob
+*.aux
+.*.aux
+*.cmi
+*.cmo
+*.cmx
+*.o
+.lia.cache
+.nia.cache
+CoqMakefile
+CoqMakefile.conf
+CoqMakefile.d
+.coqdeps.d
