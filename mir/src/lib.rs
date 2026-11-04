@@ -1,3 +1,4 @@
+mod canon;
 pub mod interp;
 pub mod mir;
 pub mod mono;

@@ -66,6 +66,25 @@ mod tests {
     }
 
     #[test]
+    fn match_binders_record_their_types() {
+        let checked = check(
+            "length = program(xs) do match xs do Empty then 0 \
+             Link(first, rest) then 1 + length(rest) done done length(Link(1, Empty))",
+        )
+        .expect("checks");
+        let mut types: Vec<String> = checked
+            .typed
+            .binder_types
+            .values()
+            .map(|t| t.to_string())
+            .collect();
+        types.sort();
+        assert_eq!(types.len(), 2);
+        assert!(types.iter().any(|t| t.starts_with("μt")), "{types:?}");
+        assert!(types.iter().any(|t| !t.starts_with("μt")), "{types:?}");
+    }
+
+    #[test]
     fn constructing_a_tag_gives_an_open_row() {
         assert_eq!(type_of("Circle(5)").unwrap(), "[Circle: Number | t0]");
         assert_eq!(type_of("Empty").unwrap(), "[Empty | t0]");

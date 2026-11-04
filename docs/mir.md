@@ -66,8 +66,19 @@ keyed by `LayoutId`:
   **index** into the layout, not by byte offset: offsets depend on the target's
   pointer and number widths, so each backend computes them from the layout.
 - **Variant:** `[header][tag: u32][payload…]`. Each tag label gets one global
-  tag number; `match` loads the tag and `br_table`s. Nullary tags may be
-  immortal static objects.
+  tag number (labels sorted, numbered from 0), so a layout's `Vec` of payloads
+  is indexed by that number and is empty for tags the type does not have.
+  `match` loads the tag and `br_table`s. Nullary tags are immortal static
+  objects, one per tag. A payload is stored flat: `Tag(a, b)` has slots `a`,
+  `b`, not a pointer to a record, and `Unit` has none. On wasm32 the tag is a
+  `u32` at offset 8 and the payload slots start at offset 16.
+- **Recursive variants:** a recursive type's layout names itself (`Link`'s
+  tail slot points at the same `LayoutId`). Mono keys layouts and
+  specializations on a *canonical* form of the type: the minimal automaton of
+  its infinite tree, written as a `μ`-term with binders numbered by depth
+  (`mir/src/canon.rs`). Types equal up to `μ`-equivalence get one layout and
+  one specialization; a layout is registered before its payloads are lowered,
+  so lowering a self-referential type terminates.
 - **String:** `[header][len: u32][bytes…]`; literals live in a `data` segment
   and are immortal.
 - **Closure:** `[header][drop_fn: i32][code: i32][captures…]` (see Closures).
@@ -81,6 +92,14 @@ The allocator must support both size-class free lists over a bump region
 budget** (microcontrollers, which cannot afford 64 KB `memory.grow` steps). A
 target declares its heap strategy; MIR does not assume `memory.grow` is cheap or
 even available.
+
+Dropping is iterative. A drop function (one per record/variant layout and per
+closure body) releases the references an object holds but does not recurse:
+a child whose count reaches zero is pushed on a pending list threaded through
+the dead objects (the dead object's `rc` word is the link, and the high bits of
+its `_pad` word hold the table slot of its own drop function). The runtime's
+`drop_loop` frees the object, pops the next, and repeats, so tearing down a
+million-element chain uses one call frame. A drop function never calls another.
 
 The wasm backend implements the free-list strategy (`wasm/src/allocator.rs`).
 `alloc` records the block's size class in the header's `_pad` word, so `free`

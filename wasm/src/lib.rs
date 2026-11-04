@@ -33,6 +33,8 @@ mod layout {
     pub const STATIC_CLOSURE: u32 = CAPTURES;
     pub const STR_LEN: u32 = HEADER;
     pub const STR_BYTES: u32 = STR_LEN + 4;
+    pub const TAG: u32 = HEADER;
+    pub const PAYLOAD: u32 = (TAG + 4).next_multiple_of(SLOT);
 
     pub fn slot(base: u32, index: usize) -> u32 {
         base + SLOT * index as u32
@@ -111,6 +113,11 @@ fn val_types(tys: impl IntoIterator<Item = MTy>) -> Vec<ValType> {
 }
 
 pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
+    let mut uses = Uses::default();
+    for func in &program.funcs {
+        uses.scan(&func.body);
+    }
+    let needs_drop = uses.drops;
     let mut types = Types::default();
     let print_number = types.intern(vec![ValType::F64], vec![]);
     let print_bool = types.intern(vec![ValType::I32], vec![]);
@@ -126,6 +133,9 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     let live_ty = types.intern(vec![], vec![ValType::I32]);
     let free_ty = types.intern(vec![ValType::I32], vec![]);
     func_types.extend([alloc_ty, free_ty, live_ty]);
+    if needs_drop {
+        func_types.push(types.intern(vec![ValType::I32, ValType::I32], vec![]));
+    }
 
     let prints_string = program
         .funcs
@@ -139,9 +149,16 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         strings.push(DATA_BASE + data.len() as u32);
         data.extend(string_object(bytes));
     }
+    let nullary_base = DATA_BASE + data.len() as u32;
+    for &tag in &uses.nullary {
+        for word in [IMMORTAL as u32, 0, tag, 0] {
+            data.extend(word.to_le_bytes());
+        }
+    }
     let static_base = DATA_BASE + data.len() as u32;
     let runtime_base = imports + program.funcs.len() as u32 + 1;
-    let helper_base = runtime_base + allocator::FUNCTIONS;
+    let runtime_len = allocator::FUNCTIONS + needs_drop as u32;
+    let helper_base = runtime_base + runtime_len;
     let mut shared = Shared {
         program,
         types,
@@ -153,8 +170,11 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         table: Vec::new(),
         statics: Vec::new(),
         static_base,
-        indirect: false,
+        nullary_base,
+        nullary: uses.nullary,
+        indirect: needs_drop,
         alloc_fn: runtime_base,
+        drop_loop_fn: needs_drop.then_some(runtime_base + allocator::FUNCTIONS),
     };
 
     let mut bodies = Vec::new();
@@ -163,12 +183,11 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     }
     bodies.push(entry_wrapper(program, imports)?);
 
-    let drop_ty = shared.drop_type();
     let mut next_helper = 0;
     while next_helper < shared.helpers.len() {
         let helper = shared.helpers[next_helper];
         bodies.push(helper_body(&mut shared, helper)?);
-        func_types.push(drop_ty);
+        func_types.push(shared.drop_type());
         next_helper += 1;
     }
 
@@ -185,11 +204,14 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         table: (DATA_BASE + data.len() as u32).next_multiple_of(8),
     };
     let heap_start = free_lists.table + allocator::TABLE_BYTES;
-    let runtime = [
+    let mut runtime = vec![
         free_lists.alloc(),
         free_lists.free(),
         free_lists.live_allocs(),
     ];
+    if needs_drop {
+        runtime.push(drop_loop(&mut shared));
+    }
     let entry_index = program.funcs.len();
     bodies.splice(entry_index + 1..entry_index + 1, runtime);
 
@@ -314,6 +336,7 @@ enum Helper {
     Noop,
     ClosureDrop(FuncId),
     RecordDrop(LayoutId),
+    VariantDrop(LayoutId),
 }
 
 struct Shared<'a> {
@@ -331,7 +354,12 @@ struct Shared<'a> {
     table: Vec<u32>,
     statics: Vec<FuncId>,
     static_base: u32,
+    /// The tags built without a payload, in the order of their immortal cells
+    /// from `nullary_base`.
+    nullary_base: u32,
+    nullary: Vec<u32>,
     indirect: bool,
+    drop_loop_fn: Option<u32>,
 }
 
 fn intern<T: PartialEq>(items: &mut Vec<T>, item: T) -> usize {
@@ -355,6 +383,12 @@ impl Shared<'_> {
         self.table_slot(noop)
     }
 
+    fn nullary_cell(&self, tag: u32) -> Result<u32, EmitError> {
+        let index = self.nullary.iter().position(|t| *t == tag);
+        let index = index.ok_or(EmitError::Malformed("unscanned nullary tag"))?;
+        Ok(self.nullary_base + index as u32 * layout::object_size(layout::PAYLOAD, 0))
+    }
+
     fn static_closure(&mut self, f: FuncId) -> u32 {
         let index = intern(&mut self.statics, f);
         self.helper(Helper::Noop);
@@ -373,47 +407,252 @@ impl Shared<'_> {
         Ok((self.types.intern(params, val_types([sig.ret])), sig.ret))
     }
 
+    /// The type of a drop function: `(object, pending) -> pending`.
     fn drop_type(&mut self) -> u32 {
-        self.types.intern(vec![ValType::I32], vec![])
+        self.types
+            .intern(vec![ValType::I32, ValType::I32], vec![ValType::I32])
+    }
+
+    /// The funcref-table slot of the drop function for objects of `kind`; a
+    /// closure carries its own, so it has none.
+    fn dropper_slot(&mut self, kind: HeapKind) -> Option<u32> {
+        let helper = match kind {
+            HeapKind::Closure(_) => return None,
+            HeapKind::Record(l) => Helper::RecordDrop(l),
+            HeapKind::Variant(l) | HeapKind::List(l) => Helper::VariantDrop(l),
+            HeapKind::Str => Helper::Noop,
+        };
+        let function = self.helper(helper);
+        Some(self.table_slot(function))
     }
 }
 
+/// What the program's code needs the module to carry, found before lowering
+/// because it fixes the function and data layout.
+#[derive(Default)]
+struct Uses {
+    /// Some `Drop` exists, so the module needs the `drop_loop` runtime.
+    drops: bool,
+    /// Tags built without a payload, each served by one immortal cell.
+    nullary: Vec<u32>,
+}
+
+impl Uses {
+    fn scan(&mut self, e: &Expr) {
+        match e {
+            Expr::Drop(_) => self.drops = true,
+            Expr::AllocVariant(_, tag, fields) if fields.is_empty() => {
+                if let Err(at) = self.nullary.binary_search(tag) {
+                    self.nullary.insert(at, *tag);
+                }
+            }
+            _ => {}
+        }
+        e.for_each_child(&mut |c| self.scan(c));
+    }
+}
+
+/// A drop function releases the references an object holds and returns the
+/// pending list: a child whose count reaches zero is pushed rather than
+/// dropped, so no drop function recurses. See `drop_loop`.
 fn helper_body(shared: &mut Shared, helper: Helper) -> Result<Function, EmitError> {
-    let slots: Vec<(MTy, u32)> = match helper {
-        Helper::Noop => Vec::new(),
+    let (object, pending) = (0, 1);
+    let layout_slots = |tys: &[MTy], base| -> Vec<(MTy, u32)> {
+        tys.iter()
+            .enumerate()
+            .map(|(i, &ty)| (ty, layout::slot(base, i)))
+            .collect()
+    };
+    let mut code = Code::new();
+    match helper {
+        Helper::Noop => {}
         Helper::ClosureDrop(f) => {
             let env = shared.program.funcs[f.0 as usize].env.as_ref();
             let captures = env.map_or(&[][..], |e| &e.captures[..]);
-            captures
-                .iter()
-                .enumerate()
-                .map(|(i, &ty)| (ty, layout::slot(layout::CAPTURES, i)))
-                .collect()
+            for (ty, offset) in layout_slots(captures, layout::CAPTURES) {
+                push_child(shared, ty, offset, &mut code)?;
+            }
         }
-        Helper::RecordDrop(l) => match shared.program.layouts.get(l.0 as usize) {
-            Some(Layout::Record(fields)) => fields
-                .iter()
-                .enumerate()
-                .map(|(i, &ty)| (ty, layout::slot(layout::HEADER, i)))
-                .collect(),
-            _ => return Err(EmitError::Malformed("record layout")),
-        },
-    };
-    let mut f = Function::new([(1, ValType::I32)]);
-    let mut code = Code::new();
-    for (ty, offset) in slots {
-        if let MTy::Ptr(kind) = ty {
-            code.push(Instruction::LocalGet(0));
-            code.extend(load(ty, offset));
-            code.push(Instruction::LocalSet(1));
-            release(shared, 1, kind, &mut code)?;
+        Helper::RecordDrop(l) => {
+            let Some(Layout::Record(fields)) = shared.program.layouts.get(l.0 as usize) else {
+                return Err(EmitError::Malformed("record layout"));
+            };
+            for (ty, offset) in layout_slots(fields, layout::HEADER) {
+                push_child(shared, ty, offset, &mut code)?;
+            }
+        }
+        Helper::VariantDrop(l) => {
+            let Some(Layout::Variant(tags)) = shared.program.layouts.get(l.0 as usize) else {
+                return Err(EmitError::Malformed("variant layout"));
+            };
+            let mut arms = Vec::new();
+            for (tag, fields) in tags.iter().enumerate() {
+                let mut arm = Code::new();
+                for (ty, offset) in layout_slots(fields, layout::PAYLOAD) {
+                    push_child(shared, ty, offset, &mut arm)?;
+                }
+                if !arm.is_empty() {
+                    arms.push((tag as u32, arm));
+                }
+            }
+            let tag = vec![
+                Instruction::LocalGet(object),
+                Instruction::I32Load(memarg(layout::TAG, 2)),
+            ];
+            code.extend(branch_on_tag(tag, arms, Code::new(), BlockType::Empty));
         }
     }
+    code.push(Instruction::LocalGet(pending));
+    // One scratch local, past the two parameters, holds the child being released.
+    let mut f = Function::new([(1, ValType::I32)]);
     for instr in &code {
         f.instruction(instr);
     }
     f.instruction(&Instruction::End);
     Ok(f)
+}
+
+/// Release the field of type `ty` at `offset` of the object being dropped
+/// (local 0). A pointer whose count reaches zero is pushed on the pending list
+/// (local 1) instead of being dropped here: its count word, dead from now on,
+/// links to the previous head, and the high bits of its `_pad` word hold the
+/// table slot of its own drop function until `drop_loop` pops it.
+fn push_child(shared: &mut Shared, ty: MTy, offset: u32, out: &mut Code) -> Result<(), EmitError> {
+    use Instruction::*;
+    let MTy::Ptr(kind) = ty else {
+        return Ok(());
+    };
+    let (object, pending, child) = (0, 1, 2);
+    out.extend([
+        LocalGet(object),
+        I32Load(memarg(offset, 2)),
+        LocalSet(child),
+    ]);
+    adjust_rc(child, I32Sub, true, out);
+    out.extend([
+        LocalGet(child),
+        rc_load(),
+        I32Eqz,
+        If(BlockType::Empty),
+        LocalGet(child),
+        LocalGet(pending),
+        rc_store(),
+        LocalGet(child),
+        LocalGet(child),
+        I32Load(memarg(layout::CLASS, 2)),
+    ]);
+    match shared.dropper_slot(kind) {
+        Some(slot) => {
+            if slot >= 1 << (32 - DROP_SLOT_SHIFT) {
+                return Err(EmitError::Unsupported("more than 2^24 table entries"));
+            }
+            out.push(I32Const((slot << DROP_SLOT_SHIFT) as i32));
+        }
+        None => out.extend([
+            LocalGet(child),
+            I32Load(memarg(layout::DROP_FN, 2)),
+            I32Const(DROP_SLOT_SHIFT as i32),
+            I32Shl,
+        ]),
+    }
+    out.extend([
+        I32Or,
+        I32Store(memarg(layout::CLASS, 2)),
+        LocalGet(child),
+        LocalSet(pending),
+        End,
+        End,
+    ]);
+    Ok(())
+}
+
+/// `_pad` keeps the allocator's size class in its low `DROP_SLOT_SHIFT` bits.
+const DROP_SLOT_SHIFT: u32 = 8;
+
+/// `drop_loop(object: i32, drop_fn: i32)`: tear down an object whose count just
+/// reached zero, and everything that dies with it, in constant stack. Each
+/// object's drop function pushes its dying children on a list threaded through
+/// the dead objects themselves (see `push_child`); this loop frees the object,
+/// pops the next, and repeats until the list is empty. Teardown of a
+/// million-element chain therefore costs one call frame, not a million.
+fn drop_loop(shared: &mut Shared) -> Function {
+    use Instruction::*;
+    let (object, drop_fn, pending) = (0, 1, 2);
+    let drop_type = shared.drop_type();
+    let class = memarg(layout::CLASS, 2);
+    let mut f = Function::new([(1, ValType::I32)]);
+    let code = [
+        Block(BlockType::Empty),
+        Loop(BlockType::Empty),
+        LocalGet(object),
+        LocalGet(pending),
+        LocalGet(drop_fn),
+        CallIndirect {
+            type_index: drop_type,
+            table_index: 0,
+        },
+        LocalSet(pending),
+        LocalGet(object),
+        Call(shared.free_fn),
+        LocalGet(pending),
+        I32Eqz,
+        BrIf(1),
+        // Pop: the dead object's count word links to the next one, and is
+        // zero again once read, as `free` requires.
+        LocalGet(pending),
+        LocalSet(object),
+        LocalGet(object),
+        rc_load(),
+        LocalSet(pending),
+        LocalGet(object),
+        I32Const(0),
+        rc_store(),
+        LocalGet(object),
+        I32Load(class),
+        I32Const(DROP_SLOT_SHIFT as i32),
+        I32ShrU,
+        LocalSet(drop_fn),
+        LocalGet(object),
+        LocalGet(object),
+        I32Load(class),
+        I32Const((1 << DROP_SLOT_SHIFT) - 1),
+        I32And,
+        I32Store(class),
+        Br(0),
+        End,
+        End,
+        End,
+    ];
+    for instr in &code {
+        f.instruction(instr);
+    }
+    f
+}
+
+/// `block` leaving the value of `arms[i]`'s code, where `tag` leaves the
+/// variant's tag on the stack: a `br_table` over nested blocks, arm `i`
+/// outside block `i`. A tag with no arm, or one past the table, runs `default`.
+fn branch_on_tag(tag: Code, arms: Vec<(u32, Code)>, default: Code, block: BlockType) -> Code {
+    use Instruction::*;
+    let n = arms.len() as u32;
+    let mut out = vec![Block(block), Block(BlockType::Empty)];
+    out.extend((0..n).map(|_| Block(BlockType::Empty)));
+    out.extend(tag);
+    let width = arms.iter().map(|(tag, _)| tag + 1).max().unwrap_or(0);
+    let mut table = vec![n; width as usize];
+    for (i, (tag, _)) in arms.iter().enumerate().rev() {
+        table[*tag as usize] = i as u32;
+    }
+    out.push(BrTable(table.into(), n));
+    for (i, (_, code)) in arms.into_iter().enumerate() {
+        out.push(End);
+        out.extend(code);
+        out.push(Br(n - i as u32));
+    }
+    out.push(End);
+    out.extend(default);
+    out.push(End);
+    out
 }
 
 pub(crate) fn memarg(offset: u32, align: u32) -> MemArg {
@@ -485,16 +724,14 @@ fn retain(p: u32, out: &mut Code) {
     out.push(Instruction::End);
 }
 
-/// A count that reaches zero runs the object's drop function, which releases
-/// its children, and then returns the block to the allocator. A count already
-/// at zero is a double release and traps.
+/// A count that reaches zero hands the object to `drop_loop`, which releases
+/// what it holds and frees it. A count already at zero is a double release and
+/// traps.
 fn release(shared: &mut Shared, p: u32, kind: HeapKind, out: &mut Code) -> Result<(), EmitError> {
-    let dropper = match kind {
-        HeapKind::Closure(_) => None,
-        HeapKind::Record(l) => Some(shared.helper(Helper::RecordDrop(l))),
-        HeapKind::Str => Some(shared.helper(Helper::Noop)),
-        _ => return Err(EmitError::Unsupported("dropping this heap object")),
-    };
+    let drop_loop = shared
+        .drop_loop_fn
+        .ok_or(EmitError::Malformed("drop without a drop runtime"))?;
+    let slot = shared.dropper_slot(kind);
     adjust_rc(p, Instruction::I32Sub, true, out);
     out.extend([
         Instruction::LocalGet(p),
@@ -503,24 +740,15 @@ fn release(shared: &mut Shared, p: u32, kind: HeapKind, out: &mut Code) -> Resul
         Instruction::If(BlockType::Empty),
         Instruction::LocalGet(p),
     ]);
-    match dropper {
-        Some(index) => out.push(Instruction::Call(index)),
-        None => {
-            let type_index = shared.drop_type();
-            shared.indirect = true;
-            out.extend([
-                Instruction::LocalGet(p),
-                Instruction::I32Load(memarg(layout::DROP_FN, 2)),
-                Instruction::CallIndirect {
-                    type_index,
-                    table_index: 0,
-                },
-            ]);
-        }
+    match slot {
+        Some(slot) => out.push(Instruction::I32Const(slot as i32)),
+        None => out.extend([
+            Instruction::LocalGet(p),
+            Instruction::I32Load(memarg(layout::DROP_FN, 2)),
+        ]),
     }
     out.extend([
-        Instruction::LocalGet(p),
-        Instruction::Call(shared.free_fn),
+        Instruction::Call(drop_loop),
         Instruction::End,
         Instruction::End,
     ]);
@@ -623,7 +851,7 @@ struct FuncCx<'a, 'p> {
 
 type Temps = Option<Vec<Option<u32>>>;
 
-impl FuncCx<'_, '_> {
+impl<'p> FuncCx<'_, 'p> {
     fn scratch(&mut self, vt: ValType) -> u32 {
         let index = self.next_local;
         self.next_local += 1;
@@ -963,12 +1191,73 @@ impl FuncCx<'_, '_> {
                 out.push(Instruction::Unreachable);
                 Ok(None)
             }
-            Expr::Switch(..) => Err(EmitError::Unsupported("switch")),
-            Expr::AllocVariant(..)
-            | Expr::Payload(..)
-            | Expr::Unpack(..)
-            | Expr::ReuseVariant(..)
-            | Expr::Free(_) => Err(EmitError::Unsupported("heap objects")),
+            Expr::Switch(x, arms, default) => {
+                let (ptr, kind) = self.pointer(*x)?;
+                if !matches!(kind, HeapKind::Variant(_) | HeapKind::List(_)) {
+                    return Err(EmitError::Malformed("switch on a non-variant"));
+                }
+                let mut ty = None;
+                let mut lowered = Vec::new();
+                for (tag, block) in arms {
+                    let mut code = Code::new();
+                    ty = ty.or(self.lower(block, &mut code)?);
+                    lowered.push((*tag, code));
+                }
+                let mut default_code = Code::new();
+                ty = ty.or(self.lower(default, &mut default_code)?);
+                let block = match ty.and_then(val_type) {
+                    Some(vt) => BlockType::Result(vt),
+                    None => BlockType::Empty,
+                };
+                let tag = vec![
+                    Instruction::LocalGet(ptr),
+                    Instruction::I32Load(memarg(layout::TAG, 2)),
+                ];
+                out.extend(branch_on_tag(tag, lowered, default_code, block));
+                if ty.is_none() {
+                    out.push(Instruction::Unreachable);
+                }
+                Ok(ty)
+            }
+            Expr::AllocVariant(l, tag, fields) => {
+                let types = self.payload_types(*l, *tag)?;
+                if types.len() != fields.len() {
+                    return Err(EmitError::Malformed("variant field count"));
+                }
+                let result = Some(MTy::Ptr(HeapKind::Variant(*l)));
+                if fields.is_empty() {
+                    out.push(Instruction::I32Const(self.shared.nullary_cell(*tag)? as i32));
+                    return Ok(result);
+                }
+                let Some(temps) = self.evaluate(fields, out)? else {
+                    return Ok(None);
+                };
+                let ptr = self.allocate(layout::object_size(layout::PAYLOAD, fields.len()), out);
+                out.extend([
+                    Instruction::LocalGet(ptr),
+                    Instruction::I32Const(*tag as i32),
+                    Instruction::I32Store(memarg(layout::TAG, 2)),
+                ]);
+                let slots: Vec<_> = types.iter().copied().zip(temps).collect();
+                self.fill(ptr, &slots, layout::PAYLOAD, out);
+                out.push(Instruction::LocalGet(ptr));
+                Ok(result)
+            }
+            Expr::Payload(x, tag, i) => {
+                let (ptr, kind) = self.pointer(*x)?;
+                let (HeapKind::Variant(l) | HeapKind::List(l)) = kind else {
+                    return Err(EmitError::Malformed("payload of a non-variant"));
+                };
+                let ty = *self
+                    .payload_types(l, *tag)?
+                    .get(*i)
+                    .ok_or(EmitError::Malformed("payload index"))?;
+                self.load_slot(ptr, ty, layout::slot(layout::PAYLOAD, *i), out);
+                Ok(Some(ty))
+            }
+            Expr::Unpack(..) | Expr::ReuseVariant(..) | Expr::Free(_) => {
+                Err(EmitError::Unsupported("in-place variant reuse"))
+            }
             Expr::StrLit(d) => {
                 let address = *self
                     .shared
@@ -978,6 +1267,16 @@ impl FuncCx<'_, '_> {
                 out.push(Instruction::I32Const(address as i32));
                 Ok(Some(MTy::Ptr(HeapKind::Str)))
             }
+        }
+    }
+
+    fn payload_types(&self, layout: LayoutId, tag: u32) -> Result<&'p [MTy], EmitError> {
+        match self.program.layouts.get(layout.0 as usize) {
+            Some(Layout::Variant(tags)) => tags
+                .get(tag as usize)
+                .map(Vec::as_slice)
+                .ok_or(EmitError::Malformed("variant tag")),
+            _ => Err(EmitError::Malformed("variant layout")),
         }
     }
 

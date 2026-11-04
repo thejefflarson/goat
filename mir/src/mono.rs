@@ -1,27 +1,25 @@
 //! Monomorphization: checked HIR to ground-typed MIR, one `Func` per
 //! `(binding, ground type)` specialization.
 
+use crate::canon::{canonical, ground_fields};
 use crate::mir::*;
 use crate::rc::insert_rc;
 use goat_checker::captures::for_each_child;
-use goat_checker::hir::{self, BinOp, ExprId, ExprKind, Param, Symbol};
+use goat_checker::hir::{self, BinOp, ExprId, ExprKind, Param, PatternPayload, Symbol};
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 type Subst = HashMap<TypeVar, Ty>;
 
 /// Lower a checked program to MIR and insert its reference counting.
 /// Constructs whose runtime support has not landed yet (ADR 0005) come back as
-/// spanned diagnostics; well-typed input never panics. Variants and `match`
-/// are staged out until their lowering lands.
+/// spanned diagnostics; well-typed input never panics.
 pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
-    let staged = unsupported_variants(&checked.root);
-    if !staged.is_empty() {
-        return Err(staged);
-    }
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
+    let mut labels = BTreeSet::new();
+    collect_tags(&checked.root, &mut labels);
     let mut m = Mono {
         typed: &checked.typed,
         lambdas,
@@ -31,6 +29,8 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         work: Vec::new(),
         sigs: Vec::new(),
         layouts: Vec::new(),
+        variants: HashMap::new(),
+        tags: labels.into_iter().zip(0..).collect(),
         wrappers: HashMap::new(),
         errors: Vec::new(),
         data: Vec::new(),
@@ -82,23 +82,18 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     Ok(program)
 }
 
-/// A diagnostic for every tag and `match`, found before any lowering so no
-/// variant type ever reaches it.
-fn unsupported_variants(root: &hir::Expr) -> Vec<GoatError> {
-    fn scan(e: &hir::Expr, out: &mut Vec<GoatError>) {
-        let message = match &e.kind {
-            ExprKind::Tag { .. } => Some("variants are not supported yet (Phase 7)"),
-            ExprKind::Match { .. } => Some("`match` is not supported yet (Phase 7)"),
-            _ => None,
-        };
-        if let Some(message) = message {
-            out.push(GoatError::new(e.span, message));
+/// Every tag label in the program, constructed or matched.
+fn collect_tags(e: &hir::Expr, out: &mut BTreeSet<String>) {
+    match &e.kind {
+        ExprKind::Tag { name, .. } => {
+            out.insert(name.clone());
         }
-        for_each_child(e, &mut |c| scan(c, out));
+        ExprKind::Match { arms, .. } => {
+            out.extend(arms.iter().map(|a| a.pattern.tag.clone()));
+        }
+        _ => {}
     }
-    let mut errors = Vec::new();
-    scan(root, &mut errors);
-    errors
+    for_each_child(e, &mut |c| collect_tags(c, out));
 }
 
 #[derive(Clone)]
@@ -164,6 +159,13 @@ impl<'a> Collector<'a> {
             ExprKind::Func { params, body } => {
                 self.lambda(Target::Anon(e.id), &typed.node_types[&e.id], params, body);
             }
+            ExprKind::Match { arms, .. } => {
+                for binder in arms.iter().flat_map(|a| a.pattern.payload.binders()) {
+                    self.var_tys
+                        .insert(binder.symbol, &typed.binder_types[&binder.symbol]);
+                }
+                for_each_child(e, &mut |c| self.walk(c));
+            }
             _ => for_each_child(e, &mut |c| self.walk(c)),
         }
     }
@@ -219,6 +221,13 @@ struct Mono<'a> {
     work: Vec<(FuncId, Target, Subst, Vec<Ty>)>,
     sigs: Vec<Sig>,
     layouts: Vec<Layout>,
+    /// The layout of each variant type, keyed by its canonical form. A
+    /// recursive layout names itself, so a layout is registered here before its
+    /// payloads are lowered: reaching the same type again finds the id instead
+    /// of lowering it forever.
+    variants: HashMap<Ty, LayoutId>,
+    /// The global tag number of each label, in sorted label order.
+    tags: HashMap<String, u32>,
     /// The zero-capture closure wrapper for each function used as a value. The
     /// wrappers are the funcref-table members: the functions with an `env`.
     wrappers: HashMap<FuncId, FuncId>,
@@ -256,24 +265,41 @@ impl FnCx {
 
 impl Mono<'_> {
     /// Apply `subst`, defaulting unconstrained type variables to `Unit` and
-    /// row variables to the empty row.
+    /// row variables to the empty row. The result is canonical (see
+    /// `canon::canonical`), so equal types are `==` and safe to key on.
     fn ground(&self, ty: &Ty, subst: &Subst) -> Ty {
+        canonical(&self.ground_in(ty, subst, &mut Vec::new()))
+    }
+
+    /// `bound` holds the `μ` binders enclosing `ty`; they are not in `subst`
+    /// and stay as variables.
+    fn ground_in(&self, ty: &Ty, subst: &Subst, bound: &mut Vec<TypeVar>) -> Ty {
         match ty {
+            Ty::Var(v) if bound.contains(v) => ty.clone(),
             Ty::Var(v) => subst.get(v).cloned().unwrap_or(Ty::Unit),
             Ty::Func(args, ret) => Ty::Func(
-                args.iter().map(|a| self.ground(a, subst)).collect(),
-                Box::new(self.ground(ret, subst)),
+                args.iter()
+                    .map(|a| self.ground_in(a, subst, bound))
+                    .collect(),
+                Box::new(self.ground_in(ret, subst, bound)),
             ),
-            Ty::Record(row) => Ty::Record(self.ground_row(row, subst)),
+            Ty::Record(row) => Ty::Record(self.ground_row(row, subst, bound)),
+            Ty::Variant(row) => Ty::Variant(self.ground_row(row, subst, bound)),
+            Ty::Rec(binder, body) => {
+                bound.push(*binder);
+                let body = self.ground_in(body, subst, bound);
+                bound.pop();
+                Ty::Rec(*binder, Box::new(body))
+            }
             other => other.clone(),
         }
     }
 
     /// Ground `row` into a closed row with its fields stably sorted by label,
     /// the order of its layout slots.
-    fn ground_row(&self, row: &Row, subst: &Subst) -> Row {
+    fn ground_row(&self, row: &Row, subst: &Subst, bound: &mut Vec<TypeVar>) -> Row {
         let mut fields = Vec::new();
-        self.flatten_row(row, subst, &mut fields);
+        self.flatten_row(row, subst, bound, &mut fields);
         fields.sort_by(|a, b| a.0.cmp(&b.0));
         fields
             .into_iter()
@@ -285,17 +311,23 @@ impl Mono<'_> {
             })
     }
 
-    fn flatten_row(&self, row: &Row, subst: &Subst, out: &mut Vec<(String, Ty)>) {
+    fn flatten_row(
+        &self,
+        row: &Row,
+        subst: &Subst,
+        bound: &mut Vec<TypeVar>,
+        out: &mut Vec<(String, Ty)>,
+    ) {
         match row {
             Row::Empty => {}
             Row::Var(v) => {
-                if let Some(Ty::Record(bound)) = subst.get(v) {
-                    self.flatten_row(bound, subst, out);
+                if let Some(Ty::Record(tail) | Ty::Variant(tail)) = subst.get(v) {
+                    self.flatten_row(tail, subst, bound, out);
                 }
             }
             Row::Extend { label, field, rest } => {
-                out.push((label.clone(), self.ground(field, subst)));
-                self.flatten_row(rest, subst, out);
+                out.push((label.clone(), self.ground_in(field, subst, bound)));
+                self.flatten_row(rest, subst, bound, out);
             }
         }
     }
@@ -346,11 +378,41 @@ impl Mono<'_> {
                 MTy::Ptr(HeapKind::Record(LayoutId(id as u32)))
             }
             Ty::Str => MTy::Ptr(HeapKind::Str),
-            Ty::Variant(_) | Ty::Rec(..) => {
-                unreachable!("variants are rejected before lowering")
-            }
+            Ty::Variant(_) => MTy::Ptr(HeapKind::Variant(self.variant_layout(canonical(ty)))),
+            Ty::Rec(..) => match ty.unfold_head() {
+                Ty::Variant(_) => MTy::Ptr(HeapKind::Variant(self.variant_layout(canonical(ty)))),
+                // A `μ` over a record or function: the cycle still passes
+                // through a variant, which cuts it.
+                Ty::Rec(..) => MTy::Unit,
+                head => self.lower_ty(&head),
+            },
             Ty::Var(_) => unreachable!("type variable survived grounding"),
         }
+    }
+
+    /// The layout of the variant type `key` (canonical). Registered before its
+    /// payloads are lowered, so a payload that mentions `key` again resolves to
+    /// this id; every cycle in a type crosses a variant, so lowering ends.
+    fn variant_layout(&mut self, key: Ty) -> LayoutId {
+        if let Some(&id) = self.variants.get(&key) {
+            return id;
+        }
+        let id = LayoutId(self.layouts.len() as u32);
+        self.layouts.push(Layout::Variant(Vec::new()));
+        self.variants.insert(key.clone(), id);
+        let Ty::Variant(row) = key.unfold_head() else {
+            unreachable!("a variant key unfolds to a variant");
+        };
+        let mut payloads = vec![Vec::new(); self.tags.len()];
+        for (label, payload) in ground_fields(&row) {
+            let fields = payload_fields(payload)
+                .iter()
+                .map(|t| self.lower_ty(t))
+                .collect();
+            payloads[self.tags[label] as usize] = fields;
+        }
+        self.layouts[id.0 as usize] = Layout::Variant(payloads);
+        id
     }
 
     fn specialize(&mut self, cx: &FnCx, target: Target, use_id: ExprId) -> (FuncId, Ty) {
@@ -613,17 +675,18 @@ impl Mono<'_> {
                     .collect();
                 Expr::AllocRecord(layout, values)
             }
-            ExprKind::Tag { .. } | ExprKind::Match { .. } => {
-                unreachable!("variants are rejected before lowering")
-            }
+            ExprKind::Tag { name, payload } => self.tag(cx, e, name, payload.as_deref()),
+            ExprKind::Match {
+                scrutinee,
+                arms,
+                else_branch,
+            } => self.match_(cx, scrutinee, arms, else_branch.as_deref(), tail),
             ExprKind::Field { record, label } => {
                 let ty = self.ground(&self.typed.node_types[&record.id], &cx.subst);
-                let Ty::Record(row) = &ty else {
+                let Ty::Record(row) = ty.unfold_head() else {
                     unreachable!("field access on a non-record");
                 };
-                let index = ground_fields(row)
-                    .position(|(l, _)| l == label)
-                    .expect("checked record has the field");
+                let index = field_index(&row, label);
                 let borrowed = match &record.kind {
                     ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
                     _ => None,
@@ -638,6 +701,166 @@ impl Mono<'_> {
                 }
             }
         }
+    }
+
+    /// `Name`, `Name(arg)` or `Name(a, b, ...)`: allocate the variant cell with
+    /// the payload stored flat in its slots.
+    fn tag(
+        &mut self,
+        cx: &mut FnCx,
+        e: &hir::Expr,
+        name: &str,
+        payload: Option<&hir::Expr>,
+    ) -> Expr {
+        let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+        let MTy::Ptr(HeapKind::Variant(layout)) = self.lower_ty(&ty) else {
+            unreachable!("variant type lowers to a variant pointer");
+        };
+        let tag = self.tags[name];
+        let Some(payload) = payload else {
+            return Expr::AllocVariant(layout, tag, Vec::new());
+        };
+        let payload_ty = self.ground(&self.typed.node_types[&payload.id], &cx.subst);
+        let Some(positional) = positional_fields(&payload_ty) else {
+            let value = self.expr(cx, payload, false);
+            return if payload_ty == Ty::Unit {
+                Expr::Let(
+                    cx.fresh(),
+                    Box::new(value),
+                    Box::new(Expr::AllocVariant(layout, tag, Vec::new())),
+                )
+            } else {
+                Expr::AllocVariant(layout, tag, vec![value])
+            };
+        };
+        match &payload.kind {
+            // A multi-argument tag: its record literal is labelled in
+            // argument order, so evaluating it in order fills the slots in
+            // order.
+            ExprKind::Record { fields } => {
+                let values = fields.iter().map(|(_, v)| self.expr(cx, v, false));
+                Expr::AllocVariant(layout, tag, values.collect())
+            }
+            // A record of the same shape built elsewhere: take it apart.
+            _ => {
+                let Ty::Record(row) = payload_ty.unfold_head() else {
+                    unreachable!("positional payloads are records");
+                };
+                let record = cx.fresh();
+                let value = self.expr(cx, payload, false);
+                let slots = (0..positional.len())
+                    .map(|n| Expr::Field(record, field_index(&row, &n.to_string())))
+                    .collect();
+                Expr::Let(
+                    record,
+                    Box::new(value),
+                    Box::new(Expr::AllocVariant(layout, tag, slots)),
+                )
+            }
+        }
+    }
+
+    /// `match scrutinee do arms else … done` as a `Switch` on the cell's tag.
+    /// Each arm borrows its binders out of the cell with `Payload`; without an
+    /// `else`, the checker has made the arms exhaustive, so the last one is the
+    /// default.
+    fn match_(
+        &mut self,
+        cx: &mut FnCx,
+        scrutinee: &hir::Expr,
+        arms: &[hir::MatchArm],
+        else_branch: Option<&hir::Expr>,
+        tail: bool,
+    ) -> Expr {
+        let scrutinee_ty = self.ground(&self.typed.node_types[&scrutinee.id], &cx.subst);
+        let Ty::Variant(row) = scrutinee_ty.unfold_head() else {
+            unreachable!("match on a non-variant");
+        };
+        let borrowed = match &scrutinee.kind {
+            ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
+            _ => None,
+        };
+        let (local, bound) = match borrowed {
+            Some(local) => (local, None),
+            None => (cx.fresh(), Some(self.expr(cx, scrutinee, false))),
+        };
+
+        let mut lowered: Vec<(u32, Expr)> = Vec::new();
+        for arm in arms {
+            let pattern = &arm.pattern;
+            let tag = self.tags[&pattern.tag];
+            let payload_ty = ground_fields(&row)
+                .find(|(label, _)| **label == pattern.tag)
+                .map(|(_, ty)| ty.clone())
+                .expect("checked match arm names a tag of the scrutinee");
+            let bindings = self.bind_payload(cx, local, tag, &pattern.payload, &payload_ty);
+            let body = self.expr(cx, &arm.body, tail);
+            let arm = bindings.into_iter().rev().fold(body, |body, (l, v)| {
+                Expr::Let(l, Box::new(v), Box::new(body))
+            });
+            lowered.push((tag, arm));
+        }
+        let default = match else_branch {
+            Some(e) => self.expr(cx, e, tail),
+            None => lowered
+                .pop()
+                .map_or_else(|| Expr::Trap("no arm matches".into()), |(_, arm)| arm),
+        };
+        let switch = Expr::Switch(local, lowered, Box::new(default));
+        match bound {
+            Some(value) => Expr::Let(local, Box::new(value), Box::new(switch)),
+            None => switch,
+        }
+    }
+
+    /// The `Let` bindings that give an arm's binders their values from the
+    /// payload of tag `tag` in the cell `cell`.
+    fn bind_payload(
+        &mut self,
+        cx: &mut FnCx,
+        cell: Local,
+        tag: u32,
+        pattern: &PatternPayload,
+        payload_ty: &Ty,
+    ) -> Vec<(Local, Expr)> {
+        let mut bindings = Vec::new();
+        let mut bind = |cx: &mut FnCx, param: &Param, value: Expr| {
+            let local = cx.fresh();
+            cx.locals.insert(param.symbol, local);
+            bindings.push((local, value));
+        };
+        match pattern {
+            PatternPayload::None => {}
+            PatternPayload::Fields(fields) => {
+                for (label, param) in fields {
+                    let slot = label.parse().expect("pattern labels are positional");
+                    bind(cx, param, Expr::Payload(cell, tag, slot));
+                }
+            }
+            PatternPayload::Whole(param) => {
+                let head = payload_ty.unfold_head();
+                let value = match (&head, positional_fields(payload_ty)) {
+                    (Ty::Unit, _) => Expr::Const(Const::Unit),
+                    // The whole payload of a multi-argument tag is a record;
+                    // the cell stores it flat, so build it from the slots.
+                    (Ty::Record(row), Some(_)) => {
+                        let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(payload_ty) else {
+                            unreachable!("record type lowers to a record pointer");
+                        };
+                        let slots = ground_fields(row)
+                            .map(|(label, _)| {
+                                let slot = label.parse().expect("labels are positional");
+                                Expr::Payload(cell, tag, slot)
+                            })
+                            .collect();
+                        Expr::AllocRecord(layout, slots)
+                    }
+                    _ => Expr::Payload(cell, tag, 0),
+                };
+                bind(cx, param, value);
+            }
+        }
+        bindings
     }
 
     fn app(&mut self, cx: &mut FnCx, callee: &hir::Expr, args: &[hir::Expr], tail: bool) -> Expr {
@@ -669,60 +892,110 @@ impl Mono<'_> {
 
 /// Recover the substitution that makes `template` equal the ground `actual`.
 fn match_ty(template: &Ty, actual: &Ty, subst: &mut Subst) {
+    match_ty_in(template, actual, subst, &mut HashSet::new());
+}
+
+/// `seen` holds the pairs of recursive types already being matched: unfolding
+/// a `μ` re-exposes the same `μ` one level down, so a repeated pair is
+/// matched coinductively, as the checker unifies them.
+fn match_ty_in(template: &Ty, actual: &Ty, subst: &mut Subst, seen: &mut HashSet<(Ty, Ty)>) {
     match (template, actual) {
         (Ty::Var(v), t) => {
             let prev = subst.insert(*v, t.clone());
-            debug_assert!(prev.is_none_or(|p| p == *t), "inconsistent instantiation");
+            debug_assert!(
+                prev.is_none_or(|p| canonical(&p) == canonical(t)),
+                "inconsistent instantiation"
+            );
+        }
+        (Ty::Rec(..), _) | (_, Ty::Rec(..)) => {
+            if seen.insert((template.clone(), actual.clone())) {
+                match_ty_in(&template.unfold_head(), &actual.unfold_head(), subst, seen);
+            }
         }
         (Ty::Func(ta, tr), Ty::Func(aa, ar)) => {
             for (t, a) in ta.iter().zip(aa) {
-                match_ty(t, a, subst);
+                match_ty_in(t, a, subst, seen);
             }
-            match_ty(tr, ar, subst);
+            match_ty_in(tr, ar, subst, seen);
         }
         (Ty::Record(template), Ty::Record(actual)) => {
-            let mut rest: Vec<_> = ground_fields(actual).collect();
-            let mut row = template;
-            loop {
-                match row {
-                    Row::Extend {
-                        label,
-                        field,
-                        rest: next,
-                    } => {
-                        if let Some(at) = rest.iter().position(|(l, _)| *l == label) {
-                            match_ty(field, rest.remove(at).1, subst);
-                        }
-                        row = next;
-                    }
-                    Row::Var(v) => {
-                        let tail =
-                            rest.into_iter()
-                                .rev()
-                                .fold(Row::Empty, |r, (l, f)| Row::Extend {
-                                    label: l.clone(),
-                                    field: Box::new(f.clone()),
-                                    rest: Box::new(r),
-                                });
-                        subst.insert(*v, Ty::Record(tail));
-                        break;
-                    }
-                    Row::Empty => break,
-                }
-            }
+            match_row(template, actual, subst, seen, Ty::Record);
+        }
+        (Ty::Variant(template), Ty::Variant(actual)) => {
+            match_row(template, actual, subst, seen, Ty::Variant);
         }
         (t, a) => debug_assert_eq!(t, a, "template does not match use site"),
     }
 }
 
-/// The `(label, type)` pairs of a ground row, in layout order.
-fn ground_fields(row: &Row) -> impl Iterator<Item = (&String, &Ty)> {
-    let mut next = Some(row);
-    std::iter::from_fn(move || match next? {
-        Row::Extend { label, field, rest } => {
-            next = Some(rest);
-            Some((label, &**field))
+/// Match the fields `template` names against those of `actual`; its tail
+/// variable, if open, takes the rest, wrapped by `wrap` into the row's type.
+fn match_row(
+    template: &Row,
+    actual: &Row,
+    subst: &mut Subst,
+    seen: &mut HashSet<(Ty, Ty)>,
+    wrap: fn(Row) -> Ty,
+) {
+    let mut rest: Vec<_> = ground_fields(actual).collect();
+    let mut row = template;
+    loop {
+        match row {
+            Row::Extend {
+                label,
+                field,
+                rest: next,
+            } => {
+                if let Some(at) = rest.iter().position(|(l, _)| *l == label) {
+                    match_ty_in(field, rest.remove(at).1, subst, seen);
+                }
+                row = next;
+            }
+            Row::Var(v) => {
+                let tail = rest
+                    .into_iter()
+                    .rev()
+                    .fold(Row::Empty, |r, (l, f)| Row::Extend {
+                        label: l.clone(),
+                        field: Box::new(f.clone()),
+                        rest: Box::new(r),
+                    });
+                subst.insert(*v, wrap(tail));
+                break;
+            }
+            Row::Empty => break,
         }
-        Row::Empty | Row::Var(_) => None,
-    })
+    }
+}
+
+/// The layout slot of `label` in a ground record row.
+fn field_index(row: &Row, label: &str) -> usize {
+    ground_fields(row)
+        .position(|(l, _)| l == label)
+        .expect("checked record has the field")
+}
+
+/// The fields of a payload record labelled exactly `0`, `1`, ... (what a
+/// multi-argument tag builds, which no source record can spell), in argument
+/// order.
+fn positional_fields(payload: &Ty) -> Option<Vec<Ty>> {
+    // A payload record that mentions its own variant is itself a `μ`.
+    let Ty::Record(row) = payload.unfold_head() else {
+        return None;
+    };
+    let mut fields = ground_fields(&row)
+        .map(|(label, ty)| Some((label.parse::<usize>().ok()?, ty.clone())))
+        .collect::<Option<Vec<_>>>()?;
+    fields.sort_by_key(|(n, _)| *n);
+    let dense = fields.iter().enumerate().all(|(i, (n, _))| i == *n);
+    (dense && !fields.is_empty()).then(|| fields.into_iter().map(|(_, ty)| ty).collect())
+}
+
+/// The slots a tag's payload occupies: none for `Unit`, one per argument for a
+/// positional record (stored flat, not behind a record), else one.
+fn payload_fields(payload: &Ty) -> Vec<Ty> {
+    match payload {
+        Ty::Unit => Vec::new(),
+        other => positional_fields(other).unwrap_or_else(|| vec![other.clone()]),
+    }
 }
