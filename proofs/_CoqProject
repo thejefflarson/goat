@@ -1,3 +1,6 @@
 -R . Goat
 Goat_ott.v
 GoatProofs.v
+GoatRows.v
+GoatDefs.v
+GoatMeta.v
