@@ -272,6 +272,55 @@ mod tests {
         assert!(ty.ends_with(&format!(", 1: {t}}}]) -> Number")), "{ty}");
     }
 
+    const SUM: &str = "sum = program(xs) do match xs do [] then 0 \
+         [first, ...rest] then first + sum(rest) done done ";
+
+    #[test]
+    fn list_patterns_infer_the_same_recursive_variant_as_tag_patterns() {
+        let from_tags = type_of(&format!("{LENGTH} length")).unwrap();
+        let from_lists = type_of(
+            "length = program(xs) do match xs do [] then 0 \
+             [first, ...rest] then 1 + length(rest) done done length",
+        )
+        .unwrap();
+        assert_eq!(from_lists, from_tags);
+    }
+
+    #[test]
+    fn list_literals_type_as_links_ending_in_empty() {
+        let ty = type_of("[]").unwrap();
+        assert_eq!(ty, type_of("Empty").unwrap());
+        let ty = type_of("[1, 2]").unwrap();
+        assert_eq!(ty, type_of("Link(1, Link(2, Empty))").unwrap());
+        assert_eq!(type_of(&format!("{SUM} sum([1, 2, 3])")).unwrap(), "Number");
+        assert_eq!(type_of(&format!("{SUM} sum([])")).unwrap(), "Number");
+    }
+
+    #[test]
+    fn nested_lists_check_and_flow_through_recursive_functions() {
+        let total = "total = program(xss) do match xss do [] then 0 \
+                     [xs, ...more] then sum(xs) + total(more) done done ";
+        let src = format!("{SUM} {total} total([[1, 2], [], [3]])");
+        assert_eq!(type_of(&src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn a_list_of_the_wrong_element_type_is_a_spanned_type_error() {
+        let src = format!("{SUM} sum([1, true])");
+        let errors = check(&src).err().expect("a type error");
+        assert!(errors[0].span.start >= SUM.len(), "{:?}", errors[0]);
+    }
+
+    #[test]
+    fn a_fixed_length_pattern_rejects_a_list_that_may_be_longer() {
+        let errors = check("[a, b] = [1, 2, 3] a").err().expect("an error");
+        assert!(errors[0].message.contains("doesn't handle"), "{errors:?}");
+        assert!(check("[a, b] = [1, 2] a").is_ok());
+        assert!(
+            check("f = program(xs) do match xs do [a, b] then a else 0 done done f([1])").is_ok()
+        );
+    }
+
     #[test]
     fn a_recursive_function_is_polymorphic_in_its_elements() {
         let src = format!(

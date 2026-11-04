@@ -244,6 +244,7 @@ fn examples_print_the_expected_output() {
         ("hello.goat", "hello, world"),
         ("lists.goat", "15"),
         ("spread.goat", "25"),
+        ("list_literals.goat", "29"),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
         let src = fs::read_to_string(&path).unwrap();
@@ -561,4 +562,95 @@ fn spread_and_destructuring_beside_variants() {
     let positional = "{tag, ...r} = {tag: Link(1, Empty), n: 2} \
                       match tag do Link(a, rest) then a + r.n done";
     assert_eq!(run(positional), "3");
+}
+
+const SUM: &str = "sum = program(xs) do match xs do [] then 0 \
+                   [first, ...rest] then first + sum(rest) done done ";
+
+#[test]
+fn list_literals_build_lists() {
+    assert_eq!(run(&format!("{SUM} sum([])")), "0");
+    assert_eq!(run(&format!("{SUM} sum([7])")), "7");
+    assert_eq!(run(&format!("{SUM} sum([1, 2, 3, 4, 5])")), "15");
+    assert_eq!(run(&format!("{SUM} sum([1, 2, 3,])")), "6");
+    assert_eq!(run(&format!("{SUM} n = 4 sum([n, n * 2, n + 1])")), "17");
+}
+
+#[test]
+fn list_literals_are_the_link_and_empty_tags() {
+    let src = format!("{LENGTH} length([1, 2, 3]) + length(Link(1, Link(2, [])))");
+    assert_eq!(run(&src), "5");
+    assert_eq!(run(&format!("{SUM} sum(Link(1, [2, 3]))")), "6");
+}
+
+#[test]
+fn nested_and_heap_lists_drop_cleanly() {
+    let total = "total = program(xss) do match xss do [] then 0 \
+                 [xs, ...more] then sum(xs) + total(more) done done ";
+    assert_eq!(
+        run(&format!("{SUM} {total} total([[1, 2], [], [3, 4, 5]])")),
+        "15"
+    );
+    let words = "len = program(xs) do match xs do [] then 0 \
+                 [w, ...more] then 1 + len(more) done done \
+                 len([\"a\", \"b\", \"c\"])";
+    assert_eq!(run(words), "3");
+}
+
+#[test]
+fn fixed_length_list_patterns() {
+    let src = "f = program(xs) do match xs do \
+                 [a, b] then a * 100 + b \
+                 [a] then a \
+                 [] then 0 \
+                 [a, ...rest] then 7 \
+               done done \
+               f([1, 2]) + f([5]) + f([]) + f([1, 2, 3])";
+    assert_eq!(run(src), "114");
+}
+
+#[test]
+fn a_list_pattern_with_an_else() {
+    let src = "f = program(xs) do match xs do [a, b] then a + b else 0 done done \
+               f([1, 2]) + f([1]) + f([1, 2, 3]) + f([])";
+    assert_eq!(run(src), "3");
+}
+
+#[test]
+fn a_rest_pattern_alone_matches_anything() {
+    let src = format!(
+        "{LENGTH} f = program(xs) do match xs do [] then 0 [...all] then length(all) done done \
+         f([4, 5, 6]) + f([])"
+    );
+    assert_eq!(run(&src), "3");
+}
+
+#[test]
+fn a_list_pattern_matches_a_computed_scrutinee() {
+    let src = format!("{SUM} match [1, 2, 3] do [] then 0 [a, ...rest] then a + sum(rest) done");
+    assert_eq!(run(&src), "6");
+}
+
+#[test]
+fn list_destructuring_and_parameters() {
+    assert_eq!(run("[a, b] = [3, 4] a * b"), "12");
+    assert_eq!(run("[first, ...rest] = [3, 4, 5] first"), "3");
+    let rest = format!("{SUM} [first, ...rest] = [3, 4, 5] sum(rest)");
+    assert_eq!(run(&rest), "9");
+    assert_eq!(
+        run("second = program([a, b]) do b done second([8, 9])"),
+        "9"
+    );
+    let two = "add = program([a, b], [c, ...rest]) do a + b + c done add([1, 2], [10, 20])";
+    assert_eq!(run(two), "13");
+}
+
+#[test]
+fn list_patterns_close_over_their_bindings() {
+    let src = "adder = program(xs) do match xs do \
+                 [n, ...rest] then program(k) do n + k done \
+                 [] then program(k) do k done \
+               done done \
+               adder([10, 20])(5) + adder([])(1)";
+    assert_eq!(run(src), "16");
 }

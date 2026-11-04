@@ -339,6 +339,84 @@ mod tests {
     }
 
     #[test]
+    fn parses_list_literals() {
+        parses_to! {
+            parser: GoatParser,
+            input: "[]",
+            rule: Rule::list,
+            tokens: [list(0, 2)]
+        }
+        parses_to! {
+            parser: GoatParser,
+            input: "[1, x]",
+            rule: Rule::list,
+            tokens: [list(0, 6, [arguments(1, 5, [
+                expr(1, 2, [number(1, 2)]),
+                expr(4, 5, [ident(4, 5)])
+            ])])]
+        }
+        use pest::Parser;
+        for src in ["[]", "[1,]", "[[1], [], [2, 3]]", "[f(1), a + 1]", "[1].x"] {
+            assert!(GoatParser::parse(Rule::goat, src).is_ok(), "failed: {src}");
+        }
+        for src in ["[,]", "[1,,2]", "[1", "1]"] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_err(),
+                "accepted: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_list_patterns() {
+        use pest::Parser;
+        for src in [
+            "[]",
+            "[a]",
+            "[a, b]",
+            "[a, ...rest]",
+            "[...rest]",
+            "[a, b,]",
+        ] {
+            assert!(
+                GoatParser::parse(Rule::list_pattern, src).is_ok(),
+                "failed: {src}"
+            );
+        }
+        for src in ["[...a, b]", "[a, ...b, ...c]", "[1]", "[Link]", "[a b]"] {
+            assert!(
+                GoatParser::parse(Rule::list_pattern, src).is_err(),
+                "accepted: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bracket_is_a_pattern_only_where_a_pattern_goes() {
+        use pest::Parser;
+        // Before `=` it destructures; anywhere else the same text is a literal.
+        let destructure = GoatParser::parse(Rule::goat, "[a, b] = xs a").unwrap();
+        assert_eq!(first_rule(destructure), Rule::destructure);
+        let literal = GoatParser::parse(Rule::goat, "[a, b]").unwrap();
+        assert_eq!(first_rule(literal), Rule::list);
+        for src in [
+            "match xs do [] then 0 [a, ...r] then a done",
+            "program([a, b], {x}, y) do a done",
+            "[first, ...rest] = [1, 2, 3] first",
+        ] {
+            assert!(GoatParser::parse(Rule::goat, src).is_ok(), "failed: {src}");
+        }
+    }
+
+    fn first_rule(pairs: pest::iterators::Pairs<Rule>) -> Rule {
+        pairs
+            .flatten()
+            .find(|p| !matches!(p.as_rule(), Rule::goat | Rule::expr))
+            .unwrap()
+            .as_rule()
+    }
+
+    #[test]
     fn parses_conditional() {
         parses_to! {
             parser: GoatParser,
