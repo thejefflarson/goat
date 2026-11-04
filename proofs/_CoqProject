@@ -4,3 +4,4 @@ GoatProofs.v
 GoatRows.v
 GoatDefs.v
 GoatMeta.v
+GoatSubst.v
