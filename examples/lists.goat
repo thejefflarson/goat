@@ -1,0 +1,27 @@
+# A list is just a recursive variant: `Link(first, rest)` or `Empty`.
+# `match` takes a value apart by its tag.
+length = program(xs) do
+  match xs do
+    Empty then 0
+    Link(first, rest) then 1 + length(rest)
+  done
+done
+
+total = program(xs) do
+  match xs do
+    Empty then 0
+    Link(first, rest) then first + total(rest)
+  done
+done
+
+map = program(f, xs) do
+  match xs do
+    Empty then Empty
+    Link(first, rest) then Link(f(first), map(f, rest))
+  done
+done
+
+double = program(n) do n * 2 done
+
+numbers = Link(1, Link(2, Link(3, Empty)))
+length(numbers) + total(map(double, numbers))

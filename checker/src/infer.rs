@@ -41,6 +41,9 @@ pub struct Typed {
     /// binding's value still mention the scheme's quantified variables.
     /// `Symbol`s are unique per binding site, so they key this map alone.
     pub schemes: HashMap<Symbol, Scheme>,
+    /// The type of every `match` pattern binder, in terms of the type variables
+    /// of the function it sits in (like a parameter's type).
+    pub binder_types: HashMap<Symbol, Ty>,
     /// Diagnostics that do not stop compilation.
     pub warnings: Vec<GoatError>,
 }
@@ -67,10 +70,16 @@ pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
                 (*symbol, scheme)
             })
             .collect();
+        let binder_types = inf
+            .binders
+            .iter()
+            .map(|(symbol, t)| (*symbol, inf.finish(t)))
+            .collect();
         Ok(Typed {
             root_ty,
             node_types,
             schemes,
+            binder_types,
             warnings,
         })
     } else {
@@ -87,6 +96,7 @@ struct Inferer {
     params: HashMap<Symbol, String>,
     node_types: HashMap<ExprId, Ty>,
     schemes: HashMap<Symbol, Scheme>,
+    binders: HashMap<Symbol, Ty>,
     constructed: Vec<(String, Span)>,
     matched: HashSet<String>,
     /// Pairs of types [`Inferer::unify_ty`] is already unifying or has unified,
@@ -689,6 +699,11 @@ impl Inferer {
         result.unwrap_or_else(|| self.fresh())
     }
 
+    fn bind_binder(&mut self, symbol: Symbol, ty: &Ty) {
+        self.env.insert(symbol, Scheme::mono(ty.clone()));
+        self.binders.insert(symbol, ty.clone());
+    }
+
     /// Type the binders of an arm's pattern, returning the payload type the
     /// arm expects.
     fn bind_payload(&mut self, payload: &PatternPayload) -> Ty {
@@ -696,14 +711,14 @@ impl Inferer {
             PatternPayload::None => Ty::Unit,
             PatternPayload::Whole(binder) => {
                 let ty = self.fresh();
-                self.env.insert(binder.symbol, Scheme::mono(ty.clone()));
+                self.bind_binder(binder.symbol, &ty);
                 ty
             }
             PatternPayload::Fields(fields) => {
                 let mut row = Row::Empty;
                 for (label, binder) in fields.iter().rev() {
                     let ty = self.fresh();
-                    self.env.insert(binder.symbol, Scheme::mono(ty.clone()));
+                    self.bind_binder(binder.symbol, &ty);
                     row = Row::Extend {
                         label: label.clone(),
                         field: Box::new(ty),

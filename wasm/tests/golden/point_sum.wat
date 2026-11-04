@@ -4,8 +4,11 @@
   (type (;2;) (func))
   (type (;3;) (func (result i32)))
   (type (;4;) (func (param i32) (result i32)))
+  (type (;5;) (func (param i32 i32)))
+  (type (;6;) (func (param i32 i32) (result i32)))
   (import "goat" "print_number" (func (;0;) (type 0) (param f64)))
   (import "goat" "print_bool" (func (;1;) (type 1) (param i32)))
+  (table (;0;) 1 1 funcref)
   (memory (;0;) 1)
   (global (;0;) (mut i32) i32.const 232)
   (global (;1;) (mut i32) i32.const 0)
@@ -13,6 +16,7 @@
   (export "goat_entry" (func 3))
   (export "goat_alloc" (func 4))
   (export "goat_live_allocs" (func 6))
+  (elem (;0;) (table 0) (i32.const 0) func 8)
   (func (;2;) (type 3) (result i32)
     (local i32 i32 i32 i32 i32)
     i32.const 3
@@ -58,9 +62,8 @@
       i32.eqz
       if ;; label = @2
         local.get 3
+        i32.const 0
         call 7
-        local.get 3
-        call 5
       end
     end
     local.get 4
@@ -233,8 +236,46 @@
   (func (;6;) (type 3) (result i32)
     global.get 1
   )
-  (func (;7;) (type 1) (param i32)
+  (func (;7;) (type 5) (param i32 i32)
     (local i32)
+    block ;; label = @1
+      loop ;; label = @2
+        local.get 0
+        local.get 2
+        local.get 1
+        call_indirect (type 6)
+        local.set 2
+        local.get 0
+        call 5
+        local.get 2
+        i32.eqz
+        br_if 1 (;@1;)
+        local.get 2
+        local.set 0
+        local.get 0
+        i32.load
+        local.set 2
+        local.get 0
+        i32.const 0
+        i32.store
+        local.get 0
+        i32.load offset=4
+        i32.const 8
+        i32.shr_u
+        local.set 1
+        local.get 0
+        local.get 0
+        i32.load offset=4
+        i32.const 255
+        i32.and
+        i32.store offset=4
+        br 0 (;@2;)
+      end
+    end
+  )
+  (func (;8;) (type 6) (param i32 i32) (result i32)
+    (local i32)
+    local.get 1
   )
   (data (;0;) (i32.const 8) "")
 )

@@ -42,6 +42,18 @@ The alternatives:
 - Deferred: a fully uniform runtime drop table, should one ever be needed, lands
   in the reserved word.
 
+### Amendment 2026-11-03 (#92, Phase 7 P7d)
+
+Iterative teardown borrows two header words of an object that is already dead.
+When a drop function finds a child's count reached zero, it pushes the child on
+a pending list: the child's `rc` word (now 0, and unreferenced) holds the link
+to the previous head, and the high 24 bits of `_pad` hold the funcref-table
+slot of the child's own drop function. `drop_loop` clears both before it calls
+`free`, so `free` still sees `rc == 0` and a bare size class, and a live or
+freed object never carries either. This is the "type/drop id in the reserved
+word" this ADR deferred, used only transiently and only on the wasm backend;
+objects still carry no type id while alive.
+
 ### Amendment 2026-11-03 (#131, Phase 6 P6b)
 
 The wasm free-list allocator (`wasm/src/allocator.rs`) now stores each block's

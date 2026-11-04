@@ -44,6 +44,11 @@ fn runs_the_examples() {
         concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/records.goat"),
     ]);
     assert_eq!(String::from_utf8(records.stdout).unwrap(), "7\n");
+    let lists = goat(&[
+        "run",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/lists.goat"),
+    ]);
+    assert_eq!(String::from_utf8(lists.stdout).unwrap(), "15\n");
 }
 
 #[test]

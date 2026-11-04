@@ -465,8 +465,9 @@ allocation or indirect call. The scheme below is the general fallback.)
 - `match` → load tag, `br_table`.
 - Mono keys must compare recursive types up to equivalence: canonicalize
   μ-types (minimize, hash-cons) before using them as keys.
-- Per-layout drop functions recurse through payloads (iteratively, so long
-  lists don't overflow the stack).
+- Per-layout drop functions release payloads iteratively (a pending list
+  threaded through the dead objects, drained by one loop), so long lists don't
+  overflow the stack. Implemented in P7d; see `docs/mir.md`.
 
 ## Phase 8 — Prelude, lists, and kid-facing features
 

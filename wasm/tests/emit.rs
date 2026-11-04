@@ -185,11 +185,15 @@ fn heap_starts_after_the_aligned_data_segment() {
 
 #[test]
 fn unsupported_heap_objects_and_bad_callees_are_rejected() {
-    let variant = program(vec![func(
+    let reuse = program(vec![func(
         MTy::Int,
-        let_(0, Expr::AllocVariant(VARIANT, 0, vec![]), int(0)),
+        let_(
+            0,
+            Expr::AllocVariant(VARIANT, 0, vec![]),
+            Expr::Unpack(Local(0), 0, vec![], Box::new(int(0))),
+        ),
     )]);
-    assert!(matches!(emit(&variant), Err(EmitError::Unsupported(_))));
+    assert!(matches!(emit(&reuse), Err(EmitError::Unsupported(_))));
     let not_a_closure = program(vec![func(MTy::Int, call_closure(int(0), vec![]))]);
     assert!(matches!(emit(&not_a_closure), Err(EmitError::Malformed(_))));
 }
@@ -392,7 +396,14 @@ fn allocator_runtime_is_exported_and_records_allocate_and_free_through_it() {
         root.contains("call 4"),
         "allocates through goat_alloc\n{root}"
     );
-    assert!(root.contains("call 5"), "releases through free\n{root}");
+    assert!(
+        root.contains("call 7"),
+        "releases through drop_loop\n{root}"
+    );
+    assert!(
+        func_body(&text, 7).contains("call 5"),
+        "drop_loop frees the block\n{text}"
+    );
     assert!(
         func_body(&text, 5).contains("memory.fill"),
         "free poisons the block\n{text}"
@@ -433,7 +444,7 @@ fn a_function_value_used_twice_shares_one_static_closure() {
 #[test]
 fn record_of_functions_validates() {
     let text = wat(&record_of_functions());
-    assert_eq!(text.matches("call_indirect").count(), 6, "{text}");
+    assert_eq!(text.matches("call_indirect").count(), 3, "{text}");
 }
 
 #[test]
@@ -555,8 +566,8 @@ fn string_programs_index_closure_bodies_past_three_imports() {
         "apply is func 2 + 3 imports\n{text}"
     );
     assert!(
-        text.contains("(i32.const 0) func 10 4"),
-        "table holds the noop helper (func 10) and double (func 1 + 3 imports)\n{text}"
+        text.contains("(i32.const 0) func 11 4"),
+        "table holds the noop helper (func 11) and double (func 1 + 3 imports)\n{text}"
     );
 }
 
@@ -595,4 +606,49 @@ fn mono_string_programs_emit_valid_modules() {
         let text = wat(&mono_program(src));
         assert!(text.contains("print_string"), "{src}\n{text}");
     }
+}
+
+const LENGTH: &str = "length = program(xs) do match xs do Empty then 0 \
+                      Link(first, rest) then 1 + length(rest) done done ";
+
+#[test]
+fn mono_variant_length_matches_golden() {
+    golden(
+        "variant_length",
+        &mono_program(&format!("{LENGTH} length(Link(1, Empty))")),
+    );
+}
+
+#[test]
+fn variant_programs_validate() {
+    for src in [
+        "Circle(5)",
+        "match Circle(5) do Circle(r) then r else 0 done",
+        "f = program(s) do match s do A then 1 B then 2 done done f(B)",
+        "size = program(t) do match t do Leaf then 1 \
+         Node(l, r) then size(l) + size(r) done done size(Node(Leaf, Leaf))",
+        "map = program(f, xs) do match xs do Empty then Empty \
+         Link(x, rest) then Link(f(x), map(f, rest)) done done \
+         map(program(n) do n + 1 done, Link(1, Empty))",
+        "f = program(p) do match p do Pair(a, b) then a + b done done f(Pair(1, 2))",
+    ] {
+        emit_valid(&mono_program(src));
+    }
+}
+
+#[test]
+fn nullary_tags_are_immortal_cells_in_the_data_segment() {
+    let text = wat(&mono_program(&format!("{LENGTH} length(Link(1, Empty))")));
+    assert!(
+        text.contains(
+            "(data (;0;) (i32.const 8) \"\\ff\\ff\\ff\\ff\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\")"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn matching_a_variant_branches_on_its_tag_through_a_table() {
+    let text = wat(&mono_program(&format!("{LENGTH} length(Link(1, Empty))")));
+    assert!(text.contains("br_table"), "{text}");
 }

@@ -517,25 +517,113 @@ fn records_and_field_values_drop_cleanly_in_branches() {
     assert_eq!(value(src), num(5.0));
 }
 
+const LENGTH: &str = "length = program(xs) do match xs do Empty then 0 \
+                      Link(first, rest) then 1 + length(rest) done done ";
+
 #[test]
-fn well_typed_variants_are_a_staged_diagnostic_not_a_panic() {
-    let programs = [
-        "Circle(5)",
-        "match Circle(5) do Circle(r) then r else 0 done",
-        "f = program(s) do match s do A then 1 B then 2 done done f(A)",
-        "length = program(xs) do match xs do Empty then 0 \
-         Link(first, rest) then 1 + length(rest) done done length(Link(1, Empty))",
-        "f = program(xs) do match xs do Next(n) then f(n) done done 0",
-    ];
-    for src in programs {
-        let checked = check(src).expect("checks");
-        let errors = mono(&checked).expect_err("variants are not lowered yet");
-        assert!(!errors.is_empty(), "{src}");
-        for e in &errors {
-            assert!(e.message.contains("not supported yet"), "{src}: {e}");
-            assert!(e.span.end > e.span.start, "{src}: {e}");
-        }
-    }
+fn nullary_and_unary_tags_match() {
+    assert_eq!(
+        value("match Circle(5) do Circle(r) then r else 0 done"),
+        num(5.0)
+    );
+    let pick = "f = program(s) do match s do A then 1 B then 2 done done ";
+    assert_eq!(value(&format!("{pick} f(A)")), num(1.0));
+    assert_eq!(value(&format!("{pick} f(B)")), num(2.0));
+}
+
+#[test]
+fn a_recursive_list_is_measured() {
+    let src = format!("{LENGTH} length(Link(1, Link(2, Link(3, Empty))))");
+    assert_eq!(value(&src), num(3.0));
+    assert_eq!(value(&format!("{LENGTH} length(Empty)")), num(0.0));
+}
+
+#[test]
+fn multi_field_payloads_bind_by_position() {
+    let src = "sum = program(p) do match p do Pair(a, b) then a + b done done sum(Pair(3, 4))";
+    assert_eq!(value(src), num(7.0));
+}
+
+#[test]
+fn a_whole_payload_is_rebuilt_as_a_record_and_taken_apart_again() {
+    let src = "rewrap = program(p) do match p do Pair(r) then Pair(r) done done \
+               sum = program(p) do match p do Pair(a, b) then a - b done done \
+               sum(rewrap(Pair(10, 3)))";
+    assert_eq!(value(src), num(7.0));
+}
+
+#[test]
+fn a_tree_is_summed_and_a_list_mapped() {
+    let tree = "sum = program(t) do match t do Leaf(n) then n \
+                Node(l, r) then sum(l) + sum(r) done done \
+                sum(Node(Node(Leaf(1), Leaf(2)), Leaf(3)))";
+    assert_eq!(value(tree), num(6.0));
+    let map = "map = program(f, xs) do match xs do Empty then Empty \
+               Link(x, rest) then Link(f(x), map(f, rest)) done done \
+               total = program(xs) do match xs do Empty then 0 \
+               Link(x, rest) then x + total(rest) done done \
+               double = program(n) do n * 2 done \
+               total(map(double, Link(1, Link(2, Link(3, Empty)))))";
+    assert_eq!(value(map), num(12.0));
+}
+
+#[test]
+fn binders_are_captured_by_closures_in_an_arm() {
+    let src = "f = program(x) do match x do Box(n) then program(k) do n + k done done done \
+               add = f(Box(10)) \
+               add(5)";
+    assert_eq!(value(src), num(15.0));
+}
+
+#[test]
+fn an_open_match_with_else_ignores_other_tags() {
+    let src = "f = program(x) do match x do A(n) then n else 0 done done \
+               f(A(4)) + f(B) + f(C(1))";
+    assert_eq!(value(src), num(4.0));
+}
+
+#[test]
+fn alpha_equivalent_recursive_types_specialize_once() {
+    let one = format!("{LENGTH} length(Link(1, Empty)) + length(Link(2, Link(3, Empty)))");
+    let (p, v) = run_src(&one);
+    assert_eq!(v, num(3.0));
+    let two = format!("{LENGTH} length(Link(1, Empty))");
+    assert_eq!(p.funcs.len(), run_src(&two).0.funcs.len());
+}
+
+#[test]
+fn the_same_list_through_two_polymorphic_helpers_shares_one_layout() {
+    let src = format!(
+        "{LENGTH} id = program(x) do x done \
+         length(id(Link(1, Empty))) + length(id(id(Link(2, Link(3, Empty)))))"
+    );
+    let (p, v) = run_src(&src);
+    assert_eq!(v, num(3.0));
+    let variants = p
+        .layouts
+        .iter()
+        .filter(|l| matches!(l, Layout::Variant(_)))
+        .count();
+    assert_eq!(variants, 1);
+}
+
+#[test]
+fn a_recursive_layout_refers_to_itself() {
+    let (p, _) = run_src(&format!("{LENGTH} length(Link(1, Empty))"));
+    let [Layout::Variant(tags)] = &p.layouts[..] else {
+        panic!("one variant layout: {:?}", p.layouts);
+    };
+    let link = &tags[1];
+    assert_eq!(link[0], MTy::Float);
+    assert_eq!(link[1], MTy::Ptr(HeapKind::Variant(LayoutId(0))));
+    assert!(tags[0].is_empty());
+}
+
+#[test]
+fn a_long_chain_is_built_and_dropped_without_leaking() {
+    let src = "build = program(n, acc) do if n < 1 then acc else build(n - 1, Link(n, acc)) done done \
+               build(3000, Empty)";
+    assert_eq!(value(src), Value::Unit);
 }
 
 fn field_index(f: &Func) -> Option<usize> {

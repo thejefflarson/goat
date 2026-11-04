@@ -242,6 +242,7 @@ fn examples_print_the_expected_output() {
         ("closures.goat", "15"),
         ("closure_shapes.goat", "77"),
         ("hello.goat", "hello, world"),
+        ("lists.goat", "15"),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
         let src = fs::read_to_string(&path).unwrap();
@@ -255,4 +256,186 @@ fn string_literals_print_verbatim() {
     assert_eq!(run("s = \"hi\"\ns"), "hi");
     assert_eq!(run("\"a\\nb\\tc\""), "a\nb\tc");
     assert_eq!(run("\"\""), "");
+}
+
+const LENGTH: &str = "length = program(xs) do match xs do Empty then 0 \
+                      Link(first, rest) then 1 + length(rest) done done ";
+
+#[test]
+fn nullary_tags_pick_an_arm() {
+    let pick = "f = program(s) do match s do A then 1 B then 2 else 3 done done ";
+    assert_eq!(run(&format!("{pick} f(A)")), "1");
+    assert_eq!(run(&format!("{pick} f(B)")), "2");
+    assert_eq!(run(&format!("{pick} f(C)")), "3");
+}
+
+#[test]
+fn a_tag_carries_a_payload() {
+    assert_eq!(
+        run("match Circle(5) do Circle(r) then r * r else 0 done"),
+        "25"
+    );
+    let src = "area = program(s) do match s do Circle(r) then 3 * r * r \
+               Rect(w, h) then w * h done done \
+               area(Circle(2)) + area(Rect(3, 4))";
+    assert_eq!(run(src), "24");
+}
+
+#[test]
+fn length_of_a_list() {
+    assert_eq!(run(&format!("{LENGTH} length(Empty)")), "0");
+    assert_eq!(
+        run(&format!(
+            "{LENGTH} length(Link(1, Link(2, Link(3, Empty))))"
+        )),
+        "3"
+    );
+}
+
+#[test]
+fn size_of_a_tree() {
+    let src = "size = program(t) do match t do Leaf then 1 \
+               Node(l, r) then size(l) + size(r) done done \
+               size(Node(Node(Leaf, Leaf), Node(Leaf, Node(Leaf, Leaf))))";
+    assert_eq!(run(src), "5");
+}
+
+#[test]
+fn map_over_a_list_shares_nothing_it_should_not() {
+    let src = "map = program(f, xs) do match xs do Empty then Empty \
+               Link(x, rest) then Link(f(x), map(f, rest)) done done \
+               total = program(xs) do match xs do Empty then 0 \
+               Link(x, rest) then x + total(rest) done done \
+               xs = Link(1, Link(2, Link(3, Empty))) \
+               double = program(n) do n * 2 done \
+               total(map(double, xs)) + total(xs)";
+    assert_eq!(run(src), "18");
+}
+
+#[test]
+fn a_closure_captures_a_pattern_binder() {
+    let src = "f = program(x) do match x do Box(n) then program(k) do n + k done done done \
+               add = f(Box(10)) \
+               add(5)";
+    assert_eq!(run(src), "15");
+}
+
+#[test]
+fn a_multi_field_payload_drops_every_field() {
+    let src = "f = program(t) do match t do Pair(a, b) then 1 done done \
+               f(Pair(Link(1, Empty), Link(2, Link(3, Empty))))";
+    assert_eq!(run(src), "1");
+}
+
+#[test]
+fn a_million_link_chain_is_dropped_in_constant_stack() {
+    let src = "build = program(n, acc) do \
+                 if n < 1 then acc else build(n - 1, Link(n, acc)) done done \
+               build(1000000, Empty)";
+    assert_eq!(run(src), "");
+}
+
+#[test]
+fn a_million_link_list_is_counted_and_then_dropped() {
+    let src = "build = program(n, acc) do \
+                 if n < 1 then acc else build(n - 1, Link(n, acc)) done done \
+               count = program(xs, n) do match xs do Empty then n \
+                 Link(first, rest) then count(rest, n + 1) done done \
+               count(build(1000000, Empty), 0)";
+    assert_eq!(run(src), "1000000");
+}
+
+#[test]
+fn a_deep_left_leaning_tree_is_dropped_in_constant_stack() {
+    let src = "grow = program(n, t) do \
+                 if n < 1 then t else grow(n - 1, Node(t, Leaf)) done done \
+               grow(500000, Leaf)";
+    assert_eq!(run(src), "");
+}
+
+#[test]
+fn a_chain_through_a_second_type_is_dropped_in_constant_stack() {
+    let src = "grow = program(n, t) do \
+                 if n < 1 then t else grow(n - 1, Node(Cons(t, Nil))) done done \
+               grow(200000, Leaf)";
+    assert_eq!(run(src), "");
+}
+
+#[test]
+fn a_chain_through_records_and_closures_is_dropped_in_constant_stack() {
+    let src = "grow = program(n, t) do if n < 1 then t \
+               else grow(n - 1, Wrap({a: t, b: program(x) do x done})) done done \
+               grow(100000, Stop)";
+    assert_eq!(run(src), "");
+    let closures = "chain = program(n, f) do \
+                      if n < 1 then f else chain(n - 1, program(x) do f(x) + 1 done) done done \
+                    chain(200000, program(x) do x done)";
+    assert_eq!(run(closures), "");
+}
+
+#[test]
+fn variants_hold_closures_strings_records_and_other_variants() {
+    let apply = "apply = program(c, x) do match c do Fn(f) then f(x) done done \
+                 apply(Fn(program(n) do n * 3 done), 4)";
+    assert_eq!(run(apply), "12");
+    assert_eq!(
+        run("g = program(x) do match x do Name(s) then s done done g(Name(\"hi\"))"),
+        "hi"
+    );
+    let point = "g = program(x) do match x do Pt(p) then p.a + p.b done done g(Pt({a: 1, b: 2}))";
+    assert_eq!(run(point), "3");
+    let nested = format!("{LENGTH} length(Link(Link(1, Empty), Link(Link(2, Empty), Empty)))");
+    assert_eq!(run(&nested), "2");
+}
+
+#[test]
+fn two_types_may_refer_to_each_other() {
+    let src = "len_t = program(t) do match t do Leaf then 0 Node(f) then 1 + len_f(f) done done \
+               len_f = program(f) do match f do Nil then 0 \
+                 Cons(t, r) then len_t(t) + len_f(r) done done \
+               len_t(Node(Cons(Node(Nil), Cons(Leaf, Nil))))";
+    assert_eq!(run(src), "2");
+}
+
+#[test]
+fn a_list_changes_its_element_type_through_map() {
+    let src = "map = program(f, xs) do match xs do Empty then Empty \
+               Link(x, r) then Link(f(x), map(f, r)) done done \
+               anytrue = program(xs) do match xs do Empty then false \
+                 Link(x, r) then if x then true else anytrue(r) done done done \
+               anytrue(map(program(n) do n < 2 done, Link(1, Link(2, Empty))))";
+    assert_eq!(run(src), "true");
+}
+
+#[test]
+fn tags_flow_through_branches_and_nested_matches() {
+    let pick = "pick = program(b) do if b then A(1) else B(2) done done \
+                f = program(x) do match x do A(n) then n B(n) then n * 10 done done \
+                f(pick(true)) + f(pick(false))";
+    assert_eq!(run(pick), "21");
+    let nested = "f = program(x) do match (match x do A then B else C done) do \
+                  B then 1 C then 2 done done f(A) + f(Q)";
+    assert_eq!(run(nested), "3");
+    let shadow = "f = program(x) do match x do Pair(a, b) then \
+                  match a do Pair(a, c) then a + b + c done done done f(Pair(Pair(1, 2), 3))";
+    assert_eq!(run(shadow), "6");
+}
+
+#[test]
+fn a_tail_call_in_an_arm_runs_in_constant_stack() {
+    let src = "go = program(xs, acc) do match xs do Empty then acc \
+               Link(x, r) then go(r, acc + x) done done \
+               build = program(n, acc) do \
+                 if n < 1 then acc else build(n - 1, Link(n, acc)) done done \
+               go(build(100000, Empty), 0)";
+    assert_eq!(run(src), "5000050000");
+}
+
+#[test]
+fn a_tag_bound_once_and_matched_at_two_widths_still_runs() {
+    let src = "s = Circle(5) \
+               narrow = program(v) do match v do Circle(r) then r done done \
+               wide = program(v) do match v do Circle(r) then r Square(w) then w done done \
+               narrow(s) + wide(s)";
+    assert_eq!(run(src), "10");
 }
