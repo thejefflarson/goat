@@ -1,0 +1,10 @@
+# `{...p, x: 3}` is a copy of `p` with `x` replaced (or added, if `p` had none).
+# `{a, b} = p` and `program({a, b})` take a record apart by field name;
+# `...rest` keeps whatever is left.
+origin = {x: 0, y: 0, label: "origin"}
+moved = {...origin, x: 3, y: 4}
+
+distance_squared = program({x, y}) do x * x + y * y done
+
+{label, ...position} = moved
+distance_squared(position)

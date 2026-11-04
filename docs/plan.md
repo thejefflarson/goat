@@ -418,7 +418,7 @@ allocation or indirect call. The scheme below is the general fallback.)
       errors with the occurs-check message.
 
 ### Record spread and destructuring (JavaScript-style)
-- [ ] **Spread update:** `{...model, x: model.x + 1}`. Typed as scoped-label
+- [x] **Spread update:** `{...model, x: model.x + 1}`. Typed as scoped-label
       extension: result `{x: Number | row(model)}`; an existing `x` is
       shadowed. Can add fields or override them (even changing type); no new
       type rules beyond Leijen's.
@@ -445,10 +445,10 @@ allocation or indirect call. The scheme below is the general fallback.)
       unsolved constraints for uncalled code, and delays field-typo errors.
   - With Perceus reuse (Phase 6), `{...model, x: …}` on a uniquely owned
     model updates in place.
-- [ ] **Destructuring:** `{x, y} = point` and in parameters
+- [x] **Destructuring:** `{x, y} = point` and in parameters
       `program({x, y}) do … done`. Open-row patterns (any record with at least
       those fields), desugared to field reads.
-- [ ] **Rest pattern:** `{x, ...rest} = point` needs row restriction (remove
+- [x] **Rest pattern:** `{x, ...rest} = point` needs row restriction (remove
       a label; supported by scoped labels). Can follow the basic forms.
 - [ ] **List patterns use the same syntax:** `[first, ...rest]` →
       `Link(first, rest)`, `[]` → `Empty` (once the prelude `List` exists,

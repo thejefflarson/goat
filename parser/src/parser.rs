@@ -220,7 +220,7 @@ mod tests {
             rule: Rule::function,
             tokens: [
                 function(0, 20, [
-                    labels(8, 9, [ident(8, 9)]),
+                    params(8, 9, [ident(8, 9)]),
                     expr(14, 16, [ident(14, 15)])
                 ])
             ]
@@ -255,7 +255,7 @@ mod tests {
                             expr(11, 12, [ident(11, 12)]),
                             expr(14, 34, [
                                 function(14, 34, [
-                                    labels(22, 23, [ident(22, 23)]),
+                                    params(22, 23, [ident(22, 23)]),
                                     expr(28, 30, [ident(28, 29)])
                                 ])
                             ])
@@ -468,6 +468,121 @@ mod tests {
             "f(Link(1, Empty))",
             "Circle(5).x",
             "{shape: Empty}",
+        ] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_ok(),
+                "failed to parse: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_record_spread() {
+        parses_to! {
+            parser: GoatParser,
+            input: "{...p, x: 1}",
+            rule: Rule::record,
+            tokens: [record(0, 12, [
+                spread(1, 5, [expr(4, 5, [ident(4, 5)])]),
+                field(7, 11, [ident(7, 8), expr(10, 11, [number(10, 11)])])
+            ])]
+        }
+        parses_to! {
+            parser: GoatParser,
+            input: "{...p}",
+            rule: Rule::record,
+            tokens: [record(0, 6, [spread(1, 5, [expr(4, 5, [ident(4, 5)])])])]
+        }
+    }
+
+    #[test]
+    fn a_second_spread_still_parses_so_lowering_can_explain_it() {
+        use pest::Parser;
+        for src in ["{...a, ...b}", "{x: 1, ...a}", "{...a.b, y: f(1),}"] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_ok(),
+                "failed to parse: {src}"
+            );
+        }
+        for src in ["{...}", "{,...a}", "{.. a}"] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_err(),
+                "accepted: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_destructuring() {
+        parses_to! {
+            parser: GoatParser,
+            input: "{x, y} = p",
+            rule: Rule::destructure,
+            tokens: [destructure(0, 10, [
+                record_pattern(0, 6, [ident(1, 2), ident(4, 5)]),
+                expr(9, 10, [ident(9, 10)])
+            ])]
+        }
+        parses_to! {
+            parser: GoatParser,
+            input: "{x, ...rest} = p x",
+            rule: Rule::destructure,
+            tokens: [destructure(0, 18, [
+                record_pattern(0, 12, [ident(1, 2), rest_binding(4, 11, [ident(7, 11)])]),
+                expr(15, 17, [ident(15, 16)]),
+                expr(17, 18, [ident(17, 18)])
+            ])]
+        }
+    }
+
+    #[test]
+    fn destructuring_does_not_capture_record_literals() {
+        use pest::Parser;
+        for src in ["{x: 1}", "{x: 1} = 2"] {
+            let pairs = GoatParser::parse(Rule::destructure, src);
+            assert!(pairs.is_err(), "{src} is not a pattern");
+        }
+        for src in [
+            "{x}",
+            "{x, y}",
+            "{x, ...r}",
+            "{...r} = p",
+            "{...r, } = p",
+            "{x,} = p",
+        ] {
+            let ok = GoatParser::parse(Rule::goat, src).is_ok();
+            assert_eq!(ok, src.contains('='), "{src}");
+        }
+        for src in [
+            "{} = p",
+            "{...a, x} = p",
+            "{...a, ...b} = p",
+            "{x, ...r, y} = p",
+        ] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_err(),
+                "accepted: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_destructuring_parameters() {
+        use pest::Parser;
+        let src = "program({x, y}) do x + y done";
+        let function = GoatParser::parse(Rule::function, src)
+            .unwrap()
+            .next()
+            .unwrap();
+        let params = function.into_inner().next().unwrap();
+        assert_eq!(params.as_rule(), Rule::params);
+        let kinds: Vec<_> = params.into_inner().map(|p| p.as_rule()).collect();
+        assert_eq!(kinds, [Rule::record_pattern]);
+
+        for src in [
+            "program(a, {x, ...r}, b) do a done",
+            "program({...r}) do r done",
+            "function({x}) do x done",
         ] {
             assert!(
                 GoatParser::parse(Rule::goat, src).is_ok(),

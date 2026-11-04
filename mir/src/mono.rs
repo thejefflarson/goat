@@ -1,7 +1,7 @@
 //! Monomorphization: checked HIR to ground-typed MIR, one `Func` per
 //! `(binding, ground type)` specialization.
 
-use crate::canon::{canonical, ground_fields};
+use crate::canon::{canonical, ground_fields, layout_fields};
 use crate::mir::*;
 use crate::rc::insert_rc;
 use goat_checker::captures::for_each_child;
@@ -383,7 +383,7 @@ impl Mono<'_> {
             }
             Ty::Record(row) => {
                 let mut fields = Vec::new();
-                for (_, field) in ground_fields(row) {
+                for (_, field) in layout_fields(row) {
                     fields.push(self.lower_ty(field));
                 }
                 let layout = Layout::Record(fields);
@@ -805,18 +805,69 @@ impl Mono<'_> {
                     unreachable!("field access on a non-record");
                 };
                 let index = field_index(&row, label);
-                let borrowed = match &record.kind {
-                    ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
-                    _ => None,
+                self.with_record(cx, record, |_, _, local| Expr::Field(local, index))
+            }
+            ExprKind::Spread { base, fields } => {
+                let base_ty = self.ground(&self.typed.node_types[&base.id], &cx.subst);
+                let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+                let (Ty::Record(base_row), Ty::Record(row)) =
+                    (base_ty.unfold_head(), ty.unfold_head())
+                else {
+                    unreachable!("spread of a non-record");
                 };
-                match borrowed {
-                    Some(local) => Expr::Field(local, index),
-                    None => {
-                        let rec = cx.fresh();
-                        let source = self.expr(cx, record, false);
-                        Expr::Let(rec, Box::new(source), Box::new(Expr::Field(rec, index)))
-                    }
-                }
+                let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty) else {
+                    unreachable!("record type lowers to a record pointer");
+                };
+                self.with_record(cx, base, |m, cx, local| {
+                    let values = layout_fields(&row)
+                        .map(|(label, _)| match fields.iter().find(|(l, _)| l == label) {
+                            Some((_, value)) => m.expr(cx, value, false),
+                            None => Expr::Field(local, field_index(&base_row, label)),
+                        })
+                        .collect();
+                    Expr::AllocRecord(layout, values)
+                })
+            }
+            ExprKind::Restrict { record, .. } => {
+                let source_ty = self.ground(&self.typed.node_types[&record.id], &cx.subst);
+                let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+                let (Ty::Record(source_row), Ty::Record(row)) =
+                    (source_ty.unfold_head(), ty.unfold_head())
+                else {
+                    unreachable!("restriction of a non-record");
+                };
+                let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty) else {
+                    unreachable!("record type lowers to a record pointer");
+                };
+                self.with_record(cx, record, |_, _, local| {
+                    let values = layout_fields(&row)
+                        .map(|(label, _)| Expr::Field(local, field_index(&source_row, label)))
+                        .collect();
+                    Expr::AllocRecord(layout, values)
+                })
+            }
+        }
+    }
+
+    /// Build `build(local)` where `local` holds `record`: a variable's own
+    /// local, or else a fresh one the record is evaluated into first.
+    fn with_record(
+        &mut self,
+        cx: &mut FnCx,
+        record: &hir::Expr,
+        build: impl FnOnce(&mut Self, &mut FnCx, Local) -> Expr,
+    ) -> Expr {
+        let borrowed = match &record.kind {
+            ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
+            _ => None,
+        };
+        match borrowed {
+            Some(local) => build(self, cx, local),
+            None => {
+                let rec = cx.fresh();
+                let source = self.expr(cx, record, false);
+                let body = build(self, cx, rec);
+                Expr::Let(rec, Box::new(source), Box::new(body))
             }
         }
     }
@@ -1096,7 +1147,7 @@ fn variant_row(key: &Ty) -> Row {
 
 /// The layout slot of `label` in a ground record row.
 fn field_index(row: &Row, label: &str) -> usize {
-    ground_fields(row)
+    layout_fields(row)
         .position(|(l, _)| l == label)
         .expect("checked record has the field")
 }

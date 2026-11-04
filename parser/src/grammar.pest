@@ -91,12 +91,23 @@ negation = { minus ~ (negation | primary ~ postfix*) }
 // Order matters: pest is a PEG, so longer/more-specific alternatives come
 // first. `declaration` (`ident = ...`) begins with an identifier, so a bare
 // `ident` must be tried after it.
-primary = _{ number | string | boolean | declaration | function | conditional | match_expr | record | tag | ident | lparen ~ expr ~ rparen }
-record = { lbrace ~ (field ~ (comma ~ field)* ~ comma?)? ~ rbrace }
+primary = _{ number | string | boolean | destructure | declaration | function | conditional | match_expr | record | tag | ident | lparen ~ expr ~ rparen }
+// `{...base, x: 1}`: the grammar accepts a spread anywhere so that lowering can
+// say what is wrong with `{...a, ...b}`, instead of a bare parse error.
+record = { lbrace ~ (record_item ~ (comma ~ record_item)* ~ comma?)? ~ rbrace }
+record_item = _{ spread | field }
+spread = { "..." ~ expr }
 field = { ident ~ colon ~ expr }
 declaration = { ident ~ equals ~ expr ~ expr? }
+// `{x, y} = point` and `{x, ...rest} = point`. Tried before `record`: a
+// pattern has bare names where a literal has `name: value`.
+destructure = { record_pattern ~ equals ~ expr ~ expr? }
+record_pattern = { lbrace ~ ((ident ~ (comma ~ ident)* ~ (comma ~ rest_binding)? | rest_binding) ~ comma?) ~ rbrace }
+rest_binding = { "..." ~ ident }
 labels = { ident ~ (comma ~ ident)* }
-function = { function_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_lit }
+params = { param ~ (comma ~ param)* }
+param = _{ record_pattern | ident }
+function = { function_lit ~ lparen ~ params? ~ rparen ~ do_lit ~ expr? ~ done_lit }
 arguments = { expr ~ (comma ~ expr)* ~ comma? }
 else_branch = _{ else_lit ~ expr }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ else_branch? ~ done_lit }

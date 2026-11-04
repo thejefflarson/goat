@@ -32,6 +32,18 @@ pub fn ground_fields(row: &Row) -> impl Iterator<Item = (&String, &Ty)> {
     })
 }
 
+/// The fields of a closed record row that get a layout slot: the first of each
+/// label, because a later one is shadowed by it (`{...p, x: 1}` over a `p` that
+/// has an `x`) and nothing can reach it.
+pub fn layout_fields(row: &Row) -> impl Iterator<Item = (&String, &Ty)> {
+    let mut seen = Vec::new();
+    ground_fields(row).filter(move |(label, _)| {
+        let first = !seen.contains(label);
+        seen.push(*label);
+        first
+    })
+}
+
 fn row_from(fields: Vec<(String, Ty)>) -> Row {
     fields
         .into_iter()
