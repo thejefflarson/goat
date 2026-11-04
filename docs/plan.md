@@ -466,9 +466,10 @@ allocation or indirect call. The scheme below is the general fallback.)
       those fields), desugared to field reads.
 - [x] **Rest pattern:** `{x, ...rest} = point` needs row restriction (remove
       a label; supported by scoped labels). Can follow the basic forms.
-- [ ] **List patterns use the same syntax:** `[first, ...rest]` →
-      `Link(first, rest)`, `[]` → `Empty` (once the prelude `List` exists,
-      Phase 8).
+- [x] **List patterns use the same syntax:** `[first, ...rest]` →
+      `Link(first, rest)`, `[]` → `Empty`, `[a, b]` → a fixed-length list.
+      Lowering compiles a `match`'s list arms into nested `Empty`/`Link`
+      matches; `[..] = xs` and `program([a, b])` use the same compiler.
 
 ### Warnings (whole-program)
 - [ ] "Tag `Cirle` is constructed but never matched anywhere" — catches tag

@@ -22,6 +22,14 @@ use std::iter::Peekable;
 // walk. No real program nests this deep; pathological input gets a clean error.
 const MAX_DEPTH: usize = 256;
 
+/// Most arm bodies a program's list patterns may expand to. A pattern like
+/// `[a, ...rest]` after `[a, b, c, d]` re-lowers its body at each place the
+/// decision tree reaches it, so nested patterns multiply.
+const MAX_LIST_LEAVES: usize = 4096;
+
+/// The name generated bindings for the pieces of a list carry.
+const LIST_NAME: &str = "list";
+
 pub struct Lowered {
     pub root: Expr,
     pub errors: Vec<GoatError>,
@@ -105,6 +113,55 @@ struct RecordPattern {
     rest: Option<(Symbol, String, Span)>,
 }
 
+/// A `[a, b, ...rest]` pattern: the names for its leading items, and for what
+/// follows them.
+struct ListPattern {
+    span: Span,
+    items: Vec<(String, Span)>,
+    rest: Option<(String, Span)>,
+}
+
+/// What runs once a list pattern has matched.
+#[derive(Clone)]
+enum Then<'i> {
+    /// A `match` arm's body.
+    Arm(Pair<'i, Rule>),
+    /// The rest of a `[..] = value` chain, if there is any.
+    Rest(Option<Pair<'i, Rule>>),
+    /// The list-pattern parameters still to unpack, then the function body.
+    Params(Vec<(Symbol, Pair<'i, Rule>)>, Option<Pair<'i, Rule>>),
+}
+
+/// The arms of one list `match`, which compile together into a decision tree
+/// over `Empty` and `Link`.
+struct ListMatch<'i> {
+    /// Each arm's pattern, what follows it, and whether a leaf lowered it yet.
+    rows: Vec<(ListPattern, Then<'i>, bool)>,
+    otherwise: Option<Pair<'i, Rule>>,
+    otherwise_lowered: bool,
+}
+
+impl ListMatch<'_> {
+    fn is_done(&self, at: &Progress) -> bool {
+        at.bound.len() == self.rows[at.row].0.items.len()
+    }
+
+    fn is_catch_all(&self, at: &Progress) -> bool {
+        self.is_done(at) && self.rows[at.row].0.rest.is_some()
+    }
+}
+
+/// How far one arm has matched on the way down the decision tree.
+#[derive(Clone)]
+struct Progress {
+    row: usize,
+    /// The list node each leading item was read from, in order.
+    bound: Vec<Symbol>,
+    /// The list that follows the leading items matched so far, which `...rest`
+    /// names.
+    rest_from: Symbol,
+}
+
 #[derive(Default)]
 struct Lower {
     next_symbol: Symbol,
@@ -120,6 +177,7 @@ struct Lower {
     file: FileId,
     /// The names the prelude defines, in scope for the user's source.
     prelude_scope: HashMap<String, Symbol>,
+    list_leaves: usize,
 }
 
 impl Lower {
@@ -358,6 +416,7 @@ impl Lower {
                 self.var(span, name)
             }
             Rule::record => self.lower_record(pair),
+            Rule::list => self.lower_list(pair),
             Rule::declaration => self.lower_declaration(pair),
             Rule::destructure => self.lower_destructure(pair),
             Rule::function => self.lower_function(pair),
@@ -484,13 +543,24 @@ impl Lower {
         self.scopes.push(HashMap::new());
         let mut params = Vec::new();
         let mut unpacked = Vec::new();
-        let mut body = None;
+        let mut list_params = Vec::new();
+        let mut body_pair = None;
         for child in pair.into_inner() {
             match child.as_rule() {
                 Rule::params => {
                     for param in child.into_inner() {
                         let pspan = self.span_of(&param);
                         let name = param.as_str().to_string();
+                        if param.as_rule() == Rule::list_pattern {
+                            let source = self.fresh_symbol();
+                            list_params.push((source, param));
+                            params.push(Param {
+                                symbol: source,
+                                name,
+                                span: pspan,
+                            });
+                            continue;
+                        }
                         if param.as_rule() == Rule::record_pattern {
                             let source = self.fresh_symbol();
                             let pattern = self.bind_record_pattern(param, "parameter");
@@ -516,10 +586,15 @@ impl Lower {
                         });
                     }
                 }
-                Rule::expr => body = Some(self.lower_expr(child)),
+                Rule::expr => body_pair = Some(child),
                 other => unreachable!("unexpected function child {other:?}"),
             }
         }
+        let body = if list_params.is_empty() {
+            body_pair.map(|b| self.lower_expr(b))
+        } else {
+            Some(self.lower_list_params(&list_params, body_pair, span))
+        };
         self.scopes.pop();
 
         let mut body = body.unwrap_or_else(|| self.node(span, ExprKind::Unit));
@@ -633,13 +708,16 @@ impl Lower {
         let source_name = pattern_pair.as_str().to_string();
 
         let value = self.lower_expr(value_pair);
-        self.scopes.push(HashMap::new());
         let source = self.fresh_symbol();
-        let pattern = self.bind_record_pattern(pattern_pair, "name");
-        let rest = rest_pair.map(|p| self.lower_expr(p));
-        self.scopes.pop();
-
-        let unpacked = self.unpack(source, &source_name, pattern, rest);
+        let unpacked = if pattern_pair.as_rule() == Rule::list_pattern {
+            Some(self.lower_list_binding(source, pattern_pair, Then::Rest(rest_pair)))
+        } else {
+            self.scopes.push(HashMap::new());
+            let pattern = self.bind_record_pattern(pattern_pair, "name");
+            let rest = rest_pair.map(|p| self.lower_expr(p));
+            self.scopes.pop();
+            self.unpack(source, &source_name, pattern, rest)
+        };
         self.node(
             span,
             ExprKind::Let {
@@ -715,10 +793,16 @@ impl Lower {
             .expect("a tag begins with its name")
             .as_str()
             .to_string();
-        let mut args: Vec<Expr> = inner
+        let args = inner
             .flat_map(|arguments| arguments.into_inner())
             .map(|a| self.lower_expr(a))
             .collect();
+        self.tag_node(span, name, args)
+    }
+
+    /// One argument is the payload as is; several become a record labelled
+    /// `"0"`, `"1"`, ... in argument order.
+    fn tag_node(&mut self, span: Span, name: String, mut args: Vec<Expr>) -> Expr {
         let payload = match args.len() {
             0 => None,
             1 => args.pop(),
@@ -740,13 +824,35 @@ impl Lower {
         )
     }
 
+    /// `[a, b]` is `Link(a, Link(b, Empty))`.
+    fn lower_list(&mut self, pair: Pair<Rule>) -> Expr {
+        let span = self.span_of(&pair);
+        let items: Vec<Pair<Rule>> = pair.into_inner().flat_map(|a| a.into_inner()).collect();
+        if self.depth + items.len() > MAX_DEPTH {
+            self.errors
+                .push(GoatError::new(span, "list has too many items to write out"));
+            return self.node(span, ExprKind::Unit);
+        }
+        self.depth += items.len();
+        let items: Vec<Expr> = items.into_iter().map(|a| self.lower_expr(a)).collect();
+        self.depth -= items.len();
+        let empty = self.tag_node(span, "Empty".into(), Vec::new());
+        items.into_iter().rev().fold(empty, |tail, item| {
+            self.tag_node(span, "Link".into(), vec![item, tail])
+        })
+    }
+
     fn lower_match(&mut self, pair: Pair<Rule>) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let scrutinee = self.lower_expr(inner.next().expect("match has a scrutinee"));
+        let children: Vec<Pair<Rule>> = inner.collect();
+        if children.iter().any(is_list_arm) {
+            return self.lower_list_match(span, scrutinee, children);
+        }
         let mut arms = Vec::new();
         let mut else_branch = None;
-        for child in inner {
+        for child in children {
             match child.as_rule() {
                 Rule::arm => arms.push(self.lower_arm(child)),
                 Rule::expr => else_branch = Some(Box::new(self.lower_expr(child))),
@@ -814,6 +920,361 @@ impl Lower {
         Pattern { tag, span, payload }
     }
 
+    fn list_pattern(&mut self, pair: Pair<Rule>) -> ListPattern {
+        let span = self.span_of(&pair);
+        let mut items: Vec<(String, Span)> = Vec::new();
+        let mut rest = None;
+        for item in pair.into_inner() {
+            let is_rest = item.as_rule() == Rule::rest_binding;
+            let name_pair = if is_rest {
+                item.into_inner()
+                    .next()
+                    .expect("`...` is followed by a name")
+            } else {
+                item
+            };
+            let name = name_pair.as_str().to_string();
+            let name_span = self.span_of(&name_pair);
+            let taken = items.iter().any(|(n, _)| *n == name)
+                || rest
+                    .as_ref()
+                    .is_some_and(|(n, _): &(String, Span)| *n == name);
+            if taken {
+                self.errors.push(GoatError::new(
+                    name_span,
+                    format!("duplicate binding `{name}` in pattern"),
+                ));
+            }
+            if is_rest {
+                rest = Some((name, name_span));
+            } else {
+                items.push((name, name_span));
+            }
+        }
+        ListPattern { span, items, rest }
+    }
+
+    /// A `match` whose arms are list patterns: `[]`, `[a, b]`, `[a, ...rest]`.
+    fn lower_list_match<'i>(
+        &mut self,
+        span: Span,
+        scrutinee: Expr,
+        children: Vec<Pair<'i, Rule>>,
+    ) -> Expr {
+        let mut rows = Vec::new();
+        let mut otherwise = None;
+        for child in children {
+            if child.as_rule() == Rule::expr {
+                otherwise = Some(child);
+                continue;
+            }
+            let mut inner = child.into_inner();
+            let pattern = inner.next().expect("an arm begins with a pattern");
+            let body = inner.next().expect("an arm has a body");
+            if pattern.as_rule() == Rule::list_pattern {
+                let pattern = self.list_pattern(pattern);
+                rows.push((pattern, Then::Arm(body), false));
+            } else {
+                self.errors.push(GoatError::new(
+                    self.span_of(&pattern),
+                    "a `match` on a list can't mix list patterns with tag patterns",
+                ));
+            }
+        }
+        if rows.is_empty() {
+            return self.node(span, ExprKind::Unit);
+        }
+        // A `...rest` with no items before it names the scrutinee itself, so
+        // the scrutinee needs a binding to read it from.
+        let needs_name = rows
+            .iter()
+            .any(|(p, ..)| p.items.is_empty() && p.rest.is_some());
+        if let ExprKind::Var { symbol, .. } = scrutinee.kind {
+            return self.compile_list_match(span, scrutinee, symbol, rows, otherwise);
+        }
+        let source = self.fresh_symbol();
+        if !needs_name {
+            return self.compile_list_match(span, scrutinee, source, rows, otherwise);
+        }
+        let var = self.list_var(scrutinee.span, source);
+        let rest = self.compile_list_match(span, var, source, rows, otherwise);
+        self.node(
+            span,
+            ExprKind::Let {
+                symbol: source,
+                name: LIST_NAME.into(),
+                value: Box::new(scrutinee),
+                rest: Some(Box::new(rest)),
+            },
+        )
+    }
+
+    fn list_var(&mut self, span: Span, symbol: Symbol) -> Expr {
+        let name = LIST_NAME.into();
+        self.node(span, ExprKind::Var { symbol, name })
+    }
+
+    /// Compile the rows into nested matches on `Empty` and `Link`, trying
+    /// them in order. `source` is the symbol `scrutinee` reads, for a
+    /// `...rest` that names the whole list.
+    fn compile_list_match<'i>(
+        &mut self,
+        span: Span,
+        scrutinee: Expr,
+        source: Symbol,
+        rows: Vec<(ListPattern, Then<'i>, bool)>,
+        otherwise: Option<Pair<'i, Rule>>,
+    ) -> Expr {
+        // Each item adds a nested match, and each name a binding around the body.
+        let extra = rows
+            .iter()
+            .map(|(p, ..)| 2 * p.items.len() + 2)
+            .max()
+            .unwrap_or(0);
+        if self.depth + extra > MAX_DEPTH {
+            self.errors
+                .push(GoatError::new(span, "list pattern nested too deeply"));
+            return self.node(span, ExprKind::Unit);
+        }
+        self.depth += extra;
+        let live = (0..rows.len())
+            .map(|row| Progress {
+                row,
+                bound: Vec::new(),
+                rest_from: source,
+            })
+            .collect();
+        let mut m = ListMatch {
+            rows,
+            otherwise,
+            otherwise_lowered: false,
+        };
+        let tree = self.build_list_tree(&mut m, scrutinee, live);
+        self.lower_unreached_arms(&mut m);
+        self.depth -= extra;
+        tree.unwrap_or_else(|| self.node(span, ExprKind::Unit))
+    }
+
+    /// The match on `scrutinee` for the arms in `live`, in order. `None` when
+    /// none of them can match what remains.
+    fn build_list_tree<'i>(
+        &mut self,
+        m: &mut ListMatch<'i>,
+        scrutinee: Expr,
+        live: Vec<Progress>,
+    ) -> Option<Expr> {
+        let first = live.first()?;
+        if m.is_catch_all(first) {
+            return Some(self.list_leaf(m, first));
+        }
+        let span = m.rows[first.row].0.span;
+        let mut arms = Vec::new();
+        if let Some(at) = live.iter().find(|at| m.is_done(at)) {
+            let body = self.list_leaf(m, at);
+            let pattern = Pattern {
+                tag: "Empty".into(),
+                span,
+                payload: PatternPayload::None,
+            };
+            arms.push(MatchArm { pattern, body });
+        }
+
+        let head = self.fresh_symbol();
+        let tail = self.fresh_symbol();
+        let deeper: Vec<Progress> = live
+            .iter()
+            .filter_map(|at| {
+                if !m.is_done(at) {
+                    let mut at = at.clone();
+                    at.bound.push(head);
+                    at.rest_from = tail;
+                    Some(at)
+                } else {
+                    m.rows[at.row].0.rest.is_some().then(|| at.clone())
+                }
+            })
+            .collect();
+        let tail_var = self.list_var(span, tail);
+        if let Some(body) = self.build_list_tree(m, tail_var, deeper) {
+            let binder = |symbol, name: &str| Param {
+                symbol,
+                name: name.into(),
+                span,
+            };
+            let pattern = Pattern {
+                tag: "Link".into(),
+                span,
+                payload: PatternPayload::Fields(vec![
+                    ("0".into(), binder(head, "head")),
+                    ("1".into(), binder(tail, "tail")),
+                ]),
+            };
+            arms.push(MatchArm { pattern, body });
+        }
+        if arms.is_empty() {
+            return None;
+        }
+
+        let else_branch = match m.otherwise.clone() {
+            Some(body) if arms.len() < 2 => {
+                let first_time = !std::mem::replace(&mut m.otherwise_lowered, true);
+                Some(Box::new(
+                    self.relower(first_time, |this| this.lower_expr(body)),
+                ))
+            }
+            _ => None,
+        };
+        Some(self.node(
+            span,
+            ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms,
+                else_branch,
+            },
+        ))
+    }
+
+    /// An arm's body, with the names its pattern bound read off the list
+    /// nodes the tree took apart to reach it.
+    fn list_leaf(&mut self, m: &mut ListMatch<'_>, at: &Progress) -> Expr {
+        let (pattern, then, lowered) = &mut m.rows[at.row];
+        let span = pattern.span;
+        let first_time = !std::mem::replace(lowered, true);
+        let then = then.clone();
+
+        self.list_leaves += 1;
+        if self.list_leaves > MAX_LIST_LEAVES {
+            if self.list_leaves == MAX_LIST_LEAVES + 1 {
+                self.errors
+                    .push(GoatError::new(span, "list patterns expand too far here"));
+            }
+            return self.node(span, ExprKind::Unit);
+        }
+
+        let names: Vec<(String, Span, Symbol)> = pattern
+            .items
+            .iter()
+            .zip(&at.bound)
+            .map(|((name, span), from)| (name.clone(), *span, *from))
+            .chain(
+                pattern
+                    .rest
+                    .as_ref()
+                    .map(|(name, span)| (name.clone(), *span, at.rest_from)),
+            )
+            .collect();
+
+        self.scopes.push(HashMap::new());
+        let bindings: Vec<_> = names
+            .into_iter()
+            .map(|(name, span, from)| (self.bind(&name), name, span, from))
+            .collect();
+        let body = self.relower(first_time, |this| this.lower_then(then, span));
+        self.scopes.pop();
+
+        bindings
+            .into_iter()
+            .rev()
+            .fold(body, |rest, (symbol, name, span, from)| {
+                let value = self.list_var(span, from);
+                self.node(
+                    span,
+                    ExprKind::Let {
+                        symbol,
+                        name,
+                        value: Box::new(value),
+                        rest: Some(Box::new(rest)),
+                    },
+                )
+            })
+    }
+
+    /// Lower with `f`, discarding the diagnostics it adds when an earlier
+    /// lowering of the same source already reported them.
+    fn relower<T>(&mut self, first_time: bool, f: impl FnOnce(&mut Self) -> T) -> T {
+        let (errors, warnings) = (self.errors.len(), self.warnings.len());
+        let out = f(self);
+        if !first_time {
+            self.errors.truncate(errors);
+            self.warnings.truncate(warnings);
+        }
+        out
+    }
+
+    fn lower_then(&mut self, then: Then<'_>, span: Span) -> Expr {
+        match then {
+            Then::Arm(body) | Then::Rest(Some(body)) => self.lower_expr(body),
+            Then::Rest(None) => self.node(span, ExprKind::Unit),
+            Then::Params(params, body) => self.lower_list_params(&params, body, span),
+        }
+    }
+
+    /// Arms the tree never reaches are shadowed by earlier ones. They are
+    /// still lowered so their own mistakes get reported.
+    fn lower_unreached_arms(&mut self, m: &mut ListMatch<'_>) {
+        for row in 0..m.rows.len() {
+            if m.rows[row].2 {
+                continue;
+            }
+            let span = m.rows[row].0.span;
+            self.errors.push(GoatError::new(
+                span,
+                "this arm never matches; earlier arms already cover every list it would",
+            ));
+            let bound = m.rows[row]
+                .0
+                .items
+                .iter()
+                .map(|_| self.fresh_symbol())
+                .collect();
+            let rest_from = self.fresh_symbol();
+            let at = Progress {
+                row,
+                bound,
+                rest_from,
+            };
+            self.list_leaf(m, &at);
+        }
+        if let Some(body) = m.otherwise.clone()
+            && !m.otherwise_lowered
+        {
+            self.lower_expr(body);
+        }
+    }
+
+    /// `[a, b] = value` (or a `[a, b]` parameter): match `source` against the
+    /// pattern, then run `then` with its names bound.
+    fn lower_list_binding<'i>(
+        &mut self,
+        source: Symbol,
+        pattern: Pair<'i, Rule>,
+        then: Then<'i>,
+    ) -> Expr {
+        let pattern = self.list_pattern(pattern);
+        let span = pattern.span;
+        let scrutinee = self.list_var(span, source);
+        self.compile_list_match(span, scrutinee, source, vec![(pattern, then, false)], None)
+    }
+
+    /// Unpack each list-pattern parameter in turn around `body`.
+    fn lower_list_params<'i>(
+        &mut self,
+        params: &[(Symbol, Pair<'i, Rule>)],
+        body: Option<Pair<'i, Rule>>,
+        span: Span,
+    ) -> Expr {
+        match params.split_first() {
+            None => match body {
+                Some(body) => self.lower_expr(body),
+                None => self.node(span, ExprKind::Unit),
+            },
+            Some(((source, pattern), later)) => {
+                let then = Then::Params(later.to_vec(), body);
+                self.lower_list_binding(*source, pattern.clone(), then)
+            }
+        }
+    }
+
     fn lower_conditional(&mut self, pair: Pair<Rule>) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
@@ -829,6 +1290,15 @@ impl Lower {
             },
         )
     }
+}
+
+fn is_list_arm(child: &Pair<Rule>) -> bool {
+    child.as_rule() == Rule::arm
+        && child
+            .clone()
+            .into_inner()
+            .next()
+            .is_some_and(|p| p.as_rule() == Rule::list_pattern)
 }
 
 fn is_program_literal(expr: &Pair<Rule>) -> bool {
@@ -989,6 +1459,178 @@ mod tests {
         let lowered = lower("match Empty do Circle(r) then r Empty then r done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("unknown name `r`"));
+    }
+
+    fn link_parts(e: &Expr) -> (&Expr, &Expr) {
+        let (name, payload) = tag_parts(e);
+        assert_eq!(name, "Link");
+        let ExprKind::Record { fields } = &payload.expect("Link has a payload").kind else {
+            panic!("Link's payload is a record");
+        };
+        let labels: Vec<_> = fields.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(labels, ["0", "1"]);
+        (&fields[0].1, &fields[1].1)
+    }
+
+    #[test]
+    fn the_empty_list_is_the_empty_tag() {
+        let root = lowered("[]").root;
+        let (name, payload) = tag_parts(&root);
+        assert_eq!(name, "Empty");
+        assert!(payload.is_none());
+    }
+
+    #[test]
+    fn a_list_literal_nests_links_ending_in_empty() {
+        let root = lowered("[1, 2, 3,]").root;
+        let mut node = &root;
+        for expected in [1.0, 2.0, 3.0] {
+            let (item, tail) = link_parts(node);
+            assert!(matches!(item.kind, ExprKind::Number(n) if n == expected));
+            node = tail;
+        }
+        assert_eq!(tag_parts(node).0, "Empty");
+    }
+
+    #[test]
+    fn list_literals_nest_and_mix_expressions() {
+        let root = lowered("x = 1 [[x], [], x + 1]").root;
+        let ExprKind::Let { rest, .. } = &root.kind else {
+            panic!("expected a let");
+        };
+        let (first, tail) = link_parts(rest.as_ref().unwrap());
+        let (inner, inner_tail) = link_parts(first);
+        assert!(matches!(inner.kind, ExprKind::Var { .. }));
+        assert_eq!(tag_parts(inner_tail).0, "Empty");
+        let (second, tail) = link_parts(tail);
+        assert_eq!(tag_parts(second).0, "Empty");
+        let (third, _) = link_parts(tail);
+        assert!(matches!(third.kind, ExprKind::Bin { .. }));
+    }
+
+    #[test]
+    fn a_list_literal_spans_its_brackets() {
+        let root = lowered("  [1, 2]").root;
+        assert_eq!((root.span.start, root.span.end), (2, 8));
+    }
+
+    #[test]
+    fn an_overlong_list_literal_is_a_clean_error() {
+        let items = vec!["1"; MAX_DEPTH + 1].join(", ");
+        let lowered = lower(&format!("[{items}]")).unwrap();
+        assert_eq!(lowered.errors.len(), 1);
+        assert!(lowered.errors[0].message.contains("too many items"));
+    }
+
+    fn arm_tags(root: &Expr) -> Vec<&str> {
+        let ExprKind::Match { arms, .. } = &root.kind else {
+            panic!("expected a match");
+        };
+        arms.iter().map(|a| a.pattern.tag.as_str()).collect()
+    }
+
+    #[test]
+    fn the_standard_list_arms_are_a_match_on_empty_and_link() {
+        let lowered = lowered("xs = [] match xs do [] then 0 [first, ...rest] then first + 1 done");
+        assert!(lowered.errors.is_empty(), "{:?}", lowered.errors);
+        let ExprKind::Let { rest, .. } = &lowered.root.kind else {
+            panic!("expected a let");
+        };
+        let tree = rest.as_ref().unwrap();
+        assert_eq!(arm_tags(tree), ["Empty", "Link"]);
+        let ExprKind::Match {
+            scrutinee, arms, ..
+        } = &tree.kind
+        else {
+            unreachable!()
+        };
+        assert!(matches!(scrutinee.kind, ExprKind::Var { .. }));
+        assert!(matches!(arms[0].pattern.payload, PatternPayload::None));
+        let PatternPayload::Fields(fields) = &arms[1].pattern.payload else {
+            panic!("Link binds its head and tail");
+        };
+        assert_eq!(fields.len(), 2);
+    }
+
+    #[test]
+    fn a_fixed_length_pattern_checks_for_the_end_of_the_list() {
+        let lowered = lowered("match [] do [a, b] then a done");
+        assert!(lowered.errors.is_empty(), "{:?}", lowered.errors);
+        let mut node = &lowered.root;
+        for _ in 0..2 {
+            assert_eq!(arm_tags(node), ["Link"]);
+            let ExprKind::Match { arms, .. } = &node.kind else {
+                unreachable!()
+            };
+            node = &arms[0].body;
+        }
+        assert_eq!(arm_tags(node), ["Empty"]);
+    }
+
+    #[test]
+    fn a_shadowed_list_arm_is_an_error_and_is_still_checked() {
+        let lowered = lower("match [] do [] then 0 [] then zzz done").unwrap();
+        let messages: Vec<_> = lowered.errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(messages[0].contains("never matches"), "{messages:?}");
+        assert!(messages[1].contains("unknown name `zzz`"), "{messages:?}");
+    }
+
+    #[test]
+    fn an_arm_body_lowered_at_several_leaves_reports_its_mistakes_once() {
+        let src = "match [] do [a, b] then 0 [a, ...r] then zzz [] then 1 done";
+        let lowered = lower(src).unwrap();
+        let unknown: Vec<_> = lowered
+            .errors
+            .iter()
+            .filter(|e| e.message.contains("zzz"))
+            .collect();
+        assert_eq!(unknown.len(), 1, "{:?}", lowered.errors);
+    }
+
+    #[test]
+    fn mixing_list_and_tag_patterns_is_an_error() {
+        let lowered = lower("match [] do [] then 0 Link(a, b) then 1 done").unwrap();
+        assert_eq!(lowered.errors.len(), 1);
+        assert!(lowered.errors[0].message.contains("can't mix"));
+    }
+
+    #[test]
+    fn duplicate_list_pattern_names_are_errors() {
+        for src in [
+            "match [] do [a, a] then a done",
+            "match [] do [a, ...a] then a done",
+            "[a, a] = [1, 2] a",
+        ] {
+            let lowered = lower(src).unwrap();
+            assert!(
+                lowered
+                    .errors
+                    .iter()
+                    .any(|e| e.message.contains("duplicate binding `a`")),
+                "{src}: {:?}",
+                lowered.errors
+            );
+        }
+    }
+
+    #[test]
+    fn list_pattern_names_are_scoped_to_their_arm() {
+        let lowered = lower("match [] do [a] then 0 [] then a done").unwrap();
+        assert!(
+            lowered
+                .errors
+                .iter()
+                .any(|e| e.message.contains("unknown name `a`")),
+            "{:?}",
+            lowered.errors
+        );
+    }
+
+    #[test]
+    fn a_destructured_list_binds_its_names_for_the_rest() {
+        let lowered = lower("[a, ...r] = [1, 2] a + 1").unwrap();
+        assert!(lowered.errors.is_empty(), "{:?}", lowered.errors);
     }
 
     #[test]

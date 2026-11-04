@@ -1,0 +1,19 @@
+# `[1, 2, 3]` is `Link(1, Link(2, Link(3, Empty)))`, and `[]` is `Empty`.
+# A list pattern takes a list apart the same way.
+sum = program(xs) do
+  match xs do
+    [] then 0
+    [first, ...rest] then first + sum(rest)
+  done
+done
+
+# Multiply neighbours two at a time; a leftover last item counts as it is.
+pairs = program(xs) do
+  match xs do
+    [a, b, ...rest] then a * b + pairs(rest)
+    [a] then a
+    [] then 0
+  done
+done
+
+sum([1, 2, 3, 4, 5]) + pairs([1, 2, 3, 4])

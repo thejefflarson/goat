@@ -60,6 +60,8 @@ lparen = _{ "(" }
 rparen = _{ ")" }
 lbrace = _{ "{" }
 rbrace = _{ "}" }
+lbracket = _{ "[" }
+rbracket = _{ "]" }
 dot = _{ "." }
 comma = _{ "," }
 // No leading sign: `5 -1` is the subtraction `5 - 1`.
@@ -91,7 +93,7 @@ negation = { minus ~ (negation | primary ~ postfix*) }
 // Order matters: pest is a PEG, so longer/more-specific alternatives come
 // first. `declaration` (`ident = ...`) begins with an identifier, so a bare
 // `ident` must be tried after it.
-primary = _{ number | string | boolean | destructure | declaration | function | conditional | match_expr | record | tag | ident | lparen ~ expr ~ rparen }
+primary = _{ number | string | boolean | destructure | declaration | function | conditional | match_expr | record | list | tag | ident | lparen ~ expr ~ rparen }
 // `{...base, x: 1}`: the grammar accepts a spread anywhere so that lowering can
 // say what is wrong with `{...a, ...b}`, instead of a bare parse error.
 record = { lbrace ~ (record_item ~ (comma ~ record_item)* ~ comma?)? ~ rbrace }
@@ -101,12 +103,17 @@ field = { ident ~ colon ~ expr }
 declaration = { ident ~ equals ~ expr ~ expr? }
 // `{x, y} = point` and `{x, ...rest} = point`. Tried before `record`: a
 // pattern has bare names where a literal has `name: value`.
-destructure = { record_pattern ~ equals ~ expr ~ expr? }
+destructure = { (record_pattern | list_pattern) ~ equals ~ expr ~ expr? }
 record_pattern = { lbrace ~ ((ident ~ (comma ~ ident)* ~ (comma ~ rest_binding)? | rest_binding) ~ comma?) ~ rbrace }
 rest_binding = { "..." ~ ident }
+// `[]`, `[a, b]`, `[first, ...rest]`: `[` is a list pattern where a pattern is
+// expected and a list literal where an expression is, so the two never meet.
+// `destructure` is tried first, so `[a, b]` with no `=` after it still parses
+// as a literal.
+list_pattern = { lbracket ~ ((ident ~ (comma ~ ident)* ~ (comma ~ rest_binding)? | rest_binding) ~ comma?)? ~ rbracket }
 labels = { ident ~ (comma ~ ident)* }
 params = { param ~ (comma ~ param)* }
-param = _{ record_pattern | ident }
+param = _{ record_pattern | list_pattern | ident }
 function = { function_lit ~ lparen ~ params? ~ rparen ~ do_lit ~ expr? ~ done_lit }
 arguments = { expr ~ (comma ~ expr)* ~ comma? }
 else_branch = _{ else_lit ~ expr }
@@ -114,5 +121,8 @@ conditional = { if_lit ~ expr ~ then_lit ~ expr ~ else_branch? ~ done_lit }
 // `Empty`, `Circle(5)`, `Link(x, rest)`. `Empty()` is the same as `Empty`.
 tag = { tag_name ~ (lparen ~ arguments? ~ rparen)? }
 pattern = { tag_name ~ (lparen ~ labels? ~ rparen)? }
-arm = { pattern ~ then_lit ~ expr }
+// `[]` is `Empty`; `[x, ...rest]` is `Link(x, rest)`; `[a, b]` is
+// `Link(a, Link(b, Empty))`.
+list = { lbracket ~ arguments? ~ rbracket }
+arm = { (list_pattern | pattern) ~ then_lit ~ expr }
 match_expr = { match_lit ~ expr ~ do_lit ~ arm* ~ else_branch? ~ done_lit }
