@@ -15,4 +15,6 @@
 CoqMakefile
 CoqMakefile.conf
 CoqMakefile.d
+.CoqMakefile.d
 .coqdeps.d
+Goat_ott.gen.v

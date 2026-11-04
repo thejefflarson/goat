@@ -15,7 +15,12 @@ Inductive exp : Set :=  (* term *)
  | e_false : exp
  | e_abs (e:exp) (* single-binder abstraction *)
  | e_app (e1:exp) (e2:exp)
- | e_let (e1:exp) (e2:exp) (* bind x in e2 only *).
+ | e_let (e1:exp) (e2:exp) (* bind x in e2 only *)
+ | e_rec (fs:fields) (* record literal (closed) *)
+ | e_proj (e:exp) (l:label) (* field projection *)
+with fields : Set :=  (* record spine (cons-list; duplicates allowed) *)
+ | fs_nil : fields
+ | fs_cons (l:label) (e:exp) (fs:fields).
 
 Inductive typ : Set :=  (* monotype *)
  | typ_Number : typ
@@ -34,7 +39,12 @@ with row : Set :=  (* row (scoped labels, duplicates allowed) *)
 (** subrules *)
 (** arities *)
 (** opening up abstractions *)
-Fixpoint open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
+Fixpoint open_fields_wrt_exp_rec (k:nat) (e5:exp) (fs5:fields) {struct fs5}: fields :=
+  match fs5 with
+  | fs_nil => fs_nil 
+  | (fs_cons l e fs) => fs_cons l (open_exp_wrt_exp_rec k e5 e) (open_fields_wrt_exp_rec k e5 fs)
+end
+with open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
   match e__6 with
   | (e_fvar_b nat) => 
       match lt_eq_lt_dec nat k with
@@ -49,15 +59,26 @@ Fixpoint open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
   | (e_abs e) => e_abs (open_exp_wrt_exp_rec (S k) e_5 e)
   | (e_app e1 e2) => e_app (open_exp_wrt_exp_rec k e_5 e1) (open_exp_wrt_exp_rec k e_5 e2)
   | (e_let e1 e2) => e_let (open_exp_wrt_exp_rec k e_5 e1) (open_exp_wrt_exp_rec (S k) e_5 e2)
+  | (e_rec fs) => e_rec (open_fields_wrt_exp_rec k e_5 fs)
+  | (e_proj e l) => e_proj (open_exp_wrt_exp_rec k e_5 e) l
 end.
+
+Definition open_fields_wrt_exp e5 fs5 := open_fields_wrt_exp_rec 0 fs5 e5.
 
 Definition open_exp_wrt_exp e_5 e__6 := open_exp_wrt_exp_rec 0 e__6 e_5.
 
 (** terms are locally-closed pre-terms *)
 (* definitions *)
 
-(* defns LC_exp *)
-Inductive lc_exp : exp -> Prop :=    (* defn lc_exp *)
+(* defns LC_fields_exp *)
+Inductive lc_fields : fields -> Prop :=    (* defn lc_fields *)
+ | lc_fs_nil : 
+     (lc_fields fs_nil)
+ | lc_fs_cons : forall (l:label) (e:exp) (fs:fields),
+     (lc_exp e) ->
+     (lc_fields fs) ->
+     (lc_fields (fs_cons l e fs))
+with lc_exp : exp -> Prop :=    (* defn lc_exp *)
  | lc_e_fvar_f : forall (x:termvar),
      (lc_exp (e_fvar_f x))
  | lc_e_num : forall (n:num),
@@ -76,9 +97,20 @@ Inductive lc_exp : exp -> Prop :=    (* defn lc_exp *)
  | lc_e_let : forall (e1 e2:exp),
      (lc_exp e1) ->
       ( forall x , lc_exp  ( open_exp_wrt_exp e2 (e_fvar_f x) )  )  ->
-     (lc_exp (e_let e1 e2)).
+     (lc_exp (e_let e1 e2))
+ | lc_e_rec : forall (fs:fields),
+     (lc_fields fs) ->
+     (lc_exp (e_rec fs))
+ | lc_e_proj : forall (e:exp) (l:label),
+     (lc_exp e) ->
+     (lc_exp (e_proj e l)).
 (** free variables *)
-Fixpoint fv_exp (e_5:exp) : vars :=
+Fixpoint fv_fields (fs5:fields) : vars :=
+  match fs5 with
+  | fs_nil => {}
+  | (fs_cons l e fs) => (fv_exp e) \u (fv_fields fs)
+end
+with fv_exp (e_5:exp) : vars :=
   match e_5 with
   | (e_fvar_b nat) => {}
   | (e_fvar_f x) => {{x}}
@@ -88,10 +120,17 @@ Fixpoint fv_exp (e_5:exp) : vars :=
   | (e_abs e) => (fv_exp e)
   | (e_app e1 e2) => (fv_exp e1) \u (fv_exp e2)
   | (e_let e1 e2) => (fv_exp e1) \u (fv_exp e2)
+  | (e_rec fs) => (fv_fields fs)
+  | (e_proj e l) => (fv_exp e)
 end.
 
 (** substitutions *)
-Fixpoint subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
+Fixpoint subst_fields (e5:exp) (x5:termvar) (fs5:fields) {struct fs5} : fields :=
+  match fs5 with
+  | fs_nil => fs_nil 
+  | (fs_cons l e fs) => fs_cons l (subst_exp e5 x5 e) (subst_fields e5 x5 fs)
+end
+with subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
   match e__6 with
   | (e_fvar_b nat) => e_fvar_b nat
   | (e_fvar_f x) => (if eq_var x x5 then e_5 else (e_fvar_f x))
@@ -101,6 +140,8 @@ Fixpoint subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
   | (e_abs e) => e_abs (subst_exp e_5 x5 e)
   | (e_app e1 e2) => e_app (subst_exp e_5 x5 e1) (subst_exp e_5 x5 e2)
   | (e_let e1 e2) => e_let (subst_exp e_5 x5 e1) (subst_exp e_5 x5 e2)
+  | (e_rec fs) => e_rec (subst_fields e_5 x5 fs)
+  | (e_proj e l) => e_proj (subst_exp e_5 x5 e) l
 end.
 
 
@@ -150,6 +191,6 @@ with req : row -> row -> Prop :=    (* defn req *)
 
 
 (** infrastructure *)
-#[export] Hint Constructors teq req lc_exp : core.
+#[export] Hint Constructors teq req lc_fields lc_exp : core.
 
 

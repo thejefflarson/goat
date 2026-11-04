@@ -27,24 +27,31 @@ Proof. apply teq_req_refl. Qed.
 Corollary req_refl : forall R : row, req R R.
 Proof. apply teq_req_refl. Qed.
 
+(* Mutual structural induction over the term/record-spine block. The record
+   literal makes [exp] mutually recursive with [fields] (goat_ln.ott), so the
+   locally-nameless infrastructure lemmas need the companion [fields] motive. *)
+Scheme exp_mut := Induction for exp Sort Prop
+with   fields_mut := Induction for fields Sort Prop.
+Combined Scheme exp_fields_mutind from exp_mut, fields_mut.
+
 (* Substituting for a variable not free in a term is the identity. This is the
    LNgen-emitted [subst_exp_fresh_eq]; it is proved by hand here because LNgen
    (a Haskell tool, not packaged on opam) is outside the Ott/Coq pipeline, and
    it is the standard non-trivial exercise of the generated [subst_exp]/[fv_exp]
    locally-nameless infrastructure. *)
+Lemma subst_fresh_eq_mut :
+  (forall (e : exp) (y : termvar) (u : exp),
+      y `notin` fv_exp e -> subst_exp u y e = e) /\
+  (forall (fs : fields) (y : termvar) (u : exp),
+      y `notin` fv_fields fs -> subst_fields u y fs = fs).
+Proof.
+  apply exp_fields_mutind; intros; simpl in *;
+    try reflexivity;
+    try (destruct (eq_var x y); subst; [ exfalso; fsetdec | reflexivity ]);
+    solve [ f_equal; auto ].
+Qed.
+
 Lemma subst_exp_fresh_eq : forall (e : exp) (y : termvar) (u : exp),
   y `notin` fv_exp e ->
   subst_exp u y e = e.
-Proof.
-  induction e; intros y u Hfv; simpl in *.
-  - reflexivity.
-  - destruct (eq_var x y); subst.
-    + exfalso. fsetdec.
-    + reflexivity.
-  - reflexivity.
-  - reflexivity.
-  - reflexivity.
-  - f_equal. apply IHe. assumption.
-  - f_equal; [ apply IHe1 | apply IHe2 ]; fsetdec.
-  - f_equal; [ apply IHe1 | apply IHe2 ]; fsetdec.
-Qed.
+Proof. apply subst_fresh_eq_mut. Qed.

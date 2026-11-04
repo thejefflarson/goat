@@ -18,8 +18,24 @@ preservation) is B3 (#71).
 | `goat.ott` | The typeset spec: the lockstep twin of `docs/semantics.md` (n-ary program/application, n-ary arrow). Source for the typeset rules, **not** for Coq. |
 | `goat_ln.ott` | The mechanization source: the locally-nameless core that Coq is generated from. See "Why two Ott files". |
 | `Goat_ott.v` | Generated from `goat_ln.ott` by Ott. Committed (see "Generated, committed"). |
-| `GoatProofs.v` | Hand-written lemmas over `Goat_ott.v`. |
+| `GoatProofs.v` | Hand-written locally-nameless infrastructure lemma (`subst_exp_fresh_eq`) and derived row-equivalence reflexivity. |
+| `GoatRows.v` | Row-equivalence theory: L1 (equivalence + congruence), L2 (head-shape "no confusion" + arrow/record inversion up to `≅`), L2′ (the §3 per-label characterization, soundness direction), L3 (row surfacing). Over `typ`/`row`/`teq`/`req` only. |
+| `GoatDefs.v` | The declarative type system and operational semantics (`docs/semantics.md` §4–§6), hand-written over the generated syntax: type/row substitution, free-variable predicates, schemes, contexts, instantiation, generalization, values, small-step reduction, typing. |
+| `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, **Progress**, **Preservation**, **Soundness**. |
 | `_CoqProject`, `Makefile` | Build. |
+
+## Records and projection in the Ott source
+
+`goat_ln.ott` adds the record literal `{ fs }` and projection `e.l` to the term
+grammar. The field sequence `fs` is a **mutually-recursive cons-list** baked
+into the same inductive block as `exp` (`fs_nil`, `l : e ; fs`), *not* a Coq
+`list (label * exp)`. This is deliberate: given a `list`-valued subterm, Ott
+0.34 aborts its locally-nameless `lc`/`fv`/`subst` code generation (it prints
+`only native lists supported`, then fails with `Not_found`). The mutual
+cons-list is the same finite ordered field sequence and lets Ott emit the full
+`open`/`subst`/`fv`/`lc` companions (`open_fields_wrt_exp`, `fv_fields`, …) that
+the metatheory needs. Type and row variables remain a free-variable set
+(`nat`), not binders, exactly as B2 chose.
 
 ## Build
 
@@ -85,15 +101,58 @@ them — is a Haskell tool not packaged on opam, so it is not in the pipeline.
 The one infrastructure lemma below is therefore hand-proved; wiring LNgen in (it
 needs a Haskell toolchain in CI) is a later step.
 
-## What is proved (`GoatProofs.v`)
+## What is proved (B3, issue #71)
 
-- `teq_refl` / `req_refl`: reflexivity of the row-equivalence relation `≅`. The
-  relation (Leijen scoped labels) states symmetry, transitivity, and label swap
-  but no reflexivity rule, so reflexivity is derived — by mutual induction over
-  the type/row structure. Canonical forms in B3 rest on it.
-- `subst_exp_fresh_eq`: `y ∉ fv_exp e → subst_exp u y e = e`. The standard
-  locally-nameless substitution lemma, exercising the generated `subst_exp` and
-  `fv_exp` over the term-binder infrastructure.
+**Status:** Progress is proved (assumption-free); Preservation and Soundness are
+complete *modulo* L6a/L6b, two standard Hindley–Milner term-substitution lemmas,
+tracked in #151. The proof is not finished until those two admits close (#71
+stays open until then).
+
+The soundness statements of `docs/semantics.md` §7 are mechanized here. By
+`Print Assumptions`:
+
+- **`progress`** — *closed under the global context*: no axioms, no admits.
+- **`preservation`** and **`soundness`** — closed except they rest on the two
+  term-substitution lemmas below.
+
+Fully closed, no admits:
+
+- The row theory (`GoatRows.v`): L1, L2 (incl. arrow/record inversion up to
+  `≅`), L2′, L3. The §3 characterization is proved in the **soundness
+  direction** — `req` respects the tail-and-per-label-list reading — which is
+  exactly L2′ and is what the record cases of canonical forms, L3, and
+  `ST-ProjRec` need. The *completeness* direction (the characterization implies
+  `req`, the swap-congruence obligation ADR 0008 names as the schedule risk) is
+  **not** needed for progress/preservation and is not proved.
+- Locally-nameless infrastructure (`open`/`subst` commutation, `subst_intro`),
+  `typing_regular`, canonical forms (L7), the T-Conv-aware typing inversions,
+  **Progress**, all **Preservation** congruence cases, and `ST-ProjRec`.
+
+The **two `Admitted` lemmas** (`GoatMeta.v`), on which Preservation's `ST-Beta`
+and `ST-LetV` cases (hence Soundness) rest:
+
+- `typing_subst` (L6a, monomorphic term substitution);
+- `typing_subst_poly` (L6b, polymorphic term substitution).
+
+Both are the standard Hindley–Milner substitution lemmas. Closing them needs the
+type/row-substitution-preserves-typing lemma (L5) together with weakening under
+binders, whose let case turns on generalization commuting with type substitution
+— i.e. capture-avoidance over the `nat`-indexed quantifier sets. `docs/semantics.md`
+§10 flags L6b's interaction with L5 as the subtlest case, and ADR 0008 budgets
+this HM substitution theory separately. They are stated at full strength (no
+theorem is weakened).
+
+`make ci` runs a frozen-admit guard (`make check-admits`) that fails if the
+`Admitted.` count in `proofs/*.v` ever differs from the two tracked here, so a
+later change can only make the proof *more* complete. When L6a/L6b close (#151),
+lower `EXPECTED_ADMITS` in the `Makefile` to 0.
+
+### Infrastructure (`GoatProofs.v`)
+
+- `teq_refl` / `req_refl`: reflexivity of `≅`, derived by mutual induction (the
+  relation states symmetry, transitivity, and label swap but no reflexivity).
+- `subst_exp_fresh_eq`: `y ∉ fv_exp e → subst_exp u y e = e`, over the
+  generated `subst_exp`/`fv_exp` (now mutual with the `fields` spine).
 
 ## CI
 
