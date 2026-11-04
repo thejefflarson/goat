@@ -103,6 +103,11 @@ needs a Haskell toolchain in CI) is a later step.
 
 ## What is proved (B3, issue #71)
 
+**Status:** Progress is proved (assumption-free); Preservation and Soundness are
+complete *modulo* L6a/L6b, two standard Hindley–Milner term-substitution lemmas,
+tracked in #151. The proof is not finished until those two admits close (#71
+stays open until then).
+
 The soundness statements of `docs/semantics.md` §7 are mechanized here. By
 `Print Assumptions`:
 
@@ -136,6 +141,11 @@ binders, whose let case turns on generalization commuting with type substitution
 §10 flags L6b's interaction with L5 as the subtlest case, and ADR 0008 budgets
 this HM substitution theory separately. They are stated at full strength (no
 theorem is weakened).
+
+`make ci` runs a frozen-admit guard (`make check-admits`) that fails if the
+`Admitted.` count in `proofs/*.v` ever differs from the two tracked here, so a
+later change can only make the proof *more* complete. When L6a/L6b close (#151),
+lower `EXPECTED_ADMITS` in the `Makefile` to 0.
 
 ### Infrastructure (`GoatProofs.v`)
 

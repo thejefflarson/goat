@@ -1,10 +1,11 @@
 # Build the mechanized development (ADR 0008, issue #70). See README.md.
 #
-# `make`        regenerate Goat_ott.v from the Ott source, then compile.
-# `make gen`    regenerate Goat_ott.v only.
-# `make coq`    compile the committed .v files under coqc.
-# `make ci`     check the committed Goat_ott.v matches the Ott source, compile.
-# `make clean`  remove generated build artifacts.
+# `make`              regenerate Goat_ott.v from the Ott source, then compile.
+# `make gen`          regenerate Goat_ott.v only.
+# `make coq`          compile the committed .v files under coqc.
+# `make check-admits` fail unless proofs/*.v holds exactly the tracked admits.
+# `make ci`           check Ott sync + admit count, then compile.
+# `make clean`        remove generated build artifacts.
 #
 # Tools come from an opam switch (Coq 8.20.1, Ott 0.34, metalib). metalib is on
 # Coq's user-contrib path, so no extra -R is needed for it.
@@ -16,7 +17,11 @@ OTT_SRC   = goat_ln.ott
 GEN       = Goat_ott.v
 OTT_FLAGS = -coq_lngen true -coq_expand_list_types true
 
-.PHONY: all gen coq ci check-gen clean
+.PHONY: all gen coq ci check-gen check-admits clean
+
+# The two allowed admits: typing_subst (L6a) and typing_subst_poly (L6b), both
+# in GoatMeta.v. Closing them finishes the B3 soundness proof (issue #151).
+EXPECTED_ADMITS = 2
 
 all: gen coq
 
@@ -40,7 +45,21 @@ check-gen: $(OTT_SRC)
 	@rm -f Goat_ott.gen.v
 	@echo "$(GEN) is in sync with $(OTT_SRC)."
 
-ci: check-gen coq
+# Frozen-admit guard: "green Coq" stays honest only while the sole admits are
+# the two tracked HM substitution lemmas, so the proof can only get MORE
+# complete. Fail if the `Admitted.` count in the sources drifts from
+# EXPECTED_ADMITS. When L6a/L6b close (#151), lower the expected count to 0.
+check-admits:
+	@n=$$(grep -rn '^Admitted\.' *.v | wc -l | tr -d '[:space:]'); \
+	if [ "$$n" != "$(EXPECTED_ADMITS)" ]; then \
+	  echo "ERROR: proofs/*.v has $$n 'Admitted.' (expected $(EXPECTED_ADMITS))."; \
+	  echo "Allowed: typing_subst (L6a) and typing_subst_poly (L6b) in GoatMeta.v (#151)."; \
+	  grep -rn '^Admitted\.' *.v; \
+	  exit 1; \
+	fi; \
+	echo "check-admits: $$n 'Admitted.' in proofs/*.v (expected $(EXPECTED_ADMITS)) -- ok."
+
+ci: check-gen check-admits coq
 
 clean:
 	-$(MAKE) -f CoqMakefile clean 2>/dev/null || true
