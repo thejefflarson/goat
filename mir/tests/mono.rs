@@ -637,3 +637,73 @@ fn field_index(f: &Func) -> Option<usize> {
     }
     find(&f.body)
 }
+
+fn variant_layouts(p: &Program) -> Vec<&Vec<Vec<MTy>>> {
+    p.layouts
+        .iter()
+        .filter_map(|l| match l {
+            Layout::Variant(tags) => Some(tags),
+            Layout::Record(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_tag_matched_at_two_widths_has_one_layout() {
+    let src = "s = Circle(5) \
+               narrow = program(v) do match v do Circle(r) then r done done \
+               wide = program(v) do match v do Circle(r) then r Square(w) then w done done \
+               narrow(s) + wide(s)";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(10.0));
+    let [tags] = variant_layouts(&p)[..] else {
+        panic!("one variant layout: {:?}", p.layouts);
+    };
+    assert_eq!(tags, &vec![vec![MTy::Float], vec![MTy::Float]]);
+}
+
+#[test]
+fn the_order_of_the_two_widths_does_not_matter() {
+    let src = "s = Circle(5) \
+               narrow = program(v) do match v do Circle(r) then r done done \
+               wide = program(v) do match v do Circle(r) then r Square(w) then w done done \
+               wide(s) + narrow(s)";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(10.0));
+    assert_eq!(variant_layouts(&p).len(), 1);
+}
+
+#[test]
+fn a_nested_tag_matched_at_two_widths_has_one_layout_per_level() {
+    let src = "s = Box(Circle(5)) \
+               narrow = program(v) do match v do Box(c) then match c do Circle(r) then r done done done \
+               wide = program(v) do match v do Box(c) then \
+                 match c do Circle(r) then r Square(w) then w done done done \
+               narrow(s) + wide(s)";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(10.0));
+    assert_eq!(variant_layouts(&p).len(), 2);
+}
+
+#[test]
+fn a_recursive_value_matched_at_two_widths_has_one_layout() {
+    let src = "xs = Link(1, Empty) \
+               narrow = program(l) do match l do Empty then 0 Link(a, r) then a done done \
+               wide = program(l) do match l do Empty then 0 Link(a, r) then a Other(n) then n done done \
+               narrow(xs) + wide(xs)";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(2.0));
+    assert_eq!(variant_layouts(&p).len(), 1);
+}
+
+#[test]
+fn a_tag_with_two_payload_types_gets_two_layouts() {
+    let src = "num = program(v) do match v do Some(n) then n else 0 done done \
+               flag = program(v) do match v do Some(b) then if b then 1 else 0 done else 0 done done \
+               num(Some(4)) + flag(Some(true))";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(5.0));
+    let layouts = variant_layouts(&p);
+    assert_eq!(layouts.len(), 2);
+    assert_ne!(layouts[0], layouts[1]);
+}

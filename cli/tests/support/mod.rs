@@ -7,6 +7,11 @@ use goat_mir::interp::{self, Value};
 pub fn interpret(src: &str) -> (Vec<String>, usize) {
     let checked = goat_checker::check(src).expect("program type-checks");
     let program = goat_mir::mono(&checked).expect("program monomorphizes");
+    assert_eq!(
+        goat_mir::verify(&program),
+        Ok(()),
+        "MIR verifies for: {src}"
+    );
     let outcome = interp::run(&program).expect("interpreter runs");
     let printed = match outcome.value {
         Value::Int(n) => vec![goat::format_number(n as f64)],

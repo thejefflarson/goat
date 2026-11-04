@@ -79,6 +79,15 @@ keyed by `LayoutId`:
   (`mir/src/canon.rs`). Types equal up to `μ`-equivalence get one layout and
   one specialization; a layout is registered before its payloads are lowered,
   so lowering a self-referential type terminates.
+- **Variant families:** a value matched at two widths (`[A]` and `[A, B]`) must
+  carry one `LayoutId`, so mono keys a variant layout on a *family*, not on the
+  exact type. A type joins the first family it shares a tag with and agrees with
+  on every shared tag's payload (nested variants compared by family); its tags
+  are added to the family's table. The layout is width-independent: a cell is
+  sized and dispatched by its stored tag, and members agree on shared tags
+  because row unification only equates two uses of a value when they do. Types
+  that give one tag different payloads (`Some(1)`, `Some(true)`) get separate
+  families.
 - **String:** `[header][len: u32][bytes…]`; literals live in a `data` segment
   and are immortal.
 - **Closure:** `[header][drop_fn: i32][code: i32][captures…]` (see Closures).
