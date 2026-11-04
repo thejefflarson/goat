@@ -30,6 +30,7 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         sigs: Vec::new(),
         layouts: Vec::new(),
         variants: HashMap::new(),
+        families: Vec::new(),
         tags: labels.into_iter().zip(0..).collect(),
         wrappers: HashMap::new(),
         errors: Vec::new(),
@@ -221,11 +222,12 @@ struct Mono<'a> {
     work: Vec<(FuncId, Target, Subst, Vec<Ty>)>,
     sigs: Vec<Sig>,
     layouts: Vec<Layout>,
-    /// The layout of each variant type, keyed by its canonical form. A
-    /// recursive layout names itself, so a layout is registered here before its
-    /// payloads are lowered: reaching the same type again finds the id instead
-    /// of lowering it forever.
+    /// The layout of each variant type, keyed by its canonical form. Types in
+    /// one `Family` share an id. A recursive layout names itself, so a type is
+    /// registered here before its payloads are lowered: reaching it again finds
+    /// the id instead of lowering it forever.
     variants: HashMap<Ty, LayoutId>,
+    families: Vec<Family>,
     /// The global tag number of each label, in sorted label order.
     tags: HashMap<String, u32>,
     /// The zero-capture closure wrapper for each function used as a value. The
@@ -234,6 +236,24 @@ struct Mono<'a> {
     errors: Vec<GoatError>,
     data: Vec<Vec<u8>>,
 }
+
+/// The variant types that share one layout. A layout is a table from the global
+/// tag number to payload slots, and every use of a value must see the same
+/// table, so a value matched at two widths (`[A]` and `[A, B]`) needs both
+/// types in one family. The layout is the union of the members' tags. That is
+/// width-independent because a cell is sized and dispatched by its stored tag,
+/// and sound because members agree on every tag they share: the checker's row
+/// unification guarantees it for the types of one value, and `Mono::agrees`
+/// enforces it before a type joins.
+struct Family {
+    layout: LayoutId,
+    /// The payload type of each tag some member has, from its first provider.
+    payloads: HashMap<String, Ty>,
+}
+
+/// Variant types assumed to join a family while `Mono::agrees` checks them: a
+/// recursive type is compared against a family with itself assumed in it.
+type Assumed = Vec<(Ty, LayoutId)>;
 
 struct FnCx {
     subst: Subst,
@@ -390,29 +410,127 @@ impl Mono<'_> {
         }
     }
 
-    /// The layout of the variant type `key` (canonical). Registered before its
+    /// The layout of the variant type `key` (canonical): that of the first
+    /// family whose tags it agrees with, else a new one. Registered before its
     /// payloads are lowered, so a payload that mentions `key` again resolves to
     /// this id; every cycle in a type crosses a variant, so lowering ends.
     fn variant_layout(&mut self, key: Ty) -> LayoutId {
         if let Some(&id) = self.variants.get(&key) {
             return id;
         }
-        let id = LayoutId(self.layouts.len() as u32);
-        self.layouts.push(Layout::Variant(Vec::new()));
-        self.variants.insert(key.clone(), id);
-        let Ty::Variant(row) = key.unfold_head() else {
-            unreachable!("a variant key unfolds to a variant");
-        };
-        let mut payloads = vec![Vec::new(); self.tags.len()];
-        for (label, payload) in ground_fields(&row) {
-            let fields = payload_fields(payload)
-                .iter()
-                .map(|t| self.lower_ty(t))
-                .collect();
-            payloads[self.tags[label] as usize] = fields;
+        let mut joined = None;
+        for family in &self.families {
+            let mut assumed = vec![(key.clone(), family.layout)];
+            if self.agrees(&key, family, &mut assumed) {
+                joined = Some(assumed);
+                break;
+            }
         }
-        self.layouts[id.0 as usize] = Layout::Variant(payloads);
-        id
+        let members = joined.unwrap_or_else(|| {
+            let id = LayoutId(self.layouts.len() as u32);
+            self.layouts
+                .push(Layout::Variant(vec![Vec::new(); self.tags.len()]));
+            self.families.push(Family {
+                layout: id,
+                payloads: HashMap::new(),
+            });
+            vec![(key.clone(), id)]
+        });
+        self.variants.extend(members.iter().cloned());
+        for (member, id) in &members {
+            let row = variant_row(member);
+            let family = self
+                .families
+                .iter_mut()
+                .find(|f| f.layout == *id)
+                .expect("layout belongs to a family");
+            for (label, payload) in ground_fields(&row) {
+                family
+                    .payloads
+                    .entry(label.clone())
+                    .or_insert_with(|| payload.clone());
+            }
+        }
+        for (member, id) in &members {
+            let row = variant_row(member);
+            for (label, payload) in ground_fields(&row) {
+                let fields = payload_fields(payload)
+                    .iter()
+                    .map(|t| self.lower_ty(t))
+                    .collect();
+                let Layout::Variant(table) = &mut self.layouts[id.0 as usize] else {
+                    unreachable!("a family's layout is a variant");
+                };
+                table[self.tags[label] as usize] = fields;
+            }
+        }
+        self.variants[&key]
+    }
+
+    /// Whether the variant type `key` can join `family`: it shares a tag with
+    /// the family, and every tag it shares has a compatible payload. Two uses
+    /// of one value always share the value's own tag, so types with nothing in
+    /// common stay apart. Nested variant types that must join a family for that
+    /// to hold are added to `assumed`.
+    fn agrees(&self, key: &Ty, family: &Family, assumed: &mut Assumed) -> bool {
+        let row = variant_row(key);
+        let mut shared = false;
+        let agree = ground_fields(&row).all(|(label, payload)| {
+            family.payloads.get(label).is_none_or(|have| {
+                shared = true;
+                self.compatible(payload, have, assumed)
+            })
+        });
+        agree && shared
+    }
+
+    /// Whether two payload types lower to the same slots once the variants
+    /// inside them are compared by family instead of by width. A variant not
+    /// yet lowered is assumed to join the family of the one it is compared to.
+    fn compatible(&self, a: &Ty, b: &Ty, assumed: &mut Assumed) -> bool {
+        if a == b {
+            return true;
+        }
+        match (a.unfold_head(), b.unfold_head()) {
+            (a @ Ty::Variant(_), b @ Ty::Variant(_)) => {
+                let (a, b) = (canonical(&a), canonical(&b));
+                let family_of = |ty: &Ty, assumed: &Assumed| {
+                    assumed
+                        .iter()
+                        .find(|(t, _)| t == ty)
+                        .map(|(_, id)| *id)
+                        .or_else(|| self.variants.get(ty).copied())
+                };
+                match (family_of(&a, assumed), family_of(&b, assumed)) {
+                    (Some(x), Some(y)) => x == y,
+                    (None, Some(y)) => {
+                        assumed.push((a.clone(), y));
+                        self.families
+                            .iter()
+                            .find(|f| f.layout == y)
+                            .is_some_and(|f| self.agrees(&a, f, assumed))
+                    }
+                    _ => false,
+                }
+            }
+            (Ty::Record(a), Ty::Record(b)) => {
+                let a: Vec<_> = ground_fields(&a).collect();
+                let b: Vec<_> = ground_fields(&b).collect();
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(&b)
+                        .all(|((la, ta), (lb, tb))| la == lb && self.compatible(ta, tb, assumed))
+            }
+            (Ty::Func(pa, ra), Ty::Func(pb, rb)) => {
+                pa.len() == pb.len()
+                    && pa
+                        .iter()
+                        .zip(&pb)
+                        .all(|(a, b)| self.compatible(a, b, assumed))
+                    && self.compatible(&ra, &rb, assumed)
+            }
+            (a, b) => a == b,
+        }
     }
 
     fn specialize(&mut self, cx: &FnCx, target: Target, use_id: ExprId) -> (FuncId, Ty) {
@@ -965,6 +1083,14 @@ fn match_row(
             }
             Row::Empty => break,
         }
+    }
+}
+
+/// The row of the variant type `key`, unfolded if it is recursive.
+fn variant_row(key: &Ty) -> Row {
+    match key.unfold_head() {
+        Ty::Variant(row) => row,
+        _ => unreachable!("a variant key unfolds to a variant"),
     }
 }
 

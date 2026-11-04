@@ -1,6 +1,6 @@
 # ADR 0010 — Mono pins a let-generalized variant value to its first use's layout
 
-- Status: accepted (2026-11-04)
+- Status: accepted (2026-11-04); the verifier gap below is closed by #141
 - Context: Phase 7 P7d (#92, #140), `mir/src/mono.rs`, `mir/src/canon.rs`, `docs/mir.md`
 
 ## Context
@@ -62,3 +62,13 @@ verifier rejects the pointer-type mismatch?
   this gap closes.
 - Same family as #74 (and #65): a let-generalized value pinned to its first
   use. If the first-use rule is ever revisited, all three move together.
+
+## Resolution (#141)
+
+Mono now keys a variant layout on a *family* of types rather than on the
+canonical row-width `Ty`: a type joins the first family it shares a tag with and
+agrees with on every shared tag's payload, and the layout is the union of the
+family's tags (`Mono::variant_layout`, `Mono::agrees`). The two uses of `s`
+above resolve to one `LayoutId`, the verifier accepts the program, and the
+differential harness now verifies every program's MIR. Types that disagree on a
+shared tag's payload stay in separate families, as before.
