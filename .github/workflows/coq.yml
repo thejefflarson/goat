@@ -44,6 +44,10 @@ jobs:
           coq_version: "8.20"
           ocaml_version: "default"
           script: |
+            # actions/checkout leaves the workspace owned by the host runner
+            # uid; the container's `coq` user (passwordless sudo) must own it so
+            # Ott and make can write generated .v/.vo files into proofs/.
+            sudo chown -R coq:coq .
             startGroup "Install Ott and metalib"
               opam update -y
               opam install -y ott.0.34
