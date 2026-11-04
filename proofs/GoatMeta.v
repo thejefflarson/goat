@@ -394,3 +394,215 @@ Qed.
 Theorem progress : forall e T,
   typing nil e T -> value e \/ exists e', step e e'.
 Proof. intros e T H. apply (proj1 progress_mut nil e T H). reflexivity. Qed.
+
+(* ================================================================== *)
+(* Typing inversion up to conversion (the T-Conv "induction tax",       *)
+(* docs/semantics.md section 9).  Each lemma peels any trailing          *)
+(* conversions off a derivation whose subject has a known head.          *)
+(* ================================================================== *)
+
+Lemma app_inv : forall G e1 e2 T,
+  typing G (e_app e1 e2) T ->
+  exists A B, typing G e1 (typ_Arrow A B) /\ typing G e2 A /\ teq B T.
+Proof.
+  intros G e1 e2 T H. remember (e_app e1 e2) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_App *) inversion He; subst. exists T1, T2.
+    repeat split; auto using teq_refl.
+  - (* T_Conv *) destruct (IHtyping He) as [A [B [Hty1 [Hty2 Hb]]]].
+    exists A, B. repeat split; try assumption. eauto using teq_trans.
+Qed.
+
+Lemma abs_inv : forall G e T,
+  typing G (e_abs e) T ->
+  exists (L : vars) T1 T2,
+    (forall x, x `notin` L ->
+       typing ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e (e_fvar_f x)) T2) /\
+    teq (typ_Arrow T1 T2) T.
+Proof.
+  intros G e T H. remember (e_abs e) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_Abs *) inversion He; subst. exists L, T1, T2.
+    split; auto using teq_refl.
+  - (* T_Conv *) destruct (IHtyping He) as [L [T1 [T2 [Hbody Hteq]]]].
+    exists L, T1, T2. split; try assumption. eauto using teq_trans.
+Qed.
+
+Lemma let_inv : forall G e1 e2 T,
+  typing G (e_let e1 e2) T ->
+  exists (L : vars) T1 T2,
+    typing G e1 T1 /\
+    (forall x, x `notin` L ->
+       typing ((x ~ gen G T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) /\
+    teq T2 T.
+Proof.
+  intros G e1 e2 T H. remember (e_let e1 e2) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_Let *) inversion He; subst. exists L, T1, T2.
+    repeat split; auto using teq_refl.
+  - (* T_Conv *) destruct (IHtyping He) as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
+    exists L, T1, T2. repeat split; try assumption. eauto using teq_trans.
+Qed.
+
+Lemma proj_inv : forall G e l T,
+  typing G (e_proj e l) T ->
+  exists T0 R, typing G e (typ_Record (row_Ext l T0 R)) /\ teq T0 T.
+Proof.
+  intros G e l T H. remember (e_proj e l) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_Proj *) inversion He; subst. exists T, R.
+    split; auto using teq_refl.
+  - (* T_Conv *) destruct (IHtyping He) as [T0 [R [Hty Hteq]]].
+    exists T0, R. split; try assumption. eauto using teq_trans.
+Qed.
+
+Lemma rec_inv : forall G fs T,
+  typing G (e_rec fs) T ->
+  exists R, field_typing G fs R /\ teq (typ_Record R) T.
+Proof.
+  intros G fs T H. remember (e_rec fs) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_Record *) inversion He; subst. exists R.
+    split; auto using teq_refl.
+  - (* T_Conv *) destruct (IHtyping He) as [R [Hft Hteq]].
+    exists R. split; try assumption. eauto using teq_trans.
+Qed.
+
+(* ================================================================== *)
+(* L6 -- term substitution.  These two are the only ADMITTED results in  *)
+(* the development.  Each is the standard Hindley-Milner substitution     *)
+(* lemma; neither is weakened in statement.  Their rigorous mechanization *)
+(* needs type/row-substitution preservation (L5) together with weakening  *)
+(* under binders, and the let case of each turns on generalization        *)
+(* commuting with type substitution -- which requires capture-avoidance   *)
+(* over the nat-indexed quantifier sets (docs/semantics.md section 10     *)
+(* names L6b's interaction with L5 as the subtlest case, and ADR 0008     *)
+(* budgets this HM substitution theory separately).  Everything the       *)
+(* soundness theorems below draw from these two lemmas is otherwise       *)
+(* fully closed; see the handoff notes.                                   *)
+(* ================================================================== *)
+
+(* L6a: monomorphic term substitution (for ST-Beta). *)
+Lemma typing_subst : forall G x U e T u,
+  typing ((x ~ sch_mono U) ++ G) e T ->
+  typing G u U ->
+  typing G (subst_exp u x e) T.
+Admitted.
+
+(* L6b: polymorphic term substitution (for ST-LetV); the side condition
+   V \cap ftv(G) = emptyset of docs/semantics.md L6b holds because [gen]
+   quantifies exactly ftv(T1) \ ftv(G). *)
+Lemma typing_subst_poly : forall G x T1 e T2 v,
+  typing ((x ~ gen G T1) ++ G) e T2 ->
+  typing G v T1 ->
+  typing G (subst_exp v x e) T2.
+Admitted.
+
+(* ================================================================== *)
+(* Preservation (docs/semantics.md section 7).                          *)
+(* ================================================================== *)
+
+Scheme step_mut := Induction for step Sort Prop
+with   step_fields_mut := Induction for step_fields Sort Prop.
+Combined Scheme step_step_fields_mutind from step_mut, step_fields_mut.
+
+Lemma preservation_mut :
+  (forall e e', step e e' -> forall G T, typing G e T -> typing G e' T) /\
+  (forall fs fs', step_fields fs fs' ->
+     forall G R, field_typing G fs R -> field_typing G fs' R).
+Proof.
+  apply step_step_fields_mutind.
+  - (* st_beta: (abs e) v --> open e v *)
+    intros e v Hv G T Hty.
+    apply app_inv in Hty. destruct Hty as [A [B [Habs [Harg Hbt]]]].
+    apply abs_inv in Habs. destruct Habs as [L [A' [B' [Hbody Harr]]]].
+    apply teq_Arrow_inv in Harr. destruct Harr as [A2 [B2 [Heq [HA HB]]]].
+    inversion Heq; subst.
+    pick fresh x for (L \u fv_exp e).
+    assert (HxL : x `notin` L) by fsetdec.
+    assert (Hxe : x `notin` fv_exp e) by fsetdec.
+    (* v : A', by converting its A-typing along teq A A' *)
+    assert (Hv' : typing G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
+    assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
+      by (eapply typing_subst; [ apply Hbody; exact HxL | exact Hv' ]).
+    rewrite <- subst_intro in Hopen by exact Hxe.
+    eapply T_Conv; [ exact Hopen | ].
+    eapply teq_trans; [ exact HB | exact Hbt ].
+  - (* st_app1 *)
+    intros e1 e1' e2 Hstep IH G T Hty.
+    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
+    eapply T_Conv; [ eapply T_App; [ apply IH; exact Hty1 | exact Hty2 ] | exact Hbt ].
+  - (* st_app2 *)
+    intros v e2 e2' Hv Hstep IH G T Hty.
+    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
+    eapply T_Conv; [ eapply T_App; [ exact Hty1 | apply IH; exact Hty2 ] | exact Hbt ].
+  - (* st_letv: (let v e2) --> open e2 v *)
+    intros v e2 Hv G T Hty.
+    apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
+    pick fresh x for (L \u fv_exp e2).
+    assert (HxL : x `notin` L) by fsetdec.
+    assert (Hxe : x `notin` fv_exp e2) by fsetdec.
+    assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e2 (e_fvar_f x))) T2)
+      by (eapply typing_subst_poly; [ apply Hbody; exact HxL | exact Hty1 ]).
+    rewrite <- subst_intro in Hopen by exact Hxe.
+    eapply T_Conv; [ exact Hopen | exact Hteq ].
+  - (* st_let1 *)
+    intros e1 e1' e2 Hstep IH G T Hty.
+    apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
+    eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1);
+                     [ apply IH; exact Hty1 | exact Hbody ] | exact Hteq ].
+  - (* st_proj *)
+    intros e e' l Hstep IH G T Hty.
+    apply proj_inv in Hty. destruct Hty as [T0 [R [Hty0 Hteq]]].
+    eapply T_Conv; [ eapply T_Proj; apply IH; exact Hty0 | exact Hteq ].
+  - (* st_projrec *)
+    intros fs l v Hrv Hlook G T Hty.
+    apply proj_inv in Hty. destruct Hty as [T0 [R [Hrec Hteq]]].
+    apply rec_inv in Hrec. destruct Hrec as [R' [Hft Hreq]].
+    apply teq_Record_inv in Hreq. destruct Hreq as [R2 [Heq Hreq]].
+    inversion Heq; subst.
+    apply req_surface in Hreq. destruct Hreq as [T1 [rest [Hpi Hteq1]]].
+    destruct (field_lookup_some _ _ _ _ _ _ Hft Hpi) as [v0 [Hlook0 Hty0]].
+    assert (v0 = v) by congruence. subst v0.
+    eapply T_Conv; [ exact Hty0 | ].
+    eapply teq_trans; [ exact Hteq1 | exact Hteq ].
+  - (* st_rec *)
+    intros fs fs' Hstep IHf G T Hty.
+    apply rec_inv in Hty. destruct Hty as [R [Hft Hteq]].
+    eapply T_Conv; [ eapply T_Record; apply IHf; exact Hft | exact Hteq ].
+  - (* stf_here *)
+    intros l e e' fs Hstep IH G R Hft.
+    inversion Hft; subst.
+    eapply FT_cons; [ apply IH; eassumption | eassumption ].
+  - (* stf_cons *)
+    intros l v fs fs' Hv Hstep IHf G R Hft.
+    inversion Hft; subst.
+    eapply FT_cons; [ eassumption | apply IHf; eassumption ].
+Qed.
+
+Theorem preservation : forall G e e' T,
+  typing G e T -> step e e' -> typing G e' T.
+Proof. intros G e e' T Hty Hstep. eapply (proj1 preservation_mut); eauto. Qed.
+
+(* ================================================================== *)
+(* Soundness (docs/semantics.md section 7): a well-typed closed term     *)
+(* never reaches a stuck state.                                           *)
+(* ================================================================== *)
+
+Theorem soundness : forall e T e',
+  typing nil e T -> multistep e e' -> value e' \/ exists e'', step e' e''.
+Proof.
+  intros e T e' Hty Hms. revert T Hty.
+  induction Hms as [ e | e1 e2 e3 Hstep Hms IH ]; intros T Hty.
+  - (* refl *) apply progress with (T := T); exact Hty.
+  - (* step *) apply IH with (T := T). eapply preservation; eauto.
+Qed.
+
+Corollary soundness_not_stuck : forall e T e',
+  typing nil e T -> multistep e e' -> ~ stuck e'.
+Proof.
+  intros e T e' Hty Hms [Hnv Hns].
+  destruct (soundness _ _ _ Hty Hms) as [Hv | [e'' Hstep]].
+  - contradiction.
+  - eapply Hns; exact Hstep.
+Qed.
