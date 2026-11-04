@@ -918,7 +918,9 @@ impl Inferer {
         let mut seen = HashSet::new();
         self.constructed
             .iter()
-            .filter(|(name, _)| !self.matched.contains(name) && seen.insert(name))
+            .filter(|(name, span)| {
+                !span.in_prelude() && !self.matched.contains(name) && seen.insert(name)
+            })
             .map(|(name, span)| {
                 GoatError::new(
                     *span,
@@ -1110,7 +1112,7 @@ fn subst_row(row: &Row, mapping: &HashMap<TypeVar, TypeVar>) -> Row {
 mod tests {
     use super::*;
 
-    const SPAN: Span = Span { start: 0, end: 0 };
+    const SPAN: Span = Span::new(0, 0);
 
     fn extend(label: &str, field: Ty, rest: Row) -> Row {
         Row::Extend {

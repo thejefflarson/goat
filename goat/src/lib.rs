@@ -5,7 +5,12 @@ use goat_checker::hir::Span;
 
 /// Parse, type-check, monomorphize, and emit a wasm module for `source`.
 pub fn compile(source: &str) -> Result<Vec<u8>, Vec<GoatError>> {
-    let checked = goat_checker::check(source)?;
+    compile_with_prelude(goat_checker::PRELUDE, source)
+}
+
+/// Like [`compile`], with `prelude` standing in for the built-in one.
+pub fn compile_with_prelude(prelude: &str, source: &str) -> Result<Vec<u8>, Vec<GoatError>> {
+    let checked = goat_checker::check_with_prelude(prelude, source)?;
     let program = goat_mir::mono(&checked)?;
     goat_wasm::emit(&program).map_err(|e| vec![GoatError::new(Span::new(0, 0), e.to_string())])
 }
