@@ -245,6 +245,10 @@ fn examples_print_the_expected_output() {
         ("lists.goat", "15"),
         ("spread.goat", "25"),
         ("list_literals.goat", "29"),
+        (
+            "constraints.goat",
+            "{x: 21, y: 42}\n[true, true, false]\ntrue",
+        ),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
         let src = fs::read_to_string(&path).unwrap();

@@ -1,7 +1,7 @@
 //! Shared by the differential tests and the fuzz target: run a program through
 //! the interpreter and wasm, and generate terminating, well-typed programs.
 
-use goat_mir::interp::{self, Value};
+use goat_mir::interp::{self, Piece, Value};
 
 /// What the interpreter says the program prints, and its live allocations.
 pub fn interpret(src: &str) -> (Vec<String>, usize) {
@@ -17,18 +17,30 @@ pub fn interpret_with_prelude(prelude: &str, src: &str) -> (Vec<String>, usize) 
         "MIR verifies for: {src}"
     );
     let outcome = interp::run(&program).expect("interpreter runs");
-    let printed = match outcome.value {
-        Value::Int(n) => vec![goat::format_number(n as f64)],
-        Value::Float(x) => vec![goat::format_number(x)],
-        Value::Bool(b) => vec![goat::format_bool(b).to_string()],
-        Value::Unit => Vec::new(),
+    let mut printed: Vec<String> = outcome
+        .printed
+        .iter()
+        .map(|line| {
+            line.iter()
+                .map(|piece| match piece {
+                    Piece::Number(x) => goat::format_number(*x),
+                    Piece::Text(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                })
+                .collect()
+        })
+        .collect();
+    match outcome.value {
+        Value::Int(n) => printed.push(goat::format_number(n as f64)),
+        Value::Float(x) => printed.push(goat::format_number(x)),
+        Value::Bool(b) => printed.push(goat::format_bool(b).to_string()),
+        Value::Unit => {}
         Value::Ptr(_) => {
             let bytes = outcome
                 .root_string
                 .expect("only string roots are supported");
-            vec![String::from_utf8(bytes).expect("string root is UTF-8")]
+            printed.push(String::from_utf8(bytes).expect("string root is UTF-8"));
         }
-    };
+    }
     (printed, outcome.live_allocations)
 }
 

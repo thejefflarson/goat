@@ -50,6 +50,22 @@ impl Span {
     }
 }
 
+/// The functions the compiler provides without the prelude defining them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Builtin {
+    /// `print`: `(a) -> Unit`, for any `a`.
+    Print,
+}
+
+impl Builtin {
+    pub fn named(name: &str) -> Option<Builtin> {
+        match name {
+            "print" => Some(Builtin::Print),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinOp {
     Add,
@@ -60,13 +76,35 @@ pub enum BinOp {
     Lte,
     Gt,
     Gte,
+    Eq,
+    Ne,
 }
 
 impl BinOp {
-    /// Whether this operator yields a `Bool` (the comparisons) rather than a
-    /// `Number` (the arithmetic).
-    pub fn is_comparison(self) -> bool {
-        matches!(self, BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte)
+    /// `+ - * /`: defined on numbers and on records of numbers.
+    pub fn is_arithmetic(self) -> bool {
+        matches!(self, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
+    }
+
+    /// `==` and `!=`: defined on any type without a function inside it.
+    pub fn is_equality(self) -> bool {
+        matches!(self, BinOp::Eq | BinOp::Ne)
+    }
+
+    /// The operator as written, for messages.
+    pub fn symbol(self) -> &'static str {
+        match self {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Lt => "<",
+            BinOp::Lte => "<=",
+            BinOp::Gt => ">",
+            BinOp::Gte => ">=",
+            BinOp::Eq => "==",
+            BinOp::Ne => "!=",
+        }
     }
 }
 
@@ -131,6 +169,8 @@ pub enum ExprKind {
         symbol: Symbol,
         name: String,
     },
+    /// A function the compiler provides, used by its bare name.
+    Builtin(Builtin),
     /// `program(params) do body done`.
     Func {
         params: Vec<Param>,

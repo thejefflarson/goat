@@ -294,6 +294,13 @@ impl<'p> Cx<'p> {
             }
             Expr::Free(_) | Expr::Dup(_) | Expr::Drop(_) => Some(MTy::Unit),
             Expr::StrLit(_) => Some(MTy::Ptr(HeapKind::Str)),
+            Expr::StrEq(..) => Some(MTy::Bool),
+            Expr::Write(write) => {
+                if let Write::Number(value) = write {
+                    self.ty(value);
+                }
+                Some(MTy::Unit)
+            }
             Expr::Trap(_) => None,
         }
     }
@@ -319,7 +326,27 @@ impl<'p> Cx<'p> {
                 Some(env) => self.borrow(e.clone(), env, after),
                 None => Out::new(e.clone()),
             },
-            Expr::Field(x, _) | Expr::Payload(x, ..) => self.borrow(e.clone(), *x, after),
+            Expr::Field(x, _) | Expr::Payload(x, ..) | Expr::Write(Write::Str(x)) => {
+                self.borrow(e.clone(), *x, after)
+            }
+            Expr::StrEq(a, b) => {
+                let b = self.borrow(Expr::Const(Const::Unit), *b, after);
+                let live: Set = after | &b.uses;
+                let a = self.borrow(Expr::Const(Const::Unit), *a, &live);
+                Out {
+                    expr: e.clone(),
+                    uses: &a.uses | &b.uses,
+                    pending: &a.pending | &b.pending,
+                }
+            }
+            Expr::Write(Write::Number(value)) => {
+                let out = self.go(value, after);
+                Out {
+                    expr: Expr::Write(Write::Number(Box::new(out.expr))),
+                    ..out
+                }
+            }
+            Expr::Write(Write::Lit(_) | Write::End) => Out::new(e.clone()),
             Expr::Let(x, rhs, body) => self.let_(*x, rhs, body, after),
             Expr::BinInt(op, a, b) => self.binary(a, b, after, |a, b| Expr::BinInt(*op, a, b)),
             Expr::BinFloat(op, a, b) => self.binary(a, b, after, |a, b| Expr::BinFloat(*op, a, b)),

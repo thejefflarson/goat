@@ -7,7 +7,8 @@
 
 use crate::error::GoatError;
 use crate::hir::{
-    BinOp, Expr, ExprId, ExprKind, FileId, MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
+    BinOp, Builtin, Expr, ExprId, ExprKind, FileId, MatchArm, Param, Pattern, PatternPayload, Span,
+    Symbol,
 };
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
@@ -451,6 +452,11 @@ impl Lower {
     }
 
     fn var(&mut self, span: Span, name: String) -> Expr {
+        if self.resolve(&name).is_none()
+            && let Some(builtin) = Builtin::named(&name)
+        {
+            return self.node(span, ExprKind::Builtin(builtin));
+        }
         let symbol = self.resolve(&name).unwrap_or_else(|| {
             self.errors
                 .push(GoatError::new(span, format!("unknown name `{name}`")));
@@ -467,7 +473,9 @@ impl Lower {
         let value_pair = inner.next().expect("declaration has a value");
         let rest_pair = inner.next();
 
-        if self.file == FileId::User && self.prelude_scope.contains_key(&name) {
+        let shadows_builtin = Builtin::named(&name).is_some();
+        if self.file == FileId::User && (self.prelude_scope.contains_key(&name) || shadows_builtin)
+        {
             self.warnings.push(GoatError::new(
                 self.span_of(&name_pair),
                 format!("`{name}` replaces the built-in `{name}`"),
@@ -1316,15 +1324,18 @@ fn bin_op(rule: Rule) -> BinOp {
         Rule::lte => BinOp::Lte,
         Rule::gt => BinOp::Gt,
         Rule::gte => BinOp::Gte,
+        Rule::equal => BinOp::Eq,
+        Rule::not_equal => BinOp::Ne,
         other => unreachable!("not an operator rule: {other:?}"),
     }
 }
 
 fn prec(op: BinOp) -> u8 {
     match op {
-        BinOp::Mul | BinOp::Div => 3,
-        BinOp::Add | BinOp::Sub => 2,
-        BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte => 1,
+        BinOp::Mul | BinOp::Div => 4,
+        BinOp::Add | BinOp::Sub => 3,
+        BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte => 2,
+        BinOp::Eq | BinOp::Ne => 1,
     }
 }
 

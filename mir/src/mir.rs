@@ -86,7 +86,7 @@ pub enum IntOp {
     Div,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FloatOp {
     Add,
     Sub,
@@ -108,6 +108,18 @@ pub enum CmpOp {
 pub enum Callee {
     Direct(FuncId),
     Closure(Box<Expr>),
+}
+
+/// Text for the host's current output line: `Number` writes a number, `Str`
+/// the bytes of a string, `Lit` the bytes of a data-segment string, and `End`
+/// finishes the line. Each yields `Unit`, and none may be dropped or reordered.
+/// `Str` borrows its operand like `Field` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Write {
+    Number(Box<Expr>),
+    Str(Local),
+    Lit(DataId),
+    End,
 }
 
 /// Using a pointer-typed `Local` moves it; `Field`, `Payload`, `Capture` and
@@ -140,6 +152,9 @@ pub enum Expr {
     ReuseVariant(Local, LayoutId, u32, Vec<Expr>),
     Free(Local),
     StrLit(DataId),
+    /// Whether two strings hold the same bytes; borrows both operands.
+    StrEq(Local, Local),
+    Write(Write),
     Dup(Local),
     Drop(Local),
     Trap(String),
@@ -156,6 +171,8 @@ impl Expr {
             | Expr::Payload(..)
             | Expr::Free(_)
             | Expr::StrLit(_)
+            | Expr::StrEq(..)
+            | Expr::Write(Write::Str(_) | Write::Lit(_) | Write::End)
             | Expr::Dup(_)
             | Expr::Drop(_)
             | Expr::Trap(_) => {}
@@ -191,6 +208,7 @@ impl Expr {
                 args.iter().for_each(f);
             }
             Expr::Unpack(_, _, _, body) => f(body),
+            Expr::Write(Write::Number(value)) => f(value),
         }
     }
 }

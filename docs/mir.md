@@ -227,6 +227,8 @@ enum Expr {
     ReuseVariant(token, LayoutId, tag, payload), Free(token),
     Capture(index),                            // read a closure capture
     StrLit(DataId),
+    StrEq(a, b),                               // bytes equal; borrows both strings
+    Write(Number(e) | Str(x) | Lit(data) | End), // host output line; Unit
     Dup(Local), Drop(Local),                   // Phase 6, inserted by the RC pass
     Trap(message),
 }

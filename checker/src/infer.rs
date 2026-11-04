@@ -27,7 +27,8 @@
 //! on [`Inferer::unify_ty`].
 
 use crate::error::GoatError;
-use crate::hir::{Expr, ExprId, ExprKind, MatchArm, PatternPayload, Span, Symbol};
+use crate::hir::{BinOp, Builtin, Expr, ExprId, ExprKind, MatchArm, PatternPayload, Span, Symbol};
+use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
 use crate::ty::{Row, Scheme, Ty, TypeVar};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -107,7 +108,20 @@ struct Inferer {
     /// `...` override) would resurface in `rest`, while the runtime layout
     /// keeps one `x` per record.
     lacks: HashMap<TypeVar, BTreeSet<String>>,
+    /// The constraints each unbound type variable must satisfy once it is
+    /// bound. Binding a variable checks them against its type and hands them
+    /// on to the variables inside it.
+    kinds: HashMap<TypeVar, Kinds>,
+    /// The same for row variables: every field a row gains must satisfy them.
+    row_kinds: HashMap<TypeVar, Kinds>,
     errors: Vec<GoatError>,
+}
+
+/// Which table of constraints a variable's lives in.
+#[derive(Clone, Copy)]
+enum KindMap {
+    Ty,
+    Row,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -251,15 +265,22 @@ impl Inferer {
         match (&a, &b) {
             (Ty::Var(x), Ty::Var(y)) if x == y => {}
             (Ty::Var(x), t) | (t, Ty::Var(x)) => {
-                if !occurs(*x, t) {
-                    self.subst.insert(*x, t.clone());
+                let bound = if !occurs(*x, t) {
+                    t.clone()
                 } else if let Some(rec) = self.tie_ty_knot(*x, t) {
-                    self.subst.insert(*x, rec);
+                    rec
                 } else {
                     self.errors.push(GoatError::new(
                         span,
                         format!("cannot construct the infinite type `{a}` = `{b}`"),
                     ));
+                    return;
+                };
+                self.subst.insert(*x, bound.clone());
+                if let Some(kinds) = self.kinds.remove(x)
+                    && let Err(violation) = self.constrain(&bound, kinds)
+                {
+                    self.report_violation(span, &violation, &bound, None);
                 }
             }
             (Ty::Rec(..), _) | (_, Ty::Rec(..)) => {
@@ -324,15 +345,32 @@ impl Inferer {
                 {
                     self.report_hidden_label(span, &label);
                 }
-                if !occurs_row(*x, other) {
-                    self.row_subst.insert(*x, other.clone());
+                let bound = if !occurs_row(*x, other) {
+                    other.clone()
                 } else if let Some(rec) = self.tie_row_knot(*x, kind, other) {
-                    self.row_subst.insert(*x, rec);
+                    rec
                 } else {
                     self.errors.push(GoatError::new(
                         span,
                         format!("cannot construct an infinite {} type", kind.noun()),
                     ));
+                    return;
+                };
+                self.row_subst.insert(*x, bound.clone());
+                if let Some(kinds) = self.row_kinds.remove(x) {
+                    for kind_to_check in kinds.iter() {
+                        let mut seen = Vec::new();
+                        if let Err(violation) = self.constrain_row(&bound, kind_to_check, &mut seen)
+                        {
+                            self.report_violation(
+                                span,
+                                &violation,
+                                &kind.wrap(bound.clone()),
+                                None,
+                            );
+                            break;
+                        }
+                    }
                 }
             }
             (Row::Extend { label, field, rest }, _) => match self.rewrite_row(label, &b) {
@@ -422,9 +460,17 @@ impl Inferer {
                 if banned.contains(label) {
                     return None;
                 }
+                let kinds = self.row_kinds.get(&v).copied().unwrap_or_default();
+                if kinds.appendable() && !is_list_tag(label) {
+                    return None;
+                }
                 let field = self.fresh();
                 let rest = self.fresh_row();
                 self.lack(&rest, &banned);
+                if let (Ty::Var(f), Row::Var(r)) = (&field, &rest) {
+                    self.kinds.insert(*f, kinds.for_fields());
+                    self.row_kinds.insert(*r, kinds);
+                }
                 let grown = Row::Extend {
                     label: label.to_string(),
                     field: Box::new(field.clone()),
@@ -471,6 +517,131 @@ impl Inferer {
         ));
     }
 
+    /// Require `ty` to satisfy every constraint in `kinds`. A variable inside
+    /// `ty` takes on the constraint, to be checked when it is bound; a type that
+    /// can never satisfy it is a [`Violation`].
+    fn constrain(&mut self, ty: &Ty, kinds: Kinds) -> Result<(), Violation> {
+        kinds
+            .iter()
+            .try_for_each(|kind| self.constrain_kind(ty, kind, &mut Vec::new()))
+    }
+
+    /// `bound` holds the `μ` binders around `ty`: they stand for the type being
+    /// walked, which is already being checked.
+    fn constrain_kind(
+        &mut self,
+        ty: &Ty,
+        kind: Kind,
+        bound: &mut Vec<TypeVar>,
+    ) -> Result<(), Violation> {
+        let ty = self.resolve(ty);
+        let fail = |ty: &Ty| {
+            Err(Violation {
+                kind,
+                offender: Offender::Type(ty.clone()),
+            })
+        };
+        match (&ty, kind) {
+            (Ty::Var(v), _) if bound.contains(v) => Ok(()),
+            (Ty::Var(v), _) => self.add_kind(KindMap::Ty, *v, kind),
+            (Ty::Number, Kind::Eq | Kind::Numeric) => Ok(()),
+            (Ty::Str, Kind::Eq | Kind::Appendable) => Ok(()),
+            (Ty::Bool | Ty::Unit, Kind::Eq) => Ok(()),
+            (Ty::Record(row), Kind::Eq | Kind::Numeric) => self.constrain_row(row, kind, bound),
+            (Ty::Variant(row), Kind::Eq) => self.constrain_row(row, kind, bound),
+            (Ty::Variant(row), Kind::Appendable) => self.constrain_list(row),
+            (Ty::Rec(binder, body), Kind::Eq) => {
+                bound.push(*binder);
+                let result = self.constrain_kind(body, kind, bound);
+                bound.pop();
+                result
+            }
+            (Ty::Rec(..), Kind::Appendable) => match ty.unfold_head() {
+                Ty::Variant(row) => self.constrain_list(&row),
+                _ => fail(&ty),
+            },
+            _ => fail(&ty),
+        }
+    }
+
+    fn constrain_row(
+        &mut self,
+        row: &Row,
+        kind: Kind,
+        bound: &mut Vec<TypeVar>,
+    ) -> Result<(), Violation> {
+        match self.resolve_row(row) {
+            Row::Empty => Ok(()),
+            Row::Var(v) => self.add_kind(KindMap::Row, v, kind),
+            Row::Extend { field, rest, .. } => {
+                self.constrain_kind(&field, kind, bound)?;
+                self.constrain_row(&rest, kind, bound)
+            }
+        }
+    }
+
+    /// A variant is a list when its tags are only `Empty` and `Link`. An open
+    /// row may still grow, so its tail is held to the same tags.
+    fn constrain_list(&mut self, row: &Row) -> Result<(), Violation> {
+        let mut cursor = self.resolve_row(row);
+        loop {
+            match cursor {
+                Row::Empty => return Ok(()),
+                Row::Var(v) => return self.add_kind(KindMap::Row, v, Kind::Appendable),
+                Row::Extend { label, rest, .. } => {
+                    if !is_list_tag(&label) {
+                        return Err(Violation {
+                            kind: Kind::Appendable,
+                            offender: Offender::Type(Ty::Variant(row.clone())),
+                        });
+                    }
+                    cursor = self.resolve_row(&rest);
+                }
+            }
+        }
+    }
+
+    fn add_kind(&mut self, map: KindMap, var: TypeVar, kind: Kind) -> Result<(), Violation> {
+        let table = match map {
+            KindMap::Ty => &mut self.kinds,
+            KindMap::Row => &mut self.row_kinds,
+        };
+        let kinds = table.entry(var).or_default().with(kind);
+        if kinds.conflicts() {
+            return Err(Violation {
+                kind,
+                offender: Offender::Both,
+            });
+        }
+        table.insert(var, kinds);
+        Ok(())
+    }
+
+    #[cold]
+    fn report_violation(
+        &mut self,
+        span: Span,
+        violation: &Violation,
+        whole: &Ty,
+        op: Option<&str>,
+    ) {
+        let whole = self.finish(whole);
+        self.errors
+            .push(GoatError::new(span, violation.message(&whole, op)));
+    }
+
+    /// Require `ty` to satisfy `kind` for the operator `op` at `span`. Returns
+    /// whether it does.
+    fn require(&mut self, ty: &Ty, kind: Kind, op: BinOp, span: Span) -> bool {
+        match self.constrain(ty, Kinds::of(kind)) {
+            Ok(()) => true,
+            Err(violation) => {
+                self.report_violation(span, &violation, ty, Some(op.symbol()));
+                false
+            }
+        }
+    }
+
     fn instantiate(&mut self, scheme: &Scheme) -> Ty {
         let mut binders = Vec::new();
         scheme.ty.rec_binders(&mut binders);
@@ -483,6 +654,12 @@ impl Inferer {
         for (old, new) in &mapping {
             if let Some(banned) = self.lacks.get(old).cloned() {
                 self.lacks.insert(*new, banned);
+            }
+            if let Some(kinds) = self.kinds.get(old).copied() {
+                self.kinds.insert(*new, kinds);
+            }
+            if let Some(kinds) = self.row_kinds.get(old).copied() {
+                self.row_kinds.insert(*new, kinds);
             }
         }
         subst_vars(&scheme.ty, &mapping)
@@ -641,14 +818,9 @@ impl Inferer {
             ExprKind::Bin { op, lhs, rhs } => {
                 let lhs_ty = self.infer(lhs);
                 let rhs_ty = self.infer(rhs);
-                self.unify_use(lhs, &lhs_ty, &Ty::Number, lhs.span);
-                self.unify_use(rhs, &rhs_ty, &Ty::Number, rhs.span);
-                if op.is_comparison() {
-                    Ty::Bool
-                } else {
-                    Ty::Number
-                }
+                self.type_bin(expr, *op, (lhs, lhs_ty), (rhs, rhs_ty))
             }
+            ExprKind::Builtin(Builtin::Print) => self.print_ty(),
             ExprKind::Record { fields } => {
                 let field_tys: Vec<(String, Ty)> = fields
                     .iter()
@@ -697,6 +869,37 @@ impl Inferer {
                 else_branch,
             } => self.infer_match(scrutinee, arms, else_branch.as_deref()),
         }
+    }
+
+    /// The type of `lhs op rhs` given its operands' types. Called after the
+    /// operands are inferred, not around them, so it adds nothing to the stack
+    /// depth of a long chain of operators.
+    #[inline(never)]
+    fn type_bin(
+        &mut self,
+        expr: &Expr,
+        op: BinOp,
+        (lhs, lhs_ty): (&Expr, Ty),
+        (rhs, rhs_ty): (&Expr, Ty),
+    ) -> Ty {
+        if op.is_arithmetic() {
+            if self.require(&lhs_ty, Kind::Numeric, op, lhs.span) {
+                self.unify_use(rhs, &rhs_ty, &lhs_ty, rhs.span);
+            }
+            lhs_ty
+        } else if op.is_equality() {
+            self.unify_use(rhs, &rhs_ty, &lhs_ty, rhs.span);
+            self.require(&lhs_ty, Kind::Eq, op, expr.span);
+            Ty::Bool
+        } else {
+            self.unify_use(lhs, &lhs_ty, &Ty::Number, lhs.span);
+            self.unify_use(rhs, &rhs_ty, &Ty::Number, rhs.span);
+            Ty::Bool
+        }
+    }
+
+    fn print_ty(&mut self) -> Ty {
+        Ty::func(vec![self.fresh()], Ty::Unit)
     }
 
     /// `{...base, l: e}`: Leijen's extension of `base`'s row. A label `base`
@@ -1302,5 +1505,138 @@ mod tests {
             panic!("lost the binder");
         };
         assert_eq!(body.to_string(), "[A: {0: Number, 1: t5}]",);
+    }
+
+    /// `μbinder. [Empty, Link: {0: Number, 1: binder}]`
+    fn list(binder: TypeVar) -> Ty {
+        let link = Ty::Record(extend(
+            "0",
+            Ty::Number,
+            extend("1", Ty::Var(binder), Row::Empty),
+        ));
+        Ty::Rec(
+            binder,
+            Box::new(Ty::Variant(extend(
+                "Empty",
+                Ty::Unit,
+                extend("Link", link, Row::Empty),
+            ))),
+        )
+    }
+
+    fn appendable(inf: &mut Inferer, ty: &Ty) -> Result<(), String> {
+        inf.constrain(ty, Kinds::of(Kind::Appendable))
+            .map_err(|v| v.message(ty, None))
+    }
+
+    #[test]
+    fn strings_and_lists_are_appendable() {
+        let mut inf = inferer();
+        assert_eq!(appendable(&mut inf, &Ty::Str), Ok(()));
+        assert_eq!(appendable(&mut inf, &list(100)), Ok(()));
+        let open = Ty::Variant(extend("Empty", Ty::Unit, Row::Var(1)));
+        assert_eq!(appendable(&mut inf, &open), Ok(()));
+    }
+
+    #[test]
+    fn nothing_else_is_appendable_and_the_message_says_so() {
+        let mut inf = inferer();
+        assert_eq!(
+            appendable(&mut inf, &Ty::Number),
+            Err("`join` needs strings or lists, but this is `Number`".into())
+        );
+        assert_eq!(
+            appendable(&mut inf, &Ty::Bool),
+            Err("`join` needs strings or lists, but this is `Bool`".into())
+        );
+        assert_eq!(
+            appendable(&mut inf, &Ty::Record(extend("x", Ty::Number, Row::Empty))),
+            Err("`join` needs strings or lists, but this is `{x: Number}`".into())
+        );
+        let shape = Ty::Variant(extend("Circle", Ty::Number, Row::Empty));
+        assert_eq!(
+            appendable(&mut inf, &shape),
+            Err("`join` needs strings or lists, but this is `[Circle: Number]`".into())
+        );
+        let func = Ty::func(vec![Ty::Number], Ty::Number);
+        assert!(appendable(&mut inf, &func).is_err());
+    }
+
+    #[test]
+    fn a_variable_is_checked_when_it_is_bound() {
+        let mut inf = inferer();
+        let v = inf.fresh();
+        assert_eq!(appendable(&mut inf, &v), Ok(()));
+        inf.unify(&v, &Ty::Str, SPAN);
+        assert!(inf.errors.is_empty(), "{:?}", inf.errors);
+
+        let w = inf.fresh();
+        appendable(&mut inf, &w).unwrap();
+        inf.unify(&w, &Ty::Number, SPAN);
+        assert_eq!(
+            inf.errors[0].message,
+            "`join` needs strings or lists, but this is `Number`"
+        );
+    }
+
+    #[test]
+    fn two_constrained_variables_intersect_their_constraints() {
+        let mut inf = inferer();
+        let (a, b) = (inf.fresh(), inf.fresh());
+        appendable(&mut inf, &a).unwrap();
+        inf.constrain(&b, Kinds::of(Kind::Numeric)).unwrap();
+        inf.unify(&a, &b, SPAN);
+        assert_eq!(
+            inf.errors[0].message,
+            "this would have to be both a number and a string or list"
+        );
+
+        let mut inf = inferer();
+        let (a, b) = (inf.fresh(), inf.fresh());
+        inf.constrain(&a, Kinds::of(Kind::Eq)).unwrap();
+        inf.constrain(&b, Kinds::of(Kind::Numeric)).unwrap();
+        inf.unify(&a, &b, SPAN);
+        inf.unify(&b, &Ty::Number, SPAN);
+        assert!(inf.errors.is_empty(), "{:?}", inf.errors);
+        let func = Ty::func(vec![Ty::Number], Ty::Number);
+        let c = inf.fresh();
+        inf.constrain(&c, Kinds::of(Kind::Eq)).unwrap();
+        inf.unify(&c, &func, SPAN);
+        assert_eq!(inf.errors[0].message, "can't compare functions with `==`");
+    }
+
+    #[test]
+    fn an_open_list_row_refuses_a_tag_that_is_not_part_of_a_list() {
+        let list_row = || Ty::Variant(extend("Empty", Ty::Unit, Row::Var(7)));
+        let circle = Ty::Variant(extend("Circle", Ty::Number, Row::Var(8)));
+
+        let mut inf = inferer();
+        appendable(&mut inf, &list_row()).unwrap();
+        inf.unify(&circle, &list_row(), SPAN);
+        assert_eq!(
+            inf.errors[0].message,
+            "the tag `Circle` is not allowed here; the other side never has it"
+        );
+
+        let mut inf = inferer();
+        appendable(&mut inf, &list_row()).unwrap();
+        inf.unify(&list_row(), &circle, SPAN);
+        assert_eq!(
+            inf.errors[0].message,
+            "`join` needs strings or lists, but this is `[Circle: Number | t1001]`"
+        );
+    }
+
+    #[test]
+    fn a_row_variable_hands_its_constraint_to_the_fields_it_gains() {
+        let mut inf = inferer();
+        let record = Ty::Record(extend("x", Ty::Number, Row::Var(7)));
+        inf.constrain(&record, Kinds::of(Kind::Numeric)).unwrap();
+        let grown = Ty::Record(extend("y", Ty::Bool, Row::Var(8)));
+        inf.unify(&record, &grown, SPAN);
+        assert_eq!(
+            inf.errors[0].message,
+            "arithmetic needs numbers or records of numbers, but this is `{y: Bool | t1001}`"
+        );
     }
 }

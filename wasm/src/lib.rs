@@ -17,6 +17,9 @@ const DATA_BASE: u32 = 8;
 const PRINT_NUMBER: u32 = 0;
 const PRINT_BOOL: u32 = 1;
 const PRINT_STRING: u32 = 2;
+/// The imports `Write` needs, after `print_number`, `print_bool` and (for a
+/// string root) `print_string`: `write_number`, `write_string`, `write_end`.
+const WRITE_IMPORTS: u32 = 3;
 const IMMORTAL: i32 = -1;
 
 /// wasm32 object layout (`docs/mir.md`); every offset below derives from these.
@@ -141,7 +144,8 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         .funcs
         .get(program.entry.0 as usize)
         .is_some_and(|root| root.ret == MTy::Ptr(HeapKind::Str));
-    let imports = if prints_string { 3 } else { 2 };
+    let writes_base = if prints_string { 3 } else { 2 };
+    let imports = writes_base + if uses.writes { WRITE_IMPORTS } else { 0 };
 
     let mut data = Vec::new();
     let mut strings = Vec::new();
@@ -163,6 +167,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         program,
         types,
         imports,
+        writes_base,
         strings,
         helpers: Vec::new(),
         helper_base,
@@ -223,6 +228,11 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     import_section.import("goat", "print_bool", EntityType::Function(print_bool));
     if prints_string {
         import_section.import("goat", "print_string", EntityType::Function(print_bool));
+    }
+    if uses.writes {
+        import_section.import("goat", "write_number", EntityType::Function(print_number));
+        import_section.import("goat", "write_string", EntityType::Function(print_bool));
+        import_section.import("goat", "write_end", EntityType::Function(entry_ty));
     }
     module.section(&import_section);
 
@@ -344,6 +354,8 @@ struct Shared<'a> {
     types: Types,
     /// Imported functions precede the program's own in the index space.
     imports: u32,
+    /// The index of the first `write_*` import, when the program has any.
+    writes_base: u32,
     /// Absolute address of each `Program.data` string object.
     strings: Vec<u32>,
     helpers: Vec<Helper>,
@@ -433,6 +445,8 @@ impl Shared<'_> {
 struct Uses {
     /// Some `Drop` exists, so the module needs the `drop_loop` runtime.
     drops: bool,
+    /// Some `Write` exists, so the module imports the host's `write_*`.
+    writes: bool,
     /// Tags built without a payload, each served by one immortal cell.
     nullary: Vec<u32>,
 }
@@ -441,6 +455,7 @@ impl Uses {
     fn scan(&mut self, e: &Expr) {
         match e {
             Expr::Drop(_) => self.drops = true,
+            Expr::Write(_) => self.writes = true,
             Expr::AllocVariant(_, tag, fields) if fields.is_empty() => {
                 if let Err(at) = self.nullary.binary_search(tag) {
                     self.nullary.insert(at, *tag);
@@ -1259,15 +1274,107 @@ impl<'p> FuncCx<'_, 'p> {
                 Err(EmitError::Unsupported("in-place variant reuse"))
             }
             Expr::StrLit(d) => {
-                let address = *self
-                    .shared
-                    .strings
-                    .get(d.0 as usize)
-                    .ok_or(EmitError::Malformed("unknown data"))?;
-                out.push(Instruction::I32Const(address as i32));
+                out.push(Instruction::I32Const(self.string_address(*d)? as i32));
                 Ok(Some(MTy::Ptr(HeapKind::Str)))
             }
+            Expr::StrEq(a, b) => {
+                let (a, b) = (self.string(*a)?, self.string(*b)?);
+                self.string_equal(a, b, out);
+                Ok(Some(MTy::Bool))
+            }
+            Expr::Write(write) => {
+                let call = match write {
+                    Write::Number(value) => {
+                        match self.lower(value, out)? {
+                            Some(MTy::Float) => {}
+                            Some(_) => return Err(EmitError::Malformed("write of a non-number")),
+                            None => return Ok(None),
+                        }
+                        0
+                    }
+                    Write::Str(x) => {
+                        out.push(Instruction::LocalGet(self.string(*x)?));
+                        1
+                    }
+                    Write::Lit(d) => {
+                        out.push(Instruction::I32Const(self.string_address(*d)? as i32));
+                        1
+                    }
+                    Write::End => 2,
+                };
+                out.push(Instruction::Call(self.shared.writes_base + call));
+                Ok(Some(MTy::Unit))
+            }
         }
+    }
+
+    fn string_address(&self, data: DataId) -> Result<u32, EmitError> {
+        self.shared
+            .strings
+            .get(data.0 as usize)
+            .copied()
+            .ok_or(EmitError::Malformed("unknown data"))
+    }
+
+    /// The wasm local holding the string `x`.
+    fn string(&self, x: Local) -> Result<u32, EmitError> {
+        match self.pointer(x)? {
+            (index, HeapKind::Str) => Ok(index),
+            _ => Err(EmitError::Malformed("expected a string")),
+        }
+    }
+
+    /// Leaves 1 when the strings in locals `a` and `b` hold the same bytes,
+    /// else 0: equal lengths first, then a byte-by-byte loop.
+    fn string_equal(&mut self, a: u32, b: u32, out: &mut Code) {
+        use Instruction::*;
+        let (len, i) = (self.scratch(ValType::I32), self.scratch(ValType::I32));
+        let len_at = memarg(layout::STR_LEN, 2);
+        let byte_at = memarg(layout::STR_BYTES, 0);
+        out.extend([
+            LocalGet(a),
+            I32Load(len_at),
+            LocalTee(len),
+            LocalGet(b),
+            I32Load(len_at),
+            I32Eq,
+            If(BlockType::Result(ValType::I32)),
+            I32Const(0),
+            LocalSet(i),
+            Block(BlockType::Result(ValType::I32)),
+            Loop(BlockType::Empty),
+            LocalGet(i),
+            LocalGet(len),
+            I32GeU,
+            If(BlockType::Empty),
+            I32Const(1),
+            Br(2),
+            End,
+            LocalGet(a),
+            LocalGet(i),
+            I32Add,
+            I32Load8U(byte_at),
+            LocalGet(b),
+            LocalGet(i),
+            I32Add,
+            I32Load8U(byte_at),
+            I32Ne,
+            If(BlockType::Empty),
+            I32Const(0),
+            Br(2),
+            End,
+            LocalGet(i),
+            I32Const(1),
+            I32Add,
+            LocalSet(i),
+            Br(0),
+            End,
+            Unreachable,
+            End,
+            Else,
+            I32Const(0),
+            End,
+        ]);
     }
 
     fn payload_types(&self, layout: LayoutId, tag: u32) -> Result<&'p [MTy], EmitError> {
