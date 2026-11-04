@@ -1,0 +1,60 @@
+name: Coq
+
+# Builds the mechanized soundness development in proofs/ under coqc (ADR 0008,
+# issue #70). Deliberately separate from the Rust `check`/`wasm32` jobs and the
+# Kani `verify` job: the Coq toolchain is slow to provision and must never gate
+# or slow the per-PR Rust critical path.
+#
+# Trigger: only when proofs/ or this workflow change (so ordinary Rust PRs don't
+# pay for a Coq image), plus manual dispatch. It is intended as an informational
+# check, not a required one — promote it to required in branch protection once
+# the development has stabilized.
+
+on:
+  push:
+    paths:
+      - "proofs/**"
+      - ".github/workflows/coq.yml"
+  pull_request:
+    paths:
+      - "proofs/**"
+      - ".github/workflows/coq.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  coq:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # coqorg/coq:8.20 ships Coq 8.20.1 + opam; the action runs the script as
+      # the `coq` user with that switch active. Ott and metalib are not in the
+      # image, so the script installs them: Ott from opam, metalib pinned to an
+      # exact revision for reproducibility (it is not published on opam).
+      - name: Build proofs under coqc
+        uses: coq-community/docker-coq-action@126d4ac196f8133729a1cb0d2aa1ee7106efec58  # v1.5.2
+        with:
+          coq_version: "8.20"
+          ocaml_version: "default"
+          script: |
+            # actions/checkout leaves the workspace owned by the host runner
+            # uid; the container's `coq` user (passwordless sudo) must own it so
+            # Ott and make can write generated .v/.vo files into proofs/.
+            sudo chown -R coq:coq .
+            startGroup "Install Ott and metalib"
+              opam update -y
+              opam install -y ott.0.34
+              opam pin add -y -n coq-metalib \
+                https://github.com/plclub/metalib.git#144ddcd0fff6717229140314cf559d85fad6eae0
+              opam install -y coq-metalib
+            endGroup
+            startGroup "Regenerate from Ott, diff against committed, compile"
+              make -C proofs ci
+            endGroup
