@@ -41,3 +41,15 @@ The alternatives:
   skips inc/dec — unaffected by this decision.
 - Deferred: a fully uniform runtime drop table, should one ever be needed, lands
   in the reserved word.
+
+### Amendment 2026-11-03 (#131, Phase 6 P6b)
+
+The wasm free-list allocator (`wasm/src/allocator.rs`) now stores each block's
+size class in `_pad`. `free` runs at `rc == 0` with no size from the caller — a
+closure's captured count is not static at the release site — so it recovers the
+class from the block itself, as a free-list allocator conventionally does. The
+class needs 55 distinct values and so occupies the low 8 bits; a future
+type/drop id can still share the word in the high 24 bits, at which point `free`
+masks `_pad & 0xFF`. This binds `_pad` only in the wasm backend: the interpreter
+and the embedded fixed-pool strategy keep the word free, so the reservation above
+is narrowed, not spent.
