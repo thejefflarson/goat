@@ -224,6 +224,160 @@ mod tests {
         assert_eq!(warnings[0].span.start, 4);
     }
 
+    const LENGTH: &str = "length = program(xs) do match xs do Empty then 0 \
+         Link(first, rest) then 1 + length(rest) done done ";
+
+    /// The name of the first `μ` binder in a printed type.
+    fn binder(ty: &str) -> &str {
+        let start = ty.find('μ').expect("a recursive type") + 'μ'.len_utf8();
+        &ty[start..ty[start..].find('.').unwrap() + start]
+    }
+
+    #[test]
+    fn a_list_length_function_infers_a_recursive_variant() {
+        let ty = type_of(&format!("{LENGTH} length")).unwrap();
+        let t = binder(&ty);
+        assert!(
+            ty.starts_with(&format!("(μ{t}. [Empty, Link: {{0: t")),
+            "{ty}"
+        );
+        assert!(ty.ends_with(&format!(", 1: {t}}}]) -> Number")), "{ty}");
+    }
+
+    #[test]
+    fn a_recursive_function_is_polymorphic_in_its_elements() {
+        let src = format!(
+            "{LENGTH} length(Link(1, Link(2, Empty))) + length(Link(true, Empty)) + length(Empty)"
+        );
+        assert_eq!(type_of(&src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn a_tree_recurses_through_both_children() {
+        let src = "size = program(t) do match t do Leaf then 0 \
+                   Node(l, r) then 1 + size(l) + size(r) done done size";
+        let ty = type_of(src).unwrap();
+        let t = binder(&ty);
+        assert_eq!(
+            ty,
+            format!("(μ{t}. [Leaf, Node: {{0: {t}, 1: {t}}}]) -> Number")
+        );
+    }
+
+    #[test]
+    fn building_a_recursive_value_types_as_an_open_recursive_variant() {
+        let src =
+            "build = program(n) do if n < 1 then Empty else Link(n, build(n - 1)) done done build";
+        let ty = type_of(src).unwrap();
+        let t = binder(&ty);
+        assert!(
+            ty.starts_with(&format!(
+                "(Number) -> μ{t}. [Empty, Link: {{0: Number, 1: {t}}} | t"
+            )),
+            "{ty}"
+        );
+    }
+
+    #[test]
+    fn a_recursive_value_matches_through_nested_unfoldings() {
+        let src = format!(
+            "{LENGTH} second = program(xs) do match xs do Empty then 0 \
+             Link(a, r) then match r do Empty then 0 Link(b, s) then length(s) done done done \
+             second(Link(1, Link(2, Link(3, Empty))))"
+        );
+        assert_eq!(type_of(&src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn a_recursion_with_no_base_case_still_has_a_type() {
+        let src = "f = program(xs) do match xs do Next(n) then f(n) done done f";
+        let ty = type_of(src).unwrap();
+        let t = binder(&ty);
+        assert!(ty.starts_with(&format!("(μ{t}. [Next: {t}]) -> t")), "{ty}");
+        let two = "f = program(xs) do match xs do Next(n) then match n do Next(m) then f(m) done done done f";
+        assert!(type_of(two).is_ok());
+    }
+
+    #[test]
+    fn a_function_returning_its_own_wrapped_result_is_recursive() {
+        let ty = type_of("f = program(x) do Wrap(f(x)) done f").unwrap();
+        let t = binder(&ty);
+        assert!(ty.contains(&format!("μ{t}. [Wrap: {t} | t")), "{ty}");
+    }
+
+    #[test]
+    fn two_recursive_types_unify() {
+        let src = format!(
+            "{LENGTH} both = program(xs, ys) do a = length(xs) b = length(ys) \
+             if true then xs else ys done done both"
+        );
+        assert!(type_of(&src).is_ok());
+    }
+
+    #[test]
+    fn rebuilding_a_scrutinee_ties_the_row_itself() {
+        let src = "f = program(xs) do \
+                     z = match xs do Empty then 0 else 1 done \
+                     match xs do Empty then Link(1, xs) else xs done \
+                   done f";
+        let ty = type_of(src).unwrap();
+        let t = binder(&ty);
+        assert!(
+            ty.starts_with(&format!("(μ{t}. [Empty, Link: {{0: Number, 1: {t}}} | t")),
+            "{ty}"
+        );
+        let after_empty = "f = program(xs) do \
+                     z = match xs do Empty then 0 else 1 done \
+                     if true then xs else Link(1, xs) done \
+                   done f";
+        assert!(type_of(after_empty).is_ok());
+    }
+
+    #[test]
+    fn a_cycle_outside_a_variant_tag_is_still_infinite() {
+        for src in [
+            "f = program(x) do x(x) done f",
+            "f = program(x) do Wrap(x(x)) done f",
+            "f = program(x) do {a: x(x)} done f",
+            "f = program(r) do if true then r else {a: r} done done f",
+        ] {
+            let err = type_of(src).unwrap_err();
+            assert!(err.contains("infinite type"), "{src}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_recursive_variant_still_rejects_the_wrong_shape() {
+        for tail in ["3", "Wrong", "Link(1, 2)", "Link(true, Empty) + 1"] {
+            let src = format!("{LENGTH} length(Link(1, {tail}))");
+            assert!(type_of(&src).is_err(), "{src}");
+        }
+        let err = type_of(&format!("{LENGTH} length(Link(1, Wrong))")).unwrap_err();
+        assert!(err.contains("`Wrong`"), "{err}");
+    }
+
+    #[test]
+    fn a_recursive_program_type_checks_with_no_unused_tag_warning() {
+        let src = format!("{LENGTH} length(Link(1, Empty))");
+        assert!(warnings_of(&src).is_empty());
+    }
+
+    #[test]
+    fn recursive_types_survive_in_schemes_and_node_types() {
+        let checked = check(&format!("{LENGTH} length")).unwrap();
+        let scheme = checked.typed.schemes.values().next().unwrap();
+        let printed = scheme.ty.to_string();
+        assert!(printed.contains('μ'), "{printed}");
+        assert!(
+            checked
+                .typed
+                .node_types
+                .values()
+                .any(|t| t.to_string().contains('μ')),
+            "no node carries the recursive type"
+        );
+    }
+
     #[test]
     fn calling_a_non_function_is_a_clear_error() {
         assert!(type_of("1(2)").unwrap_err().contains("is not a function"));

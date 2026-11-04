@@ -346,7 +346,9 @@ impl Mono<'_> {
                 MTy::Ptr(HeapKind::Record(LayoutId(id as u32)))
             }
             Ty::Str => MTy::Ptr(HeapKind::Str),
-            Ty::Variant(_) => unreachable!("variants are rejected before lowering"),
+            Ty::Variant(_) | Ty::Rec(..) => {
+                unreachable!("variants are rejected before lowering")
+            }
             Ty::Var(_) => unreachable!("type variable survived grounding"),
         }
     }

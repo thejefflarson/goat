@@ -17,6 +17,14 @@
 //! is the payload. Constructing a tag yields an open row `[Circle: Number | ρ]`;
 //! each `match` arm extends the scrutinee's row with its tag, and a `match`
 //! without `else` then closes it.
+//!
+//! A cycle in a type is allowed only when it passes through a variant payload
+//! (`Link(1, rest)` where `rest` is the same list type). Binding a variable to
+//! a type that mentions it then records a [`Ty::Rec`] instead of failing the
+//! occurs check; any other cycle (`f(f)`) stays an error. The substitution
+//! itself stays acyclic, so [`Inferer::resolve`] terminates structurally;
+//! unification of two recursive types terminates through the assumed-equal set
+//! on [`Inferer::unify_ty`].
 
 use crate::error::GoatError;
 use crate::hir::{Expr, ExprId, ExprKind, MatchArm, PatternPayload, Span, Symbol};
@@ -42,11 +50,11 @@ pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
     let ty = inf.infer(root);
     if inf.errors.is_empty() {
         let warnings = inf.unused_tag_warnings();
-        let root_ty = inf.resolve(&ty);
+        let root_ty = inf.finish(&ty);
         let node_types = inf
             .node_types
             .iter()
-            .map(|(id, t)| (*id, inf.resolve(t)))
+            .map(|(id, t)| (*id, inf.finish(t)))
             .collect();
         let schemes = inf
             .schemes
@@ -54,7 +62,7 @@ pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
             .map(|(symbol, s)| {
                 let scheme = Scheme {
                     vars: s.vars.clone(),
-                    ty: inf.resolve(&s.ty),
+                    ty: inf.finish(&s.ty),
                 };
                 (*symbol, scheme)
             })
@@ -81,13 +89,25 @@ struct Inferer {
     schemes: HashMap<Symbol, Scheme>,
     constructed: Vec<(String, Span)>,
     matched: HashSet<String>,
+    /// Pairs of types [`Inferer::unify_ty`] is already unifying or has unified,
+    /// within one top-level [`Inferer::unify`].
+    assumed: HashSet<(Ty, Ty)>,
     errors: Vec<GoatError>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum RowKind {
     Record,
     Variant,
+}
+
+/// What a cycle-closing substitution replaces: a type variable, or every
+/// record or variant type whose row is exactly this one (a row variable,
+/// possibly behind a prefix of labels).
+#[derive(Clone, PartialEq, Eq)]
+enum Hole {
+    Ty(TypeVar),
+    Mention(RowKind, Row),
 }
 
 impl RowKind {
@@ -95,6 +115,13 @@ impl RowKind {
         match self {
             RowKind::Record => "record",
             RowKind::Variant => "variant",
+        }
+    }
+
+    fn wrap(self, row: Row) -> Ty {
+        match self {
+            RowKind::Record => Ty::Record(row),
+            RowKind::Variant => Ty::Variant(row),
         }
     }
 }
@@ -127,8 +154,21 @@ impl Inferer {
             ),
             Ty::Record(row) => Ty::Record(self.resolve_row(row)),
             Ty::Variant(row) => Ty::Variant(self.resolve_row(row)),
+            Ty::Rec(binder, body) => Ty::Rec(*binder, Box::new(self.resolve(body))),
             other => other.clone(),
         }
+    }
+
+    /// [`Self::resolve`] with a recursive type unfolded until its head is a
+    /// constructor, for code that inspects the head (`match`, calls).
+    fn resolve_head(&self, ty: &Ty) -> Ty {
+        self.resolve(ty).unfold_head()
+    }
+
+    /// The resolved type in its final shape: every variable substituted, and
+    /// recursive types folded back to their `μ` form.
+    fn finish(&self, ty: &Ty) -> Ty {
+        self.resolve(ty).fold_rec()
     }
 
     fn resolve_row(&self, row: &Row) -> Row {
@@ -186,18 +226,39 @@ impl Inferer {
     }
 
     fn unify(&mut self, a: &Ty, b: &Ty, span: Span) {
+        self.unify_ty(a, b, span);
+        self.assumed.clear();
+    }
+
+    fn unify_ty(&mut self, a: &Ty, b: &Ty, span: Span) {
         let a = self.resolve(a);
         let b = self.resolve(b);
         match (&a, &b) {
             (Ty::Var(x), Ty::Var(y)) if x == y => {}
             (Ty::Var(x), t) | (t, Ty::Var(x)) => {
-                if occurs(*x, t) {
+                if !occurs(*x, t) {
+                    self.subst.insert(*x, t.clone());
+                } else if let Some(rec) = self.tie_ty_knot(*x, t) {
+                    self.subst.insert(*x, rec);
+                } else {
                     self.errors.push(GoatError::new(
                         span,
                         format!("cannot construct the infinite type `{a}` = `{b}`"),
                     ));
-                } else {
-                    self.subst.insert(*x, t.clone());
+                }
+            }
+            (Ty::Rec(..), _) | (_, Ty::Rec(..)) => {
+                // Termination: unfolding a `Rec` re-exposes the same `Rec` at
+                // every back-edge, so unifying two recursive types would
+                // otherwise recurse forever. A pair already in `assumed` is
+                // being unified further up (or already was), so it is taken as
+                // equal and returns at once. The set only grows within one
+                // top-level `unify`, and its pairs are drawn from the finitely
+                // many distinct sub-terms of the two types and their
+                // unfoldings (a regular tree has finitely many), so the
+                // recursion depth is bounded.
+                if self.assumed.insert((a.clone(), b.clone())) {
+                    self.unify_ty(&a.unfold_head(), &b.unfold_head(), span);
                 }
             }
             (Ty::Number, Ty::Number)
@@ -217,9 +278,9 @@ impl Inferer {
                     return;
                 }
                 for (x, y) in a_args.iter().zip(b_args) {
-                    self.unify(y, x, span);
+                    self.unify_ty(y, x, span);
                 }
-                self.unify(a_ret, b_ret, span);
+                self.unify_ty(a_ret, b_ret, span);
             }
             (Ty::Record(a_row), Ty::Record(b_row)) => {
                 self.unify_row(a_row, b_row, span, RowKind::Record);
@@ -243,18 +304,20 @@ impl Inferer {
             (Row::Empty, Row::Empty) => {}
             (Row::Var(x), Row::Var(y)) if x == y => {}
             (Row::Var(x), other) | (other, Row::Var(x)) => {
-                if occurs_row(*x, other) {
+                if !occurs_row(*x, other) {
+                    self.row_subst.insert(*x, other.clone());
+                } else if let Some(rec) = self.tie_row_knot(*x, kind, other) {
+                    self.row_subst.insert(*x, rec);
+                } else {
                     self.errors.push(GoatError::new(
                         span,
                         format!("cannot construct an infinite {} type", kind.noun()),
                     ));
-                } else {
-                    self.row_subst.insert(*x, other.clone());
                 }
             }
             (Row::Extend { label, field, rest }, _) => match self.rewrite_row(label, &b) {
                 Some((b_field, b_rest)) => {
-                    self.unify(field, &b_field, span);
+                    self.unify_ty(field, &b_field, span);
                     self.unify_row(rest, &b_rest, span, kind);
                 }
                 None => {
@@ -277,6 +340,35 @@ impl Inferer {
                 self.errors.push(GoatError::new(span, message));
             }
         }
+    }
+
+    /// `x = t` where `t` mentions `x`: the recursive type `μv. t[x := v]`, if
+    /// every mention sits under a variant payload.
+    fn tie_ty_knot(&mut self, x: TypeVar, t: &Ty) -> Option<Ty> {
+        let binder = self.fresh_id();
+        let body = plug(t, &Hole::Ty(x), &Ty::Var(binder), false);
+        (!occurs(x, &body)).then(|| Ty::Rec(binder, Box::new(body)))
+    }
+
+    /// `x = row` where `row` mentions `x`. Allowed only when every mention is
+    /// the same `kind` type, `[x]` or `[l: t | x]` (and likewise for records),
+    /// under a variant payload: that type is then `row` behind the prefix, so
+    /// it is the recursive type `μv. [prefix | row[mention := v]]`. `x` becomes
+    /// `row` with that type in place of the mentions.
+    fn tie_row_knot(&mut self, x: TypeVar, kind: RowKind, row: &Row) -> Option<Row> {
+        let under_tag = kind == RowKind::Variant;
+        let mention = find_mention(row, x, kind, under_tag)?;
+        let hole = Hole::Mention(kind, mention.clone());
+        let binder = self.fresh_id();
+        let inner = plug_row(row, &hole, &Ty::Var(binder), under_tag);
+        if occurs_row(x, &inner) {
+            return None;
+        }
+        let rec = Ty::Rec(binder, Box::new(kind.wrap(replace_tail(&mention, inner))));
+        if occurs(x, &rec) {
+            return None;
+        }
+        Some(plug_row(row, &hole, &rec, under_tag))
     }
 
     /// Surface `label` in `row`, returning its field type and the row without
@@ -320,13 +412,19 @@ impl Inferer {
     }
 
     fn instantiate(&mut self, scheme: &Scheme) -> Ty {
-        let mapping: HashMap<TypeVar, TypeVar> =
-            scheme.vars.iter().map(|v| (*v, self.fresh_id())).collect();
+        let mut binders = Vec::new();
+        scheme.ty.rec_binders(&mut binders);
+        let mapping: HashMap<TypeVar, TypeVar> = scheme
+            .vars
+            .iter()
+            .chain(&binders)
+            .map(|v| (*v, self.fresh_id()))
+            .collect();
         subst_vars(&scheme.ty, &mapping)
     }
 
     fn generalize(&self, ty: &Ty) -> Scheme {
-        let resolved = self.resolve(ty);
+        let resolved = self.finish(ty);
         let mut in_ty = BTreeSet::new();
         resolved.free_vars(&mut in_ty);
         let in_env = self.env_free_vars();
@@ -414,7 +512,7 @@ impl Inferer {
                 let callee_ty = self.infer(callee);
                 let arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
                 let ret = self.fresh();
-                match self.resolve(&callee_ty) {
+                match self.resolve_head(&callee_ty) {
                     Ty::Func(..) | Ty::Var(_) => {
                         let expected = Ty::func(arg_tys, ret.clone());
                         self.unify_use(callee, &callee_ty, &expected, expr.span);
@@ -541,7 +639,7 @@ impl Inferer {
         else_branch: Option<&Expr>,
     ) -> Ty {
         let scrut_ty = self.infer(scrutinee);
-        let is_variant = match self.resolve(&scrut_ty) {
+        let is_variant = match self.resolve_head(&scrut_ty) {
             Ty::Variant(_) => true,
             Ty::Var(_) => {
                 let open = Ty::Variant(self.fresh_row());
@@ -634,7 +732,7 @@ impl Inferer {
             return;
         }
         handled.push(tag);
-        let Ty::Variant(row) = self.resolve(scrut_ty) else {
+        let Ty::Variant(row) = self.resolve_head(scrut_ty) else {
             return;
         };
         let (tags, tail) = row_shape(&row);
@@ -659,7 +757,7 @@ impl Inferer {
     /// A `match` with no `else` must cover every tag the scrutinee can be, and
     /// then the scrutinee can be no other.
     fn close_match(&mut self, scrut_ty: &Ty, handled: &[&str], span: Span) {
-        let Ty::Variant(row) = self.resolve(scrut_ty) else {
+        let Ty::Variant(row) = self.resolve_head(scrut_ty) else {
             return;
         };
         let (tags, tail) = row_shape(&row);
@@ -710,7 +808,90 @@ fn occurs(var: TypeVar, ty: &Ty) -> bool {
         Ty::Var(v) => *v == var,
         Ty::Func(args, ret) => args.iter().any(|a| occurs(var, a)) || occurs(var, ret),
         Ty::Record(row) | Ty::Variant(row) => occurs_row(var, row),
+        Ty::Rec(_, body) => occurs(var, body),
         _ => false,
+    }
+}
+
+/// Replace the mentions of `hole` in `ty` with `with`, but only those under a
+/// variant payload: `under_tag` says whether `ty` already sits in one. A
+/// mention left behind is a cycle that does not pass through a tag.
+fn plug(ty: &Ty, hole: &Hole, with: &Ty, under_tag: bool) -> Ty {
+    match ty {
+        Ty::Var(v) if under_tag && *hole == Hole::Ty(*v) => with.clone(),
+        Ty::Record(row)
+            if under_tag && matches!(hole, Hole::Mention(RowKind::Record, m) if m == row) =>
+        {
+            with.clone()
+        }
+        Ty::Variant(row)
+            if under_tag && matches!(hole, Hole::Mention(RowKind::Variant, m) if m == row) =>
+        {
+            with.clone()
+        }
+        Ty::Func(args, ret) => Ty::Func(
+            args.iter()
+                .map(|a| plug(a, hole, with, under_tag))
+                .collect(),
+            Box::new(plug(ret, hole, with, under_tag)),
+        ),
+        Ty::Record(row) => Ty::Record(plug_row(row, hole, with, under_tag)),
+        Ty::Variant(row) => Ty::Variant(plug_row(row, hole, with, true)),
+        Ty::Rec(binder, body) => Ty::Rec(*binder, Box::new(plug(body, hole, with, under_tag))),
+        other => other.clone(),
+    }
+}
+
+/// [`plug`] over the fields of a row; `under_tag` is whether those fields are
+/// variant payloads.
+fn plug_row(row: &Row, hole: &Hole, with: &Ty, under_tag: bool) -> Row {
+    match row {
+        Row::Extend { label, field, rest } => Row::Extend {
+            label: label.clone(),
+            field: Box::new(plug(field, hole, with, under_tag)),
+            rest: Box::new(plug_row(rest, hole, with, under_tag)),
+        },
+        other => other.clone(),
+    }
+}
+
+/// The row of the first `kind` type under a variant payload whose row ends in
+/// the row variable `x`.
+fn find_mention(row: &Row, x: TypeVar, kind: RowKind, under_tag: bool) -> Option<Row> {
+    let Row::Extend { field, rest, .. } = row else {
+        return None;
+    };
+    find_mention_in(field, x, kind, under_tag).or_else(|| find_mention(rest, x, kind, under_tag))
+}
+
+fn find_mention_in(ty: &Ty, x: TypeVar, kind: RowKind, under_tag: bool) -> Option<Row> {
+    match ty {
+        Ty::Func(args, ret) => args
+            .iter()
+            .chain([&**ret])
+            .find_map(|t| find_mention_in(t, x, kind, under_tag)),
+        Ty::Record(row) | Ty::Variant(row) => {
+            let is_variant = matches!(ty, Ty::Variant(_));
+            if under_tag && is_variant == (kind == RowKind::Variant) && row_shape(row).1 == Some(x)
+            {
+                return Some(row.clone());
+            }
+            find_mention(row, x, kind, under_tag || is_variant)
+        }
+        Ty::Rec(_, body) => find_mention_in(body, x, kind, under_tag),
+        _ => None,
+    }
+}
+
+/// `row` with its tail replaced by `tail`.
+fn replace_tail(row: &Row, tail: Row) -> Row {
+    match row {
+        Row::Extend { label, field, rest } => Row::Extend {
+            label: label.clone(),
+            field: field.clone(),
+            rest: Box::new(replace_tail(rest, tail)),
+        },
+        _ => tail,
     }
 }
 
@@ -756,6 +937,10 @@ fn subst_vars(ty: &Ty, mapping: &HashMap<TypeVar, TypeVar>) -> Ty {
         ),
         Ty::Record(row) => Ty::Record(subst_row(row, mapping)),
         Ty::Variant(row) => Ty::Variant(subst_row(row, mapping)),
+        Ty::Rec(binder, body) => Ty::Rec(
+            mapping.get(binder).copied().unwrap_or(*binder),
+            Box::new(subst_vars(body, mapping)),
+        ),
         other => other.clone(),
     }
 }
@@ -769,5 +954,202 @@ fn subst_row(row: &Row, mapping: &HashMap<TypeVar, TypeVar>) -> Row {
             field: Box::new(subst_vars(field, mapping)),
             rest: Box::new(subst_row(rest, mapping)),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SPAN: Span = Span { start: 0, end: 0 };
+
+    fn extend(label: &str, field: Ty, rest: Row) -> Row {
+        Row::Extend {
+            label: label.to_string(),
+            field: Box::new(field),
+            rest: Box::new(rest),
+        }
+    }
+
+    /// `μbinder. [label: binder | tail]`
+    fn chain(binder: TypeVar, label: &str, tail: Row) -> Ty {
+        Ty::Rec(
+            binder,
+            Box::new(Ty::Variant(extend(label, Ty::Var(binder), tail))),
+        )
+    }
+
+    fn inferer() -> Inferer {
+        Inferer {
+            next: 1000,
+            ..Inferer::default()
+        }
+    }
+
+    fn unify_ok(a: &Ty, b: &Ty) -> Inferer {
+        let mut inf = inferer();
+        inf.unify(a, b, SPAN);
+        assert!(inf.errors.is_empty(), "{:?}", inf.errors);
+        inf
+    }
+
+    #[test]
+    fn recursive_types_that_unfold_to_each_other_unify() {
+        let one = chain(100, "A", Row::Empty);
+        let two = Ty::Rec(
+            101,
+            Box::new(Ty::Variant(extend(
+                "A",
+                Ty::Variant(extend("A", Ty::Var(101), Row::Empty)),
+                Row::Empty,
+            ))),
+        );
+        unify_ok(&one, &two);
+        unify_ok(&two, &one);
+    }
+
+    #[test]
+    fn mutually_recursive_open_shapes_unify_and_share_their_tails() {
+        let one = chain(100, "A", Row::Var(1));
+        let two = Ty::Rec(
+            101,
+            Box::new(Ty::Variant(extend(
+                "A",
+                Ty::Variant(extend("A", Ty::Var(101), Row::Var(2))),
+                Row::Var(2),
+            ))),
+        );
+        let inf = unify_ok(&one, &two);
+        assert_eq!(inf.resolve_row(&Row::Var(1)), inf.resolve_row(&Row::Var(2)));
+        assert!(inf.assumed.is_empty());
+    }
+
+    #[test]
+    fn recursive_types_that_differ_are_an_error_not_a_loop() {
+        let mut inf = inferer();
+        inf.unify(
+            &chain(100, "A", Row::Empty),
+            &chain(101, "B", Row::Empty),
+            SPAN,
+        );
+        assert!(!inf.errors.is_empty());
+
+        let mut inf = inferer();
+        let finite = Ty::Variant(extend(
+            "A",
+            Ty::Variant(extend("A", Ty::Number, Row::Empty)),
+            Row::Empty,
+        ));
+        inf.unify(&chain(100, "A", Row::Empty), &finite, SPAN);
+        assert!(!inf.errors.is_empty());
+    }
+
+    #[test]
+    fn a_variable_bound_to_a_type_containing_it_under_a_tag_becomes_recursive() {
+        let mut inf = inferer();
+        let under_tag = Ty::Variant(extend("A", Ty::Var(1), Row::Empty));
+        inf.unify(&Ty::Var(1), &under_tag, SPAN);
+        assert!(inf.errors.is_empty());
+        let resolved = inf.finish(&Ty::Var(1));
+        let Ty::Rec(binder, body) = &resolved else {
+            panic!("{resolved}");
+        };
+        assert_eq!(
+            **body,
+            Ty::Variant(extend("A", Ty::Var(*binder), Row::Empty))
+        );
+    }
+
+    #[test]
+    fn a_variable_bound_to_a_type_containing_it_outside_a_tag_is_an_error() {
+        for ty in [
+            Ty::func(vec![Ty::Var(1)], Ty::Number),
+            Ty::Record(extend("a", Ty::Var(1), Row::Empty)),
+            // one mention under a tag does not excuse another outside it
+            Ty::Record(extend(
+                "a",
+                Ty::Var(1),
+                extend(
+                    "b",
+                    Ty::Variant(extend("A", Ty::Var(1), Row::Empty)),
+                    Row::Empty,
+                ),
+            )),
+        ] {
+            let mut inf = inferer();
+            inf.unify(&Ty::Var(1), &ty, SPAN);
+            assert_eq!(inf.errors.len(), 1, "{ty}");
+            assert!(inf.errors[0].message.contains("infinite"), "{ty}");
+            assert!(!inf.subst.contains_key(&1));
+        }
+    }
+
+    #[test]
+    fn a_row_variable_mentioned_only_in_its_own_payload_becomes_recursive() {
+        let mut inf = inferer();
+        let row = extend("Link", Ty::Variant(Row::Var(1)), Row::Var(2));
+        inf.unify_row(&Row::Var(1), &row, SPAN, RowKind::Variant);
+        assert!(inf.errors.is_empty());
+        let resolved = inf.finish(&Ty::Variant(Row::Var(1)));
+        assert!(matches!(resolved, Ty::Rec(..)), "{resolved}");
+    }
+
+    #[test]
+    fn a_row_variable_that_is_its_own_tail_or_record_field_is_an_error() {
+        for (kind, row) in [
+            (RowKind::Variant, extend("A", Ty::Unit, Row::Var(1))),
+            (
+                RowKind::Record,
+                extend("a", Ty::Record(Row::Var(1)), Row::Empty),
+            ),
+        ] {
+            let mut inf = inferer();
+            inf.unify_row(&Row::Var(1), &row, SPAN, kind);
+            assert_eq!(inf.errors.len(), 1);
+            assert!(inf.errors[0].message.contains("infinite"));
+        }
+    }
+
+    #[test]
+    fn instantiating_a_recursive_scheme_renames_its_binder() {
+        let mut inf = inferer();
+        let scheme = Scheme {
+            vars: vec![7],
+            ty: Ty::func(vec![chain(5, "A", Row::Var(7))], Ty::Var(7)),
+        };
+        let first = inf.instantiate(&scheme);
+        let second = inf.instantiate(&scheme);
+        let binder = |t: &Ty| match t {
+            Ty::Func(args, _) => match &args[0] {
+                Ty::Rec(b, body) => {
+                    assert!(
+                        matches!(&**body, Ty::Variant(Row::Extend { field, .. }) if **field == Ty::Var(*b))
+                    );
+                    *b
+                }
+                other => panic!("{other}"),
+            },
+            other => panic!("{other}"),
+        };
+        let (a, b) = (binder(&first), binder(&second));
+        assert!(a != 5 && b != 5 && a != b);
+    }
+
+    #[test]
+    fn resolving_substitutes_inside_a_recursive_body_only_for_free_variables() {
+        let mut inf = inferer();
+        inf.subst.insert(1, Ty::Number);
+        let rec = Ty::Rec(
+            5,
+            Box::new(Ty::Variant(extend(
+                "A",
+                Ty::Record(extend("0", Ty::Var(1), extend("1", Ty::Var(5), Row::Empty))),
+                Row::Empty,
+            ))),
+        );
+        let Ty::Rec(_, body) = inf.resolve(&rec) else {
+            panic!("lost the binder");
+        };
+        assert_eq!(body.to_string(), "[A: {0: Number, 1: t5}]",);
     }
 }
