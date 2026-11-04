@@ -1,0 +1,286 @@
+% goat.ott -- core goat: grammar + judgments, single source for the typeset
+% spec (docs/semantics.md) and the Coq definitions (B2, issue #70).
+%
+% This file is the machine-checked twin of docs/semantics.md. Keep the two in
+% lockstep: every grammar nonterminal and every judgment here has a counterpart
+% in that document, and vice versa. The prose lives there; the rules live here.
+%
+% Binder strategy (realized in B2, not here):
+%   * TERM binders -- the x_i of `program(x1,...,xk) do e done` and the x of
+%     `x = e1 e2` -- are intended for a LOCALLY-NAMELESS treatment with
+%     metalib / LNgen. `program` is a simultaneous MULTI-binder; LNgen is
+%     smoothest for single binders, so B2 chooses either an internal currying
+%     to single-binder lambda (cheapest) or a telescope encoding (faithful).
+%     See docs/semantics.md section 10.
+%   * TYPE and ROW variables (typvar a, rowvar r) are NOT term binders. They are
+%     a free-variable set acted on by a kind-respecting type/row substitution
+%     over types, schemes, and contexts (the `tsubst`/`rsubst` below) -- exactly
+%     how checker/src/ty.rs treats `TypeVar`. B2 realizes gen/ftv via metalib's
+%     `fv` functions; the `genvars` side condition below marks the spot.
+%
+% Build note: `proofs/` is deliberately outside the cargo workspace and the
+% wasm32 build. This is an .ott + .md only; adding no manifest keeps it out of
+% both. B2 adds the opam/Coq job that runs Ott over this file.
+%
+% The core models: n-ary program/application, HM let-generalization (= binds
+% generalize; lambda params are monomorphic), base types Number and Bool,
+% records as scoped-label rows (Leijen) with construction and first-label
+% projection. Out of scope (deltas on the proven core): RC/heap, variants/match,
+% recursive (mu) types, strings, Unit, if/arithmetic, recursion, mono.
+
+metavar termvar, x, y, z, f, g, m, p ::= {{ com term variable }}
+metavar label, l ::= {{ com record label }}
+metavar num, n ::= {{ com numeral constant }}
+metavar typvar, a, b ::= {{ com type variable (free-variable set, not a binder) }}
+metavar rowvar, r, s ::= {{ com row variable (free-variable set, not a binder) }}
+
+indexvar index, i, j, k ::= {{ com list index }}
+
+grammar
+
+T {{ tex \tau }} :: 'T_' ::= {{ com monotype }}
+  | Number                    ::   :: Number
+  | Bool                      ::   :: Bool
+  | ( T1 , ... , Tk ) -> T    ::   :: Arrow   {{ com n-ary function }}
+  | { R }                     ::   :: Record
+  | a                         ::   :: Var
+  | ( T )                     :: S :: Paren  {{ coq [[T]] }}
+
+R {{ tex \rho }} :: 'R_' ::= {{ com row }}
+  | nil                       ::   :: Empty   {{ tex \cdot }} {{ com closed tail }}
+  | r                         ::   :: Var                     {{ com open tail }}
+  | l : T ; R                 ::   :: Ext     {{ com extension (duplicates allowed) }}
+
+S {{ tex \sigma }} :: 'S_' ::= {{ com type scheme }}
+  | T                                       ::   :: Mono
+    {{ com a monotype is a trivial scheme (how lambda parameters are bound) }}
+  | forall </ ai // i /> </ rj // j /> . T  ::   :: Forall
+    {{ com quantify a set of type and row variables }}
+
+G {{ tex \Gamma }} :: 'G_' ::= {{ com typing context }}
+  | empty      ::   :: Empty {{ tex \cdot }}
+  | G , x : S  ::   :: Cons
+
+e :: 'e_' ::= {{ com term }}
+  | x                                   ::   :: Var
+  | n                                   ::   :: Num
+  | true                                ::   :: True
+  | false                               ::   :: False
+  | program ( </ xi // i /> ) do e done ::   :: Abs
+    ( + bind </ xi // i /> in e + )     {{ com n-ary abstraction }}
+  | e ( </ ei // i /> )                 ::   :: App  {{ com n-ary application }}
+  | x = e1  e2                          ::   :: Let
+    ( + bind x in e2 + )                {{ com binding; x scopes over e2 only }}
+  | { </ li : ei // i /> }              ::   :: Rec  {{ com record literal (closed) }}
+  | e . l                               ::   :: Proj {{ com field projection }}
+  | ( e )                               :: S :: Paren {{ coq [[e]] }}
+  | e1 [ x := e2 ]                      :: M :: Subst {{ coq (subst_e [[e2]] [[x]] [[e1]]) }}
+
+v :: 'v_' ::= {{ com value }}
+  | n                                   ::   :: Num
+  | true                                ::   :: True
+  | false                               ::   :: False
+  | program ( </ xi // i /> ) do e done ::   :: Abs
+  | { </ li : vi // i /> }              ::   :: Rec
+
+subrules
+  v <:: e   % value syntax is a syntactic subset of expression syntax
+
+substitutions
+  single e x   :: subst_e    {{ com term substitution e[x := -] }}
+  single T a   :: tsubst     {{ com type-for-typevar substitution }}
+  single R r   :: rsubst     {{ com row-for-rowvar substitution }}
+
+freevars
+  e x :: fv_e      {{ com free term variables }}
+  T a :: ftv_T     {{ com free type variables of a type }}
+  R a :: ftv_R     {{ com free type variables inside a row }}
+  S a :: ftv_S
+  G a :: ftv_G
+  T r :: frv_T     {{ com free row variables of a type }}
+  R r :: frv_R
+  S r :: frv_S
+  G r :: frv_G
+
+% Side-condition formulas. These carry no semantic content for Ott; B2 realizes
+% `genvars` and the (dis)equality checks with metalib `fv`/decidable equality.
+grammar
+  formula :: 'formula_' ::=
+    | judgement                                              ::   :: judgement
+    | l1 <> l2                                               ::   :: label_neq
+      {{ com labels differ }} {{ tex [[l1]] \neq [[l2]] }}
+    | l notin </ li // i />                                  ::   :: label_fresh
+      {{ com l does not occur in the list }}
+      {{ tex [[l]] \notin \{ [[</ li // i />]] \} }}
+    | </ ai // i /> </ rj // j /> = gen ( G , T )            ::   :: genvars
+      {{ com the a_i and r_j are exactly ftv(T) \ ftv(G): the generalized set }}
+      {{ tex \{[[</ ai // i />]]\} \cup \{[[</ rj // j />]]\} = \mathrm{ftv}([[T]]) \setminus \mathrm{ftv}([[G]]) }}
+
+defns
+Jequiv :: '' ::= {{ com row equivalence (Leijen scoped labels; mutual T/R) }}
+
+defn
+T1 ~= T2 :: :: teq :: 'teq_'
+  {{ tex [[T1]] \cong [[T2]] }} by
+
+  --------------- :: num
+  Number ~= Number
+
+  ----------- :: bool
+  Bool ~= Bool
+
+  ----- :: var
+  a ~= a
+
+  </ Ti ~= Ti' // i />
+  T ~= T'
+  ----------------------------------------- :: arrow
+  ( T1 , ... , Tk ) -> T ~= ( T1' , ... , Tk' ) -> T'
+
+  R ~= R'
+  ------------- :: rec
+  { R } ~= { R' }
+
+  T1 ~= T2
+  T2 ~= T3
+  -------- :: trans
+  T1 ~= T3
+
+  T1 ~= T2
+  -------- :: sym
+  T2 ~= T1
+
+defn
+R1 ~= R2 :: :: req :: 'req_'
+  {{ tex [[R1]] \cong [[R2]] }} by
+
+  ------- :: empty
+  nil ~= nil
+
+  ----- :: var
+  r ~= r
+
+  T ~= T'
+  R ~= R'
+  --------------------- :: head
+  l : T ; R ~= l : T' ; R'
+
+  l <> l'
+  ------------------------------------- :: swap
+  l : T ; l' : T' ; R ~= l' : T' ; l : T ; R
+
+  R1 ~= R2
+  R2 ~= R3
+  -------- :: trans
+  R1 ~= R3
+
+  R1 ~= R2
+  -------- :: sym
+  R2 ~= R1
+
+defns
+Jinst :: '' ::= {{ com generic instance of a scheme }}
+
+defn
+T < S :: :: inst :: 'inst_'
+  {{ tex [[T]] \prec [[S]] }} by
+
+  % A monotype scheme (parameter binding) has only itself as a generic instance.
+  ----- :: mono
+  T < T
+
+  % A quantified scheme: instantiate the a_i to monotypes and r_j to rows.
+  % (B2 uses metalib's simultaneous substitution for the two lists.)
+  --------------------------------------------------------------------------------------------- :: forall
+  T0 </ [ ai := Ti ] // i /> </ [ rj := Rj ] // j /> < forall </ ai // i /> </ rj // j /> . T0
+
+defns
+Jtyp :: '' ::= {{ com declarative typing Gamma |- e : T }}
+
+defn
+G |- e : T :: :: typ :: 'T_'
+  {{ tex [[G]] \vdash [[e]] : [[T]] }} by
+
+  x : S in G
+  T < S
+  ---------- :: Var
+  G |- x : T
+
+  --------------- :: Num
+  G |- n : Number
+
+  ---------------- :: True
+  G |- true : Bool
+
+  ----------------- :: False
+  G |- false : Bool
+
+  G , </ xi : Ti // i /> |- e : T
+  ------------------------------------------------------ :: Abs
+  G |- program ( </ xi // i /> ) do e done : ( </ Ti // i /> ) -> T
+
+  G |- e : ( </ Ti // i /> ) -> T
+  </ G |- ei : Ti // i />
+  ------------------------------- :: App
+  G |- e ( </ ei // i /> ) : T
+
+  G |- e1 : T1
+  </ ai // i /> </ rj // j /> = gen ( G , T1 )
+  G , x : ( forall </ ai // i /> </ rj // j /> . T1 ) |- e2 : T2
+  ------------------------------------------------------------- :: Let
+  G |- x = e1  e2 : T2
+
+  </ G |- ei : Ti // i />
+  ---------------------------------------------------- :: Record
+  G |- { </ li : ei // i /> } : { </ li : Ti ; // i /> nil }
+
+  G |- e : { l : T ; R }
+  ---------- :: Proj
+  G |- e . l : T
+
+  G |- e : T
+  T ~= T'
+  ---------- :: Conv
+  G |- e : T'
+
+defns
+Jred :: '' ::= {{ com call-by-value, left-to-right small step }}
+
+defn
+e --> e' :: :: red :: 'red_'
+  {{ tex [[e]] \longrightarrow [[e']] }} by
+
+  % --- redexes ---
+
+  ------------------------------------------------------------------------ :: Beta
+  ( program ( </ xi // i /> ) do e done ) ( </ vi // i /> ) --> e </ [ xi := vi ] // i />
+
+  --------------------- :: LetV
+  x = v  e2 --> e2 [ x := v ]
+
+  % First field labeled l: no earlier field carries l (matches rewrite_row).
+  l notin </ li // i />
+  ------------------------------------------------------ :: ProjRec
+  { </ li : vi // i /> , l : v , </ lk' : vk' // k /> } . l --> v
+
+  % --- congruence (fix left-to-right order) ---
+
+  e --> e'
+  ----------------------------------------- :: App1
+  e ( </ ei // i /> ) --> e' ( </ ei // i /> )
+
+  ei --> ei'
+  ------------------------------------------------------------------------------------- :: App2
+  v ( </ vj // j /> , ei , </ ek'' // k /> ) --> v ( </ vj // j /> , ei' , </ ek'' // k /> )
+
+  e1 --> e1'
+  --------------------------- :: Let1
+  x = e1  e2 --> x = e1'  e2
+
+  ei --> ei'
+  ------------------------------------------------------------------------------------------- :: Rec
+  { </ lj : vj // j /> , li : ei , </ lk'' : ek'' // k /> } --> { </ lj : vj // j /> , li : ei' , </ lk'' : ek'' // k /> }
+
+  e --> e'
+  --------------- :: Proj1
+  e . l --> e' . l
