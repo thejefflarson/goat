@@ -63,8 +63,21 @@ exp, e :: 'e_' ::= {{ com term }}
   | e1 ( e2 )                ::   :: app
   | x = e1  e2               ::   :: let
     (+ bind x in e2 +)       {{ com bind x in e2 only }}
+  | { fs }                   ::   :: rec   {{ com record literal (closed) }}
+  | e . l                    ::   :: proj  {{ com field projection }}
   | ( e )                    :: S :: paren {{ coq [[e]] }}
   | e1 [ x := e2 ]           :: M :: subst {{ coq (subst_exp [[e2]] [[x]] [[e1]]) }}
+
+% The record spine is a cons-list baked into the mutual block with exp. It is
+% NOT a term binder (no `bind` clause), so Ott's locally-nameless codegen just
+% recurses through it: open/subst/fv/lc each get a `fields` companion. Encoding
+% records as a `list (label * exp)` instead makes Ott 0.34 abort its lc/fv
+% codegen ("only native lists supported", then a Not_found) because it cannot
+% build the locally-nameless clauses over a list-valued subterm; the mutual
+% cons-list sidesteps that while giving the same finite ordered field sequence.
+fields, fs :: 'fs_' ::= {{ com record spine (cons-list; duplicates allowed) }}
+  | fnil             ::   :: nil
+  | l : e ; fs       ::   :: cons
 
 substitutions
   single exp x :: subst
