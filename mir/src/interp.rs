@@ -25,7 +25,15 @@ pub enum InterpError {
     Malformed(&'static str),
 }
 
-/// `live_allocations` counts heap objects still allocated when the entry
+/// A piece of a printed line: the host formats numbers, so they stay numbers.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Piece {
+    Number(f64),
+    Text(Vec<u8>),
+}
+
+/// `printed` holds the lines the program wrote with `Write`, before its root
+/// value was shown. `live_allocations` counts heap objects still allocated when the entry
 /// function returned, including its result if that is a pointer.
 /// `allocations` counts every non-immortal object ever allocated.
 /// `root_string` holds the bytes of the entry's result when it is a string.
@@ -35,6 +43,7 @@ pub struct Outcome {
     pub live_allocations: usize,
     pub allocations: usize,
     pub root_string: Option<Vec<u8>>,
+    pub printed: Vec<Vec<Piece>>,
 }
 
 pub fn run(program: &Program) -> Result<Outcome, InterpError> {
@@ -49,6 +58,8 @@ pub fn run_with_depth(program: &Program, max_depth: usize) -> Result<Outcome, In
         live: 0,
         allocations: 0,
         strings: HashMap::new(),
+        line: Vec::new(),
+        printed: Vec::new(),
     };
     let entry = Pending {
         func: program.entry,
@@ -62,6 +73,7 @@ pub fn run_with_depth(program: &Program, max_depth: usize) -> Result<Outcome, In
         root_string,
         live_allocations: interp.live,
         allocations: interp.allocations,
+        printed: interp.printed,
     })
 }
 
@@ -122,6 +134,8 @@ struct Interp<'p> {
     live: usize,
     allocations: usize,
     strings: HashMap<DataId, usize>,
+    line: Vec<Piece>,
+    printed: Vec<Vec<Piece>>,
 }
 
 impl Interp<'_> {
@@ -146,15 +160,62 @@ impl Interp<'_> {
         let Value::Ptr(addr) = value else {
             return Ok(None);
         };
-        let Body::Str(data) = self.obj(addr)?.body else {
+        if !matches!(self.obj(addr)?.body, Body::Str(_)) {
             return Ok(None);
-        };
+        }
+        self.string_bytes(value).map(|bytes| Some(bytes.to_vec()))
+    }
+
+    fn data(&self, data: DataId) -> Result<&[u8], InterpError> {
         self.program
             .data
             .get(data.0 as usize)
-            .cloned()
-            .map(Some)
+            .map(Vec::as_slice)
             .ok_or(InterpError::Malformed("unknown data"))
+    }
+
+    fn string_bytes(&self, value: Value) -> Result<&[u8], InterpError> {
+        match value {
+            Value::Ptr(addr) => match self.obj(addr)?.body {
+                Body::Str(data) => self.data(data),
+                _ => Err(InterpError::Malformed("not a string")),
+            },
+            _ => Err(InterpError::Malformed("not a string")),
+        }
+    }
+
+    /// `StrEq` and `Write`, out of `eval` so its frame stays small.
+    #[inline(never)]
+    fn text_op(&mut self, e: &Expr, frame: &mut Frame, depth: usize) -> Result<Value, InterpError> {
+        match e {
+            Expr::StrEq(a, b) => {
+                let (a, b) = (frame.get(*a)?, frame.get(*b)?);
+                Ok(Value::Bool(self.string_bytes(a)? == self.string_bytes(b)?))
+            }
+            Expr::Write(Write::Number(value)) => match self.value(value, frame, depth)? {
+                Value::Float(x) => Ok(self.write(Piece::Number(x))),
+                Value::Int(n) => Ok(self.write(Piece::Number(n as f64))),
+                _ => Err(InterpError::Malformed("write of a non-number")),
+            },
+            Expr::Write(Write::Str(x)) => {
+                let bytes = self.string_bytes(frame.get(*x)?)?.to_vec();
+                Ok(self.write(Piece::Text(bytes)))
+            }
+            Expr::Write(Write::Lit(d)) => {
+                let bytes = self.data(*d)?.to_vec();
+                Ok(self.write(Piece::Text(bytes)))
+            }
+            Expr::Write(Write::End) => {
+                self.printed.push(std::mem::take(&mut self.line));
+                Ok(Value::Unit)
+            }
+            _ => Err(InterpError::Malformed("not a text operation")),
+        }
+    }
+
+    fn write(&mut self, piece: Piece) -> Value {
+        self.line.push(piece);
+        Value::Unit
     }
 
     fn retain(&mut self, value: Value) -> Result<Value, InterpError> {
@@ -430,6 +491,9 @@ impl Interp<'_> {
                     Value::Ptr(addr)
                 }
             },
+            Expr::StrEq(..) | Expr::Write(_) => {
+                return self.text_op(e, frame, depth).map(Flow::Val);
+            }
             Expr::Dup(x) => {
                 self.retain(frame.get(*x)?)?;
                 Value::Unit

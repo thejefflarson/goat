@@ -17,7 +17,8 @@ fn adds_two_numbers_with_no_live_allocations() {
             value: Value::Int(3),
             live_allocations: 0,
             allocations: 0,
-            root_string: None
+            root_string: None,
+            printed: Vec::new(),
         }
     );
 }

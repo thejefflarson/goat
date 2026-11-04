@@ -16,6 +16,7 @@ pub enum ErrorKind {
     NotAClosure(MTy),
     NotARecord(MTy),
     NotAVariant(MTy),
+    NotAString(MTy),
     ArityMismatch { expected: usize, found: usize },
     UnboundLocal(Local),
     DuplicateLocal(Local),
@@ -234,6 +235,16 @@ impl<'a> Checker<'a> {
             MTy::Ptr(kind) => Some(kind),
             other => {
                 self.err(ErrorKind::NotAPointer(other));
+                None
+            }
+        }
+    }
+
+    fn borrow_str(&mut self, local: Local) -> Option<()> {
+        match self.borrow(local)? {
+            MTy::Ptr(HeapKind::Str) => Some(()),
+            other => {
+                self.err(ErrorKind::NotAString(other));
                 None
             }
         }
@@ -572,6 +583,29 @@ impl<'a> Checker<'a> {
                     return self.err(ErrorKind::UnknownData(*d));
                 }
                 Ty::Val(MTy::Ptr(HeapKind::Str))
+            }
+            Expr::StrEq(a, b) => {
+                let (a, b) = (self.borrow_str(*a), self.borrow_str(*b));
+                if a.is_none() || b.is_none() {
+                    return Ty::Bad;
+                }
+                Ty::Val(MTy::Bool)
+            }
+            Expr::Write(write) => {
+                match write {
+                    Write::Number(value) => {
+                        let value = self.expr(value, false);
+                        self.expect(value, MTy::Float);
+                    }
+                    Write::Str(x) => {
+                        self.borrow_str(*x);
+                    }
+                    Write::Lit(d) if self.program.data.get(d.0 as usize).is_none() => {
+                        return self.err(ErrorKind::UnknownData(*d));
+                    }
+                    Write::Lit(_) | Write::End => {}
+                }
+                Ty::Val(MTy::Unit)
             }
             Expr::Dup(x) => {
                 if self.borrow_ptr(*x).is_none() {

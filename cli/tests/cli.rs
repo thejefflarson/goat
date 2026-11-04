@@ -52,6 +52,57 @@ fn runs_the_examples() {
 }
 
 #[test]
+fn runs_the_constraints_example() {
+    let out = goat(&[
+        "run",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/constraints.goat"),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "{x: 21, y: 42}\n[true, true, false]\ntrue\n"
+    );
+}
+
+#[test]
+fn print_writes_a_line_per_call_before_the_result() {
+    let src = "a = print(1)  b = print(\"two\")  c = print({n: [3]})  4";
+    assert_eq!(stdout_of(src), "1\ntwo\n{n: [3]}\n4");
+}
+
+#[test]
+fn comparing_functions_exits_non_zero_and_says_why() {
+    let out = run_source("bad.goat", "f = program(x) do x done  f == f");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("can't compare functions with `==`"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn arithmetic_on_a_non_numeric_record_exits_non_zero_and_says_why() {
+    let out = run_source("bad.goat", "{x: 1, y: true} + {x: 1, y: true}");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("needs numbers or records of numbers"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn record_arithmetic_and_equality_run_end_to_end() {
+    assert_eq!(
+        stdout_of("{x: 1, y: 2} + {x: 3, y: 4} == {x: 4, y: 6}"),
+        "true"
+    );
+    assert_eq!(stdout_of("\"a\" == \"b\""), "false");
+    assert_eq!(stdout_of("[1, 2] == [1, 2]"), "true");
+}
+
+#[test]
 fn runs_the_hello_example() {
     let hello = goat(&[
         "run",

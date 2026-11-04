@@ -5,6 +5,7 @@ pub mod captures;
 pub mod error;
 pub mod hir;
 pub mod infer;
+pub mod kinds;
 pub mod lower;
 mod order;
 pub mod ty;

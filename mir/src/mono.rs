@@ -5,11 +5,13 @@ use crate::canon::{canonical, ground_fields, layout_fields};
 use crate::mir::*;
 use crate::rc::insert_rc;
 use goat_checker::captures::for_each_child;
-use goat_checker::hir::{self, BinOp, ExprId, ExprKind, Param, PatternPayload, Symbol};
+use goat_checker::hir::{self, BinOp, Builtin, ExprId, ExprKind, Param, PatternPayload, Symbol};
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target};
 use std::collections::{BTreeSet, HashMap, HashSet};
+
+mod structural;
 
 type Subst = HashMap<TypeVar, Ty>;
 
@@ -33,6 +35,7 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         families: Vec::new(),
         tags: labels.into_iter().zip(0..).collect(),
         wrappers: HashMap::new(),
+        derived: HashMap::new(),
         errors: Vec::new(),
         data: Vec::new(),
     };
@@ -233,6 +236,8 @@ struct Mono<'a> {
     /// The zero-capture closure wrapper for each function used as a value. The
     /// wrappers are the funcref-table members: the functions with an `env`.
     wrappers: HashMap<FuncId, FuncId>,
+    /// The equality, printing and arithmetic functions derived from types.
+    derived: HashMap<(structural::Derived, Ty), FuncId>,
     errors: Vec<GoatError>,
     data: Vec<Vec<u8>>,
 }
@@ -767,17 +772,9 @@ impl Mono<'_> {
             ExprKind::Bin { op, lhs, rhs } => {
                 let a = Box::new(self.expr(cx, lhs, false));
                 let b = Box::new(self.expr(cx, rhs, false));
-                match op {
-                    BinOp::Add => Expr::BinFloat(FloatOp::Add, a, b),
-                    BinOp::Sub => Expr::BinFloat(FloatOp::Sub, a, b),
-                    BinOp::Mul => Expr::BinFloat(FloatOp::Mul, a, b),
-                    BinOp::Div => Expr::BinFloat(FloatOp::Div, a, b),
-                    BinOp::Lt => Expr::Cmp(CmpOp::Lt, a, b),
-                    BinOp::Lte => Expr::Cmp(CmpOp::Le, a, b),
-                    BinOp::Gt => Expr::Cmp(CmpOp::Gt, a, b),
-                    BinOp::Gte => Expr::Cmp(CmpOp::Ge, a, b),
-                }
+                self.bin(cx, *op, lhs, (a, b), tail)
             }
+            ExprKind::Builtin(Builtin::Print) => self.print_value(cx, e),
             ExprKind::Func { .. } => self.closure_value(cx, Target::Anon(e.id), e.id),
             ExprKind::Str(s) => Expr::StrLit(self.intern(s)),
             ExprKind::Record { fields } => {
@@ -847,6 +844,53 @@ impl Mono<'_> {
                 })
             }
         }
+    }
+
+    /// `lhs op rhs` given the lowered operands. Called after they are lowered,
+    /// not around them, so it adds nothing to the stack depth of a long chain
+    /// of operators.
+    #[inline(never)]
+    fn bin(
+        &mut self,
+        cx: &mut FnCx,
+        op: BinOp,
+        lhs: &hir::Expr,
+        (a, b): (Box<Expr>, Box<Expr>),
+        tail: bool,
+    ) -> Expr {
+        let operand_ty = self.ground(&self.typed.node_types[&lhs.id], &cx.subst);
+        let (a, b) = (*a, *b);
+        match op {
+            BinOp::Add => self.arith(FloatOp::Add, &operand_ty, a, b),
+            BinOp::Sub => self.arith(FloatOp::Sub, &operand_ty, a, b),
+            BinOp::Mul => self.arith(FloatOp::Mul, &operand_ty, a, b),
+            BinOp::Div => self.arith(FloatOp::Div, &operand_ty, a, b),
+            BinOp::Eq => self.equal(cx, &operand_ty, a, b, tail),
+            BinOp::Ne => {
+                let same = self.equal(cx, &operand_ty, a, b, false);
+                Expr::If(
+                    Box::new(same),
+                    Box::new(Expr::Const(Const::Bool(false))),
+                    Box::new(Expr::Const(Const::Bool(true))),
+                )
+            }
+            BinOp::Lt => Expr::Cmp(CmpOp::Lt, Box::new(a), Box::new(b)),
+            BinOp::Lte => Expr::Cmp(CmpOp::Le, Box::new(a), Box::new(b)),
+            BinOp::Gt => Expr::Cmp(CmpOp::Gt, Box::new(a), Box::new(b)),
+            BinOp::Gte => Expr::Cmp(CmpOp::Ge, Box::new(a), Box::new(b)),
+        }
+    }
+
+    /// `print` used as a value: a closure over its printer for the argument
+    /// type.
+    #[inline(never)]
+    fn print_value(&mut self, cx: &FnCx, e: &hir::Expr) -> Expr {
+        let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+        let Ty::Func(args, _) = &ty else {
+            unreachable!("print has a function type");
+        };
+        let print = self.print_fn(&args[0]);
+        self.closure_of(print, &ty)
     }
 
     /// Build `build(local)` where `local` holds `record`: a variable's own
@@ -1033,6 +1077,16 @@ impl Mono<'_> {
     }
 
     fn app(&mut self, cx: &mut FnCx, callee: &hir::Expr, args: &[hir::Expr], tail: bool) -> Expr {
+        if let (ExprKind::Builtin(Builtin::Print), [arg]) = (&callee.kind, args) {
+            let ty = self.ground(&self.typed.node_types[&arg.id], &cx.subst);
+            let print = self.print_fn(&ty);
+            let value = self.expr(cx, arg, false);
+            return if tail {
+                Expr::TailCall(Callee::Direct(print), vec![value])
+            } else {
+                Expr::CallDirect(print, vec![value])
+            };
+        }
         let direct = match &callee.kind {
             ExprKind::Var { symbol, .. }
                 if self
