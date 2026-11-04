@@ -587,6 +587,9 @@ impl Mono<'_> {
                     .collect();
                 Expr::AllocRecord(layout, values)
             }
+            ExprKind::Tag { .. } | ExprKind::Match { .. } => {
+                unreachable!("the checker rejects variants until variant typing lands")
+            }
             ExprKind::Field { record, label } => {
                 let ty = self.ground(&self.typed.node_types[&record.id], &cx.subst);
                 let Ty::Record(row) = &ty else {

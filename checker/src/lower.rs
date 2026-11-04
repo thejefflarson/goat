@@ -6,7 +6,9 @@
 //! operator list into a precedence-correct expression tree.
 
 use crate::error::GoatError;
-use crate::hir::{BinOp, Expr, ExprId, ExprKind, Param, Span, Symbol};
+use crate::hir::{
+    BinOp, Expr, ExprId, ExprKind, MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
+};
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
@@ -274,6 +276,8 @@ impl Lower {
             Rule::declaration => self.lower_declaration(pair),
             Rule::function => self.lower_function(pair),
             Rule::conditional => self.lower_conditional(pair),
+            Rule::tag => self.lower_tag(pair),
+            Rule::match_expr => self.lower_match(pair),
             other => unreachable!("unexpected term rule {other:?}"),
         }
     }
@@ -446,6 +450,113 @@ impl Lower {
         self.node(span, ExprKind::Record { fields })
     }
 
+    fn lower_tag(&mut self, pair: Pair<Rule>) -> Expr {
+        let span = span_of(&pair);
+        let mut inner = pair.into_inner();
+        let name = inner
+            .next()
+            .expect("a tag begins with its name")
+            .as_str()
+            .to_string();
+        let mut args: Vec<Expr> = inner
+            .flat_map(|arguments| arguments.into_inner())
+            .map(|a| self.lower_expr(a))
+            .collect();
+        let payload = match args.len() {
+            0 => None,
+            1 => args.pop(),
+            _ => {
+                let fields = args
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, arg)| (i.to_string(), arg))
+                    .collect();
+                Some(self.node(span, ExprKind::Record { fields }))
+            }
+        };
+        self.node(
+            span,
+            ExprKind::Tag {
+                name,
+                payload: payload.map(Box::new),
+            },
+        )
+    }
+
+    fn lower_match(&mut self, pair: Pair<Rule>) -> Expr {
+        let span = span_of(&pair);
+        let mut inner = pair.into_inner();
+        let scrutinee = self.lower_expr(inner.next().expect("match has a scrutinee"));
+        let mut arms = Vec::new();
+        let mut else_branch = None;
+        for child in inner {
+            match child.as_rule() {
+                Rule::arm => arms.push(self.lower_arm(child)),
+                Rule::expr => else_branch = Some(Box::new(self.lower_expr(child))),
+                other => unreachable!("unexpected match child {other:?}"),
+            }
+        }
+        self.node(
+            span,
+            ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms,
+                else_branch,
+            },
+        )
+    }
+
+    fn lower_arm(&mut self, pair: Pair<Rule>) -> MatchArm {
+        let mut inner = pair.into_inner();
+        let pattern_pair = inner.next().expect("an arm begins with a pattern");
+        let body_pair = inner.next().expect("an arm has a body");
+
+        self.scopes.push(HashMap::new());
+        let pattern = self.lower_pattern(pattern_pair);
+        let body = self.lower_expr(body_pair);
+        self.scopes.pop();
+        MatchArm { pattern, body }
+    }
+
+    fn lower_pattern(&mut self, pair: Pair<Rule>) -> Pattern {
+        let span = span_of(&pair);
+        let mut inner = pair.into_inner();
+        let tag = inner
+            .next()
+            .expect("a pattern begins with a tag name")
+            .as_str()
+            .to_string();
+        let mut binders: Vec<Param> = Vec::new();
+        for label in inner.flat_map(|labels| labels.into_inner()) {
+            let pspan = span_of(&label);
+            let name = label.as_str().to_string();
+            if binders.iter().any(|b| b.name == name) {
+                self.errors.push(GoatError::new(
+                    pspan,
+                    format!("duplicate binding `{name}` in pattern"),
+                ));
+            }
+            let symbol = self.bind(&name);
+            binders.push(Param {
+                symbol,
+                name,
+                span: pspan,
+            });
+        }
+        let payload = match binders.len() {
+            0 => PatternPayload::None,
+            1 => PatternPayload::Whole(binders.remove(0)),
+            _ => PatternPayload::Fields(
+                binders
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, b)| (i.to_string(), b))
+                    .collect(),
+            ),
+        };
+        Pattern { tag, span, payload }
+    }
+
     fn lower_conditional(&mut self, pair: Pair<Rule>) -> Expr {
         let span = span_of(&pair);
         let mut inner = pair.into_inner();
@@ -522,5 +633,116 @@ mod tests {
     fn rejects_unknown_escape() {
         let err = string_value(r#""bad \q""#).unwrap_err();
         assert!(err.contains("unknown escape `\\q`"), "{err}");
+    }
+
+    fn lowered(source: &str) -> Lowered {
+        let lowered = lower(source).expect("parses");
+        assert!(lowered.errors.is_empty(), "{:?}", lowered.errors);
+        lowered
+    }
+
+    fn tag_parts(e: &Expr) -> (&str, Option<&Expr>) {
+        match &e.kind {
+            ExprKind::Tag { name, payload } => (name, payload.as_deref()),
+            other => panic!("expected a tag, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nullary_tag_has_no_payload() {
+        for src in ["Empty", "Empty()"] {
+            let root = lowered(src).root;
+            let (name, payload) = tag_parts(&root);
+            assert_eq!(name, "Empty");
+            assert!(payload.is_none());
+        }
+    }
+
+    #[test]
+    fn single_argument_tag_carries_the_argument_as_its_payload() {
+        let root = lowered("Circle(5)").root;
+        let (name, payload) = tag_parts(&root);
+        assert_eq!(name, "Circle");
+        assert!(matches!(payload.unwrap().kind, ExprKind::Number(n) if n == 5.0));
+    }
+
+    #[test]
+    fn multi_argument_tag_payload_is_a_positionally_labelled_record() {
+        let root = lowered("x = 1 Link(x, Empty, 3)").root;
+        let ExprKind::Let { rest, .. } = &root.kind else {
+            panic!("expected a let");
+        };
+        let (name, payload) = tag_parts(rest.as_ref().unwrap());
+        assert_eq!(name, "Link");
+        let ExprKind::Record { fields } = &payload.unwrap().kind else {
+            panic!("expected a record payload");
+        };
+        let labels: Vec<_> = fields.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(labels, ["0", "1", "2"]);
+        assert!(matches!(fields[0].1.kind, ExprKind::Var { .. }));
+        assert!(matches!(fields[1].1.kind, ExprKind::Tag { .. }));
+        assert!(matches!(fields[2].1.kind, ExprKind::Number(_)));
+    }
+
+    #[test]
+    fn match_lowers_arms_binders_and_else() {
+        let root = lowered(
+            "s = Empty match s do Link(a, b) then a Circle(r) then r Empty then 0 else 1 done",
+        )
+        .root;
+        let ExprKind::Let { rest, .. } = &root.kind else {
+            panic!("expected a let");
+        };
+        let ExprKind::Match {
+            scrutinee,
+            arms,
+            else_branch,
+        } = &rest.as_ref().unwrap().kind
+        else {
+            panic!("expected a match");
+        };
+        assert!(matches!(scrutinee.kind, ExprKind::Var { .. }));
+        assert!(else_branch.is_some());
+        assert_eq!(arms.len(), 3);
+
+        let PatternPayload::Fields(fields) = &arms[0].pattern.payload else {
+            panic!("two binders are positional fields");
+        };
+        let labelled: Vec<_> = fields
+            .iter()
+            .map(|(l, p)| (l.as_str(), p.name.as_str()))
+            .collect();
+        assert_eq!(labelled, [("0", "a"), ("1", "b")]);
+        let ExprKind::Var { symbol, .. } = arms[0].body.kind else {
+            panic!("arm body reads a binder");
+        };
+        assert_eq!(symbol, fields[0].1.symbol);
+
+        assert!(matches!(&arms[1].pattern.payload, PatternPayload::Whole(p) if p.name == "r"));
+        assert_eq!(arms[1].pattern.tag, "Circle");
+        assert!(matches!(arms[2].pattern.payload, PatternPayload::None));
+    }
+
+    #[test]
+    fn match_without_else_has_no_catch_all() {
+        let root = lowered("match Empty do Empty then 0 done").root;
+        let ExprKind::Match { else_branch, .. } = root.kind else {
+            panic!("expected a match");
+        };
+        assert!(else_branch.is_none());
+    }
+
+    #[test]
+    fn pattern_binders_are_scoped_to_their_arm() {
+        let lowered = lower("match Empty do Circle(r) then r Empty then r done").unwrap();
+        assert_eq!(lowered.errors.len(), 1);
+        assert!(lowered.errors[0].message.contains("unknown name `r`"));
+    }
+
+    #[test]
+    fn duplicate_pattern_binder_is_an_error() {
+        let lowered = lower("match Empty do Pair(a, a) then a done").unwrap();
+        assert_eq!(lowered.errors.len(), 1);
+        assert!(lowered.errors[0].message.contains("duplicate binding `a`"));
     }
 }

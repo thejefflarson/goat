@@ -2,6 +2,7 @@ function_lit = _{ "program" | "function" }
 if_lit = _{ "if" }
 then_lit = _{ "then" }
 else_lit = _{ "else" }
+match_lit = _{ "match" }
 do_lit = _{ "do" }
 done_lit = _{ "done" }
 start_at_lit = _{ "start at" }
@@ -19,6 +20,7 @@ return_lit = _{ "return" }
 keyword = _{
   ( function_lit
   | if_lit
+  | match_lit
   | then_lit
   | else_lit
   | done_lit
@@ -71,7 +73,10 @@ string = @{ "\"" ~ raw_string ~ "\"" }
 
 unicode = _{ XID_START ~ XID_CONTINUE{0, 254} }
 
-ident = @{ !keyword ~ unicode+ }
+// Names split on the case of their first letter: a lowercase-initial name is a
+// variable, an uppercase-initial one (Unicode `Lu`) is a variant tag.
+ident = @{ !keyword ~ !UPPERCASE_LETTER ~ unicode+ }
+tag_name = @{ &UPPERCASE_LETTER ~ unicode+ }
 
 // Actual grammar
 goat = { SOI ~ expr? ~ EOI }
@@ -86,7 +91,7 @@ negation = { minus ~ (negation | primary ~ postfix*) }
 // Order matters: pest is a PEG, so longer/more-specific alternatives come
 // first. `declaration` (`ident = ...`) begins with an identifier, so a bare
 // `ident` must be tried after it.
-primary = _{ number | string | boolean | declaration | function | conditional | record | ident | lparen ~ expr ~ rparen }
+primary = _{ number | string | boolean | declaration | function | conditional | match_expr | record | tag | ident | lparen ~ expr ~ rparen }
 record = { lbrace ~ (field ~ (comma ~ field)* ~ comma?)? ~ rbrace }
 field = { ident ~ colon ~ expr }
 declaration = { ident ~ equals ~ expr ~ expr? }
@@ -95,3 +100,8 @@ function = { function_lit ~ lparen ~ labels? ~ rparen ~ do_lit ~ expr? ~ done_li
 arguments = { expr ~ (comma ~ expr)* ~ comma? }
 else_branch = _{ else_lit ~ expr }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ else_branch? ~ done_lit }
+// `Empty`, `Circle(5)`, `Link(x, rest)`. `Empty()` is the same as `Empty`.
+tag = { tag_name ~ (lparen ~ arguments? ~ rparen)? }
+pattern = { tag_name ~ (lparen ~ labels? ~ rparen)? }
+arm = { pattern ~ then_lit ~ expr }
+match_expr = { match_lit ~ expr ~ do_lit ~ arm* ~ else_branch? ~ done_lit }

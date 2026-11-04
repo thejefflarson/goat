@@ -89,6 +89,11 @@ fn free_symbols(params: &[Param], body: &Expr) -> Vec<Symbol> {
                 bound.insert(*symbol);
             }
             ExprKind::Func { params, .. } => bound.extend(params.iter().map(|p| p.symbol)),
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    bound.extend(arm.pattern.payload.binders().map(|p| p.symbol));
+                }
+            }
             _ => {}
         }
         for_each_child(e, &mut |c| scan(c, used, bound));
@@ -126,6 +131,16 @@ pub fn for_each_child<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
         }
         ExprKind::Record { fields } => fields.iter().for_each(|(_, v)| f(v)),
         ExprKind::Field { record, .. } => f(record),
+        ExprKind::Tag { payload, .. } => payload.iter().for_each(|p| f(p)),
+        ExprKind::Match {
+            scrutinee,
+            arms,
+            else_branch,
+        } => {
+            f(scrutinee);
+            arms.iter().for_each(|a| f(&a.body));
+            else_branch.iter().for_each(|e| f(e));
+        }
         ExprKind::Unit
         | ExprKind::Number(_)
         | ExprKind::Str(_)
