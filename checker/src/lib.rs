@@ -26,17 +26,26 @@ pub struct Checked {
     pub captures: HashMap<Target, Vec<Symbol>>,
 }
 
-/// Parse, name-resolve, and type-check `source`.
+/// The built-in definitions every program starts with.
+pub const PRELUDE: &str = include_str!("../../prelude/prelude.goat");
+
+/// Parse, name-resolve, and type-check `source` with the prelude in scope.
 ///
 /// Returns every diagnostic found. Lowering (name resolution) and inference
 /// errors are reported together; a parse error is returned on its own. The
 /// binding-order check runs only on a program that type-checks.
 pub fn check(source: &str) -> Result<Checked, Vec<GoatError>> {
-    let lowered = lower::lower(source).map_err(|e| vec![e])?;
+    check_with_prelude(PRELUDE, source)
+}
+
+/// Like [`check`], with `prelude` standing in for the built-in one.
+pub fn check_with_prelude(prelude: &str, source: &str) -> Result<Checked, Vec<GoatError>> {
+    let lowered = lower::lower_with_prelude(prelude, source).map_err(|e| vec![e])?;
     if !lowered.errors.is_empty() {
         return Err(lowered.errors);
     }
-    let typed = infer::infer(&lowered.root)?;
+    let mut typed = infer::infer(&lowered.root)?;
+    typed.warnings.splice(0..0, lowered.warnings);
     let captures = captures::capture_sets(&lowered.root);
     let errors = order::check(&lowered.root, &captures);
     if !errors.is_empty() {

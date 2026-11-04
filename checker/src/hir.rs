@@ -15,16 +15,38 @@ pub type Symbol = u32;
 /// each node after checking.
 pub type ExprId = u32;
 
-/// A half-open byte range `[start, end)` into the source.
+/// Which source text a [`Span`]'s offsets index into.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FileId {
+    #[default]
+    User,
+    Prelude,
+}
+
+/// A half-open byte range `[start, end)` into the source named by `file`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
+    pub file: FileId,
 }
 
 impl Span {
-    pub fn new(start: usize, end: usize) -> Span {
-        Span { start, end }
+    pub const fn new(start: usize, end: usize) -> Span {
+        Span::in_file(start, end, FileId::User)
+    }
+
+    pub const fn in_file(start: usize, end: usize, file: FileId) -> Span {
+        Span { start, end, file }
+    }
+
+    /// From the start of `self` to the end of `other`, in `self`'s file.
+    pub fn to(self, other: Span) -> Span {
+        Span::in_file(self.start, other.end, self.file)
+    }
+
+    pub fn in_prelude(self) -> bool {
+        self.file == FileId::Prelude
     }
 }
 

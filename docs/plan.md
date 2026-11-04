@@ -498,6 +498,12 @@ allocation or indirect call. The scheme below is the general fallback.)
   Errors raised inside prelude functions (e.g. `first([])`) report at the
   user's call site: "first of an empty list".
 - Users may shadow prelude names (normal scoping), with a warning.
+- Implemented (P8a): `goat_checker::PRELUDE` is lowered on its own with
+  `FileId::Prelude` spans, then the user program is grafted in as the `rest` of
+  its last `Let`. A `=` declaration that reuses a prelude name warns;
+  parameters and pattern binders do not. `GoatError::at_call_site` re-blames a
+  prelude-origin error on the user's call site. Prelude `Let`s count against
+  the lowering depth limit, so keep definitions to functions.
 
 ### Lists (defined in goat)
 ```

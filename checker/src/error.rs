@@ -18,15 +18,31 @@ impl GoatError {
         }
     }
 
+    /// Blame the user's `site` for an error raised inside the prelude, so the
+    /// user is pointed at their own code rather than at text they never wrote.
+    pub fn at_call_site(self, site: Span) -> GoatError {
+        if self.span.in_prelude() {
+            GoatError { span: site, ..self }
+        } else {
+            self
+        }
+    }
+
     /// Render the error against the source it came from: `line:col: message`,
-    /// then the offending line with a caret underline.
+    /// then the offending line with a caret underline. `source` is the user's
+    /// program; an error still inside the prelude renders against that.
     pub fn render(&self, source: &str) -> String {
+        let (source, origin) = if self.span.in_prelude() {
+            (crate::PRELUDE, "in the prelude, ")
+        } else {
+            (source, "")
+        };
         let (line, col, line_text) = locate(source, self.span.start);
         let caret_pad = " ".repeat(col.saturating_sub(1));
         let caret_len = (self.span.end.saturating_sub(self.span.start)).max(1);
         let caret = "^".repeat(caret_len);
         format!(
-            "{line}:{col}: {msg}\n  {line_text}\n  {caret_pad}{caret}",
+            "{origin}{line}:{col}: {msg}\n  {line_text}\n  {caret_pad}{caret}",
             msg = self.message,
         )
     }

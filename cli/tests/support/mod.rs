@@ -5,7 +5,11 @@ use goat_mir::interp::{self, Value};
 
 /// What the interpreter says the program prints, and its live allocations.
 pub fn interpret(src: &str) -> (Vec<String>, usize) {
-    let checked = goat_checker::check(src).expect("program type-checks");
+    interpret_with_prelude(goat_checker::PRELUDE, src)
+}
+
+pub fn interpret_with_prelude(prelude: &str, src: &str) -> (Vec<String>, usize) {
+    let checked = goat_checker::check_with_prelude(prelude, src).expect("program type-checks");
     let program = goat_mir::mono(&checked).expect("program monomorphizes");
     assert_eq!(
         goat_mir::verify(&program),
@@ -30,7 +34,11 @@ pub fn interpret(src: &str) -> (Vec<String>, usize) {
 
 /// What the compiled wasm prints, and its live allocations after `goat_entry`.
 pub fn compiled(src: &str) -> (Vec<String>, u32) {
-    let wasm = goat::compile(src).expect("program compiles");
+    compiled_with_prelude(goat_checker::PRELUDE, src)
+}
+
+pub fn compiled_with_prelude(prelude: &str, src: &str) -> (Vec<String>, u32) {
+    let wasm = goat::compile_with_prelude(prelude, src).expect("program compiles");
     let run = goat_cli::run(&wasm).expect("wasm runs");
     (run.printed, run.live_allocs)
 }
@@ -39,6 +47,16 @@ pub fn compiled(src: &str) -> (Vec<String>, u32) {
 /// the printed output joined by newlines.
 pub fn run(src: &str) -> String {
     run_with(src, |printed| printed)
+}
+
+/// Like `run`, with `prelude` in scope in place of the built-in one.
+pub fn run_with_prelude(prelude: &str, src: &str) -> String {
+    let (expected, live) = interpret_with_prelude(prelude, src);
+    assert_eq!(live, 0, "interpreter leaked allocations for: {src}");
+    let (printed, wasm_live) = compiled_with_prelude(prelude, src);
+    assert_eq!(wasm_live, 0, "wasm leaked allocations for: {src}");
+    assert_eq!(printed, expected, "wasm differs from interp: {src}");
+    expected.join("\n")
 }
 
 /// Like `run`, but `tamper` rewrites the wasm output before comparison, so a

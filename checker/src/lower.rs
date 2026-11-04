@@ -7,7 +7,7 @@
 
 use crate::error::GoatError;
 use crate::hir::{
-    BinOp, Expr, ExprId, ExprKind, MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
+    BinOp, Expr, ExprId, ExprKind, FileId, MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
 };
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
@@ -25,22 +25,78 @@ const MAX_DEPTH: usize = 256;
 pub struct Lowered {
     pub root: Expr,
     pub errors: Vec<GoatError>,
+    pub warnings: Vec<GoatError>,
 }
 
-/// Parse and lower `source`. Parse errors abort (returned as the sole error);
-/// name-resolution errors are collected so the inferer can still run and report
-/// type errors in the same pass.
+/// Parse and lower `source` on its own, with no prelude.
 pub fn lower(source: &str) -> Result<Lowered, GoatError> {
-    let mut pairs = GoatParser::parse(Rule::goat, source)
-        .map_err(|e| GoatError::new(Span::new(0, 0), format!("parse error:\n{e}")))?;
-    let goat = pairs.next().expect("goat rule always produces one pair");
+    lower_with_prelude("", source)
+}
 
+/// Parse and lower `prelude` and `source` separately, then make `source` the
+/// `rest` of the prelude's chain of `Let`s, so every prelude name is in scope
+/// for it. Spans keep the file they came from. Parse errors abort (returned
+/// as the sole error); name-resolution errors are collected so the inferer
+/// can still run and report type errors in the same pass.
+pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatError> {
     let mut ctx = Lower::default();
-    let root = ctx.lower_goat(goat);
+    let mut prelude_root = ctx.lower_source(prelude, FileId::Prelude)?;
+
+    let (names, chain_len) = defined_names(&prelude_root);
+    ctx.depth = chain_len;
+    ctx.prelude_scope = names;
+    let user_root = ctx.lower_source(source, FileId::User)?;
+
+    let root = if matches!(prelude_root.kind, ExprKind::Unit) {
+        user_root
+    } else {
+        if let Err(e) = graft(&mut prelude_root, user_root) {
+            ctx.errors.push(e);
+        }
+        prelude_root
+    };
     Ok(Lowered {
         root,
         errors: ctx.errors,
+        warnings: ctx.warnings,
     })
+}
+
+/// The names bound by the chain of `Let`s that starts at `root`, and the
+/// chain's length.
+fn defined_names(root: &Expr) -> (HashMap<String, Symbol>, usize) {
+    let mut names = HashMap::new();
+    let mut len = 0;
+    let mut next = Some(root);
+    while let Some(Expr {
+        kind: ExprKind::Let {
+            symbol, name, rest, ..
+        },
+        ..
+    }) = next
+    {
+        names.insert(name.clone(), *symbol);
+        len += 1;
+        next = rest.as_deref();
+    }
+    (names, len)
+}
+
+/// Make `user` the `rest` of the last `Let` in the chain at `prelude`.
+fn graft(prelude: &mut Expr, user: Expr) -> Result<(), GoatError> {
+    match &mut prelude.kind {
+        ExprKind::Let {
+            rest: Some(rest), ..
+        } => graft(rest, user),
+        ExprKind::Let { rest, .. } => {
+            *rest = Some(Box::new(user));
+            Ok(())
+        }
+        _ => Err(GoatError::new(
+            prelude.span,
+            "the prelude may only contain definitions",
+        )),
+    }
 }
 
 /// The names a `{x, y, ...rest}` pattern binds: `(symbol, name, span)` each.
@@ -59,10 +115,33 @@ struct Lower {
     /// earlier name in the group, which shadows it.
     grouped: HashMap<usize, Option<Symbol>>,
     errors: Vec<GoatError>,
+    warnings: Vec<GoatError>,
     depth: usize,
+    file: FileId,
+    /// The names the prelude defines, in scope for the user's source.
+    prelude_scope: HashMap<String, Symbol>,
 }
 
 impl Lower {
+    /// Parse and lower one source text, stamping its spans with `file`. The
+    /// prelude's names are in scope when `file` is the user's.
+    fn lower_source(&mut self, source: &str, file: FileId) -> Result<Expr, GoatError> {
+        self.file = file;
+        let mut pairs = GoatParser::parse(Rule::goat, source)
+            .map_err(|e| GoatError::new(Span::in_file(0, 0, file), format!("parse error:\n{e}")))?;
+        let goat = pairs.next().expect("goat rule always produces one pair");
+        debug_assert!(self.grouped.is_empty());
+        self.scopes.push(self.prelude_scope.clone());
+        let root = self.lower_goat(goat);
+        self.scopes.pop();
+        Ok(root)
+    }
+
+    fn span_of(&self, pair: &Pair<Rule>) -> Span {
+        let s = pair.as_span();
+        Span::in_file(s.start(), s.end(), self.file)
+    }
+
     fn fresh_symbol(&mut self) -> Symbol {
         let s = self.next_symbol;
         self.next_symbol += 1;
@@ -105,7 +184,7 @@ impl Lower {
     }
 
     fn lower_goat(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         self.scopes.push(HashMap::new());
         let body = pair
             .into_inner()
@@ -127,7 +206,7 @@ impl Lower {
                 .clone()
                 .into_inner()
                 .next()
-                .map_or_else(|| span_of(&pair), |first| span_of(&first));
+                .map_or_else(|| self.span_of(&pair), |first| self.span_of(&first));
             self.errors
                 .push(GoatError::new(span, "expression nested too deeply"));
             return self.node(span, ExprKind::Unit);
@@ -145,7 +224,7 @@ impl Lower {
 
         while let Some(op_pair) = inner.next() {
             let op = bin_op(op_pair.as_rule());
-            let op_span = span_of(&op_pair);
+            let op_span = self.span_of(&op_pair);
             let rhs = self.lower_operand(&mut inner);
 
             while let Some((top, _)) = ops.last() {
@@ -179,7 +258,7 @@ impl Lower {
         while let Some(postfix) =
             inner.next_if(|p| matches!(p.as_rule(), Rule::access | Rule::call))
         {
-            let span = Span::new(expr.span.start, span_of(&postfix).end);
+            let span = expr.span.to(self.span_of(&postfix));
             expr = match postfix.as_rule() {
                 Rule::access => {
                     let label = postfix
@@ -217,11 +296,11 @@ impl Lower {
 
     /// `-x` is `0 - x`: the HIR has no negation node.
     fn lower_negation(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         let mut inner = pair.into_inner().peekable();
         let minus = inner.next().expect("negation begins with `-`");
         let operand = self.lower_operand(&mut inner);
-        let zero = self.node(span_of(&minus), ExprKind::Number(0.0));
+        let zero = self.node(self.span_of(&minus), ExprKind::Number(0.0));
         self.node(
             span,
             ExprKind::Bin {
@@ -237,7 +316,7 @@ impl Lower {
         let (op, _) = ops.pop().expect("reduce called with an operator");
         let rhs = operands.pop().expect("binary operator has a right operand");
         let lhs = operands.pop().expect("binary operator has a left operand");
-        let span = Span::new(lhs.span.start, rhs.span.end);
+        let span = lhs.span.to(rhs.span);
         let node = self.node(
             span,
             ExprKind::Bin {
@@ -251,7 +330,7 @@ impl Lower {
 
     /// Lower a single term (anything that can appear as an operand).
     fn lower_primary(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         match pair.as_rule() {
             Rule::expr => self.lower_expr(pair),
             Rule::number => {
@@ -322,16 +401,22 @@ impl Lower {
     }
 
     fn lower_declaration(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let name_pair = inner.next().expect("declaration starts with a name");
         let name = name_pair.as_str().to_string();
         let value_pair = inner.next().expect("declaration has a value");
         let rest_pair = inner.next();
 
+        if self.file == FileId::User && self.prelude_scope.contains_key(&name) {
+            self.warnings.push(GoatError::new(
+                self.span_of(&name_pair),
+                format!("`{name}` replaces the built-in `{name}`"),
+            ));
+        }
         self.scopes.push(HashMap::new());
         let (symbol, value) = if is_program_literal(&value_pair) {
-            let start = span_of(&name_pair).start;
+            let start = self.span_of(&name_pair).start;
             if !self.grouped.contains_key(&start) {
                 self.bind_function_group(&name_pair, rest_pair.clone());
             }
@@ -391,11 +476,11 @@ impl Lower {
             self.bind_as(name, symbol);
             symbol
         });
-        self.grouped.insert(span_of(name_pair).start, reserved);
+        self.grouped.insert(self.span_of(name_pair).start, reserved);
     }
 
     fn lower_function(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         self.scopes.push(HashMap::new());
         let mut params = Vec::new();
         let mut unpacked = Vec::new();
@@ -404,7 +489,7 @@ impl Lower {
             match child.as_rule() {
                 Rule::params => {
                     for param in child.into_inner() {
-                        let pspan = span_of(&param);
+                        let pspan = self.span_of(&param);
                         let name = param.as_str().to_string();
                         if param.as_rule() == Rule::record_pattern {
                             let source = self.fresh_symbol();
@@ -469,7 +554,7 @@ impl Lower {
                 ),
                 _ => (item, false),
             };
-            let span = span_of(&name_pair);
+            let span = self.span_of(&name_pair);
             let name = name_pair.as_str().to_string();
             if self.scopes.last().is_some_and(|s| s.contains_key(&name)) {
                 self.errors
@@ -540,7 +625,7 @@ impl Lower {
 
     /// `{x, y} = value rest`: bind `value` once, then each name from it.
     fn lower_destructure(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let pattern_pair = inner.next().expect("destructuring begins with a pattern");
         let value_pair = inner.next().expect("destructuring has a value");
@@ -567,13 +652,13 @@ impl Lower {
     }
 
     fn lower_record(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         let mut base = None;
         let mut spreads = 0;
         let mut fields = Vec::new();
         for (position, item) in pair.into_inner().enumerate() {
             if item.as_rule() == Rule::spread {
-                let item_span = span_of(&item);
+                let item_span = self.span_of(&item);
                 let target = item
                     .into_inner()
                     .next()
@@ -598,7 +683,7 @@ impl Lower {
             debug_assert_eq!(item.as_rule(), Rule::field);
             let mut it = item.into_inner();
             let label_pair = it.next().expect("a field begins with a label");
-            let label_span = span_of(&label_pair);
+            let label_span = self.span_of(&label_pair);
             let label = label_pair.as_str().to_string();
             let value = self.lower_expr(it.next().expect("a field has a value"));
             if fields.iter().any(|(l, _)| *l == label) {
@@ -623,7 +708,7 @@ impl Lower {
     }
 
     fn lower_tag(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let name = inner
             .next()
@@ -656,7 +741,7 @@ impl Lower {
     }
 
     fn lower_match(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let scrutinee = self.lower_expr(inner.next().expect("match has a scrutinee"));
         let mut arms = Vec::new();
@@ -691,7 +776,7 @@ impl Lower {
     }
 
     fn lower_pattern(&mut self, pair: Pair<Rule>) -> Pattern {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let tag = inner
             .next()
@@ -700,7 +785,7 @@ impl Lower {
             .to_string();
         let mut binders: Vec<Param> = Vec::new();
         for label in inner.flat_map(|labels| labels.into_inner()) {
-            let pspan = span_of(&label);
+            let pspan = self.span_of(&label);
             let name = label.as_str().to_string();
             if binders.iter().any(|b| b.name == name) {
                 self.errors.push(GoatError::new(
@@ -730,7 +815,7 @@ impl Lower {
     }
 
     fn lower_conditional(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = span_of(&pair);
+        let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let cond = self.lower_expr(inner.next().expect("if has a condition"));
         let then_branch = self.lower_expr(inner.next().expect("if has a then branch"));
@@ -749,11 +834,6 @@ impl Lower {
 fn is_program_literal(expr: &Pair<Rule>) -> bool {
     let mut kids = expr.clone().into_inner();
     matches!((kids.next(), kids.next()), (Some(p), None) if p.as_rule() == Rule::function)
-}
-
-fn span_of(pair: &Pair<Rule>) -> Span {
-    let s = pair.as_span();
-    Span::new(s.start(), s.end())
 }
 
 fn bin_op(rule: Rule) -> BinOp {
