@@ -138,6 +138,22 @@ generic function once per type (`use(id, id)`); single-typed interfaces
 message (Phase 0). Possible fixes later: polymorphic fields on named types, or
 rank-2 intersection inference (see "Later").
 
+**Infinite record type through pure-extension spread.** An unannotated function
+that recurses by spreading a field it never reads is an infinite record type and
+is rejected with the occurs-check:
+
+```
+go = program(s) do go({...s, done: true}) done   # ERROR: infinite record type
+```
+
+`go` adds `done` to `s` without ever constraining `s`, so each call's argument
+is `{done: Bool | row(previous)}` — a type with no finite form. Reading a field
+first (`s.n`) pins `s`'s row and breaks the regress. A proper fix needs
+presence/absence (lacks-style) typing carried in schemes — Phase 8 constraints
+(#95). The `lacks` guard added for rest-after-shadow
+([ADR 0011](adr/0011-lacks-constraints-for-record-restriction.md)) is the first,
+targeted piece of that machinery.
+
 ## Target pipeline
 
 ```
