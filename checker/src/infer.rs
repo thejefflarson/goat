@@ -12,11 +12,16 @@
 //! variable) with `l` when needed — then the field types and the remaining rows
 //! unify. Field access unifies the record against an open row `{l: t | rest}`,
 //! so it accepts any record that has at least field `l`.
+//!
+//! Variants are the dual, on the same rows: a label is a tag and its field type
+//! is the payload. Constructing a tag yields an open row `[Circle: Number | ρ]`;
+//! each `match` arm extends the scrutinee's row with its tag, and a `match`
+//! without `else` then closes it.
 
 use crate::error::GoatError;
-use crate::hir::{Expr, ExprId, ExprKind, Span, Symbol};
+use crate::hir::{Expr, ExprId, ExprKind, MatchArm, PatternPayload, Span, Symbol};
 use crate::ty::{Row, Scheme, Ty, TypeVar};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// The result of checking a program: the program's own type, plus the resolved
 /// type of every node (keyed by [`ExprId`]) for later phases.
@@ -28,12 +33,15 @@ pub struct Typed {
     /// binding's value still mention the scheme's quantified variables.
     /// `Symbol`s are unique per binding site, so they key this map alone.
     pub schemes: HashMap<Symbol, Scheme>,
+    /// Diagnostics that do not stop compilation.
+    pub warnings: Vec<GoatError>,
 }
 
 pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
     let mut inf = Inferer::default();
     let ty = inf.infer(root);
     if inf.errors.is_empty() {
+        let warnings = inf.unused_tag_warnings();
         let root_ty = inf.resolve(&ty);
         let node_types = inf
             .node_types
@@ -55,6 +63,7 @@ pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
             root_ty,
             node_types,
             schemes,
+            warnings,
         })
     } else {
         Err(inf.errors)
@@ -70,7 +79,24 @@ struct Inferer {
     params: HashMap<Symbol, String>,
     node_types: HashMap<ExprId, Ty>,
     schemes: HashMap<Symbol, Scheme>,
+    constructed: Vec<(String, Span)>,
+    matched: HashSet<String>,
     errors: Vec<GoatError>,
+}
+
+#[derive(Clone, Copy)]
+enum RowKind {
+    Record,
+    Variant,
+}
+
+impl RowKind {
+    fn noun(self) -> &'static str {
+        match self {
+            RowKind::Record => "record",
+            RowKind::Variant => "variant",
+        }
+    }
 }
 
 impl Inferer {
@@ -100,6 +126,7 @@ impl Inferer {
                 Box::new(self.resolve(ret)),
             ),
             Ty::Record(row) => Ty::Record(self.resolve_row(row)),
+            Ty::Variant(row) => Ty::Variant(self.resolve_row(row)),
             other => other.clone(),
         }
     }
@@ -195,7 +222,10 @@ impl Inferer {
                 self.unify(a_ret, b_ret, span);
             }
             (Ty::Record(a_row), Ty::Record(b_row)) => {
-                self.unify_row(a_row, b_row, span);
+                self.unify_row(a_row, b_row, span, RowKind::Record);
+            }
+            (Ty::Variant(a_row), Ty::Variant(b_row)) => {
+                self.unify_row(a_row, b_row, span, RowKind::Variant);
             }
             _ => {
                 self.errors.push(GoatError::new(
@@ -206,7 +236,7 @@ impl Inferer {
         }
     }
 
-    fn unify_row(&mut self, a: &Row, b: &Row, span: Span) {
+    fn unify_row(&mut self, a: &Row, b: &Row, span: Span, kind: RowKind) {
         let a = self.resolve_row(a);
         let b = self.resolve_row(b);
         match (&a, &b) {
@@ -216,7 +246,7 @@ impl Inferer {
                 if occurs_row(*x, other) {
                     self.errors.push(GoatError::new(
                         span,
-                        "cannot construct an infinite record type".to_string(),
+                        format!("cannot construct an infinite {} type", kind.noun()),
                     ));
                 } else {
                     self.row_subst.insert(*x, other.clone());
@@ -225,20 +255,26 @@ impl Inferer {
             (Row::Extend { label, field, rest }, _) => match self.rewrite_row(label, &b) {
                 Some((b_field, b_rest)) => {
                     self.unify(field, &b_field, span);
-                    self.unify_row(rest, &b_rest, span);
+                    self.unify_row(rest, &b_rest, span, kind);
                 }
                 None => {
-                    self.errors.push(GoatError::new(
-                        span,
-                        format!("record has an unexpected field `{label}`"),
-                    ));
+                    let message = match kind {
+                        RowKind::Record => format!("record has an unexpected field `{label}`"),
+                        RowKind::Variant => format!(
+                            "the tag `{label}` is not allowed here; the other side never has it"
+                        ),
+                    };
+                    self.errors.push(GoatError::new(span, message));
                 }
             },
             (Row::Empty, Row::Extend { label, .. }) => {
-                self.errors.push(GoatError::new(
-                    span,
-                    format!("record is missing field `{label}`"),
-                ));
+                let message = match kind {
+                    RowKind::Record => format!("record is missing field `{label}`"),
+                    RowKind::Variant => format!(
+                        "the tag `{label}` is expected here, but this value is never `{label}`"
+                    ),
+                };
+                self.errors.push(GoatError::new(span, message));
             }
         }
     }
@@ -478,14 +514,194 @@ impl Inferer {
                 self.unify(&record_ty, &expected, expr.span);
                 field_ty
             }
-            ExprKind::Tag { .. } | ExprKind::Match { .. } => {
+            ExprKind::Tag { name, payload } => {
+                let payload_ty = match payload {
+                    Some(p) => self.infer(p),
+                    None => Ty::Unit,
+                };
+                self.constructed.push((name.clone(), expr.span));
+                Ty::Variant(Row::Extend {
+                    label: name.clone(),
+                    field: Box::new(payload_ty),
+                    rest: Box::new(self.fresh_row()),
+                })
+            }
+            ExprKind::Match {
+                scrutinee,
+                arms,
+                else_branch,
+            } => self.infer_match(scrutinee, arms, else_branch.as_deref()),
+        }
+    }
+
+    fn infer_match(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &[MatchArm],
+        else_branch: Option<&Expr>,
+    ) -> Ty {
+        let scrut_ty = self.infer(scrutinee);
+        let is_variant = match self.resolve(&scrut_ty) {
+            Ty::Variant(_) => true,
+            Ty::Var(_) => {
+                let open = Ty::Variant(self.fresh_row());
+                self.unify(&scrut_ty, &open, scrutinee.span);
+                true
+            }
+            other => {
                 self.errors.push(GoatError::new(
-                    expr.span,
-                    "variants and `match` are not supported yet",
+                    scrutinee.span,
+                    format!(
+                        "`match` needs a value built from tags (like `Circle(5)`), but this is `{other}`"
+                    ),
                 ));
-                self.fresh()
+                false
+            }
+        };
+
+        let mut result: Option<Ty> = None;
+        let mut handled: Vec<&str> = Vec::new();
+        for arm in arms {
+            let pattern = &arm.pattern;
+            self.matched.insert(pattern.tag.clone());
+            let payload_ty = self.bind_payload(&pattern.payload);
+            if is_variant {
+                self.constrain_arm(
+                    &scrut_ty,
+                    pattern.span,
+                    &pattern.tag,
+                    payload_ty,
+                    &mut handled,
+                );
+            }
+            let body_ty = self.infer(&arm.body);
+            for binder in pattern.payload.binders() {
+                self.env.remove(&binder.symbol);
+            }
+            self.join_branch(&mut result, body_ty, arm.body.span);
+        }
+        match else_branch {
+            Some(else_expr) => {
+                let else_ty = self.infer(else_expr);
+                self.join_branch(&mut result, else_ty, else_expr.span);
+            }
+            None if is_variant => self.close_match(&scrut_ty, &handled, scrutinee.span),
+            None => {}
+        }
+        result.unwrap_or_else(|| self.fresh())
+    }
+
+    /// Type the binders of an arm's pattern, returning the payload type the
+    /// arm expects.
+    fn bind_payload(&mut self, payload: &PatternPayload) -> Ty {
+        match payload {
+            PatternPayload::None => Ty::Unit,
+            PatternPayload::Whole(binder) => {
+                let ty = self.fresh();
+                self.env.insert(binder.symbol, Scheme::mono(ty.clone()));
+                ty
+            }
+            PatternPayload::Fields(fields) => {
+                let mut row = Row::Empty;
+                for (label, binder) in fields.iter().rev() {
+                    let ty = self.fresh();
+                    self.env.insert(binder.symbol, Scheme::mono(ty.clone()));
+                    row = Row::Extend {
+                        label: label.clone(),
+                        field: Box::new(ty),
+                        rest: Box::new(row),
+                    };
+                }
+                Ty::Record(row)
             }
         }
+    }
+
+    /// Require the scrutinee to be able to carry `tag` with `payload_ty`.
+    fn constrain_arm<'a>(
+        &mut self,
+        scrut_ty: &Ty,
+        span: Span,
+        tag: &'a str,
+        payload_ty: Ty,
+        handled: &mut Vec<&'a str>,
+    ) {
+        if handled.contains(&tag) {
+            self.errors.push(GoatError::new(
+                span,
+                format!("this arm repeats `{tag}`; an earlier arm already handles it"),
+            ));
+            return;
+        }
+        handled.push(tag);
+        let Ty::Variant(row) = self.resolve(scrut_ty) else {
+            return;
+        };
+        let (tags, tail) = row_shape(&row);
+        if tail.is_none() && !tags.iter().any(|t| t == tag) {
+            self.errors.push(GoatError::new(
+                span,
+                format!(
+                    "this arm matches `{tag}`, but the value is only ever {}",
+                    tag_list(&tags, "or")
+                ),
+            ));
+            return;
+        }
+        let expected = Ty::Variant(Row::Extend {
+            label: tag.to_string(),
+            field: Box::new(payload_ty),
+            rest: Box::new(self.fresh_row()),
+        });
+        self.unify(scrut_ty, &expected, span);
+    }
+
+    /// A `match` with no `else` must cover every tag the scrutinee can be, and
+    /// then the scrutinee can be no other.
+    fn close_match(&mut self, scrut_ty: &Ty, handled: &[&str], span: Span) {
+        let Ty::Variant(row) = self.resolve(scrut_ty) else {
+            return;
+        };
+        let (tags, tail) = row_shape(&row);
+        let missing: Vec<String> = tags
+            .into_iter()
+            .filter(|t| !handled.contains(&t.as_str()))
+            .collect();
+        if !missing.is_empty() {
+            self.errors.push(GoatError::new(
+                span,
+                format!(
+                    "`match` doesn't handle {}; add an arm for it or an `else`",
+                    tag_list(&missing, "and")
+                ),
+            ));
+        } else if let Some(var) = tail {
+            self.row_subst.insert(var, Row::Empty);
+        }
+    }
+
+    /// Unify a branch's type with the type of the branches before it.
+    fn join_branch(&mut self, result: &mut Option<Ty>, ty: Ty, span: Span) {
+        match result {
+            Some(first) => self.unify(&ty, first, span),
+            None => *result = Some(ty),
+        }
+    }
+
+    /// One warning per tag that is constructed but never named in a `match`
+    /// arm: the usual sign of a misspelled tag.
+    fn unused_tag_warnings(&self) -> Vec<GoatError> {
+        let mut seen = HashSet::new();
+        self.constructed
+            .iter()
+            .filter(|(name, _)| !self.matched.contains(name) && seen.insert(name))
+            .map(|(name, span)| {
+                GoatError::new(
+                    *span,
+                    format!("tag `{name}` is constructed but never matched anywhere"),
+                )
+            })
+            .collect()
     }
 }
 
@@ -493,8 +709,33 @@ fn occurs(var: TypeVar, ty: &Ty) -> bool {
     match ty {
         Ty::Var(v) => *v == var,
         Ty::Func(args, ret) => args.iter().any(|a| occurs(var, a)) || occurs(var, ret),
-        Ty::Record(row) => occurs_row(var, row),
+        Ty::Record(row) | Ty::Variant(row) => occurs_row(var, row),
         _ => false,
+    }
+}
+
+/// The labels of a resolved row, and its tail variable if the row is open.
+fn row_shape(row: &Row) -> (Vec<String>, Option<TypeVar>) {
+    let mut labels = Vec::new();
+    let mut cursor = row;
+    loop {
+        match cursor {
+            Row::Extend { label, rest, .. } => {
+                labels.push(label.clone());
+                cursor = rest;
+            }
+            Row::Var(v) => return (labels, Some(*v)),
+            Row::Empty => return (labels, None),
+        }
+    }
+}
+
+fn tag_list(tags: &[String], conjunction: &str) -> String {
+    let quoted: Vec<String> = tags.iter().map(|t| format!("`{t}`")).collect();
+    match quoted.as_slice() {
+        [] => "nothing".to_string(),
+        [only] => only.clone(),
+        [init @ .., last] => format!("{} {conjunction} {last}", init.join(", ")),
     }
 }
 
@@ -514,6 +755,7 @@ fn subst_vars(ty: &Ty, mapping: &HashMap<TypeVar, TypeVar>) -> Ty {
             Box::new(subst_vars(ret, mapping)),
         ),
         Ty::Record(row) => Ty::Record(subst_row(row, mapping)),
+        Ty::Variant(row) => Ty::Variant(subst_row(row, mapping)),
         other => other.clone(),
     }
 }

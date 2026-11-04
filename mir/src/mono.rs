@@ -14,9 +14,13 @@ type Subst = HashMap<TypeVar, Ty>;
 
 /// Lower a checked program to MIR and insert its reference counting.
 /// Constructs whose runtime support has not landed yet (ADR 0005) come back as
-/// spanned diagnostics; well-typed input never panics. No construct is staged
-/// out at present.
+/// spanned diagnostics; well-typed input never panics. Variants and `match`
+/// are staged out until their lowering lands.
 pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
+    let staged = unsupported_variants(&checked.root);
+    if !staged.is_empty() {
+        return Err(staged);
+    }
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut m = Mono {
         typed: &checked.typed,
@@ -76,6 +80,25 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     };
     insert_rc(&mut program);
     Ok(program)
+}
+
+/// A diagnostic for every tag and `match`, found before any lowering so no
+/// variant type ever reaches it.
+fn unsupported_variants(root: &hir::Expr) -> Vec<GoatError> {
+    fn scan(e: &hir::Expr, out: &mut Vec<GoatError>) {
+        let message = match &e.kind {
+            ExprKind::Tag { .. } => Some("variants are not supported yet (Phase 7)"),
+            ExprKind::Match { .. } => Some("`match` is not supported yet (Phase 7)"),
+            _ => None,
+        };
+        if let Some(message) = message {
+            out.push(GoatError::new(e.span, message));
+        }
+        for_each_child(e, &mut |c| scan(c, out));
+    }
+    let mut errors = Vec::new();
+    scan(root, &mut errors);
+    errors
 }
 
 #[derive(Clone)]
@@ -323,6 +346,7 @@ impl Mono<'_> {
                 MTy::Ptr(HeapKind::Record(LayoutId(id as u32)))
             }
             Ty::Str => MTy::Ptr(HeapKind::Str),
+            Ty::Variant(_) => unreachable!("variants are rejected before lowering"),
             Ty::Var(_) => unreachable!("type variable survived grounding"),
         }
     }
@@ -588,7 +612,7 @@ impl Mono<'_> {
                 Expr::AllocRecord(layout, values)
             }
             ExprKind::Tag { .. } | ExprKind::Match { .. } => {
-                unreachable!("the checker rejects variants until variant typing lands")
+                unreachable!("variants are rejected before lowering")
             }
             ExprKind::Field { record, label } => {
                 let ty = self.ground(&self.typed.node_types[&record.id], &cx.subst);

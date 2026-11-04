@@ -25,9 +25,13 @@ pub enum Ty {
     /// is the scoped-labels foundation — a record literal is a closed row, and
     /// field access unifies against an open one.
     Record(Row),
+    /// A variant: the dual of a record. Each label is a tag and its field type
+    /// is the payload (`Unit` for a bare tag). Constructing a tag yields an open
+    /// row; `match` closes it.
+    Variant(Row),
 }
 
-/// A row of record fields. Either closed ([`Row::Empty`] tail), open on a row
+/// A row of record fields or variant tags. Either closed ([`Row::Empty`] tail), open on a row
 /// variable ([`Row::Var`]), or a field prepended to a smaller row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Row {
@@ -59,7 +63,7 @@ impl Ty {
                 }
                 ret.free_vars(out);
             }
-            Ty::Record(row) => row.free_vars(out),
+            Ty::Record(row) | Ty::Variant(row) => row.free_vars(out),
         }
     }
 }
@@ -99,17 +103,23 @@ impl fmt::Display for Ty {
             }
             Ty::Record(row) => {
                 write!(f, "{{")?;
-                row.fmt_fields(f, true)?;
+                row.fmt_fields(f, true, false)?;
                 write!(f, "}}")
+            }
+            Ty::Variant(row) => {
+                write!(f, "[")?;
+                row.fmt_fields(f, true, true)?;
+                write!(f, "]")
             }
         }
     }
 }
 
 impl Row {
-    /// Format the fields of a row inside its enclosing braces. `first` tracks
-    /// whether a separator is needed before the next field.
-    fn fmt_fields(&self, f: &mut fmt::Formatter<'_>, first: bool) -> fmt::Result {
+    /// Format the fields of a row inside its enclosing brackets. `first` tracks
+    /// whether a separator is needed before the next field; `bare_unit` prints
+    /// a `Unit` payload as just the tag name.
+    fn fmt_fields(&self, f: &mut fmt::Formatter<'_>, first: bool, bare_unit: bool) -> fmt::Result {
         match self {
             Row::Empty => Ok(()),
             Row::Var(v) => {
@@ -123,8 +133,12 @@ impl Row {
                 if !first {
                     write!(f, ", ")?;
                 }
-                write!(f, "{label}: {field}")?;
-                rest.fmt_fields(f, false)
+                if bare_unit && **field == Ty::Unit {
+                    write!(f, "{label}")?;
+                } else {
+                    write!(f, "{label}: {field}")?;
+                }
+                rest.fmt_fields(f, false, bare_unit)
             }
         }
     }
