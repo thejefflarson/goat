@@ -380,4 +380,99 @@ mod tests {
             ]
         }
     }
+
+    #[test]
+    fn uppercase_names_are_tags_and_lowercase_are_identifiers() {
+        use pest::Parser;
+        for name in ["circle", "x", "matchbox", "matcher", "éclair"] {
+            assert!(GoatParser::parse(Rule::ident, name).is_ok(), "{name}");
+            assert!(GoatParser::parse(Rule::tag_name, name).is_err(), "{name}");
+        }
+        for name in ["Circle", "Empty", "X", "Éclair", "Matchbox"] {
+            assert!(GoatParser::parse(Rule::tag_name, name).is_ok(), "{name}");
+            assert!(GoatParser::parse(Rule::ident, name).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn match_is_a_reserved_word() {
+        use pest::Parser;
+        assert!(GoatParser::parse(Rule::ident, "match").is_err());
+    }
+
+    #[test]
+    fn parses_tags() {
+        parses_to! {
+            parser: GoatParser,
+            input: "Empty",
+            rule: Rule::tag,
+            tokens: [tag(0, 5, [tag_name(0, 5)])]
+        }
+
+        parses_to! {
+            parser: GoatParser,
+            input: "Circle(5)",
+            rule: Rule::tag,
+            tokens: [tag(0, 9, [
+                tag_name(0, 6),
+                arguments(7, 8, [expr(7, 8, [number(7, 8)])])
+            ])]
+        }
+
+        parses_to! {
+            parser: GoatParser,
+            input: "Link(x, rest)",
+            rule: Rule::tag,
+            tokens: [tag(0, 13, [
+                tag_name(0, 4),
+                arguments(5, 12, [
+                    expr(5, 6, [ident(5, 6)]),
+                    expr(8, 12, [ident(8, 12)])
+                ])
+            ])]
+        }
+    }
+
+    #[test]
+    fn parses_match() {
+        use pest::Parser;
+        let src = "match s do Circle(r) then r Empty then 0 else 1 done";
+        let mut pairs = GoatParser::parse(Rule::match_expr, src).unwrap();
+        let children: Vec<_> = pairs
+            .next()
+            .unwrap()
+            .into_inner()
+            .map(|p| p.as_rule())
+            .collect();
+        assert_eq!(children, [Rule::expr, Rule::arm, Rule::arm, Rule::expr]);
+
+        let arm = GoatParser::parse(Rule::arm, "Circle(r) then r")
+            .unwrap()
+            .next()
+            .unwrap();
+        let parts: Vec<_> = arm.into_inner().map(|p| p.as_rule()).collect();
+        assert_eq!(parts, [Rule::pattern, Rule::expr]);
+    }
+
+    #[test]
+    fn parses_match_programs() {
+        use pest::Parser;
+        for src in [
+            "match x do done",
+            "match x do else 0 done",
+            "match x do A then 1 done",
+            "match x do Link(a, b) then a\n  Empty then 0\n  else 2 done",
+            "match Circle(5) do Circle(r) then r * r done",
+            "match x do A then match y do B then 1 else 2 done else 3 done",
+            "area = program(s) do match s do Circle(r) then r Square(w, h) then w * h done done\narea(Circle(2))",
+            "f(Link(1, Empty))",
+            "Circle(5).x",
+            "{shape: Empty}",
+        ] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_ok(),
+                "failed to parse: {src}"
+            );
+        }
+    }
 }

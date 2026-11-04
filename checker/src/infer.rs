@@ -478,6 +478,13 @@ impl Inferer {
                 self.unify(&record_ty, &expected, expr.span);
                 field_ty
             }
+            ExprKind::Tag { .. } | ExprKind::Match { .. } => {
+                self.errors.push(GoatError::new(
+                    expr.span,
+                    "variants and `match` are not supported yet",
+                ));
+                self.fresh()
+            }
         }
     }
 }

@@ -62,6 +62,14 @@ mod tests {
     }
 
     #[test]
+    fn variants_and_match_are_not_typed_yet() {
+        for src in ["Circle(5)", "match 1 do Empty then 0 else 1 done"] {
+            let err = type_of(src).unwrap_err();
+            assert!(err.contains("not supported yet"), "{src}: {err}");
+        }
+    }
+
+    #[test]
     fn calling_a_non_function_is_a_clear_error() {
         assert!(type_of("1(2)").unwrap_err().contains("is not a function"));
         // the sequencing-mistake shape: `(…)` right after an expression
@@ -423,7 +431,7 @@ mod tests {
         );
         assert_eq!(
             type_of("ones = Link(1, ones)").unwrap_err(),
-            "unknown name `Link`"
+            "unknown name `ones`"
         );
         assert_eq!(
             type_of("ones = {a: ones}").unwrap_err(),

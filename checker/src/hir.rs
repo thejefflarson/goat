@@ -55,6 +55,41 @@ pub struct Param {
     pub span: Span,
 }
 
+/// What a `match` arm binds from a tag's payload, mirroring how the tag was
+/// constructed: no payload, the whole payload, or the positional fields of a
+/// multi-argument payload record.
+#[derive(Clone, Debug)]
+pub enum PatternPayload {
+    None,
+    Whole(Param),
+    /// `(label, binder)` pairs, labelled `"0"`, `"1"`, ... in argument order.
+    Fields(Vec<(String, Param)>),
+}
+
+impl PatternPayload {
+    pub fn binders(&self) -> impl Iterator<Item = &Param> {
+        let (whole, fields) = match self {
+            PatternPayload::None => (None, &[][..]),
+            PatternPayload::Whole(p) => (Some(p), &[][..]),
+            PatternPayload::Fields(fs) => (None, &fs[..]),
+        };
+        whole.into_iter().chain(fields.iter().map(|(_, p)| p))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Pattern {
+    pub tag: String,
+    pub span: Span,
+    pub payload: PatternPayload,
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+}
+
 #[derive(Clone, Debug)]
 pub struct Expr {
     pub id: ExprId,
@@ -113,5 +148,18 @@ pub enum ExprKind {
     Field {
         record: Box<Expr>,
         label: String,
+    },
+    /// `Tag`, `Tag(arg)` or `Tag(a, b, ...)`. One argument is the payload as
+    /// is; several become an [`ExprKind::Record`] labelled `"0"`, `"1"`, ...,
+    /// so variant payloads share the record row machinery.
+    Tag {
+        name: String,
+        payload: Option<Box<Expr>>,
+    },
+    /// `match scrutinee do arms else else_branch done`.
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+        else_branch: Option<Box<Expr>>,
     },
 }
