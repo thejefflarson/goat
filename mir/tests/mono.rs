@@ -523,6 +523,9 @@ fn well_typed_variants_are_a_staged_diagnostic_not_a_panic() {
         "Circle(5)",
         "match Circle(5) do Circle(r) then r else 0 done",
         "f = program(s) do match s do A then 1 B then 2 done done f(A)",
+        "length = program(xs) do match xs do Empty then 0 \
+         Link(first, rest) then 1 + length(rest) done done length(Link(1, Empty))",
+        "f = program(xs) do match xs do Next(n) then f(n) done done 0",
     ];
     for src in programs {
         let checked = check(src).expect("checks");
