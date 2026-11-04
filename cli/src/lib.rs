@@ -3,9 +3,21 @@
 
 use wasmtime::{Caller, Config, Engine, Linker, Module, Store};
 
+/// What a finished program left behind.
+pub struct Run {
+    pub printed: Vec<String>,
+    /// Heap blocks still allocated after `goat_entry`; a correct program leaves none.
+    pub live_allocs: u32,
+}
+
 /// Instantiate `wasm` under wasmtime, run its entry export, and return the
 /// lines the program printed. A trap becomes an error.
 pub fn execute(wasm: &[u8]) -> Result<Vec<String>, String> {
+    run(wasm).map(|run| run.printed)
+}
+
+/// Like `execute`, but also reads the allocator's live-allocation count.
+pub fn run(wasm: &[u8]) -> Result<Run, String> {
     let mut config = Config::new();
     config.wasm_tail_call(true);
     let engine = Engine::new(&config).map_err(|e| format!("engine: {e}"))?;
@@ -65,5 +77,12 @@ pub fn execute(wasm: &[u8]) -> Result<Vec<String>, String> {
     entry
         .call(&mut store, ())
         .map_err(|e| format!("trap: {e}"))?;
-    Ok(store.into_data())
+    let live_allocs = instance
+        .get_typed_func::<(), u32>(&mut store, "goat_live_allocs")
+        .and_then(|live| live.call(&mut store, ()))
+        .map_err(|e| format!("goat_live_allocs: {e}"))?;
+    Ok(Run {
+        printed: store.into_data(),
+        live_allocs,
+    })
 }

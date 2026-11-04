@@ -1,5 +1,5 @@
 //! Fuzz target: generated programs must print the same under the interpreter
-//! and wasm, and leave nothing live. Runs as a bounded test under `cargo test`
+//! and wasm, and leave nothing live on either. Runs as a bounded test under `cargo test`
 //! and coverage-guided via `cargo bolero` (see fuzz/README.md).
 
 #[allow(dead_code)]
