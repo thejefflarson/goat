@@ -39,11 +39,20 @@ pub fn run(src: &str) -> String {
 /// Like `run`, but `tamper` rewrites the wasm output before comparison, so a
 /// test can plant a divergence.
 pub fn run_with(src: &str, tamper: impl FnOnce(Vec<String>) -> Vec<String>) -> String {
+    run_observed(src, |(printed, live)| (tamper(printed), live))
+}
+
+/// Like `run_with`, but `tamper` sees the wasm output and live-allocation
+/// count, so a test can plant a leak the oracle must report.
+pub fn run_observed(
+    src: &str,
+    tamper: impl FnOnce((Vec<String>, u32)) -> (Vec<String>, u32),
+) -> String {
     let (expected, live) = interpret(src);
     assert_eq!(live, 0, "interpreter leaked allocations for: {src}");
-    let (printed, wasm_live) = compiled(src);
+    let (printed, wasm_live) = tamper(compiled(src));
     assert_eq!(wasm_live, 0, "wasm leaked allocations for: {src}");
-    assert_eq!(tamper(printed), expected, "wasm differs from interp: {src}");
+    assert_eq!(printed, expected, "wasm differs from interp: {src}");
     expected.join("\n")
 }
 

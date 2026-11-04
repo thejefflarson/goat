@@ -12,7 +12,16 @@ allocations.
 test. It runs under plain `cargo test` in the main workspace and also holds the
 regression for deeply nested input. `cli/tests/fuzz_differential.rs` does the
 same for the differential target (300 programs), and also plants a divergence
-to check that bolero catches it and shrinks it to a short program. The
+to check that bolero catches it and shrinks it to a short program.
+
+The no-leak and no-double-free check on the wasm side (`goat_live_allocs() == 0`
+after `goat_entry`; a double free traps with `unreachable`) rides on every
+generated program, since the generator emits records, capturing closures and
+curried closures that allocate and free. Three deterministic tests guard it
+against going vacuous: `planted_leak_is_caught` makes the harness report a
+leaked block and requires the run to fail; `real_leak_reaches_the_harness_count`
+and `real_double_free_traps_in_the_harness_host` drive hand-built MIR that
+really leaks or double-frees through the same `goat_cli::run` host. The
 generator and runner live in `cli/tests/support/mod.rs`.
 
 ## Coverage-guided tier (manual or nightly)
