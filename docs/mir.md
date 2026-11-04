@@ -64,7 +64,11 @@ keyed by `LayoutId`:
 - **Record:** `[header][field0][field1]…`, fields sorted by label, each at its
   natural width, 8-byte aligned. `Field(rec, index)` names the field by
   **index** into the layout, not by byte offset: offsets depend on the target's
-  pointer and number widths, so each backend computes them from the layout.
+  pointer and number widths, so each backend computes them from the layout. A
+  label a spread shadows (`{...p, x: …}` over a `p` that has an `x`) gets a
+  single slot — the layout keeps the first occurrence of each label
+  (`canon::layout_fields`) and the shadowed value is dropped, so a record holds
+  exactly one slot per label ([ADR 0011](adr/0011-lacks-constraints-for-record-restriction.md)).
 - **Variant:** `[header][tag: u32][payload…]`. Each tag label gets one global
   tag number (labels sorted, numbered from 0), so a layout's `Vec` of payloads
   is indexed by that number and is empty for tags the type does not have.
