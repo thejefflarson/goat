@@ -61,12 +61,167 @@ mod tests {
         }
     }
 
+    fn warnings_of(source: &str) -> Vec<GoatError> {
+        check(source).expect("checks").typed.warnings
+    }
+
     #[test]
-    fn variants_and_match_are_not_typed_yet() {
-        for src in ["Circle(5)", "match 1 do Empty then 0 else 1 done"] {
-            let err = type_of(src).unwrap_err();
-            assert!(err.contains("not supported yet"), "{src}: {err}");
-        }
+    fn constructing_a_tag_gives_an_open_row() {
+        assert_eq!(type_of("Circle(5)").unwrap(), "[Circle: Number | t0]");
+        assert_eq!(type_of("Empty").unwrap(), "[Empty | t0]");
+        let link = type_of("Link(1, Empty)").unwrap();
+        assert!(
+            link.starts_with("[Link: {0: Number, 1: [Empty | t"),
+            "{link}"
+        );
+    }
+
+    #[test]
+    fn branches_building_different_tags_merge_into_one_open_row() {
+        let src = "if true then Circle(1) else Square(2) done";
+        let ty = type_of(src).unwrap();
+        assert!(ty.starts_with("[Circle: Number, Square: Number | "), "{ty}");
+    }
+
+    #[test]
+    fn match_types_to_its_arm_bodies() {
+        assert_eq!(
+            type_of("match Circle(5) do Circle(r) then r else 0 done").unwrap(),
+            "Number"
+        );
+        assert_eq!(
+            type_of("match Empty do Empty then true Full then false done").unwrap(),
+            "Bool"
+        );
+    }
+
+    #[test]
+    fn match_without_else_closes_the_row() {
+        let src = "area = program(s) do match s do Circle(r) then r * 2 Square(w) then w * 2 done done area";
+        assert_eq!(
+            type_of(src).unwrap(),
+            "([Circle: Number, Square: Number]) -> Number"
+        );
+    }
+
+    #[test]
+    fn match_with_else_keeps_the_row_open() {
+        let src = "area = program(s) do match s do Circle(r) then r * 2 else 0 done done area";
+        let ty = type_of(src).unwrap();
+        assert!(ty.starts_with("([Circle: Number | t"), "{ty}");
+    }
+
+    #[test]
+    fn open_tag_fits_a_closed_match_but_a_stranger_does_not() {
+        let area = "area = program(s) do match s do Circle(r) then r Square(w) then w done done ";
+        assert_eq!(
+            type_of(&format!("{area} area(Circle(1))")).unwrap(),
+            "Number"
+        );
+        assert_eq!(
+            type_of(&format!("{area} area(Square(1))")).unwrap(),
+            "Number"
+        );
+        let err = type_of(&format!("{area} area(Triangle(1))")).unwrap_err();
+        assert!(err.contains("`Triangle`"), "{err}");
+    }
+
+    #[test]
+    fn closed_row_flows_through_an_else_free_match() {
+        let src = "pick = program(s) do match s do A then 1 B then 2 done done \
+                   x = pick(A) y = pick(B) x + y";
+        assert_eq!(type_of(src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn arm_bodies_must_agree() {
+        let err = type_of("match Circle(5) do Circle(r) then r else true done").unwrap_err();
+        assert!(err.contains("type mismatch"), "{err}");
+        let err =
+            type_of("match Circle(5) do Circle(r) then r Square(w) then true done").unwrap_err();
+        assert!(err.contains("type mismatch"), "{err}");
+    }
+
+    #[test]
+    fn match_missing_a_tag_is_an_error() {
+        let err = type_of("match Circle(1) do Square(w) then w done").unwrap_err();
+        assert!(err.contains("doesn't handle `Circle`"), "{err}");
+        let src = "f = program(s) do \
+                     first = match s do A then 1 B then 2 done \
+                     match s do A then 1 done \
+                   done";
+        let err = type_of(src).unwrap_err();
+        assert!(err.contains("doesn't handle `B`"), "{err}");
+    }
+
+    #[test]
+    fn match_arm_for_an_impossible_tag_is_an_error() {
+        let src = "f = program(s) do \
+                     first = match s do A then 1 B then 2 done \
+                     match s do C then 3 else 4 done \
+                   done";
+        let err = type_of(src).unwrap_err();
+        assert!(err.contains("matches `C`"), "{err}");
+        assert!(err.contains("`A` or `B`"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_arm_is_an_error() {
+        let err = type_of("match A do A then 1 A then 2 else 3 done").unwrap_err();
+        assert!(err.contains("repeats `A`"), "{err}");
+    }
+
+    #[test]
+    fn match_on_a_non_variant_is_an_error() {
+        let err = type_of("match 1 do A then 0 else 1 done").unwrap_err();
+        assert!(err.contains("built from tags"), "{err}");
+    }
+
+    #[test]
+    fn payload_mismatch_between_construction_and_pattern_is_an_error() {
+        let err = type_of("match Circle(5) do Circle then 0 else 1 done").unwrap_err();
+        assert!(err.contains("type mismatch"), "{err}");
+        let err = type_of("match Circle(5) do Circle(a) then a + true else 1 done").unwrap_err();
+        assert!(err.contains("type mismatch"), "{err}");
+    }
+
+    #[test]
+    fn multi_argument_payload_binds_positional_fields() {
+        let src = "match Pair(1, true) do Pair(a, b) then if b then a else 0 done done";
+        assert_eq!(type_of(src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn variant_errors_are_spanned() {
+        let src = "match Circle(1) do Square(w) then w done";
+        let Err(errors) = check(src) else {
+            panic!("expected an error");
+        };
+        assert_eq!(&src[errors[0].span.start..errors[0].span.end], "Circle(1)");
+    }
+
+    #[test]
+    fn constructed_but_never_matched_tag_warns() {
+        let src = "match Cirle(5) do Circle(r) then r else 0 done";
+        let warnings = warnings_of(src);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            warnings[0].message,
+            "tag `Cirle` is constructed but never matched anywhere"
+        );
+        assert_eq!(
+            &src[warnings[0].span.start..warnings[0].span.end],
+            "Cirle(5)"
+        );
+    }
+
+    #[test]
+    fn matched_tags_do_not_warn_and_each_tag_warns_once() {
+        assert!(warnings_of("match Circle(5) do Circle(r) then r else 0 done").is_empty());
+        assert!(warnings_of("1 + 2").is_empty());
+        let warnings = warnings_of("x = Oops(1) y = Oops(2) 0");
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].span.start, 4);
     }
 
     #[test]

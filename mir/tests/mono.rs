@@ -517,6 +517,24 @@ fn records_and_field_values_drop_cleanly_in_branches() {
     assert_eq!(value(src), num(5.0));
 }
 
+#[test]
+fn well_typed_variants_are_a_staged_diagnostic_not_a_panic() {
+    let programs = [
+        "Circle(5)",
+        "match Circle(5) do Circle(r) then r else 0 done",
+        "f = program(s) do match s do A then 1 B then 2 done done f(A)",
+    ];
+    for src in programs {
+        let checked = check(src).expect("checks");
+        let errors = mono(&checked).expect_err("variants are not lowered yet");
+        assert!(!errors.is_empty(), "{src}");
+        for e in &errors {
+            assert!(e.message.contains("not supported yet"), "{src}: {e}");
+            assert!(e.span.end > e.span.start, "{src}: {e}");
+        }
+    }
+}
+
 fn field_index(f: &Func) -> Option<usize> {
     fn find(e: &Expr) -> Option<usize> {
         match e {
