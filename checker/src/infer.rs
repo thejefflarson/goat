@@ -102,6 +102,11 @@ struct Inferer {
     /// Pairs of types [`Inferer::unify_ty`] is already unifying or has unified,
     /// within one top-level [`Inferer::unify`].
     assumed: HashSet<(Ty, Ty)>,
+    /// Row variables that must never gain these labels: `{x, ...rest} = m`
+    /// takes only the front `x` out of `m`, so a second `x` behind it (left by a
+    /// `...` override) would resurface in `rest`, while the runtime layout
+    /// keeps one `x` per record.
+    lacks: HashMap<TypeVar, BTreeSet<String>>,
     errors: Vec<GoatError>,
 }
 
@@ -314,6 +319,11 @@ impl Inferer {
             (Row::Empty, Row::Empty) => {}
             (Row::Var(x), Row::Var(y)) if x == y => {}
             (Row::Var(x), other) | (other, Row::Var(x)) => {
+                if let Some(banned) = self.lacks.get(x).cloned()
+                    && let Some(label) = self.lack(other, &banned)
+                {
+                    self.report_hidden_label(span, &label);
+                }
                 if !occurs_row(*x, other) {
                     self.row_subst.insert(*x, other.clone());
                 } else if let Some(rec) = self.tie_row_knot(*x, kind, other) {
@@ -408,8 +418,13 @@ impl Inferer {
                 }
             }
             Row::Var(v) => {
+                let banned = self.lacks.get(&v).cloned().unwrap_or_default();
+                if banned.contains(label) {
+                    return None;
+                }
                 let field = self.fresh();
                 let rest = self.fresh_row();
+                self.lack(&rest, &banned);
                 let grown = Row::Extend {
                     label: label.to_string(),
                     field: Box::new(field.clone()),
@@ -421,6 +436,41 @@ impl Inferer {
         }
     }
 
+    /// Record that `row` may never gain `labels`: pin them on its tail
+    /// variable. A label `row` already has makes this impossible, and is
+    /// returned.
+    fn lack(&mut self, row: &Row, labels: &BTreeSet<String>) -> Option<String> {
+        match self.resolve_row(row) {
+            Row::Empty => None,
+            Row::Var(v) => {
+                if !labels.is_empty() {
+                    self.lacks
+                        .entry(v)
+                        .or_default()
+                        .extend(labels.iter().cloned());
+                }
+                None
+            }
+            Row::Extend { label, rest, .. } => {
+                if labels.contains(&label) {
+                    Some(label)
+                } else {
+                    self.lack(&rest, labels)
+                }
+            }
+        }
+    }
+
+    #[cold]
+    fn report_hidden_label(&mut self, span: Span, label: &str) {
+        self.errors.push(GoatError::new(
+            span,
+            format!(
+                "`{label}` is in this record twice (a `...` override hid the first), so it can't be taken out with `...`"
+            ),
+        ));
+    }
+
     fn instantiate(&mut self, scheme: &Scheme) -> Ty {
         let mut binders = Vec::new();
         scheme.ty.rec_binders(&mut binders);
@@ -430,6 +480,11 @@ impl Inferer {
             .chain(&binders)
             .map(|v| (*v, self.fresh_id()))
             .collect();
+        for (old, new) in &mapping {
+            if let Some(banned) = self.lacks.get(old).cloned() {
+                self.lacks.insert(*new, banned);
+            }
+        }
         subst_vars(&scheme.ty, &mapping)
     }
 
@@ -610,6 +665,8 @@ impl Inferer {
                 }
                 Ty::Record(row)
             }
+            ExprKind::Spread { base, fields } => self.infer_spread(base, fields),
+            ExprKind::Restrict { record, labels } => self.infer_restrict(expr.span, record, labels),
             ExprKind::Field { record, label } => {
                 let record_ty = self.infer(record);
                 let field_ty = self.fresh();
@@ -640,6 +697,60 @@ impl Inferer {
                 else_branch,
             } => self.infer_match(scrutinee, arms, else_branch.as_deref()),
         }
+    }
+
+    /// `{...base, l: e}`: Leijen's extension of `base`'s row. A label `base`
+    /// is already known to have is replaced; one hidden behind its row variable
+    /// is shadowed, and the layout keeps only the new field.
+    fn infer_spread(&mut self, base: &Expr, fields: &[(String, Expr)]) -> Ty {
+        let base_ty = self.infer(base);
+        let tail = self.fresh_row();
+        match self.resolve_head(&base_ty) {
+            Ty::Record(_) | Ty::Var(_) => {
+                self.unify(&base_ty, &Ty::Record(tail.clone()), base.span)
+            }
+            other => self.errors.push(GoatError::new(
+                base.span,
+                format!("`...` copies a record, but this is `{other}`"),
+            )),
+        }
+        let field_tys: Vec<(String, Ty)> = fields
+            .iter()
+            .map(|(label, value)| (label.clone(), self.infer(value)))
+            .collect();
+        // Resolved after the fields are inferred: reading `base.l` in a field
+        // grows `base`'s row with `l`, which the override then replaces.
+        let mut row = self.resolve_row(&tail);
+        for (label, ty) in field_tys.into_iter().rev() {
+            row = without_front(row, &label);
+            row = Row::Extend {
+                label,
+                field: Box::new(ty),
+                rest: Box::new(row),
+            };
+        }
+        Ty::Record(row)
+    }
+
+    /// `record` minus `labels`: the record must have each, and the result is
+    /// the rest of its row.
+    fn infer_restrict(&mut self, span: Span, record: &Expr, labels: &[String]) -> Ty {
+        let record_ty = self.infer(record);
+        let tail = self.fresh_row();
+        let mut expected = tail.clone();
+        for label in labels.iter().rev() {
+            expected = Row::Extend {
+                label: label.clone(),
+                field: Box::new(self.fresh()),
+                rest: Box::new(expected),
+            };
+        }
+        self.unify(&record_ty, &Ty::Record(expected), span);
+        let banned = labels.iter().cloned().collect();
+        if let Some(label) = self.lack(&tail, &banned) {
+            self.report_hidden_label(span, &label);
+        }
+        Ty::Record(tail)
     }
 
     fn infer_match(
@@ -815,6 +926,29 @@ impl Inferer {
                 )
             })
             .collect()
+    }
+}
+
+/// `row` without the first field labelled `label`, looking only at the fields
+/// written out ahead of any row variable.
+fn without_front(row: Row, label: &str) -> Row {
+    match row {
+        Row::Extend {
+            label: l,
+            field,
+            rest,
+        } => {
+            if l == label {
+                *rest
+            } else {
+                Row::Extend {
+                    label: l,
+                    field,
+                    rest: Box::new(without_front(*rest, label)),
+                }
+            }
+        }
+        other => other,
     }
 }
 

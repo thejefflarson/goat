@@ -883,4 +883,169 @@ mod tests {
     fn moderately_nested_expression_still_checks() {
         assert_eq!(type_of(&chain(200)).unwrap(), "Number");
     }
+
+    fn first_error(source: &str) -> GoatError {
+        check(source).err().expect("an error").remove(0)
+    }
+
+    #[test]
+    fn spread_adds_a_field() {
+        let src = "p = {x: 1} {...p, y: true}";
+        assert_eq!(type_of(src).unwrap(), "{y: Bool, x: Number}");
+        assert_eq!(type_of("p = {x: 1} {...p}").unwrap(), "{x: Number}");
+    }
+
+    #[test]
+    fn spread_override_replaces_the_field_even_at_a_new_type() {
+        let same = "p = {x: 1, y: 2} {...p, x: 5}";
+        assert_eq!(type_of(same).unwrap(), "{x: Number, y: Number}");
+        let changed = "p = {x: 1, y: 2} {...p, x: \"one\"}";
+        assert_eq!(type_of(changed).unwrap(), "{x: String, y: Number}");
+        assert_eq!(
+            type_of("p = {x: 1} q = {...p, x: true} q.x").unwrap(),
+            "Bool"
+        );
+    }
+
+    #[test]
+    fn spread_of_an_unknown_record_stays_polymorphic_in_the_rest() {
+        let src = "bump = program(m) do {...m, x: 1} done \
+                   a = bump({y: true}) \
+                   b = bump({x: \"s\", z: 2}) \
+                   if a.y then b.x + a.x else 0 done";
+        assert_eq!(type_of(src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn spread_update_of_a_field_it_reads_can_recurse() {
+        let src = "countdown = program(s) do \
+                     if s.n < 1 then s else countdown({...s, n: s.n - 1}) done done \
+                   countdown({n: 3, label: true}).label";
+        assert_eq!(type_of(src).unwrap(), "Bool");
+    }
+
+    #[test]
+    fn spread_needs_a_record_and_mentions_what_it_got() {
+        let err = first_error("{...3, x: 1}");
+        assert!(err.message.contains("copies a record"), "{}", err.message);
+        assert!(err.message.contains("Number"), "{}", err.message);
+        assert_eq!((err.span.start, err.span.end), (4, 5));
+    }
+
+    #[test]
+    fn two_spreads_cannot_merge() {
+        let src = "a = {x: 1} b = {y: 2} {...a, ...b}";
+        let err = first_error(src);
+        assert!(
+            err.message
+                .contains("can't merge two records of unknown shape here"),
+            "{}",
+            err.message
+        );
+        assert_eq!(&src[err.span.start..err.span.end], "...b");
+        assert!(check("a = {x: 1} {...a, x: 2, ...a}").is_err());
+    }
+
+    #[test]
+    fn a_spread_must_come_first() {
+        let src = "a = {x: 1} {y: 2, ...a}";
+        let err = first_error(src);
+        assert!(err.message.contains("must come first"), "{}", err.message);
+        assert_eq!(&src[err.span.start..err.span.end], "...a");
+    }
+
+    #[test]
+    fn spread_keeps_duplicate_field_detection() {
+        let err = first_error("a = {x: 1} {...a, y: 1, y: 2}");
+        assert!(
+            err.message.contains("duplicate field `y`"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn destructuring_binds_each_field() {
+        let src = "point = {x: 1, y: true} {x, y} = point if y then x else 0 done";
+        assert_eq!(type_of(src).unwrap(), "Number");
+        assert_eq!(type_of("{x} = {x: 1, y: true}  x").unwrap(), "Number");
+        assert_eq!(type_of("{x, y} = {x: 1, y: true}").unwrap(), "Bool");
+    }
+
+    #[test]
+    fn destructuring_accepts_any_record_with_at_least_those_fields() {
+        let src = "norm = program(p) do {x, y} = p x + y done \
+                   norm({x: 1, y: 2}) + norm({a: 0, x: 3, y: 4, z: true})";
+        assert_eq!(type_of(src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn destructuring_a_missing_field_points_at_the_name() {
+        let src = "p = {x: 1} {x, z} = p x";
+        let err = first_error(src);
+        assert!(err.message.contains("missing field `z`"), "{}", err.message);
+        assert_eq!(&src[err.span.start..err.span.end], "z");
+    }
+
+    #[test]
+    fn destructured_names_scope_over_the_rest_and_shadow() {
+        assert_eq!(type_of("{x} = {x: 1} {x} = {x: true} x").unwrap(), "Bool");
+        assert!(type_of("f = program(p) do {x} = p x done x").is_err());
+        let err = first_error("p = {x: 1} {x, x} = p x");
+        assert!(
+            err.message.contains("duplicate name `x`"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn parameter_destructuring() {
+        let src = "norm = program({x, y}) do x * x + y * y done \
+                   norm({x: 3, y: 4})";
+        assert_eq!(type_of(src).unwrap(), "Number");
+        let mixed = "f = program(a, {x}, b) do a + x + b done f(1, {x: 2, q: true}, 3)";
+        assert_eq!(type_of(mixed).unwrap(), "Number");
+        let err = first_error("f = program({x}) do x done f({y: 1})");
+        assert!(err.message.contains("`x`"), "{}", err.message);
+        let dup = first_error("f = program(x, {x}) do x done");
+        assert!(
+            dup.message.contains("duplicate parameter `x`"),
+            "{}",
+            dup.message
+        );
+    }
+
+    #[test]
+    fn rest_binds_the_record_without_the_named_fields() {
+        let src = "{x, ...rest} = {x: 1, y: true, z: 2} rest";
+        assert_eq!(type_of(src).unwrap(), "{y: Bool, z: Number}");
+        let all = "{x, y, ...rest} = {x: 1, y: true} rest";
+        assert_eq!(type_of(all).unwrap(), "{}");
+        assert_eq!(type_of("{...rest} = {x: 1} rest").unwrap(), "{x: Number}");
+        let param = "drop = program({x, ...r}) do r done drop({x: 1, y: true})";
+        assert_eq!(type_of(param).unwrap(), "{y: Bool}");
+    }
+
+    #[test]
+    fn rest_needs_the_removed_fields() {
+        let err = first_error("{x, y, ...rest} = {x: 1} rest");
+        assert!(err.message.contains("`y`"), "{}", err.message);
+    }
+
+    #[test]
+    fn rest_refuses_a_label_a_spread_override_hid() {
+        let bump = "bump = program(m) do {...m, x: 1} done \
+                    drop = program({x, ...r}) do r done ";
+        assert_eq!(
+            type_of(&format!("{bump} drop(bump({{y: 2}}))")).unwrap(),
+            "{y: Number}"
+        );
+        let err = first_error(&format!("{bump} drop(bump({{x: \"s\", y: 2}}))"));
+        let twice = "`x` is in this record twice";
+        assert!(err.message.contains(twice), "{}", err.message);
+        let direct =
+            first_error("bump = program(m) do {...m, x: 1} done {x, ...r} = bump({x: true}) r");
+        assert!(direct.message.contains(twice), "{}", direct.message);
+    }
 }

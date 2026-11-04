@@ -144,6 +144,19 @@ pub enum ExprKind {
     Record {
         fields: Vec<(String, Expr)>,
     },
+    /// `{...base, label: value, ...}` — `base` extended with the fields, which
+    /// shadow any field of `base` with the same label (the new one wins, even at
+    /// a different type).
+    Spread {
+        base: Box<Expr>,
+        fields: Vec<(String, Expr)>,
+    },
+    /// `record` with each of `labels` taken out — what `{x, ...rest} = record`
+    /// binds to `rest`.
+    Restrict {
+        record: Box<Expr>,
+        labels: Vec<String>,
+    },
     /// `record.label` — field access.
     Field {
         record: Box<Expr>,

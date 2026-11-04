@@ -130,7 +130,11 @@ pub fn for_each_child<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
             f(rhs);
         }
         ExprKind::Record { fields } => fields.iter().for_each(|(_, v)| f(v)),
-        ExprKind::Field { record, .. } => f(record),
+        ExprKind::Spread { base, fields } => {
+            f(base);
+            fields.iter().for_each(|(_, v)| f(v));
+        }
+        ExprKind::Restrict { record, .. } | ExprKind::Field { record, .. } => f(record),
         ExprKind::Tag { payload, .. } => payload.iter().for_each(|p| f(p)),
         ExprKind::Match {
             scrutinee,

@@ -243,6 +243,7 @@ fn examples_print_the_expected_output() {
         ("closure_shapes.goat", "77"),
         ("hello.goat", "hello, world"),
         ("lists.goat", "15"),
+        ("spread.goat", "25"),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
         let src = fs::read_to_string(&path).unwrap();
@@ -438,4 +439,126 @@ fn a_tag_bound_once_and_matched_at_two_widths_still_runs() {
                wide = program(v) do match v do Circle(r) then r Square(w) then w done done \
                narrow(s) + wide(s)";
     assert_eq!(run(src), "10");
+}
+
+#[test]
+fn spread_adds_overrides_and_retypes_fields() {
+    assert_eq!(run("p = {x: 1} q = {...p, y: 2} q.x + q.y"), "3");
+    assert_eq!(run("p = {x: 1, y: 2} q = {...p, x: 10} q.x + q.y"), "12");
+    assert_eq!(run("p = {x: 1, y: 2} q = {...p, x: \"one\"} q.x"), "one");
+    assert_eq!(run("p = {x: 1, y: 2} q = {...p, x: true} q.y"), "2");
+    assert_eq!(run("p = {x: 1} {...p}.x"), "1");
+}
+
+#[test]
+fn spread_in_a_function_over_records_of_different_shapes() {
+    let src = "bump = program(m) do {...m, x: m.x + 1} done \
+               a = bump({x: 1, y: 10}) \
+               b = bump(bump({x: 5, z: true})) \
+               a.x + a.y + b.x";
+    assert_eq!(run(src), "19");
+}
+
+#[test]
+fn spread_shadowing_a_field_hidden_behind_a_row_variable_frees_it() {
+    let src = "retag = program(m) do {...m, x: 1} done \
+               r = retag({x: \"hidden\", y: \"kept\"}) \
+               r.y";
+    assert_eq!(run(src), "kept");
+    let numbers = "retag = program(m) do {...m, x: true} done \
+                   r = retag({x: 1, y: 2}) \
+                   if r.x then r.y else 0 done";
+    assert_eq!(run(numbers), "2");
+}
+
+#[test]
+fn spread_copies_heap_fields_and_the_original_survives() {
+    let src = "p = {name: \"goat\", tags: {a: 1}, n: 1} \
+               q = {...p, n: 2} \
+               r = {...q, name: \"kid\"} \
+               p.name";
+    assert_eq!(run(src), "goat");
+    let both = "p = {name: \"goat\", n: 1} q = {...p, n: 2} q.name";
+    assert_eq!(run(both), "goat");
+    let nested = "p = {inner: {v: 1}, n: 1} q = {...p, n: 2} q.inner.v + p.n + q.n";
+    assert_eq!(run(nested), "4");
+}
+
+#[test]
+fn spread_of_a_call_and_of_a_captured_record() {
+    let src = "mk = program(n) do {x: n, y: n * 2} done \
+               q = {...mk(3), x: 0} \
+               q.x + q.y";
+    assert_eq!(run(src), "6");
+    let closure = "p = {x: 2} f = program(k) do {...p, x: p.x + k} done f(5).x + f(1).x";
+    assert_eq!(run(closure), "10");
+}
+
+#[test]
+fn spread_update_in_a_loop() {
+    let src = "step = program(s) do {...s, n: s.n - 1, acc: s.acc + s.n} done \
+               go = program(s) do if s.n < 1 then s.acc else go(step(s)) done done \
+               go({n: 100, acc: 0, label: \"sum\"})";
+    assert_eq!(run(src), "5050");
+}
+
+#[test]
+fn destructuring_binds_fields() {
+    assert_eq!(
+        run("point = {x: 3, y: 4} {x, y} = point x * x + y * y"),
+        "25"
+    );
+    assert_eq!(run("{x, y} = {x: 3, y: 4, z: 5} x + y"), "7");
+    assert_eq!(run("{name} = {name: \"goat\", age: 3} name"), "goat");
+    assert_eq!(run("{x} = {x: 1} {x} = {x: x + 1} x"), "2");
+}
+
+#[test]
+fn destructuring_parameters() {
+    let norm = "norm = program({x, y}) do x * x + y * y done norm({y: 4, x: 3})";
+    assert_eq!(run(norm), "25");
+    let mixed = "f = program(a, {x, y}, b) do a + x * y + b done f(1, {x: 2, y: 3, z: 0}, 4)";
+    assert_eq!(run(mixed), "11");
+    let closure = "add = program({x}) do program({y}) do x + y done done add({x: 1})({y: 2})";
+    assert_eq!(run(closure), "3");
+    let strings = "first = program({name}) do name done first({name: \"goat\", n: 1})";
+    assert_eq!(run(strings), "goat");
+}
+
+#[test]
+fn rest_binds_the_record_without_the_named_fields() {
+    assert_eq!(
+        run("{x, ...rest} = {x: 1, y: 2, z: 3} rest.y + rest.z"),
+        "5"
+    );
+    assert_eq!(run("{x, y, ...rest} = {x: 1, y: 2, z: 3} rest.z"), "3");
+    assert_eq!(run("{...rest} = {x: 1} rest.x"), "1");
+    let heap = "{id, ...rest} = {id: \"a\", name: \"goat\", pals: {n: 1}} rest.name";
+    assert_eq!(run(heap), "goat");
+    let param = "drop = program({x, ...r}) do r done \
+                 a = drop({x: 1, y: 7}) \
+                 b = drop({x: true, y: 8, z: 9}) \
+                 a.y + b.y + b.z";
+    assert_eq!(run(param), "24");
+    let unused = "{x, ...rest} = {x: \"gone\", y: \"kept\"} x";
+    assert_eq!(run(unused), "gone");
+}
+
+#[test]
+fn rest_and_spread_round_trip() {
+    let src = "{x, ...rest} = {x: 1, y: 2} back = {...rest, x: 10} back.x + back.y";
+    assert_eq!(run(src), "12");
+}
+
+#[test]
+fn spread_and_destructuring_beside_variants() {
+    let src = "area = program({shape, scale}) do \
+                 match shape do Circle(r) then r * r * scale Square(w) then w * w * scale done done \
+               cfg = {shape: Circle(2), scale: 3} \
+               big = {...cfg, shape: Square(5)} \
+               area(cfg) + area(big)";
+    assert_eq!(run(src), "87");
+    let positional = "{tag, ...r} = {tag: Link(1, Empty), n: 2} \
+                      match tag do Link(a, rest) then a + r.n done";
+    assert_eq!(run(positional), "3");
 }

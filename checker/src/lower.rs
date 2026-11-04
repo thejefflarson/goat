@@ -43,6 +43,12 @@ pub fn lower(source: &str) -> Result<Lowered, GoatError> {
     })
 }
 
+/// The names a `{x, y, ...rest}` pattern binds: `(symbol, name, span)` each.
+struct RecordPattern {
+    fields: Vec<(Symbol, String, Span)>,
+    rest: Option<(Symbol, String, Span)>,
+}
+
 #[derive(Default)]
 struct Lower {
     next_symbol: Symbol,
@@ -274,6 +280,7 @@ impl Lower {
             }
             Rule::record => self.lower_record(pair),
             Rule::declaration => self.lower_declaration(pair),
+            Rule::destructure => self.lower_destructure(pair),
             Rule::function => self.lower_function(pair),
             Rule::conditional => self.lower_conditional(pair),
             Rule::tag => self.lower_tag(pair),
@@ -391,13 +398,25 @@ impl Lower {
         let span = span_of(&pair);
         self.scopes.push(HashMap::new());
         let mut params = Vec::new();
+        let mut unpacked = Vec::new();
         let mut body = None;
         for child in pair.into_inner() {
             match child.as_rule() {
-                Rule::labels => {
-                    for label in child.into_inner() {
-                        let pspan = span_of(&label);
-                        let name = label.as_str().to_string();
+                Rule::params => {
+                    for param in child.into_inner() {
+                        let pspan = span_of(&param);
+                        let name = param.as_str().to_string();
+                        if param.as_rule() == Rule::record_pattern {
+                            let source = self.fresh_symbol();
+                            let pattern = self.bind_record_pattern(param, "parameter");
+                            unpacked.push((source, name.clone(), pattern));
+                            params.push(Param {
+                                symbol: source,
+                                name,
+                                span: pspan,
+                            });
+                            continue;
+                        }
                         if self.scopes.last().is_some_and(|s| s.contains_key(&name)) {
                             self.errors.push(GoatError::new(
                                 pspan,
@@ -418,7 +437,12 @@ impl Lower {
         }
         self.scopes.pop();
 
-        let body = body.unwrap_or_else(|| self.node(span, ExprKind::Unit));
+        let mut body = body.unwrap_or_else(|| self.node(span, ExprKind::Unit));
+        for (source, name, pattern) in unpacked.into_iter().rev() {
+            body = self
+                .unpack(source, &name, pattern, Some(body))
+                .expect("a body was given");
+        }
         self.node(
             span,
             ExprKind::Func {
@@ -428,12 +452,151 @@ impl Lower {
         )
     }
 
+    /// Bind the names of a `{x, y, ...rest}` pattern in the current scope.
+    /// `what` names the construct in the duplicate-name error.
+    fn bind_record_pattern(&mut self, pair: Pair<Rule>, what: &str) -> RecordPattern {
+        let mut pattern = RecordPattern {
+            fields: Vec::new(),
+            rest: None,
+        };
+        for item in pair.into_inner() {
+            let (name_pair, is_rest) = match item.as_rule() {
+                Rule::rest_binding => (
+                    item.into_inner()
+                        .next()
+                        .expect("`...` is followed by a name"),
+                    true,
+                ),
+                _ => (item, false),
+            };
+            let span = span_of(&name_pair);
+            let name = name_pair.as_str().to_string();
+            if self.scopes.last().is_some_and(|s| s.contains_key(&name)) {
+                self.errors
+                    .push(GoatError::new(span, format!("duplicate {what} `{name}`")));
+            }
+            let symbol = self.bind(&name);
+            if is_rest {
+                pattern.rest = Some((symbol, name, span));
+            } else {
+                pattern.fields.push((symbol, name, span));
+            }
+        }
+        pattern
+    }
+
+    /// A node built from a fresh use of the pattern's source variable.
+    fn read_source(
+        &mut self,
+        (symbol, name): (Symbol, &str),
+        span: Span,
+        wrap: impl FnOnce(Box<Expr>) -> ExprKind,
+    ) -> Expr {
+        let var = ExprKind::Var {
+            symbol,
+            name: name.to_string(),
+        };
+        let record = self.node(span, var);
+        self.node(span, wrap(Box::new(record)))
+    }
+
+    /// `x = source.x  y = source.y  rest = source minus x, y` followed by
+    /// `body`: a record pattern is sugar for reading its fields.
+    fn unpack(
+        &mut self,
+        source: Symbol,
+        source_name: &str,
+        pattern: RecordPattern,
+        body: Option<Expr>,
+    ) -> Option<Expr> {
+        let labels: Vec<String> = pattern.fields.iter().map(|(_, n, _)| n.clone()).collect();
+        let source = (source, source_name);
+        let mut bindings = Vec::new();
+        for (symbol, name, span) in pattern.fields {
+            let label = name.clone();
+            let value = self.read_source(source, span, |record| ExprKind::Field { record, label });
+            bindings.push((symbol, name, span, value));
+        }
+        if let Some((symbol, name, span)) = pattern.rest {
+            let value =
+                self.read_source(source, span, |record| ExprKind::Restrict { record, labels });
+            bindings.push((symbol, name, span, value));
+        }
+        bindings
+            .into_iter()
+            .rev()
+            .fold(body, |rest, (symbol, name, binding_span, value)| {
+                Some(self.node(
+                    binding_span,
+                    ExprKind::Let {
+                        symbol,
+                        name,
+                        value: Box::new(value),
+                        rest: rest.map(Box::new),
+                    },
+                ))
+            })
+    }
+
+    /// `{x, y} = value rest`: bind `value` once, then each name from it.
+    fn lower_destructure(&mut self, pair: Pair<Rule>) -> Expr {
+        let span = span_of(&pair);
+        let mut inner = pair.into_inner();
+        let pattern_pair = inner.next().expect("destructuring begins with a pattern");
+        let value_pair = inner.next().expect("destructuring has a value");
+        let rest_pair = inner.next();
+        let source_name = pattern_pair.as_str().to_string();
+
+        let value = self.lower_expr(value_pair);
+        self.scopes.push(HashMap::new());
+        let source = self.fresh_symbol();
+        let pattern = self.bind_record_pattern(pattern_pair, "name");
+        let rest = rest_pair.map(|p| self.lower_expr(p));
+        self.scopes.pop();
+
+        let unpacked = self.unpack(source, &source_name, pattern, rest);
+        self.node(
+            span,
+            ExprKind::Let {
+                symbol: source,
+                name: source_name,
+                value: Box::new(value),
+                rest: unpacked.map(Box::new),
+            },
+        )
+    }
+
     fn lower_record(&mut self, pair: Pair<Rule>) -> Expr {
         let span = span_of(&pair);
+        let mut base = None;
+        let mut spreads = 0;
         let mut fields = Vec::new();
-        for field in pair.into_inner() {
-            debug_assert_eq!(field.as_rule(), Rule::field);
-            let mut it = field.into_inner();
+        for (position, item) in pair.into_inner().enumerate() {
+            if item.as_rule() == Rule::spread {
+                let item_span = span_of(&item);
+                let target = item
+                    .into_inner()
+                    .next()
+                    .expect("`...` is followed by an expression");
+                let target = self.lower_expr(target);
+                spreads += 1;
+                if spreads > 1 {
+                    self.errors.push(GoatError::new(
+                        item_span,
+                        "can't merge two records of unknown shape here; spread one record and write the other's fields out",
+                    ));
+                } else if position != 0 {
+                    self.errors.push(GoatError::new(
+                        item_span,
+                        "`...` must come first in a record, so the fields after it override it",
+                    ));
+                } else {
+                    base = Some(target);
+                }
+                continue;
+            }
+            debug_assert_eq!(item.as_rule(), Rule::field);
+            let mut it = item.into_inner();
             let label_pair = it.next().expect("a field begins with a label");
             let label_span = span_of(&label_pair);
             let label = label_pair.as_str().to_string();
@@ -447,7 +610,16 @@ impl Lower {
             }
             fields.push((label, value));
         }
-        self.node(span, ExprKind::Record { fields })
+        match base {
+            Some(base) => self.node(
+                span,
+                ExprKind::Spread {
+                    base: Box::new(base),
+                    fields,
+                },
+            ),
+            None => self.node(span, ExprKind::Record { fields }),
+        }
     }
 
     fn lower_tag(&mut self, pair: Pair<Rule>) -> Expr {
