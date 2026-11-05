@@ -148,6 +148,7 @@ pub fn for_each_child<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
         ExprKind::Unit
         | ExprKind::Number(_)
         | ExprKind::Str(_)
+        | ExprKind::Trap(_)
         | ExprKind::Bool(_)
         | ExprKind::Builtin(_)
         | ExprKind::Var { .. } => {}

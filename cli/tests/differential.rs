@@ -246,6 +246,10 @@ fn examples_print_the_expected_output() {
         ("spread.goat", "25"),
         ("list_literals.goat", "29"),
         (
+            "stdlib.goat",
+            "[1, 4, 7, 9]\n[8, 14, 18]\n9\n4\n[7, 1, 9, 4, 5, 6, 0]\n[9, 7, 4, 1]\n1\n4\n7\n9\ntrue\nfalse\n26",
+        ),
+        (
             "constraints.goat",
             "{x: 21, y: 42}\n[true, true, false]\ntrue",
         ),

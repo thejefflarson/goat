@@ -2,7 +2,11 @@
 //! `+ - * /` need numbers or records of numbers, and `print` takes anything.
 //! A violation is a spanned error that says what went wrong in plain words.
 
-use goat_checker::check;
+use goat_checker::{Checked, GoatError, check_with_prelude};
+
+fn check(source: &str) -> Result<Checked, Vec<GoatError>> {
+    check_with_prelude("", source)
+}
 
 fn type_of(source: &str) -> Result<String, String> {
     match check(source) {
