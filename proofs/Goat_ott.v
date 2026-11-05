@@ -2,8 +2,8 @@
 Require Import Metalib.Metatheory.
 (** syntax *)
 Definition termvar : Set := var. (* term variable (locally-nameless) *)
-Definition typvar : Set := nat. (* free type variable *)
-Definition rowvar : Set := nat. (* free row variable *)
+Definition typvar : Set := atom. (* free type variable (metalib atom) *)
+Definition rowvar : Set := atom. (* free row variable (metalib atom) *)
 Definition label : Set := nat. (* record label *)
 Definition num : Set := nat. (* numeral constant *)
 

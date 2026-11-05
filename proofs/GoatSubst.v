@@ -1,44 +1,30 @@
-(* Substitution metatheory toward closing L5/L6a/L6b (issue #151, finishing #71).
+(* Substitution metatheory for core goat: the Hindley-Milner type/row
+   substitution theory (L4/L5), term substitution (L6a/L6b), and -- building on
+   them -- preservation and soundness (docs/semantics.md section 7).
 
-   This file develops the Hindley-Milner type/row-substitution theory that the
-   two Admitted lemmas in GoatMeta.v (typing_subst = L6a, typing_subst_poly =
-   L6b) rest on, over the hand-written type system of GoatDefs.v.  It is built
-   AFTER GoatMeta.v (it reuses that file's [typing_field_mutind]); the soundness
-   theorems do not yet draw on it -- see the roadmap at the admits in GoatMeta.v
-   for exactly what remains.
+   Type and row variables are metalib [atom]s (issue #151); [ftv]/[frv] and the
+   scheme quantifier sets are [atoms] finite sets with decidable membership, so
+   capture-avoiding type/row substitution of a context is computable and the
+   substitution lemmas go through without any classical or functional-
+   extensionality axiom.
 
-   Proved here, fully (no axioms, no admits):
+   Assumption-free (no axioms, no admits unless noted at the lemma):
 
    - Type/row-substitution algebra: [ap_typ_pointwise_id], [ap_typ_ext],
      [ap_typ_comp], and the monotype-instance facts [inst_mono_eq] /
      [inst_mono_self].
-   - [teq_ap]: type equivalence is closed under any type/row substitution
-     (labels are untouched, so the swap rule survives).  This is the piece of L5
-     the T-Conv case needs.
-   - L4 (structural), two forms:
-       * [typing_sch_equiv_ctx]: typing respects pointwise scheme-equivalence of
-         the context (schemes equal up to their quantifier predicates).  This
-         sidesteps the lack of functional extensionality for [scheme] equality.
-       * [typing_ftv_mono]: typing is preserved when each context scheme is made
-         more general AND mentions no more free variables ([ctx_more_gen]).  This
-         is exactly what L6a's let case needs: removing x from the context makes
-         [gen] more general with fewer free variables.
-   - L5 for the renaming case: [typing_rename] -- typing is preserved by any
-     bijective type/row-variable renaming, via [inst_ren] (instantiation
-     commutes) and [gen_ren] (generalization commutes up to scheme-equivalence).
-
-   What is NOT yet here (the research remainder tracked in #151):
-
-   - General weakening under binders.  Its let case must freshen the
-     let-generalized variables away from the inserted context's free variables
-     (otherwise generalization silently shrinks and the derivation breaks); the
-     freshening is a [typing_rename] with a bijection that fixes a finite set and
-     moves the rest, which is a sub-development in its own right.
-   - L5 for a GENERAL instantiating substitution (not a renaming), which L6b's
-     [inst_gen_typing] step needs.  Because a scheme's quantifier sets are
-     arbitrary Props (not decidable), capture-avoiding substitution of a context
-     cannot be defined computationally for an arbitrary context, so this does not
-     reduce to the renaming case.  See the DECISION note in the PR. *)
+   - [teq_ap]: type equivalence is closed under any type/row substitution.
+   - L4: [typing_sch_equiv_ctx] (typing respects pointwise scheme-equivalence of
+     the context) and [typing_ftv_mono] (a more-general / fewer-ftv context
+     preserves typing).
+   - L5 renaming: [typing_rename] -- typing is preserved by any bijective
+     type/row-variable renaming.
+   - [typing_weaken]: general weakening under binders (freshening the
+     let-generalized variables via [typing_rename]).
+   - L5 general: [typing_tsubst] -- a kind-respecting type/row substitution
+     preserves typing.
+   - L6a [typing_subst] and L6b [typing_subst_poly]; then [preservation] and
+     [soundness]. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
@@ -70,8 +56,8 @@ Lemma inst_mono_eq : forall T U, inst T (sch_mono U) -> T = U.
 Proof.
   intros T U [st [sr [Ht [Hr Heq]]]]. simpl in *.
   rewrite Heq. apply ap_typ_pointwise_id.
-  - intros a. apply Ht. intro HF; exact HF.
-  - intros r. apply Hr. intro HF; exact HF.
+  - intros a. apply Ht. simpl. fsetdec.
+  - intros r. apply Hr. simpl. fsetdec.
 Qed.
 
 (* sch_mono is always an instance of itself *)
@@ -89,25 +75,25 @@ Qed.
 (* extensionality: ap_typ depends only on the substitution's action on fvs *)
 Lemma ap_ext_mut :
   (forall T st sr st' sr',
-     (forall a, Ftv_typ T a -> st a = st' a) ->
-     (forall r, Frv_typ T r -> sr r = sr' r) ->
+     (forall a, a `in` ftv_typ T -> st a = st' a) ->
+     (forall r, r `in` frv_typ T -> sr r = sr' r) ->
      ap_typ st sr T = ap_typ st' sr' T) /\
   (forall R st sr st' sr',
-     (forall a, Ftv_row R a -> st a = st' a) ->
-     (forall r, Frv_row R r -> sr r = sr' r) ->
+     (forall a, a `in` ftv_row R -> st a = st' a) ->
+     (forall r, r `in` frv_row R -> sr r = sr' r) ->
      ap_row st sr R = ap_row st' sr' R).
 Proof.
   apply typ_row_mutind; intros; simpl in *; try reflexivity.
-  - (* Arrow *) f_equal; [ apply H | apply H0 ]; intros; eauto.
-  - (* Record *) f_equal; apply H; intros; eauto.
-  - (* Var a *) apply H. reflexivity.
-  - (* row_Var *) apply H0. reflexivity.
-  - (* row_Ext *) f_equal; [ apply H | apply H0 ]; intros; eauto.
+  - (* Arrow *) f_equal; [ apply H | apply H0 ]; intros; [apply H1|apply H2|apply H1|apply H2]; fsetdec.
+  - (* Record *) f_equal; apply H; intros; [apply H0|apply H1]; fsetdec.
+  - (* Var a *) apply H. fsetdec.
+  - (* row_Var *) apply H0. fsetdec.
+  - (* row_Ext *) f_equal; [ apply H | apply H0 ]; intros; [apply H1|apply H2|apply H1|apply H2]; fsetdec.
 Qed.
 
 Lemma ap_typ_ext : forall T st sr st' sr',
-  (forall a, Ftv_typ T a -> st a = st' a) ->
-  (forall r, Frv_typ T r -> sr r = sr' r) ->
+  (forall a, a `in` ftv_typ T -> st a = st' a) ->
+  (forall r, r `in` frv_typ T -> sr r = sr' r) ->
   ap_typ st sr T = ap_typ st' sr' T.
 Proof. apply ap_ext_mut. Qed.
 
@@ -133,21 +119,17 @@ Proof. apply ap_comp_mut. Qed.
 
 (* ================= scheme/context equivalence; L4 structural lemmas ======== *)
 
-(* scheme equivalence up to the quantifier predicates (no funext needed) *)
+(* scheme equivalence up to the quantifier sets *)
 Definition sch_equiv (s s' : scheme) : Prop :=
-  (forall a, s_tq s a <-> s_tq s' a) /\
-  (forall r, s_rq s r <-> s_rq s' r) /\
-  s_body s = s_body s'.
+  s_tq s [=] s_tq s' /\ s_rq s [=] s_rq s' /\ s_body s = s_body s'.
 
 Lemma sch_equiv_refl : forall s, sch_equiv s s.
-Proof. intros; repeat split; auto; tauto. Qed.
+Proof. intros s. unfold sch_equiv. split; [|split]; [ fsetdec | fsetdec | reflexivity ]. Qed.
 
 Lemma sch_equiv_sym : forall s s', sch_equiv s s' -> sch_equiv s' s.
 Proof.
-  intros s s' (A & B & C). split; [| split].
-  - intro a0. specialize (A a0). tauto.
-  - intro r0. specialize (B r0). tauto.
-  - symmetry. exact C.
+  intros s s' (A & B & C). unfold sch_equiv.
+  split; [ fsetdec | split; [ fsetdec | congruence ] ].
 Qed.
 
 (* inst respects sch_equiv *)
@@ -156,16 +138,20 @@ Lemma inst_sch_equiv : forall T s s',
 Proof.
   intros T s s' [Htq [Hrq Hbody]] [st [sr [Ht [Hr Heq]]]].
   exists st, sr. repeat split.
-  - intros a Ha. apply Ht. intro Hc. apply Ha. apply Htq. exact Hc.
-  - intros r Hr0. apply Hr. intro Hc. apply Hr0. apply Hrq. exact Hc.
+  - intros a Ha. apply Ht. fsetdec.
+  - intros r Hr0. apply Hr. fsetdec.
   - rewrite <- Hbody. exact Heq.
 Qed.
 
 (* Ftv_sch respects sch_equiv *)
 Lemma Ftv_sch_equiv : forall s s' a, sch_equiv s s' -> (Ftv_sch s a <-> Ftv_sch s' a).
 Proof.
-  intros s s' a [Htq [Hrq Hbody]]. unfold Ftv_sch. rewrite Hbody.
-  split; intros [H1 H2]; split; auto; intro Hc; apply H2; apply Htq; auto.
+  intros s s' a (Htq & Hrq & Hbody). unfold Ftv_sch, ftv_sch. rewrite Hbody. fsetdec.
+Qed.
+
+Lemma Frv_sch_equiv : forall s s' r, sch_equiv s s' -> (Frv_sch s r <-> Frv_sch s' r).
+Proof.
+  intros s s' r (Htq & Hrq & Hbody). unfold Frv_sch, frv_sch. rewrite Hbody. fsetdec.
 Qed.
 
 (* pointwise scheme-equivalence of contexts *)
@@ -203,20 +189,10 @@ Qed.
 Lemma ctx_equiv_Ftv : forall G G' a,
   ctx_equiv G G' -> (Ftv_ctx G a <-> Ftv_ctx G' a).
 Proof.
-  intros G G' a H. split; intros [x [s [Hb Hf]]].
-  - destruct (ctx_equiv_binds _ _ _ _ H Hb) as [s' [Hb' Heq]].
-    exists x, s'. split; auto. apply (Ftv_sch_equiv _ _ _ Heq); auto.
-  - assert (H' : ctx_equiv G' G).
-    { clear - H. induction H as [|[u su][v sv] ? ? [Hk Hs] ? IH]; constructor; auto.
-      simpl in *; subst; split; auto using sch_equiv_sym. }
-    destruct (ctx_equiv_binds _ _ _ _ H' Hb) as [s' [Hb' Heq]].
-    exists x, s'. split; auto. apply (Ftv_sch_equiv _ _ _ Heq); auto.
-Qed.
-
-Lemma Frv_sch_equiv : forall s s' r, sch_equiv s s' -> (Frv_sch s r <-> Frv_sch s' r).
-Proof.
-  intros s s' r (Htq & Hrq & Hbody). unfold Frv_sch. rewrite Hbody.
-  split; intros [H1 H2]; split; auto; intro Hc; apply H2; apply Hrq; auto.
+  unfold Ftv_ctx. induction 1 as [|[x s] [y s'] G G' [Hk He] HF IH]; simpl.
+  - reflexivity.
+  - pose proof (Ftv_sch_equiv s s' a He) as Hs. unfold Ftv_sch in Hs.
+    rewrite !AtomSetFacts.union_iff. rewrite Hs, IH. reflexivity.
 Qed.
 
 Lemma ctx_equiv_sym : forall G G', ctx_equiv G G' -> ctx_equiv G' G.
@@ -228,22 +204,21 @@ Qed.
 Lemma ctx_equiv_Frv : forall G G' r,
   ctx_equiv G G' -> (Frv_ctx G r <-> Frv_ctx G' r).
 Proof.
-  intros G G' r H. split; intros [x [s [Hb Hf]]].
-  - destruct (ctx_equiv_binds _ _ _ _ H Hb) as [s' [Hb' Heq]].
-    exists x, s'. split; auto. apply (Frv_sch_equiv _ _ _ Heq); auto.
-  - destruct (ctx_equiv_binds _ _ _ _ (ctx_equiv_sym _ _ H) Hb) as [s' [Hb' Heq]].
-    exists x, s'. split; auto. apply (Frv_sch_equiv _ _ _ Heq); auto.
+  unfold Frv_ctx. induction 1 as [|[x s] [y s'] G G' [Hk He] HF IH]; simpl.
+  - reflexivity.
+  - pose proof (Frv_sch_equiv s s' r He) as Hs. unfold Frv_sch in Hs.
+    rewrite !AtomSetFacts.union_iff. rewrite Hs, IH. reflexivity.
 Qed.
 
 (* generalization respects context equivalence *)
 Lemma gen_ctx_equiv : forall G G' T,
   ctx_equiv G G' -> sch_equiv (gen G T) (gen G' T).
 Proof.
-  intros G G' T H. unfold gen, sch_equiv; simpl. split; [| split]; auto.
-  - intro a. split; intros [HF HN]; split; auto;
-      intro Hc; apply HN; [ apply (ctx_equiv_Ftv _ _ _ H) | apply (ctx_equiv_Ftv _ _ _ (ctx_equiv_sym _ _ H)) ]; auto.
-  - intro r. split; intros [HF HN]; split; auto;
-      intro Hc; apply HN; [ apply (ctx_equiv_Frv _ _ _ H) | apply (ctx_equiv_Frv _ _ _ (ctx_equiv_sym _ _ H)) ]; auto.
+  intros G G' T H. unfold sch_equiv, gen; simpl. split; [| split]; [| |reflexivity].
+  - assert (ftv_ctx G [=] ftv_ctx G') by (intro z; apply (ctx_equiv_Ftv _ _ z H)).
+    fsetdec.
+  - assert (frv_ctx G [=] frv_ctx G') by (intro z; apply (ctx_equiv_Frv _ _ z H)).
+    fsetdec.
 Qed.
 
 Lemma ctx_equiv_cons : forall x s s' G G',
@@ -273,6 +248,10 @@ Proof.
   - (* FT_nil *) apply FT_nil; eauto using ctx_equiv_uniq.
   - (* FT_cons *) eapply FT_cons; eauto.
 Qed.
+
+Lemma typing_sch_equiv_ctx : forall G G' e T,
+  typing G e T -> ctx_equiv G G' -> typing G' e T.
+Proof. intros. eapply (proj1 typing_sch_equiv_ctx_mut); eauto. Qed.
 
 (* "s' is at least as general as s, and mentions no more free variables" *)
 Definition sch_more_gen (s s' : scheme) : Prop :=
@@ -309,49 +288,45 @@ Proof.
   - destruct (IH Hb) as [s' [Hb' Hg']]. exists s'. split; [apply binds_cons_3; auto|auto].
 Qed.
 
-(* if G' mentions no more free vars than G (pointwise), then Ftv_ctx G' implies Ftv_ctx G *)
+(* if G' mentions no more free vars than G (pointwise), then ftv_ctx G' [<=] ftv_ctx G *)
 Lemma ctx_more_gen_Ftv : forall G G' a,
   ctx_more_gen G G' -> Ftv_ctx G' a -> Ftv_ctx G a.
 Proof.
-  intros G G' a H [x [s' [Hb' Hf']]].
-  revert x s' Hb' Hf'. induction H as [|[y sy][z sz] G G' [Hk Hg] HF IH]; intros x s' Hb' Hf'.
-  - inversion Hb'.
-  - simpl in *; subst z. apply binds_cons_1 in Hb'. destruct Hb' as [[Hx Hs]|Hb'].
-    + subst x. subst s'. exists y, sy. split; [apply binds_cons_2; auto|].
-      destruct Hg as [_ [Hftv _]]. apply Hftv; exact Hf'.
-    + destruct (IH _ _ Hb' Hf') as [u [su [Hbu Hfu]]].
-      exists u, su. split; [apply binds_cons_3; auto|auto].
+  unfold Ftv_ctx. induction 1 as [|[y sy][z sz] G G' [Hk Hg] HF IH]; simpl; intros Hin.
+  - fsetdec.
+  - rewrite AtomSetFacts.union_iff in Hin |- *.
+    destruct Hg as [_ [Hftv _]].
+    destruct Hin as [Hin|Hin]; [left; apply Hftv; exact Hin | right; apply IH; exact Hin].
 Qed.
 
 Lemma ctx_more_gen_Frv : forall G G' r,
   ctx_more_gen G G' -> Frv_ctx G' r -> Frv_ctx G r.
 Proof.
-  intros G G' r H [x [s' [Hb' Hf']]].
-  revert x s' Hb' Hf'. induction H as [|[y sy][z sz] G G' [Hk Hg] HF IH]; intros x s' Hb' Hf'.
-  - inversion Hb'.
-  - simpl in *; subst z. apply binds_cons_1 in Hb'. destruct Hb' as [[Hx Hs]|Hb'].
-    + subst x. subst s'. exists y, sy. split; [apply binds_cons_2; auto|].
-      destruct Hg as [_ [_ Hfrv]]. apply Hfrv; exact Hf'.
-    + destruct (IH _ _ Hb' Hf') as [u [su [Hbu Hfu]]].
-      exists u, su. split; [apply binds_cons_3; auto|auto].
+  unfold Frv_ctx. induction 1 as [|[y sy][z sz] G G' [Hk Hg] HF IH]; simpl; intros Hin.
+  - fsetdec.
+  - rewrite AtomSetFacts.union_iff in Hin |- *.
+    destruct Hg as [_ [_ Hfrv]].
+    destruct Hin as [Hin|Hin]; [left; apply Hfrv; exact Hin | right; apply IH; exact Hin].
 Qed.
 
 (* gen respects ctx_more_gen: fewer ctx free vars => more general & fewer scheme free vars *)
 Lemma gen_more_gen : forall G G' T,
   ctx_more_gen G G' -> sch_more_gen (gen G T) (gen G' T).
 Proof.
-  intros G G' T H. unfold sch_more_gen, gen; simpl. split; [|split].
-  - (* inst preserved: gen G' quantifies a superset *)
-    intros W [st [sr [Ht [Hr Heq]]]]. exists st, sr. repeat split; auto.
-    + intros a Hna. apply Ht. intro Hq. apply Hna. destruct Hq as [HF HN].
-      split; auto. intro Hc. apply HN. apply (ctx_more_gen_Ftv _ _ _ H); auto.
-    + intros r Hnr. apply Hr. intro Hq. apply Hnr. destruct Hq as [HF HN].
-      split; auto. intro Hc. apply HN. apply (ctx_more_gen_Frv _ _ _ H); auto.
-  - (* Ftv_sch(gen G' T) a -> Ftv_sch(gen G T) a *)
-    intros a [HF HN]. split; auto. intro Hq. apply HN. destruct Hq as [HF2 HN2].
-    split; auto. intro Hc. apply HN2. apply (ctx_more_gen_Ftv _ _ _ H); auto.
-  - intros r [HF HN]. split; auto. intro Hq. apply HN. destruct Hq as [HF2 HN2].
-    split; auto. intro Hc. apply HN2. apply (ctx_more_gen_Frv _ _ _ H); auto.
+  intros G G' T H.
+  assert (Hsub_t : ftv_ctx G' [<=] ftv_ctx G)
+    by (intros a Ha; apply (ctx_more_gen_Ftv _ _ _ H); exact Ha).
+  assert (Hsub_r : frv_ctx G' [<=] frv_ctx G)
+    by (intros r Hr; apply (ctx_more_gen_Frv _ _ _ H); exact Hr).
+  unfold sch_more_gen, Ftv_sch, Frv_sch, ftv_sch, frv_sch, gen; simpl.
+  split; [|split].
+  - intros W [st [sr [Ht [Hr Heq]]]]. simpl in Ht, Hr.
+    exists st, sr. simpl. split; [| split].
+    + intros a Hna. apply Ht. simpl in Hna |- *. fsetdec.
+    + intros r Hnr. apply Hr. simpl in Hnr |- *. fsetdec.
+    + exact Heq.
+  - intros a Hin. fsetdec.
+  - intros r Hin. fsetdec.
 Qed.
 
 Lemma ctx_more_gen_cons : forall x s s' G G',
@@ -416,6 +391,41 @@ Qed.
 Lemma teq_ap : forall T T' st sr, teq T T' -> teq (ap_typ st sr T) (ap_typ st sr T').
 Proof. intros. apply teq_ap_mut; auto. Qed.
 
+(* ================= finite-set image under a function ================= *)
+
+Lemma in_fold_add : forall (f : atom -> atom) l b,
+  b `in` fold_right (fun a acc => add (f a) acc) {} l <-> exists a, List.In a l /\ f a = b.
+Proof.
+  induction l as [|a0 l IH]; simpl; intros b.
+  - split; [ intro H; fsetdec | intros [a [[] _]] ].
+  - rewrite AtomSetFacts.add_iff. split.
+    + intros [Heq | Hin].
+      * exists a0. split; [ left; reflexivity | exact Heq ].
+      * apply IH in Hin. destruct Hin as [a [Hina Hfa]]. exists a. split; [ right; auto | auto ].
+    + intros [a [[Ha|Ha] Hfa]].
+      * subst a. left. exact Hfa.
+      * right. apply IH. exists a. auto.
+Qed.
+
+Lemma In_elements : forall a S, List.In a (AtomSetImpl.elements S) <-> a `in` S.
+Proof.
+  intros a S. split; intro H.
+  - apply AtomSetImpl.elements_2. apply (In_InA eq_equivalence). exact H.
+  - apply AtomSetImpl.elements_1 in H. apply InA_alt in H.
+    destruct H as [y [Hy Hin]]. subst; auto.
+Qed.
+
+Definition amap (f : atom -> atom) (S : atoms) : atoms :=
+  fold_right (fun a acc => add (f a) acc) {} (AtomSetImpl.elements S).
+
+Lemma amap_in : forall f S b, b `in` amap f S <-> exists a, a `in` S /\ f a = b.
+Proof.
+  intros f S b. unfold amap. rewrite in_fold_add.
+  split; intros [a [Ha Hfa]]; exists a; split; auto; apply In_elements; auto.
+Qed.
+
+(* ================= L5 for bijective renamings ====== *)
+
 Section Renaming.
 Variables (f g : typvar -> typvar) (fr gr : rowvar -> rowvar).
 Hypothesis gf : forall a, g (f a) = a.
@@ -428,43 +438,54 @@ Definition rr : rsub := fun r => row_Var (fr r).
 Definition ren_typ (T:typ) := ap_typ rt rr T.
 Definition ren_row (R:row) := ap_row rt rr R.
 
-Lemma Ftv_ren_mut :
-  (forall T a, Ftv_typ (ren_typ T) a <-> Ftv_typ T (g a)) /\
-  (forall R a, Ftv_row (ren_row R) a <-> Ftv_row R (g a)).
+Lemma amap_f_in : forall S b, b `in` amap f S <-> g b `in` S.
 Proof.
-  unfold ren_typ, ren_row.
-  apply typ_row_mutind; simpl; intros.
-  - tauto.
-  - tauto.
-  - specialize (H a); specialize (H0 a); tauto.
+  intros S b. rewrite amap_in. split.
+  - intros [a [Ha Hfa]]. subst b. rewrite gf. exact Ha.
+  - intro H. exists (g b). split; [ exact H | apply fg ].
+Qed.
+
+Lemma amap_fr_in : forall S b, b `in` amap fr S <-> gr b `in` S.
+Proof.
+  intros S b. rewrite amap_in. split.
+  - intros [a [Ha Hfa]]. subst b. rewrite grfr. exact Ha.
+  - intro H. exists (gr b). split; [ exact H | apply frgr ].
+Qed.
+
+Lemma Ftv_ren_mut :
+  (forall T a, a `in` ftv_typ (ap_typ rt rr T) <-> g a `in` ftv_typ T) /\
+  (forall R a, a `in` ftv_row (ap_row rt rr R) <-> g a `in` ftv_row R).
+Proof.
+  apply typ_row_mutind; intros; simpl.
+  - fsetdec.
+  - fsetdec.
+  - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
   - apply H.
-  - unfold rt; simpl; split;
-      [ intro HH; rewrite HH; apply gf | intro HH; rewrite <- HH; symmetry; apply fg ].
-  - tauto.
-  - unfold rr; simpl. tauto.
-  - specialize (H a); specialize (H0 a); tauto.
+  - (* Var a0 *) unfold rt; simpl. rewrite !AtomSetFacts.singleton_iff.
+    split; [ intro HH; rewrite <- HH; symmetry; apply gf | intro HH; rewrite HH; apply fg ].
+  - fsetdec.
+  - (* row_Var *) unfold rr; simpl. fsetdec.
+  - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
 Qed.
 
 Lemma Frv_ren_mut :
-  (forall T r, Frv_typ (ren_typ T) r <-> Frv_typ T (gr r)) /\
-  (forall R r, Frv_row (ren_row R) r <-> Frv_row R (gr r)).
+  (forall T r, r `in` frv_typ (ap_typ rt rr T) <-> gr r `in` frv_typ T) /\
+  (forall R r, r `in` frv_row (ap_row rt rr R) <-> gr r `in` frv_row R).
 Proof.
-  unfold ren_typ, ren_row.
-  apply typ_row_mutind; simpl; intros.
-  - tauto.
-  - tauto.
-  - specialize (H r); specialize (H0 r); tauto.
+  apply typ_row_mutind; intros; simpl.
+  - fsetdec.
+  - fsetdec.
+  - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
   - apply H.
-  - unfold rt; simpl. tauto.
-  - tauto.
-  - unfold rr; simpl; split;
-      [ intro HH; rewrite HH; apply grfr | intro HH; rewrite <- HH; symmetry; apply frgr ].
-  - specialize (H r); specialize (H0 r); tauto.
+  - (* Var a0 *) unfold rt; simpl. fsetdec.
+  - fsetdec.
+  - (* row_Var *) unfold rr; simpl. rewrite !AtomSetFacts.singleton_iff.
+    split; [ intro HH; rewrite <- HH; symmetry; apply grfr | intro HH; rewrite HH; apply frgr ].
+  - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
 Qed.
 
-
 Definition ren_sch (s:scheme) : scheme :=
-  Sch (fun a => s_tq s (g a)) (fun r => s_rq s (gr r)) (ren_typ (s_body s)).
+  Sch (amap f (s_tq s)) (amap fr (s_rq s)) (ren_typ (s_body s)).
 Definition ren_ctx (G:ctx) : ctx :=
   List.map (fun b => (fst b, ren_sch (snd b))) G.
 
@@ -487,51 +508,36 @@ Qed.
 
 Lemma Ftv_sch_ren : forall s a, Ftv_sch (ren_sch s) a <-> Ftv_sch s (g a).
 Proof.
-  intros s a. unfold Ftv_sch, ren_sch; simpl.
+  intros s a. unfold Ftv_sch, ftv_sch, ren_sch, ren_typ; simpl.
   pose proof (proj1 Ftv_ren_mut (s_body s) a) as HF.
-  split.
-  - intros [H1 H2]. split; [ apply (proj1 HF); exact H1 | exact H2 ].
-  - intros [H1 H2]. split; [ apply (proj2 HF); exact H1 | exact H2 ].
+  rewrite !AtomSetFacts.diff_iff. rewrite HF. rewrite amap_f_in. reflexivity.
 Qed.
 
 Lemma Frv_sch_ren : forall s r, Frv_sch (ren_sch s) r <-> Frv_sch s (gr r).
 Proof.
-  intros s r. unfold Frv_sch, ren_sch; simpl.
+  intros s r. unfold Frv_sch, frv_sch, ren_sch, ren_typ; simpl.
   pose proof (proj1 Frv_ren_mut (s_body s) r) as HF.
-  split.
-  - intros [H1 H2]. split; [ apply (proj1 HF); exact H1 | exact H2 ].
-  - intros [H1 H2]. split; [ apply (proj2 HF); exact H1 | exact H2 ].
+  rewrite !AtomSetFacts.diff_iff. rewrite HF. rewrite amap_fr_in. reflexivity.
 Qed.
 
 Lemma Ftv_ctx_ren : forall G a, Ftv_ctx (ren_ctx G) a <-> Ftv_ctx G (g a).
 Proof.
-  intros G a. split.
-  - intros [x [s [Hb Hf]]].
-    (* binds in ren_ctx comes from a binding in G *)
-    assert (exists s0, binds x s0 G /\ s = ren_sch s0) as [s0 [Hb0 Hs0]].
-    { clear Hf. induction G as [|[y sy] G IH]; [inversion Hb|].
-      apply binds_cons_1 in Hb. destruct Hb as [[Hx Hs]|Hb].
-      - subst. exists sy. split; [apply binds_cons_2; auto|auto].
-      - destruct (IH Hb) as [s0 [Hb0 Hs0]]. exists s0. split; [apply binds_cons_3; auto|auto]. }
-    subst s. exists x, s0. split; auto. apply Ftv_sch_ren; auto.
-  - intros [x [s0 [Hb0 Hf0]]]. exists x, (ren_sch s0). split.
-    + apply binds_ren_ctx; auto.
-    + apply Ftv_sch_ren; auto.
+  intros G a. unfold Ftv_ctx. induction G as [|[x s] G IH].
+  - simpl. fsetdec.
+  - replace (ren_ctx ((x, s) :: G)) with ((x, ren_sch s) :: ren_ctx G) by reflexivity.
+    simpl ftv_ctx. rewrite !AtomSetFacts.union_iff.
+    pose proof (Ftv_sch_ren s a) as Hs. unfold Ftv_sch in Hs.
+    rewrite Hs, IH. reflexivity.
 Qed.
 
 Lemma Frv_ctx_ren : forall G r, Frv_ctx (ren_ctx G) r <-> Frv_ctx G (gr r).
 Proof.
-  intros G r. split.
-  - intros [x [s [Hb Hf]]].
-    assert (exists s0, binds x s0 G /\ s = ren_sch s0) as [s0 [Hb0 Hs0]].
-    { clear Hf. induction G as [|[y sy] G IH]; [inversion Hb|].
-      apply binds_cons_1 in Hb. destruct Hb as [[Hx Hs]|Hb].
-      - subst. exists sy. split; [apply binds_cons_2; auto|auto].
-      - destruct (IH Hb) as [s0 [Hb0 Hs0]]. exists s0. split; [apply binds_cons_3; auto|auto]. }
-    subst s. exists x, s0. split; auto. apply Frv_sch_ren; auto.
-  - intros [x [s0 [Hf0 Hf1]]]. exists x, (ren_sch s0). split.
-    + apply binds_ren_ctx; auto.
-    + apply Frv_sch_ren; auto.
+  intros G r. unfold Frv_ctx. induction G as [|[x s] G IH].
+  - simpl. fsetdec.
+  - replace (ren_ctx ((x, s) :: G)) with ((x, ren_sch s) :: ren_ctx G) by reflexivity.
+    simpl frv_ctx. rewrite !AtomSetFacts.union_iff.
+    pose proof (Frv_sch_ren s r) as Hs. unfold Frv_sch in Hs.
+    rewrite Hs, IH. reflexivity.
 Qed.
 
 (* instantiation commutes with a bijective renaming *)
@@ -541,11 +547,13 @@ Proof.
   exists (fun c => ren_typ (st (g c))), (fun c => ren_row (sr (gr c))).
   unfold ren_sch; simpl. repeat split.
   - (* id off quantifier *)
-    intros a Hna. unfold ren_typ. 
-    assert (st (g a) = typ_Var (g a)) as Hid by (apply Ht; exact Hna).
+    intros a Hna. unfold ren_typ.
+    assert (st (g a) = typ_Var (g a)) as Hid.
+    { apply Ht. intro Hc. apply Hna. apply amap_f_in. exact Hc. }
     rewrite Hid. simpl. unfold rt. rewrite fg. reflexivity.
   - intros r Hnr. unfold ren_row.
-    assert (sr (gr r) = row_Var (gr r)) as Hid by (apply Hr; exact Hnr).
+    assert (sr (gr r) = row_Var (gr r)) as Hid.
+    { apply Hr. intro Hc. apply Hnr. apply amap_fr_in. exact Hc. }
     rewrite Hid. simpl. unfold rr. rewrite frgr. reflexivity.
   - (* ren_typ T = ap_typ (new) ... (ren_typ body) *)
     unfold ren_typ, ren_row. subst T.
@@ -555,9 +563,13 @@ Proof.
     + unfold rr. simpl. rewrite grfr. reflexivity.
 Qed.
 
-
-Lemma ren_sch_mono : forall T, ren_sch (sch_mono T) = sch_mono (ren_typ T).
-Proof. reflexivity. Qed.
+Lemma ren_sch_mono_equiv : forall T, sch_equiv (ren_sch (sch_mono T)) (sch_mono (ren_typ T)).
+Proof.
+  intros T. unfold sch_equiv, ren_sch, sch_mono; simpl. split; [|split].
+  - intro a. rewrite amap_f_in. fsetdec.
+  - intro r. rewrite amap_fr_in. fsetdec.
+  - reflexivity.
+Qed.
 
 Lemma ren_ctx_app : forall x sx G,
   ren_ctx ((x ~ sx) ++ G) = (x ~ ren_sch sx) ++ ren_ctx G.
@@ -568,20 +580,15 @@ Lemma gen_ren : forall G T,
   sch_equiv (ren_sch (gen G T)) (gen (ren_ctx G) (ren_typ T)).
 Proof.
   intros G T. unfold sch_equiv, ren_sch, gen; simpl. split; [|split]; [| |reflexivity].
-  - intro a. split; intros [HF HN].
-    + split.
-      * apply (proj1 Ftv_ren_mut); auto.
-      * intro Hc. apply HN. apply Ftv_ctx_ren; auto.
-    + split.
-      * apply (proj1 Ftv_ren_mut) in HF; auto.
-      * intro Hc. apply HN. apply Ftv_ctx_ren; auto.
-  - intro r. split; intros [HF HN].
-    + split.
-      * apply (proj1 Frv_ren_mut); auto.
-      * intro Hc. apply HN. apply Frv_ctx_ren; auto.
-    + split.
-      * apply (proj1 Frv_ren_mut) in HF; auto.
-      * intro Hc. apply HN. apply Frv_ctx_ren; auto.
+  - (* amap f (diff (ftv_typ T) (ftv_ctx G)) [=] diff (ftv_typ (ren_typ T)) (ftv_ctx (ren_ctx G)) *)
+    intro a. rewrite amap_f_in. rewrite !AtomSetFacts.diff_iff.
+    pose proof (proj1 Ftv_ren_mut T a) as HT. unfold ren_typ in HT. rewrite HT.
+    pose proof (Ftv_ctx_ren G a) as HG. unfold Ftv_ctx in HG. rewrite HG.
+    reflexivity.
+  - intro r. rewrite amap_fr_in. rewrite !AtomSetFacts.diff_iff.
+    pose proof (proj1 Frv_ren_mut T r) as HT. unfold ren_typ in HT. rewrite HT.
+    pose proof (Frv_ctx_ren G r) as HG. unfold Frv_ctx in HG. rewrite HG.
+    reflexivity.
 Qed.
 
 (* typing is preserved by a bijective type/row-variable renaming *)
@@ -596,12 +603,14 @@ Proof.
   - apply T_True; apply uniq_ren_ctx; auto.
   - apply T_False; apply uniq_ren_ctx; auto.
   - (* T_Abs *) unfold ren_typ; simpl. apply T_Abs with (L := L).
-    intros x Hx. apply (H x Hx).
+    intros x Hx. specialize (H x Hx). rewrite ren_ctx_app in H.
+    eapply typing_sch_equiv_ctx; [ exact H | ].
+    apply ctx_equiv_cons; [ apply ren_sch_mono_equiv | apply ctx_equiv_refl ].
   - (* T_App *) unfold ren_typ in H; simpl in H. eapply T_App; [ exact H | exact H0 ].
   - (* T_Let *) unfold ren_typ; simpl. apply T_Let with (L := L) (T1 := ren_typ T1);
       [ exact H | ].
     intros x Hx. specialize (H0 x Hx).
-    eapply (proj1 typing_sch_equiv_ctx_mut); [ exact H0 | ].
+    eapply typing_sch_equiv_ctx; [ exact H0 | ].
     apply ctx_equiv_cons; [ apply gen_ren | apply ctx_equiv_refl ].
   - (* T_Record *) unfold ren_typ; simpl. apply T_Record. exact H.
   - (* T_Proj *) unfold ren_typ, ren_row in H; simpl in H. eapply T_Proj. exact H.
@@ -613,3 +622,130 @@ Qed.
 Lemma typing_rename : forall G e T, typing G e T -> typing (ren_ctx G) e (ren_typ T).
 Proof. apply typing_rename_mut. Qed.
 End Renaming.
+
+(* ================================================================== *)
+(* L6a / L6b -- term substitution (docs/semantics.md section 7).        *)
+(*   (temporarily admitted; real proofs follow below)                   *)
+(* ================================================================== *)
+
+(* L6a: monomorphic term substitution (for ST-Beta). *)
+Lemma typing_subst : forall G x U e T u,
+  typing ((x ~ sch_mono U) ++ G) e T ->
+  typing G u U ->
+  typing G (subst_exp u x e) T.
+Admitted.
+
+(* L6b: polymorphic term substitution (for ST-LetV). *)
+Lemma typing_subst_poly : forall G x T1 e T2 v,
+  typing ((x ~ gen G T1) ++ G) e T2 ->
+  typing G v T1 ->
+  typing G (subst_exp v x e) T2.
+Admitted.
+
+(* ================================================================== *)
+(* Preservation (docs/semantics.md section 7).                          *)
+(* ================================================================== *)
+
+Scheme step_mut := Induction for step Sort Prop
+with   step_fields_mut := Induction for step_fields Sort Prop.
+Combined Scheme step_step_fields_mutind from step_mut, step_fields_mut.
+
+Lemma preservation_mut :
+  (forall e e', step e e' -> forall G T, typing G e T -> typing G e' T) /\
+  (forall fs fs', step_fields fs fs' ->
+     forall G R, field_typing G fs R -> field_typing G fs' R).
+Proof.
+  apply step_step_fields_mutind.
+  - (* st_beta: (abs e) v --> open e v *)
+    intros e v Hv G T Hty.
+    apply app_inv in Hty. destruct Hty as [A [B [Habs [Harg Hbt]]]].
+    apply abs_inv in Habs. destruct Habs as [L [A' [B' [Hbody Harr]]]].
+    apply teq_Arrow_inv in Harr. destruct Harr as [A2 [B2 [Heq [HA HB]]]].
+    inversion Heq; subst.
+    pick fresh x for (L \u fv_exp e).
+    assert (HxL : x `notin` L) by fsetdec.
+    assert (Hxe : x `notin` fv_exp e) by fsetdec.
+    assert (Hv' : typing G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
+    assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
+      by (eapply typing_subst; [ apply Hbody; exact HxL | exact Hv' ]).
+    rewrite <- subst_intro in Hopen by exact Hxe.
+    eapply T_Conv; [ exact Hopen | ].
+    eapply teq_trans; [ exact HB | exact Hbt ].
+  - (* st_app1 *)
+    intros e1 e1' e2 Hstep IH G T Hty.
+    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
+    eapply T_Conv; [ eapply T_App; [ apply IH; exact Hty1 | exact Hty2 ] | exact Hbt ].
+  - (* st_app2 *)
+    intros v e2 e2' Hv Hstep IH G T Hty.
+    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
+    eapply T_Conv; [ eapply T_App; [ exact Hty1 | apply IH; exact Hty2 ] | exact Hbt ].
+  - (* st_letv: (let v e2) --> open e2 v *)
+    intros v e2 Hv G T Hty.
+    apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
+    pick fresh x for (L \u fv_exp e2).
+    assert (HxL : x `notin` L) by fsetdec.
+    assert (Hxe : x `notin` fv_exp e2) by fsetdec.
+    assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e2 (e_fvar_f x))) T2)
+      by (eapply typing_subst_poly; [ apply Hbody; exact HxL | exact Hty1 ]).
+    rewrite <- subst_intro in Hopen by exact Hxe.
+    eapply T_Conv; [ exact Hopen | exact Hteq ].
+  - (* st_let1 *)
+    intros e1 e1' e2 Hstep IH G T Hty.
+    apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
+    eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1);
+                     [ apply IH; exact Hty1 | exact Hbody ] | exact Hteq ].
+  - (* st_proj *)
+    intros e e' l Hstep IH G T Hty.
+    apply proj_inv in Hty. destruct Hty as [T0 [R [Hty0 Hteq]]].
+    eapply T_Conv; [ eapply T_Proj; apply IH; exact Hty0 | exact Hteq ].
+  - (* st_projrec *)
+    intros fs l v Hrv Hlook G T Hty.
+    apply proj_inv in Hty. destruct Hty as [T0 [R [Hrec Hteq]]].
+    apply rec_inv in Hrec. destruct Hrec as [R' [Hft Hreq]].
+    apply teq_Record_inv in Hreq. destruct Hreq as [R2 [Heq Hreq]].
+    inversion Heq; subst.
+    apply req_surface in Hreq. destruct Hreq as [T1 [rest [Hpi Hteq1]]].
+    destruct (field_lookup_some _ _ _ _ _ _ Hft Hpi) as [v0 [Hlook0 Hty0]].
+    assert (v0 = v) by congruence. subst v0.
+    eapply T_Conv; [ exact Hty0 | ].
+    eapply teq_trans; [ exact Hteq1 | exact Hteq ].
+  - (* st_rec *)
+    intros fs fs' Hstep IHf G T Hty.
+    apply rec_inv in Hty. destruct Hty as [R [Hft Hteq]].
+    eapply T_Conv; [ eapply T_Record; apply IHf; exact Hft | exact Hteq ].
+  - (* stf_here *)
+    intros l e e' fs Hstep IH G R Hft.
+    inversion Hft; subst.
+    eapply FT_cons; [ apply IH; eassumption | eassumption ].
+  - (* stf_cons *)
+    intros l v fs fs' Hv Hstep IHf G R Hft.
+    inversion Hft; subst.
+    eapply FT_cons; [ eassumption | apply IHf; eassumption ].
+Qed.
+
+Theorem preservation : forall G e e' T,
+  typing G e T -> step e e' -> typing G e' T.
+Proof. intros G e e' T Hty Hstep. eapply (proj1 preservation_mut); eauto. Qed.
+
+(* ================================================================== *)
+(* Soundness (docs/semantics.md section 7): a well-typed closed term     *)
+(* never reaches a stuck state.                                           *)
+(* ================================================================== *)
+
+Theorem soundness : forall e T e',
+  typing nil e T -> multistep e e' -> value e' \/ exists e'', step e' e''.
+Proof.
+  intros e T e' Hty Hms. revert T Hty.
+  induction Hms as [ e | e1 e2 e3 Hstep Hms IH ]; intros T Hty.
+  - (* refl *) apply progress with (T := T); exact Hty.
+  - (* step *) apply IH with (T := T). eapply preservation; eauto.
+Qed.
+
+Corollary soundness_not_stuck : forall e T e',
+  typing nil e T -> multistep e e' -> ~ stuck e'.
+Proof.
+  intros e T e' Hty Hms [Hnv Hns].
+  destruct (soundness _ _ _ Hty Hms) as [Hv | [e'' Hstep]].
+  - contradiction.
+  - eapply Hns; exact Hstep.
+Qed.
