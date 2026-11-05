@@ -821,6 +821,14 @@ impl Inferer {
                 self.type_bin(expr, *op, (lhs, lhs_ty), (rhs, rhs_ty))
             }
             ExprKind::Builtin(Builtin::Print) => self.print_ty(),
+            ExprKind::Builtin(Builtin::Trap) => {
+                self.errors.push(GoatError::new(
+                    expr.span,
+                    "`trap` stops the program, so call it with a message: `trap(\"...\")`",
+                ));
+                self.fresh()
+            }
+            ExprKind::Trap(_) => self.fresh(),
             ExprKind::Record { fields } => {
                 let field_tys: Vec<(String, Ty)> = fields
                     .iter()

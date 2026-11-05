@@ -335,22 +335,39 @@ impl Lower {
                     )
                 }
                 _ => {
-                    let args = postfix
+                    let args: Vec<Expr> = postfix
                         .into_inner()
                         .flat_map(|a| a.into_inner())
                         .map(|a| self.lower_expr(a))
                         .collect();
-                    self.node(
-                        span,
-                        ExprKind::App {
-                            callee: Box::new(expr),
-                            args,
-                        },
-                    )
+                    if matches!(expr.kind, ExprKind::Builtin(Builtin::Trap)) {
+                        self.lower_trap(span, args)
+                    } else {
+                        self.node(
+                            span,
+                            ExprKind::App {
+                                callee: Box::new(expr),
+                                args,
+                            },
+                        )
+                    }
                 }
             };
         }
         expr
+    }
+
+    fn lower_trap(&mut self, span: Span, args: Vec<Expr>) -> Expr {
+        match <[Expr; 1]>::try_from(args).map(|[arg]| arg.kind) {
+            Ok(ExprKind::Str(message)) => self.node(span, ExprKind::Trap(message)),
+            _ => {
+                self.errors.push(GoatError::new(
+                    span,
+                    "`trap` takes one message, written out in quotes",
+                ));
+                self.node(span, ExprKind::Unit)
+            }
+        }
     }
 
     /// `-x` is `0 - x`: the HIR has no negation node.

@@ -775,6 +775,8 @@ impl Mono<'_> {
                 self.bin(cx, *op, lhs, (a, b), tail)
             }
             ExprKind::Builtin(Builtin::Print) => self.print_value(cx, e),
+            ExprKind::Builtin(Builtin::Trap) => unreachable!("the checker rejects a bare `trap`"),
+            ExprKind::Trap(message) => Expr::Trap(message.clone()),
             ExprKind::Func { .. } => self.closure_value(cx, Target::Anon(e.id), e.id),
             ExprKind::Str(s) => Expr::StrLit(self.intern(s)),
             ExprKind::Record { fields } => {

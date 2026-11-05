@@ -63,6 +63,12 @@ pub fn check_with_prelude(prelude: &str, source: &str) -> Result<Checked, Vec<Go
 mod tests {
     use super::*;
 
+    /// These tests count nodes, type variables and warnings, so they run
+    /// without the standard prelude.
+    fn check(source: &str) -> Result<Checked, Vec<GoatError>> {
+        check_with_prelude("", source)
+    }
+
     /// The inferred type of a program, as a string, or the first error message.
     fn type_of(source: &str) -> Result<String, String> {
         match check(source) {

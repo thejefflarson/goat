@@ -1,0 +1,18 @@
+# Lists come with a toolbox, no setup needed. `item` counts from 1.
+scores = [7, 1, 9, 4]
+ordered = sort(scores)
+shown = print(ordered)
+
+big = program(n) do n > 3 done
+double = program(n) do n * 2 done
+doubled_big = print(change_each(keep(ordered, big), double))
+
+best = print(biggest(scores))
+second = print(item(ordered, 2))
+longer = print(add(join(scores, [5, 6]), 0))
+backwards = print(reverse(ordered))
+walked = each(ordered, print)
+
+found = print(has(scores, 4))
+missing = print(has(scores, 5))
+total = print(sum(scores) + length(scores) + first(rest(scores)))

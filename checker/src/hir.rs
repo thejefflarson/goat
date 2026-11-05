@@ -55,12 +55,16 @@ impl Span {
 pub enum Builtin {
     /// `print`: `(a) -> Unit`, for any `a`.
     Print,
+    /// `trap("message")`: stops the program. Only valid called with a
+    /// string literal, which lowering turns into `ExprKind::Trap`.
+    Trap,
 }
 
 impl Builtin {
     pub fn named(name: &str) -> Option<Builtin> {
         match name {
             "print" => Some(Builtin::Print),
+            "trap" => Some(Builtin::Trap),
             _ => None,
         }
     }
@@ -171,6 +175,8 @@ pub enum ExprKind {
     },
     /// A function the compiler provides, used by its bare name.
     Builtin(Builtin),
+    /// `trap("message")`: stops the program with `message`; has any type.
+    Trap(String),
     /// `program(params) do body done`.
     Func {
         params: Vec<Param>,

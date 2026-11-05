@@ -1,3 +1,153 @@
 # The built-in definitions every program starts with. Each one is a `name = ...`
 # binding; the program itself is the rest of the chain. Unused definitions
 # cost nothing: mono only emits what the program reaches.
+#
+# Lists are `Empty` or `Link(head, tail)`, written `[]` and `[head, ...tail]`.
+# Every function that walks a whole list keeps its recursive call in tail
+# position (building results in reverse, then flipping them) so a long list
+# uses constant stack.
+
+nothing = program() do done
+
+link = program(x, xs) do Link(x, xs) done
+
+# Moves `xs` onto the front of `acc` one item at a time, reversing it.
+reverse_onto = program(xs, acc) do
+  match xs do
+    [head, ...tail] then reverse_onto(tail, Link(head, acc))
+    [] then acc
+  done
+done
+
+reverse = program(xs) do reverse_onto(xs, []) done
+
+add = program(xs, x) do reverse_onto(reverse(xs), [x]) done
+
+join = program(a, b) do reverse_onto(reverse(a), b) done
+
+length_from = program(xs, n) do
+  match xs do
+    [head, ...tail] then length_from(tail, n + 1)
+    [] then n
+  done
+done
+
+length = program(xs) do length_from(xs, 0) done
+
+first = program(xs) do
+  match xs do
+    [head, ...tail] then head
+    [] then trap("first of an empty list")
+  done
+done
+
+rest = program(xs) do
+  match xs do
+    [head, ...tail] then tail
+    [] then trap("rest of an empty list")
+  done
+done
+
+# `item(xs, 1)` is the first item.
+item = program(xs, n) do
+  match xs do
+    [head, ...tail] then if n == 1 then head else item(tail, n - 1) done
+    [] then trap("item past the end of the list")
+  done
+done
+
+each = program(xs, f) do
+  match xs do
+    [head, ...tail] then
+      shown = f(head)
+      each(tail, f)
+    [] then nothing()
+  done
+done
+
+change_each_onto = program(xs, f, acc) do
+  match xs do
+    [head, ...tail] then change_each_onto(tail, f, Link(f(head), acc))
+    [] then acc
+  done
+done
+
+change_each = program(xs, f) do reverse(change_each_onto(xs, f, [])) done
+
+keep_onto = program(xs, test, acc) do
+  match xs do
+    [head, ...tail] then
+      keep_onto(tail, test, if test(head) then Link(head, acc) else acc done)
+    [] then acc
+  done
+done
+
+keep = program(xs, test) do reverse(keep_onto(xs, test, [])) done
+
+count = program(xs, test) do length(keep_onto(xs, test, [])) done
+
+sum_from = program(xs, total) do
+  match xs do
+    [head, ...tail] then sum_from(tail, total + head)
+    [] then total
+  done
+done
+
+sum = program(xs) do sum_from(xs, 0) done
+
+biggest_from = program(xs, best) do
+  match xs do
+    [head, ...tail] then biggest_from(tail, if head > best then head else best done)
+    [] then best
+  done
+done
+
+biggest = program(xs) do
+  match xs do
+    [head, ...tail] then biggest_from(tail, head)
+    [] then trap("biggest of an empty list")
+  done
+done
+
+smallest_from = program(xs, best) do
+  match xs do
+    [head, ...tail] then smallest_from(tail, if head < best then head else best done)
+    [] then best
+  done
+done
+
+smallest = program(xs) do
+  match xs do
+    [head, ...tail] then smallest_from(tail, head)
+    [] then trap("smallest of an empty list")
+  done
+done
+
+has = program(xs, x) do
+  match xs do
+    [head, ...tail] then if head == x then true else has(tail, x) done
+    [] then false
+  done
+done
+
+# Puts `x` before the first item of `sorted` it is smaller than; `before` holds
+# the items already passed, nearest first.
+insert_sorted = program(x, sorted, before) do
+  match sorted do
+    [head, ...tail] then
+      if x < head
+        then reverse_onto(before, Link(x, sorted))
+        else insert_sorted(x, tail, Link(head, before))
+      done
+    [] then reverse_onto(before, [x])
+  done
+done
+
+sort_onto = program(xs, sorted) do
+  match xs do
+    [head, ...tail] then sort_onto(tail, insert_sorted(head, sorted, []))
+    [] then sorted
+  done
+done
+
+sort = program(xs) do sort_onto(xs, []) done

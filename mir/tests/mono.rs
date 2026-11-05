@@ -1,5 +1,10 @@
-use goat_checker::check;
+use goat_checker::{Checked, GoatError, check_with_prelude};
 use goat_mir::*;
+
+/// Without the standard prelude, whose tags would join every variant layout.
+fn check(src: &str) -> Result<Checked, Vec<GoatError>> {
+    check_with_prelude("", src)
+}
 
 fn run_src(src: &str) -> (Program, Value) {
     let checked = check(src).expect("checks");

@@ -536,6 +536,22 @@ done
 | `elem` | `has(xs, x)` (needs `eq`) |
 | `reverse`, `sort` | same |
 
+Implemented (P8d) in `prelude/prelude.goat`, in pure goat. Differences from
+the table:
+- `change_each(xs, f)` is the `map` name (a one-line rename if `map` wins).
+- `join` appends lists only; string `join` waits for runtime string
+  construction (strings are immortal literals today).
+- `count(xs, test)` is how many items pass `test`; `length` counts them all.
+- `sum`, `biggest`, `smallest` and `sort` work on numbers.
+- Every function that walks a whole list is tail-recursive, so long lists use
+  constant stack.
+- `first`, `rest`, `item` (out of range, or not a whole position inside the
+  list), `biggest` and `smallest` of nothing stop the program with
+  `trap("first of an empty list")` and the like. `trap(message)` is a builtin
+  taking a string literal; its type fits anywhere. The interpreter reports the
+  message; wasm executes `unreachable` and the host reports a bare trap, since
+  neither backend carries a source span at run time yet.
+
 Turtle (`turtle.goat`, Logo names): `forward`, `back`, `left`, `right`,
 `pen_up`, `pen_down`, `color`.
 
