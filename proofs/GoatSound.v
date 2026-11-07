@@ -601,12 +601,25 @@ Proof.
   - (* T_App *) intros G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat. simpl in *.
     eapply T_App; [ eapply IH1 | eapply IH2 ]; eauto.
   - (* T_Let *) intros L0 G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
+    (* The one non-structural case.  The let-bound scheme is [s := gen G T1],
+       which quantifies the variables of T1 not free in G.  Substituting may
+       (a) change which variables are generalizable and (b) capture a quantified
+       variable if [st]/[sr] mention it.  Plan:
+         1. rename s's quantifiers by a bijection [g],[gr] to variables fresh for
+            everything in sight, so nothing can be captured;
+         2. type e1 at the renamed-then-substituted type [B'], using the IH for
+            e1 at the precomposed substitution [st o g];
+         3. type the body in [(x ~ casch ..s) ++ G'], where the capture-avoiding
+            scheme absorbs the instances of s ([Hcaschinst]) so the IH for e2
+            applies; then swap [casch ..s] for [gen G' B'] ([Hbridge]). *)
     destruct Hsupp as [HsuppT HsuppR].
     destruct Hcompat as [HcT [HcFr [HcRt HcRfr]]].
     set (s := gen G T1).
+    (* every variable that substitution, G or G' could mention *)
     set (Bav := A `union` ftv_ctx G `union` frv_ctx G `union` ftv_ctx G' `union` frv_ctx G').
     destruct (mk_rename (s_tq s) Bav) as [g [Ng [Hginv [HgNB [HgNV [HgVN Hgfix]]]]]].
     destruct (mk_rename (s_rq s) Bav) as [gr [Ngr [Hgrinv [HgrNB [HgrNV [HgrVN Hgrfix]]]]]].
+    (* Step 1: [g],[gr] send the quantifiers outside Bav and fix everything else *)
     (* renamed quantifiers are fresh for Bav *)
     assert (HgF : forall a, a `in` amap g (s_tq s) -> a `notin` Bav).
     { intros a Ha. apply amap_in in Ha. destruct Ha as [v [Hv Hgv]]. subst a.
@@ -644,7 +657,8 @@ Proof.
     assert (HsrQ : forall r, r `in` amap gr (s_rq s) -> sr r = row_Var r).
     { intros r Hr. apply HsuppR. assert (r `notin` Bav) by (apply HgrF; exact Hr).
       unfold Bav in H. fsetdec. }
-    (* no-capture conditions, from tr_compat + freshness of renamed quantifiers *)
+    (* no-capture: the image of s's free vars under [st],[sr] lies in G', hence
+       in Bav, hence avoids the fresh renamed quantifiers *)
     assert (Hnc1 : forall a b, b `in` ftv_sch s -> a `in` amap g (s_tq s) -> a `notin` ftv_typ (st b)).
     { intros a b Hb Ha. assert (ftv_typ (st b) [<=] ftv_ctx G') by (apply HcT; fsetdec).
       assert (a `notin` Bav) by (apply HgF; exact Ha). unfold Bav in *. fsetdec. }
@@ -657,7 +671,7 @@ Proof.
     assert (Hnc4 : forall p r, r `in` frv_sch s -> p `in` amap gr (s_rq s) -> p `notin` frv_row (sr r)).
     { intros p r Hr Hp. assert (frv_row (sr r) [<=] frv_ctx G') by (apply HcRfr; fsetdec).
       assert (p `notin` Bav) by (apply HgrF; exact Hp). unfold Bav in *. fsetdec. }
-    (* the capture-avoiding substituted scheme preserves instances *)
+    (* Step 3 ingredients: the capture-avoiding scheme absorbs s's instances ... *)
     assert (Hcaschinst : sch_subst st sr s (casch st sr g gr s)).
     { intros W HW. apply casch_inst; auto. }
     (* ... and lines up with gen over G' *)
@@ -681,7 +695,8 @@ Proof.
     set (B' := ap_typ st sr (ren_typ g gr T1)).
     assert (HbodyT1 : s_body s = T1) by (unfold s, gen; reflexivity).
     apply T_Let with (L := L0 `union` dom G') (T1 := B').
-    + (* e1 : B' *)
+    + (* Step 2: e1 : B'.  Substituting [st o g] is the same as substituting
+         [st] after renaming; g fixes ftv/frv of G, so ctx_subst still holds. *)
       unfold B'. rewrite <- ap_precomp.
       set (A2 := A `union` s_tq s `union` lset Ng `union` s_rq s `union` lset Ngr).
       apply (IH1 (fun a => st (g a)) (fun r => sr (gr r)) G' A2 Hu').
@@ -702,7 +717,8 @@ Proof.
         -- intros a Ha. rewrite (HgfixG a Ha). apply HcFr; exact Ha.
         -- intros r Hr. rewrite (HgrfixG r Hr). apply HcRt; exact Hr.
         -- intros r Hr. rewrite (HgrfixG r Hr). apply HcRfr; exact Hr.
-    + (* body *)
+    + (* Step 3: body.  The IH types it under [casch ..s]; [sch_equiv] to the
+         required [gen G' B'] lets us change the binding without retyping. *)
       intros x Hx.
       apply typing_sch_equiv_ctx with (G := (x ~ casch st sr g gr s) ++ G').
       * apply (IH2 x ltac:(fsetdec) st sr ((x ~ casch st sr g gr s) ++ G') A).
@@ -964,6 +980,13 @@ Scheme step_mut := Induction for step Sort Prop
 with   step_fields_mut := Induction for step_fields Sort Prop.
 Combined Scheme step_step_fields_mutind from step_mut, step_fields_mut.
 
+(* Preservation is by induction on the step.  Because of T-Conv, a typing
+   derivation of [app e1 e2] (etc.) need not end in the matching rule, so each
+   case first applies an inversion lemma ([app_inv], [let_inv], ...) that peels
+   trailing conversions, then rebuilds the derivation with T-Conv.  The only
+   cases doing real work are the two redexes, which reduce to term substitution:
+   [typing_subst] for beta (monomorphic binding) and [typing_subst_poly] for
+   let (the binding is [gen G T1]). *)
 Lemma preservation_mut :
   (forall e e', step e e' -> forall G T, typing G e T -> typing G e' T) /\
   (forall fs fs', step_fields fs fs' ->
@@ -974,8 +997,11 @@ Proof.
     intros e v Hv G T Hty.
     apply app_inv in Hty. destruct Hty as [A [B [Habs [Harg Hbt]]]].
     apply abs_inv in Habs. destruct Habs as [L [A' [B' [Hbody Harr]]]].
+    (* abs : A' -> B' up to conversion; the argument has type A, convertible to A' *)
     apply teq_Arrow_inv in Harr. destruct Harr as [A2 [B2 [Heq [HA HB]]]].
     inversion Heq; subst.
+    (* x fresh for the body's binder bound L and for e, so that substituting v
+       for x in [open e x] is [open e v] (subst_intro) *)
     pick fresh x for (L \u fv_exp e).
     assert (HxL : x `notin` L) by fsetdec.
     assert (Hxe : x `notin` fv_exp e) by fsetdec.
@@ -996,6 +1022,8 @@ Proof.
   - (* st_letv: (let v e2) --> open e2 v *)
     intros v e2 Hv G T Hty.
     apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
+    (* as for beta, but the body is typed with x bound to the generalization of
+       T1, and the value v has type T1, so [typing_subst_poly] applies *)
     pick fresh x for (L \u fv_exp e2).
     assert (HxL : x `notin` L) by fsetdec.
     assert (Hxe : x `notin` fv_exp e2) by fsetdec.
@@ -1046,13 +1074,16 @@ Proof. intros G e e' T Hty Hstep. eapply (proj1 preservation_mut); eauto. Qed.
 (* never reaches a stuck state.                                           *)
 (* ================================================================== *)
 
+(* Induction on the reduction sequence: preservation carries the typing along
+   each step, and progress applies at the end. *)
 Theorem soundness : forall e T e',
   typing nil e T -> multistep e e' -> value e' \/ exists e'', step e' e''.
 Proof.
   intros e T e' Hty Hms. revert T Hty.
   induction Hms as [ e | e1 e2 e3 Hstep Hms IH ]; intros T Hty.
   - (* refl *) apply progress with (T := T); exact Hty.
-  - (* step *) apply IH with (T := T). eapply preservation; eauto.
+  - (* step: e1 --> e2 keeps type T, so the IH for e2 applies *)
+    apply IH with (T := T). eapply preservation; eauto.
 Qed.
 
 Corollary soundness_not_stuck : forall e T e',

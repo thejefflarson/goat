@@ -347,6 +347,10 @@ Qed.
 (* Progress (docs/semantics.md section 7).                              *)
 (* ================================================================== *)
 
+(* Induction on the typing derivation with the context fixed to [nil] (the
+   [G = nil] premise makes T-Var vacuous).  Each elimination form (app, proj)
+   needs its head to be a value of the right shape: a canonical-forms lemma
+   ([canon_arrow], [canon_record]) supplies that, and T-Conv is transparent. *)
 Lemma progress_mut :
   (forall G e T, typing G e T -> G = nil -> value e \/ exists e', step e e') /\
   (forall G fs R, field_typing G fs R -> G = nil ->
