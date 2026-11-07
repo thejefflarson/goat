@@ -5,7 +5,25 @@ permissions:
   contents: write
   pull-requests: write
 jobs:
+  audit:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci --prefix web
+      # High and above: a low-severity advisory should not stall every bump.
+      - run: npm audit --prefix web --audit-level=high
+
   auto-merge:
+    needs: audit
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
     steps:
