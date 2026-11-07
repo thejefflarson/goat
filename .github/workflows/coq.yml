@@ -32,7 +32,7 @@ jobs:
   coq:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # coqorg/coq:8.20 ships Coq 8.20.1 + opam; the action runs the script as
       # the `coq` user with that switch active. Ott and metalib are not in the

@@ -16,7 +16,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # The runner ships a stable Rust toolchain; just add the components we
       # lint with.
@@ -38,7 +38,7 @@ jobs:
   wasm32:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown
@@ -58,7 +58,7 @@ jobs:
   web-runtime:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown
