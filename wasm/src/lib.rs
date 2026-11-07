@@ -14,6 +14,7 @@ mod allocator;
 use allocator::FreeList;
 
 const DATA_BASE: u32 = 8;
+const PAGE_BYTES: u32 = 65536;
 const PRINT_NUMBER: u32 = 0;
 const PRINT_BOOL: u32 = 1;
 const PRINT_STRING: u32 = 2;
@@ -318,7 +319,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
 
     let mut memory = MemorySection::new();
     memory.memory(MemoryType {
-        minimum: 1,
+        minimum: u64::from(heap_start.div_ceil(PAGE_BYTES)).max(1),
         maximum: None,
         memory64: false,
         shared: false,

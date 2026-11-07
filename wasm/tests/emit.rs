@@ -184,6 +184,14 @@ fn heap_starts_after_the_aligned_data_segment() {
 }
 
 #[test]
+fn memory_covers_data_segments_past_one_page() {
+    let mut p = arithmetic();
+    p.data = vec![vec![0; 3 * 65536]];
+    let text = wat(&p);
+    assert!(text.contains("(memory (;0;) 4)"), "{text}");
+}
+
+#[test]
 fn unsupported_heap_objects_and_bad_callees_are_rejected() {
     let reuse = program(vec![func(
         MTy::Int,
