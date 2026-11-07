@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { compile } from "./compile.js";
 import { formatNumber, readString, run, strokes } from "./runtime.js";
 
 const compilerWasm = new URL(
@@ -8,24 +9,16 @@ const compilerWasm = new URL(
   import.meta.url,
 );
 
-async function compile(source) {
-  const { instance } = await WebAssembly.instantiate(readFileSync(compilerWasm), {});
-  const { memory, gw_alloc, gw_free, gw_compile, gw_free_result } = instance.exports;
-  const text = new TextEncoder().encode(source);
-  const src = gw_alloc(text.length);
-  new Uint8Array(memory.buffer, src, text.length).set(text);
-  const rec = gw_compile(src, text.length);
-  gw_free(src, text.length);
-  const view = new DataView(memory.buffer);
-  const tag = view.getUint8(rec);
-  const payload = new Uint8Array(memory.buffer, rec + 5, view.getUint32(rec + 1, true)).slice();
-  gw_free_result(rec);
-  assert.equal(tag, 0, new TextDecoder().decode(payload));
-  return payload;
+const compiler = await WebAssembly.compile(readFileSync(compilerWasm));
+
+async function compileOk(source) {
+  const result = await compile(compiler, source);
+  assert.ok(result.ok, result.diagnostics);
+  return result.module;
 }
 
 test("turtle commands are recorded in order", async () => {
-  const wasm = await compile(
+  const wasm = await compileOk(
     'color("red"); for i from 1 to 2 do forward(10); right(90) done; pen_up(); back(5); pen_down(); left(45)',
   );
   const { commands, output, liveAllocs } = await run(wasm);
@@ -46,7 +39,7 @@ test("turtle commands are recorded in order", async () => {
 
 test("the spiral example records its commands and leaks nothing", async () => {
   const source = readFileSync(new URL("../examples/spiral.goat", import.meta.url), "utf8");
-  const { commands, liveAllocs } = await run(await compile(source));
+  const { commands, liveAllocs } = await run(await compileOk(source));
   assert.equal(commands.length, 121);
   assert.deepEqual(commands[0], { kind: "color", value: "purple" });
   assert.deepEqual(commands[1], { kind: "forward", value: 3 });
@@ -55,7 +48,7 @@ test("the spiral example records its commands and leaks nothing", async () => {
 });
 
 test("printed text matches the CLI's formatting", async () => {
-  const wasm = await compile(
+  const wasm = await compileOk(
     'print(55); print(0.1 + 0.2); print(1 / 3); print(true); print("hi")',
   );
   const { output, liveAllocs } = await run(wasm);
@@ -64,7 +57,7 @@ test("printed text matches the CLI's formatting", async () => {
 });
 
 test("composite values stream through the write_* imports as one line", async () => {
-  const { output } = await run(await compile('print([1, 2.5]); print("a")'));
+  const { output } = await run(await compileOk('print([1, 2.5]); print("a")'));
   assert.deepEqual(output, ["[1, 2.5]", "a"]);
 });
 
@@ -113,8 +106,8 @@ test("strokes mirror the CLI replay", () => {
 });
 
 test("an invalid color and a non-finite number trap", async () => {
-  const bad = await compile('color("re d"); forward(1)');
+  const bad = await compileOk('color("re d"); forward(1)');
   await assert.rejects(run(bad), /color wants a name/);
-  const nan = await compile("forward(0 / 0)");
+  const nan = await compileOk("forward(0 / 0)");
   await assert.rejects(run(nan), /real number/);
 });
