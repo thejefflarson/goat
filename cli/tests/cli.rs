@@ -270,13 +270,13 @@ const TYPO_TAG: &str = "match Cirle(5) do Circle(r) then r else 0 done";
 
 #[test]
 fn run_warns_on_stderr_and_still_succeeds() {
-    let out = run_source("p.goat", &format!("print(1)\n{TYPO_TAG}"));
+    let out = run_source("p.goat", &format!("p = print(1)\n{TYPO_TAG}"));
     assert!(out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("warning in "), "{stderr}");
     assert!(stderr.contains("tag `Cirle` is constructed but never matched"));
     assert!(stderr.contains("^^^^^^^^"), "span caret missing: {stderr}");
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), "1\n");
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "1\n0\n");
 }
 
 #[test]
