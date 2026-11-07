@@ -71,4 +71,4 @@ jobs:
           node-version: "22"
 
       - name: Test the browser runtime
-        run: node --test web/
+        run: node --test web/*.test.js
