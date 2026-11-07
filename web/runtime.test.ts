@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { compile } from "./compile.js";
-import { formatNumber, readString, run, strokes } from "./runtime.js";
+import { compile } from "./compile.ts";
+import { type Command, formatNumber, readString, run, strokes } from "./runtime.ts";
 
 const compilerWasm = new URL(
   "../target/wasm32-unknown-unknown/release/goat_web.wasm",
@@ -11,9 +11,9 @@ const compilerWasm = new URL(
 
 const compiler = await WebAssembly.compile(readFileSync(compilerWasm));
 
-async function compileOk(source) {
+async function compileOk(source: string) {
   const result = await compile(compiler, source);
-  assert.ok(result.ok, result.diagnostics);
+  if (!result.ok) assert.fail(result.diagnostics);
   return result.module;
 }
 
@@ -62,7 +62,7 @@ test("composite values stream through the write_* imports as one line", async ()
 });
 
 test("formatNumber ports goat::format_number", () => {
-  const cases = [
+  const cases: [number, string][] = [
     [55, "55"], [-0, "0"], [-7, "-7"], [1e17, "100000000000000000"],
     [1e18, "1e+18"], [1.5, "1.5"], [0.1 + 0.2, "0.3"], [1 / 3, "0.333333333333333"],
     [123456789012345.6, "123456789012346"], [1e-5, "1e-05"], [0.0001, "0.0001"],
@@ -84,7 +84,7 @@ test("strings are read at the documented offsets and bounds-checked", () => {
 });
 
 test("strokes mirror the CLI replay", () => {
-  const log = [
+  const log: Command[] = [
     { kind: "forward", value: 10 },
     { kind: "right", value: 90 },
     { kind: "forward", value: 10 },
@@ -94,7 +94,7 @@ test("strokes mirror the CLI replay", () => {
     { kind: "color", value: "red" },
     { kind: "back", value: 5 },
   ];
-  const near = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 1e-9);
+  const near = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]) < 1e-9);
   const result = strokes(log);
   assert.equal(result.length, 2);
   assert.equal(result[0].color, "black");

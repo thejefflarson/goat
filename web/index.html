@@ -62,8 +62,8 @@ done
   <pre id="output" aria-label="printed output" hidden></pre>
 </main>
 <script type="module">
-  import { compile, loadCompiler } from "./compile.js";
-  import { animate, run } from "./runtime.js";
+  import { compile, loadCompiler } from "./dist/compile.js";
+  import { animate, run } from "./dist/runtime.js";
 
   // Serving the repository root makes this resolve after a release build of goat_web.
   const COMPILER_URL = "../target/wasm32-unknown-unknown/release/goat_web.wasm";

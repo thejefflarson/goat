@@ -1,15 +1,28 @@
 // Drives goat_web.wasm; the record layout is documented in src/lib.rs.
 const OK = 0;
 
-export async function loadCompiler(url) {
+interface CompilerExports {
+  memory: WebAssembly.Memory;
+  gw_alloc(len: number): number;
+  gw_free(ptr: number, len: number): void;
+  gw_compile(ptr: number, len: number): number;
+  gw_free_result(rec: number): void;
+}
+
+export type CompileResult =
+  | { ok: true; module: Uint8Array<ArrayBuffer> }
+  | { ok: false; diagnostics: string };
+
+export async function loadCompiler(url: string | URL): Promise<WebAssembly.Module> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`could not load compiler: HTTP ${response.status}`);
   return WebAssembly.compile(await response.arrayBuffer());
 }
 
-export async function compile(compiler, source) {
+export async function compile(compiler: WebAssembly.Module, source: string): Promise<CompileResult> {
   const instance = await WebAssembly.instantiate(compiler, {});
-  const { memory, gw_alloc, gw_free, gw_compile, gw_free_result } = instance.exports;
+  const { memory, gw_alloc, gw_free, gw_compile, gw_free_result } =
+    instance.exports as unknown as CompilerExports;
   const text = new TextEncoder().encode(source);
   const src = gw_alloc(text.length);
   new Uint8Array(memory.buffer, src, text.length).set(text);
