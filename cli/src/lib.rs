@@ -297,6 +297,17 @@ impl<H: Host + 'static> Guest<H> {
             .map_err(|e| format!("{name} trapped: {e:#}"))
     }
 
+    /// Refill the module's fuel, as a host does before each update.
+    pub fn set_fuel(&mut self, fuel: i32) -> Result<(), String> {
+        let global = self
+            .instance
+            .get_global(&mut self.store, "goat_fuel")
+            .ok_or("module exports no goat_fuel")?;
+        global
+            .set(&mut self.store, Val::I32(fuel))
+            .map_err(|e| e.to_string())
+    }
+
     pub fn exports(&mut self) -> Vec<String> {
         self.instance
             .exports(&mut self.store)

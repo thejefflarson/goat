@@ -414,3 +414,106 @@ fn rebinding_a_contract_name_reverts_to_running_once() {
     let run = goat_cli::run(&wasm).expect("runs");
     assert_eq!(run.printed, ["7"]);
 }
+
+const ARROW_DRAW: &str = include_str!("../../examples/arrow_draw.goat");
+
+fn polylines(scene: &[SceneCommand]) -> Vec<Vec<(f64, f64)>> {
+    let mut frames = Vec::new();
+    for command in scene {
+        match command {
+            SceneCommand::Begin => frames.push(Vec::new()),
+            SceneCommand::Vertex(x, y) => frames.last_mut().unwrap().push((*x, *y)),
+            _ => {}
+        }
+    }
+    frames
+}
+
+#[test]
+fn arrow_draw_accumulates_a_trail_on_both_backends_and_nothing_leaks() {
+    let program = program(ARROW_DRAW);
+    let script = [
+        Event::KeyDown("ArrowRight"),
+        Event::KeyDown("ArrowUp"),
+        Event::KeyDown("x"),
+        Event::KeyDown("ArrowLeft"),
+        Event::KeyDown("ArrowDown"),
+    ];
+    let interp = interpreted(&program, &script, 0);
+    let wasm = compiled(&program, &script, 0);
+    assert_eq!(wasm, interp);
+    assert_eq!(interp.live, 0, "leaked");
+    let frames = polylines(&interp.scene);
+    assert_eq!(frames.len(), script.len());
+    assert_eq!(frames[0], [(10.0, 0.0), (0.0, 0.0)]);
+    assert_eq!(
+        frames[4],
+        [
+            (0.0, 0.0),
+            (0.0, -10.0),
+            (10.0, -10.0),
+            (10.0, 0.0),
+            (0.0, 0.0)
+        ]
+    );
+}
+
+#[test]
+fn arrow_draw_subscribes_to_key_presses_only() {
+    assert_eq!(subscriptions(ARROW_DRAW), ["KeyDown"]);
+}
+
+const SPINNING: &str = r#"
+init = {n: 0}
+spin = program(n) do if n < 0 then n else spin(n + 1) done done
+update = program(model, event) do
+  match event do Tick(dt) then {n: spin(0)} done
+done
+draw = program(model) do [] done
+"#;
+
+#[test]
+fn an_update_that_never_returns_runs_out_of_fuel_and_traps() {
+    let wasm = goat::compile(SPINNING).expect("compiles");
+    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
+    let model: i32 = guest.call("goat_setup", ()).unwrap();
+    guest.set_fuel(100_000).unwrap();
+    let tick: i32 = guest.call("goat_event_Tick", 16.0f64).unwrap();
+    let error = guest
+        .call::<_, i32>("goat_update", (model, tick))
+        .expect_err("a runaway update must trap, not hang");
+    assert!(error.contains("trapped"), "{error}");
+}
+
+fn press(guest: &mut Guest<SceneHost>, model: i32, key: &str) -> Result<i32, String> {
+    let key = guest.string(key)?;
+    let event: i32 = guest.call("goat_event_KeyDown", key)?;
+    guest.call("goat_update", (model, event))
+}
+
+#[test]
+fn refilled_fuel_lets_ordinary_updates_run_many_times() {
+    let wasm = goat::compile(ARROW_DRAW).expect("compiles");
+    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
+    let mut model: i32 = guest.call("goat_setup", ()).unwrap();
+    for _ in 0..2_000 {
+        guest.set_fuel(10_000).unwrap();
+        model = press(&mut guest, model, "ArrowRight").unwrap();
+    }
+    guest.call::<_, ()>("goat_release_model", model).unwrap();
+    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
+    assert_eq!(guest.live_allocs().unwrap(), 0);
+}
+
+#[test]
+fn fuel_that_is_never_refilled_runs_out() {
+    let wasm = goat::compile(ARROW_DRAW).expect("compiles");
+    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
+    let mut model: i32 = guest.call("goat_setup", ()).unwrap();
+    guest.set_fuel(200).unwrap();
+    let outcome = (0..2_000).try_for_each(|_| {
+        model = press(&mut guest, model, "ArrowRight")?;
+        Ok::<(), String>(())
+    });
+    assert!(outcome.is_err(), "fuel should be spent");
+}

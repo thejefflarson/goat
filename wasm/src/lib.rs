@@ -21,10 +21,17 @@ const PRINT_STRING: u32 = 2;
 /// string root) `print_string`: `write_number`, `write_string`, `write_end`.
 const WRITE_IMPORTS: u32 = 3;
 const IMMORTAL: i32 = -1;
+/// The fuel every function entry spends one unit of, after the heap pointer and
+/// the allocator's live count. It is exported as `goat_fuel` so a host can
+/// refill it; a call that finds none left traps (ADR 0015).
+const FUEL_GLOBAL: u32 = 2;
+/// Enough that a run-once program never notices, and the value a host that
+/// never refills starts from.
+const FUEL_START: i32 = i32::MAX;
 /// The module globals that hold an interactive program's `update` and `draw`
-/// closures, after the heap pointer and the allocator's live count.
-const UPDATE_GLOBAL: u32 = 2;
-const DRAW_GLOBAL: u32 = 3;
+/// closures, after the fuel.
+const UPDATE_GLOBAL: u32 = 3;
+const DRAW_GLOBAL: u32 = 4;
 
 /// wasm32 object layout (`docs/mir.md`); every offset below derives from these.
 mod layout {
@@ -304,7 +311,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
 
     let mut globals = GlobalSection::new();
     let closure_globals = if program.interactive.is_some() { 2 } else { 0 };
-    for init in [heap_start as i32, 0]
+    for init in [heap_start as i32, 0, FUEL_START]
         .into_iter()
         .chain(std::iter::repeat_n(0, closure_globals))
     {
@@ -328,6 +335,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
             imports + program.funcs.len() as u32,
         );
     }
+    exports.export("goat_fuel", ExportKind::Global, FUEL_GLOBAL);
     exports.export("goat_alloc", ExportKind::Func, shared.alloc_fn);
     exports.export("goat_live_allocs", ExportKind::Func, shared.alloc_fn + 2);
     if let Some(interactive) = &program.interactive {
@@ -998,6 +1006,23 @@ fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError>
     Ok(f)
 }
 
+/// `fuel -= 1; if fuel <= 0 { unreachable }`: a runaway call chain, tail calls
+/// included, traps in bounded steps instead of hanging its host.
+fn spend_fuel(code: &mut Code) {
+    code.extend([
+        Instruction::GlobalGet(FUEL_GLOBAL),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::GlobalSet(FUEL_GLOBAL),
+        Instruction::GlobalGet(FUEL_GLOBAL),
+        Instruction::I32Const(0),
+        Instruction::I32LeS,
+        Instruction::If(BlockType::Empty),
+        Instruction::Unreachable,
+        Instruction::End,
+    ]);
+}
+
 fn lower_func(shared: &mut Shared, func: &Func) -> Result<Function, EmitError> {
     let mut cx = FuncCx {
         program: shared.program,
@@ -1016,6 +1041,7 @@ fn lower_func(shared: &mut Shared, func: &Func) -> Result<Function, EmitError> {
     }
     cx.declared.clear();
     let mut code = Code::new();
+    spend_fuel(&mut code);
     cx.lower(&func.body, &mut code)?;
     let mut f = Function::new_with_locals_types(cx.declared);
     for instr in &code {
