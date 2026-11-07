@@ -624,23 +624,215 @@ Proof. apply typing_rename_mut. Qed.
 End Renaming.
 
 (* ================================================================== *)
-(* L6a / L6b -- term substitution (docs/semantics.md section 7).        *)
-(*   (temporarily admitted; real proofs follow below)                   *)
+(* Context free-variable bookkeeping, and generalization is antitone in  *)
+(* the context: a smaller context (fewer free vars) generalizes more.    *)
 (* ================================================================== *)
 
-(* L6a: monomorphic term substitution (for ST-Beta). *)
+Lemma ftv_ctx_app : forall G1 G2,
+  ftv_ctx (G1 ++ G2) [=] ftv_ctx G1 `union` ftv_ctx G2.
+Proof. induction G1 as [|[x s] G1 IH]; simpl; intros; [ fsetdec | rewrite IH; fsetdec ]. Qed.
+
+Lemma frv_ctx_app : forall G1 G2,
+  frv_ctx (G1 ++ G2) [=] frv_ctx G1 `union` frv_ctx G2.
+Proof. induction G1 as [|[x s] G1 IH]; simpl; intros; [ fsetdec | rewrite IH; fsetdec ]. Qed.
+
+(* gen is antitone: dropping context free variables only quantifies more,
+   so [gen G2 T] (the smaller context) is at least as general as [gen G1 T]
+   and has no more free variables -- exactly [sch_more_gen] of the two. *)
+Lemma gen_antimono : forall G1 G2 T,
+  ftv_ctx G2 [<=] ftv_ctx G1 -> frv_ctx G2 [<=] frv_ctx G1 ->
+  sch_more_gen (gen G1 T) (gen G2 T).
+Proof.
+  intros G1 G2 T Ht Hr.
+  unfold sch_more_gen, Ftv_sch, Frv_sch, ftv_sch, frv_sch, gen; simpl.
+  split; [|split].
+  - intros W [st [sr [Hst [Hsr Heq]]]]. simpl in Hst, Hsr.
+    exists st, sr; simpl; repeat split.
+    + intros a Hna. apply Hst. simpl. fsetdec.
+    + intros r Hnr. apply Hsr. simpl. fsetdec.
+    + exact Heq.
+  - intros a Hin. fsetdec.
+  - intros r Hin. fsetdec.
+Qed.
+
+Lemma ctx_more_gen_refl : forall G, ctx_more_gen G G.
+Proof. induction G as [|[x s] G IH]; constructor; simpl; auto using sch_more_gen_refl. Qed.
+
+(* ================================================================== *)
+(* The two canonical Hindley-Milner lemmas the term-substitution proofs  *)
+(* rest on.  Both are stated at full strength (docs/semantics.md L4/L5). *)
+(* ================================================================== *)
+
+(* Weakening (L4): inserting a middle block of bindings preserves typing.
+   The let case freshens the let-generalized variables away from the
+   inserted block's free variables (via [typing_rename]) before matching
+   [gen]. *)
+Lemma typing_weaken : forall E F G e T,
+  typing (E ++ G) e T ->
+  uniq (E ++ F ++ G) ->
+  typing (E ++ F ++ G) e T.
+Admitted.
+
+(* L5, context-fixing form: substituting the type/row variables that are
+   NOT free in the context preserves typing (the context is unchanged
+   because the substitution fixes its free variables).  This is the
+   corollary of the general type/row-substitution lemma that instantiation
+   needs; the general lemma applies a kind-respecting substitution to both
+   context and type. *)
+Lemma typing_tsubst_fix : forall G e T st sr,
+  typing G e T ->
+  (forall a, a `in` ftv_ctx G -> st a = typ_Var a) ->
+  (forall r, r `in` frv_ctx G -> sr r = row_Var r) ->
+  typing G e (ap_typ st sr T).
+Admitted.
+
+(* A term with a generalizable type has every instance of its
+   generalization (L5 specialized to [gen]). *)
+Lemma typing_inst_gen : forall G v T1 W,
+  typing G v T1 -> inst W (gen G T1) -> typing G v W.
+Proof.
+  intros G v T1 W Hv [st [sr [Hst [Hsr Heq]]]].
+  simpl in Heq. subst W.
+  apply typing_tsubst_fix; auto.
+  - intros a Ha. apply Hst. simpl. fsetdec.
+  - intros r Hr. apply Hsr. simpl. fsetdec.
+Qed.
+
+(* ================================================================== *)
+(* L6a: monomorphic term substitution (for ST-Beta).                     *)
+(* ================================================================== *)
+
+Lemma typing_subst_mut : forall x U u G1,
+  typing G1 u U ->
+  (forall Gm e T, typing Gm e T ->
+     forall G2, Gm = G2 ++ (x ~ sch_mono U) ++ G1 ->
+     typing (G2 ++ G1) (subst_exp u x e) T) /\
+  (forall Gm fs R, field_typing Gm fs R ->
+     forall G2, Gm = G2 ++ (x ~ sch_mono U) ++ G1 ->
+     field_typing (G2 ++ G1) (subst_fields u x fs) R).
+Proof.
+  intros x U u G1 Hu.
+  apply typing_field_mutind.
+  - (* T_Var *) intros G y s T Huq Hb Hi G2 Heq; subst.
+    destruct (y == x) as [Hx|Hx].
+    + subst y.
+      assert (s = sch_mono U) as Hs by (eapply binds_mid_eq; [ exact Hb | exact Huq ]).
+      subst s. apply inst_mono_eq in Hi. subst T. rewrite subst_self.
+      apply (typing_weaken nil G2 G1 u U Hu). simpl_alist. solve_uniq.
+    + rewrite subst_neq by congruence.
+      apply T_Var with (s := s);
+        [ solve_uniq | eapply binds_remove_mid; [ exact Hb | congruence ] | exact Hi ].
+  - (* T_Num *) intros G n Huq G2 Heq; subst. simpl. apply T_Num. solve_uniq.
+  - (* T_True *) intros G Huq G2 Heq; subst. simpl. apply T_True. solve_uniq.
+  - (* T_False *) intros G Huq G2 Heq; subst. simpl. apply T_False. solve_uniq.
+  - (* T_Abs *) intros L G e T1 T2 Hr IH G2 Heq; subst. simpl.
+    apply T_Abs with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u).
+    intros x0 Hx0.
+    rewrite <- (subst_open_var e u x x0) by
+      (first [ fsetdec | eapply typing_regular; exact Hu ]).
+    rewrite_env (((x0 ~ sch_mono T1) ++ G2) ++ G1).
+    apply (IH x0 ltac:(fsetdec) ((x0 ~ sch_mono T1) ++ G2)). simpl_alist. reflexivity.
+  - (* T_App *) intros G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply T_App.
+    + apply (IH1 G2); reflexivity.
+    + apply (IH2 G2); reflexivity.
+  - (* T_Let *) intros L G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+    apply T_Let with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (T1 := T1).
+    + apply (IH1 G2); reflexivity.
+    + intros x0 Hx0.
+      rewrite <- (subst_open_var e2 u x x0) by
+        (first [ fsetdec | eapply typing_regular; exact Hu ]).
+      eapply typing_ftv_mono.
+      * rewrite_env (((x0 ~ gen (G2 ++ (x ~ sch_mono U) ++ G1) T1) ++ G2) ++ G1).
+        apply (IH2 x0 ltac:(fsetdec) ((x0 ~ gen (G2 ++ (x ~ sch_mono U) ++ G1) T1) ++ G2)).
+        simpl_alist. reflexivity.
+      * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
+        apply gen_antimono; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
+  - (* T_Record *) intros G fs R Hr IH G2 Heq; subst. simpl. apply T_Record. apply (IH G2); reflexivity.
+  - (* T_Proj *) intros G e l T R Hr IH G2 Heq; subst. simpl. eapply T_Proj. apply (IH G2); reflexivity.
+  - (* T_Conv *) intros G e T T' Hr IH Hteq G2 Heq; subst. eapply T_Conv; [ apply (IH G2); reflexivity | exact Hteq ].
+  - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
+  - (* FT_cons *) intros G l e T fs R Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply FT_cons.
+    + apply (IH1 G2); reflexivity.
+    + apply (IH2 G2); reflexivity.
+Qed.
+
 Lemma typing_subst : forall G x U e T u,
   typing ((x ~ sch_mono U) ++ G) e T ->
   typing G u U ->
   typing G (subst_exp u x e) T.
-Admitted.
+Proof.
+  intros G x U e T u Hty Hu.
+  exact (proj1 (typing_subst_mut x U u G Hu) _ e T Hty nil eq_refl).
+Qed.
 
-(* L6b: polymorphic term substitution (for ST-LetV). *)
+(* ================================================================== *)
+(* L6b: polymorphic term substitution (for ST-LetV).                     *)
+(* ================================================================== *)
+
+Lemma typing_subst_poly_mut : forall x T1 v G1,
+  typing G1 v T1 ->
+  (forall Gm e T, typing Gm e T ->
+     forall G2, Gm = G2 ++ (x ~ gen G1 T1) ++ G1 ->
+     typing (G2 ++ G1) (subst_exp v x e) T) /\
+  (forall Gm fs R, field_typing Gm fs R ->
+     forall G2, Gm = G2 ++ (x ~ gen G1 T1) ++ G1 ->
+     field_typing (G2 ++ G1) (subst_fields v x fs) R).
+Proof.
+  intros x T1 v G1 Hv.
+  apply typing_field_mutind.
+  - (* T_Var *) intros G y s T Huq Hb Hi G2 Heq; subst.
+    destruct (y == x) as [Hx|Hx].
+    + subst y.
+      assert (s = gen G1 T1) as Hs by (eapply binds_mid_eq; [ exact Hb | exact Huq ]).
+      subst s.
+      assert (typing G1 v T) as HvT by (eapply typing_inst_gen; [ exact Hv | exact Hi ]).
+      rewrite subst_self.
+      apply (typing_weaken nil G2 G1 v T HvT). simpl_alist. solve_uniq.
+    + rewrite subst_neq by congruence.
+      apply T_Var with (s := s);
+        [ solve_uniq | eapply binds_remove_mid; [ exact Hb | congruence ] | exact Hi ].
+  - (* T_Num *) intros G n Huq G2 Heq; subst. simpl. apply T_Num. solve_uniq.
+  - (* T_True *) intros G Huq G2 Heq; subst. simpl. apply T_True. solve_uniq.
+  - (* T_False *) intros G Huq G2 Heq; subst. simpl. apply T_False. solve_uniq.
+  - (* T_Abs *) intros L G e T0 T2 Hr IH G2 Heq; subst. simpl.
+    apply T_Abs with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp v).
+    intros x0 Hx0.
+    rewrite <- (subst_open_var e v x x0) by
+      (first [ fsetdec | eapply typing_regular; exact Hv ]).
+    rewrite_env (((x0 ~ sch_mono T0) ++ G2) ++ G1).
+    apply (IH x0 ltac:(fsetdec) ((x0 ~ sch_mono T0) ++ G2)). simpl_alist. reflexivity.
+  - (* T_App *) intros G e1 e2 T0 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply T_App.
+    + apply (IH1 G2); reflexivity.
+    + apply (IH2 G2); reflexivity.
+  - (* T_Let *) intros L G e1 e2 T0 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+    apply T_Let with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp v) (T1 := T0).
+    + apply (IH1 G2); reflexivity.
+    + intros x0 Hx0.
+      rewrite <- (subst_open_var e2 v x x0) by
+        (first [ fsetdec | eapply typing_regular; exact Hv ]).
+      eapply typing_ftv_mono.
+      * rewrite_env (((x0 ~ gen (G2 ++ (x ~ gen G1 T1) ++ G1) T0) ++ G2) ++ G1).
+        apply (IH2 x0 ltac:(fsetdec) ((x0 ~ gen (G2 ++ (x ~ gen G1 T1) ++ G1) T0) ++ G2)).
+        simpl_alist. reflexivity.
+      * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
+        apply gen_antimono; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
+  - (* T_Record *) intros G fs R Hr IH G2 Heq; subst. simpl. apply T_Record. apply (IH G2); reflexivity.
+  - (* T_Proj *) intros G e l T R Hr IH G2 Heq; subst. simpl. eapply T_Proj. apply (IH G2); reflexivity.
+  - (* T_Conv *) intros G e T T' Hr IH Hteq G2 Heq; subst. eapply T_Conv; [ apply (IH G2); reflexivity | exact Hteq ].
+  - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
+  - (* FT_cons *) intros G l e T fs R Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply FT_cons.
+    + apply (IH1 G2); reflexivity.
+    + apply (IH2 G2); reflexivity.
+Qed.
+
 Lemma typing_subst_poly : forall G x T1 e T2 v,
   typing ((x ~ gen G T1) ++ G) e T2 ->
   typing G v T1 ->
   typing G (subst_exp v x e) T2.
-Admitted.
+Proof.
+  intros G x T1 e T2 v Hty Hv.
+  exact (proj1 (typing_subst_poly_mut x T1 v G Hv) _ e T2 Hty nil eq_refl).
+Qed.
 
 (* ================================================================== *)
 (* Preservation (docs/semantics.md section 7).                          *)
