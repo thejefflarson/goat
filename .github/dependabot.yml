@@ -1,0 +1,16 @@
+# Dependabot opens update PRs; .github/workflows/dependabot-automerge.yml
+# auto-merges patch bumps on green and leaves minor/major for a human (ADR/#130).
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
