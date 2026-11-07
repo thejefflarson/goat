@@ -104,16 +104,17 @@ needs a Haskell toolchain in CI) is a later step.
 ## What is proved (B3, issue #71)
 
 **Status:** Progress is proved (assumption-free); Preservation and Soundness are
-complete *modulo* L6a/L6b, two standard Hindley–Milner term-substitution lemmas,
-tracked in #151. The proof is not finished until those two admits close (#71
-stays open until then).
+complete *modulo* two canonical Hindley–Milner lemmas — general weakening (L4)
+and type/row substitution (L5) — tracked in #151. The term-substitution lemmas
+L6a/L6b, preservation, and soundness are now **fully derived** from those two;
+the proof is not finished until the two close (#71 stays open until then).
 
 The soundness statements of `docs/semantics.md` §7 are mechanized here. By
 `Print Assumptions`:
 
 - **`progress`** — *closed under the global context*: no axioms, no admits.
 - **`preservation`** and **`soundness`** — closed except they rest on the two
-  term-substitution lemmas below.
+  lemmas below (`typing_weaken` and `typing_tsubst_fix`).
 
 Fully closed, no admits:
 
@@ -127,25 +128,38 @@ Fully closed, no admits:
 - Locally-nameless infrastructure (`open`/`subst` commutation, `subst_intro`),
   `typing_regular`, canonical forms (L7), the T-Conv-aware typing inversions,
   **Progress**, all **Preservation** congruence cases, and `ST-ProjRec`.
+- **Term substitution** (`GoatSubst.v`): `typing_subst` (L6a, monomorphic, for
+  `ST-Beta`) and `typing_subst_poly` (L6b, polymorphic, for `ST-LetV`), by mutual
+  induction on the typing derivation, prefix-generalized over the context so the
+  induction goes under binders. Their `let` cases need no new theory: dropping a
+  binding from the context only makes `gen` more general with no new free
+  variables (`gen_antimono`), the good direction for `typing_ftv_mono`. Each
+  rests only on the two lemmas below. Also `typing_inst_gen` (every instance of a
+  generalization is derivable).
 
-The **two `Admitted` lemmas** (`GoatMeta.v`), on which Preservation's `ST-Beta`
-and `ST-LetV` cases (hence Soundness) rest:
+The **two `Admitted` lemmas** (`GoatSubst.v`), on which the term-substitution
+lemmas (hence Preservation's `ST-Beta`/`ST-LetV` and Soundness) rest:
 
-- `typing_subst` (L6a, monomorphic term substitution);
-- `typing_subst_poly` (L6b, polymorphic term substitution).
+- `typing_weaken` (L4): inserting a middle block of bindings preserves typing;
+- `typing_tsubst_fix` (L5): substituting the type/row variables *not* free in the
+  context preserves typing (the context is unchanged, as the substitution fixes
+  its free variables — the corollary of general type/row substitution that
+  instantiation needs).
 
-Both are the standard Hindley–Milner substitution lemmas. Closing them needs the
-type/row-substitution-preserves-typing lemma (L5) together with weakening under
-binders, whose let case turns on generalization commuting with type substitution
-— i.e. capture-avoidance over the `nat`-indexed quantifier sets. `docs/semantics.md`
-§10 flags L6b's interaction with L5 as the subtlest case, and ADR 0008 budgets
-this HM substitution theory separately. They are stated at full strength (no
-theorem is weakened).
+Both are stated at full strength (no theorem is weakened). Their hard case is
+`T-Let`, where the let-generalized variables must be freshened away from the
+inserted/substituted vars before `gen` matches. On the atom representation this
+freshening is a finite-atom bijection (`atom_fresh`) feeding `typing_rename`; the
+subtlety ADR 0008 and `docs/semantics.md` §10 flag is the case where a
+generalized variable also occurs free in the result type *and* in the inserted
+context, which forces the proof to re-choose the body's instance substitutions
+rather than merely rename atoms. ADR 0008 budgets this HM substitution theory as
+a separate sub-development.
 
 `make ci` runs a frozen-admit guard (`make check-admits`) that fails if the
 `Admitted.` count in `proofs/*.v` ever differs from the two tracked here, so a
-later change can only make the proof *more* complete. When L6a/L6b close (#151),
-lower `EXPECTED_ADMITS` in the `Makefile` to 0.
+later change can only make the proof *more* complete. When `typing_weaken` and
+`typing_tsubst_fix` close (#151), lower `EXPECTED_ADMITS` in the `Makefile` to 0.
 
 ### Infrastructure (`GoatProofs.v`)
 

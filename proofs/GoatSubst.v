@@ -664,9 +664,13 @@ Proof. induction G as [|[x s] G IH]; constructor; simpl; auto using sch_more_gen
 (* ================================================================== *)
 
 (* Weakening (L4): inserting a middle block of bindings preserves typing.
-   The let case freshens the let-generalized variables away from the
-   inserted block's free variables (via [typing_rename]) before matching
-   [gen]. *)
+   The let case freshens the let-generalized variables away from the inserted
+   block's free variables (a finite-atom bijection feeding [typing_rename])
+   before matching [gen].  The hard sub-case is a generalized variable that
+   also occurs free in the result type AND in the inserted block: a uniform
+   renaming cannot both keep the result type fixed and move the variable out
+   of the block, so the proof must re-choose the body's instance
+   substitutions -- the sub-development ADR 0008 budgets separately. *)
 Lemma typing_weaken : forall E F G e T,
   typing (E ++ G) e T ->
   uniq (E ++ F ++ G) ->
