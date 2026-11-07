@@ -2,6 +2,11 @@
 //! the interpreter and wasm, and generate terminating, well-typed programs.
 
 use goat_mir::interp::{self, Piece, Value};
+use goat_mir::{Host, NoHost};
+
+mod host;
+
+pub use host::TestHost;
 
 /// What the interpreter says the program prints, and its live allocations.
 pub fn interpret(src: &str) -> (Vec<String>, usize) {
@@ -9,6 +14,11 @@ pub fn interpret(src: &str) -> (Vec<String>, usize) {
 }
 
 pub fn interpret_with_prelude(prelude: &str, src: &str) -> (Vec<String>, usize) {
+    interpret_hosted(prelude, src, &mut NoHost)
+}
+
+/// Like `interpret_with_prelude`, answering foreign calls from `host`.
+pub fn interpret_hosted(prelude: &str, src: &str, host: &mut dyn Host) -> (Vec<String>, usize) {
     let checked = goat_checker::check_with_prelude(prelude, src).expect("program type-checks");
     let program = goat_mir::mono(&checked).expect("program monomorphizes");
     assert_eq!(
@@ -16,7 +26,7 @@ pub fn interpret_with_prelude(prelude: &str, src: &str) -> (Vec<String>, usize) 
         Ok(()),
         "MIR verifies for: {src}"
     );
-    let outcome = interp::run(&program).expect("interpreter runs");
+    let outcome = interp::run_with_host(&program, host).expect("interpreter runs");
     let mut printed: Vec<String> = outcome
         .printed
         .iter()
@@ -53,6 +63,22 @@ pub fn compiled_with_prelude(prelude: &str, src: &str) -> (Vec<String>, u32) {
     let wasm = goat::compile_with_prelude(prelude, src).expect("program compiles");
     let run = goat_cli::run(&wasm).expect("wasm runs");
     (run.printed, run.live_allocs)
+}
+
+/// Run `src` against the test host both ways and assert that the two agree on
+/// what the program printed, on the host calls made (and their order), and on
+/// leaving nothing allocated. Returns the printed output joined by newlines
+/// and the host's log.
+pub fn run_foreign(src: &str) -> (String, Vec<String>) {
+    let mut oracle = TestHost::default();
+    let (expected, live) = interpret_hosted(goat_checker::PRELUDE, src, &mut oracle);
+    assert_eq!(live, 0, "interpreter leaked allocations for: {src}");
+    let wasm = goat::compile(src).expect("program compiles");
+    let (run, compiled) = goat_cli::run_with_host(&wasm, TestHost::default()).expect("wasm runs");
+    assert_eq!(run.live_allocs, 0, "wasm leaked allocations for: {src}");
+    assert_eq!(run.printed, expected, "wasm differs from interp: {src}");
+    assert_eq!(compiled.log, oracle.log, "host calls differ for: {src}");
+    (expected.join("\n"), oracle.log)
 }
 
 /// Run `src` both ways, assert they agree and neither side leaks, and return

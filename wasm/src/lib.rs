@@ -145,7 +145,16 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         .get(program.entry.0 as usize)
         .is_some_and(|root| root.ret == MTy::Ptr(HeapKind::Str));
     let writes_base = if prints_string { 3 } else { 2 };
-    let imports = writes_base + if uses.writes { WRITE_IMPORTS } else { 0 };
+    let foreign_base = writes_base + if uses.writes { WRITE_IMPORTS } else { 0 };
+    let imports = foreign_base + program.foreign.len() as u32;
+    let foreign_types: Vec<u32> = program
+        .foreign
+        .iter()
+        .map(|f| {
+            let params = val_types(f.params.iter().copied());
+            types.intern(params, val_types([f.ret]))
+        })
+        .collect();
 
     let mut data = Vec::new();
     let mut strings = Vec::new();
@@ -168,6 +177,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         types,
         imports,
         writes_base,
+        foreign_base,
         strings,
         helpers: Vec::new(),
         helper_base,
@@ -233,6 +243,9 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         import_section.import("goat", "write_number", EntityType::Function(print_number));
         import_section.import("goat", "write_string", EntityType::Function(print_bool));
         import_section.import("goat", "write_end", EntityType::Function(entry_ty));
+    }
+    for (foreign, ty) in program.foreign.iter().zip(&foreign_types) {
+        import_section.import(&foreign.module, &foreign.name, EntityType::Function(*ty));
     }
     module.section(&import_section);
 
@@ -356,6 +369,8 @@ struct Shared<'a> {
     imports: u32,
     /// The index of the first `write_*` import, when the program has any.
     writes_base: u32,
+    /// The index of the import for `ForeignId(0)`; the rest follow in order.
+    foreign_base: u32,
     /// Absolute address of each `Program.data` string object.
     strings: Vec<u32>,
     helpers: Vec<Helper>,
@@ -1282,6 +1297,7 @@ impl<'p> FuncCx<'_, 'p> {
                 self.string_equal(a, b, out);
                 Ok(Some(MTy::Bool))
             }
+            Expr::CallForeign(f, args) => self.call_foreign(*f, args, out),
             Expr::Write(write) => {
                 let call = match write {
                     Write::Number(value) => {
@@ -1306,6 +1322,36 @@ impl<'p> FuncCx<'_, 'p> {
                 Ok(Some(MTy::Unit))
             }
         }
+    }
+
+    /// The arguments are borrowed locals, so the host sees each pointer as
+    /// it stands and the caller still owns it afterwards. A returned string is
+    /// a block the host got from `goat_alloc`, so it arrives with count 1.
+    fn call_foreign(
+        &mut self,
+        f: ForeignId,
+        args: &[Local],
+        out: &mut Code,
+    ) -> Result<Ty, EmitError> {
+        let foreign = self
+            .program
+            .foreign
+            .get(f.0 as usize)
+            .ok_or(EmitError::Malformed("unknown foreign function"))?;
+        if foreign.params.len() != args.len() {
+            return Err(EmitError::Malformed("foreign call arity"));
+        }
+        for (&arg, &want) in args.iter().zip(&foreign.params) {
+            let &(index, ty) = self.scope.get(&arg).ok_or(EmitError::UnboundLocal(arg))?;
+            if ty != want {
+                return Err(EmitError::Malformed("foreign argument type"));
+            }
+            if let Some(index) = index {
+                out.push(Instruction::LocalGet(index));
+            }
+        }
+        out.push(Instruction::Call(self.shared.foreign_base + f.0));
+        Ok(Some(foreign.ret))
     }
 
     fn string_address(&self, data: DataId) -> Result<u32, EmitError> {

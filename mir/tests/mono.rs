@@ -1,6 +1,10 @@
 use goat_checker::{Checked, GoatError, check_with_prelude};
 use goat_mir::*;
 
+mod common;
+
+use common::{Recorder, foreign_fn};
+
 /// Without the standard prelude, whose tags would join every variant layout.
 fn check(src: &str) -> Result<Checked, Vec<GoatError>> {
     check_with_prelude("", src)
@@ -777,36 +781,150 @@ fn destructuring_reads_fields_by_label() {
     assert_eq!(value(param), num(25.0));
 }
 
-const FORWARD: &str = "forward = foreign \"turtle\" \"forward\" (Number) -> Unit\n";
+const DECLS: &str = "forward = foreign \"test\" \"forward\" (Number) -> Unit\n\
+                     double = foreign \"test\" \"double\" (Number) -> Number\n\
+                     shout = foreign \"test\" \"shout\" (String) -> String\n\
+                     say = foreign \"test\" \"say\" (String) -> Unit\n";
 
-#[test]
-fn declaring_a_foreign_function_without_calling_it_lowers() {
-    assert_eq!(value(&format!("{FORWARD}1 + 2")), num(3.0));
+fn hosted(body: &str) -> (Program, Outcome, Recorder) {
+    let src = format!("{DECLS}{body}");
+    let p = mono(&check(&src).expect("checks")).expect("lowers");
+    assert_eq!(verify(&p), Ok(()), "{src}");
+    let mut host = Recorder::default();
+    let out = run_with_host(&p, &mut host).expect("runs");
+    assert_eq!(out.live_allocations, 0, "{src}");
+    (p, out, host)
+}
+
+fn names(host: &Recorder) -> Vec<&str> {
+    host.calls.iter().map(|(n, _)| n.as_str()).collect()
 }
 
 #[test]
-fn using_a_foreign_function_is_a_staged_diagnostic_at_the_use() {
-    for body in [
-        "forward(10)",
-        "go = program() do forward(1) done\ngo()",
-        "g = forward\n1",
-        "forward",
-    ] {
-        let src = format!("{FORWARD}{body}");
-        let checked = check(&src).expect("checks");
-        let Err(errors) = mono(&checked) else {
-            panic!("lowered a foreign use: {src}");
-        };
-        assert!(!errors.is_empty(), "{src}");
-        for e in &errors {
-            assert!(
-                e.message.contains("foreign function is not supported yet"),
-                "{src}: {e:?}"
-            );
-            assert!(
-                src[e.span.start..e.span.end].contains("forward"),
-                "{src}: {e:?}"
-            );
-        }
-    }
+fn a_declaration_nothing_uses_adds_no_import() {
+    assert!(hosted("1 + 2").0.foreign.is_empty());
+    assert!(
+        hosted("go = program() do forward(1) done\n1")
+            .0
+            .foreign
+            .is_empty()
+    );
+}
+
+#[test]
+fn only_the_foreign_functions_a_program_uses_become_imports() {
+    let (p, _, _) = hosted("forward(double(1))");
+    assert_eq!(p.foreign.len(), 2);
+}
+
+#[test]
+fn a_call_lowers_to_call_foreign_of_one_import() {
+    let (p, out, host) = hosted("forward(10)");
+    assert_eq!(
+        p.foreign,
+        [foreign_fn("forward", vec![MTy::Float], MTy::Unit)]
+    );
+    assert_eq!(effects(&p.funcs[0].body), [Effect::Foreign(ForeignId(0))]);
+    assert_eq!(out.value, Value::Unit);
+    assert_eq!(
+        host.calls,
+        [("forward".into(), vec![HostValue::Number(10.0)])]
+    );
+}
+
+#[test]
+fn a_foreign_function_used_twice_shares_its_import() {
+    let (p, _, host) = hosted("forward(1); forward(2); forward(3)");
+    assert_eq!(p.foreign.len(), 1);
+    assert_eq!(
+        effects(&p.funcs[0].body),
+        [Effect::Foreign(ForeignId(0)); 3]
+    );
+    assert_eq!(names(&host), ["forward"; 3]);
+}
+
+#[test]
+fn a_discarded_unit_call_survives_in_order_through_reference_counting() {
+    let (p, out, host) = hosted("r = forward(1); forward(2); forward(double(3)); 0");
+    assert_eq!(
+        effects(&p.funcs[0].body),
+        [
+            Effect::Foreign(ForeignId(0)),
+            Effect::Foreign(ForeignId(0)),
+            Effect::Foreign(ForeignId(1)),
+            Effect::Foreign(ForeignId(0)),
+        ]
+    );
+    assert_eq!(out.value, num(0.0));
+    let args: Vec<_> = host.calls.iter().map(|(_, a)| a.clone()).collect();
+    assert_eq!(
+        args,
+        [
+            vec![HostValue::Number(1.0)],
+            vec![HostValue::Number(2.0)],
+            vec![HostValue::Number(3.0)],
+            vec![HostValue::Number(6.0)],
+        ]
+    );
+}
+
+#[test]
+fn arguments_are_evaluated_left_to_right_before_the_call() {
+    let (_, out, host) = hosted("say(shout(\"a\")); double(double(1) + double(2))");
+    assert_eq!(out.value, num(12.0));
+    assert_eq!(names(&host), ["shout", "say", "double", "double", "double"]);
+}
+
+#[test]
+fn a_string_argument_is_borrowed_and_a_returned_string_is_owned() {
+    let (_, out, host) = hosted("s = shout(\"hi\")\nsay(s); say(s); say(shout(s)); 1");
+    assert_eq!(out.value, num(1.0));
+    let said: Vec<_> = host
+        .calls
+        .iter()
+        .filter(|(n, _)| n == "say")
+        .map(|(_, a)| a[0].clone())
+        .collect();
+    assert_eq!(
+        said,
+        [
+            HostValue::Str("hi!".into()),
+            HostValue::Str("hi!".into()),
+            HostValue::Str("hi!!".into()),
+        ]
+    );
+}
+
+#[test]
+fn a_foreign_function_is_a_value() {
+    let (p, out, host) = hosted("g = double\ng(4)");
+    assert_eq!(out.value, num(8.0));
+    assert_eq!(names(&host), ["double"]);
+    assert_eq!(p.foreign.len(), 1);
+
+    let apply = "apply = program(f, x) do f(x) done\napply(double, 5)";
+    assert_eq!(hosted(apply).1.value, num(10.0));
+
+    let unit = "h = forward\nh(1); h(2); 0";
+    assert_eq!(names(&hosted(unit).2), ["forward", "forward"]);
+
+    let strings = "apply = program(f, x) do f(x) done\nsay(apply(shout, \"a\")); 0";
+    assert_eq!(hosted(strings).1.value, num(0.0));
+}
+
+#[test]
+fn a_foreign_binding_can_be_the_value_of_the_program() {
+    let src = "f = foreign \"test\" \"double\" (Number) -> Number";
+    let p = mono(&check(src).expect("checks")).expect("lowers");
+    assert_eq!(verify(&p), Ok(()));
+    let out = run_with_host(&p, &mut Recorder::default()).expect("runs");
+    assert_eq!(out.live_allocations, 0);
+}
+
+#[test]
+fn a_foreign_call_inside_a_function_and_a_loop_runs_each_time() {
+    let (_, _, host) = hosted(
+        "go = program(n) do forward(n) done\nrepeat 3 times do go(7) done;\nfor i from 1 to 2 do forward(i) done;\n0",
+    );
+    assert_eq!(names(&host), ["forward"; 5]);
 }

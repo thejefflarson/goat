@@ -19,6 +19,10 @@
 //!   deferred drops, because nothing can run after the call.
 //! - Evaluation order is preserved and no expression is removed or
 //!   duplicated, so effectful calls (even `Unit`-typed ones) are untouched.
+//!   `insert_rc` checks it: each function's `effects` (foreign calls and
+//!   writes, in order) must come out as it went in.
+//! - `CallForeign` borrows its arguments for the call, like `Write::Str`; a
+//!   pointer it returns is a fresh owned reference.
 //! - Immortal objects (`rc == u32::MAX`) get the same `Dup`/`Drop` nodes as any
 //!   other pointer; every backend treats those as no-ops on the sentinel, which
 //!   keeps the verifier's exactly-once rule uniform.
@@ -42,6 +46,11 @@ pub fn insert_rc(program: &mut Program) {
         .map(|func| Cx::new(program, func).rewrite())
         .collect();
     for (func, body) in program.funcs.iter_mut().zip(bodies) {
+        assert_eq!(
+            effects(&func.body),
+            effects(&body),
+            "reference counting changed a function's effects"
+        );
         func.body = body;
     }
     if let Some(entry) = program.funcs.get_mut(program.entry.0 as usize)
@@ -301,6 +310,7 @@ impl<'p> Cx<'p> {
                 }
                 Some(MTy::Unit)
             }
+            Expr::CallForeign(f, _) => program.foreign.get(f.0 as usize).map(|f| f.ret),
             Expr::Trap(_) => None,
         }
     }
@@ -347,6 +357,17 @@ impl<'p> Cx<'p> {
                 }
             }
             Expr::Write(Write::Lit(_) | Write::End) => Out::new(e.clone()),
+            Expr::CallForeign(_, args) => {
+                let mut live = after.clone();
+                let mut out = Out::new(e.clone());
+                for &arg in args.iter().rev() {
+                    let borrowed = self.borrow(Expr::Const(Const::Unit), arg, &live);
+                    live.extend(borrowed.uses.iter().copied());
+                    out.uses.extend(borrowed.uses);
+                    out.pending.extend(borrowed.pending);
+                }
+                out
+            }
             Expr::Let(x, rhs, body) => self.let_(*x, rhs, body, after),
             Expr::BinInt(op, a, b) => self.binary(a, b, after, |a, b| Expr::BinInt(*op, a, b)),
             Expr::BinFloat(op, a, b) => self.binary(a, b, after, |a, b| Expr::BinFloat(*op, a, b)),

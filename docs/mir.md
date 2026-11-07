@@ -197,8 +197,17 @@ lists must iterate, not recurse.
 
 - **Effectful calls are never dropped, duplicated, or reordered**, even when
   they return `Unit`. Value erasure applies to `Unit` *values*, not to the
-  *calls* that produce them. Mono marks foreign/effectful calls so later passes
-  preserve them exactly.
+  *calls* that produce them. A host call is its own node, `CallForeign`, and
+  `effects(expr)` lists the foreign calls and writes of a function in
+  evaluation order. `insert_rc` asserts that list is the same before and after
+  it runs, so a pass that dropped, duplicated or reordered a call fails loudly.
+- **Foreign calls cross by borrowing.** `CallForeign(import, locals)` takes
+  locals so that a pointer argument is borrowed for the call, like
+  `Write(Str(x))`; the caller keeps its reference and drops it afterwards. A
+  string result is a fresh owned reference: on wasm the host allocates it with
+  the exported `goat_alloc`, which returns a block with `rc = 1`, then writes
+  the length (`u32` at offset 8) and the bytes (from offset 12). A string passed
+  to the host is read from the same two offsets.
 - **`Trap(message)`** is the single runtime-error node — `first([])`, a failed
   bounds check, a stack-overflow guard. A trap aborts with the message; it is
   not catchable in v1. User-facing *static* errors still come only from the
@@ -229,6 +238,7 @@ enum Expr {
     StrLit(DataId),
     StrEq(a, b),                               // bytes equal; borrows both strings
     Write(Number(e) | Str(x) | Lit(data) | End), // host output line; Unit
+    CallForeign(import, locals),               // host function; effectful; borrows pointers
     Dup(Local), Drop(Local),                   // Phase 6, inserted by the RC pass
     Trap(message),
 }

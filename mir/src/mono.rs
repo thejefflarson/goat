@@ -5,7 +5,9 @@ use crate::canon::{canonical, ground_fields, layout_fields};
 use crate::mir::*;
 use crate::rc::insert_rc;
 use goat_checker::captures::for_each_child;
-use goat_checker::hir::{self, BinOp, Builtin, ExprId, ExprKind, Param, PatternPayload, Symbol};
+use goat_checker::hir::{
+    self, BinOp, Boundary, Builtin, ExprId, ExprKind, Param, PatternPayload, Symbol,
+};
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target};
@@ -22,13 +24,15 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut labels = BTreeSet::new();
     collect_tags(&checked.root, &mut labels);
-    let mut foreign = HashSet::new();
+    let mut foreign = HashMap::new();
     collect_foreign(&checked.root, &mut foreign);
     let mut m = Mono {
         typed: &checked.typed,
         lambdas,
         var_tys,
         foreign,
+        imports: Vec::new(),
+        foreign_fns: HashMap::new(),
         specs: Vec::new(),
         out: vec![None],
         work: Vec::new(),
@@ -84,6 +88,7 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         layouts: m.layouts,
         sigs: m.sigs,
         data: m.data,
+        foreign: m.imports,
     };
     insert_rc(&mut program);
     Ok(program)
@@ -103,14 +108,36 @@ fn collect_tags(e: &hir::Expr, out: &mut BTreeSet<String>) {
     for_each_child(e, &mut |c| collect_tags(c, out));
 }
 
-/// The binding of every `foreign` function.
-fn collect_foreign(e: &hir::Expr, out: &mut HashSet<Symbol>) {
+/// The host function each `foreign` binding names.
+fn collect_foreign(e: &hir::Expr, out: &mut HashMap<Symbol, ForeignFn>) {
     if let ExprKind::Let { symbol, value, .. } = &e.kind
-        && matches!(value.kind, ExprKind::Foreign { .. })
+        && let ExprKind::Foreign {
+            module,
+            name,
+            params,
+            ret,
+        } = &value.kind
     {
-        out.insert(*symbol);
+        out.insert(
+            *symbol,
+            ForeignFn {
+                module: module.clone(),
+                name: name.clone(),
+                params: params.iter().map(|&b| boundary_ty(b)).collect(),
+                ret: boundary_ty(*ret),
+            },
+        );
     }
     for_each_child(e, &mut |c| collect_foreign(c, out));
+}
+
+fn boundary_ty(b: Boundary) -> MTy {
+    match b {
+        Boundary::Number => MTy::Float,
+        Boundary::Bool => MTy::Bool,
+        Boundary::Unit => MTy::Unit,
+        Boundary::Str => MTy::Ptr(HeapKind::Str),
+    }
 }
 
 #[derive(Clone)]
@@ -233,8 +260,14 @@ struct Mono<'a> {
     typed: &'a Typed,
     lambdas: HashMap<Target, Lambda<'a>>,
     var_tys: HashMap<Symbol, &'a Ty>,
-    /// Host imports have no backend yet: any use of one is a diagnostic.
-    foreign: HashSet<Symbol>,
+    /// The host function of each `foreign` binding.
+    foreign: HashMap<Symbol, ForeignFn>,
+    /// The host functions the program uses, which become its imports. A
+    /// declaration nothing uses is not here.
+    imports: Vec<ForeignFn>,
+    /// The function that calls an import with its own parameters, for an
+    /// import used as a value.
+    foreign_fns: HashMap<ForeignId, FuncId>,
     specs: Vec<Spec>,
     out: Vec<Option<Func>>,
     work: Vec<(FuncId, Target, Subst, Vec<Ty>)>,
@@ -732,14 +765,58 @@ impl Mono<'_> {
         }
     }
 
-    /// A use of a foreign function (ADR 0005). The placeholder is never run:
-    /// the program is rejected with the diagnostic.
-    fn unsupported_foreign(&mut self, at: &hir::Expr) -> Expr {
-        self.errors.push(GoatError::new(
-            at.span,
-            "calling a foreign function is not supported yet (host imports are not compiled)",
-        ));
-        Expr::Trap("foreign function".into())
+    /// The import for the foreign binding `symbol`, registered on first use.
+    fn import(&mut self, symbol: Symbol) -> ForeignId {
+        let foreign = &self.foreign[&symbol];
+        let index = match self.imports.iter().position(|i| i == foreign) {
+            Some(index) => index,
+            None => {
+                self.imports.push(foreign.clone());
+                self.imports.len() - 1
+            }
+        };
+        ForeignId(index as u32)
+    }
+
+    /// A foreign function used as a value: a closure over a function that
+    /// forwards its parameters to the import.
+    fn foreign_value(&mut self, cx: &FnCx, symbol: Symbol, use_id: ExprId) -> Expr {
+        let import = self.import(symbol);
+        let target = match self.foreign_fns.get(&import) {
+            Some(&f) => f,
+            None => {
+                let ForeignFn { params, ret, .. } = self.imports[import.0 as usize].clone();
+                let locals: Vec<Local> = (0..params.len() as u32).map(Local).collect();
+                let id = FuncId(self.out.len() as u32);
+                self.out.push(Some(Func {
+                    params: locals.iter().copied().zip(params).collect(),
+                    env: None,
+                    ret,
+                    body: Expr::CallForeign(import, locals),
+                }));
+                self.foreign_fns.insert(import, id);
+                id
+            }
+        };
+        let ty = self.ground(&self.typed.node_types[&use_id], &cx.subst);
+        self.closure_of(target, &ty)
+    }
+
+    /// `import(args)`. Each argument is bound to a local, in order, because
+    /// the call borrows its pointers (see `Expr::CallForeign`).
+    fn foreign_call(&mut self, cx: &mut FnCx, symbol: Symbol, args: &[hir::Expr]) -> Expr {
+        let import = self.import(symbol);
+        let bound: Vec<(Local, Expr)> = args
+            .iter()
+            .map(|a| {
+                let value = self.expr(cx, a, false);
+                (cx.fresh(), value)
+            })
+            .collect();
+        let call = Expr::CallForeign(import, bound.iter().map(|(l, _)| *l).collect());
+        bound.into_iter().rev().fold(call, |body, (l, value)| {
+            Expr::Let(l, Box::new(value), Box::new(body))
+        })
     }
 
     fn expr(&mut self, cx: &mut FnCx, e: &hir::Expr, tail: bool) -> Expr {
@@ -747,8 +824,8 @@ impl Mono<'_> {
             ExprKind::Unit => Expr::Const(Const::Unit),
             ExprKind::Number(n) => Expr::Const(Const::Float(*n)),
             ExprKind::Bool(b) => Expr::Const(Const::Bool(*b)),
-            ExprKind::Var { symbol, .. } if self.foreign.contains(symbol) => {
-                self.unsupported_foreign(e)
+            ExprKind::Var { symbol, .. } if self.foreign.contains_key(symbol) => {
+                self.foreign_value(cx, *symbol, e.id)
             }
             ExprKind::Var { symbol, .. } => {
                 let function = Target::Named(*symbol);
@@ -788,7 +865,7 @@ impl Mono<'_> {
                 if matches!(value.kind, ExprKind::Foreign { .. }) {
                     return match rest {
                         Some(rest) => self.expr(cx, rest, tail),
-                        None => self.unsupported_foreign(value),
+                        None => self.foreign_value(cx, *symbol, value.id),
                     };
                 }
                 if let Some(rest) = rest {
@@ -1125,6 +1202,11 @@ impl Mono<'_> {
             } else {
                 Expr::CallDirect(print, vec![value])
             };
+        }
+        if let ExprKind::Var { symbol, .. } = &callee.kind
+            && self.foreign.contains_key(symbol)
+        {
+            return self.foreign_call(cx, *symbol, args);
         }
         let direct = match &callee.kind {
             ExprKind::Var { symbol, .. }

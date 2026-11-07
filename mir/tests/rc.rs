@@ -359,3 +359,116 @@ fn mono_output_of_a_string_root_is_not_dropped() {
     assert_eq!(total(&p, drops), 0);
     assert_eq!(run_clean(&p).root_string, Some(b"hi".to_vec()));
 }
+
+fn foreign_program(body: Expr) -> Program {
+    let mut p = program(vec![func(MTy::Int, body)]);
+    p.foreign = vec![
+        foreign_fn("greet", vec![], STR),
+        foreign_fn("say", vec![STR], MTy::Unit),
+        foreign_fn("forward", vec![MTy::Float], MTy::Unit),
+    ];
+    p
+}
+
+fn foreign_call(id: u32, args: &[u32]) -> Expr {
+    Expr::CallForeign(ForeignId(id), args.iter().map(|&a| Local(a)).collect())
+}
+
+#[test]
+fn a_unit_foreign_call_in_a_discard_position_is_kept_in_order() {
+    // forward(1); forward(2); forward(3); 0, each result dead
+    let call = |n: f64| foreign_call(2, &[n as u32]);
+    let body = let_(
+        10,
+        float(1.0),
+        let_(
+            11,
+            float(2.0),
+            let_(
+                12,
+                float(3.0),
+                let_(
+                    20,
+                    call(10.0),
+                    let_(21, call(11.0), let_(22, call(12.0), int(0))),
+                ),
+            ),
+        ),
+    );
+    let before = foreign_program(body);
+    let after = rc(before.clone());
+    let wanted = [Effect::Foreign(ForeignId(2)); 3];
+    assert_eq!(effects(entry(&before)), wanted);
+    assert_eq!(effects(entry(&after)), wanted);
+    let mut host = Recorder::default();
+    let out = run_with_host(&after, &mut host).expect("runs");
+    assert_eq!(out.live_allocations, 0);
+    let args: Vec<_> = host.calls.into_iter().map(|(_, a)| a).collect();
+    assert_eq!(
+        args,
+        [
+            vec![HostValue::Number(1.0)],
+            vec![HostValue::Number(2.0)],
+            vec![HostValue::Number(3.0)]
+        ]
+    );
+}
+
+#[test]
+fn a_foreign_call_borrows_its_pointers_and_the_caller_drops_them() {
+    // s = greet(); say(s); say(s); 1
+    let body = let_(
+        0,
+        foreign_call(0, &[]),
+        let_(
+            1,
+            foreign_call(1, &[0]),
+            let_(2, foreign_call(1, &[0]), int(1)),
+        ),
+    );
+    let p = rc(foreign_program(body));
+    assert_eq!(dups(entry(&p)), 0, "borrowed, so no Dup");
+    assert_eq!(drops(entry(&p)), 1, "dropped once, after the last call");
+    assert_eq!(
+        effects(entry(&p)),
+        [
+            Effect::Foreign(ForeignId(0)),
+            Effect::Foreign(ForeignId(1)),
+            Effect::Foreign(ForeignId(1)),
+        ]
+    );
+    let mut host = Recorder::default();
+    let out = run_with_host(&p, &mut host).expect("runs");
+    assert_eq!((out.value, out.live_allocations), (Value::Int(1), 0));
+    assert_eq!(out.allocations, 1);
+}
+
+#[test]
+fn a_returned_string_that_is_never_used_is_still_released() {
+    let p = rc(foreign_program(let_(0, foreign_call(0, &[]), int(7))));
+    assert_eq!(effects(entry(&p)), [Effect::Foreign(ForeignId(0))]);
+    let out = run_with_host(&p, &mut Recorder::default()).expect("runs");
+    assert_eq!((out.value, out.live_allocations), (Value::Int(7), 0));
+}
+
+#[test]
+fn a_foreign_call_in_each_branch_is_kept_in_each_branch() {
+    // if true then (s = greet(); say(s); 1) else (forward(0); 2)
+    let then = let_(
+        0,
+        foreign_call(0, &[]),
+        let_(1, foreign_call(1, &[0]), int(1)),
+    );
+    let other = let_(2, float(0.0), let_(3, foreign_call(2, &[2]), int(2)));
+    let p = rc(foreign_program(if_(boolean(true), then, other)));
+    assert_eq!(
+        effects(entry(&p)),
+        [
+            Effect::Foreign(ForeignId(0)),
+            Effect::Foreign(ForeignId(1)),
+            Effect::Foreign(ForeignId(2)),
+        ]
+    );
+    let out = run_with_host(&p, &mut Recorder::default()).expect("runs");
+    assert_eq!((out.value, out.live_allocations), (Value::Int(1), 0));
+}
