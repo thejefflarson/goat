@@ -516,6 +516,47 @@ fn spread_update_in_a_loop() {
 }
 
 #[test]
+fn spread_of_a_record_that_is_still_live_leaves_it_intact() {
+    let src = "p = {x: 1, y: 2, s: \"hi\"} \
+               q = {...p, x: 10} \
+               r = {...p, y: 20} \
+               s = {...q, y: q.x + r.y} \
+               p.x + p.y + q.x + q.y + r.x + r.y + s.y";
+    assert_eq!(run(src), "66");
+    let closure = "p = {n: 1, tag: \"t\"} \
+                   bump = program(m) do {...m, n: m.n + p.n} done \
+                   a = bump(p) b = bump(bump(p)) \
+                   p.n * 100 + a.n * 10 + b.n";
+    assert_eq!(run(closure), "123");
+}
+
+#[test]
+fn a_spread_loop_over_a_dead_record_allocates_the_same_however_long_it_runs() {
+    let allocations = |n: u32| {
+        let src = format!(
+            "step = program(s) do {{...s, n: s.n - 1, acc: s.acc + s.n}} done \
+             go = program(s) do if s.n < 1 then s.acc else go(step(s)) done done \
+             go({{n: {n}, acc: 0, tag: 1}})"
+        );
+        let checked = goat_checker::check(&src).expect("type-checks");
+        let program = goat_mir::mono(&checked).expect("monomorphizes");
+        let outcome = goat_mir::interp::run(&program).expect("runs");
+        assert_eq!(outcome.live_allocations, 0);
+        outcome.allocations
+    };
+    assert_eq!(allocations(10), allocations(1000));
+}
+
+#[test]
+fn chained_spreads_reuse_and_free_every_field() {
+    let src = "step = program(m) do {...m, n: m.n + 1, name: m.name, inner: {...m.inner, v: m.inner.v * 2}} done \
+               go = program(m, k) do if k < 1 then m else go(step(m), k - 1) done done \
+               r = go({n: 0, name: \"goat\", inner: {v: 1, w: \"w\"}}, 10) \
+               r.n * 10000 + r.inner.v + 0";
+    assert_eq!(run(src), "101024");
+}
+
+#[test]
 fn destructuring_binds_fields() {
     assert_eq!(
         run("point = {x: 3, y: 4} {x, y} = point x * x + y * y"),

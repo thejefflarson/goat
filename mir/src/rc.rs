@@ -26,6 +26,7 @@
 //! - Immortal objects (`rc == u32::MAX`) get the same `Dup`/`Drop` nodes as any
 //!   other pointer; every backend treats those as no-ops on the sentinel, which
 //!   keeps the verifier's exactly-once rule uniform.
+//! - `ReuseRecord` moves its base after its fields, like a by-value use of it.
 //! - `Unpack`, `ReuseVariant` and `Free` (in-place reuse) are not produced by
 //!   mono and are passed through with their operand treated as consumed.
 
@@ -288,6 +289,12 @@ impl<'p> Cx<'p> {
                 },
                 _ => None,
             },
+            Expr::ReuseRecord(_, layout, fields) => {
+                fields.iter().for_each(|a| {
+                    self.ty(a);
+                });
+                Some(MTy::Ptr(HeapKind::Record(*layout)))
+            }
             Expr::AllocVariant(layout, _, fields) | Expr::ReuseVariant(_, layout, _, fields) => {
                 fields.iter().for_each(|a| {
                     self.ty(a);
@@ -409,6 +416,9 @@ impl<'p> Cx<'p> {
                     parts.uses.insert(*token);
                 }
                 parts.into_out(|fields| Expr::ReuseVariant(*token, *layout, *tag, fields))
+            }
+            Expr::ReuseRecord(base, layout, fields) => {
+                self.reuse_record(*base, *layout, fields, after)
             }
             Expr::Unpack(x, tag, binds, body) => self.unpack(*x, *tag, binds, body, after),
         }
@@ -567,6 +577,22 @@ impl<'p> Cx<'p> {
             uses,
             pending,
         }
+    }
+
+    /// The fields are evaluated while `base` is still live, then the op moves
+    /// it, after a `Dup` when it is needed later (so the cell is shared and the
+    /// op allocates).
+    fn reuse_record(&mut self, base: Local, layout: LayoutId, fields: &[Expr], after: &Set) -> Out {
+        let mut live = after.clone();
+        live.insert(base);
+        let parts = self.seq(&fields.iter().collect::<Vec<_>>(), &live);
+        let mut out = parts.into_out(|fields| Expr::ReuseRecord(base, layout, fields));
+        out.uses.insert(base);
+        if after.contains(&base) {
+            let reuse = out.expr;
+            out.expr = Expr::Let(self.fresh(), Box::new(Expr::Dup(base)), Box::new(reuse));
+        }
+        out
     }
 
     fn unpack(&mut self, x: Local, tag: u32, binds: &[Local], body: &Expr, after: &Set) -> Out {

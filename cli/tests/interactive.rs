@@ -517,3 +517,51 @@ fn fuel_that_is_never_refilled_runs_out() {
     });
     assert!(outcome.is_err(), "fuel should be spent");
 }
+
+/// An all-scalar model, so a steady-state `update` allocates nothing but the
+/// model's own cell, which it should reuse.
+const COUNTER: &str = r##"
+init = {x: 0, y: 0, n: 0}
+
+update = program(model, event) do
+  match event do
+    KeyDown(key) then {...model, x: model.x + 1, n: model.n + 1}
+  else model done
+done
+
+draw = program(model) do
+  [Line({x1: 0, y1: 0, x2: model.x, y2: model.y, color: "black"})]
+done
+"##;
+
+#[test]
+fn update_reuses_the_models_cell_on_both_backends_and_nothing_leaks() {
+    let program = program(COUNTER);
+    let mut host = SceneHost::default();
+    let (mut session, mut model) = Session::setup(&program, &mut host).expect("setup runs");
+    let first = model;
+    for _ in 0..50 {
+        let key = session.string("a");
+        let event = session
+            .event("KeyDown", vec![key])
+            .expect("event constructs");
+        model = session.update(model, event).expect("update runs");
+        assert_eq!(model, first, "interpreter allocated a fresh model");
+    }
+    assert_eq!(session.fields(model).unwrap()[0], Value::Float(50.0));
+    session.release_model(model).unwrap();
+    assert_eq!(session.shutdown().unwrap(), 0, "interpreter leaked");
+
+    let wasm = goat_wasm::emit(&program).expect("program emits");
+    let mut guest = Guest::new(&wasm, SceneHost::default()).expect("module instantiates");
+    let mut model: i32 = guest.call("goat_setup", ()).expect("setup runs");
+    let first = model;
+    for _ in 0..50 {
+        model = press(&mut guest, model, "a").expect("update runs");
+        assert_eq!(model, first, "wasm allocated a fresh model");
+    }
+    assert_eq!(number(&mut guest, model, 0), 50.0);
+    guest.call::<_, ()>("goat_release_model", model).unwrap();
+    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
+    assert_eq!(guest.live_allocs().unwrap(), 0, "wasm leaked");
+}

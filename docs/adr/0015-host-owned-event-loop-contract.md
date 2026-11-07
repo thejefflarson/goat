@@ -79,10 +79,10 @@ teardown):
   old handles are dead and it holds only the returned new model. Perceus reuses
   the old model's cells in place for spread updates (`{...model, x: ...}`), so a
   steady-state loop allocates ~nothing.
-  > Note (as built, #105): in-place record reuse is not yet implemented — MIR has
-  > `ReuseVariant` but no `ReuseRecord`, so a spread update allocates a fresh
-  > record and frees the old one. The live-allocation balance above still holds;
-  > the "allocates ~nothing" steady state is tracked by #173.
+  > Note (as built): a spread that keeps the base's layout lowers to MIR
+  > `ReuseRecord`, which overwrites the base's cell when its count is 1 (the
+  > host's old handle is dead, nothing else shares it) and allocates otherwise.
+  > Variant reuse (`ReuseVariant`) is not yet produced.
 - `goat_draw` `Dup`s the model (O(1) rc-inc) so `draw` can consume its copy while
   the host keeps the original; the returned picture is streamed and dropped
   inside the wrapper, so the host never holds a picture pointer and has nothing
