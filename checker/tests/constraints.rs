@@ -26,7 +26,7 @@ fn equality_works_on_anything_without_a_function() {
         "true != false",
         "\"a\" == \"b\"",
         "{x: 1, y: true} == {x: 1, y: true}",
-        "Circle(1) == Circle(1)",
+        "tag Circle Circle(1) == Circle(1)",
         "Empty == Link(1, Empty)",
         "{a: {b: [1, 2]}} == {a: {b: [1, 2]}}",
     ] {
@@ -68,7 +68,7 @@ fn comparing_functions_is_rejected_plainly() {
 
 #[test]
 fn a_function_hidden_inside_a_value_is_found() {
-    let f = "f = program(x) do x done  ";
+    let f = "tag Wrap f = program(x) do x done  ";
     for source in [
         "{run: f} == {run: f}",
         "Wrap(f) == Wrap(f)",
@@ -109,10 +109,10 @@ fn an_equality_function_is_polymorphic_over_eq_types() {
 
 #[test]
 fn open_rows_inherit_the_equality_constraint() {
-    let src = "same = program(a, b) do a == b done  \
+    let src = "tag Circle same = program(a, b) do a == b done  \
                same(Circle(1), Circle(2))";
     assert_eq!(type_of(src).unwrap(), "Bool");
-    let src = "pick = program(s) do match s do Circle(r) then s == s else false done done \
+    let src = "tag Circle pick = program(s) do match s do Circle(r) then s == s else false done done \
                pick(Circle(program(x) do x done))";
     assert_eq!(error_of(src), "can't compare functions with `==`");
 }
@@ -179,7 +179,7 @@ fn arithmetic_on_something_else_says_what_it_needs() {
         "`*` needs numbers or records of numbers, but this is `String`"
     );
     assert_eq!(
-        error_of("Circle(1) - Circle(2)")
+        error_of("tag Circle Circle(1) - Circle(2)")
             .split(", but")
             .next()
             .unwrap(),
@@ -252,7 +252,7 @@ fn print_takes_any_one_value_and_returns_unit() {
         "print(1)",
         "print(\"hi\")",
         "print({x: 1})",
-        "print(Circle(1))",
+        "tag Circle print(Circle(1))",
         "print([1, 2])",
         "print(program(x) do x done)",
     ] {

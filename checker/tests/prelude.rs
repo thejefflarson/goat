@@ -158,10 +158,10 @@ fn programs_that_avoid_prelude_names_do_not_warn() {
 
 #[test]
 fn tags_the_prelude_constructs_are_not_reported_as_unmatched() {
-    let prelude = "make = program(n) do Oops(n) done\n";
-    assert!(warnings(prelude, "match make(1) do Oops(n) then n done").is_empty());
+    let prelude = "tag Oops make = program(n) do Oops(n) done\n";
+    assert!(warnings(prelude, "tag Oops match make(1) do Oops(n) then n done").is_empty());
     assert!(warnings(prelude, "1").is_empty());
-    let user = warnings(prelude, "Oops(1)");
+    let user = warnings(prelude, "tag Oops Oops(1)");
     assert_eq!(user.len(), 1);
     assert_eq!(user[0].span.file, FileId::User);
 }

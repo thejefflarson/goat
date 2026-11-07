@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn compile_returns_warnings_alongside_the_module() {
-        let src = "match Cirle(5) do Circle(r) then r else 0 done";
+        let src = "tag Cirle tag Circle match Cirle(5) do Circle(r) then r else 0 done";
         let (wasm, warnings) = compile_with_warnings(goat_checker::PRELUDE, src).expect("compiles");
         assert_eq!(&wasm[..4], b"\0asm");
         assert_eq!(warnings.len(), 1);

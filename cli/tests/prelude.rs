@@ -8,7 +8,7 @@ mod support;
 
 use support::{run, run_with_prelude};
 
-const PRELUDE: &str = "double = program(n) do n * 2 done\n\
+const PRELUDE: &str = "tag Wrapped double = program(n) do n * 2 done\n\
                        apply = program(f, x) do f(x) done\n\
                        fib = program(n) do if n < 2 then n else fib(n - 1) + fib(n - 2) done done\n\
                        sum_to = program(n, acc) do if n < 1 then acc else sum_to(n - 1, acc + n) done done\n\
@@ -25,7 +25,7 @@ fn prelude_definitions_run() {
         "500000500000"
     );
     assert_eq!(run_with_prelude(PRELUDE, "pair(1, true).second"), "true");
-    let src = "match wrap(3) do Wrapped(n) then n + 1 done";
+    let src = "tag Wrapped match wrap(3) do Wrapped(n) then n + 1 done";
     assert_eq!(run_with_prelude(PRELUDE, src), "4");
 }
 

@@ -18,6 +18,11 @@ pub const SHAPE_TAGS: [&str; 2] = ["Polyline", "Line"];
 /// The tags of `Key`, the payload of `KeyDown` and `KeyUp`.
 pub const KEY_TAGS: [&str; 5] = ["Up", "Down", "Left", "Right", "Other"];
 
+/// Every tag the host speaks, which lowering treats as declared.
+pub fn tag_names() -> impl Iterator<Item = &'static str> {
+    EVENT_TAGS.into_iter().chain(SHAPE_TAGS).chain(KEY_TAGS)
+}
+
 fn row<const N: usize>(fields: [(&str, Ty); N]) -> Row {
     fields
         .into_iter()

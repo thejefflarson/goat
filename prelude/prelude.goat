@@ -7,6 +7,9 @@
 # position (building results in reverse, then flipping them) so a long list
 # uses constant stack.
 
+tag Empty
+tag Link
+
 nothing = program() do done
 
 link = program(x, xs) do Link(x, xs) done

@@ -630,15 +630,15 @@ fn mono_variant_length_matches_golden() {
 #[test]
 fn variant_programs_validate() {
     for src in [
-        "Circle(5)",
-        "match Circle(5) do Circle(r) then r else 0 done",
-        "f = program(s) do match s do A then 1 B then 2 done done f(B)",
-        "size = program(t) do match t do Leaf then 1 \
+        "tag Circle Circle(5)",
+        "tag Circle match Circle(5) do Circle(r) then r else 0 done",
+        "tag A tag B f = program(s) do match s do A then 1 B then 2 done done f(B)",
+        "tag Leaf tag Node size = program(t) do match t do Leaf then 1 \
          Node(l, r) then size(l) + size(r) done done size(Node(Leaf, Leaf))",
         "map = program(f, xs) do match xs do Empty then Empty \
          Link(x, rest) then Link(f(x), map(f, rest)) done done \
          map(program(n) do n + 1 done, Link(1, Empty))",
-        "f = program(p) do match p do Pair(a, b) then a + b done done f(Pair(1, 2))",
+        "tag Pair f = program(p) do match p do Pair(a, b) then a + b done done f(Pair(1, 2))",
     ] {
         emit_valid(&mono_program(src));
     }

@@ -10,6 +10,7 @@ use crate::hir::{
     BinOp, Boundary, Builtin, ContractBinding, Expr, ExprId, ExprKind, FileId, Interactive,
     MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
 };
+use crate::vocab;
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
@@ -27,6 +28,10 @@ const MAX_DEPTH: usize = 256;
 /// `[a, ...rest]` after `[a, b, c, d]` re-lowers its body at each place the
 /// decision tree reaches it, so nested patterns multiply.
 const MAX_LIST_LEAVES: usize = 4096;
+
+/// The tags the list sugar `[]`/`[x, ...xs]` builds, declared even when no
+/// prelude is.
+const LIST_TAGS: [&str; 2] = ["Empty", "Link"];
 
 /// The name generated bindings for the pieces of a list carry.
 const LIST_NAME: &str = "list";
@@ -59,6 +64,12 @@ pub fn lower(source: &str) -> Result<Lowered, GoatError> {
 /// can still run and report type errors in the same pass.
 pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatError> {
     let mut ctx = Lower::default();
+    ctx.tags.extend(
+        LIST_TAGS
+            .into_iter()
+            .chain(vocab::tag_names())
+            .map(String::from),
+    );
     let mut prelude_root = ctx.lower_source(prelude, FileId::Prelude)?;
 
     let (names, chain_len) = defined_names(&prelude_root);
@@ -220,6 +231,9 @@ struct Lower {
     /// The names the prelude defines, in scope for the user's source.
     prelude_scope: HashMap<String, Symbol>,
     list_leaves: usize,
+    /// Every declared tag, built-in and written: one flat namespace for the
+    /// whole program.
+    tags: HashSet<String>,
 }
 
 impl Lower {
@@ -231,6 +245,14 @@ impl Lower {
             .map_err(|e| GoatError::new(Span::in_file(0, 0, file), format!("parse error:\n{e}")))?;
         let goat = pairs.next().expect("goat rule always produces one pair");
         debug_assert!(self.grouped.is_empty());
+        for decl in goat
+            .clone()
+            .into_inner()
+            .filter(|p| p.as_rule() == Rule::tag_decl)
+        {
+            let name = decl.into_inner().find(|p| p.as_rule() == Rule::name);
+            self.tags.extend(name.map(|n| n.as_str().to_string()));
+        }
         self.scopes.push(self.prelude_scope.clone());
         let root = self.lower_goat(goat);
         self.scopes.pop();
@@ -450,7 +472,11 @@ impl Lower {
         if first.as_rule() == Rule::negation {
             return self.lower_negation(first);
         }
-        let expr = self.lower_primary(first);
+        let expr = if first.as_rule() == Rule::name && self.is_tag(first.as_str()) {
+            self.lower_tag(first, inner)
+        } else {
+            self.lower_primary(first)
+        };
         self.lower_postfixes(expr, inner)
     }
 
@@ -612,7 +638,7 @@ impl Lower {
                 let is_true = pair.as_str() == "true";
                 self.node(span, ExprKind::Bool(is_true))
             }
-            Rule::ident => {
+            Rule::name => {
                 let name = pair.as_str().to_string();
                 self.var(span, name)
             }
@@ -622,7 +648,6 @@ impl Lower {
             Rule::destructure => self.lower_destructure(pair),
             Rule::function => self.lower_function(pair),
             Rule::conditional => self.lower_conditional(pair),
-            Rule::tag => self.lower_tag(pair),
             Rule::match_expr => self.lower_match(pair),
             Rule::repeat_loop | Rule::count_loop | Rule::each_loop => self.lower_loop(pair),
             other => unreachable!("unexpected term rule {other:?}"),
@@ -652,15 +677,26 @@ impl Lower {
         out
     }
 
+    /// A name is a tag when one is declared and no binding shadows it.
+    fn is_tag(&self, name: &str) -> bool {
+        self.resolve(name).is_none() && self.tags.contains(name)
+    }
+
     fn var(&mut self, span: Span, name: String) -> Expr {
+        if self.is_tag(&name) {
+            return self.tag_node(span, name, Vec::new());
+        }
         if self.resolve(&name).is_none()
             && let Some(builtin) = Builtin::named(&name)
         {
             return self.node(span, ExprKind::Builtin(builtin));
         }
         let symbol = self.resolve(&name).unwrap_or_else(|| {
+            let hint = self.similar_tag(&name).map_or_else(String::new, |tag| {
+                format!(", did you mean the tag `{tag}`?")
+            });
             self.errors
-                .push(GoatError::new(span, format!("unknown name `{name}`")));
+                .push(GoatError::new(span, format!("unknown name `{name}`{hint}")));
             self.fresh_symbol()
         });
         self.node(span, ExprKind::Var { symbol, name })
@@ -1062,19 +1098,32 @@ impl Lower {
         }
     }
 
-    fn lower_tag(&mut self, pair: Pair<Rule>) -> Expr {
-        let span = self.span_of(&pair);
-        let mut inner = pair.into_inner();
-        let name = inner
-            .next()
-            .expect("a tag begins with its name")
-            .as_str()
-            .to_string();
-        let args = inner
-            .flat_map(|arguments| arguments.into_inner())
-            .map(|a| self.lower_expr(a))
-            .collect();
-        self.tag_node(span, name, args)
+    /// The declared tag closest to an unknown `name`: the same word in another
+    /// case, or one edit away.
+    fn similar_tag(&self, name: &str) -> Option<&str> {
+        let name: Vec<char> = name.to_lowercase().chars().collect();
+        self.tags
+            .iter()
+            .filter(|tag| within_one_edit(&tag.to_lowercase().chars().collect::<Vec<_>>(), &name))
+            .min()
+            .map(String::as_str)
+    }
+
+    /// `Circle(5)`: the declared tag `name` and, if a call follows, its payload.
+    /// `Empty()` is the same as `Empty`.
+    fn lower_tag(&mut self, name: Pair<Rule>, inner: &mut Peekable<Pairs<Rule>>) -> Expr {
+        let mut span = self.span_of(&name);
+        let args = match inner.next_if(|p| p.as_rule() == Rule::call) {
+            Some(call) => {
+                span = span.to(self.span_of(&call));
+                call.into_inner()
+                    .flat_map(|arguments| arguments.into_inner())
+                    .map(|a| self.lower_expr(a))
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        self.tag_node(span, name.as_str().to_string(), args)
     }
 
     /// One argument is the payload as is; several become a record labelled
@@ -1161,11 +1210,17 @@ impl Lower {
     fn lower_pattern(&mut self, pair: Pair<Rule>) -> Pattern {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
-        let tag = inner
-            .next()
-            .expect("a pattern begins with a tag name")
-            .as_str()
-            .to_string();
+        let head = inner.next().expect("a pattern begins with a tag name");
+        let tag = head.as_str().to_string();
+        if !self.tags.contains(&tag) {
+            let hint = self
+                .similar_tag(&tag)
+                .map_or_else(String::new, |t| format!(", did you mean `{t}`?"));
+            self.errors.push(GoatError::new(
+                self.span_of(&head),
+                format!("unknown tag `{tag}`{hint}"),
+            ));
+        }
         let mut binders: Vec<Param> = Vec::new();
         for label in inner.flat_map(|labels| labels.into_inner()) {
             let pspan = self.span_of(&label);
@@ -1782,6 +1837,19 @@ impl Lower {
 
 /// How deep a chain's tree can get: a left-leaning tree of its operands, plus
 /// a level for each `not`. The statements after a `;` are lowered on their own.
+fn within_one_edit(a: &[char], b: &[char]) -> bool {
+    if a.len().abs_diff(b.len()) > 1 {
+        return false;
+    }
+    let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let (a, b) = (&a[common..], &b[common..]);
+    match a.len().cmp(&b.len()) {
+        std::cmp::Ordering::Equal => a.is_empty() || a[1..] == b[1..],
+        std::cmp::Ordering::Greater => a[1..] == *b,
+        std::cmp::Ordering::Less => *a == b[1..],
+    }
+}
+
 fn chain_depth(chain: &Pair<Rule>) -> usize {
     let (mut nots, mut others) = (0, 0);
     for child in chain.clone().into_inner() {
@@ -1904,7 +1972,7 @@ mod tests {
 
     #[test]
     fn single_argument_tag_carries_the_argument_as_its_payload() {
-        let root = lowered("Circle(5)").root;
+        let root = lowered("tag Circle Circle(5)").root;
         let (name, payload) = tag_parts(&root);
         assert_eq!(name, "Circle");
         assert!(matches!(payload.unwrap().kind, ExprKind::Number(n) if n == 5.0));
@@ -1931,7 +1999,7 @@ mod tests {
     #[test]
     fn match_lowers_arms_binders_and_else() {
         let root = lowered(
-            "s = Empty match s do Link(a, b) then a Circle(r) then r Empty then 0 else 1 done",
+            "tag Circle s = Empty match s do Link(a, b) then a Circle(r) then r Empty then 0 else 1 done",
         )
         .root;
         let ExprKind::Let { rest, .. } = &root.kind else {
@@ -1978,7 +2046,8 @@ mod tests {
 
     #[test]
     fn pattern_binders_are_scoped_to_their_arm() {
-        let lowered = lower("match Empty do Circle(r) then r Empty then r done").unwrap();
+        let lowered =
+            lower("tag Circle match Empty do Circle(r) then r Empty then r done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("unknown name `r`"));
     }
@@ -2157,7 +2226,7 @@ mod tests {
 
     #[test]
     fn duplicate_pattern_binder_is_an_error() {
-        let lowered = lower("match Empty do Pair(a, a) then a done").unwrap();
+        let lowered = lower("tag Pair match Empty do Pair(a, a) then a done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("duplicate binding `a`"));
     }

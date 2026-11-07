@@ -62,14 +62,14 @@ mod tests {
             "programmer",
             "functions",
         ] {
-            let pairs = GoatParser::parse(Rule::ident, name);
+            let pairs = GoatParser::parse(Rule::name, name);
             assert!(pairs.is_ok(), "{name} should be a valid identifier");
             assert_eq!(pairs.unwrap().as_str(), name);
         }
         // Bare keywords are still reserved.
         for kw in ["do", "done", "if", "then", "program", "function"] {
             assert!(
-                GoatParser::parse(Rule::ident, kw).is_err(),
+                GoatParser::parse(Rule::name, kw).is_err(),
                 "{kw} should be reserved"
             );
         }
@@ -144,29 +144,29 @@ mod tests {
         parses_to! {
             parser: GoatParser,
             input: "a",
-            rule: Rule::ident,
-            tokens: [ident(0, 1)]
+            rule: Rule::name,
+            tokens: [name(0, 1)]
         }
 
         parses_to! {
             parser: GoatParser,
             input: "a_",
-            rule: Rule::ident,
-            tokens: [ident(0, 2)]
+            rule: Rule::name,
+            tokens: [name(0, 2)]
         }
 
         parses_to! {
             parser: GoatParser,
             input: "a9",
-            rule: Rule::ident,
-            tokens: [ident(0, 2)]
+            rule: Rule::name,
+            tokens: [name(0, 2)]
         }
 
         parses_to! {
             parser: GoatParser,
             input: "نامهای",
-            rule: Rule::ident,
-            tokens: [ident(0, 12)]
+            rule: Rule::name,
+            tokens: [name(0, 12)]
         }
     }
 
@@ -178,8 +178,8 @@ mod tests {
             rule: Rule::declaration,
             tokens: [
                 declaration(0, 5, [
-                    ident(0, 1),
-                    value(4, 5, [ident(4, 5)])
+                    name(0, 1),
+                    value(4, 5, [name(4, 5)])
                 ])
             ]
         }
@@ -190,9 +190,9 @@ mod tests {
             rule: Rule::declaration,
             tokens: [
                 declaration(0, 7, [
-                    ident(0, 1),
-                    value(4, 6, [ident(4, 5)]),
-                    expr(6, 7, [ident(6, 7)])
+                    name(0, 1),
+                    value(4, 6, [name(4, 5)]),
+                    expr(6, 7, [name(6, 7)])
                 ])
             ]
         }
@@ -204,14 +204,14 @@ mod tests {
             parser: GoatParser,
             input: "a, b",
             rule: Rule::labels,
-            tokens: [labels(0, 4, [ident(0, 1), ident(3, 4)])]
+            tokens: [labels(0, 4, [name(0, 1), name(3, 4)])]
         }
 
         parses_to! {
             parser: GoatParser,
             input: "a",
             rule: Rule::labels,
-            tokens: [labels(0, 1, [ident(0, 1)])]
+            tokens: [labels(0, 1, [name(0, 1)])]
         }
 
         parses_to! {
@@ -220,8 +220,8 @@ mod tests {
             rule: Rule::function,
             tokens: [
                 function(0, 20, [
-                    params(8, 9, [ident(8, 9)]),
-                    expr(14, 16, [ident(14, 15)])
+                    params(8, 9, [name(8, 9)]),
+                    expr(14, 16, [name(14, 15)])
                 ])
             ]
         }
@@ -247,16 +247,16 @@ mod tests {
             rule: Rule::expr,
             tokens: [
                 expr(0, 35, [
-                    ident(0, 1),
+                    name(0, 1),
                     call(1, 35, [
                         arguments(2, 34, [
                             expr(2, 3, [number(2, 3)]),
                             expr(5, 9, [boolean(5, 9, [true_lit(5, 9)])]),
-                            expr(11, 12, [ident(11, 12)]),
+                            expr(11, 12, [name(11, 12)]),
                             expr(14, 34, [
                                 function(14, 34, [
-                                    params(22, 23, [ident(22, 23)]),
-                                    expr(28, 30, [ident(28, 29)])
+                                    params(22, 23, [name(22, 23)]),
+                                    expr(28, 30, [name(28, 29)])
                                 ])
                             ])
                         ])
@@ -269,7 +269,7 @@ mod tests {
             parser: GoatParser,
             input: "a()",
             rule: Rule::expr,
-            tokens: [expr(0, 3, [ident(0, 1), call(1, 3)])]
+            tokens: [expr(0, 3, [name(0, 1), call(1, 3)])]
         }
 
         // Calls and accesses interleave on any callee.
@@ -279,8 +279,8 @@ mod tests {
             rule: Rule::expr,
             tokens: [
                 expr(0, 9, [
-                    ident(0, 1),
-                    access(1, 3, [ident(2, 3)]),
+                    name(0, 1),
+                    access(1, 3, [name(2, 3)]),
                     call(3, 6, [arguments(4, 5, [expr(4, 5, [number(4, 5)])])]),
                     call(6, 9, [arguments(7, 8, [expr(7, 8, [number(7, 8)])])])
                 ])
@@ -322,7 +322,7 @@ mod tests {
             rule: Rule::declaration,
             tokens: [
                 declaration(0, 36, [
-                    ident(0, 1),
+                    name(0, 1),
                     foreign_decl(4, 36, [
                         foreign_kw(4, 11),
                         foreign_name(12, 15, [string(12, 15)]),
@@ -398,7 +398,7 @@ mod tests {
             rule: Rule::list,
             tokens: [list(0, 6, [arguments(1, 5, [
                 expr(1, 2, [number(1, 2)]),
-                expr(4, 5, [ident(4, 5)])
+                expr(4, 5, [name(4, 5)])
             ])])]
         }
         use pest::Parser;
@@ -429,7 +429,7 @@ mod tests {
                 "failed: {src}"
             );
         }
-        for src in ["[...a, b]", "[a, ...b, ...c]", "[1]", "[Link]", "[a b]"] {
+        for src in ["[...a, b]", "[a, ...b, ...c]", "[1]", "[a b]"] {
             assert!(
                 GoatParser::parse(Rule::list_pattern, src).is_err(),
                 "accepted: {src}"
@@ -506,53 +506,56 @@ mod tests {
     }
 
     #[test]
-    fn uppercase_names_are_tags_and_lowercase_are_identifiers() {
+    fn capitalization_does_not_change_what_a_name_is() {
         use pest::Parser;
-        for name in ["circle", "x", "matchbox", "matcher", "éclair"] {
-            assert!(GoatParser::parse(Rule::ident, name).is_ok(), "{name}");
-            assert!(GoatParser::parse(Rule::tag_name, name).is_err(), "{name}");
+        for name in ["circle", "Circle", "X", "matchbox", "Éclair", "éclair"] {
+            assert!(GoatParser::parse(Rule::name, name).is_ok(), "{name}");
         }
-        for name in ["Circle", "Empty", "X", "Éclair", "Matchbox"] {
-            assert!(GoatParser::parse(Rule::tag_name, name).is_ok(), "{name}");
-            assert!(GoatParser::parse(Rule::ident, name).is_err(), "{name}");
+    }
+
+    #[test]
+    fn tag_is_a_reserved_word_only_on_its_own() {
+        use pest::Parser;
+        assert!(GoatParser::parse(Rule::name, "tag").is_err());
+        for name in ["tagline", "tags", "tag_"] {
+            assert!(GoatParser::parse(Rule::name, name).is_ok(), "{name}");
         }
+    }
+
+    #[test]
+    fn parses_tag_declarations_before_the_program() {
+        use pest::Parser;
+        parses_to! {
+            parser: GoatParser,
+            input: "tag Circle tag Square 1",
+            rule: Rule::goat,
+            tokens: [goat(0, 23, [
+                tag_decl(0, 10, [tag_kw(0, 3), name(4, 10)]),
+                tag_decl(11, 21, [tag_kw(11, 14), name(15, 21)]),
+                expr(22, 23, [number(22, 23)]),
+                EOI(23, 23)
+            ])]
+        }
+        assert!(GoatParser::parse(Rule::goat, "tagCircle").is_ok());
+        assert!(GoatParser::parse(Rule::goat, "tag Circle").is_ok());
+        assert!(GoatParser::parse(Rule::goat, "1 tag Circle").is_err());
     }
 
     #[test]
     fn match_is_a_reserved_word() {
         use pest::Parser;
-        assert!(GoatParser::parse(Rule::ident, "match").is_err());
+        assert!(GoatParser::parse(Rule::name, "match").is_err());
     }
 
     #[test]
-    fn parses_tags() {
-        parses_to! {
-            parser: GoatParser,
-            input: "Empty",
-            rule: Rule::tag,
-            tokens: [tag(0, 5, [tag_name(0, 5)])]
-        }
-
+    fn a_tag_construction_is_a_name_and_a_call() {
         parses_to! {
             parser: GoatParser,
             input: "Circle(5)",
-            rule: Rule::tag,
-            tokens: [tag(0, 9, [
-                tag_name(0, 6),
-                arguments(7, 8, [expr(7, 8, [number(7, 8)])])
-            ])]
-        }
-
-        parses_to! {
-            parser: GoatParser,
-            input: "Link(x, rest)",
-            rule: Rule::tag,
-            tokens: [tag(0, 13, [
-                tag_name(0, 4),
-                arguments(5, 12, [
-                    expr(5, 6, [ident(5, 6)]),
-                    expr(8, 12, [ident(8, 12)])
-                ])
+            rule: Rule::expr,
+            tokens: [expr(0, 9, [
+                name(0, 6),
+                call(6, 9, [arguments(7, 8, [expr(7, 8, [number(7, 8)])])])
             ])]
         }
     }
@@ -607,15 +610,15 @@ mod tests {
             input: "{...p, x: 1}",
             rule: Rule::record,
             tokens: [record(0, 12, [
-                spread(1, 5, [expr(4, 5, [ident(4, 5)])]),
-                field(7, 11, [ident(7, 8), expr(10, 11, [number(10, 11)])])
+                spread(1, 5, [expr(4, 5, [name(4, 5)])]),
+                field(7, 11, [name(7, 8), expr(10, 11, [number(10, 11)])])
             ])]
         }
         parses_to! {
             parser: GoatParser,
             input: "{...p}",
             rule: Rule::record,
-            tokens: [record(0, 6, [spread(1, 5, [expr(4, 5, [ident(4, 5)])])])]
+            tokens: [record(0, 6, [spread(1, 5, [expr(4, 5, [name(4, 5)])])])]
         }
     }
 
@@ -643,8 +646,8 @@ mod tests {
             input: "{x, y} = p",
             rule: Rule::destructure,
             tokens: [destructure(0, 10, [
-                record_pattern(0, 6, [ident(1, 2), ident(4, 5)]),
-                value(9, 10, [ident(9, 10)])
+                record_pattern(0, 6, [name(1, 2), name(4, 5)]),
+                value(9, 10, [name(9, 10)])
             ])]
         }
         parses_to! {
@@ -652,9 +655,9 @@ mod tests {
             input: "{x, ...rest} = p x",
             rule: Rule::destructure,
             tokens: [destructure(0, 18, [
-                record_pattern(0, 12, [ident(1, 2), rest_binding(4, 11, [ident(7, 11)])]),
-                value(15, 17, [ident(15, 16)]),
-                expr(17, 18, [ident(17, 18)])
+                record_pattern(0, 12, [name(1, 2), rest_binding(4, 11, [name(7, 11)])]),
+                value(15, 17, [name(15, 16)]),
+                expr(17, 18, [name(17, 18)])
             ])]
         }
     }
@@ -721,15 +724,15 @@ mod tests {
             input: "a; b",
             rule: Rule::expr,
             tokens: [expr(0, 4, [
-                ident(0, 1),
-                sequel(1, 4, [expr(3, 4, [ident(3, 4)])])
+                name(0, 1),
+                sequel(1, 4, [expr(3, 4, [name(3, 4)])])
             ])]
         }
         parses_to! {
             parser: GoatParser,
             input: "a;",
             rule: Rule::expr,
-            tokens: [expr(0, 2, [ident(0, 1), sequel(1, 2)])]
+            tokens: [expr(0, 2, [name(0, 1), sequel(1, 2)])]
         }
         use pest::Parser;
         for src in [
@@ -751,7 +754,7 @@ mod tests {
             input: "f(1) (2)",
             rule: Rule::expr,
             tokens: [expr(0, 8, [
-                ident(0, 1),
+                name(0, 1),
                 call(1, 4, [arguments(2, 3, [expr(2, 3, [number(2, 3)])])]),
                 call(5, 8, [arguments(6, 7, [expr(6, 7, [number(6, 7)])])])
             ])]
@@ -770,22 +773,22 @@ mod tests {
             rule: Rule::expr,
             tokens: [expr(0, 16, [
                 not_op(0, 3),
-                ident(4, 5),
+                name(4, 5),
                 and_op(6, 9),
-                ident(10, 11),
+                name(10, 11),
                 or_op(12, 14),
-                ident(15, 16)
+                name(15, 16)
             ])]
         }
         use pest::Parser;
         for name in ["nothing", "android", "order", "format", "forty", "nothing2"] {
-            assert!(GoatParser::parse(Rule::ident, name).is_ok(), "{name}");
+            assert!(GoatParser::parse(Rule::name, name).is_ok(), "{name}");
         }
         for word in ["and", "or", "not", "for", "repeat", "times"] {
-            assert!(GoatParser::parse(Rule::ident, word).is_err(), "{word}");
+            assert!(GoatParser::parse(Rule::name, word).is_err(), "{word}");
         }
         for word in ["from", "to", "in"] {
-            assert!(GoatParser::parse(Rule::ident, word).is_ok(), "{word}");
+            assert!(GoatParser::parse(Rule::name, word).is_ok(), "{word}");
         }
         assert!(GoatParser::parse(Rule::goat, "a andb").is_err());
         assert!(GoatParser::parse(Rule::goat, "a and(b)").is_ok());
