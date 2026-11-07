@@ -65,17 +65,7 @@ fn run_on(
     max_depth: usize,
     host: &mut dyn Host,
 ) -> Result<Outcome, InterpError> {
-    let mut interp = Interp {
-        program,
-        host,
-        max_depth,
-        slots: Vec::new(),
-        live: 0,
-        allocations: 0,
-        strings: HashMap::new(),
-        line: Vec::new(),
-        printed: Vec::new(),
-    };
+    let mut interp = Interp::new(program, host, max_depth);
     let entry = Pending {
         func: program.entry,
         env: None,
@@ -90,6 +80,105 @@ fn run_on(
         allocations: interp.allocations,
         printed: interp.printed,
     })
+}
+
+/// An interactive program driven the way a host drives its wasm exports
+/// (ADR 0015): `setup` once, then `update` and `draw` on the model it returns.
+/// The model and every event the host builds are owned references it must
+/// hand back (`update` consumes them) or release.
+pub struct Session<'p> {
+    interp: Interp<'p>,
+    interactive: &'p Interactive,
+    update: Value,
+    draw: Value,
+}
+
+impl<'p> Session<'p> {
+    /// Run the program's top level once. The model comes back with count 1.
+    pub fn setup(
+        program: &'p Program,
+        host: &'p mut dyn Host,
+    ) -> Result<(Self, Value), InterpError> {
+        let interactive = program
+            .interactive
+            .as_ref()
+            .ok_or(InterpError::Malformed("not an interactive program"))?;
+        let mut interp = Interp::new(program, host, DEFAULT_MAX_DEPTH);
+        let entry = Pending {
+            func: program.entry,
+            env: None,
+            args: Vec::new(),
+        };
+        let root = interp.call(entry, 0)?;
+        let draw = interp.field(root, interactive.draw_slot, None)?;
+        let model = interp.field(root, interactive.init_slot, None)?;
+        let update = interp.field(root, interactive.update_slot, None)?;
+        interp.release(root)?;
+        let session = Session {
+            interp,
+            interactive,
+            update,
+            draw,
+        };
+        Ok((session, model))
+    }
+
+    /// A variant value with count 1, for a host that builds events.
+    pub fn variant(&mut self, label: &str, fields: Vec<Value>) -> Result<Value, InterpError> {
+        let tag = self
+            .interactive
+            .tags
+            .iter()
+            .find(|(l, _)| l == label)
+            .ok_or(InterpError::Malformed("unknown tag"))?
+            .1;
+        Ok(self.interp.alloc(Body::Variant(tag, fields), 1))
+    }
+
+    /// Consumes `model` and `event`; returns the new model.
+    pub fn update(&mut self, model: Value, event: Value) -> Result<Value, InterpError> {
+        let closure = self.interp.retain(self.update)?;
+        self.call(self.interactive.update, vec![closure, model, event])
+    }
+
+    /// Borrows `model`: the host keeps its reference.
+    pub fn draw(&mut self, model: Value) -> Result<(), InterpError> {
+        let closure = self.interp.retain(self.draw)?;
+        let model = self.interp.retain(model)?;
+        self.call(self.interactive.draw, vec![closure, model])
+            .map(|_| ())
+    }
+
+    pub fn release_model(&mut self, model: Value) -> Result<(), InterpError> {
+        self.interp.release(model)
+    }
+
+    /// The fields of a record, as a host reads a model.
+    pub fn fields(&self, record: Value) -> Result<Vec<Value>, InterpError> {
+        let Value::Ptr(addr) = record else {
+            return Err(InterpError::Malformed("not a record"));
+        };
+        match &self.interp.obj(addr)?.body {
+            Body::Record(fields) => Ok(fields.clone()),
+            _ => Err(InterpError::Malformed("not a record")),
+        }
+    }
+
+    /// Release the stored closures and return the number of objects still live.
+    pub fn shutdown(mut self) -> Result<usize, InterpError> {
+        self.interp.release(self.update)?;
+        self.interp.release(self.draw)?;
+        Ok(self.interp.live)
+    }
+
+    fn call(&mut self, func: FuncId, args: Vec<Value>) -> Result<Value, InterpError> {
+        let pending = Pending {
+            func,
+            env: None,
+            args,
+        };
+        self.interp.call(pending, 0)
+    }
 }
 
 enum Body {
@@ -156,7 +245,21 @@ struct Interp<'p> {
     printed: Vec<Vec<Piece>>,
 }
 
-impl Interp<'_> {
+impl<'p> Interp<'p> {
+    fn new(program: &'p Program, host: &'p mut dyn Host, max_depth: usize) -> Interp<'p> {
+        Interp {
+            program,
+            host,
+            max_depth,
+            slots: Vec::new(),
+            live: 0,
+            allocations: 0,
+            strings: HashMap::new(),
+            line: Vec::new(),
+            printed: Vec::new(),
+        }
+    }
+
     fn alloc(&mut self, body: Body, rc: u32) -> Value {
         if rc != IMMORTAL {
             self.live += 1;

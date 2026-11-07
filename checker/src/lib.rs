@@ -25,6 +25,9 @@ pub struct Checked {
     pub typed: Typed,
     /// What each function literal captures, in `Capture` index order.
     pub captures: HashMap<Target, Vec<Symbol>>,
+    /// Set when the program defines `init`, `update` and `draw`; its root then
+    /// ends in the record of those three values.
+    pub interactive: Option<hir::Interactive>,
 }
 
 /// The built-in definitions every program starts with.
@@ -49,7 +52,7 @@ pub fn check_with_prelude(prelude: &str, source: &str) -> Result<Checked, Vec<Go
     if !lowered.errors.is_empty() {
         return Err(lowered.errors);
     }
-    let mut typed = infer::infer(&lowered.root)?;
+    let mut typed = infer::infer_program(&lowered.root, lowered.interactive.as_ref())?;
     typed.warnings.splice(0..0, lowered.warnings);
     let captures = captures::capture_sets(&lowered.root);
     let errors = order::check(&lowered.root, &captures);
@@ -60,6 +63,7 @@ pub fn check_with_prelude(prelude: &str, source: &str) -> Result<Checked, Vec<Go
         root: lowered.root,
         typed,
         captures,
+        interactive: lowered.interactive,
     })
 }
 
