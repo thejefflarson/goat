@@ -947,7 +947,7 @@ impl Mono<'_> {
                     .collect();
                 Expr::AllocRecord(layout, values)
             }
-            ExprKind::Tag { name, payload } => self.tag(cx, e, name, payload.as_deref()),
+            ExprKind::Tag { name, payload, .. } => self.tag(cx, e, name, payload.as_deref()),
             ExprKind::Match {
                 scrutinee,
                 arms,

@@ -5,6 +5,9 @@
 //! codegen) never touch the source string or re-run name resolution. Spans are
 //! byte offsets into the source, kept only for diagnostics.
 
+use crate::ty::Group;
+use std::sync::Arc;
+
 /// A resolved name. Every binding occurrence (declaration, function parameter)
 /// gets a fresh `Symbol`; every use carries the `Symbol` of the binding it
 /// resolved to. This is the scope-aware alpha-renaming the old `Renamer` never
@@ -299,6 +302,9 @@ pub enum ExprKind {
     Tag {
         name: String,
         payload: Option<Box<Expr>>,
+        /// The declared group the tag belongs to; `None` for a tag the host or
+        /// the list sugar leaves open.
+        group: Option<Arc<Group>>,
     },
     /// `match scrutinee do arms else else_branch done`.
     Match {

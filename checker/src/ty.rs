@@ -2,7 +2,8 @@
 //! for let-polymorphism.
 
 use crate::hir::Boundary;
-use std::collections::BTreeSet;
+use crate::infer::subst_vars;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 /// A unification variable. The same numbering space is shared by type variables
@@ -27,8 +28,9 @@ pub enum Ty {
     /// field access unifies against an open one.
     Record(Row),
     /// A variant: the dual of a record. Each label is a tag and its field type
-    /// is the payload (`Unit` for a bare tag). Constructing a tag yields an open
-    /// row; `match` closes it.
+    /// is the payload (`Unit` for a bare tag). Constructing an undeclared tag
+    /// yields an open row, which `match` closes; a tag of a [`Group`] yields the
+    /// group's closed row.
     Variant(Row),
     /// A recursive type `μv. body`: `Var(v)` inside `body` stands for the whole
     /// type. The binder is a fresh id that is never bound by unification, and
@@ -59,6 +61,50 @@ pub enum Row {
         field: Box<Ty>,
         rest: Box<Row>,
     },
+}
+
+/// The tags of one `tag` declaration: a closed variant type. A payload that
+/// mentions the group itself holds `Ty::Var(Group::SELF)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Group {
+    pub tags: Vec<(String, Ty)>,
+    pub recursive: bool,
+}
+
+impl Group {
+    pub const SELF: TypeVar = TypeVar::MAX;
+
+    /// The group as a type, closed over `binder` when it is recursive.
+    pub fn instantiate(&self, binder: TypeVar) -> Ty {
+        let mapping = HashMap::from([(Self::SELF, binder)]);
+        let row = Row::of(
+            self.tags
+                .iter()
+                .map(|(label, payload)| (label.clone(), subst_vars(payload, &mapping))),
+        );
+        let body = Ty::Variant(row);
+        if self.recursive {
+            Ty::Rec(binder, Box::new(body))
+        } else {
+            body
+        }
+    }
+}
+
+impl Row {
+    /// A closed row of `fields`, in order.
+    pub fn of(
+        fields: impl IntoIterator<Item = (String, Ty), IntoIter: DoubleEndedIterator>,
+    ) -> Row {
+        fields
+            .into_iter()
+            .rev()
+            .fold(Row::Empty, |rest, (label, field)| Row::Extend {
+                label,
+                field: Box::new(field),
+                rest: Box::new(rest),
+            })
+    }
 }
 
 impl Ty {
