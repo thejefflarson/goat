@@ -128,6 +128,64 @@ mod tests {
     }
 
     #[test]
+    fn a_number_or_string_literal_match_with_else_checks() {
+        assert_eq!(
+            type_of("f = program(n) do match n do 0 then 10 1 then 20 else 30 done done f(1)")
+                .unwrap(),
+            "Number"
+        );
+        assert_eq!(
+            type_of("match \"go\" do \"go\" then 1 \"stop\" then 2 else 3 done").unwrap(),
+            "Number"
+        );
+    }
+
+    #[test]
+    fn a_bool_match_covering_both_values_needs_no_else() {
+        assert_eq!(
+            type_of("match 1 < 2 do true then 1 false then 2 done").unwrap(),
+            "Number"
+        );
+    }
+
+    #[test]
+    fn a_literal_match_without_else_is_a_spanned_error() {
+        for src in [
+            "match 1 do 0 then 1 done",
+            "match \"a\" do \"a\" then 1 done",
+            "match 1 < 2 do true then 1 done",
+            "match 1 < 2 do true then 1 true then 2 done",
+        ] {
+            let (message, text) = spanned_error(src);
+            assert!(message.contains("needs an `else`"), "{message}");
+            assert!(src.contains(&text), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_match_mixing_scalar_types_is_a_spanned_error() {
+        let (message, text) = spanned_error("match 1 do 0 then 1 \"a\" then 2 else 3 done");
+        assert!(message.contains("different types"), "{message}");
+        assert_eq!(text, "\"a\"");
+        let (message, _) = spanned_error("tag A match A do A then 1 2 then 2 else 3 done");
+        assert!(message.contains("can't mix"), "{message}");
+    }
+
+    #[test]
+    fn a_literal_arm_of_the_wrong_type_for_the_scrutinee_is_an_error() {
+        let err = type_of("match 1 do \"a\" then 1 else 2 done").unwrap_err();
+        assert!(err.contains("type mismatch"), "{err}");
+    }
+
+    #[test]
+    fn tag_and_list_matches_keep_their_single_type_rule() {
+        let err = type_of("tag A match A do A then 1 [] then 2 else 3 done").unwrap_err();
+        assert!(err.contains("can't mix"), "{err}");
+        let err = type_of("match [] do [] then 1 A then 2 else 3 done").unwrap_err();
+        assert!(err.contains("can't mix"), "{err}");
+    }
+
+    #[test]
     fn a_grouped_match_may_still_have_an_else() {
         let src = format!("{SHAPE} match Dot do Circle(r) then r else 0 done");
         assert_eq!(type_of(&src).unwrap(), "Number");

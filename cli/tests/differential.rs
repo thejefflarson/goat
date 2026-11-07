@@ -844,3 +844,23 @@ fn long_statement_runs() {
         format!("{expected}\n0")
     );
 }
+
+#[test]
+fn literal_patterns_match_scalars() {
+    let number = "f = program(n) do match n do 0 then 10 1 then 20 else 30 done done \
+                  print(f(0)); print(f(1)); f(7)";
+    assert_eq!(run(number), "10\n20\n30");
+    let string = "f = program(s) do match s do \"go\" then 1 \"stop\" then 2 else 0 done done \
+                  print(f(\"go\")); print(f(\"stop\")); f(\"xy\")";
+    assert_eq!(run(string), "1\n2\n0");
+    let boolean = "f = program(b) do match b do true then \"yes\" false then \"no\" done done \
+                   print(f(1 < 2)); f(2 < 1)";
+    assert_eq!(run(boolean), "yes\nno");
+}
+
+#[test]
+fn a_literal_match_evaluates_its_scrutinee_once() {
+    let src = "tick = program(n) do print(n); n + 1 done \
+               match tick(0) do 0 then 5 1 then 6 else 7 done";
+    assert_eq!(run(src), "0\n6");
+}

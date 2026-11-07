@@ -180,7 +180,9 @@ pattern = { name ~ (lparen ~ labels? ~ rparen)? }
 // `[]` is `Empty`; `[x, ...rest]` is `Link(x, rest)`; `[a, b]` is
 // `Link(a, Link(b, Empty))`.
 list = { lbracket ~ arguments? ~ rbracket }
-arm = { (list_pattern | pattern) ~ then_lit ~ expr }
+// A scalar literal matches by value: `0`, `"go"`, `true`.
+literal_pattern = { number | string | boolean }
+arm = { (list_pattern | literal_pattern | pattern) ~ then_lit ~ expr }
 match_expr = { match_lit ~ expr ~ do_lit ~ arm* ~ else_branch? ~ done_lit }
 // `repeat 3 times do ... done`, `for i from 1 to 10 do ... done` (both ends
 // included) and `for x in xs do ... done`. A loop is `()`.

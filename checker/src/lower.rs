@@ -1279,6 +1279,9 @@ impl Lower {
         if children.iter().any(is_list_arm) {
             return self.lower_list_match(span, scrutinee, children);
         }
+        if children.iter().any(is_literal_arm) {
+            return self.lower_literal_match(span, scrutinee, children);
+        }
         let mut arms = Vec::new();
         let mut else_branch = None;
         for child in children {
@@ -1296,6 +1299,125 @@ impl Lower {
                 else_branch,
             },
         )
+    }
+
+    /// A `match` whose arms are scalar literals becomes a chain of equality
+    /// tests on the scrutinee, evaluated once:
+    ///
+    /// ```text
+    /// match e do 0 then a  1 then b  else c done
+    ///   v = e  if v == 0 then a else if v == 1 then b else c done done
+    /// ```
+    ///
+    /// Number and string domains are infinite, so they need an `else`; a bool
+    /// match naming both `true` and `false` doesn't, and its last arm is the
+    /// fall-through.
+    fn lower_literal_match<'i>(
+        &mut self,
+        span: Span,
+        scrutinee: Expr,
+        children: Vec<Pair<'i, Rule>>,
+    ) -> Expr {
+        if self.depth + children.len() > MAX_DEPTH {
+            self.errors.push(GoatError::new(
+                span,
+                "`match` has too many arms to write out",
+            ));
+            return self.node(span, ExprKind::Unit);
+        }
+        self.depth += children.len();
+        let mut rows: Vec<(Expr, Expr)> = Vec::new();
+        let mut otherwise = None;
+        for child in children {
+            if child.as_rule() == Rule::expr {
+                otherwise = Some(self.lower_expr(child));
+                continue;
+            }
+            let mut inner = child.into_inner();
+            let pattern = inner.next().expect("an arm begins with a pattern");
+            let body = inner.next().expect("an arm has a body");
+            let body = self.lower_expr(body);
+            if pattern.as_rule() != Rule::literal_pattern {
+                self.errors.push(GoatError::new(
+                    self.span_of(&pattern),
+                    "a `match` can't mix literal patterns with tag or list patterns",
+                ));
+                continue;
+            }
+            let literal = pattern.into_inner().next().expect("a literal pattern");
+            let literal = self.lower_primary(literal);
+            if rows
+                .first()
+                .is_some_and(|(first, _)| scalar_kind(first) != scalar_kind(&literal))
+            {
+                self.errors.push(GoatError::new(
+                    literal.span,
+                    "a `match` can't mix patterns of different types; every arm must match the same type",
+                ));
+                continue;
+            }
+            rows.push((literal, body));
+        }
+        self.depth -= rows.len();
+
+        let covers_bool = rows
+            .iter()
+            .any(|(l, _)| matches!(l.kind, ExprKind::Bool(true)))
+            && rows
+                .iter()
+                .any(|(l, _)| matches!(l.kind, ExprKind::Bool(false)));
+        let mut tail = match otherwise {
+            Some(expr) => expr,
+            None if covers_bool => rows.pop().expect("both bool arms are present").1,
+            None => {
+                if !rows.is_empty() {
+                    self.errors.push(GoatError::new(
+                        scrutinee.span,
+                        "a `match` on values needs an `else` to cover every other value",
+                    ));
+                }
+                return self.node(span, ExprKind::Unit);
+            }
+        };
+        if rows.is_empty() {
+            return tail;
+        }
+
+        let (source, bind) = match scrutinee.kind {
+            ExprKind::Var { symbol, .. } => (symbol, None),
+            _ => (self.fresh_symbol(), Some(scrutinee)),
+        };
+        let name: String = "match".into();
+        for (literal, body) in rows.into_iter().rev() {
+            let subject = self.node(
+                literal.span,
+                ExprKind::Var {
+                    symbol: source,
+                    name: name.clone(),
+                },
+            );
+            let test = self.node(
+                literal.span,
+                ExprKind::Bin {
+                    op: BinOp::Eq,
+                    lhs: Box::new(subject),
+                    rhs: Box::new(literal),
+                },
+            );
+            tail = self.branch(span, test, body, tail);
+        }
+        match bind {
+            Some(value) => self.node(
+                span,
+                ExprKind::Let {
+                    symbol: source,
+                    name,
+                    value: Box::new(value),
+                    rest: Some(Box::new(tail)),
+                },
+            ),
+            None => tail,
+        }
     }
 
     fn lower_arm(&mut self, pair: Pair<Rule>) -> MatchArm {
@@ -1972,6 +2094,19 @@ fn is_list_arm(child: &Pair<Rule>) -> bool {
             .into_inner()
             .next()
             .is_some_and(|p| p.as_rule() == Rule::list_pattern)
+}
+
+fn is_literal_arm(child: &Pair<Rule>) -> bool {
+    child.as_rule() == Rule::arm
+        && child
+            .clone()
+            .into_inner()
+            .next()
+            .is_some_and(|p| p.as_rule() == Rule::literal_pattern)
+}
+
+fn scalar_kind(literal: &Expr) -> std::mem::Discriminant<ExprKind> {
+    std::mem::discriminant(&literal.kind)
 }
 
 fn is_program_literal(expr: &Pair<Rule>) -> bool {

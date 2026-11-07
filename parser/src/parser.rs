@@ -609,6 +609,16 @@ mod tests {
     }
 
     #[test]
+    fn an_arm_may_lead_with_a_scalar_literal() {
+        use pest::Parser;
+        for src in ["0 then 1", "\"go\" then 1", "true then 1", "2.5 then 1"] {
+            let arm = GoatParser::parse(Rule::arm, src).unwrap().next().unwrap();
+            let first = arm.into_inner().next().unwrap().as_rule();
+            assert_eq!(first, Rule::literal_pattern, "{src}");
+        }
+    }
+
+    #[test]
     fn parses_match_programs() {
         use pest::Parser;
         for src in [
