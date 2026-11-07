@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>goat</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa; --fg: #1c1c1e; --panel: #fff; --line: #c9c9ce;
+    --accent: #5b3fd1; --accent-fg: #fff; --error: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a; --fg: #ececf0; --panel: #222226; --line: #3d3d44;
+      --accent: #9b86ff; --accent-fg: #17171a; --error: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+    font: 16px/1.4 system-ui, sans-serif;
+  }
+  main { max-width: 72rem; margin: 0 auto; display: grid; gap: 16px; }
+  @media (min-width: 48rem) {
+    main { grid-template-columns: 1fr 1fr; }
+    header, #problems, #output { grid-column: 1 / -1; }
+  }
+  h1 { margin: 0; font-size: 1.25rem; }
+  textarea, pre, canvas {
+    width: 100%; margin: 0; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); color: var(--fg);
+  }
+  textarea, pre { font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; padding: 8px; }
+  textarea { height: 20rem; resize: vertical; tab-size: 2; }
+  canvas { aspect-ratio: 1; height: auto; display: block; background: #fff; }
+  pre { overflow-x: auto; white-space: pre; }
+  #problems { color: var(--error); border-color: var(--error); }
+  #output { white-space: pre-wrap; overflow-wrap: anywhere; }
+  [hidden] { display: none; }
+  button {
+    font: inherit; padding: 8px 20px; border: 0; border-radius: 6px; margin-top: 8px;
+    background: var(--accent); color: var(--accent-fg); cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: progress; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>goat</h1></header>
+  <section>
+    <textarea id="source" aria-label="goat code" spellcheck="false" autocapitalize="off" autocomplete="off">color("purple");
+for side from 1 to 60 do
+  forward(side * 3);
+  right(89)
+done
+</textarea>
+    <button id="run" disabled>Run</button>
+  </section>
+  <canvas id="canvas" width="600" height="600" aria-label="turtle drawing"></canvas>
+  <pre id="problems" role="alert" hidden></pre>
+  <pre id="output" aria-label="printed output" hidden></pre>
+</main>
+<script type="module">
+  import { compile, loadCompiler } from "./compile.js";
+  import { animate, run } from "./runtime.js";
+
+  // Serving the repository root makes this resolve after a release build of goat_web.
+  const COMPILER_URL = "../target/wasm32-unknown-unknown/release/goat_web.wasm";
+
+  const $ = (id) => document.getElementById(id);
+  const [source, button, canvas, problems, output] =
+    ["source", "run", "canvas", "problems", "output"].map($);
+
+  function show(el, text) {
+    el.textContent = text;
+    el.hidden = text === "";
+  }
+
+  let compiler;
+  try {
+    compiler = await loadCompiler(COMPILER_URL);
+    button.disabled = false;
+  } catch (e) {
+    show(problems, String(e.message ?? e));
+  }
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    show(problems, "");
+    show(output, "");
+    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    try {
+      const compiled = await compile(compiler, source.value);
+      if (!compiled.ok) return show(problems, compiled.diagnostics);
+      const lines = [];
+      const { commands } = await run(compiled.module, { onOutput: (line) => lines.push(line) });
+      show(output, lines.join("\n"));
+      await animate(canvas, commands);
+    } catch (e) {
+      show(problems, String(e.message ?? e));
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
