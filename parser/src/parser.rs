@@ -530,8 +530,8 @@ mod tests {
             input: "tag Circle tag Square 1",
             rule: Rule::goat,
             tokens: [goat(0, 23, [
-                tag_decl(0, 10, [tag_kw(0, 3), tag_case(4, 10, [name(4, 10)])]),
-                tag_decl(11, 21, [tag_kw(11, 14), tag_case(15, 21, [name(15, 21)])]),
+                tag_decl(0, 11, [tag_kw(0, 3), tag_case(4, 11, [name(4, 10)])]),
+                tag_decl(11, 22, [tag_kw(11, 14), tag_case(15, 22, [name(15, 21)])]),
                 expr(22, 23, [number(22, 23)]),
                 EOI(23, 23)
             ])]
@@ -551,7 +551,7 @@ mod tests {
             tokens: [tag_decl(0, 21, [
                 tag_kw(0, 3),
                 group_name(4, 5, [name(4, 5)]),
-                tag_case(8, 9, [name(8, 9)]),
+                tag_case(8, 10, [name(8, 9)]),
                 tag_case(12, 21, [name(12, 13), type_name(14, 20)])
             ])]
         }
