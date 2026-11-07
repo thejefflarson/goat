@@ -1,0 +1,8 @@
+# The turtle starts in the middle facing up. Each side is a little longer than
+# the one before, and a turn of 89 degrees instead of 90 makes the square drift
+# into a spiral. Run it with `goat run examples/spiral.goat -o spiral.svg`.
+color("purple");
+for side from 1 to 60 do
+  forward(side * 3);
+  right(89)
+done

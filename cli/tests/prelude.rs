@@ -41,7 +41,7 @@ fn every_example_behaves_the_same_with_a_prelude_around_it() {
     let mut seen = 0;
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
-        let uses_built_in_prelude = path.ends_with("stdlib.goat");
+        let uses_built_in_prelude = path.ends_with("stdlib.goat") || path.ends_with("spiral.goat");
         if path.extension().is_some_and(|e| e == "goat") && !uses_built_in_prelude {
             let src = fs::read_to_string(&path).unwrap();
             assert_eq!(

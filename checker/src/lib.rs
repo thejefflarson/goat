@@ -28,7 +28,11 @@ pub struct Checked {
 }
 
 /// The built-in definitions every program starts with.
-pub const PRELUDE: &str = include_str!("../../prelude/prelude.goat");
+pub const PRELUDE: &str = concat!(
+    include_str!("../../prelude/prelude.goat"),
+    "\n",
+    include_str!("../../prelude/turtle.goat"),
+);
 
 /// Parse, name-resolve, and type-check `source` with the prelude in scope.
 ///

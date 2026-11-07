@@ -178,3 +178,46 @@ fn sequencing_and_loops_run_from_the_command_line() {
         "1\n2\n3\ntrue"
     );
 }
+
+#[test]
+fn run_writes_the_turtle_drawing_to_the_o_path() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let svg = dir.path().join("spiral.svg");
+    let out = goat(&[
+        "run",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/spiral.goat"),
+        "-o",
+        svg.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let golden = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/spiral.svg");
+    assert_eq!(fs::read(&svg).unwrap(), fs::read(golden).unwrap());
+}
+
+#[test]
+fn a_turtle_program_without_o_runs_and_writes_nothing() {
+    let out = run_source("t.goat", "print(1); forward(10); print(2)");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "1\n2\n");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("-o"));
+}
+
+#[test]
+fn o_on_a_program_that_never_draws_is_an_error_and_writes_nothing() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let src = dir.path().join("n.goat");
+    let svg = dir.path().join("n.svg");
+    fs::write(&src, "1 + 2").unwrap();
+    let out = goat(&["run", src.to_str().unwrap(), "-o", svg.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "3\n");
+    assert!(!svg.exists());
+}
