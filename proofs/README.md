@@ -22,8 +22,10 @@ preservation) is B3 (#71).
 | `GoatRows.v` | Row-equivalence theory: L1 (equivalence + congruence), L2 (head-shape "no confusion" + arrow/record inversion up to `≅`), L2′ (the §3 per-label characterization, soundness direction), L3 (row surfacing). Over `typ`/`row`/`teq`/`req` only. |
 | `GoatDefs.v` | The declarative type system and operational semantics (`docs/semantics.md` §4–§6), hand-written over the generated syntax: type/row substitution, free-variable predicates, schemes, contexts, instantiation, generalization, values, small-step reduction, typing. |
 | `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, and **Progress**. |
-| `GoatSubst.v` | The Hindley–Milner substitution metatheory: the type/row-substitution algebra and `teq_ap`, the L4 structural lemmas, bijective renaming (`typing_rename`), term substitution **L6a/L6b** (derived), and **Preservation**/**Soundness**. Holds the two remaining admits `typing_weaken` (L4) and `typing_tsubst_fix` (L5). |
-| `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`, scheme/context alpha-renaming) toward closing those two admits (#151). |
+| `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), bijective renaming (`typing_rename`), and `gen_antimono`. What `GoatBij`/`GoatHM`/`GoatSound` build on. |
+| `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`, scheme/context alpha-renaming) feeding the T-Let freshening (#151). |
+| `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
+| `GoatSound.v` | The two canonical HM lemmas — `typing_weaken` (L4) and `typing_tsubst_fix` (L5) — via the general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`); then term substitution **L6a/L6b**, **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `_CoqProject`, `Makefile` | Build. |
 
 ## Records and projection in the Ott source
@@ -105,18 +107,15 @@ needs a Haskell toolchain in CI) is a later step.
 
 ## What is proved (B3, issue #71)
 
-**Status:** Progress is proved (assumption-free); Preservation and Soundness are
-complete *modulo* two canonical Hindley–Milner lemmas — general weakening (L4)
-and type/row substitution (L5) — tracked in #151. The term-substitution lemmas
-L6a/L6b, preservation, and soundness are now **fully derived** from those two;
-the proof is not finished until the two close (#71 stays open until then).
+**Status:** Progress, Preservation and Soundness are all proved, assumption-free.
+The two canonical Hindley–Milner lemmas — general weakening (L4,
+`typing_weaken`) and type/row substitution (L5, `typing_tsubst_fix`) — that the
+term-substitution lemmas L6a/L6b rest on are now **closed** (#151), so the whole
+development is unconditional.
 
 The soundness statements of `docs/semantics.md` §7 are mechanized here. By
-`Print Assumptions`:
-
-- **`progress`** — *closed under the global context*: no axioms, no admits.
-- **`preservation`** and **`soundness`** — closed except they rest on the two
-  lemmas below (`typing_weaken` and `typing_tsubst_fix`).
+`Print Assumptions`, **`progress`**, **`preservation`** and **`soundness`** are
+all *closed under the global context*: no axioms, no admits.
 
 Fully closed, no admits:
 
@@ -130,38 +129,36 @@ Fully closed, no admits:
 - Locally-nameless infrastructure (`open`/`subst` commutation, `subst_intro`),
   `typing_regular`, canonical forms (L7), the T-Conv-aware typing inversions,
   **Progress**, all **Preservation** congruence cases, and `ST-ProjRec`.
-- **Term substitution** (`GoatSubst.v`): `typing_subst` (L6a, monomorphic, for
+- **Term substitution** (`GoatSound.v`): `typing_subst` (L6a, monomorphic, for
   `ST-Beta`) and `typing_subst_poly` (L6b, polymorphic, for `ST-LetV`), by mutual
   induction on the typing derivation, prefix-generalized over the context so the
   induction goes under binders. Their `let` cases need no new theory: dropping a
   binding from the context only makes `gen` more general with no new free
-  variables (`gen_antimono`), the good direction for `typing_ftv_mono`. Each
-  rests only on the two lemmas below. Also `typing_inst_gen` (every instance of a
-  generalization is derivable).
+  variables (`gen_antimono`), the good direction for `typing_ftv_mono`. Also
+  `typing_inst_gen` (every instance of a generalization is derivable).
 
-The **two `Admitted` lemmas** (`GoatSubst.v`), on which the term-substitution
-lemmas (hence Preservation's `ST-Beta`/`ST-LetV` and Soundness) rest:
+- **The two canonical HM lemmas** (`GoatSound.v`), on which the term-substitution
+  lemmas (hence Preservation's `ST-Beta`/`ST-LetV` and Soundness) rest:
+  - `typing_weaken` (L4): inserting a middle block of bindings preserves typing;
+  - `typing_tsubst_fix` (L5): substituting the type/row variables *not* free in
+    the context preserves typing.
 
-- `typing_weaken` (L4): inserting a middle block of bindings preserves typing;
-- `typing_tsubst_fix` (L5): substituting the type/row variables *not* free in the
-  context preserves typing (the context is unchanged, as the substitution fixes
-  its free variables — the corollary of general type/row substitution that
-  instantiation needs).
+  Both follow from one general lemma, `typing_tsubst_gen_mut`: a type/row
+  substitution applied to a derivation, with the context substituted
+  capture-avoidingly (the `ctx_subst` relation, which also allows **extra**
+  target bindings, so the identity substitution gives weakening). Every case is
+  structural except `T-Let`, whose hard point is that generalization does not
+  commute with a *capturing* substitution. The fix (approach (a) of the #151
+  analysis) is a derivation-level freshness step carried out in the proof, not in
+  the typing rule: at each `T-Let` the let-generalized variables are renamed to
+  atoms fresh for the substitution and the target context (`mk_rename`), so the
+  capture-avoiding substituted scheme (`casch`, `GoatHM`) both preserves the
+  instance set (`casch_inst`) and equals `gen` of the substituted body over the
+  target context (`casch_gen_sch_equiv`, `GoatSound`). The typing rules are
+  untouched, so the set of accepted programs is unchanged.
 
-Both are stated at full strength (no theorem is weakened). Their hard case is
-`T-Let`, where the let-generalized variables must be freshened away from the
-inserted/substituted vars before `gen` matches. On the atom representation this
-freshening is a finite-atom bijection (`atom_fresh`) feeding `typing_rename`; the
-subtlety ADR 0008 and `docs/semantics.md` §10 flag is the case where a
-generalized variable also occurs free in the result type *and* in the inserted
-context, which forces the proof to re-choose the body's instance substitutions
-rather than merely rename atoms. ADR 0008 budgets this HM substitution theory as
-a separate sub-development.
-
-`make ci` runs a frozen-admit guard (`make check-admits`) that fails if the
-`Admitted.` count in `proofs/*.v` ever differs from the two tracked here, so a
-later change can only make the proof *more* complete. When `typing_weaken` and
-`typing_tsubst_fix` close (#151), lower `EXPECTED_ADMITS` in the `Makefile` to 0.
+`make ci` runs a frozen-admit guard (`make check-admits`) with
+`EXPECTED_ADMITS = 0`: it fails if any `Admitted.` reappears in `proofs/*.v`.
 
 ### Infrastructure (`GoatProofs.v`)
 

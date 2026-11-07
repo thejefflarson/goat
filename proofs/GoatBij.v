@@ -19,10 +19,8 @@
    - [ctx_more_gen_ren]: the same, pointwise over a context.
 
    This is the reusable core of the sub-development ADR 0008 budgets separately.
-   It does not itself discharge an admit: the remaining obstruction is the case
-   where a generalized variable occurs free in BOTH the result type and the
-   inserted block, which forces re-choosing the body's instance substitutions
-   rather than renaming atoms (see the [typing_weaken] comment in GoatSubst.v). *)
+   [mk_rename] and [sch_more_gen_ren] feed the T-Let freshening in GoatSound,
+   which (with [casch_inst]/[casch_gen_sch_equiv]) closes both HM lemmas. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.

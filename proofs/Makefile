@@ -23,7 +23,7 @@ OTT_FLAGS = -coq_lngen true -coq_expand_list_types true
 # that term substitution (L6a/L6b), preservation, and soundness are derived
 # from -- general weakening (typing_weaken, L4) and context-fixing type/row
 # substitution (typing_tsubst_fix, L5). Closing them finishes B3 (issue #151).
-EXPECTED_ADMITS = 2
+EXPECTED_ADMITS = 0
 
 all: gen coq
 
