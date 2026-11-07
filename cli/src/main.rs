@@ -2,8 +2,10 @@
 //!
 //! - `goat check FILE`   parse and type-check, printing the program's type.
 //! - `goat build FILE [-o OUT]`  compile to a WebAssembly module.
-//! - `goat run FILE`     compile and run under wasmtime.
+//! - `goat run FILE [-o OUT.svg]`  compile and run under wasmtime; `-o` saves
+//!   the turtle's drawing as an SVG.
 
+use goat_cli::turtle::TurtleHost;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{env, fs};
@@ -39,13 +41,40 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Some("run") => {
-            let file = args.get(2).ok_or("usage: goat run FILE")?;
-            execute(&build(file)?)?;
-            Ok(ExitCode::SUCCESS)
+            let file = args.get(2).ok_or("usage: goat run FILE [-o OUT.svg]")?;
+            run_program(&build(file)?, parse_out_flag(&args[3..]))
         }
         _ => {
             eprintln!("usage: goat <check|build|run> FILE [-o OUT]");
             Ok(ExitCode::FAILURE)
+        }
+    }
+}
+
+/// Run `wasm` under wasmtime with the turtle as its host and print what it
+/// emitted. A trap becomes an error, so the process exits non-zero. With `out`,
+/// the turtle's drawing is written there as an SVG.
+fn run_program(wasm: &[u8], out: Option<PathBuf>) -> Result<ExitCode, String> {
+    let (run, turtle) = goat_cli::run_with_host(wasm, TurtleHost::default())?;
+    for line in run.printed {
+        println!("{line}");
+    }
+    match out {
+        Some(_) if turtle.commands.is_empty() => {
+            eprintln!("goat: the program used no turtle commands, so no SVG was written");
+            Ok(ExitCode::FAILURE)
+        }
+        Some(path) => {
+            fs::write(&path, turtle.to_svg())
+                .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            eprintln!("goat: wrote {}", path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        None => {
+            if !turtle.commands.is_empty() {
+                eprintln!("goat: the turtle drew something; pass -o FILE.svg to save it");
+            }
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
@@ -66,15 +95,6 @@ fn render_errors(file: &str, source: &str, errors: &[goat_checker::GoatError]) -
 fn build(file: &str) -> Result<Vec<u8>, String> {
     let source = read(file)?;
     goat::compile(&source).map_err(|errors| render_errors(file, &source, &errors))
-}
-
-/// Run `wasm` under wasmtime and print what the program emitted. A trap
-/// becomes an error, so the process exits non-zero.
-fn execute(wasm: &[u8]) -> Result<(), String> {
-    for line in goat_cli::execute(wasm)? {
-        println!("{line}");
-    }
-    Ok(())
 }
 
 fn parse_out_flag(args: &[String]) -> Option<PathBuf> {

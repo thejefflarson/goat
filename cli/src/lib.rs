@@ -5,6 +5,8 @@ use goat_checker::hir::Boundary;
 use goat_mir::{Host, HostValue, NoHost};
 use wasmtime::{Caller, Config, Engine, ExternType, Linker, Module, Store, Val};
 
+pub mod turtle;
+
 /// What a finished program left behind.
 pub struct Run {
     pub printed: Vec<String>,
@@ -244,7 +246,7 @@ pub fn run_with_host<H: Host + 'static>(wasm: &[u8], host: H) -> Result<(Run, H)
         .map_err(|e| format!("missing entry point: {e}"))?;
     entry
         .call(&mut store, ())
-        .map_err(|e| format!("trap: {e}"))?;
+        .map_err(|e| format!("trap: {e:#}"))?;
     let live_allocs = instance
         .get_typed_func::<(), u32>(&mut store, "goat_live_allocs")
         .and_then(|live| live.call(&mut store, ()))

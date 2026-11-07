@@ -1,0 +1,18 @@
+# The turtle. The host draws; these only name what it can do, and a program
+# that never calls one pays nothing for them. The turtle starts at the origin
+# facing up with its pen down. `left` and `right` turn by degrees, and `color`
+# takes a name like "red" or a hex code like "#ff8800".
+
+forward = foreign "turtle" "forward" (Number) -> Unit
+
+back = foreign "turtle" "back" (Number) -> Unit
+
+left = foreign "turtle" "left" (Number) -> Unit
+
+right = foreign "turtle" "right" (Number) -> Unit
+
+pen_up = foreign "turtle" "pen_up" () -> Unit
+
+pen_down = foreign "turtle" "pen_down" () -> Unit
+
+color = foreign "turtle" "color" (String) -> Unit
