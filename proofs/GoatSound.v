@@ -1,3 +1,98 @@
+(* ======================================================================
+   START HERE: what this proof says, and how to read it
+   ======================================================================
+
+   WHAT WE ARE PROVING
+   -------------------
+   The theorem at the bottom of this file is called [soundness].  In plain
+   words it says:
+
+       If a goat program passes the type checker, then running it can never
+       crash or get stuck.
+
+   That is the entire point of a type system.  The checker looks at a program
+   BEFORE it runs and says "this is fine".  Soundness is the promise that the
+   checker is not lying: a program it accepts will never reach a state like
+   "add a number to a function" or "call something that is not a function",
+   where the machine would not know what to do next.  ("Stuck" means: not
+   finished, yet no rule says how to continue.)
+
+   A few words you will see everywhere:
+
+   - A TERM (or program, or expression) is a piece of goat code, such as
+     [e_app e1 e2], the call of [e1] on [e2].  The Ott/Coq name for the type
+     of all terms is [exp].
+   - A TYPE says what kind of thing a term produces: a number, a bool, a
+     function from one type to another, a record.
+   - A TYPING CONTEXT (written [G]) is a list recording the type of every
+     variable currently in scope, like a table "x : number, f : number -> bool".
+     Whether a term is well typed always depends on this table.
+   - The statement [typing G e T] reads "in context [G], term [e] has type
+     [T]".  We call a proof of that sentence a TYPING DERIVATION: a little tree
+     of rules (T_Var, T_App, ...) showing why [e] has type [T].
+   - A VALUE is a finished result that needs no more work: a number, [true],
+     [false], a function, or a record whose fields are all values.
+   - A STEP, written [step e e'], is one unit of running: [e] turns into [e']
+     by one rule, for example calling a function on a value by plugging the
+     value into the function body.  [multistep e e'] means zero or more steps.
+
+   THE TWO-PART RECIPE
+   -------------------
+   Nobody proves soundness in one go.  The standard trick is two smaller
+   promises that, together, give the big one.
+
+   1. PROGRESS: a well-typed program that is not finished can always take
+      another step.  It is never stuck RIGHT NOW.
+         (proved in GoatMeta.v, theorem [progress])
+
+   2. PRESERVATION: if a well-typed program takes a step, the result is still
+      well typed, with the SAME type.  A step never breaks the types.
+         (proved in this file, theorem [preservation])
+
+   Why do the two together rule out getting stuck?  Picture running a program
+   one step at a time.  Start with a well-typed program.  By progress it is
+   finished or it can step.  If it steps, preservation says the new program is
+   well typed too -- so progress applies AGAIN, and we can step again, and so
+   on.  At every moment along the run the program is well typed, so at every
+   moment it is either done or able to continue.  Therefore it can never be
+   stuck.  Turning "and so on" into a proof is a short induction on the number
+   of steps; that is [soundness], at the bottom of this file.
+
+   MAP OF THIS FILE
+   ----------------
+   The two short theorems at the end ([preservation], [soundness]) are easy to
+   read.  The long part in the MIDDLE is machinery that [preservation] needs.
+   The reason: when a function is called, [(fun x => body) v], the step plugs
+   [v] in for [x] in [body].  To show the result is still well typed we need a
+   SUBSTITUTION LEMMA: "plugging a well-typed value into a well-typed body
+   keeps it well typed".  That lemma is easy for plain functions, but goat
+   (like ML and Haskell) has polymorphic [let], and that makes it hard.  So,
+   top to bottom:
+
+     1. small helper lemmas about which type variables a substitution touches
+     2. the HARD LEMMA [typing_tsubst_gen_mut]: substituting for TYPE variables
+        inside a typing derivation (the polymorphic-[let] story is told just
+        above it, read that one slowly)
+     3. weakening ([typing_weaken]) and the term-substitution lemmas
+        ([typing_subst], [typing_subst_poly]) built from it
+     4. [preservation], then [soundness]
+
+   Read the explanation above [typing_tsubst_gen_mut] for the one genuinely
+   tricky idea.  Everything else is bookkeeping around it.
+
+   A NOTE ON READING COQ
+   ---------------------
+   A Coq proof is a conversation with the computer.  [Lemma name : statement.]
+   announces a claim; [Proof.] ... [Qed.] is a recipe the computer checks step
+   by step; if [Qed] is accepted, the claim is certainly true.  Each line in
+   between is a TACTIC, an instruction like "assume this", "split the goal in
+   two", or "use that other lemma".  At any moment the computer shows the
+   GOAL (what is left to show) above a list of what we already know
+   (the hypotheses).  The comments in this file tell you what each move does
+   to that goal.  [Print Assumptions soundness.] reporting "Closed under the
+   global context" means the proof rests on no unproved assumptions at all.
+   ====================================================================== *)
+
 (* The two canonical Hindley-Milner substitution lemmas (issue #151), and the
    term-substitution / preservation / soundness development that rests on them.
 
@@ -552,12 +647,98 @@ Definition tr_compat (st:tsub) (sr:rsub) (G G':ctx) : Prop :=
   (forall r, r `in` frv_ctx G -> ftv_row (sr r) [<=] ftv_ctx G') /\
   (forall r, r `in` frv_ctx G -> frv_row (sr r) [<=] frv_ctx G').
 
+(* ======================================================================
+   THE HARD IDEA: why polymorphic [let] makes substitution tricky
+   ======================================================================
+
+   Polymorphism.  In goat you can write
+       let id = fun x => x in ... id 1 ... id true ...
+   The same [id] is used at type "number -> number" and at "bool -> bool".
+   That works because [let] gives its name a TYPE SCHEME, not a single type.
+   A scheme is a type with some of its type variables marked "for any".  The
+   scheme of [id] is "for any a, a -> a", and every use picks its own [a].
+   Picking a concrete type for each "for any" variable is called INSTANTIATING
+   the scheme ([inst]); the variables you are free to pick are the
+   QUANTIFIED ones.  This is also why the empty list [] can be a list of
+   numbers here and a list of bools there.
+
+   Where do the quantified variables come from?  At [let x = e1 in e2], goat
+   finds the type [T1] of [e1] and GENERALIZES it ([gen G T1]): every type
+   variable in [T1] that does not also appear in the context [G] becomes
+   "for any".  (Variables that do appear in [G] are pinned down by the rest
+   of the program, so they may not be freely chosen.)
+
+   Substitution.  Our big lemma is about SUBSTITUTION: plugging a type in for a
+   type variable everywhere, say "replace a by number".  We want:
+       if [e] has type [T] in context [G], then after substituting, [e] has
+       the substituted type in the substituted context.
+   Every typing rule is routine to push the substitution through, EXCEPT [T_Let],
+   because of VARIABLE CAPTURE.
+
+   Capture, with a small example.  Suppose a let-bound scheme is
+   "for any b, b -> c" (here [c] is pinned, [b] is quantified).  Now substitute
+   "replace c by b" (some type that happens to mention a variable named [b]).
+   The naive result is "for any b, b -> b".  That is WRONG: the [b] we
+   inserted was a different, ordinary variable, but the existing "for any b"
+   grabbed it and turned "a function from b to the pinned c" into "the
+   identity function type, usable at every type".  The quantifier CAPTURED
+   a variable it should not own.  That changes the meaning of the program and
+   would let us prove false things, so a correct substitution must never
+   allow it.
+
+   The cure is a standard trick from logic (it is the same as renaming a
+   loop variable, [for i] to [for j], when [i] clashes).  Before substituting
+   we RENAME the quantified variables of each [let] to FRESH ones: names that
+   do not occur anywhere in the substitution, the context, or the context we
+   are moving to.  "Fresh" just means "not used by anything else".  Renaming
+   a bound variable never changes the meaning ("for any b, b -> c" and "for
+   any z, z -> c" are the same scheme), but once the quantified variables are
+   fresh, the substitution cannot hit them and cannot capture anything.
+
+   How the proof carries this out.  Inside the [T_Let] case below we:
+     (1) pick the renamings [g] (for type variables) and [gr] (for row
+         variables, which stand for "the rest of a record's fields"), via
+         [mk_rename], avoiding a set [Bav] of all names to stay away from;
+     (2) show the renamed quantifiers really are fresh (the [HgF], [Hnc*]
+         facts), so no capture;
+     (3) show the substituted scheme [casch] still has all the instances the
+         original had ([casch_inst]) -- uses of the let-bound name keep
+         working;
+     (4) show that scheme equals what [gen] would produce in the new context
+         ([casch_gen_sch_equiv]) -- so the result is again a legal [T_Let].
+   Steps (1)-(2) are long because the proof must track exactly which names
+   are free where.  That is bookkeeping, not new ideas: the idea is only
+   "rename the bound variables to fresh ones first".
+
+   (A word on the plumbing: all the TERMS here are written with
+   "locally nameless" variables -- bound variables are numbers, free ones are
+   names -- which is why instantiating a binder uses [pick fresh x] and
+   [open_exp_wrt_exp].  That is a different, easier use of freshness: the
+   name [x] for the body of a function or [let] just has to differ from
+   everything else.  Do not confuse it with the type-variable renaming above.)
+   ====================================================================== *)
+
 (* The general type/row substitution lemma: a kind-respecting substitution
    applied to a derivation, with the context substituted capture-avoidingly
    ([ctx_subst]), finite support ([tr_supp]) and image-compatibility
    ([tr_compat]).  Every case is structural except T-Let, which freshens the
    let-generalized variables (via [mk_rename]) so that [casch_inst] supplies the
-   instances and [casch_gen_sch_equiv] lines the scheme back up with [gen]. *)
+   instances and [casch_gen_sch_equiv] lines the scheme back up with [gen].
+
+   What it says, in everyday terms: take any typing derivation, and a
+   substitution [st]/[sr] ([st] replaces type variables, [sr] replaces row
+   variables).  If the new context [G'] is what you get from [G] by applying
+   the substitution (that is [ctx_subst]), and the substitution only changes
+   a bounded set [A] of names ([tr_supp]) and does not smuggle in names that
+   [G'] lacks ([tr_compat]), then the same term still type checks, at the
+   substituted type.  [G'] may have extra variables; that slack is what lets
+   the identity substitution double as WEAKENING (adding unused variables).
+
+   How the proof goes: we prove it for every typing derivation by taking each
+   typing rule in turn (the typing derivation is built from rules, so this
+   covers all of them).  When the rule has sub-derivations, we may assume the
+   lemma already holds for them: that assumption is the induction hypothesis,
+   named [IH], [IH1], [IH2] below. *)
 Lemma typing_tsubst_gen_mut :
   (forall G e T, typing G e T -> forall st sr G' A,
       uniq G' -> ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
@@ -566,14 +747,26 @@ Lemma typing_tsubst_gen_mut :
       uniq G' -> ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
       field_typing G' fs (ap_row st sr R)).
 Proof.
+  (* Do induction over typing derivations (and, mutually, over the field lists
+     of a record).  This produces one case per typing rule; each [intros]
+     below names the pieces of that rule so we can talk about them. *)
   apply typing_field_mutind.
-  - (* T_Var *) intros G x s T Hu Hb Hi st sr G' A Hu' Hcs Hsupp Hcompat.
+  - (* Case: the term is a variable [x], looked up in the context. *)
+    (* Its scheme [s] in [G] has a matching scheme [s'] in [G'] (this is what
+       [ctx_subst] promises), and any instance of [s] becomes an instance of
+       [s'] after substituting.  So the variable rule applies again. *)
+    intros G x s T Hu Hb Hi st sr G' A Hu' Hcs Hsupp Hcompat.
     destruct (ctx_subst_binds _ _ _ _ _ _ Hcs Hb) as [s' [Hb' Hss]].
     apply T_Var with (s := s'); auto.
   - intros G n Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_Num; auto.
   - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_True; auto.
   - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_False; auto.
-  - (* T_Abs *) intros L G e T1 T2 Ht IH st sr G' A Hu' Hcs Hsupp Hcompat. simpl.
+  - (* Case: a function [fun x => e] (T_Abs).  We must type its body with the
+       parameter [x] added to the context at type [T1].  [x] is a brand new
+       name picked fresh (not in [L] or [G']); the induction hypothesis then
+       types the body in the extended context.  The lengthy last bullet only
+       shows that adding [x] keeps the [tr_compat] side condition true. *)
+    intros L G e T1 T2 Ht IH st sr G' A Hu' Hcs Hsupp Hcompat. simpl.
     apply T_Abs with (L := L `union` dom G'). intros x Hx.
     apply (IH x ltac:(fsetdec) st sr ((x ~ sch_mono (ap_typ st sr T1)) ++ G') A).
     + constructor; [ assumption | fsetdec ].
@@ -598,13 +791,29 @@ Proof.
         -- rewrite frv_sch_mono in Hr. intros z Hz. apply AtomSetFacts.union_iff. left.
            rewrite frv_sch_mono. apply (frv_ap_in2 st sr T1 z r); [ exact Hr | exact Hz ].
         -- intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcRfr r Hr). exact Hz.
-  - (* T_App *) intros G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat. simpl in *.
+  - (* Case: a call [e1 e2] (T_App).  Nothing is bound here, so we just apply
+       the induction hypotheses to the function part and the argument part. *)
+    intros G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat. simpl in *.
     eapply T_App; [ eapply IH1 | eapply IH2 ]; eauto.
-  - (* T_Let *) intros L0 G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
+  - (* Case: [let x = e1 in e2] (T_Let).  THIS IS THE HARD CASE; read the
+       story above the lemma first.  Roughly:
+         - [s] is the scheme the [let] gives to [x] (generalizing [e1]'s type).
+         - We rename [s]'s quantified variables to fresh names (below, [g]
+           and [gr]), so the substitution cannot capture them.
+         - We then rebuild a [let] derivation in the new context [G'].
+       Most lines below are bookkeeping that proves the names really are
+       fresh and the renaming changes nothing; the idea is just the renaming. *)
+    intros L0 G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
     destruct Hsupp as [HsuppT HsuppR].
     destruct Hcompat as [HcT [HcFr [HcRt HcRfr]]].
     set (s := gen G T1).
+    (* [Bav] is the set of names to AVOID: everything mentioned by the
+       substitution's support or by either context.  Anything outside it is
+       fresh. *)
     set (Bav := A `union` ftv_ctx G `union` frv_ctx G `union` ftv_ctx G' `union` frv_ctx G').
+    (* Ask for a renaming [g] of the quantified type variables onto fresh names
+       outside [Bav] (and [gr] for row variables).  [g] is its own inverse
+       (swaps old and new names) and leaves every other name alone. *)
     destruct (mk_rename (s_tq s) Bav) as [g [Ng [Hginv [HgNB [HgNV [HgVN Hgfix]]]]]].
     destruct (mk_rename (s_rq s) Bav) as [gr [Ngr [Hgrinv [HgrNB [HgrNV [HgrVN Hgrfix]]]]]].
     (* renamed quantifiers are fresh for Bav *)
@@ -614,6 +823,11 @@ Proof.
     assert (HgrF : forall p, p `in` amap gr (s_rq s) -> p `notin` Bav).
     { intros p Hp. apply amap_in in Hp. destruct Hp as [v [Hv Hgv]]. subst p.
       apply HgrNB. apply HgrVN. exact Hv. }
+    (* The next dozen facts are routine consequences of freshness: [g] and
+       [gr] do not move anything the context mentions; the substitution does
+       nothing to the fresh names; and nothing the substitution inserts can
+       clash with the fresh names (these last ones are [Hnc1]..[Hnc4], the
+       NO-CAPTURE conditions). *)
     (* g, gr fix sets inside Bav and disjoint from the quantifier set *)
     assert (Hgfix' : forall C, C [<=] Bav -> (forall x, x `in` C -> x `notin` s_tq s) ->
                      forall c, c `in` C -> g c = c).
@@ -657,9 +871,13 @@ Proof.
     assert (Hnc4 : forall p r, r `in` frv_sch s -> p `in` amap gr (s_rq s) -> p `notin` frv_row (sr r)).
     { intros p r Hr Hp. assert (frv_row (sr r) [<=] frv_ctx G') by (apply HcRfr; fsetdec).
       assert (p `notin` Bav) by (apply HgrF; exact Hp). unfold Bav in *. fsetdec. }
+    (* Payoff 1: the substituted scheme [casch] still allows every instance the
+       old scheme allowed, so each use of the let-bound name still type checks. *)
     (* the capture-avoiding substituted scheme preserves instances *)
     assert (Hcaschinst : sch_subst st sr s (casch st sr g gr s)).
     { intros W HW. apply casch_inst; auto. }
+    (* Payoff 2: that scheme is the same as what [gen] would compute in the new
+       context [G'].  So the [let] rule applies again. *)
     (* ... and lines up with gen over G' *)
     assert (Hbridge : sch_equiv (casch st sr g gr s)
                         (gen G' (ap_typ st sr (ren_typ g gr (s_body s))))).
@@ -680,8 +898,13 @@ Proof.
       - intros r Hr. apply HcRfr. fsetdec. }
     set (B' := ap_typ st sr (ren_typ g gr T1)).
     assert (HbodyT1 : s_body s = T1) by (unfold s, gen; reflexivity).
+    (* Now rebuild the [let].  The [let] rule has two premises: [e1] has some
+       type (here the renamed-then-substituted type [B']), and the body types
+       when [x] is bound to the generalized scheme. *)
     apply T_Let with (L := L0 `union` dom G') (T1 := B').
-    + (* e1 : B' *)
+    + (* Premise 1: [e1] has type [B'].  Use the induction hypothesis for [e1],
+         with the substitution adjusted to run after the renaming [g]. *)
+      (* e1 : B' *)
       unfold B'. rewrite <- ap_precomp.
       set (A2 := A `union` s_tq s `union` lset Ng `union` s_rq s `union` lset Ngr).
       apply (IH1 (fun a => st (g a)) (fun r => sr (gr r)) G' A2 Hu').
@@ -702,7 +925,12 @@ Proof.
         -- intros a Ha. rewrite (HgfixG a Ha). apply HcFr; exact Ha.
         -- intros r Hr. rewrite (HgrfixG r Hr). apply HcRt; exact Hr.
         -- intros r Hr. rewrite (HgrfixG r Hr). apply HcRfr; exact Hr.
-    + (* body *)
+    + (* Premise 2: the body.  For a fresh [x], use the induction hypothesis on
+         the body with [x] bound to the substituted scheme [casch]; then swap
+         in [gen G' ...], which is the same scheme (Payoff 2), by
+         [typing_sch_equiv_ctx] (typing does not care which of two equivalent
+         schemes a variable has). *)
+      (* body *)
       intros x Hx.
       apply typing_sch_equiv_ctx with (G := (x ~ casch st sr g gr s) ++ G').
       * apply (IH2 x ltac:(fsetdec) st sr ((x ~ casch st sr g gr s) ++ G') A).
@@ -721,7 +949,11 @@ Proof.
               apply (HcRfr r); [ fold s; fsetdec | exact Hz ].
       * apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
         rewrite HbodyT1 in Hbridge. fold B' in Hbridge. exact Hbridge.
-  - (* T_Record *) intros G fs R Ht IH st sr G' A Hu' Hcs Hsupp Hcompat. simpl.
+  - (* Remaining cases (records, field access, conversion): no variable is
+       bound, so each is the induction hypothesis plus re-applying the rule.
+       T_Conv additionally needs that type equality survives substitution
+       ([teq_ap]). *)
+    (* T_Record *) intros G fs R Ht IH st sr G' A Hu' Hcs Hsupp Hcompat. simpl.
     apply T_Record. eapply IH; eauto.
   - (* T_Proj *) intros G e l T R Ht IH st sr G' A Hu' Hcs Hsupp Hcompat.
     eapply T_Proj. simpl in IH. eapply IH; eauto.
@@ -782,7 +1014,13 @@ Proof.
 Qed.
 
 (* L4 (weakening): inserting a middle block preserves typing -- the identity
-   substitution into a larger context, via the general lemma. *)
+   substitution into a larger context, via the general lemma.
+
+   What it says: if a term is well typed in a context, it is still well typed
+   when we add more (unrelated) variables to the context.  Extra information
+   in the table can never make a term ill typed.  We get this for free from
+   the big lemma by "substituting" each type variable with itself (the
+   identity substitution) while moving to a bigger context. *)
 Lemma typing_weaken : forall E F G e T,
   typing (E ++ G) e T ->
   uniq (E ++ F ++ G) ->
@@ -822,6 +1060,17 @@ Qed.
 
 (* ================================================================== *)
 (* L6a: monomorphic term substitution (for ST-Beta).                     *)
+(*                                                                        *)
+(* Now we switch from substituting TYPES for type variables to            *)
+(* substituting a TERM for a term variable.  Calling a function           *)
+(* [(fun x => body) v] steps to [body] with [v] plugged in for [x].       *)
+(* The lemma says: if [body] is well typed assuming [x : U], and [v] has  *)
+(* type [U], then [body] with [v] in place of [x] is still well typed     *)
+(* with the same type.  (It is the "no surprises" check for a function    *)
+(* call.)  The proof is again by cases on the typing rules; the only      *)
+(* interesting case is a variable, where we either find [x] itself and    *)
+(* use [v]'s typing (weakened to the current context), or some other      *)
+(* variable that is left alone.                                           *)
 (* ================================================================== *)
 
 Lemma typing_subst_mut : forall x U u G1,
@@ -889,6 +1138,13 @@ Qed.
 
 (* ================================================================== *)
 (* L6b: polymorphic term substitution (for ST-LetV).                     *)
+(*                                                                        *)
+(* Same idea for [let x = v in body], which steps to [body] with [v] in   *)
+(* place of [x].  The difference: inside [body], [x] has a type SCHEME    *)
+(* (it may be used at several types), so each use of [x] needs [v] to be  *)
+(* well typed at that particular instance.  [typing_inst_gen] supplies    *)
+(* that: a value of type [T1] has every instance of [gen G1 T1].  That is *)
+(* where the hard substitution lemma pays off.                            *)
 (* ================================================================== *)
 
 Lemma typing_subst_poly_mut : forall x T1 v G1,
@@ -958,42 +1214,83 @@ Qed.
 
 (* ================================================================== *)
 (* Preservation (docs/semantics.md section 7).                          *)
+(*                                                                        *)
+(* WHAT THIS SAYS: if a term has type [T] and takes one step to [e'],     *)
+(* then [e'] has the same type [T].  Running never changes a term's       *)
+(* type (so a number-producing program keeps producing a number).         *)
+(*                                                                        *)
+(* HOW THE PROOF GOES: a step happens by one of a handful of rules        *)
+(* ([st_beta], [st_app1], ...).  We prove the claim once per rule: for    *)
+(* each way a step can happen, assume the term before the step is well    *)
+(* typed, and show the term after is too.  Two kinds of case:             *)
+(*  - "Congruence" cases ([st_app1], [st_app2], [st_let1], [st_proj],     *)
+(*    [st_rec], [stf_*]): a step happened INSIDE a sub-term, leaving the  *)
+(*    rest alone.  The induction hypothesis says the sub-term kept its    *)
+(*    type, so we just rebuild the outer term with the same typing rule.  *)
+(*  - "Real work" cases ([st_beta], [st_letv], [st_projrec]): the outer   *)
+(*    term itself is rewritten.  Here we use the substitution lemmas.     *)
+(*                                                                        *)
+(* A recurring chore: the typing derivation might end with extra          *)
+(* [T_Conv] steps ("this type equals that type").  The [*_inv] lemmas in  *)
+(* GoatMeta.v peel those off so we can see the real rule underneath.      *)
+(* [T_Conv] reappears in each answer so the final type matches.           *)
 (* ================================================================== *)
 
 Scheme step_mut := Induction for step Sort Prop
 with   step_fields_mut := Induction for step_fields Sort Prop.
 Combined Scheme step_step_fields_mutind from step_mut, step_fields_mut.
 
+(* Do induction on the step relation: one case per step rule.  Each case
+   begins by assuming the term before the step is typed at [T] in context
+   [G] (that is the [Hty] below) and must show the stepped term is too. *)
 Lemma preservation_mut :
   (forall e e', step e e' -> forall G T, typing G e T -> typing G e' T) /\
   (forall fs fs', step_fields fs fs' ->
      forall G R, field_typing G fs R -> field_typing G fs' R).
 Proof.
   apply step_step_fields_mutind.
-  - (* st_beta: (abs e) v --> open e v *)
+  - (* Case: a function call on a value, [(fun x => e) v] steps to [e] with
+       [v] plugged in (st_beta).  The real work.  Plan: read off from [Hty]
+       that the function has type [A -> B] and [v] has type [A]; then the
+       substitution lemma [typing_subst] says plugging [v] into the body keeps
+       the type [B]. *)
     intros e v Hv G T Hty.
+    (* "Look inside" the typing of a call: it must come from a function [Habs]
+       and an argument [Harg]. *)
     apply app_inv in Hty. destruct Hty as [A [B [Habs [Harg Hbt]]]].
+    (* "Look inside" the typing of the function: its body types once the
+       parameter is added to the context. *)
     apply abs_inv in Habs. destruct Habs as [L [A' [B' [Hbody Harr]]]].
     apply teq_Arrow_inv in Harr. destruct Harr as [A2 [B2 [Heq [HA HB]]]].
     inversion Heq; subst.
+    (* Choose a name [x] for the parameter that clashes with nothing. *)
     pick fresh x for (L \u fv_exp e).
     assert (HxL : x `notin` L) by fsetdec.
     assert (Hxe : x `notin` fv_exp e) by fsetdec.
     assert (Hv' : typing G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
     assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
       by (eapply typing_subst; [ apply Hbody; exact HxL | exact Hv' ]).
+    (* Plugging [v] into the body opened with [x] equals opening the body with
+       [v] directly (that is [subst_intro]); that is exactly the stepped
+       term.  The final lines just match up the types, which agree. *)
     rewrite <- subst_intro in Hopen by exact Hxe.
     eapply T_Conv; [ exact Hopen | ].
     eapply teq_trans; [ exact HB | exact Hbt ].
-  - (* st_app1 *)
+  - (* Case: the function part of a call stepped, [e1 e2] to [e1' e2]
+       (st_app1).  Congruence: [IH] says [e1'] keeps [e1]'s type, so the call
+       is still well typed. *)
     intros e1 e1' e2 Hstep IH G T Hty.
     apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
     eapply T_Conv; [ eapply T_App; [ apply IH; exact Hty1 | exact Hty2 ] | exact Hbt ].
-  - (* st_app2 *)
+  - (* Case: the argument of a call stepped, [v e2] to [v e2'] (st_app2).
+       Same idea, on the argument. *)
     intros v e2 e2' Hv Hstep IH G T Hty.
     apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
     eapply T_Conv; [ eapply T_App; [ exact Hty1 | apply IH; exact Hty2 ] | exact Hbt ].
-  - (* st_letv: (let v e2) --> open e2 v *)
+  - (* Case: [let x = v in e2] with [v] a value steps to [e2] with [v] plugged
+       in for [x] (st_letv).  The real work, and where polymorphism matters:
+       [x] may be used at several types in [e2], so we use the POLYMORPHIC
+       substitution lemma [typing_subst_poly] rather than the plain one. *)
     intros v e2 Hv G T Hty.
     apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
     pick fresh x for (L \u fv_exp e2).
@@ -1003,16 +1300,22 @@ Proof.
       by (eapply typing_subst_poly; [ apply Hbody; exact HxL | exact Hty1 ]).
     rewrite <- subst_intro in Hopen by exact Hxe.
     eapply T_Conv; [ exact Hopen | exact Hteq ].
-  - (* st_let1 *)
+  - (* Case: the bound expression of a [let] stepped (st_let1).  Congruence.
+       The body does not change, and the type [T1] of the bound expression
+       is the same, so the generalization and the body's typing carry over. *)
     intros e1 e1' e2 Hstep IH G T Hty.
     apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
     eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1);
                      [ apply IH; exact Hty1 | exact Hbody ] | exact Hteq ].
-  - (* st_proj *)
+  - (* Case: the record in a field access [e.l] stepped (st_proj).
+       Congruence. *)
     intros e e' l Hstep IH G T Hty.
     apply proj_inv in Hty. destruct Hty as [T0 [R [Hty0 Hteq]]].
     eapply T_Conv; [ eapply T_Proj; apply IH; exact Hty0 | exact Hteq ].
-  - (* st_projrec *)
+  - (* Case: field access on a finished record, [{..., l = v, ...}.l] steps
+       to [v] (st_projrec).  The real work: the record's type says field [l]
+       has type [T1], and the field we looked up ([v]) has that type, since
+       the record was well typed field by field. *)
     intros fs l v Hrv Hlook G T Hty.
     apply proj_inv in Hty. destruct Hty as [T0 [R [Hrec Hteq]]].
     apply rec_inv in Hrec. destruct Hrec as [R' [Hft Hreq]].
@@ -1023,20 +1326,24 @@ Proof.
     assert (v0 = v) by congruence. subst v0.
     eapply T_Conv; [ exact Hty0 | ].
     eapply teq_trans; [ exact Hteq1 | exact Hteq ].
-  - (* st_rec *)
+  - (* Case: a field inside a record stepped (st_rec).  Congruence, using the
+       companion statement for lists of fields. *)
     intros fs fs' Hstep IHf G T Hty.
     apply rec_inv in Hty. destruct Hty as [R [Hft Hteq]].
     eapply T_Conv; [ eapply T_Record; apply IHf; exact Hft | exact Hteq ].
-  - (* stf_here *)
+  - (* Case: the FIRST field of a record stepped (stf_here).  Congruence. *)
     intros l e e' fs Hstep IH G R Hft.
     inversion Hft; subst.
     eapply FT_cons; [ apply IH; eassumption | eassumption ].
-  - (* stf_cons *)
+  - (* Case: the first field is already a value and a LATER field stepped
+       (stf_cons).  Congruence. *)
     intros l v fs fs' Hv Hstep IHf G R Hft.
     inversion Hft; subst.
     eapply FT_cons; [ eassumption | apply IHf; eassumption ].
 Qed.
 
+(* The headline form of the induction above: with just the first half of the
+   combined statement. *)
 Theorem preservation : forall G e e' T,
   typing G e T -> step e e' -> typing G e' T.
 Proof. intros G e e' T Hty Hstep. eapply (proj1 preservation_mut); eauto. Qed.
@@ -1044,17 +1351,40 @@ Proof. intros G e e' T Hty Hstep. eapply (proj1 preservation_mut); eauto. Qed.
 (* ================================================================== *)
 (* Soundness (docs/semantics.md section 7): a well-typed closed term     *)
 (* never reaches a stuck state.                                           *)
+(*                                                                        *)
+(* WHAT THIS SAYS: take a program [e] that type checks in the empty       *)
+(* context ([nil], a closed program: no free variables, nothing from      *)
+(* outside).  Run it for any number of steps ([multistep e e']).  Then    *)
+(* wherever it has got to, [e'] is either finished (a value) or can take  *)
+(* another step.  It is never stuck.                                      *)
+(*                                                                        *)
+(* WHY: progress says one program is not stuck; preservation says each    *)
+(* step keeps the type.  We chain them over the steps of the run.         *)
 (* ================================================================== *)
 
 Theorem soundness : forall e T e',
   typing nil e T -> multistep e e' -> value e' \/ exists e'', step e' e''.
 Proof.
+  (* Assume the program is well typed ([Hty]) and that it ran from [e] to [e']
+     ([Hms]).  Goal: [e'] is a value or can step.  We prove it by induction
+     on HOW the run went, which is a list of steps: either zero steps, or one
+     step followed by a shorter run.  ([revert T Hty] just makes the typing
+     assumption part of what the induction proves, so it can change as the
+     program changes.) *)
   intros e T e' Hty Hms. revert T Hty.
   induction Hms as [ e | e1 e2 e3 Hstep Hms IH ]; intros T Hty.
-  - (* refl *) apply progress with (T := T); exact Hty.
-  - (* step *) apply IH with (T := T). eapply preservation; eauto.
+  - (* Case: zero steps, so [e'] is [e] itself.  It is well typed, so
+       [progress] says it is a value or can step.  Done. *)
+    apply progress with (T := T); exact Hty.
+  - (* Case: one step [e1 -> e2], then a shorter run [e2 ->* e3].  By
+       [preservation], [e2] is well typed at the same [T] as [e1] was; so the
+       induction hypothesis (the claim for the shorter run) applies to [e2].
+       That gives exactly what we need about [e3]. *)
+    apply IH with (T := T). eapply preservation; eauto.
 Qed.
 
+(* The same fact phrased with the name [stuck] (not a value, and no step
+   possible): a reachable state is never stuck. *)
 Corollary soundness_not_stuck : forall e T e',
   typing nil e T -> multistep e e' -> ~ stuck e'.
 Proof.

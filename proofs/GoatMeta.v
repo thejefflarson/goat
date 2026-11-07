@@ -345,6 +345,32 @@ Qed.
 
 (* ================================================================== *)
 (* Progress (docs/semantics.md section 7).                              *)
+(*                                                                        *)
+(* NEW TO THIS PROOF?  The overview of the whole soundness argument is at *)
+(* the top of GoatSound.v.  Short version: soundness says a program that  *)
+(* passes the type checker never gets stuck.  It splits into PROGRESS     *)
+(* (this section: a well-typed program is finished or can step) and       *)
+(* PRESERVATION (GoatSound.v: a step keeps the program well typed).       *)
+(*                                                                        *)
+(* WHAT PROGRESS SAYS: if [e] has some type in the EMPTY context (a       *)
+(* closed program: no variables left over from outside), then [e] is      *)
+(* either a [value] (a finished result: number, bool, function, record    *)
+(* of values) or there is some [e'] it can [step] to.  Never stuck.       *)
+(*                                                                        *)
+(* HOW THE PROOF GOES: we prove it for every typing derivation, one       *)
+(* typing rule at a time, assuming the claim for the sub-terms (the       *)
+(* induction hypotheses [IH], [IH1], ...).  In each case ask:        *)
+(* is the term already finished?  If not, which step can it take?         *)
+(*  - Literals and functions are values already.                          *)
+(*  - A variable cannot occur: the context is empty, nothing to look up.  *)
+(*  - A call [e1 e2]: first make [e1] finish, then [e2], then the call    *)
+(*    can run.  The key fact is "canonical forms": a finished value of    *)
+(*    function type really is a function ([canon_arrow]); a finished      *)
+(*    value of record type really is a record ([canon_record]).  Without  *)
+(*    that, a call could be applied to, say, a number, and be stuck.      *)
+(*  - [let], records, and field access work the same way.                 *)
+(* The statement carries [G = nil] so the induction can be run over       *)
+(* derivations whose context is a variable; at the end we supply nil.     *)
 (* ================================================================== *)
 
 Lemma progress_mut :
@@ -352,35 +378,63 @@ Lemma progress_mut :
   (forall G fs R, field_typing G fs R -> G = nil ->
      rec_value fs \/ exists fs', step_fields fs fs').
 Proof.
+  (* Induction over typing derivations: one case per typing rule. *)
   apply typing_field_mutind.
-  - (* T_Var *) intros G x s T Hu Hb Hi HG; subst. inversion Hb.
-  - (* T_Num *) intros; left; auto.
+  - (* Case: a variable.  Impossible here: the context is empty, so there is
+       nothing for the variable to be bound to.  We show that by looking at
+       the claim that [x] is in an empty list, which has no way to hold. *)
+    intros G x s T Hu Hb Hi HG; subst. inversion Hb.
+  - (* Case: a number literal.  Numbers are values (the left side of the
+       "value or can step" claim). *)
+    intros; left; auto.
   - (* T_True *) intros; left; auto.
   - (* T_False *) intros; left; auto.
-  - (* T_Abs *) intros L G e T1 T2 Hbody IH HG; subst. left; auto.
-  - (* T_App *) intros G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2 HG; subst.
+  - (* Case: a function.  Functions are values: we do not run the body until
+       the function is called. *)
+    intros L G e T1 T2 Hbody IH HG; subst. left; auto.
+  - (* Case: a call [e1 e2].  A call is never a value, so we must find a
+       step ([right]).  Look at the function part [e1] first:
+         - either it is finished, then we look at [e2];
+         - or it can step, and then the whole call steps (st_app1). *)
+    intros G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [e1' Hs1]].
-    + destruct (canon_arrow _ _ _ _ Hv1 Hty1) as [e0 Hev]; subst.
+    + (* [e1] is a finished value with a function type, so by canonical forms
+         it is literally [fun x => e0]. *)
+      destruct (canon_arrow _ _ _ _ Hv1 Hty1) as [e0 Hev]; subst.
       destruct (IH2 eq_refl) as [Hv2 | [e2' Hs2]].
-      * exists (open_exp_wrt_exp e0 e2). apply st_beta; auto.
-      * exists (e_app (e_abs e0) e2'). apply st_app2; auto.
+      * (* Argument is finished too: perform the call, plugging [e2] into the
+           body (st_beta). *)
+        exists (open_exp_wrt_exp e0 e2). apply st_beta; auto.
+      * (* Argument can still step: step it (st_app2). *)
+        exists (e_app (e_abs e0) e2'). apply st_app2; auto.
     + exists (e_app e1' e2). apply st_app1; auto.
-  - (* T_Let *) intros L G e1 e2 T1 T2 Hty1 IH1 Hbody IH2 HG; subst.
+  - (* Case: [let x = e1 in e2].  If [e1] is finished, plug it into [e2]
+       (st_letv); otherwise step [e1] (st_let1). *)
+    intros L G e1 e2 T1 T2 Hty1 IH1 Hbody IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [e1' Hs1]].
     + exists (open_exp_wrt_exp e2 e1). apply st_letv; auto.
     + exists (e_let e1' e2). apply st_let1; auto.
-  - (* T_Record *) intros G fs R Hft IH HG; subst.
+  - (* Case: a record.  Finished if every field is; otherwise a field steps.
+       The field list has its own companion claim (second half of the
+       statement), which [IH] provides. *)
+    intros G fs R Hft IH HG; subst.
     destruct (IH eq_refl) as [Hrv | [fs' Hs]].
     + left; auto.
     + right. exists (e_rec fs'). apply st_rec; auto.
-  - (* T_Proj *) intros G e l T R Hty IH HG; subst.
+  - (* Case: field access [e.l].  If [e] is not finished, step it.  If it is,
+       canonical forms says it is a record, and its type says field [l]
+       exists, so we can look the field up and take it (st_projrec). *)
+    intros G e l T R Hty IH HG; subst.
     right. destruct (IH eq_refl) as [Hv | [e' Hs]].
     + destruct (canon_record _ _ _ Hv Hty) as [fs [R0 [Hev [Hrv [Hft Hreq]]]]]; subst.
       apply req_surface in Hreq. destruct Hreq as [T0 [rest [Hpi Hteq]]].
       destruct (field_lookup_some _ _ _ _ _ _ Hft Hpi) as [e0 [Hlook Hty0]].
       exists e0. apply st_projrec; auto.
     + exists (e_proj e' l). apply st_proj; auto.
-  - (* T_Conv *) intros G e T T' Hty IH Hteq HG; subst.
+  - (* Case: a conversion (T_Conv): the same term viewed at an equal type.
+       Whether it is finished or can step does not depend on the type, so
+       the induction hypothesis already answers it. *)
+    intros G e T T' Hty IH Hteq HG; subst.
     destruct (IH eq_refl) as [Hv | [e' Hs]]; [ left; auto | right; eauto ].
   - (* FT_nil *) intros; left; auto.
   - (* FT_cons *) intros G l e T fs R Hty IH1 Hft IH2 HG; subst.
@@ -391,6 +445,8 @@ Proof.
     + right. exists (fs_cons l e' fs). apply stf_here; auto.
 Qed.
 
+(* Progress, in its final form: a closed, well-typed program is a value or
+   can take a step. *)
 Theorem progress : forall e T,
   typing nil e T -> value e \/ exists e', step e e'.
 Proof. intros e T H. apply (proj1 progress_mut nil e T H). reflexivity. Qed.
