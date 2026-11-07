@@ -642,6 +642,7 @@ impl<'a> Checker<'a> {
                 Ty::Val(MTy::Unit)
             }
             Expr::Trap(_) => Ty::Never,
+            Expr::Site(..) => Ty::Val(MTy::Unit),
         }
     }
 

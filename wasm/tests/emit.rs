@@ -648,6 +648,22 @@ fn nullary_tags_are_immortal_cells_in_the_data_segment() {
 }
 
 #[test]
+fn a_trap_calls_the_host_with_its_message_before_halting() {
+    let text = wat(&mono_program("x = 1\nfirst([]) + x"));
+    assert!(text.contains("(import \"goat\" \"trap\""), "{text}");
+    assert!(text.contains("first of an empty list"), "{text}");
+    assert!(text.contains("global.set 3"), "{text}");
+    assert!(text.contains("(export \"goat_site\""), "{text}");
+    assert!(text.contains("(@custom \"goat.sites\""), "{text}");
+}
+
+#[test]
+fn a_program_that_cannot_trap_imports_no_trap() {
+    let text = wat(&mono_program("1 + 2"));
+    assert!(!text.contains("\"goat\" \"trap\""), "{text}");
+}
+
+#[test]
 fn matching_a_variant_branches_on_its_tag_through_a_table() {
     let text = wat(&mono_program(&format!("{LENGTH} length(Link(1, Empty))")));
     assert!(text.contains("br_table"), "{text}");

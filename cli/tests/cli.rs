@@ -139,6 +139,50 @@ fn a_trap_exits_non_zero() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("trap"));
 }
 
+fn failure_of(source: &str) -> (String, String) {
+    let out = run_source("t.goat", source);
+    assert!(!out.status.success());
+    (
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
+}
+
+#[test]
+fn a_trap_names_its_message_and_the_users_call() {
+    let (_, stderr) = failure_of("x = 1\nfirst([]) + x");
+    assert!(
+        stderr.contains("trap: 2:1: first of an empty list"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("first([])"), "{stderr}");
+    assert!(!stderr.contains("in the prelude"), "{stderr}");
+}
+
+#[test]
+fn a_nested_call_is_blamed_on_the_call_that_trapped() {
+    let (_, stderr) = failure_of("x = 1\nfirst(rest([1]))");
+    assert!(
+        stderr.contains("trap: 2:1: first of an empty list"),
+        "{stderr}"
+    );
+    let (_, stderr) = failure_of("x = 1\nitem([1, 2], 3)");
+    assert!(stderr.contains("trap: 2:1: "), "{stderr}");
+}
+
+#[test]
+fn a_users_own_trap_is_blamed_where_it_is_written() {
+    let (_, stderr) = failure_of("x = 1\ntrap(\"stop here\")");
+    assert!(stderr.contains("trap: 2:1: stop here"), "{stderr}");
+}
+
+#[test]
+fn lines_printed_before_a_trap_survive() {
+    let (stdout, stderr) = failure_of("a = print(1)\nb = print(\"two\")\nfirst([]) + 1");
+    assert_eq!(stdout, "1\ntwo\n");
+    assert!(stderr.contains("first of an empty list"), "{stderr}");
+}
+
 #[test]
 fn type_errors_exit_non_zero() {
     let out = run_source("bad.goat", "1 + true");

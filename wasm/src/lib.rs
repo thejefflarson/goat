@@ -3,10 +3,10 @@ use std::fmt;
 
 use goat_mir::*;
 use wasm_encoder::{
-    BlockType, CodeSection, ConstExpr, DataSection, ElementSection, Elements, EntityType,
-    ExportKind, ExportSection, Function, FunctionSection, GlobalSection, GlobalType, ImportSection,
-    Instruction, MemArg, MemArgTarget, MemorySection, MemoryType, Module, RefType, TableSection,
-    TableType, TypeSection, ValType,
+    BlockType, CodeSection, ConstExpr, CustomSection, DataSection, ElementSection, Elements,
+    EntityType, ExportKind, ExportSection, Function, FunctionSection, GlobalSection, GlobalType,
+    ImportSection, Instruction, MemArg, MemArgTarget, MemorySection, MemoryType, Module, RefType,
+    TableSection, TableType, TypeSection, ValType,
 };
 
 mod allocator;
@@ -28,10 +28,15 @@ const FUEL_GLOBAL: u32 = 2;
 /// Enough that a run-once program never notices, and the value a host that
 /// never refills starts from.
 const FUEL_START: i32 = i32::MAX;
+/// The global a call into the prelude sets to its site number (1-based, 0 for
+/// none), and the custom section that maps each number to a source range. A
+/// host reads both when `goat.trap` fires to blame the user's call.
+const SITE_GLOBAL: u32 = 3;
+const SITES_SECTION: &str = "goat.sites";
 /// The module globals that hold an interactive program's `update` and `draw`
-/// closures, after the fuel.
-const UPDATE_GLOBAL: u32 = 3;
-const DRAW_GLOBAL: u32 = 4;
+/// closures, after the site.
+const UPDATE_GLOBAL: u32 = 4;
+const DRAW_GLOBAL: u32 = 5;
 
 /// wasm32 object layout (`docs/mir.md`); every offset below derives from these.
 mod layout {
@@ -157,7 +162,8 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         .is_some_and(|root| root.ret == MTy::Ptr(HeapKind::Str));
     let writes_base = if prints_string { 3 } else { 2 };
     let foreign_base = writes_base + if uses.writes { WRITE_IMPORTS } else { 0 };
-    let imports = foreign_base + program.foreign.len() as u32;
+    let trap_import = foreign_base + program.foreign.len() as u32;
+    let imports = trap_import + !uses.traps.is_empty() as u32;
     let foreign_types: Vec<u32> = program
         .foreign
         .iter()
@@ -172,6 +178,11 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     for bytes in &program.data {
         strings.push(DATA_BASE + data.len() as u32);
         data.extend(string_object(bytes));
+    }
+    let mut trap_messages = HashMap::new();
+    for message in &uses.traps {
+        trap_messages.insert(message.clone(), DATA_BASE + data.len() as u32);
+        data.extend(string_object(message.as_bytes()));
     }
     let nullary_base = DATA_BASE + data.len() as u32;
     for &tag in &uses.nullary {
@@ -189,6 +200,9 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         imports,
         writes_base,
         foreign_base,
+        trap_import,
+        trap_messages,
+        sites: uses.sites,
         strings,
         helpers: Vec::new(),
         helper_base,
@@ -278,6 +292,9 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     for (foreign, ty) in program.foreign.iter().zip(&foreign_types) {
         import_section.import(&foreign.module, &foreign.name, EntityType::Function(*ty));
     }
+    if !uses.traps.is_empty() {
+        import_section.import("goat", "trap", EntityType::Function(print_bool));
+    }
     module.section(&import_section);
 
     let mut functions = FunctionSection::new();
@@ -311,7 +328,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
 
     let mut globals = GlobalSection::new();
     let closure_globals = if program.interactive.is_some() { 2 } else { 0 };
-    for init in [heap_start as i32, 0, FUEL_START]
+    for init in [heap_start as i32, 0, FUEL_START, 0]
         .into_iter()
         .chain(std::iter::repeat_n(0, closure_globals))
     {
@@ -336,6 +353,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         );
     }
     exports.export("goat_fuel", ExportKind::Global, FUEL_GLOBAL);
+    exports.export("goat_site", ExportKind::Global, SITE_GLOBAL);
     exports.export("goat_alloc", ExportKind::Func, shared.alloc_fn);
     exports.export("goat_live_allocs", ExportKind::Func, shared.alloc_fn + 2);
     if let Some(interactive) = &program.interactive {
@@ -368,6 +386,19 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     let mut segments = DataSection::new();
     segments.active(0, &ConstExpr::i32_const(DATA_BASE as i32), data);
     module.section(&segments);
+
+    if !shared.sites.is_empty() {
+        let table: Vec<u8> = shared
+            .sites
+            .iter()
+            .flat_map(|&(start, end)| [start as u32, end as u32])
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        module.section(&CustomSection {
+            name: SITES_SECTION.into(),
+            data: table.into(),
+        });
+    }
 
     Ok(module.finish())
 }
@@ -532,6 +563,12 @@ struct Shared<'a> {
     writes_base: u32,
     /// The index of the import for `ForeignId(0)`; the rest follow in order.
     foreign_base: u32,
+    /// The index of the `goat.trap` import, when the program can trap.
+    trap_import: u32,
+    /// Absolute address of the string object holding each trap message.
+    trap_messages: HashMap<String, u32>,
+    /// The source range of each site, in site-number order.
+    sites: Vec<(usize, usize)>,
     /// Absolute address of each `Program.data` string object.
     strings: Vec<u32>,
     helpers: Vec<Helper>,
@@ -625,6 +662,10 @@ struct Uses {
     writes: bool,
     /// Tags built without a payload, each served by one immortal cell.
     nullary: Vec<u32>,
+    /// Each distinct `Trap` message, so the module imports `goat.trap`.
+    traps: Vec<String>,
+    /// Each distinct `Site` range, numbered from 1 in this order.
+    sites: Vec<(usize, usize)>,
 }
 
 impl Uses {
@@ -632,6 +673,8 @@ impl Uses {
         match e {
             Expr::Drop(_) => self.drops = true,
             Expr::Write(_) => self.writes = true,
+            Expr::Trap(message) => self.note_trap(message),
+            Expr::Site(start, end) => self.note_site(*start, *end),
             Expr::AllocVariant(_, tag, fields) if fields.is_empty() => {
                 if let Err(at) = self.nullary.binary_search(tag) {
                     self.nullary.insert(at, *tag);
@@ -640,6 +683,16 @@ impl Uses {
             _ => {}
         }
         e.for_each_child(&mut |c| self.scan(c));
+    }
+
+    #[inline(never)]
+    fn note_trap(&mut self, message: &str) {
+        intern(&mut self.traps, message.to_string());
+    }
+
+    #[inline(never)]
+    fn note_site(&mut self, start: usize, end: usize) {
+        intern(&mut self.sites, (start, end));
     }
 }
 
@@ -1400,10 +1453,8 @@ impl<'p> FuncCx<'_, 'p> {
                 release(self.shared, ptr, kind, out)?;
                 Ok(Some(MTy::Unit))
             }
-            Expr::Trap(_) => {
-                out.push(Instruction::Unreachable);
-                Ok(None)
-            }
+            Expr::Trap(message) => self.trap(message, out),
+            Expr::Site(start, end) => self.site(*start, *end, out),
             Expr::Switch(x, arms, default) => {
                 let (ptr, kind) = self.pointer(*x)?;
                 if !matches!(kind, HeapKind::Variant(_) | HeapKind::List(_)) {
@@ -1505,6 +1556,36 @@ impl<'p> FuncCx<'_, 'p> {
                 Ok(Some(MTy::Unit))
             }
         }
+    }
+
+    #[inline(never)]
+    fn trap(&mut self, message: &str, out: &mut Code) -> Result<Ty, EmitError> {
+        let address = *self
+            .shared
+            .trap_messages
+            .get(message)
+            .ok_or(EmitError::Malformed("trap message not collected"))?;
+        out.extend([
+            Instruction::I32Const(address as i32),
+            Instruction::Call(self.shared.trap_import),
+            Instruction::Unreachable,
+        ]);
+        Ok(None)
+    }
+
+    #[inline(never)]
+    fn site(&mut self, start: usize, end: usize, out: &mut Code) -> Result<Ty, EmitError> {
+        let number = self
+            .shared
+            .sites
+            .iter()
+            .position(|&site| site == (start, end))
+            .ok_or(EmitError::Malformed("site not collected"))?;
+        out.extend([
+            Instruction::I32Const(number as i32 + 1),
+            Instruction::GlobalSet(SITE_GLOBAL),
+        ]);
+        Ok(Some(MTy::Unit))
     }
 
     /// The arguments are borrowed locals, so the host sees each pointer as

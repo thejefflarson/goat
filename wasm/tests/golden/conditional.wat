@@ -7,16 +7,19 @@
   (type (;5;) (func (result i32)))
   (import "goat" "print_number" (func (;0;) (type 0) (param f64)))
   (import "goat" "print_bool" (func (;1;) (type 1) (param i32)))
+  (import "goat" "trap" (func (;2;) (type 1) (param i32)))
   (memory (;0;) 1)
-  (global (;0;) (mut i32) i32.const 232)
+  (global (;0;) (mut i32) i32.const 264)
   (global (;1;) (mut i32) i32.const 0)
   (global (;2;) (mut i32) i32.const 2147483647)
+  (global (;3;) (mut i32) i32.const 0)
   (export "memory" (memory 0))
-  (export "goat_entry" (func 3))
+  (export "goat_entry" (func 4))
   (export "goat_fuel" (global 2))
-  (export "goat_alloc" (func 4))
-  (export "goat_live_allocs" (func 6))
-  (func (;2;) (type 3) (result f64)
+  (export "goat_site" (global 3))
+  (export "goat_alloc" (func 5))
+  (export "goat_live_allocs" (func 7))
+  (func (;3;) (type 3) (result f64)
     (local f64)
     global.get 2
     i32.const 1
@@ -38,14 +41,16 @@
       f64.const 0x1p+0 (;=1;)
       f64.sub
     else
+      i32.const 8
+      call 2
       unreachable
     end
   )
-  (func (;3;) (type 2)
-    call 2
+  (func (;4;) (type 2)
+    call 3
     call 0
   )
-  (func (;4;) (type 4) (param i32) (result i32)
+  (func (;5;) (type 4) (param i32) (result i32)
     (local i32 i32 i32 i32)
     local.get 0
     i32.const 1073741824
@@ -100,7 +105,7 @@
     local.get 1
     i32.const 2
     i32.shl
-    i32.load offset=8
+    i32.load offset=40
     local.tee 2
     if ;; label = @1
       local.get 2
@@ -113,7 +118,7 @@
       i32.shl
       local.get 2
       i32.load offset=8
-      i32.store offset=8
+      i32.store offset=40
     else
       global.get 0
       local.tee 2
@@ -156,7 +161,7 @@
     global.set 1
     local.get 2
   )
-  (func (;5;) (type 1) (param i32)
+  (func (;6;) (type 1) (param i32)
     (local i32 i32)
     local.get 0
     i32.load
@@ -193,20 +198,20 @@
     local.get 1
     i32.const 2
     i32.shl
-    i32.load offset=8
+    i32.load offset=40
     i32.store offset=8
     local.get 1
     i32.const 2
     i32.shl
     local.get 0
-    i32.store offset=8
+    i32.store offset=40
     global.get 1
     i32.const 1
     i32.sub
     global.set 1
   )
-  (func (;6;) (type 5) (result i32)
+  (func (;7;) (type 5) (result i32)
     global.get 1
   )
-  (data (;0;) (i32.const 8) "")
+  (data (;0;) (i32.const 8) "\ff\ff\ff\ff\00\00\00\00\12\00\00\00unreachable branch\00\00")
 )

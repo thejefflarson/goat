@@ -2,7 +2,7 @@
 //
 // Contract with the compiler (docs/mir.md; mirrored by cli/src/lib.rs and
 // cli/src/turtle.rs, which are the reference semantics):
-//   imports  goat.{print_number,print_bool,print_string,write_number,write_string,write_end}
+//   imports  goat.{print_number,print_bool,print_string,write_number,write_string,write_end,trap}
 //            turtle.{forward,back,left,right,pen_up,pen_down,color}
 //   exports  memory, goat_entry() -> (), goat_live_allocs() -> u32 (optional)
 //   string   at object pointer p: byte length is a u32 LE at p+8, UTF-8 bytes at p+12
@@ -39,6 +39,7 @@ export interface HostImports {
     write_number(x: number): void;
     write_string(ptr: number): void;
     write_end(): void;
+    trap(ptr: number): void;
   };
   turtle: {
     forward(x: number): void;
@@ -135,6 +136,9 @@ export function createHost(memory: () => WebAssembly.Memory): Host {
         line += readString(memory(), ptr);
       },
       write_end: finish,
+      trap: (ptr: number) => {
+        throw new Error(readString(memory(), ptr));
+      },
     },
     turtle: {
       forward: move("forward"),

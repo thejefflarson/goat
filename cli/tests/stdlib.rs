@@ -39,7 +39,7 @@ fn assert_traps(src: &str, message: &str) {
         InterpError::Trap(message.into()),
         "{src}"
     );
-    assert!(wasm_error(src).starts_with("trap:"), "{src}");
+    assert_eq!(wasm_error(src), format!("trap: {message}"), "{src}");
 }
 
 #[test]

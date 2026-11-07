@@ -33,9 +33,73 @@ impl Output {
     }
 }
 
+/// Why a program halted: the message it gave, and the user's source range
+/// (byte offsets) to blame when the trap came from code the user wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stopped {
+    pub message: String,
+    pub site: Option<(usize, usize)>,
+}
+
+/// A program that has run to its end or halted, with everything it printed
+/// either way.
+pub struct Finished<H> {
+    pub printed: Vec<String>,
+    pub host: H,
+    /// The heap blocks still allocated after a clean finish, or why it halted.
+    pub result: Result<u32, Stopped>,
+}
+
 struct State<H> {
     output: Output,
     host: H,
+    /// The source range of each site number, from the module's `goat.sites`.
+    sites: Vec<(usize, usize)>,
+    stopped: Option<Stopped>,
+}
+
+/// The ranges in a module's `goat.sites` custom section, in site-number order.
+fn site_table(wasm: &[u8]) -> Vec<(usize, usize)> {
+    fn leb(bytes: &mut &[u8]) -> Option<usize> {
+        let (mut value, mut shift) = (0usize, 0);
+        loop {
+            let (&byte, rest) = bytes.split_first()?;
+            *bytes = rest;
+            value |= usize::from(byte & 0x7f).checked_shl(shift)?;
+            if byte & 0x80 == 0 {
+                return Some(value);
+            }
+            shift += 7;
+        }
+    }
+    let mut rest = wasm.get(8..).unwrap_or_default();
+    while let Some((&id, tail)) = rest.split_first() {
+        rest = tail;
+        let Some(size) = leb(&mut rest) else { break };
+        let Some((mut section, tail)) = rest.split_at_checked(size) else {
+            break;
+        };
+        rest = tail;
+        if id != 0 {
+            continue;
+        }
+        let Some(name_len) = leb(&mut section) else {
+            continue;
+        };
+        let Some((name, table)) = section.split_at_checked(name_len) else {
+            continue;
+        };
+        if name == b"goat.sites" {
+            let word = |w: &[u8]| u32::from_le_bytes(w.try_into().unwrap()) as usize;
+            return table
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|pair| (word(&pair[..4]), word(&pair[4..])))
+                .collect();
+        }
+    }
+    Vec::new()
 }
 
 /// Instantiate `wasm` under wasmtime, run its entry export, and return the
@@ -226,6 +290,26 @@ fn instantiate<H: Host + 'static>(
             caller.data_mut().output.finish();
         })
         .map_err(|e| e.to_string())?;
+    linker
+        .func_wrap(
+            "goat",
+            "trap",
+            |mut caller: Caller<'_, State<H>>, ptr: i32| -> wasmtime::Result<()> {
+                let message = read_string(&mut caller, ptr)?;
+                let site = caller
+                    .get_export("goat_site")
+                    .and_then(|e| e.into_global())
+                    .and_then(|g| g.get(&mut caller).i32())
+                    .and_then(|n| usize::try_from(n).ok()?.checked_sub(1))
+                    .and_then(|n| caller.data().sites.get(n).copied());
+                caller.data_mut().stopped = Some(Stopped {
+                    message: message.clone(),
+                    site,
+                });
+                Err(wasmtime::Error::msg(message))
+            },
+        )
+        .map_err(|e| e.to_string())?;
 
     for import in module.imports() {
         if let (false, ExternType::Func(ty)) = (import.module() == "goat", import.ty()) {
@@ -238,6 +322,8 @@ fn instantiate<H: Host + 'static>(
         State {
             output: Output::default(),
             host,
+            sites: site_table(wasm),
+            stopped: None,
         },
     );
     let instance = linker
@@ -249,25 +335,47 @@ fn instantiate<H: Host + 'static>(
 /// Like `run`, answering the program's `foreign` calls from `host`, which
 /// comes back so a test can read what it recorded.
 pub fn run_with_host<H: Host + 'static>(wasm: &[u8], host: H) -> Result<(Run, H), String> {
+    let finished = run_to_end(wasm, host)?;
+    match finished.result {
+        Ok(live_allocs) => Ok((
+            Run {
+                printed: finished.printed,
+                live_allocs,
+            },
+            finished.host,
+        )),
+        Err(stopped) => Err(format!("trap: {}", stopped.message)),
+    }
+}
+
+/// Like `run_with_host`, but a halt keeps what the program printed before it,
+/// including a line it had started, and says where the user's code was.
+pub fn run_to_end<H: Host + 'static>(wasm: &[u8], host: H) -> Result<Finished<H>, String> {
     let (mut store, instance) = instantiate(wasm, host)?;
     let entry = instance
         .get_typed_func::<(), ()>(&mut store, "goat_entry")
         .map_err(|e| format!("missing entry point: {e}"))?;
-    entry
-        .call(&mut store, ())
-        .map_err(|e| format!("trap: {e:#}"))?;
-    let live_allocs = instance
-        .get_typed_func::<(), u32>(&mut store, "goat_live_allocs")
-        .and_then(|live| live.call(&mut store, ()))
-        .map_err(|e| format!("goat_live_allocs: {e}"))?;
-    let State { output, host } = store.into_data();
-    Ok((
-        Run {
-            printed: output.lines,
-            live_allocs,
-        },
+    let result = match entry.call(&mut store, ()) {
+        Ok(()) => Ok(instance
+            .get_typed_func::<(), u32>(&mut store, "goat_live_allocs")
+            .and_then(|live| live.call(&mut store, ()))
+            .map_err(|e| format!("goat_live_allocs: {e}"))?),
+        Err(error) => Err(store.data_mut().stopped.take().unwrap_or_else(|| Stopped {
+            message: format!("{error:#}"),
+            site: None,
+        })),
+    };
+    let State {
+        mut output, host, ..
+    } = store.into_data();
+    if result.is_err() && !output.line.is_empty() {
+        output.finish();
+    }
+    Ok(Finished {
+        printed: output.lines,
         host,
-    ))
+        result,
+    })
 }
 
 /// An interactive module as its host holds it: instantiated once, then driven
