@@ -1161,6 +1161,8 @@ mod tests {
         assert_eq!(type_of("true or 1 < 2").unwrap(), "Bool");
         assert_eq!(type_of("not 1 == 2").unwrap(), "Bool");
         assert_eq!(type_of("not not true").unwrap(), "Bool");
+        assert_eq!(type_of("a = true b = false a or b").unwrap(), "Bool");
+        assert_eq!(type_of("flag = true not flag").unwrap(), "Bool");
         for src in [
             "1 and true",
             "true or 1",
@@ -1168,7 +1170,7 @@ mod tests {
             "if 1 and true then 1 else 2 done",
         ] {
             let err = type_of(src).unwrap_err();
-            assert!(err.starts_with("type mismatch"), "{src}: {err}");
+            assert!(err.contains("must be a Bool"), "{src}: {err}");
         }
     }
 
@@ -1202,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn and_or_lower_to_if() {
+    fn and_or_not_have_their_own_nodes() {
         let lowered = crate::lower::lower("a = true b = false a and b").unwrap();
         let hir::ExprKind::Let { rest, .. } = lowered.root.kind else {
             panic!("expected a binding");
@@ -1210,13 +1212,62 @@ mod tests {
         let hir::ExprKind::Let { rest, .. } = rest.unwrap().kind else {
             panic!("expected a binding");
         };
-        let hir::ExprKind::If { else_branch, .. } = rest.unwrap().kind else {
-            panic!("`and` lowers to `if`");
+        assert!(matches!(rest.unwrap().kind, hir::ExprKind::And { .. }));
+    }
+
+    /// The blamed source text and the message of the first error.
+    fn blame(source: &str) -> (String, String) {
+        let Err(errors) = check(source) else {
+            panic!("{source} should not check");
         };
-        assert!(matches!(
-            else_branch.unwrap().kind,
-            hir::ExprKind::Bool(false)
-        ));
+        let span = errors[0].span;
+        (
+            source[span.start..span.end].to_string(),
+            errors[0].message.clone(),
+        )
+    }
+
+    #[test]
+    fn a_non_bool_operand_is_blamed_and_the_operator_named() {
+        let cases = [
+            (
+                "true and 1",
+                "1",
+                "the right side of `and` must be a Bool, found `Number`",
+            ),
+            (
+                "1 and true",
+                "1",
+                "the left side of `and` must be a Bool, found `Number`",
+            ),
+            (
+                "false or 1",
+                "1",
+                "the right side of `or` must be a Bool, found `Number`",
+            ),
+            (
+                "1 or true",
+                "1",
+                "the left side of `or` must be a Bool, found `Number`",
+            ),
+            (
+                "not 1",
+                "1",
+                "the operand of `not` must be a Bool, found `Number`",
+            ),
+            (
+                "true and 1 < 2 and \"x\"",
+                "\"x\"",
+                "the right side of `and` must be a Bool, found `String`",
+            ),
+        ];
+        for (src, blamed, message) in cases {
+            assert_eq!(
+                blame(src),
+                (blamed.to_string(), message.to_string()),
+                "{src}"
+            );
+        }
     }
 
     #[test]

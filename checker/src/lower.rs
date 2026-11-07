@@ -554,22 +554,26 @@ impl Lower {
                     rhs: Box::new(rhs),
                 },
             ),
-            Op::And => {
-                let no = self.node(span, ExprKind::Bool(false));
-                self.branch(span, lhs, rhs, no)
-            }
-            Op::Or => {
-                let yes = self.node(span, ExprKind::Bool(true));
-                self.branch(span, lhs, yes, rhs)
-            }
+            Op::And => self.node(
+                span,
+                ExprKind::And {
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
+            ),
+            Op::Or => self.node(
+                span,
+                ExprKind::Or {
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
+            ),
             Op::Not => unreachable!("`not` takes one operand"),
         }
     }
 
     fn not(&mut self, span: Span, operand: Expr) -> Expr {
-        let no = self.node(span, ExprKind::Bool(false));
-        let yes = self.node(span, ExprKind::Bool(true));
-        self.branch(span, operand, no, yes)
+        self.node(span, ExprKind::Not(Box::new(operand)))
     }
 
     fn branch(&mut self, span: Span, cond: Expr, then_branch: Expr, else_branch: Expr) -> Expr {

@@ -245,6 +245,18 @@ pub enum ExprKind {
         then_branch: Box<Expr>,
         else_branch: Option<Box<Expr>>,
     },
+    /// `lhs and rhs`; `rhs` runs only when `lhs` is true.
+    And {
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    /// `lhs or rhs`; `rhs` runs only when `lhs` is false.
+    Or {
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    /// `not operand`.
+    Not(Box<Expr>),
     /// `name = value rest` — a let binding. `rest` is the expression the name is
     /// in scope for; absent when the declaration is the trailing form `name =
     /// value`, whose value is then the whole expression's value.

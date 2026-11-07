@@ -939,6 +939,29 @@ impl Inferer {
         ));
     }
 
+    /// `and`, `or` and `not` need Bool operands; a wrong one is blamed on the
+    /// operand itself, naming the operator.
+    fn infer_logic(&mut self, op: &str, first: &Expr, second: Option<&Expr>) -> Ty {
+        let operands = std::iter::once((first, "left")).chain(second.map(|e| (e, "right")));
+        for (operand, side) in operands {
+            let ty = self.infer(operand);
+            let before = self.errors.len();
+            self.unify_use(operand, &ty, &Ty::Bool, operand.span);
+            let found = self.resolve(&ty);
+            if let Some(err) = self.errors[before..].first_mut()
+                && err.message.starts_with("type mismatch")
+            {
+                let which = if second.is_some() {
+                    format!("the {side} side of `{op}`")
+                } else {
+                    format!("the operand of `{op}`")
+                };
+                err.message = format!("{which} must be a Bool, found `{found}`");
+            }
+        }
+        Ty::Bool
+    }
+
     fn infer_kind(&mut self, expr: &Expr) -> Ty {
         match &expr.kind {
             ExprKind::Unit => Ty::Unit,
@@ -1003,6 +1026,9 @@ impl Inferer {
                     }
                 }
             }
+            ExprKind::And { lhs, rhs } => self.infer_logic("and", lhs, Some(rhs)),
+            ExprKind::Or { lhs, rhs } => self.infer_logic("or", lhs, Some(rhs)),
+            ExprKind::Not(operand) => self.infer_logic("not", operand, None),
             ExprKind::Let {
                 symbol,
                 value,

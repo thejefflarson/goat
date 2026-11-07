@@ -32,7 +32,9 @@ for what follows. Without that, `x = 1; x` would sequence outside `x`'s scope.
 **`and` / `or` / `not`** are reserved words. `a and b` is
 `if a then b else false done`, `a or b` is `if a then true else b done`, and
 `not a` is `if a then false else true done`, so the right operand of `and`/`or`
-runs only when the left does not decide the result. Binding strength, loosest first:
+runs only when the left does not decide the result. The checker keeps dedicated
+`And`/`Or`/`Not` HIR nodes so a non-Bool operand is blamed on that operand and
+names the operator; mono lowers them to the `if` forms above. Binding strength, loosest first:
 `or`, `and`, `not`, `==`/`!=`, comparisons, `+ -`, `* /`. `not` sits below `==`
 (`not a == b` is `not (a == b)`), as in Python.
 
@@ -64,8 +66,5 @@ interpreter changed.
   the same as a chain of bindings, so one block holds about 200 statements. Making
   that limit a function of tree shape rather than a count means walking `Let`
   chains iteratively in inference, mono and the interpreter; not done here.
-- `true and 1` reports "expected `Number`, found `Bool`" at the whole expression,
-  because the generated `else false` is what the `if` blames. `or` blames the right
-  operand correctly. A sharper message needs a dedicated HIR node; not done here.
 - Statements after a loop need a `;` (`repeat 3 times do … done;`), as after any
   other expression.

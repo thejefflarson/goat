@@ -126,10 +126,11 @@ pub fn for_each_child<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
             f(then_branch);
             else_branch.iter().for_each(|e| f(e));
         }
-        ExprKind::Bin { lhs, rhs, .. } => {
+        ExprKind::Bin { lhs, rhs, .. } | ExprKind::And { lhs, rhs } | ExprKind::Or { lhs, rhs } => {
             f(lhs);
             f(rhs);
         }
+        ExprKind::Not(operand) => f(operand),
         ExprKind::Record { fields } => fields.iter().for_each(|(_, v)| f(v)),
         ExprKind::Spread { base, fields } => {
             f(base);

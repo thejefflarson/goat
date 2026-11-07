@@ -869,6 +869,21 @@ impl Mono<'_> {
                     None => Expr::Const(Const::Unit),
                 }),
             ),
+            ExprKind::And { lhs, rhs } => Expr::If(
+                Box::new(self.expr(cx, lhs, false)),
+                Box::new(self.expr(cx, rhs, tail)),
+                Box::new(Expr::Const(Const::Bool(false))),
+            ),
+            ExprKind::Or { lhs, rhs } => Expr::If(
+                Box::new(self.expr(cx, lhs, false)),
+                Box::new(Expr::Const(Const::Bool(true))),
+                Box::new(self.expr(cx, rhs, tail)),
+            ),
+            ExprKind::Not(operand) => Expr::If(
+                Box::new(self.expr(cx, operand, false)),
+                Box::new(Expr::Const(Const::Bool(false))),
+                Box::new(Expr::Const(Const::Bool(true))),
+            ),
             ExprKind::Let {
                 symbol,
                 value,
