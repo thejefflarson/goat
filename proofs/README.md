@@ -25,6 +25,7 @@ preservation) is B3 (#71).
 | `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), bijective renaming (`typing_rename`), and `gen_antimono`. What `GoatBij`/`GoatHM`/`GoatSound` build on. |
 | `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`, scheme/context alpha-renaming) feeding the T-Let freshening (#151). |
 | `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
+| `GoatRank2.v` | B4 (issue #72): the rank-2 intersection examples. The sharp-edge programs `both` (no-record) and `use2` (scoped-label rows) now type under `T_AppPoly`, and the extended `soundness` shows they never get stuck. |
 | `GoatSound.v` | The two canonical HM lemmas — `typing_weaken` (L4) and `typing_tsubst_fix` (L5) — via the general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`); then term substitution **L6a/L6b**, **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `_CoqProject`, `Makefile` | Build. |
 
@@ -159,6 +160,58 @@ Fully closed, no admits:
 
 `make ci` runs a frozen-admit guard (`make check-admits`) with
 `EXPECTED_ADMITS = 0`: it fails if any `Admitted.` reappears in `proofs/*.v`.
+
+## B4 (issue #72): rank-2 intersection inference, as a delta on the closed core
+
+The core (B3) binds a lambda parameter monomorphically (`T_Abs` uses
+`sch_mono T1`), so goat's sharp edge — a generic function passed as a parameter
+and used at several types — is untypeable: `both = program(f) do f(1) f(true)`
+fails. ADR 0008's chosen fix is **rank-2 intersection inference**. We add it as
+one hand-written typing rule in `GoatDefs.v`, leaving the generated syntax
+(`Goat_ott.v`) and the row theory untouched:
+
+```
+T_AppPoly :  typing G (e_let g e) T  ->  typing G (e_app (e_abs e) g) T
+```
+
+It types the redex `(program(e) done)(g)` **exactly as** `let x = g in e`: the
+argument `g` is generalized against `G` and the parameter is usable at every
+instance of that scheme inside the body. This is rank-2 (a quantifier only to
+the left of the application arrow) realized as HM generalization of the
+argument. The rule is a **conservative, additive** extension: every previously
+well-typed program still types (the typing relation only gains derivations), and
+it adds exactly the rank-2 power.
+
+**Why this closes with no new theory.** `T_AppPoly`'s premise is an existing
+`let`-typing at the *same* context and type, so every metatheory obligation for
+the new rule reduces to the one already proved for `T_Let`:
+
+- Preservation's `st_beta` on the rank-2 redex is the polymorphic substitution
+  lemma `typing_subst_poly` (L6b) — the very lemma `ST-LetV` uses.
+- The type/row-substitution lemma (`typing_tsubst_gen_mut`, L5, the Barendregt
+  freshening step) gets a **one-line** new case: substitution does not touch the
+  term, so the substituted derivation is the IH re-wrapped by `T_AppPoly`.
+- Progress, regularity, weakening, renaming, and term substitution each get a
+  short case cribbed from `T_Let`.
+
+This is what lets the rank-2 **+ scoped-label-rows** combination (ADR 0008's
+"appears unexplored") go through: `use2` (`getx = program(p) do p.x done` used at
+two record widths) types because the argument's principal type is generalized
+*including its row variable*, so its soundness is the already-closed row-aware
+polymorphic substitution — no new row metatheory.
+
+`Print Assumptions` on `soundness`, `progress`, `preservation`, `both_types`
+and `use2_types` all report **"Closed under the global context"**:
+axiom-free and admit-free, with `EXPECTED_ADMITS` still `0`.
+
+**Honest boundary (not done in this pass).** The examples are stated in
+direct-application form `(program(f) ...)(g)` — what the surface form
+`f = program(...) ... f(...)` reduces to under `ST-LetV`. Typing a rank-2
+function as a *stored first-class value* (`both = program(f) ...; both(g1); both(g2)`,
+where `both`'s own lambda must receive a standalone type before being bound)
+needs rank-2 **types** in the grammar, a heavier change to `typ`/`teq` and every
+`match` over them. That is a separate, larger delta; `T_AppPoly` covers the
+parameter-meets-argument site, which is where goat's sharp edge actually bites.
 
 ### Infrastructure (`GoatProofs.v`)
 

@@ -244,6 +244,7 @@ Proof.
   - (* T_Record *) apply T_Record; eauto.
   - (* T_Proj *) eapply T_Proj; eauto.
   - (* T_Conv *) eapply T_Conv; eauto.
+  - (* T_AppPoly *) apply T_AppPoly; auto.
   - (* FT_nil *) apply FT_nil; eauto using ctx_equiv_uniq.
   - (* FT_cons *) eapply FT_cons; eauto.
 Qed.
@@ -351,6 +352,7 @@ Proof.
   - apply T_Record; eauto.
   - eapply T_Proj; eauto.
   - eapply T_Conv; eauto.
+  - (* T_AppPoly *) apply T_AppPoly; auto.
   - apply FT_nil; eauto using ctx_more_gen_uniq.
   - eapply FT_cons; eauto.
 Qed.
@@ -614,6 +616,7 @@ Proof.
   - (* T_Record *) unfold ren_typ; simpl. apply T_Record. exact H.
   - (* T_Proj *) unfold ren_typ, ren_row in H; simpl in H. eapply T_Proj. exact H.
   - (* T_Conv *) eapply T_Conv; [ exact H | apply teq_ap; auto ].
+  - (* T_AppPoly *) apply T_AppPoly; exact H.
   - apply FT_nil; apply uniq_ren_ctx; auto.
   - (* FT_cons *) unfold ren_row; simpl. eapply FT_cons; [ exact H | exact H0 ].
 Qed.

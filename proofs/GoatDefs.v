@@ -247,6 +247,20 @@ Inductive typing : ctx -> exp -> typ -> Prop :=
      typing G e (typ_Record (row_Ext l T R)) -> typing G (e_proj e l) T
  | T_Conv : forall G e T T',
      typing G e T -> teq T T' -> typing G e T'
+   (* Rank-2 intersection inference at the point where a generic function
+      meets its argument (ADR 0008, issue #72), which is where goat's sharp
+      edge bites: a parameter used at several types.  [T_App] binds the
+      parameter monomorphically ([sch_mono T1]), so [program(f) do f(1) f(true)]
+      is untypeable.  [T_AppPoly] types the redex [(program(e) done)(g)] exactly
+      as [let x = g in e]: the argument [g] is generalized against [G] and the
+      parameter is usable at every instance of that scheme inside [e].  This is
+      rank-2 (a quantifier only to the left of the application arrow) realized as
+      HM generalization of the argument -- so the rule's whole metatheory reduces
+      to the already-proven polymorphic term substitution ([typing_subst_poly]),
+      including the scoped-label-row case ([use2]), with no new theory. *)
+ | T_AppPoly : forall G e g T,
+     typing G (e_let g e) T ->
+     typing G (e_app (e_abs e) g) T
 with field_typing : ctx -> fields -> row -> Prop :=
  | FT_nil : forall G, uniq G -> field_typing G fs_nil row_Empty
  | FT_cons : forall G l e T fs R,
