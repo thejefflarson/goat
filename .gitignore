@@ -3,3 +3,4 @@
 **/*.rs.bk
 fuzz/out
 .claude/
+/coq-toolchain/
