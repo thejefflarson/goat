@@ -52,3 +52,23 @@ jobs:
         run: |
           cargo build -p goat_web --target wasm32-unknown-unknown --release
           ls -l target/wasm32-unknown-unknown/release/goat_web.wasm
+
+  # Runs web/runtime.js against modules compiled by goat_web itself. Node
+  # built-ins only; no npm install.
+  web-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Build the compiler as wasm
+        run: cargo build -p goat_web --target wasm32-unknown-unknown --release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test the browser runtime
+        run: node --test web/*.test.js
