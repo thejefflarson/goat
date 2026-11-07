@@ -759,3 +759,107 @@ fn compare(op: CmpOp, a: Value, b: Value) -> Result<Value, InterpError> {
         CmpOp::Ge => matches!(ord, Some(Greater | Equal)),
     }))
 }
+
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    fn any_int_op() -> IntOp {
+        match kani::any::<u8>() % 4 {
+            0 => IntOp::Add,
+            1 => IntOp::Sub,
+            2 => IntOp::Mul,
+            _ => IntOp::Div,
+        }
+    }
+
+    fn any_cmp_op() -> CmpOp {
+        match kani::any::<u8>() % 6 {
+            0 => CmpOp::Eq,
+            1 => CmpOp::Ne,
+            2 => CmpOp::Lt,
+            3 => CmpOp::Le,
+            4 => CmpOp::Gt,
+            _ => CmpOp::Ge,
+        }
+    }
+
+    fn as_bool(result: Result<Value, InterpError>) -> bool {
+        match result {
+            Ok(Value::Bool(b)) => b,
+            _ => panic!("comparison of like operands yields a bool"),
+        }
+    }
+
+    #[kani::proof]
+    fn int_op_is_total_and_traps_only_on_zero_division() {
+        let op = any_int_op();
+        let (a, b): (i64, i64) = (kani::any(), kani::any());
+        let result = int_op(op, Value::Int(a), Value::Int(b));
+        if op == IntOp::Div && b == 0 {
+            assert!(matches!(result, Err(InterpError::Trap(_))));
+        } else {
+            assert!(matches!(result, Ok(Value::Int(_))));
+        }
+    }
+
+    #[kani::proof]
+    fn int_add_and_sub_wrap_on_overflow() {
+        let (a, b): (i64, i64) = (kani::any(), kani::any());
+        assert_eq!(
+            int_op(IntOp::Add, Value::Int(a), Value::Int(b)),
+            Ok(Value::Int(a.wrapping_add(b)))
+        );
+        assert_eq!(
+            int_op(IntOp::Sub, Value::Int(a), Value::Int(b)),
+            Ok(Value::Int(a.wrapping_sub(b)))
+        );
+    }
+
+    #[kani::proof]
+    fn int_op_rejects_non_int_operands() {
+        let op = any_int_op();
+        let x: i64 = kani::any();
+        assert!(matches!(
+            int_op(op, Value::Bool(kani::any()), Value::Int(x)),
+            Err(InterpError::Malformed(_))
+        ));
+        assert!(matches!(
+            int_op(op, Value::Int(x), Value::Unit),
+            Err(InterpError::Malformed(_))
+        ));
+    }
+
+    #[kani::proof]
+    fn int_compare_matches_rust_operators() {
+        let (a, b): (i64, i64) = (kani::any(), kani::any());
+        let test = |op| as_bool(compare(op, Value::Int(a), Value::Int(b)));
+        assert_eq!(test(CmpOp::Eq), a == b);
+        assert_eq!(test(CmpOp::Ne), a != b);
+        assert_eq!(test(CmpOp::Lt), a < b);
+        assert_eq!(test(CmpOp::Le), a <= b);
+        assert_eq!(test(CmpOp::Gt), a > b);
+        assert_eq!(test(CmpOp::Ge), a >= b);
+    }
+
+    #[kani::proof]
+    fn float_compare_matches_ieee_including_nan() {
+        let (a, b): (f64, f64) = (kani::any(), kani::any());
+        let test = |op| as_bool(compare(op, Value::Float(a), Value::Float(b)));
+        assert_eq!(test(CmpOp::Eq), a == b);
+        assert_eq!(test(CmpOp::Ne), a != b);
+        assert_eq!(test(CmpOp::Lt), a < b);
+        assert_eq!(test(CmpOp::Le), a <= b);
+        assert_eq!(test(CmpOp::Gt), a > b);
+        assert_eq!(test(CmpOp::Ge), a >= b);
+    }
+
+    #[kani::proof]
+    fn compare_rejects_mixed_operands() {
+        let op = any_cmp_op();
+        assert!(matches!(
+            compare(op, Value::Int(kani::any()), Value::Float(kani::any())),
+            Err(InterpError::Malformed(_))
+        ));
+    }
+}
