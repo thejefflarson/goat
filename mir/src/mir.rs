@@ -201,6 +201,11 @@ pub enum Expr {
     Payload(Local, u32, usize),
     Unpack(Local, u32, Vec<Local>, Box<Expr>),
     ReuseVariant(Local, LayoutId, u32, Vec<Expr>),
+    /// A record of the same layout as the local, built from the field values:
+    /// the local's cell is overwritten and returned when it is the sole
+    /// reference (`rc == 1`), and a fresh cell is allocated otherwise. It moves
+    /// the local after evaluating the fields, which may still borrow it.
+    ReuseRecord(Local, LayoutId, Vec<Expr>),
     Free(Local),
     StrLit(DataId),
     /// Whether two strings hold the same bytes; borrows both operands.
@@ -258,7 +263,8 @@ impl Expr {
             | Expr::MakeClosure(_, args)
             | Expr::AllocRecord(_, args)
             | Expr::AllocVariant(_, _, args)
-            | Expr::ReuseVariant(_, _, _, args) => args.iter().for_each(f),
+            | Expr::ReuseVariant(_, _, _, args)
+            | Expr::ReuseRecord(_, _, args) => args.iter().for_each(f),
             Expr::CallClosure(c, args) => {
                 f(c);
                 args.iter().for_each(f);

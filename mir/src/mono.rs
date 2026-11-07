@@ -961,27 +961,7 @@ impl Mono<'_> {
                 let index = field_index(&row, label);
                 self.with_record(cx, record, |_, _, local| Expr::Field(local, index))
             }
-            ExprKind::Spread { base, fields } => {
-                let base_ty = self.ground(&self.typed.node_types[&base.id], &cx.subst);
-                let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
-                let (Ty::Record(base_row), Ty::Record(row)) =
-                    (base_ty.unfold_head(), ty.unfold_head())
-                else {
-                    unreachable!("spread of a non-record");
-                };
-                let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty) else {
-                    unreachable!("record type lowers to a record pointer");
-                };
-                self.with_record(cx, base, |m, cx, local| {
-                    let values = layout_fields(&row)
-                        .map(|(label, _)| match fields.iter().find(|(l, _)| l == label) {
-                            Some((_, value)) => m.expr(cx, value, false),
-                            None => Expr::Field(local, field_index(&base_row, label)),
-                        })
-                        .collect();
-                    Expr::AllocRecord(layout, values)
-                })
-            }
+            ExprKind::Spread { base, fields } => self.spread(cx, e, base, fields),
             ExprKind::Restrict { record, .. } => {
                 let source_ty = self.ground(&self.typed.node_types[&record.id], &cx.subst);
                 let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
@@ -1001,6 +981,41 @@ impl Mono<'_> {
                 })
             }
         }
+    }
+
+    /// `{...base, label: value, ...}`. A result of the base's own layout moves
+    /// the base into `ReuseRecord`; one that adds or retypes a field allocates.
+    #[inline(never)]
+    fn spread(
+        &mut self,
+        cx: &mut FnCx,
+        e: &hir::Expr,
+        base: &hir::Expr,
+        fields: &[(String, hir::Expr)],
+    ) -> Expr {
+        let base_ty = self.ground(&self.typed.node_types[&base.id], &cx.subst);
+        let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+        let (Ty::Record(base_row), Ty::Record(row)) = (base_ty.unfold_head(), ty.unfold_head())
+        else {
+            unreachable!("spread of a non-record");
+        };
+        let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty) else {
+            unreachable!("record type lowers to a record pointer");
+        };
+        let reuses = self.lower_ty(&base_ty) == MTy::Ptr(HeapKind::Record(layout));
+        self.with_record(cx, base, |m, cx, local| {
+            let values = layout_fields(&row)
+                .map(|(label, _)| match fields.iter().find(|(l, _)| l == label) {
+                    Some((_, value)) => m.expr(cx, value, false),
+                    None => Expr::Field(local, field_index(&base_row, label)),
+                })
+                .collect();
+            if reuses {
+                Expr::ReuseRecord(local, layout, values)
+            } else {
+                Expr::AllocRecord(layout, values)
+            }
+        })
     }
 
     /// `lhs op rhs` given the lowered operands. Called after they are lowered,

@@ -430,6 +430,36 @@ impl<'p> Interp<'p> {
         Ok(())
     }
 
+    #[inline(never)]
+    fn reuse_record(
+        &mut self,
+        x: Local,
+        fields: &[Expr],
+        frame: &mut Frame,
+        depth: usize,
+    ) -> Result<Value, InterpError> {
+        let fields = self.values(fields, frame, depth)?;
+        let Value::Ptr(addr) = frame.get(x)? else {
+            return Err(InterpError::Malformed("reuse of non-pointer"));
+        };
+        let obj = self.obj(addr)?;
+        if obj.rc != 1 {
+            self.release(Value::Ptr(addr))?;
+            return Ok(self.alloc(Body::Record(fields), 1));
+        }
+        let Body::Record(old) = &obj.body else {
+            return Err(InterpError::Malformed("reuse of non-record"));
+        };
+        let old = old.clone();
+        if let Some(Some(obj)) = self.slots.get_mut(addr) {
+            obj.body = Body::Record(fields);
+        }
+        for field in old {
+            self.release(field)?;
+        }
+        Ok(Value::Ptr(addr))
+    }
+
     fn call(&mut self, mut pending: Pending, depth: usize) -> Result<Value, InterpError> {
         if depth > self.max_depth {
             return Err(InterpError::StackOverflow);
@@ -647,6 +677,7 @@ impl<'p> Interp<'p> {
                     _ => self.alloc(Body::Variant(*tag, fields), 1),
                 }
             }
+            Expr::ReuseRecord(x, _, fields) => self.reuse_record(*x, fields, frame, depth)?,
             Expr::Free(x) => {
                 if let Value::Ptr(addr) = frame.get(*x)? {
                     self.slots[addr] = None;

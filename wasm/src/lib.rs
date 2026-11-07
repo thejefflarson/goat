@@ -671,7 +671,7 @@ struct Uses {
 impl Uses {
     fn scan(&mut self, e: &Expr) {
         match e {
-            Expr::Drop(_) => self.drops = true,
+            Expr::Drop(_) | Expr::ReuseRecord(..) => self.drops = true,
             Expr::Write(_) => self.writes = true,
             Expr::Trap(message) => self.note_trap(message),
             Expr::Site(start, end) => self.note_site(*start, *end),
@@ -1191,6 +1191,69 @@ impl<'p> FuncCx<'_, 'p> {
         }
     }
 
+    /// Overwrites the record's cell when the count is 1, releasing the fields
+    /// it held; otherwise drops this reference (the cell is shared, so the
+    /// count cannot reach zero) and allocates.
+    fn reuse_record(
+        &mut self,
+        x: Local,
+        l: LayoutId,
+        fields: &[Expr],
+        out: &mut Code,
+    ) -> Result<Ty, EmitError> {
+        let Some(Layout::Record(types)) = self.program.layouts.get(l.0 as usize) else {
+            return Err(EmitError::Malformed("record layout"));
+        };
+        if types.len() != fields.len() {
+            return Err(EmitError::Malformed("record field count"));
+        }
+        let (base, kind) = self.pointer(x)?;
+        if kind != HeapKind::Record(l) {
+            return Err(EmitError::Malformed("reuse of a different layout"));
+        }
+        let Some(temps) = self.evaluate(fields, out)? else {
+            return Ok(None);
+        };
+        let slots: Vec<_> = types.iter().copied().zip(temps).collect();
+        let result = self.scratch(ValType::I32);
+        out.extend([
+            Instruction::LocalGet(base),
+            rc_load(),
+            Instruction::I32Const(1),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Empty),
+        ]);
+        let mut olds = Vec::new();
+        for (i, &(ty, _)) in slots.iter().enumerate() {
+            if let (MTy::Ptr(kind), Some(load)) = (ty, load(ty, layout::slot(layout::HEADER, i))) {
+                let old = self.scratch(ValType::I32);
+                out.extend([
+                    Instruction::LocalGet(base),
+                    load,
+                    Instruction::LocalSet(old),
+                ]);
+                olds.push((old, kind));
+            }
+        }
+        self.fill(base, &slots, layout::HEADER, out);
+        for (old, kind) in olds {
+            release(self.shared, old, kind, out)?;
+        }
+        out.extend([Instruction::LocalGet(base), Instruction::LocalSet(result)]);
+        out.push(Instruction::Else);
+        adjust_rc(base, Instruction::I32Sub, true, out);
+        out.push(Instruction::End);
+        let ptr = self.allocate(layout::object_size(layout::HEADER, fields.len()), out);
+        self.fill(ptr, &slots, layout::HEADER, out);
+        out.extend([
+            Instruction::LocalGet(ptr),
+            Instruction::LocalSet(result),
+            Instruction::End,
+            Instruction::LocalGet(result),
+        ]);
+        Ok(Some(MTy::Ptr(HeapKind::Record(l))))
+    }
+
     fn make_closure(
         &mut self,
         f: FuncId,
@@ -1431,6 +1494,7 @@ impl<'p> FuncCx<'_, 'p> {
                 out.push(Instruction::LocalGet(ptr));
                 Ok(Some(MTy::Ptr(HeapKind::Record(*l))))
             }
+            Expr::ReuseRecord(x, l, fields) => self.reuse_record(*x, *l, fields, out),
             Expr::Field(x, i) => {
                 let (ptr, kind) = self.pointer(*x)?;
                 let HeapKind::Record(l) = kind else {

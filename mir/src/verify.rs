@@ -560,6 +560,7 @@ impl<'a> Checker<'a> {
                 }
                 Ty::Val(MTy::Ptr(HeapKind::Variant(*layout)))
             }
+            Expr::ReuseRecord(x, layout, fields) => self.reuse_record(*x, *layout, fields),
             Expr::Free(x) => {
                 self.take_token(*x);
                 Ty::Val(MTy::Unit)
@@ -644,6 +645,25 @@ impl<'a> Checker<'a> {
             Expr::Trap(_) => Ty::Never,
             Expr::Site(..) => Ty::Val(MTy::Unit),
         }
+    }
+
+    #[inline(never)]
+    fn reuse_record(&mut self, x: Local, layout: LayoutId, fields: &[Expr]) -> Ty {
+        let expected = self.record_fields(layout);
+        self.args(fields, expected);
+        match self.borrow_ptr(x) {
+            Some(HeapKind::Record(from)) => {
+                if self.record_fields(from) != expected {
+                    self.err(ErrorKind::ReuseSizeMismatch { from, to: layout });
+                }
+            }
+            Some(other) => {
+                self.err(ErrorKind::NotARecord(MTy::Ptr(other)));
+            }
+            None => {}
+        }
+        self.consume(x, Own::Moved);
+        Ty::Val(MTy::Ptr(HeapKind::Record(layout)))
     }
 
     fn binary(&mut self, a: &Expr, b: &Expr, operand: MTy, result: MTy) -> Ty {
