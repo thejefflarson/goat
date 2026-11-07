@@ -46,4 +46,9 @@ jobs:
       - name: Build for wasm32
         run: >
           cargo build -p goat_parser -p goat_checker -p goat_mir -p goat_wasm
-          -p goat --target wasm32-unknown-unknown
+          -p goat -p goat_web --target wasm32-unknown-unknown
+
+      - name: Build and record the compiler artifact
+        run: |
+          cargo build -p goat_web --target wasm32-unknown-unknown --release
+          ls -l target/wasm32-unknown-unknown/release/goat_web.wasm

@@ -1,0 +1,12 @@
+[package]
+name = "goat_web"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+goat = { path = "../goat" }
+goat_checker = { path = "../checker" }
