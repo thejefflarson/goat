@@ -52,6 +52,25 @@ fn runs_the_examples() {
 }
 
 #[test]
+fn runs_the_tags_example() {
+    let out = goat(&[
+        "run",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/tags.goat"),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "12\n9\n1\n");
+}
+
+#[test]
+fn an_undeclared_tag_is_a_spanned_error_on_stderr() {
+    let out = run_source("p.goat", "match Empty do Dwon then 1 else 0 done");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("unknown tag `Dwon`"), "{stderr}");
+    assert!(stderr.contains("^^^^"), "span caret missing: {stderr}");
+}
+
+#[test]
 fn runs_the_constraints_example() {
     let out = goat(&[
         "run",
@@ -267,10 +286,14 @@ fn o_on_a_program_that_never_draws_is_an_error_and_writes_nothing() {
 }
 
 const TYPO_TAG: &str = "match Cirle(5) do Circle(r) then r else 0 done";
+const TYPO_TAG_DECLS: &str = "tag Cirle tag Circle ";
 
 #[test]
 fn run_warns_on_stderr_and_still_succeeds() {
-    let out = run_source("p.goat", &format!("p = print(1)\n{TYPO_TAG}"));
+    let out = run_source(
+        "p.goat",
+        &format!("{TYPO_TAG_DECLS}p = print(1)\n{TYPO_TAG}"),
+    );
     assert!(out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("warning in "), "{stderr}");
@@ -283,7 +306,7 @@ fn run_warns_on_stderr_and_still_succeeds() {
 fn check_and_build_warn_on_stderr_and_succeed() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("p.goat");
-    fs::write(&path, TYPO_TAG).unwrap();
+    fs::write(&path, format!("{TYPO_TAG_DECLS}{TYPO_TAG}")).unwrap();
     let path = path.to_str().unwrap();
     for command in ["check", "build"] {
         let out = goat(&[command, path]);

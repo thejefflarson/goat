@@ -98,8 +98,9 @@ turtle.**
   are all numbers (`{x:1, y:2} + {x:3, y:4}`).
 - **Interfaces are records of functions** (`vec.add(p, q)`); row polymorphism
   makes any record with the right fields fit.
-- **Variants are structural and inferred** — no declarations. Capitalized names
-  are always tags: `Circle(5)`, `Empty`, `Link(1, rest)`.
+- **Variants are structural and inferred.** A tag is introduced by a `tag`
+  declaration (`tag Circle`), not by capitalization (ADR 0016): `Circle(5)`,
+  `Empty`, `Link(1, rest)`.
 - **Recursive types are allowed only when the cycle passes through a variant
   tag** (OCaml's default for polymorphic variants). This makes `List` and
   `Tree` definable in goat with full inference, while `f(f)`-style mistakes
@@ -407,8 +408,8 @@ allocation or indirect call. The scheme below is the general fallback.)
 ## Phase 7 — Variants, `match`, recursive types
 
 ### Syntax
-- Capitalized identifier ⇒ tag. `Circle(5)`, `Empty`, `Link(x, rest)`.
-  Lowercase identifiers stay ordinary names. (Uppercase = Unicode `Lu` start.)
+- A declared name ⇒ tag (`tag Circle`; ADR 0016). `Circle(5)`, `Empty`,
+  `Link(x, rest)`. Capitalization is style only.
 - Multi-argument tags are positional; internally the payload is a record with
   positional labels (`0`, `1`, ...) so the row machinery is reused.
 - `match e do Tag(a, b) then expr  Other then expr  else expr done` —

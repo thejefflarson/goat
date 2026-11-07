@@ -4,7 +4,7 @@
 use goat_checker::check_with_prelude;
 use goat_mir::*;
 
-const PRELUDE: &str = "double = program(n) do n * 2 done\n\
+const PRELUDE: &str = "tag Box double = program(n) do n * 2 done\n\
                        twice = program(f, x) do f(f(x)) done\n\
                        count_down = program(n) do if n < 1 then 0 else count_down(n - 1) done done\n\
                        make = program(n) do Box(n) done\n";

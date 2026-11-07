@@ -1,0 +1,18 @@
+# A tag is declared with `tag`; capitalization is only style.
+# Declarations come first and apply to the whole program.
+tag Circle
+tag Square
+tag grey
+
+area = program(shape) do
+  match shape do
+    Circle(r) then 3 * r * r
+    Square(side) then side * side
+  done
+done
+
+print(area(Circle(2)));
+print(area(Square(3)));
+match grey do
+  grey then 1
+done

@@ -19,10 +19,12 @@ for_kw = @{ for_lit ~ !XID_CONTINUE }
 from_kw = @{ "from" ~ !XID_CONTINUE }
 to_kw = @{ "to" ~ !XID_CONTINUE }
 in_kw = @{ "in" ~ !XID_CONTINUE }
+tag_kw = @{ tag_lit ~ !XID_CONTINUE }
 true_lit = { "true" }
 false_lit = { "false" }
 boolean = { true_lit | false_lit }
 return_lit = _{ "return" }
+tag_lit = _{ "tag" }
 // A reserved word, but only when it stands alone: the trailing `!XID_CONTINUE`
 // is a word boundary, so identifiers that merely begin with a keyword — `done`
 // vs `doner`, `do` vs `double`, `if` vs `ifx` — are still valid names. `done`
@@ -46,6 +48,7 @@ keyword = _{
   | true_lit
   | false_lit
   | return_lit
+  | tag_lit
   ) ~ !XID_CONTINUE
 }
 
@@ -99,13 +102,15 @@ string = @{ "\"" ~ raw_string ~ "\"" }
 
 unicode = _{ XID_START ~ XID_CONTINUE{0, 254} }
 
-// Names split on the case of their first letter: a lowercase-initial name is a
-// variable, an uppercase-initial one (Unicode `Lu`) is a variant tag.
-ident = @{ !keyword ~ !UPPERCASE_LETTER ~ unicode+ }
-tag_name = @{ &UPPERCASE_LETTER ~ unicode+ }
+// One lexeme for variables and tags: whether a name is a tag is decided by a
+// `tag` declaration in lowering, never by its capitalization.
+name = @{ !keyword ~ unicode+ }
 
 // Actual grammar
-goat = { SOI ~ expr? ~ EOI }
+// `tag Circle` declares a tag. Declarations come first and are hoisted: they
+// produce no value and every tag is visible to the whole program.
+tag_decl = { tag_kw ~ name }
+goat = { SOI ~ tag_decl* ~ expr? ~ EOI }
 // `a; b` runs `a`, drops its value, and continues with `b`. The `;` is what
 // keeps `f(x) (y)` and `f(x) -y` from reading as two statements: a statement
 // ends only at an explicit `;`. A trailing `;` makes the whole expression `()`.
@@ -119,20 +124,20 @@ value = { operand ~ more_math* }
 // `negation` keeps its operand's postfixes inside it, so `-f(x)` is `-(f(x))`.
 term = _{ negation | primary ~ postfix* }
 postfix = _{ access | call }
-access = { dot ~ ident }
+access = { dot ~ name }
 call = { lparen ~ arguments? ~ rparen }
 negation = { minus ~ (negation | primary ~ postfix*) }
 // Order matters: pest is a PEG, so longer/more-specific alternatives come
-// first. `declaration` (`ident = ...`) begins with an identifier, so a bare
-// `ident` must be tried after it.
-primary = _{ number | string | boolean | destructure | declaration | function | conditional | match_expr | repeat_loop | count_loop | each_loop | record | list | tag | ident | lparen ~ expr ~ rparen }
+// first. `declaration` (`name = ...`) begins with a name, so a bare `name` must
+// be tried after it.
+primary = _{ number | string | boolean | destructure | declaration | function | conditional | match_expr | repeat_loop | count_loop | each_loop | record | list | name | lparen ~ expr ~ rparen }
 // `{...base, x: 1}`: the grammar accepts a spread anywhere so that lowering can
 // say what is wrong with `{...a, ...b}`, instead of a bare parse error.
 record = { lbrace ~ (record_item ~ (comma ~ record_item)* ~ comma?)? ~ rbrace }
 record_item = _{ spread | field }
 spread = { "..." ~ expr }
-field = { ident ~ colon ~ expr }
-declaration = { ident ~ equals ~ (foreign_decl | value) ~ semi? ~ expr? }
+field = { name ~ colon ~ expr }
+declaration = { name ~ equals ~ (foreign_decl | value) ~ semi? ~ expr? }
 // `forward = foreign "turtle" "forward" (Number) -> Unit`: a function the host
 // provides. `foreign` is a keyword only here, so it stays usable as a name. The
 // module and name accept any plain operand so lowering can say they must be
@@ -140,34 +145,33 @@ declaration = { ident ~ equals ~ (foreign_decl | value) ~ semi? ~ expr? }
 // lowering can say which are not supported yet.
 foreign_kw = @{ "foreign" ~ !XID_CONTINUE }
 foreign_decl = { foreign_kw ~ foreign_name ~ foreign_name ~ fn_type }
-foreign_name = { string | number | boolean | ident }
+foreign_name = { string | number | boolean | name }
 fn_type = { lparen ~ (type_expr ~ (comma ~ type_expr)* ~ comma?)? ~ rparen ~ arrow ~ type_expr }
 type_expr = _{ fn_type | list_type | record_type | type_name }
 list_type = { lbracket ~ type_expr ~ rbracket }
 record_type = { lbrace ~ (field_type ~ (comma ~ field_type)* ~ comma?)? ~ rbrace }
-field_type = { ident ~ colon ~ type_expr }
+field_type = { name ~ colon ~ type_expr }
 type_name = @{ XID_START ~ XID_CONTINUE* }
 arrow = _{ "->" }
 // `{x, y} = point` and `{x, ...rest} = point`. Tried before `record`: a
 // pattern has bare names where a literal has `name: value`.
 destructure = { (record_pattern | list_pattern) ~ equals ~ value ~ semi? ~ expr? }
-record_pattern = { lbrace ~ ((ident ~ (comma ~ ident)* ~ (comma ~ rest_binding)? | rest_binding) ~ comma?) ~ rbrace }
-rest_binding = { "..." ~ ident }
+record_pattern = { lbrace ~ ((name ~ (comma ~ name)* ~ (comma ~ rest_binding)? | rest_binding) ~ comma?) ~ rbrace }
+rest_binding = { "..." ~ name }
 // `[]`, `[a, b]`, `[first, ...rest]`: `[` is a list pattern where a pattern is
 // expected and a list literal where an expression is, so the two never meet.
 // `destructure` is tried first, so `[a, b]` with no `=` after it still parses
 // as a literal.
-list_pattern = { lbracket ~ ((ident ~ (comma ~ ident)* ~ (comma ~ rest_binding)? | rest_binding) ~ comma?)? ~ rbracket }
-labels = { ident ~ (comma ~ ident)* }
+list_pattern = { lbracket ~ ((name ~ (comma ~ name)* ~ (comma ~ rest_binding)? | rest_binding) ~ comma?)? ~ rbracket }
+labels = { name ~ (comma ~ name)* }
 params = { param ~ (comma ~ param)* }
-param = _{ record_pattern | list_pattern | ident }
+param = _{ record_pattern | list_pattern | name }
 function = { function_lit ~ lparen ~ params? ~ rparen ~ do_lit ~ expr? ~ done_lit }
 arguments = { expr ~ (comma ~ expr)* ~ comma? }
 else_branch = _{ else_lit ~ expr }
 conditional = { if_lit ~ expr ~ then_lit ~ expr ~ else_branch? ~ done_lit }
-// `Empty`, `Circle(5)`, `Link(x, rest)`. `Empty()` is the same as `Empty`.
-tag = { tag_name ~ (lparen ~ arguments? ~ rparen)? }
-pattern = { tag_name ~ (lparen ~ labels? ~ rparen)? }
+// A pattern head is always a tag: `Empty`, `Circle(r)`, `Link(x, rest)`.
+pattern = { name ~ (lparen ~ labels? ~ rparen)? }
 // `[]` is `Empty`; `[x, ...rest]` is `Link(x, rest)`; `[a, b]` is
 // `Link(a, Link(b, Empty))`.
 list = { lbracket ~ arguments? ~ rbracket }
@@ -176,5 +180,5 @@ match_expr = { match_lit ~ expr ~ do_lit ~ arm* ~ else_branch? ~ done_lit }
 // `repeat 3 times do ... done`, `for i from 1 to 10 do ... done` (both ends
 // included) and `for x in xs do ... done`. A loop is `()`.
 repeat_loop = { repeat_lit ~ expr ~ times_lit ~ do_lit ~ expr? ~ done_lit }
-count_loop = { for_kw ~ ident ~ from_kw ~ expr ~ to_kw ~ expr ~ do_lit ~ expr? ~ done_lit }
-each_loop = { for_kw ~ ident ~ in_kw ~ expr ~ do_lit ~ expr? ~ done_lit }
+count_loop = { for_kw ~ name ~ from_kw ~ expr ~ to_kw ~ expr ~ do_lit ~ expr? ~ done_lit }
+each_loop = { for_kw ~ name ~ in_kw ~ expr ~ do_lit ~ expr? ~ done_lit }
