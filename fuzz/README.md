@@ -26,6 +26,10 @@ generator and runner live in `cli/tests/support/mod.rs`.
 
 ## Coverage-guided tier (manual or nightly)
 
+`.github/workflows/nightly-fuzz.yml` runs both targets for 20 minutes each
+every night (04:00 UTC) and on manual dispatch with a `budget` input. A failing
+run uploads `fuzz/tests/__fuzz__/` as an artifact.
+
 Needs the `cargo-bolero` tool and a nightly toolchain:
 
     cargo install cargo-bolero

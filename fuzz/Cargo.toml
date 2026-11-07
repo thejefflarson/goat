@@ -16,3 +16,7 @@ path = "../checker"
 # Separate from the main workspace: this tier needs cargo-bolero and nightly.
 [workspace]
 members = ["."]
+
+[profile.fuzz]
+inherits = "dev"
+debug-assertions = true

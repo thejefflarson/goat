@@ -1,0 +1,46 @@
+name: Nightly fuzz
+
+# Coverage-guided bolero fuzzing. Nightly and manual only: the per-PR gates run
+# a bounded randomized pass under `cargo test`, and this searches much deeper.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      budget:
+        description: "Fuzz time per target (bolero -T syntax, e.g. 20m)"
+        default: ""
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_BUDGET: ${{ inputs.budget || '20m' }}
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [differential_interp_vs_wasm, check_never_panics]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Install cargo-bolero
+        run: cargo install cargo-bolero --locked --version 0.13.5
+
+      - name: Fuzz
+        working-directory: fuzz
+        run: cargo +nightly bolero test ${{ matrix.target }} --engine libfuzzer -T "$FUZZ_BUDGET"
+
+      # bolero writes crashing inputs under tests/__fuzz__/<target>/crashes.
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-${{ matrix.target }}
+          path: fuzz/tests/__fuzz__/
+          if-no-files-found: ignore
