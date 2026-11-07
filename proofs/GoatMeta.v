@@ -254,6 +254,8 @@ Proof.
   - (* T_Record *) intros G fs R Hft IH; simpl; assumption.
   - (* T_Proj *) intros G e l T R Hty IH; simpl; assumption.
   - (* T_Conv *) intros G e T T' Hty IH Hteq; simpl; assumption.
+  - (* T_AppPoly *) intros G e g T Hpre IH; simpl in *.
+    destruct IH as [Hg He]; split; assumption.
   - (* FT_nil *) intros; simpl; auto.
   - (* FT_cons *) intros G l e T fs R Hty IH1 Hft IH2; simpl; split; assumption.
 Qed.
@@ -436,6 +438,17 @@ Proof.
        the induction hypothesis already answers it. *)
     intros G e T T' Hty IH Hteq HG; subst.
     destruct (IH eq_refl) as [Hv | [e' Hs]]; [ left; auto | right; eauto ].
+  - (* T_AppPoly: [(fun => e) g] is a call, so never a value; it steps.  The
+       premise [let x = g in e] always steps (it is never a value): if [g] is a
+       value the let fires (st_letv), which the call matches with st_beta; if
+       [g] steps the let steps its bound expression (st_let1), which the call
+       matches with st_app2 ([fun => e] being a value). *)
+    intros G e g T Hpre IH HG; subst.
+    right. destruct (IH eq_refl) as [Hv | [e' Hs]].
+    + inversion Hv.
+    + inversion Hs; subst.
+      * exists (open_exp_wrt_exp e g). apply st_beta; assumption.
+      * eexists. apply st_app2; [ apply v_abs | eassumption ].
   - (* FT_nil *) intros; left; auto.
   - (* FT_cons *) intros G l e T fs R Hty IH1 Hft IH2 HG; subst.
     destruct (IH1 eq_refl) as [Hv | [e' Hs]].
@@ -457,16 +470,24 @@ Proof. intros e T H. apply (proj1 progress_mut nil e T H). reflexivity. Qed.
 (* conversions off a derivation whose subject has a known head.          *)
 (* ================================================================== *)
 
+(* Inversion for a call, up to conversion.  A call can now be typed two ways:
+   the ordinary [T_App] (left disjunct) or the rank-2 [T_AppPoly] (right
+   disjunct), in which the function is literally an abstraction and the call
+   types as the corresponding [let]. *)
 Lemma app_inv : forall G e1 e2 T,
   typing G (e_app e1 e2) T ->
-  exists A B, typing G e1 (typ_Arrow A B) /\ typing G e2 A /\ teq B T.
+  (exists A B, typing G e1 (typ_Arrow A B) /\ typing G e2 A /\ teq B T)
+  \/ (exists body T', e1 = e_abs body /\ typing G (e_let e2 body) T' /\ teq T' T).
 Proof.
   intros G e1 e2 T H. remember (e_app e1 e2) as e0 eqn:He.
   induction H; try discriminate He.
-  - (* T_App *) inversion He; subst. exists T1, T2.
+  - (* T_App *) inversion He; subst. left. exists T1, T2.
     repeat split; auto using teq_refl.
-  - (* T_Conv *) destruct (IHtyping He) as [A [B [Hty1 [Hty2 Hb]]]].
-    exists A, B. repeat split; try assumption. eauto using teq_trans.
+  - (* T_Conv *) destruct (IHtyping He) as [ [A [B [Hty1 [Hty2 Hb]]]] | [body [T'' [Heqa [Hlet Hb]]]] ].
+    + left. exists A, B. repeat split; try assumption. eauto using teq_trans.
+    + right. exists body, T''. repeat split; try assumption. eauto using teq_trans.
+  - (* T_AppPoly *) inversion He; subst. right.
+    eexists; eexists. split; [ reflexivity | split; [ eassumption | apply teq_refl ] ].
 Qed.
 
 Lemma abs_inv : forall G e T,

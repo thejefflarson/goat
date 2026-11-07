@@ -959,6 +959,13 @@ Proof.
     eapply T_Proj. simpl in IH. eapply IH; eauto.
   - (* T_Conv *) intros G e T T' Ht IH Hte st sr G' A Hu' Hcs Hsupp Hcompat.
     eapply T_Conv; [ eapply IH; eauto | apply teq_ap; auto ].
+  - (* T_AppPoly: the rank-2 rule.  Its premise is a [let]-typing at the SAME
+       context and type, and type/row substitution does not touch the term, so
+       the substituted derivation is just the IH re-wrapped by [T_AppPoly].
+       This is why the novel rank-2 + scoped-label-row case needs no new theory:
+       its substitution obligation IS the (closed) [T_Let] one. *)
+    intros G e g T Ht IH st sr G' A Hu' Hcs Hsupp Hcompat.
+    apply T_AppPoly. eapply IH; eauto.
   - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. simpl. apply FT_nil; auto.
   - intros G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat. simpl.
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.
@@ -1121,6 +1128,8 @@ Proof.
   - (* T_Record *) intros G fs R Hr IH G2 Heq; subst. simpl. apply T_Record. apply (IH G2); reflexivity.
   - (* T_Proj *) intros G e l T R Hr IH G2 Heq; subst. simpl. eapply T_Proj. apply (IH G2); reflexivity.
   - (* T_Conv *) intros G e T T' Hr IH Hteq G2 Heq; subst. eapply T_Conv; [ apply (IH G2); reflexivity | exact Hteq ].
+  - (* T_AppPoly *) intros G e g0 T Hr IH G2 Heq; subst. simpl.
+    apply T_AppPoly. apply (IH G2); reflexivity.
   - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
   - (* FT_cons *) intros G l e T fs R Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply FT_cons.
     + apply (IH1 G2); reflexivity.
@@ -1197,6 +1206,8 @@ Proof.
   - (* T_Record *) intros G fs R Hr IH G2 Heq; subst. simpl. apply T_Record. apply (IH G2); reflexivity.
   - (* T_Proj *) intros G e l T R Hr IH G2 Heq; subst. simpl. eapply T_Proj. apply (IH G2); reflexivity.
   - (* T_Conv *) intros G e T T' Hr IH Hteq G2 Heq; subst. eapply T_Conv; [ apply (IH G2); reflexivity | exact Hteq ].
+  - (* T_AppPoly *) intros G e g0 T Hr IH G2 Heq; subst. simpl.
+    apply T_AppPoly. apply (IH G2); reflexivity.
   - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
   - (* FT_cons *) intros G l e T fs R Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply FT_cons.
     + apply (IH1 G2); reflexivity.
@@ -1255,38 +1266,61 @@ Proof.
        substitution lemma [typing_subst] says plugging [v] into the body keeps
        the type [B]. *)
     intros e v Hv G T Hty.
-    (* "Look inside" the typing of a call: it must come from a function [Habs]
-       and an argument [Harg]. *)
-    apply app_inv in Hty. destruct Hty as [A [B [Habs [Harg Hbt]]]].
-    (* "Look inside" the typing of the function: its body types once the
-       parameter is added to the context. *)
-    apply abs_inv in Habs. destruct Habs as [L [A' [B' [Hbody Harr]]]].
-    apply teq_Arrow_inv in Harr. destruct Harr as [A2 [B2 [Heq [HA HB]]]].
-    inversion Heq; subst.
-    (* Choose a name [x] for the parameter that clashes with nothing. *)
-    pick fresh x for (L \u fv_exp e).
-    assert (HxL : x `notin` L) by fsetdec.
-    assert (Hxe : x `notin` fv_exp e) by fsetdec.
-    assert (Hv' : typing G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
-    assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
-      by (eapply typing_subst; [ apply Hbody; exact HxL | exact Hv' ]).
-    (* Plugging [v] into the body opened with [x] equals opening the body with
-       [v] directly (that is [subst_intro]); that is exactly the stepped
-       term.  The final lines just match up the types, which agree. *)
-    rewrite <- subst_intro in Hopen by exact Hxe.
-    eapply T_Conv; [ exact Hopen | ].
-    eapply teq_trans; [ exact HB | exact Hbt ].
+    (* "Look inside" the typing of a call: it came either from [T_App] (the
+       function has an arrow type) or from the rank-2 [T_AppPoly] (the call was
+       typed as a [let]).  Both reduce to a substitution lemma. *)
+    apply app_inv in Hty. destruct Hty as [ [A [B [Habs [Harg Hbt]]]] | [body [T' [Heqabs [Hlet Hbt]]]] ].
+    + (* T_App: its body types once the parameter is added to the context. *)
+      apply abs_inv in Habs. destruct Habs as [L [A' [B' [Hbody Harr]]]].
+      apply teq_Arrow_inv in Harr. destruct Harr as [A2 [B2 [Heq [HA HB]]]].
+      inversion Heq; subst.
+      (* Choose a name [x] for the parameter that clashes with nothing. *)
+      pick fresh x for (L \u fv_exp e).
+      assert (HxL : x `notin` L) by fsetdec.
+      assert (Hxe : x `notin` fv_exp e) by fsetdec.
+      assert (Hv' : typing G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
+      assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
+        by (eapply typing_subst; [ apply Hbody; exact HxL | exact Hv' ]).
+      (* Plugging [v] into the body opened with [x] equals opening the body with
+         [v] directly (that is [subst_intro]); that is exactly the stepped
+         term.  The final lines just match up the types, which agree. *)
+      rewrite <- subst_intro in Hopen by exact Hxe.
+      eapply T_Conv; [ exact Hopen | ].
+      eapply teq_trans; [ exact HB | exact Hbt ].
+    + (* T_AppPoly: the call was typed as [let x = v in e]; [v] is a value, so
+         plugging it in uses the POLYMORPHIC substitution lemma, exactly as the
+         st_letv case below.  This is the rank-2 redex's preservation. *)
+      injection Heqabs as Hbe; subst body.
+      apply let_inv in Hlet. destruct Hlet as [L [T1 [T2 [Hty1 [Hbody Hteq2]]]]].
+      pick fresh x for (L \u fv_exp e).
+      assert (HxL : x `notin` L) by fsetdec.
+      assert (Hxe : x `notin` fv_exp e) by fsetdec.
+      assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) T2)
+        by (eapply typing_subst_poly; [ apply Hbody; exact HxL | exact Hty1 ]).
+      rewrite <- subst_intro in Hopen by exact Hxe.
+      eapply T_Conv; [ exact Hopen | ].
+      eapply teq_trans; [ exact Hteq2 | exact Hbt ].
   - (* Case: the function part of a call stepped, [e1 e2] to [e1' e2]
        (st_app1).  Congruence: [IH] says [e1'] keeps [e1]'s type, so the call
        is still well typed. *)
     intros e1 e1' e2 Hstep IH G T Hty.
-    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
-    eapply T_Conv; [ eapply T_App; [ apply IH; exact Hty1 | exact Hty2 ] | exact Hbt ].
+    apply app_inv in Hty. destruct Hty as [ [A [B [Hty1 [Hty2 Hbt]]]] | [body [T' [Heqabs [Hlet Hbt]]]] ].
+    + eapply T_Conv; [ eapply T_App; [ apply IH; exact Hty1 | exact Hty2 ] | exact Hbt ].
+    + (* T_AppPoly: the function is an abstraction, a value, so it cannot step. *)
+      subst e1. inversion Hstep.
   - (* Case: the argument of a call stepped, [v e2] to [v e2'] (st_app2).
        Same idea, on the argument. *)
     intros v e2 e2' Hv Hstep IH G T Hty.
-    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
-    eapply T_Conv; [ eapply T_App; [ exact Hty1 | apply IH; exact Hty2 ] | exact Hbt ].
+    apply app_inv in Hty. destruct Hty as [ [A [B [Hty1 [Hty2 Hbt]]]] | [body [T' [Heqabs [Hlet Hbt]]]] ].
+    + eapply T_Conv; [ eapply T_App; [ exact Hty1 | apply IH; exact Hty2 ] | exact Hbt ].
+    + (* T_AppPoly: the argument stepped; rebuild the [let] with the stepped
+         argument (its type is preserved by [IH]) and re-apply [T_AppPoly]. *)
+      subst v.
+      apply let_inv in Hlet. destruct Hlet as [L [T1 [T2 [Hty1 [Hbody Hteq2]]]]].
+      eapply T_Conv.
+      * apply T_AppPoly. eapply T_Let with (L := L) (T1 := T1);
+          [ apply IH; exact Hty1 | exact Hbody ].
+      * eapply teq_trans; [ exact Hteq2 | exact Hbt ].
   - (* Case: [let x = v in e2] with [v] a value steps to [e2] with [v] plugged
        in for [x] (st_letv).  The real work, and where polymorphism matters:
        [x] may be used at several types in [e2], so we use the POLYMORPHIC
