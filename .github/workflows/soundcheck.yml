@@ -9,7 +9,8 @@ on:
 
 jobs:
   review:
-    runs-on: ubuntu-latest
+    runs-on: goat-runners
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: write
       pull-requests: write
