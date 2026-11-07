@@ -4,14 +4,13 @@
    the re-chosen-instance step that the L5 [T-Var] leaf and instantiation turn
    on, and the piece GoatBij's freshening was building toward.
 
-   Like GoatBij, this file is a building block and does NOT by itself discharge
-   either admit in GoatSubst.v.  The remaining obstruction is [T-Let]: closing it
-   needs the let-generalized variables to be fresh with respect to the other
-   context schemes' quantifiers (so that generalization commutes with the
-   substitution), which the deterministic [gen] over a set-of-atoms scheme
-   representation does not supply on its own -- it needs a derivation-level
-   freshness/well-formedness invariant (or a cofinite [T-Let]).  See the report
-   on #151 for the detailed analysis. *)
+   [casch_inst] is the reusable core.  GoatSound then supplies the missing
+   T-Let step -- the let-generalized variables are renamed fresh for the
+   substitution and the target context at each use ([mk_rename]), so that [gen]
+   commutes with the capture-avoiding substitution ([casch_gen_sch_equiv]) --
+   and with it closes both HM lemmas, preservation and soundness, axiom-free.
+   The derivation-level freshness lives in that proof, not in the typing rule,
+   so the accepted language is unchanged. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
