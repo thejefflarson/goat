@@ -49,7 +49,7 @@ function finite(name, x) {
 }
 
 // Builds the import object and the logs it fills. `memory()` supplies the
-// module's memory once it exists; an invalid color is dropped.
+// module's memory once it exists.
 export function createHost(memory) {
   const output = [];
   const commands = [];
@@ -91,7 +91,10 @@ export function createHost(memory) {
       pen_down: () => record({ kind: "pen_down" }),
       color: (ptr) => {
         const value = readString(memory(), ptr);
-        if (COLOR_PATTERN.test(value)) record({ kind: "color", value });
+        if (!COLOR_PATTERN.test(value)) {
+          throw new Error(`color wants a name like "red" or a code like "#ff8800", not ${JSON.stringify(value)}`);
+        }
+        record({ kind: "color", value });
       },
     },
   };

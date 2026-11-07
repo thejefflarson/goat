@@ -112,9 +112,9 @@ test("strokes mirror the CLI replay", () => {
   assert.ok(near(result[1].points[1], [10, -10]));
 });
 
-test("an invalid color is ignored and a non-finite number traps", async () => {
+test("an invalid color and a non-finite number trap", async () => {
   const bad = await compile('color("re d"); forward(1)');
-  assert.deepEqual((await run(bad)).commands, [{ kind: "forward", value: 1 }]);
+  await assert.rejects(run(bad), /color wants a name/);
   const nan = await compile("forward(0 / 0)");
   await assert.rejects(run(nan), /real number/);
 });

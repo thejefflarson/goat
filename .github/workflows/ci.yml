@@ -66,5 +66,9 @@ jobs:
       - name: Build the compiler as wasm
         run: cargo build -p goat_web --target wasm32-unknown-unknown --release
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Test the browser runtime
         run: node --test web/
