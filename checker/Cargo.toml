@@ -11,3 +11,6 @@ pest = "2.9"
 
 [dev-dependencies]
 bolero = { version = "=0.13.4", default-features = false, features = ["std"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

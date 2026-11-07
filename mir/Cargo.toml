@@ -6,3 +6,6 @@ edition = "2024"
 
 [dependencies]
 goat_checker = { version = "0.1.0", path = "../checker" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

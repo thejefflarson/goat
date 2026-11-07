@@ -1907,3 +1907,27 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn occurs_finds_its_own_variable() {
+        let var: TypeVar = kani::any();
+        assert!(occurs(var, &Ty::Var(var)));
+        assert!(occurs_row(var, &Row::Var(var)));
+        let other: TypeVar = kani::any();
+        kani::assume(other != var);
+        assert!(!occurs(var, &Ty::Var(other)));
+        assert!(!occurs_row(var, &Row::Empty));
+    }
+
+    #[kani::proof]
+    fn occurs_ignores_closed_leaves() {
+        let var: TypeVar = kani::any();
+        for ty in [Ty::Number, Ty::Str, Ty::Bool, Ty::Unit] {
+            assert!(!occurs(var, &ty));
+        }
+    }
+}

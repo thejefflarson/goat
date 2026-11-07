@@ -23,4 +23,4 @@ jobs:
           cargo kani setup
 
       - name: Prove
-        run: cargo kani -p goat_wasm -p goat
+        run: cargo kani -p goat_wasm -p goat -p goat_checker -p goat_mir
