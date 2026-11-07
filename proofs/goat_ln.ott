@@ -20,19 +20,21 @@
 %        emitted lemmas apply unchanged.
 %
 % Type and row variables are a free-variable set with named substitution, NOT
-% term binders (ADR 0008). In this B2 core they are `nat`; refining them to
-% metalib `atom` with atom-set free-variable functions is a B3 step. The two
-% lemmas B2 proves do not depend on that choice.
+% term binders (ADR 0008). They are metalib `atom`s (issue #151): the same
+% decidable-atom machinery the term binder already uses, so free-variable sets
+% are metalib `atoms` with decidable membership and capture-avoiding type/row
+% substitution of a context is computable. Term variables stay the
+% repr-locally-nameless binder; type/row variables are a named free-variable set.
 
 metavar termvar, x, y, z, f, g ::=
   {{ repr-locally-nameless }}
   {{ com term variable (locally-nameless) }}
   {{ lex alphanum }}
 
-metavar typvar, a, b ::= {{ coq nat }}
-  {{ com free type variable }}
-metavar rowvar, r, s ::= {{ coq nat }}
-  {{ com free row variable }}
+metavar typvar, a, b ::= {{ coq atom }}
+  {{ com free type variable (metalib atom) }}
+metavar rowvar, r, s ::= {{ coq atom }}
+  {{ com free row variable (metalib atom) }}
 metavar label, l ::= {{ coq nat }}
   {{ com record label }}
 metavar num, n ::= {{ coq nat }}

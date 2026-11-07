@@ -5,3 +5,4 @@ GoatRows.v
 GoatDefs.v
 GoatMeta.v
 GoatSubst.v
+GoatBij.v

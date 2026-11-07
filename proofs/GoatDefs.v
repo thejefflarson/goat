@@ -6,17 +6,18 @@
    generalization and instantiation all turn on the free-type/row-variable SETS
    of a type and a context (docs/semantics.md section 5).  The type and row
    variables are a free-variable set, not binders (ADR 0008), realized here as
-   [nat] exactly as B2 chose; Ott cannot emit the [ftv]/[frv] set machinery nor
-   the [gen] side condition over them, and the reduction's [open]-based redexes
-   are likewise outside what Ott's relation codegen expresses.  Term variables
-   stay locally nameless (metalib [var]); [open_exp_wrt_exp]/[subst_exp]/[fv_exp]
-   and the cofinite-style binder rules are the generated/standard LN idiom.
+   metalib [atom]s (issue #151): [ftv]/[frv] are computable [atoms] finite sets
+   with decidable membership, scheme quantifier sets are [atoms], and [gen] is a
+   set difference.  Ott cannot emit that set machinery nor the [gen] side
+   condition, and the reduction's [open]-based redexes are likewise outside
+   Ott's relation codegen.  Term variables stay locally nameless (metalib [var]);
+   [open_exp_wrt_exp]/[subst_exp]/[fv_exp] and the cofinite-style binder rules
+   are the generated/standard LN idiom.
 
    The core is single-binder and curried (B2's encoding, docs/semantics.md
    section 10 option (a)): [typ_Arrow] is unary and application is unary, so the
    n-ary surface function [program(x1,...,xk)] is the k-fold iteration of this
-   core and the per-type "arity" is the count of nested arrows.  See
-   GoatMeta.v's arity bridge. *)
+   core and the per-type "arity" is the count of nested arrows. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
@@ -49,69 +50,88 @@ Definition idt : tsub := fun a => typ_Var a.
 Definition idr : rsub := fun r => row_Var r.
 
 (* ================================================================== *)
-(* Free type / row variables, as predicates (section 5).               *)
+(* Free type / row variables, as computable finite [atoms] sets        *)
+(* (section 5).  Type variables live at [typ_Var]; row variables at     *)
+(* [row_Var]; the recursions cross because a record carries a row and a  *)
+(* row field carries a type.                                             *)
 (* ================================================================== *)
 
-Fixpoint Ftv_typ (T : typ) (a : typvar) {struct T} : Prop :=
+Fixpoint ftv_typ (T : typ) {struct T} : atoms :=
   match T with
-  | typ_Number => False
-  | typ_Bool => False
-  | typ_Arrow A B => Ftv_typ A a \/ Ftv_typ B a
-  | typ_Record R => Ftv_row R a
-  | typ_Var b => a = b
+  | typ_Number => {}
+  | typ_Bool => {}
+  | typ_Arrow A B => ftv_typ A `union` ftv_typ B
+  | typ_Record R => ftv_row R
+  | typ_Var a => {{a}}
   end
-with Ftv_row (R : row) (a : typvar) {struct R} : Prop :=
+with ftv_row (R : row) {struct R} : atoms :=
   match R with
-  | row_Empty => False
-  | row_Var _ => False
-  | row_Ext _ T R' => Ftv_typ T a \/ Ftv_row R' a
+  | row_Empty => {}
+  | row_Var _ => {}
+  | row_Ext _ T R' => ftv_typ T `union` ftv_row R'
   end.
 
-Fixpoint Frv_typ (T : typ) (r : rowvar) {struct T} : Prop :=
+Fixpoint frv_typ (T : typ) {struct T} : atoms :=
   match T with
-  | typ_Number => False
-  | typ_Bool => False
-  | typ_Arrow A B => Frv_typ A r \/ Frv_typ B r
-  | typ_Record R => Frv_row R r
-  | typ_Var _ => False
+  | typ_Number => {}
+  | typ_Bool => {}
+  | typ_Arrow A B => frv_typ A `union` frv_typ B
+  | typ_Record R => frv_row R
+  | typ_Var _ => {}
   end
-with Frv_row (R : row) (r : rowvar) {struct R} : Prop :=
+with frv_row (R : row) {struct R} : atoms :=
   match R with
-  | row_Empty => False
-  | row_Var s => r = s
-  | row_Ext _ T R' => Frv_typ T r \/ Frv_row R' r
+  | row_Empty => {}
+  | row_Var s => {{s}}
+  | row_Ext _ T R' => frv_typ T `union` frv_row R'
   end.
+
+(* Membership wrappers: the metatheory is phrased with these predicates, and
+   their proofs [unfold] to a finite-set membership that [fsetdec] discharges. *)
+Definition Ftv_typ (T : typ) (a : typvar) : Prop := a `in` ftv_typ T.
+Definition Frv_typ (T : typ) (r : rowvar) : Prop := r `in` frv_typ T.
 
 (* ================================================================== *)
 (* Type schemes (section 5): a quantified set of type and row variables  *)
-(* over a monotype body.  Quantified sets are predicates; a monotype     *)
+(* over a monotype body.  Quantified sets are finite [atoms]; a monotype  *)
 (* scheme quantifies nothing.                                            *)
 (* ================================================================== *)
 
 Record scheme : Type := Sch {
-  s_tq : typvar -> Prop;
-  s_rq : rowvar -> Prop;
+  s_tq : atoms;
+  s_rq : atoms;
   s_body : typ
 }.
 
-Definition sch_mono (T : typ) : scheme := Sch (fun _ => False) (fun _ => False) T.
+Definition sch_mono (T : typ) : scheme := Sch {} {} T.
 
 (* Free variables of a scheme: free in the body and not quantified. *)
-Definition Ftv_sch (s : scheme) (a : typvar) : Prop :=
-  Ftv_typ (s_body s) a /\ ~ s_tq s a.
-Definition Frv_sch (s : scheme) (r : rowvar) : Prop :=
-  Frv_typ (s_body s) r /\ ~ s_rq s r.
+Definition ftv_sch (s : scheme) : atoms := AtomSetImpl.diff (ftv_typ (s_body s)) (s_tq s).
+Definition frv_sch (s : scheme) : atoms := AtomSetImpl.diff (frv_typ (s_body s)) (s_rq s).
+
+Definition Ftv_sch (s : scheme) (a : typvar) : Prop := a `in` ftv_sch s.
+Definition Frv_sch (s : scheme) (r : rowvar) : Prop := r `in` frv_sch s.
 
 (* ================================================================== *)
-(* Contexts and their free variables.                                   *)
+(* Contexts and their free variables (computable finite sets).          *)
 (* ================================================================== *)
 
 Definition ctx := list (var * scheme).
 
-Definition Ftv_ctx (G : ctx) (a : typvar) : Prop :=
-  exists x s, binds x s G /\ Ftv_sch s a.
-Definition Frv_ctx (G : ctx) (r : rowvar) : Prop :=
-  exists x s, binds x s G /\ Frv_sch s r.
+Fixpoint ftv_ctx (G : ctx) : atoms :=
+  match G with
+  | nil => {}
+  | (_, s) :: G' => ftv_sch s `union` ftv_ctx G'
+  end.
+
+Fixpoint frv_ctx (G : ctx) : atoms :=
+  match G with
+  | nil => {}
+  | (_, s) :: G' => frv_sch s `union` frv_ctx G'
+  end.
+
+Definition Ftv_ctx (G : ctx) (a : typvar) : Prop := a `in` ftv_ctx G.
+Definition Frv_ctx (G : ctx) (r : rowvar) : Prop := r `in` frv_ctx G.
 
 (* ================================================================== *)
 (* Generic instance (section 5): [inst T s] says T is a generic instance   *)
@@ -122,8 +142,8 @@ Definition Frv_ctx (G : ctx) (r : rowvar) : Prop :=
 
 Definition inst (T : typ) (s : scheme) : Prop :=
   exists (st : tsub) (sr : rsub),
-    (forall a, ~ s_tq s a -> st a = typ_Var a) /\
-    (forall r, ~ s_rq s r -> sr r = row_Var r) /\
+    (forall a, a `notin` s_tq s -> st a = typ_Var a) /\
+    (forall r, r `notin` s_rq s -> sr r = row_Var r) /\
     T = ap_typ st sr (s_body s).
 
 (* ================================================================== *)
@@ -132,8 +152,8 @@ Definition inst (T : typ) (s : scheme) : Prop :=
 (* ================================================================== *)
 
 Definition gen (G : ctx) (T : typ) : scheme :=
-  Sch (fun a => Ftv_typ T a /\ ~ Ftv_ctx G a)
-      (fun r => Frv_typ T r /\ ~ Frv_ctx G r)
+  Sch (AtomSetImpl.diff (ftv_typ T) (ftv_ctx G))
+      (AtomSetImpl.diff (frv_typ T) (frv_ctx G))
       T.
 
 (* ================================================================== *)

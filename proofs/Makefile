@@ -19,8 +19,10 @@ OTT_FLAGS = -coq_lngen true -coq_expand_list_types true
 
 .PHONY: all gen coq ci check-gen check-admits clean
 
-# The two allowed admits: typing_subst (L6a) and typing_subst_poly (L6b), both
-# in GoatMeta.v. Closing them finishes the B3 soundness proof (issue #151).
+# The allowed admits: the two canonical Hindley-Milner lemmas in GoatSubst.v
+# that term substitution (L6a/L6b), preservation, and soundness are derived
+# from -- general weakening (typing_weaken, L4) and context-fixing type/row
+# substitution (typing_tsubst_fix, L5). Closing them finishes B3 (issue #151).
 EXPECTED_ADMITS = 2
 
 all: gen coq
@@ -46,14 +48,14 @@ check-gen: $(OTT_SRC)
 	@echo "$(GEN) is in sync with $(OTT_SRC)."
 
 # Frozen-admit guard: "green Coq" stays honest only while the sole admits are
-# the two tracked HM substitution lemmas, so the proof can only get MORE
-# complete. Fail if the `Admitted.` count in the sources drifts from
-# EXPECTED_ADMITS. When L6a/L6b close (#151), lower the expected count to 0.
+# the two tracked HM lemmas, so the proof can only get MORE complete. Fail if
+# the `Admitted.` count in the sources drifts from EXPECTED_ADMITS. When
+# typing_weaken / typing_tsubst_fix close (#151), lower the expected count.
 check-admits:
 	@n=$$(grep -rn '^Admitted\.' *.v | wc -l | tr -d '[:space:]'); \
 	if [ "$$n" != "$(EXPECTED_ADMITS)" ]; then \
 	  echo "ERROR: proofs/*.v has $$n 'Admitted.' (expected $(EXPECTED_ADMITS))."; \
-	  echo "Allowed: typing_subst (L6a) and typing_subst_poly (L6b) in GoatMeta.v (#151)."; \
+	  echo "Allowed: typing_weaken (L4) and typing_tsubst_fix (L5) in GoatSubst.v (#151)."; \
 	  grep -rn '^Admitted\.' *.v; \
 	  exit 1; \
 	fi; \
