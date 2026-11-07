@@ -35,3 +35,17 @@ wrong state unrepresentable *before* you reach for a comment.
 - **Portability.** The compiler crates (`parser`, `checker`, and the future
   `mir`/`wasm`) must build for `wasm32-unknown-unknown` — keep native-only deps
   (wasmtime, filesystem, `cc`) out of them.
+- **Worktrees.** All work MUST live inside this repo. Create every git worktree
+  under `.claude/worktrees/` (gitignored, so it never shows in `git status`) —
+  never as a sibling directory like `../goat-worktrees/`. A worktree is only a
+  checked-out directory; the branch and its commits live in this repo's `.git`
+  regardless, so an in-repo worktree loses nothing and keeps the tree self-
+  contained.
+- **Local Coq toolchain.** The opam root for building the `proofs/` development
+  lives at `/coq-toolchain/` (gitignored — it is ~1 GB and must never be
+  committed). An opam root records absolute paths and breaks when moved, so a
+  fresh root is **rebuilt in place** at that path (Coq 8.20.1, Ott 0.34, metalib
+  pinned — the recipe in `.github/workflows/coq.yml`), never relocated from
+  elsewhere. CI builds the proofs in a Coq Docker image, so nothing in the repo
+  depends on this local toolchain; it is a convenience for running
+  `make -C proofs ci` without the Docker round-trip.
