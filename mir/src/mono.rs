@@ -10,9 +10,11 @@ use goat_checker::hir::{
 };
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
+use goat_checker::vocab::KEY_TAGS;
 use goat_checker::{Checked, GoatError, Target};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+mod interactive;
 mod structural;
 
 type Subst = HashMap<TypeVar, Ty>;
@@ -24,6 +26,9 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut labels = BTreeSet::new();
     collect_tags(&checked.root, &mut labels);
+    if checked.interactive.is_some() {
+        labels.extend(KEY_TAGS.map(String::from));
+    }
     let mut foreign = HashMap::new();
     collect_foreign(&checked.root, &mut foreign);
     let mut m = Mono {
@@ -772,11 +777,15 @@ impl Mono<'_> {
 
     /// The import for the foreign binding `symbol`, registered on first use.
     fn import(&mut self, symbol: Symbol) -> ForeignId {
-        let foreign = &self.foreign[&symbol];
-        let index = match self.imports.iter().position(|i| i == foreign) {
+        let foreign = self.foreign[&symbol].clone();
+        self.register_import(foreign)
+    }
+
+    fn register_import(&mut self, foreign: ForeignFn) -> ForeignId {
+        let index = match self.imports.iter().position(|i| *i == foreign) {
             Some(index) => index,
             None => {
-                self.imports.push(foreign.clone());
+                self.imports.push(foreign);
                 self.imports.len() - 1
             }
         };
@@ -822,71 +831,6 @@ impl Mono<'_> {
         bound.into_iter().rev().fold(call, |body, (l, value)| {
             Expr::Let(l, Box::new(value), Box::new(body))
         })
-    }
-
-    /// The host-facing functions of an interactive program, whose root type
-    /// `root_ty` is the record of its `draw`, `init` and `update`.
-    fn interactive(&mut self, root_ty: &Ty) -> Interactive {
-        let Ty::Record(row) = root_ty else {
-            unreachable!("an interactive root is a record");
-        };
-        let fields: Vec<(&String, &Ty)> = layout_fields(row).collect();
-        let slot = |label: &str| {
-            fields
-                .iter()
-                .position(|(l, _)| *l == label)
-                .expect("the root record holds init, update and draw")
-        };
-        let (draw_slot, init_slot, update_slot) = (slot("draw"), slot("init"), slot("update"));
-        let (Ty::Func(update_args, _), Ty::Func(..)) = (fields[update_slot].1, fields[draw_slot].1)
-        else {
-            unreachable!("the checker makes update and draw functions");
-        };
-        let model = self.lower_ty(&update_args[0]);
-        let event = self.lower_ty(&update_args[1]);
-        let update_closure = self.lower_ty(fields[update_slot].1);
-        let draw_closure = self.lower_ty(fields[draw_slot].1);
-        let MTy::Ptr(HeapKind::Closure(update_sig)) = update_closure else {
-            unreachable!("function type lowers to a closure");
-        };
-        let update_ret = self.sigs[update_sig.0 as usize].ret;
-        let (closure, model_local, event_local, shapes) = (Local(0), Local(1), Local(2), Local(3));
-        let update = self.push_func(Func {
-            params: vec![
-                (closure, update_closure),
-                (model_local, model),
-                (event_local, event),
-            ],
-            env: None,
-            ret: update_ret,
-            body: Expr::CallClosure(
-                Box::new(Expr::Local(closure)),
-                vec![Expr::Local(model_local), Expr::Local(event_local)],
-            ),
-        });
-        let draw = self.push_func(Func {
-            params: vec![(closure, draw_closure), (model_local, model)],
-            env: None,
-            ret: MTy::Unit,
-            body: Expr::Let(
-                shapes,
-                Box::new(Expr::CallClosure(
-                    Box::new(Expr::Local(closure)),
-                    vec![Expr::Local(model_local)],
-                )),
-                Box::new(Expr::Const(Const::Unit)),
-            ),
-        });
-        let mut tags: Vec<(String, u32)> = self.tags.iter().map(|(l, t)| (l.clone(), *t)).collect();
-        tags.sort_by_key(|(_, tag)| *tag);
-        Interactive {
-            draw_slot,
-            init_slot,
-            update_slot,
-            update,
-            draw,
-            tags,
-        }
     }
 
     fn push_func(&mut self, func: Func) -> FuncId {

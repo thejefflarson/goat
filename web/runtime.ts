@@ -12,7 +12,7 @@
 const STR_LEN = 8;
 const STR_BYTES = 12;
 const MAX_COMMANDS = 1_000_000;
-const COLOR_PATTERN = /^[A-Za-z0-9#]{1,32}$/;
+export const COLOR_PATTERN = /^[A-Za-z0-9#]{1,32}$/;
 
 export type Command =
   | { kind: "forward" | "back" | "left" | "right"; value: number }

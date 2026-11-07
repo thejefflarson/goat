@@ -123,16 +123,27 @@ impl<'p> Session<'p> {
         Ok((session, model))
     }
 
-    /// A variant value with count 1, for a host that builds events.
-    pub fn variant(&mut self, label: &str, fields: Vec<Value>) -> Result<Value, InterpError> {
-        let tag = self
+    /// The event `label` built by its exported constructor, owned by the host
+    /// with count 1. `args` are the payload as the host passes it; a string
+    /// argument is consumed.
+    pub fn event(&mut self, label: &str, args: Vec<Value>) -> Result<Value, InterpError> {
+        let ctor = self
             .interactive
-            .tags
+            .events
             .iter()
-            .find(|(l, _)| l == label)
-            .ok_or(InterpError::Malformed("unknown tag"))?
-            .1;
-        Ok(self.interp.alloc(Body::Variant(tag, fields), 1))
+            .find(|e| e.label == label)
+            .ok_or(InterpError::Malformed("update does not handle this event"))?;
+        self.call(ctor.func, args)
+    }
+
+    /// Whether `update` handles the event `label`: the host is subscribed to it.
+    pub fn handles(&self, label: &str) -> bool {
+        self.interactive.events.iter().any(|e| e.label == label)
+    }
+
+    /// A string with count 1, as a host makes one to hand to a constructor.
+    pub fn string(&mut self, text: &str) -> Value {
+        self.interp.alloc(Body::Text(text.as_bytes().to_vec()), 1)
     }
 
     /// Consumes `model` and `event`; returns the new model.
