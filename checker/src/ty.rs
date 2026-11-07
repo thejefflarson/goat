@@ -1,6 +1,7 @@
 //! The type language: monomorphic types, rows for records, and type schemes
 //! for let-polymorphism.
 
+use crate::hir::Boundary;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -34,6 +35,17 @@ pub enum Ty {
     /// every path from the binder to an occurrence crosses a variant payload,
     /// so unfolding always exposes a constructor.
     Rec(TypeVar, Box<Ty>),
+}
+
+impl From<Boundary> for Ty {
+    fn from(boundary: Boundary) -> Ty {
+        match boundary {
+            Boundary::Number => Ty::Number,
+            Boundary::Bool => Ty::Bool,
+            Boundary::Unit => Ty::Unit,
+            Boundary::Str => Ty::Str,
+        }
+    }
 }
 
 /// A row of record fields or variant tags. Either closed ([`Row::Empty`] tail), open on a row

@@ -36,6 +36,7 @@ fn collect(e: &Expr, free: &mut Vec<(Target, Vec<Symbol>)>) {
                     free.push((Target::Named(*symbol), symbols));
                     collect(body, free);
                 }
+                ExprKind::Foreign { .. } => free.push((Target::Named(*symbol), Vec::new())),
                 _ => collect(value, free),
             }
             if let Some(rest) = rest {
@@ -149,6 +150,7 @@ pub fn for_each_child<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
         | ExprKind::Number(_)
         | ExprKind::Str(_)
         | ExprKind::Trap(_)
+        | ExprKind::Foreign { .. }
         | ExprKind::Bool(_)
         | ExprKind::Builtin(_)
         | ExprKind::Var { .. } => {}

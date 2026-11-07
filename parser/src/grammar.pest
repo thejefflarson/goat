@@ -132,7 +132,22 @@ record = { lbrace ~ (record_item ~ (comma ~ record_item)* ~ comma?)? ~ rbrace }
 record_item = _{ spread | field }
 spread = { "..." ~ expr }
 field = { ident ~ colon ~ expr }
-declaration = { ident ~ equals ~ value ~ semi? ~ expr? }
+declaration = { ident ~ equals ~ (foreign_decl | value) ~ semi? ~ expr? }
+// `forward = foreign "turtle" "forward" (Number) -> Unit`: a function the host
+// provides. `foreign` is a keyword only here, so it stays usable as a name. The
+// module and name accept any plain operand so lowering can say they must be
+// string literals; the types accept every shape a host interface (WIT) has so
+// lowering can say which are not supported yet.
+foreign_kw = @{ "foreign" ~ !XID_CONTINUE }
+foreign_decl = { foreign_kw ~ foreign_name ~ foreign_name ~ fn_type }
+foreign_name = { string | number | boolean | ident }
+fn_type = { lparen ~ (type_expr ~ (comma ~ type_expr)* ~ comma?)? ~ rparen ~ arrow ~ type_expr }
+type_expr = _{ fn_type | list_type | record_type | type_name }
+list_type = { lbracket ~ type_expr ~ rbracket }
+record_type = { lbrace ~ (field_type ~ (comma ~ field_type)* ~ comma?)? ~ rbrace }
+field_type = { ident ~ colon ~ type_expr }
+type_name = @{ XID_START ~ XID_CONTINUE* }
+arrow = _{ "->" }
 // `{x, y} = point` and `{x, ...rest} = point`. Tried before `record`: a
 // pattern has bare names where a literal has `name: value`.
 destructure = { (record_pattern | list_pattern) ~ equals ~ value ~ semi? ~ expr? }

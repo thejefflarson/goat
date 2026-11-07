@@ -776,3 +776,37 @@ fn destructuring_reads_fields_by_label() {
     let param = "norm = program({x, y}) do x * x + y * y done norm({y: 4, x: 3})";
     assert_eq!(value(param), num(25.0));
 }
+
+const FORWARD: &str = "forward = foreign \"turtle\" \"forward\" (Number) -> Unit\n";
+
+#[test]
+fn declaring_a_foreign_function_without_calling_it_lowers() {
+    assert_eq!(value(&format!("{FORWARD}1 + 2")), num(3.0));
+}
+
+#[test]
+fn using_a_foreign_function_is_a_staged_diagnostic_at_the_use() {
+    for body in [
+        "forward(10)",
+        "go = program() do forward(1) done\ngo()",
+        "g = forward\n1",
+        "forward",
+    ] {
+        let src = format!("{FORWARD}{body}");
+        let checked = check(&src).expect("checks");
+        let Err(errors) = mono(&checked) else {
+            panic!("lowered a foreign use: {src}");
+        };
+        assert!(!errors.is_empty(), "{src}");
+        for e in &errors {
+            assert!(
+                e.message.contains("foreign function is not supported yet"),
+                "{src}: {e:?}"
+            );
+            assert!(
+                src[e.span.start..e.span.end].contains("forward"),
+                "{src}: {e:?}"
+            );
+        }
+    }
+}
