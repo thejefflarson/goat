@@ -30,6 +30,11 @@ $ goat run examples/fib.goat
 - `if c then a else b done` — conditionals.
 - `{x: 1, y: 2}` — records, with field access `point.x`.
 - Arithmetic `+ - * /` and comparisons `< <= > >=`.
+- `a and b`, `a or b`, `not a` — booleans; `and`/`or` skip the right side when the
+  left decides.
+- `a; b` — run `a`, drop its value, then run `b`.
+- `repeat n times do ... done`, `for i from 1 to 10 do ... done` and
+  `for x in xs do ... done` — loops, which are `Unit` expressions.
 
 Types are inferred — you never write a type annotation. The checker is
 Hindley-Milner with **row-polymorphic records** (scoped labels), so a function
@@ -42,7 +47,8 @@ on goat.
 A `(…)` immediately after an expression is a **call** — `f(x)` calls `f`. A
 grouped expression therefore can't start a new statement right after another
 one; `1 (2)` reads as "call `1` with `2`" (and `1` is not a function, so you get
-a clear error saying so).
+a clear error saying so). Separate statements with `;` — `print(1); (2)` — which
+is also how a bare call or a loop stands as a statement.
 
 ## Toolchain
 

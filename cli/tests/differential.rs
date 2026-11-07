@@ -246,6 +246,10 @@ fn examples_print_the_expected_output() {
         ("spread.goat", "25"),
         ("list_literals.goat", "29"),
         (
+            "loops.goat",
+            "hello\nhello\n1\n4\n9\n16\n25\nfalse\nfalse\ntrue\n2\n4\n6\n5\n10\n15",
+        ),
+        (
             "stdlib.goat",
             "[1, 4, 7, 9]\n[8, 14, 18]\n9\n4\n[7, 1, 9, 4, 5, 6, 0]\n[9, 7, 4, 1]\n1\n4\n7\n9\ntrue\nfalse\n26",
         ),
@@ -661,4 +665,140 @@ fn list_patterns_close_over_their_bindings() {
                done done \
                adder([10, 20])(5) + adder([])(1)";
     assert_eq!(run(src), "16");
+}
+
+#[test]
+fn a_semicolon_runs_one_thing_then_the_next() {
+    assert_eq!(run("print(1); print(2); 3"), "1\n2\n3");
+    assert_eq!(run("print(1); print(2);"), "1\n2");
+    assert_eq!(run("x = 5; print(x); x + 1"), "5\n6");
+    assert_eq!(
+        run("f = program(n) do print(n); n * 2 done f(1); f(2)"),
+        "1\n2\n4"
+    );
+}
+
+#[test]
+fn a_semicolon_settles_the_postfix_call_ambiguity() {
+    assert_eq!(run("print(1); (2)"), "1\n2");
+    assert_eq!(run("print(1); -2"), "1\n-2");
+    assert_eq!(run("f = program(n) do n done f(7); (8)"), "8");
+}
+
+#[test]
+fn a_discarded_heap_value_is_freed() {
+    assert_eq!(run("[1, 2, 3]; \"kept\""), "kept");
+    assert_eq!(run("{a: [1], b: \"s\"}; Link(1, Empty); 4"), "4");
+    assert_eq!(run("name = \"goat\"; print(name); name"), "goat\ngoat");
+}
+
+const LOUD: &str = "loud = program(b) do print(\"loud\"); b done ";
+
+#[test]
+fn and_and_or_skip_their_right_side_when_the_left_decides() {
+    assert_eq!(run(&format!("{LOUD} false and loud(true)")), "false");
+    assert_eq!(run(&format!("{LOUD} true or loud(false)")), "true");
+    assert_eq!(run(&format!("{LOUD} true and loud(false)")), "loud\nfalse");
+    assert_eq!(run(&format!("{LOUD} false or loud(true)")), "loud\ntrue");
+    assert_eq!(
+        run(&format!("{LOUD} loud(false) and loud(true) or loud(true)")),
+        "loud\nloud\ntrue"
+    );
+}
+
+#[test]
+fn boolean_operators_follow_their_precedence() {
+    assert_eq!(run("true or false and false"), "true");
+    assert_eq!(run("(true or false) and false"), "false");
+    assert_eq!(run("not false and false"), "false");
+    assert_eq!(run("not (false and false)"), "true");
+    assert_eq!(run("not 1 == 2"), "true");
+    assert_eq!(run("not 1 < 2 == false"), "true");
+    assert_eq!(run("1 < 2 and 2 < 3 and not 3 < 2"), "true");
+    assert_eq!(run("not not true"), "true");
+    assert_eq!(run("x = 4  x > 1 and x < 10 or x == 100"), "true");
+}
+
+#[test]
+fn repeat_runs_its_body_n_times() {
+    assert_eq!(run("repeat 3 times do print(\"hi\") done"), "hi\nhi\nhi");
+    assert_eq!(run("repeat 0 times do print(\"hi\") done; 1"), "1");
+    assert_eq!(run("n = 2; repeat n + 1 times do print(n) done"), "2\n2\n2");
+    assert_eq!(run("repeat 2 times do 5 done; 9"), "9");
+}
+
+#[test]
+fn for_counts_from_one_end_to_the_other() {
+    assert_eq!(run("for i from 1 to 4 do print(i) done"), "1\n2\n3\n4");
+    assert_eq!(run("for i from 3 to 3 do print(i) done"), "3");
+    assert_eq!(run("for i from 5 to 1 do print(i) done; 0"), "0");
+    assert_eq!(
+        run("a = 2  for i from a to a * 2 do print(i * i) done"),
+        "4\n9\n16"
+    );
+    assert_eq!(run("for i from 0.5 to 2 do print(i) done"), "0.5\n1.5");
+}
+
+#[test]
+fn for_walks_a_list() {
+    assert_eq!(
+        run("for x in [3, 1, 2] do print(x * 10) done"),
+        "30\n10\n20"
+    );
+    assert_eq!(run("for x in [] do print(x) done; 1"), "1");
+    assert_eq!(run("for s in [\"a\", \"b\"] do print(s) done"), "a\nb");
+    let nested = "for row in [[1, 2], [3]] do for x in row do print(x) done done";
+    assert_eq!(run(nested), "1\n2\n3");
+    assert_eq!(
+        run("xs = [1, 2]; for x in xs do print(x) done; print(xs)"),
+        "1\n2\n[1, 2]"
+    );
+}
+
+#[test]
+fn loops_nest_and_capture() {
+    let table = "for i from 1 to 2 do for j from 1 to 2 do print(i * 10 + j) done done";
+    assert_eq!(run(table), "11\n12\n21\n22");
+    let captured = "name = \"x\"; prefix = [\"a\"]; \
+                    repeat 2 times do print(name); print(prefix) done";
+    assert_eq!(run(captured), "x\n[\"a\"]\nx\n[\"a\"]");
+    let in_function =
+        "twice = program(s) do repeat 2 times do print(s) done done twice(\"yo\"); twice(\"ho\")";
+    assert_eq!(run(in_function), "yo\nyo\nho\nho");
+    let shadow = "i = 100  for i from 1 to 2 do print(i) done; i";
+    assert_eq!(run(shadow), "1\n2\n100");
+}
+
+#[test]
+fn a_loop_runs_in_constant_stack() {
+    assert_eq!(run("repeat 1000000 times do done"), "");
+    assert_eq!(run("for i from 1 to 1000000 do i done; \"done\""), "done");
+    let big = "build = program(n, acc) do if n < 1 then acc else build(n - 1, Link(n, acc)) done done \
+               for x in build(100000, []) do x done; 7";
+    assert_eq!(run(big), "7");
+}
+
+#[test]
+fn a_loop_is_a_unit_value() {
+    assert_eq!(
+        run("u = repeat 2 times do print(1) done; print(u); 5"),
+        "1\n1\nUnit\n5"
+    );
+}
+
+#[test]
+fn long_boolean_chains() {
+    assert_eq!(run(&vec!["true"; 200].join(" and ")), "true");
+    assert_eq!(run(&vec!["false"; 200].join(" or ")), "false");
+    assert_eq!(run(&format!("{}true", "not ".repeat(100))), "true");
+}
+
+#[test]
+fn long_statement_runs() {
+    let prints: Vec<String> = (0..200).map(|_| "print(1)".to_string()).collect();
+    let expected = vec!["1"; 200].join("\n");
+    assert_eq!(
+        run(&format!("{}; 0", prints.join("; "))),
+        format!("{expected}\n0")
+    );
 }

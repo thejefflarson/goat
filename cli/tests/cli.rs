@@ -156,3 +156,25 @@ fn build_writes_a_wasm_module() {
     assert!(result.status.success());
     assert_eq!(&fs::read(&out).unwrap()[..4], b"\0asm");
 }
+
+#[test]
+fn runs_the_loops_example() {
+    let out = goat(&[
+        "run",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/loops.goat"),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "hello\nhello\n1\n4\n9\n16\n25\nfalse\nfalse\ntrue\n2\n4\n6\n5\n10\n15\n"
+    );
+}
+
+#[test]
+fn sequencing_and_loops_run_from_the_command_line() {
+    assert_eq!(stdout_of("print(1); print(2); 3"), "1\n2\n3");
+    assert_eq!(
+        stdout_of("for i from 1 to 3 do print(i) done; false or not false"),
+        "1\n2\n3\ntrue"
+    );
+}
