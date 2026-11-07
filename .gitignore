@@ -4,3 +4,5 @@
 fuzz/out
 .claude/
 /coq-toolchain/
+/web/node_modules/
+/web/dist/

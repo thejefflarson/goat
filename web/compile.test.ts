@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { compile } from "./compile.js";
+import { compile } from "./compile.ts";
 
 const compiler = await WebAssembly.compile(
   readFileSync(new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", import.meta.url)),
@@ -10,13 +10,13 @@ const compiler = await WebAssembly.compile(
 test("a turtle program compiles to a wasm module", async () => {
   const source = readFileSync(new URL("../examples/spiral.goat", import.meta.url), "utf8");
   const result = await compile(compiler, source);
-  assert.equal(result.ok, true);
+  assert.ok(result.ok);
   assert.deepEqual([...result.module.slice(0, 4)], [0, 0x61, 0x73, 0x6d]);
 });
 
 test("a type error returns the checker's rendered diagnostics", async () => {
   const result = await compile(compiler, "1 + true");
-  assert.equal(result.ok, false);
+  assert.ok(!result.ok);
   assert.match(result.diagnostics, /\^/);
 });
 

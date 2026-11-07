@@ -53,8 +53,8 @@ jobs:
           cargo build -p goat_web --target wasm32-unknown-unknown --release
           ls -l target/wasm32-unknown-unknown/release/goat_web.wasm
 
-  # Runs web/runtime.js against modules compiled by goat_web itself. Node
-  # built-ins only; no npm install.
+  # Type-checks and builds the TypeScript web runtime, then runs it against
+  # modules compiled by goat_web itself. Node 24 executes .ts tests natively.
   web-runtime:
     runs-on: ubuntu-latest
     steps:
@@ -68,7 +68,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
+
+      - name: Install web dev dependencies
+        run: npm ci --prefix web
+
+      - name: Build the browser runtime (tsc)
+        run: npm run build --prefix web
+
+      - name: Type-check the tests
+        run: npm run typecheck --prefix web
 
       - name: Test the browser runtime
-        run: node --test web/*.test.js
+        run: node --test web/*.test.ts
