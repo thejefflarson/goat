@@ -627,7 +627,7 @@ mod tests {
         let checked = check("id = program(x) do x done\na = id(1)\nb = id(true)\nb").unwrap();
         let typed = &checked.typed;
 
-        let ExprKind::Let {
+        let hir::ExprKind::Let {
             symbol: id_sym,
             value: id_value,
             rest: Some(rest_a),
@@ -636,7 +636,7 @@ mod tests {
         else {
             panic!("expected `id` let");
         };
-        let ExprKind::Let {
+        let hir::ExprKind::Let {
             value: a_value,
             rest: Some(rest_b),
             ..
@@ -644,7 +644,7 @@ mod tests {
         else {
             panic!("expected `a` let");
         };
-        let ExprKind::Let { value: b_value, .. } = &rest_b.kind else {
+        let hir::ExprKind::Let { value: b_value, .. } = &rest_b.kind else {
             panic!("expected `b` let");
         };
 
@@ -1112,5 +1112,156 @@ mod tests {
         let direct =
             first_error("bump = program(m) do {...m, x: 1} done {x, ...r} = bump({x: true}) r");
         assert!(direct.message.contains(twice), "{}", direct.message);
+    }
+    #[test]
+    fn a_semicolon_runs_a_statement_and_keeps_the_rest() {
+        assert_eq!(type_of("print(1); 2").unwrap(), "Number");
+        assert_eq!(type_of("print(1); print(2); true").unwrap(), "Bool");
+        assert_eq!(type_of("1; \"a\"").unwrap(), "String");
+        assert_eq!(type_of("print(1);").unwrap(), "Unit");
+    }
+
+    #[test]
+    fn a_statement_ends_only_at_a_semicolon() {
+        // Without `;` a parenthesis or a minus continues the expression.
+        let call = first_error("print(1) (2)");
+        assert!(
+            call.message.contains("is not a function"),
+            "{}",
+            call.message
+        );
+        assert!(type_of("print(1) - 2").is_err());
+        assert_eq!(type_of("print(1); (2)").unwrap(), "Number");
+        assert_eq!(type_of("print(1); -2").unwrap(), "Number");
+    }
+
+    #[test]
+    fn bindings_scope_over_the_statements_after_them() {
+        assert_eq!(type_of("x = 1; x + 1").unwrap(), "Number");
+        assert_eq!(type_of("x = 1  print(x); x < 2").unwrap(), "Bool");
+        assert_eq!(type_of("{a, b} = {a: 1, b: true}; b").unwrap(), "Bool");
+        assert_eq!(
+            type_of("f = program() do print(1); 2 done f()").unwrap(),
+            "Number"
+        );
+    }
+
+    #[test]
+    fn and_or_not_are_booleans() {
+        assert_eq!(type_of("true and false").unwrap(), "Bool");
+        assert_eq!(type_of("true or 1 < 2").unwrap(), "Bool");
+        assert_eq!(type_of("not 1 == 2").unwrap(), "Bool");
+        assert_eq!(type_of("not not true").unwrap(), "Bool");
+        for src in [
+            "1 and true",
+            "true or 1",
+            "not 5",
+            "if 1 and true then 1 else 2 done",
+        ] {
+            let err = type_of(src).unwrap_err();
+            assert!(err.starts_with("type mismatch"), "{src}: {err}");
+        }
+    }
+
+    #[test]
+    fn precedence_runs_or_and_not_equality_comparison() {
+        // `or` is loosest, then `and`, then `not`, then `==`, then `<`.
+        assert!(type_of("1 < 2 == true or false and 3").is_err());
+        assert_eq!(type_of("1 < 2 == true or false and true").unwrap(), "Bool");
+        assert_eq!(type_of("not 1 < 2 == false and true").unwrap(), "Bool");
+        // `not a == b` is `not (a == b)`: `(not 1) == 2` would be a mismatch.
+        assert_eq!(type_of("not 1 == 2").unwrap(), "Bool");
+    }
+
+    #[test]
+    fn a_pile_of_nots_counts_toward_the_depth_limit() {
+        assert_eq!(
+            type_of(&format!("{}true", "not ".repeat(100))).unwrap(),
+            "Bool"
+        );
+        let err = type_of(&format!("{}true", "not ".repeat(300))).unwrap_err();
+        assert_eq!(err, "expression nested too deeply");
+    }
+
+    #[test]
+    fn a_long_run_of_statements_is_one_level_each() {
+        let statements = vec!["print(1)"; 200].join("; ");
+        assert_eq!(type_of(&format!("{statements}; 1")).unwrap(), "Number");
+        let too_many = vec!["print(1)"; 300].join("; ");
+        let err = type_of(&format!("{too_many}; 1")).unwrap_err();
+        assert_eq!(err, "expression nested too deeply");
+    }
+
+    #[test]
+    fn and_or_lower_to_if() {
+        let lowered = crate::lower::lower("a = true b = false a and b").unwrap();
+        let hir::ExprKind::Let { rest, .. } = lowered.root.kind else {
+            panic!("expected a binding");
+        };
+        let hir::ExprKind::Let { rest, .. } = rest.unwrap().kind else {
+            panic!("expected a binding");
+        };
+        let hir::ExprKind::If { else_branch, .. } = rest.unwrap().kind else {
+            panic!("`and` lowers to `if`");
+        };
+        assert!(matches!(
+            else_branch.unwrap().kind,
+            hir::ExprKind::Bool(false)
+        ));
+    }
+
+    #[test]
+    fn loops_are_unit() {
+        assert_eq!(type_of("repeat 3 times do print(1) done").unwrap(), "Unit");
+        assert_eq!(
+            type_of("for i from 1 to 3 do print(i) done").unwrap(),
+            "Unit"
+        );
+        assert_eq!(type_of("for x in [1, 2] do print(x) done").unwrap(), "Unit");
+        assert_eq!(type_of("repeat 2 times do done").unwrap(), "Unit");
+    }
+
+    #[test]
+    fn a_loop_variable_is_scoped_to_the_loop() {
+        assert_eq!(
+            type_of("for i from 1 to 2 do print(i + 1) done; true").unwrap(),
+            "Bool"
+        );
+        let err = type_of("for i from 1 to 2 do print(i) done; i").unwrap_err();
+        assert_eq!(err, "unknown name `i`");
+        // The bounds are outside the loop's scope, so they see the outer `i`.
+        assert_eq!(
+            type_of("i = 3; for i from i to i + 1 do print(i) done").unwrap(),
+            "Unit"
+        );
+    }
+
+    #[test]
+    fn a_for_loop_takes_numbers_and_a_list() {
+        let err = type_of("for i from 1 to true do print(i) done").unwrap_err();
+        assert!(err.starts_with("type mismatch"), "{err}");
+        let err = type_of("for x in 5 do print(x) done").unwrap_err();
+        assert!(err.starts_with("type mismatch"), "{err}");
+        let err = type_of("repeat true times do done").unwrap_err();
+        assert!(err.starts_with("type mismatch"), "{err}");
+    }
+
+    #[test]
+    fn loop_words_are_reserved_but_from_to_and_in_are_not() {
+        for word in ["for", "and", "or", "not", "repeat", "times"] {
+            assert!(check(&format!("{word} = 1 {word}")).is_err(), "{word}");
+        }
+        for word in ["from", "to", "in"] {
+            let src = format!("{word} = 1 {word}");
+            assert_eq!(type_of(&src).unwrap(), "Number", "{word}");
+        }
+        assert_eq!(
+            type_of("line = {from: 1, to: 2} line.to - line.from").unwrap(),
+            "Number"
+        );
+        assert_eq!(
+            type_of("to = 3 for from from 1 to to do print(from) done").unwrap(),
+            "Unit"
+        );
     }
 }

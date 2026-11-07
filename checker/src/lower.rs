@@ -31,6 +31,15 @@ const MAX_LIST_LEAVES: usize = 4096;
 /// The name generated bindings for the pieces of a list carry.
 const LIST_NAME: &str = "list";
 
+/// The name a `;`-sequenced value is bound to, which no source can mention.
+const DISCARD_NAME: &str = "_";
+
+/// The names a loop's generated bindings carry.
+const LOOP_NAME: &str = "loop";
+const LOOP_COUNTER_NAME: &str = "count";
+const LOOP_START_NAME: &str = "start";
+const LOOP_STOP_NAME: &str = "stop";
+
 pub struct Lowered {
     pub root: Expr,
     pub errors: Vec<GoatError>,
@@ -259,7 +268,7 @@ impl Lower {
     /// siblings, so [`Self::lower_operand`] consumes them before the next
     /// operator.
     fn lower_expr(&mut self, pair: Pair<Rule>) -> Expr {
-        let added = pair.clone().into_inner().count() / 2 + 1;
+        let added = chain_depth(&pair);
         if self.depth + added > MAX_DEPTH {
             let span = pair
                 .clone()
@@ -271,21 +280,35 @@ impl Lower {
             return self.node(span, ExprKind::Unit);
         }
         self.depth += added;
-        let expr = self.lower_expr_chain(pair);
+        let (expr, sequel) = self.lower_expr_chain(pair);
         self.depth -= added;
-        expr
+        match sequel {
+            // The statements after this one hang off a `Let`, beside this
+            // chain's tree rather than under it, so they cost one level each.
+            Some(sequel) => {
+                self.depth += 1;
+                let sequenced = self.lower_sequel(expr, sequel);
+                self.depth -= 1;
+                sequenced
+            }
+            None => expr,
+        }
     }
 
-    fn lower_expr_chain(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_expr_chain<'i>(&mut self, pair: Pair<'i, Rule>) -> (Expr, Option<Pair<'i, Rule>>) {
         let mut inner = pair.into_inner().peekable();
-        let mut operands = vec![self.lower_operand(&mut inner)];
-        let mut ops: Vec<(BinOp, Span)> = Vec::new();
+        let mut operands = Vec::new();
+        let mut ops: Vec<(Op, Span)> = Vec::new();
+        self.push_operand(&mut inner, &mut operands, &mut ops);
+        let mut sequel = None;
 
         while let Some(op_pair) = inner.next() {
-            let op = bin_op(op_pair.as_rule());
+            if op_pair.as_rule() == Rule::sequel {
+                sequel = Some(op_pair);
+                break;
+            }
+            let op = infix_op(op_pair.as_rule());
             let op_span = self.span_of(&op_pair);
-            let rhs = self.lower_operand(&mut inner);
-
             while let Some((top, _)) = ops.last() {
                 if prec(*top) >= prec(op) {
                     self.reduce(&mut operands, &mut ops);
@@ -294,13 +317,52 @@ impl Lower {
                 }
             }
             ops.push((op, op_span));
-            operands.push(rhs);
+            self.push_operand(&mut inner, &mut operands, &mut ops);
         }
 
         while !ops.is_empty() {
             self.reduce(&mut operands, &mut ops);
         }
-        operands.pop().expect("exactly one operand remains")
+        let expr = operands.pop().expect("exactly one operand remains");
+        (expr, sequel)
+    }
+
+    /// Any `not`s are pushed as prefix operators, then the operand they apply to.
+    fn push_operand(
+        &mut self,
+        inner: &mut Peekable<Pairs<Rule>>,
+        operands: &mut Vec<Expr>,
+        ops: &mut Vec<(Op, Span)>,
+    ) {
+        while let Some(not) = inner.next_if(|p| p.as_rule() == Rule::not_op) {
+            ops.push((Op::Not, self.span_of(&not)));
+        }
+        operands.push(self.lower_operand(inner));
+    }
+
+    /// `first; rest` binds `first`'s value to a name nothing can mention, then
+    /// runs `rest`; with nothing after the `;` the whole expression is `()`.
+    #[inline(never)]
+    fn lower_sequel(&mut self, first: Expr, sequel: Pair<Rule>) -> Expr {
+        let span = first.span.to(self.span_of(&sequel));
+        let rest = match sequel.into_inner().next() {
+            Some(rest) => self.lower_expr(rest),
+            None => self.node(span, ExprKind::Unit),
+        };
+        self.discard(span, first, rest)
+    }
+
+    fn discard(&mut self, span: Span, value: Expr, rest: Expr) -> Expr {
+        let symbol = self.fresh_symbol();
+        self.node(
+            span,
+            ExprKind::Let {
+                symbol,
+                name: DISCARD_NAME.into(),
+                value: Box::new(value),
+                rest: Some(Box::new(rest)),
+            },
+        )
     }
 
     fn lower_operand(&mut self, inner: &mut Peekable<Pairs<Rule>>) -> Expr {
@@ -387,21 +449,58 @@ impl Lower {
         )
     }
 
-    /// Fold the top operator and its two operands into one `Bin` node.
-    fn reduce(&mut self, operands: &mut Vec<Expr>, ops: &mut Vec<(BinOp, Span)>) {
-        let (op, _) = ops.pop().expect("reduce called with an operator");
-        let rhs = operands.pop().expect("binary operator has a right operand");
-        let lhs = operands.pop().expect("binary operator has a left operand");
-        let span = lhs.span.to(rhs.span);
-        let node = self.node(
-            span,
-            ExprKind::Bin {
-                op,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-            },
-        );
+    /// Fold the top operator and its operands into one node.
+    fn reduce(&mut self, operands: &mut Vec<Expr>, ops: &mut Vec<(Op, Span)>) {
+        let (op, op_span) = ops.pop().expect("reduce called with an operator");
+        let rhs = operands.pop().expect("operator has an operand");
+        let node = if op == Op::Not {
+            self.not(op_span.to(rhs.span), rhs)
+        } else {
+            let lhs = operands.pop().expect("binary operator has a left operand");
+            self.binary(op, lhs, rhs)
+        };
         operands.push(node);
+    }
+
+    #[inline(never)]
+    fn binary(&mut self, op: Op, lhs: Expr, rhs: Expr) -> Expr {
+        let span = lhs.span.to(rhs.span);
+        match op {
+            Op::Bin(op) => self.node(
+                span,
+                ExprKind::Bin {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
+            ),
+            Op::And => {
+                let no = self.node(span, ExprKind::Bool(false));
+                self.branch(span, lhs, rhs, no)
+            }
+            Op::Or => {
+                let yes = self.node(span, ExprKind::Bool(true));
+                self.branch(span, lhs, yes, rhs)
+            }
+            Op::Not => unreachable!("`not` takes one operand"),
+        }
+    }
+
+    fn not(&mut self, span: Span, operand: Expr) -> Expr {
+        let no = self.node(span, ExprKind::Bool(false));
+        let yes = self.node(span, ExprKind::Bool(true));
+        self.branch(span, operand, no, yes)
+    }
+
+    fn branch(&mut self, span: Span, cond: Expr, then_branch: Expr, else_branch: Expr) -> Expr {
+        self.node(
+            span,
+            ExprKind::If {
+                cond: Box::new(cond),
+                then_branch: Box::new(then_branch),
+                else_branch: Some(Box::new(else_branch)),
+            },
+        )
     }
 
     /// Lower a single term (anything that can appear as an operand).
@@ -441,6 +540,7 @@ impl Lower {
             Rule::conditional => self.lower_conditional(pair),
             Rule::tag => self.lower_tag(pair),
             Rule::match_expr => self.lower_match(pair),
+            Rule::repeat_loop | Rule::count_loop | Rule::each_loop => self.lower_loop(pair),
             other => unreachable!("unexpected term rule {other:?}"),
         }
     }
@@ -1315,6 +1415,231 @@ impl Lower {
             },
         )
     }
+
+    /// A loop is a local function that runs the body and calls itself for the
+    /// next step, so it needs no loop node: the tail call is the jump.
+    ///
+    /// ```text
+    /// repeat n times do B done          for i from a to b do B done
+    ///   start = 0  stop = n               start = a  stop = b
+    ///   go = program(i) do                go = program(i) do
+    ///     if i < stop then                  if i <= stop then
+    ///       _ = B  go(i + 1)                  _ = B  go(i + 1)
+    ///     else () done done                 else () done done
+    ///   go(start)                         go(start)
+    /// ```
+    ///
+    /// Counters are `Number`s until integers exist.
+    #[inline(never)]
+    fn lower_loop(&mut self, pair: Pair<Rule>) -> Expr {
+        let span = self.span_of(&pair);
+        let rule = pair.as_rule();
+        let mut inner = pair.into_inner().filter(|p| {
+            !matches!(
+                p.as_rule(),
+                Rule::for_kw | Rule::from_kw | Rule::to_kw | Rule::in_kw
+            )
+        });
+        if rule == Rule::each_loop {
+            let name_pair = inner.next().expect("a `for` names its item");
+            let list = self.lower_expr(inner.next().expect("`in` is followed by a list"));
+            return self.each_loop(span, &name_pair, list, inner.next());
+        }
+        let counter =
+            (rule == Rule::count_loop).then(|| inner.next().expect("a `for` names its counter"));
+        let (start, stop, compare) = if counter.is_some() {
+            let start = self.lower_expr(inner.next().expect("`from` is followed by a start"));
+            let stop = self.lower_expr(inner.next().expect("`to` is followed by an end"));
+            (start, stop, BinOp::Lte)
+        } else {
+            let count = self.lower_expr(inner.next().expect("`repeat` is followed by a count"));
+            (self.node(span, ExprKind::Number(0.0)), count, BinOp::Lt)
+        };
+        self.counted_loop(span, counter.as_ref(), (start, stop, compare), inner.next())
+    }
+
+    fn counted_loop(
+        &mut self,
+        span: Span,
+        counter: Option<&Pair<Rule>>,
+        (start, stop, compare): (Expr, Expr, BinOp),
+        body: Option<Pair<Rule>>,
+    ) -> Expr {
+        let start_symbol = self.fresh_symbol();
+        let stop_symbol = self.fresh_symbol();
+        let go = self.fresh_symbol();
+        self.scopes.push(HashMap::new());
+        let (i, i_name) = match counter {
+            Some(name_pair) => (self.bind(name_pair.as_str()), name_pair.as_str()),
+            None => (self.fresh_symbol(), LOOP_COUNTER_NAME),
+        };
+        let body = self.lower_loop_body(span, body);
+        self.scopes.pop();
+
+        let i_now = self.var_node(span, i, i_name);
+        let stop_now = self.var_node(span, stop_symbol, LOOP_STOP_NAME);
+        let in_range = self.node(
+            span,
+            ExprKind::Bin {
+                op: compare,
+                lhs: Box::new(i_now),
+                rhs: Box::new(stop_now),
+            },
+        );
+        let i_now = self.var_node(span, i, i_name);
+        let one = self.node(span, ExprKind::Number(1.0));
+        let next_i = self.node(
+            span,
+            ExprKind::Bin {
+                op: BinOp::Add,
+                lhs: Box::new(i_now),
+                rhs: Box::new(one),
+            },
+        );
+        let again = self.call_loop(span, go, next_i);
+        let step = self.discard(span, body, again);
+        let done = self.node(span, ExprKind::Unit);
+        let looping = self.branch(span, in_range, step, done);
+
+        let param = Param {
+            symbol: i,
+            name: i_name.into(),
+            span,
+        };
+        let first = self.var_node(span, start_symbol, LOOP_START_NAME);
+        let entry = self.call_loop(span, go, first);
+        let run = self.bind_loop(span, (go, vec![param], looping), entry);
+        let with_stop = self.let_node(span, (stop_symbol, LOOP_STOP_NAME), stop, run);
+        self.let_node(span, (start_symbol, LOOP_START_NAME), start, with_stop)
+    }
+
+    fn each_loop(
+        &mut self,
+        span: Span,
+        name_pair: &Pair<Rule>,
+        list: Expr,
+        body: Option<Pair<Rule>>,
+    ) -> Expr {
+        let go = self.fresh_symbol();
+        let remaining = self.fresh_symbol();
+        let tail = self.fresh_symbol();
+        self.scopes.push(HashMap::new());
+        let item = self.bind(name_pair.as_str());
+        let body = self.lower_loop_body(span, body);
+        self.scopes.pop();
+
+        let tail_now = self.var_node(span, tail, LIST_NAME);
+        let again = self.call_loop(span, go, tail_now);
+        let step = self.discard(span, body, again);
+        let param = |symbol, name: &str| Param {
+            symbol,
+            name: name.into(),
+            span,
+        };
+        let link = MatchArm {
+            pattern: Pattern {
+                tag: "Link".into(),
+                span,
+                payload: PatternPayload::Fields(vec![
+                    ("0".into(), param(item, name_pair.as_str())),
+                    ("1".into(), param(tail, LIST_NAME)),
+                ]),
+            },
+            body: step,
+        };
+        let empty = MatchArm {
+            pattern: Pattern {
+                tag: "Empty".into(),
+                span,
+                payload: PatternPayload::None,
+            },
+            body: self.node(span, ExprKind::Unit),
+        };
+        let scrutinee = self.var_node(span, remaining, LIST_NAME);
+        let walk = self.node(
+            span,
+            ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms: vec![empty, link],
+                else_branch: None,
+            },
+        );
+
+        let entry = self.call_loop(span, go, list);
+        self.bind_loop(span, (go, vec![param(remaining, LIST_NAME)], walk), entry)
+    }
+
+    fn lower_loop_body(&mut self, span: Span, body: Option<Pair<Rule>>) -> Expr {
+        match body {
+            Some(body) => self.lower_expr(body),
+            None => self.node(span, ExprKind::Unit),
+        }
+    }
+
+    fn var_node(&mut self, span: Span, symbol: Symbol, name: &str) -> Expr {
+        let name = name.into();
+        self.node(span, ExprKind::Var { symbol, name })
+    }
+
+    fn call_loop(&mut self, span: Span, go: Symbol, arg: Expr) -> Expr {
+        let callee = self.var_node(span, go, LOOP_NAME);
+        self.node(
+            span,
+            ExprKind::App {
+                callee: Box::new(callee),
+                args: vec![arg],
+            },
+        )
+    }
+
+    /// `go = program(params) do body done  rest`
+    fn bind_loop(
+        &mut self,
+        span: Span,
+        (go, params, body): (Symbol, Vec<Param>, Expr),
+        rest: Expr,
+    ) -> Expr {
+        let func = self.node(
+            span,
+            ExprKind::Func {
+                params,
+                body: Box::new(body),
+            },
+        );
+        self.let_node(span, (go, LOOP_NAME), func, rest)
+    }
+
+    fn let_node(
+        &mut self,
+        span: Span,
+        (symbol, name): (Symbol, &str),
+        value: Expr,
+        rest: Expr,
+    ) -> Expr {
+        self.node(
+            span,
+            ExprKind::Let {
+                symbol,
+                name: name.into(),
+                value: Box::new(value),
+                rest: Some(Box::new(rest)),
+            },
+        )
+    }
+}
+
+/// How deep a chain's tree can get: a left-leaning tree of its operands, plus
+/// a level for each `not`. The statements after a `;` are lowered on their own.
+fn chain_depth(chain: &Pair<Rule>) -> usize {
+    let (mut nots, mut others) = (0, 0);
+    for child in chain.clone().into_inner() {
+        match child.as_rule() {
+            Rule::not_op => nots += 1,
+            Rule::sequel => {}
+            _ => others += 1,
+        }
+    }
+    others / 2 + 1 + nots
 }
 
 fn is_list_arm(child: &Pair<Rule>) -> bool {
@@ -1331,28 +1656,45 @@ fn is_program_literal(expr: &Pair<Rule>) -> bool {
     matches!((kids.next(), kids.next()), (Some(p), None) if p.as_rule() == Rule::function)
 }
 
-fn bin_op(rule: Rule) -> BinOp {
+/// An operator while a chain is being folded: `and`/`or` lower to `if` rather
+/// than to a `Bin`, and `not` is the one prefix operator.
+#[derive(Clone, Copy, PartialEq)]
+enum Op {
+    Bin(BinOp),
+    And,
+    Or,
+    Not,
+}
+
+fn infix_op(rule: Rule) -> Op {
     match rule {
-        Rule::plus => BinOp::Add,
-        Rule::minus => BinOp::Sub,
-        Rule::multiply => BinOp::Mul,
-        Rule::divide => BinOp::Div,
-        Rule::lt => BinOp::Lt,
-        Rule::lte => BinOp::Lte,
-        Rule::gt => BinOp::Gt,
-        Rule::gte => BinOp::Gte,
-        Rule::equal => BinOp::Eq,
-        Rule::not_equal => BinOp::Ne,
+        Rule::and_op => Op::And,
+        Rule::or_op => Op::Or,
+        Rule::plus => Op::Bin(BinOp::Add),
+        Rule::minus => Op::Bin(BinOp::Sub),
+        Rule::multiply => Op::Bin(BinOp::Mul),
+        Rule::divide => Op::Bin(BinOp::Div),
+        Rule::lt => Op::Bin(BinOp::Lt),
+        Rule::lte => Op::Bin(BinOp::Lte),
+        Rule::gt => Op::Bin(BinOp::Gt),
+        Rule::gte => Op::Bin(BinOp::Gte),
+        Rule::equal => Op::Bin(BinOp::Eq),
+        Rule::not_equal => Op::Bin(BinOp::Ne),
         other => unreachable!("not an operator rule: {other:?}"),
     }
 }
 
-fn prec(op: BinOp) -> u8 {
+/// Binding strength, loosest first: `or`, `and`, `not`, equality,
+/// comparison, `+ -`, `* /`.
+fn prec(op: Op) -> u8 {
     match op {
-        BinOp::Mul | BinOp::Div => 4,
-        BinOp::Add | BinOp::Sub => 3,
-        BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte => 2,
-        BinOp::Eq | BinOp::Ne => 1,
+        Op::Or => 1,
+        Op::And => 2,
+        Op::Not => 3,
+        Op::Bin(BinOp::Eq | BinOp::Ne) => 4,
+        Op::Bin(BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte) => 5,
+        Op::Bin(BinOp::Add | BinOp::Sub) => 6,
+        Op::Bin(BinOp::Mul | BinOp::Div) => 7,
     }
 }
 

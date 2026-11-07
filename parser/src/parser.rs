@@ -179,7 +179,7 @@ mod tests {
             tokens: [
                 declaration(0, 5, [
                     ident(0, 1),
-                    expr(4, 5, [ident(4, 5)])
+                    value(4, 5, [ident(4, 5)])
                 ])
             ]
         }
@@ -191,7 +191,7 @@ mod tests {
             tokens: [
                 declaration(0, 7, [
                     ident(0, 1),
-                    expr(4, 6, [ident(4, 5)]),
+                    value(4, 6, [ident(4, 5)]),
                     expr(6, 7, [ident(6, 7)])
                 ])
             ]
@@ -598,7 +598,7 @@ mod tests {
             rule: Rule::destructure,
             tokens: [destructure(0, 10, [
                 record_pattern(0, 6, [ident(1, 2), ident(4, 5)]),
-                expr(9, 10, [ident(9, 10)])
+                value(9, 10, [ident(9, 10)])
             ])]
         }
         parses_to! {
@@ -607,7 +607,7 @@ mod tests {
             rule: Rule::destructure,
             tokens: [destructure(0, 18, [
                 record_pattern(0, 12, [ident(1, 2), rest_binding(4, 11, [ident(7, 11)])]),
-                expr(15, 17, [ident(15, 16)]),
+                value(15, 17, [ident(15, 16)]),
                 expr(17, 18, [ident(17, 18)])
             ])]
         }
@@ -665,6 +665,115 @@ mod tests {
             assert!(
                 GoatParser::parse(Rule::goat, src).is_ok(),
                 "failed to parse: {src}"
+            );
+        }
+    }
+    #[test]
+    fn a_semicolon_sequences_expressions() {
+        parses_to! {
+            parser: GoatParser,
+            input: "a; b",
+            rule: Rule::expr,
+            tokens: [expr(0, 4, [
+                ident(0, 1),
+                sequel(1, 4, [expr(3, 4, [ident(3, 4)])])
+            ])]
+        }
+        parses_to! {
+            parser: GoatParser,
+            input: "a;",
+            rule: Rule::expr,
+            tokens: [expr(0, 2, [ident(0, 1), sequel(1, 2)])]
+        }
+        use pest::Parser;
+        for src in [
+            "f(1); g(2);",
+            "x = 1; x",
+            "x = 1  f(x); g(x)",
+            "{a} = r; a",
+            "a;;",
+        ] {
+            let ok = GoatParser::parse(Rule::goat, src).is_ok();
+            assert_eq!(ok, src != "a;;", "{src}");
+        }
+    }
+
+    #[test]
+    fn without_a_semicolon_a_paren_is_a_call_and_a_minus_is_subtraction() {
+        parses_to! {
+            parser: GoatParser,
+            input: "f(1) (2)",
+            rule: Rule::expr,
+            tokens: [expr(0, 8, [
+                ident(0, 1),
+                call(1, 4, [arguments(2, 3, [expr(2, 3, [number(2, 3)])])]),
+                call(5, 8, [arguments(6, 7, [expr(6, 7, [number(6, 7)])])])
+            ])]
+        }
+        use pest::Parser;
+        let pairs = GoatParser::parse(Rule::expr, "f(1) -2").unwrap();
+        assert!(pairs.flatten().any(|p| p.as_rule() == Rule::minus));
+        assert!(GoatParser::parse(Rule::goat, "f(1) g(2)").is_err());
+    }
+
+    #[test]
+    fn and_or_not_are_operators_and_words() {
+        parses_to! {
+            parser: GoatParser,
+            input: "not a and b or c",
+            rule: Rule::expr,
+            tokens: [expr(0, 16, [
+                not_op(0, 3),
+                ident(4, 5),
+                and_op(6, 9),
+                ident(10, 11),
+                or_op(12, 14),
+                ident(15, 16)
+            ])]
+        }
+        use pest::Parser;
+        for name in ["nothing", "android", "order", "format", "forty", "nothing2"] {
+            assert!(GoatParser::parse(Rule::ident, name).is_ok(), "{name}");
+        }
+        for word in ["and", "or", "not", "for", "repeat", "times"] {
+            assert!(GoatParser::parse(Rule::ident, word).is_err(), "{word}");
+        }
+        for word in ["from", "to", "in"] {
+            assert!(GoatParser::parse(Rule::ident, word).is_ok(), "{word}");
+        }
+        assert!(GoatParser::parse(Rule::goat, "a andb").is_err());
+        assert!(GoatParser::parse(Rule::goat, "a and(b)").is_ok());
+    }
+
+    #[test]
+    fn parses_loops() {
+        use pest::Parser;
+        for (src, rule) in [
+            ("repeat 3 times do done", Rule::repeat_loop),
+            ("repeat n + 1 times do f(); g() done", Rule::repeat_loop),
+            ("for i from 1 to 10 do f(i) done", Rule::count_loop),
+            ("for i from a.from to a.to do done", Rule::count_loop),
+            ("for x in xs do f(x) done", Rule::each_loop),
+            ("for x in [1, 2] do done", Rule::each_loop),
+        ] {
+            let pair = GoatParser::parse(Rule::goat, src)
+                .unwrap_or_else(|e| panic!("{src}: {e}"))
+                .flatten()
+                .find(|p| !matches!(p.as_rule(), Rule::goat | Rule::expr))
+                .unwrap();
+            assert_eq!(pair.as_rule(), rule, "{src}");
+        }
+        for src in [
+            "repeat 3 do done",
+            "for i from 1 do done",
+            "for i 1 to 2 do done",
+            "for i in do done",
+            "for x in xs done",
+            "for i fromm 1 to 2 do done",
+        ] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_err(),
+                "accepted: {src}"
             );
         }
     }

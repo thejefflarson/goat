@@ -1,0 +1,12 @@
+# `a; b` runs `a`, throws its value away, then runs `b`. A loop is a statement
+# too, so each one ends with `;`. `for i from 1 to 5` counts both ends in.
+repeat 2 times do print("hello") done;
+for i from 1 to 5 do print(i * i) done;
+
+# `for x in xs` walks a list. `and`, `or` and `not` only look at the right-hand
+# side when they must, and `not` binds looser than `==`.
+for x in [3, 8, 12] do print(x > 5 and not x == 8) done;
+
+table = program(n) do for i from 1 to 3 do print(n * i) done done
+table(2);
+table(5)

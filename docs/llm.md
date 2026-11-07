@@ -13,8 +13,9 @@ Prefer the forms under "What runs today".
 
 goat is a typed, garbage-collector-free scripting language that compiles to
 WebAssembly and runs under a wasm runtime (the CLI uses wasmtime). It is
-functional and immutable: there are no variables to reassign, no statements, no
-loops yet — a program is one expression, and its value is the program's output.
+functional and immutable: there are no variables to reassign — a program is one
+expression, and its value is the program's output. Statements are expressions
+joined with `;`, and loops are expressions of type `Unit`.
 Types are inferred (Hindley-Milner), so you never write a type annotation.
 
 ## Running a program
@@ -63,6 +64,42 @@ score = 1
 score = score + 1   # the right-hand `score` is the old 1
 score               # 2
 ```
+
+### Sequencing: `a; b`
+
+`a; b` runs `a`, drops its value, then runs `b`; it is `b`'s value. A trailing
+`print(1);` is `Unit`. Bindings scope over the statements after them.
+
+```
+print(1); print(2); 3     # prints 1, 2; value 3
+```
+
+A statement ends only at `;`: `print(1) (2)` is a call of `print(1)` and
+`print(1) -2` is a subtraction, so write `print(1); (2)`. A loop or a bare call
+that is not the last thing in a block needs the `;`.
+
+### Booleans: `and`, `or`, `not`
+
+```
+x > 1 and x < 10 or x == 100
+not done
+```
+
+`and`/`or` skip the right side when the left decides. Loosest first: `or`,
+`and`, `not`, `==`, comparisons, `+ -`, `* /` — so `not a == b` is
+`not (a == b)`.
+
+### Loops
+
+```
+repeat 3 times do print("hi") done;
+for i from 1 to 5 do print(i * i) done;      # 1 to 5, both included
+for x in [3, 1, 2] do print(x) done;
+```
+
+A loop is a `Unit` expression; the body's value is dropped. The counter is a
+`Number`. `for` counts up only (`from 5 to 1` runs zero times). `from`, `to` and
+`in` are words only in a `for` header; `for`, `and`, `or`, `not` are reserved.
 
 ### Conditionals: `if … then … else … done`
 
@@ -160,9 +197,7 @@ These are planned but **do not run on the current build**. Do not generate them.
   variable captured from an outer function. (This is Phase 4, landing now.)
 - **Strings.** String literals parse (`"hi"`) but there is no string runtime, so
   a program that produces or prints a string will not run yet. (Phase 5.)
-- **Loops.** `repeat`, `return`, `times` are reserved words but have no usable
-  syntax yet. Express repetition with recursion. (Phase 4.)
-- **`==` and boolean `and`/`or`.** Not yet; use `<`, `<=`, `>`, `>=`.
+- **`return`.** A reserved word with no syntax; a function's value is its body.
 - **Variants and `match`** (`Circle(5)`, `Empty`), **lists**, and the
   **turtle/drawing** builtins. (Phases 7–8.)
 - **Field-wise record arithmetic** (`{x:1} + {x:2}`) and **named types**.

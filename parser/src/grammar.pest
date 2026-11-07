@@ -8,6 +8,17 @@ done_lit = _{ "done" }
 start_at_lit = _{ "start at" }
 repeat_lit = _{ "repeat" }
 times_lit = _{ "times" }
+for_lit = _{ "for" }
+and_lit = _{ "and" }
+or_lit = _{ "or" }
+not_lit = _{ "not" }
+// `from`, `to` and `in` are only keywords inside a `for` header, so they stay
+// usable as names: `line.from` and `{to: 1}` keep working. These are atomic so
+// the word boundary is checked right after the word, not after skipping spaces.
+for_kw = @{ for_lit ~ !XID_CONTINUE }
+from_kw = @{ "from" ~ !XID_CONTINUE }
+to_kw = @{ "to" ~ !XID_CONTINUE }
+in_kw = @{ "in" ~ !XID_CONTINUE }
 true_lit = { "true" }
 false_lit = { "false" }
 boolean = { true_lit | false_lit }
@@ -28,6 +39,10 @@ keyword = _{
   | start_at_lit
   | repeat_lit
   | times_lit
+  | for_lit
+  | and_lit
+  | or_lit
+  | not_lit
   | true_lit
   | false_lit
   | return_lit
@@ -47,7 +62,12 @@ lte = { "<=" }
 gte = { ">=" }
 lt = { "<" }
 gt = { ">" }
+and_op = @{ and_lit ~ !XID_CONTINUE }
+or_op = @{ or_lit ~ !XID_CONTINUE }
+not_op = @{ not_lit ~ !XID_CONTINUE }
 infix = _{
+  and_op |
+  or_op |
   plus |
   minus |
   multiply |
@@ -86,8 +106,16 @@ tag_name = @{ &UPPERCASE_LETTER ~ unicode+ }
 
 // Actual grammar
 goat = { SOI ~ expr? ~ EOI }
-expr = { term ~ more_math* }
-more_math = _{ infix ~ term }
+// `a; b` runs `a`, drops its value, and continues with `b`. The `;` is what
+// keeps `f(x) (y)` and `f(x) -y` from reading as two statements: a statement
+// ends only at an explicit `;`. A trailing `;` makes the whole expression `()`.
+expr = { operand ~ more_math* ~ sequel? }
+sequel = { semi ~ expr? }
+operand = _{ not_op* ~ term }
+more_math = _{ infix ~ operand }
+// A binding's value stops at a `;`, so `x = 1; x` binds `x` for the statements
+// after it instead of sequencing inside the value.
+value = { operand ~ more_math* }
 // `negation` keeps its operand's postfixes inside it, so `-f(x)` is `-(f(x))`.
 term = _{ negation | primary ~ postfix* }
 postfix = _{ access | call }
@@ -97,17 +125,17 @@ negation = { minus ~ (negation | primary ~ postfix*) }
 // Order matters: pest is a PEG, so longer/more-specific alternatives come
 // first. `declaration` (`ident = ...`) begins with an identifier, so a bare
 // `ident` must be tried after it.
-primary = _{ number | string | boolean | destructure | declaration | function | conditional | match_expr | record | list | tag | ident | lparen ~ expr ~ rparen }
+primary = _{ number | string | boolean | destructure | declaration | function | conditional | match_expr | repeat_loop | count_loop | each_loop | record | list | tag | ident | lparen ~ expr ~ rparen }
 // `{...base, x: 1}`: the grammar accepts a spread anywhere so that lowering can
 // say what is wrong with `{...a, ...b}`, instead of a bare parse error.
 record = { lbrace ~ (record_item ~ (comma ~ record_item)* ~ comma?)? ~ rbrace }
 record_item = _{ spread | field }
 spread = { "..." ~ expr }
 field = { ident ~ colon ~ expr }
-declaration = { ident ~ equals ~ expr ~ expr? }
+declaration = { ident ~ equals ~ value ~ semi? ~ expr? }
 // `{x, y} = point` and `{x, ...rest} = point`. Tried before `record`: a
 // pattern has bare names where a literal has `name: value`.
-destructure = { (record_pattern | list_pattern) ~ equals ~ expr ~ expr? }
+destructure = { (record_pattern | list_pattern) ~ equals ~ value ~ semi? ~ expr? }
 record_pattern = { lbrace ~ ((ident ~ (comma ~ ident)* ~ (comma ~ rest_binding)? | rest_binding) ~ comma?) ~ rbrace }
 rest_binding = { "..." ~ ident }
 // `[]`, `[a, b]`, `[first, ...rest]`: `[` is a list pattern where a pattern is
@@ -130,3 +158,8 @@ pattern = { tag_name ~ (lparen ~ labels? ~ rparen)? }
 list = { lbracket ~ arguments? ~ rbracket }
 arm = { (list_pattern | pattern) ~ then_lit ~ expr }
 match_expr = { match_lit ~ expr ~ do_lit ~ arm* ~ else_branch? ~ done_lit }
+// `repeat 3 times do ... done`, `for i from 1 to 10 do ... done` (both ends
+// included) and `for x in xs do ... done`. A loop is `()`.
+repeat_loop = { repeat_lit ~ expr ~ times_lit ~ do_lit ~ expr? ~ done_lit }
+count_loop = { for_kw ~ ident ~ from_kw ~ expr ~ to_kw ~ expr ~ do_lit ~ expr? ~ done_lit }
+each_loop = { for_kw ~ ident ~ in_kw ~ expr ~ do_lit ~ expr? ~ done_lit }
