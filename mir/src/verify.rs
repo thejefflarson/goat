@@ -28,6 +28,7 @@ pub enum ErrorKind {
     UnknownLayout(LayoutId),
     UnknownSig(SigId),
     UnknownData(DataId),
+    UnknownForeign(ForeignId),
     BadFieldIndex(usize),
     BadCapture(usize),
     BadTag(u32),
@@ -606,6 +607,23 @@ impl<'a> Checker<'a> {
                     Write::Lit(_) | Write::End => {}
                 }
                 Ty::Val(MTy::Unit)
+            }
+            Expr::CallForeign(f, args) => {
+                let Some(foreign) = self.program.foreign.get(f.0 as usize) else {
+                    return self.err(ErrorKind::UnknownForeign(*f));
+                };
+                if foreign.params.len() != args.len() {
+                    self.err(ErrorKind::ArityMismatch {
+                        expected: foreign.params.len(),
+                        found: args.len(),
+                    });
+                }
+                for (&arg, &want) in args.iter().zip(&foreign.params) {
+                    if let Some(found) = self.borrow(arg) {
+                        self.expect(Ty::Val(found), want);
+                    }
+                }
+                Ty::Val(foreign.ret)
             }
             Expr::Dup(x) => {
                 if self.borrow_ptr(*x).is_none() {

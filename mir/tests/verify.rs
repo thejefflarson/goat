@@ -254,3 +254,48 @@ fn reuse_rejects_a_differently_sized_cell() {
         }]
     );
 }
+
+fn with_foreign(body: Expr) -> Program {
+    let mut p = main_returning_int(body);
+    p.foreign = vec![foreign_fn("double", vec![MTy::Float], MTy::Float)];
+    p
+}
+
+#[test]
+fn accepts_a_well_typed_foreign_call() {
+    let body = let_(
+        0,
+        float(1.0),
+        let_(1, Expr::CallForeign(ForeignId(0), vec![Local(0)]), int(1)),
+    );
+    assert_eq!(verify(&with_foreign(body)), Ok(()));
+}
+
+#[test]
+fn rejects_a_malformed_foreign_call() {
+    let unknown = Expr::CallForeign(ForeignId(3), vec![]);
+    assert_eq!(
+        kinds(&with_foreign(let_(0, unknown, int(1)))),
+        [ErrorKind::UnknownForeign(ForeignId(3))]
+    );
+    let arity = let_(0, Expr::CallForeign(ForeignId(0), vec![]), int(1));
+    assert_eq!(
+        kinds(&with_foreign(arity)),
+        [ErrorKind::ArityMismatch {
+            expected: 1,
+            found: 0
+        }]
+    );
+    let wrong = let_(
+        0,
+        boolean(true),
+        let_(1, Expr::CallForeign(ForeignId(0), vec![Local(0)]), int(1)),
+    );
+    assert_eq!(
+        kinds(&with_foreign(wrong)),
+        [ErrorKind::TypeMismatch {
+            expected: MTy::Float,
+            found: MTy::Bool
+        }]
+    );
+}

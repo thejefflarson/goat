@@ -5,7 +5,7 @@ macro_rules! id {
     )*};
 }
 
-id!(Local, FuncId, LayoutId, SigId, DataId);
+id!(Local, FuncId, LayoutId, SigId, DataId, ForeignId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeapKind {
@@ -51,6 +51,19 @@ pub struct Program {
     pub layouts: Vec<Layout>,
     pub sigs: Vec<Sig>,
     pub data: Vec<Vec<u8>>,
+    /// The host functions the program calls: one wasm import each.
+    pub foreign: Vec<ForeignFn>,
+}
+
+/// A host function, identified by the import `module` and `name`. Parameters
+/// and result are the boundary types: `Float` (Number), `Bool`, `Unit`, and
+/// `Ptr(Str)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForeignFn {
+    pub module: String,
+    pub name: String,
+    pub params: Vec<MTy>,
+    pub ret: MTy,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +135,15 @@ pub enum Write {
     End,
 }
 
+/// What a `CallForeign` and a `Write` do to the world outside the program.
+/// Passes that rewrite a function must leave its `effects` unchanged, which
+/// `insert_rc` asserts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    Foreign(ForeignId),
+    Write,
+}
+
 /// Using a pointer-typed `Local` moves it; `Field`, `Payload`, `Capture` and
 /// `Switch` borrow their operand, and a pointer they load is a fresh owned
 /// reference (an implicit `Dup`).
@@ -155,6 +177,12 @@ pub enum Expr {
     /// Whether two strings hold the same bytes; borrows both operands.
     StrEq(Local, Local),
     Write(Write),
+    /// A call to a host function. Effectful even when it returns `Unit`: it is
+    /// never dropped, duplicated, or reordered (see `effects`). Arguments are
+    /// locals so that a pointer passed to the host is borrowed for the call,
+    /// as `Write::Str` borrows, and the caller keeps its reference. A returned
+    /// string is a fresh owned reference.
+    CallForeign(ForeignId, Vec<Local>),
     Dup(Local),
     Drop(Local),
     Trap(String),
@@ -172,6 +200,7 @@ impl Expr {
             | Expr::Free(_)
             | Expr::StrLit(_)
             | Expr::StrEq(..)
+            | Expr::CallForeign(..)
             | Expr::Write(Write::Str(_) | Write::Lit(_) | Write::End)
             | Expr::Dup(_)
             | Expr::Drop(_)
@@ -211,4 +240,19 @@ impl Expr {
             Expr::Write(Write::Number(value)) => f(value),
         }
     }
+}
+
+/// The effects `e` performs, in evaluation order.
+pub fn effects(e: &Expr) -> Vec<Effect> {
+    fn walk(e: &Expr, out: &mut Vec<Effect>) {
+        match e {
+            Expr::CallForeign(f, _) => out.push(Effect::Foreign(*f)),
+            Expr::Write(_) => out.push(Effect::Write),
+            _ => {}
+        }
+        e.for_each_child(&mut |c| walk(c, out));
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
 }

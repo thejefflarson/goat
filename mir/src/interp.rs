@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::host::{Host, HostValue, NoHost};
 use crate::mir::*;
 
 const IMMORTAL: u32 = u32::MAX;
@@ -51,8 +52,22 @@ pub fn run(program: &Program) -> Result<Outcome, InterpError> {
 }
 
 pub fn run_with_depth(program: &Program, max_depth: usize) -> Result<Outcome, InterpError> {
+    run_on(program, max_depth, &mut NoHost)
+}
+
+/// Run `program`, answering its foreign calls from `host`.
+pub fn run_with_host(program: &Program, host: &mut dyn Host) -> Result<Outcome, InterpError> {
+    run_on(program, DEFAULT_MAX_DEPTH, host)
+}
+
+fn run_on(
+    program: &Program,
+    max_depth: usize,
+    host: &mut dyn Host,
+) -> Result<Outcome, InterpError> {
     let mut interp = Interp {
         program,
+        host,
         max_depth,
         slots: Vec::new(),
         live: 0,
@@ -81,6 +96,8 @@ enum Body {
     Record(Vec<Value>),
     Variant(u32, Vec<Value>),
     Str(DataId),
+    /// A string the host returned.
+    Text(Vec<u8>),
     Closure(FuncId, Vec<Value>),
 }
 
@@ -93,7 +110,7 @@ impl Obj {
     fn children(&self) -> impl Iterator<Item = usize> + '_ {
         let fields: &[Value] = match &self.body {
             Body::Record(f) | Body::Variant(_, f) | Body::Closure(_, f) => f,
-            Body::Str(_) => &[],
+            Body::Str(_) | Body::Text(_) => &[],
         };
         fields.iter().filter_map(|v| match v {
             Value::Ptr(a) => Some(*a),
@@ -129,6 +146,7 @@ impl Frame {
 
 struct Interp<'p> {
     program: &'p Program,
+    host: &'p mut dyn Host,
     max_depth: usize,
     slots: Vec<Option<Obj>>,
     live: usize,
@@ -160,7 +178,7 @@ impl Interp<'_> {
         let Value::Ptr(addr) = value else {
             return Ok(None);
         };
-        if !matches!(self.obj(addr)?.body, Body::Str(_)) {
+        if !matches!(self.obj(addr)?.body, Body::Str(_) | Body::Text(_)) {
             return Ok(None);
         }
         self.string_bytes(value).map(|bytes| Some(bytes.to_vec()))
@@ -176,8 +194,9 @@ impl Interp<'_> {
 
     fn string_bytes(&self, value: Value) -> Result<&[u8], InterpError> {
         match value {
-            Value::Ptr(addr) => match self.obj(addr)?.body {
-                Body::Str(data) => self.data(data),
+            Value::Ptr(addr) => match &self.obj(addr)?.body {
+                Body::Str(data) => self.data(*data),
+                Body::Text(bytes) => Ok(bytes),
                 _ => Err(InterpError::Malformed("not a string")),
             },
             _ => Err(InterpError::Malformed("not a string")),
@@ -210,6 +229,50 @@ impl Interp<'_> {
                 Ok(Value::Unit)
             }
             _ => Err(InterpError::Malformed("not a text operation")),
+        }
+    }
+
+    /// A host call, out of `eval` so its frame stays small. Strings cross by
+    /// copy; one the host returns is a fresh object with count 1.
+    #[inline(never)]
+    fn call_foreign(
+        &mut self,
+        f: ForeignId,
+        args: &[Local],
+        frame: &Frame,
+    ) -> Result<Value, InterpError> {
+        let program = self.program;
+        let foreign = program
+            .foreign
+            .get(f.0 as usize)
+            .ok_or(InterpError::Malformed("unknown foreign function"))?;
+        let mut values = Vec::with_capacity(args.len());
+        for &arg in args {
+            values.push(match frame.get(arg)? {
+                Value::Float(x) => HostValue::Number(x),
+                Value::Int(n) => HostValue::Number(n as f64),
+                Value::Bool(b) => HostValue::Bool(b),
+                Value::Unit => HostValue::Unit,
+                string @ Value::Ptr(_) => {
+                    let bytes = self.string_bytes(string)?;
+                    HostValue::Str(String::from_utf8_lossy(bytes).into_owned())
+                }
+            });
+        }
+        let returned = self
+            .host
+            .call(&foreign.module, &foreign.name, &values)
+            .map_err(InterpError::Trap)?;
+        match (foreign.ret, returned) {
+            (MTy::Float, HostValue::Number(x)) => Ok(Value::Float(x)),
+            (MTy::Bool, HostValue::Bool(b)) => Ok(Value::Bool(b)),
+            (MTy::Unit, HostValue::Unit) => Ok(Value::Unit),
+            (MTy::Ptr(HeapKind::Str), HostValue::Str(text)) => {
+                Ok(self.alloc(Body::Text(text.into_bytes()), 1))
+            }
+            _ => Err(InterpError::Malformed(
+                "host result does not match its type",
+            )),
         }
     }
 
@@ -494,6 +557,7 @@ impl Interp<'_> {
             Expr::StrEq(..) | Expr::Write(_) => {
                 return self.text_op(e, frame, depth).map(Flow::Val);
             }
+            Expr::CallForeign(f, args) => self.call_foreign(*f, args, frame)?,
             Expr::Dup(x) => {
                 self.retain(frame.get(*x)?)?;
                 Value::Unit

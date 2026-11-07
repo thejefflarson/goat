@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use goat_checker::hir::Boundary;
 use goat_mir::*;
 
 pub fn int(n: i64) -> Expr {
@@ -37,6 +38,7 @@ pub fn program(funcs: Vec<Func>) -> Program {
         ],
         sigs: vec![],
         data: vec![],
+        foreign: vec![],
     }
 }
 
@@ -133,4 +135,38 @@ pub fn with_closures(mut p: Program, sig_params: Vec<MTy>) -> Program {
     p.layouts
         .push(Layout::Record(vec![closure_ty(0), closure_ty(0)]));
     p
+}
+
+/// A host that records every call it gets, in order, and answers `Unit` to
+/// `forward` and `say`, twice its argument to `double`, and a fresh
+/// `"<arg>!"` to `shout`.
+#[derive(Default)]
+pub struct Recorder {
+    pub calls: Vec<(String, Vec<HostValue>)>,
+}
+
+impl Host for Recorder {
+    fn signature(&self, _: &str, _: &str) -> Option<(Vec<Boundary>, Boundary)> {
+        None
+    }
+
+    fn call(&mut self, _: &str, name: &str, args: &[HostValue]) -> Result<HostValue, String> {
+        self.calls.push((name.to_string(), args.to_vec()));
+        match (name, args) {
+            ("forward" | "say", _) => Ok(HostValue::Unit),
+            ("double", [HostValue::Number(x)]) => Ok(HostValue::Number(x * 2.0)),
+            ("shout", [HostValue::Str(s)]) => Ok(HostValue::Str(format!("{s}!"))),
+            ("greet", []) => Ok(HostValue::Str("hi".into())),
+            _ => Err(format!("unexpected call to {name}")),
+        }
+    }
+}
+
+pub fn foreign_fn(name: &str, params: Vec<MTy>, ret: MTy) -> ForeignFn {
+    ForeignFn {
+        module: "test".into(),
+        name: name.into(),
+        params,
+        ret,
+    }
 }
