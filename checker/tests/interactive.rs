@@ -7,12 +7,13 @@ use goat_checker::{Checked, GoatError, check};
 const UPDATE: &str = "update = program(model, event) do
   match event do
     Tick(dt) then {...model, x: model.x + dt}
-    Reset then {...model, x: 0}
+    KeyDown(key) then {...model, x: 0}
   done
 done
 ";
 
-const DRAW: &str = "draw = program(model) do [Circle(model.x)] done\n";
+const DRAW: &str =
+    "draw = program(model) do [Line({x1: 0, y1: 0, x2: model.x, y2: 0, color: \"red\"})] done\n";
 
 fn interactive(init: &str, update: &str, draw: &str) -> String {
     format!("init = {init}\n{update}{draw}")
@@ -124,7 +125,7 @@ fn the_event_must_be_a_variant() {
 
 #[test]
 fn draw_must_take_the_model() {
-    let draw = "draw = program() do [Circle(1)] done\n";
+    let draw = "draw = program() do [] done\n";
     let (message, text) = the_error(&interactive("{x: 0}", UPDATE, draw));
     assert!(message.starts_with("draw must be a function"), "{message}");
     assert!(text.starts_with("program()"), "{text}");
@@ -142,7 +143,7 @@ fn draw_must_return_a_list_of_variants() {
 
 #[test]
 fn draws_model_must_match_init() {
-    let draw = "draw = program(model) do [Circle(model.y)] done\n";
+    let draw = "draw = program(model) do [Line({x1: 0, y1: 0, x2: model.y, y2: 0, color: \"red\"})] done\n";
     let (message, _) = the_error(&interactive("{x: 0}", UPDATE, draw));
     assert!(message.starts_with("draw's model"), "{message}");
 }
@@ -154,4 +155,139 @@ fn an_empty_picture_is_a_list_of_shapes() {
         UPDATE,
         "draw = program(model) do [] done\n",
     ));
+}
+
+fn update_of(arms: &str) -> String {
+    format!("update = program(model, event) do\n  match event do\n{arms}\n  done\ndone\n")
+}
+
+fn draw_of(shapes: &str) -> String {
+    format!("draw = program(model) do {shapes} done\n")
+}
+
+fn update_type(source: &str) -> String {
+    let ty = checks(source).typed.root_ty.to_string();
+    let start = ty.find("update: ").expect("update in root type");
+    let end = ty.find(", draw: ").expect("draw in root type");
+    ty[start..end].to_string()
+}
+
+#[test]
+fn every_host_event_and_shape_checks() {
+    let update = update_of(
+        "    Tick(dt) then model
+    KeyDown(k) then match k do Up then model Down then model Left then model Right then model Other(s) then model done
+    KeyUp(k) then model
+    PointerMove(p) then {x: p.x}
+    PointerDown(p) then {x: p.y}
+    PointerUp(p) then model",
+    );
+    let draw = draw_of(
+        "[Polyline({points: [{x: 0, y: 0}, {x: model.x, y: 1}], color: \"blue\"}), Line({x1: 0, y1: 0, x2: 1, y2: 1, color: \"#fa0\"})]",
+    );
+    checks(&interactive("{x: 0}", &update, &draw));
+}
+
+#[test]
+fn the_event_row_closes_to_the_handled_tags() {
+    let update = update_of("    Tick(dt) then model\n    KeyUp(k) then model");
+    let ty = update_type(&interactive("{x: 0}", &update, DRAW));
+    assert!(ty.contains("Tick") && ty.contains("KeyUp"), "{ty}");
+    assert!(!ty.contains("KeyDown") && !ty.contains('|'), "{ty}");
+}
+
+#[test]
+fn an_else_arm_leaves_the_row_at_the_tags_named_before_it() {
+    let update = "update = program(model, event) do
+  match event do
+    Tick(dt) then model
+  else model done
+done
+";
+    let ty = update_type(&interactive("{x: 0}", update, DRAW));
+    assert!(ty.contains("Tick") && !ty.contains('|'), "{ty}");
+}
+
+#[test]
+fn an_unknown_event_tag_is_a_spanned_error() {
+    let update = update_of("    Tick(dt) then model\n    Frobnicate then model");
+    let (message, text) = the_error(&interactive("{x: 0}", &update, DRAW));
+    assert!(
+        message.starts_with("the host doesn't send a `Frobnicate` event"),
+        "{message}"
+    );
+    assert!(text.starts_with("program(model, event)"), "{text}");
+}
+
+#[test]
+fn an_event_payload_the_host_does_not_send_is_a_spanned_error() {
+    for arm in [
+        "Tick(dt) then {...model, x: dt + \"a\"}",
+        "Tick(a, b) then model",
+        "KeyDown(k) then {...model, x: k + 1}",
+        "PointerMove(p) then {...model, x: p.z}",
+    ] {
+        let update = update_of(&format!("    {arm}"));
+        let source = interactive("{x: 0}", &update, DRAW);
+        assert!(!errors_of(&source).is_empty(), "{arm}");
+    }
+    let update = update_of("    Tick(a, b) then model");
+    let (message, text) = the_error(&interactive("{x: 0}", &update, DRAW));
+    assert!(
+        message.contains("`Tick` event carries `Number`"),
+        "{message}"
+    );
+    assert!(text.starts_with("program(model, event)"), "{text}");
+}
+
+#[test]
+fn a_partial_key_match_without_else_is_rejected() {
+    let update = update_of("    KeyDown(k) then match k do Up then model Down then model done");
+    let (message, _) = the_error(&interactive("{x: 0}", &update, DRAW));
+    assert!(message.contains("`KeyDown` event carries"), "{message}");
+}
+
+#[test]
+fn a_key_match_with_else_checks() {
+    let update = update_of(
+        "    KeyDown(k) then match k do Up then model else model done\n    Tick(dt) then model",
+    );
+    checks(&interactive("{x: 0}", &update, DRAW));
+}
+
+#[test]
+fn an_unknown_shape_tag_is_a_spanned_error() {
+    let draw = draw_of("[Circle({x: 0, y: 0, r: 1, color: \"red\"})]");
+    let (message, text) = the_error(&interactive("{x: 0}", UPDATE, &draw));
+    assert!(
+        message.starts_with("the host can't draw a `Circle` shape"),
+        "{message}"
+    );
+    assert!(text.starts_with("program(model)"), "{text}");
+}
+
+#[test]
+fn a_shape_payload_the_host_cannot_read_is_a_spanned_error() {
+    for shape in [
+        "Line({x1: 0, y1: 0, x2: 1, y2: 1})",
+        "Line({x1: 0, y1: 0, x2: 1, y2: 1, color: 7})",
+        "Line(1, 2, 3, 4, \"red\")",
+        "Polyline({points: [1], color: \"red\"})",
+        "Polyline({points: [{x: 0, y: \"a\"}], color: \"red\"})",
+        "Polyline({color: \"red\"})",
+    ] {
+        let draw = draw_of(&format!("[{shape}]"));
+        let (message, text) = the_error(&interactive("{x: 0}", UPDATE, &draw));
+        assert!(message.contains("shape needs"), "{shape}: {message}");
+        assert!(text.starts_with("program(model)"), "{text}");
+    }
+}
+
+#[test]
+fn a_polyline_may_be_built_from_the_model() {
+    let draw = "draw = program(model) do
+  [Polyline({points: model.path, color: \"red\"})]
+done
+";
+    checks(&interactive("{x: 0, path: [{x: 0, y: 0}]}", UPDATE, draw));
 }

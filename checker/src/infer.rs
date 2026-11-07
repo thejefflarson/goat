@@ -33,6 +33,7 @@ use crate::hir::{
 };
 use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
 use crate::ty::{Row, Scheme, Ty, TypeVar};
+use crate::vocab::{EVENT_TAGS, SHAPE_TAGS, event_payload, list, shape_payload};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// The result of checking a program: the program's own type, plus the resolved
@@ -747,15 +748,7 @@ impl Inferer {
             Ty::Func(args, ret) if args.len() == 2 => {
                 self.unify_contract(&contract.update, &args[0], &model, "update's model");
                 self.unify_contract(&contract.update, &ret, &model, "update's result");
-                if !matches!(self.resolve_head(&args[1]), Ty::Variant(_)) {
-                    self.contract_error(
-                        &contract.update,
-                        format!(
-                            "update's second argument must be an event, a tag like Tick or KeyDown(key), not `{}`",
-                            self.finish(&args[1])
-                        ),
-                    );
-                }
+                self.check_events(&contract.update, &args[1]);
             }
             other => self.contract_error(
                 &contract.update,
@@ -770,11 +763,13 @@ impl Inferer {
         match self.resolve_head(&draw) {
             Ty::Func(args, ret) if args.len() == 1 => {
                 self.unify_contract(&contract.draw, &args[0], &model, "draw's model");
-                if !self.is_list_of_variants(&ret) {
+                if self.is_list_of_variants(&ret) {
+                    self.check_shapes(&contract.draw, &ret);
+                } else {
                     self.contract_error(
                         &contract.draw,
                         format!(
-                            "draw must return a list of shapes, like [Circle(5)], not `{}`",
+                            "draw must return a list of shapes, like [Line({{x1: 0, y1: 0, x2: 5, y2: 5, color: \"black\"}})], not `{}`",
                             self.finish(&ret)
                         ),
                     );
@@ -787,6 +782,107 @@ impl Inferer {
                     self.finish(&other)
                 ),
             ),
+        }
+    }
+
+    /// The event type is exactly the tags `update` handles, each carrying what
+    /// the host sends. Closing the row is what lets the backend build one
+    /// constructor per handled tag (ADR 0015).
+    fn check_events(&mut self, binding: &ContractBinding, event: &Ty) {
+        let Ty::Variant(row) = self.resolve_head(event) else {
+            self.contract_error(
+                binding,
+                format!(
+                    "update's second argument must be an event, a tag like Tick(dt) or KeyDown(key), not `{}`",
+                    self.finish(event)
+                ),
+            );
+            return;
+        };
+        let (tags, tail) = row_shape(&row);
+        if self.reject_unknown(
+            binding,
+            &tags,
+            &EVENT_TAGS,
+            "the host doesn't send",
+            "event",
+        ) {
+            return;
+        }
+        for tag in &tags {
+            if let (Some(payload), Some(expected)) = (field_of(&row, tag), event_payload(tag)) {
+                let what = format!("the host's `{tag}` event carries");
+                self.unify_vocab(binding, payload, &expected, &what);
+            }
+        }
+        if let Some(var) = tail {
+            self.row_subst.insert(var, Row::Empty);
+        }
+    }
+
+    /// `draw`'s shapes come from the host's vocabulary, each with the payload
+    /// the host reads.
+    fn check_shapes(&mut self, binding: &ContractBinding, shapes: &Ty) {
+        // A list literal types each element on its own; unifying with one list
+        // type makes every element the same `Shape`.
+        let (item, binder) = (self.fresh(), self.fresh_id());
+        self.unify(shapes, &list(binder, item.clone()), binding.span);
+        let Ty::Variant(row) = self.resolve_head(&item) else {
+            return;
+        };
+        let (tags, tail) = row_shape(&row);
+        if self.reject_unknown(binding, &tags, &SHAPE_TAGS, "the host can't draw", "shape") {
+            return;
+        }
+        for tag in &tags {
+            let binder = self.fresh_id();
+            if let (Some(payload), Some(expected)) =
+                (field_of(&row, tag), shape_payload(tag, binder))
+            {
+                let what = format!("the host's `{tag}` shape needs");
+                self.unify_vocab(binding, payload, &expected, &what);
+            }
+        }
+        if let Some(var) = tail {
+            self.row_subst.insert(var, Row::Empty);
+        }
+    }
+
+    /// Report the tags outside `known`; true if there were any.
+    fn reject_unknown(
+        &mut self,
+        binding: &ContractBinding,
+        tags: &[String],
+        known: &[&str],
+        verb: &str,
+        noun: &str,
+    ) -> bool {
+        let unknown: Vec<String> = tags
+            .iter()
+            .filter(|t| !known.contains(&t.as_str()))
+            .cloned()
+            .collect();
+        if unknown.is_empty() {
+            return false;
+        }
+        let known: Vec<String> = known.iter().map(|t| t.to_string()).collect();
+        let named = match unknown.as_slice() {
+            [only] => format!("a `{only}` {noun}"),
+            _ => format!("{} {noun}s", tag_list(&unknown, "or")),
+        };
+        self.contract_error(
+            binding,
+            format!("{verb} {named}; the host knows {}", tag_list(&known, "and")),
+        );
+        true
+    }
+
+    fn unify_vocab(&mut self, binding: &ContractBinding, actual: &Ty, expected: &Ty, what: &str) {
+        let before = self.errors.len();
+        self.unify(actual, expected, binding.span);
+        let expected = self.finish(expected);
+        for error in &mut self.errors[before..] {
+            error.message = format!("{what} `{expected}`: {}", error.message);
         }
     }
 

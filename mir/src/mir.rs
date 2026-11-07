@@ -67,11 +67,21 @@ pub struct Interactive {
     pub update_slot: usize,
     /// `(closure, model, event) -> model`: calls the `update` closure.
     pub update: FuncId,
-    /// `(closure, model) -> Unit`: calls the `draw` closure and drops the
-    /// shapes it returns.
+    /// `(closure, model) -> Unit`: calls the `draw` closure and streams the
+    /// shapes it returns through the `scene.*` imports.
     pub draw: FuncId,
-    /// Each tag label and its number, so a host can build an event.
-    pub tags: Vec<(String, u32)>,
+    /// One constructor per event tag `update` handles. The host is subscribed
+    /// to exactly these.
+    pub events: Vec<EventCtor>,
+}
+
+/// `(payload...) -> event`: builds the event `label` from what the host sends
+/// (`Tick` a number, a pointer event its `x` and `y`, a key event the
+/// `KeyboardEvent.key` string, which it consumes) and returns it owned.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventCtor {
+    pub label: String,
+    pub func: FuncId,
 }
 
 /// A host function, identified by the import `module` and `name`. Parameters

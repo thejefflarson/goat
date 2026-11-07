@@ -120,6 +120,13 @@ handling an un-enabled event is unreachable. An event tag `update` matches that
 is not in the host vocabulary is a checker error (*"the host doesn't send a
 `Frobnicate` event"*).
 
+> Note (as built, #106): the checker closes the event row to the tags `update`
+> handles — an `else` arm leaves the row at the tags named before it — and
+> unifies each payload with the vocabulary, so a `match` on a key without an
+> `else` must name all five `Key` tags. `draw`'s list is unified with one list
+> type, so every element is the same closed `Shape` row. A per-frame budget of
+> 100,000 shapes plus vertices traps an oversized picture.
+
 Inference is at **event granularity, not key granularity**: `KeyDown(k)` matched
 with a nested `match` on `k` subscribes to `KeyDown` and receives every keydown;
 the arrow-vs-other discrimination happens inside goat, one level below the row the

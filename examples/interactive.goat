@@ -1,13 +1,27 @@
 # A program that defines `init`, `update` and `draw` is run by its host, not
 # once through: the host calls `update` for each event and `draw` to show the
 # model. `update` returns a new model; `{...model, x: 1}` copies it with `x` set.
-init = {ticks: 0, x: 0}
+# `draw` returns a list of shapes, here a Line and a Polyline.
+#
+# Only the events `update` names are sent: this one handles Tick and KeyDown,
+# and a key it has no arm for falls to `else`.
+init = {ticks: 0, x: 0, y: 0}
 
 update = program(model, event) do
   match event do
-    Tick then {...model, ticks: model.ticks + 1}
-    Step(dx) then {...model, x: model.x + dx}
+    Tick(dt) then {...model, ticks: model.ticks + 1}
+    KeyDown(key) then match key do
+      Right then {...model, x: model.x + 10}
+      Left then {...model, x: model.x - 10}
+      Up then {...model, y: model.y - 10}
+      Down then {...model, y: model.y + 10}
+    else model done
   done
 done
 
-draw = program(model) do [Circle(model.x), Circle(model.ticks)] done
+draw = program(model) do
+  [
+    Line({x1: 0, y1: 0, x2: model.x, y2: model.y, color: "red"}),
+    Polyline({points: [{x: 0, y: 0}, {x: model.x, y: 0}, {x: model.x, y: model.y}], color: "blue"})
+  ]
+done

@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "outDir": "dist"
   },
-  "include": ["runtime.ts", "compile.ts"]
+  "include": ["runtime.ts", "compile.ts", "scene.ts"]
 }

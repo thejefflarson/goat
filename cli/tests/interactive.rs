@@ -1,32 +1,89 @@
-//! The interactive export contract (ADR 0015): setup, update, draw, release and
-//! shutdown, run on the MIR interpreter and on wasm, which must agree and leave
-//! nothing allocated.
+//! The interactive export contract (ADR 0015): setup, event constructors,
+//! update, draw, release and shutdown, run on the MIR interpreter and on wasm.
+//! The two must agree on the model after every event and on the scene `draw`
+//! streams, command for command, and leave nothing allocated.
 
-use goat_mir::{Interactive, NoHost, Program, Session, Value};
-use wasmtime::{Config, Engine, Instance, Linker, Memory, Module, Store};
+use goat_cli::Guest;
+use goat_mir::{Program, SceneCommand, SceneHost, Session, Value};
 
 const EXAMPLE: &str = include_str!("../../examples/interactive.goat");
 
-#[derive(Clone, Copy)]
-enum Event {
-    Tick,
-    Step(f64),
-}
-
 const HEADER: usize = 8;
 const SLOT: usize = 8;
-const PAYLOAD: usize = 16;
+const EVENTS: [&str; 6] = [
+    "Tick",
+    "KeyDown",
+    "KeyUp",
+    "PointerMove",
+    "PointerDown",
+    "PointerUp",
+];
 
-fn script() -> Vec<Event> {
-    (0..300)
-        .map(|i| {
-            if i % 3 == 0 {
-                Event::Tick
-            } else {
-                Event::Step(i as f64 / 4.0 - 10.0)
-            }
-        })
+/// A pointer program that draws the path the pointer has dragged and handles
+/// no `Tick`.
+const SKETCH: &str = r##"
+init = {down: false, path: [{x: 0, y: 0}]}
+
+update = program(model, event) do
+  match event do
+    PointerDown(p) then {down: true, path: [p]}
+    PointerMove(p) then if model.down then {down: true, path: Link(p, model.path)} else model done
+    PointerUp(p) then {down: false, path: model.path}
+  done
+done
+
+draw = program(model) do
+  [Polyline({points: model.path, color: "#0a0"}), Line({x1: 0, y1: 0, x2: 1, y2: 1, color: "black"})]
+done
+"##;
+
+#[derive(Clone, Debug)]
+enum Event {
+    Tick(f64),
+    KeyDown(&'static str),
+    KeyUp(&'static str),
+    Pointer(&'static str, f64, f64),
+}
+
+impl Event {
+    fn label(&self) -> String {
+        match self {
+            Event::Tick(_) => "Tick".into(),
+            Event::KeyDown(_) => "KeyDown".into(),
+            Event::KeyUp(_) => "KeyUp".into(),
+            Event::Pointer(kind, ..) => format!("Pointer{kind}"),
+        }
+    }
+}
+
+fn example_script() -> Vec<Event> {
+    let keys = [
+        "ArrowRight",
+        "ArrowRight",
+        "ArrowUp",
+        "a",
+        "ArrowLeft",
+        "ArrowDown",
+        "ArrowUpp",
+        "",
+    ];
+    keys.iter()
+        .flat_map(|k| [Event::Tick(16.0), Event::KeyDown(k)])
+        .chain([Event::KeyUp("ArrowUp")])
         .collect()
+}
+
+fn sketch_script() -> Vec<Event> {
+    let at = |kind, x, y| Event::Pointer(kind, x, y);
+    vec![
+        at("Move", 5.0, 5.0),
+        at("Down", 1.0, 2.0),
+        at("Move", 3.0, 4.0),
+        at("Move", 5.0, 6.0),
+        at("Up", 7.0, 8.0),
+        at("Move", 9.0, 9.0),
+        at("Down", -1.0, -2.0),
+    ]
 }
 
 fn program(source: &str) -> Program {
@@ -36,152 +93,231 @@ fn program(source: &str) -> Program {
     program
 }
 
-fn tag(interactive: &Interactive, label: &str) -> u32 {
-    interactive.tags.iter().find(|(l, _)| l == label).unwrap().1
+/// What one backend did with a script.
+#[derive(Debug, PartialEq)]
+struct Trace {
+    /// The leading numeric fields of the model after each handled event.
+    models: Vec<Vec<f64>>,
+    /// Every `scene.*` call, in order.
+    scene: Vec<SceneCommand>,
+    live: usize,
 }
 
-/// `(ticks, x)` after each event, from the interpreter, and the objects live
-/// at the end.
-fn interpreted(program: &Program) -> (Vec<(f64, f64)>, usize) {
-    let mut host = NoHost;
+/// Run `script` on the interpreter, skipping events `update` does not handle
+/// (the host never sends one). `numbers` is how many leading model fields are
+/// numbers to record.
+fn interpreted(program: &Program, script: &[Event], numbers: usize) -> Trace {
+    let mut host = SceneHost::default();
     let (mut session, mut model) = Session::setup(program, &mut host).expect("setup runs");
-    let number = |v: &Value| match v {
-        Value::Float(x) => *x,
-        other => panic!("not a number: {other:?}"),
-    };
     let mut models = Vec::new();
-    for event in script() {
-        let event = match event {
-            Event::Tick => session.variant("Tick", vec![]),
-            Event::Step(dx) => session.variant("Step", vec![Value::Float(dx)]),
+    let handled: Vec<&Event> = script
+        .iter()
+        .filter(|e| session.handles(&e.label()))
+        .collect();
+    for event in handled {
+        let built = match event {
+            Event::Tick(dt) => session.event("Tick", vec![Value::Float(*dt)]),
+            Event::KeyDown(key) | Event::KeyUp(key) => {
+                let key = session.string(key);
+                session.event(&event.label(), vec![key])
+            }
+            Event::Pointer(_, x, y) => {
+                session.event(&event.label(), vec![Value::Float(*x), Value::Float(*y)])
+            }
         }
-        .unwrap();
-        model = session.update(model, event).expect("update runs");
+        .expect("event constructs");
+        model = session.update(model, built).expect("update runs");
         session.draw(model).expect("draw runs");
         let fields = session.fields(model).unwrap();
-        models.push((number(&fields[0]), number(&fields[1])));
+        models.push(
+            fields
+                .iter()
+                .take(numbers)
+                .map(|v| match v {
+                    Value::Float(x) => *x,
+                    other => panic!("not a number: {other:?}"),
+                })
+                .collect(),
+        );
     }
     session.release_model(model).unwrap();
-    (models, session.shutdown().expect("shutdown runs"))
-}
-
-struct Wasm {
-    store: Store<()>,
-    instance: Instance,
-    memory: Memory,
-}
-
-impl Wasm {
-    fn new(program: &Program) -> Wasm {
-        let wasm = goat_wasm::emit(program).expect("program emits");
-        let mut config = Config::new();
-        config.wasm_tail_call(true);
-        let engine = Engine::new(&config).unwrap();
-        let module = Module::new(&engine, &wasm).unwrap();
-        let mut linker: Linker<()> = Linker::new(&engine);
-        linker
-            .func_wrap("goat", "print_number", |_: f64| {})
-            .unwrap();
-        linker.func_wrap("goat", "print_bool", |_: i32| {}).unwrap();
-        let mut store = Store::new(&engine, ());
-        let instance = linker.instantiate(&mut store, &module).unwrap();
-        let memory = instance.get_memory(&mut store, "memory").unwrap();
-        Wasm {
-            store,
-            instance,
-            memory,
-        }
-    }
-
-    fn call<P: wasmtime::WasmParams, R: wasmtime::WasmResults>(
-        &mut self,
-        name: &str,
-        args: P,
-    ) -> R {
-        let func = self
-            .instance
-            .get_typed_func::<P, R>(&mut self.store, name)
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
-        func.call(&mut self.store, args)
-            .unwrap_or_else(|e| panic!("{name} trapped: {e:#}"))
-    }
-
-    /// An event owned by the host (count 1), as `goat_update` consumes it.
-    fn event(&mut self, tag: u32, step: Option<f64>) -> i32 {
-        let size = if step.is_some() {
-            PAYLOAD + SLOT
-        } else {
-            PAYLOAD
-        };
-        let ptr: i32 = self.call("goat_alloc", size as i32);
-        let base = ptr as usize;
-        self.memory
-            .write(&mut self.store, base + HEADER, &tag.to_le_bytes())
-            .unwrap();
-        if let Some(dx) = step {
-            self.memory
-                .write(&mut self.store, base + PAYLOAD, &dx.to_le_bytes())
-                .unwrap();
-        }
-        ptr
-    }
-
-    fn number(&mut self, model: i32, slot: usize) -> f64 {
-        let mut bytes = [0; 8];
-        let at = model as usize + HEADER + SLOT * slot;
-        self.memory.read(&self.store, at, &mut bytes).unwrap();
-        f64::from_le_bytes(bytes)
+    let live = session.shutdown().expect("shutdown runs");
+    Trace {
+        models,
+        scene: host.commands,
+        live,
     }
 }
 
-fn compiled(program: &Program) -> (Vec<(f64, f64)>, u32) {
-    let interactive = program.interactive.as_ref().unwrap();
-    let (tick, step) = (tag(interactive, "Tick"), tag(interactive, "Step"));
-    let mut wasm = Wasm::new(program);
-    let mut model: i32 = wasm.call("goat_setup", ());
+fn compiled(program: &Program, script: &[Event], numbers: usize) -> Trace {
+    let wasm = goat_wasm::emit(program).expect("program emits");
+    let mut guest = Guest::new(&wasm, SceneHost::default()).expect("module instantiates");
+    let exports = guest.exports();
+    let mut model: i32 = guest.call("goat_setup", ()).expect("setup runs");
     let mut models = Vec::new();
-    for event in script() {
-        let event = match event {
-            Event::Tick => wasm.event(tick, None),
-            Event::Step(dx) => wasm.event(step, Some(dx)),
-        };
-        model = wasm.call("goat_update", (model, event));
-        wasm.call::<_, ()>("goat_draw", model);
-        models.push((wasm.number(model, 0), wasm.number(model, 1)));
+    let handled = |e: &&Event| exports.contains(&format!("goat_event_{}", e.label()));
+    for event in script.iter().filter(handled) {
+        let name = format!("goat_event_{}", event.label());
+        let built: i32 = match event {
+            Event::Tick(dt) => guest.call(&name, *dt),
+            Event::KeyDown(key) | Event::KeyUp(key) => {
+                let key = guest.string(key).unwrap();
+                guest.call(&name, key)
+            }
+            Event::Pointer(_, x, y) => guest.call(&name, (*x, *y)),
+        }
+        .expect("event constructs");
+        model = guest
+            .call("goat_update", (model, built))
+            .expect("update runs");
+        guest.call::<_, ()>("goat_draw", model).expect("draw runs");
+        models.push((0..numbers).map(|i| number(&mut guest, model, i)).collect());
     }
-    wasm.call::<_, ()>("goat_release_model", model);
-    wasm.call::<_, ()>("goat_shutdown", ());
-    (models, wasm.call("goat_live_allocs", ()))
+    guest.call::<_, ()>("goat_release_model", model).unwrap();
+    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
+    let live = guest.live_allocs().unwrap() as usize;
+    Trace {
+        models,
+        scene: guest.into_host().commands,
+        live,
+    }
 }
 
-#[test]
-fn the_model_survives_every_update_and_nothing_is_left_allocated() {
-    let program = program(EXAMPLE);
-    let (interp_models, interp_live) = interpreted(&program);
-    let (wasm_models, wasm_live) = compiled(&program);
+fn number(guest: &mut Guest<SceneHost>, model: i32, slot: usize) -> f64 {
+    let bytes = guest
+        .read(model as usize + HEADER + SLOT * slot, 8)
+        .expect("model readable");
+    f64::from_le_bytes(bytes.try_into().unwrap())
+}
 
-    let ticks = script().iter().filter(|e| matches!(e, Event::Tick)).count();
-    let x: f64 = script()
+fn export_names(wasm: &[u8]) -> Vec<String> {
+    let engine = wasmtime::Engine::default();
+    let module = wasmtime::Module::new(&engine, wasm).unwrap();
+    module.exports().map(|e| e.name().to_string()).collect()
+}
+
+fn subscriptions(source: &str) -> Vec<String> {
+    let wasm = goat::compile(source).expect("compiles");
+    let exports = export_names(&wasm);
+    EVENTS
         .iter()
-        .map(|e| if let Event::Step(dx) = e { *dx } else { 0.0 })
-        .sum();
-    assert_eq!(interp_models.last(), Some(&(ticks as f64, x)));
-    assert_eq!(wasm_models, interp_models);
-    assert_eq!(interp_live, 0, "interpreter leaked");
-    assert_eq!(wasm_live, 0, "wasm leaked");
+        .filter(|e| exports.contains(&format!("goat_event_{e}")))
+        .map(|e| e.to_string())
+        .collect()
 }
 
 #[test]
-fn setup_hands_the_host_a_model_with_count_one() {
+fn the_model_and_the_scene_agree_on_both_backends_and_nothing_leaks() {
     let program = program(EXAMPLE);
-    let mut wasm = Wasm::new(&program);
-    let model: i32 = wasm.call("goat_setup", ());
-    assert_eq!(wasm.number(model, 0), 0.0);
-    wasm.call::<_, ()>("goat_draw", model);
-    wasm.call::<_, ()>("goat_draw", model);
-    wasm.call::<_, ()>("goat_release_model", model);
-    wasm.call::<_, ()>("goat_shutdown", ());
-    assert_eq!(wasm.call::<_, u32>("goat_live_allocs", ()), 0);
+    let script = example_script();
+    let interp = interpreted(&program, &script, 3);
+    let wasm = compiled(&program, &script, 3);
+    assert_eq!(wasm, interp);
+    assert_eq!(interp.live, 0, "leaked");
+}
+
+#[test]
+fn arrow_keys_reach_the_branch_that_matches_them() {
+    let program = program(EXAMPLE);
+    let script = [
+        Event::KeyDown("ArrowRight"),
+        Event::KeyDown("ArrowRight"),
+        Event::KeyDown("ArrowUp"),
+        Event::KeyDown("ArrowLeft"),
+        Event::KeyDown("ArrowDown"),
+        Event::KeyDown("a"),
+        Event::KeyDown("ArrowUpp"),
+        Event::KeyDown(""),
+    ];
+    let expected = [
+        (10.0, 0.0),
+        (20.0, 0.0),
+        (20.0, -10.0),
+        (10.0, -10.0),
+        (10.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 0.0),
+    ];
+    for trace in [
+        interpreted(&program, &script, 3),
+        compiled(&program, &script, 3),
+    ] {
+        let seen: Vec<(f64, f64)> = trace.models.iter().map(|m| (m[1], m[2])).collect();
+        assert_eq!(seen, expected);
+        assert_eq!(trace.live, 0);
+    }
+}
+
+#[test]
+fn the_picture_is_streamed_as_one_bracketed_frame_per_draw() {
+    let program = program(EXAMPLE);
+    let trace = interpreted(&program, &[Event::KeyDown("ArrowRight")], 3);
+    use SceneCommand::*;
+    assert_eq!(
+        trace.scene,
+        [
+            Begin,
+            Line {
+                from: (0.0, 0.0),
+                to: (10.0, 0.0),
+                color: "red".into()
+            },
+            PolylineBegin("blue".into()),
+            Vertex(0.0, 0.0),
+            Vertex(10.0, 0.0),
+            Vertex(10.0, 0.0),
+            PolylineEnd,
+            End,
+        ]
+    );
+}
+
+#[test]
+fn a_polyline_grows_with_the_pointer_path_on_both_backends() {
+    let program = program(SKETCH);
+    let script = sketch_script();
+    let interp = interpreted(&program, &script, 0);
+    let wasm = compiled(&program, &script, 0);
+    assert_eq!(wasm, interp);
+    assert_eq!(interp.live, 0, "leaked");
+    let frames = interp
+        .scene
+        .iter()
+        .filter(|c| **c == SceneCommand::Begin)
+        .count();
+    assert_eq!(frames, script.len());
+    let vertices = interp
+        .scene
+        .iter()
+        .filter(|c| matches!(c, SceneCommand::Vertex(..)))
+        .count();
+    assert!(vertices > script.len(), "{vertices}");
+}
+
+#[test]
+fn only_the_events_update_handles_are_exported() {
+    assert_eq!(subscriptions(EXAMPLE), ["Tick", "KeyDown"]);
+    assert_eq!(
+        subscriptions(SKETCH),
+        ["PointerMove", "PointerDown", "PointerUp"]
+    );
+    let key_only = EXAMPLE.replace("    Tick(dt) then {...model, ticks: model.ticks + 1}\n", "");
+    assert_eq!(subscriptions(&key_only), ["KeyDown"]);
+}
+
+#[test]
+fn an_else_arm_adds_no_subscription() {
+    let source = r#"
+init = {n: 0}
+update = program(model, event) do
+  match event do
+    Tick(dt) then {n: model.n + 1}
+  else model done
+done
+draw = program(model) do [] done
+"#;
+    assert_eq!(subscriptions(source), ["Tick"]);
 }
 
 #[test]
@@ -204,8 +340,64 @@ fn an_interactive_module_exports_the_contract_and_not_an_entry() {
 }
 
 #[test]
+fn setup_hands_the_host_a_model_with_count_one() {
+    let wasm = goat::compile(EXAMPLE).expect("compiles");
+    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
+    let model: i32 = guest.call("goat_setup", ()).unwrap();
+    assert_eq!(number(&mut guest, model, 1), 0.0);
+    guest.call::<_, ()>("goat_draw", model).unwrap();
+    guest.call::<_, ()>("goat_draw", model).unwrap();
+    guest.call::<_, ()>("goat_release_model", model).unwrap();
+    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
+    assert_eq!(guest.live_allocs().unwrap(), 0);
+    assert_eq!(guest.into_host().commands.len(), 2 * 8);
+}
+
+const TOO_MANY_POINTS: &str = r#"
+init = {n: 100001}
+update = program(model, event) do
+  match event do Tick(dt) then model done
+done
+points = program(n, acc) do
+  if n == 0 then acc else points(n - 1, Link({x: n, y: n}, acc)) done
+done
+draw = program(model) do
+  [Polyline({points: points(model.n, []), color: "red"})]
+done
+"#;
+
+#[test]
+fn a_picture_past_the_per_frame_cap_traps() {
+    let program = program(TOO_MANY_POINTS);
+    let mut host = SceneHost::default();
+    let (mut session, model) = Session::setup(&program, &mut host).unwrap();
+    let error = session.draw(model).expect_err("draw should trap");
+    assert!(
+        format!("{error:?}").contains("too many shapes"),
+        "{error:?}"
+    );
+
+    let wasm = goat_wasm::emit(&program).unwrap();
+    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
+    let model: i32 = guest.call("goat_setup", ()).unwrap();
+    let error = guest.call::<_, ()>("goat_draw", model).unwrap_err();
+    assert!(error.contains("trapped"), "{error}");
+}
+
+#[test]
+fn a_color_outside_the_allowlist_traps() {
+    let source = SKETCH.replace("#0a0", "red; alert(1)");
+    let program = program(&source);
+    let wasm = goat_wasm::emit(&program).unwrap();
+    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
+    let model: i32 = guest.call("goat_setup", ()).unwrap();
+    let error = guest.call::<_, ()>("goat_draw", model).unwrap_err();
+    assert!(error.contains("trapped"), "{error}");
+}
+
+#[test]
 fn a_program_without_all_three_still_runs_once() {
-    let src = "init = {x: 1}\ndraw = program(model) do [Circle(model.x)] done\nprint(init.x + 1)";
+    let src = "init = {x: 1}\ndraw = program(model) do [] done\nprint(init.x + 1)";
     let wasm = goat::compile(src).expect("compiles");
     let exports = export_names(&wasm);
     assert!(exports.iter().any(|e| e == "goat_entry"), "{exports:?}");
@@ -221,10 +413,4 @@ fn rebinding_a_contract_name_reverts_to_running_once() {
     let wasm = goat::compile(&src).expect("compiles");
     let run = goat_cli::run(&wasm).expect("runs");
     assert_eq!(run.printed, ["7"]);
-}
-
-fn export_names(wasm: &[u8]) -> Vec<String> {
-    let engine = Engine::default();
-    let module = Module::new(&engine, wasm).unwrap();
-    module.exports().map(|e| e.name().to_string()).collect()
 }

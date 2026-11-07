@@ -37,3 +37,76 @@ impl Host for NoHost {
         Err(format!("no host function {module}.{name}"))
     }
 }
+
+/// One call an interactive program's `draw` makes to the `scene.*` imports, in
+/// the order it made them.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SceneCommand {
+    Begin,
+    End,
+    Line {
+        from: (f64, f64),
+        to: (f64, f64),
+        color: String,
+    },
+    PolylineBegin(String),
+    Vertex(f64, f64),
+    PolylineEnd,
+}
+
+/// The host of an interactive program's picture: it records the scene the
+/// program streams, so the interpreter and wasmtime can be compared command
+/// for command.
+#[derive(Debug, Default)]
+pub struct SceneHost {
+    pub commands: Vec<SceneCommand>,
+}
+
+impl Host for SceneHost {
+    fn signature(&self, module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)> {
+        use Boundary::{Number, Str, Unit};
+        if module != "scene" {
+            return None;
+        }
+        Some(match name {
+            "begin" | "end" | "polyline_end" => (vec![], Unit),
+            "line" => (vec![Number, Number, Number, Number, Str], Unit),
+            "polyline_begin" => (vec![Str], Unit),
+            "vertex" => (vec![Number, Number], Unit),
+            _ => return None,
+        })
+    }
+
+    fn call(&mut self, _: &str, name: &str, args: &[HostValue]) -> Result<HostValue, String> {
+        use HostValue::{Number, Str};
+        let command = match (name, args) {
+            ("begin", []) => SceneCommand::Begin,
+            ("end", []) => SceneCommand::End,
+            ("line", [Number(x1), Number(y1), Number(x2), Number(y2), Str(color)]) => {
+                SceneCommand::Line {
+                    from: (*x1, *y1),
+                    to: (*x2, *y2),
+                    color: color_name(color)?,
+                }
+            }
+            ("polyline_begin", [Str(color)]) => SceneCommand::PolylineBegin(color_name(color)?),
+            ("vertex", [Number(x), Number(y)]) => SceneCommand::Vertex(*x, *y),
+            ("polyline_end", []) => SceneCommand::PolylineEnd,
+            _ => return Err(format!("bad call to scene.{name}")),
+        };
+        self.commands.push(command);
+        Ok(HostValue::Unit)
+    }
+}
+
+/// A color name or `#hex` code, the only text safe to hand a renderer
+/// (ADR 0014's allowlist).
+fn color_name(text: &str) -> Result<String, String> {
+    let ok = (1..=32).contains(&text.len())
+        && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '#');
+    if ok {
+        Ok(text.to_string())
+    } else {
+        Err(format!("{text:?} is not a color name or #hex code"))
+    }
+}

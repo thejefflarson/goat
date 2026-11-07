@@ -330,9 +330,13 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     }
     exports.export("goat_alloc", ExportKind::Func, shared.alloc_fn);
     exports.export("goat_live_allocs", ExportKind::Func, shared.alloc_fn + 2);
-    if program.interactive.is_some() {
+    if let Some(interactive) = &program.interactive {
         for (name, index) in INTERACTIVE_EXPORTS.iter().zip(exports_base..) {
             exports.export(name, ExportKind::Func, index);
+        }
+        for event in &interactive.events {
+            let name = format!("goat_event_{}", event.label);
+            exports.export(&name, ExportKind::Func, imports + event.func.0);
         }
     }
     module.section(&exports);

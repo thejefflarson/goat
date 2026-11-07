@@ -3,7 +3,7 @@
 
 use goat_checker::hir::Boundary;
 use goat_mir::{Host, HostValue, NoHost};
-use wasmtime::{Caller, Config, Engine, ExternType, Linker, Module, Store, Val};
+use wasmtime::{Caller, Config, Engine, ExternType, Instance, Linker, Module, Store, Val};
 
 pub mod turtle;
 
@@ -154,9 +154,11 @@ pub fn run(wasm: &[u8]) -> Result<Run, String> {
     run_with_host(wasm, NoHost).map(|(run, _)| run)
 }
 
-/// Like `run`, answering the program's `foreign` calls from `host`, which
-/// comes back so a test can read what it recorded.
-pub fn run_with_host<H: Host + 'static>(wasm: &[u8], host: H) -> Result<(Run, H), String> {
+/// A module instantiated with its imports answered from `host`.
+fn instantiate<H: Host + 'static>(
+    wasm: &[u8],
+    host: H,
+) -> Result<(Store<State<H>>, Instance), String> {
     let mut config = Config::new();
     config.wasm_tail_call(true);
     let engine = Engine::new(&config).map_err(|e| format!("engine: {e}"))?;
@@ -241,6 +243,13 @@ pub fn run_with_host<H: Host + 'static>(wasm: &[u8], host: H) -> Result<(Run, H)
     let instance = linker
         .instantiate(&mut store, &module)
         .map_err(|e| format!("instantiate: {e}"))?;
+    Ok((store, instance))
+}
+
+/// Like `run`, answering the program's `foreign` calls from `host`, which
+/// comes back so a test can read what it recorded.
+pub fn run_with_host<H: Host + 'static>(wasm: &[u8], host: H) -> Result<(Run, H), String> {
+    let (mut store, instance) = instantiate(wasm, host)?;
     let entry = instance
         .get_typed_func::<(), ()>(&mut store, "goat_entry")
         .map_err(|e| format!("missing entry point: {e}"))?;
@@ -259,4 +268,77 @@ pub fn run_with_host<H: Host + 'static>(wasm: &[u8], host: H) -> Result<(Run, H)
         },
         host,
     ))
+}
+
+/// An interactive module as its host holds it: instantiated once, then driven
+/// through its exports.
+pub struct Guest<H: Host + 'static> {
+    store: Store<State<H>>,
+    instance: Instance,
+}
+
+impl<H: Host + 'static> Guest<H> {
+    pub fn new(wasm: &[u8], host: H) -> Result<Guest<H>, String> {
+        let (store, instance) = instantiate(wasm, host)?;
+        Ok(Guest { store, instance })
+    }
+
+    /// Call the export `name`; a trap is an error.
+    pub fn call<P: wasmtime::WasmParams, R: wasmtime::WasmResults>(
+        &mut self,
+        name: &str,
+        args: P,
+    ) -> Result<R, String> {
+        let func = self
+            .instance
+            .get_typed_func::<P, R>(&mut self.store, name)
+            .map_err(|e| format!("{name}: {e}"))?;
+        func.call(&mut self.store, args)
+            .map_err(|e| format!("{name} trapped: {e:#}"))
+    }
+
+    pub fn exports(&mut self) -> Vec<String> {
+        self.instance
+            .exports(&mut self.store)
+            .map(|e| e.name().to_string())
+            .collect()
+    }
+
+    /// A goat string holding `text`, owned by the caller (count 1), as the
+    /// host hands one to an event constructor.
+    pub fn string(&mut self, text: &str) -> Result<i32, String> {
+        let len = u32::try_from(text.len()).map_err(|_| "string too long".to_string())?;
+        let ptr: u32 = self.call("goat_alloc", STR_BYTES as u32 + len)?;
+        let memory = self
+            .instance
+            .get_memory(&mut self.store, "memory")
+            .ok_or("module exports no memory")?;
+        let at = ptr as usize;
+        memory
+            .write(&mut self.store, at + STR_LEN, &len.to_le_bytes())
+            .and_then(|()| memory.write(&mut self.store, at + STR_BYTES, text.as_bytes()))
+            .map_err(|e| e.to_string())?;
+        Ok(ptr as i32)
+    }
+
+    /// `len` bytes of the module's memory at `at`.
+    pub fn read(&mut self, at: usize, len: usize) -> Result<Vec<u8>, String> {
+        let memory = self
+            .instance
+            .get_memory(&mut self.store, "memory")
+            .ok_or("module exports no memory")?;
+        let mut bytes = vec![0; len];
+        memory
+            .read(&self.store, at, &mut bytes)
+            .map_err(|e| e.to_string())?;
+        Ok(bytes)
+    }
+
+    pub fn live_allocs(&mut self) -> Result<u32, String> {
+        self.call("goat_live_allocs", ())
+    }
+
+    pub fn into_host(self) -> H {
+        self.store.into_data().host
+    }
 }

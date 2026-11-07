@@ -9,6 +9,7 @@ pub mod kinds;
 pub mod lower;
 mod order;
 pub mod ty;
+pub mod vocab;
 
 pub use captures::Target;
 pub use error::GoatError;
