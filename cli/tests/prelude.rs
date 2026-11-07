@@ -42,7 +42,8 @@ fn every_example_behaves_the_same_with_a_prelude_around_it() {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         let uses_built_in_prelude = path.ends_with("stdlib.goat") || path.ends_with("spiral.goat");
-        let driven_by_a_host = path.ends_with("interactive.goat");
+        let driven_by_a_host =
+            path.ends_with("interactive.goat") || path.ends_with("arrow_draw.goat");
         if path.extension().is_some_and(|e| e == "goat")
             && !uses_built_in_prelude
             && !driven_by_a_host

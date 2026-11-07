@@ -33,6 +33,8 @@
   }
   textarea, pre { font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; padding: 8px; }
   textarea { height: 20rem; resize: vertical; tab-size: 2; }
+  canvas:focus-visible { outline: 2px solid var(--accent); }
+  select { font: inherit; padding: 8px; margin-left: 8px; }
   canvas { aspect-ratio: 1; height: auto; display: block; background: #fff; }
   pre { overflow-x: auto; white-space: pre; }
   #problems { color: var(--error); border-color: var(--error); }
@@ -49,28 +51,64 @@
 <main>
   <header><h1>goat</h1></header>
   <section>
-    <textarea id="source" aria-label="goat code" spellcheck="false" autocapitalize="off" autocomplete="off">color("purple");
-for side from 1 to 60 do
-  forward(side * 3);
-  right(89)
-done
-</textarea>
+    <textarea id="source" aria-label="goat code" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
     <button id="run" disabled>Run</button>
+    <select id="example" aria-label="example program">
+      <option value="arrow_draw">Arrow keys draw (interactive)</option>
+      <option value="spiral">Spiral (run once)</option>
+    </select>
   </section>
-  <canvas id="canvas" width="600" height="600" aria-label="turtle drawing"></canvas>
+  <canvas id="canvas" width="600" height="600" aria-label="drawing" tabindex="0"></canvas>
   <pre id="problems" role="alert" hidden></pre>
   <pre id="output" aria-label="printed output" hidden></pre>
 </main>
 <script type="module">
   import { compile, loadCompiler } from "./dist/compile.js";
+  import { isInteractiveModule, runInteractive } from "./dist/loop.js";
   import { animate, run } from "./dist/runtime.js";
 
   // Serving the repository root makes this resolve after a release build of goat_web.
   const COMPILER_URL = "../target/wasm32-unknown-unknown/release/goat_web.wasm";
 
   const $ = (id) => document.getElementById(id);
-  const [source, button, canvas, problems, output] =
-    ["source", "run", "canvas", "problems", "output"].map($);
+  const [source, button, canvas, problems, output, example] =
+    ["source", "run", "canvas", "problems", "output", "example"].map($);
+
+  const EXAMPLES = {
+    arrow_draw: `# Press Run, click the picture, then use the arrow keys.
+init = {x: 300, y: 300, path: [{x: 300, y: 300}]}
+
+step = program(model, dx, dy) do
+  next = {x: model.x + dx, y: model.y + dy}
+  {...model, x: next.x, y: next.y, path: Link(next, model.path)}
+done
+
+update = program(model, event) do
+  match event do
+    KeyDown(key) then match key do
+      Up then step(model, 0, 0 - 10)
+      Down then step(model, 0, 10)
+      Left then step(model, 0 - 10, 0)
+      Right then step(model, 10, 0)
+    else model done
+  done
+done
+
+draw = program(model) do
+  [Polyline({points: model.path, color: "purple"})]
+done
+`,
+    spiral: `color("purple");
+for side from 1 to 60 do
+  forward(side * 3);
+  right(89)
+done
+`,
+  };
+  source.value = EXAMPLES.arrow_draw;
+  example.addEventListener("change", () => (source.value = EXAMPLES[example.value]));
+
+  let loop;
 
   function show(el, text) {
     el.textContent = text;
@@ -86,6 +124,7 @@ done
   }
 
   button.addEventListener("click", async () => {
+    loop?.stop();
     button.disabled = true;
     show(problems, "");
     show(output, "");
@@ -93,6 +132,11 @@ done
     try {
       const compiled = await compile(compiler, source.value);
       if (!compiled.ok) return show(problems, compiled.diagnostics);
+      if (isInteractiveModule(await WebAssembly.compile(compiled.module))) {
+        loop = await runInteractive(compiled.module, canvas, (message) => show(problems, message));
+        canvas.focus();
+        return;
+      }
       const lines = [];
       const { commands } = await run(compiled.module, { onOutput: (line) => lines.push(line) });
       show(output, lines.join("\n"));

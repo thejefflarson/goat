@@ -1,0 +1,23 @@
+# An Etch A Sketch: each arrow key moves the turtle one step and the drawing
+# keeps the whole trail. `path` lists the points the turtle has visited, newest first.
+init = {x: 0, y: 0, path: [{x: 0, y: 0}]}
+
+step = program(model, dx, dy) do
+  next = {x: model.x + dx, y: model.y + dy}
+  {...model, x: next.x, y: next.y, path: Link(next, model.path)}
+done
+
+update = program(model, event) do
+  match event do
+    KeyDown(key) then match key do
+      Up then step(model, 0, 0 - 10)
+      Down then step(model, 0, 10)
+      Left then step(model, 0 - 10, 0)
+      Right then step(model, 10, 0)
+    else model done
+  done
+done
+
+draw = program(model) do
+  [Polyline({points: model.path, color: "purple"})]
+done
