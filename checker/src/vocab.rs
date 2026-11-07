@@ -2,7 +2,7 @@
 //! and the shapes it draws from `draw`. A program may use any subset; the
 //! checker rejects a tag outside these lists.
 
-use crate::ty::{Row, Ty, TypeVar};
+use crate::ty::{Group, Row, Ty, TypeVar};
 
 pub const EVENT_TAGS: [&str; 6] = [
     "Tick",
@@ -18,20 +18,31 @@ pub const SHAPE_TAGS: [&str; 2] = ["Polyline", "Line"];
 /// The tags of `Key`, the payload of `KeyDown` and `KeyUp`.
 pub const KEY_TAGS: [&str; 5] = ["Up", "Down", "Left", "Right", "Other"];
 
-/// Every tag the host speaks, which lowering treats as declared.
+/// The host tags that stay open rows: events and shapes. `update` and `draw`
+/// close them to the tags the program handles or draws.
 pub fn tag_names() -> impl Iterator<Item = &'static str> {
-    EVENT_TAGS.into_iter().chain(SHAPE_TAGS).chain(KEY_TAGS)
+    EVENT_TAGS.into_iter().chain(SHAPE_TAGS)
+}
+
+/// The built-in `tag Key = Up | Down | Left | Right | Other(String)`, the one
+/// source of both its tags and the payload of `KeyDown` and `KeyUp`.
+pub fn key_group() -> Group {
+    let payload = |tag: &str| if tag == "Other" { Ty::Str } else { Ty::Unit };
+    Group {
+        tags: KEY_TAGS
+            .iter()
+            .map(|tag| (tag.to_string(), payload(tag)))
+            .collect(),
+        recursive: false,
+    }
 }
 
 fn row<const N: usize>(fields: [(&str, Ty); N]) -> Row {
-    fields
-        .into_iter()
-        .rev()
-        .fold(Row::Empty, |rest, (label, field)| Row::Extend {
-            label: label.to_string(),
-            field: Box::new(field),
-            rest: Box::new(rest),
-        })
+    Row::of(
+        fields
+            .into_iter()
+            .map(|(label, field)| (label.to_string(), field)),
+    )
 }
 
 fn record<const N: usize>(fields: [(&str, Ty); N]) -> Ty {
@@ -40,16 +51,6 @@ fn record<const N: usize>(fields: [(&str, Ty); N]) -> Ty {
 
 fn point() -> Ty {
     record([("x", Ty::Number), ("y", Ty::Number)])
-}
-
-fn key() -> Ty {
-    Ty::Variant(row([
-        ("Up", Ty::Unit),
-        ("Down", Ty::Unit),
-        ("Left", Ty::Unit),
-        ("Right", Ty::Unit),
-        ("Other", Ty::Str),
-    ]))
 }
 
 /// `μbinder. [Empty, Link: {0: item, 1: binder}]`
@@ -65,7 +66,7 @@ pub fn list(binder: TypeVar, item: Ty) -> Ty {
 pub fn event_payload(tag: &str) -> Option<Ty> {
     Some(match tag {
         "Tick" => Ty::Number,
-        "KeyDown" | "KeyUp" => key(),
+        "KeyDown" | "KeyUp" => key_group().instantiate(0),
         "PointerMove" | "PointerDown" | "PointerUp" => point(),
         _ => return None,
     })

@@ -90,6 +90,133 @@ mod tests {
         check(source).expect("checks").typed.warnings
     }
 
+    /// The one error's message and the source text its span covers.
+    fn spanned_error(source: &str) -> (String, String) {
+        let errors = check(source).err().expect("should not check");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        let span = errors[0].span;
+        (
+            errors[0].message.clone(),
+            source[span.start..span.end].to_string(),
+        )
+    }
+
+    const SHAPE: &str = "tag Shape = Circle(Number) | Square(Number) | Dot ";
+
+    #[test]
+    fn a_grouped_match_covering_every_tag_needs_no_else() {
+        let src = format!(
+            "{SHAPE} area = program(s) do match s do \
+               Circle(r) then r Square(w) then w * w Dot then 0 done done \
+             area(Circle(2))"
+        );
+        assert_eq!(type_of(&src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn a_grouped_tag_builds_the_closed_group() {
+        let ty = type_of(&format!("{SHAPE} Dot")).unwrap();
+        assert_eq!(ty, "[Circle: Number, Square: Number, Dot]");
+    }
+
+    #[test]
+    fn a_grouped_match_missing_a_tag_is_a_spanned_error() {
+        let src = format!("{SHAPE} match Dot do Circle(r) then r Square(w) then w done");
+        let (message, text) = spanned_error(&src);
+        assert!(message.contains("doesn't handle `Dot`"), "{message}");
+        assert_eq!(text, "Dot");
+    }
+
+    #[test]
+    fn a_grouped_match_may_still_have_an_else() {
+        let src = format!("{SHAPE} match Dot do Circle(r) then r else 0 done");
+        assert_eq!(type_of(&src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn an_arm_for_a_tag_outside_the_group_is_an_error() {
+        let src = format!("{SHAPE} tag Stray match Dot do Stray then 1 else 0 done");
+        let err = type_of(&src).unwrap_err();
+        assert!(err.contains("matches `Stray`"), "{err}");
+    }
+
+    #[test]
+    fn a_grouped_payload_is_checked_against_the_declaration() {
+        let (message, text) = spanned_error(&format!("{SHAPE} Circle(\"big\")"));
+        assert!(message.contains("Number"), "{message}");
+        assert_eq!(text, "Circle(\"big\")");
+    }
+
+    #[test]
+    fn a_tag_in_two_groups_is_a_spanned_duplicate_error() {
+        for src in [
+            "tag A | B tag B | C 1",
+            "tag A | A 1",
+            "tag Light = Up | Stop 1",
+            "tag Empty | Full 1",
+            "tag Tick | Tock 1",
+        ] {
+            let (message, text) = spanned_error(src);
+            assert!(message.starts_with("duplicate tag"), "{src}: {message}");
+            assert!(
+                ["B", "A", "Up", "Empty", "Tick"].contains(&text.as_str()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_flat_tag_may_not_join_a_group() {
+        let (message, text) = spanned_error("tag A tag B | A 1");
+        assert!(message.starts_with("duplicate tag `A`"), "{message}");
+        assert_eq!(text, "A");
+    }
+
+    #[test]
+    fn a_recursive_group_is_a_recursive_type() {
+        let src = "tag Tree = Leaf | Node({left: Tree, right: Tree}) \
+                   depth = program(t) do match t do \
+                     Leaf then 0 \
+                     Node(n) then 1 + depth(n.left) \
+                   done done \
+                   depth(Node({left: Node({left: Leaf, right: Leaf}), right: Leaf}))";
+        let checked = check(src).expect("checks");
+        assert_eq!(checked.typed.root_ty.to_string(), "Number");
+        let tree = type_of("tag Tree = Leaf | Node({left: Tree, right: Tree}) Leaf").unwrap();
+        assert!(tree.starts_with("μ"), "{tree}");
+    }
+
+    #[test]
+    fn a_recursive_group_rejects_a_payload_of_the_wrong_shape() {
+        let src = "tag Tree = Leaf | Node({left: Tree, right: Tree}) Node({left: 1, right: Leaf})";
+        assert!(type_of(src).is_err());
+    }
+
+    #[test]
+    fn a_payload_naming_an_unknown_type_is_a_spanned_error() {
+        let (message, text) = spanned_error("tag Box(Widget) 1");
+        assert!(
+            message.contains("a tag payload can't be `Widget`"),
+            "{message}"
+        );
+        assert_eq!(text, "Widget");
+        let (message, _) = spanned_error("tag Bag(Number, [Number]) | Empty2 1");
+        assert!(message.contains("a list"), "{message}");
+    }
+
+    #[test]
+    fn several_payload_types_make_a_record_payload() {
+        let src = "tag Pair(Number, String) | Nothing match Pair(1, \"a\") do \
+                     Pair(n, s) then n Nothing then 0 done";
+        assert_eq!(type_of(src).unwrap(), "Number");
+    }
+
+    #[test]
+    fn a_flat_tag_stays_open() {
+        let src = "tag A tag B match A do A then 1 else 2 done";
+        assert_eq!(type_of(src).unwrap(), "Number");
+    }
+
     #[test]
     fn match_binders_record_their_types() {
         let checked = check(

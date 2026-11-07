@@ -100,7 +100,12 @@ turtle.**
   makes any record with the right fields fit.
 - **Variants are structural and inferred.** A tag is introduced by a `tag`
   declaration (`tag Circle`), not by capitalization (ADR 0016): `Circle(5)`,
-  `Empty`, `Link(1, rest)`.
+  `Empty`, `Link(1, rest)`. A grouped declaration closes its tags into one
+  variant type: `tag Shape = Circle(Number) | Dot` makes `match` over a `Shape`
+  exhaustive with no `else`, and a named group may hold itself
+  (`tag Tree = Leaf | Node({left: Tree, right: Tree})`). The host's `Key`
+  (`Up | Down | Left | Right | Other(String)`) is such a built-in group. A
+  lone `tag Foo` stays an open tag.
 - **Recursive types are allowed only when the cycle passes through a variant
   tag** (OCaml's default for polymorphic variants). This makes `List` and
   `Tree` definable in goat with full inference, while `f(f)`-style mistakes

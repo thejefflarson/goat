@@ -62,6 +62,28 @@ fn runs_the_tags_example() {
 }
 
 #[test]
+fn runs_the_groups_example() {
+    let out = goat(&[
+        "run",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/groups.goat"),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "25\n2\n");
+}
+
+#[test]
+fn a_missing_arm_in_a_grouped_match_is_a_spanned_error_on_stderr() {
+    let out = run_source(
+        "p.goat",
+        "tag Light = Red | Green match Red do Red then 1 done",
+    );
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("doesn't handle `Green`"), "{stderr}");
+    assert!(stderr.contains("^^^"), "span caret missing: {stderr}");
+}
+
+#[test]
 fn an_undeclared_tag_is_a_spanned_error_on_stderr() {
     let out = run_source("p.goat", "match Empty do Dwon then 1 else 0 done");
     assert!(!out.status.success());

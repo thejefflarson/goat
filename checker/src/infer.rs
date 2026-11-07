@@ -32,7 +32,7 @@ use crate::hir::{
     Span, Symbol,
 };
 use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
-use crate::ty::{Row, Scheme, Ty, TypeVar};
+use crate::ty::{Group, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{EVENT_TAGS, SHAPE_TAGS, event_payload, list, shape_payload};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -1101,12 +1101,19 @@ impl Inferer {
                 self.unify(&record_ty, &expected, expr.span);
                 field_ty
             }
-            ExprKind::Tag { name, payload } => {
+            ExprKind::Tag {
+                name,
+                payload,
+                group,
+            } => {
                 let payload_ty = match payload {
                     Some(p) => self.infer(p),
                     None => Ty::Unit,
                 };
                 self.constructed.push((name.clone(), expr.span));
+                if let Some(group) = group {
+                    return self.construct_grouped(group, name, &payload_ty, expr.span);
+                }
                 Ty::Variant(Row::Extend {
                     label: name.clone(),
                     field: Box::new(payload_ty),
@@ -1119,6 +1126,19 @@ impl Inferer {
                 else_branch,
             } => self.infer_match(scrutinee, arms, else_branch.as_deref()),
         }
+    }
+
+    /// A tag of a declared group builds the group's whole closed type, so a
+    /// `match` over it needs every tag and no annotation.
+    fn construct_grouped(&mut self, group: &Group, tag: &str, payload: &Ty, span: Span) -> Ty {
+        let binder = self.fresh_id();
+        let whole = group.instantiate(binder);
+        if let Ty::Variant(row) = whole.unfold_head()
+            && let Some(expected) = field_of(&row, tag)
+        {
+            self.unify(payload, expected, span);
+        }
+        whole
     }
 
     /// The type of `lhs op rhs` given its operands' types. Called after the
@@ -1549,7 +1569,7 @@ fn occurs_row(var: TypeVar, row: &Row) -> bool {
     }
 }
 
-fn subst_vars(ty: &Ty, mapping: &HashMap<TypeVar, TypeVar>) -> Ty {
+pub(crate) fn subst_vars(ty: &Ty, mapping: &HashMap<TypeVar, TypeVar>) -> Ty {
     match ty {
         Ty::Var(v) => Ty::Var(mapping.get(v).copied().unwrap_or(*v)),
         Ty::Func(args, ret) => Ty::Func(

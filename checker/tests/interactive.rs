@@ -294,3 +294,33 @@ done
 ";
     checks(&interactive("{x: 0, path: [{x: 0, y: 0}]}", UPDATE, draw));
 }
+
+fn key_update(arms: &str) -> String {
+    update_of(&format!(
+        "    KeyDown(key) then match key do\n{arms}\n    done"
+    ))
+}
+
+const EVERY_KEY: &str =
+    "Up then model Down then model Left then model Right then model Other(s) then model";
+
+#[test]
+fn the_key_group_is_closed_so_its_match_needs_no_else() {
+    checks(&interactive("{x: 0}", &key_update(EVERY_KEY), DRAW));
+}
+
+#[test]
+fn a_key_match_missing_a_key_is_a_spanned_error() {
+    let arms = EVERY_KEY.replace("Right then model ", "");
+    let (message, text) = the_error(&interactive("{x: 0}", &key_update(&arms), DRAW));
+    assert!(message.contains("`Right`"), "{message}");
+    assert!(text.starts_with("program(model, event)"), "{text}");
+}
+
+#[test]
+fn a_key_tag_cannot_be_redeclared() {
+    let source = format!("tag Up | Sideways\n{}", interactive("{x: 0}", UPDATE, DRAW));
+    let (message, text) = the_error(&source);
+    assert!(message.starts_with("duplicate tag `Up`"), "{message}");
+    assert_eq!(text, "Up");
+}

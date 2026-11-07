@@ -14,7 +14,9 @@ update = program(model, event) do
       Down then step(model, 0, 10)
       Left then step(model, 0 - 10, 0)
       Right then step(model, 10, 0)
-    else model done
+      Other(name) then model
+    done
+    else model
   done
 done
 

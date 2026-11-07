@@ -107,9 +107,14 @@ unicode = _{ XID_START ~ XID_CONTINUE{0, 254} }
 name = @{ !keyword ~ unicode+ }
 
 // Actual grammar
-// `tag Circle` declares a tag. Declarations come first and are hoisted: they
-// produce no value and every tag is visible to the whole program.
-tag_decl = { tag_kw ~ name }
+// `tag Circle` declares a tag; `tag Shape = Circle(Number) | Dot` declares a
+// closed group of them, named only when a payload refers back to it.
+// Declarations come first and are hoisted: they produce no value and every tag
+// is visible to the whole program.
+bar = _{ "|" }
+tag_decl = { tag_kw ~ (group_name ~ equals)? ~ tag_case ~ (bar ~ tag_case)* }
+group_name = { name }
+tag_case = { name ~ (lparen ~ type_expr ~ (comma ~ type_expr)* ~ rparen)? }
 goat = { SOI ~ tag_decl* ~ expr? ~ EOI }
 // `a; b` runs `a`, drops its value, and continues with `b`. The `;` is what
 // keeps `f(x) (y)` and `f(x) -y` from reading as two statements: a statement

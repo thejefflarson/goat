@@ -10,12 +10,14 @@ use crate::hir::{
     BinOp, Boundary, Builtin, ContractBinding, Expr, ExprId, ExprKind, FileId, Interactive,
     MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
 };
+use crate::ty::{Group, Row, Ty};
 use crate::vocab;
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
 use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
+use std::sync::Arc;
 
 /// Deepest expression tree lowering accepts; deeper input would overflow the
 /// recursive passes (inference, codegen) that walk the tree.
@@ -68,7 +70,13 @@ pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatEr
         LIST_TAGS
             .into_iter()
             .chain(vocab::tag_names())
-            .map(String::from),
+            .map(|tag| (tag.to_string(), None)),
+    );
+    let key = Arc::new(vocab::key_group());
+    ctx.tags.extend(
+        key.tags
+            .iter()
+            .map(|(tag, _)| (tag.clone(), Some(key.clone()))),
     );
     let mut prelude_root = ctx.lower_source(prelude, FileId::Prelude)?;
 
@@ -232,8 +240,8 @@ struct Lower {
     prelude_scope: HashMap<String, Symbol>,
     list_leaves: usize,
     /// Every declared tag, built-in and written: one flat namespace for the
-    /// whole program.
-    tags: HashSet<String>,
+    /// whole program, each tag with the closed group it belongs to, if any.
+    tags: HashMap<String, Option<Arc<Group>>>,
 }
 
 impl Lower {
@@ -250,13 +258,106 @@ impl Lower {
             .into_inner()
             .filter(|p| p.as_rule() == Rule::tag_decl)
         {
-            let name = decl.into_inner().find(|p| p.as_rule() == Rule::name);
-            self.tags.extend(name.map(|n| n.as_str().to_string()));
+            self.declare_tags(decl);
         }
         self.scopes.push(self.prelude_scope.clone());
         let root = self.lower_goat(goat);
         self.scopes.pop();
         Ok(root)
+    }
+
+    /// `tag Foo` opens one tag. Anything with a group name, a payload or a `|`
+    /// closes its tags into a group, and each tag belongs to one group only.
+    fn declare_tags(&mut self, decl: Pair<Rule>) {
+        let mut group_name = None;
+        let mut cases = Vec::new();
+        for part in decl.into_inner() {
+            match part.as_rule() {
+                Rule::group_name => group_name = Some(part.as_str().to_string()),
+                Rule::tag_case => cases.push(part),
+                _ => {}
+            }
+        }
+        let is_flat = group_name.is_none()
+            && matches!(cases.as_slice(), [case] if case.clone().into_inner().count() == 1);
+        let mut recursive = false;
+        let mut tags = Vec::new();
+        let mut declared: Vec<String> = Vec::new();
+        for case in cases {
+            let mut parts = case.into_inner();
+            let name = parts.next().expect("a tag case names its tag");
+            let span = self.span_of(&name);
+            let payload: Vec<Ty> = parts
+                .map(|ty| self.payload_ty(&ty, group_name.as_deref(), &mut recursive))
+                .collect();
+            let payload = match payload.len() {
+                0 => Ty::Unit,
+                1 => payload.into_iter().next().expect("one payload"),
+                _ => Ty::Record(Row::of(
+                    payload
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, field)| (i.to_string(), field)),
+                )),
+            };
+            let name = name.as_str().to_string();
+            let taken = declared.contains(&name)
+                || self
+                    .tags
+                    .get(&name)
+                    .is_some_and(|group| group.is_some() || !is_flat);
+            if taken {
+                self.errors.push(GoatError::new(
+                    span,
+                    format!("duplicate tag `{name}`; a tag belongs to exactly one declaration"),
+                ));
+            }
+            declared.push(name.clone());
+            tags.push((name, payload));
+        }
+        let group = (!is_flat).then(|| Arc::new(Group { tags, recursive }));
+        for name in declared {
+            self.tags.entry(name).or_insert_with(|| group.clone());
+        }
+    }
+
+    /// A tag payload's type: `group` stands for the group being declared.
+    fn payload_ty(&mut self, ty: &Pair<Rule>, group: Option<&str>, recursive: &mut bool) -> Ty {
+        let (shape, hint) = match ty.as_rule() {
+            Rule::type_name if group == Some(ty.as_str()) => {
+                *recursive = true;
+                return Ty::Var(Group::SELF);
+            }
+            Rule::type_name => match Boundary::named(ty.as_str()) {
+                Some(boundary) => return boundary.into(),
+                None => (
+                    format!("`{}`", ty.as_str()),
+                    "; a payload is Number, Bool, Unit, String, a record of those, or the group itself",
+                ),
+            },
+            Rule::record_type => {
+                let fields: Vec<(String, Ty)> = ty
+                    .clone()
+                    .into_inner()
+                    .map(|field| {
+                        let mut parts = field.into_inner();
+                        let label = parts.next().expect("a field type has a label");
+                        let ty = parts.next().expect("a field type has a type");
+                        let ty = self.payload_ty(&ty, group, recursive);
+                        (label.as_str().to_string(), ty)
+                    })
+                    .collect();
+                return Ty::Record(Row::of(fields));
+            }
+            Rule::list_type => ("a list".to_string(), ""),
+            Rule::fn_type => ("a function".to_string(), ""),
+            other => unreachable!("unexpected type rule {other:?}"),
+        };
+        self.errors.push(GoatError::new(
+            self.span_of(ty),
+            format!("a tag payload can't be {shape} yet{hint}"),
+        ));
+        Ty::Unit
     }
 
     fn span_of(&self, pair: &Pair<Rule>) -> Span {
@@ -679,7 +780,7 @@ impl Lower {
 
     /// A name is a tag when one is declared and no binding shadows it.
     fn is_tag(&self, name: &str) -> bool {
-        self.resolve(name).is_none() && self.tags.contains(name)
+        self.resolve(name).is_none() && self.tags.contains_key(name)
     }
 
     fn var(&mut self, span: Span, name: String) -> Expr {
@@ -1103,7 +1204,7 @@ impl Lower {
     fn similar_tag(&self, name: &str) -> Option<&str> {
         let name: Vec<char> = name.to_lowercase().chars().collect();
         self.tags
-            .iter()
+            .keys()
             .filter(|tag| within_one_edit(&tag.to_lowercase().chars().collect::<Vec<_>>(), &name))
             .min()
             .map(String::as_str)
@@ -1141,11 +1242,13 @@ impl Lower {
                 Some(self.node(span, ExprKind::Record { fields }))
             }
         };
+        let group = self.tags.get(&name).cloned().flatten();
         self.node(
             span,
             ExprKind::Tag {
                 name,
                 payload: payload.map(Box::new),
+                group,
             },
         )
     }
@@ -1212,7 +1315,7 @@ impl Lower {
         let mut inner = pair.into_inner();
         let head = inner.next().expect("a pattern begins with a tag name");
         let tag = head.as_str().to_string();
-        if !self.tags.contains(&tag) {
+        if !self.tags.contains_key(&tag) {
             let hint = self
                 .similar_tag(&tag)
                 .map_or_else(String::new, |t| format!(", did you mean `{t}`?"));
@@ -1955,7 +2058,7 @@ mod tests {
 
     fn tag_parts(e: &Expr) -> (&str, Option<&Expr>) {
         match &e.kind {
-            ExprKind::Tag { name, payload } => (name, payload.as_deref()),
+            ExprKind::Tag { name, payload, .. } => (name, payload.as_deref()),
             other => panic!("expected a tag, got {other:?}"),
         }
     }

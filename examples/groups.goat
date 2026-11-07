@@ -1,0 +1,23 @@
+# A grouped `tag` declaration closes its tags into one type, so a `match`
+# must handle every tag and needs no `else`. A group that names itself
+# (`Tree`) can hold itself in a payload.
+tag Light = Red | Green | Amber
+tag Tree = Leaf | Node({left: Tree, right: Tree})
+
+seconds = program(light) do
+  match light do
+    Red then 30
+    Green then 25
+    Amber then 5
+  done
+done
+
+size = program(tree) do
+  match tree do
+    Leaf then 0
+    Node(n) then 1 + size(n.left) + size(n.right)
+  done
+done
+
+print(seconds(Green));
+print(size(Node({left: Node({left: Leaf, right: Leaf}), right: Leaf})));
