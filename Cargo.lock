@@ -715,6 +715,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "goat_web"
+version = "0.1.0"
+dependencies = [
+ "goat",
+ "goat_checker",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
