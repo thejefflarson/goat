@@ -133,6 +133,26 @@ impl BinOp {
     }
 }
 
+/// A top-level binding the interactive contract names: the span of its value,
+/// and the node of its use in the synthetic tail the contract adds to the root
+/// chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContractBinding {
+    pub span: Span,
+    pub use_id: ExprId,
+}
+
+/// A program whose root chain binds `init`, `update` and `draw` once each is
+/// interactive (ADR 0015). Lowering ends its chain with the record
+/// `{draw: draw, init: init, update: update}`, so inference and
+/// monomorphization see the three values like any other uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Interactive {
+    pub init: ContractBinding,
+    pub update: ContractBinding,
+    pub draw: ContractBinding,
+}
+
 #[derive(Clone, Debug)]
 pub struct Param {
     pub symbol: Symbol,

@@ -38,7 +38,8 @@ type Set = BTreeSet<Local>;
 /// Insert `Dup` and `Drop` throughout `program`, which must contain none. The
 /// entry's value, when it is a pointer other than a string, has no consumer and
 /// is dropped here, so the entry then returns `Unit`; a string root is handed
-/// to the host.
+/// to the host, and so is an interactive program's, which holds its model and
+/// closures.
 pub fn insert_rc(program: &mut Program) {
     let bodies: Vec<Expr> = program
         .funcs
@@ -53,7 +54,8 @@ pub fn insert_rc(program: &mut Program) {
         );
         func.body = body;
     }
-    if let Some(entry) = program.funcs.get_mut(program.entry.0 as usize)
+    if program.interactive.is_none()
+        && let Some(entry) = program.funcs.get_mut(program.entry.0 as usize)
         && matches!(entry.ret, MTy::Ptr(kind) if kind != HeapKind::Str)
     {
         let body = std::mem::replace(&mut entry.body, Expr::Const(Const::Unit));

@@ -7,8 +7,8 @@
 
 use crate::error::GoatError;
 use crate::hir::{
-    BinOp, Boundary, Builtin, Expr, ExprId, ExprKind, FileId, MatchArm, Param, Pattern,
-    PatternPayload, Span, Symbol,
+    BinOp, Boundary, Builtin, ContractBinding, Expr, ExprId, ExprKind, FileId, Interactive,
+    MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
 };
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
@@ -44,6 +44,7 @@ pub struct Lowered {
     pub root: Expr,
     pub errors: Vec<GoatError>,
     pub warnings: Vec<GoatError>,
+    pub interactive: Option<Interactive>,
 }
 
 /// Parse and lower `source` on its own, with no prelude.
@@ -73,11 +74,42 @@ pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatEr
         }
         prelude_root
     };
+    let mut root = root;
+    let interactive = ctx.make_interactive(&mut root);
     Ok(Lowered {
         root,
         errors: ctx.errors,
         warnings: ctx.warnings,
+        interactive,
     })
+}
+
+const INTERACTIVE_NAMES: [&str; 3] = ["init", "update", "draw"];
+
+/// The value span and symbol of each of `INTERACTIVE_NAMES` the root chain
+/// binds exactly once; `None` when one is missing or rebound (a rebinding
+/// shadows the first, ADR 0003, and the program runs once).
+fn contract_bindings(root: &Expr) -> Option<[(Symbol, Span); 3]> {
+    let mut found: [Vec<(Symbol, Span)>; 3] = Default::default();
+    let mut next = Some(root);
+    while let Some(Expr {
+        kind:
+            ExprKind::Let {
+                symbol,
+                name,
+                value,
+                rest,
+            },
+        ..
+    }) = next
+    {
+        if let Some(i) = INTERACTIVE_NAMES.iter().position(|n| n == name) {
+            found[i].push((*symbol, value.span));
+        }
+        next = rest.as_deref();
+    }
+    let [init, update, draw] = found.map(|f| <[_; 1]>::try_from(f).ok().map(|[b]| b));
+    Some([init?, update?, draw?])
 }
 
 /// The names bound by the chain of `Let`s that starts at `root`, and the
@@ -220,6 +252,54 @@ impl Lower {
         let id = self.next_expr_id;
         self.next_expr_id += 1;
         id
+    }
+
+    /// End the root chain of an interactive program with the record its three
+    /// bindings make, keeping any trailing expression as a discarded value.
+    fn make_interactive(&mut self, root: &mut Expr) -> Option<Interactive> {
+        let [init, update, draw] = contract_bindings(root)?;
+        let end = Span::in_file(root.span.end, root.span.end, FileId::User);
+        let mut uses = Vec::new();
+        let mut fields = Vec::new();
+        for (name, (symbol, span)) in INTERACTIVE_NAMES.iter().zip([init, update, draw]) {
+            let var = self.node(
+                end,
+                ExprKind::Var {
+                    symbol,
+                    name: name.to_string(),
+                },
+            );
+            uses.push(ContractBinding {
+                span,
+                use_id: var.id,
+            });
+            fields.push((name.to_string(), var));
+        }
+        let tail = self.node(end, ExprKind::Record { fields });
+        self.append_to_chain(root, tail, end);
+        Some(Interactive {
+            init: uses[0],
+            update: uses[1],
+            draw: uses[2],
+        })
+    }
+
+    /// Make `tail` the last thing in the chain of `Let`s at `chain`; an
+    /// expression already there runs first, its value discarded.
+    fn append_to_chain(&mut self, chain: &mut Expr, tail: Expr, span: Span) {
+        let ExprKind::Let { rest, .. } = &mut chain.kind else {
+            unreachable!("the chain holds the bindings found above");
+        };
+        match rest {
+            Some(next) if matches!(next.kind, ExprKind::Let { .. }) => {
+                self.append_to_chain(next, tail, span)
+            }
+            Some(_) => {
+                let old = rest.take().expect("matched Some");
+                *rest = Some(Box::new(self.discard(span, *old, tail)));
+            }
+            None => *rest = Some(Box::new(tail)),
+        }
     }
 
     fn node(&mut self, span: Span, kind: ExprKind) -> Expr {

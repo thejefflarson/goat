@@ -27,7 +27,10 @@
 //! on [`Inferer::unify_ty`].
 
 use crate::error::GoatError;
-use crate::hir::{BinOp, Builtin, Expr, ExprId, ExprKind, MatchArm, PatternPayload, Span, Symbol};
+use crate::hir::{
+    BinOp, Builtin, ContractBinding, Expr, ExprId, ExprKind, Interactive, MatchArm, PatternPayload,
+    Span, Symbol,
+};
 use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
 use crate::ty::{Row, Scheme, Ty, TypeVar};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -50,8 +53,20 @@ pub struct Typed {
 }
 
 pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
+    infer_program(root, None)
+}
+
+/// Like [`infer`], for a program that may be interactive: its three contract
+/// bindings are then unified into the shape ADR 0015 gives them.
+pub fn infer_program(
+    root: &Expr,
+    interactive: Option<&Interactive>,
+) -> Result<Typed, Vec<GoatError>> {
     let mut inf = Inferer::default();
     let ty = inf.infer(root);
+    if let (true, Some(contract)) = (inf.errors.is_empty(), interactive) {
+        inf.check_contract(contract);
+    }
     if inf.errors.is_empty() {
         let warnings = inf.unused_tag_warnings();
         let root_ty = inf.finish(&ty);
@@ -711,6 +726,107 @@ impl Inferer {
         }
     }
 
+    /// `init : M`, `update : (M, E) -> M`, `draw : (M) -> List(S)`, with `M` a
+    /// record and `E` and `S` variants. The three types are the uses the
+    /// root's tail makes, so unifying them here fixes what mono specializes.
+    fn check_contract(&mut self, contract: &Interactive) {
+        let model = self.contract_ty(&contract.init);
+        if !matches!(self.resolve_head(&model), Ty::Record(_)) {
+            self.contract_error(
+                &contract.init,
+                format!(
+                    "init must be a record, like {{x: 0, y: 0}}, not `{}`",
+                    self.finish(&model)
+                ),
+            );
+            return;
+        }
+
+        let update = self.contract_ty(&contract.update);
+        match self.resolve_head(&update) {
+            Ty::Func(args, ret) if args.len() == 2 => {
+                self.unify_contract(&contract.update, &args[0], &model, "update's model");
+                self.unify_contract(&contract.update, &ret, &model, "update's result");
+                if !matches!(self.resolve_head(&args[1]), Ty::Variant(_)) {
+                    self.contract_error(
+                        &contract.update,
+                        format!(
+                            "update's second argument must be an event, a tag like Tick or KeyDown(key), not `{}`",
+                            self.finish(&args[1])
+                        ),
+                    );
+                }
+            }
+            other => self.contract_error(
+                &contract.update,
+                format!(
+                    "update must be a function of a model and an event, like program(model, event); this is `{}`",
+                    self.finish(&other)
+                ),
+            ),
+        }
+
+        let draw = self.contract_ty(&contract.draw);
+        match self.resolve_head(&draw) {
+            Ty::Func(args, ret) if args.len() == 1 => {
+                self.unify_contract(&contract.draw, &args[0], &model, "draw's model");
+                if !self.is_list_of_variants(&ret) {
+                    self.contract_error(
+                        &contract.draw,
+                        format!(
+                            "draw must return a list of shapes, like [Circle(5)], not `{}`",
+                            self.finish(&ret)
+                        ),
+                    );
+                }
+            }
+            other => self.contract_error(
+                &contract.draw,
+                format!(
+                    "draw must be a function of the model, like program(model); this is `{}`",
+                    self.finish(&other)
+                ),
+            ),
+        }
+    }
+
+    fn contract_ty(&self, binding: &ContractBinding) -> Ty {
+        self.node_types[&binding.use_id].clone()
+    }
+
+    fn contract_error(&mut self, binding: &ContractBinding, message: String) {
+        self.errors.push(GoatError::new(binding.span, message));
+    }
+
+    fn unify_contract(&mut self, binding: &ContractBinding, actual: &Ty, model: &Ty, what: &str) {
+        let before = self.errors.len();
+        self.unify(actual, model, binding.span);
+        for error in &mut self.errors[before..] {
+            error.message = format!(
+                "{what} must have the type of init's value: {}",
+                error.message
+            );
+        }
+    }
+
+    /// Whether `ty` is `[]` or a `Link` list whose items are variants.
+    fn is_list_of_variants(&self, ty: &Ty) -> bool {
+        let Ty::Variant(row) = self.resolve_head(ty) else {
+            return false;
+        };
+        let (labels, _) = row_shape(&row);
+        if !labels.iter().all(|l| is_list_tag(l)) {
+            return false;
+        }
+        let Some(link) = field_of(&row, "Link") else {
+            return true;
+        };
+        let Ty::Record(link) = self.resolve_head(link) else {
+            return false;
+        };
+        field_of(&link, "0").is_some_and(|item| matches!(self.resolve_head(item), Ty::Variant(_)))
+    }
+
     fn infer(&mut self, expr: &Expr) -> Ty {
         let ty = self.infer_kind(expr);
         self.node_types.insert(expr.id, ty.clone());
@@ -1274,6 +1390,23 @@ fn row_shape(row: &Row) -> (Vec<String>, Option<TypeVar>) {
             Row::Var(v) => return (labels, Some(*v)),
             Row::Empty => return (labels, None),
         }
+    }
+}
+
+fn field_of<'a>(row: &'a Row, label: &str) -> Option<&'a Ty> {
+    match row {
+        Row::Extend {
+            label: l,
+            field,
+            rest,
+        } => {
+            if l == label {
+                Some(field)
+            } else {
+                field_of(rest, label)
+            }
+        }
+        Row::Var(_) | Row::Empty => None,
     }
 }
 

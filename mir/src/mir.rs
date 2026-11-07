@@ -53,6 +53,25 @@ pub struct Program {
     pub data: Vec<Vec<u8>>,
     /// The host functions the program calls: one wasm import each.
     pub foreign: Vec<ForeignFn>,
+    /// Set for an interactive program (ADR 0015).
+    pub interactive: Option<Interactive>,
+}
+
+/// What a host needs to drive `init`/`update`/`draw`. The entry function
+/// returns a record holding the three values, and a host never sees it: the
+/// slots say where `setup` finds each.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Interactive {
+    pub draw_slot: usize,
+    pub init_slot: usize,
+    pub update_slot: usize,
+    /// `(closure, model, event) -> model`: calls the `update` closure.
+    pub update: FuncId,
+    /// `(closure, model) -> Unit`: calls the `draw` closure and drops the
+    /// shapes it returns.
+    pub draw: FuncId,
+    /// Each tag label and its number, so a host can build an event.
+    pub tags: Vec<(String, u32)>,
 }
 
 /// A host function, identified by the import `module` and `name`. Parameters

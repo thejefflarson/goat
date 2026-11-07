@@ -21,6 +21,10 @@ const PRINT_STRING: u32 = 2;
 /// string root) `print_string`: `write_number`, `write_string`, `write_end`.
 const WRITE_IMPORTS: u32 = 3;
 const IMMORTAL: i32 = -1;
+/// The module globals that hold an interactive program's `update` and `draw`
+/// closures, after the heap pointer and the allocator's live count.
+const UPDATE_GLOBAL: u32 = 2;
+const DRAW_GLOBAL: u32 = 3;
 
 /// wasm32 object layout (`docs/mir.md`); every offset below derives from these.
 mod layout {
@@ -120,7 +124,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     for func in &program.funcs {
         uses.scan(&func.body);
     }
-    let needs_drop = uses.drops;
+    let needs_drop = uses.drops || program.interactive.is_some();
     let mut types = Types::default();
     let print_number = types.intern(vec![ValType::F64], vec![]);
     let print_bool = types.intern(vec![ValType::I32], vec![]);
@@ -198,12 +202,32 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     }
     bodies.push(entry_wrapper(program, imports)?);
 
+    let export_bodies = match &program.interactive {
+        Some(interactive) => interactive_exports(&mut shared, interactive, imports)?,
+        None => Vec::new(),
+    };
+
     let mut next_helper = 0;
     while next_helper < shared.helpers.len() {
         let helper = shared.helpers[next_helper];
         bodies.push(helper_body(&mut shared, helper)?);
         func_types.push(shared.drop_type());
         next_helper += 1;
+    }
+
+    let exports_base = runtime_base + runtime_len + shared.helpers.len() as u32;
+    if !export_bodies.is_empty() {
+        let (one, two) = (vec![ValType::I32], vec![ValType::I32; 2]);
+        for (params, results) in [
+            (vec![], one.clone()),
+            (two, one.clone()),
+            (one.clone(), vec![]),
+            (one, vec![]),
+            (vec![], vec![]),
+        ] {
+            func_types.push(shared.types.intern(params, results));
+        }
+        bodies.extend(export_bodies);
     }
 
     if !shared.statics.is_empty() {
@@ -279,33 +303,38 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     module.section(&memory);
 
     let mut globals = GlobalSection::new();
-    globals.global(
-        GlobalType {
-            val_type: ValType::I32,
-            mutable: true,
-            shared: false,
-        },
-        &ConstExpr::i32_const(heap_start as i32),
-    );
-    globals.global(
-        GlobalType {
-            val_type: ValType::I32,
-            mutable: true,
-            shared: false,
-        },
-        &ConstExpr::i32_const(0),
-    );
+    let closure_globals = if program.interactive.is_some() { 2 } else { 0 };
+    for init in [heap_start as i32, 0]
+        .into_iter()
+        .chain(std::iter::repeat_n(0, closure_globals))
+    {
+        globals.global(
+            GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
+            &ConstExpr::i32_const(init),
+        );
+    }
     module.section(&globals);
 
     let mut exports = ExportSection::new();
     exports.export("memory", ExportKind::Memory, 0);
-    exports.export(
-        "goat_entry",
-        ExportKind::Func,
-        imports + program.funcs.len() as u32,
-    );
+    if program.interactive.is_none() {
+        exports.export(
+            "goat_entry",
+            ExportKind::Func,
+            imports + program.funcs.len() as u32,
+        );
+    }
     exports.export("goat_alloc", ExportKind::Func, shared.alloc_fn);
     exports.export("goat_live_allocs", ExportKind::Func, shared.alloc_fn + 2);
+    if program.interactive.is_some() {
+        for (name, index) in INTERACTIVE_EXPORTS.iter().zip(exports_base..) {
+            exports.export(name, ExportKind::Func, index);
+        }
+    }
     module.section(&exports);
 
     if table_len > 0 {
@@ -329,6 +358,126 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     module.section(&segments);
 
     Ok(module.finish())
+}
+
+/// The exports an interactive program adds, in the order `interactive_exports`
+/// builds their bodies.
+const INTERACTIVE_EXPORTS: [&str; 5] = [
+    "goat_setup",
+    "goat_update",
+    "goat_draw",
+    "goat_release_model",
+    "goat_shutdown",
+];
+
+/// The host-facing functions of an interactive program (ADR 0015). The host
+/// owns the model (count 1 from `goat_setup`); `goat_update` consumes it and
+/// the event, `goat_draw` keeps the host's reference, and the stored closures
+/// stay owned by the module's globals until `goat_shutdown`.
+fn interactive_exports(
+    shared: &mut Shared,
+    interactive: &Interactive,
+    imports: u32,
+) -> Result<Vec<Function>, EmitError> {
+    let program = shared.program;
+    let func = |id: FuncId| {
+        program
+            .funcs
+            .get(id.0 as usize)
+            .ok_or(EmitError::UnknownFunc(id))
+    };
+    let kind = |ty: Option<&(Local, MTy)>| match ty {
+        Some((_, MTy::Ptr(kind))) => Ok(*kind),
+        _ => Err(EmitError::Malformed("interactive entry takes no pointer")),
+    };
+    let root = func(program.entry)?;
+    let (update, draw) = (func(interactive.update)?, func(interactive.draw)?);
+    let root_kind = match root.ret {
+        MTy::Ptr(kind) => kind,
+        _ => return Err(EmitError::Malformed("interactive root is not a record")),
+    };
+    let (update_kind, model_kind) = (kind(update.params.first())?, kind(update.params.get(1))?);
+    let draw_kind = kind(draw.params.first())?;
+
+    let mut setup = Code::new();
+    setup.extend([
+        Instruction::Call(imports + program.entry.0),
+        Instruction::LocalSet(0),
+    ]);
+    for (slot, local) in [
+        (interactive.draw_slot, 1),
+        (interactive.init_slot, 2),
+        (interactive.update_slot, 3),
+    ] {
+        setup.extend([
+            Instruction::LocalGet(0),
+            Instruction::I32Load(memarg(layout::slot(layout::HEADER, slot), 2)),
+            Instruction::LocalSet(local),
+        ]);
+        retain(local, &mut setup);
+    }
+    release(shared, 0, root_kind, &mut setup)?;
+    setup.extend([
+        Instruction::LocalGet(1),
+        Instruction::GlobalSet(DRAW_GLOBAL),
+        Instruction::LocalGet(3),
+        Instruction::GlobalSet(UPDATE_GLOBAL),
+        Instruction::LocalGet(2),
+    ]);
+
+    let mut update_code = Code::new();
+    update_code.extend([
+        Instruction::GlobalGet(UPDATE_GLOBAL),
+        Instruction::LocalSet(2),
+    ]);
+    retain(2, &mut update_code);
+    update_code.extend([
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(1),
+        Instruction::Call(imports + interactive.update.0),
+    ]);
+
+    let mut draw_code = Code::new();
+    retain(0, &mut draw_code);
+    draw_code.extend([
+        Instruction::GlobalGet(DRAW_GLOBAL),
+        Instruction::LocalSet(1),
+    ]);
+    retain(1, &mut draw_code);
+    draw_code.extend([
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(0),
+        Instruction::Call(imports + interactive.draw.0),
+    ]);
+
+    let mut release_code = Code::new();
+    release(shared, 0, model_kind, &mut release_code)?;
+
+    let mut shutdown = Code::new();
+    for (global, kind) in [(UPDATE_GLOBAL, update_kind), (DRAW_GLOBAL, draw_kind)] {
+        shutdown.extend([Instruction::GlobalGet(global), Instruction::LocalSet(0)]);
+        release(shared, 0, kind, &mut shutdown)?;
+        shutdown.extend([Instruction::I32Const(0), Instruction::GlobalSet(global)]);
+    }
+
+    Ok([
+        (4, setup),
+        (1, update_code),
+        (1, draw_code),
+        (0, release_code),
+        (1, shutdown),
+    ]
+    .into_iter()
+    .map(|(locals, code)| {
+        let mut f = Function::new([(locals, ValType::I32)]);
+        for instr in &code {
+            f.instruction(instr);
+        }
+        f.instruction(&Instruction::End);
+        f
+    })
+    .collect())
 }
 
 /// An immortal string: the count never reaches zero, so it is never freed.
@@ -819,6 +968,10 @@ fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError>
         return Err(EmitError::Malformed("entry function takes parameters"));
     }
     let mut f = Function::new([]);
+    if program.interactive.is_some() {
+        f.instruction(&Instruction::End);
+        return Ok(f);
+    }
     f.instruction(&Instruction::Call(imports + program.entry.0));
     match root.ret {
         MTy::Float => {

@@ -39,6 +39,7 @@ pub fn program(funcs: Vec<Func>) -> Program {
         sigs: vec![],
         data: vec![],
         foreign: vec![],
+        interactive: None,
     }
 }
 

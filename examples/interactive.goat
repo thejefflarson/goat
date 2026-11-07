@@ -1,0 +1,13 @@
+# A program that defines `init`, `update` and `draw` is run by its host, not
+# once through: the host calls `update` for each event and `draw` to show the
+# model. `update` returns a new model; `{...model, x: 1}` copies it with `x` set.
+init = {ticks: 0, x: 0}
+
+update = program(model, event) do
+  match event do
+    Tick then {...model, ticks: model.ticks + 1}
+    Step(dx) then {...model, x: model.x + dx}
+  done
+done
+
+draw = program(model) do [Circle(model.x), Circle(model.ticks)] done
