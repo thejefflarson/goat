@@ -6,3 +6,4 @@ GoatDefs.v
 GoatMeta.v
 GoatSubst.v
 GoatBij.v
+GoatHM.v
