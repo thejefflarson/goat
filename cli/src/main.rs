@@ -29,6 +29,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let source = read(file)?;
             let checked = goat_checker::check(&source)
                 .map_err(|errors| render_errors(file, &source, &errors))?;
+            print_warnings(file, &source, &checked.typed.warnings);
             println!("{}", checked.typed.root_ty);
             Ok(ExitCode::SUCCESS)
         }
@@ -106,9 +107,18 @@ fn render_errors(file: &str, source: &str, errors: &[goat_checker::GoatError]) -
     )
 }
 
+fn print_warnings(file: &str, source: &str, warnings: &[goat_checker::GoatError]) {
+    for warning in warnings {
+        eprintln!("warning in {file}: {}", warning.render(source));
+    }
+}
+
 fn build(file: &str) -> Result<Vec<u8>, String> {
     let source = read(file)?;
-    goat::compile(&source).map_err(|errors| render_errors(file, &source, &errors))
+    let (wasm, warnings) = goat::compile_with_warnings(goat_checker::PRELUDE, &source)
+        .map_err(|errors| render_errors(file, &source, &errors))?;
+    print_warnings(file, &source, &warnings);
+    Ok(wasm)
 }
 
 fn parse_out_flag(args: &[String]) -> Option<PathBuf> {

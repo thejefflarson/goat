@@ -10,9 +10,20 @@ pub fn compile(source: &str) -> Result<Vec<u8>, Vec<GoatError>> {
 
 /// Like [`compile`], with `prelude` standing in for the built-in one.
 pub fn compile_with_prelude(prelude: &str, source: &str) -> Result<Vec<u8>, Vec<GoatError>> {
-    let checked = goat_checker::check_with_prelude(prelude, source)?;
+    compile_with_warnings(prelude, source).map(|(wasm, _)| wasm)
+}
+
+/// Like [`compile_with_prelude`], also returning the checker's non-fatal warnings.
+pub fn compile_with_warnings(
+    prelude: &str,
+    source: &str,
+) -> Result<(Vec<u8>, Vec<GoatError>), Vec<GoatError>> {
+    let mut checked = goat_checker::check_with_prelude(prelude, source)?;
+    let warnings = std::mem::take(&mut checked.typed.warnings);
     let program = goat_mir::mono(&checked)?;
-    goat_wasm::emit(&program).map_err(|e| vec![GoatError::new(Span::new(0, 0), e.to_string())])
+    let wasm = goat_wasm::emit(&program)
+        .map_err(|e| vec![GoatError::new(Span::new(0, 0), e.to_string())])?;
+    Ok((wasm, warnings))
 }
 
 /// Format a number the way the program's `print` shows it: whole values within
@@ -104,6 +115,15 @@ mod tests {
     fn compile_produces_a_wasm_module() {
         let bytes = compile("1 + 2 * 3").expect("compiles");
         assert_eq!(&bytes[..4], b"\0asm");
+    }
+
+    #[test]
+    fn compile_returns_warnings_alongside_the_module() {
+        let src = "match Cirle(5) do Circle(r) then r else 0 done";
+        let (wasm, warnings) = compile_with_warnings(goat_checker::PRELUDE, src).expect("compiles");
+        assert_eq!(&wasm[..4], b"\0asm");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("Cirle"));
     }
 
     #[test]
