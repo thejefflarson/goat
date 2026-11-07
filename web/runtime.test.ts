@@ -111,3 +111,8 @@ test("an invalid color and a non-finite number trap", async () => {
   const nan = await compileOk("forward(0 / 0)");
   await assert.rejects(run(nan), /real number/);
 });
+
+test("a trap in the program reaches the host with its message", async () => {
+  const empty = await compileOk("first([]) + 1");
+  await assert.rejects(run(empty), /first of an empty list/);
+});

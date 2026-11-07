@@ -6,7 +6,7 @@ use crate::mir::*;
 use crate::rc::insert_rc;
 use goat_checker::captures::for_each_child;
 use goat_checker::hir::{
-    self, BinOp, Boundary, Builtin, ExprId, ExprKind, Param, PatternPayload, Symbol,
+    self, BinOp, Boundary, Builtin, ExprId, ExprKind, Param, PatternPayload, Span, Symbol,
 };
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
@@ -856,7 +856,7 @@ impl Mono<'_> {
                     _ => self.variable_value(cx, *symbol),
                 }
             }
-            ExprKind::App { callee, args } => self.app(cx, callee, args, tail),
+            ExprKind::App { callee, args } => self.app(cx, e.span, callee, args, tail),
             ExprKind::If {
                 cond,
                 then_branch,
@@ -909,7 +909,14 @@ impl Mono<'_> {
             }
             ExprKind::Builtin(Builtin::Print) => self.print_value(cx, e),
             ExprKind::Builtin(Builtin::Trap) => unreachable!("the checker rejects a bare `trap`"),
-            ExprKind::Trap(message) => Expr::Trap(message.clone()),
+            ExprKind::Trap(message) => {
+                let trap = Expr::Trap(message.clone());
+                if e.span.in_prelude() {
+                    trap
+                } else {
+                    Self::at_site(cx, e.span, trap)
+                }
+            }
             ExprKind::Func { .. } => self.closure_value(cx, Target::Anon(e.id), e.id),
             ExprKind::Str(s) => Expr::StrLit(self.intern(s)),
             ExprKind::Record { fields } => {
@@ -1211,7 +1218,20 @@ impl Mono<'_> {
         bindings
     }
 
-    fn app(&mut self, cx: &mut FnCx, callee: &hir::Expr, args: &[hir::Expr], tail: bool) -> Expr {
+    /// `e` run after naming `span` as the user code a trap should be blamed on.
+    fn at_site(cx: &mut FnCx, span: Span, e: Expr) -> Expr {
+        let site = Expr::Site(span.start, span.end);
+        Expr::Let(cx.fresh(), Box::new(site), Box::new(e))
+    }
+
+    fn app(
+        &mut self,
+        cx: &mut FnCx,
+        span: Span,
+        callee: &hir::Expr,
+        args: &[hir::Expr],
+        tail: bool,
+    ) -> Expr {
         if let (ExprKind::Builtin(Builtin::Print), [arg]) = (&callee.kind, args) {
             let ty = self.ground(&self.typed.node_types[&arg.id], &cx.subst);
             let print = self.print_fn(&ty);
@@ -1238,18 +1258,35 @@ impl Mono<'_> {
             }
             _ => None,
         };
+        let enters_prelude = !span.in_prelude()
+            && matches!(&callee.kind, ExprKind::Var { symbol, .. }
+                if self.lambdas.get(&Target::Named(*symbol)).is_some_and(|f| f.body.span.in_prelude()));
         let target = match direct {
             Some(id) => Callee::Direct(id),
             None => Callee::Closure(Box::new(self.expr(cx, callee, false))),
         };
-        let args: Vec<Expr> = args.iter().map(|a| self.expr(cx, a, false)).collect();
-        if !tail {
-            return match target {
-                Callee::Direct(id) => Expr::CallDirect(id, args),
-                Callee::Closure(c) => Expr::CallClosure(c, args),
-            };
+        let mut args: Vec<Expr> = args.iter().map(|a| self.expr(cx, a, false)).collect();
+        // The site is set after the arguments run, so a call nested in an
+        // argument cannot overwrite it.
+        let mut bound = Vec::new();
+        if enters_prelude {
+            for arg in &mut args {
+                let local = cx.fresh();
+                bound.push((local, std::mem::replace(arg, Expr::Local(local))));
+            }
         }
-        Expr::TailCall(target, args)
+        let call = match (tail, target) {
+            (false, Callee::Direct(id)) => Expr::CallDirect(id, args),
+            (false, Callee::Closure(c)) => Expr::CallClosure(c, args),
+            (true, target) => Expr::TailCall(target, args),
+        };
+        if !enters_prelude {
+            return call;
+        }
+        let call = Self::at_site(cx, span, call);
+        bound.into_iter().rev().fold(call, |rest, (local, value)| {
+            Expr::Let(local, Box::new(value), Box::new(rest))
+        })
     }
 }
 

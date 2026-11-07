@@ -314,6 +314,7 @@ impl<'p> Cx<'p> {
             }
             Expr::CallForeign(f, _) => program.foreign.get(f.0 as usize).map(|f| f.ret),
             Expr::Trap(_) => None,
+            Expr::Site(..) => Some(MTy::Unit),
         }
     }
 
@@ -331,7 +332,9 @@ impl<'p> Cx<'p> {
     /// has finished (so a by-value use of one of them must `Dup` first).
     fn go(&mut self, e: &Expr, after: &Set) -> Out {
         match e {
-            Expr::Const(_) | Expr::StrLit(_) | Expr::Trap(_) | Expr::Dup(_) => Out::new(e.clone()),
+            Expr::Const(_) | Expr::StrLit(_) | Expr::Trap(_) | Expr::Dup(_) | Expr::Site(..) => {
+                Out::new(e.clone())
+            }
             Expr::Local(x) => self.local(*x, after),
             Expr::Drop(x) | Expr::Free(x) => self.consumed(e.clone(), *x),
             Expr::Capture(_) => match self.func.env.as_ref().map(|env| env.local) {

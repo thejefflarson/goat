@@ -681,6 +681,7 @@ impl<'p> Interp<'p> {
                 Value::Unit
             }
             Expr::Trap(message) => return Err(InterpError::Trap(message.clone())),
+            Expr::Site(..) => Value::Unit,
         };
         Ok(Flow::Val(value))
     }

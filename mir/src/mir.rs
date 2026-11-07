@@ -215,6 +215,9 @@ pub enum Expr {
     Dup(Local),
     Drop(Local),
     Trap(String),
+    /// Names the source range `start..end` as the user code now running a
+    /// call into the prelude, so a trap inside it can be blamed on that call.
+    Site(usize, usize),
 }
 
 impl Expr {
@@ -233,7 +236,8 @@ impl Expr {
             | Expr::Write(Write::Str(_) | Write::Lit(_) | Write::End)
             | Expr::Dup(_)
             | Expr::Drop(_)
-            | Expr::Trap(_) => {}
+            | Expr::Trap(_)
+            | Expr::Site(..) => {}
             Expr::Let(_, a, b)
             | Expr::BinInt(_, a, b)
             | Expr::BinFloat(_, a, b)

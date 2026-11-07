@@ -58,16 +58,20 @@ user can trigger.
 - goat gains a halt primitive with a one-line prelude cost and no new backend node.
   The prelude's partial functions can type as total (`List(a) -> a`) and fail at
   run time, which is the behavior a kid expects.
-- **Run-time blame is incomplete, and that is a known, tracked gap.** Neither
-  backend carries a source span at run time. The interpreter reports the message
-  (`first of an empty list`); wasm emits a bare `unreachable`, so `goat run` shows
-  `trap:` with no text and loses lines printed before the trap. `at_call_site`
-  re-blames only checker errors, so a runtime trap is not yet pointed at the user's
-  call site. Fixing this (a `goat.trap` host import carrying the message, a
-  trap-site → call-site source map, and flushing printed output before the trap) is
-  #156, to land with the Phase 8.5/9 turtle runtime. This is a UX gap, not a
-  soundness one: the interp==wasm differential oracle asserts that the program
-  traps, not the wasm message text.
+- **Run-time blame.** A trap is a host-side stop, not a checker error. wasm lowers
+  `trap("m")` to a call to the `goat.trap` import with the message string, then
+  `unreachable`; the host prints the message and keeps the lines printed before
+  it. The interpreter reports the same message. To point at the user's code, mono
+  wraps a user call into a prelude function (and a user-written `trap`) in an
+  `Expr::Site(start, end)`, which the wasm backend lowers to a `goat_site` global
+  write; the ranges travel in a `goat.sites` custom section. When `goat.trap`
+  fires the host reads the global and renders the message at that range. The
+  site is set after the call's arguments run, so a nested call cannot overwrite
+  it, but it is the *last* user call into the prelude: a trap in prelude code
+  that a user callback returned to (e.g. inside `map` after the callback ran)
+  is blamed on the callback's last call. A trap with no site (a prelude-internal
+  halt such as an exhausted arm) shows the message alone. The interp==wasm
+  differential oracle still asserts only that the program traps.
 - A literal-only message means `trap` cannot interpolate a computed value (e.g. the
   out-of-range index). Accepted for now: goat has no run-time string construction
   (strings are immortal literals), so a computed message is not expressible anyway.

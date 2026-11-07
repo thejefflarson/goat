@@ -42,7 +42,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         Some("run") => {
             let file = args.get(2).ok_or("usage: goat run FILE [-o OUT.svg]")?;
-            run_program(&build(file)?, parse_out_flag(&args[3..]))
+            let source = read(file)?;
+            run_program(&build(file)?, &source, parse_out_flag(&args[3..]))
         }
         _ => {
             eprintln!("usage: goat <check|build|run> FILE [-o OUT]");
@@ -54,10 +55,23 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 /// Run `wasm` under wasmtime with the turtle as its host and print what it
 /// emitted. A trap becomes an error, so the process exits non-zero. With `out`,
 /// the turtle's drawing is written there as an SVG.
-fn run_program(wasm: &[u8], out: Option<PathBuf>) -> Result<ExitCode, String> {
-    let (run, turtle) = goat_cli::run_with_host(wasm, TurtleHost::default())?;
-    for line in run.printed {
+fn run_program(wasm: &[u8], source: &str, out: Option<PathBuf>) -> Result<ExitCode, String> {
+    let finished = goat_cli::run_to_end(wasm, TurtleHost::default())?;
+    for line in &finished.printed {
         println!("{line}");
+    }
+    let turtle = finished.host;
+    if let Err(stopped) = finished.result {
+        return Err(match stopped.site {
+            Some((start, end)) => {
+                let blame = goat_checker::GoatError::new(
+                    goat_checker::hir::Span::new(start, end),
+                    stopped.message,
+                );
+                format!("trap: {}", blame.render(source))
+            }
+            None => format!("trap: {}", stopped.message),
+        });
     }
     match out {
         Some(_) if turtle.commands.is_empty() => {
