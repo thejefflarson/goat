@@ -737,6 +737,10 @@ impl Inferer {
                 Some(scheme) => self.instantiate(&scheme),
                 None => self.fresh(),
             },
+            ExprKind::Foreign { params, ret, .. } => Ty::func(
+                params.iter().copied().map(Ty::from).collect(),
+                Ty::from(*ret),
+            ),
             ExprKind::Func { params, body } => {
                 let arg_tys: Vec<Ty> = params.iter().map(|_| self.fresh()).collect();
                 for (param, ty) in params.iter().zip(&arg_tys) {

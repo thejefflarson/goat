@@ -7,8 +7,8 @@
 
 use crate::error::GoatError;
 use crate::hir::{
-    BinOp, Builtin, Expr, ExprId, ExprKind, FileId, MatchArm, Param, Pattern, PatternPayload, Span,
-    Symbol,
+    BinOp, Boundary, Builtin, Expr, ExprId, ExprKind, FileId, MatchArm, Param, Pattern,
+    PatternPayload, Span, Symbol,
 };
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
@@ -613,7 +613,11 @@ impl Lower {
             };
             (symbol, self.lower_expr(value_pair))
         } else {
-            let value = self.lower_expr(value_pair);
+            let value = if value_pair.as_rule() == Rule::foreign_decl {
+                self.lower_foreign(value_pair)
+            } else {
+                self.lower_expr(value_pair)
+            };
             (self.bind(&name), value)
         };
         let rest = rest_pair.map(|p| self.lower_expr(p));
@@ -628,6 +632,70 @@ impl Lower {
                 rest: rest.map(Box::new),
             },
         )
+    }
+
+    fn lower_foreign(&mut self, pair: Pair<Rule>) -> Expr {
+        let span = self.span_of(&pair);
+        let mut inner = pair
+            .into_inner()
+            .filter(|p| p.as_rule() != Rule::foreign_kw);
+        let module = self.foreign_name(inner.next().expect("foreign names a module"), "module");
+        let name = self.foreign_name(inner.next().expect("foreign names a function"), "name");
+        let signature = inner.next().expect("foreign has a signature");
+        let mut types = signature.into_inner();
+        let ret = types
+            .next_back()
+            .expect("a signature ends in a return type");
+        let params = types.map(|t| self.boundary(&t, "take")).collect();
+        let ret = self.boundary(&ret, "return");
+        self.node(
+            span,
+            ExprKind::Foreign {
+                module,
+                name,
+                params,
+                ret,
+            },
+        )
+    }
+
+    fn foreign_name(&mut self, pair: Pair<Rule>, what: &str) -> String {
+        let span = self.span_of(&pair);
+        let text = pair.as_str();
+        let is_string = pair
+            .into_inner()
+            .next()
+            .is_some_and(|p| p.as_rule() == Rule::string);
+        if is_string {
+            return self.decode_string(span, &text[1..text.len() - 1]);
+        }
+        self.errors.push(GoatError::new(
+            span,
+            format!("the {what} of a foreign function must be a string in quotes"),
+        ));
+        String::new()
+    }
+
+    /// `verb` is "take" for a parameter and "return" for a result.
+    fn boundary(&mut self, ty: &Pair<Rule>, verb: &str) -> Boundary {
+        let (shape, hint) = match ty.as_rule() {
+            Rule::type_name => match Boundary::named(ty.as_str()) {
+                Some(boundary) => return boundary,
+                None => (
+                    format!("`{}`", ty.as_str()),
+                    "; the types that cross are Number, Bool, Unit and String",
+                ),
+            },
+            Rule::record_type => ("a record".to_string(), ""),
+            Rule::list_type => ("a list".to_string(), ""),
+            Rule::fn_type => ("a function".to_string(), ""),
+            other => unreachable!("unexpected type rule {other:?}"),
+        };
+        self.errors.push(GoatError::new(
+            self.span_of(ty),
+            format!("foreign functions can't {verb} {shape} yet{hint}"),
+        ));
+        Boundary::Unit
     }
 
     /// Bind every function name in the declaration chain starting at `first`

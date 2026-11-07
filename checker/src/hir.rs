@@ -70,6 +70,27 @@ impl Builtin {
     }
 }
 
+/// The types that may cross the host boundary of a `foreign` function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Boundary {
+    Number,
+    Bool,
+    Unit,
+    Str,
+}
+
+impl Boundary {
+    pub fn named(name: &str) -> Option<Boundary> {
+        match name {
+            "Number" => Some(Boundary::Number),
+            "Bool" => Some(Boundary::Bool),
+            "Unit" => Some(Boundary::Unit),
+            "String" => Some(Boundary::Str),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinOp {
     Add,
@@ -177,6 +198,16 @@ pub enum ExprKind {
     Builtin(Builtin),
     /// `trap("message")`: stops the program with `message`; has any type.
     Trap(String),
+    /// `foreign "module" "name" (params) -> ret`: the host function `name`
+    /// of import module `module`. It is only ever the value of a `Let`, whose
+    /// scheme is the fixed `(params) -> ret`; the binding is a capture-free
+    /// function that has no body to lower.
+    Foreign {
+        module: String,
+        name: String,
+        params: Vec<Boundary>,
+        ret: Boundary,
+    },
     /// `program(params) do body done`.
     Func {
         params: Vec<Param>,

@@ -22,10 +22,13 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut labels = BTreeSet::new();
     collect_tags(&checked.root, &mut labels);
+    let mut foreign = HashSet::new();
+    collect_foreign(&checked.root, &mut foreign);
     let mut m = Mono {
         typed: &checked.typed,
         lambdas,
         var_tys,
+        foreign,
         specs: Vec::new(),
         out: vec![None],
         work: Vec::new(),
@@ -98,6 +101,16 @@ fn collect_tags(e: &hir::Expr, out: &mut BTreeSet<String>) {
         _ => {}
     }
     for_each_child(e, &mut |c| collect_tags(c, out));
+}
+
+/// The binding of every `foreign` function.
+fn collect_foreign(e: &hir::Expr, out: &mut HashSet<Symbol>) {
+    if let ExprKind::Let { symbol, value, .. } = &e.kind
+        && matches!(value.kind, ExprKind::Foreign { .. })
+    {
+        out.insert(*symbol);
+    }
+    for_each_child(e, &mut |c| collect_foreign(c, out));
 }
 
 #[derive(Clone)]
@@ -220,6 +233,8 @@ struct Mono<'a> {
     typed: &'a Typed,
     lambdas: HashMap<Target, Lambda<'a>>,
     var_tys: HashMap<Symbol, &'a Ty>,
+    /// Host imports have no backend yet: any use of one is a diagnostic.
+    foreign: HashSet<Symbol>,
     specs: Vec<Spec>,
     out: Vec<Option<Func>>,
     work: Vec<(FuncId, Target, Subst, Vec<Ty>)>,
@@ -717,11 +732,24 @@ impl Mono<'_> {
         }
     }
 
+    /// A use of a foreign function (ADR 0005). The placeholder is never run:
+    /// the program is rejected with the diagnostic.
+    fn unsupported_foreign(&mut self, at: &hir::Expr) -> Expr {
+        self.errors.push(GoatError::new(
+            at.span,
+            "calling a foreign function is not supported yet (host imports are not compiled)",
+        ));
+        Expr::Trap("foreign function".into())
+    }
+
     fn expr(&mut self, cx: &mut FnCx, e: &hir::Expr, tail: bool) -> Expr {
         match &e.kind {
             ExprKind::Unit => Expr::Const(Const::Unit),
             ExprKind::Number(n) => Expr::Const(Const::Float(*n)),
             ExprKind::Bool(b) => Expr::Const(Const::Bool(*b)),
+            ExprKind::Var { symbol, .. } if self.foreign.contains(symbol) => {
+                self.unsupported_foreign(e)
+            }
             ExprKind::Var { symbol, .. } => {
                 let function = Target::Named(*symbol);
                 match cx.self_env {
@@ -757,6 +785,12 @@ impl Mono<'_> {
                         None => self.closure_value(cx, Target::Named(*symbol), value.id),
                     };
                 }
+                if matches!(value.kind, ExprKind::Foreign { .. }) {
+                    return match rest {
+                        Some(rest) => self.expr(cx, rest, tail),
+                        None => self.unsupported_foreign(value),
+                    };
+                }
                 if let Some(rest) = rest {
                     self.instantiate_binding(cx, *symbol, rest);
                 }
@@ -773,6 +807,9 @@ impl Mono<'_> {
                 let a = Box::new(self.expr(cx, lhs, false));
                 let b = Box::new(self.expr(cx, rhs, false));
                 self.bin(cx, *op, lhs, (a, b), tail)
+            }
+            ExprKind::Foreign { .. } => {
+                unreachable!("a foreign function is only a declaration's value")
             }
             ExprKind::Builtin(Builtin::Print) => self.print_value(cx, e),
             ExprKind::Builtin(Builtin::Trap) => unreachable!("the checker rejects a bare `trap`"),

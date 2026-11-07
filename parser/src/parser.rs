@@ -289,6 +289,52 @@ mod tests {
     }
 
     #[test]
+    fn parses_foreign_declarations() {
+        use pest::Parser;
+        for src in [
+            r#"f = foreign "m" "f" (Number) -> Unit"#,
+            r#"f = foreign "m" "f" () -> Bool"#,
+            r#"f = foreign "m" "f" (Number, String,) -> Unit f(1, "a")"#,
+            r#"f = foreign "m" "f" ({x: Number}) -> [Bool]"#,
+            r#"f = foreign "m" "f" ((Number) -> Unit) -> Unit"#,
+            r#"f = foreign m "f" (Number) -> Unit"#,
+            "foreign = 1 foreign + 1",
+        ] {
+            assert!(GoatParser::parse(Rule::goat, src).is_ok(), "failed: {src}");
+        }
+        for src in [
+            r#"f = foreign "m" "f" (Number)"#,
+            r#"f = foreign "m" "f" Number -> Unit"#,
+            r#"f = foreign "m" (Number) -> Unit"#,
+        ] {
+            assert!(
+                GoatParser::parse(Rule::goat, src).is_err(),
+                "accepted: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_foreign_declaration_is_a_declaration_with_a_signature() {
+        parses_to! {
+            parser: GoatParser,
+            input: r#"f = foreign "m" "g" (Number) -> Unit"#,
+            rule: Rule::declaration,
+            tokens: [
+                declaration(0, 36, [
+                    ident(0, 1),
+                    foreign_decl(4, 36, [
+                        foreign_kw(4, 11),
+                        foreign_name(12, 15, [string(12, 15)]),
+                        foreign_name(16, 19, [string(16, 19)]),
+                        fn_type(20, 36, [type_name(21, 27), type_name(32, 36)])
+                    ])
+                ])
+            ]
+        }
+    }
+
+    #[test]
     fn grouped_expression_is_not_a_call() {
         parses_to! {
             parser: GoatParser,
