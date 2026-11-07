@@ -21,7 +21,9 @@ preservation) is B3 (#71).
 | `GoatProofs.v` | Hand-written locally-nameless infrastructure lemma (`subst_exp_fresh_eq`) and derived row-equivalence reflexivity. |
 | `GoatRows.v` | Row-equivalence theory: L1 (equivalence + congruence), L2 (head-shape "no confusion" + arrow/record inversion up to `≅`), L2′ (the §3 per-label characterization, soundness direction), L3 (row surfacing). Over `typ`/`row`/`teq`/`req` only. |
 | `GoatDefs.v` | The declarative type system and operational semantics (`docs/semantics.md` §4–§6), hand-written over the generated syntax: type/row substitution, free-variable predicates, schemes, contexts, instantiation, generalization, values, small-step reduction, typing. |
-| `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, **Progress**, **Preservation**, **Soundness**. |
+| `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, and **Progress**. |
+| `GoatSubst.v` | The Hindley–Milner substitution metatheory: the type/row-substitution algebra and `teq_ap`, the L4 structural lemmas, bijective renaming (`typing_rename`), term substitution **L6a/L6b** (derived), and **Preservation**/**Soundness**. Holds the two remaining admits `typing_weaken` (L4) and `typing_tsubst_fix` (L5). |
+| `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`, scheme/context alpha-renaming) toward closing those two admits (#151). |
 | `_CoqProject`, `Makefile` | Build. |
 
 ## Records and projection in the Ott source
