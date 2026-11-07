@@ -298,3 +298,11 @@ fn print_works_at_a_polymorphic_function_type() {
 fn a_user_print_replaces_the_builtin() {
     assert_eq!(run("print = program(x) do x + 1 done  print(1)"), "2");
 }
+
+#[test]
+fn string_literals_beyond_one_page_compile_and_run() {
+    let big = "x".repeat(70_000);
+    let src = format!("a = \"{big}\"  b = \"{big}y\"  a == b");
+    assert_eq!(run(&src), "false");
+    assert_eq!(run(&format!("\"{big}\" == \"{big}\"")), "true");
+}
