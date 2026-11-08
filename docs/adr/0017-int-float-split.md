@@ -77,8 +77,9 @@ hardware-mapped**, made *safe* rather than *unbounded*.
 - **Overflow.** MIR's `BinInt` traps (`this number got too big`) where the
   result does not fit, in both the interpreter and wasm; mono wraps each `Int`
   operation in user code in a `Site`, so the trap is blamed on the operation.
-- **Printing.** The host's `print_number` reads an `f64`, so an `Int` beyond
-  2^53 prints as the `Float` nearest it. An `i64` print import is the fix.
+- **Printing.** An `Int` prints through its own `i64` host imports,
+  `print_int` and `write_int`, so every digit of an `Int` beyond 2^53 reaches
+  the host; `print_number` and `write_number` carry only `Float`.
 
 ## Implementation notes (semantics)
 
@@ -127,9 +128,9 @@ stay 8 bytes wide.
 - **Float to Int.** `truncate`, and so `round`, `floor` and `ceil`, give an
   `i32`: a value outside `[-2^31, 2^31)` traps with the same "can't be made a
   whole number" message desktop uses past 2^63.
-- **Host boundary.** `print_number`, `write_number`, and every foreign import
-  keep `f64` and `i64` whatever the profile, so one host serves both; the
-  module converts at the edge. A host `Int` past 2^31 traps on the way in.
+- **Host boundary.** `print_number`, `write_number`, `print_int`, `write_int`,
+  and every foreign import keep `f64` and `i64` whatever the profile, so one
+  host serves both; the module converts at the edge. A host `Int` past 2^31 traps on the way in.
 - **Not yet supported:** interactive programs on the embedded profile (the
   event exports take `Float` payloads at the program's own width).
   The heap budget and bounded stack are separate decisions.

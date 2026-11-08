@@ -1,5 +1,6 @@
 //! The embedded profile at the wasm level: `Int` is an `i32` and `Float` an
-//! `f32`, while `print_number` still takes an `f64` so one host serves both.
+//! `f32`, while `print_int` still takes an `i64` and `print_number` an `f64` so one
+//! host serves both.
 
 #[path = "../../mir/tests/common/mod.rs"]
 mod common;
@@ -27,16 +28,13 @@ fn wat(p: &Program) -> String {
 }
 
 #[test]
-fn an_int_is_an_i32_that_prints_through_an_f64() {
+fn an_int_is_an_i32_that_prints_through_an_i64() {
     let text = wat(&embedded(vec![func(MTy::Int, add(int(1), int(2)))]));
     assert!(text.contains("(result i32)"), "{text}");
     assert!(text.contains("i32.const 1"), "{text}");
-    assert!(text.contains("f64.convert_i32_s"), "{text}");
+    assert!(!text.contains("f64.convert_i32_s"), "{text}");
     assert!(!text.contains("i64.const 1"), "{text}");
-    assert!(
-        text.contains("print_number\" (func (;0;) (type 0) (param f64))"),
-        "{text}"
-    );
+    assert!(text.contains("print_int\" (func (;2;)"), "{text}");
 }
 
 #[test]

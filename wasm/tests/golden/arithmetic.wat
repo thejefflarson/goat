@@ -5,20 +5,22 @@
   (type (;3;) (func (result f64)))
   (type (;4;) (func (param i32) (result i32)))
   (type (;5;) (func (result i32)))
+  (type (;6;) (func (param i64)))
   (import "goat" "print_number" (func (;0;) (type 0) (param f64)))
   (import "goat" "print_bool" (func (;1;) (type 1) (param i32)))
+  (import "goat" "print_int" (func (;2;) (type 6) (param i64)))
   (memory (;0;) 1)
   (global (;0;) (mut i32) i32.const 232)
   (global (;1;) (mut i32) i32.const 0)
   (global (;2;) (mut i32) i32.const 2147483647)
   (global (;3;) (mut i32) i32.const 0)
   (export "memory" (memory 0))
-  (export "goat_entry" (func 3))
+  (export "goat_entry" (func 4))
   (export "goat_fuel" (global 2))
   (export "goat_site" (global 3))
-  (export "goat_alloc" (func 4))
-  (export "goat_live_allocs" (func 6))
-  (func (;2;) (type 3) (result f64)
+  (export "goat_alloc" (func 5))
+  (export "goat_live_allocs" (func 7))
+  (func (;3;) (type 3) (result f64)
     (local f64)
     global.get 2
     i32.const 1
@@ -38,11 +40,11 @@
     f64.const 0x1p+1 (;=2;)
     f64.mul
   )
-  (func (;3;) (type 2)
-    call 2
+  (func (;4;) (type 2)
+    call 3
     call 0
   )
-  (func (;4;) (type 4) (param i32) (result i32)
+  (func (;5;) (type 4) (param i32) (result i32)
     (local i32 i32 i32 i32)
     local.get 0
     i32.const 1073741824
@@ -153,7 +155,7 @@
     global.set 1
     local.get 2
   )
-  (func (;5;) (type 1) (param i32)
+  (func (;6;) (type 1) (param i32)
     (local i32 i32)
     local.get 0
     i32.load
@@ -202,7 +204,7 @@
     i32.sub
     global.set 1
   )
-  (func (;6;) (type 5) (result i32)
+  (func (;7;) (type 5) (result i32)
     global.get 1
   )
   (data (;0;) (i32.const 8) "")

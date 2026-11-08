@@ -47,8 +47,8 @@ Two MIR nodes cover what a function cannot express:
 
 - `StrEq(a, b)` compares two strings by bytes; both operands are borrowed.
 - `Write(..)` appends to the host's current output line (`Number`, `Str`, `Lit`)
-  or ends it (`End`). The wasm module imports `write_number`, `write_string` and
-  `write_end` only when it uses `Write`, after the `print_*` imports. The
+  or ends it (`End`). The wasm module imports `write_number`, `write_string`,
+  `write_end` and `write_int` only when it uses `Write`, after the `print_*` imports. The
   existing root `print_*` imports are unchanged: each still prints one line.
 
 `print` is a builtin HIR node (`ExprKind::Builtin`), resolved when the name is

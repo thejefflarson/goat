@@ -57,13 +57,14 @@ pub fn interpret_on(
             line.iter()
                 .map(|piece| match piece {
                     Piece::Number(x) => goat::format_number(*x),
+                    Piece::Int(n) => n.to_string(),
                     Piece::Text(bytes) => String::from_utf8_lossy(bytes).into_owned(),
                 })
                 .collect()
         })
         .collect();
     match outcome.value {
-        Value::Int(n) => printed.push(goat::format_number(n as f64)),
+        Value::Int(n) => printed.push(n.to_string()),
         Value::Float(x) => printed.push(goat::format_number(x)),
         Value::Bool(b) => printed.push(goat::format_bool(b).to_string()),
         Value::Unit => {}
