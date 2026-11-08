@@ -12,7 +12,7 @@ use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
 use goat_checker::vocab::KEY_TAGS;
 use goat_checker::{Checked, GoatError, Target};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod interactive;
 mod structural;
@@ -57,14 +57,8 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     let ret = m.lower_ty(&root_ty);
     // A pointer root is dropped after it is computed (see `rc::insert_rc`), so
     // it cannot end in a tail call; a string root is handed to the host.
-    let discarded = ret.is_ptr() && ret != MTy::Ptr(HeapKind::Str);
-    let body = m.expr(&mut cx, &checked.root, !discarded);
-    m.out[0] = Some(Func {
-        params: vec![],
-        env: None,
-        ret,
-        body,
-    });
+    let body = m.expr(&mut cx, &checked.root, !ret.is_discarded_root());
+    m.out[0] = Some(cx.into_func(vec![], None, ret, body));
     let interactive = checked
         .interactive
         .is_some()
@@ -325,6 +319,7 @@ struct FnCx {
     /// closure being run, never to a stored capture.
     self_env: Option<(Symbol, Local)>,
     next: u32,
+    tys: BTreeMap<Local, MTy>,
 }
 
 impl FnCx {
@@ -335,12 +330,25 @@ impl FnCx {
             captures: HashMap::new(),
             self_env: None,
             next: 0,
+            tys: BTreeMap::new(),
         }
     }
 
-    fn fresh(&mut self) -> Local {
+    fn fresh(&mut self, ty: MTy) -> Local {
         self.next += 1;
-        Local(self.next - 1)
+        let local = Local(self.next - 1);
+        self.tys.insert(local, ty);
+        local
+    }
+
+    fn into_func(self, params: Vec<(Local, MTy)>, env: Option<Env>, ret: MTy, body: Expr) -> Func {
+        Func {
+            params,
+            env,
+            ret,
+            body,
+            locals: self.tys,
+        }
     }
 }
 
@@ -680,6 +688,7 @@ impl Mono<'_> {
                     }),
                     ret,
                     body,
+                    locals: BTreeMap::new(),
                 }));
                 self.wrappers.insert(target, id);
                 id
@@ -701,10 +710,10 @@ impl Mono<'_> {
         let mut cx = FnCx::new(subst);
         let mut mparams = Vec::new();
         for (param, ty) in params.iter().zip(arg_tys) {
-            let local = cx.fresh();
-            cx.locals.insert(param.symbol, local);
             let ty = self.ground(ty, &cx.subst);
             let mty = self.lower_ty(&ty);
+            let local = cx.fresh(mty);
+            cx.locals.insert(param.symbol, local);
             mparams.push((local, mty));
         }
         let ret = self.ground(ret_ty, &cx.subst);
@@ -713,12 +722,9 @@ impl Mono<'_> {
         } else {
             Some(self.bind_env(&mut cx, target, ty, &captures, &capture_tys))
         };
-        Func {
-            params: mparams,
-            env,
-            ret: self.lower_ty(&ret),
-            body: self.expr(&mut cx, body, true),
-        }
+        let ret = self.lower_ty(&ret);
+        let body = self.expr(&mut cx, body, true);
+        cx.into_func(mparams, env, ret, body)
     }
 
     /// Give a capturing function its `env` parameter.
@@ -734,7 +740,7 @@ impl Mono<'_> {
         let MTy::Ptr(HeapKind::Closure(sig)) = self.lower_ty(&ty) else {
             unreachable!("function type lowers to a closure");
         };
-        let local = cx.fresh();
+        let local = cx.fresh(MTy::Ptr(HeapKind::Closure(sig)));
         cx.captures = captures.iter().copied().zip(0..).collect();
         if let Target::Named(symbol) = target {
             cx.self_env = Some((symbol, local));
@@ -805,6 +811,7 @@ impl Mono<'_> {
                     env: None,
                     ret,
                     body: Expr::CallForeign(import, locals),
+                    locals: BTreeMap::new(),
                 }));
                 self.foreign_fns.insert(import, id);
                 id
@@ -818,17 +825,24 @@ impl Mono<'_> {
     /// the call borrows its pointers (see `Expr::CallForeign`).
     fn foreign_call(&mut self, cx: &mut FnCx, symbol: Symbol, args: &[hir::Expr]) -> Expr {
         let import = self.import(symbol);
+        let params = self.imports[import.0 as usize].params.clone();
         let bound: Vec<(Local, Expr)> = args
             .iter()
-            .map(|a| {
+            .zip(params)
+            .map(|(a, ty)| {
                 let value = self.expr(cx, a, false);
-                (cx.fresh(), value)
+                (cx.fresh(ty), value)
             })
             .collect();
         let call = Expr::CallForeign(import, bound.iter().map(|(l, _)| *l).collect());
         bound.into_iter().rev().fold(call, |body, (l, value)| {
             Expr::Let(l, Box::new(value), Box::new(body))
         })
+    }
+
+    fn node_mty(&mut self, cx: &FnCx, id: ExprId) -> MTy {
+        let ty = self.ground(&self.typed.node_types[&id], &cx.subst);
+        self.lower_ty(&ty)
     }
 
     fn push_func(&mut self, func: Func) -> FuncId {
@@ -865,8 +879,9 @@ impl Mono<'_> {
             if let Some(rest) = rest {
                 self.instantiate_binding(cx, *symbol, rest);
             }
+            let ty = self.node_mty(cx, value.id);
             let value = self.expr(cx, value, false);
-            let local = cx.fresh();
+            let local = cx.fresh(ty);
             cx.locals.insert(*symbol, local);
             bound.push((local, value));
             match rest {
@@ -1092,7 +1107,8 @@ impl Mono<'_> {
         match borrowed {
             Some(local) => build(self, cx, local),
             None => {
-                let rec = cx.fresh();
+                let ty = self.node_mty(cx, record.id);
+                let rec = cx.fresh(ty);
                 let source = self.expr(cx, record, false);
                 let body = build(self, cx, rec);
                 Expr::Let(rec, Box::new(source), Box::new(body))
@@ -1122,7 +1138,7 @@ impl Mono<'_> {
             let value = self.expr(cx, payload, false);
             return if payload_ty == Ty::Unit {
                 Expr::Let(
-                    cx.fresh(),
+                    cx.fresh(MTy::Unit),
                     Box::new(value),
                     Box::new(Expr::AllocVariant(layout, tag, Vec::new())),
                 )
@@ -1143,7 +1159,7 @@ impl Mono<'_> {
                 let Ty::Record(row) = payload_ty.unfold_head() else {
                     unreachable!("positional payloads are records");
                 };
-                let record = cx.fresh();
+                let record = cx.fresh(self.lower_ty(&payload_ty));
                 let value = self.expr(cx, payload, false);
                 let slots = (0..positional.len())
                     .map(|n| Expr::Field(record, field_index(&row, &n.to_string())))
@@ -1179,7 +1195,10 @@ impl Mono<'_> {
         };
         let (local, bound) = match borrowed {
             Some(local) => (local, None),
-            None => (cx.fresh(), Some(self.expr(cx, scrutinee, false))),
+            None => {
+                let ty = self.lower_ty(&scrutinee_ty);
+                (cx.fresh(ty), Some(self.expr(cx, scrutinee, false)))
+            }
         };
 
         let mut lowered: Vec<(u32, Expr)> = Vec::new();
@@ -1221,17 +1240,25 @@ impl Mono<'_> {
         payload_ty: &Ty,
     ) -> Vec<(Local, Expr)> {
         let mut bindings = Vec::new();
-        let mut bind = |cx: &mut FnCx, param: &Param, value: Expr| {
-            let local = cx.fresh();
+        let mut bind = |cx: &mut FnCx, param: &Param, ty: MTy, value: Expr| {
+            let local = cx.fresh(ty);
             cx.locals.insert(param.symbol, local);
             bindings.push((local, value));
         };
         match pattern {
             PatternPayload::None => {}
             PatternPayload::Fields(fields) => {
+                let Ty::Record(row) = payload_ty.unfold_head() else {
+                    unreachable!("a multi-argument payload is a record");
+                };
                 for (label, param) in fields {
                     let slot = label.parse().expect("pattern labels are positional");
-                    bind(cx, param, Expr::Payload(cell, tag, slot));
+                    let field_ty = ground_fields(&row)
+                        .find(|(l, _)| *l == label)
+                        .map(|(_, ty)| ty.clone())
+                        .expect("a pattern label names a payload field");
+                    let ty = self.lower_ty(&field_ty);
+                    bind(cx, param, ty, Expr::Payload(cell, tag, slot));
                 }
             }
             PatternPayload::Whole(param) => {
@@ -1254,7 +1281,8 @@ impl Mono<'_> {
                     }
                     _ => Expr::Payload(cell, tag, 0),
                 };
-                bind(cx, param, value);
+                let ty = self.lower_ty(payload_ty);
+                bind(cx, param, ty, value);
             }
         }
         bindings
@@ -1263,7 +1291,7 @@ impl Mono<'_> {
     /// `e` run after naming `span` as the user code a trap should be blamed on.
     fn at_site(cx: &mut FnCx, span: Span, e: Expr) -> Expr {
         let site = Expr::Site(span.start, span.end);
-        Expr::Let(cx.fresh(), Box::new(site), Box::new(e))
+        Expr::Let(cx.fresh(MTy::Unit), Box::new(site), Box::new(e))
     }
 
     fn app(
@@ -1307,13 +1335,15 @@ impl Mono<'_> {
             Some(id) => Callee::Direct(id),
             None => Callee::Closure(Box::new(self.expr(cx, callee, false))),
         };
+        let hir_args = args;
         let mut args: Vec<Expr> = args.iter().map(|a| self.expr(cx, a, false)).collect();
         // The site is set after the arguments run, so a call nested in an
         // argument cannot overwrite it.
         let mut bound = Vec::new();
         if enters_prelude {
-            for arg in &mut args {
-                let local = cx.fresh();
+            for (arg, hir_arg) in args.iter_mut().zip(hir_args) {
+                let ty = self.node_mty(cx, hir_arg.id);
+                let local = cx.fresh(ty);
                 bound.push((local, std::mem::replace(arg, Expr::Local(local))));
             }
         }
