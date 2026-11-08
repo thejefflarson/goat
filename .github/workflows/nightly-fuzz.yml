@@ -32,9 +32,31 @@ jobs:
       - name: Install cargo-bolero
         run: cargo install cargo-bolero --locked --version 0.13.5
 
+      # Carry the coverage corpus across runs so each night deepens the last
+      # instead of starting cold. The run-id-suffixed key never hits exactly, so
+      # the save step below always stores the grown corpus; restore-keys pulls the
+      # most recent prior one. The corpus is gitignored, so this cache is its only
+      # home between runs.
+      - name: Restore the ${{ matrix.target }} corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/tests/__fuzz__/${{ matrix.target }}/corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
       - name: Fuzz
         working-directory: fuzz
         run: cargo +nightly bolero test ${{ matrix.target }} --engine libfuzzer -T "$FUZZ_BUDGET"
+
+      # if: always() — save even when the run crashed, so the inputs that found
+      # the crash and the coverage reached getting there seed the next run.
+      - name: Persist the grown ${{ matrix.target }} corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/tests/__fuzz__/${{ matrix.target }}/corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
 
       # bolero writes crashing inputs under tests/__fuzz__/<target>/crashes.
       - name: Upload crashes
@@ -44,3 +66,33 @@ jobs:
           name: crashes-${{ matrix.target }}
           path: fuzz/tests/__fuzz__/
           if-no-files-found: ignore
+
+  # A red nightly run is easy to miss in email, so a crash opens a tracking issue
+  # pointing at the run and its crash artifacts. Deduped on the `nightly-fuzz`
+  # label: a still-failing nightly comments on the open issue instead of filing
+  # a fresh one each night.
+  report:
+    needs: fuzz
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or bump the fuzz-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create nightly-fuzz --color FBCA04 \
+            --description "A nightly fuzz run found a crash" 2>/dev/null || true
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label nightly-fuzz --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
+              --body "Nightly fuzz failed again — $RUN_URL"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --label nightly-fuzz \
+              --title "Nightly fuzz found a crash" \
+              --body "$(printf 'A nightly fuzz run failed — a target found a crash.\n\nRun: %s\n\nThe failing matrix leg and the crashing inputs are on that run (the `crashes-<target>` artifact). Reproduce locally:\n\n    cd fuzz && cargo +nightly bolero test <target> --engine libfuzzer\n\nwhich replays the saved crashes under `fuzz/tests/__fuzz__/<target>/crashes/`.' "$RUN_URL")"
+          fi
