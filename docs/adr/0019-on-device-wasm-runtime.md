@@ -111,12 +111,16 @@ iteration, live coding, tens of KB), **WAMR AOT** when a program needs speed the
 interpreter can't give, **wasm→C** only for the locked-image / unreachable-board
 case above. WAMR gives the first two under one roof.
 
-### 3. The feature floor is MVP + the tail-call proposal — we keep tail calls
+### 3. The feature floor is MVP + tail-call + bulk-memory — we keep tail calls
 
 The floor goat's emitted modules may require is **the WebAssembly MVP plus the
-tail-call proposal**. Concretely: every host — browser, wasmtime, the Apple
-shell, and the microcontroller — must run `return_call` / `return_call_indirect`.
-The three real options and their costs:
+tail-call and bulk-memory proposals** — the full enumeration is in *Feature floor:
+what goat emits vs. what the runtime must provide* below. This section decides the
+load-bearing, expensive-to-reverse half, the tail-call requirement; the audit adds
+one more opcode (`memory.fill`, in the allocator's `free`) that both candidate
+runtimes already run. Concretely: every host — browser, wasmtime, the Apple shell,
+and the microcontroller — must run `return_call` / `return_call_indirect` and
+`memory.fill`. The three real options for the tail-call half and their costs:
 
 **(a) Pick a runtime that supports tail calls — recommended.** Cost: constrains
 §1/§2 to WAMR (flag on) or wasm3 (maintenance-mode), and excludes any runtime
@@ -205,16 +209,134 @@ trampoline to reason about.
   new hand-written suite. wasmtime already proves the tail-call lowering; the WAMR
   driver proves those same cases run on-device with the flag on.
 
+## Feature floor: what goat emits vs. what the runtime must provide
+
+§3 fixed the floor by reasoning from tail calls alone. Reading the backend end to
+end — `wasm/src/lib.rs` and the allocator it emits, `wasm/src/allocator.rs` —
+shows the emitted floor is one proposal wider: **MVP + the tail-call proposal + the
+bulk-memory proposal**. "Bulk memory" is the proposal that adds `memory.fill` /
+`memory.copy` / `memory.init` / `data.drop` and *passive* data segments (a data
+segment the module copies into memory with an explicit `memory.init` at run time,
+rather than an *active* segment the engine lays down at instantiation). The extra
+requirement over §3 is one opcode, `memory.fill`, emitted unconditionally by the
+allocator's `free`; everything else goat emits is MVP or tail-call. This section
+lists the whole emitted set, maps each item to WAMR and wasm3 at their 2026
+defaults, and separates what the *board* needs from what only desktop/browser
+hot-reload needs.
+
+### What the codegen actually emits
+
+| Emitted feature | Proposal tier | Where in the output | In which modules |
+|---|---|---|---|
+| i32/i64/f32/f64 numerics; `if`/`block`/`loop`/`br*`; `call`; `call_indirect` on a funcref table (`CallIndirect { table_index: 0 }`); active element + active data segments; owned, exported `memory`; `memory.size`/`memory.grow`; mutable globals, including *exporting* `goat_fuel`/`goat_site`; `unreachable` | **MVP** | throughout `lib.rs` / `allocator.rs` | every module |
+| Trapping `i32.trunc_f32_s` / `i64.trunc_f64_s` behind an explicit range guard (`truncate_to_int`); `f32.trunc`/`f64.trunc`; `f32.sqrt`/`f64.sqrt`; `i64.extend_i32_s`, `i32.wrap_i64`, `f64.promote_f32`, `f32.demote_f64` at the host/profile boundary | **MVP** | `truncate_to_int`, `checked_int32`, `narrow_int`, `call_foreign` | every module |
+| `return_call` (direct tail call) and `return_call_indirect` (closure-loop tail call — the common case, per the Context) | **tail-call** | `Expr::TailCall` lowering | every module |
+| `memory.fill` — the allocator's `free` poisons a freed block for use-after-free detection (`allocator.rs` invariants) | **bulk-memory** | `FreeList::free` | **every module** |
+| passive data segment + `DataCountSection` + `memory.init` + `data.drop`; *imported* `memory`; *imported* mutable globals `heap`/`live`; a `start` function; an immutable `i64` fingerprint global | **bulk-memory** (init/drop/passive) + **MVP** (imported memory/globals, start, i64 global) | `emit_reloadable` / `load_data` | **hosted/reloadable only** — interactive hot-reload; `emit_module` rejects interactive programs on the embedded profile, so the board emits none of it |
+
+**Candidates the audit refutes** — proposals goat does *not* require, each read out
+of the code rather than assumed:
+
+| Candidate proposal | Verdict | Why |
+|---|---|---|
+| reference types (externref, multiple tables, `table.get`/`set`, typed function refs) | **not used** | the closure table is a plain funcref table reached by `call_indirect` / `return_call_indirect` — MVP (the table) + tail-call (the `return_` form), not reference-types |
+| non-trapping float-to-int (`trunc_sat`) | **not used** | `math.truncate` lowers to the *trapping* `trunc_f*_s` behind a range guard that raises goat's own `NOT_A_WHOLE_NUMBER` diagnostic |
+| sign-extension operators (`i32.extend8_s`, …) | **not used** | the only `extend` emitted is `i64.extend_i32_s`, the MVP i32→i64 widening — a different instruction |
+| multi-value (a function or block returning ≥2 values) | **not used** | every `func_signature` and every block type returns 0 or 1 value |
+| SIMD, threads/atomics, GC, memory64, custom page size | **not used** | `memory64: false`, `page_size_log2: None` (default 64 KiB — what #116's custom-page-size check guards), no SIMD/atomic/GC opcodes emitted |
+
+Two things the "i32/f32 embedded profile" label can hide: a board module still
+*imports* `print_int` with an `i64` parameter and widens `Int`→`i64`
+(`i64.extend_i32_s`) at that boundary, so the module is not i64-free — but `i64` is
+MVP and universal, a note, not a risk. And `memory.fill` is load-bearing for a
+*safety* feature (poison-on-free), not an incidental optimization that could be
+dropped for free.
+
+### Runtime support, 2026 defaults
+
+| Feature goat needs | WAMR (classic-interp / fast-interp / AOT) | wasm3 (fallback) |
+|---|---|---|
+| **tail-call** (`return_call[_indirect]`) | `WAMR_BUILD_TAIL_CALL` — **default OFF**; set `=1` (all four modes) | "Tail call" listed **Ready** (main `README` proposals group) |
+| **bulk-memory** `memory.fill` (every module) | `WAMR_BUILD_BULK_MEMORY` — **default ON** (also turns on `bulk-memory-opt`) | "Bulk memory operations" listed **Ready** |
+| **bulk-memory** passive + `memory.init`/`data.drop` (hosted reload; desktop/browser only) | same `WAMR_BUILD_BULK_MEMORY`, default ON | same, Ready |
+| imported memory / imported mutable globals / `start` (hosted only) | MVP / mutable-globals baseline — on | supported (Lime1 "Import/Export of Mutable Globals") |
+| funcref table + `call_indirect` | MVP; on older WAMR, table ops sit under `WAMR_BUILD_REF_TYPES` (**default ON**) | MVP — supported |
+| non-trapping-float-to-int, sign-ext, multi-value (**not emitted**) | "always on" in WAMR's Wasm-2.0 preset — zero risk even unused | Lime1 group, Ready — zero risk |
+| SIMD / threads / GC / memory64 / custom page size (**not emitted**) | irrelevant | `⛔ N/A` for SIMD/threads/GC — irrelevant, goat emits none |
+
+WAMR flag defaults are from the upstream `doc/build_wamr.md`. The wasm3 rows are the
+current `wasm3/wasm3` `main` `README` "Features" table, whose Status column marks
+whole proposal *groups* "⭐ Ready" — a milestone marker, not a per-opcode guarantee.
+
+### Differences that matter
+
+1. **The board build carries two flags, not one.** The ADR's "one build flag"
+   (tail-call, default off) is half the story. `memory.fill` in `free` means a goat
+   module also needs `WAMR_BUILD_BULK_MEMORY`. That flag is *on* by default, so the
+   ordinary build is fine — but a footprint-minimized board build that turns it off
+   would fail to *load* every goat module (WAMR validates the whole module at load,
+   so the opcode is rejected even in a program that never frees). The board config
+   must assert both: `WAMR_BUILD_TAIL_CALL=1` (flip on) and `WAMR_BUILD_BULK_MEMORY`
+   (keep on).
+2. **§3's floor label undercounts.** "MVP + tail-call" should read "MVP + tail-call
+   + bulk-memory"; this commit widens §3's first paragraph, the Consequences, and
+   the one-way-door to match. The *decision* is unchanged — both candidate runtimes
+   support bulk memory out of the box — but a future host that ran tail calls yet
+   not bulk memory would otherwise be mis-judged in-floor.
+3. **The board/desktop delta is real and runs the favorable way.** The whole
+   reloadable path — passive data, `memory.init`/`data.drop`, imported memory,
+   imported mutable globals, `start` — is interactive-only and rejected on the
+   embedded profile, so the board emits *none* of it. The board's only above-MVP
+   requirements are tail-call and the single `memory.fill`. Desktop and browser
+   hot-reload need the full bulk-memory set; the board needs one opcode of it.
+4. **A future embedded allocator could lower the board floor by one proposal — but
+   nothing emitted today does.** `memory.fill` is required only because the shared
+   bump allocator poisons freed blocks. `allocator.rs` already anticipates a pooled
+   embedded allocator "behind the same three functions"; one written without
+   `memory.fill`/`memory.copy` would drop bulk-memory from the *board* floor
+   (desktop reload would still need it). That is allocator work — recorded here as a
+   lever, not a change this ADR makes.
+5. **wasm3 now has two proposals to verify, and it is minimal-maintenance.** Both
+   tail-call and bulk-memory sit in "Ready" groups of the current `main` README,
+   consistent with keeping wasm3 a fallback — but a README milestone marker is not a
+   verified per-opcode guarantee, and if wasm3's bulk-memory were incomplete (an
+   older vendored snapshot marked it "partial"), wasm3 could run *no* goat module at
+   all, tail calls or not. Verify tail-call **and** `memory.fill` against the pinned
+   wasm3 build before the fallback is trusted.
+
+### Bottom line
+
+"Keep tail calls, no codegen change" **survives** the whole emitted-feature set —
+with two asterisks, both about the floor's *membership*, neither about codegen:
+
+- **(\*) The floor is MVP + tail-call + bulk-memory.** No codegen change follows
+  (WAMR enables bulk memory by default; wasm3 lists it Ready), but the floor
+  wording, the Consequences, and the one-way-door must name bulk-memory, or the
+  recorded floor is smaller than the bytes goat emits.
+- **(\*) Two build flags on the board, not one** — `WAMR_BUILD_TAIL_CALL=1`
+  (default off) and `WAMR_BUILD_BULK_MEMORY` (default on, must stay on). Both are
+  checked at load.
+
+No feature goat emits is unsupported by, or behaves differently on, WAMR with those
+two flags set. Every other candidate proposal — reference types, sign-extension
+ops, non-trapping float-to-int, multi-value, SIMD, threads, memory64, custom page
+size — is absent from the output, so none forces a codegen change or a codegen
+variant. The one genuine residual unknown is wasm3's per-opcode support at its
+pinned version (two proposals now, not one), which §3 already routes around by
+making WAMR the default and wasm3 the named, to-be-verified fallback.
+
 ## Consequences
 
 - goat ships to boards with its codegen unchanged; the browser, wasmtime, and
   Apple paths are untouched. The embedded footprint is WAMR's published figures,
   which already include tail-call.
-- The dependency surface is one runtime vendor and one build flag. The interp→AOT
-  graduation is internal to that vendor.
+- The dependency surface is one runtime vendor and two build flags: tail-call
+  (`WAMR_BUILD_TAIL_CALL`, off by default — flip on) and bulk-memory
+  (`WAMR_BUILD_BULK_MEMORY`, on by default — keep on). The interp→AOT graduation is
+  internal to that vendor.
 - The feature floor is now explicit for *every* host: a new host that cannot run
-  the tail-call proposal is out of scope until it can, rather than silently
-  forcing a codegen rewrite.
+  the tail-call *and* bulk-memory proposals is out of scope until it can, rather
+  than silently forcing a codegen rewrite.
 - A later board may still want the wasm→C path; this ADR leaves it open as a
   fallback with a named precondition (verify tail-call-in-C), not a closed door.
 
@@ -231,15 +353,19 @@ trampoline to reason about.
 ### One-way door
 
 The genuine one-way door is **the feature floor itself** — whether goat's emitted
-modules are allowed to require the tail-call proposal. Every host and every
-program compiled so far assumes tail calls; lowering the floor to "no tail calls"
-later is the ADR-0013 reversal of option (b) and would have to hold for *all*
-hosts at once. So the floor is the expensive-to-reverse decision, and the
-recommendation is to set it at MVP + tail-call and keep it there.
+modules are allowed to require the tail-call proposal (and, per the audit,
+bulk-memory). Every host and every program compiled so far assumes tail calls;
+lowering the floor to "no tail calls" later is the ADR-0013 reversal of option (b)
+and would have to hold for *all* hosts at once. Bulk-memory is the shallower half
+of the door — both candidate runtimes run it today, and a future embedded
+allocator without poison-on-free could drop it from the board floor — but it is
+still part of what the floor commits every host to. So the floor is the
+expensive-to-reverse decision, and the recommendation is to set it at MVP +
+tail-call + bulk-memory and keep it there.
 
 ## Open questions for a recorded decision
 
-This ADR is **proposed**, not accepted; three points want the author's ratify or
+This ADR is **proposed**, not accepted; four points want the author's ratify or
 redirect, and each becomes a recorded decision on acceptance:
 
 1. **The tail-call floor (a / b / c).** Recommended: (a), keep tail calls. This is
@@ -250,14 +376,28 @@ redirect, and each becomes a recorded decision on acceptance:
 3. **The wasm→C tail-call unknown.** w2c2 doesn't document tail calls, wabt
    `wasm2c` is unconfirmed, and C has no guaranteed TCO. This is a genuine unknown
    to resolve *before* any board plan chooses the wasm→C path.
+4. **Widening the floor label to MVP + tail-call + bulk-memory** (the audit
+   section). Recommended: ratify — the allocator's `free` emits `memory.fill` in
+   every module, so the floor already includes bulk-memory in fact; this only makes
+   the recorded label match the bytes. Both candidate runtimes run it (WAMR default
+   on, wasm3 Ready), so it carries no codegen change. The attached build-discipline
+   item — the board config must keep `WAMR_BUILD_BULK_MEMORY` on as well as setting
+   `WAMR_BUILD_TAIL_CALL=1` — rides along with this ratification.
 
 ## References (external, as of 2026-11)
 
 - WAMR `WAMR_BUILD_TAIL_CALL=1/0, default off … Supported in classic-interpreter,
   fast-interpreter, AOT and LLVM JIT modes` — `doc/build_wamr.md`; Cortex-M4F
   core-VM footprints (tail-call/bulk/shared enabled) — project README.
-- wasm3 — "Tail call" listed *Ready* on the main README; project stated to be in
-  a minimal-maintenance phase.
+- WAMR `WAMR_BUILD_BULK_MEMORY=1/0, default on` (also enables `bulk-memory-opt`);
+  `WAMR_BUILD_REF_TYPES` default on; `memory64` default off; "Multi-value,
+  Non-trapping float-to-int Conversions and Sign-extension Operators are always on"
+  in the Wasm-2.0 preset — `doc/build_wamr.md`.
+- wasm3 — "Tail call" and "Bulk memory operations" both listed under "⭐ Ready"
+  groups in the `wasm3/wasm3` `main` `README` "Features" table (a milestone marker,
+  not a per-opcode guarantee); project stated to be in a minimal-maintenance phase.
+  An older vendored snapshot marked bulk memory "partial" / tail call unsupported,
+  so the pinned build's support is worth confirming.
 - w2c2 README — lists WebAssembly 2.0, extended-const, threads, SIMD, WASI; no
   tail-call entry.
 - C tail calls — no standard guarantee; `[[clang::musttail]]` is Clang-specific.
