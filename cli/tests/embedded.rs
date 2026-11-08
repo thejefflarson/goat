@@ -17,12 +17,13 @@
 //! The whole differential suite also runs on the embedded profile with
 //! `GOAT_PROFILE=embedded cargo test -p goat_cli --test differential --test
 //! stdlib --test foreign --test groups --test constraints --test prelude
-//! --test numbers`. Each failure there is one of the differences above:
+//! --test numbers --test turtle`. Each failure there is one of the differences above:
 //! `numbers_print_without_exponent` (`0.1 + 0.2`);
 //! `a_tail_call_in_an_arm_runs_in_constant_stack`,
 //! `deep_tail_recursion_runs_in_constant_stack`,
 //! `long_lists_do_not_overflow_the_stack` and `prelude_definitions_run` (sums
-//! past 2^31); and nine in `numbers`, which pins 64-bit and 15-digit answers
+//! past 2^31); `the_circle_example_renders_to_its_golden` (f32 `sin` moves the
+//! SVG coordinates); and nine in `numbers`, which pins 64-bit and 15-digit answers
 //! (`an_int_is_a_64_bit_integer`, `an_int_at_the_edge_does_not_trap`,
 //! `the_most_negative_int_floor_divides_by_minus_one_only_as_a_remainder`,
 //! `a_float_follows_ieee_and_never_traps`, `rounding_a_float_with_no_int_traps`,
