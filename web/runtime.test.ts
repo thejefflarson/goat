@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { compile } from "./compile.ts";
-import { type Command, formatNumber, readString, run, strokes } from "./runtime.ts";
+import { type Command, formatNumber, readString, renderTrap, run, siteTable, strokes } from "./runtime.ts";
 
 const compilerWasm = new URL(
   "../target/wasm32-unknown-unknown/release/goat_web.wasm",
@@ -115,4 +115,32 @@ test("an invalid color and a non-finite number trap", async () => {
 test("a trap in the program reaches the host with its message", async () => {
   const empty = await compileOk("first([]) + 1");
   await assert.rejects(run(empty), /first of an empty list/);
+});
+
+test("siteTable reads the goat.sites section and skips other sections", () => {
+  const name = new TextEncoder().encode("goat.sites");
+  const table = new Uint8Array(new Uint32Array([3, 9, 12, 13]).buffer);
+  const body = [name.length, ...name, ...table];
+  const other = [0, 2, 1, 0x61];
+  const header = [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
+  const wasm = new Uint8Array([...header, ...other, 0, body.length, ...body]);
+  assert.deepEqual(siteTable(wasm), [[3, 9], [12, 13]]);
+  assert.deepEqual(siteTable(new Uint8Array(header)), []);
+});
+
+test("renderTrap matches the CLI's line, column and caret", () => {
+  assert.equal(
+    renderTrap("let a = 1\nfirst([]) + 1", [10, 18], "boom"),
+    "2:1: boom\n  first([]) + 1\n  ^^^^^^^^",
+  );
+  assert.equal(renderTrap("é = f()", [5, 8], "x"), "1:5: x\n  é = f()\n      ^^^");
+});
+
+test("a trap with the source is located at the user's call", async () => {
+  const source = "forward(1);\nfirst([]) + 1";
+  const located = run(await compileOk(source), { source });
+  await assert.rejects(located, (e: Error) => {
+    assert.match(e.message, /^trap: 2:1: .*first of an empty list\n {2}first\(\[\]\) \+ 1\n {2}\^+$/);
+    return true;
+  });
 });
