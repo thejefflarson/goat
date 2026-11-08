@@ -185,3 +185,36 @@ test("an update that returns but overruns the frame budget stops the loop", asyn
   assert.equal(loop.running, false);
   assert.deepEqual(page.errors, [STUCK_MESSAGE]);
 });
+
+test("send delivers a host event without any DOM listener", async () => {
+  const { exports, scene } = await instantiate(arrowDraw);
+  const page = fakeEnv();
+  const loop = startLoop(exports, page.env);
+  loop.send({ kind: "KeyDown", key: "ArrowRight" });
+  loop.send({ kind: "KeyUp", key: "ArrowRight" });
+  page.frame(16);
+  const vertices = scene.commands.flatMap((c) => (c.kind === "vertex" ? [[c.x, c.y]] : []));
+  assert.deepEqual(vertices, [[10, 0], [0, 0]]);
+  loop.stop();
+  loop.send({ kind: "KeyDown", key: "ArrowRight" });
+  assert.deepEqual(page.errors, []);
+});
+
+test("around wraps every call into goat and fuelBudget sets the refill", async () => {
+  const { exports } = await instantiate(arrowDraw);
+  const page = fakeEnv();
+  const seen: number[] = [];
+  const loop = startLoop(exports, {
+    ...page.env,
+    fuelBudget: 12345,
+    around: (call) => {
+      seen.push(exports.goat_fuel.value as number);
+      return call();
+    },
+  });
+  loop.send({ kind: "KeyDown", key: "ArrowDown" });
+  page.frame(16);
+  assert.equal(seen.length, 3);
+  assert.deepEqual([...new Set(seen)], [12345]);
+  loop.stop();
+});

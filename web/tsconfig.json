@@ -13,5 +13,19 @@
     "skipLibCheck": true,
     "outDir": "dist"
   },
-  "include": ["runtime.ts", "compile.ts", "scene.ts", "loop.ts", "embed.ts", "embed-main.ts"]
+  "include": [
+    "runtime.ts",
+    "compile.ts",
+    "scene.ts",
+    "loop.ts",
+    "protocol.ts",
+    "supervisor.ts",
+    "worker-core.ts",
+    "worker.ts",
+    "input.ts",
+    "stage.ts",
+    "browser.ts",
+    "embed.ts",
+    "embed-main.ts"
+  ]
 }

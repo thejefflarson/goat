@@ -94,7 +94,7 @@ export class RecordingScene implements Scene {
 }
 
 export type DrawingContext = Pick<
-  CanvasRenderingContext2D,
+  CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   | "canvas"
   | "strokeStyle"
   | "lineWidth"
