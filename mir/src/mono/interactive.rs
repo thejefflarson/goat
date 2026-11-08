@@ -111,6 +111,7 @@ impl Mono<'_> {
             update,
             draw,
             events,
+            model,
         }
     }
 

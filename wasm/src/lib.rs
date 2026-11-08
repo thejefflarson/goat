@@ -3,10 +3,10 @@ use std::fmt;
 
 use goat_mir::*;
 use wasm_encoder::{
-    BlockType, CodeSection, ConstExpr, CustomSection, DataSection, ElementSection, Elements,
-    EntityType, ExportKind, ExportSection, Function, FunctionSection, GlobalSection, GlobalType,
-    ImportSection, Instruction, MemArg, MemArgTarget, MemorySection, MemoryType, Module, RefType,
-    TableSection, TableType, TypeSection, ValType,
+    BlockType, CodeSection, ConstExpr, CustomSection, DataCountSection, DataSection,
+    ElementSection, Elements, EntityType, ExportKind, ExportSection, Function, FunctionSection,
+    GlobalSection, GlobalType, ImportSection, Instruction, MemArg, MemArgTarget, MemorySection,
+    MemoryType, Module, RefType, StartSection, TableSection, TableType, TypeSection, ValType,
 };
 
 mod allocator;
@@ -42,6 +42,14 @@ const SITES_SECTION: &str = "goat.sites";
 /// closures, after the site.
 const UPDATE_GLOBAL: u32 = 4;
 const DRAW_GLOBAL: u32 = 5;
+/// An interactive program's model fingerprint, exported as
+/// `goat_model_fingerprint`, and (in a reloadable module) the address its
+/// static data was copied to.
+const FINGERPRINT_GLOBAL: u32 = 6;
+const DATA_BASE_GLOBAL: u32 = 7;
+/// Where a reloadable module expects the host's heap to begin: the free-list
+/// table sits at `DATA_BASE`, the heap right after it.
+pub const HOSTED_HEAP_START: u32 = DATA_BASE + allocator::TABLE_BYTES;
 
 /// wasm32 object layout (`docs/mir.md`); every offset below derives from these.
 mod layout {
@@ -135,6 +143,24 @@ fn val_type(profile: Profile, ty: MTy) -> Option<ValType> {
     }
 }
 
+fn i32_cell() -> GlobalType {
+    GlobalType {
+        val_type: ValType::I32,
+        mutable: true,
+        shared: false,
+    }
+}
+
+fn hosted_memory() -> MemoryType {
+    MemoryType {
+        minimum: 1,
+        maximum: None,
+        memory64: false,
+        shared: false,
+        page_size_log2: None,
+    }
+}
+
 fn val_types(profile: Profile, tys: impl IntoIterator<Item = MTy>) -> Vec<ValType> {
     tys.into_iter()
         .filter_map(|ty| val_type(profile, ty))
@@ -142,6 +168,23 @@ fn val_types(profile: Profile, tys: impl IntoIterator<Item = MTy>) -> Vec<ValTyp
 }
 
 pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
+    emit_module(program, false)
+}
+
+/// Like [`emit`] for an interactive program, but the module imports its
+/// `memory` and the allocator's `heap` and `live` globals from `goat` instead
+/// of owning them, so a host can instantiate a recompiled module over the same
+/// heap and keep the model (ADR 0015, addendum). The host starts the heap
+/// pointer at [`HOSTED_HEAP_START`] and the live count at zero; each module
+/// copies its static data into the heap when it starts.
+pub fn emit_reloadable(program: &Program) -> Result<Vec<u8>, EmitError> {
+    if program.interactive.is_none() {
+        return Err(EmitError::Unsupported("a reloadable run-once program"));
+    }
+    emit_module(program, true)
+}
+
+fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
     let profile = program.profile;
     if profile == Profile::Embedded && program.interactive.is_some() {
         return Err(EmitError::Unsupported(
@@ -234,6 +277,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         indirect: needs_drop,
         alloc_fn: runtime_base,
         drop_loop_fn: needs_drop.then_some(runtime_base + allocator::FUNCTIONS),
+        hosted,
     };
 
     let mut bodies = Vec::new();
@@ -280,7 +324,11 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         }
     }
     let free_lists = FreeList {
-        table: (DATA_BASE + data.len() as u32).next_multiple_of(8),
+        table: if hosted {
+            DATA_BASE
+        } else {
+            (DATA_BASE + data.len() as u32).next_multiple_of(8)
+        },
     };
     let heap_start = free_lists.table + allocator::TABLE_BYTES;
     let mut runtime = vec![
@@ -290,6 +338,10 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     ];
     if needs_drop {
         runtime.push(drop_loop(&mut shared));
+    }
+    if hosted {
+        func_types.push(entry_ty);
+        bodies.push(load_data(shared.alloc_fn, data.len() as u32));
     }
     let entry_index = program.funcs.len();
     bodies.splice(entry_index + 1..entry_index + 1, runtime);
@@ -314,6 +366,11 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     if !uses.traps.is_empty() {
         import_section.import("goat", "trap", EntityType::Function(print_bool));
     }
+    if hosted {
+        import_section.import("goat", "memory", hosted_memory());
+        import_section.import("goat", "heap", i32_cell());
+        import_section.import("goat", "live", i32_cell());
+    }
     module.section(&import_section);
 
     let mut functions = FunctionSection::new();
@@ -335,30 +392,38 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         module.section(&tables);
     }
 
-    let mut memory = MemorySection::new();
-    memory.memory(MemoryType {
-        minimum: u64::from(heap_start.div_ceil(PAGE_BYTES)).max(1),
-        maximum: None,
-        memory64: false,
-        shared: false,
-        page_size_log2: None,
-    });
-    module.section(&memory);
+    if !hosted {
+        let mut memory = MemorySection::new();
+        memory.memory(MemoryType {
+            minimum: u64::from(heap_start.div_ceil(PAGE_BYTES)).max(1),
+            maximum: None,
+            ..hosted_memory()
+        });
+        module.section(&memory);
+    }
 
     let mut globals = GlobalSection::new();
+    let allocator_globals: &[i32] = if hosted { &[] } else { &[heap_start as i32, 0] };
     let closure_globals = if program.interactive.is_some() { 2 } else { 0 };
-    for init in [heap_start as i32, 0, FUEL_START, 0]
-        .into_iter()
+    for init in allocator_globals
+        .iter()
+        .copied()
+        .chain([FUEL_START, 0])
         .chain(std::iter::repeat_n(0, closure_globals))
     {
-        globals.global(
-            GlobalType {
-                val_type: ValType::I32,
-                mutable: true,
-                shared: false,
-            },
-            &ConstExpr::i32_const(init),
-        );
+        globals.global(i32_cell(), &ConstExpr::i32_const(init));
+    }
+    if let Some(interactive) = &program.interactive {
+        let fingerprint = model_fingerprint(&program.layouts, interactive.model);
+        let immutable_i64 = GlobalType {
+            val_type: ValType::I64,
+            mutable: false,
+            shared: false,
+        };
+        globals.global(immutable_i64, &ConstExpr::i64_const(fingerprint as i64));
+        if hosted {
+            globals.global(i32_cell(), &ConstExpr::i32_const(0));
+        }
     }
     module.section(&globals);
 
@@ -383,8 +448,16 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
             let name = format!("goat_event_{}", event.label);
             exports.export(&name, ExportKind::Func, imports + event.func.0);
         }
+        exports.export(FINGERPRINT_EXPORT, ExportKind::Global, FINGERPRINT_GLOBAL);
     }
     module.section(&exports);
+
+    if hosted {
+        let start = imports + bodies.len() as u32 - 1;
+        module.section(&StartSection {
+            function_index: start,
+        });
+    }
 
     if table_len > 0 {
         let mut elements = ElementSection::new();
@@ -396,6 +469,10 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         module.section(&elements);
     }
 
+    if hosted {
+        module.section(&DataCountSection { count: 1 });
+    }
+
     let mut code = CodeSection::new();
     for body in &bodies {
         code.function(body);
@@ -403,7 +480,11 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     module.section(&code);
 
     let mut segments = DataSection::new();
-    segments.active(0, &ConstExpr::i32_const(DATA_BASE as i32), data);
+    if hosted {
+        segments.passive(data);
+    } else {
+        segments.active(0, &ConstExpr::i32_const(DATA_BASE as i32), data);
+    }
     module.section(&segments);
 
     if !shared.sites.is_empty() {
@@ -420,6 +501,43 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     }
 
     Ok(module.finish())
+}
+
+/// The host reads this immutable `i64` global to learn whether a recompiled
+/// program still lays its model out the way the running one does.
+pub const FINGERPRINT_EXPORT: &str = "goat_model_fingerprint";
+
+/// A reloadable module's start function: it takes a block from the shared
+/// allocator for its static data, hands the block's count back (the data is
+/// immortal, not a live object), and copies the data in.
+fn load_data(alloc_fn: u32, len: u32) -> Function {
+    use Instruction::*;
+    let live = allocator::LIVE_GLOBAL;
+    let code = [
+        I32Const((layout::HEADER + len) as i32),
+        Call(alloc_fn),
+        GlobalGet(live),
+        I32Const(1),
+        I32Sub,
+        GlobalSet(live),
+        I32Const(layout::HEADER as i32),
+        I32Add,
+        GlobalSet(DATA_BASE_GLOBAL),
+        GlobalGet(DATA_BASE_GLOBAL),
+        I32Const(0),
+        I32Const(len as i32),
+        MemoryInit {
+            mem: 0,
+            data_index: 0,
+        },
+        DataDrop(0),
+        End,
+    ];
+    let mut f = Function::new([]);
+    for instr in &code {
+        f.instruction(instr);
+    }
+    f
 }
 
 /// The exports an interactive program adds, in the order `interactive_exports`
@@ -604,6 +722,9 @@ struct Shared<'a> {
     nullary: Vec<u32>,
     indirect: bool,
     drop_loop_fn: Option<u32>,
+    /// Static data sits wherever the module's start function copied it, so
+    /// its addresses are offsets from a global.
+    hosted: bool,
 }
 
 fn intern<T: PartialEq>(items: &mut Vec<T>, item: T) -> usize {
@@ -625,6 +746,19 @@ impl Shared<'_> {
     fn noop_slot(&mut self) -> u32 {
         let noop = self.helper(Helper::Noop);
         self.table_slot(noop)
+    }
+
+    /// Pushes the address of the static datum at `address`.
+    fn push_data_address(&self, address: u32, out: &mut Code) {
+        if self.hosted {
+            out.extend([
+                Instruction::GlobalGet(DATA_BASE_GLOBAL),
+                Instruction::I32Const((address - DATA_BASE) as i32),
+                Instruction::I32Add,
+            ]);
+        } else {
+            out.push(Instruction::I32Const(address as i32));
+        }
     }
 
     fn nullary_cell(&self, tag: u32) -> Result<u32, EmitError> {
@@ -1320,7 +1454,8 @@ impl<'p> FuncCx<'_, 'p> {
         }
         let ty = MTy::Ptr(HeapKind::Closure(env.sig));
         if captures.is_empty() {
-            out.push(Instruction::I32Const(self.shared.static_closure(f) as i32));
+            let address = self.shared.static_closure(f);
+            self.shared.push_data_address(address, out);
             return Ok(Some(ty));
         }
         let Some(temps) = self.evaluate(captures, out)? else {
@@ -1635,7 +1770,8 @@ impl<'p> FuncCx<'_, 'p> {
                 }
                 let result = Some(MTy::Ptr(HeapKind::Variant(*l)));
                 if fields.is_empty() {
-                    out.push(Instruction::I32Const(self.shared.nullary_cell(*tag)? as i32));
+                    let address = self.shared.nullary_cell(*tag)?;
+                    self.shared.push_data_address(address, out);
                     return Ok(result);
                 }
                 let Some(temps) = self.evaluate(fields, out)? else {
@@ -1668,7 +1804,7 @@ impl<'p> FuncCx<'_, 'p> {
                 Err(EmitError::Unsupported("in-place variant reuse"))
             }
             Expr::StrLit(d) => {
-                out.push(Instruction::I32Const(self.string_address(*d)? as i32));
+                self.shared.push_data_address(self.string_address(*d)?, out);
                 Ok(Some(MTy::Ptr(HeapKind::Str)))
             }
             Expr::StrEq(a, b) => {
@@ -1694,7 +1830,7 @@ impl<'p> FuncCx<'_, 'p> {
                         1
                     }
                     Write::Lit(d) => {
-                        out.push(Instruction::I32Const(self.string_address(*d)? as i32));
+                        self.shared.push_data_address(self.string_address(*d)?, out);
                         1
                     }
                     Write::End => 2,
@@ -1971,8 +2107,8 @@ impl<'p> FuncCx<'_, 'p> {
             .trap_messages
             .get(message)
             .ok_or(EmitError::Malformed("trap message not collected"))?;
+        self.shared.push_data_address(address, out);
         out.extend([
-            Instruction::I32Const(address as i32),
             Instruction::Call(self.shared.trap_import),
             Instruction::Unreachable,
         ]);

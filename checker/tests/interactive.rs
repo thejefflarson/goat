@@ -83,6 +83,31 @@ fn init_must_be_a_record() {
 }
 
 #[test]
+fn the_model_cannot_hold_a_function() {
+    for init in [
+        "{x: 0, f: program(a) do a done}",
+        "{x: 0, inner: {f: program(a) do a + 1 done}}",
+        "{x: 0, fs: [program(a) do a done]}",
+    ] {
+        let source = interactive(init, UPDATE, DRAW);
+        let (message, text) = the_error(&source);
+        assert!(
+            message.starts_with("the model can't hold a function"),
+            "{message}"
+        );
+        assert_eq!(text, init);
+    }
+}
+
+#[test]
+fn a_function_at_the_top_level_is_not_in_the_model() {
+    let init = "{x: step(0.5)}";
+    let source = interactive(init, UPDATE, DRAW)
+        .replace("init =", "step = program(a) do a + 1 done\ninit =");
+    checks(&source);
+}
+
+#[test]
 fn update_must_take_a_model_and_an_event() {
     let update = "update = program(model) do model done\n";
     let (message, text) = the_error(&interactive("{x: 0}", update, DRAW));

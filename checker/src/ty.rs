@@ -150,6 +150,15 @@ impl Ty {
         }
     }
 
+    /// The first function type in this type, looking inside records, variant
+    /// payloads and recursive bodies.
+    pub fn find_func(&self) -> Option<&Ty> {
+        match self {
+            Ty::Func(..) => Some(self),
+            _ => self.children().into_iter().find_map(Ty::find_func),
+        }
+    }
+
     /// The types directly inside this one.
     fn children(&self) -> Vec<&Ty> {
         match self {

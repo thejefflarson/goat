@@ -24,7 +24,7 @@ use wasm_encoder::{BlockType, Function, Instruction, ValType};
 use crate::{layout, memarg, rc_load};
 
 const HEAP_GLOBAL: u32 = 0;
-const LIVE_GLOBAL: u32 = 1;
+pub const LIVE_GLOBAL: u32 = 1;
 pub const FUNCTIONS: u32 = 3;
 
 const MIN_BLOCK: u32 = 16;

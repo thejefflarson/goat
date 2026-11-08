@@ -1,7 +1,7 @@
 //! The host side of ADR 0015: instantiate an interactive module, feed it
 //! events, and stream each frame it draws to a [`SceneSink`].
 
-use super::Guest;
+use super::{Guest, site_table};
 use goat_mir::{Scene, SceneSink};
 
 /// The fuel refilled before every call into goat, so a runaway `update`
@@ -35,6 +35,16 @@ impl Event {
     }
 }
 
+/// What a reload did with the model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reloaded {
+    /// The new program's model layout matches, so the running model carried
+    /// over.
+    Kept,
+    /// The layout changed, so the model restarted from the new `init`.
+    Reset,
+}
+
 /// A running interactive program. Any trap stops it for good: later calls
 /// fail, since a half-run `update` leaves no model worth continuing from.
 pub struct Interactive<S: SceneSink + 'static> {
@@ -48,17 +58,48 @@ impl<S: SceneSink + 'static> Interactive<S> {
     /// model.
     pub fn new(wasm: &[u8], sink: S) -> Result<Self, String> {
         let mut guest = Guest::new(wasm, Scene(sink))?;
-        let subscriptions = guest
-            .exports()
-            .iter()
-            .filter_map(|name| name.strip_prefix(EVENT_PREFIX).map(str::to_string))
-            .collect();
+        let subscriptions = subscriptions(&mut guest);
         let model = call(&mut guest, "goat_setup", ())?;
         Ok(Interactive {
             guest,
             model: Some(model),
             subscriptions,
         })
+    }
+
+    /// Swap in a recompiled program, keeping the running model when its
+    /// layout fingerprint is unchanged and starting over from the new `init`
+    /// when it is not (or when the program had stopped). Both modules must
+    /// come from `compile_reloadable`. If the new program cannot start, the
+    /// old one is left running.
+    pub fn reload(&mut self, wasm: &[u8]) -> Result<Reloaded, String> {
+        let guest = &mut self.guest;
+        let (old, new) = (guest.instance, guest.spawn(wasm)?);
+        let fresh: i32 = guest.on(new, |guest| call(guest, "goat_setup", ()))?;
+        let same_layout = guest.fingerprint(old)? == guest.fingerprint(new)?;
+
+        let (model, outcome) = match self.model.take() {
+            Some(model) if same_layout => {
+                guest.on(new, |guest| {
+                    call::<_, _, ()>(guest, "goat_release_model", fresh)
+                })?;
+                (model, Reloaded::Kept)
+            }
+            Some(model) => {
+                guest.on(old, |guest| {
+                    call::<_, _, ()>(guest, "goat_release_model", model)
+                })?;
+                (fresh, Reloaded::Reset)
+            }
+            None => (fresh, Reloaded::Reset),
+        };
+        guest.on(old, |guest| call::<_, _, ()>(guest, "goat_shutdown", ()))?;
+
+        guest.instance = new;
+        guest.store.data_mut().sites = site_table(wasm);
+        self.subscriptions = subscriptions(guest);
+        self.model = Some(model);
+        Ok(outcome)
     }
 
     /// The event tags the program handles; the host need only listen for
@@ -115,6 +156,14 @@ impl<S: SceneSink + 'static> Interactive<S> {
     pub fn into_sink(self) -> S {
         self.guest.into_host().0
     }
+}
+
+fn subscriptions<S: SceneSink + 'static>(guest: &mut Guest<Scene<S>>) -> Vec<String> {
+    guest
+        .exports()
+        .iter()
+        .filter_map(|name| name.strip_prefix(EVENT_PREFIX).map(str::to_string))
+        .collect()
 }
 
 const STOPPED: &str = "the program has stopped";

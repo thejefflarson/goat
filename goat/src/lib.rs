@@ -104,11 +104,27 @@ pub fn compile_for(
     source: &str,
     host: &HostInterface,
 ) -> Result<(Vec<u8>, Vec<GoatError>), Vec<GoatError>> {
+    compile_with(profile, source, host, goat_wasm::emit)
+}
+
+/// Like [`compile`] for an interactive program, emitting a module that imports
+/// its memory and allocator state from the host, so a recompiled module can be
+/// swapped in over the same heap (see `native::Interactive::reload`). A
+/// run-once program is an error.
+pub fn compile_reloadable(source: &str, host: &HostInterface) -> Result<Vec<u8>, Vec<GoatError>> {
+    compile_with(Profile::Desktop, source, host, goat_wasm::emit_reloadable).map(|(wasm, _)| wasm)
+}
+
+fn compile_with(
+    profile: Profile,
+    source: &str,
+    host: &HostInterface,
+    emit: fn(&goat_mir::Program) -> Result<Vec<u8>, goat_wasm::EmitError>,
+) -> Result<(Vec<u8>, Vec<GoatError>), Vec<GoatError>> {
     let mut checked = goat_checker::check_with_prelude(host.prelude(), source)?;
     let warnings = std::mem::take(&mut checked.typed.warnings);
     let program = goat_mir::mono_for(&checked, profile)?;
-    let wasm = goat_wasm::emit(&program)
-        .map_err(|e| vec![GoatError::new(Span::new(0, 0), e.to_string())])?;
+    let wasm = emit(&program).map_err(|e| vec![GoatError::new(Span::new(0, 0), e.to_string())])?;
     Ok((wasm, warnings))
 }
 
