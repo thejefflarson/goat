@@ -1,0 +1,22 @@
+# A literal pattern matches a number, string, or bool by value. Numbers and
+# strings can never be exhausted, so they need an `else`; a bool that names
+# both `true` and `false` doesn't.
+command = program(word) do
+  match word do
+    "go" then 1
+    "stop" then 2
+    else 0
+  done
+done
+
+score = program(n) do
+  match n do
+    0 then 0
+    1 then 10
+    else 100
+  done
+done
+
+print(command("stop"));
+print(score(1));
+print(match 2 < 1 do true then "yes" false then "no" done);
