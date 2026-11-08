@@ -8,6 +8,11 @@ fn compile_never_panics() {
     bolero::check!().for_each(|data: &[u8]| {
         if let Ok(source) = std::str::from_utf8(data) {
             let _ = goat::compile_turtle(source);
+        } else {
+            // Drive the lossy path: replacement characters (U+FFFD) are valid
+            // UTF-8 that may reach all compiler phases, expanding coverage of
+            // the diagnostic-formatting and character-handling code paths.
+            let _ = goat::compile_turtle(&String::from_utf8_lossy(data));
         }
     });
 }

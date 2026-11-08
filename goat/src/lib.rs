@@ -23,7 +23,14 @@ impl HostInterface {
 
     /// A host that offers the standard library plus `declarations`, goat
     /// source made of `foreign` bindings.
+    ///
+    /// `declarations` must not shadow any name already defined in the standard
+    /// library; debug builds assert this to catch mistakes early.
     pub fn with_stdlib(declarations: &str) -> Self {
+        debug_assert!(
+            !shadows_stdlib(declarations),
+            "declarations shadow a stdlib name"
+        );
         Self::new(format!("{}\n{declarations}", goat_checker::STDLIB))
     }
 
@@ -35,6 +42,31 @@ impl HostInterface {
     pub fn prelude(&self) -> &str {
         &self.prelude
     }
+}
+
+/// True if any top-level binding name in `declarations` is already defined in
+/// the standard library. Uses a lightweight line scan: the first identifier on
+/// a non-comment, non-empty, non-keyword line is treated as the binding name.
+fn shadows_stdlib(declarations: &str) -> bool {
+    use std::collections::HashSet;
+    // Keywords that open a construct but are not binding names.
+    const KW: &[&str] = &[
+        "tag", "if", "then", "else", "done", "do", "program", "foreign", "match",
+    ];
+    fn binding_names(src: &str) -> HashSet<&str> {
+        src.lines()
+            .filter_map(|line| {
+                let t = line.trim_start();
+                if t.starts_with("//") || t.is_empty() {
+                    return None;
+                }
+                let name = t.split(|c: char| !c.is_alphanumeric() && c != '_').next()?;
+                if name.is_empty() || KW.contains(&name) { None } else { Some(name) }
+            })
+            .collect()
+    }
+    let stdlib = binding_names(goat_checker::STDLIB);
+    binding_names(declarations).iter().any(|n| stdlib.contains(n))
 }
 
 /// Parse, type-check, monomorphize, and emit a wasm module for `source`
