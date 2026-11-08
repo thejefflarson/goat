@@ -40,6 +40,9 @@ configuration, and `xcodegen generate` copies `Local.xcconfig.example` (empty te
 
 To sign with your own Apple Development team, set `DEVELOPMENT_TEAM` in `Local.xcconfig`
 (gitignored, so the Team ID never reaches this public repo) and regenerate the project.
+The Team ID is the **OU** of your Apple Development certificate, *not* the value shown in
+parentheses in the certificate's name — read it with
+`security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject -nameopt multiline | grep organizationalUnit`.
 Automatic signing then needs your Apple ID in Xcode (Settings > Accounts), and for a device
 build a registered device; headless `xcodebuild` also needs `-allowProvisioningUpdates` the
 first time. Pass `CODE_SIGNING_ALLOWED=NO` to build unsigned while a team is set.

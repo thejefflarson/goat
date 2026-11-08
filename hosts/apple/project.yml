@@ -2,7 +2,10 @@ name: Goat
 options:
   bundleIdPrefix: com.thejefflarson
   # Local.xcconfig is gitignored; a fresh checkout gets the empty example (unsigned).
-  preGenCommand: cp -n Local.xcconfig.example Local.xcconfig
+  # `test -e || cp` (not `cp -n`): macOS `cp -n` exits 1 when it skips an existing
+  # file, which would fail preGenCommand and abort xcodegen for anyone who already
+  # has a Local.xcconfig.
+  preGenCommand: test -e Local.xcconfig || cp Local.xcconfig.example Local.xcconfig
   deploymentTarget:
     macOS: "13.0"
     iOS: "16.0"
