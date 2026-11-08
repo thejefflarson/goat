@@ -1683,6 +1683,63 @@ mod tests {
         assert_eq!(err, "expression nested too deeply");
     }
 
+    /// `f0` wraps its argument in `{a: _}`; each later `f` composes the one
+    /// before with itself, so `f{levels}` nests the wrapper `2^levels` times.
+    fn self_composed(levels: usize) -> String {
+        let mut source = String::from(
+            "compose = program(f, g) do program(x) do f(g(x)) done done\n\
+             f0 = program(x) do {a: x} done\n",
+        );
+        for level in 1..=levels {
+            let previous = level - 1;
+            source += &format!("f{level} = compose(f{previous}, f{previous})\n");
+        }
+        source + &format!("f{levels}")
+    }
+
+    #[test]
+    fn composing_a_generic_function_with_itself_is_a_spanned_resource_error() {
+        let started = std::time::Instant::now();
+        let source = self_composed(14);
+        let Err(errors) = check(&source) else {
+            panic!("a type of 2^14 parts should not check");
+        };
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].message.starts_with("program too complex"),
+            "{}",
+            errors[0].message
+        );
+        let blamed = &source[errors[0].span.start..errors[0].span.end];
+        assert!(
+            blamed.starts_with("compose(f") && blamed.ends_with(')'),
+            "{blamed}"
+        );
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn composing_a_generic_function_with_itself_a_few_times_still_checks() {
+        let ty = type_of(&self_composed(6)).unwrap();
+        assert!(ty.starts_with("(t"), "{ty}");
+        assert_eq!(ty.matches("{a: ").count(), 64);
+    }
+
+    #[test]
+    fn a_wide_record_is_fine_until_its_type_passes_the_term_limit() {
+        let record = |fields: usize| {
+            let body: Vec<String> = (0..fields).map(|i| format!("f{i}: {i}")).collect();
+            format!("{{{}}}", body.join(", "))
+        };
+        assert!(type_of(&record(200)).is_ok());
+        let source = record(600);
+        let Err(errors) = check(&source) else {
+            panic!("a 600-field record should not check");
+        };
+        assert!(errors[0].message.starts_with("program too complex"));
+        assert_eq!(&source[errors[0].span.start..errors[0].span.end], source);
+    }
+
     #[test]
     fn and_or_not_have_their_own_nodes() {
         let lowered = crate::lower::lower("a = true b = false a and b").unwrap();

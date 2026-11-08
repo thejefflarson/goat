@@ -36,6 +36,12 @@ use crate::ty::{Group, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{EVENT_TAGS, SHAPE_TAGS, event_payload, list, shape_payload};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+/// Most type terms (constructors, fields, variables) one expression's type may
+/// hold. Composing generic functions with themselves doubles a type at every
+/// level, and inference over a type that large is slower than quadratic, so a
+/// crafted program would hang the checker; no hand-written type comes close.
+const MAX_TYPE_TERMS: usize = 1024;
+
 /// The result of checking a program: the program's own type, plus the resolved
 /// type of every node (keyed by [`ExprId`]) for later phases.
 pub struct Typed {
@@ -1012,9 +1018,60 @@ impl Inferer {
     }
 
     fn infer(&mut self, expr: &Expr) -> Ty {
-        let ty = self.infer_kind(expr);
+        let mut ty = self.infer_kind(expr);
+        if !self.within_term_budget(&ty) {
+            self.errors.push(GoatError::new(
+                expr.span,
+                format!(
+                    "program too complex: the type of this expression has more than {MAX_TYPE_TERMS} parts"
+                ),
+            ));
+            ty = self.fresh();
+        }
         self.node_types.insert(expr.id, ty.clone());
         ty
+    }
+
+    /// Whether `ty`, followed through the substitution, has at most
+    /// [`MAX_TYPE_TERMS`] terms. Counting stops once the budget is spent, so
+    /// the cost is bounded however large the type is.
+    fn within_term_budget(&self, ty: &Ty) -> bool {
+        let mut budget = MAX_TYPE_TERMS;
+        self.spend_on_ty(ty, &mut budget).is_some()
+    }
+
+    fn spend_on_ty(&self, ty: &Ty, budget: &mut usize) -> Option<()> {
+        *budget = budget.checked_sub(1)?;
+        match ty {
+            Ty::Var(v) => match self.subst.get(v) {
+                Some(bound) => self.spend_on_ty(bound, budget),
+                None => Some(()),
+            },
+            Ty::Func(args, ret) => {
+                for arg in args {
+                    self.spend_on_ty(arg, budget)?;
+                }
+                self.spend_on_ty(ret, budget)
+            }
+            Ty::Record(row) | Ty::Variant(row) => self.spend_on_row(row, budget),
+            Ty::Rec(_, body) => self.spend_on_ty(body, budget),
+            Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => Some(()),
+        }
+    }
+
+    fn spend_on_row(&self, row: &Row, budget: &mut usize) -> Option<()> {
+        *budget = budget.checked_sub(1)?;
+        match row {
+            Row::Var(v) => match self.row_subst.get(v) {
+                Some(bound) => self.spend_on_row(bound, budget),
+                None => Some(()),
+            },
+            Row::Extend { field, rest, .. } => {
+                self.spend_on_ty(field, budget)?;
+                self.spend_on_row(rest, budget)
+            }
+            Row::Empty => Some(()),
+        }
     }
 
     /// The chain of `Let`s from `first`, walked in a loop so a long block costs
