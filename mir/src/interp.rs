@@ -542,6 +542,12 @@ impl<'p> Interp<'p> {
     }
 
     fn eval(&mut self, e: &Expr, frame: &mut Frame, depth: usize) -> Result<Flow, InterpError> {
+        let mut e = e;
+        while let Expr::Let(x, rhs, body) = e {
+            let v = self.value(rhs, frame, depth)?;
+            frame.locals.insert(*x, v);
+            e = body;
+        }
         let value = match e {
             Expr::Const(c) => match *c {
                 Const::Int(n) => Value::Int(n),
@@ -550,11 +556,7 @@ impl<'p> Interp<'p> {
                 Const::Unit => Value::Unit,
             },
             Expr::Local(x) => frame.get(*x)?,
-            Expr::Let(x, rhs, body) => {
-                let v = self.value(rhs, frame, depth)?;
-                frame.locals.insert(*x, v);
-                return self.eval(body, frame, depth);
-            }
+            Expr::Let(..) => unreachable!("the loop above consumed every `Let`"),
             Expr::BinInt(op, a, b) => {
                 let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
                 int_op(*op, a, b)?

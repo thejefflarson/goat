@@ -864,3 +864,32 @@ fn a_literal_match_evaluates_its_scrutinee_once() {
                match tick(0) do 0 then 5 1 then 6 else 7 done";
     assert_eq!(run(src), "0\n6");
 }
+
+const LONG_BLOCK: usize = 3000;
+
+#[test]
+fn a_block_of_thousands_of_statements_runs() {
+    let prints: Vec<String> = (0..LONG_BLOCK).map(|i| format!("print({i})")).collect();
+    let expected: Vec<String> = (0..LONG_BLOCK).map(|i| i.to_string()).collect();
+    assert_eq!(
+        run(&format!("{}; 0", prints.join("; "))),
+        format!("{}\n0", expected.join("\n"))
+    );
+}
+
+#[test]
+fn a_chain_of_thousands_of_bindings_runs() {
+    let bindings: Vec<String> = (1..LONG_BLOCK)
+        .map(|i| format!("a{i} = a{} + 1", i - 1))
+        .collect();
+    let src = format!("a0 = 0 {} a{}", bindings.join(" "), LONG_BLOCK - 1);
+    // The parser nests each binding's rest inside it, so the chain needs more
+    // stack than a test thread has; the passes after parsing use none per link.
+    let ran = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || run(&src))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(ran, (LONG_BLOCK - 1).to_string());
+}

@@ -1440,11 +1440,64 @@ mod tests {
     }
 
     #[test]
-    fn a_long_run_of_statements_is_one_level_each() {
-        let statements = vec!["print(1)"; 200].join("; ");
+    fn a_long_run_of_statements_costs_no_depth() {
+        let statements = vec!["print(1)"; 5000].join("; ");
         assert_eq!(type_of(&format!("{statements}; 1")).unwrap(), "Number");
-        let too_many = vec!["print(1)"; 300].join("; ");
-        let err = type_of(&format!("{too_many}; 1")).unwrap_err();
+    }
+
+    #[test]
+    fn a_long_chain_of_bindings_costs_no_depth() {
+        let bindings: Vec<String> = (1..3000)
+            .map(|i| format!("a{i} = a{} + 1", i - 1))
+            .collect();
+        let src = format!("a0 = 0 {} a2999", bindings.join(" "));
+        assert_eq!(type_of_on_a_big_stack(src).unwrap(), "Number");
+    }
+
+    /// The parser nests each binding's rest inside it, so a long chain needs
+    /// more stack than a test thread has; the passes after it use none per
+    /// link. Deeply nested source is likewise lowered recursively.
+    fn type_of_on_a_big_stack(source: String) -> Result<String, String> {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(move || type_of(&source))
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_literal_match_gives_back_the_depth_it_took() {
+        let matches = vec!["match 1 do 1 then 0 else 2 done"; 300].join("; ");
+        assert_eq!(type_of(&format!("{matches}; 1")).unwrap(), "Number");
+    }
+
+    #[test]
+    fn a_deeply_nested_expression_is_still_a_clean_error() {
+        let nested = format!("{}1{}", "(".repeat(300), ")".repeat(300));
+        let err = type_of_on_a_big_stack(nested).unwrap_err();
+        assert_eq!(err, "expression nested too deeply");
+        let blocks = format!(
+            "{}1{}",
+            "if true then ".repeat(300),
+            " else 2 done".repeat(300)
+        );
+        let err = type_of_on_a_big_stack(blocks).unwrap_err();
+        assert_eq!(err, "expression nested too deeply");
+    }
+
+    #[test]
+    fn statements_inside_a_nested_block_still_count_the_nesting() {
+        let inner = vec!["print(1)"; 1000].join("; ");
+        let wrap = |depth: usize| {
+            format!(
+                "{}{inner}; 1{}",
+                "if true then ".repeat(depth),
+                " else 2 done".repeat(depth)
+            )
+        };
+        assert!(type_of_on_a_big_stack(wrap(200)).is_ok());
+        let err = type_of_on_a_big_stack(wrap(300)).unwrap_err();
         assert_eq!(err, "expression nested too deeply");
     }
 

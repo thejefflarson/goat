@@ -62,9 +62,13 @@ interpreter changed.
 - Loop counters are `Number` (a float) until the Int/Float split lands (ADR 0001).
 - The loop body is not required to be `Unit`; a non-`Unit` body value is dropped,
   as with `;`.
-- A `;`-sequenced block costs one level of the lowering depth limit per statement,
-  the same as a chain of bindings, so one block holds about 200 statements. Making
-  that limit a function of tree shape rather than a count means walking `Let`
-  chains iteratively in inference, mono and the interpreter; not done here.
+- The lowering depth limit counts nesting, not statements. A `;`-sequenced block
+  is a flat run of siblings in the parse tree and a chain of `Let`s in the HIR and
+  MIR, and every pass walks that chain in a loop (lowering, inference, capture
+  analysis, mono, reference counting, verification, the interpreter, wasm
+  emission), so a block of any length costs one level of depth and no stack per
+  statement. A chain of bindings is the same after parsing, but the parser nests
+  each binding's rest inside it, so its length is bounded by the parser's own
+  stack check, which fails cleanly with a parse error.
 - Statements after a loop need a `;` (`repeat 3 times do … done;`), as after any
   other expression.

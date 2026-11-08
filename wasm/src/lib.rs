@@ -670,8 +670,8 @@ struct Uses {
 }
 
 impl Uses {
-    fn scan(&mut self, e: &Expr) {
-        match e {
+    fn scan(&mut self, root: &Expr) {
+        root.for_each_node(&mut |e| match e {
             Expr::Drop(_) | Expr::ReuseRecord(..) => self.drops = true,
             Expr::Write(_) => self.writes = true,
             Expr::Trap(message) => self.note_trap(message),
@@ -682,8 +682,7 @@ impl Uses {
                 }
             }
             _ => {}
-        }
-        e.for_each_child(&mut |c| self.scan(c));
+        });
     }
 
     #[inline(never)]
@@ -1336,6 +1335,16 @@ impl<'p> FuncCx<'_, 'p> {
     }
 
     fn lower(&mut self, expr: &Expr, out: &mut Code) -> Result<Ty, EmitError> {
+        let mut expr = expr;
+        while let Expr::Let(l, rhs, body) = expr {
+            let Some(ty) = self.lower(rhs, out)? else {
+                return Ok(None);
+            };
+            if let Some(index) = self.bind(*l, ty) {
+                out.push(Instruction::LocalSet(index));
+            }
+            expr = body;
+        }
         match expr {
             Expr::Const(c) => Ok(Some(match *c {
                 Const::Int(n) => {
@@ -1359,15 +1368,7 @@ impl<'p> FuncCx<'_, 'p> {
                 }
                 Ok(Some(ty))
             }
-            Expr::Let(l, rhs, body) => {
-                let Some(ty) = self.lower(rhs, out)? else {
-                    return Ok(None);
-                };
-                if let Some(index) = self.bind(*l, ty) {
-                    out.push(Instruction::LocalSet(index));
-                }
-                self.lower(body, out)
-            }
+            Expr::Let(..) => unreachable!("the loop above consumed every `Let`"),
             Expr::BinInt(op, a, b) => {
                 self.operands(a, b, MTy::Int, out)?;
                 out.push(match op {

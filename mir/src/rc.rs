@@ -76,21 +76,19 @@ pub fn insert_rc(program: &mut Program) {
 }
 
 fn max_local(func: &Func) -> u32 {
-    fn walk(e: &Expr, max: &mut u32) {
-        let mut note = |l: &Local| *max = (*max).max(l.0);
-        match e {
-            Expr::Let(x, ..) => note(x),
-            Expr::Unpack(_, _, binds, _) => binds.iter().for_each(note),
-            _ => {}
-        }
-        e.for_each_child(&mut |c| walk(c, max));
-    }
     let mut max = 0;
     func.params.iter().for_each(|(l, _)| max = max.max(l.0));
     if let Some(env) = &func.env {
         max = max.max(env.local.0);
     }
-    walk(&func.body, &mut max);
+    func.body.for_each_node(&mut |e| {
+        let mut note = |l: &Local| max = max.max(l.0);
+        match e {
+            Expr::Let(x, ..) => note(x),
+            Expr::Unpack(_, _, binds, _) => binds.iter().for_each(note),
+            _ => {}
+        }
+    });
     max
 }
 
@@ -208,11 +206,15 @@ impl<'p> Cx<'p> {
                 Const::Unit => MTy::Unit,
             }),
             Expr::Local(x) => self.types.get(x).copied(),
-            Expr::Let(x, rhs, body) => {
-                if let Some(t) = self.ty(rhs) {
-                    self.types.insert(*x, t);
+            Expr::Let(..) => {
+                let mut cursor = e;
+                while let Expr::Let(x, rhs, body) = cursor {
+                    if let Some(t) = self.ty(rhs) {
+                        self.types.insert(*x, t);
+                    }
+                    cursor = body;
                 }
-                self.ty(body)
+                self.ty(cursor)
             }
             Expr::BinInt(_, a, b) => {
                 self.ty(a);
@@ -380,7 +382,7 @@ impl<'p> Cx<'p> {
                 }
                 out
             }
-            Expr::Let(x, rhs, body) => self.let_(*x, rhs, body, after),
+            Expr::Let(..) => self.let_chain(e, after),
             Expr::BinInt(op, a, b) => self.binary(a, b, after, |a, b| Expr::BinInt(*op, a, b)),
             Expr::BinFloat(op, a, b) => self.binary(a, b, after, |a, b| Expr::BinFloat(*op, a, b)),
             Expr::Cmp(op, a, b) => self.binary(a, b, after, |a, b| Expr::Cmp(*op, a, b)),
@@ -565,18 +567,30 @@ impl<'p> Cx<'p> {
         (self.drops(unused, expr), uses, pending)
     }
 
-    fn let_(&mut self, x: Local, rhs: &Expr, body: &Expr, after: &Set) -> Out {
-        let body = self.go(body, after);
-        let (body_expr, mut uses, pending) = self.scope(&[x], body);
-        let live: Set = after | &uses;
-        let rhs = self.go(rhs, &live);
-        let body_expr = self.drops(rhs.pending, body_expr);
-        uses.extend(rhs.uses);
-        Out {
-            expr: Expr::Let(x, Box::new(rhs.expr), Box::new(body_expr)),
-            uses,
-            pending,
+    /// A chain of `Let`s, rewritten from the last body back to the first
+    /// binding in a loop so a long block costs no stack. Every body in the
+    /// chain has the same `after`: whatever follows the whole chain.
+    fn let_chain(&mut self, first: &Expr, after: &Set) -> Out {
+        let mut bindings = Vec::new();
+        let mut cursor = first;
+        while let Expr::Let(x, rhs, body) = cursor {
+            bindings.push((*x, &**rhs));
+            cursor = body;
         }
+        let mut out = self.go(cursor, after);
+        for (x, rhs) in bindings.into_iter().rev() {
+            let (body_expr, mut uses, pending) = self.scope(&[x], out);
+            let live: Set = after | &uses;
+            let rhs = self.go(rhs, &live);
+            let body_expr = self.drops(rhs.pending, body_expr);
+            uses.extend(rhs.uses);
+            out = Out {
+                expr: Expr::Let(x, Box::new(rhs.expr), Box::new(body_expr)),
+                uses,
+                pending,
+            };
+        }
+        out
     }
 
     /// The fields are evaluated while `base` is still live, then the op moves

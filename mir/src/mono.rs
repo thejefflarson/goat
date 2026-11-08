@@ -4,7 +4,7 @@
 use crate::canon::{canonical, ground_fields, layout_fields};
 use crate::mir::*;
 use crate::rc::insert_rc;
-use goat_checker::captures::for_each_child;
+use goat_checker::captures::{for_each_node, push_children};
 use goat_checker::hir::{
     self, BinOp, Boundary, Builtin, ExprId, ExprKind, Param, PatternPayload, Span, Symbol,
 };
@@ -105,8 +105,8 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
 }
 
 /// Every tag label in the program, constructed or matched.
-fn collect_tags(e: &hir::Expr, out: &mut BTreeSet<String>) {
-    match &e.kind {
+fn collect_tags(root: &hir::Expr, out: &mut BTreeSet<String>) {
+    for_each_node(root, &mut |e| match &e.kind {
         ExprKind::Tag { name, .. } => {
             out.insert(name.clone());
         }
@@ -114,31 +114,31 @@ fn collect_tags(e: &hir::Expr, out: &mut BTreeSet<String>) {
             out.extend(arms.iter().map(|a| a.pattern.tag.clone()));
         }
         _ => {}
-    }
-    for_each_child(e, &mut |c| collect_tags(c, out));
+    });
 }
 
 /// The host function each `foreign` binding names.
-fn collect_foreign(e: &hir::Expr, out: &mut HashMap<Symbol, ForeignFn>) {
-    if let ExprKind::Let { symbol, value, .. } = &e.kind
-        && let ExprKind::Foreign {
-            module,
-            name,
-            params,
-            ret,
-        } = &value.kind
-    {
-        out.insert(
-            *symbol,
-            ForeignFn {
-                module: module.clone(),
-                name: name.clone(),
-                params: params.iter().map(|&b| boundary_ty(b)).collect(),
-                ret: boundary_ty(*ret),
-            },
-        );
-    }
-    for_each_child(e, &mut |c| collect_foreign(c, out));
+fn collect_foreign(root: &hir::Expr, out: &mut HashMap<Symbol, ForeignFn>) {
+    for_each_node(root, &mut |e| {
+        if let ExprKind::Let { symbol, value, .. } = &e.kind
+            && let ExprKind::Foreign {
+                module,
+                name,
+                params,
+                ret,
+            } = &value.kind
+        {
+            out.insert(
+                *symbol,
+                ForeignFn {
+                    module: module.clone(),
+                    name: name.clone(),
+                    params: params.iter().map(|&b| boundary_ty(b)).collect(),
+                    ret: boundary_ty(*ret),
+                },
+            );
+        }
+    });
 }
 
 fn boundary_ty(b: Boundary) -> MTy {
@@ -187,40 +187,41 @@ fn collect_lambdas<'a>(
 }
 
 impl<'a> Collector<'a> {
-    fn walk(&mut self, e: &'a hir::Expr) {
+    fn walk(&mut self, root: &'a hir::Expr) {
         let typed = self.typed;
-        match &e.kind {
-            ExprKind::Let {
-                symbol,
-                value,
-                rest,
-                ..
-            } => {
-                match &value.kind {
-                    ExprKind::Func { params, body } => {
-                        let ty = &typed.schemes[symbol].ty;
-                        self.lambda(Target::Named(*symbol), ty, params, body);
+        let mut pending = vec![root];
+        while let Some(e) = pending.pop() {
+            match &e.kind {
+                ExprKind::Let {
+                    symbol,
+                    value,
+                    rest,
+                    ..
+                } => {
+                    pending.extend(rest.as_deref());
+                    match &value.kind {
+                        ExprKind::Func { params, body } => {
+                            let ty = &typed.schemes[symbol].ty;
+                            self.lambda(Target::Named(*symbol), ty, params, body);
+                        }
+                        _ => {
+                            self.var_tys.insert(*symbol, &typed.node_types[&value.id]);
+                            pending.push(value);
+                        }
                     }
-                    _ => {
-                        self.var_tys.insert(*symbol, &typed.node_types[&value.id]);
-                        self.walk(value);
+                }
+                ExprKind::Func { params, body } => {
+                    self.lambda(Target::Anon(e.id), &typed.node_types[&e.id], params, body);
+                }
+                ExprKind::Match { arms, .. } => {
+                    for binder in arms.iter().flat_map(|a| a.pattern.payload.binders()) {
+                        self.var_tys
+                            .insert(binder.symbol, &typed.binder_types[&binder.symbol]);
                     }
+                    push_children(e, &mut pending);
                 }
-                if let Some(rest) = rest {
-                    self.walk(rest);
-                }
+                _ => push_children(e, &mut pending),
             }
-            ExprKind::Func { params, body } => {
-                self.lambda(Target::Anon(e.id), &typed.node_types[&e.id], params, body);
-            }
-            ExprKind::Match { arms, .. } => {
-                for binder in arms.iter().flat_map(|a| a.pattern.payload.binders()) {
-                    self.var_tys
-                        .insert(binder.symbol, &typed.binder_types[&binder.symbol]);
-                }
-                for_each_child(e, &mut |c| self.walk(c));
-            }
-            _ => for_each_child(e, &mut |c| self.walk(c)),
         }
     }
 
@@ -244,14 +245,11 @@ impl<'a> Collector<'a> {
 }
 
 /// The first expression in `e` that refers to `symbol`.
-fn first_use(e: &hir::Expr, symbol: Symbol) -> Option<ExprId> {
-    if matches!(&e.kind, ExprKind::Var { symbol: s, .. } if *s == symbol) {
-        return Some(e.id);
-    }
+fn first_use(root: &hir::Expr, symbol: Symbol) -> Option<ExprId> {
     let mut found = None;
-    for_each_child(e, &mut |c| {
-        if found.is_none() {
-            found = first_use(c, symbol);
+    for_each_node(root, &mut |e| {
+        if found.is_none() && matches!(&e.kind, ExprKind::Var { symbol: s, .. } if *s == symbol) {
+            found = Some(e.id);
         }
     });
     found
@@ -838,6 +836,49 @@ impl Mono<'_> {
         FuncId(self.out.len() as u32 - 1)
     }
 
+    /// The chain of `Let`s from `first`, lowered in a loop so a long block
+    /// costs no stack.
+    fn let_chain(&mut self, cx: &mut FnCx, first: &hir::Expr, tail: bool) -> Expr {
+        let mut bound = Vec::new();
+        let mut cursor = first;
+        let body = loop {
+            let ExprKind::Let {
+                symbol,
+                value,
+                rest,
+                ..
+            } = &cursor.kind
+            else {
+                break self.expr(cx, cursor, tail);
+            };
+            let is_func = matches!(value.kind, ExprKind::Func { .. });
+            if is_func || matches!(value.kind, ExprKind::Foreign { .. }) {
+                match rest {
+                    Some(rest) => cursor = rest,
+                    None if is_func => {
+                        break self.closure_value(cx, Target::Named(*symbol), value.id);
+                    }
+                    None => break self.foreign_value(cx, *symbol, value.id),
+                }
+                continue;
+            }
+            if let Some(rest) = rest {
+                self.instantiate_binding(cx, *symbol, rest);
+            }
+            let value = self.expr(cx, value, false);
+            let local = cx.fresh();
+            cx.locals.insert(*symbol, local);
+            bound.push((local, value));
+            match rest {
+                Some(rest) => cursor = rest,
+                None => break Expr::Local(local),
+            }
+        };
+        bound.into_iter().rev().fold(body, |rest, (local, value)| {
+            Expr::Let(local, Box::new(value), Box::new(rest))
+        })
+    }
+
     fn expr(&mut self, cx: &mut FnCx, e: &hir::Expr, tail: bool) -> Expr {
         match &e.kind {
             ExprKind::Unit => Expr::Const(Const::Unit),
@@ -884,36 +925,7 @@ impl Mono<'_> {
                 Box::new(Expr::Const(Const::Bool(false))),
                 Box::new(Expr::Const(Const::Bool(true))),
             ),
-            ExprKind::Let {
-                symbol,
-                value,
-                rest,
-                ..
-            } => {
-                if matches!(value.kind, ExprKind::Func { .. }) {
-                    return match rest {
-                        Some(rest) => self.expr(cx, rest, tail),
-                        None => self.closure_value(cx, Target::Named(*symbol), value.id),
-                    };
-                }
-                if matches!(value.kind, ExprKind::Foreign { .. }) {
-                    return match rest {
-                        Some(rest) => self.expr(cx, rest, tail),
-                        None => self.foreign_value(cx, *symbol, value.id),
-                    };
-                }
-                if let Some(rest) = rest {
-                    self.instantiate_binding(cx, *symbol, rest);
-                }
-                let value = self.expr(cx, value, false);
-                let local = cx.fresh();
-                cx.locals.insert(*symbol, local);
-                let rest = match rest {
-                    Some(rest) => self.expr(cx, rest, tail),
-                    None => Expr::Local(local),
-                };
-                Expr::Let(local, Box::new(value), Box::new(rest))
-            }
+            ExprKind::Let { .. } => self.let_chain(cx, e, tail),
             ExprKind::Bin { op, lhs, rhs } => {
                 let a = Box::new(self.expr(cx, lhs, false));
                 let b = Box::new(self.expr(cx, rhs, false));
