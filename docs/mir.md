@@ -159,6 +159,12 @@ paths are the same MIR, so the verifier checks ownership once and uniqueness is
 a runtime fact. `ReuseVariant` requires the token's cell and the new layout to
 have the same maximum payload size, which keeps reuse to same-sized cells.
 
+This sizing rule predates variant-family merging (ADR 0010): a merged family's
+`Layout::Variant` table is the union of all members' tags, so its `max_payload`
+over-approximates any one member. When the reuse pass lands it must size the
+token by the **actual stored tag's** payload, not the family table's maximum, or
+it will reserve against an over-approximated size.
+
 ## Closures
 
 `MakeClosure` and `CallClosure` are abstract so the lowering can be a heap
