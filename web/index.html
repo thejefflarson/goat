@@ -67,8 +67,7 @@
   import { isInteractiveModule, runInteractive } from "./dist/loop.js";
   import { animate, run } from "./dist/runtime.js";
 
-  // Serving the repository root makes this resolve after a release build of goat_web.
-  const COMPILER_URL = "../target/wasm32-unknown-unknown/release/goat_web.wasm";
+  const COMPILER_URL = "./goat_web.wasm";
 
   const $ = (id) => document.getElementById(id);
   const [source, button, canvas, problems, output, example] =

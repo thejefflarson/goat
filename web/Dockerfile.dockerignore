@@ -1,0 +1,16 @@
+*
+!Cargo.toml
+!Cargo.lock
+!parser
+!checker
+!mir
+!wasm
+!goat
+!cli
+!web
+!prelude
+!examples
+web/node_modules
+web/dist
+web/site
+**/target
