@@ -1,0 +1,4 @@
+// Copy to Local.xcconfig and set DEVELOPMENT_TEAM to your Apple Development team.
+// Local.xcconfig is gitignored. Empty team = unsigned build (what CI does).
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Automatic

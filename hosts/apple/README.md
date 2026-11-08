@@ -32,6 +32,18 @@ swift test --package-path GoatKit
 `scripts/check-doc-types.sh` (run in CI after `xcodegen generate`) fails if the
 document type, the exported UTI and `UTType.goatSource` stop naming the same identifier.
 
+## Signing
+
+Builds are unsigned unless you opt in. `project.yml` includes `Local.xcconfig` in every
+configuration, and `xcodegen generate` copies `Local.xcconfig.example` (empty team) to
+`Local.xcconfig` when it is missing, so a fresh checkout and CI stay unsigned.
+
+To sign with your own Apple Development team, set `DEVELOPMENT_TEAM` in `Local.xcconfig`
+(gitignored, so the Team ID never reaches this public repo) and regenerate the project.
+Automatic signing then needs your Apple ID in Xcode (Settings > Accounts), and for a device
+build a registered device; headless `xcodebuild` also needs `-allowProvisioningUpdates` the
+first time. Pass `CODE_SIGNING_ALLOWED=NO` to build unsigned while a team is set.
+
 ## Create Document on the iOS simulator
 
 Tapping **Create Document** in the iOS 26.5 simulator intermittently shows "Unable to
@@ -95,6 +107,6 @@ the arrow keys.
 
 ## Open decisions
 
-Bundle id `com.thejefflarson.goat`, minimum macOS 13 / iOS 16, unsigned builds.
-Team, signing and entitlements beyond the macOS sandbox (user-selected files,
+Bundle id `com.thejefflarson.goat`, minimum macOS 13 / iOS 16, unsigned by default.
+Distribution signing and entitlements beyond the macOS sandbox (user-selected files,
 no network) are not set.

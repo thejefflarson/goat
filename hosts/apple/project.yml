@@ -1,9 +1,14 @@
 name: Goat
 options:
   bundleIdPrefix: com.thejefflarson
+  # Local.xcconfig is gitignored; a fresh checkout gets the empty example (unsigned).
+  preGenCommand: cp -n Local.xcconfig.example Local.xcconfig
   deploymentTarget:
     macOS: "13.0"
     iOS: "16.0"
+configFiles:
+  Debug: Local.xcconfig
+  Release: Local.xcconfig
 settings:
   base:
     SWIFT_VERSION: "5.0"
