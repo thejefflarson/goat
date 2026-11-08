@@ -5,3 +5,4 @@
 /GoatKit/.build/
 .build/
 build/
+/Local.xcconfig
