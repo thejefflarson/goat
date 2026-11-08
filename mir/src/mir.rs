@@ -42,8 +42,9 @@ impl MTy {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Layout {
     Record(Vec<MTy>),
-    /// Payload field types, indexed by tag.
-    Variant(Vec<Vec<MTy>>),
+    /// Payload field types of each tag the layout's family uses; any other
+    /// tag is absent.
+    Variant(BTreeMap<u32, Vec<MTy>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

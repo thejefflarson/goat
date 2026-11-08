@@ -737,13 +737,13 @@ fn helper_body(shared: &mut Shared, helper: Helper) -> Result<Function, EmitErro
                 return Err(EmitError::Malformed("variant layout"));
             };
             let mut arms = Vec::new();
-            for (tag, fields) in tags.iter().enumerate() {
+            for (&tag, fields) in tags {
                 let mut arm = Code::new();
                 for (ty, offset) in layout_slots(fields, layout::PAYLOAD) {
                     push_child(shared, ty, offset, &mut arm)?;
                 }
                 if !arm.is_empty() {
-                    arms.push((tag as u32, arm));
+                    arms.push((tag, arm));
                 }
             }
             let tag = vec![
@@ -1867,7 +1867,7 @@ impl<'p> FuncCx<'_, 'p> {
     fn payload_types(&self, layout: LayoutId, tag: u32) -> Result<&'p [MTy], EmitError> {
         match self.program.layouts.get(layout.0 as usize) {
             Some(Layout::Variant(tags)) => tags
-                .get(tag as usize)
+                .get(&tag)
                 .map(Vec::as_slice)
                 .ok_or(EmitError::Malformed("variant tag")),
             _ => Err(EmitError::Malformed("variant layout")),

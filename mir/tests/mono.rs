@@ -1,5 +1,6 @@
 use goat_checker::{Checked, GoatError, check_with_prelude};
 use goat_mir::*;
+use std::collections::BTreeMap;
 
 mod common;
 
@@ -633,10 +634,10 @@ fn a_recursive_layout_refers_to_itself() {
     let [Layout::Variant(tags)] = &p.layouts[..] else {
         panic!("one variant layout: {:?}", p.layouts);
     };
-    let link = &tags[1];
+    let link = &tags[&1];
     assert_eq!(link[0], MTy::Int);
     assert_eq!(link[1], MTy::Ptr(HeapKind::Variant(LayoutId(0))));
-    assert!(tags[0].is_empty());
+    assert!(tags[&0].is_empty());
 }
 
 #[test]
@@ -658,7 +659,7 @@ fn field_index(f: &Func) -> Option<usize> {
     find(&f.body)
 }
 
-fn variant_layouts(p: &Program) -> Vec<&Vec<Vec<MTy>>> {
+fn variant_layouts(p: &Program) -> Vec<&BTreeMap<u32, Vec<MTy>>> {
     p.layouts
         .iter()
         .filter_map(|l| match l {
@@ -679,7 +680,10 @@ fn a_tag_matched_at_two_widths_has_one_layout() {
     let [tags] = variant_layouts(&p)[..] else {
         panic!("one variant layout: {:?}", p.layouts);
     };
-    assert_eq!(tags, &vec![vec![MTy::Int], vec![MTy::Int]]);
+    assert_eq!(
+        tags,
+        &BTreeMap::from([(0, vec![MTy::Int]), (1, vec![MTy::Int])])
+    );
 }
 
 #[test]
@@ -935,4 +939,57 @@ fn a_foreign_call_inside_a_function_and_a_loop_runs_each_time() {
         "go = program(n) do forward(n) done\nrepeat 3 times do go(7) done;\nfor i from 1 to 2 do forward(i) done;\n0",
     );
     assert_eq!(names(&host), ["forward"; 5]);
+}
+
+/// Each level calls the next at two different types, so the leaf needs one
+/// copy per path of wrappers although every type stays small.
+fn branching_chain(levels: usize) -> String {
+    let mut src = String::from("f0 = program(x) do 1 done\n");
+    for k in 1..=levels {
+        src.push_str(&format!(
+            "f{k} = program(x) do if true then f{}({{a: x}}) else f{}({{b: x}}) done done\n",
+            k - 1,
+            k - 1
+        ));
+    }
+    src.push_str(&format!("f{levels}(1)"));
+    src
+}
+
+#[test]
+fn specializations_double_with_each_branching_level() {
+    let funcs = |levels| {
+        let checked = check(&branching_chain(levels)).expect("checks");
+        mono(&checked).expect("lowers").funcs.len()
+    };
+    assert_eq!(funcs(6) * 4, funcs(8));
+}
+
+#[test]
+fn a_program_that_needs_too_many_specializations_is_rejected_with_a_span() {
+    let src = branching_chain(16);
+    let checked = check(&src).expect("checks");
+    let errors = mono(&checked).expect_err("too many specializations");
+    let [error] = &errors[..] else {
+        panic!("one error: {errors:?}");
+    };
+    assert_eq!(
+        error.message,
+        "program too complex: it needs too many specialized functions"
+    );
+    assert!(!error.span.in_prelude() && error.span.end <= src.len());
+}
+
+#[test]
+fn many_tags_in_many_families_keep_every_layout_sparse() {
+    let tags = 300;
+    let mut src: String = (0..tags).map(|i| format!("tag T{i}\n")).collect();
+    for i in 0..tags {
+        src.push_str(&format!("v{i} = T{i}({i})\n"));
+    }
+    src.push('0');
+    let (p, _) = run_src(&src);
+    let layouts = variant_layouts(&p);
+    assert_eq!(layouts.len(), tags);
+    assert!(layouts.iter().all(|table| table.len() == 1));
 }

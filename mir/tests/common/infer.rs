@@ -47,7 +47,7 @@ impl Infer<'_> {
             return None;
         };
         match self.program.layouts.get(l.0 as usize)? {
-            Layout::Variant(tags) => tags.get(tag as usize).cloned(),
+            Layout::Variant(tags) => tags.get(&tag).cloned(),
             Layout::Record(_) => None,
         }
     }

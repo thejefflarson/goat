@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::mir::*;
 
@@ -269,7 +269,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn variant_tags(&mut self, id: LayoutId) -> Option<&'a [Vec<MTy>]> {
+    fn variant_tags(&mut self, id: LayoutId) -> Option<&'a BTreeMap<u32, Vec<MTy>>> {
         match self.layout(id)? {
             Layout::Variant(tags) => Some(tags),
             Layout::Record(_) => {
@@ -435,7 +435,7 @@ impl<'a> Checker<'a> {
                 for (tag, block) in arms {
                     if seen.contains(tag) {
                         self.err(ErrorKind::DuplicateSwitchArm(*tag));
-                    } else if tags.is_some_and(|t| *tag as usize >= t.len()) {
+                    } else if tags.is_some_and(|t| !t.contains_key(tag)) {
                         self.err(ErrorKind::BadTag(*tag));
                     }
                     seen.push(*tag);
@@ -502,7 +502,7 @@ impl<'a> Checker<'a> {
             },
             Expr::AllocVariant(layout, tag, fields) => {
                 let tags = self.variant_tags(*layout);
-                let expected = match tags.map(|t| t.get(*tag as usize)) {
+                let expected = match tags.map(|t| t.get(tag)) {
                     Some(Some(payload)) => Some(payload.as_slice()),
                     Some(None) => {
                         self.err(ErrorKind::BadTag(*tag));
@@ -517,7 +517,7 @@ impl<'a> Checker<'a> {
                 let payload = match self.borrow_ptr(*x) {
                     Some(HeapKind::Variant(l) | HeapKind::List(l)) => {
                         self.variant_tags(l).and_then(|tags| {
-                            let found = tags.get(*tag as usize);
+                            let found = tags.get(tag);
                             if found.is_none() {
                                 self.err(ErrorKind::BadTag(*tag));
                             }
@@ -557,7 +557,7 @@ impl<'a> Checker<'a> {
             }
             Expr::ReuseVariant(x, layout, tag, fields) => {
                 let tags = self.variant_tags(*layout);
-                let expected = match tags.map(|t| t.get(*tag as usize)) {
+                let expected = match tags.map(|t| t.get(tag)) {
                     Some(Some(payload)) => Some(payload.as_slice()),
                     Some(None) => {
                         self.err(ErrorKind::BadTag(*tag));
@@ -585,7 +585,7 @@ impl<'a> Checker<'a> {
                     let Some(tags) = self.variant_tags(l) else {
                         return Ty::Bad;
                     };
-                    let Some(payload) = tags.get(*tag as usize) else {
+                    let Some(payload) = tags.get(tag) else {
                         return self.err(ErrorKind::BadTag(*tag));
                     };
                     payload
@@ -690,6 +690,6 @@ impl<'a> Checker<'a> {
     }
 }
 
-fn max_payload(tags: &[Vec<MTy>]) -> usize {
-    tags.iter().map(Vec::len).max().unwrap_or(0)
+fn max_payload(tags: &BTreeMap<u32, Vec<MTy>>) -> usize {
+    tags.values().map(Vec::len).max().unwrap_or(0)
 }

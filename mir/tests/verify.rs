@@ -2,6 +2,7 @@ mod common;
 
 use common::*;
 use goat_mir::*;
+use std::collections::BTreeMap;
 
 fn kinds(p: &Program) -> Vec<ErrorKind> {
     verify(p)
@@ -244,8 +245,10 @@ fn reuse_rejects_a_differently_sized_cell() {
         Expr::ReuseVariant(Local(0), LayoutId(2), 0, vec![int(1), int(2)]),
         let_(3, Expr::Drop(Local(2)), local(1)),
     ));
-    p.layouts
-        .push(Layout::Variant(vec![vec![MTy::Int, MTy::Int]]));
+    p.layouts.push(Layout::Variant(BTreeMap::from([(
+        0,
+        vec![MTy::Int, MTy::Int],
+    )])));
     assert_eq!(
         kinds(&p),
         vec![ErrorKind::ReuseSizeMismatch {

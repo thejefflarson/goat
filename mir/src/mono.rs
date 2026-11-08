@@ -38,7 +38,7 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         foreign,
         imports: Vec::new(),
         foreign_fns: HashMap::new(),
-        specs: Vec::new(),
+        specs: HashMap::new(),
         out: vec![None],
         work: Vec::new(),
         sigs: Vec::new(),
@@ -262,12 +262,15 @@ fn first_use(root: &hir::Expr, symbol: Symbol) -> Option<ExprId> {
 
 /// One specialization of a function literal: its use type and the ground types
 /// of its captures fix the body.
-struct Spec {
-    target: Target,
-    ty: Ty,
-    capture_tys: Vec<Ty>,
-    id: FuncId,
-}
+/// A function literal at one instantiation: its target, its type at the use,
+/// and the types of its captured variables.
+type SpecKey = (Target, Ty, Vec<Ty>);
+
+/// The most specialized functions one program may need. Specialization is
+/// exponential in the program: a chain of generic functions that each call the
+/// next at two different types needs a copy per type path, from types of
+/// constant size, so no checker-side size bound reaches it.
+const MAX_SPECIALIZATIONS: usize = 1 << 14;
 
 struct Mono<'a> {
     typed: &'a Typed,
@@ -281,7 +284,7 @@ struct Mono<'a> {
     /// The function that calls an import with its own parameters, for an
     /// import used as a value.
     foreign_fns: HashMap<ForeignId, FuncId>,
-    specs: Vec<Spec>,
+    specs: HashMap<SpecKey, FuncId>,
     out: Vec<Option<Func>>,
     work: Vec<(FuncId, Target, Subst, Vec<Ty>)>,
     sigs: Vec<Sig>,
@@ -515,8 +518,7 @@ impl Mono<'_> {
         }
         let members = joined.unwrap_or_else(|| {
             let id = LayoutId(self.layouts.len() as u32);
-            self.layouts
-                .push(Layout::Variant(vec![Vec::new(); self.tags.len()]));
+            self.layouts.push(Layout::Variant(BTreeMap::new()));
             self.families.push(Family {
                 layout: id,
                 payloads: HashMap::new(),
@@ -548,7 +550,7 @@ impl Mono<'_> {
                 let Layout::Variant(table) = &mut self.layouts[id.0 as usize] else {
                     unreachable!("a family's layout is a variant");
                 };
-                table[self.tags[label] as usize] = fields;
+                table.insert(self.tags[label], fields);
             }
         }
         self.variants[&key]
@@ -620,44 +622,48 @@ impl Mono<'_> {
         }
     }
 
-    fn specialize(&mut self, cx: &FnCx, target: Target, use_id: ExprId) -> (FuncId, Ty) {
-        let use_ty = self.ground(&self.typed.node_types[&use_id], &cx.subst);
+    fn specialize(&mut self, cx: &FnCx, target: Target, site: &hir::Expr) -> (FuncId, Ty) {
+        let use_ty = self.ground(&self.typed.node_types[&site.id], &cx.subst);
         let Lambda { ty, captures, .. } = self.lambdas[&target].clone();
         let capture_tys: Vec<Ty> = captures
             .iter()
             .map(|c| self.ground(self.var_tys[c], &cx.subst))
             .collect();
-        if let Some(spec) = self
-            .specs
-            .iter()
-            .find(|s| s.target == target && s.ty == use_ty && s.capture_tys == capture_tys)
-        {
-            return (spec.id, use_ty);
+        let key = (target, use_ty, capture_tys);
+        if let Some(&id) = self.specs.get(&key) {
+            return (id, key.1);
         }
+        if self.specs.len() >= MAX_SPECIALIZATIONS {
+            if self.errors.is_empty() {
+                self.errors.push(GoatError::new(
+                    site.span,
+                    "program too complex: it needs too many specialized functions",
+                ));
+            }
+            // The program is rejected, so the placeholder is never emitted.
+            return (FuncId(0), key.1);
+        }
+        let (_, use_ty, capture_tys) = &key;
         let id = FuncId(self.out.len() as u32);
         self.out.push(None);
 
         // The body also mentions the enclosing scope's type variables; the
         // captured variables' ground types recover them.
         let mut subst = Subst::new();
-        match_ty(ty, &use_ty, &mut subst);
-        for (c, capture_ty) in captures.iter().zip(&capture_tys) {
+        match_ty(ty, use_ty, &mut subst);
+        for (c, capture_ty) in captures.iter().zip(capture_tys) {
             match_ty(self.var_tys[c], capture_ty, &mut subst);
         }
         self.work.push((id, target, subst, capture_tys.clone()));
-        self.specs.push(Spec {
-            target,
-            ty: use_ty.clone(),
-            capture_tys,
-            id,
-        });
+        let use_ty = use_ty.clone();
+        self.specs.insert(key, id);
         (id, use_ty)
     }
 
     /// The closure value of `target` at a use site: a static closure when it
     /// captures nothing, else a fresh heap closure over the captured variables.
-    fn closure_value(&mut self, cx: &mut FnCx, target: Target, use_id: ExprId) -> Expr {
-        let (id, ty) = self.specialize(cx, target, use_id);
+    fn closure_value(&mut self, cx: &mut FnCx, target: Target, site: &hir::Expr) -> Expr {
+        let (id, ty) = self.specialize(cx, target, site);
         let captures = self.lambdas[&target].captures.clone();
         if captures.is_empty() {
             return self.closure_of(id, &ty);
@@ -888,7 +894,7 @@ impl Mono<'_> {
                 match rest {
                     Some(rest) => cursor = rest,
                     None if is_func => {
-                        break self.closure_value(cx, Target::Named(*symbol), value.id);
+                        break self.closure_value(cx, Target::Named(*symbol), value);
                     }
                     None => break self.foreign_value(cx, *symbol, value.id),
                 }
@@ -933,7 +939,7 @@ impl Mono<'_> {
                 match cx.self_env {
                     Some((me, env)) if me == *symbol => Expr::Local(env),
                     _ if self.lambdas.contains_key(&function) => {
-                        self.closure_value(cx, function, e.id)
+                        self.closure_value(cx, function, e)
                     }
                     _ => self.variable_value(cx, *symbol),
                 }
@@ -985,7 +991,7 @@ impl Mono<'_> {
                     Self::at_site(cx, e.span, trap)
                 }
             }
-            ExprKind::Func { .. } => self.closure_value(cx, Target::Anon(e.id), e.id),
+            ExprKind::Func { .. } => self.closure_value(cx, Target::Anon(e.id), e),
             ExprKind::Str(s) => Expr::StrLit(self.intern(s)),
             ExprKind::Record { fields } => {
                 let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
@@ -1360,7 +1366,7 @@ impl Mono<'_> {
                     .get(&Target::Named(*symbol))
                     .is_some_and(|f| f.captures.is_empty()) =>
             {
-                Some(self.specialize(cx, Target::Named(*symbol), callee.id).0)
+                Some(self.specialize(cx, Target::Named(*symbol), callee).0)
             }
             _ => None,
         };
