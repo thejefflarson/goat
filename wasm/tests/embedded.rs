@@ -130,6 +130,7 @@ fn an_interactive_program_is_unsupported() {
         update: FuncId(0),
         draw: FuncId(0),
         events: vec![],
+        model: MTy::Unit,
     });
     assert!(matches!(emit(&p), Err(EmitError::Unsupported(_))));
 }

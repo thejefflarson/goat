@@ -115,6 +115,8 @@ pub struct Interactive {
     /// One constructor per event tag `update` handles. The host is subscribed
     /// to exactly these.
     pub events: Vec<EventCtor>,
+    /// The type of the model `init` returns and `update` and `draw` take.
+    pub model: MTy,
 }
 
 /// `(payload...) -> event`: builds the event `label` from what the host sends

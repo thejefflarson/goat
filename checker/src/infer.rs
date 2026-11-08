@@ -860,6 +860,17 @@ impl Inferer {
                 ),
             ),
         }
+
+        if let Some(function) = self.finish(&model).find_func() {
+            let function = self.shown(function);
+            self.contract_error(
+                &contract.init,
+                format!(
+                    "the model can't hold a function, but this one holds `{function}`; \
+                     a reload keeps the model, and a function can't outlive its code, so keep functions at the top level"
+                ),
+            );
+        }
     }
 
     /// The event type is exactly the tags `update` handles, each carrying what

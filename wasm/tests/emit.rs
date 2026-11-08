@@ -173,6 +173,14 @@ fn module_shape() {
 }
 
 #[test]
+fn only_an_interactive_program_can_be_emitted_reloadable() {
+    assert!(matches!(
+        goat_wasm::emit_reloadable(&arithmetic()),
+        Err(EmitError::Unsupported(_))
+    ));
+}
+
+#[test]
 fn heap_starts_after_the_aligned_data_segment() {
     let mut p = arithmetic();
     p.data = vec![vec![0; 13]];

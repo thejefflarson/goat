@@ -4,6 +4,7 @@
 //! - [`run_to_end`] runs a run-once program (`goat_entry`) against a [`Host`].
 //! - [`Interactive`] drives the ADR 0015 export contract, streaming each frame
 //!   to a [`SceneSink`].
+//!   [`Interactive::reload`] swaps in a recompiled program over the same heap.
 //! - [`Guest`] is the raw instance both are built on.
 
 use wasmtime::{Caller, Config, Engine, ExternType, Instance, Linker, Module, Store, Val};
@@ -12,7 +13,7 @@ mod interactive;
 
 pub use goat_checker::hir::Boundary;
 pub use goat_mir::{Host, HostValue, NoHost, SceneSink};
-pub use interactive::{Event, Interactive, UPDATE_FUEL};
+pub use interactive::{Event, Interactive, Reloaded, UPDATE_FUEL};
 
 /// What a finished program left behind.
 pub struct Run {
@@ -227,17 +228,19 @@ pub fn run(wasm: &[u8]) -> Result<Run, String> {
     run_with_host(wasm, NoHost).map(|(run, _)| run)
 }
 
-/// A module instantiated with its imports answered from `host`.
-fn instantiate<H: Host + 'static>(
-    wasm: &[u8],
-    host: H,
-) -> Result<(Store<State<H>>, Instance), String> {
+fn engine() -> Result<Engine, String> {
     let mut config = Config::new();
     config.wasm_tail_call(true);
-    let engine = Engine::new(&config).map_err(|e| format!("engine: {e}"))?;
-    let module = Module::new(&engine, wasm).map_err(|e| format!("invalid module: {e}"))?;
+    Engine::new(&config).map_err(|e| format!("engine: {e}"))
+}
 
-    let mut linker: Linker<State<H>> = Linker::new(&engine);
+/// What `module` imports from the host, answered from `host`.
+fn link<H: Host + 'static>(
+    engine: &Engine,
+    module: &Module,
+    host: &H,
+) -> Result<Linker<State<H>>, String> {
+    let mut linker: Linker<State<H>> = Linker::new(engine);
     linker
         .func_wrap(
             "goat",
@@ -325,10 +328,85 @@ fn instantiate<H: Host + 'static>(
 
     for import in module.imports() {
         if let (false, ExternType::Func(ty)) = (import.module() == "goat", import.ty()) {
-            link_foreign(&mut linker, &host, import.module(), import.name(), ty)?;
+            link_foreign(&mut linker, host, import.module(), import.name(), ty)?;
         }
     }
 
+    Ok(linker)
+}
+
+/// The memory and allocator state a reloadable module imports. Every module
+/// run over the same `Hosted` shares one heap, so objects one allocated are
+/// valid in the next.
+#[derive(Clone, Copy)]
+struct Hosted {
+    memory: wasmtime::Memory,
+    heap: wasmtime::Global,
+    live: wasmtime::Global,
+}
+
+impl Hosted {
+    fn new<T>(store: &mut Store<T>) -> Result<Hosted, String> {
+        let memory = wasmtime::Memory::new(&mut *store, wasmtime::MemoryType::new(1, None))
+            .map_err(|e| e.to_string())?;
+        let mut cell = |init: u32| {
+            let ty = wasmtime::GlobalType::new(wasmtime::ValType::I32, wasmtime::Mutability::Var);
+            wasmtime::Global::new(&mut *store, ty, Val::I32(init as i32)).map_err(|e| e.to_string())
+        };
+        Ok(Hosted {
+            heap: cell(goat_wasm::HOSTED_HEAP_START)?,
+            live: cell(0)?,
+            memory,
+        })
+    }
+
+    fn define<T>(&self, linker: &mut Linker<T>, store: &Store<T>) -> Result<(), String> {
+        let mut define = |name: &str, item: wasmtime::Extern| {
+            linker
+                .define(store, "goat", name, item)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        };
+        define("memory", self.memory.into())?;
+        define("heap", self.heap.into())?;
+        define("live", self.live.into())
+    }
+}
+
+fn imports_memory(module: &Module) -> bool {
+    module
+        .imports()
+        .any(|i| i.module() == "goat" && i.name() == "memory")
+}
+
+fn load(engine: &Engine, wasm: &[u8]) -> Result<Module, String> {
+    Module::new(engine, wasm).map_err(|e| format!("invalid module: {e}"))
+}
+
+/// Instantiate `module` in `store`, over the shared heap in `hosted` if it
+/// imports one, which is made on first need.
+fn instantiate_in<H: Host + 'static>(
+    store: &mut Store<State<H>>,
+    module: &Module,
+    hosted: &mut Option<Hosted>,
+) -> Result<Instance, String> {
+    let mut linker = link(store.engine(), module, &store.data().host)?;
+    if imports_memory(module) {
+        let shared = match *hosted {
+            Some(shared) => shared,
+            None => *hosted.insert(Hosted::new(store)?),
+        };
+        shared.define(&mut linker, store)?;
+    }
+    linker
+        .instantiate(&mut *store, module)
+        .map_err(|e| format!("instantiate: {e}"))
+}
+
+/// A module instantiated with its imports answered from `host`.
+fn instantiate<H: Host + 'static>(wasm: &[u8], host: H) -> Result<Guest<H>, String> {
+    let engine = engine()?;
+    let module = load(&engine, wasm)?;
     let mut store = Store::new(
         &engine,
         State {
@@ -338,10 +416,13 @@ fn instantiate<H: Host + 'static>(
             stopped: None,
         },
     );
-    let instance = linker
-        .instantiate(&mut store, &module)
-        .map_err(|e| format!("instantiate: {e}"))?;
-    Ok((store, instance))
+    let mut hosted = None;
+    let instance = instantiate_in(&mut store, &module, &mut hosted)?;
+    Ok(Guest {
+        store,
+        instance,
+        hosted,
+    })
 }
 
 /// Like `run`, answering the program's `foreign` calls from `host`, which
@@ -363,7 +444,11 @@ pub fn run_with_host<H: Host + 'static>(wasm: &[u8], host: H) -> Result<(Run, H)
 /// Like `run_with_host`, but a halt keeps what the program printed before it,
 /// including a line it had started, and says where the user's code was.
 pub fn run_to_end<H: Host + 'static>(wasm: &[u8], host: H) -> Result<Finished<H>, String> {
-    let (mut store, instance) = instantiate(wasm, host)?;
+    let Guest {
+        mut store,
+        instance,
+        ..
+    } = instantiate(wasm, host)?;
     let entry = instance
         .get_typed_func::<(), ()>(&mut store, "goat_entry")
         .map_err(|e| format!("missing entry point: {e}"))?;
@@ -395,12 +480,43 @@ pub fn run_to_end<H: Host + 'static>(wasm: &[u8], host: H) -> Result<Finished<H>
 pub struct Guest<H: Host + 'static> {
     store: Store<State<H>>,
     instance: Instance,
+    /// Set when the module imports its heap, which a later module can then
+    /// share.
+    hosted: Option<Hosted>,
 }
 
 impl<H: Host + 'static> Guest<H> {
     pub fn new(wasm: &[u8], host: H) -> Result<Guest<H>, String> {
-        let (store, instance) = instantiate(wasm, host)?;
-        Ok(Guest { store, instance })
+        instantiate(wasm, host)
+    }
+
+    /// Instantiate a recompiled `wasm` over this guest's heap without making
+    /// it the current instance. Both it and the running module must import
+    /// their heap, as `compile_reloadable` makes them.
+    fn spawn(&mut self, wasm: &[u8]) -> Result<Instance, String> {
+        let module = load(self.store.engine(), wasm)?;
+        if self.hosted.is_none() || !imports_memory(&module) {
+            return Err("only modules from compile_reloadable can be reloaded".into());
+        }
+        instantiate_in(&mut self.store, &module, &mut self.hosted)
+    }
+
+    /// Run `f` with `instance` as the current one, then put the current one
+    /// back.
+    fn on<R>(&mut self, instance: Instance, f: impl FnOnce(&mut Self) -> R) -> R {
+        let current = std::mem::replace(&mut self.instance, instance);
+        let result = f(self);
+        self.instance = current;
+        result
+    }
+
+    /// `instance`'s model fingerprint, or why it has none.
+    fn fingerprint(&mut self, instance: Instance) -> Result<u64, String> {
+        instance
+            .get_global(&mut self.store, goat_wasm::FINGERPRINT_EXPORT)
+            .and_then(|global| global.get(&mut self.store).i64())
+            .map(|bits| bits as u64)
+            .ok_or_else(|| format!("module exports no {}", goat_wasm::FINGERPRINT_EXPORT))
     }
 
     /// Call the export `name`; a trap is an error.

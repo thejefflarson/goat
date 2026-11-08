@@ -2,7 +2,9 @@
 //! module through the native drivers.
 #![cfg(feature = "native")]
 
-use goat::native::{Boundary, Event, Host, HostValue, Interactive, SceneSink, run_to_end};
+use goat::native::{
+    Boundary, Event, Host, HostValue, Interactive, Reloaded, SceneSink, run_to_end,
+};
 use goat::{HostInterface, compile};
 
 #[derive(Default)]
@@ -165,4 +167,157 @@ draw = program(model) do [Line({x1: 0, y1: 0, x2: 1, y2: 1, color: "red; drop"})
     let mut program = interactive(source);
     let error = program.draw().unwrap_err();
     assert!(error.contains("not a color name"), "{error}");
+}
+
+fn reloadable(source: &str) -> Vec<u8> {
+    goat::compile_reloadable(source, &HostInterface::turtle()).expect("compiles")
+}
+
+fn live(source: &str) -> Interactive<Frames> {
+    Interactive::new(&reloadable(source), Frames::default()).expect("starts")
+}
+
+/// A model of a number, a string and a list, all on the heap. `step` is the
+/// logic a reload can change without touching the model's layout; `extra` is a
+/// model field that does.
+fn counter(start: i32, step: i32, extra: &str) -> String {
+    format!(
+        r#"
+init = {{x: {start}, color: "red", trail: [{{x: 0, y: 0}}, {{x: 5, y: 5}}]{extra}}}
+update = program(model, event) do
+  match event do
+    Tick(dt) then {{...model, x: model.x + {step}, trail: Link({{x: model.x, y: 1}}, model.trail)}}
+  done
+done
+draw = program(model) do
+  [Line({{x1: 0, y1: 0, x2: model.x, y2: 0, color: model.color}}), Polyline({{points: model.trail, color: model.color}})]
+done
+"#
+    )
+}
+
+fn tick(program: &mut Interactive<Frames>, times: usize) {
+    for _ in 0..times {
+        assert!(program.send(&Event::Tick(16.0)).unwrap());
+    }
+}
+
+fn line_to(x: f64) -> Line {
+    ((0.0, 0.0), (x, 0.0), "red".to_string())
+}
+
+#[test]
+fn a_reload_with_the_same_model_layout_keeps_the_model_and_swaps_the_logic() {
+    let mut program = live(&counter(0, 1, ""));
+    tick(&mut program, 3);
+    program.draw().unwrap();
+
+    let reloaded = program.reload(&reloadable(&counter(100, 10, "")));
+    assert_eq!(reloaded, Ok(Reloaded::Kept));
+    tick(&mut program, 1);
+    program.draw().unwrap();
+
+    let (frames, live) = program.finish().expect("tears down");
+    assert_eq!(live, 0, "leaked");
+    assert_eq!(frames.lines, [line_to(3.0), line_to(13.0)]);
+    // The two-point trail grew by one point per tick, across the reload.
+    assert_eq!(frames.vertices, 5 + 6);
+}
+
+#[test]
+fn a_reload_that_changes_the_model_layout_starts_over_from_the_new_init() {
+    let mut program = live(&counter(0, 1, ""));
+    tick(&mut program, 3);
+
+    let reloaded = program.reload(&reloadable(&counter(7, 1, ", z: 0")));
+    assert_eq!(reloaded, Ok(Reloaded::Reset));
+    program.draw().unwrap();
+    tick(&mut program, 1);
+    program.draw().unwrap();
+
+    let (frames, live) = program.finish().expect("tears down");
+    assert_eq!(live, 0, "leaked");
+    assert_eq!(frames.lines, [line_to(7.0), line_to(8.0)]);
+    assert_eq!(frames.vertices, 2 + 3);
+}
+
+#[test]
+fn nothing_leaks_across_many_reloads_of_either_kind() {
+    let mut program = live(&counter(0, 1, ""));
+    for round in 0..6 {
+        tick(&mut program, 2);
+        program.draw().unwrap();
+        let extra = if round % 3 == 2 { ", z: 0" } else { "" };
+        program
+            .reload(&reloadable(&counter(0, round + 1, extra)))
+            .unwrap();
+    }
+    program.draw().unwrap();
+    let (_, live) = program.finish().expect("tears down");
+    assert_eq!(live, 0, "leaked");
+}
+
+#[test]
+fn a_reload_can_change_which_events_the_program_handles() {
+    let ticks = counter(0, 1, "");
+    let pointer = ticks.replace("Tick(dt)", "PointerDown(at)");
+    let mut program = live(&ticks);
+    assert_eq!(program.subscriptions(), ["Tick"]);
+    assert_eq!(program.reload(&reloadable(&pointer)), Ok(Reloaded::Kept));
+    assert_eq!(program.subscriptions(), ["PointerDown"]);
+    assert!(!program.send(&Event::Tick(16.0)).unwrap());
+    assert!(
+        program
+            .send(&Event::PointerDown { x: 1.0, y: 2.0 })
+            .unwrap()
+    );
+    assert_eq!(program.finish().unwrap().1, 0);
+}
+
+#[test]
+fn a_reload_that_renumbers_a_tag_inside_the_model_starts_over() {
+    // Tags are numbered across the whole program in label order, so handling
+    // `KeyDown`, which sorts before the list's `Link`, moves `Link`'s number.
+    let ticks = counter(0, 1, "");
+    let keys = ticks.replace("Tick(dt)", "KeyDown(key)");
+    let mut program = live(&ticks);
+    tick(&mut program, 2);
+    assert_eq!(program.reload(&reloadable(&keys)), Ok(Reloaded::Reset));
+    assert!(program.send(&Event::KeyDown("a".into())).unwrap());
+    program.draw().unwrap();
+    let (frames, live) = program.finish().unwrap();
+    assert_eq!((frames.vertices, live), (3, 0));
+}
+
+#[test]
+fn a_reload_rescues_a_program_the_runaway_update_stopped() {
+    let mut program = live(SPINNING);
+    assert!(program.send(&Event::Tick(16.0)).is_err());
+
+    let fixed = counter(5, 1, "");
+    assert_eq!(program.reload(&reloadable(&fixed)), Ok(Reloaded::Reset));
+    tick(&mut program, 1);
+    program.draw().unwrap();
+    assert_eq!(program.into_sink().lines, [line_to(6.0)]);
+}
+
+#[test]
+fn a_module_that_owns_its_memory_cannot_be_reloaded() {
+    let owned = goat::compile_turtle(&counter(0, 1, "")).unwrap();
+    let mut program = Interactive::new(&owned, Frames::default()).unwrap();
+    assert!(program.reload(&reloadable(&counter(0, 2, ""))).is_err());
+
+    let mut program = live(&counter(0, 1, ""));
+    tick(&mut program, 1);
+    assert!(program.reload(&owned).is_err());
+    tick(&mut program, 1);
+    program.draw().unwrap();
+    let (frames, live) = program.finish().expect("the old program kept running");
+    assert_eq!((frames.lines, live), ([line_to(2.0)].to_vec(), 0));
+}
+
+#[test]
+fn only_an_interactive_program_can_be_compiled_reloadable() {
+    let error = goat::compile_reloadable("print(1)", &HostInterface::turtle()).unwrap_err();
+    assert!(error[0].message.contains("run-once"), "{error:?}");
 }

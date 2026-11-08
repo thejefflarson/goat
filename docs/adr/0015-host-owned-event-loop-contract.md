@@ -199,3 +199,63 @@ Recorded as data on top of the ABI, growable without a new ADR (mirroring ADR
 
 The genuine one-way door is the ABI *shape*: the export set, the owned-pointer
 ownership convention, exports-as-subscription, and the scene-streaming protocol.
+
+## Addendum (2026-11-08): hot reload keeps the model, so the model holds no function
+
+- Status: accepted (2026-11-08)
+- Context: Phase 11 hot reload (`docs/plan.md`). Recompile, instantiate the new
+  module over the same heap, keep the model, swap `update`/`draw`. Builds on §1
+  (the model is one opaque record pointer) and ADR 0010 (a layout is pinned per
+  mono run).
+
+### 1. A model type that contains a function is a checker error
+
+The model is the record type that `init`, `update`, and `draw` share (§1). A
+function anywhere inside it — a record field, a variant payload, a list item —
+is rejected with a spanned error on `init`. A closure holds an index into its
+own module's function table, so a closure that survives a reload would call
+into code that is gone. Rejecting it up front keeps "errors come only from the
+checker" intact: no later stage has to cope with a model it cannot carry across.
+Functions stay available at the top level, where they become `update`/`draw`
+captures that each reload rebuilds. This is the one new restriction; it applies
+to every interactive program, reloaded or not.
+
+### 2. A reloadable module imports its heap
+
+`goat_wasm::emit_reloadable` builds an interactive module that imports `memory`,
+the allocator's `heap` pointer, and its `live` count from `goat`, instead of
+defining them. The host creates all three once, starts `heap` at
+`goat_wasm::HOSTED_HEAP_START` and `live` at zero, and passes the same three to
+every module it instantiates. The free-list table sits at a fixed address, so
+every module's allocator agrees on it. The module's strings, nullary variant
+cells, and static closures cannot sit at a fixed address (a longer program would
+overwrite the old model), so a start function takes one block from the shared
+allocator, hands its count back to `live`, copies the data in, and every static
+address becomes an offset from a global. Run-once modules and `emit` are
+unchanged.
+
+### 3. The model-layout fingerprint decides keep or reset
+
+Each interactive module exports an immutable `i64` global,
+`goat_model_fingerprint`: FNV-1a over a canonical walk of the model's mono
+layout — scalar kinds, record slot order, and every variant's tag numbers and
+payload slots. Layouts are numbered by first visit, not by `LayoutId`, so an
+unrelated type elsewhere does not change it. On reload the host instantiates the
+new module and runs its `goat_setup`; if the fingerprints match, it releases the
+new `init` value and keeps the running model, otherwise it releases the running
+model through the old module and takes the new `init`. Either way it then runs
+the old module's `goat_shutdown`, so the old closures are dropped by the code
+that built them, and `goat_live_allocs` stays at zero. If the new module fails
+to start, the old one keeps running.
+
+### Consequences
+
+- The fingerprint is conservative: tag numbers are assigned across the whole
+  program (ADR 0010), so handling an event that sorts before a list's `Link`
+  renumbers it and resets the model. Renaming a field without changing its slot
+  or type keeps the model, because a layout records positions, not names.
+- Each reload leaves its static data in the heap for good, because a kept model
+  may point into it. That is roughly the size of the program's string literals per
+  reload, and it is not counted by `goat_live_allocs`.
+- A model that survives a reload is only as valid as the fingerprint: it
+  compares layouts, not meaning.

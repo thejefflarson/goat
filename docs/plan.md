@@ -725,7 +725,7 @@ loop:
       product; the CLI and the turtle app are clients.
 - [ ] **Second demo host** (e.g. a small game-scripting or p5-style canvas
       host in Rust) to keep the embedding API honest.
-- [ ] **Hot reload with state preserved:** recompile, instantiate the new
+- [x] **Hot reload with state preserved:** recompile, instantiate the new
       module, keep the `model`, swap `update`/`draw`.
   - The host owns linear memory and passes it in (imported memory), so old
     and new instances share it; the allocator's state lives there too.
