@@ -15,6 +15,7 @@ goat_mir = { version = "0.1.0", path = "../mir" }
 
 [dev-dependencies]
 bolero = { version = "=0.13.4", default-features = false, features = ["std"] }
+goat_wamr = { path = "../wamr" }
 goat_wasm = { path = "../wasm" }
 tempfile = "3.27.0"
 wasmtime = "50.0.1"

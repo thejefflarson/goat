@@ -7,5 +7,6 @@ members = [
     "wasm",
     "goat",
     "cli",
+    "wamr",
     "web",
 ]
