@@ -18,6 +18,34 @@ pub fn default_profile() -> Profile {
     }
 }
 
+/// Whether compiled wasm runs under WAMR's fast interpreter instead of
+/// wasmtime. `GOAT_RUNTIME=wamr` turns it on for any suite, and `tests/wamr.rs`
+/// turns it on for the suites it includes (their module path starts `wamr::`).
+pub fn uses_wamr() -> bool {
+    module_path!().starts_with("wamr::") || std::env::var("GOAT_RUNTIME").as_deref() == Ok("wamr")
+}
+
+/// Run `wasm` under the runtime this suite is checking.
+pub fn execute(wasm: &[u8]) -> Result<goat_cli::Run, String> {
+    if uses_wamr() {
+        goat_wamr::run(wasm)
+    } else {
+        goat_cli::run(wasm)
+    }
+}
+
+/// Like `execute`, answering foreign calls from `host`, which comes back.
+pub fn execute_with_host<H: Host + 'static>(
+    wasm: &[u8],
+    host: H,
+) -> Result<(goat_cli::Run, H), String> {
+    if uses_wamr() {
+        goat_wamr::run_with_host(wasm, host)
+    } else {
+        goat_cli::run_with_host(wasm, host)
+    }
+}
+
 /// What the interpreter says the program prints, and its live allocations.
 pub fn interpret(src: &str) -> (Vec<String>, usize) {
     interpret_with_prelude(goat_checker::PRELUDE, src)
@@ -90,7 +118,7 @@ pub fn compiled_with_prelude(prelude: &str, src: &str) -> (Vec<String>, u32) {
 pub fn compiled_on(profile: Profile, prelude: &str, src: &str) -> (Vec<String>, u32) {
     let (wasm, _) = goat::compile_for(profile, src, &goat::HostInterface::new(prelude))
         .expect("program compiles");
-    let run = goat_cli::run(&wasm).expect("wasm runs");
+    let run = execute(&wasm).expect("wasm runs");
     (run.printed, run.live_allocs)
 }
 
@@ -104,7 +132,7 @@ pub fn run_foreign(src: &str) -> (String, Vec<String>) {
     assert_eq!(live, 0, "interpreter leaked allocations for: {src}");
     let (wasm, _) = goat::compile_for(default_profile(), src, &goat::HostInterface::turtle())
         .expect("program compiles");
-    let (run, compiled) = goat_cli::run_with_host(&wasm, TestHost::default()).expect("wasm runs");
+    let (run, compiled) = execute_with_host(&wasm, TestHost::default()).expect("wasm runs");
     assert_eq!(run.live_allocs, 0, "wasm leaked allocations for: {src}");
     assert_eq!(run.printed, expected, "wasm differs from interp: {src}");
     assert_eq!(compiled.log, oracle.log, "host calls differ for: {src}");
@@ -127,7 +155,7 @@ pub fn agree_or_trap(src: &str) {
             let (wasm, _) =
                 goat::compile_for(default_profile(), src, &goat::HostInterface::turtle())
                     .expect("program compiles");
-            let Err(error) = goat_cli::run(&wasm) else {
+            let Err(error) = execute(&wasm) else {
                 panic!("wasm did not trap like the interpreter: {src}");
             };
             assert_eq!(error, format!("trap: {message}"), "{src}");

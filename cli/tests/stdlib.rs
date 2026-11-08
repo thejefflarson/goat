@@ -27,7 +27,7 @@ fn interp_error(src: &str) -> InterpError {
 
 fn wasm_error(src: &str) -> String {
     let wasm = goat::compile_turtle(src).expect("compiles");
-    match goat_cli::run(&wasm) {
+    match support::execute(&wasm) {
         Ok(_) => panic!("the program should trap: {src}"),
         Err(error) => error,
     }

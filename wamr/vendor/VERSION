@@ -1,0 +1,5 @@
+wasm-micro-runtime WAMR-2.4.5
+commit 25bd7eb63e828e4bd242cc9b38d260b4b31c6605
+https://github.com/bytecodealliance/wasm-micro-runtime
+Apache-2.0 WITH LLVM-exception; see wasm-micro-runtime/LICENSE.
+A trimmed copy: wamr/vendor.sh lists what is kept. Re-vendor with that script.

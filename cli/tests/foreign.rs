@@ -163,7 +163,7 @@ fn programs_without_foreign_functions_import_nothing_of_the_hosts() {
 #[test]
 fn a_program_run_without_its_host_function_fails_to_link() {
     let wasm = goat::compile_turtle(&format!("{DECLS}print(double(1))")).expect("compiles");
-    let error = goat_cli::run(&wasm).err().expect("no host");
+    let error = support::execute(&wasm).err().expect("no host");
     assert!(
         error.contains("provides no function test.double"),
         "{error}"
