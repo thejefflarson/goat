@@ -80,7 +80,10 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
     while let Some((id, target, subst, capture_tys)) = m.work.pop() {
         step += 1;
         if step > MAX_SPECS {
-            m.errors.push(GoatError::new(Span::new(0, 0), "program too complex".to_string()));
+            m.errors.push(GoatError::new(
+                Span::new(0, 0),
+                "program too complex".to_string(),
+            ));
             break;
         }
         let func = m.specialize_body(target, subst, capture_tys);

@@ -62,12 +62,18 @@ fn shadows_stdlib(declarations: &str) -> bool {
                     return None;
                 }
                 let name = t.split(|c: char| !c.is_alphanumeric() && c != '_').next()?;
-                if name.is_empty() || KW.contains(&name) { None } else { Some(name) }
+                if name.is_empty() || KW.contains(&name) {
+                    None
+                } else {
+                    Some(name)
+                }
             })
             .collect()
     }
     let stdlib = binding_names(goat_checker::STDLIB);
-    binding_names(declarations).iter().any(|n| stdlib.contains(n))
+    binding_names(declarations)
+        .iter()
+        .any(|n| stdlib.contains(n))
 }
 
 /// Parse, type-check, monomorphize, and emit a wasm module for `source`

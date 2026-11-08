@@ -29,6 +29,7 @@ const MAX_SRC_LEN: u32 = 16 * 1024 * 1024;
 // without trusting the caller-supplied length.
 const ALLOC_HEADER: usize = 4;
 
+#[cfg(test)]
 fn buffer_layout(len: usize) -> Layout {
     // A zero-size layout is undefined for the allocator, so round up to one byte.
     Layout::from_size_align(len.max(1), 1).expect("byte layouts fit while len <= isize::MAX")
@@ -44,7 +45,8 @@ pub extern "C" fn gw_alloc(len: u32) -> u32 {
         return 0;
     }
     let total = len as usize + ALLOC_HEADER;
-    let layout = Layout::from_size_align(total, 1).expect("byte layouts fit while len <= MAX_SRC_LEN");
+    let layout =
+        Layout::from_size_align(total, 1).expect("byte layouts fit while len <= MAX_SRC_LEN");
     // SAFETY: layout has non-zero size (total >= ALLOC_HEADER).
     let base = unsafe { alloc(layout) };
     if base.is_null() {
@@ -56,6 +58,7 @@ pub extern "C" fn gw_alloc(len: u32) -> u32 {
     (base as usize + ALLOC_HEADER) as u32
 }
 
+#[cfg(test)]
 fn alloc_buf(len: usize) -> *mut u8 {
     // SAFETY: the layout has non-zero size.
     unsafe { alloc(buffer_layout(len)) }
@@ -80,11 +83,13 @@ pub unsafe extern "C" fn gw_free(ptr: u32, _len: u32) {
         return; // corrupt header; leak rather than UB
     }
     let total = stored_len as usize + ALLOC_HEADER;
-    let layout = Layout::from_size_align(total, 1).expect("byte layouts fit while stored_len <= MAX_SRC_LEN");
+    let layout = Layout::from_size_align(total, 1)
+        .expect("byte layouts fit while stored_len <= MAX_SRC_LEN");
     // SAFETY: base and layout match the gw_alloc allocation.
     unsafe { dealloc(base, layout) };
 }
 
+#[cfg(test)]
 unsafe fn free_buf(ptr: *mut u8, len: usize) {
     if !ptr.is_null() {
         // SAFETY: `ptr` came from `alloc_buf(len)`.
