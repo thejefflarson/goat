@@ -1,6 +1,7 @@
 //! The built-in constraints a type variable can carry, Elm-style. A user never
-//! writes one: `==` puts `Eq` on its operands, `+ - * /` put `Numeric`, and
-//! unification checks each against the type the variable is bound to.
+//! writes one: `==` puts `Eq` on its operands, `+ - *` put `Numeric`, `<` and
+//! `/` put `Ordered`, and unification checks each against the type the
+//! variable is bound to.
 
 use crate::ty::Ty;
 
@@ -10,17 +11,24 @@ pub enum Kind {
     Eq,
     /// `String`, or a list.
     Appendable,
-    /// `Number`, or a record whose fields are all `Numeric`.
+    /// `Int` or `Float`, or a record whose fields are all `Numeric`.
     Numeric,
+    /// `Int` or `Float`.
+    Ordered,
+    /// The type of a whole-number literal: `Ordered`, and `Int` unless the
+    /// context makes it `Float` (ADR 0017).
+    Literal,
 }
 
-/// The set of constraints on one variable. `Numeric` and `Appendable` exclude
-/// each other.
+/// The set of constraints on one variable. `Numeric`, `Ordered` and `Literal`
+/// each exclude `Appendable`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Kinds {
     eq: bool,
     appendable: bool,
     numeric: bool,
+    ordered: bool,
+    literal: bool,
 }
 
 impl Kinds {
@@ -33,6 +41,8 @@ impl Kinds {
             Kind::Eq => self.eq = true,
             Kind::Appendable => self.appendable = true,
             Kind::Numeric => self.numeric = true,
+            Kind::Ordered => self.ordered = true,
+            Kind::Literal => self.literal = true,
         }
         self
     }
@@ -42,13 +52,27 @@ impl Kinds {
             (self.eq, Kind::Eq),
             (self.appendable, Kind::Appendable),
             (self.numeric, Kind::Numeric),
+            (self.ordered, Kind::Ordered),
+            (self.literal, Kind::Literal),
         ]
         .into_iter()
         .filter_map(|(set, kind)| set.then_some(kind))
     }
 
     pub fn conflicts(self) -> bool {
-        self.numeric && self.appendable
+        (self.numeric || self.ordered || self.literal) && self.appendable
+    }
+
+    /// Whether the variable is a whole-number literal's type, which falls back
+    /// to `Int` if nothing makes it `Float`.
+    pub fn is_literal(self) -> bool {
+        self.literal
+    }
+
+    /// Whether the variable can only be an `Int` or a `Float`, so a clash with
+    /// anything else reads as a mismatch with `Number`.
+    pub fn is_scalar(self) -> bool {
+        self.literal || self.ordered
     }
 
     pub fn appendable(self) -> bool {
@@ -105,6 +129,12 @@ impl Violation {
                 let op = op.map_or_else(|| "arithmetic".to_string(), |op| format!("`{op}`"));
                 format!("{op} needs numbers or records of numbers, but this is `{whole}`")
             }
+            Kind::Ordered | Kind::Literal => match op {
+                Some("/") => {
+                    format!("`/` needs numbers or records of numbers, but this is `{whole}`")
+                }
+                _ => format!("type mismatch: expected `Number`, found `{whole}`"),
+            },
             Kind::Appendable => {
                 format!("`join` needs strings or lists, but this is `{whole}`")
             }

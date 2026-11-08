@@ -135,9 +135,20 @@ fn collect_foreign(root: &hir::Expr, out: &mut HashMap<Symbol, ForeignFn>) {
     });
 }
 
+/// `e`, of type `ty`, as the `Float` nearest it: the one place an `Int`
+/// widens.
+fn widen(e: Expr, ty: &Ty) -> Expr {
+    match (e, ty) {
+        (Expr::Const(Const::Int(n)), _) => Expr::Const(Const::Float(n as f64)),
+        (e, Ty::Int) => Expr::IntToFloat(Box::new(e)),
+        (e, _) => e,
+    }
+}
+
 fn boundary_ty(b: Boundary) -> MTy {
     match b {
         Boundary::Number => MTy::Float,
+        Boundary::Int => MTy::Int,
         Boundary::Bool => MTy::Bool,
         Boundary::Unit => MTy::Unit,
         Boundary::Str => MTy::Ptr(HeapKind::Str),
@@ -365,7 +376,13 @@ impl Mono<'_> {
     fn ground_in(&self, ty: &Ty, subst: &Subst, bound: &mut Vec<TypeVar>) -> Ty {
         match ty {
             Ty::Var(v) if bound.contains(v) => ty.clone(),
-            Ty::Var(v) => subst.get(v).cloned().unwrap_or(Ty::Unit),
+            Ty::Var(v) => subst.get(v).cloned().unwrap_or_else(|| {
+                if self.typed.number_vars.contains(v) {
+                    Ty::Int
+                } else {
+                    Ty::Unit
+                }
+            }),
             Ty::Func(args, ret) => Ty::Func(
                 args.iter()
                     .map(|a| self.ground_in(a, subst, bound))
@@ -436,7 +453,8 @@ impl Mono<'_> {
 
     fn lower_ty(&mut self, ty: &Ty) -> MTy {
         match ty {
-            Ty::Number => MTy::Float,
+            Ty::Int => MTy::Int,
+            Ty::Float => MTy::Float,
             Ty::Bool => MTy::Bool,
             Ty::Unit => MTy::Unit,
             Ty::Func(args, ret) => {
@@ -897,7 +915,15 @@ impl Mono<'_> {
     fn expr(&mut self, cx: &mut FnCx, e: &hir::Expr, tail: bool) -> Expr {
         match &e.kind {
             ExprKind::Unit => Expr::Const(Const::Unit),
-            ExprKind::Number(n) => Expr::Const(Const::Float(*n)),
+            ExprKind::Int(n) => {
+                let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+                Expr::Const(if ty == Ty::Float {
+                    Const::Float(*n as f64)
+                } else {
+                    Const::Int(*n)
+                })
+            }
+            ExprKind::Float(x) => Expr::Const(Const::Float(*x)),
             ExprKind::Bool(b) => Expr::Const(Const::Bool(*b)),
             ExprKind::Var { symbol, .. } if self.foreign.contains_key(symbol) => {
                 self.foreign_value(cx, *symbol, e.id)
@@ -944,7 +970,7 @@ impl Mono<'_> {
             ExprKind::Bin { op, lhs, rhs } => {
                 let a = Box::new(self.expr(cx, lhs, false));
                 let b = Box::new(self.expr(cx, rhs, false));
-                self.bin(cx, *op, lhs, (a, b), tail)
+                self.bin(cx, (*op, e.span), (lhs, rhs), (a, b), tail)
             }
             ExprKind::Foreign { .. } => {
                 unreachable!("a foreign function is only a declaration's value")
@@ -1049,21 +1075,31 @@ impl Mono<'_> {
     /// not around them, so it adds nothing to the stack depth of a long chain
     /// of operators.
     #[inline(never)]
+    /// A binary operator over operands of the types the checker gave them. An
+    /// `Int` beside a `Float` is widened first, and `/` reads both as `Float`.
     fn bin(
         &mut self,
         cx: &mut FnCx,
-        op: BinOp,
-        lhs: &hir::Expr,
+        (op, span): (BinOp, Span),
+        (lhs, rhs): (&hir::Expr, &hir::Expr),
         (a, b): (Box<Expr>, Box<Expr>),
         tail: bool,
     ) -> Expr {
-        let operand_ty = self.ground(&self.typed.node_types[&lhs.id], &cx.subst);
-        let (a, b) = (*a, *b);
+        let lhs_ty = self.ground(&self.typed.node_types[&lhs.id], &cx.subst);
+        let rhs_ty = self.ground(&self.typed.node_types[&rhs.id], &cx.subst);
+        let scalars = [&lhs_ty, &rhs_ty]
+            .iter()
+            .all(|ty| matches!(ty, Ty::Int | Ty::Float));
+        let (operand_ty, a, b) = if scalars && (lhs_ty != rhs_ty || op == BinOp::Div) {
+            (Ty::Float, widen(*a, &lhs_ty), widen(*b, &rhs_ty))
+        } else {
+            (lhs_ty, *a, *b)
+        };
         match op {
-            BinOp::Add => self.arith(FloatOp::Add, &operand_ty, a, b),
-            BinOp::Sub => self.arith(FloatOp::Sub, &operand_ty, a, b),
-            BinOp::Mul => self.arith(FloatOp::Mul, &operand_ty, a, b),
-            BinOp::Div => self.arith(FloatOp::Div, &operand_ty, a, b),
+            BinOp::Add => self.arith(cx, Some(span), FloatOp::Add, &operand_ty, a, b),
+            BinOp::Sub => self.arith(cx, Some(span), FloatOp::Sub, &operand_ty, a, b),
+            BinOp::Mul => self.arith(cx, Some(span), FloatOp::Mul, &operand_ty, a, b),
+            BinOp::Div => self.arith(cx, Some(span), FloatOp::Div, &operand_ty, a, b),
             BinOp::Eq => self.equal(cx, &operand_ty, a, b, tail),
             BinOp::Ne => {
                 let same = self.equal(cx, &operand_ty, a, b, false);

@@ -4,7 +4,7 @@
 //! streams, command for command, and leave nothing allocated.
 
 use goat_cli::Guest;
-use goat_mir::{Program, SceneCommand, SceneHost, Session, Value};
+use goat_mir::{HeapKind, Layout, MTy, Program, SceneCommand, SceneHost, Session, Value};
 
 const EXAMPLE: &str = include_str!("../../examples/interactive.goat");
 
@@ -135,6 +135,7 @@ fn interpreted(program: &Program, script: &[Event], numbers: usize) -> Trace {
                 .take(numbers)
                 .map(|v| match v {
                     Value::Float(x) => *x,
+                    Value::Int(n) => *n as f64,
                     other => panic!("not a number: {other:?}"),
                 })
                 .collect(),
@@ -154,6 +155,7 @@ fn compiled(program: &Program, script: &[Event], numbers: usize) -> Trace {
     let mut guest = Guest::new(&wasm, SceneHost::default()).expect("module instantiates");
     let exports = guest.exports();
     let mut model: i32 = guest.call("goat_setup", ()).expect("setup runs");
+    let slots = model_slots(program);
     let mut models = Vec::new();
     let handled = |e: &&Event| exports.contains(&format!("goat_event_{}", e.label()));
     for event in script.iter().filter(handled) {
@@ -171,7 +173,11 @@ fn compiled(program: &Program, script: &[Event], numbers: usize) -> Trace {
             .call("goat_update", (model, built))
             .expect("update runs");
         guest.call::<_, ()>("goat_draw", model).expect("draw runs");
-        models.push((0..numbers).map(|i| number(&mut guest, model, i)).collect());
+        models.push(
+            (0..numbers)
+                .map(|i| number(&mut guest, model, i, slots[i]))
+                .collect(),
+        );
     }
     guest.call::<_, ()>("goat_release_model", model).unwrap();
     guest.call::<_, ()>("goat_shutdown", ()).unwrap();
@@ -183,11 +189,27 @@ fn compiled(program: &Program, script: &[Event], numbers: usize) -> Trace {
     }
 }
 
-fn number(guest: &mut Guest<SceneHost>, model: i32, slot: usize) -> f64 {
+/// The type of each field of the model, in slot order.
+fn model_slots(program: &Program) -> Vec<MTy> {
+    let update = program.interactive.as_ref().expect("interactive").update;
+    let MTy::Ptr(HeapKind::Record(layout)) = program.funcs[update.0 as usize].params[1].1 else {
+        panic!("the model is a record");
+    };
+    match &program.layouts[layout.0 as usize] {
+        Layout::Record(fields) => fields.clone(),
+        Layout::Variant(_) => panic!("the model is a record"),
+    }
+}
+
+fn number(guest: &mut Guest<SceneHost>, model: i32, slot: usize, ty: MTy) -> f64 {
     let bytes = guest
         .read(model as usize + HEADER + SLOT * slot, 8)
         .expect("model readable");
-    f64::from_le_bytes(bytes.try_into().unwrap())
+    let bytes = bytes.try_into().unwrap();
+    match ty {
+        MTy::Int => i64::from_le_bytes(bytes) as f64,
+        _ => f64::from_le_bytes(bytes),
+    }
 }
 
 fn export_names(wasm: &[u8]) -> Vec<String> {
@@ -344,7 +366,7 @@ fn setup_hands_the_host_a_model_with_count_one() {
     let wasm = goat::compile(EXAMPLE).expect("compiles");
     let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
     let model: i32 = guest.call("goat_setup", ()).unwrap();
-    assert_eq!(number(&mut guest, model, 1), 0.0);
+    assert_eq!(number(&mut guest, model, 1, MTy::Float), 0.0);
     guest.call::<_, ()>("goat_draw", model).unwrap();
     guest.call::<_, ()>("goat_draw", model).unwrap();
     guest.call::<_, ()>("goat_release_model", model).unwrap();
@@ -548,7 +570,7 @@ fn update_reuses_the_models_cell_on_both_backends_and_nothing_leaks() {
         model = session.update(model, event).expect("update runs");
         assert_eq!(model, first, "interpreter allocated a fresh model");
     }
-    assert_eq!(session.fields(model).unwrap()[0], Value::Float(50.0));
+    assert_eq!(session.fields(model).unwrap()[0], Value::Int(50));
     session.release_model(model).unwrap();
     assert_eq!(session.shutdown().unwrap(), 0, "interpreter leaked");
 
@@ -560,7 +582,7 @@ fn update_reuses_the_models_cell_on_both_backends_and_nothing_leaks() {
         model = press(&mut guest, model, "a").expect("update runs");
         assert_eq!(model, first, "wasm allocated a fresh model");
     }
-    assert_eq!(number(&mut guest, model, 0), 50.0);
+    assert_eq!(number(&mut guest, model, 0, MTy::Int), 50.0);
     guest.call::<_, ()>("goat_release_model", model).unwrap();
     guest.call::<_, ()>("goat_shutdown", ()).unwrap();
     assert_eq!(guest.live_allocs().unwrap(), 0, "wasm leaked");

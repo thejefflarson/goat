@@ -364,7 +364,7 @@ impl<'p> Interp<'p> {
         for &arg in args {
             values.push(match frame.get(arg)? {
                 Value::Float(x) => HostValue::Number(x),
-                Value::Int(n) => HostValue::Number(n as f64),
+                Value::Int(n) => HostValue::Int(n),
                 Value::Bool(b) => HostValue::Bool(b),
                 Value::Unit => HostValue::Unit,
                 string @ Value::Ptr(_) => {
@@ -379,6 +379,7 @@ impl<'p> Interp<'p> {
             .map_err(InterpError::Trap)?;
         match (foreign.ret, returned) {
             (MTy::Float, HostValue::Number(x)) => Ok(Value::Float(x)),
+            (MTy::Int, HostValue::Int(n)) => Ok(Value::Int(n)),
             (MTy::Bool, HostValue::Bool(b)) => Ok(Value::Bool(b)),
             (MTy::Unit, HostValue::Unit) => Ok(Value::Unit),
             (MTy::Ptr(HeapKind::Str), HostValue::Str(text)) => {
@@ -565,6 +566,10 @@ impl<'p> Interp<'p> {
                 let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
                 float_op(*op, a, b)?
             }
+            Expr::IntToFloat(value) => match self.value(value, frame, depth)? {
+                Value::Int(n) => Value::Float(n as f64),
+                _ => return Err(InterpError::Malformed("conversion of a non-int")),
+            },
             Expr::Cmp(op, a, b) => {
                 let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
                 compare(*op, a, b)?
@@ -724,13 +729,16 @@ fn int_op(op: IntOp, a: Value, b: Value) -> Result<Value, InterpError> {
     let (Value::Int(a), Value::Int(b)) = (a, b) else {
         return Err(InterpError::Malformed("int operands"));
     };
-    Ok(Value::Int(match op {
-        IntOp::Add => a.wrapping_add(b),
-        IntOp::Sub => a.wrapping_sub(b),
-        IntOp::Mul => a.wrapping_mul(b),
-        IntOp::Div if b == 0 => return Err(InterpError::Trap("division by zero".into())),
-        IntOp::Div => a.wrapping_div(b),
-    }))
+    let result = match op {
+        IntOp::Add => a.checked_add(b),
+        IntOp::Sub => a.checked_sub(b),
+        IntOp::Mul => a.checked_mul(b),
+        IntOp::Div if b == 0 => return Err(InterpError::Trap(DIVISION_BY_ZERO.into())),
+        IntOp::Div => a.checked_div(b),
+    };
+    result
+        .map(Value::Int)
+        .ok_or_else(|| InterpError::Trap(INT_OVERFLOW.into()))
 }
 
 fn float_op(op: FloatOp, a: Value, b: Value) -> Result<Value, InterpError> {
@@ -794,28 +802,29 @@ mod proofs {
     }
 
     #[kani::proof]
-    fn int_op_is_total_and_traps_only_on_zero_division() {
+    fn int_op_is_total_and_traps_only_on_overflow_or_zero_division() {
         let op = any_int_op();
         let (a, b): (i64, i64) = (kani::any(), kani::any());
         let result = int_op(op, Value::Int(a), Value::Int(b));
-        if op == IntOp::Div && b == 0 {
-            assert!(matches!(result, Err(InterpError::Trap(_))));
-        } else {
-            assert!(matches!(result, Ok(Value::Int(_))));
+        let exact = match op {
+            IntOp::Add => a.checked_add(b),
+            IntOp::Sub => a.checked_sub(b),
+            IntOp::Mul => a.checked_mul(b),
+            IntOp::Div => a.checked_div(b),
+        };
+        match exact {
+            Some(n) => assert_eq!(result, Ok(Value::Int(n))),
+            None => assert!(matches!(result, Err(InterpError::Trap(_)))),
         }
     }
 
     #[kani::proof]
-    fn int_add_and_sub_wrap_on_overflow() {
+    fn int_add_and_sub_trap_on_overflow() {
         let (a, b): (i64, i64) = (kani::any(), kani::any());
-        assert_eq!(
-            int_op(IntOp::Add, Value::Int(a), Value::Int(b)),
-            Ok(Value::Int(a.wrapping_add(b)))
-        );
-        assert_eq!(
-            int_op(IntOp::Sub, Value::Int(a), Value::Int(b)),
-            Ok(Value::Int(a.wrapping_sub(b)))
-        );
+        let add = int_op(IntOp::Add, Value::Int(a), Value::Int(b));
+        assert_eq!(add.is_err(), a.checked_add(b).is_none());
+        let sub = int_op(IntOp::Sub, Value::Int(a), Value::Int(b));
+        assert_eq!(sub.is_err(), a.checked_sub(b).is_none());
     }
 
     #[kani::proof]

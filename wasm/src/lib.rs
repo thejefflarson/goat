@@ -119,10 +119,11 @@ type Code = Vec<Instruction<'static>>;
 /// `None` is a diverging expression (a trap), which has every type.
 type Ty = Option<MTy>;
 
-/// `Int` is i32 on wasm32 and `Float` is f64 (ADR 0001); `Unit` is erased.
+/// `Int` is i64 and `Float` is f64 on this target (ADR 0017); `Unit` is erased.
 fn val_type(ty: MTy) -> Option<ValType> {
     match ty {
-        MTy::Int | MTy::Bool | MTy::Ptr(_) => Some(ValType::I32),
+        MTy::Bool | MTy::Ptr(_) => Some(ValType::I32),
+        MTy::Int => Some(ValType::I64),
         MTy::Float => Some(ValType::F64),
         MTy::Unit => None,
     }
@@ -675,6 +676,12 @@ impl Uses {
             Expr::Drop(_) | Expr::ReuseRecord(..) => self.drops = true,
             Expr::Write(_) => self.writes = true,
             Expr::Trap(message) => self.note_trap(message),
+            Expr::BinInt(op, ..) => {
+                self.note_trap(INT_OVERFLOW);
+                if *op == IntOp::Div {
+                    self.note_trap(DIVISION_BY_ZERO);
+                }
+            }
             Expr::Site(start, end) => self.note_site(*start, *end),
             Expr::AllocVariant(_, tag, fields) if fields.is_empty() => {
                 if let Err(at) = self.nullary.binary_search(tag) {
@@ -911,16 +918,18 @@ pub(crate) fn memarg(offset: u32, align: u32) -> MemArg {
 fn load(ty: MTy, offset: u32) -> Option<Instruction<'static>> {
     match ty {
         MTy::Float => Some(Instruction::F64Load(memarg(offset, 3))),
+        MTy::Int => Some(Instruction::I64Load(memarg(offset, 3))),
         MTy::Unit => None,
-        MTy::Int | MTy::Bool | MTy::Ptr(_) => Some(Instruction::I32Load(memarg(offset, 2))),
+        MTy::Bool | MTy::Ptr(_) => Some(Instruction::I32Load(memarg(offset, 2))),
     }
 }
 
 fn store(ty: MTy, offset: u32) -> Option<Instruction<'static>> {
     match ty {
         MTy::Float => Some(Instruction::F64Store(memarg(offset, 3))),
+        MTy::Int => Some(Instruction::I64Store(memarg(offset, 3))),
         MTy::Unit => None,
-        MTy::Int | MTy::Bool | MTy::Ptr(_) => Some(Instruction::I32Store(memarg(offset, 2))),
+        MTy::Bool | MTy::Ptr(_) => Some(Instruction::I32Store(memarg(offset, 2))),
     }
 }
 
@@ -1023,7 +1032,8 @@ impl Types {
     }
 }
 
-/// An `Int` root prints through `print_number`, since both are numbers.
+/// An `Int` root prints through `print_number`, since both are numbers. The
+/// host reads an f64, so an `Int` beyond 2^53 prints as the `Float` nearest it.
 fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError> {
     let root = program
         .funcs
@@ -1043,7 +1053,7 @@ fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError>
             f.instruction(&Instruction::Call(PRINT_NUMBER));
         }
         MTy::Int => {
-            f.instruction(&Instruction::F64ConvertI32S);
+            f.instruction(&Instruction::F64ConvertI64S);
             f.instruction(&Instruction::Call(PRINT_NUMBER));
         }
         MTy::Bool => {
@@ -1348,7 +1358,7 @@ impl<'p> FuncCx<'_, 'p> {
         match expr {
             Expr::Const(c) => Ok(Some(match *c {
                 Const::Int(n) => {
-                    out.push(Instruction::I32Const(n as i32));
+                    out.push(Instruction::I64Const(n));
                     MTy::Int
                 }
                 Const::Float(x) => {
@@ -1371,14 +1381,17 @@ impl<'p> FuncCx<'_, 'p> {
             Expr::Let(..) => unreachable!("the loop above consumed every `Let`"),
             Expr::BinInt(op, a, b) => {
                 self.operands(a, b, MTy::Int, out)?;
-                out.push(match op {
-                    IntOp::Add => Instruction::I32Add,
-                    IntOp::Sub => Instruction::I32Sub,
-                    IntOp::Mul => Instruction::I32Mul,
-                    IntOp::Div => Instruction::I32DivS,
-                });
+                self.checked_int(*op, out)?;
                 Ok(Some(MTy::Int))
             }
+            Expr::IntToFloat(value) => match self.lower(value, out)? {
+                Some(MTy::Int) => {
+                    out.push(Instruction::F64ConvertI64S);
+                    Ok(Some(MTy::Float))
+                }
+                Some(_) => Err(EmitError::Malformed("conversion of a non-int")),
+                None => Ok(None),
+            },
             Expr::BinFloat(op, a, b) => {
                 self.operands(a, b, MTy::Float, out)?;
                 out.push(match op {
@@ -1396,12 +1409,12 @@ impl<'p> FuncCx<'_, 'p> {
                     return Err(EmitError::Malformed("comparison operand types differ"));
                 }
                 let instr = match (ta.or(tb), op) {
-                    (Some(MTy::Int), CmpOp::Eq) => Instruction::I32Eq,
-                    (Some(MTy::Int), CmpOp::Ne) => Instruction::I32Ne,
-                    (Some(MTy::Int), CmpOp::Lt) => Instruction::I32LtS,
-                    (Some(MTy::Int), CmpOp::Le) => Instruction::I32LeS,
-                    (Some(MTy::Int), CmpOp::Gt) => Instruction::I32GtS,
-                    (Some(MTy::Int), CmpOp::Ge) => Instruction::I32GeS,
+                    (Some(MTy::Int), CmpOp::Eq) => Instruction::I64Eq,
+                    (Some(MTy::Int), CmpOp::Ne) => Instruction::I64Ne,
+                    (Some(MTy::Int), CmpOp::Lt) => Instruction::I64LtS,
+                    (Some(MTy::Int), CmpOp::Le) => Instruction::I64LeS,
+                    (Some(MTy::Int), CmpOp::Gt) => Instruction::I64GtS,
+                    (Some(MTy::Int), CmpOp::Ge) => Instruction::I64GeS,
                     (Some(MTy::Float), CmpOp::Eq) => Instruction::F64Eq,
                     (Some(MTy::Float), CmpOp::Ne) => Instruction::F64Ne,
                     (Some(MTy::Float), CmpOp::Lt) => Instruction::F64Lt,
@@ -1603,6 +1616,7 @@ impl<'p> FuncCx<'_, 'p> {
                     Write::Number(value) => {
                         match self.lower(value, out)? {
                             Some(MTy::Float) => {}
+                            Some(MTy::Int) => out.push(Instruction::F64ConvertI64S),
                             Some(_) => return Err(EmitError::Malformed("write of a non-number")),
                             None => return Ok(None),
                         }
@@ -1622,6 +1636,103 @@ impl<'p> FuncCx<'_, 'p> {
                 Ok(Some(MTy::Unit))
             }
         }
+    }
+
+    /// `a op b` on the two `i64`s on the stack, trapping where the result does
+    /// not fit: wasm's own `i64` arithmetic would wrap, and `i64.div_s` traps
+    /// with no message.
+    #[inline(never)]
+    fn checked_int(&mut self, op: IntOp, out: &mut Code) -> Result<(), EmitError> {
+        use Instruction::{
+            I32Const, I64Add, I64And, I64Const, I64DivS, I64Eq, I64Eqz, I64LtS, I64Mul, I64Ne,
+            I64Sub, I64Xor, LocalGet, LocalSet,
+        };
+        let (a, b) = (self.scratch(ValType::I64), self.scratch(ValType::I64));
+        out.extend([LocalSet(b), LocalSet(a)]);
+        match op {
+            IntOp::Add | IntOp::Sub => {
+                let r = self.scratch(ValType::I64);
+                // Add overflows when the sum's sign differs from both
+                // operands'; Sub when the operands differ in sign and the
+                // result's sign differs from the minuend's.
+                let (arithmetic, first, second) = match op {
+                    IntOp::Add => (I64Add, (a, r), (b, r)),
+                    _ => (I64Sub, (a, b), (a, r)),
+                };
+                out.extend([
+                    LocalGet(a),
+                    LocalGet(b),
+                    arithmetic,
+                    LocalSet(r),
+                    LocalGet(first.0),
+                    LocalGet(first.1),
+                    I64Xor,
+                    LocalGet(second.0),
+                    LocalGet(second.1),
+                    I64Xor,
+                    I64And,
+                    I64Const(0),
+                    I64LtS,
+                ]);
+                self.trap_if(INT_OVERFLOW, out)?;
+                out.push(LocalGet(r));
+            }
+            IntOp::Mul => {
+                // Overflow unless a is 0, or a is -1 and b is not the minimum,
+                // or dividing the product by a gives b back.
+                let flag = BlockType::Result(ValType::I32);
+                out.extend([
+                    LocalGet(a),
+                    I64Eqz,
+                    Instruction::If(flag),
+                    I32Const(0),
+                    Instruction::Else,
+                    LocalGet(a),
+                    I64Const(-1),
+                    I64Eq,
+                    Instruction::If(flag),
+                    LocalGet(b),
+                    I64Const(i64::MIN),
+                    I64Eq,
+                    Instruction::Else,
+                    LocalGet(a),
+                    LocalGet(b),
+                    I64Mul,
+                    LocalGet(a),
+                    I64DivS,
+                    LocalGet(b),
+                    I64Ne,
+                    Instruction::End,
+                    Instruction::End,
+                ]);
+                self.trap_if(INT_OVERFLOW, out)?;
+                out.extend([LocalGet(a), LocalGet(b), I64Mul]);
+            }
+            IntOp::Div => {
+                out.extend([LocalGet(b), I64Eqz]);
+                self.trap_if(DIVISION_BY_ZERO, out)?;
+                out.extend([
+                    LocalGet(a),
+                    I64Const(i64::MIN),
+                    I64Eq,
+                    LocalGet(b),
+                    I64Const(-1),
+                    I64Eq,
+                    Instruction::I32And,
+                ]);
+                self.trap_if(INT_OVERFLOW, out)?;
+                out.extend([LocalGet(a), LocalGet(b), I64DivS]);
+            }
+        }
+        Ok(())
+    }
+
+    /// Traps with `message` when the `i32` on the stack is nonzero.
+    fn trap_if(&mut self, message: &str, out: &mut Code) -> Result<(), EmitError> {
+        out.push(Instruction::If(BlockType::Empty));
+        self.trap(message, out)?;
+        out.push(Instruction::End);
+        Ok(())
     }
 
     #[inline(never)]

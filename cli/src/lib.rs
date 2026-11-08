@@ -175,6 +175,7 @@ fn link_foreign<H: Host + 'static>(
                 for param in &params {
                     values.push(match param {
                         Boundary::Number => HostValue::Number(next(&mut raw)?.unwrap_f64()),
+                        Boundary::Int => HostValue::Int(next(&mut raw)?.unwrap_i64()),
                         Boundary::Bool => HostValue::Bool(next(&mut raw)?.unwrap_i32() != 0),
                         Boundary::Unit => HostValue::Unit,
                         Boundary::Str => {
@@ -190,6 +191,7 @@ fn link_foreign<H: Host + 'static>(
                     .map_err(wasmtime::Error::msg)?;
                 match (ret, returned) {
                     (Boundary::Number, HostValue::Number(x)) => results[0] = Val::F64(x.to_bits()),
+                    (Boundary::Int, HostValue::Int(n)) => results[0] = Val::I64(n),
                     (Boundary::Bool, HostValue::Bool(b)) => results[0] = Val::I32(b as i32),
                     (Boundary::Unit, HostValue::Unit) => {}
                     (Boundary::Str, HostValue::Str(text)) => {

@@ -24,6 +24,51 @@ fn adds_two_numbers_with_no_live_allocations() {
 }
 
 #[test]
+fn int_arithmetic_traps_where_it_overflows() {
+    let trap = |body| run(&program(vec![func(MTy::Int, body)])).expect_err("traps");
+    let overflow = InterpError::Trap(INT_OVERFLOW.into());
+    assert_eq!(trap(add(int(i64::MAX), int(1))), overflow);
+    assert_eq!(trap(sub(int(i64::MIN), int(1))), overflow);
+    assert_eq!(trap(mul(int(i64::MAX), int(2))), overflow);
+    let divide = |a, b| Expr::BinInt(IntOp::Div, Box::new(int(a)), Box::new(int(b)));
+    assert_eq!(trap(divide(i64::MIN, -1)), overflow);
+    assert_eq!(
+        trap(divide(1, 0)),
+        InterpError::Trap(DIVISION_BY_ZERO.into())
+    );
+    let fits = |body| run_verified(&program(vec![func(MTy::Int, body)])).value;
+    assert_eq!(fits(add(int(i64::MAX - 1), int(1))), Value::Int(i64::MAX));
+    assert_eq!(fits(mul(int(i64::MIN), int(1))), Value::Int(i64::MIN));
+}
+
+#[test]
+fn an_int_widens_to_the_float_nearest_it() {
+    let widen = |body| Expr::IntToFloat(Box::new(body));
+    let p = program(vec![func(MTy::Float, widen(int(3)))]);
+    assert_eq!(run_verified(&p).value, Value::Float(3.0));
+    let p = program(vec![func(MTy::Float, widen(float(1.5)))]);
+    assert_eq!(
+        verify(&p),
+        Err(vec![VerifyError {
+            func: FuncId(0),
+            kind: ErrorKind::TypeMismatch {
+                expected: MTy::Int,
+                found: MTy::Float
+            }
+        }])
+    );
+}
+
+#[test]
+fn a_number_prints_whether_it_is_an_int_or_a_float() {
+    let write = |value| Expr::Write(Write::Number(Box::new(value)));
+    let end = Expr::Write(Write::End);
+    let body = let_(0, write(int(7)), let_(1, end, float(0.5)));
+    let out = run_verified(&program(vec![func(MTy::Float, body)]));
+    assert_eq!(out.printed, [vec![Piece::Number(7.0)]]);
+}
+
+#[test]
 fn record_round_trip_frees_everything() {
     let body = let_(
         0,

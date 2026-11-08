@@ -14,7 +14,10 @@ pub type TypeVar = u32;
 pub enum Ty {
     /// An as-yet-unknown type, to be filled in by unification.
     Var(TypeVar),
-    Number,
+    /// A whole number: `i64` on desktop and web (ADR 0017).
+    Int,
+    /// A number with a fraction: `f64` on desktop and web.
+    Float,
     Str,
     Bool,
     /// The type of an expression that yields no value (an empty program, a
@@ -42,7 +45,8 @@ pub enum Ty {
 impl From<Boundary> for Ty {
     fn from(boundary: Boundary) -> Ty {
         match boundary {
-            Boundary::Number => Ty::Number,
+            Boundary::Number => Ty::Float,
+            Boundary::Int => Ty::Int,
             Boundary::Bool => Ty::Bool,
             Boundary::Unit => Ty::Unit,
             Boundary::Str => Ty::Str,
@@ -119,7 +123,7 @@ impl Ty {
             Ty::Var(v) => {
                 out.insert(*v);
             }
-            Ty::Number | Ty::Str | Ty::Bool | Ty::Unit => {}
+            Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => {}
             Ty::Func(args, ret) => {
                 for a in args {
                     a.free_vars(out);
@@ -152,7 +156,7 @@ impl Ty {
             Ty::Func(args, ret) => args.iter().chain(std::iter::once(&**ret)).collect(),
             Ty::Record(row) | Ty::Variant(row) => row.fields().collect(),
             Ty::Rec(_, body) => vec![body],
-            Ty::Var(_) | Ty::Number | Ty::Str | Ty::Bool | Ty::Unit => Vec::new(),
+            Ty::Var(_) | Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => Vec::new(),
         }
     }
 
@@ -162,7 +166,7 @@ impl Ty {
             Ty::Record(row) => Ty::Record(row.map_fields(f)),
             Ty::Variant(row) => Ty::Variant(row.map_fields(f)),
             Ty::Rec(binder, body) => Ty::Rec(*binder, Box::new(f(body))),
-            Ty::Var(_) | Ty::Number | Ty::Str | Ty::Bool | Ty::Unit => self.clone(),
+            Ty::Var(_) | Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => self.clone(),
         }
     }
 
@@ -267,11 +271,43 @@ impl Row {
     }
 }
 
+/// A type as written for a reader. `Display` calls both numeric types
+/// `Number`, the kid-facing name; [`Ty::exact`] says `Int` or `Float`.
+struct Shown<'a> {
+    ty: &'a Ty,
+    exact: bool,
+}
+
+impl Ty {
+    pub fn exact(&self) -> impl fmt::Display + '_ {
+        Shown {
+            ty: self,
+            exact: true,
+        }
+    }
+}
+
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
+        Shown {
+            ty: self,
+            exact: false,
+        }
+        .fmt(f)
+    }
+}
+
+impl fmt::Display for Shown<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let show = |ty| Shown {
+            ty,
+            exact: self.exact,
+        };
+        match self.ty {
             Ty::Var(v) => write!(f, "{}", name_of(*v)),
-            Ty::Number => write!(f, "Number"),
+            Ty::Int if self.exact => write!(f, "Int"),
+            Ty::Float if self.exact => write!(f, "Float"),
+            Ty::Int | Ty::Float => write!(f, "Number"),
             Ty::Str => write!(f, "String"),
             Ty::Bool => write!(f, "Bool"),
             Ty::Unit => write!(f, "Unit"),
@@ -281,21 +317,21 @@ impl fmt::Display for Ty {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{a}")?;
+                    write!(f, "{}", show(a))?;
                 }
-                write!(f, ") -> {ret}")
+                write!(f, ") -> {}", show(ret))
             }
             Ty::Record(row) => {
                 write!(f, "{{")?;
-                row.fmt_fields(f, true, false)?;
+                row.fmt_fields(f, true, false, self.exact)?;
                 write!(f, "}}")
             }
             Ty::Variant(row) => {
                 write!(f, "[")?;
-                row.fmt_fields(f, true, true)?;
+                row.fmt_fields(f, true, true, self.exact)?;
                 write!(f, "]")
             }
-            Ty::Rec(binder, body) => write!(f, "μ{}. {body}", name_of(*binder)),
+            Ty::Rec(binder, body) => write!(f, "μ{}. {}", name_of(*binder), show(body)),
         }
     }
 }
@@ -304,7 +340,13 @@ impl Row {
     /// Format the fields of a row inside its enclosing brackets. `first` tracks
     /// whether a separator is needed before the next field; `bare_unit` prints
     /// a `Unit` payload as just the tag name.
-    fn fmt_fields(&self, f: &mut fmt::Formatter<'_>, first: bool, bare_unit: bool) -> fmt::Result {
+    fn fmt_fields(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        first: bool,
+        bare_unit: bool,
+        exact: bool,
+    ) -> fmt::Result {
         match self {
             Row::Empty => Ok(()),
             Row::Var(v) => {
@@ -321,9 +363,9 @@ impl Row {
                 if bare_unit && **field == Ty::Unit {
                     write!(f, "{label}")?;
                 } else {
-                    write!(f, "{label}: {field}")?;
+                    write!(f, "{label}: {}", Shown { ty: field, exact })?;
                 }
-                rest.fmt_fields(f, false, bare_unit)
+                rest.fmt_fields(f, false, bare_unit, exact)
             }
         }
     }
@@ -373,7 +415,7 @@ mod tests {
     fn list(binder: TypeVar) -> Ty {
         let link = Ty::Record(Row::Extend {
             label: "0".into(),
-            field: Box::new(Ty::Number),
+            field: Box::new(Ty::Int),
             rest: Box::new(Row::Extend {
                 label: "1".into(),
                 field: Box::new(Ty::Var(binder)),
@@ -405,9 +447,9 @@ mod tests {
 
     #[test]
     fn degenerate_recursive_types_print_and_unfold_without_looping() {
-        let vacuous = Ty::Rec(0, Box::new(Ty::Number));
+        let vacuous = Ty::Rec(0, Box::new(Ty::Int));
         assert_eq!(vacuous.to_string(), "μt0. Number");
-        assert_eq!(vacuous.unfold_head(), Ty::Number);
+        assert_eq!(vacuous.unfold_head(), Ty::Int);
 
         let empty = Ty::Rec(0, Box::new(Ty::Variant(Row::Empty)));
         assert_eq!(empty.to_string(), "μt0. []");
@@ -434,7 +476,7 @@ mod tests {
 
     #[test]
     fn folding_leaves_a_type_with_nothing_to_fold_alone() {
-        let plain = Ty::func(vec![Ty::Number], variant(&[("A", Ty::Unit)], Row::Var(1)));
+        let plain = Ty::func(vec![Ty::Int], variant(&[("A", Ty::Unit)], Row::Var(1)));
         assert_eq!(plain.fold_rec(), plain);
         assert_eq!(list(3).fold_rec(), list(3));
     }

@@ -82,6 +82,10 @@ impl Infer<'_> {
                 self.ty(b);
                 Some(MTy::Float)
             }
+            Expr::IntToFloat(value) => {
+                self.ty(value);
+                Some(MTy::Float)
+            }
             Expr::Cmp(_, a, b) => {
                 self.ty(a);
                 self.ty(b);

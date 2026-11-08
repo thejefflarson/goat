@@ -5,6 +5,6 @@ mod support;
 #[test]
 fn differential_interp_vs_wasm() {
     bolero::check!().for_each(|data: &[u8]| {
-        support::run(&support::generate(data));
+        support::agree_or_trap(&support::generate(data));
     });
 }

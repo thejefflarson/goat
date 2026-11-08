@@ -60,7 +60,7 @@ fn has_rec(ty: &Ty) -> bool {
         Ty::Rec(..) => true,
         Ty::Func(args, ret) => args.iter().any(has_rec) || has_rec(ret),
         Ty::Record(row) | Ty::Variant(row) => ground_fields(row).any(|(_, t)| has_rec(t)),
-        Ty::Var(_) | Ty::Number | Ty::Str | Ty::Bool | Ty::Unit => false,
+        Ty::Var(_) | Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => false,
     }
 }
 
@@ -86,7 +86,7 @@ fn rename_binders(ty: &Ty, scope: &mut Vec<(TypeVar, TypeVar)>) -> Ty {
         ),
         Ty::Record(row) => Ty::Record(rename_row(row, scope)),
         Ty::Variant(row) => Ty::Variant(rename_row(row, scope)),
-        Ty::Number | Ty::Str | Ty::Bool | Ty::Unit => ty.clone(),
+        Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => ty.clone(),
     }
 }
 
@@ -104,7 +104,8 @@ fn rename_row(row: &Row, scope: &mut Vec<(TypeVar, TypeVar)>) -> Row {
 /// What a node of the type's tree is, apart from its children.
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Shape {
-    Number,
+    Int,
+    Float,
     Str,
     Bool,
     Unit,
@@ -122,7 +123,8 @@ fn split(ty: &Ty) -> (Shape, Vec<Ty>) {
         fields.into_iter().unzip::<_, _, Vec<_>, Vec<_>>()
     };
     match ty {
-        Ty::Number => (Shape::Number, Vec::new()),
+        Ty::Int => (Shape::Int, Vec::new()),
+        Ty::Float => (Shape::Float, Vec::new()),
         Ty::Str => (Shape::Str, Vec::new()),
         Ty::Bool => (Shape::Bool, Vec::new()),
         Ty::Func(args, ret) => (
@@ -147,7 +149,8 @@ fn split(ty: &Ty) -> (Shape, Vec<Ty>) {
 
 fn build(shape: &Shape, kids: Vec<Ty>) -> Ty {
     match shape {
-        Shape::Number => Ty::Number,
+        Shape::Int => Ty::Int,
+        Shape::Float => Ty::Float,
         Shape::Str => Ty::Str,
         Shape::Bool => Ty::Bool,
         Shape::Unit => Ty::Unit,
@@ -291,38 +294,35 @@ mod tests {
 
     #[test]
     fn types_without_recursion_are_left_alone() {
-        let plain = Ty::func(vec![variant(vec![("A", Ty::Number)])], Ty::Bool);
+        let plain = Ty::func(vec![variant(vec![("A", Ty::Int)])], Ty::Bool);
         assert_eq!(canonical(&plain), plain);
     }
 
     #[test]
     fn alpha_equivalent_types_get_one_form() {
-        assert_ne!(list(7, Ty::Number), list(8, Ty::Number));
-        assert_eq!(
-            canonical(&list(7, Ty::Number)),
-            canonical(&list(8, Ty::Number))
-        );
+        assert_ne!(list(7, Ty::Int), list(8, Ty::Int));
+        assert_eq!(canonical(&list(7, Ty::Int)), canonical(&list(8, Ty::Int)));
     }
 
     #[test]
     fn a_type_and_its_unfolding_get_one_form() {
-        let folded = list(3, Ty::Number);
+        let folded = list(3, Ty::Int);
         assert_eq!(canonical(&folded.unfold()), canonical(&folded));
         assert_eq!(canonical(&folded.unfold().unfold()), canonical(&folded));
     }
 
     #[test]
     fn a_two_period_unrolling_is_the_same_type_as_the_one_period_form() {
-        let one = list(1, Ty::Number);
+        let one = list(1, Ty::Int);
         let inner = variant(vec![
             ("Empty", Ty::Unit),
-            ("Link", link(Ty::Number, Ty::Var(2))),
+            ("Link", link(Ty::Int, Ty::Var(2))),
         ]);
         let two = Ty::Rec(
             2,
             Box::new(variant(vec![
                 ("Empty", Ty::Unit),
-                ("Link", link(Ty::Number, inner)),
+                ("Link", link(Ty::Int, inner)),
             ])),
         );
         assert_ne!(one, two);
@@ -331,15 +331,12 @@ mod tests {
 
     #[test]
     fn different_element_types_stay_different() {
-        assert_ne!(
-            canonical(&list(1, Ty::Number)),
-            canonical(&list(1, Ty::Bool))
-        );
+        assert_ne!(canonical(&list(1, Ty::Int)), canonical(&list(1, Ty::Bool)));
     }
 
     #[test]
     fn nested_binders_are_numbered_by_depth() {
-        let inner = list(5, Ty::Number);
+        let inner = list(5, Ty::Int);
         let outer = Ty::Rec(
             9,
             Box::new(variant(vec![
@@ -351,7 +348,7 @@ mod tests {
             4,
             Box::new(variant(vec![
                 ("Nil", Ty::Unit),
-                ("Cons", link(list(6, Ty::Number), Ty::Var(4))),
+                ("Cons", link(list(6, Ty::Int), Ty::Var(4))),
             ])),
         );
         assert_eq!(canonical(&outer), canonical(&again));
@@ -359,13 +356,13 @@ mod tests {
 
     #[test]
     fn canonicalizing_is_idempotent() {
-        let once = canonical(&list(11, Ty::Number));
+        let once = canonical(&list(11, Ty::Int));
         assert_eq!(canonical(&once), once);
     }
 
     #[test]
     fn a_vacuous_binder_is_dropped() {
-        let vacuous = Ty::Rec(1, Box::new(variant(vec![("A", Ty::Number)])));
-        assert_eq!(canonical(&vacuous), variant(vec![("A", Ty::Number)]));
+        let vacuous = Ty::Rec(1, Box::new(variant(vec![("A", Ty::Int)])));
+        assert_eq!(canonical(&vacuous), variant(vec![("A", Ty::Int)]));
     }
 }

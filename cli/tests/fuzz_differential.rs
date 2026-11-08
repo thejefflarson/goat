@@ -16,7 +16,7 @@ fn generated_programs_agree_between_interp_and_wasm() {
         .with_iterations(300)
         .with_max_len(256)
         .for_each(|data: &[u8]| {
-            support::run(&support::generate(data));
+            support::agree_or_trap(&support::generate(data));
         });
 }
 

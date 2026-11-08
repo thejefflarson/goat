@@ -76,7 +76,9 @@ impl Builtin {
 /// The types that may cross the host boundary of a `foreign` function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Boundary {
+    /// `Number`: a `Float` on this target.
     Number,
+    Int,
     Bool,
     Unit,
     Str,
@@ -86,6 +88,7 @@ impl Boundary {
     pub fn named(name: &str) -> Option<Boundary> {
         match name {
             "Number" => Some(Boundary::Number),
+            "Int" => Some(Boundary::Int),
             "Bool" => Some(Boundary::Bool),
             "Unit" => Some(Boundary::Unit),
             "String" => Some(Boundary::Str),
@@ -209,7 +212,10 @@ pub struct Expr {
 pub enum ExprKind {
     /// An empty program, or an empty function body.
     Unit,
-    Number(f64),
+    /// A whole-number literal: `Int`, or `Float` where the context needs one.
+    Int(i64),
+    /// A literal with a decimal point or exponent.
+    Float(f64),
     Str(String),
     Bool(bool),
     /// A use of a name, resolved to its binding.

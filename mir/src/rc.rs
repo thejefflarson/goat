@@ -214,6 +214,13 @@ impl<'p> Cx<'p> {
                     ..out
                 }
             }
+            Expr::IntToFloat(value) => {
+                let out = self.go(value, after);
+                Out {
+                    expr: Expr::IntToFloat(Box::new(out.expr)),
+                    ..out
+                }
+            }
             Expr::Write(Write::Lit(_) | Write::End) => Out::new(e.clone()),
             Expr::CallForeign(_, args) => {
                 let mut live = after.clone();

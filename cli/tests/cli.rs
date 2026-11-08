@@ -228,6 +228,21 @@ fn a_users_own_trap_is_blamed_where_it_is_written() {
 }
 
 #[test]
+fn a_number_that_gets_too_big_is_blamed_on_the_operation() {
+    let (_, stderr) = failure_of("x = 9223372036854775807\nprint(x + 1)");
+    assert!(
+        stderr.contains("trap: 2:7: this number got too big"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("x + 1"), "{stderr}");
+    let (_, stderr) = failure_of("f = program(n) do n * n done\nx = 1\nf(4611686018427387904)");
+    assert!(
+        stderr.contains("trap: 1:19: this number got too big"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn lines_printed_before_a_trap_survive() {
     let (stdout, stderr) = failure_of("a = print(1)\nb = print(\"two\")\nfirst([]) + 1");
     assert_eq!(stdout, "1\ntwo\n");

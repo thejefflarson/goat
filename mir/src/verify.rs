@@ -395,6 +395,11 @@ impl<'a> Checker<'a> {
             }
             Expr::BinInt(_, a, b) => self.binary(a, b, MTy::Int, MTy::Int),
             Expr::BinFloat(_, a, b) => self.binary(a, b, MTy::Float, MTy::Float),
+            Expr::IntToFloat(value) => {
+                let value = self.expr(value, false);
+                self.expect(value, MTy::Int);
+                Ty::Val(MTy::Float)
+            }
             Expr::Cmp(_, a, b) => {
                 let a = self.expr(a, false);
                 let b = self.expr(b, false);
@@ -605,10 +610,10 @@ impl<'a> Checker<'a> {
             }
             Expr::Write(write) => {
                 match write {
-                    Write::Number(value) => {
-                        let value = self.expr(value, false);
-                        self.expect(value, MTy::Float);
-                    }
+                    Write::Number(value) => match self.expr(value, false) {
+                        Ty::Val(MTy::Int | MTy::Float) | Ty::Never | Ty::Bad => {}
+                        found => self.expect(found, MTy::Float),
+                    },
                     Write::Str(x) => {
                         self.borrow_str(*x);
                     }

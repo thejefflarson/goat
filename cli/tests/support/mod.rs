@@ -1,7 +1,7 @@
 //! Shared by the differential tests and the fuzz target: run a program through
 //! the interpreter and wasm, and generate terminating, well-typed programs.
 
-use goat_mir::interp::{self, Piece, Value};
+use goat_mir::interp::{self, InterpError, Piece, Value};
 use goat_mir::{Host, NoHost};
 
 mod host;
@@ -87,6 +87,25 @@ pub fn run(src: &str) -> String {
     run_with(src, |printed| printed)
 }
 
+/// Like `run`, except that a program the interpreter traps on (an `Int` that
+/// overflows) must trap in wasm with the same message.
+pub fn agree_or_trap(src: &str) {
+    let checked = goat_checker::check(src).expect("program type-checks");
+    let program = goat_mir::mono(&checked).expect("program monomorphizes");
+    match interp::run(&program) {
+        Err(InterpError::Trap(message)) => {
+            let wasm = goat::compile(src).expect("program compiles");
+            let Err(error) = goat_cli::run(&wasm) else {
+                panic!("wasm did not trap like the interpreter: {src}");
+            };
+            assert_eq!(error, format!("trap: {message}"), "{src}");
+        }
+        _ => {
+            run(src);
+        }
+    }
+}
+
 /// Like `run`, with `prelude` in scope in place of the built-in one.
 pub fn run_with_prelude(prelude: &str, src: &str) -> String {
     let (expected, live) = interpret_with_prelude(prelude, src);
@@ -141,6 +160,16 @@ impl Gen<'_> {
         format!("v{}", self.next_name)
     }
 
+    /// A whole number, or now and then a `Float`.
+    fn literal(&mut self) -> String {
+        let n = self.byte();
+        if n.is_multiple_of(4) {
+            format!("{}.5", n / 4)
+        } else {
+            n.to_string()
+        }
+    }
+
     fn number(&mut self, depth: u8) -> String {
         let choice = if depth >= 4 {
             self.byte() % 2
@@ -148,12 +177,12 @@ impl Gen<'_> {
             self.byte() % 8
         };
         match choice {
-            0 => self.byte().to_string(),
+            0 => self.literal(),
             1 if !self.numbers.is_empty() => {
                 let i = self.byte() as usize % self.numbers.len();
                 self.numbers[i].clone()
             }
-            1 => self.byte().to_string(),
+            1 => self.literal(),
             2 => {
                 let op = ["+", "-", "*", "/"][self.byte() as usize % 4];
                 format!(
@@ -274,5 +303,11 @@ mod tests {
             .filter(|src| src.contains("do program("))
             .count();
         assert!(nested > 0, "no curried closure generated");
+    }
+
+    #[test]
+    fn generator_emits_floats_and_ints() {
+        assert!(generate(&[0, 1, 0, 8]).contains("2.5"));
+        assert!(generate(&[0, 1, 0, 9]).contains("9"));
     }
 }

@@ -10,13 +10,23 @@ fn check(src: &str) -> Result<Checked, Vec<GoatError>> {
     check_with_prelude("", src)
 }
 
+/// The program and its value, with an `Int` read as the `Float` of the same
+/// size, so the layout and closure tests below need not care which number type
+/// a whole-number literal took.
 fn run_src(src: &str) -> (Program, Value) {
     let checked = check(src).expect("checks");
     let p = mono(&checked).expect("lowers");
     assert_eq!(verify(&p), Ok(()), "{src}");
     let out = run(&p).expect("runs");
     assert_eq!(out.live_allocations, 0);
-    (p, out.value)
+    (p, as_num(out.value))
+}
+
+fn as_num(value: Value) -> Value {
+    match value {
+        Value::Int(n) => num(n as f64),
+        other => other,
+    }
 }
 
 fn value(src: &str) -> Value {
@@ -100,7 +110,7 @@ fn polymorphic_binding_gets_one_function_per_instantiation() {
         .iter()
         .map(|f| (f.params[0].1, f.ret))
         .collect();
-    assert!(sigs.contains(&(MTy::Float, MTy::Float)));
+    assert!(sigs.contains(&(MTy::Int, MTy::Int)));
     assert!(sigs.contains(&(MTy::Bool, MTy::Bool)));
 }
 
@@ -180,7 +190,7 @@ fn tail_recursive_accumulator_runs_in_constant_stack() {
     assert_eq!(verify(&p), Ok(()));
     assert!(p.funcs.iter().any(|f| has_tail_call(&f.body)));
     let out = run_with_depth(&p, 8).expect("constant stack");
-    assert_eq!(out.value, num(500500.0));
+    assert_eq!(as_num(out.value), num(500500.0));
     assert_eq!(out.live_allocations, 0);
 }
 
@@ -193,7 +203,7 @@ fn tail_call_releases_closure_parameters() {
     let p = mono(&checked).expect("lowers");
     assert_eq!(verify(&p), Ok(()));
     let out = run_with_depth(&p, 8).expect("constant stack");
-    assert_eq!(out.value, num(0.0));
+    assert_eq!(as_num(out.value), num(0.0));
     assert_eq!(out.live_allocations, 0);
 }
 
@@ -236,7 +246,7 @@ fn capturing_literal_emits_make_closure_and_capture() {
     assert_eq!(v, num(3.0));
 
     let adder = capturing(&p).next().expect("a capturing closure body");
-    assert_eq!(adder.env.as_ref().unwrap().captures, vec![MTy::Float]);
+    assert_eq!(adder.env.as_ref().unwrap().captures, vec![MTy::Int]);
     assert!(contains(&adder.body, &|e| matches!(e, Expr::Capture(0))));
     let makes = |e: &Expr| matches!(e, Expr::MakeClosure(_, c) if c.len() == 1);
     assert!(p.funcs.iter().any(|f| contains(&f.body, &makes)));
@@ -473,7 +483,7 @@ fn record_literal_and_field() {
 #[test]
 fn record_layout_sorts_labels() {
     let (p, _) = run_src("p = {b: true, a: 1}  p.a");
-    assert_eq!(p.layouts, vec![Layout::Record(vec![MTy::Float, MTy::Bool])]);
+    assert_eq!(p.layouts, vec![Layout::Record(vec![MTy::Int, MTy::Bool])]);
 }
 
 #[test]
@@ -624,7 +634,7 @@ fn a_recursive_layout_refers_to_itself() {
         panic!("one variant layout: {:?}", p.layouts);
     };
     let link = &tags[1];
-    assert_eq!(link[0], MTy::Float);
+    assert_eq!(link[0], MTy::Int);
     assert_eq!(link[1], MTy::Ptr(HeapKind::Variant(LayoutId(0))));
     assert!(tags[0].is_empty());
 }
@@ -669,7 +679,7 @@ fn a_tag_matched_at_two_widths_has_one_layout() {
     let [tags] = variant_layouts(&p)[..] else {
         panic!("one variant layout: {:?}", p.layouts);
     };
-    assert_eq!(tags, &vec![vec![MTy::Float], vec![MTy::Float]]);
+    assert_eq!(tags, &vec![vec![MTy::Int], vec![MTy::Int]]);
 }
 
 #[test]
@@ -746,7 +756,7 @@ fn a_known_override_leaves_one_slot_for_the_label() {
     let (p, v) = run_src("p = {x: 1, y: 2} q = {...p, x: true} q.y");
     assert_eq!(v, num(2.0));
     assert!(
-        record_layouts(&p).contains(&&vec![MTy::Bool, MTy::Float]),
+        record_layouts(&p).contains(&&vec![MTy::Bool, MTy::Int]),
         "{:?}",
         p.layouts
     );
@@ -760,10 +770,7 @@ fn a_shadowed_field_behind_a_row_variable_is_dropped_from_the_layout() {
     let (p, v) = run_src(src);
     assert_eq!(v, num(2.0));
     let layouts = record_layouts(&p);
-    assert!(
-        layouts.contains(&&vec![MTy::Bool, MTy::Float]),
-        "{layouts:?}"
-    );
+    assert!(layouts.contains(&&vec![MTy::Bool, MTy::Int]), "{layouts:?}");
     assert!(layouts.iter().all(|l| l.len() <= 2), "{layouts:?}");
 }
 
@@ -772,7 +779,7 @@ fn rest_copies_the_remaining_fields_into_a_smaller_record() {
     let src = "{x, ...rest} = {x: 1, y: 2, z: true} rest.y";
     let (p, v) = run_src(src);
     assert_eq!(v, num(2.0));
-    assert!(record_layouts(&p).contains(&&vec![MTy::Float, MTy::Bool]));
+    assert!(record_layouts(&p).contains(&&vec![MTy::Int, MTy::Bool]));
 }
 
 #[test]
@@ -856,7 +863,7 @@ fn a_discarded_unit_call_survives_in_order_through_reference_counting() {
             Effect::Foreign(ForeignId(0)),
         ]
     );
-    assert_eq!(out.value, num(0.0));
+    assert_eq!(as_num(out.value), num(0.0));
     let args: Vec<_> = host.calls.iter().map(|(_, a)| a.clone()).collect();
     assert_eq!(
         args,
@@ -872,14 +879,14 @@ fn a_discarded_unit_call_survives_in_order_through_reference_counting() {
 #[test]
 fn arguments_are_evaluated_left_to_right_before_the_call() {
     let (_, out, host) = hosted("say(shout(\"a\")); double(double(1) + double(2))");
-    assert_eq!(out.value, num(12.0));
+    assert_eq!(as_num(out.value), num(12.0));
     assert_eq!(names(&host), ["shout", "say", "double", "double", "double"]);
 }
 
 #[test]
 fn a_string_argument_is_borrowed_and_a_returned_string_is_owned() {
     let (_, out, host) = hosted("s = shout(\"hi\")\nsay(s); say(s); say(shout(s)); 1");
-    assert_eq!(out.value, num(1.0));
+    assert_eq!(as_num(out.value), num(1.0));
     let said: Vec<_> = host
         .calls
         .iter()
@@ -899,18 +906,18 @@ fn a_string_argument_is_borrowed_and_a_returned_string_is_owned() {
 #[test]
 fn a_foreign_function_is_a_value() {
     let (p, out, host) = hosted("g = double\ng(4)");
-    assert_eq!(out.value, num(8.0));
+    assert_eq!(as_num(out.value), num(8.0));
     assert_eq!(names(&host), ["double"]);
     assert_eq!(p.foreign.len(), 1);
 
     let apply = "apply = program(f, x) do f(x) done\napply(double, 5)";
-    assert_eq!(hosted(apply).1.value, num(10.0));
+    assert_eq!(as_num(hosted(apply).1.value), num(10.0));
 
     let unit = "h = forward\nh(1); h(2); 0";
     assert_eq!(names(&hosted(unit).2), ["forward", "forward"]);
 
     let strings = "apply = program(f, x) do f(x) done\nsay(apply(shout, \"a\")); 0";
-    assert_eq!(hosted(strings).1.value, num(0.0));
+    assert_eq!(as_num(hosted(strings).1.value), num(0.0));
 }
 
 #[test]

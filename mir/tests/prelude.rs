@@ -32,7 +32,7 @@ fn only_the_prelude_definitions_a_program_calls_are_emitted() {
     let uses_double = lower(PRELUDE, "double(4)");
     assert_eq!(uses_double.funcs.len(), entry_only + 1);
     let out = run(&uses_double).expect("runs");
-    assert_eq!(out.value, Value::Float(8.0));
+    assert_eq!(out.value, Value::Int(8));
     assert_eq!(out.live_allocations, 0);
 }
 
@@ -40,5 +40,5 @@ fn only_the_prelude_definitions_a_program_calls_are_emitted() {
 fn a_prelude_function_can_take_another_prelude_function() {
     let p = lower(PRELUDE, "twice(double, 3)");
     let out = run(&p).expect("runs");
-    assert_eq!(out.value, Value::Float(12.0));
+    assert_eq!(out.value, Value::Int(12));
 }

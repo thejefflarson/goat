@@ -113,6 +113,25 @@ mod tests {
     }
 
     #[test]
+    fn a_number_may_have_an_exponent() {
+        for (input, end) in [("1e3", 3), ("2.5E-2", 6), ("1e+9", 4), (".5e1", 4)] {
+            parses_to! {
+                parser: GoatParser,
+                input: input,
+                rule: Rule::number,
+                tokens: [number(0, end)]
+            }
+        }
+        // An `e` with no digits after it is not an exponent.
+        parses_to! {
+            parser: GoatParser,
+            input: "2e",
+            rule: Rule::number,
+            tokens: [number(0, 1)]
+        }
+    }
+
+    #[test]
     fn parses_strings() {
         parses_to! {
             parser: GoatParser,

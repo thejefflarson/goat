@@ -143,6 +143,12 @@ pub enum Const {
     Unit,
 }
 
+/// What an `Int` operation that overflows traps with, and what `Div` by zero
+/// traps with (ADR 0017): never a wrapped result.
+pub const INT_OVERFLOW: &str = "this number got too big";
+pub const DIVISION_BY_ZERO: &str = "division by zero";
+
+/// Integer arithmetic traps on overflow rather than wrapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntOp {
     Add,
@@ -210,6 +216,8 @@ pub enum Expr {
     Let(Local, Box<Expr>, Box<Expr>),
     BinInt(IntOp, Box<Expr>, Box<Expr>),
     BinFloat(FloatOp, Box<Expr>, Box<Expr>),
+    /// An `Int` widened to the `Float` nearest it.
+    IntToFloat(Box<Expr>),
     Cmp(CmpOp, Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Block>, Box<Block>),
     Switch(Local, Vec<(u32, Block)>, Box<Block>),
@@ -299,7 +307,7 @@ impl Expr {
                 args.iter().for_each(f);
             }
             Expr::Unpack(_, _, _, body) => f(body),
-            Expr::Write(Write::Number(value)) => f(value),
+            Expr::IntToFloat(value) | Expr::Write(Write::Number(value)) => f(value),
         }
     }
 

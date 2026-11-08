@@ -10,6 +10,7 @@ use goat_checker::hir::Boundary;
 #[derive(Debug, Clone, PartialEq)]
 pub enum HostValue {
     Number(f64),
+    Int(i64),
     Bool(bool),
     Unit,
     Str(String),
