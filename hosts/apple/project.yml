@@ -1,0 +1,113 @@
+name: Goat
+options:
+  bundleIdPrefix: com.thejefflarson
+  deploymentTarget:
+    macOS: "13.0"
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+# Both apps share App/ and the GoatKit sources, built here as a framework per
+# platform (the GoatKit package is the same code for `swift test`).
+# Resources/web is staged by scripts/stage-web.sh: web/embed.html, its modules
+# and goat_web.wasm.
+targets:
+  GoatKit-macOS:
+    type: framework
+    platform: macOS
+    sources: [GoatKit/Sources/GoatKit]
+    settings:
+      base: &framework
+        PRODUCT_NAME: GoatKit
+        PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat.kit
+        GENERATE_INFOPLIST_FILE: YES
+  GoatKit-iOS:
+    type: framework
+    platform: iOS
+    sources: [GoatKit/Sources/GoatKit]
+    settings:
+      base: *framework
+  Goat-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - path: Resources/web
+        type: folder
+        buildPhase: resources
+        optional: true
+    dependencies:
+      - target: GoatKit-macOS
+    preBuildScripts:
+      - name: Check staged web assets
+        script: '"$SRCROOT/scripts/check-staged.sh"'
+        basedOnDependencyAnalysis: false
+    entitlements:
+      path: Goat-macOS.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-write: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat
+        PRODUCT_NAME: Goat
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Info-macOS.plist
+      properties: &info
+        CFBundleDisplayName: Goat
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Goat source
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes: [com.thejefflarson.goat.source]
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.thejefflarson.goat.source
+            UTTypeDescription: Goat source
+            UTTypeConformsTo: [public.plain-text]
+            UTTypeTagSpecification:
+              public.filename-extension: [goat]
+              public.mime-type: [text/x-goat]
+  Goat-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - path: Resources/web
+        type: folder
+        buildPhase: resources
+        optional: true
+    dependencies:
+      - target: GoatKit-iOS
+    preBuildScripts:
+      - name: Check staged web assets
+        script: '"$SRCROOT/scripts/check-staged.sh"'
+        basedOnDependencyAnalysis: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat
+        PRODUCT_NAME: Goat
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Info-iOS.plist
+      properties:
+        <<: *info
+        UILaunchScreen: {}
+        UISupportsDocumentBrowser: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UIFileSharingEnabled: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
