@@ -129,6 +129,15 @@ struct Inferer {
     subst: HashMap<TypeVar, Ty>,
     row_subst: HashMap<TypeVar, Row>,
     env: HashMap<Symbol, Scheme>,
+    /// The `env` symbols whose types may still mention a variable that is
+    /// neither quantified nor bound, other than those in `lone_vars`.
+    /// [`Inferer::env_free_vars`] drops a symbol once its type is closed,
+    /// which it stays.
+    open_env: HashSet<Symbol>,
+    /// The `env` symbols whose type is exactly one unbound variable, by that
+    /// variable. Such a symbol adds only its variable to the environment's, so
+    /// generalizing looks the variable up instead of scanning the symbol.
+    lone_vars: HashMap<TypeVar, HashSet<Symbol>>,
     params: HashMap<Symbol, String>,
     node_types: HashMap<ExprId, Ty>,
     schemes: HashMap<Symbol, Scheme>,
@@ -341,8 +350,12 @@ impl Inferer {
     }
 
     fn unify_ty(&mut self, a: &Ty, b: &Ty, span: Span) {
-        let a = self.resolve(a);
-        let b = self.resolve(b);
+        let (mut a, mut b) = (self.resolve(a), self.resolve(b));
+        // Between two variables the newer is bound to the older, so a variable
+        // unified once per statement stays one link from its root.
+        if matches!((&a, &b), (Ty::Var(x), Ty::Var(y)) if x < y) {
+            std::mem::swap(&mut a, &mut b);
+        }
         match (&a, &b) {
             (Ty::Var(x), Ty::Var(y)) if x == y => {}
             (Ty::Var(x), t) | (t, Ty::Var(x)) => {
@@ -357,7 +370,7 @@ impl Inferer {
                     ));
                     return;
                 };
-                self.subst.insert(*x, bound.clone());
+                self.bind_var(*x, bound.clone());
                 if let Some(kinds) = self.kinds.remove(x)
                     && let Err(violation) = self.constrain(&bound, kinds)
                 {
@@ -779,29 +792,74 @@ impl Inferer {
     /// A value that is not a function keeps its literals' types shared (still
     /// open to `Float`) rather than generalized: `n = 3` is one number, not a
     /// fresh one at every use.
-    fn generalize(&self, ty: &Ty, function: bool) -> Scheme {
+    fn generalize(&mut self, ty: &Ty, function: bool) -> Scheme {
         let resolved = self.finish(ty);
         let mut in_ty = BTreeSet::new();
         resolved.free_vars(&mut in_ty);
-        let in_env = self.env_free_vars();
-        let vars = in_ty
-            .difference(&in_env)
-            .copied()
-            .filter(|v| function || !self.is_literal(*v))
-            .collect();
-        Scheme { vars, ty: resolved }
+        in_ty.retain(|v| function || !self.is_literal(*v));
+        if !in_ty.is_empty() {
+            let in_env = self.env_free_vars();
+            in_ty.retain(|v| !in_env.contains(v) && !self.lone_vars.contains_key(v));
+        }
+        Scheme {
+            vars: in_ty.into_iter().collect(),
+            ty: resolved,
+        }
     }
 
-    fn env_free_vars(&self) -> BTreeSet<TypeVar> {
+    fn bind_env(&mut self, symbol: Symbol, scheme: Scheme) {
+        self.unbind_env(&symbol);
+        match &scheme.ty {
+            Ty::Var(v) if scheme.vars.is_empty() && !self.subst.contains_key(v) => {
+                self.lone_vars.entry(*v).or_default().insert(symbol);
+            }
+            _ => {
+                self.open_env.insert(symbol);
+            }
+        }
+        self.env.insert(symbol, scheme);
+    }
+
+    fn unbind_env(&mut self, symbol: &Symbol) -> Option<Scheme> {
+        let scheme = self.env.remove(symbol)?;
+        self.open_env.remove(symbol);
+        if let Ty::Var(v) = &scheme.ty
+            && let Some(symbols) = self.lone_vars.get_mut(v)
+        {
+            symbols.remove(symbol);
+            if symbols.is_empty() {
+                self.lone_vars.remove(v);
+            }
+        }
+        Some(scheme)
+    }
+
+    /// Bind `var`, which moves any symbol of exactly that type out of
+    /// `lone_vars`: its type is no longer just the variable.
+    fn bind_var(&mut self, var: TypeVar, ty: Ty) {
+        self.subst.insert(var, ty);
+        if let Some(symbols) = self.lone_vars.remove(&var) {
+            self.open_env.extend(symbols);
+        }
+    }
+
+    fn env_free_vars(&mut self) -> BTreeSet<TypeVar> {
         let mut out = BTreeSet::new();
-        for scheme in self.env.values() {
+        let mut open = std::mem::take(&mut self.open_env);
+        open.retain(|symbol| {
+            let Some(scheme) = self.env.get(symbol) else {
+                return false;
+            };
             let mut free = BTreeSet::new();
             self.resolve(&scheme.ty).free_vars(&mut free);
             for bound in &scheme.vars {
                 free.remove(bound);
             }
+            let still_open = !free.is_empty();
             out.extend(free);
-        }
+            still_open
+        });
+        self.open_env = open;
         out
     }
 
@@ -823,7 +881,7 @@ impl Inferer {
         {
             if matches!(value.kind, ExprKind::Func { .. }) && !self.env.contains_key(symbol) {
                 let ty = self.fresh();
-                self.env.insert(*symbol, Scheme::mono(ty));
+                self.bind_env(*symbol, Scheme::mono(ty));
             }
             cursor = rest.as_deref();
         }
@@ -1098,6 +1156,7 @@ impl Inferer {
     /// no stack. Every `Let` in it has the type of the chain's last expression.
     fn infer_spine(&mut self, first: &Expr) -> Ty {
         let mut spine = Vec::new();
+        let mut seeded = false;
         let mut cursor = first;
         let ty = loop {
             let ExprKind::Let {
@@ -1109,11 +1168,12 @@ impl Inferer {
             else {
                 break self.infer(cursor);
             };
-            if matches!(value.kind, ExprKind::Func { .. }) {
+            if !seeded && matches!(value.kind, ExprKind::Func { .. }) {
                 self.seed_function_group(cursor);
+                seeded = true;
             }
             let value_ty = self.infer(value);
-            let rec = match self.env.remove(symbol) {
+            let rec = match self.unbind_env(symbol) {
                 Some(seed) => {
                     self.unify(&value_ty, &seed.ty, value.span);
                     seed.ty
@@ -1122,7 +1182,7 @@ impl Inferer {
             };
 
             let scheme = self.generalize(&rec, matches!(value.kind, ExprKind::Func { .. }));
-            self.env.insert(*symbol, scheme.clone());
+            self.bind_env(*symbol, scheme.clone());
             self.schemes.insert(*symbol, scheme.clone());
             spine.push((cursor.id, symbol));
             match rest {
@@ -1131,7 +1191,7 @@ impl Inferer {
             }
         };
         for (id, symbol) in spine.into_iter().rev() {
-            self.env.remove(symbol);
+            self.unbind_env(symbol);
             self.node_types.insert(id, ty.clone());
         }
         ty
@@ -1188,12 +1248,12 @@ impl Inferer {
             ExprKind::Func { params, body } => {
                 let arg_tys: Vec<Ty> = params.iter().map(|_| self.fresh()).collect();
                 for (param, ty) in params.iter().zip(&arg_tys) {
-                    self.env.insert(param.symbol, Scheme::mono(ty.clone()));
+                    self.bind_env(param.symbol, Scheme::mono(ty.clone()));
                     self.params.insert(param.symbol, param.name.clone());
                 }
                 let ret = self.infer(body);
                 for param in params {
-                    self.env.remove(&param.symbol);
+                    self.unbind_env(&param.symbol);
                     self.params.remove(&param.symbol);
                 }
                 Ty::func(arg_tys, ret)
@@ -1464,7 +1524,7 @@ impl Inferer {
             .map(|(var, _)| *var)
             .collect();
         for var in undecided {
-            self.subst.insert(var, Ty::Int);
+            self.bind_var(var, Ty::Int);
         }
     }
 
@@ -1568,7 +1628,7 @@ impl Inferer {
             }
             let body_ty = self.infer(&arm.body);
             for binder in pattern.payload.binders() {
-                self.env.remove(&binder.symbol);
+                self.unbind_env(&binder.symbol);
             }
             self.join_branch(&mut result, body_ty, arm.body.span);
         }
@@ -1584,7 +1644,7 @@ impl Inferer {
     }
 
     fn bind_binder(&mut self, symbol: Symbol, ty: &Ty) {
-        self.env.insert(symbol, Scheme::mono(ty.clone()));
+        self.bind_env(symbol, Scheme::mono(ty.clone()));
         self.binders.insert(symbol, ty.clone());
     }
 

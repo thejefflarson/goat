@@ -218,11 +218,72 @@ struct Progress {
     rest_from: Symbol,
 }
 
+/// The names in scope, innermost binding first. A name's bindings are stacked
+/// under it, so resolving one costs the same however many scopes are open.
+#[derive(Default)]
+struct Scopes {
+    visible: HashMap<String, Vec<(Symbol, usize)>>,
+    /// Each frame's start in `trail`.
+    frames: Vec<usize>,
+    /// Every name bound, in order, so a frame is unbound by popping its tail.
+    trail: Vec<String>,
+}
+
+impl Scopes {
+    fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    fn push(&mut self) {
+        self.frames.push(self.trail.len());
+    }
+
+    fn pop(&mut self) {
+        let start = self.frames.pop().expect("a scope is open to pop");
+        while self.trail.len() > start {
+            let name = self.trail.pop().expect("the trail reaches the frame start");
+            if let Some(bindings) = self.visible.get_mut(&name) {
+                bindings.pop();
+                if bindings.is_empty() {
+                    self.visible.remove(&name);
+                }
+            }
+        }
+    }
+
+    fn truncate(&mut self, len: usize) {
+        while self.frames.len() > len {
+            self.pop();
+        }
+    }
+
+    fn bind(&mut self, name: &str, symbol: Symbol) {
+        let frame = self.frames.len() - 1;
+        self.visible
+            .entry(name.to_string())
+            .or_default()
+            .push((symbol, frame));
+        self.trail.push(name.to_string());
+    }
+
+    fn resolve(&self, name: &str) -> Option<Symbol> {
+        self.visible.get(name)?.last().map(|(symbol, _)| *symbol)
+    }
+
+    /// Whether the innermost scope itself binds `name`.
+    fn innermost_binds(&self, name: &str) -> bool {
+        self.visible
+            .get(name)
+            .and_then(|bindings| bindings.last())
+            .is_some_and(|(_, frame)| *frame + 1 == self.frames.len())
+    }
+}
+
 #[derive(Default)]
 struct Lower {
     next_symbol: Symbol,
     next_expr_id: ExprId,
-    scopes: Vec<HashMap<String, Symbol>>,
+    scopes: Scopes,
     /// Function bindings seen by a group pre-pass, keyed by the start of the
     /// binding's name: `Some` is its reserved symbol, `None` a repeat of an
     /// earlier name in the group, which shadows it.
@@ -255,7 +316,10 @@ impl Lower {
         {
             self.declare_tags(decl);
         }
-        self.scopes.push(self.prelude_scope.clone());
+        self.scopes.push();
+        for (name, symbol) in &self.prelude_scope {
+            self.scopes.bind(name, *symbol);
+        }
         let root = self.lower_goat(goat);
         self.scopes.pop();
         Ok(root)
@@ -442,23 +506,17 @@ impl Lower {
     }
 
     fn bind_as(&mut self, name: &str, symbol: Symbol) {
-        self.scopes
-            .last_mut()
-            .expect("a scope is always open while binding")
-            .insert(name.to_string(), symbol);
+        self.scopes.bind(name, symbol);
     }
 
     /// Resolve a use to the nearest enclosing binding, innermost scope first.
     fn resolve(&self, name: &str) -> Option<Symbol> {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name).copied())
+        self.scopes.resolve(name)
     }
 
     fn lower_goat(&mut self, pair: Pair<Rule>) -> Expr {
         let span = self.span_of(&pair);
-        self.scopes.push(HashMap::new());
+        self.scopes.push();
         let body = pair
             .into_inner()
             .find(|p| p.as_rule() == Rule::expr)
@@ -885,7 +943,7 @@ impl Lower {
                 format!("`{name}` replaces the built-in `{name}`"),
             ));
         }
-        self.scopes.push(HashMap::new());
+        self.scopes.push();
         let (symbol, value) = if is_program_literal(&value_pair) {
             let start = self.span_of(&name_pair).start;
             if !self.grouped.contains_key(&start) {
@@ -1020,7 +1078,7 @@ impl Lower {
 
     fn lower_function(&mut self, pair: Pair<Rule>) -> Expr {
         let span = self.span_of(&pair);
-        self.scopes.push(HashMap::new());
+        self.scopes.push();
         let mut params = Vec::new();
         let mut unpacked = Vec::new();
         let mut list_params = Vec::new();
@@ -1052,7 +1110,7 @@ impl Lower {
                             });
                             continue;
                         }
-                        if self.scopes.last().is_some_and(|s| s.contains_key(&name)) {
+                        if self.scopes.innermost_binds(&name) {
                             self.errors.push(GoatError::new(
                                 pspan,
                                 format!("duplicate parameter `{name}`"),
@@ -1111,7 +1169,7 @@ impl Lower {
             };
             let span = self.span_of(&name_pair);
             let name = name_pair.as_str().to_string();
-            if self.scopes.last().is_some_and(|s| s.contains_key(&name)) {
+            if self.scopes.innermost_binds(&name) {
                 self.errors
                     .push(GoatError::new(span, format!("duplicate {what} `{name}`")));
             }
@@ -1192,7 +1250,7 @@ impl Lower {
         let unpacked = if pattern_pair.as_rule() == Rule::list_pattern {
             Some(self.lower_list_binding(source, pattern_pair, Then::Rest(rest_pair)))
         } else {
-            self.scopes.push(HashMap::new());
+            self.scopes.push();
             let pattern = self.bind_record_pattern(pattern_pair, "name");
             let rest = rest_pair.map(|p| self.lower_expr(p));
             self.scopes.pop();
@@ -1492,7 +1550,7 @@ impl Lower {
         let pattern_pair = inner.next().expect("an arm begins with a pattern");
         let body_pair = inner.next().expect("an arm has a body");
 
-        self.scopes.push(HashMap::new());
+        self.scopes.push();
         let pattern = self.lower_pattern(pattern_pair);
         let body = self.lower_expr(body_pair);
         self.scopes.pop();
@@ -1788,7 +1846,7 @@ impl Lower {
             )
             .collect();
 
-        self.scopes.push(HashMap::new());
+        self.scopes.push();
         let bindings: Vec<_> = names
             .into_iter()
             .map(|(name, span, from)| (self.bind(&name), name, span, from))
@@ -1967,7 +2025,7 @@ impl Lower {
         let start_symbol = self.fresh_symbol();
         let stop_symbol = self.fresh_symbol();
         let go = self.fresh_symbol();
-        self.scopes.push(HashMap::new());
+        self.scopes.push();
         let (i, i_name) = match counter {
             Some(name_pair) => (self.bind(name_pair.as_str()), name_pair.as_str()),
             None => (self.fresh_symbol(), LOOP_COUNTER_NAME),
@@ -2022,7 +2080,7 @@ impl Lower {
         let go = self.fresh_symbol();
         let remaining = self.fresh_symbol();
         let tail = self.fresh_symbol();
-        self.scopes.push(HashMap::new());
+        self.scopes.push();
         let item = self.bind(name_pair.as_str());
         let body = self.lower_loop_body(span, body);
         self.scopes.pop();
