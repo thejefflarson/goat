@@ -572,8 +572,7 @@ impl<'p> Interp<'p> {
     }
 
     /// Moves the fields of the variant in `x` into `binds`. Out of line so
-    /// `eval`, which a long chain of operators recurses through, keeps its
-    /// frame small.
+    /// `eval`, which nested source recurses through, keeps its frame small.
     #[inline(never)]
     fn unpack(
         &mut self,
@@ -608,13 +607,95 @@ impl<'p> Interp<'p> {
         Ok(())
     }
 
+    /// Evaluates `e` with an explicit stack of the nodes waiting on an operand,
+    /// so a long chain of operators takes no more stack than a short one. A
+    /// left-associative chain nests down its leading operands (and, once
+    /// lowered to let-bindings, down each `Let`'s right-hand side), and a right
+    /// operand is pushed the same way, so no operator recurses.
+    ///
+    /// Each node's operands still run left to right, and an `If` still runs
+    /// only the branch its condition picks, so short-circuiting is unchanged.
     fn eval(&mut self, e: &Expr, frame: &mut Frame, depth: usize) -> Result<Flow, InterpError> {
-        let mut e = e;
-        while let Expr::Let(x, rhs, body) = e {
-            let v = self.value(rhs, frame, depth)?;
-            frame.locals.insert(*x, v);
-            e = body;
+        let mut waiting = Vec::new();
+        let mut node = e;
+        loop {
+            while let Some(first) = node.leading_operand() {
+                waiting.push(OperandWait::First(node));
+                node = first;
+            }
+            let mut flow = self.eval_node(node, frame, depth)?;
+            loop {
+                let Some(wait) = waiting.pop() else {
+                    return Ok(flow);
+                };
+                let Flow::Val(value) = flow else {
+                    return Err(InterpError::Malformed("tail call outside tail position"));
+                };
+                match self.resume(wait, value, frame)? {
+                    OperandStep::Next(next) => {
+                        node = next;
+                        break;
+                    }
+                    OperandStep::Right(wait, next) => {
+                        waiting.push(wait);
+                        node = next;
+                        break;
+                    }
+                    OperandStep::Done(done) => flow = Flow::Val(done),
+                }
+            }
         }
+    }
+
+    /// What a waiting node does once the operand it waited on has a value.
+    #[inline(never)]
+    fn resume<'e>(
+        &mut self,
+        wait: OperandWait<'e, Value>,
+        value: Value,
+        frame: &mut Frame,
+    ) -> Result<OperandStep<'e, Value>, InterpError> {
+        Ok(match wait {
+            OperandWait::First(Expr::Let(x, _, body)) => {
+                frame.locals.insert(*x, value);
+                OperandStep::Next(body)
+            }
+            OperandWait::First(Expr::If(_, then, otherwise)) => {
+                let Value::Bool(c) = value else {
+                    return Err(InterpError::Malformed("if condition"));
+                };
+                OperandStep::Next(if c { then } else { otherwise })
+            }
+            OperandWait::First(
+                node @ (Expr::BinInt(_, _, right)
+                | Expr::BinFloat(_, _, right)
+                | Expr::Cmp(_, _, right)),
+            ) => OperandStep::Right(OperandWait::Second(node, value), right),
+            OperandWait::First(node) => {
+                OperandStep::Done(convert(self.program.profile, node, value)?)
+            }
+            OperandWait::Second(Expr::BinInt(op, _, _), a) => {
+                OperandStep::Done(self.bin_int(*op, a, value)?)
+            }
+            OperandWait::Second(Expr::BinFloat(op, _, _), a) => {
+                OperandStep::Done(self.bin_float(*op, a, value)?)
+            }
+            OperandWait::Second(Expr::Cmp(op, _, _), a) => {
+                OperandStep::Done(compare(*op, a, value)?)
+            }
+            OperandWait::Second(..) => return Err(InterpError::Malformed("not a binary operator")),
+        })
+    }
+
+    /// A node with no operand to wait on first: everything `eval` does not
+    /// walk itself.
+    #[inline(never)]
+    fn eval_node(
+        &mut self,
+        e: &Expr,
+        frame: &mut Frame,
+        depth: usize,
+    ) -> Result<Flow, InterpError> {
         let value = match e {
             Expr::Const(c) => match *c {
                 Const::Int(n) => Value::Int(n),
@@ -623,28 +704,13 @@ impl<'p> Interp<'p> {
                 Const::Unit => Value::Unit,
             },
             Expr::Local(x) => frame.get(*x)?,
-            Expr::Let(..) => unreachable!("the loop above consumed every `Let`"),
-            Expr::BinInt(op, a, b) => {
-                let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
-                self.bin_int(*op, a, b)?
-            }
-            Expr::BinFloat(op, a, b) => {
-                let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
-                self.bin_float(*op, a, b)?
-            }
-            Expr::IntToFloat(value) | Expr::FloatFn(_, value) => {
-                convert(self.program.profile, e, self.value(value, frame, depth)?)?
-            }
-            Expr::Cmp(op, a, b) => {
-                let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
-                compare(*op, a, b)?
-            }
-            Expr::If(cond, then, otherwise) => {
-                let Value::Bool(c) = self.value(cond, frame, depth)? else {
-                    return Err(InterpError::Malformed("if condition"));
-                };
-                return self.eval(if c { then } else { otherwise }, frame, depth);
-            }
+            Expr::Let(..)
+            | Expr::BinInt(..)
+            | Expr::BinFloat(..)
+            | Expr::IntToFloat(_)
+            | Expr::FloatFn(..)
+            | Expr::Cmp(..)
+            | Expr::If(..) => unreachable!("`eval` walks every node with a leading operand"),
             Expr::Switch(x, arms, default) => {
                 let Value::Ptr(addr) = frame.get(*x)? else {
                     return Err(InterpError::Malformed("switch scrutinee"));
@@ -816,9 +882,7 @@ fn floor_mod(a: i64, b: i64) -> Option<i64> {
     })
 }
 
-/// An `IntToFloat` or `FloatFn` node applied to its operand's value. One arm
-/// serves both so `eval`, which a long chain of operators recurses through,
-/// keeps its frame.
+/// An `IntToFloat` or `FloatFn` node applied to its operand's value.
 #[inline(never)]
 fn convert(profile: Profile, node: &Expr, value: Value) -> Result<Value, InterpError> {
     match (node, value) {

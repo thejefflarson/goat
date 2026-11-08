@@ -1315,6 +1315,13 @@ struct FuncCx<'a, 'p> {
 
 type Temps = Option<Vec<Option<u32>>>;
 
+fn expect_operand(found: Ty, want: MTy) -> Result<(), EmitError> {
+    match found {
+        Some(ty) if ty != want => Err(EmitError::Malformed("operand type")),
+        _ => Ok(()),
+    }
+}
+
 impl<'p> FuncCx<'_, 'p> {
     fn scratch(&mut self, vt: ValType) -> u32 {
         let index = self.next_local;
@@ -1535,17 +1542,44 @@ impl<'p> FuncCx<'_, 'p> {
         self.shared.closure_type(sig).map(Some)
     }
 
+    /// Lowers `expr` with an explicit stack of the nodes waiting on an operand,
+    /// so a long chain of operators takes no more stack than a short one. A
+    /// left-associative chain nests down its leading operands (and, once
+    /// lowered to let-bindings, down each `Let`'s right-hand side), and a right
+    /// operand is pushed the same way, so no operator recurses. The code comes
+    /// out as it would from lowering each node's operands before its operator.
     fn lower(&mut self, expr: &Expr, out: &mut Code) -> Result<Ty, EmitError> {
-        let mut expr = expr;
-        while let Expr::Let(l, rhs, body) = expr {
-            let Some(ty) = self.lower(rhs, out)? else {
-                return Ok(None);
-            };
-            if let Some(index) = self.bind(*l, ty) {
-                out.push(Instruction::LocalSet(index));
+        let mut waiting = Vec::new();
+        let mut node = expr;
+        loop {
+            while let Some(first) = node.leading_operand() {
+                waiting.push(OperandWait::First(node));
+                node = first;
             }
-            expr = body;
+            let mut ty = self.lower_leaf(node, out)?;
+            loop {
+                let Some(wait) = waiting.pop() else {
+                    return Ok(ty);
+                };
+                match self.resume(wait, ty, out)? {
+                    OperandStep::Next(next) => {
+                        node = next;
+                        break;
+                    }
+                    OperandStep::Right(wait, next) => {
+                        waiting.push(wait);
+                        node = next;
+                        break;
+                    }
+                    OperandStep::Done(done) => ty = done,
+                }
+            }
         }
+    }
+
+    /// A node with no operand to wait on first: everything `lower` does not
+    /// walk itself.
+    fn lower_leaf(&mut self, expr: &Expr, out: &mut Code) -> Result<Ty, EmitError> {
         match expr {
             Expr::Const(c) => Ok(Some(match *c {
                 Const::Int(n) => {
@@ -1578,95 +1612,13 @@ impl<'p> FuncCx<'_, 'p> {
                 }
                 Ok(Some(ty))
             }
-            Expr::Let(..) => unreachable!("the loop above consumed every `Let`"),
-            Expr::BinInt(op, a, b) => {
-                self.operands(a, b, MTy::Int, out)?;
-                self.checked_int(*op, out)?;
-                Ok(Some(MTy::Int))
-            }
-            Expr::IntToFloat(value) => match self.lower(value, out)? {
-                Some(MTy::Int) => {
-                    out.push(match self.program.profile {
-                        Profile::Desktop => Instruction::F64ConvertI64S,
-                        Profile::Embedded => Instruction::F32ConvertI32S,
-                    });
-                    Ok(Some(MTy::Float))
-                }
-                Some(_) => Err(EmitError::Malformed("conversion of a non-int")),
-                None => Ok(None),
-            },
-            Expr::FloatFn(function, value) => self.float_fn(*function, value, out),
-            Expr::BinFloat(op, a, b) => {
-                self.operands(a, b, MTy::Float, out)?;
-                out.push(match (self.program.profile, op) {
-                    (Profile::Desktop, FloatOp::Add) => Instruction::F64Add,
-                    (Profile::Desktop, FloatOp::Sub) => Instruction::F64Sub,
-                    (Profile::Desktop, FloatOp::Mul) => Instruction::F64Mul,
-                    (Profile::Desktop, FloatOp::Div) => Instruction::F64Div,
-                    (Profile::Embedded, FloatOp::Add) => Instruction::F32Add,
-                    (Profile::Embedded, FloatOp::Sub) => Instruction::F32Sub,
-                    (Profile::Embedded, FloatOp::Mul) => Instruction::F32Mul,
-                    (Profile::Embedded, FloatOp::Div) => Instruction::F32Div,
-                });
-                Ok(Some(MTy::Float))
-            }
-            Expr::Cmp(op, a, b) => {
-                let ta = self.lower(a, out)?;
-                let tb = self.lower(b, out)?;
-                if ta.zip(tb).is_some_and(|(x, y)| x != y) {
-                    return Err(EmitError::Malformed("comparison operand types differ"));
-                }
-                let instr = match (self.program.profile, ta.or(tb), op) {
-                    (Profile::Desktop, Some(MTy::Int), CmpOp::Eq) => Instruction::I64Eq,
-                    (Profile::Desktop, Some(MTy::Int), CmpOp::Ne) => Instruction::I64Ne,
-                    (Profile::Desktop, Some(MTy::Int), CmpOp::Lt) => Instruction::I64LtS,
-                    (Profile::Desktop, Some(MTy::Int), CmpOp::Le) => Instruction::I64LeS,
-                    (Profile::Desktop, Some(MTy::Int), CmpOp::Gt) => Instruction::I64GtS,
-                    (Profile::Desktop, Some(MTy::Int), CmpOp::Ge) => Instruction::I64GeS,
-                    (Profile::Embedded, Some(MTy::Int), CmpOp::Eq) => Instruction::I32Eq,
-                    (Profile::Embedded, Some(MTy::Int), CmpOp::Ne) => Instruction::I32Ne,
-                    (Profile::Embedded, Some(MTy::Int), CmpOp::Lt) => Instruction::I32LtS,
-                    (Profile::Embedded, Some(MTy::Int), CmpOp::Le) => Instruction::I32LeS,
-                    (Profile::Embedded, Some(MTy::Int), CmpOp::Gt) => Instruction::I32GtS,
-                    (Profile::Embedded, Some(MTy::Int), CmpOp::Ge) => Instruction::I32GeS,
-                    (Profile::Desktop, Some(MTy::Float), CmpOp::Eq) => Instruction::F64Eq,
-                    (Profile::Desktop, Some(MTy::Float), CmpOp::Ne) => Instruction::F64Ne,
-                    (Profile::Desktop, Some(MTy::Float), CmpOp::Lt) => Instruction::F64Lt,
-                    (Profile::Desktop, Some(MTy::Float), CmpOp::Le) => Instruction::F64Le,
-                    (Profile::Desktop, Some(MTy::Float), CmpOp::Gt) => Instruction::F64Gt,
-                    (Profile::Desktop, Some(MTy::Float), CmpOp::Ge) => Instruction::F64Ge,
-                    (Profile::Embedded, Some(MTy::Float), CmpOp::Eq) => Instruction::F32Eq,
-                    (Profile::Embedded, Some(MTy::Float), CmpOp::Ne) => Instruction::F32Ne,
-                    (Profile::Embedded, Some(MTy::Float), CmpOp::Lt) => Instruction::F32Lt,
-                    (Profile::Embedded, Some(MTy::Float), CmpOp::Le) => Instruction::F32Le,
-                    (Profile::Embedded, Some(MTy::Float), CmpOp::Gt) => Instruction::F32Gt,
-                    (Profile::Embedded, Some(MTy::Float), CmpOp::Ge) => Instruction::F32Ge,
-                    _ => return Err(EmitError::Malformed("comparison operands")),
-                };
-                out.push(instr);
-                Ok(Some(MTy::Bool))
-            }
-            Expr::If(cond, then, els) => {
-                self.lower(cond, out)?;
-                let mut then_code = Code::new();
-                let mut else_code = Code::new();
-                let then_ty = self.lower(then, &mut then_code)?;
-                let else_ty = self.lower(els, &mut else_code)?;
-                let ty = then_ty.or(else_ty);
-                let block = match ty.and_then(|ty| val_type(self.program.profile, ty)) {
-                    Some(vt) => BlockType::Result(vt),
-                    None => BlockType::Empty,
-                };
-                out.push(Instruction::If(block));
-                out.extend(then_code);
-                out.push(Instruction::Else);
-                out.extend(else_code);
-                out.push(Instruction::End);
-                if ty.is_none() {
-                    out.push(Instruction::Unreachable);
-                }
-                Ok(ty)
-            }
+            Expr::Let(..)
+            | Expr::BinInt(..)
+            | Expr::IntToFloat(_)
+            | Expr::FloatFn(..)
+            | Expr::BinFloat(..)
+            | Expr::Cmp(..)
+            | Expr::If(..) => unreachable!("`lower` walks every node with a leading operand"),
             Expr::CallDirect(f, args) => {
                 let callee = self
                     .program
@@ -1862,16 +1814,150 @@ impl<'p> FuncCx<'_, 'p> {
         }
     }
 
-    /// Out of line so `lower`, which a long chain of operators recurses
-    /// through, keeps a small frame.
+    /// What a waiting node does once the operand it waited on has a type.
     #[inline(never)]
-    fn float_fn(
+    fn resume<'e>(
         &mut self,
-        function: FloatFn,
-        value: &Expr,
+        wait: OperandWait<'e, Ty>,
+        ty: Ty,
         out: &mut Code,
-    ) -> Result<Ty, EmitError> {
-        if self.lower(value, out)?.is_none() {
+    ) -> Result<OperandStep<'e, Ty>, EmitError> {
+        Ok(match wait {
+            OperandWait::First(Expr::Let(l, _, body)) => {
+                let Some(ty) = ty else {
+                    return Ok(OperandStep::Done(None));
+                };
+                if let Some(index) = self.bind(*l, ty) {
+                    out.push(Instruction::LocalSet(index));
+                }
+                OperandStep::Next(body)
+            }
+            OperandWait::First(Expr::If(_, then, els)) => {
+                OperandStep::Done(self.branch(then, els, out)?)
+            }
+            OperandWait::First(node @ Expr::BinInt(_, _, right)) => {
+                expect_operand(ty, MTy::Int)?;
+                OperandStep::Right(OperandWait::Second(node, ty), right)
+            }
+            OperandWait::First(node @ Expr::BinFloat(_, _, right)) => {
+                expect_operand(ty, MTy::Float)?;
+                OperandStep::Right(OperandWait::Second(node, ty), right)
+            }
+            OperandWait::First(node @ Expr::Cmp(_, _, right)) => {
+                OperandStep::Right(OperandWait::Second(node, ty), right)
+            }
+            OperandWait::First(Expr::IntToFloat(_)) => {
+                OperandStep::Done(self.int_to_float(ty, out)?)
+            }
+            OperandWait::First(Expr::FloatFn(function, _)) => {
+                OperandStep::Done(self.float_fn(*function, ty, out)?)
+            }
+            OperandWait::First(_) => return Err(EmitError::Malformed("not an operator")),
+            OperandWait::Second(Expr::BinInt(op, ..), _) => {
+                expect_operand(ty, MTy::Int)?;
+                self.checked_int(*op, out)?;
+                OperandStep::Done(Some(MTy::Int))
+            }
+            OperandWait::Second(Expr::BinFloat(op, ..), _) => {
+                expect_operand(ty, MTy::Float)?;
+                self.float_op(*op, out);
+                OperandStep::Done(Some(MTy::Float))
+            }
+            OperandWait::Second(Expr::Cmp(op, ..), first) => {
+                OperandStep::Done(self.compare(*op, first, ty, out)?)
+            }
+            OperandWait::Second(..) => return Err(EmitError::Malformed("not a binary operator")),
+        })
+    }
+
+    fn int_to_float(&mut self, operand: Ty, out: &mut Code) -> Result<Ty, EmitError> {
+        match operand {
+            Some(MTy::Int) => {
+                out.push(match self.program.profile {
+                    Profile::Desktop => Instruction::F64ConvertI64S,
+                    Profile::Embedded => Instruction::F32ConvertI32S,
+                });
+                Ok(Some(MTy::Float))
+            }
+            Some(_) => Err(EmitError::Malformed("conversion of a non-int")),
+            None => Ok(None),
+        }
+    }
+
+    fn float_op(&self, op: FloatOp, out: &mut Code) {
+        out.push(match (self.program.profile, op) {
+            (Profile::Desktop, FloatOp::Add) => Instruction::F64Add,
+            (Profile::Desktop, FloatOp::Sub) => Instruction::F64Sub,
+            (Profile::Desktop, FloatOp::Mul) => Instruction::F64Mul,
+            (Profile::Desktop, FloatOp::Div) => Instruction::F64Div,
+            (Profile::Embedded, FloatOp::Add) => Instruction::F32Add,
+            (Profile::Embedded, FloatOp::Sub) => Instruction::F32Sub,
+            (Profile::Embedded, FloatOp::Mul) => Instruction::F32Mul,
+            (Profile::Embedded, FloatOp::Div) => Instruction::F32Div,
+        });
+    }
+
+    fn compare(&self, op: CmpOp, ta: Ty, tb: Ty, out: &mut Code) -> Result<Ty, EmitError> {
+        if ta.zip(tb).is_some_and(|(x, y)| x != y) {
+            return Err(EmitError::Malformed("comparison operand types differ"));
+        }
+        let instr = match (self.program.profile, ta.or(tb), op) {
+            (Profile::Desktop, Some(MTy::Int), CmpOp::Eq) => Instruction::I64Eq,
+            (Profile::Desktop, Some(MTy::Int), CmpOp::Ne) => Instruction::I64Ne,
+            (Profile::Desktop, Some(MTy::Int), CmpOp::Lt) => Instruction::I64LtS,
+            (Profile::Desktop, Some(MTy::Int), CmpOp::Le) => Instruction::I64LeS,
+            (Profile::Desktop, Some(MTy::Int), CmpOp::Gt) => Instruction::I64GtS,
+            (Profile::Desktop, Some(MTy::Int), CmpOp::Ge) => Instruction::I64GeS,
+            (Profile::Embedded, Some(MTy::Int), CmpOp::Eq) => Instruction::I32Eq,
+            (Profile::Embedded, Some(MTy::Int), CmpOp::Ne) => Instruction::I32Ne,
+            (Profile::Embedded, Some(MTy::Int), CmpOp::Lt) => Instruction::I32LtS,
+            (Profile::Embedded, Some(MTy::Int), CmpOp::Le) => Instruction::I32LeS,
+            (Profile::Embedded, Some(MTy::Int), CmpOp::Gt) => Instruction::I32GtS,
+            (Profile::Embedded, Some(MTy::Int), CmpOp::Ge) => Instruction::I32GeS,
+            (Profile::Desktop, Some(MTy::Float), CmpOp::Eq) => Instruction::F64Eq,
+            (Profile::Desktop, Some(MTy::Float), CmpOp::Ne) => Instruction::F64Ne,
+            (Profile::Desktop, Some(MTy::Float), CmpOp::Lt) => Instruction::F64Lt,
+            (Profile::Desktop, Some(MTy::Float), CmpOp::Le) => Instruction::F64Le,
+            (Profile::Desktop, Some(MTy::Float), CmpOp::Gt) => Instruction::F64Gt,
+            (Profile::Desktop, Some(MTy::Float), CmpOp::Ge) => Instruction::F64Ge,
+            (Profile::Embedded, Some(MTy::Float), CmpOp::Eq) => Instruction::F32Eq,
+            (Profile::Embedded, Some(MTy::Float), CmpOp::Ne) => Instruction::F32Ne,
+            (Profile::Embedded, Some(MTy::Float), CmpOp::Lt) => Instruction::F32Lt,
+            (Profile::Embedded, Some(MTy::Float), CmpOp::Le) => Instruction::F32Le,
+            (Profile::Embedded, Some(MTy::Float), CmpOp::Gt) => Instruction::F32Gt,
+            (Profile::Embedded, Some(MTy::Float), CmpOp::Ge) => Instruction::F32Ge,
+            _ => return Err(EmitError::Malformed("comparison operands")),
+        };
+        out.push(instr);
+        Ok(Some(MTy::Bool))
+    }
+
+    /// An `If` once its condition is lowered: both branches, then the block
+    /// that picks between them.
+    fn branch(&mut self, then: &Expr, els: &Expr, out: &mut Code) -> Result<Ty, EmitError> {
+        let mut then_code = Code::new();
+        let mut else_code = Code::new();
+        let then_ty = self.lower(then, &mut then_code)?;
+        let else_ty = self.lower(els, &mut else_code)?;
+        let ty = then_ty.or(else_ty);
+        let block = match ty.and_then(|ty| val_type(self.program.profile, ty)) {
+            Some(vt) => BlockType::Result(vt),
+            None => BlockType::Empty,
+        };
+        out.push(Instruction::If(block));
+        out.extend(then_code);
+        out.push(Instruction::Else);
+        out.extend(else_code);
+        out.push(Instruction::End);
+        if ty.is_none() {
+            out.push(Instruction::Unreachable);
+        }
+        Ok(ty)
+    }
+
+    #[inline(never)]
+    fn float_fn(&mut self, function: FloatFn, value: Ty, out: &mut Code) -> Result<Ty, EmitError> {
+        if value.is_none() {
             return Ok(None);
         }
         match function {
@@ -2285,15 +2371,6 @@ impl<'p> FuncCx<'_, 'p> {
         }
         for arg in args {
             self.lower(arg, out)?;
-        }
-        Ok(())
-    }
-
-    fn operands(&mut self, a: &Expr, b: &Expr, want: MTy, out: &mut Code) -> Result<(), EmitError> {
-        for operand in [a, b] {
-            if self.lower(operand, out)?.is_some_and(|t| t != want) {
-                return Err(EmitError::Malformed("operand type"));
-            }
         }
         Ok(())
     }
