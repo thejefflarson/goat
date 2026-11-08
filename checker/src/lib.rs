@@ -86,6 +86,16 @@ mod tests {
         }
     }
 
+    /// Like [`type_of`], naming `Int` and `Float` where `Display` says `Number`.
+    fn exact_type_of(source: &str) -> String {
+        check(source)
+            .expect("checks")
+            .typed
+            .root_ty
+            .exact()
+            .to_string()
+    }
+
     fn warnings_of(source: &str) -> Vec<GoatError> {
         check(source).expect("checks").typed.warnings
     }
@@ -318,7 +328,7 @@ mod tests {
 
     #[test]
     fn capitalization_does_not_decide_what_a_tag_is() {
-        assert_eq!(type_of("tag up up(1)").unwrap(), "[up: Number | t0]");
+        assert_eq!(type_of("tag up up(1)").unwrap(), "[up: Number | t1]");
         assert_eq!(type_of("tag A tag B 1").unwrap(), "Number");
         assert_eq!(
             type_of("tag Foo f = program(Foo) do Foo(1) done f(program(x) do x done)").unwrap(),
@@ -347,7 +357,7 @@ mod tests {
     fn constructing_a_tag_gives_an_open_row() {
         assert_eq!(
             type_of("tag Circle Circle(5)").unwrap(),
-            "[Circle: Number | t0]"
+            "[Circle: Number | t1]"
         );
         assert_eq!(type_of("Empty").unwrap(), "[Empty | t0]");
         let link = type_of("Link(1, Empty)").unwrap();
@@ -768,6 +778,107 @@ mod tests {
         assert_eq!(type_of("\"hi\"").unwrap(), "String");
         assert_eq!(type_of("true").unwrap(), "Bool");
         assert_eq!(type_of("").unwrap(), "Unit");
+    }
+
+    #[test]
+    fn a_literal_with_a_point_or_an_exponent_is_a_float() {
+        assert_eq!(exact_type_of("3"), "Int");
+        assert_eq!(exact_type_of("007"), "Int");
+        for float in ["3.0", "3.5", "1e3", "2.5E-2", ".5", "5."] {
+            assert_eq!(exact_type_of(float), "Float", "{float}");
+        }
+    }
+
+    #[test]
+    fn a_whole_number_too_big_for_an_int_is_an_error() {
+        let (message, shown) = spanned_error("9223372036854775808");
+        assert!(message.contains("too big"), "{message}");
+        assert_eq!(shown, "9223372036854775808");
+        assert_eq!(exact_type_of("9223372036854775807"), "Int");
+    }
+
+    #[test]
+    fn an_int_beside_a_float_widens_to_a_float() {
+        assert_eq!(exact_type_of("3 + 1.5"), "Float");
+        assert_eq!(exact_type_of("1.5 + 3"), "Float");
+        assert_eq!(exact_type_of("n = 3  n + 1.5"), "Float");
+        assert_eq!(exact_type_of("2 * 3"), "Int");
+        assert_eq!(type_of("3 < 4.5").unwrap(), "Bool");
+        assert_eq!(type_of("1 == 1.0").unwrap(), "Bool");
+    }
+
+    #[test]
+    fn division_is_always_a_float() {
+        assert_eq!(exact_type_of("7 / 2"), "Float");
+        assert_eq!(exact_type_of("4 / 2"), "Float");
+        assert_eq!(
+            exact_type_of("half = program(n) do n / 2 done  half(3)"),
+            "Float"
+        );
+        assert_eq!(
+            exact_type_of("{x: 9, y: 8} / {x: 3, y: 2}"),
+            "{x: Float, y: Float}"
+        );
+    }
+
+    #[test]
+    fn a_numeric_function_works_at_both_int_and_float() {
+        let add = "add = program(a, b) do a + b done ";
+        assert_eq!(exact_type_of(&format!("{add} add(1, 2)")), "Int");
+        assert_eq!(exact_type_of(&format!("{add} add(1.5, 2)")), "Float");
+        let both = format!("{add} a = add(1, 2)  b = add(1.5, 2)  {{a: a, b: b}}");
+        assert_eq!(exact_type_of(&both), "{a: Int, b: Float}");
+        let scale = "scale = program(x) do x * 2 done  a = scale(3)  b = scale(1.5) {a: a, b: b}";
+        assert_eq!(exact_type_of(scale), "{a: Int, b: Float}");
+    }
+
+    #[test]
+    fn a_shared_number_is_a_float_once_anything_needs_a_float() {
+        assert_eq!(exact_type_of("n = 3  a = n + 1.5  n"), "Float");
+        assert_eq!(exact_type_of("n = 3  a = n / 2  n"), "Int");
+    }
+
+    #[test]
+    fn a_foreign_int_meets_a_float_only_by_widening() {
+        let count = "count = foreign \"m\" \"count\" () -> Int\n";
+        let take = "take = foreign \"m\" \"take\" (Int) -> Unit\n";
+        assert_eq!(exact_type_of(&format!("{count}count()")), "Int");
+        assert_eq!(exact_type_of(&format!("{count}count() + 1")), "Int");
+        assert_eq!(exact_type_of(&format!("{count}count() + 1.5")), "Float");
+        assert_eq!(exact_type_of(&format!("{count}count() / 2")), "Float");
+        assert_eq!(type_of(&format!("{take}take(3)")).unwrap(), "Unit");
+        assert_eq!(
+            type_of(&format!("{take}take(1.5)")).unwrap_err(),
+            "type mismatch: expected `Int`, found `Float`"
+        );
+        assert_eq!(
+            type_of(&format!("{take}take(2.0)")).unwrap_err(),
+            "type mismatch: expected `Int`, found `Float`"
+        );
+    }
+
+    #[test]
+    fn diagnostics_say_number() {
+        assert_eq!(
+            type_of("1 + true").unwrap_err(),
+            "type mismatch: expected `Number`, found `Bool`"
+        );
+        assert_eq!(
+            type_of("1.5 + true").unwrap_err(),
+            "type mismatch: expected `Number`, found `Bool`"
+        );
+        assert_eq!(
+            type_of("true < 1").unwrap_err(),
+            "type mismatch: expected `Number`, found `Bool`"
+        );
+        assert_eq!(
+            type_of("if 1 then 2 else 3 done").unwrap_err(),
+            "type mismatch: expected `Bool`, found `Number`"
+        );
+        assert_eq!(
+            type_of("\"a\" / 2").unwrap_err(),
+            "`/` needs numbers or records of numbers, but this is `String`"
+        );
     }
 
     #[test]

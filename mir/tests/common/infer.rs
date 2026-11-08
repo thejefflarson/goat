@@ -47,7 +47,7 @@ impl Infer<'_> {
             return None;
         };
         match self.program.layouts.get(l.0 as usize)? {
-            Layout::Variant(tags) => tags.get(tag as usize).cloned(),
+            Layout::Variant(tags) => tags.get(&tag).cloned(),
             Layout::Record(_) => None,
         }
     }
@@ -80,6 +80,10 @@ impl Infer<'_> {
             Expr::BinFloat(_, a, b) => {
                 self.ty(a);
                 self.ty(b);
+                Some(MTy::Float)
+            }
+            Expr::IntToFloat(value) => {
+                self.ty(value);
                 Some(MTy::Float)
             }
             Expr::Cmp(_, a, b) => {

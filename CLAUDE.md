@@ -27,9 +27,12 @@ wrong state unrepresentable *before* you reach for a comment.
 - **Gates (CI-enforced).** `cargo fmt --all -- --check`,
   `cargo clippy --all-targets -- -D warnings`, and `cargo test` must all be
   green before a PR merges.
-- **Errors come only from the checker.** A user never sees an error from
-  mono/MIR/codegen — those failing is an internal compiler bug. Every
-  user-facing diagnostic carries a source span.
+- **Errors come only from the checker**, with one deliberate exception: mono may
+  raise a spanned *resource-limit* diagnostic ("program too complex") when a
+  well-typed program would explode monomorphization — a resource bound, not a
+  type or logic error. Otherwise a user never sees an error from mono/MIR/codegen
+  — those failing is an internal compiler bug. Every user-facing diagnostic
+  carries a source span.
 - **Tests.** Every feature gets a checker test and, where it runs, an
   end-to-end run test. Examples go in `examples/`.
 - **Portability.** The compiler crates (`parser`, `checker`, and the future

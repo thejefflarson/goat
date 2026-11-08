@@ -57,6 +57,29 @@ hardware-mapped**, made *safe* rather than *unbounded*.
   decimal numbers) just works; the split shows only where it must — a loop
   counter wants a whole number, and going Float→Int is an explicit `round`.
 
+## Implementation notes (foundation)
+
+- **A whole-number literal is an unknown `Int` or `Float`** that settles as
+  `Int` unless its context needs a `Float` — Haskell's defaulting, in the
+  checker as a `Literal` constraint on a type variable. This is what lets
+  `forward(100)`, `3 + 1.5` and `scale = program(x) do x * 2 done` called at
+  `1.5` work without a conversion at every call: the `3` simply *is* `3.0`
+  there. A *concrete* `Int` (a host function declared `-> Int`) beside a
+  `Float` widens at the operator instead, and mono converts it.
+- A binding that is not a function (`n = 3`) keeps its literals' types shared
+  rather than generalized, so `n` is one number, `Float` once anything needs a
+  `Float`; a function's literals stay free for each call to decide.
+- `/` types its operands separately and always yields `Float`; the `Int` side
+  of a quotient is converted. A record of numbers divides field by field, and
+  its fields must be `Float`.
+- `Int` and `Float` print as `Number` in a diagnostic; only a clash between the
+  two (`take(1.5)` where `take` wants an `Int`) names them.
+- **Overflow.** MIR's `BinInt` traps (`this number got too big`) where the
+  result does not fit, in both the interpreter and wasm; mono wraps each `Int`
+  operation in user code in a `Site`, so the trap is blamed on the operation.
+- **Printing.** The host's `print_number` reads an `f64`, so an `Int` beyond
+  2^53 prints as the `Float` nearest it. An `i64` print import is the fix.
+
 ## Deferred
 
 - `i64` Int on a future 64-bit *native* target (MIR has room).

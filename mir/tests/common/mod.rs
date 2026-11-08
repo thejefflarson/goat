@@ -2,6 +2,7 @@
 
 use goat_checker::hir::Boundary;
 use goat_mir::*;
+use std::collections::BTreeMap;
 
 mod infer;
 
@@ -40,7 +41,7 @@ pub fn program(funcs: Vec<Func>) -> Program {
         entry: FuncId(0),
         layouts: vec![
             Layout::Record(vec![MTy::Int]),
-            Layout::Variant(vec![vec![], vec![MTy::Int]]),
+            Layout::Variant(BTreeMap::from([(0, vec![]), (1, vec![MTy::Int])])),
         ],
         sigs: vec![],
         data: vec![],

@@ -327,7 +327,7 @@ impl Lower {
                 Some(boundary) => return boundary.into(),
                 None => (
                     format!("`{}`", ty.as_str()),
-                    "; a payload is Number, Bool, Unit, String, a record of those, or the group itself",
+                    "; a payload is Number, Int, Bool, Unit, String, a record of those, or the group itself",
                 ),
             },
             Rule::record_type => {
@@ -669,13 +669,37 @@ impl Lower {
         }
     }
 
+    /// A literal with a `.` or an exponent is a `Float`; bare digits are an
+    /// `Int`, which must fit in an `i64`.
+    fn lower_number(&mut self, span: Span, text: &str) -> Expr {
+        let is_float = text.contains(['.', 'e', 'E']);
+        let kind = if is_float {
+            text.trim_end_matches('.').parse().map(ExprKind::Float).ok()
+        } else {
+            text.parse().map(ExprKind::Int).ok()
+        };
+        let kind = kind.unwrap_or_else(|| {
+            let message = if is_float {
+                format!("invalid number `{text}`")
+            } else {
+                format!(
+                    "`{text}` is too big a whole number (the most is {})",
+                    i64::MAX
+                )
+            };
+            self.errors.push(GoatError::new(span, message));
+            ExprKind::Int(0)
+        });
+        self.node(span, kind)
+    }
+
     /// `-x` is `0 - x`: the HIR has no negation node.
     fn lower_negation(&mut self, pair: Pair<Rule>) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner().peekable();
         let minus = inner.next().expect("negation begins with `-`");
         let operand = self.lower_operand(&mut inner);
-        let zero = self.node(self.span_of(&minus), ExprKind::Number(0.0));
+        let zero = self.node(self.span_of(&minus), ExprKind::Int(0));
         self.node(
             span,
             ExprKind::Bin {
@@ -749,17 +773,7 @@ impl Lower {
         let span = self.span_of(&pair);
         match pair.as_rule() {
             Rule::expr => self.lower_expr(pair),
-            Rule::number => {
-                let text = pair.as_str().trim_end_matches('.');
-                match text.parse::<f64>() {
-                    Ok(n) => self.node(span, ExprKind::Number(n)),
-                    Err(_) => {
-                        self.errors
-                            .push(GoatError::new(span, format!("invalid number `{text}`")));
-                        self.node(span, ExprKind::Number(0.0))
-                    }
-                }
-            }
+            Rule::number => self.lower_number(span, pair.as_str()),
             Rule::string => {
                 let raw = pair.as_str();
                 let decoded = self.decode_string(span, &raw[1..raw.len() - 1]);
@@ -941,7 +955,7 @@ impl Lower {
                 Some(boundary) => return boundary,
                 None => (
                     format!("`{}`", ty.as_str()),
-                    "; the types that cross are Number, Bool, Unit and String",
+                    "; the types that cross are Number, Int, Bool, Unit and String",
                 ),
             },
             Rule::record_type => ("a record".to_string(), ""),
@@ -1903,7 +1917,7 @@ impl Lower {
     ///   go(start)                         go(start)
     /// ```
     ///
-    /// Counters are `Number`s until integers exist.
+    /// A counter's literals take whichever of `Int` and `Float` the loop's use of it needs.
     #[inline(never)]
     fn lower_loop(&mut self, pair: Pair<Rule>) -> Expr {
         let span = self.span_of(&pair);
@@ -1927,7 +1941,7 @@ impl Lower {
             (start, stop, BinOp::Lte)
         } else {
             let count = self.lower_expr(inner.next().expect("`repeat` is followed by a count"));
-            (self.node(span, ExprKind::Number(0.0)), count, BinOp::Lt)
+            (self.node(span, ExprKind::Int(0)), count, BinOp::Lt)
         };
         self.counted_loop(span, counter.as_ref(), (start, stop, compare), inner.next())
     }
@@ -1961,7 +1975,7 @@ impl Lower {
             },
         );
         let i_now = self.var_node(span, i, i_name);
-        let one = self.node(span, ExprKind::Number(1.0));
+        let one = self.node(span, ExprKind::Int(1));
         let next_i = self.node(
             span,
             ExprKind::Bin {
@@ -2167,8 +2181,12 @@ fn is_literal_arm(child: &Pair<Rule>) -> bool {
             .is_some_and(|p| p.as_rule() == Rule::literal_pattern)
 }
 
+/// `Int` and `Float` literals are both numbers, so they may share a `match`.
 fn scalar_kind(literal: &Expr) -> std::mem::Discriminant<ExprKind> {
-    std::mem::discriminant(&literal.kind)
+    match literal.kind {
+        ExprKind::Float(_) => std::mem::discriminant(&ExprKind::Int(0)),
+        _ => std::mem::discriminant(&literal.kind),
+    }
 }
 
 fn is_program_literal(expr: &Pair<Rule>) -> bool {
@@ -2275,7 +2293,7 @@ mod tests {
         let root = lowered("tag Circle Circle(5)").root;
         let (name, payload) = tag_parts(&root);
         assert_eq!(name, "Circle");
-        assert!(matches!(payload.unwrap().kind, ExprKind::Number(n) if n == 5.0));
+        assert!(matches!(payload.unwrap().kind, ExprKind::Int(5)));
     }
 
     #[test]
@@ -2293,7 +2311,7 @@ mod tests {
         assert_eq!(labels, ["0", "1", "2"]);
         assert!(matches!(fields[0].1.kind, ExprKind::Var { .. }));
         assert!(matches!(fields[1].1.kind, ExprKind::Tag { .. }));
-        assert!(matches!(fields[2].1.kind, ExprKind::Number(_)));
+        assert!(matches!(fields[2].1.kind, ExprKind::Int(3)));
     }
 
     #[test]
@@ -2375,9 +2393,9 @@ mod tests {
     fn a_list_literal_nests_links_ending_in_empty() {
         let root = lowered("[1, 2, 3,]").root;
         let mut node = &root;
-        for expected in [1.0, 2.0, 3.0] {
+        for expected in [1, 2, 3] {
             let (item, tail) = link_parts(node);
-            assert!(matches!(item.kind, ExprKind::Number(n) if n == expected));
+            assert!(matches!(item.kind, ExprKind::Int(n) if n == expected));
             node = tail;
         }
         assert_eq!(tag_parts(node).0, "Empty");

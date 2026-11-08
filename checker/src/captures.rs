@@ -162,7 +162,8 @@ pub fn for_each_child<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
             else_branch.iter().for_each(|e| f(e));
         }
         ExprKind::Unit
-        | ExprKind::Number(_)
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
         | ExprKind::Str(_)
         | ExprKind::Trap(_)
         | ExprKind::Foreign { .. }

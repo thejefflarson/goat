@@ -3,7 +3,7 @@
 //! Every call is recorded in `log`, which is how a test sees the order and
 //! count of calls whose result is `Unit`.
 
-use goat_checker::hir::Boundary::{self, Bool, Number, Str, Unit};
+use goat_checker::hir::Boundary::{self, Bool, Int, Number, Str, Unit};
 use goat_mir::{Host, HostValue};
 
 #[derive(Default)]
@@ -19,6 +19,8 @@ impl Host for TestHost {
         Some(match name {
             "note" => (vec![Number], Unit),
             "double" => (vec![Number], Number),
+            "count" => (vec![], Int),
+            "bump" => (vec![Int], Int),
             "negate" => (vec![Bool], Bool),
             "say" => (vec![Str], Unit),
             "shout" => (vec![Str], Str),
@@ -33,6 +35,7 @@ impl Host for TestHost {
         use HostValue as V;
         let shown = |v: &V| match v {
             V::Number(x) => goat::format_number(*x),
+            V::Int(n) => n.to_string(),
             V::Bool(b) => b.to_string(),
             V::Unit => "unit".into(),
             V::Str(s) => format!("{s:?}"),
@@ -42,6 +45,8 @@ impl Host for TestHost {
         Ok(match (name, args) {
             ("note", _) | ("say", _) => V::Unit,
             ("double", [V::Number(x)]) => V::Number(x * 2.0),
+            ("count", []) => V::Int(7),
+            ("bump", [V::Int(n)]) => V::Int(n + 1),
             ("negate", [V::Bool(b)]) => V::Bool(!b),
             ("shout", [V::Str(s)]) => V::Str(format!("{}!", s.to_uppercase())),
             ("greeting", []) => V::Str("hello from the host".into()),

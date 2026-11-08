@@ -49,6 +49,9 @@ pub struct Typed {
     /// The type of every `match` pattern binder, in terms of the type variables
     /// of the function it sits in (like a parameter's type).
     pub binder_types: HashMap<Symbol, Ty>,
+    /// The type variables, left free in a generalized function, that can only
+    /// be `Int` or `Float`. Where nothing instantiates one, it reads as `Int`.
+    pub number_vars: HashSet<TypeVar>,
     /// Diagnostics that do not stop compilation.
     pub warnings: Vec<GoatError>,
 }
@@ -69,6 +72,7 @@ pub fn infer_program(
         inf.check_contract(contract);
     }
     if inf.errors.is_empty() {
+        inf.default_numbers();
         let warnings = inf.unused_tag_warnings();
         let root_ty = inf.finish(&ty);
         let node_types = inf
@@ -92,11 +96,18 @@ pub fn infer_program(
             .iter()
             .map(|(symbol, t)| (*symbol, inf.finish(t)))
             .collect();
+        let number_vars = inf
+            .kinds
+            .iter()
+            .filter(|(_, kinds)| kinds.is_scalar())
+            .map(|(var, _)| *var)
+            .collect();
         Ok(Typed {
             root_ty,
             node_types,
             schemes,
             binder_types,
+            number_vars,
             warnings,
         })
     } else {
@@ -207,13 +218,41 @@ impl Inferer {
     /// [`Self::resolve`] with a recursive type unfolded until its head is a
     /// constructor, for code that inspects the head (`match`, calls).
     fn resolve_head(&self, ty: &Ty) -> Ty {
-        self.resolve(ty).unfold_head()
+        self.undecided_as_int(self.resolve(ty).unfold_head())
+    }
+
+    /// A literal whose type is still open reads as `Int` to code that only
+    /// inspects what kind of type it has.
+    fn undecided_as_int(&self, ty: Ty) -> Ty {
+        match ty {
+            Ty::Var(v) if self.is_literal(v) => Ty::Int,
+            ty => ty,
+        }
+    }
+
+    fn is_literal(&self, var: TypeVar) -> bool {
+        self.kinds.get(&var).is_some_and(|kinds| kinds.is_literal())
+    }
+
+    fn is_scalar(&self, var: TypeVar) -> bool {
+        self.kinds.get(&var).is_some_and(|kinds| kinds.is_scalar())
     }
 
     /// The resolved type in its final shape: every variable substituted, and
     /// recursive types folded back to their `μ` form.
     fn finish(&self, ty: &Ty) -> Ty {
         self.resolve(ty).fold_rec()
+    }
+
+    /// [`Self::finish`] for a message: a literal whose type is still open
+    /// reads as `Number`, not as a bare variable.
+    fn shown(&self, ty: &Ty) -> Ty {
+        let resolved = self.finish(ty);
+        let mut vars = BTreeSet::new();
+        resolved.free_vars(&mut vars);
+        vars.into_iter()
+            .filter(|var| self.is_literal(*var))
+            .fold(resolved, |ty, var| ty.substitute(var, &Ty::Int))
     }
 
     fn resolve_row(&self, row: &Row) -> Row {
@@ -252,7 +291,10 @@ impl Inferer {
     /// earlier use already fixed, a failure is the monomorphic-parameter
     /// limitation, so say that instead of a bare mismatch.
     fn unify_use(&mut self, used: &Expr, actual: &Ty, expected: &Ty, span: Span) {
-        let reused = !matches!(self.resolve(actual), Ty::Var(_));
+        let reused = match self.resolve(actual) {
+            Ty::Var(v) => self.is_scalar(v),
+            _ => true,
+        };
         let before = self.errors.len();
         self.unify(actual, expected, span);
         if reused
@@ -296,7 +338,23 @@ impl Inferer {
                 if let Some(kinds) = self.kinds.remove(x)
                     && let Err(violation) = self.constrain(&bound, kinds)
                 {
-                    self.report_violation(span, &violation, &bound, None);
+                    if kinds.is_scalar() && violation.offender != Offender::Both {
+                        // The number stays a number, so one mismatch is not
+                        // followed by others about the type it would have taken.
+                        self.subst.remove(x);
+                        self.kinds.insert(*x, kinds);
+                        let shown = self.shown(&bound).to_string();
+                        let (found, expected) = match &a {
+                            Ty::Var(v) if v == x => ("Number".to_string(), shown),
+                            _ => (shown, "Number".to_string()),
+                        };
+                        self.errors.push(GoatError::new(
+                            span,
+                            format!("type mismatch: expected `{expected}`, found `{found}`"),
+                        ));
+                    } else {
+                        self.report_violation(span, &violation, &bound, None);
+                    }
                 }
             }
             (Ty::Rec(..), _) | (_, Ty::Rec(..)) => {
@@ -313,7 +371,8 @@ impl Inferer {
                     self.unify_ty(&a.unfold_head(), &b.unfold_head(), span);
                 }
             }
-            (Ty::Number, Ty::Number)
+            (Ty::Int, Ty::Int)
+            | (Ty::Float, Ty::Float)
             | (Ty::Str, Ty::Str)
             | (Ty::Bool, Ty::Bool)
             | (Ty::Unit, Ty::Unit) => {}
@@ -341,9 +400,18 @@ impl Inferer {
                 self.unify_row(a_row, b_row, span, RowKind::Variant);
             }
             _ => {
+                // Both numeric types read `Number`, so a clash between `Int`
+                // and `Float` has to name them.
+                let (a, b) = (self.shown(&a), self.shown(&b));
+                let (found, expected) = match (a.to_string(), b.to_string()) {
+                    (found, expected) if found == expected => {
+                        (a.exact().to_string(), b.exact().to_string())
+                    }
+                    shown => shown,
+                };
                 self.errors.push(GoatError::new(
                     span,
-                    format!("type mismatch: expected `{b}`, found `{a}`"),
+                    format!("type mismatch: expected `{expected}`, found `{found}`"),
                 ));
             }
         }
@@ -560,7 +628,9 @@ impl Inferer {
         match (&ty, kind) {
             (Ty::Var(v), _) if bound.contains(v) => Ok(()),
             (Ty::Var(v), _) => self.add_kind(KindMap::Ty, *v, kind),
-            (Ty::Number, Kind::Eq | Kind::Numeric) => Ok(()),
+            (Ty::Int | Ty::Float, Kind::Eq | Kind::Numeric | Kind::Ordered | Kind::Literal) => {
+                Ok(())
+            }
             (Ty::Str, Kind::Eq | Kind::Appendable) => Ok(()),
             (Ty::Bool | Ty::Unit, Kind::Eq) => Ok(()),
             (Ty::Record(row), Kind::Eq | Kind::Numeric) => self.constrain_row(row, kind, bound),
@@ -641,7 +711,7 @@ impl Inferer {
         whole: &Ty,
         op: Option<&str>,
     ) {
-        let whole = self.finish(whole);
+        let whole = self.shown(whole);
         self.errors
             .push(GoatError::new(span, violation.message(&whole, op)));
     }
@@ -681,12 +751,19 @@ impl Inferer {
         subst_vars(&scheme.ty, &mapping)
     }
 
-    fn generalize(&self, ty: &Ty) -> Scheme {
+    /// A value that is not a function keeps its literals' types shared (still
+    /// open to `Float`) rather than generalized: `n = 3` is one number, not a
+    /// fresh one at every use.
+    fn generalize(&self, ty: &Ty, function: bool) -> Scheme {
         let resolved = self.finish(ty);
         let mut in_ty = BTreeSet::new();
         resolved.free_vars(&mut in_ty);
         let in_env = self.env_free_vars();
-        let vars = in_ty.difference(&in_env).copied().collect();
+        let vars = in_ty
+            .difference(&in_env)
+            .copied()
+            .filter(|v| function || !self.is_literal(*v))
+            .collect();
         Scheme { vars, ty: resolved }
     }
 
@@ -737,7 +814,7 @@ impl Inferer {
                 &contract.init,
                 format!(
                     "init must be a record, like {{x: 0, y: 0}}, not `{}`",
-                    self.finish(&model)
+                    self.shown(&model)
                 ),
             );
             return;
@@ -754,7 +831,7 @@ impl Inferer {
                 &contract.update,
                 format!(
                     "update must be a function of a model and an event, like program(model, event); this is `{}`",
-                    self.finish(&other)
+                    self.shown(&other)
                 ),
             ),
         }
@@ -770,7 +847,7 @@ impl Inferer {
                         &contract.draw,
                         format!(
                             "draw must return a list of shapes, like [Line({{x1: 0, y1: 0, x2: 5, y2: 5, color: \"black\"}})], not `{}`",
-                            self.finish(&ret)
+                            self.shown(&ret)
                         ),
                     );
                 }
@@ -779,7 +856,7 @@ impl Inferer {
                 &contract.draw,
                 format!(
                     "draw must be a function of the model, like program(model); this is `{}`",
-                    self.finish(&other)
+                    self.shown(&other)
                 ),
             ),
         }
@@ -794,7 +871,7 @@ impl Inferer {
                 binding,
                 format!(
                     "update's second argument must be an event, a tag like Tick(dt) or KeyDown(key), not `{}`",
-                    self.finish(event)
+                    self.shown(event)
                 ),
             );
             return;
@@ -880,7 +957,7 @@ impl Inferer {
     fn unify_vocab(&mut self, binding: &ContractBinding, actual: &Ty, expected: &Ty, what: &str) {
         let before = self.errors.len();
         self.unify(actual, expected, binding.span);
-        let expected = self.finish(expected);
+        let expected = self.shown(expected);
         for error in &mut self.errors[before..] {
             error.message = format!("{what} `{expected}`: {}", error.message);
         }
@@ -956,7 +1033,7 @@ impl Inferer {
                 None => value_ty,
             };
 
-            let scheme = self.generalize(&rec);
+            let scheme = self.generalize(&rec, matches!(value.kind, ExprKind::Func { .. }));
             self.env.insert(*symbol, scheme.clone());
             self.schemes.insert(*symbol, scheme.clone());
             spine.push((cursor.id, symbol));
@@ -989,8 +1066,8 @@ impl Inferer {
         for (operand, side) in operands {
             let ty = self.infer(operand);
             let before = self.errors.len();
+            let found = self.undecided_as_int(self.resolve(&ty));
             self.unify_use(operand, &ty, &Ty::Bool, operand.span);
-            let found = self.resolve(&ty);
             if let Some(err) = self.errors[before..].first_mut()
                 && err.message.starts_with("type mismatch")
             {
@@ -1008,7 +1085,8 @@ impl Inferer {
     fn infer_kind(&mut self, expr: &Expr) -> Ty {
         match &expr.kind {
             ExprKind::Unit => Ty::Unit,
-            ExprKind::Number(_) => Ty::Number,
+            ExprKind::Int(_) => self.literal(),
+            ExprKind::Float(_) => Ty::Float,
             ExprKind::Str(_) => Ty::Str,
             ExprKind::Bool(_) => Ty::Bool,
             ExprKind::Var { symbol, .. } => match self.env.get(symbol).cloned() {
@@ -1168,19 +1246,98 @@ impl Inferer {
         (lhs, lhs_ty): (&Expr, Ty),
         (rhs, rhs_ty): (&Expr, Ty),
     ) -> Ty {
-        if op.is_arithmetic() {
-            if self.require(&lhs_ty, Kind::Numeric, op, lhs.span) {
-                self.unify_use(rhs, &rhs_ty, &lhs_ty, rhs.span);
+        let operands = ((lhs, lhs_ty), (rhs, rhs_ty));
+        if op == BinOp::Div {
+            self.type_division(op, operands)
+        } else if op.is_arithmetic() {
+            let (lhs, lhs_ty) = &operands.0;
+            if self.require(lhs_ty, Kind::Numeric, op, lhs.span) {
+                return self.join_operands(operands);
             }
-            lhs_ty
+            lhs_ty.clone()
         } else if op.is_equality() {
-            self.unify_use(rhs, &rhs_ty, &lhs_ty, rhs.span);
-            self.require(&lhs_ty, Kind::Eq, op, expr.span);
+            let ty = self.join_operands(operands);
+            self.require(&ty, Kind::Eq, op, expr.span);
             Ty::Bool
         } else {
-            self.unify_use(lhs, &lhs_ty, &Ty::Number, lhs.span);
-            self.unify_use(rhs, &rhs_ty, &Ty::Number, rhs.span);
+            let (lhs, lhs_ty) = &operands.0;
+            if self.require(lhs_ty, Kind::Ordered, op, lhs.span) {
+                self.join_operands(operands);
+            }
             Ty::Bool
+        }
+    }
+
+    /// The type both operands share. An `Int` meeting a `Float` widens to
+    /// `Float` (mono converts the `Int` side); anything else must be one type.
+    fn join_operands(&mut self, ((_, lhs_ty), (rhs, rhs_ty)): ((&Expr, Ty), (&Expr, Ty))) -> Ty {
+        match (self.resolve(&lhs_ty), self.resolve(&rhs_ty)) {
+            (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => Ty::Float,
+            _ => {
+                self.unify_use(rhs, &rhs_ty, &lhs_ty, rhs.span);
+                lhs_ty
+            }
+        }
+    }
+
+    /// `/` always yields a `Float`, whatever its operands are. A record of
+    /// numbers divides field by field, so each field has to be a `Float`.
+    fn type_division(
+        &mut self,
+        op: BinOp,
+        ((lhs, lhs_ty), (rhs, rhs_ty)): ((&Expr, Ty), (&Expr, Ty)),
+    ) -> Ty {
+        let is_record = |ty: &Ty| matches!(self.resolve_head(ty), Ty::Record(_));
+        if is_record(&lhs_ty) || is_record(&rhs_ty) {
+            if self.require(&lhs_ty, Kind::Numeric, op, lhs.span) {
+                self.unify_use(rhs, &rhs_ty, &lhs_ty, rhs.span);
+                self.require_float_fields(&lhs_ty, lhs.span);
+            }
+            lhs_ty
+        } else {
+            self.require(&lhs_ty, Kind::Ordered, op, lhs.span);
+            self.require(&rhs_ty, Kind::Ordered, op, rhs.span);
+            Ty::Float
+        }
+    }
+
+    fn require_float_fields(&mut self, ty: &Ty, span: Span) {
+        match self.resolve_head(ty) {
+            Ty::Record(row) => {
+                let mut cursor = row;
+                while let Row::Extend { field, rest, .. } = cursor {
+                    self.require_float_fields(&field, span);
+                    cursor = *rest;
+                }
+            }
+            _ => self.unify(ty, &Ty::Float, span),
+        }
+    }
+
+    /// The type of a whole-number literal: an unknown `Int` or `Float`. If
+    /// nothing decides, [`Inferer::default_numbers`] makes it `Int`.
+    fn literal(&mut self) -> Ty {
+        let var = self.fresh_id();
+        self.kinds.insert(var, Kinds::of(Kind::Literal));
+        Ty::Var(var)
+    }
+
+    /// Settle every number whose type nothing decided as `Int`, except one in
+    /// a function's type, which stays free for each call to decide.
+    fn default_numbers(&mut self) {
+        let generalized: HashSet<TypeVar> = self
+            .schemes
+            .values()
+            .flat_map(|scheme| scheme.vars.iter().copied())
+            .collect();
+        let undecided: Vec<TypeVar> = self
+            .kinds
+            .iter()
+            .filter(|(var, kinds)| kinds.is_scalar() && !generalized.contains(var))
+            .map(|(var, _)| *var)
+            .collect();
+        for var in undecided {
+            self.subst.insert(var, Ty::Int);
         }
     }
 
@@ -1694,7 +1851,7 @@ mod tests {
         let mut inf = inferer();
         let finite = Ty::Variant(extend(
             "A",
-            Ty::Variant(extend("A", Ty::Number, Row::Empty)),
+            Ty::Variant(extend("A", Ty::Int, Row::Empty)),
             Row::Empty,
         ));
         inf.unify(&chain(100, "A", Row::Empty), &finite, SPAN);
@@ -1720,7 +1877,7 @@ mod tests {
     #[test]
     fn a_variable_bound_to_a_type_containing_it_outside_a_tag_is_an_error() {
         for ty in [
-            Ty::func(vec![Ty::Var(1)], Ty::Number),
+            Ty::func(vec![Ty::Var(1)], Ty::Int),
             Ty::Record(extend("a", Ty::Var(1), Row::Empty)),
             // one mention under a tag does not excuse another outside it
             Ty::Record(extend(
@@ -1795,7 +1952,7 @@ mod tests {
     #[test]
     fn resolving_substitutes_inside_a_recursive_body_only_for_free_variables() {
         let mut inf = inferer();
-        inf.subst.insert(1, Ty::Number);
+        inf.subst.insert(1, Ty::Int);
         let rec = Ty::Rec(
             5,
             Box::new(Ty::Variant(extend(
@@ -1814,7 +1971,7 @@ mod tests {
     fn list(binder: TypeVar) -> Ty {
         let link = Ty::Record(extend(
             "0",
-            Ty::Number,
+            Ty::Int,
             extend("1", Ty::Var(binder), Row::Empty),
         ));
         Ty::Rec(
@@ -1845,7 +2002,7 @@ mod tests {
     fn nothing_else_is_appendable_and_the_message_says_so() {
         let mut inf = inferer();
         assert_eq!(
-            appendable(&mut inf, &Ty::Number),
+            appendable(&mut inf, &Ty::Int),
             Err("`join` needs strings or lists, but this is `Number`".into())
         );
         assert_eq!(
@@ -1853,15 +2010,15 @@ mod tests {
             Err("`join` needs strings or lists, but this is `Bool`".into())
         );
         assert_eq!(
-            appendable(&mut inf, &Ty::Record(extend("x", Ty::Number, Row::Empty))),
+            appendable(&mut inf, &Ty::Record(extend("x", Ty::Int, Row::Empty))),
             Err("`join` needs strings or lists, but this is `{x: Number}`".into())
         );
-        let shape = Ty::Variant(extend("Circle", Ty::Number, Row::Empty));
+        let shape = Ty::Variant(extend("Circle", Ty::Int, Row::Empty));
         assert_eq!(
             appendable(&mut inf, &shape),
             Err("`join` needs strings or lists, but this is `[Circle: Number]`".into())
         );
-        let func = Ty::func(vec![Ty::Number], Ty::Number);
+        let func = Ty::func(vec![Ty::Int], Ty::Int);
         assert!(appendable(&mut inf, &func).is_err());
     }
 
@@ -1875,7 +2032,7 @@ mod tests {
 
         let w = inf.fresh();
         appendable(&mut inf, &w).unwrap();
-        inf.unify(&w, &Ty::Number, SPAN);
+        inf.unify(&w, &Ty::Int, SPAN);
         assert_eq!(
             inf.errors[0].message,
             "`join` needs strings or lists, but this is `Number`"
@@ -1899,9 +2056,9 @@ mod tests {
         inf.constrain(&a, Kinds::of(Kind::Eq)).unwrap();
         inf.constrain(&b, Kinds::of(Kind::Numeric)).unwrap();
         inf.unify(&a, &b, SPAN);
-        inf.unify(&b, &Ty::Number, SPAN);
+        inf.unify(&b, &Ty::Int, SPAN);
         assert!(inf.errors.is_empty(), "{:?}", inf.errors);
-        let func = Ty::func(vec![Ty::Number], Ty::Number);
+        let func = Ty::func(vec![Ty::Int], Ty::Int);
         let c = inf.fresh();
         inf.constrain(&c, Kinds::of(Kind::Eq)).unwrap();
         inf.unify(&c, &func, SPAN);
@@ -1911,7 +2068,7 @@ mod tests {
     #[test]
     fn an_open_list_row_refuses_a_tag_that_is_not_part_of_a_list() {
         let list_row = || Ty::Variant(extend("Empty", Ty::Unit, Row::Var(7)));
-        let circle = Ty::Variant(extend("Circle", Ty::Number, Row::Var(8)));
+        let circle = Ty::Variant(extend("Circle", Ty::Int, Row::Var(8)));
 
         let mut inf = inferer();
         appendable(&mut inf, &list_row()).unwrap();
@@ -1933,7 +2090,7 @@ mod tests {
     #[test]
     fn a_row_variable_hands_its_constraint_to_the_fields_it_gains() {
         let mut inf = inferer();
-        let record = Ty::Record(extend("x", Ty::Number, Row::Var(7)));
+        let record = Ty::Record(extend("x", Ty::Int, Row::Var(7)));
         inf.constrain(&record, Kinds::of(Kind::Numeric)).unwrap();
         let grown = Ty::Record(extend("y", Ty::Bool, Row::Var(8)));
         inf.unify(&record, &grown, SPAN);
@@ -1962,7 +2119,7 @@ mod proofs {
     #[kani::proof]
     fn occurs_ignores_closed_leaves() {
         let var: TypeVar = kani::any();
-        for ty in [Ty::Number, Ty::Str, Ty::Bool, Ty::Unit] {
+        for ty in [Ty::Int, Ty::Str, Ty::Bool, Ty::Unit] {
             assert!(!occurs(var, &ty));
         }
     }

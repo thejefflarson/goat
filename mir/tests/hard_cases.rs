@@ -2,6 +2,7 @@ mod common;
 
 use common::*;
 use goat_mir::*;
+use std::collections::BTreeMap;
 
 const LIST: LayoutId = LayoutId(2);
 const FNS: LayoutId = LayoutId(3);
@@ -92,8 +93,10 @@ fn build(funcs: Vec<Func>, sig_params: Vec<MTy>) -> Program {
         params: sig_params,
         ret: MTy::Int,
     }];
-    p.layouts
-        .push(Layout::Variant(vec![vec![], vec![MTy::Int, list_ty()]]));
+    p.layouts.push(Layout::Variant(BTreeMap::from([
+        (0, vec![]),
+        (1, vec![MTy::Int, list_ty()]),
+    ])));
     p.layouts
         .push(Layout::Record(vec![closure_ty(0), closure_ty(0)]));
     p

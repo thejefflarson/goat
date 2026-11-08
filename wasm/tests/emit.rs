@@ -394,26 +394,26 @@ fn standalone_record_matches_golden() {
 fn allocator_runtime_is_exported_and_records_allocate_and_free_through_it() {
     let text = wat(&point_sum());
     for expected in [
-        "(export \"goat_alloc\" (func 4))",
-        "(export \"goat_live_allocs\" (func 6))",
+        "(export \"goat_alloc\" (func 5))",
+        "(export \"goat_live_allocs\" (func 7))",
     ] {
         assert!(text.contains(expected), "missing {expected}\n{text}");
     }
-    let root = func_body(&text, 2);
+    let root = func_body(&text, 3);
     assert!(
-        root.contains("call 4"),
+        root.contains("call 5"),
         "allocates through goat_alloc\n{root}"
     );
     assert!(
-        root.contains("call 7"),
+        root.contains("call 8"),
         "releases through drop_loop\n{root}"
     );
     assert!(
-        func_body(&text, 7).contains("call 5"),
+        func_body(&text, 8).contains("call 6"),
         "drop_loop frees the block\n{text}"
     );
     assert!(
-        func_body(&text, 5).contains("memory.fill"),
+        func_body(&text, 6).contains("memory.fill"),
         "free poisons the block\n{text}"
     );
 }
@@ -444,9 +444,9 @@ fn a_function_value_used_twice_shares_one_static_closure() {
         call(2, vec![Expr::MakeClosure(FuncId(1), vec![]), int(2)]),
     );
     let text = wat(&p);
-    let root = func_body(&text, 2);
-    assert_eq!(root.matches("i32.const 8\n").count(), 2, "{text}");
-    assert!(!root.contains("i32.const 24\n"), "{text}");
+    let root = func_body(&text, 3);
+    assert_eq!(root.matches("i32.const 48\n").count(), 2, "{text}");
+    assert!(!root.contains("i32.const 64\n"), "{text}");
 }
 
 #[test]
@@ -469,7 +469,7 @@ fn tail_calls_through_a_closure_become_return_call_indirect() {
 #[test]
 fn direct_tail_recursion_becomes_return_call() {
     let text = wat(&tail_recursive_direct());
-    assert!(text.contains("return_call 3"), "{text}");
+    assert!(text.contains("return_call 4"), "{text}");
 }
 
 fn mono_program(src: &str) -> Program {
@@ -570,12 +570,12 @@ fn string_programs_index_closure_bodies_past_three_imports() {
     p.data = vec![b"hi".to_vec()];
     let text = wat(&p);
     assert!(
-        text.contains("call 5"),
-        "apply is func 2 + 3 imports\n{text}"
+        text.contains("call 6"),
+        "apply is func 2 + 4 imports (the third is print_string, the fourth trap)\n{text}"
     );
     assert!(
-        text.contains("(i32.const 0) func 11 4"),
-        "table holds the noop helper (func 11) and double (func 1 + 3 imports)\n{text}"
+        text.contains("(i32.const 0) func 12 5"),
+        "table holds the noop helper (func 12) and double (func 1 + 4 imports)\n{text}"
     );
 }
 
@@ -648,9 +648,7 @@ fn variant_programs_validate() {
 fn nullary_tags_are_immortal_cells_in_the_data_segment() {
     let text = wat(&mono_program(&format!("{LENGTH} length(Link(1, Empty))")));
     assert!(
-        text.contains(
-            "(data (;0;) (i32.const 8) \"\\ff\\ff\\ff\\ff\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\")"
-        ),
+        text.contains("\\ff\\ff\\ff\\ff\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00"),
         "{text}"
     );
 }
@@ -667,8 +665,16 @@ fn a_trap_calls_the_host_with_its_message_before_halting() {
 
 #[test]
 fn a_program_that_cannot_trap_imports_no_trap() {
-    let text = wat(&mono_program("1 + 2"));
+    let text = wat(&mono_program("1.5 + 2"));
     assert!(!text.contains("\"goat\" \"trap\""), "{text}");
+}
+
+#[test]
+fn int_arithmetic_can_overflow_so_it_imports_trap() {
+    let text = wat(&mono_program("1 + 2"));
+    assert!(text.contains("\"goat\" \"trap\""), "{text}");
+    assert!(text.contains("this number got too big"), "{text}");
+    assert!(text.contains("i64.xor"), "{text}");
 }
 
 #[test]

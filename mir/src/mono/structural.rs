@@ -12,6 +12,7 @@
 use super::{FnCx, Mono, Subst, payload_fields, positional_fields};
 use crate::canon::{canonical, ground_fields, layout_fields};
 use crate::mir::*;
+use goat_checker::hir::Span;
 use goat_checker::ty::{Row, Ty};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -116,9 +117,20 @@ impl Mono<'_> {
         Expr::Switch(local, arms, Box::new(default))
     }
 
-    pub(super) fn arith(&mut self, op: FloatOp, ty: &Ty, a: Expr, b: Expr) -> Expr {
+    /// `a op b` on two values of type `ty`. An `Int` operation that overflows
+    /// traps, blamed on `span` when the operation is the user's own.
+    pub(super) fn arith(
+        &mut self,
+        cx: &mut FnCx,
+        span: Option<Span>,
+        op: FloatOp,
+        ty: &Ty,
+        a: Expr,
+        b: Expr,
+    ) -> Expr {
         match ty.unfold_head() {
-            Ty::Number => Expr::BinFloat(op, Box::new(a), Box::new(b)),
+            Ty::Float => Expr::BinFloat(op, Box::new(a), Box::new(b)),
+            Ty::Int => Self::int_arith(cx, span, op, a, b),
             Ty::Record(_) => {
                 let f = self.arith_fn(op, ty);
                 Expr::CallDirect(f, vec![a, b])
@@ -127,9 +139,31 @@ impl Mono<'_> {
         }
     }
 
+    /// The site is set after both operands run, so an operand's own call cannot
+    /// overwrite it before the overflow check.
+    fn int_arith(cx: &mut FnCx, span: Option<Span>, op: FloatOp, a: Expr, b: Expr) -> Expr {
+        let op = match op {
+            FloatOp::Add => IntOp::Add,
+            FloatOp::Sub => IntOp::Sub,
+            FloatOp::Mul => IntOp::Mul,
+            FloatOp::Div => IntOp::Div,
+        };
+        let Some(span) = span.filter(|span| !span.in_prelude()) else {
+            return Expr::BinInt(op, Box::new(a), Box::new(b));
+        };
+        let (x, y) = (cx.fresh(MTy::Int), cx.fresh(MTy::Int));
+        let operation = Expr::BinInt(op, Box::new(Expr::Local(x)), Box::new(Expr::Local(y)));
+        let blamed = Self::at_site(cx, span, operation);
+        Expr::Let(
+            x,
+            Box::new(a),
+            Box::new(Expr::Let(y, Box::new(b), Box::new(blamed))),
+        )
+    }
+
     fn arith_fn(&mut self, op: FloatOp, ty: &Ty) -> FuncId {
         let ret = self.lower_ty(&canonical(ty));
-        self.derive(Derived::Arith(op), ty, ret, |m, _, params| {
+        self.derive(Derived::Arith(op), ty, ret, |m, cx, params| {
             let (a, b) = (params[0], params[1]);
             let Ty::Record(row) = ty.unfold_head() else {
                 return Expr::Trap("arithmetic on a type that is not a record".into());
@@ -139,7 +173,9 @@ impl Mono<'_> {
             };
             let fields = layout_fields(&row)
                 .enumerate()
-                .map(|(i, (_, field))| m.arith(op, field, Expr::Field(a, i), Expr::Field(b, i)))
+                .map(|(i, (_, field))| {
+                    m.arith(cx, None, op, field, Expr::Field(a, i), Expr::Field(b, i))
+                })
                 .collect();
             Expr::AllocRecord(layout, fields)
         })
@@ -149,7 +185,7 @@ impl Mono<'_> {
     /// type is a checker error, so it cannot reach here.
     pub(super) fn equal(&mut self, cx: &mut FnCx, ty: &Ty, a: Expr, b: Expr, tail: bool) -> Expr {
         match ty.unfold_head() {
-            Ty::Number => Expr::Cmp(CmpOp::Eq, Box::new(a), Box::new(b)),
+            Ty::Int | Ty::Float => Expr::Cmp(CmpOp::Eq, Box::new(a), Box::new(b)),
             Ty::Bool => {
                 let (l, r) = (cx.fresh(MTy::Bool), cx.fresh(MTy::Bool));
                 let differs = Expr::If(
@@ -259,7 +295,7 @@ impl Mono<'_> {
     /// one printed by itself is not.
     fn show(&mut self, cx: &mut FnCx, ty: &Ty, value: Expr, nested: bool) -> Expr {
         match ty.unfold_head() {
-            Ty::Number => Expr::Write(Write::Number(Box::new(value))),
+            Ty::Int | Ty::Float => Expr::Write(Write::Number(Box::new(value))),
             Ty::Bool => {
                 let b = cx.fresh(MTy::Bool);
                 let (yes, no) = (self.text("true"), self.text("false"));

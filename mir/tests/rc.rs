@@ -342,7 +342,7 @@ fn total(p: &Program, f: impl Fn(&Expr) -> usize) -> usize {
 fn mono_output_dups_a_record_passed_twice() {
     let p = from_source("r = {a: 2}\nget = program(x) do x.a done\nget(r) * get(r)");
     assert_eq!(total(&p, dups), 1);
-    assert_eq!(run_clean(&p).value, Value::Float(4.0));
+    assert_eq!(run_clean(&p).value, Value::Int(4));
 }
 
 #[test]
@@ -351,7 +351,7 @@ fn mono_output_dups_a_captured_closure_only_while_it_is_live() {
         "r = {a: 2}\nmk = program(n) do program(m) do r.a + n + m done done\nf = mk(1)\nf(10) + f(20)",
     );
     assert!(total(&p, dups) >= 1);
-    assert_eq!(run_clean(&p).value, Value::Float(36.0));
+    assert_eq!(run_clean(&p).value, Value::Int(36));
 }
 
 #[test]

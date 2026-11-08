@@ -50,7 +50,7 @@ fn record<const N: usize>(fields: [(&str, Ty); N]) -> Ty {
 }
 
 fn point() -> Ty {
-    record([("x", Ty::Number), ("y", Ty::Number)])
+    record([("x", Ty::Float), ("y", Ty::Float)])
 }
 
 /// `μbinder. [Empty, Link: {0: item, 1: binder}]`
@@ -65,7 +65,7 @@ pub fn list(binder: TypeVar, item: Ty) -> Ty {
 /// The payload type of the host event `tag`.
 pub fn event_payload(tag: &str) -> Option<Ty> {
     Some(match tag {
-        "Tick" => Ty::Number,
+        "Tick" => Ty::Float,
         "KeyDown" | "KeyUp" => key_group().instantiate(0),
         "PointerMove" | "PointerDown" | "PointerUp" => point(),
         _ => return None,
@@ -78,10 +78,10 @@ pub fn shape_payload(tag: &str, binder: TypeVar) -> Option<Ty> {
     Some(match tag {
         "Polyline" => record([("points", list(binder, point())), ("color", Ty::Str)]),
         "Line" => record([
-            ("x1", Ty::Number),
-            ("y1", Ty::Number),
-            ("x2", Ty::Number),
-            ("y2", Ty::Number),
+            ("x1", Ty::Float),
+            ("y1", Ty::Float),
+            ("x2", Ty::Float),
+            ("y2", Ty::Float),
             ("color", Ty::Str),
         ]),
         _ => return None,
