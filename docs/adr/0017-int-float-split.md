@@ -105,6 +105,45 @@ hardware-mapped**, made *safe* rather than *unbounded*.
   and `sin(i)` in a counting loop work. A host function that takes `Int` still
   rejects a `Float`.
 
+## Embedded profile
+
+`Program.profile` (`Desktop` or `Embedded`) carries the per-target widths of
+decision 6 through mono (`mono_for`), the interpreter, and wasm emit.
+`goat build|run --target embedded` and `goat::compile_for` select it; the
+default is `Desktop`. Pointers are 4 bytes on both (wasm32), and object slots
+stay 8 bytes wide.
+
+- **Int** is an `i32`. wasm runs the operation in `i64`, where two `i32`s
+  cannot overflow, then traps (`this number got too big`) if the result does
+  not fit back. An `Int` literal past 2^31 becomes a runtime trap at its
+  site, so the checker stays profile-blind and a literal on a branch that does
+  not run is harmless.
+  `//` and `%` take the same path, so `-2^31 // -1` traps and `-2^31 % -1`
+  is `0`.
+- **Float** is an `f32`. The interpreter rounds each `+ - * /`, `sqrt`,
+  literal, and `Int` widening to `f32`, which is exactly what `f32` hardware
+  computes because an `f64` carries more than twice the bits. The goat-code
+  trig therefore runs in `f32` and agrees with desktop to about 7 digits.
+- **Float to Int.** `truncate`, and so `round`, `floor` and `ceil`, give an
+  `i32`: a value outside `[-2^31, 2^31)` traps with the same "can't be made a
+  whole number" message desktop uses past 2^63.
+- **Host boundary.** `print_number`, `write_number`, and every foreign import
+  keep `f64` and `i64` whatever the profile, so one host serves both; the
+  module converts at the edge. A host `Int` past 2^31 traps on the way in.
+- **Not yet supported:** interactive programs on the embedded profile (the
+  event exports take `Float` payloads at the program's own width).
+  The heap budget and bounded stack are separate decisions.
+
+`GOAT_PROFILE=embedded cargo test -p goat_cli` runs the differential suites on
+the embedded profile; the failures there are the differences listed in
+`cli/tests/embedded.rs`.
+
+Where the profiles legitimately differ, `cli/tests/embedded.rs` pins both
+answers: `Int` overflow at 2^31 (desktop 2^63), `Float` precision (a
+`0.1 + 0.2` prints `0.300000011920929`, since the host formats the widened
+`f32`), and a `Float` past 3.4e38 is `inf`. Every other example program prints
+the same on both.
+
 ## Deferred
 
 - `i64` Int on a future 64-bit *native* target (MIR has room).

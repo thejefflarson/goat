@@ -332,3 +332,57 @@ fn non_string_roots_have_no_string() {
     let out = run_verified(&program(vec![func(MTy::Int, int(1))]));
     assert_eq!(out.root_string, None);
 }
+
+fn embedded(funcs: Vec<Func>) -> Program {
+    Program {
+        profile: Profile::Embedded,
+        ..program(funcs)
+    }
+}
+
+#[test]
+fn an_embedded_int_traps_where_it_leaves_i32() {
+    let trap = |body| run(&embedded(vec![func(MTy::Int, body)])).expect_err("traps");
+    let overflow = InterpError::Trap(INT_OVERFLOW.into());
+    let max = i64::from(i32::MAX);
+    let min = i64::from(i32::MIN);
+    assert_eq!(trap(add(int(max), int(1))), overflow);
+    assert_eq!(trap(sub(int(min), int(1))), overflow);
+    assert_eq!(trap(mul(int(65536), int(32768))), overflow);
+    let divide = |a, b| Expr::BinInt(IntOp::Div, Box::new(int(a)), Box::new(int(b)));
+    assert_eq!(trap(divide(min, -1)), overflow);
+    let fits = |body| {
+        run(&embedded(vec![func(MTy::Int, body)]))
+            .expect("runs")
+            .value
+    };
+    assert_eq!(fits(add(int(max - 1), int(1))), Value::Int(max));
+    assert_eq!(fits(sub(int(min + 1), int(1))), Value::Int(min));
+    assert_eq!(fits(mul(int(46340), int(46340))), Value::Int(2_147_395_600));
+    assert_eq!(
+        run(&program(vec![func(MTy::Int, add(int(max), int(1)))])).map(|o| o.value),
+        Ok(Value::Int(max + 1)),
+        "the same sum fits on desktop"
+    );
+}
+
+#[test]
+fn an_embedded_float_rounds_to_f32_after_each_operation() {
+    let sum = bin_float(FloatOp::Add, float(16_777_216.0), float(1.0));
+    let value = |p: Program| run(&p).expect("runs").value;
+    assert_eq!(
+        value(embedded(vec![func(MTy::Float, sum.clone())])),
+        Value::Float(16_777_216.0)
+    );
+    assert_eq!(
+        value(program(vec![func(MTy::Float, sum)])),
+        Value::Float(16_777_217.0)
+    );
+    let tenth = value(embedded(vec![func(MTy::Float, float(0.1))]));
+    assert_eq!(tenth, Value::Float(f64::from(0.1_f32)));
+    let widen = Expr::IntToFloat(Box::new(int(16_777_217)));
+    assert_eq!(
+        value(embedded(vec![func(MTy::Float, widen)])),
+        Value::Float(16_777_216.0)
+    );
+}

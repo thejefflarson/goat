@@ -2,11 +2,21 @@
 //! the interpreter and wasm, and generate terminating, well-typed programs.
 
 use goat_mir::interp::{self, InterpError, Piece, Value};
-use goat_mir::{Host, NoHost};
+use goat_mir::{Host, NoHost, Profile};
 
 mod host;
 
 pub use host::TestHost;
+
+/// The profile the differential suites run on: `GOAT_PROFILE=embedded` runs
+/// them all on the embedded profile, where the tests that pin 64-bit `Int` or
+/// 15-digit `Float` answers are expected to fail.
+pub fn default_profile() -> Profile {
+    match std::env::var("GOAT_PROFILE").as_deref() {
+        Ok("embedded") => Profile::Embedded,
+        _ => Profile::Desktop,
+    }
+}
 
 /// What the interpreter says the program prints, and its live allocations.
 pub fn interpret(src: &str) -> (Vec<String>, usize) {
@@ -19,9 +29,19 @@ pub fn interpret_with_prelude(prelude: &str, src: &str) -> (Vec<String>, usize) 
 
 /// Like `interpret_with_prelude`, answering foreign calls from `host`.
 pub fn interpret_hosted(prelude: &str, src: &str, host: &mut dyn Host) -> (Vec<String>, usize) {
+    interpret_on(default_profile(), prelude, src, host)
+}
+
+/// Like `interpret_hosted`, with `Int` and `Float` as wide as `profile` says.
+pub fn interpret_on(
+    profile: Profile,
+    prelude: &str,
+    src: &str,
+    host: &mut dyn Host,
+) -> (Vec<String>, usize) {
     let checked = goat_checker::check_with_prelude(prelude, src)
         .unwrap_or_else(|e| panic!("unexpected type-check failure for {src:?}: {e:?}"));
-    let program = goat_mir::mono(&checked)
+    let program = goat_mir::mono_for(&checked, profile)
         .unwrap_or_else(|e| panic!("unexpected mono failure for {src:?}: {e:?}"));
     assert_eq!(
         goat_mir::verify(&program),
@@ -63,7 +83,12 @@ pub fn compiled(src: &str) -> (Vec<String>, u32) {
 }
 
 pub fn compiled_with_prelude(prelude: &str, src: &str) -> (Vec<String>, u32) {
-    let wasm = goat::compile(src, &goat::HostInterface::new(prelude)).expect("program compiles");
+    compiled_on(default_profile(), prelude, src)
+}
+
+pub fn compiled_on(profile: Profile, prelude: &str, src: &str) -> (Vec<String>, u32) {
+    let (wasm, _) = goat::compile_for(profile, src, &goat::HostInterface::new(prelude))
+        .expect("program compiles");
     let run = goat_cli::run(&wasm).expect("wasm runs");
     (run.printed, run.live_allocs)
 }
@@ -76,7 +101,8 @@ pub fn run_foreign(src: &str) -> (String, Vec<String>) {
     let mut oracle = TestHost::default();
     let (expected, live) = interpret_hosted(goat_checker::PRELUDE, src, &mut oracle);
     assert_eq!(live, 0, "interpreter leaked allocations for: {src}");
-    let wasm = goat::compile_turtle(src).expect("program compiles");
+    let (wasm, _) = goat::compile_for(default_profile(), src, &goat::HostInterface::turtle())
+        .expect("program compiles");
     let (run, compiled) = goat_cli::run_with_host(&wasm, TestHost::default()).expect("wasm runs");
     assert_eq!(run.live_allocs, 0, "wasm leaked allocations for: {src}");
     assert_eq!(run.printed, expected, "wasm differs from interp: {src}");
@@ -94,10 +120,12 @@ pub fn run(src: &str) -> String {
 /// overflows) must trap in wasm with the same message.
 pub fn agree_or_trap(src: &str) {
     let checked = goat_checker::check(src).expect("program type-checks");
-    let program = goat_mir::mono(&checked).expect("program monomorphizes");
+    let program = goat_mir::mono_for(&checked, default_profile()).expect("program monomorphizes");
     match interp::run(&program) {
         Err(InterpError::Trap(message)) => {
-            let wasm = goat::compile_turtle(src).expect("program compiles");
+            let (wasm, _) =
+                goat::compile_for(default_profile(), src, &goat::HostInterface::turtle())
+                    .expect("program compiles");
             let Err(error) = goat_cli::run(&wasm) else {
                 panic!("wasm did not trap like the interpreter: {src}");
             };

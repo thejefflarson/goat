@@ -2,6 +2,7 @@
 
 use goat_checker::GoatError;
 use goat_checker::hir::Span;
+pub use goat_mir::Profile;
 
 /// The vocabulary a host provides: the `foreign` functions a program may call,
 /// declared in goat source ahead of the program. The events `update` receives
@@ -85,9 +86,18 @@ pub fn compile_with_warnings(
     source: &str,
     host: &HostInterface,
 ) -> Result<(Vec<u8>, Vec<GoatError>), Vec<GoatError>> {
+    compile_for(Profile::Desktop, source, host)
+}
+
+/// Like [`compile_with_warnings`], for the number widths of `profile`.
+pub fn compile_for(
+    profile: Profile,
+    source: &str,
+    host: &HostInterface,
+) -> Result<(Vec<u8>, Vec<GoatError>), Vec<GoatError>> {
     let mut checked = goat_checker::check_with_prelude(host.prelude(), source)?;
     let warnings = std::mem::take(&mut checked.typed.warnings);
-    let program = goat_mir::mono(&checked)?;
+    let program = goat_mir::mono_for(&checked, profile)?;
     let wasm = goat_wasm::emit(&program)
         .map_err(|e| vec![GoatError::new(Span::new(0, 0), e.to_string())])?;
     Ok((wasm, warnings))
