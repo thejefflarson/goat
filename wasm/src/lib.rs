@@ -37,12 +37,9 @@ const HOST_PROFILE: Profile = Profile::Desktop;
 /// the allocator's live count. It is exported as `goat_fuel` so a host can
 /// refill it; a call that finds none left traps (ADR 0015).
 const FUEL_GLOBAL: u32 = 2;
-/// What a host that never refills `goat_fuel` starts from. A run-once program
-/// gets a fraction of a second of calls on a native engine, enough for any
-/// ordinary program and well short of a hung tab; an interactive program
-/// starts from the per-call budget its hosts refill to (ADR 0015).
-const RUN_ONCE_FUEL: i32 = 100_000_000;
-const INTERACTIVE_FUEL: i32 = 5_000_000;
+/// Enough that a run-once program never notices, and the value a host that
+/// never refills starts from.
+const FUEL_START: i32 = i32::MAX;
 /// The global a call into the prelude sets to its site number (1-based, 0 for
 /// none), and the custom section that maps each number to a source range. A
 /// host reads both when `goat.trap` fires to blame the user's call.
@@ -418,15 +415,10 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
     let mut globals = GlobalSection::new();
     let allocator_globals: &[i32] = if hosted { &[] } else { &[heap_start as i32, 0] };
     let closure_globals = if program.interactive.is_some() { 2 } else { 0 };
-    let fuel_start = if program.interactive.is_some() {
-        INTERACTIVE_FUEL
-    } else {
-        RUN_ONCE_FUEL
-    };
     for init in allocator_globals
         .iter()
         .copied()
-        .chain([fuel_start, 0])
+        .chain([FUEL_START, 0])
         .chain(std::iter::repeat_n(0, closure_globals))
     {
         globals.global(i32_cell(), &ConstExpr::i32_const(init));

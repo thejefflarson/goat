@@ -507,20 +507,6 @@ fn an_update_that_never_returns_runs_out_of_fuel_and_traps() {
     assert!(error.contains("trapped"), "{error}");
 }
 
-#[test]
-fn an_interactive_module_starts_with_one_updates_worth_of_fuel() {
-    let wasm = goat::compile_turtle(SPINNING).expect("compiles");
-    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
-    assert_eq!(guest.fuel().unwrap(), goat::native::UPDATE_FUEL);
-}
-
-#[test]
-fn a_run_once_module_starts_with_more_fuel_than_an_update_gets() {
-    let wasm = goat::compile_turtle("1").expect("compiles");
-    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
-    assert!(guest.fuel().unwrap() > goat::native::UPDATE_FUEL);
-}
-
 fn press(guest: &mut Guest<SceneHost>, model: i32, key: &str) -> Result<i32, String> {
     let key = guest.string(key)?;
     let event: i32 = guest.call("goat_event_KeyDown", key)?;
