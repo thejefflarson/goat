@@ -2,6 +2,7 @@
 // host sends source in and reads `EngineMessage`s back. There is no editor UI
 // here, only a canvas and the runtime.
 
+import { type BeatMessage, createBeat } from "./beat.ts";
 import { compile } from "./compile.ts";
 import { isInteractiveModule, runInteractive, type Loop } from "./loop.ts";
 import { animate, run } from "./runtime.ts";
@@ -20,7 +21,8 @@ export type EngineMessage =
   | { type: "ready" }
   | { type: "diagnostics"; diagnostics: Diagnostic[] }
   | { type: "output"; lines: string[] }
-  | { type: "state"; state: "running" | "finished" | "failed"; message?: string };
+  | { type: "state"; state: "running" | "finished" | "failed"; message?: string }
+  | BeatMessage;
 
 export interface Engine {
   run(source: string): Promise<void>;
@@ -35,6 +37,9 @@ export interface EngineEnv {
   // surface (ADR 0021); otherwise it runs on this thread against `canvas`.
   runner?: Runner;
   focus?(): void;
+  // Posts a `beat` around every call into goat, for a host that watches the page
+  // from outside and tears it down when goat stops answering.
+  heartbeat?: boolean;
 }
 
 const LOCATED = /^(in the prelude, )?(\d+):(\d+): /;
@@ -58,7 +63,8 @@ export function parseDiagnostics(rendered: string): Diagnostic[] {
   });
 }
 
-export function createEngine({ canvas, compiler, post, runner, focus = () => canvas.focus() }: EngineEnv): Engine {
+export function createEngine({ canvas, compiler, post, runner, heartbeat = false, focus = () => canvas.focus() }: EngineEnv): Engine {
+  const beat = heartbeat ? createBeat(post) : undefined;
   let loop: Loop | undefined;
   let generation = 0;
 
@@ -110,14 +116,22 @@ export function createEngine({ canvas, compiler, post, runner, focus = () => can
         return;
       }
       if (interactive) {
-        const started = await runInteractive(compiled.module, canvas, fail);
+        const started = await runInteractive(
+          compiled.module,
+          canvas,
+          fail,
+          beat && ((call) => beat.around("frame", call)),
+        );
         if (!current()) return started.stop();
         loop = started;
         focus();
         return;
       }
       const lines: string[] = [];
-      const { commands } = await run(compiled.module, { onOutput: (line) => lines.push(line) });
+      const { commands } = await run(compiled.module, {
+        onOutput: (line) => lines.push(line),
+        around: beat && ((call) => beat.around("once", call)),
+      });
       if (!current()) return;
       post({ type: "output", lines });
       await animate(canvas, commands, {

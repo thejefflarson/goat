@@ -43,6 +43,30 @@ swift test --package-path GoatKit
   block module scripts and the wasm fetch). The web view cancels every other
   navigation and the page's CSP is `default-src 'none'`.
 
+## Stopping a runaway program (ADR 0021)
+
+goat runs on the web view's main thread, which nothing on the page can interrupt,
+so the native app owns preemption (`Watchdog.swift`, `Engine.swift`):
+
+1. `web/beat.ts` posts a `beat` before and after every call into goat. The count
+   is odd while goat runs and even while the page is idle; `call` says which
+   budget applies (`frame` for `setup`/`update`/`draw`, `once` for a run-once program).
+2. `WatchdogTimer` polls only while a call is open. A call open past its budget
+   (1 s per frame, 10 s run-once, the same numbers as the browser supervisor)
+   makes `Engine` drop the web view, build a new one on a non-persistent data
+   store, and show "your program got stuck" / "your program was stopped". Idle
+   programs are never stopped. The program does not restart on its own; Run does.
+3. Injected fuel still runs underneath and is removed separately.
+
+Untested without a Mac at runtime: that releasing a web view kills a content
+process stuck in wasm, and that a `beat` posted just before the page blocks still
+reaches the app. If the second fails the watchdog never fires and fuel is the only bound.
+
+`crossOriginIsolated` (COOP/COEP on `AssetSchemeHandler`, so the browser's worker
+supervisor could run here) is not used. Whether WebKit isolates a custom-scheme
+page, and serves a module worker and wasm from one, is unverified; try it on a Mac
+before relying on it. The page picks the worker path by itself when isolated.
+
 ## App Store 2.5.2
 
 The app never downloads or generates code outside what the user types: source is

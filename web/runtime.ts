@@ -200,7 +200,7 @@ export function strokes(commands: Command[]): Stroke[] {
 
 export async function run(
   moduleBytes: BufferSource,
-  { onOutput }: { onOutput?: (line: string) => void } = {},
+  { onOutput, around }: { onOutput?: (line: string) => void; around?: (call: () => void) => void } = {},
 ): Promise<RunResult> {
   let memory: WebAssembly.Memory | undefined;
   const host = createHost(() => memory!);
@@ -208,7 +208,8 @@ export async function run(
   const exports = instance.exports as unknown as GoatExports;
   memory = exports.memory;
   if (!memory) throw new Error("module exports no memory");
-  exports.goat_entry();
+  if (around) around(() => exports.goat_entry());
+  else exports.goat_entry();
   const liveAllocs = exports.goat_live_allocs?.() ?? null;
   if (onOutput) host.output.forEach((line) => onOutput(line));
   return { output: host.output, commands: host.commands, liveAllocs };

@@ -222,6 +222,7 @@ export async function runInteractive(
   moduleBytes: BufferSource,
   canvas: HTMLCanvasElement,
   onError: (message: string) => void,
+  around?: LoopEnv["around"],
 ): Promise<Loop> {
   const exports = await instantiateInteractive(moduleBytes, canvas.getContext("2d") as DrawingContext);
   return startLoop(exports, {
@@ -231,5 +232,6 @@ export async function runInteractive(
     cancelRaf: (handle) => cancelAnimationFrame(handle),
     now: () => performance.now(),
     onError,
+    around,
   });
 }

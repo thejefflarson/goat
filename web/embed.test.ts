@@ -35,13 +35,14 @@ function fakeCanvas() {
   };
 }
 
-function engine() {
+function engine(heartbeat = false) {
   const canvas = fakeCanvas();
   const messages: EngineMessage[] = [];
   const built = createEngine({
     canvas: canvas as unknown as HTMLCanvasElement,
     compiler,
     post: (message) => messages.push(message),
+    heartbeat,
   });
   return { canvas, messages, ...built };
 }
@@ -189,6 +190,38 @@ test("stopping the engine stops the runner, and a stopped run's results are drop
   sink.onReady?.();
   sink.onFinished?.();
   assert.deepEqual(messages, [{ type: "state", state: "running" }]);
+});
+
+const beats = (messages: EngineMessage[]) => messages.flatMap((m) => (m.type === "beat" ? [m] : []));
+
+test("a run-once program is bracketed by one odd and one even beat", async () => {
+  const { messages, run } = engine(true);
+  await run('print("hello");\nforward(10)');
+  assert.deepEqual(beats(messages), [
+    { type: "beat", count: 1, call: "once" },
+    { type: "beat", count: 2, call: "once" },
+  ]);
+  const enter = messages.findIndex((m) => m.type === "beat");
+  assert.deepEqual(messages[enter - 1], { type: "state", state: "running" });
+  assert.equal(messages[enter + 2]!.type, "output");
+});
+
+test("every call into an interactive program is bracketed, and the page ends idle", async () => {
+  const { messages, run, stop } = engine(true);
+  await run(ARROWS);
+  stop();
+  const seen = beats(messages);
+  assert.ok(seen.length >= 2 && seen.length % 2 === 0, "setup alone is one enter and one leave");
+  seen.forEach((m, i) => {
+    assert.equal(m.count, i + 1);
+    assert.equal(m.call, "frame");
+  });
+});
+
+test("without a heartbeat the page posts no beats", async () => {
+  const { messages, run } = engine();
+  await run('print("hello")');
+  assert.equal(beats(messages).length, 0);
 });
 
 test("the embed bundle is the canvas page, relative and self-contained", async () => {
