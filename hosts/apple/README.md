@@ -29,6 +29,19 @@ xcodebuild -project Goat.xcodeproj -scheme Goat-iOS -destination 'generic/platfo
 swift test --package-path GoatKit
 ```
 
+`scripts/check-doc-types.sh` (run in CI after `xcodegen generate`) fails if the
+document type, the exported UTI and `UTType.goatSource` stop naming the same identifier.
+
+## Create Document on the iOS simulator
+
+Tapping **Create Document** in the iOS 26.5 simulator intermittently shows "Unable to
+Import Document (com.apple.DocumentManager error 1)". The type declarations are not the
+cause: the UTI resolves and conforms to `public.plain-text`, existing `.goat` files open
+with their contents, and an app whose document type is stock `public.plain-text` fails the
+same way. On a failure the file is still written; the Files service then cannot resolve a
+bookmark for the item it just moved (`NSFileProviderErrorDomain` -1005, "NonExistentItemIdentifier").
+Open the file from the browser instead. Not reproduced on a device.
+
 ## The bridge
 
 - Native to web: `Engine.run(source:)` calls `window.goat.run(source)` through

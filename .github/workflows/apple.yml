@@ -32,6 +32,9 @@ jobs:
           brew install xcodegen
           xcodegen generate --spec hosts/apple/project.yml
 
+      - name: Check document type declarations
+        run: hosts/apple/scripts/check-doc-types.sh
+
       - name: Build macOS
         run: >
           xcodebuild -project hosts/apple/Goat.xcodeproj -scheme Goat-macOS
