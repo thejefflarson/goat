@@ -1,0 +1,12 @@
+[package]
+name = "rowan-slice"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rowan = "0.17.0"
+unicode-ident = "1.0.27"
+
+[dev-dependencies]
+goat_parser = { path = "../../../parser" }
+pest = "2.9"

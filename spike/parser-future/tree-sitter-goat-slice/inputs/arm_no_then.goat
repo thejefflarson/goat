@@ -1,0 +1,4 @@
+match s do
+  Circle(r) r * r
+  Square(s) then s
+done

@@ -1,0 +1,8 @@
+area = shape.size * 2 + 1;
+total = match shape do
+  Circle(r) then r * r * 3
+  Square(s) then s * s
+  0 then 0
+  else -1
+done;
+f(area, total) + g.h

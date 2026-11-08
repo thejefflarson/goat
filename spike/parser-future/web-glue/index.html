@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>web-tree-sitter goat slice</title>
+<pre id="out">loading…</pre>
+<script type="module">
+  import { Language, Parser } from "./node_modules/web-tree-sitter/web-tree-sitter.js";
+  const out = document.getElementById("out");
+  try {
+    await Parser.init({ locateFile: (name) => `./node_modules/web-tree-sitter/${name}` });
+    const parser = new Parser();
+    parser.setLanguage(await Language.load("../tree-sitter-goat-slice/goat_slice.wasm"));
+    const lines = [];
+    for (const src of ["a = 1 + 2", "match x do", "a = ;\nb = 2"]) {
+      lines.push(JSON.stringify(src), "  " + parser.parse(src).rootNode.toString());
+    }
+    out.textContent = "OK\n" + lines.join("\n");
+  } catch (e) {
+    out.textContent = "FAILED " + e;
+  }
+</script>

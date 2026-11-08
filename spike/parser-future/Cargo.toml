@@ -1,0 +1,3 @@
+[workspace]
+resolver = "2"
+members = ["rowan-slice", "chumsky-slice", "ts-rust"]
