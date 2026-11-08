@@ -966,15 +966,19 @@ impl Lower {
             let (Some(decl), None) = (kids.next(), kids.next()) else {
                 break;
             };
-            if decl.as_rule() != Rule::declaration {
-                break;
-            }
+            let is_declaration = match decl.as_rule() {
+                Rule::declaration => true,
+                Rule::destructure => false,
+                _ => break,
+            };
             let mut parts = decl.into_inner();
-            let name_pair = parts.next().expect("declaration starts with a name");
-            let value = parts.next().expect("declaration has a value");
+            let head = parts
+                .next()
+                .expect("a chain link starts with a name or pattern");
+            let value = parts.next().expect("a chain link has a value");
             rest = parts.next();
-            if is_program_literal(&value) {
-                self.reserve(&name_pair, &mut seen);
+            if is_declaration && is_program_literal(&value) {
+                self.reserve(&head, &mut seen);
             }
         }
     }
