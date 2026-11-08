@@ -834,12 +834,6 @@ impl Lower {
             };
             (symbol, self.lower_expr(value_pair))
         } else {
-            if let Some((first, rest)) = first_program_decl(rest_pair.clone())
-                && self.resolve(first.as_str()).is_none()
-                && !self.grouped.contains_key(&self.span_of(&first).start)
-            {
-                self.bind_function_group(&first, rest);
-            }
             let value = if value_pair.as_rule() == Rule::foreign_decl {
                 self.lower_foreign(value_pair)
             } else {
@@ -2113,28 +2107,6 @@ fn is_literal_arm(child: &Pair<Rule>) -> bool {
 
 fn scalar_kind(literal: &Expr) -> std::mem::Discriminant<ExprKind> {
     std::mem::discriminant(&literal.kind)
-}
-
-/// The first `name = program(...)` declaration in the chain `rest`, skipping
-/// value declarations, with the chain that follows it.
-fn first_program_decl(mut rest: Option<Pair<Rule>>) -> Option<(Pair<Rule>, Option<Pair<Rule>>)> {
-    while let Some(expr) = rest.take() {
-        let mut kids = expr.into_inner();
-        let (Some(decl), None) = (kids.next(), kids.next()) else {
-            break;
-        };
-        if decl.as_rule() != Rule::declaration {
-            break;
-        }
-        let mut parts = decl.into_inner();
-        let name_pair = parts.next().expect("declaration starts with a name");
-        let value = parts.next().expect("declaration has a value");
-        rest = parts.next();
-        if is_program_literal(&value) {
-            return Some((name_pair, rest));
-        }
-    }
-    None
 }
 
 fn is_program_literal(expr: &Pair<Rule>) -> bool {
