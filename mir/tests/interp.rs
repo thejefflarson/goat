@@ -287,6 +287,27 @@ fn unbounded_non_tail_recursion_overflows() {
 }
 
 #[test]
+fn a_loop_that_allocates_without_end_runs_out_of_memory() {
+    // leak(n) = { _ = {n}; leak(n + 1) }
+    let leak = Func {
+        params: vec![(Local(0), MTy::Int)],
+        env: None,
+        ret: MTy::Int,
+        body: let_(
+            1,
+            Expr::AllocRecord(RECORD, vec![local(0)]),
+            Expr::TailCall(Callee::Direct(FuncId(1)), vec![add(local(0), int(1))]),
+        ),
+        locals: Default::default(),
+    };
+    let main = func(MTy::Int, Expr::CallDirect(FuncId(1), vec![int(0)]));
+    assert_eq!(
+        run_with_object_limit(&program(vec![main, leak]), 10_000),
+        Err(InterpError::OutOfMemory)
+    );
+}
+
+#[test]
 fn switch_selects_arm_by_tag_and_reads_payload() {
     let body = let_(
         0,

@@ -118,7 +118,7 @@ fn interpreted(program: &Program, script: &[Event], numbers: usize) -> Trace {
         let built = match event {
             Event::Tick(dt) => session.event("Tick", vec![Value::Float(*dt)]),
             Event::KeyDown(key) | Event::KeyUp(key) => {
-                let key = session.string(key);
+                let key = session.string(key).expect("string allocates");
                 session.event(&event.label(), vec![key])
             }
             Event::Pointer(_, x, y) => {
@@ -563,7 +563,7 @@ fn update_reuses_the_models_cell_on_both_backends_and_nothing_leaks() {
     let (mut session, mut model) = Session::setup(&program, &mut host).expect("setup runs");
     let first = model;
     for _ in 0..50 {
-        let key = session.string("a");
+        let key = session.string("a").expect("string allocates");
         let event = session
             .event("KeyDown", vec![key])
             .expect("event constructs");
