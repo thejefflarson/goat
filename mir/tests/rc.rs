@@ -33,6 +33,7 @@ fn calls(e: &Expr) -> Vec<FuncId> {
 
 /// Insert RC into `p`, then require the verifier to accept it.
 fn rc(mut p: Program) -> Program {
+    infer_locals(&mut p);
     insert_rc(&mut p);
     assert_eq!(verify(&p), Ok(()), "{p:#?}");
     p

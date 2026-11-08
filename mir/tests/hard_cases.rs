@@ -56,6 +56,7 @@ fn closure_fn(ps: Vec<(u32, MTy)>, env: u32, captures: Vec<MTy>, ret: MTy, body:
         }),
         ret,
         body,
+        locals: Default::default(),
     }
 }
 
@@ -65,6 +66,7 @@ fn plain_fn(ps: Vec<(u32, MTy)>, ret: MTy, body: Expr) -> Func {
         env: None,
         ret,
         body,
+        locals: Default::default(),
     }
 }
 

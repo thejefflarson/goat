@@ -4,6 +4,8 @@
 //! never reads goat's heap, so everything that touches variant tags, payload
 //! slots or record layouts lives here, over types the checker has fixed.
 
+use std::collections::BTreeMap;
+
 use super::{FnCx, Mono, Subst, field_index, positional_fields, variant_row};
 use crate::canon::ground_fields;
 use crate::mir::*;
@@ -98,6 +100,7 @@ impl Mono<'_> {
                 Box::new(local(closure)),
                 vec![local(model_local), local(event_local)],
             ),
+            locals: BTreeMap::new(),
         });
         let events = self.event_ctors(&update_args[1]);
         let draw = self.draw_func(draw_closure, model, shapes_ty);
@@ -124,14 +127,14 @@ impl Mono<'_> {
             let mut cx = FnCx::new(Subst::new());
             let (params, body) = match label.as_str() {
                 "Tick" => {
-                    let dt = cx.fresh();
+                    let dt = cx.fresh(MTy::Float);
                     let body = Expr::AllocVariant(layout, tag, vec![local(dt)]);
                     (vec![(dt, MTy::Float)], body)
                 }
                 "KeyDown" | "KeyUp" => {
-                    let key = cx.fresh();
+                    let key = cx.fresh(MTy::Ptr(HeapKind::Str));
                     let keyed = self.key_of(&mut cx, key, &payload);
-                    let event = cx.fresh();
+                    let event = cx.fresh(self.lower_ty(&payload));
                     let body = lets(
                         vec![(event, keyed)],
                         Expr::AllocVariant(layout, tag, vec![local(event)]),
@@ -142,19 +145,15 @@ impl Mono<'_> {
                     let MTy::Ptr(HeapKind::Record(point)) = self.lower_ty(&payload) else {
                         unreachable!("a pointer payload is a record");
                     };
-                    let (x, y) = (cx.fresh(), cx.fresh());
+                    let (x, y) = (cx.fresh(MTy::Float), cx.fresh(MTy::Float));
                     let at = Expr::AllocRecord(point, vec![local(x), local(y)]);
                     let body = Expr::AllocVariant(layout, tag, vec![at]);
                     (vec![(x, MTy::Float), (y, MTy::Float)], body)
                 }
                 _ => unreachable!("the checker admits only events the host sends"),
             };
-            let func = self.push_func(Func {
-                params,
-                env: None,
-                ret: MTy::Ptr(HeapKind::Variant(layout)),
-                body,
-            });
+            let ret = MTy::Ptr(HeapKind::Variant(layout));
+            let func = self.push_func(cx.into_func(params, None, ret, body));
             ctors.push(EventCtor { label, func });
         }
         ctors
@@ -169,7 +168,7 @@ impl Mono<'_> {
         debug_assert!(KEY_TAGS.iter().all(|t| self.tags.contains_key(*t)));
         let other = Expr::AllocVariant(layout, self.tags["Other"], vec![local(key)]);
         ARROWS.iter().rev().fold(other, |otherwise, (name, tag)| {
-            let literal = cx.fresh();
+            let literal = cx.fresh(MTy::Ptr(HeapKind::Str));
             let data = self.intern(name);
             let arrow = Expr::AllocVariant(layout, self.tags[*tag], Vec::new());
             Expr::Let(
@@ -192,27 +191,33 @@ impl Mono<'_> {
         let begin = self.scene("begin", Vec::new());
         let end = self.scene("end", Vec::new());
         let mut cx = FnCx::new(Subst::new());
-        let (closure, model, shapes) = (cx.fresh(), cx.fresh(), cx.fresh());
+        let shapes_mty = self.lower_ty(shapes_ty);
+        let (closure, model, shapes) = (
+            cx.fresh(closure_ty),
+            cx.fresh(model_ty),
+            cx.fresh(shapes_mty),
+        );
         let mut steps = vec![
             (
                 shapes,
                 Expr::CallClosure(Box::new(local(closure)), vec![local(model)]),
             ),
-            (cx.fresh(), Expr::CallForeign(begin, Vec::new())),
+            (cx.fresh(MTy::Unit), Expr::CallForeign(begin, Vec::new())),
         ];
         if let Some(walk) = walk {
             steps.push((
-                cx.fresh(),
+                cx.fresh(MTy::Unit),
                 Expr::CallDirect(walk, vec![local(shapes), int(PICTURE_BUDGET)]),
             ));
         }
-        steps.push((cx.fresh(), Expr::CallForeign(end, Vec::new())));
-        self.push_func(Func {
-            params: vec![(closure, closure_ty), (model, model_ty)],
-            env: None,
-            ret: MTy::Unit,
-            body: lets(steps, Expr::Const(Const::Unit)),
-        })
+        steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(end, Vec::new())));
+        let body = lets(steps, Expr::Const(Const::Unit));
+        self.push_func(cx.into_func(
+            vec![(closure, closure_ty), (model, model_ty)],
+            None,
+            MTy::Unit,
+            body,
+        ))
     }
 
     /// `(shapes, budget) -> Unit`, if the picture can hold any shape.
@@ -227,8 +232,9 @@ impl Mono<'_> {
 
         let id = self.reserve();
         let mut cx = FnCx::new(Subst::new());
-        let (shapes, budget) = (cx.fresh(), cx.fresh());
-        let (head, rest, left) = (cx.fresh(), cx.fresh(), cx.fresh());
+        let (shapes, budget) = (cx.fresh(list), cx.fresh(MTy::Int));
+        let item_ty = self.lower_ty(&item);
+        let (head, rest, left) = (cx.fresh(item_ty), cx.fresh(list), cx.fresh(MTy::Int));
         let step = spend(budget, |remaining| {
             lets(
                 vec![
@@ -239,16 +245,13 @@ impl Mono<'_> {
                 Expr::TailCall(Callee::Direct(id), vec![local(rest), local(left)]),
             )
         });
-        self.out[id.0 as usize] = Some(Func {
-            params: vec![(shapes, list), (budget, MTy::Int)],
-            env: None,
-            ret: MTy::Unit,
-            body: Expr::Switch(
-                shapes,
-                vec![(link, step)],
-                Box::new(Expr::Const(Const::Unit)),
-            ),
-        });
+        let body = Expr::Switch(
+            shapes,
+            vec![(link, step)],
+            Box::new(Expr::Const(Const::Unit)),
+        );
+        let params = vec![(shapes, list), (budget, MTy::Int)];
+        self.out[id.0 as usize] = Some(cx.into_func(params, None, MTy::Unit, body));
         Some(id)
     }
 
@@ -261,16 +264,23 @@ impl Mono<'_> {
             .collect();
         let id = self.reserve();
         let mut cx = FnCx::new(Subst::new());
-        let (shape, budget) = (cx.fresh(), cx.fresh());
+        let (shape, budget) = (cx.fresh(kind), cx.fresh(MTy::Int));
         let mut arms = Vec::new();
         for (label, payload) in &payloads {
             let tag = self.tags[label];
-            let record = cx.fresh();
+            let record = cx.fresh(self.lower_ty(payload));
             let read = |m: &Self, name: &str| Expr::Field(record, m.slot(payload, name));
             let mut steps = vec![(record, Expr::Payload(shape, tag, 0))];
             let body = match label.as_str() {
                 "Line" => {
-                    let args: Vec<Local> = (0..5).map(|_| cx.fresh()).collect();
+                    let arg_tys = [
+                        MTy::Float,
+                        MTy::Float,
+                        MTy::Float,
+                        MTy::Float,
+                        MTy::Ptr(HeapKind::Str),
+                    ];
+                    let args: Vec<Local> = arg_tys.into_iter().map(|ty| cx.fresh(ty)).collect();
                     for (arg, name) in args.iter().zip(["x1", "y1", "x2", "y2", "color"]) {
                         steps.push((*arg, read(self, name)));
                     }
@@ -281,36 +291,38 @@ impl Mono<'_> {
                             .chain([MTy::Ptr(HeapKind::Str)])
                             .collect(),
                     );
-                    steps.push((cx.fresh(), Expr::CallForeign(line, args)));
+                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(line, args)));
                     local(budget)
                 }
                 "Polyline" => {
-                    let (color, points, left) = (cx.fresh(), cx.fresh(), cx.fresh());
                     let points_ty = self.field_ty(payload, "points");
+                    let points_mty = self.lower_ty(&points_ty);
+                    let (color, points, left) = (
+                        cx.fresh(MTy::Ptr(HeapKind::Str)),
+                        cx.fresh(points_mty),
+                        cx.fresh(MTy::Int),
+                    );
                     let walk = self.points_walk(&points_ty);
                     let begin = self.scene("polyline_begin", vec![MTy::Ptr(HeapKind::Str)]);
                     let end = self.scene("polyline_end", Vec::new());
                     steps.push((color, read(self, "color")));
                     steps.push((points, read(self, "points")));
-                    steps.push((cx.fresh(), Expr::CallForeign(begin, vec![color])));
+                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(begin, vec![color])));
                     let walked = match walk {
                         Some(walk) => Expr::CallDirect(walk, vec![local(points), local(budget)]),
                         None => local(budget),
                     };
                     steps.push((left, walked));
-                    steps.push((cx.fresh(), Expr::CallForeign(end, Vec::new())));
+                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(end, Vec::new())));
                     local(left)
                 }
                 _ => unreachable!("the checker admits only shapes the host draws"),
             };
             arms.push((tag, lets(steps, body)));
         }
-        self.out[id.0 as usize] = Some(Func {
-            params: vec![(shape, kind), (budget, MTy::Int)],
-            env: None,
-            ret: MTy::Int,
-            body: switch_on(shape, arms),
-        });
+        let params = vec![(shape, kind), (budget, MTy::Int)];
+        self.out[id.0 as usize] =
+            Some(cx.into_func(params, None, MTy::Int, switch_on(shape, arms)));
         id
     }
 
@@ -322,8 +334,10 @@ impl Mono<'_> {
         let vertex = self.scene("vertex", vec![MTy::Float; 2]);
         let id = self.reserve();
         let mut cx = FnCx::new(Subst::new());
-        let (points, budget) = (cx.fresh(), cx.fresh());
-        let (head, rest, x, y) = (cx.fresh(), cx.fresh(), cx.fresh(), cx.fresh());
+        let (points, budget) = (cx.fresh(list), cx.fresh(MTy::Int));
+        let point_ty = self.lower_ty(&point);
+        let (head, rest) = (cx.fresh(point_ty), cx.fresh(list));
+        let (x, y) = (cx.fresh(MTy::Float), cx.fresh(MTy::Float));
         let (x_slot, y_slot) = (self.slot(&point, "x"), self.slot(&point, "y"));
         let step = spend(budget, |remaining| {
             lets(
@@ -332,17 +346,14 @@ impl Mono<'_> {
                     (rest, Expr::Payload(points, link, 1)),
                     (x, Expr::Field(head, x_slot)),
                     (y, Expr::Field(head, y_slot)),
-                    (cx.fresh(), Expr::CallForeign(vertex, vec![x, y])),
+                    (cx.fresh(MTy::Unit), Expr::CallForeign(vertex, vec![x, y])),
                 ],
                 Expr::TailCall(Callee::Direct(id), vec![local(rest), remaining]),
             )
         });
-        self.out[id.0 as usize] = Some(Func {
-            params: vec![(points, list), (budget, MTy::Int)],
-            env: None,
-            ret: MTy::Int,
-            body: Expr::Switch(points, vec![(link, step)], Box::new(local(budget))),
-        });
+        let body = Expr::Switch(points, vec![(link, step)], Box::new(local(budget)));
+        let params = vec![(points, list), (budget, MTy::Int)];
+        self.out[id.0 as usize] = Some(cx.into_func(params, None, MTy::Int, body));
         Some(id)
     }
 

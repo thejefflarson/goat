@@ -88,14 +88,10 @@ impl Mono<'_> {
 
         let mty = self.lower_ty(&ty);
         let mut cx = FnCx::new(Subst::new());
-        let locals: Vec<Local> = (0..kind.arity()).map(|_| cx.fresh()).collect();
+        let locals: Vec<Local> = (0..kind.arity()).map(|_| cx.fresh(mty)).collect();
         let body = build(self, &mut cx, &locals);
-        self.out[id.0 as usize] = Some(Func {
-            params: locals.iter().map(|&l| (l, mty)).collect(),
-            env: None,
-            ret,
-            body,
-        });
+        let params = locals.iter().map(|&l| (l, mty)).collect();
+        self.out[id.0 as usize] = Some(cx.into_func(params, None, ret, body));
         id
     }
 
@@ -103,7 +99,7 @@ impl Mono<'_> {
     fn sequence(&self, cx: &mut FnCx, mut parts: Vec<Expr>) -> Expr {
         let last = parts.pop().unwrap_or(Expr::Const(Const::Unit));
         parts.into_iter().rev().fold(last, |rest, part| {
-            Expr::Let(cx.fresh(), Box::new(part), Box::new(rest))
+            Expr::Let(cx.fresh(MTy::Unit), Box::new(part), Box::new(rest))
         })
     }
 
@@ -155,7 +151,7 @@ impl Mono<'_> {
         match ty.unfold_head() {
             Ty::Number => Expr::Cmp(CmpOp::Eq, Box::new(a), Box::new(b)),
             Ty::Bool => {
-                let (l, r) = (cx.fresh(), cx.fresh());
+                let (l, r) = (cx.fresh(MTy::Bool), cx.fresh(MTy::Bool));
                 let differs = Expr::If(
                     Box::new(Expr::Local(r)),
                     Box::new(boolean(false)),
@@ -173,7 +169,10 @@ impl Mono<'_> {
                 )
             }
             Ty::Str => {
-                let (l, r) = (cx.fresh(), cx.fresh());
+                let (l, r) = (
+                    cx.fresh(MTy::Ptr(HeapKind::Str)),
+                    cx.fresh(MTy::Ptr(HeapKind::Str)),
+                );
                 Expr::Let(
                     l,
                     Box::new(a),
@@ -262,13 +261,13 @@ impl Mono<'_> {
         match ty.unfold_head() {
             Ty::Number => Expr::Write(Write::Number(Box::new(value))),
             Ty::Bool => {
-                let b = cx.fresh();
+                let b = cx.fresh(MTy::Bool);
                 let (yes, no) = (self.text("true"), self.text("false"));
                 let pick = Expr::If(Box::new(Expr::Local(b)), Box::new(yes), Box::new(no));
                 Expr::Let(b, Box::new(value), Box::new(pick))
             }
             Ty::Str => {
-                let s = cx.fresh();
+                let s = cx.fresh(MTy::Ptr(HeapKind::Str));
                 let written = if nested {
                     let quote = self.text("\"");
                     let closing = self.text("\"");
@@ -289,7 +288,11 @@ impl Mono<'_> {
             }
             Ty::Func(..) | Ty::Rec(..) | Ty::Var(_) => {
                 let name = self.text("<function>");
-                self.sequence(cx, vec![value, name])
+                let ty = match ty {
+                    Ty::Var(_) => MTy::Unit,
+                    _ => self.lower_ty(ty),
+                };
+                Expr::Let(cx.fresh(ty), Box::new(value), Box::new(name))
             }
         }
     }

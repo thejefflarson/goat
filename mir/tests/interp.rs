@@ -122,6 +122,7 @@ fn closure_reads_capture_and_frees_environment() {
             Expr::Capture(0),
             let_(3, Expr::Drop(Local(1)), add(local(0), local(2))),
         ),
+        locals: Default::default(),
     };
     let main = func(
         MTy::Int,
@@ -155,6 +156,7 @@ fn tail_call_runs_in_constant_stack() {
                 )],
             )),
         ),
+        locals: Default::default(),
     };
     let main = func(MTy::Int, Expr::CallDirect(FuncId(1), vec![int(100_000)]));
     let out = run_verified(&program(vec![main, count]));

@@ -3,6 +3,11 @@
 use goat_checker::hir::Boundary;
 use goat_mir::*;
 
+mod infer;
+
+#[allow(unused_imports)]
+pub use infer::infer_locals;
+
 pub fn int(n: i64) -> Expr {
     Expr::Const(Const::Int(n))
 }
@@ -25,6 +30,7 @@ pub fn func(ret: MTy, body: Expr) -> Func {
         env: None,
         ret,
         body,
+        locals: Default::default(),
     }
 }
 
@@ -77,6 +83,7 @@ pub fn func_with(params: Vec<(u32, MTy)>, ret: MTy, body: Expr) -> Func {
         env: None,
         ret,
         body,
+        locals: Default::default(),
     }
 }
 

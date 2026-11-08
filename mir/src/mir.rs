@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 macro_rules! id {
     ($($name:ident),*) => {$(
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -28,6 +30,12 @@ pub enum MTy {
 impl MTy {
     pub fn is_ptr(self) -> bool {
         matches!(self, MTy::Ptr(_))
+    }
+
+    /// Whether an entry that returns this type has its value dropped after it
+    /// is computed. A string root is handed to the host instead.
+    pub fn is_discarded_root(self) -> bool {
+        matches!(self, MTy::Ptr(kind) if kind != HeapKind::Str)
     }
 }
 
@@ -108,6 +116,21 @@ pub struct Func {
     pub env: Option<Env>,
     pub ret: MTy,
     pub body: Block,
+    /// The type of every `Let` and `Unpack` binder in `body`. Parameters and
+    /// `env` are typed by their own declarations.
+    pub locals: BTreeMap<Local, MTy>,
+}
+
+impl Func {
+    pub fn local_ty(&self, x: Local) -> Option<MTy> {
+        let param = self.params.iter().find(|(l, _)| *l == x).map(|(_, t)| *t);
+        let env = self
+            .env
+            .as_ref()
+            .filter(|env| env.local == x)
+            .map(|env| MTy::Ptr(HeapKind::Closure(env.sig)));
+        param.or(env).or_else(|| self.locals.get(&x).copied())
+    }
 }
 
 pub type Block = Expr;
