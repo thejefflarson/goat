@@ -1,18 +1,20 @@
 # ADR 0020 — A host declares its event/shape/key vocabulary; the compiler stops hard-coding the turtle's
 
-- Status: proposed (2026-11-08)
+- Status: accepted (2026-11-08)
 - Context: #234 (follow-up to #227/#233, which put the host's `foreign` functions
   on `HostInterface`); ADR 0015 (the host-owned `init`/`update`/`draw` contract,
   which already calls the v1 Shape and event vocabulary "reversible, versioned
-  data on top of the ABI"); ADR 0016 (tags are declared, not capitalized — it
+  data on top of the ABI", and whose §4 "as built #106" note already *closes* the
+  event/shape rows to the tags a program handles or draws); ADR 0016 (tags are
+  declared, not capitalized — a `tag` declaration is a *closed* variant type; it
   injects the vocab tag *names* as built-in declarations and flags "move the host
   vocabulary into a goat prelude" as a deferred, separable follow-on); ADR 0010
   (mono assigns variant tag numbers globally in sorted-label order, and the
   ADR-0015 reload fingerprint hashes them); ADR 0018 (one Rust conformance suite,
   a thin driver per host); ADR 0019 / PR #243 (the Phase-12 on-device runtime,
   proposed). This ADR extends ADR 0015; it supersedes nothing. Recorded as a
-  decision draft before #234 is built, because #234 gates the second host (#111)
-  and the embedded host's vocabulary (#117/#118).
+  decision before #234 is built, because #234 gates the second host (#111) and
+  the embedded host's vocabulary (#117/#118).
 
 ## Context
 
@@ -40,7 +42,7 @@ That is fine while the turtle is the only interactive host. It stops being fine
 at the next one. A p5-style game host (#111) wants its own events and shapes; an
 embedded host (#117/#118) wants `ButtonPress`, `Timer`, `SensorReading` in and
 LED/GPIO shapes out, not `Polyline` and `Pointer`. #234 asks to make the
-vocabulary configurable — to thread a vocab *value* through the passes that today
+vocabulary host-supplied — to thread a vocab *value* through the passes that today
 read the constants — and warrants an ADR because the question is not only "where
 does the list live" but "what, exactly, is a vocabulary, given that part of it is
 backend marshalling code that no list of names can carry."
@@ -52,7 +54,7 @@ whole shape of the cost, so it is worth stating per pass:
 
 | Pass | File | Reads the vocab as | How hard-coded |
 |---|---|---|---|
-| lower | `checker/src/lower.rs` | `vocab::tag_names()` → declared tag names; `vocab::key_group()` → the closed `Key` group | **data**: iterates a list, injects declarations |
+| lower | `checker/src/lower.rs` | `vocab::tag_names()` → declared event/shape tag names; `vocab::key_group()` → the closed `Key` group | **data**: iterates a list, injects declarations |
 | infer | `checker/src/infer.rs` (`check_events`/`check_shapes`) | `EVENT_TAGS`/`SHAPE_TAGS` as an allowlist; `event_payload`/`shape_payload` as a payload oracle to unify against | **data**: reads lists and calls the payload functions |
 | mono | `mir/src/mono.rs` | `KEY_TAGS` to lay out the full `Key` group when interactive | **data**: extends the tag set |
 | mono glue | `mir/src/mono/interactive.rs` | per-tag constructor and scene-streaming code | **structural Rust**: see below |
@@ -84,67 +86,96 @@ streaming). The checker needs (1) and (2); the backend glue needs (3). Goat
 source can express (1) and (2); it cannot express (3). That is the real design
 question #234 forces, and ADR 0015 already anticipated it by calling the
 vocabulary "versioned data on top of the ABI" while leaving the data a compiler
-constant. This ADR turns that data into something a host supplies.
+constant. This ADR turns that data into something a host supplies — without
+loosening what kind of thing it is.
+
+### The vocabulary is closed; "host-configured" does not change that
+
+A host's events, shapes, and keys are each a **closed** set of tags. ADR 0015
+subscribes a program to exactly the tags its `update` handles or its `draw`
+draws, rejects a tag the host doesn't send (*"the host doesn't send a
+`Frobnicate` event"*), and unifies each payload with the vocabulary; its §4 "as
+built #106" note records that the checker *closes* the event and shape rows to
+those tags, so a key `match` with no `else` must name all five `Key` tags. ADR
+0016 makes a `tag` declaration a closed variant type and relies on the same
+`close_match` machinery for exhaustiveness.
+
+Making the vocabulary host-supplied is a question of *where the closed set comes
+from*, not whether it is closed. **"Configurable per host" is not "open in the
+type system."** Each host declares its own closed set of event/shape/key tags;
+the set is host-supplied rather than a compiler constant, but within any one
+compilation it is fixed and closed. This is deliberately **not**
+row-polymorphic or extensible-membership variants — a program cannot add a tag
+to a host's vocabulary, and the checker's exhaustiveness guarantee is unchanged.
 
 ## Decision
 
-### 1. The vocabulary rides on `HostInterface`, as structured data, not as goat source
+### 1. The vocabulary is a set of closed tag families, supplied per host as a structured `Vocab` on `HostInterface`
 
 A host already has one value that means "what I offer a program" —
-`HostInterface`. The vocabulary belongs on it (option (a) in #234), beside the
-foreign-function prelude. The open choice is the *form*: a structured descriptor
-the embedder builds in Rust (option (b)), or goat `tag` declarations in the
-prelude the host already supplies (option (c)).
+`HostInterface`. The vocabulary belongs on it, beside the foreign-function
+prelude. `HostInterface` gains a `vocab: Vocab` field; `HostInterface::turtle()`
+supplies the turtle's, which is the one that exists today lifted from the
+`checker/src/vocab.rs` constants into a value. For each event tag and each shape
+tag the descriptor names: the tag, its payload goat type, and its marshalling
+(§2). It also carries the key group and the role split — which tags are the event
+family and which are the shape family. Each of these is a closed set; the `Vocab`
+is the host's declaration of them.
 
-**Recommendation: a structured descriptor** — call it `Vocab` — that is the
-host-supplied form of today's `checker/src/vocab.rs`. `HostInterface` gains a
-`vocab: Vocab` field; `HostInterface::turtle()` supplies the turtle's, which is
-the one that exists today lifted from constants into a value. For each event tag
-and each shape tag the descriptor names: the tag, its payload goat type, and its
-marshalling (below). It also carries the key group and the role split — which
-tags are the event family and which are the shape family.
+`Vocab` is a **structured descriptor the Rust embedder builds**, not goat source,
+for two reasons:
 
-Source declarations (option (c)) are rejected as the *primary* mechanism, for
-two concrete reasons, not a preference:
-
-- **Open families have no source syntax.** Events and shapes are *open* tag
-  families: ADR 0015 subscribes a program to exactly the tags its `update`
-  handles, and an `else` arm adds none. `lower.rs` reflects this by injecting
-  event/shape tags *ungrouped* (group `None`), unlike the `Key` group, which is
-  closed. But ADR 0016's `tag` declaration always *closes* a set. So there is no
-  way, in goat source today, to declare "these tags exist with these payloads, as
-  an open family." Option (c) would need new language syntax for an open tag
-  family — a bigger change than #234, and one that touches every program, not
-  just hosts.
-- **Source cannot carry the marshalling protocol.** A `tag` declaration gives the
-  payload *type*; it does not say that a `Polyline` streams to `scene.polyline_*`
+- **The consumer is a Rust embedder.** `HostInterface` is a value the turtle,
+  #111, and the Phase-11 embedding API each construct in Rust. A structured
+  `Vocab` matches that; a prelude string would make the host round-trip its
+  vocabulary through the parser.
+- **Source cannot carry the marshalling protocol.** A declaration can give the
+  payload *type*; it cannot say that a `Polyline` streams to `scene.polyline_*`
   by walking its `points` list, or that a `Line`'s fields go to `scene.line` in
   the order `x1,y1,x2,y2,color`. That protocol is item (3) above, and it is Rust.
+  The payload *types* in a `Vocab` stay goat types; only the marshalling, which
+  the language has no way to express, stays in Rust.
 
-The descriptor is also the right fit for who the consumer is. `HostInterface` is
-a value a *Rust embedder* constructs — the turtle, #111, the Phase-11 embedding
-API all build one in Rust. A structured `Vocab` matches that; a prelude string
-would make the host round-trip its vocabulary through the parser to say something
-the parser cannot fully say anyway.
+This resolves the "move the host vocab into a goat prelude" gesture ADR 0016
+deferred: the *source* of the vocabulary moves from a compiler constant to the
+host's structured `Vocab` — not to a shared goat prelude. The tag names and
+payload types that ADR 0016 injects as built-in declarations now come from the
+host's `Vocab` instead of `vocab.rs`, keeping it the single source of truth for a
+host's contract while leaving ADR 0016's closed-`tag` semantics exactly as they
+are.
 
-> This does not abandon ADR 0016's "move the host vocab into a goat prelude"
-> direction. ADR 0016 moved the vocab tag *names* into built-in declarations
-> sourced from `vocab.rs`; this ADR moves the *source of those declarations* from
-> a constant to the host's `Vocab`. The payload types stay goat types. What stays
-> in Rust is only the marshalling the language has no way to express.
+**Open variants are a non-goal.** An earlier draft of this ADR framed events and
+shapes as *open* tag families and weighed growing goat with new "open-tag-family"
+syntax so a host could declare an all-source vocabulary. That framing was wrong
+and that option is rejected outright — not deferred research, and not tied to any
+future language tier. A host's event, shape, and key families are closed sets;
+the checker's exhaustiveness guarantee (§2) depends on that closedness; goat gains
+no open-tag syntax. The only thing that is host-configured is *which closed set*
+a host declares.
 
-### 2. Marshalling is derived from payload types under one convention, not matched per tag
+### 2. The checker enforces closedness unchanged; marshalling is derived from payload types
 
-The structural `match label.as_str()` in `mir/src/mono/interactive.rs` is the
+Nothing about host-supplying the vocabulary weakens exhaustiveness. The checker
+closes an event/shape variant exactly as it does today: a `match` **without**
+`else` closes the scrutinee's variant to the named tags and requires them to be
+exhaustive, and `else` is the opt-in catch-all. The grammar makes the `else` arm
+optional — `match_expr = { match ~ expr ~ do ~ arm* ~ else_branch? ~ done }`,
+`else_branch` optional — and `infer_match` in `checker/src/infer.rs` calls
+`close_match` precisely in the no-`else`, variant case. The host's `Vocab`
+supplies the allowlist (`check_events`/`check_shapes`) and the payload oracle
+that each handled tag unifies against; the closing step is untouched. A program
+still handles a *subset* of the host's closed vocabulary (ADR 0015: the host
+enables a superset of the handled tags), and every tag it names must be in that
+vocabulary. The internal scoped-label rows that inference uses to get there —
+records, and an event/shape row extended per arm and then closed — are an
+inference detail, never a surfaced open variant.
+
+The structural `match label.as_str()` in `mir/src/mono/interactive.rs` is the one
 part that cannot simply read a list, and it is also the part most worth
 *removing* rather than merely parameterizing. A `match` with an `unreachable!()`
-default is exactly a vocabulary hard-coded in code; adding a host by adding an arm
-is not "configurable."
-
-**Recommendation: fix a flattening convention over payload types, and derive the
-glue from the type.** Make every payload that crosses the ABI a tree of
-host-native *leaves* — scalars (`Int`/`Float`), `String`, and records/lists of
-those — and let the backend:
+default is a vocabulary hard-coded in code; adding a host by adding an arm is not
+"host-supplied." So the glue is fixed over a flattening convention on payload
+types and derived from the type:
 
 - **construct** an event by flattening the payload type's scalar/string leaves,
   left to right, into the `goat_event_<Tag>` parameter list, then rebuilding the
@@ -157,26 +188,30 @@ those — and let the backend:
   argument order is the payload record's field order, and the per-frame vertex
   budget bounds the list walk exactly as it does today.
 
-This leaves one genuinely host-semantic thing in today's tree that is **not**
-derivable from a type: `key_of` / `ARROWS`, the browser `KeyboardEvent.key` →
-`Key` mapping. It is a decoder, not a layout. Baking it into codegen *complects*
-the compiler with one host's keyboard — the opposite of configurable.
+Deriving the `goat_event_<Tag>` constructors and the scene-streaming glue from a
+`Vocab`'s payload types is the expensive part of #234, and it is what lets a new
+host add a `Vocab` rather than a backend arm with an `unreachable!()` default.
 
-**Recommendation: decouple it.** The `KeyDown`/`KeyUp` payload that crosses the
-ABI is a `String`; the string→`Key` mapping becomes goat prelude code the turtle
-`Vocab` ships (a `key_of : String -> Key` the turtle's `update` calls), not
-compiler glue. Then the backend is fully generic — it marshals leaves — and each
-host's decode semantics live where a host can change them: in that host's
-`Vocab` prelude, checked like any goat code. A host with no keyboard (an embedded
-sensor host) simply has no such decoder, instead of inheriting arrow strings it
-will never see.
+### 3. The key decode belongs to the host, inside its `Vocab` — keys in browser
 
-This is the sharpest point in the ADR, and §"Open questions" flags it for a
-recorded decision: whether the arrow decode moves to the prelude (recommended,
-backend stays generic) or stays a per-`Vocab` backend hook (smaller diff,
-backend keeps one escape hatch).
+One thing in today's tree is genuinely host-semantic and **not** derivable from a
+payload type: `key_of` / `ARROWS`, the browser `KeyboardEvent.key` → `Key`
+mapping. It is a decoder, not a layout. Baking it into codegen *complects* the
+compiler with one host's keyboard — the opposite of host-supplied.
 
-### 3. Tag numbers stay mono-global and sorted-label; a host never picks a number
+**The key decode belongs to the host, carried in its `Vocab`.** The browser host
+does `KeyboardEvent.key → Key` as part of *its* (closed) `Vocab`: the decode
+travels with the browser host, where a browser can change it. It is **not**
+hard-coded in the compiler backend (today's `key_of`/`ARROWS` in
+`mir/src/mono/interactive.rs` go away), and it is **not** forced into a shared
+goat prelude that every host inherits. The payload that crosses the ABI for
+`KeyDown`/`KeyUp` is a `String`; turning that `String` into a `Key` is the
+browser `Vocab`'s concern. With the decode gone from codegen, the backend is
+fully generic — it marshals leaves (§2) — and a host with no keyboard (an
+embedded sensor host) carries no such decoder, rather than inheriting arrow
+strings it will never see.
+
+### 4. Tag numbers stay mono-global and sorted-label; a host never picks a number
 
 ADR 0010 assigns every variant tag a number globally, in sorted-label order over
 all tags a program uses, and `mono.rs` adds the key group's tags when the program
@@ -184,7 +219,7 @@ is interactive. The ADR-0015 reload fingerprint (FNV-1a over the model's layout)
 hashes those numbers, so layout stability depends on the numbering being a pure
 function of the tag *set*.
 
-A configurable vocabulary changes which tags enter that set, not how they are
+A host-supplied vocabulary changes which tags enter that set, not how they are
 numbered. The rule holds unchanged:
 
 - The `Vocab`'s tags join the mono-global set the same way the constants do
@@ -205,7 +240,7 @@ For the turtle, nothing moves: the same tags, sorted the same way, get the same
 numbers and the same fingerprint as today. #234 is behavior-neutral for it by
 construction.
 
-### 4. Scope and sequencing: a turtle-first refactor that unblocks the second host
+### 5. Scope and sequencing: a turtle-first refactor that unblocks the second host
 
 #234 is "not needed for the turtle or the #228 driver," and this ADR keeps it
 that way: the deliverable is a refactor that lifts `checker/src/vocab.rs` from
@@ -219,7 +254,7 @@ Dependencies, stated precisely because the task's "sits behind ADR 0019" is easy
 to over-read:
 
 - #234 is a checker/mono refactor. It is **independent of ADR 0019** (PR #243),
-  which decides the on-device *runtime* (WAMR, tail calls) — a different layer. 
+  which decides the on-device *runtime* (WAMR, tail calls) — a different layer.
   #234 can land whenever; it needs no runtime decision.
 - #234 **unblocks #111** (the Rust p5-style second host) directly. #111 is a
   desktop Rust host and needs no embedded runtime, so it depends on #234 and not
@@ -244,67 +279,60 @@ it rather than for its own sake.
 - The backend stops carrying one host's vocabulary. Removing the
   `match label.as_str()` arms in favor of type-driven marshalling (§2) means a new
   host adds a `Vocab`, not a backend arm with an `unreachable!()` default —
-  "configurable" in the sense that matters.
+  host-supplied in the sense that matters.
 - "Errors come only from the checker" is preserved and slightly strengthened: a
-  host's vocabulary is goat types plus a marshalling descriptor, both fixed before
-  mono runs, so mono still sees only well-typed closed variants. A host that
-  declares an ill-formed payload type is a checker error against that host's
-  prelude, not a mono panic.
-- The turtle is unchanged in behavior and becomes the reference `Vocab`. Decoupling
-  the key decode (§2) is the one turtle-facing change, and it is invisible to a
-  program: the turtle `Vocab`'s prelude supplies the `key_of` its `update` already
-  effectively calls.
+  host's vocabulary is closed goat types plus a marshalling descriptor, both fixed
+  before mono runs, so mono still sees only well-typed closed variants. A host
+  that declares an ill-formed payload type is a checker error against that host's
+  vocabulary, not a mono panic. Exhaustiveness is exactly as strong as before
+  (§2): host-configuring the vocabulary does not open it.
+- The turtle is unchanged in behavior and becomes the reference `Vocab`. Moving
+  the key decode (§3) out of codegen into the browser `Vocab` is the one
+  turtle-facing change, and it is invisible to a program: the same
+  `KeyboardEvent.key` → `Key` mapping, now owned by the host that has a keyboard.
 - Cost, stated plainly: the checker side (`lower`/`infer`/`mono.rs`) is a
   parameter-threading change — pass the `Vocab` where the constants are read. The
   backend side (`mir/src/mono/interactive.rs`) is a genuine rewrite: `event_ctors`,
   `shape_func`, `points_walk`, and `key_of` go from per-tag `match` arms to one
-  type-driven walk plus the decoupled decoder. That rewrite is the bulk of #234,
-  and it is where the risk is — it must reproduce today's exact `scene.*` call
-  sequence for the turtle, which the conformance suite pins.
+  type-driven walk (§2), with the key decode leaving codegen entirely (§3). That
+  rewrite is the bulk of #234, and it is where the risk is — it must reproduce
+  today's exact `scene.*` call sequence for the turtle, which the conformance
+  suite pins.
 
 ### Reversible (versioned) parts — deliberately not one-way doors
 
 - **The contents of any host's `Vocab`** — which events, shapes, and keys it
-  offers, and their payloads. This is the whole point: growable per host without
-  an ADR, extending ADR 0015's "the v1 vocabulary is versioned data."
+  offers, and their payloads. This is the whole point: a host may ship a
+  *different* closed set, or grow its set in a later version, without an ADR,
+  extending ADR 0015's "the v1 vocabulary is versioned data." Within any one
+  compilation the set is still fixed and closed; versioning the set is not opening
+  it.
 - **The §2 marshalling convention's details** — the exact leaf-flattening order,
   how a `List` maps to begin/element/end. Internal to the compiler and the
   descriptor; changeable as long as every host's conformance cases stay green.
-- **Where the key decode lives** (prelude vs. backend hook) — the §2 open
-  question; either choice is reversible until a non-turtle host ships a decoder.
+- **The form of a host's key decode inside its `Vocab`** — the browser host owns
+  the `KeyboardEvent.key` → `Key` mapping (§3); how that `Vocab` expresses it is
+  the host's to change, as long as it stays out of codegen and out of a shared
+  prelude.
 
 ### One-way doors
 
 - **The public shape of `HostInterface`'s `Vocab`** — what a Rust embedder passes
   to declare a vocabulary — becomes a stable contract once #111 and the embedding
-  API (#111's "keep the embedding API honest") depend on it. Getting the
-  descriptor's *form* right (§1) is the durable decision here.
+  API depend on it. Getting the descriptor's *form* right (§1) is the durable
+  decision here.
 - **The marshalling convention as a contract between the descriptor and the
   backend** — once a host relies on "my payload type determines my constructor
   signature and my scene calls," that mapping is load-bearing the way ADR 0015's
   scene-streaming protocol is.
 
-## Open questions (flagged for a recorded decision)
+### Deliberately deferred
 
-If this ADR is accepted, the main loop should record the resolutions as an
-amendment here (ADR 0015's pattern).
-
-1. **The key decode (§2), the sharp one.** Move the browser `KeyboardEvent.key` →
-   `Key` mapping out of `mir/src/mono/interactive.rs` into the turtle `Vocab`'s
-   goat prelude (**recommended** — the backend becomes fully generic and no host
-   inherits another's keyboard), or keep a per-`Vocab` backend decode hook (a
-   smaller diff, but the backend keeps one host-semantic escape hatch that every
-   future host must reason about)?
-2. **Descriptor form (§1).** A structured Rust `Vocab` (**recommended**) versus
-   growing goat with open-tag-family syntax so option (c) — an all-source
-   vocabulary — becomes possible. The latter is the ADR-0016-gestured end state
-   but a language change well beyond #234; recording "not now, and here is why"
-   keeps the gesture from being read as a commitment.
-3. **Relationship to WIT (Phase 11/12).** `docs/plan.md` has hosts declare their
-   interface via WIT, and WIT already fits the *foreign-function* (import)
-   direction. Events and shapes are not functions a program calls — they are
-   variants the host constructs through compiler glue and a picture streamed as
-   data — so WIT does not naturally express them, and this ADR keeps the `Vocab`
-   its own concern. Whether #117/#118 express their embedded vocabulary *in* a
-   `Vocab` descriptor or derive one from a WIT world is a Phase-12 detail to
-   decide when those land, not now.
+- **Relationship to WIT (Phase 11/12).** `docs/plan.md` has hosts declare their
+  interface via WIT, and WIT already fits the *foreign-function* (import)
+  direction. Events and shapes are not functions a program calls — they are
+  closed variants the host constructs through compiler glue and a picture streamed
+  as data — so WIT does not naturally express them, and this ADR keeps the `Vocab`
+  its own concern. Whether #117/#118 express their embedded vocabulary *in* a
+  `Vocab` descriptor or derive one from a WIT world is a Phase-12 detail to decide
+  when those hosts land, not now.
