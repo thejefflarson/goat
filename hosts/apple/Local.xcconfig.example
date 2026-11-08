@@ -1,4 +1,8 @@
 // Copy to Local.xcconfig and set DEVELOPMENT_TEAM to your Apple Development team.
 // Local.xcconfig is gitignored. Empty team = unsigned build (what CI does).
+// WARNING: CI artifacts (goat_web.wasm, embed.html) carry no code signature; verify
+// checksums before promoting a CI build to distribution.
+// For distribution set PROVISIONING_PROFILE_SPECIFIER to a named profile; Automatic
+// signing may silently select a distribution certificate with unreviewed entitlements.
 DEVELOPMENT_TEAM =
-CODE_SIGN_STYLE = Automatic
+CODE_SIGN_STYLE = Manual

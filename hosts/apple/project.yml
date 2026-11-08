@@ -5,19 +5,18 @@ options:
   # `test -e || cp` (not `cp -n`): macOS `cp -n` exits 1 when it skips an existing
   # file, which would fail preGenCommand and abort xcodegen for anyone who already
   # has a Local.xcconfig.
-  preGenCommand: test -e Local.xcconfig || cp Local.xcconfig.example Local.xcconfig
+  preGenCommand: "test -e 'Local.xcconfig' || cp 'Local.xcconfig.example' 'Local.xcconfig'"
   deploymentTarget:
     macOS: "13.0"
     iOS: "16.0"
 configFiles:
   Debug: Local.xcconfig
-  Release: Local.xcconfig
 settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
 # Both apps share App/ and the GoatKit sources, built here as a framework per
 # platform (the GoatKit package is the same code for `swift test`).
 # Resources/web is staged by scripts/stage-web.sh: web/embed.html, its modules
@@ -58,11 +57,13 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
+        com.apple.security.cs.allow-jit: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat
         PRODUCT_NAME: Goat
         GENERATE_INFOPLIST_FILE: NO
+        ENABLE_HARDENED_RUNTIME: YES
     info:
       path: Info-macOS.plist
       properties: &info
@@ -108,8 +109,7 @@ targets:
         <<: *info
         UILaunchScreen: {}
         UISupportsDocumentBrowser: true
-        LSSupportsOpeningDocumentsInPlace: true
-        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
