@@ -80,9 +80,7 @@ pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatEr
     );
     let mut prelude_root = ctx.lower_source(prelude, FileId::Prelude)?;
 
-    let (names, chain_len) = defined_names(&prelude_root);
-    ctx.depth = chain_len;
-    ctx.prelude_scope = names;
+    ctx.prelude_scope = defined_names(&prelude_root);
     let user_root = ctx.lower_source(source, FileId::User)?;
 
     let root = if matches!(prelude_root.kind, ExprKind::Unit) {
@@ -131,11 +129,9 @@ fn contract_bindings(root: &Expr) -> Option<[(Symbol, Span); 3]> {
     Some([init?, update?, draw?])
 }
 
-/// The names bound by the chain of `Let`s that starts at `root`, and the
-/// chain's length.
-fn defined_names(root: &Expr) -> (HashMap<String, Symbol>, usize) {
+/// The names bound by the chain of `Let`s that starts at `root`.
+fn defined_names(root: &Expr) -> HashMap<String, Symbol> {
     let mut names = HashMap::new();
-    let mut len = 0;
     let mut next = Some(root);
     while let Some(Expr {
         kind: ExprKind::Let {
@@ -145,10 +141,9 @@ fn defined_names(root: &Expr) -> (HashMap<String, Symbol>, usize) {
     }) = next
     {
         names.insert(name.clone(), *symbol);
-        len += 1;
         next = rest.as_deref();
     }
-    (names, len)
+    names
 }
 
 /// Make `user` the `rest` of the last `Let` in the chain at `prelude`.
@@ -410,19 +405,26 @@ impl Lower {
     /// Make `tail` the last thing in the chain of `Let`s at `chain`; an
     /// expression already there runs first, its value discarded.
     fn append_to_chain(&mut self, chain: &mut Expr, tail: Expr, span: Span) {
-        let ExprKind::Let { rest, .. } = &mut chain.kind else {
+        let mut link = chain;
+        while matches!(
+            &link.kind,
+            ExprKind::Let { rest: Some(next), .. } if matches!(next.kind, ExprKind::Let { .. })
+        ) {
+            let ExprKind::Let {
+                rest: Some(next), ..
+            } = &mut link.kind
+            else {
+                unreachable!("the loop condition matched a link with a successor");
+            };
+            link = next;
+        }
+        let ExprKind::Let { rest, .. } = &mut link.kind else {
             unreachable!("the chain holds the bindings found above");
         };
-        match rest {
-            Some(next) if matches!(next.kind, ExprKind::Let { .. }) => {
-                self.append_to_chain(next, tail, span)
-            }
-            Some(_) => {
-                let old = rest.take().expect("matched Some");
-                *rest = Some(Box::new(self.discard(span, *old, tail)));
-            }
-            None => *rest = Some(Box::new(tail)),
-        }
+        *rest = Some(Box::new(match rest.take() {
+            Some(old) => self.discard(span, *old, tail),
+            None => tail,
+        }));
     }
 
     fn node(&mut self, span: Span, kind: ExprKind) -> Expr {
@@ -471,43 +473,83 @@ impl Lower {
     /// siblings, so [`Self::lower_operand`] consumes them before the next
     /// operator.
     fn lower_expr(&mut self, pair: Pair<Rule>) -> Expr {
-        let added = chain_depth(&pair);
-        if self.depth + added > MAX_DEPTH {
-            let span = pair
-                .clone()
-                .into_inner()
-                .next()
-                .map_or_else(|| self.span_of(&pair), |first| self.span_of(&first));
-            self.errors
-                .push(GoatError::new(span, "expression nested too deeply"));
-            return self.node(span, ExprKind::Unit);
-        }
-        self.depth += added;
-        let (expr, sequel) = self.lower_expr_chain(pair);
-        self.depth -= added;
-        match sequel {
-            // The statements after this one hang off a `Let`, beside this
-            // chain's tree rather than under it, so they cost one level each.
-            Some(sequel) => {
-                self.depth += 1;
-                let sequenced = self.lower_sequel(expr, sequel);
-                self.depth -= 1;
-                sequenced
+        let scopes = self.scopes.len();
+        let mut spine = Vec::new();
+        let mut next = Some(pair);
+        let mut tail = None;
+        // The statements and bindings of a block hang off a spine of `Let`s,
+        // beside the trees they build rather than under them, so the spine is
+        // walked in this loop and only a statement's own nesting costs depth.
+        'blocks: while let Some(pair) = next.take() {
+            let end = self.span_of(&pair);
+            let mut inner = pair.into_inner().peekable();
+            loop {
+                let added = chain_depth(&inner);
+                if self.depth + added > MAX_DEPTH {
+                    let span = inner.peek().map_or(end, |first| self.span_of(first));
+                    self.errors
+                        .push(GoatError::new(span, "expression nested too deeply"));
+                    tail = Some(self.node(span, ExprKind::Unit));
+                    break 'blocks;
+                }
+                self.depth += added;
+                if let Some(declaration) = sole_declaration(&inner) {
+                    let (binding, rest) = self.lower_declaration_head(declaration);
+                    spine.push(binding);
+                    next = rest;
+                    self.depth -= added;
+                    break;
+                }
+                let (expr, sequenced) = self.lower_expr_chain(&mut inner);
+                self.depth -= added;
+                if !sequenced {
+                    tail = Some(expr);
+                    break;
+                }
+                let span = expr.span.to(end);
+                spine.push(Binding {
+                    span,
+                    symbol: None,
+                    name: DISCARD_NAME.into(),
+                    value: expr,
+                });
+                if inner.peek().is_none() {
+                    tail = Some(self.node(span, ExprKind::Unit));
+                    break;
+                }
             }
-            None => expr,
         }
+        self.scopes.truncate(scopes);
+        while let Some(binding) = spine.pop() {
+            tail = Some(self.bound(binding, tail));
+        }
+        tail.expect("a chain of statements ends in an expression")
     }
 
-    fn lower_expr_chain<'i>(&mut self, pair: Pair<'i, Rule>) -> (Expr, Option<Pair<'i, Rule>>) {
-        let mut inner = pair.into_inner().peekable();
+    fn bound(&mut self, binding: Binding, rest: Option<Expr>) -> Expr {
+        let symbol = binding.symbol.unwrap_or_else(|| self.fresh_symbol());
+        self.node(
+            binding.span,
+            ExprKind::Let {
+                symbol,
+                name: binding.name,
+                value: Box::new(binding.value),
+                rest: rest.map(Box::new),
+            },
+        )
+    }
+
+    /// Lower the statement at the front of `inner`, through the `;` that ends
+    /// it. The flag is whether there was one.
+    fn lower_expr_chain(&mut self, inner: &mut Peekable<Pairs<Rule>>) -> (Expr, bool) {
         let mut operands = Vec::new();
         let mut ops: Vec<(Op, Span)> = Vec::new();
-        self.push_operand(&mut inner, &mut operands, &mut ops);
-        let mut sequel = None;
+        self.push_operand(inner, &mut operands, &mut ops);
+        let mut sequenced = false;
 
         while let Some(op_pair) = inner.next() {
             if op_pair.as_rule() == Rule::sequel {
-                sequel = Some(op_pair);
+                sequenced = true;
                 break;
             }
             let op = infix_op(op_pair.as_rule());
@@ -520,14 +562,14 @@ impl Lower {
                 }
             }
             ops.push((op, op_span));
-            self.push_operand(&mut inner, &mut operands, &mut ops);
+            self.push_operand(inner, &mut operands, &mut ops);
         }
 
         while !ops.is_empty() {
             self.reduce(&mut operands, &mut ops);
         }
         let expr = operands.pop().expect("exactly one operand remains");
-        (expr, sequel)
+        (expr, sequenced)
     }
 
     /// Any `not`s are pushed as prefix operators, then the operand they apply to.
@@ -541,18 +583,6 @@ impl Lower {
             ops.push((Op::Not, self.span_of(&not)));
         }
         operands.push(self.lower_operand(inner));
-    }
-
-    /// `first; rest` binds `first`'s value to a name nothing can mention, then
-    /// runs `rest`; with nothing after the `;` the whole expression is `()`.
-    #[inline(never)]
-    fn lower_sequel(&mut self, first: Expr, sequel: Pair<Rule>) -> Expr {
-        let span = first.span.to(self.span_of(&sequel));
-        let rest = match sequel.into_inner().next() {
-            Some(rest) => self.lower_expr(rest),
-            None => self.node(span, ExprKind::Unit),
-        };
-        self.discard(span, first, rest)
     }
 
     fn discard(&mut self, span: Span, value: Expr, rest: Expr) -> Expr {
@@ -804,6 +834,18 @@ impl Lower {
     }
 
     fn lower_declaration(&mut self, pair: Pair<Rule>) -> Expr {
+        let (binding, rest) = self.lower_declaration_head(pair);
+        let rest = rest.map(|p| self.lower_expr(p));
+        self.scopes.pop();
+        self.bound(binding, rest)
+    }
+
+    /// Bind the declaration's name in a new scope, which the caller pops once
+    /// the declaration's `rest` is lowered, and lower its value.
+    fn lower_declaration_head<'i>(
+        &mut self,
+        pair: Pair<'i, Rule>,
+    ) -> (Binding, Option<Pair<'i, Rule>>) {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let name_pair = inner.next().expect("declaration starts with a name");
@@ -841,18 +883,13 @@ impl Lower {
             };
             (self.bind(&name), value)
         };
-        let rest = rest_pair.map(|p| self.lower_expr(p));
-        self.scopes.pop();
-
-        self.node(
+        let binding = Binding {
             span,
-            ExprKind::Let {
-                symbol,
-                name,
-                value: Box::new(value),
-                rest: rest.map(Box::new),
-            },
-        )
+            symbol: Some(symbol),
+            name,
+            value,
+        };
+        (binding, rest_pair)
     }
 
     fn lower_foreign(&mut self, pair: Pair<Rule>) -> Expr {
@@ -1325,7 +1362,8 @@ impl Lower {
             ));
             return self.node(span, ExprKind::Unit);
         }
-        self.depth += children.len();
+        let charged = children.len();
+        self.depth += charged;
         let mut rows: Vec<(Expr, Expr)> = Vec::new();
         let mut otherwise = None;
         for child in children {
@@ -1358,7 +1396,7 @@ impl Lower {
             }
             rows.push((literal, body));
         }
-        self.depth -= rows.len();
+        self.depth -= charged;
 
         let covers_bool = rows
             .iter()
@@ -2060,8 +2098,6 @@ impl Lower {
     }
 }
 
-/// How deep a chain's tree can get: a left-leaning tree of its operands, plus
-/// a level for each `not`. The statements after a `;` are lowered on their own.
 fn within_one_edit(a: &[char], b: &[char]) -> bool {
     if a.len().abs_diff(b.len()) > 1 {
         return false;
@@ -2075,12 +2111,34 @@ fn within_one_edit(a: &[char], b: &[char]) -> bool {
     }
 }
 
-fn chain_depth(chain: &Pair<Rule>) -> usize {
+/// One link of a block's spine: a name bound to a value for what follows. A
+/// `;`-sequenced statement binds its value to a name nothing can mention
+/// (`symbol` is `None` until the link is built).
+struct Binding {
+    span: Span,
+    symbol: Option<Symbol>,
+    name: String,
+    value: Expr,
+}
+
+/// The declaration that is all of what remains in `kids`, since a
+/// declaration's `rest` takes everything after it.
+fn sole_declaration<'i>(kids: &Peekable<Pairs<'i, Rule>>) -> Option<Pair<'i, Rule>> {
+    let mut kids = kids.clone();
+    match (kids.next(), kids.next()) {
+        (Some(only), None) if only.as_rule() == Rule::declaration => Some(only),
+        _ => None,
+    }
+}
+
+/// How deep the statement at the front of `kids` can get: a left-leaning tree
+/// of its operands, plus a level for each `not`. The statements after a `;`
+/// are lowered on their own.
+fn chain_depth(kids: &Peekable<Pairs<Rule>>) -> usize {
     let (mut nots, mut others) = (0, 0);
-    for child in chain.clone().into_inner() {
+    for child in kids.clone().take_while(|p| p.as_rule() != Rule::sequel) {
         match child.as_rule() {
             Rule::not_op => nots += 1,
-            Rule::sequel => {}
             _ => others += 1,
         }
     }

@@ -167,16 +167,8 @@ fn tags_the_prelude_constructs_are_not_reported_as_unmatched() {
 }
 
 #[test]
-fn prelude_definitions_count_against_the_nesting_limit() {
+fn prelude_definitions_cost_the_user_no_depth() {
     let prelude: String = (0..200).map(|i| format!("p{i} = {i}\n")).collect();
-    let shallow = "1";
-    assert!(check_with_prelude(&prelude, shallow).is_ok());
-    let deep: String = (0..100).map(|i| format!("q{i} = {i}\n")).collect();
-    let Err(err) = check_with_prelude(&prelude, &deep) else {
-        panic!("expected the nesting limit to apply");
-    };
-    assert!(
-        err.iter().any(|e| e.message.contains("nested too deeply")),
-        "{err:?}"
-    );
+    let long: String = (0..300).map(|i| format!("q{i} = {i}\n")).collect();
+    assert!(check_with_prelude(&prelude, &format!("{long} 1")).is_ok());
 }

@@ -21,33 +21,51 @@ pub fn capture_sets(root: &Expr) -> HashMap<Target, Vec<Symbol>> {
     resolve(&free)
 }
 
-fn collect(e: &Expr, free: &mut Vec<(Target, Vec<Symbol>)>) {
-    match &e.kind {
-        ExprKind::Let {
-            symbol,
-            value,
-            rest,
-            ..
-        } => {
-            match &value.kind {
-                ExprKind::Func { params, body } => {
-                    let mut symbols = free_symbols(params, body);
-                    symbols.retain(|s| s != symbol);
-                    free.push((Target::Named(*symbol), symbols));
-                    collect(body, free);
+fn collect(root: &Expr, free: &mut Vec<(Target, Vec<Symbol>)>) {
+    let mut pending = vec![root];
+    while let Some(e) = pending.pop() {
+        match &e.kind {
+            ExprKind::Let {
+                symbol,
+                value,
+                rest,
+                ..
+            } => {
+                pending.extend(rest.as_deref());
+                match &value.kind {
+                    ExprKind::Func { params, body } => {
+                        let mut symbols = free_symbols(params, body);
+                        symbols.retain(|s| s != symbol);
+                        free.push((Target::Named(*symbol), symbols));
+                        pending.push(body);
+                    }
+                    ExprKind::Foreign { .. } => free.push((Target::Named(*symbol), Vec::new())),
+                    _ => pending.push(value),
                 }
-                ExprKind::Foreign { .. } => free.push((Target::Named(*symbol), Vec::new())),
-                _ => collect(value, free),
             }
-            if let Some(rest) = rest {
-                collect(rest, free);
+            ExprKind::Func { params, body } => {
+                free.push((Target::Anon(e.id), free_symbols(params, body)));
+                pending.push(body);
             }
+            _ => push_children(e, &mut pending),
         }
-        ExprKind::Func { params, body } => {
-            free.push((Target::Anon(e.id), free_symbols(params, body)));
-            collect(body, free);
-        }
-        _ => for_each_child(e, &mut |c| collect(c, free)),
+    }
+}
+
+/// Push `e`'s children so they pop in source order.
+pub fn push_children<'a>(e: &'a Expr, pending: &mut Vec<&'a Expr>) {
+    let at = pending.len();
+    for_each_child(e, &mut |c| pending.push(c));
+    pending[at..].reverse();
+}
+
+/// Visit `e` and everything under it, each node before its children, using no
+/// stack proportional to the tree's depth: a long chain of `Let`s is a deep tree.
+pub fn for_each_node<'a>(root: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
+    let mut pending = vec![root];
+    while let Some(e) = pending.pop() {
+        f(e);
+        push_children(e, &mut pending);
     }
 }
 
@@ -83,25 +101,21 @@ fn resolve(free: &[(Target, Vec<Symbol>)]) -> HashMap<Target, Vec<Symbol>> {
 /// The symbols `body` uses that neither it nor `params` bind, in order of
 /// first use.
 fn free_symbols(params: &[Param], body: &Expr) -> Vec<Symbol> {
-    fn scan(e: &Expr, used: &mut Vec<Symbol>, bound: &mut HashSet<Symbol>) {
-        match &e.kind {
-            ExprKind::Var { symbol, .. } if !used.contains(symbol) => used.push(*symbol),
-            ExprKind::Let { symbol, .. } => {
-                bound.insert(*symbol);
-            }
-            ExprKind::Func { params, .. } => bound.extend(params.iter().map(|p| p.symbol)),
-            ExprKind::Match { arms, .. } => {
-                for arm in arms {
-                    bound.extend(arm.pattern.payload.binders().map(|p| p.symbol));
-                }
-            }
-            _ => {}
-        }
-        for_each_child(e, &mut |c| scan(c, used, bound));
-    }
     let mut used = Vec::new();
     let mut bound: HashSet<_> = params.iter().map(|p| p.symbol).collect();
-    scan(body, &mut used, &mut bound);
+    for_each_node(body, &mut |e| match &e.kind {
+        ExprKind::Var { symbol, .. } if !used.contains(symbol) => used.push(*symbol),
+        ExprKind::Let { symbol, .. } => {
+            bound.insert(*symbol);
+        }
+        ExprKind::Func { params, .. } => bound.extend(params.iter().map(|p| p.symbol)),
+        ExprKind::Match { arms, .. } => {
+            for arm in arms {
+                bound.extend(arm.pattern.payload.binders().map(|p| p.symbol));
+            }
+        }
+        _ => {}
+    });
     used.retain(|s| !bound.contains(s));
     used
 }

@@ -119,8 +119,10 @@ goat = { SOI ~ tag_decl* ~ expr? ~ EOI }
 // `a; b` runs `a`, drops its value, and continues with `b`. The `;` is what
 // keeps `f(x) (y)` and `f(x) -y` from reading as two statements: a statement
 // ends only at an explicit `;`. A trailing `;` makes the whole expression `()`.
-expr = { operand ~ more_math* ~ sequel? }
-sequel = { semi ~ expr? }
+// The statements are siblings, each `sequel` marking the end of one, so a long
+// block is a wide parse tree rather than a deep one.
+expr = { operand ~ more_math* ~ (sequel ~ operand ~ more_math*)* ~ sequel? }
+sequel = { semi }
 operand = _{ not_op* ~ term }
 more_math = _{ infix ~ operand }
 // A binding's value stops at a `;`, so `x = 1; x` binds `x` for the statements

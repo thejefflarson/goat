@@ -372,16 +372,26 @@ impl<'a> Checker<'a> {
                 Const::Unit => MTy::Unit,
             }),
             Expr::Local(x) => self.consume(*x, Own::Moved).map_or(Ty::Bad, Ty::Val),
-            Expr::Let(x, rhs, body) => {
-                let rhs = self.expr(rhs, false);
-                let Ty::Val(ty) = rhs else { return rhs };
-                self.bind(*x, ty);
-                let body = self.expr(body, tail);
-                if body != Ty::Never {
-                    self.report_leaks(vec![*x]);
+            Expr::Let(..) => {
+                let mut bound = Vec::new();
+                let mut cursor = e;
+                let result = loop {
+                    let Expr::Let(x, rhs, body) = cursor else {
+                        break self.expr(cursor, tail);
+                    };
+                    let rhs = self.expr(rhs, false);
+                    let Ty::Val(ty) = rhs else { break rhs };
+                    self.bind(*x, ty);
+                    bound.push(*x);
+                    cursor = body;
+                };
+                for x in bound.into_iter().rev() {
+                    if result != Ty::Never {
+                        self.report_leaks(vec![x]);
+                    }
+                    self.own.remove(&x);
                 }
-                self.own.remove(x);
-                body
+                result
             }
             Expr::BinInt(_, a, b) => self.binary(a, b, MTy::Int, MTy::Int),
             Expr::BinFloat(_, a, b) => self.binary(a, b, MTy::Float, MTy::Float),

@@ -760,9 +760,14 @@ mod tests {
             parser: GoatParser,
             input: "a; b",
             rule: Rule::expr,
-            tokens: [expr(0, 4, [
-                name(0, 1),
-                sequel(1, 4, [expr(3, 4, [name(3, 4)])])
+            tokens: [expr(0, 4, [name(0, 1), sequel(1, 2), name(3, 4)])]
+        }
+        parses_to! {
+            parser: GoatParser,
+            input: "a; b; c",
+            rule: Rule::expr,
+            tokens: [expr(0, 7, [
+                name(0, 1), sequel(1, 2), name(3, 4), sequel(4, 5), name(6, 7)
             ])]
         }
         parses_to! {

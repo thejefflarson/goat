@@ -929,6 +929,49 @@ impl Inferer {
         ty
     }
 
+    /// The chain of `Let`s from `first`, walked in a loop so a long block costs
+    /// no stack. Every `Let` in it has the type of the chain's last expression.
+    fn infer_spine(&mut self, first: &Expr) -> Ty {
+        let mut spine = Vec::new();
+        let mut cursor = first;
+        let ty = loop {
+            let ExprKind::Let {
+                symbol,
+                value,
+                rest,
+                ..
+            } = &cursor.kind
+            else {
+                break self.infer(cursor);
+            };
+            if matches!(value.kind, ExprKind::Func { .. }) {
+                self.seed_function_group(cursor);
+            }
+            let value_ty = self.infer(value);
+            let rec = match self.env.remove(symbol) {
+                Some(seed) => {
+                    self.unify(&value_ty, &seed.ty, value.span);
+                    seed.ty
+                }
+                None => value_ty,
+            };
+
+            let scheme = self.generalize(&rec);
+            self.env.insert(*symbol, scheme.clone());
+            self.schemes.insert(*symbol, scheme.clone());
+            spine.push((cursor.id, symbol));
+            match rest {
+                Some(rest) => cursor = rest,
+                None => break self.instantiate(&scheme),
+            }
+        };
+        for (id, symbol) in spine.into_iter().rev() {
+            self.env.remove(symbol);
+            self.node_types.insert(id, ty.clone());
+        }
+        ty
+    }
+
     #[cold]
     fn report_not_callable(&mut self, span: Span, ty: &Ty) {
         self.errors.push(GoatError::new(
@@ -1029,34 +1072,7 @@ impl Inferer {
             ExprKind::And { lhs, rhs } => self.infer_logic("and", lhs, Some(rhs)),
             ExprKind::Or { lhs, rhs } => self.infer_logic("or", lhs, Some(rhs)),
             ExprKind::Not(operand) => self.infer_logic("not", operand, None),
-            ExprKind::Let {
-                symbol,
-                value,
-                rest,
-                ..
-            } => {
-                if matches!(value.kind, ExprKind::Func { .. }) {
-                    self.seed_function_group(expr);
-                }
-                let value_ty = self.infer(value);
-                let rec = match self.env.remove(symbol) {
-                    Some(seed) => {
-                        self.unify(&value_ty, &seed.ty, value.span);
-                        seed.ty
-                    }
-                    None => value_ty,
-                };
-
-                let scheme = self.generalize(&rec);
-                self.env.insert(*symbol, scheme.clone());
-                self.schemes.insert(*symbol, scheme.clone());
-                let result = match rest {
-                    Some(rest) => self.infer(rest),
-                    None => self.instantiate(&scheme),
-                };
-                self.env.remove(symbol);
-                result
-            }
+            ExprKind::Let { .. } => self.infer_spine(expr),
             ExprKind::Bin { op, lhs, rhs } => {
                 let lhs_ty = self.infer(lhs);
                 let rhs_ty = self.infer(rhs);

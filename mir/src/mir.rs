@@ -227,7 +227,7 @@ pub enum Expr {
 
 impl Expr {
     /// Calls `f` on each direct subexpression, in evaluation order.
-    pub fn for_each_child(&self, f: &mut impl FnMut(&Expr)) {
+    pub fn for_each_child<'a>(&'a self, f: &mut impl FnMut(&'a Expr)) {
         match self {
             Expr::Const(_)
             | Expr::Local(_)
@@ -279,19 +279,28 @@ impl Expr {
             Expr::Write(Write::Number(value)) => f(value),
         }
     }
+
+    /// Calls `f` on `self` and everything under it, each node before its
+    /// children, with no stack proportional to the tree's depth: a long block
+    /// is a long chain of `Let`s.
+    pub fn for_each_node<'a>(&'a self, f: &mut impl FnMut(&'a Expr)) {
+        let mut pending = vec![self];
+        while let Some(e) = pending.pop() {
+            f(e);
+            let at = pending.len();
+            e.for_each_child(&mut |c| pending.push(c));
+            pending[at..].reverse();
+        }
+    }
 }
 
 /// The effects `e` performs, in evaluation order.
 pub fn effects(e: &Expr) -> Vec<Effect> {
-    fn walk(e: &Expr, out: &mut Vec<Effect>) {
-        match e {
-            Expr::CallForeign(f, _) => out.push(Effect::Foreign(*f)),
-            Expr::Write(_) => out.push(Effect::Write),
-            _ => {}
-        }
-        e.for_each_child(&mut |c| walk(c, out));
-    }
     let mut out = Vec::new();
-    walk(e, &mut out);
+    e.for_each_node(&mut |e| match e {
+        Expr::CallForeign(f, _) => out.push(Effect::Foreign(*f)),
+        Expr::Write(_) => out.push(Effect::Write),
+        _ => {}
+    });
     out
 }
