@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -118.335 219.239 219.239">
+<g fill="none" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+<polyline stroke="blue" points="0,0 0,-17.431"/>
+<polyline stroke="red" points="0,-17.431 3.027,-34.597"/>
+<polyline stroke="blue" points="3.027,-34.597 8.989,-50.977"/>
+<polyline stroke="red" points="8.989,-50.977 17.704,-66.073"/>
+<polyline stroke="blue" points="17.704,-66.073 28.909,-79.426"/>
+<polyline stroke="red" points="28.909,-79.426 42.262,-90.631"/>
+<polyline stroke="blue" points="42.262,-90.631 57.358,-99.346"/>
+<polyline stroke="red" points="57.358,-99.346 73.738,-105.308"/>
+<polyline stroke="blue" points="73.738,-105.308 90.904,-108.335"/>
+<polyline stroke="red" points="90.904,-108.335 108.335,-108.335"/>
+<polyline stroke="blue" points="108.335,-108.335 125.501,-105.308"/>
+<polyline stroke="red" points="125.501,-105.308 141.881,-99.346"/>
+<polyline stroke="blue" points="141.881,-99.346 156.977,-90.631"/>
+<polyline stroke="red" points="156.977,-90.631 170.33,-79.426"/>
+<polyline stroke="blue" points="170.33,-79.426 181.535,-66.073"/>
+<polyline stroke="red" points="181.535,-66.073 190.25,-50.977"/>
+<polyline stroke="blue" points="190.25,-50.977 196.212,-34.597"/>
+<polyline stroke="red" points="196.212,-34.597 199.239,-17.431"/>
+<polyline stroke="blue" points="199.239,-17.431 199.239,0"/>
+<polyline stroke="red" points="199.239,0 196.212,17.166"/>
+<polyline stroke="blue" points="196.212,17.166 190.25,33.546"/>
+<polyline stroke="red" points="190.25,33.546 181.535,48.642"/>
+<polyline stroke="blue" points="181.535,48.642 170.33,61.995"/>
+<polyline stroke="red" points="170.33,61.995 156.977,73.2"/>
+<polyline stroke="blue" points="156.977,73.2 141.881,81.915"/>
+<polyline stroke="red" points="141.881,81.915 125.501,87.877"/>
+<polyline stroke="blue" points="125.501,87.877 108.335,90.904"/>
+<polyline stroke="red" points="108.335,90.904 90.904,90.904"/>
+<polyline stroke="blue" points="90.904,90.904 73.738,87.877"/>
+<polyline stroke="red" points="73.738,87.877 57.358,81.915"/>
+<polyline stroke="blue" points="57.358,81.915 42.262,73.2"/>
+<polyline stroke="red" points="42.262,73.2 28.909,61.995"/>
+<polyline stroke="blue" points="28.909,61.995 17.704,48.642"/>
+<polyline stroke="red" points="17.704,48.642 8.989,33.546"/>
+<polyline stroke="blue" points="8.989,33.546 3.027,17.166"/>
+<polyline stroke="red" points="3.027,17.166 0,0"/>
+</g>
+</svg>

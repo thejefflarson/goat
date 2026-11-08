@@ -103,6 +103,10 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    /// `//`: Int-only floor division.
+    FloorDiv,
+    /// `%`: Int-only remainder, taking the sign of the divisor.
+    Mod,
     Lt,
     Lte,
     Gt,
@@ -129,6 +133,8 @@ impl BinOp {
             BinOp::Sub => "-",
             BinOp::Mul => "*",
             BinOp::Div => "/",
+            BinOp::FloorDiv => "//",
+            BinOp::Mod => "%",
             BinOp::Lt => "<",
             BinOp::Lte => "<=",
             BinOp::Gt => ">",

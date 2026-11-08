@@ -281,9 +281,9 @@ struct Mono<'a> {
     /// The host functions the program uses, which become its imports. A
     /// declaration nothing uses is not here.
     imports: Vec<ForeignFn>,
-    /// The function that calls an import with its own parameters, for an
-    /// import used as a value.
-    foreign_fns: HashMap<ForeignId, FuncId>,
+    /// The function that calls a foreign binding with its own parameters, for
+    /// one used as a value.
+    foreign_fns: HashMap<Symbol, FuncId>,
     specs: HashMap<SpecKey, FuncId>,
     out: Vec<Option<Func>>,
     work: Vec<(FuncId, Target, Subst, Vec<Ty>)>,
@@ -822,22 +822,26 @@ impl Mono<'_> {
 
     /// A foreign function used as a value: a closure over a function that
     /// forwards its parameters to the import.
+    #[inline(never)]
     fn foreign_value(&mut self, cx: &FnCx, symbol: Symbol, use_id: ExprId) -> Expr {
-        let import = self.import(symbol);
-        let target = match self.foreign_fns.get(&import) {
+        let target = match self.foreign_fns.get(&symbol) {
             Some(&f) => f,
             None => {
-                let ForeignFn { params, ret, .. } = self.imports[import.0 as usize].clone();
-                let locals: Vec<Local> = (0..params.len() as u32).map(Local).collect();
+                let foreign = self.foreign[&symbol].clone();
+                let locals: Vec<Local> = (0..foreign.params.len() as u32).map(Local).collect();
+                let body = match foreign.intrinsic() {
+                    Some(function) => Expr::FloatFn(function, Box::new(Expr::Local(Local(0)))),
+                    None => Expr::CallForeign(self.import(symbol), locals.clone()),
+                };
                 let id = FuncId(self.out.len() as u32);
                 self.out.push(Some(Func {
-                    params: locals.iter().copied().zip(params).collect(),
+                    params: locals.into_iter().zip(foreign.params).collect(),
                     env: None,
-                    ret,
-                    body: Expr::CallForeign(import, locals),
+                    ret: foreign.ret,
+                    body,
                     locals: BTreeMap::new(),
                 }));
-                self.foreign_fns.insert(import, id);
+                self.foreign_fns.insert(symbol, id);
                 id
             }
         };
@@ -845,23 +849,38 @@ impl Mono<'_> {
         self.closure_of(target, &ty)
     }
 
-    /// `import(args)`. Each argument is bound to a local, in order, because
-    /// the call borrows its pointers (see `Expr::CallForeign`).
+    /// `import(args)`, or the compiler's own `math` function. Each argument is
+    /// bound to a local, in order, because the call borrows its pointers (see
+    /// `Expr::CallForeign`); an `Int` argument to a `Float` parameter widens.
+    #[inline(never)]
     fn foreign_call(&mut self, cx: &mut FnCx, symbol: Symbol, args: &[hir::Expr]) -> Expr {
-        let import = self.import(symbol);
-        let params = self.imports[import.0 as usize].params.clone();
+        let foreign = self.foreign[&symbol].clone();
+        if let Some(function) = foreign.intrinsic()
+            && let [arg] = args
+        {
+            let value = self.argument(cx, arg, true);
+            return Expr::FloatFn(function, Box::new(value));
+        }
         let bound: Vec<(Local, Expr)> = args
             .iter()
-            .zip(params)
-            .map(|(a, ty)| {
-                let value = self.expr(cx, a, false);
-                (cx.fresh(ty), value)
-            })
+            .zip(foreign.params)
+            .map(|(a, ty)| (cx.fresh(ty), self.argument(cx, a, ty == MTy::Float)))
             .collect();
-        let call = Expr::CallForeign(import, bound.iter().map(|(l, _)| *l).collect());
+        let call = Expr::CallForeign(self.import(symbol), bound.iter().map(|(l, _)| *l).collect());
         bound.into_iter().rev().fold(call, |body, (l, value)| {
             Expr::Let(l, Box::new(value), Box::new(body))
         })
+    }
+
+    /// `arg` lowered, widened when the parameter it is passed to is a `Float`.
+    #[inline(never)]
+    fn argument(&mut self, cx: &mut FnCx, arg: &hir::Expr, float_param: bool) -> Expr {
+        let value = self.expr(cx, arg, false);
+        if !float_param {
+            return value;
+        }
+        let ty = self.ground(&self.typed.node_types[&arg.id], &cx.subst);
+        widen(value, &ty)
     }
 
     fn node_mty(&mut self, cx: &FnCx, id: ExprId) -> MTy {
@@ -1106,6 +1125,7 @@ impl Mono<'_> {
             BinOp::Sub => self.arith(cx, Some(span), FloatOp::Sub, &operand_ty, a, b),
             BinOp::Mul => self.arith(cx, Some(span), FloatOp::Mul, &operand_ty, a, b),
             BinOp::Div => self.arith(cx, Some(span), FloatOp::Div, &operand_ty, a, b),
+            BinOp::FloorDiv | BinOp::Mod => Self::whole_division(cx, (op, span), a, b),
             BinOp::Eq => self.equal(cx, &operand_ty, a, b, tail),
             BinOp::Ne => {
                 let same = self.equal(cx, &operand_ty, a, b, false);
@@ -1336,6 +1356,7 @@ impl Mono<'_> {
         Expr::Let(cx.fresh(MTy::Unit), Box::new(site), Box::new(e))
     }
 
+    #[inline(never)]
     fn app(
         &mut self,
         cx: &mut FnCx,
@@ -1378,13 +1399,27 @@ impl Mono<'_> {
             None => Callee::Closure(Box::new(self.expr(cx, callee, false))),
         };
         let hir_args = args;
-        let mut args: Vec<Expr> = args.iter().map(|a| self.expr(cx, a, false)).collect();
+        let callee_ty = self.ground(&self.typed.node_types[&callee.id], &cx.subst);
+        let float_params: Vec<bool> = match callee_ty.unfold_head() {
+            Ty::Func(params, _) => params.iter().map(|p| *p == Ty::Float).collect(),
+            _ => Vec::new(),
+        };
+        let float_param = |i: usize| float_params.get(i).copied().unwrap_or(false);
+        let mut args: Vec<Expr> = args
+            .iter()
+            .enumerate()
+            .map(|(i, a)| self.argument(cx, a, float_param(i)))
+            .collect();
         // The site is set after the arguments run, so a call nested in an
         // argument cannot overwrite it.
         let mut bound = Vec::new();
         if enters_prelude {
-            for (arg, hir_arg) in args.iter_mut().zip(hir_args) {
-                let ty = self.node_mty(cx, hir_arg.id);
+            for (i, (arg, hir_arg)) in args.iter_mut().zip(hir_args).enumerate() {
+                let ty = if float_param(i) {
+                    MTy::Float
+                } else {
+                    self.node_mty(cx, hir_arg.id)
+                };
                 let local = cx.fresh(ty);
                 bound.push((local, std::mem::replace(arg, Expr::Local(local))));
             }

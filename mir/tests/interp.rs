@@ -42,6 +42,74 @@ fn int_arithmetic_traps_where_it_overflows() {
 }
 
 #[test]
+fn floor_division_and_remainder_round_toward_negative_infinity() {
+    let run_op = |op, a, b| {
+        let body = Expr::BinInt(op, Box::new(int(a)), Box::new(int(b)));
+        run(&program(vec![func(MTy::Int, body)])).map(|out| out.value)
+    };
+    for (a, b, quotient, remainder) in [
+        (7, 2, 3, 1),
+        (-7, 2, -4, 1),
+        (7, -2, -4, -1),
+        (-7, -2, 3, -1),
+        (6, -3, -2, 0),
+        (-6, 3, -2, 0),
+        (0, 5, 0, 0),
+        (i64::MIN, 1, i64::MIN, 0),
+        (i64::MIN, -1, 0, 0),
+        (i64::MAX, -1, -i64::MAX, 0),
+    ] {
+        if (a, b) != (i64::MIN, -1) {
+            assert_eq!(
+                run_op(IntOp::FloorDiv, a, b),
+                Ok(Value::Int(quotient)),
+                "{a} // {b}"
+            );
+        }
+        assert_eq!(
+            run_op(IntOp::Mod, a, b),
+            Ok(Value::Int(remainder)),
+            "{a} % {b}"
+        );
+    }
+    let overflow = InterpError::Trap(INT_OVERFLOW.into());
+    assert_eq!(run_op(IntOp::FloorDiv, i64::MIN, -1), Err(overflow));
+    let zero = InterpError::Trap(DIVISION_BY_ZERO.into());
+    assert_eq!(run_op(IntOp::FloorDiv, 1, 0), Err(zero.clone()));
+    assert_eq!(run_op(IntOp::Mod, 1, 0), Err(zero));
+}
+
+#[test]
+fn a_float_function_takes_a_float_and_traps_where_no_int_fits() {
+    let apply = |function, value| {
+        let body = Expr::FloatFn(function, Box::new(value));
+        let ret = match function {
+            FloatFn::Sqrt => MTy::Float,
+            FloatFn::Truncate => MTy::Int,
+        };
+        run(&program(vec![func(ret, body)])).map(|out| out.value)
+    };
+    assert_eq!(apply(FloatFn::Sqrt, float(2.25)), Ok(Value::Float(1.5)));
+    assert_eq!(apply(FloatFn::Truncate, float(-2.9)), Ok(Value::Int(-2)));
+    assert_eq!(apply(FloatFn::Truncate, float(2.9)), Ok(Value::Int(2)));
+    let too_big = InterpError::Trap(NOT_A_WHOLE_NUMBER.into());
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 9.3e18, -9.3e18] {
+        assert_eq!(
+            apply(FloatFn::Truncate, float(bad)),
+            Err(too_big.clone()),
+            "{bad}"
+        );
+    }
+    let edge = apply(FloatFn::Truncate, float(-9_223_372_036_854_775_808.0));
+    assert_eq!(edge, Ok(Value::Int(i64::MIN)));
+    let p = program(vec![func(
+        MTy::Float,
+        Expr::FloatFn(FloatFn::Sqrt, Box::new(int(4))),
+    )]);
+    assert!(verify(&p).is_err());
+}
+
+#[test]
 fn an_int_widens_to_the_float_nearest_it() {
     let widen = |body| Expr::IntToFloat(Box::new(body));
     let p = program(vec![func(MTy::Float, widen(int(3)))]);

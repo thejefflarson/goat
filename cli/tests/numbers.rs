@@ -160,3 +160,202 @@ fn a_float_follows_ieee_and_never_traps() {
     assert_eq!(run("x = 9223372036854775807.0\nprint(x + x > x)"), "true");
     assert_eq!(run("print(0.0 / 0.0 == 0.0 / 0.0)"), "false");
 }
+
+const DIVISION_BY_ZERO: &str = "division by zero";
+const NOT_WHOLE: &str = "this number can't be made a whole number";
+
+#[test]
+fn floor_division_rounds_toward_negative_infinity() {
+    for (sum, expected) in [
+        ("7 // 2", "3"),
+        ("-7 // 2", "-4"),
+        ("7 // -2", "-4"),
+        ("-7 // -2", "3"),
+        ("6 // 3", "2"),
+        ("-6 // 3", "-2"),
+        ("0 // 5", "0"),
+        ("1 // 5", "0"),
+        ("-1 // 5", "-1"),
+    ] {
+        assert_eq!(run(&format!("print({sum})")), expected, "{sum}");
+    }
+}
+
+#[test]
+fn remainder_takes_the_sign_of_the_divisor() {
+    for (sum, expected) in [
+        ("7 % 3", "1"),
+        ("-7 % 3", "2"),
+        ("7 % -3", "-2"),
+        ("-7 % -3", "-1"),
+        ("6 % 3", "0"),
+        ("-6 % 3", "0"),
+        ("0 % 5", "0"),
+        ("-1 % 360", "359"),
+    ] {
+        assert_eq!(run(&format!("print({sum})")), expected, "{sum}");
+    }
+}
+
+#[test]
+fn floor_division_and_remainder_rebuild_the_dividend() {
+    let program = "check = program(a, b) do (a // b) * b + a % b == a done
+for a from -9 to 9 do
+  for b from 1 to 4 do print(check(a, b) and check(a, 0 - b)) done
+done";
+    let printed = run(program);
+    assert!(printed.lines().all(|line| line == "true"), "{printed}");
+    assert_eq!(printed.lines().count(), 19 * 4);
+}
+
+#[test]
+fn floor_division_and_remainder_work_through_functions_and_loops() {
+    let digits = "digit = program(n, place) do n // place % 10 done
+print(digit(4096, 1));
+print(digit(4096, 10));
+print(digit(4096, 100));
+print(digit(4096, 1000))";
+    assert_eq!(run(digits), "6\n9\n0\n4");
+    assert_eq!(
+        run("for i from 1 to 6 do print(i % 3 == 0) done"),
+        "false\nfalse\ntrue\nfalse\nfalse\ntrue"
+    );
+    assert_eq!(run("print(7 // 2 + 0.5)"), "3.5");
+}
+
+#[test]
+fn floor_division_and_remainder_trap_on_a_zero_divisor() {
+    assert_traps("1 // 0", DIVISION_BY_ZERO);
+    assert_traps("1 % 0", DIVISION_BY_ZERO);
+    assert_traps("zero = 3 - 3\n5 // zero", DIVISION_BY_ZERO);
+    assert_traps("zero = 3 - 3\n0 - 5 % zero", DIVISION_BY_ZERO);
+    assert_traps(
+        "split = program(a, b) do a // b done\nsplit(10, 0)",
+        DIVISION_BY_ZERO,
+    );
+}
+
+#[test]
+fn the_most_negative_int_floor_divides_by_minus_one_only_as_a_remainder() {
+    let min = "min = 0 - 9223372036854775807 - 1\n";
+    assert_traps(&format!("{min}min // (0 - 1)"), OVERFLOW);
+    assert_eq!(run(&format!("{min}print(min % (0 - 1))")), "0");
+    assert_eq!(run(&format!("{min}print(min // 1 == min)")), "true");
+    assert_eq!(run(&format!("{min}print(min % 2)")), "0");
+    assert_eq!(
+        run(&format!(
+            "{min}print((min + 1) // 2 == 0 - 4611686018427387904)"
+        )),
+        "true"
+    );
+}
+
+#[test]
+fn round_floor_ceil_and_truncate_turn_a_float_into_an_int() {
+    for (call, expected) in [
+        ("round(2.4)", "2"),
+        ("round(2.5)", "3"),
+        ("round(-2.4)", "-2"),
+        ("round(-2.5)", "-3"),
+        ("round(0.49999999999999994)", "0"),
+        ("round(7)", "7"),
+        ("floor(2.7)", "2"),
+        ("floor(-2.1)", "-3"),
+        ("floor(-2.0)", "-2"),
+        ("floor(5)", "5"),
+        ("ceil(2.1)", "3"),
+        ("ceil(-2.7)", "-2"),
+        ("ceil(2.0)", "2"),
+        ("truncate(2.9)", "2"),
+        ("truncate(-2.9)", "-2"),
+        ("truncate(1e15)", "1000000000000000"),
+        ("round(-0.4) == 0", "true"),
+    ] {
+        assert_eq!(run(&format!("print({call})")), expected, "{call}");
+    }
+}
+
+#[test]
+fn the_result_of_a_rounding_function_is_an_int() {
+    let whole = "n = round(9007199254740993 / 1)\nprint(n // 2)";
+    assert_eq!(run(whole), "4503599627370496");
+    assert_eq!(run("print(round(7.6) // 2 + round(1.4))"), "5");
+    assert_eq!(
+        run("print(change_each([1.5, 2.5, -2.5], round))"),
+        "[2, 3, -3]"
+    );
+    assert_eq!(run("print(change_each([1.5, 2.5], floor))"), "[1, 2]");
+}
+
+#[test]
+fn rounding_a_float_with_no_int_traps() {
+    assert_traps("round(1 / 0)", NOT_WHOLE);
+    assert_traps("floor(0.0 / 0.0)", NOT_WHOLE);
+    assert_traps("truncate(1e19)", NOT_WHOLE);
+    assert_traps("ceil(0 - 1e19)", NOT_WHOLE);
+    assert_eq!(
+        run("print(truncate(9223372036854774784.0) == 9223372036854774784)"),
+        "true"
+    );
+}
+
+#[test]
+fn sqrt_is_exact_where_it_can_be() {
+    assert_eq!(run("print(sqrt(16))"), "4");
+    assert_eq!(run("print(sqrt(2.25))"), "1.5");
+    assert_eq!(run("print(sqrt(0))"), "0");
+    assert_eq!(run("print(sqrt(2) * sqrt(2) > 1.99999)"), "true");
+    assert_eq!(run("print(sqrt(0 - 1) == sqrt(0 - 1))"), "false");
+    assert_eq!(run("n = 49 // 1\nprint(sqrt(n))"), "7");
+}
+
+#[test]
+fn trig_takes_degrees_and_is_exact_at_the_quarter_turns() {
+    for (call, expected) in [
+        ("sin(0)", "0"),
+        ("sin(90)", "1"),
+        ("sin(180)", "0"),
+        ("sin(270)", "-1"),
+        ("sin(360)", "0"),
+        ("sin(-90)", "-1"),
+        ("cos(0)", "1"),
+        ("cos(90)", "0"),
+        ("cos(180)", "-1"),
+        ("cos(270)", "0"),
+        ("cos(-180)", "-1"),
+        ("sin(30)", "0.5"),
+        ("cos(60)", "0.5"),
+        ("sin(-30)", "-0.5"),
+        ("sin(1000)", "-0.984807753012208"),
+        ("tan(45)", "1"),
+        ("tan(0)", "0"),
+    ] {
+        assert_eq!(run(&format!("print({call})")), expected, "{call}");
+    }
+}
+
+#[test]
+fn trig_keeps_the_pythagorean_identity_all_the_way_round() {
+    let program = "wobble = program(d) do sin(d) * sin(d) + cos(d) * cos(d) - 1 done
+for d from -400 to 400 do
+  print(wobble(d) < 0.000000000001 and wobble(d) > -0.000000000001)
+done";
+    let printed = run(program);
+    assert_eq!(printed.lines().count(), 801);
+    assert!(printed.lines().all(|line| line == "true"), "{printed}");
+}
+
+#[test]
+fn an_int_counter_feeds_trig_and_sqrt() {
+    let program = "for i from 0 to 4 do print(round(100 * sin(i * 90)) + round(sqrt(i * i))) done";
+    assert_eq!(run(program), "0\n101\n2\n-97\n4");
+}
+
+#[test]
+fn an_int_widens_at_a_call_to_a_float_parameter() {
+    let note = "note = foreign \"test\" \"note\" (Number) -> Unit\n";
+    let (_, log) = run_foreign(&format!("{note}note(7 // 2)"));
+    assert_eq!(log, ["note(3)"]);
+    let scale = "scale = program(x) do x * 1.5 done\nprint(scale(7 // 2))";
+    assert_eq!(run(scale), "4.5");
+}

@@ -58,6 +58,8 @@ semi = _{ ";" }
 plus = { "+" }
 minus = { "-" }
 multiply = { "*" }
+floor_divide = { "//" }
+remainder = { "%" }
 divide = { "/" }
 equal = { "==" }
 not_equal = { "!=" }
@@ -74,7 +76,9 @@ infix = _{
   plus |
   minus |
   multiply |
+  floor_divide |
   divide |
+  remainder |
   equal |
   not_equal |
   lte |

@@ -400,6 +400,14 @@ impl<'a> Checker<'a> {
                 self.expect(value, MTy::Int);
                 Ty::Val(MTy::Float)
             }
+            Expr::FloatFn(function, value) => {
+                let value = self.expr(value, false);
+                self.expect(value, MTy::Float);
+                Ty::Val(match function {
+                    FloatFn::Sqrt => MTy::Float,
+                    FloatFn::Truncate => MTy::Int,
+                })
+            }
             Expr::Cmp(_, a, b) => {
                 let a = self.expr(a, false);
                 let b = self.expr(b, false);

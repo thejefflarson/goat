@@ -52,6 +52,30 @@ fn runs_the_examples() {
 }
 
 #[test]
+fn runs_the_whole_numbers_example() {
+    let out = goat(&[
+        "run",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../examples/whole_numbers.goat"
+        ),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "3\n2\n-4\n3\n3\n-3\n-2\n-2\n0.5\n4\n50\n"
+    );
+}
+
+#[test]
+fn a_division_by_zero_is_blamed_on_the_slash_slash() {
+    let out = run_source("p.goat", "print(5 // 0)");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("trap: 1:7: division by zero"), "{stderr}");
+}
+
+#[test]
 fn runs_the_tags_example() {
     let out = goat(&[
         "run",

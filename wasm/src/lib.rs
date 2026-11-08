@@ -678,10 +678,11 @@ impl Uses {
             Expr::Trap(message) => self.note_trap(message),
             Expr::BinInt(op, ..) => {
                 self.note_trap(INT_OVERFLOW);
-                if *op == IntOp::Div {
+                if matches!(op, IntOp::Div | IntOp::FloorDiv | IntOp::Mod) {
                     self.note_trap(DIVISION_BY_ZERO);
                 }
             }
+            Expr::FloatFn(FloatFn::Truncate, _) => self.note_trap(NOT_A_WHOLE_NUMBER),
             Expr::Site(start, end) => self.note_site(*start, *end),
             Expr::AllocVariant(_, tag, fields) if fields.is_empty() => {
                 if let Err(at) = self.nullary.binary_search(tag) {
@@ -1392,6 +1393,7 @@ impl<'p> FuncCx<'_, 'p> {
                 Some(_) => Err(EmitError::Malformed("conversion of a non-int")),
                 None => Ok(None),
             },
+            Expr::FloatFn(function, value) => self.float_fn(*function, value, out),
             Expr::BinFloat(op, a, b) => {
                 self.operands(a, b, MTy::Float, out)?;
                 out.push(match op {
@@ -1638,14 +1640,38 @@ impl<'p> FuncCx<'_, 'p> {
         }
     }
 
+    /// Out of line so `lower`, which a long chain of operators recurses
+    /// through, keeps a small frame.
+    #[inline(never)]
+    fn float_fn(
+        &mut self,
+        function: FloatFn,
+        value: &Expr,
+        out: &mut Code,
+    ) -> Result<Ty, EmitError> {
+        if self.lower(value, out)?.is_none() {
+            return Ok(None);
+        }
+        match function {
+            FloatFn::Sqrt => {
+                out.push(Instruction::F64Sqrt);
+                Ok(Some(MTy::Float))
+            }
+            FloatFn::Truncate => {
+                self.truncate_to_int(out)?;
+                Ok(Some(MTy::Int))
+            }
+        }
+    }
+
     /// `a op b` on the two `i64`s on the stack, trapping where the result does
     /// not fit: wasm's own `i64` arithmetic would wrap, and `i64.div_s` traps
     /// with no message.
     #[inline(never)]
     fn checked_int(&mut self, op: IntOp, out: &mut Code) -> Result<(), EmitError> {
         use Instruction::{
-            I32Const, I64Add, I64And, I64Const, I64DivS, I64Eq, I64Eqz, I64LtS, I64Mul, I64Ne,
-            I64Sub, I64Xor, LocalGet, LocalSet,
+            I32Const, I64Add, I64And, I64Const, I64DivS, I64Eq, I64Eqz, I64ExtendI32U, I64LtS,
+            I64Mul, I64Ne, I64RemS, I64Sub, I64Xor, LocalGet, LocalSet,
         };
         let (a, b) = (self.scratch(ValType::I64), self.scratch(ValType::I64));
         out.extend([LocalSet(b), LocalSet(a)]);
@@ -1708,22 +1734,86 @@ impl<'p> FuncCx<'_, 'p> {
                 self.trap_if(INT_OVERFLOW, out)?;
                 out.extend([LocalGet(a), LocalGet(b), I64Mul]);
             }
-            IntOp::Div => {
+            IntOp::Div | IntOp::FloorDiv | IntOp::Mod => {
                 out.extend([LocalGet(b), I64Eqz]);
                 self.trap_if(DIVISION_BY_ZERO, out)?;
-                out.extend([
-                    LocalGet(a),
-                    I64Const(i64::MIN),
-                    I64Eq,
-                    LocalGet(b),
-                    I64Const(-1),
-                    I64Eq,
-                    Instruction::I32And,
-                ]);
-                self.trap_if(INT_OVERFLOW, out)?;
-                out.extend([LocalGet(a), LocalGet(b), I64DivS]);
+                if op != IntOp::Mod {
+                    // `i64::MIN / -1` is the one quotient that does not fit;
+                    // as a remainder it is 0, which `i64.rem_s` gives.
+                    out.extend([
+                        LocalGet(a),
+                        I64Const(i64::MIN),
+                        I64Eq,
+                        LocalGet(b),
+                        I64Const(-1),
+                        I64Eq,
+                        Instruction::I32And,
+                    ]);
+                    self.trap_if(INT_OVERFLOW, out)?;
+                }
+                match op {
+                    IntOp::Div => out.extend([LocalGet(a), LocalGet(b), I64DivS]),
+                    IntOp::FloorDiv => {
+                        let r = self.scratch(ValType::I64);
+                        out.extend([LocalGet(a), LocalGet(b), I64DivS]);
+                        out.extend([LocalGet(a), LocalGet(b), I64RemS, LocalSet(r)]);
+                        self.rounds_down(r, b, out);
+                        out.extend([I64ExtendI32U, I64Sub]);
+                    }
+                    _ => {
+                        let r = self.scratch(ValType::I64);
+                        out.extend([LocalGet(a), LocalGet(b), I64RemS, LocalSet(r)]);
+                        out.extend([LocalGet(r), LocalGet(b), I64Add, LocalGet(r)]);
+                        self.rounds_down(r, b, out);
+                        out.push(Instruction::Select);
+                    }
+                }
             }
         }
+        Ok(())
+    }
+
+    /// Pushes an `i32`: whether truncating division left the remainder `r`
+    /// on the other side of zero from the divisor `b`, so the floor is one
+    /// step below the truncated quotient.
+    fn rounds_down(&mut self, r: u32, b: u32, out: &mut Code) {
+        use Instruction::{I64Const, I64Eqz, I64LtS, I64Xor, LocalGet};
+        out.extend([
+            LocalGet(r),
+            I64Eqz,
+            Instruction::I32Eqz,
+            LocalGet(r),
+            LocalGet(b),
+            I64Xor,
+            I64Const(0),
+            I64LtS,
+            Instruction::I32And,
+        ]);
+    }
+
+    /// Turns the `f64` on the stack into the `i64` with its fraction dropped,
+    /// trapping for NaN and for a value `i64` cannot hold, where
+    /// `i64.trunc_f64_s` would trap with no message.
+    fn truncate_to_int(&mut self, out: &mut Code) -> Result<(), EmitError> {
+        use Instruction::{
+            F64Const, F64Ge, F64Lt, F64Trunc, I32And, I32Eqz, I64TruncF64S, LocalGet, LocalSet,
+        };
+        let whole = self.scratch(ValType::F64);
+        let two_pow_63: f64 = 9_223_372_036_854_775_808.0;
+        out.extend([
+            F64Trunc,
+            LocalSet(whole),
+            LocalGet(whole),
+            F64Const((-two_pow_63).into()),
+            F64Ge,
+            LocalGet(whole),
+            F64Const(two_pow_63.into()),
+            F64Lt,
+            I32And,
+            I32Eqz,
+        ]);
+        self.trap_if(NOT_A_WHOLE_NUMBER, out)?;
+        out.extend([LocalGet(whole), I64TruncF64S]);
         Ok(())
     }
 

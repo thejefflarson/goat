@@ -86,6 +86,13 @@ impl Infer<'_> {
                 self.ty(value);
                 Some(MTy::Float)
             }
+            Expr::FloatFn(function, value) => {
+                self.ty(value);
+                Some(match function {
+                    FloatFn::Sqrt => MTy::Float,
+                    FloatFn::Truncate => MTy::Int,
+                })
+            }
             Expr::Cmp(_, a, b) => {
                 self.ty(a);
                 self.ty(b);

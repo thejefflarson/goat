@@ -1110,23 +1110,7 @@ impl Inferer {
                 }
                 Ty::func(arg_tys, ret)
             }
-            ExprKind::App { callee, args } => {
-                let callee_ty = self.infer(callee);
-                let arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
-                let ret = self.fresh();
-                match self.resolve_head(&callee_ty) {
-                    Ty::Func(..) | Ty::Var(_) => {
-                        let expected = Ty::func(arg_tys, ret.clone());
-                        self.unify_use(callee, &callee_ty, &expected, expr.span);
-                    }
-                    // A `(…)` immediately after an expression is read as a
-                    // call, so calling a non-function is often a sequencing
-                    // mistake. Reporting lives in a cold helper to keep this
-                    // deeply-recursed match's stack frame small.
-                    other => self.report_not_callable(callee.span, &other),
-                }
-                ret
-            }
+            ExprKind::App { callee, args } => self.infer_app(expr.span, callee, args),
             ExprKind::If {
                 cond,
                 then_branch,
@@ -1247,7 +1231,9 @@ impl Inferer {
         (rhs, rhs_ty): (&Expr, Ty),
     ) -> Ty {
         let operands = ((lhs, lhs_ty), (rhs, rhs_ty));
-        if op == BinOp::Div {
+        if matches!(op, BinOp::FloorDiv | BinOp::Mod) {
+            self.type_whole_division(op, operands)
+        } else if op == BinOp::Div {
             self.type_division(op, operands)
         } else if op.is_arithmetic() {
             let (lhs, lhs_ty) = &operands.0;
@@ -1299,6 +1285,59 @@ impl Inferer {
             self.require(&rhs_ty, Kind::Ordered, op, rhs.span);
             Ty::Float
         }
+    }
+
+    /// Kept out of line so its locals stay out of the deeply recursed
+    /// [`Inferer::infer_kind`] frame.
+    #[inline(never)]
+    fn infer_app(&mut self, span: Span, callee: &Expr, args: &[Expr]) -> Ty {
+        let callee_ty = self.infer(callee);
+        let mut arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
+        let ret = self.fresh();
+        let head = self.resolve_head(&callee_ty);
+        if let Ty::Func(params, _) = &head {
+            self.widen_arguments(params, &mut arg_tys);
+        }
+        match head {
+            Ty::Func(..) | Ty::Var(_) => {
+                let expected = Ty::func(arg_tys, ret.clone());
+                self.unify_use(callee, &callee_ty, &expected, span);
+            }
+            // A `(…)` immediately after an expression is read as a call, so
+            // calling a non-function is often a sequencing mistake. Reporting
+            // lives in a cold helper to keep this frame small.
+            other => self.report_not_callable(callee.span, &other),
+        }
+        ret
+    }
+
+    /// A concrete `Int` argument to a `Float` parameter is taken as the
+    /// `Float` it widens to; mono converts it at the call.
+    fn widen_arguments(&self, params: &[Ty], args: &mut [Ty]) {
+        for (param, arg) in params.iter().zip(args) {
+            if self.resolve(param) == Ty::Float && self.resolve(arg) == Ty::Int {
+                *arg = Ty::Float;
+            }
+        }
+    }
+
+    /// `//` and `%` take and give whole numbers. A `Float` operand is named
+    /// rather than reported as a bare mismatch, because both read `Number`.
+    fn type_whole_division(&mut self, op: BinOp, operands: ((&Expr, Ty), (&Expr, Ty))) -> Ty {
+        for (operand, ty) in [operands.0, operands.1] {
+            if self.resolve(&ty) == Ty::Float {
+                self.errors.push(GoatError::new(
+                    operand.span,
+                    format!(
+                        "`{}` needs whole numbers, but this is a `Float`; use `round`, `floor` or `truncate` first",
+                        op.symbol()
+                    ),
+                ));
+            } else {
+                self.unify_use(operand, &ty, &Ty::Int, operand.span);
+            }
+        }
+        Ty::Int
     }
 
     fn require_float_fields(&mut self, ty: &Ty, span: Span) {
