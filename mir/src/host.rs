@@ -55,6 +55,69 @@ pub enum SceneCommand {
     PolylineEnd,
 }
 
+/// Where an interactive program's picture goes: `draw` streams each frame as
+/// `begin`, shapes, `end` (ADR 0015). Colors arrive already checked against
+/// ADR 0014's allowlist.
+pub trait SceneSink {
+    fn begin(&mut self);
+    fn end(&mut self);
+    fn line(&mut self, from: (f64, f64), to: (f64, f64), color: &str);
+    fn polyline_begin(&mut self, color: &str);
+    fn vertex(&mut self, x: f64, y: f64);
+    fn polyline_end(&mut self);
+}
+
+/// A sink as a host: answers the `scene.*` imports by calling the sink.
+pub struct Scene<S>(pub S);
+
+impl<S: SceneSink> Host for Scene<S> {
+    fn signature(&self, module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)> {
+        scene_signature(module, name)
+    }
+
+    fn call(&mut self, _: &str, name: &str, args: &[HostValue]) -> Result<HostValue, String> {
+        scene_call(&mut self.0, name, args)
+    }
+}
+
+fn scene_signature(module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)> {
+    use Boundary::{Number, Str, Unit};
+    if module != "scene" {
+        return None;
+    }
+    Some(match name {
+        "begin" | "end" | "polyline_end" => (vec![], Unit),
+        "line" => (vec![Number, Number, Number, Number, Str], Unit),
+        "polyline_begin" => (vec![Str], Unit),
+        "vertex" => (vec![Number, Number], Unit),
+        _ => return None,
+    })
+}
+
+fn scene_call(
+    sink: &mut impl SceneSink,
+    name: &str,
+    args: &[HostValue],
+) -> Result<HostValue, String> {
+    use HostValue::{Number, Str};
+    match (name, args) {
+        ("begin", []) => sink.begin(),
+        ("end", []) => sink.end(),
+        ("line", [Number(x1), Number(y1), Number(x2), Number(y2), Str(color)]) => {
+            check_color(color)?;
+            sink.line((*x1, *y1), (*x2, *y2), color)
+        }
+        ("polyline_begin", [Str(color)]) => {
+            check_color(color)?;
+            sink.polyline_begin(color)
+        }
+        ("vertex", [Number(x), Number(y)]) => sink.vertex(*x, *y),
+        ("polyline_end", []) => sink.polyline_end(),
+        _ => return Err(format!("bad call to scene.{name}")),
+    }
+    Ok(HostValue::Unit)
+}
+
 /// The host of an interactive program's picture: it records the scene the
 /// program streams, so the interpreter and wasmtime can be compared command
 /// for command.
@@ -63,50 +126,54 @@ pub struct SceneHost {
     pub commands: Vec<SceneCommand>,
 }
 
+impl SceneSink for SceneHost {
+    fn begin(&mut self) {
+        self.commands.push(SceneCommand::Begin);
+    }
+
+    fn end(&mut self) {
+        self.commands.push(SceneCommand::End);
+    }
+
+    fn line(&mut self, from: (f64, f64), to: (f64, f64), color: &str) {
+        self.commands.push(SceneCommand::Line {
+            from,
+            to,
+            color: color.to_string(),
+        });
+    }
+
+    fn polyline_begin(&mut self, color: &str) {
+        self.commands
+            .push(SceneCommand::PolylineBegin(color.to_string()));
+    }
+
+    fn vertex(&mut self, x: f64, y: f64) {
+        self.commands.push(SceneCommand::Vertex(x, y));
+    }
+
+    fn polyline_end(&mut self) {
+        self.commands.push(SceneCommand::PolylineEnd);
+    }
+}
+
 impl Host for SceneHost {
     fn signature(&self, module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)> {
-        use Boundary::{Number, Str, Unit};
-        if module != "scene" {
-            return None;
-        }
-        Some(match name {
-            "begin" | "end" | "polyline_end" => (vec![], Unit),
-            "line" => (vec![Number, Number, Number, Number, Str], Unit),
-            "polyline_begin" => (vec![Str], Unit),
-            "vertex" => (vec![Number, Number], Unit),
-            _ => return None,
-        })
+        scene_signature(module, name)
     }
 
     fn call(&mut self, _: &str, name: &str, args: &[HostValue]) -> Result<HostValue, String> {
-        use HostValue::{Number, Str};
-        let command = match (name, args) {
-            ("begin", []) => SceneCommand::Begin,
-            ("end", []) => SceneCommand::End,
-            ("line", [Number(x1), Number(y1), Number(x2), Number(y2), Str(color)]) => {
-                SceneCommand::Line {
-                    from: (*x1, *y1),
-                    to: (*x2, *y2),
-                    color: color_name(color)?,
-                }
-            }
-            ("polyline_begin", [Str(color)]) => SceneCommand::PolylineBegin(color_name(color)?),
-            ("vertex", [Number(x), Number(y)]) => SceneCommand::Vertex(*x, *y),
-            ("polyline_end", []) => SceneCommand::PolylineEnd,
-            _ => return Err(format!("bad call to scene.{name}")),
-        };
-        self.commands.push(command);
-        Ok(HostValue::Unit)
+        scene_call(self, name, args)
     }
 }
 
 /// A color name or `#hex` code, the only text safe to hand a renderer
 /// (ADR 0014's allowlist).
-fn color_name(text: &str) -> Result<String, String> {
+fn check_color(text: &str) -> Result<(), String> {
     let ok = (1..=32).contains(&text.len())
         && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '#');
     if ok {
-        Ok(text.to_string())
+        Ok(())
     } else {
         Err(format!("{text:?} is not a color name or #hex code"))
     }

@@ -4,6 +4,9 @@ use goat_checker::GoatError;
 use goat_checker::hir::Span;
 pub use goat_mir::Profile;
 
+#[cfg(feature = "native")]
+pub mod native;
+
 /// The vocabulary a host provides: the `foreign` functions a program may call,
 /// declared in goat source ahead of the program. The events `update` receives
 /// and the shapes `draw` returns are fixed by the checker's `vocab` (ADR 0015),

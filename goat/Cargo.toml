@@ -8,6 +8,14 @@ edition = "2024"
 goat_checker = { path = "../checker" }
 goat_mir = { path = "../mir" }
 goat_wasm = { path = "../wasm" }
+wasmtime = { version = "50.0.1", optional = true }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
+[features]
+native = ["dep:wasmtime"]
+
+[[example]]
+name = "embed"
+required-features = ["native"]

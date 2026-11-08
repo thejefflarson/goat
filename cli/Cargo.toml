@@ -9,12 +9,12 @@ name = "goat"
 path = "src/main.rs"
 
 [dependencies]
-goat = { version = "0.1.0", path = "../goat" }
+goat = { version = "0.1.0", path = "../goat", features = ["native"] }
 goat_checker = { path = "../checker" }
 goat_mir = { version = "0.1.0", path = "../mir" }
-wasmtime = "50.0.1"
 
 [dev-dependencies]
 bolero = { version = "=0.13.4", default-features = false, features = ["std"] }
 goat_wasm = { path = "../wasm" }
 tempfile = "3.27.0"
+wasmtime = "50.0.1"
