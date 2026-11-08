@@ -22,7 +22,7 @@ try {
     const { stage, supervisor } = superviseCanvas(canvas);
     window.goat = createEngine({ canvas, compiler, post, runner: supervisor, focus: () => stage.focus() });
   } else {
-    window.goat = createEngine({ canvas, compiler, post });
+    window.goat = createEngine({ canvas, compiler, post, heartbeat: true });
   }
   post({ type: "ready" });
 } catch (e) {

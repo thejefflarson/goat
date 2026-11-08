@@ -18,6 +18,15 @@ final class EngineMessageTests: XCTestCase {
             .diagnostics([Diagnostic(line: 2, column: 3, length: 4, message: "bad")]))
     }
 
+    func testDecodesTheHeartbeatAroundACallIntoGoat() {
+        XCTAssertEqual(
+            EngineMessage.decode(#"{"type":"beat","count":7,"call":"frame"}"#), .beat(count: 7, call: .frame))
+        XCTAssertEqual(
+            EngineMessage.decode(#"{"type":"beat","count":2,"call":"once"}"#), .beat(count: 2, call: .once))
+        XCTAssertNil(EngineMessage.decode(#"{"type":"beat","count":2,"call":"forever"}"#))
+        XCTAssertNil(EngineMessage.decode(#"{"type":"beat","call":"frame"}"#))
+    }
+
     func testDropsAnythingMalformed() {
         XCTAssertNil(EngineMessage.decode(["type": "ready"]))
         XCTAssertNil(EngineMessage.decode("not json"))

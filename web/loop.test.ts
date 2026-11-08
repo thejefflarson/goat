@@ -218,3 +218,31 @@ test("around wraps every call into goat and fuelBudget sets the refill", async (
   assert.deepEqual([...new Set(seen)], [12345]);
   loop.stop();
 });
+
+test("a host that supplies `around` sees every call into goat, even one that traps", async () => {
+  const calls = { open: 0, closed: 0 };
+  const around = <T>(call: () => T): T => {
+    calls.open++;
+    try {
+      return call();
+    } finally {
+      calls.closed++;
+    }
+  };
+  const fine = await instantiate(arrowDraw);
+  const page = fakeEnv();
+  const loop = startLoop(fine.exports, { ...page.env, around });
+  page.fire("keydown", { key: "ArrowDown" });
+  page.frame(16);
+  loop.stop();
+  assert.ok(calls.open >= 3, "setup, update, and draw each ran inside it");
+  assert.equal(calls.open, calls.closed);
+
+  const stuck = await instantiate(spinning);
+  const runaway = fakeEnv();
+  const before = calls.open;
+  startLoop(stuck.exports, { ...runaway.env, around });
+  runaway.frame(16);
+  assert.ok(calls.open > before);
+  assert.equal(calls.open, calls.closed);
+});

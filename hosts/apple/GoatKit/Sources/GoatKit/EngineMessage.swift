@@ -1,5 +1,11 @@
 import Foundation
 
+/// Which budget applies to the call into goat that a `beat` brackets: one frame's
+/// `setup`/`update`/`draw`, or a whole run-once program.
+public enum BeatCall: String, Decodable, Sendable {
+    case frame, once
+}
+
 /// What the web view's engine (web/embed.ts) reports to the native side.
 public enum EngineMessage: Equatable, Sendable {
     public enum State: String, Decodable, Sendable {
@@ -10,6 +16,8 @@ public enum EngineMessage: Equatable, Sendable {
     case diagnostics([Diagnostic])
     case output([String])
     case state(State, message: String?)
+    /// Odd `count` means goat was entered, even means it was left (web/beat.ts).
+    case beat(count: Int, call: BeatCall)
 
     /// The page is not trusted to be well-formed, so anything oversized or
     /// unrecognized decodes to nil.
@@ -23,7 +31,7 @@ public enum EngineMessage: Equatable, Sendable {
 
 extension EngineMessage: Decodable {
     private enum Keys: String, CodingKey {
-        case type, diagnostics, lines, state, message
+        case type, diagnostics, lines, state, message, count, call
     }
 
     public init(from decoder: Decoder) throws {
@@ -39,6 +47,10 @@ extension EngineMessage: Decodable {
             self = .state(
                 try values.decode(State.self, forKey: .state),
                 message: try values.decodeIfPresent(String.self, forKey: .message))
+        case "beat":
+            self = .beat(
+                count: try values.decode(Int.self, forKey: .count),
+                call: try values.decode(BeatCall.self, forKey: .call))
         case let other:
             throw DecodingError.dataCorruptedError(
                 forKey: .type, in: values, debugDescription: "unknown message type \(other)")

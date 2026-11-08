@@ -1,16 +1,46 @@
 import SwiftUI
 
 #if os(macOS)
+private typealias PlatformView = NSView
+#else
+private typealias PlatformView = UIView
+#endif
+
+/// Hosts the engine's current web view, swapping it in place when the watchdog
+/// replaces it.
+private final class CanvasContainer: PlatformView {
+    func show(_ webView: PlatformView) {
+        guard subviews.first !== webView else { return }
+        subviews.forEach { $0.removeFromSuperview() }
+        webView.frame = bounds
+        #if os(macOS)
+        webView.autoresizingMask = [.width, .height]
+        #else
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        #endif
+        addSubview(webView)
+    }
+}
+
+#if os(macOS)
 private struct CanvasView: NSViewRepresentable {
     let webView: NSView
-    func makeNSView(context: Context) -> NSView { webView }
-    func updateNSView(_ view: NSView, context: Context) {}
+    func makeNSView(context: Context) -> CanvasContainer {
+        let container = CanvasContainer()
+        container.show(webView)
+        return container
+    }
+    func updateNSView(_ container: CanvasContainer, context: Context) { container.show(webView) }
 }
 #else
 private struct CanvasView: UIViewRepresentable {
     let webView: UIView
-    func makeUIView(context: Context) -> UIView { webView }
-    func updateUIView(_ view: UIView, context: Context) {}
+    func makeUIView(context: Context) -> CanvasContainer {
+        let container = CanvasContainer()
+        container.show(webView)
+        return container
+    }
+    func updateUIView(_ container: CanvasContainer, context: Context) { container.show(webView) }
 }
 #endif
 
