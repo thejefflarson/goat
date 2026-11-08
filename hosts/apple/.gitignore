@@ -1,0 +1,7 @@
+/Goat.xcodeproj/
+/Resources/web/
+/Info-*.plist
+/Goat-macOS.entitlements
+/GoatKit/.build/
+.build/
+build/

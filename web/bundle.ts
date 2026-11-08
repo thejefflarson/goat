@@ -4,16 +4,19 @@ import { fileURLToPath } from "node:url";
 const here = new URL(".", import.meta.url);
 const wasmSource = new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", here);
 
-// Lays out the page, its compiled modules and the compiler at the relative
-// paths index.html references, so the directory can be served as-is.
-export function assemble(outDir: string): void {
+// Lays out the pages, their compiled modules and the compiler at the relative
+// paths the pages reference, so the directory can be served as-is.
+export function assemble(outDir: string, pages: string[] = ["index.html"]): void {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
-  copyFileSync(new URL("index.html", here), `${outDir}/index.html`);
+  for (const page of pages) copyFileSync(new URL(page, here), `${outDir}/${page}`);
   cpSync(new URL("dist", here), `${outDir}/dist`, { recursive: true });
   copyFileSync(wasmSource, `${outDir}/goat_web.wasm`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  assemble(fileURLToPath(new URL("site", here)));
+  const args = process.argv.slice(2);
+  const embed = args[0] === "--embed";
+  if (embed) args.shift();
+  assemble(args[0] ?? fileURLToPath(new URL("site", here)), embed ? ["embed.html"] : undefined);
 }

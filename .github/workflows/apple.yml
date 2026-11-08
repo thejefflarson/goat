@@ -1,0 +1,43 @@
+name: apple
+
+# Builds the SwiftUI editor (hosts/apple) for macOS and iOS. Unsigned: no
+# signing identity is needed to prove the targets compile and bundle.
+on:
+  pull_request:
+    paths: ["hosts/apple/**", "web/**", ".github/workflows/apple.yml"]
+  push:
+    branches: [master]
+    paths: ["hosts/apple/**", "web/**", ".github/workflows/apple.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  apple:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Stage the drawing engine
+        run: hosts/apple/scripts/stage-web.sh
+
+      - name: Test GoatKit
+        run: swift test --package-path hosts/apple/GoatKit
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec hosts/apple/project.yml
+
+      - name: Build macOS
+        run: >
+          xcodebuild -project hosts/apple/Goat.xcodeproj -scheme Goat-macOS
+          -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+
+      - name: Build iOS
+        run: >
+          xcodebuild -project hosts/apple/Goat.xcodeproj -scheme Goat-iOS
+          -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
