@@ -37,6 +37,7 @@ pub fn func(ret: MTy, body: Expr) -> Func {
 
 pub fn program(funcs: Vec<Func>) -> Program {
     Program {
+        profile: Profile::Desktop,
         funcs,
         entry: FuncId(0),
         layouts: vec![

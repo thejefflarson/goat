@@ -53,8 +53,41 @@ pub struct Sig {
     pub ret: MTy,
 }
 
+/// The target a program is lowered for: the widths of `Int` and `Float`
+/// (ADR 0001, ADR 0017). Pointers are 4 bytes on every profile (wasm32).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Profile {
+    /// `Int` is `i64` and `Float` is `f64`.
+    #[default]
+    Desktop,
+    /// `Int` is `i32` and `Float` is `f32`, for MCUs without an FPU or a
+    /// 64-bit word.
+    Embedded,
+}
+
+impl Profile {
+    pub fn fits_int(self, n: i64) -> bool {
+        match self {
+            Profile::Desktop => true,
+            Profile::Embedded => i32::try_from(n).is_ok(),
+        }
+    }
+
+    /// `x` as the profile's `Float` holds it: rounded to the nearest `f32` on
+    /// the embedded profile. Rounding the `f64` result of one `+ - * /` gives
+    /// the correctly rounded `f32` result, so the interpreter models `f32`
+    /// arithmetic with it.
+    pub fn round_float(self, x: f64) -> f64 {
+        match self {
+            Profile::Desktop => x,
+            Profile::Embedded => f64::from(x as f32),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
+    pub profile: Profile,
     pub funcs: Vec<Func>,
     pub entry: FuncId,
     pub layouts: Vec<Layout>,

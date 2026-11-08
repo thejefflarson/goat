@@ -22,6 +22,10 @@ const PRINT_STRING: u32 = 2;
 /// string root) `print_string`: `write_number`, `write_string`, `write_end`.
 const WRITE_IMPORTS: u32 = 3;
 const IMMORTAL: i32 = -1;
+/// The widths numbers have where they cross into the host: imports and
+/// `print_number` take `f64` and `i64` whatever the program's profile, so one
+/// host serves every profile and the module converts at the boundary.
+const HOST_PROFILE: Profile = Profile::Desktop;
 /// The fuel every function entry spends one unit of, after the heap pointer and
 /// the allocator's live count. It is exported as `goat_fuel` so a host can
 /// refill it; a call that finds none left traps (ADR 0015).
@@ -119,24 +123,37 @@ type Code = Vec<Instruction<'static>>;
 /// `None` is a diverging expression (a trap), which has every type.
 type Ty = Option<MTy>;
 
-/// `Int` is i64 and `Float` is f64 on this target (ADR 0017); `Unit` is erased.
-fn val_type(ty: MTy) -> Option<ValType> {
-    match ty {
-        MTy::Bool | MTy::Ptr(_) => Some(ValType::I32),
-        MTy::Int => Some(ValType::I64),
-        MTy::Float => Some(ValType::F64),
-        MTy::Unit => None,
+/// `Int` and `Float` are as wide as `profile` says (ADR 0017); `Unit` is erased.
+fn val_type(profile: Profile, ty: MTy) -> Option<ValType> {
+    match (ty, profile) {
+        (MTy::Bool | MTy::Ptr(_), _) => Some(ValType::I32),
+        (MTy::Int, Profile::Desktop) => Some(ValType::I64),
+        (MTy::Int, Profile::Embedded) => Some(ValType::I32),
+        (MTy::Float, Profile::Desktop) => Some(ValType::F64),
+        (MTy::Float, Profile::Embedded) => Some(ValType::F32),
+        (MTy::Unit, _) => None,
     }
 }
 
-fn val_types(tys: impl IntoIterator<Item = MTy>) -> Vec<ValType> {
-    tys.into_iter().filter_map(val_type).collect()
+fn val_types(profile: Profile, tys: impl IntoIterator<Item = MTy>) -> Vec<ValType> {
+    tys.into_iter()
+        .filter_map(|ty| val_type(profile, ty))
+        .collect()
 }
 
 pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
+    let profile = program.profile;
+    if profile == Profile::Embedded && program.interactive.is_some() {
+        return Err(EmitError::Unsupported(
+            "an interactive program on the embedded profile",
+        ));
+    }
     let mut uses = Uses::default();
     for func in &program.funcs {
         uses.scan(&func.body);
+    }
+    if profile == Profile::Embedded && program.foreign.iter().any(|f| f.ret == MTy::Int) {
+        uses.note_trap(INT_OVERFLOW);
     }
     let needs_drop = uses.drops || program.interactive.is_some();
     let mut types = Types::default();
@@ -146,7 +163,7 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
 
     let mut func_types = Vec::new();
     for func in &program.funcs {
-        let (params, results) = func_signature(func);
+        let (params, results) = func_signature(profile, func);
         func_types.push(types.intern(params, results));
     }
     func_types.push(entry_ty);
@@ -170,8 +187,8 @@ pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
         .foreign
         .iter()
         .map(|f| {
-            let params = val_types(f.params.iter().copied());
-            types.intern(params, val_types([f.ret]))
+            let params = val_types(HOST_PROFILE, f.params.iter().copied());
+            types.intern(params, val_types(HOST_PROFILE, [f.ret]))
         })
         .collect();
 
@@ -538,13 +555,13 @@ fn string_object(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// A closure body takes its environment as an extra leading `i32` parameter.
-fn func_signature(func: &Func) -> (Vec<ValType>, Vec<ValType>) {
+fn func_signature(profile: Profile, func: &Func) -> (Vec<ValType>, Vec<ValType>) {
     let mut params = Vec::new();
     if func.env.is_some() {
         params.push(ValType::I32);
     }
-    params.extend(val_types(func.params.iter().map(|&(_, ty)| ty)));
-    (params, val_types([func.ret]))
+    params.extend(val_types(profile, func.params.iter().map(|&(_, ty)| ty)));
+    (params, val_types(profile, [func.ret]))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -629,9 +646,13 @@ impl Shared<'_> {
             .get(sig.0 as usize)
             .ok_or(EmitError::Malformed("unknown signature"))?;
         let mut params = vec![ValType::I32];
-        params.extend(val_types(sig.params.iter().copied()));
+        let profile = self.program.profile;
+        params.extend(val_types(profile, sig.params.iter().copied()));
         self.indirect = true;
-        Ok((self.types.intern(params, val_types([sig.ret])), sig.ret))
+        Ok((
+            self.types.intern(params, val_types(profile, [sig.ret])),
+            sig.ret,
+        ))
     }
 
     /// The type of a drop function: `(object, pending) -> pending`.
@@ -916,21 +937,23 @@ pub(crate) fn memarg(offset: u32, align: u32) -> MemArg {
     }
 }
 
-fn load(ty: MTy, offset: u32) -> Option<Instruction<'static>> {
-    match ty {
-        MTy::Float => Some(Instruction::F64Load(memarg(offset, 3))),
-        MTy::Int => Some(Instruction::I64Load(memarg(offset, 3))),
-        MTy::Unit => None,
-        MTy::Bool | MTy::Ptr(_) => Some(Instruction::I32Load(memarg(offset, 2))),
+fn load(profile: Profile, ty: MTy, offset: u32) -> Option<Instruction<'static>> {
+    match (ty, profile) {
+        (MTy::Float, Profile::Desktop) => Some(Instruction::F64Load(memarg(offset, 3))),
+        (MTy::Float, Profile::Embedded) => Some(Instruction::F32Load(memarg(offset, 2))),
+        (MTy::Int, Profile::Desktop) => Some(Instruction::I64Load(memarg(offset, 3))),
+        (MTy::Unit, _) => None,
+        (MTy::Int | MTy::Bool | MTy::Ptr(_), _) => Some(Instruction::I32Load(memarg(offset, 2))),
     }
 }
 
-fn store(ty: MTy, offset: u32) -> Option<Instruction<'static>> {
-    match ty {
-        MTy::Float => Some(Instruction::F64Store(memarg(offset, 3))),
-        MTy::Int => Some(Instruction::I64Store(memarg(offset, 3))),
-        MTy::Unit => None,
-        MTy::Bool | MTy::Ptr(_) => Some(Instruction::I32Store(memarg(offset, 2))),
+fn store(profile: Profile, ty: MTy, offset: u32) -> Option<Instruction<'static>> {
+    match (ty, profile) {
+        (MTy::Float, Profile::Desktop) => Some(Instruction::F64Store(memarg(offset, 3))),
+        (MTy::Float, Profile::Embedded) => Some(Instruction::F32Store(memarg(offset, 2))),
+        (MTy::Int, Profile::Desktop) => Some(Instruction::I64Store(memarg(offset, 3))),
+        (MTy::Unit, _) => None,
+        (MTy::Int | MTy::Bool | MTy::Ptr(_), _) => Some(Instruction::I32Store(memarg(offset, 2))),
     }
 }
 
@@ -1050,11 +1073,10 @@ fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError>
     }
     f.instruction(&Instruction::Call(imports + program.entry.0));
     match root.ret {
-        MTy::Float => {
-            f.instruction(&Instruction::Call(PRINT_NUMBER));
-        }
-        MTy::Int => {
-            f.instruction(&Instruction::F64ConvertI64S);
+        MTy::Float | MTy::Int => {
+            if let Some(widen) = to_print_number(program.profile, root.ret) {
+                f.instruction(&widen);
+            }
             f.instruction(&Instruction::Call(PRINT_NUMBER));
         }
         MTy::Bool => {
@@ -1068,6 +1090,18 @@ fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError>
     }
     f.instruction(&Instruction::End);
     Ok(f)
+}
+
+/// Widens the number on the stack to the `f64` `print_number` takes. Both
+/// profiles' `Int` and `Float` convert exactly, except a desktop `Int` beyond
+/// 2^53.
+fn to_print_number(profile: Profile, ty: MTy) -> Option<Instruction<'static>> {
+    match (profile, ty) {
+        (Profile::Desktop, MTy::Int) => Some(Instruction::F64ConvertI64S),
+        (Profile::Embedded, MTy::Int) => Some(Instruction::F64ConvertI32S),
+        (Profile::Embedded, _) => Some(Instruction::F64PromoteF32),
+        (Profile::Desktop, _) => None,
+    }
 }
 
 /// `fuel -= 1; if fuel <= 0 { unreachable }`: a runaway call chain, tail calls
@@ -1137,7 +1171,7 @@ impl<'p> FuncCx<'_, 'p> {
     }
 
     fn bind(&mut self, local: Local, ty: MTy) -> Option<u32> {
-        let index = val_type(ty).map(|vt| self.scratch(vt));
+        let index = val_type(self.program.profile, ty).map(|vt| self.scratch(vt));
         self.scope.insert(local, (index, ty));
         index
     }
@@ -1157,7 +1191,7 @@ impl<'p> FuncCx<'_, 'p> {
             let Some(ty) = self.lower(expr, out)? else {
                 return Ok(None);
             };
-            let temp = val_type(ty).map(|vt| self.scratch(vt));
+            let temp = val_type(self.program.profile, ty).map(|vt| self.scratch(vt));
             if let Some(temp) = temp {
                 out.push(Instruction::LocalSet(temp));
             }
@@ -1179,7 +1213,8 @@ impl<'p> FuncCx<'_, 'p> {
 
     fn fill(&self, ptr: u32, slots: &[(MTy, Option<u32>)], base: u32, out: &mut Code) {
         for (i, &(ty, temp)) in slots.iter().enumerate() {
-            if let (Some(temp), Some(store)) = (temp, store(ty, layout::slot(base, i))) {
+            let store = store(self.program.profile, ty, layout::slot(base, i));
+            if let (Some(temp), Some(store)) = (temp, store) {
                 out.extend([
                     Instruction::LocalGet(ptr),
                     Instruction::LocalGet(temp),
@@ -1191,7 +1226,7 @@ impl<'p> FuncCx<'_, 'p> {
 
     /// Loads a slot, leaving a fresh owned reference when it holds a pointer.
     fn load_slot(&mut self, ptr: u32, ty: MTy, offset: u32, out: &mut Code) {
-        let Some(load) = load(ty, offset) else {
+        let Some(load) = load(self.program.profile, ty, offset) else {
             return;
         };
         out.extend([Instruction::LocalGet(ptr), load]);
@@ -1236,7 +1271,8 @@ impl<'p> FuncCx<'_, 'p> {
         ]);
         let mut olds = Vec::new();
         for (i, &(ty, _)) in slots.iter().enumerate() {
-            if let (MTy::Ptr(kind), Some(load)) = (ty, load(ty, layout::slot(layout::HEADER, i))) {
+            let load = load(self.program.profile, ty, layout::slot(layout::HEADER, i));
+            if let (MTy::Ptr(kind), Some(load)) = (ty, load) {
                 let old = self.scratch(ValType::I32);
                 out.extend([
                     Instruction::LocalGet(base),
@@ -1359,11 +1395,20 @@ impl<'p> FuncCx<'_, 'p> {
         match expr {
             Expr::Const(c) => Ok(Some(match *c {
                 Const::Int(n) => {
-                    out.push(Instruction::I64Const(n));
+                    out.push(match self.program.profile {
+                        Profile::Desktop => Instruction::I64Const(n),
+                        Profile::Embedded => Instruction::I32Const(
+                            i32::try_from(n)
+                                .map_err(|_| EmitError::Malformed("int constant out of range"))?,
+                        ),
+                    });
                     MTy::Int
                 }
                 Const::Float(x) => {
-                    out.push(Instruction::F64Const(x.into()));
+                    out.push(match self.program.profile {
+                        Profile::Desktop => Instruction::F64Const(x.into()),
+                        Profile::Embedded => Instruction::F32Const((x as f32).into()),
+                    });
                     MTy::Float
                 }
                 Const::Bool(b) => {
@@ -1387,7 +1432,10 @@ impl<'p> FuncCx<'_, 'p> {
             }
             Expr::IntToFloat(value) => match self.lower(value, out)? {
                 Some(MTy::Int) => {
-                    out.push(Instruction::F64ConvertI64S);
+                    out.push(match self.program.profile {
+                        Profile::Desktop => Instruction::F64ConvertI64S,
+                        Profile::Embedded => Instruction::F32ConvertI32S,
+                    });
                     Ok(Some(MTy::Float))
                 }
                 Some(_) => Err(EmitError::Malformed("conversion of a non-int")),
@@ -1396,11 +1444,15 @@ impl<'p> FuncCx<'_, 'p> {
             Expr::FloatFn(function, value) => self.float_fn(*function, value, out),
             Expr::BinFloat(op, a, b) => {
                 self.operands(a, b, MTy::Float, out)?;
-                out.push(match op {
-                    FloatOp::Add => Instruction::F64Add,
-                    FloatOp::Sub => Instruction::F64Sub,
-                    FloatOp::Mul => Instruction::F64Mul,
-                    FloatOp::Div => Instruction::F64Div,
+                out.push(match (self.program.profile, op) {
+                    (Profile::Desktop, FloatOp::Add) => Instruction::F64Add,
+                    (Profile::Desktop, FloatOp::Sub) => Instruction::F64Sub,
+                    (Profile::Desktop, FloatOp::Mul) => Instruction::F64Mul,
+                    (Profile::Desktop, FloatOp::Div) => Instruction::F64Div,
+                    (Profile::Embedded, FloatOp::Add) => Instruction::F32Add,
+                    (Profile::Embedded, FloatOp::Sub) => Instruction::F32Sub,
+                    (Profile::Embedded, FloatOp::Mul) => Instruction::F32Mul,
+                    (Profile::Embedded, FloatOp::Div) => Instruction::F32Div,
                 });
                 Ok(Some(MTy::Float))
             }
@@ -1410,19 +1462,31 @@ impl<'p> FuncCx<'_, 'p> {
                 if ta.zip(tb).is_some_and(|(x, y)| x != y) {
                     return Err(EmitError::Malformed("comparison operand types differ"));
                 }
-                let instr = match (ta.or(tb), op) {
-                    (Some(MTy::Int), CmpOp::Eq) => Instruction::I64Eq,
-                    (Some(MTy::Int), CmpOp::Ne) => Instruction::I64Ne,
-                    (Some(MTy::Int), CmpOp::Lt) => Instruction::I64LtS,
-                    (Some(MTy::Int), CmpOp::Le) => Instruction::I64LeS,
-                    (Some(MTy::Int), CmpOp::Gt) => Instruction::I64GtS,
-                    (Some(MTy::Int), CmpOp::Ge) => Instruction::I64GeS,
-                    (Some(MTy::Float), CmpOp::Eq) => Instruction::F64Eq,
-                    (Some(MTy::Float), CmpOp::Ne) => Instruction::F64Ne,
-                    (Some(MTy::Float), CmpOp::Lt) => Instruction::F64Lt,
-                    (Some(MTy::Float), CmpOp::Le) => Instruction::F64Le,
-                    (Some(MTy::Float), CmpOp::Gt) => Instruction::F64Gt,
-                    (Some(MTy::Float), CmpOp::Ge) => Instruction::F64Ge,
+                let instr = match (self.program.profile, ta.or(tb), op) {
+                    (Profile::Desktop, Some(MTy::Int), CmpOp::Eq) => Instruction::I64Eq,
+                    (Profile::Desktop, Some(MTy::Int), CmpOp::Ne) => Instruction::I64Ne,
+                    (Profile::Desktop, Some(MTy::Int), CmpOp::Lt) => Instruction::I64LtS,
+                    (Profile::Desktop, Some(MTy::Int), CmpOp::Le) => Instruction::I64LeS,
+                    (Profile::Desktop, Some(MTy::Int), CmpOp::Gt) => Instruction::I64GtS,
+                    (Profile::Desktop, Some(MTy::Int), CmpOp::Ge) => Instruction::I64GeS,
+                    (Profile::Embedded, Some(MTy::Int), CmpOp::Eq) => Instruction::I32Eq,
+                    (Profile::Embedded, Some(MTy::Int), CmpOp::Ne) => Instruction::I32Ne,
+                    (Profile::Embedded, Some(MTy::Int), CmpOp::Lt) => Instruction::I32LtS,
+                    (Profile::Embedded, Some(MTy::Int), CmpOp::Le) => Instruction::I32LeS,
+                    (Profile::Embedded, Some(MTy::Int), CmpOp::Gt) => Instruction::I32GtS,
+                    (Profile::Embedded, Some(MTy::Int), CmpOp::Ge) => Instruction::I32GeS,
+                    (Profile::Desktop, Some(MTy::Float), CmpOp::Eq) => Instruction::F64Eq,
+                    (Profile::Desktop, Some(MTy::Float), CmpOp::Ne) => Instruction::F64Ne,
+                    (Profile::Desktop, Some(MTy::Float), CmpOp::Lt) => Instruction::F64Lt,
+                    (Profile::Desktop, Some(MTy::Float), CmpOp::Le) => Instruction::F64Le,
+                    (Profile::Desktop, Some(MTy::Float), CmpOp::Gt) => Instruction::F64Gt,
+                    (Profile::Desktop, Some(MTy::Float), CmpOp::Ge) => Instruction::F64Ge,
+                    (Profile::Embedded, Some(MTy::Float), CmpOp::Eq) => Instruction::F32Eq,
+                    (Profile::Embedded, Some(MTy::Float), CmpOp::Ne) => Instruction::F32Ne,
+                    (Profile::Embedded, Some(MTy::Float), CmpOp::Lt) => Instruction::F32Lt,
+                    (Profile::Embedded, Some(MTy::Float), CmpOp::Le) => Instruction::F32Le,
+                    (Profile::Embedded, Some(MTy::Float), CmpOp::Gt) => Instruction::F32Gt,
+                    (Profile::Embedded, Some(MTy::Float), CmpOp::Ge) => Instruction::F32Ge,
                     _ => return Err(EmitError::Malformed("comparison operands")),
                 };
                 out.push(instr);
@@ -1435,7 +1499,7 @@ impl<'p> FuncCx<'_, 'p> {
                 let then_ty = self.lower(then, &mut then_code)?;
                 let else_ty = self.lower(els, &mut else_code)?;
                 let ty = then_ty.or(else_ty);
-                let block = match ty.and_then(val_type) {
+                let block = match ty.and_then(|ty| val_type(self.program.profile, ty)) {
                     Some(vt) => BlockType::Result(vt),
                     None => BlockType::Empty,
                 };
@@ -1550,7 +1614,7 @@ impl<'p> FuncCx<'_, 'p> {
                 }
                 let mut default_code = Code::new();
                 ty = ty.or(self.lower(default, &mut default_code)?);
-                let block = match ty.and_then(val_type) {
+                let block = match ty.and_then(|ty| val_type(self.program.profile, ty)) {
                     Some(vt) => BlockType::Result(vt),
                     None => BlockType::Empty,
                 };
@@ -1617,8 +1681,9 @@ impl<'p> FuncCx<'_, 'p> {
                 let call = match write {
                     Write::Number(value) => {
                         match self.lower(value, out)? {
-                            Some(MTy::Float) => {}
-                            Some(MTy::Int) => out.push(Instruction::F64ConvertI64S),
+                            Some(ty @ (MTy::Float | MTy::Int)) => {
+                                out.extend(to_print_number(self.program.profile, ty));
+                            }
                             Some(_) => return Err(EmitError::Malformed("write of a non-number")),
                             None => return Ok(None),
                         }
@@ -1654,7 +1719,10 @@ impl<'p> FuncCx<'_, 'p> {
         }
         match function {
             FloatFn::Sqrt => {
-                out.push(Instruction::F64Sqrt);
+                out.push(match self.program.profile {
+                    Profile::Desktop => Instruction::F64Sqrt,
+                    Profile::Embedded => Instruction::F32Sqrt,
+                });
                 Ok(Some(MTy::Float))
             }
             FloatFn::Truncate => {
@@ -1669,9 +1737,12 @@ impl<'p> FuncCx<'_, 'p> {
     /// with no message.
     #[inline(never)]
     fn checked_int(&mut self, op: IntOp, out: &mut Code) -> Result<(), EmitError> {
+        if self.program.profile == Profile::Embedded {
+            return self.checked_int32(op, out);
+        }
         use Instruction::{
-            I32Const, I64Add, I64And, I64Const, I64DivS, I64Eq, I64Eqz, I64ExtendI32U, I64LtS,
-            I64Mul, I64Ne, I64RemS, I64Sub, I64Xor, LocalGet, LocalSet,
+            I32Const, I64Add, I64And, I64Const, I64DivS, I64Eq, I64Eqz, I64LtS, I64Mul, I64Ne,
+            I64Sub, I64Xor, LocalGet, LocalSet,
         };
         let (a, b) = (self.scratch(ValType::I64), self.scratch(ValType::I64));
         out.extend([LocalSet(b), LocalSet(a)]);
@@ -1734,40 +1805,49 @@ impl<'p> FuncCx<'_, 'p> {
                 self.trap_if(INT_OVERFLOW, out)?;
                 out.extend([LocalGet(a), LocalGet(b), I64Mul]);
             }
-            IntOp::Div | IntOp::FloorDiv | IntOp::Mod => {
-                out.extend([LocalGet(b), I64Eqz]);
-                self.trap_if(DIVISION_BY_ZERO, out)?;
-                if op != IntOp::Mod {
-                    // `i64::MIN / -1` is the one quotient that does not fit;
-                    // as a remainder it is 0, which `i64.rem_s` gives.
-                    out.extend([
-                        LocalGet(a),
-                        I64Const(i64::MIN),
-                        I64Eq,
-                        LocalGet(b),
-                        I64Const(-1),
-                        I64Eq,
-                        Instruction::I32And,
-                    ]);
-                    self.trap_if(INT_OVERFLOW, out)?;
-                }
-                match op {
-                    IntOp::Div => out.extend([LocalGet(a), LocalGet(b), I64DivS]),
-                    IntOp::FloorDiv => {
-                        let r = self.scratch(ValType::I64);
-                        out.extend([LocalGet(a), LocalGet(b), I64DivS]);
-                        out.extend([LocalGet(a), LocalGet(b), I64RemS, LocalSet(r)]);
-                        self.rounds_down(r, b, out);
-                        out.extend([I64ExtendI32U, I64Sub]);
-                    }
-                    _ => {
-                        let r = self.scratch(ValType::I64);
-                        out.extend([LocalGet(a), LocalGet(b), I64RemS, LocalSet(r)]);
-                        out.extend([LocalGet(r), LocalGet(b), I64Add, LocalGet(r)]);
-                        self.rounds_down(r, b, out);
-                        out.push(Instruction::Select);
-                    }
-                }
+            IntOp::Div | IntOp::FloorDiv | IntOp::Mod => self.divide(op, a, b, out)?,
+        }
+        Ok(())
+    }
+
+    /// `a op b` for `Div`, `FloorDiv` and `Mod` on the `i64` locals `a` and
+    /// `b`, trapping on a zero divisor and on the one quotient that does not fit.
+    fn divide(&mut self, op: IntOp, a: u32, b: u32, out: &mut Code) -> Result<(), EmitError> {
+        use Instruction::{
+            I64Add, I64Const, I64DivS, I64Eq, I64Eqz, I64ExtendI32U, I64RemS, I64Sub, LocalGet,
+            LocalSet,
+        };
+        out.extend([LocalGet(b), I64Eqz]);
+        self.trap_if(DIVISION_BY_ZERO, out)?;
+        if op != IntOp::Mod {
+            // `i64::MIN / -1` is the one quotient that does not fit;
+            // as a remainder it is 0, which `i64.rem_s` gives.
+            out.extend([
+                LocalGet(a),
+                I64Const(i64::MIN),
+                I64Eq,
+                LocalGet(b),
+                I64Const(-1),
+                I64Eq,
+                Instruction::I32And,
+            ]);
+            self.trap_if(INT_OVERFLOW, out)?;
+        }
+        match op {
+            IntOp::Div => out.extend([LocalGet(a), LocalGet(b), I64DivS]),
+            IntOp::FloorDiv => {
+                let r = self.scratch(ValType::I64);
+                out.extend([LocalGet(a), LocalGet(b), I64DivS]);
+                out.extend([LocalGet(a), LocalGet(b), I64RemS, LocalSet(r)]);
+                self.rounds_down(r, b, out);
+                out.extend([I64ExtendI32U, I64Sub]);
+            }
+            _ => {
+                let r = self.scratch(ValType::I64);
+                out.extend([LocalGet(a), LocalGet(b), I64RemS, LocalSet(r)]);
+                out.extend([LocalGet(r), LocalGet(b), I64Add, LocalGet(r)]);
+                self.rounds_down(r, b, out);
+                out.push(Instruction::Select);
             }
         }
         Ok(())
@@ -1791,29 +1871,88 @@ impl<'p> FuncCx<'_, 'p> {
         ]);
     }
 
-    /// Turns the `f64` on the stack into the `i64` with its fraction dropped,
-    /// trapping for NaN and for a value `i64` cannot hold, where
-    /// `i64.trunc_f64_s` would trap with no message.
+    /// Turns the `Float` on the stack into the `Int` with its fraction dropped,
+    /// trapping for NaN and for a value the profile's `Int` cannot hold, where
+    /// `trunc_f` would trap with no message.
     fn truncate_to_int(&mut self, out: &mut Code) -> Result<(), EmitError> {
         use Instruction::{
-            F64Const, F64Ge, F64Lt, F64Trunc, I32And, I32Eqz, I64TruncF64S, LocalGet, LocalSet,
+            F32Const, F32Ge, F32Lt, F32Trunc, F64Const, F64Ge, F64Lt, F64Trunc, I32And, I32Eqz,
+            I32TruncF32S, I64TruncF64S, LocalGet, LocalSet,
         };
-        let whole = self.scratch(ValType::F64);
-        let two_pow_63: f64 = 9_223_372_036_854_775_808.0;
+        let embedded = self.program.profile == Profile::Embedded;
+        let whole = self.scratch(if embedded { ValType::F32 } else { ValType::F64 });
+        let (trunc, low, ge, high, lt, convert) = if embedded {
+            (
+                F32Trunc,
+                F32Const((-(2.0_f32.powi(31))).into()),
+                F32Ge,
+                F32Const(2.0_f32.powi(31).into()),
+                F32Lt,
+                I32TruncF32S,
+            )
+        } else {
+            (
+                F64Trunc,
+                F64Const((-(2.0_f64.powi(63))).into()),
+                F64Ge,
+                F64Const(2.0_f64.powi(63).into()),
+                F64Lt,
+                I64TruncF64S,
+            )
+        };
         out.extend([
-            F64Trunc,
+            trunc,
             LocalSet(whole),
             LocalGet(whole),
-            F64Const((-two_pow_63).into()),
-            F64Ge,
+            low,
+            ge,
             LocalGet(whole),
-            F64Const(two_pow_63.into()),
-            F64Lt,
+            high,
+            lt,
             I32And,
             I32Eqz,
         ]);
         self.trap_if(NOT_A_WHOLE_NUMBER, out)?;
-        out.extend([LocalGet(whole), I64TruncF64S]);
+        out.extend([LocalGet(whole), convert]);
+        Ok(())
+    }
+
+    /// `checked_int` for `i32` operands: the operation runs in `i64`, where
+    /// two `i32`s cannot overflow, and `narrow_int` traps if the result does
+    /// not fit back (`-2^31 // -1`, for one).
+    fn checked_int32(&mut self, op: IntOp, out: &mut Code) -> Result<(), EmitError> {
+        use Instruction::{I64Add, I64ExtendI32S, I64Mul, I64Sub, LocalGet, LocalSet};
+        let (a, b) = (self.scratch(ValType::I64), self.scratch(ValType::I64));
+        out.extend([I64ExtendI32S, LocalSet(b), I64ExtendI32S, LocalSet(a)]);
+        match op {
+            IntOp::Add | IntOp::Sub | IntOp::Mul => out.extend([
+                LocalGet(a),
+                LocalGet(b),
+                match op {
+                    IntOp::Add => I64Add,
+                    IntOp::Sub => I64Sub,
+                    _ => I64Mul,
+                },
+            ]),
+            IntOp::Div | IntOp::FloorDiv | IntOp::Mod => self.divide(op, a, b, out)?,
+        }
+        self.narrow_int(out)
+    }
+
+    /// Turns the `i64` on the stack into the profile's `i32` `Int`, trapping
+    /// where it does not fit.
+    fn narrow_int(&mut self, out: &mut Code) -> Result<(), EmitError> {
+        use Instruction::{I32WrapI64, I64ExtendI32S, I64Ne, LocalGet, LocalTee};
+        let wide = self.scratch(ValType::I64);
+        out.extend([
+            LocalTee(wide),
+            LocalGet(wide),
+            I32WrapI64,
+            I64ExtendI32S,
+            I64Ne,
+        ]);
+        self.trap_if(INT_OVERFLOW, out)?;
+        out.extend([LocalGet(wide), I32WrapI64]);
         Ok(())
     }
 
@@ -1879,9 +2018,23 @@ impl<'p> FuncCx<'_, 'p> {
             }
             if let Some(index) = index {
                 out.push(Instruction::LocalGet(index));
+                if self.program.profile == Profile::Embedded {
+                    match ty {
+                        MTy::Float => out.push(Instruction::F64PromoteF32),
+                        MTy::Int => out.push(Instruction::I64ExtendI32S),
+                        _ => {}
+                    }
+                }
             }
         }
         out.push(Instruction::Call(self.shared.foreign_base + f.0));
+        if self.program.profile == Profile::Embedded {
+            match foreign.ret {
+                MTy::Float => out.push(Instruction::F32DemoteF64),
+                MTy::Int => self.narrow_int(out)?,
+                _ => {}
+            }
+        }
         Ok(Some(foreign.ret))
     }
 

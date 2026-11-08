@@ -27,6 +27,13 @@ const MAX_SPECS: usize = 50_000;
 /// Constructs whose runtime support has not landed yet (ADR 0005) come back as
 /// spanned diagnostics; well-typed input never panics.
 pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
+    mono_for(checked, Profile::Desktop)
+}
+
+/// Like [`mono`], for the number widths of `profile`. An `Int` literal the
+/// profile cannot hold becomes a runtime trap, the one an overflowing
+/// operation takes (ADR 0017).
+pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<GoatError>> {
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut labels = BTreeSet::new();
     collect_tags(&checked.root, &mut labels);
@@ -36,6 +43,7 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     let mut foreign = HashMap::new();
     collect_foreign(&checked.root, &mut foreign);
     let mut m = Mono {
+        profile,
         typed: &checked.typed,
         lambdas,
         var_tys,
@@ -72,7 +80,10 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     while let Some((id, target, subst, capture_tys)) = m.work.pop() {
         step += 1;
         if step > MAX_SPECS {
-            m.errors.push(GoatError::new(Span::new(0, 0), "program too complex".to_string()));
+            m.errors.push(GoatError::new(
+                Span::new(0, 0),
+                "program too complex".to_string(),
+            ));
             break;
         }
         let func = m.specialize_body(target, subst, capture_tys);
@@ -92,6 +103,7 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
     }
 
     let mut program = Program {
+        profile,
         funcs: m
             .out
             .into_iter()
@@ -283,6 +295,7 @@ type SpecKey = (Target, Ty, Vec<Ty>);
 const MAX_SPECIALIZATIONS: usize = 1 << 14;
 
 struct Mono<'a> {
+    profile: Profile,
     typed: &'a Typed,
     lambdas: HashMap<Target, Lambda<'a>>,
     var_tys: HashMap<Symbol, &'a Ty>,
@@ -952,11 +965,13 @@ impl Mono<'_> {
             ExprKind::Unit => Expr::Const(Const::Unit),
             ExprKind::Int(n) => {
                 let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
-                Expr::Const(if ty == Ty::Float {
-                    Const::Float(*n as f64)
+                if ty == Ty::Float {
+                    Expr::Const(Const::Float(*n as f64))
+                } else if self.profile.fits_int(*n) {
+                    Expr::Const(Const::Int(*n))
                 } else {
-                    Const::Int(*n)
-                })
+                    Expr::Trap(INT_OVERFLOW.into())
+                }
             }
             ExprKind::Float(x) => Expr::Const(Const::Float(*x)),
             ExprKind::Bool(b) => Expr::Const(Const::Bool(*b)),

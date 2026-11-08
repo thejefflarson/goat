@@ -993,3 +993,28 @@ fn many_tags_in_many_families_keep_every_layout_sparse() {
     assert_eq!(layouts.len(), tags);
     assert!(layouts.iter().all(|table| table.len() == 1));
 }
+
+#[test]
+fn an_int_literal_past_the_profile_becomes_a_trap() {
+    let checked = check("3000000000").expect("checks");
+    let desktop = mono(&checked).expect("lowers");
+    assert_eq!(desktop.profile, Profile::Desktop);
+    assert_eq!(
+        run(&desktop).expect("runs").value,
+        Value::Int(3_000_000_000)
+    );
+    let embedded = mono_for(&checked, Profile::Embedded).expect("lowers");
+    assert_eq!(embedded.profile, Profile::Embedded);
+    assert_eq!(verify(&embedded), Ok(()));
+    assert_eq!(run(&embedded), Err(InterpError::Trap(INT_OVERFLOW.into())));
+}
+
+#[test]
+fn a_literal_that_fits_the_profile_stays_a_constant() {
+    let checked = check("2147483647").expect("checks");
+    let embedded = mono_for(&checked, Profile::Embedded).expect("lowers");
+    assert_eq!(
+        run(&embedded).expect("runs").value,
+        Value::Int(2_147_483_647)
+    );
+}

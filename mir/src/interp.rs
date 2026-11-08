@@ -378,7 +378,10 @@ impl<'p> Interp<'p> {
             .call(&foreign.module, &foreign.name, &values)
             .map_err(InterpError::Trap)?;
         match (foreign.ret, returned) {
-            (MTy::Float, HostValue::Number(x)) => Ok(Value::Float(x)),
+            (MTy::Float, HostValue::Number(x)) => Ok(Value::Float(self.round(x))),
+            (MTy::Int, HostValue::Int(n)) if !self.program.profile.fits_int(n) => {
+                Err(InterpError::Trap(INT_OVERFLOW.into()))
+            }
             (MTy::Int, HostValue::Int(n)) => Ok(Value::Int(n)),
             (MTy::Bool, HostValue::Bool(b)) => Ok(Value::Bool(b)),
             (MTy::Unit, HostValue::Unit) => Ok(Value::Unit),
@@ -388,6 +391,30 @@ impl<'p> Interp<'p> {
             _ => Err(InterpError::Malformed(
                 "host result does not match its type",
             )),
+        }
+    }
+
+    fn round(&self, x: f64) -> f64 {
+        self.program.profile.round_float(x)
+    }
+
+    /// `int_op`, trapping too where the result leaves the profile's `Int`.
+    #[inline(never)]
+    fn bin_int(&self, op: IntOp, a: Value, b: Value) -> Result<Value, InterpError> {
+        match int_op(op, a, b)? {
+            Value::Int(n) if !self.program.profile.fits_int(n) => {
+                Err(InterpError::Trap(INT_OVERFLOW.into()))
+            }
+            result => Ok(result),
+        }
+    }
+
+    /// `float_op`, rounded to the profile's `Float`.
+    #[inline(never)]
+    fn bin_float(&self, op: FloatOp, a: Value, b: Value) -> Result<Value, InterpError> {
+        match float_op(op, a, b)? {
+            Value::Float(x) => Ok(Value::Float(self.round(x))),
+            result => Ok(result),
         }
     }
 
@@ -589,7 +616,7 @@ impl<'p> Interp<'p> {
         let value = match e {
             Expr::Const(c) => match *c {
                 Const::Int(n) => Value::Int(n),
-                Const::Float(x) => Value::Float(x),
+                Const::Float(x) => Value::Float(self.round(x)),
                 Const::Bool(b) => Value::Bool(b),
                 Const::Unit => Value::Unit,
             },
@@ -597,14 +624,14 @@ impl<'p> Interp<'p> {
             Expr::Let(..) => unreachable!("the loop above consumed every `Let`"),
             Expr::BinInt(op, a, b) => {
                 let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
-                int_op(*op, a, b)?
+                self.bin_int(*op, a, b)?
             }
             Expr::BinFloat(op, a, b) => {
                 let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
-                float_op(*op, a, b)?
+                self.bin_float(*op, a, b)?
             }
             Expr::IntToFloat(value) | Expr::FloatFn(_, value) => {
-                convert(e, self.value(value, frame, depth)?)?
+                convert(self.program.profile, e, self.value(value, frame, depth)?)?
             }
             Expr::Cmp(op, a, b) => {
                 let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
@@ -791,14 +818,16 @@ fn floor_mod(a: i64, b: i64) -> Option<i64> {
 /// serves both so `eval`, which a long chain of operators recurses through,
 /// keeps its frame.
 #[inline(never)]
-fn convert(node: &Expr, value: Value) -> Result<Value, InterpError> {
+fn convert(profile: Profile, node: &Expr, value: Value) -> Result<Value, InterpError> {
     match (node, value) {
-        (Expr::IntToFloat(_), Value::Int(n)) => Ok(Value::Float(n as f64)),
-        (Expr::FloatFn(FloatFn::Sqrt, _), Value::Float(x)) => Ok(Value::Float(x.sqrt())),
+        (Expr::IntToFloat(_), Value::Int(n)) => Ok(Value::Float(profile.round_float(n as f64))),
+        (Expr::FloatFn(FloatFn::Sqrt, _), Value::Float(x)) => {
+            Ok(Value::Float(profile.round_float(x.sqrt())))
+        }
         (Expr::FloatFn(FloatFn::Truncate, _), Value::Float(x)) => {
             let whole = x.trunc();
             // `-2^63 <= whole < 2^63` is false for NaN too.
-            if (-TWO_POW_63..TWO_POW_63).contains(&whole) {
+            if (-TWO_POW_63..TWO_POW_63).contains(&whole) && profile.fits_int(whole as i64) {
                 Ok(Value::Int(whole as i64))
             } else {
                 Err(InterpError::Trap(NOT_A_WHOLE_NUMBER.into()))

@@ -756,8 +756,10 @@ Espruino. None are statically typed and GC-free.
       sensors, serial print.
 - [ ] **Event model:** the Phase 9.5 loop and interrupt queue — button/timer/
       sensor events in, model updated, outputs driven. No callbacks.
-- [ ] **Constraints honored:** `f32` floats, declared heap budget with pooled
-      allocation, bounded stack with clear overflow traps.
+- [x] **Number profile:** `Int` is `i32` and `Float` is `f32` on the embedded
+      profile (`goat build --target embedded`; ADR 0017).
+- [ ] **Constraints honored:** declared heap budget with pooled allocation,
+      bounded stack with clear overflow traps.
 - [ ] **Live coding over serial:** upload new code, keep the model (same
       rules as Phase 11 hot reload).
 - [ ] Check runtime support for wasm custom page sizes before relying on it.

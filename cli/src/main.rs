@@ -4,7 +4,11 @@
 //! - `goat build FILE [-o OUT]`  compile to a WebAssembly module.
 //! - `goat run FILE [-o OUT.svg]`  compile and run under wasmtime; `-o` saves
 //!   the turtle's drawing as an SVG.
+//!
+//! `build` and `run` take `--target desktop|embedded` (default `desktop`):
+//! `embedded` makes an `Int` an `i32` and a `Float` an `f32`.
 
+use goat::Profile;
 use goat_cli::turtle::TurtleHost;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -36,7 +40,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("build") => {
             let file = args.get(2).ok_or("usage: goat build FILE [-o OUT]")?;
             let out = parse_out_flag(&args[3..]).unwrap_or_else(|| default_output(file));
-            let wasm = build(file)?;
+            let wasm = build(file, parse_target_flag(&args[3..])?)?;
             fs::write(&out, wasm).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
             eprintln!("goat: wrote {}", out.display());
             Ok(ExitCode::SUCCESS)
@@ -44,10 +48,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("run") => {
             let file = args.get(2).ok_or("usage: goat run FILE [-o OUT.svg]")?;
             let source = read(file)?;
-            run_program(&build(file)?, &source, parse_out_flag(&args[3..]))
+            let wasm = build(file, parse_target_flag(&args[3..])?)?;
+            run_program(&wasm, &source, parse_out_flag(&args[3..]))
         }
         _ => {
-            eprintln!("usage: goat <check|build|run> FILE [-o OUT]");
+            eprintln!("usage: goat <check|build|run> FILE [-o OUT] [--target desktop|embedded]");
             Ok(ExitCode::FAILURE)
         }
     }
@@ -113,9 +118,9 @@ fn print_warnings(file: &str, source: &str, warnings: &[goat_checker::GoatError]
     }
 }
 
-fn build(file: &str) -> Result<Vec<u8>, String> {
+fn build(file: &str, profile: Profile) -> Result<Vec<u8>, String> {
     let source = read(file)?;
-    let (wasm, warnings) = goat::compile_with_warnings(&source, &goat::HostInterface::turtle())
+    let (wasm, warnings) = goat::compile_for(profile, &source, &goat::HostInterface::turtle())
         .map_err(|errors| render_errors(file, &source, &errors))?;
     print_warnings(file, &source, &warnings);
     Ok(wasm)
@@ -129,6 +134,20 @@ fn parse_out_flag(args: &[String]) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn parse_target_flag(args: &[String]) -> Result<Profile, String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--target" {
+            return match it.next().map(String::as_str) {
+                Some("desktop") => Ok(Profile::Desktop),
+                Some("embedded") => Ok(Profile::Embedded),
+                _ => Err("--target takes desktop or embedded".to_string()),
+            };
+        }
+    }
+    Ok(Profile::Desktop)
 }
 
 fn default_output(file: &str) -> PathBuf {

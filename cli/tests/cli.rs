@@ -189,6 +189,36 @@ fn runs_the_hello_example() {
 }
 
 #[test]
+fn the_target_flag_picks_the_number_widths() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("p.goat");
+    fs::write(&path, "print(2147483647 + 1)").unwrap();
+    let file = path.to_str().unwrap();
+    let run = |target: &[&str]| goat(&[&["run", file], target].concat());
+
+    let desktop = run(&["--target", "desktop"]);
+    assert_eq!(desktop.stdout, b"2147483648\n");
+    assert_eq!(run(&[]).stdout, desktop.stdout);
+    let embedded = run(&["--target", "embedded"]);
+    assert!(!embedded.status.success());
+    assert!(String::from_utf8_lossy(&embedded.stderr).contains("this number got too big"));
+    let unknown = run(&["--target", "arm"]);
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("desktop or embedded"));
+
+    let out = dir.path().join("p.wasm");
+    let build = goat(&[
+        "build",
+        file,
+        "--target",
+        "embedded",
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert!(build.status.success());
+    assert!(goat_cli::run(&fs::read(out).unwrap()).is_err());
+}
+
+#[test]
 fn number_formatting_matches_the_old_runtime() {
     assert_eq!(stdout_of("1 + 2 * 3"), "7");
     assert_eq!(stdout_of("1000000"), "1000000");
