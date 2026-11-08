@@ -9,11 +9,17 @@
     color-scheme: light dark;
     --bg: #fafafa; --fg: #1c1c1e; --panel: #fff; --line: #c9c9ce;
     --accent: #5b3fd1; --accent-fg: #fff; --error: #b3261e;
+    --selection: #c9c9ce;
+    --tok-keyword: #5b3fd1; --tok-literal: #0b6e99; --tok-number: #0b6e99;
+    --tok-string: #1a7f37; --tok-comment: #6a6a73; --tok-tag: #b35900;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #17171a; --fg: #ececf0; --panel: #222226; --line: #3d3d44;
       --accent: #9b86ff; --accent-fg: #17171a; --error: #ff8a80;
+      --selection: #3d3d5c;
+      --tok-keyword: #b4a3ff; --tok-literal: #7dd3fc; --tok-number: #7dd3fc;
+      --tok-string: #7ee787; --tok-comment: #9a9aa5; --tok-tag: #ffb870;
     }
   }
   * { box-sizing: border-box; }
@@ -27,12 +33,12 @@
     header, #problems, #output { grid-column: 1 / -1; }
   }
   h1 { margin: 0; font-size: 1.25rem; }
-  textarea, pre, canvas {
+  pre, canvas {
     width: 100%; margin: 0; border: 1px solid var(--line); border-radius: 6px;
     background: var(--panel); color: var(--fg);
   }
-  textarea, pre { font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; padding: 8px; }
-  textarea { height: 20rem; resize: vertical; tab-size: 2; }
+  pre { font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; padding: 8px; }
+  #source { height: 20rem; resize: vertical; overflow: auto; }
   canvas:focus-visible { outline: 2px solid var(--accent); }
   select { font: inherit; padding: 8px; margin-left: 8px; }
   canvas { aspect-ratio: 1; height: auto; display: block; background: #fff; }
@@ -51,7 +57,7 @@
 <main>
   <header><h1>goat</h1></header>
   <section>
-    <textarea id="source" aria-label="goat code" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+    <div id="source"></div>
     <button id="run" disabled>Run</button>
     <select id="example" aria-label="example program">
       <option value="arrow_draw">Arrow keys draw (interactive)</option>
@@ -66,11 +72,12 @@
   import { compile, loadCompiler } from "./dist/compile.js";
   import { superviseCanvas } from "./dist/browser.js";
   import { isInteractiveModule } from "./dist/loop.js";
+  import { mountEditor } from "./dist/editor.bundle.js";
 
   const COMPILER_URL = "./goat_web.wasm";
 
   const $ = (id) => document.getElementById(id);
-  const [source, button, canvas, problems, output, example] =
+  const [sourceHost, button, canvas, problems, output, example] =
     ["source", "run", "canvas", "problems", "output", "example"].map($);
 
   const EXAMPLES = {
@@ -104,8 +111,6 @@ for side from 1 to 60 do
 done
 `,
   };
-  source.value = EXAMPLES.arrow_draw;
-  example.addEventListener("change", () => (source.value = EXAMPLES[example.value]));
 
   function show(el, text) {
     el.textContent = text;
@@ -124,13 +129,17 @@ done
     show(problems, String(e.message ?? e));
   }
 
+  // Without the compiler the editor still edits; it just neither colors nor checks.
+  const editor = mountEditor(sourceHost, EXAMPLES.arrow_draw, compiler);
+  example.addEventListener("change", () => editor.setText(EXAMPLES[example.value]));
+
   button.addEventListener("click", async () => {
     page.supervisor.stop();
     button.disabled = true;
     show(problems, "");
     show(output, "");
     try {
-      const compiled = await compile(compiler, source.value);
+      const compiled = await compile(compiler, editor.text());
       if (!compiled.ok) return show(problems, compiled.diagnostics);
       const interactive = isInteractiveModule(await WebAssembly.compile(compiled.module));
       page.supervisor.start(

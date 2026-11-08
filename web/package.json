@@ -4,13 +4,20 @@
   "type": "module",
   "devDependencies": {
     "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
     "typescript": "7.0.2"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node build-editor.ts",
     "bundle": "node bundle.ts",
     "serve": "node serve.ts",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "node --test *.test.ts"
+  },
+  "dependencies": {
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lint": "6.9.7",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15"
   }
 }
