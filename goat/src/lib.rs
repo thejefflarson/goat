@@ -124,8 +124,25 @@ fn compile_with(
     let mut checked = goat_checker::check_with_prelude(host.prelude(), source)?;
     let warnings = std::mem::take(&mut checked.typed.warnings);
     let program = goat_mir::mono_for(&checked, profile)?;
+    verify_mir(&program)?;
     let wasm = emit(&program).map_err(|e| vec![GoatError::new(Span::new(0, 0), e.to_string())])?;
     Ok((wasm, warnings))
+}
+
+/// Verification costs about a tenth of mono, so it runs in release too: a
+/// mono bug becomes a reported compiler error here instead of a module the
+/// backend turns into something unsound.
+fn verify_mir(program: &goat_mir::Program) -> Result<(), Vec<GoatError>> {
+    goat_mir::verify(program).map_err(|errors| {
+        vec![GoatError::new(
+            Span::new(0, 0),
+            format!(
+                "internal compiler error: the generated program is malformed ({} problem(s), first: {:?})",
+                errors.len(),
+                errors[0]
+            ),
+        )]
+    })
 }
 
 /// Format a number the way the program's `print` shows it: whole values within
@@ -186,6 +203,17 @@ fn strip_zeros(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_malformed_program_is_a_compiler_error_not_a_module() {
+        let checked = goat_checker::check_with_prelude(HostInterface::turtle().prelude(), "1")
+            .expect("checks");
+        let mut program = goat_mir::mono_for(&checked, Profile::Desktop).expect("lowers");
+        assert!(verify_mir(&program).is_ok());
+        program.funcs.clear();
+        let errors = verify_mir(&program).unwrap_err();
+        assert!(errors[0].message.starts_with("internal compiler error"));
+    }
 
     #[test]
     fn whole_numbers_print_as_integers() {

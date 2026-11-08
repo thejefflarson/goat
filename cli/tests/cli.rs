@@ -443,3 +443,23 @@ fn error_program_still_fails() {
             .contains("error(s) in")
     );
 }
+
+#[test]
+fn a_run_once_program_that_never_stops_runs_out_of_fuel_and_fails() {
+    let out = run_source(
+        "spin.goat",
+        "spin = program(n) do if n < 0 then n else spin(n + 1) done done\nprint(spin(0))",
+    );
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("trap"));
+}
+
+#[test]
+fn a_run_once_program_with_tens_of_millions_of_calls_still_finishes() {
+    assert_eq!(
+        stdout_of(
+            "fib = program(n) do if n < 2 then n else fib(n - 1) + fib(n - 2) done done\nprint(fib(35))"
+        ),
+        "9227465"
+    );
+}

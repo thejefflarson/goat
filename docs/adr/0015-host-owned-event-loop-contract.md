@@ -144,9 +144,10 @@ bounded steps and traps, which the host catches and surfaces as *"your update go
 stuck"* — stopping the program, not hanging the tab. The browser additionally
 keeps a wall-clock frame-budget guard for a terminating-but-pathologically-slow
 update. > Note (as built, #107): the global is exported as `goat_fuel` (a mutable wasm
-> global the host sets), starts at `i32::MAX` in every module so a host that
-> never refills it still gets a bound, and is spent by every compiled goat
-> function entry. The browser refills it to 5,000,000 before each call into goat
+> global the host sets), starts at 5,000,000 in an interactive module and
+> 100,000,000 in a run-once one so a host that never refills it still gets a
+> bound (a runaway loop traps in a fraction of a second, not billions of
+> calls), and is spent by every compiled goat function entry. The browser refills it to 5,000,000 before each call into goat
 > and treats a trap with the fuel at or below zero as "stuck"; a call that
 > returns after more than one second also stops the loop.
 

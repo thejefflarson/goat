@@ -1741,6 +1741,27 @@ mod tests {
     }
 
     #[test]
+    fn a_parameter_grown_one_field_at_a_time_hits_the_term_limit_before_the_stack() {
+        let reads: Vec<String> = (0..300).map(|i| format!("a{i} = r.f{i}")).collect();
+        let source = format!(
+            "pick = program(r) do {} a0 done\npick({{f0: 1}})",
+            reads.join(" ")
+        );
+        let Err(errors) = check(&source) else {
+            panic!("a 300-field parameter should not check");
+        };
+        assert!(
+            errors
+                .iter()
+                .all(|e| e.message.starts_with("program too complex")),
+            "{:?}",
+            errors[0]
+        );
+        let blamed = &source[errors[0].span.start..errors[0].span.end];
+        assert_eq!(blamed, "r");
+    }
+
+    #[test]
     fn and_or_not_have_their_own_nodes() {
         let lowered = crate::lower::lower("a = true b = false a and b").unwrap();
         let hir::ExprKind::Let { rest, .. } = lowered.root.kind else {

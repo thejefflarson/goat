@@ -12,7 +12,7 @@
   (memory (;0;) 1)
   (global (;0;) (mut i32) i32.const 232)
   (global (;1;) (mut i32) i32.const 0)
-  (global (;2;) (mut i32) i32.const 2147483647)
+  (global (;2;) (mut i32) i32.const 100000000)
   (global (;3;) (mut i32) i32.const 0)
   (export "memory" (memory 0))
   (export "goat_entry" (func 4))

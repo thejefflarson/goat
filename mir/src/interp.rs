@@ -7,6 +7,9 @@ const IMMORTAL: u32 = u32::MAX;
 /// Debug-build interpreter frames are large; callers with deep recursion
 /// should raise the limit via `run_with_depth` and grow their own stack.
 const DEFAULT_MAX_DEPTH: usize = 128;
+/// Most heap objects one run may allocate. Slots are never reused, so this
+/// bounds the interpreter's memory however a crafted program loops.
+const MAX_OBJECTS: usize = 1 << 22;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
@@ -23,6 +26,8 @@ pub enum InterpError {
     DoubleFree(usize),
     UseAfterFree(usize),
     StackOverflow,
+    /// The program holds more than `MAX_OBJECTS` heap objects.
+    OutOfMemory,
     Malformed(&'static str),
 }
 
@@ -57,6 +62,18 @@ pub fn run_with_depth(program: &Program, max_depth: usize) -> Result<Outcome, In
     run_on(program, max_depth, &mut NoHost)
 }
 
+/// Like [`run`], but failing with [`InterpError::OutOfMemory`] past `max_objects`
+/// heap objects instead of [`MAX_OBJECTS`].
+pub fn run_with_object_limit(
+    program: &Program,
+    max_objects: usize,
+) -> Result<Outcome, InterpError> {
+    let mut host = NoHost;
+    let mut interp = Interp::new(program, &mut host, DEFAULT_MAX_DEPTH);
+    interp.max_objects = max_objects;
+    run_entry(program, interp)
+}
+
 /// Run `program`, answering its foreign calls from `host`.
 pub fn run_with_host(program: &Program, host: &mut dyn Host) -> Result<Outcome, InterpError> {
     run_on(program, DEFAULT_MAX_DEPTH, host)
@@ -67,7 +84,10 @@ fn run_on(
     max_depth: usize,
     host: &mut dyn Host,
 ) -> Result<Outcome, InterpError> {
-    let mut interp = Interp::new(program, host, max_depth);
+    run_entry(program, Interp::new(program, host, max_depth))
+}
+
+fn run_entry(program: &Program, mut interp: Interp) -> Result<Outcome, InterpError> {
     let entry = Pending {
         func: program.entry,
         env: None,
@@ -144,7 +164,7 @@ impl<'p> Session<'p> {
     }
 
     /// A string with count 1, as a host makes one to hand to a constructor.
-    pub fn string(&mut self, text: &str) -> Value {
+    pub fn string(&mut self, text: &str) -> Result<Value, InterpError> {
         self.interp.alloc(Body::Text(text.as_bytes().to_vec()), 1)
     }
 
@@ -250,6 +270,7 @@ struct Interp<'p> {
     program: &'p Program,
     host: &'p mut dyn Host,
     max_depth: usize,
+    max_objects: usize,
     slots: Vec<Option<Obj>>,
     live: usize,
     allocations: usize,
@@ -264,6 +285,7 @@ impl<'p> Interp<'p> {
             program,
             host,
             max_depth,
+            max_objects: MAX_OBJECTS,
             slots: Vec::new(),
             live: 0,
             allocations: 0,
@@ -273,13 +295,16 @@ impl<'p> Interp<'p> {
         }
     }
 
-    fn alloc(&mut self, body: Body, rc: u32) -> Value {
+    fn alloc(&mut self, body: Body, rc: u32) -> Result<Value, InterpError> {
+        if self.slots.len() >= self.max_objects {
+            return Err(InterpError::OutOfMemory);
+        }
         if rc != IMMORTAL {
             self.live += 1;
             self.allocations += 1;
         }
         self.slots.push(Some(Obj { rc, body }));
-        Value::Ptr(self.slots.len() - 1)
+        Ok(Value::Ptr(self.slots.len() - 1))
     }
 
     fn obj(&self, addr: usize) -> Result<&Obj, InterpError> {
@@ -388,7 +413,7 @@ impl<'p> Interp<'p> {
             (MTy::Bool, HostValue::Bool(b)) => Ok(Value::Bool(b)),
             (MTy::Unit, HostValue::Unit) => Ok(Value::Unit),
             (MTy::Ptr(HeapKind::Str), HostValue::Str(text)) => {
-                Ok(self.alloc(Body::Text(text.into_bytes()), 1))
+                self.alloc(Body::Text(text.into_bytes()), 1)
             }
             _ => Err(InterpError::Malformed(
                 "host result does not match its type",
@@ -475,7 +500,7 @@ impl<'p> Interp<'p> {
         let obj = self.obj(addr)?;
         if obj.rc != 1 {
             self.release(Value::Ptr(addr))?;
-            return Ok(self.alloc(Body::Record(fields), 1));
+            return self.alloc(Body::Record(fields), 1);
         }
         let Body::Record(old) = &obj.body else {
             return Err(InterpError::Malformed("reuse of non-record"));
@@ -752,7 +777,7 @@ impl<'p> Interp<'p> {
             }
             Expr::MakeClosure(f, captures) => {
                 let captures = self.values(captures, frame, depth)?;
-                self.alloc(Body::Closure(*f, captures), 1)
+                self.alloc(Body::Closure(*f, captures), 1)?
             }
             Expr::Capture(i) => {
                 let env = frame.env.ok_or(InterpError::Malformed("no env"))?;
@@ -767,7 +792,7 @@ impl<'p> Interp<'p> {
             }
             Expr::AllocRecord(_, fields) => {
                 let fields = self.values(fields, frame, depth)?;
-                self.alloc(Body::Record(fields), 1)
+                self.alloc(Body::Record(fields), 1)?
             }
             Expr::Field(x, i) => {
                 let record = frame.get(*x)?;
@@ -775,7 +800,7 @@ impl<'p> Interp<'p> {
             }
             Expr::AllocVariant(_, tag, fields) => {
                 let fields = self.values(fields, frame, depth)?;
-                self.alloc(Body::Variant(*tag, fields), 1)
+                self.alloc(Body::Variant(*tag, fields), 1)?
             }
             Expr::Unpack(x, tag, binds, body) => {
                 self.unpack(*x, *tag, binds, frame)?;
@@ -790,7 +815,7 @@ impl<'p> Interp<'p> {
                         }
                         Value::Ptr(addr)
                     }
-                    _ => self.alloc(Body::Variant(*tag, fields), 1),
+                    _ => self.alloc(Body::Variant(*tag, fields), 1)?,
                 }
             }
             Expr::ReuseRecord(x, _, fields) => self.reuse_record(*x, fields, frame, depth)?,
@@ -808,7 +833,7 @@ impl<'p> Interp<'p> {
             Expr::StrLit(d) => match self.strings.get(d) {
                 Some(&addr) => Value::Ptr(addr),
                 None => {
-                    let Value::Ptr(addr) = self.alloc(Body::Str(*d), IMMORTAL) else {
+                    let Value::Ptr(addr) = self.alloc(Body::Str(*d), IMMORTAL)? else {
                         unreachable!("alloc returns a pointer");
                     };
                     self.strings.insert(*d, addr);

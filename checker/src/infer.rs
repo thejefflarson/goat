@@ -77,6 +77,7 @@ pub fn infer_program(
     if let (true, Some(contract)) = (inf.errors.is_empty(), interactive) {
         inf.check_contract(contract);
     }
+    inf.report_spent_ids(root.span);
     if inf.errors.is_empty() {
         inf.default_numbers();
         let warnings = inf.unused_tag_warnings();
@@ -124,6 +125,7 @@ pub fn infer_program(
 #[derive(Default)]
 struct Inferer {
     next: TypeVar,
+    ids_spent: bool,
     subst: HashMap<TypeVar, Ty>,
     row_subst: HashMap<TypeVar, Row>,
     env: HashMap<Symbol, Scheme>,
@@ -189,10 +191,25 @@ impl RowKind {
 }
 
 impl Inferer {
+    /// Ids stop at `TypeVar::MAX`, where `ids_spent` is raised once and every
+    /// later variable aliases it; the caller reports that before codegen could
+    /// see an unsound type.
     fn fresh_id(&mut self) -> TypeVar {
         let v = self.next;
-        self.next += 1;
+        if v == TypeVar::MAX - 1 {
+            self.ids_spent = true;
+        }
+        self.next = v.saturating_add(1);
         v
+    }
+
+    fn report_spent_ids(&mut self, span: Span) {
+        if std::mem::take(&mut self.ids_spent) {
+            self.errors.push(GoatError::new(
+                span,
+                "program too complex: it needs more type variables than the checker can number",
+            ));
+        }
     }
 
     fn fresh(&mut self) -> Ty {
@@ -522,7 +539,9 @@ impl Inferer {
     /// Surface `label` in `row`, returning its field type and the row without
     /// it. An open row (ending in a row variable) is grown with a fresh field;
     /// a closed row missing the label yields `None`. Differing labels ahead of
-    /// `label` keep their position, which is what makes labels scoped.
+    /// `label` keep their position, which is what makes labels scoped. The
+    /// recursion is as deep as the row is long, which [`MAX_TYPE_TERMS`] caps:
+    /// every row grows by one inferred expression at a time and each is checked.
     fn rewrite_row(&mut self, label: &str, row: &Row) -> Option<(Ty, Row)> {
         match self.resolve_row(row) {
             Row::Empty => None,
@@ -1019,6 +1038,7 @@ impl Inferer {
 
     fn infer(&mut self, expr: &Expr) -> Ty {
         let mut ty = self.infer_kind(expr);
+        self.report_spent_ids(expr.span);
         if !self.within_term_budget(&ty) {
             self.errors.push(GoatError::new(
                 expr.span,
@@ -1905,6 +1925,33 @@ mod tests {
             next: 1000,
             ..Inferer::default()
         }
+    }
+
+    #[test]
+    fn running_out_of_type_variable_ids_is_a_spanned_resource_error() {
+        let lowered = crate::lower::lower("id = program(x) do x done id(1)").unwrap();
+        let mut inf = Inferer {
+            next: TypeVar::MAX - 3,
+            ..Inferer::default()
+        };
+        inf.infer(&lowered.root);
+        let spent: Vec<_> = inf
+            .errors
+            .iter()
+            .filter(|e| e.message.starts_with("program too complex"))
+            .collect();
+        assert_eq!(spent.len(), 1, "{:?}", inf.errors);
+        assert!(spent[0].span.end > spent[0].span.start);
+    }
+
+    #[test]
+    fn type_variable_ids_stop_at_the_maximum_instead_of_wrapping() {
+        let mut inf = Inferer {
+            next: TypeVar::MAX,
+            ..Inferer::default()
+        };
+        assert_eq!(inf.fresh_id(), TypeVar::MAX);
+        assert_eq!(inf.fresh_id(), TypeVar::MAX);
     }
 
     fn unify_ok(a: &Ty, b: &Ty) -> Inferer {
