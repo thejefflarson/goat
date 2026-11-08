@@ -124,9 +124,13 @@ goat = { SOI ~ tag_decl* ~ expr? ~ EOI }
 // `a; b` runs `a`, drops its value, and continues with `b`. The `;` is what
 // keeps `f(x) (y)` and `f(x) -y` from reading as two statements: a statement
 // ends only at an explicit `;`. A trailing `;` makes the whole expression `()`.
-// The statements are siblings, each `sequel` marking the end of one, so a long
-// block is a wide parse tree rather than a deep one.
-expr = { operand ~ more_math* ~ (sequel ~ operand ~ more_math*)* ~ sequel? }
+// A block is a flat run of siblings: statements, each `sequel` marking the end
+// of one, and bindings, which need no `;` and bind their name for everything
+// after them. So a long block or chain of bindings is a wide parse tree rather
+// than a deep one.
+expr = { part ~ (sequel ~ part)* ~ sequel? }
+statement = _{ operand ~ more_math* }
+part = _{ declaration+ ~ statement? | statement }
 sequel = { semi }
 operand = _{ not_op* ~ term }
 more_math = _{ infix ~ operand }
@@ -140,16 +144,20 @@ access = { dot ~ name }
 call = { lparen ~ arguments? ~ rparen }
 negation = { minus ~ (negation | primary ~ postfix*) }
 // Order matters: pest is a PEG, so longer/more-specific alternatives come
-// first. `declaration` (`name = ...`) begins with a name, so a bare `name` must
-// be tried after it.
-primary = _{ number | string | boolean | destructure | declaration | function | conditional | match_expr | repeat_loop | count_loop | each_loop | record | list | name | lparen ~ expr ~ rparen }
+// first. `local` (`name = ...`) begins with a name, so a bare `name` must be tried
+// after it.
+primary = _{ number | string | boolean | destructure | local | function | conditional | match_expr | repeat_loop | count_loop | each_loop | record | list | name | lparen ~ expr ~ rparen }
 // `{...base, x: 1}`: the grammar accepts a spread anywhere so that lowering can
 // say what is wrong with `{...a, ...b}`, instead of a bare parse error.
 record = { lbrace ~ (record_item ~ (comma ~ record_item)* ~ comma?)? ~ rbrace }
 record_item = _{ spread | field }
 spread = { "..." ~ expr }
 field = { name ~ colon ~ expr }
-declaration = { name ~ equals ~ (foreign_decl | value) ~ semi? ~ expr? }
+// A binding as an operand (`1 + x = 2 x`, `y = x = 2 x`) takes the rest of the
+// expression as its scope, so it nests; the bindings that begin a statement are
+// siblings in `part` instead.
+local = { declaration ~ expr? }
+declaration = { name ~ equals ~ (foreign_decl | value) ~ semi? }
 // `forward = foreign "turtle" "forward" (Number) -> Unit`: a function the host
 // provides. `foreign` is a keyword only here, so it stays usable as a name. The
 // module and name accept any plain operand so lowering can say they must be

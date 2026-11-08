@@ -228,15 +228,76 @@ mod tests {
         parses_to! {
             parser: GoatParser,
             input: "a = b a",
-            rule: Rule::declaration,
+            rule: Rule::expr,
             tokens: [
-                declaration(0, 7, [
-                    name(0, 1),
-                    value(4, 6, [name(4, 5)]),
-                    expr(6, 7, [name(6, 7)])
+                expr(0, 7, [
+                    declaration(0, 6, [name(0, 1), value(4, 6, [name(4, 5)])]),
+                    name(6, 7)
                 ])
             ]
         }
+    }
+
+    #[test]
+    fn a_run_of_bindings_is_a_flat_run_of_siblings() {
+        parses_to! {
+            parser: GoatParser,
+            input: "a = 1 b = 2; a",
+            rule: Rule::expr,
+            tokens: [
+                expr(0, 14, [
+                    declaration(0, 6, [name(0, 1), value(4, 6, [number(4, 5)])]),
+                    declaration(6, 12, [name(6, 7), value(10, 11, [number(10, 11)])]),
+                    name(13, 14)
+                ])
+            ]
+        }
+        parses_to! {
+            parser: GoatParser,
+            input: "p; a = 1",
+            rule: Rule::expr,
+            tokens: [
+                expr(0, 8, [
+                    name(0, 1),
+                    sequel(1, 2),
+                    declaration(3, 8, [name(3, 4), value(7, 8, [number(7, 8)])])
+                ])
+            ]
+        }
+    }
+
+    #[test]
+    fn a_binding_as_an_operand_scopes_over_the_rest() {
+        parses_to! {
+            parser: GoatParser,
+            input: "1 + a = 2 a",
+            rule: Rule::expr,
+            tokens: [
+                expr(0, 11, [
+                    number(0, 1),
+                    plus(2, 3),
+                    local(4, 11, [
+                        declaration(4, 10, [name(4, 5), value(8, 10, [number(8, 9)])]),
+                        expr(10, 11, [name(10, 11)])
+                    ])
+                ])
+            ]
+        }
+        use pest::Parser;
+        assert!(GoatParser::parse(Rule::goat, "a = b = 1 b").is_ok());
+    }
+
+    #[test]
+    fn a_chain_of_thousands_of_bindings_parses_on_the_default_stack() {
+        use pest::Parser;
+        let chain: String = (0..5000).map(|i| format!("a{i} = {i} ")).collect();
+        let src = format!("{chain}a0");
+        let program = GoatParser::parse(Rule::goat, &src).expect("a long chain parses");
+        let expr = program
+            .flatten()
+            .find(|p| p.as_rule() == Rule::expr)
+            .unwrap();
+        assert_eq!(expr.into_inner().count(), 5001);
     }
 
     #[test]
