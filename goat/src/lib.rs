@@ -1,27 +1,34 @@
 //! The goat compiler pipeline: source text to a WebAssembly module.
 
-use goat_checker::GoatError;
 use goat_checker::hir::Span;
+use goat_checker::{GoatError, Vocab};
 pub use goat_mir::Profile;
 
 #[cfg(feature = "native")]
 pub mod native;
 
-/// The vocabulary a host provides: the `foreign` functions a program may call,
-/// declared in goat source ahead of the program. The events `update` receives
-/// and the shapes `draw` returns are fixed by the checker's `vocab` (ADR 0015),
-/// so they are not part of this value.
+/// What a host provides: the `foreign` functions a program may call, declared
+/// in goat source ahead of the program, and the closed set of events, shapes
+/// and keys `update` and `draw` speak in (ADR 0020).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostInterface {
     prelude: String,
+    vocab: Vocab,
 }
 
 impl HostInterface {
-    /// A host whose complete prelude is `prelude`, standard library included
-    /// or not.
+    /// A host with the turtle's events, shapes and keys, whose complete prelude
+    /// is `prelude`, standard library included or not.
     pub fn new(prelude: impl Into<String>) -> Self {
+        Self::with_vocab(prelude, Vocab::turtle())
+    }
+
+    /// A host with its own `vocab`, whose complete prelude is `prelude`
+    /// followed by the decoders `vocab` carries.
+    pub fn with_vocab(prelude: impl Into<String>, vocab: Vocab) -> Self {
         HostInterface {
-            prelude: prelude.into(),
+            prelude: format!("{}\n{}", prelude.into(), vocab.prelude),
+            vocab,
         }
     }
 
@@ -45,6 +52,10 @@ impl HostInterface {
 
     pub fn prelude(&self) -> &str {
         &self.prelude
+    }
+
+    pub fn vocab(&self) -> &Vocab {
+        &self.vocab
     }
 }
 
@@ -121,7 +132,7 @@ fn compile_with(
     host: &HostInterface,
     emit: fn(&goat_mir::Program) -> Result<Vec<u8>, goat_wasm::EmitError>,
 ) -> Result<(Vec<u8>, Vec<GoatError>), Vec<GoatError>> {
-    let mut checked = goat_checker::check_with_prelude(host.prelude(), source)?;
+    let mut checked = goat_checker::check_with_vocab(host.prelude(), host.vocab(), source)?;
     let warnings = std::mem::take(&mut checked.typed.warnings);
     let program = goat_mir::mono_for(&checked, profile)?;
     verify_mir(&program)?;

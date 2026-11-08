@@ -336,3 +336,26 @@ it rather than for its own sake.
   its own concern. Whether #117/#118 express their embedded vocabulary *in* a
   `Vocab` descriptor or derive one from a WIT world is a Phase-12 detail to decide
   when those hosts land, not now.
+
+## As built
+
+- `goat_checker::Vocab` holds `events`, `shapes`, the `keys` group and a goat
+  `prelude`. An event tag names its goat payload type and, optionally, a
+  `Decode { wire, function }`: the host sends the leaves of `wire` and the goat
+  function `function` in the host's prelude turns them into the payload. A shape
+  tag names its payload and the `scene.*` imports it streams through
+  (`SceneCalls::Call` for flat payloads, `Stream` for one list).
+  `Vocab::validate` rejects a vocabulary the backend cannot realize with a
+  checker error.
+- The turtle's `key_of` (the `KeyboardEvent.key` to `Key` decode) is goat in
+  `prelude/turtle_keys.goat`, carried by `Vocab::turtle()`. Lowering adds each
+  decoder to the interactive root record (labelled `@<function>`) so inference
+  checks its type and mono specializes it for the event constructors.
+- Leaf order is the declared field order of the payload type; arguments to a
+  `scene.*` call follow it. The backend reads fields by name, so the order mono
+  lays records out in does not matter.
+- A decoder's tags join the tag set only when something uses it (an
+  interactive program's root record does; so does a program that calls it), so
+  a turtle program that never decodes an event is numbered exactly as before
+  `key_of` moved into the prelude. Tag numbers stay a pure function of the set
+  (§4).

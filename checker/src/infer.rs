@@ -33,7 +33,7 @@ use crate::hir::{
 };
 use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
 use crate::ty::{Group, Row, Scheme, Ty, TypeVar};
-use crate::vocab::{EVENT_TAGS, SHAPE_TAGS, event_payload, list, shape_payload};
+use crate::vocab::{Vocab, list};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Most type terms (constructors, fields, variables) one expression's type may
@@ -63,19 +63,21 @@ pub struct Typed {
 }
 
 pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
-    infer_program(root, None)
+    infer_program(root, None, &Vocab::empty())
 }
 
 /// Like [`infer`], for a program that may be interactive: its three contract
-/// bindings are then unified into the shape ADR 0015 gives them.
+/// bindings are then unified into the shape ADR 0015 gives them, over the
+/// events and shapes of `vocab`.
 pub fn infer_program(
     root: &Expr,
     interactive: Option<&Interactive>,
+    vocab: &Vocab,
 ) -> Result<Typed, Vec<GoatError>> {
     let mut inf = Inferer::default();
     let ty = inf.infer(root);
     if let (true, Some(contract)) = (inf.errors.is_empty(), interactive) {
-        inf.check_contract(contract);
+        inf.check_contract(contract, vocab);
     }
     inf.report_spent_ids(root.span);
     if inf.errors.is_empty() {
@@ -890,7 +892,17 @@ impl Inferer {
     /// `init : M`, `update : (M, E) -> M`, `draw : (M) -> List(S)`, with `M` a
     /// record and `E` and `S` variants. The three types are the uses the
     /// root's tail makes, so unifying them here fixes what mono specializes.
-    fn check_contract(&mut self, contract: &Interactive) {
+    fn check_contract(&mut self, contract: &Interactive, vocab: &Vocab) {
+        for decoder in &contract.decoders {
+            if let Some(expected) = vocab.decoder_ty(&decoder.function) {
+                let actual = self.contract_ty(&decoder.binding);
+                let what = format!(
+                    "the host's `{}` decodes its events, so it must have the type",
+                    decoder.function
+                );
+                self.unify_vocab(&decoder.binding, &actual, &expected, &what);
+            }
+        }
         let model = self.contract_ty(&contract.init);
         if !matches!(self.resolve_head(&model), Ty::Record(_)) {
             self.contract_error(
@@ -908,7 +920,7 @@ impl Inferer {
             Ty::Func(args, ret) if args.len() == 2 => {
                 self.unify_contract(&contract.update, &args[0], &model, "update's model");
                 self.unify_contract(&contract.update, &ret, &model, "update's result");
-                self.check_events(&contract.update, &args[1]);
+                self.check_events(&contract.update, &args[1], vocab);
             }
             other => self.contract_error(
                 &contract.update,
@@ -924,7 +936,7 @@ impl Inferer {
             Ty::Func(args, ret) if args.len() == 1 => {
                 self.unify_contract(&contract.draw, &args[0], &model, "draw's model");
                 if self.is_list_of_variants(&ret) {
-                    self.check_shapes(&contract.draw, &ret);
+                    self.check_shapes(&contract.draw, &ret, vocab);
                 } else {
                     self.contract_error(
                         &contract.draw,
@@ -959,7 +971,7 @@ impl Inferer {
     /// The event type is exactly the tags `update` handles, each carrying what
     /// the host sends. Closing the row is what lets the backend build one
     /// constructor per handled tag (ADR 0015).
-    fn check_events(&mut self, binding: &ContractBinding, event: &Ty) {
+    fn check_events(&mut self, binding: &ContractBinding, event: &Ty, vocab: &Vocab) {
         let Ty::Variant(row) = self.resolve_head(event) else {
             self.contract_error(
                 binding,
@@ -971,19 +983,14 @@ impl Inferer {
             return;
         };
         let (tags, tail) = row_shape(&row);
-        if self.reject_unknown(
-            binding,
-            &tags,
-            &EVENT_TAGS,
-            "the host doesn't send",
-            "event",
-        ) {
+        let known: Vec<&str> = vocab.events.iter().map(|e| e.name.as_str()).collect();
+        if self.reject_unknown(binding, &tags, &known, "the host doesn't send", "event") {
             return;
         }
         for tag in &tags {
-            if let (Some(payload), Some(expected)) = (field_of(&row, tag), event_payload(tag)) {
+            if let (Some(payload), Some(event)) = (field_of(&row, tag), vocab.event(tag)) {
                 let what = format!("the host's `{tag}` event carries");
-                self.unify_vocab(binding, payload, &expected, &what);
+                self.unify_vocab(binding, payload, &event.payload, &what);
             }
         }
         if let Some(var) = tail {
@@ -993,7 +1000,7 @@ impl Inferer {
 
     /// `draw`'s shapes come from the host's vocabulary, each with the payload
     /// the host reads.
-    fn check_shapes(&mut self, binding: &ContractBinding, shapes: &Ty) {
+    fn check_shapes(&mut self, binding: &ContractBinding, shapes: &Ty, vocab: &Vocab) {
         // A list literal types each element on its own; unifying with one list
         // type makes every element the same `Shape`.
         let (item, binder) = (self.fresh(), self.fresh_id());
@@ -1002,13 +1009,14 @@ impl Inferer {
             return;
         };
         let (tags, tail) = row_shape(&row);
-        if self.reject_unknown(binding, &tags, &SHAPE_TAGS, "the host can't draw", "shape") {
+        let known: Vec<&str> = vocab.shapes.iter().map(|s| s.name.as_str()).collect();
+        if self.reject_unknown(binding, &tags, &known, "the host can't draw", "shape") {
             return;
         }
         for tag in &tags {
             let binder = self.fresh_id();
             if let (Some(payload), Some(expected)) =
-                (field_of(&row, tag), shape_payload(tag, binder))
+                (field_of(&row, tag), vocab.shape_payload(tag, binder))
             {
                 let what = format!("the host's `{tag}` shape needs");
                 self.unify_vocab(binding, payload, &expected, &what);

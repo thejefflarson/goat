@@ -16,6 +16,7 @@ pub use error::GoatError;
 pub use hir::Expr;
 pub use infer::Typed;
 pub use ty::Ty;
+pub use vocab::Vocab;
 
 use hir::Symbol;
 use std::collections::HashMap;
@@ -29,6 +30,8 @@ pub struct Checked {
     /// Set when the program defines `init`, `update` and `draw`; its root then
     /// ends in the record of those three values.
     pub interactive: Option<hir::Interactive>,
+    /// The host vocabulary the program was checked against.
+    pub vocab: Vocab,
 }
 
 /// The standard library: the definitions every program starts with, whatever its host.
@@ -42,6 +45,8 @@ pub const PRELUDE: &str = concat!(
     include_str!("../../prelude/prelude.goat"),
     "\n",
     include_str!("../../prelude/turtle.goat"),
+    "\n",
+    include_str!("../../prelude/turtle_keys.goat"),
 );
 
 /// Parse, name-resolve, and type-check `source` with the prelude in scope.
@@ -53,13 +58,32 @@ pub fn check(source: &str) -> Result<Checked, Vec<GoatError>> {
     check_with_prelude(PRELUDE, source)
 }
 
-/// Like [`check`], with `prelude` standing in for the built-in one.
+/// Like [`check`], with `prelude` standing in for the built-in one. The program
+/// is checked against the turtle's vocabulary, so a prelude that offers
+/// interactive programs must define its decoders, as [`PRELUDE`] does.
 pub fn check_with_prelude(prelude: &str, source: &str) -> Result<Checked, Vec<GoatError>> {
-    let lowered = lower::lower_with_prelude(prelude, source).map_err(|e| vec![e])?;
+    check_with_vocab(prelude, &Vocab::turtle(), source)
+}
+
+/// Like [`check_with_prelude`], against the vocabulary of a host: the events
+/// `update` may handle, the shapes `draw` may return and the keys they carry.
+/// `prelude` must already hold the goat source of `vocab`'s decoders.
+pub fn check_with_vocab(
+    prelude: &str,
+    vocab: &Vocab,
+    source: &str,
+) -> Result<Checked, Vec<GoatError>> {
+    vocab.validate().map_err(|message| {
+        vec![GoatError::new(
+            hir::Span::new(0, 0),
+            format!("the host's vocabulary is invalid: {message}"),
+        )]
+    })?;
+    let lowered = lower::lower_with_vocab(prelude, vocab, source).map_err(|e| vec![e])?;
     if !lowered.errors.is_empty() {
         return Err(lowered.errors);
     }
-    let mut typed = infer::infer_program(&lowered.root, lowered.interactive.as_ref())?;
+    let mut typed = infer::infer_program(&lowered.root, lowered.interactive.as_ref(), vocab)?;
     typed.warnings.splice(0..0, lowered.warnings);
     let captures = captures::capture_sets(&lowered.root);
     let errors = order::check(&lowered.root, &captures);
@@ -71,6 +95,7 @@ pub fn check_with_prelude(prelude: &str, source: &str) -> Result<Checked, Vec<Go
         typed,
         captures,
         interactive: lowered.interactive,
+        vocab: vocab.clone(),
     })
 }
 

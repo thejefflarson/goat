@@ -261,9 +261,11 @@ fn host_tags() -> &'static HashSet<String> {
             .into_iter()
             .map(String::from)
             .collect();
+        let vocab = host.vocab();
         tags.extend(
-            goat_checker::vocab::tag_names()
-                .chain(goat_checker::vocab::KEY_TAGS)
+            vocab
+                .tag_names()
+                .chain(vocab.key_tag_names())
                 .map(String::from),
         );
         tags

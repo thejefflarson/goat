@@ -7,11 +7,11 @@
 
 use crate::error::GoatError;
 use crate::hir::{
-    BinOp, Boundary, Builtin, ContractBinding, Expr, ExprId, ExprKind, FileId, Interactive,
-    MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
+    BinOp, Boundary, Builtin, ContractBinding, Decoder, Expr, ExprId, ExprKind, FileId,
+    Interactive, MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
 };
 use crate::ty::{Group, Row, Ty};
-use crate::vocab;
+use crate::vocab::Vocab;
 use goat_parser::parser::{GoatParser, Rule};
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
@@ -65,14 +65,20 @@ pub fn lower(source: &str) -> Result<Lowered, GoatError> {
 /// as the sole error); name-resolution errors are collected so the inferer
 /// can still run and report type errors in the same pass.
 pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatError> {
+    lower_with_vocab(prelude, &Vocab::turtle(), source)
+}
+
+/// Like [`lower_with_prelude`], with the tags and decoders of `vocab` standing
+/// in for the turtle's.
+pub fn lower_with_vocab(prelude: &str, vocab: &Vocab, source: &str) -> Result<Lowered, GoatError> {
     let mut ctx = Lower::default();
     ctx.tags.extend(
         LIST_TAGS
             .into_iter()
-            .chain(vocab::tag_names())
+            .chain(vocab.tag_names())
             .map(|tag| (tag.to_string(), None)),
     );
-    let key = Arc::new(vocab::key_group());
+    let key = Arc::new(vocab.keys.clone());
     ctx.tags.extend(
         key.tags
             .iter()
@@ -92,7 +98,7 @@ pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatEr
         prelude_root
     };
     let mut root = root;
-    let interactive = ctx.make_interactive(&mut root);
+    let interactive = ctx.make_interactive(&mut root, vocab);
     Ok(Lowered {
         root,
         errors: ctx.errors,
@@ -102,6 +108,10 @@ pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatEr
 }
 
 const INTERACTIVE_NAMES: [&str; 3] = ["init", "update", "draw"];
+
+/// What a decoder's field in the root record is labelled with, which no source
+/// record can spell.
+const DECODER_PREFIX: &str = "@";
 
 /// The value span and symbol of each of `INTERACTIVE_NAMES` the root chain
 /// binds exactly once; `None` when one is missing or rebound (a rebinding
@@ -438,7 +448,7 @@ impl Lower {
 
     /// End the root chain of an interactive program with the record its three
     /// bindings make, keeping any trailing expression as a discarded value.
-    fn make_interactive(&mut self, root: &mut Expr) -> Option<Interactive> {
+    fn make_interactive(&mut self, root: &mut Expr, vocab: &Vocab) -> Option<Interactive> {
         let [init, update, draw] = contract_bindings(root)?;
         let end = Span::in_file(root.span.end, root.span.end, FileId::User);
         let mut uses = Vec::new();
@@ -457,13 +467,65 @@ impl Lower {
             });
             fields.push((name.to_string(), var));
         }
+        let mut decoders = Vec::new();
+        for function in vocab.decoders() {
+            let Some((symbol, span)) = self.decoder_symbol(root, function) else {
+                self.errors.push(GoatError::new(
+                    end,
+                    format!("the host's prelude must define `{function}` as a function to decode its events"),
+                ));
+                continue;
+            };
+            let var = self.node(
+                end,
+                ExprKind::Var {
+                    symbol,
+                    name: function.to_string(),
+                },
+            );
+            decoders.push(Decoder {
+                function: function.to_string(),
+                symbol,
+                binding: ContractBinding {
+                    span,
+                    use_id: var.id,
+                },
+            });
+            fields.push((format!("{DECODER_PREFIX}{function}"), var));
+        }
         let tail = self.node(end, ExprKind::Record { fields });
         self.append_to_chain(root, tail, end);
         Some(Interactive {
             init: uses[0],
             update: uses[1],
             draw: uses[2],
+            decoders,
         })
+    }
+
+    /// The prelude's own binding of `function`, which a program that rebinds
+    /// the name does not replace, if that binding is a function, with the span
+    /// of its value.
+    fn decoder_symbol(&self, root: &Expr, function: &str) -> Option<(Symbol, Span)> {
+        let symbol = *self.prelude_scope.get(function)?;
+        let mut next = Some(root);
+        while let Some(Expr {
+            kind:
+                ExprKind::Let {
+                    symbol: s,
+                    value,
+                    rest,
+                    ..
+                },
+            ..
+        }) = next
+        {
+            if *s == symbol {
+                return matches!(value.kind, ExprKind::Func { .. }).then_some((symbol, value.span));
+            }
+            next = rest.as_deref();
+        }
+        None
     }
 
     /// Make `tail` the last thing in the chain of `Let`s at `chain`; an
