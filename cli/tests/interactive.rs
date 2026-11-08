@@ -219,7 +219,7 @@ fn export_names(wasm: &[u8]) -> Vec<String> {
 }
 
 fn subscriptions(source: &str) -> Vec<String> {
-    let wasm = goat::compile(source).expect("compiles");
+    let wasm = goat::compile_turtle(source).expect("compiles");
     let exports = export_names(&wasm);
     EVENTS
         .iter()
@@ -344,7 +344,7 @@ draw = program(model) do [] done
 
 #[test]
 fn an_interactive_module_exports_the_contract_and_not_an_entry() {
-    let wasm = goat::compile(EXAMPLE).expect("compiles");
+    let wasm = goat::compile_turtle(EXAMPLE).expect("compiles");
     let exports = export_names(&wasm);
     for name in [
         "goat_setup",
@@ -363,7 +363,7 @@ fn an_interactive_module_exports_the_contract_and_not_an_entry() {
 
 #[test]
 fn setup_hands_the_host_a_model_with_count_one() {
-    let wasm = goat::compile(EXAMPLE).expect("compiles");
+    let wasm = goat::compile_turtle(EXAMPLE).expect("compiles");
     let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
     let model: i32 = guest.call("goat_setup", ()).unwrap();
     assert_eq!(number(&mut guest, model, 1, MTy::Float), 0.0);
@@ -420,7 +420,7 @@ fn a_color_outside_the_allowlist_traps() {
 #[test]
 fn a_program_without_all_three_still_runs_once() {
     let src = "init = {x: 1}\ndraw = program(model) do [] done\nprint(init.x + 1)";
-    let wasm = goat::compile(src).expect("compiles");
+    let wasm = goat::compile_turtle(src).expect("compiles");
     let exports = export_names(&wasm);
     assert!(exports.iter().any(|e| e == "goat_entry"), "{exports:?}");
     assert!(!exports.iter().any(|e| e == "goat_setup"), "{exports:?}");
@@ -432,7 +432,7 @@ fn a_program_without_all_three_still_runs_once() {
 #[test]
 fn rebinding_a_contract_name_reverts_to_running_once() {
     let src = format!("{EXAMPLE}\ninit = 7\nprint(init)\n");
-    let wasm = goat::compile(&src).expect("compiles");
+    let wasm = goat::compile_turtle(&src).expect("compiles");
     let run = goat_cli::run(&wasm).expect("runs");
     assert_eq!(run.printed, ["7"]);
 }
@@ -496,7 +496,7 @@ draw = program(model) do [] done
 
 #[test]
 fn an_update_that_never_returns_runs_out_of_fuel_and_traps() {
-    let wasm = goat::compile(SPINNING).expect("compiles");
+    let wasm = goat::compile_turtle(SPINNING).expect("compiles");
     let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
     let model: i32 = guest.call("goat_setup", ()).unwrap();
     guest.set_fuel(100_000).unwrap();
@@ -515,7 +515,7 @@ fn press(guest: &mut Guest<SceneHost>, model: i32, key: &str) -> Result<i32, Str
 
 #[test]
 fn refilled_fuel_lets_ordinary_updates_run_many_times() {
-    let wasm = goat::compile(ARROW_DRAW).expect("compiles");
+    let wasm = goat::compile_turtle(ARROW_DRAW).expect("compiles");
     let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
     let mut model: i32 = guest.call("goat_setup", ()).unwrap();
     for _ in 0..2_000 {
@@ -529,7 +529,7 @@ fn refilled_fuel_lets_ordinary_updates_run_many_times() {
 
 #[test]
 fn fuel_that_is_never_refilled_runs_out() {
-    let wasm = goat::compile(ARROW_DRAW).expect("compiles");
+    let wasm = goat::compile_turtle(ARROW_DRAW).expect("compiles");
     let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
     let mut model: i32 = guest.call("goat_setup", ()).unwrap();
     guest.set_fuel(200).unwrap();

@@ -7,7 +7,7 @@
 fn compile_never_panics() {
     bolero::check!().for_each(|data: &[u8]| {
         if let Ok(source) = std::str::from_utf8(data) {
-            let _ = goat::compile(source);
+            let _ = goat::compile_turtle(source);
         }
     });
 }
