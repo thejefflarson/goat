@@ -38,9 +38,14 @@ export interface EngineEnv {
   runner?: Runner;
   focus?(): void;
   // Posts a `beat` around every call into goat, for a host that watches the page
-  // from outside and tears it down when goat stops answering.
+  // from outside and tears it down when goat stops answering. Without a runner,
+  // this is the only thing that can stop a runaway program, so the engine
+  // declines to run without it.
   heartbeat?: boolean;
 }
+
+export const UNPROTECTED_MESSAGE =
+  "goat will not run here: nothing could stop a program that never finishes. Serve the page cross-origin isolated, or open it from a host app that watches it.";
 
 const LOCATED = /^(in the prelude, )?(\d+):(\d+): /;
 
@@ -83,6 +88,7 @@ export function createEngine({ canvas, compiler, post, runner, heartbeat = false
     const fail = (message: string) => {
       if (current()) post({ type: "state", state: "failed", message });
     };
+    if (!runner && !heartbeat) return fail(UNPROTECTED_MESSAGE);
     if (!runner) canvas.getContext("2d")!.clearRect(0, 0, canvas.width, canvas.height);
     try {
       const compiled = await compile(compiler, source);

@@ -3,10 +3,7 @@
 
 use super::{Guest, site_table};
 use goat_mir::{Scene, SceneSink};
-
-/// The fuel refilled before every call into goat, so a runaway `update`
-/// traps instead of hanging the host.
-pub const UPDATE_FUEL: i32 = 5_000_000;
+use std::time::Duration;
 
 const EVENT_PREFIX: &str = "goat_event_";
 
@@ -57,9 +54,19 @@ impl<S: SceneSink + 'static> Interactive<S> {
     /// Instantiate `wasm` and run its top-level code, which yields the first
     /// model.
     pub fn new(wasm: &[u8], sink: S) -> Result<Self, String> {
-        let mut guest = Guest::new(wasm, Scene(sink))?;
+        Self::start(Guest::new(wasm, Scene(sink))?)
+    }
+
+    /// Like `new`, but each call into the program (setup, every event's
+    /// `update`, every `draw`) is stopped with a trap if it runs longer than
+    /// `timeout`.
+    pub fn with_timeout(wasm: &[u8], sink: S, timeout: Duration) -> Result<Self, String> {
+        Self::start(Guest::with_timeout(wasm, Scene(sink), timeout)?)
+    }
+
+    fn start(mut guest: Guest<Scene<S>>) -> Result<Self, String> {
         let subscriptions = subscriptions(&mut guest);
-        let model = call(&mut guest, "goat_setup", ())?;
+        let model = guest.call("goat_setup", ())?;
         Ok(Interactive {
             guest,
             model: Some(model),
@@ -75,25 +82,25 @@ impl<S: SceneSink + 'static> Interactive<S> {
     pub fn reload(&mut self, wasm: &[u8]) -> Result<Reloaded, String> {
         let guest = &mut self.guest;
         let (old, new) = (guest.instance, guest.spawn(wasm)?);
-        let fresh: i32 = guest.on(new, |guest| call(guest, "goat_setup", ()))?;
+        let fresh: i32 = guest.on(new, |guest| guest.call("goat_setup", ()))?;
         let same_layout = guest.fingerprint(old)? == guest.fingerprint(new)?;
 
         let (model, outcome) = match self.model.take() {
             Some(model) if same_layout => {
                 guest.on(new, |guest| {
-                    call::<_, _, ()>(guest, "goat_release_model", fresh)
+                    guest.call::<_, ()>("goat_release_model", fresh)
                 })?;
                 (model, Reloaded::Kept)
             }
             Some(model) => {
                 guest.on(old, |guest| {
-                    call::<_, _, ()>(guest, "goat_release_model", model)
+                    guest.call::<_, ()>("goat_release_model", model)
                 })?;
                 (fresh, Reloaded::Reset)
             }
             None => (fresh, Reloaded::Reset),
         };
-        guest.on(old, |guest| call::<_, _, ()>(guest, "goat_shutdown", ()))?;
+        guest.on(old, |guest| guest.call::<_, ()>("goat_shutdown", ()))?;
 
         guest.instance = new;
         guest.store.data_mut().sites = site_table(wasm);
@@ -119,23 +126,23 @@ impl<S: SceneSink + 'static> Interactive<S> {
         let constructor = format!("{EVENT_PREFIX}{tag}");
         let guest = &mut self.guest;
         let built: i32 = match event {
-            Event::Tick(dt) => call(guest, &constructor, *dt)?,
+            Event::Tick(dt) => guest.call(&constructor, *dt)?,
             Event::KeyDown(key) | Event::KeyUp(key) => {
                 let key = guest.string(key)?;
-                call(guest, &constructor, key)?
+                guest.call(&constructor, key)?
             }
             Event::PointerMove { x, y }
             | Event::PointerDown { x, y }
-            | Event::PointerUp { x, y } => call(guest, &constructor, (*x, *y))?,
+            | Event::PointerUp { x, y } => guest.call(&constructor, (*x, *y))?,
         };
-        self.model = Some(call(guest, "goat_update", (model, built))?);
+        self.model = Some(guest.call("goat_update", (model, built))?);
         Ok(true)
     }
 
     /// Stream the current picture to the sink as one frame.
     pub fn draw(&mut self) -> Result<(), String> {
         let model = self.model.ok_or(STOPPED)?;
-        let drawn = call(&mut self.guest, "goat_draw", model);
+        let drawn = self.guest.call("goat_draw", model);
         if drawn.is_err() {
             self.model = None;
         }
@@ -146,8 +153,8 @@ impl<S: SceneSink + 'static> Interactive<S> {
     /// still allocated, which is zero for a correct program.
     pub fn finish(mut self) -> Result<(S, u32), String> {
         let model = self.model.ok_or(STOPPED)?;
-        call::<_, _, ()>(&mut self.guest, "goat_release_model", model)?;
-        call::<_, _, ()>(&mut self.guest, "goat_shutdown", ())?;
+        self.guest.call::<_, ()>("goat_release_model", model)?;
+        self.guest.call::<_, ()>("goat_shutdown", ())?;
         let live = self.guest.live_allocs()?;
         Ok((self.guest.into_host().0, live))
     }
@@ -167,19 +174,3 @@ fn subscriptions<S: SceneSink + 'static>(guest: &mut Guest<Scene<S>>) -> Vec<Str
 }
 
 const STOPPED: &str = "the program has stopped";
-
-/// Call an export with a full tank of fuel, saying so if the call ran dry.
-fn call<S: SceneSink + 'static, P: wasmtime::WasmParams, R: wasmtime::WasmResults>(
-    guest: &mut Guest<Scene<S>>,
-    name: &str,
-    args: P,
-) -> Result<R, String> {
-    guest.set_fuel(UPDATE_FUEL)?;
-    guest.call(name, args).map_err(|error| {
-        if guest.fuel().is_ok_and(|left| left <= 0) {
-            format!("{name} ran out of fuel, so the program looks stuck: {error}")
-        } else {
-            error
-        }
-    })
-}

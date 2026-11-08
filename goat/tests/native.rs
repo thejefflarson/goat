@@ -4,8 +4,10 @@
 
 use goat::native::{
     Boundary, Event, Host, HostValue, Interactive, Reloaded, SceneSink, run_to_end,
+    run_to_end_within,
 };
 use goat::{HostInterface, compile};
+use std::time::{Duration, Instant};
 
 #[derive(Default)]
 struct Synth {
@@ -65,6 +67,32 @@ fn a_trap_keeps_the_output_and_names_the_message() {
     assert_eq!(finished.result.unwrap_err().message, "boom");
 }
 
+const SPIN: &str = "spin = program(n) do if n < 0 then n else spin(n + 1) done done\nspin(0)";
+
+#[test]
+fn a_run_once_program_that_never_ends_is_stopped_by_its_timeout() {
+    let wasm = compile(SPIN, &HostInterface::with_stdlib("")).expect("compiles");
+    let started = Instant::now();
+    let finished = run_to_end_within(
+        &wasm,
+        goat::native::NoHost,
+        Some(Duration::from_millis(100)),
+    )
+    .expect("instantiates");
+    let message = finished.result.unwrap_err().message;
+    assert!(message.contains("looks stuck"), "{message}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn a_timeout_does_not_disturb_a_program_that_finishes_in_time() {
+    let wasm = compile("print(1 + 2)", &HostInterface::with_stdlib("")).expect("compiles");
+    let finished = run_to_end_within(&wasm, goat::native::NoHost, Some(Duration::from_secs(60)))
+        .expect("runs");
+    assert_eq!(finished.printed, ["3"]);
+    assert_eq!(finished.result, Ok(0));
+}
+
 type Line = ((f64, f64), (f64, f64), String);
 
 #[derive(Debug, Default, PartialEq)]
@@ -94,9 +122,12 @@ impl SceneSink for Frames {
     fn polyline_end(&mut self) {}
 }
 
+/// Long enough that no ordinary call is near it; the runaway tests wait it out.
+const RUNAWAY_LIMIT: Duration = Duration::from_millis(500);
+
 fn interactive(source: &str) -> Interactive<Frames> {
     let wasm = goat::compile_turtle(source).expect("compiles");
-    Interactive::new(&wasm, Frames::default()).expect("starts")
+    Interactive::with_timeout(&wasm, Frames::default(), RUNAWAY_LIMIT).expect("starts")
 }
 
 const EXAMPLE: &str = include_str!("../../examples/interactive.goat");
@@ -174,7 +205,8 @@ fn reloadable(source: &str) -> Vec<u8> {
 }
 
 fn live(source: &str) -> Interactive<Frames> {
-    Interactive::new(&reloadable(source), Frames::default()).expect("starts")
+    Interactive::with_timeout(&reloadable(source), Frames::default(), RUNAWAY_LIMIT)
+        .expect("starts")
 }
 
 /// A model of a number, a string and a list, all on the heap. `step` is the

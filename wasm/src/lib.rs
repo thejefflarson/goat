@@ -33,27 +33,20 @@ const IMMORTAL: i32 = -1;
 /// program's profile, so one host serves every profile and the module converts
 /// at the boundary.
 const HOST_PROFILE: Profile = Profile::Desktop;
-/// The fuel every function entry spends one unit of, after the heap pointer and
-/// the allocator's live count. It is exported as `goat_fuel` so a host can
-/// refill it; a call that finds none left traps (ADR 0015).
-const FUEL_GLOBAL: u32 = 2;
-/// Enough that a run-once program never notices, and the value a host that
-/// never refills starts from.
-const FUEL_START: i32 = i32::MAX;
 /// The global a call into the prelude sets to its site number (1-based, 0 for
 /// none), and the custom section that maps each number to a source range. A
 /// host reads both when `goat.trap` fires to blame the user's call.
-const SITE_GLOBAL: u32 = 3;
+const SITE_GLOBAL: u32 = 2;
 const SITES_SECTION: &str = "goat.sites";
 /// The module globals that hold an interactive program's `update` and `draw`
 /// closures, after the site.
-const UPDATE_GLOBAL: u32 = 4;
-const DRAW_GLOBAL: u32 = 5;
+const UPDATE_GLOBAL: u32 = 3;
+const DRAW_GLOBAL: u32 = 4;
 /// An interactive program's model fingerprint, exported as
 /// `goat_model_fingerprint`, and (in a reloadable module) the address its
 /// static data was copied to.
-const FINGERPRINT_GLOBAL: u32 = 6;
-const DATA_BASE_GLOBAL: u32 = 7;
+const FINGERPRINT_GLOBAL: u32 = 5;
+const DATA_BASE_GLOBAL: u32 = 6;
 /// Where a reloadable module expects the host's heap to begin: the free-list
 /// table sits at `DATA_BASE`, the heap right after it.
 pub const HOSTED_HEAP_START: u32 = DATA_BASE + allocator::TABLE_BYTES;
@@ -414,12 +407,11 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
 
     let mut globals = GlobalSection::new();
     let allocator_globals: &[i32] = if hosted { &[] } else { &[heap_start as i32, 0] };
-    let closure_globals = if program.interactive.is_some() { 2 } else { 0 };
+    let site_and_closure_globals = if program.interactive.is_some() { 3 } else { 1 };
     for init in allocator_globals
         .iter()
         .copied()
-        .chain([FUEL_START, 0])
-        .chain(std::iter::repeat_n(0, closure_globals))
+        .chain(std::iter::repeat_n(0, site_and_closure_globals))
     {
         globals.global(i32_cell(), &ConstExpr::i32_const(init));
     }
@@ -446,7 +438,6 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
             imports + program.funcs.len() as u32,
         );
     }
-    exports.export("goat_fuel", ExportKind::Global, FUEL_GLOBAL);
     exports.export("goat_site", ExportKind::Global, SITE_GLOBAL);
     exports.export("goat_alloc", ExportKind::Func, shared.alloc_fn);
     exports.export("goat_live_allocs", ExportKind::Func, shared.alloc_fn + 2);
@@ -1257,23 +1248,6 @@ fn to_print_int(profile: Profile) -> Option<Instruction<'static>> {
     }
 }
 
-/// `fuel -= 1; if fuel <= 0 { unreachable }`: a runaway call chain, tail calls
-/// included, traps in bounded steps instead of hanging its host.
-fn spend_fuel(code: &mut Code) {
-    code.extend([
-        Instruction::GlobalGet(FUEL_GLOBAL),
-        Instruction::I32Const(1),
-        Instruction::I32Sub,
-        Instruction::GlobalSet(FUEL_GLOBAL),
-        Instruction::GlobalGet(FUEL_GLOBAL),
-        Instruction::I32Const(0),
-        Instruction::I32LeS,
-        Instruction::If(BlockType::Empty),
-        Instruction::Unreachable,
-        Instruction::End,
-    ]);
-}
-
 fn lower_func(shared: &mut Shared, func: &Func) -> Result<Function, EmitError> {
     let mut cx = FuncCx {
         program: shared.program,
@@ -1292,7 +1266,6 @@ fn lower_func(shared: &mut Shared, func: &Func) -> Result<Function, EmitError> {
     }
     cx.declared.clear();
     let mut code = Code::new();
-    spend_fuel(&mut code);
     cx.lower(&func.body, &mut code)?;
     let mut f = Function::new_with_locals_types(cx.declared);
     for instr in &code {

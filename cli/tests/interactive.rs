@@ -5,6 +5,7 @@
 
 use goat_cli::Guest;
 use goat_mir::{HeapKind, Layout, MTy, Program, SceneCommand, SceneHost, Session, Value};
+use std::time::{Duration, Instant};
 
 const EXAMPLE: &str = include_str!("../../examples/interactive.goat");
 
@@ -495,16 +496,16 @@ draw = program(model) do [] done
 "#;
 
 #[test]
-fn an_update_that_never_returns_runs_out_of_fuel_and_traps() {
+fn an_update_that_never_returns_traps_under_a_timeout() {
     let wasm = goat::compile_turtle(SPINNING).expect("compiles");
-    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
+    let mut guest =
+        Guest::with_timeout(&wasm, SceneHost::default(), Duration::from_millis(100)).unwrap();
     let model: i32 = guest.call("goat_setup", ()).unwrap();
-    guest.set_fuel(100_000).unwrap();
     let tick: i32 = guest.call("goat_event_Tick", 16.0f64).unwrap();
     let error = guest
         .call::<_, i32>("goat_update", (model, tick))
         .expect_err("a runaway update must trap, not hang");
-    assert!(error.contains("trapped"), "{error}");
+    assert!(error.contains("looks stuck"), "{error}");
 }
 
 fn press(guest: &mut Guest<SceneHost>, model: i32, key: &str) -> Result<i32, String> {
@@ -514,12 +515,11 @@ fn press(guest: &mut Guest<SceneHost>, model: i32, key: &str) -> Result<i32, Str
 }
 
 #[test]
-fn refilled_fuel_lets_ordinary_updates_run_many_times() {
+fn ordinary_updates_run_many_times_with_no_bound() {
     let wasm = goat::compile_turtle(ARROW_DRAW).expect("compiles");
     let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
     let mut model: i32 = guest.call("goat_setup", ()).unwrap();
     for _ in 0..2_000 {
-        guest.set_fuel(10_000).unwrap();
         model = press(&mut guest, model, "ArrowRight").unwrap();
     }
     guest.call::<_, ()>("goat_release_model", model).unwrap();
@@ -528,16 +528,15 @@ fn refilled_fuel_lets_ordinary_updates_run_many_times() {
 }
 
 #[test]
-fn fuel_that_is_never_refilled_runs_out() {
+fn the_timeout_restarts_with_every_call() {
     let wasm = goat::compile_turtle(ARROW_DRAW).expect("compiles");
-    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
+    let timeout = Duration::from_millis(100);
+    let mut guest = Guest::with_timeout(&wasm, SceneHost::default(), timeout).unwrap();
     let mut model: i32 = guest.call("goat_setup", ()).unwrap();
-    guest.set_fuel(200).unwrap();
-    let outcome = (0..2_000).try_for_each(|_| {
-        model = press(&mut guest, model, "ArrowRight")?;
-        Ok::<(), String>(())
-    });
-    assert!(outcome.is_err(), "fuel should be spent");
+    let started = Instant::now();
+    while started.elapsed() < 3 * timeout {
+        model = press(&mut guest, model, "ArrowRight").unwrap();
+    }
 }
 
 /// An all-scalar model, so a steady-state `update` allocates nothing but the

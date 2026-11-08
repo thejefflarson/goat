@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { assemble } from "./bundle.ts";
 import { compile } from "./compile.ts";
-import { type EngineMessage, createEngine, parseDiagnostics } from "./embed.ts";
+import { type EngineMessage, UNPROTECTED_MESSAGE, createEngine, parseDiagnostics } from "./embed.ts";
 import type { Job, Runner, RunSink } from "./supervisor.ts";
 
 const compilerUrl = new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", import.meta.url);
@@ -35,7 +35,7 @@ function fakeCanvas() {
   };
 }
 
-function engine(heartbeat = false) {
+function engine(heartbeat = true) {
   const canvas = fakeCanvas();
   const messages: EngineMessage[] = [];
   const built = createEngine({
@@ -46,6 +46,8 @@ function engine(heartbeat = false) {
   });
   return { canvas, messages, ...built };
 }
+
+const unbeaten = (messages: EngineMessage[]) => messages.filter((m) => m.type !== "beat");
 
 globalThis.requestAnimationFrame = (frame) => setTimeout(() => frame(0), 0) as unknown as number;
 globalThis.cancelAnimationFrame = (handle) => clearTimeout(handle);
@@ -91,7 +93,7 @@ test("a compile error posts diagnostics then fails", async () => {
 test("a run-once program posts its output and finishes", async () => {
   const { messages, run } = engine();
   await run('print("hello");\nforward(10)');
-  assert.deepEqual(messages, [
+  assert.deepEqual(unbeaten(messages), [
     { type: "state", state: "running" },
     { type: "output", lines: ["hello"] },
     { type: "state", state: "finished" },
@@ -101,7 +103,7 @@ test("a run-once program posts its output and finishes", async () => {
 test("an interactive program keeps running until stopped", async () => {
   const { canvas, messages, run, stop } = engine();
   await run(ARROWS);
-  assert.deepEqual(messages, [{ type: "state", state: "running" }]);
+  assert.deepEqual(unbeaten(messages), [{ type: "state", state: "running" }]);
   stop();
   assert.equal(canvas.listenerCount(), 0);
 });
@@ -218,8 +220,14 @@ test("every call into an interactive program is bracketed, and the page ends idl
   });
 });
 
-test("without a heartbeat the page posts no beats", async () => {
-  const { messages, run } = engine();
+test("with neither a runner nor a heartbeat the engine refuses to run anything", async () => {
+  const { messages, run } = engine(false);
+  await run('print("hello")');
+  assert.deepEqual(messages, [{ type: "state", state: "failed", message: UNPROTECTED_MESSAGE }]);
+});
+
+test("with a runner and no heartbeat the page posts no beats", async () => {
+  const { messages, run } = supervised();
   await run('print("hello")');
   assert.equal(beats(messages).length, 0);
 });

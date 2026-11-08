@@ -323,10 +323,26 @@ Sequenced; T1 before T2 is the critical ordering from §4.
   worker, so `Stage` swaps a fresh `<canvas>` into the same place for every start.
   Input listeners sit on the canvas's container for that reason. Run-once programs
   animate their picture inside the worker for the same reason.
-- **Fuel stays, inert.** The worker tops the tank to `i32::MAX` before every call,
-  so the supervisor's deadline always fires first. T2 deletes the tank.
-- **Hosts without cross-origin isolation.** The editor page refuses to run
-  without it. The Apple embed engine (`web/embed-main.ts`) falls back to the
-  main-thread loop when the web view is not isolated, because its `goat-app://`
-  scheme handler sends no COOP/COEP headers; until it does (or the host finds
-  another stop), that host keeps today's fuel watchdog, which T2 removes.
+
+## As built: T2 (fuel removed)
+
+- **Codegen.** The `goat_fuel` global, its export, `spend_fuel` and the
+  per-function-entry call are gone. The site global moved from index 3 to 2,
+  `update`/`draw` from 4/5 to 3/4, and the fingerprint and data-base globals from
+  6/7 to 5/6. The eight goldens were regenerated; a test asserts no emitted module
+  mentions `goat_fuel` and no user function touches a global on entry.
+- **CLI / native.** The engine enables epoch interruption. `Guest::with_timeout`,
+  `Interactive::with_timeout` and `run_to_end_within` start a ticker thread that
+  advances the epoch every 10 ms and arm a deadline before every call into the
+  guest, so the bound is per call (per `setup`, `update`, `draw`) for an
+  interactive program and whole-program for a run-once one. A timeout rounds up to
+  whole ticks plus one, so a call is never cut short of what was asked. With no
+  timeout no thread runs and the deadline is never reached. `goat run --timeout MS`
+  arms it; the default is unbounded and `Ctrl-C` stops it.
+- **Browser.** `web/loop.ts` and the worker no longer touch a fuel tank. The
+  supervisor is the only watchdog in the worker path.
+- **No unprotected path.** The embed engine (`web/embed.ts`) runs a program only
+  with a worker `runner` or with `heartbeat` on. `embed-main.ts` turns the
+  heartbeat on only when the `goat` message handler exists, the handle the Apple
+  app registers alongside its native watchdog; a page with neither cross-origin
+  isolation nor that handler shows `UNPROTECTED_MESSAGE` and refuses every run.

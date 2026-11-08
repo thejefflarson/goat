@@ -4,12 +4,11 @@
 // the model, and every animation frame `goat_draw` streams the picture through
 // the scene renderer.
 //
-// On the main thread (the in-page fallback) a runaway `update` is stopped by the
-// module's own fuel (`goat_fuel`, spent one unit per call): the host refills it
-// before each call into goat, and a trap with the fuel gone is "stuck". A call
-// that returns but took longer than a frame budget stops the loop too. Inside the
-// worker (worker-core.ts) the supervisor's wall-clock deadline is the real bound,
-// and the tank is topped to its maximum so fuel never fires first (ADR 0021).
+// The module carries no execution bound; the host owns preemption (ADR 0021).
+// Inside the worker (worker-core.ts) the supervisor's wall-clock deadline stops a
+// runaway call. On the main thread (a native host's web view) the host's own
+// watchdog does, fed by `around`. A call that returns but took longer than a
+// frame budget stops the loop too.
 
 import { createHost } from "./runtime.ts";
 import {
@@ -22,7 +21,6 @@ import {
   subscriptions,
 } from "./scene.ts";
 
-export const FUEL_BUDGET = 5_000_000;
 export const FRAME_BUDGET_MS = 1000;
 export const STUCK_MESSAGE = "your program got stuck: it kept running without finishing, so it was stopped";
 
@@ -52,8 +50,6 @@ export interface LoopEnv {
   cancelRaf(handle: number): void;
   now(): number;
   onError(message: string): void;
-  // Refill level before each call into goat; the default is FUEL_BUDGET.
-  fuelBudget?: number;
   // Wraps every call into goat, so a host can mark when goat is running.
   around?<T>(call: () => T): T;
 }
@@ -64,7 +60,6 @@ export interface InteractiveExports extends WebAssembly.Exports {
   goat_draw(model: number): void;
   goat_release_model(model: number): void;
   goat_shutdown(): void;
-  goat_fuel: WebAssembly.Global;
 }
 
 export interface Loop {
@@ -100,19 +95,14 @@ export function pointerPosition(
 
 export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
   const wanted = new Set<EventKind>(subscriptions(exports));
-  const fuel = exports.goat_fuel;
-  const refuel = () => {
-    fuel.value = env.fuelBudget ?? FUEL_BUDGET;
-  };
   const removers: Array<() => void> = [];
   let handle: number | undefined;
   let running = true;
   let healthy = true;
   let last: number | undefined;
 
-  // One call into goat: refuel, run, and stop the loop if it traps or overruns.
+  // One call into goat: run it, and stop the loop if it traps or overruns.
   const guarded = <T>(call: () => T): T | undefined => {
-    refuel();
     const started = env.now();
     try {
       const result = env.around ? env.around(call) : call();
@@ -122,8 +112,7 @@ export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
       }
       return result;
     } catch (e) {
-      const spent = fuel.value <= 0;
-      fail(spent ? STUCK_MESSAGE : `your program stopped: ${e instanceof Error ? e.message : String(e)}`);
+      fail(`your program stopped: ${e instanceof Error ? e.message : String(e)}`);
       return undefined;
     }
   };

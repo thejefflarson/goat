@@ -135,6 +135,9 @@ compiler reads. (goat patterns do not nest — `KeyDown(Up)` is written as
 
 ### 5. Bounded update time via a compiler-injected fuel global
 
+> Superseded by ADR 0021: goat emits no fuel; each host owns preemption. Kept as
+> the historical record.
+
 The browser cannot preempt wasm, and goat's only non-termination is infinite
 recursion; non-tail recursion self-limits via stack exhaustion, but tail calls
 (enabled) do not. So the backend emits a mutable `i32` `fuel` global and, at each

@@ -2,7 +2,7 @@
 
 import { canSupervise, superviseCanvas } from "./browser.ts";
 import { loadCompiler } from "./compile.ts";
-import { createEngine, type Engine, type EngineMessage } from "./embed.ts";
+import { createEngine, type Engine, type EngineMessage, UNPROTECTED_MESSAGE } from "./embed.ts";
 
 declare global {
   interface Window {
@@ -16,13 +16,17 @@ const post = (message: EngineMessage) => window.webkit?.messageHandlers.goat.pos
 try {
   const compiler = await loadCompiler(new URL("../goat_web.wasm", import.meta.url));
   const canvas = document.getElementById("canvas") as HTMLCanvasElement;
-  // A host that cannot cross-origin isolate its web view keeps goat on the page's
-  // own thread; one that can gets the terminable worker (ADR 0021).
+  // Goat carries no execution bound, so every path needs a stop it does not own
+  // (ADR 0021): the terminable worker when the page is cross-origin isolated, else
+  // the native watchdog of the host that registered the `goat` message handler.
+  // With neither, the engine refuses to run.
   if (canSupervise()) {
     const { stage, supervisor } = superviseCanvas(canvas);
     window.goat = createEngine({ canvas, compiler, post, runner: supervisor, focus: () => stage.focus() });
   } else {
-    window.goat = createEngine({ canvas, compiler, post, heartbeat: true });
+    const watched = window.webkit?.messageHandlers.goat !== undefined;
+    if (!watched) document.body.textContent = UNPROTECTED_MESSAGE;
+    window.goat = createEngine({ canvas, compiler, post, heartbeat: watched });
   }
   post({ type: "ready" });
 } catch (e) {

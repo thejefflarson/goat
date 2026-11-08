@@ -17,6 +17,54 @@ fn run_source(name: &str, source: &str) -> Output {
     goat(&["run", path.to_str().unwrap()])
 }
 
+/// A finite loop that takes far longer than a few milliseconds.
+const LONG_LOOP: &str =
+    "count = program(n) do if n >= 300000000 then n else count(n + 1) done done\nprint(count(0))";
+const SPIN: &str = "spin = program(n) do if n < 0 then n else spin(n + 1) done done\nspin(0)";
+
+fn run_with_args(source: &str, args: &[&str]) -> Output {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("p.goat");
+    fs::write(&path, source).unwrap();
+    goat(&[&["run", path.to_str().unwrap()], args].concat())
+}
+
+#[test]
+fn a_runaway_program_is_stopped_by_timeout() {
+    let out = run_with_args(SPIN, &["--timeout", "200"]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("trap") && stderr.contains("looks stuck"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn without_timeout_a_long_program_runs_to_the_end() {
+    let bounded = run_with_args(LONG_LOOP, &["--timeout", "1"]);
+    assert!(!bounded.status.success(), "the loop outlasts 1 ms");
+    let unbounded = run_with_args(LONG_LOOP, &[]);
+    assert!(
+        unbounded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&unbounded.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&unbounded.stdout).trim(),
+        "300000000"
+    );
+}
+
+#[test]
+fn timeout_must_be_a_positive_number_of_milliseconds() {
+    for bad in ["0", "soon", "-5"] {
+        let out = run_with_args("1", &["--timeout", bad]);
+        assert!(!out.status.success(), "{bad}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("--timeout"));
+    }
+}
+
 fn stdout_of(source: &str) -> String {
     let out = run_source("p.goat", source);
     assert!(

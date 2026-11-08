@@ -689,8 +689,8 @@ loop:
   variant row to exactly the events handled. The host reads that from the
   compiled interface and enables only those listeners/interrupts — no
   declaration needed; saves power on microcontrollers.
-- **Bounded update time:** fuel/epoch limits plus a watchdog catch a slow or
-  looping `update`.
+- **Bounded update time:** the host owns preemption (ADR 0021): an epoch
+  deadline natively, a terminable worker in the browser, a watchdog on a board.
 - **Memory:** the old model is dropped after `update`; Perceus reuse makes
   spread updates in place.
 
