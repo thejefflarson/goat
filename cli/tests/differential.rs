@@ -7,7 +7,7 @@ use std::fs;
 #[allow(dead_code)]
 mod support;
 
-use support::run;
+use support::{agree_or_trap, run};
 
 #[test]
 fn arithmetic() {
@@ -76,6 +76,68 @@ fn shadowing_value_binding() {
 #[test]
 fn long_operator_chain() {
     assert_eq!(run(&vec!["1"; 200].join(" + ")), "200");
+}
+
+/// The most terms the checker admits in one chain.
+const MAX_CHAIN: usize = 256;
+
+#[test]
+fn an_operator_chain_at_the_depth_limit_runs() {
+    assert_eq!(
+        run(&vec!["1"; MAX_CHAIN].join(" + ")),
+        MAX_CHAIN.to_string()
+    );
+    let minus = format!("1000 - {}", vec!["1"; MAX_CHAIN - 1].join(" - "));
+    assert_eq!(run(&minus), (1000 - (MAX_CHAIN - 1)).to_string());
+    let floats = vec!["0.5"; MAX_CHAIN].join(" + ");
+    assert_eq!(run(&floats), (MAX_CHAIN as f64 / 2.0).to_string());
+    let compared = format!("{} < 1000", vec!["1"; MAX_CHAIN - 1].join(" + "));
+    assert_eq!(run(&compared), "true");
+}
+
+/// A call counts for two of the checker's depth, so half as many fit.
+const CALLS: usize = MAX_CHAIN / 2 - 2;
+
+#[test]
+fn a_chain_of_effects_runs_in_source_order() {
+    let calls: Vec<String> = (0..CALLS).map(|n| format!("p({n})")).collect();
+    let expected: Vec<String> = (0..CALLS).map(|n| n.to_string()).collect();
+    let src = format!("p = program(n) do print(n); n done {}", calls.join(" - "));
+    let sum = -((CALLS * (CALLS - 1) / 2) as i64);
+    assert_eq!(run(&src), format!("{}\n{sum}", expected.join("\n")));
+}
+
+#[test]
+fn boolean_chains_at_the_depth_limit_short_circuit() {
+    let terms = |n: usize| -> Vec<String> { (0..n).map(|i| format!("f({i})")).collect() };
+    let printed = |upto: usize, last: &str| {
+        let lines: Vec<String> = (0..=upto).map(|n| n.to_string()).collect();
+        format!("{}\n{last}", lines.join("\n"))
+    };
+    let and = format!(
+        "f = program(n) do print(n); n < 100 done {}",
+        terms(CALLS).join(" and ")
+    );
+    assert_eq!(run(&and), printed(100, "false"));
+    let or = format!(
+        "f = program(n) do print(n); n >= 100 done {}",
+        terms(CALLS).join(" or ")
+    );
+    assert_eq!(run(&or), printed(100, "true"));
+    assert_eq!(run(&vec!["true"; MAX_CHAIN].join(" and ")), "true");
+    assert_eq!(run(&vec!["false"; MAX_CHAIN].join(" or ")), "false");
+    assert_eq!(
+        run(&format!("{}true", "not ".repeat(MAX_CHAIN - 1))),
+        "false"
+    );
+}
+
+#[test]
+fn a_chain_traps_where_its_arithmetic_does() {
+    let ones = vec!["1"; MAX_CHAIN - 1].join(" + ");
+    agree_or_trap(&format!("9223372036854775807 + {ones}"));
+    let zero = format!("{} // 0", vec!["1"; MAX_CHAIN - 1].join(" // "));
+    agree_or_trap(&zero);
 }
 
 #[test]

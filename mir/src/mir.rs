@@ -383,6 +383,24 @@ impl Expr {
         }
     }
 
+    /// The subexpression a `Let` or operator node evaluates first: a `Let`'s
+    /// right-hand side, the left side of a binary operator or comparison, the
+    /// value under a conversion, the condition of an `If`. A left-associative
+    /// chain (`a + b + c`, `a and b and c`) nests down these, so walking them
+    /// with an explicit stack costs no call stack per link.
+    pub fn leading_operand(&self) -> Option<&Expr> {
+        match self {
+            Expr::Let(_, a, _)
+            | Expr::BinInt(_, a, _)
+            | Expr::BinFloat(_, a, _)
+            | Expr::Cmp(_, a, _)
+            | Expr::IntToFloat(a)
+            | Expr::FloatFn(_, a)
+            | Expr::If(a, _, _) => Some(a),
+            _ => None,
+        }
+    }
+
     /// An `IntToFloat` or `FloatFn` node over `operand` in place of its own.
     pub fn with_operand(&self, operand: Expr) -> Expr {
         let operand = Box::new(operand);
@@ -404,6 +422,26 @@ impl Expr {
             pending[at..].reverse();
         }
     }
+}
+
+/// A node a walk over a chain of operators has started and is holding until an
+/// operand has a result of type `T`: `Value` for the interpreter, the lowered
+/// type for the wasm lowering.
+pub enum OperandWait<'e, T> {
+    /// The node's leading operand (see [`Expr::leading_operand`]).
+    First(&'e Expr),
+    /// The right operand of a binary node, given the left operand's result.
+    Second(&'e Expr, T),
+}
+
+/// What a waiting node does once its operand has a result.
+pub enum OperandStep<'e, T> {
+    /// The expression to walk next in place of the node.
+    Next(&'e Expr),
+    /// The node still needs this right operand.
+    Right(OperandWait<'e, T>, &'e Expr),
+    /// The node's own result.
+    Done(T),
 }
 
 /// The effects `e` performs, in evaluation order.
