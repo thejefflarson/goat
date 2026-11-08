@@ -163,6 +163,15 @@ fn closures_capture_closures_and_records() {
 }
 
 #[test]
+fn mutual_recursion_spans_a_destructure() {
+    let src = "even = program(n) do if n < 1 then true else odd(n - 1) done done \
+               {a} = {a: 1} \
+               odd = program(n) do if n < 1 then false else even(n - 1) done done \
+               even(10)";
+    assert_eq!(run(src), "true");
+}
+
+#[test]
 fn nested_mutual_recursion_with_captures() {
     let src = "outer = program(m) do \
                  is_even = program(n) do if n < m then true else is_odd(n - m) done done \

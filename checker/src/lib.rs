@@ -1185,6 +1185,15 @@ mod tests {
         assert_eq!(type_of(src).unwrap(), "Bool");
     }
 
+    #[test]
+    fn mutual_recursion_spans_a_destructure() {
+        let src = "is_even = program(n) do if n < 1 then true else is_odd(n - 1) done done \
+                   {a} = {a: 1} \
+                   is_odd = program(n) do if n < 1 then false else is_even(n - 1) done done \
+                   is_even(a + 3)";
+        assert_eq!(type_of(src).unwrap(), "Bool");
+    }
+
     fn chain(n: usize) -> String {
         vec!["1"; n].join(" + ")
     }
