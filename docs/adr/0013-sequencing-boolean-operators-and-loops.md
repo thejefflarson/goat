@@ -67,8 +67,11 @@ interpreter changed.
   MIR, and every pass walks that chain in a loop (lowering, inference, capture
   analysis, mono, reference counting, verification, the interpreter, wasm
   emission), so a block of any length costs one level of depth and no stack per
-  statement. A chain of bindings is the same after parsing, but the parser nests
-  each binding's rest inside it, so its length is bounded by the parser's own
-  stack check, which fails cleanly with a parse error.
+  statement. A chain of bindings is flat too: a `name = value` that begins a
+  statement is a sibling of the statements around it, so a chain of any length
+  parses and lowers without stack per binding. Two forms still nest in the parse
+  tree and are bounded by the parser's own stack check, which fails cleanly with a
+  parse error: a binding used as an operand (`1 + x = 2 x`) and a destructuring
+  binding (`{a} = r`), each of which holds the rest of its block.
 - Statements after a loop need a `;` (`repeat 3 times do … done;`), as after any
   other expression.

@@ -474,49 +474,51 @@ impl Lower {
     /// operator.
     fn lower_expr(&mut self, pair: Pair<Rule>) -> Expr {
         let scopes = self.scopes.len();
+        let end = self.span_of(&pair);
+        let mut inner = pair.into_inner().peekable();
         let mut spine = Vec::new();
-        let mut next = Some(pair);
         let mut tail = None;
         // The statements and bindings of a block hang off a spine of `Let`s,
         // beside the trees they build rather than under them, so the spine is
         // walked in this loop and only a statement's own nesting costs depth.
-        'blocks: while let Some(pair) = next.take() {
-            let end = self.span_of(&pair);
-            let mut inner = pair.into_inner().peekable();
-            loop {
-                let added = chain_depth(&inner);
-                if self.depth + added > MAX_DEPTH {
-                    let span = inner.peek().map_or(end, |first| self.span_of(first));
-                    self.errors
-                        .push(GoatError::new(span, "expression nested too deeply"));
-                    tail = Some(self.node(span, ExprKind::Unit));
-                    break 'blocks;
-                }
-                self.depth += added;
-                if let Some(declaration) = sole_declaration(&inner) {
-                    let (binding, rest) = self.lower_declaration_head(declaration);
-                    spine.push(binding);
-                    next = rest;
-                    self.depth -= added;
-                    break;
-                }
-                let (expr, sequenced) = self.lower_expr_chain(&mut inner);
+        while let Some(first) = inner.peek() {
+            if first.as_rule() == Rule::sequel {
+                inner.next();
+                continue;
+            }
+            let is_binding = first.as_rule() == Rule::declaration;
+            let span = self.span_of(first);
+            let added = if is_binding { 1 } else { chain_depth(&inner) };
+            if self.depth + added > MAX_DEPTH {
+                self.errors
+                    .push(GoatError::new(span, "expression nested too deeply"));
+                tail = Some(self.node(span, ExprKind::Unit));
+                break;
+            }
+            self.depth += added;
+            if is_binding {
+                let declaration = inner.next().expect("a declaration was peeked");
+                let mut binding = self.lower_declaration_head(declaration, inner.clone());
+                binding.span = binding.span.to(end);
+                spine.push(binding);
                 self.depth -= added;
-                if !sequenced {
-                    tail = Some(expr);
-                    break;
-                }
-                let span = expr.span.to(end);
-                spine.push(Binding {
-                    span,
-                    symbol: None,
-                    name: DISCARD_NAME.into(),
-                    value: expr,
-                });
-                if inner.peek().is_none() {
-                    tail = Some(self.node(span, ExprKind::Unit));
-                    break;
-                }
+                continue;
+            }
+            let (expr, sequenced) = self.lower_expr_chain(&mut inner);
+            self.depth -= added;
+            if !sequenced {
+                tail = Some(expr);
+                break;
+            }
+            let span = expr.span.to(end);
+            spine.push(Binding {
+                span,
+                symbol: None,
+                name: DISCARD_NAME.into(),
+                value: expr,
+            });
+            if inner.peek().is_none() {
+                tail = Some(self.node(span, ExprKind::Unit));
             }
         }
         self.scopes.truncate(scopes);
@@ -789,7 +791,7 @@ impl Lower {
             }
             Rule::record => self.lower_record(pair),
             Rule::list => self.lower_list(pair),
-            Rule::declaration => self.lower_declaration(pair),
+            Rule::local => self.lower_local(pair),
             Rule::destructure => self.lower_destructure(pair),
             Rule::function => self.lower_function(pair),
             Rule::conditional => self.lower_conditional(pair),
@@ -847,25 +849,33 @@ impl Lower {
         self.node(span, ExprKind::Var { symbol, name })
     }
 
-    fn lower_declaration(&mut self, pair: Pair<Rule>) -> Expr {
-        let (binding, rest) = self.lower_declaration_head(pair);
+    /// A binding that is an operand, scoped over the expression after it.
+    fn lower_local(&mut self, pair: Pair<Rule>) -> Expr {
+        let span = self.span_of(&pair);
+        let mut inner = pair.into_inner();
+        let declaration = inner.next().expect("a local begins with a declaration");
+        let rest = inner.next();
+        let following = rest.clone().into_iter().flat_map(Pair::into_inner);
+        let mut binding = self.lower_declaration_head(declaration, following);
+        binding.span = span;
         let rest = rest.map(|p| self.lower_expr(p));
         self.scopes.pop();
         self.bound(binding, rest)
     }
 
     /// Bind the declaration's name in a new scope, which the caller pops once
-    /// the declaration's `rest` is lowered, and lower its value.
+    /// the bindings and statements after it are lowered, and lower its value.
+    /// `following` is what comes after it in its block.
     fn lower_declaration_head<'i>(
         &mut self,
         pair: Pair<'i, Rule>,
-    ) -> (Binding, Option<Pair<'i, Rule>>) {
+        following: impl Iterator<Item = Pair<'i, Rule>> + 'i,
+    ) -> Binding {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let name_pair = inner.next().expect("declaration starts with a name");
         let name = name_pair.as_str().to_string();
         let value_pair = inner.next().expect("declaration has a value");
-        let rest_pair = inner.next();
 
         let shadows_builtin = Builtin::named(&name).is_some();
         if self.file == FileId::User && (self.prelude_scope.contains_key(&name) || shadows_builtin)
@@ -879,7 +889,7 @@ impl Lower {
         let (symbol, value) = if is_program_literal(&value_pair) {
             let start = self.span_of(&name_pair).start;
             if !self.grouped.contains_key(&start) {
-                self.bind_function_group(&name_pair, rest_pair.clone());
+                self.bind_function_group(&name_pair, following);
             }
             let symbol = match self.grouped.remove(&start).flatten() {
                 Some(symbol) => {
@@ -897,13 +907,12 @@ impl Lower {
             };
             (self.bind(&name), value)
         };
-        let binding = Binding {
+        Binding {
             span,
             symbol: Some(symbol),
             name,
             value,
-        };
-        (binding, rest_pair)
+        }
     }
 
     fn lower_foreign(&mut self, pair: Pair<Rule>) -> Expr {
@@ -972,27 +981,29 @@ impl Lower {
 
     /// Bind every function name in the declaration chain starting at `first`
     /// before any body is lowered, so bodies can call each other in any order.
-    fn bind_function_group(&mut self, first: &Pair<Rule>, mut rest: Option<Pair<Rule>>) {
+    fn bind_function_group<'i>(
+        &mut self,
+        first: &Pair<Rule>,
+        following: impl Iterator<Item = Pair<'i, Rule>> + 'i,
+    ) {
         let mut seen = HashSet::new();
         self.reserve(first, &mut seen);
-        while let Some(expr) = rest.take() {
-            let mut kids = expr.into_inner();
-            let (Some(decl), None) = (kids.next(), kids.next()) else {
-                break;
-            };
-            let is_declaration = match decl.as_rule() {
-                Rule::declaration => true,
-                Rule::destructure => false,
+        let mut links: Box<dyn Iterator<Item = Pair<'i, Rule>> + 'i> = Box::new(following);
+        while let Some(link) = links.next() {
+            match link.as_rule() {
+                Rule::declaration => {
+                    let mut parts = link.into_inner();
+                    let head = parts.next().expect("a declaration starts with a name");
+                    let value = parts.next().expect("a declaration has a value");
+                    if is_program_literal(&value) {
+                        self.reserve(&head, &mut seen);
+                    }
+                }
+                Rule::destructure => match link.into_inner().nth(2) {
+                    Some(rest) => links = Box::new(rest.into_inner()),
+                    None => break,
+                },
                 _ => break,
-            };
-            let mut parts = decl.into_inner();
-            let head = parts
-                .next()
-                .expect("a chain link starts with a name or pattern");
-            let value = parts.next().expect("a chain link has a value");
-            rest = parts.next();
-            if is_declaration && is_program_literal(&value) {
-                self.reserve(&head, &mut seen);
             }
         }
     }
@@ -2137,16 +2148,6 @@ struct Binding {
     symbol: Option<Symbol>,
     name: String,
     value: Expr,
-}
-
-/// The declaration that is all of what remains in `kids`, since a
-/// declaration's `rest` takes everything after it.
-fn sole_declaration<'i>(kids: &Peekable<Pairs<'i, Rule>>) -> Option<Pair<'i, Rule>> {
-    let mut kids = kids.clone();
-    match (kids.next(), kids.next()) {
-        (Some(only), None) if only.as_rule() == Rule::declaration => Some(only),
-        _ => None,
-    }
 }
 
 /// How deep the statement at the front of `kids` can get: a left-leaning tree

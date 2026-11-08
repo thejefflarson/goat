@@ -892,13 +892,18 @@ fn a_chain_of_thousands_of_bindings_runs() {
         .map(|i| format!("a{i} = a{} + 1", i - 1))
         .collect();
     let src = format!("a0 = 0 {} a{}", bindings.join(" "), LONG_BLOCK - 1);
-    // The parser nests each binding's rest inside it, so the chain needs more
-    // stack than a test thread has; the passes after parsing use none per link.
-    let ran = std::thread::Builder::new()
-        .stack_size(64 << 20)
-        .spawn(move || run(&src))
-        .unwrap()
-        .join()
-        .unwrap();
-    assert_eq!(ran, (LONG_BLOCK - 1).to_string());
+    assert_eq!(run(&src), (LONG_BLOCK - 1).to_string());
+}
+
+#[test]
+fn a_forward_reference_reaches_across_a_chain_of_thousands_of_bindings() {
+    let bindings: Vec<String> = (1..LONG_BLOCK)
+        .map(|i| format!("a{i} = a{} + 1", i - 1))
+        .collect();
+    let src = format!(
+        "first = program() do last() done a0 = 0 {} last = program() do a{} done first()",
+        bindings.join(" "),
+        LONG_BLOCK - 1
+    );
+    assert_eq!(run(&src), (LONG_BLOCK - 1).to_string());
 }
