@@ -6,12 +6,11 @@ use crate::mir::*;
 use crate::rc::insert_rc;
 use goat_checker::captures::{for_each_node, push_children};
 use goat_checker::hir::{
-    self, BinOp, Boundary, Builtin, ExprId, ExprKind, Param, PatternPayload, Span, Symbol,
+    self, BinOp, Boundary, Builtin, Decoder, ExprId, ExprKind, Param, PatternPayload, Span, Symbol,
 };
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Ty, TypeVar};
-use goat_checker::vocab::KEY_TAGS;
-use goat_checker::{Checked, GoatError, Target};
+use goat_checker::{Checked, GoatError, Target, Vocab};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod interactive;
@@ -36,15 +35,17 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
 pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<GoatError>> {
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut labels = BTreeSet::new();
-    collect_tags(&checked.root, &mut labels);
+    collect_tags(&checked.root, &checked.vocab, &mut labels);
     if checked.interactive.is_some() {
-        labels.extend(KEY_TAGS.map(String::from));
+        labels.extend(checked.vocab.key_tag_names().map(String::from));
     }
     let mut foreign = HashMap::new();
     collect_foreign(&checked.root, &mut foreign);
     let mut m = Mono {
         profile,
         typed: &checked.typed,
+        vocab: &checked.vocab,
+        decoders: checked.interactive.as_ref().map_or(&[], |i| &i.decoders),
         lambdas,
         var_tys,
         foreign,
@@ -120,17 +121,63 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
     Ok(program)
 }
 
-/// Every tag label in the program, constructed or matched.
-fn collect_tags(root: &hir::Expr, out: &mut BTreeSet<String>) {
-    for_each_node(root, &mut |e| match &e.kind {
-        ExprKind::Tag { name, .. } => {
-            out.insert(name.clone());
+/// Every tag label in the program, constructed or matched. A host's decoder
+/// brings its tags only if something uses it, so a program that never decodes
+/// an event is numbered as if its host had no decoder (ADR 0020).
+fn collect_tags(root: &hir::Expr, vocab: &Vocab, out: &mut BTreeSet<String>) {
+    let decoders = decoder_symbols(root, vocab);
+    if tags_outside(root, &decoders, out) {
+        tags_outside(root, &HashSet::new(), out);
+    }
+}
+
+/// The prelude's own binding of each of the host's decoder functions.
+fn decoder_symbols(root: &hir::Expr, vocab: &Vocab) -> HashSet<Symbol> {
+    let names = vocab.decoders();
+    let mut found = HashSet::new();
+    let mut next = Some(root);
+    while let Some(hir::Expr {
+        kind:
+            ExprKind::Let {
+                symbol,
+                name,
+                value,
+                rest,
+            },
+        ..
+    }) = next
+    {
+        if value.span.in_prelude() && names.contains(&name.as_str()) {
+            found.insert(*symbol);
         }
-        ExprKind::Match { arms, .. } => {
-            out.extend(arms.iter().map(|a| a.pattern.tag.clone()));
+        next = rest.as_deref();
+    }
+    found
+}
+
+/// Add the tags of everything outside the bindings of `skip`; true if
+/// anything there refers to one of them.
+fn tags_outside(root: &hir::Expr, skip: &HashSet<Symbol>, out: &mut BTreeSet<String>) -> bool {
+    let mut uses_skipped = false;
+    let mut pending = vec![root];
+    while let Some(e) = pending.pop() {
+        match &e.kind {
+            ExprKind::Let { symbol, rest, .. } if skip.contains(symbol) => {
+                pending.extend(rest.as_deref());
+                continue;
+            }
+            ExprKind::Var { symbol, .. } => uses_skipped |= skip.contains(symbol),
+            ExprKind::Tag { name, .. } => {
+                out.insert(name.clone());
+            }
+            ExprKind::Match { arms, .. } => {
+                out.extend(arms.iter().map(|a| a.pattern.tag.clone()));
+            }
+            _ => {}
         }
-        _ => {}
-    });
+        push_children(e, &mut pending);
+    }
+    uses_skipped
 }
 
 /// The host function each `foreign` binding names.
@@ -297,6 +344,10 @@ const MAX_SPECIALIZATIONS: usize = 1 << 14;
 struct Mono<'a> {
     profile: Profile,
     typed: &'a Typed,
+    /// What the host sends and draws, which the interactive glue marshals.
+    vocab: &'a Vocab,
+    /// The host's decoder functions, which its event constructors call.
+    decoders: &'a [Decoder],
     lambdas: HashMap<Target, Lambda<'a>>,
     var_tys: HashMap<Symbol, &'a Ty>,
     /// The host function of each `foreign` binding.
@@ -647,10 +698,22 @@ impl Mono<'_> {
 
     fn specialize(&mut self, cx: &FnCx, target: Target, site: &hir::Expr) -> (FuncId, Ty) {
         let use_ty = self.ground(&self.typed.node_types[&site.id], &cx.subst);
+        self.specialize_at(&cx.subst, target, use_ty, site.span)
+    }
+
+    /// The specialization of `target` at the ground type `use_ty`, as used in
+    /// code whose type variables `scope` fixes.
+    fn specialize_at(
+        &mut self,
+        scope: &Subst,
+        target: Target,
+        use_ty: Ty,
+        span: Span,
+    ) -> (FuncId, Ty) {
         let Lambda { ty, captures, .. } = self.lambdas[&target].clone();
         let capture_tys: Vec<Ty> = captures
             .iter()
-            .map(|c| self.ground(self.var_tys[c], &cx.subst))
+            .map(|c| self.ground(self.var_tys[c], scope))
             .collect();
         let key = (target, use_ty, capture_tys);
         if let Some(&id) = self.specs.get(&key) {
@@ -659,7 +722,7 @@ impl Mono<'_> {
         if self.specs.len() >= MAX_SPECIALIZATIONS {
             if self.errors.is_empty() {
                 self.errors.push(GoatError::new(
-                    site.span,
+                    span,
                     "program too complex: it needs too many specialized functions",
                 ));
             }

@@ -353,3 +353,95 @@ fn only_an_interactive_program_can_be_compiled_reloadable() {
     let error = goat::compile_reloadable("print(1)", &HostInterface::turtle()).unwrap_err();
     assert!(error[0].message.contains("run-once"), "{error:?}");
 }
+
+#[test]
+fn a_host_with_its_own_vocabulary_compiles_to_the_imports_and_exports_it_declares() {
+    use goat_checker::Vocab;
+    use goat_checker::ty::{Row, Ty};
+    use goat_checker::vocab::{EventTag, SceneCalls, ShapeTag};
+
+    let led = Ty::Record(Row::of([
+        ("pin".to_string(), Ty::Int),
+        ("on".to_string(), Ty::Bool),
+    ]));
+    let vocab = Vocab {
+        events: vec![EventTag {
+            name: "Press".into(),
+            payload: Ty::Int,
+            decode: None,
+        }],
+        shapes: vec![ShapeTag {
+            name: "Led".into(),
+            payload: led,
+            scene: SceneCalls::Call("led".into()),
+        }],
+        ..Vocab::empty()
+    };
+    let host = HostInterface::with_vocab("", vocab);
+    let source = "init = {n: 0}\n\
+                  update = program(model, event) do match event do Press(pin) then {n: pin} done done\n\
+                  draw = program(model) do [Led({pin: model.n, on: true})] done\n";
+    let wasm = compile(source, &host).expect("compiles");
+    let engine = wasmtime::Engine::default();
+    let module = wasmtime::Module::new(&engine, &wasm).expect("a valid module");
+    let imports: Vec<_> = module
+        .imports()
+        .map(|i| format!("{}.{}", i.module(), i.name()))
+        .collect();
+    assert!(imports.contains(&"scene.led".to_string()), "{imports:?}");
+    assert!(!imports.contains(&"scene.line".to_string()), "{imports:?}");
+    let exports: Vec<_> = module.exports().map(|e| e.name().to_string()).collect();
+    assert!(
+        exports.contains(&"goat_event_Press".to_string()),
+        "{exports:?}"
+    );
+
+    let turtle_event = source.replace("Press(pin)", "Tick(pin)");
+    assert!(compile(&turtle_event, &host).is_err());
+}
+
+const WASD: &str = r#"
+key_of = program(key) do
+  if key == "w" then Up
+  else if key == "s" then Down
+  else Other(key) done done
+done
+"#;
+
+const CLIMB: &str = r#"
+init = {height: 0}
+update = program(model, event) do
+  match event do
+    KeyDown(key) then match key do
+      Up then {height: model.height + 1}
+      Down then {height: model.height - 1}
+      else model
+    done
+  done
+done
+draw = program(model) do [Line({x1: 0, y1: 0, x2: model.height, y2: 0, color: "red"})] done
+"#;
+
+fn height_after(host: &HostInterface, keys: &[&str]) -> f64 {
+    let wasm = compile(CLIMB, host).expect("compiles");
+    let mut program = Interactive::new(&wasm, Frames::default()).expect("starts");
+    for key in keys {
+        program.send(&Event::KeyDown(key.to_string())).unwrap();
+    }
+    program.draw().unwrap();
+    program.into_sink().lines[0].1.0
+}
+
+#[test]
+fn the_host_owns_how_a_key_string_becomes_a_key() {
+    let wasd = HostInterface::with_vocab(
+        format!("{}\n{}", goat_checker::STDLIB, goat_checker::TURTLE_VOCAB),
+        goat_checker::Vocab {
+            prelude: WASD.to_string(),
+            ..goat_checker::Vocab::turtle()
+        },
+    );
+    let keys = ["w", "w", "s", "ArrowUp", "ArrowUp"];
+    assert_eq!(height_after(&wasd, &keys), 1.0);
+    assert_eq!(height_after(&HostInterface::turtle(), &keys), 2.0);
+}

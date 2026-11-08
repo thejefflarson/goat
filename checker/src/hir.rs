@@ -156,13 +156,23 @@ pub struct ContractBinding {
 
 /// A program whose root chain binds `init`, `update` and `draw` once each is
 /// interactive (ADR 0015). Lowering ends its chain with the record
-/// `{draw: draw, init: init, update: update}`, so inference and
-/// monomorphization see the three values like any other uses.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// `{draw: draw, init: init, update: update}`, plus one field per decoder the
+/// host's vocabulary names, so inference and monomorphization see them like any
+/// other uses.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Interactive {
     pub init: ContractBinding,
     pub update: ContractBinding,
     pub draw: ContractBinding,
+    pub decoders: Vec<Decoder>,
+}
+
+/// A host's decoder function (ADR 0020), defined in its prelude.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Decoder {
+    pub function: String,
+    pub symbol: Symbol,
+    pub binding: ContractBinding,
 }
 
 #[derive(Clone, Debug)]

@@ -1,0 +1,10 @@
+# The turtle's key decoder: a browser `KeyboardEvent.key` becomes a `Key`. An
+# arrow's name maps to its tag and anything else is `Other(key)`.
+
+key_of = program(key) do
+  if key == "ArrowUp" then Up
+  else if key == "ArrowDown" then Down
+  else if key == "ArrowLeft" then Left
+  else if key == "ArrowRight" then Right
+  else Other(key) done done done done
+done

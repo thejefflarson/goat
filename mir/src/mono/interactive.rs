@@ -3,25 +3,24 @@
 //! that streams `draw`'s picture out through the `scene.*` imports. The host
 //! never reads goat's heap, so everything that touches variant tags, payload
 //! slots or record layouts lives here, over types the checker has fixed.
+//!
+//! Both are derived from the host's vocabulary (ADR 0020), not written per
+//! tag. A constructor takes the leaves of its host values, left to right, and
+//! rebuilds the records around them; a shape streams as its leaves, with a
+//! list as a begin, one call per element and an end.
 
 use std::collections::BTreeMap;
 
 use super::{FnCx, Mono, Subst, field_index, positional_fields, variant_row};
-use crate::canon::ground_fields;
+use crate::canon::{ground_fields, layout_fields};
 use crate::mir::*;
+use goat_checker::Target;
 use goat_checker::ty::Ty;
-use goat_checker::vocab::KEY_TAGS;
+use goat_checker::vocab::{Leaf, SceneCalls, leaves, shape_leaves};
+use std::collections::HashMap;
 
 /// The most shapes plus vertices one frame may stream before it traps.
 const PICTURE_BUDGET: i64 = 100_000;
-
-/// The `KeyboardEvent.key` of each arrow, and the `Key` tag it maps to.
-const ARROWS: [(&str, &str); 4] = [
-    ("ArrowUp", "Up"),
-    ("ArrowDown", "Down"),
-    ("ArrowLeft", "Left"),
-    ("ArrowRight", "Right"),
-];
 
 fn local(l: Local) -> Expr {
     Expr::Local(l)
@@ -122,36 +121,42 @@ impl Mono<'_> {
         let payloads: Vec<(String, Ty)> = ground_fields(&variant_row(event_ty))
             .map(|(label, payload)| (label.clone(), payload.clone()))
             .collect();
+        let vocab = self.vocab;
         let mut ctors = Vec::new();
         for (label, payload) in payloads {
             let tag = self.tags[&label];
+            let event = vocab
+                .event(&label)
+                .expect("the checker admits only events the host sends");
+            let wire = event.decode.as_ref().map_or(&event.payload, |d| &d.wire);
             let mut cx = FnCx::new(Subst::new());
-            let (params, body) = match label.as_str() {
-                "Tick" => {
-                    let dt = cx.fresh(MTy::Float);
-                    let body = Expr::AllocVariant(layout, tag, vec![local(dt)]);
-                    (vec![(dt, MTy::Float)], body)
+            let mut params = Vec::new();
+            let mut values = HashMap::new();
+            for leaf in leaves(wire).expect("the host's event values are flat") {
+                let ty = self.lower_ty(&leaf.ty);
+                let param = cx.fresh(ty);
+                params.push((param, ty));
+                values.insert(leaf.path, param);
+            }
+            let body = if payload == Ty::Unit {
+                Expr::AllocVariant(layout, tag, Vec::new())
+            } else {
+                let wire_ty = self.ground(wire, &Subst::new());
+                let mut value = self.assemble(&wire_ty, &mut Vec::new(), &values);
+                if let Some(decode) = &event.decode {
+                    let decoder = self.decoder(&decode.function);
+                    value = Expr::CallDirect(decoder, vec![value]);
                 }
-                "KeyDown" | "KeyUp" => {
-                    let key = cx.fresh(MTy::Ptr(HeapKind::Str));
-                    let keyed = self.key_of(&mut cx, key, &payload);
-                    let event = cx.fresh(self.lower_ty(&payload));
-                    let body = lets(
-                        vec![(event, keyed)],
-                        Expr::AllocVariant(layout, tag, vec![local(event)]),
-                    );
-                    (vec![(key, MTy::Ptr(HeapKind::Str))], body)
+                match value {
+                    Expr::Local(_) => Expr::AllocVariant(layout, tag, vec![value]),
+                    _ => {
+                        let held = cx.fresh(self.lower_ty(&payload));
+                        lets(
+                            vec![(held, value)],
+                            Expr::AllocVariant(layout, tag, vec![local(held)]),
+                        )
+                    }
                 }
-                "PointerMove" | "PointerDown" | "PointerUp" => {
-                    let MTy::Ptr(HeapKind::Record(point)) = self.lower_ty(&payload) else {
-                        unreachable!("a pointer payload is a record");
-                    };
-                    let (x, y) = (cx.fresh(MTy::Float), cx.fresh(MTy::Float));
-                    let at = Expr::AllocRecord(point, vec![local(x), local(y)]);
-                    let body = Expr::AllocVariant(layout, tag, vec![at]);
-                    (vec![(x, MTy::Float), (y, MTy::Float)], body)
-                }
-                _ => unreachable!("the checker admits only events the host sends"),
             };
             let ret = MTy::Ptr(HeapKind::Variant(layout));
             let func = self.push_func(cx.into_func(params, None, ret, body));
@@ -160,28 +165,50 @@ impl Mono<'_> {
         ctors
     }
 
-    /// The `Key` of the `KeyboardEvent.key` string `key`: an arrow's name maps
-    /// to its tag and anything else is `Other(key)`.
-    fn key_of(&mut self, cx: &mut FnCx, key: Local, key_ty: &Ty) -> Expr {
-        let MTy::Ptr(HeapKind::Variant(layout)) = self.lower_ty(key_ty) else {
-            unreachable!("a key is a variant");
+    /// The value of the ground type `ty` whose leaf at each path is in
+    /// `values`: records are rebuilt around them in layout order.
+    fn assemble(
+        &mut self,
+        ty: &Ty,
+        path: &mut Vec<String>,
+        values: &HashMap<Vec<String>, Local>,
+    ) -> Expr {
+        let Ty::Record(row) = ty else {
+            return local(values.get(path.as_slice()).copied().unwrap_or_else(|| {
+                unreachable!("the host's event values cover every leaf of the payload")
+            }));
         };
-        debug_assert!(KEY_TAGS.iter().all(|t| self.tags.contains_key(*t)));
-        let other = Expr::AllocVariant(layout, self.tags["Other"], vec![local(key)]);
-        ARROWS.iter().rev().fold(other, |otherwise, (name, tag)| {
-            let literal = cx.fresh(MTy::Ptr(HeapKind::Str));
-            let data = self.intern(name);
-            let arrow = Expr::AllocVariant(layout, self.tags[*tag], Vec::new());
-            Expr::Let(
-                literal,
-                Box::new(Expr::StrLit(data)),
-                Box::new(Expr::If(
-                    Box::new(Expr::StrEq(key, literal)),
-                    Box::new(arrow),
-                    Box::new(otherwise),
-                )),
-            )
-        })
+        let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(ty) else {
+            unreachable!("a record lowers to a record layout");
+        };
+        let fields: Vec<(String, Ty)> = layout_fields(row)
+            .map(|(label, field)| (label.clone(), field.clone()))
+            .collect();
+        let slots = fields
+            .into_iter()
+            .map(|(label, field)| {
+                path.push(label);
+                let slot = self.assemble(&field, path, values);
+                path.pop();
+                slot
+            })
+            .collect();
+        Expr::AllocRecord(layout, slots)
+    }
+
+    /// The host's decoder `function`, specialized at the type its vocabulary
+    /// gives it.
+    fn decoder(&mut self, function: &str) -> FuncId {
+        let decoders = self.decoders;
+        let decoder = decoders
+            .iter()
+            .find(|d| d.function == function)
+            .expect("lowering binds every decoder the vocabulary names");
+        let scope = Subst::new();
+        let use_ty = self.ground(&self.typed.node_types[&decoder.binding.use_id], &scope);
+        let target = Target::Named(decoder.symbol);
+        self.specialize_at(&scope, target, use_ty, decoder.binding.span)
+            .0
     }
 
     /// `(closure, model) -> Unit`: run `draw` and stream the shapes it returns
@@ -263,52 +290,48 @@ impl Mono<'_> {
         let payloads: Vec<(String, Ty)> = ground_fields(&variant_row(shape_ty))
             .map(|(label, payload)| (label.clone(), payload.clone()))
             .collect();
+        let vocab = self.vocab;
         let id = self.reserve();
         let mut cx = FnCx::new(Subst::new());
         let (shape, budget) = (cx.fresh(kind), cx.fresh(MTy::Int));
         let mut arms = Vec::new();
         for (label, payload) in &payloads {
             let tag = self.tags[label];
+            let spec = vocab
+                .shape(label)
+                .expect("the checker admits only shapes the host draws");
+            let streamed = shape_leaves(&spec.payload).expect("the host's shape is flat");
             let record = cx.fresh(self.lower_ty(payload));
-            let read = |m: &Self, name: &str| Expr::Field(record, m.slot(payload, name));
             let mut steps = vec![(record, Expr::Payload(shape, tag, 0))];
-            let body = match label.as_str() {
-                "Line" => {
-                    let arg_tys = [
-                        MTy::Float,
-                        MTy::Float,
-                        MTy::Float,
-                        MTy::Float,
-                        MTy::Ptr(HeapKind::Str),
-                    ];
-                    let args: Vec<Local> = arg_tys.into_iter().map(|ty| cx.fresh(ty)).collect();
-                    for (arg, name) in args.iter().zip(["x1", "y1", "x2", "y2", "color"]) {
-                        steps.push((*arg, read(self, name)));
-                    }
-                    let line = self.scene(
-                        "line",
-                        [MTy::Float; 4]
-                            .into_iter()
-                            .chain([MTy::Ptr(HeapKind::Str)])
-                            .collect(),
-                    );
-                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(line, args)));
+            let head = self.read_leaves(&mut cx, &mut steps, record, payload, &streamed.head);
+            let head_tys: Vec<MTy> = streamed
+                .head
+                .iter()
+                .map(|leaf| self.lower_ty(&leaf.ty))
+                .collect();
+            let body = match (&spec.scene, &streamed.list) {
+                (SceneCalls::Call(name), _) => {
+                    let call = self.scene(name, head_tys);
+                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(call, head)));
                     local(budget)
                 }
-                "Polyline" => {
-                    let points_ty = self.field_ty(payload, "points");
-                    let points_mty = self.lower_ty(&points_ty);
-                    let (color, points, left) = (
-                        cx.fresh(MTy::Ptr(HeapKind::Str)),
-                        cx.fresh(points_mty),
-                        cx.fresh(MTy::Int),
-                    );
-                    let walk = self.points_walk(&points_ty);
-                    let begin = self.scene("polyline_begin", vec![MTy::Ptr(HeapKind::Str)]);
-                    let end = self.scene("polyline_end", Vec::new());
-                    steps.push((color, read(self, "color")));
-                    steps.push((points, read(self, "points")));
-                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(begin, vec![color])));
+                (
+                    SceneCalls::Stream {
+                        begin,
+                        element,
+                        end,
+                    },
+                    Some(list),
+                ) => {
+                    let points_ty = self.field_ty(payload, &list.field);
+                    let points = cx.fresh(self.lower_ty(&points_ty));
+                    let left = cx.fresh(MTy::Int);
+                    let walk = self.points_walk(&points_ty, element, &list.element);
+                    let begin = self.scene(begin, head_tys);
+                    let end = self.scene(end, Vec::new());
+                    let slot = self.slot(payload, &list.field);
+                    steps.push((points, Expr::Field(record, slot)));
+                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(begin, head)));
                     let walked = match walk {
                         Some(walk) => Expr::CallDirect(walk, vec![local(points), local(budget)]),
                         None => local(budget),
@@ -317,7 +340,9 @@ impl Mono<'_> {
                     steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(end, Vec::new())));
                     local(left)
                 }
-                _ => unreachable!("the checker admits only shapes the host draws"),
+                (SceneCalls::Stream { .. }, None) => {
+                    unreachable!("a streamed shape holds a list")
+                }
             };
             arms.push((tag, lets(steps, body)));
         }
@@ -327,28 +352,27 @@ impl Mono<'_> {
         id
     }
 
-    /// `(points, budget) -> budget`: one `scene.vertex` per point, if the list
-    /// can hold any.
-    fn points_walk(&mut self, points_ty: &Ty) -> Option<FuncId> {
+    /// `(points, budget) -> budget`: one `scene.<element>` call per element,
+    /// if the list can hold any.
+    fn points_walk(&mut self, points_ty: &Ty, element: &str, leaves: &[Leaf]) -> Option<FuncId> {
         let (point, link) = self.list_item(points_ty)?;
         let list = self.lower_ty(points_ty);
-        let vertex = self.scene("vertex", vec![MTy::Float; 2]);
+        let leaf_tys = leaves.iter().map(|leaf| self.lower_ty(&leaf.ty)).collect();
+        let call = self.scene(element, leaf_tys);
         let id = self.reserve();
         let mut cx = FnCx::new(Subst::new());
         let (points, budget) = (cx.fresh(list), cx.fresh(MTy::Int));
         let point_ty = self.lower_ty(&point);
         let (head, rest) = (cx.fresh(point_ty), cx.fresh(list));
-        let (x, y) = (cx.fresh(MTy::Float), cx.fresh(MTy::Float));
-        let (x_slot, y_slot) = (self.slot(&point, "x"), self.slot(&point, "y"));
+        let mut steps = vec![
+            (head, Expr::Payload(points, link, 0)),
+            (rest, Expr::Payload(points, link, 1)),
+        ];
+        let args = self.read_leaves(&mut cx, &mut steps, head, &point, leaves);
+        steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(call, args)));
         let step = spend(budget, |remaining| {
             lets(
-                vec![
-                    (head, Expr::Payload(points, link, 0)),
-                    (rest, Expr::Payload(points, link, 1)),
-                    (x, Expr::Field(head, x_slot)),
-                    (y, Expr::Field(head, y_slot)),
-                    (cx.fresh(MTy::Unit), Expr::CallForeign(vertex, vec![x, y])),
-                ],
+                steps,
                 Expr::TailCall(Callee::Direct(id), vec![local(rest), remaining]),
             )
         });
@@ -356,6 +380,31 @@ impl Mono<'_> {
         let params = vec![(points, list), (budget, MTy::Int)];
         self.out[id.0 as usize] = Some(cx.into_func(params, None, MTy::Int, body));
         Some(id)
+    }
+
+    /// The locals holding each of `leaves` in `record`, whose ground type is
+    /// `record_ty`, read by `steps`.
+    fn read_leaves(
+        &mut self,
+        cx: &mut FnCx,
+        steps: &mut Vec<(Local, Expr)>,
+        record: Local,
+        record_ty: &Ty,
+        leaves: &[Leaf],
+    ) -> Vec<Local> {
+        leaves
+            .iter()
+            .map(|leaf| {
+                let (mut holder, mut holder_ty) = (record, record_ty.clone());
+                for label in &leaf.path {
+                    let ty = self.field_ty(&holder_ty, label);
+                    let next = cx.fresh(self.lower_ty(&ty));
+                    steps.push((next, Expr::Field(holder, self.slot(&holder_ty, label))));
+                    (holder, holder_ty) = (next, ty);
+                }
+                holder
+            })
+            .collect()
     }
 
     /// The element type and `Link` tag of a list type that can have elements.
