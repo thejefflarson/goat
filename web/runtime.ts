@@ -214,10 +214,13 @@ export async function run(
   return { output: host.output, commands: host.commands, liveAllocs };
 }
 
+// A page canvas or the OffscreenCanvas a worker draws on.
+export type AnimationCanvas = HTMLCanvasElement | OffscreenCanvas;
+
 // Browser only: draws the strokes segment by segment, `perFrame` segments per
 // animation frame, scaled to fit the canvas. Resolves when drawing finishes.
 export function animate(
-  canvas: HTMLCanvasElement,
+  canvas: AnimationCanvas,
   commands: Command[],
   { perFrame = 4, raf = requestAnimationFrame }: AnimateOptions = {},
 ): Promise<void> {

@@ -4,10 +4,12 @@
 // the model, and every animation frame `goat_draw` streams the picture through
 // the scene renderer.
 //
-// The browser cannot preempt wasm, so a runaway `update` is stopped by the
+// On the main thread (the in-page fallback) a runaway `update` is stopped by the
 // module's own fuel (`goat_fuel`, spent one unit per call): the host refills it
 // before each call into goat, and a trap with the fuel gone is "stuck". A call
-// that returns but took longer than a frame budget stops the loop too.
+// that returns but took longer than a frame budget stops the loop too. Inside the
+// worker (worker-core.ts) the supervisor's wall-clock deadline is the real bound,
+// and the tank is topped to its maximum so fuel never fires first (ADR 0021).
 
 import { createHost } from "./runtime.ts";
 import {
@@ -50,6 +52,10 @@ export interface LoopEnv {
   cancelRaf(handle: number): void;
   now(): number;
   onError(message: string): void;
+  // Refill level before each call into goat; the default is FUEL_BUDGET.
+  fuelBudget?: number;
+  // Wraps every call into goat, so a host can mark when goat is running.
+  around?<T>(call: () => T): T;
 }
 
 export interface InteractiveExports extends WebAssembly.Exports {
@@ -63,6 +69,8 @@ export interface InteractiveExports extends WebAssembly.Exports {
 
 export interface Loop {
   stop(): void;
+  // Delivers a host event as if the page had raised it; ignored if unsubscribed.
+  send(event: HostEvent): void;
   readonly running: boolean;
 }
 
@@ -70,14 +78,31 @@ export function isInteractiveModule(module: WebAssembly.Module): boolean {
   return WebAssembly.Module.exports(module).some((e) => e.name === "goat_setup");
 }
 
-const KEY_EVENTS = { keydown: "KeyDown", keyup: "KeyUp" } as const;
-const POINTER_EVENTS = { pointermove: "PointerMove", pointerdown: "PointerDown", pointerup: "PointerUp" } as const;
+export const KEY_EVENTS = { keydown: "KeyDown", keyup: "KeyUp" } as const;
+export const POINTER_EVENTS = {
+  pointermove: "PointerMove",
+  pointerdown: "PointerDown",
+  pointerup: "PointerUp",
+} as const;
+
+// A pointer event in the canvas's own pixel space, or null while it has no size.
+export function pointerPosition(
+  canvas: Pick<LoopCanvas, "width" | "height" | "getBoundingClientRect">,
+  e: DomEvent,
+): { x: number; y: number } | null {
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return null;
+  return {
+    x: ((e.clientX ?? 0) - rect.left) * (canvas.width / rect.width),
+    y: ((e.clientY ?? 0) - rect.top) * (canvas.height / rect.height),
+  };
+}
 
 export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
   const wanted = new Set<EventKind>(subscriptions(exports));
   const fuel = exports.goat_fuel;
   const refuel = () => {
-    fuel.value = FUEL_BUDGET;
+    fuel.value = env.fuelBudget ?? FUEL_BUDGET;
   };
   const removers: Array<() => void> = [];
   let handle: number | undefined;
@@ -90,7 +115,7 @@ export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
     refuel();
     const started = env.now();
     try {
-      const result = call();
+      const result = env.around ? env.around(call) : call();
       if (env.now() - started > FRAME_BUDGET_MS) {
         fail(STUCK_MESSAGE);
         return undefined;
@@ -122,7 +147,7 @@ export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
 
   let model = 0;
   const first = guarded(() => exports.goat_setup());
-  if (first === undefined) return { stop, running: false };
+  if (first === undefined) return { stop, send: () => {}, running: false };
   model = first;
 
   const send = (event: HostEvent) => {
@@ -150,11 +175,8 @@ export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
   for (const [type, kind] of Object.entries(POINTER_EVENTS)) {
     if (!wanted.has(kind)) continue;
     listen(env.canvas, type, (e) => {
-      const rect = env.canvas.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
-      const x = ((e.clientX ?? 0) - rect.left) * (env.canvas.width / rect.width);
-      const y = ((e.clientY ?? 0) - rect.top) * (env.canvas.height / rect.height);
-      send({ kind, x, y });
+      const at = pointerPosition(env.canvas, e);
+      if (at) send({ kind, ...at });
     });
   }
 
@@ -171,28 +193,38 @@ export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
 
   return {
     stop,
+    send,
     get running() {
       return running;
     },
   };
 }
 
-// Instantiates an interactive module against a canvas and starts its loop.
-// `memory` is only known once the module exists, so the imports read it lazily.
-export async function runInteractive(
+// Instantiates an interactive module drawing through `ctx`. `memory` is only
+// known once the module exists, so the imports read it lazily.
+export async function instantiateInteractive(
   moduleBytes: BufferSource,
-  canvas: HTMLCanvasElement,
-  onError: (message: string) => void,
-): Promise<Loop> {
+  ctx: DrawingContext,
+): Promise<InteractiveExports> {
   let memory: WebAssembly.Memory | undefined;
-  const scene = new CanvasScene(canvas.getContext("2d") as DrawingContext);
+  const scene = new CanvasScene(ctx);
   const host = createHost(() => memory!);
   const { instance } = await WebAssembly.instantiate(moduleBytes, {
     goat: host.imports.goat,
     ...sceneImports(() => memory!, scene),
   });
   memory = instance.exports.memory as WebAssembly.Memory;
-  return startLoop(instance.exports as InteractiveExports, {
+  return instance.exports as InteractiveExports;
+}
+
+// Instantiates an interactive module against a canvas and starts its loop.
+export async function runInteractive(
+  moduleBytes: BufferSource,
+  canvas: HTMLCanvasElement,
+  onError: (message: string) => void,
+): Promise<Loop> {
+  const exports = await instantiateInteractive(moduleBytes, canvas.getContext("2d") as DrawingContext);
+  return startLoop(exports, {
     canvas,
     keys: canvas,
     raf: (callback) => requestAnimationFrame(callback),

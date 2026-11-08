@@ -301,3 +301,32 @@ Sequenced; T1 before T2 is the critical ordering from §4.
   (an ADR update) that the board's watchdog stops a hung program without
   re-introducing goat-injected fuel. Gated behind the #243/#232 board bring-up —
   the one coupled open item.
+
+## As built: T1 (browser worker supervisor)
+
+- **Heartbeat.** One `Int32` in a `SharedArrayBuffer` that the worker bumps on
+  entering and leaving every call into goat (`web/protocol.ts`). Odd means goat is
+  running, even means the worker is idle. The supervisor kills a worker only when
+  the word is odd and has not changed for the deadline, so an idle worker (a hidden
+  tab pauses animation frames) is never mistaken for a hang. Each worker gets a
+  fresh buffer, since a killed worker leaves its word odd.
+- **Deadlines.** `FRAME_BUDGET_MS` (1 s) bounds each call into `goat_setup`,
+  `goat_update` or `goat_draw`; `RUN_ONCE_BUDGET_MS` (10 s) bounds a whole
+  run-once program, including its instantiation. The supervisor polls every
+  100 ms on a timer, not `requestAnimationFrame`, so a hidden tab is still policed;
+  a kill lands up to one poll late.
+- **Restart.** A stuck interactive program restarts from `init` only if its
+  `setup` had finished, and at most `MAX_RESTARTS` (3) times in a row, so a
+  program that spins in `setup` or on every first event cannot loop forever. A
+  stuck run-once program is reported and stays stopped.
+- **Canvas.** `transferControlToOffscreen` works once per element and dies with its
+  worker, so `Stage` swaps a fresh `<canvas>` into the same place for every start.
+  Input listeners sit on the canvas's container for that reason. Run-once programs
+  animate their picture inside the worker for the same reason.
+- **Fuel stays, inert.** The worker tops the tank to `i32::MAX` before every call,
+  so the supervisor's deadline always fires first. T2 deletes the tank.
+- **Hosts without cross-origin isolation.** The editor page refuses to run
+  without it. The Apple embed engine (`web/embed-main.ts`) falls back to the
+  main-thread loop when the web view is not isolated, because its `goat-app://`
+  scheme handler sends no COOP/COEP headers; until it does (or the host finds
+  another stop), that host keeps today's fuel watchdog, which T2 removes.

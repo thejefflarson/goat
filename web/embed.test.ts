@@ -6,6 +6,7 @@ import test from "node:test";
 import { assemble } from "./bundle.ts";
 import { compile } from "./compile.ts";
 import { type EngineMessage, createEngine, parseDiagnostics } from "./embed.ts";
+import type { Job, Runner, RunSink } from "./supervisor.ts";
 
 const compilerUrl = new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", import.meta.url);
 const compiler = await WebAssembly.compile(readFileSync(compilerUrl));
@@ -112,6 +113,84 @@ test("a stopped run posts nothing more", async () => {
   assert.deepEqual(messages, []);
 });
 
+// A runner that records what the engine hands it, standing in for the worker supervisor.
+function supervised() {
+  const started: Array<{ job: Job; sink: RunSink }> = [];
+  let stops = 0;
+  let focuses = 0;
+  const runner: Runner = {
+    start: (job, sink) => started.push({ job, sink }),
+    stop: () => stops++,
+  };
+  const canvas = fakeCanvas();
+  const messages: EngineMessage[] = [];
+  const built = createEngine({
+    canvas: canvas as unknown as HTMLCanvasElement,
+    compiler,
+    post: (message) => messages.push(message),
+    runner,
+    focus: () => focuses++,
+  });
+  return { canvas, messages, started, stops: () => stops, focuses: () => focuses, ...built };
+}
+
+test("with a runner, the source is compiled here and handed over with its mode", async () => {
+  const { messages, started, run } = supervised();
+  await run(ARROWS);
+  await run('print("hi")');
+  assert.deepEqual(started.map((s) => s.job.mode), ["interactive", "once"]);
+  assert.ok(started.every((s) => s.job.module.length > 0));
+  assert.deepEqual(messages, [
+    { type: "state", state: "running" },
+    { type: "state", state: "running" },
+  ]);
+});
+
+test("with a runner, the canvas is not drawn on from this thread", async () => {
+  const { canvas, run } = supervised();
+  canvas.getContext = () => assert.fail("the worker owns the canvas");
+  await run("forward(10)");
+});
+
+test("with a runner, a compile error never starts the runner", async () => {
+  const { messages, started, run } = supervised();
+  await run("foo(2)");
+  assert.equal(started.length, 0);
+  assert.equal(messages[0]!.type, "diagnostics");
+});
+
+test("the runner's results become engine messages", async () => {
+  const { messages, started, run, focuses } = supervised();
+  await run(ARROWS);
+  const { sink } = started[0]!;
+  sink.onReady?.();
+  sink.onOutput(["a", "b"]);
+  sink.onFailed("your program got stuck");
+  sink.onReady?.();
+  sink.onFinished?.();
+  assert.deepEqual(messages.slice(1), [
+    { type: "output", lines: ["a", "b"] },
+    { type: "state", state: "failed", message: "your program got stuck" },
+    { type: "state", state: "running" },
+    { type: "state", state: "finished" },
+  ]);
+  assert.equal(focuses(), 2);
+});
+
+test("stopping the engine stops the runner, and a stopped run's results are dropped", async () => {
+  const { messages, started, stop, stops, run } = supervised();
+  await run(ARROWS);
+  const before = stops();
+  stop();
+  assert.equal(stops(), before + 1);
+  const { sink } = started[0]!;
+  sink.onOutput(["late"]);
+  sink.onFailed("late");
+  sink.onReady?.();
+  sink.onFinished?.();
+  assert.deepEqual(messages, [{ type: "state", state: "running" }]);
+});
+
 test("the embed bundle is the canvas page, relative and self-contained", async () => {
   const outDir = mkdtempSync(`${tmpdir()}/goat-embed-`);
   try {
@@ -138,6 +217,7 @@ test("the embed bundle is the canvas page, relative and self-contained", async (
       }
     }
 
+    assert.ok(existsSync(`${outDir}/dist/worker.js`), "the worker the supervisor spawns is shipped");
     const main = readFileSync(resolve(outDir, entry), "utf8");
     const wasmPath = main.match(/new URL\("([^"]+goat_web\.wasm)", import\.meta\.url\)/)![1]!;
     assert.match(wasmPath, /^\.\.?\//);

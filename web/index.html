@@ -58,14 +58,14 @@
       <option value="spiral">Spiral (run once)</option>
     </select>
   </section>
-  <canvas id="canvas" width="600" height="600" aria-label="drawing" tabindex="0"></canvas>
+  <div id="stage"><canvas id="canvas" width="600" height="600" aria-label="drawing" tabindex="0"></canvas></div>
   <pre id="problems" role="alert" hidden></pre>
   <pre id="output" aria-label="printed output" hidden></pre>
 </main>
 <script type="module">
   import { compile, loadCompiler } from "./dist/compile.js";
-  import { isInteractiveModule, runInteractive } from "./dist/loop.js";
-  import { animate, run } from "./dist/runtime.js";
+  import { superviseCanvas } from "./dist/browser.js";
+  import { isInteractiveModule } from "./dist/loop.js";
 
   const COMPILER_URL = "./goat_web.wasm";
 
@@ -107,15 +107,17 @@ done
   source.value = EXAMPLES.arrow_draw;
   example.addEventListener("change", () => (source.value = EXAMPLES[example.value]));
 
-  let loop;
-
   function show(el, text) {
     el.textContent = text;
     el.hidden = text === "";
   }
 
+  // goat runs in a worker the page can terminate; without cross-origin isolation
+  // there is no safe way to run it, so the page refuses to start.
+  let page;
   let compiler;
   try {
+    page = superviseCanvas(canvas);
     compiler = await loadCompiler(COMPILER_URL);
     button.disabled = false;
   } catch (e) {
@@ -123,23 +125,22 @@ done
   }
 
   button.addEventListener("click", async () => {
-    loop?.stop();
+    page.supervisor.stop();
     button.disabled = true;
     show(problems, "");
     show(output, "");
-    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
     try {
       const compiled = await compile(compiler, source.value);
       if (!compiled.ok) return show(problems, compiled.diagnostics);
-      if (isInteractiveModule(await WebAssembly.compile(compiled.module))) {
-        loop = await runInteractive(compiled.module, canvas, (message) => show(problems, message));
-        canvas.focus();
-        return;
-      }
-      const lines = [];
-      const { commands } = await run(compiled.module, { onOutput: (line) => lines.push(line) });
-      show(output, lines.join("\n"));
-      await animate(canvas, commands);
+      const interactive = isInteractiveModule(await WebAssembly.compile(compiled.module));
+      page.supervisor.start(
+        { mode: interactive ? "interactive" : "once", module: compiled.module },
+        {
+          onReady: () => page.stage.focus(),
+          onOutput: (lines) => show(output, lines.join("\n")),
+          onFailed: (message) => show(problems, message),
+        },
+      );
     } catch (e) {
       show(problems, String(e.message ?? e));
     } finally {

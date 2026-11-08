@@ -5,6 +5,7 @@
 import { compile } from "./compile.ts";
 import { isInteractiveModule, runInteractive, type Loop } from "./loop.ts";
 import { animate, run } from "./runtime.ts";
+import type { Runner } from "./supervisor.ts";
 
 // `line` and `column` are 1-based, `column` and `length` count characters, and
 // line 0 means the message has no place in the user's source.
@@ -30,6 +31,10 @@ export interface EngineEnv {
   canvas: HTMLCanvasElement;
   compiler: WebAssembly.Module;
   post(message: EngineMessage): void;
+  // When present, goat runs in a terminable worker that owns the drawing
+  // surface (ADR 0021); otherwise it runs on this thread against `canvas`.
+  runner?: Runner;
+  focus?(): void;
 }
 
 const LOCATED = /^(in the prelude, )?(\d+):(\d+): /;
@@ -53,7 +58,7 @@ export function parseDiagnostics(rendered: string): Diagnostic[] {
   });
 }
 
-export function createEngine({ canvas, compiler, post }: EngineEnv): Engine {
+export function createEngine({ canvas, compiler, post, runner, focus = () => canvas.focus() }: EngineEnv): Engine {
   let loop: Loop | undefined;
   let generation = 0;
 
@@ -61,6 +66,7 @@ export function createEngine({ canvas, compiler, post }: EngineEnv): Engine {
     generation++;
     loop?.stop();
     loop = undefined;
+    runner?.stop();
   };
 
   // A run that was superseded or stopped while awaiting must not post or draw.
@@ -71,7 +77,7 @@ export function createEngine({ canvas, compiler, post }: EngineEnv): Engine {
     const fail = (message: string) => {
       if (current()) post({ type: "state", state: "failed", message });
     };
-    canvas.getContext("2d")!.clearRect(0, 0, canvas.width, canvas.height);
+    if (!runner) canvas.getContext("2d")!.clearRect(0, 0, canvas.width, canvas.height);
     try {
       const compiled = await compile(compiler, source);
       if (!current()) return;
@@ -80,11 +86,34 @@ export function createEngine({ canvas, compiler, post }: EngineEnv): Engine {
         return fail("your program has problems");
       }
       post({ type: "state", state: "running" });
-      if (isInteractiveModule(await WebAssembly.compile(compiled.module))) {
+      const interactive = isInteractiveModule(await WebAssembly.compile(compiled.module));
+      if (!current()) return;
+      if (runner) {
+        let failed = false;
+        runner.start(
+          { mode: interactive ? "interactive" : "once", module: compiled.module },
+          {
+            onReady: () => {
+              if (!current()) return;
+              if (failed) post({ type: "state", state: "running" });
+              failed = false;
+              focus();
+            },
+            onOutput: (lines) => current() && post({ type: "output", lines }),
+            onFinished: () => current() && post({ type: "state", state: "finished" }),
+            onFailed: (message) => {
+              failed = true;
+              fail(message);
+            },
+          },
+        );
+        return;
+      }
+      if (interactive) {
         const started = await runInteractive(compiled.module, canvas, fail);
         if (!current()) return started.stop();
         loop = started;
-        canvas.focus();
+        focus();
         return;
       }
       const lines: string[] = [];
