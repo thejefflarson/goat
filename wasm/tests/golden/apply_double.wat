@@ -8,9 +8,11 @@
   (type (;6;) (func (result i32)))
   (type (;7;) (func (param i32 i32)))
   (type (;8;) (func (param i32 i32) (result i32)))
+  (type (;9;) (func (param i64)))
   (import "goat" "print_number" (func (;0;) (type 0) (param f64)))
   (import "goat" "print_bool" (func (;1;) (type 1) (param i32)))
-  (import "goat" "trap" (func (;2;) (type 1) (param i32)))
+  (import "goat" "print_int" (func (;2;) (type 9) (param i64)))
+  (import "goat" "trap" (func (;3;) (type 1) (param i32)))
   (table (;0;) 2 2 funcref)
   (memory (;0;) 1)
   (global (;0;) (mut i32) i32.const 288)
@@ -18,13 +20,13 @@
   (global (;2;) (mut i32) i32.const 2147483647)
   (global (;3;) (mut i32) i32.const 0)
   (export "memory" (memory 0))
-  (export "goat_entry" (func 6))
+  (export "goat_entry" (func 7))
   (export "goat_fuel" (global 2))
   (export "goat_site" (global 3))
-  (export "goat_alloc" (func 7))
-  (export "goat_live_allocs" (func 9))
-  (elem (;0;) (table 0) (i32.const 0) func 11 4)
-  (func (;3;) (type 3) (result i64)
+  (export "goat_alloc" (func 8))
+  (export "goat_live_allocs" (func 10))
+  (elem (;0;) (table 0) (i32.const 0) func 12 5)
+  (func (;4;) (type 3) (result i64)
     global.get 2
     i32.const 1
     i32.sub
@@ -37,9 +39,9 @@
     end
     i32.const 48
     i64.const 21
-    call 5
+    call 6
   )
-  (func (;4;) (type 4) (param i32 i64) (result i64)
+  (func (;5;) (type 4) (param i32 i64) (result i64)
     (local i64 i64)
     global.get 2
     i32.const 1
@@ -75,7 +77,7 @@
         local.get 0
         local.get 0
         i32.load offset=8
-        call 10
+        call 11
       end
     end
     local.get 1
@@ -106,14 +108,14 @@
     end
     if ;; label = @1
       i32.const 8
-      call 2
+      call 3
       unreachable
     end
     local.get 2
     local.get 3
     i64.mul
   )
-  (func (;5;) (type 4) (param i32 i64) (result i64)
+  (func (;6;) (type 4) (param i32 i64) (result i64)
     (local i32)
     global.get 2
     i32.const 1
@@ -133,12 +135,11 @@
     i32.load offset=12
     call_indirect (type 4)
   )
-  (func (;6;) (type 2)
-    call 3
-    f64.convert_i64_s
-    call 0
+  (func (;7;) (type 2)
+    call 4
+    call 2
   )
-  (func (;7;) (type 5) (param i32) (result i32)
+  (func (;8;) (type 5) (param i32) (result i32)
     (local i32 i32 i32 i32)
     local.get 0
     i32.const 1073741824
@@ -249,7 +250,7 @@
     global.set 1
     local.get 2
   )
-  (func (;8;) (type 1) (param i32)
+  (func (;9;) (type 1) (param i32)
     (local i32 i32)
     local.get 0
     i32.load
@@ -298,10 +299,10 @@
     i32.sub
     global.set 1
   )
-  (func (;9;) (type 6) (result i32)
+  (func (;10;) (type 6) (result i32)
     global.get 1
   )
-  (func (;10;) (type 7) (param i32 i32)
+  (func (;11;) (type 7) (param i32 i32)
     (local i32)
     block ;; label = @1
       loop ;; label = @2
@@ -311,7 +312,7 @@
         call_indirect (type 8)
         local.set 2
         local.get 0
-        call 8
+        call 9
         local.get 2
         i32.eqz
         br_if 1 (;@1;)
@@ -338,7 +339,7 @@
       end
     end
   )
-  (func (;11;) (type 8) (param i32 i32) (result i32)
+  (func (;12;) (type 8) (param i32 i32) (result i32)
     (local i32)
     local.get 1
   )

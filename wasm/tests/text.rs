@@ -46,14 +46,35 @@ fn writes() -> Program {
 fn write_imports_the_host_writers_after_the_print_imports() {
     let text = wat(&writes());
     for (index, name, params) in [
-        (2, "write_number", "(param f64)"),
-        (3, "write_string", "(param i32)"),
-        (4, "write_end", ""),
+        (3, "write_number", "(param f64)"),
+        (4, "write_string", "(param i32)"),
+        (5, "write_end", ""),
+        (6, "write_int", "(param i64)"),
     ] {
         let import = format!("(import \"goat\" \"{name}\" (func (;{index};)");
         assert!(text.contains(&import), "{name}: {text}");
         assert!(text.contains(params), "{name}: {text}");
     }
+}
+
+#[test]
+fn an_int_write_calls_write_int_and_a_float_write_calls_write_number() {
+    let write = |value| {
+        string_program(
+            then(
+                Expr::Write(Write::Number(Box::new(value))),
+                Expr::Write(Write::End),
+                0,
+            ),
+            MTy::Unit,
+        )
+    };
+    let ints = wat(&write(int(7)));
+    let floats = wat(&write(float(1.5)));
+    assert!(ints.contains("call 6"), "{ints}");
+    assert!(!ints.contains("call 3"), "{ints}");
+    assert!(floats.contains("call 3"), "{floats}");
+    assert!(!floats.contains("call 6"), "{floats}");
 }
 
 #[test]
@@ -67,11 +88,11 @@ fn a_string_root_keeps_print_string_ahead_of_the_writers() {
     let body = then(Expr::Write(Write::End), Expr::StrLit(DataId(0)), 0);
     let text = wat(&string_program(body, MTy::Ptr(HeapKind::Str)));
     assert!(
-        text.contains("(import \"goat\" \"print_string\" (func (;2;)"),
+        text.contains("(import \"goat\" \"print_string\" (func (;3;)"),
         "{text}"
     );
     assert!(
-        text.contains("(import \"goat\" \"write_number\" (func (;3;)"),
+        text.contains("(import \"goat\" \"write_number\" (func (;4;)"),
         "{text}"
     );
 }

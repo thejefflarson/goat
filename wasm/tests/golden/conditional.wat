@@ -5,21 +5,23 @@
   (type (;3;) (func (result f64)))
   (type (;4;) (func (param i32) (result i32)))
   (type (;5;) (func (result i32)))
+  (type (;6;) (func (param i64)))
   (import "goat" "print_number" (func (;0;) (type 0) (param f64)))
   (import "goat" "print_bool" (func (;1;) (type 1) (param i32)))
-  (import "goat" "trap" (func (;2;) (type 1) (param i32)))
+  (import "goat" "print_int" (func (;2;) (type 6) (param i64)))
+  (import "goat" "trap" (func (;3;) (type 1) (param i32)))
   (memory (;0;) 1)
   (global (;0;) (mut i32) i32.const 264)
   (global (;1;) (mut i32) i32.const 0)
   (global (;2;) (mut i32) i32.const 2147483647)
   (global (;3;) (mut i32) i32.const 0)
   (export "memory" (memory 0))
-  (export "goat_entry" (func 4))
+  (export "goat_entry" (func 5))
   (export "goat_fuel" (global 2))
   (export "goat_site" (global 3))
-  (export "goat_alloc" (func 5))
-  (export "goat_live_allocs" (func 7))
-  (func (;3;) (type 3) (result f64)
+  (export "goat_alloc" (func 6))
+  (export "goat_live_allocs" (func 8))
+  (func (;4;) (type 3) (result f64)
     (local f64)
     global.get 2
     i32.const 1
@@ -42,15 +44,15 @@
       f64.sub
     else
       i32.const 8
-      call 2
+      call 3
       unreachable
     end
   )
-  (func (;4;) (type 2)
-    call 3
+  (func (;5;) (type 2)
+    call 4
     call 0
   )
-  (func (;5;) (type 4) (param i32) (result i32)
+  (func (;6;) (type 4) (param i32) (result i32)
     (local i32 i32 i32 i32)
     local.get 0
     i32.const 1073741824
@@ -161,7 +163,7 @@
     global.set 1
     local.get 2
   )
-  (func (;6;) (type 1) (param i32)
+  (func (;7;) (type 1) (param i32)
     (local i32 i32)
     local.get 0
     i32.load
@@ -210,7 +212,7 @@
     i32.sub
     global.set 1
   )
-  (func (;7;) (type 5) (result i32)
+  (func (;8;) (type 5) (result i32)
     global.get 1
   )
   (data (;0;) (i32.const 8) "\ff\ff\ff\ff\00\00\00\00\12\00\00\00unreachable branch\00\00")

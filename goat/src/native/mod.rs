@@ -268,6 +268,15 @@ fn link<H: Host + 'static>(
     linker
         .func_wrap(
             "goat",
+            "print_int",
+            |mut caller: Caller<'_, State<H>>, n: i64| {
+                caller.data_mut().output.write_line(&n.to_string());
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    linker
+        .func_wrap(
+            "goat",
             "print_string",
             |mut caller: Caller<'_, State<H>>, ptr: i32| -> wasmtime::Result<()> {
                 let text = read_string(&mut caller, ptr)?;
@@ -286,6 +295,15 @@ fn link<H: Host + 'static>(
                     .output
                     .line
                     .push_str(&crate::format_number(x));
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    linker
+        .func_wrap(
+            "goat",
+            "write_int",
+            |mut caller: Caller<'_, State<H>>, n: i64| {
+                caller.data_mut().output.line.push_str(&n.to_string());
             },
         )
         .map_err(|e| e.to_string())?;

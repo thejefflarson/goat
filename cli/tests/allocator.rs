@@ -38,6 +38,15 @@ fn instantiate(program: &Program, memory_limit: usize) -> Running {
         )
         .unwrap();
     linker.func_wrap("goat", "print_bool", |_: i32| {}).unwrap();
+    linker
+        .func_wrap(
+            "goat",
+            "print_int",
+            |mut c: wasmtime::Caller<'_, State>, n: i64| {
+                c.data_mut().printed.push(n.to_string());
+            },
+        )
+        .unwrap();
     linker.func_wrap("goat", "trap", |_: i32| {}).unwrap();
     let limits = StoreLimitsBuilder::new().memory_size(memory_limit).build();
     let mut store = Store::new(
@@ -152,8 +161,8 @@ fn a_dangling_read_sees_poison() {
     p.layouts.push(Layout::Record(vec![MTy::Int, MTy::Int]));
     let mut run = instantiate(&p, usize::MAX);
     run.entry().unwrap();
-    let poison = i64::from_le_bytes([0xFE; 8]) as f64;
-    assert_eq!(run.store.data().printed, [goat::format_number(poison)]);
+    let poison = i64::from_le_bytes([0xFE; 8]);
+    assert_eq!(run.store.data().printed, [poison.to_string()]);
 }
 
 #[test]

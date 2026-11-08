@@ -68,6 +68,14 @@ fn runs_the_whole_numbers_example() {
 }
 
 #[test]
+fn run_prints_an_int_past_2_to_the_53_exactly() {
+    assert_eq!(
+        stdout_of("print(9007199254740993);\nprint(9007199254740992 + 1);\nprint(0.5)"),
+        "9007199254740993\n9007199254740993\n0.5"
+    );
+}
+
+#[test]
 fn a_division_by_zero_is_blamed_on_the_slash_slash() {
     let out = run_source("p.goat", "print(5 // 0)");
     assert!(!out.status.success());

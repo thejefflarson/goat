@@ -27,9 +27,11 @@ pub enum InterpError {
 }
 
 /// A piece of a printed line: the host formats numbers, so they stay numbers.
+/// An `Int` stays an `i64` so none of its digits are lost.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Piece {
     Number(f64),
+    Int(i64),
     Text(Vec<u8>),
 }
 
@@ -327,7 +329,7 @@ impl<'p> Interp<'p> {
             }
             Expr::Write(Write::Number(value)) => match self.value(value, frame, depth)? {
                 Value::Float(x) => Ok(self.write(Piece::Number(x))),
-                Value::Int(n) => Ok(self.write(Piece::Number(n as f64))),
+                Value::Int(n) => Ok(self.write(Piece::Int(n))),
                 _ => Err(InterpError::Malformed("write of a non-number")),
             },
             Expr::Write(Write::Str(x)) => {

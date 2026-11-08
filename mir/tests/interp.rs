@@ -133,7 +133,7 @@ fn a_number_prints_whether_it_is_an_int_or_a_float() {
     let end = Expr::Write(Write::End);
     let body = let_(0, write(int(7)), let_(1, end, float(0.5)));
     let out = run_verified(&program(vec![func(MTy::Float, body)]));
-    assert_eq!(out.printed, [vec![Piece::Number(7.0)]]);
+    assert_eq!(out.printed, [vec![Piece::Int(7)]]);
 }
 
 #[test]

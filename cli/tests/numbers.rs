@@ -46,6 +46,29 @@ fn an_int_is_a_64_bit_integer() {
 }
 
 #[test]
+fn an_int_past_2_to_the_53_prints_every_digit() {
+    assert_eq!(run("print(9007199254740993)"), "9007199254740993");
+    assert_eq!(run("print(9007199254740992 + 1)"), "9007199254740993");
+    assert_eq!(run("print(9223372036854775807)"), "9223372036854775807");
+    assert_eq!(
+        run("print(0 - 9223372036854775807 - 1)"),
+        "-9223372036854775808"
+    );
+    assert_eq!(run("9007199254740993"), "9007199254740993");
+    assert_eq!(run("print([9007199254740993, 1])"), "[9007199254740993, 1]");
+    assert_eq!(
+        run("print({big: 9007199254740993, f: 0.5})"),
+        "{big: 9007199254740993, f: 0.5}"
+    );
+}
+
+#[test]
+fn a_float_still_prints_as_a_float_beside_a_large_int() {
+    assert_eq!(run("print(9007199254740993 + 0.5)"), "9007199254740992");
+    assert_eq!(run("print(1e18)"), "1e+18");
+}
+
+#[test]
 fn division_is_a_float() {
     assert_eq!(run("print(7 / 2)"), "3.5");
     assert_eq!(run("print(4 / 2)"), "2");

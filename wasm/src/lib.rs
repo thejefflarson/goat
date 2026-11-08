@@ -17,14 +17,21 @@ const DATA_BASE: u32 = 8;
 const PAGE_BYTES: u32 = 65536;
 const PRINT_NUMBER: u32 = 0;
 const PRINT_BOOL: u32 = 1;
-const PRINT_STRING: u32 = 2;
-/// The imports `Write` needs, after `print_number`, `print_bool` and (for a
-/// string root) `print_string`: `write_number`, `write_string`, `write_end`.
-const WRITE_IMPORTS: u32 = 3;
+const PRINT_INT: u32 = 2;
+const PRINT_STRING: u32 = 3;
+/// The imports `Write` needs, after `print_number`, `print_bool`, `print_int`
+/// and (for a string root) `print_string`: `write_number`, `write_string`,
+/// `write_end`, `write_int`.
+const WRITE_IMPORTS: u32 = 4;
+const WRITE_NUMBER: u32 = 0;
+const WRITE_STRING: u32 = 1;
+const WRITE_END: u32 = 2;
+const WRITE_INT: u32 = 3;
 const IMMORTAL: i32 = -1;
 /// The widths numbers have where they cross into the host: imports and
-/// `print_number` take `f64` and `i64` whatever the program's profile, so one
-/// host serves every profile and the module converts at the boundary.
+/// `print_number` takes an `f64` and `print_int` an `i64` whatever the
+/// program's profile, so one host serves every profile and the module converts
+/// at the boundary.
 const HOST_PROFILE: Profile = Profile::Desktop;
 /// The fuel every function entry spends one unit of, after the heap pointer and
 /// the allocator's live count. It is exported as `goat_fuel` so a host can
@@ -222,7 +229,7 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
         .funcs
         .get(program.entry.0 as usize)
         .is_some_and(|root| root.ret == MTy::Ptr(HeapKind::Str));
-    let writes_base = if prints_string { 3 } else { 2 };
+    let writes_base = PRINT_STRING + prints_string as u32;
     let foreign_base = writes_base + if uses.writes { WRITE_IMPORTS } else { 0 };
     let trap_import = foreign_base + program.foreign.len() as u32;
     let imports = trap_import + !uses.traps.is_empty() as u32;
@@ -346,12 +353,14 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
     let entry_index = program.funcs.len();
     bodies.splice(entry_index + 1..entry_index + 1, runtime);
 
+    let print_int = shared.types.intern(vec![ValType::I64], vec![]);
     let mut module = Module::new();
     module.section(&shared.types.section());
 
     let mut import_section = ImportSection::new();
     import_section.import("goat", "print_number", EntityType::Function(print_number));
     import_section.import("goat", "print_bool", EntityType::Function(print_bool));
+    import_section.import("goat", "print_int", EntityType::Function(print_int));
     if prints_string {
         import_section.import("goat", "print_string", EntityType::Function(print_bool));
     }
@@ -359,6 +368,7 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
         import_section.import("goat", "write_number", EntityType::Function(print_number));
         import_section.import("goat", "write_string", EntityType::Function(print_bool));
         import_section.import("goat", "write_end", EntityType::Function(entry_ty));
+        import_section.import("goat", "write_int", EntityType::Function(print_int));
     }
     for (foreign, ty) in program.foreign.iter().zip(&foreign_types) {
         import_section.import(&foreign.module, &foreign.name, EntityType::Function(*ty));
@@ -1190,8 +1200,6 @@ impl Types {
     }
 }
 
-/// An `Int` root prints through `print_number`, since both are numbers. The
-/// host reads an f64, so an `Int` beyond 2^53 prints as the `Float` nearest it.
 fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError> {
     let root = program
         .funcs
@@ -1207,11 +1215,17 @@ fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError>
     }
     f.instruction(&Instruction::Call(imports + program.entry.0));
     match root.ret {
-        MTy::Float | MTy::Int => {
-            if let Some(widen) = to_print_number(program.profile, root.ret) {
+        MTy::Float => {
+            if let Some(widen) = to_print_number(program.profile) {
                 f.instruction(&widen);
             }
             f.instruction(&Instruction::Call(PRINT_NUMBER));
+        }
+        MTy::Int => {
+            if let Some(widen) = to_print_int(program.profile) {
+                f.instruction(&widen);
+            }
+            f.instruction(&Instruction::Call(PRINT_INT));
         }
         MTy::Bool => {
             f.instruction(&Instruction::Call(PRINT_BOOL));
@@ -1226,15 +1240,20 @@ fn entry_wrapper(program: &Program, imports: u32) -> Result<Function, EmitError>
     Ok(f)
 }
 
-/// Widens the number on the stack to the `f64` `print_number` takes. Both
-/// profiles' `Int` and `Float` convert exactly, except a desktop `Int` beyond
-/// 2^53.
-fn to_print_number(profile: Profile, ty: MTy) -> Option<Instruction<'static>> {
-    match (profile, ty) {
-        (Profile::Desktop, MTy::Int) => Some(Instruction::F64ConvertI64S),
-        (Profile::Embedded, MTy::Int) => Some(Instruction::F64ConvertI32S),
-        (Profile::Embedded, _) => Some(Instruction::F64PromoteF32),
-        (Profile::Desktop, _) => None,
+/// Widens the `Float` on the stack to the `f64` `print_number` takes.
+fn to_print_number(profile: Profile) -> Option<Instruction<'static>> {
+    match profile {
+        Profile::Embedded => Some(Instruction::F64PromoteF32),
+        Profile::Desktop => None,
+    }
+}
+
+/// Widens the `Int` on the stack to the `i64` `print_int` takes, so every
+/// digit reaches the host.
+fn to_print_int(profile: Profile) -> Option<Instruction<'static>> {
+    match profile {
+        Profile::Embedded => Some(Instruction::I64ExtendI32S),
+        Profile::Desktop => None,
     }
 }
 
@@ -1815,25 +1834,27 @@ impl<'p> FuncCx<'_, 'p> {
             Expr::CallForeign(f, args) => self.call_foreign(*f, args, out),
             Expr::Write(write) => {
                 let call = match write {
-                    Write::Number(value) => {
-                        match self.lower(value, out)? {
-                            Some(ty @ (MTy::Float | MTy::Int)) => {
-                                out.extend(to_print_number(self.program.profile, ty));
-                            }
-                            Some(_) => return Err(EmitError::Malformed("write of a non-number")),
-                            None => return Ok(None),
+                    Write::Number(value) => match self.lower(value, out)? {
+                        Some(MTy::Float) => {
+                            out.extend(to_print_number(self.program.profile));
+                            WRITE_NUMBER
                         }
-                        0
-                    }
+                        Some(MTy::Int) => {
+                            out.extend(to_print_int(self.program.profile));
+                            WRITE_INT
+                        }
+                        Some(_) => return Err(EmitError::Malformed("write of a non-number")),
+                        None => return Ok(None),
+                    },
                     Write::Str(x) => {
                         out.push(Instruction::LocalGet(self.string(*x)?));
-                        1
+                        WRITE_STRING
                     }
                     Write::Lit(d) => {
                         self.shared.push_data_address(self.string_address(*d)?, out);
-                        1
+                        WRITE_STRING
                     }
-                    Write::End => 2,
+                    Write::End => WRITE_END,
                 };
                 out.push(Instruction::Call(self.shared.writes_base + call));
                 Ok(Some(MTy::Unit))
