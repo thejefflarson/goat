@@ -14,9 +14,24 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: goat-runners
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: "0"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
+
+      # The image installs Rust under ~/.cargo/bin but does not add it to the
+      # job shell's PATH the way GitHub-hosted runners do, so rustup/cargo/sccache
+      # are not found until this runs. Must precede Start sccache (sccache lives
+      # there too).
+      - name: Enable rust
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Start sccache
+        run: bash .github/scripts/start-sccache.sh
 
       # The runner ships a stable Rust toolchain; just add the components we
       # lint with.
@@ -36,9 +51,24 @@ jobs:
   # Keeps the front end and wasm backend buildable for wasm32 so the compiler
   # can run in a browser or embedded host.
   wasm32:
-    runs-on: ubuntu-latest
+    runs-on: goat-runners
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: "0"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
+
+      # The image installs Rust under ~/.cargo/bin but does not add it to the
+      # job shell's PATH the way GitHub-hosted runners do, so rustup/cargo/sccache
+      # are not found until this runs. Must precede Start sccache (sccache lives
+      # there too).
+      - name: Enable rust
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Start sccache
+        run: bash .github/scripts/start-sccache.sh
 
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown
@@ -54,21 +84,32 @@ jobs:
           ls -l target/wasm32-unknown-unknown/release/goat_web.wasm
 
   # Type-checks and builds the TypeScript web runtime, then runs it against
-  # modules compiled by goat_web itself. Node 24 executes .ts tests natively.
+  # modules compiled by goat_web itself. The runner image's Node 24 executes .ts tests natively.
   web-runtime:
-    runs-on: ubuntu-latest
+    runs-on: goat-runners
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: "0"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
+
+      # The image installs Rust under ~/.cargo/bin but does not add it to the
+      # job shell's PATH the way GitHub-hosted runners do, so rustup/cargo/sccache
+      # are not found until this runs. Must precede Start sccache (sccache lives
+      # there too).
+      - name: Enable rust
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Start sccache
+        run: bash .github/scripts/start-sccache.sh
 
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown
 
       - name: Build the compiler as wasm
         run: cargo build -p goat_web --target wasm32-unknown-unknown --release
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
 
       - name: Install web dev dependencies
         run: npm ci --prefix web
