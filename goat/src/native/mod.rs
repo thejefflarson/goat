@@ -7,13 +7,16 @@
 //!   [`Interactive::reload`] swaps in a recompiled program over the same heap.
 //! - [`Guest`] is the raw instance both are built on.
 
-use wasmtime::{Caller, Config, Engine, ExternType, Instance, Linker, Module, Store, Val};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use wasmtime::{Caller, Config, Engine, ExternType, Instance, Linker, Module, Store, Trap, Val};
 
 mod interactive;
 
 pub use goat_checker::hir::Boundary;
 pub use goat_mir::{Host, HostValue, NoHost, SceneSink};
-pub use interactive::{Event, Interactive, Reloaded, UPDATE_FUEL};
+pub use interactive::{Event, Interactive, Reloaded};
 
 /// What a finished program left behind.
 pub struct Run {
@@ -228,9 +231,68 @@ pub fn run(wasm: &[u8]) -> Result<Run, String> {
     run_with_host(wasm, NoHost).map(|(run, _)| run)
 }
 
+/// How often a timeout's ticker advances the epoch.
+const EPOCH_TICK: Duration = Duration::from_millis(10);
+
+/// A wall-clock bound on each call into a guest, enforced by wasmtime's epoch
+/// interruption: a thread advances the engine's epoch every [`EPOCH_TICK`] and
+/// a call that outlives its ticks traps at the next function entry or loop
+/// back-edge. The host owns this bound (ADR 0021); the module carries none.
+struct Deadline {
+    timeout: Duration,
+    ticks: u64,
+    stop: Arc<AtomicBool>,
+}
+
+impl Deadline {
+    fn start(engine: &Engine, timeout: Duration) -> Deadline {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ticker, halt) = (engine.clone(), Arc::clone(&stop));
+        std::thread::spawn(move || {
+            while !halt.load(Ordering::Relaxed) {
+                std::thread::sleep(EPOCH_TICK);
+                ticker.increment_epoch();
+            }
+        });
+        // One extra tick, because the first falls anywhere in the first interval.
+        let ticks = u64::try_from(timeout.as_nanos().div_ceil(EPOCH_TICK.as_nanos()))
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        Deadline {
+            timeout,
+            ticks,
+            stop,
+        }
+    }
+
+    fn stuck(&self) -> String {
+        format!(
+            "the program ran for more than {} ms, so it looks stuck",
+            self.timeout.as_millis()
+        )
+    }
+}
+
+impl Drop for Deadline {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Start a call's clock: `deadline` from now, or never without one. A store
+/// with epochs enabled traps at once until this is set.
+fn arm<T>(store: &mut Store<T>, deadline: Option<&Deadline>) {
+    store.set_epoch_deadline(deadline.map_or(u64::MAX, |deadline| deadline.ticks));
+}
+
+fn interrupted(error: &wasmtime::Error) -> bool {
+    error.downcast_ref::<Trap>() == Some(&Trap::Interrupt)
+}
+
 fn engine() -> Result<Engine, String> {
     let mut config = Config::new();
     config.wasm_tail_call(true);
+    config.epoch_interruption(true);
     Engine::new(&config).map_err(|e| format!("engine: {e}"))
 }
 
@@ -422,7 +484,11 @@ fn instantiate_in<H: Host + 'static>(
 }
 
 /// A module instantiated with its imports answered from `host`.
-fn instantiate<H: Host + 'static>(wasm: &[u8], host: H) -> Result<Guest<H>, String> {
+fn instantiate<H: Host + 'static>(
+    wasm: &[u8],
+    host: H,
+    timeout: Option<Duration>,
+) -> Result<Guest<H>, String> {
     let engine = engine()?;
     let module = load(&engine, wasm)?;
     let mut store = Store::new(
@@ -434,12 +500,15 @@ fn instantiate<H: Host + 'static>(wasm: &[u8], host: H) -> Result<Guest<H>, Stri
             stopped: None,
         },
     );
+    let deadline = timeout.map(|timeout| Deadline::start(&engine, timeout));
+    arm(&mut store, deadline.as_ref());
     let mut hosted = None;
     let instance = instantiate_in(&mut store, &module, &mut hosted)?;
     Ok(Guest {
         store,
         instance,
         hosted,
+        deadline,
     })
 }
 
@@ -462,21 +531,38 @@ pub fn run_with_host<H: Host + 'static>(wasm: &[u8], host: H) -> Result<(Run, H)
 /// Like `run_with_host`, but a halt keeps what the program printed before it,
 /// including a line it had started, and says where the user's code was.
 pub fn run_to_end<H: Host + 'static>(wasm: &[u8], host: H) -> Result<Finished<H>, String> {
+    run_to_end_within(wasm, host, None)
+}
+
+/// Like `run_to_end`, but a program still running after `timeout` is stopped
+/// with a trap. `None` lets it run as long as it likes.
+pub fn run_to_end_within<H: Host + 'static>(
+    wasm: &[u8],
+    host: H,
+    timeout: Option<Duration>,
+) -> Result<Finished<H>, String> {
     let Guest {
         mut store,
         instance,
+        deadline,
         ..
-    } = instantiate(wasm, host)?;
+    } = instantiate(wasm, host, timeout)?;
     let entry = instance
         .get_typed_func::<(), ()>(&mut store, "goat_entry")
         .map_err(|e| format!("missing entry point: {e}"))?;
     let result = match entry.call(&mut store, ()) {
-        Ok(()) => Ok(instance
-            .get_typed_func::<(), u32>(&mut store, "goat_live_allocs")
-            .and_then(|live| live.call(&mut store, ()))
-            .map_err(|e| format!("goat_live_allocs: {e}"))?),
+        Ok(()) => {
+            arm(&mut store, deadline.as_ref());
+            Ok(instance
+                .get_typed_func::<(), u32>(&mut store, "goat_live_allocs")
+                .and_then(|live| live.call(&mut store, ()))
+                .map_err(|e| format!("goat_live_allocs: {e}"))?)
+        }
         Err(error) => Err(store.data_mut().stopped.take().unwrap_or_else(|| Stopped {
-            message: format!("{error:#}"),
+            message: match &deadline {
+                Some(deadline) if interrupted(&error) => deadline.stuck(),
+                _ => format!("{error:#}"),
+            },
             site: None,
         })),
     };
@@ -501,11 +587,18 @@ pub struct Guest<H: Host + 'static> {
     /// Set when the module imports its heap, which a later module can then
     /// share.
     hosted: Option<Hosted>,
+    deadline: Option<Deadline>,
 }
 
 impl<H: Host + 'static> Guest<H> {
     pub fn new(wasm: &[u8], host: H) -> Result<Guest<H>, String> {
-        instantiate(wasm, host)
+        instantiate(wasm, host, None)
+    }
+
+    /// Like `new`, but each call into the guest is stopped with a trap once it
+    /// has run longer than `timeout`.
+    pub fn with_timeout(wasm: &[u8], host: H, timeout: Duration) -> Result<Guest<H>, String> {
+        instantiate(wasm, host, Some(timeout))
     }
 
     /// Instantiate a recompiled `wasm` over this guest's heap without making
@@ -516,6 +609,7 @@ impl<H: Host + 'static> Guest<H> {
         if self.hosted.is_none() || !imports_memory(&module) {
             return Err("only modules from compile_reloadable can be reloaded".into());
         }
+        arm(&mut self.store, self.deadline.as_ref());
         instantiate_in(&mut self.store, &module, &mut self.hosted)
     }
 
@@ -537,7 +631,8 @@ impl<H: Host + 'static> Guest<H> {
             .ok_or_else(|| format!("module exports no {}", goat_wasm::FINGERPRINT_EXPORT))
     }
 
-    /// Call the export `name`; a trap is an error.
+    /// Call the export `name`; a trap is an error, and so is outrunning the
+    /// timeout.
     pub fn call<P: wasmtime::WasmParams, R: wasmtime::WasmResults>(
         &mut self,
         name: &str,
@@ -547,31 +642,14 @@ impl<H: Host + 'static> Guest<H> {
             .instance
             .get_typed_func::<P, R>(&mut self.store, name)
             .map_err(|e| format!("{name}: {e}"))?;
+        arm(&mut self.store, self.deadline.as_ref());
         func.call(&mut self.store, args)
-            .map_err(|e| format!("{name} trapped: {e:#}"))
-    }
-
-    /// Refill the module's fuel, as a host does before each update.
-    pub fn set_fuel(&mut self, fuel: i32) -> Result<(), String> {
-        let global = self.fuel_global()?;
-        global
-            .set(&mut self.store, Val::I32(fuel))
-            .map_err(|e| e.to_string())
-    }
-
-    /// The fuel left; at or below zero after a trap means the program ran dry.
-    pub fn fuel(&mut self) -> Result<i32, String> {
-        let global = self.fuel_global()?;
-        global
-            .get(&mut self.store)
-            .i32()
-            .ok_or_else(|| "goat_fuel is not an i32".to_string())
-    }
-
-    fn fuel_global(&mut self) -> Result<wasmtime::Global, String> {
-        self.instance
-            .get_global(&mut self.store, "goat_fuel")
-            .ok_or_else(|| "module exports no goat_fuel".to_string())
+            .map_err(|error| match &self.deadline {
+                Some(deadline) if interrupted(&error) => {
+                    format!("{name} stopped: {}", deadline.stuck())
+                }
+                _ => format!("{name} trapped: {error:#}"),
+            })
     }
 
     pub fn exports(&mut self) -> Vec<String> {

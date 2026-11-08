@@ -142,29 +142,29 @@ done
   assert.deepEqual(lines, [[0, 0, 0], [16, 0, 0], [50, 0, 0], [60, 150, 150]]);
 });
 
-const spinning = `
+const trapping = `
 init = {n: 0}
-spin = program(n) do if n < 0 then n else spin(n + 1) done done
 update = program(model, event) do
-  match event do Tick(dt) then {n: spin(0)} done
+  match event do Tick(dt) then first([]) done
 done
 draw = program(model) do [] done
 `;
 
-test("a runaway update is stopped by fuel, reported as stuck, and the page survives", async () => {
-  const { exports } = await instantiate(spinning);
+test("a trapping update is reported, stops the loop, and the page survives", async () => {
+  const { exports } = await instantiate(trapping);
   const page = fakeEnv();
   const loop = startLoop(exports, page.env);
   page.frame(16);
-  assert.deepEqual(page.errors, [STUCK_MESSAGE]);
+  assert.equal(page.errors.length, 1);
+  assert.match(page.errors[0]!, /^your program stopped: /);
   assert.equal(loop.running, false);
   assert.deepEqual(page.registered(), []);
   page.frame(32);
   loop.stop();
-  assert.deepEqual(page.errors, [STUCK_MESSAGE]);
+  assert.equal(page.errors.length, 1);
 });
 
-test("refilled fuel lets a well-behaved program run many frames", async () => {
+test("a well-behaved program runs many frames with nothing bounding it", async () => {
   const { exports } = await instantiate(arrowDraw);
   const page = fakeEnv();
   const loop = startLoop(exports, page.env);
@@ -200,22 +200,20 @@ test("send delivers a host event without any DOM listener", async () => {
   assert.deepEqual(page.errors, []);
 });
 
-test("around wraps every call into goat and fuelBudget sets the refill", async () => {
+test("around wraps every call into goat", async () => {
   const { exports } = await instantiate(arrowDraw);
   const page = fakeEnv();
-  const seen: number[] = [];
+  let calls = 0;
   const loop = startLoop(exports, {
     ...page.env,
-    fuelBudget: 12345,
     around: (call) => {
-      seen.push(exports.goat_fuel.value as number);
+      calls++;
       return call();
     },
   });
   loop.send({ kind: "KeyDown", key: "ArrowDown" });
   page.frame(16);
-  assert.equal(seen.length, 3);
-  assert.deepEqual([...new Set(seen)], [12345]);
+  assert.equal(calls, 3);
   loop.stop();
 });
 
@@ -238,10 +236,10 @@ test("a host that supplies `around` sees every call into goat, even one that tra
   assert.ok(calls.open >= 3, "setup, update, and draw each ran inside it");
   assert.equal(calls.open, calls.closed);
 
-  const stuck = await instantiate(spinning);
+  const broken = await instantiate(trapping);
   const runaway = fakeEnv();
   const before = calls.open;
-  startLoop(stuck.exports, { ...runaway.env, around });
+  startLoop(broken.exports, { ...runaway.env, around });
   runaway.frame(16);
   assert.ok(calls.open > before);
   assert.equal(calls.open, calls.closed);

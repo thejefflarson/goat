@@ -14,40 +14,18 @@
   (memory (;0;) 1)
   (global (;0;) (mut i32) i32.const 272)
   (global (;1;) (mut i32) i32.const 0)
-  (global (;2;) (mut i32) i32.const 2147483647)
-  (global (;3;) (mut i32) i32.const 0)
+  (global (;2;) (mut i32) i32.const 0)
   (export "memory" (memory 0))
   (export "goat_entry" (func 6))
-  (export "goat_fuel" (global 2))
-  (export "goat_site" (global 3))
+  (export "goat_site" (global 2))
   (export "goat_alloc" (func 7))
   (export "goat_live_allocs" (func 9))
   (func (;4;) (type 3) (result i64)
-    global.get 2
-    i32.const 1
-    i32.sub
-    global.set 2
-    global.get 2
-    i32.const 0
-    i32.le_s
-    if ;; label = @1
-      unreachable
-    end
     i64.const 10
     call 5
   )
   (func (;5;) (type 4) (param i64) (result i64)
     (local i64 i64 i64 i64 i64 i64 i64 i64 i64)
-    global.get 2
-    i32.const 1
-    i32.sub
-    global.set 2
-    global.get 2
-    i32.const 0
-    i32.le_s
-    if ;; label = @1
-      unreachable
-    end
     local.get 0
     i64.const 2
     i64.lt_s

@@ -2,8 +2,9 @@
 //!
 //! - `goat check FILE`   parse and type-check, printing the program's type.
 //! - `goat build FILE [-o OUT]`  compile to a WebAssembly module.
-//! - `goat run FILE [-o OUT.svg]`  compile and run under wasmtime; `-o` saves
-//!   the turtle's drawing as an SVG.
+//! - `goat run FILE [-o OUT.svg] [--timeout MS]`  compile and run under
+//!   wasmtime; `-o` saves the turtle's drawing as an SVG. A program runs as
+//!   long as it likes unless `--timeout` bounds it; `Ctrl-C` stops it either way.
 //!
 //! `build` and `run` take `--target desktop|embedded` (default `desktop`):
 //! `embedded` makes an `Int` an `i32` and a `Float` an `f32`.
@@ -12,6 +13,7 @@ use goat::Profile;
 use goat_cli::turtle::TurtleHost;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 use std::{env, fs};
 
 fn main() -> ExitCode {
@@ -46,13 +48,18 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Some("run") => {
-            let file = args.get(2).ok_or("usage: goat run FILE [-o OUT.svg]")?;
+            let file = args
+                .get(2)
+                .ok_or("usage: goat run FILE [-o OUT.svg] [--timeout MS]")?;
             let source = read(file)?;
             let wasm = build(file, parse_target_flag(&args[3..])?)?;
-            run_program(&wasm, &source, parse_out_flag(&args[3..]))
+            let timeout = parse_timeout_flag(&args[3..])?;
+            run_program(&wasm, &source, parse_out_flag(&args[3..]), timeout)
         }
         _ => {
-            eprintln!("usage: goat <check|build|run> FILE [-o OUT] [--target desktop|embedded]");
+            eprintln!(
+                "usage: goat <check|build|run> FILE [-o OUT] [--target desktop|embedded] [--timeout MS]"
+            );
             Ok(ExitCode::FAILURE)
         }
     }
@@ -60,9 +67,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 
 /// Run `wasm` under wasmtime with the turtle as its host and print what it
 /// emitted. A trap becomes an error, so the process exits non-zero. With `out`,
-/// the turtle's drawing is written there as an SVG.
-fn run_program(wasm: &[u8], source: &str, out: Option<PathBuf>) -> Result<ExitCode, String> {
-    let finished = goat::native::run_to_end(wasm, TurtleHost::default())?;
+/// the turtle's drawing is written there as an SVG. With `timeout`, a program
+/// still running when it passes is stopped and reported as a trap.
+fn run_program(
+    wasm: &[u8],
+    source: &str,
+    out: Option<PathBuf>,
+    timeout: Option<Duration>,
+) -> Result<ExitCode, String> {
+    let finished = goat::native::run_to_end_within(wasm, TurtleHost::default(), timeout)?;
     for line in &finished.printed {
         println!("{line}");
     }
@@ -148,6 +161,19 @@ fn parse_target_flag(args: &[String]) -> Result<Profile, String> {
         }
     }
     Ok(Profile::Desktop)
+}
+
+fn parse_timeout_flag(args: &[String]) -> Result<Option<Duration>, String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--timeout" {
+            return match it.next().map(|ms| ms.parse::<u64>()) {
+                Some(Ok(ms)) if ms > 0 => Ok(Some(Duration::from_millis(ms))),
+                _ => Err("--timeout takes a positive number of milliseconds".to_string()),
+            };
+        }
+    }
+    Ok(None)
 }
 
 fn default_output(file: &str) -> PathBuf {

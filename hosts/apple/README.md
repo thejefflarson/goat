@@ -56,11 +56,15 @@ so the native app owns preemption (`Watchdog.swift`, `Engine.swift`):
    makes `Engine` drop the web view, build a new one on a non-persistent data
    store, and show "your program got stuck" / "your program was stopped". Idle
    programs are never stopped. The program does not restart on its own; Run does.
-3. Injected fuel still runs underneath and is removed separately.
+3. Nothing else bounds a program: goat modules carry no fuel. The page only runs
+   goat on its own thread when the `goat` message handler exists, which is how it
+   knows this watchdog is listening; a page with neither that nor cross-origin
+   isolation refuses to run.
 
 Untested without a Mac at runtime: that releasing a web view kills a content
 process stuck in wasm, and that a `beat` posted just before the page blocks still
-reaches the app. If the second fails the watchdog never fires and fuel is the only bound.
+reaches the app. If the second fails the watchdog never fires and a runaway
+program hangs the web view.
 
 `crossOriginIsolated` (COOP/COEP on `AssetSchemeHandler`, so the browser's worker
 supervisor could run here) is not used. Whether WebKit isolates a custom-scheme

@@ -677,9 +677,23 @@ fn a_trap_calls_the_host_with_its_message_before_halting() {
     let text = wat(&mono_program("x = 1\nfirst([]) + x"));
     assert!(text.contains("(import \"goat\" \"trap\""), "{text}");
     assert!(text.contains("first of an empty list"), "{text}");
-    assert!(text.contains("global.set 3"), "{text}");
+    assert!(text.contains("global.set 2"), "{text}");
     assert!(text.contains("(export \"goat_site\""), "{text}");
     assert!(text.contains("(@custom \"goat.sites\""), "{text}");
+}
+
+#[test]
+fn no_module_carries_fuel() {
+    let text = wat(&fib());
+    assert!(!text.contains("goat_fuel"), "{text}");
+    assert!(!text.contains("2147483647"), "{text}");
+    for index in [4, 5] {
+        let body = func_body(&text, index);
+        assert!(
+            !body.contains("global."),
+            "function {index} spends fuel\n{body}"
+        );
+    }
 }
 
 #[test]

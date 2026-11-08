@@ -14,10 +14,6 @@ import { type FromWorker, Heartbeat, type ToWorker } from "./protocol.ts";
 import { animate, run } from "./runtime.ts";
 import { type DrawingContext, subscriptions } from "./scene.ts";
 
-// i32::MAX: the fuel tank is topped to its maximum before each call, so it never
-// runs out before the supervisor's deadline does.
-const FUEL_TANK = 2 ** 31 - 1;
-
 export interface WorkerCoreEnv {
   post(message: FromWorker): void;
   raf(callback: (time: number) => void): number;
@@ -51,7 +47,6 @@ export function createWorkerCore(env: WorkerCoreEnv) {
       cancelRaf: env.cancelRaf,
       now: env.now,
       onError: (failure) => env.post({ type: "failed", message: failure }),
-      fuelBudget: FUEL_TANK,
       around: (call) => heartbeat.during(call),
     });
     if (loop.running) env.post({ type: "ready", subscriptions: subscriptions(exports) });
