@@ -6,3 +6,4 @@ fuzz/out
 /coq-toolchain/
 /web/node_modules/
 /web/dist/
+/web/site/

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "bundle": "node bundle.ts",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "node --test *.test.ts"
   }
