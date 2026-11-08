@@ -104,6 +104,23 @@ pub struct ForeignFn {
     pub ret: MTy,
 }
 
+impl ForeignFn {
+    /// The `math` functions the compiler implements itself rather than
+    /// importing from the host.
+    pub fn intrinsic(&self) -> Option<FloatFn> {
+        match (
+            self.module.as_str(),
+            self.name.as_str(),
+            &self.params[..],
+            self.ret,
+        ) {
+            ("math", "sqrt", [MTy::Float], MTy::Float) => Some(FloatFn::Sqrt),
+            ("math", "truncate", [MTy::Float], MTy::Int) => Some(FloatFn::Truncate),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Env {
     pub local: Local,
@@ -144,18 +161,33 @@ pub enum Const {
     Unit,
 }
 
-/// What an `Int` operation that overflows traps with, and what `Div` by zero
-/// traps with (ADR 0017): never a wrapped result.
+/// What an `Int` operation that overflows traps with, what a division or
+/// remainder by zero traps with, and what turning a `Float` that has no `Int`
+/// (NaN, infinity, out of range) into one traps with (ADR 0017): never a
+/// wrapped or saturated result.
 pub const INT_OVERFLOW: &str = "this number got too big";
 pub const DIVISION_BY_ZERO: &str = "division by zero";
+pub const NOT_A_WHOLE_NUMBER: &str = "this number can't be made a whole number";
 
-/// Integer arithmetic traps on overflow rather than wrapping.
+/// Integer arithmetic traps on overflow rather than wrapping. `Div` rounds
+/// toward zero; `FloorDiv` and `Mod` round toward negative infinity, so
+/// `a == FloorDiv(a, b) * b + Mod(a, b)` and `Mod` takes the divisor's sign.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntOp {
     Add,
     Sub,
     Mul,
     Div,
+    FloorDiv,
+    Mod,
+}
+
+/// A one-operand `Float` function: the primitives the prelude's math builds
+/// on. `Sqrt` is a `Float`; `Truncate` drops the fraction and is an `Int`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FloatFn {
+    Sqrt,
+    Truncate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -219,6 +251,8 @@ pub enum Expr {
     BinFloat(FloatOp, Box<Expr>, Box<Expr>),
     /// An `Int` widened to the `Float` nearest it.
     IntToFloat(Box<Expr>),
+    /// A `Float` primitive; see [`FloatFn`] for the type each gives.
+    FloatFn(FloatFn, Box<Expr>),
     Cmp(CmpOp, Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Block>, Box<Block>),
     Switch(Local, Vec<(u32, Block)>, Box<Block>),
@@ -308,7 +342,18 @@ impl Expr {
                 args.iter().for_each(f);
             }
             Expr::Unpack(_, _, _, body) => f(body),
-            Expr::IntToFloat(value) | Expr::Write(Write::Number(value)) => f(value),
+            Expr::IntToFloat(value)
+            | Expr::FloatFn(_, value)
+            | Expr::Write(Write::Number(value)) => f(value),
+        }
+    }
+
+    /// An `IntToFloat` or `FloatFn` node over `operand` in place of its own.
+    pub fn with_operand(&self, operand: Expr) -> Expr {
+        let operand = Box::new(operand);
+        match self {
+            Expr::FloatFn(function, _) => Expr::FloatFn(*function, operand),
+            _ => Expr::IntToFloat(operand),
         }
     }
 

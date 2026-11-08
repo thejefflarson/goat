@@ -132,6 +132,28 @@ mod tests {
     }
 
     #[test]
+    fn floor_division_is_one_operator_and_division_another() {
+        parses_to! {
+            parser: GoatParser,
+            input: "7 // 2",
+            rule: Rule::expr,
+            tokens: [expr(0, 6, [number(0, 1), floor_divide(2, 4), number(5, 6)])]
+        }
+        parses_to! {
+            parser: GoatParser,
+            input: "7 / 2",
+            rule: Rule::expr,
+            tokens: [expr(0, 5, [number(0, 1), divide(2, 3), number(4, 5)])]
+        }
+        parses_to! {
+            parser: GoatParser,
+            input: "7 % 2",
+            rule: Rule::expr,
+            tokens: [expr(0, 5, [number(0, 1), remainder(2, 3), number(4, 5)])]
+        }
+    }
+
+    #[test]
     fn parses_strings() {
         parses_to! {
             parser: GoatParser,

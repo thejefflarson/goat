@@ -1,0 +1,19 @@
+# `//` divides whole numbers, rounding down, and `%` is the remainder, which
+# takes the sign of the number you divide by. Together they rebuild the number:
+# (a // b) * b + a % b is always a.
+print(17 // 5);
+print(17 % 5);
+print(-17 // 5);
+print(-17 % 5);
+
+# A decimal never turns into a whole number by itself. `round`, `floor`, `ceil`
+# and `truncate` each say which way to go.
+print(round(2.5));
+print(floor(-2.5));
+print(ceil(-2.5));
+print(truncate(-2.5));
+
+# `sin`, `cos` and `tan` take degrees; `sqrt` takes a number.
+print(sin(30));
+print(sqrt(16));
+print(round(100 * cos(60)))

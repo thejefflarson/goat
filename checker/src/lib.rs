@@ -858,6 +858,62 @@ mod tests {
     }
 
     #[test]
+    fn floor_division_and_remainder_are_ints() {
+        assert_eq!(exact_type_of("7 // 2"), "Int");
+        assert_eq!(exact_type_of("7 % 2"), "Int");
+        assert_eq!(exact_type_of("7 // 2 * 3 % 4"), "Int");
+        let halve = "halve = program(n) do n // 2 done ";
+        assert_eq!(exact_type_of(&format!("{halve} halve(9)")), "Int");
+        assert_eq!(exact_type_of("n = 7  m = n // 2  n"), "Int");
+    }
+
+    #[test]
+    fn floor_division_and_remainder_reject_a_float() {
+        for (source, operand) in [
+            ("7.5 // 2", "7.5"),
+            ("7 // 2.0", "2.0"),
+            ("7 % 2.5", "2.5"),
+            ("1e3 % 7", "1e3"),
+            ("x = 2.5  7 // x", "x"),
+            ("(7 / 2) // 2", "7 / 2"),
+        ] {
+            let (message, shown) = spanned_error(source);
+            assert!(message.contains("needs whole numbers"), "{message}");
+            assert!(message.contains("round"), "{message}");
+            assert_eq!(shown, operand, "{source}");
+        }
+        let halve = "halve = program(n) do n // 2 done ";
+        assert_eq!(
+            type_of(&format!("{halve} halve(2.5)")).unwrap_err(),
+            "type mismatch: expected `Int`, found `Float`"
+        );
+        assert_eq!(
+            type_of("\"a\" // 2").unwrap_err(),
+            "type mismatch: expected `Number`, found `String`"
+        );
+    }
+
+    #[test]
+    fn floor_division_binds_like_multiplication() {
+        assert_eq!(exact_type_of("1 + 7 // 2"), "Int");
+        assert_eq!(exact_type_of("1.5 + 7 // 2"), "Float");
+        assert_eq!(exact_type_of("7 // 2 + 0.5"), "Float");
+    }
+
+    #[test]
+    fn an_int_argument_widens_to_a_float_parameter() {
+        let take = "take = foreign \"m\" \"take\" (Number) -> Unit\n";
+        let scale = "scale = program(x) do x * 1.5 done\n";
+        assert_eq!(type_of(&format!("{take}take(7 // 2)")).unwrap(), "Unit");
+        assert_eq!(type_of(&format!("{take}take(2.5)")).unwrap(), "Unit");
+        assert_eq!(exact_type_of(&format!("{scale}scale(7 // 2)")), "Float");
+        assert_eq!(
+            type_of(&format!("{take}take(true)")).unwrap_err(),
+            "type mismatch: expected `Number`, found `Bool`"
+        );
+    }
+
+    #[test]
     fn diagnostics_say_number() {
         assert_eq!(
             type_of("1 + true").unwrap_err(),

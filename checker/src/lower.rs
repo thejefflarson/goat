@@ -2212,6 +2212,8 @@ fn infix_op(rule: Rule) -> Op {
         Rule::minus => Op::Bin(BinOp::Sub),
         Rule::multiply => Op::Bin(BinOp::Mul),
         Rule::divide => Op::Bin(BinOp::Div),
+        Rule::floor_divide => Op::Bin(BinOp::FloorDiv),
+        Rule::remainder => Op::Bin(BinOp::Mod),
         Rule::lt => Op::Bin(BinOp::Lt),
         Rule::lte => Op::Bin(BinOp::Lte),
         Rule::gt => Op::Bin(BinOp::Gt),
@@ -2223,7 +2225,7 @@ fn infix_op(rule: Rule) -> Op {
 }
 
 /// Binding strength, loosest first: `or`, `and`, `not`, equality,
-/// comparison, `+ -`, `* /`.
+/// comparison, `+ -`, `* / // %`.
 fn prec(op: Op) -> u8 {
     match op {
         Op::Or => 1,
@@ -2232,7 +2234,7 @@ fn prec(op: Op) -> u8 {
         Op::Bin(BinOp::Eq | BinOp::Ne) => 4,
         Op::Bin(BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte) => 5,
         Op::Bin(BinOp::Add | BinOp::Sub) => 6,
-        Op::Bin(BinOp::Mul | BinOp::Div) => 7,
+        Op::Bin(BinOp::Mul | BinOp::Div | BinOp::FloorDiv | BinOp::Mod) => 7,
     }
 }
 

@@ -542,6 +542,43 @@ impl<'p> Interp<'p> {
         self.retain(value)
     }
 
+    /// Moves the fields of the variant in `x` into `binds`. Out of line so
+    /// `eval`, which a long chain of operators recurses through, keeps its
+    /// frame small.
+    #[inline(never)]
+    fn unpack(
+        &mut self,
+        x: Local,
+        tag: u32,
+        binds: &[Local],
+        frame: &mut Frame,
+    ) -> Result<(), InterpError> {
+        let Value::Ptr(addr) = frame.get(x)? else {
+            return Err(InterpError::Malformed("unpack of non-pointer"));
+        };
+        let obj = self.obj(addr)?;
+        let Body::Variant(t, fields) = &obj.body else {
+            return Err(InterpError::Malformed("unpack of non-variant"));
+        };
+        if *t != tag || fields.len() != binds.len() {
+            return Err(InterpError::Malformed("unpack tag"));
+        }
+        let fields = fields.clone();
+        if obj.rc == 1 {
+            if let Some(Some(obj)) = self.slots.get_mut(addr) {
+                obj.body = Body::Variant(tag, Vec::new());
+            }
+        } else {
+            for field in &fields {
+                self.retain(*field)?;
+            }
+            self.release(Value::Ptr(addr))?;
+            frame.locals.insert(x, Value::Unit);
+        }
+        frame.locals.extend(binds.iter().copied().zip(fields));
+        Ok(())
+    }
+
     fn eval(&mut self, e: &Expr, frame: &mut Frame, depth: usize) -> Result<Flow, InterpError> {
         let mut e = e;
         while let Expr::Let(x, rhs, body) = e {
@@ -566,10 +603,9 @@ impl<'p> Interp<'p> {
                 let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
                 float_op(*op, a, b)?
             }
-            Expr::IntToFloat(value) => match self.value(value, frame, depth)? {
-                Value::Int(n) => Value::Float(n as f64),
-                _ => return Err(InterpError::Malformed("conversion of a non-int")),
-            },
+            Expr::IntToFloat(value) | Expr::FloatFn(_, value) => {
+                convert(e, self.value(value, frame, depth)?)?
+            }
             Expr::Cmp(op, a, b) => {
                 let (a, b) = (self.value(a, frame, depth)?, self.value(b, frame, depth)?);
                 compare(*op, a, b)?
@@ -647,29 +683,7 @@ impl<'p> Interp<'p> {
                 self.alloc(Body::Variant(*tag, fields), 1)
             }
             Expr::Unpack(x, tag, binds, body) => {
-                let Value::Ptr(addr) = frame.get(*x)? else {
-                    return Err(InterpError::Malformed("unpack of non-pointer"));
-                };
-                let obj = self.obj(addr)?;
-                let Body::Variant(t, fields) = &obj.body else {
-                    return Err(InterpError::Malformed("unpack of non-variant"));
-                };
-                if t != tag || fields.len() != binds.len() {
-                    return Err(InterpError::Malformed("unpack tag"));
-                }
-                let fields = fields.clone();
-                if obj.rc == 1 {
-                    if let Some(Some(obj)) = self.slots.get_mut(addr) {
-                        obj.body = Body::Variant(*tag, Vec::new());
-                    }
-                } else {
-                    for field in &fields {
-                        self.retain(*field)?;
-                    }
-                    self.release(Value::Ptr(addr))?;
-                    frame.locals.insert(*x, Value::Unit);
-                }
-                frame.locals.extend(binds.iter().copied().zip(fields));
+                self.unpack(*x, *tag, binds, frame)?;
                 return self.eval(body, frame, depth);
             }
             Expr::ReuseVariant(x, _, tag, fields) => {
@@ -725,6 +739,7 @@ impl<'p> Interp<'p> {
     }
 }
 
+#[inline(never)]
 fn int_op(op: IntOp, a: Value, b: Value) -> Result<Value, InterpError> {
     let (Value::Int(a), Value::Int(b)) = (a, b) else {
         return Err(InterpError::Malformed("int operands"));
@@ -733,13 +748,67 @@ fn int_op(op: IntOp, a: Value, b: Value) -> Result<Value, InterpError> {
         IntOp::Add => a.checked_add(b),
         IntOp::Sub => a.checked_sub(b),
         IntOp::Mul => a.checked_mul(b),
-        IntOp::Div if b == 0 => return Err(InterpError::Trap(DIVISION_BY_ZERO.into())),
+        IntOp::Div | IntOp::FloorDiv | IntOp::Mod if b == 0 => {
+            return Err(InterpError::Trap(DIVISION_BY_ZERO.into()));
+        }
         IntOp::Div => a.checked_div(b),
+        IntOp::FloorDiv => floor_div(a, b),
+        IntOp::Mod => floor_mod(a, b),
     };
     result
         .map(Value::Int)
         .ok_or_else(|| InterpError::Trap(INT_OVERFLOW.into()))
 }
+
+/// `a // b`, rounding toward negative infinity. `None` on overflow
+/// (`i64::MIN // -1`) or a zero divisor.
+#[inline(never)]
+fn floor_div(a: i64, b: i64) -> Option<i64> {
+    let quotient = a.checked_div(b)?;
+    let remainder = a % b;
+    Some(if remainder != 0 && (remainder < 0) != (b < 0) {
+        quotient - 1
+    } else {
+        quotient
+    })
+}
+
+/// `a % b`, with the sign of `b`. `None` for a zero divisor.
+#[inline(never)]
+fn floor_mod(a: i64, b: i64) -> Option<i64> {
+    if b == -1 {
+        return Some(0);
+    }
+    let remainder = a.checked_rem(b)?;
+    Some(if remainder != 0 && (remainder < 0) != (b < 0) {
+        remainder + b
+    } else {
+        remainder
+    })
+}
+
+/// An `IntToFloat` or `FloatFn` node applied to its operand's value. One arm
+/// serves both so `eval`, which a long chain of operators recurses through,
+/// keeps its frame.
+#[inline(never)]
+fn convert(node: &Expr, value: Value) -> Result<Value, InterpError> {
+    match (node, value) {
+        (Expr::IntToFloat(_), Value::Int(n)) => Ok(Value::Float(n as f64)),
+        (Expr::FloatFn(FloatFn::Sqrt, _), Value::Float(x)) => Ok(Value::Float(x.sqrt())),
+        (Expr::FloatFn(FloatFn::Truncate, _), Value::Float(x)) => {
+            let whole = x.trunc();
+            // `-2^63 <= whole < 2^63` is false for NaN too.
+            if (-TWO_POW_63..TWO_POW_63).contains(&whole) {
+                Ok(Value::Int(whole as i64))
+            } else {
+                Err(InterpError::Trap(NOT_A_WHOLE_NUMBER.into()))
+            }
+        }
+        _ => Err(InterpError::Malformed("conversion of the wrong type")),
+    }
+}
+
+const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
 
 fn float_op(op: FloatOp, a: Value, b: Value) -> Result<Value, InterpError> {
     let (Value::Float(a), Value::Float(b)) = (a, b) else {
@@ -775,11 +844,13 @@ mod proofs {
     use super::*;
 
     fn any_int_op() -> IntOp {
-        match kani::any::<u8>() % 4 {
+        match kani::any::<u8>() % 6 {
             0 => IntOp::Add,
             1 => IntOp::Sub,
             2 => IntOp::Mul,
-            _ => IntOp::Div,
+            3 => IntOp::Div,
+            4 => IntOp::FloorDiv,
+            _ => IntOp::Mod,
         }
     }
 
@@ -811,6 +882,8 @@ mod proofs {
             IntOp::Sub => a.checked_sub(b),
             IntOp::Mul => a.checked_mul(b),
             IntOp::Div => a.checked_div(b),
+            IntOp::FloorDiv => floor_div(a, b),
+            IntOp::Mod => floor_mod(a, b),
         };
         match exact {
             Some(n) => assert_eq!(result, Ok(Value::Int(n))),

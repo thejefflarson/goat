@@ -12,7 +12,7 @@
 use super::{FnCx, Mono, Subst, payload_fields, positional_fields};
 use crate::canon::{canonical, ground_fields, layout_fields};
 use crate::mir::*;
-use goat_checker::hir::Span;
+use goat_checker::hir::{BinOp, Span};
 use goat_checker::ty::{Row, Ty};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,6 +48,15 @@ fn call(f: FuncId, args: Vec<Expr>, tail: bool) -> Expr {
         Expr::TailCall(Callee::Direct(f), args)
     } else {
         Expr::CallDirect(f, args)
+    }
+}
+
+fn int_counterpart(op: FloatOp) -> IntOp {
+    match op {
+        FloatOp::Add => IntOp::Add,
+        FloatOp::Sub => IntOp::Sub,
+        FloatOp::Mul => IntOp::Mul,
+        FloatOp::Div => IntOp::Div,
     }
 }
 
@@ -130,7 +139,7 @@ impl Mono<'_> {
     ) -> Expr {
         match ty.unfold_head() {
             Ty::Float => Expr::BinFloat(op, Box::new(a), Box::new(b)),
-            Ty::Int => Self::int_arith(cx, span, op, a, b),
+            Ty::Int => Self::int_arith(cx, span, int_counterpart(op), a, b),
             Ty::Record(_) => {
                 let f = self.arith_fn(op, ty);
                 Expr::CallDirect(f, vec![a, b])
@@ -139,15 +148,32 @@ impl Mono<'_> {
         }
     }
 
+    /// `//` or `%`, out of line so `bin`, which a long chain of operators
+    /// recurses through, keeps a small frame.
+    #[inline(never)]
+    pub(super) fn whole_division(
+        cx: &mut FnCx,
+        (op, span): (BinOp, Span),
+        a: Expr,
+        b: Expr,
+    ) -> Expr {
+        let op = if op == BinOp::Mod {
+            IntOp::Mod
+        } else {
+            IntOp::FloorDiv
+        };
+        Self::int_arith(cx, Some(span), op, a, b)
+    }
+
     /// The site is set after both operands run, so an operand's own call cannot
     /// overwrite it before the overflow check.
-    fn int_arith(cx: &mut FnCx, span: Option<Span>, op: FloatOp, a: Expr, b: Expr) -> Expr {
-        let op = match op {
-            FloatOp::Add => IntOp::Add,
-            FloatOp::Sub => IntOp::Sub,
-            FloatOp::Mul => IntOp::Mul,
-            FloatOp::Div => IntOp::Div,
-        };
+    pub(super) fn int_arith(
+        cx: &mut FnCx,
+        span: Option<Span>,
+        op: IntOp,
+        a: Expr,
+        b: Expr,
+    ) -> Expr {
         let Some(span) = span.filter(|span| !span.in_prelude()) else {
             return Expr::BinInt(op, Box::new(a), Box::new(b));
         };

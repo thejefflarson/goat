@@ -64,6 +64,11 @@ fn the_spiral_example_renders_to_its_golden() {
 }
 
 #[test]
+fn the_circle_example_renders_to_its_golden() {
+    assert_golden("circle.svg", &draw(&example("circle.goat")).to_svg());
+}
+
+#[test]
 fn every_command_reaches_the_host_in_order() {
     let src = "color(\"#ff8800\"); forward(1); back(2); left(3); right(4); pen_up(); \
                pen_down(); pen_up()";

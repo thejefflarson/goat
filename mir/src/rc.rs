@@ -214,10 +214,10 @@ impl<'p> Cx<'p> {
                     ..out
                 }
             }
-            Expr::IntToFloat(value) => {
+            Expr::IntToFloat(value) | Expr::FloatFn(_, value) => {
                 let out = self.go(value, after);
                 Out {
-                    expr: Expr::IntToFloat(Box::new(out.expr)),
+                    expr: e.with_operand(out.expr),
                     ..out
                 }
             }

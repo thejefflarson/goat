@@ -80,9 +80,33 @@ hardware-mapped**, made *safe* rather than *unbounded*.
 - **Printing.** The host's `print_number` reads an `f64`, so an `Int` beyond
   2^53 prints as the `Float` nearest it. An `i64` print import is the fix.
 
+## Implementation notes (semantics)
+
+- **`//` and `%` floor.** `//` rounds toward negative infinity and `%` takes the
+  sign of the divisor, so `-7 // 2 == -4`, `-7 % 3 == 2`, and
+  `(a // b) * b + a % b == a` for every `a` and `b`. A kid's `angle % 360` is
+  never negative. Both are `Int` only: a `Float` operand is a spanned checker
+  error that points at `round`, `floor` and `truncate`. A zero divisor traps
+  (`division by zero`); `i64::MIN // -1` traps like any overflow; `i64::MIN % -1`
+  is `0`.
+- **Two compiler primitives, the rest in the prelude.** `sqrt` and `truncate`
+  are `foreign "math"` bindings that mono lowers to MIR's `FloatFn` instead of
+  importing, so no host has to provide them. `floor`, `ceil` and `round` (halves
+  go away from zero) are goat code over `truncate`; `truncate` traps
+  (`this number can't be made a whole number`) on NaN, infinity or a value an
+  `Int` cannot hold, never saturating.
+- **Trig is goat code, in degrees.** `sin`, `cos` and `tan` take degrees, like
+  the turtle's `left` and `right`. They split an angle into whole quarter turns
+  and at most 45 degrees, then sum a Taylor series, so the same code runs
+  identically on every target and multiples of 90 degrees are exact. Radians
+  and the inverse functions are not provided yet.
+- **An `Int` argument widens at a call.** A concrete `Int` passed where the
+  callee's parameter is `Float` is accepted and converted, so `forward(7 // 2)`
+  and `sin(i)` in a counting loop work. A host function that takes `Int` still
+  rejects a `Float`.
+
 ## Deferred
 
 - `i64` Int on a future 64-bit *native* target (MIR has room).
 - Rationals / arbitrary-precision decimals — not planned (bignum rejected above).
-- The exact spelling of `round`/`floor`/`truncate` and whether `//`/`%` ship in
-  the first cut or follow — an implementation-ticket call, within these rules.
+- Inverse trig (`atan2`, `asin`, `acos`), radians, and a `pi` constant.
