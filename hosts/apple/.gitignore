@@ -1,8 +1,11 @@
 /Goat.xcodeproj/
 /Resources/web/
 /Info-*.plist
-/Goat-macOS.entitlements
 /GoatKit/.build/
 .build/
 build/
 /Local.xcconfig
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.cer

@@ -26,6 +26,7 @@ hosts/apple/scripts/stage-web.sh          # cargo + npm; fills hosts/apple/Resou
 cd hosts/apple && xcodegen generate       # brew install xcodegen
 xcodebuild -project Goat.xcodeproj -scheme Goat-macOS -destination 'platform=macOS' build
 xcodebuild -project Goat.xcodeproj -scheme Goat-iOS -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+# ^ CODE_SIGNING_ALLOWED=NO is valid for simulator and CI only; it must not be used for real-device or distribution builds.
 swift test --package-path GoatKit
 ```
 
@@ -113,3 +114,13 @@ the arrow keys.
 Bundle id `com.thejefflarson.goat`, minimum macOS 13 / iOS 16, unsigned by default.
 Distribution signing and entitlements beyond the macOS sandbox (user-selected files,
 no network) are not set.
+
+For App Store submission the minimum additional entitlements are:
+
+- **`com.apple.security.cs.allow-jit`** — required for WKWebView's JIT compiler on
+  macOS (already in `project.yml`); Apple requires a written justification in App
+  Review notes.
+- **Hardened Runtime** (`ENABLE_HARDENED_RUNTIME = YES`) — required for macOS
+  notarization and App Store distribution (already in `project.yml`).
+
+Any entitlement beyond the two above requires explicit Apple review justification.
