@@ -1,4 +1,4 @@
-//! C-ABI over [`goat::compile`], built as a `wasm32-unknown-unknown` module so a
+//! C-ABI over [`goat::compile_turtle`], built as a `wasm32-unknown-unknown` module so a
 //! browser can compile goat source. JS owns the buffers; every address is an
 //! offset into this module's linear memory.
 //!
@@ -88,7 +88,7 @@ unsafe fn compile_at(ptr: *const u8, len: usize) -> *mut u8 {
         unsafe { std::slice::from_raw_parts(ptr, len) }
     };
     let (tag, payload) = match std::str::from_utf8(bytes) {
-        Ok(source) => match goat::compile(source) {
+        Ok(source) => match goat::compile_turtle(source) {
             Ok(module) => (TAG_OK, module),
             Err(errors) => (TAG_ERR, render_all(&errors, source).into_bytes()),
         },

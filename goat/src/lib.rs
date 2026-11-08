@@ -3,22 +3,57 @@
 use goat_checker::GoatError;
 use goat_checker::hir::Span;
 
-/// Parse, type-check, monomorphize, and emit a wasm module for `source`.
-pub fn compile(source: &str) -> Result<Vec<u8>, Vec<GoatError>> {
-    compile_with_prelude(goat_checker::PRELUDE, source)
+/// The vocabulary a host provides: the `foreign` functions a program may call,
+/// declared in goat source ahead of the program. The events `update` receives
+/// and the shapes `draw` returns are fixed by the checker's `vocab` (ADR 0015),
+/// so they are not part of this value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostInterface {
+    prelude: String,
 }
 
-/// Like [`compile`], with `prelude` standing in for the built-in one.
-pub fn compile_with_prelude(prelude: &str, source: &str) -> Result<Vec<u8>, Vec<GoatError>> {
-    compile_with_warnings(prelude, source).map(|(wasm, _)| wasm)
+impl HostInterface {
+    /// A host whose complete prelude is `prelude`, standard library included
+    /// or not.
+    pub fn new(prelude: impl Into<String>) -> Self {
+        HostInterface {
+            prelude: prelude.into(),
+        }
+    }
+
+    /// A host that offers the standard library plus `declarations`, goat
+    /// source made of `foreign` bindings.
+    pub fn with_stdlib(declarations: &str) -> Self {
+        Self::new(format!("{}\n{declarations}", goat_checker::STDLIB))
+    }
+
+    /// The turtle host the CLI and the web player implement.
+    pub fn turtle() -> Self {
+        Self::with_stdlib(goat_checker::TURTLE_VOCAB)
+    }
+
+    pub fn prelude(&self) -> &str {
+        &self.prelude
+    }
 }
 
-/// Like [`compile_with_prelude`], also returning the checker's non-fatal warnings.
+/// Parse, type-check, monomorphize, and emit a wasm module for `source`
+/// against the vocabulary of `host`.
+pub fn compile(source: &str, host: &HostInterface) -> Result<Vec<u8>, Vec<GoatError>> {
+    compile_with_warnings(source, host).map(|(wasm, _)| wasm)
+}
+
+/// [`compile`] against the turtle host.
+pub fn compile_turtle(source: &str) -> Result<Vec<u8>, Vec<GoatError>> {
+    compile(source, &HostInterface::turtle())
+}
+
+/// Like [`compile`], also returning the checker's non-fatal warnings.
 pub fn compile_with_warnings(
-    prelude: &str,
     source: &str,
+    host: &HostInterface,
 ) -> Result<(Vec<u8>, Vec<GoatError>), Vec<GoatError>> {
-    let mut checked = goat_checker::check_with_prelude(prelude, source)?;
+    let mut checked = goat_checker::check_with_prelude(host.prelude(), source)?;
     let warnings = std::mem::take(&mut checked.typed.warnings);
     let program = goat_mir::mono(&checked)?;
     let wasm = goat_wasm::emit(&program)
@@ -113,14 +148,15 @@ mod tests {
 
     #[test]
     fn compile_produces_a_wasm_module() {
-        let bytes = compile("1 + 2 * 3").expect("compiles");
+        let bytes = compile_turtle("1 + 2 * 3").expect("compiles");
         assert_eq!(&bytes[..4], b"\0asm");
     }
 
     #[test]
     fn compile_returns_warnings_alongside_the_module() {
         let src = "tag Cirle tag Circle match Cirle(5) do Circle(r) then r else 0 done";
-        let (wasm, warnings) = compile_with_warnings(goat_checker::PRELUDE, src).expect("compiles");
+        let (wasm, warnings) =
+            compile_with_warnings(src, &HostInterface::turtle()).expect("compiles");
         assert_eq!(&wasm[..4], b"\0asm");
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].message.contains("Cirle"));
@@ -128,7 +164,38 @@ mod tests {
 
     #[test]
     fn compile_threads_check_errors() {
-        assert!(compile("1 + true").is_err());
-        assert!(compile("x").is_err());
+        assert!(compile_turtle("1 + true").is_err());
+        assert!(compile_turtle("x").is_err());
+    }
+
+    #[test]
+    fn the_turtle_host_is_the_built_in_prelude() {
+        assert_eq!(HostInterface::turtle().prelude(), goat_checker::PRELUDE);
+    }
+
+    #[test]
+    fn turtle_calls_compile_under_the_turtle_host_only() {
+        let turn = "forward(10); left(90)";
+        assert!(compile(turn, &HostInterface::turtle()).is_ok());
+        assert!(compile(turn, &HostInterface::with_stdlib("")).is_err());
+    }
+
+    #[test]
+    fn a_custom_host_compiles_a_program_that_uses_its_vocabulary() {
+        let synth = HostInterface::with_stdlib(
+            "beep = foreign \"synth\" \"beep\" (Number) -> Unit\n\
+             volume = foreign \"synth\" \"volume\" () -> Number\n",
+        );
+        let program = "beep(volume() * 2)";
+        let wasm = compile(program, &synth).expect("compiles");
+        assert!(wasm.windows(4).any(|w| w == b"beep"));
+        assert!(compile(program, &HostInterface::turtle()).is_err());
+    }
+
+    #[test]
+    fn a_host_without_the_standard_library_lacks_its_definitions() {
+        let bare = HostInterface::new("");
+        assert!(compile("link(1, Empty)", &bare).is_err());
+        assert!(compile("1 + 2", &bare).is_ok());
     }
 }

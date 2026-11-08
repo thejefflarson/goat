@@ -115,7 +115,7 @@ fn print_warnings(file: &str, source: &str, warnings: &[goat_checker::GoatError]
 
 fn build(file: &str) -> Result<Vec<u8>, String> {
     let source = read(file)?;
-    let (wasm, warnings) = goat::compile_with_warnings(goat_checker::PRELUDE, &source)
+    let (wasm, warnings) = goat::compile_with_warnings(&source, &goat::HostInterface::turtle())
         .map_err(|errors| render_errors(file, &source, &errors))?;
     print_warnings(file, &source, &warnings);
     Ok(wasm)

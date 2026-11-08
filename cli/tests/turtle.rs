@@ -20,7 +20,7 @@ fn draw(src: &str) -> TurtleHost {
     let mut oracle = TurtleHost::default();
     let (printed, live) = interpret_hosted(goat_checker::PRELUDE, src, &mut oracle);
     assert_eq!(live, 0, "interpreter leaked allocations for: {src}");
-    let wasm = goat::compile(src).expect("program compiles");
+    let wasm = goat::compile_turtle(src).expect("program compiles");
     let (run, compiled) = goat_cli::run_with_host(&wasm, TurtleHost::default()).expect("wasm runs");
     assert_eq!(run.live_allocs, 0, "wasm leaked allocations for: {src}");
     assert_eq!(run.printed, printed, "wasm printed differently: {src}");
@@ -103,7 +103,7 @@ fn printing_works_alongside_the_turtle() {
 
 #[test]
 fn a_bad_color_stops_the_program() {
-    let wasm = goat::compile("color(\"not a color\")").expect("compiles");
+    let wasm = goat::compile_turtle("color(\"not a color\")").expect("compiles");
     let err = goat_cli::run_with_host(&wasm, TurtleHost::default()).err();
     assert!(err.expect("traps").contains("color wants a name"));
 }

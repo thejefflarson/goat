@@ -31,7 +31,13 @@ pub struct Checked {
     pub interactive: Option<hir::Interactive>,
 }
 
-/// The built-in definitions every program starts with.
+/// The standard library: the definitions every program starts with, whatever its host.
+pub const STDLIB: &str = include_str!("../../prelude/prelude.goat");
+
+/// The `foreign` declarations of the turtle host.
+pub const TURTLE_VOCAB: &str = include_str!("../../prelude/turtle.goat");
+
+/// The built-in definitions every program starts with under the turtle host.
 pub const PRELUDE: &str = concat!(
     include_str!("../../prelude/prelude.goat"),
     "\n",

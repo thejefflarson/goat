@@ -137,7 +137,7 @@ fn calls_inside_functions_closures_and_loops_run_every_time() {
 fn only_the_foreign_functions_a_program_uses_are_imported() {
     let engine = Engine::default();
     let imports = |src: &str| -> Vec<String> {
-        let wasm = goat::compile(src).expect("compiles");
+        let wasm = goat::compile_turtle(src).expect("compiles");
         let module = Module::new(&engine, wasm).expect("valid");
         module
             .imports()
@@ -155,14 +155,14 @@ fn only_the_foreign_functions_a_program_uses_are_imported() {
 
 #[test]
 fn programs_without_foreign_functions_import_nothing_of_the_hosts() {
-    let wasm = goat::compile("print(1)").expect("compiles");
+    let wasm = goat::compile_turtle("print(1)").expect("compiles");
     let module = Module::new(&Engine::default(), wasm).expect("valid");
     assert!(module.imports().all(|i| i.module() == "goat"));
 }
 
 #[test]
 fn a_program_run_without_its_host_function_fails_to_link() {
-    let wasm = goat::compile(&format!("{DECLS}print(double(1))")).expect("compiles");
+    let wasm = goat::compile_turtle(&format!("{DECLS}print(double(1))")).expect("compiles");
     let error = goat_cli::run(&wasm).err().expect("no host");
     assert!(
         error.contains("provides no function test.double"),

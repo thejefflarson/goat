@@ -60,7 +60,7 @@ pub fn compiled(src: &str) -> (Vec<String>, u32) {
 }
 
 pub fn compiled_with_prelude(prelude: &str, src: &str) -> (Vec<String>, u32) {
-    let wasm = goat::compile_with_prelude(prelude, src).expect("program compiles");
+    let wasm = goat::compile(src, &goat::HostInterface::new(prelude)).expect("program compiles");
     let run = goat_cli::run(&wasm).expect("wasm runs");
     (run.printed, run.live_allocs)
 }
@@ -73,7 +73,7 @@ pub fn run_foreign(src: &str) -> (String, Vec<String>) {
     let mut oracle = TestHost::default();
     let (expected, live) = interpret_hosted(goat_checker::PRELUDE, src, &mut oracle);
     assert_eq!(live, 0, "interpreter leaked allocations for: {src}");
-    let wasm = goat::compile(src).expect("program compiles");
+    let wasm = goat::compile_turtle(src).expect("program compiles");
     let (run, compiled) = goat_cli::run_with_host(&wasm, TestHost::default()).expect("wasm runs");
     assert_eq!(run.live_allocs, 0, "wasm leaked allocations for: {src}");
     assert_eq!(run.printed, expected, "wasm differs from interp: {src}");
@@ -94,7 +94,7 @@ pub fn agree_or_trap(src: &str) {
     let program = goat_mir::mono(&checked).expect("program monomorphizes");
     match interp::run(&program) {
         Err(InterpError::Trap(message)) => {
-            let wasm = goat::compile(src).expect("program compiles");
+            let wasm = goat::compile_turtle(src).expect("program compiles");
             let Err(error) = goat_cli::run(&wasm) else {
                 panic!("wasm did not trap like the interpreter: {src}");
             };
