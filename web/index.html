@@ -138,7 +138,7 @@ done
         return;
       }
       const lines = [];
-      const { commands } = await run(compiled.module, { source: source.value, onOutput: (line) => lines.push(line) });
+      const { commands } = await run(compiled.module, { onOutput: (line) => lines.push(line) });
       show(output, lines.join("\n"));
       await animate(canvas, commands);
     } catch (e) {
