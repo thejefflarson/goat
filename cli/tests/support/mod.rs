@@ -19,14 +19,17 @@ pub fn interpret_with_prelude(prelude: &str, src: &str) -> (Vec<String>, usize) 
 
 /// Like `interpret_with_prelude`, answering foreign calls from `host`.
 pub fn interpret_hosted(prelude: &str, src: &str, host: &mut dyn Host) -> (Vec<String>, usize) {
-    let checked = goat_checker::check_with_prelude(prelude, src).expect("program type-checks");
-    let program = goat_mir::mono(&checked).expect("program monomorphizes");
+    let checked = goat_checker::check_with_prelude(prelude, src)
+        .unwrap_or_else(|e| panic!("unexpected type-check failure for {src:?}: {e:?}"));
+    let program = goat_mir::mono(&checked)
+        .unwrap_or_else(|e| panic!("unexpected mono failure for {src:?}: {e:?}"));
     assert_eq!(
         goat_mir::verify(&program),
         Ok(()),
         "MIR verifies for: {src}"
     );
-    let outcome = interp::run_with_host(&program, host).expect("interpreter runs");
+    let outcome = interp::run_with_host(&program, host)
+        .unwrap_or_else(|e| panic!("interpreter error for {src:?}: {e:?}"));
     let mut printed: Vec<String> = outcome
         .printed
         .iter()

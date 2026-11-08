@@ -22,15 +22,38 @@ pub const TAG_OK: u8 = 0;
 pub const TAG_ERR: u8 = 1;
 const HEADER: usize = 5;
 
+// 16 MiB is generous for source text; prevents a JS caller from triggering
+// gigabyte allocations or multi-second compile jobs before control returns.
+const MAX_SRC_LEN: u32 = 16 * 1024 * 1024;
+// 4-byte size prefix prepended by gw_alloc so gw_free can recover the layout
+// without trusting the caller-supplied length.
+const ALLOC_HEADER: usize = 4;
+
 fn buffer_layout(len: usize) -> Layout {
     // A zero-size layout is undefined for the allocator, so round up to one byte.
     Layout::from_size_align(len.max(1), 1).expect("byte layouts fit while len <= isize::MAX")
 }
 
-/// Allocate `len` bytes for the caller to fill. Returns 0 if allocation fails.
+/// Allocate `len` bytes for the caller to fill. Returns 0 if `len` exceeds
+/// `MAX_SRC_LEN` or allocation fails. The returned pointer points past a
+/// 4-byte size header so `gw_free` can recover the layout without trusting
+/// the caller-supplied length.
 #[unsafe(no_mangle)]
 pub extern "C" fn gw_alloc(len: u32) -> u32 {
-    alloc_buf(len as usize) as usize as u32
+    if len > MAX_SRC_LEN {
+        return 0;
+    }
+    let total = len as usize + ALLOC_HEADER;
+    let layout = Layout::from_size_align(total, 1).expect("byte layouts fit while len <= MAX_SRC_LEN");
+    // SAFETY: layout has non-zero size (total >= ALLOC_HEADER).
+    let base = unsafe { alloc(layout) };
+    if base.is_null() {
+        return 0;
+    }
+    // Store the data length so gw_free can reconstruct the layout.
+    // SAFETY: base is valid with at least ALLOC_HEADER bytes.
+    unsafe { (base as *mut u32).write_unaligned(len) };
+    (base as usize + ALLOC_HEADER) as u32
 }
 
 fn alloc_buf(len: usize) -> *mut u8 {
@@ -38,14 +61,28 @@ fn alloc_buf(len: usize) -> *mut u8 {
     unsafe { alloc(buffer_layout(len)) }
 }
 
-/// Free a buffer from `gw_alloc` with the same `len`.
+/// Free a buffer from `gw_alloc`. The caller-supplied `_len` is ignored; the
+/// true allocation size is recovered from the header written by `gw_alloc`,
+/// preventing a mismatched-layout dealloc when the caller passes a wrong length.
 ///
 /// # Safety
-/// `ptr` and `len` must come from one `gw_alloc` call not yet freed.
+/// `ptr` must come from one `gw_alloc` call not yet freed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gw_free(ptr: u32, len: u32) {
-    // SAFETY: forwarded from the caller's contract.
-    unsafe { free_buf(ptr as usize as *mut u8, len as usize) }
+pub unsafe extern "C" fn gw_free(ptr: u32, _len: u32) {
+    let data_ptr = ptr as usize;
+    if data_ptr < ALLOC_HEADER {
+        return;
+    }
+    let base = (data_ptr - ALLOC_HEADER) as *mut u8;
+    // SAFETY: ptr came from gw_alloc, so base[-ALLOC_HEADER] holds the stored len.
+    let stored_len = unsafe { (base as *const u32).read_unaligned() };
+    if stored_len > MAX_SRC_LEN {
+        return; // corrupt header; leak rather than UB
+    }
+    let total = stored_len as usize + ALLOC_HEADER;
+    let layout = Layout::from_size_align(total, 1).expect("byte layouts fit while stored_len <= MAX_SRC_LEN");
+    // SAFETY: base and layout match the gw_alloc allocation.
+    unsafe { dealloc(base, layout) };
 }
 
 unsafe fn free_buf(ptr: *mut u8, len: usize) {
@@ -81,10 +118,15 @@ pub unsafe extern "C" fn gw_free_result(ptr: u32) {
 /// # Safety
 /// `ptr..ptr + len` must be readable memory (or `len` must be 0).
 unsafe fn compile_at(ptr: *const u8, len: usize) -> *mut u8 {
+    if len > MAX_SRC_LEN as usize {
+        return make_record(TAG_ERR, b"source exceeds size limit".to_vec());
+    }
     let bytes: &[u8] = if len == 0 {
         &[]
+    } else if ptr.is_null() {
+        return make_record(TAG_ERR, b"null source pointer".to_vec());
     } else {
-        // SAFETY: non-empty range, readable per the contract.
+        // SAFETY: non-null, non-empty range, readable per the contract.
         unsafe { std::slice::from_raw_parts(ptr, len) }
     };
     let (tag, payload) = match std::str::from_utf8(bytes) {
@@ -126,6 +168,11 @@ unsafe fn free_record(ptr: *mut u8) {
     // SAFETY: a record starts with its header, and its total size is header + payload.
     unsafe {
         let len = u32::from_le_bytes(*(ptr.add(1) as *const [u8; 4])) as usize;
+        // Guard: HEADER + len must not overflow usize. On wasm32, usize == u32,
+        // so a maximum-valued payload length would wrap and produce a tiny slice.
+        if len > usize::MAX - HEADER {
+            return; // corrupt header; leak rather than UB
+        }
         drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
             ptr,
             HEADER + len,

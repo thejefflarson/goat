@@ -19,6 +19,10 @@ mod structural;
 
 type Subst = HashMap<TypeVar, Ty>;
 
+// Caps the number of function specializations so a pathologically polymorphic
+// but well-typed program cannot cause exponential monomorphization work.
+const MAX_SPECS: usize = 50_000;
+
 /// Lower a checked program to MIR and insert its reference counting.
 /// Constructs whose runtime support has not landed yet (ADR 0005) come back as
 /// spanned diagnostics; well-typed input never panics.
@@ -64,7 +68,13 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
         .is_some()
         .then(|| m.interactive(&root_ty));
 
+    let mut step = 0usize;
     while let Some((id, target, subst, capture_tys)) = m.work.pop() {
+        step += 1;
+        if step > MAX_SPECS {
+            m.errors.push(GoatError::new(Span::new(0, 0), "program too complex".to_string()));
+            break;
+        }
         let func = m.specialize_body(target, subst, capture_tys);
         m.out[id.0 as usize] = Some(func);
     }
