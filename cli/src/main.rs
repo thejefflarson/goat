@@ -62,7 +62,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 /// emitted. A trap becomes an error, so the process exits non-zero. With `out`,
 /// the turtle's drawing is written there as an SVG.
 fn run_program(wasm: &[u8], source: &str, out: Option<PathBuf>) -> Result<ExitCode, String> {
-    let finished = goat_cli::run_to_end(wasm, TurtleHost::default())?;
+    let finished = goat::native::run_to_end(wasm, TurtleHost::default())?;
     for line in &finished.printed {
         println!("{line}");
     }

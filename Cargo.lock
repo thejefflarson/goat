@@ -664,6 +664,7 @@ dependencies = [
  "goat_checker",
  "goat_mir",
  "goat_wasm",
+ "wasmtime",
 ]
 
 [[package]]
