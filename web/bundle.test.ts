@@ -46,6 +46,9 @@ async function servedClosure(entries: URL[]): Promise<Set<string>> {
     assert.equal(url.origin, origin);
     const response = await fetch(url);
     assert.equal(response.status, 200, url.href);
+    // A bundle has no imports left to follow, and its library text would only
+    // fool the scan.
+    if (url.pathname.endsWith(".bundle.js")) continue;
     for (const spec of relativeSpecifiers(await response.text())) {
       assert.match(spec, /^\.\.?\//, `${url.pathname} imports ${spec}`);
       queue.push(new URL(spec, url));
@@ -57,6 +60,13 @@ async function servedClosure(entries: URL[]): Promise<Set<string>> {
 test("every module the page imports is served, transitively", async () => {
   const seen = await servedClosure(relativeSpecifiers(html).map((spec) => new URL(spec, page)));
   assert.ok([...seen].some((href) => href.endsWith("/dist/runtime.js")));
+});
+
+test("the editor is one served bundle that imports nothing by package name", async () => {
+  assert.ok(relativeSpecifiers(html).includes("./dist/editor.bundle.js"));
+  const bundle = await (await fetch(new URL("dist/editor.bundle.js", page))).text();
+  assert.match(bundle, /export\s*\{[^}]*\bmountEditor\b/);
+  assert.doesNotMatch(bundle, /^\s*import[\s{*"']/);
 });
 
 test("the worker the supervisor spawns is served with all it imports", async () => {
