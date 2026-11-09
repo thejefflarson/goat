@@ -13,6 +13,7 @@ name: Coq
 
 on:
   push:
+    branches: [master]
     paths:
       - "proofs/**"
       - ".github/workflows/coq.yml"
