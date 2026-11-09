@@ -1,4 +1,4 @@
-# ADR 0023 — The `goat` facade owns the public host boundary
+# ADR 0024 — The `goat` facade owns the public host boundary
 
 - Status: accepted (2026-11-08)
 - Context: ADR 0020 (host vocabulary), `docs/plan.md` ("library first": the
