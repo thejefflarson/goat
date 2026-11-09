@@ -28,9 +28,8 @@ pub(crate) enum Event {
     Missing(&'static str),
     /// The token at this index of the full, trivia-included token list.
     Token(usize),
-    /// The trivia up to the next token belongs to the open node, as pest's
-    /// implicit whitespace skipping places it between the pieces of a
-    /// sequence: a node that ends in an empty option or repetition keeps the
+    /// The trivia up to the next token belongs to the open node, between the
+    /// pieces of a sequence: a node that ends in an empty option or repetition keeps the
     /// trivia after its last token.
     Skip,
     Close,

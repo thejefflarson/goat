@@ -15,7 +15,6 @@ interface CompilerExports {
   gw_compile(ptr: number, len: number): number;
   gw_check(ptr: number, len: number): number;
   gw_tokenize(ptr: number, len: number): number;
-  gw_vocabulary(): number;
   gw_complete(ptr: number, len: number, cursor: number): number;
 }
 
@@ -118,47 +117,6 @@ export function decodeTokens(payload: Uint8Array, source: string): Token[] {
     if (kind) tokens.push({ kind, from: index(view.getUint32(at + 1, true)), to: index(view.getUint32(at + 5, true)) });
   }
   return tokens;
-}
-
-export type WordKind = "keyword" | "function" | "tag";
-
-const WORD_KINDS: readonly WordKind[] = ["keyword", "function", "tag"];
-
-// A word the editor can complete. `detail` is a signature for a function and
-// empty otherwise.
-export interface Word {
-  kind: WordKind;
-  name: string;
-  detail: string;
-}
-
-// The keywords of the grammar and the names the turtle host defines, straight
-// from the compiler so they cannot drift from the language.
-export function loadVocabulary(compiler: WebAssembly.Module): Word[] {
-  const instance = new WebAssembly.Instance(compiler, {});
-  const exports = instance.exports as unknown as CompilerExports;
-  const { ok, payload } = takeRecord(exports, exports.gw_vocabulary());
-  return ok ? decodeVocabulary(payload) : [];
-}
-
-export function decodeVocabulary(payload: Uint8Array): Word[] {
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const decoder = new TextDecoder();
-  const words: Word[] = [];
-  let at = 0;
-  const text = () => {
-    const length = view.getUint32(at, true);
-    const value = decoder.decode(payload.subarray(at + 4, at + 4 + length));
-    at += 4 + length;
-    return value;
-  };
-  while (at < payload.length) {
-    const kind = WORD_KINDS[payload[at++]];
-    const name = text();
-    const detail = text();
-    if (kind) words.push({ kind, name, detail });
-  }
-  return words;
 }
 
 export type OptionKind = "variable" | "function" | "keyword" | "tag" | "field";
