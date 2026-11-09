@@ -100,6 +100,7 @@ fn every_example_prints_the_same_on_both_profiles() {
         let driven_by_a_host = [
             "interactive.goat",
             "arrow_draw.goat",
+            "shapes.goat",
             "spiral.goat",
             "circle.goat",
             "whole_numbers.goat",

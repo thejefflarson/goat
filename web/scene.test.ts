@@ -34,8 +34,13 @@ function recordingContext() {
     lineWidth: 0,
     lineCap: "butt",
     lineJoin: "miter",
+    font: "",
+    textBaseline: "alphabetic",
     set strokeStyle(color: string) {
       calls.push(`strokeStyle=${color}`);
+    },
+    set fillStyle(color: string) {
+      calls.push(`fillStyle=${color}`);
     },
     save: log("save"),
     restore: log("restore"),
@@ -44,6 +49,10 @@ function recordingContext() {
     moveTo: log("moveTo"),
     lineTo: log("lineTo"),
     stroke: log("stroke"),
+    arc: log("arc"),
+    fill: log("fill"),
+    fillRect: log("fillRect"),
+    fillText: log("fillText"),
   };
   return { ctx: ctx as unknown as DrawingContext, calls };
 }
@@ -77,6 +86,33 @@ test("a frame clears, strokes each shape as a path, and restores the context", (
   ]);
 });
 
+test("circles and rects are filled, text is drawn from its top left, all in canvas coordinates", () => {
+  const { ctx, calls } = recordingContext();
+  const scene = new CanvasScene(ctx);
+  scene.begin();
+  scene.circle(5, 6, 7, "blue");
+  scene.rect(1, 2, 30, 40, "#fa0");
+  scene.text(8, 9, "goat", "black");
+  scene.end();
+  assert.equal((ctx as unknown as { textBaseline: string }).textBaseline, "top");
+  assert.deepEqual(calls.slice(2, -1), [
+    "fillStyle=blue",
+    "beginPath()",
+    `arc(5, 6, 7, 0, ${2 * Math.PI})`,
+    "fill()",
+    "fillStyle=#fa0",
+    "fillRect(1, 2, 30, 40)",
+    "fillStyle=black",
+    "fillText(goat, 8, 9)",
+  ]);
+});
+
+test("a circle with a negative radius draws nothing", () => {
+  const { ctx, calls } = recordingContext();
+  new CanvasScene(ctx).circle(0, 0, -1, "red");
+  assert.deepEqual(calls, []);
+});
+
 test("each polyline starts a new path at its first vertex", () => {
   const { ctx, calls } = recordingContext();
   const scene = new CanvasScene(ctx);
@@ -101,6 +137,29 @@ test("the scene imports refuse a color outside the allowlist and a non-finite nu
   assert.throws(() => scene.line(0, 0, 1, 1, newString(exports, "re d")), /color wants a name/);
   assert.throws(() => scene.polyline_begin(newString(exports, "a".repeat(33))), /color wants a name/);
   assert.throws(() => scene.vertex(Number.NaN, 1), /real number/);
+  assert.throws(() => scene.circle(0, 0, Number.POSITIVE_INFINITY, newString(exports, "red")), /real number/);
+  assert.throws(() => scene.rect(0, 0, 1, Number.NaN, newString(exports, "red")), /real number/);
+  assert.throws(() => scene.text(Number.NaN, 0, newString(exports, "hi"), newString(exports, "red")), /real number/);
+  assert.throws(() => scene.circle(0, 0, 1, newString(exports, "re d")), /color wants a name/);
+  assert.throws(() => scene.rect(0, 0, 1, 1, newString(exports, "re d")), /color wants a name/);
+  assert.throws(() => scene.text(0, 0, newString(exports, "hi"), newString(exports, "re d")), /color wants a name/);
+});
+
+test("the text import reads its string from module memory", () => {
+  const memory = new WebAssembly.Memory({ initial: 1 });
+  let next = 64;
+  const exports = {
+    memory,
+    goat_alloc: (size: number) => {
+      const ptr = next;
+      next += size;
+      return ptr;
+    },
+  } as unknown as WebAssembly.Exports;
+  const recording = new RecordingScene();
+  const { scene } = sceneImports(() => memory, recording);
+  scene.text(1, 2, newString(exports, "héllo ☃"), newString(exports, "red"));
+  assert.deepEqual(recording.commands, [{ kind: "text", x: 1, y: 2, text: "héllo ☃", color: "red" }]);
 });
 
 async function instantiate(source: string) {
@@ -157,6 +216,26 @@ test("goat_event_KeyDown maps ArrowUp to the Up branch and the scene follows", a
     { kind: "vertex", x: 0, y: 0 },
     { kind: "vertex", x: 0, y: -10 },
     { kind: "polyline_end" },
+    { kind: "end" },
+  ]);
+  exports.goat_release_model(model);
+  exports.goat_shutdown();
+  assert.equal(exports.goat_live_allocs(), 0);
+});
+
+const shapes = readFileSync(new URL("../examples/shapes.goat", import.meta.url), "utf8");
+
+test("a draw of Rect, Circle and Text reaches the scene in order", async () => {
+  const { exports: raw, scene } = await instantiate(shapes);
+  const exports = raw as Exports;
+  let model = exports.goat_setup();
+  model = exports.goat_update(model, constructEvent(exports, { kind: "Tick", dt: 16 })!);
+  exports.goat_draw(model);
+  assert.deepEqual(scene.commands, [
+    { kind: "begin" },
+    { kind: "rect", x: 10, y: 10, w: 200, h: 80, color: "#fa0" },
+    { kind: "circle", x: 50, y: 50, r: 20, color: "blue" },
+    { kind: "text", x: 20, y: 20, text: "goat", color: "black" },
     { kind: "end" },
   ]);
   exports.goat_release_model(model);

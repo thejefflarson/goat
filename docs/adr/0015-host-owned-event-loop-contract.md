@@ -186,12 +186,13 @@ Recorded as data on top of the ABI, growable without a new ADR (mirroring ADR
   `Line {x1,y1,x2,y2,color}`, `Circle {x,y,r,color}`, `Rect {x,y,w,h,color}`,
   `Text {x,y,text,color}`; coordinates are `Number`, origin top-left, y down
   (canvas-native — note this differs from the turtle's y-up stroke math). v1
-  ships **Polyline + Line**. A `Polyline` expresses the accumulating arrow-draw
+  ships **Polyline + Line**; **Circle, Rect and Text** followed as single
+  `scene.circle` / `scene.rect` / `scene.text` calls (filled, not stroked; a
+  `Rect` and a `Text` anchor at their top left). A `Polyline` expresses the accumulating arrow-draw
   path as one shape rather than N `Line`s; the `goat_draw` wrapper streams it with
   a nested list walk — `scene.polyline_begin(color)`, then `scene.vertex(x, y)`
   per point, then `scene.polyline_end()` — reusing the same `Switch`/`Payload`
   machinery one level deeper, and the per-frame cap also bounds total vertices.
-  Circle/Rect/Text are a fast-follow.
 - **The v1 browser event vocabulary:** `Tick(dt)`, `KeyDown(key)`, `KeyUp(key)`,
   `Pointer{Move,Down,Up}({x,y})`, where `key : Key = Up | Down | Left | Right |
   Other(String)`. The host always passes the raw `KeyboardEvent.key` string; the

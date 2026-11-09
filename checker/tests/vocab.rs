@@ -286,7 +286,7 @@ fn the_turtle_vocabulary_is_well_formed_and_matches_what_the_checker_always_acce
         ]
     );
     let shapes: Vec<&str> = turtle.shapes.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(shapes, ["Polyline", "Line"]);
+    assert_eq!(shapes, ["Polyline", "Line", "Circle", "Rect", "Text"]);
     let keys: Vec<&str> = turtle.key_tag_names().collect();
     assert_eq!(keys, ["Up", "Down", "Left", "Right", "Other"]);
     assert_eq!(turtle.event("Tick").unwrap().payload, Ty::Float);

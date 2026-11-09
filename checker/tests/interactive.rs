@@ -16,7 +16,7 @@ const DRAW: &str =
     "draw = program(model) do [Line({x1: 0, y1: 0, x2: model.x, y2: 0, color: \"red\"})] done\n";
 
 /// Declared so the host contract, not name resolution, is what rejects them.
-const OFF_CONTRACT_TAGS: &str = "tag Circle tag Frobnicate\n";
+const OFF_CONTRACT_TAGS: &str = "tag Circle tag Triangle tag Frobnicate\n";
 
 fn interactive(init: &str, update: &str, draw: &str) -> String {
     format!("{OFF_CONTRACT_TAGS}init = {init}\n{update}{draw}")
@@ -217,6 +217,14 @@ fn every_host_event_and_shape_checks() {
 }
 
 #[test]
+fn circle_rect_and_text_check_in_a_draw() {
+    let draw = draw_of(
+        "[Circle({x: model.x, y: 1, r: 2.5, color: \"red\"}), Rect({x: 0, y: 0, w: model.x, h: 9, color: \"#fa0\"}), Text({x: 1, y: 2, text: \"hi\", color: \"black\"})]",
+    );
+    checks(&interactive("{x: 0}", UPDATE, &draw));
+}
+
+#[test]
 fn the_event_row_closes_to_the_handled_tags() {
     let update = update_of("    Tick(dt) then model\n    KeyUp(k) then model");
     let ty = update_type(&interactive("{x: 0}", &update, DRAW));
@@ -285,10 +293,10 @@ fn a_key_match_with_else_checks() {
 
 #[test]
 fn an_unknown_shape_tag_is_a_spanned_error() {
-    let draw = draw_of("[Circle({x: 0, y: 0, r: 1, color: \"red\"})]");
+    let draw = draw_of("[Triangle({x: 0, y: 0, r: 1, color: \"red\"})]");
     let (message, text) = the_error(&interactive("{x: 0}", UPDATE, &draw));
     assert!(
-        message.starts_with("the host can't draw a `Circle` shape"),
+        message.starts_with("the host can't draw a `Triangle` shape"),
         "{message}"
     );
     assert!(text.starts_with("program(model)"), "{text}");
@@ -303,6 +311,11 @@ fn a_shape_payload_the_host_cannot_read_is_a_spanned_error() {
         "Polyline({points: [1], color: \"red\"})",
         "Polyline({points: [{x: 0, y: \"a\"}], color: \"red\"})",
         "Polyline({color: \"red\"})",
+        "Circle({x: 0, y: 0, color: \"red\"})",
+        "Circle({x: 0, y: 0, r: \"big\", color: \"red\"})",
+        "Rect({x: 0, y: 0, w: 1, color: \"red\"})",
+        "Text({x: 0, y: 0, text: 5, color: \"red\"})",
+        "Text({x: 0, y: 0, color: \"red\"})",
     ] {
         let draw = draw_of(&format!("[{shape}]"));
         let (message, text) = the_error(&interactive("{x: 0}", UPDATE, &draw));

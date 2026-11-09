@@ -1,7 +1,7 @@
 // Picture and event plumbing for interactive goat modules (ADR 0015), the
 // browser half of mir/src/host.rs (`SceneHost`) and cli/src/lib.rs (`Guest`).
 //
-//   imports  scene.{begin,end,line,polyline_begin,vertex,polyline_end}
+//   imports  scene.{begin,end,line,polyline_begin,vertex,polyline_end,circle,rect,text}
 //   exports  goat_setup, goat_update, goat_draw, goat_release_model,
 //            goat_shutdown, goat_alloc, goat_event_<Tag> per handled event
 //
@@ -13,12 +13,16 @@ import { COLOR_PATTERN, readString } from "./runtime.ts";
 
 const STR_LEN = 8;
 const STR_BYTES = 12;
+const TEXT_FONT = "16px sans-serif";
 
 export type SceneCommand =
   | { kind: "begin" | "end" | "polyline_end" }
   | { kind: "line"; x1: number; y1: number; x2: number; y2: number; color: string }
   | { kind: "polyline_begin"; color: string }
-  | { kind: "vertex"; x: number; y: number };
+  | { kind: "vertex"; x: number; y: number }
+  | { kind: "circle"; x: number; y: number; r: number; color: string }
+  | { kind: "rect"; x: number; y: number; w: number; h: number; color: string }
+  | { kind: "text"; x: number; y: number; text: string; color: string };
 
 // What a renderer implements; `sceneImports` validates and forwards to it.
 export interface Scene {
@@ -27,6 +31,9 @@ export interface Scene {
   polylineBegin(color: string): void;
   vertex(x: number, y: number): void;
   polylineEnd(): void;
+  circle(x: number, y: number, r: number, color: string): void;
+  rect(x: number, y: number, w: number, h: number, color: string): void;
+  text(x: number, y: number, text: string, color: string): void;
   end(): void;
 }
 
@@ -38,6 +45,9 @@ export interface SceneImports {
     polyline_begin(color: number): void;
     vertex(x: number, y: number): void;
     polyline_end(): void;
+    circle(x: number, y: number, r: number, color: number): void;
+    rect(x: number, y: number, w: number, h: number, color: number): void;
+    text(x: number, y: number, text: number, color: number): void;
   };
 }
 
@@ -65,6 +75,11 @@ export function sceneImports(memory: () => WebAssembly.Memory, scene: Scene): Sc
       polyline_begin: (ptr) => scene.polylineBegin(color(ptr)),
       vertex: (x, y) => scene.vertex(finite("vertex", x), finite("vertex", y)),
       polyline_end: () => scene.polylineEnd(),
+      circle: (x, y, r, ptr) => scene.circle(finite("circle", x), finite("circle", y), finite("circle", r), color(ptr)),
+      rect: (x, y, w, h, ptr) =>
+        scene.rect(finite("rect", x), finite("rect", y), finite("rect", w), finite("rect", h), color(ptr)),
+      text: (x, y, textPtr, ptr) =>
+        scene.text(finite("text", x), finite("text", y), readString(memory(), textPtr), color(ptr)),
     },
   };
 }
@@ -88,6 +103,15 @@ export class RecordingScene implements Scene {
   polylineEnd() {
     this.commands.push({ kind: "polyline_end" });
   }
+  circle(x: number, y: number, r: number, color: string) {
+    this.commands.push({ kind: "circle", x, y, r, color });
+  }
+  rect(x: number, y: number, w: number, h: number, color: string) {
+    this.commands.push({ kind: "rect", x, y, w, h, color });
+  }
+  text(x: number, y: number, text: string, color: string) {
+    this.commands.push({ kind: "text", x, y, text, color });
+  }
   end() {
     this.commands.push({ kind: "end" });
   }
@@ -97,6 +121,9 @@ export type DrawingContext = Pick<
   CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   | "canvas"
   | "strokeStyle"
+  | "fillStyle"
+  | "font"
+  | "textBaseline"
   | "lineWidth"
   | "lineCap"
   | "lineJoin"
@@ -107,6 +134,10 @@ export type DrawingContext = Pick<
   | "moveTo"
   | "lineTo"
   | "stroke"
+  | "arc"
+  | "fill"
+  | "fillRect"
+  | "fillText"
 >;
 
 // Draws each frame in canvas coordinates, origin top left with y down, as
@@ -127,6 +158,8 @@ export class CanvasScene implements Scene {
     ctx.lineWidth = 1;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
+    ctx.font = TEXT_FONT;
+    ctx.textBaseline = "top";
   }
 
   line(x1: number, y1: number, x2: number, y2: number, color: string) {
@@ -152,6 +185,27 @@ export class CanvasScene implements Scene {
 
   polylineEnd() {
     this.#ctx.stroke();
+  }
+
+  // A negative radius draws nothing: `arc` would throw on it.
+  circle(x: number, y: number, r: number, color: string) {
+    if (r < 0) return;
+    const ctx = this.#ctx;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  rect(x: number, y: number, w: number, h: number, color: string) {
+    this.#ctx.fillStyle = color;
+    this.#ctx.fillRect(x, y, w, h);
+  }
+
+  // (x, y) is the top left of the text, as a Rect's is.
+  text(x: number, y: number, text: string, color: string) {
+    this.#ctx.fillStyle = color;
+    this.#ctx.fillText(text, x, y);
   }
 
   end() {
