@@ -21,6 +21,8 @@ const TOO_DEEP: &str = "expression nested too deeply";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ParseError {
     pub offset: usize,
+    /// The parse failed on nesting past the limit, not on a syntax error.
+    pub too_deep: bool,
 }
 
 impl fmt::Display for ParseError {
@@ -51,13 +53,16 @@ pub fn parse(source: &str) -> Result<Cst, ParseError> {
     if let Some(unknown) = tokens.iter().find(|t| t.kind == TokenKind::Unknown) {
         return Err(ParseError {
             offset: unknown.start,
+            too_deep: false,
         });
     }
     let (significant, placed) = significant(&tokens);
     let mut run = Run::new(grammar, source, &placed, false);
     if !run.rule(grammar.root) {
-        let offset = placed.get(run.farthest).map_or(source.len(), |t| t.start);
-        return Err(ParseError { offset });
+        let too_deep = run.too_deep.is_some();
+        let at = run.too_deep.unwrap_or(run.farthest);
+        let offset = placed.get(at).map_or(source.len(), |t| t.start);
+        return Err(ParseError { offset, too_deep });
     }
     let events = place(run.events, &significant);
     Ok(Cst::build(source, grammar, tokens, &events))
@@ -584,7 +589,10 @@ mod tests {
         ] {
             assert_eq!(
                 parse(source).unwrap_err(),
-                ParseError { offset },
+                ParseError {
+                    offset,
+                    too_deep: false
+                },
                 "{source:?}"
             );
         }
@@ -603,5 +611,14 @@ mod tests {
         };
         assert!(on_small_stack(nested(50)));
         assert!(!on_small_stack(nested(100_000)));
+    }
+
+    #[test]
+    fn a_parse_that_fails_on_nesting_says_so_and_where() {
+        let nested = format!("{}1{}", "(".repeat(300), ")".repeat(300));
+        let error = parse(&nested).unwrap_err();
+        assert!(error.too_deep);
+        assert_eq!(error.offset, MAX_NESTING - 1);
+        assert!(!parse("(1").unwrap_err().too_deep);
     }
 }
