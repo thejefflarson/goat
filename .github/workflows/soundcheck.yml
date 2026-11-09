@@ -1,11 +1,14 @@
 name: Security Review
 on:
+  # PRs that touch code only — skip docs-only PRs (ADRs, markdown, papers).
+  # No push/master run (the PR already reviewed the diff) and no weekly scan.
   pull_request:
-  push:
-    branches: [main, master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'papers/**'
+      - 'LICENSE'
   workflow_dispatch:
-  schedule:
-    - cron: "0 9 * * 1"
 
 jobs:
   review:
