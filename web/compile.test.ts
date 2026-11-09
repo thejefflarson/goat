@@ -66,6 +66,19 @@ test("check reports every error compile does", async () => {
   assert.equal(found.length, rendered.diagnostics.split("\n\n").length);
 });
 
+test("a program with several syntax errors reports each at its own span", async () => {
+  const source = "f(a b); g(c d); 1";
+  const found = await check(compiler, source);
+  assert.deepEqual(
+    found.map((d) => source.slice(d.from, d.to)),
+    ["b", "d"],
+  );
+  assert.ok(found.every((d) => d.message.startsWith("parse error")));
+  const rendered = await compile(compiler, source);
+  assert.ok(!rendered.ok);
+  assert.equal(rendered.diagnostics.split("\n\n").length, found.length);
+});
+
 test("tokenize colors a program by the lexer's categories", () => {
   const source = '# hi\ntag Dot\nx = "é" + 1.5\nif true then Dot else 0 done';
   const tokens = createTokenizer(compiler)(source);

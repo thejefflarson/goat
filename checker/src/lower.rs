@@ -54,22 +54,26 @@ pub struct Lowered {
 }
 
 /// Parse and lower `source` on its own, with no prelude.
-pub fn lower(source: &str) -> Result<Lowered, GoatError> {
+pub fn lower(source: &str) -> Result<Lowered, Vec<GoatError>> {
     lower_with_prelude("", source)
 }
 
 /// Parse and lower `prelude` and `source` separately, then make `source` the
 /// `rest` of the prelude's chain of `Let`s, so every prelude name is in scope
-/// for it. Spans keep the file they came from. Parse errors abort (returned
-/// as the sole error); name-resolution errors are collected so the inferer
+/// for it. Spans keep the file they came from. Parse errors abort (every
+/// one the recovering parse found is returned); name-resolution errors are collected so the inferer
 /// can still run and report type errors in the same pass.
-pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatError> {
+pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, Vec<GoatError>> {
     lower_with_vocab(prelude, &Vocab::turtle(), source)
 }
 
 /// Like [`lower_with_prelude`], with the tags and decoders of `vocab` standing
 /// in for the turtle's.
-pub fn lower_with_vocab(prelude: &str, vocab: &Vocab, source: &str) -> Result<Lowered, GoatError> {
+pub fn lower_with_vocab(
+    prelude: &str,
+    vocab: &Vocab,
+    source: &str,
+) -> Result<Lowered, Vec<GoatError>> {
     let mut ctx = Lower::default();
     ctx.tags.extend(
         LIST_TAGS
@@ -312,18 +316,27 @@ struct Lower {
 impl Lower {
     /// Parse and lower one source text, stamping its spans with `file`. The
     /// prelude's names are in scope when `file` is the user's.
-    fn lower_source(&mut self, source: &str, file: FileId) -> Result<Expr, GoatError> {
+    fn lower_source(&mut self, source: &str, file: FileId) -> Result<Expr, Vec<GoatError>> {
         self.file = file;
-        let cst = interp::parse(source).map_err(|e| {
-            let at = Span::in_file(e.offset, e.offset, file);
-            let message = if e.too_deep {
-                "expression nested too deeply"
-            } else {
-                "parse error: unexpected input"
-            };
-            GoatError::new(at, message)
-        })?;
-        let goat = Goat::cast(cst.root()).expect("the root is the goat node");
+        let recovered = interp::parse_recovering(source);
+        let mut diagnostics = recovered.diagnostics;
+        // Past the nesting limit every other diagnostic is a cascade of it.
+        if diagnostics.iter().any(|d| d.message == interp::TOO_DEEP) {
+            diagnostics.retain(|d| d.message == interp::TOO_DEEP);
+        }
+        if !diagnostics.is_empty() {
+            return Err(diagnostics
+                .into_iter()
+                .map(|d| {
+                    let message = match d.message.as_str() {
+                        interp::TOO_DEEP => d.message,
+                        other => format!("parse error: {other}"),
+                    };
+                    GoatError::new(Span::in_file(d.span.start, d.span.end, file), message)
+                })
+                .collect());
+        }
+        let goat = Goat::cast(recovered.cst.root()).expect("the root is the goat node");
         debug_assert!(self.grouped.is_empty());
         for decl in goat.tag_decls() {
             self.declare_tags(decl.node());
@@ -2345,7 +2358,7 @@ mod tests {
     use super::*;
 
     fn string_value(source: &str) -> Result<String, String> {
-        let lowered = lower(source).map_err(|e| e.message)?;
+        let lowered = lower(source).map_err(|e| e[0].message.clone())?;
         if let Some(e) = lowered.errors.first() {
             return Err(e.message.clone());
         }
