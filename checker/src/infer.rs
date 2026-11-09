@@ -74,54 +74,69 @@ pub fn infer_program(
     interactive: Option<&Interactive>,
     vocab: &Vocab,
 ) -> Result<Typed, Vec<GoatError>> {
+    match infer_partial(root, interactive, vocab) {
+        (typed, errors) if errors.is_empty() => Ok(typed),
+        (_, errors) => Err(errors),
+    }
+}
+
+/// [`infer_program`] for editor tooling: the types of whatever the checker
+/// could settle, beside the errors it found. A program with errors has types
+/// for the parts that are fine, and none of its warnings.
+pub fn infer_partial(
+    root: &Expr,
+    interactive: Option<&Interactive>,
+    vocab: &Vocab,
+) -> (Typed, Vec<GoatError>) {
     let mut inf = Inferer::default();
     let ty = inf.infer(root);
     if let (true, Some(contract)) = (inf.errors.is_empty(), interactive) {
         inf.check_contract(contract, vocab);
     }
     inf.report_spent_ids(root.span);
-    if inf.errors.is_empty() {
-        inf.default_numbers();
-        let warnings = inf.unused_tag_warnings();
-        let root_ty = inf.finish(&ty);
-        let node_types = inf
-            .node_types
-            .iter()
-            .map(|(id, t)| (*id, inf.finish(t)))
-            .collect();
-        let schemes = inf
-            .schemes
-            .iter()
-            .map(|(symbol, s)| {
-                let scheme = Scheme {
-                    vars: s.vars.clone(),
-                    ty: inf.finish(&s.ty),
-                };
-                (*symbol, scheme)
-            })
-            .collect();
-        let binder_types = inf
-            .binders
-            .iter()
-            .map(|(symbol, t)| (*symbol, inf.finish(t)))
-            .collect();
-        let number_vars = inf
-            .kinds
-            .iter()
-            .filter(|(_, kinds)| kinds.is_scalar())
-            .map(|(var, _)| *var)
-            .collect();
-        Ok(Typed {
-            root_ty,
-            node_types,
-            schemes,
-            binder_types,
-            number_vars,
-            warnings,
-        })
+    inf.default_numbers();
+    let warnings = if inf.errors.is_empty() {
+        inf.unused_tag_warnings()
     } else {
-        Err(inf.errors)
-    }
+        Vec::new()
+    };
+    let root_ty = inf.finish(&ty);
+    let node_types = inf
+        .node_types
+        .iter()
+        .map(|(id, t)| (*id, inf.finish(t)))
+        .collect();
+    let schemes = inf
+        .schemes
+        .iter()
+        .map(|(symbol, s)| {
+            let scheme = Scheme {
+                vars: s.vars.clone(),
+                ty: inf.finish(&s.ty),
+            };
+            (*symbol, scheme)
+        })
+        .collect();
+    let binder_types = inf
+        .binders
+        .iter()
+        .map(|(symbol, t)| (*symbol, inf.finish(t)))
+        .collect();
+    let number_vars = inf
+        .kinds
+        .iter()
+        .filter(|(_, kinds)| kinds.is_scalar())
+        .map(|(var, _)| *var)
+        .collect();
+    let typed = Typed {
+        root_ty,
+        node_types,
+        schemes,
+        binder_types,
+        number_vars,
+        warnings,
+    };
+    (typed, inf.errors)
 }
 
 #[derive(Default)]

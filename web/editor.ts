@@ -17,7 +17,7 @@ import {
 } from "@codemirror/view";
 import { linter, lintGutter } from "@codemirror/lint";
 import { autocompletion } from "@codemirror/autocomplete";
-import { check, createTokenizer, loadVocabulary, type Token } from "./compile.ts";
+import { check, createCompleter, createTokenizer, type Token } from "./compile.ts";
 import { goatCompletions } from "./completion.ts";
 import { lintDiagnostics } from "./lint.ts";
 
@@ -56,17 +56,13 @@ function liveChecking(compiler: WebAssembly.Module): Extension {
   return [linter(source, { delay: CHECK_DELAY_MS }), lintGutter()];
 }
 
-function completing(compiler: WebAssembly.Module, tokenize: (source: string) => Token[]): Extension {
-  try {
-    return autocompletion({ override: [goatCompletions(loadVocabulary(compiler), tokenize)] });
-  } catch {
-    return [];
-  }
+function completing(compiler: WebAssembly.Module): Extension {
+  return autocompletion({ override: [goatCompletions(createCompleter(compiler))] });
 }
 
 function withCompiler(compiler: WebAssembly.Module): Extension[] {
   const tokenize = createTokenizer(compiler);
-  return [highlighting(tokenize), liveChecking(compiler), completing(compiler, tokenize)];
+  return [highlighting(tokenize), liveChecking(compiler), completing(compiler)];
 }
 
 // Colors come from the page's custom properties, so light and dark follow the

@@ -29,7 +29,12 @@
 //! - `gw_vocabulary` takes no source and returns `TAG_OK` with the words to
 //!   complete (see `vocabulary::encode`): keywords, then the turtle host's
 //!   functions and tags.
+//! - `gw_complete` takes the source and a byte offset for the cursor, and
+//!   returns `TAG_OK` with what the checker offers there (see
+//!   `completion::complete`), empty where nothing completes. It answers on
+//!   source that does not parse.
 
+mod completion;
 mod vocabulary;
 
 use goat_parser::lexer::{self, TokenKind};
@@ -161,8 +166,25 @@ pub extern "C" fn gw_vocabulary() -> u32 {
     vocabulary_record() as usize as u32
 }
 
-/// Free a record returned by `gw_compile`, `gw_check`, `gw_tokenize` or
-/// `gw_vocabulary`.
+/// Complete at byte `cursor` of the `src_len` bytes at `src_ptr`; returns the
+/// result record's address.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_complete(src_ptr: u32, src_len: u32, cursor: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        complete_at(
+            src_ptr as usize as *const u8,
+            src_len as usize,
+            cursor as usize,
+        ) as usize as u32
+    }
+}
+
+/// Free a record returned by `gw_compile`, `gw_check`, `gw_tokenize`,
+/// `gw_vocabulary` or `gw_complete`.
 ///
 /// # Safety
 /// `ptr` must come from one `gw_compile` call not yet freed.
@@ -211,6 +233,17 @@ unsafe fn tokenize_at(ptr: *const u8, len: usize) -> *mut u8 {
     // SAFETY: forwarded from the caller's contract.
     let (tag, payload) = match unsafe { source_at(ptr, len) } {
         Ok(source) => (TAG_OK, encode_tokens(source)),
+        Err(problem) => (TAG_ERR, problem.into_bytes()),
+    };
+    make_record(tag, payload)
+}
+
+/// # Safety
+/// `ptr..ptr + len` must be readable memory (or `len` must be 0).
+unsafe fn complete_at(ptr: *const u8, len: usize, cursor: usize) -> *mut u8 {
+    // SAFETY: forwarded from the caller's contract.
+    let (tag, payload) = match unsafe { source_at(ptr, len) } {
+        Ok(source) => (TAG_OK, completion::complete(source, cursor)),
         Err(problem) => (TAG_ERR, problem.into_bytes()),
     };
     make_record(tag, payload)
