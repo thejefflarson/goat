@@ -66,7 +66,14 @@ cause: the UTI resolves and conforms to `public.plain-text`, existing `.goat` fi
 with their contents, and an app whose document type is stock `public.plain-text` fails the
 same way. On a failure the file is still written; the Files service then cannot resolve a
 bookmark for the item it just moved (`NSFileProviderErrorDomain` -1005, "NonExistentItemIdentifier").
-Open the file from the browser instead. Not reproduced on a device.
+Open the file from the browser instead.
+
+On a device, creating in iCloud Drive while it is mid-sync stalls the same import step,
+and the browser then ignores every further **+** until relaunch. The iOS app sets
+`LSSupportsOpeningDocumentsInPlace` so the browser opens documents where they live
+instead of importing a copy (the Xcode document-app default); `check-doc-types.sh`
+guards it. `DocumentGroup` cannot choose the default save location, so creating in
+**On My iPhone** remains the dependable path.
 
 ## The bridge
 

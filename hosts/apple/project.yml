@@ -167,7 +167,7 @@ targets:
         <<: *info
         UILaunchScreen: {}
         UISupportsDocumentBrowser: true
-        LSSupportsOpeningDocumentsInPlace: false
+        LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft

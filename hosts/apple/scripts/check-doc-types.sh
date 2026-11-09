@@ -23,3 +23,9 @@ for plist in "$here/Info-macOS.plist" "$here/Info-iOS.plist"; do
   [ "$ext" = "goat" ] ||
     { echo "error: $(basename "$plist") maps extension '$ext', expected goat" >&2; exit 1; }
 done
+
+# Without in-place opening the document browser copies every created or opened
+# file through an import step that stalls on unsynced iCloud items.
+in_place=$(plutil -extract LSSupportsOpeningDocumentsInPlace raw -o - "$here/Info-iOS.plist")
+[ "$in_place" = "true" ] ||
+  { echo "error: Info-iOS.plist must set LSSupportsOpeningDocumentsInPlace to true" >&2; exit 1; }
