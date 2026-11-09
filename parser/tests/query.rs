@@ -194,6 +194,8 @@ fn names_being_introduced_complete_nothing() {
     for marked in [
         "f = program(|",
         "f = program(a, |",
+        "f = fn(|",
+        "f = fn(a, |",
         "for |",
         "match s do\n  Circle(r) then 1\n  Dot(|) then 2",
         "tag |",

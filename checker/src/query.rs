@@ -28,8 +28,8 @@ use std::ops::Range;
 const LIST_TAGS: [&str; 2] = ["Empty", "Link"];
 
 /// The keywords that can begin an expression.
-const OPERAND_KEYWORDS: [&str; 9] = [
-    "if", "match", "repeat", "for", "program", "function", "true", "false", "not",
+const OPERAND_KEYWORDS: [&str; 10] = [
+    "if", "match", "repeat", "for", "program", "function", "fn", "true", "false", "not",
 ];
 
 /// Where a name in scope comes from.

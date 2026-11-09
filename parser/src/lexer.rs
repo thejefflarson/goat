@@ -68,7 +68,7 @@ pub fn tokenize(source: &str) -> Vec<Token> {
 }
 
 const KEYWORDS: &[&str] = &[
-    "program", "function", "if", "match", "then", "else", "done", "do", "start at", "repeat",
+    "program", "function", "fn", "if", "match", "then", "else", "done", "do", "start at", "repeat",
     "times", "for", "and", "or", "not", "return", "tag",
 ];
 
@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(
             keywords(),
             [
-                "program", "function", "if", "match", "then", "else", "done", "do", "repeat",
+                "program", "function", "fn", "if", "match", "then", "else", "done", "do", "repeat",
                 "times", "for", "and", "or", "not", "tag", "true", "false", "from", "to", "in",
                 "foreign",
             ]

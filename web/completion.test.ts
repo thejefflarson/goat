@@ -66,6 +66,7 @@ test("a binding's value offers the names in scope, the builtins and the tags", (
   assert.equal(option(found, "print").kind, "function");
   assert.equal(option(found, "Tick").kind, "tag");
   assert.equal(option(found, "match").kind, "keyword");
+  assert.equal(option(found, "fn").kind, "keyword");
   assert.ok(!found.labels.includes("c"), "not the name being defined");
 });
 

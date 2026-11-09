@@ -137,7 +137,7 @@ list_pattern <- '[' ((name (',' name)* (',' rest_binding)? / rest_binding) ','?)
 rest_binding <- '...' name
 
 @anchor('do' 'done')
-function <- ('program' / 'function') '('@expect params? ')'@expect 'do'@expect expr? 'done'@expect
+function <- ('program' / 'function' / 'fn') '('@expect params? ')'@expect 'do'@expect expr? 'done'@expect
 params <- _param (',' _param)*
 _param <- record_pattern / list_pattern / name
 
