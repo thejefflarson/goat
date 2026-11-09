@@ -693,6 +693,7 @@ dependencies = [
  "goat_cli",
  "goat_mir",
  "goat_parser",
+ "goat_wamr",
 ]
 
 [[package]]
@@ -707,6 +708,15 @@ name = "goat_parser"
 version = "0.1.0"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "goat_wamr"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "goat",
+ "wasmparser 0.263.0",
 ]
 
 [[package]]
@@ -1550,8 +1560,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f5fa0a054ae153606df820eb0a84213e28cda41bbe04ba2628e71b6ba100fcb"
 dependencies = [
  "bitflags",
+ "hashbrown 0.17.1",
  "indexmap",
  "semver",
+ "serde",
 ]
 
 [[package]]
