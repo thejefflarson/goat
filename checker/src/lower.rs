@@ -1,4 +1,4 @@
-//! Lowering: the pest parse tree → the owned, name-resolved [`hir`].
+//! Lowering: the parse tree → the owned, name-resolved [`hir`].
 //!
 //! This pass does name resolution directly (assigning a fresh [`Symbol`] to
 //! each binding and resolving each use to its binder), replacing the old
@@ -12,9 +12,8 @@ use crate::hir::{
 };
 use crate::ty::{Group, Row, Ty};
 use crate::vocab::Vocab;
-use goat_parser::parser::{GoatParser, Rule};
-use pest::Parser;
-use pest::iterators::{Pair, Pairs};
+use goat_parser::parser::Rule;
+use goat_parser::tree::{Pair, Pairs, parse_cst, parse_pest};
 use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
 use std::sync::Arc;
@@ -71,7 +70,32 @@ pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatEr
 /// Like [`lower_with_prelude`], with the tags and decoders of `vocab` standing
 /// in for the turtle's.
 pub fn lower_with_vocab(prelude: &str, vocab: &Vocab, source: &str) -> Result<Lowered, GoatError> {
-    let mut ctx = Lower::default();
+    lower_with_parser(Parser::Pest, prelude, vocab, source)
+}
+
+/// [`lower_with_vocab`] reading the parse tree from the grammar interpreter's
+/// CST instead of pest; the dual-run tests hold the two to the same result.
+pub fn lower_via_cst(prelude: &str, vocab: &Vocab, source: &str) -> Result<Lowered, GoatError> {
+    lower_with_parser(Parser::Cst, prelude, vocab, source)
+}
+
+#[derive(Clone, Copy, Default)]
+enum Parser {
+    #[default]
+    Pest,
+    Cst,
+}
+
+fn lower_with_parser(
+    parser: Parser,
+    prelude: &str,
+    vocab: &Vocab,
+    source: &str,
+) -> Result<Lowered, GoatError> {
+    let mut ctx = Lower {
+        parser,
+        ..Lower::default()
+    };
     ctx.tags.extend(
         LIST_TAGS
             .into_iter()
@@ -191,11 +215,11 @@ struct ListPattern {
 #[derive(Clone)]
 enum Then<'i> {
     /// A `match` arm's body.
-    Arm(Pair<'i, Rule>),
+    Arm(Pair<'i>),
     /// The rest of a `[..] = value` chain, if there is any.
-    Rest(Option<Pair<'i, Rule>>),
+    Rest(Option<Pair<'i>>),
     /// The list-pattern parameters still to unpack, then the function body.
-    Params(Vec<(Symbol, Pair<'i, Rule>)>, Option<Pair<'i, Rule>>),
+    Params(Vec<(Symbol, Pair<'i>)>, Option<Pair<'i>>),
 }
 
 /// The arms of one list `match`, which compile together into a decision tree
@@ -203,7 +227,7 @@ enum Then<'i> {
 struct ListMatch<'i> {
     /// Each arm's pattern, what follows it, and whether a leaf lowered it yet.
     rows: Vec<(ListPattern, Then<'i>, bool)>,
-    otherwise: Option<Pair<'i, Rule>>,
+    otherwise: Option<Pair<'i>>,
     otherwise_lowered: bool,
 }
 
@@ -291,6 +315,7 @@ impl Scopes {
 
 #[derive(Default)]
 struct Lower {
+    parser: Parser,
     next_symbol: Symbol,
     next_expr_id: ExprId,
     scopes: Scopes,
@@ -315,9 +340,13 @@ impl Lower {
     /// prelude's names are in scope when `file` is the user's.
     fn lower_source(&mut self, source: &str, file: FileId) -> Result<Expr, GoatError> {
         self.file = file;
-        let mut pairs = GoatParser::parse(Rule::goat, source)
+        let parsed = match self.parser {
+            Parser::Pest => parse_pest(source),
+            Parser::Cst => parse_cst(source),
+        };
+        let tree = parsed
             .map_err(|e| GoatError::new(Span::in_file(0, 0, file), format!("parse error:\n{e}")))?;
-        let goat = pairs.next().expect("goat rule always produces one pair");
+        let goat = tree.root();
         debug_assert!(self.grouped.is_empty());
         for decl in goat
             .clone()
@@ -337,7 +366,7 @@ impl Lower {
 
     /// `tag Foo` opens one tag. Anything with a group name, a payload or a `|`
     /// closes its tags into a group, and each tag belongs to one group only.
-    fn declare_tags(&mut self, decl: Pair<Rule>) {
+    fn declare_tags(&mut self, decl: Pair) {
         let mut group_name = None;
         let mut cases = Vec::new();
         for part in decl.into_inner() {
@@ -391,7 +420,7 @@ impl Lower {
     }
 
     /// A tag payload's type: `group` stands for the group being declared.
-    fn payload_ty(&mut self, ty: &Pair<Rule>, group: Option<&str>, recursive: &mut bool) -> Ty {
+    fn payload_ty(&mut self, ty: &Pair, group: Option<&str>, recursive: &mut bool) -> Ty {
         let (shape, hint) = match ty.as_rule() {
             Rule::type_name if group == Some(ty.as_str()) => {
                 *recursive = true;
@@ -429,7 +458,7 @@ impl Lower {
         Ty::Unit
     }
 
-    fn span_of(&self, pair: &Pair<Rule>) -> Span {
+    fn span_of(&self, pair: &Pair) -> Span {
         let s = pair.as_span();
         Span::in_file(s.start(), s.end(), self.file)
     }
@@ -576,7 +605,7 @@ impl Lower {
         self.scopes.resolve(name)
     }
 
-    fn lower_goat(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_goat(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         self.scopes.push();
         let body = pair
@@ -592,7 +621,7 @@ impl Lower {
     /// more postfix accesses and calls; the grammar leaves those `access` pairs as
     /// siblings, so [`Self::lower_operand`] consumes them before the next
     /// operator.
-    fn lower_expr(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_expr(&mut self, pair: Pair) -> Expr {
         let scopes = self.scopes.len();
         let end = self.span_of(&pair);
         let mut inner = pair.into_inner().peekable();
@@ -663,7 +692,7 @@ impl Lower {
 
     /// Lower the statement at the front of `inner`, through the `;` that ends
     /// it. The flag is whether there was one.
-    fn lower_expr_chain(&mut self, inner: &mut Peekable<Pairs<Rule>>) -> (Expr, bool) {
+    fn lower_expr_chain(&mut self, inner: &mut Peekable<Pairs>) -> (Expr, bool) {
         let mut operands = Vec::new();
         let mut ops: Vec<(Op, Span)> = Vec::new();
         self.push_operand(inner, &mut operands, &mut ops);
@@ -697,7 +726,7 @@ impl Lower {
     /// Any `not`s are pushed as prefix operators, then the operand they apply to.
     fn push_operand(
         &mut self,
-        inner: &mut Peekable<Pairs<Rule>>,
+        inner: &mut Peekable<Pairs>,
         operands: &mut Vec<Expr>,
         ops: &mut Vec<(Op, Span)>,
     ) {
@@ -720,7 +749,7 @@ impl Lower {
         )
     }
 
-    fn lower_operand(&mut self, inner: &mut Peekable<Pairs<Rule>>) -> Expr {
+    fn lower_operand(&mut self, inner: &mut Peekable<Pairs>) -> Expr {
         let first = inner.next().expect("an operand begins with a primary");
         if first.as_rule() == Rule::negation {
             return self.lower_negation(first);
@@ -734,7 +763,7 @@ impl Lower {
     }
 
     /// `a.b(x).c` nests as `((a.b)(x)).c`.
-    fn lower_postfixes(&mut self, mut expr: Expr, inner: &mut Peekable<Pairs<Rule>>) -> Expr {
+    fn lower_postfixes(&mut self, mut expr: Expr, inner: &mut Peekable<Pairs>) -> Expr {
         while let Some(postfix) =
             inner.next_if(|p| matches!(p.as_rule(), Rule::access | Rule::call))
         {
@@ -816,7 +845,7 @@ impl Lower {
     }
 
     /// `-x` is `0 - x`: the HIR has no negation node.
-    fn lower_negation(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_negation(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner().peekable();
         let minus = inner.next().expect("negation begins with `-`");
@@ -891,7 +920,7 @@ impl Lower {
     }
 
     /// Lower a single term (anything that can appear as an operand).
-    fn lower_primary(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_primary(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         match pair.as_rule() {
             Rule::expr => self.lower_expr(pair),
@@ -970,7 +999,7 @@ impl Lower {
     }
 
     /// A binding that is an operand, scoped over the expression after it.
-    fn lower_local(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_local(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let declaration = inner.next().expect("a local begins with a declaration");
@@ -988,8 +1017,8 @@ impl Lower {
     /// `following` is what comes after it in its block.
     fn lower_declaration_head<'i>(
         &mut self,
-        pair: Pair<'i, Rule>,
-        following: impl Iterator<Item = Pair<'i, Rule>> + 'i,
+        pair: Pair<'i>,
+        following: impl Iterator<Item = Pair<'i>> + 'i,
     ) -> Binding {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
@@ -1035,7 +1064,7 @@ impl Lower {
         }
     }
 
-    fn lower_foreign(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_foreign(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair
             .into_inner()
@@ -1060,7 +1089,7 @@ impl Lower {
         )
     }
 
-    fn foreign_name(&mut self, pair: Pair<Rule>, what: &str) -> String {
+    fn foreign_name(&mut self, pair: Pair, what: &str) -> String {
         let span = self.span_of(&pair);
         let text = pair.as_str();
         let is_string = pair
@@ -1078,7 +1107,7 @@ impl Lower {
     }
 
     /// `verb` is "take" for a parameter and "return" for a result.
-    fn boundary(&mut self, ty: &Pair<Rule>, verb: &str) -> Boundary {
+    fn boundary(&mut self, ty: &Pair, verb: &str) -> Boundary {
         let (shape, hint) = match ty.as_rule() {
             Rule::type_name => match Boundary::named(ty.as_str()) {
                 Some(boundary) => return boundary,
@@ -1103,12 +1132,12 @@ impl Lower {
     /// before any body is lowered, so bodies can call each other in any order.
     fn bind_function_group<'i>(
         &mut self,
-        first: &Pair<Rule>,
-        following: impl Iterator<Item = Pair<'i, Rule>> + 'i,
+        first: &Pair,
+        following: impl Iterator<Item = Pair<'i>> + 'i,
     ) {
         let mut seen = HashSet::new();
         self.reserve(first, &mut seen);
-        let mut links: Box<dyn Iterator<Item = Pair<'i, Rule>> + 'i> = Box::new(following);
+        let mut links: Box<dyn Iterator<Item = Pair<'i>> + 'i> = Box::new(following);
         while let Some(link) = links.next() {
             match link.as_rule() {
                 Rule::declaration => {
@@ -1128,7 +1157,7 @@ impl Lower {
         }
     }
 
-    fn reserve(&mut self, name_pair: &Pair<Rule>, seen: &mut HashSet<String>) {
+    fn reserve(&mut self, name_pair: &Pair, seen: &mut HashSet<String>) {
         let name = name_pair.as_str();
         let reserved = seen.insert(name.to_string()).then(|| {
             let symbol = self.fresh_symbol();
@@ -1138,7 +1167,7 @@ impl Lower {
         self.grouped.insert(self.span_of(name_pair).start, reserved);
     }
 
-    fn lower_function(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_function(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         self.scopes.push();
         let mut params = Vec::new();
@@ -1214,7 +1243,7 @@ impl Lower {
 
     /// Bind the names of a `{x, y, ...rest}` pattern in the current scope.
     /// `what` names the construct in the duplicate-name error.
-    fn bind_record_pattern(&mut self, pair: Pair<Rule>, what: &str) -> RecordPattern {
+    fn bind_record_pattern(&mut self, pair: Pair, what: &str) -> RecordPattern {
         let mut pattern = RecordPattern {
             fields: Vec::new(),
             rest: None,
@@ -1299,7 +1328,7 @@ impl Lower {
     }
 
     /// `{x, y} = value rest`: bind `value` once, then each name from it.
-    fn lower_destructure(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_destructure(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let pattern_pair = inner.next().expect("destructuring begins with a pattern");
@@ -1329,7 +1358,7 @@ impl Lower {
         )
     }
 
-    fn lower_record(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_record(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         let mut base = None;
         let mut spreads = 0;
@@ -1398,7 +1427,7 @@ impl Lower {
 
     /// `Circle(5)`: the declared tag `name` and, if a call follows, its payload.
     /// `Empty()` is the same as `Empty`.
-    fn lower_tag(&mut self, name: Pair<Rule>, inner: &mut Peekable<Pairs<Rule>>) -> Expr {
+    fn lower_tag(&mut self, name: Pair, inner: &mut Peekable<Pairs>) -> Expr {
         let mut span = self.span_of(&name);
         let args = match inner.next_if(|p| p.as_rule() == Rule::call) {
             Some(call) => {
@@ -1440,9 +1469,9 @@ impl Lower {
     }
 
     /// `[a, b]` is `Link(a, Link(b, Empty))`.
-    fn lower_list(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_list(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
-        let items: Vec<Pair<Rule>> = pair.into_inner().flat_map(|a| a.into_inner()).collect();
+        let items: Vec<Pair> = pair.into_inner().flat_map(|a| a.into_inner()).collect();
         if self.depth + items.len() > MAX_DEPTH {
             self.errors
                 .push(GoatError::new(span, "list has too many items to write out"));
@@ -1457,11 +1486,11 @@ impl Lower {
         })
     }
 
-    fn lower_match(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_match(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let scrutinee = self.lower_expr(inner.next().expect("match has a scrutinee"));
-        let children: Vec<Pair<Rule>> = inner.collect();
+        let children: Vec<Pair> = inner.collect();
         if children.iter().any(is_list_arm) {
             return self.lower_list_match(span, scrutinee, children);
         }
@@ -1502,7 +1531,7 @@ impl Lower {
         &mut self,
         span: Span,
         scrutinee: Expr,
-        children: Vec<Pair<'i, Rule>>,
+        children: Vec<Pair<'i>>,
     ) -> Expr {
         if self.depth + children.len() > MAX_DEPTH {
             self.errors.push(GoatError::new(
@@ -1607,7 +1636,7 @@ impl Lower {
         }
     }
 
-    fn lower_arm(&mut self, pair: Pair<Rule>) -> MatchArm {
+    fn lower_arm(&mut self, pair: Pair) -> MatchArm {
         let mut inner = pair.into_inner();
         let pattern_pair = inner.next().expect("an arm begins with a pattern");
         let body_pair = inner.next().expect("an arm has a body");
@@ -1619,7 +1648,7 @@ impl Lower {
         MatchArm { pattern, body }
     }
 
-    fn lower_pattern(&mut self, pair: Pair<Rule>) -> Pattern {
+    fn lower_pattern(&mut self, pair: Pair) -> Pattern {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let head = inner.next().expect("a pattern begins with a tag name");
@@ -1664,7 +1693,7 @@ impl Lower {
         Pattern { tag, span, payload }
     }
 
-    fn list_pattern(&mut self, pair: Pair<Rule>) -> ListPattern {
+    fn list_pattern(&mut self, pair: Pair) -> ListPattern {
         let span = self.span_of(&pair);
         let mut items: Vec<(String, Span)> = Vec::new();
         let mut rest = None;
@@ -1703,7 +1732,7 @@ impl Lower {
         &mut self,
         span: Span,
         scrutinee: Expr,
-        children: Vec<Pair<'i, Rule>>,
+        children: Vec<Pair<'i>>,
     ) -> Expr {
         let mut rows = Vec::new();
         let mut otherwise = None;
@@ -1767,7 +1796,7 @@ impl Lower {
         scrutinee: Expr,
         source: Symbol,
         rows: Vec<(ListPattern, Then<'i>, bool)>,
-        otherwise: Option<Pair<'i, Rule>>,
+        otherwise: Option<Pair<'i>>,
     ) -> Expr {
         // Each item adds a nested match, and each name a binding around the body.
         let extra = rows
@@ -1991,7 +2020,7 @@ impl Lower {
     fn lower_list_binding<'i>(
         &mut self,
         source: Symbol,
-        pattern: Pair<'i, Rule>,
+        pattern: Pair<'i>,
         then: Then<'i>,
     ) -> Expr {
         let pattern = self.list_pattern(pattern);
@@ -2003,8 +2032,8 @@ impl Lower {
     /// Unpack each list-pattern parameter in turn around `body`.
     fn lower_list_params<'i>(
         &mut self,
-        params: &[(Symbol, Pair<'i, Rule>)],
-        body: Option<Pair<'i, Rule>>,
+        params: &[(Symbol, Pair<'i>)],
+        body: Option<Pair<'i>>,
         span: Span,
     ) -> Expr {
         match params.split_first() {
@@ -2019,7 +2048,7 @@ impl Lower {
         }
     }
 
-    fn lower_conditional(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_conditional(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair.into_inner();
         let cond = self.lower_expr(inner.next().expect("if has a condition"));
@@ -2050,7 +2079,7 @@ impl Lower {
     ///
     /// A counter's literals take whichever of `Int` and `Float` the loop's use of it needs.
     #[inline(never)]
-    fn lower_loop(&mut self, pair: Pair<Rule>) -> Expr {
+    fn lower_loop(&mut self, pair: Pair) -> Expr {
         let span = self.span_of(&pair);
         let rule = pair.as_rule();
         let mut inner = pair.into_inner().filter(|p| {
@@ -2080,9 +2109,9 @@ impl Lower {
     fn counted_loop(
         &mut self,
         span: Span,
-        counter: Option<&Pair<Rule>>,
+        counter: Option<&Pair>,
         (start, stop, compare): (Expr, Expr, BinOp),
-        body: Option<Pair<Rule>>,
+        body: Option<Pair>,
     ) -> Expr {
         let start_symbol = self.fresh_symbol();
         let stop_symbol = self.fresh_symbol();
@@ -2132,13 +2161,7 @@ impl Lower {
         self.let_node(span, (start_symbol, LOOP_START_NAME), start, with_stop)
     }
 
-    fn each_loop(
-        &mut self,
-        span: Span,
-        name_pair: &Pair<Rule>,
-        list: Expr,
-        body: Option<Pair<Rule>>,
-    ) -> Expr {
+    fn each_loop(&mut self, span: Span, name_pair: &Pair, list: Expr, body: Option<Pair>) -> Expr {
         let go = self.fresh_symbol();
         let remaining = self.fresh_symbol();
         let tail = self.fresh_symbol();
@@ -2188,7 +2211,7 @@ impl Lower {
         self.bind_loop(span, (go, vec![param(remaining, LIST_NAME)], walk), entry)
     }
 
-    fn lower_loop_body(&mut self, span: Span, body: Option<Pair<Rule>>) -> Expr {
+    fn lower_loop_body(&mut self, span: Span, body: Option<Pair>) -> Expr {
         match body {
             Some(body) => self.lower_expr(body),
             None => self.node(span, ExprKind::Unit),
@@ -2273,7 +2296,7 @@ struct Binding {
 /// How deep the statement at the front of `kids` can get: a left-leaning tree
 /// of its operands, plus a level for each `not`. The statements after a `;`
 /// are lowered on their own.
-fn chain_depth(kids: &Peekable<Pairs<Rule>>) -> usize {
+fn chain_depth(kids: &Peekable<Pairs>) -> usize {
     let (mut nots, mut others) = (0, 0);
     for child in kids.clone().take_while(|p| p.as_rule() != Rule::sequel) {
         match child.as_rule() {
@@ -2284,7 +2307,7 @@ fn chain_depth(kids: &Peekable<Pairs<Rule>>) -> usize {
     others / 2 + 1 + nots
 }
 
-fn is_list_arm(child: &Pair<Rule>) -> bool {
+fn is_list_arm(child: &Pair) -> bool {
     child.as_rule() == Rule::arm
         && child
             .clone()
@@ -2293,7 +2316,7 @@ fn is_list_arm(child: &Pair<Rule>) -> bool {
             .is_some_and(|p| p.as_rule() == Rule::list_pattern)
 }
 
-fn is_literal_arm(child: &Pair<Rule>) -> bool {
+fn is_literal_arm(child: &Pair) -> bool {
     child.as_rule() == Rule::arm
         && child
             .clone()
@@ -2310,7 +2333,7 @@ fn scalar_kind(literal: &Expr) -> std::mem::Discriminant<ExprKind> {
     }
 }
 
-fn is_program_literal(expr: &Pair<Rule>) -> bool {
+fn is_program_literal(expr: &Pair) -> bool {
     let mut kids = expr.clone().into_inner();
     matches!((kids.next(), kids.next()), (Some(p), None) if p.as_rule() == Rule::function)
 }

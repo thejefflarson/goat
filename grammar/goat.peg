@@ -1,0 +1,142 @@
+# goat's grammar, the single source of truth the parser interprets (ADR 0022).
+#
+#   rule <- body        a rule that makes a node of its own name in the tree
+#   _rule <- body       a silent rule: its pieces join the enclosing node
+#   a b                 sequence             a / b       ordered choice
+#   a* a+ a?            repetition, option   ( a )       grouping
+#   'text'              one token with exactly that text
+#   NAME NUMBER STRING  one token of that kind        EOI   the end of input
+#
+# Choice is ordered and commits to the first alternative that matches, as in
+# a PEG: `local` (a binding) is tried before a bare `name`, `destructure` before
+# `record` and `list`. Whitespace and comments are trivia the lexer sets
+# aside, so no rule mentions them; the lexer also decides word boundaries, so
+# `doner` is a NAME and `done` is not. A NAME is any identifier the lexer does
+# not reserve, so the words `from`, `to`, `in` and `foreign` are names except
+# where a rule spells them out.
+
+# Declarations come first and are hoisted: they produce no value, and every tag
+# is visible to the whole program. `tag Circle` declares a tag; `tag Shape =
+# Circle(Number) | Dot` declares a closed group of them, named only when a
+# payload refers back to it.
+goat <- tag_decl* expr? EOI
+tag_decl <- tag_kw (group_name '=')? tag_case ('|' tag_case)*
+tag_kw <- 'tag'
+group_name <- name
+tag_case <- name ('(' _type_expr (',' _type_expr)* ')')?
+
+# `a; b` runs `a`, drops its value, and continues with `b`; a statement ends
+# only at an explicit `;`. A block is a flat run of siblings: statements, each
+# `sequel` ending one, and bindings, which need no `;` and bind their name for
+# everything after them.
+expr <- _part (sequel _part)* sequel?
+sequel <- ';'
+_part <- declaration+ _statement? / _statement
+_statement <- _operand _more_math*
+_more_math <- _infix _operand
+_operand <- not_op* _term
+
+# A binding's value stops at a `;`, so `x = 1; x` binds `x` for the statements
+# after it instead of sequencing inside the value.
+value <- _operand _more_math*
+
+# Operators are a flat run; lowering resolves their precedence (ADR 0013).
+_infix <- and_op / or_op / plus / minus / multiply / floor_divide / divide
+        / remainder / equal / not_equal / lte / lt / gte / gt
+and_op <- 'and'
+or_op <- 'or'
+not_op <- 'not'
+plus <- '+'
+minus <- '-'
+multiply <- '*'
+floor_divide <- '//'
+divide <- '/'
+remainder <- '%'
+equal <- '=='
+not_equal <- '!='
+lte <- '<='
+lt <- '<'
+gte <- '>='
+gt <- '>'
+
+# `negation` keeps its operand's postfixes inside it, so `-f(x)` is `-(f(x))`.
+_term <- negation / _primary _postfix*
+negation <- minus (negation / _primary _postfix*)
+_postfix <- access / call
+access <- '.' name
+call <- '(' arguments? ')'
+arguments <- expr (',' expr)* ','?
+
+_primary <- number / string / boolean / destructure / local / function
+          / conditional / match_expr / repeat_loop / count_loop / each_loop
+          / record / list / name / '(' expr ')'
+
+number <- NUMBER
+string <- STRING
+boolean <- true_lit / false_lit
+true_lit <- 'true'
+false_lit <- 'false'
+name <- NAME
+
+# `{...base, x: 1}`: a spread is accepted anywhere so that lowering can say
+# what is wrong with `{...a, ...b}`, instead of a bare parse error.
+record <- '{' (_record_item (',' _record_item)* ','?)? '}'
+_record_item <- spread / field
+spread <- '...' expr
+field <- name ':' expr
+
+# A binding as an operand (`1 + x = 2 x`) takes the rest of the expression as
+# its scope, so it nests; the bindings that begin a statement are siblings in
+# `_part` instead.
+local <- declaration expr?
+declaration <- name '=' (foreign_decl / value) ';'?
+
+# `forward = foreign "turtle" "forward" (Number) -> Unit`: a function the host
+# provides. The module and name accept any plain operand so lowering can say
+# they must be string literals; the types accept every shape a host interface
+# has so lowering can say which are not supported yet.
+foreign_kw <- 'foreign'
+foreign_decl <- foreign_kw foreign_name foreign_name fn_type
+foreign_name <- string / number / boolean / name
+fn_type <- '(' (_type_expr (',' _type_expr)* ','?)? ')' '->' _type_expr
+_type_expr <- fn_type / list_type / record_type / type_name
+list_type <- '[' _type_expr ']'
+record_type <- '{' (field_type (',' field_type)* ','?)? '}'
+field_type <- name ':' _type_expr
+type_name <- NAME
+
+# `{x, y} = point`, `{x, ...rest} = point`, `[first, ...rest] = xs`. Tried
+# before `record` and `list`: a pattern has bare names where a literal has
+# `name: value`.
+destructure <- (record_pattern / list_pattern) '=' value ';'? expr?
+record_pattern <- '{' ((name (',' name)* (',' rest_binding)? / rest_binding) ','?) '}'
+list_pattern <- '[' ((name (',' name)* (',' rest_binding)? / rest_binding) ','?)? ']'
+rest_binding <- '...' name
+
+function <- ('program' / 'function') '(' params? ')' 'do' expr? 'done'
+params <- _param (',' _param)*
+_param <- record_pattern / list_pattern / name
+
+conditional <- 'if' expr 'then' expr _else_branch? 'done'
+_else_branch <- 'else' expr
+
+# `[]` is `Empty`; `[x, ...rest]` is `Link(x, rest)`.
+list <- '[' arguments? ']'
+
+# A pattern head is always a tag: `Empty`, `Circle(r)`, `Link(x, rest)`. A
+# scalar literal pattern matches by value: `0`, `"go"`, `true`.
+match_expr <- 'match' expr 'do' arm* _else_branch? 'done'
+arm <- (list_pattern / literal_pattern / pattern) 'then' expr
+pattern <- name ('(' labels? ')')?
+labels <- name (',' name)*
+literal_pattern <- number / string / boolean
+
+# `repeat 3 times do ... done`, `for i from 1 to 10 do ... done` (both ends
+# included) and `for x in xs do ... done`. A loop is `()`.
+repeat_loop <- 'repeat' expr 'times' 'do' expr? 'done'
+count_loop <- for_kw name from_kw expr to_kw expr 'do' expr? 'done'
+each_loop <- for_kw name in_kw expr 'do' expr? 'done'
+for_kw <- 'for'
+from_kw <- 'from'
+to_kw <- 'to'
+in_kw <- 'in'
