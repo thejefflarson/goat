@@ -8,7 +8,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
-use goat::native::{Boundary, Host, HostValue, NoHost};
+use goat::{Boundary, Host, HostValue, NoHost};
 use wasmparser::ValType;
 
 mod ffi;

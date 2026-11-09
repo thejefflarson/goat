@@ -2,7 +2,7 @@
 //! events, and stream each frame it draws to a [`SceneSink`].
 
 use super::{Guest, site_table};
-use goat_mir::{Scene, SceneSink};
+use crate::{Scene, SceneSink};
 use std::time::Duration;
 
 const EVENT_PREFIX: &str = "goat_event_";

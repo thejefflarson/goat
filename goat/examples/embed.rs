@@ -3,8 +3,8 @@
 //!
 //!     cargo run -p goat --features native --example embed
 
-use goat::HostInterface;
-use goat::native::{Boundary, Host, HostValue, run_to_end};
+use goat::native::run_to_end;
+use goat::{Boundary, Host, HostInterface, HostValue};
 
 struct Logger(Vec<String>);
 

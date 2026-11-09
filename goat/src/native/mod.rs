@@ -7,6 +7,7 @@
 //!   [`Interactive::reload`] swaps in a recompiled program over the same heap.
 //! - [`Guest`] is the raw instance both are built on.
 
+use crate::{Boundary, Host, HostValue, NoHost};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -14,8 +15,6 @@ use wasmtime::{Caller, Config, Engine, ExternType, Instance, Linker, Module, Sto
 
 mod interactive;
 
-pub use goat_checker::hir::Boundary;
-pub use goat_mir::{Host, HostValue, NoHost, SceneSink};
 pub use interactive::{Event, Interactive, Reloaded};
 
 /// What a finished program left behind.
