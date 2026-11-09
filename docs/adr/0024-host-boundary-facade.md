@@ -17,7 +17,8 @@ embedder depends on.
 ## Decision
 
 The `goat` crate re-exports the host boundary at its root: `Host`, `HostValue`,
-`NoHost`, `Boundary`, `Scene`, `SceneCommand`, `SceneHost` and `SceneSink`.
+`NoHost`, `Boundary`, `Scene`, `SceneCommand`, `SceneHost`, `SceneSink` and `check_color` (the one color allowlist every host
+shares).
 Clients (the CLI, `goat_wamr`, `goat::native`, examples) import host types from
 `goat`, not from `goat_mir` or `goat_checker`.
 

@@ -9,7 +9,7 @@
 // for exactly the events the module can build. The requestAnimationFrame loop
 // that drives them is separate; this file is what each turn of it calls.
 
-import { COLOR_PATTERN, readString } from "./runtime.ts";
+import { checkColor, readString } from "./runtime.ts";
 
 const STR_LEN = 8;
 const STR_BYTES = 12;
@@ -59,13 +59,7 @@ function finite(name: string, x: number): number {
 // The scene.* imports over `scene`. A color outside ADR 0014's allowlist and a
 // non-finite coordinate throw, which traps the program like turtle.color does.
 export function sceneImports(memory: () => WebAssembly.Memory, scene: Scene): SceneImports {
-  const color = (ptr: number) => {
-    const value = readString(memory(), ptr);
-    if (!COLOR_PATTERN.test(value)) {
-      throw new Error(`color wants a name like "red" or a code like "#ff8800", not ${JSON.stringify(value)}`);
-    }
-    return value;
-  };
+  const color = (ptr: number) => checkColor(readString(memory(), ptr));
   return {
     scene: {
       begin: () => scene.begin(),
