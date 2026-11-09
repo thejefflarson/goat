@@ -49,7 +49,7 @@ const OVERFLOW: &str = "this number got too big";
 /// The printed lines of `src` on `profile`, which the interpreter and wasm
 /// must agree on, with nothing left allocated by either.
 fn run_on(profile: Profile, src: &str) -> String {
-    let (expected, live) = interpret_on(profile, goat_checker::PRELUDE, src, &mut goat_mir::NoHost);
+    let (expected, live) = interpret_on(profile, goat_checker::PRELUDE, src, &mut goat::NoHost);
     assert_eq!(live, 0, "interpreter leaked on {profile:?}: {src}");
     let (printed, wasm_live) = compiled_on(profile, goat_checker::PRELUDE, src);
     assert_eq!(wasm_live, 0, "wasm leaked on {profile:?}: {src}");

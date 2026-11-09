@@ -2,11 +2,8 @@
 //! module through the native drivers.
 #![cfg(feature = "native")]
 
-use goat::native::{
-    Boundary, Event, Host, HostValue, Interactive, Reloaded, SceneSink, run_to_end,
-    run_to_end_within,
-};
-use goat::{HostInterface, compile};
+use goat::native::{Event, Interactive, Reloaded, run_to_end, run_to_end_within};
+use goat::{Boundary, Host, HostInterface, HostValue, SceneSink, compile};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -62,7 +59,7 @@ fn a_trap_keeps_the_output_and_names_the_message() {
         &HostInterface::with_stdlib(""),
     )
     .expect("compiles");
-    let finished = run_to_end(&wasm, goat::native::NoHost).expect("instantiates");
+    let finished = run_to_end(&wasm, goat::NoHost).expect("instantiates");
     assert_eq!(finished.printed, ["before"]);
     assert_eq!(finished.result.unwrap_err().message, "boom");
 }
@@ -73,12 +70,8 @@ const SPIN: &str = "spin = program(n) do if n < 0 then n else spin(n + 1) done d
 fn a_run_once_program_that_never_ends_is_stopped_by_its_timeout() {
     let wasm = compile(SPIN, &HostInterface::with_stdlib("")).expect("compiles");
     let started = Instant::now();
-    let finished = run_to_end_within(
-        &wasm,
-        goat::native::NoHost,
-        Some(Duration::from_millis(100)),
-    )
-    .expect("instantiates");
+    let finished = run_to_end_within(&wasm, goat::NoHost, Some(Duration::from_millis(100)))
+        .expect("instantiates");
     let message = finished.result.unwrap_err().message;
     assert!(message.contains("looks stuck"), "{message}");
     assert!(started.elapsed() < Duration::from_secs(10));
@@ -87,8 +80,8 @@ fn a_run_once_program_that_never_ends_is_stopped_by_its_timeout() {
 #[test]
 fn a_timeout_does_not_disturb_a_program_that_finishes_in_time() {
     let wasm = compile("print(1 + 2)", &HostInterface::with_stdlib("")).expect("compiles");
-    let finished = run_to_end_within(&wasm, goat::native::NoHost, Some(Duration::from_secs(60)))
-        .expect("runs");
+    let finished =
+        run_to_end_within(&wasm, goat::NoHost, Some(Duration::from_secs(60))).expect("runs");
     assert_eq!(finished.printed, ["3"]);
     assert_eq!(finished.result, Ok(0));
 }

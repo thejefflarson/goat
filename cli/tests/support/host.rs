@@ -3,8 +3,8 @@
 //! Every call is recorded in `log`, which is how a test sees the order and
 //! count of calls whose result is `Unit`.
 
-use goat_checker::hir::Boundary::{self, Bool, Int, Number, Str, Unit};
-use goat_mir::{Host, HostValue};
+use goat::Boundary::{self, Bool, Int, Number, Str, Unit};
+use goat::{Host, HostValue};
 
 #[derive(Default)]
 pub struct TestHost {

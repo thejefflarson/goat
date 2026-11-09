@@ -3,8 +3,9 @@
 //! The two must agree on the model after every event and on the scene `draw`
 //! streams, command for command, and leave nothing allocated.
 
+use goat::{SceneCommand, SceneHost};
 use goat_cli::Guest;
-use goat_mir::{HeapKind, Layout, MTy, Program, SceneCommand, SceneHost, Session, Value};
+use goat_mir::{HeapKind, Layout, MTy, Program, Session, Value};
 use std::time::{Duration, Instant};
 
 const EXAMPLE: &str = include_str!("../../examples/interactive.goat");

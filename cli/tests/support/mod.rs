@@ -1,8 +1,8 @@
 //! Shared by the differential tests and the fuzz target: run a program through
 //! the interpreter and wasm, and generate terminating, well-typed programs.
 
+use goat::{Host, NoHost, Profile};
 use goat_mir::interp::{self, InterpError, Piece, Value};
-use goat_mir::{Host, NoHost, Profile};
 
 mod host;
 

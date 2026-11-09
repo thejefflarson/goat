@@ -5,8 +5,8 @@
 //! The turtle starts at the origin facing up, pen down, drawing black. `left`
 //! and `right` turn by degrees; the picture's y axis points down, as in SVG.
 
-use goat_checker::hir::Boundary::{self, Number, Str, Unit};
-use goat_mir::{Host, HostValue};
+use goat::Boundary::{self, Number, Str, Unit};
+use goat::{Host, HostValue};
 use std::fmt::Write;
 
 /// A bound on a runaway program's memory, not on any honest drawing.

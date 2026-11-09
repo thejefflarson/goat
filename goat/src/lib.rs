@@ -1,8 +1,9 @@
 //! The goat compiler pipeline: source text to a WebAssembly module.
 
+pub use goat_checker::hir::Boundary;
 use goat_checker::hir::Span;
 use goat_checker::{GoatError, Vocab};
-pub use goat_mir::Profile;
+pub use goat_mir::{Host, HostValue, NoHost, Profile, Scene, SceneCommand, SceneHost, SceneSink};
 
 #[cfg(feature = "native")]
 pub mod native;

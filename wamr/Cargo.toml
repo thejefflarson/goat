@@ -7,8 +7,6 @@ build = "build.rs"
 
 [dependencies]
 goat = { path = "../goat", features = ["native"] }
-goat_checker = { path = "../checker" }
-goat_mir = { path = "../mir" }
 wasmparser = "0.263.0"
 
 [dev-dependencies]
