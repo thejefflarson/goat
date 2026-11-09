@@ -532,12 +532,16 @@ fn load_data(alloc_fn: u32, len: u32) -> Function {
             data_index: 0,
         },
         DataDrop(0),
-        End,
     ];
-    let mut f = Function::new([]);
-    for instr in &code {
+    assemble(Function::new([]), &code)
+}
+
+/// Appends `code` and the closing `End` to `f`.
+fn assemble(mut f: Function, code: &[Instruction]) -> Function {
+    for instr in code {
         f.instruction(instr);
     }
+    f.instruction(&Instruction::End);
     f
 }
 
@@ -650,14 +654,7 @@ fn interactive_exports(
         (1, shutdown),
     ]
     .into_iter()
-    .map(|(locals, code)| {
-        let mut f = Function::new([(locals, ValType::I32)]);
-        for instr in &code {
-            f.instruction(instr);
-        }
-        f.instruction(&Instruction::End);
-        f
-    })
+    .map(|(locals, code)| assemble(Function::new([(locals, ValType::I32)]), &code))
     .collect())
 }
 
@@ -903,21 +900,13 @@ fn helper_body(shared: &mut Shared, helper: Helper) -> Result<Function, EmitErro
                     arms.push((tag, arm));
                 }
             }
-            let tag = vec![
-                Instruction::LocalGet(object),
-                Instruction::I32Load(memarg(layout::TAG, 2)),
-            ];
+            let tag = load_tag(object);
             code.extend(branch_on_tag(tag, arms, Code::new(), BlockType::Empty));
         }
     }
     code.push(Instruction::LocalGet(pending));
     // One scratch local, past the two parameters, holds the child being released.
-    let mut f = Function::new([(1, ValType::I32)]);
-    for instr in &code {
-        f.instruction(instr);
-    }
-    f.instruction(&Instruction::End);
-    Ok(f)
+    Ok(assemble(Function::new([(1, ValType::I32)]), &code))
 }
 
 /// Release the field of type `ty` at `offset` of the object being dropped
@@ -988,7 +977,6 @@ fn drop_loop(shared: &mut Shared) -> Function {
     let (object, drop_fn, pending) = (0, 1, 2);
     let drop_type = shared.drop_type();
     let class = memarg(layout::CLASS, 2);
-    let mut f = Function::new([(1, ValType::I32)]);
     let code = [
         Block(BlockType::Empty),
         Loop(BlockType::Empty),
@@ -1029,12 +1017,8 @@ fn drop_loop(shared: &mut Shared) -> Function {
         Br(0),
         End,
         End,
-        End,
     ];
-    for instr in &code {
-        f.instruction(instr);
-    }
-    f
+    assemble(Function::new([(1, ValType::I32)]), &code)
 }
 
 /// `block` leaving the value of `arms[i]`'s code, where `tag` leaves the
@@ -1061,6 +1045,13 @@ fn branch_on_tag(tag: Code, arms: Vec<(u32, Code)>, default: Code, block: BlockT
     out.extend(default);
     out.push(End);
     out
+}
+
+fn load_tag(object: u32) -> Code {
+    vec![
+        Instruction::LocalGet(object),
+        Instruction::I32Load(memarg(layout::TAG, 2)),
+    ]
 }
 
 pub(crate) fn memarg(offset: u32, align: u32) -> MemArg {
@@ -1267,12 +1258,10 @@ fn lower_func(shared: &mut Shared, func: &Func) -> Result<Function, EmitError> {
     cx.declared.clear();
     let mut code = Code::new();
     cx.lower(&func.body, &mut code)?;
-    let mut f = Function::new_with_locals_types(cx.declared);
-    for instr in &code {
-        f.instruction(instr);
-    }
-    f.instruction(&Instruction::End);
-    Ok(f)
+    Ok(assemble(
+        Function::new_with_locals_types(cx.declared),
+        &code,
+    ))
 }
 
 struct FuncCx<'a, 'p> {
@@ -1307,6 +1296,21 @@ impl<'p> FuncCx<'_, 'p> {
         let index = val_type(self.program.profile, ty).map(|vt| self.scratch(vt));
         self.scope.insert(local, (index, ty));
         index
+    }
+
+    fn block_type(&self, ty: Ty) -> BlockType {
+        match ty.and_then(|ty| val_type(self.program.profile, ty)) {
+            Some(vt) => BlockType::Result(vt),
+            None => BlockType::Empty,
+        }
+    }
+
+    fn record_fields(&self, l: LayoutId, count: usize) -> Result<&'p [MTy], EmitError> {
+        match self.program.layouts.get(l.0 as usize) {
+            Some(Layout::Record(types)) if types.len() == count => Ok(types),
+            Some(Layout::Record(_)) => Err(EmitError::Malformed("record field count")),
+            _ => Err(EmitError::Malformed("record layout")),
+        }
     }
 
     fn pointer(&self, local: Local) -> Result<(u32, HeapKind), EmitError> {
@@ -1380,12 +1384,7 @@ impl<'p> FuncCx<'_, 'p> {
         fields: &[Expr],
         out: &mut Code,
     ) -> Result<Ty, EmitError> {
-        let Some(Layout::Record(types)) = self.program.layouts.get(l.0 as usize) else {
-            return Err(EmitError::Malformed("record layout"));
-        };
-        if types.len() != fields.len() {
-            return Err(EmitError::Malformed("record field count"));
-        }
+        let types = self.record_fields(l, fields.len())?;
         let (base, kind) = self.pointer(x)?;
         if kind != HeapKind::Record(l) {
             return Err(EmitError::Malformed("reuse of a different layout"));
@@ -1461,11 +1460,12 @@ impl<'p> FuncCx<'_, 'p> {
             return Ok(None);
         };
         let ptr = self.allocate(layout::object_size(layout::CAPTURES, captures.len()), out);
-        let drop_fn = if env.captures.iter().any(|c| c.is_ptr()) {
-            self.shared.helper(Helper::ClosureDrop(f))
+        let drop_helper = if env.captures.iter().any(|c| c.is_ptr()) {
+            Helper::ClosureDrop(f)
         } else {
-            self.shared.helper(Helper::Noop)
+            Helper::Noop
         };
+        let drop_fn = self.shared.helper(drop_helper);
         let drop_slot = self.shared.table_slot(drop_fn);
         let code_slot = self.shared.table_slot(self.shared.imports + f.0);
         for (offset, slot) in [(layout::DROP_FN, drop_slot), (layout::CODE, code_slot)] {
@@ -1639,12 +1639,7 @@ impl<'p> FuncCx<'_, 'p> {
                 Ok(Some(ty))
             }
             Expr::AllocRecord(l, fields) => {
-                let Some(Layout::Record(types)) = self.program.layouts.get(l.0 as usize) else {
-                    return Err(EmitError::Malformed("record layout"));
-                };
-                if types.len() != fields.len() {
-                    return Err(EmitError::Malformed("record field count"));
-                }
+                let types = self.record_fields(*l, fields.len())?;
                 let Some(temps) = self.evaluate(fields, out)? else {
                     return Ok(None);
                 };
@@ -1693,15 +1688,8 @@ impl<'p> FuncCx<'_, 'p> {
                 }
                 let mut default_code = Code::new();
                 ty = ty.or(self.lower(default, &mut default_code)?);
-                let block = match ty.and_then(|ty| val_type(self.program.profile, ty)) {
-                    Some(vt) => BlockType::Result(vt),
-                    None => BlockType::Empty,
-                };
-                let tag = vec![
-                    Instruction::LocalGet(ptr),
-                    Instruction::I32Load(memarg(layout::TAG, 2)),
-                ];
-                out.extend(branch_on_tag(tag, lowered, default_code, block));
+                let block = self.block_type(ty);
+                out.extend(branch_on_tag(load_tag(ptr), lowered, default_code, block));
                 if ty.is_none() {
                     out.push(Instruction::Unreachable);
                 }
@@ -1913,11 +1901,7 @@ impl<'p> FuncCx<'_, 'p> {
         let then_ty = self.lower(then, &mut then_code)?;
         let else_ty = self.lower(els, &mut else_code)?;
         let ty = then_ty.or(else_ty);
-        let block = match ty.and_then(|ty| val_type(self.program.profile, ty)) {
-            Some(vt) => BlockType::Result(vt),
-            None => BlockType::Empty,
-        };
-        out.push(Instruction::If(block));
+        out.push(Instruction::If(self.block_type(ty)));
         out.extend(then_code);
         out.push(Instruction::Else);
         out.extend(else_code);
