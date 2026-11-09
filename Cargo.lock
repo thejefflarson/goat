@@ -700,6 +700,7 @@ dependencies = [
 name = "goat_parser"
 version = "0.1.0"
 dependencies = [
+ "bolero",
  "pest",
  "pest_derive",
  "unicode-ident",

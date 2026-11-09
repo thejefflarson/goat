@@ -7,6 +7,19 @@
 #   'text'              one token with exactly that text
 #   NAME NUMBER STRING  one token of that kind        EOI   the end of input
 #
+# Recovery annotations steer the parser on broken input and change nothing
+# about valid input:
+#   a@expect    `a` is required here. If it is absent the parser inserts a
+#               zero-width MISSING node and goes on; if `a` is a keyword that
+#               sits further ahead, the tokens between are an ERROR node.
+#   @sync('x')  before a rule: tokens where the rule's panic-mode skipping
+#               stops, so `;` ends junk instead of swallowing the next statement.
+#   @anchor('x') before a rule: tokens an inner recovery must not consume,
+#               because this rule is waiting for them (`done` closes a `match`).
+#   @nest       before a rule: it counts as one level of expression nesting.
+# Put `@expect` only after a prefix no other alternative shares: a choice
+# commits to an alternative that supplies a MISSING node instead of failing.
+#
 # Choice is ordered and commits to the first alternative that matches, as in
 # a PEG: `local` (a binding) is tried before a bare `name`, `destructure` before
 # `record` and `list`. Whitespace and comments are trivia the lexer sets
@@ -19,8 +32,9 @@
 # is visible to the whole program. `tag Circle` declares a tag; `tag Shape =
 # Circle(Number) | Dot` declares a closed group of them, named only when a
 # payload refers back to it.
+@sync(';')
 goat <- tag_decl* expr? EOI
-tag_decl <- tag_kw (group_name '=')? tag_case ('|' tag_case)*
+tag_decl <- tag_kw (group_name '=')? tag_case@expect ('|' tag_case@expect)*
 tag_kw <- 'tag'
 group_name <- name
 tag_case <- name ('(' _type_expr (',' _type_expr)* ')')?
@@ -29,15 +43,18 @@ tag_case <- name ('(' _type_expr (',' _type_expr)* ')')?
 # only at an explicit `;`. A block is a flat run of siblings: statements, each
 # `sequel` ending one, and bindings, which need no `;` and bind their name for
 # everything after them.
+@sync(';')
+@nest
 expr <- _part (sequel _part)* sequel?
 sequel <- ';'
 _part <- declaration+ _statement? / _statement
 _statement <- _operand _more_math*
-_more_math <- _infix _operand
+_more_math <- _infix _operand@expect
 _operand <- not_op* _term
 
 # A binding's value stops at a `;`, so `x = 1; x` binds `x` for the statements
 # after it instead of sequencing inside the value.
+@sync(';')
 value <- _operand _more_math*
 
 # Operators are a flat run; lowering resolves their precedence (ADR 0013).
@@ -61,15 +78,17 @@ gt <- '>'
 
 # `negation` keeps its operand's postfixes inside it, so `-f(x)` is `-(f(x))`.
 _term <- negation / _primary _postfix*
+@nest
 negation <- minus (negation / _primary _postfix*)
 _postfix <- access / call
-access <- '.' name
-call <- '(' arguments? ')'
+access <- '.' name@expect
+@sync(';')
+call <- '(' arguments? ')'@expect
 arguments <- expr (',' expr)* ','?
 
 _primary <- number / string / boolean / destructure / local / function
           / conditional / match_expr / repeat_loop / count_loop / each_loop
-          / record / list / name / '(' expr ')'
+          / record / list / name / '(' expr ')'@expect
 
 number <- NUMBER
 string <- STRING
@@ -80,16 +99,17 @@ name <- NAME
 
 # `{...base, x: 1}`: a spread is accepted anywhere so that lowering can say
 # what is wrong with `{...a, ...b}`, instead of a bare parse error.
-record <- '{' (_record_item (',' _record_item)* ','?)? '}'
+@sync(';')
+record <- '{' (_record_item (',' _record_item)* ','?)? '}'@expect
 _record_item <- spread / field
-spread <- '...' expr
-field <- name ':' expr
+spread <- '...' expr@expect
+field <- name ':' expr@expect
 
 # A binding as an operand (`1 + x = 2 x`) takes the rest of the expression as
 # its scope, so it nests; the bindings that begin a statement are siblings in
 # `_part` instead.
 local <- declaration expr?
-declaration <- name '=' (foreign_decl / value) ';'?
+declaration <- name '=' (foreign_decl / value)@expect ';'?
 
 # `forward = foreign "turtle" "forward" (Number) -> Unit`: a function the host
 # provides. The module and name accept any plain operand so lowering can say
@@ -98,9 +118,12 @@ declaration <- name '=' (foreign_decl / value) ';'?
 foreign_kw <- 'foreign'
 foreign_decl <- foreign_kw foreign_name foreign_name fn_type
 foreign_name <- string / number / boolean / name
+@nest
 fn_type <- '(' (_type_expr (',' _type_expr)* ','?)? ')' '->' _type_expr
 _type_expr <- fn_type / list_type / record_type / type_name
+@nest
 list_type <- '[' _type_expr ']'
+@nest
 record_type <- '{' (field_type (',' field_type)* ','?)? '}'
 field_type <- name ':' _type_expr
 type_name <- NAME
@@ -108,34 +131,41 @@ type_name <- NAME
 # `{x, y} = point`, `{x, ...rest} = point`, `[first, ...rest] = xs`. Tried
 # before `record` and `list`: a pattern has bare names where a literal has
 # `name: value`.
-destructure <- (record_pattern / list_pattern) '=' value ';'? expr?
+destructure <- (record_pattern / list_pattern) '=' value@expect ';'? expr?
 record_pattern <- '{' ((name (',' name)* (',' rest_binding)? / rest_binding) ','?) '}'
 list_pattern <- '[' ((name (',' name)* (',' rest_binding)? / rest_binding) ','?)? ']'
 rest_binding <- '...' name
 
-function <- ('program' / 'function') '(' params? ')' 'do' expr? 'done'
+@anchor('do' 'done')
+function <- ('program' / 'function') '('@expect params? ')'@expect 'do'@expect expr? 'done'@expect
 params <- _param (',' _param)*
 _param <- record_pattern / list_pattern / name
 
-conditional <- 'if' expr 'then' expr _else_branch? 'done'
-_else_branch <- 'else' expr
+@anchor('then' 'else' 'done')
+conditional <- 'if' expr 'then'@expect expr@expect _else_branch? 'done'@expect
+_else_branch <- 'else' expr@expect
 
 # `[]` is `Empty`; `[x, ...rest]` is `Link(x, rest)`.
-list <- '[' arguments? ']'
+@sync(';')
+list <- '[' arguments? ']'@expect
 
 # A pattern head is always a tag: `Empty`, `Circle(r)`, `Link(x, rest)`. A
 # scalar literal pattern matches by value: `0`, `"go"`, `true`.
-match_expr <- 'match' expr 'do' arm* _else_branch? 'done'
-arm <- (list_pattern / literal_pattern / pattern) 'then' expr
+@anchor('do' 'done')
+match_expr <- 'match' expr@expect 'do'@expect arm* _else_branch? 'done'@expect
+arm <- (list_pattern / literal_pattern / pattern) 'then'@expect expr@expect
 pattern <- name ('(' labels? ')')?
 labels <- name (',' name)*
 literal_pattern <- number / string / boolean
 
 # `repeat 3 times do ... done`, `for i from 1 to 10 do ... done` (both ends
 # included) and `for x in xs do ... done`. A loop is `()`.
-repeat_loop <- 'repeat' expr 'times' 'do' expr? 'done'
-count_loop <- for_kw name from_kw expr to_kw expr 'do' expr? 'done'
-each_loop <- for_kw name in_kw expr 'do' expr? 'done'
+@anchor('times' 'do' 'done')
+repeat_loop <- 'repeat' expr@expect 'times'@expect 'do'@expect expr? 'done'@expect
+@anchor('from' 'to' 'do' 'done')
+count_loop <- for_kw name from_kw expr@expect to_kw@expect expr@expect 'do'@expect expr? 'done'@expect
+@anchor('in' 'do' 'done')
+each_loop <- for_kw name in_kw expr@expect 'do'@expect expr? 'done'@expect
 for_kw <- 'for'
 from_kw <- 'from'
 to_kw <- 'to'

@@ -3,14 +3,29 @@
 //! 0022 §4). Nodes and tokens are addressed by index, so the tree is plainly
 //! `Clone`, `Send` and wasm32-clean. Typed views at the bottom wrap a node and
 //! return `Option` for every child, since a recovered tree may lack any of them.
+//!
+//! A recovered tree also holds two kinds of node no rule names: `ERROR`, which
+//! keeps the tokens the grammar could not place, and `MISSING`, a zero-width
+//! node where a required piece should have been.
 
 use crate::lexer::{Token, TokenKind};
 use crate::peg::{Grammar, RuleId};
 
+/// What a node stands for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Rule(RuleId),
+    Error,
+    /// What was expected, as the grammar spells it.
+    Missing(&'static str),
+}
+
 /// What the interpreter did, in order; [`Cst::build`] turns it into the arena.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Event {
-    Open(RuleId),
+    Open(Kind),
+    /// A zero-width [`Kind::Missing`] node right after the last token placed.
+    Missing(&'static str),
     /// The token at this index of the full, trivia-included token list.
     Token(usize),
     /// The trivia up to the next token belongs to the open node, as pest's
@@ -29,7 +44,7 @@ enum Element {
 
 #[derive(Clone, Debug)]
 struct NodeData {
-    kind: RuleId,
+    kind: Kind,
     start: usize,
     end: usize,
     first_child: u32,
@@ -63,7 +78,7 @@ impl Cst {
             nodes: Vec::new(),
             children: Vec::new(),
         };
-        let mut open: Vec<(RuleId, Vec<Element>)> = Vec::new();
+        let mut open: Vec<(Kind, Vec<Element>)> = Vec::new();
         let mut emitted = 0;
         for (at, event) in events.iter().enumerate() {
             let next_token = || {
@@ -87,6 +102,14 @@ impl Cst {
             match *event {
                 Event::Skip => {}
                 Event::Open(kind) => open.push((kind, Vec::new())),
+                Event::Missing(expected) => {
+                    let at = emitted.checked_sub(1).map_or(0, |i| cst.tokens[i].end);
+                    let id = cst.push_node(Kind::Missing(expected), &[], at);
+                    open.last_mut()
+                        .expect("a node holds it")
+                        .1
+                        .push(Element::Node(id));
+                }
                 Event::Token(i) => {
                     open.last_mut()
                         .expect("a token sits inside a node")
@@ -100,7 +123,7 @@ impl Cst {
                         elements
                             .extend((emitted..cst.tokens.len()).map(|i| Element::Token(i as u32)));
                     }
-                    let id = cst.push_node(kind, &elements);
+                    let id = cst.push_node(kind, &elements, 0);
                     if let Some((_, siblings)) = open.last_mut() {
                         siblings.push(Element::Node(id));
                     }
@@ -112,9 +135,10 @@ impl Cst {
         cst
     }
 
-    fn push_node(&mut self, kind: RuleId, elements: &[Element]) -> u32 {
-        let start = elements.first().map_or(0, |e| self.element_start(*e));
-        let end = elements.last().map_or(0, |e| self.element_end(*e));
+    /// `at` places a node with no elements.
+    fn push_node(&mut self, kind: Kind, elements: &[Element], at: usize) -> u32 {
+        let start = elements.first().map_or(at, |e| self.element_start(*e));
+        let end = elements.last().map_or(at, |e| self.element_end(*e));
         let first_child = self.children.len() as u32;
         self.children.extend_from_slice(elements);
         self.nodes.push(NodeData {
@@ -139,6 +163,15 @@ impl Cst {
             Element::Token(i) => self.tokens[i as usize].end,
             Element::Node(i) => self.nodes[i as usize].end,
         }
+    }
+
+    /// Where each `MISSING` node sits, in the order the interpreter inserted them.
+    pub(crate) fn missing_offsets(&self) -> Vec<usize> {
+        self.nodes
+            .iter()
+            .filter(|n| matches!(n.kind, Kind::Missing(_)))
+            .map(|n| n.start)
+            .collect()
     }
 
     pub fn source(&self) -> &str {
@@ -173,8 +206,21 @@ impl<'a> Node<'a> {
         &self.cst.nodes[self.id as usize]
     }
 
+    /// The rule's name, or `ERROR` or `MISSING` in a recovered tree.
     pub fn kind(&self) -> &'a str {
-        &self.cst.grammar.rule(self.data().kind).name
+        match self.data().kind {
+            Kind::Rule(id) => &self.cst.grammar.rule(id).name,
+            Kind::Error => "ERROR",
+            Kind::Missing(_) => "MISSING",
+        }
+    }
+
+    /// What a `MISSING` node stands in for: a keyword's text or a rule's name.
+    pub fn expected(&self) -> Option<&'static str> {
+        match self.data().kind {
+            Kind::Missing(expected) => Some(expected),
+            _ => None,
+        }
     }
 
     pub fn is(&self, kind: &str) -> bool {
