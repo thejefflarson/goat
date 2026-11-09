@@ -50,6 +50,12 @@ jobs:
       - name: Test
         run: cargo test
 
+      - name: Check the standalone fuzz crate builds
+        # fuzz/ is not a workspace member, so the clippy/test steps above never
+        # touch it; this catches a fuzz target that stops compiling (e.g. a stale
+        # dep) before it silently rots the nightly fuzz run. See #326.
+        run: cd fuzz && cargo check --tests
+
   # Keeps the front end and wasm backend buildable for wasm32 so the compiler
   # can run in a browser or embedded host.
   wasm32:
