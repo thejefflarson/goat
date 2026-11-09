@@ -22,7 +22,7 @@
 //!   diagnostics. `TAG_OK` has an empty payload; `TAG_ERR` has one entry per
 //!   error: `start: u32`, `end: u32` (byte offsets into the source, little
 //!   endian), `len: u32`, then `len` bytes of UTF-8 message.
-//! - `gw_tokenize` lexes with the parser's own lexical rules. The payload is
+//! - `gw_tokenize` lexes with the parser crate's hand-written lexer. The payload is
 //!   one 9-byte entry per token: `kind: u8` (a `TOKEN_*` constant), then
 //!   `start: u32` and `end: u32`, byte offsets. Names and punctuation are left
 //!   out. `TAG_ERR` carries a message and no tokens.
@@ -305,7 +305,9 @@ fn encode_tokens(source: &str) -> Vec<u8> {
                 TokenKind::String => TOKEN_STRING,
                 TokenKind::Tag => TOKEN_TAG,
                 TokenKind::Operator => TOKEN_OPERATOR,
-                TokenKind::Name | TokenKind::Punct => return None,
+                TokenKind::Name | TokenKind::Punct | TokenKind::Whitespace | TokenKind::Unknown => {
+                    return None;
+                }
             };
             let mut entry = vec![kind];
             entry.extend_from_slice(&word(t.start));

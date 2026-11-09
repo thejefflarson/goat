@@ -1,10 +1,10 @@
-//! The token stream editors highlight from. It is the grammar's own lexical
-//! rules (`lex` in `grammar.pest`), so a highlighter cannot drift from the
-//! language, and it never fails: half-typed code still yields tokens.
+//! The token stream editors highlight from, and the one the parser will read:
+//! a hand-written scanner over the lexical rules of `grammar.pest`. The parity
+//! tests hold it to those rules, so a highlighter cannot drift from the
+//! language. It never fails: half-typed code still yields tokens.
 
-use crate::parser::{GoatParser, Rule};
-use pest::Parser;
 use std::collections::HashSet;
+use unicode_ident::{is_xid_continue, is_xid_start};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenKind {
@@ -21,6 +21,11 @@ pub enum TokenKind {
     Name,
     /// Brackets, `=`, `:`, `;`, `|`, `,` and `.`.
     Punct,
+    /// Spaces, tabs and line breaks; only [`lex`] produces it.
+    Whitespace,
+    /// A run of characters no rule recognizes, including a `"` that opens no
+    /// complete string; only [`lex`] produces it.
+    Unknown,
 }
 
 /// A byte range `[start, end)` of the source.
@@ -31,36 +36,162 @@ pub struct Token {
     pub end: usize,
 }
 
+/// Every byte of `source` as a token, in order and without gaps, so the source
+/// reconstructs from the spans. `from`, `to`, `in` and `foreign` come back as
+/// [`TokenKind::Name`]; [`tokenize`] places them.
+pub fn lex(source: &str) -> Vec<Token> {
+    let mut tokens: Vec<Token> = Vec::new();
+    let mut start = 0;
+    while start < source.len() {
+        let (kind, len) = next_token(&source[start..]);
+        let end = start + len;
+        match tokens.last_mut() {
+            Some(last) if kind == TokenKind::Unknown && last.kind == TokenKind::Unknown => {
+                last.end = end;
+            }
+            _ => tokens.push(Token { kind, start, end }),
+        }
+        start = end;
+    }
+    tokens
+}
+
 /// Every token of `source` in order, whitespace aside. Unrecognized characters
 /// produce no token.
 pub fn tokenize(source: &str) -> Vec<Token> {
-    let Ok(pairs) = GoatParser::parse(Rule::lex, source) else {
-        return Vec::new();
-    };
-    let mut tokens: Vec<Token> = pairs
-        .flatten()
-        .filter_map(|pair| {
-            let kind = match pair.as_rule() {
-                Rule::lex_comment => TokenKind::Comment,
-                Rule::lex_keyword => TokenKind::Keyword,
-                Rule::lex_literal => TokenKind::Literal,
-                Rule::lex_number => TokenKind::Number,
-                Rule::lex_string => TokenKind::String,
-                Rule::lex_operator => TokenKind::Operator,
-                Rule::lex_punct => TokenKind::Punct,
-                Rule::lex_name | Rule::lex_word => TokenKind::Name,
-                _ => return None,
-            };
-            let span = pair.as_span();
-            Some(Token {
-                kind,
-                start: span.start(),
-                end: span.end(),
-            })
-        })
+    let mut tokens: Vec<Token> = lex(source)
+        .into_iter()
+        .filter(|t| !matches!(t.kind, TokenKind::Whitespace | TokenKind::Unknown))
         .collect();
     place_contextual_keywords(source, &mut tokens);
     tokens
+}
+
+const KEYWORDS: &[&str] = &[
+    "program", "function", "if", "match", "then", "else", "done", "do", "start at", "repeat",
+    "times", "for", "and", "or", "not", "return", "tag",
+];
+
+const LITERALS: &[&str] = &["true", "false"];
+
+// A longer operator precedes any it begins with: the first that fits wins.
+const OPERATORS: &[&str] = &[
+    "==", "!=", "<=", "<", ">=", ">", "->", "//", "/", "%", "+", "*", "-",
+];
+
+const PUNCTUATION: &[&str] = &[
+    "(", ")", "{", "}", "[", "]", "=", ":", ";", "|", ",", "...", ".",
+];
+
+/// A name is runs of one `XID_START` and up to this many `XID_CONTINUE`
+/// characters (the grammar's `unicode` rule), so a longer word continues only
+/// into another `XID_START`.
+const NAME_RUN: usize = 255;
+
+/// The first rule that matches the start of `rest`, tried in the order the
+/// grammar's lexical rules are.
+fn next_token(rest: &str) -> (TokenKind, usize) {
+    whitespace(rest)
+        .map(|n| (TokenKind::Whitespace, n))
+        .or_else(|| comment(rest).map(|n| (TokenKind::Comment, n)))
+        .or_else(|| string(rest).map(|n| (TokenKind::String, n)))
+        .or_else(|| number(rest).map(|n| (TokenKind::Number, n)))
+        .or_else(|| word(rest, LITERALS).map(|n| (TokenKind::Literal, n)))
+        .or_else(|| word(rest, KEYWORDS).map(|n| (TokenKind::Keyword, n)))
+        .or_else(|| name(rest).map(|n| (TokenKind::Name, n)))
+        .or_else(|| prefix(rest, OPERATORS).map(|n| (TokenKind::Operator, n)))
+        .or_else(|| prefix(rest, PUNCTUATION).map(|n| (TokenKind::Punct, n)))
+        .unwrap_or_else(|| {
+            let first = rest.chars().next().map_or(0, char::len_utf8);
+            (TokenKind::Unknown, first)
+        })
+}
+
+fn whitespace(rest: &str) -> Option<usize> {
+    let len = rest.len() - rest.trim_start_matches([' ', '\t', '\n', '\r']).len();
+    (len > 0).then_some(len)
+}
+
+/// `#` to the end of the line, not including the line break.
+fn comment(rest: &str) -> Option<usize> {
+    rest.starts_with('#')
+        .then(|| rest.find(['\n', '\r']).unwrap_or(rest.len()))
+}
+
+/// A `"…"` literal; a backslash escapes the next character, quote included.
+fn string(rest: &str) -> Option<usize> {
+    let mut chars = rest.strip_prefix('"')?.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '"' => return Some(i + 2),
+            '\\' => {
+                chars.next()?;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Digits with an optional fraction and exponent, or a bare fraction (`.5`).
+/// There is no sign: `5 -1` is a subtraction.
+fn number(rest: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    let digits = |from: usize| {
+        bytes
+            .get(from..)
+            .map_or(0, |b| b.iter().take_while(|c| c.is_ascii_digit()).count())
+    };
+    let whole = digits(0);
+    let mut end = if whole > 0 {
+        match bytes.get(whole) {
+            Some(b'.') => whole + 1 + digits(whole + 1),
+            _ => whole,
+        }
+    } else if bytes.first() == Some(&b'.') && digits(1) > 0 {
+        1 + digits(1)
+    } else {
+        return None;
+    };
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let sign = usize::from(matches!(bytes.get(end + 1), Some(b'+' | b'-')));
+        let exponent = digits(end + 1 + sign);
+        if exponent > 0 {
+            end += 1 + sign + exponent;
+        }
+    }
+    Some(end)
+}
+
+fn name(rest: &str) -> Option<usize> {
+    let mut end = 0;
+    while let Some(c) = rest[end..].chars().next().filter(|&c| is_xid_start(c)) {
+        end += c.len_utf8();
+        end += rest[end..]
+            .chars()
+            .take(NAME_RUN - 1)
+            .take_while(|&c| is_xid_continue(c))
+            .map(char::len_utf8)
+            .sum::<usize>();
+    }
+    (end > 0).then_some(end)
+}
+
+/// One of `words` at the start of `rest`, not followed by an identifier
+/// character: `done` is a keyword, `doner` a name.
+fn word(rest: &str, words: &[&str]) -> Option<usize> {
+    words.iter().find_map(|w| {
+        let after = rest.strip_prefix(w)?;
+        (!after.chars().next().is_some_and(is_xid_continue)).then_some(w.len())
+    })
+}
+
+/// The first of `candidates` that `rest` starts with.
+fn prefix(rest: &str, candidates: &[&str]) -> Option<usize> {
+    candidates
+        .iter()
+        .find(|c| rest.starts_with(**c))
+        .map(|c| c.len())
 }
 
 /// [`tokenize`], with each name that `source` or `known_tags` declares as a tag
@@ -240,7 +371,7 @@ mod tests {
     use super::*;
 
     /// `(kind, text)` for each token of `source`.
-    fn lex(source: &str) -> Vec<(TokenKind, &str)> {
+    fn lexed(source: &str) -> Vec<(TokenKind, &str)> {
         tokenize(source)
             .into_iter()
             .map(|t| (t.kind, &source[t.start..t.end]))
@@ -259,7 +390,7 @@ mod tests {
     fn classifies_the_lexical_categories() {
         use TokenKind::*;
         assert_eq!(
-            lex("x = 1.5 + \"hi\" # note\nif true then not y done"),
+            lexed("x = 1.5 + \"hi\" # note\nif true then not y done"),
             [
                 (Name, "x"),
                 (Punct, "="),
@@ -281,7 +412,7 @@ mod tests {
     fn a_keyword_prefix_is_a_name() {
         use TokenKind::*;
         assert_eq!(
-            lex("doner double ifx truthy"),
+            lexed("doner double ifx truthy"),
             [
                 (Name, "doner"),
                 (Name, "double"),
@@ -293,7 +424,7 @@ mod tests {
 
     #[test]
     fn a_hash_inside_a_string_is_not_a_comment() {
-        assert_eq!(lex("\"a # b\""), [(TokenKind::String, "\"a # b\"")],);
+        assert_eq!(lexed("\"a # b\""), [(TokenKind::String, "\"a # b\"")],);
     }
 
     #[test]
@@ -306,7 +437,7 @@ mod tests {
     #[test]
     fn half_typed_code_still_tokenizes() {
         use TokenKind::*;
-        let tokens = lex("if x then @ \"oops");
+        let tokens = lexed("if x then @ \"oops");
         assert!(tokens.contains(&(Keyword, "if")));
         assert!(tokens.contains(&(Keyword, "then")));
         assert!(tokens.contains(&(Name, "oops")));
@@ -321,9 +452,9 @@ mod tests {
     #[test]
     fn for_headers_make_from_to_in_keywords() {
         use TokenKind::*;
-        let count = lex("for i from 1 to 3 do i done");
+        let count = lexed("for i from 1 to 3 do i done");
         assert!(count.contains(&(Keyword, "from")) && count.contains(&(Keyword, "to")));
-        let each = lex("for x in xs do x done");
+        let each = lexed("for x in xs do x done");
         assert!(each.contains(&(Keyword, "in")));
     }
 
@@ -331,13 +462,13 @@ mod tests {
     fn from_to_in_are_names_elsewhere() {
         use TokenKind::*;
         for source in ["line.from", "{to: 1}", "in = 2", "f(from, to)"] {
-            for (kind, text) in lex(source) {
+            for (kind, text) in lexed(source) {
                 if matches!(text, "from" | "to" | "in") {
                     assert_eq!(kind, Name, "{source}");
                 }
             }
         }
-        let nested = lex("for i from 1 to f({to: 2}.to) do i done");
+        let nested = lexed("for i from 1 to f({to: 2}.to) do i done");
         let to: Vec<_> = nested.iter().filter(|(_, t)| *t == "to").collect();
         assert_eq!(
             to.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
@@ -348,10 +479,10 @@ mod tests {
     #[test]
     fn foreign_is_a_keyword_only_in_a_foreign_declaration() {
         use TokenKind::*;
-        let decl = lex("f = foreign \"m\" \"n\" (Number) -> Unit");
+        let decl = lexed("f = foreign \"m\" \"n\" (Number) -> Unit");
         assert!(decl.contains(&(Keyword, "foreign")));
-        assert!(!lex("x = foreign + 1").contains(&(Keyword, "foreign")));
-        assert!(!lex("foreign(1)").contains(&(Keyword, "foreign")));
+        assert!(!lexed("x = foreign + 1").contains(&(Keyword, "foreign")));
+        assert!(!lexed("foreign(1)").contains(&(Keyword, "foreign")));
     }
 
     #[test]
@@ -397,6 +528,241 @@ mod tests {
     fn an_unterminated_tag_declaration_does_not_panic() {
         for source in ["tag", "tag A(", "tag A = ", "tag A(B | ", "tag A((("] {
             let _ = highlight(source, &HashSet::new());
+        }
+    }
+
+    #[test]
+    fn strings_take_escapes_and_stop_at_the_closing_quote() {
+        use TokenKind::*;
+        assert_eq!(lex(r#""a\"b" c"#)[0], tok(String, 0, 6));
+        assert_eq!(lex(r#""a\\" "b""#)[0], tok(String, 0, 5));
+        assert_eq!(lex("\"a\nb\"")[0].kind, String);
+        assert_eq!(lex("\"\"")[0], tok(String, 0, 2));
+    }
+
+    #[test]
+    fn an_unterminated_string_is_unknown_and_lexing_resumes() {
+        use TokenKind::*;
+        for source in ["\"abc", "\"abc\\", "\"abc\\\""] {
+            assert_eq!(lex(source)[0], tok(Unknown, 0, 1), "{source}");
+        }
+        assert_eq!(
+            lex("\"ab"),
+            [tok(Unknown, 0, 1), tok(Name, 1, 3)],
+            "the quote alone is skipped and the rest lexes as usual"
+        );
+    }
+
+    #[test]
+    fn numbers_take_a_fraction_and_an_exponent_but_no_sign() {
+        use TokenKind::*;
+        for number in ["7", "1.5", "1.", ".5", "1e5", "2.5E-3", "1.e+2", ".5e3"] {
+            assert_eq!(lex(number), [tok(Number, 0, number.len())], "{number}");
+        }
+        assert_eq!(
+            lex("5 -1"),
+            [
+                tok(Number, 0, 1),
+                tok(Whitespace, 1, 2),
+                tok(Operator, 2, 3),
+                tok(Number, 3, 4)
+            ]
+        );
+        assert_eq!(
+            lex("1e"),
+            [tok(Number, 0, 1), tok(Name, 1, 2)],
+            "an exponent needs digits"
+        );
+        assert_eq!(lex("1..2"), [tok(Number, 0, 2), tok(Number, 2, 4)]);
+        assert_eq!(lex("."), [tok(Punct, 0, 1)]);
+    }
+
+    #[test]
+    fn a_comment_ends_at_either_kind_of_line_break() {
+        use TokenKind::*;
+        assert_eq!(lex("#a\rb")[0], tok(Comment, 0, 2));
+        assert_eq!(lex("#a\r\nb")[0], tok(Comment, 0, 2));
+        assert_eq!(lex("#a\nb")[0], tok(Comment, 0, 2));
+        assert_eq!(lex("# to the end"), [tok(Comment, 0, 12)]);
+    }
+
+    #[test]
+    fn operators_and_punctuation_take_the_longest_form() {
+        use TokenKind::*;
+        let cases = [
+            ("==", Operator),
+            ("!=", Operator),
+            ("<=", Operator),
+            (">=", Operator),
+            ("->", Operator),
+            ("//", Operator),
+            ("...", Punct),
+            ("=", Punct),
+        ];
+        for (text, kind) in cases {
+            assert_eq!(lex(text), [tok(kind, 0, text.len())], "{text}");
+        }
+        assert_eq!(lex("!"), [tok(Unknown, 0, 1)]);
+    }
+
+    #[test]
+    fn start_at_is_one_keyword_only_with_a_single_space() {
+        use TokenKind::*;
+        assert_eq!(lex("start at"), [tok(Keyword, 0, 8)]);
+        assert_eq!(lex("start  at")[0].kind, Name);
+        assert_eq!(lex("start atx")[0].kind, Name);
+    }
+
+    #[test]
+    fn names_may_be_unicode_and_stop_at_the_first_non_identifier_character() {
+        use TokenKind::*;
+        assert_eq!(lex("héllo_2"), [tok(Name, 0, 8)]);
+        assert_eq!(lex("a-b").len(), 3);
+        assert_eq!(lex("_x"), [tok(Unknown, 0, 1), tok(Name, 1, 2)]);
+        let long = "a".repeat(300);
+        assert_eq!(lex(&long), [tok(Name, 0, 300)]);
+        let digit_after_a_full_run = format!("{}1", "a".repeat(NAME_RUN));
+        assert_eq!(
+            lex(&digit_after_a_full_run),
+            [tok(Name, 0, NAME_RUN), tok(Number, NAME_RUN, NAME_RUN + 1)]
+        );
+    }
+
+    #[test]
+    fn unknown_characters_merge_into_one_token() {
+        use TokenKind::*;
+        assert_eq!(lex("a@€!b").len(), 3);
+        assert_eq!(lex("@€"), [tok(Unknown, 0, 4)]);
+    }
+
+    #[test]
+    fn lex_covers_every_byte_exactly_once() {
+        for source in corpus() {
+            let mut next = 0;
+            for t in lex(&source) {
+                assert_eq!(t.start, next, "gap before {t:?}");
+                assert!(t.end > t.start, "empty token {t:?}");
+                assert!(source.is_char_boundary(t.end));
+                next = t.end;
+            }
+            assert_eq!(next, source.len());
+        }
+    }
+
+    #[derive(pest_derive::Parser)]
+    #[grammar = "grammar.pest"]
+    #[grammar = "lex_oracle.pest"]
+    struct OracleParser;
+
+    const _ORACLE: &str = include_str!("lex_oracle.pest");
+
+    /// The tokens the grammar's own `lex` rule finds, before contextual keywords
+    /// are placed: what the highlighter was before the hand-written scanner.
+    fn oracle(source: &str) -> Vec<Token> {
+        use pest::Parser;
+        OracleParser::parse(Rule::lex, source)
+            .expect("lex never fails")
+            .flatten()
+            .filter_map(|pair| {
+                let kind = match pair.as_rule() {
+                    Rule::lex_comment => TokenKind::Comment,
+                    Rule::lex_keyword => TokenKind::Keyword,
+                    Rule::lex_literal => TokenKind::Literal,
+                    Rule::lex_number => TokenKind::Number,
+                    Rule::lex_string => TokenKind::String,
+                    Rule::lex_operator => TokenKind::Operator,
+                    Rule::lex_punct => TokenKind::Punct,
+                    Rule::lex_name | Rule::lex_word => TokenKind::Name,
+                    _ => return None,
+                };
+                let span = pair.as_span();
+                Some(tok(kind, span.start(), span.end()))
+            })
+            .collect()
+    }
+
+    fn tok(kind: TokenKind, start: usize, end: usize) -> Token {
+        Token { kind, start, end }
+    }
+
+    fn assert_parity(source: &str) {
+        let significant: Vec<Token> = lex(source)
+            .into_iter()
+            .filter(|t| !matches!(t.kind, TokenKind::Whitespace | TokenKind::Unknown))
+            .collect();
+        let mut expected = oracle(source);
+        assert_eq!(significant, expected, "lex differs on {source:?}");
+        place_contextual_keywords(source, &mut expected);
+        assert_eq!(tokenize(source), expected, "tokenize differs on {source:?}");
+    }
+
+    fn read_goat_files(dir: &str) -> Vec<String> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .expect("corpus directory")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "goat"))
+            .collect();
+        files.sort();
+        files
+            .iter()
+            .map(|p| std::fs::read_to_string(p).expect("readable"))
+            .collect()
+    }
+
+    /// The example programs, the prelude, and the Rust test sources that quote
+    /// goat (whole files and line by line), which also stress odd characters.
+    fn corpus() -> Vec<String> {
+        let mut sources = read_goat_files("../examples");
+        sources.extend(read_goat_files("../prelude"));
+        for rust in [
+            include_str!("parser.rs"),
+            include_str!("../../checker/src/lib.rs"),
+            include_str!("lexer.rs"),
+        ] {
+            sources.push(rust.to_string());
+            sources.extend(rust.lines().map(String::from));
+        }
+        sources
+    }
+
+    #[test]
+    fn parity_on_the_examples_prelude_and_test_sources() {
+        for source in corpus() {
+            assert_parity(&source);
+        }
+    }
+
+    #[test]
+    fn parity_on_every_prefix_of_the_examples() {
+        for source in read_goat_files("../examples") {
+            for end in (0..=source.len()).filter(|&i| source.is_char_boundary(i)) {
+                assert_parity(&source[..end]);
+            }
+        }
+    }
+
+    #[test]
+    fn parity_on_generated_fragments() {
+        const PIECES: &[&str] = &[
+            "a", "Z", "_", "é", "ǅ", "٣", "€", "\u{0}", "1", "0", ".", "e", "E", "+", "-", "\"",
+            "\\", "#", "\n", "\r", "\r\n", " ", "\t", "=", "==", "!", "!=", "<", "<=", ">", ">=",
+            "/", "//", "%", "*", "->", "(", ")", "{", "}", "[", "]", "|", ",", ":", ";", "...",
+            "start at", "start", "at", "do", "done", "true", "false", "from", "to", "in",
+            "foreign", "if", "then", "tag", "x", "doner", "\"s\"", "5.5", "1e9",
+        ];
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move |bound: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % bound as u64) as usize
+        };
+        for _ in 0..20_000 {
+            let source: String = (0..1 + next(14))
+                .map(|_| PIECES[next(PIECES.len())])
+                .collect();
+            assert_parity(&source);
         }
     }
 }
