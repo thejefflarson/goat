@@ -53,7 +53,7 @@ pub const PRELUDE: &str = concat!(
 /// Parse, name-resolve, and type-check `source` with the prelude in scope.
 ///
 /// Returns every diagnostic found. Lowering (name resolution) and inference
-/// errors are reported together; a parse error is returned on its own. The
+/// errors are reported together; parse errors are returned without the rest. The
 /// binding-order check runs only on a program that type-checks.
 pub fn check(source: &str) -> Result<Checked, Vec<GoatError>> {
     check_with_prelude(PRELUDE, source)
@@ -80,7 +80,7 @@ pub fn check_with_vocab(
             format!("the host's vocabulary is invalid: {message}"),
         )]
     })?;
-    let lowered = lower::lower_with_vocab(prelude, vocab, source).map_err(|e| vec![e])?;
+    let lowered = lower::lower_with_vocab(prelude, vocab, source)?;
     if !lowered.errors.is_empty() {
         return Err(lowered.errors);
     }

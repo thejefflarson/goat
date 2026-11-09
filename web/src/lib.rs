@@ -459,6 +459,24 @@ mod tests {
     }
 
     #[test]
+    fn check_reports_every_syntax_error_at_the_span_compile_names() {
+        let source = "f(a b); g(c d); 1";
+        let (tag, payload) = record_of(check_at, source.as_bytes());
+        assert_eq!(tag, TAG_ERR);
+        let found: Vec<_> = diagnostics(&payload)
+            .iter()
+            .map(|(start, end, _)| &source[*start as usize..*end as usize])
+            .collect();
+        assert_eq!(found, ["b", "d"]);
+        let errors = goat::compile_turtle(source).unwrap_err();
+        let compiled: Vec<_> = errors
+            .iter()
+            .map(|e| &source[e.span.start..e.span.end])
+            .collect();
+        assert_eq!(compiled, found);
+    }
+
+    #[test]
     fn check_agrees_with_compile_on_whether_source_is_good() {
         for source in [
             "",

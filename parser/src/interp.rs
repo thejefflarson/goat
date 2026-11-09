@@ -15,7 +15,7 @@ use std::ops::Range;
 /// nesting fails the parse, so a pathological program cannot overflow the stack.
 const MAX_NESTING: usize = 256;
 
-const TOO_DEEP: &str = "expression nested too deeply";
+pub const TOO_DEEP: &str = "expression nested too deeply";
 
 /// The byte offset of the farthest token the grammar could not place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
