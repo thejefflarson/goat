@@ -193,7 +193,7 @@ four mechanisms, layered:
 3. **Panic-mode to a sync token (`@sync`).** When the engine hits input it cannot
    match inside a rule, it opens an `ERROR` node and skips tokens into it until it
    reaches a token in that rule's sync set (its `@sync` tokens plus its follow
-   set), then resumes. This is what keeps the `b = 2` after a broken `a = ;`.
+   set), then resumes. This is what keeps the `b = 2` after a broken `a = ;`: the `;` is the sync token.
 4. **Don't-cross anchors (`@anchor`).** Recovery for an inner error must not
    consume an anchor token belonging to an enclosing construct (the outer `done`,
    a top-level `;`). This is the fix for the spike's worst observed failure, where
@@ -231,12 +231,14 @@ Completion at `•`: the enclosing path is `MatchExpr → arm-position`, so offe
 **arm pattern head** — the tags of `x`'s type (checker-backed) or any declared tag
 (CST-only fallback).
 
-**(b) `a = •` then (newline) `b = 2; b`** — a binding with no value yet.
+**(b) `a = •;` then `b = 2; b`** — a binding with no value yet. goat is
+whitespace-insensitive, so the `;` after the cursor is what ends the broken
+binding; without it `b` would parse as `a`'s value.
 
 ```
 Expr[ Decl[ name 'a'  '='  MISSING(value)@expect ]      # a kept
       Decl[ name 'b'  '='  OpRun[number '2'] ]  ';'  OpRun[name 'b'] ]  # b intact
-diag: "expected a value"  at the `=`
+diag: "expected value"  where the value should be
 ```
 Completion at `•`: the enclosing path is `Decl → value-position`, so offer the
 **in-scope names + builtins/prelude** — exactly the kids'-discoverability case,
