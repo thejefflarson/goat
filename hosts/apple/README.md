@@ -28,7 +28,17 @@ xcodebuild -project Goat.xcodeproj -scheme Goat-macOS -destination 'platform=mac
 xcodebuild -project Goat.xcodeproj -scheme Goat-iOS -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 # ^ CODE_SIGNING_ALLOWED=NO is valid for simulator and CI only; it must not be used for real-device or distribution builds.
 swift test --package-path GoatKit
+# the same tests inside the sandbox; ad-hoc signing makes the entitlements apply
+xcodebuild test -project Goat.xcodeproj -scheme GoatKitTests-macOS -destination 'platform=macOS' \
+  CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES ENABLE_USER_SCRIPT_SANDBOXING=NO
 ```
+
+`EngineWebViewTests` drives the real `Engine` through an off-screen `WKWebView`
+(boot, compile, draw, check the canvas pixels) and prints what the page logged
+when a step fails. Under `swift test` it runs unsandboxed; under `xcodebuild test`
+it runs inside `GoatTestHost-macOS`, a windowless app with `Goat-macOS`'s entitlements,
+which is where a missing entitlement shows up. An unsigned build is unsandboxed, so it
+cannot catch one.
 
 `scripts/check-doc-types.sh` (run in CI after `xcodegen generate`) fails if the
 document type, the exported UTI and `UTType.goatSource` stop naming the same identifier.

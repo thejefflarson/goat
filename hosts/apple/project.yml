@@ -21,6 +21,14 @@ settings:
 # platform (the GoatKit package is the same code for `swift test`).
 # Resources/web is staged by scripts/stage-web.sh: web/embed.html, its modules
 # and goat_web.wasm.
+schemes:
+  GoatKitTests-macOS:
+    build:
+      targets:
+        GoatTestHost-macOS: all
+        GoatKit-macOS: all
+    test:
+      targets: [GoatKitTests-macOS]
 targets:
   GoatKit-macOS:
     type: framework
@@ -60,10 +68,13 @@ targets:
           - $(SRCROOT)/Resources/web/goat_web.wasm
     entitlements:
       path: Goat-macOS.entitlements
-      properties:
+      properties: &sandbox
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.cs.allow-jit: true
+        # WebKit's web content and networking processes crash without it, even
+        # though the page loads only the bundled goat-app:// scheme.
+        com.apple.security.network.client: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat
@@ -88,6 +99,41 @@ targets:
             UTTypeTagSpecification:
               public.filename-extension: [goat]
               public.mime-type: [text/x-goat]
+  # A windowless app that runs the web view tests inside the same sandbox and
+  # signing settings as Goat-macOS, without ever showing the editor.
+  GoatTestHost-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - TestHost
+      - path: Resources/web
+        type: folder
+        buildPhase: resources
+        optional: true
+    preBuildScripts:
+      - name: Check staged web assets
+        script: '"$SRCROOT/scripts/check-staged.sh"'
+        basedOnDependencyAnalysis: false
+    entitlements:
+      path: GoatTestHost-macOS.entitlements
+      properties: *sandbox
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat.testhost
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        ENABLE_HARDENED_RUNTIME: YES
+  GoatKitTests-macOS:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [GoatKit/Tests/GoatKitTests]
+    dependencies:
+      - target: GoatTestHost-macOS
+      - target: GoatKit-macOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat.kit.tests
+        GENERATE_INFOPLIST_FILE: YES
   Goat-iOS:
     type: application
     platform: iOS

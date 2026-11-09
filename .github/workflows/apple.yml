@@ -35,6 +35,14 @@ jobs:
       - name: Check document type declarations
         run: hosts/apple/scripts/check-doc-types.sh
 
+      # Ad-hoc signed, not unsigned: the sandbox entitlements only take effect on a
+      # signed host, and the sandbox is what this test exists to exercise.
+      - name: Test the engine in a sandboxed web view
+        run: >
+          xcodebuild test -project hosts/apple/Goat.xcodeproj -scheme GoatKitTests-macOS
+          -destination 'platform=macOS' CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
+          ENABLE_USER_SCRIPT_SANDBOXING=NO
+
       - name: Build macOS
         run: >
           xcodebuild -project hosts/apple/Goat.xcodeproj -scheme Goat-macOS
