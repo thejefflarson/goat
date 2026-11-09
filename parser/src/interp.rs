@@ -1,15 +1,21 @@
 //! The PEG interpreter: walks the grammar as data over the lexer's tokens and
-//! records a [`Cst`]. It parses valid input only; on anything else it reports
-//! where the parse got farthest and builds no tree.
+//! records a [`Cst`]. [`parse`] accepts valid input only and reports where the
+//! parse got farthest otherwise; it is the strict reading pest's tree is held
+//! to. [`parse_recovering`] never fails: it follows the grammar's recovery
+//! annotations to a tree with `ERROR` and `MISSING` nodes and a list of spanned
+//! diagnostics, and on valid input builds the same tree as [`parse`].
 
-use crate::cst::{Cst, Event};
+use crate::cst::{Cst, Event, Kind};
 use crate::lexer::{self, Token, TokenKind};
 use crate::peg::{Expr, Grammar, Terminal};
 use std::fmt;
+use std::ops::Range;
 
-/// Rule nesting deeper than this fails the parse, so a pathological program
-/// cannot overflow the stack.
-const MAX_DEPTH: usize = 1024;
+/// Expression levels, the bound lowering applies to the same program: deeper
+/// nesting fails the parse, so a pathological program cannot overflow the stack.
+const MAX_NESTING: usize = 256;
+
+const TOO_DEEP: &str = "expression nested too deeply";
 
 /// The byte offset of the farthest token the grammar could not place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +31,20 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+/// A syntax problem the parser recovered from. A zero-width span marks
+/// something missing at that offset.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub span: Range<usize>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct Recovered {
+    pub cst: Cst,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 pub fn parse(source: &str) -> Result<Cst, ParseError> {
     let grammar = Grammar::goat();
     let tokens = lexer::lex(source);
@@ -33,33 +53,75 @@ pub fn parse(source: &str) -> Result<Cst, ParseError> {
             offset: unknown.start,
         });
     }
-    let significant: Vec<usize> = (0..tokens.len())
-        .filter(|&i| !tokens[i].is_trivia())
-        .collect();
-    let placed: Vec<Token> = significant.iter().map(|&i| tokens[i]).collect();
-
-    let mut run = Run {
-        grammar,
-        source,
-        tokens: &placed,
-        position: 0,
-        events: Vec::new(),
-        farthest: 0,
-        depth: 0,
-    };
+    let (significant, placed) = significant(&tokens);
+    let mut run = Run::new(grammar, source, &placed, false);
     if !run.rule(grammar.root) {
         let offset = placed.get(run.farthest).map_or(source.len(), |t| t.start);
         return Err(ParseError { offset });
     }
-    let events: Vec<Event> = run
-        .events
+    let events = place(run.events, &significant);
+    Ok(Cst::build(source, grammar, tokens, &events))
+}
+
+/// Parse any input. Every byte lands in the tree, and every problem is a
+/// diagnostic.
+pub fn parse_recovering(source: &str) -> Recovered {
+    let grammar = Grammar::goat();
+    let tokens = lexer::lex(source);
+    let (significant, placed) = significant(&tokens);
+    let mut run = Run::new(grammar, source, &placed, true);
+    run.root();
+    let events = place(run.events, &significant);
+    let cst = Cst::build(source, grammar, tokens, &events);
+    let mut diagnostics = run.diagnostics;
+    // A MISSING diagnostic says where the tree put its node, after any trivia
+    // already placed, so a span and its node never disagree.
+    let mut offsets = cst.missing_offsets().into_iter();
+    for diagnostic in diagnostics.iter_mut().filter(|d| d.span.is_empty()) {
+        let at = offsets.next().expect("a MISSING node for each diagnostic");
+        diagnostic.span = at..at;
+    }
+    if let Some(at) = run.too_deep {
+        diagnostics.push(Diagnostic {
+            span: placed[at].start..placed[at].end,
+            message: TOO_DEEP.into(),
+        });
+    }
+    diagnostics.sort_by_key(|d| d.span.start);
+    Recovered { cst, diagnostics }
+}
+
+/// The indices of the tokens the grammar sees, and those tokens.
+fn significant(tokens: &[Token]) -> (Vec<usize>, Vec<Token>) {
+    let significant: Vec<usize> = (0..tokens.len())
+        .filter(|&i| !tokens[i].is_trivia())
+        .collect();
+    let placed = significant.iter().map(|&i| tokens[i]).collect();
+    (significant, placed)
+}
+
+/// Re-index the events from significant tokens to the full token list.
+fn place(events: Vec<Event>, significant: &[usize]) -> Vec<Event> {
+    events
         .into_iter()
         .map(|event| match event {
             Event::Token(i) => Event::Token(significant[i]),
             other => other,
         })
-        .collect();
-    Ok(Cst::build(source, grammar, tokens, &events))
+        .collect()
+}
+
+#[derive(Clone, Copy)]
+struct Mark {
+    position: usize,
+    events: usize,
+    diagnostics: usize,
+}
+
+/// What an `@expect` stands in for.
+enum Expected {
+    Text(&'static str),
+    Named(&'static str),
 }
 
 struct Run<'a> {
@@ -69,25 +131,97 @@ struct Run<'a> {
     position: usize,
     events: Vec<Event>,
     farthest: usize,
-    depth: usize,
+    nesting: usize,
+    recover: bool,
+    diagnostics: Vec<Diagnostic>,
+    /// The `@anchor` tokens of every rule being run, outermost first.
+    anchors: Vec<&'static str>,
+    /// How many of `anchors` belong to rules enclosing the innermost node
+    /// rule: those are walls for its recovery, and its own are not.
+    walls: usize,
+    sync: &'static [String],
+    /// The token at which nesting first hit the cap.
+    too_deep: Option<usize>,
 }
 
-impl Run<'_> {
+impl<'a> Run<'a> {
+    fn new(grammar: &'static Grammar, source: &'a str, tokens: &'a [Token], recover: bool) -> Self {
+        Run {
+            grammar,
+            source,
+            tokens,
+            position: 0,
+            events: Vec::new(),
+            farthest: 0,
+            nesting: 0,
+            recover,
+            diagnostics: Vec::new(),
+            anchors: Vec::new(),
+            walls: 0,
+            sync: &[],
+            too_deep: None,
+        }
+    }
+
+    /// The root rule, whose last item is the end of input. Whatever the rest
+    /// leaves before the end is junk: skip it through a sync token and read on.
+    /// Each pass consumes at least one token, so the loop ends.
+    fn root(&mut self) {
+        let grammar = self.grammar;
+        let rule = grammar.rule(grammar.root);
+        let Expr::Seq(items) = &rule.body else {
+            panic!("the root rule is a sequence ending at the end of input");
+        };
+        self.events.push(Event::Open(Kind::Rule(grammar.root)));
+        self.sync = &rule.sync;
+        loop {
+            for (i, item) in items[..items.len() - 1].iter().enumerate() {
+                if i > 0 {
+                    self.events.push(Event::Skip);
+                }
+                self.expr(item);
+            }
+            if self.position == self.tokens.len() {
+                break;
+            }
+            let mut end = self.position;
+            loop {
+                let stops = self.is_sync(end);
+                end += 1;
+                if stops || end == self.tokens.len() {
+                    break;
+                }
+            }
+            self.junk(end, "unexpected input");
+        }
+        self.events.push(Event::Skip);
+        self.events.push(Event::Close);
+    }
+
     fn rule(&mut self, id: u16) -> bool {
-        if self.depth == MAX_DEPTH {
+        let grammar = self.grammar;
+        let rule = grammar.rule(id);
+        if rule.nest && self.nesting == MAX_NESTING {
+            let last = self.tokens.len().saturating_sub(1);
+            self.too_deep.get_or_insert(self.position.min(last));
             return false;
         }
-        let rule = self.grammar.rule(id);
-        let mark = (self.position, self.events.len());
+        let mark = self.mark();
+        let (walls, sync) = (self.walls, self.sync);
+        let anchors = self.anchors.len();
         if !rule.silent {
-            self.events.push(Event::Open(id));
+            self.events.push(Event::Open(Kind::Rule(id)));
+            self.walls = anchors;
+            self.sync = &rule.sync;
         }
-        self.depth += 1;
+        self.anchors.extend(rule.anchors.iter().map(String::as_str));
+        self.nesting += usize::from(rule.nest);
         let matched = self.expr(&rule.body);
-        self.depth -= 1;
+        self.nesting -= usize::from(rule.nest);
+        self.anchors.truncate(anchors);
+        (self.walls, self.sync) = (walls, sync);
         if !matched {
-            (self.position, _) = mark;
-            self.events.truncate(mark.1);
+            self.reset(mark);
             return false;
         }
         if !rule.silent {
@@ -96,38 +230,14 @@ impl Run<'_> {
         true
     }
 
-    fn expr(&mut self, expr: &Expr) -> bool {
+    fn expr(&mut self, expr: &'static Expr) -> bool {
         match expr {
             Expr::Rule(id) => self.rule(*id),
             Expr::Terminal(terminal) => self.terminal(terminal),
-            Expr::Seq(items) => {
-                let mark = self.mark();
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        self.events.push(Event::Skip);
-                    }
-                    if !self.expr(item) {
-                        self.reset(mark);
-                        return false;
-                    }
-                }
-                true
-            }
-            Expr::Choice(alternatives) => {
-                let mark = self.mark();
-                for alternative in alternatives {
-                    if self.expr(alternative) {
-                        return true;
-                    }
-                    self.reset(mark);
-                }
-                false
-            }
+            Expr::Seq(items) => self.sequence(items),
+            Expr::Choice(alternatives) => self.choice(alternatives),
             Expr::Opt(inner) => {
-                let mark = self.mark();
-                if !self.expr(inner) {
-                    self.reset(mark);
-                }
+                self.optional(inner);
                 true
             }
             Expr::Star(inner) => {
@@ -135,11 +245,44 @@ impl Run<'_> {
                 true
             }
             Expr::Plus(inner) => self.repeat(inner) > 0,
+            Expr::Expect(inner) => self.expect(inner),
+        }
+    }
+
+    fn sequence(&mut self, items: &'static [Expr]) -> bool {
+        let mark = self.mark();
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                self.events.push(Event::Skip);
+            }
+            if !self.expr(item) {
+                self.reset(mark);
+                return false;
+            }
+        }
+        true
+    }
+
+    fn choice(&mut self, alternatives: &'static [Expr]) -> bool {
+        let mark = self.mark();
+        for alternative in alternatives {
+            if self.expr(alternative) {
+                return true;
+            }
+            self.reset(mark);
+        }
+        false
+    }
+
+    fn optional(&mut self, inner: &'static Expr) {
+        let mark = self.mark();
+        if !self.expr(inner) {
+            self.reset(mark);
         }
     }
 
     /// Match `inner` as many times as it will, returning how many.
-    fn repeat(&mut self, inner: &Expr) -> usize {
+    fn repeat(&mut self, inner: &'static Expr) -> usize {
         let mut count = 0;
         loop {
             let mark = self.mark();
@@ -151,10 +294,101 @@ impl Run<'_> {
                 return count;
             }
             count += 1;
-            if self.position == mark.0 {
+            if self.position == mark.position {
                 return count;
             }
         }
+    }
+
+    /// A required piece. When it is absent and recovery is on, the tokens up to
+    /// the keyword it spells, if that keyword lies ahead within reach, become an
+    /// `ERROR` node and the keyword matches; otherwise a `MISSING` node stands
+    /// in for it and the tokens stay for an enclosing rule. The keyword is out of reach past a token an enclosing rule
+    /// anchors or this rule syncs on.
+    fn expect(&mut self, inner: &'static Expr) -> bool {
+        let mark = self.mark();
+        if self.expr(inner) {
+            return true;
+        }
+        self.reset(mark);
+        if !self.recover {
+            return false;
+        }
+        let expected = self.expected(inner);
+        if let Expected::Text(text) = expected {
+            let mut end = self.position;
+            while end < self.tokens.len() && self.text(end) != text && !self.is_wall(end) {
+                end += 1;
+            }
+            if end < self.tokens.len() && self.text(end) == text {
+                self.junk(end, &format!("unexpected input, expected `{text}`"));
+                if self.expr(inner) {
+                    return true;
+                }
+            }
+        }
+        let (label, message) = match expected {
+            Expected::Text(text) => (text, format!("expected `{text}`")),
+            Expected::Named(name) => (name, format!("expected {name}")),
+        };
+        self.diagnostics.push(Diagnostic {
+            span: 0..0,
+            message,
+        });
+        self.events.push(Event::Missing(label));
+        true
+    }
+
+    fn expected(&self, expr: &'static Expr) -> Expected {
+        match expr {
+            Expr::Terminal(Terminal::Text(text)) => Expected::Text(text),
+            Expr::Terminal(Terminal::Kind(kind)) => Expected::Named(match kind {
+                TokenKind::Number => "number",
+                TokenKind::String => "string",
+                _ => "name",
+            }),
+            Expr::Terminal(Terminal::EndOfInput) => Expected::Named("the end"),
+            Expr::Rule(id) => {
+                let rule = self.grammar.rule(*id);
+                match &rule.body {
+                    Expr::Terminal(Terminal::Text(text)) => Expected::Text(text),
+                    _ => Expected::Named(rule.name.trim_start_matches('_')),
+                }
+            }
+            Expr::Choice(items) => self.expected(items.last().expect("a choice has alternatives")),
+            Expr::Seq(items) => self.expected(&items[0]),
+            Expr::Star(inner) | Expr::Plus(inner) | Expr::Opt(inner) | Expr::Expect(inner) => {
+                self.expected(inner)
+            }
+        }
+    }
+
+    /// Move the tokens before `end` into an `ERROR` node. Nothing moves when
+    /// `end` is the cursor.
+    fn junk(&mut self, end: usize, message: &str) {
+        if end == self.position {
+            return;
+        }
+        self.diagnostics.push(Diagnostic {
+            span: self.tokens[self.position].start..self.tokens[end - 1].end,
+            message: message.into(),
+        });
+        self.events.push(Event::Open(Kind::Error));
+        self.events.extend((self.position..end).map(Event::Token));
+        self.events.push(Event::Close);
+        self.position = end;
+    }
+
+    fn text(&self, at: usize) -> &str {
+        &self.source[self.tokens[at].start..self.tokens[at].end]
+    }
+
+    fn is_sync(&self, at: usize) -> bool {
+        self.sync.iter().any(|s| s == self.text(at))
+    }
+
+    fn is_wall(&self, at: usize) -> bool {
+        self.is_sync(at) || self.anchors[..self.walls].contains(&self.text(at))
     }
 
     fn terminal(&mut self, terminal: &Terminal) -> bool {
@@ -174,13 +408,18 @@ impl Run<'_> {
         matched
     }
 
-    fn mark(&self) -> (usize, usize) {
-        (self.position, self.events.len())
+    fn mark(&self) -> Mark {
+        Mark {
+            position: self.position,
+            events: self.events.len(),
+            diagnostics: self.diagnostics.len(),
+        }
     }
 
-    fn reset(&mut self, (position, events): (usize, usize)) {
-        self.position = position;
-        self.events.truncate(events);
+    fn reset(&mut self, mark: Mark) {
+        self.position = mark.position;
+        self.events.truncate(mark.events);
+        self.diagnostics.truncate(mark.diagnostics);
     }
 }
 

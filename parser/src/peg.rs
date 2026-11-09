@@ -1,7 +1,7 @@
 //! The grammar as data: `grammar/goat.peg` read into a tree of PEG combinators
-//! that [`crate::interp`] walks. The reader accepts only a well-formed grammar
-//! and panics on a malformed one, which is a bug in the file, not in a user's
-//! program.
+//! that [`crate::interp`] walks, recovery annotations included. The reader
+//! accepts only a well-formed grammar and panics on a malformed one, which is a
+//! bug in the file, not in a user's program.
 
 use crate::lexer::TokenKind;
 use std::collections::HashMap;
@@ -29,6 +29,8 @@ pub enum Expr {
     Star(Box<Expr>),
     Plus(Box<Expr>),
     Opt(Box<Expr>),
+    /// `a@expect`: required, and recovered from when absent.
+    Expect(Box<Expr>),
     Terminal(Terminal),
     Rule(RuleId),
 }
@@ -38,6 +40,12 @@ pub struct Rule {
     pub name: String,
     /// A silent rule makes no node: its pieces join the enclosing one.
     pub silent: bool,
+    /// `@sync`: tokens where panic-mode skipping inside this rule stops.
+    pub sync: Vec<String>,
+    /// `@anchor`: tokens recovery inside this rule must not consume.
+    pub anchors: Vec<String>,
+    /// `@nest`: one level of the nesting the parser bounds.
+    pub nest: bool,
     pub body: Expr,
 }
 
@@ -79,6 +87,7 @@ enum Lex {
     Question,
     Open,
     Close,
+    At,
 }
 
 fn lex(text: &str) -> Result<Vec<Lex>, String> {
@@ -93,6 +102,7 @@ fn lex(text: &str) -> Result<Vec<Lex>, String> {
             '*' => out.push(Lex::Star),
             '+' => out.push(Lex::Plus),
             '?' => out.push(Lex::Question),
+            '@' => out.push(Lex::At),
             '(' => out.push(Lex::Open),
             ')' => out.push(Lex::Close),
             '\'' => {
@@ -127,8 +137,16 @@ enum Draft {
     Star(Box<Draft>),
     Plus(Box<Draft>),
     Opt(Box<Draft>),
+    Expect(Box<Draft>),
     Terminal(Terminal),
     Name(String),
+}
+
+#[derive(Default)]
+struct Annotations {
+    sync: Vec<String>,
+    anchors: Vec<String>,
+    nest: bool,
 }
 
 struct Reader {
@@ -147,27 +165,31 @@ impl Reader {
     fn grammar(mut self) -> Result<Grammar, String> {
         let mut drafts = Vec::new();
         while self.at < self.lexed.len() {
+            let annotations = self.annotations()?;
             let Some(Lex::Ident(name)) = self.next() else {
                 return Err("a rule starts with its name".into());
             };
             if self.next() != Some(Lex::Arrow) {
                 return Err(format!("expected `<-` after `{name}`"));
             }
-            drafts.push((name, self.choice()?));
+            drafts.push((name, annotations, self.choice()?));
         }
         let ids: HashMap<String, RuleId> = drafts
             .iter()
             .enumerate()
-            .map(|(i, (name, _))| (name.clone(), i as RuleId))
+            .map(|(i, (name, ..))| (name.clone(), i as RuleId))
             .collect();
         if ids.len() != drafts.len() {
             return Err("a rule is defined twice".into());
         }
         let rules = drafts
             .into_iter()
-            .map(|(name, draft)| {
+            .map(|(name, annotations, draft)| {
                 Ok(Rule {
                     silent: name.starts_with('_'),
+                    sync: annotations.sync,
+                    anchors: annotations.anchors,
+                    nest: annotations.nest,
                     body: resolve(draft, &ids)?,
                     name,
                 })
@@ -175,6 +197,34 @@ impl Reader {
             .collect::<Result<Vec<_>, String>>()?;
         let root = *ids.get("goat").ok_or("no `goat` rule")?;
         Ok(Grammar { rules, root, ids })
+    }
+
+    fn annotations(&mut self) -> Result<Annotations, String> {
+        let mut found = Annotations::default();
+        while self.peek() == Some(&Lex::At) {
+            self.at += 1;
+            let Some(Lex::Ident(name)) = self.next() else {
+                return Err("an annotation has a name".into());
+            };
+            let mut tokens = Vec::new();
+            if self.peek() == Some(&Lex::Open) {
+                self.at += 1;
+                while let Some(Lex::Quoted(text)) = self.peek().cloned() {
+                    tokens.push(text);
+                    self.at += 1;
+                }
+                if self.next() != Some(Lex::Close) {
+                    return Err(format!("`@{name}` lists quoted tokens in parentheses"));
+                }
+            }
+            match (name.as_str(), tokens.is_empty()) {
+                ("sync", false) => found.sync = tokens,
+                ("anchor", false) => found.anchors = tokens,
+                ("nest", true) => found.nest = true,
+                _ => return Err(format!("a misused annotation `@{name}`")),
+            }
+        }
+        Ok(found)
     }
 
     fn peek(&self) -> Option<&Lex> {
@@ -204,7 +254,8 @@ impl Reader {
 
     fn sequence(&mut self) -> Result<Draft, String> {
         let mut items = Vec::new();
-        while !self.at_rule_start() && !matches!(self.peek(), None | Some(Lex::Slash | Lex::Close))
+        while !self.at_rule_start()
+            && !matches!(self.peek(), None | Some(Lex::Slash | Lex::Close | Lex::At))
         {
             items.push(self.suffixed()?);
         }
@@ -221,6 +272,12 @@ impl Reader {
                 Some(Lex::Star) => Draft::Star(Box::new(atom)),
                 Some(Lex::Plus) => Draft::Plus(Box::new(atom)),
                 Some(Lex::Question) => Draft::Opt(Box::new(atom)),
+                Some(Lex::At)
+                    if self.lexed.get(self.at + 1) == Some(&Lex::Ident("expect".into())) =>
+                {
+                    self.at += 1;
+                    Draft::Expect(Box::new(atom))
+                }
                 _ => return Ok(atom),
             };
             self.at += 1;
@@ -267,6 +324,7 @@ fn resolve(draft: Draft, ids: &HashMap<String, RuleId>) -> Result<Expr, String> 
         Draft::Star(d) => Expr::Star(Box::new(resolve(*d, ids)?)),
         Draft::Plus(d) => Expr::Plus(Box::new(resolve(*d, ids)?)),
         Draft::Opt(d) => Expr::Opt(Box::new(resolve(*d, ids)?)),
+        Draft::Expect(d) => Expr::Expect(Box::new(resolve(*d, ids)?)),
         Draft::Terminal(t) => Expr::Terminal(t),
         Draft::Name(name) => Expr::Rule(*ids.get(&name).ok_or(format!("no rule named `{name}`"))?),
     })
@@ -297,6 +355,25 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_recovery_annotations() {
+        let grammar = Grammar::read(
+            "@sync(';' 'x')\n@anchor('done')\n@nest\ngoat <- a@expect 'y'@expect b\na <- 'z'\nb <- 'w'",
+        )
+        .unwrap();
+        let root = grammar.rule(grammar.root);
+        assert_eq!(root.sync, [";", "x"]);
+        assert_eq!(root.anchors, ["done"]);
+        assert!(root.nest);
+        let Expr::Seq(items) = &root.body else {
+            panic!("a sequence");
+        };
+        assert!(matches!(&items[0], Expr::Expect(inner) if matches!(**inner, Expr::Rule(1))));
+        assert!(matches!(&items[1], Expr::Expect(inner) if matches!(**inner, Expr::Terminal(_))));
+        assert!(matches!(&items[2], Expr::Rule(2)));
+        assert!(!grammar.rule(1).nest && grammar.rule(1).sync.is_empty());
+    }
+
+    #[test]
     fn rejects_a_malformed_grammar() {
         for (text, why) in [
             ("goat <- missing", "no rule named"),
@@ -305,6 +382,9 @@ mod tests {
             ("goat <- 'x", "unterminated"),
             ("other <- 'x'", "no `goat` rule"),
             ("goat <-", "empty sequence"),
+            ("@sync\ngoat <- 'x'", "misused annotation"),
+            ("@bogus('x')\ngoat <- 'x'", "misused annotation"),
+            ("@anchor('x' goat <- 'x'", "lists quoted tokens"),
         ] {
             let error = Grammar::read(text).expect_err(text);
             assert!(error.contains(why), "{text}: {error}");

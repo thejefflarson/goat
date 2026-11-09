@@ -8,3 +8,6 @@ edition = "2024"
 pest = "2.9"
 pest_derive = "2.9"
 unicode-ident = "1.0.27"
+
+[dev-dependencies]
+bolero = { version = "=0.13.4", default-features = false, features = ["std"] }
