@@ -8,7 +8,7 @@
 //! a cursor that only trivia separates from its end.
 
 use crate::cst::{Child, Cst, Match, Node};
-use crate::lexer::{self, Token, TokenKind};
+use crate::lexer::{self, FUNCTION_KEYWORDS, Token, TokenKind};
 use std::ops::Range;
 
 /// What the cursor is positioned to type.
@@ -367,7 +367,7 @@ fn binder_position(
     }
     let opening = matches!(previous, Some("(" | ","));
     match open_bracket(tokens, source, at) {
-        Some(("(", Some("program" | "function" | "fn"))) if opening => return true,
+        Some(("(", Some(word))) if opening && FUNCTION_KEYWORDS.contains(&word) => return true,
         Some(("{", _)) if matches!(previous, Some("{" | ",")) => return true,
         _ => {}
     }
@@ -376,9 +376,6 @@ fn binder_position(
     match (last.map(|n| n.kind()), parent.map(|n| n.kind())) {
         (Some("name"), Some("field")) => true,
         (Some("pattern"), _) => opening,
-        _ => matches!(
-            previous,
-            Some("tag" | "for" | "program" | "function" | "fn")
-        ),
+        _ => previous.is_some_and(|w| matches!(w, "tag" | "for") || FUNCTION_KEYWORDS.contains(&w)),
     }
 }

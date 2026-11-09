@@ -67,9 +67,13 @@ pub fn tokenize(source: &str) -> Vec<Token> {
     tokens
 }
 
+/// The words that open a function literal; the grammar's `function` rule lists
+/// the same three.
+pub const FUNCTION_KEYWORDS: [&str; 3] = ["program", "function", "fn"];
+
 const KEYWORDS: &[&str] = &[
-    "program", "function", "fn", "if", "match", "then", "else", "done", "do", "start at", "repeat",
-    "times", "for", "and", "or", "not", "return", "tag",
+    "if", "match", "then", "else", "done", "do", "start at", "repeat", "times", "for", "and", "or",
+    "not", "return", "tag",
 ];
 
 const LITERALS: &[&str] = &["true", "false"];
@@ -97,7 +101,11 @@ fn next_token(rest: &str) -> (TokenKind, usize) {
         .or_else(|| string(rest).map(|n| (TokenKind::String, n)))
         .or_else(|| number(rest).map(|n| (TokenKind::Number, n)))
         .or_else(|| word(rest, LITERALS).map(|n| (TokenKind::Literal, n)))
-        .or_else(|| word(rest, KEYWORDS).map(|n| (TokenKind::Keyword, n)))
+        .or_else(|| {
+            word(rest, &FUNCTION_KEYWORDS)
+                .or_else(|| word(rest, KEYWORDS))
+                .map(|n| (TokenKind::Keyword, n))
+        })
         .or_else(|| name(rest).map(|n| (TokenKind::Name, n)))
         .or_else(|| prefix(rest, OPERATORS).map(|n| (TokenKind::Operator, n)))
         .or_else(|| prefix(rest, PUNCTUATION).map(|n| (TokenKind::Punct, n)))
@@ -265,9 +273,9 @@ fn after_matching_paren(source: &str, tokens: &[Token], open: usize) -> usize {
 /// construct uses (`return` and `start at` are reserved but unused, so they are
 /// left out), then the contextual ones (`from`, `to`, `in`, `foreign`).
 pub fn keywords() -> Vec<&'static str> {
-    KEYWORDS
-        .iter()
-        .copied()
+    FUNCTION_KEYWORDS
+        .into_iter()
+        .chain(KEYWORDS.iter().copied())
         .filter(|w| !matches!(*w, "return" | "start at"))
         .chain(LITERALS.iter().copied())
         .chain(["from", "to", "in", "foreign"])
@@ -481,6 +489,20 @@ mod tests {
                 "foreign",
             ]
         );
+    }
+
+    #[test]
+    fn the_grammar_lists_exactly_the_function_keywords() {
+        let rule = include_str!("../../grammar/goat.peg")
+            .lines()
+            .find(|l| l.starts_with("function <- "))
+            .expect("the grammar has a function rule");
+        let alternation = &rule["function <- (".len()..rule.find(')').unwrap()];
+        let listed: Vec<_> = alternation
+            .split(" / ")
+            .map(|w| w.trim_matches('\''))
+            .collect();
+        assert_eq!(listed, FUNCTION_KEYWORDS);
     }
 
     #[test]
