@@ -49,8 +49,9 @@ fn every_example_behaves_the_same_with_a_prelude_around_it() {
         ]
         .iter()
         .any(|name| path.ends_with(name));
-        let driven_by_a_host =
-            path.ends_with("interactive.goat") || path.ends_with("arrow_draw.goat");
+        let driven_by_a_host = ["interactive.goat", "arrow_draw.goat", "shapes.goat"]
+            .iter()
+            .any(|name| path.ends_with(name));
         if path.extension().is_some_and(|e| e == "goat")
             && !uses_built_in_prelude
             && !driven_by_a_host

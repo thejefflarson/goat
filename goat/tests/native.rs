@@ -100,6 +100,7 @@ struct Frames {
     frames: usize,
     lines: Vec<Line>,
     vertices: usize,
+    filled: Vec<String>,
 }
 
 impl SceneSink for Frames {
@@ -120,6 +121,20 @@ impl SceneSink for Frames {
     }
 
     fn polyline_end(&mut self) {}
+
+    fn circle(&mut self, center: (f64, f64), radius: f64, color: &str) {
+        self.filled
+            .push(format!("circle {center:?} {radius} {color}"));
+    }
+
+    fn rect(&mut self, origin: (f64, f64), size: (f64, f64), color: &str) {
+        self.filled
+            .push(format!("rect {origin:?} {size:?} {color}"));
+    }
+
+    fn text(&mut self, origin: (f64, f64), text: &str, color: &str) {
+        self.filled.push(format!("text {origin:?} {text} {color}"));
+    }
 }
 
 /// Long enough that no ordinary call is near it; the runaway tests wait it out.
@@ -156,6 +171,23 @@ fn an_interactive_program_draws_frames_for_the_events_it_handles() {
         ]
     );
     assert_eq!(frames.vertices, 6);
+}
+
+#[test]
+fn circle_rect_and_text_reach_the_native_sink() {
+    let mut program = interactive(include_str!("../../examples/shapes.goat"));
+    assert!(program.send(&Event::Tick(16.0)).unwrap());
+    program.draw().unwrap();
+    let (frames, live) = program.finish().unwrap();
+    assert_eq!(live, 0, "leaked");
+    assert_eq!(
+        frames.filled,
+        [
+            "rect (10.0, 10.0) (200.0, 80.0) #fa0",
+            "circle (50.0, 50.0) 20 blue",
+            "text (20.0, 20.0) goat black",
+        ]
+    );
 }
 
 #[test]

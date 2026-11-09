@@ -142,14 +142,14 @@ mod tests {
         )
     }
 
-    const SHAPE: &str = "tag Shape = Circle(Number) | Square(Number) | Dot ";
+    const SHAPE: &str = "tag Shape = Disc(Number) | Square(Number) | Dot ";
 
     #[test]
     fn a_grouped_match_covering_every_tag_needs_no_else() {
         let src = format!(
             "{SHAPE} area = program(s) do match s do \
-               Circle(r) then r Square(w) then w * w Dot then 0 done done \
-             area(Circle(2))"
+               Disc(r) then r Square(w) then w * w Dot then 0 done done \
+             area(Disc(2))"
         );
         assert_eq!(type_of(&src).unwrap(), "Number");
     }
@@ -157,12 +157,12 @@ mod tests {
     #[test]
     fn a_grouped_tag_builds_the_closed_group() {
         let ty = type_of(&format!("{SHAPE} Dot")).unwrap();
-        assert_eq!(ty, "[Circle: Number, Square: Number, Dot]");
+        assert_eq!(ty, "[Disc: Number, Square: Number, Dot]");
     }
 
     #[test]
     fn a_grouped_match_missing_a_tag_is_a_spanned_error() {
-        let src = format!("{SHAPE} match Dot do Circle(r) then r Square(w) then w done");
+        let src = format!("{SHAPE} match Dot do Disc(r) then r Square(w) then w done");
         let (message, text) = spanned_error(&src);
         assert!(message.contains("doesn't handle `Dot`"), "{message}");
         assert_eq!(text, "Dot");
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn a_grouped_match_may_still_have_an_else() {
-        let src = format!("{SHAPE} match Dot do Circle(r) then r else 0 done");
+        let src = format!("{SHAPE} match Dot do Disc(r) then r else 0 done");
         assert_eq!(type_of(&src).unwrap(), "Number");
     }
 
@@ -241,9 +241,9 @@ mod tests {
 
     #[test]
     fn a_grouped_payload_is_checked_against_the_declaration() {
-        let (message, text) = spanned_error(&format!("{SHAPE} Circle(\"big\")"));
+        let (message, text) = spanned_error(&format!("{SHAPE} Disc(\"big\")"));
         assert!(message.contains("Number"), "{message}");
-        assert_eq!(text, "Circle(\"big\")");
+        assert_eq!(text, "Disc(\"big\")");
     }
 
     #[test]
@@ -351,10 +351,10 @@ mod tests {
 
     #[test]
     fn constructing_an_undeclared_tag_is_an_unknown_name() {
-        let errors = errors_of("Circle(5)");
-        assert_eq!(errors[0].message, "unknown name `Circle`");
-        let errors = errors_of("tag Circle circle(5)");
-        assert!(errors[0].message.contains("did you mean the tag `Circle`?"));
+        let errors = errors_of("Ball(5)");
+        assert_eq!(errors[0].message, "unknown name `Ball`");
+        let errors = errors_of("tag Ball ball(5)");
+        assert!(errors[0].message.contains("did you mean the tag `Ball`?"));
     }
 
     #[test]

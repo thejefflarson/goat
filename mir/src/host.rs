@@ -53,6 +53,21 @@ pub enum SceneCommand {
     PolylineBegin(String),
     Vertex(f64, f64),
     PolylineEnd,
+    Circle {
+        center: (f64, f64),
+        radius: f64,
+        color: String,
+    },
+    Rect {
+        origin: (f64, f64),
+        size: (f64, f64),
+        color: String,
+    },
+    Text {
+        origin: (f64, f64),
+        text: String,
+        color: String,
+    },
 }
 
 /// Where an interactive program's picture goes: `draw` streams each frame as
@@ -65,6 +80,9 @@ pub trait SceneSink {
     fn polyline_begin(&mut self, color: &str);
     fn vertex(&mut self, x: f64, y: f64);
     fn polyline_end(&mut self);
+    fn circle(&mut self, center: (f64, f64), radius: f64, color: &str);
+    fn rect(&mut self, origin: (f64, f64), size: (f64, f64), color: &str);
+    fn text(&mut self, origin: (f64, f64), text: &str, color: &str);
 }
 
 /// A sink as a host: answers the `scene.*` imports by calling the sink.
@@ -90,6 +108,9 @@ fn scene_signature(module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)
         "line" => (vec![Number, Number, Number, Number, Str], Unit),
         "polyline_begin" => (vec![Str], Unit),
         "vertex" => (vec![Number, Number], Unit),
+        "circle" => (vec![Number, Number, Number, Str], Unit),
+        "rect" => (vec![Number, Number, Number, Number, Str], Unit),
+        "text" => (vec![Number, Number, Str, Str], Unit),
         _ => return None,
     })
 }
@@ -113,6 +134,18 @@ fn scene_call(
         }
         ("vertex", [Number(x), Number(y)]) => sink.vertex(*x, *y),
         ("polyline_end", []) => sink.polyline_end(),
+        ("circle", [Number(x), Number(y), Number(r), Str(color)]) => {
+            check_color(color)?;
+            sink.circle((*x, *y), *r, color)
+        }
+        ("rect", [Number(x), Number(y), Number(w), Number(h), Str(color)]) => {
+            check_color(color)?;
+            sink.rect((*x, *y), (*w, *h), color)
+        }
+        ("text", [Number(x), Number(y), Str(text), Str(color)]) => {
+            check_color(color)?;
+            sink.text((*x, *y), text, color)
+        }
         _ => return Err(format!("bad call to scene.{name}")),
     }
     Ok(HostValue::Unit)
@@ -154,6 +187,30 @@ impl SceneSink for SceneHost {
 
     fn polyline_end(&mut self) {
         self.commands.push(SceneCommand::PolylineEnd);
+    }
+
+    fn circle(&mut self, center: (f64, f64), radius: f64, color: &str) {
+        self.commands.push(SceneCommand::Circle {
+            center,
+            radius,
+            color: color.to_string(),
+        });
+    }
+
+    fn rect(&mut self, origin: (f64, f64), size: (f64, f64), color: &str) {
+        self.commands.push(SceneCommand::Rect {
+            origin,
+            size,
+            color: color.to_string(),
+        });
+    }
+
+    fn text(&mut self, origin: (f64, f64), text: &str, color: &str) {
+        self.commands.push(SceneCommand::Text {
+            origin,
+            text: text.to_string(),
+            color: color.to_string(),
+        });
     }
 }
 

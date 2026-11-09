@@ -1,0 +1,23 @@
+# `draw` can return filled shapes as well as lines. Coordinates are in canvas
+# pixels: the origin is the top left and y grows downward.
+#
+#   Circle({x, y, r, color})      a disc centred on (x, y)
+#   Rect({x, y, w, h, color})     a box with its top left at (x, y)
+#   Text({x, y, text, color})     a string with its top left at (x, y)
+#
+# Each Tick the circle moves 10 pixels to the right.
+init = {x: 40}
+
+update = program(model, event) do
+  match event do
+    Tick(dt) then {x: model.x + 10}
+  done
+done
+
+draw = program(model) do
+  [
+    Rect({x: 10, y: 10, w: 200, h: 80, color: "#fa0"}),
+    Circle({x: model.x, y: 50, r: 20, color: "blue"}),
+    Text({x: 20, y: 20, text: "goat", color: "black"})
+  ]
+done

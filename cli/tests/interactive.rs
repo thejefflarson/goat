@@ -8,6 +8,7 @@ use goat_mir::{HeapKind, Layout, MTy, Program, SceneCommand, SceneHost, Session,
 use std::time::{Duration, Instant};
 
 const EXAMPLE: &str = include_str!("../../examples/interactive.goat");
+const SHAPES: &str = include_str!("../../examples/shapes.goat");
 
 const HEADER: usize = 8;
 const SLOT: usize = 8;
@@ -316,6 +317,65 @@ fn a_polyline_grows_with_the_pointer_path_on_both_backends() {
         .filter(|c| matches!(c, SceneCommand::Vertex(..)))
         .count();
     assert!(vertices > script.len(), "{vertices}");
+}
+
+#[test]
+fn circle_rect_and_text_stream_the_same_scene_on_both_backends() {
+    let program = program(SHAPES);
+    let script = [Event::Tick(16.0), Event::Tick(16.0)];
+    let interp = interpreted(&program, &script, 1);
+    let wasm = compiled(&program, &script, 1);
+    assert_eq!(wasm, interp);
+    assert_eq!(interp.live, 0, "leaked");
+    use SceneCommand::*;
+    let frame = |x: f64| {
+        [
+            Begin,
+            Rect {
+                origin: (10.0, 10.0),
+                size: (200.0, 80.0),
+                color: "#fa0".into(),
+            },
+            Circle {
+                center: (x, 50.0),
+                radius: 20.0,
+                color: "blue".into(),
+            },
+            Text {
+                origin: (20.0, 20.0),
+                text: "goat".into(),
+                color: "black".into(),
+            },
+            End,
+        ]
+    };
+    let expected: Vec<_> = [frame(50.0), frame(60.0)].concat();
+    assert_eq!(interp.scene, expected);
+}
+
+const LABELS: &str = r#"
+init = {n: 0}
+update = program(model, event) do match event do Tick(dt) then model done done
+draw = program(model) do
+  [Text({x: 1.5, y: -2, text: "héllo ☃", color: "red"}), Text({x: 0, y: 0, text: "", color: "red"})]
+done
+"#;
+
+#[test]
+fn text_carries_any_string_across_the_boundary() {
+    let program = program(LABELS);
+    let script = [Event::Tick(1.0)];
+    let interp = interpreted(&program, &script, 0);
+    assert_eq!(compiled(&program, &script, 0), interp);
+    let texts: Vec<_> = interp
+        .scene
+        .iter()
+        .filter_map(|c| match c {
+            SceneCommand::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["h\u{e9}llo \u{2603}", ""]);
 }
 
 #[test]

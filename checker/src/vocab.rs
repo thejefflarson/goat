@@ -271,6 +271,32 @@ impl Vocab {
                     ]),
                     SceneCalls::Call("line".to_string()),
                 ),
+                shape(
+                    "Circle",
+                    record([float("x"), float("y"), float("r"), ("color", Ty::Str)]),
+                    SceneCalls::Call("circle".to_string()),
+                ),
+                shape(
+                    "Rect",
+                    record([
+                        float("x"),
+                        float("y"),
+                        float("w"),
+                        float("h"),
+                        ("color", Ty::Str),
+                    ]),
+                    SceneCalls::Call("rect".to_string()),
+                ),
+                shape(
+                    "Text",
+                    record([
+                        float("x"),
+                        float("y"),
+                        ("text", Ty::Str),
+                        ("color", Ty::Str),
+                    ]),
+                    SceneCalls::Call("text".to_string()),
+                ),
             ],
             keys,
             prelude: TURTLE_KEYS.to_string(),

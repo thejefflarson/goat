@@ -125,7 +125,15 @@ fn a_shape_streams_through_the_scene_imports_its_vocabulary_names() {
     assert_eq!(import(&program, "strip_begin"), [MTy::Ptr(HeapKind::Str)]);
     assert_eq!(import(&program, "pixel"), [MTy::Int; 3]);
     assert_eq!(import(&program, "strip_end"), []);
-    let turtle_calls = ["line", "polyline_begin", "vertex", "polyline_end"];
+    let turtle_calls = [
+        "line",
+        "polyline_begin",
+        "vertex",
+        "polyline_end",
+        "circle",
+        "rect",
+        "text",
+    ];
     assert!(
         program
             .foreign
@@ -214,4 +222,22 @@ fn the_turtle_streams_the_scene_calls_it_always_has() {
     assert_eq!(import(&program, "polyline_begin"), [string]);
     assert_eq!(import(&program, "vertex"), [float, float]);
     assert_eq!(import(&program, "polyline_end"), []);
+}
+
+#[test]
+fn the_turtle_streams_circle_rect_and_text_as_single_scene_calls() {
+    let source = "init = {n: 0}\n\
+                  update = program(model, event) do match event do Tick(dt) then model done done\n\
+                  draw = program(model) do [Circle({x: 0, y: 0, r: 1, color: \"red\"}), \
+                  Rect({x: 0, y: 0, w: 1, h: 1, color: \"red\"}), \
+                  Text({x: 0, y: 0, text: \"hi\", color: \"red\"})] done\n";
+    let program = lower(&Vocab::turtle(), source);
+    let float = MTy::Float;
+    let string = MTy::Ptr(HeapKind::Str);
+    assert_eq!(import(&program, "circle"), [float, float, float, string]);
+    assert_eq!(
+        import(&program, "rect"),
+        [float, float, float, float, string]
+    );
+    assert_eq!(import(&program, "text"), [float, float, string, string]);
 }

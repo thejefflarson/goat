@@ -16,13 +16,13 @@ fn an_exhaustive_match_over_a_declared_group_runs() {
 
 #[test]
 fn a_group_with_payloads_runs() {
-    let src = "tag Shape = Circle(Number) | Rect(Number, Number) | Dot \
+    let src = "tag Shape = Disc(Number) | Box(Number, Number) | Dot \
                area = program(s) do match s do \
-                 Circle(r) then 3 * r * r \
-                 Rect(w, h) then w * h \
+                 Disc(r) then 3 * r * r \
+                 Box(w, h) then w * h \
                  Dot then 0 \
                done done \
-               print(area(Circle(2)) + area(Rect(3, 4)) + area(Dot));";
+               print(area(Disc(2)) + area(Box(3, 4)) + area(Dot));";
     assert_eq!(run(src), "24");
 }
 
