@@ -329,8 +329,6 @@ fn first_use(root: &hir::Expr, symbol: Symbol) -> Option<ExprId> {
     found
 }
 
-/// One specialization of a function literal: its use type and the ground types
-/// of its captures fix the body.
 /// A function literal at one instantiation: its target, its type at the use,
 /// and the types of its captured variables.
 type SpecKey = (Target, Ty, Vec<Ty>);
@@ -516,16 +514,7 @@ impl Mono<'_> {
     }
 
     fn intern(&mut self, s: &str) -> DataId {
-        let bytes = s.as_bytes();
-        let index = self
-            .data
-            .iter()
-            .position(|d| d == bytes)
-            .unwrap_or_else(|| {
-                self.data.push(bytes.to_vec());
-                self.data.len() - 1
-            });
-        DataId(index as u32)
+        DataId(intern_index(&mut self.data, s.as_bytes().to_vec()) as u32)
     }
 
     fn lower_ty(&mut self, ty: &Ty) -> MTy {
@@ -539,10 +528,7 @@ impl Mono<'_> {
                     params: args.iter().map(|a| self.lower_ty(a)).collect(),
                     ret: self.lower_ty(ret),
                 };
-                let id = self.sigs.iter().position(|s| *s == sig).unwrap_or_else(|| {
-                    self.sigs.push(sig);
-                    self.sigs.len() - 1
-                });
+                let id = intern_index(&mut self.sigs, sig);
                 MTy::Ptr(HeapKind::Closure(SigId(id as u32)))
             }
             Ty::Record(row) => {
@@ -550,15 +536,7 @@ impl Mono<'_> {
                 for (_, field) in layout_fields(row) {
                     fields.push(self.lower_ty(field));
                 }
-                let layout = Layout::Record(fields);
-                let id = self
-                    .layouts
-                    .iter()
-                    .position(|l| *l == layout)
-                    .unwrap_or_else(|| {
-                        self.layouts.push(layout);
-                        self.layouts.len() - 1
-                    });
+                let id = intern_index(&mut self.layouts, Layout::Record(fields));
                 MTy::Ptr(HeapKind::Record(LayoutId(id as u32)))
             }
             Ty::Str => MTy::Ptr(HeapKind::Str),
@@ -697,7 +675,7 @@ impl Mono<'_> {
     }
 
     fn specialize(&mut self, cx: &FnCx, target: Target, site: &hir::Expr) -> (FuncId, Ty) {
-        let use_ty = self.ground(&self.typed.node_types[&site.id], &cx.subst);
+        let use_ty = self.node_ty(cx, site.id);
         self.specialize_at(&cx.subst, target, use_ty, site.span)
     }
 
@@ -879,7 +857,7 @@ impl Mono<'_> {
         let Some(first_use) = first_use(rest, symbol) else {
             return;
         };
-        let use_ty = self.ground(&self.typed.node_types[&first_use], &cx.subst);
+        let use_ty = self.node_ty(cx, first_use);
         let mut found = Subst::new();
         match_ty(&scheme.ty, &use_ty, &mut found);
         for v in &scheme.vars {
@@ -896,14 +874,7 @@ impl Mono<'_> {
     }
 
     fn register_import(&mut self, foreign: ForeignFn) -> ForeignId {
-        let index = match self.imports.iter().position(|i| *i == foreign) {
-            Some(index) => index,
-            None => {
-                self.imports.push(foreign);
-                self.imports.len() - 1
-            }
-        };
-        ForeignId(index as u32)
+        ForeignId(intern_index(&mut self.imports, foreign) as u32)
     }
 
     /// A foreign function used as a value: a closure over a function that
@@ -931,7 +902,7 @@ impl Mono<'_> {
                 id
             }
         };
-        let ty = self.ground(&self.typed.node_types[&use_id], &cx.subst);
+        let ty = self.node_ty(cx, use_id);
         self.closure_of(target, &ty)
     }
 
@@ -953,9 +924,7 @@ impl Mono<'_> {
             .map(|(a, ty)| (cx.fresh(ty), self.argument(cx, a, ty == MTy::Float)))
             .collect();
         let call = Expr::CallForeign(self.import(symbol), bound.iter().map(|(l, _)| *l).collect());
-        bound.into_iter().rev().fold(call, |body, (l, value)| {
-            Expr::Let(l, Box::new(value), Box::new(body))
-        })
+        wrap_lets(bound, call)
     }
 
     /// `arg` lowered, widened when the parameter it is passed to is a `Float`.
@@ -965,13 +934,24 @@ impl Mono<'_> {
         if !float_param {
             return value;
         }
-        let ty = self.ground(&self.typed.node_types[&arg.id], &cx.subst);
+        let ty = self.node_ty(cx, arg.id);
         widen(value, &ty)
     }
 
+    fn node_ty(&self, cx: &FnCx, id: ExprId) -> Ty {
+        self.ground(&self.typed.node_types[&id], &cx.subst)
+    }
+
     fn node_mty(&mut self, cx: &FnCx, id: ExprId) -> MTy {
-        let ty = self.ground(&self.typed.node_types[&id], &cx.subst);
+        let ty = self.node_ty(cx, id);
         self.lower_ty(&ty)
+    }
+
+    fn record_layout(&mut self, ty: &Ty) -> LayoutId {
+        let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(ty) else {
+            unreachable!("record type lowers to a record pointer");
+        };
+        layout
     }
 
     fn push_func(&mut self, func: Func) -> FuncId {
@@ -1018,16 +998,14 @@ impl Mono<'_> {
                 None => break Expr::Local(local),
             }
         };
-        bound.into_iter().rev().fold(body, |rest, (local, value)| {
-            Expr::Let(local, Box::new(value), Box::new(rest))
-        })
+        wrap_lets(bound, body)
     }
 
     fn expr(&mut self, cx: &mut FnCx, e: &hir::Expr, tail: bool) -> Expr {
         match &e.kind {
             ExprKind::Unit => Expr::Const(Const::Unit),
             ExprKind::Int(n) => {
-                let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+                let ty = self.node_ty(cx, e.id);
                 if ty == Ty::Float {
                     Expr::Const(Const::Float(*n as f64))
                 } else if self.profile.fits_int(*n) {
@@ -1074,11 +1052,7 @@ impl Mono<'_> {
                 Box::new(Expr::Const(Const::Bool(true))),
                 Box::new(self.expr(cx, rhs, tail)),
             ),
-            ExprKind::Not(operand) => Expr::If(
-                Box::new(self.expr(cx, operand, false)),
-                Box::new(Expr::Const(Const::Bool(false))),
-                Box::new(Expr::Const(Const::Bool(true))),
-            ),
+            ExprKind::Not(operand) => Self::not(self.expr(cx, operand, false)),
             ExprKind::Let { .. } => self.let_chain(cx, e, tail),
             ExprKind::Bin { op, lhs, rhs } => {
                 let a = Box::new(self.expr(cx, lhs, false));
@@ -1101,10 +1075,8 @@ impl Mono<'_> {
             ExprKind::Func { .. } => self.closure_value(cx, Target::Anon(e.id), e),
             ExprKind::Str(s) => Expr::StrLit(self.intern(s)),
             ExprKind::Record { fields } => {
-                let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
-                let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty) else {
-                    unreachable!("record type lowers to a record pointer");
-                };
+                let ty = self.node_ty(cx, e.id);
+                let layout = self.record_layout(&ty);
                 let mut order: Vec<_> = fields.iter().collect();
                 order.sort_by(|a, b| a.0.cmp(&b.0));
                 let values = order
@@ -1120,7 +1092,7 @@ impl Mono<'_> {
                 else_branch,
             } => self.match_(cx, scrutinee, arms, else_branch.as_deref(), tail),
             ExprKind::Field { record, label } => {
-                let ty = self.ground(&self.typed.node_types[&record.id], &cx.subst);
+                let ty = self.node_ty(cx, record.id);
                 let Ty::Record(row) = ty.unfold_head() else {
                     unreachable!("field access on a non-record");
                 };
@@ -1129,16 +1101,14 @@ impl Mono<'_> {
             }
             ExprKind::Spread { base, fields } => self.spread(cx, e, base, fields),
             ExprKind::Restrict { record, .. } => {
-                let source_ty = self.ground(&self.typed.node_types[&record.id], &cx.subst);
-                let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+                let source_ty = self.node_ty(cx, record.id);
+                let ty = self.node_ty(cx, e.id);
                 let (Ty::Record(source_row), Ty::Record(row)) =
                     (source_ty.unfold_head(), ty.unfold_head())
                 else {
                     unreachable!("restriction of a non-record");
                 };
-                let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty) else {
-                    unreachable!("record type lowers to a record pointer");
-                };
+                let layout = self.record_layout(&ty);
                 self.with_record(cx, record, |_, _, local| {
                     let values = layout_fields(&row)
                         .map(|(label, _)| Expr::Field(local, field_index(&source_row, label)))
@@ -1159,15 +1129,13 @@ impl Mono<'_> {
         base: &hir::Expr,
         fields: &[(String, hir::Expr)],
     ) -> Expr {
-        let base_ty = self.ground(&self.typed.node_types[&base.id], &cx.subst);
-        let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+        let base_ty = self.node_ty(cx, base.id);
+        let ty = self.node_ty(cx, e.id);
         let (Ty::Record(base_row), Ty::Record(row)) = (base_ty.unfold_head(), ty.unfold_head())
         else {
             unreachable!("spread of a non-record");
         };
-        let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(&ty) else {
-            unreachable!("record type lowers to a record pointer");
-        };
+        let layout = self.record_layout(&ty);
         let reuses = self.lower_ty(&base_ty) == MTy::Ptr(HeapKind::Record(layout));
         self.with_record(cx, base, |m, cx, local| {
             let values = layout_fields(&row)
@@ -1184,12 +1152,11 @@ impl Mono<'_> {
         })
     }
 
-    /// `lhs op rhs` given the lowered operands. Called after they are lowered,
-    /// not around them, so it adds nothing to the stack depth of a long chain
-    /// of operators.
+    /// `lhs op rhs` given the lowered operands, over the types the checker gave
+    /// them. An `Int` beside a `Float` is widened first, and `/` reads both as
+    /// `Float`. Called after the operands are lowered, not around them, so it
+    /// adds nothing to the stack depth of a long chain of operators.
     #[inline(never)]
-    /// A binary operator over operands of the types the checker gave them. An
-    /// `Int` beside a `Float` is widened first, and `/` reads both as `Float`.
     fn bin(
         &mut self,
         cx: &mut FnCx,
@@ -1198,8 +1165,8 @@ impl Mono<'_> {
         (a, b): (Box<Expr>, Box<Expr>),
         tail: bool,
     ) -> Expr {
-        let lhs_ty = self.ground(&self.typed.node_types[&lhs.id], &cx.subst);
-        let rhs_ty = self.ground(&self.typed.node_types[&rhs.id], &cx.subst);
+        let lhs_ty = self.node_ty(cx, lhs.id);
+        let rhs_ty = self.node_ty(cx, rhs.id);
         let scalars = [&lhs_ty, &rhs_ty]
             .iter()
             .all(|ty| matches!(ty, Ty::Int | Ty::Float));
@@ -1215,14 +1182,7 @@ impl Mono<'_> {
             BinOp::Div => self.arith(cx, Some(span), FloatOp::Div, &operand_ty, a, b),
             BinOp::FloorDiv | BinOp::Mod => Self::whole_division(cx, (op, span), a, b),
             BinOp::Eq => self.equal(cx, &operand_ty, a, b, tail),
-            BinOp::Ne => {
-                let same = self.equal(cx, &operand_ty, a, b, false);
-                Expr::If(
-                    Box::new(same),
-                    Box::new(Expr::Const(Const::Bool(false))),
-                    Box::new(Expr::Const(Const::Bool(true))),
-                )
-            }
+            BinOp::Ne => Self::not(self.equal(cx, &operand_ty, a, b, false)),
             BinOp::Lt => Expr::Cmp(CmpOp::Lt, Box::new(a), Box::new(b)),
             BinOp::Lte => Expr::Cmp(CmpOp::Le, Box::new(a), Box::new(b)),
             BinOp::Gt => Expr::Cmp(CmpOp::Gt, Box::new(a), Box::new(b)),
@@ -1234,12 +1194,20 @@ impl Mono<'_> {
     /// type.
     #[inline(never)]
     fn print_value(&mut self, cx: &FnCx, e: &hir::Expr) -> Expr {
-        let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+        let ty = self.node_ty(cx, e.id);
         let Ty::Func(args, _) = &ty else {
             unreachable!("print has a function type");
         };
         let print = self.print_fn(&args[0]);
         self.closure_of(print, &ty)
+    }
+
+    /// The local `e` names when it is a variable bound in this function.
+    fn variable_local(cx: &FnCx, e: &hir::Expr) -> Option<Local> {
+        match &e.kind {
+            ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
+            _ => None,
+        }
     }
 
     /// Build `build(local)` where `local` holds `record`: a variable's own
@@ -1250,11 +1218,7 @@ impl Mono<'_> {
         record: &hir::Expr,
         build: impl FnOnce(&mut Self, &mut FnCx, Local) -> Expr,
     ) -> Expr {
-        let borrowed = match &record.kind {
-            ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
-            _ => None,
-        };
-        match borrowed {
+        match Self::variable_local(cx, record) {
             Some(local) => build(self, cx, local),
             None => {
                 let ty = self.node_mty(cx, record.id);
@@ -1275,7 +1239,7 @@ impl Mono<'_> {
         name: &str,
         payload: Option<&hir::Expr>,
     ) -> Expr {
-        let ty = self.ground(&self.typed.node_types[&e.id], &cx.subst);
+        let ty = self.node_ty(cx, e.id);
         let MTy::Ptr(HeapKind::Variant(layout)) = self.lower_ty(&ty) else {
             unreachable!("variant type lowers to a variant pointer");
         };
@@ -1283,7 +1247,7 @@ impl Mono<'_> {
         let Some(payload) = payload else {
             return Expr::AllocVariant(layout, tag, Vec::new());
         };
-        let payload_ty = self.ground(&self.typed.node_types[&payload.id], &cx.subst);
+        let payload_ty = self.node_ty(cx, payload.id);
         let Some(positional) = positional_fields(&payload_ty) else {
             let value = self.expr(cx, payload, false);
             return if payload_ty == Ty::Unit {
@@ -1335,15 +1299,11 @@ impl Mono<'_> {
         else_branch: Option<&hir::Expr>,
         tail: bool,
     ) -> Expr {
-        let scrutinee_ty = self.ground(&self.typed.node_types[&scrutinee.id], &cx.subst);
+        let scrutinee_ty = self.node_ty(cx, scrutinee.id);
         let Ty::Variant(row) = scrutinee_ty.unfold_head() else {
             unreachable!("match on a non-variant");
         };
-        let borrowed = match &scrutinee.kind {
-            ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
-            _ => None,
-        };
-        let (local, bound) = match borrowed {
+        let (local, bound) = match Self::variable_local(cx, scrutinee) {
             Some(local) => (local, None),
             None => {
                 let ty = self.lower_ty(&scrutinee_ty);
@@ -1361,10 +1321,7 @@ impl Mono<'_> {
                 .expect("checked match arm names a tag of the scrutinee");
             let bindings = self.bind_payload(cx, local, tag, &pattern.payload, &payload_ty);
             let body = self.expr(cx, &arm.body, tail);
-            let arm = bindings.into_iter().rev().fold(body, |body, (l, v)| {
-                Expr::Let(l, Box::new(v), Box::new(body))
-            });
-            lowered.push((tag, arm));
+            lowered.push((tag, wrap_lets(bindings, body)));
         }
         let default = match else_branch {
             Some(e) => self.expr(cx, e, tail),
@@ -1418,9 +1375,7 @@ impl Mono<'_> {
                     // The whole payload of a multi-argument tag is a record;
                     // the cell stores it flat, so build it from the slots.
                     (Ty::Record(row), Some(_)) => {
-                        let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(payload_ty) else {
-                            unreachable!("record type lowers to a record pointer");
-                        };
+                        let layout = self.record_layout(payload_ty);
                         let slots = ground_fields(row)
                             .map(|(label, _)| {
                                 let slot = label.parse().expect("labels are positional");
@@ -1436,6 +1391,14 @@ impl Mono<'_> {
             }
         }
         bindings
+    }
+
+    fn not(e: Expr) -> Expr {
+        Expr::If(
+            Box::new(e),
+            Box::new(Expr::Const(Const::Bool(false))),
+            Box::new(Expr::Const(Const::Bool(true))),
+        )
     }
 
     /// `e` run after naming `span` as the user code a trap should be blamed on.
@@ -1454,7 +1417,7 @@ impl Mono<'_> {
         tail: bool,
     ) -> Expr {
         if let (ExprKind::Builtin(Builtin::Print), [arg]) = (&callee.kind, args) {
-            let ty = self.ground(&self.typed.node_types[&arg.id], &cx.subst);
+            let ty = self.node_ty(cx, arg.id);
             let print = self.print_fn(&ty);
             let value = self.expr(cx, arg, false);
             return if tail {
@@ -1487,7 +1450,7 @@ impl Mono<'_> {
             None => Callee::Closure(Box::new(self.expr(cx, callee, false))),
         };
         let hir_args = args;
-        let callee_ty = self.ground(&self.typed.node_types[&callee.id], &cx.subst);
+        let callee_ty = self.node_ty(cx, callee.id);
         let float_params: Vec<bool> = match callee_ty.unfold_head() {
             Ty::Func(params, _) => params.iter().map(|p| *p == Ty::Float).collect(),
             _ => Vec::new(),
@@ -1521,10 +1484,26 @@ impl Mono<'_> {
             return call;
         }
         let call = Self::at_site(cx, span, call);
-        bound.into_iter().rev().fold(call, |rest, (local, value)| {
+        wrap_lets(bound, call)
+    }
+}
+
+/// The index of `item` in `items`, pushing it first if absent.
+fn intern_index<T: PartialEq>(items: &mut Vec<T>, item: T) -> usize {
+    items.iter().position(|i| *i == item).unwrap_or_else(|| {
+        items.push(item);
+        items.len() - 1
+    })
+}
+
+/// `body` under `bindings` as nested `Let`s, the first binding outermost.
+fn wrap_lets(bindings: Vec<(Local, Expr)>, body: Expr) -> Expr {
+    bindings
+        .into_iter()
+        .rev()
+        .fold(body, |rest, (local, value)| {
             Expr::Let(local, Box::new(value), Box::new(rest))
         })
-    }
 }
 
 /// Recover the substitution that makes `template` equal the ground `actual`.
