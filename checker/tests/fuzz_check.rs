@@ -37,12 +37,21 @@ fn assert_clean_error(source: &str) {
     assert!(!errors.is_empty());
 }
 
+// The grammar interpreter spends about 10 KB of stack per level of call nesting
+// in a debug build, so 256 levels do not fit libtest's 2 MB threads.
 #[test]
 fn deep_nesting_is_a_clean_error() {
-    let depth = 100_000;
-    assert_clean_error(&format!("{}1{}", "(".repeat(depth), ")".repeat(depth)));
-    assert_clean_error(&format!("{}1", "-".repeat(depth)));
-    assert_clean_error(&"f(".repeat(depth));
+    std::thread::Builder::new()
+        .stack_size(8 << 20)
+        .spawn(|| {
+            let depth = 100_000;
+            assert_clean_error(&format!("{}1{}", "(".repeat(depth), ")".repeat(depth)));
+            assert_clean_error(&format!("{}1", "-".repeat(depth)));
+            assert_clean_error(&"f(".repeat(depth));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]

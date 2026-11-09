@@ -1,8 +1,7 @@
-//! The parse tree lowering reads, with the `Pair`/`Pairs` surface pest's tree
-//! has. Either parser builds it: [`parse_pest`] from pest, [`parse_cst`] from
-//! the grammar interpreter's CST. Lowering reads only this, so the dual-run
-//! tests can hold the two parsers to the same tree and the same HIR. The module
-//! is scaffolding: it goes when lowering reads the CST's typed views directly.
+//! One tree shape for both parsers, so the dual-run tests can hold them to the
+//! same tree: [`parse_pest`] builds it from pest, [`parse_cst`] from the grammar
+//! interpreter's CST. Lowering reads the CST directly; this module is the
+//! pest oracle and goes when pest does.
 
 use crate::cst::Node;
 use crate::parser::{GoatParser, Rule};

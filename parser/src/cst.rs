@@ -201,6 +201,36 @@ pub enum Child<'a> {
     Token(Token),
 }
 
+/// A node's child nodes in source order, which a lowering pass can name, peek
+/// at and clone.
+#[derive(Clone)]
+pub struct Children<'a> {
+    cst: &'a Cst,
+    elements: std::slice::Iter<'a, Element>,
+}
+
+impl<'a> Iterator for Children<'a> {
+    type Item = Node<'a>;
+
+    fn next(&mut self) -> Option<Node<'a>> {
+        self.elements.find_map(|element| match *element {
+            Element::Node(id) => Some(Node { cst: self.cst, id }),
+            Element::Token(_) => None,
+        })
+    }
+}
+
+impl DoubleEndedIterator for Children<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.elements
+            .rfind(|e| matches!(e, Element::Node(_)))
+            .map(|element| match *element {
+                Element::Node(id) => Node { cst: self.cst, id },
+                Element::Token(_) => unreachable!("rfind kept a node"),
+            })
+    }
+}
+
 impl<'a> Node<'a> {
     fn data(&self) -> &'a NodeData {
         &self.cst.nodes[self.id as usize]
@@ -247,11 +277,13 @@ impl<'a> Node<'a> {
             })
     }
 
-    pub fn children(&self) -> impl Iterator<Item = Node<'a>> + use<'a> {
-        self.elements().filter_map(|child| match child {
-            Child::Node(node) => Some(node),
-            Child::Token(_) => None,
-        })
+    pub fn children(&self) -> Children<'a> {
+        let data = self.data();
+        let range = data.first_child as usize..(data.first_child + data.child_count) as usize;
+        Children {
+            cst: self.cst,
+            elements: self.cst.children[range].iter(),
+        }
     }
 
     pub fn child(&self, kind: &str) -> Option<Node<'a>> {

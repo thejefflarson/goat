@@ -12,8 +12,8 @@ use crate::hir::{
 };
 use crate::ty::{Group, Row, Ty};
 use crate::vocab::Vocab;
-use goat_parser::parser::Rule;
-use goat_parser::tree::{Pair, Pairs, parse_cst, parse_pest};
+use goat_parser::cst::{Children, Goat, Node};
+use goat_parser::interp;
 use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
 use std::sync::Arc;
@@ -70,32 +70,7 @@ pub fn lower_with_prelude(prelude: &str, source: &str) -> Result<Lowered, GoatEr
 /// Like [`lower_with_prelude`], with the tags and decoders of `vocab` standing
 /// in for the turtle's.
 pub fn lower_with_vocab(prelude: &str, vocab: &Vocab, source: &str) -> Result<Lowered, GoatError> {
-    lower_with_parser(Parser::Pest, prelude, vocab, source)
-}
-
-/// [`lower_with_vocab`] reading the parse tree from the grammar interpreter's
-/// CST instead of pest; the dual-run tests hold the two to the same result.
-pub fn lower_via_cst(prelude: &str, vocab: &Vocab, source: &str) -> Result<Lowered, GoatError> {
-    lower_with_parser(Parser::Cst, prelude, vocab, source)
-}
-
-#[derive(Clone, Copy, Default)]
-enum Parser {
-    #[default]
-    Pest,
-    Cst,
-}
-
-fn lower_with_parser(
-    parser: Parser,
-    prelude: &str,
-    vocab: &Vocab,
-    source: &str,
-) -> Result<Lowered, GoatError> {
-    let mut ctx = Lower {
-        parser,
-        ..Lower::default()
-    };
+    let mut ctx = Lower::default();
     ctx.tags.extend(
         LIST_TAGS
             .into_iter()
@@ -215,11 +190,11 @@ struct ListPattern {
 #[derive(Clone)]
 enum Then<'i> {
     /// A `match` arm's body.
-    Arm(Pair<'i>),
+    Arm(Node<'i>),
     /// The rest of a `[..] = value` chain, if there is any.
-    Rest(Option<Pair<'i>>),
+    Rest(Option<Node<'i>>),
     /// The list-pattern parameters still to unpack, then the function body.
-    Params(Vec<(Symbol, Pair<'i>)>, Option<Pair<'i>>),
+    Params(Vec<(Symbol, Node<'i>)>, Option<Node<'i>>),
 }
 
 /// The arms of one list `match`, which compile together into a decision tree
@@ -227,7 +202,7 @@ enum Then<'i> {
 struct ListMatch<'i> {
     /// Each arm's pattern, what follows it, and whether a leaf lowered it yet.
     rows: Vec<(ListPattern, Then<'i>, bool)>,
-    otherwise: Option<Pair<'i>>,
+    otherwise: Option<Node<'i>>,
     otherwise_lowered: bool,
 }
 
@@ -315,7 +290,6 @@ impl Scopes {
 
 #[derive(Default)]
 struct Lower {
-    parser: Parser,
     next_symbol: Symbol,
     next_expr_id: ExprId,
     scopes: Scopes,
@@ -340,20 +314,19 @@ impl Lower {
     /// prelude's names are in scope when `file` is the user's.
     fn lower_source(&mut self, source: &str, file: FileId) -> Result<Expr, GoatError> {
         self.file = file;
-        let parsed = match self.parser {
-            Parser::Pest => parse_pest(source),
-            Parser::Cst => parse_cst(source),
-        };
-        let tree = parsed
-            .map_err(|e| GoatError::new(Span::in_file(0, 0, file), format!("parse error:\n{e}")))?;
-        let goat = tree.root();
+        let cst = interp::parse(source).map_err(|e| {
+            let at = Span::in_file(e.offset, e.offset, file);
+            let message = if e.too_deep {
+                "expression nested too deeply"
+            } else {
+                "parse error: unexpected input"
+            };
+            GoatError::new(at, message)
+        })?;
+        let goat = Goat::cast(cst.root()).expect("the root is the goat node");
         debug_assert!(self.grouped.is_empty());
-        for decl in goat
-            .clone()
-            .into_inner()
-            .filter(|p| p.as_rule() == Rule::tag_decl)
-        {
-            self.declare_tags(decl);
+        for decl in goat.tag_decls() {
+            self.declare_tags(decl.node());
         }
         self.scopes.push();
         for (name, symbol) in &self.prelude_scope {
@@ -366,23 +339,23 @@ impl Lower {
 
     /// `tag Foo` opens one tag. Anything with a group name, a payload or a `|`
     /// closes its tags into a group, and each tag belongs to one group only.
-    fn declare_tags(&mut self, decl: Pair) {
+    fn declare_tags(&mut self, decl: Node) {
         let mut group_name = None;
         let mut cases = Vec::new();
-        for part in decl.into_inner() {
-            match part.as_rule() {
-                Rule::group_name => group_name = Some(part.as_str().to_string()),
-                Rule::tag_case => cases.push(part),
+        for part in decl.children() {
+            match part.kind() {
+                "group_name" => group_name = Some(part.text().to_string()),
+                "tag_case" => cases.push(part),
                 _ => {}
             }
         }
         let is_flat = group_name.is_none()
-            && matches!(cases.as_slice(), [case] if case.clone().into_inner().count() == 1);
+            && matches!(cases.as_slice(), [case] if case.clone().children().count() == 1);
         let mut recursive = false;
         let mut tags = Vec::new();
         let mut declared: Vec<String> = Vec::new();
         for case in cases {
-            let mut parts = case.into_inner();
+            let mut parts = case.children();
             let name = parts.next().expect("a tag case names its tag");
             let span = self.span_of(&name);
             let payload: Vec<Ty> = parts
@@ -398,7 +371,7 @@ impl Lower {
                         .map(|(i, field)| (i.to_string(), field)),
                 )),
             };
-            let name = name.as_str().to_string();
+            let name = name.text().to_string();
             let taken = declared.contains(&name)
                 || self
                     .tags
@@ -420,35 +393,35 @@ impl Lower {
     }
 
     /// A tag payload's type: `group` stands for the group being declared.
-    fn payload_ty(&mut self, ty: &Pair, group: Option<&str>, recursive: &mut bool) -> Ty {
-        let (shape, hint) = match ty.as_rule() {
-            Rule::type_name if group == Some(ty.as_str()) => {
+    fn payload_ty(&mut self, ty: &Node, group: Option<&str>, recursive: &mut bool) -> Ty {
+        let (shape, hint) = match ty.kind() {
+            "type_name" if group == Some(ty.text()) => {
                 *recursive = true;
                 return Ty::Var(Group::SELF);
             }
-            Rule::type_name => match Boundary::named(ty.as_str()) {
+            "type_name" => match Boundary::named(ty.text()) {
                 Some(boundary) => return boundary.into(),
                 None => (
-                    format!("`{}`", ty.as_str()),
+                    format!("`{}`", ty.text()),
                     "; a payload is Number, Int, Bool, Unit, String, a record of those, or the group itself",
                 ),
             },
-            Rule::record_type => {
+            "record_type" => {
                 let fields: Vec<(String, Ty)> = ty
                     .clone()
-                    .into_inner()
+                    .children()
                     .map(|field| {
-                        let mut parts = field.into_inner();
+                        let mut parts = field.children();
                         let label = parts.next().expect("a field type has a label");
                         let ty = parts.next().expect("a field type has a type");
                         let ty = self.payload_ty(&ty, group, recursive);
-                        (label.as_str().to_string(), ty)
+                        (label.text().to_string(), ty)
                     })
                     .collect();
                 return Ty::Record(Row::of(fields));
             }
-            Rule::list_type => ("a list".to_string(), ""),
-            Rule::fn_type => ("a function".to_string(), ""),
+            "list_type" => ("a list".to_string(), ""),
+            "fn_type" => ("a function".to_string(), ""),
             other => unreachable!("unexpected type rule {other:?}"),
         };
         self.errors.push(GoatError::new(
@@ -458,9 +431,9 @@ impl Lower {
         Ty::Unit
     }
 
-    fn span_of(&self, pair: &Pair) -> Span {
-        let s = pair.as_span();
-        Span::in_file(s.start(), s.end(), self.file)
+    fn span_of(&self, pair: &Node) -> Span {
+        let s = pair.span();
+        Span::in_file(s.start, s.end, self.file)
     }
 
     fn fresh_symbol(&mut self) -> Symbol {
@@ -605,13 +578,10 @@ impl Lower {
         self.scopes.resolve(name)
     }
 
-    fn lower_goat(&mut self, pair: Pair) -> Expr {
-        let span = self.span_of(&pair);
+    fn lower_goat(&mut self, goat: Goat) -> Expr {
+        let span = self.span_of(&goat.node());
         self.scopes.push();
-        let body = pair
-            .into_inner()
-            .find(|p| p.as_rule() == Rule::expr)
-            .map(|p| self.lower_expr(p));
+        let body = goat.body().map(|block| self.lower_expr(block.node()));
         self.scopes.pop();
         body.unwrap_or_else(|| self.node(span, ExprKind::Unit))
     }
@@ -621,21 +591,21 @@ impl Lower {
     /// more postfix accesses and calls; the grammar leaves those `access` pairs as
     /// siblings, so [`Self::lower_operand`] consumes them before the next
     /// operator.
-    fn lower_expr(&mut self, pair: Pair) -> Expr {
+    fn lower_expr(&mut self, pair: Node) -> Expr {
         let scopes = self.scopes.len();
         let end = self.span_of(&pair);
-        let mut inner = pair.into_inner().peekable();
+        let mut inner = pair.children().peekable();
         let mut spine = Vec::new();
         let mut tail = None;
         // The statements and bindings of a block hang off a spine of `Let`s,
         // beside the trees they build rather than under them, so the spine is
         // walked in this loop and only a statement's own nesting costs depth.
         while let Some(first) = inner.peek() {
-            if first.as_rule() == Rule::sequel {
+            if first.is("sequel") {
                 inner.next();
                 continue;
             }
-            let is_binding = first.as_rule() == Rule::declaration;
+            let is_binding = first.is("declaration");
             let span = self.span_of(first);
             let added = if is_binding { 1 } else { chain_depth(&inner) };
             if self.depth + added > MAX_DEPTH {
@@ -692,18 +662,18 @@ impl Lower {
 
     /// Lower the statement at the front of `inner`, through the `;` that ends
     /// it. The flag is whether there was one.
-    fn lower_expr_chain(&mut self, inner: &mut Peekable<Pairs>) -> (Expr, bool) {
+    fn lower_expr_chain(&mut self, inner: &mut Peekable<Children>) -> (Expr, bool) {
         let mut operands = Vec::new();
         let mut ops: Vec<(Op, Span)> = Vec::new();
         self.push_operand(inner, &mut operands, &mut ops);
         let mut sequenced = false;
 
         while let Some(op_pair) = inner.next() {
-            if op_pair.as_rule() == Rule::sequel {
+            if op_pair.is("sequel") {
                 sequenced = true;
                 break;
             }
-            let op = infix_op(op_pair.as_rule());
+            let op = infix_op(op_pair.kind());
             let op_span = self.span_of(&op_pair);
             while let Some((top, _)) = ops.last() {
                 if prec(*top) >= prec(op) {
@@ -726,11 +696,11 @@ impl Lower {
     /// Any `not`s are pushed as prefix operators, then the operand they apply to.
     fn push_operand(
         &mut self,
-        inner: &mut Peekable<Pairs>,
+        inner: &mut Peekable<Children>,
         operands: &mut Vec<Expr>,
         ops: &mut Vec<(Op, Span)>,
     ) {
-        while let Some(not) = inner.next_if(|p| p.as_rule() == Rule::not_op) {
+        while let Some(not) = inner.next_if(|p| p.is("not_op")) {
             ops.push((Op::Not, self.span_of(&not)));
         }
         operands.push(self.lower_operand(inner));
@@ -749,12 +719,12 @@ impl Lower {
         )
     }
 
-    fn lower_operand(&mut self, inner: &mut Peekable<Pairs>) -> Expr {
+    fn lower_operand(&mut self, inner: &mut Peekable<Children>) -> Expr {
         let first = inner.next().expect("an operand begins with a primary");
-        if first.as_rule() == Rule::negation {
+        if first.is("negation") {
             return self.lower_negation(first);
         }
-        let expr = if first.as_rule() == Rule::name && self.is_tag(first.as_str()) {
+        let expr = if first.is("name") && self.is_tag(first.text()) {
             self.lower_tag(first, inner)
         } else {
             self.lower_primary(first)
@@ -763,18 +733,16 @@ impl Lower {
     }
 
     /// `a.b(x).c` nests as `((a.b)(x)).c`.
-    fn lower_postfixes(&mut self, mut expr: Expr, inner: &mut Peekable<Pairs>) -> Expr {
-        while let Some(postfix) =
-            inner.next_if(|p| matches!(p.as_rule(), Rule::access | Rule::call))
-        {
+    fn lower_postfixes(&mut self, mut expr: Expr, inner: &mut Peekable<Children>) -> Expr {
+        while let Some(postfix) = inner.next_if(|p| matches!(p.kind(), "access" | "call")) {
             let span = expr.span.to(self.span_of(&postfix));
-            expr = match postfix.as_rule() {
-                Rule::access => {
+            expr = match postfix.kind() {
+                "access" => {
                     let label = postfix
-                        .into_inner()
+                        .children()
                         .next()
                         .expect("access is `.` then an identifier")
-                        .as_str()
+                        .text()
                         .to_string();
                     self.node(
                         span,
@@ -786,8 +754,8 @@ impl Lower {
                 }
                 _ => {
                     let args: Vec<Expr> = postfix
-                        .into_inner()
-                        .flat_map(|a| a.into_inner())
+                        .children()
+                        .flat_map(|a| a.children())
                         .map(|a| self.lower_expr(a))
                         .collect();
                     if matches!(expr.kind, ExprKind::Builtin(Builtin::Trap)) {
@@ -847,9 +815,9 @@ impl Lower {
     }
 
     /// `-x` is `0 - x`: the HIR has no negation node.
-    fn lower_negation(&mut self, pair: Pair) -> Expr {
+    fn lower_negation(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
-        let mut inner = pair.into_inner().peekable();
+        let mut inner = pair.children().peekable();
         let minus = inner.next().expect("negation begins with `-`");
         let operand = self.lower_operand(&mut inner);
         let zero = self.node(self.span_of(&minus), ExprKind::Int(0));
@@ -922,32 +890,32 @@ impl Lower {
     }
 
     /// Lower a single term (anything that can appear as an operand).
-    fn lower_primary(&mut self, pair: Pair) -> Expr {
+    fn lower_primary(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
-        match pair.as_rule() {
-            Rule::expr => self.lower_expr(pair),
-            Rule::number => self.lower_number(span, pair.as_str()),
-            Rule::string => {
-                let raw = pair.as_str();
+        match pair.kind() {
+            "expr" => self.lower_expr(pair),
+            "number" => self.lower_number(span, pair.text()),
+            "string" => {
+                let raw = pair.text();
                 let decoded = self.decode_string(span, &raw[1..raw.len() - 1]);
                 self.node(span, ExprKind::Str(decoded))
             }
-            Rule::boolean => {
-                let is_true = pair.as_str() == "true";
+            "boolean" => {
+                let is_true = pair.text() == "true";
                 self.node(span, ExprKind::Bool(is_true))
             }
-            Rule::name => {
-                let name = pair.as_str().to_string();
+            "name" => {
+                let name = pair.text().to_string();
                 self.var(span, name)
             }
-            Rule::record => self.lower_record(pair),
-            Rule::list => self.lower_list(pair),
-            Rule::local => self.lower_local(pair),
-            Rule::destructure => self.lower_destructure(pair),
-            Rule::function => self.lower_function(pair),
-            Rule::conditional => self.lower_conditional(pair),
-            Rule::match_expr => self.lower_match(pair),
-            Rule::repeat_loop | Rule::count_loop | Rule::each_loop => self.lower_loop(pair),
+            "record" => self.lower_record(pair),
+            "list" => self.lower_list(pair),
+            "local" => self.lower_local(pair),
+            "destructure" => self.lower_destructure(pair),
+            "function" => self.lower_function(pair),
+            "conditional" => self.lower_conditional(pair),
+            "match_expr" => self.lower_match(pair),
+            "repeat_loop" | "count_loop" | "each_loop" => self.lower_loop(pair),
             other => unreachable!("unexpected term rule {other:?}"),
         }
     }
@@ -1001,12 +969,12 @@ impl Lower {
     }
 
     /// A binding that is an operand, scoped over the expression after it.
-    fn lower_local(&mut self, pair: Pair) -> Expr {
+    fn lower_local(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
-        let mut inner = pair.into_inner();
+        let mut inner = pair.children();
         let declaration = inner.next().expect("a local begins with a declaration");
         let rest = inner.next();
-        let following = rest.clone().into_iter().flat_map(Pair::into_inner);
+        let following = rest.into_iter().flat_map(|node| node.children());
         let mut binding = self.lower_declaration_head(declaration, following);
         binding.span = span;
         let rest = rest.map(|p| self.lower_expr(p));
@@ -1019,13 +987,13 @@ impl Lower {
     /// `following` is what comes after it in its block.
     fn lower_declaration_head<'i>(
         &mut self,
-        pair: Pair<'i>,
-        following: impl Iterator<Item = Pair<'i>> + 'i,
+        pair: Node<'i>,
+        following: impl Iterator<Item = Node<'i>> + 'i,
     ) -> Binding {
         let span = self.span_of(&pair);
-        let mut inner = pair.into_inner();
+        let mut inner = pair.children();
         let name_pair = inner.next().expect("declaration starts with a name");
-        let name = name_pair.as_str().to_string();
+        let name = name_pair.text().to_string();
         let value_pair = inner.next().expect("declaration has a value");
 
         let shadows_builtin = Builtin::named(&name).is_some();
@@ -1051,7 +1019,7 @@ impl Lower {
             };
             (symbol, self.lower_expr(value_pair))
         } else {
-            let value = if value_pair.as_rule() == Rule::foreign_decl {
+            let value = if value_pair.is("foreign_decl") {
                 self.lower_foreign(value_pair)
             } else {
                 self.lower_expr(value_pair)
@@ -1066,15 +1034,13 @@ impl Lower {
         }
     }
 
-    fn lower_foreign(&mut self, pair: Pair) -> Expr {
+    fn lower_foreign(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
-        let mut inner = pair
-            .into_inner()
-            .filter(|p| p.as_rule() != Rule::foreign_kw);
+        let mut inner = pair.children().filter(|p| !p.is("foreign_kw"));
         let module = self.foreign_name(inner.next().expect("foreign names a module"), "module");
         let name = self.foreign_name(inner.next().expect("foreign names a function"), "name");
         let signature = inner.next().expect("foreign has a signature");
-        let mut types = signature.into_inner();
+        let mut types = signature.children();
         let ret = types
             .next_back()
             .expect("a signature ends in a return type");
@@ -1091,13 +1057,10 @@ impl Lower {
         )
     }
 
-    fn foreign_name(&mut self, pair: Pair, what: &str) -> String {
+    fn foreign_name(&mut self, pair: Node, what: &str) -> String {
         let span = self.span_of(&pair);
-        let text = pair.as_str();
-        let is_string = pair
-            .into_inner()
-            .next()
-            .is_some_and(|p| p.as_rule() == Rule::string);
+        let text = pair.text();
+        let is_string = pair.children().next().is_some_and(|p| p.is("string"));
         if is_string {
             return self.decode_string(span, &text[1..text.len() - 1]);
         }
@@ -1109,18 +1072,18 @@ impl Lower {
     }
 
     /// `verb` is "take" for a parameter and "return" for a result.
-    fn boundary(&mut self, ty: &Pair, verb: &str) -> Boundary {
-        let (shape, hint) = match ty.as_rule() {
-            Rule::type_name => match Boundary::named(ty.as_str()) {
+    fn boundary(&mut self, ty: &Node, verb: &str) -> Boundary {
+        let (shape, hint) = match ty.kind() {
+            "type_name" => match Boundary::named(ty.text()) {
                 Some(boundary) => return boundary,
                 None => (
-                    format!("`{}`", ty.as_str()),
+                    format!("`{}`", ty.text()),
                     "; the types that cross are Number, Int, Bool, Unit and String",
                 ),
             },
-            Rule::record_type => ("a record".to_string(), ""),
-            Rule::list_type => ("a list".to_string(), ""),
-            Rule::fn_type => ("a function".to_string(), ""),
+            "record_type" => ("a record".to_string(), ""),
+            "list_type" => ("a list".to_string(), ""),
+            "fn_type" => ("a function".to_string(), ""),
             other => unreachable!("unexpected type rule {other:?}"),
         };
         self.errors.push(GoatError::new(
@@ -1134,24 +1097,24 @@ impl Lower {
     /// before any body is lowered, so bodies can call each other in any order.
     fn bind_function_group<'i>(
         &mut self,
-        first: &Pair,
-        following: impl Iterator<Item = Pair<'i>> + 'i,
+        first: &Node,
+        following: impl Iterator<Item = Node<'i>> + 'i,
     ) {
         let mut seen = HashSet::new();
         self.reserve(first, &mut seen);
-        let mut links: Box<dyn Iterator<Item = Pair<'i>> + 'i> = Box::new(following);
+        let mut links: Box<dyn Iterator<Item = Node<'i>> + 'i> = Box::new(following);
         while let Some(link) = links.next() {
-            match link.as_rule() {
-                Rule::declaration => {
-                    let mut parts = link.into_inner();
+            match link.kind() {
+                "declaration" => {
+                    let mut parts = link.children();
                     let head = parts.next().expect("a declaration starts with a name");
                     let value = parts.next().expect("a declaration has a value");
                     if is_program_literal(&value) {
                         self.reserve(&head, &mut seen);
                     }
                 }
-                Rule::destructure => match link.into_inner().nth(2) {
-                    Some(rest) => links = Box::new(rest.into_inner()),
+                "destructure" => match link.children().nth(2) {
+                    Some(rest) => links = Box::new(rest.children()),
                     None => break,
                 },
                 _ => break,
@@ -1159,8 +1122,8 @@ impl Lower {
         }
     }
 
-    fn reserve(&mut self, name_pair: &Pair, seen: &mut HashSet<String>) {
-        let name = name_pair.as_str();
+    fn reserve(&mut self, name_pair: &Node, seen: &mut HashSet<String>) {
+        let name = name_pair.text();
         let reserved = seen.insert(name.to_string()).then(|| {
             let symbol = self.fresh_symbol();
             self.bind_as(name, symbol);
@@ -1169,20 +1132,20 @@ impl Lower {
         self.grouped.insert(self.span_of(name_pair).start, reserved);
     }
 
-    fn lower_function(&mut self, pair: Pair) -> Expr {
+    fn lower_function(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
         self.scopes.push();
         let mut params = Vec::new();
         let mut unpacked = Vec::new();
         let mut list_params = Vec::new();
         let mut body_pair = None;
-        for child in pair.into_inner() {
-            match child.as_rule() {
-                Rule::params => {
-                    for param in child.into_inner() {
+        for child in pair.children() {
+            match child.kind() {
+                "params" => {
+                    for param in child.children() {
                         let pspan = self.span_of(&param);
-                        let name = param.as_str().to_string();
-                        if param.as_rule() == Rule::list_pattern {
+                        let name = param.text().to_string();
+                        if param.is("list_pattern") {
                             let source = self.fresh_symbol();
                             list_params.push((source, param));
                             params.push(Param {
@@ -1192,7 +1155,7 @@ impl Lower {
                             });
                             continue;
                         }
-                        if param.as_rule() == Rule::record_pattern {
+                        if param.is("record_pattern") {
                             let source = self.fresh_symbol();
                             let pattern = self.bind_record_pattern(param, "parameter");
                             unpacked.push((source, name.clone(), pattern));
@@ -1217,7 +1180,7 @@ impl Lower {
                         });
                     }
                 }
-                Rule::expr => body_pair = Some(child),
+                "expr" => body_pair = Some(child),
                 other => unreachable!("unexpected function child {other:?}"),
             }
         }
@@ -1245,23 +1208,21 @@ impl Lower {
 
     /// Bind the names of a `{x, y, ...rest}` pattern in the current scope.
     /// `what` names the construct in the duplicate-name error.
-    fn bind_record_pattern(&mut self, pair: Pair, what: &str) -> RecordPattern {
+    fn bind_record_pattern(&mut self, pair: Node, what: &str) -> RecordPattern {
         let mut pattern = RecordPattern {
             fields: Vec::new(),
             rest: None,
         };
-        for item in pair.into_inner() {
-            let (name_pair, is_rest) = match item.as_rule() {
-                Rule::rest_binding => (
-                    item.into_inner()
-                        .next()
-                        .expect("`...` is followed by a name"),
+        for item in pair.children() {
+            let (name_pair, is_rest) = match item.kind() {
+                "rest_binding" => (
+                    item.children().next().expect("`...` is followed by a name"),
                     true,
                 ),
                 _ => (item, false),
             };
             let span = self.span_of(&name_pair);
-            let name = name_pair.as_str().to_string();
+            let name = name_pair.text().to_string();
             if self.scopes.innermost_binds(&name) {
                 self.errors
                     .push(GoatError::new(span, format!("duplicate {what} `{name}`")));
@@ -1330,17 +1291,17 @@ impl Lower {
     }
 
     /// `{x, y} = value rest`: bind `value` once, then each name from it.
-    fn lower_destructure(&mut self, pair: Pair) -> Expr {
+    fn lower_destructure(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
-        let mut inner = pair.into_inner();
+        let mut inner = pair.children();
         let pattern_pair = inner.next().expect("destructuring begins with a pattern");
         let value_pair = inner.next().expect("destructuring has a value");
         let rest_pair = inner.next();
-        let source_name = pattern_pair.as_str().to_string();
+        let source_name = pattern_pair.text().to_string();
 
         let value = self.lower_expr(value_pair);
         let source = self.fresh_symbol();
-        let unpacked = if pattern_pair.as_rule() == Rule::list_pattern {
+        let unpacked = if pattern_pair.is("list_pattern") {
             Some(self.lower_list_binding(source, pattern_pair, Then::Rest(rest_pair)))
         } else {
             self.scopes.push();
@@ -1360,16 +1321,16 @@ impl Lower {
         )
     }
 
-    fn lower_record(&mut self, pair: Pair) -> Expr {
+    fn lower_record(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
         let mut base = None;
         let mut spreads = 0;
         let mut fields = Vec::new();
-        for (position, item) in pair.into_inner().enumerate() {
-            if item.as_rule() == Rule::spread {
+        for (position, item) in pair.children().enumerate() {
+            if item.is("spread") {
                 let item_span = self.span_of(&item);
                 let target = item
-                    .into_inner()
+                    .children()
                     .next()
                     .expect("`...` is followed by an expression");
                 let target = self.lower_expr(target);
@@ -1389,11 +1350,11 @@ impl Lower {
                 }
                 continue;
             }
-            debug_assert_eq!(item.as_rule(), Rule::field);
-            let mut it = item.into_inner();
+            debug_assert_eq!(item.kind(), "field");
+            let mut it = item.children();
             let label_pair = it.next().expect("a field begins with a label");
             let label_span = self.span_of(&label_pair);
-            let label = label_pair.as_str().to_string();
+            let label = label_pair.text().to_string();
             let value = self.lower_expr(it.next().expect("a field has a value"));
             if fields.iter().any(|(l, _)| *l == label) {
                 self.errors.push(GoatError::new(
@@ -1429,19 +1390,19 @@ impl Lower {
 
     /// `Circle(5)`: the declared tag `name` and, if a call follows, its payload.
     /// `Empty()` is the same as `Empty`.
-    fn lower_tag(&mut self, name: Pair, inner: &mut Peekable<Pairs>) -> Expr {
+    fn lower_tag(&mut self, name: Node, inner: &mut Peekable<Children>) -> Expr {
         let mut span = self.span_of(&name);
-        let args = match inner.next_if(|p| p.as_rule() == Rule::call) {
+        let args = match inner.next_if(|p| p.is("call")) {
             Some(call) => {
                 span = span.to(self.span_of(&call));
-                call.into_inner()
-                    .flat_map(|arguments| arguments.into_inner())
+                call.children()
+                    .flat_map(|arguments| arguments.children())
                     .map(|a| self.lower_expr(a))
                     .collect()
             }
             None => Vec::new(),
         };
-        self.tag_node(span, name.as_str().to_string(), args)
+        self.tag_node(span, name.text().to_string(), args)
     }
 
     /// One argument is the payload as is; several become a record labelled
@@ -1471,9 +1432,9 @@ impl Lower {
     }
 
     /// `[a, b]` is `Link(a, Link(b, Empty))`.
-    fn lower_list(&mut self, pair: Pair) -> Expr {
+    fn lower_list(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
-        let items: Vec<Pair> = pair.into_inner().flat_map(|a| a.into_inner()).collect();
+        let items: Vec<Node> = pair.children().flat_map(|a| a.children()).collect();
         if self.depth + items.len() > MAX_DEPTH {
             self.errors
                 .push(GoatError::new(span, "list has too many items to write out"));
@@ -1488,11 +1449,11 @@ impl Lower {
         })
     }
 
-    fn lower_match(&mut self, pair: Pair) -> Expr {
+    fn lower_match(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
-        let mut inner = pair.into_inner();
+        let mut inner = pair.children();
         let scrutinee = self.lower_expr(inner.next().expect("match has a scrutinee"));
-        let children: Vec<Pair> = inner.collect();
+        let children: Vec<Node> = inner.collect();
         if children.iter().any(is_list_arm) {
             return self.lower_list_match(span, scrutinee, children);
         }
@@ -1502,9 +1463,9 @@ impl Lower {
         let mut arms = Vec::new();
         let mut else_branch = None;
         for child in children {
-            match child.as_rule() {
-                Rule::arm => arms.push(self.lower_arm(child)),
-                Rule::expr => else_branch = Some(Box::new(self.lower_expr(child))),
+            match child.kind() {
+                "arm" => arms.push(self.lower_arm(child)),
+                "expr" => else_branch = Some(Box::new(self.lower_expr(child))),
                 other => unreachable!("unexpected match child {other:?}"),
             }
         }
@@ -1533,7 +1494,7 @@ impl Lower {
         &mut self,
         span: Span,
         scrutinee: Expr,
-        children: Vec<Pair<'i>>,
+        children: Vec<Node<'i>>,
     ) -> Expr {
         if self.depth + children.len() > MAX_DEPTH {
             self.errors.push(GoatError::new(
@@ -1547,22 +1508,22 @@ impl Lower {
         let mut rows: Vec<(Expr, Expr)> = Vec::new();
         let mut otherwise = None;
         for child in children {
-            if child.as_rule() == Rule::expr {
+            if child.is("expr") {
                 otherwise = Some(self.lower_expr(child));
                 continue;
             }
-            let mut inner = child.into_inner();
+            let mut inner = child.children();
             let pattern = inner.next().expect("an arm begins with a pattern");
             let body = inner.next().expect("an arm has a body");
             let body = self.lower_expr(body);
-            if pattern.as_rule() != Rule::literal_pattern {
+            if !pattern.is("literal_pattern") {
                 self.errors.push(GoatError::new(
                     self.span_of(&pattern),
                     "a `match` can't mix literal patterns with tag or list patterns",
                 ));
                 continue;
             }
-            let literal = pattern.into_inner().next().expect("a literal pattern");
+            let literal = pattern.children().next().expect("a literal pattern");
             let literal = self.lower_primary(literal);
             if rows
                 .first()
@@ -1638,8 +1599,8 @@ impl Lower {
         }
     }
 
-    fn lower_arm(&mut self, pair: Pair) -> MatchArm {
-        let mut inner = pair.into_inner();
+    fn lower_arm(&mut self, pair: Node) -> MatchArm {
+        let mut inner = pair.children();
         let pattern_pair = inner.next().expect("an arm begins with a pattern");
         let body_pair = inner.next().expect("an arm has a body");
 
@@ -1650,11 +1611,11 @@ impl Lower {
         MatchArm { pattern, body }
     }
 
-    fn lower_pattern(&mut self, pair: Pair) -> Pattern {
+    fn lower_pattern(&mut self, pair: Node) -> Pattern {
         let span = self.span_of(&pair);
-        let mut inner = pair.into_inner();
+        let mut inner = pair.children();
         let head = inner.next().expect("a pattern begins with a tag name");
-        let tag = head.as_str().to_string();
+        let tag = head.text().to_string();
         if !self.tags.contains_key(&tag) {
             let hint = self
                 .similar_tag(&tag)
@@ -1665,9 +1626,9 @@ impl Lower {
             ));
         }
         let mut binders: Vec<Param> = Vec::new();
-        for label in inner.flat_map(|labels| labels.into_inner()) {
+        for label in inner.flat_map(|labels| labels.children()) {
             let pspan = self.span_of(&label);
-            let name = label.as_str().to_string();
+            let name = label.text().to_string();
             if binders.iter().any(|b| b.name == name) {
                 self.errors.push(GoatError::new(
                     pspan,
@@ -1695,20 +1656,18 @@ impl Lower {
         Pattern { tag, span, payload }
     }
 
-    fn list_pattern(&mut self, pair: Pair) -> ListPattern {
+    fn list_pattern(&mut self, pair: Node) -> ListPattern {
         let span = self.span_of(&pair);
         let mut items: Vec<(String, Span)> = Vec::new();
         let mut rest = None;
-        for item in pair.into_inner() {
-            let is_rest = item.as_rule() == Rule::rest_binding;
+        for item in pair.children() {
+            let is_rest = item.is("rest_binding");
             let name_pair = if is_rest {
-                item.into_inner()
-                    .next()
-                    .expect("`...` is followed by a name")
+                item.children().next().expect("`...` is followed by a name")
             } else {
                 item
             };
-            let name = name_pair.as_str().to_string();
+            let name = name_pair.text().to_string();
             let name_span = self.span_of(&name_pair);
             let taken = items.iter().any(|(n, _)| *n == name)
                 || rest
@@ -1734,19 +1693,19 @@ impl Lower {
         &mut self,
         span: Span,
         scrutinee: Expr,
-        children: Vec<Pair<'i>>,
+        children: Vec<Node<'i>>,
     ) -> Expr {
         let mut rows = Vec::new();
         let mut otherwise = None;
         for child in children {
-            if child.as_rule() == Rule::expr {
+            if child.is("expr") {
                 otherwise = Some(child);
                 continue;
             }
-            let mut inner = child.into_inner();
+            let mut inner = child.children();
             let pattern = inner.next().expect("an arm begins with a pattern");
             let body = inner.next().expect("an arm has a body");
-            if pattern.as_rule() == Rule::list_pattern {
+            if pattern.is("list_pattern") {
                 let pattern = self.list_pattern(pattern);
                 rows.push((pattern, Then::Arm(body), false));
             } else {
@@ -1798,7 +1757,7 @@ impl Lower {
         scrutinee: Expr,
         source: Symbol,
         rows: Vec<(ListPattern, Then<'i>, bool)>,
-        otherwise: Option<Pair<'i>>,
+        otherwise: Option<Node<'i>>,
     ) -> Expr {
         // Each item adds a nested match, and each name a binding around the body.
         let extra = rows
@@ -1890,7 +1849,7 @@ impl Lower {
             return None;
         }
 
-        let else_branch = match m.otherwise.clone() {
+        let else_branch = match m.otherwise {
             Some(body) if arms.len() < 2 => {
                 let first_time = !std::mem::replace(&mut m.otherwise_lowered, true);
                 Some(Box::new(
@@ -2010,7 +1969,7 @@ impl Lower {
             };
             self.list_leaf(m, &at);
         }
-        if let Some(body) = m.otherwise.clone()
+        if let Some(body) = m.otherwise
             && !m.otherwise_lowered
         {
             self.lower_expr(body);
@@ -2022,7 +1981,7 @@ impl Lower {
     fn lower_list_binding<'i>(
         &mut self,
         source: Symbol,
-        pattern: Pair<'i>,
+        pattern: Node<'i>,
         then: Then<'i>,
     ) -> Expr {
         let pattern = self.list_pattern(pattern);
@@ -2034,8 +1993,8 @@ impl Lower {
     /// Unpack each list-pattern parameter in turn around `body`.
     fn lower_list_params<'i>(
         &mut self,
-        params: &[(Symbol, Pair<'i>)],
-        body: Option<Pair<'i>>,
+        params: &[(Symbol, Node<'i>)],
+        body: Option<Node<'i>>,
         span: Span,
     ) -> Expr {
         match params.split_first() {
@@ -2045,14 +2004,14 @@ impl Lower {
             },
             Some(((source, pattern), later)) => {
                 let then = Then::Params(later.to_vec(), body);
-                self.lower_list_binding(*source, pattern.clone(), then)
+                self.lower_list_binding(*source, *pattern, then)
             }
         }
     }
 
-    fn lower_conditional(&mut self, pair: Pair) -> Expr {
+    fn lower_conditional(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
-        let mut inner = pair.into_inner();
+        let mut inner = pair.children();
         let cond = self.lower_expr(inner.next().expect("if has a condition"));
         let then_branch = self.lower_expr(inner.next().expect("if has a then branch"));
         let else_branch = inner.next().map(|p| Box::new(self.lower_expr(p)));
@@ -2081,22 +2040,19 @@ impl Lower {
     ///
     /// A counter's literals take whichever of `Int` and `Float` the loop's use of it needs.
     #[inline(never)]
-    fn lower_loop(&mut self, pair: Pair) -> Expr {
+    fn lower_loop(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
-        let rule = pair.as_rule();
-        let mut inner = pair.into_inner().filter(|p| {
-            !matches!(
-                p.as_rule(),
-                Rule::for_kw | Rule::from_kw | Rule::to_kw | Rule::in_kw
-            )
-        });
-        if rule == Rule::each_loop {
+        let rule = pair.kind();
+        let mut inner = pair
+            .children()
+            .filter(|p| !matches!(p.kind(), "for_kw" | "from_kw" | "to_kw" | "in_kw"));
+        if rule == "each_loop" {
             let name_pair = inner.next().expect("a `for` names its item");
             let list = self.lower_expr(inner.next().expect("`in` is followed by a list"));
             return self.each_loop(span, &name_pair, list, inner.next());
         }
         let counter =
-            (rule == Rule::count_loop).then(|| inner.next().expect("a `for` names its counter"));
+            (rule == "count_loop").then(|| inner.next().expect("a `for` names its counter"));
         let (start, stop, compare) = if counter.is_some() {
             let start = self.lower_expr(inner.next().expect("`from` is followed by a start"));
             let stop = self.lower_expr(inner.next().expect("`to` is followed by an end"));
@@ -2111,16 +2067,16 @@ impl Lower {
     fn counted_loop(
         &mut self,
         span: Span,
-        counter: Option<&Pair>,
+        counter: Option<&Node>,
         (start, stop, compare): (Expr, Expr, BinOp),
-        body: Option<Pair>,
+        body: Option<Node>,
     ) -> Expr {
         let start_symbol = self.fresh_symbol();
         let stop_symbol = self.fresh_symbol();
         let go = self.fresh_symbol();
         self.scopes.push();
         let (i, i_name) = match counter {
-            Some(name_pair) => (self.bind(name_pair.as_str()), name_pair.as_str()),
+            Some(name_pair) => (self.bind(name_pair.text()), name_pair.text()),
             None => (self.fresh_symbol(), LOOP_COUNTER_NAME),
         };
         let body = self.lower_loop_body(span, body);
@@ -2163,12 +2119,12 @@ impl Lower {
         self.let_node(span, (start_symbol, LOOP_START_NAME), start, with_stop)
     }
 
-    fn each_loop(&mut self, span: Span, name_pair: &Pair, list: Expr, body: Option<Pair>) -> Expr {
+    fn each_loop(&mut self, span: Span, name_pair: &Node, list: Expr, body: Option<Node>) -> Expr {
         let go = self.fresh_symbol();
         let remaining = self.fresh_symbol();
         let tail = self.fresh_symbol();
         self.scopes.push();
-        let item = self.bind(name_pair.as_str());
+        let item = self.bind(name_pair.text());
         let body = self.lower_loop_body(span, body);
         self.scopes.pop();
 
@@ -2185,7 +2141,7 @@ impl Lower {
                 tag: "Link".into(),
                 span,
                 payload: PatternPayload::Fields(vec![
-                    ("0".into(), param(item, name_pair.as_str())),
+                    ("0".into(), param(item, name_pair.text())),
                     ("1".into(), param(tail, LIST_NAME)),
                 ]),
             },
@@ -2213,7 +2169,7 @@ impl Lower {
         self.bind_loop(span, (go, vec![param(remaining, LIST_NAME)], walk), entry)
     }
 
-    fn lower_loop_body(&mut self, span: Span, body: Option<Pair>) -> Expr {
+    fn lower_loop_body(&mut self, span: Span, body: Option<Node>) -> Expr {
         match body {
             Some(body) => self.lower_expr(body),
             None => self.node(span, ExprKind::Unit),
@@ -2298,33 +2254,33 @@ struct Binding {
 /// How deep the statement at the front of `kids` can get: a left-leaning tree
 /// of its operands, plus a level for each `not`. The statements after a `;`
 /// are lowered on their own.
-fn chain_depth(kids: &Peekable<Pairs>) -> usize {
+fn chain_depth(kids: &Peekable<Children>) -> usize {
     let (mut nots, mut others) = (0, 0);
-    for child in kids.clone().take_while(|p| p.as_rule() != Rule::sequel) {
-        match child.as_rule() {
-            Rule::not_op => nots += 1,
+    for child in kids.clone().take_while(|p| !p.is("sequel")) {
+        match child.kind() {
+            "not_op" => nots += 1,
             _ => others += 1,
         }
     }
     others / 2 + 1 + nots
 }
 
-fn is_list_arm(child: &Pair) -> bool {
-    child.as_rule() == Rule::arm
+fn is_list_arm(child: &Node) -> bool {
+    child.is("arm")
         && child
             .clone()
-            .into_inner()
+            .children()
             .next()
-            .is_some_and(|p| p.as_rule() == Rule::list_pattern)
+            .is_some_and(|p| p.is("list_pattern"))
 }
 
-fn is_literal_arm(child: &Pair) -> bool {
-    child.as_rule() == Rule::arm
+fn is_literal_arm(child: &Node) -> bool {
+    child.is("arm")
         && child
             .clone()
-            .into_inner()
+            .children()
             .next()
-            .is_some_and(|p| p.as_rule() == Rule::literal_pattern)
+            .is_some_and(|p| p.is("literal_pattern"))
 }
 
 /// `Int` and `Float` literals are both numbers, so they may share a `match`.
@@ -2335,9 +2291,9 @@ fn scalar_kind(literal: &Expr) -> std::mem::Discriminant<ExprKind> {
     }
 }
 
-fn is_program_literal(expr: &Pair) -> bool {
-    let mut kids = expr.clone().into_inner();
-    matches!((kids.next(), kids.next()), (Some(p), None) if p.as_rule() == Rule::function)
+fn is_program_literal(expr: &Node) -> bool {
+    let mut kids = expr.clone().children();
+    matches!((kids.next(), kids.next()), (Some(p), None) if p.is("function"))
 }
 
 /// An operator while a chain is being folded: `and`/`or` lower to `if` rather
@@ -2350,22 +2306,22 @@ enum Op {
     Not,
 }
 
-fn infix_op(rule: Rule) -> Op {
+fn infix_op(rule: &str) -> Op {
     match rule {
-        Rule::and_op => Op::And,
-        Rule::or_op => Op::Or,
-        Rule::plus => Op::Bin(BinOp::Add),
-        Rule::minus => Op::Bin(BinOp::Sub),
-        Rule::multiply => Op::Bin(BinOp::Mul),
-        Rule::divide => Op::Bin(BinOp::Div),
-        Rule::floor_divide => Op::Bin(BinOp::FloorDiv),
-        Rule::remainder => Op::Bin(BinOp::Mod),
-        Rule::lt => Op::Bin(BinOp::Lt),
-        Rule::lte => Op::Bin(BinOp::Lte),
-        Rule::gt => Op::Bin(BinOp::Gt),
-        Rule::gte => Op::Bin(BinOp::Gte),
-        Rule::equal => Op::Bin(BinOp::Eq),
-        Rule::not_equal => Op::Bin(BinOp::Ne),
+        "and_op" => Op::And,
+        "or_op" => Op::Or,
+        "plus" => Op::Bin(BinOp::Add),
+        "minus" => Op::Bin(BinOp::Sub),
+        "multiply" => Op::Bin(BinOp::Mul),
+        "divide" => Op::Bin(BinOp::Div),
+        "floor_divide" => Op::Bin(BinOp::FloorDiv),
+        "remainder" => Op::Bin(BinOp::Mod),
+        "lt" => Op::Bin(BinOp::Lt),
+        "lte" => Op::Bin(BinOp::Lte),
+        "gt" => Op::Bin(BinOp::Gt),
+        "gte" => Op::Bin(BinOp::Gte),
+        "equal" => Op::Bin(BinOp::Eq),
+        "not_equal" => Op::Bin(BinOp::Ne),
         other => unreachable!("not an operator rule: {other:?}"),
     }
 }
