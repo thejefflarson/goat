@@ -8,7 +8,7 @@ pub mod rc;
 pub mod verify;
 
 pub use fingerprint::model_fingerprint;
-pub use host::{Host, HostValue, NoHost, Scene, SceneCommand, SceneHost, SceneSink};
+pub use host::{Host, HostValue, NoHost, Scene, SceneCommand, SceneHost, SceneSink, check_color};
 pub use interp::{
     InterpError, Outcome, Piece, Session, Value, run, run_with_depth, run_with_host,
     run_with_object_limit,

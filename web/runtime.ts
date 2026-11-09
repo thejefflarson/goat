@@ -12,7 +12,15 @@
 const STR_LEN = 8;
 const STR_BYTES = 12;
 const MAX_COMMANDS = 1_000_000;
-export const COLOR_PATTERN = /^[A-Za-z0-9#]{1,32}$/;
+const COLOR_PATTERN = /^[A-Za-z0-9#]{1,32}$/;
+
+// The one color allowlist (ADR 0014); mirrors check_color in mir/src/host.rs.
+export function checkColor(value: string): string {
+  if (!COLOR_PATTERN.test(value)) {
+    throw new Error(`color wants a name like "red" or a code like "#ff8800", not ${JSON.stringify(value)}`);
+  }
+  return value;
+}
 
 export type Command =
   | { kind: "forward" | "back" | "left" | "right"; value: number }
@@ -154,11 +162,7 @@ export function createHost(memory: () => WebAssembly.Memory): Host {
       pen_up: () => record({ kind: "pen_up" }),
       pen_down: () => record({ kind: "pen_down" }),
       color: (ptr: number) => {
-        const value = readString(memory(), ptr);
-        if (!COLOR_PATTERN.test(value)) {
-          throw new Error(`color wants a name like "red" or a code like "#ff8800", not ${JSON.stringify(value)}`);
-        }
-        record({ kind: "color", value });
+        record({ kind: "color", value: checkColor(readString(memory(), ptr)) });
       },
     },
   };

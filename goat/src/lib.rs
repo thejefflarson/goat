@@ -3,7 +3,9 @@
 pub use goat_checker::hir::Boundary;
 use goat_checker::hir::Span;
 use goat_checker::{GoatError, Vocab};
-pub use goat_mir::{Host, HostValue, NoHost, Profile, Scene, SceneCommand, SceneHost, SceneSink};
+pub use goat_mir::{
+    Host, HostValue, NoHost, Profile, Scene, SceneCommand, SceneHost, SceneSink, check_color,
+};
 
 #[cfg(feature = "native")]
 pub mod native;

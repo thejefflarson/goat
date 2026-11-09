@@ -1,0 +1,9 @@
+begin
+end
+line number number number number string
+polyline_begin string
+vertex number number
+polyline_end
+circle number number number string
+rect number number number number string
+text number number string string

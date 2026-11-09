@@ -74,19 +74,9 @@ fn finite(name: &str, x: f64) -> Result<f64, String> {
     }
 }
 
-/// A color name or `#hex` code. Nothing else is accepted, so the text is safe
-/// to write straight into an SVG attribute.
 fn color_name(text: &str) -> Result<String, String> {
-    let ok = !text.is_empty()
-        && text.len() <= 32
-        && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '#');
-    if ok {
-        Ok(text.to_string())
-    } else {
-        Err(format!(
-            "color wants a name like \"red\" or a code like \"#ff8800\", not {text:?}"
-        ))
-    }
+    goat::check_color(text)?;
+    Ok(text.to_string())
 }
 
 struct Stroke<'a> {

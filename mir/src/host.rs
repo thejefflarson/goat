@@ -224,14 +224,17 @@ impl Host for SceneHost {
     }
 }
 
-/// A color name or `#hex` code, the only text safe to hand a renderer
-/// (ADR 0014's allowlist).
-fn check_color(text: &str) -> Result<(), String> {
+/// A color name or `#hex` code of at most 32 characters, the only text safe to
+/// write into an SVG or HTML attribute (ADR 0014's allowlist). Every Rust host
+/// validates colors through this one rule.
+pub fn check_color(text: &str) -> Result<(), String> {
     let ok = (1..=32).contains(&text.len())
         && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '#');
     if ok {
         Ok(())
     } else {
-        Err(format!("{text:?} is not a color name or #hex code"))
+        Err(format!(
+            "color wants a name like \"red\" or a code like \"#ff8800\", not {text:?}"
+        ))
     }
 }
