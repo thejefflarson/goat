@@ -2,7 +2,7 @@
 
 - Status: accepted (2026-11-08)
 - Context: implements the split [ADR 0001](0001-number-representation.md) deferred;
-  `docs/plan.md` "Known limitation"; [ADR 0012](0012-trap-builtin.md) (runtime traps); #83.
+  `docs/plan.md` "Known limitation"; [ADR 0023](0023-trap-builtin.md) (runtime traps); #83.
 
 ## Context
 
@@ -35,7 +35,7 @@ hardware-mapped**, made *safe* rather than *unbounded*.
    comparison (`3 + 1.5 == 4.5`). Float→Int is **never** implicit — it needs an
    explicit `round` / `floor` / `truncate`.
 5. **Overflow traps, never wraps.** Int arithmetic that overflows its target
-   width is a runtime trap carrying a spanned message (the ADR-0012 mechanism),
+   width is a runtime trap carrying a spanned message (the ADR-0023 mechanism),
    not silent wraparound: a kid gets "this number got too big," never a wrong
    answer. Float follows IEEE-754 (inf/NaN) as today.
 6. **Per-target width** (from ADR 0001): Int = `i64` desktop/web, `i32`
@@ -50,7 +50,7 @@ hardware-mapped**, made *safe* rather than *unbounded*.
   indexing to Int.
 - "Errors come only from the checker" holds: overflow is a *defined runtime
   trap* on a well-typed program — the same category as the list-bounds traps
-  ADR 0012 ratified — not a checker error and not a mono/codegen panic.
+  ADR 0023 ratified — not a checker error and not a mono/codegen panic.
 - MIR already carries the Int/Float slots (ADR 0001), so no new MIR shape; mono
   lowers each to the target's width.
 - Kid-facing: the common case (draw with `+ - * /`, freely mix whole and
