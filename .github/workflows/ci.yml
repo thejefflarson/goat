@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches: [master]
+    tags: ['v*.*.*']
   pull_request:
 
 # Cancel superseded runs for the same ref so a fast push doesn't pile up jobs.
