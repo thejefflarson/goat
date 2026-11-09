@@ -6,6 +6,7 @@
 //! byte offsets into the source, kept only for diagnostics.
 
 use crate::ty::Group;
+use std::fmt;
 use std::sync::Arc;
 
 /// A resolved name. Every binding occurrence (declaration, function parameter)
@@ -222,15 +223,15 @@ pub struct MatchArm {
     pub body: Expr,
 }
 
-#[derive(Clone, Debug)]
 pub struct Expr {
     pub id: ExprId,
     pub span: Span,
     pub kind: ExprKind,
 }
 
-/// A long block is a long chain of `Let`s, so the derived drop would recurse
-/// once per statement and overflow the stack; this one unlinks the chain first.
+/// A long block is a long chain of `Let`s, so the derived `Drop`, `Clone` and
+/// `Debug` would each recurse once per statement and overflow the stack; the
+/// impls below walk the chain in a loop instead.
 impl Drop for Expr {
     fn drop(&mut self) {
         let mut next = self.take_rest();
@@ -246,6 +247,98 @@ impl Expr {
             ExprKind::Let { rest, .. } => rest.take(),
             _ => None,
         }
+    }
+
+    fn rest(&self) -> Option<&Expr> {
+        match &self.kind {
+            ExprKind::Let { rest, .. } => rest.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn clone_without_rest(&self) -> Expr {
+        let kind = match &self.kind {
+            ExprKind::Let {
+                symbol,
+                name,
+                value,
+                ..
+            } => ExprKind::Let {
+                symbol: *symbol,
+                name: name.clone(),
+                value: value.clone(),
+                rest: None,
+            },
+            kind => kind.clone(),
+        };
+        Expr {
+            id: self.id,
+            span: self.span,
+            kind,
+        }
+    }
+}
+
+impl Clone for Expr {
+    fn clone(&self) -> Expr {
+        let mut links = vec![self.clone_without_rest()];
+        let mut cursor = self.rest();
+        while let Some(link) = cursor {
+            links.push(link.clone_without_rest());
+            cursor = link.rest();
+        }
+        let mut result = links.pop().expect("the chain has a head");
+        while let Some(mut link) = links.pop() {
+            if let ExprKind::Let { rest, .. } = &mut link.kind {
+                *rest = Some(Box::new(result));
+            }
+            result = link;
+        }
+        result
+    }
+}
+
+/// A `Let` chain prints as a flat list of its links.
+impl fmt::Debug for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !matches!(self.kind, ExprKind::Let { .. }) {
+            return f
+                .debug_struct("Expr")
+                .field("id", &self.id)
+                .field("span", &self.span)
+                .field("kind", &self.kind)
+                .finish();
+        }
+        let mut list = f.debug_list();
+        let mut cursor = Some(self);
+        while let Some(link) = cursor {
+            list.entry(&LinkDebug(link));
+            cursor = link.rest();
+        }
+        list.finish()
+    }
+}
+
+struct LinkDebug<'a>(&'a Expr);
+
+impl fmt::Debug for LinkDebug<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Expr { id, span, kind } = self.0;
+        let mut s = f.debug_struct("Expr");
+        s.field("id", id).field("span", span);
+        match kind {
+            ExprKind::Let {
+                symbol,
+                name,
+                value,
+                ..
+            } => s
+                .field("symbol", symbol)
+                .field("name", name)
+                .field("value", value),
+            kind => s.field("kind", kind),
+        };
+        s.finish()
     }
 }
 
