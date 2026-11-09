@@ -5,6 +5,7 @@
 use bolero::check;
 
 const ITERATIONS: usize = 2_000;
+const MAX_STRING_BYTES: usize = 4_096;
 
 #[test]
 fn check_never_panics_on_utf8() {
@@ -22,6 +23,7 @@ fn check_never_panics_on_utf8() {
 fn check_never_panics_on_strings() {
     check!()
         .with_iterations(ITERATIONS)
+        .with_max_len(MAX_STRING_BYTES)
         .with_type::<String>()
         .for_each(|source| {
             let _ = goat_checker::check(source);
@@ -41,4 +43,16 @@ fn deep_nesting_is_a_clean_error() {
     assert_clean_error(&format!("{}1{}", "(".repeat(depth), ")".repeat(depth)));
     assert_clean_error(&format!("{}1", "-".repeat(depth)));
     assert_clean_error(&"f(".repeat(depth));
+}
+
+#[test]
+fn a_long_block_is_checked_and_dropped_without_overflowing_the_stack() {
+    let length = 30_000;
+    let statements = format!("{}1", "1; ".repeat(length));
+    assert!(goat_checker::check(&statements).is_ok());
+    let bindings = (0..length)
+        .map(|i| format!("a{i} = 1\n"))
+        .collect::<String>();
+    assert!(goat_checker::check(&format!("{bindings}a0")).is_ok());
+    assert_clean_error(&format!("{bindings}missing"));
 }

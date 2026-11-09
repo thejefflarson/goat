@@ -1789,13 +1789,16 @@ mod tests {
     #[test]
     fn and_or_not_have_their_own_nodes() {
         let lowered = crate::lower::lower("a = true b = false a and b").unwrap();
-        let hir::ExprKind::Let { rest, .. } = lowered.root.kind else {
+        let hir::ExprKind::Let { rest, .. } = &lowered.root.kind else {
             panic!("expected a binding");
         };
-        let hir::ExprKind::Let { rest, .. } = rest.unwrap().kind else {
+        let hir::ExprKind::Let { rest, .. } = &rest.as_ref().unwrap().kind else {
             panic!("expected a binding");
         };
-        assert!(matches!(rest.unwrap().kind, hir::ExprKind::And { .. }));
+        assert!(matches!(
+            rest.as_ref().unwrap().kind,
+            hir::ExprKind::And { .. }
+        ));
     }
 
     /// The blamed source text and the message of the first error.
