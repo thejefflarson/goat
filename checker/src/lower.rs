@@ -808,7 +808,9 @@ impl Lower {
     }
 
     fn lower_trap(&mut self, span: Span, args: Vec<Expr>) -> Expr {
-        match <[Expr; 1]>::try_from(args).map(|[arg]| arg.kind) {
+        match <[Expr; 1]>::try_from(args)
+            .map(|[mut arg]| std::mem::replace(&mut arg.kind, ExprKind::Unit))
+        {
             Ok(ExprKind::Str(message)) => self.node(span, ExprKind::Trap(message)),
             _ => {
                 self.errors.push(GoatError::new(
@@ -2391,8 +2393,8 @@ mod tests {
         if let Some(e) = lowered.errors.first() {
             return Err(e.message.clone());
         }
-        match lowered.root.kind {
-            ExprKind::Str(s) => Ok(s),
+        match &lowered.root.kind {
+            ExprKind::Str(s) => Ok(s.clone()),
             other => panic!("expected a string, got {other:?}"),
         }
     }
@@ -2502,7 +2504,7 @@ mod tests {
     #[test]
     fn match_without_else_has_no_catch_all() {
         let root = lowered("match Empty do Empty then 0 done").root;
-        let ExprKind::Match { else_branch, .. } = root.kind else {
+        let ExprKind::Match { else_branch, .. } = &root.kind else {
             panic!("expected a match");
         };
         assert!(else_branch.is_none());

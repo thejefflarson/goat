@@ -229,6 +229,26 @@ pub struct Expr {
     pub kind: ExprKind,
 }
 
+/// A long block is a long chain of `Let`s, so the derived drop would recurse
+/// once per statement and overflow the stack; this one unlinks the chain first.
+impl Drop for Expr {
+    fn drop(&mut self) {
+        let mut next = self.take_rest();
+        while let Some(mut link) = next {
+            next = link.take_rest();
+        }
+    }
+}
+
+impl Expr {
+    fn take_rest(&mut self) -> Option<Box<Expr>> {
+        match &mut self.kind {
+            ExprKind::Let { rest, .. } => rest.take(),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ExprKind {
     /// An empty program, or an empty function body.
