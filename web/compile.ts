@@ -16,6 +16,7 @@ interface CompilerExports {
   gw_check(ptr: number, len: number): number;
   gw_tokenize(ptr: number, len: number): number;
   gw_vocabulary(): number;
+  gw_complete(ptr: number, len: number, cursor: number): number;
 }
 
 export type CompileResult =
@@ -158,4 +159,71 @@ export function decodeVocabulary(payload: Uint8Array): Word[] {
     if (kind) words.push({ kind, name, detail });
   }
   return words;
+}
+
+export type OptionKind = "variable" | "function" | "keyword" | "tag" | "field";
+
+const OPTION_KINDS: readonly OptionKind[] = ["variable", "function", "keyword", "tag", "field"];
+
+// One thing the editor can offer. `detail` is a signature or a type, or empty.
+export interface CompletionOption {
+  kind: OptionKind;
+  label: string;
+  detail: string;
+}
+
+// What can be typed at the cursor, best first; `from` is where the word being
+// typed starts, in UTF-16 code units of the source.
+export interface Completions {
+  from: number;
+  options: CompletionOption[];
+}
+
+export type Completer = (source: string, cursor: number) => Completions | null;
+
+// A completer that keeps one compiler instance alive, as `createTokenizer`
+// does. It asks the checker, so it works on source that does not parse; it
+// returns null where nothing completes.
+export function createCompleter(compiler: WebAssembly.Module): Completer {
+  let instance: WebAssembly.Instance | undefined;
+  return (source, cursor) => {
+    try {
+      instance ??= new WebAssembly.Instance(compiler, {});
+      const exports = instance.exports as unknown as CompilerExports;
+      const { memory, gw_alloc, gw_free } = exports;
+      const encoder = new TextEncoder();
+      const text = encoder.encode(source);
+      const at = encoder.encode(source.slice(0, cursor)).length;
+      const src = gw_alloc(text.length);
+      new Uint8Array(memory.buffer, src, text.length).set(text);
+      const record = exports.gw_complete(src, text.length, at);
+      gw_free(src, text.length);
+      const { ok, payload } = takeRecord(exports, record);
+      return ok ? decodeCompletions(payload, source) : null;
+    } catch {
+      instance = undefined;
+      return null;
+    }
+  };
+}
+
+export function decodeCompletions(payload: Uint8Array, source: string): Completions | null {
+  if (payload.length === 0) return null;
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const decoder = new TextDecoder();
+  let at = 4;
+  const text = () => {
+    const length = view.getUint32(at, true);
+    const value = decoder.decode(payload.subarray(at + 4, at + 4 + length));
+    at += 4 + length;
+    return value;
+  };
+  const options: CompletionOption[] = [];
+  while (at < payload.length) {
+    const kind = OPTION_KINDS[payload[at++]];
+    const label = text();
+    const detail = text();
+    if (kind) options.push({ kind, label, detail });
+  }
+  return { from: utf16Offsets(source)(view.getUint32(0, true)), options };
 }

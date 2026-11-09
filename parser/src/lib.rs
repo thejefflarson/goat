@@ -8,4 +8,5 @@ pub mod interp;
 pub mod lexer;
 pub mod parser;
 pub mod peg;
+pub mod query;
 pub mod tree;

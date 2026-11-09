@@ -8,6 +8,7 @@ pub mod infer;
 pub mod kinds;
 pub mod lower;
 mod order;
+pub mod query;
 pub mod ty;
 pub mod vocab;
 
