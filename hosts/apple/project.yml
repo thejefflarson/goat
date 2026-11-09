@@ -52,6 +52,12 @@ targets:
       - name: Check staged web assets
         script: '"$SRCROOT/scripts/check-staged.sh"'
         basedOnDependencyAnalysis: false
+        # Declared so the phase reads its script and the files it stats under
+        # ENABLE_USER_SCRIPT_SANDBOXING (Xcode's recommended default).
+        inputFiles:
+          - $(SRCROOT)/scripts/check-staged.sh
+          - $(SRCROOT)/Resources/web/embed.html
+          - $(SRCROOT)/Resources/web/goat_web.wasm
     entitlements:
       path: Goat-macOS.entitlements
       properties:
@@ -97,6 +103,12 @@ targets:
       - name: Check staged web assets
         script: '"$SRCROOT/scripts/check-staged.sh"'
         basedOnDependencyAnalysis: false
+        # Declared so the phase reads its script and the files it stats under
+        # ENABLE_USER_SCRIPT_SANDBOXING (Xcode's recommended default).
+        inputFiles:
+          - $(SRCROOT)/scripts/check-staged.sh
+          - $(SRCROOT)/Resources/web/embed.html
+          - $(SRCROOT)/Resources/web/goat_web.wasm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat
