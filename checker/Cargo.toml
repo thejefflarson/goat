@@ -7,7 +7,6 @@ edition = "2024"
 
 [dependencies]
 goat_parser = { path = "../parser" }
-pest = "2.9"
 
 [dev-dependencies]
 bolero = { version = "=0.13.4", default-features = false, features = ["std"] }

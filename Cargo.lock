@@ -673,7 +673,6 @@ version = "0.1.0"
 dependencies = [
  "bolero",
  "goat_parser",
- "pest",
 ]
 
 [[package]]

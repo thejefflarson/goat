@@ -287,7 +287,7 @@ pub fn keywords() -> Vec<&'static str> {
         &rest[..rest.find('}').expect("rule is closed")]
     }
 
-    // Appears in its own definition, the `keyword` or `lex_word` list, and at
+    // Appears in its own definition, the `keyword` list, and at
     // least one construct that uses it.
     fn is_used(ident: &str) -> bool {
         idents(GRAMMAR).filter(|&other| other == ident).count() > 2
@@ -311,7 +311,9 @@ pub fn keywords() -> Vec<&'static str> {
 
     let mut found = Vec::new();
     collect("keyword", &mut found);
-    collect("lex_word", &mut found);
+    for word in ["from_kw", "to_kw", "in_kw", "foreign_kw"] {
+        collect(word, &mut found);
+    }
     found
 }
 
