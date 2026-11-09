@@ -1,0 +1,19 @@
+// Test-only oracle for the hand-written lexer in `lexer.rs`: the lexical rules
+// of `grammar.pest` composed into a lexer that never fails. The parity tests
+// hold the two token streams equal; delete this file with pest. It is compound-
+// atomic (`$`) so the implicit COMMENT skipping does not swallow the comments
+// it reports, and `lex_comment` and `lex_keyword` wrap the silent `COMMENT` and
+// `keyword`, which would otherwise emit no pairs. Text no rule recognizes is
+// skipped one character at a time.
+lex = ${ (lex_space | lex_comment | lex_string | lex_number | lex_literal | lex_keyword | lex_word | lex_name | lex_operator | lex_punct | lex_other)* ~ EOI }
+lex_space = _{ WHITESPACE }
+lex_comment = @{ COMMENT }
+lex_string = @{ string }
+lex_number = @{ number }
+lex_literal = @{ (true_lit | false_lit) ~ !XID_CONTINUE }
+lex_keyword = @{ keyword }
+lex_word = @{ from_kw | to_kw | in_kw | foreign_kw }
+lex_name = @{ name }
+lex_operator = @{ equal | not_equal | lte | lt | gte | gt | arrow | floor_divide | divide | remainder | plus | multiply | minus }
+lex_punct = @{ lparen | rparen | lbrace | rbrace | lbracket | rbracket | equals | colon | semi | bar | comma | "..." | dot }
+lex_other = @{ ANY }
