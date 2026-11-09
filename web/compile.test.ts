@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { check, compile, createTokenizer, decodeVocabulary } from "./compile.ts";
+import { check, compile, createTokenizer } from "./compile.ts";
 
 const compiler = await WebAssembly.compile(
   readFileSync(new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", import.meta.url)),
@@ -100,23 +100,4 @@ test("tokenize still colors a program with a syntax error, call after call", () 
     assert.ok(tokenize('if x then ))) "oops').some((t) => t.kind === "keyword"));
   }
   assert.deepEqual(tokenize(""), []);
-});
-
-test("decodeVocabulary reads kind, name and detail, in UTF-8", () => {
-  const entry = (kind: number, name: string, detail: string) => {
-    const [n, d] = [name, detail].map((s) => new TextEncoder().encode(s));
-    const out = new Uint8Array(1 + 4 + n.length + 4 + d.length);
-    const view = new DataView(out.buffer);
-    out[0] = kind;
-    view.setUint32(1, n.length, true);
-    out.set(n, 5);
-    view.setUint32(5 + n.length, d.length, true);
-    out.set(d, 9 + n.length);
-    return out;
-  };
-  const payload = new Uint8Array([...entry(1, "é", "(x)"), ...entry(0, "if", ""), ...entry(9, "skipped", "")]);
-  assert.deepEqual(decodeVocabulary(payload), [
-    { kind: "function", name: "é", detail: "(x)" },
-    { kind: "keyword", name: "if", detail: "" },
-  ]);
 });

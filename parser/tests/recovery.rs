@@ -1,6 +1,5 @@
-//! Recovery on invalid input. pest stops at the first error, so these are not
-//! dual-run: they hold the recovering parser to the shape ADR 0022 §3 describes,
-//! and to the three properties the fuzzers also check: it never panics, every
+//! Recovery on invalid input. They hold the recovering parser to the shape
+//! ADR 0022 §3 describes, and to the three properties the fuzzers also check: it never panics, every
 //! byte stays in the tree, and it ends.
 
 mod corpus;

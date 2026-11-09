@@ -1,9 +1,9 @@
 //! The PEG interpreter: walks the grammar as data over the lexer's tokens and
 //! records a [`Cst`]. [`parse`] accepts valid input only and reports where the
-//! parse got farthest otherwise; it is the strict reading pest's tree is held
-//! to. [`parse_recovering`] never fails: it follows the grammar's recovery
-//! annotations to a tree with `ERROR` and `MISSING` nodes and a list of spanned
-//! diagnostics, and on valid input builds the same tree as [`parse`].
+//! parse got farthest otherwise. [`parse_recovering`] never fails: it follows
+//! the grammar's recovery annotations to a tree with `ERROR` and `MISSING`
+//! nodes and a list of spanned diagnostics, and on valid input builds the same
+//! tree as [`parse`].
 
 use crate::cst::{Cst, Event, Kind};
 use crate::lexer::{self, Token, TokenKind};

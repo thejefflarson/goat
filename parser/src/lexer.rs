@@ -1,7 +1,7 @@
 //! The token stream editors highlight from, and the one the parser will read:
-//! a hand-written scanner over the lexical rules of `grammar.pest`. The parity
-//! tests hold it to those rules, so a highlighter cannot drift from the
-//! language. It never fails: half-typed code still yields tokens.
+//! a hand-written scanner shared by the highlighter and the grammar
+//! interpreter, so a highlighter cannot drift from the language. It never
+//! fails: half-typed code still yields tokens.
 
 use std::collections::HashSet;
 use unicode_ident::{is_xid_continue, is_xid_start};
@@ -261,60 +261,17 @@ fn after_matching_paren(source: &str, tokens: &[Token], open: usize) -> usize {
     tokens.len()
 }
 
-/// The words an editor may offer as keywords, read from `grammar.pest` itself
-/// so the list cannot drift from the language: the reserved words some
+/// The words an editor may offer as keywords: the reserved words some
 /// construct uses (`return` and `start at` are reserved but unused, so they are
 /// left out), then the contextual ones (`from`, `to`, `in`, `foreign`).
 pub fn keywords() -> Vec<&'static str> {
-    const GRAMMAR: &str = include_str!("grammar.pest");
-
-    fn idents(text: &str) -> impl Iterator<Item = &str> {
-        text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .filter(|s| !s.is_empty())
-    }
-
-    // The text between a rule's first `{` and the `}` that closes it.
-    fn body(rule: &str) -> &'static str {
-        let header = format!("{rule} = ");
-        let (at, _) = GRAMMAR
-            .match_indices(&header)
-            .find(|&(at, _)| at == 0 || GRAMMAR.as_bytes()[at - 1] == b'\n')
-            .expect("rule exists");
-        let start = at + header.len();
-        let rest = &GRAMMAR[start..];
-        let open = rest.find('{').expect("rule has a body") + 1;
-        let rest = &rest[open..];
-        &rest[..rest.find('}').expect("rule is closed")]
-    }
-
-    // Appears in its own definition, the `keyword` list, and at
-    // least one construct that uses it.
-    fn is_used(ident: &str) -> bool {
-        idents(GRAMMAR).filter(|&other| other == ident).count() > 2
-    }
-
-    fn collect(rule: &str, found: &mut Vec<&'static str>) {
-        for (i, part) in body(rule).split('"').enumerate() {
-            if i % 2 == 1 {
-                if !part.contains(' ') && !found.contains(&part) {
-                    found.push(part);
-                }
-                continue;
-            }
-            for ident in idents(part).filter(|s| s.ends_with("_lit") || s.ends_with("_kw")) {
-                if is_used(ident) {
-                    collect(ident, found);
-                }
-            }
-        }
-    }
-
-    let mut found = Vec::new();
-    collect("keyword", &mut found);
-    for word in ["from_kw", "to_kw", "in_kw", "foreign_kw"] {
-        collect(word, &mut found);
-    }
-    found
+    KEYWORDS
+        .iter()
+        .copied()
+        .filter(|w| !matches!(*w, "return" | "start at"))
+        .chain(LITERALS.iter().copied())
+        .chain(["from", "to", "in", "foreign"])
+        .collect()
 }
 
 /// `from`, `in`, `to` and `foreign` are keywords only where the grammar says so
@@ -515,12 +472,12 @@ mod tests {
     }
 
     #[test]
-    fn keywords_come_from_the_grammar() {
+    fn keywords_are_the_reserved_words_in_use_and_the_contextual_ones() {
         assert_eq!(
             keywords(),
             [
                 "program", "function", "if", "match", "then", "else", "done", "do", "repeat",
-                "times", "for", "and", "or", "not", "true", "false", "tag", "from", "to", "in",
+                "times", "for", "and", "or", "not", "tag", "true", "false", "from", "to", "in",
                 "foreign",
             ]
         );
@@ -651,51 +608,8 @@ mod tests {
         }
     }
 
-    #[derive(pest_derive::Parser)]
-    #[grammar = "grammar.pest"]
-    #[grammar = "lex_oracle.pest"]
-    struct OracleParser;
-
-    const _ORACLE: &str = include_str!("lex_oracle.pest");
-
-    /// The tokens the grammar's own `lex` rule finds, before contextual keywords
-    /// are placed: what the highlighter was before the hand-written scanner.
-    fn oracle(source: &str) -> Vec<Token> {
-        use pest::Parser;
-        OracleParser::parse(Rule::lex, source)
-            .expect("lex never fails")
-            .flatten()
-            .filter_map(|pair| {
-                let kind = match pair.as_rule() {
-                    Rule::lex_comment => TokenKind::Comment,
-                    Rule::lex_keyword => TokenKind::Keyword,
-                    Rule::lex_literal => TokenKind::Literal,
-                    Rule::lex_number => TokenKind::Number,
-                    Rule::lex_string => TokenKind::String,
-                    Rule::lex_operator => TokenKind::Operator,
-                    Rule::lex_punct => TokenKind::Punct,
-                    Rule::lex_name | Rule::lex_word => TokenKind::Name,
-                    _ => return None,
-                };
-                let span = pair.as_span();
-                Some(tok(kind, span.start(), span.end()))
-            })
-            .collect()
-    }
-
     fn tok(kind: TokenKind, start: usize, end: usize) -> Token {
         Token { kind, start, end }
-    }
-
-    fn assert_parity(source: &str) {
-        let significant: Vec<Token> = lex(source)
-            .into_iter()
-            .filter(|t| !matches!(t.kind, TokenKind::Whitespace | TokenKind::Unknown))
-            .collect();
-        let mut expected = oracle(source);
-        assert_eq!(significant, expected, "lex differs on {source:?}");
-        place_contextual_keywords(source, &mut expected);
-        assert_eq!(tokenize(source), expected, "tokenize differs on {source:?}");
     }
 
     fn read_goat_files(dir: &str) -> Vec<String> {
@@ -718,7 +632,7 @@ mod tests {
         let mut sources = read_goat_files("../examples");
         sources.extend(read_goat_files("../prelude"));
         for rust in [
-            include_str!("parser.rs"),
+            include_str!("interp.rs"),
             include_str!("../../checker/src/lib.rs"),
             include_str!("lexer.rs"),
         ] {
@@ -726,45 +640,5 @@ mod tests {
             sources.extend(rust.lines().map(String::from));
         }
         sources
-    }
-
-    #[test]
-    fn parity_on_the_examples_prelude_and_test_sources() {
-        for source in corpus() {
-            assert_parity(&source);
-        }
-    }
-
-    #[test]
-    fn parity_on_every_prefix_of_the_examples() {
-        for source in read_goat_files("../examples") {
-            for end in (0..=source.len()).filter(|&i| source.is_char_boundary(i)) {
-                assert_parity(&source[..end]);
-            }
-        }
-    }
-
-    #[test]
-    fn parity_on_generated_fragments() {
-        const PIECES: &[&str] = &[
-            "a", "Z", "_", "é", "ǅ", "٣", "€", "\u{0}", "1", "0", ".", "e", "E", "+", "-", "\"",
-            "\\", "#", "\n", "\r", "\r\n", " ", "\t", "=", "==", "!", "!=", "<", "<=", ">", ">=",
-            "/", "//", "%", "*", "->", "(", ")", "{", "}", "[", "]", "|", ",", ":", ";", "...",
-            "start at", "start", "at", "do", "done", "true", "false", "from", "to", "in",
-            "foreign", "if", "then", "tag", "x", "doner", "\"s\"", "5.5", "1e9",
-        ];
-        let mut state = 0x2545_f491_4f6c_dd1du64;
-        let mut next = move |bound: usize| {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            (state % bound as u64) as usize
-        };
-        for _ in 0..20_000 {
-            let source: String = (0..1 + next(14))
-                .map(|_| PIECES[next(PIECES.len())])
-                .collect();
-            assert_parity(&source);
-        }
     }
 }

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { CompletionContext } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
-import { createCompleter, decodeCompletions, loadVocabulary } from "./compile.ts";
+import { createCompleter, decodeCompletions } from "./compile.ts";
 import { goatCompletions } from "./completion.ts";
 
 const compiler = await WebAssembly.compile(
@@ -25,12 +25,6 @@ const option = (found: NonNullable<ReturnType<typeof at>>, label: string) => {
   assert.ok(hit, `${label} offered: ${found.labels.join()}`);
   return hit;
 };
-
-test("the vocabulary export still lists the grammar's keywords and the host's names", () => {
-  const named = (kind: string) => loadVocabulary(compiler).filter((w) => w.kind === kind).map((w) => w.name);
-  assert.ok(named("keyword").includes("match"));
-  assert.ok(named("function").includes("forward"));
-});
 
 test("a dot offers the members of the value's type, and only those", () => {
   const found = at('p = {x: 1, name: "goat"}\nturtle = {heading: 90, pen_down: true}\np.|')!;

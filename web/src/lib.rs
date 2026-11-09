@@ -26,16 +26,12 @@
 //!   one 9-byte entry per token: `kind: u8` (a `TOKEN_*` constant), then
 //!   `start: u32` and `end: u32`, byte offsets. Names and punctuation are left
 //!   out. `TAG_ERR` carries a message and no tokens.
-//! - `gw_vocabulary` takes no source and returns `TAG_OK` with the words to
-//!   complete (see `vocabulary::encode`): keywords, then the turtle host's
-//!   functions and tags.
 //! - `gw_complete` takes the source and a byte offset for the cursor, and
 //!   returns `TAG_OK` with what the checker offers there (see
 //!   `completion::complete`), empty where nothing completes. It answers on
 //!   source that does not parse.
 
 mod completion;
-mod vocabulary;
 
 use goat_parser::lexer::{self, TokenKind};
 use std::alloc::{Layout, alloc, dealloc};
@@ -159,13 +155,6 @@ pub unsafe extern "C" fn gw_tokenize(src_ptr: u32, src_len: u32) -> u32 {
     unsafe { tokenize_at(src_ptr as usize as *const u8, src_len as usize) as usize as u32 }
 }
 
-/// The words an editor completes: keywords, builtins and the host's names.
-/// Returns the result record's address.
-#[unsafe(no_mangle)]
-pub extern "C" fn gw_vocabulary() -> u32 {
-    vocabulary_record() as usize as u32
-}
-
 /// Complete at byte `cursor` of the `src_len` bytes at `src_ptr`; returns the
 /// result record's address.
 ///
@@ -183,8 +172,8 @@ pub unsafe extern "C" fn gw_complete(src_ptr: u32, src_len: u32, cursor: u32) ->
     }
 }
 
-/// Free a record returned by `gw_compile`, `gw_check`, `gw_tokenize`,
-/// `gw_vocabulary` or `gw_complete`.
+/// Free a record returned by `gw_compile`, `gw_check`, `gw_tokenize` or
+/// `gw_complete`.
 ///
 /// # Safety
 /// `ptr` must come from one `gw_compile` call not yet freed.
@@ -316,14 +305,6 @@ fn host_tags() -> &'static HashSet<String> {
         );
         tags
     })
-}
-
-/// Address-width-neutral core of `gw_vocabulary`.
-fn vocabulary_record() -> *mut u8 {
-    static WORDS: OnceLock<Vec<u8>> = OnceLock::new();
-    let words = WORDS
-        .get_or_init(|| vocabulary::encode(&vocabulary::words(&goat::HostInterface::turtle())));
-    make_record(TAG_OK, words.clone())
 }
 
 fn encode_tokens(source: &str) -> Vec<u8> {
@@ -538,24 +519,6 @@ mod tests {
             .map(|(_, text)| text)
             .collect();
         assert_eq!(tags, ["KeyDown", "Up", "Link", "Empty"]);
-    }
-
-    #[test]
-    fn vocabulary_record_holds_keywords_and_host_names() {
-        // SAFETY: the record is read before it is freed.
-        let (tag, payload) = unsafe {
-            let rec = vocabulary_record();
-            let len = u32::from_le_bytes(*(rec.add(1) as *const [u8; 4])) as usize;
-            let payload = std::slice::from_raw_parts(rec.add(HEADER), len).to_vec();
-            let tag = *rec;
-            free_record(rec);
-            (tag, payload)
-        };
-        assert_eq!(tag, TAG_OK);
-        let text = String::from_utf8_lossy(&payload);
-        for word in ["repeat", "forward", "(Number) -> Unit", "KeyDown"] {
-            assert!(text.contains(word), "{word}");
-        }
     }
 
     #[test]

@@ -164,7 +164,7 @@ targeted piece of that machinery.
 
 ```
 source + prelude
-  → parser (pest)                      [exists]
+  → parser (grammar/goat.peg)          [exists]
   → lower: HIR + name resolution       [exists]
   → infer: HM + scoped-label rows      [exists; Phases 1, 7, 8 extend it]
   → mono: specialize to concrete types [new: goat_mir]

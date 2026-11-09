@@ -1,4 +1,4 @@
-//! The sources the dual-run tests feed both parsers: every `.goat` file in the
+//! The sources the corpus tests feed the parser: every `.goat` file in the
 //! repo, and the text of every string literal in its Rust sources, which holds
 //! the goat programs the tests quote.
 
@@ -45,7 +45,7 @@ pub fn goat_programs() -> Vec<String> {
 
 /// The text of every string literal in some Rust source: ordinary and raw,
 /// escapes resolved. A rough scan is enough, since a stray fragment is one more
-/// input both parsers must agree on.
+/// input the parser must handle.
 pub fn string_literals(rust: &str) -> Vec<String> {
     let chars: Vec<char> = rust.chars().collect();
     let mut out = Vec::new();
