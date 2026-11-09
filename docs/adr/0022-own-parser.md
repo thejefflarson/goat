@@ -1,6 +1,6 @@
 # ADR 0022 — goat's own grammar-driven, error-recovering parser (replacing pest)
 
-- Status: proposed (2026-11-08)
+- Status: accepted (2026-11-08)
 - Context: the parser-future spike (PR #268, `docs/spikes/parser-future.md`), which
   measured rowan, chumsky and tree-sitter against pest and recommended a
   hand-written recursive-descent parser over rowan. This ADR **supersedes that
