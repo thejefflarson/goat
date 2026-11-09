@@ -65,3 +65,17 @@ fn a_long_block_is_checked_and_dropped_without_overflowing_the_stack() {
     assert!(goat_checker::check(&format!("{bindings}a0")).is_ok());
     assert_clean_error(&format!("{bindings}missing"));
 }
+
+#[test]
+fn a_long_block_is_cloned_and_debug_printed_without_overflowing_the_stack() {
+    let length = 30_000;
+    let bindings = (0..length)
+        .map(|i| format!("a{i} = 1\n"))
+        .collect::<String>();
+    let checked = goat_checker::check(&format!("{bindings}a0")).unwrap();
+    let copy = checked.root.clone();
+    let printed = format!("{:?}", checked.root);
+    assert_eq!(printed, format!("{copy:?}"));
+    assert!(printed.matches("symbol").count() >= length);
+    assert!(format!("{copy:#?}").len() > printed.len());
+}
