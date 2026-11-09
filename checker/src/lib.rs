@@ -1704,7 +1704,7 @@ mod tests {
                 " else 2 done".repeat(depth)
             )
         };
-        assert!(type_of_on_a_big_stack(wrap(200)).is_ok());
+        assert!(type_of_on_a_big_stack(wrap(100)).is_ok());
         let err = type_of_on_a_big_stack(wrap(300)).unwrap_err();
         assert_eq!(err, "expression nested too deeply");
     }

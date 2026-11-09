@@ -13,7 +13,9 @@ use std::ops::Range;
 
 /// Expression levels, the bound lowering applies to the same program: deeper
 /// nesting fails the parse, so a pathological program cannot overflow the stack.
-const MAX_NESTING: usize = 256;
+/// A level costs up to about 4 KB of stack in a release build (11 KB in debug),
+/// so the worst accepted program fits a 1 MB wasm host with room to spare.
+const MAX_NESTING: usize = 128;
 
 const TOO_DEEP: &str = "expression nested too deeply";
 

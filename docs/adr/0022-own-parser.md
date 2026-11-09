@@ -205,8 +205,8 @@ spike's rowan prototype was first *exponential*: after hitting a depth cap it
 re-entered the same nesting from every level. The engine therefore maintains the
 invariant that **every recovery step either advances the token cursor by at least
 one or closes an open node; it never re-enters a rule at a position it has already
-tried.** With a global depth cap (`MAX_DEPTH = 256`, the bound lowering already
-uses) this makes the parse terminate on any input. We fuzz for it directly:
+tried.** With a global depth cap (`MAX_NESTING = 128` expression levels, sized to fit a
+1 MB wasm stack) this makes the parse terminate on any input. We fuzz for it directly:
 `fuzz/` already exists, and the property is "never panics, always lossless, always
 terminates."
 

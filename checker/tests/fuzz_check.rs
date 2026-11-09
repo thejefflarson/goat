@@ -37,21 +37,41 @@ fn assert_clean_error(source: &str) {
     assert!(!errors.is_empty());
 }
 
-// The grammar interpreter spends about 10 KB of stack per level of call nesting
-// in a debug build, so 256 levels do not fit libtest's 2 MB threads.
 #[test]
 fn deep_nesting_is_a_clean_error() {
-    std::thread::Builder::new()
-        .stack_size(8 << 20)
-        .spawn(|| {
-            let depth = 100_000;
-            assert_clean_error(&format!("{}1{}", "(".repeat(depth), ")".repeat(depth)));
-            assert_clean_error(&format!("{}1", "-".repeat(depth)));
-            assert_clean_error(&"f(".repeat(depth));
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    let depth = 100_000;
+    assert_clean_error(&format!("{}1{}", "(".repeat(depth), ")".repeat(depth)));
+    assert_clean_error(&format!("{}1", "-".repeat(depth)));
+    assert_clean_error(&"f(".repeat(depth));
+}
+
+// A browser or embedded wasm host may give the compiler only 1 MB of stack.
+// Debug frames are several times larger, so only a release build can promise it.
+#[cfg(not(debug_assertions))]
+#[test]
+fn the_deepest_accepted_nesting_checks_on_a_one_megabyte_stack() {
+    let depth = 127;
+    let sources = [
+        format!(
+            "{}1{}",
+            "if true then ".repeat(depth),
+            " else 2 done".repeat(depth)
+        ),
+        format!(
+            "{}1{}",
+            "function() do ".repeat(depth),
+            " done".repeat(depth)
+        ),
+        format!("{}1{}", "{a: ".repeat(depth), "}".repeat(depth)),
+    ];
+    for source in sources {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(move || assert!(goat_checker::check(&source).is_ok()))
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
 #[test]

@@ -323,8 +323,8 @@ fn nesting_past_the_limit_is_one_spanned_error_and_never_overflows() {
     };
     let nested = |n: usize| format!("{}1{}", "(".repeat(n), ")".repeat(n));
     assert!(!on_small_stack(nested(100)));
-    assert!(!on_small_stack(nested(250)));
-    assert!(on_small_stack(nested(300)));
+    assert!(!on_small_stack(nested(120)));
+    assert!(on_small_stack(nested(150)));
     assert!(on_small_stack(nested(100_000)));
     assert!(on_small_stack("-".repeat(100_000)));
     assert!(on_small_stack("f(".repeat(100_000)));
