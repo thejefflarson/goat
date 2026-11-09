@@ -1,9 +1,11 @@
 # goat: plan
 
-Working plan for taking goat from a Cranelift native backend to an
-embeddable language with a single WebAssembly backend (browsers, iOS,
-desktop, microcontrollers, any wasm host), with variants, recursive
-data, a kid-friendly prelude, and turtle graphics. Phases are ordered; each
+Working plan for goat, an embeddable language with a single WebAssembly
+backend (browsers, iOS, desktop, microcontrollers, any wasm host), with
+variants, recursive data, a kid-friendly prelude, and turtle graphics. goat
+began on a Cranelift native backend; that direct backend is now removed and
+the single-wasm-backend move is done (the Cranelift notes below are only
+about Wasmtime's wasm JIT). Phases are ordered; each
 ends with something that runs and passes tests.
 
 ## What goat is
