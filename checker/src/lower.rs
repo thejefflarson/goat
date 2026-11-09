@@ -315,12 +315,13 @@ impl Lower {
     fn lower_source(&mut self, source: &str, file: FileId) -> Result<Expr, GoatError> {
         self.file = file;
         let cst = interp::parse(source).map_err(|e| {
-            if e.too_deep {
-                let at = Span::in_file(e.offset, e.offset, file);
-                GoatError::new(at, "expression nested too deeply")
+            let at = Span::in_file(e.offset, e.offset, file);
+            let message = if e.too_deep {
+                "expression nested too deeply"
             } else {
-                GoatError::new(Span::in_file(0, 0, file), format!("parse error:\n{e}"))
-            }
+                "parse error: unexpected input"
+            };
+            GoatError::new(at, message)
         })?;
         let goat = Goat::cast(cst.root()).expect("the root is the goat node");
         debug_assert!(self.grouped.is_empty());
