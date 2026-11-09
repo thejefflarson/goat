@@ -9,3 +9,4 @@ build/
 *.provisionprofile
 *.p12
 *.cer
+/*.entitlements
