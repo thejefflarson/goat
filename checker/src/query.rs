@@ -27,10 +27,12 @@ use std::ops::Range;
 /// The tags the list sugar builds, which every program may use.
 const LIST_TAGS: [&str; 2] = ["Empty", "Link"];
 
-/// The keywords that can begin an expression.
-const OPERAND_KEYWORDS: [&str; 10] = [
-    "if", "match", "repeat", "for", "program", "function", "fn", "true", "false", "not",
-];
+/// The keywords that can begin an expression, besides the function-literal ones.
+const OPERAND_KEYWORDS: [&str; 7] = ["if", "match", "repeat", "for", "true", "false", "not"];
+
+fn operand_keywords() -> impl Iterator<Item = &'static str> {
+    OPERAND_KEYWORDS.into_iter().chain(lexer::FUNCTION_KEYWORDS)
+}
 
 /// Where a name in scope comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -700,8 +702,7 @@ pub fn complete(prelude: &str, vocab: &Vocab, source: &str, offset: usize) -> Op
                 .is_some_and(|t| &source[t.start..t.end] == "="))
             .then_some("foreign");
             items.extend(
-                OPERAND_KEYWORDS
-                    .into_iter()
+                operand_keywords()
                     .chain(foreign)
                     .map(|k| item(k, ItemKind::Keyword, "")),
             );
