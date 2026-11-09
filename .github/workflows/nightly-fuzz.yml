@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [differential_interp_vs_wasm, check_never_panics, compile_never_panics]
+        target: [differential_interp_vs_wasm, check_never_panics, compile_never_panics, parse_recovery_holds_its_invariants]
     steps:
       - uses: actions/checkout@v7
 
