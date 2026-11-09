@@ -367,7 +367,7 @@ fn binder_position(
     }
     let opening = matches!(previous, Some("(" | ","));
     match open_bracket(tokens, source, at) {
-        Some(("(", Some("program" | "function"))) if opening => return true,
+        Some(("(", Some("program" | "function" | "fn"))) if opening => return true,
         Some(("{", _)) if matches!(previous, Some("{" | ",")) => return true,
         _ => {}
     }
@@ -376,6 +376,9 @@ fn binder_position(
     match (last.map(|n| n.kind()), parent.map(|n| n.kind())) {
         (Some("name"), Some("field")) => true,
         (Some("pattern"), _) => opening,
-        _ => matches!(previous, Some("tag" | "for" | "program" | "function")),
+        _ => matches!(
+            previous,
+            Some("tag" | "for" | "program" | "function" | "fn")
+        ),
     }
 }

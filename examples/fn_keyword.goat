@@ -1,0 +1,6 @@
+# `fn` is a shorthand for `program` and `function`; all three mean the same.
+double = fn(n) do n * 2 done
+add = function(a, b) do a + b done
+inc = program(n) do n + 1 done
+
+double(inc(add(1, 1)))

@@ -311,6 +311,7 @@ fn examples_print_the_expected_output() {
         ("higher_order.goat", "42"),
         ("records.goat", "7"),
         ("closures.goat", "15"),
+        ("fn_keyword.goat", "6"),
         ("closure_shapes.goat", "77"),
         ("hello.goat", "hello, world"),
         ("lists.goat", "15"),

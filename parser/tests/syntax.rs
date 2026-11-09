@@ -125,8 +125,8 @@ fn words_that_merely_begin_with_a_keyword_are_names() {
         assert!(is_name(word), "{word} should be a name");
     }
     for word in [
-        "do", "done", "if", "then", "program", "function", "match", "and", "or", "not", "for",
-        "repeat", "times", "tag",
+        "do", "done", "if", "then", "program", "function", "fn", "match", "and", "or", "not",
+        "for", "repeat", "times", "tag",
     ] {
         assert!(!accepts(word), "{word} should be reserved");
     }
@@ -193,7 +193,11 @@ fn a_chain_of_thousands_of_bindings_parses_on_the_default_stack() {
 
 #[test]
 fn functions_and_calls() {
-    for source in ["program(a) do a done", "function(a) do a done"] {
+    for source in [
+        "program(a) do a done",
+        "function(a) do a done",
+        "fn(a) do a done",
+    ] {
         assert!(contains_kind(source, "function"), "{source}");
     }
     assert_eq!(
