@@ -72,6 +72,17 @@ Open the file from the browser instead. Not reproduced on a device.
   block module scripts and the wasm fetch). The web view cancels every other
   navigation and the page's CSP is `default-src 'none'`.
 
+## Loading and load failure
+
+`EditorScreen` covers the canvas with "Loading…" and keeps Run disabled until the
+page sends `ready`. If `ready` has not arrived after `Engine.defaultLoadBudget`
+(20 s), a navigation fails, or the web content process terminates, the phase
+becomes `.loadFailed` and the overlay offers Retry, which builds a new web view.
+This is separate from the watchdog below, which only bounds a running program.
+`Engine` logs each phase (web view created, `didStartProvisionalNavigation`,
+`didFinishNavigation`, `ready`, first `state=running`) with elapsed time to
+`os_log` under subsystem `com.thejefflarson.goat`, category `engine`.
+
 ## Stopping a runaway program (ADR 0021)
 
 goat runs on the web view's main thread, which nothing on the page can interrupt,

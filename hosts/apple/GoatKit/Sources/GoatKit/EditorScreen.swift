@@ -55,6 +55,11 @@ public struct EditorScreen: View {
         _document = document
     }
 
+    init(document: Binding<GoatDocument>, engine: Engine) {
+        _document = document
+        _engine = StateObject(wrappedValue: engine)
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             GeometryReader { geometry in
@@ -65,6 +70,7 @@ public struct EditorScreen: View {
                     Divider()
                     CanvasView(webView: engine.webView)
                         .accessibilityLabel("drawing")
+                        .overlay { LoadOverlay(phase: engine.phase, retry: engine.retry) }
                 }
             }
             Divider()
@@ -78,7 +84,7 @@ public struct EditorScreen: View {
                     Label("Run", systemImage: "play.fill")
                 }
                 .keyboardShortcut("r", modifiers: .command)
-                .disabled(engine.phase == .loading)
+                .disabled(!engine.phase.canRun)
                 Button {
                     engine.stop()
                 } label: {
@@ -102,6 +108,36 @@ public struct EditorScreen: View {
 
     private var highlights: [NSRange] {
         engine.diagnostics.compactMap { $0.range(in: document.text) }
+    }
+}
+
+/// Covers the canvas until the page is ready, so the user never sees a bare white web view.
+struct LoadOverlay: View {
+    let phase: Engine.Phase
+    let retry: () -> Void
+
+    var body: some View {
+        switch phase {
+        case .loading:
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Loading…")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background)
+            .accessibilityElement(children: .combine)
+        case .loadFailed(let message):
+            VStack(spacing: 12) {
+                Text(message).multilineTextAlignment(.center)
+                Button("Retry", action: retry)
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background)
+        default:
+            EmptyView()
+        }
     }
 }
 
