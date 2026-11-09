@@ -10,6 +10,7 @@ goat = { path = "../goat" }
 goat_cli = { path = "../cli" }
 goat_mir = { path = "../mir" }
 goat_parser = { path = "../parser" }
+goat_wamr = { path = "../wamr" }
 
 [dev-dependencies.goat_checker]
 path = "../checker"
