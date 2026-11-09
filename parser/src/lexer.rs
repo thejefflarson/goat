@@ -130,6 +130,60 @@ fn after_matching_paren(source: &str, tokens: &[Token], open: usize) -> usize {
     tokens.len()
 }
 
+/// The words an editor may offer as keywords, read from `grammar.pest` itself
+/// so the list cannot drift from the language: the reserved words some
+/// construct uses (`return` and `start at` are reserved but unused, so they are
+/// left out), then the contextual ones (`from`, `to`, `in`, `foreign`).
+pub fn keywords() -> Vec<&'static str> {
+    const GRAMMAR: &str = include_str!("grammar.pest");
+
+    fn idents(text: &str) -> impl Iterator<Item = &str> {
+        text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|s| !s.is_empty())
+    }
+
+    // The text between a rule's first `{` and the `}` that closes it.
+    fn body(rule: &str) -> &'static str {
+        let header = format!("{rule} = ");
+        let (at, _) = GRAMMAR
+            .match_indices(&header)
+            .find(|&(at, _)| at == 0 || GRAMMAR.as_bytes()[at - 1] == b'\n')
+            .expect("rule exists");
+        let start = at + header.len();
+        let rest = &GRAMMAR[start..];
+        let open = rest.find('{').expect("rule has a body") + 1;
+        let rest = &rest[open..];
+        &rest[..rest.find('}').expect("rule is closed")]
+    }
+
+    // Appears in its own definition, the `keyword` or `lex_word` list, and at
+    // least one construct that uses it.
+    fn is_used(ident: &str) -> bool {
+        idents(GRAMMAR).filter(|&other| other == ident).count() > 2
+    }
+
+    fn collect(rule: &str, found: &mut Vec<&'static str>) {
+        for (i, part) in body(rule).split('"').enumerate() {
+            if i % 2 == 1 {
+                if !part.contains(' ') && !found.contains(&part) {
+                    found.push(part);
+                }
+                continue;
+            }
+            for ident in idents(part).filter(|s| s.ends_with("_lit") || s.ends_with("_kw")) {
+                if is_used(ident) {
+                    collect(ident, found);
+                }
+            }
+        }
+    }
+
+    let mut found = Vec::new();
+    collect("keyword", &mut found);
+    collect("lex_word", &mut found);
+    found
+}
+
 /// `from`, `in`, `to` and `foreign` are keywords only where the grammar says so
 /// (`for_kw ~ name ~ from_kw ~ expr ~ to_kw`, `x = foreign "m" "n" (…) -> …`);
 /// elsewhere they are ordinary names, so `line.to` and `{from: 1}` stay names.
@@ -325,6 +379,18 @@ mod tests {
             .map(|t| &source[t.start..t.end])
             .collect();
         assert_eq!(tags, ["KeyDown"]);
+    }
+
+    #[test]
+    fn keywords_come_from_the_grammar() {
+        assert_eq!(
+            keywords(),
+            [
+                "program", "function", "if", "match", "then", "else", "done", "do", "repeat",
+                "times", "for", "and", "or", "not", "true", "false", "tag", "from", "to", "in",
+                "foreign",
+            ]
+        );
     }
 
     #[test]

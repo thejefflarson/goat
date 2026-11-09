@@ -16,7 +16,9 @@ import {
   lineNumbers,
 } from "@codemirror/view";
 import { linter, lintGutter } from "@codemirror/lint";
-import { check, createTokenizer, type Token } from "./compile.ts";
+import { autocompletion } from "@codemirror/autocomplete";
+import { check, createTokenizer, loadVocabulary, type Token } from "./compile.ts";
+import { goatCompletions } from "./completion.ts";
 import { lintDiagnostics } from "./lint.ts";
 
 const CHECK_DELAY_MS = 200;
@@ -54,6 +56,19 @@ function liveChecking(compiler: WebAssembly.Module): Extension {
   return [linter(source, { delay: CHECK_DELAY_MS }), lintGutter()];
 }
 
+function completing(compiler: WebAssembly.Module, tokenize: (source: string) => Token[]): Extension {
+  try {
+    return autocompletion({ override: [goatCompletions(loadVocabulary(compiler), tokenize)] });
+  } catch {
+    return [];
+  }
+}
+
+function withCompiler(compiler: WebAssembly.Module): Extension[] {
+  const tokenize = createTokenizer(compiler);
+  return [highlighting(tokenize), liveChecking(compiler), completing(compiler, tokenize)];
+}
+
 // Colors come from the page's custom properties, so light and dark follow the
 // page; the token colors fall back to values readable on a white panel.
 const theme = EditorView.theme({
@@ -84,7 +99,7 @@ export interface GoatEditor {
   setText(text: string): void;
 }
 
-// Without a `compiler` the editor still edits; it just neither colors nor checks.
+// Without a `compiler` the editor still edits; it just neither colors, checks nor completes.
 export function mountEditor(parent: HTMLElement, doc: string, compiler?: WebAssembly.Module): GoatEditor {
   const scheme = matchMedia("(prefers-color-scheme: dark)");
   const darkness = new Compartment();
@@ -105,7 +120,7 @@ export function mountEditor(parent: HTMLElement, doc: string, compiler?: WebAsse
         autocorrect: "off",
         autocapitalize: "off",
       }),
-      ...(compiler ? [highlighting(createTokenizer(compiler)), liveChecking(compiler)] : []),
+      ...(compiler ? withCompiler(compiler) : []),
     ],
   });
   scheme.addEventListener("change", () =>
