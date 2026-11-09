@@ -64,11 +64,16 @@ pub enum Builtin {
 }
 
 impl Builtin {
+    pub const ALL: [Builtin; 2] = [Builtin::Print, Builtin::Trap];
+
     pub fn named(name: &str) -> Option<Builtin> {
-        match name {
-            "print" => Some(Builtin::Print),
-            "trap" => Some(Builtin::Trap),
-            _ => None,
+        Self::ALL.into_iter().find(|b| b.name() == name)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Builtin::Print => "print",
+            Builtin::Trap => "trap",
         }
     }
 }
