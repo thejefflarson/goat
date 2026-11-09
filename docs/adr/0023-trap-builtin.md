@@ -1,6 +1,6 @@
-# ADR 0012 — `trap` is a halting builtin: a literal-only message, a bottom type, checker-guarded
+# ADR 0023 — `trap` is a halting builtin: a literal-only message, a bottom type, checker-guarded
 
-- Status: accepted (2026-11-04)
+- Status: accepted (2026-11-04); renumbered from 0012 (a duplicate of the constraints ADR) to 0023
 - Context: Phase 8 (P8d prelude stdlib), ADR 0005 (out-of-scope feature diagnostics),
   `docs/plan.md` ("Prelude"); ratified while integrating #155 (closes #96). The MIR
   `Expr::Trap` node predates this decision.

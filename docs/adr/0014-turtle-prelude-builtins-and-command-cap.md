@@ -3,7 +3,7 @@
 - Status: accepted (2026-11-07)
 - Context: Phase 8.5 (P85c headless SVG turtle), `docs/plan.md` ("turtle"),
   ADR 0003 (binding semantics: values shadow), ADR 0009 (strings are immortal
-  literals), ADR 0012 (`trap` is a halting builtin, shadowed by a user binding);
+  literals), ADR 0023 (`trap` is a halting builtin, shadowed by a user binding);
   ratified while integrating #164 (closes #100). `prelude/turtle.goat`,
   `cli/src/turtle.rs`.
 
@@ -18,7 +18,7 @@ reverse once programs and examples depend on them, so they are recorded here.
 
 1. **Where the turtle names live.** goat has no module system — `import`,
    namespaces, and selective exposure are Phase 10+ (`docs/plan.md`). The only
-   mechanism for a name every program can see is the prelude, which ADR 0012
+   mechanism for a name every program can see is the prelude, which ADR 0023
    already uses for `trap` and P8d uses for the list stdlib. Putting the turtle
    behind a module that does not exist would block the Phase 8.5/9 payoff on
    Phase 10.
@@ -38,7 +38,7 @@ program, on the same footing as `first`/`length`/`trap`.
 - **Shadowing preserves escape.** By ADR 0003 a value binding shadows, so a user
   who writes `forward = 7` or `color = program(c) do ... done` gets their own
   binding (with the ordinary shadowing warning), exactly as a user `trap` wins
-  under ADR 0012. Nothing is stolen from the kid's namespace permanently; the
+  under ADR 0023. Nothing is stolen from the kid's namespace permanently; the
   global name is a default, not a reservation.
 - **Unused turtle names cost nothing.** As with the rest of the prelude, mono
   only emits what the program reaches (`prelude/prelude.goat` header), so a
@@ -47,7 +47,7 @@ program, on the same footing as `first`/`length`/`trap`.
   which asserts non-turtle examples behave identically with the prelude around
   them.
 - **The precedent is deliberate.** Immortal prelude declarations are how goat
-  already ships a standard library (ADR 0012, P8d lists). The turtle adds host
+  already ships a standard library (ADR 0023, P8d lists). The turtle adds host
   `foreign` decls to that same surface; it does not invent a second mechanism.
 
 This is a bridge, not a permanent namespace decision. When a module system lands

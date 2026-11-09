@@ -4,7 +4,7 @@
 - Context: Phase 9.5 (event loop), `docs/plan.md` ("Phase 9.5 — Event loop
   (host-owned)"), ADR 0002 (object header), ADR 0009 (strings are immortal,
   length at `ptr+8`, bytes at `ptr+12`), ADR 0010 (first-use layout pinning /
-  width-independent variant families), ADR 0012 (`trap`; prelude builtins),
+  width-independent variant families), ADR 0023 (`trap`; prelude builtins),
   ADR 0014 (turtle builtins, color allowlist, the million-command cap). Recorded
   before implementing #105/#106/#107. Supersedes nothing; adds a second,
   parallel entry surface beside the run-once `goat_entry`.
@@ -37,7 +37,7 @@ memory.
 A program is *interactive* iff its root let-chain binds all three of `init`,
 `update`, and `draw`, un-shadowed. Otherwise it is *run-once* — today's
 `goat_entry` with the imperative turtle, unchanged. Detection is over the HIR
-root `Let` chain. As with `trap` (ADR 0012) and the turtle names (ADR 0014), a
+root `Let` chain. As with `trap` (ADR 0023) and the turtle names (ADR 0014), a
 user binding of one of these names shadows with the ordinary warning and reverts
 the program to run-once; the names are a default, not a reservation.
 
