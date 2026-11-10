@@ -2,6 +2,7 @@
 //! `return_call_indirect`, or `memory.fill` does not load without its flag,
 //! so each is exercised directly, apart from whatever goat emits.
 
+use goat_wamr::{Interp, NoHost, run_to_end_on};
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, ElementSection, Elements, ExportKind, ExportSection,
     Function, FunctionSection, Instruction, MemArg, MemArgTarget, MemorySection, MemoryType,
@@ -130,6 +131,9 @@ fn module() -> Vec<u8> {
 
 #[test]
 fn tail_calls_and_bulk_memory_run_in_constant_stack() {
-    let run = goat_wamr::run(&module()).expect("module loads and runs");
-    assert_eq!(run.live_allocs, 7 + 9, "indirect(0) + the filled byte");
+    for interp in [Interp::Fast, Interp::Classic] {
+        let finished = run_to_end_on(interp, &module(), NoHost).expect("module loads");
+        let live = finished.result.map_err(|s| s.message);
+        assert_eq!(live, Ok(7 + 9), "{interp:?}: indirect(0) + the filled byte");
+    }
 }

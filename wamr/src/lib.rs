@@ -1,5 +1,6 @@
-//! Run compiled goat modules under WAMR's fast interpreter, the runtime goat
-//! targets on boards (ADR 0019). This is a conformance driver (ADR 0018): it
+//! Run compiled goat modules under WAMR, the runtime goat targets on boards
+//! (ADR 0019): the fast interpreter, or the classic one for a module the fast
+//! one cannot load (ADR 0025). This is a conformance driver (ADR 0018): it
 //! takes the same [`Host`] and returns the same [`Finished`] as the wasmtime
 //! driver in `goat::native`, so one suite checks both. Native only; the C
 //! build keeps it out of the compiler's wasm32 crates.
@@ -8,12 +9,17 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
-use goat::{Boundary, Host, HostValue, NoHost};
+use goat::{Boundary, Host, HostValue};
 use wasmparser::ValType;
 
 mod ffi;
 mod imports;
+mod limits;
 
+use ffi::Api;
+pub use limits::{FAST_INTERP_CELL_LIMIT, interp_for};
+
+pub use goat::NoHost;
 pub use goat::native::{Finished, Run, Stopped};
 
 /// Where a string object keeps its length and its bytes (`docs/mir.md`).
@@ -33,21 +39,51 @@ const MIN_SLOTS: usize = 16;
 /// `(module, name)` from one process-wide list, so each pair registers once
 /// and its index here is its attachment. The lock also serializes loading,
 /// because registering edits that list.
-static REGISTRY: Mutex<Registry> = Mutex::new(Registry {
-    started: false,
-    natives: Vec::new(),
-});
+static FAST_REGISTRY: Mutex<Registry> = Mutex::new(Registry::new(Interp::Fast));
+static CLASSIC_REGISTRY: Mutex<Registry> = Mutex::new(Registry::new(Interp::Classic));
+
+/// Which copy of the WAMR runtime runs a module (ADR 0025).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interp {
+    Fast,
+    Classic,
+}
+
+impl Interp {
+    fn api(self) -> &'static Api {
+        match self {
+            Interp::Fast => &ffi::FAST,
+            Interp::Classic => &ffi::CLASSIC,
+        }
+    }
+
+    fn registry(self) -> &'static Mutex<Registry> {
+        match self {
+            Interp::Fast => &FAST_REGISTRY,
+            Interp::Classic => &CLASSIC_REGISTRY,
+        }
+    }
+}
 
 struct Registry {
+    interp: Interp,
     started: bool,
     natives: Vec<(String, String)>,
 }
 
 impl Registry {
+    const fn new(interp: Interp) -> Self {
+        Registry {
+            interp,
+            started: false,
+            natives: Vec::new(),
+        }
+    }
+
     fn start(&mut self) -> Result<(), String> {
         if !self.started {
             // SAFETY: the first WAMR call in the process, under the lock.
-            if !unsafe { ffi::wasm_runtime_init() } {
+            if !unsafe { (self.interp.api().init)() } {
                 return Err("wamr: runtime init failed".into());
             }
             self.started = true;
@@ -69,7 +105,10 @@ impl Registry {
         let c_name = CString::new(name).map_err(|e| e.to_string())?;
         let symbol = Box::new(ffi::NativeSymbol {
             symbol: c_name.into_raw(),
-            func_ptr: trampoline as ffi::RawNative as *mut c_void,
+            func_ptr: match self.interp {
+                Interp::Fast => trampoline::<false> as ffi::RawNative,
+                Interp::Classic => trampoline::<true> as ffi::RawNative,
+            } as *mut c_void,
             // Empty: WAMR neither checks nor rewrites the arguments, and one
             // registration serves whatever type a module gives the import.
             signature: c"".as_ptr(),
@@ -78,7 +117,7 @@ impl Registry {
         // SAFETY: WAMR keeps these pointers for the life of the process, so
         // none of them is ever freed.
         let registered = unsafe {
-            ffi::wasm_runtime_register_natives_raw(c_module.into_raw(), Box::into_raw(symbol), 1)
+            (self.interp.api().register_natives_raw)(c_module.into_raw(), Box::into_raw(symbol), 1)
         };
         if !registered {
             return Err(format!("wamr: cannot register {module}.{name}"));
@@ -117,6 +156,7 @@ impl Output {
 }
 
 struct Session<H> {
+    api: &'static Api,
     output: Output,
     host: H,
     /// The module's imports, indexed by registry id.
@@ -132,6 +172,7 @@ trait Dispatch {
 impl<H: Host> Dispatch for Session<H> {
     fn call(&mut self, env: ffi::ExecEnv, id: usize, slots: &mut [u64]) -> Result<(), String> {
         let Session {
+            api,
             output,
             host,
             signatures,
@@ -141,9 +182,9 @@ impl<H: Host> Dispatch for Session<H> {
             return Err("host call to an import this module does not have".into());
         };
         let result = if sig.module == "goat" {
-            runtime_call(output, sig, env, slots)
+            runtime_call(api, output, sig, env, slots)
         } else {
-            foreign_call(host, sig, env, slots)
+            foreign_call(api, host, sig, env, slots)
         };
         if let Err(message) = &result {
             stopped.get_or_insert_with(|| Stopped {
@@ -156,15 +197,13 @@ impl<H: Host> Dispatch for Session<H> {
 }
 
 /// The one host function WAMR calls, for every import of every module.
-unsafe extern "C" fn trampoline(env: ffi::ExecEnv, slots: *mut u64) {
+unsafe extern "C" fn trampoline<const CLASSIC: bool>(env: ffi::ExecEnv, slots: *mut u64) {
+    let api = if CLASSIC { &ffi::CLASSIC } else { &ffi::FAST };
     // SAFETY: `run_to_end` keeps a live `&mut dyn Dispatch` as the user data
     // for as long as the module can call out.
     let (dispatch, id) = unsafe {
-        let user = ffi::wasm_runtime_get_user_data(env).cast::<&mut dyn Dispatch>();
-        (
-            &mut **user,
-            ffi::wasm_runtime_get_function_attachment(env) as usize,
-        )
+        let user = (api.get_user_data)(env).cast::<&mut dyn Dispatch>();
+        (&mut **user, (api.get_function_attachment)(env) as usize)
     };
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: WAMR passes a buffer of at least `MIN_SLOTS`.
@@ -179,8 +218,8 @@ unsafe extern "C" fn trampoline(env: ffi::ExecEnv, slots: *mut u64) {
     let message = CString::new(failure).unwrap_or_else(|_| c"host error".into());
     // SAFETY: `env` is the live environment WAMR called us with.
     unsafe {
-        let instance = ffi::wasm_runtime_get_module_inst(env);
-        ffi::wasm_runtime_set_exception(instance, message.as_ptr());
+        let instance = (api.get_module_inst)(env);
+        (api.set_exception)(instance, message.as_ptr());
     }
 }
 
@@ -214,6 +253,7 @@ fn from_f64(ty: ValType, x: f64) -> u64 {
 
 /// A call to one of the `goat.*` imports every module may have.
 fn runtime_call(
+    api: &Api,
     output: &mut Output,
     sig: &Signature,
     env: ffi::ExecEnv,
@@ -227,7 +267,7 @@ fn runtime_call(
     };
     let int = || arg().map(|(ty, slot)| as_i64(ty, slot));
     let number = || arg().map(|(ty, slot)| as_f64(ty, slot));
-    let string = || arg().and_then(|(_, slot)| read_string(env, slot as u32));
+    let string = || arg().and_then(|(_, slot)| read_string(api, env, slot as u32));
     match sig.name.as_str() {
         "print_number" => output.write_line(&goat::format_number(number()?)),
         "print_bool" => output.write_line(goat::format_bool(int()? != 0)),
@@ -246,6 +286,7 @@ fn runtime_call(
 /// A call to a `foreign` function the program imports: wasm values in,
 /// `HostValue`s to the host, its result back out through `slots[0]`.
 fn foreign_call<H: Host>(
+    api: &Api,
     host: &mut H,
     sig: &Signature,
     env: ffi::ExecEnv,
@@ -260,7 +301,7 @@ fn foreign_call<H: Host>(
             Boundary::Int => HostValue::Int(as_i64(ty, slot)),
             Boundary::Bool => HostValue::Bool(slot as u32 != 0),
             Boundary::Unit => HostValue::Unit,
-            Boundary::Str => HostValue::Str(read_string(env, slot as u32)?),
+            Boundary::Str => HostValue::Str(read_string(api, env, slot as u32)?),
         });
     }
     let returned = host.call(module, name, &values)?;
@@ -269,7 +310,7 @@ fn foreign_call<H: Host>(
         (Boundary::Int, HostValue::Int(n), Some(ty)) => from_i64(ty, n),
         (Boundary::Bool, HostValue::Bool(b), Some(_)) => u64::from(b),
         (Boundary::Unit, HostValue::Unit, None) => return Ok(()),
-        (Boundary::Str, HostValue::Str(text), Some(_)) => u64::from(alloc_string(env, &text)?),
+        (Boundary::Str, HostValue::Str(text), Some(_)) => u64::from(alloc_string(api, env, &text)?),
         _ => {
             return Err(format!(
                 "{module}.{name} returned a value of the wrong type"
@@ -280,32 +321,32 @@ fn foreign_call<H: Host>(
 }
 
 /// The guest memory range `[offset, offset + len)`, which must lie inside it.
-fn guest_range(env: ffi::ExecEnv, offset: u64, len: u64) -> Result<*mut u8, String> {
+fn guest_range(api: &Api, env: ffi::ExecEnv, offset: u64, len: u64) -> Result<*mut u8, String> {
     // SAFETY: `env` is live; the range is validated before it is converted.
     unsafe {
-        let instance = ffi::wasm_runtime_get_module_inst(env);
-        if !ffi::wasm_runtime_validate_app_addr(instance, offset, len) {
+        let instance = (api.get_module_inst)(env);
+        if !(api.validate_app_addr)(instance, offset, len) {
             return Err("string out of bounds".into());
         }
-        Ok(ffi::wasm_runtime_addr_app_to_native(instance, offset).cast())
+        Ok((api.addr_app_to_native)(instance, offset).cast())
     }
 }
 
-fn read_string(env: ffi::ExecEnv, ptr: u32) -> Result<String, String> {
+fn read_string(api: &Api, env: ffi::ExecEnv, ptr: u32) -> Result<String, String> {
     let at = u64::from(ptr);
-    let len_at = guest_range(env, at + STR_LEN, 4)?;
+    let len_at = guest_range(api, env, at + STR_LEN, 4)?;
     // SAFETY: the range was validated just above, and nothing runs between.
     let len = u64::from(u32::from_le_bytes(unsafe {
         len_at.cast::<[u8; 4]>().read()
     }));
-    let bytes = guest_range(env, at + STR_BYTES, len)?;
+    let bytes = guest_range(api, env, at + STR_BYTES, len)?;
     // SAFETY: as above.
     let bytes = unsafe { std::slice::from_raw_parts(bytes, len as usize) };
     Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
-fn write_guest(env: ffi::ExecEnv, offset: u64, bytes: &[u8]) -> Result<(), String> {
-    let to = guest_range(env, offset, bytes.len() as u64)?;
+fn write_guest(api: &Api, env: ffi::ExecEnv, offset: u64, bytes: &[u8]) -> Result<(), String> {
+    let to = guest_range(api, env, offset, bytes.len() as u64)?;
     // SAFETY: the range was validated just above, and `bytes` is host memory.
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), to, bytes.len()) };
     Ok(())
@@ -313,32 +354,38 @@ fn write_guest(env: ffi::ExecEnv, offset: u64, bytes: &[u8]) -> Result<(), Strin
 
 /// A string object holding `text`, made in the module's own heap through its
 /// exported `goat_alloc`, which hands it over with count 1: goat owns it.
-fn alloc_string(env: ffi::ExecEnv, text: &str) -> Result<u32, String> {
+fn alloc_string(api: &Api, env: ffi::ExecEnv, text: &str) -> Result<u32, String> {
     let too_long = |_| "string too long".to_string();
     let len = u32::try_from(text.len()).map_err(too_long)?;
     let size = u32::try_from(STR_BYTES as usize + text.len()).map_err(too_long)?;
     let mut argv = [size];
-    call_export(env, c"goat_alloc", 1, &mut argv)?;
+    call_export(api, env, c"goat_alloc", 1, &mut argv)?;
     let at = u64::from(argv[0]);
-    write_guest(env, at + STR_LEN, &len.to_le_bytes())?;
-    write_guest(env, at + STR_BYTES, text.as_bytes())?;
+    write_guest(api, env, at + STR_LEN, &len.to_le_bytes())?;
+    write_guest(api, env, at + STR_BYTES, text.as_bytes())?;
     Ok(argv[0])
 }
 
 /// Call the module's export `name` in the running environment. `argv` holds
 /// the `argc` arguments going in and the results coming out.
-fn call_export(env: ffi::ExecEnv, name: &CStr, argc: u32, argv: &mut [u32]) -> Result<(), String> {
+fn call_export(
+    api: &Api,
+    env: ffi::ExecEnv,
+    name: &CStr,
+    argc: u32,
+    argv: &mut [u32],
+) -> Result<(), String> {
     // SAFETY: `env` is live and `argv` outlasts the call.
     unsafe {
-        let instance = ffi::wasm_runtime_get_module_inst(env);
-        let function = ffi::wasm_runtime_lookup_function(instance, name.as_ptr());
+        let instance = (api.get_module_inst)(env);
+        let function = (api.lookup_function)(instance, name.as_ptr());
         if function.is_null() {
             return Err(format!("module exports no {}", name.to_string_lossy()));
         }
-        if ffi::wasm_runtime_call_wasm(env, function, argc, argv.as_mut_ptr()) {
+        if (api.call_wasm)(env, function, argc, argv.as_mut_ptr()) {
             return Ok(());
         }
-        let message = ffi::wasm_runtime_get_exception(instance);
+        let message = (api.get_exception)(instance);
         Err(if message.is_null() {
             "unknown trap".into()
         } else {
@@ -349,6 +396,7 @@ fn call_export(env: ffi::ExecEnv, name: &CStr, argc: u32, argv: &mut [u32]) -> R
 
 /// A loaded, instantiated module and the environment that runs it.
 struct Loaded {
+    api: &'static Api,
     module: ffi::Module,
     instance: ffi::Instance,
     env: ffi::ExecEnv,
@@ -358,12 +406,13 @@ struct Loaded {
 
 impl Drop for Loaded {
     fn drop(&mut self) {
+        let api = self.api;
         // SAFETY: each handle came from its create call and is released once,
         // in reverse order.
         unsafe {
-            ffi::wasm_runtime_destroy_exec_env(self.env);
-            ffi::wasm_runtime_deinstantiate(self.instance);
-            ffi::wasm_runtime_unload(self.module);
+            (api.destroy_exec_env)(self.env);
+            (api.deinstantiate)(self.instance);
+            (api.unload)(self.module);
         }
     }
 }
@@ -376,9 +425,14 @@ fn error_text(buf: &[c_char; ERROR_LEN]) -> String {
 }
 
 /// Register the host functions `wasm` imports, then load and instantiate it.
-fn load<H: Host>(wasm: &[u8], host: &H) -> Result<(Loaded, Vec<Option<Signature>>), String> {
+fn load<H: Host>(
+    interp: Interp,
+    wasm: &[u8],
+    host: &H,
+) -> Result<(Loaded, Vec<Option<Signature>>), String> {
+    let api = interp.api();
     let imports = imports::function_imports(wasm)?;
-    let mut registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+    let mut registry = interp.registry().lock().unwrap_or_else(|e| e.into_inner());
     registry.start()?;
     let mut ids = Vec::with_capacity(imports.len());
     for import in &imports {
@@ -407,28 +461,27 @@ fn load<H: Host>(wasm: &[u8], host: &H) -> Result<(Loaded, Vec<Option<Signature>
     let mut error = [0 as c_char; ERROR_LEN];
     let error_len = ERROR_LEN as u32;
     // SAFETY: `wasm` moves into the returned `Loaded`, which outlives the module.
-    let module =
-        unsafe { ffi::wasm_runtime_load(wasm.as_mut_ptr(), size, error.as_mut_ptr(), error_len) };
+    let module = unsafe { (api.load)(wasm.as_mut_ptr(), size, error.as_mut_ptr(), error_len) };
     if module.is_null() {
         return Err(format!("invalid module: {}", error_text(&error)));
     }
     // SAFETY: `module` is live; each failure path below unloads what it made.
-    let instance = unsafe {
-        ffi::wasm_runtime_instantiate(module, STACK_SIZE, 0, error.as_mut_ptr(), error_len)
-    };
+    let instance =
+        unsafe { (api.instantiate)(module, STACK_SIZE, 0, error.as_mut_ptr(), error_len) };
     if instance.is_null() {
-        unsafe { ffi::wasm_runtime_unload(module) };
+        unsafe { (api.unload)(module) };
         return Err(format!("instantiate: {}", error_text(&error)));
     }
-    let env = unsafe { ffi::wasm_runtime_create_exec_env(instance, STACK_SIZE) };
+    let env = unsafe { (api.create_exec_env)(instance, STACK_SIZE) };
     if env.is_null() {
         unsafe {
-            ffi::wasm_runtime_deinstantiate(instance);
-            ffi::wasm_runtime_unload(module);
+            (api.deinstantiate)(instance);
+            (api.unload)(module);
         }
         return Err("wamr: cannot create an execution environment".into());
     }
     let loaded = Loaded {
+        api,
         module,
         instance,
         env,
@@ -439,10 +492,18 @@ fn load<H: Host>(wasm: &[u8], host: &H) -> Result<(Loaded, Vec<Option<Signature>
 
 /// Instantiate `wasm` under WAMR, run its entry export against `host`, and
 /// return everything it printed. A halt keeps what the program printed before
-/// it, including a line it had started.
+/// it, including a line it had started. The interpreter is the fast one unless
+/// the module has a function past its cell limit ([`interp_for`]).
 pub fn run_to_end<H: Host>(wasm: &[u8], host: H) -> Result<Finished<H>, String> {
-    let (loaded, signatures) = load(wasm, &host)?;
+    run_to_end_on(interp_for(wasm)?, wasm, host)
+}
+
+/// Like [`run_to_end`], on the interpreter the caller names.
+pub fn run_to_end_on<H: Host>(interp: Interp, wasm: &[u8], host: H) -> Result<Finished<H>, String> {
+    let api = interp.api();
+    let (loaded, signatures) = load(interp, wasm, &host)?;
     let mut session = Session {
+        api,
         output: Output::default(),
         host,
         signatures,
@@ -450,24 +511,24 @@ pub fn run_to_end<H: Host>(wasm: &[u8], host: H) -> Result<Finished<H>, String> 
     };
 
     // SAFETY: paired with the destroy below.
-    if !unsafe { ffi::wasm_runtime_init_thread_env() } {
+    if !unsafe { (api.init_thread_env)() } {
         return Err("wamr: cannot initialize the thread".into());
     }
     let outcome = {
         let mut dispatch: &mut dyn Dispatch = &mut session;
         // SAFETY: `dispatch` outlives every call into the module below.
         unsafe {
-            ffi::wasm_runtime_set_user_data(loaded.env, (&raw mut dispatch).cast::<c_void>());
+            (api.set_user_data)(loaded.env, (&raw mut dispatch).cast::<c_void>());
         }
-        call_export(loaded.env, c"goat_entry", 0, &mut []).and_then(|()| {
+        call_export(api, loaded.env, c"goat_entry", 0, &mut []).and_then(|()| {
             let mut live = [0u32];
-            call_export(loaded.env, c"goat_live_allocs", 0, &mut live)
+            call_export(api, loaded.env, c"goat_live_allocs", 0, &mut live)
                 .map(|()| live[0])
                 .map_err(|e| format!("goat_live_allocs: {e}"))
         })
     };
     // SAFETY: pairs the init above.
-    unsafe { ffi::wasm_runtime_destroy_thread_env() };
+    unsafe { (api.destroy_thread_env)() };
     drop(loaded);
 
     let Session {

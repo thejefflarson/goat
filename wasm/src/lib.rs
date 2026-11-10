@@ -37,6 +37,10 @@ const HOST_PROFILE: Profile = Profile::Desktop;
 /// none), and the custom section that maps each number to a source range. A
 /// host reads both when `goat.trap` fires to blame the user's call.
 const SITE_GLOBAL: u32 = 2;
+/// The embedded profile's count of calls waiting on a result. An embedded
+/// module is never interactive, so this shares an index with the first
+/// interactive-only global.
+const DEPTH_GLOBAL: u32 = 3;
 const SITES_SECTION: &str = "goat.sites";
 /// The module globals that hold an interactive program's `update` and `draw`
 /// closures, after the site.
@@ -167,8 +171,40 @@ fn val_types(profile: Profile, tys: impl IntoIterator<Item = MTy>) -> Vec<ValTyp
         .collect()
 }
 
+/// The memory discipline of the embedded profile (ADR 0026): the heap is a
+/// fixed arena that never grows, and calls nest only so deep. Running past
+/// either is a spanned runtime trap, like `trap` (ADR 0023).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmbeddedLimits {
+    /// Bytes of heap the program may use, beyond its static data.
+    pub heap_bytes: u32,
+    /// Calls that may be waiting on a result at once. A tail call waits on
+    /// nothing, so it does not count.
+    pub call_depth: u32,
+}
+
+impl Default for EmbeddedLimits {
+    fn default() -> Self {
+        EmbeddedLimits {
+            heap_bytes: 256 << 10,
+            call_depth: 1024,
+        }
+    }
+}
+
+/// What a trap says when the heap budget is used up, and when calls nest past
+/// the bound.
+pub const HEAP_BUDGET_EXHAUSTED: &str = "the program ran out of memory";
+pub const STACK_OVERFLOW: &str = "the program called itself too deeply";
+
 pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
-    emit_module(program, false)
+    emit_with_limits(program, EmbeddedLimits::default())
+}
+
+/// Like [`emit`], with the embedded limits spelled out. A desktop program has
+/// none, and ignores them.
+pub fn emit_with_limits(program: &Program, limits: EmbeddedLimits) -> Result<Vec<u8>, EmitError> {
+    emit_module(program, false, limits)
 }
 
 /// Like [`emit`] for an interactive program, but the module imports its
@@ -181,11 +217,16 @@ pub fn emit_reloadable(program: &Program) -> Result<Vec<u8>, EmitError> {
     if program.interactive.is_none() {
         return Err(EmitError::Unsupported("a reloadable run-once program"));
     }
-    emit_module(program, true)
+    emit_module(program, true, EmbeddedLimits::default())
 }
 
-fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
+fn emit_module(
+    program: &Program,
+    hosted: bool,
+    limits: EmbeddedLimits,
+) -> Result<Vec<u8>, EmitError> {
     let profile = program.profile;
+    let bounded = profile == Profile::Embedded;
     if profile == Profile::Embedded && program.interactive.is_some() {
         return Err(EmitError::Unsupported(
             "an interactive program on the embedded profile",
@@ -197,6 +238,10 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
     }
     if profile == Profile::Embedded && program.foreign.iter().any(|f| f.ret == MTy::Int) {
         uses.note_trap(INT_OVERFLOW);
+    }
+    if bounded {
+        uses.note_trap(HEAP_BUDGET_EXHAUSTED);
+        uses.note_trap(STACK_OVERFLOW);
     }
     let needs_drop = uses.drops || program.interactive.is_some();
     let mut types = Types::default();
@@ -275,6 +320,7 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
         nullary_base,
         nullary: uses.nullary,
         indirect: needs_drop,
+        call_depth: bounded.then_some(limits.call_depth),
         alloc_fn: runtime_base,
         drop_loop_fn: needs_drop.then_some(runtime_base + allocator::FUNCTIONS),
         hosted,
@@ -323,14 +369,21 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
             }
         }
     }
-    let free_lists = FreeList {
-        table: if hosted {
-            DATA_BASE
-        } else {
-            (DATA_BASE + data.len() as u32).next_multiple_of(8)
-        },
+    let table = if hosted {
+        DATA_BASE
+    } else {
+        (DATA_BASE + data.len() as u32).next_multiple_of(8)
     };
-    let heap_start = free_lists.table + allocator::TABLE_BYTES;
+    let heap_start = table + allocator::TABLE_BYTES;
+    let heap_end = heap_start.saturating_add(limits.heap_bytes);
+    let free_lists = FreeList {
+        table,
+        budget: bounded.then(|| allocator::Budget {
+            end: heap_end,
+            trap_import,
+            message: shared.trap_messages[HEAP_BUDGET_EXHAUSTED],
+        }),
+    };
     let mut runtime = vec![
         free_lists.alloc(),
         free_lists.free(),
@@ -397,9 +450,10 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
 
     if !hosted {
         let mut memory = MemorySection::new();
+        let pages = u64::from(if bounded { heap_end } else { heap_start }.div_ceil(PAGE_BYTES));
         memory.memory(MemoryType {
-            minimum: u64::from(heap_start.div_ceil(PAGE_BYTES)).max(1),
-            maximum: None,
+            minimum: pages.max(1),
+            maximum: bounded.then_some(pages.max(1)),
             ..hosted_memory()
         });
         module.section(&memory);
@@ -407,7 +461,11 @@ fn emit_module(program: &Program, hosted: bool) -> Result<Vec<u8>, EmitError> {
 
     let mut globals = GlobalSection::new();
     let allocator_globals: &[i32] = if hosted { &[] } else { &[heap_start as i32, 0] };
-    let site_and_closure_globals = if program.interactive.is_some() { 3 } else { 1 };
+    let site_and_closure_globals = match (&program.interactive, bounded) {
+        (Some(_), _) => 3,
+        (None, true) => 2,
+        (None, false) => 1,
+    };
     for init in allocator_globals
         .iter()
         .copied()
@@ -719,6 +777,8 @@ struct Shared<'a> {
     nullary_base: u32,
     nullary: Vec<u32>,
     indirect: bool,
+    /// The bound on nested calls, when the profile has one.
+    call_depth: Option<u32>,
     drop_loop_fn: Option<u32>,
     /// Static data sits wherever the module's start function copied it, so
     /// its addresses are offsets from a global.
@@ -1599,17 +1659,18 @@ impl<'p> FuncCx<'_, 'p> {
                     .get(f.0 as usize)
                     .ok_or(EmitError::UnknownFunc(*f))?;
                 self.direct_args(*f, args, out)?;
-                out.push(Instruction::Call(self.shared.imports + f.0));
+                self.bound_call(Instruction::Call(self.shared.imports + f.0), out)?;
                 Ok(Some(callee.ret))
             }
             Expr::CallClosure(closure, args) => {
                 let Some((type_index, ret)) = self.closure_call(closure, args, out)? else {
                     return Ok(None);
                 };
-                out.push(Instruction::CallIndirect {
+                let call = Instruction::CallIndirect {
                     type_index,
                     table_index: 0,
-                });
+                };
+                self.bound_call(call, out)?;
                 Ok(Some(ret))
             }
             Expr::TailCall(Callee::Direct(f), args) => {
@@ -2161,6 +2222,34 @@ impl<'p> FuncCx<'_, 'p> {
         out.push(Instruction::If(BlockType::Empty));
         self.trap(message, out)?;
         out.push(Instruction::End);
+        Ok(())
+    }
+
+    /// Emits `call`, which waits on a result: under a call-depth bound it also
+    /// counts the call in `DEPTH_GLOBAL` and traps past the bound.
+    fn bound_call(&mut self, call: Instruction<'static>, out: &mut Code) -> Result<(), EmitError> {
+        use Instruction::*;
+        let Some(limit) = self.shared.call_depth else {
+            out.push(call);
+            return Ok(());
+        };
+        out.extend([
+            GlobalGet(DEPTH_GLOBAL),
+            I32Const(1),
+            I32Add,
+            GlobalSet(DEPTH_GLOBAL),
+            GlobalGet(DEPTH_GLOBAL),
+            I32Const(limit as i32),
+            I32GtU,
+        ]);
+        self.trap_if(STACK_OVERFLOW, out)?;
+        out.extend([
+            call,
+            GlobalGet(DEPTH_GLOBAL),
+            I32Const(1),
+            I32Sub,
+            GlobalSet(DEPTH_GLOBAL),
+        ]);
         Ok(())
     }
 

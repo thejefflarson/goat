@@ -12,7 +12,3 @@
 #if WASM_ENABLE_BULK_MEMORY != 1
 #error "goat_wamr needs WASM_ENABLE_BULK_MEMORY=1 (WAMR_BUILD_BULK_MEMORY)"
 #endif
-
-#if WASM_ENABLE_FAST_INTERP != 1
-#error "goat_wamr runs the WAMR fast interpreter"
-#endif

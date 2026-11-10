@@ -941,19 +941,22 @@ const LONG_BLOCK: usize = 3000;
 
 /// `run(src)` must print `expected`. WAMR's fast interpreter addresses a
 /// function's frame with 16-bit offsets and refuses to load one that needs
-/// more than 32767 cells, which a chain this long does; under WAMR that
-/// refusal is the expected result, so a runtime that lifts it fails the test.
+/// more than 32767 cells, which a chain this long does (ADR 0025). Under WAMR
+/// the fast interpreter must still refuse it, and the driver must run it on
+/// the classic interpreter and agree with the oracle.
 fn run_long_chain(src: &str, expected: String) {
-    if !support::uses_wamr() {
-        assert_eq!(run(src), expected);
-        return;
+    assert_eq!(run(src), expected);
+    if support::uses_wamr() {
+        let wasm = goat::compile_turtle(src).expect("program compiles");
+        assert_eq!(goat_wamr::interp_for(&wasm), Ok(goat_wamr::Interp::Classic));
+        let refused = goat_wamr::run_to_end_on(goat_wamr::Interp::Fast, &wasm, goat::NoHost)
+            .err()
+            .expect("the fast interpreter refuses the chain");
+        assert!(
+            refused.contains("fast interpreter offset overflow"),
+            "{refused}"
+        );
     }
-    let wasm = goat::compile_turtle(src).expect("program compiles");
-    let error = support::execute(&wasm).err().expect("WAMR loads the chain");
-    assert!(
-        error.contains("fast interpreter offset overflow"),
-        "{error}"
-    );
 }
 
 #[test]

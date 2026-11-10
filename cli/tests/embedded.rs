@@ -22,7 +22,11 @@
 //! `a_tail_call_in_an_arm_runs_in_constant_stack`,
 //! `deep_tail_recursion_runs_in_constant_stack`,
 //! `long_lists_do_not_overflow_the_stack` and `prelude_definitions_run` (sums
-//! past 2^31); `the_circle_example_renders_to_its_golden` (f32 `sin` moves the
+//! past 2^31); the tests that build a million-link structure
+//! (`equality_on_long_lists_uses_constant_stack`, `a_loop_runs_in_constant_stack`,
+//! `a_million_link_list_is_counted_and_then_dropped` and the dropped-chain tests),
+//! which trap on the embedded heap budget (ADR 0026);
+//! `the_circle_example_renders_to_its_golden` (f32 `sin` moves the
 //! SVG coordinates); and nine in `numbers`, which pins 64-bit and 15-digit answers
 //! (`an_int_is_a_64_bit_integer`, `an_int_at_the_edge_does_not_trap`,
 //! `the_most_negative_int_floor_divides_by_minus_one_only_as_a_remainder`,
