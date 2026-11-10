@@ -168,8 +168,11 @@ Records nest, and field access chains: `{point: {x: 1}}.point.x` is `1`.
 ## Types, in brief
 
 Types are fully inferred; you never annotate. The inferencer is Hindley-Milner
-with row-polymorphic records. A binding made with `=` is generalized, so a
-generic function bound with `=` can be used at several types:
+with row-polymorphic records. A binding made with `=` whose value is a function,
+a literal, a name, or a record of such values is generalized, so a generic
+function bound with `=` can be used at several types. A *computed* binding (a
+call, a `match`, an `if`, a field access) has one type; use it at two types and
+the checker suggests writing it as a function so it re-specializes per use:
 
 ```
 id = program(x) do x done
