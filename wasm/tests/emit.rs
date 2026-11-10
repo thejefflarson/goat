@@ -192,6 +192,15 @@ fn only_an_interactive_program_can_be_emitted_reloadable() {
 }
 
 #[test]
+fn the_hosted_heap_start_matches_the_browser_host() {
+    assert_eq!(
+        goat_wasm::HOSTED_HEAP_START,
+        232,
+        "web/loop.ts mirrors this"
+    );
+}
+
+#[test]
 fn heap_starts_after_the_aligned_data_segment() {
     let mut p = arithmetic();
     p.data = vec![vec![0; 13]];

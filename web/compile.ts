@@ -5,7 +5,7 @@ const OK = 0;
 const DIAGNOSTIC_HEADER = 12;
 const TOKEN_SIZE = 9;
 
-type Entry = "gw_compile" | "gw_check" | "gw_tokenize";
+type Entry = "gw_compile" | "gw_compile_live" | "gw_check" | "gw_tokenize";
 
 interface CompilerExports {
   memory: WebAssembly.Memory;
@@ -13,6 +13,7 @@ interface CompilerExports {
   gw_free(ptr: number, len: number): void;
   gw_free_result(rec: number): void;
   gw_compile(ptr: number, len: number): number;
+  gw_compile_live(ptr: number, len: number): number;
   gw_check(ptr: number, len: number): number;
   gw_tokenize(ptr: number, len: number): number;
   gw_complete(ptr: number, len: number, cursor: number): number;
@@ -65,12 +66,21 @@ function takeRecord(exports: CompilerExports, rec: number): { ok: boolean; paylo
   return { ok: tag === OK, payload };
 }
 
-export async function compile(compiler: WebAssembly.Module, source: string): Promise<CompileResult> {
-  const { ok, payload } = invoke(await WebAssembly.instantiate(compiler, {}), "gw_compile", source);
+export async function compile(
+  compiler: WebAssembly.Module,
+  source: string,
+  entry: "gw_compile" | "gw_compile_live" = "gw_compile",
+): Promise<CompileResult> {
+  const { ok, payload } = invoke(await WebAssembly.instantiate(compiler, {}), entry, source);
   return ok
     ? { ok, module: payload as Uint8Array<ArrayBuffer> }
     : { ok, diagnostics: new TextDecoder().decode(payload) };
 }
+
+// Like `compile`, but an interactive program comes out as a module that imports
+// its heap, so `Loop.reload` can swap it in over a running one.
+export const compileLive = (compiler: WebAssembly.Module, source: string): Promise<CompileResult> =>
+  compile(compiler, source, "gw_compile_live");
 
 // The problems `compile` would fail with, as the checker's own spans and messages.
 export async function check(compiler: WebAssembly.Module, source: string): Promise<Diagnostic[]> {

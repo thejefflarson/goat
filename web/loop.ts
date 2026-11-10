@@ -22,6 +22,7 @@ import {
 } from "./scene.ts";
 
 export const FRAME_BUDGET_MS = 1000;
+export const NOT_RUNNING_MESSAGE = "the program is not running";
 export const STUCK_MESSAGE = "your program got stuck: it kept running without finishing, so it was stopped";
 
 export interface DomEvent {
@@ -62,8 +63,15 @@ export interface InteractiveExports extends WebAssembly.Exports {
   goat_shutdown(): void;
 }
 
+export type Reloaded = "kept" | "reset";
+
 export interface Loop {
   stop(): void;
+  // Swaps in a recompiled module built over the same `Hosted` heap: the running
+  // model is kept when the new module lays it out the same way, else it starts
+  // over from the new `init`. Throws, leaving the old program running, if the
+  // new one cannot start.
+  reload(next: InteractiveExports): Reloaded;
   // Delivers a host event as if the page had raised it; ignored if unsubscribed.
   send(event: HostEvent): void;
   readonly running: boolean;
@@ -93,8 +101,17 @@ export function pointerPosition(
   };
 }
 
-export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
-  const wanted = new Set<EventKind>(subscriptions(exports));
+// The `goat_model_fingerprint` global a reloadable module exports; equal values
+// mean the model's layout is unchanged (ADR 0015, addendum).
+function fingerprint(exports: InteractiveExports): bigint {
+  const global = exports.goat_model_fingerprint;
+  if (!(global instanceof WebAssembly.Global)) throw new Error("this program cannot be reloaded");
+  return global.value as bigint;
+}
+
+export function startLoop(initial: InteractiveExports, env: LoopEnv): Loop {
+  let exports = initial;
+  let wanted = new Set<EventKind>(subscriptions(exports));
   const removers: Array<() => void> = [];
   let handle: number | undefined;
   let running = true;
@@ -136,7 +153,16 @@ export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
 
   let model = 0;
   const first = guarded(() => exports.goat_setup());
-  if (first === undefined) return { stop, send: () => {}, running: false };
+  if (first === undefined) {
+    return {
+      stop,
+      send: () => {},
+      reload: () => {
+        throw new Error(NOT_RUNNING_MESSAGE);
+      },
+      running: false,
+    };
+  }
   model = first;
 
   const send = (event: HostEvent) => {
@@ -146,6 +172,24 @@ export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
       return built === null ? model : exports.goat_update(model, built);
     });
     if (next !== undefined) model = next;
+  };
+
+  const reload = (next: InteractiveExports): Reloaded => {
+    if (!running) throw new Error(NOT_RUNNING_MESSAGE);
+    const kept = fingerprint(exports) === fingerprint(next);
+    const fresh = env.around ? env.around(() => next.goat_setup()) : next.goat_setup();
+    const old = exports;
+    exports = next;
+    wanted = new Set(subscriptions(next));
+    guarded(() => {
+      if (kept) next.goat_release_model(fresh);
+      else {
+        old.goat_release_model(model);
+        model = fresh;
+      }
+      old.goat_shutdown();
+    });
+    return kept ? "kept" : "reset";
   };
 
   const listen = (target: ListenerTarget, type: string, listener: (event: DomEvent) => void) => {
@@ -183,23 +227,47 @@ export function startLoop(exports: InteractiveExports, env: LoopEnv): Loop {
   return {
     stop,
     send,
+    reload,
     get running() {
       return running;
     },
   };
 }
 
-// Instantiates an interactive module drawing through `ctx`. `memory` is only
-// known once the module exists, so the imports read it lazily.
+// Where a reloadable module expects the heap to begin; mirrors
+// `goat_wasm::HOSTED_HEAP_START`.
+const HOSTED_HEAP_START = 232;
+
+// The memory and allocator state every reloadable module of one program shares,
+// so a model built by one is valid in the next (ADR 0015, addendum).
+export interface Hosted {
+  memory: WebAssembly.Memory;
+  heap: WebAssembly.Global;
+  live: WebAssembly.Global;
+}
+
+export function createHosted(): Hosted {
+  const cell = (value: number) => new WebAssembly.Global({ value: "i32", mutable: true }, value);
+  return { memory: new WebAssembly.Memory({ initial: 1 }), heap: cell(HOSTED_HEAP_START), live: cell(0) };
+}
+
+export function isReloadableModule(module: WebAssembly.Module): boolean {
+  return WebAssembly.Module.imports(module).some((i) => i.module === "goat" && i.name === "memory");
+}
+
+// Instantiates an interactive module drawing through `ctx`, over `hosted`'s
+// heap if it is reloadable. `memory` is only known once the module exists, so
+// the imports read it lazily.
 export async function instantiateInteractive(
   moduleBytes: BufferSource,
   ctx: DrawingContext,
+  hosted?: Hosted,
 ): Promise<InteractiveExports> {
-  let memory: WebAssembly.Memory | undefined;
+  let memory: WebAssembly.Memory | undefined = hosted?.memory;
   const scene = new CanvasScene(ctx);
   const host = createHost(() => memory!);
   const { instance } = await WebAssembly.instantiate(moduleBytes, {
-    goat: host.imports.goat,
+    goat: { ...host.imports.goat, ...hosted },
     ...sceneImports(() => memory!, scene),
   });
   memory = instance.exports.memory as WebAssembly.Memory;

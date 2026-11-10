@@ -266,3 +266,42 @@ test("the poll runs on the configured interval", () => {
   supervisor.start(interactive, sink);
   assert.deepEqual(timers.map((t) => t.ms), [50]);
 });
+
+const reloaded = new Uint8Array([1]);
+
+test("a reload goes to a ready interactive program and its outcome reaches the sink", () => {
+  const { supervisor, events, sink, last } = harness();
+  const outcomes: string[] = [];
+  supervisor.start(interactive, { ...sink, onReloaded: (o) => outcomes.push(o), onReloadFailed: (m) => outcomes.push(m) });
+  assert.equal(supervisor.reload(reloaded), false);
+  last().emit({ type: "ready", subscriptions: [] });
+  assert.equal(supervisor.reload(reloaded), true);
+  assert.deepEqual(last().posted.at(-1)!.message, { type: "reload", module: reloaded });
+  last().emit({ type: "reloaded", outcome: "reset", subscriptions: ["KeyDown"] });
+  last().emit({ type: "reload_failed", message: "no" });
+  assert.deepEqual(outcomes, ["reset", "no"]);
+  assert.equal(supervisor.wants("KeyDown"), true);
+  assert.deepEqual(events, ["ready"]);
+});
+
+test("a run-once program takes no reload", () => {
+  const { supervisor, sink, last } = harness();
+  supervisor.start(once, sink);
+  last().emit({ type: "ready", subscriptions: [] });
+  assert.equal(supervisor.reload(reloaded), false);
+});
+
+test("a restart after a stuck call runs the last module that reloaded, not one that failed", () => {
+  const { supervisor, workers, sink, advance, last } = harness();
+  const failed = new Uint8Array([2]);
+  supervisor.start(interactive, sink);
+  last().emit({ type: "ready", subscriptions: [] });
+  supervisor.reload(reloaded);
+  last().emit({ type: "reloaded", outcome: "kept", subscriptions: [] });
+  supervisor.reload(failed);
+  last().emit({ type: "reload_failed", message: "no" });
+  last().heartbeat.enter();
+  advance(LIMITS.frameMs + LIMITS.pollMs);
+  assert.equal(workers.length, 2);
+  assert.equal((workers[1]!.posted[0]!.message as Extract<ToWorker, { type: "run" }>).module, reloaded);
+});

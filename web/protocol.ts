@@ -15,10 +15,13 @@ export type ToWorker =
       canvas: OffscreenCanvas;
       heartbeat: SharedArrayBuffer;
     }
-  | { type: "input"; event: HostEvent };
+  | { type: "input"; event: HostEvent }
+  | { type: "reload"; module: Uint8Array<ArrayBuffer> };
 
 export type FromWorker =
   | { type: "ready"; subscriptions: EventKind[] }
+  | { type: "reloaded"; outcome: "kept" | "reset"; subscriptions: EventKind[] }
+  | { type: "reload_failed"; message: string }
   | { type: "output"; lines: string[] }
   | { type: "finished" }
   | { type: "failed"; message: string };

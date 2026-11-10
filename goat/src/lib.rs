@@ -129,6 +129,19 @@ pub fn compile_reloadable(source: &str, host: &HostInterface) -> Result<Vec<u8>,
     compile_with(Profile::Desktop, source, host, goat_wasm::emit_reloadable).map(|(wasm, _)| wasm)
 }
 
+/// [`compile`] for a live editor: an interactive program comes out reloadable
+/// (see [`compile_reloadable`]), a run-once program as the plain module.
+pub fn compile_live(source: &str, host: &HostInterface) -> Result<Vec<u8>, Vec<GoatError>> {
+    compile_with(Profile::Desktop, source, host, |program| {
+        if program.interactive.is_some() {
+            goat_wasm::emit_reloadable(program)
+        } else {
+            goat_wasm::emit(program)
+        }
+    })
+    .map(|(wasm, _)| wasm)
+}
+
 fn compile_with(
     profile: Profile,
     source: &str,

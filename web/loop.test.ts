@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { compile } from "./compile.ts";
+import { compile, compileLive } from "./compile.ts";
 import {
   FRAME_BUDGET_MS,
   type DomEvent,
+  type Hosted,
   type InteractiveExports,
   type LoopCanvas,
   STUCK_MESSAGE,
+  createHosted,
   isInteractiveModule,
+  isReloadableModule,
   startLoop,
 } from "./loop.ts";
 import { createHost } from "./runtime.ts";
@@ -243,4 +246,83 @@ test("a host that supplies `around` sees every call into goat, even one that tra
   runaway.frame(16);
   assert.ok(calls.open > before);
   assert.equal(calls.open, calls.closed);
+});
+
+async function instantiateLive(source: string, hosted: Hosted, scene = new RecordingScene()) {
+  const result = await compileLive(compiler, source);
+  if (!result.ok) assert.fail(result.diagnostics);
+  const host = createHost(() => hosted.memory);
+  const { instance } = await WebAssembly.instantiate(result.module, {
+    goat: { ...host.imports.goat, ...hosted },
+    ...sceneImports(() => hosted.memory, scene),
+  });
+  return instance.exports as InteractiveExports & { goat_live_allocs(): number };
+}
+
+const counter = (extra: string, drawn: string) => `
+init = {x: 0${extra}}
+update = program(model, event) do
+  match event do KeyDown(key) then {...model, x: model.x + 10} else model done
+done
+draw = program(model) do [Line({x1: 0, y1: 0, x2: ${drawn}, y2: 0, color: "red"})] done
+`;
+
+const lineEnds = (scene: RecordingScene) =>
+  scene.commands.flatMap((c) => (c.kind === "line" ? [c.x2] : []));
+
+async function liveProgram(source: string) {
+  const hosted = createHosted();
+  const scene = new RecordingScene();
+  const first = await instantiateLive(source, hosted, scene);
+  const page = fakeEnv();
+  const loop = startLoop(first, page.env);
+  const reload = async (next: string) => loop.reload(await instantiateLive(next, hosted, scene));
+  return { hosted, scene, page, loop, first, reload };
+}
+
+test("only an interactive program compiles reloadable", async () => {
+  const module = async (source: string) => {
+    const result = await compileLive(compiler, source);
+    if (!result.ok) assert.fail(result.diagnostics);
+    return WebAssembly.compile(result.module);
+  };
+  assert.equal(isReloadableModule(await module(arrowDraw)), true);
+  assert.equal(isReloadableModule(await module("forward(10)")), false);
+});
+
+test("a reload that leaves the model's shape alone keeps the model and swaps draw", async () => {
+  const { scene, page, loop, first, reload } = await liveProgram(counter("", "model.x"));
+  loop.send({ kind: "KeyDown", key: "a" });
+  loop.send({ kind: "KeyDown", key: "a" });
+  page.frame(16);
+  assert.equal(await reload(counter("", "model.x * 2")), "kept");
+  page.frame(32);
+  assert.deepEqual(lineEnds(scene), [20, 40]);
+  loop.send({ kind: "KeyDown", key: "a" });
+  page.frame(48);
+  assert.deepEqual(lineEnds(scene), [20, 40, 60]);
+  loop.stop();
+  assert.equal(first.goat_live_allocs(), 0);
+  assert.deepEqual(page.errors, []);
+});
+
+test("a reload that changes the model's shape starts over from the new init", async () => {
+  const { scene, page, loop, first, reload } = await liveProgram(counter("", "model.x"));
+  loop.send({ kind: "KeyDown", key: "a" });
+  assert.equal(await reload(counter(", y: 5", "model.x + model.y")), "reset");
+  page.frame(16);
+  assert.deepEqual(lineEnds(scene), [5]);
+  loop.stop();
+  assert.equal(first.goat_live_allocs(), 0);
+  assert.deepEqual(page.errors, []);
+});
+
+test("a reloaded program that cannot start leaves the old one running", async () => {
+  const { scene, page, loop, reload } = await liveProgram(counter("", "model.x"));
+  loop.send({ kind: "KeyDown", key: "a" });
+  await assert.rejects(reload(counter("", "model.x").replace("{x: 0}", "{x: first([])}")));
+  assert.equal(loop.running, true);
+  page.frame(16);
+  assert.deepEqual(lineEnds(scene), [10]);
+  assert.deepEqual(page.errors, []);
 });

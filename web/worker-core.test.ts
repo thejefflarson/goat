@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { compile } from "./compile.ts";
+import { compile, compileLive } from "./compile.ts";
 import { type FromWorker, Heartbeat, type ToWorker } from "./protocol.ts";
 import { createWorkerCore } from "./worker-core.ts";
 
@@ -9,8 +9,8 @@ const compiler = await WebAssembly.compile(
   readFileSync(new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", import.meta.url)),
 );
 
-async function moduleOf(source: string) {
-  const result = await compile(compiler, source);
+async function moduleOf(source: string, build = compile) {
+  const result = await build(compiler, source);
   if (!result.ok) assert.fail(result.diagnostics);
   return result.module;
 }
@@ -44,13 +44,13 @@ function worker() {
     pending = [];
     callbacks.forEach((callback) => callback(time));
   };
-  const run = async (mode: "interactive" | "once", source: string) => {
+  const run = async (mode: "interactive" | "once", source: string, build = compile) => {
     const surface = fakeSurface();
     const heartbeat = new Heartbeat();
     const message: ToWorker = {
       type: "run",
       mode,
-      module: await moduleOf(source),
+      module: await moduleOf(source, build),
       canvas: surface.canvas,
       heartbeat: heartbeat.buffer,
     };
@@ -152,4 +152,43 @@ test("a module that cannot be instantiated is a failure, not a crash", async () 
     heartbeat: new Heartbeat().buffer,
   });
   assert.equal(posted[0]!.type, "failed");
+});
+
+test("a reload keeps the model when its shape is unchanged and swaps draw", async () => {
+  const { core, posted, frame, run } = worker();
+  const { calls } = await run("interactive", KEYS, compileLive);
+  await core.handle({ type: "input", event: { kind: "KeyDown", key: "x" } });
+  await core.handle({ type: "reload", module: await moduleOf(KEYS.replace("y2: 5", "y2: 7"), compileLive) });
+  assert.deepEqual(posted.at(-1), { type: "reloaded", outcome: "kept", subscriptions: ["KeyDown"] });
+  frame(16);
+  assert.ok(calls.includes("lineTo(10,7)"), calls.join(" "));
+});
+
+test("a reload that changes the model's shape starts over from the new init", async () => {
+  const { core, posted, frame, run } = worker();
+  const { calls } = await run("interactive", KEYS, compileLive);
+  await core.handle({ type: "input", event: { kind: "KeyDown", key: "x" } });
+  const reshaped = KEYS.replace("{x: 0}", "{x: 3, z: 0}").replace("{x: model.x + 10}", "{...model, x: model.x + 10}");
+  await core.handle({ type: "reload", module: await moduleOf(reshaped, compileLive) });
+  assert.deepEqual(posted.at(-1), { type: "reloaded", outcome: "reset", subscriptions: ["KeyDown"] });
+  frame(16);
+  assert.ok(calls.includes("lineTo(3,5)"), calls.join(" "));
+});
+
+test("a reload that cannot take the program leaves the old one running", async () => {
+  const { core, posted, frame, run } = worker();
+  const { calls } = await run("interactive", KEYS, compileLive);
+  await core.handle({ type: "reload", module: await moduleOf("forward(10)", compileLive) });
+  await core.handle({ type: "reload", module: await moduleOf(KEYS.replace("{x: 0}", "{x: first([])}"), compileLive) });
+  assert.deepEqual(posted.slice(1).map((m) => m.type), ["reload_failed", "reload_failed"]);
+  frame(16);
+  assert.ok(calls.includes("lineTo(0,5)"), calls.join(" "));
+});
+
+test("a reload with nothing running, or into a program started the plain way, is refused", async () => {
+  const { core, posted, run } = worker();
+  await core.handle({ type: "reload", module: await moduleOf(KEYS, compileLive) });
+  await run("interactive", KEYS);
+  await core.handle({ type: "reload", module: await moduleOf(KEYS, compileLive) });
+  assert.deepEqual(posted.map((m) => m.type), ["reload_failed", "ready", "reload_failed"]);
 });

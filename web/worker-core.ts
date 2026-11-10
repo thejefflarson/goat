@@ -6,8 +6,11 @@
 import {
   type DomEvent,
   type ListenerTarget,
+  type Hosted,
   type LoopCanvas,
+  createHosted,
   instantiateInteractive,
+  isReloadableModule,
   startLoop,
 } from "./loop.ts";
 import { type FromWorker, Heartbeat, type ToWorker } from "./protocol.ts";
@@ -29,11 +32,15 @@ const NO_LISTENERS: ListenerTarget = {
 
 export function createWorkerCore(env: WorkerCoreEnv) {
   let loop: ReturnType<typeof startLoop> | undefined;
+  let reloadable: { ctx: DrawingContext; hosted: Hosted; heartbeat: Heartbeat } | undefined;
 
   const runInteractiveProgram = async (message: Extract<ToWorker, { type: "run" }>) => {
     const heartbeat = new Heartbeat(message.heartbeat);
     const { canvas } = message;
-    const exports = await instantiateInteractive(message.module, canvas.getContext("2d") as DrawingContext);
+    const ctx = canvas.getContext("2d") as DrawingContext;
+    const hosted = isReloadableModule(new WebAssembly.Module(message.module)) ? createHosted() : undefined;
+    const exports = await instantiateInteractive(message.module, ctx, hosted);
+    reloadable = hosted && { ctx, hosted, heartbeat };
     const surface: LoopCanvas = {
       ...NO_LISTENERS,
       width: canvas.width,
@@ -50,6 +57,26 @@ export function createWorkerCore(env: WorkerCoreEnv) {
       around: (call) => heartbeat.during(call),
     });
     if (loop.running) env.post({ type: "ready", subscriptions: subscriptions(exports) });
+  };
+
+  const reloadProgram = async (module: Uint8Array<ArrayBuffer>) => {
+    if (!loop?.running || !reloadable || !isReloadableModule(new WebAssembly.Module(module))) {
+      return env.post({ type: "reload_failed", message: "press Run to start this version" });
+    }
+    const { ctx, hosted, heartbeat } = reloadable;
+    try {
+      heartbeat.enter();
+      let next;
+      try {
+        next = await instantiateInteractive(module, ctx, hosted);
+      } finally {
+        heartbeat.leave();
+      }
+      const outcome = loop.reload(next);
+      if (loop.running) env.post({ type: "reloaded", outcome, subscriptions: subscriptions(next) });
+    } catch (e) {
+      env.post({ type: "reload_failed", message: e instanceof Error ? e.message : String(e) });
+    }
   };
 
   const runOnceProgram = async (message: Extract<ToWorker, { type: "run" }>) => {
@@ -70,6 +97,7 @@ export function createWorkerCore(env: WorkerCoreEnv) {
     async handle(message: ToWorker): Promise<void> {
       try {
         if (message.type === "input") return loop?.send(message.event);
+        if (message.type === "reload") return await reloadProgram(message.module);
         await (message.mode === "interactive" ? runInteractiveProgram(message) : runOnceProgram(message));
       } catch (e) {
         env.post({ type: "failed", message: `your program stopped: ${e instanceof Error ? e.message : String(e)}` });

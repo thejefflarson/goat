@@ -93,12 +93,14 @@ const theme = EditorView.theme({
 export interface GoatEditor {
   text(): string;
   setText(text: string): void;
+  onChange(listener: () => void): void;
 }
 
 // Without a `compiler` the editor still edits; it just neither colors, checks nor completes.
 export function mountEditor(parent: HTMLElement, doc: string, compiler?: WebAssembly.Module): GoatEditor {
   const scheme = matchMedia("(prefers-color-scheme: dark)");
   const darkness = new Compartment();
+  const listeners: Array<() => void> = [];
   const view = new EditorView({
     parent,
     doc,
@@ -108,6 +110,9 @@ export function mountEditor(parent: HTMLElement, doc: string, compiler?: WebAsse
       drawSelection(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       theme,
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) listeners.forEach((listener) => listener());
+      }),
       darkness.of(EditorView.darkTheme.of(scheme.matches)),
       // goat strings use straight quotes; stop mobile keyboards from curling them.
       EditorView.contentAttributes.of({
@@ -124,6 +129,7 @@ export function mountEditor(parent: HTMLElement, doc: string, compiler?: WebAsse
   );
   return {
     text: () => view.state.doc.toString(),
+    onChange: (listener) => void listeners.push(listener),
     setText: (text) => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } }),
   };
 }

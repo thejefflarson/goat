@@ -22,6 +22,9 @@
 //!   diagnostics. `TAG_OK` has an empty payload; `TAG_ERR` has one entry per
 //!   error: `start: u32`, `end: u32` (byte offsets into the source, little
 //!   endian), `len: u32`, then `len` bytes of UTF-8 message.
+//! - `gw_compile_live` is `gw_compile`, except an interactive program comes out
+//!   as a reloadable module that imports `goat.memory`, `goat.heap` and
+//!   `goat.live` (ADR 0015, addendum), so a recompile can replace a running one.
 //! - `gw_tokenize` lexes with the parser crate's hand-written lexer. The payload is
 //!   one 9-byte entry per token: `kind: u8` (a `TOKEN_*` constant), then
 //!   `start: u32` and `end: u32`, byte offsets. Names and punctuation are left
@@ -135,6 +138,16 @@ pub unsafe extern "C" fn gw_compile(src_ptr: u32, src_len: u32) -> u32 {
     unsafe { compile_at(src_ptr as usize as *const u8, src_len as usize) as usize as u32 }
 }
 
+/// Like `gw_compile`, but an interactive program is emitted reloadable.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_compile_live(src_ptr: u32, src_len: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { compile_live_at(src_ptr as usize as *const u8, src_len as usize) as usize as u32 }
+}
+
 /// Check the `src_len` bytes at `src_ptr`; returns the result record's address.
 ///
 /// # Safety
@@ -190,8 +203,30 @@ pub unsafe extern "C" fn gw_free_result(ptr: u32) {
 /// `ptr..ptr + len` must be readable memory (or `len` must be 0).
 unsafe fn compile_at(ptr: *const u8, len: usize) -> *mut u8 {
     // SAFETY: forwarded from the caller's contract.
+    unsafe { compile_record(ptr, len, goat::compile_turtle) }
+}
+
+/// # Safety
+/// `ptr..ptr + len` must be readable memory (or `len` must be 0).
+unsafe fn compile_live_at(ptr: *const u8, len: usize) -> *mut u8 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { compile_record(ptr, len, compile_live_turtle) }
+}
+
+fn compile_live_turtle(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
+    goat::compile_live(source, &goat::HostInterface::turtle())
+}
+
+/// # Safety
+/// `ptr..ptr + len` must be readable memory (or `len` must be 0).
+unsafe fn compile_record(
+    ptr: *const u8,
+    len: usize,
+    compile: fn(&str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>>,
+) -> *mut u8 {
+    // SAFETY: forwarded from the caller's contract.
     let (tag, payload) = match unsafe { source_at(ptr, len) } {
-        Ok(source) => match goat::compile_turtle(source) {
+        Ok(source) => match compile(source) {
             Ok(module) => (TAG_OK, module),
             Err(errors) => (TAG_ERR, render_all(&errors, source).into_bytes()),
         },
@@ -474,6 +509,20 @@ mod tests {
             .map(|e| &source[e.span.start..e.span.end])
             .collect();
         assert_eq!(compiled, found);
+    }
+
+    #[test]
+    fn compile_live_changes_only_an_interactive_module() {
+        let live_matches_plain = |source: &str| {
+            let (tag, live) = record_of(compile_live_at, source.as_bytes());
+            assert_eq!(tag, TAG_OK);
+            live == run(source.as_bytes()).1
+        };
+        assert!(live_matches_plain("forward(10)"));
+        assert!(!live_matches_plain(include_str!(
+            "../../examples/arrow_draw.goat"
+        )));
+        assert_eq!(record_of(compile_live_at, b"1 + true").0, TAG_ERR);
     }
 
     #[test]
