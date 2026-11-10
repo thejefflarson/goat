@@ -33,10 +33,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("check") => {
             let file = args.get(2).ok_or("usage: goat check FILE")?;
             let source = read(file)?;
-            let checked = goat_checker::check(&source)
+            let (ty, warnings) = goat::check(&source, &goat::HostInterface::turtle())
                 .map_err(|errors| render_errors(file, &source, &errors))?;
-            print_warnings(file, &source, &checked.typed.warnings);
-            println!("{}", checked.typed.root_ty);
+            print_warnings(file, &source, &warnings);
+            println!("{ty}");
             Ok(ExitCode::SUCCESS)
         }
         Some("build") => {
@@ -83,10 +83,7 @@ fn run_program(
     if let Err(stopped) = finished.result {
         return Err(match stopped.site {
             Some((start, end)) => {
-                let blame = goat_checker::GoatError::new(
-                    goat_checker::hir::Span::new(start, end),
-                    stopped.message,
-                );
+                let blame = goat::GoatError::new(goat::Span::new(start, end), stopped.message);
                 format!("trap: {}", blame.render(source))
             }
             None => format!("trap: {}", stopped.message),
@@ -116,7 +113,7 @@ fn read(file: &str) -> Result<String, String> {
     fs::read_to_string(file).map_err(|e| format!("cannot read {file}: {e}"))
 }
 
-fn render_errors(file: &str, source: &str, errors: &[goat_checker::GoatError]) -> String {
+fn render_errors(file: &str, source: &str, errors: &[goat::GoatError]) -> String {
     let rendered: Vec<String> = errors.iter().map(|e| e.render(source)).collect();
     format!(
         "{} error(s) in {file}:\n{}",
@@ -125,7 +122,7 @@ fn render_errors(file: &str, source: &str, errors: &[goat_checker::GoatError]) -
     )
 }
 
-fn print_warnings(file: &str, source: &str, warnings: &[goat_checker::GoatError]) {
+fn print_warnings(file: &str, source: &str, warnings: &[goat::GoatError]) {
     for warning in warnings {
         eprintln!("warning in {file}: {}", warning.render(source));
     }

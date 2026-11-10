@@ -1,8 +1,8 @@
 //! The goat compiler pipeline: source text to a WebAssembly module.
 
-pub use goat_checker::hir::Boundary;
-use goat_checker::hir::Span;
-use goat_checker::{GoatError, Vocab};
+pub use goat_checker::hir::{Boundary, Span};
+pub use goat_checker::ty::{Group, Row, Ty};
+pub use goat_checker::{GoatError, Vocab};
 pub use goat_mir::{
     Host, HostValue, NoHost, Profile, Scene, SceneCommand, SceneHost, SceneSink, check_color,
 };
@@ -97,6 +97,13 @@ fn shadows_stdlib(declarations: &str) -> bool {
 /// against the vocabulary of `host`.
 pub fn compile(source: &str, host: &HostInterface) -> Result<Vec<u8>, Vec<GoatError>> {
     compile_with_warnings(source, host).map(|(wasm, _)| wasm)
+}
+
+/// Parse and type-check `source` against the vocabulary of `host`, returning the
+/// program's type and the checker's non-fatal warnings.
+pub fn check(source: &str, host: &HostInterface) -> Result<(Ty, Vec<GoatError>), Vec<GoatError>> {
+    let checked = goat_checker::check_with_vocab(host.prelude(), host.vocab(), source)?;
+    Ok((checked.typed.root_ty, checked.typed.warnings))
 }
 
 /// [`compile`] against the turtle host.
@@ -230,6 +237,15 @@ fn strip_zeros(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_reports_the_type_and_the_errors() {
+        let host = HostInterface::turtle();
+        let (ty, _) = check("1 + 2", &host).expect("checks");
+        assert_eq!(ty.to_string(), "Number");
+        let errors = check("1 + true", &host).unwrap_err();
+        assert!(!errors.is_empty());
+    }
 
     #[test]
     fn a_malformed_program_is_a_compiler_error_not_a_module() {

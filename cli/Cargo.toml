@@ -10,11 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 goat = { version = "0.1.0", path = "../goat", features = ["native"] }
-goat_checker = { path = "../checker" }
 goat_mir = { version = "0.1.0", path = "../mir" }
 
 [dev-dependencies]
 bolero = { version = "=0.13.4", default-features = false, features = ["std"] }
+goat_checker = { path = "../checker" }
 goat_wamr = { path = "../wamr" }
 goat_wasm = { path = "../wasm" }
 tempfile = "3.27.0"
