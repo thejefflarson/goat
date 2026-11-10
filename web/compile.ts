@@ -12,7 +12,8 @@ type Entry =
   | "gw_compile_canvas"
   | "gw_compile_canvas_live"
   | "gw_check_canvas"
-  | "gw_tokenize";
+  | "gw_tokenize"
+  | "gw_tokenize_canvas";
 
 // The vocabulary a program is written against: the turtle's, or the canvas
 // host's (`Frame`, `MousePress`, `Dot`, ...).
@@ -21,6 +22,10 @@ export type Host = "turtle" | "canvas";
 const COMPILE: Record<Host, Entry> = { turtle: "gw_compile", canvas: "gw_compile_canvas" };
 const COMPILE_LIVE: Record<Host, Entry> = { turtle: "gw_compile_live", canvas: "gw_compile_canvas_live" };
 const CHECK: Record<Host, Entry> = { turtle: "gw_check", canvas: "gw_check_canvas" };
+const TOKENIZE: Record<Host, Entry> = { turtle: "gw_tokenize", canvas: "gw_tokenize_canvas" };
+const COMPLETE: Record<Host, CompleteEntry> = { turtle: "gw_complete", canvas: "gw_complete_canvas" };
+
+type CompleteEntry = "gw_complete" | "gw_complete_canvas";
 
 interface CompilerExports {
   memory: WebAssembly.Memory;
@@ -34,7 +39,9 @@ interface CompilerExports {
   gw_compile_canvas_live(ptr: number, len: number): number;
   gw_check_canvas(ptr: number, len: number): number;
   gw_tokenize(ptr: number, len: number): number;
+  gw_tokenize_canvas(ptr: number, len: number): number;
   gw_complete(ptr: number, len: number, cursor: number): number;
+  gw_complete_canvas(ptr: number, len: number, cursor: number): number;
 }
 
 export type CompileResult =
@@ -122,14 +129,15 @@ export function decodeDiagnostics(payload: Uint8Array, source: string): Diagnost
 }
 
 // A tokenizer that keeps one compiler instance alive: it runs on every
-// keystroke, so it must not pay for instantiation. It never traps on any input;
-// if one ever did, the next call starts from a fresh instance.
-export function createTokenizer(compiler: WebAssembly.Module): (source: string) => Token[] {
+// keystroke, so it must not pay for instantiation. It colors against the
+// vocabulary `host` names at each call. It never traps on any input; if one
+// ever did, the next call starts from a fresh instance.
+export function createTokenizer(compiler: WebAssembly.Module, host: () => Host = () => "turtle"): (source: string) => Token[] {
   let instance: WebAssembly.Instance | undefined;
   return (source) => {
     try {
       instance ??= new WebAssembly.Instance(compiler, {});
-      const { ok, payload } = invoke(instance, "gw_tokenize", source);
+      const { ok, payload } = invoke(instance, TOKENIZE[host()], source);
       return ok ? decodeTokens(payload, source) : [];
     } catch {
       instance = undefined;
@@ -172,7 +180,7 @@ export type Completer = (source: string, cursor: number) => Completions | null;
 // A completer that keeps one compiler instance alive, as `createTokenizer`
 // does. It asks the checker, so it works on source that does not parse; it
 // returns null where nothing completes.
-export function createCompleter(compiler: WebAssembly.Module): Completer {
+export function createCompleter(compiler: WebAssembly.Module, host: () => Host = () => "turtle"): Completer {
   let instance: WebAssembly.Instance | undefined;
   return (source, cursor) => {
     try {
@@ -184,7 +192,7 @@ export function createCompleter(compiler: WebAssembly.Module): Completer {
       const at = encoder.encode(source.slice(0, cursor)).length;
       const src = gw_alloc(text.length);
       new Uint8Array(memory.buffer, src, text.length).set(text);
-      const record = exports.gw_complete(src, text.length, at);
+      const record = exports[COMPLETE[host()]](src, text.length, at);
       gw_free(src, text.length);
       const { ok, payload } = takeRecord(exports, record);
       return ok ? decodeCompletions(payload, source) : null;

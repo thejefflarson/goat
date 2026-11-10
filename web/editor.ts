@@ -56,13 +56,13 @@ function liveChecking(compiler: WebAssembly.Module, host: () => Host): Extension
   return [linter(source, { delay: CHECK_DELAY_MS }), lintGutter()];
 }
 
-function completing(compiler: WebAssembly.Module): Extension {
-  return autocompletion({ override: [goatCompletions(createCompleter(compiler))] });
+function completing(compiler: WebAssembly.Module, host: () => Host): Extension {
+  return autocompletion({ override: [goatCompletions(createCompleter(compiler, host))] });
 }
 
 function withCompiler(compiler: WebAssembly.Module, host: () => Host): Extension[] {
-  const tokenize = createTokenizer(compiler);
-  return [highlighting(tokenize), liveChecking(compiler, host), completing(compiler)];
+  const tokenize = createTokenizer(compiler, host);
+  return [highlighting(tokenize), liveChecking(compiler, host), completing(compiler, host)];
 }
 
 // Colors come from the page's custom properties, so light and dark follow the
@@ -97,7 +97,7 @@ export interface GoatEditor {
 }
 
 // Without a `compiler` the editor still edits; it just neither colors, checks nor completes.
-// `host` names the vocabulary the checker reads the buffer against, asked at each check.
+// `host` names the vocabulary the buffer is colored, checked and completed against, asked each time.
 export function mountEditor(
   parent: HTMLElement,
   doc: string,
