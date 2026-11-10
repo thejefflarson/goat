@@ -50,6 +50,8 @@ one; `1 (2)` reads as "call `1` with `2`" (and `1` is not a function, so you get
 a clear error saying so). Separate statements with `;` — `print(1); (2)` — which
 is also how a bare call or a loop stands as a statement.
 
+To embed goat in your own application, see [`docs/embedding.md`](docs/embedding.md).
+
 ## Toolchain
 
 ```console
