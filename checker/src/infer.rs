@@ -156,6 +156,9 @@ struct Inferer {
     /// generalizing looks the variable up instead of scanning the symbol.
     lone_vars: HashMap<TypeVar, HashSet<Symbol>>,
     params: HashMap<Symbol, String>,
+    /// Computed `=` bindings that keep a monotype where a value would have
+    /// been generalized, by their name.
+    restricted: HashMap<Symbol, String>,
     node_types: HashMap<ExprId, Ty>,
     schemes: HashMap<Symbol, Scheme>,
     binders: HashMap<Symbol, Ty>,
@@ -176,6 +179,26 @@ struct Inferer {
     /// The same for row variables: every field a row gains must satisfy them.
     row_kinds: HashMap<TypeVar, Kinds>,
     errors: Vec<GoatError>,
+}
+
+/// Whether evaluating `expr` can do no work, so its binding may be generalized:
+/// a function, a literal, a name, or a record or variant of such values.
+/// Anything else is computed and keeps one type.
+fn is_syntactic_value(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Unit
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Str(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Var { .. }
+        | ExprKind::Builtin(_)
+        | ExprKind::Foreign { .. }
+        | ExprKind::Func { .. } => true,
+        ExprKind::Record { fields } => fields.iter().all(|(_, field)| is_syntactic_value(field)),
+        ExprKind::Tag { payload, .. } => payload.as_deref().is_none_or(is_syntactic_value),
+        _ => false,
+    }
 }
 
 /// Which table of constraints a variable's lives in.
@@ -1184,9 +1207,9 @@ impl Inferer {
         let ty = loop {
             let ExprKind::Let {
                 symbol,
+                name,
                 value,
                 rest,
-                ..
             } = &cursor.kind
             else {
                 break self.infer(cursor);
@@ -1204,7 +1227,11 @@ impl Inferer {
                 None => value_ty,
             };
 
-            let scheme = self.generalize(&rec, matches!(value.kind, ExprKind::Func { .. }));
+            let mut scheme = self.generalize(&rec, matches!(value.kind, ExprKind::Func { .. }));
+            if !scheme.vars.is_empty() && !is_syntactic_value(value) {
+                self.restricted.insert(*symbol, name.clone());
+                scheme = Scheme::mono(scheme.ty);
+            }
             self.bind_env(*symbol, scheme.clone());
             self.schemes.insert(*symbol, scheme.clone());
             spine.push((cursor.id, symbol));
@@ -1472,7 +1499,21 @@ impl Inferer {
         match head {
             Ty::Func(..) | Ty::Var(_) => {
                 let expected = Ty::func(arg_tys, ret.clone());
+                let before = self.errors.len();
                 self.unify_use(callee, &callee_ty, &expected, span);
+                if self.errors.len() > before
+                    && let ExprKind::Var { symbol, name } = &callee.kind
+                    && self.restricted.contains_key(symbol)
+                {
+                    self.errors.truncate(before);
+                    self.errors.push(GoatError::new(
+                        span,
+                        format!(
+                            "`{name}` is a computed value, so it has one type, and this call needs a different one than an earlier use; \
+                             write it as a function so it re-specializes per use, like `{name} = program(…) do … done`"
+                        ),
+                    ));
+                }
             }
             // A `(…)` immediately after an expression is read as a call, so
             // calling a non-function is often a sequencing mistake. Reporting

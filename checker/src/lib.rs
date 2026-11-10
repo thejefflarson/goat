@@ -1710,7 +1710,8 @@ mod tests {
     }
 
     /// `f0` wraps its argument in `{a: _}`; each later `f` composes the one
-    /// before with itself, so `f{levels}` nests the wrapper `2^levels` times.
+    /// before with itself (written as a function, since a computed binding is
+    /// not generalized), so `f{levels}` nests the wrapper `2^levels` times.
     fn self_composed(levels: usize) -> String {
         let mut source = String::from(
             "compose = program(f, g) do program(x) do f(g(x)) done done\n\
@@ -1718,7 +1719,8 @@ mod tests {
         );
         for level in 1..=levels {
             let previous = level - 1;
-            source += &format!("f{level} = compose(f{previous}, f{previous})\n");
+            source +=
+                &format!("f{level} = program(x) do compose(f{previous}, f{previous})(x) done\n");
         }
         source + &format!("f{levels}")
     }
