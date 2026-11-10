@@ -66,8 +66,6 @@ leaks heap.
   verifier.
 - `lacks` grows a side table keyed by row variable that is never pruned; its
   size is bounded by the program's type-variable count.
-- Full presence/absence typing — row variables that track present and absent
-  labels as part of the scheme — would subsume `lacks` and also remove the
-  infinite-record-type limitation (`docs/plan.md`, "Known limitation"). That is
-  Phase 8 constraints (#95); `lacks` is the first, targeted piece of that
-  machinery.
+- `lacks` does not change the infinite-record-type rejection (`docs/plan.md`,
+  "Known limitation"): recursion that only spreads and extends its parameter is
+  rejected by design ([ADR 0028](0028-pure-extension-spread-recursion-rejected.md)).
