@@ -62,8 +62,9 @@ stack for `call_depth` frames, and on a board that is a link-time choice.
 Where the trap lands: both traps go through `goat.trap`, so a host that reads
 `goat_site` blames the last user call into the prelude (ADR 0023). A trap with no site
 (deep recursion in user code that never called the prelude) shows the message alone.
-The `wamr` driver does not read `goat_site` yet, so under WAMR a trap carries its
-message but no range.
+The `wamr` driver reads the exported `goat_site` global when `goat.trap` is called and
+looks it up in the module's `goat.sites` table, as the wasmtime driver does, so the
+two runtimes blame the same range.
 
 ## Custom page sizes: checked, not used
 

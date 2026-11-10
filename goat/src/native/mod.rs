@@ -69,7 +69,7 @@ struct State<H> {
 }
 
 /// The ranges in a module's `goat.sites` custom section, in site-number order.
-fn site_table(wasm: &[u8]) -> Vec<(usize, usize)> {
+pub fn site_table(wasm: &[u8]) -> Vec<(usize, usize)> {
     fn leb(bytes: &mut &[u8]) -> Option<usize> {
         let (mut value, mut shift) = (0usize, 0);
         loop {

@@ -106,25 +106,37 @@ fn a_tail_call_does_not_count_against_the_bound() {
     assert_eq!(run.printed, ["7"]);
 }
 
-#[test]
-fn running_out_of_memory_names_a_range_of_the_source_under_wasmtime() {
-    let src = format!("{BUILD} length(build(10000, []))");
-    let wasm = wasm_with(Profile::Embedded, limits(8 << 10, 1024), &src);
-    let stopped = if support::uses_wamr() {
-        goat_wamr::run_to_end(&wasm, goat::NoHost)
-            .expect("loads")
-            .result
+fn trapped(limits: EmbeddedLimits, src: &str) -> goat::native::Stopped {
+    let wasm = wasm_with(Profile::Embedded, limits, src);
+    let finished = if support::uses_wamr() {
+        goat_wamr::run_to_end(&wasm, goat::NoHost).expect("loads")
     } else {
-        goat::native::run_to_end(&wasm, goat::NoHost)
-            .expect("loads")
-            .result
+        goat::native::run_to_end(&wasm, goat::NoHost).expect("loads")
     };
-    let stopped = stopped.expect_err("traps");
+    finished.result.expect_err("traps")
+}
+
+fn assert_names_source(stopped: &goat::native::Stopped, src: &str) {
+    let (start, end) = stopped.site.expect("the trap names a range of the source");
+    assert!(start < end && end <= src.len(), "{start}..{end}");
+}
+
+#[test]
+fn running_out_of_memory_names_a_range_of_the_source() {
+    let src = format!("{BUILD} length(build(10000, []))");
+    let stopped = trapped(limits(8 << 10, 1024), &src);
     assert_eq!(stopped.message, HEAP_BUDGET_EXHAUSTED);
-    if !support::uses_wamr() {
-        let (start, end) = stopped.site.expect("the trap names a range of the source");
-        assert!(start < end && end <= src.len(), "{start}..{end}");
-    }
+    assert_names_source(&stopped, &src);
+}
+
+#[test]
+fn calling_too_deeply_names_a_range_of_the_source() {
+    let src = "down = program(n) do \
+                 if n < 1 then 0 else length([n]) + down(n - 1) done \
+               done down(100)";
+    let stopped = trapped(limits(64 << 10, 50), src);
+    assert_eq!(stopped.message, STACK_OVERFLOW);
+    assert_names_source(&stopped, src);
 }
 
 #[test]
