@@ -12,6 +12,8 @@
 mod constraints;
 #[path = "differential.rs"]
 mod differential;
+#[path = "embedded_limits.rs"]
+mod embedded_limits;
 #[path = "foreign.rs"]
 mod foreign;
 #[path = "groups.rs"]

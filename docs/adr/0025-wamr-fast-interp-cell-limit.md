@@ -46,3 +46,9 @@ program still runs on the embedded oracle) without a codegen change.
   hits the cap on the fast interp **and** needs fast-interp speed, that is the signal
   to build the splitting pass — and this ADR is where the deferral is recorded, so
   the reversal is deliberate.
+
+## Implementation
+
+Built under ADR 0026: the `wamr` crate links a second, symbol-renamed copy of WAMR
+compiled for the classic interpreter, and `interp_for` picks it for any module with a
+function whose cell bound passes 32767.

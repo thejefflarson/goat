@@ -1,8 +1,8 @@
 //! The wasm allocator: size-class free lists over a bump region.
 //!
-//! A second strategy (fixed-size pools inside a declared heap budget, for
-//! embedded targets) replaces this module behind the same three functions:
-//! `alloc(size) -> ptr`, `free(ptr)`, and the live-allocation count.
+//! The three functions are `alloc(size) -> ptr`, `free(ptr)`, and the live-allocation
+//! count. On the embedded profile the bump region is a fixed arena that traps
+//! when full instead of growing memory (ADR 0026).
 //!
 //! Invariants:
 //! - Every block is a multiple of 8 bytes and at least `MIN_BLOCK`, so a freed
@@ -44,6 +44,17 @@ type Code = Vec<Instruction<'static>>;
 /// Free-list heads, one word per size class, at `table` in linear memory.
 pub struct FreeList {
     pub table: u32,
+    /// A fixed arena that ends at `end` and never grows, for the embedded
+    /// profile; `None` grows memory a page at a time.
+    pub budget: Option<Budget>,
+}
+
+/// Where the arena ends, and how `alloc` reports running past it: a call to
+/// the `goat.trap` import with the string object at `message`.
+pub struct Budget {
+    pub end: u32,
+    pub trap_import: u32,
+    pub message: u32,
 }
 
 fn guard(cond: Code) -> Code {
@@ -152,6 +163,43 @@ impl FreeList {
             LocalGet(bytes),
             I32Add,
             LocalTee(end),
+        ]);
+        code.extend(self.fit(end));
+        code.extend([
+            LocalGet(end),
+            GlobalSet(HEAP_GLOBAL),
+            End,
+            LocalGet(block),
+            I32Const(1),
+            I32Store(memarg(layout::RC, 2)),
+            LocalGet(block),
+            LocalGet(class),
+            I32Store(memarg(layout::CLASS, 2)),
+            GlobalGet(LIVE_GLOBAL),
+            I32Const(1),
+            I32Add,
+            GlobalSet(LIVE_GLOBAL),
+            LocalGet(block),
+        ]);
+        finish(&[(4, ValType::I32)], code)
+    }
+
+    /// Makes room for a block ending at `end`, which is also on the stack:
+    /// grows memory, or traps past the budget's end.
+    fn fit(&self, end: u32) -> Code {
+        use Instruction::*;
+        if let Some(budget) = &self.budget {
+            return vec![
+                I32Const(budget.end as i32),
+                I32GtU,
+                If(BlockType::Empty),
+                I32Const(budget.message as i32),
+                Call(budget.trap_import),
+                Unreachable,
+                End,
+            ];
+        }
+        vec![
             MemorySize(0),
             I32Const(PAGE_BITS),
             I32Shl,
@@ -173,22 +221,7 @@ impl FreeList {
             Unreachable,
             End,
             End,
-            LocalGet(end),
-            GlobalSet(HEAP_GLOBAL),
-            End,
-            LocalGet(block),
-            I32Const(1),
-            I32Store(memarg(layout::RC, 2)),
-            LocalGet(block),
-            LocalGet(class),
-            I32Store(memarg(layout::CLASS, 2)),
-            GlobalGet(LIVE_GLOBAL),
-            I32Const(1),
-            I32Add,
-            GlobalSet(LIVE_GLOBAL),
-            LocalGet(block),
-        ]);
-        finish(&[(4, ValType::I32)], code)
+        ]
     }
 
     /// `free(ptr: i32)`: takes a block whose count just reached zero, poisons

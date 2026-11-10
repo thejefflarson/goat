@@ -695,6 +695,7 @@ dependencies = [
  "goat_wamr",
  "goat_wasm",
  "tempfile",
+ "wasm-encoder 0.263.0",
  "wasmtime",
 ]
 

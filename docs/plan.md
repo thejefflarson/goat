@@ -760,11 +760,14 @@ Espruino. None are statically typed and GC-free.
       sensor events in, model updated, outputs driven. No callbacks.
 - [x] **Number profile:** `Int` is `i32` and `Float` is `f32` on the embedded
       profile (`goat build --target embedded`; ADR 0017).
-- [ ] **Constraints honored:** declared heap budget with pooled allocation,
-      bounded stack with clear overflow traps.
+- [x] **Constraints honored:** declared heap budget with pooled allocation,
+      bounded stack with clear overflow traps (ADR 0026), provable in CI under
+      wasmtime and the `wamr` driver.
 - [ ] **Live coding over serial:** upload new code, keep the model (same
       rules as Phase 11 hot reload).
-- [ ] Check runtime support for wasm custom page sizes before relying on it.
+- [x] Check runtime support for wasm custom page sizes before relying on it:
+      wasmtime has it, WAMR 2.4.5 does not, so the embedded heap uses default
+      pages (ADR 0026).
 
 ---
 

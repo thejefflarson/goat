@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Re-vendors the slice of WAMR that goat_wamr builds: the fast interpreter, the
-# loader, and the posix platform layers. Pass a checkout of the pinned tag:
+# Re-vendors the slice of WAMR that goat_wamr builds: the fast and classic
+# interpreters, the loader, and the posix platform layers. Pass a checkout of the pinned tag:
 #
 #   git clone --depth 1 --branch WAMR-2.4.5 \
 #     https://github.com/bytecodealliance/wasm-micro-runtime.git /tmp/wamr
@@ -28,7 +28,8 @@ cp "$src"/core/iwasm/compilation/aot.h "$dst/core/iwasm/compilation/"
 cp "$src"/core/iwasm/interpreter/*.h "$dst/core/iwasm/interpreter/"
 cp "$src/core/iwasm/interpreter/wasm_loader.c" \
   "$src/core/iwasm/interpreter/wasm_runtime.c" \
-  "$src/core/iwasm/interpreter/wasm_interp_fast.c" "$dst/core/iwasm/interpreter/"
+  "$src/core/iwasm/interpreter/wasm_interp_fast.c" \
+  "$src/core/iwasm/interpreter/wasm_interp_classic.c" "$dst/core/iwasm/interpreter/"
 cp -R "$src/core/shared/utils" "$src/core/shared/mem-alloc" "$dst/core/shared/"
 cp -R "$src/core/shared/platform/include" "$src/core/shared/platform/darwin" \
   "$src/core/shared/platform/linux" "$dst/core/shared/platform/"
