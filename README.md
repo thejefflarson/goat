@@ -1,6 +1,6 @@
 # goat
 
-A small, statically typed programming language that compiles to native code —
+A small, statically typed programming language that compiles to WebAssembly —
 built to be simple enough for a kid to read, with a real type system underneath
 so it can grow into something serious. The eventual goal is a turtle-graphics
 language for making drawings.
@@ -56,12 +56,12 @@ To embed goat in your own application, see [`docs/embedding.md`](docs/embedding.
 
 ```console
 $ goat check FILE        # parse and type-check; prints the program's type
-$ goat build FILE -o OUT # compile to a native executable
+$ goat build FILE -o OUT # compile to a WebAssembly module
 $ goat run FILE          # compile and run
 ```
 
-The backend is [Cranelift](https://cranelift.dev); `goat build` links the
-generated object against a tiny C runtime using the system `cc`.
+The one backend emits WebAssembly. `goat build` writes the module; `goat run`
+executes it under wasmtime with the turtle as its host.
 
 ## Layout
 
@@ -69,16 +69,9 @@ generated object against a tiny C runtime using the system `cc`.
 |---|---|
 | `parser` | the grammar (pest) |
 | `checker` | lowering, name resolution, and type inference |
-| `compiler` | the Cranelift native backend |
+| `mir` | monomorphization and the mid-level IR |
+| `wasm` | the WebAssembly backend, emitted from MIR |
+| `goat` | the facade: compile, check and run for embedders |
 | `cli` | the `goat` command |
 
-## Status
-
-Working: the full frontend (parse → type-check) for everything above, and a
-native backend for numbers, booleans, functions (including recursion and
-higher-order calls), conditionals, and arithmetic.
-
-Not yet compiled (they type-check, but the backend rejects them for now):
-records and strings at runtime, and closures that capture local variables.
-Next up: compiling records, then the drawing runtime (a live window) and loop
-syntax.
+See [`docs/plan.md`](docs/plan.md) for the roadmap.

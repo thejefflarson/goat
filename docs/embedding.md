@@ -39,7 +39,9 @@ Everything is imported from the `goat` crate root, except the runner in
 |---|---|---|
 | `HostInterface::with_stdlib(decls)` | stable | The standard library plus your `foreign` declarations. Declarations may not shadow stdlib names (debug builds assert). |
 | `HostInterface::new(prelude)` | experimental | Your whole prelude, stdlib included or not, with the turtle's vocabulary. |
-| `HostInterface::with_vocab(prelude, vocab)` | experimental | Your own events, shapes and keys (ADR 0020). `Vocab` and its parts live in `goat_checker` and are not re-exported yet, so building one needs that crate. |
+| `HostInterface::with_vocab(prelude, vocab)` | experimental | Your own events, shapes and keys (ADR 0020). |
+| `Vocab`, `Ty`, `Row`, `Group`, `GoatError`, `Span` | experimental | Re-exported from the checker, so a host names every type `compile`, `check` and `with_vocab` use with only a `goat` dependency. |
+| `check(source, &host)` | experimental | Type-check without emitting code; returns the program's `Ty` and the warnings. `goat check` calls it. |
 | `HostInterface::turtle()` | experimental | The turtle host's interface; the reference client. |
 | `HostInterface::prelude()`, `vocab()` | experimental | Read back what the interface carries. |
 | `compile(source, &host)` | stable | Source to wasm bytes, or the checker's errors. |
@@ -57,13 +59,9 @@ Everything is imported from the `goat` crate root, except the runner in
 
 Known gaps in the facade, each a reason not to mark more as stable:
 
-- `compile` returns `Vec<goat_checker::GoatError>` (`message`, and a byte-range
-  `span`), but the facade does not re-export the type. You can read the fields
-  without naming it, as the examples do.
 - `Interactive` sends the turtle's `Event` enum and draws through the fixed
   `scene.*` calls. A custom `Vocab` compiles, but today only a host that
   implements those imports itself (a `Guest` with its own `Host`) can drive it.
-- The CLI still calls `goat_checker::check` directly for `goat check`.
 
 ## Tutorial: embed goat in a Rust app
 
