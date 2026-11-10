@@ -151,16 +151,16 @@ that recurses by spreading a field it never reads is an infinite record type and
 is rejected with the occurs-check:
 
 ```
-go = program(s) do go({...s, done: true}) done   # ERROR: infinite record type
+go = program(s) do go({...s, stop: true}) done   # ERROR: infinite record type
 ```
 
-`go` adds `done` to `s` without ever constraining `s`, so each call's argument
-is `{done: Bool | row(previous)}` — a type with no finite form. Reading a field
-first (`s.n`) pins `s`'s row and breaks the regress. A proper fix needs
-presence/absence (lacks-style) typing carried in schemes — Phase 8 constraints
-(#95). The `lacks` guard added for rest-after-shadow
-([ADR 0011](adr/0011-lacks-constraints-for-record-restriction.md)) is the first,
-targeted piece of that machinery.
+`go` adds `stop` to `s` without ever constraining `s`, so each call's argument
+is `{stop: Bool | row(previous)}` — a type with no finite form. The checker
+reports it with a targeted error naming the added fields. Reading a field first
+(`s.n`) pins `s`'s row and breaks the regress. The rejection is by design: it
+sits outside the decidable, annotation-free scoped-label fragment, and accepting
+it would need presence flags and update semantics in place of scoped labels
+([ADR 0028](adr/0028-pure-extension-spread-recursion-rejected.md)).
 
 ## Target pipeline
 

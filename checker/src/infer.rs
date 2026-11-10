@@ -487,10 +487,11 @@ impl Inferer {
                 } else if let Some(rec) = self.tie_row_knot(*x, kind, other) {
                     rec
                 } else {
-                    self.errors.push(GoatError::new(
-                        span,
-                        format!("cannot construct an infinite {} type", kind.noun()),
-                    ));
+                    let message = match pure_extension(*x, other) {
+                        Some(labels) if kind == RowKind::Record => spread_regress_message(&labels),
+                        _ => format!("cannot construct an infinite {} type", kind.noun()),
+                    };
+                    self.errors.push(GoatError::new(span, message));
                     return;
                 };
                 self.row_subst.insert(*x, bound.clone());
@@ -1942,6 +1943,32 @@ fn tag_list(tags: &[String], conjunction: &str) -> String {
         [only] => only.clone(),
         [init @ .., last] => format!("{} {conjunction} {last}", init.join(", ")),
     }
+}
+
+/// The labels `row` adds in front of `var` when it is nothing but `var` with
+/// fields prepended and none of those fields mention `var`: what a recursive
+/// call that spreads its parameter and overrides fields produces.
+fn pure_extension(var: TypeVar, row: &Row) -> Option<Vec<String>> {
+    let mut labels = Vec::new();
+    let mut cursor = row;
+    while let Row::Extend { label, field, rest } = cursor {
+        if occurs(var, field) {
+            return None;
+        }
+        labels.push(label.clone());
+        cursor = rest;
+    }
+    (matches!(cursor, Row::Var(v) if *v == var) && !labels.is_empty()).then_some(labels)
+}
+
+fn spread_regress_message(labels: &[String]) -> String {
+    let noun = if labels.len() == 1 { "field" } else { "fields" };
+    format!(
+        "cannot construct an infinite record type: each recursive call spreads the parameter \
+         and adds {noun} {}, so the record would grow without bound. Read or constrain a field \
+         of the parameter so the recursion has a fixed shape, or drop the never-read `...` spread",
+        tag_list(labels, "and"),
+    )
 }
 
 fn occurs_row(var: TypeVar, row: &Row) -> bool {

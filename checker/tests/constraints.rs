@@ -296,3 +296,27 @@ fn arithmetic_errors_are_spanned_at_the_operand() {
     let span = errors[0].span;
     assert_eq!(&source[span.start..span.end], "true");
 }
+
+#[test]
+fn spread_recursion_that_only_adds_a_field_gets_a_targeted_error() {
+    let message = error_of("go = program(s) do go({...s, stop: true}) done  1");
+    assert!(
+        message.contains("adds field `stop`") && message.contains("grow without bound"),
+        "{message}"
+    );
+    let several = error_of("go = program(s) do go({...s, a: 1, b: true}) done  1");
+    assert!(several.contains("adds fields `a` and `b`"), "{several}");
+}
+
+#[test]
+fn spread_recursion_that_reads_a_field_still_checks() {
+    let source =
+        "go = program(s) do if s.n == 0 then s.n else go({...s, n: s.n - 1}) done done  go({n: 3})";
+    assert_eq!(type_of(source).unwrap(), "Number");
+}
+
+#[test]
+fn other_infinite_record_types_keep_the_generic_message() {
+    let message = error_of("f = program(s) do f({a: {...s, b: 1}}) done  1");
+    assert_eq!(message, "cannot construct an infinite record type");
+}
