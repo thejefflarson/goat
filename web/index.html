@@ -51,6 +51,8 @@
     background: var(--accent); color: var(--accent-fg); cursor: pointer;
   }
   button:disabled { opacity: 0.5; cursor: progress; }
+  label { margin-left: 12px; white-space: nowrap; }
+  #status { margin-left: 12px; }
 </style>
 </head>
 <body>
@@ -63,13 +65,15 @@
       <option value="arrow_draw">Arrow keys draw (interactive)</option>
       <option value="spiral">Spiral (run once)</option>
     </select>
+    <label><input type="checkbox" id="live" checked> Live</label>
+    <span id="status" role="status"></span>
   </section>
   <div id="stage"><canvas id="canvas" width="600" height="600" aria-label="drawing" tabindex="0"></canvas></div>
   <pre id="problems" role="alert" hidden></pre>
   <pre id="output" aria-label="printed output" hidden></pre>
 </main>
 <script type="module">
-  import { compile, loadCompiler } from "./dist/compile.js";
+  import { compileLive, loadCompiler } from "./dist/compile.js";
   import { superviseCanvas } from "./dist/browser.js";
   import { isInteractiveModule } from "./dist/loop.js";
   import { mountEditor } from "./dist/editor.bundle.js";
@@ -77,8 +81,9 @@
   const COMPILER_URL = "./goat_web.wasm";
 
   const $ = (id) => document.getElementById(id);
-  const [sourceHost, button, canvas, problems, output, example] =
-    ["source", "run", "canvas", "problems", "output", "example"].map($);
+  const [sourceHost, button, canvas, problems, output, example, live, status] =
+    ["source", "run", "canvas", "problems", "output", "example", "live", "status"].map($);
+  const RELOAD_DELAY_MS = 400;
 
   const EXAMPLES = {
     arrow_draw: `# Press Run, click the picture, then use the arrow keys.
@@ -133,19 +138,57 @@ done
   const editor = mountEditor(sourceHost, EXAMPLES.arrow_draw, compiler);
   example.addEventListener("change", () => editor.setText(EXAMPLES[example.value]));
 
+  const RELOAD_SAYS = {
+    kept: "Updated: your sketch kept going",
+    reset: "Started over: your change reshaped what the sketch remembers",
+  };
+
+  // While a sketch runs, an edit recompiles it and swaps it in. A mistake in the
+  // edit leaves the last good version running.
+  let reloadTimer;
+  let edits = 0;
+  async function reload() {
+    const edit = ++edits;
+    const text = editor.text();
+    try {
+      const compiled = await compileLive(compiler, text);
+      if (edit !== edits) return;
+      if (!compiled.ok) {
+        show(problems, compiled.diagnostics);
+        return show(status, "There is a mistake, so the last good version keeps running");
+      }
+      show(problems, "");
+      if (page.supervisor.reload(compiled.module)) show(status, "Updating...");
+    } catch (e) {
+      show(problems, String(e.message ?? e));
+    }
+  }
+  editor.onChange(() => {
+    clearTimeout(reloadTimer);
+    if (live.checked) reloadTimer = setTimeout(reload, RELOAD_DELAY_MS);
+  });
+  live.addEventListener("change", () => {
+    clearTimeout(reloadTimer);
+    show(status, "");
+  });
+
   button.addEventListener("click", async () => {
     page.supervisor.stop();
+    clearTimeout(reloadTimer);
     button.disabled = true;
     show(problems, "");
     show(output, "");
+    show(status, "");
     try {
-      const compiled = await compile(compiler, editor.text());
+      const compiled = await compileLive(compiler, editor.text());
       if (!compiled.ok) return show(problems, compiled.diagnostics);
       const interactive = isInteractiveModule(await WebAssembly.compile(compiled.module));
       page.supervisor.start(
         { mode: interactive ? "interactive" : "once", module: compiled.module },
         {
           onReady: () => page.stage.focus(),
+          onReloaded: (outcome) => show(status, RELOAD_SAYS[outcome]),
+          onReloadFailed: (message) => show(status, message),
           onOutput: (lines) => show(output, lines.join("\n")),
           onFailed: (message) => show(problems, message),
         },

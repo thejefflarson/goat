@@ -46,6 +46,10 @@ export interface Job {
 export interface RunSink {
   // An interactive program finished `setup`, on the first start and after each restart.
   onReady?(): void;
+  // A recompiled program replaced the running one: `kept` its state, or started over.
+  onReloaded?(outcome: "kept" | "reset"): void;
+  // The recompiled program could not replace the running one, which keeps running.
+  onReloadFailed?(message: string): void;
   onOutput(lines: string[]): void;
   onFinished?(): void;
   // A trap, a worker error, or a stuck program the supervisor stopped.
@@ -74,6 +78,7 @@ interface Session {
   ready: boolean;
   subscriptions: ReadonlySet<EventKind>;
   restarts: number;
+  pending: Array<Job["module"]>;
 }
 
 export class Supervisor implements Runner {
@@ -108,6 +113,17 @@ export class Supervisor implements Runner {
     return this.#session?.subscriptions.has(kind) ?? false;
   }
 
+  // Hands a recompiled module to the running interactive program; false if
+  // nothing is ready to take it. A restart after a stuck call uses the newest
+  // module that took.
+  reload(module: Job["module"]): boolean {
+    const session = this.#session;
+    if (!session?.ready || session.job.mode !== "interactive") return false;
+    session.pending.push(module);
+    session.worker.postMessage({ type: "reload", module });
+    return true;
+  }
+
   input(event: HostEvent): void {
     const session = this.#session;
     if (session?.ready && session.subscriptions.has(event.kind)) {
@@ -129,6 +145,7 @@ export class Supervisor implements Runner {
       ready: false,
       subscriptions: new Set(),
       restarts,
+      pending: [],
     };
     this.#session = session;
     worker.onmessage = (event) => this.#receive(session, event.data);
@@ -147,6 +164,15 @@ export class Supervisor implements Runner {
         session.ready = true;
         session.subscriptions = new Set(message.subscriptions);
         session.sink.onReady?.();
+        break;
+      case "reloaded":
+        session.subscriptions = new Set(message.subscriptions);
+        session.job = { ...session.job, module: session.pending.shift() ?? session.job.module };
+        session.sink.onReloaded?.(message.outcome);
+        break;
+      case "reload_failed":
+        session.pending.shift();
+        session.sink.onReloadFailed?.(message.message);
         break;
       case "output":
         session.sink.onOutput(message.lines);
