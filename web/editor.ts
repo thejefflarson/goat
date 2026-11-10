@@ -17,7 +17,7 @@ import {
 } from "@codemirror/view";
 import { linter, lintGutter } from "@codemirror/lint";
 import { autocompletion } from "@codemirror/autocomplete";
-import { check, createCompleter, createTokenizer, type Token } from "./compile.ts";
+import { check, createCompleter, createTokenizer, type Host, type Token } from "./compile.ts";
 import { goatCompletions } from "./completion.ts";
 import { lintDiagnostics } from "./lint.ts";
 
@@ -44,11 +44,11 @@ function highlighting(tokenize: (source: string) => Token[]): Extension {
   );
 }
 
-function liveChecking(compiler: WebAssembly.Module): Extension {
+function liveChecking(compiler: WebAssembly.Module, host: () => Host): Extension {
   const source = async (view: EditorView) => {
     const text = view.state.doc.toString();
     try {
-      return lintDiagnostics(await check(compiler, text), text.length);
+      return lintDiagnostics(await check(compiler, text, host()), text.length);
     } catch {
       return [];
     }
@@ -60,9 +60,9 @@ function completing(compiler: WebAssembly.Module): Extension {
   return autocompletion({ override: [goatCompletions(createCompleter(compiler))] });
 }
 
-function withCompiler(compiler: WebAssembly.Module): Extension[] {
+function withCompiler(compiler: WebAssembly.Module, host: () => Host): Extension[] {
   const tokenize = createTokenizer(compiler);
-  return [highlighting(tokenize), liveChecking(compiler), completing(compiler)];
+  return [highlighting(tokenize), liveChecking(compiler, host), completing(compiler)];
 }
 
 // Colors come from the page's custom properties, so light and dark follow the
@@ -97,7 +97,13 @@ export interface GoatEditor {
 }
 
 // Without a `compiler` the editor still edits; it just neither colors, checks nor completes.
-export function mountEditor(parent: HTMLElement, doc: string, compiler?: WebAssembly.Module): GoatEditor {
+// `host` names the vocabulary the checker reads the buffer against, asked at each check.
+export function mountEditor(
+  parent: HTMLElement,
+  doc: string,
+  compiler?: WebAssembly.Module,
+  host: () => Host = () => "turtle",
+): GoatEditor {
   const scheme = matchMedia("(prefers-color-scheme: dark)");
   const darkness = new Compartment();
   const listeners: Array<() => void> = [];
@@ -121,7 +127,7 @@ export function mountEditor(parent: HTMLElement, doc: string, compiler?: WebAsse
         autocorrect: "off",
         autocapitalize: "off",
       }),
-      ...(compiler ? withCompiler(compiler) : []),
+      ...(compiler ? withCompiler(compiler, host) : []),
     ],
   });
   scheme.addEventListener("change", () =>

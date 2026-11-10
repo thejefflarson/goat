@@ -9,5 +9,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 goat = { path = "../goat" }
+goat_canvas = { version = "0.1.0", path = "../canvas", default-features = false }
 goat_checker = { path = "../checker" }
 goat_parser = { version = "0.1.0", path = "../parser" }

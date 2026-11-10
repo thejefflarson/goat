@@ -7,10 +7,19 @@ edition = "2024"
 [[bin]]
 name = "goat-canvas"
 path = "src/main.rs"
+required-features = ["native"]
 
 [dependencies]
-goat = { version = "0.1.0", path = "../goat", features = ["native"] }
+goat = { version = "0.1.0", path = "../goat" }
 goat_checker = { path = "../checker" }
+
+[[test]]
+name = "canvas"
+required-features = ["native"]
+
+[features]
+default = ["native"]
+native = ["goat/native"]
 
 [dev-dependencies]
 goat_mir = { path = "../mir" }

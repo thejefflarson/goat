@@ -5,7 +5,22 @@ const OK = 0;
 const DIAGNOSTIC_HEADER = 12;
 const TOKEN_SIZE = 9;
 
-type Entry = "gw_compile" | "gw_compile_live" | "gw_check" | "gw_tokenize";
+type Entry =
+  | "gw_compile"
+  | "gw_compile_live"
+  | "gw_check"
+  | "gw_compile_canvas"
+  | "gw_compile_canvas_live"
+  | "gw_check_canvas"
+  | "gw_tokenize";
+
+// The vocabulary a program is written against: the turtle's, or the canvas
+// host's (`Frame`, `MousePress`, `Dot`, ...).
+export type Host = "turtle" | "canvas";
+
+const COMPILE: Record<Host, Entry> = { turtle: "gw_compile", canvas: "gw_compile_canvas" };
+const COMPILE_LIVE: Record<Host, Entry> = { turtle: "gw_compile_live", canvas: "gw_compile_canvas_live" };
+const CHECK: Record<Host, Entry> = { turtle: "gw_check", canvas: "gw_check_canvas" };
 
 interface CompilerExports {
   memory: WebAssembly.Memory;
@@ -15,6 +30,9 @@ interface CompilerExports {
   gw_compile(ptr: number, len: number): number;
   gw_compile_live(ptr: number, len: number): number;
   gw_check(ptr: number, len: number): number;
+  gw_compile_canvas(ptr: number, len: number): number;
+  gw_compile_canvas_live(ptr: number, len: number): number;
+  gw_check_canvas(ptr: number, len: number): number;
   gw_tokenize(ptr: number, len: number): number;
   gw_complete(ptr: number, len: number, cursor: number): number;
 }
@@ -69,8 +87,10 @@ function takeRecord(exports: CompilerExports, rec: number): { ok: boolean; paylo
 export async function compile(
   compiler: WebAssembly.Module,
   source: string,
-  entry: "gw_compile" | "gw_compile_live" = "gw_compile",
+  host: Host = "turtle",
+  live = false,
 ): Promise<CompileResult> {
+  const entry = (live ? COMPILE_LIVE : COMPILE)[host];
   const { ok, payload } = invoke(await WebAssembly.instantiate(compiler, {}), entry, source);
   return ok
     ? { ok, module: payload as Uint8Array<ArrayBuffer> }
@@ -79,12 +99,12 @@ export async function compile(
 
 // Like `compile`, but an interactive program comes out as a module that imports
 // its heap, so `Loop.reload` can swap it in over a running one.
-export const compileLive = (compiler: WebAssembly.Module, source: string): Promise<CompileResult> =>
-  compile(compiler, source, "gw_compile_live");
+export const compileLive = (compiler: WebAssembly.Module, source: string, host: Host = "turtle"): Promise<CompileResult> =>
+  compile(compiler, source, host, true);
 
 // The problems `compile` would fail with, as the checker's own spans and messages.
-export async function check(compiler: WebAssembly.Module, source: string): Promise<Diagnostic[]> {
-  const { ok, payload } = invoke(await WebAssembly.instantiate(compiler, {}), "gw_check", source);
+export async function check(compiler: WebAssembly.Module, source: string, host: Host = "turtle"): Promise<Diagnostic[]> {
+  const { ok, payload } = invoke(await WebAssembly.instantiate(compiler, {}), CHECK[host], source);
   return ok ? [] : decodeDiagnostics(payload, source);
 }
 
