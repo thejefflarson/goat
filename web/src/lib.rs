@@ -28,7 +28,8 @@
 //! - `gw_compile_canvas`, `gw_compile_canvas_live` and `gw_check_canvas` are
 //!   `gw_compile`, `gw_compile_live` and `gw_check` against the canvas host's
 //!   vocabulary (`Frame`, `MousePress`, `Dot`, ...) instead of the turtle's.
-//!   Tokenizing and completion stay the turtle's.
+//!   `gw_tokenize_canvas` and `gw_complete_canvas` do the same for `gw_tokenize`
+//!   and `gw_complete`.
 //! - `gw_tokenize` lexes with the parser crate's hand-written lexer. The payload is
 //!   one 9-byte entry per token: `kind: u8` (a `TOKEN_*` constant), then
 //!   `start: u32` and `end: u32`, byte offsets. Names and punctuation are left
@@ -220,6 +221,19 @@ pub unsafe extern "C" fn gw_tokenize(src_ptr: u32, src_len: u32) -> u32 {
     unsafe { tokenize_at(src_ptr as usize as *const u8, src_len as usize) as usize as u32 }
 }
 
+/// Like `gw_tokenize`, against the canvas host's vocabulary.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_tokenize_canvas(src_ptr: u32, src_len: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        tokenize_record(src_ptr as usize as *const u8, src_len as usize, canvas_host) as usize
+            as u32
+    }
+}
+
 /// Complete at byte `cursor` of the `src_len` bytes at `src_ptr`; returns the
 /// result record's address.
 ///
@@ -233,6 +247,23 @@ pub unsafe extern "C" fn gw_complete(src_ptr: u32, src_len: u32, cursor: u32) ->
             src_ptr as usize as *const u8,
             src_len as usize,
             cursor as usize,
+        ) as usize as u32
+    }
+}
+
+/// Like `gw_complete`, against the canvas host's vocabulary.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_complete_canvas(src_ptr: u32, src_len: u32, cursor: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        complete_record(
+            src_ptr as usize as *const u8,
+            src_len as usize,
+            cursor as usize,
+            canvas_host,
         ) as usize as u32
     }
 }
@@ -320,8 +351,15 @@ unsafe fn check_record(ptr: *const u8, len: usize, compile: Compiler) -> *mut u8
 /// `ptr..ptr + len` must be readable memory (or `len` must be 0).
 unsafe fn tokenize_at(ptr: *const u8, len: usize) -> *mut u8 {
     // SAFETY: forwarded from the caller's contract.
+    unsafe { tokenize_record(ptr, len, turtle_host) }
+}
+
+/// # Safety
+/// `ptr..ptr + len` must be readable memory (or `len` must be 0).
+unsafe fn tokenize_record(ptr: *const u8, len: usize, host: fn() -> &'static Host) -> *mut u8 {
+    // SAFETY: forwarded from the caller's contract.
     let (tag, payload) = match unsafe { source_at(ptr, len) } {
-        Ok(source) => (TAG_OK, encode_tokens(source)),
+        Ok(source) => (TAG_OK, encode_tokens(source, host())),
         Err(problem) => (TAG_ERR, problem.into_bytes()),
     };
     make_record(tag, payload)
@@ -331,8 +369,23 @@ unsafe fn tokenize_at(ptr: *const u8, len: usize) -> *mut u8 {
 /// `ptr..ptr + len` must be readable memory (or `len` must be 0).
 unsafe fn complete_at(ptr: *const u8, len: usize, cursor: usize) -> *mut u8 {
     // SAFETY: forwarded from the caller's contract.
+    unsafe { complete_record(ptr, len, cursor, turtle_host) }
+}
+
+/// # Safety
+/// `ptr..ptr + len` must be readable memory (or `len` must be 0).
+unsafe fn complete_record(
+    ptr: *const u8,
+    len: usize,
+    cursor: usize,
+    host: fn() -> &'static Host,
+) -> *mut u8 {
+    // SAFETY: forwarded from the caller's contract.
     let (tag, payload) = match unsafe { source_at(ptr, len) } {
-        Ok(source) => (TAG_OK, completion::complete(source, cursor)),
+        Ok(source) => (
+            TAG_OK,
+            completion::complete(&host().interface, source, cursor),
+        ),
         Err(problem) => (TAG_ERR, problem.into_bytes()),
     };
     make_record(tag, payload)
@@ -385,30 +438,43 @@ fn encode_diagnostic(start: usize, end: usize, message: &str) -> Vec<u8> {
     entry
 }
 
-/// The names the host declares as tags: the prelude's `tag` declarations and
-/// the vocabulary the checker accepts from the host (ADR 0015).
-fn host_tags() -> &'static HashSet<String> {
-    static TAGS: OnceLock<HashSet<String>> = OnceLock::new();
-    TAGS.get_or_init(|| {
-        let host = goat::HostInterface::turtle();
-        let prelude = host.prelude();
+/// A host's interface and the names it declares as tags: the prelude's `tag`
+/// declarations and the vocabulary the checker accepts from the host (ADR 0015).
+struct Host {
+    interface: goat::HostInterface,
+    tags: HashSet<String>,
+}
+
+impl Host {
+    fn new(interface: goat::HostInterface) -> Self {
+        let prelude = interface.prelude();
         let mut tags: HashSet<String> = lexer::declared_tags(prelude, &lexer::tokenize(prelude))
             .into_iter()
             .map(String::from)
             .collect();
-        let vocab = host.vocab();
+        let vocab = interface.vocab();
         tags.extend(
             vocab
                 .tag_names()
                 .chain(vocab.key_tag_names())
                 .map(String::from),
         );
-        tags
-    })
+        Host { interface, tags }
+    }
 }
 
-fn encode_tokens(source: &str) -> Vec<u8> {
-    lexer::highlight(source, host_tags())
+fn turtle_host() -> &'static Host {
+    static HOST: OnceLock<Host> = OnceLock::new();
+    HOST.get_or_init(|| Host::new(goat::HostInterface::turtle()))
+}
+
+fn canvas_host() -> &'static Host {
+    static HOST: OnceLock<Host> = OnceLock::new();
+    HOST.get_or_init(|| Host::new(goat_canvas::interface()))
+}
+
+fn encode_tokens(source: &str, host: &Host) -> Vec<u8> {
+    lexer::highlight(source, &host.tags)
         .into_iter()
         .filter_map(|t| {
             let kind = match t.kind {
@@ -487,6 +553,11 @@ mod tests {
     unsafe fn check_canvas_at(ptr: *const u8, len: usize) -> *mut u8 {
         // SAFETY: forwarded from the caller's contract.
         unsafe { check_record(ptr, len, compile_canvas) }
+    }
+
+    unsafe fn tokenize_canvas_at(ptr: *const u8, len: usize) -> *mut u8 {
+        // SAFETY: forwarded from the caller's contract.
+        unsafe { tokenize_record(ptr, len, canvas_host) }
     }
 
     fn run(source: &[u8]) -> (u8, Vec<u8>) {
@@ -666,6 +737,22 @@ mod tests {
             .map(|(_, text)| text)
             .collect();
         assert_eq!(tags, ["KeyDown", "Up", "Link", "Empty"]);
+    }
+
+    #[test]
+    fn canvas_tokenize_knows_the_canvas_tags_the_turtle_does_not() {
+        let source = "match e do Frame(1) then Dot else Segment done";
+        let tags_of = |entry| {
+            let (tag, payload) = record_of(entry, source.as_bytes());
+            assert_eq!(tag, TAG_OK);
+            tokens(source, &payload)
+                .into_iter()
+                .filter(|(kind, _)| *kind == TOKEN_TAG)
+                .map(|(_, text)| text)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(tags_of(tokenize_canvas_at), ["Frame", "Dot", "Segment"]);
+        assert!(!tags_of(tokenize_at).contains(&"Segment"));
     }
 
     #[test]

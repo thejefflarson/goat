@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { check, compile, createTokenizer } from "./compile.ts";
+import { check, compile, createCompleter, createTokenizer } from "./compile.ts";
 
 const compiler = await WebAssembly.compile(
   readFileSync(new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", import.meta.url)),
@@ -113,4 +113,25 @@ test("tokenize still colors a program with a syntax error, call after call", () 
     assert.ok(tokenize('if x then ))) "oops').some((t) => t.kind === "keyword"));
   }
   assert.deepEqual(tokenize(""), []);
+});
+
+test("tokenize tags the vocabulary of the host it is asked about", () => {
+  let host: "turtle" | "canvas" = "canvas";
+  const tokenize = createTokenizer(compiler, () => host);
+  const source = "Segment Dot";
+  const tags = () => tokenize(source).filter((t) => t.kind === "tag").map((t) => source.slice(t.from, t.to));
+  assert.deepEqual(tags(), ["Segment", "Dot"]);
+  host = "turtle";
+  assert.ok(!tags().includes("Segment"));
+});
+
+test("completion offers the vocabulary of the host it is asked about", () => {
+  let host: "turtle" | "canvas" = "canvas";
+  const complete = createCompleter(compiler, () => host);
+  const labels = () => complete("x = ", 4)?.options.map((o) => o.label) ?? [];
+  assert.ok(labels().includes("Segment"));
+  assert.ok(!labels().includes("forward"));
+  host = "turtle";
+  assert.ok(labels().includes("forward"));
+  assert.ok(!labels().includes("Segment"));
 });

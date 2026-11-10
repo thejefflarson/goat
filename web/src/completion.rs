@@ -2,12 +2,6 @@
 //! encoded for the wire (see `gw_complete`).
 
 use goat_checker::query::{self, ItemKind};
-use std::sync::OnceLock;
-
-fn host() -> &'static goat::HostInterface {
-    static HOST: OnceLock<goat::HostInterface> = OnceLock::new();
-    HOST.get_or_init(goat::HostInterface::turtle)
-}
 
 const VARIABLE: u8 = 0;
 const FUNCTION: u8 = 1;
@@ -29,8 +23,7 @@ fn kind(kind: ItemKind) -> u8 {
 /// the byte offset where the word being typed starts, then one entry per item,
 /// best first: `kind: u8`, then the label and the detail, each a
 /// little-endian `u32` byte length followed by UTF-8.
-pub fn complete(source: &str, cursor: usize) -> Vec<u8> {
-    let host = host();
+pub fn complete(host: &goat::HostInterface, source: &str, cursor: usize) -> Vec<u8> {
     let Some(found) = query::complete(host.prelude(), host.vocab(), source, cursor) else {
         return Vec::new();
     };
@@ -51,6 +44,10 @@ pub fn complete(source: &str, cursor: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn complete(source: &str, cursor: usize) -> Vec<u8> {
+        super::complete(&goat::HostInterface::turtle(), source, cursor)
+    }
 
     /// `(kind, label, detail)` per entry after the 4-byte header.
     fn entries(payload: &[u8]) -> Vec<(u8, String, String)> {
@@ -113,5 +110,13 @@ mod tests {
         );
         assert!(found.iter().any(|e| e.0 == TAG && e.1 == "Tick"));
         assert!(found.iter().any(|e| e.0 == KEYWORD && e.1 == "match"));
+    }
+
+    #[test]
+    fn the_canvas_host_offers_its_own_names_and_not_the_turtles() {
+        let payload = super::complete(&goat_canvas::interface(), "x = ", 4);
+        let found = entries(&payload);
+        assert!(found.iter().any(|e| e.0 == TAG && e.1 == "Segment"));
+        assert!(!found.iter().any(|e| e.1 == "forward"));
     }
 }
