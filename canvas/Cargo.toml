@@ -1,0 +1,16 @@
+[package]
+name = "goat_canvas"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+edition = "2024"
+
+[[bin]]
+name = "goat-canvas"
+path = "src/main.rs"
+
+[dependencies]
+goat = { version = "0.1.0", path = "../goat", features = ["native"] }
+goat_checker = { path = "../checker" }
+
+[dev-dependencies]
+goat_mir = { path = "../mir" }

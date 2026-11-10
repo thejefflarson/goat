@@ -668,6 +668,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "goat_canvas"
+version = "0.1.0"
+dependencies = [
+ "goat",
+ "goat_checker",
+ "goat_mir",
+]
+
+[[package]]
 name = "goat_checker"
 version = "0.1.0"
 dependencies = [

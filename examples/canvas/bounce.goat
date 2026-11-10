@@ -1,0 +1,40 @@
+# A ball bouncing in the canvas. The canvas host sends a Frame(dt) event with
+# the milliseconds since the last one; `draw` returns Dot, Segment and Box
+# shapes, and the host paints them. The canvas is 400 wide and 300 tall, and y
+# grows downward.
+init = {x: 40, y: 30, vx: 140, vy: 0}
+
+gravity = 600
+floor_y = 270
+left_wall = 20
+right_wall = 380
+
+bounce = program(m, dt) do
+  s = dt / 1000
+  vy = m.vy + gravity * s
+  x = m.x + m.vx * s
+  y = m.y + vy * s
+  hit_floor = y > floor_y
+  hit_wall = x < left_wall or x > right_wall
+  {
+    x: x,
+    y: if hit_floor then floor_y else y done,
+    vx: if hit_wall then 0 - m.vx else m.vx done,
+    vy: if hit_floor then 0 - vy * 0.8 else vy done
+  }
+done
+
+update = program(model, event) do
+  match event do
+    Frame(dt) then bounce(model, dt)
+    else model
+  done
+done
+
+draw = program(model) do
+  [
+    Box({x: 0, y: 290, w: 400, h: 10, fill: "green"}),
+    Segment({x1: model.x, y1: model.y, x2: model.x, y2: 290, fill: "gray"}),
+    Dot({x: model.x, y: model.y, r: 20, fill: "tomato"})
+  ]
+done
