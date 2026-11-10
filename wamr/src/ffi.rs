@@ -17,6 +17,14 @@ pub struct NativeSymbol {
     pub attachment: *mut c_void,
 }
 
+/// `wasm_global_inst_t`: an exported global's kind, mutability and storage.
+#[repr(C)]
+pub struct GlobalInst {
+    pub kind: u8,
+    pub is_mutable: bool,
+    pub global_data: *mut c_void,
+}
+
 /// A `wasm_runtime_register_natives_raw` host function: every argument is one
 /// `u64` slot, and a result goes back in slot 0.
 pub type RawNative = unsafe extern "C" fn(ExecEnv, *mut u64);
@@ -45,6 +53,8 @@ pub struct Api {
     pub get_function_attachment: unsafe extern "C" fn(ExecEnv) -> *mut c_void,
     pub set_user_data: unsafe extern "C" fn(ExecEnv, *mut c_void),
     pub get_user_data: unsafe extern "C" fn(ExecEnv) -> *mut c_void,
+    pub get_export_global_inst:
+        unsafe extern "C" fn(Instance, *const c_char, *mut GlobalInst) -> bool,
 }
 
 mod fast {
@@ -91,6 +101,11 @@ mod fast {
         pub fn wasm_runtime_get_function_attachment(env: ExecEnv) -> *mut c_void;
         pub fn wasm_runtime_set_user_data(env: ExecEnv, data: *mut c_void);
         pub fn wasm_runtime_get_user_data(env: ExecEnv) -> *mut c_void;
+        pub fn wasm_runtime_get_export_global_inst(
+            instance: Instance,
+            name: *const c_char,
+            global: *mut GlobalInst,
+        ) -> bool;
     }
 }
 
@@ -158,6 +173,12 @@ mod classic {
         pub fn wasm_runtime_set_user_data(env: ExecEnv, data: *mut c_void);
         #[link_name = "goat_classic_wasm_runtime_get_user_data"]
         pub fn wasm_runtime_get_user_data(env: ExecEnv) -> *mut c_void;
+        #[link_name = "goat_classic_wasm_runtime_get_export_global_inst"]
+        pub fn wasm_runtime_get_export_global_inst(
+            instance: Instance,
+            name: *const c_char,
+            global: *mut GlobalInst,
+        ) -> bool;
     }
 }
 
@@ -182,6 +203,7 @@ pub static FAST: Api = Api {
     get_function_attachment: fast::wasm_runtime_get_function_attachment,
     set_user_data: fast::wasm_runtime_set_user_data,
     get_user_data: fast::wasm_runtime_get_user_data,
+    get_export_global_inst: fast::wasm_runtime_get_export_global_inst,
 };
 
 pub static CLASSIC: Api = Api {
@@ -205,4 +227,5 @@ pub static CLASSIC: Api = Api {
     get_function_attachment: classic::wasm_runtime_get_function_attachment,
     set_user_data: classic::wasm_runtime_set_user_data,
     get_user_data: classic::wasm_runtime_get_user_data,
+    get_export_global_inst: classic::wasm_runtime_get_export_global_inst,
 };

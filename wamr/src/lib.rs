@@ -161,6 +161,8 @@ struct Session<H> {
     host: H,
     /// The module's imports, indexed by registry id.
     signatures: Vec<Option<Signature>>,
+    /// The source range of each site number, from the module's `goat.sites`.
+    sites: Vec<(usize, usize)>,
     stopped: Option<Stopped>,
 }
 
@@ -176,6 +178,7 @@ impl<H: Host> Dispatch for Session<H> {
             output,
             host,
             signatures,
+            sites,
             stopped,
         } = self;
         let Some(Some(sig)) = signatures.get(id) else {
@@ -189,7 +192,9 @@ impl<H: Host> Dispatch for Session<H> {
         if let Err(message) = &result {
             stopped.get_or_insert_with(|| Stopped {
                 message: message.clone(),
-                site: None,
+                site: (sig.module == "goat" && sig.name == "trap")
+                    .then(|| trap_site(api, env, sites))
+                    .flatten(),
             });
         }
         result
@@ -249,6 +254,30 @@ fn from_f64(ty: ValType, x: f64) -> u64 {
         ValType::F32 => u64::from((x as f32).to_bits()),
         _ => x.to_bits(),
     }
+}
+
+/// The source range the module blames for a trap: the site number in its
+/// exported `goat_site` global, looked up in `sites` (ADR 0023).
+fn trap_site(api: &Api, env: ffi::ExecEnv, sites: &[(usize, usize)]) -> Option<(usize, usize)> {
+    let mut global = ffi::GlobalInst {
+        kind: 0,
+        is_mutable: false,
+        global_data: std::ptr::null_mut(),
+    };
+    // SAFETY: `env` is live; on success `global_data` points at the exported
+    // `i32` global, which nothing else touches while the host function runs.
+    let number = unsafe {
+        let instance = (api.get_module_inst)(env);
+        if !(api.get_export_global_inst)(instance, c"goat_site".as_ptr(), &mut global)
+            || global.global_data.is_null()
+        {
+            return None;
+        }
+        global.global_data.cast::<i32>().read_unaligned()
+    };
+    sites
+        .get(usize::try_from(number).ok()?.checked_sub(1)?)
+        .copied()
 }
 
 /// A call to one of the `goat.*` imports every module may have.
@@ -507,6 +536,7 @@ pub fn run_to_end_on<H: Host>(interp: Interp, wasm: &[u8], host: H) -> Result<Fi
         output: Output::default(),
         host,
         signatures,
+        sites: goat::native::site_table(wasm),
         stopped: None,
     };
 
