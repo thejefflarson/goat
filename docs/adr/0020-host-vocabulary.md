@@ -359,3 +359,16 @@ it rather than for its own sake.
   a turtle program that never decodes an event is numbered exactly as before
   `key_of` moved into the prelude. Tag numbers stay a pure function of the set
   (§4).
+
+### The second host (`canvas/`)
+
+`goat_canvas` is a p5-style canvas host with its own `Vocab`: events `Frame`,
+`KeyPress`, `KeyRelease`, `MouseMove`, `MousePress`, `MouseRelease`; shapes
+`Segment`, `Dot`, `Box`, `Label` (colors in a `fill` field); keys `Space`, the
+arrows and `Char(String)`. It builds the `Vocab` in Rust and compiles through
+`HostInterface::with_vocab`, with no change to the checker, mono or the backend.
+Its shapes reuse the turtle's `scene.*` imports unchanged, so the wire protocol
+is shared and a shape's payload must follow the import's argument order. The
+turtle-shaped assumptions it found are all on the host side: `goat::native`'s
+`Interactive` takes a closed `Event` enum of the turtle's six events, so the
+canvas drives the `goat_event_<Tag>` exports through `Guest` itself.

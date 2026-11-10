@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+<rect width="400" height="300" fill="white"/>
+<rect x="0" y="290" width="400" height="10" fill="green"/>
+<line x1="241.6" y1="127.428" x2="241.6" y2="290" stroke="gray"/>
+<circle cx="241.6" cy="127.428" r="20" fill="tomato"/>
+</svg>

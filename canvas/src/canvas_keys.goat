@@ -1,0 +1,11 @@
+# The canvas's key decoder: a browser `KeyboardEvent.key` becomes a `Key`.
+# Space and the arrows have tags; any other key is `Char(key)`.
+
+canvas_key_of = program(key) do
+  if key == " " then Space
+  else if key == "ArrowLeft" then Left
+  else if key == "ArrowRight" then Right
+  else if key == "ArrowUp" then Up
+  else if key == "ArrowDown" then Down
+  else Char(key) done done done done done
+done

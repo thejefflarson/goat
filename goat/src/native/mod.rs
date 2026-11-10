@@ -692,6 +692,10 @@ impl<H: Host + 'static> Guest<H> {
         self.call("goat_live_allocs", ())
     }
 
+    pub fn host_mut(&mut self) -> &mut H {
+        &mut self.store.data_mut().host
+    }
+
     pub fn into_host(self) -> H {
         self.store.into_data().host
     }
