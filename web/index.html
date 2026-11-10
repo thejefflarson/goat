@@ -64,6 +64,8 @@
     <select id="example" aria-label="example program">
       <option value="arrow_draw">Arrow keys draw (interactive)</option>
       <option value="spiral">Spiral (run once)</option>
+      <option value="bounce">Bouncing ball (canvas)</option>
+      <option value="catch">Catch the coin (canvas)</option>
     </select>
     <label><input type="checkbox" id="live" checked> Live</label>
     <span id="status" role="status"></span>
@@ -84,6 +86,10 @@
   const [sourceHost, button, canvas, problems, output, example, live, status] =
     ["source", "run", "canvas", "problems", "output", "example", "live", "status"].map($);
   const RELOAD_DELAY_MS = 400;
+
+  // An example names its vocabulary: the turtle's, or the canvas host's.
+  const HOSTS = { arrow_draw: "turtle", spiral: "turtle", bounce: "canvas", catch: "canvas" };
+  let host = "turtle";
 
   const EXAMPLES = {
     arrow_draw: `# Press Run, click the picture, then use the arrow keys.
@@ -115,6 +121,99 @@ for side from 1 to 60 do
   right(89)
 done
 `,
+    bounce: `# A ball bouncing in the canvas. The canvas host sends a Frame(dt) event with
+# the milliseconds since the last one; draw returns Dot, Segment and Box
+# shapes, and the host paints them. The canvas is 400 wide and 300 tall, and y
+# grows downward.
+init = {x: 40, y: 30, vx: 140, vy: 0}
+
+gravity = 600
+floor_y = 270
+left_wall = 20
+right_wall = 380
+
+bounce = program(m, dt) do
+  s = dt / 1000
+  vy = m.vy + gravity * s
+  x = m.x + m.vx * s
+  y = m.y + vy * s
+  hit_floor = y > floor_y
+  hit_wall = x < left_wall or x > right_wall
+  {
+    x: x,
+    y: if hit_floor then floor_y else y done,
+    vx: if hit_wall then 0 - m.vx else m.vx done,
+    vy: if hit_floor then 0 - vy * 0.8 else vy done
+  }
+done
+
+update = program(model, event) do
+  match event do
+    Frame(dt) then bounce(model, dt)
+    else model
+  done
+done
+
+draw = program(model) do
+  [
+    Box({x: 0, y: 290, w: 400, h: 10, fill: "green"}),
+    Segment({x1: model.x, y1: model.y, x2: model.x, y2: 290, fill: "gray"}),
+    Dot({x: model.x, y: model.y, r: 20, fill: "tomato"})
+  ]
+done
+`,
+    catch: `# A catching game. Move the basket with the arrow keys or the mouse; each
+# gold coin that lands in it scores a point, shown as a growing bar. Five
+# points win. The coin falls on every Frame event.
+init = {basket: 200, coin_x: 100, coin_y: 0, score: 0}
+
+reach = 40
+ground = 270
+
+with_basket = program(model, to) do {basket: to, coin_x: model.coin_x, coin_y: model.coin_y, score: model.score} done
+
+caught = program(model) do
+  model.coin_x > model.basket - reach and model.coin_x < model.basket + reach
+done
+
+next_column = program(x) do if x > 300 then x - 250 else x + 70 done done
+
+land = program(model) do
+  {
+    basket: model.basket,
+    coin_x: next_column(model.coin_x),
+    coin_y: 0,
+    score: if caught(model) then model.score + 1 else model.score done
+  }
+done
+
+fall = program(model, dt) do
+  y = model.coin_y + 160 * dt / 1000
+  if y < ground then {basket: model.basket, coin_x: model.coin_x, coin_y: y, score: model.score} else land(model) done
+done
+
+update = program(model, event) do
+  match event do
+    Frame(dt) then fall(model, dt)
+    MouseMove(p) then with_basket(model, p.x)
+    KeyPress(key) then match key do
+      Left then with_basket(model, model.basket - 20)
+      Right then with_basket(model, model.basket + 20)
+      else model
+    done
+    else model
+  done
+done
+
+draw = program(model) do
+  [
+    Box({x: model.basket - reach, y: ground, w: 2 * reach, h: 20, fill: "navy"}),
+    Dot({x: model.coin_x, y: model.coin_y, r: 10, fill: "gold"}),
+    Box({x: 10, y: 10, w: 20 * model.score, h: 10, fill: "green"}),
+    Label({x: 10, y: 30, text: if model.score >= 5 then "you win!" else "catch the gold" done, fill: "black"})
+  ]
+done
+`,
   };
 
   function show(el, text) {
@@ -135,8 +234,11 @@ done
   }
 
   // Without the compiler the editor still edits; it just neither colors nor checks.
-  const editor = mountEditor(sourceHost, EXAMPLES.arrow_draw, compiler);
-  example.addEventListener("change", () => editor.setText(EXAMPLES[example.value]));
+  const editor = mountEditor(sourceHost, EXAMPLES.arrow_draw, compiler, () => host);
+  example.addEventListener("change", () => {
+    host = HOSTS[example.value];
+    editor.setText(EXAMPLES[example.value]);
+  });
 
   const RELOAD_SAYS = {
     kept: "Updated: your sketch kept going",
@@ -151,7 +253,7 @@ done
     const edit = ++edits;
     const text = editor.text();
     try {
-      const compiled = await compileLive(compiler, text);
+      const compiled = await compileLive(compiler, text, host);
       if (edit !== edits) return;
       if (!compiled.ok) {
         show(problems, compiled.diagnostics);
@@ -180,7 +282,7 @@ done
     show(output, "");
     show(status, "");
     try {
-      const compiled = await compileLive(compiler, editor.text());
+      const compiled = await compileLive(compiler, editor.text(), host);
       if (!compiled.ok) return show(problems, compiled.diagnostics);
       const interactive = isInteractiveModule(await WebAssembly.compile(compiled.module));
       page.supervisor.start(

@@ -215,11 +215,26 @@ export type HostEvent =
 export type EventKind = HostEvent["kind"];
 
 const EVENT_PREFIX = "goat_event_";
-const EVENT_KINDS: readonly EventKind[] = ["Tick", "KeyDown", "KeyUp", "PointerMove", "PointerDown", "PointerUp"];
+
+// Each host event under the turtle's name, then the canvas host's. A module is
+// built against one vocabulary, so at most one of the two exports exists.
+const EVENT_NAMES: Record<EventKind, readonly [string, string]> = {
+  Tick: ["Tick", "Frame"],
+  KeyDown: ["KeyDown", "KeyPress"],
+  KeyUp: ["KeyUp", "KeyRelease"],
+  PointerMove: ["PointerMove", "MouseMove"],
+  PointerDown: ["PointerDown", "MousePress"],
+  PointerUp: ["PointerUp", "MouseRelease"],
+};
+
+function constructorFor(exports: WebAssembly.Exports, kind: EventKind): Function | undefined {
+  const found = EVENT_NAMES[kind].map((name) => exports[EVENT_PREFIX + name]).find((x) => typeof x === "function");
+  return found as Function | undefined;
+}
 
 // The events the module handles: one per `goat_event_*` export.
 export function subscriptions(exports: WebAssembly.Exports): EventKind[] {
-  return EVENT_KINDS.filter((kind) => typeof exports[EVENT_PREFIX + kind] === "function");
+  return (Object.keys(EVENT_NAMES) as EventKind[]).filter((kind) => constructorFor(exports, kind));
 }
 
 function memoryOf(exports: WebAssembly.Exports): WebAssembly.Memory {
@@ -242,8 +257,8 @@ export function newString(exports: WebAssembly.Exports, text: string): number {
 // Build `event` with the module's own constructor and hand back the owned
 // pointer `goat_update` consumes, or null if the module does not handle it.
 export function constructEvent(exports: WebAssembly.Exports, event: HostEvent): number | null {
-  const make = exports[EVENT_PREFIX + event.kind];
-  if (typeof make !== "function") return null;
+  const make = constructorFor(exports, event.kind);
+  if (!make) return null;
   switch (event.kind) {
     case "Tick":
       return make(event.dt);

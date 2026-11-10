@@ -741,6 +741,7 @@ name = "goat_web"
 version = "0.1.0"
 dependencies = [
  "goat",
+ "goat_canvas",
  "goat_checker",
  "goat_parser",
 ]

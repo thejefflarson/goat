@@ -25,6 +25,10 @@
 //! - `gw_compile_live` is `gw_compile`, except an interactive program comes out
 //!   as a reloadable module that imports `goat.memory`, `goat.heap` and
 //!   `goat.live` (ADR 0015, addendum), so a recompile can replace a running one.
+//! - `gw_compile_canvas`, `gw_compile_canvas_live` and `gw_check_canvas` are
+//!   `gw_compile`, `gw_compile_live` and `gw_check` against the canvas host's
+//!   vocabulary (`Frame`, `MousePress`, `Dot`, ...) instead of the turtle's.
+//!   Tokenizing and completion stay the turtle's.
 //! - `gw_tokenize` lexes with the parser crate's hand-written lexer. The payload is
 //!   one 9-byte entry per token: `kind: u8` (a `TOKEN_*` constant), then
 //!   `start: u32` and `end: u32`, byte offsets. Names and punctuation are left
@@ -148,6 +152,54 @@ pub unsafe extern "C" fn gw_compile_live(src_ptr: u32, src_len: u32) -> u32 {
     unsafe { compile_live_at(src_ptr as usize as *const u8, src_len as usize) as usize as u32 }
 }
 
+/// Like `gw_compile`, against the canvas host's vocabulary.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_compile_canvas(src_ptr: u32, src_len: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        compile_record(
+            src_ptr as usize as *const u8,
+            src_len as usize,
+            compile_canvas,
+        ) as usize as u32
+    }
+}
+
+/// Like `gw_compile_live`, against the canvas host's vocabulary.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_compile_canvas_live(src_ptr: u32, src_len: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        compile_record(
+            src_ptr as usize as *const u8,
+            src_len as usize,
+            compile_live_canvas,
+        ) as usize as u32
+    }
+}
+
+/// Like `gw_check`, against the canvas host's vocabulary.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_check_canvas(src_ptr: u32, src_len: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        check_record(
+            src_ptr as usize as *const u8,
+            src_len as usize,
+            compile_canvas,
+        ) as usize as u32
+    }
+}
+
 /// Check the `src_len` bytes at `src_ptr`; returns the result record's address.
 ///
 /// # Safety
@@ -213,17 +265,23 @@ unsafe fn compile_live_at(ptr: *const u8, len: usize) -> *mut u8 {
     unsafe { compile_record(ptr, len, compile_live_turtle) }
 }
 
+type Compiler = fn(&str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>>;
+
 fn compile_live_turtle(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
     goat::compile_live(source, &goat::HostInterface::turtle())
 }
 
+fn compile_canvas(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
+    goat::compile(source, &goat_canvas::interface())
+}
+
+fn compile_live_canvas(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
+    goat::compile_live(source, &goat_canvas::interface())
+}
+
 /// # Safety
 /// `ptr..ptr + len` must be readable memory (or `len` must be 0).
-unsafe fn compile_record(
-    ptr: *const u8,
-    len: usize,
-    compile: fn(&str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>>,
-) -> *mut u8 {
+unsafe fn compile_record(ptr: *const u8, len: usize, compile: Compiler) -> *mut u8 {
     // SAFETY: forwarded from the caller's contract.
     let (tag, payload) = match unsafe { source_at(ptr, len) } {
         Ok(source) => match compile(source) {
@@ -241,8 +299,15 @@ unsafe fn compile_record(
 /// `ptr..ptr + len` must be readable memory (or `len` must be 0).
 unsafe fn check_at(ptr: *const u8, len: usize) -> *mut u8 {
     // SAFETY: forwarded from the caller's contract.
+    unsafe { check_record(ptr, len, goat::compile_turtle) }
+}
+
+/// # Safety
+/// `ptr..ptr + len` must be readable memory (or `len` must be 0).
+unsafe fn check_record(ptr: *const u8, len: usize, compile: Compiler) -> *mut u8 {
+    // SAFETY: forwarded from the caller's contract.
     let (tag, payload) = match unsafe { source_at(ptr, len) } {
-        Ok(source) => match goat::compile_turtle(source) {
+        Ok(source) => match compile(source) {
             Ok(_) => (TAG_OK, Vec::new()),
             Err(errors) => (TAG_ERR, encode_diagnostics(&errors)),
         },
@@ -408,6 +473,21 @@ unsafe fn free_record(ptr: *mut u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    unsafe fn compile_canvas_at(ptr: *const u8, len: usize) -> *mut u8 {
+        // SAFETY: forwarded from the caller's contract.
+        unsafe { compile_record(ptr, len, compile_canvas) }
+    }
+
+    unsafe fn compile_live_canvas_at(ptr: *const u8, len: usize) -> *mut u8 {
+        // SAFETY: forwarded from the caller's contract.
+        unsafe { compile_record(ptr, len, compile_live_canvas) }
+    }
+
+    unsafe fn check_canvas_at(ptr: *const u8, len: usize) -> *mut u8 {
+        // SAFETY: forwarded from the caller's contract.
+        unsafe { check_record(ptr, len, compile_canvas) }
+    }
 
     fn run(source: &[u8]) -> (u8, Vec<u8>) {
         // SAFETY: `source` is a live slice; the record is read before it is freed.
@@ -601,6 +681,27 @@ mod tests {
         let (tag, payload) = record_of(tokenize_at, &[0xff]);
         assert_eq!(tag, TAG_ERR);
         assert!(String::from_utf8(payload).unwrap().contains("UTF-8"));
+    }
+
+    const BOUNCE: &[u8] = include_bytes!("../../examples/canvas/bounce.goat");
+
+    #[test]
+    fn canvas_entries_compile_canvas_programs_the_turtle_entries_reject() {
+        for entry in [compile_canvas_at, compile_live_canvas_at] {
+            let (tag, module) = record_of(entry, BOUNCE);
+            assert_eq!(tag, TAG_OK);
+            assert!(module.starts_with(b"\0asm"));
+        }
+        assert_eq!(record_of(check_canvas_at, BOUNCE).0, TAG_OK);
+        assert_eq!(run(BOUNCE).0, TAG_ERR);
+        assert_eq!(record_of(check_at, BOUNCE).0, TAG_ERR);
+    }
+
+    #[test]
+    fn canvas_entries_reject_turtle_calls_with_a_span() {
+        let (tag, payload) = record_of(check_canvas_at, b"forward(10)");
+        assert_eq!(tag, TAG_ERR);
+        assert!(!diagnostics(&payload).is_empty());
     }
 
     #[test]
