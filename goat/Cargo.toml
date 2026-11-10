@@ -19,3 +19,9 @@ native = ["dep:wasmtime"]
 [[example]]
 name = "embed"
 required-features = ["native"]
+test = true
+
+[[example]]
+name = "embed_live"
+required-features = ["native"]
+test = true

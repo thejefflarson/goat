@@ -31,3 +31,11 @@ fn main() -> Result<(), String> {
     println!("logged: {:?}", finished.host.0);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn runs() {
+        super::main().expect("example runs");
+    }
+}
