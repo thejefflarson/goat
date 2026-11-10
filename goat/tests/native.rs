@@ -361,7 +361,7 @@ fn a_reload_rescues_a_program_the_runaway_update_stopped() {
 #[test]
 fn a_module_that_owns_its_memory_cannot_be_reloaded() {
     let owned = goat::compile_turtle(&counter(0, 1, "")).unwrap();
-    let mut program = Interactive::new(&owned, Frames::default()).unwrap();
+    let mut program: Interactive<Frames> = Interactive::new(&owned, Frames::default()).unwrap();
     assert!(program.reload(&reloadable(&counter(0, 2, ""))).is_err());
 
     let mut program = live(&counter(0, 1, ""));

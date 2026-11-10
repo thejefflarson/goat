@@ -1,6 +1,6 @@
 use crate::compile;
-use goat::native::Guest;
-use goat::{Scene, SceneCommand, SceneHost};
+use goat::native::{Guest, HostEvent, Interactive};
+use goat::{Host, SceneCommand, SceneHost};
 use std::fmt::Write;
 use std::time::Duration;
 
@@ -10,8 +10,6 @@ pub const HEIGHT: u32 = 300;
 /// Bounds one call into a script, so a runaway `update` or `draw` traps
 /// instead of hanging the host (ADR 0021).
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
-
-const EVENT_PREFIX: &str = "goat_event_";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
@@ -23,7 +21,7 @@ pub enum Event {
     MouseRelease(f64, f64),
 }
 
-impl Event {
+impl HostEvent for Event {
     fn tag(&self) -> &'static str {
         match self {
             Event::Frame(_) => "Frame",
@@ -35,6 +33,25 @@ impl Event {
         }
     }
 
+    fn construct<H: Host + 'static>(
+        &self,
+        guest: &mut Guest<H>,
+        constructor: &str,
+    ) -> Result<i32, String> {
+        match self {
+            Event::Frame(dt) => guest.call(constructor, *dt),
+            Event::KeyPress(key) | Event::KeyRelease(key) => {
+                let key = guest.string(key)?;
+                guest.call(constructor, key)
+            }
+            Event::MouseMove(x, y) | Event::MousePress(x, y) | Event::MouseRelease(x, y) => {
+                guest.call(constructor, (*x, *y))
+            }
+        }
+    }
+}
+
+impl Event {
     /// One event per line, the tag then its arguments: `Frame 16`,
     /// `KeyPress ArrowLeft`, `MousePress 120 80`. Blank lines and `#` comments
     /// are skipped. A key is the rest of its line, so `KeyPress  ` is Space.
@@ -72,62 +89,32 @@ impl Event {
 
 /// A running script and the picture it last drew.
 pub struct Canvas {
-    guest: Guest<Scene<SceneHost>>,
-    model: i32,
-    subscriptions: Vec<String>,
+    script: Interactive<SceneHost, Event>,
 }
 
 impl Canvas {
     pub fn new(wasm: &[u8]) -> Result<Canvas, String> {
-        let mut guest = Guest::with_timeout(wasm, Scene(SceneHost::default()), CALL_TIMEOUT)?;
-        let subscriptions = guest
-            .exports()
-            .iter()
-            .filter_map(|name| name.strip_prefix(EVENT_PREFIX).map(str::to_string))
-            .collect();
-        let model = guest.call("goat_setup", ())?;
         Ok(Canvas {
-            guest,
-            model,
-            subscriptions,
+            script: Interactive::with_timeout(wasm, SceneHost::default(), CALL_TIMEOUT)?,
         })
     }
 
     /// Deliver `event` to `update`, unless the script does not handle it.
     pub fn send(&mut self, event: &Event) -> Result<(), String> {
-        let tag = event.tag();
-        if !self.subscriptions.iter().any(|s| s == tag) {
-            return Ok(());
-        }
-        let constructor = format!("{EVENT_PREFIX}{tag}");
-        let guest = &mut self.guest;
-        let built: i32 = match event {
-            Event::Frame(dt) => guest.call(&constructor, *dt)?,
-            Event::KeyPress(key) | Event::KeyRelease(key) => {
-                let key = guest.string(key)?;
-                guest.call(&constructor, key)?
-            }
-            Event::MouseMove(x, y) | Event::MousePress(x, y) | Event::MouseRelease(x, y) => {
-                guest.call(&constructor, (*x, *y))?
-            }
-        };
-        self.model = guest.call("goat_update", (self.model, built))?;
-        Ok(())
+        self.script.send(event).map(|_| ())
     }
 
     /// Run `draw` and return the picture it streamed.
     pub fn draw(&mut self) -> Result<Vec<SceneCommand>, String> {
-        self.guest.call::<_, ()>("goat_draw", self.model)?;
-        let commands = std::mem::take(&mut self.guest.host_mut().0.commands);
+        self.script.draw()?;
+        let commands = std::mem::take(&mut self.script.sink_mut().commands);
         let frame = commands.iter().rposition(|c| *c == SceneCommand::Begin);
         Ok(frame.map_or(Vec::new(), |at| commands[at..].to_vec()))
     }
 
     /// Tear the script down, returning how many heap blocks it leaked.
-    pub fn finish(mut self) -> Result<u32, String> {
-        self.guest.call::<_, ()>("goat_release_model", self.model)?;
-        self.guest.call::<_, ()>("goat_shutdown", ())?;
-        self.guest.live_allocs()
+    pub fn finish(self) -> Result<u32, String> {
+        self.script.finish().map(|(_, leaked)| leaked)
     }
 }
 

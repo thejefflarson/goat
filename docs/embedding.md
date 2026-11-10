@@ -55,13 +55,18 @@ Everything is imported from the `goat` crate root, except the runner in
 | `native::run_to_end`, `run_to_end_within` | experimental | Run a run-once program against a `Host`; a trap becomes `Finished.result`'s `Err(Stopped)`, with the source range to blame. |
 | `native::Interactive` | experimental | Drive `init`/`update`/`draw`: `new`, `with_timeout`, `send`, `draw`, `reload`, `subscriptions`, `finish`. |
 | `native::Event` | experimental | The turtle vocabulary's events: `Tick`, `KeyDown`, `KeyUp`, `PointerMove`, `PointerDown`, `PointerUp`. |
+| `native::HostEvent` | experimental | Implement for your own event type: its `goat_event_<Tag>` tag and how to build the event in the guest. `Interactive<S, E>` then drives it. |
 | `native::Guest` | experimental | The raw wasmtime instance the runners are built on. |
 
 Known gaps in the facade, each a reason not to mark more as stable:
 
-- `Interactive` sends the turtle's `Event` enum and draws through the fixed
-  `scene.*` calls. A custom `Vocab` compiles, but today only a host that
-  implements those imports itself (a `Guest` with its own `Host`) can drive it.
+- `Interactive<S, E>` is generic over the event type `E: HostEvent`, which
+  defaults to the turtle's `Event`; the canvas host drives its own events
+  through it. Drawing is still the fixed `scene.*` wire protocol into a
+  `SceneSink`, so a vocabulary whose shapes do not stream through those calls
+  still needs a `Guest` with its own `Host`. Because `E` is a default and not
+  inferred, a program that never calls `send` must name it
+  (`Interactive<Sink>`). The `HostEvent` trait is new and may change.
 
 ## Tutorial: embed goat in a Rust app
 

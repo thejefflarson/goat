@@ -3,6 +3,7 @@
 //! pictures render to committed golden SVGs. Run with `GOAT_BLESS=1` to
 //! rewrite the goldens.
 
+use goat::native::Interactive;
 use goat::{SceneCommand, SceneHost};
 use goat_canvas::{Canvas, Event, compile, interface, render, to_svg, vocab};
 use goat_mir::{Session, Value};
@@ -228,4 +229,30 @@ fn wasmtime_and_the_interpreter_draw_the_same_picture() {
     }
     assert_eq!(canvas.draw().unwrap(), interpreted(&source, &events));
     assert_eq!(canvas.finish().unwrap(), 0, "wasm leaked");
+}
+
+#[test]
+fn the_generic_interactive_driver_runs_the_canvas_vocabulary() {
+    let source = "
+init = {x: 0}
+update = program(m, e) do
+  match e do
+    Frame(dt) then {x: m.x + 1}
+    else m
+  done
+done
+draw = program(m) do [Dot({x: m.x, y: 0, r: 1, fill: \"red\"})] done";
+    let wasm = compile(source).unwrap();
+    let mut driver: Interactive<SceneHost, Event> =
+        Interactive::new(&wasm, SceneHost::default()).unwrap();
+    assert_eq!(driver.subscriptions(), ["Frame"]);
+    assert!(driver.send(&Event::Frame(16.0)).unwrap());
+    assert!(!driver.send(&Event::MouseMove(1.0, 2.0)).unwrap());
+    driver.draw().unwrap();
+    let (sink, leaked) = driver.finish().unwrap();
+    assert_eq!(leaked, 0);
+    assert!(sink.commands.iter().any(|c| matches!(
+        c,
+        SceneCommand::Circle { center: (x, _), .. } if *x == 1.0
+    )));
 }

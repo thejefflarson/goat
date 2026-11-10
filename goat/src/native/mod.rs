@@ -4,6 +4,7 @@
 //! - [`run_to_end`] runs a run-once program (`goat_entry`) against a [`Host`].
 //! - [`Interactive`] drives the ADR 0015 export contract, streaming each frame
 //!   to a [`SceneSink`].
+//!   Its events are the host's own: the turtle's [`Event`], or any [`HostEvent`].
 //!   [`Interactive::reload`] swaps in a recompiled program over the same heap.
 //! - [`Guest`] is the raw instance both are built on.
 
@@ -15,7 +16,7 @@ use wasmtime::{Caller, Config, Engine, ExternType, Instance, Linker, Module, Sto
 
 mod interactive;
 
-pub use interactive::{Event, Interactive, Reloaded};
+pub use interactive::{Event, HostEvent, Interactive, Reloaded};
 
 /// What a finished program left behind.
 pub struct Run {
