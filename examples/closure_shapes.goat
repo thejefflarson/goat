@@ -16,7 +16,7 @@ flag = true
 addn = program(x) do x + offset done
 pick = program(b) do if flag then b else false done done
 
-# A record of closures, called as `r.f(x)`.
+# A record of closures, called as `(r.f)(x)`.
 r = {f: program(x) do x + offset done, g: program(x) do x * offset done}
 
-add(1)(2) + repeat_add(10) + apply(addn, 1) + r.f(3) + r.g(2)
+add(1)(2) + repeat_add(10) + apply(addn, 1) + (r.f)(3) + (r.g)(2)

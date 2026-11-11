@@ -801,8 +801,8 @@ mod tests {
         assert_eq!(type_of(polymorphic_apply).unwrap(), "Number");
 
         let record_of_functions = "k = 10 \
-                                   r = {f: program(x) do x + k done, g: program(x) do x * k done} \
-                                   r.f(3) + r.g(2)";
+                                   r = {f: program(x) do x + k done, g: program(x) do x * k done}; \
+                                   (r.f)(3) + (r.g)(2)";
         assert_eq!(type_of(record_of_functions).unwrap(), "Number");
     }
 
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[test]
     fn calls_on_any_callee() {
-        let src = "vec = {add: program(p, q) do p.x + q.x done} vec.add({x: 1}, {x: 2})";
+        let src = "vec = {add: program(p, q) do p.x + q.x done}; (vec.add)({x: 1}, {x: 2})";
         assert_eq!(type_of(src).unwrap(), "Number");
         // chained calls and accesses nest left to right
         assert_eq!(
@@ -1144,7 +1144,7 @@ mod tests {
             "Number"
         );
         assert_eq!(
-            type_of("a = {b: {c: program(x) do x done}} a.b.c(1)").unwrap(),
+            type_of("a = {b: {c: program(x) do x done}}; (a.b.c)(1)").unwrap(),
             "Number"
         );
         // a call result can be accessed
@@ -1366,7 +1366,7 @@ mod tests {
     fn function_run_before_a_generalized_value_it_reads_is_rejected() {
         let src = "f = program() do g() done  x = f()  \
                    m = {y: program(s) do s done}  \
-                   g = program() do m.y(1) done  x";
+                   g = program() do (m.y)(1) done  x";
         assert_eq!(
             order_error(src),
             ("`f` uses `m` before it is defined".to_string(), "f")

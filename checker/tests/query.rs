@@ -233,6 +233,25 @@ fn a_field_of_something_with_no_members_offers_nothing() {
 }
 
 #[test]
+fn completion_after_the_dot_of_a_dot_call_offers_the_receivers_fields() {
+    let marked = "ball = {x: 1, moved: program(self) do self.x done}\nball.|mo()";
+    assert_eq!(labels(marked), ["x", "moved"]);
+}
+
+#[test]
+fn completion_after_the_dot_of_a_computed_receiver_offers_its_fields() {
+    let marked = "make = program() do {x: 1, f: program(s) do 0 done} done\nmake().|";
+    assert_eq!(labels(marked), ["x", "f"]);
+}
+
+#[test]
+fn a_dot_calls_hidden_receiver_binder_is_not_in_scope() {
+    let marked = "make = program() do {f: program(s) do 0 done} done\nmake().f(|)";
+    let names = own_names(marked);
+    assert!(!names.iter().any(|name| name.contains('@')), "{names:?}");
+}
+
+#[test]
 fn a_field_survives_junk_after_the_dot() {
     let marked = "p = {x: 1, y: 2}\nforward(p.|\nback(3";
     assert_eq!(labels(marked), ["x", "y"]);

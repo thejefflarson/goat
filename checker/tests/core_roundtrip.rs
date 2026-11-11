@@ -29,6 +29,8 @@ enum Style {
     Curried,
     /// `f(a, b)` and `program(x, y) do e done`.
     Grouped,
+    /// `Grouped`, writing `v.l(a)` for `(v.l)(v, a)`.
+    Dot,
 }
 
 fn label_name(label: u32) -> String {
@@ -46,6 +48,11 @@ fn needs_parens_as_operand(term: &Term) -> bool {
 /// rest of the text as its scope.
 fn needs_parens_as_value(term: &Term) -> bool {
     matches!(term, Term::Let(..))
+}
+
+/// A projection in callee position is parenthesised: `r.f(x)` passes `r`.
+fn needs_parens_as_callee(term: &Term) -> bool {
+    needs_parens_as_operand(term) || matches!(term, Term::Proj(..))
 }
 
 fn parenthesise(term: &Term, style: Style, wrap: bool) -> String {
@@ -68,8 +75,20 @@ fn print(term: &Term, style: Style) -> String {
         }
         Term::App(..) => {
             let (callee, args) = application_group(term, style);
+            if let (Style::Dot, Term::Proj(base, label), Some((first, rest))) =
+                (style, callee, args.split_first())
+                && matches!((&**base, first), (Term::Var(v), Term::Var(w)) if v == w)
+            {
+                let rest: Vec<String> = rest.iter().map(|arg| print(arg, style)).collect();
+                return format!(
+                    "{}.{}({})",
+                    print(base, style),
+                    label_name(*label),
+                    rest.join(", ")
+                );
+            }
             let args: Vec<String> = args.iter().map(|arg| print(arg, style)).collect();
-            let callee = parenthesise(callee, style, needs_parens_as_operand(callee));
+            let callee = parenthesise(callee, style, needs_parens_as_callee(callee));
             format!("{callee}({})", args.join(", "))
         }
         Term::Let(name, value, body) => {
@@ -361,7 +380,7 @@ fn printed_core_terms_parse_back_as_the_same_term() {
         builder.functions = 0;
         let mut term = builder.term(0);
         intern_labels(&mut term, &mut Vec::new());
-        for style in [Style::Curried, Style::Grouped] {
+        for style in [Style::Curried, Style::Grouped, Style::Dot] {
             let source = print(&term, style);
             assert_eq!(
                 lower_to_term(&source),
@@ -370,6 +389,35 @@ fn printed_core_terms_parse_back_as_the_same_term() {
             );
         }
     }
+}
+
+#[test]
+fn a_dot_call_reads_back_as_the_application_that_passes_the_record() {
+    let var = |name: &str| Term::Var(name.to_string());
+    let id = Term::Abs("s".into(), Box::new(var("s")));
+    let call = |args: Vec<Term>| {
+        let method = Term::Proj(Box::new(var("x")), 0);
+        let applied = args
+            .into_iter()
+            .fold(method, |f, a| Term::App(Box::new(f), Box::new(a)));
+        Term::Let(
+            "x".into(),
+            Box::new(Term::Rec(vec![(0, id.clone())])),
+            Box::new(applied),
+        )
+    };
+    let dotted = call(vec![var("x"), Term::Num(1)]);
+    assert_eq!(
+        print(&dotted, Style::Dot),
+        "x = {lab0: program(s) do s done}; x.lab0(1)"
+    );
+    assert_eq!(lower_to_term(&print(&dotted, Style::Dot)), dotted);
+    let stored = call(vec![Term::Num(1)]);
+    assert_eq!(
+        print(&stored, Style::Dot),
+        "x = {lab0: program(s) do s done}; (x.lab0)(1)"
+    );
+    assert_eq!(lower_to_term(&print(&stored, Style::Dot)), stored);
 }
 
 /// The terms the Coq printer is checked against (proofs/GoatPrinterTable.v).

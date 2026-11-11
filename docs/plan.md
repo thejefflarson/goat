@@ -129,9 +129,9 @@ not:
 
 ```
 m = {id: program(x) do x done}
-a = m.id(1)  m.id(true)                       # OK
+a = (m.id)(1)  (m.id)(true)                       # OK
 
-use = program(m) do a = m.id(1)  m.id(true) done
+use = program(m) do a = (m.id)(1)  (m.id)(true) done
 use(m)                                        # ERROR: Number vs Bool
 
 both = program(f) do a = f(1)  f(true) done   # ERROR, no record needed

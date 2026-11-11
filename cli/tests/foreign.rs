@@ -115,7 +115,7 @@ fn a_foreign_function_is_a_value() {
     let (_, log) = go("h = note\nh(1); h(2); 0");
     assert_eq!(log, ["note(1)", "note(2)"]);
 
-    let (_, log) = go("fs = {a: say, b: note}\nfs.a(\"x\"); fs.b(2); 0");
+    let (_, log) = go("fs = {a: say, b: note};\n(fs.a)(\"x\"); (fs.b)(2); 0");
     assert_eq!(log, ["say(\"x\")", "note(2)"]);
 }
 
