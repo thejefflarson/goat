@@ -21,6 +21,7 @@ const HIGHLIGHTER: &str = include_str!("../../editor/highlight.goat");
 enum EditorEvent {
     Edited { text: String, cursor: i64 },
     Selected { anchor: i64, head: i64 },
+    HostTags { names: String },
 }
 
 impl HostEvent for EditorEvent {
@@ -28,6 +29,7 @@ impl HostEvent for EditorEvent {
         match self {
             EditorEvent::Edited { .. } => "Edited",
             EditorEvent::Selected { .. } => "Selected",
+            EditorEvent::HostTags { .. } => "HostTags",
         }
     }
 
@@ -42,6 +44,10 @@ impl HostEvent for EditorEvent {
                 guest.call(constructor, (text, *cursor))
             }
             EditorEvent::Selected { anchor, head } => guest.call(constructor, (*anchor, *head)),
+            EditorEvent::HostTags { names } => {
+                let names = guest.string(names)?;
+                guest.call(constructor, names)
+            }
         }
     }
 }
@@ -74,9 +80,36 @@ fn edit(editor: &mut Interactive<SceneHost, EditorEvent>, text: &str) -> Vec<Spa
         .collect()
 }
 
+/// The names a host declares as tags: the prelude's `tag` declarations and the
+/// vocabulary's events, shapes and keys, as `goat_web` hands them to its tokenizer.
+fn host_tags(host: &HostInterface) -> HashSet<String> {
+    let prelude = host.prelude();
+    let mut tags: HashSet<String> = lexer::declared_tags(prelude, &lexer::tokenize(prelude))
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let vocab = host.vocab();
+    tags.extend(
+        vocab
+            .tag_names()
+            .chain(vocab.key_tag_names())
+            .map(String::from),
+    );
+    tags
+}
+
+fn declare_tags(editor: &mut Interactive<SceneHost, EditorEvent>, tags: &HashSet<String>) {
+    let mut names: Vec<&str> = tags.iter().map(String::as_str).collect();
+    names.sort_unstable();
+    let event = EditorEvent::HostTags {
+        names: names.join(" "),
+    };
+    assert!(editor.send(&event).unwrap());
+}
+
 /// The spans the lexer finds, as the web editor's `tok-<kind>` classes.
-fn oracle(source: &str) -> Vec<Span> {
-    lexer::highlight(source, &HashSet::new())
+fn oracle(source: &str, tags: &HashSet<String>) -> Vec<Span> {
+    lexer::highlight(source, tags)
         .into_iter()
         .filter_map(|token| {
             let kind = match token.kind {
@@ -97,7 +130,16 @@ fn oracle(source: &str) -> Vec<Span> {
 }
 
 fn assert_agrees(editor: &mut Interactive<SceneHost, EditorEvent>, name: &str, source: &str) {
-    let (drawn, expected) = (edit(editor, source), oracle(source));
+    assert_agrees_with(editor, name, source, &HashSet::new());
+}
+
+fn assert_agrees_with(
+    editor: &mut Interactive<SceneHost, EditorEvent>,
+    name: &str,
+    source: &str,
+    tags: &HashSet<String>,
+) {
+    let (drawn, expected) = (edit(editor, source), oracle(source, tags));
     if drawn != expected {
         let at = drawn
             .iter()
@@ -125,6 +167,55 @@ fn the_highlighter_draws_the_spans_the_lexer_finds_on_every_goat_file() {
     }
     let (_, leaked) = editor.finish().unwrap();
     assert_eq!(leaked, 0, "the highlighter leaked");
+}
+
+/// With the host's own tags declared, the spans still equal the lexer's, for
+/// the turtle's names and the canvas host's.
+#[test]
+fn the_highlighter_marks_the_hosts_tags_as_the_lexer_does() {
+    let files = corpus::files_with("goat");
+    for (host, name) in [
+        (HostInterface::turtle(), "turtle"),
+        (goat_canvas::interface(), "canvas"),
+    ] {
+        let tags = host_tags(&host);
+        let mut editor = editor();
+        declare_tags(&mut editor, &tags);
+        for file in &files {
+            let source = fs::read_to_string(file).unwrap();
+            assert_agrees_with(&mut editor, &file.display().to_string(), &source, &tags);
+        }
+        for source in [
+            "update = program(m, e) do match e do Tick(dt) then m else m done done",
+            "draw = program(m) do [Dot({x: 1, y: 2, r: 3, fill: \"red\"}), Line({x1: 1})] done",
+            "KeyDown(Up) MouseMove Frame Empty Link \u{fc}n\u{ef}code Tickle Tick",
+            "Tick tag Tick = Tock | Tick Tock Tick",
+        ] {
+            assert_agrees_with(&mut editor, source, source, &tags);
+        }
+        let marked = edit(&mut editor, "Link Empty x");
+        assert_eq!(marked.len(), 2, "{name}: {marked:?}");
+        assert!(marked.iter().all(|(_, _, kind)| kind == "tag"), "{name}");
+        assert_eq!(editor.finish().unwrap().1, 0, "the highlighter leaked");
+    }
+}
+
+#[test]
+fn host_tags_replace_the_previous_names_and_keep_the_spans() {
+    let mut editor = editor();
+    let tags = HashSet::from(["Dot".to_string(), "Box".to_string()]);
+    declare_tags(&mut editor, &tags);
+    assert_eq!(edit(&mut editor, "Dot Box Line").len(), 2);
+    declare_tags(&mut editor, &HashSet::from(["Line".to_string()]));
+    editor.draw().unwrap();
+    let frame = std::mem::take(&mut editor.sink_mut().commands);
+    let kept = frame
+        .iter()
+        .filter(|c| matches!(c, SceneCommand::Span { .. }))
+        .count();
+    assert_eq!(kept, 2, "a HostTags event draws the spans it had");
+    assert_eq!(edit(&mut editor, "Dot Box Line").len(), 1);
+    editor.finish().unwrap();
 }
 
 /// The goat programs the Rust tests quote, and whatever else sits in a string
@@ -247,6 +338,7 @@ fn the_editor_vocabulary_rejects_an_event_it_does_not_send() {
     );
     assert!(compile(&program("Edited(e)"), &HostInterface::editor()).is_ok());
     assert!(compile(&program("Selected(s)"), &HostInterface::editor()).is_ok());
+    assert!(compile(&program("HostTags(h)"), &HostInterface::editor()).is_ok());
 }
 
 #[test]

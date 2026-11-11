@@ -10,6 +10,7 @@
 !wamr
 !grammar
 !web
+!editor
 !prelude
 !examples
 web/node_modules

@@ -1,7 +1,7 @@
 // Picture and event plumbing for interactive goat modules (ADR 0015), the
 // browser half of mir/src/host.rs (`SceneHost`) and cli/src/lib.rs (`Guest`).
 //
-//   imports  scene.{begin,end,line,polyline_begin,vertex,polyline_end,circle,rect,text}
+//   imports  scene.{begin,end,line,polyline_begin,vertex,polyline_end,circle,rect,text,span}
 //   exports  goat_setup, goat_update, goat_draw, goat_release_model,
 //            goat_shutdown, goat_alloc, goat_event_<Tag> per handled event
 //
@@ -22,7 +22,16 @@ export type SceneCommand =
   | { kind: "vertex"; x: number; y: number }
   | { kind: "circle"; x: number; y: number; r: number; color: string }
   | { kind: "rect"; x: number; y: number; w: number; h: number; color: string }
-  | { kind: "text"; x: number; y: number; text: string; color: string };
+  | { kind: "text"; x: number; y: number; text: string; color: string }
+  | { kind: "span"; from: number; to: number; role: string };
+
+// A style span the editor vocabulary draws: byte offsets into the edited text
+// and a role name the goat program chose, which the page must not trust.
+export interface RawSpan {
+  from: number;
+  to: number;
+  kind: string;
+}
 
 // What a renderer implements; `sceneImports` validates and forwards to it.
 export interface Scene {
@@ -34,6 +43,7 @@ export interface Scene {
   circle(x: number, y: number, r: number, color: string): void;
   rect(x: number, y: number, w: number, h: number, color: string): void;
   text(x: number, y: number, text: string, color: string): void;
+  span(from: number, to: number, role: string): void;
   end(): void;
 }
 
@@ -48,6 +58,7 @@ export interface SceneImports {
     circle(x: number, y: number, r: number, color: number): void;
     rect(x: number, y: number, w: number, h: number, color: number): void;
     text(x: number, y: number, text: number, color: number): void;
+    span(from: bigint, to: bigint, role: number): void;
   };
 }
 
@@ -74,6 +85,7 @@ export function sceneImports(memory: () => WebAssembly.Memory, scene: Scene): Sc
         scene.rect(finite("rect", x), finite("rect", y), finite("rect", w), finite("rect", h), color(ptr)),
       text: (x, y, textPtr, ptr) =>
         scene.text(finite("text", x), finite("text", y), readString(memory(), textPtr), color(ptr)),
+      span: (from, to, ptr) => scene.span(Number(from), Number(to), readString(memory(), ptr)),
     },
   };
 }
@@ -106,9 +118,41 @@ export class RecordingScene implements Scene {
   text(x: number, y: number, text: string, color: string) {
     this.commands.push({ kind: "text", x, y, text, color });
   }
+  span(from: number, to: number, role: string) {
+    this.commands.push({ kind: "span", from, to, role });
+  }
   end() {
     this.commands.push({ kind: "end" });
   }
+}
+
+export const MAX_SPANS = 1_000_000;
+
+// The spans of the frame being drawn, for the editor host: `begin` starts a
+// frame over, and nothing else is drawn. More than `MAX_SPANS` in one frame
+// traps the program instead of growing without bound.
+export class SpanScene implements Scene {
+  #spans: RawSpan[] = [];
+  begin() {
+    this.#spans = [];
+  }
+  span(from: number, to: number, role: string) {
+    if (this.#spans.length >= MAX_SPANS) throw new Error(`the highlighter drew more than ${MAX_SPANS} spans`);
+    this.#spans.push({ from, to, kind: role });
+  }
+  take(): RawSpan[] {
+    const spans = this.#spans;
+    this.#spans = [];
+    return spans;
+  }
+  line() {}
+  polylineBegin() {}
+  vertex() {}
+  polylineEnd() {}
+  circle() {}
+  rect() {}
+  text() {}
+  end() {}
 }
 
 export type DrawingContext = Pick<
@@ -202,6 +246,9 @@ export class CanvasScene implements Scene {
     this.#ctx.fillText(text, x, y);
   }
 
+  // The picture has no text to style.
+  span() {}
+
   end() {
     this.#ctx.restore();
   }
@@ -210,7 +257,9 @@ export class CanvasScene implements Scene {
 export type HostEvent =
   | { kind: "Tick"; dt: number }
   | { kind: "KeyDown" | "KeyUp"; key: string }
-  | { kind: "PointerMove" | "PointerDown" | "PointerUp"; x: number; y: number };
+  | { kind: "PointerMove" | "PointerDown" | "PointerUp"; x: number; y: number }
+  | { kind: "Edited"; text: string; cursor: number }
+  | { kind: "HostTags"; names: string };
 
 export type EventKind = HostEvent["kind"];
 
@@ -225,6 +274,8 @@ const EVENT_NAMES: Record<EventKind, readonly [string, string]> = {
   PointerMove: ["PointerMove", "MouseMove"],
   PointerDown: ["PointerDown", "MousePress"],
   PointerUp: ["PointerUp", "MouseRelease"],
+  Edited: ["Edited", "Edited"],
+  HostTags: ["HostTags", "HostTags"],
 };
 
 function constructorFor(exports: WebAssembly.Exports, kind: EventKind): Function | undefined {
@@ -265,6 +316,10 @@ export function constructEvent(exports: WebAssembly.Exports, event: HostEvent): 
     case "KeyDown":
     case "KeyUp":
       return make(newString(exports, event.key));
+    case "Edited":
+      return make(newString(exports, event.text), BigInt(event.cursor));
+    case "HostTags":
+      return make(newString(exports, event.names));
     default:
       return make(event.x, event.y);
   }

@@ -30,6 +30,13 @@
 //!   vocabulary (`Frame`, `MousePress`, `Dot`, ...) instead of the turtle's.
 //!   `gw_tokenize_canvas` and `gw_complete_canvas` do the same for `gw_tokenize`
 //!   and `gw_complete`.
+//! - `gw_compile_editor` is `gw_compile` against the editor host's vocabulary
+//!   (`Edited`, `HostTags`, `Span`, ...), which `editor/highlight.goat` is written
+//!   against.
+//! - `gw_host_tags` and `gw_host_tags_canvas` take no input and return
+//!   `TAG_OK` with the names the turtle's or canvas host declares as tags, space
+//!   separated and sorted: the names `gw_tokenize` marks beyond the text's own,
+//!   which a goat highlighter is told through the editor's `HostTags` event.
 //! - `gw_tokenize` lexes with the parser crate's hand-written lexer. The payload is
 //!   one 9-byte entry per token: `kind: u8` (a `TOKEN_*` constant), then
 //!   `start: u32` and `end: u32`, byte offsets. Names and punctuation are left
@@ -201,6 +208,34 @@ pub unsafe extern "C" fn gw_check_canvas(src_ptr: u32, src_len: u32) -> u32 {
     }
 }
 
+/// Like `gw_compile`, against the editor host's vocabulary.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_compile_editor(src_ptr: u32, src_len: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        compile_record(
+            src_ptr as usize as *const u8,
+            src_len as usize,
+            compile_editor,
+        ) as usize as u32
+    }
+}
+
+/// The turtle host's tag names, space separated; returns the result record's address.
+#[unsafe(no_mangle)]
+pub extern "C" fn gw_host_tags() -> u32 {
+    host_tags_record(turtle_host()) as usize as u32
+}
+
+/// The canvas host's tag names, space separated; returns the result record's address.
+#[unsafe(no_mangle)]
+pub extern "C" fn gw_host_tags_canvas() -> u32 {
+    host_tags_record(canvas_host()) as usize as u32
+}
+
 /// Check the `src_len` bytes at `src_ptr`; returns the result record's address.
 ///
 /// # Safety
@@ -304,6 +339,10 @@ fn compile_live_turtle(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatEr
 
 fn compile_canvas(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
     goat::compile(source, &goat_canvas::interface())
+}
+
+fn compile_editor(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
+    goat::compile(source, &goat::HostInterface::editor())
 }
 
 fn compile_live_canvas(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
@@ -473,6 +512,12 @@ fn canvas_host() -> &'static Host {
     HOST.get_or_init(|| Host::new(goat_canvas::interface()))
 }
 
+fn host_tags_record(host: &Host) -> *mut u8 {
+    let mut names: Vec<&str> = host.tags.iter().map(String::as_str).collect();
+    names.sort_unstable();
+    make_record(TAG_OK, names.join(" ").into_bytes())
+}
+
 fn encode_tokens(source: &str, host: &Host) -> Vec<u8> {
     lexer::highlight(source, &host.tags)
         .into_iter()
@@ -558,6 +603,11 @@ mod tests {
     unsafe fn tokenize_canvas_at(ptr: *const u8, len: usize) -> *mut u8 {
         // SAFETY: forwarded from the caller's contract.
         unsafe { tokenize_record(ptr, len, canvas_host) }
+    }
+
+    unsafe fn compile_editor_at(ptr: *const u8, len: usize) -> *mut u8 {
+        // SAFETY: forwarded from the caller's contract.
+        unsafe { compile_record(ptr, len, compile_editor) }
     }
 
     fn run(source: &[u8]) -> (u8, Vec<u8>) {
@@ -789,6 +839,60 @@ mod tests {
         let (tag, payload) = record_of(check_canvas_at, b"forward(10)");
         assert_eq!(tag, TAG_ERR);
         assert!(!diagnostics(&payload).is_empty());
+    }
+
+    const HIGHLIGHTER: &[u8] = include_bytes!("../../editor/highlight.goat");
+
+    fn names_of(host: fn() -> &'static Host) -> Vec<String> {
+        let record = host_tags_record(host());
+        // SAFETY: `record` was just made and is freed once, after it is read.
+        let (tag, payload) = unsafe {
+            let len = u32::from_le_bytes(*(record.add(1) as *const [u8; 4])) as usize;
+            let payload = std::slice::from_raw_parts(record.add(HEADER), len).to_vec();
+            let tag = *record;
+            free_record(record);
+            (tag, payload)
+        };
+        assert_eq!(tag, TAG_OK);
+        String::from_utf8(payload)
+            .unwrap()
+            .split_whitespace()
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn the_editor_entry_compiles_the_highlighter_and_the_turtle_entry_does_not() {
+        let (tag, module) = record_of(compile_editor_at, HIGHLIGHTER);
+        assert_eq!(tag, TAG_OK);
+        assert!(module.starts_with(b"\0asm"));
+        assert_eq!(run(HIGHLIGHTER).0, TAG_ERR);
+        assert_eq!(record_of(compile_editor_at, BOUNCE).0, TAG_ERR);
+    }
+
+    #[test]
+    fn the_editor_entry_guards_its_input_like_the_others() {
+        let (tag, payload) = record_of(compile_editor_at, &[0xff]);
+        assert_eq!(tag, TAG_ERR);
+        assert!(String::from_utf8(payload).unwrap().contains("UTF-8"));
+        // SAFETY: a zero length reads nothing.
+        let record = unsafe { compile_record(std::ptr::null(), 0, compile_editor) };
+        // SAFETY: `record` was just made.
+        assert_eq!(unsafe { *record }, TAG_OK);
+        // SAFETY: `record` came from `compile_record` and is freed once.
+        unsafe { free_record(record) };
+    }
+
+    #[test]
+    fn host_tags_list_each_hosts_names_sorted_and_the_hosts_differ() {
+        let turtle = names_of(turtle_host);
+        let canvas = names_of(canvas_host);
+        assert!(turtle.iter().any(|n| n == "KeyDown") && turtle.iter().any(|n| n == "Empty"));
+        assert!(canvas.iter().any(|n| n == "Frame") && canvas.iter().any(|n| n == "Segment"));
+        assert!(!turtle.iter().any(|n| n == "Segment"));
+        assert!(turtle.windows(2).all(|pair| pair[0] < pair[1]));
+        let hosts: HashSet<_> = turtle.iter().cloned().collect();
+        assert_eq!(hosts, turtle_host().tags);
     }
 
     #[test]

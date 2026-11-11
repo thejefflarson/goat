@@ -16,6 +16,7 @@ import {
   type DrawingContext,
   type EventKind,
   type HostEvent,
+  type Scene,
   constructEvent,
   sceneImports,
   subscriptions,
@@ -255,16 +256,15 @@ export function isReloadableModule(module: WebAssembly.Module): boolean {
   return WebAssembly.Module.imports(module).some((i) => i.module === "goat" && i.name === "memory");
 }
 
-// Instantiates an interactive module drawing through `ctx`, over `hosted`'s
+// Instantiates an interactive module drawing through `scene`, over `hosted`'s
 // heap if it is reloadable. `memory` is only known once the module exists, so
 // the imports read it lazily.
-export async function instantiateInteractive(
+export async function instantiateWithScene(
   moduleBytes: BufferSource,
-  ctx: DrawingContext,
+  scene: Scene,
   hosted?: Hosted,
 ): Promise<InteractiveExports> {
   let memory: WebAssembly.Memory | undefined = hosted?.memory;
-  const scene = new CanvasScene(ctx);
   const host = createHost(() => memory!);
   const { instance } = await WebAssembly.instantiate(moduleBytes, {
     goat: { ...host.imports.goat, ...hosted },
@@ -273,6 +273,13 @@ export async function instantiateInteractive(
   memory = instance.exports.memory as WebAssembly.Memory;
   return instance.exports as InteractiveExports;
 }
+
+// `instantiateWithScene` drawing through `ctx`.
+export const instantiateInteractive = (
+  moduleBytes: BufferSource,
+  ctx: DrawingContext,
+  hosted?: Hosted,
+): Promise<InteractiveExports> => instantiateWithScene(moduleBytes, new CanvasScene(ctx), hosted);
 
 // Instantiates an interactive module against a canvas and starts its loop.
 export async function runInteractive(

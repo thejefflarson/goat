@@ -661,6 +661,7 @@ dependencies = [
 name = "goat"
 version = "0.1.0"
 dependencies = [
+ "goat_canvas",
  "goat_checker",
  "goat_mir",
  "goat_parser",

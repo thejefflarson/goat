@@ -27,4 +27,5 @@ required-features = ["native"]
 test = true
 
 [dev-dependencies]
+goat_canvas = { path = "../canvas", default-features = false }
 goat_parser = { path = "../parser" }

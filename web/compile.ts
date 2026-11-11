@@ -13,7 +13,8 @@ type Entry =
   | "gw_compile_canvas_live"
   | "gw_check_canvas"
   | "gw_tokenize"
-  | "gw_tokenize_canvas";
+  | "gw_tokenize_canvas"
+  | "gw_compile_editor";
 
 // The vocabulary a program is written against: the turtle's, or the canvas
 // host's (`Frame`, `MousePress`, `Dot`, ...).
@@ -40,6 +41,9 @@ interface CompilerExports {
   gw_check_canvas(ptr: number, len: number): number;
   gw_tokenize(ptr: number, len: number): number;
   gw_tokenize_canvas(ptr: number, len: number): number;
+  gw_compile_editor(ptr: number, len: number): number;
+  gw_host_tags(): number;
+  gw_host_tags_canvas(): number;
   gw_complete(ptr: number, len: number, cursor: number): number;
   gw_complete_canvas(ptr: number, len: number, cursor: number): number;
 }
@@ -57,7 +61,7 @@ export interface Diagnostic {
 
 export type TokenKind = "comment" | "keyword" | "literal" | "number" | "string" | "tag" | "operator";
 
-const TOKEN_KINDS: readonly TokenKind[] = ["comment", "keyword", "literal", "number", "string", "tag", "operator"];
+export const TOKEN_KINDS: readonly TokenKind[] = ["comment", "keyword", "literal", "number", "string", "tag", "operator"];
 
 export interface Token {
   kind: TokenKind;
@@ -113,6 +117,30 @@ export const compileLive = (compiler: WebAssembly.Module, source: string, host: 
 export async function check(compiler: WebAssembly.Module, source: string, host: Host = "turtle"): Promise<Diagnostic[]> {
   const { ok, payload } = invoke(await WebAssembly.instantiate(compiler, {}), CHECK[host], source);
   return ok ? [] : decodeDiagnostics(payload, source);
+}
+
+// A program over the editor vocabulary (`Edited`, `HostTags`, `Span`), like
+// `editor/highlight.goat`, as a module that draws style spans.
+export async function compileEditor(compiler: WebAssembly.Module, source: string): Promise<CompileResult> {
+  const { ok, payload } = invoke(await WebAssembly.instantiate(compiler, {}), "gw_compile_editor", source);
+  return ok
+    ? { ok, module: payload as Uint8Array<ArrayBuffer> }
+    : { ok, diagnostics: new TextDecoder().decode(payload) };
+}
+
+const HOST_TAGS: Record<Host, "gw_host_tags" | "gw_host_tags_canvas"> = {
+  turtle: "gw_host_tags",
+  canvas: "gw_host_tags_canvas",
+};
+
+// The names `host` declares as tags, space separated: what a highlighter must
+// be told, since the text of a program does not declare them.
+export function hostTags(compiler: WebAssembly.Module, host: Host): string {
+  const instance = new WebAssembly.Instance(compiler, {});
+  const exports = instance.exports as unknown as CompilerExports;
+  const { ok, payload } = takeRecord(exports, exports[HOST_TAGS[host]]());
+  if (!ok) throw new Error("could not read the host's tags");
+  return new TextDecoder().decode(payload);
 }
 
 export function decodeDiagnostics(payload: Uint8Array, source: string): Diagnostic[] {

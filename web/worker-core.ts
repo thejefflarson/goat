@@ -5,17 +5,19 @@
 
 import {
   type DomEvent,
+  type InteractiveExports,
   type ListenerTarget,
   type Hosted,
   type LoopCanvas,
   createHosted,
   instantiateInteractive,
+  instantiateWithScene,
   isReloadableModule,
   startLoop,
 } from "./loop.ts";
 import { type FromWorker, Heartbeat, type ToWorker } from "./protocol.ts";
 import { animate, run } from "./runtime.ts";
-import { type DrawingContext, subscriptions } from "./scene.ts";
+import { type DrawingContext, type HostEvent, SpanScene, constructEvent, subscriptions } from "./scene.ts";
 
 export interface WorkerCoreEnv {
   post(message: FromWorker): void;
@@ -30,8 +32,18 @@ const NO_LISTENERS: ListenerTarget = {
   removeEventListener(_type: string, _listener: (event: DomEvent) => void) {},
 };
 
+// A program over the editor vocabulary: `update` takes each input event, and
+// `draw` runs once after an `Edited` one, so the spans cost one scan per edit.
+interface Highlighter {
+  exports: InteractiveExports;
+  scene: SpanScene;
+  heartbeat: Heartbeat;
+  model: number;
+}
+
 export function createWorkerCore(env: WorkerCoreEnv) {
   let loop: ReturnType<typeof startLoop> | undefined;
+  let highlighter: Highlighter | undefined;
   let reloadable: { ctx: DrawingContext; hosted: Hosted; heartbeat: Heartbeat } | undefined;
 
   const runInteractiveProgram = async (message: Extract<ToWorker, { type: "run" }>) => {
@@ -57,6 +69,26 @@ export function createWorkerCore(env: WorkerCoreEnv) {
       around: (call) => heartbeat.during(call),
     });
     if (loop.running) env.post({ type: "ready", subscriptions: subscriptions(exports) });
+  };
+
+  const runHighlighter = async (message: Extract<ToWorker, { type: "run" }>) => {
+    const heartbeat = new Heartbeat(message.heartbeat);
+    const scene = new SpanScene();
+    const exports = await instantiateWithScene(message.module, scene);
+    const model = heartbeat.during(() => exports.goat_setup());
+    highlighter = { exports, scene, heartbeat, model };
+    env.post({ type: "ready", subscriptions: subscriptions(exports) });
+  };
+
+  const highlight = (session: Highlighter, event: HostEvent, ticket: number | undefined) => {
+    const { exports, heartbeat, scene } = session;
+    session.model = heartbeat.during(() => {
+      const built = constructEvent(exports, event);
+      return built === null ? session.model : exports.goat_update(session.model, built);
+    });
+    if (event.kind !== "Edited") return;
+    heartbeat.during(() => exports.goat_draw(session.model));
+    env.post({ type: "spans", ticket: ticket ?? 0, spans: scene.take() });
   };
 
   const reloadProgram = async (module: Uint8Array<ArrayBuffer>) => {
@@ -96,8 +128,12 @@ export function createWorkerCore(env: WorkerCoreEnv) {
   return {
     async handle(message: ToWorker): Promise<void> {
       try {
-        if (message.type === "input") return loop?.send(message.event);
+        if (message.type === "input") {
+          if (highlighter) return highlight(highlighter, message.event, message.ticket);
+          return loop?.send(message.event);
+        }
         if (message.type === "reload") return await reloadProgram(message.module);
+        if (message.mode === "highlight") return await runHighlighter(message);
         await (message.mode === "interactive" ? runInteractiveProgram(message) : runOnceProgram(message));
       } catch (e) {
         env.post({ type: "failed", message: `your program stopped: ${e instanceof Error ? e.message : String(e)}` });
