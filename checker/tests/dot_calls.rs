@@ -99,31 +99,55 @@ fn a_computed_receiver_has_one_fixed_type_so_it_cannot_take_itself() {
     assert!(message.contains("infinite type"), "{message}");
 }
 
-fn dot_calls(source: &str) -> Vec<DotCall> {
-    lower(source)
+fn dot_calls(source: &str) -> Vec<(String, DotCall)> {
+    let mut calls: Vec<_> = lower(source)
         .expect("parses")
         .dot_calls
         .into_values()
-        .collect()
+        .map(|call| {
+            (
+                source[call.receiver.start..call.receiver.end].to_string(),
+                call,
+            )
+        })
+        .collect();
+    calls.sort_by_key(|(_, call)| call.receiver.end);
+    calls
 }
 
 #[test]
 fn the_side_table_records_each_dot_call() {
+    let [(receiver, call)] = &dot_calls("r = {o: {f: program(s) do 0 done}}\nr.o.f()")[..] else {
+        panic!("one dot call")
+    };
     assert_eq!(
-        dot_calls("r = {o: {f: program(s) do 0 done}}\nr.o.f()"),
-        [DotCall {
-            receiver_text: "r.o".into(),
-            label: "f".into(),
-            receiver_kind: ReceiverKind::Path,
-        }]
+        (receiver.as_str(), call.label.as_str(), call.receiver_kind),
+        ("r.o", "f", ReceiverKind::Path)
     );
+    let [(receiver, call)] =
+        &dot_calls("mk = program() do {f: program(s) do 0 done} done\nmk().f()")[..]
+    else {
+        panic!("one dot call")
+    };
     assert_eq!(
-        dot_calls("mk = program() do {f: program(s) do 0 done} done\nmk().f()"),
-        [DotCall {
-            receiver_text: "mk()".into(),
-            label: "f".into(),
-            receiver_kind: ReceiverKind::Computed,
-        }]
+        (receiver.as_str(), call.label.as_str(), call.receiver_kind),
+        ("mk()", "f", ReceiverKind::Computed)
     );
     assert!(dot_calls("r = {f: program(s) do 0 done}\n(r.f)(1)").is_empty());
+}
+
+#[test]
+fn a_dot_call_chain_records_each_receiver_as_a_span_of_the_prefix() {
+    let links = 200;
+    let binding = "r = {f: program(s) do s done}\n";
+    let source = format!("{binding}r{}", ".f()".repeat(links));
+    let calls = dot_calls(&source);
+    assert_eq!(calls.len(), links);
+    let start = binding.len();
+    for (k, (_, call)) in calls.iter().enumerate() {
+        assert_eq!(
+            (call.receiver.start, call.receiver.end),
+            (start, start + 1 + 4 * k)
+        );
+    }
 }

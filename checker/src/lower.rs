@@ -53,7 +53,8 @@ pub const RECEIVER_NAME: &str = "@receiver";
 /// A call through a dot, `r.f(a)`, rewritten to `(r.f)(r, a)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DotCall {
-    pub receiver_text: String,
+    /// Where the receiver is written; a diagnostic quotes it from the source.
+    pub receiver: Span,
     pub label: String,
     pub receiver_kind: ReceiverKind,
 }
@@ -334,8 +335,6 @@ struct Lower {
     /// Every declared tag, built-in and written: one flat namespace for the
     /// whole program, each tag with the closed group it belongs to, if any.
     tags: HashMap<String, Option<Arc<Group>>>,
-    /// The text being lowered, for quoting a dot call's receiver.
-    source: String,
     dot_calls: HashMap<ExprId, DotCall>,
 }
 
@@ -344,7 +343,6 @@ impl Lower {
     /// prelude's names are in scope when `file` is the user's.
     fn lower_source(&mut self, source: &str, file: FileId) -> Result<Expr, Vec<GoatError>> {
         self.file = file;
-        self.source = source.to_string();
         let recovered = interp::parse_recovering(source);
         let mut diagnostics = recovered.diagnostics;
         // Past the nesting limit every other diagnostic is a cascade of it.
@@ -828,11 +826,6 @@ impl Lower {
             unreachable!("a call after an access calls a field")
         };
         let receiver_span = record.span;
-        let receiver_text = self
-            .source
-            .get(receiver_span.start..receiver_span.end)
-            .unwrap_or_default()
-            .to_string();
         let (field_record, receiver, bound) = match self.repeat_path(&record) {
             Some(receiver) => (*record, receiver, None),
             None => {
@@ -869,7 +862,7 @@ impl Lower {
         self.dot_calls.insert(
             app.id,
             DotCall {
-                receiver_text,
+                receiver: receiver_span,
                 label,
                 receiver_kind,
             },
