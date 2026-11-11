@@ -80,14 +80,14 @@ const theme = EditorView.theme({
   ".cm-scroller": { fontFamily: "ui-monospace, Menlo, Consolas, monospace", lineHeight: "1.4" },
   ".cm-content": { caretColor: "var(--fg)" },
   ".cm-cursor": { borderLeftColor: "var(--fg)" },
-  ".cm-gutters": { backgroundColor: "var(--panel)", color: "var(--tok-comment, #6a6a73)", border: "none" },
+  ".cm-gutters": { backgroundColor: "var(--panel)", color: "var(--tok-comment, #505058)", border: "none" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection, #c9c9ce)" },
-  ".tok-keyword": { color: "var(--tok-keyword, #5b3fd1)" },
-  ".tok-literal": { color: "var(--tok-literal, #0b6e99)" },
-  ".tok-number": { color: "var(--tok-number, #0b6e99)" },
-  ".tok-string": { color: "var(--tok-string, #1a7f37)" },
-  ".tok-comment": { color: "var(--tok-comment, #6a6a73)", fontStyle: "italic" },
-  ".tok-tag": { color: "var(--tok-tag, #b35900)" },
+  ".tok-keyword": { color: "var(--tok-keyword, #4a2fb8)" },
+  ".tok-literal": { color: "var(--tok-literal, #095a80)" },
+  ".tok-number": { color: "var(--tok-number, #095a80)" },
+  ".tok-string": { color: "var(--tok-string, #14602b)" },
+  ".tok-comment": { color: "var(--tok-comment, #505058)" },
+  ".tok-tag": { color: "var(--tok-tag, #80400a)" },
 });
 
 export interface GoatEditor {

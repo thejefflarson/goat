@@ -160,6 +160,13 @@ sqrt = foreign "math" "sqrt" (Number) -> Number
 # Drops the fraction: `truncate(-2.5)` is `-2`.
 truncate = foreign "math" "truncate" (Number) -> Int
 
+# How many bytes of UTF-8 a string holds, not how many characters: `"é"` is 2.
+byte_length = foreign "text" "byte_length" (String) -> Int
+
+# The byte (0 to 255) at a position of a string, counting from 1 like `item`.
+# A position outside the string stops the program.
+byte_at = foreign "text" "byte_at" (String, Int) -> Int
+
 # The nearest whole number below: `floor(-2.5)` is `-3`.
 floor = program(x) do
   whole = truncate(x)

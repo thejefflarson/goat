@@ -551,6 +551,11 @@ the table:
   construction (strings are immortal literals today).
 - `count(xs, test)` is how many items pass `test`; `length` counts them all.
 - `sum`, `biggest`, `smallest` and `sort` work on numbers.
+- `byte_length(s)` and `byte_at(s, i)` read a string's UTF-8 bytes (bytes, not
+  characters, per ADR 0009). `byte_at` counts from 1 like `item`, gives an
+  `Int`, and traps outside the string. Both are `foreign "text"` bindings that
+  mono lowers to MIR's `StrLen` and `StrByte`, the way `sqrt` and `truncate`
+  lower to `FloatFn` (ADR 0017); neither allocates.
 - Every function that walks a whole list is tail-recursive, so long lists use
   constant stack.
 - `first`, `rest`, `item` (out of range, or not a whole position inside the
