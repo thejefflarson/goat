@@ -176,3 +176,27 @@ fn every_ott_production_is_reached_by_some_core_rule() {
         }
     }
 }
+
+/// `proofs/GoatShape.v` lists the core rules that make nodes; it must agree
+/// with this map, or the Coq claim covers a different fragment than the Rust
+/// side tests.
+#[test]
+fn coq_core_rule_list_matches_the_map() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../proofs/GoatShape.v");
+    let coq = fs::read_to_string(path).expect("proofs/GoatShape.v is readable");
+    let start = coq
+        .find("Definition core_rule")
+        .expect("GoatShape.v defines core_rule");
+    let definition = &coq[start..];
+    let definition = &definition[..definition.find("end.").expect("core_rule ends")];
+    let in_coq: BTreeSet<&str> = definition
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter_map(|word| word.strip_prefix("R_"))
+        .collect();
+    let in_map: BTreeSet<&str> = RULES
+        .iter()
+        .filter(|(name, class)| matches!(class, Core(_)) && !name.starts_with('_'))
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(in_coq, in_map);
+}

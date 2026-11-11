@@ -244,6 +244,7 @@ enum Expr {
     StrLit(DataId),
     StrEq(a, b),                               // bytes equal; borrows both strings
     StrLen(s), StrByte(s, i),                  // UTF-8 byte count; byte at 1-based Int i, traps outside
+    StrChars(s), StrChar(s, i),                // code-point count; new rc=1 string of the code point at 1-based i, traps outside
     Write(Number(e) | Str(x) | Lit(data) | End), // host output line; Unit
     CallForeign(import, locals),               // host function; effectful; borrows pointers
     Dup(Local), Drop(Local),                   // Phase 6, inserted by the RC pass

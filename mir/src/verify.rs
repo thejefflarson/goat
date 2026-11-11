@@ -616,13 +616,13 @@ impl<'a> Checker<'a> {
                 }
                 Ty::Val(MTy::Bool)
             }
-            Expr::StrLen(s) => {
+            Expr::StrLen(s) | Expr::StrChars(s) => {
                 if self.borrow_str(*s).is_none() {
                     return Ty::Bad;
                 }
                 Ty::Val(MTy::Int)
             }
-            Expr::StrByte(s, i) => {
+            Expr::StrByte(s, i) | Expr::StrChar(s, i) => {
                 let (s, i) = (self.borrow_str(*s), self.borrow(*i));
                 if let Some(found) = i {
                     self.expect(Ty::Val(found), MTy::Int);
@@ -630,7 +630,11 @@ impl<'a> Checker<'a> {
                 if s.is_none() || i.is_none() {
                     return Ty::Bad;
                 }
-                Ty::Val(MTy::Int)
+                Ty::Val(if matches!(e, Expr::StrChar(..)) {
+                    MTy::Ptr(HeapKind::Str)
+                } else {
+                    MTy::Int
+                })
             }
             Expr::Write(write) => {
                 match write {

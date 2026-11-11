@@ -1,0 +1,13 @@
+# char_count counts the characters of a string and char_at gives the one at a
+# position as a new string, counting from 1 like item. They count Unicode code
+# points, so "é" and "日" are one each, though a few emoji are several.
+show_letters = program(word, at) do
+  if at > char_count(word)
+    then 0
+    else
+      shown = print(char_at(word, at))
+      show_letters(word, at + 1)
+  done
+done
+
+show_letters("goat é日🐐", 1);

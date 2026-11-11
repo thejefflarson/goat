@@ -916,7 +916,7 @@ impl Uses {
                 }
             }
             Expr::FloatFn(FloatFn::Truncate, _) => self.note_trap(NOT_A_WHOLE_NUMBER),
-            Expr::StrByte(..) => self.note_trap(BYTE_OUT_OF_RANGE),
+            Expr::StrByte(..) | Expr::StrChar(..) => self.note_trap(BYTE_OUT_OF_RANGE),
             Expr::Site(start, end) => self.note_site(*start, *end),
             Expr::AllocVariant(_, tag, fields) if fields.is_empty() => {
                 if let Err(at) = self.nullary.binary_search(tag) {
@@ -1840,6 +1840,16 @@ impl<'p> FuncCx<'_, 'p> {
                 self.string_byte(s, *i, out)?;
                 Ok(Some(MTy::Int))
             }
+            Expr::StrChars(s) => {
+                let s = self.string(*s)?;
+                self.string_chars(s, out);
+                Ok(Some(MTy::Int))
+            }
+            Expr::StrChar(s, i) => {
+                let s = self.string(*s)?;
+                self.string_char(s, *i, out)?;
+                Ok(Some(MTy::Ptr(HeapKind::Str)))
+            }
             Expr::CallForeign(f, args) => self.call_foreign(*f, args, out),
             Expr::Write(write) => {
                 let call = match write {
@@ -2421,6 +2431,191 @@ impl<'p> FuncCx<'_, 'p> {
         }
         out.extend([I32Add, I32Load8U(memarg(layout::STR_BYTES, 0))]);
         self.widen_unsigned(out);
+        Ok(())
+    }
+
+    /// Leaves the number of code points in the string in local `s` as an
+    /// `Int`: the bytes that are not UTF-8 continuation bytes.
+    fn string_chars(&mut self, s: u32, out: &mut Code) {
+        use Instruction::*;
+        let (len, i, count) = (
+            self.scratch(ValType::I32),
+            self.scratch(ValType::I32),
+            self.scratch(ValType::I32),
+        );
+        out.extend([
+            LocalGet(s),
+            I32Load(memarg(layout::STR_LEN, 2)),
+            LocalSet(len),
+            I32Const(0),
+            LocalSet(i),
+            I32Const(0),
+            LocalSet(count),
+            Block(BlockType::Empty),
+            Loop(BlockType::Empty),
+            LocalGet(i),
+            LocalGet(len),
+            I32GeU,
+            BrIf(1),
+        ]);
+        self.is_lead_byte(s, i, out);
+        out.extend([
+            LocalGet(count),
+            I32Add,
+            LocalSet(count),
+            LocalGet(i),
+            I32Const(1),
+            I32Add,
+            LocalSet(i),
+            Br(0),
+            End,
+            End,
+            LocalGet(count),
+        ]);
+        self.widen_unsigned(out);
+    }
+
+    /// Leaves 1 when the byte at offset `at` of the string in local `s` is not
+    /// a UTF-8 continuation byte, else 0. The caller keeps `at` inside it.
+    fn is_lead_byte(&self, s: u32, at: u32, out: &mut Code) {
+        use Instruction::*;
+        out.extend([
+            LocalGet(s),
+            LocalGet(at),
+            I32Add,
+            I32Load8U(memarg(layout::STR_BYTES, 0)),
+            I32Const(0xC0),
+            I32And,
+            I32Const(0x80),
+            I32Ne,
+        ]);
+    }
+
+    /// Leaves a new string (`rc = 1`) holding the code point at the 1-based
+    /// position in the `Int` local `position` of the string in local `s`,
+    /// trapping outside the string. The scan counts `position - 1` down to zero
+    /// as an unsigned number, so a position below 1 is a huge count that runs
+    /// off the end. Every read is checked against the header's length, so the
+    /// copy stays inside the string even when it is not valid UTF-8.
+    fn string_char(&mut self, s: u32, position: Local, out: &mut Code) -> Result<(), EmitError> {
+        use Instruction::*;
+        let &(position, ty) = self
+            .scope
+            .get(&position)
+            .ok_or(EmitError::UnboundLocal(position))?;
+        let (Some(position), MTy::Int) = (position, ty) else {
+            return Err(EmitError::Malformed("character position is not an Int"));
+        };
+        let wide = self.program.profile == Profile::Desktop;
+        let (one, sub, eqz) = if wide {
+            (I64Const(1), I64Sub, I64Eqz)
+        } else {
+            (I32Const(1), I32Sub, I32Eqz)
+        };
+        let skip = self.scratch(if wide { ValType::I64 } else { ValType::I32 });
+        let (len, start, end, size, copy, ptr) = (
+            self.scratch(ValType::I32),
+            self.scratch(ValType::I32),
+            self.scratch(ValType::I32),
+            self.scratch(ValType::I32),
+            self.scratch(ValType::I32),
+            self.scratch(ValType::I32),
+        );
+        out.extend([
+            LocalGet(position),
+            one.clone(),
+            sub.clone(),
+            LocalSet(skip),
+            LocalGet(s),
+            I32Load(memarg(layout::STR_LEN, 2)),
+            LocalSet(len),
+            I32Const(0),
+            LocalSet(start),
+            Block(BlockType::Empty),
+            Loop(BlockType::Empty),
+            LocalGet(start),
+            LocalGet(len),
+            I32GeU,
+        ]);
+        self.trap_if(BYTE_OUT_OF_RANGE, out)?;
+        self.is_lead_byte(s, start, out);
+        out.extend([
+            If(BlockType::Empty),
+            LocalGet(skip),
+            eqz,
+            BrIf(2),
+            LocalGet(skip),
+            one,
+            sub,
+            LocalSet(skip),
+            End,
+            LocalGet(start),
+            I32Const(1),
+            I32Add,
+            LocalSet(start),
+            Br(0),
+            End,
+            End,
+            LocalGet(start),
+            I32Const(1),
+            I32Add,
+            LocalSet(end),
+            Block(BlockType::Empty),
+            Loop(BlockType::Empty),
+            LocalGet(end),
+            LocalGet(len),
+            I32GeU,
+            BrIf(1),
+        ]);
+        self.is_lead_byte(s, end, out);
+        out.extend([
+            BrIf(1),
+            LocalGet(end),
+            I32Const(1),
+            I32Add,
+            LocalSet(end),
+            Br(0),
+            End,
+            End,
+            LocalGet(end),
+            LocalGet(start),
+            I32Sub,
+            LocalSet(size),
+            LocalGet(size),
+            I32Const(layout::STR_BYTES as i32),
+            I32Add,
+            Call(self.shared.alloc_fn),
+            LocalSet(ptr),
+            LocalGet(ptr),
+            LocalGet(size),
+            I32Store(memarg(layout::STR_LEN, 2)),
+            I32Const(0),
+            LocalSet(copy),
+            Block(BlockType::Empty),
+            Loop(BlockType::Empty),
+            LocalGet(copy),
+            LocalGet(size),
+            I32GeU,
+            BrIf(1),
+            LocalGet(ptr),
+            LocalGet(copy),
+            I32Add,
+            LocalGet(s),
+            LocalGet(start),
+            I32Add,
+            LocalGet(copy),
+            I32Add,
+            I32Load8U(memarg(layout::STR_BYTES, 0)),
+            I32Store8(memarg(layout::STR_BYTES, 0)),
+            LocalGet(copy),
+            I32Const(1),
+            I32Add,
+            LocalSet(copy),
+            Br(0),
+            End,
+            End,
+            LocalGet(ptr),
+        ]);
         Ok(())
     }
 

@@ -139,3 +139,107 @@ fn the_vowels_example_counts_nine() {
     let path = format!("{}/../examples/vowels.goat", env!("CARGO_MANIFEST_DIR"));
     assert_eq!(run(&fs::read_to_string(path).unwrap()), "9");
 }
+
+#[test]
+fn char_count_counts_code_points() {
+    for (text, count) in [
+        ("", 0),
+        ("hello", 5),
+        ("héllo", 5),
+        ("日本", 2),
+        ("🐐", 1),
+        ("👍🏽", 2),
+        ("👨‍👩‍👧", 5),
+    ] {
+        assert_eq!(
+            run(&format!("print(char_count(\"{text}\"))")),
+            count.to_string(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn char_at_gives_the_code_point_at_each_position() {
+    for (text, chars) in [
+        ("abc", &["a", "b", "c"][..]),
+        ("héé", &["h", "é", "é"]),
+        ("日本", &["日", "本"]),
+        ("a🐐b", &["a", "🐐", "b"]),
+        ("👍🏽", &["👍", "🏽"]),
+        ("👨‍👩‍👧", &["👨", "\u{200d}", "👩", "\u{200d}", "👧"]),
+    ] {
+        for (at, one) in chars.iter().enumerate() {
+            let at = at + 1;
+            assert_eq!(
+                run(&format!("print(char_at(\"{text}\", {at}))")),
+                *one,
+                "{text} {at}"
+            );
+            assert_eq!(
+                run(&format!("print(char_at(\"{text}\", {at}) == \"{one}\")")),
+                "true",
+                "{text} {at}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_character_is_a_string_of_its_own() {
+    assert_eq!(run("print(byte_length(char_at(\"a日b\", 2)))"), "3");
+    assert_eq!(run("print(char_count(char_at(\"a日b\", 2)))"), "1");
+    assert_eq!(
+        run("print(char_at(\"ab\", 1) == char_at(\"ba\", 2))"),
+        "true"
+    );
+    assert_eq!(
+        run("print(char_at(\"ab\", 1) == char_at(\"ab\", 2))"),
+        "false"
+    );
+}
+
+#[test]
+fn char_at_outside_the_string_traps() {
+    assert_traps("char_at(\"\", 1)", OUT_OF_RANGE);
+    assert_traps("char_at(\"日本\", 3)", OUT_OF_RANGE);
+    assert_traps("char_at(\"日本\", 0)", OUT_OF_RANGE);
+    assert_traps("char_at(\"日本\", -1)", OUT_OF_RANGE);
+    assert_traps("char_at(\"abc\", 0 - 2147483647 - 1)", OUT_OF_RANGE);
+    assert_traps("char_at(\"abc\", 2147483647)", OUT_OF_RANGE);
+}
+
+#[test]
+fn many_one_character_strings_are_built_and_freed() {
+    let src = "walk = program(s, at, same) do
+  if at > char_count(s)
+    then same
+    else
+      more = if char_at(s, at) == \"é\" then same + 1 else same done
+      walk(s, at + 1, more)
+  done
+done
+again = program(n, total) do
+  if n == 0 then total else again(n - 1, total + walk(\"é日🐐éa\", 1, 0)) done
+done
+print(again(500, 0))";
+    assert_eq!(run(src), "1000");
+}
+
+#[test]
+fn the_character_functions_work_as_values() {
+    assert_eq!(
+        run("print(change_each([\"a\", \"日本\", \"\"], char_count))"),
+        "[1, 2, 0]"
+    );
+    assert_eq!(run("at = char_at\nprint(at(\"日本\", 2))"), "本");
+}
+
+#[test]
+fn the_letters_example_prints_each_character() {
+    let path = format!("{}/../examples/letters.goat", env!("CARGO_MANIFEST_DIR"));
+    assert_eq!(
+        run(&fs::read_to_string(path).unwrap()),
+        "g\no\na\nt\n \né\n日\n🐐"
+    );
+}

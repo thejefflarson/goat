@@ -155,6 +155,8 @@ impl ForeignFn {
             }
             ("text", "byte_length", [STR], MTy::Int) => Some(Intrinsic::ByteLength),
             ("text", "byte_at", [STR, MTy::Int], MTy::Int) => Some(Intrinsic::ByteAt),
+            ("text", "char_count", [STR], MTy::Int) => Some(Intrinsic::CharCount),
+            ("text", "char_at", [STR, MTy::Int], STR) => Some(Intrinsic::CharAt),
             _ => None,
         }
     }
@@ -168,6 +170,8 @@ pub enum Intrinsic {
     Float(FloatFn),
     ByteLength,
     ByteAt,
+    CharCount,
+    CharAt,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -218,7 +222,8 @@ pub const INT_OVERFLOW: &str = "this number got too big";
 pub const DIVISION_BY_ZERO: &str = "division by zero";
 pub const NOT_A_WHOLE_NUMBER: &str = "this number can't be made a whole number";
 
-/// What `StrByte` traps with when its position is not inside the string.
+/// What `StrByte` and `StrChar` trap with when their position is not inside
+/// the string.
 pub const BYTE_OUT_OF_RANGE: &str = "this position is outside the string";
 
 /// Integer arithmetic traps on overflow rather than wrapping. `Div` rounds
@@ -334,6 +339,15 @@ pub enum Expr {
     /// local; borrows the string. A position outside `1..=StrLen` traps with
     /// `BYTE_OUT_OF_RANGE`.
     StrByte(Local, Local),
+    /// The number of code points in a string, counted as the bytes that are
+    /// not UTF-8 continuation bytes; borrows it.
+    StrChars(Local),
+    /// A new one-code-point string (`rc = 1`) from the code point at a 1-based
+    /// position held in an `Int` local; borrows the string. A position outside
+    /// `1..=StrChars` traps with `BYTE_OUT_OF_RANGE`. A code point is a lead
+    /// byte and the continuation bytes after it, so the copy never leaves the
+    /// string even when it is not valid UTF-8.
+    StrChar(Local, Local),
     Write(Write),
     /// A call to a host function. Effectful even when it returns `Unit`: it is
     /// never dropped, duplicated, or reordered (see `effects`). Arguments are
@@ -363,6 +377,8 @@ impl Expr {
             | Expr::StrEq(..)
             | Expr::StrLen(_)
             | Expr::StrByte(..)
+            | Expr::StrChars(_)
+            | Expr::StrChar(..)
             | Expr::CallForeign(..)
             | Expr::Write(Write::Str(_) | Write::Lit(_) | Write::End)
             | Expr::Dup(_)

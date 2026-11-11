@@ -214,6 +214,25 @@ impl<'p> Session<'p> {
     }
 }
 
+fn is_continuation(byte: u8) -> bool {
+    byte & 0xC0 == 0x80
+}
+
+/// The `at`-th (0-based) code point of `bytes`: a byte that is not a UTF-8
+/// continuation and the continuation bytes after it. It stays inside `bytes`
+/// whether or not they are valid UTF-8.
+fn code_point(bytes: &[u8], at: usize) -> Option<&[u8]> {
+    let start = bytes
+        .iter()
+        .enumerate()
+        .filter(|&(_, &b)| !is_continuation(b))
+        .nth(at)?
+        .0;
+    let tail = &bytes[start + 1..];
+    let width = 1 + tail.iter().take_while(|&&b| is_continuation(b)).count();
+    Some(&bytes[start..start + width])
+}
+
 enum Body {
     Record(Vec<Value>),
     Variant(u32, Vec<Value>),
@@ -367,6 +386,25 @@ impl<'p> Interp<'p> {
                     .and_then(|at| bytes.get(at))
                     .map(|&byte| Value::Int(byte.into()))
                     .ok_or_else(|| InterpError::Trap(BYTE_OUT_OF_RANGE.to_string()))
+            }
+            Expr::StrChars(s) => {
+                let bytes = self.string_bytes(frame.get(*s)?)?;
+                Ok(Value::Int(
+                    bytes.iter().filter(|&&b| !is_continuation(b)).count() as i64,
+                ))
+            }
+            Expr::StrChar(s, i) => {
+                let Value::Int(position) = frame.get(*i)? else {
+                    return Err(InterpError::Malformed("character position is not an Int"));
+                };
+                let bytes = self.string_bytes(frame.get(*s)?)?;
+                let one = position
+                    .checked_sub(1)
+                    .and_then(|at| usize::try_from(at).ok())
+                    .and_then(|at| code_point(bytes, at))
+                    .ok_or_else(|| InterpError::Trap(BYTE_OUT_OF_RANGE.to_string()))?
+                    .to_vec();
+                self.alloc(Body::Text(one), 1)
             }
             Expr::Write(Write::Number(value)) => match self.value(value, frame, depth)? {
                 Value::Float(x) => Ok(self.write(Piece::Number(x))),
@@ -856,7 +894,12 @@ impl<'p> Interp<'p> {
                     Value::Ptr(addr)
                 }
             },
-            Expr::StrEq(..) | Expr::StrLen(_) | Expr::StrByte(..) | Expr::Write(_) => {
+            Expr::StrEq(..)
+            | Expr::StrLen(_)
+            | Expr::StrByte(..)
+            | Expr::StrChars(_)
+            | Expr::StrChar(..)
+            | Expr::Write(_) => {
                 return self.text_op(e, frame, depth).map(Flow::Val);
             }
             Expr::CallForeign(f, args) => self.call_foreign(*f, args, frame)?,
