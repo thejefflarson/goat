@@ -1516,7 +1516,6 @@ fn wrap_lets(bindings: Vec<(Local, Expr)>, body: Expr) -> Expr {
         })
 }
 
-/// Recover the substitution that makes `template` equal the ground `actual`.
 /// The type variables of `scheme` as `use_ty` instantiates them.
 fn instance(scheme: &Scheme, use_ty: &Ty) -> Vec<(TypeVar, Ty)> {
     let mut found = Subst::new();
@@ -1554,6 +1553,7 @@ fn generalized_values(checked: &Checked) -> HashMap<Symbol, &hir::Expr> {
     values
 }
 
+/// Recover the substitution that makes `template` equal the ground `actual`.
 fn match_ty(template: &Ty, actual: &Ty, subst: &mut Subst) {
     match_ty_in(template, actual, subst, &mut HashSet::new());
 }

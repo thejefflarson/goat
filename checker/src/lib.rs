@@ -20,7 +20,7 @@ pub use ty::Ty;
 pub use vocab::Vocab;
 
 use hir::Symbol;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A successfully checked program: its name-resolved tree and inferred types.
 pub struct Checked {
@@ -93,7 +93,10 @@ pub fn check_with_vocab(
         .map(|(symbol, _)| *symbol)
         .collect();
     let captures = captures::capture_sets(&lowered.root, &generalized);
-    let errors = order::check(&lowered.root, &captures);
+    // Order is judged on the names the source writes: a function still uses a
+    // generalized value it names, however mono later lowers that value.
+    let named = captures::capture_sets(&lowered.root, &HashSet::new());
+    let errors = order::check(&lowered.root, &named);
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -1353,6 +1356,17 @@ mod tests {
                      x \
                    done \
                    outer()";
+        assert_eq!(
+            order_error(src),
+            ("`f` uses `m` before it is defined".to_string(), "f")
+        );
+    }
+
+    #[test]
+    fn function_run_before_a_generalized_value_it_reads_is_rejected() {
+        let src = "f = program() do g() done  x = f()  \
+                   m = {y: program(s) do s done}  \
+                   g = program() do m.y(1) done  x";
         assert_eq!(
             order_error(src),
             ("`f` uses `m` before it is defined".to_string(), "f")
