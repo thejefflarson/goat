@@ -1,7 +1,7 @@
 # ADR 0032 — Methods on any receiver: infer guarded structural recursive record types
 
-- Status: proposed (2026-11-11). Recommendation: **accept**, with the work list
-  in "What is left" below.
+- Status: accepted (2026-11-11), on condition that items 1 and 2 of "What is
+  left" land before methods on fixed-type receivers reach a kid.
 - Context: ADR 0010 (mono layout identity), ADR 0027 (rank-1 inference, value
   restriction), ADR 0028 (pure-extension spread recursion is rejected), ADR 0030
   (the verified core fragment), ADR 0031 item 7 (methods on a fixed-type
@@ -51,13 +51,17 @@ Accept **inferred, guarded, equi-recursive record types**, with these rules.
    text says "under a function parameter". The first thing a method does is
    return an updated copy of itself (`moved: program(self) do {...self, x: …}
    done`), so `P = {moved: (P) -> P}`. The second `P` is in result position.
-   Restricting the knot to parameters rejects the primary use case. This is a
-   deviation from the ticket for the owner to ratify.
+   Restricting the knot to parameters rejects the primary use case. The owner
+   ratified this.
 5. **Mono** lowers a `μ` over a function or record by reserving its signature
    or layout id before lowering the body (see Evidence, item 2).
 6. **`{...v, k: e}` is a syntactic value** (ADR 0027) when `v` and every `e` are
-   (see Evidence, item 3). This is independent of the knot and can ship
+   (see Evidence, item 3). This is independent of the knot and ships
    separately.
+7. **Two methods whose rows differ must work before acceptance is complete.**
+   The `update`-plus-`draw` shape (Evidence, item 1, "Known hole") is the
+   program kids write first, so the multi-mention knot is a precondition, not a
+   follow-up.
 
 ## Evidence
 
