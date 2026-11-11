@@ -213,6 +213,29 @@ impl Vocab {
         }
     }
 
+    /// The vocabulary of a text-editing host: it reports what the person typed
+    /// and where the selection is, and `draw` answers with style spans over
+    /// the text, each a role name (`"keyword"`) and never a colour.
+    pub fn editor() -> Vocab {
+        let event = |name: &str, payload: Ty| EventTag {
+            name: name.to_string(),
+            payload,
+            decode: None,
+        };
+        Vocab {
+            events: vec![
+                event("Edited", record([("text", Ty::Str), ("cursor", Ty::Int)])),
+                event("Selected", record([("anchor", Ty::Int), ("head", Ty::Int)])),
+            ],
+            shapes: vec![ShapeTag {
+                name: "Span".to_string(),
+                payload: record([("from", Ty::Int), ("to", Ty::Int), ("kind", Ty::Str)]),
+                scene: SceneCalls::Call("span".to_string()),
+            }],
+            ..Vocab::empty()
+        }
+    }
+
     /// The vocabulary of the turtle host, the CLI and the web player.
     pub fn turtle() -> Vocab {
         let keys = Group {
@@ -523,6 +546,16 @@ mod tests {
                 Box::new(turtle.keys.instantiate(0))
             ))
         );
+    }
+
+    #[test]
+    fn the_editor_vocabulary_is_well_formed_and_streams_spans_as_one_call() {
+        let editor = Vocab::editor();
+        assert_eq!(editor.validate(), Ok(()));
+        let span = shape_leaves(&editor.shape("Span").unwrap().payload).unwrap();
+        assert_eq!(paths(&span.head), ["from", "to", "kind"]);
+        assert!(span.list.is_none());
+        assert!(editor.decoders().is_empty());
     }
 
     #[test]

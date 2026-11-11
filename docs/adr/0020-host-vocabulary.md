@@ -372,3 +372,22 @@ is shared and a shape's payload must follow the import's argument order. The
 turtle-shaped assumptions it found are all on the host side: `goat::native`'s
 `Interactive` takes a closed `Event` enum of the turtle's six events, so the
 canvas drives the `goat_event_<Tag>` exports through `Guest` itself.
+
+### The third host (the editor)
+
+`Vocab::editor()` (`HostInterface::editor()`) is the vocabulary of a text
+editor. Events: `Edited({text: String, cursor: Int})` and
+`Selected({anchor: Int, head: Int})`. One shape, `Span({from: Int, to: Int,
+kind: String})`, streams through a new `scene.span(Int, Int, String)` import;
+a host that styles no text ignores it (`SceneSink::span` has an empty default).
+Offsets are 0-based UTF-8 byte offsets into the text, `to` exclusive, and
+`kind` is a style role (`"keyword"`, `"tag"`), never a color. `Edited` carries a
+bare string leaf with no decoder; mono's event constructors take it like any
+other leaf, so the marshalling is unchanged.
+
+`editor/highlight.goat` is the highlighter, an ADR 0015 program over this
+vocabulary: `update` lexes the text with `byte_length` and `byte_at` and keeps
+the spans, `draw` returns them. `goat/tests/highlight.rs` holds it to
+`parser::lexer` byte for byte. It marks only the tags the text declares, not
+the host's own (`Empty`, `Tick`, ...), and it counts every byte of 128 or more
+as part of a name where the lexer consults Unicode.

@@ -68,6 +68,11 @@ pub enum SceneCommand {
         text: String,
         color: String,
     },
+    Span {
+        from: i64,
+        to: i64,
+        kind: String,
+    },
 }
 
 /// Where an interactive program's picture goes: `draw` streams each frame as
@@ -83,6 +88,10 @@ pub trait SceneSink {
     fn circle(&mut self, center: (f64, f64), radius: f64, color: &str);
     fn rect(&mut self, origin: (f64, f64), size: (f64, f64), color: &str);
     fn text(&mut self, origin: (f64, f64), text: &str, color: &str);
+
+    /// A style span over `from..to`, byte offsets into the host's text; `kind`
+    /// is a role the host styles, never a color. Hosts with no text ignore it.
+    fn span(&mut self, _from: i64, _to: i64, _kind: &str) {}
 }
 
 /// A sink as a host: answers the `scene.*` imports by calling the sink.
@@ -99,7 +108,7 @@ impl<S: SceneSink> Host for Scene<S> {
 }
 
 fn scene_signature(module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)> {
-    use Boundary::{Number, Str, Unit};
+    use Boundary::{Int, Number, Str, Unit};
     if module != "scene" {
         return None;
     }
@@ -111,6 +120,7 @@ fn scene_signature(module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)
         "circle" => (vec![Number, Number, Number, Str], Unit),
         "rect" => (vec![Number, Number, Number, Number, Str], Unit),
         "text" => (vec![Number, Number, Str, Str], Unit),
+        "span" => (vec![Int, Int, Str], Unit),
         _ => return None,
     })
 }
@@ -120,7 +130,7 @@ fn scene_call(
     name: &str,
     args: &[HostValue],
 ) -> Result<HostValue, String> {
-    use HostValue::{Number, Str};
+    use HostValue::{Int, Number, Str};
     match (name, args) {
         ("begin", []) => sink.begin(),
         ("end", []) => sink.end(),
@@ -146,6 +156,7 @@ fn scene_call(
             check_color(color)?;
             sink.text((*x, *y), text, color)
         }
+        ("span", [Int(from), Int(to), Str(kind)]) => sink.span(*from, *to, kind),
         _ => return Err(format!("bad call to scene.{name}")),
     }
     Ok(HostValue::Unit)
@@ -210,6 +221,14 @@ impl SceneSink for SceneHost {
             origin,
             text: text.to_string(),
             color: color.to_string(),
+        });
+    }
+
+    fn span(&mut self, from: i64, to: i64, kind: &str) {
+        self.commands.push(SceneCommand::Span {
+            from,
+            to,
+            kind: kind.to_string(),
         });
     }
 }
