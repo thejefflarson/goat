@@ -16,6 +16,7 @@ WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY web/ ./
+COPY editor/ ../editor/
 COPY --from=compiler /src/target/wasm32-unknown-unknown/release/goat_web.wasm ../target/wasm32-unknown-unknown/release/goat_web.wasm
 RUN npm run build && npm run bundle
 

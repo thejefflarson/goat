@@ -76,7 +76,8 @@
 </main>
 <script type="module">
   import { compileLive, loadCompiler } from "./dist/compile.js";
-  import { superviseCanvas } from "./dist/browser.js";
+  import { superviseCanvas, superviseHighlighter } from "./dist/browser.js";
+  import { GoatHighlighter } from "./dist/highlighter.js";
   import { isInteractiveModule } from "./dist/loop.js";
   import { mountEditor } from "./dist/editor.bundle.js";
 
@@ -233,8 +234,22 @@ done
     show(problems, String(e.message ?? e));
   }
 
+  // Developer toggle: ?highlighter=goat colors the editor with editor/highlight.goat,
+  // run in a worker of its own, instead of the built-in tokenizer. Any failure
+  // leaves the built-in one coloring.
+  let highlighter;
+  if (compiler && new URLSearchParams(location.search).get("highlighter") === "goat") {
+    try {
+      const source = await (await fetch("./highlight.goat")).text();
+      highlighter = new GoatHighlighter({ compiler, source, runner: superviseHighlighter(), host: () => host });
+      highlighter.start();
+    } catch {
+      highlighter = undefined;
+    }
+  }
+
   // Without the compiler the editor still edits; it just neither colors nor checks.
-  const editor = mountEditor(sourceHost, EXAMPLES.arrow_draw, compiler, () => host);
+  const editor = mountEditor(sourceHost, EXAMPLES.arrow_draw, compiler, () => host, highlighter);
   example.addEventListener("change", () => {
     host = HOSTS[example.value];
     editor.setText(EXAMPLES[example.value]);

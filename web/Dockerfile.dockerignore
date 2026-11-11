@@ -7,9 +7,11 @@
 !wasm
 !goat
 !cli
+!canvas
 !wamr
 !grammar
 !web
+!editor
 !prelude
 !examples
 web/node_modules

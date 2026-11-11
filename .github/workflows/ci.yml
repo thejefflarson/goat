@@ -40,6 +40,9 @@ jobs:
       - name: Add clippy and rustfmt
         run: rustup component add clippy rustfmt
 
+      - name: Editor image build context covers the workspace
+        run: bash .github/scripts/check-dockerignore.sh
+
       - name: Format
         run: cargo fmt --all --check
 

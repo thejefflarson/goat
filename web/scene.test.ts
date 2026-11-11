@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { compile } from "./compile.ts";
+import { compile, compileEditor } from "./compile.ts";
 import { createHost } from "./runtime.ts";
 import {
   CanvasScene,
   type DrawingContext,
+  MAX_SPANS,
   RecordingScene,
+  SpanScene,
   constructEvent,
   newString,
   sceneImports,
@@ -272,4 +274,67 @@ done
   exports.goat_release_model(model);
   exports.goat_shutdown();
   assert.equal(exports.goat_live_allocs(), 0);
+});
+
+test("an editor program's spans reach the scene as numbers, and take empties the frame", async () => {
+  const module = await compileEditor(
+    compiler,
+    `init = {n: 0}
+update = program(m, e) do match e do Edited(x) then {n: 7} else m done done
+draw = program(m) do [Span({from: 1, to: 3, kind: "keyword"}), Span({from: 4, to: 9, kind: "<evil>"})] done`,
+  );
+  assert.ok(module.ok);
+  const scene = new SpanScene();
+  let memory: WebAssembly.Memory | undefined;
+  const { instance } = await WebAssembly.instantiate(module.module, {
+    goat: createHost(() => memory!).imports.goat,
+    ...sceneImports(() => memory!, scene),
+  });
+  memory = instance.exports.memory as WebAssembly.Memory;
+  const exports = instance.exports as unknown as {
+    goat_setup(): number;
+    goat_update(model: number, event: number): number;
+    goat_draw(model: number): void;
+  };
+  const edited = constructEvent(instance.exports, { kind: "Edited", text: "hello", cursor: 2 });
+  assert.notEqual(edited, null);
+  const model = exports.goat_update(exports.goat_setup(), edited!);
+  exports.goat_draw(model);
+  assert.deepEqual(scene.take(), [
+    { from: 1, to: 3, kind: "keyword" },
+    { from: 4, to: 9, kind: "<evil>" },
+  ]);
+  assert.deepEqual(scene.take(), []);
+});
+
+test("a frame with more spans than the cap traps the program", () => {
+  const scene = new SpanScene();
+  for (let i = 0; i < MAX_SPANS; i++) scene.span(i, i + 1, "number");
+  assert.throws(() => scene.span(0, 1, "number"), /more than/);
+  scene.begin();
+  scene.span(0, 1, "number");
+  assert.equal(scene.take().length, 1);
+});
+
+test("the editor's events are subscriptions, and Edited and HostTags build with their payloads", async () => {
+  const module = await compileEditor(
+    compiler,
+    `init = {n: 0}
+update = program(m, e) do match e do Edited(x) then m HostTags(h) then m else m done done
+draw = program(m) do [] done`,
+  );
+  assert.ok(module.ok);
+  let memory: WebAssembly.Memory | undefined;
+  const { instance } = await WebAssembly.instantiate(module.module, {
+    goat: createHost(() => memory!).imports.goat,
+    ...sceneImports(() => memory!, new SpanScene()),
+  });
+  memory = instance.exports.memory as WebAssembly.Memory;
+  assert.deepEqual(subscriptions(instance.exports).sort(), ["Edited", "HostTags"]);
+  for (const event of [
+    { kind: "Edited", text: "\u00e9", cursor: 1 },
+    { kind: "HostTags", names: "Dot Box" },
+  ] as const) {
+    assert.equal(typeof constructEvent(instance.exports, event), "number", event.kind);
+  }
 });

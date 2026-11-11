@@ -29,7 +29,7 @@ test("each scene import takes the golden arity and records the golden field type
   } as unknown as WebAssembly.Exports;
   const recording = new RecordingScene();
   const { scene } = sceneImports(() => memory, recording) as unknown as {
-    scene: Record<string, (...args: number[]) => void>;
+    scene: Record<string, (...args: Array<number | bigint>) => void>;
   };
 
   assert.deepEqual(Object.keys(scene).sort(), [...golden.keys()].sort());
@@ -37,10 +37,12 @@ test("each scene import takes the golden arity and records the golden field type
     const call = scene[name]!;
     assert.equal(call.length, params.length, `scene.${name} arity`);
     recording.commands.length = 0;
-    call(...params.map((type) => (type === "string" ? newString(exports, "red") : 1.5)));
+    // An Int crosses the wasm boundary as a BigInt and is recorded as a number.
+    call(...params.map((type) => (type === "string" ? newString(exports, "red") : type === "int" ? 1n : 1.5)));
     assert.equal(recording.commands.length, 1, `scene.${name} records one command`);
     const [{ kind, ...fields }] = recording.commands as [{ kind: string }];
     assert.equal(kind, name);
-    assert.deepEqual(Object.values(fields).map((value) => typeof value), params, `scene.${name} fields`);
+    const recorded = params.map((type) => (type === "int" ? "number" : type));
+    assert.deepEqual(Object.values(fields).map((value) => typeof value), recorded, `scene.${name} fields`);
   }
 });

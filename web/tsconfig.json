@@ -23,6 +23,7 @@
     "worker-core.ts",
     "worker.ts",
     "input.ts",
+    "highlighter.ts",
     "stage.ts",
     "browser.ts",
     "embed.ts",

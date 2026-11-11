@@ -4,7 +4,7 @@
 // compile.ts, and the decorations in `tokenDecorations`.
 
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { Compartment, RangeSetBuilder, type Extension } from "@codemirror/state";
+import { Compartment, RangeSetBuilder, StateEffect, type Extension } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -19,6 +19,7 @@ import { linter, lintGutter } from "@codemirror/lint";
 import { autocompletion } from "@codemirror/autocomplete";
 import { check, createCompleter, createTokenizer, type Host, type Token } from "./compile.ts";
 import { goatCompletions } from "./completion.ts";
+import type { TokenSource } from "./highlighter.ts";
 import { lintDiagnostics } from "./lint.ts";
 
 const CHECK_DELAY_MS = 200;
@@ -44,6 +45,41 @@ function highlighting(tokenize: (source: string) => Token[]): Extension {
   );
 }
 
+const setTokens = StateEffect.define<DecorationSet>();
+
+// Decorations from a `TokenSource` that may answer later (the goat highlighter,
+// in a worker). Until it does, the old decorations ride along with the edit.
+function sourcedHighlighting(source: TokenSource): Extension {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet = Decoration.none;
+      #unsubscribe: () => void;
+      constructor(view: EditorView) {
+        this.#unsubscribe = source.onTokens((tokens) =>
+          view.dispatch({ effects: setTokens.of(tokenDecorations(tokens)) }),
+        );
+        this.#adopt(source.request(view.state.doc.toString()));
+      }
+      update(update: ViewUpdate) {
+        if (update.docChanged) {
+          this.decorations = this.decorations.map(update.changes);
+          this.#adopt(source.request(update.state.doc.toString()));
+        }
+        for (const transaction of update.transactions) {
+          for (const effect of transaction.effects) if (effect.is(setTokens)) this.decorations = effect.value;
+        }
+      }
+      destroy() {
+        this.#unsubscribe();
+      }
+      #adopt(tokens: Token[] | null) {
+        if (tokens) this.decorations = tokenDecorations(tokens);
+      }
+    },
+    { decorations: (plugin) => plugin.decorations },
+  );
+}
+
 function liveChecking(compiler: WebAssembly.Module, host: () => Host): Extension {
   const source = async (view: EditorView) => {
     const text = view.state.doc.toString();
@@ -60,9 +96,9 @@ function completing(compiler: WebAssembly.Module, host: () => Host): Extension {
   return autocompletion({ override: [goatCompletions(createCompleter(compiler, host))] });
 }
 
-function withCompiler(compiler: WebAssembly.Module, host: () => Host): Extension[] {
-  const tokenize = createTokenizer(compiler, host);
-  return [highlighting(tokenize), liveChecking(compiler, host), completing(compiler, host)];
+function withCompiler(compiler: WebAssembly.Module, host: () => Host, tokens?: TokenSource): Extension[] {
+  const colors = tokens ? sourcedHighlighting(tokens) : highlighting(createTokenizer(compiler, host));
+  return [colors, liveChecking(compiler, host), completing(compiler, host)];
 }
 
 // Colors come from the page's custom properties, so light and dark follow the
@@ -98,11 +134,13 @@ export interface GoatEditor {
 
 // Without a `compiler` the editor still edits; it just neither colors, checks nor completes.
 // `host` names the vocabulary the buffer is colored, checked and completed against, asked each time.
+// `tokens` replaces the built-in tokenizer as the source of the colors.
 export function mountEditor(
   parent: HTMLElement,
   doc: string,
   compiler?: WebAssembly.Module,
   host: () => Host = () => "turtle",
+  tokens?: TokenSource,
 ): GoatEditor {
   const scheme = matchMedia("(prefers-color-scheme: dark)");
   const darkness = new Compartment();
@@ -127,7 +165,7 @@ export function mountEditor(
         autocorrect: "off",
         autocapitalize: "off",
       }),
-      ...(compiler ? withCompiler(compiler, host) : []),
+      ...(compiler ? withCompiler(compiler, host, tokens) : []),
     ],
   });
   scheme.addEventListener("change", () =>
