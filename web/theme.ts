@@ -44,7 +44,7 @@ export const DEFAULT_THEME: Theme = {
 
 // The basic CSS colour names. Contrast can only be measured on a colour whose
 // value is known, so a name outside this list has to be written as a code.
-const NAMED: Record<string, string> = {
+const NAMED = new Map<string, string>(Object.entries({
   black: "#000000",
   silver: "#c0c0c0",
   gray: "#808080",
@@ -63,7 +63,7 @@ const NAMED: Record<string, string> = {
   teal: "#008080",
   aqua: "#00ffff",
   orange: "#ffa500",
-};
+}));
 
 function resolveColor(text: string): string | null {
   try {
@@ -71,7 +71,7 @@ function resolveColor(text: string): string | null {
   } catch {
     return null;
   }
-  return normalizeHex(text) ?? NAMED[text.toLowerCase()] ?? null;
+  return normalizeHex(text) ?? NAMED.get(text.toLowerCase()) ?? null;
 }
 
 export type ThemeOutcome = { ok: true; theme: Theme; notes: string[] } | { ok: false; message: string };

@@ -142,6 +142,14 @@ test("a colour outside the allowlist or the names the host knows is dropped and 
   assert.match(outcome.notes[0]!, /light number colour "papayawhip"/);
 });
 
+test("a name only an object inherits, like constructor, is an unknown colour, not a crash", async () => {
+  const { themes } = engine();
+  const outcome = await themes.change(recolored("number", "constructor"));
+  assert.ok(outcome.ok);
+  assert.deepEqual(outcome.theme, DEFAULT_THEME);
+  assert.match(outcome.notes[0]!, /light number colour "constructor"/);
+});
+
 test("a program that never answers is dropped after its budget instead of hanging the queue", async () => {
   const painted: Theme[] = [];
   let stopped = 0;
