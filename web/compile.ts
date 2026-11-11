@@ -12,19 +12,30 @@ type Entry =
   | "gw_compile_canvas"
   | "gw_compile_canvas_live"
   | "gw_check_canvas"
+  | "gw_check_editor"
   | "gw_tokenize"
   | "gw_tokenize_canvas"
   | "gw_compile_editor";
 
-// The vocabulary a program is written against: the turtle's, or the canvas
-// host's (`Frame`, `MousePress`, `Dot`, ...).
-export type Host = "turtle" | "canvas";
+// The vocabulary a program is written against: the turtle's, the canvas host's
+// (`Frame`, `MousePress`, `Dot`, ...), or the editor's (`Edited`, `Span`), which
+// `editor/theme.goat` is written in. The editor has its own compile and check;
+// its text is lexed and completed as the turtle's.
+export type Host = "turtle" | "canvas" | "editor";
 
-const COMPILE: Record<Host, Entry> = { turtle: "gw_compile", canvas: "gw_compile_canvas" };
-const COMPILE_LIVE: Record<Host, Entry> = { turtle: "gw_compile_live", canvas: "gw_compile_canvas_live" };
-const CHECK: Record<Host, Entry> = { turtle: "gw_check", canvas: "gw_check_canvas" };
-const TOKENIZE: Record<Host, Entry> = { turtle: "gw_tokenize", canvas: "gw_tokenize_canvas" };
-const COMPLETE: Record<Host, CompleteEntry> = { turtle: "gw_complete", canvas: "gw_complete_canvas" };
+const COMPILE: Record<Host, Entry> = { turtle: "gw_compile", canvas: "gw_compile_canvas", editor: "gw_compile_editor" };
+const COMPILE_LIVE: Record<Host, Entry> = {
+  turtle: "gw_compile_live",
+  canvas: "gw_compile_canvas_live",
+  editor: "gw_compile_editor",
+};
+const CHECK: Record<Host, Entry> = { turtle: "gw_check", canvas: "gw_check_canvas", editor: "gw_check_editor" };
+const TOKENIZE: Record<Host, Entry> = { turtle: "gw_tokenize", canvas: "gw_tokenize_canvas", editor: "gw_tokenize" };
+const COMPLETE: Record<Host, CompleteEntry> = {
+  turtle: "gw_complete",
+  canvas: "gw_complete_canvas",
+  editor: "gw_complete",
+};
 
 type CompleteEntry = "gw_complete" | "gw_complete_canvas";
 
@@ -39,6 +50,7 @@ interface CompilerExports {
   gw_compile_canvas(ptr: number, len: number): number;
   gw_compile_canvas_live(ptr: number, len: number): number;
   gw_check_canvas(ptr: number, len: number): number;
+  gw_check_editor(ptr: number, len: number): number;
   gw_tokenize(ptr: number, len: number): number;
   gw_tokenize_canvas(ptr: number, len: number): number;
   gw_compile_editor(ptr: number, len: number): number;
@@ -128,14 +140,12 @@ export async function compileEditor(compiler: WebAssembly.Module, source: string
     : { ok, diagnostics: new TextDecoder().decode(payload) };
 }
 
-const HOST_TAGS: Record<Host, "gw_host_tags" | "gw_host_tags_canvas"> = {
-  turtle: "gw_host_tags",
-  canvas: "gw_host_tags_canvas",
-};
+const HOST_TAGS = { turtle: "gw_host_tags", canvas: "gw_host_tags_canvas" } as const;
 
 // The names `host` declares as tags, space separated: what a highlighter must
 // be told, since the text of a program does not declare them.
 export function hostTags(compiler: WebAssembly.Module, host: Host): string {
+  if (host === "editor") return "";
   const instance = new WebAssembly.Instance(compiler, {});
   const exports = instance.exports as unknown as CompilerExports;
   const { ok, payload } = takeRecord(exports, exports[HOST_TAGS[host]]());

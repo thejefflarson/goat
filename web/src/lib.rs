@@ -33,6 +33,7 @@
 //! - `gw_compile_editor` is `gw_compile` against the editor host's vocabulary
 //!   (`Edited`, `HostTags`, `Span`, ...), which `editor/highlight.goat` is written
 //!   against.
+//! - `gw_check_editor` is `gw_check` against that same vocabulary.
 //! - `gw_host_tags` and `gw_host_tags_canvas` take no input and return
 //!   `TAG_OK` with the names the turtle's or canvas host declares as tags, space
 //!   separated and sorted: the names `gw_tokenize` marks beyond the text's own,
@@ -217,6 +218,22 @@ pub unsafe extern "C" fn gw_compile_editor(src_ptr: u32, src_len: u32) -> u32 {
     // SAFETY: forwarded from the caller's contract.
     unsafe {
         compile_record(
+            src_ptr as usize as *const u8,
+            src_len as usize,
+            compile_editor,
+        ) as usize as u32
+    }
+}
+
+/// Like `gw_check`, against the editor host's vocabulary.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_check_editor(src_ptr: u32, src_len: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        check_record(
             src_ptr as usize as *const u8,
             src_len as usize,
             compile_editor,
@@ -610,6 +627,11 @@ mod tests {
         unsafe { compile_record(ptr, len, compile_editor) }
     }
 
+    unsafe fn check_editor_at(ptr: *const u8, len: usize) -> *mut u8 {
+        // SAFETY: forwarded from the caller's contract.
+        unsafe { check_record(ptr, len, compile_editor) }
+    }
+
     fn run(source: &[u8]) -> (u8, Vec<u8>) {
         // SAFETY: `source` is a live slice; the record is read before it is freed.
         unsafe {
@@ -881,6 +903,16 @@ mod tests {
         assert_eq!(unsafe { *record }, TAG_OK);
         // SAFETY: `record` came from `compile_record` and is freed once.
         unsafe { free_record(record) };
+    }
+
+    #[test]
+    fn the_editor_check_accepts_the_theme_and_reports_what_the_turtle_check_would_miss() {
+        const THEME: &[u8] = include_bytes!("../../editor/theme.goat");
+        assert_eq!(record_of(check_editor_at, THEME), (TAG_OK, Vec::new()));
+        let (tag, payload) = record_of(check_editor_at, b"1 + true");
+        assert_eq!(tag, TAG_ERR);
+        assert!(!diagnostics(&payload).is_empty());
+        assert_eq!(record_of(check_at, THEME).0, TAG_ERR);
     }
 
     #[test]

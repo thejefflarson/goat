@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { AA, SURFACES, contrast } from "./contrast.ts";
 
-const AA = 4.5;
 const roles = ["keyword", "literal", "number", "string", "comment", "tag"];
 
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
@@ -15,18 +15,6 @@ function vars(block: string): Map<string, string> {
       "#" + (hex.length === 3 ? [...hex].map((c) => c + c).join("") : hex),
     ]),
   );
-}
-
-function luminance(hex: string): number {
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) =>
-    c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
-  );
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function contrast(a: string, b: string): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
 }
 
 const light = vars(lightBlock);
@@ -57,6 +45,13 @@ test("editor fallbacks match the light-mode tokens", () => {
     const fallback = editor.match(new RegExp(`var\\(--tok-${role}, (#[0-9a-fA-F]{6})\\)`))?.[1];
     assert.equal(fallback, light.get(`tok-${role}`), `tok-${role} fallback`);
   }
+});
+
+test("the theme check's surfaces are the ones the page paints", () => {
+  assert.equal(SURFACES.light.panel, light.get("panel"));
+  assert.equal(SURFACES.light.selection, light.get("selection"));
+  assert.equal(SURFACES.dark.panel, modes.dark.get("panel"));
+  assert.equal(SURFACES.dark.selection, modes.dark.get("selection"));
 });
 
 test("problems is a polite status region, not an alert", () => {

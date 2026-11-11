@@ -24,6 +24,7 @@
     "worker.ts",
     "input.ts",
     "highlighter.ts",
+    "theme.ts",
     "stage.ts",
     "browser.ts",
     "embed.ts",

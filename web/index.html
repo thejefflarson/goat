@@ -69,6 +69,8 @@
     </select>
     <label><input type="checkbox" id="live" checked> Live</label>
     <span id="status" role="status"></span>
+    <button id="theme" type="button" disabled>Edit editor theme</button>
+    <button id="reset-theme" type="button" hidden>Reset theme</button>
   </section>
   <div id="stage"><canvas id="canvas" width="600" height="600" aria-label="drawing" tabindex="0"></canvas></div>
   <pre id="problems" role="status" hidden></pre>
@@ -76,16 +78,17 @@
 </main>
 <script type="module">
   import { compileLive, loadCompiler } from "./dist/compile.js";
-  import { superviseCanvas, superviseHighlighter } from "./dist/browser.js";
+  import { canSupervise, superviseCanvas, superviseHighlighter } from "./dist/browser.js";
   import { GoatHighlighter } from "./dist/highlighter.js";
   import { isInteractiveModule } from "./dist/loop.js";
+  import { ThemeEngine, themeApplier, themeStore } from "./dist/theme.js";
   import { mountEditor } from "./dist/editor.bundle.js";
 
   const COMPILER_URL = "./goat_web.wasm";
 
   const $ = (id) => document.getElementById(id);
-  const [sourceHost, button, canvas, problems, output, example, live, status] =
-    ["source", "run", "canvas", "problems", "output", "example", "live", "status"].map($);
+  const [sourceHost, button, canvas, problems, output, example, live, status, themeButton, resetTheme] =
+    ["source", "run", "canvas", "problems", "output", "example", "live", "status", "theme", "reset-theme"].map($);
   const RELOAD_DELAY_MS = 400;
 
   // An example names its vocabulary: the turtle's, or the canvas host's.
@@ -251,8 +254,80 @@ done
   // Without the compiler the editor still edits; it just neither colors nor checks.
   const editor = mountEditor(sourceHost, EXAMPLES.arrow_draw, compiler, () => host, highlighter);
   example.addEventListener("change", () => {
+    if (editingTheme) setThemeMode(false);
     host = HOSTS[example.value];
     editor.setText(EXAMPLES[example.value]);
+  });
+
+  // The editor's colours come from editor/theme.goat. "Edit editor theme" swaps
+  // it into the editor; saving (Run, or Live as you type) re-colours the page. A
+  // theme with a mistake or an unreadable colour leaves the last one in place.
+  let themes;
+  let defaultTheme = "";
+  let editingTheme = false;
+  let mine = "";
+  const storage = (() => {
+    try {
+      return localStorage;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (compiler && canSupervise()) {
+    try {
+      defaultTheme = await (await fetch("./theme.goat")).text();
+      themes = new ThemeEngine({
+        compiler,
+        runner: superviseHighlighter(),
+        apply: themeApplier(document.documentElement, matchMedia("(prefers-color-scheme: dark)")),
+      });
+      themeButton.disabled = false;
+      const saved = themeStore.load(storage);
+      if (saved) themes.change(saved);
+    } catch {
+      themes = undefined;
+    }
+  }
+
+  function setThemeMode(on) {
+    editingTheme = on;
+    host = on ? "editor" : HOSTS[example.value];
+    themeButton.textContent = on ? "Back to my program" : "Edit editor theme";
+    button.textContent = on ? "Save theme" : "Run";
+    resetTheme.hidden = !on;
+    show(problems, "");
+    show(status, "");
+  }
+
+  async function saveTheme() {
+    const text = editor.text();
+    const outcome = await themes.change(text);
+    if (!editingTheme || text !== editor.text()) return;
+    if (!outcome.ok) {
+      show(problems, outcome.message);
+      return show(status, "There is a mistake, so the last theme is still in use");
+    }
+    themeStore.save(storage, text === defaultTheme ? null : text);
+    show(problems, outcome.notes.join("\n"));
+    show(status, "Theme saved");
+  }
+
+  themeButton.addEventListener("click", () => {
+    clearTimeout(reloadTimer);
+    if (editingTheme) {
+      setThemeMode(false);
+      return editor.setText(mine);
+    }
+    mine = editor.text();
+    setThemeMode(true);
+    editor.setText(themeStore.load(storage) ?? defaultTheme);
+  });
+  resetTheme.addEventListener("click", () => {
+    themeStore.save(storage, null);
+    themes.reset();
+    editor.setText(defaultTheme);
+    show(problems, "");
+    show(status, "Theme reset");
   });
 
   const RELOAD_SAYS = {
@@ -282,7 +357,7 @@ done
   }
   editor.onChange(() => {
     clearTimeout(reloadTimer);
-    if (live.checked) reloadTimer = setTimeout(reload, RELOAD_DELAY_MS);
+    if (live.checked) reloadTimer = setTimeout(editingTheme ? saveTheme : reload, RELOAD_DELAY_MS);
   });
   live.addEventListener("change", () => {
     clearTimeout(reloadTimer);
@@ -290,6 +365,10 @@ done
   });
 
   button.addEventListener("click", async () => {
+    if (editingTheme) {
+      clearTimeout(reloadTimer);
+      return saveTheme();
+    }
     page.supervisor.stop();
     clearTimeout(reloadTimer);
     button.disabled = true;

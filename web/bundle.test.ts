@@ -93,6 +93,12 @@ test("nginx sends the same isolation headers", () => {
   }
 });
 
+test("the default theme is served, and the page fetches it from a relative path", async () => {
+  assert.match(html, /fetch\("\.\/theme\.goat"\)/);
+  const served = await (await fetch(new URL("theme.goat", page))).text();
+  assert.equal(served, readFileSync(new URL("../editor/theme.goat", import.meta.url), "utf8"));
+});
+
 test("the compiler loads from the page's relative URL and compiles", async () => {
   const compiler = await loadCompiler(new URL(compilerUrl, page));
   const result = await compile(compiler, "forward(10)");

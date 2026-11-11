@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 const here = new URL(".", import.meta.url);
 const wasmSource = new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", here);
 const highlighterSource = new URL("../editor/highlight.goat", here);
+const themeSource = new URL("../editor/theme.goat", here);
 
 // Lays out the pages, their compiled modules and the compiler at the relative
 // paths the pages reference, so the directory can be served as-is.
@@ -14,6 +15,7 @@ export function assemble(outDir: string, pages: string[] = ["index.html"]): void
   cpSync(new URL("dist", here), `${outDir}/dist`, { recursive: true });
   copyFileSync(wasmSource, `${outDir}/goat_web.wasm`);
   copyFileSync(highlighterSource, `${outDir}/highlight.goat`);
+  copyFileSync(themeSource, `${outDir}/theme.goat`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -1,0 +1,51 @@
+# The colours of the editor, written in goat. Change a colour, save, and the
+# editor re-colours at once; "reset theme" brings these back.
+#
+# Each swatch(role, palette, color) paints one style role in one palette: `light`
+# is for light pages and `dark` for dark ones. A color is a name like "purple" or
+# a code like "#4a2fb8". The editor checks that every color is easy to read on
+# its background and refuses a theme with one that is not, saying which.
+#
+# A swatch is a Span, the editor host's one shape: `from` is the role, `to` is
+# the palette and `kind` is the color. goat only says what the colors are; the
+# editor decides how to paint them.
+
+keyword = 0
+literal = 1
+number = 2
+string = 3
+comment = 4
+tag_name = 5
+
+light = 0
+dark = 1
+
+swatch = program(role, palette, color) do
+  Span({from: role, to: palette, kind: color})
+done
+
+init = {}
+
+update = program(model, event) do
+  match event do
+    Edited(edit) then model
+    else model
+  done
+done
+
+draw = program(model) do
+  [
+    swatch(keyword, light, "#4a2fb8"),
+    swatch(literal, light, "#095a80"),
+    swatch(number, light, "#095a80"),
+    swatch(string, light, "#14602b"),
+    swatch(comment, light, "#505058"),
+    swatch(tag_name, light, "#80400a"),
+    swatch(keyword, dark, "#b4a3ff"),
+    swatch(literal, dark, "#7dd3fc"),
+    swatch(number, dark, "#7dd3fc"),
+    swatch(string, dark, "#7ee787"),
+    swatch(comment, dark, "#b8b8c4"),
+    swatch(tag_name, dark, "#ffb870")
+  ]
+done

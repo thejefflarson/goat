@@ -407,3 +407,15 @@ event, not once per animation frame. The page treats the spans as untrusted
 words: `kind` must be one of the seven roles (`comment`, `keyword`, `literal`,
 `number`, `string`, `tag`, `operator`) before it becomes a class name, and a
 span out of range or out of order is dropped.
+
+The editor's colours are a second program over this vocabulary,
+`editor/theme.goat`, which the page runs once per change of the theme instead
+of once per edit. It reuses `Span` as a swatch because the vocabulary has no
+second string and a new shape would change every host's imports: `from` is the
+role (an index into the six styled roles), `to` the palette (0 light, 1 dark)
+and `kind` the color. This is the one place `kind` is a color rather than a
+role, and the page treats it as untrusted like any span: roles and palettes
+outside the known ones are dropped, a color must pass `checkColor` and name a
+value the page can measure, and a theme with a color under 4.5:1 contrast on
+the editor's panel or selection is rejected whole, keeping the previous theme.
+The page writes only validated `#rrggbb` values to `--tok-*` custom properties.
