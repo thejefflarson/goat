@@ -269,3 +269,114 @@ fn the_string_functions_want_a_string_and_an_int_position() {
         }]
     );
 }
+
+/// `StrChar` at the 1-based `position` of `text`, giving the new string's byte
+/// length; both strings dropped.
+fn char_at_length(text: &str, position: i64) -> Program {
+    let body = let_(
+        0,
+        Expr::StrLit(DataId(0)),
+        let_(
+            1,
+            int(position),
+            let_(
+                2,
+                Expr::StrChar(Local(0), Local(1)),
+                let_(
+                    3,
+                    Expr::StrLen(Local(2)),
+                    let_(
+                        4,
+                        Expr::Drop(Local(2)),
+                        let_(5, Expr::Drop(Local(0)), local(3)),
+                    ),
+                ),
+            ),
+        ),
+    );
+    string_program(&[text], body, MTy::Int)
+}
+
+#[test]
+fn str_chars_counts_code_points() {
+    for (text, count) in [("", 0), ("ab", 2), ("é", 1), ("日本", 2), ("👍🏽", 2)] {
+        let body = let_(
+            0,
+            Expr::StrLit(DataId(0)),
+            let_(
+                1,
+                Expr::StrChars(Local(0)),
+                let_(2, Expr::Drop(Local(0)), local(1)),
+            ),
+        );
+        let out = run_verified(&string_program(&[text], body, MTy::Int));
+        assert_eq!(out.value, Value::Int(count), "{text}");
+    }
+}
+
+#[test]
+fn str_char_copies_one_code_point_into_a_counted_string() {
+    for (position, bytes) in [(1, 1), (2, 2), (3, 3), (4, 4), (5, 1)] {
+        let out = run_verified(&char_at_length("aé日🐐b", position));
+        assert_eq!(out.value, Value::Int(bytes), "position {position}");
+        assert_eq!(out.live_allocations, 0, "position {position}");
+    }
+}
+
+#[test]
+fn str_char_outside_the_string_traps() {
+    for position in [0, 6, -1, i64::MIN, i64::MAX] {
+        let p = char_at_length("aé日🐐b", position);
+        assert_eq!(verify(&p), Ok(()));
+        assert_eq!(
+            run(&p),
+            Err(InterpError::Trap(BYTE_OUT_OF_RANGE.into())),
+            "position {position}"
+        );
+    }
+    assert_eq!(
+        run(&char_at_length("", 1)),
+        Err(InterpError::Trap(BYTE_OUT_OF_RANGE.into()))
+    );
+}
+
+#[test]
+fn the_character_nodes_want_a_string_and_an_int_position() {
+    let float_position = let_(
+        0,
+        Expr::StrLit(DataId(0)),
+        let_(
+            1,
+            float(1.0),
+            let_(
+                2,
+                Expr::StrChar(Local(0), Local(1)),
+                let_(
+                    3,
+                    Expr::Drop(Local(2)),
+                    let_(4, Expr::Drop(Local(0)), int(0)),
+                ),
+            ),
+        ),
+    );
+    assert_eq!(
+        kinds(&string_program(&["a"], float_position, MTy::Int)),
+        [ErrorKind::TypeMismatch {
+            expected: MTy::Int,
+            found: MTy::Float
+        }]
+    );
+    let not_a_string = let_(
+        0,
+        alloc_record(1),
+        let_(
+            1,
+            Expr::StrChars(Local(0)),
+            let_(2, Expr::Drop(Local(0)), local(1)),
+        ),
+    );
+    assert!(
+        kinds(&string_program(&[], not_a_string, MTy::Int))
+            .contains(&ErrorKind::NotAString(MTy::Ptr(HeapKind::Record(RECORD))))
+    );
+}

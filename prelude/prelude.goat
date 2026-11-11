@@ -167,6 +167,14 @@ byte_length = foreign "text" "byte_length" (String) -> Int
 # A position outside the string stops the program.
 byte_at = foreign "text" "byte_at" (String, Int) -> Int
 
+# How many Unicode code points a string holds: `"é"` is 1. Some things that look
+# like one character are several code points: a thumbs-up with a skin tone is 2.
+char_count = foreign "text" "char_count" (String) -> Int
+
+# The code point at a position of a string, counting from 1 like `item`, as a new
+# one-character string. A position outside the string stops the program.
+char_at = foreign "text" "char_at" (String, Int) -> String
+
 # The nearest whole number below: `floor(-2.5)` is `-3`.
 floor = program(x) do
   whole = truncate(x)

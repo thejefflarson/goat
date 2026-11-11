@@ -556,6 +556,12 @@ the table:
   `Int`, and traps outside the string. Both are `foreign "text"` bindings that
   mono lowers to MIR's `StrLen` and `StrByte`, the way `sqrt` and `truncate`
   lower to `FloatFn` (ADR 0017); neither allocates.
+- `char_count(s)` and `char_at(s, i)` count Unicode code points, not graphemes
+  (UAX #29 tables cost space on wasm and the RP2040). `char_at` counts from 1,
+  traps outside the string, and returns a new one-code-point `String` allocated
+  through the runtime allocator (`rc = 1`, freed by the normal drop path; on the
+  embedded profile it draws on the fixed arena and traps when it is full, ADR
+  0026). They lower to MIR's `StrChars` and `StrChar`. Each is O(n).
 - Every function that walks a whole list is tail-recursive, so long lists use
   constant stack.
 - `first`, `rest`, `item` (out of range, or not a whole position inside the

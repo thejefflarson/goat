@@ -164,7 +164,8 @@ impl Infer<'_> {
             Expr::Free(_) | Expr::Dup(_) | Expr::Drop(_) => Some(MTy::Unit),
             Expr::StrLit(_) => Some(MTy::Ptr(HeapKind::Str)),
             Expr::StrEq(..) => Some(MTy::Bool),
-            Expr::StrLen(_) | Expr::StrByte(..) => Some(MTy::Int),
+            Expr::StrLen(_) | Expr::StrByte(..) | Expr::StrChars(_) => Some(MTy::Int),
+            Expr::StrChar(..) => Some(MTy::Ptr(HeapKind::Str)),
             Expr::Write(write) => {
                 if let Write::Number(value) = write {
                     self.ty(value);
