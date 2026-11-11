@@ -7,9 +7,11 @@
 //!   long as it likes unless `--timeout` bounds it; `Ctrl-C` stops it either way.
 //!
 //! `build` and `run` take `--target desktop|embedded` (default `desktop`):
-//! `embedded` makes an `Int` an `i32` and a `Float` an `f32`.
+//! `embedded` makes an `Int` an `i32` and a `Float` an `f32`; with it,
+//! `--board c6|c3|rp2040` sizes the heap arena and call depth for that board
+//! (ADR 0029).
 
-use goat::Profile;
+use goat::{EmbeddedLimits, Profile};
 use goat_cli::turtle::TurtleHost;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -42,7 +44,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("build") => {
             let file = args.get(2).ok_or("usage: goat build FILE [-o OUT]")?;
             let out = parse_out_flag(&args[3..]).unwrap_or_else(|| default_output(file));
-            let wasm = build(file, parse_target_flag(&args[3..])?)?;
+            let wasm = build(
+                file,
+                parse_target_flag(&args[3..])?,
+                parse_board_flag(&args[3..])?,
+            )?;
             fs::write(&out, wasm).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
             eprintln!("goat: wrote {}", out.display());
             Ok(ExitCode::SUCCESS)
@@ -52,13 +58,17 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 .get(2)
                 .ok_or("usage: goat run FILE [-o OUT.svg] [--timeout MS]")?;
             let source = read(file)?;
-            let wasm = build(file, parse_target_flag(&args[3..])?)?;
+            let wasm = build(
+                file,
+                parse_target_flag(&args[3..])?,
+                parse_board_flag(&args[3..])?,
+            )?;
             let timeout = parse_timeout_flag(&args[3..])?;
             run_program(&wasm, &source, parse_out_flag(&args[3..]), timeout)
         }
         _ => {
             eprintln!(
-                "usage: goat <check|build|run> FILE [-o OUT] [--target desktop|embedded] [--timeout MS]"
+                "usage: goat <check|build|run> FILE [-o OUT] [--target desktop|embedded] [--board c6|c3|rp2040] [--timeout MS]"
             );
             Ok(ExitCode::FAILURE)
         }
@@ -128,10 +138,17 @@ fn print_warnings(file: &str, source: &str, warnings: &[goat::GoatError]) {
     }
 }
 
-fn build(file: &str, profile: Profile) -> Result<Vec<u8>, String> {
+fn build(file: &str, profile: Profile, board: Option<EmbeddedLimits>) -> Result<Vec<u8>, String> {
+    if board.is_some() && profile != Profile::Embedded {
+        return Err("--board needs --target embedded".to_string());
+    }
     let source = read(file)?;
-    let (wasm, warnings) = goat::compile_for(profile, &source, &goat::HostInterface::turtle())
-        .map_err(|errors| render_errors(file, &source, &errors))?;
+    let host = goat::HostInterface::turtle();
+    let compiled = match board {
+        Some(limits) => goat::compile_embedded(&source, &host, limits),
+        None => goat::compile_for(profile, &source, &host),
+    };
+    let (wasm, warnings) = compiled.map_err(|errors| render_errors(file, &source, &errors))?;
     print_warnings(file, &source, &warnings);
     Ok(wasm)
 }
@@ -158,6 +175,21 @@ fn parse_target_flag(args: &[String]) -> Result<Profile, String> {
         }
     }
     Ok(Profile::Desktop)
+}
+
+fn parse_board_flag(args: &[String]) -> Result<Option<EmbeddedLimits>, String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--board" {
+            return match it.next().map(String::as_str) {
+                Some("c6") => Ok(Some(EmbeddedLimits::C6)),
+                Some("c3") => Ok(Some(EmbeddedLimits::C3)),
+                Some("rp2040") => Ok(Some(EmbeddedLimits::RP2040)),
+                _ => Err("--board takes c6, c3 or rp2040".to_string()),
+            };
+        }
+    }
+    Ok(None)
 }
 
 fn parse_timeout_flag(args: &[String]) -> Result<Option<Duration>, String> {

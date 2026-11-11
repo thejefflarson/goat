@@ -183,6 +183,26 @@ pub struct EmbeddedLimits {
     pub call_depth: u32,
 }
 
+/// Bytes of a board's memory the static data and allocator table may take, so
+/// that heap plus statics still fill a whole number of pages.
+const STATIC_RESERVE: u32 = 8 << 10;
+
+impl EmbeddedLimits {
+    const fn in_pages(pages: u32, call_depth: u32) -> Self {
+        EmbeddedLimits {
+            heap_bytes: pages * PAGE_BYTES - STATIC_RESERVE,
+            call_depth,
+        }
+    }
+
+    /// ESP32-C6: 512 KB of SRAM holds a 4-page (256 KiB) arena.
+    pub const C6: EmbeddedLimits = Self::in_pages(4, 1024);
+    /// ESP32-C3: the same 4-page arena as the C6.
+    pub const C3: EmbeddedLimits = Self::in_pages(4, 1024);
+    /// RP2040: 264 KB of SRAM leaves room for one 64 KiB page.
+    pub const RP2040: EmbeddedLimits = Self::in_pages(1, 256);
+}
+
 impl Default for EmbeddedLimits {
     fn default() -> Self {
         EmbeddedLimits {
