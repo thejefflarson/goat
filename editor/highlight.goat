@@ -1,0 +1,313 @@
+# Syntax highlighting for the editor host (ADR 0015, ADR 0020), written in goat.
+# `update` receives the text on each Edited event and keeps one Span per
+# highlighted token; `draw` hands the spans back. A span's `from` and `to` are
+# 0-based byte offsets into the text, `to` exclusive, and its `kind` is the
+# style role of the web editor's `tok-<kind>` classes. The offsets are 0-based
+# throughout: `at` reads position p with the 1-based `byte_at(text, p + 1)`.
+#
+# The scanner follows `parser::lexer` rule for rule and is tested against it
+# byte for byte. It differs in two places: every byte of 128 or more counts as
+# a letter (the lexer asks Unicode which characters may start a name), and a
+# name has no length limit. Only the tags the text itself declares are marked.
+
+# Token kinds. Spans carry only those up to `operator`.
+comment = 0
+keyword = 1
+literal = 2
+number = 3
+string = 4
+tag_name = 5
+operator = 6
+name = 7
+punct = 8
+space = 9
+unknown = 10
+
+functions = ["program", "function", "fn"]
+
+keywords = [
+  "if", "match", "then", "else", "done", "do", "start at", "repeat", "times",
+  "for", "and", "or", "not", "return", "tag"
+]
+
+literals = ["true", "false"]
+
+operators = ["==", "!=", "<=", "<", ">=", ">", "->", "//", "/", "%", "+", "*", "-"]
+
+puncts = ["(", ")", "{", "}", "[", "]", "=", ":", ";", "|", ",", "...", "."]
+
+# The byte at 0-based position p, or -1 outside the text.
+at = program(text, p) do
+  if p >= 0 and p < byte_length(text) then byte_at(text, p + 1) else 0 - 1 done
+done
+
+is_space = program(c) do c == 32 or c == 9 or c == 10 or c == 13 done
+
+is_digit = program(c) do c >= 48 and c <= 57 done
+
+is_letter = program(c) do (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c >= 128 done
+
+is_inner = program(c) do is_letter(c) or is_digit(c) or c == 95 done
+
+is_not_newline = program(c) do c != 10 and c != 13 and c != 0 - 1 done
+
+# Where the run of bytes satisfying `test` that starts at p ends.
+run_end = program(text, p, test) do
+  if test(at(text, p)) then run_end(text, p + 1, test) else p done
+done
+
+# The end of a string whose opening quote is before p, or -1 if it never closes.
+string_end = program(text, p) do
+  c = at(text, p)
+  if c == 34 then p + 1
+  else if c == 0 - 1 then 0 - 1
+  else if c == 92 then
+    if at(text, p + 1) == 0 - 1 then 0 - 1 else string_end(text, p + 2) done
+  else string_end(text, p + 1) done done done
+done
+
+# The end of the number starting at p, or -1 if none does: digits with an
+# optional fraction and exponent, or a bare fraction.
+number_end = program(text, p) do
+  whole = run_end(text, p, is_digit)
+  fraction = run_end(text, p + 1, is_digit)
+  base = if whole > p
+    then if at(text, whole) == 46 then run_end(text, whole + 1, is_digit) else whole done
+    else if at(text, p) == 46 and fraction > p + 1 then fraction else 0 - 1 done
+  done
+  marker = at(text, base)
+  sign = if at(text, base + 1) == 43 or at(text, base + 1) == 45 then 1 else 0 done
+  exponent = run_end(text, base + 1 + sign, is_digit)
+  if base < 0 then base
+  else if (marker == 101 or marker == 69) and exponent > base + 1 + sign then exponent
+  else base done done
+done
+
+# Does `word` sit at p, counting its bytes from i?
+spelled_at = program(text, p, word, i) do
+  if i > byte_length(word) then true
+  else if at(text, p + i - 1) == byte_at(word, i) then spelled_at(text, p, word, i + 1)
+  else false done done
+done
+
+# Do the `length` bytes at p and at q match, counting from i?
+same_bytes = program(text, p, q, i, length) do
+  if i > length then true
+  else if at(text, p + i - 1) == at(text, q + i - 1) then same_bytes(text, p, q, i + 1, length)
+  else false done done
+done
+
+# Does `word` sit at p as a whole word, not the start of a longer name?
+word_at = program(text, p, word) do
+  spelled_at(text, p, word, 1) and not is_inner(at(text, p + byte_length(word)))
+done
+
+# The length of the first of `words` at p as a whole word, or 0.
+word_length = program(text, p, words) do
+  match words do
+    [head, ...tail] then
+      if word_at(text, p, head) then byte_length(head) else word_length(text, p, tail) done
+    [] then 0
+  done
+done
+
+# The length of the first of `symbols` at p, or 0.
+symbol_length = program(text, p, symbols) do
+  match symbols do
+    [head, ...tail] then
+      if spelled_at(text, p, head, 1) then byte_length(head) else symbol_length(text, p, tail) done
+    [] then 0
+  done
+done
+
+# The kind and end of the token at p, tried in the lexer's order.
+next_token = program(text, p) do
+  c = at(text, p)
+  closed = if c == 34 then string_end(text, p + 1) else 0 - 1 done
+  digits = number_end(text, p)
+  literal_length = word_length(text, p, literals)
+  keyword_length = word_length(text, p, functions) + word_length(text, p, keywords)
+  operator_length = symbol_length(text, p, operators)
+  punct_length = symbol_length(text, p, puncts)
+  if is_space(c) then {kind: space, end: run_end(text, p, is_space)}
+  else if c == 35 then {kind: comment, end: run_end(text, p, is_not_newline)}
+  else if closed > 0 then {kind: string, end: closed}
+  else if digits > 0 then {kind: number, end: digits}
+  else if literal_length > 0 then {kind: literal, end: p + literal_length}
+  else if keyword_length > 0 then {kind: keyword, end: p + keyword_length}
+  else if is_letter(c) then {kind: name, end: run_end(text, p, is_inner)}
+  else if operator_length > 0 then {kind: operator, end: p + operator_length}
+  else if punct_length > 0 then {kind: punct, end: p + punct_length}
+  else {kind: unknown, end: p + 1} done done done done done done done done done
+done
+
+# Every token but the whitespace and unrecognized bytes, in order.
+lex = program(text, p, found) do
+  if p >= byte_length(text) then reverse(found)
+  else
+    token = next_token(text, p)
+    kept = token.kind != space and token.kind != unknown
+    lex(text, token.end, if kept then Link({kind: token.kind, a: p, b: token.end}, found) else found done)
+  done
+done
+
+is_text = program(text, token, word) do
+  token.b - token.a == byte_length(word) and spelled_at(text, token.a, word, 1)
+done
+
+is_punct = program(text, token, word) do token.kind == punct and is_text(text, token, word) done
+
+is_keyword = program(text, token, word) do token.kind == keyword and is_text(text, token, word) done
+
+opens = program(text, token) do
+  is_punct(text, token, "(") or is_punct(text, token, "{") or is_punct(text, token, "[")
+done
+
+closes = program(text, token) do
+  is_punct(text, token, ")") or is_punct(text, token, "}") or is_punct(text, token, "]")
+done
+
+# Can a foreign declaration's module come next?
+starts_signature = program(next) do
+  next.kind == string or next.kind == number or next.kind == literal or next.kind == name
+done
+
+# Is this name a keyword where it stands? `from`, `in`, `to` and `foreign` are
+# keywords only in a `for` header and a foreign declaration. `after_name` says
+# the token before is a name and `for_before` that the one before that is `for`;
+# `after_equals` says the token before is `=` and `signature` that a token a
+# foreign declaration may continue with comes next. `waiting` is the bracket
+# depth of the `for` header whose `to` is due, or -1.
+placed_keyword = program(text, token, after_name, for_before, after_equals, signature, waiting, depth) do
+  if is_text(text, token, "from") or is_text(text, token, "in") then after_name and for_before
+  else if is_text(text, token, "to") then waiting == depth
+  else if is_text(text, token, "foreign") then after_equals and signature
+  else false done done done
+done
+
+# `lex` with the contextual keywords placed. `before` and `before_before` are
+# the previous two tokens as this pass left them.
+place = program(text, tokens, placed, before, before_before, waiting, depth) do
+  match tokens do
+    [token, ...rest] then
+      signature = match rest do
+        [next, ...more] then starts_signature(next)
+        [] then false
+      done
+      becomes = token.kind == name and placed_keyword(
+        text, token,
+        before.kind == name, is_keyword(text, before_before, "for"),
+        is_punct(text, before, "="), signature, waiting, depth
+      )
+      now = {kind: if becomes then keyword else token.kind done, a: token.a, b: token.b}
+      next_depth =
+        if opens(text, token) then depth + 1
+        else if closes(text, token) and depth > 0 then depth - 1
+        else depth done done
+      next_waiting =
+        if is_keyword(text, token, "do") then 0 - 1
+        else if becomes and is_text(text, token, "from") then depth
+        else waiting done done
+      place(text, rest, Link(now, placed), now, before, next_waiting, next_depth)
+    [] then reverse(placed)
+  done
+done
+
+# The list without its first item.
+after_first = program(tokens) do
+  match tokens do
+    [head, ...tail] then tail
+    [] then []
+  done
+done
+
+# The name tokens of the `tag` declarations among `tokens`, found by a small
+# machine. `mode` 0 looks for `tag`; 1 has just seen it and may skip a group
+# name; 2 wants a case name; 3 has a case and wants `(` or `|`; 4 skips a
+# parenthesized payload, `open` deep; 5 has finished a payload and wants `|`.
+declared = program(text, tokens, found, mode, open) do
+  match tokens do
+    [token, ...rest] then
+      if mode == 0 then
+        if is_keyword(text, token, "tag")
+          then declared(text, rest, found, 1, 0)
+          else declared(text, rest, found, 0, 0) done
+      else if mode == 1 then
+        grouped = match rest do
+          [second, ...more] then is_punct(text, second, "=")
+          [] then false
+        done
+        if grouped
+          then declared(text, after_first(rest), found, 2, 0)
+          else declared(text, tokens, found, 2, 0) done
+      else if mode == 2 then
+        if token.kind == name
+          then declared(text, rest, Link(token, found), 3, 0)
+          else declared(text, tokens, found, 0, 0) done
+      else if mode == 3 then
+        if is_punct(text, token, "(") then declared(text, tokens, found, 4, 0)
+        else if is_punct(text, token, "|") then declared(text, rest, found, 2, 0)
+        else declared(text, tokens, found, 0, 0) done done
+      else if mode == 4 then
+        deeper =
+          if is_punct(text, token, "(") then open + 1
+          else if is_punct(text, token, ")") then open - 1
+          else open done done
+        if deeper == 0 and is_punct(text, token, ")")
+          then declared(text, rest, found, 5, 0)
+          else declared(text, rest, found, 4, deeper) done
+      else
+        if is_punct(text, token, "|")
+          then declared(text, rest, found, 2, 0)
+          else declared(text, tokens, found, 0, 0) done
+      done done done done done
+    [] then found
+  done
+done
+
+is_declared = program(text, tags, token) do
+  match tags do
+    [head, ...tail] then
+      (head.b - head.a == token.b - token.a and same_bytes(text, head.a, token.a, 1, head.b - head.a))
+        or is_declared(text, tail, token)
+    [] then false
+  done
+done
+
+role = program(kind) do
+  if kind == comment then "comment"
+  else if kind == keyword then "keyword"
+  else if kind == literal then "literal"
+  else if kind == number then "number"
+  else if kind == string then "string"
+  else if kind == tag_name then "tag"
+  else "operator" done done done done done done
+done
+
+# One Span per token that has a role, with declared tags marked.
+spans = program(text, tokens, tags, found) do
+  match tokens do
+    [token, ...rest] then
+      kind = if token.kind == name and is_declared(text, tags, token) then tag_name else token.kind done
+      span = Span({from: token.a, to: token.b, kind: role(kind)})
+      spans(text, rest, tags, if kind <= operator then Link(span, found) else found done)
+    [] then reverse(found)
+  done
+done
+
+highlight = program(text) do
+  nowhere = {kind: unknown, a: 0, b: 0}
+  tokens = place(text, lex(text, 0, []), [], nowhere, nowhere, 0 - 1, 0)
+  spans(text, tokens, declared(text, tokens, [], 0, 0), [])
+done
+
+init = {spans: []}
+
+update = program(model, event) do
+  match event do
+    Edited(edit) then {spans: highlight(edit.text)}
+    else model
+  done
+done
+
+draw = program(model) do model.spans done

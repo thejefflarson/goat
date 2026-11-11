@@ -25,3 +25,6 @@ test = true
 name = "embed_live"
 required-features = ["native"]
 test = true
+
+[dev-dependencies]
+goat_parser = { path = "../parser" }

@@ -54,6 +54,12 @@ impl HostInterface {
         Self::with_stdlib(goat_checker::TURTLE_VOCAB)
     }
 
+    /// A text-editing host: the standard library and the editor's events and
+    /// style spans.
+    pub fn editor() -> Self {
+        Self::with_vocab(goat_checker::STDLIB, Vocab::editor())
+    }
+
     pub fn prelude(&self) -> &str {
         &self.prelude
     }
