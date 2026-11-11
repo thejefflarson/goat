@@ -1,0 +1,295 @@
+(* The tree the printer builds denotes the term it was printed from. A bound
+   index of the term is read back as the free variable the parser gives the
+   binder's name, and each binder closes that variable again, so the term is
+   recovered exactly (up to the label table). *)
+
+From Coq Require Import String List Arith Lia.
+Import ListNotations.
+Require Import Metalib.Metatheory.
+Require Import Goat.Goat_ott.
+Require Import Goat.GoatProofs.
+Require Import Goat.GoatGrammar.
+Require Import Goat.GoatPeg.
+Require Import Goat.GoatDen.
+Require Import Goat.GoatPrint.
+Require Import Goat.GoatPrintParse.
+Open Scope string_scope.
+Open Scope list_scope.
+
+(* ---- the bound indices read as the names the printer gave them ---- *)
+
+Fixpoint inst_rec (var_of : string -> termvar) (k D : nat) (e : exp) {struct e} : exp :=
+  match e with
+  | e_fvar_b i =>
+      if Nat.ltb i k then e_fvar_b i else e_fvar_f (var_of (nm (D + k - 1 - i)))
+  | e_fvar_f y => e_fvar_f y
+  | e_num n => e_num n
+  | e_true => e_true
+  | e_false => e_false
+  | e_abs b => e_abs (inst_rec var_of (S k) D b)
+  | e_app a b => e_app (inst_rec var_of k D a) (inst_rec var_of k D b)
+  | e_let a b => e_let (inst_rec var_of k D a) (inst_rec var_of (S k) D b)
+  | e_rec fs => e_rec (inst_fields var_of k D fs)
+  | e_proj a l => e_proj (inst_rec var_of k D a) l
+  end
+with inst_fields (var_of : string -> termvar) (k D : nat) (fs : Goat_ott.fields) {struct fs}
+  : Goat_ott.fields :=
+  match fs with
+  | fs_nil => fs_nil
+  | fs_cons l e rest => fs_cons l (inst_rec var_of k D e) (inst_fields var_of k D rest)
+  end.
+
+Definition inst (var_of : string -> termvar) (D : nat) (e : exp) : exp :=
+  inst_rec var_of 0 D e.
+
+Lemma inst_bvar : forall var_of D i,
+  inst var_of D (e_fvar_b i) = e_fvar_f (var_of (nm (D - 1 - i))).
+Proof. intros var_of D i. unfold inst. simpl. rewrite Nat.add_0_r. reflexivity. Qed.
+
+(* Closing the variable that stands for the innermost of [S D] binders turns it
+   back into the bound index [k], and the other variables are unchanged. *)
+Lemma close_inst : forall var_of, names_distinct var_of -> forall D,
+  (forall e k, scoped (k + S D) e ->
+     close_exp_rec k (var_of (nm D)) (inst_rec var_of k (S D) e)
+     = inst_rec var_of (S k) D e) /\
+  (forall fs k, scoped_fields (k + S D) fs ->
+     close_fields_rec k (var_of (nm D)) (inst_fields var_of k (S D) fs)
+     = inst_fields var_of (S k) D fs).
+Proof.
+  intros var_of Hdist D.
+  apply exp_fields_mutind.
+  - (* bound index *)
+    intros i k Hs. simpl in Hs.
+    cbn [inst_rec]. destruct (Nat.ltb i k) eqn:Hik.
+    + assert (Hlt : i < k) by (apply Nat.ltb_lt; exact Hik).
+      assert (Hlt' : Nat.ltb i (S k) = true) by (apply Nat.ltb_lt; lia).
+      cbn [close_exp_rec inst_rec]. rewrite Hlt'. reflexivity.
+    + assert (Hge : k <= i) by (apply Nat.ltb_ge; exact Hik).
+      cbn [close_exp_rec inst_rec].
+      destruct (var_of (nm (S D + k - 1 - i)) == var_of (nm D)) as [Heq | Hne].
+      * assert (Hnm : S D + k - 1 - i = D) by (apply Hdist; exact Heq).
+        assert (Hik' : i = k) by lia.
+        subst i. assert (Hlt' : Nat.ltb k (S k) = true) by (apply Nat.ltb_lt; lia).
+        rewrite Hlt'. reflexivity.
+      * destruct (Nat.ltb i (S k)) eqn:Hlt'.
+        { exfalso. apply Nat.ltb_lt in Hlt'.
+          assert (Hik' : i = k) by lia. subst i.
+          apply Hne. replace (S D + k - 1 - k) with D by lia. reflexivity. }
+        replace (D + S k - 1 - i) with (S D + k - 1 - i) by lia.
+        reflexivity.
+  - intros y k Hs. destruct Hs.
+  - intros n k Hs. reflexivity.
+  - intros k Hs. reflexivity.
+  - intros k Hs. reflexivity.
+  - (* abs *)
+    intros b IH k Hs. simpl in Hs. simpl.
+    rewrite (IH (S k) Hs). reflexivity.
+  - (* app *)
+    intros a IHa b IHb k [Ha Hb]. simpl.
+    rewrite (IHa k Ha), (IHb k Hb). reflexivity.
+  - (* let *)
+    intros a IHa b IHb k [Ha Hb]. simpl.
+    rewrite (IHa k Ha), (IHb (S k) Hb). reflexivity.
+  - (* record *)
+    intros fs IH k Hs. simpl in *. rewrite (IH k Hs). reflexivity.
+  - (* projection *)
+    intros a IH l k Hs. simpl in *. rewrite (IH k Hs). reflexivity.
+  - intros k Hs. reflexivity.
+  - intros l e IHe fs IHfs k [He Hfs]. simpl.
+    rewrite (IHe k He), (IHfs k Hfs). reflexivity.
+Qed.
+
+Lemma close_inst_exp : forall var_of D b,
+  names_distinct var_of -> scoped (S D) b ->
+  close_exp (var_of (nm D)) (inst var_of (S D) b) = inst_rec var_of 1 D b.
+Proof.
+  intros var_of D b Hdist Hs. unfold close_exp, inst.
+  exact (proj1 (close_inst var_of Hdist D) b 0 Hs).
+Qed.
+
+(* ---- the label table ---- *)
+
+Definition LabelsOK (tbl : list string) (ls : list nat) : Prop :=
+  forall n, List.In n ls -> index_of (lname n) tbl = n.
+
+Lemma labelsok_app_l : forall tbl a b, LabelsOK tbl (a ++ b) -> LabelsOK tbl a.
+Proof. intros tbl a b H n Hn. apply H, in_or_app. left. exact Hn. Qed.
+
+Lemma labelsok_app_r : forall tbl a b, LabelsOK tbl (a ++ b) -> LabelsOK tbl b.
+Proof. intros tbl a b H n Hn. apply H, in_or_app. right. exact Hn. Qed.
+
+Lemma lab_lname : forall tbl n, LabelsOK tbl [n] -> lab tbl (lname n) = n.
+Proof. intros tbl n H. unfold lab. apply H. left. reflexivity. Qed.
+
+(* ---- extending a chain by a postfix ---- *)
+
+Lemma den_posts_snoc : forall var_of tbl e rest e0,
+  Den_posts var_of tbl e rest e0 ->
+  forall post e', Den_posts var_of tbl e0 [post] e' ->
+  Den_posts var_of tbl e (rest ++ [post]) e'.
+Proof.
+  intros var_of tbl e rest e0 H. induction H; intros post e'' Hp.
+  - exact Hp.
+  - simpl. apply DP_access. apply IHDen_posts. exact Hp.
+  - simpl. eapply DP_call; [ eassumption | ]. apply IHDen_posts. exact Hp.
+Qed.
+
+Lemma den_chain_snoc : forall var_of tbl cs e0 post e',
+  Den_chain var_of tbl cs e0 -> Den_posts var_of tbl e0 [post] e' ->
+  Den_chain var_of tbl (cs ++ [post]) e'.
+Proof.
+  intros var_of tbl cs e0 post e' H Hp. inversion H; subst.
+  - simpl. eapply DC_head; [ eassumption | ].
+    eapply den_posts_snoc; eassumption.
+  - simpl. eapply DC_paren; [ eassumption | ].
+    eapply den_posts_snoc; eassumption.
+Qed.
+
+Lemma den_chain_call : forall var_of tbl cs e0 b ea,
+  Den_chain var_of tbl cs e0 -> Den var_of tbl (Node R_expr b) ea ->
+  Den_chain var_of tbl (cs ++ [call_tree b]) (e_app e0 ea).
+Proof.
+  intros var_of tbl cs e0 b ea Hc Hb.
+  eapply den_chain_snoc; [ exact Hc | ].
+  eapply DP_call with (es := [ea]).
+  - apply DA_last. exact Hb.
+  - apply DP_nil.
+Qed.
+
+Lemma den_chain_access : forall var_of tbl cs e0 l,
+  Den_chain var_of tbl cs e0 -> LabelsOK tbl [l] ->
+  Den_chain var_of tbl (cs ++ [access_tree l]) (e_proj e0 l).
+Proof.
+  intros var_of tbl cs e0 l Hc Hl.
+  eapply den_chain_snoc; [ exact Hc | ].
+  unfold access_tree. apply DP_access. rewrite (lab_lname tbl l Hl). apply DP_nil.
+Qed.
+
+Lemma den_chain_single : forall var_of tbl t e,
+  Den var_of tbl t e -> Den_chain var_of tbl [t] e.
+Proof. intros var_of tbl t e H. eapply DC_head; [ exact H | apply DP_nil ]. Qed.
+
+Lemma den_chain_paren : forall var_of tbl b e,
+  Den_block var_of tbl b e -> Den_chain var_of tbl (paren_kids b) e.
+Proof.
+  intros var_of tbl b e H. unfold paren_kids.
+  eapply DC_paren; [ apply D_expr; exact H | apply DP_nil ].
+Qed.
+
+(* ---- the main lemma ---- *)
+
+Lemma print_den : forall var_of tbl, names_distinct var_of ->
+  (forall e P, scoped P e -> LabelsOK tbl (lbls e) ->
+     Den_block var_of tbl (block P e) (inst var_of P e) /\
+     (NonLet e -> Den_chain var_of tbl (block P e) (inst var_of P e))) /\
+  (forall fs P, scoped_fields P fs -> LabelsOK tbl (lbls_fields fs) ->
+     Den_items var_of tbl (field_trees P fs ++ [sym "}"]) (inst_fields var_of 0 P fs) /\
+     Den_sep var_of tbl (more_field_trees P fs ++ [sym "}"]) (inst_fields var_of 0 P fs)).
+Proof.
+  intros var_of tbl Hdist.
+  apply exp_fields_mutind.
+  - (* bound index *)
+    intros i P Hs Hl.
+    assert (Hchain : Den_chain var_of tbl (block P (e_fvar_b i)) (inst var_of P (e_fvar_b i))).
+    { rewrite inst_bvar. apply den_chain_single. apply D_name. }
+    split; [ apply DB_chain; exact Hchain | intros _; exact Hchain ].
+  - intros y P Hs. destruct Hs.
+  - intros n P Hs Hl.
+    assert (Hchain : Den_chain var_of tbl (block P (e_num n)) (e_num n))
+      by (apply den_chain_single; apply D_num).
+    split; [ apply DB_chain; exact Hchain | intros _; exact Hchain ].
+  - intros P Hs Hl.
+    assert (Hchain : Den_chain var_of tbl (block P e_true) e_true)
+      by (apply den_chain_single; apply D_true).
+    split; [ apply DB_chain; exact Hchain | intros _; exact Hchain ].
+  - intros P Hs Hl.
+    assert (Hchain : Den_chain var_of tbl (block P e_false) e_false)
+      by (apply den_chain_single; apply D_false).
+    split; [ apply DB_chain; exact Hchain | intros _; exact Hchain ].
+  - (* program *)
+    intros b IH P Hs Hl.
+    destruct (IH (S P) Hs Hl) as [Hblock _].
+    assert (Hfun : Den var_of tbl (function_tree P (block (S P) b))
+                     (curry [var_of (nm P)] (inst var_of (S P) b))).
+    { unfold function_tree. eapply D_function with (xs := [nm P]).
+      - apply DPa_one.
+      - apply D_expr. exact Hblock. }
+    assert (Hcurry : curry [var_of (nm P)] (inst var_of (S P) b)
+                     = inst var_of P (e_abs b)).
+    { simpl. rewrite (close_inst_exp var_of P b Hdist Hs). reflexivity. }
+    rewrite Hcurry in Hfun.
+    assert (Hchain : Den_chain var_of tbl (block P (e_abs b)) (inst var_of P (e_abs b)))
+      by (apply den_chain_single; exact Hfun).
+    split; [ apply DB_chain; exact Hchain | intros _; exact Hchain ].
+  - (* call *)
+    intros f IHf a IHa P [Hf Ha] Hl.
+    destruct (IHf P Hf (labelsok_app_l _ _ _ Hl)) as [Hbf Hcf].
+    destruct (IHa P Ha (labelsok_app_r _ _ _ Hl)) as [Hba _].
+    assert (Hop : Den_chain var_of tbl (as_operand f (block P f)) (inst var_of P f)).
+    { destruct f; cbn [as_operand];
+        first [ apply den_chain_paren; exact Hbf | apply Hcf; exact I ]. }
+    assert (Hchain : Den_chain var_of tbl (block P (e_app f a)) (inst var_of P (e_app f a))).
+    { exact (den_chain_call var_of tbl _ _ _ _ Hop (D_expr _ _ _ _ Hba)). }
+    split; [ apply DB_chain; exact Hchain | intros _; exact Hchain ].
+  - (* binding *)
+    intros v IHv b IHb P [Hv Hb] Hl.
+    destruct (IHv P Hv (labelsok_app_l _ _ _ Hl)) as [Hbv Hcv].
+    destruct (IHb (S P) Hb (labelsok_app_r _ _ _ Hl)) as [Hbb _].
+    assert (Hval : Den_chain var_of tbl (as_value v (block P v)) (inst var_of P v)).
+    { destruct v; cbn [as_value];
+        first [ apply den_chain_paren; exact Hbv | apply Hcv; exact I ]. }
+    assert (Hdecl : Den_decl var_of tbl
+                      (decl_tree P (as_value v (block P v))) (nm P) (inst var_of P v)).
+    { apply DD_semi. apply D_value. exact Hval. }
+    split; [ | intros Hn; destruct Hn ].
+    assert (Hlet : inst var_of P (e_let v b)
+                   = e_let (inst var_of P v) (close_exp (var_of (nm P)) (inst var_of (S P) b))).
+    { unfold inst at 1. simpl. rewrite (close_inst_exp var_of P b Hdist Hb). reflexivity. }
+    rewrite Hlet. cbn [block].
+    eapply DB_decl; [ exact Hdecl | exact Hbb ].
+  - (* record *)
+    intros fs IH P Hs Hl.
+    destruct (IH P Hs Hl) as [Hitems _].
+    assert (Hrec : Den var_of tbl
+                     (Node R_record ((sym "{" :: field_trees P fs) ++ [sym "}"]))
+                     (e_rec (inst_fields var_of 0 P fs))).
+    { apply D_record. exact Hitems. }
+    assert (Hchain : Den_chain var_of tbl (block P (e_rec fs)) (inst var_of P (e_rec fs)))
+      by (apply den_chain_single; exact Hrec).
+    split; [ apply DB_chain; exact Hchain | intros _; exact Hchain ].
+  - (* projection *)
+    intros f IH l P Hf Hl.
+    destruct (IH P Hf (labelsok_app_l _ _ _ Hl)) as [Hbf Hcf].
+    assert (Hop : Den_chain var_of tbl (as_operand f (block P f)) (inst var_of P f)).
+    { destruct f; cbn [as_operand];
+        first [ apply den_chain_paren; exact Hbf | apply Hcf; exact I ]. }
+    assert (Hchain : Den_chain var_of tbl (block P (e_proj f l)) (inst var_of P (e_proj f l)))
+      by exact (den_chain_access var_of tbl _ _ _ Hop (labelsok_app_r _ _ _ Hl)).
+    split; [ apply DB_chain; exact Hchain | intros _; exact Hchain ].
+  - (* no fields *)
+    intros P Hs Hl. split.
+    + apply DI_end.
+    + apply DS_end.
+  - (* a field, then the rest *)
+    intros l e IHe rest IHrest P [He Hrest] Hl.
+    assert (Hl' : LabelsOK tbl (l :: lbls e ++ lbls_fields rest)) by exact Hl.
+    assert (Hll : LabelsOK tbl [l]).
+    { intros n Hn. apply Hl'. destruct Hn as [<- | []]. left. reflexivity. }
+    assert (Hle : LabelsOK tbl (lbls e)).
+    { intros n Hn. apply Hl'. right. apply in_or_app. left. exact Hn. }
+    assert (Hlrest : LabelsOK tbl (lbls_fields rest)).
+    { intros n Hn. apply Hl'. right. apply in_or_app. right. exact Hn. }
+    destruct (IHe P He Hle) as [Hbe _].
+    destruct (IHrest P Hrest Hlrest) as [Hitems Hsep].
+    assert (Hfield : Den_field var_of tbl (field_tree l (block P e)) (lname l) (inst var_of P e)).
+    { unfold field_tree. apply DF. apply D_expr. exact Hbe. }
+    assert (Hitems' : Den_items var_of tbl
+                        (field_trees P (fs_cons l e rest) ++ [sym "}"])
+                        (inst_fields var_of 0 P (fs_cons l e rest))).
+    { cbn [field_trees inst_fields].
+      pose proof (DI_field var_of tbl _ _ _ _ _ Hfield Hsep) as Hcons.
+      rewrite (lab_lname tbl l Hll) in Hcons. exact Hcons. }
+    split; [ exact Hitems' | ].
+    cbn [more_field_trees]. simpl. apply DS_more.
+    exact Hitems'.
+Qed.
