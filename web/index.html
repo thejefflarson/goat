@@ -10,8 +10,8 @@
     --bg: #fafafa; --fg: #1c1c1e; --panel: #fff; --line: #c9c9ce;
     --accent: #5b3fd1; --accent-fg: #fff; --error: #b3261e;
     --selection: #c9c9ce;
-    --tok-keyword: #5b3fd1; --tok-literal: #0b6e99; --tok-number: #0b6e99;
-    --tok-string: #1a7f37; --tok-comment: #6a6a73; --tok-tag: #b35900;
+    --tok-keyword: #4a2fb8; --tok-literal: #095a80; --tok-number: #095a80;
+    --tok-string: #14602b; --tok-comment: #505058; --tok-tag: #80400a;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -19,7 +19,7 @@
       --accent: #9b86ff; --accent-fg: #17171a; --error: #ff8a80;
       --selection: #3d3d5c;
       --tok-keyword: #b4a3ff; --tok-literal: #7dd3fc; --tok-number: #7dd3fc;
-      --tok-string: #7ee787; --tok-comment: #9a9aa5; --tok-tag: #ffb870;
+      --tok-string: #7ee787; --tok-comment: #b8b8c4; --tok-tag: #ffb870;
     }
   }
   * { box-sizing: border-box; }
@@ -71,7 +71,7 @@
     <span id="status" role="status"></span>
   </section>
   <div id="stage"><canvas id="canvas" width="600" height="600" aria-label="drawing" tabindex="0"></canvas></div>
-  <pre id="problems" role="alert" hidden></pre>
+  <pre id="problems" role="status" hidden></pre>
   <pre id="output" aria-label="printed output" hidden></pre>
 </main>
 <script type="module">
