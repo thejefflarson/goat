@@ -40,6 +40,11 @@ it runs inside `GoatTestHost-macOS`, a windowless app with `Goat-macOS`'s entitl
 which is where a missing entitlement shows up. An unsigned build is unsandboxed, so it
 cannot catch one.
 
+`UITests/EditorSmokeTests` (scheme `Goat-iOS`, `xcodebuild test` against an iOS simulator)
+launches the Debug app with `-goat-ui-smoke`, which opens the editor on the starter program
+without the document browser, taps Run, and waits for the canvas (identifier `canvas`) to
+report the value `finished`.
+
 `scripts/check-doc-types.sh` (run in CI after `xcodegen generate`) fails if the
 document type, the exported UTI and `UTType.goatSource` stop naming the same identifier.
 

@@ -29,6 +29,12 @@ schemes:
         GoatKit-macOS: all
     test:
       targets: [GoatKitTests-macOS]
+  Goat-iOS:
+    build:
+      targets:
+        Goat-iOS: all
+    test:
+      targets: [GoatUITests-iOS]
 targets:
   GoatKit-macOS:
     type: framework
@@ -133,6 +139,18 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat.kit.tests
+        GENERATE_INFOPLIST_FILE: YES
+  # Launches Goat-iOS straight into the editor (-goat-ui-smoke, Debug only), taps
+  # Run, and waits for the canvas to report that the program finished.
+  GoatUITests-iOS:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: Goat-iOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat.uitests
         GENERATE_INFOPLIST_FILE: YES
   Goat-iOS:
     type: application

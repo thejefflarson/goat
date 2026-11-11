@@ -70,6 +70,8 @@ public struct EditorScreen: View {
                     Divider()
                     CanvasView(webView: engine.webView)
                         .accessibilityLabel("drawing")
+                        .accessibilityValue(engine.phase.accessibilityValue)
+                        .accessibilityIdentifier("canvas")
                         .overlay { LoadOverlay(phase: engine.phase, retry: engine.retry) }
                 }
             }
@@ -108,6 +110,20 @@ public struct EditorScreen: View {
 
     private var highlights: [NSRange] {
         engine.diagnostics.compactMap { $0.range(in: document.text) }
+    }
+}
+
+extension Engine.Phase {
+    /// What the canvas reports to assistive technology and to UI tests: `finished`
+    /// means the program ran to the end and drew.
+    var accessibilityValue: String {
+        switch self {
+        case .loading: "loading"
+        case .ready: "ready"
+        case .running: "running"
+        case .finished: "finished"
+        case .failed, .loadFailed: "failed"
+        }
     }
 }
 

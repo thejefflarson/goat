@@ -48,6 +48,16 @@ jobs:
           xcodebuild -project hosts/apple/Goat.xcodeproj -scheme Goat-macOS
           -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
 
+      # Boots the app straight into the editor (-goat-ui-smoke), taps Run, and waits
+      # for the canvas to report the program finished. Picks whichever iPhone
+      # simulator the runner's Xcode ships.
+      - name: UI smoke test on the iOS simulator
+        run: |
+          udid=$(xcrun simctl list devices available iPhone | grep -Eo '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' | head -1)
+          xcodebuild test -project hosts/apple/Goat.xcodeproj -scheme Goat-iOS \
+            -destination "platform=iOS Simulator,id=$udid" \
+            CODE_SIGNING_ALLOWED=NO ENABLE_USER_SCRIPT_SANDBOXING=NO
+
       - name: Build iOS
         run: >
           xcodebuild -project hosts/apple/Goat.xcodeproj -scheme Goat-iOS
