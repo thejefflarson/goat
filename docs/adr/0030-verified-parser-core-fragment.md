@@ -74,11 +74,19 @@ small enough to finish.
     lowering error while the curried `program(x) do program(x) do e done done`
     is not.
   The generator avoids the three (unique names for function bindings, distinct
-  labels per record, no duplicate parameter in one group). **Decided:** they stay
-  side conditions on the term, and `proofs/goat_ln.ott` is not changed. T1 does
-  not need them, because closing a variable yields a locally closed term whatever
-  names repeat, so T1 is stated without them; they become hypotheses of T3, the
-  round-trip, where agreement with the front end depends on them.
+  labels per record, no duplicate parameter in one group). **Decided:**
+  `proofs/goat_ln.ott` is not changed, and the three are hypotheses of neither
+  T1 nor T3. T1 holds without them because closing a variable yields a locally
+  closed term whatever names repeat. T3 holds without them because the printer
+  names each binder by its depth, so no name repeats and no binding refers to
+  itself, and `Den` reads a binding as the non-recursive Ott `let`. The three
+  concern how the Rust front end reads text, and
+  `checker/tests/core_roundtrip.rs` covers them.
+- T3 (`print_parse_roundtrip`, `proofs/GoatRoundtrip.v`) needs one hypothesis
+  beyond a closed term: `Interned`, that the term's labels are numbered by
+  first occurrence in the printed text. It covers the curried printer style and
+  closed terms only. The grouped style (`program(x, y)`, `f(a, b)`) and terms
+  with free variables are not covered.
 - T1 to T3 say nothing about the Rust interpreter: they are facts about the
   generated grammar. Connecting the two stays a testing argument (the rule map
   and the round-trip test), not a proof.

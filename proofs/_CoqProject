@@ -15,3 +15,15 @@ GoatDen.v
 GoatShape.v
 GoatParse.v
 GoatExample.v
+GoatPegTac.v
+GoatPrint.v
+GoatPrintChain.v
+GoatPrintPrim.v
+GoatPrintBlock.v
+GoatPrintParse.v
+GoatPrintDen.v
+GoatPrintLabels.v
+GoatPrintTop.v
+GoatRoundtrip.v
+GoatPrinterTable.v
+GoatRoundtripExample.v
