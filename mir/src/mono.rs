@@ -9,7 +9,7 @@ use goat_checker::hir::{
     self, BinOp, Boundary, Builtin, Decoder, ExprId, ExprKind, Param, PatternPayload, Span, Symbol,
 };
 use goat_checker::infer::Typed;
-use goat_checker::ty::{Row, Ty, TypeVar};
+use goat_checker::ty::{Row, Scheme, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target, Vocab};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -404,6 +404,9 @@ struct FnCx {
     /// A capturing function's own name and `env`; the name refers to the
     /// closure being run, never to a stored capture.
     self_env: Option<(Symbol, Local)>,
+    /// The extra copies of a generalized value binding, one per concrete type
+    /// the function itself uses it at; `locals` holds the first use's copy.
+    copies: HashMap<Symbol, Vec<(Ty, Local)>>,
     next: u32,
     tys: BTreeMap<Local, MTy>,
 }
@@ -415,6 +418,7 @@ impl FnCx {
             locals: HashMap::new(),
             captures: HashMap::new(),
             self_env: None,
+            copies: HashMap::new(),
             next: 0,
             tys: BTreeMap::new(),
         }
@@ -739,6 +743,16 @@ impl Mono<'_> {
         Expr::MakeClosure(id, values)
     }
 
+    /// The copy of a generalized value binding made for the type `use_site`
+    /// uses it at, when it is not the first use's copy.
+    fn copy_local(&self, cx: &FnCx, use_site: &hir::Expr, symbol: Symbol) -> Option<Local> {
+        let copies = cx.copies.get(&symbol)?;
+        let use_ty = self.node_ty(cx, use_site.id);
+        copies
+            .iter()
+            .find_map(|(ty, local)| (*ty == use_ty).then_some(*local))
+    }
+
     /// A captured or local variable's value.
     fn variable_value(&mut self, cx: &mut FnCx, symbol: Symbol) -> Expr {
         if let Some(&local) = cx.locals.get(&symbol) {
@@ -842,27 +856,63 @@ impl Mono<'_> {
 
     /// Pin the type variables a value binding generalizes over (`m = mk(2)`
     /// is polymorphic in whatever `mk` leaves open) to the instantiation its
-    /// first use in `rest` picks. The binding is evaluated once, so its value,
-    /// and the type of any closure capturing it, must be lowered at that
-    /// type; defaulting the variables to `Unit` would disagree with the use.
-    fn instantiate_binding(&self, cx: &mut FnCx, symbol: Symbol, rest: &hir::Expr) {
-        let Some(scheme) = self
-            .typed
+    /// first use in `rest` picks. Returns that use's type. The binding is
+    /// evaluated at that type, so its value, and the type of any closure
+    /// capturing it, must be lowered there; defaulting the variables to `Unit`
+    /// would disagree with the use.
+    fn instantiate_binding(&self, cx: &mut FnCx, symbol: Symbol, rest: &hir::Expr) -> Option<Ty> {
+        let scheme = self.generalized(symbol)?;
+        let use_ty = self.node_ty(cx, first_use(rest, symbol)?);
+        for (v, ty) in instance(scheme, &use_ty) {
+            cx.subst.entry(v).or_insert(ty);
+        }
+        Some(use_ty)
+    }
+
+    fn generalized(&self, symbol: Symbol) -> Option<&Scheme> {
+        self.typed
             .schemes
             .get(&symbol)
             .filter(|s| !s.vars.is_empty())
-        else {
+    }
+
+    /// Lower a generalized value binding once more for each other concrete
+    /// type `rest` uses it at directly. A syntactic value has no effects, so
+    /// evaluating it per type is unobservable; one copy cannot serve two types
+    /// because its layout depends on the instantiation.
+    fn rematerialize(
+        &mut self,
+        cx: &mut FnCx,
+        symbol: Symbol,
+        value: &hir::Expr,
+        rest: &hir::Expr,
+        first: &Ty,
+        bound: &mut Vec<(Local, Expr)>,
+    ) {
+        let Some(scheme) = self.generalized(symbol).cloned() else {
             return;
         };
-        let Some(first_use) = first_use(rest, symbol) else {
-            return;
-        };
-        let use_ty = self.node_ty(cx, first_use);
-        let mut found = Subst::new();
-        match_ty(&scheme.ty, &use_ty, &mut found);
-        for v in &scheme.vars {
-            if let Some(ty) = found.remove(v) {
-                cx.subst.entry(*v).or_insert(ty);
+        let mut seen = vec![first.clone()];
+        let mut pending = vec![rest];
+        while let Some(e) = pending.pop() {
+            match &e.kind {
+                ExprKind::Func { .. } => {}
+                ExprKind::Var { symbol: s, .. } if *s == symbol => {
+                    let use_ty = self.node_ty(cx, e.id);
+                    if seen.contains(&use_ty) {
+                        continue;
+                    }
+                    seen.push(use_ty.clone());
+                    let saved = cx.subst.clone();
+                    cx.subst.extend(instance(&scheme, &use_ty));
+                    let ty = self.node_mty(cx, value.id);
+                    let lowered = self.expr(cx, value, false);
+                    cx.subst = saved;
+                    let local = cx.fresh(ty);
+                    bound.push((local, lowered));
+                    cx.copies.entry(symbol).or_default().push((use_ty, local));
+                }
+                _ => push_children(e, &mut pending),
             }
         }
     }
@@ -985,14 +1035,17 @@ impl Mono<'_> {
                 }
                 continue;
             }
-            if let Some(rest) = rest {
-                self.instantiate_binding(cx, *symbol, rest);
-            }
+            let first = rest
+                .as_deref()
+                .and_then(|rest| self.instantiate_binding(cx, *symbol, rest));
             let ty = self.node_mty(cx, value.id);
-            let value = self.expr(cx, value, false);
+            let lowered = self.expr(cx, value, false);
             let local = cx.fresh(ty);
             cx.locals.insert(*symbol, local);
-            bound.push((local, value));
+            bound.push((local, lowered));
+            if let (Some(rest), Some(first)) = (rest.as_deref(), first) {
+                self.rematerialize(cx, *symbol, value, rest, &first, &mut bound);
+            }
             match rest {
                 Some(rest) => cursor = rest,
                 None => break Expr::Local(local),
@@ -1026,7 +1079,10 @@ impl Mono<'_> {
                     _ if self.lambdas.contains_key(&function) => {
                         self.closure_value(cx, function, e)
                     }
-                    _ => self.variable_value(cx, *symbol),
+                    _ => match self.copy_local(cx, e, *symbol) {
+                        Some(local) => Expr::Local(local),
+                        None => self.variable_value(cx, *symbol),
+                    },
                 }
             }
             ExprKind::App { callee, args } => self.app(cx, e.span, callee, args, tail),
@@ -1203,11 +1259,12 @@ impl Mono<'_> {
     }
 
     /// The local `e` names when it is a variable bound in this function.
-    fn variable_local(cx: &FnCx, e: &hir::Expr) -> Option<Local> {
-        match &e.kind {
-            ExprKind::Var { symbol, .. } => cx.locals.get(symbol).copied(),
-            _ => None,
-        }
+    fn variable_local(&self, cx: &FnCx, e: &hir::Expr) -> Option<Local> {
+        let ExprKind::Var { symbol, .. } = &e.kind else {
+            return None;
+        };
+        self.copy_local(cx, e, *symbol)
+            .or_else(|| cx.locals.get(symbol).copied())
     }
 
     /// Build `build(local)` where `local` holds `record`: a variable's own
@@ -1218,7 +1275,7 @@ impl Mono<'_> {
         record: &hir::Expr,
         build: impl FnOnce(&mut Self, &mut FnCx, Local) -> Expr,
     ) -> Expr {
-        match Self::variable_local(cx, record) {
+        match self.variable_local(cx, record) {
             Some(local) => build(self, cx, local),
             None => {
                 let ty = self.node_mty(cx, record.id);
@@ -1303,7 +1360,7 @@ impl Mono<'_> {
         let Ty::Variant(row) = scrutinee_ty.unfold_head() else {
             unreachable!("match on a non-variant");
         };
-        let (local, bound) = match Self::variable_local(cx, scrutinee) {
+        let (local, bound) = match self.variable_local(cx, scrutinee) {
             Some(local) => (local, None),
             None => {
                 let ty = self.lower_ty(&scrutinee_ty);
@@ -1507,6 +1564,17 @@ fn wrap_lets(bindings: Vec<(Local, Expr)>, body: Expr) -> Expr {
 }
 
 /// Recover the substitution that makes `template` equal the ground `actual`.
+/// The type variables of `scheme` as `use_ty` instantiates them.
+fn instance(scheme: &Scheme, use_ty: &Ty) -> Vec<(TypeVar, Ty)> {
+    let mut found = Subst::new();
+    match_ty(&scheme.ty, use_ty, &mut found);
+    scheme
+        .vars
+        .iter()
+        .filter_map(|v| found.remove(v).map(|ty| (*v, ty)))
+        .collect()
+}
+
 fn match_ty(template: &Ty, actual: &Ty, subst: &mut Subst) {
     match_ty_in(template, actual, subst, &mut HashSet::new());
 }

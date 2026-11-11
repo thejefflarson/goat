@@ -10,6 +10,30 @@ mod support;
 use support::{agree_or_trap, run};
 
 #[test]
+fn a_generalized_record_value_is_rematerialized_per_type() {
+    let at_two_types = "a = {x: 1, y: program(s) do s done};\n\
+                        print(a.y(2));\n\
+                        print(a.y(true))";
+    assert_eq!(run(at_two_types), "2\ntrue");
+    let self_typed = "a = {x: 1, y: program(self) do self.x done};\n\
+                      print(a.y(a))";
+    assert_eq!(run(self_typed), "1");
+    let shared_function = "getx = program(self) do self.x done;\n\
+                           a = {x: 1, y: getx};\n\
+                           print(a.y(a))";
+    assert_eq!(run(shared_function), "1");
+}
+
+#[test]
+fn a_generalized_value_is_read_at_each_of_its_types() {
+    let src = "pair = {f: program(s) do s done, n: 3};\n\
+               print(pair.f(pair.n));\n\
+               print(pair.f(false));\n\
+               print(pair.f(pair.n + 1))";
+    assert_eq!(run(src), "3\nfalse\n4");
+}
+
+#[test]
 fn arithmetic() {
     assert_eq!(run("1 + 2 * 3"), "7");
     assert_eq!(run("(1 + 2) * 3"), "9");
