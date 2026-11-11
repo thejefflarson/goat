@@ -108,6 +108,7 @@ fn every_example_prints_the_same_on_both_profiles() {
             "spiral.goat",
             "circle.goat",
             "whole_numbers.goat",
+            "blink.goat",
         ]
         .iter()
         .any(|f| path.ends_with(f));
