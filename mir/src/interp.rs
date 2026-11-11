@@ -344,13 +344,29 @@ impl<'p> Interp<'p> {
         }
     }
 
-    /// `StrEq` and `Write`, out of `eval` so its frame stays small.
+    /// The string operations and `Write`, out of `eval` so its frame stays small.
     #[inline(never)]
     fn text_op(&mut self, e: &Expr, frame: &mut Frame, depth: usize) -> Result<Value, InterpError> {
         match e {
             Expr::StrEq(a, b) => {
                 let (a, b) = (frame.get(*a)?, frame.get(*b)?);
                 Ok(Value::Bool(self.string_bytes(a)? == self.string_bytes(b)?))
+            }
+            Expr::StrLen(s) => {
+                let len = self.string_bytes(frame.get(*s)?)?.len();
+                Ok(Value::Int(len as i64))
+            }
+            Expr::StrByte(s, i) => {
+                let Value::Int(position) = frame.get(*i)? else {
+                    return Err(InterpError::Malformed("byte position is not an Int"));
+                };
+                let bytes = self.string_bytes(frame.get(*s)?)?;
+                position
+                    .checked_sub(1)
+                    .and_then(|at| usize::try_from(at).ok())
+                    .and_then(|at| bytes.get(at))
+                    .map(|&byte| Value::Int(byte.into()))
+                    .ok_or_else(|| InterpError::Trap(BYTE_OUT_OF_RANGE.to_string()))
             }
             Expr::Write(Write::Number(value)) => match self.value(value, frame, depth)? {
                 Value::Float(x) => Ok(self.write(Piece::Number(x))),
@@ -840,7 +856,7 @@ impl<'p> Interp<'p> {
                     Value::Ptr(addr)
                 }
             },
-            Expr::StrEq(..) | Expr::Write(_) => {
+            Expr::StrEq(..) | Expr::StrLen(_) | Expr::StrByte(..) | Expr::Write(_) => {
                 return self.text_op(e, frame, depth).map(Flow::Val);
             }
             Expr::CallForeign(f, args) => self.call_foreign(*f, args, frame)?,

@@ -140,20 +140,34 @@ pub struct ForeignFn {
 }
 
 impl ForeignFn {
-    /// The `math` functions the compiler implements itself rather than
-    /// importing from the host.
-    pub fn intrinsic(&self) -> Option<FloatFn> {
+    /// The `math` and `text` functions the compiler implements itself rather
+    /// than importing from the host.
+    pub fn intrinsic(&self) -> Option<Intrinsic> {
         match (
             self.module.as_str(),
             self.name.as_str(),
             &self.params[..],
             self.ret,
         ) {
-            ("math", "sqrt", [MTy::Float], MTy::Float) => Some(FloatFn::Sqrt),
-            ("math", "truncate", [MTy::Float], MTy::Int) => Some(FloatFn::Truncate),
+            ("math", "sqrt", [MTy::Float], MTy::Float) => Some(Intrinsic::Float(FloatFn::Sqrt)),
+            ("math", "truncate", [MTy::Float], MTy::Int) => {
+                Some(Intrinsic::Float(FloatFn::Truncate))
+            }
+            ("text", "byte_length", [STR], MTy::Int) => Some(Intrinsic::ByteLength),
+            ("text", "byte_at", [STR, MTy::Int], MTy::Int) => Some(Intrinsic::ByteAt),
             _ => None,
         }
     }
+}
+
+const STR: MTy = MTy::Ptr(HeapKind::Str);
+
+/// A foreign binding the compiler lowers to a MIR node of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Intrinsic {
+    Float(FloatFn),
+    ByteLength,
+    ByteAt,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -203,6 +217,9 @@ pub enum Const {
 pub const INT_OVERFLOW: &str = "this number got too big";
 pub const DIVISION_BY_ZERO: &str = "division by zero";
 pub const NOT_A_WHOLE_NUMBER: &str = "this number can't be made a whole number";
+
+/// What `StrByte` traps with when its position is not inside the string.
+pub const BYTE_OUT_OF_RANGE: &str = "this position is outside the string";
 
 /// Integer arithmetic traps on overflow rather than wrapping. `Div` rounds
 /// toward zero; `FloorDiv` and `Mod` round toward negative infinity, so
@@ -311,6 +328,12 @@ pub enum Expr {
     StrLit(DataId),
     /// Whether two strings hold the same bytes; borrows both operands.
     StrEq(Local, Local),
+    /// The number of UTF-8 bytes in a string; borrows it.
+    StrLen(Local),
+    /// The byte (`0..=255`) of a string at a 1-based position held in an `Int`
+    /// local; borrows the string. A position outside `1..=StrLen` traps with
+    /// `BYTE_OUT_OF_RANGE`.
+    StrByte(Local, Local),
     Write(Write),
     /// A call to a host function. Effectful even when it returns `Unit`: it is
     /// never dropped, duplicated, or reordered (see `effects`). Arguments are
@@ -338,6 +361,8 @@ impl Expr {
             | Expr::Free(_)
             | Expr::StrLit(_)
             | Expr::StrEq(..)
+            | Expr::StrLen(_)
+            | Expr::StrByte(..)
             | Expr::CallForeign(..)
             | Expr::Write(Write::Str(_) | Write::Lit(_) | Write::End)
             | Expr::Dup(_)

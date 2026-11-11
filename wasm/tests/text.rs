@@ -120,3 +120,28 @@ fn string_equality_loops_over_the_bytes() {
     assert!(text.contains("i32.load8_u"), "{text}");
     assert!(text.contains("loop"), "{text}");
 }
+
+#[test]
+fn reading_a_byte_checks_the_position_against_the_length() {
+    let body = let_(
+        0,
+        Expr::StrLit(DataId(0)),
+        let_(
+            1,
+            int(2),
+            let_(
+                2,
+                Expr::StrByte(Local(0), Local(1)),
+                let_(
+                    3,
+                    Expr::StrLen(Local(0)),
+                    let_(4, Expr::Drop(Local(0)), local(2)),
+                ),
+            ),
+        ),
+    );
+    let text = wat(&string_program(body, MTy::Int));
+    assert!(text.contains("i32.load8_u"), "{text}");
+    assert!(text.contains("i64.ge_u"), "{text}");
+    assert!(text.contains(BYTE_OUT_OF_RANGE), "{text}");
+}

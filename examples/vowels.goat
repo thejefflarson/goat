@@ -1,0 +1,17 @@
+# byte_at reads a string one byte at a time, counting from 1 like item, and
+# byte_length says how many bytes there are. They count bytes, not characters:
+# 97 is "a", and a letter like "é" takes two bytes.
+is_vowel = program(byte) do
+  byte == 97 or byte == 101 or byte == 105 or byte == 111 or byte == 117
+done
+
+count_vowels = program(text, at, found) do
+  if at > byte_length(text)
+    then found
+    else
+      more = if is_vowel(byte_at(text, at)) then found + 1 else found done
+      count_vowels(text, at + 1, more)
+  done
+done
+
+print(count_vowels("a goat eats a banana", 1, 0));
