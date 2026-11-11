@@ -8,14 +8,20 @@ import UIKit
 typealias PlatformColor = UIColor
 #endif
 
-/// Marks `ranges` in `storage`, first clearing whatever the last call marked.
+/// Marks `ranges` in `storage` with a dashed red underline, first clearing
+/// whatever the last call marked. An underline leaves the text colour alone and
+/// does not rely on colour only; TextKit has no public wavy style.
 @MainActor
-private func paint(_ storage: NSTextStorage, ranges: [NSRange]) {
+func paint(_ storage: NSTextStorage, ranges: [NSRange]) {
     let whole = NSRange(location: 0, length: storage.length)
     storage.beginEditing()
-    storage.removeAttribute(.backgroundColor, range: whole)
+    storage.removeAttribute(.underlineStyle, range: whole)
+    storage.removeAttribute(.underlineColor, range: whole)
     for range in ranges where NSMaxRange(range) <= storage.length {
-        storage.addAttribute(.backgroundColor, value: PlatformColor.systemRed.withAlphaComponent(0.3), range: range)
+        storage.addAttributes([
+            .underlineStyle: NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDash.rawValue,
+            .underlineColor: PlatformColor.systemRed,
+        ], range: range)
     }
     storage.endEditing()
 }
