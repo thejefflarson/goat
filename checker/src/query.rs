@@ -14,7 +14,7 @@
 use crate::captures::for_each_node;
 use crate::hir::{Builtin, Expr, ExprKind, FileId};
 use crate::infer::{Typed, infer_partial};
-use crate::lower::lower_with_vocab;
+use crate::lower::{RECEIVER_NAME, lower_with_vocab};
 use crate::ty::{Row, Ty};
 use crate::vocab::Vocab;
 use goat_parser::cst::{Child, Cst, Goat, Match, Node, TagCase};
@@ -231,7 +231,7 @@ fn read_binders(program: &Program) -> (HashMap<(String, usize), Known>, Vec<Bind
                 name,
                 value,
                 ..
-            } => {
+            } if name != RECEIVER_NAME => {
                 binders.insert((name.clone(), e.span.start), known(typed, symbol, value));
             }
             ExprKind::Func { params, .. } => {
