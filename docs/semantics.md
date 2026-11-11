@@ -407,30 +407,30 @@ and non-derivations. Throughout, `I ≡ program(x) do x done`; by `T-Abs`/`T-Var
 `· ⊢ I : (α)→α` for any `α`. We write `a = e₁  e₂` for the inner binding whose
 body `e₂` ignores `a` — it forces `e₁` to be typed, then types `e₂`.
 
-### 8.1 `m = {id: program(x) do x done}  (a = m.id(1)  m.id(true))` — **accepts**
+### 8.1 `m = {id: program(x) do x done}  (a = (m.id)(1)  (m.id)(true))` — **accepts**
 
 - `T-Record` on `{id: I}` with `· ⊢ I : (α)→α` gives `{id: I} : {id:(α)→α ; ·}`.
 - `gen(·, {id:(α)→α ; ·}) = ∀α. {id:(α)→α ; ·}`, since `α ∉ ftv(·)`. Call it
   `σ_m`; bind `m : σ_m`.
 - First use: `T-Var` instantiates `σ_m` at `α := Number`, so
   `m : {id:(Number)→Number ; ·}`, `T-Proj` gives `m.id : (Number)→Number`, and
-  `T-App` with `1 : Number` gives `m.id(1) : Number`. Bind `a : Number`.
+  `T-App` with `1 : Number` gives `(m.id)(1) : Number`. Bind `a : Number`.
 - Second use: `T-Var` instantiates `σ_m` **again**, at `α := Bool`, so
-  `m.id : (Bool)→Bool` and `m.id(true) : Bool`.
+  `m.id : (Bool)→Bool` and `(m.id)(true) : Bool`.
 - Whole program: `Bool`. ✓
 
 It accepts because `m` itself is generalized, so **each mention of `m`
 re-instantiates `α`**. The field `id` is not independently polymorphic; the
 record `m` is, and that is enough.
 
-### 8.2 `use = program(m) do a = m.id(1)  m.id(true) done` — **rejects** (the sharp edge)
+### 8.2 `use = program(m) do a = (m.id)(1)  (m.id)(true) done` — **rejects** (the sharp edge)
 
 Typing the body needs `Γ, m:τ_m ⊢ …`, with `m` bound at a **monotype** `τ_m`
 (`T-Abs`, no `∀`). `m.id` requires, by `T-Proj` (+ `T-Conv`), that
 `τ_m ≅ {id:τ_id ; ρ}` for a single fixed `τ_id`.
 
-- `m.id(1)` forces, by `T-App`, `τ_id ≅ (Number)→τ`.
-- `m.id(true)` reuses the **same** `τ_id` (a monotype has only itself as
+- `(m.id)(1)` forces, by `T-App`, `τ_id ≅ (Number)→τ`.
+- `(m.id)(true)` reuses the **same** `τ_id` (a monotype has only itself as
   instance) and forces `τ_id ≅ (Bool)→τ'`.
 
 So `(Number)→τ ≅ (Bool)→τ'`, which by L2 forces `Number ≅ Bool` — not derivable.

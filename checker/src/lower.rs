@@ -46,8 +46,31 @@ const LOOP_COUNTER_NAME: &str = "count";
 const LOOP_START_NAME: &str = "start";
 const LOOP_STOP_NAME: &str = "stop";
 
+/// The hidden binder of a dot call's computed receiver. No source name can
+/// spell it.
+pub const RECEIVER_NAME: &str = "@receiver";
+
+/// A call through a dot, `r.f(a)`, rewritten to `(r.f)(r, a)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DotCall {
+    /// Where the receiver is written; a diagnostic quotes it from the source.
+    pub receiver: Span,
+    pub label: String,
+    pub receiver_kind: ReceiverKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverKind {
+    /// A variable or a path of field accesses, repeated in the rewrite.
+    Path,
+    /// Anything else, bound once to a hidden name.
+    Computed,
+}
+
 pub struct Lowered {
     pub root: Expr,
+    /// Each dot call's `App`, by id.
+    pub dot_calls: HashMap<ExprId, DotCall>,
     pub errors: Vec<GoatError>,
     pub warnings: Vec<GoatError>,
     pub interactive: Option<Interactive>,
@@ -104,6 +127,7 @@ pub fn lower_with_vocab(
     let interactive = ctx.make_interactive(&mut root, vocab);
     Ok(Lowered {
         root,
+        dot_calls: ctx.dot_calls,
         errors: ctx.errors,
         warnings: ctx.warnings,
         interactive,
@@ -311,6 +335,7 @@ struct Lower {
     /// Every declared tag, built-in and written: one flat namespace for the
     /// whole program, each tag with the closed group it belongs to, if any.
     tags: HashMap<String, Option<Arc<Group>>>,
+    dot_calls: HashMap<ExprId, DotCall>,
 }
 
 impl Lower {
@@ -745,10 +770,13 @@ impl Lower {
         self.lower_postfixes(expr, inner)
     }
 
-    /// `a.b(x).c` nests as `((a.b)(x)).c`.
+    /// `a.b(x).c` nests as `((a.b)(x)).c`. A call straight after an access is a
+    /// dot call: `r.f(x)` is `(r.f)(r, x)`.
     fn lower_postfixes(&mut self, mut expr: Expr, inner: &mut Peekable<Children>) -> Expr {
+        let mut after_access = false;
         while let Some(postfix) = inner.next_if(|p| matches!(p.kind(), "access" | "call")) {
             let span = expr.span.to(self.span_of(&postfix));
+            let was_access = std::mem::replace(&mut after_access, postfix.is("access"));
             expr = match postfix.kind() {
                 "access" => {
                     let label = postfix
@@ -773,6 +801,8 @@ impl Lower {
                         .collect();
                     if matches!(expr.kind, ExprKind::Builtin(Builtin::Trap)) {
                         self.lower_trap(span, args)
+                    } else if was_access {
+                        self.lower_dot_call(span, expr, args)
                     } else {
                         self.node(
                             span,
@@ -786,6 +816,86 @@ impl Lower {
             };
         }
         expr
+    }
+
+    /// `callee` is the `r.f` of `r.f(args)`.
+    fn lower_dot_call(&mut self, span: Span, mut callee: Expr, mut args: Vec<Expr>) -> Expr {
+        let callee_span = callee.span;
+        let ExprKind::Field { record, label } = std::mem::replace(&mut callee.kind, ExprKind::Unit)
+        else {
+            unreachable!("a call after an access calls a field")
+        };
+        let receiver_span = record.span;
+        let (field_record, receiver, bound) = match self.repeat_path(&record) {
+            Some(receiver) => (*record, receiver, None),
+            None => {
+                let symbol = self.fresh_symbol();
+                let var = ExprKind::Var {
+                    symbol,
+                    name: RECEIVER_NAME.into(),
+                };
+                let field_record = self.node(receiver_span, var.clone());
+                let receiver = self.node(receiver_span, var);
+                (field_record, receiver, Some((symbol, *record)))
+            }
+        };
+        let callee = self.node(
+            callee_span,
+            ExprKind::Field {
+                record: Box::new(field_record),
+                label: label.clone(),
+            },
+        );
+        args.insert(0, receiver);
+        let app = self.node(
+            span,
+            ExprKind::App {
+                callee: Box::new(callee),
+                args,
+            },
+        );
+        let receiver_kind = if bound.is_some() {
+            ReceiverKind::Computed
+        } else {
+            ReceiverKind::Path
+        };
+        self.dot_calls.insert(
+            app.id,
+            DotCall {
+                receiver: receiver_span,
+                label,
+                receiver_kind,
+            },
+        );
+        match bound {
+            None => app,
+            Some((symbol, value)) => {
+                let kind = ExprKind::Let {
+                    symbol,
+                    name: RECEIVER_NAME.into(),
+                    value: Box::new(value),
+                    rest: Some(Box::new(app)),
+                };
+                self.node(span, kind)
+            }
+        }
+    }
+
+    /// A copy of a variable or a path of field accesses with fresh ids, since
+    /// each use is typed on its own.
+    fn repeat_path(&mut self, e: &Expr) -> Option<Expr> {
+        let kind = match &e.kind {
+            ExprKind::Var { symbol, name } => ExprKind::Var {
+                symbol: *symbol,
+                name: name.clone(),
+            },
+            ExprKind::Field { record, label } => ExprKind::Field {
+                record: Box::new(self.repeat_path(record)?),
+                label: label.clone(),
+            },
+            _ => return None,
+        };
+        Some(self.node(e.span, kind))
     }
 
     fn lower_trap(&mut self, span: Span, args: Vec<Expr>) -> Expr {

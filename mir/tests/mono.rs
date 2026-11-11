@@ -321,8 +321,8 @@ fn closures_through_a_polymorphic_apply() {
 #[test]
 fn record_of_capturing_functions() {
     let src = "k = 10 \
-               r = {f: program(x) do x + k done, g: program(x) do x * k done} \
-               r.f(3) + r.g(2)";
+               r = {f: program(x) do x + k done, g: program(x) do x * k done}; \
+               (r.f)(3) + (r.g)(2)";
     assert_eq!(value(src), num(33.0));
 }
 

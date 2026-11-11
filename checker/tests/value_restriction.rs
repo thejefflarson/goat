@@ -34,7 +34,7 @@ fn a_computed_binding_used_once_checks() {
 
 #[test]
 fn a_record_of_functions_generalizes() {
-    checks("p = {f: program(x) do x done}\na = p.f(1)\nb = p.f(true)\nb");
+    checks("p = {f: program(x) do x done}\na = (p.f)(1)\nb = (p.f)(true)\nb");
 }
 
 #[test]
