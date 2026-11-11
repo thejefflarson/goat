@@ -27,6 +27,13 @@ preservation) is B3 (#71).
 | `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
 | `GoatRank2.v` | B4 (issue #72): the rank-2 intersection examples. The sharp-edge programs `both` (no-record) and `use2` (scoped-label rows) now type under `T_AppPoly`, and the extended `soundness` shows they never get stuck. |
 | `GoatSound.v` | The two canonical HM lemmas — `typing_weaken` (L4) and `typing_tsubst_fix` (L5) — via the general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`); then term substitution **L6a/L6b**, **Preservation** and **Soundness**. All axiom- and admit-free. |
+| `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
+| `GoatPeg.v` | Ford-style relational PEG semantics of the generated grammar over a token stream, and **T2** `peg_deterministic`. |
+| `GoatDen.v` | The denotation of core-fragment parse trees as Ott terms (curried, locally nameless via `close_exp`, labels interned by first occurrence), and its local closure. |
+| `GoatShape.v` | The forests the core rules can produce, the shape of each core node's children, and totality: every valid, complete core tree has a denotation. |
+| `GoatParse.v` | **T1** `parse_denotes_lc`. |
+| `GoatExample.v` | A fuel-bounded PEG interpreter, sound for the relation, parsing two small programs; T1 applied to one of them. |
+| `GoatAssumptions.v` | `make check-assumptions` fails unless T1 and T2 print "Closed under the global context". |
 | `_CoqProject`, `Makefile` | Build. |
 
 ## Records and projection in the Ott source
@@ -219,6 +226,40 @@ parameter-meets-argument site, which is where goat's sharp edge actually bites.
   relation states symmetry, transitivity, and label swap but no reflexivity).
 - `subst_exp_fresh_eq`: `y ∉ fv_exp e → subst_exp u y e = e`, over the
   generated `subst_exp`/`fv_exp` (now mutual with the `fields` spine).
+
+## The parser claim (ADR 0030)
+
+`peg_deterministic` (T2): a token stream has at most one parse. `parse_denotes_lc`
+(T1): every parse of the top rule `goat` whose tree is in the core fragment
+denotes a term that is both `lc` (the local closure the soundness proof uses)
+and the generated `lc_exp`.
+
+Boundary:
+
+- **Core fragment only.** The rules of `grammar/goat.peg` that `goat_ln.ott` has
+  a production for (`core_rule` in `GoatShape.v`, checked against
+  `parser/tests/rule_map.rs` by a Rust test), minus the shapes ADR 0030 excludes
+  (`Complete` in `GoatShape.v`): `program()`, an empty body, a call with no
+  arguments, an empty program, a block that ends in a binding.
+- **The lexer is trusted.** The input is a list of tokens; nothing is said about
+  how characters become tokens. A text terminal matches a punctuation or keyword
+  token, never a name, so the words `from`, `to`, `in` and `foreign` (names
+  elsewhere) cannot be matched as keywords by the model. No core rule spells them
+  out.
+- **Recovery annotations are not in the generated grammar.** They change nothing
+  about valid input.
+- **Not verified:** the Rust interpreter `parser/src/interp.rs`, the lowering
+  `checker/src/lower.rs`, and every rule outside the fragment. Connecting them to
+  these theorems stays a testing argument (`rule_map.rs`,
+  `checker/tests/core_roundtrip.rs`).
+
+Side conditions. The front end and `goat_ln.ott` disagree in three places (ADR
+0030): function bindings are recursive and a block's functions form a group, and
+duplicate record labels or repeated parameters are lowering errors. `goat_ln.ott`
+is unchanged; they are conditions on the term, to be hypotheses of the
+round-trip theorem T3 where they matter. T1 does not need them: `close_exp`
+yields a locally closed term whatever names repeat, so T1 is stated without them
+rather than with unused hypotheses.
 
 ## CI
 
