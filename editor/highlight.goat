@@ -1,6 +1,7 @@
 # Syntax highlighting for the editor host (ADR 0015, ADR 0020), written in goat.
 # `update` receives the text on each Edited event and keeps one Span per
-# highlighted token; `draw` hands the spans back. A span's `from` and `to` are
+# highlighted token; `draw` hands the spans back. A HostTags event names the
+# tags the host itself provides (`Empty`, `Tick`, ...), space separated. A span's `from` and `to` are
 # 0-based byte offsets into the text, `to` exclusive, and its `kind` is the
 # style role of the web editor's `tok-<kind>` classes. The offsets are 0-based
 # throughout: `at` reads position p with the 1-based `byte_at(text, p + 1)`.
@@ -8,7 +9,7 @@
 # The scanner follows `parser::lexer` rule for rule and is tested against it
 # byte for byte. It differs in two places: every byte of 128 or more counts as
 # a letter (the lexer asks Unicode which characters may start a name), and a
-# name has no length limit. Only the tags the text itself declares are marked.
+# name has no length limit.
 
 # Token kinds. Spans carry only those up to `operator`.
 comment = 0
@@ -51,6 +52,8 @@ is_inner = program(c) do is_letter(c) or is_digit(c) or c == 95 done
 
 is_not_newline = program(c) do c != 10 and c != 13 and c != 0 - 1 done
 
+is_not_space = program(c) do c != 32 and c != 0 - 1 done
+
 # Where the run of bytes satisfying `test` that starts at p ends.
 run_end = program(text, p, test) do
   if test(at(text, p)) then run_end(text, p + 1, test) else p done
@@ -90,10 +93,10 @@ spelled_at = program(text, p, word, i) do
   else false done done
 done
 
-# Do the `length` bytes at p and at q match, counting from i?
-same_bytes = program(text, p, q, i, length) do
+# Do the `length` bytes of `one` at p and of `other` at q match, counting from i?
+same_bytes = program(one, p, other, q, i, length) do
   if i > length then true
-  else if at(text, p + i - 1) == at(text, q + i - 1) then same_bytes(text, p, q, i + 1, length)
+  else if at(one, p + i - 1) == at(other, q + i - 1) then same_bytes(one, p, other, q, i + 1, length)
   else false done done
 done
 
@@ -265,13 +268,24 @@ declared = program(text, tokens, found, mode, open) do
   done
 done
 
-is_declared = program(text, tags, token) do
+# Is the token spelled like one of `tags`, whose ranges index `source`?
+is_named = program(source, tags, text, token) do
   match tags do
     [head, ...tail] then
-      (head.b - head.a == token.b - token.a and same_bytes(text, head.a, token.a, 1, head.b - head.a))
-        or is_declared(text, tail, token)
+      (head.b - head.a == token.b - token.a and same_bytes(source, head.a, text, token.a, 1, head.b - head.a))
+        or is_named(source, tail, text, token)
     [] then false
   done
+done
+
+# The ranges of the space-separated words in `names`.
+words = program(names, p, found) do
+  if p >= byte_length(names) then found
+  else if at(names, p) == 32 then words(names, p + 1, found)
+  else
+    end = run_end(names, p, is_not_space)
+    words(names, end, Link({a: p, b: end}, found))
+  done done
 done
 
 role = program(kind) do
@@ -284,28 +298,31 @@ role = program(kind) do
   else "operator" done done done done done done
 done
 
-# One Span per token that has a role, with declared tags marked.
-spans = program(text, tokens, tags, found) do
+# One Span per token that has a role, with the tags the text declares and the
+# host's `names` (whose ranges are `host`) marked.
+spans = program(text, tokens, tags, names, host, found) do
   match tokens do
     [token, ...rest] then
-      kind = if token.kind == name and is_declared(text, tags, token) then tag_name else token.kind done
+      is_tag = token.kind == name and (is_named(text, tags, text, token) or is_named(names, host, text, token))
+      kind = if is_tag then tag_name else token.kind done
       span = Span({from: token.a, to: token.b, kind: role(kind)})
-      spans(text, rest, tags, if kind <= operator then Link(span, found) else found done)
+      spans(text, rest, tags, names, host, if kind <= operator then Link(span, found) else found done)
     [] then reverse(found)
   done
 done
 
-highlight = program(text) do
+highlight = program(text, names) do
   nowhere = {kind: unknown, a: 0, b: 0}
   tokens = place(text, lex(text, 0, []), [], nowhere, nowhere, 0 - 1, 0)
-  spans(text, tokens, declared(text, tokens, [], 0, 0), [])
+  spans(text, tokens, declared(text, tokens, [], 0, 0), names, words(names, 0, []), [])
 done
 
-init = {spans: []}
+init = {spans: [], names: ""}
 
 update = program(model, event) do
   match event do
-    Edited(edit) then {spans: highlight(edit.text)}
+    Edited(edit) then {spans: highlight(edit.text, model.names), names: model.names}
+    HostTags(host) then {spans: model.spans, names: host.names}
     else model
   done
 done

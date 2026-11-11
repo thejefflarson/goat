@@ -388,6 +388,22 @@ other leaf, so the marshalling is unchanged.
 `editor/highlight.goat` is the highlighter, an ADR 0015 program over this
 vocabulary: `update` lexes the text with `byte_length` and `byte_at` and keeps
 the spans, `draw` returns them. `goat/tests/highlight.rs` holds it to
-`parser::lexer` byte for byte. It marks only the tags the text declares, not
-the host's own (`Empty`, `Tick`, ...), and it counts every byte of 128 or more
-as part of a name where the lexer consults Unicode.
+`parser::lexer` byte for byte. It counts every byte of 128 or more as part of
+a name where the lexer consults Unicode.
+
+The text does not declare a host's own tags (`Empty`, `Tick`, ...), so a third
+event, `HostTags({names: String})`, carries them: the names, space separated,
+that the host's prelude and vocabulary declare. The highlighter marks those
+names as tags exactly as `gw_tokenize` does with the host's tag set, and the
+conformance test holds the spans to the lexer with the turtle's and the canvas
+host's tags supplied. Events carry flat leaves only, which is why the names are
+one string.
+
+The web editor runs the highlighter behind the `?highlighter=goat` query
+string (`web/highlighter.ts`). It runs in a worker of its own under the
+supervisor (ADR 0021), so a highlighter that traps or spins is terminated, and
+the editor falls back to `gw_tokenize`. The program draws once per `Edited`
+event, not once per animation frame. The page treats the spans as untrusted
+words: `kind` must be one of the seven roles (`comment`, `keyword`, `literal`,
+`number`, `string`, `tag`, `operator`) before it becomes a class name, and a
+span out of range or out of order is dropped.

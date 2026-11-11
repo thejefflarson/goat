@@ -213,8 +213,9 @@ impl Vocab {
         }
     }
 
-    /// The vocabulary of a text-editing host: it reports what the person typed
-    /// and where the selection is, and `draw` answers with style spans over
+    /// The vocabulary of a text-editing host: it reports what the person typed,
+    /// where the selection is and which names its language declares as tags
+    /// (`HostTags`, space separated), and `draw` answers with style spans over
     /// the text, each a role name (`"keyword"`) and never a colour.
     pub fn editor() -> Vocab {
         let event = |name: &str, payload: Ty| EventTag {
@@ -226,6 +227,7 @@ impl Vocab {
             events: vec![
                 event("Edited", record([("text", Ty::Str), ("cursor", Ty::Int)])),
                 event("Selected", record([("anchor", Ty::Int), ("head", Ty::Int)])),
+                event("HostTags", record([("names", Ty::Str)])),
             ],
             shapes: vec![ShapeTag {
                 name: "Span".to_string(),

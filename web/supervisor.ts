@@ -14,7 +14,7 @@ import {
   type ToWorker,
   missingCapability,
 } from "./protocol.ts";
-import type { EventKind, HostEvent } from "./scene.ts";
+import type { EventKind, HostEvent, RawSpan } from "./scene.ts";
 
 export const RUN_ONCE_BUDGET_MS = 10_000;
 export const POLL_MS = 100;
@@ -51,6 +51,9 @@ export interface RunSink {
   // The recompiled program could not replace the running one, which keeps running.
   onReloadFailed?(message: string): void;
   onOutput(lines: string[]): void;
+  // A `highlight` program drew spans for the input sent with `ticket`. The
+  // spans are the program's own words, to be validated before use.
+  onSpans?(ticket: number, spans: RawSpan[]): void;
   onFinished?(): void;
   // A trap, a worker error, or a stuck program the supervisor stopped.
   onFailed(message: string): void;
@@ -124,10 +127,12 @@ export class Supervisor implements Runner {
     return true;
   }
 
-  input(event: HostEvent): void {
+  // Delivers a host event to the running program; a `highlight` program's
+  // answer comes back through `onSpans` with the same `ticket`.
+  input(event: HostEvent, ticket?: number): void {
     const session = this.#session;
     if (session?.ready && session.subscriptions.has(event.kind)) {
-      session.worker.postMessage({ type: "input", event });
+      session.worker.postMessage({ type: "input", event, ticket });
     }
   }
 
@@ -176,6 +181,9 @@ export class Supervisor implements Runner {
         break;
       case "output":
         session.sink.onOutput(message.lines);
+        break;
+      case "spans":
+        session.sink.onSpans?.(message.ticket, message.spans);
         break;
       case "finished":
         session.sink.onFinished?.();
