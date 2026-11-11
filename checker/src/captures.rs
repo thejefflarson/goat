@@ -14,14 +14,15 @@ pub enum Target {
 
 /// Each literal's captures, in `Capture` index order: its free variables, where
 /// a referenced function binding contributes that function's captures instead
-/// of itself.
-pub fn capture_sets(root: &Expr) -> HashMap<Target, Vec<Symbol>> {
+/// of itself. A `generalized` value binding is lowered afresh at each use, so
+/// it too contributes its own free variables instead of itself.
+pub fn capture_sets(root: &Expr, generalized: &HashSet<Symbol>) -> HashMap<Target, Vec<Symbol>> {
     let mut free = Vec::new();
-    collect(root, &mut free);
+    collect(root, generalized, &mut free);
     resolve(&free)
 }
 
-fn collect(root: &Expr, free: &mut Vec<(Target, Vec<Symbol>)>) {
+fn collect(root: &Expr, generalized: &HashSet<Symbol>, free: &mut Vec<(Target, Vec<Symbol>)>) {
     let mut pending = vec![root];
     while let Some(e) = pending.pop() {
         match &e.kind {
@@ -40,7 +41,12 @@ fn collect(root: &Expr, free: &mut Vec<(Target, Vec<Symbol>)>) {
                         pending.push(body);
                     }
                     ExprKind::Foreign { .. } => free.push((Target::Named(*symbol), Vec::new())),
-                    _ => pending.push(value),
+                    _ => {
+                        if generalized.contains(symbol) {
+                            free.push((Target::Named(*symbol), free_symbols(&[], value)));
+                        }
+                        pending.push(value);
+                    }
                 }
             }
             ExprKind::Func { params, body } => {

@@ -34,6 +34,47 @@ fn a_generalized_value_is_read_at_each_of_its_types() {
 }
 
 #[test]
+fn a_generalized_value_is_used_at_one_type_in_each_function() {
+    let src = "a = {y: program(s) do s done}\n\
+               f = program(n) do a.y(n) done\n\
+               g = program(b) do a.y(b) done\n\
+               print(f(2));\n\
+               print(g(true))";
+    assert_eq!(run(src), "2\ntrue");
+}
+
+#[test]
+fn a_generalized_value_is_used_at_two_types_in_one_function() {
+    let src = "a = {y: program(s) do s done}\n\
+               h = program(n) do print(a.y(n)); print(a.y(true)) done\n\
+               h(2)";
+    assert_eq!(run(src), "2\ntrue");
+}
+
+#[test]
+fn a_generalized_value_is_used_in_a_closure_inside_a_closure() {
+    let src = "a = {y: program(s) do s done}\n\
+               outer = program(n) do\n\
+                 inner = program(m) do a.y(m) + n done;\n\
+                 print(a.y(true));\n\
+                 inner(1)\n\
+               done\n\
+               print(outer(2));\n\
+               print(a.y(false))";
+    assert_eq!(run(src), "true\n3\nfalse");
+}
+
+#[test]
+fn a_generalized_value_keeps_the_variables_it_names() {
+    let src = "k = 5\n\
+               a = {n: k, y: program(s) do s done}\n\
+               f = program(z) do a.y(z) + a.n done\n\
+               print(f(2));\n\
+               print(a.y(true))";
+    assert_eq!(run(src), "7\ntrue");
+}
+
+#[test]
 fn arithmetic() {
     assert_eq!(run("1 + 2 * 3"), "7");
     assert_eq!(run("(1 + 2) * 3"), "9");

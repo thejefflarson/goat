@@ -86,7 +86,13 @@ pub fn check_with_vocab(
     }
     let mut typed = infer::infer_program(&lowered.root, lowered.interactive.as_ref(), vocab)?;
     typed.warnings.splice(0..0, lowered.warnings);
-    let captures = captures::capture_sets(&lowered.root);
+    let generalized = typed
+        .schemes
+        .iter()
+        .filter(|(_, scheme)| !scheme.vars.is_empty())
+        .map(|(symbol, _)| *symbol)
+        .collect();
+    let captures = captures::capture_sets(&lowered.root, &generalized);
     let errors = order::check(&lowered.root, &captures);
     if !errors.is_empty() {
         return Err(errors);
