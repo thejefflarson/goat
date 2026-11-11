@@ -9,7 +9,7 @@ use goat_checker::hir::{
     self, BinOp, Boundary, Builtin, Decoder, ExprId, ExprKind, Param, PatternPayload, Span, Symbol,
 };
 use goat_checker::infer::Typed;
-use goat_checker::ty::{Row, Ty, TypeVar};
+use goat_checker::ty::{Row, Scheme, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target, Vocab};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -48,6 +48,7 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
         decoders: checked.interactive.as_ref().map_or(&[], |i| &i.decoders),
         lambdas,
         var_tys,
+        values: generalized_values(checked),
         foreign,
         imports: Vec::new(),
         foreign_fns: HashMap::new(),
@@ -318,17 +319,6 @@ impl<'a> Collector<'a> {
     }
 }
 
-/// The first expression in `e` that refers to `symbol`.
-fn first_use(root: &hir::Expr, symbol: Symbol) -> Option<ExprId> {
-    let mut found = None;
-    for_each_node(root, &mut |e| {
-        if found.is_none() && matches!(&e.kind, ExprKind::Var { symbol: s, .. } if *s == symbol) {
-            found = Some(e.id);
-        }
-    });
-    found
-}
-
 /// A function literal at one instantiation: its target, its type at the use,
 /// and the types of its captured variables.
 type SpecKey = (Target, Ty, Vec<Ty>);
@@ -348,6 +338,9 @@ struct Mono<'a> {
     decoders: &'a [Decoder],
     lambdas: HashMap<Target, Lambda<'a>>,
     var_tys: HashMap<Symbol, &'a Ty>,
+    /// The value of each generalized value binding. A use lowers the value at
+    /// the use's type, so no copy is bound or captured.
+    values: HashMap<Symbol, &'a hir::Expr>,
     /// The host function of each `foreign` binding.
     foreign: HashMap<Symbol, ForeignFn>,
     /// The host functions the program uses, which become its imports. A
@@ -739,6 +732,21 @@ impl Mono<'_> {
         Expr::MakeClosure(id, values)
     }
 
+    /// A generalized value binding at a use: its value lowered at the use's
+    /// type. A syntactic value has no effects, so evaluating it per use is
+    /// unobservable, and its layout depends on the instantiation, so one copy
+    /// cannot serve two types.
+    fn rematerialize(&mut self, cx: &mut FnCx, symbol: Symbol, use_site: &hir::Expr) -> Expr {
+        let use_ty = self.node_ty(cx, use_site.id);
+        let value = self.values[&symbol];
+        let scheme = &self.typed.schemes[&symbol];
+        let saved = cx.subst.clone();
+        cx.subst.extend(instance(scheme, &use_ty));
+        let lowered = self.expr(cx, value, false);
+        cx.subst = saved;
+        lowered
+    }
+
     /// A captured or local variable's value.
     fn variable_value(&mut self, cx: &mut FnCx, symbol: Symbol) -> Expr {
         if let Some(&local) = cx.locals.get(&symbol) {
@@ -837,33 +845,6 @@ impl Mono<'_> {
             local,
             sig,
             captures: capture_tys.iter().map(|t| self.lower_ty(t)).collect(),
-        }
-    }
-
-    /// Pin the type variables a value binding generalizes over (`m = mk(2)`
-    /// is polymorphic in whatever `mk` leaves open) to the instantiation its
-    /// first use in `rest` picks. The binding is evaluated once, so its value,
-    /// and the type of any closure capturing it, must be lowered at that
-    /// type; defaulting the variables to `Unit` would disagree with the use.
-    fn instantiate_binding(&self, cx: &mut FnCx, symbol: Symbol, rest: &hir::Expr) {
-        let Some(scheme) = self
-            .typed
-            .schemes
-            .get(&symbol)
-            .filter(|s| !s.vars.is_empty())
-        else {
-            return;
-        };
-        let Some(first_use) = first_use(rest, symbol) else {
-            return;
-        };
-        let use_ty = self.node_ty(cx, first_use);
-        let mut found = Subst::new();
-        match_ty(&scheme.ty, &use_ty, &mut found);
-        for v in &scheme.vars {
-            if let Some(ty) = found.remove(v) {
-                cx.subst.entry(*v).or_insert(ty);
-            }
         }
     }
 
@@ -1009,8 +990,12 @@ impl Mono<'_> {
                 }
                 continue;
             }
-            if let Some(rest) = rest {
-                self.instantiate_binding(cx, *symbol, rest);
+            if self.values.contains_key(symbol) {
+                match rest {
+                    Some(rest) => cursor = rest,
+                    None => break self.expr(cx, value, tail),
+                }
+                continue;
             }
             let ty = self.node_mty(cx, value.id);
             let value = self.expr(cx, value, false);
@@ -1050,6 +1035,7 @@ impl Mono<'_> {
                     _ if self.lambdas.contains_key(&function) => {
                         self.closure_value(cx, function, e)
                     }
+                    _ if self.values.contains_key(symbol) => self.rematerialize(cx, *symbol, e),
                     _ => self.variable_value(cx, *symbol),
                 }
             }
@@ -1528,6 +1514,43 @@ fn wrap_lets(bindings: Vec<(Local, Expr)>, body: Expr) -> Expr {
         .fold(body, |rest, (local, value)| {
             Expr::Let(local, Box::new(value), Box::new(rest))
         })
+}
+
+/// The type variables of `scheme` as `use_ty` instantiates them.
+fn instance(scheme: &Scheme, use_ty: &Ty) -> Vec<(TypeVar, Ty)> {
+    let mut found = Subst::new();
+    match_ty(&scheme.ty, use_ty, &mut found);
+    scheme
+        .vars
+        .iter()
+        .filter_map(|v| found.remove(v).map(|ty| (*v, ty)))
+        .collect()
+}
+
+/// The value binding of each generalized symbol the program refers to. An
+/// unreferenced one is lowered in place like any binding, so the layouts it
+/// builds still exist.
+fn generalized_values(checked: &Checked) -> HashMap<Symbol, &hir::Expr> {
+    let mut values = HashMap::new();
+    let mut referenced = HashSet::new();
+    for_each_node(&checked.root, &mut |e| match &e.kind {
+        ExprKind::Var { symbol, .. } => {
+            referenced.insert(*symbol);
+        }
+        ExprKind::Let { symbol, value, .. }
+            if !matches!(value.kind, ExprKind::Func { .. } | ExprKind::Foreign { .. })
+                && checked
+                    .typed
+                    .schemes
+                    .get(symbol)
+                    .is_some_and(|s| !s.vars.is_empty()) =>
+        {
+            values.insert(*symbol, &**value);
+        }
+        _ => {}
+    });
+    values.retain(|symbol, _| referenced.contains(symbol));
+    values
 }
 
 /// Recover the substitution that makes `template` equal the ground `actual`.

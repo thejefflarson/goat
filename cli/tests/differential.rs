@@ -10,6 +10,71 @@ mod support;
 use support::{agree_or_trap, run};
 
 #[test]
+fn a_generalized_record_value_is_rematerialized_per_type() {
+    let at_two_types = "a = {x: 1, y: program(s) do s done};\n\
+                        print(a.y(2));\n\
+                        print(a.y(true))";
+    assert_eq!(run(at_two_types), "2\ntrue");
+    let self_typed = "a = {x: 1, y: program(self) do self.x done};\n\
+                      print(a.y(a))";
+    assert_eq!(run(self_typed), "1");
+    let shared_function = "getx = program(self) do self.x done;\n\
+                           a = {x: 1, y: getx};\n\
+                           print(a.y(a))";
+    assert_eq!(run(shared_function), "1");
+}
+
+#[test]
+fn a_generalized_value_is_read_at_each_of_its_types() {
+    let src = "pair = {f: program(s) do s done, n: 3};\n\
+               print(pair.f(pair.n));\n\
+               print(pair.f(false));\n\
+               print(pair.f(pair.n + 1))";
+    assert_eq!(run(src), "3\nfalse\n4");
+}
+
+#[test]
+fn a_generalized_value_is_used_at_one_type_in_each_function() {
+    let src = "a = {y: program(s) do s done}\n\
+               f = program(n) do a.y(n) done\n\
+               g = program(b) do a.y(b) done\n\
+               print(f(2));\n\
+               print(g(true))";
+    assert_eq!(run(src), "2\ntrue");
+}
+
+#[test]
+fn a_generalized_value_is_used_at_two_types_in_one_function() {
+    let src = "a = {y: program(s) do s done}\n\
+               h = program(n) do print(a.y(n)); print(a.y(true)) done\n\
+               h(2)";
+    assert_eq!(run(src), "2\ntrue");
+}
+
+#[test]
+fn a_generalized_value_is_used_in_a_closure_inside_a_closure() {
+    let src = "a = {y: program(s) do s done}\n\
+               outer = program(n) do\n\
+                 inner = program(m) do a.y(m) + n done;\n\
+                 print(a.y(true));\n\
+                 inner(1)\n\
+               done\n\
+               print(outer(2));\n\
+               print(a.y(false))";
+    assert_eq!(run(src), "true\n3\nfalse");
+}
+
+#[test]
+fn a_generalized_value_keeps_the_variables_it_names() {
+    let src = "k = 5\n\
+               a = {n: k, y: program(s) do s done}\n\
+               f = program(z) do a.y(z) + a.n done\n\
+               print(f(2));\n\
+               print(a.y(true))";
+    assert_eq!(run(src), "7\ntrue");
+}
+
+#[test]
 fn arithmetic() {
     assert_eq!(run("1 + 2 * 3"), "7");
     assert_eq!(run("(1 + 2) * 3"), "9");
