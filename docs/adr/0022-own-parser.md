@@ -359,6 +359,8 @@ active goal; highlighting and live type-checking already work on pest.
 
 ### 7. Relation to the Coq proofs — a first-class artifact, nothing overclaimed
 
+> **Superseded by [ADR 0030](0030-verified-parser-core-fragment.md):** the parser is verified for the core fragment, over a trusted token stream.
+
 goat's proofs (ADR 0008) are about the **type system** — progress and preservation
 over an *abstract-syntax* declarative core, authored in **Ott**, which generates
 the typeset spec and the Coq definitions from one source. Ott models typing and
