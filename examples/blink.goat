@@ -1,0 +1,9 @@
+# Blink an LED on pin 2 three times, then stop. The host supplies the board.
+led = foreign "gpio" "write" (Int, Bool) -> Unit
+delay = foreign "timer" "delay" (Int) -> Unit
+say = foreign "serial" "print" (String) -> Unit
+say("blinking");
+repeat 3 times do
+  led(2, true); delay(500);
+  led(2, false); delay(500)
+done
