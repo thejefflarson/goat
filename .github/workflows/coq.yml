@@ -6,7 +6,8 @@ name: Coq
 # Kani `verify` job: the Coq toolchain is slow to build and must never gate
 # or slow the per-PR Rust critical path.
 #
-# Trigger: only when proofs/, the grammar, the Coq emitter or this workflow change (so ordinary Rust PRs don't
+# Trigger: only when proofs/, the grammar, the Coq emitter and what it prints
+# through (parser/src/peg.rs, parser/src/lexer.rs) or this workflow change (so ordinary Rust PRs don't
 # pay for a Coq build), plus manual dispatch. It is intended as an informational
 # check, not a required one — promote it to required in branch protection once
 # the development has stabilized.
@@ -18,12 +19,16 @@ on:
       - "proofs/**"
       - "grammar/goat.peg"
       - "parser/examples/emit_coq.rs"
+      - "parser/src/peg.rs"
+      - "parser/src/lexer.rs"
       - ".github/workflows/coq.yml"
   pull_request:
     paths:
       - "proofs/**"
       - "grammar/goat.peg"
       - "parser/examples/emit_coq.rs"
+      - "parser/src/peg.rs"
+      - "parser/src/lexer.rs"
       - ".github/workflows/coq.yml"
   workflow_dispatch:
 

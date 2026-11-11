@@ -17,9 +17,8 @@ Require Import Goat.GoatShape.
 Open Scope string_scope.
 Open Scope list_scope.
 
-(* Field and access labels in source order; lowering numbers them by first
-   occurrence in this list. *)
-Fixpoint labels (t : tree) : list string :=
+(* Field and access labels in source order, repeats included. *)
+Fixpoint label_occurrences (t : tree) : list string :=
   match t with
   | Leaf _ => []
   | Node r cs =>
@@ -31,9 +30,22 @@ Fixpoint labels (t : tree) : list string :=
       ++ (fix go (l : list tree) : list string :=
             match l with
             | [] => []
-            | c :: l' => labels c ++ go l'
+            | c :: l' => label_occurrences c ++ go l'
             end) cs
   end.
+
+Fixpoint nub_from (seen l : list string) : list string :=
+  match l with
+  | [] => []
+  | x :: l' =>
+      if existsb (String.eqb x) seen
+      then nub_from seen l'
+      else x :: nub_from (seen ++ [x]) l'
+  end.
+
+(* The label table: each distinct label once, in order of first occurrence, so
+   a label's index is the number lowering gives it. *)
+Definition labels (t : tree) : list string := nub_from [] (label_occurrences t).
 
 (* The program is its single top-level expression. *)
 Definition Den_goat (var_of : string -> termvar) (t : tree) (e : exp) : Prop :=
