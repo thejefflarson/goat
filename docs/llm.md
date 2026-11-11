@@ -174,6 +174,32 @@ byte_at("goat", 1)      # 103, the byte for "g"
 trap pointing at the call. Neither builtin allocates. See
 `examples/vowels.goat`.
 
+### Reading a string by character: `char_count` and `char_at`
+
+These two count Unicode **code points**, which is not always what you see as
+one character.
+
+```
+char_count("goat")      # 4
+char_count("é")         # 1 (byte_length says 2)
+char_count("日本")       # 2
+char_at("goat", 1)      # "g", a new one-character String
+char_at("日本", 2)       # "本"
+char_at("goat", 1) == "g"   # true
+```
+
+`char_at(s, i)` counts from 1, like `item(xs, 1)`. A position below 1 or past
+`char_count(s)` stops the program with a trap pointing at the call. Both read
+the whole string up to the position, so use them for short words, not in a hot
+loop over a long text.
+
+Some emoji and accented letters are several code points: a thumbs-up with a skin
+tone (`"👍🏽"`) is 2, and a family emoji joined with zero-width joiners is 5.
+`char_count` says 2 and 5, and `char_at` hands back the pieces. Grapheme
+clusters (what a reader sees as one character) are not supported. `char_count`
+does not allocate; `char_at` allocates the new string, which the program frees
+when it is no longer used. See `examples/letters.goat`.
+
 ### Comments
 
 ```
@@ -214,8 +240,9 @@ These are planned but **do not run on the current build**. Do not generate them.
   function may use its own parameters and any top-level function, but not a
   variable captured from an outer function. (This is Phase 4, landing now.)
 - **Building strings.** A string literal can be printed, compared with `==`,
-  and read with `byte_length` and `byte_at`, but a program cannot yet make a
-  new string at run time.
+  and read with `byte_length`, `byte_at`, `char_count` and `char_at`.
+  `char_at` is the only way to make a new string at run time; there is no
+  concatenation or `join` for strings yet.
 - **`return`.** A reserved word with no syntax; a function's value is its body.
 - **Variants and `match`** (`Circle(5)`, `Empty`), **lists**, and the
   **turtle/drawing** builtins. (Phases 7–8.)

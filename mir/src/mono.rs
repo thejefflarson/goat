@@ -895,6 +895,8 @@ impl Mono<'_> {
         match (foreign.intrinsic(), args) {
             (Some(Intrinsic::ByteLength), &[s]) => Expr::StrLen(s),
             (Some(Intrinsic::ByteAt), &[s, i]) => Expr::StrByte(s, i),
+            (Some(Intrinsic::CharCount), &[s]) => Expr::StrChars(s),
+            (Some(Intrinsic::CharAt), &[s, i]) => Expr::StrChar(s, i),
             _ => Expr::CallForeign(self.import(symbol), args.to_vec()),
         }
     }
@@ -902,8 +904,8 @@ impl Mono<'_> {
     /// `import(args)`, or the compiler's own `math` or `text` function. Each
     /// argument is bound to a local, in order, because the call borrows its
     /// pointers (see `Expr::CallForeign`); an `Int` argument to a `Float`
-    /// parameter widens. `byte_at` names `span` as the code to blame for its
-    /// trap.
+    /// parameter widens. `byte_at` and `char_at` name `span` as the code to blame
+    /// for their trap.
     #[inline(never)]
     fn foreign_call(
         &mut self,
@@ -926,7 +928,11 @@ impl Mono<'_> {
             .collect();
         let locals: Vec<Local> = bound.iter().map(|(l, _)| *l).collect();
         let mut call = self.foreign_op(symbol, &foreign, &locals);
-        if foreign.intrinsic() == Some(Intrinsic::ByteAt) && !span.in_prelude() {
+        if matches!(
+            foreign.intrinsic(),
+            Some(Intrinsic::ByteAt | Intrinsic::CharAt)
+        ) && !span.in_prelude()
+        {
             call = Self::at_site(cx, span, call);
         }
         wrap_lets(bound, call)

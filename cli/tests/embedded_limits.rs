@@ -66,6 +66,37 @@ fn freed_blocks_are_reused_so_a_long_loop_fits_a_small_budget() {
     assert_eq!(run.live_allocs, 0);
 }
 
+const SPELL: &str = "spell = program(n, acc) do \
+                       if n < 1 then acc else spell(n - 1, Link(char_at(\"日本\", 2), acc)) done \
+                     done ";
+
+#[test]
+fn one_character_strings_come_from_the_arena_and_go_back_to_it() {
+    let run = run_within(
+        limits(1 << 10, 1024),
+        &format!("{SPELL} length(spell(10, []))"),
+    )
+    .expect("fits");
+    assert_eq!(run.printed, ["10"]);
+    assert_eq!(run.live_allocs, 0);
+
+    let spin = "spin = program(n, r) do \
+                  if n < 1 then r else spin(n - 1, char_at(\"日本\", 1)) done \
+                done print(spin(100000, \"\"))";
+    let run = run_within(limits(1 << 10, 1024), spin).expect("reuses its blocks");
+    assert_eq!(run.printed, ["日"]);
+    assert_eq!(run.live_allocs, 0);
+}
+
+#[test]
+fn keeping_one_character_strings_past_the_budget_traps_with_a_message() {
+    let src = format!("{SPELL} length(spell(10000, []))");
+    let error = run_within(limits(8 << 10, 1024), &src)
+        .err()
+        .expect("traps");
+    assert_eq!(error, format!("trap: {HEAP_BUDGET_EXHAUSTED}"));
+}
+
 #[test]
 fn the_default_budget_is_declared_and_holds_a_modest_list() {
     let src = format!("{BUILD} length(build(1000, []))");

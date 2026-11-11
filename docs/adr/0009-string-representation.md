@@ -38,5 +38,13 @@ functionality Phase 5 commits to, and what a string's bytes mean.
   compiled backends call `goat.print_string` with the object pointer.
 - Making a string mortal later changes only the allocation site and the drop
   path; the layout and the `Ptr(Str)` type stay.
+- `char_at` makes the first string a program builds at run time: the backend
+  allocates `12 + n` bytes through the runtime allocator (`rc = 1`, `len = n`,
+  the code point's bytes copied from the source), and the normal drop path frees
+  it like a host-supplied string. A code point is a non-continuation byte plus
+  the continuation bytes after it; the scan and the copy are bounded by the
+  header's `len`, so they stay inside the string even if it is not valid UTF-8.
+  Code points are the unit for `char_count` and `char_at`; grapheme clusters are
+  not provided.
 - Because `len` counts bytes, a string with multi-byte characters has a `len`
   larger than its character count; user-facing length, if added, must say so.
