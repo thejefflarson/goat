@@ -916,6 +916,7 @@ impl Uses {
                 }
             }
             Expr::FloatFn(FloatFn::Truncate, _) => self.note_trap(NOT_A_WHOLE_NUMBER),
+            Expr::StrByte(..) => self.note_trap(BYTE_OUT_OF_RANGE),
             Expr::Site(start, end) => self.note_site(*start, *end),
             Expr::AllocVariant(_, tag, fields) if fields.is_empty() => {
                 if let Err(at) = self.nullary.binary_search(tag) {
@@ -1825,6 +1826,20 @@ impl<'p> FuncCx<'_, 'p> {
                 self.string_equal(a, b, out);
                 Ok(Some(MTy::Bool))
             }
+            Expr::StrLen(s) => {
+                let s = self.string(*s)?;
+                out.extend([
+                    Instruction::LocalGet(s),
+                    Instruction::I32Load(memarg(layout::STR_LEN, 2)),
+                ]);
+                self.widen_unsigned(out);
+                Ok(Some(MTy::Int))
+            }
+            Expr::StrByte(s, i) => {
+                let s = self.string(*s)?;
+                self.string_byte(s, *i, out)?;
+                Ok(Some(MTy::Int))
+            }
             Expr::CallForeign(f, args) => self.call_foreign(*f, args, out),
             Expr::Write(write) => {
                 let call = match write {
@@ -2361,6 +2376,52 @@ impl<'p> FuncCx<'_, 'p> {
             (index, HeapKind::Str) => Ok(index),
             _ => Err(EmitError::Malformed("expected a string")),
         }
+    }
+
+    /// An `i32` on the stack as an `Int`.
+    fn widen_unsigned(&self, out: &mut Code) {
+        if self.program.profile == Profile::Desktop {
+            out.push(Instruction::I64ExtendI32U);
+        }
+    }
+
+    /// Leaves the byte of the string in local `s` at the 1-based position in
+    /// the `Int` local `position` as an `Int`, trapping outside the string. One
+    /// unsigned comparison of `position - 1` against the length covers both
+    /// ends, and `Int::MIN` wraps to a huge index.
+    fn string_byte(&mut self, s: u32, position: Local, out: &mut Code) -> Result<(), EmitError> {
+        use Instruction::*;
+        let &(position, ty) = self
+            .scope
+            .get(&position)
+            .ok_or(EmitError::UnboundLocal(position))?;
+        let (Some(position), MTy::Int) = (position, ty) else {
+            return Err(EmitError::Malformed("byte position is not an Int"));
+        };
+        let wide = self.program.profile == Profile::Desktop;
+        let index = self.scratch(if wide { ValType::I64 } else { ValType::I32 });
+        out.push(LocalGet(position));
+        out.extend(if wide {
+            [I64Const(1), I64Sub]
+        } else {
+            [I32Const(1), I32Sub]
+        });
+        out.extend([
+            LocalTee(index),
+            LocalGet(s),
+            I32Load(memarg(layout::STR_LEN, 2)),
+        ]);
+        self.widen_unsigned(out);
+        out.push(if wide { I64GeU } else { I32GeU });
+        self.trap_if(BYTE_OUT_OF_RANGE, out)?;
+        out.push(LocalGet(s));
+        out.push(LocalGet(index));
+        if wide {
+            out.push(I32WrapI64);
+        }
+        out.extend([I32Add, I32Load8U(memarg(layout::STR_BYTES, 0))]);
+        self.widen_unsigned(out);
+        Ok(())
     }
 
     /// Leaves 1 when the strings in locals `a` and `b` hold the same bytes,

@@ -1,4 +1,4 @@
-//! `Write` and `StrEq`: how the verifier checks them and what the interpreter
+//! `Write`, `StrEq`, `StrLen` and `StrByte`: how the verifier checks them and what the interpreter
 //! does with them.
 
 mod common;
@@ -167,5 +167,105 @@ fn str_eq_wants_strings() {
     assert!(
         kinds(&string_program(&[], bad, MTy::Bool))
             .contains(&ErrorKind::NotAString(MTy::Ptr(HeapKind::Record(RECORD))))
+    );
+}
+
+/// `StrByte` at the 1-based `position` of the string `text`, string dropped.
+fn byte_at(text: &str, position: i64) -> Program {
+    let body = let_(
+        0,
+        Expr::StrLit(DataId(0)),
+        let_(
+            1,
+            int(position),
+            let_(
+                2,
+                Expr::StrByte(Local(0), Local(1)),
+                let_(3, Expr::Drop(Local(0)), local(2)),
+            ),
+        ),
+    );
+    string_program(&[text], body, MTy::Int)
+}
+
+#[test]
+fn str_len_counts_bytes() {
+    for (text, bytes) in [("", 0), ("ab", 2), ("é", 2), ("🐐", 4)] {
+        let body = let_(
+            0,
+            Expr::StrLit(DataId(0)),
+            let_(
+                1,
+                Expr::StrLen(Local(0)),
+                let_(2, Expr::Drop(Local(0)), local(1)),
+            ),
+        );
+        let out = run_verified(&string_program(&[text], body, MTy::Int));
+        assert_eq!(out.value, Value::Int(bytes), "{text}");
+    }
+}
+
+#[test]
+fn str_byte_counts_from_one() {
+    for (position, byte) in [(1, 195), (2, 169), (3, 97)] {
+        let out = run_verified(&byte_at("éa", position));
+        assert_eq!(out.value, Value::Int(byte), "position {position}");
+    }
+}
+
+#[test]
+fn str_byte_outside_the_string_traps() {
+    for position in [0, 4, -1, i64::MIN, i64::MAX] {
+        let p = byte_at("éa", position);
+        assert_eq!(verify(&p), Ok(()));
+        assert_eq!(
+            run(&p),
+            Err(InterpError::Trap(BYTE_OUT_OF_RANGE.into())),
+            "position {position}"
+        );
+    }
+    assert_eq!(
+        run(&byte_at("", 1)),
+        Err(InterpError::Trap(BYTE_OUT_OF_RANGE.into()))
+    );
+}
+
+#[test]
+fn the_string_functions_want_a_string_and_an_int_position() {
+    let not_a_string = |read: Expr| {
+        let_(
+            0,
+            alloc_record(1),
+            let_(
+                1,
+                int(1),
+                let_(2, read, let_(3, Expr::Drop(Local(0)), local(2))),
+            ),
+        )
+    };
+    let record = ErrorKind::NotAString(MTy::Ptr(HeapKind::Record(RECORD)));
+    for read in [Expr::StrLen(Local(0)), Expr::StrByte(Local(0), Local(1))] {
+        let found = kinds(&string_program(&[], not_a_string(read), MTy::Int));
+        assert!(found.contains(&record), "{found:?}");
+    }
+    let float_position = let_(
+        0,
+        Expr::StrLit(DataId(0)),
+        let_(
+            1,
+            float(1.0),
+            let_(
+                2,
+                Expr::StrByte(Local(0), Local(1)),
+                let_(3, Expr::Drop(Local(0)), local(2)),
+            ),
+        ),
+    );
+    assert_eq!(
+        kinds(&string_program(&["a"], float_position, MTy::Int)),
+        [ErrorKind::TypeMismatch {
+            expected: MTy::Int,
+            found: MTy::Float
+        }]
     );
 }

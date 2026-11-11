@@ -887,8 +887,10 @@ impl Mono<'_> {
                 let foreign = self.foreign[&symbol].clone();
                 let locals: Vec<Local> = (0..foreign.params.len() as u32).map(Local).collect();
                 let body = match foreign.intrinsic() {
-                    Some(function) => Expr::FloatFn(function, Box::new(Expr::Local(Local(0)))),
-                    None => Expr::CallForeign(self.import(symbol), locals.clone()),
+                    Some(Intrinsic::Float(function)) => {
+                        Expr::FloatFn(function, Box::new(Expr::Local(Local(0))))
+                    }
+                    _ => self.foreign_op(symbol, &foreign, &locals),
                 };
                 let id = FuncId(self.out.len() as u32);
                 self.out.push(Some(Func {
@@ -906,13 +908,31 @@ impl Mono<'_> {
         self.closure_of(target, &ty)
     }
 
-    /// `import(args)`, or the compiler's own `math` function. Each argument is
-    /// bound to a local, in order, because the call borrows its pointers (see
-    /// `Expr::CallForeign`); an `Int` argument to a `Float` parameter widens.
+    /// The call to `symbol` over `args`: the import, or the MIR node of the
+    /// compiler's own `text` function.
+    fn foreign_op(&mut self, symbol: Symbol, foreign: &ForeignFn, args: &[Local]) -> Expr {
+        match (foreign.intrinsic(), args) {
+            (Some(Intrinsic::ByteLength), &[s]) => Expr::StrLen(s),
+            (Some(Intrinsic::ByteAt), &[s, i]) => Expr::StrByte(s, i),
+            _ => Expr::CallForeign(self.import(symbol), args.to_vec()),
+        }
+    }
+
+    /// `import(args)`, or the compiler's own `math` or `text` function. Each
+    /// argument is bound to a local, in order, because the call borrows its
+    /// pointers (see `Expr::CallForeign`); an `Int` argument to a `Float`
+    /// parameter widens. `byte_at` names `span` as the code to blame for its
+    /// trap.
     #[inline(never)]
-    fn foreign_call(&mut self, cx: &mut FnCx, symbol: Symbol, args: &[hir::Expr]) -> Expr {
+    fn foreign_call(
+        &mut self,
+        cx: &mut FnCx,
+        span: Span,
+        symbol: Symbol,
+        args: &[hir::Expr],
+    ) -> Expr {
         let foreign = self.foreign[&symbol].clone();
-        if let Some(function) = foreign.intrinsic()
+        if let Some(Intrinsic::Float(function)) = foreign.intrinsic()
             && let [arg] = args
         {
             let value = self.argument(cx, arg, true);
@@ -920,10 +940,14 @@ impl Mono<'_> {
         }
         let bound: Vec<(Local, Expr)> = args
             .iter()
-            .zip(foreign.params)
+            .zip(foreign.params.iter().copied())
             .map(|(a, ty)| (cx.fresh(ty), self.argument(cx, a, ty == MTy::Float)))
             .collect();
-        let call = Expr::CallForeign(self.import(symbol), bound.iter().map(|(l, _)| *l).collect());
+        let locals: Vec<Local> = bound.iter().map(|(l, _)| *l).collect();
+        let mut call = self.foreign_op(symbol, &foreign, &locals);
+        if foreign.intrinsic() == Some(Intrinsic::ByteAt) && !span.in_prelude() {
+            call = Self::at_site(cx, span, call);
+        }
         wrap_lets(bound, call)
     }
 
@@ -1429,7 +1453,7 @@ impl Mono<'_> {
         if let ExprKind::Var { symbol, .. } = &callee.kind
             && self.foreign.contains_key(symbol)
         {
-            return self.foreign_call(cx, *symbol, args);
+            return self.foreign_call(cx, span, *symbol, args);
         }
         let direct = match &callee.kind {
             ExprKind::Var { symbol, .. }

@@ -616,6 +616,22 @@ impl<'a> Checker<'a> {
                 }
                 Ty::Val(MTy::Bool)
             }
+            Expr::StrLen(s) => {
+                if self.borrow_str(*s).is_none() {
+                    return Ty::Bad;
+                }
+                Ty::Val(MTy::Int)
+            }
+            Expr::StrByte(s, i) => {
+                let (s, i) = (self.borrow_str(*s), self.borrow(*i));
+                if let Some(found) = i {
+                    self.expect(Ty::Val(found), MTy::Int);
+                }
+                if s.is_none() || i.is_none() {
+                    return Ty::Bad;
+                }
+                Ty::Val(MTy::Int)
+            }
             Expr::Write(write) => {
                 match write {
                     Write::Number(value) => match self.expr(value, false) {

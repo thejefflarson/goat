@@ -159,6 +159,21 @@ sum(origin) + sum(spot)   # 0 + 7 = 7
 
 Records nest, and field access chains: `{point: {x: 1}}.point.x` is `1`.
 
+### Reading a string: `byte_length` and `byte_at`
+
+A string is UTF-8, and these two builtins count **bytes**, not characters.
+
+```
+byte_length("goat")     # 4
+byte_length("é")        # 2: one character, two bytes
+byte_at("goat", 1)      # 103, the byte for "g"
+```
+
+`byte_at(s, i)` counts from 1, like `item(xs, 1)`, and gives an `Int` from 0 to
+255. A position below 1 or past `byte_length(s)` stops the program with a
+trap pointing at the call. Neither builtin allocates. See
+`examples/vowels.goat`.
+
 ### Comments
 
 ```
@@ -198,8 +213,9 @@ These are planned but **do not run on the current build**. Do not generate them.
   enclosing scope is rejected today ("closures are not supported yet"). A nested
   function may use its own parameters and any top-level function, but not a
   variable captured from an outer function. (This is Phase 4, landing now.)
-- **Strings.** String literals parse (`"hi"`) but there is no string runtime, so
-  a program that produces or prints a string will not run yet. (Phase 5.)
+- **Building strings.** A string literal can be printed, compared with `==`,
+  and read with `byte_length` and `byte_at`, but a program cannot yet make a
+  new string at run time.
 - **`return`.** A reserved word with no syntax; a function's value is its body.
 - **Variants and `match`** (`Circle(5)`, `Empty`), **lists**, and the
   **turtle/drawing** builtins. (Phases 7–8.)
