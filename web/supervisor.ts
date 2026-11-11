@@ -14,7 +14,7 @@ import {
   type ToWorker,
   missingCapability,
 } from "./protocol.ts";
-import type { EventKind, HostEvent, RawSpan } from "./scene.ts";
+import type { EventKind, HostEvent, RawSpan, RawSwatch } from "./scene.ts";
 
 export const RUN_ONCE_BUDGET_MS = 10_000;
 export const POLL_MS = 100;
@@ -54,6 +54,9 @@ export interface RunSink {
   // A `highlight` program drew spans for the input sent with `ticket`. The
   // spans are the program's own words, to be validated before use.
   onSpans?(ticket: number, spans: RawSpan[]): void;
+  // A `theme` program drew its swatches: the program's own words, to be
+  // validated before use.
+  onSwatches?(swatches: RawSwatch[]): void;
   onFinished?(): void;
   // A trap, a worker error, or a stuck program the supervisor stopped.
   onFailed(message: string): void;
@@ -184,6 +187,9 @@ export class Supervisor implements Runner {
         break;
       case "spans":
         session.sink.onSpans?.(message.ticket, message.spans);
+        break;
+      case "swatches":
+        session.sink.onSwatches?.(message.swatches);
         break;
       case "finished":
         session.sink.onFinished?.();

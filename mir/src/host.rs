@@ -73,6 +73,11 @@ pub enum SceneCommand {
         to: i64,
         kind: String,
     },
+    Swatch {
+        role: String,
+        light: String,
+        dark: String,
+    },
 }
 
 /// Where an interactive program's picture goes: `draw` streams each frame as
@@ -92,6 +97,11 @@ pub trait SceneSink {
     /// A style span over `from..to`, byte offsets into the host's text; `kind`
     /// is a role the host styles, never a color. Hosts with no text ignore it.
     fn span(&mut self, _from: i64, _to: i64, _kind: &str) {}
+
+    /// The colors a theme gives a style role on a light page and a dark one.
+    /// They are the program's words, not checked here: the host that reads a
+    /// theme validates them. Hosts that read no theme ignore it.
+    fn swatch(&mut self, _role: &str, _light: &str, _dark: &str) {}
 }
 
 /// A sink as a host: answers the `scene.*` imports by calling the sink.
@@ -121,6 +131,7 @@ fn scene_signature(module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)
         "rect" => (vec![Number, Number, Number, Number, Str], Unit),
         "text" => (vec![Number, Number, Str, Str], Unit),
         "span" => (vec![Int, Int, Str], Unit),
+        "swatch" => (vec![Str, Str, Str], Unit),
         _ => return None,
     })
 }
@@ -157,6 +168,7 @@ fn scene_call(
             sink.text((*x, *y), text, color)
         }
         ("span", [Int(from), Int(to), Str(kind)]) => sink.span(*from, *to, kind),
+        ("swatch", [Str(role), Str(light), Str(dark)]) => sink.swatch(role, light, dark),
         _ => return Err(format!("bad call to scene.{name}")),
     }
     Ok(HostValue::Unit)
@@ -229,6 +241,14 @@ impl SceneSink for SceneHost {
             from,
             to,
             kind: kind.to_string(),
+        });
+    }
+
+    fn swatch(&mut self, role: &str, light: &str, dark: &str) {
+        self.commands.push(SceneCommand::Swatch {
+            role: role.to_string(),
+            light: light.to_string(),
+            dark: dark.to_string(),
         });
     }
 }

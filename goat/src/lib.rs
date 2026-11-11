@@ -60,6 +60,12 @@ impl HostInterface {
         Self::with_vocab(goat_checker::STDLIB, Vocab::editor())
     }
 
+    /// A host that reads a color theme: the standard library and the theme's
+    /// swatches.
+    pub fn theme() -> Self {
+        Self::with_vocab(goat_checker::STDLIB, Vocab::theme())
+    }
+
     pub fn prelude(&self) -> &str {
         &self.prelude
     }

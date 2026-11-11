@@ -191,7 +191,8 @@ pub fn to_svg(picture: &[SceneCommand]) -> String {
             | SceneCommand::PolylineBegin(_)
             | SceneCommand::Vertex(..)
             | SceneCommand::PolylineEnd
-            | SceneCommand::Span { .. } => Ok(()),
+            | SceneCommand::Span { .. }
+            | SceneCommand::Swatch { .. } => Ok(()),
         }
         .expect("writing to a String");
     }

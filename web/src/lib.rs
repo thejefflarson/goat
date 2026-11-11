@@ -33,7 +33,9 @@
 //! - `gw_compile_editor` is `gw_compile` against the editor host's vocabulary
 //!   (`Edited`, `HostTags`, `Span`, ...), which `editor/highlight.goat` is written
 //!   against.
-//! - `gw_check_editor` is `gw_check` against that same vocabulary.
+//! - `gw_compile_theme` and `gw_check_theme` are `gw_compile` and `gw_check` against
+//!   the theme host's vocabulary (`Swatch`), which `editor/theme.goat` is written
+//!   against.
 //! - `gw_host_tags` and `gw_host_tags_canvas` take no input and return
 //!   `TAG_OK` with the names the turtle's or canvas host declares as tags, space
 //!   separated and sorted: the names `gw_tokenize` marks beyond the text's own,
@@ -225,18 +227,34 @@ pub unsafe extern "C" fn gw_compile_editor(src_ptr: u32, src_len: u32) -> u32 {
     }
 }
 
-/// Like `gw_check`, against the editor host's vocabulary.
+/// Like `gw_compile`, against the theme host's vocabulary.
 ///
 /// # Safety
 /// `src_ptr..src_ptr + src_len` must be readable memory.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gw_check_editor(src_ptr: u32, src_len: u32) -> u32 {
+pub unsafe extern "C" fn gw_compile_theme(src_ptr: u32, src_len: u32) -> u32 {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        compile_record(
+            src_ptr as usize as *const u8,
+            src_len as usize,
+            compile_theme,
+        ) as usize as u32
+    }
+}
+
+/// Like `gw_check`, against the theme host's vocabulary.
+///
+/// # Safety
+/// `src_ptr..src_ptr + src_len` must be readable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gw_check_theme(src_ptr: u32, src_len: u32) -> u32 {
     // SAFETY: forwarded from the caller's contract.
     unsafe {
         check_record(
             src_ptr as usize as *const u8,
             src_len as usize,
-            compile_editor,
+            compile_theme,
         ) as usize as u32
     }
 }
@@ -356,6 +374,10 @@ fn compile_live_turtle(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatEr
 
 fn compile_canvas(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
     goat::compile(source, &goat_canvas::interface())
+}
+
+fn compile_theme(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
+    goat::compile(source, &goat::HostInterface::theme())
 }
 
 fn compile_editor(source: &str) -> Result<Vec<u8>, Vec<goat_checker::GoatError>> {
@@ -627,9 +649,14 @@ mod tests {
         unsafe { compile_record(ptr, len, compile_editor) }
     }
 
-    unsafe fn check_editor_at(ptr: *const u8, len: usize) -> *mut u8 {
+    unsafe fn compile_theme_at(ptr: *const u8, len: usize) -> *mut u8 {
         // SAFETY: forwarded from the caller's contract.
-        unsafe { check_record(ptr, len, compile_editor) }
+        unsafe { compile_record(ptr, len, compile_theme) }
+    }
+
+    unsafe fn check_theme_at(ptr: *const u8, len: usize) -> *mut u8 {
+        // SAFETY: forwarded from the caller's contract.
+        unsafe { check_record(ptr, len, compile_theme) }
     }
 
     fn run(source: &[u8]) -> (u8, Vec<u8>) {
@@ -906,13 +933,18 @@ mod tests {
     }
 
     #[test]
-    fn the_editor_check_accepts_the_theme_and_reports_what_the_turtle_check_would_miss() {
+    fn the_theme_entries_take_the_theme_and_the_other_hosts_do_not() {
         const THEME: &[u8] = include_bytes!("../../editor/theme.goat");
-        assert_eq!(record_of(check_editor_at, THEME), (TAG_OK, Vec::new()));
-        let (tag, payload) = record_of(check_editor_at, b"1 + true");
+        let (tag, module) = record_of(compile_theme_at, THEME);
+        assert_eq!(tag, TAG_OK);
+        assert!(module.starts_with(b"\0asm"));
+        assert_eq!(record_of(check_theme_at, THEME), (TAG_OK, Vec::new()));
+        assert_eq!(record_of(check_at, THEME).0, TAG_ERR);
+        assert_eq!(record_of(compile_editor_at, THEME).0, TAG_ERR);
+        assert_eq!(record_of(compile_theme_at, HIGHLIGHTER).0, TAG_ERR);
+        let (tag, payload) = record_of(check_theme_at, b"1 + true");
         assert_eq!(tag, TAG_ERR);
         assert!(!diagnostics(&payload).is_empty());
-        assert_eq!(record_of(check_at, THEME).0, TAG_ERR);
     }
 
     #[test]

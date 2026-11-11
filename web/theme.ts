@@ -1,21 +1,20 @@
 // The editor's colours come from a goat program (editor/theme.goat). It runs in
 // a worker under the supervisor, like the highlighter (ADR 0021), once per
-// change of the theme, and says each colour as a `Span`: `from` is the role,
-// `to` the palette, `kind` the colour. What it says is untrusted: the host
-// accepts only known roles, colours it can check and read, and writes them to
-// the page as `--tok-*` custom properties. goat never touches the page.
+// change of the theme, and draws one `Swatch` per style role: the role and its
+// light and dark colours. What it says is untrusted: the host accepts only
+// known roles and colours it can check and read, and writes them to the page as
+// `--tok-*` custom properties. goat never touches the page.
 
 import { AA, SURFACES, contrast, normalizeHex } from "./contrast.ts";
-import { compileEditor } from "./compile.ts";
-import type { HighlightRunner } from "./highlighter.ts";
-import type { RawSpan } from "./scene.ts";
+import { compileTheme } from "./compile.ts";
+import type { Runner } from "./supervisor.ts";
+import type { RawSwatch } from "./scene.ts";
 import { checkColor } from "./runtime.ts";
 
-// The roles the editor styles, in the order editor/theme.goat numbers them.
+// The roles the editor styles, as editor/theme.goat names them.
 export const THEME_ROLES = ["keyword", "literal", "number", "string", "comment", "tag"] as const;
 export type ThemeRole = (typeof THEME_ROLES)[number];
 
-// Palette 0 is for light pages, palette 1 for dark ones.
 export const SCHEMES = ["light", "dark"] as const;
 export type Scheme = (typeof SCHEMES)[number];
 
@@ -77,28 +76,30 @@ function resolveColor(text: string): string | null {
 
 export type ThemeOutcome = { ok: true; theme: Theme; notes: string[] } | { ok: false; message: string };
 
-// The theme the program's swatches describe. A swatch for a role or palette that
-// does not exist is dropped, and so is one whose colour is not an allowed
-// colour the host can read; the role then keeps its default. A colour that is
+// The theme the program's swatches describe. A swatch for a role that does not
+// exist is dropped, and so is one colour that is not an allowed colour the host
+// can read; that role then keeps its default in that palette. A colour that is
 // hard to read on the editor's background rejects the whole theme.
-export function acceptSwatches(spans: unknown): ThemeOutcome {
+export function acceptSwatches(swatches: unknown): ThemeOutcome {
   const theme: Theme = { light: { ...DEFAULT_THEME.light }, dark: { ...DEFAULT_THEME.dark } };
   const written = new Map<string, string>();
   const notes: string[] = [];
-  for (const span of Array.isArray(spans) ? (spans as Array<Partial<RawSpan> | null>) : []) {
-    if (typeof span !== "object" || span === null) continue;
-    const role = Number.isInteger(span.from) ? THEME_ROLES[span.from!] : undefined;
-    const scheme = Number.isInteger(span.to) ? SCHEMES[span.to!] : undefined;
-    if (role === undefined || scheme === undefined || typeof span.kind !== "string") continue;
-    const hex = resolveColor(span.kind);
-    if (hex === null) {
-      notes.push(
-        `Ignored the ${scheme} ${role} colour ${JSON.stringify(span.kind.slice(0, 32))}: use a name like "purple" or a code like "#4a2fb8".`,
-      );
-      continue;
+  for (const swatch of Array.isArray(swatches) ? (swatches as Array<Partial<RawSwatch> | null>) : []) {
+    if (typeof swatch !== "object" || swatch === null) continue;
+    const role = THEME_ROLES.find((known) => known === swatch.role);
+    if (role === undefined) continue;
+    for (const scheme of SCHEMES) {
+      const color = swatch[scheme];
+      const hex = typeof color === "string" ? resolveColor(color) : null;
+      if (typeof color !== "string" || hex === null) {
+        notes.push(
+          `Ignored the ${scheme} ${role} colour ${JSON.stringify(String(color).slice(0, 32))}: use a name like "purple" or a code like "#4a2fb8".`,
+        );
+        continue;
+      }
+      theme[scheme][role] = hex;
+      written.set(`${scheme} ${role}`, color);
     }
-    theme[scheme][role] = hex;
-    written.set(`${scheme} ${role}`, span.kind);
   }
   const problems: string[] = [];
   for (const scheme of SCHEMES) {
@@ -148,13 +149,13 @@ export function themeApplier(root: StyleTarget, dark: SchemeQuery): (theme: Them
   };
 }
 
-// A theme program that has not answered by then is dropped, as when it never
-// handles `Edited`; a program stuck inside a call is stopped sooner by the supervisor.
+// A theme program that has not answered by then is dropped; a program stuck
+// inside a call is stopped sooner by the supervisor.
 export const THEME_BUDGET_MS = 2000;
 
 export interface ThemeEngineOptions {
   compiler: WebAssembly.Module;
-  runner: HighlightRunner;
+  runner: Runner;
   apply(theme: Theme): void;
   budgetMs?: number;
 }
@@ -199,28 +200,20 @@ export class ThemeEngine {
   }
 
   async #run(source: string): Promise<ThemeOutcome> {
-    const compiled = await compileEditor(this.#options.compiler, source);
+    const compiled = await compileTheme(this.#options.compiler, source);
     if (!compiled.ok) return { ok: false, message: `${compiled.diagnostics}\nYour last theme is still in use.` };
     const { runner, budgetMs = THEME_BUDGET_MS } = this.#options;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const spans = await new Promise<RawSpan[] | string>((resolve) => {
-        timer = setTimeout(
-          () => resolve("The theme never answered: its update must handle Edited, and its draw must list the swatches."),
-          budgetMs,
-        );
+      const swatches = await new Promise<RawSwatch[] | string>((resolve) => {
+        timer = setTimeout(() => resolve("The theme never answered: its draw must list the swatches."), budgetMs);
         runner.start(
-          { mode: "highlight", module: compiled.module },
-          {
-            onReady: () => runner.input({ kind: "Edited", text: "", cursor: 0 }, 1),
-            onOutput: () => {},
-            onSpans: (_ticket, found) => resolve(found),
-            onFailed: resolve,
-          },
+          { mode: "theme", module: compiled.module },
+          { onOutput: () => {}, onSwatches: resolve, onFailed: resolve },
         );
       });
-      if (typeof spans === "string") return { ok: false, message: `${spans}\nYour last theme is still in use.` };
-      return acceptSwatches(spans);
+      if (typeof swatches === "string") return { ok: false, message: `${swatches}\nYour last theme is still in use.` };
+      return acceptSwatches(swatches);
     } finally {
       clearTimeout(timer);
       runner.stop();

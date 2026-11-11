@@ -291,7 +291,7 @@ done
 
   function setThemeMode(on) {
     editingTheme = on;
-    host = on ? "editor" : HOSTS[example.value];
+    host = on ? "theme" : HOSTS[example.value];
     themeButton.textContent = on ? "Back to my program" : "Edit editor theme";
     button.textContent = on ? "Save theme" : "Run";
     resetTheme.hidden = !on;

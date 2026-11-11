@@ -8,3 +8,4 @@ circle number number number string
 rect number number number number string
 text number number string string
 span int int string
+swatch string string string

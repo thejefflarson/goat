@@ -80,8 +80,10 @@ function cssPalettes(): Theme {
   return { light: read(light!), dark: read(dark!) };
 }
 
-const recolored = (role: string, color: string) =>
-  source.replace(new RegExp(`swatch\\(${role}, light, "[^"]*"\\)`), `swatch(${role}, light, "${color}")`);
+const recolored = (role: string, color: string, palette = "light") =>
+  source.replace(new RegExp(`(role: "${role}", light: "[^"]*", dark: "[^"]*")`), (line) =>
+    line.replace(new RegExp(`${palette}: "[^"]*"`), `${palette}: "${color}"`),
+  );
 
 test("the default theme is today's palette, exactly", async () => {
   const { themes, painted } = engine();
@@ -113,9 +115,9 @@ test("a named colour is read as the colour it names", async () => {
 test("a theme that does not compile keeps the previous theme and shows the checker's diagnostic", async () => {
   const { themes, painted } = engine();
   await themes.change(recolored("keyword", "#000000"));
-  const outcome = await themes.change(source.replace("swatch(keyword, light", "swatch(keyword, ligth"));
+  const outcome = await themes.change(source.replace("Swatch({role: \"keyword\"", "Swatch({rol: \"keyword\""));
   assert.ok(!outcome.ok);
-  assert.match(outcome.message, /ligth/);
+  assert.match(outcome.message, /rol/);
   assert.match(outcome.message, /\^/);
   assert.match(outcome.message, /last theme is still in use/);
   assert.equal(painted.length, 1);
@@ -140,13 +142,25 @@ test("a colour outside the allowlist or the names the host knows is dropped and 
   assert.match(outcome.notes[0]!, /light number colour "papayawhip"/);
 });
 
-test("a program that never handles Edited is dropped after its budget instead of hanging the queue", async () => {
-  const { themes, painted } = engine(50);
-  const silent = source.replace("Edited(edit) then model", "HostTags(host) then model");
-  const outcome = await themes.change(silent);
+test("a program that never answers is dropped after its budget instead of hanging the queue", async () => {
+  const painted: Theme[] = [];
+  let stopped = 0;
+  const silent = { start: () => {}, stop: () => void stopped++ };
+  const themes = new ThemeEngine({ compiler, runner: silent, apply: (theme) => void painted.push(theme), budgetMs: 20 });
+  const outcome = await themes.change(source);
   assert.ok(!outcome.ok);
   assert.match(outcome.message, /never answered/);
-  assert.ok((await themes.change(source)).ok);
+  assert.match(outcome.message, /last theme is still in use/);
+  assert.equal(stopped, 1);
+  assert.deepEqual(painted, []);
+});
+
+test("a theme that traps keeps the previous theme and says why", async () => {
+  const { themes, painted } = engine();
+  await themes.change(source);
+  const outcome = await themes.change(source.replace("draw = program(model) do", 'draw = program(model) do\n  trap("no colours today");'));
+  assert.ok(!outcome.ok);
+  assert.match(outcome.message, /no colours today/);
   assert.equal(painted.length, 1);
 });
 
@@ -170,31 +184,37 @@ test("resetting paints the default theme again", async () => {
   assert.equal(painted.at(-1)?.light.keyword, "#000000");
 });
 
-test("swatches for unknown roles, palettes and shapes are dropped", () => {
-  const swatch = (from: unknown, to: unknown, kind: unknown) => ({ from, to, kind });
+test("swatches for unknown roles and malformed shapes are dropped", () => {
+  const swatch = (role: unknown, light: unknown, dark: unknown) => ({ role, light, dark });
   const outcome = acceptSwatches([
-    swatch(99, 0, "#000000"),
-    swatch(-1, 0, "#000000"),
-    swatch(0, 2, "#000000"),
-    swatch(0.5, 0, "#000000"),
-    swatch(0, 0, 5),
+    swatch("plain", "#000000", "#ffffff"),
+    swatch("__proto__", "#000000", "#ffffff"),
+    swatch(3, "#000000", "#ffffff"),
     null,
     "keyword",
-    swatch(3, 1, "#ffffff"),
+    swatch("string", "#000000", "#ffffff"),
   ]);
   assert.ok(outcome.ok);
-  assert.deepEqual(outcome.theme.light, DEFAULT_THEME.light);
+  assert.deepEqual(outcome.theme.light, { ...DEFAULT_THEME.light, string: "#000000" });
   assert.deepEqual(outcome.theme.dark, { ...DEFAULT_THEME.dark, string: "#ffffff" });
   assert.deepEqual(acceptSwatches("not a list"), { ok: true, theme: DEFAULT_THEME, notes: [] });
 });
 
+test("a bad colour in one palette leaves the other palette's colour in place", () => {
+  const outcome = acceptSwatches([{ role: "keyword", light: 5, dark: "#ffffff" }]);
+  assert.ok(outcome.ok);
+  assert.equal(outcome.theme.light.keyword, DEFAULT_THEME.light.keyword);
+  assert.equal(outcome.theme.dark.keyword, "#ffffff");
+  assert.equal(outcome.notes.length, 1);
+});
+
 test("a colour is checked against every surface of its palette", () => {
-  const dark = acceptSwatches([{ from: 0, to: 1, kind: "#3d3d5c" }]);
+  const dark = acceptSwatches([{ role: "keyword", light: "#000000", dark: "#3d3d5c" }]);
   assert.ok(!dark.ok);
   assert.match(dark.message, /dark keyword colour "#3d3d5c" is hard to read on the panel/);
   assert.match(dark.message, /lighter/);
   // #707070 reads on the white panel but not on the light selection.
-  const light = acceptSwatches([{ from: 0, to: 0, kind: "#707070" }]);
+  const light = acceptSwatches([{ role: "keyword", light: "#707070", dark: "#ffffff" }]);
   assert.ok(!light.ok);
   assert.match(light.message, /light keyword colour "#707070" is hard to read on the selection/);
 });

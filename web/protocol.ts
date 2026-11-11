@@ -3,11 +3,13 @@
 // is the heartbeat, a SharedArrayBuffer word the worker bumps and the supervisor
 // polls, because a worker spinning inside wasm can send nothing.
 
-import type { EventKind, HostEvent, RawSpan } from "./scene.ts";
+import type { EventKind, HostEvent, RawSpan, RawSwatch } from "./scene.ts";
 
 // `highlight` runs a program over the editor vocabulary: it draws once per
 // `Edited` input, not once per animation frame, and has no canvas.
-export type Mode = "interactive" | "once" | "highlight";
+// `theme` runs a program over the theme vocabulary: it draws once, on start,
+// and takes no input.
+export type Mode = "interactive" | "once" | "highlight" | "theme";
 
 export type ToWorker =
   | {
@@ -26,6 +28,7 @@ export type FromWorker =
   | { type: "reload_failed"; message: string }
   | { type: "output"; lines: string[] }
   | { type: "spans"; ticket: number; spans: RawSpan[] }
+  | { type: "swatches"; swatches: RawSwatch[] }
   | { type: "finished" }
   | { type: "failed"; message: string };
 
