@@ -91,6 +91,23 @@ jobs:
           cargo build -p goat_web --target wasm32-unknown-unknown --release
           ls -l target/wasm32-unknown-unknown/release/goat_web.wasm
 
+  # Cross-builds the vendored WAMR for the board architectures with the feature
+  # floor on (docs/adr/0029). Needs no board: the build must link, and a build
+  # with tail calls or bulk memory off must fail.
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install cross toolchains
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          gcc-arm-none-eabi libnewlib-arm-none-eabi
+          gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf
+
+      - name: Cross-build WAMR for riscv32imc and thumbv6m
+        run: firmware/check.sh
+
   # Type-checks and builds the TypeScript web runtime, then runs it against
   # modules compiled by goat_web itself. The runner image's Node 24 executes .ts tests natively.
   web-runtime:

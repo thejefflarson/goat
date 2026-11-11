@@ -6,6 +6,7 @@ pub use goat_checker::{GoatError, Vocab};
 pub use goat_mir::{
     Host, HostValue, NoHost, Profile, Scene, SceneCommand, SceneHost, SceneSink, check_color,
 };
+pub use goat_wasm::EmbeddedLimits;
 
 #[cfg(feature = "native")]
 pub mod native;
@@ -128,6 +129,18 @@ pub fn compile_for(
     compile_with(profile, source, host, goat_wasm::emit)
 }
 
+/// Like [`compile_for`] on the embedded profile, with the heap and call-depth
+/// budgets spelled out (ADR 0026).
+pub fn compile_embedded(
+    source: &str,
+    host: &HostInterface,
+    limits: EmbeddedLimits,
+) -> Result<(Vec<u8>, Vec<GoatError>), Vec<GoatError>> {
+    compile_with(Profile::Embedded, source, host, |program| {
+        goat_wasm::emit_with_limits(program, limits)
+    })
+}
+
 /// Like [`compile`] for an interactive program, emitting a module that imports
 /// its memory and allocator state from the host, so a recompiled module can be
 /// swapped in over the same heap (see `native::Interactive::reload`). A
@@ -153,7 +166,7 @@ fn compile_with(
     profile: Profile,
     source: &str,
     host: &HostInterface,
-    emit: fn(&goat_mir::Program) -> Result<Vec<u8>, goat_wasm::EmitError>,
+    emit: impl FnOnce(&goat_mir::Program) -> Result<Vec<u8>, goat_wasm::EmitError>,
 ) -> Result<(Vec<u8>, Vec<GoatError>), Vec<GoatError>> {
     let mut checked = goat_checker::check_with_vocab(host.prelude(), host.vocab(), source)?;
     let warnings = std::mem::take(&mut checked.typed.warnings);
