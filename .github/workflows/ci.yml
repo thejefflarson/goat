@@ -99,11 +99,34 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The .debs are cached per runner image so a warm run installs offline
+      # and survives an apt mirror outage; a cold run retries the downloads.
+      - name: Read runner image version
+        id: image
+        run: echo "version=$ImageVersion" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cross toolchain packages
+        id: debs
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchain-debs
+          key: firmware-debs-${{ runner.os }}-${{ steps.image.outputs.version }}-${{ hashFiles('.github/workflows/ci.yml') }}
+
+      - name: Download cross toolchain packages
+        if: steps.debs.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          mkdir -p ~/toolchain-debs
+          sudo apt-get -o Acquire::Retries=5 -o Dir::Cache::archives="$HOME/toolchain-debs" \
+            install -y --download-only \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf
+          sudo chown -R "$USER" ~/toolchain-debs
+          rm -f ~/toolchain-debs/lock
+          rm -rf ~/toolchain-debs/partial
+
       - name: Install cross toolchains
-        run: >
-          sudo apt-get update && sudo apt-get install -y
-          gcc-arm-none-eabi libnewlib-arm-none-eabi
-          gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf
+        run: sudo dpkg -i ~/toolchain-debs/*.deb
 
       - name: Cross-build WAMR for riscv32imc and thumbv6m
         run: firmware/check.sh
