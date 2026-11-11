@@ -1,7 +1,7 @@
 //! Monomorphization: checked HIR to ground-typed MIR, one `Func` per
 //! `(binding, ground type)` specialization.
 
-use crate::canon::{canonical, ground_fields, layout_fields};
+use crate::canon::{canonical, ground_fields, has_structural_rec, layout_fields};
 use crate::mir::*;
 use crate::rc::insert_rc;
 use goat_checker::captures::{for_each_node, push_children};
@@ -55,6 +55,7 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
         specs: HashMap::new(),
         out: vec![None],
         work: Vec::new(),
+        rec_tys: HashMap::new(),
         sigs: Vec::new(),
         layouts: Vec::new(),
         variants: HashMap::new(),
@@ -359,6 +360,9 @@ struct Mono<'a> {
     /// registered here before its payloads are lowered: reaching it again finds
     /// the id instead of lowering it forever.
     variants: HashMap<Ty, LayoutId>,
+    /// The lowering of each `μ` over a function or record, keyed by canonical
+    /// form. Registered before the body is lowered, so a back edge finds it.
+    rec_tys: HashMap<Ty, MTy>,
     families: Vec<Family>,
     /// The global tag number of each label, in sorted label order.
     tags: HashMap<String, u32>,
@@ -516,6 +520,9 @@ impl Mono<'_> {
             Ty::Float => MTy::Float,
             Ty::Bool => MTy::Bool,
             Ty::Unit => MTy::Unit,
+            Ty::Func(..) | Ty::Record(_) if has_structural_rec(ty) => {
+                self.lower_rec(ty, ty.clone())
+            }
             Ty::Func(args, ret) => {
                 let sig = Sig {
                     params: args.iter().map(|a| self.lower_ty(a)).collect(),
@@ -536,12 +543,51 @@ impl Mono<'_> {
             Ty::Variant(_) => MTy::Ptr(HeapKind::Variant(self.variant_layout(canonical(ty)))),
             Ty::Rec(..) => match ty.unfold_head() {
                 Ty::Variant(_) => MTy::Ptr(HeapKind::Variant(self.variant_layout(canonical(ty)))),
-                // A `μ` over a record or function: the cycle still passes
-                // through a variant, which cuts it.
                 Ty::Rec(..) => MTy::Unit,
+                head if has_structural_rec(ty) => self.lower_rec(ty, head),
                 head => self.lower_ty(&head),
             },
             Ty::Var(_) => unreachable!("type variable survived grounding"),
+        }
+    }
+
+    /// A `μ` type whose head is a function or record. Its sig or layout id is
+    /// reserved first, then filled, so the cycle back to `ty` finds the id.
+    fn lower_rec(&mut self, ty: &Ty, head: Ty) -> MTy {
+        let key = canonical(ty);
+        if let Some(done) = self.rec_tys.get(&key) {
+            return *done;
+        }
+        let poison = MTy::Ptr(HeapKind::Closure(SigId(u32::MAX)));
+        match head {
+            Ty::Func(args, ret) => {
+                let id = self.sigs.len();
+                self.sigs.push(Sig {
+                    params: vec![poison],
+                    ret: MTy::Unit,
+                });
+                let mty = MTy::Ptr(HeapKind::Closure(SigId(id as u32)));
+                self.rec_tys.insert(key, mty);
+                let sig = Sig {
+                    params: args.iter().map(|a| self.lower_ty(a)).collect(),
+                    ret: self.lower_ty(&ret),
+                };
+                self.sigs[id] = sig;
+                mty
+            }
+            Ty::Record(row) => {
+                let id = self.layouts.len();
+                self.layouts.push(Layout::Record(vec![poison]));
+                let mty = MTy::Ptr(HeapKind::Record(LayoutId(id as u32)));
+                self.rec_tys.insert(key, mty);
+                let mut fields = Vec::new();
+                for (_, field) in layout_fields(&row) {
+                    fields.push(self.lower_ty(field));
+                }
+                self.layouts[id] = Layout::Record(fields);
+                mty
+            }
+            other => self.lower_ty(&other),
         }
     }
 
@@ -800,7 +846,8 @@ impl Mono<'_> {
             ty,
             captures,
         } = self.lambdas[&target].clone();
-        let Ty::Func(arg_tys, ret_ty) = ty else {
+        let unfolded = ty.unfold_head();
+        let Ty::Func(arg_tys, ret_ty) = &unfolded else {
             unreachable!("function literal without a function type");
         };
         let mut cx = FnCx::new(subst);
