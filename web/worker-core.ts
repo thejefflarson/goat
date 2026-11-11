@@ -17,7 +17,7 @@ import {
 } from "./loop.ts";
 import { type FromWorker, Heartbeat, type ToWorker } from "./protocol.ts";
 import { animate, run } from "./runtime.ts";
-import { type DrawingContext, type HostEvent, SpanScene, constructEvent, subscriptions } from "./scene.ts";
+import { type DrawingContext, type HostEvent, SpanScene, SwatchScene, constructEvent, subscriptions } from "./scene.ts";
 
 export interface WorkerCoreEnv {
   post(message: FromWorker): void;
@@ -80,6 +80,14 @@ export function createWorkerCore(env: WorkerCoreEnv) {
     env.post({ type: "ready", subscriptions: subscriptions(exports) });
   };
 
+  const runTheme = async (message: Extract<ToWorker, { type: "run" }>) => {
+    const heartbeat = new Heartbeat(message.heartbeat);
+    const scene = new SwatchScene();
+    const exports = await instantiateWithScene(message.module, scene);
+    heartbeat.during(() => exports.goat_draw(exports.goat_setup()));
+    env.post({ type: "swatches", swatches: scene.take() });
+  };
+
   const highlight = (session: Highlighter, event: HostEvent, ticket: number | undefined) => {
     const { exports, heartbeat, scene } = session;
     session.model = heartbeat.during(() => {
@@ -134,6 +142,7 @@ export function createWorkerCore(env: WorkerCoreEnv) {
         }
         if (message.type === "reload") return await reloadProgram(message.module);
         if (message.mode === "highlight") return await runHighlighter(message);
+        if (message.mode === "theme") return await runTheme(message);
         await (message.mode === "interactive" ? runInteractiveProgram(message) : runOnceProgram(message));
       } catch (e) {
         env.post({ type: "failed", message: `your program stopped: ${e instanceof Error ? e.message : String(e)}` });

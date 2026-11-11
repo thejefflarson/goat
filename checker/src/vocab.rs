@@ -238,6 +238,27 @@ impl Vocab {
         }
     }
 
+    /// The vocabulary of a host that reads a color theme: `draw` answers with
+    /// one swatch per style role, a role name and the colors to paint it with
+    /// on a light page and on a dark one. The host checks both. The host sends
+    /// nothing, but an interactive program's `update` must take an event, so
+    /// the vocabulary has one, `Opened`, with no payload.
+    pub fn theme() -> Vocab {
+        Vocab {
+            events: vec![EventTag {
+                name: "Opened".to_string(),
+                payload: Ty::Unit,
+                decode: None,
+            }],
+            shapes: vec![ShapeTag {
+                name: "Swatch".to_string(),
+                payload: record([("role", Ty::Str), ("light", Ty::Str), ("dark", Ty::Str)]),
+                scene: SceneCalls::Call("swatch".to_string()),
+            }],
+            ..Vocab::empty()
+        }
+    }
+
     /// The vocabulary of the turtle host, the CLI and the web player.
     pub fn turtle() -> Vocab {
         let keys = Group {
@@ -558,6 +579,16 @@ mod tests {
         assert_eq!(paths(&span.head), ["from", "to", "kind"]);
         assert!(span.list.is_none());
         assert!(editor.decoders().is_empty());
+    }
+
+    #[test]
+    fn the_theme_vocabulary_is_well_formed_and_streams_swatches_as_one_call() {
+        let theme = Vocab::theme();
+        assert_eq!(theme.validate(), Ok(()));
+        let swatch = shape_leaves(&theme.shape("Swatch").unwrap().payload).unwrap();
+        assert_eq!(paths(&swatch.head), ["role", "light", "dark"]);
+        assert!(swatch.list.is_none());
+        assert!(theme.decoders().is_empty());
     }
 
     #[test]

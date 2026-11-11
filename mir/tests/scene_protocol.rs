@@ -1,6 +1,6 @@
-//! The `scene.*` wire protocol is written down three times: `Vocab::turtle()`
-//! and `Vocab::editor()` (the source of truth, ADR 0020), the Rust scene host, and the browser's
-//! `web/scene.ts`. The browser is checked through `web/scene-signatures.txt`,
+//! The `scene.*` wire protocol is written down three times: `Vocab::turtle()`,
+//! `Vocab::editor()` and `Vocab::theme()` (the source of truth, ADR 0020), the
+//! Rust scene host, and the browser's `web/scene.ts`. The browser is checked through `web/scene-signatures.txt`,
 //! which `web/scene-signatures.test.ts` holds `scene.ts` to. A change to one
 //! copy that skips the others fails here or there.
 
@@ -27,13 +27,13 @@ fn wires(leaves: &[Leaf]) -> Vec<String> {
     leaves.iter().map(|leaf| wire(&leaf.ty)).collect()
 }
 
-/// The scene calls `Vocab::turtle()` and `Vocab::editor()` imply, plus the
+/// The scene calls the vocabularies imply, plus the
 /// frame brackets every interactive program streams inside.
 fn from_vocab() -> Table {
     let mut table = Table::new();
     table.insert("begin".into(), vec![]);
     table.insert("end".into(), vec![]);
-    let shapes = [Vocab::turtle(), Vocab::editor()].map(|vocab| vocab.shapes);
+    let shapes = [Vocab::turtle(), Vocab::editor(), Vocab::theme()].map(|vocab| vocab.shapes);
     for shape in shapes.iter().flatten() {
         let leaves = shape_leaves(&shape.payload).expect("a flat payload");
         match &shape.scene {

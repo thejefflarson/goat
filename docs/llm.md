@@ -278,6 +278,23 @@ sum = program(p) do p.x + p.y done
 sum(origin) + sum(spot)
 ```
 
+## Changing the editor's colours
+
+The web editor's syntax colours are a goat program, `editor/theme.goat`. Press
+"Edit editor theme" to open it in the editor, change a colour in a line like
+`Swatch({role: "keyword", light: "#4a2fb8", dark: "#b4a3ff"})`, and press "Save
+theme" (or leave Live on and just type): the editor re-colours at once, with no
+reload. The roles are `keyword`, `literal`, `number`, `string`, `comment` and
+`tag`; `light` is the colour on a light page and `dark` on a dark one. A colour
+is a basic name like `"purple"` or a code like `"#4a2fb8"`. Anything else is
+ignored and that colour keeps its default.
+
+The editor refuses a colour that is hard to read (under 4.5:1 contrast on the
+editor's background or selection) and says which one. A theme with a mistake
+keeps the last good colours. Your theme is remembered in this browser; "Reset
+theme" brings the default back. goat only says which colours; the page decides
+how to paint them.
+
 ## Checklist before handing goat back
 
 - The program ends on a **number or boolean** expression (so it prints).

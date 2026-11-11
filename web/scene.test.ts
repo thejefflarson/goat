@@ -7,8 +7,10 @@ import {
   CanvasScene,
   type DrawingContext,
   MAX_SPANS,
+  MAX_SWATCHES,
   RecordingScene,
   SpanScene,
+  SwatchScene,
   constructEvent,
   newString,
   sceneImports,
@@ -314,6 +316,15 @@ test("a frame with more spans than the cap traps the program", () => {
   scene.begin();
   scene.span(0, 1, "number");
   assert.equal(scene.take().length, 1);
+});
+
+test("a theme with more swatches than the cap traps the program", () => {
+  const scene = new SwatchScene();
+  for (let i = 0; i < MAX_SWATCHES; i++) scene.swatch("keyword", "red", "blue");
+  assert.throws(() => scene.swatch("keyword", "red", "blue"), /more than/);
+  scene.begin();
+  scene.swatch("keyword", "red", "blue");
+  assert.deepEqual(scene.take(), [{ role: "keyword", light: "red", dark: "blue" }]);
 });
 
 test("the editor's events are subscriptions, and Edited and HostTags build with their payloads", async () => {

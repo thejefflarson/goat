@@ -1,7 +1,7 @@
 // Picture and event plumbing for interactive goat modules (ADR 0015), the
 // browser half of mir/src/host.rs (`SceneHost`) and cli/src/lib.rs (`Guest`).
 //
-//   imports  scene.{begin,end,line,polyline_begin,vertex,polyline_end,circle,rect,text,span}
+//   imports  scene.{begin,end,line,polyline_begin,vertex,polyline_end,circle,rect,text,span,swatch}
 //   exports  goat_setup, goat_update, goat_draw, goat_release_model,
 //            goat_shutdown, goat_alloc, goat_event_<Tag> per handled event
 //
@@ -23,7 +23,8 @@ export type SceneCommand =
   | { kind: "circle"; x: number; y: number; r: number; color: string }
   | { kind: "rect"; x: number; y: number; w: number; h: number; color: string }
   | { kind: "text"; x: number; y: number; text: string; color: string }
-  | { kind: "span"; from: number; to: number; role: string };
+  | { kind: "span"; from: number; to: number; role: string }
+  | { kind: "swatch"; role: string; light: string; dark: string };
 
 // A style span the editor vocabulary draws: byte offsets into the edited text
 // and a role name the goat program chose, which the page must not trust.
@@ -31,6 +32,14 @@ export interface RawSpan {
   from: number;
   to: number;
   kind: string;
+}
+
+// The colors a theme gives one style role, on a light page and a dark one. They
+// are the goat program's words, which the page must not trust.
+export interface RawSwatch {
+  role: string;
+  light: string;
+  dark: string;
 }
 
 // What a renderer implements; `sceneImports` validates and forwards to it.
@@ -44,6 +53,7 @@ export interface Scene {
   rect(x: number, y: number, w: number, h: number, color: string): void;
   text(x: number, y: number, text: string, color: string): void;
   span(from: number, to: number, role: string): void;
+  swatch(role: string, light: string, dark: string): void;
   end(): void;
 }
 
@@ -59,6 +69,7 @@ export interface SceneImports {
     rect(x: number, y: number, w: number, h: number, color: number): void;
     text(x: number, y: number, text: number, color: number): void;
     span(from: bigint, to: bigint, role: number): void;
+    swatch(role: number, light: number, dark: number): void;
   };
 }
 
@@ -86,6 +97,8 @@ export function sceneImports(memory: () => WebAssembly.Memory, scene: Scene): Sc
       text: (x, y, textPtr, ptr) =>
         scene.text(finite("text", x), finite("text", y), readString(memory(), textPtr), color(ptr)),
       span: (from, to, ptr) => scene.span(Number(from), Number(to), readString(memory(), ptr)),
+      swatch: (role, light, dark) =>
+        scene.swatch(readString(memory(), role), readString(memory(), light), readString(memory(), dark)),
     },
   };
 }
@@ -121,6 +134,9 @@ export class RecordingScene implements Scene {
   span(from: number, to: number, role: string) {
     this.commands.push({ kind: "span", from, to, role });
   }
+  swatch(role: string, light: string, dark: string) {
+    this.commands.push({ kind: "swatch", role, light, dark });
+  }
   end() {
     this.commands.push({ kind: "end" });
   }
@@ -145,6 +161,36 @@ export class SpanScene implements Scene {
     this.#spans = [];
     return spans;
   }
+  swatch() {}
+  line() {}
+  polylineBegin() {}
+  vertex() {}
+  polylineEnd() {}
+  circle() {}
+  rect() {}
+  text() {}
+  end() {}
+}
+
+// The swatches of the theme being drawn. A theme names a handful of roles, so
+// more than `MAX_SWATCHES` traps the program instead of growing without bound.
+export const MAX_SWATCHES = 1000;
+
+export class SwatchScene implements Scene {
+  #swatches: RawSwatch[] = [];
+  begin() {
+    this.#swatches = [];
+  }
+  swatch(role: string, light: string, dark: string) {
+    if (this.#swatches.length >= MAX_SWATCHES) throw new Error(`the theme drew more than ${MAX_SWATCHES} swatches`);
+    this.#swatches.push({ role, light, dark });
+  }
+  take(): RawSwatch[] {
+    const swatches = this.#swatches;
+    this.#swatches = [];
+    return swatches;
+  }
+  span() {}
   line() {}
   polylineBegin() {}
   vertex() {}
@@ -246,8 +292,9 @@ export class CanvasScene implements Scene {
     this.#ctx.fillText(text, x, y);
   }
 
-  // The picture has no text to style.
+  // The picture has no text to style and no theme to read.
   span() {}
+  swatch() {}
 
   end() {
     this.#ctx.restore();

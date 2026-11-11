@@ -407,3 +407,22 @@ event, not once per animation frame. The page treats the spans as untrusted
 words: `kind` must be one of the seven roles (`comment`, `keyword`, `literal`,
 `number`, `string`, `tag`, `operator`) before it becomes a class name, and a
 span out of range or out of order is dropped.
+
+The editor's colours are a program over a vocabulary of its own,
+`Vocab::theme()`, so the editor vocabulary keeps meaning one thing. One shape,
+`Swatch({role: String, light: String, dark: String})`, streams through a
+`scene.swatch(String, String, String)` import: a style role and the color to
+paint it with on a light page and on a dark one. A program imports a scene
+function only for the shapes its `draw` returns, and only a vocabulary that
+admits a shape can return it, so no other host's imports change. The vocabulary
+has one event, `Opened`, with no payload, which exists because an interactive
+program's `update` must take an event; the host never sends it. `draw` runs
+once when the theme is loaded, not once per edit.
+
+`editor/theme.goat` is that program. The page treats its swatches as untrusted,
+like spans: a role outside the six the editor styles is dropped; a color must
+pass `checkColor` and be a hex code or one of the basic color names, or that
+palette's color for the role stays the default; and a theme with a color under
+4.5:1 contrast on the editor's panel or selection is rejected whole, keeping
+the previous theme. The page writes only validated `#rrggbb` values to
+`--tok-*` custom properties.
