@@ -1277,10 +1277,10 @@ impl Mono<'_> {
             BinOp::FloorDiv | BinOp::Mod => Self::whole_division(cx, (op, span), a, b),
             BinOp::Eq => self.equal(cx, &operand_ty, a, b, tail),
             BinOp::Ne => Self::not(self.equal(cx, &operand_ty, a, b, false)),
-            BinOp::Lt => Expr::Cmp(CmpOp::Lt, Box::new(a), Box::new(b)),
-            BinOp::Lte => Expr::Cmp(CmpOp::Le, Box::new(a), Box::new(b)),
-            BinOp::Gt => Expr::Cmp(CmpOp::Gt, Box::new(a), Box::new(b)),
-            BinOp::Gte => Expr::Cmp(CmpOp::Ge, Box::new(a), Box::new(b)),
+            BinOp::Lt => self.order(cx, CmpOp::Lt, &operand_ty, a, b),
+            BinOp::Lte => self.order(cx, CmpOp::Le, &operand_ty, a, b),
+            BinOp::Gt => self.order(cx, CmpOp::Gt, &operand_ty, a, b),
+            BinOp::Gte => self.order(cx, CmpOp::Ge, &operand_ty, a, b),
         }
     }
 
