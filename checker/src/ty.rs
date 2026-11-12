@@ -65,7 +65,22 @@ pub enum Row {
         field: Box<Ty>,
         rest: Box<Row>,
     },
+    /// A field that is there or not, by the presence variable `pres` (Rémy):
+    /// a spread over a base of unknown shape, `{...r, x: 1}`, reads `r`'s `x`
+    /// as `Maybe` at the type it writes. Binding `pres` to [`PRESENT`] makes it
+    /// an `Extend`, to [`ABSENT`] drops it.
+    Maybe {
+        label: String,
+        pres: TypeVar,
+        field: Box<Ty>,
+        rest: Box<Row>,
+    },
 }
+
+/// What a presence variable is bound to, as a type, so that the substitutions
+/// that map type variables to types carry it (mono's instantiation does).
+pub const PRESENT: Ty = Ty::Unit;
+pub const ABSENT: Ty = Ty::Bool;
 
 /// The tags of one `tag` declaration: a closed variant type. A payload that
 /// mentions the group itself holds `Ty::Var(Group::SELF)`.
@@ -254,13 +269,20 @@ impl Row {
                 field.free_vars(out);
                 rest.free_vars(out);
             }
+            Row::Maybe {
+                pres, field, rest, ..
+            } => {
+                out.insert(*pres);
+                field.free_vars(out);
+                rest.free_vars(out);
+            }
         }
     }
 
     fn fields(&self) -> impl Iterator<Item = &Ty> {
         let mut cursor = Some(self);
         std::iter::from_fn(move || match cursor? {
-            Row::Extend { field, rest, .. } => {
+            Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
                 cursor = Some(rest);
                 Some(&**field)
             }
@@ -272,6 +294,17 @@ impl Row {
         match self {
             Row::Extend { label, field, rest } => Row::Extend {
                 label: label.clone(),
+                field: Box::new(f(field)),
+                rest: Box::new(rest.map_fields(f)),
+            },
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                rest,
+            } => Row::Maybe {
+                label: label.clone(),
+                pres: *pres,
                 field: Box::new(f(field)),
                 rest: Box::new(rest.map_fields(f)),
             },
@@ -394,7 +427,7 @@ impl Row {
     fn fmt_labels(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut row = self;
         let mut first = true;
-        while let Row::Extend { label, rest, .. } = row {
+        while let Row::Extend { label, rest, .. } | Row::Maybe { label, rest, .. } = row {
             if !first {
                 write!(f, ", ")?;
             }
@@ -433,6 +466,16 @@ impl Row {
                 } else {
                     write!(f, "{label}: {}", Shown { ty: field, exact })?;
                 }
+                rest.fmt_fields(f, false, bare_unit, exact)
+            }
+            Row::Maybe {
+                label, field, rest, ..
+            } => {
+                if !first {
+                    write!(f, ", ")?;
+                }
+                let mark = if exact { "?" } else { "" };
+                write!(f, "{label}{mark}: {}", Shown { ty: field, exact })?;
                 rest.fmt_fields(f, false, bare_unit, exact)
             }
         }

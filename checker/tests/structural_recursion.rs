@@ -59,12 +59,10 @@ fn a_cycle_through_a_function_alone_stays_rejected() {
 }
 
 #[test]
-fn pure_extension_spread_recursion_stays_rejected() {
-    let message =
-        error_of("go = program(s) do go({...s, stop: true}) done  1").expect("should not check");
-    assert!(
-        message.contains("adds field `stop`") && message.contains("grow without bound"),
-        "{message}"
+fn pure_extension_spread_recursion_checks() {
+    assert_eq!(
+        error_of("go = program(s) do go({...s, stop: true}) done  1"),
+        None
     );
 }
 

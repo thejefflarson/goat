@@ -548,7 +548,11 @@ fn heal(cst: &Cst, cursor: usize) -> Healed {
 pub fn row_fields(row: &Row) -> Vec<(&str, &Ty)> {
     let mut out = Vec::new();
     let mut next = row;
-    while let Row::Extend { label, field, rest } = next {
+    while let Row::Extend { label, field, rest }
+    | Row::Maybe {
+        label, field, rest, ..
+    } = next
+    {
         out.push((label.as_str(), field.as_ref()));
         next = rest;
     }
@@ -560,7 +564,7 @@ fn row_is_open(row: &Row) -> bool {
     match row {
         Row::Empty => false,
         Row::Var(_) => true,
-        Row::Extend { rest, .. } => row_is_open(rest),
+        Row::Extend { rest, .. } | Row::Maybe { rest, .. } => row_is_open(rest),
     }
 }
 

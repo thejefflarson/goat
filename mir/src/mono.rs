@@ -1,7 +1,7 @@
 //! Monomorphization: checked HIR to ground-typed MIR, one `Func` per
 //! `(binding, ground type)` specialization.
 
-use crate::canon::{canonical, ground_fields, has_structural_rec, layout_fields};
+use crate::canon::{canonical, ground_fields, has_structural_rec};
 use crate::mir::*;
 use crate::rc::insert_rc;
 use goat_checker::captures::{for_each_node, push_children};
@@ -9,7 +9,7 @@ use goat_checker::hir::{
     self, BinOp, Boundary, Builtin, Decoder, ExprId, ExprKind, Param, PatternPayload, Span, Symbol,
 };
 use goat_checker::infer::Typed;
-use goat_checker::ty::{Row, Scheme, Ty, TypeVar};
+use goat_checker::ty::{ABSENT, PRESENT, Row, Scheme, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target, Vocab};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -523,6 +523,17 @@ impl Mono<'_> {
                 out.push((label.clone(), self.ground_in(field, subst, bound)));
                 self.flatten_row(rest, subst, bound, out);
             }
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                rest,
+            } => {
+                if subst.get(pres) == Some(&PRESENT) {
+                    out.push((label.clone(), self.ground_in(field, subst, bound)));
+                }
+                self.flatten_row(rest, subst, bound, out);
+            }
         }
     }
 
@@ -549,7 +560,7 @@ impl Mono<'_> {
             }
             Ty::Record(row) => {
                 let mut fields = Vec::new();
-                for (_, field) in layout_fields(row) {
+                for (_, field) in ground_fields(row) {
                     fields.push(self.lower_ty(field));
                 }
                 let id = intern_index(&mut self.layouts, Layout::Record(fields));
@@ -597,7 +608,7 @@ impl Mono<'_> {
                 let mty = MTy::Ptr(HeapKind::Record(LayoutId(id as u32)));
                 self.rec_tys.insert(key, mty);
                 let mut fields = Vec::new();
-                for (_, field) in layout_fields(&row) {
+                for (_, field) in ground_fields(&row) {
                     fields.push(self.lower_ty(field));
                 }
                 self.layouts[id] = Layout::Record(fields);
@@ -1189,7 +1200,7 @@ impl Mono<'_> {
                 };
                 let layout = self.record_layout(&ty);
                 self.with_record(cx, record, |_, _, local| {
-                    let values = layout_fields(&row)
+                    let values = ground_fields(&row)
                         .map(|(label, _)| Expr::Field(local, field_index(&source_row, label)))
                         .collect();
                     Expr::AllocRecord(layout, values)
@@ -1217,7 +1228,7 @@ impl Mono<'_> {
         let layout = self.record_layout(&ty);
         let reuses = self.lower_ty(&base_ty) == MTy::Ptr(HeapKind::Record(layout));
         self.with_record(cx, base, |m, cx, local| {
-            let values = layout_fields(&row)
+            let values = ground_fields(&row)
                 .map(|(label, _)| match fields.iter().find(|(l, _)| l == label) {
                     Some((_, value)) => m.expr(cx, value, false),
                     None => Expr::Field(local, field_index(&base_row, label)),
@@ -1683,6 +1694,19 @@ fn match_row(
                 }
                 row = next;
             }
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                rest: next,
+            } => {
+                let found = rest.iter().position(|(l, _)| *l == label);
+                if let Some(at) = found {
+                    match_ty_in(field, rest.remove(at).1, subst, seen);
+                }
+                subst.insert(*pres, if found.is_some() { PRESENT } else { ABSENT });
+                row = next;
+            }
             Row::Var(v) => {
                 let tail = rest
                     .into_iter()
@@ -1710,7 +1734,7 @@ fn variant_row(key: &Ty) -> Row {
 
 /// The layout slot of `label` in a ground record row.
 fn field_index(row: &Row, label: &str) -> usize {
-    layout_fields(row)
+    ground_fields(row)
         .position(|(l, _)| l == label)
         .expect("checked record has the field")
 }

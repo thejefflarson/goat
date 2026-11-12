@@ -47,8 +47,11 @@ Two consequences:
 - ADR 0028 is superseded. `go = program(s) do go({...s, stop: true}) done` is
   an update or extension of `stop` at `Bool` and type-checks.
 - ADR 0011 is simplified. With no shadowed fields, its one-slot rule is the only
-  case, and the `lacks` constraint guarding rest patterns over a shadowed label
-  has nothing left to guard. Rest patterns keep their meaning.
+  case. The `lacks` guard on rest patterns stays: spread can no longer reach
+  it, but unification can. After `{x, ...r} = p`, returning `{x: 1}` where `r`
+  is expected would need a row with two `x` fields, and the guard rejects it
+  with "`x` was taken out of this record with `...`, so a record that has `x`
+  can't be put back in its place". Rest patterns keep their meaning.
 - ADR 0032's knot gets one shape per receiver: a method that updates `self`
   returns `self`'s type. The spike showed that this does not make #403's nested
   knots unnecessary: each method still has its own open self row.
@@ -173,7 +176,7 @@ under 200 MB. The full workspace suite ran twice, about 20 minutes each, in debu
 | `checker/src/lib.rs` `spread_adds_a_field` | expects `{x: Number, y: Bool}` | An added field now sits behind the base's fields instead of in front. Display order only; mono sorts fields by label, so layouts are the same. |
 | `lib.rs` `spread_override_replaces_the_field_even_at_a_new_type`, now `..._updates_the_field_and_keeps_its_type` | a type-changing override is an error | Decision rule 3. |
 | `lib.rs` `spread_of_an_unknown_record_stays_polymorphic_in_the_rest` | `bump({x: "s", z: 2})` became `bump({x: 4, z: 2})` | The string `x` changed the field's type. |
-| `lib.rs` `rest_refuses_a_label_a_spread_override_hid`, now `rest_after_a_spread_update_names_each_label_once` | the "`x` is in this record twice" error no longer arises | No record holds two fields with one label (rule 5). The type-changing inputs are now ordinary mismatches. The `lack` check that raised it is unreachable from spread; delete it with the shadowing code if accepted. |
+| `lib.rs` `rest_refuses_a_label_a_spread_override_hid`, now `rest_after_a_spread_update_names_each_label_once` | the "`x` is in this record twice" error no longer arises | No record holds two fields with one label (rule 5). The type-changing inputs are now ordinary mismatches. The `lack` check that raised it is unreachable from spread but reachable by unification (see Consequences), so it stays, with a reworded message. |
 | `checker/tests/constraints.rs` `spread_recursion_that_only_adds_a_field_gets_a_targeted_error`, now `..._checks` | the program type-checks | ADR 0028 superseded. `pure_extension` and `spread_regress_message` are now dead. |
 | `constraints.rs` `other_infinite_record_types_keep_the_generic_message`, now `..._stay_rejected` | still rejected; the message now reads "cannot construct the infinite type …", not the record-specific wording | `f = program(s) do f({a: {...s, b: 1}}) done` fails on the type-variable path first. The message names type variables, a kid-wording gap that predates the spike. |
 | `checker/tests/structural_recursion.rs` `pure_extension_spread_recursion_stays_rejected`, now `..._checks` | the program type-checks | ADR 0028 superseded. |

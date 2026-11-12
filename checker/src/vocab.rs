@@ -111,7 +111,7 @@ fn fields(row: &Row) -> Option<Vec<(&String, &Ty)>> {
                 next = rest;
             }
             Row::Empty => return Some(out),
-            Row::Var(_) => return None,
+            Row::Var(_) | Row::Maybe { .. } => return None,
         }
     }
 }
