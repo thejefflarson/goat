@@ -307,7 +307,9 @@ enum Peel<'r> {
     Done,
     Bound(Rc<Row>),
     Rest(&'r Row),
-    Resolved(Row),
+    /// A field known present, as a plain field, the rest left unresolved:
+    /// resolving the whole row here would walk it with no budget.
+    Present(Row),
 }
 
 /// `row`'s first field when it is `label`: whether it is there (a presence),
@@ -855,13 +857,13 @@ impl Inferer {
             Peel::Done => {}
             Peel::Bound(row) => return self.unify_row(&row, b, span, kind),
             Peel::Rest(row) => return self.unify_row(row, b, span, kind),
-            Peel::Resolved(row) => return self.unify_row(&row, b, span, kind),
+            Peel::Present(row) => return self.unify_row(&row, b, span, kind),
         }
         match self.peel(b) {
             Peel::Done => {}
             Peel::Bound(row) => return self.unify_row(a, &row, span, kind),
             Peel::Rest(row) => return self.unify_row(a, row, span, kind),
-            Peel::Resolved(row) => return self.unify_row(a, &row, span, kind),
+            Peel::Present(row) => return self.unify_row(a, &row, span, kind),
         }
         match (a, b) {
             (Row::Empty, Row::Empty) => {}
@@ -1020,9 +1022,20 @@ impl Inferer {
                 .get(v)
                 .cloned()
                 .map_or(Peel::Done, Peel::Bound),
-            Row::Maybe { pres, rest, .. } => match self.resolve(&Ty::Var(*pres)) {
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                method,
+                rest,
+            } => match self.resolve(&Ty::Var(*pres)) {
                 absent if absent == ABSENT => Peel::Rest(rest),
-                present if present == PRESENT => Peel::Resolved(self.resolve_row(row)),
+                present if present == PRESENT => Peel::Present(Row::Extend {
+                    label: label.clone(),
+                    field: field.clone(),
+                    method: method.clone(),
+                    rest: rest.clone(),
+                }),
                 _ => Peel::Done,
             },
             _ => Peel::Done,
