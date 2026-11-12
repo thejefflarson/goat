@@ -211,6 +211,102 @@ distance_squared = program({x, y}) do x * x + y * y done
 distance_squared(moved)   # 0 + 22 * 22 = 484
 ```
 
+A spread **updates** a field `p` has and **extends** `p` with one it lacks, so a
+misspelled name adds a field instead of changing one. It never changes a
+field's type: `{...p, x: "hi"}` is an error when `x` is a number.
+
+```goat
+ball = {x: 1, y: 2}
+moved = {...ball, x: 5}          # update: x is 5
+tagged = {...ball, color: "red"} # extend: a new field
+oops = {...ball, z: 5}           # a typo for x adds z; x is still 1
+moved.x + tagged.y + oops.x
+```
+
+```goat error
+ball = {x: 1, y: 2}
+{...ball, x: "hi"}
+```
+
+### Methods: `self`, `.` and `::`
+
+A function written inside a record can take `self` as its first parameter. That
+makes it a *method*, and the record is handed to it as `self`.
+
+`ball.moved()` calls `moved` and hands it `ball` as `self`. A method gives back
+something new, and `ball` itself doesn't change, so keep the result:
+`ball2 = ball.moved()`. Methods chain, and the receiver can be a parameter.
+
+```goat
+ball = {
+  x: 1,
+  moved: program(self) do {...self, x: self.x + 1} done,
+  at: program(self, x) do {...self, x: x} done
+}
+ball2 = ball.moved()
+step = program(b) do b.moved().x done
+ball2.x + ball.moved().moved().x + step(ball)   # 2 + 3 + 2 = 7
+```
+
+A record can't hold its own constructor, because that would make the record
+refer to itself and goat values are acyclic. To make another one, use any of:
+
+- a prototype copy, `{...ball, x: 5}`, which has exactly `ball`'s type, so it
+  goes in the same list;
+- a method that returns a modified copy, like `at` above: `ball.at(5)`;
+- a top-level function, `make_ball(5)`.
+
+```goat
+ball = {x: 1, moved: program(self) do {...self, x: self.x + 1} done}
+make_ball = program(x) do {x: x, moved: program(self) do {...self, x: self.x + 1} done} done
+balls = [ball, {...ball, x: 5}, make_ball(9)]
+sum(change_each(balls, program(b) do b.moved().x done))   # 2 + 6 + 10 = 18
+```
+
+`::` takes a function out of a record without handing it the record. Use it for
+plain functions, the ones without `self`: `tools::double(5)`. `.` means "record,
+do this", and `::` means "borrow the record's tool".
+
+```goat
+math = {
+  double: program(n) do n * 2 done,
+  clamp: program(x, low, high) do
+    if x < low then low else if x > high then high else x done done
+  done
+}
+math::clamp(math::double(7), 0, 10)   # 10
+```
+
+The two do not mix. `.` on a function without `self` is an error, and so is `::`
+on a method (`ball::moved()`; write `ball.moved()`).
+
+```goat error
+tools = {double: program(n) do n * 2 done}
+tools.double(5)
+```
+
+The checker says: "`double` has no `self`, so `tools.double(5)` can't hand it
+`tools`. Call it with `tools::double(5)`. If `double` is meant to work on
+`tools`, make it a method by writing `self` first: `program(self, n)`." For the
+other direction it says: "`moved` has `self`, so call it with a dot:
+`ball.moved()`. `::` is for functions without `self`, like `math::double(5)`."
+
+```goat error
+ball = {x: 1, moved: program(self) do {...self, x: self.x + 1} done}
+ball::moved()
+```
+
+Two other mistakes have their own messages. `self` only works in a function
+written right inside a record, and it has to be the first parameter. Records in
+one list must agree on which fields are methods: "`f` is a method in one record
+and a plain function in the other, so they don't have the same shape. Start both
+with `self`, or neither."
+
+```goat error
+add = program(self, n) do n done
+1
+```
+
 ### Tags and `match`
 
 A tag is declared with `tag` and builds a variant when it is called with a
@@ -419,6 +515,18 @@ greeting = "hello, " + "goat"
 print(greeting)
 ```
 
+- **`::` as a namespace.** `::` only takes a function out of a record you
+  have: no `math::sqrt` from a module, no `Shape::Circle`.
+
+```goat error
+tools = {double: program(n) do n * 2 done}
+math::double(5)
+```
+
+- **Assigning a field.** Fields are never assigned; `self.x = 5` doesn't exist.
+  Write `{...self, x: 5}` and keep the result.
+- **Methods on strings or lists.** `"hi".length()` and `[1, 2].sum()` don't
+  exist; call `length("hi")` or `sum([1, 2])`.
 - **`return`.** A reserved word with no syntax; a function's value is its body.
 
 ```goat error
@@ -497,4 +605,9 @@ how to paint them.
   needs an `else`.
 - Compare with `==` and `!=`; combine with `and`, `or`, `not`.
 - No string concatenation, no `return`, no named types.
+- Call a method with `.` (`ball.moved()`) and a plain function from a record
+  with `::` (`tools::double(5)`); never `ball::moved()` or `tools.double(5)`.
+- Keep the result of a method: `ball2 = ball.moved()`. A method never changes
+  `ball`.
+- No field assignment, no `::` namespaces, no methods on strings or lists.
 - No type annotations anywhere.

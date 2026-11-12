@@ -1,0 +1,13 @@
+# A record can hold a toolbox of plain functions. They take no `self`, so you
+# borrow one with `::`; the record is not handed to it.
+math = {
+  double: program(n) do n * 2 done,
+  half: program(n) do n / 2 done,
+  clamp: program(x, low, high) do
+    if x < low then low else if x > high then high else x done done
+  done
+}
+
+# `math.double(5)` would be an error: `.` hands `math` to `double` as its first
+# argument, and `double` has no `self` to receive it.
+math::clamp(math::double(7), 0, 10) + math::half(math::clamp(-3, 0, 10)) + math::double(5)

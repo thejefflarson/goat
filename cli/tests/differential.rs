@@ -382,6 +382,8 @@ fn examples_print_the_expected_output() {
         ("lists.goat", "15"),
         ("spread.goat", "25"),
         ("spread_update.goat", "27"),
+        ("methods.goat", "39"),
+        ("toolbox.goat", "20"),
         ("list_literals.goat", "29"),
         (
             "loops.goat",

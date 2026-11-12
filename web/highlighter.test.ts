@@ -116,8 +116,8 @@ test("the goat highlighter's decorations equal the built-in tokenizer's on every
 test("the page's own examples color the same under both highlighters", async () => {
   const page = readFileSync(new URL("./index.html", import.meta.url), "utf8");
   const examples = [...page.matchAll(/^ {4}(\w+): `([^`]*)`/gm)].map((match) => [match[1]!, match[2]!] as const);
-  assert.equal(examples.length, 4);
-  const hosts: Record<string, Host> = { arrow_draw: "turtle", spiral: "turtle", bounce: "canvas", catch: "canvas" };
+  assert.equal(examples.length, 5);
+  const hosts: Record<string, Host> = { arrow_draw: "turtle", spiral: "turtle", bounce: "canvas", catch: "canvas", sky: "canvas" };
   let host: Host = "turtle";
   const goat = await highlighter(() => host);
   await goat.ready();
