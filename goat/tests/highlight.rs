@@ -169,6 +169,15 @@ fn the_highlighter_draws_the_spans_the_lexer_finds_on_every_goat_file() {
     assert_eq!(leaked, 0, "the highlighter leaked");
 }
 
+#[test]
+fn the_highlighter_draws_a_take_as_one_operator() {
+    let mut editor = editor();
+    let source = "r::f(1) + r.g: r :: f";
+    assert_agrees(&mut editor, source, source);
+    let spans = edit(&mut editor, "r::f");
+    assert_eq!(spans, [(1, 3, "operator".to_string())]);
+}
+
 /// With the host's own tags declared, the spans still equal the lexer's, for
 /// the turtle's names and the canvas host's.
 #[test]

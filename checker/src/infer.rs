@@ -32,7 +32,7 @@ use crate::hir::{
     Span, Symbol,
 };
 use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
-use crate::lower::DotCall;
+use crate::lower::{DotCall, Take};
 use crate::ty::{ABSENT, Group, PRESENT, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{Vocab, list};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -72,6 +72,7 @@ pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
 #[derive(Default)]
 pub struct DotCalls {
     pub calls: HashMap<ExprId, DotCall>,
+    pub takes: HashMap<ExprId, Take>,
     pub source: String,
 }
 
@@ -109,6 +110,7 @@ pub fn infer_partial(
     }
     inf.report_spent_ids(root.span);
     inf.default_numbers();
+    inf.check_takes();
     let warnings = if inf.errors.is_empty() {
         inf.unused_tag_warnings()
     } else {
@@ -1846,6 +1848,37 @@ impl Inferer {
         for var in undecided {
             self.bind_var(var, Ty::Int);
         }
+    }
+
+    /// `r::f` takes a function out of a record; a data field is read with
+    /// `r.f`, so there is one way to read it. These errors come first: a call
+    /// on the data field fails too, and that is the consequence.
+    fn check_takes(&mut self) {
+        let mut offenders: Vec<(Span, String)> = Vec::new();
+        for (id, take) in &self.dots.takes {
+            let Some(ty) = self.node_types.get(id) else {
+                continue;
+            };
+            match self.undecided_as_int(self.resolve(ty).unfold_head()) {
+                Ty::Func(..) | Ty::Var(_) => continue,
+                _ => {}
+            }
+            let Some(receiver) = self.dots.source.get(take.receiver.start..take.receiver.end)
+            else {
+                continue;
+            };
+            let label = &take.label;
+            let message =
+                format!("`{label}` isn't a function, so read it with `{receiver}.{label}`");
+            offenders.push((take.span, message));
+        }
+        offenders.sort_by_key(|(span, _)| (span.start, span.end));
+        self.errors.splice(
+            0..0,
+            offenders
+                .into_iter()
+                .map(|(span, message)| GoatError::new(span, message)),
+        );
     }
 
     fn print_ty(&mut self) -> Ty {

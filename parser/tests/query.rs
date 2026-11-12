@@ -53,6 +53,18 @@ fn a_dot_with_nothing_after_it_is_an_access_missing_its_name() {
 }
 
 #[test]
+fn a_take_with_nothing_after_it_is_a_take_missing_its_name() {
+    assert_eq!(
+        path("p = {x: 1}\np::|"),
+        ["goat", "expr", "take", "MISSING"]
+    );
+    assert_eq!(
+        path("q = p::fo|"),
+        ["goat", "expr", "declaration", "value", "take", "name"]
+    );
+}
+
+#[test]
 fn an_unterminated_match_encloses_a_cursor_in_its_trailing_space() {
     assert_eq!(
         path("match s do\n  |"),

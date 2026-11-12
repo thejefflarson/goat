@@ -57,3 +57,28 @@ fn a_negated_dot_call() {
                print(-r.f(2))";
     assert_eq!(run(src), "-3");
 }
+
+#[test]
+fn a_take_calls_without_the_record() {
+    let src = "r = {n: 2, f: program(x) do x * 10 done};\n\
+               print(r::f(4));\n\
+               print(r.n)";
+    assert_eq!(run(src), "40\n2");
+}
+
+#[test]
+fn a_take_on_a_method_passes_self_explicitly() {
+    let src = "ball = {x: 3, plus: program(self) do self.x done};\n\
+               other = {x: 10};\n\
+               print(ball::plus(other));\n\
+               print(ball.plus())";
+    assert_eq!(run(src), "10\n3");
+}
+
+#[test]
+fn a_bare_take_is_a_function_value() {
+    let src = "r = {f: program(x) do x + 1 done};\n\
+               g = r::f;\n\
+               print(g(1))";
+    assert_eq!(run(src), "2");
+}

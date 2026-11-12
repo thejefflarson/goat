@@ -179,3 +179,18 @@ Proof.
     eapply DC_head; [ apply D_num | apply DP_nil ].
   - apply DP_nil.
 Qed.
+
+(* A take passes nothing: x::f(1) is (x.f)(1). *)
+Example take_calls_without_the_receiver : forall var_of x,
+  Den_posts var_of ["f"] (e_fvar_f x)
+    [Node R_take [sym "::"; ident "f"];
+     Node R_call [sym "("; Node R_arguments [Node R_expr [Node R_number [Leaf (TNum 1)]]]; sym ")"]]
+    (e_app (e_proj (e_fvar_f x) 0) (e_num 1)).
+Proof.
+  intros var_of x.
+  apply DP_take.
+  eapply DP_call with (es := [e_num 1]).
+  - apply DA_last. apply D_expr. apply DB_chain.
+    eapply DC_head; [ apply D_num | apply DP_nil ].
+  - apply DP_nil.
+Qed.

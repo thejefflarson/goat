@@ -233,6 +233,24 @@ fn a_field_of_something_with_no_members_offers_nothing() {
 }
 
 #[test]
+fn a_take_offers_the_members_of_the_base_type_like_a_dot() {
+    let record = "p = {x: 1, f: program(a) do a done}\n";
+    assert_eq!(labels(&format!("{record}p::|")), ["x", "f"]);
+    assert_eq!(
+        labels(&format!("{record}p::|")),
+        labels(&format!("{record}p.|"))
+    );
+    assert_eq!(
+        labels("w = {pos: {x: 1, y: 2}, n: 0}\nw.pos::|"),
+        ["x", "y"]
+    );
+    assert_eq!(
+        labels("t = {heading: 90, height: 2, pen: true}\nt::he|"),
+        ["heading", "height"]
+    );
+}
+
+#[test]
 fn completion_after_the_dot_of_a_dot_call_offers_the_receivers_fields() {
     let marked = "ball = {x: 1, moved: program(self) do self.x done}\nball.|mo()";
     assert_eq!(labels(marked), ["x", "moved"]);

@@ -14,7 +14,7 @@ const TYPES: Record<OptionKind, string> = {
   field: "property",
 };
 
-// Typing opens the list once a letter is typed, or a `.`; Ctrl-Space opens it
+// Typing opens the list once a letter is typed, or a `.` or `::`; Ctrl-Space opens it
 // anywhere. The compiler's order is the ranking, so CodeMirror does not refilter.
 export function goatCompletions(complete: Completer): CompletionSource {
   return (context: CompletionContext): CompletionResult | null => {
@@ -22,7 +22,8 @@ export function goatCompletions(complete: Completer): CompletionSource {
     const found = complete(source, context.pos);
     if (!found) return null;
     const afterDot = source[found.from - 1] === "." && source[found.from - 2] !== ".";
-    if (!context.explicit && found.from === context.pos && !afterDot) return null;
+    const afterTake = source.slice(found.from - 2, found.from) === "::";
+    if (!context.explicit && found.from === context.pos && !afterDot && !afterTake) return null;
     const options: Completion[] = found.options.map(({ kind, label, detail }) => ({
       label,
       detail: detail || undefined,

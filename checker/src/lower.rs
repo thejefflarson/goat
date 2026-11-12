@@ -59,6 +59,17 @@ pub struct DotCall {
     pub receiver_kind: ReceiverKind,
 }
 
+/// A field taken out with `::`, `r::f`, which the checker requires to be a
+/// function (ADR 0034).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Take {
+    /// Where the record is written; a diagnostic quotes it from the source.
+    pub receiver: Span,
+    /// The whole `r::f`.
+    pub span: Span,
+    pub label: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReceiverKind {
     /// A variable or a path of field accesses, repeated in the rewrite.
@@ -71,6 +82,8 @@ pub struct Lowered {
     pub root: Expr,
     /// Each dot call's `App`, by id.
     pub dot_calls: HashMap<ExprId, DotCall>,
+    /// Each `r::f`'s `Field`, by id.
+    pub takes: HashMap<ExprId, Take>,
     pub errors: Vec<GoatError>,
     pub warnings: Vec<GoatError>,
     pub interactive: Option<Interactive>,
@@ -128,6 +141,7 @@ pub fn lower_with_vocab(
     Ok(Lowered {
         root,
         dot_calls: ctx.dot_calls,
+        takes: ctx.takes,
         errors: ctx.errors,
         warnings: ctx.warnings,
         interactive,
@@ -336,6 +350,7 @@ struct Lower {
     /// whole program, each tag with the closed group it belongs to, if any.
     tags: HashMap<String, Option<Arc<Group>>>,
     dot_calls: HashMap<ExprId, DotCall>,
+    takes: HashMap<ExprId, Take>,
 }
 
 impl Lower {
@@ -771,27 +786,41 @@ impl Lower {
     }
 
     /// `a.b(x).c` nests as `((a.b)(x)).c`. A call straight after an access is a
-    /// dot call: `r.f(x)` is `(r.f)(r, x)`.
+    /// dot call: `r.f(x)` is `(r.f)(r, x)`. `r::f(x)` is `(r.f)(x)`, with no
+    /// dot call.
     fn lower_postfixes(&mut self, mut expr: Expr, inner: &mut Peekable<Children>) -> Expr {
         let mut after_access = false;
-        while let Some(postfix) = inner.next_if(|p| matches!(p.kind(), "access" | "call")) {
+        while let Some(postfix) = inner.next_if(|p| matches!(p.kind(), "access" | "take" | "call"))
+        {
             let span = expr.span.to(self.span_of(&postfix));
             let was_access = std::mem::replace(&mut after_access, postfix.is("access"));
             expr = match postfix.kind() {
-                "access" => {
+                kind @ ("access" | "take") => {
                     let label = postfix
                         .children()
                         .next()
-                        .expect("access is `.` then an identifier")
+                        .expect("a field postfix is its operator then an identifier")
                         .text()
                         .to_string();
-                    self.node(
+                    let receiver = expr.span;
+                    let field = self.node(
                         span,
                         ExprKind::Field {
                             record: Box::new(expr),
-                            label,
+                            label: label.clone(),
                         },
-                    )
+                    );
+                    if kind == "take" {
+                        self.takes.insert(
+                            field.id,
+                            Take {
+                                receiver,
+                                span,
+                                label,
+                            },
+                        );
+                    }
+                    field
                 }
                 _ => {
                     let args: Vec<Expr> = postfix

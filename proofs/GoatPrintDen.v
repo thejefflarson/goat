@@ -156,6 +156,10 @@ Proof.
       * exact H.
     + apply IHDen_posts; [ exact Hp | ].
       intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ Hend)).
+  - (* take *)
+    simpl. apply DP_take.
+    apply IHDen_posts; [ exact Hp | ].
+    intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ Hend)).
   - (* dot call *)
     simpl. eapply DP_dot_call; [ eassumption | ].
     apply IHDen_posts; [ exact Hp | ].

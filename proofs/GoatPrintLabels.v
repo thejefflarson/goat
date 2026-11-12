@@ -19,6 +19,7 @@ Definition occs (ts : list tree) : list string := flat_map label_occurrences ts.
 Definition lo_head (r : rule) (cs : list tree) : list string :=
   match r, cs with
   | R_access, [_; Node _ [Leaf (TName l)]] => [l]
+  | R_take, [_; Node _ [Leaf (TName l)]] => [l]
   | R_field, Node _ [Leaf (TName l)] :: _ => [l]
   | _, _ => []
   end.

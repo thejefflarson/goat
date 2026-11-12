@@ -24,6 +24,7 @@ Fixpoint label_occurrences (t : tree) : list string :=
   | Node r cs =>
       match r, cs with
       | R_access, [_; Node _ [Leaf (TName l)]] => [l]
+      | R_take, [_; Node _ [Leaf (TName l)]] => [l]
       | R_field, Node _ [Leaf (TName l)] :: _ => [l]
       | _, _ => []
       end

@@ -48,6 +48,7 @@ const RULES: &[(&str, Class)] = &[
     ("negation", Outside),
     ("_postfix", Core("e")),
     ("access", Core("e_proj")),
+    ("take", Core("e_proj")),
     ("call", Core("e_app")),
     ("arguments", Core("e_app")),
     ("_primary", Core("e")),
