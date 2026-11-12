@@ -11,6 +11,7 @@ use goat_checker::hir::{
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Scheme, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target, Vocab};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod interactive;
@@ -242,7 +243,7 @@ struct Collector<'a> {
     typed: &'a Typed,
     captures: &'a HashMap<Target, Vec<Symbol>>,
     lambdas: HashMap<Target, Lambda<'a>>,
-    var_tys: HashMap<Symbol, &'a Ty>,
+    var_tys: HashMap<Symbol, Cow<'a, Ty>>,
 }
 
 /// Find every function literal, its captures, and the type template of every
@@ -251,7 +252,7 @@ fn collect_lambdas<'a>(
     typed: &'a Typed,
     root: &'a hir::Expr,
     captures: &'a HashMap<Target, Vec<Symbol>>,
-) -> (HashMap<Target, Lambda<'a>>, HashMap<Symbol, &'a Ty>) {
+) -> (HashMap<Target, Lambda<'a>>, HashMap<Symbol, Cow<'a, Ty>>) {
     let mut c = Collector {
         typed,
         captures,
@@ -281,7 +282,8 @@ impl<'a> Collector<'a> {
                             self.lambda(Target::Named(*symbol), ty, params, body);
                         }
                         _ => {
-                            self.var_tys.insert(*symbol, &typed.node_types[&value.id]);
+                            self.var_tys
+                                .insert(*symbol, Cow::Borrowed(&typed.node_types[&value.id]));
                             pending.push(value);
                         }
                     }
@@ -291,8 +293,10 @@ impl<'a> Collector<'a> {
                 }
                 ExprKind::Match { arms, .. } => {
                     for binder in arms.iter().flat_map(|a| a.pattern.payload.binders()) {
-                        self.var_tys
-                            .insert(binder.symbol, &typed.binder_types[&binder.symbol]);
+                        self.var_tys.insert(
+                            binder.symbol,
+                            Cow::Borrowed(&typed.binder_types[&binder.symbol]),
+                        );
                     }
                     push_children(e, &mut pending);
                 }
@@ -302,10 +306,22 @@ impl<'a> Collector<'a> {
     }
 
     fn lambda(&mut self, target: Target, ty: &'a Ty, params: &'a [Param], body: &'a hir::Expr) {
-        if let Ty::Func(args, _) = ty {
-            for (param, ty) in params.iter().zip(args) {
-                self.var_tys.insert(param.symbol, ty);
+        // A function whose type mentions itself through a record is a `μ`
+        // at the head; its parameters are those of the unfolding.
+        match ty {
+            Ty::Func(args, _) => {
+                for (param, ty) in params.iter().zip(args) {
+                    self.var_tys.insert(param.symbol, Cow::Borrowed(ty));
+                }
             }
+            Ty::Rec(..) => {
+                if let Ty::Func(args, _) = ty.unfold_head() {
+                    for (param, ty) in params.iter().zip(args) {
+                        self.var_tys.insert(param.symbol, Cow::Owned(ty));
+                    }
+                }
+            }
+            _ => {}
         }
         self.lambdas.insert(
             target,
@@ -338,7 +354,7 @@ struct Mono<'a> {
     /// The host's decoder functions, which its event constructors call.
     decoders: &'a [Decoder],
     lambdas: HashMap<Target, Lambda<'a>>,
-    var_tys: HashMap<Symbol, &'a Ty>,
+    var_tys: HashMap<Symbol, Cow<'a, Ty>>,
     /// The value of each generalized value binding. A use lowers the value at
     /// the use's type, so no copy is bound or captured.
     values: HashMap<Symbol, &'a hir::Expr>,
@@ -730,7 +746,7 @@ impl Mono<'_> {
         let Lambda { ty, captures, .. } = self.lambdas[&target].clone();
         let capture_tys: Vec<Ty> = captures
             .iter()
-            .map(|c| self.ground(self.var_tys[c], scope))
+            .map(|c| self.ground(&self.var_tys[c], scope))
             .collect();
         let key = (target, use_ty, capture_tys);
         if let Some(&id) = self.specs.get(&key) {
@@ -755,7 +771,7 @@ impl Mono<'_> {
         let mut subst = Subst::new();
         match_ty(ty, use_ty, &mut subst);
         for (c, capture_ty) in captures.iter().zip(capture_tys) {
-            match_ty(self.var_tys[c], capture_ty, &mut subst);
+            match_ty(&self.var_tys[c], capture_ty, &mut subst);
         }
         self.work.push((id, target, subst, capture_tys.clone()));
         let use_ty = use_ty.clone();

@@ -78,3 +78,10 @@ fn a_wrong_shaped_method_names_no_type_variable() {
     assert!(!message.contains('μ'), "{message}");
     assert!(!message.contains("t4"), "{message}");
 }
+
+#[test]
+fn a_function_passed_inside_its_own_argument_checks() {
+    let source = "h = program(r) do if r.stop then 0 else (r.g)({stop: true, g: h}) done done
+        h({stop: false, g: h})";
+    assert_eq!(error_of(source), None);
+}

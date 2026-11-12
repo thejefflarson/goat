@@ -43,3 +43,13 @@ fn an_update_loop_over_a_model_with_methods_runs() {
         print(run(init(), 4))";
     assert_eq!(run(src), "12");
 }
+
+#[test]
+fn a_function_whose_type_mentions_itself_captures_its_parameter() {
+    let src = "h = program(r) do
+          stopped = program() do r.stop done
+          if stopped() then 0 else 1 + (r.g)({stop: true, g: h}) done
+        done
+        print(h({stop: false, g: h}))";
+    assert_eq!(run(src), "1");
+}
