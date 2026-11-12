@@ -93,10 +93,88 @@ fn a_computed_receiver_is_bound_once_to_a_hidden_name() {
     assert_eq!((calls_of_make, hidden_binders), (1, 1));
 }
 
+fn first_diagnostic(source: &str) -> (String, String) {
+    let Err(errors) = check_with_prelude("", source) else {
+        panic!("should not check: {source}")
+    };
+    let span = errors[0].span;
+    (
+        errors[0].message.clone(),
+        source[span.start..span.end].to_string(),
+    )
+}
+
 #[test]
-fn a_computed_receiver_has_one_fixed_type_so_it_cannot_take_itself() {
-    let message = first_error("make = program() do {f: program(s) do 0 done} done\nmake().f()");
-    assert!(message.contains("infinite type"), "{message}");
+fn a_method_with_no_parameter_for_the_record_says_so() {
+    let source = "ball = {x: 1, moved: program() do 0 done}\nball.moved()";
+    assert_eq!(
+        first_diagnostic(source),
+        (
+            "`ball.moved()` hands `ball` to `moved` as its first argument, but `moved` has no parameter for it. \
+             Add one first, like `program(self) do … done`, or write `(ball.moved)()` to call it without `ball`."
+                .to_string(),
+            "ball.moved()".to_string()
+        )
+    );
+}
+
+#[test]
+fn a_method_missing_only_self_names_how_many_it_takes() {
+    let source = "ball = {x: 1, moved: program(dt) do dt done}\nball.moved(2)";
+    assert_eq!(
+        first_diagnostic(source),
+        (
+            "`ball.moved()` hands `ball` to `moved` as its first argument, but `moved` takes only 1 argument. \
+             Add `self` first, like `program(self, …)`, or write `(ball.moved)()` to call it without `ball`."
+                .to_string(),
+            "ball.moved(2)".to_string()
+        )
+    );
+}
+
+#[test]
+fn passing_the_receiver_again_says_the_dot_already_did() {
+    let source = "ball = {x: 1, moved: program(self) do self.x done}\nball.moved(ball)";
+    assert_eq!(
+        first_diagnostic(source),
+        (
+            "`ball.moved(ball)` already hands `ball` over: the dot does it. Write `ball.moved()`."
+                .to_string(),
+            "ball.moved(ball)".to_string()
+        )
+    );
+}
+
+#[test]
+fn a_count_that_is_off_by_more_than_the_receiver_counts_it() {
+    let source = "ball = {x: 1, moved: program(self, dt) do dt done}\nball.moved(1, 2, 3)";
+    assert_eq!(
+        first_diagnostic(source),
+        (
+            "`ball.moved(…)` hands `ball` to `moved` first, so it passes 4 arguments, but `moved` takes 2."
+                .to_string(),
+            "ball.moved(1, 2, 3)".to_string()
+        )
+    );
+}
+
+#[test]
+fn a_receiver_whose_type_cannot_be_built_is_named_without_type_variables() {
+    let source = "make = program() do {f: program(s) do 0 done} done\nmake().f()";
+    let (message, covered) = first_diagnostic(source);
+    assert_eq!(
+        message,
+        "`make().f(…)` hands `make()` to `f`, but `make()` has one fixed type that `f` would have to contain. \
+         Bind the record to a name with `=` first, then call `f` on that name."
+    );
+    assert_eq!(covered, "make().f()");
+    assert!(!message.contains('μ') && !message.contains("infinite"));
+}
+
+#[test]
+fn a_call_that_is_not_a_dot_call_keeps_the_plain_count_message() {
+    let (message, _) = first_diagnostic("r = {f: program(x) do x done};\n(r.f)(1, 2)");
+    assert_eq!(message, "function expects 1 argument(s) but got 2");
 }
 
 fn dot_calls(source: &str) -> Vec<(String, DotCall)> {

@@ -13,7 +13,7 @@
 
 use crate::captures::for_each_node;
 use crate::hir::{Builtin, Expr, ExprKind, FileId};
-use crate::infer::{Typed, infer_partial};
+use crate::infer::{DotCalls, Typed, infer_partial};
 use crate::lower::{RECEIVER_NAME, lower_with_vocab};
 use crate::ty::{Row, Ty};
 use crate::vocab::Vocab;
@@ -105,7 +105,12 @@ impl Analysis {
             lower_with_vocab(prelude, vocab, "")
         });
         let program = lowered.ok().map(|lowered| {
-            let (typed, _) = infer_partial(&lowered.root, lowered.interactive.as_ref(), vocab);
+            let dots = DotCalls {
+                calls: lowered.dot_calls,
+                source: healed.source.clone(),
+            };
+            let (typed, _) =
+                infer_partial(&lowered.root, lowered.interactive.as_ref(), vocab, dots);
             Program {
                 root: lowered.root,
                 typed,
