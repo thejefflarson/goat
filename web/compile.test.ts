@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { check, compile, createCompleter, createTokenizer } from "./compile.ts";
+import { check, compile, createCompleter, createTokenizer, decodeDiagnostics } from "./compile.ts";
 
 const compiler = await WebAssembly.compile(
   readFileSync(new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", import.meta.url)),
@@ -134,4 +134,32 @@ test("completion offers the vocabulary of the host it is asked about", () => {
   host = "turtle";
   assert.ok(labels().includes("forward"));
   assert.ok(!labels().includes("Segment"));
+});
+
+test("an error at a helper's call carries the use it failed to meet as a label", async () => {
+  const source = "getx = program(p) do p.x done\ngetx({y: 1})";
+  const found = await check(compiler, source);
+  assert.equal(found.length, 1);
+  assert.equal(source.slice(found[0].from, found[0].to), "getx({y: 1})");
+  assert.equal(found[0].labels?.length, 1);
+  const [label] = found[0].labels!;
+  assert.equal(source.slice(label.from, label.to), "p.x");
+  assert.ok(label.message.length > 0);
+});
+
+test("an error with no label has no labels field", async () => {
+  const [found] = await check(compiler, "1 + true");
+  assert.equal(found.labels, undefined);
+});
+
+test("a malformed diagnostic payload decodes without throwing or trusting its counts", () => {
+  const word = (n: number) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, n >>> 24];
+  const hugeCount = new Uint8Array([...word(0), ...word(1), ...word(2), 104, 105, ...word(0xffffffff)]);
+  const found = decodeDiagnostics(hugeCount, "hi");
+  assert.equal(found.length, 1);
+  assert.equal(found[0].labels, undefined);
+  const cutCount = new Uint8Array([...word(0), ...word(1), ...word(0), 0, 0]);
+  assert.equal(decodeDiagnostics(cutCount, "hi").length, 1);
+  const longMessage = new Uint8Array([...word(0), ...word(1), ...word(0xffffffff), 104]);
+  assert.equal(decodeDiagnostics(longMessage, "hi").length, 1);
 });

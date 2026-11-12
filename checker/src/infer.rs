@@ -250,6 +250,16 @@ struct Inferer {
     /// The same for row variables: every field a row gains must satisfy them.
     row_kinds: HashMap<TypeVar, Kinds>,
     errors: Vec<GoatError>,
+    /// The span of the expression being inferred, which a variable created now
+    /// takes as its origin.
+    cursor: Option<Span>,
+    /// Where each variable was created, for the label a failed call carries.
+    /// Instantiating a scheme copies its variables' origins, so a type that
+    /// came from a helper still points into the helper.
+    origins: HashMap<TypeVar, Span>,
+    /// The call whose arguments are being unified, the only place an error
+    /// borrows an origin. An origin inside the call adds nothing.
+    call: Option<Span>,
 }
 
 /// The pairs of types [`Inferer::unify_ty`] is already unifying or has
@@ -463,6 +473,11 @@ impl Inferer {
             self.ids_spent = true;
         }
         self.next = v.saturating_add(1);
+        if let Some(span) = self.cursor
+            && !span.in_prelude()
+        {
+            self.origins.insert(v, span);
+        }
         v
     }
 
@@ -731,10 +746,9 @@ impl Inferer {
                             Ty::Var(v) if v == x => ("Number".to_string(), shown),
                             _ => (shown, "Number".to_string()),
                         };
-                        self.errors.push(GoatError::new(
-                            span,
-                            format!("type mismatch: expected `{expected}`, found `{found}`"),
-                        ));
+                        let message =
+                            format!("type mismatch: expected `{expected}`, found `{found}`");
+                        self.report_with_origin(span, message, [&bound]);
                     } else {
                         self.report_violation(span, &violation, &bound, None);
                     }
@@ -777,14 +791,12 @@ impl Inferer {
             | (Ty::Unit, Ty::Unit) => {}
             (Ty::Func(a_args, a_ret), Ty::Func(b_args, b_ret)) => {
                 if a_args.len() != b_args.len() {
-                    self.errors.push(GoatError::new(
-                        span,
-                        format!(
-                            "function expects {} argument(s) but got {}",
-                            a_args.len(),
-                            b_args.len()
-                        ),
-                    ));
+                    let message = format!(
+                        "function expects {} argument(s) but got {}",
+                        a_args.len(),
+                        b_args.len()
+                    );
+                    self.report_with_origin(span, message, [a, b]);
                     return;
                 }
                 for (x, y) in a_args.iter().zip(b_args) {
@@ -808,12 +820,54 @@ impl Inferer {
                     }
                     shown => shown,
                 };
-                self.errors.push(GoatError::new(
-                    span,
-                    format!("type mismatch: expected `{expected}`, found `{found}`"),
-                ));
+                let message = format!("type mismatch: expected `{expected}`, found `{found}`");
+                self.report_with_origin(span, message, [&a, &b]);
             }
         }
+    }
+
+    /// Report a clash between two shapes. In a call, the error also points at
+    /// where the helper's side of the clash was required, unless that is
+    /// inside the call itself or in the prelude.
+    fn report_with_origin<const N: usize>(
+        &mut self,
+        span: Span,
+        message: String,
+        shapes: [&Ty; N],
+    ) {
+        let origin = shapes
+            .into_iter()
+            .find_map(|ty| self.origin_of(ty).filter(|o| !self.inside_call(*o)));
+        self.report_at_origin(span, message, origin);
+    }
+
+    fn report_at_origin(&mut self, span: Span, message: String, origin: Option<Span>) {
+        let mut error = GoatError::new(span, message);
+        if self.call.is_some()
+            && let Some(origin) = origin
+        {
+            error = error.with_label(origin, "this is the use the call has to satisfy");
+        }
+        self.errors.push(error);
+    }
+
+    fn inside_call(&self, span: Span) -> bool {
+        self.call
+            .is_some_and(|call| call.start <= span.start && span.end <= call.end)
+    }
+
+    /// Where the open end of `ty` was created: a record or variant's row
+    /// variable, or a function's result variable.
+    fn origin_of(&self, ty: &Ty) -> Option<Span> {
+        let var = match ty {
+            Ty::Record(row) | Ty::Variant(row) => row_shape(row).1?,
+            Ty::Func(_, ret) => match self.resolve(ret) {
+                Ty::Var(v) => v,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        self.origins.get(&var).copied()
     }
 
     /// Unify where a side is a receiver variable. It is never bound: against a
@@ -974,7 +1028,7 @@ impl Inferer {
                                 "the tag `{label}` is not allowed here; the other side never has it"
                             ),
                         };
-                        self.errors.push(GoatError::new(span, message));
+                        self.report_with_row_origin(span, message, [a, b]);
                     }
                 },
             },
@@ -989,9 +1043,17 @@ impl Inferer {
                         "the tag `{label}` is expected here, but this value is never `{label}`"
                     ),
                 };
-                self.errors.push(GoatError::new(span, message));
+                self.report_with_row_origin(span, message, [a, b]);
             }
         }
+    }
+
+    fn report_with_row_origin(&mut self, span: Span, message: String, rows: [&Row; 2]) {
+        let origin = rows.into_iter().find_map(|row| {
+            let origin = self.origins.get(&row_shape(row).1?).copied()?;
+            Some(origin).filter(|o| !self.inside_call(*o))
+        });
+        self.report_at_origin(span, message, origin);
     }
 
     /// [`Self::surface`] on a row that is within [`MAX_UNFOLDED_TERMS`], for
@@ -1208,6 +1270,11 @@ impl Inferer {
                 }
                 let field = self.fresh();
                 let rest = self.fresh_row();
+                if let Some(origin) = self.origins.get(&v).copied()
+                    && let Row::Var(r) = &rest
+                {
+                    self.origins.insert(*r, origin);
+                }
                 let method = self.fresh();
                 banned.insert(label.to_string());
                 self.lack(&rest, &banned);
@@ -1466,6 +1533,10 @@ impl Inferer {
             .map(|v| (*v, self.fresh_id()))
             .collect();
         for (old, new) in &mapping {
+            match self.origins.get(old).copied() {
+                Some(origin) => self.origins.insert(*new, origin),
+                None => self.origins.remove(new),
+            };
             if let Some(banned) = self.lacks.get(old).cloned() {
                 self.lacks.insert(*new, banned);
             }
@@ -1806,6 +1877,7 @@ impl Inferer {
     }
 
     fn infer(&mut self, expr: &Expr) -> Ty {
+        self.cursor = Some(expr.span);
         let mut ty = self.infer_kind(expr);
         self.report_spent_ids(expr.span);
         if !self.within_term_budget(&ty) {
@@ -1994,6 +2066,8 @@ impl Inferer {
                 Ty::from(*ret),
             ),
             ExprKind::Func { params, body } => {
+                // A parameter is not a requirement, so it has no origin.
+                self.cursor = None;
                 let mut arg_tys: Vec<Ty> = params.iter().map(|_| self.fresh()).collect();
                 if let Some(receiver) = self.method_self.take() {
                     arg_tys[0] = receiver;
@@ -2053,6 +2127,7 @@ impl Inferer {
             ExprKind::Restrict { record, labels } => self.infer_restrict(expr.span, record, labels),
             ExprKind::Field { record, label } => {
                 let record_ty = self.infer(record);
+                self.cursor = Some(expr.span);
                 let field_ty = self.fresh();
                 let method = self.fresh();
                 if self.dots.callees.contains(&expr.id) || self.dots.takes.contains_key(&expr.id) {
@@ -2184,6 +2259,7 @@ impl Inferer {
         }
         let callee_ty = self.infer(callee);
         let mut arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
+        self.cursor = Some(span);
         let ret = self.fresh();
         if self.method_takes.contains(&callee.id) {
             return ret;
@@ -2210,7 +2286,9 @@ impl Inferer {
                 let hole = receiver.as_ref().map(|_| arg_tys[0].clone());
                 let expected = Ty::func(arg_tys, ret.clone());
                 let before = self.errors.len();
+                self.call = Some(span);
                 self.unify_use(callee, &callee_ty, &expected, span);
+                self.call = None;
                 if let (Some(receiver), Some(hole)) = (receiver, hole)
                     && self.errors.len() == before
                 {
