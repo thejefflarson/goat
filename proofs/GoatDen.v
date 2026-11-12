@@ -93,6 +93,9 @@ Qed.
 
 (* ---- the denotation ---- *)
 
+Definition starts_call (ts : list tree) : Prop :=
+  match ts with Node R_call _ :: _ => True | _ => False end.
+
 Fixpoint index_of (l : string) (tbl : list string) : nat :=
   match tbl with
   | [] => 0
@@ -166,8 +169,15 @@ Section Denotation.
     | DP_nil : forall e,
         Den_posts e [] e
     | DP_access : forall e l rest e',
+        ~ starts_call rest ->
         Den_posts (e_proj e (lab l)) rest e' ->
         Den_posts e (Node R_access [sym "."; ident l] :: rest) e'
+    | DP_dot_call : forall x l args es rest e',
+        Den_args args es ->
+        Den_posts (apps (e_proj (e_fvar_f x) (lab l)) (e_fvar_f x :: es)) rest e' ->
+        Den_posts (e_fvar_f x)
+          (Node R_access [sym "."; ident l]
+             :: Node R_call [sym "("; Node R_arguments args; sym ")"] :: rest) e'
     | DP_call : forall e args es rest e',
         Den_args args es ->
         Den_posts (apps e es) rest e' ->
@@ -270,9 +280,16 @@ Proof.
     intros cs rest e0 e Hexpr IHexpr Hposts IHposts. exact (IHposts IHexpr).
   - (* posts, none *) intros e Hlc. exact Hlc.
   - (* posts, access *)
-    intros e l rest e' Hrest IHrest Hlc.
+    intros e l rest e' Hnocall Hrest IHrest Hlc.
     assert (Hproj : lc (e_proj e (lab tbl l))) by exact Hlc.
     exact (IHrest Hproj).
+  - (* posts, dot call: the receiver is a variable, passed first *)
+    intros x l args es rest e' Hargs IHargs Hrest IHrest Hlc.
+    assert (Hrecv : Forall lc (e_fvar_f x :: es))
+      by (apply Forall_cons; [ exact I | exact IHargs ]).
+    assert (Happs : lc (apps (e_proj (e_fvar_f x) (lab tbl l)) (e_fvar_f x :: es)))
+      by (apply lc_apps; [ exact I | exact Hrecv ]).
+    exact (IHrest Happs).
   - (* posts, call *)
     intros e args es rest e' Hargs IHargs Hrest IHrest Hlc.
     assert (Happs : lc (apps e es)) by (apply lc_apps; assumption).

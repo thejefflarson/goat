@@ -9,6 +9,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
+Require Import Goat.GoatDen.
 Require Import Goat.GoatShape.
 Require Import Goat.GoatParse.
 Open Scope string_scope.
@@ -144,15 +145,15 @@ Proof.
     [ apply Forall_nil | apply Forall_cons | apply Cp_leaf | apply Cp_node ];
     simpl; try exact I.
   - (* the program has an expression *) eexists. in_list.
-  - (* the block does not end in a binding *)
-    intros [c Hlast]. simpl in Hlast. discriminate Hlast.
+  - (* the block does not end in a binding, and has no dot call *)
+    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
   - (* the function has parameters and a body *)
     split; eexists; in_list.
   - (* the body is a single name *)
-    intros [c Hlast]. simpl in Hlast. discriminate Hlast.
+    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
   - (* the call has arguments *) eexists. in_list.
   - (* the argument is a single number *)
-    intros [c Hlast]. simpl in Hlast. discriminate Hlast.
+    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
 Qed.
 
 (* T1 applies to a concrete program: f = program(y) do y done  f(1). *)
@@ -163,4 +164,18 @@ Proof.
   intros var_of.
   exact (parse_denotes_lc var_of application [application_tree] []
            application_parses application_core application_complete).
+Qed.
+
+(* A dot call on a variable passes the variable first: x.f(1) is (x.f)(x, 1). *)
+Example dot_call_passes_the_receiver : forall var_of x,
+  Den_posts var_of ["f"] (e_fvar_f x)
+    [Node R_access [sym "."; ident "f"];
+     Node R_call [sym "("; Node R_arguments [Node R_expr [Node R_number [Leaf (TNum 1)]]]; sym ")"]]
+    (e_app (e_app (e_proj (e_fvar_f x) 0) (e_fvar_f x)) (e_num 1)).
+Proof.
+  intros var_of x.
+  eapply DP_dot_call with (es := [e_num 1]).
+  - apply DA_last. apply D_expr. apply DB_chain.
+    eapply DC_head; [ apply D_num | apply DP_nil ].
+  - apply DP_nil.
 Qed.

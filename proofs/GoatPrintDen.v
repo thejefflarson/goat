@@ -123,34 +123,71 @@ Proof. intros tbl n H. unfold lab. apply H. left. reflexivity. Qed.
 
 (* ---- extending a chain by a postfix ---- *)
 
+(* A call straight after an access is a dot call, so a chain that ends in an
+   access cannot be extended by a call. *)
+Definition ends_in_access (cs : list tree) : Prop :=
+  exists init c, cs = init ++ [Node R_access c].
+
+Lemma ends_cons : forall t cs, ends_in_access cs -> ends_in_access (t :: cs).
+Proof.
+  intros t cs [init [c H]]. exists (t :: init), c. rewrite H. reflexivity.
+Qed.
+
+Lemma ends_access_last : forall pre t,
+  (forall c, t <> Node R_access c) -> ~ ends_in_access (pre ++ [t]).
+Proof.
+  intros pre t Ht [init [c H]].
+  apply app_inj_tail in H. destruct H as [_ H]. exact (Ht c H).
+Qed.
+
 Lemma den_posts_snoc : forall var_of tbl e rest e0,
   Den_posts var_of tbl e rest e0 ->
   forall post e', Den_posts var_of tbl e0 [post] e' ->
+  (starts_call [post] -> ~ ends_in_access rest) ->
   Den_posts var_of tbl e (rest ++ [post]) e'.
 Proof.
-  intros var_of tbl e rest e0 H. induction H; intros post e'' Hp.
+  intros var_of tbl e rest e0 H. induction H; intros post e'' Hp Hcall.
   - exact Hp.
-  - simpl. apply DP_access. apply IHDen_posts. exact Hp.
-  - simpl. eapply DP_call; [ eassumption | ]. apply IHDen_posts. exact Hp.
+  - (* access *)
+    simpl. apply DP_access.
+    + destruct rest as [| r rs].
+      * intros Hstarts. apply (Hcall Hstarts).
+        exists [], [sym "."; ident l]. reflexivity.
+      * exact H.
+    + apply IHDen_posts; [ exact Hp | ].
+      intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ Hend)).
+  - (* dot call *)
+    simpl. eapply DP_dot_call; [ eassumption | ].
+    apply IHDen_posts; [ exact Hp | ].
+    intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ (ends_cons _ _ Hend))).
+  - (* call *)
+    simpl. eapply DP_call; [ eassumption | ].
+    apply IHDen_posts; [ exact Hp | ].
+    intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ Hend)).
 Qed.
 
 Lemma den_chain_snoc : forall var_of tbl cs e0 post e',
   Den_chain var_of tbl cs e0 -> Den_posts var_of tbl e0 [post] e' ->
+  (starts_call [post] -> ~ ends_in_access cs) ->
   Den_chain var_of tbl (cs ++ [post]) e'.
 Proof.
-  intros var_of tbl cs e0 post e' H Hp. inversion H; subst.
+  intros var_of tbl cs e0 post e' H Hp Hcall. inversion H; subst.
   - simpl. eapply DC_head; [ eassumption | ].
-    eapply den_posts_snoc; eassumption.
+    eapply den_posts_snoc; [ eassumption | eassumption | ].
+    intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ Hend)).
   - simpl. eapply DC_paren; [ eassumption | ].
-    eapply den_posts_snoc; eassumption.
+    eapply den_posts_snoc; [ eassumption | eassumption | ].
+    intros Hstarts Hend.
+    exact (Hcall Hstarts (ends_cons _ _ (ends_cons _ _ (ends_cons _ _ Hend)))).
 Qed.
 
 Lemma den_chain_call : forall var_of tbl cs e0 b ea,
   Den_chain var_of tbl cs e0 -> Den var_of tbl (Node R_expr b) ea ->
+  ~ ends_in_access cs ->
   Den_chain var_of tbl (cs ++ [call_tree b]) (e_app e0 ea).
 Proof.
-  intros var_of tbl cs e0 b ea Hc Hb.
-  eapply den_chain_snoc; [ exact Hc | ].
+  intros var_of tbl cs e0 b ea Hc Hb Hend.
+  eapply den_chain_snoc; [ exact Hc | | intros _; exact Hend ].
   eapply DP_call with (es := [ea]).
   - apply DA_last. exact Hb.
   - apply DP_nil.
@@ -161,8 +198,21 @@ Lemma den_chain_access : forall var_of tbl cs e0 l,
   Den_chain var_of tbl (cs ++ [access_tree l]) (e_proj e0 l).
 Proof.
   intros var_of tbl cs e0 l Hc Hl.
-  eapply den_chain_snoc; [ exact Hc | ].
-  unfold access_tree. apply DP_access. rewrite (lab_lname tbl l Hl). apply DP_nil.
+  eapply den_chain_snoc; [ exact Hc | | intros Hstarts; destruct Hstarts ].
+  unfold access_tree. apply DP_access; [ intros Hstarts; destruct Hstarts | ].
+  rewrite (lab_lname tbl l Hl). apply DP_nil.
+Qed.
+
+(* No operand of a call ends in an access: a projection callee is
+   parenthesised. *)
+Lemma callee_not_access : forall P f, ~ ends_in_access (as_callee f (block P f)).
+Proof.
+  intros P f. destruct f; cbn [as_callee as_operand block paren_kids];
+    first
+    [ (intros [init [c H]]; destruct init; discriminate H)
+    | (apply (ends_access_last [sym "("; Node R_expr _]); intros c Hc; discriminate Hc)
+    | (apply (ends_access_last []); intros c Hc; discriminate Hc)
+    | (apply ends_access_last; intros c Hc; discriminate Hc) ].
 Qed.
 
 Lemma den_chain_single : forall var_of tbl t e,
@@ -225,11 +275,12 @@ Proof.
     intros f IHf a IHa P [Hf Ha] Hl.
     destruct (IHf P Hf (labelsok_app_l _ _ _ Hl)) as [Hbf Hcf].
     destruct (IHa P Ha (labelsok_app_r _ _ _ Hl)) as [Hba _].
-    assert (Hop : Den_chain var_of tbl (as_operand f (block P f)) (inst var_of P f)).
-    { destruct f; cbn [as_operand];
+    assert (Hop : Den_chain var_of tbl (as_callee f (block P f)) (inst var_of P f)).
+    { destruct f; cbn [as_callee as_operand];
         first [ apply den_chain_paren; exact Hbf | apply Hcf; exact I ]. }
     assert (Hchain : Den_chain var_of tbl (block P (e_app f a)) (inst var_of P (e_app f a))).
-    { exact (den_chain_call var_of tbl _ _ _ _ Hop (D_expr _ _ _ _ Hba)). }
+    { exact (den_chain_call var_of tbl _ _ _ _ Hop (D_expr _ _ _ _ Hba)
+               (callee_not_access P f)). }
     split; [ apply DB_chain; exact Hchain | intros _; exact Hchain ].
   - (* binding *)
     intros v IHv b IHb P [Hv Hb] Hl.

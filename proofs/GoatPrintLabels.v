@@ -62,7 +62,7 @@ Proof.
   - intros b IH P. cbn [block lbls]. unfold function_tree. occ_simp. exact (IH (S P)).
   - intros f IHf a IHa P. cbn [block lbls]. rewrite occs_app, List.map_app.
     unfold call_tree. occ_simp. rewrite IHa.
-    destruct f; cbn [as_operand]; first
+    destruct f; cbn [as_callee as_operand]; first
       [ unfold paren_kids; occ_simp; try rewrite IHf; reflexivity
       | rewrite IHf; reflexivity ].
   - intros v IHv b IHb P. cbn [block lbls]. unfold decl_tree.
