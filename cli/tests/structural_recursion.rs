@@ -43,3 +43,12 @@ fn an_update_loop_over_a_model_with_methods_runs() {
         print(run(init(), 4))";
     assert_eq!(run(src), "12");
 }
+
+#[test]
+fn a_returned_model_with_two_methods_whose_rows_differ_runs() {
+    let src = "init = program() do {x: 0, speed: 3, update: program(self) do {...self, x: self.x + self.speed} done, draw: program(self) do self.x done} done
+        run = program(m, n) do if n == 0 then m else run(m.update(), n - 1) done done
+        m = run(init(), 4)
+        print(m.draw())";
+    assert_eq!(run(src), "12");
+}
