@@ -1,6 +1,10 @@
 # ADR 0011 — A shadowed record field gets one layout slot; a `lacks` constraint keeps rest-patterns sound
 
-- Status: accepted (2026-11-03)
+- Status: accepted (2026-11-03). Note (ADR 0033, 2026-11-11): the shadowed-slot
+  case is gone. A spread updates or extends and no record type holds two fields
+  with one label, so `layout_fields` and its first-of-label filter were deleted
+  and a layout has one slot per label by construction. The `lacks` table stays:
+  a rest pattern still must not let its rest regain the label it took out.
 - Context: Phase 7 (record spread + destructuring + rest), ADR 0002, `docs/mir.md`
   ("Layouts"), `docs/plan.md` ("Record spread and destructuring"); ratified while
   integrating #145 (closes #91).

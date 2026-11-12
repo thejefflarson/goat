@@ -1,6 +1,6 @@
 # ADR 0028 — Recursion that only spreads and extends its parameter is rejected by design
 
-- Status: accepted (2026-11-09)
+- Status: superseded by ADR 0033 (2026-11-11). A spread now updates or extends, so `go({...s, stop: true})` type-checks; the rejection described below no longer exists.
 - Context: `docs/plan.md` ("Known limitation"), ADR 0010 (mono layout identity),
   ADR 0011 (`lacks` constraints for record restriction). An unannotated function
   that recurses by spreading a parameter it never reads and adding a field is an

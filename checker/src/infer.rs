@@ -33,7 +33,7 @@ use crate::hir::{
 };
 use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
 use crate::lower::DotCall;
-use crate::ty::{Group, Row, Scheme, Ty, TypeVar};
+use crate::ty::{ABSENT, Group, PRESENT, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{Vocab, list};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -356,6 +356,26 @@ impl Inferer {
                 field: Box::new(self.resolve(field)),
                 rest: Box::new(self.resolve_row(rest)),
             },
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                rest,
+            } => match self.resolve(&Ty::Var(*pres)) {
+                present if present == PRESENT => Row::Extend {
+                    label: label.clone(),
+                    field: Box::new(self.resolve(field)),
+                    rest: Box::new(self.resolve_row(rest)),
+                },
+                absent if absent == ABSENT => self.resolve_row(rest),
+                Ty::Var(pres) => Row::Maybe {
+                    label: label.clone(),
+                    pres,
+                    field: Box::new(self.resolve(field)),
+                    rest: Box::new(self.resolve_row(rest)),
+                },
+                _ => unreachable!("a presence variable is bound to a presence or a variable"),
+            },
             Row::Empty => Row::Empty,
         }
     }
@@ -528,10 +548,7 @@ impl Inferer {
                 } else if let Some(rec) = self.tie_row_knot(*x, kind, other) {
                     rec
                 } else {
-                    let message = match pure_extension(*x, other) {
-                        Some(labels) if kind == RowKind::Record => spread_regress_message(&labels),
-                        _ => format!("cannot construct an infinite {} type", kind.noun()),
-                    };
+                    let message = format!("cannot construct an infinite {} type", kind.noun());
                     self.errors.push(GoatError::new(span, message));
                     return;
                 };
@@ -552,8 +569,28 @@ impl Inferer {
                     }
                 }
             }
-            (Row::Extend { label, field, rest }, _) => match self.rewrite_row(label, &b) {
-                Some((b_field, b_rest)) => {
+            (
+                Row::Maybe {
+                    label,
+                    pres,
+                    field,
+                    rest,
+                },
+                _,
+            ) => match self.surface(label, &b, true) {
+                Some((b_pres, b_field, b_rest)) => {
+                    self.unify_presence(&Ty::Var(*pres), &b_pres, span);
+                    self.unify_ty(field, &b_field, span);
+                    self.unify_row(rest, &b_rest, span, kind);
+                }
+                None => {
+                    self.subst.insert(*pres, ABSENT);
+                    self.unify_row(rest, &b, span, kind);
+                }
+            },
+            (Row::Extend { label, field, rest }, _) => match self.surface(label, &b, false) {
+                Some((b_pres, b_field, b_rest)) => {
+                    self.unify_presence(&PRESENT, &b_pres, span);
                     self.unify_ty(field, &b_field, span);
                     self.unify_row(rest, &b_rest, span, kind);
                 }
@@ -567,6 +604,10 @@ impl Inferer {
                     self.errors.push(GoatError::new(span, message));
                 }
             },
+            (Row::Empty, Row::Maybe { pres, rest, .. }) => {
+                self.subst.insert(*pres, ABSENT);
+                self.unify_row(&Row::Empty, rest, span, kind);
+            }
             (Row::Empty, Row::Extend { label, .. }) => {
                 let message = match kind {
                     RowKind::Record => format!("record is missing field `{label}`"),
@@ -611,13 +652,14 @@ impl Inferer {
         Some(plug_row(row, &hole, &rec, under_tag))
     }
 
-    /// Surface `label` in `row`, returning its field type and the row without
-    /// it. An open row (ending in a row variable) is grown with a fresh field;
-    /// a closed row missing the label yields `None`. Differing labels ahead of
-    /// `label` keep their position, which is what makes labels scoped. The
-    /// recursion is as deep as the row is long, which [`MAX_TYPE_TERMS`] caps:
-    /// every row grows by one inferred expression at a time and each is checked.
-    fn rewrite_row(&mut self, label: &str, row: &Row) -> Option<(Ty, Row)> {
+    /// Surface `label` in `row`, returning whether it is present, its field
+    /// type, and the row without it. An open row (ending in a row variable) is
+    /// grown with a fresh field, present unless `optional`; a closed row
+    /// missing the label yields `None`. Fields ahead of `label` keep their
+    /// position and their presence. The recursion is as deep as the row is
+    /// long, which [`MAX_TYPE_TERMS`] caps: every row grows by one inferred
+    /// expression at a time and each is checked.
+    fn surface(&mut self, label: &str, row: &Row, optional: bool) -> Option<(Ty, Ty, Row)> {
         match self.resolve_row(row) {
             Row::Empty => None,
             Row::Extend {
@@ -626,10 +668,11 @@ impl Inferer {
                 rest,
             } => {
                 if l2 == label {
-                    Some((*field, *rest))
+                    Some((PRESENT, *field, *rest))
                 } else {
-                    let (f, r) = self.rewrite_row(label, &rest)?;
+                    let (p, f, r) = self.surface(label, &rest, optional)?;
                     Some((
+                        p,
                         f,
                         Row::Extend {
                             label: l2,
@@ -639,8 +682,30 @@ impl Inferer {
                     ))
                 }
             }
+            Row::Maybe {
+                label: l2,
+                pres,
+                field,
+                rest,
+            } => {
+                if l2 == label {
+                    Some((Ty::Var(pres), *field, *rest))
+                } else {
+                    let (p, f, r) = self.surface(label, &rest, optional)?;
+                    Some((
+                        p,
+                        f,
+                        Row::Maybe {
+                            label: l2,
+                            pres,
+                            field,
+                            rest: Box::new(r),
+                        },
+                    ))
+                }
+            }
             Row::Var(v) => {
-                let banned = self.lacks.get(&v).cloned().unwrap_or_default();
+                let mut banned = self.lacks.get(&v).cloned().unwrap_or_default();
                 if banned.contains(label) {
                     return None;
                 }
@@ -650,19 +715,52 @@ impl Inferer {
                 }
                 let field = self.fresh();
                 let rest = self.fresh_row();
+                banned.insert(label.to_string());
                 self.lack(&rest, &banned);
                 if let (Ty::Var(f), Row::Var(r)) = (&field, &rest) {
                     self.kinds.insert(*f, kinds.for_fields());
                     self.row_kinds.insert(*r, kinds);
                 }
-                let grown = Row::Extend {
-                    label: label.to_string(),
-                    field: Box::new(field.clone()),
-                    rest: Box::new(rest.clone()),
+                let (pres, grown) = if optional {
+                    let pres = self.fresh_id();
+                    (
+                        Ty::Var(pres),
+                        Row::Maybe {
+                            label: label.to_string(),
+                            pres,
+                            field: Box::new(field.clone()),
+                            rest: Box::new(rest.clone()),
+                        },
+                    )
+                } else {
+                    (
+                        PRESENT,
+                        Row::Extend {
+                            label: label.to_string(),
+                            field: Box::new(field.clone()),
+                            rest: Box::new(rest.clone()),
+                        },
+                    )
                 };
                 self.row_subst.insert(v, grown);
-                Some((field, rest))
+                Some((pres, field, rest))
             }
+        }
+    }
+
+    /// Make two presences agree: a variable takes the other side, and a field
+    /// cannot be both there and not.
+    fn unify_presence(&mut self, a: &Ty, b: &Ty, span: Span) {
+        let (a, b) = (self.resolve(a), self.resolve(b));
+        match (&a, &b) {
+            _ if a == b => {}
+            (Ty::Var(v), other) | (other, Ty::Var(v)) => {
+                self.subst.insert(*v, other.clone());
+            }
+            _ => self.errors.push(GoatError::new(
+                span,
+                "a field is here on one side and missing on the other",
+            )),
         }
     }
 
@@ -688,6 +786,14 @@ impl Inferer {
                     self.lack(&rest, labels)
                 }
             }
+            Row::Maybe {
+                label, pres, rest, ..
+            } => {
+                if labels.contains(&label) {
+                    self.subst.insert(pres, ABSENT);
+                }
+                self.lack(&rest, labels)
+            }
         }
     }
 
@@ -696,7 +802,7 @@ impl Inferer {
         self.errors.push(GoatError::new(
             span,
             format!(
-                "`{label}` is in this record twice (a `...` override hid the first), so it can't be taken out with `...`"
+                "`{label}` was taken out of this record with `...`, so a record that has `{label}` can't be put back in its place"
             ),
         ));
     }
@@ -759,7 +865,7 @@ impl Inferer {
         match self.resolve_row(row) {
             Row::Empty => Ok(()),
             Row::Var(v) => self.add_kind(KindMap::Row, v, kind),
-            Row::Extend { field, rest, .. } => {
+            Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
                 self.constrain_kind(&field, kind, bound)?;
                 self.constrain_row(&rest, kind, bound)
             }
@@ -774,7 +880,7 @@ impl Inferer {
             match cursor {
                 Row::Empty => return Ok(()),
                 Row::Var(v) => return self.add_kind(KindMap::Row, v, Kind::Appendable),
-                Row::Extend { label, rest, .. } => {
+                Row::Extend { label, rest, .. } | Row::Maybe { label, rest, .. } => {
                     if !is_list_tag(&label) {
                         return Err(Violation {
                             kind: Kind::Appendable,
@@ -1212,7 +1318,7 @@ impl Inferer {
                 Some(bound) => self.spend_on_row(bound, budget),
                 None => Some(()),
             },
-            Row::Extend { field, rest, .. } => {
+            Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
                 self.spend_on_ty(field, budget)?;
                 self.spend_on_row(rest, budget)
             }
@@ -1643,7 +1749,8 @@ impl Inferer {
         match self.resolve_head(ty) {
             Ty::Record(row) => {
                 let mut cursor = row;
-                while let Row::Extend { field, rest, .. } = cursor {
+                while let Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } = cursor
+                {
                     self.require_float_fields(&field, span);
                     cursor = *rest;
                 }
@@ -1683,9 +1790,10 @@ impl Inferer {
         Ty::func(vec![self.fresh()], Ty::Unit)
     }
 
-    /// `{...base, l: e}`: Leijen's extension of `base`'s row. A label `base`
-    /// is already known to have is replaced; one hidden behind its row variable
-    /// is shadowed, and the layout keeps only the new field.
+    /// `{...base, l: e}` updates a field `base` has, at that field's type, and
+    /// adds one it lacks. When `base`'s row is not yet known, `l` is a
+    /// presence-variable field in it (there or not, at `e`'s type) and a
+    /// present one in the result, so the type is the same either way (ADR 0033).
     fn infer_spread(&mut self, base: &Expr, fields: &[(String, Expr)]) -> Ty {
         let base_ty = self.infer(base);
         let tail = self.fresh_row();
@@ -1698,22 +1806,142 @@ impl Inferer {
                 format!("`...` copies a record, but this is `{other}`"),
             )),
         }
-        let field_tys: Vec<(String, Ty)> = fields
+        let field_tys: Vec<(&str, Ty, Span)> = fields
             .iter()
-            .map(|(label, value)| (label.clone(), self.infer(value)))
+            .map(|(label, value)| (label.as_str(), self.infer(value), value.span))
             .collect();
         // Resolved after the fields are inferred: reading `base.l` in a field
-        // grows `base`'s row with `l`, which the override then replaces.
+        // grows `base`'s row with `l`, which the override then updates.
+        let copied = match &base.kind {
+            ExprKind::Var { name, .. } => Copied::Named(name.clone()),
+            _ => Copied::Anonymous,
+        };
         let mut row = self.resolve_row(&tail);
-        for (label, ty) in field_tys.into_iter().rev() {
-            row = without_front(row, &label);
-            row = Row::Extend {
-                label,
-                field: Box::new(ty),
-                rest: Box::new(row),
-            };
+        for (label, ty, span) in field_tys {
+            row = self.override_field(row, label, ty, span, &copied);
         }
         Ty::Record(row)
+    }
+
+    /// `row` with `label` set to a value of type `ty`.
+    fn override_field(
+        &mut self,
+        row: Row,
+        label: &str,
+        ty: Ty,
+        span: Span,
+        copied: &Copied,
+    ) -> Row {
+        match self.resolve_row(&row) {
+            Row::Extend {
+                label: l,
+                field,
+                rest,
+            } => {
+                if l == label {
+                    self.keep_field_type(label, &field, &ty, span, copied);
+                    Row::Extend {
+                        label: l,
+                        field,
+                        rest,
+                    }
+                } else {
+                    let rest = self.override_field(*rest, label, ty, span, copied);
+                    Row::Extend {
+                        label: l,
+                        field,
+                        rest: Box::new(rest),
+                    }
+                }
+            }
+            Row::Maybe {
+                label: l,
+                pres,
+                field,
+                rest,
+            } => {
+                if l == label {
+                    self.keep_field_type(label, &field, &ty, span, copied);
+                    Row::Extend {
+                        label: l,
+                        field,
+                        rest,
+                    }
+                } else {
+                    let rest = self.override_field(*rest, label, ty, span, copied);
+                    Row::Maybe {
+                        label: l,
+                        pres,
+                        field,
+                        rest: Box::new(rest),
+                    }
+                }
+            }
+            Row::Empty => Row::Extend {
+                label: label.to_string(),
+                field: Box::new(ty),
+                rest: Box::new(Row::Empty),
+            },
+            Row::Var(v) => {
+                let mut banned = self.lacks.get(&v).cloned().unwrap_or_default();
+                if !banned.contains(label) {
+                    let pres = self.fresh_id();
+                    let rest = self.fresh_row();
+                    let kinds = self.row_kinds.get(&v).copied().unwrap_or_default();
+                    banned.insert(label.to_string());
+                    self.lack(&rest, &banned);
+                    if let Row::Var(r) = &rest {
+                        self.row_kinds.insert(*r, kinds);
+                    }
+                    self.row_subst.insert(
+                        v,
+                        Row::Maybe {
+                            label: label.to_string(),
+                            pres,
+                            field: Box::new(ty.clone()),
+                            rest: Box::new(rest.clone()),
+                        },
+                    );
+                    return Row::Extend {
+                        label: label.to_string(),
+                        field: Box::new(ty),
+                        rest: Box::new(rest),
+                    };
+                }
+                Row::Extend {
+                    label: label.to_string(),
+                    field: Box::new(ty),
+                    rest: Box::new(Row::Var(v)),
+                }
+            }
+        }
+    }
+
+    /// A `...` override gives `label` a value of type `new` where the record
+    /// already has it at `old`. A mismatch says so in the kid's terms when both
+    /// types are known.
+    fn keep_field_type(&mut self, label: &str, old: &Ty, new: &Ty, span: Span, copied: &Copied) {
+        let (shown_old, shown_new) = (self.shown(old), self.shown(new));
+        let before = self.errors.len();
+        self.unify(old, new, span);
+        let known = |ty: &Ty| {
+            let mut vars = BTreeSet::new();
+            ty.free_vars(&mut vars);
+            vars.is_empty()
+        };
+        if self.errors.len() > before && known(&shown_old) && known(&shown_new) {
+            self.errors.truncate(before);
+            let (in_record, spread_of) = match copied {
+                Copied::Named(name) => (format!("`{name}`"), name.as_str()),
+                Copied::Anonymous => ("the record being copied".to_string(), "record"),
+            };
+            self.errors.push(GoatError::new(
+                span,
+                format!(
+                    "`{label}` is a `{shown_old}` in {in_record}, and `{{...{spread_of}, {label}: …}}` keeps each field's type, so `{label}` can't become a `{shown_new}`. To keep the text too, give it its own field, like `{label}_text`."
+                ),
+            ));
+        }
     }
 
     /// `record` minus `labels`: the record must have each, and the result is
@@ -1915,29 +2143,6 @@ impl Inferer {
     }
 }
 
-/// `row` without the first field labelled `label`, looking only at the fields
-/// written out ahead of any row variable.
-fn without_front(row: Row, label: &str) -> Row {
-    match row {
-        Row::Extend {
-            label: l,
-            field,
-            rest,
-        } => {
-            if l == label {
-                *rest
-            } else {
-                Row::Extend {
-                    label: l,
-                    field,
-                    rest: Box::new(without_front(*rest, label)),
-                }
-            }
-        }
-        other => other,
-    }
-}
-
 fn occurs(var: TypeVar, ty: &Ty) -> bool {
     match ty {
         Ty::Var(v) => *v == var,
@@ -2013,6 +2218,17 @@ fn plug_row(row: &Row, hole: &Hole, with: &Ty, at: Guard) -> Row {
             field: Box::new(plug(field, hole, with, at)),
             rest: Box::new(plug_row(rest, hole, with, at)),
         },
+        Row::Maybe {
+            label,
+            pres,
+            field,
+            rest,
+        } => Row::Maybe {
+            label: label.clone(),
+            pres: *pres,
+            field: Box::new(plug(field, hole, with, at)),
+            rest: Box::new(plug_row(rest, hole, with, at)),
+        },
         other => other.clone(),
     }
 }
@@ -2020,7 +2236,7 @@ fn plug_row(row: &Row, hole: &Hole, with: &Ty, at: Guard) -> Row {
 /// The row of the first `kind` type at a guarded position whose row ends in
 /// the row variable `x`.
 fn find_mention(row: &Row, x: TypeVar, kind: RowKind, at: Guard) -> Option<Row> {
-    let Row::Extend { field, rest, .. } = row else {
+    let (Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. }) = row else {
         return None;
     };
     find_mention_in(field, x, kind, at).or_else(|| find_mention(rest, x, kind, at))
@@ -2056,6 +2272,17 @@ fn replace_tail(row: &Row, tail: Row) -> Row {
             field: field.clone(),
             rest: Box::new(replace_tail(rest, tail)),
         },
+        Row::Maybe {
+            label,
+            pres,
+            field,
+            rest,
+        } => Row::Maybe {
+            label: label.clone(),
+            pres: *pres,
+            field: field.clone(),
+            rest: Box::new(replace_tail(rest, tail)),
+        },
         _ => tail,
     }
 }
@@ -2066,7 +2293,7 @@ fn row_shape(row: &Row) -> (Vec<String>, Option<TypeVar>) {
     let mut cursor = row;
     loop {
         match cursor {
-            Row::Extend { label, rest, .. } => {
+            Row::Extend { label, rest, .. } | Row::Maybe { label, rest, .. } => {
                 labels.push(label.clone());
                 cursor = rest;
             }
@@ -2089,6 +2316,18 @@ fn field_of<'a>(row: &'a Row, label: &str) -> Option<&'a Ty> {
                 field_of(rest, label)
             }
         }
+        Row::Maybe {
+            label: l,
+            field,
+            rest,
+            ..
+        } => {
+            if l == label {
+                Some(field)
+            } else {
+                field_of(rest, label)
+            }
+        }
         Row::Var(_) | Row::Empty => None,
     }
 }
@@ -2102,41 +2341,23 @@ fn tag_list(tags: &[String], conjunction: &str) -> String {
     }
 }
 
-/// The labels `row` adds in front of `var` when it is nothing but `var` with
-/// fields prepended and none of those fields mention `var`: what a recursive
-/// call that spreads its parameter and overrides fields produces.
-fn pure_extension(var: TypeVar, row: &Row) -> Option<Vec<String>> {
-    let mut labels = Vec::new();
-    let mut cursor = row;
-    while let Row::Extend { label, field, rest } = cursor {
-        if occurs(var, field) {
-            return None;
-        }
-        labels.push(label.clone());
-        cursor = rest;
-    }
-    (matches!(cursor, Row::Var(v) if *v == var) && !labels.is_empty()).then_some(labels)
+/// What a spread copies, for the message when it would change a field's type.
+enum Copied {
+    Named(String),
+    Anonymous,
 }
 
 fn count(n: usize, noun: &str) -> String {
     format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
 }
 
-fn spread_regress_message(labels: &[String]) -> String {
-    let noun = if labels.len() == 1 { "field" } else { "fields" };
-    format!(
-        "cannot construct an infinite record type: each recursive call spreads the parameter \
-         and adds {noun} {}, so the record would grow without bound. Read or constrain a field \
-         of the parameter so the recursion has a fixed shape, or drop the never-read `...` spread",
-        tag_list(labels, "and"),
-    )
-}
-
 fn occurs_row(var: TypeVar, row: &Row) -> bool {
     match row {
         Row::Empty => false,
         Row::Var(v) => *v == var,
-        Row::Extend { field, rest, .. } => occurs(var, field) || occurs_row(var, rest),
+        Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
+            occurs(var, field) || occurs_row(var, rest)
+        }
     }
 }
 
@@ -2163,6 +2384,17 @@ fn subst_row(row: &Row, mapping: &HashMap<TypeVar, TypeVar>) -> Row {
         Row::Var(v) => Row::Var(mapping.get(v).copied().unwrap_or(*v)),
         Row::Extend { label, field, rest } => Row::Extend {
             label: label.clone(),
+            field: Box::new(subst_vars(field, mapping)),
+            rest: Box::new(subst_row(rest, mapping)),
+        },
+        Row::Maybe {
+            label,
+            pres,
+            field,
+            rest,
+        } => Row::Maybe {
+            label: label.clone(),
+            pres: mapping.get(pres).copied().unwrap_or(*pres),
             field: Box::new(subst_vars(field, mapping)),
             rest: Box::new(subst_row(rest, mapping)),
         },

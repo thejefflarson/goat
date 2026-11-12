@@ -298,14 +298,9 @@ fn arithmetic_errors_are_spanned_at_the_operand() {
 }
 
 #[test]
-fn spread_recursion_that_only_adds_a_field_gets_a_targeted_error() {
-    let message = error_of("go = program(s) do go({...s, stop: true}) done  1");
-    assert!(
-        message.contains("adds field `stop`") && message.contains("grow without bound"),
-        "{message}"
-    );
-    let several = error_of("go = program(s) do go({...s, a: 1, b: true}) done  1");
-    assert!(several.contains("adds fields `a` and `b`"), "{several}");
+fn spread_recursion_that_only_adds_a_field_checks() {
+    assert!(type_of("go = program(s) do go({...s, stop: true}) done  1").is_ok());
+    assert!(type_of("go = program(s) do go({...s, a: 1, b: true}) done  1").is_ok());
 }
 
 #[test]
@@ -316,7 +311,7 @@ fn spread_recursion_that_reads_a_field_still_checks() {
 }
 
 #[test]
-fn other_infinite_record_types_keep_the_generic_message() {
+fn other_infinite_record_types_stay_rejected() {
     let message = error_of("f = program(s) do f({a: {...s, b: 1}}) done  1");
-    assert_eq!(message, "cannot construct an infinite record type");
+    assert!(message.contains("infinite"), "{message}");
 }

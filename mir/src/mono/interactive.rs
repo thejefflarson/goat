@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 
 use super::{FnCx, Mono, Subst, field_index, positional_fields, variant_row};
-use crate::canon::{ground_fields, layout_fields};
+use crate::canon::ground_fields;
 use crate::mir::*;
 use goat_checker::Target;
 use goat_checker::ty::Ty;
@@ -65,7 +65,7 @@ impl Mono<'_> {
         let Ty::Record(row) = root_ty else {
             unreachable!("an interactive root is a record");
         };
-        let fields: Vec<(&String, &Ty)> = crate::canon::layout_fields(row).collect();
+        let fields: Vec<(&String, &Ty)> = crate::canon::ground_fields(row).collect();
         let slot = |label: &str| {
             fields
                 .iter()
@@ -181,7 +181,7 @@ impl Mono<'_> {
         let MTy::Ptr(HeapKind::Record(layout)) = self.lower_ty(ty) else {
             unreachable!("a record lowers to a record layout");
         };
-        let fields: Vec<(String, Ty)> = layout_fields(row)
+        let fields: Vec<(String, Ty)> = ground_fields(row)
             .map(|(label, field)| (label.clone(), field.clone()))
             .collect();
         let slots = fields

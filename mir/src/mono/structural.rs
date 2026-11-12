@@ -10,7 +10,7 @@
 //! printing a long list uses constant stack.
 
 use super::{FnCx, Mono, Subst, payload_fields, positional_fields};
-use crate::canon::{canonical, ground_fields, layout_fields};
+use crate::canon::{canonical, ground_fields};
 use crate::mir::*;
 use goat_checker::hir::{BinOp, Span};
 use goat_checker::ty::{Row, Ty};
@@ -197,7 +197,7 @@ impl Mono<'_> {
             let MTy::Ptr(HeapKind::Record(layout)) = ret else {
                 unreachable!("a record type lowers to a record pointer");
             };
-            let fields = layout_fields(&row)
+            let fields = ground_fields(&row)
                 .enumerate()
                 .map(|(i, (_, field))| {
                     m.arith(cx, None, op, field, Expr::Field(a, i), Expr::Field(b, i))
@@ -276,7 +276,7 @@ impl Mono<'_> {
             let (a, b) = (params[0], params[1]);
             match ty.unfold_head() {
                 Ty::Record(row) => {
-                    let pairs = layout_fields(&row)
+                    let pairs = ground_fields(&row)
                         .enumerate()
                         .map(|(i, (_, field))| {
                             (field.clone(), Expr::Field(a, i), Expr::Field(b, i))
@@ -377,7 +377,7 @@ impl Mono<'_> {
         let positional = positional_fields(ty).is_some();
         let (open, close) = if positional { ("(", ")") } else { ("{", "}") };
         let mut parts = vec![self.text(open)];
-        for (i, (label, field)) in layout_fields(row).enumerate() {
+        for (i, (label, field)) in ground_fields(row).enumerate() {
             if i > 0 {
                 parts.push(self.text(", "));
             }
