@@ -135,3 +135,19 @@ test("completion offers the vocabulary of the host it is asked about", () => {
   assert.ok(labels().includes("forward"));
   assert.ok(!labels().includes("Segment"));
 });
+
+test("an error at a helper's call carries the use it failed to meet as a label", async () => {
+  const source = "getx = program(p) do p.x done\ngetx({y: 1})";
+  const found = await check(compiler, source);
+  assert.equal(found.length, 1);
+  assert.equal(source.slice(found[0].from, found[0].to), "getx({y: 1})");
+  assert.equal(found[0].labels?.length, 1);
+  const [label] = found[0].labels!;
+  assert.equal(source.slice(label.from, label.to), "p.x");
+  assert.ok(label.message.length > 0);
+});
+
+test("an error with no label has no labels field", async () => {
+  const [found] = await check(compiler, "1 + true");
+  assert.equal(found.labels, undefined);
+});

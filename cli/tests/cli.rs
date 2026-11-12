@@ -174,6 +174,21 @@ fn a_missing_arm_in_a_grouped_match_is_a_spanned_error_on_stderr() {
 }
 
 #[test]
+fn a_helpers_failed_requirement_is_a_second_location_on_stderr() {
+    let (_, stderr) = failure_of(
+        "step = program(p) do q = p.moved(); q.x done\n\
+         ball = {x: 1, moved: program(self) do self.x done}\n\
+         step(ball)",
+    );
+    assert!(stderr.contains("3:1: type mismatch"), "{stderr}");
+    assert!(stderr.contains("1:37: note: "), "{stderr}");
+    assert!(
+        stderr.contains("  step = program(p) do q = p.moved(); q.x done"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn an_undeclared_tag_is_a_spanned_error_on_stderr() {
     let out = run_source("p.goat", "match Empty do Dwon then 1 else 0 done");
     assert!(!out.status.success());

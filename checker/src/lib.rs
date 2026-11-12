@@ -13,7 +13,7 @@ pub mod ty;
 pub mod vocab;
 
 pub use captures::Target;
-pub use error::GoatError;
+pub use error::{GoatError, Label};
 pub use hir::Expr;
 pub use infer::Typed;
 pub use ty::Ty;

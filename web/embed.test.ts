@@ -269,3 +269,11 @@ test("the embed bundle is the canvas page, relative and self-contained", async (
     rmSync(outDir, { recursive: true, force: true });
   }
 });
+
+test("the notes an error carries are not part of its message", () => {
+  const rendered = "2:1: first\n  call()\n  ^^^^\n1:5: note: why\n  helper\n      ^\n\n3:1: second\n  b\n  ^";
+  assert.deepEqual(parseDiagnostics(rendered), [
+    { line: 2, column: 1, length: 4, message: "first" },
+    { line: 3, column: 1, length: 1, message: "second" },
+  ]);
+});

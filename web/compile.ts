@@ -71,6 +71,14 @@ export interface Diagnostic {
   from: number;
   to: number;
   message: string;
+  // Other places that explain the problem, each saying what it shows there.
+  labels?: DiagnosticLabel[];
+}
+
+export interface DiagnosticLabel {
+  from: number;
+  to: number;
+  message: string;
 }
 
 export type TokenKind = "comment" | "keyword" | "literal" | "number" | "string" | "tag" | "operator";
@@ -168,11 +176,21 @@ export function decodeDiagnostics(payload: Uint8Array, source: string): Diagnost
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const index = utf16Offsets(source);
   const found: Diagnostic[] = [];
-  for (let at = 0; at + DIAGNOSTIC_HEADER <= payload.length; ) {
+  let at = 0;
+  const located = (): DiagnosticLabel => {
     const length = view.getUint32(at + 8, true);
-    const message = new TextDecoder().decode(payload.subarray(at + DIAGNOSTIC_HEADER, at + DIAGNOSTIC_HEADER + length));
-    found.push({ from: index(view.getUint32(at, true)), to: index(view.getUint32(at + 4, true)), message });
-    at += DIAGNOSTIC_HEADER + length;
+    const start = at + DIAGNOSTIC_HEADER;
+    const message = new TextDecoder().decode(payload.subarray(start, start + length));
+    const place = { from: index(view.getUint32(at, true)), to: index(view.getUint32(at + 4, true)), message };
+    at = start + length;
+    return place;
+  };
+  while (at + DIAGNOSTIC_HEADER <= payload.length) {
+    const diagnostic: Diagnostic = located();
+    const count = view.getUint32(at, true);
+    at += 4;
+    const labels = Array.from({ length: count }, located);
+    found.push(labels.length > 0 ? { ...diagnostic, labels } : diagnostic);
   }
   return found;
 }

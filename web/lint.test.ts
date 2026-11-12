@@ -42,3 +42,14 @@ test("spans past the end of the document are clamped to it", () => {
     { from: 3, to: 6, severity: "error", message: "m" },
   ]);
 });
+
+test("a label becomes an info note at its own place", () => {
+  const found = lintDiagnostics(
+    [{ from: 10, to: 14, message: "m", labels: [{ from: 2, to: 5, message: "<b>x</b>" }] }],
+    20,
+  );
+  assert.deepEqual(found, [
+    { from: 10, to: 14, severity: "error", message: "m" },
+    { from: 2, to: 5, severity: "info", message: "note: <b>x</b>" },
+  ]);
+});
