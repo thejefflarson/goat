@@ -1,7 +1,10 @@
-# `<`, `<=`, `>` and `>=` order numbers, strings, records and lists.
+# `<`, `<=`, `>` and `>=` order numbers, strings, records, tags and lists.
 # Strings go letter by letter. Records go field by field in alphabetical
-# order of the field names, so `age` is compared before `name`.
+# order of the field names, so `age` is compared before `name`. Tags go in
+# the order they are declared: the leftmost is the lowest.
+tag Level = Low | Medium | High
 words = print(sort(["pear", "apple", "fig"]))
 first_word = print(smallest(["pear", "apple", "fig"]))
 people = print(sort([{name: "Zed", age: 3}, {name: "Amy", age: 9}, {name: "Amy", age: 4}]))
 lists = print([1, 2] < [1, 2, 0])
+levels = print(sort([High, Low, Medium]))

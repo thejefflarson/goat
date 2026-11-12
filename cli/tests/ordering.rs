@@ -75,7 +75,7 @@ fn records_order_field_by_field_in_label_order() {
 }
 
 #[test]
-fn tags_order_by_label_then_payload() {
+fn tags_order_by_declaration_then_payload() {
     let tags = "tag Circle tag Square tag Dot \
                 pick = program(n) do \
                   if n == 1 then Circle(5) else if n == 2 then Circle(7) else \
@@ -89,9 +89,68 @@ fn tags_order_by_label_then_payload() {
     assert_eq!(cmp(1, 3, "<"), "true");
     assert_eq!(cmp(3, 1, ">"), "true");
     assert_eq!(cmp(4, 1, ">"), "true");
-    assert_eq!(cmp(3, 4, ">="), "true");
+    assert_eq!(cmp(3, 4, "<"), "true");
+    assert_eq!(cmp(3, 4, ">="), "false");
     assert_eq!(cmp(4, 4, ">="), "true");
     assert_eq!(cmp(4, 4, ">"), "false");
+}
+
+#[test]
+fn a_group_orders_left_to_right() {
+    let level = "tag Level = Low | Medium | High ";
+    for (a, b) in [("Low", "Medium"), ("Medium", "High"), ("Low", "High")] {
+        assert_eq!(run(&format!("{level} {a} < {b}")), "true", "{a} < {b}");
+        assert_eq!(run(&format!("{level} {b} > {a}")), "true", "{b} > {a}");
+        assert_eq!(run(&format!("{level} {b} < {a}")), "false", "{b} < {a}");
+        assert_eq!(run(&format!("{level} {a} >= {b}")), "false", "{a} >= {b}");
+    }
+    assert_eq!(run(&format!("{level} Medium <= Medium")), "true");
+    assert_eq!(run(&format!("{level} Medium < Medium")), "false");
+    assert_eq!(
+        run(&format!("{level} print(sort([High, Low, Medium]))")),
+        "[Low, Medium, High]"
+    );
+    assert_eq!(
+        run(&format!("{level} print(biggest([Medium, High, Low]))")),
+        "High"
+    );
+    assert_eq!(
+        run(&format!("{level} print(smallest([Medium, High, Low]))")),
+        "Low"
+    );
+}
+
+#[test]
+fn a_group_with_payloads_orders_by_position_then_payload() {
+    let size = "tag Size = Tiny | Some(Number) | Huge(Number) ";
+    assert_eq!(run(&format!("{size} Some(1) < Some(2)")), "true");
+    assert_eq!(run(&format!("{size} Some(2) < Some(1)")), "false");
+    assert_eq!(run(&format!("{size} Some(9) < Huge(1)")), "true");
+    assert_eq!(run(&format!("{size} Tiny < Some(0)")), "true");
+    assert_eq!(run(&format!("{size} Huge(1) > Tiny")), "true");
+}
+
+#[test]
+fn individually_declared_tags_order_by_first_appearance() {
+    let src = "tag Zebra tag Apple tag Mango ";
+    assert_eq!(run(&format!("{src} Zebra < Apple")), "true");
+    assert_eq!(run(&format!("{src} Apple < Mango")), "true");
+    assert_eq!(run(&format!("{src} Mango > Zebra")), "true");
+}
+
+#[test]
+fn a_group_after_other_tags_keeps_its_own_order() {
+    let src = "tag Zebra tag Apple tag Rank = Beta | Alpha ";
+    assert_eq!(run(&format!("{src} Beta < Alpha")), "true");
+    assert_eq!(run(&format!("{src} Zebra < Apple")), "true");
+}
+
+#[test]
+fn list_tags_stay_empty_before_link_whatever_the_program_declares() {
+    let src = "tag Aaa tag Zzz ";
+    assert_eq!(run(&format!("{src} [] < [0]")), "true");
+    assert_eq!(run(&format!("{src} [1, 2] < [1, 3]")), "true");
+    assert_eq!(run(&format!("{src} [5] > []")), "true");
 }
 
 #[test]

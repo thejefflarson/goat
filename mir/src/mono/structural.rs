@@ -419,8 +419,9 @@ impl Mono<'_> {
         })
     }
 
-    /// Records compare field by field in label order. Tags compare by label,
-    /// then by payload, which orders a list's `Empty` before its `Link`.
+    /// Records compare field by field in label order. Tags compare by
+    /// declaration order, then by payload, which orders a list's `Empty`
+    /// before its `Link`.
     fn compare_fn(&mut self, ty: &Ty) -> FuncId {
         self.derive(Derived::Cmp, ty, MTy::Int, |m, cx, params| {
             let (a, b) = (params[0], params[1]);
@@ -435,11 +436,16 @@ impl Mono<'_> {
                     m.compare_all(cx, pairs, true)
                 }
                 Ty::Variant(row) => {
-                    let mut ordered: Vec<(u32, &Ty)> = tags(&row)
+                    let rank = |label: &String| m.tag_ranks.get(label).copied().unwrap_or(u32::MAX);
+                    let mut ordered: Vec<(u32, u32, &Ty)> = tags(&row)
                         .into_iter()
-                        .map(|(label, payload)| (m.tags[label], payload))
+                        .map(|(label, payload)| (rank(label), m.tags[label], payload))
                         .collect();
-                    ordered.sort_by_key(|(tag, _)| *tag);
+                    ordered.sort_by_key(|&(rank, tag, _)| (rank, tag));
+                    let ordered: Vec<(u32, &Ty)> = ordered
+                        .into_iter()
+                        .map(|(_, tag, payload)| (tag, payload))
+                        .collect();
                     let mut arms = Vec::new();
                     for (i, &(tag, payload)) in ordered.iter().enumerate() {
                         let pairs = payload_fields(payload)
