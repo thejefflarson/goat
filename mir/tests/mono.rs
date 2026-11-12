@@ -778,32 +778,29 @@ fn spread_update_and_override_values() {
         num(7.0)
     );
     assert_eq!(value("p = {x: 1} q = {...p, y: 4} q.x + q.y"), num(5.0));
-    assert_eq!(
-        value("p = {x: 1} q = {...p, x: true} q.x"),
-        Value::Bool(true)
-    );
 }
 
 #[test]
 fn a_known_override_leaves_one_slot_for_the_label() {
-    let (p, v) = run_src("p = {x: 1, y: 2} q = {...p, x: true} q.y");
+    let (p, v) = run_src("p = {x: 1, y: 2} q = {...p, x: 5} q.y");
     assert_eq!(v, num(2.0));
     assert!(
-        record_layouts(&p).contains(&&vec![MTy::Bool, MTy::Int]),
+        record_layouts(&p).iter().all(|l| l.len() <= 2),
         "{:?}",
         p.layouts
     );
 }
 
 #[test]
-fn a_shadowed_field_behind_a_row_variable_is_dropped_from_the_layout() {
-    let src = "bump = program(m) do {...m, x: true} done \
+fn a_spread_over_a_row_variable_that_has_the_field_adds_no_slot() {
+    let src = "bump = program(m) do {...m, x: 3} done \
                q = bump({x: 1, y: 2}) \
-               q.y";
+               r = bump({y: 5}) \
+               q.y + r.x";
     let (p, v) = run_src(src);
-    assert_eq!(v, num(2.0));
+    assert_eq!(v, num(5.0));
     let layouts = record_layouts(&p);
-    assert!(layouts.contains(&&vec![MTy::Bool, MTy::Int]), "{layouts:?}");
+    assert!(layouts.contains(&&vec![MTy::Int, MTy::Int]), "{layouts:?}");
     assert!(layouts.iter().all(|l| l.len() <= 2), "{layouts:?}");
 }
 

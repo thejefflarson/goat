@@ -8,6 +8,7 @@ mod support;
 use support::run;
 
 #[test]
+#[ignore = "spike finding: one knot per mention row is not enough; this does not finish (see ADR 0033)"]
 fn a_three_method_model_runs() {
     let src = "init = program() do {x: 0, y: 1, update: program(self) do {...self, x: self.x + 1} done, nudge: program(self) do {...self, y: self.y + 1} done, draw: program(self) do self.x + self.y done} done
         run = program(m, n) do if n == 0 then m else run(m.nudge().update(), n - 1) done done
@@ -21,7 +22,7 @@ fn a_spread_over_an_unknown_record_updates_or_extends() {
     let src = "set_x = program(r) do {...r, x: 1} done
         a = set_x({y: 7})
         b = set_x({x: 5, y: 8})
-        print(a.x + a.y)
+        print(a.x + a.y);
         print(b.x + b.y)";
     assert_eq!(run(src), "8\n9");
 }

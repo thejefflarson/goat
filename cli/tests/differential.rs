@@ -593,11 +593,9 @@ fn a_tag_bound_once_and_matched_at_two_widths_still_runs() {
 }
 
 #[test]
-fn spread_adds_overrides_and_retypes_fields() {
+fn spread_adds_and_overrides_fields() {
     assert_eq!(run("p = {x: 1} q = {...p, y: 2} q.x + q.y"), "3");
     assert_eq!(run("p = {x: 1, y: 2} q = {...p, x: 10} q.x + q.y"), "12");
-    assert_eq!(run("p = {x: 1, y: 2} q = {...p, x: \"one\"} q.x"), "one");
-    assert_eq!(run("p = {x: 1, y: 2} q = {...p, x: true} q.y"), "2");
     assert_eq!(run("p = {x: 1} {...p}.x"), "1");
 }
 
@@ -611,15 +609,12 @@ fn spread_in_a_function_over_records_of_different_shapes() {
 }
 
 #[test]
-fn spread_shadowing_a_field_hidden_behind_a_row_variable_frees_it() {
+fn spread_over_an_unknown_record_updates_or_extends() {
     let src = "retag = program(m) do {...m, x: 1} done \
-               r = retag({x: \"hidden\", y: \"kept\"}) \
-               r.y";
-    assert_eq!(run(src), "kept");
-    let numbers = "retag = program(m) do {...m, x: true} done \
-                   r = retag({x: 1, y: 2}) \
-                   if r.x then r.y else 0 done";
-    assert_eq!(run(numbers), "2");
+               a = retag({x: 7, y: 2}) \
+               b = retag({y: 3}) \
+               a.x + a.y + b.x + b.y";
+    assert_eq!(run(src), "7");
 }
 
 #[test]
