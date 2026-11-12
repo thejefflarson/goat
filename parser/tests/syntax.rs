@@ -93,6 +93,23 @@ fn records_and_field_access() {
 }
 
 #[test]
+fn a_take_is_a_postfix_beside_access_and_call() {
+    assert_accepts(&[
+        "r::f",
+        "r::f(1)",
+        "r::a::b(1)(2)",
+        "r.a::f()",
+        "r::a.b",
+        "(r)::f",
+    ]);
+    assert_rejects(&["r::", "r:: f g", "::f", "r:f"]);
+    assert_eq!(
+        shape("r::f(1)"),
+        "goat[expr[name(\"r\") take[name(\"f\")] call[arguments[expr[number(\"1\")]]]]]"
+    );
+}
+
+#[test]
 fn words_that_merely_begin_with_a_keyword_are_names() {
     for word in [
         "double",

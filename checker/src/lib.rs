@@ -86,6 +86,7 @@ pub fn check_with_vocab(
     }
     let dots = infer::DotCalls {
         calls: lowered.dot_calls,
+        takes: lowered.takes,
         source: source.to_string(),
     };
     let mut typed = infer::infer_program(&lowered.root, lowered.interactive.as_ref(), vocab, dots)?;

@@ -44,6 +44,14 @@ test("a half-typed member narrows the same list and a chain follows each step's 
   assert.deepEqual(at("w = {pos: {x: 1, y: 2}, n: 0}\nw.pos.|")!.labels, ["x", "y"]);
 });
 
+test("a take offers the same members as a dot", () => {
+  const record = "p = {x: 1, f: program(a) do a done}\n";
+  const found = at(`${record}p::|`)!;
+  assert.deepEqual(found.labels, ["x", "f"]);
+  assert.equal(found.from, `${record}p::`.length);
+  assert.deepEqual(at("t = {heading: 90, height: 2}\nt::he|")!.labels, ["heading", "height"]);
+});
+
 test("a dot after something with no members offers nothing", () => {
   assert.equal(at("n = 1\nn.|"), null);
 });

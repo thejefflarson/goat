@@ -90,7 +90,7 @@ impl Cst {
         let previous_text = previous.map(|t| &source[t.start..t.end]);
         let role = if opaque {
             Role::Nothing
-        } else if previous_text == Some(".") {
+        } else if matches!(previous_text, Some("." | "::")) {
             field(&path)
         } else if let Some(arm) = arm_pattern(&path, previous, source, prefix.start, offset) {
             arm
@@ -185,13 +185,17 @@ impl Node<'_> {
     }
 }
 
-fn is_postfix(node: &Node) -> bool {
-    matches!(node.kind(), "access" | "call")
+fn is_field_postfix(node: &Node) -> bool {
+    matches!(node.kind(), "access" | "take")
 }
 
-/// After a `.`: the operand chain the access hangs off.
+fn is_postfix(node: &Node) -> bool {
+    matches!(node.kind(), "access" | "take" | "call")
+}
+
+/// After a `.` or `::`: the operand chain the access hangs off.
 fn field(path: &[Node]) -> Role {
-    let Some(at) = path.iter().rposition(|n| n.is("access")) else {
+    let Some(at) = path.iter().rposition(|n| is_field_postfix(n)) else {
         return Role::Nothing;
     };
     let Some(parent) = at.checked_sub(1).map(|p| path[p]) else {
@@ -200,7 +204,7 @@ fn field(path: &[Node]) -> Role {
     let siblings: Vec<Node> = parent.children().collect();
     let Some(place) = siblings
         .iter()
-        .position(|n| n.is("access") && n.span() == path[at].span())
+        .position(|n| is_field_postfix(n) && n.span() == path[at].span())
     else {
         return Role::Nothing;
     };

@@ -107,6 +107,7 @@ impl Analysis {
         let program = lowered.ok().map(|lowered| {
             let dots = DotCalls {
                 calls: lowered.dot_calls,
+                takes: lowered.takes,
                 source: healed.source.clone(),
             };
             let (typed, _) =
@@ -488,7 +489,7 @@ fn heal(cst: &Cst, cursor: usize) -> Healed {
         let touches = span.start < cursor && cursor <= span.end;
         match node.kind() {
             "ERROR" => blanks.push(node.span()),
-            "access" if touches || node.child("MISSING").is_some() => blanks.push(span),
+            "access" | "take" if touches || node.child("MISSING").is_some() => blanks.push(span),
             "arm"
                 if node.children().next().is_some_and(|head| {
                     let head = head.span();

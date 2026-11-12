@@ -172,6 +172,9 @@ Section Denotation.
         ~ starts_call rest ->
         Den_posts (e_proj e (lab l)) rest e' ->
         Den_posts e (Node R_access [sym "."; ident l] :: rest) e'
+    | DP_take : forall e l rest e',
+        Den_posts (e_proj e (lab l)) rest e' ->
+        Den_posts e (Node R_take [sym "::"; ident l] :: rest) e'
     | DP_dot_call : forall x l args es rest e',
         Den_args args es ->
         Den_posts (apps (e_proj (e_fvar_f x) (lab l)) (e_fvar_f x :: es)) rest e' ->
@@ -281,6 +284,10 @@ Proof.
   - (* posts, none *) intros e Hlc. exact Hlc.
   - (* posts, access *)
     intros e l rest e' Hnocall Hrest IHrest Hlc.
+    assert (Hproj : lc (e_proj e (lab tbl l))) by exact Hlc.
+    exact (IHrest Hproj).
+  - (* posts, take *)
+    intros e l rest e' Hrest IHrest Hlc.
     assert (Hproj : lc (e_proj e (lab tbl l))) by exact Hlc.
     exact (IHrest Hproj).
   - (* posts, dot call: the receiver is a variable, passed first *)

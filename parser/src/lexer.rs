@@ -80,7 +80,7 @@ const LITERALS: &[&str] = &["true", "false"];
 
 // A longer operator precedes any it begins with: the first that fits wins.
 const OPERATORS: &[&str] = &[
-    "==", "!=", "<=", "<", ">=", ">", "->", "//", "/", "%", "+", "*", "-",
+    "==", "!=", "<=", "<", ">=", ">", "->", "//", "/", "%", "+", "*", "-", "::",
 ];
 
 const PUNCTUATION: &[&str] = &[
@@ -577,6 +577,8 @@ mod tests {
             (">=", Operator),
             ("->", Operator),
             ("//", Operator),
+            ("::", Operator),
+            (":", Punct),
             ("...", Punct),
             ("=", Punct),
         ];
@@ -584,6 +586,10 @@ mod tests {
             assert_eq!(lex(text), [tok(kind, 0, text.len())], "{text}");
         }
         assert_eq!(lex("!"), [tok(Unknown, 0, 1)]);
+        assert_eq!(lex(":::"), [tok(Operator, 0, 2), tok(Punct, 2, 3)]);
+        assert_eq!(lex("a::b").len(), 3);
+        let spaced = lex("a: :b");
+        assert_eq!((spaced[1], spaced[3]), (tok(Punct, 1, 2), tok(Punct, 3, 4)));
     }
 
     #[test]

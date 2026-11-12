@@ -42,6 +42,7 @@ Inductive rule : Type :=
   | R_negation
   | R__postfix
   | R_access
+  | R_take
   | R_call
   | R_arguments
   | R__primary
@@ -180,9 +181,11 @@ Definition body (r : rule) : pexpr :=
   | R_negation =>
     (E_seq (E_rule R_minus) (E_alt (E_rule R_negation) (E_seq (E_rule R__primary) (E_star (E_rule R__postfix)))))
   | R__postfix =>
-    (E_alt (E_rule R_access) (E_rule R_call))
+    (E_alt (E_rule R_access) (E_alt (E_rule R_take) (E_rule R_call)))
   | R_access =>
     (E_seq (E_term (T_text ".")) (E_expect (E_rule R_name)))
+  | R_take =>
+    (E_seq (E_term (T_text "::")) (E_expect (E_rule R_name)))
   | R_call =>
     (E_seq (E_term (T_text "(")) (E_seq (E_opt (E_rule R_arguments)) (E_expect (E_term (T_text ")")))))
   | R_arguments =>

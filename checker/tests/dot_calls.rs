@@ -234,3 +234,77 @@ fn a_dot_call_chain_records_each_receiver_as_a_span_of_the_prefix() {
         );
     }
 }
+
+fn plain_apps(source: &str) -> Vec<(String, usize)> {
+    let mut apps = Vec::new();
+    for_each_node(&lower(source).expect("parses").root, &mut |e| {
+        if let ExprKind::App { callee, args } = &e.kind
+            && let ExprKind::Field { record, label } = &callee.kind
+            && let ExprKind::Var { name, .. } = &record.kind
+        {
+            apps.push((format!("{name}.{label}"), args.len()));
+        }
+    });
+    apps
+}
+
+#[test]
+fn a_take_call_lowers_to_the_parenthesised_projection_call() {
+    let record = "t = {double: program(x) do x * 2 done};\n";
+    let taken = format!("{record}t::double(5)");
+    let parenthesised = format!("{record}(t.double)(5)");
+    assert_eq!(plain_apps(&taken), [("t.double".to_string(), 1)]);
+    assert_eq!(plain_apps(&taken), plain_apps(&parenthesised));
+    assert!(dot_calls(&taken).is_empty());
+    assert_eq!(type_of(&taken), type_of(&parenthesised));
+}
+
+#[test]
+fn a_take_on_a_method_passes_the_record_explicitly() {
+    let record = "ball = {x: 1, moved: program(self) do self.x done}\n\
+                  other = {x: 10}\n";
+    let call = format!("{record}ball::moved(other)");
+    assert_eq!(plain_apps(&call), [("ball.moved".to_string(), 1)]);
+    assert_eq!(type_of(&call), "Number");
+    let message = first_error(&format!("{record}ball::moved()"));
+    assert_eq!(message, "function expects 1 argument(s) but got 0");
+}
+
+#[test]
+fn a_bare_take_is_the_function_value() {
+    let record = "r = {f: program(x) do x done}\n";
+    assert_eq!(type_of(&format!("{record}g = r::f\ng(true)")), "Bool");
+}
+
+#[test]
+fn a_take_of_a_data_field_says_to_read_it_with_a_dot() {
+    for (source, label) in [
+        ("r = {x: 1}\nr::x", "x"),
+        ("r = {x: 1}\nr::x(2)", "x"),
+        ("r = {name: \"goat\"}\nr::name", "name"),
+        ("r = {inner: {x: 1}}\nr::inner", "inner"),
+    ] {
+        let (message, quoted) = first_diagnostic(source);
+        assert_eq!(
+            message,
+            format!("`{label}` isn't a function, so read it with `r.{label}`"),
+            "{source}"
+        );
+        assert_eq!(quoted, format!("r::{label}"), "{source}");
+    }
+}
+
+#[test]
+fn a_take_on_a_path_receiver_quotes_the_whole_receiver() {
+    let (message, quoted) = first_diagnostic("a = {b: {n: 1}}\na.b::n");
+    assert_eq!(message, "`n` isn't a function, so read it with `a.b.n`");
+    assert_eq!(quoted, "a.b::n");
+}
+
+#[test]
+fn a_take_whose_field_type_is_decided_later_is_not_an_error() {
+    assert_eq!(
+        type_of("call = program(r) do r::f(1) done\ncall({f: program(x) do x done})"),
+        "Number"
+    );
+}

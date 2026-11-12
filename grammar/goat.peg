@@ -80,8 +80,9 @@ gt <- '>'
 _term <- negation / _primary _postfix*
 @nest
 negation <- minus (negation / _primary _postfix*)
-_postfix <- access / call
+_postfix <- access / take / call
 access <- '.' name@expect
+take <- '::' name@expect
 @sync(';')
 call <- '(' arguments? ')'@expect
 arguments <- expr (',' expr)* ','?

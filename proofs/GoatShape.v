@@ -16,7 +16,7 @@ Open Scope list_scope.
 Definition core_rule (r : rule) : bool :=
   match r with
   | R_goat | R_expr | R_value | R_declaration | R_local | R_function | R_params
-  | R_call | R_arguments | R_access | R_name | R_number | R_boolean | R_true_lit
+  | R_call | R_arguments | R_access | R_take | R_name | R_number | R_boolean | R_true_lit
   | R_false_lit | R_record | R_field => true
   | _ => false
   end.
@@ -168,6 +168,16 @@ Qed.
 
 Lemma shape_access : forall cs,
   gen (body R_access) cs -> exists l, cs = [sym "."; ident l].
+Proof.
+  intros cs H. simpl in H.
+  split_seq H as (ts1 & ts2 & -> & H1 & H2). text_leaf H1.
+  apply gen_expect_inv in H2.
+  destruct (gen_ident _ H2) as (l & ->).
+  exists l. reflexivity.
+Qed.
+
+Lemma shape_take : forall cs,
+  gen (body R_take) cs -> exists l, cs = [sym "::"; ident l].
 Proof.
   intros cs H. simpl in H.
   split_seq H as (ts1 & ts2 & -> & H1 & H2). text_leaf H1.
@@ -760,6 +770,7 @@ Section Totality.
         | R_declaration => exists x v, Den_decl var_of tbl t x v
         | R_field => exists l e, Den_field var_of tbl t l e
         | R_access => exists l, cs = [sym "."; ident l]
+        | R_take => exists l, cs = [sym "::"; ident l]
         | R_call =>
             exists args es,
               cs = [sym "("; Node R_arguments args; sym ")"]
@@ -784,7 +795,7 @@ Section Totality.
     - intros ts1 ts2 Hpost IH Hkids Hnd acc.
       apply Forall_app in Hkids as [Hkids1 Hkids2].
       pose proof (gen_splice_inv Hpost eq_refl) as Halt. simpl in Halt.
-      destruct (gen_alt_inv Halt) as [Haccess | Hcall].
+      destruct (gen_alt_inv Halt) as [Haccess | Htake_call].
       + (* .label *)
         destruct (gen_node_of Haccess eq_refl) as (c & -> & _).
         inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
@@ -792,13 +803,21 @@ Section Totality.
         simpl in Hnd. destruct Hnd as [Hnocall Hnd2].
         destruct (IH Hkids2 Hnd2 (e_proj acc (lab tbl l))) as (e' & Hrest).
         exists e'. apply DP_access; assumption.
-      + (* (arguments) *)
-        destruct (gen_node_of Hcall eq_refl) as (c & -> & _).
-        inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
-        destruct Hkid as (args & es & -> & Hargs).
-        simpl in Hnd.
-        destruct (IH Hkids2 Hnd (apps acc es)) as (e' & Hrest).
-        exists e'. apply DP_call with (es := es); assumption.
+      + destruct (gen_alt_inv Htake_call) as [Htake | Hcall].
+        * (* ::label *)
+          destruct (gen_node_of Htake eq_refl) as (c & -> & _).
+          inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
+          destruct Hkid as (l & ->).
+          simpl in Hnd.
+          destruct (IH Hkids2 Hnd (e_proj acc (lab tbl l))) as (e' & Hrest).
+          exists e'. apply DP_take. exact Hrest.
+        * (* (arguments) *)
+          destruct (gen_node_of Hcall eq_refl) as (c & -> & _).
+          inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
+          destruct Hkid as (args & es & -> & Hargs).
+          simpl in Hnd.
+          destruct (IH Hkids2 Hnd (apps acc es)) as (e' & Hrest).
+          exists e'. apply DP_call with (es := es); assumption.
   Qed.
 
   Lemma posts_den_var : forall x ps,
@@ -810,7 +829,7 @@ Section Totality.
     - exists (e_fvar_f x). apply DP_nil.
     - apply Forall_app in Hkids as [Hkids1 Hkids2].
       pose proof (gen_splice_inv Hpost eq_refl) as Halt. simpl in Halt.
-      destruct (gen_alt_inv Halt) as [Haccess | Hcall].
+      destruct (gen_alt_inv Halt) as [Haccess | Htake_call].
       + (* .label, then perhaps a call *)
         destruct (gen_node_of Haccess eq_refl) as (c & -> & _).
         inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
@@ -821,7 +840,7 @@ Section Totality.
           apply DP_access; [ exact (proj1 Hhead) | apply DP_nil ].
         * pose proof (gen_splice_inv Hpost3 eq_refl) as Halt3. simpl in Halt3.
           apply Forall_app in Hkids2 as [Hkids3 Hkids4].
-          destruct (gen_alt_inv Halt3) as [Haccess3 | Hcall3].
+          destruct (gen_alt_inv Halt3) as [Haccess3 | Htake_call3].
           -- (* a second access: the first is a plain projection *)
              destruct (gen_node_of Haccess3 eq_refl) as (c3 & -> & _).
              assert (Hrest34 : gen (E_star (E_rule R__postfix))
@@ -832,21 +851,41 @@ Section Totality.
              destruct (posts_den _ Hrest34 Hk34 (proj2 Hhead)
                          (e_proj (e_fvar_f x) (lab tbl l))) as (e' & Hposts).
              exists e'. apply DP_access; [ exact (proj1 Hhead) | exact Hposts ].
-          -- (* a call: a dot call on the variable *)
-             destruct (gen_node_of Hcall3 eq_refl) as (c3 & -> & _).
-             inversion Hkids3 as [| ? ? Hkid3 _]; subst. simpl in Hkid3.
-             destruct Hkid3 as (args & es & -> & Hargs).
-             destruct (posts_den ts4 Hrest4 Hkids4 Hhead
-                         (apps (e_proj (e_fvar_f x) (lab tbl l)) (e_fvar_f x :: es)))
-               as (e' & Hposts).
-             exists e'. apply DP_dot_call with (es := es); assumption.
-      + (* (arguments) *)
-        destruct (gen_node_of Hcall eq_refl) as (c & -> & _).
-        inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
-        destruct Hkid as (args & es & -> & Hargs).
-        destruct (posts_den ts2 Hrest Hkids2 Hhead (apps (e_fvar_f x) es))
-          as (e' & Hposts).
-        exists e'. apply DP_call with (es := es); assumption.
+          -- destruct (gen_alt_inv Htake_call3) as [Htake3 | Hcall3].
+             ++ (* a take: the first is a plain projection *)
+                destruct (gen_node_of Htake3 eq_refl) as (c3 & -> & _).
+                assert (Hrest34 : gen (E_star (E_rule R__postfix))
+                                    ([Node R_take c3] ++ ts4))
+                  by (apply G_star_cons; assumption).
+                assert (Hk34 : Forall TotKind ([Node R_take c3] ++ ts4))
+                  by (apply Forall_app; split; assumption).
+                destruct (posts_den _ Hrest34 Hk34 (proj2 Hhead)
+                            (e_proj (e_fvar_f x) (lab tbl l))) as (e' & Hposts).
+                exists e'. apply DP_access; [ exact (proj1 Hhead) | exact Hposts ].
+             ++ (* a call: a dot call on the variable *)
+                destruct (gen_node_of Hcall3 eq_refl) as (c3 & -> & _).
+                inversion Hkids3 as [| ? ? Hkid3 _]; subst. simpl in Hkid3.
+                destruct Hkid3 as (args & es & -> & Hargs).
+                destruct (posts_den ts4 Hrest4 Hkids4 Hhead
+                            (apps (e_proj (e_fvar_f x) (lab tbl l)) (e_fvar_f x :: es)))
+                  as (e' & Hposts).
+                exists e'. apply DP_dot_call with (es := es); assumption.
+      + destruct (gen_alt_inv Htake_call) as [Htake | Hcall].
+        * (* ::label *)
+          destruct (gen_node_of Htake eq_refl) as (c & -> & _).
+          inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
+          destruct Hkid as (l & ->).
+          assert (Hnd : no_dot ts2) by exact Hhead.
+          destruct (posts_den ts2 Hrest Hkids2 Hnd (e_proj (e_fvar_f x) (lab tbl l)))
+            as (e' & Hposts).
+          exists e'. apply DP_take. exact Hposts.
+        * (* (arguments) *)
+          destruct (gen_node_of Hcall eq_refl) as (c & -> & _).
+          inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
+          destruct Hkid as (args & es & -> & Hargs).
+          destruct (posts_den ts2 Hrest Hkids2 Hhead (apps (e_fvar_f x) es))
+            as (e' & Hposts).
+          exists e'. apply DP_call with (es := es); assumption.
   Qed.
 
   Lemma chain_head : forall t posts e0,
@@ -1218,6 +1257,12 @@ Section Steps.
     simpl. exists l. reflexivity.
   Qed.
 
+  Lemma step_take : Step R_take.
+  Proof.
+    intros cs H _ _. destruct (shape_take cs H) as (l & ->).
+    simpl. exists l. reflexivity.
+  Qed.
+
   Lemma step_call : Step R_call.
   Proof.
     intros cs H Hcomplete Hkids. simpl in Hcomplete.
@@ -1249,7 +1294,7 @@ Section Steps.
         [ exact step_number | exact step_name | exact step_boolean
         | exact step_expr | exact step_value | exact step_function
         | exact step_record | exact step_local | exact step_declaration
-        | exact step_field | exact step_access | exact step_call
+        | exact step_field | exact step_access | exact step_take | exact step_call
         | exact step_arguments | exact step_params
         | (intros cs _ _ _; exact I) ].
   Qed.
