@@ -1781,15 +1781,15 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_record_is_fine_until_its_type_passes_the_term_limit() {
+    fn a_wide_record_is_fine_until_its_type_passes_the_depth_limit() {
         let record = |fields: usize| {
             let body: Vec<String> = (0..fields).map(|i| format!("f{i}: {i}")).collect();
             format!("{{{}}}", body.join(", "))
         };
         assert!(type_of(&record(200)).is_ok());
-        let source = record(600);
+        let source = record(1200);
         let Err(errors) = check(&source) else {
-            panic!("a 600-field record should not check");
+            panic!("a 1200-field record should not check");
         };
         assert!(errors[0].message.starts_with("program too complex"));
         assert_eq!(&source[errors[0].span.start..errors[0].span.end], source);

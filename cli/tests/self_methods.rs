@@ -49,3 +49,30 @@ fn methods_of_two_records_with_the_same_shape_run_in_a_list() {
         print(make(7).get())";
     assert_eq!(run(src), "2\n7");
 }
+
+fn updating_record(methods: usize) -> String {
+    let fields: Vec<String> = (0..methods)
+        .map(|i| format!("m{i}: program(self) do {{...self, x: self.x + 1}} done"))
+        .collect();
+    format!("ball = {{x: 0, {}}}\n", fields.join(", "))
+}
+
+#[test]
+fn twenty_updating_methods_run() {
+    let chain: String = (0..20).map(|i| format!(".m{i}()")).collect();
+    let src = format!("{}print(ball{chain}.x)", updating_record(20));
+    assert_eq!(run(&src), "20");
+}
+
+#[test]
+fn ten_methods_calling_siblings_run() {
+    let fields: Vec<String> = (0..9)
+        .map(|i| format!("m{i}: program(self) do self.m{}() done", i + 1))
+        .collect();
+    let src = format!(
+        "ball = {{x: 0, {}, m9: program(self) do {{...self, x: self.x + 1}} done}}\n\
+         print(ball.m0().x);\nprint(ball.m5().m0().x)",
+        fields.join(", ")
+    );
+    assert_eq!(run(&src), "1\n2");
+}
