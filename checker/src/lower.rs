@@ -133,6 +133,8 @@ pub fn lower_with_vocab(
         ctx.tags.insert(tag.clone(), Some(key.clone()));
         ctx.rank(tag);
     }
+    ctx.tag_groups
+        .push(key.tags.iter().map(|(tag, _)| tag.clone()).collect());
     let mut prelude_root = ctx.lower_source(prelude, FileId::Prelude)?;
 
     ctx.prelude_scope = defined_names(&prelude_root);

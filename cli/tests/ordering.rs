@@ -131,6 +131,13 @@ fn a_group_with_payloads_orders_by_position_then_payload() {
 }
 
 #[test]
+fn one_key_tag_outside_an_interactive_program_numbers_its_whole_group() {
+    assert_eq!(run("print(Up)"), "Up");
+    assert_eq!(run("Up < Down"), "true");
+    assert_eq!(run("Right > Left"), "true");
+}
+
+#[test]
 fn individually_declared_tags_order_by_first_appearance() {
     let src = "tag Zebra tag Apple tag Mango ";
     assert_eq!(run(&format!("{src} Zebra < Apple")), "true");
