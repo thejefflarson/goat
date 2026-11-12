@@ -1,13 +1,13 @@
 //! The built-in constraints a type variable can carry, Elm-style. A user never
-//! writes one: `==` puts `Eq` on its operands, `+ - *` put `Numeric`, `<` and
-//! `/` put `Ordered`, and unification checks each against the type the
+//! writes one: `==` and `<` put `Eq` on their operands, `+ - *` put `Numeric`, `/`
+//! puts `Ordered`, and unification checks each against the type the
 //! variable is bound to.
 
 use crate::ty::Ty;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// Any type with no function inside it.
+    /// Any type with no function inside it: what `==` and `<` compare (ADR 0036).
     Eq,
     /// `String`, or a list.
     Appendable,
@@ -118,11 +118,11 @@ impl Violation {
         }
         match self.kind {
             Kind::Eq => {
-                let op = op.unwrap_or("==");
+                let with = op.map_or_else(String::new, |op| format!(" with `{op}`"));
                 if matches!(whole, Ty::Func(..)) {
-                    format!("can't compare functions with `{op}`")
+                    format!("can't compare functions{with}")
                 } else {
-                    format!("can't compare `{whole}` with `{op}`: it has a function inside")
+                    format!("can't compare `{whole}`{with}: it has a function inside")
                 }
             }
             Kind::Numeric => {
