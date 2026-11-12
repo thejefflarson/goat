@@ -37,6 +37,11 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut labels = BTreeSet::new();
     collect_tags(&checked.root, &checked.vocab, &mut labels);
+    for group in &checked.tag_groups {
+        if group.iter().any(|tag| labels.contains(tag)) {
+            labels.extend(group.iter().cloned());
+        }
+    }
     if checked.interactive.is_some() {
         labels.extend(checked.vocab.key_tag_names().map(String::from));
     }
@@ -62,6 +67,7 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
         variants: HashMap::new(),
         families: Vec::new(),
         tags: labels.into_iter().zip(0..).collect(),
+        tag_ranks: &checked.tag_ranks,
         wrappers: HashMap::new(),
         derived: HashMap::new(),
         errors: Vec::new(),
@@ -382,6 +388,9 @@ struct Mono<'a> {
     families: Vec<Family>,
     /// The global tag number of each label, in sorted label order.
     tags: HashMap<String, u32>,
+    /// Each label's place in declaration order, which `<` follows. A label the
+    /// checker did not rank sorts last.
+    tag_ranks: &'a HashMap<String, u32>,
     /// The zero-capture closure wrapper for each function used as a value. The
     /// wrappers are the funcref-table members: the functions with an `env`.
     wrappers: HashMap<FuncId, FuncId>,

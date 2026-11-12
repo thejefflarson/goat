@@ -21,9 +21,13 @@ records needs an order on more than numbers.
    - `Bool`: `false < true`;
    - records field by field in label order (the order the type already keeps),
      the first unequal field decides;
-   - tags by label, then by payload left to right. Lists are the tags `Empty`
-     and `Link(first, rest)`, so `Empty < Link` gives lexicographic order with
-     a prefix first;
+   - tags by declaration order, then by payload left to right. In `tag Level =
+     Low | Medium | High` the leftmost is lowest, so `Low < Medium < High`.
+     A tag declared by itself (`tag Circle`) ranks by where it first appears
+     in the source, the prelude's tags before the program's, and a group's
+     tags take consecutive places where the group is written. The list tags
+     `Empty` and `Link(first, rest)` come first of all, so `Empty < Link`
+     gives lexicographic order with a prefix first;
    - `Unit` equals itself.
 2. **Typing reuses the `Eq` constraint.** `a < b` unifies its operands (an
    `Int` beside a `Float` still widens) and requires the shared type to have no
@@ -56,14 +60,17 @@ records needs an order on more than numbers.
 - A for/repeat loop whose bound is not a number now reports the `+` of the
   counter step (`` `+` needs numbers or records of numbers ``) rather than the
   comparison, because the comparison accepts any ordered type.
-- A tag group orders by label (alphabetical), not by declaration order: a row
-  in a type holds labels sorted, and the declaration order is not part of
-  `Ty`. Ordering by declaration order would need the checker to carry the
-  group's order into the type; that is left open.
+- A row in a type holds labels sorted, so the declaration order is not in
+  `Ty`. The checker keeps it beside the type, as a rank for each tag label,
+  and mono's derived compare sorts a row's tags by that rank. A tag the
+  checker did not rank sorts after the ranked ones. The ranks are a
+  program-wide table, so they never change a type or inference.
+- Every tag of a declared group now gets a tag number when the program names
+  any one of them. A value of the group's type holds all of them, and naming
+  only `Low` used to leave `Medium` and `High` without a number.
 - The mismatch message for `true < 1` now reads `expected Bool, found Number`
   (the left operand sets the type) rather than blaming the `Bool` as a non-number.
 
 ## Deferred
 
-- Declaration order for tag groups.
 - A user-defined order (a method that overrides `<`).
