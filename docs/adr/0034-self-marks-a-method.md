@@ -49,3 +49,49 @@
 - Live reload of methods held in the model (canvas option (c)) builds on this.
   A method's code is known from the record literal that made it, so the host can
   rebind methods by field after an edit.
+
+## Implementation addendum (2026-11-11)
+
+Decisions the build made where the ADR left room. The three-method model
+(`x`, `y`, `update`, `nudge`, `draw`; `m.nudge().update().draw()` and
+`m = run(init(), 4); m.draw()`) now checks and runs through the interpreter and
+wasm with one recursive type and no nested knots.
+
+1. **Method-ness is a flag on the record field, not on `Func`.** `Row::Extend`
+   and `Row::Maybe` carry a `method` type. It is a variable bound to one of two
+   constants, `METHOD` or `PLAIN`, by the same mechanism as ADR 0033's presence
+   flags, so generalization, instantiation and unification carry it with no
+   second substitution. `r.f(a)` unifies the flag of `f` with `METHOD`. `r::f`,
+   `(r.f)` and plain projection leave it alone. Unifying a `METHOD` field with a
+   `PLAIN` one is an error that names the field, so a list that mixes the two
+   shapes says so. Mono and canon erase the flag: a layout never depends on it.
+2. **`self` is reserved by lowering and the checker, not the lexer.** The
+   parser still reads `self` as a name, so `grammar/goat.peg` and the proofs do
+   not change. Lowering reports `self` as a parameter anywhere but first, `self`
+   as the first parameter of a function that is not written directly as a
+   record field, and an unbound `self`. A field of a spread literal
+   (`{...r, f: program(self) do … done}`) may be a method; its receiver is typed
+   by ADR 0032's knot, since the literal's final shape is the spread's.
+3. **A record literal with methods is typed like a `letrec` over its fields.**
+   Every field gets a type variable, and every method's `self` is
+   `{fields | ρ}` over those variables with one shared row variable `ρ` for
+   whatever a later extension adds. After the bodies are inferred, the receiver
+   type is folded once into `μs. {fields | ρ}` with each method typed `(s, …) ->`
+   its result, and the literal's own type is the closed row of those fields. `ρ`
+   is generalized with the binding, so each use of a record instantiates its own
+   extension: `big = {...ball, size: 10}; big.moved()` returns `big`'s type. If a
+   method calls a sibling through `self`, the methods' types mention another
+   field's variable and the fold is skipped; the fields are then unified one at
+   a time, which can still tie a knot per method. ADR 0032's occurs-check knot
+   remains for receivers that are parameters.
+4. **The highlighter shows `self` as a keyword by a rule both sides share.**
+   `parser::lexer::highlight` marks a name `self` as a keyword (as it marks
+   declared tags), and `editor/highlight.goat` does the same. `lexer::lex` and
+   `tokenize`, which the parser reads, keep `self` a name, so the highlighter
+   and the lexer agree byte for byte on `highlight`'s output.
+5. **Errors.** Each is spanned and names neither `μ` nor a raw variable:
+   a dot call on a plain function suggests `::` and the `self` fix; `self`
+   outside a record, or not first, says where it goes; `r::f()` on a method says
+   `self` gets nothing and suggests `.`; a call on a record built by a method
+   without `...self` names the method that dropped the rest. The earlier
+   `(r.f)()` suggestion is now `r::f()`.

@@ -106,7 +106,9 @@ fn fields(row: &Row) -> Option<Vec<(&String, &Ty)>> {
     let mut next = row;
     loop {
         match next {
-            Row::Extend { label, field, rest } => {
+            Row::Extend {
+                label, field, rest, ..
+            } => {
                 out.push((label, &**field));
                 next = rest;
             }

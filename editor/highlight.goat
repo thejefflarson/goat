@@ -7,9 +7,10 @@
 # throughout: `at` reads position p with the 1-based `byte_at(text, p + 1)`.
 #
 # The scanner follows `parser::lexer` rule for rule and is tested against it
-# byte for byte. It differs in two places: every byte of 128 or more counts as
-# a letter (the lexer asks Unicode which characters may start a name), and a
-# name has no length limit.
+# byte for byte, including `lexer::highlight`'s rule that `self` is a keyword
+# (the parser reads it as a name; the checker reserves it). It differs in two
+# places: every byte of 128 or more counts as a letter (the lexer asks Unicode
+# which characters may start a name), and a name has no length limit.
 
 # Token kinds. Spans carry only those up to `operator`.
 comment = 0
@@ -304,7 +305,8 @@ spans = program(text, tokens, tags, names, host, found) do
   match tokens do
     [token, ...rest] then
       is_tag = token.kind == name and (is_named(text, tags, text, token) or is_named(names, host, text, token))
-      kind = if is_tag then tag_name else token.kind done
+      is_self = token.kind == name and is_text(text, token, "self")
+      kind = if is_tag then tag_name else if is_self then keyword else token.kind done done
       span = Span({from: token.a, to: token.b, kind: role(kind)})
       spans(text, rest, tags, names, host, if kind <= operator then Link(span, found) else found done)
     [] then reverse(found)

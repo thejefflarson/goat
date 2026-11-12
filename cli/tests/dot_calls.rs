@@ -69,7 +69,7 @@ fn a_take_calls_without_the_record() {
 #[test]
 fn a_take_on_a_method_passes_self_explicitly() {
     let src = "ball = {x: 3, plus: program(self) do self.x done};\n\
-               other = {x: 10};\n\
+               other = {...ball, x: 10};\n\
                print(ball::plus(other));\n\
                print(ball.plus())";
     assert_eq!(run(src), "10\n3");

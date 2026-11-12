@@ -63,6 +63,9 @@ pub enum Row {
     Extend {
         label: String,
         field: Box<Ty>,
+        /// Whether the field is a method: [`METHOD`], [`PLAIN`], or a flag
+        /// variable that a dot call or a unification will settle.
+        method: Box<Ty>,
         rest: Box<Row>,
     },
     /// A field that is there or not, by the presence variable `pres` (Rémy):
@@ -73,6 +76,7 @@ pub enum Row {
         label: String,
         pres: TypeVar,
         field: Box<Ty>,
+        method: Box<Ty>,
         rest: Box<Row>,
     },
 }
@@ -81,6 +85,12 @@ pub enum Row {
 /// that map type variables to types carry it (mono's instantiation does).
 pub const PRESENT: Ty = Ty::Unit;
 pub const ABSENT: Ty = Ty::Bool;
+
+/// A field's method flag, bound the same way (ADR 0034): a method starts with
+/// `self` and a dot call passes the record to it; anything else is plain. Mono
+/// and canon erase it.
+pub const METHOD: Ty = Ty::Int;
+pub const PLAIN: Ty = Ty::Str;
 
 /// The tags of one `tag` declaration: a closed variant type. A payload that
 /// mentions the group itself holds `Ty::Var(Group::SELF)`.
@@ -121,6 +131,7 @@ impl Row {
             .fold(Row::Empty, |rest, (label, field)| Row::Extend {
                 label,
                 field: Box::new(field),
+                method: Box::new(PLAIN),
                 rest: Box::new(rest),
             })
     }
@@ -184,7 +195,7 @@ impl Ty {
         }
     }
 
-    fn map_children(&self, f: &impl Fn(&Ty) -> Ty) -> Ty {
+    pub(crate) fn map_children(&self, f: &impl Fn(&Ty) -> Ty) -> Ty {
         match self {
             Ty::Func(args, ret) => Ty::Func(args.iter().map(f).collect(), Box::new(f(ret))),
             Ty::Record(row) => Ty::Record(row.map_fields(f)),
@@ -244,10 +255,25 @@ impl Ty {
         folded
     }
 
+    /// Whether this type and `other` start with the same constructor, over the
+    /// same labels or arity: a cheap necessary condition for equality.
+    fn has_head_of(&self, other: &Ty) -> bool {
+        match (self, other) {
+            (Ty::Record(a), Ty::Record(b)) | (Ty::Variant(a), Ty::Variant(b)) => {
+                a.labels().eq(b.labels())
+            }
+            (Ty::Func(a, _), Ty::Func(b, _)) => a.len() == b.len(),
+            _ => std::mem::discriminant(self) == std::mem::discriminant(other),
+        }
+    }
+
     /// A `Rec` among this type's sub-terms whose unfolding is `target`.
     fn find_unfolding_to(&self, target: &Ty) -> Option<Ty> {
         for child in self.children() {
-            if matches!(child, Ty::Rec(..)) && child.unfold() == *target {
+            if let Ty::Rec(_, body) = child
+                && body.has_head_of(target)
+                && child.unfold() == *target
+            {
                 return Some(child.clone());
             }
             if let Some(found) = child.find_unfolding_to(target) {
@@ -265,18 +291,40 @@ impl Row {
             Row::Var(v) => {
                 out.insert(*v);
             }
-            Row::Extend { field, rest, .. } => {
+            Row::Extend {
+                field,
+                method,
+                rest,
+                ..
+            } => {
                 field.free_vars(out);
+                method.free_vars(out);
                 rest.free_vars(out);
             }
             Row::Maybe {
-                pres, field, rest, ..
+                pres,
+                field,
+                method,
+                rest,
+                ..
             } => {
                 out.insert(*pres);
                 field.free_vars(out);
+                method.free_vars(out);
                 rest.free_vars(out);
             }
         }
+    }
+
+    fn labels(&self) -> impl Iterator<Item = &str> {
+        let mut cursor = Some(self);
+        std::iter::from_fn(move || match cursor? {
+            Row::Extend { label, rest, .. } | Row::Maybe { label, rest, .. } => {
+                cursor = Some(rest);
+                Some(label.as_str())
+            }
+            Row::Empty | Row::Var(_) => None,
+        })
     }
 
     fn fields(&self) -> impl Iterator<Item = &Ty> {
@@ -292,20 +340,28 @@ impl Row {
 
     fn map_fields(&self, f: &impl Fn(&Ty) -> Ty) -> Row {
         match self {
-            Row::Extend { label, field, rest } => Row::Extend {
+            Row::Extend {
+                label,
+                field,
+                method,
+                rest,
+            } => Row::Extend {
                 label: label.clone(),
                 field: Box::new(f(field)),
+                method: Box::new(f(method)),
                 rest: Box::new(rest.map_fields(f)),
             },
             Row::Maybe {
                 label,
                 pres,
                 field,
+                method,
                 rest,
             } => Row::Maybe {
                 label: label.clone(),
                 pres: *pres,
                 field: Box::new(f(field)),
+                method: Box::new(f(method)),
                 rest: Box::new(rest.map_fields(f)),
             },
             other => other.clone(),
@@ -457,7 +513,9 @@ impl Row {
                     write!(f, " | {}", name_of(*v))
                 }
             }
-            Row::Extend { label, field, rest } => {
+            Row::Extend {
+                label, field, rest, ..
+            } => {
                 if !first {
                     write!(f, ", ")?;
                 }
@@ -518,6 +576,7 @@ mod tests {
             .fold(tail, |rest, (label, field)| Row::Extend {
                 label: label.to_string(),
                 field: Box::new(field.clone()),
+                method: Box::new(PLAIN),
                 rest: Box::new(rest),
             });
         Ty::Variant(row)
@@ -527,9 +586,11 @@ mod tests {
         let link = Ty::Record(Row::Extend {
             label: "0".into(),
             field: Box::new(Ty::Int),
+            method: Box::new(PLAIN),
             rest: Box::new(Row::Extend {
                 label: "1".into(),
                 field: Box::new(Ty::Var(binder)),
+                method: Box::new(PLAIN),
                 rest: Box::new(Row::Empty),
             }),
         });

@@ -32,8 +32,8 @@ use crate::hir::{
     Span, Symbol,
 };
 use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
-use crate::lower::{DotCall, Take};
-use crate::ty::{ABSENT, Group, PRESENT, Row, Scheme, Ty, TypeVar};
+use crate::lower::{DotCall, SELF_NAME, Take};
+use crate::ty::{ABSENT, Group, METHOD, PLAIN, PRESENT, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{Vocab, list};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -74,6 +74,24 @@ pub struct DotCalls {
     pub calls: HashMap<ExprId, DotCall>,
     pub takes: HashMap<ExprId, Take>,
     pub source: String,
+    /// The `Field` of each dot call's callee, whose method flag the call settles.
+    callees: HashSet<ExprId>,
+}
+
+impl DotCalls {
+    pub fn new(
+        calls: HashMap<ExprId, DotCall>,
+        takes: HashMap<ExprId, Take>,
+        source: String,
+    ) -> Self {
+        let callees = calls.values().map(|call| call.callee).collect();
+        DotCalls {
+            calls,
+            takes,
+            source,
+            callees,
+        }
+    }
 }
 
 /// Like [`infer`], for a program that may be interactive: its three contract
@@ -176,6 +194,14 @@ struct Inferer {
     /// been generalized, by their name.
     restricted: HashMap<Symbol, String>,
     dots: DotCalls,
+    /// The type `self` takes in the method the next `Func` is, set just before
+    /// inferring it.
+    method_self: Option<Ty>,
+    /// The method flag of each `Field` a dot call or a `::` names.
+    field_flags: HashMap<ExprId, Ty>,
+    /// The parameter names of the plain functions written in record literals,
+    /// by field label, for the hint a dot call on one gives.
+    plain_fns: HashMap<String, Vec<String>>,
     node_types: HashMap<ExprId, Ty>,
     schemes: HashMap<Symbol, Scheme>,
     binders: HashMap<Symbol, Ty>,
@@ -200,6 +226,11 @@ struct Inferer {
     /// The same for row variables: every field a row gains must satisfy them.
     row_kinds: HashMap<TypeVar, Kinds>,
     errors: Vec<GoatError>,
+}
+
+/// Whether `expr` is a function whose first parameter is `self`.
+fn is_method(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::Func { params, .. } if params.first().is_some_and(|p| p.name == SELF_NAME))
 }
 
 /// Whether evaluating `expr` can do no work, so its binding may be generalized:
@@ -371,20 +402,28 @@ impl Inferer {
                 Some(r) => self.resolve_row(r),
                 None => Row::Var(*v),
             },
-            Row::Extend { label, field, rest } => Row::Extend {
+            Row::Extend {
+                label,
+                field,
+                method,
+                rest,
+            } => Row::Extend {
                 label: label.clone(),
                 field: Box::new(self.resolve(field)),
+                method: Box::new(self.resolve(method)),
                 rest: Box::new(self.resolve_row(rest)),
             },
             Row::Maybe {
                 label,
                 pres,
                 field,
+                method,
                 rest,
             } => match self.resolve(&Ty::Var(*pres)) {
                 present if present == PRESENT => Row::Extend {
                     label: label.clone(),
                     field: Box::new(self.resolve(field)),
+                    method: Box::new(self.resolve(method)),
                     rest: Box::new(self.resolve_row(rest)),
                 },
                 absent if absent == ABSENT => self.resolve_row(rest),
@@ -392,6 +431,7 @@ impl Inferer {
                     label: label.clone(),
                     pres,
                     field: Box::new(self.resolve(field)),
+                    method: Box::new(self.resolve(method)),
                     rest: Box::new(self.resolve_row(rest)),
                 },
                 _ => unreachable!("a presence variable is bound to a presence or a variable"),
@@ -620,12 +660,14 @@ impl Inferer {
                     label,
                     pres,
                     field,
+                    method,
                     rest,
                 },
                 _,
             ) => match self.surface(label, &b, true) {
-                Some((b_pres, b_field, b_rest)) => {
+                Some((b_pres, b_field, b_method, b_rest)) => {
                     self.unify_presence(&Ty::Var(*pres), &b_pres, span);
+                    self.unify_method(label, method, &b_method, span);
                     self.unify_ty(field, &b_field, span);
                     self.unify_row(rest, &b_rest, span, kind);
                 }
@@ -634,9 +676,18 @@ impl Inferer {
                     self.unify_row(rest, &b, span, kind);
                 }
             },
-            (Row::Extend { label, field, rest }, _) => match self.surface(label, &b, false) {
-                Some((b_pres, b_field, b_rest)) => {
+            (
+                Row::Extend {
+                    label,
+                    field,
+                    method,
+                    rest,
+                },
+                _,
+            ) => match self.surface(label, &b, false) {
+                Some((b_pres, b_field, b_method, b_rest)) => {
                     self.unify_presence(&PRESENT, &b_pres, span);
+                    self.unify_method(label, method, &b_method, span);
                     self.unify_ty(field, &b_field, span);
                     self.unify_row(rest, &b_rest, span, kind);
                 }
@@ -718,24 +769,27 @@ impl Inferer {
     /// position and their presence. The recursion is as deep as the row is
     /// long, which [`MAX_TYPE_TERMS`] caps: every row grows by one inferred
     /// expression at a time and each is checked.
-    fn surface(&mut self, label: &str, row: &Row, optional: bool) -> Option<(Ty, Ty, Row)> {
+    fn surface(&mut self, label: &str, row: &Row, optional: bool) -> Option<(Ty, Ty, Ty, Row)> {
         match self.resolve_row(row) {
             Row::Empty => None,
             Row::Extend {
                 label: l2,
                 field,
+                method,
                 rest,
             } => {
                 if l2 == label {
-                    Some((PRESENT, *field, *rest))
+                    Some((PRESENT, *field, *method, *rest))
                 } else {
-                    let (p, f, r) = self.surface(label, &rest, optional)?;
+                    let (p, f, m, r) = self.surface(label, &rest, optional)?;
                     Some((
                         p,
                         f,
+                        m,
                         Row::Extend {
                             label: l2,
                             field,
+                            method,
                             rest: Box::new(r),
                         },
                     ))
@@ -745,19 +799,22 @@ impl Inferer {
                 label: l2,
                 pres,
                 field,
+                method,
                 rest,
             } => {
                 if l2 == label {
-                    Some((Ty::Var(pres), *field, *rest))
+                    Some((Ty::Var(pres), *field, *method, *rest))
                 } else {
-                    let (p, f, r) = self.surface(label, &rest, optional)?;
+                    let (p, f, m, r) = self.surface(label, &rest, optional)?;
                     Some((
                         p,
                         f,
+                        m,
                         Row::Maybe {
                             label: l2,
                             pres,
                             field,
+                            method,
                             rest: Box::new(r),
                         },
                     ))
@@ -774,6 +831,7 @@ impl Inferer {
                 }
                 let field = self.fresh();
                 let rest = self.fresh_row();
+                let method = self.fresh();
                 banned.insert(label.to_string());
                 self.lack(&rest, &banned);
                 if let (Ty::Var(f), Row::Var(r)) = (&field, &rest) {
@@ -788,6 +846,7 @@ impl Inferer {
                             label: label.to_string(),
                             pres,
                             field: Box::new(field.clone()),
+                            method: Box::new(method.clone()),
                             rest: Box::new(rest.clone()),
                         },
                     )
@@ -797,13 +856,33 @@ impl Inferer {
                         Row::Extend {
                             label: label.to_string(),
                             field: Box::new(field.clone()),
+                            method: Box::new(method.clone()),
                             rest: Box::new(rest.clone()),
                         },
                     )
                 };
                 self.row_subst.insert(v, grown);
-                Some((pres, field, rest))
+                Some((pres, field, method, rest))
             }
+        }
+    }
+
+    /// Make two method flags agree: a variable takes the other side, and a
+    /// field cannot be a method in one record and a plain value in the other.
+    fn unify_method(&mut self, label: &str, a: &Ty, b: &Ty, span: Span) {
+        let (a, b) = (self.resolve(a), self.resolve(b));
+        match (&a, &b) {
+            _ if a == b => {}
+            (Ty::Var(v), other) | (other, Ty::Var(v)) => {
+                self.subst.insert(*v, other.clone());
+            }
+            _ => self.errors.push(GoatError::new(
+                span,
+                format!(
+                    "`{label}` is a method in one record and a plain function in the other, so they don't have the same shape. \
+                     Start both with `self`, or neither."
+                ),
+            )),
         }
     }
 
@@ -1488,7 +1567,10 @@ impl Inferer {
                 Ty::from(*ret),
             ),
             ExprKind::Func { params, body } => {
-                let arg_tys: Vec<Ty> = params.iter().map(|_| self.fresh()).collect();
+                let mut arg_tys: Vec<Ty> = params.iter().map(|_| self.fresh()).collect();
+                if let Some(receiver) = self.method_self.take() {
+                    arg_tys[0] = receiver;
+                }
                 for (param, ty) in params.iter().zip(&arg_tys) {
                     self.bind_env(param.symbol, Scheme::mono(ty.clone()));
                     self.params.insert(param.symbol, param.name.clone());
@@ -1539,31 +1621,21 @@ impl Inferer {
                 self.fresh()
             }
             ExprKind::Trap(_) => self.fresh(),
-            ExprKind::Record { fields } => {
-                let field_tys: Vec<(String, Ty)> = fields
-                    .iter()
-                    .map(|(label, value)| (label.clone(), self.infer(value)))
-                    .collect();
-                // Build the closed row back-to-front so field order is kept.
-                let mut row = Row::Empty;
-                for (label, ty) in field_tys.into_iter().rev() {
-                    row = Row::Extend {
-                        label,
-                        field: Box::new(ty),
-                        rest: Box::new(row),
-                    };
-                }
-                Ty::Record(row)
-            }
+            ExprKind::Record { fields } => self.infer_record(fields),
             ExprKind::Spread { base, fields } => self.infer_spread(base, fields),
             ExprKind::Restrict { record, labels } => self.infer_restrict(expr.span, record, labels),
             ExprKind::Field { record, label } => {
                 let record_ty = self.infer(record);
                 let field_ty = self.fresh();
+                let method = self.fresh();
+                if self.dots.callees.contains(&expr.id) || self.dots.takes.contains_key(&expr.id) {
+                    self.field_flags.insert(expr.id, method.clone());
+                }
                 let rest = self.fresh_row();
                 let expected = Ty::Record(Row::Extend {
                     label: label.clone(),
                     field: Box::new(field_ty.clone()),
+                    method: Box::new(method),
                     rest: Box::new(rest),
                 });
                 self.unify(&record_ty, &expected, expr.span);
@@ -1585,6 +1657,7 @@ impl Inferer {
                 Ty::Variant(Row::Extend {
                     label: name.clone(),
                     field: Box::new(payload_ty),
+                    method: Box::new(PLAIN),
                     rest: Box::new(self.fresh_row()),
                 })
             }
@@ -1681,9 +1754,21 @@ impl Inferer {
     /// [`Inferer::infer_kind`] frame.
     #[inline(never)]
     fn infer_app(&mut self, id: ExprId, span: Span, callee: &Expr, args: &[Expr]) -> Ty {
+        let before_callee = self.errors.len();
         let callee_ty = self.infer(callee);
         let mut arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
         let ret = self.fresh();
+        if self.errors.len() > before_callee
+            && let Some(message) = self.dropped_method_message(id, before_callee)
+        {
+            self.errors.truncate(before_callee);
+            self.errors.push(GoatError::new(span, message));
+            return ret;
+        }
+        if let Some(message) = self.misused_field_message(id, span, callee, &callee_ty, args) {
+            self.errors.push(GoatError::new(span, message));
+            return ret;
+        }
         let head = self.resolve_head(&callee_ty);
         if let Ty::Func(params, _) = &head {
             self.widen_arguments(params, &mut arg_tys);
@@ -1720,6 +1805,93 @@ impl Inferer {
         ret
     }
 
+    /// The source text of `args`, after the first `skip`, joined by commas.
+    fn args_text(&self, args: &[Expr], skip: usize) -> Option<String> {
+        let parts: Option<Vec<&str>> = args
+            .iter()
+            .skip(skip)
+            .map(|a| self.dots.source.get(a.span.start..a.span.end))
+            .collect();
+        Some(parts?.join(", "))
+    }
+
+    /// The error for a dot call on a plain function, or for `r::f(…)` on a
+    /// method that is missing its `self` argument (ADR 0034). A dot call on a
+    /// field whose flag is not yet known makes it a method.
+    fn misused_field_message(
+        &mut self,
+        id: ExprId,
+        span: Span,
+        callee: &Expr,
+        callee_ty: &Ty,
+        args: &[Expr],
+    ) -> Option<String> {
+        let flag = self.field_flags.get(&callee.id).cloned()?;
+        let flag = self.resolve(&flag);
+        if let Some(dot) = self.dots.calls.get(&id).cloned() {
+            if flag == METHOD {
+                return None;
+            }
+            if flag != PLAIN {
+                self.unify_method(&dot.label, &flag, &METHOD, span);
+                return None;
+            }
+            let source = &self.dots.source;
+            let receiver = source.get(dot.receiver.start..dot.receiver.end)?;
+            let call = source.get(dot.span.start..dot.span.end)?;
+            let method = &dot.label;
+            let rest = self.args_text(args, 1)?;
+            let hint = match self.plain_fns.get(method) {
+                Some(names) => names.iter().fold("program(self".to_string(), |text, name| {
+                    format!("{text}, {name}")
+                }),
+                None => "program(self, …".to_string(),
+            };
+            return Some(format!(
+                "`{method}` has no `self`, so `{call}` can't hand it `{receiver}`. \
+                 Call it with `{receiver}::{method}({rest})`. \
+                 If `{method}` is meant to work on `{receiver}`, make it a method by writing `self` first: `{hint})`."
+            ));
+        }
+        let take = self.dots.takes.get(&callee.id)?;
+        if flag != METHOD {
+            return None;
+        }
+        let Ty::Func(params, _) = self.resolve_head(callee_ty) else {
+            return None;
+        };
+        if params.len() != args.len() + 1 {
+            return None;
+        }
+        let receiver = self
+            .dots
+            .source
+            .get(take.receiver.start..take.receiver.end)?;
+        let method = &take.label;
+        let rest = self.args_text(args, 0)?;
+        Some(format!(
+            "`{receiver}::{method}({rest})` takes `{method}` out without handing it `{receiver}`, so `self` gets nothing. \
+             Write `{receiver}.{method}({rest})`."
+        ))
+    }
+
+    /// `r.f(…)` where `r`'s record has no `f` because the method that made `r`
+    /// built a new record instead of starting from `...self`.
+    fn dropped_method_message(&self, id: ExprId, before: usize) -> Option<String> {
+        let dot = self.dots.calls.get(&id)?;
+        let missing = format!("record is missing field `{}`", dot.label);
+        self.errors[before..]
+            .iter()
+            .any(|e| e.message == missing)
+            .then_some(())?;
+        let inner = self.dots.calls.values().find(|c| c.span == dot.receiver)?;
+        let call = self.dots.source.get(dot.receiver.start..dot.receiver.end)?;
+        Some(format!(
+            "`{call}` gave back a record with no `{}`. If `{}` builds a new record, start it with `...self` so the methods come along.",
+            dot.label, inner.label
+        ))
+    }
+
     /// The message for a dot call `r.f(…)` whose unification failed, naming
     /// the receiver the dot passed first. `None` leaves the errors from
     /// `before` as they are: a call that is not a dot call, or a type mismatch
@@ -1747,21 +1919,6 @@ impl Inferer {
                 format!(
                     "`{receiver}.{method}({receiver})` already hands `{receiver}` over: the dot does it. \
                      Write `{receiver}.{method}()`."
-                )
-            } else if takes + 1 == passed {
-                let fix = if takes == 0 {
-                    format!(
-                        "`{method}` has no parameter for it. Add one first, like `program(self) do … done`"
-                    )
-                } else {
-                    format!(
-                        "`{method}` takes only {}. Add `self` first, like `program(self, …)`",
-                        count(takes, "argument")
-                    )
-                };
-                format!(
-                    "`{receiver}.{method}()` hands `{receiver}` to `{method}` as its first argument, but {fix}, \
-                     or write `({receiver}.{method})()` to call it without `{receiver}`."
                 )
             } else {
                 format!(
@@ -1885,6 +2042,149 @@ impl Inferer {
         Ty::func(vec![self.fresh()], Ty::Unit)
     }
 
+    /// A record literal. Its methods share one receiver type, `self`: the
+    /// record's fields and a row `ρ` for whatever a later extension adds. The
+    /// literal is typed like a `letrec` over its fields, so a method that
+    /// returns `{...self, …}` returns that same type, and the one recursive
+    /// type has one shape however many methods there are (ADR 0034).
+    fn infer_record(&mut self, fields: &[(String, Expr)]) -> Ty {
+        for (label, value) in fields {
+            if let ExprKind::Func { params, .. } = &value.kind
+                && !is_method(value)
+            {
+                let names = params.iter().map(|p| p.name.clone()).collect();
+                self.plain_fns.insert(label.clone(), names);
+            }
+        }
+        if !fields.iter().any(|(_, value)| is_method(value)) {
+            let tys: Vec<Ty> = fields.iter().map(|(_, value)| self.infer(value)).collect();
+            let row = fields
+                .iter()
+                .zip(tys)
+                .rev()
+                .fold(Row::Empty, |rest, ((label, _), field)| Row::Extend {
+                    label: label.clone(),
+                    field: Box::new(field),
+                    method: Box::new(PLAIN),
+                    rest: Box::new(rest),
+                });
+            return Ty::Record(row);
+        }
+        let flags: Vec<Ty> = fields
+            .iter()
+            .map(|(_, value)| if is_method(value) { METHOD } else { PLAIN })
+            .collect();
+        let slots: Vec<Ty> = fields.iter().map(|_| self.fresh()).collect();
+        let tail = self.fresh_row();
+        let self_row = fields.iter().zip(&slots).zip(&flags).rev().fold(
+            tail,
+            |rest, (((label, _), slot), flag)| Row::Extend {
+                label: label.clone(),
+                field: Box::new(slot.clone()),
+                method: Box::new(flag.clone()),
+                rest: Box::new(rest),
+            },
+        );
+        let self_ty = Ty::Record(self_row);
+        let mut tys = Vec::with_capacity(fields.len());
+        for ((_, value), slot) in fields.iter().zip(&slots) {
+            if is_method(value) {
+                self.method_self = Some(self_ty.clone());
+                tys.push(self.infer(value));
+            } else {
+                let ty = self.infer(value);
+                self.unify(slot, &ty, value.span);
+                tys.push(ty);
+            }
+        }
+        let tied = self.tie_methods(fields, &slots, &flags, &tys, &self_ty);
+        let row = fields.iter().zip(&flags).zip(tied).rev().fold(
+            Row::Empty,
+            |rest, (((label, _), flag), field)| Row::Extend {
+                label: label.clone(),
+                field: Box::new(field),
+                method: Box::new(flag.clone()),
+                rest: Box::new(rest),
+            },
+        );
+        Ty::Record(row)
+    }
+
+    /// The type each field of a literal with methods has once its methods'
+    /// receiver is folded into one recursive type, `μs. {fields | ρ}`, where
+    /// each method takes and returns `s`. If a method's type mentions another
+    /// field's variable (it calls a sibling through `self`), folding is not
+    /// possible, and each field's variable is unified with its type instead.
+    fn tie_methods(
+        &mut self,
+        fields: &[(String, Expr)],
+        slots: &[Ty],
+        flags: &[Ty],
+        tys: &[Ty],
+        self_ty: &Ty,
+    ) -> Vec<Ty> {
+        let receiver = self.resolve(self_ty);
+        let binder = self.fresh_id();
+        let unrolled: Vec<Ty> = fields
+            .iter()
+            .zip(tys)
+            .map(|((_, value), ty)| {
+                let ty = self.resolve(ty);
+                if is_method(value) {
+                    abstract_receiver(&ty, &receiver, binder)
+                } else {
+                    ty
+                }
+            })
+            .collect();
+        let slot_vars: BTreeSet<TypeVar> = fields
+            .iter()
+            .zip(slots)
+            .filter(|((_, value), _)| is_method(value))
+            .filter_map(|(_, slot)| match slot {
+                Ty::Var(v) => Some(*v),
+                _ => None,
+            })
+            .collect();
+        let mut loose = BTreeSet::new();
+        for (ty, (_, value)) in unrolled.iter().zip(fields) {
+            if is_method(value) {
+                ty.free_vars(&mut loose);
+            }
+        }
+        let Ty::Record(receiver_row) = &receiver else {
+            unreachable!("a record's receiver is a record")
+        };
+        if loose.is_disjoint(&slot_vars) {
+            let body = fields.iter().zip(flags).zip(&unrolled).rev().fold(
+                row_after(receiver_row, fields.len()),
+                |rest, (((label, _), flag), field)| Row::Extend {
+                    label: label.clone(),
+                    field: Box::new(field.clone()),
+                    method: Box::new(flag.clone()),
+                    rest: Box::new(rest),
+                },
+            );
+            let recursive = Ty::Rec(binder, Box::new(Ty::Record(body)));
+            let folded: Vec<Ty> = unrolled
+                .iter()
+                .map(|ty| ty.substitute(binder, &recursive))
+                .collect();
+            for (((_, value), slot), ty) in fields.iter().zip(slots).zip(&folded) {
+                if is_method(value) {
+                    self.unify(slot, ty, value.span);
+                }
+            }
+            return folded;
+        }
+        for (((_, value), slot), ty) in fields.iter().zip(slots).zip(tys) {
+            if is_method(value) {
+                self.unify(slot, ty, value.span);
+            }
+        }
+        tys.to_vec()
+    }
+
     /// `{...base, l: e}` updates a field `base` has, at that field's type, and
     /// adds one it lacks. When `base`'s row is not yet known, `l` is a
     /// presence-variable field in it (there or not, at `e`'s type) and a
@@ -1901,9 +2201,12 @@ impl Inferer {
                 format!("`...` copies a record, but this is `{other}`"),
             )),
         }
-        let field_tys: Vec<(&str, Ty, Span)> = fields
+        let field_tys: Vec<(&str, (Ty, Ty), Span)> = fields
             .iter()
-            .map(|(label, value)| (label.as_str(), self.infer(value), value.span))
+            .map(|(label, value)| {
+                let flag = if is_method(value) { METHOD } else { PLAIN };
+                (label.as_str(), (self.infer(value), flag), value.span)
+            })
             .collect();
         // Resolved after the fields are inferred: reading `base.l` in a field
         // grows `base`'s row with `l`, which the override then updates.
@@ -1918,12 +2221,13 @@ impl Inferer {
         Ty::Record(row)
     }
 
-    /// `row` with `label` set to a value of type `ty`.
+    /// `row` with `label` set to a value of type `ty`, a method when `flag` is
+    /// [`METHOD`]. An update keeps the field it replaces, flag included.
     fn override_field(
         &mut self,
         row: Row,
         label: &str,
-        ty: Ty,
+        (ty, flag): (Ty, Ty),
         span: Span,
         copied: &Copied,
     ) -> Row {
@@ -1931,20 +2235,24 @@ impl Inferer {
             Row::Extend {
                 label: l,
                 field,
+                method,
                 rest,
             } => {
                 if l == label {
                     self.keep_field_type(label, &field, &ty, span, copied);
+                    self.unify_method(label, &method, &flag, span);
                     Row::Extend {
                         label: l,
                         field,
+                        method,
                         rest,
                     }
                 } else {
-                    let rest = self.override_field(*rest, label, ty, span, copied);
+                    let rest = self.override_field(*rest, label, (ty, flag), span, copied);
                     Row::Extend {
                         label: l,
                         field,
+                        method,
                         rest: Box::new(rest),
                     }
                 }
@@ -1953,21 +2261,25 @@ impl Inferer {
                 label: l,
                 pres,
                 field,
+                method,
                 rest,
             } => {
                 if l == label {
                     self.keep_field_type(label, &field, &ty, span, copied);
+                    self.unify_method(label, &method, &flag, span);
                     Row::Extend {
                         label: l,
                         field,
+                        method,
                         rest,
                     }
                 } else {
-                    let rest = self.override_field(*rest, label, ty, span, copied);
+                    let rest = self.override_field(*rest, label, (ty, flag), span, copied);
                     Row::Maybe {
                         label: l,
                         pres,
                         field,
+                        method,
                         rest: Box::new(rest),
                     }
                 }
@@ -1975,6 +2287,7 @@ impl Inferer {
             Row::Empty => Row::Extend {
                 label: label.to_string(),
                 field: Box::new(ty),
+                method: Box::new(flag),
                 rest: Box::new(Row::Empty),
             },
             Row::Var(v) => {
@@ -1994,18 +2307,21 @@ impl Inferer {
                         label: label.to_string(),
                         pres,
                         field: Box::new(ty.clone()),
+                        method: Box::new(flag.clone()),
                         rest: Box::new(rest.clone()),
                     };
                     self.unify(&Ty::Record(Row::Var(v)), &Ty::Record(maybe), span);
                     return Row::Extend {
                         label: label.to_string(),
                         field: Box::new(ty),
+                        method: Box::new(flag),
                         rest: Box::new(rest),
                     };
                 }
                 Row::Extend {
                     label: label.to_string(),
                     field: Box::new(ty),
+                    method: Box::new(flag),
                     rest: Box::new(Row::Var(v)),
                 }
             }
@@ -2049,6 +2365,7 @@ impl Inferer {
             expected = Row::Extend {
                 label: label.clone(),
                 field: Box::new(self.fresh()),
+                method: Box::new(self.fresh()),
                 rest: Box::new(expected),
             };
         }
@@ -2140,6 +2457,7 @@ impl Inferer {
                     row = Row::Extend {
                         label: label.clone(),
                         field: Box::new(ty),
+                        method: Box::new(self.fresh()),
                         rest: Box::new(row),
                     };
                 }
@@ -2182,6 +2500,7 @@ impl Inferer {
         let expected = Ty::Variant(Row::Extend {
             label: tag.to_string(),
             field: Box::new(payload_ty),
+            method: Box::new(PLAIN),
             rest: Box::new(self.fresh_row()),
         });
         self.unify(scrut_ty, &expected, span);
@@ -2338,20 +2657,28 @@ fn plug<'a>(ty: &'a Ty, hole: &Hole, with: &Ty, at: Guard, bound: &mut Vec<&'a T
 /// [`plug`] over the fields of a row, which already sit at `at`.
 fn plug_row<'a>(row: &'a Row, hole: &Hole, with: &Ty, at: Guard, bound: &mut Vec<&'a Ty>) -> Row {
     match row {
-        Row::Extend { label, field, rest } => Row::Extend {
+        Row::Extend {
+            label,
+            field,
+            method,
+            rest,
+        } => Row::Extend {
             label: label.clone(),
             field: Box::new(plug(field, hole, with, at, bound)),
+            method: method.clone(),
             rest: Box::new(plug_row(rest, hole, with, at, bound)),
         },
         Row::Maybe {
             label,
             pres,
             field,
+            method,
             rest,
         } => Row::Maybe {
             label: label.clone(),
             pres: *pres,
             field: Box::new(plug(field, hole, with, at, bound)),
+            method: method.clone(),
             rest: Box::new(plug_row(rest, hole, with, at, bound)),
         },
         other => other.clone(),
@@ -2409,20 +2736,28 @@ fn find_mention_in<'a>(
 /// `row` with its tail replaced by `tail`.
 fn replace_tail(row: &Row, tail: Row) -> Row {
     match row {
-        Row::Extend { label, field, rest } => Row::Extend {
+        Row::Extend {
+            label,
+            field,
+            method,
+            rest,
+        } => Row::Extend {
             label: label.clone(),
             field: field.clone(),
+            method: method.clone(),
             rest: Box::new(replace_tail(rest, tail)),
         },
         Row::Maybe {
             label,
             pres,
             field,
+            method,
             rest,
         } => Row::Maybe {
             label: label.clone(),
             pres: *pres,
             field: field.clone(),
+            method: method.clone(),
             rest: Box::new(replace_tail(rest, tail)),
         },
         _ => tail,
@@ -2445,12 +2780,31 @@ fn row_shape(row: &Row) -> (Vec<String>, Option<TypeVar>) {
     }
 }
 
+/// `ty` with every part equal to the record type `receiver` replaced by the
+/// variable `binder`.
+fn abstract_receiver(ty: &Ty, receiver: &Ty, binder: TypeVar) -> Ty {
+    if ty == receiver {
+        Ty::Var(binder)
+    } else {
+        ty.map_children(&|part| abstract_receiver(part, receiver, binder))
+    }
+}
+
+/// `row` without its first `n` fields.
+fn row_after(row: &Row, n: usize) -> Row {
+    match row {
+        Row::Extend { rest, .. } | Row::Maybe { rest, .. } if n > 0 => row_after(rest, n - 1),
+        other => other.clone(),
+    }
+}
+
 fn field_of<'a>(row: &'a Row, label: &str) -> Option<&'a Ty> {
     match row {
         Row::Extend {
             label: l,
             field,
             rest,
+            ..
         } => {
             if l == label {
                 Some(field)
@@ -2524,20 +2878,28 @@ fn subst_row(row: &Row, mapping: &HashMap<TypeVar, TypeVar>) -> Row {
     match row {
         Row::Empty => Row::Empty,
         Row::Var(v) => Row::Var(mapping.get(v).copied().unwrap_or(*v)),
-        Row::Extend { label, field, rest } => Row::Extend {
+        Row::Extend {
+            label,
+            field,
+            method,
+            rest,
+        } => Row::Extend {
             label: label.clone(),
             field: Box::new(subst_vars(field, mapping)),
+            method: Box::new(subst_vars(method, mapping)),
             rest: Box::new(subst_row(rest, mapping)),
         },
         Row::Maybe {
             label,
             pres,
             field,
+            method,
             rest,
         } => Row::Maybe {
             label: label.clone(),
             pres: mapping.get(pres).copied().unwrap_or(*pres),
             field: Box::new(subst_vars(field, mapping)),
+            method: Box::new(subst_vars(method, mapping)),
             rest: Box::new(subst_row(rest, mapping)),
         },
     }
@@ -2553,6 +2915,7 @@ mod tests {
         Row::Extend {
             label: label.to_string(),
             field: Box::new(field),
+            method: Box::new(PLAIN),
             rest: Box::new(rest),
         }
     }

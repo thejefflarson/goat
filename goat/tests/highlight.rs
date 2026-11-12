@@ -178,6 +178,21 @@ fn the_highlighter_draws_a_take_as_one_operator() {
     assert_eq!(spans, [(1, 3, "operator".to_string())]);
 }
 
+#[test]
+fn the_highlighter_draws_self_as_a_keyword_the_way_the_lexer_does() {
+    let mut editor = editor();
+    for source in [
+        "{moved: program(self) do {...self, x: self.x + 1} done}",
+        "selfish self_ myself self",
+        "x.self {self: 1} self::f",
+    ] {
+        assert_agrees(&mut editor, source, source);
+    }
+    let spans = edit(&mut editor, "self selfie");
+    assert_eq!(spans, [(0, 4, "keyword".to_string())]);
+    editor.finish().unwrap();
+}
+
 /// With the host's own tags declared, the spans still equal the lexer's, for
 /// the turtle's names and the canvas host's.
 #[test]

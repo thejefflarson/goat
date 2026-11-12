@@ -13,7 +13,7 @@
 //! graph is finite, and partition refinement and the cycle-cutting emit walk
 //! it finitely.
 
-use goat_checker::ty::{Row, Ty, TypeVar};
+use goat_checker::ty::{PLAIN, Row, Ty, TypeVar};
 use std::collections::HashMap;
 
 /// Canonical binders count up from here. A ground type has no free variables,
@@ -24,7 +24,9 @@ const BINDER_BASE: TypeVar = 1 << 30;
 pub fn ground_fields(row: &Row) -> impl Iterator<Item = (&String, &Ty)> {
     let mut next = Some(row);
     std::iter::from_fn(move || match next? {
-        Row::Extend { label, field, rest } => {
+        Row::Extend {
+            label, field, rest, ..
+        } => {
             next = Some(rest);
             Some((label, &**field))
         }
@@ -39,6 +41,7 @@ fn row_from(fields: Vec<(String, Ty)>) -> Row {
         .fold(Row::Empty, |rest, (label, field)| Row::Extend {
             label,
             field: Box::new(field),
+            method: Box::new(PLAIN),
             rest: Box::new(rest),
         })
 }
@@ -106,9 +109,12 @@ fn rename_binders(ty: &Ty, scope: &mut Vec<(TypeVar, TypeVar)>) -> Ty {
 
 fn rename_row(row: &Row, scope: &mut Vec<(TypeVar, TypeVar)>) -> Row {
     match row {
-        Row::Extend { label, field, rest } => Row::Extend {
+        Row::Extend {
+            label, field, rest, ..
+        } => Row::Extend {
             label: label.clone(),
             field: Box::new(rename_binders(field, scope)),
+            method: Box::new(PLAIN),
             rest: Box::new(rename_row(rest, scope)),
         },
         other => other.clone(),

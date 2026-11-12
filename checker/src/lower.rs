@@ -46,6 +46,9 @@ const LOOP_COUNTER_NAME: &str = "count";
 const LOOP_START_NAME: &str = "start";
 const LOOP_STOP_NAME: &str = "stop";
 
+/// The first parameter that makes a function a method (ADR 0034).
+pub const SELF_NAME: &str = "self";
+
 /// The hidden binder of a dot call's computed receiver. No source name can
 /// spell it.
 pub const RECEIVER_NAME: &str = "@receiver";
@@ -53,6 +56,10 @@ pub const RECEIVER_NAME: &str = "@receiver";
 /// A call through a dot, `r.f(a)`, rewritten to `(r.f)(r, a)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DotCall {
+    /// The whole call.
+    pub span: Span,
+    /// The `r.f` field access being called.
+    pub callee: ExprId,
     /// Where the receiver is written; a diagnostic quotes it from the source.
     pub receiver: Span,
     pub label: String,
@@ -351,6 +358,10 @@ struct Lower {
     tags: HashMap<String, Option<Arc<Group>>>,
     dot_calls: HashMap<ExprId, DotCall>,
     takes: HashMap<ExprId, Take>,
+    /// Functions whose first parameter is `self`, by id, until a record
+    /// literal claims one as a field. Any left over is a `self` outside a
+    /// record.
+    unclaimed_methods: HashMap<ExprId, Span>,
 }
 
 impl Lower {
@@ -387,6 +398,18 @@ impl Lower {
         }
         let root = self.lower_goat(goat);
         self.scopes.pop();
+        let mut stray: Vec<Span> = self
+            .unclaimed_methods
+            .drain()
+            .map(|(_, span)| span)
+            .collect();
+        stray.sort_by_key(|span| (span.start, span.end));
+        for span in stray {
+            self.errors.push(GoatError::new(
+                span,
+                "`self` only works in a function written right inside a record, like `{moved: program(self) do … done}`.",
+            ));
+        }
         Ok(root)
     }
 
@@ -875,6 +898,7 @@ impl Lower {
                 label: label.clone(),
             },
         );
+        let callee_id = callee.id;
         args.insert(0, receiver);
         let app = self.node(
             span,
@@ -891,6 +915,8 @@ impl Lower {
         self.dot_calls.insert(
             app.id,
             DotCall {
+                span,
+                callee: callee_id,
                 receiver: receiver_span,
                 label,
                 receiver_kind,
@@ -1113,8 +1139,12 @@ impl Lower {
             let hint = self.similar_tag(&name).map_or_else(String::new, |tag| {
                 format!(", did you mean the tag `{tag}`?")
             });
-            self.errors
-                .push(GoatError::new(span, format!("unknown name `{name}`{hint}")));
+            let message = if name == SELF_NAME {
+                "`self` only works in a function written right inside a record, like `{moved: program(self) do … done}`.".to_string()
+            } else {
+                format!("unknown name `{name}`{hint}")
+            };
+            self.errors.push(GoatError::new(span, message));
             self.fresh_symbol()
         });
         self.node(span, ExprKind::Var { symbol, name })
@@ -1291,12 +1321,26 @@ impl Lower {
         let mut unpacked = Vec::new();
         let mut list_params = Vec::new();
         let mut body_pair = None;
+        let mut self_span = None;
         for child in pair.children() {
             match child.kind() {
                 "params" => {
-                    for param in child.children() {
+                    for (position, param) in child.children().enumerate() {
                         let pspan = self.span_of(&param);
                         let name = param.text().to_string();
+                        if name == SELF_NAME
+                            && !param.is("list_pattern")
+                            && !param.is("record_pattern")
+                        {
+                            if position == 0 {
+                                self_span = Some(pspan);
+                            } else {
+                                self.errors.push(GoatError::new(
+                                    pspan,
+                                    "`self` has to be the first parameter: `program(self, dt)`.",
+                                ));
+                            }
+                        }
                         if param.is("list_pattern") {
                             let source = self.fresh_symbol();
                             list_params.push((source, param));
@@ -1349,13 +1393,17 @@ impl Lower {
                 .unpack(source, &name, pattern, Some(body))
                 .expect("a body was given");
         }
-        self.node(
+        let func = self.node(
             span,
             ExprKind::Func {
                 params,
                 body: Box::new(body),
             },
-        )
+        );
+        if let Some(self_span) = self_span {
+            self.unclaimed_methods.insert(func.id, self_span);
+        }
+        func
     }
 
     /// Bind the names of a `{x, y, ...rest}` pattern in the current scope.
@@ -1508,6 +1556,7 @@ impl Lower {
             let label_span = self.span_of(&label_pair);
             let label = label_pair.text().to_string();
             let value = self.lower_expr(it.next().expect("a field has a value"));
+            self.unclaimed_methods.remove(&value.id);
             if fields.iter().any(|(l, _)| *l == label) {
                 self.errors.push(GoatError::new(
                     label_span,
