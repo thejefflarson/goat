@@ -261,18 +261,36 @@ fn a_take_call_lowers_to_the_parenthesised_projection_call() {
 }
 
 #[test]
-fn a_take_on_a_method_passes_the_record_explicitly() {
-    let record = "ball = {x: 1, moved: program(self) do self.x done}\n\
+fn a_take_on_a_method_is_an_error_that_steers_to_the_dot() {
+    let record = "ball = {x: 1, moved: program(self, k) do self.x + k done}\n\
                   other = {...ball, x: 10}\n";
-    let call = format!("{record}ball::moved(other)");
-    assert_eq!(plain_apps(&call), [("ball.moved".to_string(), 1)]);
-    assert_eq!(type_of(&call), "Number");
-    let (message, covered) = first_diagnostic(&format!("{record}ball::moved()"));
-    assert_eq!(
-        message,
-        "`ball::moved()` takes `moved` out without handing it `ball`, so `self` gets nothing. Write `ball.moved()`."
+    let cases = [
+        ("ball::moved(2)", "ball.moved(2)"),
+        ("ball::moved(other, 2)", "other.moved(2)"),
+        ("ball::moved", "ball.moved()"),
+    ];
+    for (written, suggested) in cases {
+        let (message, covered) = first_diagnostic(&format!("{record}{written}"));
+        assert_eq!(
+            message,
+            format!(
+                "`moved` has `self`, so call it with a dot: `{suggested}`. \
+                 `::` is for functions without `self`, like `ball::new(5)`."
+            ),
+            "{written}"
+        );
+        assert_eq!(covered, "ball::moved");
+    }
+}
+
+#[test]
+fn a_take_settles_an_open_field_as_plain() {
+    let source = "pick = program(r) do r::f done\npick({f: program(self) do 1 done})";
+    let (message, _) = first_diagnostic(source);
+    assert!(
+        message.contains("`f` is a method in one record and a plain function"),
+        "{message}"
     );
-    assert_eq!(covered, "ball::moved()");
 }
 
 #[test]

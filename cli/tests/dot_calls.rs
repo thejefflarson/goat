@@ -67,12 +67,13 @@ fn a_take_calls_without_the_record() {
 }
 
 #[test]
-fn a_take_on_a_method_passes_self_explicitly() {
-    let src = "ball = {x: 3, plus: program(self) do self.x done};\n\
-               other = {...ball, x: 10};\n\
-               print(ball::plus(other));\n\
-               print(ball.plus())";
-    assert_eq!(run(src), "10\n3");
+fn a_selfless_constructor_is_taken_and_its_result_called_with_a_dot() {
+    let src = "ball = {x: 0,
+                 new: program(x) do {x: x, moved: program(self) do {...self, x: self.x + 1} done} done,
+                 moved: program(self) do {...self, x: self.x + 1} done};\n\
+               print(ball::new(5).moved().x);\n\
+               print(ball.moved().x)";
+    assert_eq!(run(src), "6\n1");
 }
 
 #[test]

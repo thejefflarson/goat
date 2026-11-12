@@ -148,11 +148,19 @@ fn a_take_on_a_method_steers_to_the_dot() {
     assert_eq!(
         first_diagnostic(source),
         (
-            "`ball::moved()` takes `moved` out without handing it `ball`, so `self` gets nothing. Write `ball.moved()`."
+            "`moved` has `self`, so call it with a dot: `ball.moved()`. \
+             `::` is for functions without `self`, like `ball::new(5)`."
                 .to_string(),
-            "ball::moved()".to_string()
+            "ball::moved".to_string()
         )
     );
+}
+
+#[test]
+fn a_selfless_constructor_in_a_record_is_taken_with_a_double_colon() {
+    let source = "ball = {new: program(x) do {x: x, moved: program(self) do {...self, x: self.x + 1} done} done}\n\
+                  ball::new(5).moved().x";
+    assert_eq!(type_of(source), "Number");
 }
 
 #[test]

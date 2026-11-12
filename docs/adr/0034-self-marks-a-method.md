@@ -25,11 +25,14 @@
    to be a method. A field's type records whether it is a method, so a dot call
    on a parameter has one meaning. A dot call on a plain function is an error:
    "`double` has no `self`, so call it with `tools::double(5)`".
-5. **`r::f` takes a field out without passing the record.** `r::f(a…)` means
-   `(r.f)(a…)`, and bare `r::f` is the function value. On a method,
-   `ball::moved(other)` passes `self` explicitly. `(r.f)(x)` still works, since
-   a parenthesized expression is an expression, but `::` is the form the docs
-   teach.
+5. **`::` calls functions without `self` only.** `r::f(a…)` means
+   `(r.f)(a…)`, and bare `r::f` is the function value, so `ball::new(5)` calls
+   a constructor stored in the record. A method is called with `.` and nothing
+   else: `ball::moved()` and `ball::moved(other)` are errors that steer to
+   `ball.moved()` and `other.moved()`. Rust also allows `Type::method(x)`; goat
+   does not, so each kind of function has one call form, and `::` puts no shape
+   constraint on its arguments. `(r.f)(x)` still works, since a parenthesized
+   expression is an expression, but `::` is the form the docs teach.
 6. **No named types, no annotations.** Everything above is inferred.
 
 ## Consequences
@@ -88,10 +91,23 @@ wasm with one recursive type and no nested knots.
    `parser::lexer::highlight` marks a name `self` as a keyword (as it marks
    declared tags), and `editor/highlight.goat` does the same. `lexer::lex` and
    `tokenize`, which the parser reads, keep `self` a name, so the highlighter
-   and the lexer agree byte for byte on `highlight`'s output.
+   and the lexer agree byte for byte on `highlight`'s output. The rule is
+   lexical, so `self` reads as a keyword everywhere, a field label `{self: 1}`
+   included; telling the label apart would need the parse, which the
+   highlighter does not have.
 5. **Errors.** Each is spanned and names neither `μ` nor a raw variable:
    a dot call on a plain function suggests `::` and the `self` fix; `self`
-   outside a record, or not first, says where it goes; `r::f()` on a method says
-   `self` gets nothing and suggests `.`; a call on a record built by a method
+   outside a record, or not first, says where it goes; `r::f` on a method says
+   "`moved` has `self`, so call it with a dot: `ball.moved()`. `::` is for
+   functions without `self`, like `ball::new(5)`.", suggesting `other.moved()`
+   when the first argument names a record. `r::f` settles a field whose flag is
+   still open as plain, as `r.f(…)` settles it as a method; a call on a record built by a method
    without `...self` names the method that dropped the rest. The earlier
    `(r.f)()` suggestion is now `r::f()`.
+6. **Check time.** The ticket asked that the three-method model check in at
+   most twice the time of the same model written without methods. It does not:
+   3.1 ms against 0.15 ms in a release build. Each method's type embeds the
+   receiver twice, so the record type has about 110 terms against about 15, and
+   `unify_ty` resolves whole types at every step. The criterion
+   was waived for this build; sharing the receiver type, or resolving it
+   shallowly, is #417.

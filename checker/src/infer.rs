@@ -199,6 +199,10 @@ struct Inferer {
     method_self: Option<Ty>,
     /// The method flag of each `Field` a dot call or a `::` names.
     field_flags: HashMap<ExprId, Ty>,
+    /// The argument spans of the call whose callee is the `r::f` inferred next.
+    take_args: Option<(ExprId, Vec<Span>)>,
+    /// The `r::f` takes that named a method and were reported.
+    method_takes: HashSet<ExprId>,
     /// The parameter names of the plain functions written in record literals,
     /// by field label, for the hint a dot call on one gives.
     plain_fns: HashMap<String, Vec<String>>,
@@ -226,6 +230,16 @@ struct Inferer {
     /// The same for row variables: every field a row gains must satisfy them.
     row_kinds: HashMap<TypeVar, Kinds>,
     errors: Vec<GoatError>,
+}
+
+/// Whether `text` names a record the way a receiver does: `ball`, `a.b`.
+fn is_path(text: &str) -> bool {
+    text.split('.').all(|part| {
+        part.chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
+            && part.chars().all(|c| c.is_alphanumeric() || c == '_')
+    })
 }
 
 /// Whether `expr` is a function whose first parameter is `self`.
@@ -1635,10 +1649,13 @@ impl Inferer {
                 let expected = Ty::Record(Row::Extend {
                     label: label.clone(),
                     field: Box::new(field_ty.clone()),
-                    method: Box::new(method),
+                    method: Box::new(method.clone()),
                     rest: Box::new(rest),
                 });
                 self.unify(&record_ty, &expected, expr.span);
+                if let Some(take) = self.dots.takes.get(&expr.id).cloned() {
+                    self.check_take(expr.id, &take, &method);
+                }
                 field_ty
             }
             ExprKind::Tag {
@@ -1755,9 +1772,15 @@ impl Inferer {
     #[inline(never)]
     fn infer_app(&mut self, id: ExprId, span: Span, callee: &Expr, args: &[Expr]) -> Ty {
         let before_callee = self.errors.len();
+        if self.dots.takes.contains_key(&callee.id) {
+            self.take_args = Some((callee.id, args.iter().map(|a| a.span).collect()));
+        }
         let callee_ty = self.infer(callee);
         let mut arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
         let ret = self.fresh();
+        if self.method_takes.contains(&callee.id) {
+            return ret;
+        }
         if self.errors.len() > before_callee
             && let Some(message) = self.dropped_method_message(id, before_callee)
         {
@@ -1765,7 +1788,7 @@ impl Inferer {
             self.errors.push(GoatError::new(span, message));
             return ret;
         }
-        if let Some(message) = self.misused_field_message(id, span, callee, &callee_ty, args) {
+        if let Some(message) = self.misused_field_message(id, span, callee, args) {
             self.errors.push(GoatError::new(span, message));
             return ret;
         }
@@ -1815,15 +1838,13 @@ impl Inferer {
         Some(parts?.join(", "))
     }
 
-    /// The error for a dot call on a plain function, or for `r::f(…)` on a
-    /// method that is missing its `self` argument (ADR 0034). A dot call on a
-    /// field whose flag is not yet known makes it a method.
+    /// The error for a dot call on a plain function (ADR 0034). A dot call on
+    /// a field whose flag is not yet known makes it a method.
     fn misused_field_message(
         &mut self,
         id: ExprId,
         span: Span,
         callee: &Expr,
-        callee_ty: &Ty,
         args: &[Expr],
     ) -> Option<String> {
         let flag = self.field_flags.get(&callee.id).cloned()?;
@@ -1853,26 +1874,7 @@ impl Inferer {
                  If `{method}` is meant to work on `{receiver}`, make it a method by writing `self` first: `{hint})`."
             ));
         }
-        let take = self.dots.takes.get(&callee.id)?;
-        if flag != METHOD {
-            return None;
-        }
-        let Ty::Func(params, _) = self.resolve_head(callee_ty) else {
-            return None;
-        };
-        if params.len() != args.len() + 1 {
-            return None;
-        }
-        let receiver = self
-            .dots
-            .source
-            .get(take.receiver.start..take.receiver.end)?;
-        let method = &take.label;
-        let rest = self.args_text(args, 0)?;
-        Some(format!(
-            "`{receiver}::{method}({rest})` takes `{method}` out without handing it `{receiver}`, so `self` gets nothing. \
-             Write `{receiver}.{method}({rest})`."
-        ))
+        None
     }
 
     /// `r.f(…)` where `r`'s record has no `f` because the method that made `r`
@@ -2036,6 +2038,47 @@ impl Inferer {
                 .into_iter()
                 .map(|(span, message)| GoatError::new(span, message)),
         );
+    }
+
+    /// `r::f` is for a function without `self`, so it settles an open flag as
+    /// plain and reports a method, steering to the dot: to `r.f(…)`, or to
+    /// `other.f(…)` when the first argument looks meant as the receiver.
+    fn check_take(&mut self, id: ExprId, take: &Take, flag: &Ty) {
+        let args = match self.take_args.take() {
+            Some((callee, spans)) if callee == id => spans,
+            _ => Vec::new(),
+        };
+        match self.resolve(flag) {
+            Ty::Var(v) => {
+                self.subst.insert(v, PLAIN);
+                return;
+            }
+            flag if flag != METHOD => return,
+            _ => {}
+        }
+        self.method_takes.insert(id);
+        let source = &self.dots.source;
+        let text = |span: &Span| source.get(span.start..span.end);
+        let Some(receiver) = text(&take.receiver) else {
+            return;
+        };
+        let Some(args) = args.iter().map(text).collect::<Option<Vec<&str>>>() else {
+            return;
+        };
+        let label = &take.label;
+        let call = match args.split_first() {
+            Some((first, rest)) if is_path(first) => {
+                format!("{first}.{label}({})", rest.join(", "))
+            }
+            _ => format!("{receiver}.{label}({})", args.join(", ")),
+        };
+        self.errors.push(GoatError::new(
+            take.span,
+            format!(
+                "`{label}` has `self`, so call it with a dot: `{call}`. \
+                 `::` is for functions without `self`, like `{receiver}::new(5)`."
+            ),
+        ));
     }
 
     fn print_ty(&mut self) -> Ty {
