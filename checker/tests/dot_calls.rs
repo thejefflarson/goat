@@ -94,9 +94,9 @@ fn a_computed_receiver_is_bound_once_to_a_hidden_name() {
 }
 
 #[test]
-fn a_computed_receiver_has_one_fixed_type_so_it_cannot_take_itself() {
-    let message = first_error("make = program() do {f: program(s) do 0 done} done\nmake().f()");
-    assert!(message.contains("infinite type"), "{message}");
+fn a_computed_receiver_may_take_itself() {
+    let source = "make = program() do {f: program(s) do 0 done} done\nmake().f()";
+    assert_eq!(type_of(source), "Number");
 }
 
 fn dot_calls(source: &str) -> Vec<(String, DotCall)> {

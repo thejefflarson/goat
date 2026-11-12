@@ -562,20 +562,23 @@ impl Inferer {
     }
 
     /// `x = t` where `t` mentions `x`: the recursive type `μv. t[x := v]`, if
-    /// every mention sits under a variant payload.
+    /// every mention is guarded (see [`Guard`]).
     fn tie_ty_knot(&mut self, x: TypeVar, t: &Ty) -> Option<Ty> {
         let binder = self.fresh_id();
-        let body = plug(t, &Hole::Ty(x), &Ty::Var(binder), false);
+        let body = plug(t, &Hole::Ty(x), &Ty::Var(binder), Guard::default());
         (!occurs(x, &body)).then(|| Ty::Rec(binder, Box::new(body)))
     }
 
     /// `x = row` where `row` mentions `x`. Allowed only when every mention is
     /// the same `kind` type, `[x]` or `[l: t | x]` (and likewise for records),
-    /// under a variant payload: that type is then `row` behind the prefix, so
+    /// guarded (see [`Guard`]): that type is then `row` behind the prefix, so
     /// it is the recursive type `μv. [prefix | row[mention := v]]`. `x` becomes
     /// `row` with that type in place of the mentions.
     fn tie_row_knot(&mut self, x: TypeVar, kind: RowKind, row: &Row) -> Option<Row> {
-        let under_tag = kind == RowKind::Variant;
+        let under_tag = match kind {
+            RowKind::Variant => Guard::default().tag(),
+            RowKind::Record => Guard::default().field(),
+        };
         let mention = find_mention(row, x, kind, under_tag)?;
         let hole = Hole::Mention(kind, mention.clone());
         let binder = self.fresh_id();
@@ -1862,72 +1865,102 @@ fn occurs(var: TypeVar, ty: &Ty) -> bool {
     }
 }
 
-/// Replace the mentions of `hole` in `ty` with `with`, but only those under a
-/// variant payload: `under_tag` says whether `ty` already sits in one. A
-/// mention left behind is a cycle that does not pass through a tag.
-fn plug(ty: &Ty, hole: &Hole, with: &Ty, under_tag: bool) -> Ty {
+/// Where a mention sits, as the cycle through it would see it. A cycle is
+/// guarded when it passes through a variant payload, or through both a record
+/// field and a function type (parameter or result).
+#[derive(Clone, Copy, Default)]
+struct Guard {
+    tag: bool,
+    field: bool,
+    func: bool,
+}
+
+impl Guard {
+    fn tag(self) -> Self {
+        Self { tag: true, ..self }
+    }
+    fn field(self) -> Self {
+        Self {
+            field: true,
+            ..self
+        }
+    }
+    fn func(self) -> Self {
+        Self { func: true, ..self }
+    }
+    fn guarded(self) -> bool {
+        self.tag || (self.field && self.func)
+    }
+}
+
+/// Replace the mentions of `hole` in `ty` with `with`, but only the guarded
+/// ones (see [`Guard`]); `at` says where `ty` already sits. A mention left
+/// behind is a cycle that is not guarded.
+fn plug(ty: &Ty, hole: &Hole, with: &Ty, at: Guard) -> Ty {
     match ty {
-        Ty::Var(v) if under_tag && *hole == Hole::Ty(*v) => with.clone(),
+        Ty::Var(v) if at.guarded() && *hole == Hole::Ty(*v) => with.clone(),
         Ty::Record(row)
-            if under_tag && matches!(hole, Hole::Mention(RowKind::Record, m) if m == row) =>
+            if at.guarded() && matches!(hole, Hole::Mention(RowKind::Record, m) if m == row) =>
         {
             with.clone()
         }
         Ty::Variant(row)
-            if under_tag && matches!(hole, Hole::Mention(RowKind::Variant, m) if m == row) =>
+            if at.guarded() && matches!(hole, Hole::Mention(RowKind::Variant, m) if m == row) =>
         {
             with.clone()
         }
         Ty::Func(args, ret) => Ty::Func(
             args.iter()
-                .map(|a| plug(a, hole, with, under_tag))
+                .map(|a| plug(a, hole, with, at.func()))
                 .collect(),
-            Box::new(plug(ret, hole, with, under_tag)),
+            Box::new(plug(ret, hole, with, at.func())),
         ),
-        Ty::Record(row) => Ty::Record(plug_row(row, hole, with, under_tag)),
-        Ty::Variant(row) => Ty::Variant(plug_row(row, hole, with, true)),
-        Ty::Rec(binder, body) => Ty::Rec(*binder, Box::new(plug(body, hole, with, under_tag))),
+        Ty::Record(row) => Ty::Record(plug_row(row, hole, with, at.field())),
+        Ty::Variant(row) => Ty::Variant(plug_row(row, hole, with, at.tag())),
+        Ty::Rec(binder, body) => Ty::Rec(*binder, Box::new(plug(body, hole, with, at))),
         other => other.clone(),
     }
 }
 
-/// [`plug`] over the fields of a row; `under_tag` is whether those fields are
-/// variant payloads.
-fn plug_row(row: &Row, hole: &Hole, with: &Ty, under_tag: bool) -> Row {
+/// [`plug`] over the fields of a row, which already sit at `at`.
+fn plug_row(row: &Row, hole: &Hole, with: &Ty, at: Guard) -> Row {
     match row {
         Row::Extend { label, field, rest } => Row::Extend {
             label: label.clone(),
-            field: Box::new(plug(field, hole, with, under_tag)),
-            rest: Box::new(plug_row(rest, hole, with, under_tag)),
+            field: Box::new(plug(field, hole, with, at)),
+            rest: Box::new(plug_row(rest, hole, with, at)),
         },
         other => other.clone(),
     }
 }
 
-/// The row of the first `kind` type under a variant payload whose row ends in
+/// The row of the first `kind` type at a guarded position whose row ends in
 /// the row variable `x`.
-fn find_mention(row: &Row, x: TypeVar, kind: RowKind, under_tag: bool) -> Option<Row> {
+fn find_mention(row: &Row, x: TypeVar, kind: RowKind, at: Guard) -> Option<Row> {
     let Row::Extend { field, rest, .. } = row else {
         return None;
     };
-    find_mention_in(field, x, kind, under_tag).or_else(|| find_mention(rest, x, kind, under_tag))
+    find_mention_in(field, x, kind, at).or_else(|| find_mention(rest, x, kind, at))
 }
 
-fn find_mention_in(ty: &Ty, x: TypeVar, kind: RowKind, under_tag: bool) -> Option<Row> {
+fn find_mention_in(ty: &Ty, x: TypeVar, kind: RowKind, at: Guard) -> Option<Row> {
     match ty {
         Ty::Func(args, ret) => args
             .iter()
-            .chain([&**ret])
-            .find_map(|t| find_mention_in(t, x, kind, under_tag)),
+            .find_map(|t| find_mention_in(t, x, kind, at.func()))
+            .or_else(|| find_mention_in(ret, x, kind, at.func())),
         Ty::Record(row) | Ty::Variant(row) => {
             let is_variant = matches!(ty, Ty::Variant(_));
-            if under_tag && is_variant == (kind == RowKind::Variant) && row_shape(row).1 == Some(x)
+            if at.guarded()
+                && is_variant == (kind == RowKind::Variant)
+                && row_shape(row).1 == Some(x)
             {
                 return Some(row.clone());
             }
-            find_mention(row, x, kind, under_tag || is_variant)
+            let inner = if is_variant { at.tag() } else { at.field() };
+            find_mention(row, x, kind, inner)
         }
-        Ty::Rec(_, body) => find_mention_in(body, x, kind, under_tag),
+        Ty::Rec(_, body) => find_mention_in(body, x, kind, at),
         _ => None,
     }
 }
