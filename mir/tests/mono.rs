@@ -641,6 +641,20 @@ fn a_recursive_layout_refers_to_itself() {
 }
 
 #[test]
+fn a_record_that_holds_a_method_over_itself_has_one_layout() {
+    let src = "ball = {x: 1, moved: program(self) do {...self, x: self.x + 1} done} \
+               step = program(p) do p.moved() done \
+               step(step(ball)).x";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(3.0));
+    let with_closures = p.layouts.iter().filter(|layout| {
+        matches!(layout, Layout::Record(fields)
+            if fields.iter().any(|f| matches!(f, MTy::Ptr(HeapKind::Closure(_)))))
+    });
+    assert_eq!(with_closures.count(), 1, "{:?}", p.layouts);
+}
+
+#[test]
 fn a_long_chain_is_built_and_dropped_without_leaking() {
     let src = "build = program(n, acc) do if n < 1 then acc else build(n - 1, Link(n, acc)) done done \
                build(3000, Empty)";
