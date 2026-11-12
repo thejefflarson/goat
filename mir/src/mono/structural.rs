@@ -1,6 +1,6 @@
 //! Functions mono derives from a ground type instead of from source: structural
-//! equality (`==`), the printer behind `print`, and field-wise arithmetic on
-//! records. Each is a plain MIR function memoized on the canonical form of its
+//! equality (`==`) and ordering (`<`), the printer behind `print`, and
+//! field-wise arithmetic on records. Each is a plain MIR function memoized on the canonical form of its
 //! type, so a recursive type reuses the function it is already building and the
 //! derivation terminates, and the interpreter and every backend run it without
 //! knowing it exists.
@@ -18,6 +18,10 @@ use goat_checker::ty::{Row, Ty};
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum Derived {
     Eq,
+    /// Three-way order of two values of one type: -1, 0 or 1.
+    Cmp,
+    /// Three-way order of two strings from a 1-based byte position on.
+    StrCmp,
     Arith(FloatOp),
     /// Writes a value without ending the line.
     Show,
@@ -35,10 +39,12 @@ struct ListShape {
 }
 
 impl Derived {
-    fn arity(self) -> usize {
+    /// The parameter types of the derived function over a value of type `mty`.
+    fn params(self, mty: MTy) -> Vec<MTy> {
         match self {
-            Derived::Eq | Derived::Arith(_) => 2,
-            Derived::Show | Derived::ShowRest | Derived::Print => 1,
+            Derived::Eq | Derived::Cmp | Derived::Arith(_) => vec![mty, mty],
+            Derived::StrCmp => vec![mty, mty, MTy::Int],
+            Derived::Show | Derived::ShowRest | Derived::Print => vec![mty],
         }
     }
 }
@@ -58,6 +64,10 @@ fn int_counterpart(op: FloatOp) -> IntOp {
         FloatOp::Mul => IntOp::Mul,
         FloatOp::Div => IntOp::Div,
     }
+}
+
+fn int(n: i64) -> Expr {
+    Expr::Const(Const::Int(n))
 }
 
 fn boolean(b: bool) -> Expr {
@@ -98,9 +108,10 @@ impl Mono<'_> {
 
         let mty = self.lower_ty(&ty);
         let mut cx = FnCx::new(Subst::new());
-        let locals: Vec<Local> = (0..kind.arity()).map(|_| cx.fresh(mty)).collect();
+        let tys = kind.params(mty);
+        let locals: Vec<Local> = tys.iter().map(|&t| cx.fresh(t)).collect();
         let body = build(self, &mut cx, &locals);
-        let params = locals.iter().map(|&l| (l, mty)).collect();
+        let params = locals.iter().copied().zip(tys).collect();
         self.out[id.0 as usize] = Some(cx.into_func(params, None, ret, body));
         id
     }
@@ -306,6 +317,215 @@ impl Mono<'_> {
                 }
                 _ => Expr::Trap("equality on a type that cannot be compared".into()),
             }
+        })
+    }
+
+    /// `a op b` on two values of type `ty`. Numbers compare directly; anything
+    /// else goes through a derived three-way comparison tested against 0. A
+    /// function inside the type is a checker error, so it cannot reach here.
+    pub(super) fn order(&mut self, cx: &mut FnCx, op: CmpOp, ty: &Ty, a: Expr, b: Expr) -> Expr {
+        if matches!(ty.unfold_head(), Ty::Int | Ty::Float) {
+            return Expr::Cmp(op, Box::new(a), Box::new(b));
+        }
+        let order = self.compare(cx, ty, a, b, false);
+        Expr::Cmp(op, Box::new(order), Box::new(int(0)))
+    }
+
+    /// -1, 0 or 1 as `a` is before, equal to or after `b`. A `Float` NaN is
+    /// after everything, itself included.
+    fn compare(&mut self, cx: &mut FnCx, ty: &Ty, a: Expr, b: Expr, tail: bool) -> Expr {
+        match ty.unfold_head() {
+            scalar @ (Ty::Int | Ty::Float) => {
+                let mty = if scalar == Ty::Int {
+                    MTy::Int
+                } else {
+                    MTy::Float
+                };
+                let (l, r) = (cx.fresh(mty), cx.fresh(mty));
+                let test = |op| {
+                    Box::new(Expr::Cmp(
+                        op,
+                        Box::new(Expr::Local(l)),
+                        Box::new(Expr::Local(r)),
+                    ))
+                };
+                let order = Expr::If(
+                    test(CmpOp::Eq),
+                    Box::new(int(0)),
+                    Box::new(Expr::If(
+                        test(CmpOp::Lt),
+                        Box::new(int(-1)),
+                        Box::new(int(1)),
+                    )),
+                );
+                Self::bind_pair(l, r, a, b, order)
+            }
+            Ty::Bool => {
+                let (l, r) = (cx.fresh(MTy::Bool), cx.fresh(MTy::Bool));
+                let pick = |yes, no| {
+                    Expr::If(
+                        Box::new(Expr::Local(r)),
+                        Box::new(int(yes)),
+                        Box::new(int(no)),
+                    )
+                };
+                let order = Expr::If(
+                    Box::new(Expr::Local(l)),
+                    Box::new(pick(0, 1)),
+                    Box::new(pick(-1, 0)),
+                );
+                Self::bind_pair(l, r, a, b, order)
+            }
+            Ty::Str => {
+                let f = self.str_compare_fn();
+                call(f, vec![a, b, int(1)], tail)
+            }
+            Ty::Unit => self.sequence(cx, vec![a, b, int(0)]),
+            Ty::Record(_) | Ty::Variant(_) => {
+                let f = self.compare_fn(ty);
+                call(f, vec![a, b], tail)
+            }
+            Ty::Func(..) | Ty::Rec(..) | Ty::Var(_) => {
+                Expr::Trap("ordering on a type that cannot be compared".into())
+            }
+        }
+    }
+
+    fn bind_pair(l: Local, r: Local, a: Expr, b: Expr, body: Expr) -> Expr {
+        Expr::Let(
+            l,
+            Box::new(a),
+            Box::new(Expr::Let(r, Box::new(b), Box::new(body))),
+        )
+    }
+
+    /// The first nonzero order of the pairs, in order; the last may be a tail
+    /// call.
+    fn compare_all(&mut self, cx: &mut FnCx, pairs: Vec<(Ty, Expr, Expr)>, tail: bool) -> Expr {
+        let mut pairs: Vec<_> = pairs
+            .into_iter()
+            .filter(|(ty, ..)| ty.unfold_head() != Ty::Unit)
+            .collect();
+        let Some((ty, a, b)) = pairs.pop() else {
+            return int(0);
+        };
+        let last = self.compare(cx, &ty, a, b, tail);
+        pairs.into_iter().rev().fold(last, |rest, (ty, a, b)| {
+            let order = cx.fresh(MTy::Int);
+            let same = Expr::Cmp(CmpOp::Eq, Box::new(Expr::Local(order)), Box::new(int(0)));
+            let first = self.compare(cx, &ty, a, b, false);
+            let next = Expr::If(Box::new(same), Box::new(rest), Box::new(Expr::Local(order)));
+            Expr::Let(order, Box::new(first), Box::new(next))
+        })
+    }
+
+    /// Records compare field by field in label order. Tags compare by label,
+    /// then by payload, which orders a list's `Empty` before its `Link`.
+    fn compare_fn(&mut self, ty: &Ty) -> FuncId {
+        self.derive(Derived::Cmp, ty, MTy::Int, |m, cx, params| {
+            let (a, b) = (params[0], params[1]);
+            match ty.unfold_head() {
+                Ty::Record(row) => {
+                    let pairs = ground_fields(&row)
+                        .enumerate()
+                        .map(|(i, (_, field))| {
+                            (field.clone(), Expr::Field(a, i), Expr::Field(b, i))
+                        })
+                        .collect();
+                    m.compare_all(cx, pairs, true)
+                }
+                Ty::Variant(row) => {
+                    let mut ordered: Vec<(u32, &Ty)> = tags(&row)
+                        .into_iter()
+                        .map(|(label, payload)| (m.tags[label], payload))
+                        .collect();
+                    ordered.sort_by_key(|(tag, _)| *tag);
+                    let mut arms = Vec::new();
+                    for (i, &(tag, payload)) in ordered.iter().enumerate() {
+                        let pairs = payload_fields(payload)
+                            .into_iter()
+                            .enumerate()
+                            .map(|(n, field)| {
+                                (field, Expr::Payload(a, tag, n), Expr::Payload(b, tag, n))
+                            })
+                            .collect();
+                        let same = m.compare_all(cx, pairs, true);
+                        let mut same = Some(same);
+                        let against = ordered
+                            .iter()
+                            .enumerate()
+                            .map(|(j, &(other, _))| match j.cmp(&i) {
+                                std::cmp::Ordering::Equal => {
+                                    (other, same.take().unwrap_or_else(|| int(0)))
+                                }
+                                std::cmp::Ordering::Less => (other, int(1)),
+                                std::cmp::Ordering::Greater => (other, int(-1)),
+                            })
+                            .collect();
+                        arms.push((tag, Self::switch_on(b, against)));
+                    }
+                    if arms.is_empty() {
+                        return int(0);
+                    }
+                    Self::switch_on(a, arms)
+                }
+                _ => Expr::Trap("ordering on a type that cannot be compared".into()),
+            }
+        })
+    }
+
+    /// Strings compare byte by byte, which is code point order in UTF-8; a
+    /// string that is a prefix of the other comes first.
+    fn str_compare_fn(&mut self) -> FuncId {
+        self.derive(Derived::StrCmp, &Ty::Str, MTy::Int, |m, cx, params| {
+            let me = m.derived[&(Derived::StrCmp, canonical(&Ty::Str))];
+            let (a, b, i) = (params[0], params[1], params[2]);
+            let (len_a, len_b) = (cx.fresh(MTy::Int), cx.fresh(MTy::Int));
+            let (x, y, next) = (cx.fresh(MTy::Int), cx.fresh(MTy::Int), cx.fresh(MTy::Int));
+            let local = |l| Box::new(Expr::Local(l));
+            let test = |op, l, r| Box::new(Expr::Cmp(op, local(l), local(r)));
+            let differ = Expr::If(test(CmpOp::Lt, x, y), Box::new(int(-1)), Box::new(int(1)));
+            let advance = Expr::Let(
+                next,
+                Box::new(Expr::BinInt(IntOp::Add, local(i), Box::new(int(1)))),
+                Box::new(call(
+                    me,
+                    vec![Expr::Local(a), Expr::Local(b), Expr::Local(next)],
+                    true,
+                )),
+            );
+            let bytes = Expr::Let(
+                x,
+                Box::new(Expr::StrByte(a, i)),
+                Box::new(Expr::Let(
+                    y,
+                    Box::new(Expr::StrByte(b, i)),
+                    Box::new(Expr::If(
+                        test(CmpOp::Eq, x, y),
+                        Box::new(advance),
+                        Box::new(differ),
+                    )),
+                )),
+            );
+            let a_is_done = Expr::If(
+                test(CmpOp::Gt, i, len_b),
+                Box::new(int(0)),
+                Box::new(int(-1)),
+            );
+            let body = Expr::If(
+                test(CmpOp::Gt, i, len_a),
+                Box::new(a_is_done),
+                Box::new(Expr::If(
+                    test(CmpOp::Gt, i, len_b),
+                    Box::new(int(1)),
+                    Box::new(bytes),
+                )),
+            );
+            Expr::Let(
+                len_a,
+                Box::new(Expr::StrLen(a)),
+                Box::new(Expr::Let(len_b, Box::new(Expr::StrLen(b)), Box::new(body))),
+            )
         })
     }
 

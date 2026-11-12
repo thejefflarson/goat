@@ -127,11 +127,6 @@ impl BinOp {
         matches!(self, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
     }
 
-    /// `==` and `!=`: defined on any type without a function inside it.
-    pub fn is_equality(self) -> bool {
-        matches!(self, BinOp::Eq | BinOp::Ne)
-    }
-
     /// The operator as written, for messages.
     pub fn symbol(self) -> &'static str {
         match self {
