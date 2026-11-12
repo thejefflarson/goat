@@ -33,6 +33,10 @@ pub struct Checked {
     pub interactive: Option<hir::Interactive>,
     /// The host vocabulary the program was checked against.
     pub vocab: Vocab,
+    /// Each tag's place in declaration order, which the derived `<` follows.
+    pub tag_ranks: HashMap<String, u32>,
+    /// The tags of each declared group.
+    pub tag_groups: Vec<Vec<String>>,
 }
 
 /// The standard library: the definitions every program starts with, whatever its host.
@@ -107,6 +111,8 @@ pub fn check_with_vocab(
         captures,
         interactive: lowered.interactive,
         vocab: vocab.clone(),
+        tag_ranks: lowered.tag_ranks,
+        tag_groups: lowered.tag_groups,
     })
 }
 
