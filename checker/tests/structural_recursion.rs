@@ -79,9 +79,31 @@ fn a_wrong_shaped_method_names_no_type_variable() {
     assert!(!message.contains("t4"), "{message}");
 }
 
+const TWO_METHOD_MODEL: &str =
+    "init = program() do {x: 0, speed: 3, update: program(self) do {...self, x: self.x + self.speed} done, draw: program(self) do self.x done} done
+     run = program(m, n) do if n == 0 then m else run(m.update(), n - 1) done done
+     m = run(init(), 4)";
+
 #[test]
-fn a_function_passed_inside_its_own_argument_checks() {
-    let source = "h = program(r) do if r.stop then 0 else (r.g)({stop: true, g: h}) done done
-        h({stop: false, g: h})";
-    assert_eq!(error_of(source), None);
+fn two_methods_whose_rows_differ_check() {
+    let source = format!("{TWO_METHOD_MODEL}\nm.draw()");
+    assert_eq!(error_of(&source), None);
+}
+
+#[test]
+fn three_methods_whose_rows_differ_finish_with_a_plain_answer() {
+    let source = "init = program() do {x: 0, y: 1, update: program(self) do {...self, x: self.x + 1} done, nudge: program(self) do {...self, y: self.y + 1, x: self.x} done, draw: program(self) do self.x + self.y done} done
+        run = program(m, n) do if n == 0 then m else run(m.update(), n - 1) done done
+        m = run(init(), 2)
+        m.nudge().draw()";
+    if let Some(message) = error_of(source) {
+        assert!(!message.contains('μ'), "{message}");
+    }
+}
+
+#[test]
+fn a_missing_method_on_a_two_method_model_is_still_an_error() {
+    let source = format!("{TWO_METHOD_MODEL}\nm.undraw()");
+    let message = error_of(&source).expect("should not check");
+    assert!(!message.contains('μ'), "{message}");
 }

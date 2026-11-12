@@ -182,6 +182,11 @@ struct Inferer {
     /// Pairs of types [`Inferer::unify_ty`] is already unifying or has unified,
     /// within one top-level [`Inferer::unify`].
     assumed: HashSet<(Ty, Ty)>,
+    /// Knots tied within the current top-level unify; see [`MAX_KNOTS_PER_UNIFY`].
+    knots_tied: usize,
+    /// Whether the current top-level unify already reported hitting
+    /// [`MAX_UNFOLDINGS_PER_UNIFY`].
+    too_complex: bool,
     /// Row variables that must never gain these labels: `{x, ...rest} = m`
     /// takes only the front `x` out of `m`, so a second `x` behind it (left by a
     /// `...` override) would resurface in `rest`, while the runtime layout
@@ -218,6 +223,24 @@ fn is_syntactic_value(expr: &Expr) -> bool {
         _ => false,
     }
 }
+
+/// Distinct row prefixes one row variable's cycle may have before the
+/// simultaneous knot gives up.
+const MAX_KNOT_MENTIONS: usize = 3;
+
+/// Knots one top-level unify may tie. Each knot mints fresh binders, so the
+/// assumed-equal set (see [`Inferer::unify_ty`]) cannot bound a unify that
+/// keeps tying new ones; this does.
+const MAX_KNOTS_PER_UNIFY: usize = 16;
+
+/// Terms a type may have while unification unfolds it. Unfolding copies the
+/// whole `μ` into its body, so mismatched recursive types can double at every
+/// step.
+const MAX_UNFOLDED_TERMS: usize = 4 * MAX_TYPE_TERMS;
+
+/// Distinct pairs of recursive types one top-level unify may compare. Growing
+/// an open row while unfolding can mint a new pair at every step.
+const MAX_UNFOLDINGS_PER_UNIFY: usize = 256;
 
 /// Which table of constraints a variable's lives in.
 #[derive(Clone, Copy)]
@@ -425,6 +448,8 @@ impl Inferer {
     fn unify(&mut self, a: &Ty, b: &Ty, span: Span) {
         self.unify_ty(a, b, span);
         self.assumed.clear();
+        self.knots_tied = 0;
+        self.too_complex = false;
     }
 
     fn unify_ty(&mut self, a: &Ty, b: &Ty, span: Span) {
@@ -481,7 +506,18 @@ impl Inferer {
                 // many distinct sub-terms of the two types and their
                 // unfoldings (a regular tree has finitely many), so the
                 // recursion depth is bounded.
-                if self.assumed.insert((a.clone(), b.clone())) {
+                if self.assumed.len() > MAX_UNFOLDINGS_PER_UNIFY
+                    || !self.within_unfold_budget(&a)
+                    || !self.within_unfold_budget(&b)
+                {
+                    if !self.too_complex {
+                        self.too_complex = true;
+                        self.errors.push(GoatError::new(
+                            span,
+                            "program too complex: these recursive types do not unify in a bounded number of steps",
+                        ));
+                    }
+                } else if self.assumed.insert((a.clone(), b.clone())) {
                     self.unify_ty(&a.unfold_head(), &b.unfold_head(), span);
                 }
             }
@@ -623,36 +659,63 @@ impl Inferer {
         }
     }
 
+    fn spend_knot(&mut self) -> Option<()> {
+        self.knots_tied += 1;
+        (self.knots_tied <= MAX_KNOTS_PER_UNIFY).then_some(())
+    }
+
     /// `x = t` where `t` mentions `x`: the recursive type `μv. t[x := v]`, if
     /// every mention is guarded (see [`Guard`]).
     fn tie_ty_knot(&mut self, x: TypeVar, t: &Ty) -> Option<Ty> {
+        self.spend_knot()?;
         let binder = self.fresh_id();
-        let body = plug(t, &Hole::Ty(x), &Ty::Var(binder), Guard::default());
+        let body = plug(
+            t,
+            &[(Hole::Ty(x), Ty::Var(binder))],
+            Guard::default(),
+            &mut Vec::new(),
+        );
         (!occurs(x, &body)).then(|| Ty::Rec(binder, Box::new(body)))
     }
 
     /// `x = row` where `row` mentions `x`. Allowed only when every mention is
-    /// the same `kind` type, `[x]` or `[l: t | x]` (and likewise for records),
-    /// guarded (see [`Guard`]): that type is then `row` behind the prefix, so
-    /// it is the recursive type `μv. [prefix | row[mention := v]]`. `x` becomes
-    /// `row` with that type in place of the mentions.
+    /// a `kind` type, `[x]` or `[l: t | x]` (and likewise for records),
+    /// guarded (see [`Guard`]). Mention `i` with prefix `p_i` is the recursive
+    /// type `μv_i. [p_i | row[mentions := …]]`; mentions with different
+    /// prefixes depend on each other, so they nest (Bekić): inside `μv_i`, the
+    /// other mention `j` is itself `μv_j. [p_j | …]` with `v_i` in scope.
+    /// `x` becomes `row` with each mention replaced by its type. At most
+    /// [`MAX_KNOT_MENTIONS`] distinct prefixes, since the nesting grows
+    /// factorially.
     fn tie_row_knot(&mut self, x: TypeVar, kind: RowKind, row: &Row) -> Option<Row> {
+        self.spend_knot()?;
         let under_tag = match kind {
             RowKind::Variant => Guard::default().tag(),
             RowKind::Record => Guard::default().field(),
         };
-        let mention = find_mention(row, x, kind, under_tag)?;
-        let hole = Hole::Mention(kind, mention.clone());
-        let binder = self.fresh_id();
-        let inner = plug_row(row, &hole, &Ty::Var(binder), under_tag);
-        if occurs_row(x, &inner) {
+        let mut mentions = Vec::new();
+        find_mentions(row, x, kind, under_tag, &mut Vec::new(), &mut mentions);
+        let kind_ty = kind.wrap(row.clone());
+        if mentions.is_empty()
+            || mentions.len() > MAX_KNOT_MENTIONS
+            || !self.within_term_budget(&kind_ty)
+        {
             return None;
         }
-        let rec = Ty::Rec(binder, Box::new(kind.wrap(replace_tail(&mention, inner))));
-        if occurs(x, &rec) {
-            return None;
-        }
-        Some(plug_row(row, &hole, &rec, under_tag))
+        let binders: Vec<TypeVar> = mentions.iter().map(|_| self.fresh_id()).collect();
+        let knot = Knot {
+            infer: self,
+            kind,
+            row,
+            mentions: &mentions,
+            binders: &binders,
+            at: under_tag,
+        };
+        let holes = (0..mentions.len())
+            .map(|i| Some((Hole::Mention(kind, mentions[i].clone()), knot.tie(i, &[])?)))
+            .collect::<Option<Vec<_>>>()?;
+        let tied = plug_row(row, &holes, under_tag, &mut Vec::new());
+        (!occurs_row(x, &tied)).then_some(tied)
     }
 
     /// Surface `label` in `row`, returning whether it is present, its field
@@ -1285,6 +1348,11 @@ impl Inferer {
         }
         self.node_types.insert(expr.id, ty.clone());
         ty
+    }
+
+    fn within_unfold_budget(&self, ty: &Ty) -> bool {
+        let mut budget = MAX_UNFOLDED_TERMS;
+        self.spend_on_ty(ty, &mut budget).is_some()
     }
 
     /// Whether `ty`, followed through the substitution, has at most
@@ -2169,42 +2237,77 @@ impl Guard {
     }
 }
 
-/// Replace the mentions of `hole` in `ty` with `with`, but only the guarded
-/// ones (see [`Guard`]); `at` says where `ty` already sits. A mention left
-/// behind is a cycle that is not guarded.
-fn plug(ty: &Ty, hole: &Hole, with: &Ty, at: Guard) -> Ty {
+/// `row`, which sits under the recursive types `bound` (outermost first), with
+/// each of their binders replaced by the type it names. A mention under a
+/// binder carries that binder in its prefix; unfolding makes it comparable to
+/// the same mention outside.
+fn unfolded(row: &Row, kind: RowKind, bound: &[&Ty]) -> Row {
+    if bound.is_empty() {
+        return row.clone();
+    }
+    let closed = bound.iter().rev().fold(kind.wrap(row.clone()), |ty, rec| {
+        let Ty::Rec(binder, _) = rec else { return ty };
+        ty.substitute(*binder, rec)
+    });
+    match closed {
+        Ty::Record(row) | Ty::Variant(row) => row,
+        _ => unreachable!("substitution keeps the constructor"),
+    }
+}
+
+/// The type to put where `ty` sits, if `ty` is one of the `holes`' mentions
+/// and `at` is guarded (see [`Guard`]).
+fn replacement<'a>(ty: &Ty, holes: &'a [(Hole, Ty)], at: Guard, bound: &[&Ty]) -> Option<&'a Ty> {
+    if !at.guarded() {
+        return None;
+    }
+    holes
+        .iter()
+        .find(|(hole, _)| match (hole, ty) {
+            (Hole::Ty(v), Ty::Var(w)) => v == w,
+            (Hole::Mention(kind @ RowKind::Record, m), Ty::Record(row))
+            | (Hole::Mention(kind @ RowKind::Variant, m), Ty::Variant(row)) => {
+                row_shape(row) == row_shape(m) && unfolded(row, *kind, bound) == *m
+            }
+            _ => false,
+        })
+        .map(|(_, with)| with)
+}
+
+/// Replace the mentions of each hole in `ty` with its type, but only the
+/// guarded ones; `at` says where `ty` already sits and `bound` which
+/// recursive types enclose it. A mention left behind is a cycle that is not
+/// guarded.
+fn plug<'a>(ty: &'a Ty, holes: &[(Hole, Ty)], at: Guard, bound: &mut Vec<&'a Ty>) -> Ty {
+    if let Some(with) = replacement(ty, holes, at, bound) {
+        return with.clone();
+    }
     match ty {
-        Ty::Var(v) if at.guarded() && *hole == Hole::Ty(*v) => with.clone(),
-        Ty::Record(row)
-            if at.guarded() && matches!(hole, Hole::Mention(RowKind::Record, m) if m == row) =>
-        {
-            with.clone()
-        }
-        Ty::Variant(row)
-            if at.guarded() && matches!(hole, Hole::Mention(RowKind::Variant, m) if m == row) =>
-        {
-            with.clone()
-        }
         Ty::Func(args, ret) => Ty::Func(
             args.iter()
-                .map(|a| plug(a, hole, with, at.func()))
+                .map(|a| plug(a, holes, at.func(), bound))
                 .collect(),
-            Box::new(plug(ret, hole, with, at.func())),
+            Box::new(plug(ret, holes, at.func(), bound)),
         ),
-        Ty::Record(row) => Ty::Record(plug_row(row, hole, with, at.field())),
-        Ty::Variant(row) => Ty::Variant(plug_row(row, hole, with, at.tag())),
-        Ty::Rec(binder, body) => Ty::Rec(*binder, Box::new(plug(body, hole, with, at))),
+        Ty::Record(row) => Ty::Record(plug_row(row, holes, at.field(), bound)),
+        Ty::Variant(row) => Ty::Variant(plug_row(row, holes, at.tag(), bound)),
+        Ty::Rec(binder, body) => {
+            bound.push(ty);
+            let body = plug(body, holes, at, bound);
+            bound.pop();
+            Ty::Rec(*binder, Box::new(body))
+        }
         other => other.clone(),
     }
 }
 
 /// [`plug`] over the fields of a row, which already sit at `at`.
-fn plug_row(row: &Row, hole: &Hole, with: &Ty, at: Guard) -> Row {
+fn plug_row<'a>(row: &'a Row, holes: &[(Hole, Ty)], at: Guard, bound: &mut Vec<&'a Ty>) -> Row {
     match row {
         Row::Extend { label, field, rest } => Row::Extend {
             label: label.clone(),
-            field: Box::new(plug(field, hole, with, at)),
-            rest: Box::new(plug_row(rest, hole, with, at)),
+            field: Box::new(plug(field, holes, at, bound)),
+            rest: Box::new(plug_row(rest, holes, at, bound)),
         },
         Row::Maybe {
             label,
@@ -2214,41 +2317,107 @@ fn plug_row(row: &Row, hole: &Hole, with: &Ty, at: Guard) -> Row {
         } => Row::Maybe {
             label: label.clone(),
             pres: *pres,
-            field: Box::new(plug(field, hole, with, at)),
-            rest: Box::new(plug_row(rest, hole, with, at)),
+            field: Box::new(plug(field, holes, at, bound)),
+            rest: Box::new(plug_row(rest, holes, at, bound)),
         },
         other => other.clone(),
     }
 }
 
-/// The row of the first `kind` type at a guarded position whose row ends in
-/// the row variable `x`.
-fn find_mention(row: &Row, x: TypeVar, kind: RowKind, at: Guard) -> Option<Row> {
-    let (Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. }) = row else {
-        return None;
-    };
-    find_mention_in(field, x, kind, at).or_else(|| find_mention(rest, x, kind, at))
+/// The distinct rows, unfolded (see [`unfolded`]), of the `kind` types at a
+/// guarded position whose row ends in the row variable `x`, in order of
+/// appearance.
+fn find_mentions<'a>(
+    row: &'a Row,
+    x: TypeVar,
+    kind: RowKind,
+    at: Guard,
+    bound: &mut Vec<&'a Ty>,
+    out: &mut Vec<Row>,
+) {
+    if let Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } = row {
+        find_mentions_in(field, x, kind, at, bound, out);
+        find_mentions(rest, x, kind, at, bound, out);
+    }
 }
 
-fn find_mention_in(ty: &Ty, x: TypeVar, kind: RowKind, at: Guard) -> Option<Row> {
+fn find_mentions_in<'a>(
+    ty: &'a Ty,
+    x: TypeVar,
+    kind: RowKind,
+    at: Guard,
+    bound: &mut Vec<&'a Ty>,
+    out: &mut Vec<Row>,
+) {
     match ty {
-        Ty::Func(args, ret) => args
-            .iter()
-            .find_map(|t| find_mention_in(t, x, kind, at.func()))
-            .or_else(|| find_mention_in(ret, x, kind, at.func())),
+        Ty::Func(args, ret) => {
+            for t in args {
+                find_mentions_in(t, x, kind, at.func(), bound, out);
+            }
+            find_mentions_in(ret, x, kind, at.func(), bound, out);
+        }
         Ty::Record(row) | Ty::Variant(row) => {
             let is_variant = matches!(ty, Ty::Variant(_));
             if at.guarded()
                 && is_variant == (kind == RowKind::Variant)
                 && row_shape(row).1 == Some(x)
             {
-                return Some(row.clone());
+                let mention = unfolded(row, kind, bound);
+                if !out.contains(&mention) {
+                    out.push(mention);
+                }
             }
             let inner = if is_variant { at.tag() } else { at.field() };
-            find_mention(row, x, kind, inner)
+            find_mentions(row, x, kind, inner, bound, out);
         }
-        Ty::Rec(_, body) => find_mention_in(body, x, kind, at),
-        _ => None,
+        Ty::Rec(_, body) => {
+            bound.push(ty);
+            find_mentions_in(body, x, kind, at, bound, out);
+            bound.pop();
+        }
+        _ => {}
+    }
+}
+
+/// The simultaneous knot over the mentions of one row variable.
+struct Knot<'a> {
+    infer: &'a Inferer,
+    kind: RowKind,
+    row: &'a Row,
+    mentions: &'a [Row],
+    binders: &'a [TypeVar],
+    at: Guard,
+}
+
+impl Knot<'_> {
+    /// The type of mention `i`, given the mentions in `outer` whose binders
+    /// are already in scope: `μv_i. [p_i | row[…]]`, where `row` refers to
+    /// each outer mention (and `i`) by its binder and nests the rest. The
+    /// prefix `p_i` is rewritten the same way, since its fields can mention
+    /// the cycle too. `None` when the type outgrows [`MAX_TYPE_TERMS`], which
+    /// bounds the nesting however the mentions copy each other.
+    fn tie(&self, i: usize, outer: &[usize]) -> Option<Ty> {
+        let scope: Vec<usize> = outer.iter().copied().chain([i]).collect();
+        let holes = (0..self.mentions.len())
+            .map(|j| {
+                let with = if scope.contains(&j) {
+                    Ty::Var(self.binders[j])
+                } else {
+                    self.tie(j, &scope)?
+                };
+                Some((Hole::Mention(self.kind, self.mentions[j].clone()), with))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let inner = plug_row(self.row, &holes, self.at, &mut Vec::new());
+        let prefix = plug_row(
+            &self.mentions[i],
+            &holes,
+            Guard::default().tag(),
+            &mut Vec::new(),
+        );
+        let body = self.kind.wrap(replace_tail(&prefix, inner));
+        let rec = Ty::Rec(self.binders[i], Box::new(body));
+        self.infer.within_term_budget(&rec).then_some(rec)
     }
 }
 
