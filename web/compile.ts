@@ -185,11 +185,15 @@ export function decodeDiagnostics(payload: Uint8Array, source: string): Diagnost
     at = start + length;
     return place;
   };
-  while (at + DIAGNOSTIC_HEADER <= payload.length) {
+  const fits = (bytes: number) => at + bytes <= payload.length;
+  while (fits(DIAGNOSTIC_HEADER)) {
     const diagnostic: Diagnostic = located();
-    const count = view.getUint32(at, true);
+    // A count or a label past the end of the payload is dropped, not read, so
+    // a malformed payload cannot throw or allocate by the count it claims.
+    const count = fits(4) ? view.getUint32(at, true) : 0;
     at += 4;
-    const labels = Array.from({ length: count }, located);
+    const labels: DiagnosticLabel[] = [];
+    while (labels.length < count && fits(DIAGNOSTIC_HEADER)) labels.push(located());
     found.push(labels.length > 0 ? { ...diagnostic, labels } : diagnostic);
   }
   return found;
