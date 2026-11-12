@@ -28,7 +28,7 @@ pub fn ground_fields(row: &Row) -> impl Iterator<Item = (&String, &Ty)> {
             next = Some(rest);
             Some((label, &**field))
         }
-        Row::Empty | Row::Var(_) => None,
+        Row::Empty | Row::Var(_) | Row::Maybe { .. } => None,
     })
 }
 

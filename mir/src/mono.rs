@@ -9,7 +9,7 @@ use goat_checker::hir::{
     self, BinOp, Boundary, Builtin, Decoder, ExprId, ExprKind, Param, PatternPayload, Span, Symbol,
 };
 use goat_checker::infer::Typed;
-use goat_checker::ty::{Row, Scheme, Ty, TypeVar};
+use goat_checker::ty::{ABSENT, PRESENT, Row, Scheme, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target, Vocab};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -521,6 +521,17 @@ impl Mono<'_> {
             }
             Row::Extend { label, field, rest } => {
                 out.push((label.clone(), self.ground_in(field, subst, bound)));
+                self.flatten_row(rest, subst, bound, out);
+            }
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                rest,
+            } => {
+                if subst.get(pres) == Some(&PRESENT) {
+                    out.push((label.clone(), self.ground_in(field, subst, bound)));
+                }
                 self.flatten_row(rest, subst, bound, out);
             }
         }
@@ -1681,6 +1692,19 @@ fn match_row(
                 if let Some(at) = rest.iter().position(|(l, _)| *l == label) {
                     match_ty_in(field, rest.remove(at).1, subst, seen);
                 }
+                row = next;
+            }
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                rest: next,
+            } => {
+                let found = rest.iter().position(|(l, _)| *l == label);
+                if let Some(at) = found {
+                    match_ty_in(field, rest.remove(at).1, subst, seen);
+                }
+                subst.insert(*pres, if found.is_some() { PRESENT } else { ABSENT });
                 row = next;
             }
             Row::Var(v) => {
