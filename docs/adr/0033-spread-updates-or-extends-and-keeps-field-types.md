@@ -1,8 +1,9 @@
 # ADR 0033 — A spread updates a field it has, extends with a field it lacks, and never changes a field's type
 
-- Status: proposed (2026-11-11). The owner decided the rule. The spike ran
-  (see "Spike evidence"): the typing carries the rule, but one knot per receiver
-  does not suffice. Recommendation: accept the rule, drop the #403 expectation.
+- Status: accepted (2026-11-11). The spike (see "Spike evidence") showed the
+  typing carries the rule. It also showed that one knot per receiver is not
+  enough for several methods; ADR 0034 addresses that by typing each method
+  against its own record.
 - Context: ADR 0011 (a shadowed field gets one layout slot; `lacks` constraints
   keep rest patterns sound), ADR 0028 (pure-extension spread recursion is
   rejected), ADR 0032 (methods on any receiver), PR #403 (two methods whose rows
