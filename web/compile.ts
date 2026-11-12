@@ -71,6 +71,14 @@ export interface Diagnostic {
   from: number;
   to: number;
   message: string;
+  // Other places that explain the problem, each saying what it shows there.
+  labels?: DiagnosticLabel[];
+}
+
+export interface DiagnosticLabel {
+  from: number;
+  to: number;
+  message: string;
 }
 
 export type TokenKind = "comment" | "keyword" | "literal" | "number" | "string" | "tag" | "operator";
@@ -168,11 +176,25 @@ export function decodeDiagnostics(payload: Uint8Array, source: string): Diagnost
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const index = utf16Offsets(source);
   const found: Diagnostic[] = [];
-  for (let at = 0; at + DIAGNOSTIC_HEADER <= payload.length; ) {
+  let at = 0;
+  const located = (): DiagnosticLabel => {
     const length = view.getUint32(at + 8, true);
-    const message = new TextDecoder().decode(payload.subarray(at + DIAGNOSTIC_HEADER, at + DIAGNOSTIC_HEADER + length));
-    found.push({ from: index(view.getUint32(at, true)), to: index(view.getUint32(at + 4, true)), message });
-    at += DIAGNOSTIC_HEADER + length;
+    const start = at + DIAGNOSTIC_HEADER;
+    const message = new TextDecoder().decode(payload.subarray(start, start + length));
+    const place = { from: index(view.getUint32(at, true)), to: index(view.getUint32(at + 4, true)), message };
+    at = start + length;
+    return place;
+  };
+  const fits = (bytes: number) => at + bytes <= payload.length;
+  while (fits(DIAGNOSTIC_HEADER)) {
+    const diagnostic: Diagnostic = located();
+    // A count or a label past the end of the payload is dropped, not read, so
+    // a malformed payload cannot throw or allocate by the count it claims.
+    const count = fits(4) ? view.getUint32(at, true) : 0;
+    at += 4;
+    const labels: DiagnosticLabel[] = [];
+    while (labels.length < count && fits(DIAGNOSTIC_HEADER)) labels.push(located());
+    found.push(labels.length > 0 ? { ...diagnostic, labels } : diagnostic);
   }
   return found;
 }

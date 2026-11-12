@@ -420,7 +420,7 @@ unsafe fn check_record(ptr: *const u8, len: usize, compile: Compiler) -> *mut u8
             Ok(_) => (TAG_OK, Vec::new()),
             Err(errors) => (TAG_ERR, encode_diagnostics(&errors)),
         },
-        Err(problem) => (TAG_ERR, encode_diagnostic(0, 0, &problem)),
+        Err(problem) => (TAG_ERR, encode_diagnostic(0, 0, &problem, &[])),
     };
     make_record(tag, payload)
 }
@@ -495,9 +495,10 @@ fn encode_diagnostics(errors: &[goat_checker::GoatError]) -> Vec<u8> {
         .flat_map(|e| {
             // A span in the prelude indexes text the user never wrote.
             if e.span.in_prelude() {
-                encode_diagnostic(0, 0, &format!("in the prelude, {}", e.message))
+                encode_diagnostic(0, 0, &format!("in the prelude, {}", e.message), &[])
             } else {
-                encode_diagnostic(e.span.start, e.span.end, &e.message)
+                let labels: Vec<_> = e.labels.iter().filter(|l| !l.span.in_prelude()).collect();
+                encode_diagnostic(e.span.start, e.span.end, &e.message, &labels)
             }
         })
         .collect()
@@ -507,12 +508,27 @@ fn word(n: usize) -> [u8; 4] {
     u32::try_from(n).unwrap_or(u32::MAX).to_le_bytes()
 }
 
-fn encode_diagnostic(start: usize, end: usize, message: &str) -> Vec<u8> {
-    let mut entry = Vec::with_capacity(12 + message.len());
+fn encode_located(entry: &mut Vec<u8>, start: usize, end: usize, message: &str) {
     entry.extend_from_slice(&word(start));
     entry.extend_from_slice(&word(end));
     entry.extend_from_slice(&word(message.len()));
     entry.extend_from_slice(message.as_bytes());
+}
+
+/// One diagnostic: its span and message, then a count of secondary labels and
+/// each label's span and message in the same layout.
+fn encode_diagnostic(
+    start: usize,
+    end: usize,
+    message: &str,
+    labels: &[&goat_checker::Label],
+) -> Vec<u8> {
+    let mut entry = Vec::with_capacity(16 + message.len());
+    encode_located(&mut entry, start, end, message);
+    entry.extend_from_slice(&word(labels.len()));
+    for label in labels {
+        encode_located(&mut entry, label.span.start, label.span.end, &label.message);
+    }
     entry
 }
 
@@ -697,6 +713,11 @@ mod tests {
                 String::from_utf8(message.to_vec()).unwrap(),
             ));
             at += 12 + len;
+            let labels = word(at);
+            at += 4;
+            for _ in 0..labels {
+                at += 12 + word(at + 8) as usize;
+            }
         }
         found
     }

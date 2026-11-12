@@ -48,13 +48,18 @@ export const UNPROTECTED_MESSAGE =
   "goat will not run here: nothing could stop a program that never finishes. Serve the page cross-origin isolated, or open it from a host app that watches it.";
 
 const LOCATED = /^(in the prelude, )?(\d+):(\d+): /;
+const NOTE = /^\d+:\d+: note: /;
 
 // Reads the checker's rendered form, `line:col: message`, the source line, then
-// a caret underline (checker/src/error.rs), one block per error.
+// a caret underline (checker/src/error.rs), one block per error. The notes an
+// error carries follow its own caret line; this host shows only the error
+// itself, so they are dropped until it learns to draw a second location.
 export function parseDiagnostics(rendered: string): Diagnostic[] {
   return rendered.split("\n\n").map((block) => {
     const located = LOCATED.exec(block);
-    const lines = block.split("\n");
+    const all = block.split("\n");
+    const note = all.findIndex((line, i) => i > 0 && NOTE.test(line));
+    const lines = note < 0 ? all : all.slice(0, note);
     if (!located || located[1] || lines.length < 3) {
       return { line: 0, column: 0, length: 0, message: block };
     }
