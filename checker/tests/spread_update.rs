@@ -97,3 +97,13 @@ fn three_methods_whose_rows_differ_check() {
         m.draw()";
     assert_eq!(type_of(source), "Number");
 }
+
+#[test]
+#[ignore = "spike finding: update's row and draw's row differ, so a single knot rejects it (see ADR 0033)"]
+fn two_methods_whose_rows_differ_check() {
+    let source = "init = program() do {x: 0, update: program(self) do {...self, x: self.x + 1} done, draw: program(self) do self.x done} done
+        run = program(m, n) do if n == 0 then m else run(m.update(), n - 1) done done
+        m = run(init(), 2)
+        m.draw()";
+    assert_eq!(type_of(source), "Number");
+}
