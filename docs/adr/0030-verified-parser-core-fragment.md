@@ -23,7 +23,10 @@ small enough to finish.
 1. **The claim covers the core fragment only.** That is what `goat_ln.ott` has: a
    variable, a number, `true` and `false`, `program(x1, …, xk) do e done` with at
    least one parameter, a call `e(e1, …, ek)`, a binding `x = e1 e2`, a record
-   literal `{l: e, …}`, a field access `e.l`, and parentheses. The n-ary forms
+   literal `{l: e, …}`, a field access `e.l`, a dot call `x.l(e1, …, ek)` on a
+   variable receiver `x` (ADR 0031: it denotes `(x.l)(x, e1, …, ek)`), and
+   parentheses. A dot call on any other receiver is outside the fragment, and
+   so is a call with no argument. The n-ary forms
    are curried into the single-binder core, and field labels are interned to
    `nat` in first-occurrence order of the source text. `program()` with no
    parameter is excluded.

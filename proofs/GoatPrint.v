@@ -35,6 +35,14 @@ Definition as_operand (e : exp) (b : list tree) : list tree :=
   | _ => b
   end.
 
+(* A projection callee is also parenthesised: [r.f(x)] is a dot call, which
+   passes [r] first. *)
+Definition as_callee (e : exp) (b : list tree) : list tree :=
+  match e with
+  | e_proj _ _ => paren_kids b
+  | _ => as_operand e b
+  end.
+
 (* A binding's value is one operand: a nested binding is parenthesised. *)
 Definition as_value (e : exp) (b : list tree) : list tree :=
   match e with
@@ -67,7 +75,7 @@ Fixpoint block (P : nat) (e : exp) {struct e} : list tree :=
   | e_true => [Node R_boolean [Node R_true_lit [sym "true"]]]
   | e_false => [Node R_boolean [Node R_false_lit [sym "false"]]]
   | e_abs b => [function_tree P (block (S P) b)]
-  | e_app f a => as_operand f (block P f) ++ [call_tree (block P a)]
+  | e_app f a => as_callee f (block P f) ++ [call_tree (block P a)]
   | e_let v b => decl_tree P (as_value v (block P v)) :: block (S P) b
   | e_rec fs => [Node R_record ((sym "{" :: field_trees P fs) ++ [sym "}"])]
   | e_proj f l => as_operand f (block P f) ++ [access_tree l]

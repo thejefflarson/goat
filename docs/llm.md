@@ -383,7 +383,7 @@ when it is no longer used. See `examples/letters.goat`.
 
 Types are fully inferred; you never annotate. The inferencer is Hindley-Milner
 with row-polymorphic records. A binding made with `=` whose value is a function,
-a literal, a name, or a record of such values is generalized, so a generic
+a literal, a name, or a record or spread (`{...r, k: v}`) of such values is generalized, so a generic
 function bound with `=` can be used at several types. A *computed* binding (a
 call, a `match`, an `if`, a field access) has one type; use it at two types and
 the checker suggests writing it as a function so it re-specializes per use:

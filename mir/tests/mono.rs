@@ -116,6 +116,21 @@ fn polymorphic_binding_gets_one_function_per_instantiation() {
 }
 
 #[test]
+fn each_use_of_a_generalized_spread_gets_its_own_layout() {
+    let src = "b = {mk: program(v) do {w: v} done, n: 1}\n\
+               a = {...b, k: 5}\n\
+               x = (a.mk)(1)\n\
+               y = (a.mk)(true)\n\
+               y.w";
+    let (p, v) = run_src(src);
+    assert_eq!(v, Value::Bool(true));
+    for ty in [MTy::Int, MTy::Bool] {
+        let wrapped = Layout::Record(vec![ty]);
+        assert!(p.layouts.contains(&wrapped), "{:?}", p.layouts);
+    }
+}
+
+#[test]
 fn repeated_instantiation_is_memoized() {
     let src = "id = program(x) do x done id(1) + id(2) + id(3)";
     assert_eq!(run_src(src).0.funcs.len(), 2);
@@ -638,6 +653,20 @@ fn a_recursive_layout_refers_to_itself() {
     assert_eq!(link[0], MTy::Int);
     assert_eq!(link[1], MTy::Ptr(HeapKind::Variant(LayoutId(0))));
     assert!(tags[&0].is_empty());
+}
+
+#[test]
+fn a_record_that_holds_a_method_over_itself_has_one_layout() {
+    let src = "ball = {x: 1, moved: program(self) do {...self, x: self.x + 1} done} \
+               step = program(p) do p.moved() done \
+               step(step(ball)).x";
+    let (p, v) = run_src(src);
+    assert_eq!(v, num(3.0));
+    let with_closures = p.layouts.iter().filter(|layout| {
+        matches!(layout, Layout::Record(fields)
+            if fields.iter().any(|f| matches!(f, MTy::Ptr(HeapKind::Closure(_)))))
+    });
+    assert_eq!(with_closures.count(), 1, "{:?}", p.layouts);
 }
 
 #[test]

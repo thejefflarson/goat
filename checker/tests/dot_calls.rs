@@ -159,15 +159,20 @@ fn a_count_that_is_off_by_more_than_the_receiver_counts_it() {
 }
 
 #[test]
-fn a_receiver_whose_type_cannot_be_built_is_named_without_type_variables() {
+fn a_computed_receiver_may_take_itself() {
     let source = "make = program() do {f: program(s) do 0 done} done\nmake().f()";
+    assert_eq!(type_of(source), "Number");
+}
+
+#[test]
+fn a_method_whose_type_would_contain_itself_is_named_without_type_variables() {
+    let source = "f = program(x) do x.m(x.m) done  1";
     let (message, covered) = first_diagnostic(source);
     assert_eq!(
         message,
-        "`make().f(…)` hands `make()` to `f`, but `make()` has one fixed type that `f` would have to contain. \
-         Bind the record to a name with `=` first, then call `f` on that name."
+        "`x.m(…)` hands `x` to `m`, but then the type of `m` would have to contain itself."
     );
-    assert_eq!(covered, "make().f()");
+    assert_eq!(covered, "x.m(x.m)");
     assert!(!message.contains('μ') && !message.contains("infinite"));
 }
 

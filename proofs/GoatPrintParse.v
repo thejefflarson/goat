@@ -116,6 +116,14 @@ Proof.
     | exact (proj1 HB) ].
 Qed.
 
+Lemma callee_chain : forall P f, BlkAt P f -> Chain (as_callee f (block P f)).
+Proof.
+  intros P f HB. destruct f; cbn [as_callee as_operand];
+    first
+    [ exact (chain_prim _ (prim_paren _ (expr_parses P _ HB)))
+    | exact (proj1 HB) ].
+Qed.
+
 Lemma value_chain : forall P v, BlkAt P v -> Chain (as_value v (block P v)).
 Proof.
   intros P v HB. destruct v; cbn [as_value];
@@ -147,7 +155,7 @@ Proof.
     exact (chain_prim _ (prim_function _ _ (expr_parses _ _ (IHb (S n) (S P) Hs)))).
   - (* call *)
     intros f IHf a IHa n P [Hf Ha]. apply blk_chain; [ exact I | ].
-    exact (chain_snoc _ _ (operand_chain _ _ (IHf n P Hf))
+    exact (chain_snoc _ _ (callee_chain _ _ (IHf n P Hf))
              (post_call _ (expr_parses _ _ (IHa n P Ha)))).
   - (* binding *)
     intros v IHv b IHb n P [Hv Hb].
