@@ -105,11 +105,7 @@ impl Analysis {
             lower_with_vocab(prelude, vocab, "")
         });
         let program = lowered.ok().map(|lowered| {
-            let dots = DotCalls {
-                calls: lowered.dot_calls,
-                takes: lowered.takes,
-                source: healed.source.clone(),
-            };
+            let dots = DotCalls::new(lowered.dot_calls, lowered.takes, healed.source.clone());
             let (typed, _) =
                 infer_partial(&lowered.root, lowered.interactive.as_ref(), vocab, dots);
             Program {
@@ -548,7 +544,9 @@ fn heal(cst: &Cst, cursor: usize) -> Healed {
 pub fn row_fields(row: &Row) -> Vec<(&str, &Ty)> {
     let mut out = Vec::new();
     let mut next = row;
-    while let Row::Extend { label, field, rest }
+    while let Row::Extend {
+        label, field, rest, ..
+    }
     | Row::Maybe {
         label, field, rest, ..
     } = next

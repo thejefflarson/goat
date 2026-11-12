@@ -41,7 +41,7 @@ fn a_parenthesised_projection_calls_without_the_record() {
         "Bool"
     );
     let message = first_error("r = {f: program(x) do x done}\nr.f(true)");
-    assert!(message.contains("argument"), "{message}");
+    assert!(message.contains("`f` has no `self`"), "{message}");
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn a_negated_dot_call_negates_the_result() {
 #[test]
 fn a_computed_receiver_is_bound_once_to_a_hidden_name() {
     let lowered =
-        lower("make = program() do {f: program(s) do 0 done} done\nmake().f()").expect("parses");
+        lower("make = program() do {f: program(self) do 0 done} done\nmake().f()").expect("parses");
     let mut calls_of_make = 0;
     let mut hidden_binders = 0;
     for_each_node(&lowered.root, &mut |e| match &e.kind {
@@ -110,8 +110,8 @@ fn a_method_with_no_parameter_for_the_record_says_so() {
     assert_eq!(
         first_diagnostic(source),
         (
-            "`ball.moved()` hands `ball` to `moved` as its first argument, but `moved` has no parameter for it. \
-             Add one first, like `program(self) do … done`, or write `(ball.moved)()` to call it without `ball`."
+            "`moved` has no `self`, so `ball.moved()` can't hand it `ball`. Call it with `ball::moved()`. \
+             If `moved` is meant to work on `ball`, make it a method by writing `self` first: `program(self)`."
                 .to_string(),
             "ball.moved()".to_string()
         )
@@ -124,8 +124,8 @@ fn a_method_missing_only_self_names_how_many_it_takes() {
     assert_eq!(
         first_diagnostic(source),
         (
-            "`ball.moved()` hands `ball` to `moved` as its first argument, but `moved` takes only 1 argument. \
-             Add `self` first, like `program(self, …)`, or write `(ball.moved)()` to call it without `ball`."
+            "`moved` has no `self`, so `ball.moved(2)` can't hand it `ball`. Call it with `ball::moved(2)`. \
+             If `moved` is meant to work on `ball`, make it a method by writing `self` first: `program(self, dt)`."
                 .to_string(),
             "ball.moved(2)".to_string()
         )
@@ -160,7 +160,7 @@ fn a_count_that_is_off_by_more_than_the_receiver_counts_it() {
 
 #[test]
 fn a_computed_receiver_may_take_itself() {
-    let source = "make = program() do {f: program(s) do 0 done} done\nmake().f()";
+    let source = "make = program() do {f: program(self) do 0 done} done\nmake().f()";
     assert_eq!(type_of(source), "Number");
 }
 
@@ -200,7 +200,8 @@ fn dot_calls(source: &str) -> Vec<(String, DotCall)> {
 
 #[test]
 fn the_side_table_records_each_dot_call() {
-    let [(receiver, call)] = &dot_calls("r = {o: {f: program(s) do 0 done}}\nr.o.f()")[..] else {
+    let [(receiver, call)] = &dot_calls("r = {o: {f: program(self) do 0 done}}\nr.o.f()")[..]
+    else {
         panic!("one dot call")
     };
     assert_eq!(
@@ -208,7 +209,7 @@ fn the_side_table_records_each_dot_call() {
         ("r.o", "f", ReceiverKind::Path)
     );
     let [(receiver, call)] =
-        &dot_calls("mk = program() do {f: program(s) do 0 done} done\nmk().f()")[..]
+        &dot_calls("mk = program() do {f: program(self) do 0 done} done\nmk().f()")[..]
     else {
         panic!("one dot call")
     };
@@ -216,13 +217,13 @@ fn the_side_table_records_each_dot_call() {
         (receiver.as_str(), call.label.as_str(), call.receiver_kind),
         ("mk()", "f", ReceiverKind::Computed)
     );
-    assert!(dot_calls("r = {f: program(s) do 0 done}\n(r.f)(1)").is_empty());
+    assert!(dot_calls("r = {f: program(self) do 0 done}\n(r.f)(1)").is_empty());
 }
 
 #[test]
 fn a_dot_call_chain_records_each_receiver_as_a_span_of_the_prefix() {
     let links = 200;
-    let binding = "r = {f: program(s) do s done}\n";
+    let binding = "r = {f: program(self) do self done}\n";
     let source = format!("{binding}r{}", ".f()".repeat(links));
     let calls = dot_calls(&source);
     assert_eq!(calls.len(), links);
@@ -260,14 +261,36 @@ fn a_take_call_lowers_to_the_parenthesised_projection_call() {
 }
 
 #[test]
-fn a_take_on_a_method_passes_the_record_explicitly() {
-    let record = "ball = {x: 1, moved: program(self) do self.x done}\n\
-                  other = {x: 10}\n";
-    let call = format!("{record}ball::moved(other)");
-    assert_eq!(plain_apps(&call), [("ball.moved".to_string(), 1)]);
-    assert_eq!(type_of(&call), "Number");
-    let message = first_error(&format!("{record}ball::moved()"));
-    assert_eq!(message, "function expects 1 argument(s) but got 0");
+fn a_take_on_a_method_is_an_error_that_steers_to_the_dot() {
+    let record = "ball = {x: 1, moved: program(self, k) do self.x + k done}\n\
+                  other = {...ball, x: 10}\n";
+    let cases = [
+        ("ball::moved(2)", "ball.moved(2)"),
+        ("ball::moved(other, 2)", "other.moved(2)"),
+        ("ball::moved", "ball.moved()"),
+    ];
+    for (written, suggested) in cases {
+        let (message, covered) = first_diagnostic(&format!("{record}{written}"));
+        assert_eq!(
+            message,
+            format!(
+                "`moved` has `self`, so call it with a dot: `{suggested}`. \
+                 `::` is for functions without `self`, like `math::double(5)`."
+            ),
+            "{written}"
+        );
+        assert_eq!(covered, "ball::moved");
+    }
+}
+
+#[test]
+fn a_take_settles_an_open_field_as_plain() {
+    let source = "pick = program(r) do r::f done\npick({f: program(self) do 1 done})";
+    let (message, _) = first_diagnostic(source);
+    assert!(
+        message.contains("`f` is a method in one record and a plain function"),
+        "{message}"
+    );
 }
 
 #[test]

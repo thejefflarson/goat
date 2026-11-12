@@ -203,15 +203,24 @@ fn prefix(rest: &str, candidates: &[&str]) -> Option<usize> {
 }
 
 /// [`tokenize`], with each name that `source` or `known_tags` declares as a tag
-/// marked [`TokenKind::Tag`]. `known_tags` is what the host provides: the
-/// prelude's tags and the vocabulary's.
+/// marked [`TokenKind::Tag`], and `self` marked [`TokenKind::Keyword`].
+/// `known_tags` is what the host provides: the prelude's tags and the
+/// vocabulary's. `self` stays a [`TokenKind::Name`] to the parser, which reads
+/// [`lex`]; the checker reserves it (ADR 0034), so an editor can show it as the
+/// keyword it acts as.
 pub fn highlight(source: &str, known_tags: &HashSet<String>) -> Vec<Token> {
     let mut tokens = tokenize(source);
     let mut tags: HashSet<&str> = known_tags.iter().map(String::as_str).collect();
     tags.extend(declared_tags(source, &tokens));
     for token in &mut tokens {
-        if token.kind == TokenKind::Name && tags.contains(&source[token.start..token.end]) {
+        if token.kind != TokenKind::Name {
+            continue;
+        }
+        let word = &source[token.start..token.end];
+        if tags.contains(word) {
             token.kind = TokenKind::Tag;
+        } else if word == "self" {
+            token.kind = TokenKind::Keyword;
         }
     }
     tokens
@@ -441,6 +450,31 @@ mod tests {
             to.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
             [Keyword, Name, Name]
         );
+    }
+
+    #[test]
+    fn self_is_a_name_to_the_parser_and_a_keyword_to_the_highlighter() {
+        let source = "program(self) do self.x done selfish";
+        let kinds_of_self = |tokens: Vec<Token>| {
+            tokens
+                .iter()
+                .filter(|t| &source[t.start..t.end] == "self")
+                .map(|t| t.kind)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds_of_self(tokenize(source)),
+            [TokenKind::Name, TokenKind::Name]
+        );
+        assert_eq!(
+            kinds_of_self(highlight(source, &HashSet::new())),
+            [TokenKind::Keyword, TokenKind::Keyword]
+        );
+        let selfish = highlight(source, &HashSet::new())
+            .into_iter()
+            .find(|t| &source[t.start..t.end] == "selfish")
+            .unwrap();
+        assert_eq!(selfish.kind, TokenKind::Name);
     }
 
     #[test]

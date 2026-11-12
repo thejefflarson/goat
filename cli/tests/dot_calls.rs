@@ -67,12 +67,21 @@ fn a_take_calls_without_the_record() {
 }
 
 #[test]
-fn a_take_on_a_method_passes_self_explicitly() {
-    let src = "ball = {x: 3, plus: program(self) do self.x done};\n\
-               other = {x: 10};\n\
-               print(ball::plus(other));\n\
-               print(ball.plus())";
-    assert_eq!(run(src), "10\n3");
+fn a_record_of_tools_is_called_with_a_double_colon() {
+    let src = "math = {clamp: program(x, lo, hi) do if x < lo then lo else if x > hi then hi else x done done done,
+                 double: program(n) do n * 2 done};\n\
+               print(math::clamp(12, 0, 10));\n\
+               print(math::double(5))";
+    assert_eq!(run(src), "10\n10");
+}
+
+#[test]
+fn a_record_mixes_a_method_and_a_tool() {
+    let src = "ball = {pos: 1, x: program(self) do self.pos done,
+                 clamp: program(v) do if v > 2 then 2 else v done done};\n\
+               print(ball.x());\n\
+               print(ball::clamp(3))";
+    assert_eq!(run(src), "1\n2");
 }
 
 #[test]

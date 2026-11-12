@@ -18,9 +18,9 @@ fn a_generalized_record_value_is_rematerialized_per_type() {
     let self_typed = "a = {x: 1, y: program(self) do self.x done};\n\
                       print(a.y())";
     assert_eq!(run(self_typed), "1");
-    let shared_function = "getx = program(self) do self.x done;\n\
+    let shared_function = "getx = program(r) do r.x done;\n\
                            a = {x: 1, y: getx};\n\
-                           print(a.y())";
+                           print(a::y(a))";
     assert_eq!(run(shared_function), "1");
 }
 

@@ -9,7 +9,7 @@ use goat_checker::hir::{
     self, BinOp, Boundary, Builtin, Decoder, ExprId, ExprKind, Param, PatternPayload, Span, Symbol,
 };
 use goat_checker::infer::Typed;
-use goat_checker::ty::{ABSENT, PRESENT, Row, Scheme, Ty, TypeVar};
+use goat_checker::ty::{ABSENT, PLAIN, PRESENT, Row, Scheme, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target, Vocab};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -501,6 +501,7 @@ impl Mono<'_> {
             .fold(Row::Empty, |rest, (label, field)| Row::Extend {
                 label,
                 field: Box::new(field),
+                method: Box::new(PLAIN),
                 rest: Box::new(rest),
             })
     }
@@ -519,7 +520,9 @@ impl Mono<'_> {
                     self.flatten_row(tail, subst, bound, out);
                 }
             }
-            Row::Extend { label, field, rest } => {
+            Row::Extend {
+                label, field, rest, ..
+            } => {
                 out.push((label.clone(), self.ground_in(field, subst, bound)));
                 self.flatten_row(rest, subst, bound, out);
             }
@@ -528,6 +531,7 @@ impl Mono<'_> {
                 pres,
                 field,
                 rest,
+                ..
             } => {
                 if subst.get(pres) == Some(&PRESENT) {
                     out.push((label.clone(), self.ground_in(field, subst, bound)));
@@ -1688,6 +1692,7 @@ fn match_row(
                 label,
                 field,
                 rest: next,
+                ..
             } => {
                 if let Some(at) = rest.iter().position(|(l, _)| *l == label) {
                     match_ty_in(field, rest.remove(at).1, subst, seen);
@@ -1699,6 +1704,7 @@ fn match_row(
                 pres,
                 field,
                 rest: next,
+                ..
             } => {
                 let found = rest.iter().position(|(l, _)| *l == label);
                 if let Some(at) = found {
@@ -1714,6 +1720,7 @@ fn match_row(
                     .fold(Row::Empty, |r, (l, f)| Row::Extend {
                         label: l.clone(),
                         field: Box::new(f.clone()),
+                        method: Box::new(PLAIN),
                         rest: Box::new(r),
                     });
                 subst.insert(*v, wrap(tail));
