@@ -149,7 +149,7 @@ fn a_take_on_a_method_steers_to_the_dot() {
         first_diagnostic(source),
         (
             "`moved` has `self`, so call it with a dot: `ball.moved()`. \
-             `::` is for functions without `self`, like `ball::new(5)`."
+             `::` is for functions without `self`, like `math::double(5)`."
                 .to_string(),
             "ball::moved".to_string()
         )
@@ -157,10 +157,58 @@ fn a_take_on_a_method_steers_to_the_dot() {
 }
 
 #[test]
-fn a_selfless_constructor_in_a_record_is_taken_with_a_double_colon() {
-    let source = "ball = {new: program(x) do {x: x, moved: program(self) do {...self, x: self.x + 1} done} done}\n\
-                  ball::new(5).moved().x";
+fn a_take_on_a_method_names_the_records_own_tool_as_the_example() {
+    let source = "ball = {pos: 1, x: program(self) do self.pos done, \
+                  clamp: program(v) do if v > 2 then 2 else v done done}\n\
+                  ball::x()";
+    assert_eq!(
+        first_diagnostic(source),
+        (
+            "`x` has `self`, so call it with a dot: `ball.x()`. \
+             `::` is for functions without `self`, like `ball::clamp(…)`."
+                .to_string(),
+            "ball::x".to_string()
+        )
+    );
+}
+
+#[test]
+fn a_dot_on_a_records_tool_steers_to_the_double_colon() {
+    let source = "ball = {pos: 1, x: program(self) do self.pos done, \
+                  clamp: program(v) do if v > 2 then 2 else v done done}\n\
+                  ball.clamp(3)";
+    assert_eq!(
+        first_diagnostic(source),
+        (
+            "`clamp` has no `self`, so `ball.clamp(3)` can't hand it `ball`. Call it with `ball::clamp(3)`. \
+             If `clamp` is meant to work on `ball`, make it a method by writing `self` first: `program(self, v)`."
+                .to_string(),
+            "ball.clamp(3)".to_string()
+        )
+    );
+}
+
+#[test]
+fn a_record_of_tools_is_called_with_a_double_colon() {
+    let source = "math = {clamp: program(x, lo, hi) do if x < lo then lo else if x > hi then hi else x done done done, \
+                  double: program(n) do n * 2 done}\n\
+                  math::clamp(12, 0, 10) + math::double(5)";
     assert_eq!(type_of(source), "Number");
+}
+
+#[test]
+fn methods_calling_siblings_stop_at_the_type_budget() {
+    let methods: Vec<String> = (0..5)
+        .map(|i| format!("m{i}: program(self) do self.m{}() done", i + 1))
+        .collect();
+    let source = format!(
+        "r = {{x: 0, {}, m5: program(self) do {{...self, x: self.x + 1}} done}}\nr.m0().x",
+        methods.join(", ")
+    );
+    let start = Instant::now();
+    let (message, _) = first_diagnostic(&source);
+    assert!(message.starts_with("program too complex"), "{message}");
+    assert!(start.elapsed() < Duration::from_secs(5));
 }
 
 #[test]

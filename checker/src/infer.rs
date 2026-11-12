@@ -129,32 +129,33 @@ pub fn infer_partial(
     inf.report_spent_ids(root.span);
     inf.default_numbers();
     inf.check_takes();
+    inf.report_outgrown_types();
     let warnings = if inf.errors.is_empty() {
         inf.unused_tag_warnings()
     } else {
         Vec::new()
     };
-    let root_ty = inf.finish(&ty);
+    let root_ty = inf.finish_within_budget(&ty).unwrap_or(Ty::Unit);
     let node_types = inf
         .node_types
         .iter()
-        .map(|(id, t)| (*id, inf.finish(t)))
+        .filter_map(|(id, t)| Some((*id, inf.finish_within_budget(t)?)))
         .collect();
     let schemes = inf
         .schemes
         .iter()
-        .map(|(symbol, s)| {
+        .filter_map(|(symbol, s)| {
             let scheme = Scheme {
                 vars: s.vars.clone(),
-                ty: inf.finish(&s.ty),
+                ty: inf.finish_within_budget(&s.ty)?,
             };
-            (*symbol, scheme)
+            Some((*symbol, scheme))
         })
         .collect();
     let binder_types = inf
         .binders
         .iter()
-        .map(|(symbol, t)| (*symbol, inf.finish(t)))
+        .filter_map(|(symbol, t)| Some((*symbol, inf.finish_within_budget(t)?)))
         .collect();
     let number_vars = inf
         .kinds
@@ -207,6 +208,7 @@ struct Inferer {
     /// by field label, for the hint a dot call on one gives.
     plain_fns: HashMap<String, Vec<String>>,
     node_types: HashMap<ExprId, Ty>,
+    node_spans: HashMap<ExprId, Span>,
     schemes: HashMap<Symbol, Scheme>,
     binders: HashMap<Symbol, Ty>,
     constructed: Vec<(String, Span)>,
@@ -1433,7 +1435,39 @@ impl Inferer {
             ty = self.fresh();
         }
         self.node_types.insert(expr.id, ty.clone());
+        self.node_spans.insert(expr.id, expr.span);
         ty
+    }
+
+    /// Report the first expression whose type, with every variable
+    /// substituted, has outgrown [`MAX_UNFOLDED_TERMS`], unless an error
+    /// already stops the program. Each type was within
+    /// [`MAX_TYPE_TERMS`] when inferred, but later bindings of the variables
+    /// inside it can multiply it, and [`Self::finish`] walks the whole thing.
+    fn report_outgrown_types(&mut self) {
+        if !self.errors.is_empty() {
+            return;
+        }
+        let outgrown = self
+            .node_types
+            .iter()
+            .filter(|(_, ty)| !self.within_unfold_budget(ty))
+            .filter_map(|(id, _)| self.node_spans.get(id).copied())
+            .min_by_key(|span| (span.start, span.end));
+        if let Some(span) = outgrown {
+            self.errors.push(GoatError::new(
+                span,
+                format!(
+                    "program too complex: the type of this expression has more than {MAX_UNFOLDED_TERMS} parts"
+                ),
+            ));
+        }
+    }
+
+    /// [`Self::finish`], or `None` for a type over [`MAX_UNFOLDED_TERMS`],
+    /// which [`Self::report_outgrown_types`] has reported.
+    fn finish_within_budget(&self, ty: &Ty) -> Option<Ty> {
+        self.within_unfold_budget(ty).then(|| self.finish(ty))
     }
 
     fn within_unfold_budget(&self, ty: &Ty) -> bool {
@@ -1654,7 +1688,7 @@ impl Inferer {
                 });
                 self.unify(&record_ty, &expected, expr.span);
                 if let Some(take) = self.dots.takes.get(&expr.id).cloned() {
-                    self.check_take(expr.id, &take, &method);
+                    self.check_take(expr.id, &take, &method, &record_ty);
                 }
                 field_ty
             }
@@ -2043,7 +2077,7 @@ impl Inferer {
     /// `r::f` is for a function without `self`, so it settles an open flag as
     /// plain and reports a method, steering to the dot: to `r.f(…)`, or to
     /// `other.f(…)` when the first argument looks meant as the receiver.
-    fn check_take(&mut self, id: ExprId, take: &Take, flag: &Ty) {
+    fn check_take(&mut self, id: ExprId, take: &Take, flag: &Ty, record: &Ty) {
         let args = match self.take_args.take() {
             Some((callee, spans)) if callee == id => spans,
             _ => Vec::new(),
@@ -2057,6 +2091,14 @@ impl Inferer {
             _ => {}
         }
         self.method_takes.insert(id);
+        let example = self.plain_function_of(record).map_or_else(
+            || "math::double(5)".to_string(),
+            |(label, arity)| {
+                let receiver = self.dots.source.get(take.receiver.start..take.receiver.end);
+                let dots = if arity == 0 { "" } else { "…" };
+                format!("{}::{label}({dots})", receiver.unwrap_or("r"))
+            },
+        );
         let source = &self.dots.source;
         let text = |span: &Span| source.get(span.start..span.end);
         let Some(receiver) = text(&take.receiver) else {
@@ -2076,9 +2118,37 @@ impl Inferer {
             take.span,
             format!(
                 "`{label}` has `self`, so call it with a dot: `{call}`. \
-                 `::` is for functions without `self`, like `{receiver}::new(5)`."
+                 `::` is for functions without `self`, like `{example}`."
             ),
         ));
+    }
+
+    /// A field of `record` that is a function without `self`, by label and
+    /// arity, for an example of what `::` is for.
+    fn plain_function_of(&self, record: &Ty) -> Option<(String, usize)> {
+        let Ty::Record(row) = self.resolve_head(record) else {
+            return None;
+        };
+        let mut next = row;
+        loop {
+            match next {
+                Row::Extend {
+                    label,
+                    field,
+                    method,
+                    rest,
+                } => {
+                    if self.resolve(&method) == PLAIN
+                        && let Ty::Func(params, _) = self.resolve_head(&field)
+                    {
+                        return Some((label, params.len()));
+                    }
+                    next = *rest;
+                }
+                Row::Maybe { rest, .. } => next = *rest,
+                Row::Empty | Row::Var(_) => return None,
+            }
+        }
     }
 
     fn print_ty(&mut self) -> Ty {

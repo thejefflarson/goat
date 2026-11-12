@@ -275,7 +275,7 @@ fn a_take_on_a_method_is_an_error_that_steers_to_the_dot() {
             message,
             format!(
                 "`moved` has `self`, so call it with a dot: `{suggested}`. \
-                 `::` is for functions without `self`, like `ball::new(5)`."
+                 `::` is for functions without `self`, like `math::double(5)`."
             ),
             "{written}"
         );

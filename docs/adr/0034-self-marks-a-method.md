@@ -26,13 +26,18 @@
    on a parameter has one meaning. A dot call on a plain function is an error:
    "`double` has no `self`, so call it with `tools::double(5)`".
 5. **`::` calls functions without `self` only.** `r::f(a…)` means
-   `(r.f)(a…)`, and bare `r::f` is the function value, so `ball::new(5)` calls
-   a constructor stored in the record. A method is called with `.` and nothing
+   `(r.f)(a…)`, and bare `r::f` is the function value, so a record of tools
+   is called as `math::double(5)`. A method is called with `.` and nothing
    else: `ball::moved()` and `ball::moved(other)` are errors that steer to
    `ball.moved()` and `other.moved()`. Rust also allows `Type::method(x)`; goat
    does not, so each kind of function has one call form, and `::` puts no shape
    constraint on its arguments. `(r.f)(x)` still works, since a parenthesized
    expression is an expression, but `::` is the form the docs teach.
+   A record cannot hold its own constructor: that field would have to refer to
+   the record, and goat values are acyclic, while a `new` that rebuilds a
+   literal returns a record without `new`, so not the record's shape. A new
+   ball is a prototype copy (`{...ball, pos: 5}`), a method returning a
+   changed copy (`ball.at(5)`), or a top-level function (`make_ball(5)`).
 6. **No named types, no annotations.** Everything above is inferred.
 
 ## Consequences
@@ -99,8 +104,9 @@ wasm with one recursive type and no nested knots.
    a dot call on a plain function suggests `::` and the `self` fix; `self`
    outside a record, or not first, says where it goes; `r::f` on a method says
    "`moved` has `self`, so call it with a dot: `ball.moved()`. `::` is for
-   functions without `self`, like `ball::new(5)`.", suggesting `other.moved()`
-   when the first argument names a record. `r::f` settles a field whose flag is
+   functions without `self`, like `math::double(5)`.", naming one of the
+   record's own functions without `self` as the example when it has one, and
+   suggesting `other.moved()` when the first argument names a record. `r::f` settles a field whose flag is
    still open as plain, as `r.f(…)` settles it as a method; a call on a record built by a method
    without `...self` names the method that dropped the rest. The earlier
    `(r.f)()` suggestion is now `r::f()`.
@@ -111,3 +117,12 @@ wasm with one recursive type and no nested knots.
    `unify_ty` resolves whole types at every step. The criterion
    was waived for this build; sharing the receiver type, or resolving it
    shallowly, is #417.
+7. **Final types are bounded too.** A type within `MAX_TYPE_TERMS` when
+   inferred can grow as later unifications bind the variables inside it: six
+   methods calling one another through `self` reach two million terms once
+   substituted, and folding them back into `μ` form does not finish. Before the
+   checker hands its types on, each is counted, with the count stopping early,
+   against `MAX_UNFOLDED_TERMS`; one over it is a spanned "program too
+   complex" error. Such records are now rejected in well under a second rather
+   than checking forever, and records of more than about ten methods, or four
+   that call siblings, hit the bound; making them fit is #417's work.
