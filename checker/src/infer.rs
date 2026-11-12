@@ -1955,15 +1955,15 @@ impl Inferer {
                     if let Row::Var(r) = &rest {
                         self.row_kinds.insert(*r, kinds);
                     }
-                    self.row_subst.insert(
-                        v,
-                        Row::Maybe {
-                            label: label.to_string(),
-                            pres,
-                            field: Box::new(ty.clone()),
-                            rest: Box::new(rest.clone()),
-                        },
-                    );
+                    // Through unify, not a bare bind: `{...s, next: s}` puts
+                    // `s`'s own row variable in the field, which needs a knot.
+                    let maybe = Row::Maybe {
+                        label: label.to_string(),
+                        pres,
+                        field: Box::new(ty.clone()),
+                        rest: Box::new(rest.clone()),
+                    };
+                    self.unify(&Ty::Record(Row::Var(v)), &Ty::Record(maybe), span);
                     return Row::Extend {
                         label: label.to_string(),
                         field: Box::new(ty),

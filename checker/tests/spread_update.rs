@@ -120,3 +120,9 @@ fn a_rest_pattern_over_an_updated_record_checks() {
     let source = "r = {...{x: 1, y: 2}, x: 3}\n{x, ...rest} = r\nrest";
     assert_eq!(type_of(source), "{y: Number}");
 }
+
+#[test]
+fn a_spread_that_stores_its_own_base_is_a_plain_error() {
+    let message = first_error("k = program(s) do {...s, next: s} done\nk({a: 1})");
+    assert!(message.contains("infinite record type"), "{message}");
+}
