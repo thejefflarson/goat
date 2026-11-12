@@ -967,7 +967,7 @@ mod tests {
         );
         assert_eq!(
             type_of("true < 1").unwrap_err(),
-            "type mismatch: expected `Number`, found `Bool`"
+            "type mismatch: expected `Bool`, found `Number`"
         );
         assert_eq!(
             type_of("if 1 then 2 else 3 done").unwrap_err(),
@@ -1915,11 +1915,11 @@ mod tests {
     #[test]
     fn a_for_loop_takes_numbers_and_a_list() {
         let err = type_of("for i from 1 to true do print(i) done").unwrap_err();
-        assert!(err.starts_with("type mismatch"), "{err}");
+        assert!(err.contains("needs numbers"), "{err}");
         let err = type_of("for x in 5 do print(x) done").unwrap_err();
         assert!(err.starts_with("type mismatch"), "{err}");
         let err = type_of("repeat true times do done").unwrap_err();
-        assert!(err.starts_with("type mismatch"), "{err}");
+        assert!(err.contains("needs numbers"), "{err}");
     }
 
     #[test]

@@ -48,6 +48,7 @@ fn every_example_behaves_the_same_with_a_prelude_around_it() {
             "whole_numbers.goat",
             "vowels.goat",
             "letters.goat",
+            "ordering.goat",
         ]
         .iter()
         .any(|name| path.ends_with(name));

@@ -395,6 +395,10 @@ fn examples_print_the_expected_output() {
             "constraints.goat",
             "{x: 21, y: 42}\n[true, true, false]\ntrue",
         ),
+        (
+            "ordering.goat",
+            "[\"apple\", \"fig\", \"pear\"]\napple\n[{age: 3, name: \"Zed\"}, {age: 4, name: \"Amy\"}, {age: 9, name: \"Amy\"}]\ntrue",
+        ),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
         let src = fs::read_to_string(&path).unwrap();

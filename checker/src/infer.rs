@@ -1755,15 +1755,9 @@ impl Inferer {
                 return self.join_operands(operands);
             }
             lhs_ty.clone()
-        } else if op.is_equality() {
+        } else {
             let ty = self.join_operands(operands);
             self.require(&ty, Kind::Eq, op, expr.span);
-            Ty::Bool
-        } else {
-            let (lhs, lhs_ty) = &operands.0;
-            if self.require(lhs_ty, Kind::Ordered, op, lhs.span) {
-                self.join_operands(operands);
-            }
             Ty::Bool
         }
     }
@@ -3337,7 +3331,7 @@ mod tests {
         let c = inf.fresh();
         inf.constrain(&c, Kinds::of(Kind::Eq)).unwrap();
         inf.unify(&c, &func, SPAN);
-        assert_eq!(inf.errors[0].message, "can't compare functions with `==`");
+        assert_eq!(inf.errors[0].message, "can't compare functions");
     }
 
     #[test]
