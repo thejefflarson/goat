@@ -32,6 +32,7 @@ use crate::hir::{
     Span, Symbol,
 };
 use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
+use crate::lower::DotCall;
 use crate::ty::{Group, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{Vocab, list};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -63,7 +64,15 @@ pub struct Typed {
 }
 
 pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
-    infer_program(root, None, &Vocab::empty())
+    infer_program(root, None, &Vocab::empty(), DotCalls::default())
+}
+
+/// What a message about a dot call quotes: the lowering's side table and the
+/// user source its receiver spans point into.
+#[derive(Default)]
+pub struct DotCalls {
+    pub calls: HashMap<ExprId, DotCall>,
+    pub source: String,
 }
 
 /// Like [`infer`], for a program that may be interactive: its three contract
@@ -73,8 +82,9 @@ pub fn infer_program(
     root: &Expr,
     interactive: Option<&Interactive>,
     vocab: &Vocab,
+    dots: DotCalls,
 ) -> Result<Typed, Vec<GoatError>> {
-    match infer_partial(root, interactive, vocab) {
+    match infer_partial(root, interactive, vocab, dots) {
         (typed, errors) if errors.is_empty() => Ok(typed),
         (_, errors) => Err(errors),
     }
@@ -87,8 +97,12 @@ pub fn infer_partial(
     root: &Expr,
     interactive: Option<&Interactive>,
     vocab: &Vocab,
+    dots: DotCalls,
 ) -> (Typed, Vec<GoatError>) {
-    let mut inf = Inferer::default();
+    let mut inf = Inferer {
+        dots,
+        ..Inferer::default()
+    };
     let ty = inf.infer(root);
     if let (true, Some(contract)) = (inf.errors.is_empty(), interactive) {
         inf.check_contract(contract, vocab);
@@ -159,6 +173,7 @@ struct Inferer {
     /// Computed `=` bindings that keep a monotype where a value would have
     /// been generalized, by their name.
     restricted: HashMap<Symbol, String>,
+    dots: DotCalls,
     node_types: HashMap<ExprId, Ty>,
     schemes: HashMap<Symbol, Scheme>,
     binders: HashMap<Symbol, Ty>,
@@ -1315,7 +1330,7 @@ impl Inferer {
                 }
                 Ty::func(arg_tys, ret)
             }
-            ExprKind::App { callee, args } => self.infer_app(expr.span, callee, args),
+            ExprKind::App { callee, args } => self.infer_app(expr.id, expr.span, callee, args),
             ExprKind::If {
                 cond,
                 then_branch,
@@ -1495,7 +1510,7 @@ impl Inferer {
     /// Kept out of line so its locals stay out of the deeply recursed
     /// [`Inferer::infer_kind`] frame.
     #[inline(never)]
-    fn infer_app(&mut self, span: Span, callee: &Expr, args: &[Expr]) -> Ty {
+    fn infer_app(&mut self, id: ExprId, span: Span, callee: &Expr, args: &[Expr]) -> Ty {
         let callee_ty = self.infer(callee);
         let mut arg_tys: Vec<Ty> = args.iter().map(|a| self.infer(a)).collect();
         let ret = self.fresh();
@@ -1509,6 +1524,11 @@ impl Inferer {
                 let before = self.errors.len();
                 self.unify_use(callee, &callee_ty, &expected, span);
                 if self.errors.len() > before
+                    && let Some(message) = self.dot_call_message(id, &head, args, before)
+                {
+                    self.errors.truncate(before);
+                    self.errors.push(GoatError::new(span, message));
+                } else if self.errors.len() > before
                     && let ExprKind::Var { symbol, name } = &callee.kind
                     && self.restricted.contains_key(symbol)
                 {
@@ -1528,6 +1548,66 @@ impl Inferer {
             other => self.report_not_callable(callee.span, &other),
         }
         ret
+    }
+
+    /// The message for a dot call `r.f(…)` whose unification failed, naming
+    /// the receiver the dot passed first. `None` leaves the errors from
+    /// `before` as they are: a call that is not a dot call, or a type mismatch
+    /// that is not about the receiver.
+    fn dot_call_message(
+        &self,
+        id: ExprId,
+        head: &Ty,
+        args: &[Expr],
+        before: usize,
+    ) -> Option<String> {
+        let dot = self.dots.calls.get(&id)?;
+        let source = &self.dots.source;
+        let receiver = source.get(dot.receiver.start..dot.receiver.end)?;
+        let method = &dot.label;
+        let passed = args.len();
+        if let Ty::Func(params, _) = head
+            && params.len() != passed
+        {
+            let takes = params.len();
+            let again = args
+                .get(1)
+                .is_some_and(|a| source.get(a.span.start..a.span.end) == Some(receiver));
+            return Some(if again && takes + 1 == passed {
+                format!(
+                    "`{receiver}.{method}({receiver})` already hands `{receiver}` over: the dot does it. \
+                     Write `{receiver}.{method}()`."
+                )
+            } else if takes + 1 == passed {
+                let fix = if takes == 0 {
+                    format!(
+                        "`{method}` has no parameter for it. Add one first, like `program(self) do … done`"
+                    )
+                } else {
+                    format!(
+                        "`{method}` takes only {}. Add `self` first, like `program(self, …)`",
+                        count(takes, "argument")
+                    )
+                };
+                format!(
+                    "`{receiver}.{method}()` hands `{receiver}` to `{method}` as its first argument, but {fix}, \
+                     or write `({receiver}.{method})()` to call it without `{receiver}`."
+                )
+            } else {
+                format!(
+                    "`{receiver}.{method}(…)` hands `{receiver}` to `{method}` first, so it passes {}, but `{method}` takes {takes}.",
+                    count(passed, "argument"),
+                )
+            });
+        }
+        self.errors[before..]
+            .iter()
+            .any(|e| e.message.contains("infinite"))
+            .then(|| {
+                format!(
+                    "`{receiver}.{method}(…)` hands `{receiver}` to `{method}`, but then the type of `{method}` would have to contain itself."
+                )
+            })
     }
 
     /// A concrete `Int` argument to a `Float` parameter is taken as the
@@ -2036,6 +2116,10 @@ fn pure_extension(var: TypeVar, row: &Row) -> Option<Vec<String>> {
         cursor = rest;
     }
     (matches!(cursor, Row::Var(v) if *v == var) && !labels.is_empty()).then_some(labels)
+}
+
+fn count(n: usize, noun: &str) -> String {
+    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
 }
 
 fn spread_regress_message(labels: &[String]) -> String {

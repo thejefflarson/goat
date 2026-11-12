@@ -84,7 +84,11 @@ pub fn check_with_vocab(
     if !lowered.errors.is_empty() {
         return Err(lowered.errors);
     }
-    let mut typed = infer::infer_program(&lowered.root, lowered.interactive.as_ref(), vocab)?;
+    let dots = infer::DotCalls {
+        calls: lowered.dot_calls,
+        source: source.to_string(),
+    };
+    let mut typed = infer::infer_program(&lowered.root, lowered.interactive.as_ref(), vocab, dots)?;
     typed.warnings.splice(0..0, lowered.warnings);
     let generalized = typed
         .schemes
