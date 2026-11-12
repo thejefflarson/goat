@@ -196,6 +196,9 @@ fn is_syntactic_value(expr: &Expr) -> bool {
         | ExprKind::Foreign { .. }
         | ExprKind::Func { .. } => true,
         ExprKind::Record { fields } => fields.iter().all(|(_, field)| is_syntactic_value(field)),
+        ExprKind::Spread { base, fields } => {
+            is_syntactic_value(base) && fields.iter().all(|(_, field)| is_syntactic_value(field))
+        }
         ExprKind::Tag { payload, .. } => payload.as_deref().is_none_or(is_syntactic_value),
         _ => false,
     }
