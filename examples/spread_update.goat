@@ -1,0 +1,13 @@
+# A spread updates a field the record has and adds one it lacks, but never
+# changes a field's type: `{...ball, x: "hi"}` is an error when `x` is a number.
+ball = {x: 1, y: 2}
+moved = {...ball, x: 5, color: "red"}
+
+# With no record in sight, `x` is there or not, and the result has it either way.
+set_x = program(r) do {...r, x: 10} done
+
+# A method that updates its receiver returns the receiver's own type.
+counter = {n: 0, bump: program(self) do {...self, n: self.n + 1} done}
+twice = counter.bump().bump()
+
+moved.x + set_x(ball).x + set_x({y: 1}).x + twice.n

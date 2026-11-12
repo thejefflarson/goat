@@ -1442,19 +1442,24 @@ mod tests {
     #[test]
     fn spread_adds_a_field() {
         let src = "p = {x: 1} {...p, y: true}";
-        assert_eq!(type_of(src).unwrap(), "{y: Bool, x: Number}");
+        assert_eq!(type_of(src).unwrap(), "{x: Number, y: Bool}");
         assert_eq!(type_of("p = {x: 1} {...p}").unwrap(), "{x: Number}");
     }
 
     #[test]
-    fn spread_override_replaces_the_field_even_at_a_new_type() {
+    fn spread_override_updates_the_field_and_keeps_its_type() {
         let same = "p = {x: 1, y: 2} {...p, x: 5}";
         assert_eq!(type_of(same).unwrap(), "{x: Number, y: Number}");
-        let changed = "p = {x: 1, y: 2} {...p, x: \"one\"}";
-        assert_eq!(type_of(changed).unwrap(), "{x: String, y: Number}");
+        let changed = first_error("p = {x: 1, y: 2} {...p, x: \"one\"}");
         assert_eq!(
-            type_of("p = {x: 1} q = {...p, x: true} q.x").unwrap(),
-            "Bool"
+            changed.message,
+            "`x` is a `Number` in `p`, and `{...p, x: …}` keeps each field's type, so `x` can't become a `String`. To keep the text too, give it its own field, like `x_text`."
+        );
+        let later = first_error("p = {x: 1} q = {...p, x: true} q.x");
+        assert!(
+            later.message.contains("can't become a `Bool`"),
+            "{}",
+            later.message
         );
     }
 
@@ -1462,7 +1467,7 @@ mod tests {
     fn spread_of_an_unknown_record_stays_polymorphic_in_the_rest() {
         let src = "bump = program(m) do {...m, x: 1} done \
                    a = bump({y: true}) \
-                   b = bump({x: \"s\", z: 2}) \
+                   b = bump({x: 4, z: 2}) \
                    if a.y then b.x + a.x else 0 done";
         assert_eq!(type_of(src).unwrap(), "Number");
     }
@@ -1585,20 +1590,21 @@ mod tests {
     }
 
     #[test]
-    fn rest_refuses_a_label_a_spread_override_hid() {
+    fn rest_after_a_spread_update_names_each_label_once() {
         let bump = "bump = program(m) do {...m, x: 1} done \
                     drop = program({x, ...r}) do r done ";
         assert_eq!(
             type_of(&format!("{bump} drop(bump({{y: 2}}))")).unwrap(),
             "{y: Number}"
         );
+        assert_eq!(
+            type_of(&format!("{bump} drop(bump({{x: 3, y: 2}}))")).unwrap(),
+            "{y: Number}"
+        );
         let err = first_error(&format!("{bump} drop(bump({{x: \"s\", y: 2}}))"));
-        let twice = "`x` is in this record twice";
-        assert!(err.message.contains(twice), "{}", err.message);
-        let direct =
-            first_error("bump = program(m) do {...m, x: 1} done {x, ...r} = bump({x: true}) r");
-        assert!(direct.message.contains(twice), "{}", direct.message);
+        assert!(err.message.contains("mismatch"), "{}", err.message);
     }
+
     #[test]
     fn a_semicolon_runs_a_statement_and_keeps_the_rest() {
         assert_eq!(type_of("print(1); 2").unwrap(), "Number");
