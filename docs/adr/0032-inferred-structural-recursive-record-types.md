@@ -258,3 +258,30 @@ examples; if it shows, cache the answer per lowered type.
   required before this is user-visible.
 - Unification, mono and canonicalization already handle `μ` for variants, so no
   new type constructor enters the pipeline.
+
+### Amendment 2026-11-11: unification is bounded
+
+A receiver with three or more methods that return `{...self, …}` gives the
+checker types that mention themselves under several row prefixes. Without a
+bound, `m.nudge().update().draw()` on such a model ran for a minute: each bind
+grew a type that later binds copied again, and the final pass then folded
+types of millions of terms. Unification now carries four budgets. Each trip is a
+spanned `program too complex: …` diagnostic, the one resource-limit exception
+CLAUDE.md allows the checker, or the generic infinite-type error. No message
+shows a `μ` or a raw type variable.
+
+| Budget | Value | Bounds |
+|---|---|---|
+| `MAX_KNOTS_PER_UNIFY` | 16 | knots tied in one top-level unify; each mints fresh binders, so the assumed-equal set cannot bound it. A trip is the infinite-type error. |
+| `MAX_UNFOLDINGS_PER_UNIFY` | 256 | distinct pairs of recursive types one top-level unify compares |
+| `MAX_UNFOLDED_TERMS` | 4 × `MAX_TYPE_TERMS` (4096) | terms in a type being unfolded, or in the type a variable or row variable is bound to |
+
+The same pass compares a row mention up to unfolding the enclosing `μ`
+binders, so a mention seen under a binder and the same mention outside it are
+one. The nested-knot construction for mentions with different prefixes is
+separate work; until it lands, such receivers end in one of these two errors
+rather than checking.
+
+The test `checker/tests/knot_budget.rs` pins the three-method model
+(`m.nudge().update().draw()` and `m = run(init(), 4); m.draw()`): both must
+finish in under 2 s in a debug build and may end in either error.

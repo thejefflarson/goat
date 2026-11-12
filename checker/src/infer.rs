@@ -182,6 +182,10 @@ struct Inferer {
     /// Pairs of types [`Inferer::unify_ty`] is already unifying or has unified,
     /// within one top-level [`Inferer::unify`].
     assumed: HashSet<(Ty, Ty)>,
+    /// Knots tied within the current top-level unify; see [`MAX_KNOTS_PER_UNIFY`].
+    knots_tied: usize,
+    /// Whether the current top-level unify already reported a spent budget.
+    too_complex: bool,
     /// Row variables that must never gain these labels: `{x, ...rest} = m`
     /// takes only the front `x` out of `m`, so a second `x` behind it (left by a
     /// `...` override) would resurface in `rest`, while the runtime layout
@@ -218,6 +222,20 @@ fn is_syntactic_value(expr: &Expr) -> bool {
         _ => false,
     }
 }
+
+/// Knots one top-level unify may tie. Each knot mints fresh binders, so the
+/// assumed-equal set (see [`Inferer::unify_ty`]) cannot bound a unify that
+/// keeps tying new ones; this does.
+const MAX_KNOTS_PER_UNIFY: usize = 16;
+
+/// Terms a type may have while unification unfolds it or binds a variable to
+/// it. Unfolding copies the whole `μ` into its body, so mismatched recursive
+/// types can double at every step.
+const MAX_UNFOLDED_TERMS: usize = 4 * MAX_TYPE_TERMS;
+
+/// Distinct pairs of recursive types one top-level unify may compare. Growing
+/// an open row while unfolding can mint a new pair at every step.
+const MAX_UNFOLDINGS_PER_UNIFY: usize = 256;
 
 /// Which table of constraints a variable's lives in.
 #[derive(Clone, Copy)]
@@ -405,6 +423,18 @@ impl Inferer {
     fn unify(&mut self, a: &Ty, b: &Ty, span: Span) {
         self.unify_ty(a, b, span);
         self.assumed.clear();
+        self.knots_tied = 0;
+        self.too_complex = false;
+    }
+
+    fn report_too_complex(&mut self, span: Span) {
+        if !self.too_complex {
+            self.too_complex = true;
+            self.errors.push(GoatError::new(
+                span,
+                "program too complex: these types grow too large to unify",
+            ));
+        }
     }
 
     fn unify_ty(&mut self, a: &Ty, b: &Ty, span: Span) {
@@ -428,6 +458,10 @@ impl Inferer {
                     ));
                     return;
                 };
+                if !self.within_unfold_budget(&bound) {
+                    self.report_too_complex(span);
+                    return;
+                }
                 self.bind_var(*x, bound.clone());
                 if let Some(kinds) = self.kinds.remove(x)
                     && let Err(violation) = self.constrain(&bound, kinds)
@@ -461,7 +495,12 @@ impl Inferer {
                 // many distinct sub-terms of the two types and their
                 // unfoldings (a regular tree has finitely many), so the
                 // recursion depth is bounded.
-                if self.assumed.insert((a.clone(), b.clone())) {
+                if self.assumed.len() > MAX_UNFOLDINGS_PER_UNIFY
+                    || !self.within_unfold_budget(&a)
+                    || !self.within_unfold_budget(&b)
+                {
+                    self.report_too_complex(span);
+                } else if self.assumed.insert((a.clone(), b.clone())) {
                     self.unify_ty(&a.unfold_head(), &b.unfold_head(), span);
                 }
             }
@@ -535,6 +574,11 @@ impl Inferer {
                     self.errors.push(GoatError::new(span, message));
                     return;
                 };
+                let mut budget = MAX_UNFOLDED_TERMS;
+                if self.spend_on_row(&bound, &mut budget).is_none() {
+                    self.report_too_complex(span);
+                    return;
+                }
                 self.row_subst.insert(*x, bound.clone());
                 if let Some(kinds) = self.row_kinds.remove(x) {
                     for kind_to_check in kinds.iter() {
@@ -579,11 +623,23 @@ impl Inferer {
         }
     }
 
+    fn spend_knot(&mut self) -> Option<()> {
+        self.knots_tied += 1;
+        (self.knots_tied <= MAX_KNOTS_PER_UNIFY).then_some(())
+    }
+
     /// `x = t` where `t` mentions `x`: the recursive type `μv. t[x := v]`, if
     /// every mention is guarded (see [`Guard`]).
     fn tie_ty_knot(&mut self, x: TypeVar, t: &Ty) -> Option<Ty> {
+        self.spend_knot()?;
         let binder = self.fresh_id();
-        let body = plug(t, &Hole::Ty(x), &Ty::Var(binder), Guard::default());
+        let body = plug(
+            t,
+            &Hole::Ty(x),
+            &Ty::Var(binder),
+            Guard::default(),
+            &mut Vec::new(),
+        );
         (!occurs(x, &body)).then(|| Ty::Rec(binder, Box::new(body)))
     }
 
@@ -593,14 +649,15 @@ impl Inferer {
     /// it is the recursive type `μv. [prefix | row[mention := v]]`. `x` becomes
     /// `row` with that type in place of the mentions.
     fn tie_row_knot(&mut self, x: TypeVar, kind: RowKind, row: &Row) -> Option<Row> {
+        self.spend_knot()?;
         let under_tag = match kind {
             RowKind::Variant => Guard::default().tag(),
             RowKind::Record => Guard::default().field(),
         };
-        let mention = find_mention(row, x, kind, under_tag)?;
+        let mention = find_mention(row, x, kind, under_tag, &mut Vec::new())?;
         let hole = Hole::Mention(kind, mention.clone());
         let binder = self.fresh_id();
-        let inner = plug_row(row, &hole, &Ty::Var(binder), under_tag);
+        let inner = plug_row(row, &hole, &Ty::Var(binder), under_tag, &mut Vec::new());
         if occurs_row(x, &inner) {
             return None;
         }
@@ -608,7 +665,7 @@ impl Inferer {
         if occurs(x, &rec) {
             return None;
         }
-        Some(plug_row(row, &hole, &rec, under_tag))
+        Some(plug_row(row, &hole, &rec, under_tag, &mut Vec::new()))
     }
 
     /// Surface `label` in `row`, returning its field type and the row without
@@ -1176,6 +1233,11 @@ impl Inferer {
         }
         self.node_types.insert(expr.id, ty.clone());
         ty
+    }
+
+    fn within_unfold_budget(&self, ty: &Ty) -> bool {
+        let mut budget = MAX_UNFOLDED_TERMS;
+        self.spend_on_ty(ty, &mut budget).is_some()
     }
 
     /// Whether `ty`, followed through the substitution, has at most
@@ -1976,74 +2038,121 @@ impl Guard {
     }
 }
 
+/// `row`, which sits under the recursive types `bound` (outermost first), with
+/// each of their binders replaced by the type it names. A mention under a
+/// binder carries that binder in its prefix; unfolding makes it comparable to
+/// the same mention outside.
+fn unfolded(row: &Row, kind: RowKind, bound: &[&Ty]) -> Row {
+    if bound.is_empty() {
+        return row.clone();
+    }
+    let closed = bound.iter().rev().fold(kind.wrap(row.clone()), |ty, rec| {
+        let Ty::Rec(binder, _) = rec else { return ty };
+        ty.substitute(*binder, rec)
+    });
+    match closed {
+        Ty::Record(row) | Ty::Variant(row) => row,
+        _ => unreachable!("substitution keeps the constructor"),
+    }
+}
+
+/// Whether `ty` is the mention `hole` names, up to unfolding the enclosing
+/// recursive types `bound`.
+fn is_mention(ty: &Ty, hole: &Hole, bound: &[&Ty]) -> bool {
+    match (hole, ty) {
+        (Hole::Mention(kind @ RowKind::Record, m), Ty::Record(row))
+        | (Hole::Mention(kind @ RowKind::Variant, m), Ty::Variant(row)) => {
+            row_shape(row) == row_shape(m) && unfolded(row, *kind, bound) == *m
+        }
+        _ => false,
+    }
+}
+
 /// Replace the mentions of `hole` in `ty` with `with`, but only the guarded
-/// ones (see [`Guard`]); `at` says where `ty` already sits. A mention left
-/// behind is a cycle that is not guarded.
-fn plug(ty: &Ty, hole: &Hole, with: &Ty, at: Guard) -> Ty {
+/// ones (see [`Guard`]); `at` says where `ty` already sits and `bound` which
+/// recursive types enclose it. A mention left behind is a cycle that is not
+/// guarded.
+fn plug<'a>(ty: &'a Ty, hole: &Hole, with: &Ty, at: Guard, bound: &mut Vec<&'a Ty>) -> Ty {
+    if at.guarded()
+        && (matches!(ty, Ty::Var(v) if *hole == Hole::Ty(*v)) || is_mention(ty, hole, bound))
+    {
+        return with.clone();
+    }
     match ty {
-        Ty::Var(v) if at.guarded() && *hole == Hole::Ty(*v) => with.clone(),
-        Ty::Record(row)
-            if at.guarded() && matches!(hole, Hole::Mention(RowKind::Record, m) if m == row) =>
-        {
-            with.clone()
-        }
-        Ty::Variant(row)
-            if at.guarded() && matches!(hole, Hole::Mention(RowKind::Variant, m) if m == row) =>
-        {
-            with.clone()
-        }
         Ty::Func(args, ret) => Ty::Func(
             args.iter()
-                .map(|a| plug(a, hole, with, at.func()))
+                .map(|a| plug(a, hole, with, at.func(), bound))
                 .collect(),
-            Box::new(plug(ret, hole, with, at.func())),
+            Box::new(plug(ret, hole, with, at.func(), bound)),
         ),
-        Ty::Record(row) => Ty::Record(plug_row(row, hole, with, at.field())),
-        Ty::Variant(row) => Ty::Variant(plug_row(row, hole, with, at.tag())),
-        Ty::Rec(binder, body) => Ty::Rec(*binder, Box::new(plug(body, hole, with, at))),
+        Ty::Record(row) => Ty::Record(plug_row(row, hole, with, at.field(), bound)),
+        Ty::Variant(row) => Ty::Variant(plug_row(row, hole, with, at.tag(), bound)),
+        Ty::Rec(binder, body) => {
+            bound.push(ty);
+            let body = plug(body, hole, with, at, bound);
+            bound.pop();
+            Ty::Rec(*binder, Box::new(body))
+        }
         other => other.clone(),
     }
 }
 
 /// [`plug`] over the fields of a row, which already sit at `at`.
-fn plug_row(row: &Row, hole: &Hole, with: &Ty, at: Guard) -> Row {
+fn plug_row<'a>(row: &'a Row, hole: &Hole, with: &Ty, at: Guard, bound: &mut Vec<&'a Ty>) -> Row {
     match row {
         Row::Extend { label, field, rest } => Row::Extend {
             label: label.clone(),
-            field: Box::new(plug(field, hole, with, at)),
-            rest: Box::new(plug_row(rest, hole, with, at)),
+            field: Box::new(plug(field, hole, with, at, bound)),
+            rest: Box::new(plug_row(rest, hole, with, at, bound)),
         },
         other => other.clone(),
     }
 }
 
-/// The row of the first `kind` type at a guarded position whose row ends in
-/// the row variable `x`.
-fn find_mention(row: &Row, x: TypeVar, kind: RowKind, at: Guard) -> Option<Row> {
+/// The row, unfolded (see [`unfolded`]), of the first `kind` type at a guarded
+/// position whose row ends in the row variable `x`.
+fn find_mention<'a>(
+    row: &'a Row,
+    x: TypeVar,
+    kind: RowKind,
+    at: Guard,
+    bound: &mut Vec<&'a Ty>,
+) -> Option<Row> {
     let Row::Extend { field, rest, .. } = row else {
         return None;
     };
-    find_mention_in(field, x, kind, at).or_else(|| find_mention(rest, x, kind, at))
+    find_mention_in(field, x, kind, at, bound).or_else(|| find_mention(rest, x, kind, at, bound))
 }
 
-fn find_mention_in(ty: &Ty, x: TypeVar, kind: RowKind, at: Guard) -> Option<Row> {
+fn find_mention_in<'a>(
+    ty: &'a Ty,
+    x: TypeVar,
+    kind: RowKind,
+    at: Guard,
+    bound: &mut Vec<&'a Ty>,
+) -> Option<Row> {
     match ty {
         Ty::Func(args, ret) => args
             .iter()
-            .find_map(|t| find_mention_in(t, x, kind, at.func()))
-            .or_else(|| find_mention_in(ret, x, kind, at.func())),
+            .find_map(|t| find_mention_in(t, x, kind, at.func(), bound))
+            .or_else(|| find_mention_in(ret, x, kind, at.func(), bound)),
         Ty::Record(row) | Ty::Variant(row) => {
             let is_variant = matches!(ty, Ty::Variant(_));
             if at.guarded()
                 && is_variant == (kind == RowKind::Variant)
                 && row_shape(row).1 == Some(x)
             {
-                return Some(row.clone());
+                return Some(unfolded(row, kind, bound));
             }
             let inner = if is_variant { at.tag() } else { at.field() };
-            find_mention(row, x, kind, inner)
+            find_mention(row, x, kind, inner, bound)
         }
-        Ty::Rec(_, body) => find_mention_in(body, x, kind, at),
+        Ty::Rec(_, body) => {
+            bound.push(ty);
+            let found = find_mention_in(body, x, kind, at, bound);
+            bound.pop();
+            found
+        }
         _ => None,
     }
 }
