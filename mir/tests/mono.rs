@@ -116,6 +116,21 @@ fn polymorphic_binding_gets_one_function_per_instantiation() {
 }
 
 #[test]
+fn each_use_of_a_generalized_spread_gets_its_own_layout() {
+    let src = "b = {mk: program(v) do {w: v} done, n: 1}\n\
+               a = {...b, k: 5}\n\
+               x = (a.mk)(1)\n\
+               y = (a.mk)(true)\n\
+               y.w";
+    let (p, v) = run_src(src);
+    assert_eq!(v, Value::Bool(true));
+    for ty in [MTy::Int, MTy::Bool] {
+        let wrapped = Layout::Record(vec![ty]);
+        assert!(p.layouts.contains(&wrapped), "{:?}", p.layouts);
+    }
+}
+
+#[test]
 fn repeated_instantiation_is_memoized() {
     let src = "id = program(x) do x done id(1) + id(2) + id(3)";
     assert_eq!(run_src(src).0.funcs.len(), 2);

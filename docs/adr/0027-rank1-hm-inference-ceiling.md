@@ -21,8 +21,10 @@
   rank-2 would not fix it, because the obstacle is lowering one once-evaluated
   value at two types. A `=` binding therefore generalizes its type variables only
   when its value is *syntactic*: a `program(...)` literal, a literal, a name, or a
-  record or variant whose fields are all syntactic values. Any other value (a call,
-  a `match`, an `if`, a field access, a spread) keeps a monotype.
+  record or variant whose fields are all syntactic values, or a spread
+  `{...base, k: v}` whose base and fields are all syntactic values (it only copies
+  fields, so it is pure; ADR 0032 item 6). Any other value (a call, a `match`, an
+  `if`, a field access) keeps a monotype.
 - Consequences: a computed binding used at two incompatible types is a checker
   error that names the binding, says it is a computed value with one type, and
   suggests the fix: write it as a function so it re-specializes per use, for example
