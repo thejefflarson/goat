@@ -1,0 +1,22 @@
+# A function written inside a record with `self` first is a method. `.` calls it
+# and hands it the record; `::` takes a function without `self` and hands it
+# nothing.
+ball = {
+  x: 1,
+  moved: program(self) do {...self, x: self.x + 1} done,
+  at: program(self, x) do {...self, x: x} done
+}
+
+# A method gives back a new record, so calls chain and `ball` itself stays put.
+chained = ball.moved().moved()
+
+# The receiver can be a parameter: any record with a `moved` method works.
+step = program(b) do b.moved().x done
+
+# A prototype copy has `ball`'s type, methods included.
+twin = {...ball, x: 20}
+
+# `::` borrows a plain function and leaves the record out of the call.
+tools = {double: program(n) do n * 2 done}
+
+chained.x + ball.at(5).x + step(twin) + tools::double(5)

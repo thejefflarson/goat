@@ -1,0 +1,43 @@
+# Things in the sky share their fields (x, y, size, fill) but each has its own
+# look(self, t) method, so the same call draws each one differently. The
+# model holds only the clock t, in milliseconds. The canvas is 400 wide and
+# 300 tall.
+init = {t: 0}
+
+sun = {
+  x: 90, y: 90, size: 30, fill: "gold",
+  look: program(self, t) do
+    Dot({x: self.x, y: self.y, r: self.size + 4 * sin(t / 10), fill: self.fill})
+  done
+}
+
+moon = {
+  x: 300, y: 70, size: 22, fill: "white",
+  look: program(self, t) do
+    Dot({x: self.x - 20 * sin(t / 30), y: self.y, r: self.size, fill: self.fill})
+  done
+}
+
+star = {
+  x: 200, y: 40, size: 3, fill: "white",
+  look: program(self, t) do
+    Dot({x: self.x, y: self.y, r: if sin(t / 5) > 0 then self.size else 1 done, fill: self.fill})
+  done
+}
+
+# A prototype copy keeps the type and the method.
+sky = [sun, moon, star, {...star, x: 140, y: 120}, {...star, x: 250, y: 150}]
+
+update = program(model, event) do
+  match event do
+    Frame(dt) then {...model, t: model.t + dt}
+    else model
+  done
+done
+
+draw = program(model) do
+  join(
+    [Box({x: 0, y: 0, w: 400, h: 300, fill: "navy"})],
+    change_each(sky, program(item) do item.look(model.t) done)
+  )
+done
