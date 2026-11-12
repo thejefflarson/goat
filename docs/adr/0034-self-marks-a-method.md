@@ -125,4 +125,4 @@ wasm with one recursive type and no nested knots.
    against `MAX_UNFOLDED_TERMS`; one over it is a spanned "program too
    complex" error. Such records are now rejected in well under a second rather
    than checking forever, and records of more than about ten methods, or four
-   that call siblings, hit the bound; making them fit is #417's work.
+   that call siblings, hit the bound; making them fit is #418, with #417.
