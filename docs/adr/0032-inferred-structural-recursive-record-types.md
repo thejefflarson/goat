@@ -291,6 +291,14 @@ as a tree. The test `checker/tests/method_scale.rs` pins a method called on a
 sibling's result, which is refused in well under a second rather than resolving
 a type of millions of terms.
 
+The depth limits fit the editor's stack. On 2026-11-12 the release `goat_web`
+wasm (the Rust default 1 MiB stack) under Node 26 checked thirty-method
+literals, a sixty-method literal, and 2000-binding chains that nest a record,
+a tag, a function or a list one level per binding; each either checked or
+ended in `program too complex`, none overflowed the stack. The long chains take
+20–70 s in wasm because every binding past the limit reports again; that is a
+cost, not a crash.
+
 The test `checker/tests/knot_budget.rs` pins the three-method model
 (`m.nudge().update().draw()` and `m = run(init(), 4); m.draw()`): both must
 finish in under 2 s in a debug build and may end in either error.
