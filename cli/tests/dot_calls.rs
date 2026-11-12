@@ -28,6 +28,15 @@ fn a_method_on_a_nested_record_gets_the_nested_record() {
 }
 
 #[test]
+fn a_spread_of_values_is_used_at_two_types() {
+    let src = "b = {id: program(v) do v done, n: 1};\n\
+               a = {...b, k: 5};\n\
+               print((a.id)(1));\n\
+               print((a.id)(true))";
+    assert_eq!(run(src), "1\ntrue");
+}
+
+#[test]
 fn a_parenthesised_projection_calls_without_the_record() {
     let src = "r = {n: 2, f: program(x) do x * 10 done};\n\
                print((r.f)(4));\n\

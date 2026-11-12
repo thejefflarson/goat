@@ -31,15 +31,11 @@ enum Style {
     Grouped,
     /// `Grouped`, writing `v.l(a)` for `(v.l)(v, a)`.
     Dot,
-    /// `Curried` with a bare projection callee, `r.l(a)`, as the Coq printer
-    /// writes it until it learns the dot call (#387). Lowering reads that as a
-    /// dot call, so this style is for the table only and does not round-trip.
-    CoqTable,
 }
 
 impl Style {
     fn curried(self) -> bool {
-        matches!(self, Style::Curried | Style::CoqTable)
+        matches!(self, Style::Curried)
     }
 }
 
@@ -61,9 +57,8 @@ fn needs_parens_as_value(term: &Term) -> bool {
 }
 
 /// A projection in callee position is parenthesised: `r.f(x)` passes `r`.
-fn needs_parens_as_callee(term: &Term, style: Style) -> bool {
-    needs_parens_as_operand(term)
-        || (matches!(term, Term::Proj(..)) && !matches!(style, Style::CoqTable))
+fn needs_parens_as_callee(term: &Term) -> bool {
+    needs_parens_as_operand(term) || matches!(term, Term::Proj(..))
 }
 
 fn parenthesise(term: &Term, style: Style, wrap: bool) -> String {
@@ -99,7 +94,7 @@ fn print(term: &Term, style: Style) -> String {
                 );
             }
             let args: Vec<String> = args.iter().map(|arg| print(arg, style)).collect();
-            let callee = parenthesise(callee, style, needs_parens_as_callee(callee, style));
+            let callee = parenthesise(callee, style, needs_parens_as_callee(callee));
             format!("{callee}({})", args.join(", "))
         }
         Term::Let(name, value, body) => {
@@ -553,7 +548,7 @@ fn printer_table() -> String {
         builder.functions = 0;
         let mut term = builder.term(0);
         intern_labels(&mut term, &mut Vec::new());
-        let source = print(&canonical(&term, &mut Vec::new()), Style::CoqTable);
+        let source = print(&canonical(&term, &mut Vec::new()), Style::Curried);
         rows.push(format!(
             "  ({}, {})",
             coq_term(&term, &mut Vec::new()),

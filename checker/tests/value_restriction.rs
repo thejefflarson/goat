@@ -61,3 +61,53 @@ fn a_computed_binding_used_at_two_types_is_rejected_with_the_fix() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].message.contains("`m` is a computed value"));
 }
+
+#[test]
+fn a_spread_of_values_generalizes() {
+    checks(
+        "b = {id: program(v) do v done, n: 1}\n\
+         a = {...b, k: 5}\n\
+         p = (a.id)(1)\n\
+         q = (a.id)(true)\n\
+         q",
+    );
+}
+
+#[test]
+fn a_spread_of_a_spread_generalizes() {
+    checks(
+        "b = {id: program(v) do v done, n: 1}\n\
+         a = {...b, k: 5}\n\
+         c = {...a, j: 6}\n\
+         p = (c.id)(1)\n\
+         q = (c.id)(true)\n\
+         q",
+    );
+}
+
+#[test]
+fn a_spread_with_a_computed_field_keeps_one_type() {
+    let errors = errors_of(
+        "b = {id: program(v) do v done}\n\
+         mk = program(n) do {n: n} done\n\
+         a = {...b, k: mk(1).n}\n\
+         p = (a.id)(1)\n\
+         q = (a.id)(true)\n\
+         q",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].message.contains("type mismatch"), "{errors:?}");
+}
+
+#[test]
+fn a_spread_with_a_computed_base_keeps_one_type() {
+    let errors = errors_of(
+        "mk = program(n) do {id: program(v) do v done, n: n} done\n\
+         a = {...mk(1), k: 5}\n\
+         p = (a.id)(1)\n\
+         q = (a.id)(true)\n\
+         q",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].message.contains("type mismatch"), "{errors:?}");
+}
