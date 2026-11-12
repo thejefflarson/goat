@@ -274,13 +274,30 @@ shows a `μ` or a raw type variable.
 |---|---|---|
 | `MAX_KNOTS_PER_UNIFY` | 16 | knots tied in one top-level unify; each mints fresh binders, so the assumed-equal set cannot bound it. A trip is the infinite-type error. |
 | `MAX_UNFOLDINGS_PER_UNIFY` | 256 | distinct pairs of recursive types one top-level unify compares |
-| `MAX_UNFOLDED_TERMS` | 4 × `MAX_TYPE_TERMS` (4096) | terms in a type being unfolded, or in the type a variable or row variable is bound to |
+| `MAX_UNFOLDED_TERMS` | 4 × `MAX_TYPE_TERMS` (32768) | terms in a type being unfolded, or in the type a variable or row variable is bound to |
+| `MAX_TYPE_TERMS` | 8192 | terms in one expression's type, followed through the substitution. A record literal of n methods has a type of about n² terms, so this leaves room for about thirty. |
+| `MAX_TYPE_DEPTH` and `MAX_UNFOLDED_DEPTH` | 384 and 1536 | how deep a type nests, a row counting one level per field. The checker recurses as deep as the type does, so depth, not term count, keeps the stack from overflowing; raising the term limit would otherwise have raised the stack depth with it. |
 
 The same pass compares a row mention up to unfolding the enclosing `μ`
 binders, so a mention seen under a binder and the same mention outside it are
 one. The nested-knot construction for mentions with different prefixes is
 separate work; until it lands, such receivers end in one of these two errors
 rather than checking.
+
+Each walk that resolves a whole type (a record literal's receiver, a row
+surfaced during unification) first checks the type against `MAX_UNFOLDED_TERMS`,
+because a substitution can hold a type that is small as a graph and exponential
+as a tree. The test `checker/tests/method_scale.rs` pins a method called on a
+sibling's result, which is refused in well under a second rather than resolving
+a type of millions of terms.
+
+The depth limits fit the editor's stack. On 2026-11-12 the release `goat_web`
+wasm (the Rust default 1 MiB stack) under Node 26 checked thirty-method
+literals, a sixty-method literal, and 2000-binding chains that nest a record,
+a tag, a function or a list one level per binding; each either checked or
+ended in `program too complex`, none overflowed the stack. The long chains take
+20–70 s in wasm because every binding past the limit reports again; that is a
+cost, not a crash.
 
 The test `checker/tests/knot_budget.rs` pins the three-method model
 (`m.nudge().update().draw()` and `m = run(init(), 4); m.draw()`): both must

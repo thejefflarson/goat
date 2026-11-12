@@ -246,13 +246,56 @@ impl Ty {
     /// so a type reads `μl. [Empty, Link: {0: a, 1: l}]` rather than that
     /// unfolded once with the `μ` one level down.
     pub fn fold_rec(&self) -> Ty {
-        let folded = self.map_children(&Ty::fold_rec);
-        if !matches!(folded, Ty::Rec(..))
+        self.clone().into_folded()
+    }
+
+    /// [`Self::fold_rec`], rebuilding the type only when something folds.
+    pub fn into_folded(self) -> Ty {
+        if self.scan_folds(&mut Vec::new()) {
+            self.fold_rec_noting().0
+        } else {
+            self
+        }
+    }
+
+    /// Whether some sub-term of this type is the unfolding of a `Rec` inside
+    /// it. Every `Rec` in the type is pushed on `recs`, so each sub-term
+    /// is tested against the `Rec`s below it and none other.
+    fn scan_folds<'a>(&'a self, recs: &mut Vec<&'a Ty>) -> bool {
+        let below = recs.len();
+        let mut folds = false;
+        for child in self.children() {
+            folds |= child.scan_folds(recs);
+        }
+        if matches!(self, Ty::Rec(..)) {
+            recs.push(self);
+        } else if !folds {
+            folds = recs[below..].iter().any(|rec| match rec {
+                Ty::Rec(_, body) => body.has_head_of(self) && rec.unfold() == *self,
+                _ => false,
+            });
+        }
+        folds
+    }
+
+    /// [`Self::fold_rec`], and whether the result has a `Rec` anywhere in it:
+    /// with none, no sub-term can be an unfolding of one, and the search for
+    /// one is skipped.
+    fn fold_rec_noting(&self) -> (Ty, bool) {
+        let nested = std::cell::Cell::new(false);
+        let folded = self.map_children(&|child| {
+            let (child, has_rec) = child.fold_rec_noting();
+            nested.set(nested.get() || has_rec);
+            child
+        });
+        let is_rec = matches!(folded, Ty::Rec(..));
+        if !is_rec
+            && nested.get()
             && let Some(rec) = folded.find_unfolding_to(&folded)
         {
-            return rec;
+            return (rec, true);
         }
-        folded
+        (folded, is_rec || nested.get())
     }
 
     /// Whether this type and `other` start with the same constructor, over the
@@ -260,7 +303,7 @@ impl Ty {
     fn has_head_of(&self, other: &Ty) -> bool {
         match (self, other) {
             (Ty::Record(a), Ty::Record(b)) | (Ty::Variant(a), Ty::Variant(b)) => {
-                a.labels().eq(b.labels())
+                a.labels().eq(b.labels()) && a.tail() == b.tail()
             }
             (Ty::Func(a, _), Ty::Func(b, _)) => a.len() == b.len(),
             _ => std::mem::discriminant(self) == std::mem::discriminant(other),
@@ -313,6 +356,14 @@ impl Row {
                 method.free_vars(out);
                 rest.free_vars(out);
             }
+        }
+    }
+
+    /// What the row ends in: [`Row::Empty`] or a row variable.
+    fn tail(&self) -> &Row {
+        match self {
+            Row::Extend { rest, .. } | Row::Maybe { rest, .. } => rest.tail(),
+            Row::Empty | Row::Var(_) => self,
         }
     }
 

@@ -197,7 +197,7 @@ fn a_record_of_tools_is_called_with_a_double_colon() {
 }
 
 #[test]
-fn methods_calling_siblings_stop_at_the_type_budget() {
+fn methods_calling_siblings_share_the_receiver() {
     let methods: Vec<String> = (0..5)
         .map(|i| format!("m{i}: program(self) do self.m{}() done", i + 1))
         .collect();
@@ -206,9 +206,55 @@ fn methods_calling_siblings_stop_at_the_type_budget() {
         methods.join(", ")
     );
     let start = Instant::now();
-    let (message, _) = first_diagnostic(&source);
-    assert!(message.starts_with("program too complex"), "{message}");
+    assert_eq!(type_of(&source), "Number");
     assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn a_sibling_call_in_one_method_and_an_update_in_another_agree_on_the_type() {
+    let source = "ball = {x: 1,
+        moved: program(self) do {...self, x: self.x + 1} done,
+        twice: program(self) do self.moved().x + self.x done}
+        ball.moved().twice()";
+    assert_eq!(type_of(source), "Number");
+}
+
+#[test]
+fn an_extension_of_a_record_whose_methods_call_siblings_calls_them_at_its_own_type() {
+    let source = "ball = {x: 1,
+        moved: program(self) do {...self, x: self.x + 1} done,
+        again: program(self) do self.moved() done}
+        big = {...ball, size: 10}
+        big.again().size";
+    assert_eq!(type_of(source), "Number");
+}
+
+#[test]
+fn a_method_hands_self_to_a_function_that_reads_a_field() {
+    let source = "read_x = program(r) do r.x done
+        ball = {x: 1, get: program(self) do read_x(self) done}
+        ball.get()";
+    assert_eq!(type_of(source), "Number");
+}
+
+#[test]
+fn a_helper_inside_a_method_keeps_the_type_of_the_field_it_reads() {
+    let source = "ball = {x: \"far\", get: program(self) do
+            helper = program() do self.x done
+            helper() * 2
+        done}
+        ball.get()";
+    let (message, _) = first_diagnostic(source);
+    assert!(message.contains("`String`"), "{message}");
+}
+
+#[test]
+fn a_record_literal_inside_a_method_has_its_own_receiver() {
+    let source = "outer = {n: 1, make: program(self) do
+            {m: self.n, get: program(self) do self.m done}
+        done}
+        outer.make().get()";
+    assert_eq!(type_of(source), "Number");
 }
 
 #[test]

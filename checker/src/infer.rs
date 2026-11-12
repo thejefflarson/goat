@@ -36,12 +36,23 @@ use crate::lower::{DotCall, SELF_NAME, Take};
 use crate::ty::{ABSENT, Group, METHOD, PLAIN, PRESENT, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{Vocab, list};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::ops::Deref;
+use std::rc::Rc;
 
 /// Most type terms (constructors, fields, variables) one expression's type may
 /// hold. Composing generic functions with themselves doubles a type at every
 /// level, and inference over a type that large is slower than quadratic, so a
 /// crafted program would hang the checker; no hand-written type comes close.
-const MAX_TYPE_TERMS: usize = 1024;
+/// A record literal's methods each hold the whole receiver type, so a literal
+/// of n methods has a type of about n² terms, and the limit leaves room for
+/// about thirty of them.
+const MAX_TYPE_TERMS: usize = 8192;
+
+/// How deep a type may nest, rows included: a row nests one level per field.
+/// The checker recurses as deep as the type does, so this, not the number of
+/// terms, keeps a type from overflowing the stack.
+const MAX_TYPE_DEPTH: usize = 384;
 
 /// The result of checking a program: the program's own type, plus the resolved
 /// type of every node (keyed by [`ExprId`]) for later phases.
@@ -178,8 +189,8 @@ pub fn infer_partial(
 struct Inferer {
     next: TypeVar,
     ids_spent: bool,
-    subst: HashMap<TypeVar, Ty>,
-    row_subst: HashMap<TypeVar, Row>,
+    subst: HashMap<TypeVar, Rc<Ty>>,
+    row_subst: HashMap<TypeVar, Rc<Row>>,
     env: HashMap<Symbol, Scheme>,
     /// The `env` symbols whose types may still mention a variable that is
     /// neither quantified nor bound, other than those in `lone_vars`.
@@ -198,6 +209,13 @@ struct Inferer {
     /// The type `self` takes in the method the next `Func` is, set just before
     /// inferring it.
     method_self: Option<Ty>,
+    /// The receiver variable of each record literal whose methods are being
+    /// inferred, with the record it stands for: the literal's fields as
+    /// variables, plus a row for whatever a later extension adds. The variable
+    /// is never bound until the literal is done, so a method that calls a
+    /// sibling through `self` mentions it without cycling through its own
+    /// type; unifying it unifies its record instead.
+    self_defs: HashMap<TypeVar, Ty>,
     /// The method flag of each `Field` a dot call or a `::` names.
     field_flags: HashMap<ExprId, Ty>,
     /// The argument spans of the call whose callee is the `r::f` inferred next.
@@ -215,7 +233,7 @@ struct Inferer {
     matched: HashSet<String>,
     /// Pairs of types [`Inferer::unify_ty`] is already unifying or has unified,
     /// within one top-level [`Inferer::unify`].
-    assumed: HashSet<(Ty, Ty)>,
+    assumed: Assumed,
     /// Knots tied within the current top-level unify; see [`MAX_KNOTS_PER_UNIFY`].
     knots_tied: usize,
     /// Whether the current top-level unify already reported a spent budget.
@@ -232,6 +250,87 @@ struct Inferer {
     /// The same for row variables: every field a row gains must satisfy them.
     row_kinds: HashMap<TypeVar, Kinds>,
     errors: Vec<GoatError>,
+}
+
+/// The pairs of types [`Inferer::unify_ty`] is already unifying or has
+/// unified, within one top-level [`Inferer::unify`]. Pairs are kept as they are
+/// met, not resolved, so binding a variable inside one does not make it a new
+/// pair, and a pair is found by its hash without copying it.
+#[derive(Default)]
+struct Assumed {
+    buckets: HashMap<u64, Vec<(Ty, Ty)>>,
+    len: usize,
+}
+
+impl Assumed {
+    /// Record the pair, and whether it was new.
+    fn insert(&mut self, a: &Ty, b: &Ty) -> bool {
+        let mut hasher = std::hash::DefaultHasher::new();
+        (a, b).hash(&mut hasher);
+        let bucket = self.buckets.entry(hasher.finish()).or_default();
+        if bucket.iter().any(|(x, y)| x == a && y == b) {
+            return false;
+        }
+        bucket.push((a.clone(), b.clone()));
+        self.len += 1;
+        true
+    }
+
+    fn clear(&mut self) {
+        self.buckets.clear();
+        self.len = 0;
+    }
+}
+
+/// A type seen through the substitution: borrowed when nothing was bound, or
+/// the shared type a variable is bound to.
+enum Head<'a> {
+    Borrowed(&'a Ty),
+    Shared(Rc<Ty>),
+}
+
+impl Deref for Head<'_> {
+    type Target = Ty;
+    fn deref(&self) -> &Ty {
+        match self {
+            Head::Borrowed(ty) => ty,
+            Head::Shared(ty) => ty,
+        }
+    }
+}
+
+/// A budget ran out, and the error is reported.
+struct Spent;
+
+/// How [`Inferer::unify_row`] sees past the front of a row.
+enum Peel<'r> {
+    Done,
+    Bound(Rc<Row>),
+    Rest(&'r Row),
+    /// A field known present, as a plain field, the rest left unresolved:
+    /// resolving the whole row here would walk it with no budget.
+    Present(Row),
+}
+
+/// `row`'s first field when it is `label`: whether it is there (a presence),
+/// its type, its method flag, and the rest of the row.
+fn front<'r>(row: &'r Row, label: &str) -> Option<(Ty, &'r Ty, &'r Ty, &'r Row)> {
+    match row {
+        Row::Extend {
+            label: l,
+            field,
+            method,
+            rest,
+        } if l == label => Some((PRESENT, field, method, rest)),
+        Row::Maybe {
+            label: l,
+            pres,
+            field,
+            method,
+            rest,
+        } if l == label => Some((Ty::Var(*pres), field, method, rest)),
+        _ => None,
+    }
 }
 
 /// Whether `text` names a record the way a receiver does: `ball`, `a.b`.
@@ -281,6 +380,36 @@ const MAX_KNOTS_PER_UNIFY: usize = 16;
 /// it. Unfolding copies the whole `μ` into its body, so mismatched recursive
 /// types can double at every step.
 const MAX_UNFOLDED_TERMS: usize = 4 * MAX_TYPE_TERMS;
+
+/// The same for how deep the type nests.
+const MAX_UNFOLDED_DEPTH: usize = 4 * MAX_TYPE_DEPTH;
+
+/// What walking a type may still spend: terms to count, and levels to descend.
+struct Budget {
+    terms: usize,
+    levels: usize,
+}
+
+impl Budget {
+    fn for_type() -> Budget {
+        Budget {
+            terms: MAX_TYPE_TERMS,
+            levels: MAX_TYPE_DEPTH,
+        }
+    }
+
+    fn for_unfolding() -> Budget {
+        Budget {
+            terms: MAX_UNFOLDED_TERMS,
+            levels: MAX_UNFOLDED_DEPTH,
+        }
+    }
+
+    fn spend(&mut self, depth: usize) -> Option<()> {
+        self.terms = self.terms.checked_sub(1)?;
+        (depth <= self.levels).then_some(())
+    }
+}
 
 /// Distinct pairs of recursive types one top-level unify may compare. Growing
 /// an open row while unfolding can mint a new pair at every step.
@@ -375,7 +504,43 @@ impl Inferer {
     /// [`Self::resolve`] with a recursive type unfolded until its head is a
     /// constructor, for code that inspects the head (`match`, calls).
     fn resolve_head(&self, ty: &Ty) -> Ty {
-        self.undecided_as_int(self.resolve(ty).unfold_head())
+        let head = self.resolve(ty).unfold_head();
+        match self.self_def(&head) {
+            Some(def) => self.resolve(def),
+            None => self.undecided_as_int(head),
+        }
+    }
+
+    /// The record a receiver variable stands for while its literal is being
+    /// inferred.
+    fn self_def(&self, ty: &Ty) -> Option<&Ty> {
+        match ty {
+            Ty::Var(v) => self.self_defs.get(v),
+            _ => None,
+        }
+    }
+
+    /// `ty` with each receiver variable in it replaced by the recursive type
+    /// it stands for, for output a person reads.
+    fn open_selves(&self, ty: Ty) -> Ty {
+        if self.self_defs.is_empty() {
+            return ty;
+        }
+        self.open_selves_except(ty, &mut Vec::new())
+    }
+
+    fn open_selves_except(&self, ty: Ty, opened: &mut Vec<TypeVar>) -> Ty {
+        let mut vars = BTreeSet::new();
+        ty.free_vars(&mut vars);
+        vars.into_iter().fold(ty, |ty, var| {
+            let Some(def) = self.self_defs.get(&var).filter(|_| !opened.contains(&var)) else {
+                return ty;
+            };
+            opened.push(var);
+            let body = self.open_selves_except(self.resolve(def), opened);
+            opened.pop();
+            ty.substitute(var, &Ty::Rec(var, Box::new(body)))
+        })
     }
 
     /// A literal whose type is still open reads as `Int` to code that only
@@ -398,7 +563,7 @@ impl Inferer {
     /// The resolved type in its final shape: every variable substituted, and
     /// recursive types folded back to their `μ` form.
     fn finish(&self, ty: &Ty) -> Ty {
-        self.resolve(ty).fold_rec()
+        self.open_selves(self.resolve(ty)).into_folded()
     }
 
     /// [`Self::finish`] for a message: a literal whose type is still open
@@ -516,30 +681,42 @@ impl Inferer {
     }
 
     fn unify_ty(&mut self, a: &Ty, b: &Ty, span: Span) {
-        let (mut a, mut b) = (self.resolve(a), self.resolve(b));
+        let (a_held, b_held) = (self.head(a), self.head(b));
+        let (mut a, mut b): (&Ty, &Ty) = (&a_held, &b_held);
+        if self.unify_selves(a, b, span) {
+            return;
+        }
         // Between two variables the newer is bound to the older, so a variable
         // unified once per statement stays one link from its root.
-        if matches!((&a, &b), (Ty::Var(x), Ty::Var(y)) if x < y) {
+        if self.self_def(a).is_some()
+            || matches!((a, b), (Ty::Var(x), Ty::Var(y)) if x < y && self.self_def(b).is_none())
+        {
             std::mem::swap(&mut a, &mut b);
         }
-        match (&a, &b) {
+        match (a, b) {
             (Ty::Var(x), Ty::Var(y)) if x == y => {}
             (Ty::Var(x), t) | (t, Ty::Var(x)) => {
-                let bound = if !occurs(*x, t) {
+                if !self.within_unfold_budget(t) {
+                    self.report_too_complex(span);
+                    return;
+                }
+                let bound = if !self.occurs_deep(*x, t) {
                     t.clone()
-                } else if let Some(rec) = self.tie_ty_knot(*x, t) {
+                } else if let Some(rec) = self.tie_ty_knot(*x, &self.resolve(t)) {
+                    if !self.within_unfold_budget(&rec) {
+                        self.report_too_complex(span);
+                        return;
+                    }
                     rec
                 } else {
+                    let (a, b) = (self.resolve(a), self.resolve(b));
                     self.errors.push(GoatError::new(
                         span,
                         format!("cannot construct the infinite type `{a}` = `{b}`"),
                     ));
                     return;
                 };
-                if !self.within_unfold_budget(&bound) {
-                    self.report_too_complex(span);
-                    return;
-                }
+                let bound = Rc::new(bound);
                 self.bind_var(*x, bound.clone());
                 if let Some(kinds) = self.kinds.remove(x)
                     && let Err(violation) = self.constrain(&bound, kinds)
@@ -550,7 +727,7 @@ impl Inferer {
                         self.subst.remove(x);
                         self.kinds.insert(*x, kinds);
                         let shown = self.shown(&bound).to_string();
-                        let (found, expected) = match &a {
+                        let (found, expected) = match a {
                             Ty::Var(v) if v == x => ("Number".to_string(), shown),
                             _ => (shown, "Number".to_string()),
                         };
@@ -573,13 +750,24 @@ impl Inferer {
                 // many distinct sub-terms of the two types and their
                 // unfoldings (a regular tree has finitely many), so the
                 // recursion depth is bounded.
-                if self.assumed.len() > MAX_UNFOLDINGS_PER_UNIFY
-                    || !self.within_unfold_budget(&a)
-                    || !self.within_unfold_budget(&b)
+                if a == b {
+                    return;
+                }
+                if self.assumed.len > MAX_UNFOLDINGS_PER_UNIFY
+                    || !self.within_unfold_budget(a)
+                    || !self.within_unfold_budget(b)
                 {
                     self.report_too_complex(span);
-                } else if self.assumed.insert((a.clone(), b.clone())) {
-                    self.unify_ty(&a.unfold_head(), &b.unfold_head(), span);
+                    return;
+                }
+                if self.assumed.insert(a, b) {
+                    let unfold = |ty: &Ty| matches!(ty, Ty::Rec(..)).then(|| ty.unfold_head());
+                    let (a_open, b_open) = (unfold(a), unfold(b));
+                    self.unify_ty(
+                        a_open.as_ref().unwrap_or(a),
+                        b_open.as_ref().unwrap_or(b),
+                        span,
+                    );
                 }
             }
             (Ty::Int, Ty::Int)
@@ -613,7 +801,7 @@ impl Inferer {
             _ => {
                 // Both numeric types read `Number`, so a clash between `Int`
                 // and `Float` has to name them.
-                let (a, b) = (self.shown(&a), self.shown(&b));
+                let (a, b) = (self.shown(a), self.shown(b));
                 let (found, expected) = match (a.to_string(), b.to_string()) {
                     (found, expected) if found == expected => {
                         (a.exact().to_string(), b.exact().to_string())
@@ -628,10 +816,56 @@ impl Inferer {
         }
     }
 
+    /// Unify where a side is a receiver variable. It is never bound: against a
+    /// plain variable the plain one is bound to it (left to the caller), and
+    /// against any other type its record is unified instead. Whether the pair
+    /// is settled here.
+    fn unify_selves(&mut self, a: &Ty, b: &Ty, span: Span) -> bool {
+        if self.self_defs.is_empty() {
+            return false;
+        }
+        let (a_def, b_def) = (self.self_def(a).cloned(), self.self_def(b).cloned());
+        match (a_def, b_def) {
+            (None, None) => false,
+            (Some(_), Some(_)) if a == b => true,
+            (Some(def), None) if !matches!(b, Ty::Var(_)) => {
+                self.unify_through(a, b, &def, b, span);
+                true
+            }
+            (None, Some(def)) if !matches!(a, Ty::Var(_)) => {
+                self.unify_through(a, b, a, &def, span);
+                true
+            }
+            (Some(a_def), Some(b_def)) => {
+                self.unify_through(a, b, &a_def, &b_def, span);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn unify_through(&mut self, a: &Ty, b: &Ty, left: &Ty, right: &Ty, span: Span) {
+        if self.assumed.len > MAX_UNFOLDINGS_PER_UNIFY {
+            self.report_too_complex(span);
+        } else if self.assumed.insert(a, b) {
+            self.unify_ty(left, right, span);
+        }
+    }
+
     fn unify_row(&mut self, a: &Row, b: &Row, span: Span, kind: RowKind) {
-        let a = self.resolve_row(a);
-        let b = self.resolve_row(b);
-        match (&a, &b) {
+        match self.peel(a) {
+            Peel::Done => {}
+            Peel::Bound(row) => return self.unify_row(&row, b, span, kind),
+            Peel::Rest(row) => return self.unify_row(row, b, span, kind),
+            Peel::Present(row) => return self.unify_row(&row, b, span, kind),
+        }
+        match self.peel(b) {
+            Peel::Done => {}
+            Peel::Bound(row) => return self.unify_row(a, &row, span, kind),
+            Peel::Rest(row) => return self.unify_row(a, row, span, kind),
+            Peel::Present(row) => return self.unify_row(a, &row, span, kind),
+        }
+        match (a, b) {
             (Row::Empty, Row::Empty) => {}
             (Row::Var(x), Row::Var(y)) if x == y => {}
             (Row::Var(x), other) | (other, Row::Var(x)) => {
@@ -640,21 +874,30 @@ impl Inferer {
                 {
                     self.report_hidden_label(span, &label);
                 }
-                let bound = if !occurs_row(*x, other) {
+                if self
+                    .spend_on_row(other, &mut Budget::for_unfolding(), 0)
+                    .is_none()
+                {
+                    self.report_too_complex(span);
+                    return;
+                }
+                let bound = if !self.occurs_row_deep(*x, other) {
                     other.clone()
-                } else if let Some(rec) = self.tie_row_knot(*x, kind, other) {
+                } else if let Some(rec) = self.tie_row_knot(*x, kind, &self.resolve_row(other)) {
+                    if self
+                        .spend_on_row(&rec, &mut Budget::for_unfolding(), 0)
+                        .is_none()
+                    {
+                        self.report_too_complex(span);
+                        return;
+                    }
                     rec
                 } else {
                     let message = format!("cannot construct an infinite {} type", kind.noun());
                     self.errors.push(GoatError::new(span, message));
                     return;
                 };
-                let mut budget = MAX_UNFOLDED_TERMS;
-                if self.spend_on_row(&bound, &mut budget).is_none() {
-                    self.report_too_complex(span);
-                    return;
-                }
-                self.row_subst.insert(*x, bound.clone());
+                self.row_subst.insert(*x, Rc::new(bound.clone()));
                 if let Some(kinds) = self.row_kinds.remove(x) {
                     for kind_to_check in kinds.iter() {
                         let mut seen = Vec::new();
@@ -680,17 +923,26 @@ impl Inferer {
                     rest,
                 },
                 _,
-            ) => match self.surface(label, &b, true) {
+            ) => match front(b, label) {
                 Some((b_pres, b_field, b_method, b_rest)) => {
                     self.unify_presence(&Ty::Var(*pres), &b_pres, span);
-                    self.unify_method(label, method, &b_method, span);
-                    self.unify_ty(field, &b_field, span);
-                    self.unify_row(rest, &b_rest, span, kind);
+                    self.unify_method(label, method, b_method, span);
+                    self.unify_ty(field, b_field, span);
+                    self.unify_row(rest, b_rest, span, kind);
                 }
-                None => {
-                    self.subst.insert(*pres, ABSENT);
-                    self.unify_row(rest, &b, span, kind);
-                }
+                None => match self.surface_bounded(label, b, true, span) {
+                    Err(Spent) => {}
+                    Ok(Some((b_pres, b_field, b_method, b_rest))) => {
+                        self.unify_presence(&Ty::Var(*pres), &b_pres, span);
+                        self.unify_method(label, method, &b_method, span);
+                        self.unify_ty(field, &b_field, span);
+                        self.unify_row(rest, &b_rest, span, kind);
+                    }
+                    Ok(None) => {
+                        self.subst.insert(*pres, Rc::new(ABSENT));
+                        self.unify_row(rest, b, span, kind);
+                    }
+                },
             },
             (
                 Row::Extend {
@@ -700,25 +952,34 @@ impl Inferer {
                     rest,
                 },
                 _,
-            ) => match self.surface(label, &b, false) {
+            ) => match front(b, label) {
                 Some((b_pres, b_field, b_method, b_rest)) => {
                     self.unify_presence(&PRESENT, &b_pres, span);
-                    self.unify_method(label, method, &b_method, span);
-                    self.unify_ty(field, &b_field, span);
-                    self.unify_row(rest, &b_rest, span, kind);
+                    self.unify_method(label, method, b_method, span);
+                    self.unify_ty(field, b_field, span);
+                    self.unify_row(rest, b_rest, span, kind);
                 }
-                None => {
-                    let message = match kind {
-                        RowKind::Record => format!("record has an unexpected field `{label}`"),
-                        RowKind::Variant => format!(
-                            "the tag `{label}` is not allowed here; the other side never has it"
-                        ),
-                    };
-                    self.errors.push(GoatError::new(span, message));
-                }
+                None => match self.surface_bounded(label, b, false, span) {
+                    Err(Spent) => {}
+                    Ok(Some((b_pres, b_field, b_method, b_rest))) => {
+                        self.unify_presence(&PRESENT, &b_pres, span);
+                        self.unify_method(label, method, &b_method, span);
+                        self.unify_ty(field, &b_field, span);
+                        self.unify_row(rest, &b_rest, span, kind);
+                    }
+                    Ok(None) => {
+                        let message = match kind {
+                            RowKind::Record => format!("record has an unexpected field `{label}`"),
+                            RowKind::Variant => format!(
+                                "the tag `{label}` is not allowed here; the other side never has it"
+                            ),
+                        };
+                        self.errors.push(GoatError::new(span, message));
+                    }
+                },
             },
             (Row::Empty, Row::Maybe { pres, rest, .. }) => {
-                self.subst.insert(*pres, ABSENT);
+                self.subst.insert(*pres, Rc::new(ABSENT));
                 self.unify_row(&Row::Empty, rest, span, kind);
             }
             (Row::Empty, Row::Extend { label, .. }) => {
@@ -729,6 +990,106 @@ impl Inferer {
                     ),
                 };
                 self.errors.push(GoatError::new(span, message));
+            }
+        }
+    }
+
+    /// [`Self::surface`] on a row that is within [`MAX_UNFOLDED_TERMS`], for
+    /// surfacing resolves the whole row.
+    fn surface_bounded(
+        &mut self,
+        label: &str,
+        row: &Row,
+        optional: bool,
+        span: Span,
+    ) -> Result<Option<(Ty, Ty, Ty, Row)>, Spent> {
+        if self
+            .spend_on_row(row, &mut Budget::for_unfolding(), 0)
+            .is_none()
+        {
+            self.report_too_complex(span);
+            return Err(Spent);
+        }
+        Ok(self.surface(label, row, optional))
+    }
+
+    /// What stands between `row` and its first field: a row variable bound to
+    /// a row, a field known to be absent, or a field known to be present.
+    fn peel<'r>(&self, row: &'r Row) -> Peel<'r> {
+        match row {
+            Row::Var(v) => self
+                .row_subst
+                .get(v)
+                .cloned()
+                .map_or(Peel::Done, Peel::Bound),
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                method,
+                rest,
+            } => match self.resolve(&Ty::Var(*pres)) {
+                absent if absent == ABSENT => Peel::Rest(rest),
+                present if present == PRESENT => Peel::Present(Row::Extend {
+                    label: label.clone(),
+                    field: field.clone(),
+                    method: method.clone(),
+                    rest: rest.clone(),
+                }),
+                _ => Peel::Done,
+            },
+            _ => Peel::Done,
+        }
+    }
+
+    /// `ty`, followed through the substitution until its outermost
+    /// constructor or an unbound variable shows, without copying anything.
+    fn head<'a>(&self, ty: &'a Ty) -> Head<'a> {
+        let Ty::Var(v) = ty else {
+            return Head::Borrowed(ty);
+        };
+        let Some(mut bound) = self.subst.get(v).cloned() else {
+            return Head::Borrowed(ty);
+        };
+        while let Ty::Var(next) = &*bound {
+            let Some(deeper) = self.subst.get(next).cloned() else {
+                break;
+            };
+            bound = deeper;
+        }
+        Head::Shared(bound)
+    }
+
+    fn occurs_deep(&self, var: TypeVar, ty: &Ty) -> bool {
+        match ty {
+            Ty::Var(v) => {
+                *v == var
+                    || self
+                        .subst
+                        .get(v)
+                        .is_some_and(|bound| self.occurs_deep(var, bound))
+            }
+            Ty::Func(args, ret) => {
+                args.iter().any(|a| self.occurs_deep(var, a)) || self.occurs_deep(var, ret)
+            }
+            Ty::Record(row) | Ty::Variant(row) => self.occurs_row_deep(var, row),
+            Ty::Rec(_, body) => self.occurs_deep(var, body),
+            _ => false,
+        }
+    }
+
+    fn occurs_row_deep(&self, var: TypeVar, row: &Row) -> bool {
+        match row {
+            Row::Empty => false,
+            Row::Var(v) => {
+                *v == var
+                    || self
+                        .row_subst
+                        .get(v)
+                        .is_some_and(|bound| self.occurs_row_deep(var, bound))
+            }
+            Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
+                self.occurs_deep(var, field) || self.occurs_row_deep(var, rest)
             }
         }
     }
@@ -877,7 +1238,7 @@ impl Inferer {
                         },
                     )
                 };
-                self.row_subst.insert(v, grown);
+                self.row_subst.insert(v, Rc::new(grown));
                 Some((pres, field, method, rest))
             }
         }
@@ -890,7 +1251,7 @@ impl Inferer {
         match (&a, &b) {
             _ if a == b => {}
             (Ty::Var(v), other) | (other, Ty::Var(v)) => {
-                self.subst.insert(*v, other.clone());
+                self.subst.insert(*v, Rc::new(other.clone()));
             }
             _ => self.errors.push(GoatError::new(
                 span,
@@ -909,7 +1270,7 @@ impl Inferer {
         match (&a, &b) {
             _ if a == b => {}
             (Ty::Var(v), other) | (other, Ty::Var(v)) => {
-                self.subst.insert(*v, other.clone());
+                self.subst.insert(*v, Rc::new(other.clone()));
             }
             _ => self.errors.push(GoatError::new(
                 span,
@@ -944,7 +1305,7 @@ impl Inferer {
                 label, pres, rest, ..
             } => {
                 if labels.contains(&label) {
-                    self.subst.insert(pres, ABSENT);
+                    self.subst.insert(pres, Rc::new(ABSENT));
                 }
                 self.lack(&rest, labels)
             }
@@ -987,6 +1348,13 @@ impl Inferer {
         };
         match (&ty, kind) {
             (Ty::Var(v), _) if bound.contains(v) => Ok(()),
+            (Ty::Var(v), _) if self.self_defs.contains_key(v) => {
+                let def = self.self_defs[v].clone();
+                bound.push(*v);
+                let result = self.constrain_kind(&def, kind, bound);
+                bound.pop();
+                result
+            }
             (Ty::Var(v), _) => self.add_kind(KindMap::Ty, *v, kind),
             (Ty::Int | Ty::Float, Kind::Eq | Kind::Numeric | Kind::Ordered | Kind::Literal) => {
                 Ok(())
@@ -1121,12 +1489,27 @@ impl Inferer {
         in_ty.retain(|v| function || !self.is_literal(*v));
         if !in_ty.is_empty() {
             let in_env = self.env_free_vars();
-            in_ty.retain(|v| !in_env.contains(v) && !self.lone_vars.contains_key(v));
+            let in_selves = self.self_def_vars();
+            in_ty.retain(|v| {
+                !in_env.contains(v) && !in_selves.contains(v) && !self.lone_vars.contains_key(v)
+            });
         }
         Scheme {
             vars: in_ty.into_iter().collect(),
             ty: resolved,
         }
+    }
+
+    /// The variables inside the records receiver variables stand for. A method
+    /// reaches them through `self`, which the environment holds as one
+    /// variable, so generalizing must leave them alone too.
+    fn self_def_vars(&self) -> BTreeSet<TypeVar> {
+        let mut out = BTreeSet::new();
+        for (var, def) in &self.self_defs {
+            self.resolve(def).free_vars(&mut out);
+            out.insert(*var);
+        }
+        out
     }
 
     fn bind_env(&mut self, symbol: Symbol, scheme: Scheme) {
@@ -1158,7 +1541,7 @@ impl Inferer {
 
     /// Bind `var`, which moves any symbol of exactly that type out of
     /// `lone_vars`: its type is no longer just the variable.
-    fn bind_var(&mut self, var: TypeVar, ty: Ty) {
+    fn bind_var(&mut self, var: TypeVar, ty: Rc<Ty>) {
         self.subst.insert(var, ty);
         if let Some(symbols) = self.lone_vars.remove(&var) {
             self.open_env.extend(symbols);
@@ -1314,7 +1697,7 @@ impl Inferer {
             }
         }
         if let Some(var) = tail {
-            self.row_subst.insert(var, Row::Empty);
+            self.row_subst.insert(var, Rc::new(Row::Empty));
         }
     }
 
@@ -1343,7 +1726,7 @@ impl Inferer {
             }
         }
         if let Some(var) = tail {
-            self.row_subst.insert(var, Row::Empty);
+            self.row_subst.insert(var, Rc::new(Row::Empty));
         }
     }
 
@@ -1428,9 +1811,7 @@ impl Inferer {
         if !self.within_term_budget(&ty) {
             self.errors.push(GoatError::new(
                 expr.span,
-                format!(
-                    "program too complex: the type of this expression has more than {MAX_TYPE_TERMS} parts"
-                ),
+                "program too complex: the type of this expression is larger than the checker handles",
             ));
             ty = self.fresh();
         }
@@ -1457,9 +1838,7 @@ impl Inferer {
         if let Some(span) = outgrown {
             self.errors.push(GoatError::new(
                 span,
-                format!(
-                    "program too complex: the type of this expression has more than {MAX_UNFOLDED_TERMS} parts"
-                ),
+                "program too complex: the type of this expression is larger than the checker handles",
             ));
         }
     }
@@ -1471,47 +1850,47 @@ impl Inferer {
     }
 
     fn within_unfold_budget(&self, ty: &Ty) -> bool {
-        let mut budget = MAX_UNFOLDED_TERMS;
-        self.spend_on_ty(ty, &mut budget).is_some()
+        self.spend_on_ty(ty, &mut Budget::for_unfolding(), 0)
+            .is_some()
     }
 
     /// Whether `ty`, followed through the substitution, has at most
-    /// [`MAX_TYPE_TERMS`] terms. Counting stops once the budget is spent, so
-    /// the cost is bounded however large the type is.
+    /// [`MAX_TYPE_TERMS`] terms and nests at most [`MAX_TYPE_DEPTH`] deep.
+    /// Counting stops once the budget is spent, so the cost is bounded however
+    /// large the type is.
     fn within_term_budget(&self, ty: &Ty) -> bool {
-        let mut budget = MAX_TYPE_TERMS;
-        self.spend_on_ty(ty, &mut budget).is_some()
+        self.spend_on_ty(ty, &mut Budget::for_type(), 0).is_some()
     }
 
-    fn spend_on_ty(&self, ty: &Ty, budget: &mut usize) -> Option<()> {
-        *budget = budget.checked_sub(1)?;
+    fn spend_on_ty(&self, ty: &Ty, budget: &mut Budget, depth: usize) -> Option<()> {
+        budget.spend(depth)?;
         match ty {
             Ty::Var(v) => match self.subst.get(v) {
-                Some(bound) => self.spend_on_ty(bound, budget),
+                Some(bound) => self.spend_on_ty(bound, budget, depth + 1),
                 None => Some(()),
             },
             Ty::Func(args, ret) => {
                 for arg in args {
-                    self.spend_on_ty(arg, budget)?;
+                    self.spend_on_ty(arg, budget, depth + 1)?;
                 }
-                self.spend_on_ty(ret, budget)
+                self.spend_on_ty(ret, budget, depth + 1)
             }
-            Ty::Record(row) | Ty::Variant(row) => self.spend_on_row(row, budget),
-            Ty::Rec(_, body) => self.spend_on_ty(body, budget),
+            Ty::Record(row) | Ty::Variant(row) => self.spend_on_row(row, budget, depth + 1),
+            Ty::Rec(_, body) => self.spend_on_ty(body, budget, depth + 1),
             Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => Some(()),
         }
     }
 
-    fn spend_on_row(&self, row: &Row, budget: &mut usize) -> Option<()> {
-        *budget = budget.checked_sub(1)?;
+    fn spend_on_row(&self, row: &Row, budget: &mut Budget, depth: usize) -> Option<()> {
+        budget.spend(depth)?;
         match row {
             Row::Var(v) => match self.row_subst.get(v) {
-                Some(bound) => self.spend_on_row(bound, budget),
+                Some(bound) => self.spend_on_row(bound, budget, depth + 1),
                 None => Some(()),
             },
             Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
-                self.spend_on_ty(field, budget)?;
-                self.spend_on_row(rest, budget)
+                self.spend_on_ty(field, budget, depth + 1)?;
+                self.spend_on_row(rest, budget, depth + 1)
             }
             Row::Empty => Some(()),
         }
@@ -1669,7 +2048,7 @@ impl Inferer {
                 self.fresh()
             }
             ExprKind::Trap(_) => self.fresh(),
-            ExprKind::Record { fields } => self.infer_record(fields),
+            ExprKind::Record { fields } => self.infer_record(fields, expr.span),
             ExprKind::Spread { base, fields } => self.infer_spread(base, fields),
             ExprKind::Restrict { record, labels } => self.infer_restrict(expr.span, record, labels),
             ExprKind::Field { record, label } => {
@@ -1826,9 +2205,17 @@ impl Inferer {
         }
         match head {
             Ty::Func(..) | Ty::Var(_) => {
+                let receiver = (self.dots.calls.contains_key(&id) && !arg_tys.is_empty())
+                    .then(|| std::mem::replace(&mut arg_tys[0], self.fresh()));
+                let hole = receiver.as_ref().map(|_| arg_tys[0].clone());
                 let expected = Ty::func(arg_tys, ret.clone());
                 let before = self.errors.len();
                 self.unify_use(callee, &callee_ty, &expected, span);
+                if let (Some(receiver), Some(hole)) = (receiver, hole)
+                    && self.errors.len() == before
+                {
+                    self.unify(&hole, &receiver, args[0].span);
+                }
                 if self.errors.len() > before
                     && let Some(message) = self.dot_call_message(id, &head, args, before)
                 {
@@ -2033,7 +2420,7 @@ impl Inferer {
             .map(|(var, _)| *var)
             .collect();
         for var in undecided {
-            self.bind_var(var, Ty::Int);
+            self.bind_var(var, Rc::new(Ty::Int));
         }
     }
 
@@ -2078,7 +2465,7 @@ impl Inferer {
         };
         match self.resolve(flag) {
             Ty::Var(v) => {
-                self.subst.insert(v, PLAIN);
+                self.subst.insert(v, Rc::new(PLAIN));
                 return;
             }
             flag if flag != METHOD => return,
@@ -2154,7 +2541,7 @@ impl Inferer {
     /// literal is typed like a `letrec` over its fields, so a method that
     /// returns `{...self, …}` returns that same type, and the one recursive
     /// type has one shape however many methods there are (ADR 0034).
-    fn infer_record(&mut self, fields: &[(String, Expr)]) -> Ty {
+    fn infer_record(&mut self, fields: &[(String, Expr)], span: Span) -> Ty {
         for (label, value) in fields {
             if let ExprKind::Func { params, .. } = &value.kind
                 && !is_method(value)
@@ -2192,11 +2579,12 @@ impl Inferer {
                 rest: Box::new(rest),
             },
         );
-        let self_ty = Ty::Record(self_row);
+        let receiver = self.fresh_id();
+        self.self_defs.insert(receiver, Ty::Record(self_row));
         let mut tys = Vec::with_capacity(fields.len());
         for ((_, value), slot) in fields.iter().zip(&slots) {
             if is_method(value) {
-                self.method_self = Some(self_ty.clone());
+                self.method_self = Some(Ty::Var(receiver));
                 tys.push(self.infer(value));
             } else {
                 let ty = self.infer(value);
@@ -2204,7 +2592,7 @@ impl Inferer {
                 tys.push(ty);
             }
         }
-        let tied = self.tie_methods(fields, &slots, &flags, &tys, &self_ty);
+        let tied = self.tie_methods(fields, &slots, &flags, &tys, receiver, span);
         let row = fields.iter().zip(&flags).zip(tied).rev().fold(
             Row::Empty,
             |rest, (((label, _), flag), field)| Row::Extend {
@@ -2217,79 +2605,77 @@ impl Inferer {
         Ty::Record(row)
     }
 
-    /// The type each field of a literal with methods has once its methods'
-    /// receiver is folded into one recursive type, `μs. {fields | ρ}`, where
-    /// each method takes and returns `s`. If a method's type mentions another
-    /// field's variable (it calls a sibling through `self`), folding is not
-    /// possible, and each field's variable is unified with its type instead.
+    /// Settle the receiver of a literal with methods once its bodies are
+    /// inferred. Each method's type is unified with its field's variable, with
+    /// the receiver kept as the variable `receiver` and any result equal to
+    /// the receiver's record written as that variable. The variable is then
+    /// bound to `μs. {fields | ρ}`, the record with every `receiver` in it
+    /// turned into the binder, so the one recursive type has one shape however
+    /// many methods call each other through `self`. Returns the type of each
+    /// field of the literal, which mentions the receiver by its variable.
     fn tie_methods(
         &mut self,
         fields: &[(String, Expr)],
         slots: &[Ty],
         flags: &[Ty],
         tys: &[Ty],
-        self_ty: &Ty,
+        receiver: TypeVar,
+        span: Span,
     ) -> Vec<Ty> {
-        let receiver = self.resolve(self_ty);
-        let binder = self.fresh_id();
-        let unrolled: Vec<Ty> = fields
+        let def = self.self_defs[&receiver].clone();
+        if !self.within_unfold_budget(&def) || tys.iter().any(|ty| !self.within_unfold_budget(ty)) {
+            return self.abandon_receiver(receiver, slots, span);
+        }
+        let record = self.resolve(&def);
+        let owns: Vec<Ty> = fields
             .iter()
             .zip(tys)
-            .map(|((_, value), ty)| {
-                let ty = self.resolve(ty);
-                if is_method(value) {
-                    abstract_receiver(&ty, &receiver, binder)
-                } else {
-                    ty
-                }
-            })
+            .filter(|((_, value), _)| is_method(value))
+            .map(|(_, ty)| abstract_receiver(&self.resolve(ty), &record, receiver))
             .collect();
-        let slot_vars: BTreeSet<TypeVar> = fields
+        let methods = fields
             .iter()
             .zip(slots)
-            .filter(|((_, value), _)| is_method(value))
-            .filter_map(|(_, slot)| match slot {
-                Ty::Var(v) => Some(*v),
-                _ => None,
-            })
-            .collect();
-        let mut loose = BTreeSet::new();
-        for (ty, (_, value)) in unrolled.iter().zip(fields) {
-            if is_method(value) {
-                ty.free_vars(&mut loose);
-            }
+            .filter(|((_, value), _)| is_method(value));
+        for (((_, value), slot), own) in methods.zip(&owns) {
+            self.unify(slot, own, value.span);
         }
-        let Ty::Record(receiver_row) = &receiver else {
+        if !self.within_unfold_budget(&def) || slots.iter().any(|ty| !self.within_unfold_budget(ty))
+        {
+            return self.abandon_receiver(receiver, slots, span);
+        }
+        let binder = self.fresh_id();
+        let Ty::Record(receiver_row) = self.resolve(&def) else {
             unreachable!("a record's receiver is a record")
         };
-        if loose.is_disjoint(&slot_vars) {
-            let body = fields.iter().zip(flags).zip(&unrolled).rev().fold(
-                row_after(receiver_row, fields.len()),
-                |rest, (((label, _), flag), field)| Row::Extend {
-                    label: label.clone(),
-                    field: Box::new(field.clone()),
-                    method: Box::new(flag.clone()),
-                    rest: Box::new(rest),
-                },
-            );
-            let recursive = Ty::Rec(binder, Box::new(Ty::Record(body)));
-            let folded: Vec<Ty> = unrolled
-                .iter()
-                .map(|ty| ty.substitute(binder, &recursive))
-                .collect();
-            for (((_, value), slot), ty) in fields.iter().zip(slots).zip(&folded) {
-                if is_method(value) {
-                    self.unify(slot, ty, value.span);
-                }
-            }
-            return folded;
-        }
-        for (((_, value), slot), ty) in fields.iter().zip(slots).zip(tys) {
-            if is_method(value) {
-                self.unify(slot, ty, value.span);
-            }
-        }
-        tys.to_vec()
+        let body = fields.iter().zip(flags).zip(slots).rev().fold(
+            self.resolve_row(&row_after(&receiver_row, fields.len())),
+            |rest, (((label, _), flag), slot)| Row::Extend {
+                label: label.clone(),
+                field: Box::new(self.resolve(slot)),
+                method: Box::new(flag.clone()),
+                rest: Box::new(rest),
+            },
+        );
+        let recursive = Ty::Rec(
+            binder,
+            Box::new(Ty::Record(body).substitute(receiver, &Ty::Var(binder))),
+        );
+        self.self_defs.remove(&receiver);
+        self.bind_var(receiver, Rc::new(recursive));
+        slots.to_vec()
+    }
+
+    /// Give up on the receiver of a literal whose methods' types have grown
+    /// past [`MAX_UNFOLDED_TERMS`] before they could be folded: resolving them
+    /// would take longer than the program is worth.
+    fn abandon_receiver(&mut self, receiver: TypeVar, slots: &[Ty], span: Span) -> Vec<Ty> {
+        self.self_defs.remove(&receiver);
+        self.errors.push(GoatError::new(
+            span,
+            "program too complex: the methods of this record have types larger than the checker handles",
+        ));
+        slots.to_vec()
     }
 
     /// `{...base, l: e}` updates a field `base` has, at that field's type, and
@@ -2298,6 +2684,10 @@ impl Inferer {
     /// present one in the result, so the type is the same either way (ADR 0033).
     fn infer_spread(&mut self, base: &Expr, fields: &[(String, Expr)]) -> Ty {
         let base_ty = self.infer(base);
+        let receiver = match &*self.head(&base_ty) {
+            Ty::Var(var) if self.self_defs.contains_key(var) => Some(*var),
+            _ => None,
+        };
         let tail = self.fresh_row();
         match self.resolve_head(&base_ty) {
             Ty::Record(_) | Ty::Var(_) => {
@@ -2325,7 +2715,11 @@ impl Inferer {
         for (label, ty, span) in field_tys {
             row = self.override_field(row, label, ty, span, &copied);
         }
-        Ty::Record(row)
+        let copy = Ty::Record(row);
+        match receiver {
+            Some(var) if self.resolve(&self.self_defs[&var]) == self.resolve(&copy) => Ty::Var(var),
+            _ => copy,
+        }
     }
 
     /// `row` with `label` set to a value of type `ty`, a method when `flag` is
@@ -2633,7 +3027,7 @@ impl Inferer {
                 ),
             ));
         } else if let Some(var) = tail {
-            self.row_subst.insert(var, Row::Empty);
+            self.row_subst.insert(var, Rc::new(Row::Empty));
         }
     }
 
@@ -3104,7 +3498,7 @@ mod tests {
         );
         let inf = unify_ok(&one, &two);
         assert_eq!(inf.resolve_row(&Row::Var(1)), inf.resolve_row(&Row::Var(2)));
-        assert!(inf.assumed.is_empty());
+        assert_eq!(inf.assumed.len, 0);
     }
 
     #[test]
@@ -3221,7 +3615,7 @@ mod tests {
     #[test]
     fn resolving_substitutes_inside_a_recursive_body_only_for_free_variables() {
         let mut inf = inferer();
-        inf.subst.insert(1, Ty::Int);
+        inf.subst.insert(1, Rc::new(Ty::Int));
         let rec = Ty::Rec(
             5,
             Box::new(Ty::Variant(extend(
