@@ -1,7 +1,7 @@
 //! Monomorphization: checked HIR to ground-typed MIR, one `Func` per
 //! `(binding, ground type)` specialization.
 
-use crate::canon::{canonical, ground_fields, layout_fields};
+use crate::canon::{canonical, ground_fields, has_structural_rec, layout_fields};
 use crate::mir::*;
 use crate::rc::insert_rc;
 use goat_checker::captures::{for_each_node, push_children};
@@ -11,6 +11,7 @@ use goat_checker::hir::{
 use goat_checker::infer::Typed;
 use goat_checker::ty::{Row, Scheme, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target, Vocab};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod interactive;
@@ -55,6 +56,7 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
         specs: HashMap::new(),
         out: vec![None],
         work: Vec::new(),
+        rec_tys: HashMap::new(),
         sigs: Vec::new(),
         layouts: Vec::new(),
         variants: HashMap::new(),
@@ -241,7 +243,7 @@ struct Collector<'a> {
     typed: &'a Typed,
     captures: &'a HashMap<Target, Vec<Symbol>>,
     lambdas: HashMap<Target, Lambda<'a>>,
-    var_tys: HashMap<Symbol, &'a Ty>,
+    var_tys: HashMap<Symbol, Cow<'a, Ty>>,
 }
 
 /// Find every function literal, its captures, and the type template of every
@@ -250,7 +252,7 @@ fn collect_lambdas<'a>(
     typed: &'a Typed,
     root: &'a hir::Expr,
     captures: &'a HashMap<Target, Vec<Symbol>>,
-) -> (HashMap<Target, Lambda<'a>>, HashMap<Symbol, &'a Ty>) {
+) -> (HashMap<Target, Lambda<'a>>, HashMap<Symbol, Cow<'a, Ty>>) {
     let mut c = Collector {
         typed,
         captures,
@@ -280,7 +282,8 @@ impl<'a> Collector<'a> {
                             self.lambda(Target::Named(*symbol), ty, params, body);
                         }
                         _ => {
-                            self.var_tys.insert(*symbol, &typed.node_types[&value.id]);
+                            self.var_tys
+                                .insert(*symbol, Cow::Borrowed(&typed.node_types[&value.id]));
                             pending.push(value);
                         }
                     }
@@ -290,8 +293,10 @@ impl<'a> Collector<'a> {
                 }
                 ExprKind::Match { arms, .. } => {
                     for binder in arms.iter().flat_map(|a| a.pattern.payload.binders()) {
-                        self.var_tys
-                            .insert(binder.symbol, &typed.binder_types[&binder.symbol]);
+                        self.var_tys.insert(
+                            binder.symbol,
+                            Cow::Borrowed(&typed.binder_types[&binder.symbol]),
+                        );
                     }
                     push_children(e, &mut pending);
                 }
@@ -301,10 +306,22 @@ impl<'a> Collector<'a> {
     }
 
     fn lambda(&mut self, target: Target, ty: &'a Ty, params: &'a [Param], body: &'a hir::Expr) {
-        if let Ty::Func(args, _) = ty {
-            for (param, ty) in params.iter().zip(args) {
-                self.var_tys.insert(param.symbol, ty);
+        // A function whose type mentions itself through a record is a `μ`
+        // at the head; its parameters are those of the unfolding.
+        match ty {
+            Ty::Func(args, _) => {
+                for (param, ty) in params.iter().zip(args) {
+                    self.var_tys.insert(param.symbol, Cow::Borrowed(ty));
+                }
             }
+            Ty::Rec(..) => {
+                if let Ty::Func(args, _) = ty.unfold_head() {
+                    for (param, ty) in params.iter().zip(args) {
+                        self.var_tys.insert(param.symbol, Cow::Owned(ty));
+                    }
+                }
+            }
+            _ => {}
         }
         self.lambdas.insert(
             target,
@@ -337,7 +354,7 @@ struct Mono<'a> {
     /// The host's decoder functions, which its event constructors call.
     decoders: &'a [Decoder],
     lambdas: HashMap<Target, Lambda<'a>>,
-    var_tys: HashMap<Symbol, &'a Ty>,
+    var_tys: HashMap<Symbol, Cow<'a, Ty>>,
     /// The value of each generalized value binding. A use lowers the value at
     /// the use's type, so no copy is bound or captured.
     values: HashMap<Symbol, &'a hir::Expr>,
@@ -359,6 +376,9 @@ struct Mono<'a> {
     /// registered here before its payloads are lowered: reaching it again finds
     /// the id instead of lowering it forever.
     variants: HashMap<Ty, LayoutId>,
+    /// The lowering of each `μ` over a function or record, keyed by canonical
+    /// form. Registered before the body is lowered, so a back edge finds it.
+    rec_tys: HashMap<Ty, MTy>,
     families: Vec<Family>,
     /// The global tag number of each label, in sorted label order.
     tags: HashMap<String, u32>,
@@ -516,6 +536,9 @@ impl Mono<'_> {
             Ty::Float => MTy::Float,
             Ty::Bool => MTy::Bool,
             Ty::Unit => MTy::Unit,
+            Ty::Func(..) | Ty::Record(_) if has_structural_rec(ty) => {
+                self.lower_rec(ty, ty.clone())
+            }
             Ty::Func(args, ret) => {
                 let sig = Sig {
                     params: args.iter().map(|a| self.lower_ty(a)).collect(),
@@ -536,12 +559,51 @@ impl Mono<'_> {
             Ty::Variant(_) => MTy::Ptr(HeapKind::Variant(self.variant_layout(canonical(ty)))),
             Ty::Rec(..) => match ty.unfold_head() {
                 Ty::Variant(_) => MTy::Ptr(HeapKind::Variant(self.variant_layout(canonical(ty)))),
-                // A `μ` over a record or function: the cycle still passes
-                // through a variant, which cuts it.
                 Ty::Rec(..) => MTy::Unit,
+                head if has_structural_rec(ty) => self.lower_rec(ty, head),
                 head => self.lower_ty(&head),
             },
             Ty::Var(_) => unreachable!("type variable survived grounding"),
+        }
+    }
+
+    /// A `μ` type whose head is a function or record. Its sig or layout id is
+    /// reserved first, then filled, so the cycle back to `ty` finds the id.
+    fn lower_rec(&mut self, ty: &Ty, head: Ty) -> MTy {
+        let key = canonical(ty);
+        if let Some(done) = self.rec_tys.get(&key) {
+            return *done;
+        }
+        let poison = MTy::Ptr(HeapKind::Closure(SigId(u32::MAX)));
+        match head {
+            Ty::Func(args, ret) => {
+                let id = self.sigs.len();
+                self.sigs.push(Sig {
+                    params: vec![poison],
+                    ret: MTy::Unit,
+                });
+                let mty = MTy::Ptr(HeapKind::Closure(SigId(id as u32)));
+                self.rec_tys.insert(key, mty);
+                let sig = Sig {
+                    params: args.iter().map(|a| self.lower_ty(a)).collect(),
+                    ret: self.lower_ty(&ret),
+                };
+                self.sigs[id] = sig;
+                mty
+            }
+            Ty::Record(row) => {
+                let id = self.layouts.len();
+                self.layouts.push(Layout::Record(vec![poison]));
+                let mty = MTy::Ptr(HeapKind::Record(LayoutId(id as u32)));
+                self.rec_tys.insert(key, mty);
+                let mut fields = Vec::new();
+                for (_, field) in layout_fields(&row) {
+                    fields.push(self.lower_ty(field));
+                }
+                self.layouts[id] = Layout::Record(fields);
+                mty
+            }
+            other => self.lower_ty(&other),
         }
     }
 
@@ -684,7 +746,7 @@ impl Mono<'_> {
         let Lambda { ty, captures, .. } = self.lambdas[&target].clone();
         let capture_tys: Vec<Ty> = captures
             .iter()
-            .map(|c| self.ground(self.var_tys[c], scope))
+            .map(|c| self.ground(&self.var_tys[c], scope))
             .collect();
         let key = (target, use_ty, capture_tys);
         if let Some(&id) = self.specs.get(&key) {
@@ -709,7 +771,7 @@ impl Mono<'_> {
         let mut subst = Subst::new();
         match_ty(ty, use_ty, &mut subst);
         for (c, capture_ty) in captures.iter().zip(capture_tys) {
-            match_ty(self.var_tys[c], capture_ty, &mut subst);
+            match_ty(&self.var_tys[c], capture_ty, &mut subst);
         }
         self.work.push((id, target, subst, capture_tys.clone()));
         let use_ty = use_ty.clone();
@@ -800,7 +862,8 @@ impl Mono<'_> {
             ty,
             captures,
         } = self.lambdas[&target].clone();
-        let Ty::Func(arg_tys, ret_ty) = ty else {
+        let unfolded = ty.unfold_head();
+        let Ty::Func(arg_tys, ret_ty) = &unfolded else {
             unreachable!("function literal without a function type");
         };
         let mut cx = FnCx::new(subst);

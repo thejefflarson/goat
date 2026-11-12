@@ -330,6 +330,11 @@ impl fmt::Display for Shown<'_> {
                 }
                 write!(f, ") -> {}", show(ret))
             }
+            Ty::Record(row) if row.fields().any(has_structural_rec) => {
+                write!(f, "{{")?;
+                row.fmt_labels(f)?;
+                write!(f, "}}")
+            }
             Ty::Record(row) => {
                 write!(f, "{{")?;
                 row.fmt_fields(f, true, false, self.exact)?;
@@ -340,12 +345,66 @@ impl fmt::Display for Shown<'_> {
                 row.fmt_fields(f, true, true, self.exact)?;
                 write!(f, "]")
             }
+            Ty::Rec(binder, body)
+                if matches!(**body, Ty::Record(_) | Ty::Func(..))
+                    && loops_without_variant(*binder, body) =>
+            {
+                match &**body {
+                    Ty::Record(row) => {
+                        write!(f, "{{")?;
+                        row.fmt_labels(f)?;
+                        write!(f, "}}")
+                    }
+                    _ => write!(f, "(…) -> …"),
+                }
+            }
             Ty::Rec(binder, body) => write!(f, "μ{}. {}", name_of(*binder), show(body)),
         }
     }
 }
 
+/// Whether `ty` holds a recursive record or function, which prints as its
+/// labels alone.
+fn has_structural_rec(ty: &Ty) -> bool {
+    match ty {
+        Ty::Rec(binder, body) => loops_without_variant(*binder, body) || has_structural_rec(body),
+        Ty::Func(args, ret) => args.iter().any(has_structural_rec) || has_structural_rec(ret),
+        Ty::Record(row) | Ty::Variant(row) => row.fields().any(has_structural_rec),
+        _ => false,
+    }
+}
+
+/// Whether `binder` is reachable in `ty` without crossing a variant: the cycle
+/// of a recursive record or function, which has no finite way to print.
+fn loops_without_variant(binder: TypeVar, ty: &Ty) -> bool {
+    match ty {
+        Ty::Var(v) => *v == binder,
+        Ty::Func(args, ret) => {
+            args.iter().any(|a| loops_without_variant(binder, a))
+                || loops_without_variant(binder, ret)
+        }
+        Ty::Record(row) => row.fields().any(|t| loops_without_variant(binder, t)),
+        Ty::Rec(_, body) => loops_without_variant(binder, body),
+        _ => false,
+    }
+}
+
 impl Row {
+    /// The labels of a row with each value elided: `a: …, b: …`.
+    fn fmt_labels(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut row = self;
+        let mut first = true;
+        while let Row::Extend { label, rest, .. } = row {
+            if !first {
+                write!(f, ", ")?;
+            }
+            write!(f, "{label}: …")?;
+            first = false;
+            row = rest;
+        }
+        Ok(())
+    }
+
     /// Format the fields of a row inside its enclosing brackets. `first` tracks
     /// whether a separator is needed before the next field; `bare_unit` prints
     /// a `Unit` payload as just the tag name.

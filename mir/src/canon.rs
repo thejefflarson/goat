@@ -55,6 +55,32 @@ fn row_from(fields: Vec<(String, Ty)>) -> Row {
         })
 }
 
+/// Whether `binder` is reachable in `ty` without crossing a variant.
+fn loops_without_variant(binder: TypeVar, ty: &Ty) -> bool {
+    match ty {
+        Ty::Var(v) => *v == binder,
+        Ty::Func(args, ret) => {
+            args.iter().any(|a| loops_without_variant(binder, a))
+                || loops_without_variant(binder, ret)
+        }
+        Ty::Record(row) => ground_fields(row).any(|(_, t)| loops_without_variant(binder, t)),
+        Ty::Rec(_, body) => loops_without_variant(binder, body),
+        _ => false,
+    }
+}
+
+/// Whether `ty` holds a `μ` over a function or record, a cycle no variant cuts.
+pub fn has_structural_rec(ty: &Ty) -> bool {
+    match ty {
+        Ty::Rec(binder, body) => loops_without_variant(*binder, body) || has_structural_rec(body),
+        Ty::Func(args, ret) => args.iter().any(has_structural_rec) || has_structural_rec(ret),
+        Ty::Record(row) | Ty::Variant(row) => {
+            ground_fields(row).any(|(_, t)| has_structural_rec(t))
+        }
+        _ => false,
+    }
+}
+
 fn has_rec(ty: &Ty) -> bool {
     match ty {
         Ty::Rec(..) => true,
