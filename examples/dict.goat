@@ -1,0 +1,21 @@
+# dict() is a map from keys to values, kept in key order. `set` and `remove`
+# give back a new dictionary, so they chain and the old one stays as it was.
+scores = dict().set("ana", 3).set("bo", 5).set("cy", 1)
+
+# `get` finds a value or says it is missing.
+points = match scores.get("ana") do
+  Found(n) then n
+  Missing then 0
+done
+print(points);
+print(scores.has("bo"));
+print(scores.remove("bo").keys());
+print(scores.values());
+
+# `each` visits every entry in key order.
+scores.each(program(name, score) do print(name) done);
+
+# `dict_by` takes the ordering: here, biggest key first.
+countdown = dict_by(program(a, b) do a > b done).set(1, "one").set(3, "three").set(2, "two")
+print(countdown.values());
+scores.size() + countdown.size()

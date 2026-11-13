@@ -389,6 +389,46 @@ print(has(scores, 4));                        # true
 sum(scores)                                   # 21
 ```
 
+### Dictionaries: `dict()`
+
+Use `dict()` where you would use an object as a map in JavaScript. It maps keys
+to values and keeps them in key order. `set` and `remove` don't change the
+dictionary; they give back a new one, so they chain and the old one stays as it
+was. `get` gives back `Found(value)` or `Missing`, so a lookup never fails.
+
+```goat
+scores = dict().set("ana", 3).set("bo", 5)
+more = scores.set("cy", 1)
+points = match more.get("ana") do
+  Found(n) then n
+  Missing then 0
+done
+print(points);                 # 3
+print(more.has("bo"));         # true
+print(more.keys());            # ["ana", "bo", "cy"]
+print(more.values());          # [3, 5, 1]
+print(more.remove("bo").size()); # 2
+print(scores.size());          # 2, still
+more.each(program(name, score) do print(name) done)
+```
+
+All the keys of one dictionary share a type, and so do all its values. A key can
+be anything `<` can order: numbers, strings, lists, records, tags. `dict_by`
+takes the ordering as a function, `less(a, b)`, true when `a` goes first:
+
+```goat
+countdown = dict_by(program(a, b) do a > b done).set(1, "one").set(3, "three")
+print(countdown.keys());       # [3, 1]
+by_age = dict_by(program(a, b) do a.age < b.age done)
+people = by_age.set({age: 9, name: "Zed"}, 1).set({age: 3, name: "Amy"}, 2)
+change_each(people.keys(), program(p) do p.name done)   # ["Amy", "Zed"]
+```
+
+Each operation takes about log2(n) steps (`size` visits every entry). A function
+that takes a dictionary and calls both `set` and `remove` on it can make the
+checker answer "program too complex"; call the methods on the dictionary
+directly instead.
+
 ### Turtle drawing
 
 `forward`, `back`, `left`, `right` take a number (degrees for turns), `pen_up`
@@ -609,5 +649,7 @@ how to paint them.
   with `::` (`tools::double(5)`); never `ball::moved()` or `tools.double(5)`.
 - Keep the result of a method: `ball2 = ball.moved()`. A method never changes
   `ball`.
+- Use `dict()` for a map (`dict().set(k, v)`, `.get(k)` is `Found(v)` or
+  `Missing`), not a record with computed keys.
 - No field assignment, no `::` namespaces, no methods on strings or lists.
 - No type annotations anywhere.
