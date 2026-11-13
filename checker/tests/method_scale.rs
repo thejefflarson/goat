@@ -78,7 +78,7 @@ fn a_record_with_far_too_many_methods_is_refused_not_hung() {
 }
 
 #[test]
-fn a_method_called_on_a_siblings_result_is_refused_not_hung() {
+fn a_method_called_on_a_siblings_result_checks_quickly() {
     let source = "counter = {n: 0,
         bump: program(self) do {...self, n: self.n + 1} done,
         twice: program(self) do self.bump().bump() done,
@@ -86,7 +86,7 @@ fn a_method_called_on_a_siblings_result_is_refused_not_hung() {
         total: program(self) do self.thrice().twice().n done}
         counter.total()";
     let start = Instant::now();
-    assert!(check_with_prelude("", source).is_err());
+    assert!(check_with_prelude("", source).is_ok());
     assert!(
         start.elapsed() < Duration::from_secs(10),
         "{:?}",

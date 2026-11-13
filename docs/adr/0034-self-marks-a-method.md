@@ -135,7 +135,18 @@ wasm with one recursive type and no nested knots.
    "program too complex" error. A record literal's receiver is counted before
    it is resolved. A literal of twelve updating methods, or four that call
    siblings, now checks; one of a hundred and twenty is refused. A method
-   called on the result of a sibling call (`self.bump().bump()`) is still
-   refused, with "cannot construct an infinite record type", because the
-   result's type is not yet known to be the receiver when the second call is
-   typed.
+   called on the result of a sibling call (`self.bump().bump()`) checks at any
+   chain length (item 8).
+8. **A sibling's result is the receiver before the next call is typed.** A
+   method whose type is `s -> s` (it returns `{...self, …}`, which ADR 0033
+   types as exactly `self`) is unified with its field as soon as its body is
+   inferred, so a call to it gives back `s`, not an unknown that the next
+   `.bump()` would wrap in another layer of record type. Methods are inferred
+   after the siblings they call through `self`, in source order otherwise
+   (methods that call each other in a cycle keep source order), so a chain
+   works wherever its callee is declared. A call's result bound to a
+   temporary, which is how a dot call on a call is lowered, keeps the type `s`
+   instead of the receiver's whole record opened at the binding. A method
+   that returns a different shape (a spread that adds a field, a number) is
+   not `s -> s`, is tied with the others afterward as before, and is typed or
+   rejected by the same rules.
