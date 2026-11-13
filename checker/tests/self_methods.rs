@@ -291,3 +291,99 @@ fn a_method_that_needs_a_missing_field_rejects_the_record() {
     let (message, _) = first_diagnostic(source);
     assert!(message.contains("`z`"), "{message}");
 }
+
+fn counter_with(methods: &str) -> String {
+    format!(
+        "counter = {{n: 0,
+            bump: program(self) do {{...self, n: self.n + 1}} done,
+            {methods}}}
+        counter.n"
+    )
+}
+
+#[test]
+fn a_method_called_on_a_siblings_result_checks() {
+    for methods in [
+        "twice: program(self) do self.bump().bump() done",
+        "three: program(self) do self.bump().bump().bump() done",
+        "back: program(self) do {...self, n: self.n - 1} done,
+            both: program(self) do self.bump().back() done",
+        "twice: program(self) do self.bump().bump() done,
+            back: program(self) do {...self, n: self.n - 1} done",
+        "twice: program(self) do self.bump().bump() done,
+            peek: program(self) do self.n done",
+        "twice: program(self) do self.bump().bump() done,
+            three: program(self) do self.twice().bump() done",
+    ] {
+        assert_eq!(type_of(&counter_with(methods)), "Number", "{methods}");
+    }
+}
+
+#[test]
+fn a_method_may_call_a_sibling_declared_after_it() {
+    let methods = "three: program(self) do self.twice().bump() done,
+        twice: program(self) do self.bump().bump() done,
+        both: program(self) do self.three().back() done,
+        back: program(self) do {...self, n: self.n - 1} done";
+    assert_eq!(type_of(&counter_with(methods)), "Number");
+}
+
+#[test]
+fn a_chain_through_self_leaves_the_receiver_usable_outside() {
+    let source = "counter = {n: 0,
+            bump: program(self) do {...self, n: self.n + 1} done,
+            twice: program(self) do self.bump().bump() done}
+        counter.twice().twice().bump().n";
+    assert_eq!(type_of(source), "Number");
+}
+
+#[test]
+fn a_ten_call_chain_in_a_method_checks() {
+    let methods = format!(
+        "long: program(self) do self.{} done",
+        ["bump()"; 10].join(".")
+    );
+    assert_eq!(type_of(&counter_with(&methods)), "Number");
+}
+
+#[test]
+fn twenty_methods_some_of_them_chaining_check_in_a_small_budget() {
+    let mut fields = vec![
+        "n: 0".to_string(),
+        "bump: program(self) do {...self, n: self.n + 1} done".to_string(),
+    ];
+    for i in 0..19 {
+        let body = match i % 3 {
+            0 => "self.bump().bump()".to_string(),
+            1 => format!("self.m{}().bump()", i - 1),
+            _ => "{...self, n: self.n - 1}".to_string(),
+        };
+        fields.push(format!("m{i}: program(self) do {body} done"));
+    }
+    let source = format!("r = {{{}}}\nr.m18().n", fields.join(", "));
+    let start = Instant::now();
+    assert_eq!(type_of(&source), "Number");
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn a_method_that_extends_its_receiver_does_not_return_the_receivers_type() {
+    let source = "counter = {n: 0,
+            wider: program(self) do {...self, extra: 1} done,
+            bad: program(self) do self.wider().n + self.n done}
+        counter.wider().extra";
+    assert_eq!(type_of(source), "Number");
+}
+
+#[test]
+fn a_method_called_on_a_number_result_is_rejected_with_a_message() {
+    let source = counter_with(
+        "peek: program(self) do self.n done,\n bad: program(self) do self.peek().peek() done",
+    );
+    let (message, _) = first_diagnostic(&source);
+    assert!(!message.contains("too complex"), "{message}");
+}

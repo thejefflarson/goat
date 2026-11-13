@@ -389,6 +389,54 @@ print(has(scores, 4));                        # true
 sum(scores)                                   # 21
 ```
 
+### Comparing and sorting: `<`, `<=`, `>`, `>=`
+
+`<`, `<=`, `>` and `>=` order any two values of the same type, as long as the
+type holds no function. The rules, by kind of value:
+
+- **Numbers** compare by value, and an `Int` compares with a `Float`.
+- **Strings** compare in dictionary order by Unicode code point, so a shorter
+  prefix is smaller: `"app" < "apple" < "apply"`. Capitals come before
+  lowercase letters.
+- **Bools**: `false < true`.
+- **Tags** go in declaration order, leftmost lowest. `tag Level = Low | Medium
+  | High` gives `Low < Medium < High`. Two values of the same tag compare by
+  payload: `Hit(1) < Hit(2)`.
+- **Lists** compare element by element from the left. The first difference
+  decides, and a list that runs out first is smaller: `[1, 2] < [1, 3]`,
+  `[1, 9] < [2]`, `[1, 2] < [1, 2, 0]`, `[] < [1]`.
+- **Records** compare field by field in label order, which is alphabetical,
+  not the order written, because `{x, y}` and `{y, x}` are the same type. The
+  first unequal field decides. To rank by another field first, compare a list
+  or a tag payload instead.
+- **Functions** can't be compared; it is an error.
+
+```goat
+tag Level = Low | Medium | High
+tag Shot = Miss | Hit(Int)
+a = "app" < "apple"                  # true
+b = false < true                     # true
+c = Low < High                       # true
+d = Hit(1) < Hit(2)                  # true
+e = [1, 9] < [2]                     # true: 1 < 2 decides
+f = [1, 2] < [1, 2, 0]               # true: the shorter list runs out first
+g = {name: "Zed", age: 3} < {name: "Amy", age: 9}   # true: age is compared before name
+h = [[2, "b"], [1, "z"], [2, "a"]]
+sort(h)                              # [[1, "z"], [2, "a"], [2, "b"]]
+```
+
+`sort`, `biggest`, `smallest` and `insert_sorted` use the same order, so they
+work on strings, records and lists too: `sort(["pear", "apple", "fig"])`.
+
+```goat error
+f = program(n) do n done
+f < f
+```
+
+The checker says: "can't compare functions with `<`". Details are in
+`docs/adr/0036-structural-ordering.md`; `examples/ordering.goat` walks through
+every rule.
+
 ### Dictionaries: `dict()`
 
 Use `dict()` where you would use an object as a map in JavaScript. It maps keys

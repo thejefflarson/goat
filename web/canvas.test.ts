@@ -140,3 +140,10 @@ test("the editor page offers the sky example exactly as the file reads", () => {
   assert.ok(page.includes(`    sky: \`${example("sky")}\`,`));
   assert.ok(page.includes('<option value="sky">'));
 });
+
+test("the editor page offers the ordering example exactly as the file reads", () => {
+  const page = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+  const file = readFileSync(new URL("../examples/ordering.goat", import.meta.url), "utf8");
+  assert.ok(page.includes(`    ordering: \`${file}\`,`));
+  assert.ok(page.includes('<option value="ordering">'));
+});
