@@ -399,7 +399,7 @@ fn examples_print_the_expected_output() {
         ),
         (
             "ordering.goat",
-            "[\"apple\", \"fig\", \"pear\"]\napple\n[{age: 3, name: \"Zed\"}, {age: 4, name: \"Amy\"}, {age: 9, name: \"Amy\"}]\ntrue\n[Low, Medium, High]",
+            "true\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ndone",
         ),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
