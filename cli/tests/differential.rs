@@ -383,6 +383,10 @@ fn examples_print_the_expected_output() {
         ("spread.goat", "25"),
         ("spread_update.goat", "27"),
         ("methods.goat", "39"),
+        (
+            "dict.goat",
+            "3\ntrue\n[\"ana\", \"cy\"]\n[3, 5, 1]\nana\nbo\ncy\n[\"three\", \"two\", \"one\"]\n6",
+        ),
         ("toolbox.goat", "20"),
         ("list_literals.goat", "29"),
         (

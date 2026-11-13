@@ -676,7 +676,7 @@ fn variant_programs_validate() {
 fn nullary_tags_are_immortal_cells_in_the_data_segment() {
     let text = wat(&mono_program(&format!("{LENGTH} length(Link(1, Empty))")));
     assert!(
-        text.contains("\\ff\\ff\\ff\\ff\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00"),
+        text.contains("\\ff\\ff\\ff\\ff\\00\\00\\00\\00\\02\\00\\00\\00\\00\\00\\00\\00"),
         "{text}"
     );
 }

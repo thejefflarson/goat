@@ -10,6 +10,12 @@
 tag Empty
 tag Link
 
+# The pieces of a dictionary (see `dict_by`) and what its `get` finds.
+tag DictLeaf
+tag DictNode
+tag Found
+tag Missing
+
 nothing = program() do done
 
 link = program(x, xs) do Link(x, xs) done
@@ -235,3 +241,209 @@ cos = program(degrees) do
 done
 
 tan = program(degrees) do sin(degrees) / cos(degrees) done
+
+# A dictionary is an AVL tree: `DictNode(left, key, value, right, height)` or
+# `DictLeaf`. Updates copy the path from the root to the change and share the
+# rest, so an old dictionary is still whole and every operation takes O(log n)
+# steps (`size` visits every node). `less(a, b)` says whether key `a` sorts
+# before key `b`.
+
+# The never-taken branch (a height is never negative) makes both subtrees the
+# same type as the tree. Without it each function's type spells out its own
+# nesting of nodes, and checking the prelude costs several times as much.
+dict_height = program(tree) do
+  match tree do
+    DictNode(left, key, value, right, height) then
+      if height < 0 then dict_height(left) + dict_height(right) else height done
+    DictLeaf then 0
+  done
+done
+
+dict_node = program(left, key, value, right) do
+  hl = dict_height(left)
+  hr = dict_height(right)
+  DictNode(left, key, value, right, 1 + if hl > hr then hl else hr done)
+done
+
+# One rotation: the left (or right) child becomes the root.
+dict_rotate_right = program(left, key, value, right) do
+  match left do
+    DictNode(ll, lk, lv, lr, lh) then dict_node(ll, lk, lv, dict_node(lr, key, value, right))
+    DictLeaf then trap("dict: rotate of a leaf")
+  done
+done
+
+dict_rotate_left = program(left, key, value, right) do
+  match right do
+    DictNode(rl, rk, rv, rr, rh) then dict_node(dict_node(left, key, value, rl), rk, rv, rr)
+    DictLeaf then trap("dict: rotate of a leaf")
+  done
+done
+
+# A node whose left subtree is 2 taller than its right: one rotation, or two
+# when the left child leans right. `dict_lean_right` is the mirror image.
+dict_lean_left = program(left, key, value, right) do
+  match left do
+    DictNode(ll, lk, lv, lr, lh) then
+      leaning = if dict_height(lr) > dict_height(ll) then dict_rotate_left(ll, lk, lv, lr) else left done
+      dict_rotate_right(leaning, key, value, right)
+    DictLeaf then trap("dict: lean of a leaf")
+  done
+done
+
+dict_lean_right = program(left, key, value, right) do
+  match right do
+    DictNode(rl, rk, rv, rr, rh) then
+      leaning = if dict_height(rl) > dict_height(rr) then dict_rotate_right(rl, rk, rv, rr) else right done
+      dict_rotate_left(left, key, value, leaning)
+    DictLeaf then trap("dict: lean of a leaf")
+  done
+done
+
+# Builds a node whose subtrees differ in height by at most 2 (what one insert
+# or delete leaves), rotating when they differ by 2.
+dict_balance = program(left, key, value, right) do
+  hl = dict_height(left)
+  hr = dict_height(right)
+  if hl > hr + 1 then dict_lean_left(left, key, value, right)
+  else if hr > hl + 1 then dict_lean_right(left, key, value, right)
+  else dict_node(left, key, value, right) done done
+done
+
+dict_insert = program(tree, less, key, value) do
+  match tree do
+    DictLeaf then dict_node(DictLeaf, key, value, DictLeaf)
+    DictNode(left, k, v, right, height) then
+      if less(key, k)
+        then dict_balance(dict_insert(left, less, key, value), k, v, right)
+        else if less(k, key)
+          then dict_balance(left, k, v, dict_insert(right, less, key, value))
+          else DictNode(left, key, value, right, height)
+        done
+      done
+  done
+done
+
+dict_lookup = program(tree, less, key) do
+  match tree do
+    DictLeaf then Missing
+    DictNode(left, k, v, right, height) then
+      if less(key, k) then dict_lookup(left, less, key)
+      else if less(k, key) then dict_lookup(right, less, key)
+      else Found(v) done done
+  done
+done
+
+dict_has = program(tree, less, key) do
+  match dict_lookup(tree, less, key) do
+    Found(v) then true
+    Missing then false
+  done
+done
+
+# The leftmost node of a tree that has one.
+dict_leftmost = program(tree) do
+  match tree do
+    DictNode(left, k, v, right, height) then
+      match left do
+        DictLeaf then tree
+        else dict_leftmost(left)
+      done
+    DictLeaf then trap("dict: no smallest key")
+  done
+done
+
+dict_without_leftmost = program(tree) do
+  match tree do
+    DictNode(left, k, v, right, height) then
+      match left do
+        DictLeaf then right
+        else dict_balance(dict_without_leftmost(left), k, v, right)
+      done
+    DictLeaf then trap("dict: no smallest key")
+  done
+done
+
+# Joins two trees whose keys are all ordered `left` before `right`.
+dict_join = program(left, right) do
+  match right do
+    DictLeaf then left
+    else
+      match dict_leftmost(right) do
+        DictNode(ml, mk, mv, mr, mh) then dict_balance(left, mk, mv, dict_without_leftmost(right))
+        DictLeaf then left
+      done
+  done
+done
+
+dict_remove = program(tree, less, key) do
+  match tree do
+    DictLeaf then DictLeaf
+    DictNode(left, k, v, right, height) then
+      if less(key, k)
+        then dict_balance(dict_remove(left, less, key), k, v, right)
+        else if less(k, key)
+          then dict_balance(left, k, v, dict_remove(right, less, key))
+          else dict_join(left, right)
+        done
+      done
+  done
+done
+
+dict_keys_onto = program(tree, acc) do
+  match tree do
+    DictLeaf then acc
+    DictNode(left, k, v, right, height) then
+      dict_keys_onto(left, Link(k, dict_keys_onto(right, acc)))
+  done
+done
+
+dict_values_onto = program(tree, acc) do
+  match tree do
+    DictLeaf then acc
+    DictNode(left, k, v, right, height) then
+      dict_values_onto(left, Link(v, dict_values_onto(right, acc)))
+  done
+done
+
+dict_size = program(tree) do
+  match tree do
+    DictLeaf then 0
+    DictNode(left, k, v, right, height) then dict_size(left) + 1 + dict_size(right)
+  done
+done
+
+dict_each = program(tree, f) do
+  match tree do
+    DictLeaf then nothing()
+    DictNode(left, k, v, right, height) then
+      before = dict_each(left, f)
+      shown = f(k, v)
+      dict_each(right, f)
+  done
+done
+
+# A dictionary that orders its keys with `less(a, b)`. Every dictionary
+# is a record with the same methods, so `set` and `remove` give back a new
+# dictionary that chains: `dict().set("ana", 3).set("bo", 5)`.
+dict_by = program(less) do
+  {
+    tree: DictLeaf,
+    less: less,
+    set: program(self, key, value) do
+      {...self, tree: dict_insert(self.tree, self::less, key, value)}
+    done,
+    remove: program(self, key) do
+      {...self, tree: dict_remove(self.tree, self::less, key)}
+    done,
+    get: program(self, key) do dict_lookup(self.tree, self::less, key) done,
+    has: program(self, key) do dict_has(self.tree, self::less, key) done,
+    keys: program(self) do dict_keys_onto(self.tree, []) done,
+    values: program(self) do dict_values_onto(self.tree, []) done,
+    size: program(self) do dict_size(self.tree) done,
+    each: program(self, f) do dict_each(self.tree, f) done
+  }
+done
+
+# An empty dictionary that orders its keys with `<`.
+dict = program() do dict_by(program(a, b) do a < b done) done

@@ -34,7 +34,7 @@
     call 7
     local.set 2
     local.get 2
-    i32.const 1
+    i32.const 4
     i32.store offset=8
     local.get 2
     local.get 0
@@ -52,7 +52,7 @@
         block ;; label = @3
           local.get 0
           i32.load offset=8
-          br_table 0 (;@3;) 1 (;@2;)
+          br_table 1 (;@2;) 1 (;@2;) 0 (;@3;) 1 (;@2;)
         end
         local.get 0
         i32.load
@@ -371,7 +371,7 @@
         block ;; label = @3
           local.get 0
           i32.load offset=8
-          br_table 1 (;@2;) 0 (;@3;) 1 (;@2;)
+          br_table 1 (;@2;) 1 (;@2;) 1 (;@2;) 1 (;@2;) 0 (;@3;) 1 (;@2;)
         end
         local.get 0
         i32.load offset=24
@@ -415,6 +415,6 @@
     end
     local.get 1
   )
-  (data (;0;) (i32.const 8) "\ff\ff\ff\ff\00\00\00\00\17\00\00\00this number got too big\00\00\00\00\00\ff\ff\ff\ff\00\00\00\00\00\00\00\00\00\00\00\00")
+  (data (;0;) (i32.const 8) "\ff\ff\ff\ff\00\00\00\00\17\00\00\00this number got too big\00\00\00\00\00\ff\ff\ff\ff\00\00\00\00\02\00\00\00\00\00\00\00")
   (@custom "goat.sites" (after data) "H\00\00\00X\00\00\00")
 )
