@@ -738,7 +738,7 @@ mod tests {
             "f = program(r) do if true then r else {a: r} done done f",
         ] {
             let err = type_of(src).unwrap_err();
-            assert!(err.contains("infinite type"), "{src}: {err}");
+            assert!(err.contains("contain itself"), "{src}: {err}");
         }
     }
 

@@ -33,7 +33,7 @@ use crate::hir::{
 };
 use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
 use crate::lower::{DotCall, SELF_NAME, Take};
-use crate::ty::{ABSENT, Group, METHOD, PLAIN, PRESENT, Row, Scheme, Ty, TypeVar};
+use crate::ty::{self, ABSENT, Group, METHOD, PLAIN, PRESENT, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{Vocab, list};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -124,6 +124,75 @@ pub fn infer_program(
 /// could settle, beside the errors it found. A program with errors has types
 /// for the parts that are fine, and none of its warnings.
 pub fn infer_partial(
+    root: &Expr,
+    interactive: Option<&Interactive>,
+    vocab: &Vocab,
+    dots: DotCalls,
+) -> (Typed, Vec<GoatError>) {
+    let names = ty::MessageNames::enter();
+    let (typed, mut errors) = infer_with_variable_markers(root, interactive, vocab, dots);
+    drop(names);
+    for error in &mut errors {
+        let labels = error.labels.iter_mut().map(|label| &mut label.message);
+        ty::name_variables(std::iter::once(&mut error.message).chain(labels));
+    }
+    (typed, errors)
+}
+
+/// How `var` sits inside `ty`, outermost step first: `its argument`,
+/// `its `g` field`. Empty when `var` is `ty` itself or the route is unclear.
+fn cycle_route(var: TypeVar, ty: &Ty) -> Vec<String> {
+    fn in_row(var: TypeVar, row: &Row, route: &mut Vec<String>, noun: &str) -> bool {
+        match row {
+            Row::Extend {
+                label, field, rest, ..
+            }
+            | Row::Maybe {
+                label, field, rest, ..
+            } => {
+                route.push(format!("its `{label}` {noun}"));
+                if in_ty(var, field, route) {
+                    return true;
+                }
+                route.pop();
+                in_row(var, rest, route, noun)
+            }
+            Row::Empty | Row::Var(_) => false,
+        }
+    }
+    fn in_ty(var: TypeVar, ty: &Ty, route: &mut Vec<String>) -> bool {
+        match ty {
+            Ty::Var(v) => *v == var,
+            Ty::Func(args, ret) => {
+                for arg in args {
+                    route.push("its argument".to_string());
+                    if in_ty(var, arg, route) {
+                        return true;
+                    }
+                    route.pop();
+                }
+                route.push("its result".to_string());
+                if in_ty(var, ret, route) {
+                    return true;
+                }
+                route.pop();
+                false
+            }
+            Ty::Record(row) => in_row(var, row, route, "field"),
+            Ty::Variant(row) => in_row(var, row, route, "tag"),
+            Ty::Rec(_, body) => in_ty(var, body, route),
+            _ => false,
+        }
+    }
+    let mut route = Vec::new();
+    if in_ty(var, ty, &mut route) {
+        route
+    } else {
+        Vec::new()
+    }
+}
+
+fn infer_with_variable_markers(
     root: &Expr,
     interactive: Option<&Interactive>,
     vocab: &Vocab,
@@ -724,10 +793,17 @@ impl Inferer {
                     }
                     rec
                 } else {
-                    let (a, b) = (self.resolve(a), self.resolve(b));
+                    let route = cycle_route(*x, &self.resolve(t)).join(", then ");
+                    let through = if route.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (through {route})")
+                    };
                     self.errors.push(GoatError::new(
                         span,
-                        format!("cannot construct the infinite type `{a}` = `{b}`"),
+                        format!(
+                            "this value would have to contain itself{through}, which can't be built"
+                        ),
                     ));
                     return;
                 };
@@ -947,7 +1023,10 @@ impl Inferer {
                     }
                     rec
                 } else {
-                    let message = format!("cannot construct an infinite {} type", kind.noun());
+                    let message = format!(
+                        "this {} would have to contain itself, which can't be built",
+                        kind.noun()
+                    );
                     self.errors.push(GoatError::new(span, message));
                     return;
                 };
@@ -2424,7 +2503,7 @@ impl Inferer {
         }
         self.errors[before..]
             .iter()
-            .any(|e| e.message.contains("infinite"))
+            .any(|e| e.message.contains("contain itself"))
             .then(|| {
                 format!(
                     "`{receiver}.{method}(…)` hands `{receiver}` to `{method}`, but then the type of `{method}` would have to contain itself."
@@ -3634,7 +3713,7 @@ mod tests {
             let mut inf = inferer();
             inf.unify(&Ty::Var(1), &ty, SPAN);
             assert_eq!(inf.errors.len(), 1, "{ty}");
-            assert!(inf.errors[0].message.contains("infinite"), "{ty}");
+            assert!(inf.errors[0].message.contains("contain itself"), "{ty}");
             assert!(!inf.subst.contains_key(&1));
         }
     }
@@ -3661,7 +3740,7 @@ mod tests {
             let mut inf = inferer();
             inf.unify_row(&Row::Var(1), &row, SPAN, kind);
             assert_eq!(inf.errors.len(), 1);
-            assert!(inf.errors[0].message.contains("infinite"));
+            assert!(inf.errors[0].message.contains("contain itself"));
         }
     }
 

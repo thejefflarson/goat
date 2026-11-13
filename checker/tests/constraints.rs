@@ -359,5 +359,5 @@ fn spread_recursion_that_reads_a_field_still_checks() {
 #[test]
 fn other_infinite_record_types_stay_rejected() {
     let message = error_of("f = program(s) do f({a: {...s, b: 1}}) done  1");
-    assert!(message.contains("infinite"), "{message}");
+    assert!(message.contains("contain itself"), "{message}");
 }

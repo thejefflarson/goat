@@ -3,7 +3,8 @@
 
 use crate::hir::Boundary;
 use crate::infer::subst_vars;
-use std::collections::{BTreeSet, HashMap};
+use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 /// A unification variable. The same numbering space is shared by type variables
@@ -557,6 +558,9 @@ impl Row {
     ) -> fmt::Result {
         match self {
             Row::Empty => Ok(()),
+            Row::Var(_) if MESSAGE_NAMES.get() => {
+                write!(f, "{}…", if first { "" } else { ", " })
+            }
             Row::Var(v) => {
                 if first {
                     write!(f, "{}", name_of(*v))
@@ -594,7 +598,72 @@ impl Row {
 /// Render a type variable as a short name (`t0`, `t1`, ...) so error messages
 /// and inferred-type output stay readable.
 fn name_of(v: TypeVar) -> String {
-    format!("t{v}")
+    if MESSAGE_NAMES.get() {
+        format!("{MARK_OPEN}{v}{MARK_CLOSE}")
+    } else {
+        format!("t{v}")
+    }
+}
+
+const MARK_OPEN: char = '\u{e000}';
+const MARK_CLOSE: char = '\u{e001}';
+
+thread_local! {
+    static MESSAGE_NAMES: Cell<bool> = const { Cell::new(false) };
+}
+
+/// While alive, `Display` writes a type variable as a marker that
+/// [`name_variables`] later turns into a letter, and an open row's tail as `…`,
+/// so a diagnostic never shows a raw `t36`.
+pub(crate) struct MessageNames(bool);
+
+impl MessageNames {
+    pub(crate) fn enter() -> MessageNames {
+        MessageNames(MESSAGE_NAMES.replace(true))
+    }
+}
+
+impl Drop for MessageNames {
+    fn drop(&mut self) {
+        MESSAGE_NAMES.set(self.0);
+    }
+}
+
+/// Replace each variable marker in `texts` with a letter (`a`, `b`, ... `z`,
+/// `a1`, ...), the same letter for the same variable across all of them.
+pub(crate) fn name_variables<'a>(texts: impl IntoIterator<Item = &'a mut String>) {
+    let mut letters: BTreeMap<String, String> = BTreeMap::new();
+    for text in texts {
+        if !text.contains(MARK_OPEN) {
+            continue;
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text.as_str();
+        while let Some(start) = rest.find(MARK_OPEN) {
+            out.push_str(&rest[..start]);
+            let after = &rest[start + MARK_OPEN.len_utf8()..];
+            let Some(end) = after.find(MARK_CLOSE) else {
+                rest = after;
+                continue;
+            };
+            let next = letters.len();
+            let letter = letters
+                .entry(after[..end].to_string())
+                .or_insert_with(|| letter_name(next));
+            out.push_str(letter);
+            rest = &after[end + MARK_CLOSE.len_utf8()..];
+        }
+        out.push_str(rest);
+        *text = out;
+    }
+}
+
+fn letter_name(index: usize) -> String {
+    let letter = (b'a' + (index % 26) as u8) as char;
+    match index / 26 {
+        0 => letter.to_string(),
+        round => format!("{letter}{round}"),
+    }
 }
 
 /// A type scheme `forall vars. ty` — a polymorphic type produced by
