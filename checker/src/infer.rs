@@ -26,6 +26,7 @@
 //! unification of two recursive types terminates through the assumed-equal set
 //! on [`Inferer::unify_ty`].
 
+use crate::captures::for_each_node;
 use crate::error::GoatError;
 use crate::hir::{
     BinOp, Builtin, ContractBinding, Expr, ExprId, ExprKind, Interactive, MatchArm, PatternPayload,
@@ -356,6 +357,56 @@ fn is_path(text: &str) -> bool {
 /// Whether `expr` is a function whose first parameter is `self`.
 fn is_method(expr: &Expr) -> bool {
     matches!(&expr.kind, ExprKind::Func { params, .. } if params.first().is_some_and(|p| p.name == SELF_NAME))
+}
+
+/// The order a record literal's fields are inferred in: source order, except
+/// that the methods take each other's places so a method comes after the
+/// siblings it calls through `self`. A caller that reaches a sibling's result
+/// before the sibling is typed cannot tell it is the receiver (see
+/// [`Inferer::settle_updater`]). Methods that call each other in a cycle keep
+/// source order.
+fn inference_order(fields: &[(String, Expr)]) -> Vec<usize> {
+    let methods: Vec<usize> = (0..fields.len())
+        .filter(|&i| is_method(&fields[i].1))
+        .collect();
+    let calls: Vec<Vec<usize>> = methods
+        .iter()
+        .map(|&i| {
+            let mut called = Vec::new();
+            for_each_node(&fields[i].1, &mut |e| {
+                if let ExprKind::Field { record, label } = &e.kind
+                    && matches!(&record.kind, ExprKind::Var { name, .. } if name == SELF_NAME)
+                    && let Some(&j) = methods.iter().find(|&&j| fields[j].0 == *label)
+                    && j != i
+                    && !called.contains(&j)
+                {
+                    called.push(j);
+                }
+            });
+            called
+        })
+        .collect();
+    let mut done = vec![false; fields.len()];
+    let mut ordered = Vec::with_capacity(methods.len());
+    while ordered.len() < methods.len() {
+        let pending = || (0..methods.len()).filter(|&m| !done[methods[m]]);
+        let next = pending()
+            .find(|&m| calls[m].iter().all(|&j| done[j]))
+            .or_else(|| pending().next())
+            .expect("a method is left");
+        done[methods[next]] = true;
+        ordered.push(methods[next]);
+    }
+    let mut ordered = ordered.into_iter();
+    (0..fields.len())
+        .map(|i| {
+            if is_method(&fields[i].1) {
+                ordered.next().expect("one per method")
+            } else {
+                i
+            }
+        })
+        .collect()
 }
 
 /// Whether evaluating `expr` can do no work, so its binding may be generalized:
@@ -1554,6 +1605,14 @@ impl Inferer {
     /// open to `Float`) rather than generalized: `n = 3` is one number, not a
     /// fresh one at every use.
     fn generalize(&mut self, ty: &Ty, function: bool) -> Scheme {
+        // A value that is the receiver of the literal being inferred (a method
+        // call's result bound to a temporary) stays that variable: opening it
+        // would copy the whole record type into every use.
+        if let Ty::Var(var) = self.resolve(ty)
+            && self.self_defs.contains_key(&var)
+        {
+            return Scheme::mono(Ty::Var(var));
+        }
         let resolved = self.finish(ty);
         let mut in_ty = BTreeSet::new();
         resolved.free_vars(&mut in_ty);
@@ -2659,15 +2718,16 @@ impl Inferer {
         );
         let receiver = self.fresh_id();
         self.self_defs.insert(receiver, Ty::Record(self_row));
-        let mut tys = Vec::with_capacity(fields.len());
-        for ((_, value), slot) in fields.iter().zip(&slots) {
+        let mut tys = vec![Ty::Unit; fields.len()];
+        for at in inference_order(fields) {
+            let (value, slot) = (&fields[at].1, &slots[at]);
             if is_method(value) {
                 self.method_self = Some(Ty::Var(receiver));
-                tys.push(self.infer(value));
+                tys[at] = self.infer(value);
+                self.settle_updater(slot, &tys[at], receiver, value.span);
             } else {
-                let ty = self.infer(value);
-                self.unify(slot, &ty, value.span);
-                tys.push(ty);
+                tys[at] = self.infer(value);
+                self.unify(slot, &tys[at], value.span);
             }
         }
         let tied = self.tie_methods(fields, &slots, &flags, &tys, receiver, span);
@@ -2681,6 +2741,22 @@ impl Inferer {
             },
         );
         Ty::Record(row)
+    }
+
+    /// A method that returns its own receiver (`{...self, …}`) has the type
+    /// `s -> s`, which no later body can change. Unifying it with its field
+    /// right away lets a sibling that calls it, even in a chain, see that the
+    /// result is `s` instead of an unknown that each further call wraps in
+    /// another layer of record type.
+    fn settle_updater(&mut self, slot: &Ty, ty: &Ty, receiver: TypeVar, span: Span) {
+        if let Ty::Func(params, ret) = self.resolve(ty)
+            && params
+                .first()
+                .is_some_and(|p| self.resolve(p) == Ty::Var(receiver))
+            && self.resolve(&ret) == Ty::Var(receiver)
+        {
+            self.unify(slot, ty, span);
+        }
     }
 
     /// Settle the receiver of a literal with methods once its bodies are
