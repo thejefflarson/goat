@@ -38,7 +38,7 @@ jobs:
       # most recent prior one. The corpus is gitignored, so this cache is its only
       # home between runs.
       - name: Restore the ${{ matrix.target }} corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: fuzz/tests/__fuzz__/${{ matrix.target }}/corpus
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -53,7 +53,7 @@ jobs:
       # the crash and the coverage reached getting there seed the next run.
       - name: Persist the grown ${{ matrix.target }} corpus
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: fuzz/tests/__fuzz__/${{ matrix.target }}/corpus
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}

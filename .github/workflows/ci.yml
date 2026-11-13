@@ -110,7 +110,7 @@ jobs:
 
       - name: Cache cross toolchain packages
         id: debs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/toolchain-debs
           key: firmware-debs-${{ runner.os }}-${{ steps.image.outputs.version }}-${{ hashFiles('.github/workflows/ci.yml') }}
