@@ -472,10 +472,7 @@ people = by_age.set({age: 9, name: "Zed"}, 1).set({age: 3, name: "Amy"}, 2)
 change_each(people.keys(), program(p) do p.name done)   # ["Amy", "Zed"]
 ```
 
-Each operation takes about log2(n) steps (`size` visits every entry). A function
-that takes a dictionary and calls both `set` and `remove` on it can make the
-checker answer "program too complex"; call the methods on the dictionary
-directly instead.
+Each operation takes about log2(n) steps (`size` visits every entry).
 
 ### Turtle drawing
 

@@ -190,6 +190,21 @@ d = fill(dict(), 1, 10000)
 "#;
 
 #[test]
+fn a_helper_may_call_set_and_remove_on_the_dictionary_it_takes() {
+    let src = r#"
+change = program(d, k, add) do if add then d.set(k, 1) else d.remove(k) done done
+fill = program(d) do d.set(1, 10).set(2, 20) done
+drain = program(d) do d.remove(1) done
+both = program(d) do d.set(1, 10).remove(1) done
+print(change(dict(), "a", true).size());
+print(change(dict().set("a", 2), "a", false).size());
+print(drain(fill(dict())).keys());
+print(both(dict()).size())
+"#;
+    assert_eq!(run(src), "1\n0\n[2]\n0");
+}
+
+#[test]
 fn ten_thousand_keys_insert_look_up_and_stay_balanced() {
     let src = format!(
         "{BIG}print(d.size());\nprint(hits(d, 1, 10000, 0));\nprint(dict_height(d.tree) <= 19)"
