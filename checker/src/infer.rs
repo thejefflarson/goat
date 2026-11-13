@@ -141,10 +141,12 @@ pub fn infer_partial(
 }
 
 /// How `var` sits inside `ty`, outermost step first: `its argument`,
-/// `its `g` field`. Empty when `var` is `ty` itself or the route is unclear.
+/// `its `g` field`. Empty when `var` is `ty` itself, the route is unclear, or
+/// it runs deeper than unification lets a type nest.
 fn cycle_route(var: TypeVar, ty: &Ty) -> Vec<String> {
-    fn in_row(var: TypeVar, row: &Row, route: &mut Vec<String>, noun: &str) -> bool {
+    fn in_row(var: TypeVar, row: &Row, route: &mut Vec<String>, noun: &str, depth: usize) -> bool {
         match row {
+            _ if depth > MAX_UNFOLDED_DEPTH => false,
             Row::Extend {
                 label, field, rest, ..
             }
@@ -152,41 +154,42 @@ fn cycle_route(var: TypeVar, ty: &Ty) -> Vec<String> {
                 label, field, rest, ..
             } => {
                 route.push(format!("its `{label}` {noun}"));
-                if in_ty(var, field, route) {
+                if in_ty(var, field, route, depth + 1) {
                     return true;
                 }
                 route.pop();
-                in_row(var, rest, route, noun)
+                in_row(var, rest, route, noun, depth + 1)
             }
             Row::Empty | Row::Var(_) => false,
         }
     }
-    fn in_ty(var: TypeVar, ty: &Ty, route: &mut Vec<String>) -> bool {
+    fn in_ty(var: TypeVar, ty: &Ty, route: &mut Vec<String>, depth: usize) -> bool {
         match ty {
+            _ if depth > MAX_UNFOLDED_DEPTH => false,
             Ty::Var(v) => *v == var,
             Ty::Func(args, ret) => {
                 for arg in args {
                     route.push("its argument".to_string());
-                    if in_ty(var, arg, route) {
+                    if in_ty(var, arg, route, depth + 1) {
                         return true;
                     }
                     route.pop();
                 }
                 route.push("its result".to_string());
-                if in_ty(var, ret, route) {
+                if in_ty(var, ret, route, depth + 1) {
                     return true;
                 }
                 route.pop();
                 false
             }
-            Ty::Record(row) => in_row(var, row, route, "field"),
-            Ty::Variant(row) => in_row(var, row, route, "tag"),
-            Ty::Rec(_, body) => in_ty(var, body, route),
+            Ty::Record(row) => in_row(var, row, route, "field", depth + 1),
+            Ty::Variant(row) => in_row(var, row, route, "tag", depth + 1),
+            Ty::Rec(_, body) => in_ty(var, body, route, depth + 1),
             _ => false,
         }
     }
     let mut route = Vec::new();
-    if in_ty(var, ty, &mut route) {
+    if in_ty(var, ty, &mut route, 0) {
         route
     } else {
         Vec::new()
@@ -3667,6 +3670,17 @@ mod tests {
             next: 1000,
             ..Inferer::default()
         }
+    }
+
+    #[test]
+    fn a_cycle_route_deeper_than_a_type_may_nest_is_left_out() {
+        let mut ty = Ty::Var(1);
+        for _ in 0..=MAX_UNFOLDED_DEPTH {
+            ty = Ty::Func(vec![ty], Box::new(Ty::Unit));
+        }
+        assert!(cycle_route(1, &ty).is_empty());
+        let shallow = Ty::Func(vec![Ty::Var(1)], Box::new(Ty::Unit));
+        assert_eq!(cycle_route(1, &shallow), ["its argument"]);
     }
 
     #[test]
