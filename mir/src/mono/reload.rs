@@ -24,7 +24,7 @@ use crate::mir::*;
 use goat_checker::captures::for_each_node;
 use goat_checker::hir::{self, ExprId, ExprKind, Span, Symbol};
 use goat_checker::lower::SELF_NAME;
-use goat_checker::ty::Ty;
+use goat_checker::ty::{Row, Ty, TypeVar};
 use goat_checker::{Checked, Target};
 
 const NIL: u32 = 0;
@@ -595,7 +595,9 @@ impl<'g, 'a> Gen<'g, 'a> {
                 ],
             ),
         );
-        let shared = lets(
+        // The last holder of a shared object sees a count of one, so every
+        // heap object is looked up, not only the ones with a count above one.
+        let out = lets(
             vec![
                 (address, Expr::Addr(value)),
                 (
@@ -606,13 +608,12 @@ impl<'g, 'a> Gen<'g, 'a> {
             Self::if_(
                 Expr::Cmp(CmpOp::Ge, boxed(local(seen)), boxed(int(0))),
                 self.node(PAIR, vec![self.node(REF, vec![local(seen)]), local(table)]),
-                write,
+                Self::if_(
+                    Expr::Shared(value),
+                    write,
+                    Expr::CallDirect(body, vec![local(value), local(table)]),
+                ),
             ),
-        );
-        let out = Self::if_(
-            Expr::Shared(value),
-            shared,
-            Expr::CallDirect(body, vec![local(value), local(table)]),
         );
         self.define(id, cx, vec![(value, mty), (table, n)], n, out);
         id
@@ -1278,9 +1279,13 @@ impl<'g, 'a> Gen<'g, 'a> {
     /// Whether `site`'s literal, specialized, has the type `ty`.
     fn fits(&mut self, site: &Site, ty: &Ty) -> bool {
         let lambda_ty = self.m.lambdas[&Target::Anon(site.expr)].ty;
+        let ty = canonical(ty);
+        if !agrees(lambda_ty, &ty, &mut HashMap::new(), &mut HashSet::new()) {
+            return false;
+        }
         let mut subst = Subst::new();
-        match_ty(lambda_ty, ty, &mut subst);
-        self.m.ground(lambda_ty, &subst) == canonical(ty)
+        match_ty(lambda_ty, &ty, &mut subst);
+        self.m.ground(lambda_ty, &subst) == ty
     }
 
     fn site_slot(&mut self, site: ExprId, ty: &Ty) -> usize {
@@ -1584,6 +1589,82 @@ impl<'g, 'a> Gen<'g, 'a> {
             });
         }
         out
+    }
+}
+
+/// Whether `match_ty` could instantiate `template` to `actual`: it checks
+/// without the assertions `match_ty` makes, since a site's literal is tried
+/// against every method field of its name, whatever type that field has.
+fn agrees(
+    template: &Ty,
+    actual: &Ty,
+    bound: &mut HashMap<TypeVar, Ty>,
+    seen: &mut HashSet<(Ty, Ty)>,
+) -> bool {
+    match (template, actual) {
+        (Ty::Var(v), t) => {
+            let t = canonical(t);
+            bound.get(v).is_none_or(|prev| *prev == t) && {
+                bound.insert(*v, t);
+                true
+            }
+        }
+        (Ty::Rec(..), _) | (_, Ty::Rec(..)) => {
+            !seen.insert((template.clone(), actual.clone()))
+                || agrees(&template.unfold_head(), &actual.unfold_head(), bound, seen)
+        }
+        (Ty::Func(ta, tr), Ty::Func(aa, ar)) => {
+            ta.len() == aa.len()
+                && ta.iter().zip(aa).all(|(t, a)| agrees(t, a, bound, seen))
+                && agrees(tr, ar, bound, seen)
+        }
+        (Ty::Record(t), Ty::Record(a)) | (Ty::Variant(t), Ty::Variant(a)) => {
+            rows_agree(t, a, bound, seen)
+        }
+        (t, a) => t == a,
+    }
+}
+
+fn rows_agree(
+    template: &Row,
+    actual: &Row,
+    bound: &mut HashMap<TypeVar, Ty>,
+    seen: &mut HashSet<(Ty, Ty)>,
+) -> bool {
+    let mut rest: Vec<_> = ground_fields(actual).collect();
+    let mut row = template;
+    loop {
+        match row {
+            Row::Extend {
+                label,
+                field,
+                rest: next,
+                ..
+            } => {
+                let Some(at) = rest.iter().position(|(l, _)| *l == label) else {
+                    return false;
+                };
+                if !agrees(field, rest.remove(at).1, bound, seen) {
+                    return false;
+                }
+                row = next;
+            }
+            Row::Maybe {
+                label,
+                field,
+                rest: next,
+                ..
+            } => {
+                if let Some(at) = rest.iter().position(|(l, _)| *l == label)
+                    && !agrees(field, rest.remove(at).1, bound, seen)
+                {
+                    return false;
+                }
+                row = next;
+            }
+            Row::Var(_) => return true,
+            Row::Empty => return rest.is_empty(),
+        }
     }
 }
 

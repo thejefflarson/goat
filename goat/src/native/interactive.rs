@@ -4,7 +4,7 @@
 use super::{Guest, site_table};
 use crate::{Host, Scene, SceneSink};
 use std::marker::PhantomData;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const EVENT_PREFIX: &str = "goat_event_";
 
@@ -65,14 +65,36 @@ impl HostEvent for Event {
     }
 }
 
-/// What a reload did with the model.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What a reload did with the model (ADR 0035).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reloaded {
-    /// The new program's model layout matches, so the running model carried
-    /// over.
-    Kept,
-    /// The layout changed, so the model restarted from the new `init`.
-    Reset,
+    /// The running model carried across by name, its methods rebound to the
+    /// new program's.
+    Refreshed,
+    /// The model restarted from the new `init`, and why.
+    Reset(ResetReason),
+}
+
+/// Why a reload started the model over: a kind such as `field_added` or
+/// `method_captures`, and the names it carries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResetReason {
+    pub kind: String,
+    pub args: Vec<String>,
+}
+
+impl ResetReason {
+    pub(super) fn of(parts: Vec<String>) -> ResetReason {
+        let mut parts = parts.into_iter();
+        ResetReason {
+            kind: parts.next().unwrap_or_else(|| "reshaped".into()),
+            args: parts.collect(),
+        }
+    }
+
+    fn reshaped() -> ResetReason {
+        ResetReason::of(Vec::new())
+    }
 }
 
 /// A running interactive program. Any trap stops it for good: later calls
@@ -83,6 +105,7 @@ pub struct Interactive<S: SceneSink + 'static, E: HostEvent = Event> {
     model: Option<i32>,
     subscriptions: Vec<String>,
     events: PhantomData<fn(&E)>,
+    carried: Duration,
 }
 
 impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
@@ -107,42 +130,63 @@ impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
             model: Some(model),
             subscriptions,
             events: PhantomData,
+            carried: Duration::ZERO,
         })
     }
 
-    /// Swap in a recompiled program, keeping the running model when its
-    /// layout fingerprint is unchanged and starting over from the new `init`
-    /// when it is not (or when the program had stopped). Both modules must
-    /// come from `compile_reloadable`. If the new program cannot start, the
-    /// old one is left running.
+    /// Swap in a recompiled program over the same heap (ADR 0035). The old
+    /// module snapshots the model, the new one refreshes a model of its own
+    /// types from the snapshot, and the old module's code and static data are
+    /// freed. A model that cannot be refreshed restarts from the new `init`
+    /// (or when the program had stopped), and the reason says why. Both
+    /// modules must come from `compile_reloadable`. If the new program cannot
+    /// start, the old one is left running.
     pub fn reload(&mut self, wasm: &[u8]) -> Result<Reloaded, String> {
         let guest = &mut self.guest;
         let (old, new) = (guest.instance, guest.spawn(wasm)?);
         let fresh: i32 = guest.on(new, |guest| guest.call("goat_setup", ()))?;
-        let same_layout = guest.fingerprint(old)? == guest.fingerprint(new)?;
 
         let (model, outcome) = match self.model.take() {
-            Some(model) if same_layout => {
-                guest.on(new, |guest| {
-                    guest.call::<_, ()>("goat_release_model", fresh)
-                })?;
-                (model, Reloaded::Kept)
-            }
+            None => (fresh, Reloaded::Reset(ResetReason::reshaped())),
             Some(model) => {
-                guest.on(old, |guest| {
-                    guest.call::<_, ()>("goat_release_model", model)
-                })?;
-                (fresh, Reloaded::Reset)
+                let started = Instant::now();
+                // The snapshot consumes the model, so the old module is not
+                // asked to release it.
+                let image = guest.on(old, |guest| guest.call::<_, i32>("goat_snapshot", model));
+                let refreshed = image.and_then(|image| {
+                    guest.on(new, |guest| guest.call::<_, i32>("goat_refresh", (image, fresh)))
+                });
+                self.carried = started.elapsed();
+                match refreshed {
+                    Ok(0) => {
+                        let reason = guest.on(new, |guest| guest.reason());
+                        (fresh, Reloaded::Reset(reason))
+                    }
+                    Ok(rebuilt) => {
+                        guest.on(new, |guest| {
+                            guest.call::<_, ()>("goat_release_model", fresh)
+                        })?;
+                        (rebuilt, Reloaded::Refreshed)
+                    }
+                    Err(_) => (fresh, Reloaded::Reset(ResetReason::reshaped())),
+                }
             }
-            None => (fresh, Reloaded::Reset),
         };
         guest.on(old, |guest| guest.call::<_, ()>("goat_shutdown", ()))?;
+        guest.on(old, |guest| guest.call::<_, ()>("goat_free_static", ()))?;
 
         guest.instance = new;
         guest.store.data_mut().sites = site_table(wasm);
         self.subscriptions = subscriptions(guest);
         self.model = Some(model);
         Ok(outcome)
+    }
+
+    /// How long the last reload spent in the old module's snapshot and the new
+    /// module's refresh: the part of a reload that grows with the model, and
+    /// the part a host's per-call budget applies to.
+    pub fn carry_time(&self) -> Duration {
+        self.carried
     }
 
     /// The event tags the program handles; the host need only listen for
@@ -182,6 +226,16 @@ impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
         self.guest.call::<_, ()>("goat_shutdown", ())?;
         let live = self.guest.live_allocs()?;
         Ok((self.guest.into_host().0, live))
+    }
+
+    /// Heap blocks allocated and not yet freed, the model's among them.
+    pub fn live_allocs(&mut self) -> Result<u32, String> {
+        self.guest.live_allocs()
+    }
+
+    /// How far the heap has grown, in bytes; see [`Guest::heap_end`].
+    pub fn heap_end(&mut self) -> Result<u32, String> {
+        self.guest.heap_end()
     }
 
     /// The sink the frames stream to.

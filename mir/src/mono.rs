@@ -80,18 +80,23 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
     let mut cx = FnCx::new(Subst::new());
     let root_ty = m.ground(&checked.typed.root_ty, &cx.subst);
     let mut ret = m.lower_ty(&root_ty);
-    // A pointer root is dropped after it is computed (see `rc::insert_rc`), so
-    // it cannot end in a tail call; a string root is handed to the host.
-    let mut body = m.expr(&mut cx, &checked.root, !ret.is_discarded_root());
-    let interactive = if checked.interactive.is_some() {
-        let names = reload::names(checked, &m.lambdas);
+    let names = checked
+        .interactive
+        .is_some()
+        .then(|| reload::names(checked, &m.lambdas));
+    if let Some(names) = &names {
         m.method_bindings = names
             .sites
             .iter()
             .map(|s| (s.expr, s.binding.clone()))
             .collect();
+    }
+    // A pointer root is dropped after it is computed (see `rc::insert_rc`), so
+    // it cannot end in a tail call; a string root is handed to the host.
+    let mut body = m.expr(&mut cx, &checked.root, !ret.is_discarded_root());
+    let interactive = if let Some(names) = &names {
         let model = reload::model_ty(&root_ty);
-        let built = reload::Gen::build(&mut m, &names, &model, &mut cx);
+        let built = reload::Gen::build(&mut m, names, &model, &mut cx);
         let MTy::Ptr(HeapKind::Record(root_layout)) = ret else {
             unreachable!("an interactive root is a record");
         };

@@ -2,7 +2,9 @@
 //! module through the native drivers.
 #![cfg(feature = "native")]
 
-use goat::native::{Event, Interactive, Reloaded, run_to_end, run_to_end_within};
+use goat::native::{
+    Event, Interactive, Reloaded, ResetReason, run_to_end, run_to_end_within,
+};
 use goat::{Boundary, Host, HostInterface, HostValue, SceneSink, compile};
 use std::time::{Duration, Instant};
 
@@ -270,7 +272,7 @@ fn a_reload_with_the_same_model_layout_keeps_the_model_and_swaps_the_logic() {
     program.draw().unwrap();
 
     let reloaded = program.reload(&reloadable(&counter(100, 10, "")));
-    assert_eq!(reloaded, Ok(Reloaded::Kept));
+    assert_eq!(reloaded, Ok(Reloaded::Refreshed));
     tick(&mut program, 1);
     program.draw().unwrap();
 
@@ -282,20 +284,41 @@ fn a_reload_with_the_same_model_layout_keeps_the_model_and_swaps_the_logic() {
 }
 
 #[test]
-fn a_reload_that_changes_the_model_layout_starts_over_from_the_new_init() {
+fn a_field_the_new_model_adds_comes_from_the_new_init() {
     let mut program = live(&counter(0, 1, ""));
     tick(&mut program, 3);
 
     let reloaded = program.reload(&reloadable(&counter(7, 1, ", z: 0")));
-    assert_eq!(reloaded, Ok(Reloaded::Reset));
+    assert_eq!(reloaded, Ok(Reloaded::Refreshed));
     program.draw().unwrap();
     tick(&mut program, 1);
     program.draw().unwrap();
 
     let (frames, live) = program.finish().expect("tears down");
     assert_eq!(live, 0, "leaked");
-    assert_eq!(frames.lines, [line_to(7.0), line_to(8.0)]);
-    assert_eq!(frames.vertices, 2 + 3);
+    assert_eq!(frames.lines, [line_to(3.0), line_to(4.0)]);
+    assert_eq!(frames.vertices, 5 + 6);
+}
+
+#[test]
+fn a_field_that_changes_type_starts_over_from_the_new_init_and_says_which() {
+    let mut program = live(&counter(0, 1, ""));
+    tick(&mut program, 3);
+
+    let changed = counter(7, 1, "").replace("color: \"red\"", "color: 5");
+    let changed = changed.replace("color: model.color", "color: \"red\"");
+    let reloaded = program.reload(&reloadable(&changed));
+    assert_eq!(reloaded, Ok(Reloaded::Reset(reason("type_changed", &["color", "String", "Int"]))));
+    program.draw().unwrap();
+    let (frames, live) = program.finish().expect("tears down");
+    assert_eq!((frames.lines, live), ([line_to(7.0)].to_vec(), 0));
+}
+
+fn reason(kind: &str, args: &[&str]) -> ResetReason {
+    ResetReason {
+        kind: kind.into(),
+        args: args.iter().map(|a| a.to_string()).collect(),
+    }
 }
 
 #[test]
@@ -320,7 +343,7 @@ fn a_reload_can_change_which_events_the_program_handles() {
     let pointer = ticks.replace("Tick(dt)", "PointerDown(at)");
     let mut program = live(&ticks);
     assert_eq!(program.subscriptions(), ["Tick"]);
-    assert_eq!(program.reload(&reloadable(&pointer)), Ok(Reloaded::Kept));
+    assert_eq!(program.reload(&reloadable(&pointer)), Ok(Reloaded::Refreshed));
     assert_eq!(program.subscriptions(), ["PointerDown"]);
     assert!(!program.send(&Event::Tick(16.0)).unwrap());
     assert!(
@@ -332,18 +355,19 @@ fn a_reload_can_change_which_events_the_program_handles() {
 }
 
 #[test]
-fn a_reload_that_renumbers_a_tag_inside_the_model_starts_over() {
+fn a_reload_that_renumbers_a_tag_inside_the_model_keeps_it() {
     // Tags are numbered across the whole program in label order, so handling
     // `KeyDown`, which sorts before the list's `Link`, moves `Link`'s number.
+    // The image names its tags, so the renumbering does not matter.
     let ticks = counter(0, 1, "");
     let keys = ticks.replace("Tick(dt)", "KeyDown(key)");
     let mut program = live(&ticks);
     tick(&mut program, 2);
-    assert_eq!(program.reload(&reloadable(&keys)), Ok(Reloaded::Reset));
+    assert_eq!(program.reload(&reloadable(&keys)), Ok(Reloaded::Refreshed));
     assert!(program.send(&Event::KeyDown("a".into())).unwrap());
     program.draw().unwrap();
     let (frames, live) = program.finish().unwrap();
-    assert_eq!((frames.vertices, live), (3, 0));
+    assert_eq!((frames.vertices, live), (5, 0));
 }
 
 #[test]
@@ -352,7 +376,10 @@ fn a_reload_rescues_a_program_the_runaway_update_stopped() {
     assert!(program.send(&Event::Tick(16.0)).is_err());
 
     let fixed = counter(5, 1, "");
-    assert_eq!(program.reload(&reloadable(&fixed)), Ok(Reloaded::Reset));
+    assert_eq!(
+        program.reload(&reloadable(&fixed)),
+        Ok(Reloaded::Reset(reason("reshaped", &[])))
+    );
     tick(&mut program, 1);
     program.draw().unwrap();
     assert_eq!(program.into_sink().lines, [line_to(6.0)]);
