@@ -1,0 +1,56 @@
+name: Proof gate
+
+# ADR 0037, decision 4: a PR that changes the grammar, the checker's typing or
+# the prelude without touching proofs/ fails, unless it carries the
+# `no-semantics-change` label and a `No semantics change: <reason>` line in its
+# body. Always reports, so it can be a required check.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+  push:
+    branches: [master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  proof-gate:
+    runs-on: goat-runners
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+
+      - name: Require proofs for language changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, '\n') }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          changed=$(git diff --name-only "$BASE...$HEAD")
+          gated=$(echo "$changed" | grep -E '^(grammar/goat\.peg|checker/src/(infer|lower|ty)\.rs|prelude/prelude\.goat)$' || true)
+          if [ -z "$gated" ]; then
+            echo "No gated paths changed."
+            exit 0
+          fi
+          if echo "$changed" | grep -q '^proofs/'; then
+            echo "Gated paths changed together with proofs/."
+            exit 0
+          fi
+          if printf '%b\n' "$LABELS" | grep -qx 'no-semantics-change' \
+            && printf '%s\n' "$BODY" | tr -d '\r' | grep -Eq '^No semantics change:[[:space:]]*[^[:space:]]'; then
+            echo "Waived: no-semantics-change label and reason present."
+            exit 0
+          fi
+          echo "::error::This PR changes language-defining paths without changing proofs/:"
+          echo "$gated"
+          echo "Update the proofs (ADR 0037), or add the no-semantics-change label and a body line starting 'No semantics change:' with the reason."
+          exit 1
