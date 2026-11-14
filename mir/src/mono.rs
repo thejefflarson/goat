@@ -37,6 +37,7 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut labels = BTreeSet::new();
     collect_tags(&checked.root, &checked.vocab, &mut labels);
+    labels.extend(checked.pruned_tags.iter().cloned());
     for group in &checked.tag_groups {
         if group.iter().any(|tag| labels.contains(tag)) {
             labels.extend(group.iter().cloned());

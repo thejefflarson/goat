@@ -20,7 +20,7 @@ pub use ty::Ty;
 pub use vocab::Vocab;
 
 use hir::Symbol;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// A successfully checked program: its name-resolved tree and inferred types.
 pub struct Checked {
@@ -37,6 +37,9 @@ pub struct Checked {
     pub tag_ranks: HashMap<String, u32>,
     /// The tags of each declared group.
     pub tag_groups: Vec<Vec<String>>,
+    /// Tags named only by prelude definitions the program never reaches, which
+    /// are not in `root` but still take a number.
+    pub pruned_tags: BTreeSet<String>,
 }
 
 /// The standard library: the definitions every program starts with, whatever its host.
@@ -78,6 +81,16 @@ pub fn check_with_vocab(
     vocab: &Vocab,
     source: &str,
 ) -> Result<Checked, Vec<GoatError>> {
+    check_pruning(prelude, vocab, source, true)
+}
+
+/// [`check_with_vocab`], inferring the whole prelude unless `prune`.
+fn check_pruning(
+    prelude: &str,
+    vocab: &Vocab,
+    source: &str,
+    prune: bool,
+) -> Result<Checked, Vec<GoatError>> {
     vocab.validate().map_err(|message| {
         vec![GoatError::new(
             hir::Span::new(0, 0),
@@ -88,9 +101,25 @@ pub fn check_with_vocab(
     if !lowered.errors.is_empty() {
         return Err(lowered.errors);
     }
-    let (root, pruned_matches) = lower::prune_unreached_prelude(lowered.root);
+    let lower::Pruned {
+        root,
+        matched,
+        tags: pruned_tags,
+    } = if prune {
+        lower::prune_unreached_prelude(
+            lowered.root,
+            lowered.interactive.as_ref().map_or(&[], |i| &i.decoders),
+            &vocab.decoders(),
+        )
+    } else {
+        lower::Pruned {
+            root: lowered.root,
+            matched: HashSet::new(),
+            tags: BTreeSet::new(),
+        }
+    };
     let mut dots = infer::DotCalls::new(lowered.dot_calls, lowered.takes, source.to_string());
-    dots.pruned_matches = pruned_matches;
+    dots.pruned_matches = matched;
     let mut typed = infer::infer_program(&root, lowered.interactive.as_ref(), vocab, dots)?;
     typed.warnings.splice(0..0, lowered.warnings);
     let generalized = typed
@@ -115,6 +144,7 @@ pub fn check_with_vocab(
         vocab: vocab.clone(),
         tag_ranks: lowered.tag_ranks,
         tag_groups: lowered.tag_groups,
+        pruned_tags,
     })
 }
 
@@ -1947,5 +1977,174 @@ mod tests {
             type_of("to = 3 for from from 1 to to do print(from) done").unwrap(),
             "Unit"
         );
+    }
+
+    mod pruning {
+        use super::*;
+        use crate::captures::for_each_node;
+        use std::time::Instant;
+
+        fn full(source: &str) -> Result<Checked, Vec<GoatError>> {
+            check_pruning(PRELUDE, &Vocab::turtle(), source, false)
+        }
+
+        fn pruned(source: &str) -> Result<Checked, Vec<GoatError>> {
+            check_pruning(PRELUDE, &Vocab::turtle(), source, true)
+        }
+
+        fn bound_names(checked: &Checked) -> Vec<String> {
+            let mut names = Vec::new();
+            for_each_node(&checked.root, &mut |e| {
+                if let hir::ExprKind::Let { name, .. } = &e.kind {
+                    names.push(name.clone());
+                }
+            });
+            names
+        }
+
+        /// `ty` with its type variables renumbered by first appearance: pruning
+        /// leaves fewer variables in play, so their ids shift.
+        fn canonical(ty: Option<&Ty>) -> Option<String> {
+            let text = ty?.to_string();
+            let mut out = String::new();
+            let mut seen: Vec<String> = Vec::new();
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find('t') {
+                let (before, after) = rest.split_at(at);
+                let digits: String = after[1..]
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                let boundary =
+                    !before.ends_with(|c: char| (c.is_alphanumeric() && c != 'μ') || c == '_');
+                out.push_str(before);
+                if boundary && !digits.is_empty() {
+                    let at = seen.iter().position(|d| *d == digits).unwrap_or_else(|| {
+                        seen.push(digits.clone());
+                        seen.len() - 1
+                    });
+                    out.push_str(&format!("t{at}"));
+                    rest = &after[1 + digits.len()..];
+                } else {
+                    out.push('t');
+                    rest = &after[1..];
+                }
+            }
+            out.push_str(rest);
+            Some(out)
+        }
+
+        fn assert_same_result(label: &str, source: &str) {
+            match (full(source), pruned(source)) {
+                (Ok(full), Ok(pruned)) => {
+                    assert_eq!(full.typed.warnings, pruned.typed.warnings, "{label}");
+                    assert_eq!(
+                        canonical(Some(&full.typed.root_ty)),
+                        canonical(Some(&pruned.typed.root_ty)),
+                        "{label}"
+                    );
+                    let mut compared = 0;
+                    for_each_node(&pruned.root, &mut |e| {
+                        if e.span.file == hir::FileId::User {
+                            compared += 1;
+                            assert_eq!(
+                                canonical(full.typed.node_types.get(&e.id)),
+                                canonical(pruned.typed.node_types.get(&e.id)),
+                                "{label}: node at {:?}",
+                                e.span
+                            );
+                        }
+                    });
+                    assert!(compared > 0 || source.trim().is_empty(), "{label}");
+                }
+                (Err(full), Err(pruned)) => assert_eq!(full, pruned, "{label}"),
+                (full, pruned) => panic!(
+                    "{label}: full {:?}, pruned {:?}",
+                    full.map(|_| ()),
+                    pruned.map(|_| ())
+                ),
+            }
+        }
+
+        #[test]
+        fn pruning_changes_nothing_a_program_checks_to() {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
+            let mut sources = Vec::new();
+            for dir in [dir.clone(), dir.join("canvas")] {
+                for entry in std::fs::read_dir(dir).expect("examples dir") {
+                    let path = entry.expect("entry").path();
+                    if path.extension().is_some_and(|ext| ext == "goat") {
+                        sources.push((
+                            path.display().to_string(),
+                            std::fs::read_to_string(&path).expect("example reads"),
+                        ));
+                    }
+                }
+            }
+            assert!(sources.len() > 20, "found {} examples", sources.len());
+            for (label, source) in sources {
+                assert_same_result(&label, &source);
+            }
+        }
+
+        #[test]
+        fn pruning_changes_no_diagnostic() {
+            let cases = [
+                ("unused tag", "Typo"),
+                (
+                    "matched tag",
+                    "tag T = A | B\nmatch A do A then 1 B then 2 done",
+                ),
+                ("prelude tag", "Some(1)"),
+                ("type error", "1 + \"a\""),
+                ("type error through the prelude", "map(1, 2)"),
+                ("unbound", "nope(1)"),
+                ("shadowed prelude name", "dict = 5\ndict + 1"),
+                (
+                    "shadowed prelude function",
+                    "map = program(x) do x done\nmap(2)",
+                ),
+                ("dict", "d = dict()\nd.set(1, 2).get(1)"),
+            ];
+            for (label, source) in cases {
+                assert_same_result(label, source);
+            }
+        }
+
+        #[test]
+        fn a_tag_only_unreached_prelude_code_matches_is_not_reported_unused() {
+            let source = "Found(1)";
+            let warnings = pruned(source).unwrap().typed.warnings;
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(full(source).unwrap().typed.warnings, warnings);
+        }
+
+        #[test]
+        fn a_program_infers_only_the_prelude_it_reaches() {
+            let hello = pruned("\"hello\"").unwrap();
+            assert!(!bound_names(&hello).iter().any(|n| n == "dict"));
+            let with_dict = pruned("dict()").unwrap();
+            assert!(bound_names(&with_dict).iter().any(|n| n == "dict"));
+            assert!(
+                hello.typed.node_types.len() * 4
+                    < full("\"hello\"").unwrap().typed.node_types.len()
+            );
+        }
+
+        #[test]
+        fn a_program_that_reaches_nothing_checks_faster_than_the_whole_prelude() {
+            let best = |prune: bool| {
+                (0..5)
+                    .map(|_| {
+                        let start = Instant::now();
+                        check_pruning(PRELUDE, &Vocab::turtle(), "\"hello\"", prune).unwrap();
+                        start.elapsed()
+                    })
+                    .min()
+                    .unwrap()
+            };
+            let (whole, reached) = (best(false), best(true));
+            assert!(reached < whole, "pruned {reached:?}, whole {whole:?}");
+        }
     }
 }
