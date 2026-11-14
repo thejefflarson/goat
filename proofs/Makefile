@@ -6,8 +6,9 @@
 # `make check-admits` fail unless proofs/*.v holds exactly the tracked admits.
 # `make gen-grammar`  regenerate GoatGrammar.v from grammar/goat.peg.
 # `make check-grammar` fail if GoatGrammar.v is stale against grammar/goat.peg.
-# `make check-assumptions` fail unless T1, T2 and T3 are closed under the global context.
-# `make ci`           check Ott and grammar sync + admit count, compile, check assumptions.
+# `make check-assumptions` fail unless T1, T2, T3 and the inference soundness theorem are closed.
+# `make differential` extract the proven inference algorithm and compare it with the Rust checker.
+# `make ci`           check Ott and grammar sync + admit count, compile, check assumptions, differential.
 # `make clean`        remove generated build artifacts.
 #
 # Tools come from an opam switch (Rocq 9.1.1, Ott 0.34, metalib). metalib is on
@@ -21,8 +22,10 @@ GEN       = Goat_ott.v
 GRAMMAR   = GoatGrammar.v
 EMIT      = cargo run -q --manifest-path ../Cargo.toml -p goat_parser --example emit_coq
 OTT_FLAGS = -coq_lngen true -coq_expand_list_types true
+DIFF_DIR  = _differential
+CORPUS    = cargo run -q --manifest-path ../Cargo.toml -p goat_checker --example core_corpus
 
-.PHONY: all gen coq ci check-gen check-grammar gen-grammar check-assumptions check-admits clean
+.PHONY: all gen coq ci check-gen check-grammar gen-grammar check-assumptions check-admits differential clean
 
 # No admits are allowed: every proof in proofs/*.v must be closed.
 EXPECTED_ADMITS = 0
@@ -61,15 +64,16 @@ check-grammar: ../grammar/goat.peg
 	@rm -f GoatGrammar.gen.v
 	@echo "$(GRAMMAR) is in sync with grammar/goat.peg."
 
-# T1, T2 and T3 must rest on no axiom and no admit.
+# T1, T2, T3 and the soundness of the inference algorithm must rest on no axiom
+# and no admit.
 check-assumptions: coq
 	@out=$$(rocq compile -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
 	n=$$(echo "$$out" | grep -c '^Closed under the global context'); \
-	if [ "$$n" != "3" ]; then \
-	  echo "ERROR: expected peg_deterministic, parse_denotes_lc and print_parse_roundtrip closed under the global context:"; \
+	if [ "$$n" != "4" ]; then \
+	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip and infer_closed_sound closed under the global context:"; \
 	  echo "$$out"; exit 1; \
 	fi; \
-	echo "check-assumptions: peg_deterministic, parse_denotes_lc and print_parse_roundtrip are closed -- ok."
+	echo "check-assumptions: peg_deterministic, parse_denotes_lc, print_parse_roundtrip and infer_closed_sound are closed -- ok."
 
 # Frozen-admit guard: fail if the `Admitted.` count in the sources drifts from
 # EXPECTED_ADMITS, so a green proof build never hides an open lemma.
@@ -82,9 +86,21 @@ check-admits:
 	fi; \
 	echo "check-admits: $$n 'Admitted.' in proofs/*.v (expected $(EXPECTED_ADMITS)) -- ok."
 
-ci: check-gen check-grammar check-admits coq check-assumptions
+# The proven algorithm is tied to the Rust checker by running both on the same
+# programs (ADR 0037, decision 6; differential/README.md).
+differential: coq
+	rm -rf $(DIFF_DIR)
+	mkdir $(DIFF_DIR)
+	cd $(DIFF_DIR) && rocq compile -R .. Goat ../GoatExtract.v
+	cp ../differential/driver.ml $(DIFF_DIR)/
+	cd $(DIFF_DIR) && ocamlfind ocamlopt -w -a goat_infer.mli goat_infer.ml driver.ml -o driver
+	$(CORPUS) > $(DIFF_DIR)/corpus.tsv
+	$(DIFF_DIR)/driver $(DIFF_DIR)/corpus.tsv
+
+ci: check-gen check-grammar check-admits coq check-assumptions differential
 
 clean:
 	-$(MAKE) -f CoqMakefile clean 2>/dev/null || true
 	rm -f CoqMakefile CoqMakefile.conf CoqMakefile.d .coqdeps.d Goat_ott.gen.v GoatGrammar.gen.v
 	rm -f *.vo *.vok *.vos *.glob .*.aux
+	rm -rf $(DIFF_DIR)
