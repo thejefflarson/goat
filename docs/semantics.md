@@ -39,9 +39,13 @@ the implementation diverge, §8 flags it.
   `false`, string literals, and the unit value; their elimination forms are
   `if` on a `Bool`, the arithmetic operators `+ - * / // %`, and the
   comparisons `< <= > >= == !=` (ADR 0017, ADR 0036), each at concrete types
-  (§4). Integers are unbounded and signed; a `Float` is an exact rational;
-- a **trap**: integer `//` or `%` by zero is a defined runtime error, one of
-  the three outcomes of a closed well-typed term (§7);
+  (§4). An `Int` is a signed 64-bit integer; a `Float` is opaque: every
+  `Float` operation is unspecified (§6);
+- an explicit **Int-to-Float coercion** `float(e)`, which elaboration inserts
+  wherever the checker accepts an `Int` for a `Float` (§4);
+- a **trap**: integer `//` or `%` by zero, and an integer result outside the
+  64-bit range, are defined runtime errors, one of the three outcomes of a
+  closed well-typed term (§7);
 - records as **scoped-label rows** (Leijen, *Extensible records with scoped
   labels*, `papers/scopedlabels.pdf`): construction `{l₁: e₁,…,lₖ: eₖ}` and
   field projection `e.l`, with Leijen's row-equivalence relation.
@@ -61,8 +65,9 @@ what the sharp-edge theorem is about.
 counting / heap / the Perceus model; variants, `match`, and recursive (μ)
 types; recursive and mutually-recursive bindings; the `Eq`, `Numeric` and
 `Ordered` constraints (an operator is typed at concrete types only, so a
-generic operator waits for phase 2); integer overflow and the `trap()` builtin;
-IEEE infinities and NaN; comparison of `Unit`, records and tags; rank-2
+generic operator waits for phase 2); the `trap()` builtin; the 32-bit `Int` of
+the embedded target; IEEE rounding, infinities and NaN (a `Float` is opaque);
+comparison of `Unit`, records and tags (phase 6); rank-2
 inference; `and`, `or`, `not`
 and unary minus; monomorphization.
 
@@ -70,13 +75,13 @@ and unary minus; monomorphization.
 
 Term variables `x, y, z, f, g, m, p`; labels `l`; string
 literals `q` (a list of bytes, ADR 0009); whole-number literals `n` (integers)
-and decimal literals `d` (rationals). Type
+and `Float` values `d` (opaque: no rule reads which one). Type
 variables `α, β`; row variables `r, s`. Metavariables range over: `e` terms,
 `v` values, `τ` monotypes, `ρ` rows, `σ` type schemes, `Γ` contexts.
 
 ```
 e  ::=  x                              variable
-     |  n  |  d  |  true  |  false     whole-number, decimal and boolean constants
+     |  n  |  d  |  true  |  false     whole-number, Float and boolean constants
      |  q  |  unit                       string literal (its bytes), the unit value
      |  program(x₁,…,xₖ) do e done     abstraction        (k ≥ 0, the xᵢ distinct)
      |  e(e₁,…,eₖ)                     application        (k ≥ 0)
@@ -85,6 +90,7 @@ e  ::=  x                              variable
      |  e.l                            field projection
      |  if e₁ then e₂ else e₃          conditional
      |  e₁ ⊙ e₂                        binary operation   (⊙ ∈ + - * / // %  < <= > >= == !=)
+     |  float(e)                       Int-to-Float coercion (inserted by elaboration)
 
 v  ::=  n  |  d  |  true  |  false     constant value
      |  q  |  unit                      string and unit values
@@ -199,8 +205,8 @@ generalization are defined in §5.
 ———————————————————————— (T-Var)      ———————————————— (T-Num)
        Γ ⊢ x : τ                       Γ ⊢ n : Int
 
-———————————————— (T-NumFloat)      ———————————————— (T-Dec)
- Γ ⊢ n : Float                      Γ ⊢ d : Float
+———————————————— (T-Dec)
+ Γ ⊢ d : Float
 
 ———————————————— (T-True)      ———————————————— (T-False)
  Γ ⊢ true : Bool                Γ ⊢ false : Bool
@@ -212,6 +218,10 @@ generalization are defined in §5.
 ————————————————————————————————————————————————— (T-If)
         Γ ⊢ if e₁ then e₂ else e₃ : τ
 
+ Γ ⊢ e : Int
+———————————————————————— (T-ToFloat)
+ Γ ⊢ float(e) : Float
+
  Γ ⊢ e₁ : τ₁      Γ ⊢ e₂ : τ₂      ⊙ : τ₁, τ₂ ⇒ τ
 ————————————————————————————————————————————————————— (T-Bin)
                  Γ ⊢ e₁ ⊙ e₂ : τ
@@ -219,20 +229,22 @@ generalization are defined in §5.
 ```
 
 The operator signature `⊙ : τ₁, τ₂ ⇒ τ` (ADR 0017, ADR 0036) says which operand
-types an operator takes and what it gives. `ν` ranges over `Int` and `Float`.
+types an operator takes and what it gives. Both operands of an arithmetic or
+comparison operator have one type: an `Int` meets a `Float` only through
+`float(e)`.
 
 ```
- ⊙ ∈ {+, -, *}                    ⊙ ∈ {+, -, *}    ν₁ = Float or ν₂ = Float
-—————————————————— (S-RingInt)    ————————————————————————————————————————— (S-RingFloat)
- ⊙ : Int, Int ⇒ Int                     ⊙ : ν₁, ν₂ ⇒ Float
+ ⊙ ∈ {+, -, *}                    ⊙ ∈ {+, -, *}
+—————————————————— (S-RingInt)    ———————————————————————— (S-RingFloat)
+ ⊙ : Int, Int ⇒ Int               ⊙ : Float, Float ⇒ Float
 
-—————————————————————— (S-Quot)       ⊙ ∈ {//, %}
- / : ν₁, ν₂ ⇒ Float                  —————————————————— (S-Whole)
+—————————————————————————— (S-Quot)       ⊙ ∈ {//, %}
+ / : Float, Float ⇒ Float             —————————————————— (S-Whole)
                                        ⊙ : Int, Int ⇒ Int
 
- ⊙ ∈ {<, <=, >, >=, ==, !=}                 ⊙ ∈ {<, <=, >, >=, ==, !=}   τ ∈ {String, Bool}
-——————————————————————————— (S-CmpNum)    ————————————————————————————————————————————————— (S-CmpBase)
- ⊙ : ν₁, ν₂ ⇒ Bool                                      ⊙ : τ, τ ⇒ Bool
+ ⊙ ∈ {<, <=, >, >=, ==, !=}      τ ∈ {Int, Float, String, Bool}
+——————————————————————————————————————————————————————— (S-Cmp)
+                     ⊙ : τ, τ ⇒ Bool
 
 ```
 
@@ -291,21 +303,23 @@ Rule by rule:
   derivation, and the checker reports `expected Bool, found Number`.
 - **`T-Bin`** types an operation by the signature of its operator, at the
   concrete types of its operands.
-  - `+ - *` on two `Int`s give an `Int`; with a `Float` on either side they give
-    a `Float`, the `Int` widening at the operator (`S-RingInt`, `S-RingFloat`).
-  - `/` takes any two numbers and always gives a `Float`, so `7 / 2 : Float`
-    (`S-Quot`).
+  - `+ - *` take two `Int`s and give an `Int`, or take two `Float`s and give a
+    `Float` (`S-RingInt`, `S-RingFloat`).
+  - `/` takes two `Float`s and gives a `Float` (`S-Quot`). The checker accepts
+    `7 / 2` and types it `Float`; elaboration writes it `float(7) / float(2)`.
   - `//` and `%` take two `Int`s and give an `Int`; `1.5 // 2` has no derivation
     (`S-Whole`), and the checker says `` `//` needs whole numbers ``.
-  - A comparison takes any two numbers, so `1 < 1.5` types by widening
-    (`S-CmpNum`), or two strings or two booleans of one type (`S-CmpBase`); so
-    `1 < "a"` has no derivation and `true + true` has none (the checker:
-    `expected Number, found String`, `` `+` needs numbers… ``).
-- **`T-NumFloat`.** A whole-number literal has type `Int`, and also `Float`
-  where a `Float` is wanted: `if c then 1 else 2.5 done` types at `Float`. This
-  models the checker settling an unconstrained literal as `Float` (ADR 0017).
-  A concrete `Int` does not do the same: `if c then 7 // 2 else 2.5 done` has no
-  derivation, and the checker rejects it too.
+  - A comparison takes two `Int`s, two `Float`s, two strings or two booleans
+    (`S-Cmp`); so `1 < "a"` has no derivation and `true + true` has none (the
+    checker: `expected Number, found String`, `` `+` needs numbers… ``). The
+    checker accepts `1 < 1.5`; elaboration writes it `float(1) < 1.5`.
+- **`T-ToFloat`.** Wherever the checker accepts an `Int` where a `Float` is
+  wanted (an operator with a `Float` on one side, a call whose parameter is a
+  `Float`, a whole-number literal settled as a `Float`, ADR 0017), elaboration
+  inserts `float(e)`, which has type `Float` when `e` has type `Int`. The
+  calculus has no subtyping and no literal that is both an `Int` and a `Float`:
+  `1 + 1.5` has no derivation, and `float(1) + 1.5` has one. Only an `Int` is
+  coerced, so `float(1.5)` and `float(true)` have none.
 - **`T-Conv`** closes typing under `≅`: anywhere a type is produced, an
   equivalent type may be used. This is where row reordering happens — e.g.
   passing a `{b:Bool ; a:Int ; ·}` value where `{a:Int ; b:Bool ; ·}` is
@@ -388,36 +402,46 @@ fix left-to-right evaluation order:
      e₂ ⟶ e₂'                                  v₁, v₂ values      ⊙(v₁, v₂) = v
 ——————————————————— (ST-Op2)           ————————————————————————————————————— (ST-Op)
  v ⊙ e₂ ⟶ v ⊙ e₂'                        v₁ ⊙ v₂ ⟶ v
+
+      e ⟶ e'                                    d is any Float
+——————————————————————— (ST-ToFloat1)    ————————————————————————— (ST-ToFloat)
+ float(e) ⟶ float(e')                     float(n) ⟶ d
 ```
 
 `⊙(v₁, v₂) = v` is the value an operator gives on two literals. It is a relation
-because one case has no single answer; every other case has exactly one.
+because a `Float` operation has no single answer; every `Int` case has at most
+one.
 
-- **Integers.** `+`, `-` and `*` on whole numbers `a` and `b` give `a + b`,
-  `a − b` and `a · b` over ℤ, so `1 - 2 = -1`. `a // b` is `⌊a / b⌋` (rounding
-  toward negative infinity) and `a % b` has the sign of `b`, so `-7 // 2 = -4`
-  and `-7 % 3 = 2`. A zero divisor does not step: it traps (below).
-- **Floats.** A decimal is a rational. If either operand of `+ - *` is a
-  decimal, both read as rationals and the result is a decimal. `/` divides the
-  rationals, and `7 / 2 = 7/2`. A `Float` quotient by zero is IEEE infinity or
-  NaN in the compiler (`5 / 0` prints `inf`); the model leaves its result
-  unspecified, so `⊙(v₁, 0)` is any decimal and the term still steps.
-- **Comparison.** Two numbers, whole or decimal, compare as rationals, so
-  `1 < 1.5` and `2 == 2.0` hold. Two strings compare bytewise with a prefix
-  first, and two booleans with `false` before `true` (ADR 0036). The result is
-  `true` or `false` as the operator asks (`==` and `!=` ask for equal and
-  unequal).
+- **Integers.** An `Int` is a signed 64-bit integer, the range `[-2⁶³, 2⁶³ − 1]`.
+  `+`, `-` and `*` on whole numbers `a` and `b` give `a + b`, `a − b` and
+  `a · b` over ℤ, so `1 - 2 = -1`, when the result is in range. `a // b` is
+  `⌊a / b⌋` (rounding toward negative infinity) and `a % b` has the sign of
+  `b`, so `-7 // 2 = -4` and `-7 % 3 = 2`. A zero divisor does not step, and
+  neither does a result outside the range: both trap (below). The one quotient
+  that does not fit is `-2⁶³ // -1`; `-2⁶³ % -1` is `0`, which fits.
+- **Floats.** A `Float` value `d` is opaque. Any `+ - * /` on two `Float` values
+  gives any `Float`, so `⊙(d₁, d₂) = d` holds for every `d`: the model is a
+  relation, and a property of it holds for any function a compiler computes.
+  This covers IEEE rounding, a quotient by zero, infinities and NaN, none of
+  which the model separates out. A comparison of two `Float` values gives either
+  boolean. `float(n)` gives any `Float` (`ST-ToFloat`).
+- **Comparison.** Two `Int`s compare as integers. Two strings compare bytewise
+  with a prefix first, and two booleans with `false` before `true` (ADR 0036).
+  The result is `true` or `false` as the operator asks (`==` and `!=` ask for
+  equal and unequal).
 
 On any other pair of values `⊙` has no result; canonical forms (L7) show a
 well-typed term never reaches that case. §9 lists where `⊙` departs from the
 compiler.
 
-**Traps.** A closed term *traps* with `Div_by_zero`, written `e ↯ Div_by_zero`,
-when evaluation reaches `v₁ // 0` or `v₁ % 0`. The trap rises through the
+**Traps.** A closed term *traps*, written `e ↯ k`, with `Div_by_zero` when
+evaluation reaches `v₁ // 0` or `v₁ % 0`, and with `Overflow` when it reaches
+an `Int` operation `v₁ ⊙ v₂` (`+ - * // %`) whose result is outside the 64-bit
+range (the compiler's `this number got too big`, ADR 0017). The trap rises through the
 enclosing context in the same left-to-right order as `⟶`: if `e₁ ↯ k` then
 `e₁(…) ↯ k`, `e₁ ⊙ e₂ ↯ k`, `if e₁ … ↯ k`, and so on, and if `v` is a value and
-`e₂ ↯ k` then `v ⊙ e₂ ↯ k`. A trapped term has no `⟶` step. Overflow and the
-`trap()` builtin are not in the core (§9).
+`e₂ ↯ k` then `v ⊙ e₂ ↯ k`, and if `e ↯ k` then `float(e) ↯ k`. A trapped term
+has no `⟶` step. The `trap()` builtin is not in the core (§9).
 
 Values do not step. A binding reduces by first evaluating `e₁` to a value
 (`ST-Let1`) and then substituting (`ST-LetV`); because `e₁` is closed-up-to-`Γ`
@@ -469,7 +493,7 @@ obligations it must generate.
     has that instance because the quantified `V` are not free in `Γ`.
 - **L7 — canonical forms.** If `· ⊢ v : τ` for a value `v`:
   - `τ ≅ Int` ⟹ `v` is a whole-number literal `n`;
-  - `τ ≅ Float` ⟹ `v` is a whole-number literal `n` or a decimal literal `d`;
+  - `τ ≅ Float` ⟹ `v` is a `Float` value `d`;
   - `τ ≅ Bool` ⟹ `v ∈ {true, false}`;
   - `τ ≅ String` ⟹ `v` is a string literal `q`;
   - `τ ≅ Unit` ⟹ `v = unit`;
@@ -492,9 +516,10 @@ stepping or trapping does not depend on the type). `T-If`: by L7 an evaluated
 condition is `true` or `false`, so `ST-IfTrue` or `ST-IfFalse` fires (or the
 condition steps by `ST-If1`, or traps). `T-Bin`: either an operand steps
 (`ST-Op1`, `ST-Op2`) or traps, or both are values, and the operator's signature
-and L7 give the operands' forms. Then `ST-Op` fires, except for `//` and `%` at a
-zero divisor, which trap, and a `Float` quotient by zero, which steps to an
-unspecified decimal. `T-App`: by L7 the evaluated
+and L7 give the operands' forms. Then `ST-Op` fires, except for an `Int`
+operation that divides by zero or leaves the 64-bit range, which traps. `T-ToFloat`:
+by L7 an evaluated operand is a whole number, so `ST-ToFloat` fires (or the
+operand steps by `ST-ToFloat1`, or traps). `T-App`: by L7 the evaluated
 callee is a `k`-ary `program` and the arguments are `k` values, so `ST-Beta`
 fires (or a subterm steps by `ST-App1/2`, or traps). `T-Proj`: by L7 and L3 the
 evaluated record has a first-`l` field, so `ST-ProjRec` fires (or `ST-Proj1`).
@@ -513,9 +538,9 @@ uses L6b (its side condition `V ∩ ftv(Γ) = ∅` holds because `gen` quantifie
 exactly `ftv(τ₁) \ ftv(Γ)`); `ST-ProjRec` uses L7/L3 to show the first-`l`
 value has the projected type `τ`; `ST-IfTrue` and `ST-IfFalse` return the branch,
 which has the type of the whole `if`; `ST-Op` uses L7 to read both operands as
-literals of the operator's types, so the result is a whole number or decimal
-(arithmetic) or a boolean (comparison), the type its signature assigns; a whole
-number met by a `Float` signature is the literal rule `T-NumFloat`; the
+literals of the operator's types, so the result is a whole number or `Float`
+value (arithmetic) or a boolean (comparison), the type its signature assigns;
+`ST-ToFloat` gives a `Float` value, which has type `Float` by `T-Dec`; the
 congruence rules use the IH. The theorem
 is stated for arbitrary `Γ` because the induction needs it; soundness uses the
 closed case `Γ = ·`.
@@ -621,25 +646,29 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   comparisons of §4. `proofs/GoatPhase1.v` holds each of the cases below as a
   checked example, and the examples were compared with `goat check` and
   `goat run` from a release build. What the model abstracts:
-  - *Integers are unbounded.* The compiler's `Int` is an `i64` on desktop and an
+  - *`Int` is 64 bits.* The compiler's `Int` is an `i64` on desktop and an
     `i32` on embedded, and an operation that does not fit traps
-    (`this number got too big`, ADR 0017). The model has no width, so no
-    operation overflows and there is no overflow trap. Which width the model
-    should take is open (phase 1 records it as a decision for the owner).
-  - *A `Float` is an exact rational.* The compiler's `Float` is an `f64` (`f32`
-    on embedded) with IEEE rounding, infinities and NaN. `0.1 + 0.2 == 0.3` is
-    `false` there and `true` here. A `Float` quotient by zero (`5 / 0` prints
-    `inf`) steps to an unspecified decimal, and a comparison with NaN is not
-    modeled.
+    (`this number got too big`, ADR 0017). The model takes the desktop width, so
+    `Int` is the range `[-2⁶³, 2⁶³ − 1]` and a result outside it traps with
+    `Overflow`; the 32-bit target is not separately modeled.
+  - *A `Float` is opaque.* The compiler's `Float` is an `f64` (`f32` on
+    embedded) with IEEE rounding, infinities and NaN. The model keeps none of
+    that: a `Float` value carries nothing a rule reads, and every `Float`
+    operation, comparison included, is an unspecified function, modeled as a
+    relation that allows every result. `0.1 + 0.2 == 0.3` and `x == x` can step
+    either way. Soundness holds for every choice, so it holds for the compiler's.
   - *Traps.* A zero divisor in `//` or `%` traps in the compiler (ADR 0023:
     `5 // 0` prints `trap: division by zero`) and traps here: it has no `⟶` step
-    and is a third outcome of Progress and Soundness. Overflow and the `trap()`
-    builtin raise no trap here, because the model has neither.
-  - *A call does not widen.* The compiler accepts an `Int` argument where the
-    parameter is a `Float` (`f(7 // 2)` with `f` forced to take a `Float`). The
-    model widens at an operator and settles a literal as a `Float`, but has no
-    subsumption at a call. A parameter used only in arithmetic with a `Float`
-    still accepts an `Int`, because the parameter takes the type `Int`.
+    and is a third outcome of Progress and Soundness. So does an `Int` result
+    outside the range. The `trap()` builtin raises no trap here, because the
+    model has no such term.
+  - *A call coerces.* The compiler accepts an `Int` argument where the
+    parameter is a `Float` (`f(7 // 2)` with `f` forced to take a `Float`), and
+    an `Int` beside a `Float` at an operator. The calculus has no subtyping:
+    elaboration writes `float(e)` at each such place (`T-ToFloat`), so the
+    soundness theorems apply to the elaborated term. Whether the checker inserts
+    it exactly where the compiler accepts an `Int` is the elaborator's
+    obligation, not a theorem here.
   - *Operators at concrete types.* The checker types `a < b` with an `Eq`
     constraint and `a + b` with `Numeric`, so a generic function stays
     polymorphic over them. The calculus has no constraints, so an operator
@@ -650,7 +679,8 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
     carries no bytes, and a string denotes `q` for every `q`.
   - *`if` has an `else`.* `if c then a done` lowers to `if c then a else ()`;
     the core has the three-armed form only, and the unit value has no literal.
-  - *Not here:* comparison of `Unit`, records and tags (ADR 0036), `and`, `or`,
+  - *Not here:* comparison of `Unit` (phase 6, structural ordering), records and
+    tags (ADR 0036), `and`, `or`,
     `not`, unary minus, and the precedence of a run of operators (the parser
     fragment has at most one operator in an expression).
 - **`let` is non-recursive here; goat's is recursive for `program` values.**

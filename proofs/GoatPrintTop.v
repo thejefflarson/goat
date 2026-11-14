@@ -65,6 +65,7 @@ Proof.
   - intros a IHa b IHb c IHc k [Ha [Hb Hc]]. cbn [inst_rec].
     rewrite (IHa k Ha), (IHb k Hb), (IHc k Hc). reflexivity.
   - intros a IHa o b IHb k [Ha Hb]. cbn [inst_rec]. rewrite (IHa k Ha), (IHb k Hb). reflexivity.
+  - intros a IH k Hs. destruct Hs.
   - intros k Hs. reflexivity.
   - intros l e IHe fs IHfs k [He Hfs]. cbn [inst_fields].
     rewrite (IHe k He), (IHfs k Hfs). reflexivity.

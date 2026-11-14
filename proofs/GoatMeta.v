@@ -39,6 +39,7 @@ Fixpoint lc_at (n : nat) (e : exp) {struct e} : Prop :=
   | e_str _ => True
   | e_ite a b c => lc_at n a /\ lc_at n b /\ lc_at n c
   | e_bin a _ b => lc_at n a /\ lc_at n b
+  | e_tofloat a => lc_at n a
   end
 with lcf_at (n : nat) (fs : fields) {struct fs} : Prop :=
   match fs with
@@ -74,6 +75,7 @@ Proof.
       [ apply (IHa m n Hle H1) | apply (IHb m n Hle H2) | apply (IHc m n Hle H3) ].
   - (* bin *) intros a IHa o b IHb m n Hle [H1 H2]; simpl; split;
       [ apply (IHa m n Hle H1) | apply (IHb m n Hle H2) ].
+  - (* tofloat *) intros e0 IH m n Hle H; simpl in *; apply (IH m n Hle H).
   - (* fs_nil *) intros; simpl; auto.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs m n Hle [H1 H2]; simpl; split;
       [ apply (IHe m n Hle H1) | apply (IHfs m n Hle H2) ].
@@ -108,6 +110,7 @@ Proof.
       repeat split; [ apply (IHa n x H1) | apply (IHb n x H2) | apply (IHc n x H3) ].
   - (* bin *) intros a IHa o b IHb n x H; simpl in *; destruct H as [H1 H2];
       split; [ apply (IHa n x H1) | apply (IHb n x H2) ].
+  - (* tofloat *) intros e0 IH n x H; simpl in *; apply (IH n x H).
   - (* fs_nil *) intros; simpl; auto.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs n x H; simpl in *; destruct H as [H1 H2];
       split; [ apply (IHe n x H1) | apply (IHfs n x H2) ].
@@ -144,6 +147,7 @@ Proof.
       [ apply (IHa n H1 k w Hle) | apply (IHb n H2 k w Hle) | apply (IHc n H3 k w Hle) ].
   - (* bin *) intros a IHa o b IHb n [H1 H2] k w Hle; simpl; f_equal;
       [ apply (IHa n H1 k w Hle) | apply (IHb n H2 k w Hle) ].
+  - (* tofloat *) intros e0 IH n H k w Hle; simpl; f_equal; apply (IH n H k w Hle).
   - (* fs_nil *) intros; simpl; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs n [H1 H2] k w Hle; simpl; f_equal;
       [ apply (IHe n H1 k w Hle) | apply (IHfs n H2 k w Hle) ].
@@ -199,6 +203,7 @@ Proof.
       [ apply IHa | apply IHb | apply IHc ]; fsetdec.
   - (* bin *) intros a IHa o b IHb x v k Hfv; simpl in *; f_equal;
       [ apply IHa | apply IHb ]; fsetdec.
+  - (* tofloat *) intros e0 IH x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
   - (* fs_nil *) intros; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs x v k Hfv; simpl in *; f_equal;
       [ apply IHe | apply IHfs ]; fsetdec.
@@ -248,6 +253,7 @@ Proof.
       [ apply IHa | apply IHb | apply IHc ]; auto.
   - (* bin *) intros a IHa o b IHb u x w k Hlc; simpl; f_equal;
       [ apply IHa | apply IHb ]; auto.
+  - (* tofloat *) intros e0 IH u x w k Hlc; simpl; f_equal; apply IH; auto.
   - (* fs_nil *) intros; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs u x w k Hlc; simpl; f_equal;
       [ apply IHe | apply IHfs ]; auto.
@@ -282,7 +288,6 @@ Proof.
   apply typing_field_mutind; unfold lc, lcf.
   - (* T_Var *) intros; simpl; auto.
   - (* T_Num *) intros; simpl; auto.
-  - (* T_NumFloat *) intros; simpl; auto.
   - (* T_Dec *) intros; simpl; auto.
   - (* T_True *) intros; simpl; auto.
   - (* T_False *) intros; simpl; auto.
@@ -300,6 +305,7 @@ Proof.
   - (* T_Unit *) intros; simpl; auto.
   - (* T_Str *) intros; simpl; auto.
   - (* T_If *) intros G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3; simpl; auto.
+  - (* T_ToFloat *) intros G e Ht IH; simpl; assumption.
   - (* T_Bin *) intros G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs; simpl; auto.
   - (* FT_nil *) intros; simpl; auto.
   - (* FT_cons *) intros G l e T fs R Hty IH1 Hft IH2; simpl; split; assumption.
@@ -390,13 +396,11 @@ Proof.
     apply req_trans with (R2 := R'); auto.
 Qed.
 
-(* A value at (a type equal to) a base type is a literal of that type.  A
-   whole-number literal also has type [Float], so a [Float] value is a whole
-   number or a decimal. *)
+(* A value at (a type equal to) a base type is a literal of that type. *)
 Lemma canon_base : forall G v T,
   value v -> typing G v T ->
   (teq T typ_Int -> exists n, v = e_num n) /\
-  (teq T typ_Float -> (exists n, v = e_num n) \/ (exists d, v = e_dec d)) /\
+  (teq T typ_Float -> exists d, v = e_dec d) /\
   (teq T typ_String -> exists q, v = e_str q) /\
   (teq T typ_Bool -> v = e_true \/ v = e_false).
 Proof.
@@ -412,17 +416,6 @@ Proof.
       (eapply teq_trans; [ eassumption | exact Hq ]).
 Qed.
 
-(* A value of a number type stands for a rational. *)
-Lemma canon_num : forall G v A,
-  value v -> typing G v A -> num_typ A -> exists p, num_val v p.
-Proof.
-  intros G v A Hv Hty HA. inversion HA; subst.
-  - destruct (canon_base _ _ _ Hv Hty) as [C _].
-    destruct (C (teq_refl _)) as [n ->]. eexists. apply nv_num.
-  - destruct (canon_base _ _ _ Hv Hty) as [_ [C _]].
-    destruct (C (teq_refl _)) as [[n ->] | [d ->]]; eexists; constructor.
-Qed.
-
 (* An operator applied to two values of the types its signature wants either
    computes a value or raises a defined error. *)
 Lemma bin_progress : forall G o v1 v2 A B R,
@@ -431,38 +424,35 @@ Lemma bin_progress : forall G o v1 v2 A B R,
   (exists v, bin_step o v1 v2 v) \/ (exists k, bin_trap o v1 v2 k).
 Proof.
   intros G o v1 v2 A B R Hs Hv1 Hv2 H1 H2.
-  destruct Hs as [ o Hk | o A B Hk HA HB HF | A B HA HB | o Hk
-                 | o A B Hk HA HB | o B Hk HB ].
-  - (* [+ - *] on two Ints *)
-    destruct (canon_base _ _ _ Hv1 H1) as [C1 _]. destruct (C1 (teq_refl _)) as [a ->].
-    destruct (canon_base _ _ _ Hv2 H2) as [C2 _]. destruct (C2 (teq_refl _)) as [b ->].
-    left. eexists. apply bs_ring_int; assumption.
-  - (* [+ - *] with a Float: two whole numbers stay whole, any decimal makes
-       the result a decimal *)
-    destruct (canon_num _ _ _ Hv1 H1 HA) as [p Hp].
-    destruct (canon_num _ _ _ Hv2 H2 HB) as [q Hq].
-    left. inversion Hp; inversion Hq; subst; eexists;
-      first [ apply bs_ring_int; assumption
-            | eapply bs_ring_float; [ exact Hk | constructor | constructor
-                                    | intros [a [b [E1 E2]]]; discriminate ] ].
-  - (* [/]: a zero divisor gives an unspecified Float, not a trap *)
-    destruct (canon_num _ _ _ Hv1 H1 HA) as [p Hp].
-    destruct (canon_num _ _ _ Hv2 H2 HB) as [q Hq].
-    left. destruct (q_is_zero q) eqn:Hz.
-    + exists (e_dec (dec_of_q p)). eapply bs_quot_zero; eassumption.
-    + eexists. eapply bs_quot; eassumption.
-  - (* [//] and [%]: a zero divisor traps *)
-    destruct (canon_base _ _ _ Hv1 H1) as [C1 _]. destruct (C1 (teq_refl _)) as [a ->].
-    destruct (canon_base _ _ _ Hv2 H2) as [C2 _]. destruct (C2 (teq_refl _)) as [b ->].
+  assert (Hint : forall v, value v -> typing G v typ_Int -> exists a, v = e_num a)
+    by (intros v Hv Hty; destruct (canon_base _ _ _ Hv Hty) as [C _]; exact (C (teq_refl _))).
+  assert (Hflt : forall v, value v -> typing G v typ_Float -> exists d, v = e_dec d)
+    by (intros v Hv Hty; destruct (canon_base _ _ _ Hv Hty) as [_ [C _]]; exact (C (teq_refl _))).
+  destruct Hs as [ o Hk | o Hk | | o Hk | o B Hk HB ].
+  - (* [+ - *] on two Ints: in range it steps, out of range it traps *)
+    destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
+    destruct (in_int (ring_Z o a b)) eqn:Hr.
+    + left. eexists. apply bs_ring_int; assumption.
+    + right. exists trap_overflow. apply bt_ring_overflow; assumption.
+  - (* [+ - *] on two Floats: any Float *)
+    destruct (Hflt _ Hv1 H1) as [x ->]. destruct (Hflt _ Hv2 H2) as [y ->].
+    left. exists (e_dec 0). apply bs_float. left; assumption.
+  - (* [/] on two Floats: any Float, a zero divisor included *)
+    destruct (Hflt _ Hv1 H1) as [x ->]. destruct (Hflt _ Hv2 H2) as [y ->].
+    left. exists (e_dec 0). apply bs_float. right; reflexivity.
+  - (* [//] and [%]: a zero divisor traps, and so does a quotient out of range *)
+    destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
     destruct (z_is_zero b) eqn:Hz.
     + right. exists trap_div_zero. apply bt_div_zero; assumption.
-    + left. eexists. apply bs_whole; assumption.
-  - (* a comparison of two numbers *)
-    destruct (canon_num _ _ _ Hv1 H1 HA) as [p Hp].
-    destruct (canon_num _ _ _ Hv2 H2 HB) as [q Hq].
-    left. eexists. eapply bs_cmp_num; eassumption.
-  - (* a comparison of two strings or two booleans *)
+    + destruct (in_int (whole_Z o a b)) eqn:Hr.
+      * left. eexists. apply bs_whole; assumption.
+      * right. exists trap_overflow. apply bt_whole_overflow; assumption.
+  - (* a comparison of two Ints, Floats, strings or booleans *)
     inversion HB; subst.
+    + destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
+      left. eexists. apply bs_cmp_int; assumption.
+    + destruct (Hflt _ Hv1 H1) as [x ->]. destruct (Hflt _ Hv2 H2) as [y ->].
+      left. exists (of_bool true). apply bs_cmp_float; assumption.
     + destruct (canon_base _ _ _ Hv1 H1) as [_ [_ [C1 _]]]. destruct (C1 (teq_refl _)) as [p ->].
       destruct (canon_base _ _ _ Hv2 H2) as [_ [_ [C2 _]]]. destruct (C2 (teq_refl _)) as [q ->].
       left. eexists. apply bs_cmp_str; assumption.
@@ -523,7 +513,6 @@ Proof.
   - (* T_Num: numbers are values (the left side of the "value or can step"
        claim). *)
     intros; left; auto.
-  - (* T_NumFloat *) intros; left; auto.
   - (* T_Dec *) intros; left; auto.
   - (* T_True *) intros; left; auto.
   - (* T_False *) intros; left; auto.
@@ -593,6 +582,16 @@ Proof.
       * left. exists e3. apply st_ite_false.
     + left. exists (e_ite e1' e2 e3). apply st_ite1; auto.
     + right. exists k. apply tr_ite1; auto.
+  - (* Case: a coercion [float(e)].  If [e] is finished, canonical forms says
+       it is a whole number, and the coercion steps to a Float (st_tofloat);
+       otherwise [e] steps or traps. *)
+    intros G e Ht IH HG; subst.
+    right. destruct (IH eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
+    + destruct (canon_base _ _ _ Hv Ht) as [C _].
+      destruct (C (teq_refl _)) as [a ->].
+      left. exists (e_dec 0). apply st_tofloat.
+    + left. exists (e_tofloat e'). apply st_tofloat1; auto.
+    + right. exists k. apply tr_tofloat; auto.
   - (* Case: an operator [e1 o e2].  Evaluate [e1], then [e2]; then the
        operator computes a value or raises its error ([bin_progress]). *)
     intros G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs HG; subst.
@@ -707,6 +706,16 @@ Proof.
   - (* T_Conv *) destruct (IHtyping He) as [T0 [A [B [C D]]]].
     exists T0. repeat split; try assumption. eauto using teq_trans.
   - (* T_If *) inversion He; subst. eexists. repeat split; try eassumption; apply teq_refl.
+Qed.
+
+Lemma tofloat_inv : forall G e T,
+  typing G (e_tofloat e) T -> typing G e typ_Int /\ teq typ_Float T.
+Proof.
+  intros G e T H. remember (e_tofloat e) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_Conv *) destruct (IHtyping He) as [A B].
+    split; [ exact A | eauto using teq_trans ].
+  - (* T_ToFloat *) inversion He; subst. split; [ assumption | apply teq_refl ].
 Qed.
 
 Lemma bin_inv : forall G e1 o e2 T,

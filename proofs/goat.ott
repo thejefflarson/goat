@@ -29,13 +29,16 @@
 % Int, Float, String and Bool at concrete types (ADR 0017, ADR 0036), with a
 % defined runtime error (a trap) for integer division by zero. Out of scope
 % (deltas on the proven core): RC/heap, variants/match, recursive (mu) types,
-% recursion, constraint-polymorphic operators, overflow and IEEE special values,
-% mono.
+% recursion, constraint-polymorphic operators, comparison of Unit, mono.
+% An Int is a signed 64-bit integer and a result outside the range traps; a
+% Float is opaque (every Float operation is unspecified); an explicit
+% Int-to-Float coercion float(e), inserted by elaboration, is the only way an
+% Int meets a Float.
 
 metavar termvar, x, y, z, f, g, m, p ::= {{ com term variable }}
 metavar label, l ::= {{ com record label }}
 metavar num, n ::= {{ com whole-number literal, an integer }}
-metavar dec, d ::= {{ com decimal literal, a rational }}
+metavar dec, d ::= {{ com Float value, opaque }}
 metavar str, q ::= {{ com string literal, as its bytes }}
 metavar typvar, a, b ::= {{ com type variable (free-variable set, not a binder) }}
 metavar rowvar, r, s ::= {{ com row variable (free-variable set, not a binder) }}
@@ -87,7 +90,7 @@ o :: 'o_' ::= {{ com binary operator }}
 e :: 'e_' ::= {{ com term }}
   | x                                   ::   :: Var
   | n                                   ::   :: Num  {{ com whole-number literal }}
-  | d                                   ::   :: Dec  {{ com decimal literal }}
+  | d                                   ::   :: Dec  {{ com Float value, opaque }}
   | true                                ::   :: True
   | false                               ::   :: False
   | program ( </ xi // i /> ) do e done ::   :: Abs
@@ -101,6 +104,7 @@ e :: 'e_' ::= {{ com term }}
   | q                                   ::   :: Str  {{ com string literal }}
   | if e1 then e2 else e3               ::   :: If   {{ com conditional }}
   | e1 o e2                             ::   :: Bin  {{ com binary operation }}
+  | float ( e )                         ::   :: ToFloat {{ com Int-to-Float coercion, inserted by elaboration }}
   | ( e )                               :: S :: Paren {{ coq [[e]] }}
   | e1 [ x := e2 ]                      :: M :: Subst {{ coq (subst_e [[e2]] [[x]] [[e1]]) }}
 
@@ -249,10 +253,6 @@ G |- e : T :: :: typ :: 'T_'
   ------------- :: Num
   G |- n : Int
 
-  % a whole-number literal settles as a Float where a Float is wanted
-  ----------------- :: NumFloat
-  G |- n : Float
-
   ----------------- :: Dec
   G |- d : Float
 
@@ -273,6 +273,11 @@ G |- e : T :: :: typ :: 'T_'
   G |- e3 : T
   ---------------------------------- :: If
   G |- if e1 then e2 else e3 : T
+
+  % elaboration inserts this where the checker accepts an Int for a Float
+  G |- e : Int
+  ------------------------ :: ToFloat
+  G |- float ( e ) : Float
 
   G |- e1 : T1
   G |- e2 : T2
@@ -336,10 +341,20 @@ e --> e' :: :: red :: 'red_'
   ------------------------------------------- :: IfFalse
   if false then e2 else e3 --> e3
 
-  % [[o]] applied to two literals of one type: arithmetic gives a number,
-  % comparison a boolean (strings bytewise, false before true).
+  % [[o]] applied to two literals of one type: Int arithmetic gives an Int in
+  % the 64-bit range, a Float operation gives any Float (a Float comparison any
+  % boolean), an Int or String or boolean comparison gives a boolean (strings
+  % bytewise, false before true).
   ------------------------------ :: Op
   v1 o v2 --> eval ( o , v1 , v2 )
+
+  % [[float]] of a whole number is any Float
+  ------------------------------ :: ToFloat
+  float ( n ) --> d
+
+  e --> e'
+  ------------------------------ :: ToFloat1
+  float ( e ) --> float ( e' )
 
   e1 --> e1'
   ---------------------------------- :: If1
@@ -386,22 +401,17 @@ o : T1 , T2 => T :: :: sig :: 'sig_'
   ---------------------------- :: RingInt
   o : Int , Int => Int
 
-  % o is one of + - *; T1 and T2 are Int or Float, and at least one is Float
+  % o is one of + - *
   ---------------------------- :: RingFloat
-  o : T1 , T2 => Float
+  o : Float , Float => Float
 
-  % T1 and T2 are Int or Float: / always gives a Float
   ---------------------------- :: Quot
-  / : T1 , T2 => Float
+  / : Float , Float => Float
 
   % o is one of // %
   ---------------------------- :: Whole
   o : Int , Int => Int
 
-  % o is one of < <= > >= == !=; T1 and T2 are Int or Float
-  ---------------------------- :: CmpNum
-  o : T1 , T2 => Bool
-
-  % o is one of < <= > >= == !=; T is String or Bool
-  ---------------------------- :: CmpBase
+  % o is one of < <= > >= == !=; T is Int, Float, String or Bool
+  ---------------------------- :: Cmp
   o : T , T => Bool

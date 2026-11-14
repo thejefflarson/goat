@@ -6,7 +6,7 @@ Definition typvar : Set := atom. (* free type variable (metalib atom) *)
 Definition rowvar : Set := atom. (* free row variable (metalib atom) *)
 Definition label : Set := nat. (* record label *)
 Definition num : Set := BinNums.Z. (* whole-number literal, an integer *)
-Definition dec : Set := (BinNums.Z * BinNums.positive). (* decimal literal as a numerator and a positive denominator *)
+Definition dec : Set := nat. (* a Float value, opaque: no rule reads the payload *)
 Definition str : Set := (list nat). (* string literal, as its bytes *)
 
 Inductive bop : Set :=  (* binary operator *)
@@ -27,7 +27,7 @@ Inductive exp : Set :=  (* term *)
  | e_fvar_b (_:nat) (* variable *)
  | e_fvar_f (x:termvar) (* variable *)
  | e_num (n:num) (* whole-number literal *)
- | e_dec (d:dec) (* decimal literal *)
+ | e_dec (d:dec) (* Float value, opaque *)
  | e_true : exp
  | e_false : exp
  | e_abs (e:exp) (* single-binder abstraction *)
@@ -39,6 +39,7 @@ Inductive exp : Set :=  (* term *)
  | e_str (q:str) (* string literal *)
  | e_ite (e1:exp) (e2:exp) (e3:exp) (* conditional *)
  | e_bin (e1:exp) (o:bop) (e2:exp) (* binary operation *)
+ | e_tofloat (e:exp) (* Int-to-Float coercion, inserted by elaboration *)
 with fields : Set :=  (* record spine (cons-list; duplicates allowed) *)
  | fs_nil : fields
  | fs_cons (l:label) (e:exp) (fs:fields).
@@ -90,6 +91,7 @@ with open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
   | (e_str q) => e_str q
   | (e_ite e1 e2 e3) => e_ite (open_exp_wrt_exp_rec k e_5 e1) (open_exp_wrt_exp_rec k e_5 e2) (open_exp_wrt_exp_rec k e_5 e3)
   | (e_bin e1 o e2) => e_bin (open_exp_wrt_exp_rec k e_5 e1) o (open_exp_wrt_exp_rec k e_5 e2)
+  | (e_tofloat e) => e_tofloat (open_exp_wrt_exp_rec k e_5 e)
 end.
 
 Definition open_fields_wrt_exp e5 fs5 := open_fields_wrt_exp_rec 0 fs5 e5.
@@ -147,9 +149,17 @@ with lc_exp : exp -> Prop :=    (* defn lc_exp *)
  | lc_e_bin : forall (e1:exp) (o:bop) (e2:exp),
      (lc_exp e1) ->
      (lc_exp e2) ->
-     (lc_exp (e_bin e1 o e2)).
+     (lc_exp (e_bin e1 o e2))
+ | lc_e_tofloat : forall (e:exp),
+     (lc_exp e) ->
+     (lc_exp (e_tofloat e)).
 (** free variables *)
-Fixpoint fv_exp (e_5:exp) : vars :=
+Fixpoint fv_fields (fs5:fields) : vars :=
+  match fs5 with
+  | fs_nil => {}
+  | (fs_cons l e fs) => (fv_exp e) \u (fv_fields fs)
+end
+with fv_exp (e_5:exp) : vars :=
   match e_5 with
   | (e_fvar_b nat) => {}
   | (e_fvar_f x) => {{x}}
@@ -166,11 +176,7 @@ Fixpoint fv_exp (e_5:exp) : vars :=
   | (e_str q) => {}
   | (e_ite e1 e2 e3) => (fv_exp e1) \u (fv_exp e2) \u (fv_exp e3)
   | (e_bin e1 o e2) => (fv_exp e1) \u (fv_exp e2)
-end
-with fv_fields (fs5:fields) : vars :=
-  match fs5 with
-  | fs_nil => {}
-  | (fs_cons l e fs) => (fv_exp e) \u (fv_fields fs)
+  | (e_tofloat e) => (fv_exp e)
 end.
 
 (** substitutions *)
@@ -196,6 +202,7 @@ with subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
   | (e_str q) => e_str q
   | (e_ite e1 e2 e3) => e_ite (subst_exp e_5 x5 e1) (subst_exp e_5 x5 e2) (subst_exp e_5 x5 e3)
   | (e_bin e1 o e2) => e_bin (subst_exp e_5 x5 e1) o (subst_exp e_5 x5 e2)
+  | (e_tofloat e) => e_tofloat (subst_exp e_5 x5 e)
 end.
 
 

@@ -25,8 +25,17 @@ wrong state unrepresentable *before* you reach for a comment.
 - **Tracker.** GitHub issues (`thejefflarson/goat`). Decisions that outlive a
   ticket go in `docs/adr/`.
 - **Gates (CI-enforced).** `cargo fmt --all -- --check`,
-  `cargo clippy --all-targets -- -D warnings`, and `cargo test` must all be
-  green before a PR merges.
+  `cargo clippy --all-targets -- -D warnings`, and the tests must all be green
+  before a PR merges. CI runs the tests with `cargo nextest run --profile ci`
+  plus `cargo test --doc` (nextest skips doctests); locally prefer
+  `cargo nextest run` — it runs test binaries in parallel and is several times
+  faster than `cargo test`, which still works. Config is `.config/nextest.toml`.
+- **Proof gate (ADR 0037).** A PR that changes `grammar/goat.peg`,
+  `checker/src/{infer,lower,ty}.rs` or `prelude/prelude.goat` must also change
+  `proofs/`. The `proof-gate` check waives this only for a PR with the
+  `no-semantics-change` label and a body line starting `No semantics change:`
+  followed by the reason. The `coq` check runs on every PR and skips its build
+  when nothing it depends on changed.
 - **Errors come only from the checker**, with one deliberate exception: mono may
   raise a spanned *resource-limit* diagnostic ("program too complex") when a
   well-typed program would explode monomorphization — a resource bound, not a

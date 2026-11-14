@@ -211,6 +211,8 @@ Proof.
     right. exists (as_binop a (block P a)), o, (as_binop b (block P b)).
     split; [ reflexivity | ].
     split; [ exact (binop_chain _ _ (IHa n P Ha)) | exact (binop_chain _ _ (IHb n P Hb)) ].
+  - (* coercion: not a term of the printed fragment *)
+    intros a IH n P Hs. destruct Hs.
   - intros n P Hs. exact I.
   - intros l e IHe rest IHrest n P [He Hrest].
     split; [ exact (expr_parses _ _ (IHe n P He)) | exact (IHrest n P Hrest) ].

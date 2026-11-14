@@ -233,7 +233,6 @@ Proof.
   - (* T_Var *) destruct (ctx_equiv_binds _ _ _ _ H b) as [s' [Hb' Heq]].
     apply T_Var with (s := s'); eauto using ctx_equiv_uniq, inst_sch_equiv.
   - (* T_Num *) apply T_Num; eauto using ctx_equiv_uniq.
-  - (* T_NumFloat *) apply T_NumFloat; eauto using ctx_equiv_uniq.
   - (* T_Dec *) apply T_Dec; eauto using ctx_equiv_uniq.
   - (* T_True *) apply T_True; eauto using ctx_equiv_uniq.
   - (* T_False *) apply T_False; eauto using ctx_equiv_uniq.
@@ -249,6 +248,7 @@ Proof.
   - (* T_Unit *) apply T_Unit; eauto using ctx_equiv_uniq.
   - (* T_Str *) apply T_Str; eauto using ctx_equiv_uniq.
   - (* T_If *) eapply T_If; eauto.
+  - (* T_ToFloat *) apply T_ToFloat; eauto.
   - (* T_Bin *) eapply T_Bin; eauto.
   - (* FT_nil *) apply FT_nil; eauto using ctx_equiv_uniq.
   - (* FT_cons *) eapply FT_cons; eauto.
@@ -347,7 +347,6 @@ Proof.
   - (* T_Var *) destruct (ctx_more_gen_binds _ _ _ _ H b) as [s' [Hb' [Hinst _]]].
     apply T_Var with (s := s'); eauto using ctx_more_gen_uniq.
   - apply T_Num; eauto using ctx_more_gen_uniq.
-  - apply T_NumFloat; eauto using ctx_more_gen_uniq.
   - apply T_Dec; eauto using ctx_more_gen_uniq.
   - apply T_True; eauto using ctx_more_gen_uniq.
   - apply T_False; eauto using ctx_more_gen_uniq.
@@ -362,6 +361,7 @@ Proof.
   - (* T_Unit *) apply T_Unit; eauto using ctx_more_gen_uniq.
   - (* T_Str *) apply T_Str; eauto using ctx_more_gen_uniq.
   - (* T_If *) eapply T_If; eauto.
+  - (* T_ToFloat *) apply T_ToFloat; eauto.
   - (* T_Bin *) eapply T_Bin; eauto.
   - apply FT_nil; eauto using ctx_more_gen_uniq.
   - eapply FT_cons; eauto.
@@ -620,7 +620,6 @@ Proof.
   - (* T_Var *) apply T_Var with (s := ren_sch s);
       [ apply uniq_ren_ctx; auto | apply binds_ren_ctx; auto | apply inst_ren; auto ].
   - apply T_Num; apply uniq_ren_ctx; auto.
-  - apply T_NumFloat; apply uniq_ren_ctx; auto.
   - apply T_Dec; apply uniq_ren_ctx; auto.
   - apply T_True; apply uniq_ren_ctx; auto.
   - apply T_False; apply uniq_ren_ctx; auto.
@@ -640,6 +639,7 @@ Proof.
   - (* T_Unit *) apply T_Unit; apply uniq_ren_ctx; auto.
   - (* T_Str *) apply T_Str; apply uniq_ren_ctx; auto.
   - (* T_If *) unfold ren_typ in *; simpl in *. eapply T_If; eauto.
+  - (* T_ToFloat *) unfold ren_typ in *; simpl in *. apply T_ToFloat. exact H.
   - (* T_Bin: the signature's types are closed, so renaming leaves them alone *)
     unfold ren_typ in *.
     destruct (bin_sig_ap _ _ _ _ rt rr b) as [HA [HB HR]].

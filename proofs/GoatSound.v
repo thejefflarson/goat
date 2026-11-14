@@ -771,7 +771,6 @@ Proof.
     destruct (ctx_subst_binds _ _ _ _ _ _ Hcs Hb) as [s' [Hb' Hss]].
     apply T_Var with (s := s'); auto.
   - intros G n Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_Num; auto.
-  - intros G n Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_NumFloat; auto.
   - intros G d Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_Dec; auto.
   - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_True; auto.
   - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_False; auto.
@@ -978,6 +977,9 @@ Proof.
   - (* T_If: no variable is bound, so the IHs and the rule again. *)
     intros G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3 st sr G' A Hu' Hcs Hsupp Hcompat.
     simpl in *. eapply T_If; [ eapply IH1 | eapply IH2 | eapply IH3 ]; eauto.
+  - (* T_ToFloat: Int and Float are closed, so substitution leaves them alone. *)
+    intros G e Ht IH st sr G' A Hu' Hcs Hsupp Hcompat. simpl in *.
+    apply T_ToFloat. exact (IH st sr G' A Hu' Hcs Hsupp Hcompat).
   - (* T_Bin: the signature's types are closed, so substitution leaves them
        alone ([bin_sig_ap]). *)
     intros G e1 o e2 A1 B1 R1 Ht1 IH1 Ht2 IH2 Hs st sr G' A Hu' Hcs Hsupp Hcompat.
@@ -1120,7 +1122,6 @@ Proof.
       apply T_Var with (s := s);
         [ solve_uniq | eapply binds_remove_mid; [ exact Hb | congruence ] | exact Hi ].
   - (* T_Num *) intros G n Huq G2 Heq; subst. simpl. apply T_Num. solve_uniq.
-  - (* T_NumFloat *) intros G n Huq G2 Heq; subst. simpl. apply T_NumFloat. solve_uniq.
   - (* T_Dec *) intros G d Huq G2 Heq; subst. simpl. apply T_Dec. solve_uniq.
   - (* T_True *) intros G Huq G2 Heq; subst. simpl. apply T_True. solve_uniq.
   - (* T_False *) intros G Huq G2 Heq; subst. simpl. apply T_False. solve_uniq.
@@ -1153,6 +1154,8 @@ Proof.
   - (* T_Str *) intros G q Huq G2 Heq; subst. simpl. apply T_Str. solve_uniq.
   - (* T_If *) intros G e1 e2 e3 T Hr1 IH1 Hr2 IH2 Hr3 IH3 G2 Heq; subst. simpl.
     eapply T_If; [ apply (IH1 G2) | apply (IH2 G2) | apply (IH3 G2) ]; reflexivity.
+  - (* T_ToFloat *) intros G e Hr IH G2 Heq; subst. simpl.
+    apply T_ToFloat. apply (IH G2); reflexivity.
   - (* T_Bin *) intros G e1 o e2 A B R Hr1 IH1 Hr2 IH2 Hs G2 Heq; subst. simpl.
     eapply T_Bin; [ apply (IH1 G2) | apply (IH2 G2) | exact Hs ]; reflexivity.
   - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
@@ -1204,7 +1207,6 @@ Proof.
       apply T_Var with (s := s);
         [ solve_uniq | eapply binds_remove_mid; [ exact Hb | congruence ] | exact Hi ].
   - (* T_Num *) intros G n Huq G2 Heq; subst. simpl. apply T_Num. solve_uniq.
-  - (* T_NumFloat *) intros G n Huq G2 Heq; subst. simpl. apply T_NumFloat. solve_uniq.
   - (* T_Dec *) intros G d Huq G2 Heq; subst. simpl. apply T_Dec. solve_uniq.
   - (* T_True *) intros G Huq G2 Heq; subst. simpl. apply T_True. solve_uniq.
   - (* T_False *) intros G Huq G2 Heq; subst. simpl. apply T_False. solve_uniq.
@@ -1237,6 +1239,8 @@ Proof.
   - (* T_Str *) intros G q Huq G2 Heq; subst. simpl. apply T_Str. solve_uniq.
   - (* T_If *) intros G e1 e2 e3 T Hr1 IH1 Hr2 IH2 Hr3 IH3 G2 Heq; subst. simpl.
     eapply T_If; [ apply (IH1 G2) | apply (IH2 G2) | apply (IH3 G2) ]; reflexivity.
+  - (* T_ToFloat *) intros G e Hr IH G2 Heq; subst. simpl.
+    apply T_ToFloat. apply (IH G2); reflexivity.
   - (* T_Bin *) intros G e1 o e2 A B R Hr1 IH1 Hr2 IH2 Hs G2 Heq; subst. simpl.
     eapply T_Bin; [ apply (IH1 G2) | apply (IH2 G2) | exact Hs ]; reflexivity.
   - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
@@ -1284,26 +1288,31 @@ Proof. intros G b Hu. destruct b; [ apply T_True | apply T_False ]; exact Hu. Qe
 
 (* An operator's result has the type its signature gives.  Pairing each way
    the operator can compute ([bin_step]) with each signature, almost every pair
-   is ruled out by the operator's class.  The one mismatch left to refute is
-   two whole numbers computing a decimal under the signature for two Ints. *)
+   is ruled out by the operator's class; the rest give an Int, a Float or a
+   boolean as the signature says. *)
 Lemma bin_step_typing : forall G o v1 v2 v A B R,
   bin_sig o A B R -> value v1 -> value v2 ->
   typing G v1 A -> typing G v2 B -> bin_step o v1 v2 v -> typing G v R.
 Proof.
   intros G o v1 v2 v A B R Hs Hv1 Hv2 H1 H2 Hb.
   assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
+  destruct (canon_base _ _ _ Hv1 H1) as [C1 [C2 [C3 C4]]].
+  destruct (canon_base _ _ _ Hv2 H2) as [D1 [D2 [D3 D4]]].
   destruct Hb; inversion Hs; subst;
-    try (exfalso; first [ congruence | (simpl in *; discriminate) ]);
-    try (exfalso;
-         match goal with
-         | Hn : ~ both_whole ?x ?y |- _ =>
-             apply Hn;
-             destruct (canon_base _ _ _ Hv1 H1) as [C1 _]; destruct (C1 (teq_refl _)) as [a Ha];
-             destruct (canon_base _ _ _ Hv2 H2) as [C2 _]; destruct (C2 (teq_refl _)) as [b Hb];
-             exists a, b; auto
-         end);
-    first [ apply T_Num; exact Hu | apply T_NumFloat; exact Hu
-          | apply T_Dec; exact Hu | apply typing_of_bool; exact Hu ].
+    try (exfalso; first [ congruence | (simpl in *; discriminate)
+      | (match goal with Hd : kind _ = _ \/ kind _ = _ |- _ => destruct Hd; congruence end) ]);
+    (* an operand literal of the wrong head for its signature type *)
+    try (exfalso; first
+      [ (destruct (C1 (teq_refl _)) as [? E]; discriminate E)
+      | (destruct (C2 (teq_refl _)) as [? E]; discriminate E)
+      | (destruct (C3 (teq_refl _)) as [? E]; discriminate E)
+      | (destruct (C4 (teq_refl _)) as [E | E]; discriminate E)
+      | (destruct (D1 (teq_refl _)) as [? E]; discriminate E)
+      | (destruct (D2 (teq_refl _)) as [? E]; discriminate E)
+      | (destruct (D3 (teq_refl _)) as [? E]; discriminate E)
+      | (destruct (D4 (teq_refl _)) as [E | E]; discriminate E) ]);
+    first [ apply T_Num; exact Hu | apply T_Dec; exact Hu
+          | apply typing_of_bool; exact Hu ].
 Qed.
 
 Scheme step_mut := Induction for step Sort Prop
@@ -1425,6 +1434,16 @@ Proof.
     destruct (bin_inv _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
     eapply T_Conv;
       [ exact (bin_step_typing _ _ _ _ _ _ _ _ Hs Hv1 Hv2 H1 H2 Hb) | exact Hteq ].
+  - (* Case: the operand of a coercion stepped (st_tofloat1).  Congruence. *)
+    intros e e' Hstep IH G T Hty.
+    destruct (tofloat_inv _ _ _ Hty) as [H1 Hteq].
+    eapply T_Conv; [ eapply T_ToFloat; apply IH; exact H1 | exact Hteq ].
+  - (* Case: [float(n)] steps to a Float (st_tofloat).  A Float value has
+       type [Float] whatever its payload. *)
+    intros z d G T Hty.
+    destruct (tofloat_inv _ _ _ Hty) as [H1 Hteq].
+    assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
+    eapply T_Conv; [ apply T_Dec; exact Hu | exact Hteq ].
   - (* Case: the FIRST field of a record stepped (stf_here).  Congruence. *)
     intros l e e' fs Hstep IH G R Hft.
     inversion Hft; subst.

@@ -1,0 +1,16 @@
+[profile.default]
+retries = 0
+status-level = "retry"
+final-status-level = "slow"
+failure-output = "immediate-final"
+# Warn after 60s; kill after 10 minutes so a hung test cannot stall CI forever.
+slow-timeout = { period = "60s", terminate-after = 10 }
+
+# Tests that exercise timeouts and runaway programs must finish well inside a
+# few minutes; if the mechanism under test breaks they would otherwise spin.
+[[profile.default.overrides]]
+filter = 'test(/never_ends|runaway|never_returns|_timeout/)'
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+[profile.ci]
+fail-fast = false

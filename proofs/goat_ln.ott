@@ -39,8 +39,8 @@ metavar label, l ::= {{ coq nat }}
   {{ com record label }}
 metavar num, n ::= {{ coq BinNums.Z }}
   {{ com whole-number literal, an integer }}
-metavar dec, d ::= {{ coq (BinNums.Z * BinNums.positive) }}
-  {{ com decimal literal as a numerator and a positive denominator }}
+metavar dec, d ::= {{ coq nat }}
+  {{ com a Float value, opaque: no rule reads the payload }}
 metavar str, q ::= {{ coq (list nat) }}
   {{ com string literal, as its bytes }}
 
@@ -79,7 +79,7 @@ bop, o :: 'bop_' ::= {{ com binary operator }}
 exp, e :: 'e_' ::= {{ com term }}
   | x                        ::   :: fvar  {{ com variable }}
   | n                        ::   :: num   {{ com whole-number literal }}
-  | d                        ::   :: dec   {{ com decimal literal }}
+  | d                        ::   :: dec   {{ com Float value, opaque }}
   | true                     ::   :: true
   | false                    ::   :: false
   | program ( x ) do e done  ::   :: abs
@@ -93,6 +93,7 @@ exp, e :: 'e_' ::= {{ com term }}
   | q                        ::   :: str   {{ com string literal }}
   | if e1 then e2 else e3    ::   :: ite   {{ com conditional }}
   | e1 o e2                  ::   :: bin   {{ com binary operation }}
+  | float ( e )              ::   :: tofloat {{ com Int-to-Float coercion, inserted by elaboration }}
   | ( e )                    :: S :: paren {{ coq [[e]] }}
   | e1 [ x := e2 ]           :: M :: subst {{ coq (subst_exp [[e2]] [[x]] [[e1]]) }}
 

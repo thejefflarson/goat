@@ -95,6 +95,7 @@ Proof.
   - intros a IHa o b IHb P. cbn [block lbls].
     rewrite occs_app, occs_cons, occs_op, !occs_as_binop, IHa, IHb, List.map_app.
     reflexivity.
+  - intros a IH P. cbn [block lbls]. occ_simp. reflexivity.
   - intros P. split; reflexivity.
   - intros l e IHe rest IHrest P. destruct (IHrest P) as [IHf IHm].
     cbn [field_trees more_field_trees lbls_fields]. unfold field_tree.

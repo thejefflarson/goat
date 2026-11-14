@@ -196,10 +196,12 @@ Fixpoint lookup_first (l : label) (fs : fields) : option exp :=
 
 (* ================================================================== *)
 (* Base-type operators (ADR 0017, ADR 0036).                            *)
-(* A whole-number literal is a [Z], a decimal literal a numerator over a  *)
-(* positive denominator, and a string its bytes.  Integers are unbounded: *)
-(* the compiler's per-target overflow trap is not modeled.  A Float is an *)
-(* exact rational: IEEE rounding, infinities and NaN are not modeled.     *)
+(* An [Int] is a signed 64-bit integer: an arithmetic result outside the *)
+(* range is a trap, as in the compiler.  A [Float] is opaque: a decimal  *)
+(* value [e_dec d] carries a payload no rule reads, and each Float       *)
+(* operation relates its operands to every Float (a comparison, to every  *)
+(* Bool).  A property of that relation holds for any function a compiler  *)
+(* might compute, so IEEE rounding, infinities and NaN need no model.    *)
 (* ================================================================== *)
 
 (* What an operator does, by its row in ADR 0017. *)
@@ -213,19 +215,12 @@ Definition kind (o : bop) : bop_kind :=
   | bop_lt | bop_lte | bop_gt | bop_gte | bop_eq | bop_ne => k_cmp
   end.
 
-(* [+ - *] on integers and on rationals; meaningful when [kind o = k_ring]. *)
+(* [+ - *] over the integers; meaningful when [kind o = k_ring]. *)
 Definition ring_Z (o : bop) (a b : znum) : znum :=
   match o with
   | bop_add => z_add a b
   | bop_sub => z_sub a b
   | _ => z_mul a b
-  end.
-
-Definition ring_Q (o : bop) (p q : qnum) : qnum :=
-  match o with
-  | bop_add => q_add p q
-  | bop_sub => q_sub p q
-  | _ => q_mul p q
   end.
 
 (* [//] floors and [%] takes the sign of the divisor (Z.div and Z.modulo do
@@ -278,39 +273,25 @@ Definition val_bool (v : exp) : option bool :=
   | _ => None
   end.
 
-(* A number value and the rational it stands for: an [Int] widens to a
-   [Float] at an operator (ADR 0017). *)
-Inductive num_val : exp -> qnum -> Prop :=
- | nv_num : forall z, num_val (e_num z) (q_of_z z)
- | nv_dec : forall d, num_val (e_dec d) (q_of_dec d).
-
-(* Two whole numbers: the operands of integer arithmetic. *)
-Definition both_whole (x y : exp) : Prop :=
-  exists a b, x = e_num a /\ y = e_num b.
-
 (* What an operator computes from two values.  A relation, because a Float
-   quotient by zero is IEEE infinity or NaN, which the model leaves
-   unspecified: any decimal.  Every other case has one answer, and an integer
-   [//] or [%] by zero has none (it traps, see [bin_trap]). *)
+   operation is unspecified: any Float, or for a comparison any Bool.  Every
+   Int case has one answer, and none when the divisor is zero or the result
+   leaves the 64-bit range (those trap, see [bin_trap]). *)
 Inductive bin_step : bop -> exp -> exp -> exp -> Prop :=
  | bs_ring_int : forall o a b,
-     kind o = k_ring ->
+     kind o = k_ring -> in_int (ring_Z o a b) = true ->
      bin_step o (e_num a) (e_num b) (e_num (ring_Z o a b))
- | bs_ring_float : forall o x y p q,
-     kind o = k_ring -> num_val x p -> num_val y q -> ~ both_whole x y ->
-     bin_step o x y (e_dec (dec_of_q (ring_Q o p q)))
- | bs_quot : forall x y p q,
-     num_val x p -> num_val y q -> q_is_zero q = false ->
-     bin_step bop_div x y (e_dec (dec_of_q (q_div p q)))
- | bs_quot_zero : forall x y p q d,
-     num_val x p -> num_val y q -> q_is_zero q = true ->
-     bin_step bop_div x y (e_dec d)
  | bs_whole : forall o a b,
-     kind o = k_whole -> z_is_zero b = false ->
+     kind o = k_whole -> z_is_zero b = false -> in_int (whole_Z o a b) = true ->
      bin_step o (e_num a) (e_num b) (e_num (whole_Z o a b))
- | bs_cmp_num : forall o x y p q,
-     kind o = k_cmp -> num_val x p -> num_val y q ->
-     bin_step o x y (of_bool (cmp_holds o (q_cmp p q)))
+ | bs_float : forall o x y d,
+     (kind o = k_ring \/ kind o = k_quot) ->
+     bin_step o (e_dec x) (e_dec y) (e_dec d)
+ | bs_cmp_int : forall o a b,
+     kind o = k_cmp ->
+     bin_step o (e_num a) (e_num b) (of_bool (cmp_holds o (z_cmp a b)))
+ | bs_cmp_float : forall o x y c,
+     kind o = k_cmp -> bin_step o (e_dec x) (e_dec y) (of_bool c)
  | bs_cmp_str : forall o p q,
      kind o = k_cmp ->
      bin_step o (e_str p) (e_str q) (of_bool (cmp_holds o (str_compare p q)))
@@ -318,45 +299,45 @@ Inductive bin_step : bop -> exp -> exp -> exp -> Prop :=
      kind o = k_cmp -> val_bool x = Some a -> val_bool y = Some b ->
      bin_step o x y (of_bool (cmp_holds o (bool_compare a b))).
 
-(* Why a program stops: the defined runtime errors.  Only integer division by
-   zero is in the fragment; overflow and [trap()] are not. *)
-Inductive trap_kind : Set := trap_div_zero.
+(* Why a program stops: the defined runtime errors of the fragment. *)
+Inductive trap_kind : Set := trap_div_zero | trap_overflow.
 
 Inductive bin_trap : bop -> exp -> exp -> trap_kind -> Prop :=
  | bt_div_zero : forall o a b,
      kind o = k_whole -> z_is_zero b = true ->
-     bin_trap o (e_num a) (e_num b) trap_div_zero.
+     bin_trap o (e_num a) (e_num b) trap_div_zero
+ | bt_ring_overflow : forall o a b,
+     kind o = k_ring -> in_int (ring_Z o a b) = false ->
+     bin_trap o (e_num a) (e_num b) trap_overflow
+ | bt_whole_overflow : forall o a b,
+     kind o = k_whole -> z_is_zero b = false -> in_int (whole_Z o a b) = false ->
+     bin_trap o (e_num a) (e_num b) trap_overflow.
 
 (* The types an operator accepts, and what it gives (ADR 0017, ADR 0036):
-   [+ - *] on two Ints give an Int, with a Float anywhere a Float; [/] gives a
-   Float; [//] and [%] want two Ints; a comparison takes any two numbers, two
-   strings or two booleans.  Operators are at concrete types: a constraint
-   variable has no signature in this phase. *)
-Inductive num_typ : typ -> Prop :=
- | nt_int : num_typ typ_Int
- | nt_float : num_typ typ_Float.
-
-Inductive base_typ : typ -> Prop :=
- | base_String : base_typ typ_String
- | base_Bool : base_typ typ_Bool.
+   [+ - *] take two Ints or two Floats; [/] takes two Floats and gives a
+   Float; [//] and [%] take two Ints; a comparison takes two of one of Int,
+   Float, String or Bool.  The checker accepts an Int where a Float is wanted;
+   elaboration inserts [e_tofloat] there, so the calculus has no mixed
+   signature.  Operators are at concrete types: a constraint variable has no
+   signature in this phase. *)
+Inductive cmp_typ : typ -> Prop :=
+ | ct_int : cmp_typ typ_Int
+ | ct_float : cmp_typ typ_Float
+ | ct_string : cmp_typ typ_String
+ | ct_bool : cmp_typ typ_Bool.
 
 Inductive bin_sig : bop -> typ -> typ -> typ -> Prop :=
  | sig_ring_int : forall o,
      kind o = k_ring -> bin_sig o typ_Int typ_Int typ_Int
- | sig_ring_float : forall o A B,
-     kind o = k_ring -> num_typ A -> num_typ B ->
-     (A = typ_Float \/ B = typ_Float) ->
-     bin_sig o A B typ_Float
- | sig_quot : forall A B,
-     num_typ A -> num_typ B -> bin_sig bop_div A B typ_Float
+ | sig_ring_float : forall o,
+     kind o = k_ring -> bin_sig o typ_Float typ_Float typ_Float
+ | sig_quot : bin_sig bop_div typ_Float typ_Float typ_Float
  | sig_whole : forall o,
      kind o = k_whole -> bin_sig o typ_Int typ_Int typ_Int
- | sig_cmp_num : forall o A B,
-     kind o = k_cmp -> num_typ A -> num_typ B -> bin_sig o A B typ_Bool
- | sig_cmp_base : forall o B,
-     kind o = k_cmp -> base_typ B -> bin_sig o B B typ_Bool.
+ | sig_cmp : forall o B,
+     kind o = k_cmp -> cmp_typ B -> bin_sig o B B typ_Bool.
 
-#[export] Hint Constructors num_typ base_typ num_val : core.
+#[export] Hint Constructors cmp_typ : core.
 
 (* Every type in a signature is closed, so substitution leaves it alone. *)
 Lemma bin_sig_ap : forall o A B R st sr,
@@ -364,12 +345,10 @@ Lemma bin_sig_ap : forall o A B R st sr,
   ap_typ st sr A = A /\ ap_typ st sr B = B /\ ap_typ st sr R = R.
 Proof.
   intros o A B R st sr H.
-  assert (Hn : forall N, num_typ N -> ap_typ st sr N = N)
-    by (intros N HN; destruct HN; reflexivity).
-  assert (Hb : forall N, base_typ N -> ap_typ st sr N = N)
+  assert (Hc : forall N, cmp_typ N -> ap_typ st sr N = N)
     by (intros N HN; destruct HN; reflexivity).
   destruct H; simpl; repeat split;
-    first [ reflexivity | apply Hn; assumption | apply Hb; assumption ].
+    first [ reflexivity | apply Hc; assumption ].
 Qed.
 
 (* ================================================================== *)
@@ -411,6 +390,8 @@ Inductive step : exp -> exp -> Prop :=
  | st_bin : forall v1 o v2 v,
      value v1 -> value v2 -> bin_step o v1 v2 v ->
      step (e_bin v1 o v2) v
+ | st_tofloat1 : forall e e', step e e' -> step (e_tofloat e) (e_tofloat e')
+ | st_tofloat : forall z d, step (e_tofloat (e_num z)) (e_dec d)
 with step_fields : fields -> fields -> Prop :=
  | stf_here : forall l e e' fs,
      step e e' -> step_fields (fs_cons l e fs) (fs_cons l e' fs)
@@ -432,6 +413,7 @@ Inductive traps : exp -> trap_kind -> Prop :=
  | tr_bin1 : forall e1 o e2 k, traps e1 k -> traps (e_bin e1 o e2) k
  | tr_bin2 : forall v o e2 k,
      value v -> traps e2 k -> traps (e_bin v o e2) k
+ | tr_tofloat : forall e k, traps e k -> traps (e_tofloat e) k
  | tr_bin : forall v1 o v2 k,
      value v1 -> value v2 -> bin_trap o v1 v2 k -> traps (e_bin v1 o v2) k
 with traps_fields : fields -> trap_kind -> Prop :=
@@ -451,7 +433,6 @@ Inductive typing : ctx -> exp -> typ -> Prop :=
  | T_Var : forall G x s T,
      uniq G -> binds x s G -> inst T s -> typing G (e_fvar_f x) T
  | T_Num : forall G n, uniq G -> typing G (e_num n) typ_Int
- | T_NumFloat : forall G n, uniq G -> typing G (e_num n) typ_Float
  | T_Dec : forall G d, uniq G -> typing G (e_dec d) typ_Float
  | T_True : forall G, uniq G -> typing G e_true typ_Bool
  | T_False : forall G, uniq G -> typing G e_false typ_Bool
@@ -479,6 +460,8 @@ Inductive typing : ctx -> exp -> typ -> Prop :=
  | T_If : forall G e1 e2 e3 T,
      typing G e1 typ_Bool -> typing G e2 T -> typing G e3 T ->
      typing G (e_ite e1 e2 e3) T
+ | T_ToFloat : forall G e,
+     typing G e typ_Int -> typing G (e_tofloat e) typ_Float
  | T_Bin : forall G e1 o e2 A B R,
      typing G e1 A -> typing G e2 B -> bin_sig o A B R ->
      typing G (e_bin e1 o e2) R

@@ -36,6 +36,7 @@ Fixpoint inst_rec (var_of : string -> termvar) (k D : nat) (e : exp) {struct e} 
   | e_str q => e_str q
   | e_ite a b c => e_ite (inst_rec var_of k D a) (inst_rec var_of k D b) (inst_rec var_of k D c)
   | e_bin a o b => e_bin (inst_rec var_of k D a) o (inst_rec var_of k D b)
+  | e_tofloat a => e_tofloat (inst_rec var_of k D a)
   end
 with inst_fields (var_of : string -> termvar) (k D : nat) (fs : Goat_ott.fields) {struct fs}
   : Goat_ott.fields :=
@@ -108,6 +109,8 @@ Proof.
   - (* operation *)
     intros a IHa o b IHb k [Ha Hb]. simpl.
     rewrite (IHa k Ha), (IHb k Hb). reflexivity.
+  - (* coercion: not a term of the printed fragment *)
+    intros a IH k Hs. destruct Hs.
   - intros k Hs. reflexivity.
   - intros l e IHe fs IHfs k [He Hfs]. simpl.
     rewrite (IHe k He), (IHfs k Hfs). reflexivity.
@@ -383,6 +386,8 @@ Proof.
     { cbn [block]. exact (DM_bin var_of tbl _ _ o _ _ H1 H2). }
     split; [ apply DB_chain; exact Hmath
            | split; [ intros _; exact Hmath | intros _ Hx; discriminate Hx ] ].
+  - (* coercion: not a term of the printed fragment *)
+    intros a IH P Hs Hl. destruct Hs.
   - (* no fields *)
     intros P Hs Hl. split.
     + apply DI_end.
