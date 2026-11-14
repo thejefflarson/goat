@@ -26,6 +26,10 @@ Fixpoint close_exp_rec (k : nat) (x : termvar) (e : exp) {struct e} : exp :=
   | e_let a b => e_let (close_exp_rec k x a) (close_exp_rec (S k) x b)
   | e_rec fs => e_rec (close_fields_rec k x fs)
   | e_proj a l => e_proj (close_exp_rec k x a) l
+  | e_unit => e_unit
+  | e_str q => e_str q
+  | e_ite a b c => e_ite (close_exp_rec k x a) (close_exp_rec k x b) (close_exp_rec k x c)
+  | e_bin a o b => e_bin (close_exp_rec k x a) o (close_exp_rec k x b)
   end
 with close_fields_rec (k : nat) (x : termvar) (fs : fields) {struct fs} : fields :=
   match fs with
@@ -69,6 +73,14 @@ Proof.
   - (* projection *)
     intros a IH l k x Ha. simpl in *. exact (IH k x Ha).
   - intros k x _. exact I.
+  - intros q k x _. exact I.
+  - (* conditional *)
+    intros a IHa b IHb c IHc k x [Ha [Hb Hc]]. simpl.
+    split; [ exact (IHa k x Ha) | split; [ exact (IHb k x Hb) | exact (IHc k x Hc) ] ].
+  - (* binary operation *)
+    intros a IHa o b IHb k x [Ha Hb]. simpl.
+    split; [ exact (IHa k x Ha) | exact (IHb k x Hb) ].
+  - intros k x _. exact I.
   - (* field list *)
     intros l e IHe fs IHfs k x [He Hfs]. simpl.
     split; [ exact (IHe k x He) | exact (IHfs k x Hfs) ].
@@ -102,6 +114,40 @@ Fixpoint index_of (l : string) (tbl : list string) : nat :=
   | l' :: tbl' => if String.eqb l l' then 0 else S (index_of l tbl')
   end.
 
+Definition op_rule (o : bop) : rule :=
+  match o with
+  | bop_add => R_plus
+  | bop_sub => R_minus
+  | bop_mul => R_multiply
+  | bop_div => R_divide
+  | bop_fdiv => R_floor_divide
+  | bop_rem => R_remainder
+  | bop_lt => R_lt
+  | bop_lte => R_lte
+  | bop_gt => R_gt
+  | bop_gte => R_gte
+  | bop_eq => R_equal
+  | bop_ne => R_not_equal
+  end.
+
+Definition op_text (o : bop) : string :=
+  match o with
+  | bop_add => "+"
+  | bop_sub => "-"
+  | bop_mul => "*"
+  | bop_div => "/"
+  | bop_fdiv => "//"
+  | bop_rem => "%"
+  | bop_lt => "<"
+  | bop_lte => "<="
+  | bop_gt => ">"
+  | bop_gte => ">="
+  | bop_eq => "=="
+  | bop_ne => "!="
+  end.
+
+Definition op_tree (o : bop) : tree := Node (op_rule o) [Leaf (TSym (op_text o))].
+
 Section Denotation.
 
   Variable var_of : string -> termvar.
@@ -125,7 +171,7 @@ Section Denotation.
         Den_block cs e ->
         Den (Node R_expr cs) e
     | D_value : forall cs e,
-        Den_chain cs e ->
+        Den_math cs e ->
         Den (Node R_value cs) e
     | D_function : forall kw ps xs cs body,
         Den_params ps xs ->
@@ -141,6 +187,15 @@ Section Denotation.
         Den (Node R_expr cs) body ->
         Den (Node R_local [d; Node R_expr cs])
             (e_let v (close_exp (var_of x) body))
+    | D_str : forall q,
+        Den (Node R_string [Leaf TStr]) (e_str q)
+    | D_cond : forall cs1 cs2 cs3 e1 e2 e3,
+        Den (Node R_expr cs1) e1 ->
+        Den (Node R_expr cs2) e2 ->
+        Den (Node R_expr cs3) e3 ->
+        Den (Node R_conditional [sym "if"; Node R_expr cs1; sym "then";
+                                 Node R_expr cs2; sym "else"; Node R_expr cs3; sym "done"])
+            (e_ite e1 e2 e3)
   with Den_decl : tree -> string -> exp -> Prop :=
     | DD_plain : forall x cs v,
         Den (Node R_value cs) v ->
@@ -150,12 +205,20 @@ Section Denotation.
         Den_decl (Node R_declaration [ident x; sym "="; Node R_value cs; sym ";"]) x v
   with Den_block : list tree -> exp -> Prop :=
     | DB_chain : forall cs e,
-        Den_chain cs e ->
+        Den_math cs e ->
         Den_block cs e
     | DB_decl : forall d rest x v body,
         Den_decl d x v ->
         Den_block rest body ->
         Den_block (d :: rest) (e_let v (close_exp (var_of x) body))
+  with Den_math : list tree -> exp -> Prop :=
+    | DM_chain : forall cs e,
+        Den_chain cs e ->
+        Den_math cs e
+    | DM_bin : forall c1 c2 o e1 e2,
+        Den_chain c1 e1 ->
+        Den_chain c2 e2 ->
+        Den_math (c1 ++ op_tree o :: c2) (e_bin e1 o e2)
   with Den_chain : list tree -> exp -> Prop :=
     | DC_head : forall t rest e0 e,
         Den t e0 ->
@@ -225,6 +288,7 @@ End Denotation.
 Scheme Den_ind' := Induction for Den Sort Prop
 with Den_decl_ind' := Induction for Den_decl Sort Prop
 with Den_block_ind' := Induction for Den_block Sort Prop
+with Den_math_ind' := Induction for Den_math Sort Prop
 with Den_chain_ind' := Induction for Den_chain Sort Prop
 with Den_posts_ind' := Induction for Den_posts Sort Prop
 with Den_args_ind' := Induction for Den_args Sort Prop
@@ -233,7 +297,7 @@ with Den_items_ind' := Induction for Den_items Sort Prop
 with Den_sep_ind' := Induction for Den_sep Sort Prop
 with Den_field_ind' := Induction for Den_field Sort Prop.
 Combined Scheme Den_mutind from Den_ind', Den_decl_ind', Den_block_ind',
-  Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
+  Den_math_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
   Den_items_ind', Den_sep_ind', Den_field_ind'.
 
 (* ---- T1, the denotation half: whatever a derivation denotes is locally closed ---- *)
@@ -242,6 +306,7 @@ Lemma den_lc : forall var_of tbl,
   (forall t e, Den var_of tbl t e -> lc e) /\
   (forall d x v, Den_decl var_of tbl d x v -> lc v) /\
   (forall cs e, Den_block var_of tbl cs e -> lc e) /\
+  (forall cs e, Den_math var_of tbl cs e -> lc e) /\
   (forall cs e, Den_chain var_of tbl cs e -> lc e) /\
   (forall e0 cs e, Den_posts var_of tbl e0 cs e -> lc e0 -> lc e) /\
   (forall cs es, Den_args var_of tbl cs es -> Forall lc es) /\
@@ -269,14 +334,20 @@ Proof.
     assert (Hclose : lc_at 1 (close_exp (var_of x) body))
       by (apply (proj1 lc_close_mut); exact IHbody).
     exact (conj IHd Hclose).
+  - (* string *) intros q. exact I.
+  - (* conditional *)
+    intros cs1 cs2 cs3 e1 e2 e3 H1 IH1 H2 IH2 H3 IH3. exact (conj IH1 (conj IH2 IH3)).
   - (* decl, plain *) intros x cs v Hv IH. exact IH.
   - (* decl, with semicolon *) intros x cs v Hv IH. exact IH.
-  - (* block, chain *) intros cs e Hchain IH. exact IH.
+  - (* block, chain *) intros cs e Hmath IH. exact IH.
   - (* block, declaration *)
     intros d rest x v body Hd IHd Hrest IHrest.
     assert (Hclose : lc_at 1 (close_exp (var_of x) body))
       by (apply (proj1 lc_close_mut); exact IHrest).
     exact (conj IHd Hclose).
+  - (* math, chain *) intros cs e Hchain IH. exact IH.
+  - (* math, binary operation *)
+    intros c1 c2 o e1 e2 H1 IH1 H2 IH2. exact (conj IH1 IH2).
   - (* chain, head *)
     intros t rest e0 e Ht IHt Hposts IHposts. exact (IHposts IHt).
   - (* chain, parenthesised *)
@@ -323,11 +394,13 @@ Qed.
 
 Fixpoint size (e : exp) : nat :=
   match e with
-  | e_fvar_b _ | e_fvar_f _ | e_num _ | e_true | e_false => 1
+  | e_fvar_b _ | e_fvar_f _ | e_num _ | e_true | e_false | e_unit | e_str _ => 1
   | e_abs b => S (size b)
   | e_app a b | e_let a b => S (size a + size b)
   | e_rec fs => S (size_fields fs)
   | e_proj a _ => S (size a)
+  | e_ite a b c => S (size a + size b + size c)
+  | e_bin a _ b => S (size a + size b)
   end
 with size_fields (fs : fields) : nat :=
   match fs with
@@ -352,6 +425,10 @@ Proof.
   - (* rec *) rewrite H. reflexivity.
   - (* proj *) rewrite H. reflexivity.
   - reflexivity.
+  - reflexivity.
+  - (* ite *) rewrite H, H0, H1. reflexivity.
+  - (* bin *) rewrite H, H0. reflexivity.
+  - reflexivity.
   - (* cons *) rewrite H, H0. reflexivity.
 Qed.
 
@@ -372,6 +449,10 @@ Proof.
   - (* rec *) apply H. assumption.
   - (* proj *) apply H. assumption.
   - exact I.
+  - exact I.
+  - (* ite *) destruct H2 as [Ha [Hb Hc]]. split; [ apply H | split; [ apply H0 | apply H1 ] ]; assumption.
+  - (* bin *) destruct H1 as [Ha Hb]. split; [ apply H | apply H0 ]; assumption.
+  - exact I.
   - (* cons *) destruct H1 as [He Hfs]. split; [ apply H | apply H0 ]; assumption.
 Qed.
 
@@ -383,7 +464,7 @@ Proof.
   - destruct t; simpl in Hsize; lia.
   - destruct t; simpl in Hsize; lia.
   - destruct IH as [IHe IHfs].
-    destruct t as [i | x | n | | | b | a b | a b | fs | a l];
+    destruct t as [i | x | n | | | b | a b | a b | fs | a l | | q | a b c | a o b];
       unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
     + lia.
     + apply lc_e_fvar_f.
@@ -414,6 +495,14 @@ Proof.
       apply lc_e_rec. apply IHfs; [ lia | exact Hlc ].
     + (* proj *)
       apply lc_e_proj. apply IHe; [ lia | exact Hlc ].
+    + apply lc_e_unit.
+    + apply lc_e_str.
+    + (* ite *)
+      destruct Hlc as [Ha [Hb Hc]].
+      apply lc_e_ite; apply IHe; try assumption; lia.
+    + (* bin *)
+      destruct Hlc as [Ha Hb].
+      apply lc_e_bin; apply IHe; try assumption; lia.
   - destruct IH as [IHe IHfs].
     destruct t as [| l e fs]; unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
     + apply lc_fs_nil.

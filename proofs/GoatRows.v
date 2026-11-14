@@ -52,6 +52,8 @@ Definition thead_tag (T : typ) : nat :=
   | typ_Arrow _ _ => 2
   | typ_Record _ => 3
   | typ_Var _ => 4
+  | typ_Unit => 5
+  | typ_String => 6
   end.
 
 Lemma teq_thead : forall T1 T2, teq T1 T2 -> thead_tag T1 = thead_tag T2.
@@ -64,6 +66,18 @@ Proof.
 Qed.
 
 Lemma teq_Bool_inv : forall T, teq typ_Bool T -> T = typ_Bool.
+Proof.
+  intros T H. apply teq_thead in H; simpl in H.
+  destruct T; simpl in H; try discriminate; reflexivity.
+Qed.
+
+Lemma teq_Unit_inv : forall T, teq typ_Unit T -> T = typ_Unit.
+Proof.
+  intros T H. apply teq_thead in H; simpl in H.
+  destruct T; simpl in H; try discriminate; reflexivity.
+Qed.
+
+Lemma teq_String_inv : forall T, teq typ_String T -> T = typ_String.
 Proof.
   intros T H. apply teq_thead in H; simpl in H.
   destruct T; simpl in H; try discriminate; reflexivity.
@@ -84,6 +98,8 @@ Proof.
   induction 1.
   - (* num *) repeat split; intros; discriminate.
   - (* bool *) repeat split; intros; discriminate.
+  - (* unit *) repeat split; intros; discriminate.
+  - (* string *) repeat split; intros; discriminate.
   - (* var *) repeat split; intros; discriminate.
   - (* arrow *) repeat split; intros; try discriminate;
       match goal with H : typ_Arrow _ _ = typ_Arrow _ _ |- _ => inversion H; subst end.

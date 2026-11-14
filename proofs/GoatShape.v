@@ -10,6 +10,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
 Require Import Goat.GoatDen.
+Require Import Lia.
 Open Scope string_scope.
 Open Scope list_scope.
 
@@ -17,7 +18,9 @@ Definition core_rule (r : rule) : bool :=
   match r with
   | R_goat | R_expr | R_value | R_declaration | R_local | R_function | R_params
   | R_call | R_arguments | R_access | R_take | R_name | R_number | R_boolean | R_true_lit
-  | R_false_lit | R_record | R_field => true
+  | R_false_lit | R_record | R_field | R_string | R_conditional
+  | R_plus | R_minus | R_multiply | R_floor_divide | R_divide | R_remainder
+  | R_equal | R_not_equal | R_lte | R_lt | R_gte | R_gt => true
   | _ => false
   end.
 
@@ -396,6 +399,36 @@ Proof.
   - exists [sym "}"]. split; [ reflexivity | left; reflexivity ].
 Qed.
 
+Lemma shape_string : forall cs, gen (body R_string) cs -> cs = [Leaf TStr].
+Proof. intros cs H. simpl in H. inversion H. reflexivity. Qed.
+
+Lemma shape_conditional : forall cs,
+  gen (body R_conditional) cs -> In (sym "else") cs ->
+  exists a b c,
+    cs = [sym "if"; Node R_expr a; sym "then"; Node R_expr b; sym "else"; Node R_expr c;
+          sym "done"].
+Proof.
+  intros cs H Hhas. simpl in H.
+  split_seq H as (tsif & ts1 & -> & Hif & H1). text_leaf Hif.
+  split_seq H1 as (tsa & ts2 & -> & Ha & H2).
+  destruct (gen_node_of Ha eq_refl) as (a & -> & _).
+  split_seq H2 as (tsthen & ts3 & -> & Hthen & H3).
+  apply gen_expect_inv in Hthen. text_leaf Hthen.
+  split_seq H3 as (tsb & ts4 & -> & Hb & H4).
+  apply gen_expect_inv in Hb.
+  destruct (gen_node_of Hb eq_refl) as (b & -> & _).
+  split_seq H4 as (tsel & tsdone & -> & Hel & Hdone).
+  apply gen_expect_inv in Hdone. text_leaf Hdone.
+  destruct (gen_opt_inv Hel) as [Helse | ->].
+  - pose proof (gen_splice_inv Helse eq_refl) as Hbody. simpl in Hbody.
+    split_seq Hbody as (tse & ts5 & -> & He & Hc). text_leaf He.
+    apply gen_expect_inv in Hc.
+    destruct (gen_node_of Hc eq_refl) as (c & -> & _).
+    exists a, b, c. reflexivity.
+  - exfalso. simpl in Hhas.
+    repeat (destruct Hhas as [Hhas | Hhas]; [ discriminate Hhas | ]). contradiction.
+Qed.
+
 Lemma shape_goat : forall cs,
   gen (body R_goat) cs -> has R_expr cs ->
   exists b, cs = [Node R_expr b].
@@ -420,34 +453,81 @@ Ltac dead :=
   | H : gen (E_rule _) _ |- False => exact (gen_outside H eq_refl eq_refl)
   end.
 
-Lemma no_infix : forall ts, ~ gen (E_rule R__infix) ts.
+Definition is_op_rule (r : rule) : bool :=
+  match r with
+  | R_plus | R_minus | R_multiply | R_floor_divide | R_divide | R_remainder
+  | R_equal | R_not_equal | R_lte | R_lt | R_gte | R_gt => true
+  | _ => false
+  end.
+
+(* How many operator nodes sit among the children. *)
+Fixpoint count_ops (cs : list tree) : nat :=
+  match cs with
+  | Node r _ :: rest => (if is_op_rule r then 1 else 0) + count_ops rest
+  | _ :: rest => count_ops rest
+  | [] => 0
+  end.
+
+Lemma count_ops_app : forall a b, count_ops (a ++ b) = count_ops a + count_ops b.
+Proof.
+  induction a as [| t a IH]; intros b; [ reflexivity | ].
+  destruct t as [k | r c]; simpl; rewrite IH; lia.
+Qed.
+
+Lemma count_ops_op : forall o, count_ops [op_tree o] = 1.
+Proof. intros o. destruct o; reflexivity. Qed.
+
+Ltac op_case H o :=
+  destruct (gen_node_of H eq_refl) as (? & -> & Hc);
+  simpl in Hc; apply gen_text_inv in Hc; subst; exists o; reflexivity.
+
+Ltac infix_step Halt o :=
+  destruct (gen_alt_inv Halt) as [Hh | Halt']; [ op_case Hh o | clear Halt; rename Halt' into Halt ].
+
+Lemma infix_shape : forall ts,
+  gen (E_rule R__infix) ts -> exists o, ts = [op_tree o].
 Proof.
   intros ts H.
   pose proof (gen_splice_inv H eq_refl) as Halt. simpl in Halt.
-  repeat match goal with
-         | Halt : gen (E_alt _ _) _ |- _ =>
-             let Hl := fresh "Hl" in
-             let Hr := fresh "Hr" in
-             destruct (gen_alt_inv Halt) as [Hl | Hr]; clear Halt
-         end.
-  all: dead.
+  destruct (gen_alt_inv Halt) as [Hand | Halt1].
+  { exfalso. dead. }
+  destruct (gen_alt_inv Halt1) as [Hor | Halt2].
+  { exfalso. dead. }
+  infix_step Halt2 bop_add.
+  infix_step Halt2 bop_sub.
+  infix_step Halt2 bop_mul.
+  infix_step Halt2 bop_fdiv.
+  infix_step Halt2 bop_div.
+  infix_step Halt2 bop_rem.
+  infix_step Halt2 bop_eq.
+  infix_step Halt2 bop_ne.
+  infix_step Halt2 bop_lte.
+  infix_step Halt2 bop_lt.
+  infix_step Halt2 bop_gte.
+  op_case Halt2 bop_gt.
 Qed.
 
-Lemma no_more_math : forall ts, ~ gen (E_rule R__more_math) ts.
+Lemma more_math_shape : forall ts,
+  gen (E_rule R__more_math) ts ->
+  exists o c2, ts = op_tree o :: c2 /\ gen (E_rule R__operand) c2.
 Proof.
   intros ts H.
   pose proof (gen_splice_inv H eq_refl) as Hseq. simpl in Hseq.
-  split_seq Hseq as (tsi & ts1 & -> & Hinfix & _).
-  exact (no_infix _ Hinfix).
+  split_seq Hseq as (tsi & ts1 & -> & Hinfix & Hop).
+  destruct (infix_shape _ Hinfix) as (o & ->).
+  apply gen_expect_inv in Hop.
+  exists o, ts1. split; [ reflexivity | exact Hop ].
 Qed.
 
-Lemma no_more_math_star : forall ts,
-  gen (E_star (E_rule R__more_math)) ts -> ts = [].
+Lemma star_more_math_zero : forall ts,
+  gen (E_star (E_rule R__more_math)) ts -> count_ops ts = 0 -> ts = [].
 Proof.
-  intros ts H.
-  destruct (gen_star_inv H) as [Hnil | (ts1 & ts2 & _ & H1 & _)].
-  - exact Hnil.
-  - exfalso. exact (no_more_math _ H1).
+  intros ts H Hcount.
+  destruct (gen_star_inv H) as [Hnil | (ts1 & ts2 & -> & H1 & _)]; [ exact Hnil | ].
+  exfalso. destruct (more_math_shape _ H1) as (o & c2 & -> & _).
+  rewrite count_ops_app in Hcount. cbn [app] in Hcount.
+  change (op_tree o :: c2) with ([op_tree o] ++ c2) in Hcount.
+  rewrite count_ops_app, count_ops_op in Hcount. lia.
 Qed.
 
 Lemma operand_term : forall cs,
@@ -459,16 +539,6 @@ Proof.
   destruct (gen_star_inv Hnot) as [-> | (t1 & t2 & _ & Ht1 & _)].
   - exact Hterm.
   - exfalso. dead.
-Qed.
-
-Lemma statement_term : forall cs,
-  gen (E_seq (E_rule R__operand) (E_star (E_rule R__more_math))) cs ->
-  gen (E_rule R__term) cs.
-Proof.
-  intros cs H.
-  split_seq H as (tso & tsm & -> & Hop & Hmore).
-  rewrite (no_more_math_star _ Hmore), app_nil_r.
-  exact (operand_term _ Hop).
 Qed.
 
 Lemma term_shape : forall cs,
@@ -489,7 +559,9 @@ Qed.
 Lemma primary_shape : forall prim,
   gen (E_rule R__primary) prim ->
   (exists c, prim = [Node R_number c])
+  \/ (exists c, prim = [Node R_string c])
   \/ (exists c, prim = [Node R_boolean c])
+  \/ (exists c, prim = [Node R_conditional c])
   \/ (exists c, prim = [Node R_local c])
   \/ (exists c, prim = [Node R_function c])
   \/ (exists c, prim = [Node R_record c])
@@ -501,18 +573,19 @@ Proof.
   destruct (gen_alt_inv Halt) as [Hnumber | Halt1].
   { destruct (gen_node_of Hnumber eq_refl) as (c & -> & _). left. eauto. }
   destruct (gen_alt_inv Halt1) as [Hstring | Halt2].
-  { exfalso. dead. }
+  { destruct (gen_node_of Hstring eq_refl) as (c & -> & _). right; left. eauto. }
   destruct (gen_alt_inv Halt2) as [Hboolean | Halt3].
-  { destruct (gen_node_of Hboolean eq_refl) as (c & -> & _). right; left. eauto. }
+  { destruct (gen_node_of Hboolean eq_refl) as (c & -> & _). right; right; left. eauto. }
   destruct (gen_alt_inv Halt3) as [Hdestructure | Halt4].
   { exfalso. dead. }
   destruct (gen_alt_inv Halt4) as [Hlocal | Halt5].
-  { destruct (gen_node_of Hlocal eq_refl) as (c & -> & _). right; right; left. eauto. }
+  { destruct (gen_node_of Hlocal eq_refl) as (c & -> & _). right; right; right; right; left. eauto. }
   destruct (gen_alt_inv Halt5) as [Hfunction | Halt6].
   { destruct (gen_node_of Hfunction eq_refl) as (c & -> & _).
-    right; right; right; left. eauto. }
+    right; right; right; right; right; left. eauto. }
   destruct (gen_alt_inv Halt6) as [Hconditional | Halt7].
-  { exfalso. dead. }
+  { destruct (gen_node_of Hconditional eq_refl) as (c & -> & _).
+    right; right; right; left. eauto. }
   destruct (gen_alt_inv Halt7) as [Hmatch | Halt8].
   { exfalso. dead. }
   destruct (gen_alt_inv Halt8) as [Hrepeat | Halt9].
@@ -523,17 +596,39 @@ Proof.
   { exfalso. dead. }
   destruct (gen_alt_inv Halt11) as [Hrecord | Halt12].
   { destruct (gen_node_of Hrecord eq_refl) as (c & -> & _).
-    right; right; right; right; left. eauto. }
+    right; right; right; right; right; right; left. eauto. }
   destruct (gen_alt_inv Halt12) as [Hlist | Hrest].
   { exfalso. dead. }
   destruct (gen_alt_inv Hrest) as [Hname | Hparen].
   - destruct (gen_node_of Hname eq_refl) as (c & -> & _).
-    right; right; right; right; right; left. eauto.
+    right; right; right; right; right; right; right; left. eauto.
   - split_seq Hparen as (tsl & ts1 & -> & Hl & H1). text_leaf Hl.
     split_seq H1 as (tse & tsr & -> & He & Hr).
     apply gen_expect_inv in Hr. text_leaf Hr.
     destruct (gen_node_of He eq_refl) as (c & -> & _).
-    right; right; right; right; right; right. exists c. reflexivity.
+    right; right; right; right; right; right; right; right. exists c. reflexivity.
+Qed.
+
+Lemma term_ops : forall cs, gen (E_rule R__term) cs -> count_ops cs = 0.
+Proof.
+  intros cs H.
+  destruct (term_shape cs H) as (prim & posts & -> & Hprim & Hposts).
+  rewrite count_ops_app.
+  assert (Hp : count_ops prim = 0).
+  { destruct (primary_shape prim Hprim) as
+      [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | (c & ->)]]]]]]]];
+      reflexivity. }
+  assert (Hq : count_ops posts = 0).
+  { apply (gen_star_ind (E_rule R__postfix) (fun ps => count_ops ps = 0)); [ | | exact Hposts ].
+    - reflexivity.
+    - intros ts1 ts2 Hpost IH. rewrite count_ops_app, IH.
+      pose proof (gen_splice_inv Hpost eq_refl) as Halt. simpl in Halt.
+      destruct (gen_alt_inv Halt) as [Ha | Halt'].
+      + destruct (gen_node_of Ha eq_refl) as (c & -> & _). reflexivity.
+      + destruct (gen_alt_inv Halt') as [Ht | Hc].
+        * destruct (gen_node_of Ht eq_refl) as (c & -> & _). reflexivity.
+        * destruct (gen_node_of Hc eq_refl) as (c & -> & _). reflexivity. }
+  lia.
 Qed.
 
 Lemma expr_part : forall cs,
@@ -582,12 +677,18 @@ Proof.
     apply Forall_cons; [ eauto | exact IH ].
 Qed.
 
-Lemma statement_rule_term : forall cs,
-  gen (E_rule R__statement) cs -> gen (E_rule R__term) cs.
+Lemma statement_math_value : forall cs,
+  gen (body R_value) cs ->
+  gen (E_seq (E_rule R__operand) (E_star (E_rule R__more_math))) cs.
+Proof. intros cs H. exact H. Qed.
+
+Lemma statement_math : forall cs,
+  gen (E_rule R__statement) cs ->
+  gen (E_seq (E_rule R__operand) (E_star (E_rule R__more_math))) cs.
 Proof.
   intros cs H.
   pose proof (gen_splice_inv H eq_refl) as Hseq. simpl in Hseq.
-  exact (statement_term _ Hseq).
+  exact Hseq.
 Qed.
 
 (* ---- what the fragment excludes beyond its rules, and when a tree is valid ---- *)
@@ -619,6 +720,11 @@ Fixpoint dots_ok (cs : list tree) : Prop :=
   | _ => no_dot cs
   end.
 
+(* An expression with an operator has exactly one, and no dot call: its
+   operands are chains, and precedence between operators is not modelled. *)
+Definition ops_ok (cs : list tree) : Prop :=
+  count_ops cs = 0 \/ (count_ops cs = 1 /\ no_dot cs).
+
 (* The fragment has no empty parameter list, empty body, empty call, empty
    program, block that ends in a binding, or dot call on a receiver that is not
    a variable. *)
@@ -627,8 +733,9 @@ Definition complete_node (r : rule) (cs : list tree) : Prop :=
   | R_goat | R_local => has R_expr cs
   | R_function => has R_params cs /\ has R_expr cs
   | R_call => has R_arguments cs
-  | R_expr => ~ last_is_decl cs /\ dots_ok cs
-  | R_value => dots_ok cs
+  | R_expr => ~ last_is_decl cs /\ dots_ok cs /\ ops_ok cs
+  | R_value => dots_ok cs /\ ops_ok cs
+  | R_conditional => In (sym "else") cs
   | _ => True
   end.
 
@@ -765,7 +872,7 @@ Section Totality.
     | Node r cs =>
         match r with
         | R_number | R_boolean | R_name | R_function | R_record | R_local
-        | R_expr | R_value =>
+        | R_expr | R_value | R_string | R_conditional =>
             exists e, Den var_of tbl t e
         | R_declaration => exists x v, Den_decl var_of tbl t x v
         | R_field => exists l e, Den_field var_of tbl t l e
@@ -907,8 +1014,18 @@ Section Totality.
     destruct (term_shape cs H) as (prim & posts & -> & Hprim & Hposts).
     apply Forall_app in Hkids as [Hkprim Hkposts].
     destruct (primary_shape prim Hprim) as
-      [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | (c & ->)]]]]]].
+      [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | (c & ->)]]]]]]]].
     - (* number *)
+      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
+      destruct Hk as (e0 & Hden).
+      assert (Hnd : no_dot posts) by exact Hdots.
+      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
+    - (* string *)
+      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
+      destruct Hk as (e0 & Hden).
+      assert (Hnd : no_dot posts) by exact Hdots.
+      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
+    - (* conditional *)
       inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
       destruct Hk as (e0 & Hden).
       assert (Hnd : no_dot posts) by exact Hdots.
@@ -947,6 +1064,85 @@ Section Totality.
       assert (Hnd : no_dot posts) by exact Hdots.
       destruct (posts_den posts Hposts Hkposts Hnd e0) as (e & Hchain).
       exists e. apply DC_paren with (e0 := e0); assumption.
+  Qed.
+
+  Lemma no_dot_app : forall a b, no_dot (a ++ b) -> no_dot a /\ no_dot b.
+  Proof.
+    induction a as [| t a IH]; intros b H; [ split; [ exact I | exact H ] | ].
+    destruct t as [k | r c].
+    - simpl in H |- *. exact (IH b H).
+    - destruct r; simpl in H |- *; try exact (IH b H).
+      destruct H as [Hnc Hrest]. destruct (IH b Hrest) as [Ha Hb].
+      split; [ split | exact Hb ].
+      + destruct a as [| x a']; [ intros [] | exact Hnc ].
+      + exact Ha.
+  Qed.
+
+  Lemma no_dot_head_ok : forall ps, no_dot ps -> head_ok ps.
+  Proof.
+    intros ps H. unfold head_ok.
+    destruct ps as [| t1 ps1]; [ exact H | ].
+    destruct t1 as [k | r1 c1]; [ exact H | ].
+    destruct r1; try exact H.
+    destruct ps1 as [| t2 ps2]; [ exact H | ].
+    destruct t2 as [k2 | r2 c2]; [ exact H | ].
+    destruct r2; try exact H.
+    exfalso. simpl in H. destruct H as [H _]. apply H. simpl. exact I.
+  Qed.
+
+  Lemma no_dot_dots_ok : forall cs, no_dot cs -> dots_ok cs.
+  Proof.
+    induction cs as [| t cs IH]; intros H; [ exact I | ].
+    destruct t as [k | r c]; [ exact H | ].
+    destruct r; try exact H;
+      first [ exact (IH H) | exact (no_dot_head_ok cs H) ].
+  Qed.
+
+  Lemma no_dot_op : forall o c2, no_dot (op_tree o :: c2) -> no_dot c2.
+  Proof. intros o c2 H. destruct o; exact H. Qed.
+
+  Lemma math_den : forall cs,
+    gen (E_seq (E_rule R__operand) (E_star (E_rule R__more_math))) cs ->
+    Forall TotKind cs -> dots_ok cs -> ops_ok cs ->
+    exists e, Den_math var_of tbl cs e.
+  Proof.
+    intros cs H Hkids Hdots Hops.
+    split_seq H as (tso & tsm & -> & Hop & Hmore).
+    pose proof (operand_term _ Hop) as Hterm.
+    destruct (gen_star_inv Hmore) as [-> | (m1 & m2 & -> & Hm1 & Hm2)].
+    - rewrite app_nil_r in *.
+      destruct (chain_den tso Hterm Hkids Hdots) as (e & Hchain).
+      exists e. apply DM_chain. exact Hchain.
+    - destruct (more_math_shape _ Hm1) as (o & c2 & -> & Hc2).
+      pose proof (operand_term _ Hc2) as Hterm2.
+      assert (Hcount : count_ops (tso ++ (op_tree o :: c2) ++ m2) = 1 + count_ops m2).
+      { rewrite !count_ops_app.
+        change (op_tree o :: c2) with ([op_tree o] ++ c2).
+        rewrite count_ops_app, count_ops_op, (term_ops _ Hterm), (term_ops _ Hterm2).
+        lia. }
+      assert (Hm2nil : m2 = []).
+      { apply (star_more_math_zero _ Hm2).
+        destruct Hops as [Hz | [Hone _]]; lia. }
+      subst m2. rewrite app_nil_r in *.
+      assert (Hnd : no_dot (tso ++ op_tree o :: c2)).
+      { destruct Hops as [Hz | [_ Hnd]]; [ rewrite Hz in Hcount; simpl in Hcount; lia | exact Hnd ]. }
+      destruct (no_dot_app _ _ Hnd) as [Hnd1 Hnd2].
+      apply Forall_app in Hkids as [Hk1 Hk2].
+      inversion Hk2 as [| ? ? _ Hk3]; subst.
+      destruct (chain_den tso Hterm Hk1 (no_dot_dots_ok _ Hnd1)) as (e1 & Hc1).
+      destruct (chain_den c2 Hterm2 Hk3 (no_dot_dots_ok _ (no_dot_op _ _ Hnd2))) as (e2 & Hc2').
+      exists (e_bin e1 o e2). apply DM_bin; assumption.
+  Qed.
+
+  Lemma ops_ok_decls : forall ds ss,
+    Forall (fun t => exists c, t = Node R_declaration c) ds ->
+    ops_ok (ds ++ ss) -> ops_ok ss.
+  Proof.
+    intros ds ss Hds. induction Hds as [| d ds [c ->] _ IH]; intros Hops.
+    - exact Hops.
+    - apply IH. destruct Hops as [Hz | [Hone Hnd]].
+      + left. exact Hz.
+      + right. split; [ exact Hone | exact Hnd ].
   Qed.
 
   Lemma decls_block : forall ds,
@@ -1007,9 +1203,9 @@ Section Totality.
 
   Lemma block_den : forall cs,
     gen (E_rule R__part) cs -> Forall TotKind cs -> ~ last_is_decl cs ->
-    dots_ok cs -> exists e, Den_block var_of tbl cs e.
+    dots_ok cs -> ops_ok cs -> exists e, Den_block var_of tbl cs e.
   Proof.
-    intros cs H Hkids Hlast Hdots.
+    intros cs H Hkids Hlast Hdots Hops.
     destruct (part_shape cs H) as [(ds & ss & -> & Hds & Hss) | Hstatement].
     - (* declarations, then perhaps a chain *)
       destruct Hss as [Hstatement | ->].
@@ -1020,15 +1216,18 @@ Section Totality.
         assert (Hdots_ss : dots_ok ss).
         { apply (dots_ok_decls ds ss); [ | exact Hdots ].
           apply declaration_nodes. exact Hstar. }
-        destruct (chain_den ss (statement_rule_term _ Hstatement) Hkss Hdots_ss)
-          as (e & Hchain).
-        assert (Hss : Den_block var_of tbl ss e) by (apply DB_chain; exact Hchain).
+        assert (Hops_ss : ops_ok ss).
+        { apply (ops_ok_decls ds ss); [ | exact Hops ].
+          apply declaration_nodes. exact Hstar. }
+        destruct (math_den ss (statement_math _ Hstatement) Hkss Hdots_ss Hops_ss)
+          as (e & Hmath).
+        assert (Hss : Den_block var_of tbl ss e) by (apply DB_chain; exact Hmath).
         exact (decls_block ds Hstar Hkds ss e Hss).
       + exfalso. apply Hlast. rewrite app_nil_r. exact (plus_decls_last ds Hds).
     - (* a chain alone *)
-      destruct (chain_den cs (statement_rule_term _ Hstatement) Hkids Hdots)
-        as (e & Hchain).
-      exists e. apply DB_chain. exact Hchain.
+      destruct (math_den cs (statement_math _ Hstatement) Hkids Hdots Hops)
+        as (e & Hmath).
+      exists e. apply DB_chain. exact Hmath.
   Qed.
 
   Lemma args_den : forall fin tail,
@@ -1176,17 +1375,38 @@ Section Steps.
   Lemma step_expr : Step R_expr.
   Proof.
     intros cs H Hcomplete Hkids. simpl in Hcomplete.
-    destruct Hcomplete as [Hlast Hdots].
-    destruct (block_den var_of tbl cs (expr_part cs H) Hkids Hlast Hdots)
+    destruct Hcomplete as [Hlast [Hdots Hops]].
+    destruct (block_den var_of tbl cs (expr_part cs H) Hkids Hlast Hdots Hops)
       as (e & Hblock).
     simpl. exists e. apply D_expr. exact Hblock.
   Qed.
 
   Lemma step_value : Step R_value.
   Proof.
-    intros cs H Hdots Hkids. simpl in Hdots.
-    destruct (chain_den var_of tbl cs (statement_term cs H) Hkids Hdots) as (e & Hchain).
-    simpl. exists e. apply D_value. exact Hchain.
+    intros cs H Hcomplete Hkids. simpl in Hcomplete.
+    destruct Hcomplete as [Hdots Hops].
+    destruct (math_den var_of tbl cs (statement_math_value cs H) Hkids Hdots Hops)
+      as (e & Hmath).
+    simpl. exists e. apply D_value. exact Hmath.
+  Qed.
+
+  Lemma step_string : Step R_string.
+  Proof.
+    intros cs H _ _. pose proof (shape_string cs H) as ->.
+    simpl. exists (e_str []). apply D_str.
+  Qed.
+
+  Lemma step_conditional : Step R_conditional.
+  Proof.
+    intros cs H Hcomplete Hkids. simpl in Hcomplete.
+    destruct (shape_conditional cs H Hcomplete) as (a & b & c & ->).
+    rewrite Forall_forall in Hkids.
+    assert (Ha : TotKind var_of tbl (Node R_expr a)) by (apply Hkids; in_list).
+    assert (Hb : TotKind var_of tbl (Node R_expr b)) by (apply Hkids; in_list).
+    assert (Hc : TotKind var_of tbl (Node R_expr c)) by (apply Hkids; in_list).
+    simpl in Ha, Hb, Hc.
+    destruct Ha as (ea & Hda). destruct Hb as (eb & Hdb). destruct Hc as (ec & Hdc).
+    simpl. exists (e_ite ea eb ec). apply D_cond; assumption.
   Qed.
 
   Lemma step_function : Step R_function.
@@ -1293,6 +1513,7 @@ Section Steps.
       first
         [ exact step_number | exact step_name | exact step_boolean
         | exact step_expr | exact step_value | exact step_function
+        | exact step_string | exact step_conditional
         | exact step_record | exact step_local | exact step_declaration
         | exact step_field | exact step_access | exact step_take | exact step_call
         | exact step_arguments | exact step_params

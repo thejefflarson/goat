@@ -6,6 +6,21 @@ Definition typvar : Set := atom. (* free type variable (metalib atom) *)
 Definition rowvar : Set := atom. (* free row variable (metalib atom) *)
 Definition label : Set := nat. (* record label *)
 Definition num : Set := nat. (* numeral constant *)
+Definition str : Set := (list nat). (* string literal, as its bytes *)
+
+Inductive bop : Set :=  (* binary operator *)
+ | bop_add : bop (* + *)
+ | bop_sub : bop (* - *)
+ | bop_mul : bop (* * *)
+ | bop_div : bop (* / *)
+ | bop_fdiv : bop (* // *)
+ | bop_rem : bop (* % *)
+ | bop_lt : bop (* < *)
+ | bop_lte : bop (* <= *)
+ | bop_gt : bop (* > *)
+ | bop_gte : bop (* >= *)
+ | bop_eq : bop (* == *)
+ | bop_ne : bop (* != *).
 
 Inductive exp : Set :=  (* term *)
  | e_fvar_b (_:nat) (* variable *)
@@ -18,6 +33,10 @@ Inductive exp : Set :=  (* term *)
  | e_let (e1:exp) (e2:exp) (* bind x in e2 only *)
  | e_rec (fs:fields) (* record literal (closed) *)
  | e_proj (e:exp) (l:label) (* field projection *)
+ | e_unit : exp (* the unit value *)
+ | e_str (q:str) (* string literal *)
+ | e_ite (e1:exp) (e2:exp) (e3:exp) (* conditional *)
+ | e_bin (e1:exp) (o:bop) (e2:exp) (* binary operation *)
 with fields : Set :=  (* record spine (cons-list; duplicates allowed) *)
  | fs_nil : fields
  | fs_cons (l:label) (e:exp) (fs:fields).
@@ -25,6 +44,8 @@ with fields : Set :=  (* record spine (cons-list; duplicates allowed) *)
 Inductive typ : Set :=  (* monotype *)
  | typ_Number : typ
  | typ_Bool : typ
+ | typ_Unit : typ
+ | typ_String : typ
  | typ_Arrow (T1:typ) (T2:typ) (* unary (curried) function; see header *)
  | typ_Record (R:row)
  | typ_Var (a:typvar)
@@ -61,6 +82,10 @@ with open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
   | (e_let e1 e2) => e_let (open_exp_wrt_exp_rec k e_5 e1) (open_exp_wrt_exp_rec (S k) e_5 e2)
   | (e_rec fs) => e_rec (open_fields_wrt_exp_rec k e_5 fs)
   | (e_proj e l) => e_proj (open_exp_wrt_exp_rec k e_5 e) l
+  | e_unit => e_unit 
+  | (e_str q) => e_str q
+  | (e_ite e1 e2 e3) => e_ite (open_exp_wrt_exp_rec k e_5 e1) (open_exp_wrt_exp_rec k e_5 e2) (open_exp_wrt_exp_rec k e_5 e3)
+  | (e_bin e1 o e2) => e_bin (open_exp_wrt_exp_rec k e_5 e1) o (open_exp_wrt_exp_rec k e_5 e2)
 end.
 
 Definition open_fields_wrt_exp e5 fs5 := open_fields_wrt_exp_rec 0 fs5 e5.
@@ -103,7 +128,20 @@ with lc_exp : exp -> Prop :=    (* defn lc_exp *)
      (lc_exp (e_rec fs))
  | lc_e_proj : forall (e:exp) (l:label),
      (lc_exp e) ->
-     (lc_exp (e_proj e l)).
+     (lc_exp (e_proj e l))
+ | lc_e_unit : 
+     (lc_exp e_unit)
+ | lc_e_str : forall (q:str),
+     (lc_exp (e_str q))
+ | lc_e_ite : forall (e1 e2 e3:exp),
+     (lc_exp e1) ->
+     (lc_exp e2) ->
+     (lc_exp e3) ->
+     (lc_exp (e_ite e1 e2 e3))
+ | lc_e_bin : forall (e1:exp) (o:bop) (e2:exp),
+     (lc_exp e1) ->
+     (lc_exp e2) ->
+     (lc_exp (e_bin e1 o e2)).
 (** free variables *)
 Fixpoint fv_fields (fs5:fields) : vars :=
   match fs5 with
@@ -122,6 +160,10 @@ with fv_exp (e_5:exp) : vars :=
   | (e_let e1 e2) => (fv_exp e1) \u (fv_exp e2)
   | (e_rec fs) => (fv_fields fs)
   | (e_proj e l) => (fv_exp e)
+  | e_unit => {}
+  | (e_str q) => {}
+  | (e_ite e1 e2 e3) => (fv_exp e1) \u (fv_exp e2) \u (fv_exp e3)
+  | (e_bin e1 o e2) => (fv_exp e1) \u (fv_exp e2)
 end.
 
 (** substitutions *)
@@ -142,6 +184,10 @@ with subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
   | (e_let e1 e2) => e_let (subst_exp e_5 x5 e1) (subst_exp e_5 x5 e2)
   | (e_rec fs) => e_rec (subst_fields e_5 x5 fs)
   | (e_proj e l) => e_proj (subst_exp e_5 x5 e) l
+  | e_unit => e_unit 
+  | (e_str q) => e_str q
+  | (e_ite e1 e2 e3) => e_ite (subst_exp e_5 x5 e1) (subst_exp e_5 x5 e2) (subst_exp e_5 x5 e3)
+  | (e_bin e1 o e2) => e_bin (subst_exp e_5 x5 e1) o (subst_exp e_5 x5 e2)
 end.
 
 
@@ -153,6 +199,10 @@ Inductive teq : typ -> typ -> Prop :=    (* defn teq *)
      teq typ_Number typ_Number
  | teq_bool : 
      teq typ_Bool typ_Bool
+ | teq_unit : 
+     teq typ_Unit typ_Unit
+ | teq_string : 
+     teq typ_String typ_String
  | teq_var : forall (a:typvar),
      teq (typ_Var a) (typ_Var a)
  | teq_arrow : forall (T1 T2 T1' T2':typ),

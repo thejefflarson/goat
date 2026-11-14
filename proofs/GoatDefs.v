@@ -189,6 +189,99 @@ Fixpoint lookup_first (l : label) (fs : fields) : option exp :=
   end.
 
 (* ================================================================== *)
+(* Base-type operators (ADR 0017, ADR 0036).                            *)
+(* A numeral is a [nat] and a string is its bytes ([list nat]).  The     *)
+(* operators below are total functions on those payloads; where the      *)
+(* compiler traps (overflow, a zero divisor) or follows IEEE the model   *)
+(* picks Coq's total reading, and the soundness statements are about     *)
+(* types, not traps (docs/semantics.md section 9).                       *)
+(* ================================================================== *)
+
+Definition is_arith (o : bop) : bool :=
+  match o with
+  | bop_add | bop_sub | bop_mul | bop_div | bop_fdiv | bop_rem => true
+  | _ => false
+  end.
+
+Definition arith_op (o : bop) (a b : nat) : nat :=
+  match o with
+  | bop_add => a + b
+  | bop_sub => a - b
+  | bop_mul => a * b
+  | bop_div | bop_fdiv => Nat.div a b
+  | bop_rem => Nat.modulo a b
+  | _ => 0
+  end.
+
+(* Which comparison results satisfy a comparison operator. *)
+Definition cmp_holds (o : bop) (c : comparison) : bool :=
+  match o, c with
+  | bop_lt, Lt => true
+  | bop_lte, (Lt | Eq) => true
+  | bop_gt, Gt => true
+  | bop_gte, (Gt | Eq) => true
+  | bop_eq, Eq => true
+  | bop_ne, (Lt | Gt) => true
+  | _, _ => false
+  end.
+
+(* Strings order bytewise, and a prefix comes first (ADR 0036). *)
+Fixpoint str_compare (p q : list nat) {struct p} : comparison :=
+  match p, q with
+  | nil, nil => Eq
+  | nil, _ :: _ => Lt
+  | _ :: _, nil => Gt
+  | a :: p', b :: q' =>
+      match Nat.compare a b with
+      | Eq => str_compare p' q'
+      | c => c
+      end
+  end.
+
+(* [false] orders before [true] (ADR 0036). *)
+Definition bool_compare (a b : bool) : comparison :=
+  match a, b with
+  | false, true => Lt
+  | true, false => Gt
+  | _, _ => Eq
+  end.
+
+Definition of_bool (b : bool) : exp := if b then e_true else e_false.
+
+Definition val_bool (v : exp) : option bool :=
+  match v with
+  | e_true => Some true
+  | e_false => Some false
+  | _ => None
+  end.
+
+(* The result of an operator on two values.  The last arm is unreachable for
+   well-typed operands (canonical forms). *)
+Definition eval_bin (o : bop) (v1 v2 : exp) : exp :=
+  match v1, v2 with
+  | e_num a, e_num b =>
+      if is_arith o then e_num (arith_op o a b)
+      else of_bool (cmp_holds o (Nat.compare a b))
+  | e_str p, e_str q => of_bool (cmp_holds o (str_compare p q))
+  | _, _ =>
+      match val_bool v1, val_bool v2 with
+      | Some a, Some b => of_bool (cmp_holds o (bool_compare a b))
+      | _, _ => e_unit
+      end
+  end.
+
+(* Types with an order and an equality in this phase (ADR 0036). *)
+Inductive base_typ : typ -> Prop :=
+ | base_Number : base_typ typ_Number
+ | base_String : base_typ typ_String
+ | base_Bool : base_typ typ_Bool.
+
+#[export] Hint Constructors base_typ : core.
+
+Lemma base_ap : forall st sr B, base_typ B -> ap_typ st sr B = B.
+Proof. intros st sr B H. destruct H; reflexivity. Qed.
+
+(* ================================================================== *)
 (* Small-step, call-by-value, left-to-right (section 6).                 *)
 (* No local-closure side conditions: the soundness theorems quantify over  *)
 (* well-typed terms, and every typeable term is locally closed            *)
@@ -216,6 +309,16 @@ Inductive step : exp -> exp -> Prop :=
      step (e_proj (e_rec fs) l) v
  | st_rec : forall fs fs',
      step_fields fs fs' -> step (e_rec fs) (e_rec fs')
+ | st_ite1 : forall e1 e1' e2 e3,
+     step e1 e1' -> step (e_ite e1 e2 e3) (e_ite e1' e2 e3)
+ | st_ite_true : forall e2 e3, step (e_ite e_true e2 e3) e2
+ | st_ite_false : forall e2 e3, step (e_ite e_false e2 e3) e3
+ | st_bin1 : forall e1 e1' o e2,
+     step e1 e1' -> step (e_bin e1 o e2) (e_bin e1' o e2)
+ | st_bin2 : forall v o e2 e2',
+     value v -> step e2 e2' -> step (e_bin v o e2) (e_bin v o e2')
+ | st_bin : forall v1 o v2,
+     value v1 -> value v2 -> step (e_bin v1 o v2) (eval_bin o v1 v2)
 with step_fields : fields -> fields -> Prop :=
  | stf_here : forall l e e' fs,
      step e e' -> step_fields (fs_cons l e fs) (fs_cons l e' fs)
@@ -269,6 +372,19 @@ Inductive typing : ctx -> exp -> typ -> Prop :=
  | T_AppPoly : forall G e g T,
      typing G (e_let g e) T ->
      typing G (e_app (e_abs e) g) T
+ | T_Unit : forall G, uniq G -> typing G e_unit typ_Unit
+ | T_Str : forall G q, uniq G -> typing G (e_str q) typ_String
+ | T_If : forall G e1 e2 e3 T,
+     typing G e1 typ_Bool -> typing G e2 T -> typing G e3 T ->
+     typing G (e_ite e1 e2 e3) T
+ | T_Arith : forall G e1 o e2,
+     is_arith o = true ->
+     typing G e1 typ_Number -> typing G e2 typ_Number ->
+     typing G (e_bin e1 o e2) typ_Number
+ | T_Cmp : forall G e1 o e2 B,
+     is_arith o = false -> base_typ B ->
+     typing G e1 B -> typing G e2 B ->
+     typing G (e_bin e1 o e2) typ_Bool
 with field_typing : ctx -> fields -> row -> Prop :=
  | FT_nil : forall G, uniq G -> field_typing G fs_nil row_Empty
  | FT_cons : forall G l e T fs R,

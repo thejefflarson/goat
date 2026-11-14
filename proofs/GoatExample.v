@@ -146,14 +146,19 @@ Proof.
     simpl; try exact I.
   - (* the program has an expression *) eexists. in_list.
   - (* the block does not end in a binding, and has no dot call *)
-    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
+    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
+         | split; [ exact I | left; reflexivity ] ].
+  - (* the bound value has no dot call and no operator *)
+    split; [ exact I | left; reflexivity ].
   - (* the function has parameters and a body *)
     split; eexists; in_list.
   - (* the body is a single name *)
-    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
+    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
+         | split; [ exact I | left; reflexivity ] ].
   - (* the call has arguments *) eexists. in_list.
   - (* the argument is a single number *)
-    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
+    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
+         | split; [ exact I | left; reflexivity ] ].
 Qed.
 
 (* T1 applies to a concrete program: f = program(y) do y done  f(1). *)
@@ -175,7 +180,7 @@ Example dot_call_passes_the_receiver : forall var_of x,
 Proof.
   intros var_of x.
   eapply DP_dot_call with (es := [e_num 1]).
-  - apply DA_last. apply D_expr. apply DB_chain.
+  - apply DA_last. apply D_expr. apply DB_chain. apply DM_chain.
     eapply DC_head; [ apply D_num | apply DP_nil ].
   - apply DP_nil.
 Qed.
@@ -190,7 +195,7 @@ Proof.
   intros var_of x.
   apply DP_take.
   eapply DP_call with (es := [e_num 1]).
-  - apply DA_last. apply D_expr. apply DB_chain.
+  - apply DA_last. apply D_expr. apply DB_chain. apply DM_chain.
     eapply DC_head; [ apply D_num | apply DP_nil ].
   - apply DP_nil.
 Qed.

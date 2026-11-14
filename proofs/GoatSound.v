@@ -148,6 +148,8 @@ Proof.
   apply typ_row_mutind; intros; simpl in *.
   - fsetdec.
   - fsetdec.
+  - fsetdec.
+  - fsetdec.
   - (* Arrow *) rewrite AtomSetFacts.union_iff in H1. destruct H1 as [H1|H1].
     + destruct (H _ _ _ H1) as [[b [Hb Ha]]|[p [Hp Ha]]].
       * left; exists b; split; [fsetdec|auto].
@@ -181,6 +183,8 @@ Lemma frv_ap_mut :
      (exists q, q `in` frv_row R /\ p `in` frv_row (sr q))).
 Proof.
   apply typ_row_mutind; intros; simpl in *.
+  - fsetdec.
+  - fsetdec.
   - fsetdec.
   - fsetdec.
   - rewrite AtomSetFacts.union_iff in H1. destruct H1 as [H1|H1].
@@ -232,6 +236,8 @@ Proof.
   apply typ_row_mutind; intros; simpl in *.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
+  - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
+  - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - rewrite AtomSetFacts.union_iff.
     destruct H1 as [[b [Hb Ha]]|[p [Hp Ha]]].
     + rewrite AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb];
@@ -272,6 +278,8 @@ Lemma frv_ap_in_mut :
      a `in` frv_row (ap_row st sr R)).
 Proof.
   apply typ_row_mutind; intros; simpl in *.
+  - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
+  - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - rewrite AtomSetFacts.union_iff.
@@ -966,6 +974,18 @@ Proof.
        its substitution obligation IS the (closed) [T_Let] one. *)
     intros G e g T Ht IH st sr G' A Hu' Hcs Hsupp Hcompat.
     apply T_AppPoly. eapply IH; eauto.
+  - (* T_Unit *) intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. simpl. apply T_Unit; auto.
+  - (* T_Str *) intros G q Hu st sr G' A Hu' Hcs Hsupp Hcompat. simpl. apply T_Str; auto.
+  - (* T_If: no variable is bound, so the IHs and the rule again. *)
+    intros G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3 st sr G' A Hu' Hcs Hsupp Hcompat.
+    simpl in *. eapply T_If; [ eapply IH1 | eapply IH2 | eapply IH3 ]; eauto.
+  - (* T_Arith *)
+    intros G e1 o e2 Ho Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
+    simpl in *. eapply T_Arith; [ exact Ho | eapply IH1 | eapply IH2 ]; eauto.
+  - (* T_Cmp: a base type is untouched by substitution ([base_ap]). *)
+    intros G e1 o e2 B Ho HB Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
+    simpl in *. eapply T_Cmp with (B := ap_typ st sr B);
+      [ exact Ho | rewrite (base_ap st sr B HB); exact HB | eapply IH1 | eapply IH2 ]; eauto.
   - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. simpl. apply FT_nil; auto.
   - intros G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat. simpl.
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.
@@ -1130,6 +1150,14 @@ Proof.
   - (* T_Conv *) intros G e T T' Hr IH Hteq G2 Heq; subst. eapply T_Conv; [ apply (IH G2); reflexivity | exact Hteq ].
   - (* T_AppPoly *) intros G e g0 T Hr IH G2 Heq; subst. simpl.
     apply T_AppPoly. apply (IH G2); reflexivity.
+  - (* T_Unit *) intros G Huq G2 Heq; subst. simpl. apply T_Unit. solve_uniq.
+  - (* T_Str *) intros G q Huq G2 Heq; subst. simpl. apply T_Str. solve_uniq.
+  - (* T_If *) intros G e1 e2 e3 T Hr1 IH1 Hr2 IH2 Hr3 IH3 G2 Heq; subst. simpl.
+    eapply T_If; [ apply (IH1 G2) | apply (IH2 G2) | apply (IH3 G2) ]; reflexivity.
+  - (* T_Arith *) intros G e1 o e2 Ho Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+    eapply T_Arith; [ exact Ho | apply (IH1 G2) | apply (IH2 G2) ]; reflexivity.
+  - (* T_Cmp *) intros G e1 o e2 B Ho HB Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+    eapply T_Cmp; [ exact Ho | exact HB | apply (IH1 G2) | apply (IH2 G2) ]; reflexivity.
   - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
   - (* FT_cons *) intros G l e T fs R Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply FT_cons.
     + apply (IH1 G2); reflexivity.
@@ -1208,6 +1236,14 @@ Proof.
   - (* T_Conv *) intros G e T T' Hr IH Hteq G2 Heq; subst. eapply T_Conv; [ apply (IH G2); reflexivity | exact Hteq ].
   - (* T_AppPoly *) intros G e g0 T Hr IH G2 Heq; subst. simpl.
     apply T_AppPoly. apply (IH G2); reflexivity.
+  - (* T_Unit *) intros G Huq G2 Heq; subst. simpl. apply T_Unit. solve_uniq.
+  - (* T_Str *) intros G q Huq G2 Heq; subst. simpl. apply T_Str. solve_uniq.
+  - (* T_If *) intros G e1 e2 e3 T Hr1 IH1 Hr2 IH2 Hr3 IH3 G2 Heq; subst. simpl.
+    eapply T_If; [ apply (IH1 G2) | apply (IH2 G2) | apply (IH3 G2) ]; reflexivity.
+  - (* T_Arith *) intros G e1 o e2 Ho Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+    eapply T_Arith; [ exact Ho | apply (IH1 G2) | apply (IH2 G2) ]; reflexivity.
+  - (* T_Cmp *) intros G e1 o e2 B Ho HB Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+    eapply T_Cmp; [ exact Ho | exact HB | apply (IH1 G2) | apply (IH2 G2) ]; reflexivity.
   - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
   - (* FT_cons *) intros G l e T fs R Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply FT_cons.
     + apply (IH1 G2); reflexivity.
@@ -1246,6 +1282,28 @@ Qed.
 (* GoatMeta.v peel those off so we can see the real rule underneath.      *)
 (* [T_Conv] reappears in each answer so the final type matches.           *)
 (* ================================================================== *)
+
+(* The result of a comparison of two literals of one base type is a boolean. *)
+Lemma typing_of_bool : forall G b, uniq G -> typing G (of_bool b) typ_Bool.
+Proof. intros G b Hu. destruct b; [ apply T_True | apply T_False ]; exact Hu. Qed.
+
+Lemma eval_bin_cmp : forall G o v1 v2 B,
+  is_arith o = false -> base_typ B -> value v1 -> value v2 ->
+  typing G v1 B -> typing G v2 B ->
+  exists b, eval_bin o v1 v2 = of_bool b.
+Proof.
+  intros G o v1 v2 B Ho HB Hv1 Hv2 H1 H2.
+  inversion HB; subst.
+  - destruct (canon_base _ _ _ Hv1 H1) as [C1 _]. destruct (C1 (teq_refl _)) as [a ->].
+    destruct (canon_base _ _ _ Hv2 H2) as [C2 _]. destruct (C2 (teq_refl _)) as [b ->].
+    unfold eval_bin. rewrite Ho. eexists. reflexivity.
+  - destruct (canon_base _ _ _ Hv1 H1) as [_ [C1 _]]. destruct (C1 (teq_refl _)) as [p ->].
+    destruct (canon_base _ _ _ Hv2 H2) as [_ [C2 _]]. destruct (C2 (teq_refl _)) as [q ->].
+    eexists. reflexivity.
+  - destruct (canon_base _ _ _ Hv1 H1) as [_ [_ C1]]. destruct (C1 (teq_refl _)) as [-> | ->];
+    destruct (canon_base _ _ _ Hv2 H2) as [_ [_ C2]]; destruct (C2 (teq_refl _)) as [-> | ->];
+    eexists; reflexivity.
+Qed.
 
 Scheme step_mut := Induction for step Sort Prop
 with   step_fields_mut := Induction for step_fields Sort Prop.
@@ -1365,6 +1423,48 @@ Proof.
     intros fs fs' Hstep IHf G T Hty.
     apply rec_inv in Hty. destruct Hty as [R [Hft Hteq]].
     eapply T_Conv; [ eapply T_Record; apply IHf; exact Hft | exact Hteq ].
+  - (* Case: the condition of an [if] stepped (st_ite1).  Congruence. *)
+    intros e1 e1' e2 e3 Hstep IH G T Hty.
+    apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
+    eapply T_Conv; [ eapply T_If; [ apply IH; exact H1 | exact H2 | exact H3 ] | exact Hteq ].
+  - (* Case: [if true then e2 else e3] steps to [e2] (st_ite_true).  The
+       then-branch has the type of the whole [if]. *)
+    intros e2 e3 G T Hty.
+    apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
+    eapply T_Conv; [ exact H2 | exact Hteq ].
+  - (* st_ite_false: the else-branch. *)
+    intros e2 e3 G T Hty.
+    apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
+    eapply T_Conv; [ exact H3 | exact Hteq ].
+  - (* Case: the left operand stepped (st_bin1).  Congruence, for either
+       typing rule of an operator. *)
+    intros e1 e1' o e2 Hstep IH G T Hty.
+    destruct (bin_inv _ _ _ _ _ Hty)
+      as [[Ho [H1 [H2 Hteq]]] | [Ho [B [HB [H1 [H2 Hteq]]]]]].
+    + eapply T_Conv; [ eapply T_Arith; [ exact Ho | apply IH; exact H1 | exact H2 ] | exact Hteq ].
+    + eapply T_Conv;
+        [ eapply T_Cmp; [ exact Ho | exact HB | apply IH; exact H1 | exact H2 ] | exact Hteq ].
+  - (* st_bin2: the right operand stepped. *)
+    intros v o e2 e2' Hv Hstep IH G T Hty.
+    destruct (bin_inv _ _ _ _ _ Hty)
+      as [[Ho [H1 [H2 Hteq]]] | [Ho [B [HB [H1 [H2 Hteq]]]]]].
+    + eapply T_Conv; [ eapply T_Arith; [ exact Ho | exact H1 | apply IH; exact H2 ] | exact Hteq ].
+    + eapply T_Conv;
+        [ eapply T_Cmp; [ exact Ho | exact HB | exact H1 | apply IH; exact H2 ] | exact Hteq ].
+  - (* Case: an operator on two values (st_bin).  The real work for the
+       base types: canonical forms say each operand is a literal of the
+       operator's type, so [eval_bin] returns a number (arithmetic) or a
+       boolean (comparison), the type the rule gives. *)
+    intros v1 o v2 Hv1 Hv2 G T Hty.
+    destruct (bin_inv _ _ _ _ _ Hty)
+      as [[Ho [H1 [H2 Hteq]]] | [Ho [B [HB [H1 [H2 Hteq]]]]]].
+    + destruct (canon_base _ _ _ Hv1 H1) as [C1 _]. destruct (C1 (teq_refl _)) as [a ->].
+      destruct (canon_base _ _ _ Hv2 H2) as [C2 _]. destruct (C2 (teq_refl _)) as [b ->].
+      unfold eval_bin. rewrite Ho.
+      eapply T_Conv; [ apply T_Num; eapply typing_uniq; exact H1 | exact Hteq ].
+    + destruct (eval_bin_cmp G o v1 v2 B Ho HB Hv1 Hv2 H1 H2) as [b Hb].
+      rewrite Hb.
+      eapply T_Conv; [ apply typing_of_bool; eapply typing_uniq; exact H1 | exact Hteq ].
   - (* Case: the FIRST field of a record stepped (stf_here).  Congruence. *)
     intros l e e' fs Hstep IH G R Hft.
     inversion Hft; subst.
