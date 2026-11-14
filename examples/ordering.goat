@@ -1,0 +1,46 @@
+# How goat compares two values with < <= > >=. Each line prints its answer;
+# the comment says what it should be. See docs/adr/0036-structural-ordering.md.
+
+tag Level = Low | Medium | High
+tag Shot = Miss | Hit(Int)
+
+# Numbers compare by value. An Int and a Float compare together.
+print(3 < 5);            # true
+print(2 < 1.5);          # false
+print(2 <= 2.0);         # true
+
+# Strings compare in dictionary order, by Unicode code point. A shorter
+# prefix is smaller.
+print("app" < "apple");    # true: a shorter prefix is smaller
+print("apple" < "apply");  # true: "e" comes before "y"
+print("Zed" < "amy");      # true: capital letters come before lowercase
+
+# Bools: false is smaller than true.
+print(false < true);     # true
+
+# Tags go in the order they are declared: the leftmost is the lowest.
+print(Low < Medium);     # true
+print(High < Medium);    # false
+# When two tags match, the payload breaks the tie.
+print(Miss < Hit(0));       # true: Miss is declared first
+print(Hit(1) < Hit(2));     # true: same tag, so the payload decides
+
+# Lists compare element by element from the left. The first difference
+# decides. A list that runs out first is smaller.
+print([1, 2] < [1, 3]);     # true: 2 < 3 at the second element
+print([1, 9] < [2]);        # true: 1 < 2 decides, the rest is ignored
+print([1, 2] < [1, 2, 0]);  # true: the shorter list runs out first
+print([] < [1]);            # true: an empty list is the smallest
+
+# Records compare field by field in alphabetical order of the labels, not the
+# order you wrote them: {x, y} and {y, x} are the same type. Here age comes
+# before name, so the age decides first.
+print({name: "Zed", age: 3} < {name: "Amy", age: 9});   # true: 3 < 9
+print({age: 9, name: "Amy"} < {name: "Zed", age: 9});   # true: ages tie, "Amy" < "Zed"
+# Written in the other order, it is the same comparison.
+print({y: 1, x: 2} < {x: 3, y: 0});                     # true: x is first, 2 < 3
+# To rank by another field first, put it first in a list or a tag payload.
+
+# Functions can't be compared. Uncommenting this line is an error:
+# print(program(n) do n done < program(n) do n done)
+print("done")

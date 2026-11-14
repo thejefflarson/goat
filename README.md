@@ -29,7 +29,10 @@ $ goat run examples/fib.goat
   `function` is an accepted synonym for `program`.
 - `if c then a else b done` — conditionals.
 - `{x: 1, y: 2}` — records, with field access `point.x`.
-- Arithmetic `+ - * /` and comparisons `< <= > >=`.
+- `ball.moved()` calls a method; `tools::double(5)` borrows a plain function.
+- Arithmetic `+ - * /` and comparisons `< <= > >=`, which order numbers, strings,
+  bools, tags (in declaration order), lists and records; functions can't be
+  compared (see `docs/adr/0036-structural-ordering.md`).
 - `a and b`, `a or b`, `not a` — booleans; `and`/`or` skip the right side when the
   left decides.
 - `a; b` — run `a`, drop its value, then run `b`.

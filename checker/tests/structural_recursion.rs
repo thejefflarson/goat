@@ -41,21 +41,21 @@ fn a_call_result_is_a_receiver() {
 #[test]
 fn self_application_stays_rejected() {
     let message = error_of("f = program(x) do x(x) done  1").expect("should not check");
-    assert!(message.contains("infinite type"), "{message}");
+    assert!(message.contains("contain itself"), "{message}");
 }
 
 #[test]
 fn a_cycle_through_a_field_alone_stays_rejected() {
     let source = "f = program(x) do if true then x else {a: x} done done  1";
     let message = error_of(source).expect("should not check");
-    assert!(message.contains("infinite"), "{message}");
+    assert!(message.contains("contain itself"), "{message}");
 }
 
 #[test]
 fn a_cycle_through_a_function_alone_stays_rejected() {
     let source = "f = program(x) do if true then x else program() do x done done done  1";
     let message = error_of(source).expect("should not check");
-    assert!(message.contains("infinite"), "{message}");
+    assert!(message.contains("contain itself"), "{message}");
 }
 
 #[test]

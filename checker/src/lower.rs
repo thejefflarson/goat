@@ -94,6 +94,12 @@ pub struct Lowered {
     pub errors: Vec<GoatError>,
     pub warnings: Vec<GoatError>,
     pub interactive: Option<Interactive>,
+    /// Each tag's place in declaration order: the list tags first, then the
+    /// host's, then the prelude's and the program's in source order.
+    pub tag_ranks: HashMap<String, u32>,
+    /// The tags of each declared group, which a value of the group's type
+    /// carries whether or not the program names them all.
+    pub tag_groups: Vec<Vec<String>>,
 }
 
 /// Parse and lower `source` on its own, with no prelude.
@@ -118,18 +124,17 @@ pub fn lower_with_vocab(
     source: &str,
 ) -> Result<Lowered, Vec<GoatError>> {
     let mut ctx = Lower::default();
-    ctx.tags.extend(
-        LIST_TAGS
-            .into_iter()
-            .chain(vocab.tag_names())
-            .map(|tag| (tag.to_string(), None)),
-    );
+    for tag in LIST_TAGS.into_iter().chain(vocab.tag_names()) {
+        ctx.tags.insert(tag.to_string(), None);
+        ctx.rank(tag);
+    }
     let key = Arc::new(vocab.keys.clone());
-    ctx.tags.extend(
-        key.tags
-            .iter()
-            .map(|(tag, _)| (tag.clone(), Some(key.clone()))),
-    );
+    for (tag, _) in &key.tags {
+        ctx.tags.insert(tag.clone(), Some(key.clone()));
+        ctx.rank(tag);
+    }
+    ctx.tag_groups
+        .push(key.tags.iter().map(|(tag, _)| tag.clone()).collect());
     let mut prelude_root = ctx.lower_source(prelude, FileId::Prelude)?;
 
     ctx.prelude_scope = defined_names(&prelude_root);
@@ -152,6 +157,8 @@ pub fn lower_with_vocab(
         errors: ctx.errors,
         warnings: ctx.warnings,
         interactive,
+        tag_ranks: ctx.tag_ranks,
+        tag_groups: ctx.tag_groups,
     })
 }
 
@@ -356,6 +363,9 @@ struct Lower {
     /// Every declared tag, built-in and written: one flat namespace for the
     /// whole program, each tag with the closed group it belongs to, if any.
     tags: HashMap<String, Option<Arc<Group>>>,
+    /// Each tag's place in declaration order, which `<` follows (ADR 0036).
+    tag_ranks: HashMap<String, u32>,
+    tag_groups: Vec<Vec<String>>,
     dot_calls: HashMap<ExprId, DotCall>,
     takes: HashMap<ExprId, Take>,
     /// Functions whose first parameter is `self`, by id, until a record
@@ -413,6 +423,11 @@ impl Lower {
         Ok(root)
     }
 
+    fn rank(&mut self, tag: &str) {
+        let next = self.tag_ranks.len() as u32;
+        self.tag_ranks.entry(tag.to_string()).or_insert(next);
+    }
+
     /// `tag Foo` opens one tag. Anything with a group name, a payload or a `|`
     /// closes its tags into a group, and each tag belongs to one group only.
     fn declare_tags(&mut self, decl: Node) {
@@ -463,7 +478,11 @@ impl Lower {
             tags.push((name, payload));
         }
         let group = (!is_flat).then(|| Arc::new(Group { tags, recursive }));
+        if !is_flat {
+            self.tag_groups.push(declared.clone());
+        }
         for name in declared {
+            self.rank(&name);
             self.tags.entry(name).or_insert_with(|| group.clone());
         }
     }

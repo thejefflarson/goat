@@ -13,7 +13,7 @@ pub mod ty;
 pub mod vocab;
 
 pub use captures::Target;
-pub use error::GoatError;
+pub use error::{GoatError, Label};
 pub use hir::Expr;
 pub use infer::Typed;
 pub use ty::Ty;
@@ -33,6 +33,10 @@ pub struct Checked {
     pub interactive: Option<hir::Interactive>,
     /// The host vocabulary the program was checked against.
     pub vocab: Vocab,
+    /// Each tag's place in declaration order, which the derived `<` follows.
+    pub tag_ranks: HashMap<String, u32>,
+    /// The tags of each declared group.
+    pub tag_groups: Vec<Vec<String>>,
 }
 
 /// The standard library: the definitions every program starts with, whatever its host.
@@ -107,6 +111,8 @@ pub fn check_with_vocab(
         captures,
         interactive: lowered.interactive,
         vocab: vocab.clone(),
+        tag_ranks: lowered.tag_ranks,
+        tag_groups: lowered.tag_groups,
     })
 }
 
@@ -732,7 +738,7 @@ mod tests {
             "f = program(r) do if true then r else {a: r} done done f",
         ] {
             let err = type_of(src).unwrap_err();
-            assert!(err.contains("infinite type"), "{src}: {err}");
+            assert!(err.contains("contain itself"), "{src}: {err}");
         }
     }
 
@@ -967,7 +973,7 @@ mod tests {
         );
         assert_eq!(
             type_of("true < 1").unwrap_err(),
-            "type mismatch: expected `Number`, found `Bool`"
+            "type mismatch: expected `Bool`, found `Number`"
         );
         assert_eq!(
             type_of("if 1 then 2 else 3 done").unwrap_err(),
@@ -1781,15 +1787,15 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_record_is_fine_until_its_type_passes_the_term_limit() {
+    fn a_wide_record_is_fine_until_its_type_passes_the_depth_limit() {
         let record = |fields: usize| {
             let body: Vec<String> = (0..fields).map(|i| format!("f{i}: {i}")).collect();
             format!("{{{}}}", body.join(", "))
         };
         assert!(type_of(&record(200)).is_ok());
-        let source = record(600);
+        let source = record(1200);
         let Err(errors) = check(&source) else {
-            panic!("a 600-field record should not check");
+            panic!("a 1200-field record should not check");
         };
         assert!(errors[0].message.starts_with("program too complex"));
         assert_eq!(&source[errors[0].span.start..errors[0].span.end], source);
@@ -1915,11 +1921,11 @@ mod tests {
     #[test]
     fn a_for_loop_takes_numbers_and_a_list() {
         let err = type_of("for i from 1 to true do print(i) done").unwrap_err();
-        assert!(err.starts_with("type mismatch"), "{err}");
+        assert!(err.contains("needs numbers"), "{err}");
         let err = type_of("for x in 5 do print(x) done").unwrap_err();
         assert!(err.starts_with("type mismatch"), "{err}");
         let err = type_of("repeat true times do done").unwrap_err();
-        assert!(err.starts_with("type mismatch"), "{err}");
+        assert!(err.contains("needs numbers"), "{err}");
     }
 
     #[test]

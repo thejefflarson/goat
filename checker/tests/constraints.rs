@@ -86,7 +86,7 @@ fn a_function_hidden_inside_a_value_is_found() {
 #[test]
 fn a_function_used_where_equality_is_demanded_later_is_found_at_the_call() {
     let src = "same = program(a, b) do a == b done  same(program(x) do x done, 1)";
-    assert_eq!(error_of(src), "can't compare functions with `==`");
+    assert_eq!(error_of(src), "can't compare functions");
     let src = "same = program(a, b) do a == b done  same({f: program(x) do x done}, {f: 1})";
     assert!(
         error_of(src).contains("function inside"),
@@ -114,7 +114,7 @@ fn open_rows_inherit_the_equality_constraint() {
     assert_eq!(type_of(src).unwrap(), "Bool");
     let src = "tag Circle pick = program(s) do match s do Circle(r) then s == s else false done done \
                pick(Circle(program(x) do x done))";
-    assert_eq!(error_of(src), "can't compare functions with `==`");
+    assert_eq!(error_of(src), "can't compare functions");
 }
 
 #[test]
@@ -238,11 +238,57 @@ fn field_access_keeps_a_numeric_operand_numeric() {
 }
 
 #[test]
-fn ordering_still_wants_plain_numbers() {
-    assert_eq!(type_of("1 < 2").unwrap(), "Bool");
+fn ordering_works_on_anything_without_a_function() {
+    for source in [
+        "1 < 2",
+        "1 <= 2.5",
+        "\"apple\" < \"banana\"",
+        "false < true",
+        "{x: 1, y: 2} >= {x: 1, y: 3}",
+        "tag Small | Large  Small < Large",
+        "[1, 2] > [1]",
+        "{a: [\"x\"], b: true} <= {a: [\"x\"], b: false}",
+    ] {
+        assert_eq!(type_of(source).unwrap(), "Bool", "{source}");
+    }
+}
+
+#[test]
+fn ordering_needs_both_sides_to_have_the_same_type() {
     assert_eq!(
-        error_of("{x: 1} < {x: 2}"),
-        "type mismatch: expected `Number`, found `{x: Number}`"
+        error_of("\"a\" < 1"),
+        "type mismatch: expected `String`, found `Number`"
+    );
+    assert_eq!(
+        error_of("{x: 1} < 2"),
+        "type mismatch: expected `{x: Number}`, found `Number`"
+    );
+}
+
+#[test]
+fn ordering_a_function_is_an_error_that_names_the_comparison() {
+    let f = "f = program(x) do x done  ";
+    assert_eq!(
+        error_of(&format!("{f}f < f")),
+        "can't compare functions with `<`"
+    );
+    assert_eq!(
+        error_of("a = {x: 1, f: program(n) do n + 1 done}  a < a"),
+        "can't compare `{x: Number, f: (Number) -> Number}` with `<`: it has a function inside"
+    );
+}
+
+#[test]
+fn a_function_used_where_ordering_is_demanded_later_is_found_at_the_call() {
+    let src = "least = program(a, b) do if a < b then a else b done done  ";
+    assert_eq!(type_of(&format!("{src}least(2, 1)")).unwrap(), "Number");
+    assert_eq!(
+        type_of(&format!("{src}least(\"b\", \"a\")")).unwrap(),
+        "String"
+    );
+    assert_eq!(
+        error_of(&format!("{src}least(program(x) do x done, 1)")),
+        "can't compare functions"
     );
 }
 
@@ -313,5 +359,5 @@ fn spread_recursion_that_reads_a_field_still_checks() {
 #[test]
 fn other_infinite_record_types_stay_rejected() {
     let message = error_of("f = program(s) do f({a: {...s, b: 1}}) done  1");
-    assert!(message.contains("infinite"), "{message}");
+    assert!(message.contains("contain itself"), "{message}");
 }

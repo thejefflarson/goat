@@ -8,6 +8,14 @@ use std::fmt;
 pub struct GoatError {
     pub span: Span,
     pub message: String,
+    /// Other places that explain the error, each with what it says there.
+    pub labels: Vec<Label>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Label {
+    pub span: Span,
+    pub message: String,
 }
 
 impl GoatError {
@@ -15,7 +23,16 @@ impl GoatError {
         GoatError {
             span,
             message: message.into(),
+            labels: Vec::new(),
         }
+    }
+
+    pub fn with_label(mut self, span: Span, message: impl Into<String>) -> GoatError {
+        self.labels.push(Label {
+            span,
+            message: message.into(),
+        });
+        self
     }
 
     /// Blame the user's `site` for an error raised inside the prelude, so the
@@ -32,20 +49,30 @@ impl GoatError {
     /// then the offending line with a caret underline. `source` is the user's
     /// program; an error still inside the prelude renders against that.
     pub fn render(&self, source: &str) -> String {
-        let (source, origin) = if self.span.in_prelude() {
-            (crate::PRELUDE, "in the prelude, ")
-        } else {
-            (source, "")
-        };
-        let (line, col, line_text) = locate(source, self.span.start);
-        let caret_pad = " ".repeat(col.saturating_sub(1));
-        let caret_len = (self.span.end.saturating_sub(self.span.start)).max(1);
-        let caret = "^".repeat(caret_len);
-        format!(
-            "{origin}{line}:{col}: {msg}\n  {line_text}\n  {caret_pad}{caret}",
-            msg = self.message,
-        )
+        let mut out = snippet(source, self.span, &self.message);
+        for label in &self.labels {
+            out.push('\n');
+            out.push_str(&snippet(
+                source,
+                label.span,
+                &format!("note: {}", label.message),
+            ));
+        }
+        out
     }
+}
+
+/// `line:col: message`, then the line with a caret underline under `span`.
+fn snippet(source: &str, span: Span, message: &str) -> String {
+    let (source, origin) = if span.in_prelude() {
+        (crate::PRELUDE, "in the prelude, ")
+    } else {
+        (source, "")
+    };
+    let (line, col, line_text) = locate(source, span.start);
+    let caret_pad = " ".repeat(col.saturating_sub(1));
+    let caret = "^".repeat(span.end.saturating_sub(span.start).max(1));
+    format!("{origin}{line}:{col}: {message}\n  {line_text}\n  {caret_pad}{caret}")
 }
 
 impl fmt::Display for GoatError {

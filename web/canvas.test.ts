@@ -115,3 +115,35 @@ draw = program(model) do [Dot({x: 1, y: 1, r: 1, fill: "not-a-color"})] done
   assert.equal(errors.length, 1);
   assert.match(errors[0]!, /color/);
 });
+
+test("the sky draws each thing with its own look method from a model that holds only the clock", async () => {
+  const { exports, loop, frame, errors } = await start(example("sky"));
+  const dots = (commands: SceneCommand[]) => commands.filter((c) => c.kind === "circle");
+  const first = frame(0);
+  assert.deepEqual(kinds(first), ["begin", "rect", "circle", "circle", "circle", "circle", "circle", "end"]);
+  assert.deepEqual(
+    dots(first).map((c) => ("color" in c ? c.color : undefined)),
+    ["gold", "white", "white", "white", "white"],
+  );
+  assert.deepEqual(dots(first)[0], { kind: "circle", x: 90, y: 90, r: 30, color: "gold" });
+  loop.send({ kind: "Tick", dt: 150 });
+  const later = dots(frame(16));
+  assert.notDeepEqual(later[0], dots(first)[0]);
+  assert.notDeepEqual(later[1], dots(first)[1]);
+  loop.stop();
+  assert.equal(exports.goat_live_allocs(), 0);
+  assert.deepEqual(errors, []);
+});
+
+test("the editor page offers the sky example exactly as the file reads", () => {
+  const page = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+  assert.ok(page.includes(`    sky: \`${example("sky")}\`,`));
+  assert.ok(page.includes('<option value="sky">'));
+});
+
+test("the editor page offers the ordering example exactly as the file reads", () => {
+  const page = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+  const file = readFileSync(new URL("../examples/ordering.goat", import.meta.url), "utf8");
+  assert.ok(page.includes(`    ordering: \`${file}\`,`));
+  assert.ok(page.includes('<option value="ordering">'));
+});

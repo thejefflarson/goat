@@ -2,7 +2,7 @@
 
 pub use goat_checker::hir::{Boundary, Span};
 pub use goat_checker::ty::{Group, Row, Ty};
-pub use goat_checker::{GoatError, Vocab};
+pub use goat_checker::{GoatError, Label, Vocab};
 pub use goat_mir::{
     Host, HostValue, NoHost, Profile, Scene, SceneCommand, SceneHost, SceneSink, check_color,
 };

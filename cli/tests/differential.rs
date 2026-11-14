@@ -382,6 +382,12 @@ fn examples_print_the_expected_output() {
         ("lists.goat", "15"),
         ("spread.goat", "25"),
         ("spread_update.goat", "27"),
+        ("methods.goat", "39"),
+        (
+            "dict.goat",
+            "3\ntrue\n[\"ana\", \"cy\"]\n[3, 5, 1]\nana\nbo\ncy\n[\"three\", \"two\", \"one\"]\n6",
+        ),
+        ("toolbox.goat", "20"),
         ("list_literals.goat", "29"),
         (
             "loops.goat",
@@ -394,6 +400,10 @@ fn examples_print_the_expected_output() {
         (
             "constraints.goat",
             "{x: 21, y: 42}\n[true, true, false]\ntrue",
+        ),
+        (
+            "ordering.goat",
+            "true\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ndone",
         ),
     ] {
         let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));

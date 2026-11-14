@@ -3,7 +3,8 @@
 
 use crate::hir::Boundary;
 use crate::infer::subst_vars;
-use std::collections::{BTreeSet, HashMap};
+use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 /// A unification variable. The same numbering space is shared by type variables
@@ -246,13 +247,56 @@ impl Ty {
     /// so a type reads `μl. [Empty, Link: {0: a, 1: l}]` rather than that
     /// unfolded once with the `μ` one level down.
     pub fn fold_rec(&self) -> Ty {
-        let folded = self.map_children(&Ty::fold_rec);
-        if !matches!(folded, Ty::Rec(..))
+        self.clone().into_folded()
+    }
+
+    /// [`Self::fold_rec`], rebuilding the type only when something folds.
+    pub fn into_folded(self) -> Ty {
+        if self.scan_folds(&mut Vec::new()) {
+            self.fold_rec_noting().0
+        } else {
+            self
+        }
+    }
+
+    /// Whether some sub-term of this type is the unfolding of a `Rec` inside
+    /// it. Every `Rec` in the type is pushed on `recs`, so each sub-term
+    /// is tested against the `Rec`s below it and none other.
+    fn scan_folds<'a>(&'a self, recs: &mut Vec<&'a Ty>) -> bool {
+        let below = recs.len();
+        let mut folds = false;
+        for child in self.children() {
+            folds |= child.scan_folds(recs);
+        }
+        if matches!(self, Ty::Rec(..)) {
+            recs.push(self);
+        } else if !folds {
+            folds = recs[below..].iter().any(|rec| match rec {
+                Ty::Rec(_, body) => body.has_head_of(self) && rec.unfold() == *self,
+                _ => false,
+            });
+        }
+        folds
+    }
+
+    /// [`Self::fold_rec`], and whether the result has a `Rec` anywhere in it:
+    /// with none, no sub-term can be an unfolding of one, and the search for
+    /// one is skipped.
+    fn fold_rec_noting(&self) -> (Ty, bool) {
+        let nested = std::cell::Cell::new(false);
+        let folded = self.map_children(&|child| {
+            let (child, has_rec) = child.fold_rec_noting();
+            nested.set(nested.get() || has_rec);
+            child
+        });
+        let is_rec = matches!(folded, Ty::Rec(..));
+        if !is_rec
+            && nested.get()
             && let Some(rec) = folded.find_unfolding_to(&folded)
         {
-            return rec;
+            return (rec, true);
         }
-        folded
+        (folded, is_rec || nested.get())
     }
 
     /// Whether this type and `other` start with the same constructor, over the
@@ -260,7 +304,7 @@ impl Ty {
     fn has_head_of(&self, other: &Ty) -> bool {
         match (self, other) {
             (Ty::Record(a), Ty::Record(b)) | (Ty::Variant(a), Ty::Variant(b)) => {
-                a.labels().eq(b.labels())
+                a.labels().eq(b.labels()) && a.tail() == b.tail()
             }
             (Ty::Func(a, _), Ty::Func(b, _)) => a.len() == b.len(),
             _ => std::mem::discriminant(self) == std::mem::discriminant(other),
@@ -313,6 +357,14 @@ impl Row {
                 method.free_vars(out);
                 rest.free_vars(out);
             }
+        }
+    }
+
+    /// What the row ends in: [`Row::Empty`] or a row variable.
+    fn tail(&self) -> &Row {
+        match self {
+            Row::Extend { rest, .. } | Row::Maybe { rest, .. } => rest.tail(),
+            Row::Empty | Row::Var(_) => self,
         }
     }
 
@@ -506,6 +558,9 @@ impl Row {
     ) -> fmt::Result {
         match self {
             Row::Empty => Ok(()),
+            Row::Var(_) if MESSAGE_NAMES.get() => {
+                write!(f, "{}…", if first { "" } else { ", " })
+            }
             Row::Var(v) => {
                 if first {
                     write!(f, "{}", name_of(*v))
@@ -543,7 +598,72 @@ impl Row {
 /// Render a type variable as a short name (`t0`, `t1`, ...) so error messages
 /// and inferred-type output stay readable.
 fn name_of(v: TypeVar) -> String {
-    format!("t{v}")
+    if MESSAGE_NAMES.get() {
+        format!("{MARK_OPEN}{v}{MARK_CLOSE}")
+    } else {
+        format!("t{v}")
+    }
+}
+
+const MARK_OPEN: char = '\u{e000}';
+const MARK_CLOSE: char = '\u{e001}';
+
+thread_local! {
+    static MESSAGE_NAMES: Cell<bool> = const { Cell::new(false) };
+}
+
+/// While alive, `Display` writes a type variable as a marker that
+/// [`name_variables`] later turns into a letter, and an open row's tail as `…`,
+/// so a diagnostic never shows a raw `t36`.
+pub(crate) struct MessageNames(bool);
+
+impl MessageNames {
+    pub(crate) fn enter() -> MessageNames {
+        MessageNames(MESSAGE_NAMES.replace(true))
+    }
+}
+
+impl Drop for MessageNames {
+    fn drop(&mut self) {
+        MESSAGE_NAMES.set(self.0);
+    }
+}
+
+/// Replace each variable marker in `texts` with a letter (`a`, `b`, ... `z`,
+/// `a1`, ...), the same letter for the same variable across all of them.
+pub(crate) fn name_variables<'a>(texts: impl IntoIterator<Item = &'a mut String>) {
+    let mut letters: BTreeMap<String, String> = BTreeMap::new();
+    for text in texts {
+        if !text.contains(MARK_OPEN) {
+            continue;
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text.as_str();
+        while let Some(start) = rest.find(MARK_OPEN) {
+            out.push_str(&rest[..start]);
+            let after = &rest[start + MARK_OPEN.len_utf8()..];
+            let Some(end) = after.find(MARK_CLOSE) else {
+                rest = after;
+                continue;
+            };
+            let next = letters.len();
+            let letter = letters
+                .entry(after[..end].to_string())
+                .or_insert_with(|| letter_name(next));
+            out.push_str(letter);
+            rest = &after[end + MARK_CLOSE.len_utf8()..];
+        }
+        out.push_str(rest);
+        *text = out;
+    }
+}
+
+fn letter_name(index: usize) -> String {
+    let letter = (b'a' + (index % 26) as u8) as char;
+    match index / 26 {
+        0 => letter.to_string(),
+        round => format!("{letter}{round}"),
+    }
 }
 
 /// A type scheme `forall vars. ty` — a polymorphic type produced by

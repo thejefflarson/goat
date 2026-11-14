@@ -66,6 +66,8 @@
       <option value="spiral">Spiral (run once)</option>
       <option value="bounce">Bouncing ball (canvas)</option>
       <option value="catch">Catch the coin (canvas)</option>
+      <option value="sky">Sky with methods (canvas)</option>
+      <option value="ordering">How values compare (prints)</option>
     </select>
     <label><input type="checkbox" id="live" checked> Live</label>
     <span id="status" role="status"></span>
@@ -92,7 +94,7 @@
   const RELOAD_DELAY_MS = 400;
 
   // An example names its vocabulary: the turtle's, or the canvas host's.
-  const HOSTS = { arrow_draw: "turtle", spiral: "turtle", bounce: "canvas", catch: "canvas" };
+  const HOSTS = { arrow_draw: "turtle", spiral: "turtle", bounce: "canvas", catch: "canvas", sky: "canvas", ordering: "turtle" };
   let host = "turtle";
 
   const EXAMPLES = {
@@ -217,6 +219,97 @@ draw = program(model) do
     Label({x: 10, y: 30, text: if model.score >= 5 then "you win!" else "catch the gold" done, fill: "black"})
   ]
 done
+`,
+    sky: `# Things in the sky share their fields (x, y, size, fill) but each has its own
+# look(self, t) method, so the same call draws each one differently. The
+# model holds only the clock t, in milliseconds. The canvas is 400 wide and
+# 300 tall.
+init = {t: 0}
+
+sun = {
+  x: 90, y: 90, size: 30, fill: "gold",
+  look: program(self, t) do
+    Dot({x: self.x, y: self.y, r: self.size + 4 * sin(t / 10), fill: self.fill})
+  done
+}
+
+moon = {
+  x: 300, y: 70, size: 22, fill: "white",
+  look: program(self, t) do
+    Dot({x: self.x - 20 * sin(t / 30), y: self.y, r: self.size, fill: self.fill})
+  done
+}
+
+star = {
+  x: 200, y: 40, size: 3, fill: "white",
+  look: program(self, t) do
+    Dot({x: self.x, y: self.y, r: if sin(t / 5) > 0 then self.size else 1 done, fill: self.fill})
+  done
+}
+
+# A prototype copy keeps the type and the method.
+sky = [sun, moon, star, {...star, x: 140, y: 120}, {...star, x: 250, y: 150}]
+
+update = program(model, event) do
+  match event do
+    Frame(dt) then {...model, t: model.t + dt}
+    else model
+  done
+done
+
+draw = program(model) do
+  join(
+    [Box({x: 0, y: 0, w: 400, h: 300, fill: "navy"})],
+    change_each(sky, program(item) do item.look(model.t) done)
+  )
+done
+`,
+    ordering: `# How goat compares two values with < <= > >=. Each line prints its answer;
+# the comment says what it should be. See docs/adr/0036-structural-ordering.md.
+
+tag Level = Low | Medium | High
+tag Shot = Miss | Hit(Int)
+
+# Numbers compare by value. An Int and a Float compare together.
+print(3 < 5);            # true
+print(2 < 1.5);          # false
+print(2 <= 2.0);         # true
+
+# Strings compare in dictionary order, by Unicode code point. A shorter
+# prefix is smaller.
+print("app" < "apple");    # true: a shorter prefix is smaller
+print("apple" < "apply");  # true: "e" comes before "y"
+print("Zed" < "amy");      # true: capital letters come before lowercase
+
+# Bools: false is smaller than true.
+print(false < true);     # true
+
+# Tags go in the order they are declared: the leftmost is the lowest.
+print(Low < Medium);     # true
+print(High < Medium);    # false
+# When two tags match, the payload breaks the tie.
+print(Miss < Hit(0));       # true: Miss is declared first
+print(Hit(1) < Hit(2));     # true: same tag, so the payload decides
+
+# Lists compare element by element from the left. The first difference
+# decides. A list that runs out first is smaller.
+print([1, 2] < [1, 3]);     # true: 2 < 3 at the second element
+print([1, 9] < [2]);        # true: 1 < 2 decides, the rest is ignored
+print([1, 2] < [1, 2, 0]);  # true: the shorter list runs out first
+print([] < [1]);            # true: an empty list is the smallest
+
+# Records compare field by field in alphabetical order of the labels, not the
+# order you wrote them: {x, y} and {y, x} are the same type. Here age comes
+# before name, so the age decides first.
+print({name: "Zed", age: 3} < {name: "Amy", age: 9});   # true: 3 < 9
+print({age: 9, name: "Amy"} < {name: "Zed", age: 9});   # true: ages tie, "Amy" < "Zed"
+# Written in the other order, it is the same comparison.
+print({y: 1, x: 2} < {x: 3, y: 0});                     # true: x is first, 2 < 3
+# To rank by another field first, put it first in a list or a tag payload.
+
+# Functions can't be compared. Uncommenting this line is an error:
+# print(program(n) do n done < program(n) do n done)
+print("done")
 `,
   };
 

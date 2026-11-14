@@ -80,12 +80,7 @@ fn results_feed_back_into_the_list_functions() {
 
 #[test]
 fn numeric_functions_reject_other_elements() {
-    for (source, found) in [
-        ("sum([\"a\"])", "String"),
-        ("biggest([true])", "Bool"),
-        ("smallest([\"a\"])", "String"),
-        ("sort([\"a\"])", "String"),
-    ] {
+    for (source, found) in [("sum([\"a\"])", "String"), ("sum([true])", "Bool")] {
         assert_eq!(
             type_of(source).unwrap_err(),
             format!("type mismatch: expected `Number`, found `{found}`"),
@@ -95,10 +90,26 @@ fn numeric_functions_reject_other_elements() {
 }
 
 #[test]
+fn ordering_functions_take_anything_without_a_function() {
+    for source in [
+        "sort([\"b\", \"a\"])",
+        "biggest([true, false])",
+        "smallest([{x: 1}, {x: 0}])",
+        "insert_sorted(\"b\", [\"a\", \"c\"], [])",
+    ] {
+        assert!(type_of(source).is_ok(), "{source}");
+    }
+    assert_eq!(
+        type_of("sort([print])").unwrap_err(),
+        "can't compare functions"
+    );
+}
+
+#[test]
 fn has_cannot_compare_functions() {
     assert_eq!(
         type_of("has([print], print)").unwrap_err(),
-        "can't compare functions with `==`"
+        "can't compare functions"
     );
 }
 

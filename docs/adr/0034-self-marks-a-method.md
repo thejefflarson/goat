@@ -81,17 +81,22 @@ wasm with one recursive type and no nested knots.
    (`{...r, f: program(self) do … done}`) may be a method; its receiver is typed
    by ADR 0032's knot, since the literal's final shape is the spread's.
 3. **A record literal with methods is typed like a `letrec` over its fields.**
-   Every field gets a type variable, and every method's `self` is
-   `{fields | ρ}` over those variables with one shared row variable `ρ` for
-   whatever a later extension adds. After the bodies are inferred, the receiver
-   type is folded once into `μs. {fields | ρ}` with each method typed `(s, …) ->`
-   its result, and the literal's own type is the closed row of those fields. `ρ`
-   is generalized with the binding, so each use of a record instantiates its own
-   extension: `big = {...ball, size: 10}; big.moved()` returns `big`'s type. If a
-   method calls a sibling through `self`, the methods' types mention another
-   field's variable and the fold is skipped; the fields are then unified one at
-   a time, which can still tie a knot per method. ADR 0032's occurs-check knot
-   remains for receivers that are parameters.
+   Every field gets a type variable, and the literal gets one receiver variable,
+   `s`, that every method's `self` has as its type. `s` stands for
+   `{fields | ρ}` over those variables, with one shared row variable `ρ` for
+   whatever a later extension adds, and it is never bound while the bodies are
+   inferred: unifying `s` with a record unifies that record, so `self.x` and
+   `{...self, …}` see the fields, and a sibling call `self.g()` constrains
+   `g`'s variable without a cycle through its own type. This is how OCaml types
+   objects. After the bodies are inferred, each method is unified with its
+   field's variable, a result equal to the receiver's record is written `s`, and
+   `s` is bound once to `μs. {fields | ρ}`. The literal's own type is the closed
+   row of those fields, each mentioning `s`. `ρ` is generalized with the
+   binding, so each use of a record instantiates its own extension:
+   `big = {...ball, size: 10}; big.moved()` returns `big`'s type. Methods that
+   call siblings, chain through `self`, or update the record all take this one
+   path, and ADR 0032's occurs-check knot remains for receivers that are
+   parameters.
 4. **The highlighter shows `self` as a keyword by a rule both sides share.**
    `parser::lexer::highlight` marks a name `self` as a keyword (as it marks
    declared tags), and `editor/highlight.goat` does the same. `lexer::lex` and
@@ -111,18 +116,37 @@ wasm with one recursive type and no nested knots.
    without `...self` names the method that dropped the rest. The earlier
    `(r.f)()` suggestion is now `r::f()`.
 6. **Check time.** The ticket asked that the three-method model check in at
-   most twice the time of the same model written without methods. It does not:
-   3.1 ms against 0.15 ms in a release build. Each method's type embeds the
-   receiver twice, so the record type has about 110 terms against about 15, and
-   `unify_ty` resolves whole types at every step. The criterion
-   was waived for this build; sharing the receiver type, or resolving it
-   shallowly, is #417.
+   most twice the time of the same model written without methods. The first
+   build took 3.1 ms against 0.15 ms in a release build, because each method's
+   type embedded the receiver twice and `unify_ty` resolved whole types at every
+   step. The receiver variable, shallow resolution in `unify_ty` and
+   `unify_row` (types in the substitution are shared, so following a variable
+   copies nothing), unresolved keys for the pairs unification assumes equal, and
+   a cheaper search for types to refold bring it to about 1.3 ms against 0.15
+   ms: still about nine times, not two. What is left is mostly `run`'s own
+   parameter, which a dot call on a parameter ties into nested knots (ADR
+   0032), and `finish` copying `n` receiver types for `n` mentions of `self`.
+   A literal of thirty methods, half of them calling siblings, checks in about
+   12 ms in a release build.
 7. **Final types are bounded too.** A type within `MAX_TYPE_TERMS` when
-   inferred can grow as later unifications bind the variables inside it: six
-   methods calling one another through `self` reach two million terms once
-   substituted, and folding them back into `μ` form does not finish. Before the
-   checker hands its types on, each is counted, with the count stopping early,
-   against `MAX_UNFOLDED_TERMS`; one over it is a spanned "program too
-   complex" error. Such records are now rejected in well under a second rather
-   than checking forever, and records of more than about ten methods, or four
-   that call siblings, hit the bound; making them fit is #418, with #417.
+   inferred can grow as later unifications bind the variables inside it, so
+   before the checker hands its types on, each is counted, with the count
+   stopping early, against `MAX_UNFOLDED_TERMS`; one over it is a spanned
+   "program too complex" error. A record literal's receiver is counted before
+   it is resolved. A literal of twelve updating methods, or four that call
+   siblings, now checks; one of a hundred and twenty is refused. A method
+   called on the result of a sibling call (`self.bump().bump()`) checks at any
+   chain length (item 8).
+8. **A sibling's result is the receiver before the next call is typed.** A
+   method whose type is `s -> s` (it returns `{...self, …}`, which ADR 0033
+   types as exactly `self`) is unified with its field as soon as its body is
+   inferred, so a call to it gives back `s`, not an unknown that the next
+   `.bump()` would wrap in another layer of record type. Methods are inferred
+   after the siblings they call through `self`, in source order otherwise
+   (methods that call each other in a cycle keep source order), so a chain
+   works wherever its callee is declared. A call's result bound to a
+   temporary, which is how a dot call on a call is lowered, keeps the type `s`
+   instead of the receiver's whole record opened at the binding. A method
+   that returns a different shape (a spread that adds a field, a number) is
+   not `s -> s`, is tied with the others afterward as before, and is typed or
+   rejected by the same rules.
