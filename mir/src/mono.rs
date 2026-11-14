@@ -15,6 +15,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod interactive;
+mod reload;
 mod structural;
 
 type Subst = HashMap<TypeVar, Ty>;
@@ -72,19 +73,45 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
         derived: HashMap::new(),
         errors: Vec::new(),
         data: Vec::new(),
+        method_bindings: HashMap::new(),
+        method_funcs: Vec::new(),
     };
 
     let mut cx = FnCx::new(Subst::new());
     let root_ty = m.ground(&checked.typed.root_ty, &cx.subst);
-    let ret = m.lower_ty(&root_ty);
+    let mut ret = m.lower_ty(&root_ty);
     // A pointer root is dropped after it is computed (see `rc::insert_rc`), so
     // it cannot end in a tail call; a string root is handed to the host.
-    let body = m.expr(&mut cx, &checked.root, !ret.is_discarded_root());
+    let mut body = m.expr(&mut cx, &checked.root, !ret.is_discarded_root());
+    let interactive = if checked.interactive.is_some() {
+        let names = reload::names(checked, &m.lambdas);
+        m.method_bindings = names
+            .sites
+            .iter()
+            .map(|s| (s.expr, s.binding.clone()))
+            .collect();
+        let model = reload::model_ty(&root_ty);
+        let built = reload::Gen::build(&mut m, &names, &model, &mut cx);
+        let MTy::Ptr(HeapKind::Record(root_layout)) = ret else {
+            unreachable!("an interactive root is a record");
+        };
+        let Layout::Record(fields) = m.layouts[root_layout.0 as usize].clone() else {
+            unreachable!("an interactive root is a record");
+        };
+        let sites_slot = fields.len();
+        let sites_ty = MTy::Ptr(HeapKind::Record(built.sites_layout));
+        let mut extended = fields.clone();
+        extended.push(sites_ty);
+        let extended_layout = LayoutId(m.layouts.len() as u32);
+        m.layouts.push(Layout::Record(extended));
+        let sites = Expr::AllocRecord(built.sites_layout, built.site_closures);
+        body = reload::extend_root(body, &mut cx, ret, sites_ty, extended_layout, fields.len(), sites);
+        ret = MTy::Ptr(HeapKind::Record(extended_layout));
+        Some(m.interactive(&root_ty, built.reload, sites_slot))
+    } else {
+        None
+    };
     m.out[0] = Some(cx.into_func(vec![], None, ret, body));
-    let interactive = checked
-        .interactive
-        .is_some()
-        .then(|| m.interactive(&root_ty));
 
     let mut step = 0usize;
     while let Some((id, target, subst, capture_tys)) = m.work.pop() {
@@ -112,6 +139,16 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
         return Err(m.errors);
     }
 
+    let method_sites = m
+        .method_funcs
+        .clone()
+        .into_iter()
+        .flat_map(|(func, key)| {
+            let key = m.intern(&key);
+            let wrapper = m.wrappers.get(&func).copied();
+            std::iter::once(func).chain(wrapper).map(move |func| MethodSite { func, key })
+        })
+        .collect();
     let mut program = Program {
         profile,
         funcs: m
@@ -125,6 +162,7 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
         data: m.data,
         foreign: m.imports,
         interactive,
+        method_sites,
     };
     insert_rc(&mut program);
     Ok(program)
@@ -398,6 +436,10 @@ struct Mono<'a> {
     derived: HashMap<(structural::Derived, Ty), FuncId>,
     errors: Vec<GoatError>,
     data: Vec<Vec<u8>>,
+    /// The top-level binding each method literal sits in, by literal.
+    method_bindings: HashMap<ExprId, String>,
+    /// Each specialization of a method literal, with its binding.
+    method_funcs: Vec<(FuncId, String)>,
 }
 
 /// The variant types that share one layout. A layout is a table from the global
@@ -789,6 +831,11 @@ impl Mono<'_> {
         let (_, use_ty, capture_tys) = &key;
         let id = FuncId(self.out.len() as u32);
         self.out.push(None);
+        if let Target::Anon(expr) = target
+            && let Some(binding) = self.method_bindings.get(&expr)
+        {
+            self.method_funcs.push((id, binding.clone()));
+        }
 
         // The body also mentions the enclosing scope's type variables; the
         // captured variables' ground types recover them.
