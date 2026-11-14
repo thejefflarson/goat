@@ -5,6 +5,7 @@
 //! `Renamer`. It also parses literals to values and flattens the parse tree's
 //! operator list into a precedence-correct expression tree.
 
+use crate::captures::for_each_node;
 use crate::error::GoatError;
 use crate::hir::{
     BinOp, Boundary, Builtin, ContractBinding, Decoder, Expr, ExprId, ExprKind, FileId,
@@ -209,6 +210,93 @@ fn defined_names(root: &Expr) -> HashMap<String, Symbol> {
         next = rest.as_deref();
     }
     names
+}
+
+/// `root` without the prelude definitions its program never reaches, by name
+/// and transitively, and the tags those dropped definitions match (a tag the
+/// program constructs still counts as matched there). Foreign declarations and
+/// `_` bindings stay, since a host or a side effect may depend on them.
+pub fn prune_unreached_prelude(root: Expr) -> (Expr, HashSet<String>) {
+    let mut shells: Vec<Expr> = Vec::new();
+    let mut cur = root;
+    let mut dangling = false;
+    while cur.span.in_prelude() {
+        let ExprKind::Let { rest, .. } = &mut cur.kind else {
+            break;
+        };
+        let Some(next) = rest.take() else {
+            dangling = true;
+            break;
+        };
+        shells.push(cur);
+        cur = *next;
+    }
+    if dangling {
+        shells.push(cur);
+        let kept = vec![true; shells.len()];
+        return rebuild_chain(shells, None, &kept);
+    }
+    let tail = cur;
+
+    let index: HashMap<Symbol, usize> = shells
+        .iter()
+        .enumerate()
+        .filter_map(|(i, shell)| match &shell.kind {
+            ExprKind::Let { symbol, .. } => Some((*symbol, i)),
+            _ => None,
+        })
+        .collect();
+    let mut kept = vec![false; shells.len()];
+    let mut pending = Vec::new();
+    let reach = |expr: &Expr, kept: &mut Vec<bool>, pending: &mut Vec<usize>| {
+        for_each_node(expr, &mut |e| {
+            if let ExprKind::Var { symbol, .. } = &e.kind {
+                if let Some(&i) = index.get(symbol) {
+                    if !std::mem::replace(&mut kept[i], true) {
+                        pending.push(i);
+                    }
+                }
+            }
+        });
+    };
+    reach(&tail, &mut kept, &mut pending);
+    for (i, shell) in shells.iter().enumerate() {
+        if let ExprKind::Let { name, value, .. } = &shell.kind {
+            if (name == "_" || matches!(value.kind, ExprKind::Foreign { .. })) && !kept[i] {
+                kept[i] = true;
+                pending.push(i);
+            }
+        }
+    }
+    while let Some(i) = pending.pop() {
+        if let ExprKind::Let { value, .. } = &shells[i].kind {
+            reach(value, &mut kept, &mut pending);
+        }
+    }
+    rebuild_chain(shells, Some(tail), &kept)
+}
+
+/// Relink the `kept` shells in order ahead of `tail`, collecting the tags the
+/// others' arms match.
+fn rebuild_chain(shells: Vec<Expr>, tail: Option<Expr>, kept: &[bool]) -> (Expr, HashSet<String>) {
+    let mut matched = HashSet::new();
+    let mut acc = tail.map(Box::new);
+    for (shell, keep) in shells.into_iter().zip(kept).rev() {
+        if *keep {
+            let mut shell = shell;
+            if let ExprKind::Let { rest, .. } = &mut shell.kind {
+                *rest = acc.take();
+            }
+            acc = Some(Box::new(shell));
+        } else if let ExprKind::Let { value, .. } = &shell.kind {
+            for_each_node(value, &mut |e| {
+                if let ExprKind::Match { arms, .. } = &e.kind {
+                    matched.extend(arms.iter().map(|arm| arm.pattern.tag.clone()));
+                }
+            });
+        }
+    }
+    (*acc.expect("a kept link or a tail remains"), matched)
 }
 
 /// Make `user` the `rest` of the last `Let` in the chain at `prelude`.

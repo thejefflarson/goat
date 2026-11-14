@@ -88,8 +88,10 @@ pub fn check_with_vocab(
     if !lowered.errors.is_empty() {
         return Err(lowered.errors);
     }
-    let dots = infer::DotCalls::new(lowered.dot_calls, lowered.takes, source.to_string());
-    let mut typed = infer::infer_program(&lowered.root, lowered.interactive.as_ref(), vocab, dots)?;
+    let (root, pruned_matches) = lower::prune_unreached_prelude(lowered.root);
+    let mut dots = infer::DotCalls::new(lowered.dot_calls, lowered.takes, source.to_string());
+    dots.pruned_matches = pruned_matches;
+    let mut typed = infer::infer_program(&root, lowered.interactive.as_ref(), vocab, dots)?;
     typed.warnings.splice(0..0, lowered.warnings);
     let generalized = typed
         .schemes
@@ -97,16 +99,16 @@ pub fn check_with_vocab(
         .filter(|(_, scheme)| !scheme.vars.is_empty())
         .map(|(symbol, _)| *symbol)
         .collect();
-    let captures = captures::capture_sets(&lowered.root, &generalized);
+    let captures = captures::capture_sets(&root, &generalized);
     // Order is judged on the names the source writes: a function still uses a
     // generalized value it names, however mono later lowers that value.
-    let named = captures::capture_sets(&lowered.root, &HashSet::new());
-    let errors = order::check(&lowered.root, &named);
+    let named = captures::capture_sets(&root, &HashSet::new());
+    let errors = order::check(&root, &named);
     if !errors.is_empty() {
         return Err(errors);
     }
     Ok(Checked {
-        root: lowered.root,
+        root,
         typed,
         captures,
         interactive: lowered.interactive,
