@@ -199,3 +199,68 @@ Proof.
     eapply DC_head; [ apply D_num | apply DP_nil ].
   - apply DP_nil.
 Qed.
+
+(* if 1 < 2 then "s" else 3 + 4 done: a conditional, a string and two operations. *)
+Definition conditional_program : list tok :=
+  [TSym "if"; TNum 1; TSym "<"; TNum 2; TSym "then"; TStr; TSym "else";
+   TNum 3; TSym "+"; TNum 4; TSym "done"].
+
+Definition conditional_tree : tree :=
+  Node R_goat
+    [Node R_expr
+       [Node R_conditional
+          [sym "if";
+           Node R_expr
+             [Node R_number [Leaf (TNum 1)]; Node R_lt [sym "<"];
+              Node R_number [Leaf (TNum 2)]];
+           sym "then"; Node R_expr [Node R_string [Leaf TStr]]; sym "else";
+           Node R_expr
+             [Node R_number [Leaf (TNum 3)]; Node R_plus [sym "+"];
+              Node R_number [Leaf (TNum 4)]];
+           sym "done"]]].
+
+Example conditional_parses :
+  peg (E_rule R_goat) conditional_program (Ok [conditional_tree] []).
+Proof. apply (run_sound 600). vm_compute. reflexivity. Qed.
+
+Lemma conditional_core : Forall core_tree [conditional_tree].
+Proof.
+  repeat first
+    [ apply Forall_nil | apply Forall_cons | apply Core_leaf
+    | (apply Core_node; [ reflexivity | ]) ].
+Qed.
+
+Lemma conditional_complete : Forall Complete [conditional_tree].
+Proof.
+  repeat first
+    [ apply Forall_nil | apply Forall_cons | apply Cp_leaf | apply Cp_node ];
+    simpl; try exact I.
+  all: first
+    [ solve [ eexists; in_list ]
+    | solve [ split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
+                     | split; [ exact I | first [ left; reflexivity
+                                                | (right; split; [ reflexivity | exact I ]) ] ] ] ]
+    | solve [ in_list ] ].
+Qed.
+
+(* T1 applies to the conditional program. *)
+Example conditional_denotes_lc : forall var_of,
+  exists t e,
+    [conditional_tree] = [t] /\ Den_goat var_of t e /\ lc_exp e /\ lc e.
+Proof.
+  intros var_of.
+  exact (parse_denotes_lc var_of conditional_program [conditional_tree] []
+           conditional_parses conditional_core conditional_complete).
+Qed.
+
+(* The operation denotes the term with the operator the tree names. *)
+Example operation_denotes_its_operator : forall var_of tbl,
+  Den_math var_of tbl
+    [Node R_number [Leaf (TNum 3)]; Node R_plus [sym "+"]; Node R_number [Leaf (TNum 4)]]
+    (e_bin (e_num 3) bop_add (e_num 4)).
+Proof.
+  intros var_of tbl.
+  apply (DM_bin var_of tbl [Node R_number [Leaf (TNum 3)]]
+           [Node R_number [Leaf (TNum 4)]] bop_add (e_num 3) (e_num 4));
+    (eapply DC_head; [ apply D_num | apply DP_nil ]).
+Qed.

@@ -25,7 +25,7 @@ Proof.
   intros P e r HB Hr. destruct e;
     first
     [ (cbn [block]; unfold decl_tree; flat_simp; exact I)
-    | exact (chain_plain _ _ (proj1 HB) Hr) ].
+    | exact (fin_plain _ _ (proj1 HB) Hr) ].
 Qed.
 
 Lemma goat_parses : forall e,
@@ -59,6 +59,11 @@ Proof.
   - intros a IHa b IHb k [Ha Hb]. cbn [inst_rec]. rewrite (IHa k Ha), (IHb (S k) Hb). reflexivity.
   - intros fs IH k Hs. simpl in Hs. cbn [inst_rec]. rewrite (IH k Hs). reflexivity.
   - intros a IH l k Hs. simpl in Hs. cbn [inst_rec]. rewrite (IH k Hs). reflexivity.
+  - intros k Hs. destruct Hs.
+  - intros q k Hs. reflexivity.
+  - intros a IHa b IHb c IHc k [Ha [Hb Hc]]. cbn [inst_rec].
+    rewrite (IHa k Ha), (IHb k Hb), (IHc k Hc). reflexivity.
+  - intros a IHa o b IHb k [Ha Hb]. cbn [inst_rec]. rewrite (IHa k Ha), (IHb k Hb). reflexivity.
   - intros k Hs. reflexivity.
   - intros l e IHe fs IHfs k [He Hfs]. cbn [inst_fields].
     rewrite (IHe k He), (IHfs k Hfs). reflexivity.

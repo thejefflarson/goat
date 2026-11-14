@@ -6,7 +6,7 @@
 # `make check-admits` fail unless proofs/*.v holds exactly the tracked admits.
 # `make gen-grammar`  regenerate GoatGrammar.v from grammar/goat.peg.
 # `make check-grammar` fail if GoatGrammar.v is stale against grammar/goat.peg.
-# `make check-assumptions` fail unless T1, T2 and T3 are closed under the global context.
+# `make check-assumptions` fail unless T1, T2, T3, progress, preservation and soundness are closed under the global context.
 # `make ci`           check Ott and grammar sync + admit count, compile, check assumptions.
 # `make clean`        remove generated build artifacts.
 #
@@ -64,15 +64,15 @@ check-grammar: ../grammar/goat.peg
 	@rm -f GoatGrammar.gen.v
 	@echo "$(GRAMMAR) is in sync with grammar/goat.peg."
 
-# T1, T2 and T3 must rest on no axiom and no admit.
+# T1, T2, T3 and the three soundness theorems must rest on no axiom and no admit.
 check-assumptions: coq
 	@out=$$(coqc -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
 	n=$$(echo "$$out" | grep -c '^Closed under the global context'); \
-	if [ "$$n" != "3" ]; then \
-	  echo "ERROR: expected peg_deterministic, parse_denotes_lc and print_parse_roundtrip closed under the global context:"; \
+	if [ "$$n" != "6" ]; then \
+	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation and soundness closed under the global context:"; \
 	  echo "$$out"; exit 1; \
 	fi; \
-	echo "check-assumptions: peg_deterministic, parse_denotes_lc and print_parse_roundtrip are closed -- ok."
+	echo "check-assumptions: T1, T2, T3, progress, preservation and soundness are closed -- ok."
 
 # Frozen-admit guard: "green Coq" stays honest only while the sole admits are
 # the two tracked HM lemmas, so the proof can only get MORE complete. Fail if
