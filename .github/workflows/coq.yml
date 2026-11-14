@@ -17,6 +17,11 @@ on:
     branches: [master]
     paths:
       - "proofs/**"
+      - "checker/**"
+      - "examples/**"
+      - "docs/llm.md"
+      - "differential/**"
+      - "parser/**"
       - "grammar/goat.peg"
       - "parser/examples/emit_coq.rs"
       - "parser/src/peg.rs"
@@ -25,6 +30,11 @@ on:
   pull_request:
     paths:
       - "proofs/**"
+      - "checker/**"
+      - "examples/**"
+      - "docs/llm.md"
+      - "differential/**"
+      - "parser/**"
       - "grammar/goat.peg"
       - "parser/examples/emit_coq.rs"
       - "parser/src/peg.rs"
