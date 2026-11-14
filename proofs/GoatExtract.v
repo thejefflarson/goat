@@ -8,7 +8,7 @@
    a double underscore that the generated syntax uses. *)
 
 Require Import Goat.GoatInfer.
-Require Import Coq.extraction.ExtrOcamlNatInt.
+Require Import Stdlib.extraction.ExtrOcamlNatInt.
 
 Set Warnings "-extraction-opaque-accessed,-extraction-default-directory,-extraction-reserved-identifier".
 Extraction Language OCaml.

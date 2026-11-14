@@ -13,7 +13,7 @@ Require Import Goat.GoatHM.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Import ListNotations.
 
 Lemma ftv_ctx_has : forall a G, a `in` ftv_ctx G ->

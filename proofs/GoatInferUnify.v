@@ -11,7 +11,7 @@ Require Import Goat.GoatHM.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Import ListNotations.
 
 Lemma teq_apT : forall s T T', teq T T' -> teq (apT s T) (apT s T').

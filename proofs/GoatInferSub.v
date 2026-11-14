@@ -10,8 +10,8 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
-Require Import Coq.Lists.List.
-Require Import Lia.
+Require Import Stdlib.Lists.List.
+From Stdlib Require Import Lia.
 Import ListNotations.
 
 (* ------------------------------------------------------------------ *)

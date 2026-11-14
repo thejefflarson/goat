@@ -10,7 +10,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Import ListNotations.
 
 Lemma uniq_rename_mid : forall G2 G1 x y (sc : scheme),

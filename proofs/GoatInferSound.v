@@ -20,7 +20,7 @@ Require Import Goat.GoatInferTyp.
 Require Import Goat.GoatInferRen.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatInferGen.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Import ListNotations.
 
 Lemma lookup_binds : forall x G s, lookup x G = Some s -> binds x s G.

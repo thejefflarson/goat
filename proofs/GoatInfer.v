@@ -15,7 +15,7 @@ Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatSubst.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Import ListNotations.
 
 (* ------------------------------------------------------------------ *)

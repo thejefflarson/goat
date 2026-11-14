@@ -13,7 +13,7 @@ Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
 Require Import Goat.GoatInferTyp.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Import ListNotations.
 
 Lemma aset_in : forall a l, a `in` aset l <-> In a l.

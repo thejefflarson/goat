@@ -97,7 +97,7 @@ check-admits:
 differential: coq
 	rm -rf $(DIFF_DIR)
 	mkdir $(DIFF_DIR)
-	cd $(DIFF_DIR) && coqc -R .. Goat ../GoatExtract.v
+	cd $(DIFF_DIR) && rocq compile -R .. Goat ../GoatExtract.v
 	cp ../differential/driver.ml $(DIFF_DIR)/
 	cd $(DIFF_DIR) && ocamlfind ocamlopt -w -a goat_infer.mli goat_infer.ml driver.ml -o driver
 	$(CORPUS) > $(DIFF_DIR)/corpus.tsv
