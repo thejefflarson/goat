@@ -25,8 +25,12 @@ wrong state unrepresentable *before* you reach for a comment.
 - **Tracker.** GitHub issues (`thejefflarson/goat`). Decisions that outlive a
   ticket go in `docs/adr/`.
 - **Gates (CI-enforced).** `cargo fmt --all -- --check`,
-  `cargo clippy --all-targets -- -D warnings`, and `cargo test` must all be
-  green before a PR merges. `coq` and `proof-gate` are required too (ADR 0037).
+  `cargo clippy --all-targets -- -D warnings`, and the tests must all be green
+  before a PR merges. CI runs the tests with `cargo nextest run --profile ci`
+  plus `cargo test --doc` (nextest skips doctests); locally prefer
+  `cargo nextest run` — it runs test binaries in parallel and is several times
+  faster than `cargo test`, which still works. Config is `.config/nextest.toml`.
+  `coq` and `proof-gate` are required too (ADR 0037).
 - **Proof-gate waiver.** Agents MAY apply the `no-semantics-change` label
   themselves (owner-authorized, 2026-11-14) when a PR touches a gated file but
   changes no typing rule, grammar or evaluation semantics, for example a

@@ -83,6 +83,7 @@
   import { canSupervise, superviseCanvas, superviseHighlighter } from "./dist/browser.js";
   import { GoatHighlighter } from "./dist/highlighter.js";
   import { isInteractiveModule } from "./dist/loop.js";
+  import { reloadSays } from "./dist/reload-says.js";
   import { ThemeEngine, themeApplier, themeStore } from "./dist/theme.js";
   import { mountEditor } from "./dist/editor.bundle.js";
 
@@ -423,11 +424,6 @@ print("done")
     show(status, "Theme reset");
   });
 
-  const RELOAD_SAYS = {
-    kept: "Updated: your sketch kept going",
-    reset: "Started over: your change reshaped what the sketch remembers",
-  };
-
   // While a sketch runs, an edit recompiles it and swaps it in. A mistake in the
   // edit leaves the last good version running.
   let reloadTimer;
@@ -476,7 +472,7 @@ print("done")
         { mode: interactive ? "interactive" : "once", module: compiled.module },
         {
           onReady: () => page.stage.focus(),
-          onReloaded: (outcome) => show(status, RELOAD_SAYS[outcome]),
+          onReloaded: (outcome) => show(status, reloadSays(outcome)),
           onReloadFailed: (message) => show(status, message),
           onOutput: (lines) => show(output, lines.join("\n")),
           onFailed: (message) => show(problems, message),

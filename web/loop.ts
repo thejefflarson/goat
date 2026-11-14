@@ -10,7 +10,7 @@
 // watchdog does, fed by `around`. A call that returns but took longer than a
 // frame budget stops the loop too.
 
-import { createHost } from "./runtime.ts";
+import { createHost, readString } from "./runtime.ts";
 import {
   CanvasScene,
   type DrawingContext,
@@ -62,16 +62,35 @@ export interface InteractiveExports extends WebAssembly.Exports {
   goat_draw(model: number): void;
   goat_release_model(model: number): void;
   goat_shutdown(): void;
+  // The reload contract (ADR 0035). `goat_snapshot` consumes the model.
+  // `goat_refresh` borrows `fresh` and returns the rebuilt model, or 0 with a
+  // reason that `goat_reason_part` reads out, a string at a time, until 0.
+  goat_snapshot(model: number): number;
+  goat_refresh(image: number, fresh: number): number;
+  goat_reason_part(index: number): number;
+  goat_free_static(): void;
 }
 
-export type Reloaded = "kept" | "reset";
+// Why a reload started the model over: a kind such as `field_added` and the
+// names it carries.
+export interface ResetReason {
+  kind: string;
+  args: string[];
+}
+
+export interface Reloaded {
+  outcome: "refreshed" | "reset";
+  reason?: ResetReason;
+}
 
 export interface Loop {
   stop(): void;
-  // Swaps in a recompiled module built over the same `Hosted` heap: the running
-  // model is kept when the new module lays it out the same way, else it starts
-  // over from the new `init`. Throws, leaving the old program running, if the
-  // new one cannot start.
+  // Swaps in a recompiled module built over the same `Hosted` heap (ADR 0035):
+  // the old module snapshots the model, the new one refreshes a model of its own
+  // types from it and rebinds each method, and the old module's code and static
+  // data are freed. A model that cannot be refreshed starts over from the new
+  // `init`, and the reason says why. Throws, leaving the old program running,
+  // if the new one cannot start.
   reload(next: InteractiveExports): Reloaded;
   // Delivers a host event as if the page had raised it; ignored if unsubscribed.
   send(event: HostEvent): void;
@@ -102,12 +121,19 @@ export function pointerPosition(
   };
 }
 
-// The `goat_model_fingerprint` global a reloadable module exports; equal values
-// mean the model's layout is unchanged (ADR 0015, addendum).
-function fingerprint(exports: InteractiveExports): bigint {
-  const global = exports.goat_model_fingerprint;
-  if (!(global instanceof WebAssembly.Global)) throw new Error("this program cannot be reloaded");
-  return global.value as bigint;
+// The reason `exports`' last refresh gave up, read out of its memory: the first
+// part is the kind and the rest are the names it carries.
+function readReason(exports: InteractiveExports): ResetReason {
+  const memory = exports.memory as WebAssembly.Memory;
+  const parts: string[] = [];
+  for (;;) {
+    const at = exports.goat_reason_part(parts.length);
+    const text = at === 0 ? "" : readString(memory, at);
+    if (text === "") break;
+    parts.push(text);
+  }
+  const [kind = "reshaped", ...args] = parts;
+  return { kind, args };
 }
 
 export function startLoop(initial: InteractiveExports, env: LoopEnv): Loop {
@@ -177,20 +203,39 @@ export function startLoop(initial: InteractiveExports, env: LoopEnv): Loop {
 
   const reload = (next: InteractiveExports): Reloaded => {
     if (!running) throw new Error(NOT_RUNNING_MESSAGE);
-    const kept = fingerprint(exports) === fingerprint(next);
-    const fresh = env.around ? env.around(() => next.goat_setup()) : next.goat_setup();
+    const call = <T>(f: () => T): T => (env.around ? env.around(f) : f());
+    // A new module that cannot start throws here, and the old one keeps running.
+    const fresh = call(() => next.goat_setup());
     const old = exports;
+    const started = env.now();
+
+    // A trap or a 0 from here on is a reset, never a stop: the snapshot has
+    // already taken the old model apart, so the new `init` is the model left.
+    let rebuilt = 0;
+    let trapped = false;
+    try {
+      const image = call(() => old.goat_snapshot(model));
+      rebuilt = call(() => next.goat_refresh(image, fresh));
+    } catch {
+      trapped = true;
+    }
+    let outcome: Reloaded;
+    if (rebuilt !== 0) {
+      call(() => next.goat_release_model(fresh));
+      model = rebuilt;
+      outcome = { outcome: "refreshed" };
+    } else {
+      model = fresh;
+      outcome = { outcome: "reset", reason: trapped ? { kind: "reshaped", args: [] } : readReason(next) };
+    }
     exports = next;
     wanted = new Set(subscriptions(next));
     guarded(() => {
-      if (kept) next.goat_release_model(fresh);
-      else {
-        old.goat_release_model(model);
-        model = fresh;
-      }
       old.goat_shutdown();
+      old.goat_free_static();
     });
-    return kept ? "kept" : "reset";
+    if (running && env.now() - started > FRAME_BUDGET_MS) fail(STUCK_MESSAGE);
+    return outcome;
   };
 
   const listen = (target: ListenerTarget, type: string, listener: (event: DomEvent) => void) => {

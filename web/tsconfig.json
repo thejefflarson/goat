@@ -18,6 +18,7 @@
     "compile.ts",
     "scene.ts",
     "loop.ts",
+    "reload-says.ts",
     "protocol.ts",
     "supervisor.ts",
     "worker-core.ts",

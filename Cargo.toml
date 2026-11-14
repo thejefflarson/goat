@@ -11,3 +11,10 @@ members = [
     "wamr",
     "web",
 ]
+
+# Optimized test code: the fuzz and differential suites are CPU-bound, and
+# opt-level 1 keeps debug assertions and overflow checks (the dev defaults).
+[profile.dev]
+opt-level = 1
+debug-assertions = true
+overflow-checks = true

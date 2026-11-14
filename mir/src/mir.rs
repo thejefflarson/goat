@@ -9,7 +9,7 @@ macro_rules! id {
 
 id!(Local, FuncId, LayoutId, SigId, DataId, ForeignId);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HeapKind {
     Record(LayoutId),
     Variant(LayoutId),
@@ -18,7 +18,7 @@ pub enum HeapKind {
     List(LayoutId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MTy {
     Int,
     Float,
@@ -97,6 +97,16 @@ pub struct Program {
     pub foreign: Vec<ForeignFn>,
     /// Set for an interactive program (ADR 0015).
     pub interactive: Option<Interactive>,
+    /// Each function a method literal compiles to, with the key of its site
+    /// (ADR 0035): the closures a model holds in method fields run these.
+    pub method_sites: Vec<MethodSite>,
+}
+
+/// A function made from a method literal, and the site key it answers to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodSite {
+    pub func: FuncId,
+    pub key: DataId,
 }
 
 /// What a host needs to drive `init`/`update`/`draw`. The entry function
@@ -117,7 +127,32 @@ pub struct Interactive {
     pub events: Vec<EventCtor>,
     /// The type of the model `init` returns and `update` and `draw` take.
     pub model: MTy,
+    /// The root record's slot of the closures `setup` makes for the methods a
+    /// refreshed model can be rebound to (ADR 0035).
+    pub sites_slot: usize,
+    pub reload: Reload,
 }
+
+/// The functions that carry a model across a reload (ADR 0035). Images are
+/// values of the fixed `Node` layout, so any module can read another's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reload {
+    /// The `Node` layout of an image.
+    pub node: LayoutId,
+    /// `(model) -> image`: consumes the model.
+    pub snapshot: FuncId,
+    /// `(image, fresh, sites) -> outcome`: consumes all three. The outcome is
+    /// a variant of layout `outcome`: tag `REFRESHED` holds the rebuilt model,
+    /// tag `RESET` holds a reason, a chain of strings that `part` reads.
+    pub refresh: FuncId,
+    pub outcome: LayoutId,
+    /// `(reason, index) -> string`: consumes the reason; the `index`th part, or
+    /// the empty string past the end.
+    pub part: FuncId,
+}
+
+pub const REFRESHED: u32 = 0;
+pub const RESET: u32 = 1;
 
 /// `(payload...) -> event`: builds the event `label` from what the host sends
 /// (`Tick` a number, a pointer event its `x` and `y`, a key event the
@@ -348,6 +383,22 @@ pub enum Expr {
     /// byte and the continuation bytes after it, so the copy never leaves the
     /// string even when it is not valid UTF-8.
     StrChar(Local, Local),
+    /// The address of the heap object a pointer refers to, as an `Int` that
+    /// identifies it for as long as it lives; borrows the pointer.
+    Addr(Local),
+    /// Whether more than one reference to the object exists, an immortal object
+    /// excepted (it is never shared, only static); borrows the pointer.
+    Shared(Local),
+    /// A new reference to the live object at the address held in an `Int`
+    /// local, typed `ty`: the inverse of `Addr`.
+    Retain(Local, MTy),
+    /// A string that outlives the module that made it, as a reference: a heap
+    /// string gains one, a string literal is copied into a heap string with
+    /// count one. Borrows the string.
+    KeepStr(Local),
+    /// The key of the method site a closure was made at, as a string literal;
+    /// borrows the closure. Traps for a closure no method site made.
+    MethodKey(Local),
     Write(Write),
     /// A call to a host function. Effectful even when it returns `Unit`: it is
     /// never dropped, duplicated, or reordered (see `effects`). Arguments are
@@ -379,6 +430,11 @@ impl Expr {
             | Expr::StrByte(..)
             | Expr::StrChars(_)
             | Expr::StrChar(..)
+            | Expr::Addr(_)
+            | Expr::Shared(_)
+            | Expr::Retain(..)
+            | Expr::KeepStr(_)
+            | Expr::MethodKey(_)
             | Expr::CallForeign(..)
             | Expr::Write(Write::Str(_) | Write::Lit(_) | Write::End)
             | Expr::Dup(_)

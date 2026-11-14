@@ -154,25 +154,36 @@ test("a module that cannot be instantiated is a failure, not a crash", async () 
   assert.equal(posted[0]!.type, "failed");
 });
 
-test("a reload keeps the model when its shape is unchanged and swaps draw", async () => {
+test("a reload refreshes the model when its shape is unchanged and swaps draw", async () => {
   const { core, posted, frame, run } = worker();
   const { calls } = await run("interactive", KEYS, compileLive);
   await core.handle({ type: "input", event: { kind: "KeyDown", key: "x" } });
   await core.handle({ type: "reload", module: await moduleOf(KEYS.replace("y2: 5", "y2: 7"), compileLive) });
-  assert.deepEqual(posted.at(-1), { type: "reloaded", outcome: "kept", subscriptions: ["KeyDown"] });
+  assert.deepEqual(posted.at(-1), { type: "reloaded", outcome: "refreshed", subscriptions: ["KeyDown"] });
   frame(16);
   assert.ok(calls.includes("lineTo(10,7)"), calls.join(" "));
 });
 
-test("a reload that changes the model's shape starts over from the new init", async () => {
+test("a reload that changes a field's type starts over from the new init and says why", async () => {
   const { core, posted, frame, run } = worker();
   const { calls } = await run("interactive", KEYS, compileLive);
   await core.handle({ type: "input", event: { kind: "KeyDown", key: "x" } });
-  const reshaped = KEYS.replace("{x: 0}", "{x: 3, z: 0}").replace("{x: model.x + 10}", "{...model, x: model.x + 10}");
-  await core.handle({ type: "reload", module: await moduleOf(reshaped, compileLive) });
-  assert.deepEqual(posted.at(-1), { type: "reloaded", outcome: "reset", subscriptions: ["KeyDown"] });
+  const retyped = KEYS.replace("{x: 0}", "{x: 3, z: 0}")
+    .replace("{x: model.x + 10}", "{...model, x: model.x + 10}")
+    .replace("x2: model.x", "x2: model.x + model.z");
+  await core.handle({ type: "reload", module: await moduleOf(retyped, compileLive) });
+  assert.deepEqual(posted.at(-1), { type: "reloaded", outcome: "refreshed", subscriptions: ["KeyDown"] });
   frame(16);
-  assert.ok(calls.includes("lineTo(3,5)"), calls.join(" "));
+  assert.ok(calls.includes("lineTo(10,5)"), calls.join(" "));
+
+  const text = KEYS.replace("{x: 0}", '{x: "far"}').replace("x2: model.x", "x2: 4").replace("{x: model.x + 10}", "model");
+  await core.handle({ type: "reload", module: await moduleOf(text, compileLive) });
+  assert.deepEqual(posted.at(-1), {
+    type: "reloaded",
+    outcome: "reset",
+    reason: { kind: "type_changed", args: ["x", "Number", "String"] },
+    subscriptions: ["KeyDown"],
+  });
 });
 
 test("a reload that cannot take the program leaves the old one running", async () => {

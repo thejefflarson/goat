@@ -112,8 +112,8 @@ export function createWorkerCore(env: WorkerCoreEnv) {
       } finally {
         heartbeat.leave();
       }
-      const outcome = loop.reload(next);
-      if (loop.running) env.post({ type: "reloaded", outcome, subscriptions: subscriptions(next) });
+      const reloaded = loop.reload(next);
+      if (loop.running) env.post({ type: "reloaded", ...reloaded, subscriptions: subscriptions(next) });
     } catch (e) {
       env.post({ type: "reload_failed", message: e instanceof Error ? e.message : String(e) });
     }

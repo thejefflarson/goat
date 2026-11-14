@@ -13,9 +13,10 @@ name: Coq
 # Trigger: every PR and push to master, so the `coq` check always reports and
 # can be required in branch protection (ADR 0037). The job diffs the changed
 # files itself and skips the build, still succeeding, when nothing the Coq build
-# depends on changed (proofs/, the grammar, the Coq emitter and what it prints
-# through, or this workflow). A push without a usable base and manual dispatch
-# always build.
+# depends on changed (proofs/, the grammar, the parser, or this workflow; and,
+# for the differential test against the extracted algorithm, the checker, the
+# prelude, the corpus sources examples/ and docs/llm.md, and differential/). A
+# push without a usable base and manual dispatch always build.
 
 on:
   push:
@@ -46,7 +47,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          relevant='^(proofs/|grammar/goat\.peg$|parser/examples/emit_coq\.rs$|parser/src/peg\.rs$|parser/src/lexer\.rs$|\.github/workflows/coq\.yml$)'
+          relevant='^(proofs/|differential/|checker/|prelude/|parser/|examples/|docs/llm\.md$|grammar/goat\.peg$|\.github/workflows/coq\.yml$)'
           if [ "$EVENT" = workflow_dispatch ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           elif git diff --name-only "$BASE...$HEAD" | grep -Eq "$relevant"; then

@@ -58,7 +58,7 @@ fn main() -> Result<(), String> {
         "{reloaded:?}: circles {:?}, {leaked} heap blocks leaked",
         circles.0
     );
-    assert_eq!(reloaded, Reloaded::Kept);
+    assert_eq!(reloaded, Reloaded::Refreshed);
     assert_eq!(circles.0, [(3.0, 9.0)]);
     assert_eq!(leaked, 0);
     Ok(())

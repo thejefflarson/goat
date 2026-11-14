@@ -88,6 +88,9 @@ pub struct DotCalls {
     pub source: String,
     /// The `Field` of each dot call's callee, whose method flag the call settles.
     callees: HashSet<ExprId>,
+    /// Tags matched by prelude code the program never reaches, so left
+    /// uninferred; they still count as matched.
+    pub pruned_matches: HashSet<String>,
 }
 
 impl DotCalls {
@@ -102,6 +105,7 @@ impl DotCalls {
             takes,
             source,
             callees,
+            pruned_matches: HashSet::new(),
         }
     }
 }
@@ -203,6 +207,7 @@ fn infer_with_variable_markers(
     dots: DotCalls,
 ) -> (Typed, Vec<GoatError>) {
     let mut inf = Inferer {
+        matched: dots.pruned_matches.clone(),
         dots,
         ..Inferer::default()
     };
@@ -1871,13 +1876,13 @@ impl Inferer {
             ),
         }
 
-        if let Some(function) = self.finish(&model).find_func() {
+        if let Some(function) = self.finish(&model).find_plain_func() {
             let function = self.shown(function);
             self.contract_error(
                 &contract.init,
                 format!(
-                    "the model can't hold a function, but this one holds `{function}`; \
-                     a reload keeps the model, and a function can't outlive its code, so keep functions at the top level"
+                    "the model can hold methods but not plain functions, and `{function}` has no `self`. \
+                     Write `self` first to make it a method, or keep it at the top level."
                 ),
             );
         }
