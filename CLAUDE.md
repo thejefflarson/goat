@@ -25,8 +25,11 @@ wrong state unrepresentable *before* you reach for a comment.
 - **Tracker.** GitHub issues (`thejefflarson/goat`). Decisions that outlive a
   ticket go in `docs/adr/`.
 - **Gates (CI-enforced).** `cargo fmt --all -- --check`,
-  `cargo clippy --all-targets -- -D warnings`, and `cargo test` must all be
-  green before a PR merges.
+  `cargo clippy --all-targets -- -D warnings`, and the tests must all be green
+  before a PR merges. CI runs the tests with `cargo nextest run --profile ci`
+  plus `cargo test --doc` (nextest skips doctests); locally prefer
+  `cargo nextest run` — it runs test binaries in parallel and is several times
+  faster than `cargo test`, which still works. Config is `.config/nextest.toml`.
 - **Proof gate (ADR 0037).** A PR that changes `grammar/goat.peg`,
   `checker/src/{infer,lower,ty}.rs` or `prelude/prelude.goat` must also change
   `proofs/`. The `proof-gate` check waives this only for a PR with the
