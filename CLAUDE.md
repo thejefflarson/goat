@@ -30,6 +30,12 @@ wrong state unrepresentable *before* you reach for a comment.
   plus `cargo test --doc` (nextest skips doctests); locally prefer
   `cargo nextest run` — it runs test binaries in parallel and is several times
   faster than `cargo test`, which still works. Config is `.config/nextest.toml`.
+  `coq` and `proof-gate` are required too (ADR 0037).
+- **Proof-gate waiver.** Agents MAY apply the `no-semantics-change` label
+  themselves (owner-authorized, 2026-11-14) when a PR touches a gated file but
+  changes no typing rule, grammar or evaluation semantics, for example a
+  diagnostic's wording, a performance change, or a host-reason rejection outside
+  the calculus. The PR body MUST carry a `No semantics change:` line saying why.
 - **Proof gate (ADR 0037).** A PR that changes `grammar/goat.peg`,
   `checker/src/{infer,lower,ty}.rs` or `prelude/prelude.goat` must also change
   `proofs/`. The `proof-gate` check waives this only for a PR with the
