@@ -10,40 +10,18 @@ name: Coq
 # job: the toolchain is slow to build and must never gate or slow the per-PR Rust
 # critical path.
 #
-# Trigger: only when proofs/, the grammar, the Coq emitter and what it prints
-# through (parser/src/peg.rs, parser/src/lexer.rs) or this workflow change (so ordinary Rust PRs don't
-# pay for a Coq build), plus manual dispatch. It is intended as an informational
-# check, not a required one — promote it to required in branch protection once
-# the development has stabilized.
+# Trigger: every PR and push to master, so the `coq` check always reports and
+# can be required in branch protection (ADR 0037). The job diffs the changed
+# files itself and skips the build, still succeeding, when nothing the Coq build
+# depends on changed (proofs/, the grammar, the parser, or this workflow; and,
+# for the differential test against the extracted algorithm, the checker, the
+# prelude, the corpus sources examples/ and docs/llm.md, and differential/). A
+# push without a usable base and manual dispatch always build.
 
 on:
   push:
     branches: [master]
-    paths:
-      - "proofs/**"
-      - "checker/**"
-      - "examples/**"
-      - "docs/llm.md"
-      - "differential/**"
-      - "parser/**"
-      - "grammar/goat.peg"
-      - "parser/examples/emit_coq.rs"
-      - "parser/src/peg.rs"
-      - "parser/src/lexer.rs"
-      - ".github/workflows/coq.yml"
   pull_request:
-    paths:
-      - "proofs/**"
-      - "checker/**"
-      - "examples/**"
-      - "docs/llm.md"
-      - "differential/**"
-      - "parser/**"
-      - "grammar/goat.peg"
-      - "parser/examples/emit_coq.rs"
-      - "parser/src/peg.rs"
-      - "parser/src/lexer.rs"
-      - ".github/workflows/coq.yml"
   workflow_dispatch:
 
 concurrency:
@@ -59,13 +37,34 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect Coq-relevant changes
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          relevant='^(proofs/|differential/|checker/|prelude/|parser/|examples/|docs/llm\.md$|grammar/goat\.peg$|\.github/workflows/coq\.yml$)'
+          if [ "$EVENT" = workflow_dispatch ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE...$HEAD" | grep -Eq "$relevant"; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No Coq-relevant changes; skipping the build."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # check-grammar regenerates proofs/GoatGrammar.v with cargo. The image
       # installs Rust under ~/.cargo/bin without adding it to the job PATH.
       - name: Enable rust
+        if: steps.changes.outputs.build == 'true'
         run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Check the Rocq toolchain
+        if: steps.changes.outputs.build == 'true'
         run: |
           if ! opam switch list --short | grep -qx rocq-9; then
             echo "::error::runner image has no opam switch 'rocq-9'. Expected Rocq 9.1.1 (opam coq.9.1.1), ott.0.34, and coq-metalib at plclub/metalib 144ddcd0fff6717229140314cf559d85fad6eae0. Rebuild the image."
@@ -79,4 +78,5 @@ jobs:
           esac
 
       - name: Build proofs under Rocq
+        if: steps.changes.outputs.build == 'true'
         run: opam exec --switch=rocq-9 -- make -C proofs ci
