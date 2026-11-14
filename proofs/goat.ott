@@ -23,14 +23,23 @@
 % both. B2 adds the opam/Coq job that runs Ott over this file.
 %
 % The core models: n-ary program/application, HM let-generalization (= binds
-% generalize; lambda params are monomorphic), base types Number and Bool,
+% generalize; lambda params are monomorphic), base types Int, Float and Bool,
 % records as scoped-label rows (Leijen) with construction and first-label
-% projection. Out of scope (deltas on the proven core): RC/heap, variants/match,
-% recursive (mu) types, strings, Unit, if/arithmetic, recursion, mono.
+% projection, and (phase 1 of ADR 0037) Unit, String, `if`, and the operators on
+% Int, Float, String and Bool at concrete types (ADR 0017, ADR 0036), with a
+% defined runtime error (a trap) for integer division by zero. Out of scope
+% (deltas on the proven core): RC/heap, variants/match, recursive (mu) types,
+% recursion, constraint-polymorphic operators, comparison of Unit, mono.
+% An Int is a signed 64-bit integer and a result outside the range traps; a
+% Float is opaque (every Float operation is unspecified); an explicit
+% Int-to-Float coercion float(e), inserted by elaboration, is the only way an
+% Int meets a Float.
 
 metavar termvar, x, y, z, f, g, m, p ::= {{ com term variable }}
 metavar label, l ::= {{ com record label }}
-metavar num, n ::= {{ com numeral constant }}
+metavar num, n ::= {{ com whole-number literal, an integer }}
+metavar dec, d ::= {{ com Float value, opaque }}
+metavar str, q ::= {{ com string literal, as its bytes }}
 metavar typvar, a, b ::= {{ com type variable (free-variable set, not a binder) }}
 metavar rowvar, r, s ::= {{ com row variable (free-variable set, not a binder) }}
 
@@ -39,8 +48,11 @@ indexvar index, i, j, k ::= {{ com list index }}
 grammar
 
 T {{ tex \tau }} :: 'T_' ::= {{ com monotype }}
-  | Number                    ::   :: Number
+  | Int                       ::   :: Int
+  | Float                     ::   :: Float
   | Bool                      ::   :: Bool
+  | Unit                      ::   :: Unit
+  | String                    ::   :: String
   | ( T1 , ... , Tk ) -> T    ::   :: Arrow   {{ com n-ary function }}
   | { R }                     ::   :: Record
   | a                         ::   :: Var
@@ -61,9 +73,24 @@ G {{ tex \Gamma }} :: 'G_' ::= {{ com typing context }}
   | empty      ::   :: Empty {{ tex \cdot }}
   | G , x : S  ::   :: Cons
 
+o :: 'o_' ::= {{ com binary operator }}
+  | +    ::   :: Add     {{ com addition }}
+  | -    ::   :: Sub     {{ com subtraction }}
+  | *    ::   :: Mul     {{ com multiplication }}
+  | /    ::   :: Div     {{ com division }}
+  | //   ::   :: FDiv    {{ com floor division }}
+  | %    ::   :: Rem     {{ com remainder }}
+  | <    ::   :: Lt
+  | <=   ::   :: Lte
+  | >    ::   :: Gt
+  | >=   ::   :: Gte
+  | ==   ::   :: Eq
+  | !=   ::   :: Ne
+
 e :: 'e_' ::= {{ com term }}
   | x                                   ::   :: Var
-  | n                                   ::   :: Num
+  | n                                   ::   :: Num  {{ com whole-number literal }}
+  | d                                   ::   :: Dec  {{ com Float value, opaque }}
   | true                                ::   :: True
   | false                               ::   :: False
   | program ( </ xi // i /> ) do e done ::   :: Abs
@@ -73,13 +100,21 @@ e :: 'e_' ::= {{ com term }}
     ( + bind x in e2 + )                {{ com binding; x scopes over e2 only }}
   | { </ li : ei // i /> }              ::   :: Rec  {{ com record literal (closed) }}
   | e . l                               ::   :: Proj {{ com field projection }}
+  | unit                                ::   :: Unit {{ com the unit value }}
+  | q                                   ::   :: Str  {{ com string literal }}
+  | if e1 then e2 else e3               ::   :: If   {{ com conditional }}
+  | e1 o e2                             ::   :: Bin  {{ com binary operation }}
+  | float ( e )                         ::   :: ToFloat {{ com Int-to-Float coercion, inserted by elaboration }}
   | ( e )                               :: S :: Paren {{ coq [[e]] }}
   | e1 [ x := e2 ]                      :: M :: Subst {{ coq (subst_e [[e2]] [[x]] [[e1]]) }}
 
 v :: 'v_' ::= {{ com value }}
   | n                                   ::   :: Num
+  | d                                   ::   :: Dec
   | true                                ::   :: True
   | false                               ::   :: False
+  | unit                                ::   :: Unit
+  | q                                   ::   :: Str
   | program ( </ xi // i /> ) do e done ::   :: Abs
   | { </ li : vi // i /> }              ::   :: Rec
 
@@ -123,11 +158,20 @@ defn
 T1 ~= T2 :: :: teq :: 'teq_'
   {{ tex [[T1]] \cong [[T2]] }} by
 
-  --------------- :: num
-  Number ~= Number
+  ----------- :: int
+  Int ~= Int
+
+  ----------------- :: float
+  Float ~= Float
 
   ----------- :: bool
   Bool ~= Bool
+
+  ------------- :: unit
+  Unit ~= Unit
+
+  ----------------- :: string
+  String ~= String
 
   ----- :: var
   a ~= a
@@ -206,14 +250,40 @@ G |- e : T :: :: typ :: 'T_'
   ---------- :: Var
   G |- x : T
 
-  --------------- :: Num
-  G |- n : Number
+  ------------- :: Num
+  G |- n : Int
+
+  ----------------- :: Dec
+  G |- d : Float
 
   ---------------- :: True
   G |- true : Bool
 
   ----------------- :: False
   G |- false : Bool
+
+  ---------------- :: Unit
+  G |- unit : Unit
+
+  ------------------ :: Str
+  G |- q : String
+
+  G |- e1 : Bool
+  G |- e2 : T
+  G |- e3 : T
+  ---------------------------------- :: If
+  G |- if e1 then e2 else e3 : T
+
+  % elaboration inserts this where the checker accepts an Int for a Float
+  G |- e : Int
+  ------------------------ :: ToFloat
+  G |- float ( e ) : Float
+
+  G |- e1 : T1
+  G |- e2 : T2
+  o : T1 , T2 => T
+  ---------------------- :: Bin
+  G |- e1 o e2 : T
 
   G , </ xi : Ti // i /> |- e : T
   ------------------------------------------------------ :: Abs
@@ -263,6 +333,41 @@ e --> e' :: :: red :: 'red_'
   ------------------------------------------------------ :: ProjRec
   { </ li : vi // i /> , l : v , </ lk' : vk' // k /> } . l --> v
 
+  % --- conditional and operators ---
+
+  ------------------------------------------ :: IfTrue
+  if true then e2 else e3 --> e2
+
+  ------------------------------------------- :: IfFalse
+  if false then e2 else e3 --> e3
+
+  % [[o]] applied to two literals of one type: Int arithmetic gives an Int in
+  % the 64-bit range, a Float operation gives any Float (a Float comparison any
+  % boolean), an Int or String or boolean comparison gives a boolean (strings
+  % bytewise, false before true).
+  ------------------------------ :: Op
+  v1 o v2 --> eval ( o , v1 , v2 )
+
+  % [[float]] of a whole number is any Float
+  ------------------------------ :: ToFloat
+  float ( n ) --> d
+
+  e --> e'
+  ------------------------------ :: ToFloat1
+  float ( e ) --> float ( e' )
+
+  e1 --> e1'
+  ---------------------------------- :: If1
+  if e1 then e2 else e3 --> if e1' then e2 else e3
+
+  e1 --> e1'
+  ------------------ :: Op1
+  e1 o e2 --> e1' o e2
+
+  e2 --> e2'
+  ------------------ :: Op2
+  v o e2 --> v o e2'
+
   % --- congruence (fix left-to-right order) ---
 
   e --> e'
@@ -284,3 +389,29 @@ e --> e' :: :: red :: 'red_'
   e --> e'
   --------------- :: Proj1
   e . l --> e' . l
+
+defns
+Jsig :: '' ::= {{ com operator signatures (ADR 0017, ADR 0036), at concrete types }}
+
+defn
+o : T1 , T2 => T :: :: sig :: 'sig_'
+  {{ tex [[o]] : [[T1]] , [[T2]] \Rightarrow [[T]] }} by
+
+  % o is one of + - *
+  ---------------------------- :: RingInt
+  o : Int , Int => Int
+
+  % o is one of + - *
+  ---------------------------- :: RingFloat
+  o : Float , Float => Float
+
+  ---------------------------- :: Quot
+  / : Float , Float => Float
+
+  % o is one of // %
+  ---------------------------- :: Whole
+  o : Int , Int => Int
+
+  % o is one of < <= > >= == !=; T is Int, Float, String or Bool
+  ---------------------------- :: Cmp
+  o : T , T => Bool

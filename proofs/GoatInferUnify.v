@@ -183,7 +183,7 @@ Proof.
   destruct IH as [IHt IHr].
   split.
   - intros T1 T2 n s n' H H1 H2. cbn [unify_t] in H.
-    destruct T1 as [| | A B | R | a]; destruct T2 as [| | A' B' | R' | b];
+    destruct T1 as [| | | | | A B | R | a]; destruct T2 as [| | | | | A' B' | R' | b];
       try discriminate H.
     all: try (exact (var_left_T _ _ _ _ _ H H1 H2)).
     all: try (exact (var_right_T _ _ _ _ _ H H1 H2)).

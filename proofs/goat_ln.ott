@@ -37,14 +37,21 @@ metavar rowvar, r, s ::= {{ coq atom }}
   {{ com free row variable (metalib atom) }}
 metavar label, l ::= {{ coq nat }}
   {{ com record label }}
-metavar num, n ::= {{ coq nat }}
-  {{ com numeral constant }}
+metavar num, n ::= {{ coq BinNums.Z }}
+  {{ com whole-number literal, an integer }}
+metavar dec, d ::= {{ coq nat }}
+  {{ com a Float value, opaque: no rule reads the payload }}
+metavar str, q ::= {{ coq (list nat) }}
+  {{ com string literal, as its bytes }}
 
 grammar
 
 typ, T :: 'typ_' ::= {{ com monotype }}
-  | Number        ::   :: Number
+  | Int           ::   :: Int
+  | Float         ::   :: Float
   | Bool          ::   :: Bool
+  | Unit          ::   :: Unit
+  | String        ::   :: String
   | ( T1 ) -> T2  ::   :: Arrow   {{ com unary (curried) function; see header }}
   | { R }         ::   :: Record
   | a             ::   :: Var
@@ -55,9 +62,24 @@ row, R :: 'row_' ::= {{ com row (scoped labels, duplicates allowed) }}
   | r             ::   :: Var
   | l : T ; R     ::   :: Ext
 
+bop, o :: 'bop_' ::= {{ com binary operator }}
+  | plus      ::   :: add       {{ com + }}
+  | minus     ::   :: sub       {{ com - }}
+  | times     ::   :: mul       {{ com * }}
+  | quot      ::   :: div       {{ com / }}
+  | floordiv  ::   :: fdiv      {{ com // }}
+  | rem       ::   :: rem       {{ com % }}
+  | lt        ::   :: lt        {{ com < }}
+  | lte       ::   :: lte       {{ com <= }}
+  | gt        ::   :: gt        {{ com > }}
+  | gte       ::   :: gte       {{ com >= }}
+  | eqeq      ::   :: eq        {{ com == }}
+  | neq       ::   :: ne        {{ com != }}
+
 exp, e :: 'e_' ::= {{ com term }}
   | x                        ::   :: fvar  {{ com variable }}
-  | n                        ::   :: num
+  | n                        ::   :: num   {{ com whole-number literal }}
+  | d                        ::   :: dec   {{ com Float value, opaque }}
   | true                     ::   :: true
   | false                    ::   :: false
   | program ( x ) do e done  ::   :: abs
@@ -67,6 +89,11 @@ exp, e :: 'e_' ::= {{ com term }}
     (+ bind x in e2 +)       {{ com bind x in e2 only }}
   | { fs }                   ::   :: rec   {{ com record literal (closed) }}
   | e . l                    ::   :: proj  {{ com field projection }}
+  | unit                     ::   :: unit  {{ com the unit value }}
+  | q                        ::   :: str   {{ com string literal }}
+  | if e1 then e2 else e3    ::   :: ite   {{ com conditional }}
+  | e1 o e2                  ::   :: bin   {{ com binary operation }}
+  | float ( e )              ::   :: tofloat {{ com Int-to-Float coercion, inserted by elaboration }}
   | ( e )                    :: S :: paren {{ coq [[e]] }}
   | e1 [ x := e2 ]           :: M :: subst {{ coq (subst_exp [[e2]] [[x]] [[e1]]) }}
 
@@ -101,11 +128,20 @@ defn
 T1 ~= T2 :: :: teq :: 'teq_'
   {{ tex [[T1]] \cong [[T2]] }} by
 
-  --------------- :: num
-  Number ~= Number
+  ----------- :: int
+  Int ~= Int
+
+  ----------------- :: float
+  Float ~= Float
 
   ----------- :: bool
   Bool ~= Bool
+
+  ------------- :: unit
+  Unit ~= Unit
+
+  ----------------- :: string
+  String ~= String
 
   ----- :: var
   a ~= a

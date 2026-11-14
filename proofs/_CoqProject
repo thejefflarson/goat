@@ -1,6 +1,8 @@
 -R . Goat
 Goat_ott.v
 GoatProofs.v
+GoatNum.v
+GoatLit.v
 GoatRows.v
 GoatDefs.v
 GoatMeta.v
@@ -15,7 +17,7 @@ GoatInferGen.v
 GoatInferSound.v
 GoatInferRen.v
 GoatInferUnify.v
-GoatRank2.v
+GoatPhase1.v
 GoatGrammar.v
 GoatPeg.v
 GoatDen.v

@@ -19,6 +19,8 @@ Inductive Stop : list tok -> Prop :=
   | Stop_comma : forall r, Stop (TSym "," :: r)
   | Stop_rbrace : forall r, Stop (TSym "}" :: r)
   | Stop_done : forall r, Stop (TSym "done" :: r)
+  | Stop_then : forall r, Stop (TSym "then" :: r)
+  | Stop_else : forall r, Stop (TSym "else" :: r)
   | Stop_semi : forall r, Stop (TSym ";" :: r).
 
 (* What can follow an expression, as opposed to a value. *)
@@ -27,10 +29,17 @@ Inductive StopE : list tok -> Prop :=
   | StopE_rparen : forall r, StopE (TSym ")" :: r)
   | StopE_comma : forall r, StopE (TSym "," :: r)
   | StopE_rbrace : forall r, StopE (TSym "}" :: r)
-  | StopE_done : forall r, StopE (TSym "done" :: r).
+  | StopE_done : forall r, StopE (TSym "done" :: r)
+  | StopE_then : forall r, StopE (TSym "then" :: r)
+  | StopE_else : forall r, StopE (TSym "else" :: r).
 
 Lemma stop_of_stopE : forall r, StopE r -> Stop r.
 Proof. intros r H. inversion H; constructor. Qed.
+
+(* What can follow a chain: what follows an expression, or an operator. *)
+Inductive StopC : list tok -> Prop :=
+  | StopC_stop : forall r, Stop r -> StopC r
+  | StopC_op : forall o r, StopC (TSym (op_text o) :: r).
 
 (* The next token is not "=": a name here is not the start of a binding. *)
 Definition NotEq (r : list tok) : Prop :=
@@ -58,6 +67,20 @@ Ltac ext_text := eapply text_fail; assumption.
 
 Lemma notEq_stop : forall r, Stop r -> NotEq r.
 Proof. intros r H. inversion H; subst; simpl; try exact I; intro Hx; discriminate Hx. Qed.
+
+Lemma notEq_stopC : forall r, StopC r -> NotEq r.
+Proof.
+  intros r H. inversion H; subst.
+  - apply notEq_stop. assumption.
+  - destruct o; simpl; intro Hx; discriminate Hx.
+Qed.
+
+Lemma stopC_postfix_fail : forall r, StopC r -> peg (E_rule R__postfix) r Fail.
+Proof.
+  intros r H. inversion H; subst.
+  - match goal with Hs : Stop _ |- _ => inversion Hs; subst end; pfail nope.
+  - destruct o; pfail nope.
+Qed.
 
 Lemma stop_more_math : forall r, Stop r ->
   peg (E_star (E_rule R__more_math)) r (Ok [] r).
@@ -119,23 +142,23 @@ Proof.
 Qed.
 
 Lemma star_posts : forall Ps r,
-  Forall PostOK Ps -> Stop r ->
+  Forall PostOK Ps -> StopC r ->
   peg (E_star (E_rule R__postfix)) (flats Ps ++ r) (Ok Ps r).
 Proof.
   induction Ps as [| p Ps IH]; intros r Hp Hstop.
-  - inversion Hstop; subst; pok nope.
+  - pok ltac:(exact (stopC_postfix_fail _ Hstop)).
   - inversion Hp as [| ? ? [_ Hpost] Hrest]; subst.
     rewrite flats_cons, <- app_assoc.
     pok ltac:(first [ exact (Hpost _) | exact (IH _ Hrest Hstop) ]).
 Qed.
 
 Lemma chain_operand : forall ks r,
-  Chain ks -> Stop r ->
+  Chain ks -> StopC r ->
   peg (E_rule R__operand) (flats ks ++ r) (Ok ks r).
 Proof.
   intros ks r (H & Ps & -> & Hprim & Hposts) Hstop.
   assert (Hne : NotEq (flats Ps ++ r))
-    by (apply notEq_posts; [ exact Hposts | apply notEq_stop; exact Hstop ]).
+    by (apply notEq_posts; [ exact Hposts | apply notEq_stopC; exact Hstop ]).
   destruct (Hprim _ Hne) as (Hplain & _ & Hpeg).
   assert (Hstar : peg (E_star (E_rule R__postfix)) (flats Ps ++ r) (Ok Ps r))
     by (apply star_posts; assumption).
@@ -146,21 +169,21 @@ Proof.
 Qed.
 
 Lemma chain_plain : forall ks r,
-  Chain ks -> Stop r -> Plain (flats ks ++ r).
+  Chain ks -> StopC r -> Plain (flats ks ++ r).
 Proof.
   intros ks r (H & Ps & -> & Hprim & Hposts) Hstop.
   assert (Hne : NotEq (flats Ps ++ r))
-    by (apply notEq_posts; [ exact Hposts | apply notEq_stop; exact Hstop ]).
+    by (apply notEq_posts; [ exact Hposts | apply notEq_stopC; exact Hstop ]).
   destruct (Hprim _ Hne) as (Hplain & _ & _).
   rewrite flats_app, <- app_assoc. exact Hplain.
 Qed.
 
 Lemma chain_notdecl : forall ks r,
-  Chain ks -> Stop r -> NotDecl (flats ks ++ r).
+  Chain ks -> StopC r -> NotDecl (flats ks ++ r).
 Proof.
   intros ks r (H & Ps & -> & Hprim & Hposts) Hstop.
   assert (Hne : NotEq (flats Ps ++ r))
-    by (apply notEq_posts; [ exact Hposts | apply notEq_stop; exact Hstop ]).
+    by (apply notEq_posts; [ exact Hposts | apply notEq_stopC; exact Hstop ]).
   destruct (Hprim _ Hne) as (_ & Hnd & _).
   rewrite flats_app, <- app_assoc. exact Hnd.
 Qed.
@@ -178,7 +201,8 @@ Lemma chain_statement : forall ks r,
   peg (E_rule R__statement) (flats ks ++ r) (Ok ks r).
 Proof.
   intros ks r Hchain Hstop.
-  pok ltac:(first [ exact (chain_operand _ _ Hchain Hstop) | exact (stop_more_math _ Hstop) ]).
+  pok ltac:(first [ exact (chain_operand _ _ Hchain (StopC_stop _ Hstop))
+                  | exact (stop_more_math _ Hstop) ]).
 Qed.
 
 Lemma chain_value : forall ks r,
@@ -186,5 +210,85 @@ Lemma chain_value : forall ks r,
   peg (E_rule R_value) (flats ks ++ r) (Ok [Node R_value ks] r).
 Proof.
   intros ks r Hchain Hstop.
-  pok ltac:(first [ exact (chain_operand _ _ Hchain Hstop) | exact (stop_more_math _ Hstop) ]).
+  pok ltac:(first [ exact (chain_operand _ _ Hchain (StopC_stop _ Hstop))
+                  | exact (stop_more_math _ Hstop) ]).
+Qed.
+
+(* ---- a binary operation: two chains round an operator ---- *)
+
+Lemma infix_parses : forall o r,
+  peg (E_rule R__infix) (TSym (op_text o) :: r) (Ok [op_tree o] r).
+Proof. intros o r. destruct o; pok nope. Qed.
+
+Lemma flats_op : forall o ks,
+  flats (op_tree o :: ks) = TSym (op_text o) :: flats ks.
+Proof.
+  intros o ks. unfold op_tree.
+  rewrite flats_cons, flat_node, flats_cons, flat_leaf, flats_nil. reflexivity.
+Qed.
+
+Definition Bin (ks : list tree) : Prop :=
+  exists k1 o k2, ks = k1 ++ op_tree o :: k2 /\ Chain k1 /\ Chain k2.
+
+(* What the last statement of a block can be: one chain, or two round an
+   operator. *)
+Definition Fin (ks : list tree) : Prop := Chain ks \/ Bin ks.
+
+Lemma flats_bin : forall k1 o k2 r,
+  flats (k1 ++ op_tree o :: k2) ++ r
+  = flats k1 ++ TSym (op_text o) :: (flats k2 ++ r).
+Proof.
+  intros k1 o k2 r. rewrite flats_app, flats_op, <- app_assoc. reflexivity.
+Qed.
+
+Lemma bin_math : forall k1 o k2 r,
+  Chain k1 -> Chain k2 -> Stop r ->
+  peg (E_seq (E_rule R__operand) (E_star (E_rule R__more_math)))
+      (flats k1 ++ TSym (op_text o) :: (flats k2 ++ r))
+      (Ok (k1 ++ op_tree o :: k2) r).
+Proof.
+  intros k1 o k2 r H1 H2 Hr.
+  eapply peg_seq_ok;
+    [ exact (chain_operand _ _ H1 (StopC_op o _)) | | pcat ].
+  eapply peg_star_cons;
+    [ | exact (stop_more_math _ Hr) | pcat ].
+  pok ltac:(first
+    [ exact (infix_parses o _)
+    | exact (chain_operand _ _ H2 (StopC_stop _ Hr)) ]).
+Qed.
+
+Lemma fin_statement : forall ks r,
+  Fin ks -> Stop r ->
+  peg (E_rule R__statement) (flats ks ++ r) (Ok ks r).
+Proof.
+  intros ks r [Hc | (k1 & o & k2 & -> & H1 & H2)] Hstop.
+  - exact (chain_statement _ _ Hc Hstop).
+  - rewrite flats_bin. eapply peg_splice; [ reflexivity | ].
+    cbn [body]. exact (bin_math _ _ _ _ H1 H2 Hstop).
+Qed.
+
+Lemma fin_value : forall ks r,
+  Fin ks -> Stop r ->
+  peg (E_rule R_value) (flats ks ++ r) (Ok [Node R_value ks] r).
+Proof.
+  intros ks r [Hc | (k1 & o & k2 & -> & H1 & H2)] Hstop.
+  - exact (chain_value _ _ Hc Hstop).
+  - rewrite flats_bin. eapply peg_node; [ reflexivity | | reflexivity ].
+    cbn [body]. exact (bin_math _ _ _ _ H1 H2 Hstop).
+Qed.
+
+Lemma fin_plain : forall ks r,
+  Fin ks -> Stop r -> Plain (flats ks ++ r).
+Proof.
+  intros ks r [Hc | (k1 & o & k2 & -> & H1 & H2)] Hstop.
+  - exact (chain_plain _ _ Hc (StopC_stop _ Hstop)).
+  - rewrite flats_bin. exact (chain_plain _ _ H1 (StopC_op o _)).
+Qed.
+
+Lemma fin_notdecl : forall ks r,
+  Fin ks -> Stop r -> NotDecl (flats ks ++ r).
+Proof.
+  intros ks r [Hc | (k1 & o & k2 & -> & H1 & H2)] Hstop.
+  - exact (chain_notdecl _ _ Hc (StopC_stop _ Hstop)).
+  - rewrite flats_bin. exact (chain_notdecl _ _ H1 (StopC_op o _)).
 Qed.

@@ -90,8 +90,11 @@ let canonical_type t =
   in
   let b = Buffer.create 64 in
   let rec typ = function
-    | Typ_Number -> Buffer.add_string b "Number"
+    | Typ_Int -> Buffer.add_string b "Number"
+    | Typ_Float -> Buffer.add_string b "Float"
     | Typ_Bool -> Buffer.add_string b "Bool"
+    | Typ_Unit -> Buffer.add_string b "Unit"
+    | Typ_String -> Buffer.add_string b "String"
     | Typ_Arrow (x, y) ->
         Buffer.add_char b '(';
         typ x;
