@@ -3,7 +3,7 @@
    annotations are not in the generated grammar, so the relation describes
    valid input only. The lexer is trusted: a token stream is the input. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Goat.GoatGrammar.
 

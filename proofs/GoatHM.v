@@ -20,7 +20,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatBij.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Import ListNotations.
 
 (* ap_typ by a substitution that fixes a type's free variables is the identity. *)
