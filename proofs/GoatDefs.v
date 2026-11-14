@@ -35,6 +35,8 @@ Fixpoint ap_typ (st : tsub) (sr : rsub) (T : typ) {struct T} : typ :=
   match T with
   | typ_Number => typ_Number
   | typ_Bool => typ_Bool
+  | typ_Unit => typ_Unit
+  | typ_String => typ_String
   | typ_Arrow A B => typ_Arrow (ap_typ st sr A) (ap_typ st sr B)
   | typ_Record R => typ_Record (ap_row st sr R)
   | typ_Var a => st a
@@ -60,6 +62,8 @@ Fixpoint ftv_typ (T : typ) {struct T} : atoms :=
   match T with
   | typ_Number => {}
   | typ_Bool => {}
+  | typ_Unit => {}
+  | typ_String => {}
   | typ_Arrow A B => ftv_typ A `union` ftv_typ B
   | typ_Record R => ftv_row R
   | typ_Var a => {{a}}
@@ -75,6 +79,8 @@ Fixpoint frv_typ (T : typ) {struct T} : atoms :=
   match T with
   | typ_Number => {}
   | typ_Bool => {}
+  | typ_Unit => {}
+  | typ_String => {}
   | typ_Arrow A B => frv_typ A `union` frv_typ B
   | typ_Record R => frv_row R
   | typ_Var _ => {}
@@ -164,6 +170,8 @@ Inductive value : exp -> Prop :=
  | v_num : forall n, value (e_num n)
  | v_true : value e_true
  | v_false : value e_false
+ | v_unit : value e_unit
+ | v_str : forall q, value (e_str q)
  | v_abs : forall e, value (e_abs e)
  | v_rec : forall fs, rec_value fs -> value (e_rec fs)
 with rec_value : fields -> Prop :=
