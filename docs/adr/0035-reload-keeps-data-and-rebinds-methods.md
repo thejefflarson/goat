@@ -63,13 +63,11 @@ addendum, Consequences).
    method. Lists rebind each element by key, not by index. A method that a
    spread inherits (`{...ball, size: 10}`) keeps the key of the literal that
    wrote it, here `(ball, moved)`.
-   - **A rename carries methods over.** When an old key's binding no longer
-     exists, refresh looks for a renamed binding: exactly one top-level binding
-     that is new in this program and whose method labels include the old key's
-     label. If there is exactly one, the old key maps to it (`init` renamed to
-     `make_ball` keeps `(init, update)` as `(make_ball, update)`) and the status
-     says so. If there is none or more than one, the reload resets and the
-     reason names both sides.
+   - **A renamed binding is a different binding.** `init` and `make_ball` are
+     two names, so `(init, update)` and `(make_ball, update)` are two keys and
+     a method under the new name is a new method. The reload resets, and the
+     reason names the binding that is gone rather than a method the kid didn't
+     touch.
 4. **Host sequence.**
    1. New `goat_setup` gives `fresh`. If it traps, the old program keeps
       running.
@@ -92,8 +90,7 @@ addendum, Consequences).
    go away. A reason carries the names the copy needs (`field_added(spin)`,
    `field_removed(vy)`, `type_changed(x, Number, String)`,
    `method_added(grow)`, `method_lost(grow)`, `method_captures(update, speed)`,
-   `ambiguous_site(update)`, `rename_unclear(init)`, `reshaped`). A refresh
-   that followed a rename carries `renamed(init, make_ball)`.
+   `ambiguous_site(update)`, `binding_gone(init)`, `reshaped`).
 6. **A plain function in the model stays a checker error, reworded.** The rule
    at `infer.rs` ~1279 keeps rejecting a function whose field is not a method,
    and accepts one the field flag from ADR 0034 marks `METHOD`:
@@ -108,8 +105,7 @@ Status copy (the host shows these; the table is part of the contract):
 | Situation | Message |
 |---|---|
 | Refreshed | Updated: the ball kept going with your new `update`. |
-| Refreshed after a rename | Updated: `init` is now `make_ball`, and the ball kept going. |
-| A rename that can't be matched | Your sketch started over because `init` is gone and goat couldn't tell which new name it became. |
+| The binding that made a method is gone | Your sketch started over because `init` is gone, and the ball's methods came from `init`. |
 | A field was added | Your sketch started over because you added `spin` to what it remembers. |
 | A field was removed | Your sketch started over because it no longer remembers `vy`. |
 | A field's type changed | Your sketch started over because `x` changed from a `Number` to a `String`. |
@@ -296,19 +292,15 @@ goat behavior re-expressed in native code).
 
 ## Risks and open questions
 
-1. **Rename matching is a heuristic.** It handles one renamed binding per edit.
-   Renaming two bindings that hold the same method label in one edit resets
-   with `rename_unclear`. That is the safe failure: a wrong match would run one
-   ball's data under another binding's methods.
-2. **A reset after a failed snapshot still leaves the old static block** until
+1. **A reset after a failed snapshot still leaves the old static block** until
    the old module is released; step 7 runs only after a refresh or a reset that
    completed steps 4 and 5.
-3. **Mono-instance sites.** One source literal can have several specializations
+2. **Mono-instance sites.** One source literal can have several specializations
    with different layouts. The site table must hold the closure for the
    specialization whose layout the refreshed record uses; two specializations of
    one site are one key. Phase 2 must test a method literal inside a polymorphic
    function used at two types.
-4. **A reset still re-enters the host's fresh model**, so a reset throws away
+3. **A reset still re-enters the host's fresh model**, so a reset throws away
    the ball's position, as today. Nothing in this ADR makes a reset gentler.
 
 ## Recommendation
@@ -325,9 +317,9 @@ goat behavior re-expressed in native code).
 
 The owner settled the image format on 2026-11-13: a DAG with back-references,
 string pointers shared by reference count with literals copied, tail-call list
-walks, rename matching, and freeing the old static block. Phase 2 must include
-tests for the reset paths that no program on master reaches
-(`method_captures`, `ambiguous_site`, `rename_unclear`), a model that shares one
+walks, a renamed binding treated as a different binding, and freeing the old
+static block. Phase 2 must include tests for the reset paths that no program on
+master reaches (`method_captures`, `ambiguous_site`, `binding_gone`), a model that shares one
 record in two places (rebuilt once), a 10,000-ball reload, and a heap check that
 repeated reloads return `goat_live_allocs` and the heap's high-water mark to
 their starting values.
