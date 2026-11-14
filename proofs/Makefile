@@ -24,10 +24,7 @@ OTT_FLAGS = -coq_lngen true -coq_expand_list_types true
 
 .PHONY: all gen coq ci check-gen check-grammar gen-grammar check-assumptions check-admits clean
 
-# The allowed admits: the two canonical Hindley-Milner lemmas in GoatSubst.v
-# that term substitution (L6a/L6b), preservation, and soundness are derived
-# from -- general weakening (typing_weaken, L4) and context-fixing type/row
-# substitution (typing_tsubst_fix, L5). Closing them finishes B3 (issue #151).
+# No admits are allowed: every proof in proofs/*.v must be closed.
 EXPECTED_ADMITS = 0
 
 all: gen coq
@@ -74,15 +71,12 @@ check-assumptions: coq
 	fi; \
 	echo "check-assumptions: peg_deterministic, parse_denotes_lc and print_parse_roundtrip are closed -- ok."
 
-# Frozen-admit guard: "green Coq" stays honest only while the sole admits are
-# the two tracked HM lemmas, so the proof can only get MORE complete. Fail if
-# the `Admitted.` count in the sources drifts from EXPECTED_ADMITS. When
-# typing_weaken / typing_tsubst_fix close (#151), lower the expected count.
+# Frozen-admit guard: fail if the `Admitted.` count in the sources drifts from
+# EXPECTED_ADMITS, so a green proof build never hides an open lemma.
 check-admits:
 	@n=$$(grep -rn '^Admitted\.' *.v | wc -l | tr -d '[:space:]'); \
 	if [ "$$n" != "$(EXPECTED_ADMITS)" ]; then \
 	  echo "ERROR: proofs/*.v has $$n 'Admitted.' (expected $(EXPECTED_ADMITS))."; \
-	  echo "Allowed: typing_weaken (L4) and typing_tsubst_fix (L5) in GoatSubst.v (#151)."; \
 	  grep -rn '^Admitted\.' *.v; \
 	  exit 1; \
 	fi; \
