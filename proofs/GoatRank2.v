@@ -23,7 +23,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSound.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 
 (* one-point substitutions used to witness the instance relation *)
 Definition tsub1 (a : typvar) (tau : typ) : tsub :=
