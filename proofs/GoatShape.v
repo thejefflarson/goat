@@ -3,7 +3,7 @@
    expression [e] can produce the forest [ts] using core rules only; it does not
    look at the input. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
@@ -11,7 +11,7 @@ Require Import Goat.GoatNum.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
 Require Import Goat.GoatDen.
-Require Import Lia.
+From Stdlib Require Import Lia.
 Open Scope string_scope.
 Open Scope list_scope.
 

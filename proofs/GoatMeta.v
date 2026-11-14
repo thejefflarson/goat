@@ -15,8 +15,8 @@ Require Import Goat.GoatProofs.   (* exp_fields_mutind *)
 Require Import Goat.GoatRows.
 Require Import Goat.GoatNum.
 Require Import Goat.GoatDefs.
-Require Import Coq.Lists.List.
-Require Import Lia.
+Require Import Stdlib.Lists.List.
+From Stdlib Require Import Lia.
 
 (* ================================================================== *)
 (* Locally-nameless infrastructure (LNgen-style, hand-proved).          *)

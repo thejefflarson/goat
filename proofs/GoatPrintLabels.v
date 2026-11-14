@@ -2,7 +2,7 @@
    the label table that T1 builds from the parse tree is the first-occurrence
    table of the term's labels. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.

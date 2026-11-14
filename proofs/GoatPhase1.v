@@ -13,7 +13,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSound.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Import ListNotations.
 
 (* Integer arguments of the constructors below are written as numerals. *)

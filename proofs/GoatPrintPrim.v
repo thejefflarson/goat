@@ -2,7 +2,7 @@
    rule that should take it and by no earlier alternative of the ordered choice
    in [_primary] (a binding, a destructuring, a function, a record, a name). *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.

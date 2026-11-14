@@ -7,7 +7,7 @@
    a bound index [i] at depth [P] prints as [nm (P - 1 - i)]; the label [n]
    prints as [lname n]. *)
 
-From Coq Require Import String List Decimal DecimalString.
+From Stdlib Require Import String List Decimal DecimalString.
 Import ListNotations.
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.

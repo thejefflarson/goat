@@ -1,7 +1,7 @@
 (* The printed block of every closed term parses as an expression, with every
    ordered choice committing to the right alternative. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.

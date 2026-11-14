@@ -21,7 +21,7 @@
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Require Import Goat.GoatNum.
 Require Import Goat.GoatLit.
 

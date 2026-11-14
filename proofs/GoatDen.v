@@ -1,13 +1,13 @@
 (* The denotation of a core-fragment parse tree as an Ott term, and its local
    closure (the denotation half of T1, ADR 0030). *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatMeta.
-Require Import Lia.
+From Stdlib Require Import Lia.
 Require Export Goat.GoatLit.
 Require Import Goat.GoatNum.
 Require Import Goat.GoatGrammar.

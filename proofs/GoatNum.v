@@ -3,8 +3,8 @@
    [p~1]) that clash with Metalib's [x ~ T] context notation, so the
    development imports them here and nowhere else. *)
 
-Require Import Coq.ZArith.ZArith.
-Require Import Coq.QArith.QArith.
+Require Import Stdlib.ZArith.ZArith.
+Require Import Stdlib.QArith.QArith.
 
 Definition znum : Set := Z.
 
