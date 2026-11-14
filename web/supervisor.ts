@@ -5,7 +5,7 @@
 // deadline it calls `terminate()` and, for an interactive program, starts over
 // from `init`. The page never blocks, so it can always do this.
 
-import { FRAME_BUDGET_MS, STUCK_MESSAGE } from "./loop.ts";
+import { FRAME_BUDGET_MS, type Reloaded, STUCK_MESSAGE } from "./loop.ts";
 import {
   type Capabilities,
   type FromWorker,
@@ -46,8 +46,9 @@ export interface Job {
 export interface RunSink {
   // An interactive program finished `setup`, on the first start and after each restart.
   onReady?(): void;
-  // A recompiled program replaced the running one: `kept` its state, or started over.
-  onReloaded?(outcome: "kept" | "reset"): void;
+  // A recompiled program replaced the running one: its state `refreshed`, or
+  // `reset` to the new `init` for the reason given.
+  onReloaded?(outcome: Reloaded): void;
   // The recompiled program could not replace the running one, which keeps running.
   onReloadFailed?(message: string): void;
   onOutput(lines: string[]): void;
@@ -176,7 +177,9 @@ export class Supervisor implements Runner {
       case "reloaded":
         session.subscriptions = new Set(message.subscriptions);
         session.job = { ...session.job, module: session.pending.shift() ?? session.job.module };
-        session.sink.onReloaded?.(message.outcome);
+        session.sink.onReloaded?.(
+          message.reason ? { outcome: message.outcome, reason: message.reason } : { outcome: message.outcome },
+        );
         break;
       case "reload_failed":
         session.pending.shift();

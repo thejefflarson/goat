@@ -83,7 +83,7 @@ fn init_must_be_a_record() {
 }
 
 #[test]
-fn the_model_cannot_hold_a_function() {
+fn the_model_cannot_hold_a_plain_function() {
     for init in [
         "{x: 0, f: program(a) do a done}",
         "{x: 0, inner: {f: program(a) do a + 1 done}}",
@@ -92,11 +92,37 @@ fn the_model_cannot_hold_a_function() {
         let source = interactive(init, UPDATE, DRAW);
         let (message, text) = the_error(&source);
         assert!(
-            message.starts_with("the model can't hold a function"),
+            message.starts_with("the model can hold methods but not plain functions"),
+            "{message}"
+        );
+        assert!(
+            message.ends_with("or keep it at the top level."),
             "{message}"
         );
         assert_eq!(text, init);
     }
+}
+
+#[test]
+fn the_model_can_hold_methods() {
+    for init in [
+        "{x: 0, bump: program(self) do {...self, x: self.x + 1} done}",
+        "{x: 0, inner: {n: 1, grow: program(self) do {...self, n: self.n + 1} done}}",
+        "{x: 0, balls: [{y: 0, fall: program(self) do {...self, y: self.y + 1} done}]}",
+    ] {
+        checks(&interactive(init, UPDATE, DRAW));
+    }
+}
+
+#[test]
+fn a_method_does_not_license_a_plain_function_beside_it() {
+    let init = "{x: 0, bump: program(self) do self.x done, f: program(a) do a done}";
+    let (message, text) = the_error(&interactive(init, UPDATE, DRAW));
+    assert!(
+        message.starts_with("the model can hold methods"),
+        "{message}"
+    );
+    assert_eq!(text, init);
 }
 
 #[test]

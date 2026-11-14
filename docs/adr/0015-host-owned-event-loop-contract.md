@@ -214,6 +214,9 @@ ownership convention, exports-as-subscription, and the scene-streaming protocol.
 
 ### 1. A model type that contains a function is a checker error
 
+> Amended by ADR 0035: the model may hold methods (record fields marked by
+> `self`, ADR 0034). A plain function in the model is still an error.
+
 The model is the record type that `init`, `update`, and `draw` share (§1). A
 function anywhere inside it — a record field, a variant payload, a list item —
 is rejected with a spanned error on `init`. A closure holds an index into its
@@ -239,6 +242,10 @@ address becomes an offset from a global. Run-once modules and `emit` are
 unchanged.
 
 ### 3. The model-layout fingerprint decides keep or reset
+
+> Superseded by ADR 0035: the fingerprint is gone. The old module snapshots the
+> model by field and tag name, the new one refreshes a model of its own type
+> from the snapshot, and the reload reports `refreshed` or `reset` with a reason.
 
 Each interactive module exports an immutable `i64` global,
 `goat_model_fingerprint`: FNV-1a over a canonical walk of the model's mono

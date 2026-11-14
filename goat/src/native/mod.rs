@@ -16,7 +16,7 @@ use wasmtime::{Caller, Config, Engine, ExternType, Instance, Linker, Module, Sto
 
 mod interactive;
 
-pub use interactive::{Event, HostEvent, Interactive, Reloaded};
+pub use interactive::{Event, HostEvent, Interactive, Reloaded, ResetReason};
 
 /// What a finished program left behind.
 pub struct Run {
@@ -622,13 +622,26 @@ impl<H: Host + 'static> Guest<H> {
         result
     }
 
-    /// `instance`'s model fingerprint, or why it has none.
-    fn fingerprint(&mut self, instance: Instance) -> Result<u64, String> {
-        instance
-            .get_global(&mut self.store, goat_wasm::FINGERPRINT_EXPORT)
-            .and_then(|global| global.get(&mut self.store).i64())
-            .map(|bits| bits as u64)
-            .ok_or_else(|| format!("module exports no {}", goat_wasm::FINGERPRINT_EXPORT))
+    /// The parts of the reason the last `goat_refresh` gave up, read out of
+    /// the module's memory.
+    fn reason(&mut self) -> ResetReason {
+        let mut parts = Vec::new();
+        while let Ok(at) = self.call::<_, u32>("goat_reason_part", parts.len() as u32) {
+            let text = self.read_string(at).unwrap_or_default();
+            if at == 0 || text.is_empty() {
+                break;
+            }
+            parts.push(text);
+        }
+        ResetReason::of(parts)
+    }
+
+    /// The text of the goat string at `at`.
+    fn read_string(&mut self, at: u32) -> Result<String, String> {
+        let len = self.read(at as usize + STR_LEN, 4)?;
+        let len = u32::from_le_bytes([len[0], len[1], len[2], len[3]]) as usize;
+        let bytes = self.read(at as usize + STR_BYTES, len)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Call the export `name`; a trap is an error, and so is outrunning the
@@ -691,6 +704,19 @@ impl<H: Host + 'static> Guest<H> {
 
     pub fn live_allocs(&mut self) -> Result<u32, String> {
         self.call("goat_live_allocs", ())
+    }
+
+    /// The allocator's high-water mark: the address the heap has grown to,
+    /// which freed blocks never lower. A module that owns its heap has none
+    /// the host can read.
+    pub fn heap_end(&mut self) -> Result<u32, String> {
+        let hosted = self.hosted.ok_or("this module owns its heap")?;
+        hosted
+            .heap
+            .get(&mut self.store)
+            .i32()
+            .map(|end| end as u32)
+            .ok_or_else(|| "the heap pointer is not an i32".to_string())
     }
 
     pub fn host_mut(&mut self) -> &mut H {
