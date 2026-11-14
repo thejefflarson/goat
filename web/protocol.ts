@@ -3,6 +3,7 @@
 // is the heartbeat, a SharedArrayBuffer word the worker bumps and the supervisor
 // polls, because a worker spinning inside wasm can send nothing.
 
+import type { Reloaded } from "./loop.ts";
 import type { EventKind, HostEvent, RawSpan, RawSwatch } from "./scene.ts";
 
 // `highlight` runs a program over the editor vocabulary: it draws once per
@@ -24,7 +25,7 @@ export type ToWorker =
 
 export type FromWorker =
   | { type: "ready"; subscriptions: EventKind[] }
-  | { type: "reloaded"; outcome: "kept" | "reset"; subscriptions: EventKind[] }
+  | ({ type: "reloaded"; subscriptions: EventKind[] } & Reloaded)
   | { type: "reload_failed"; message: string }
   | { type: "output"; lines: string[] }
   | { type: "spans"; ticket: number; spans: RawSpan[] }

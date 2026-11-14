@@ -110,7 +110,15 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
         let extended_layout = LayoutId(m.layouts.len() as u32);
         m.layouts.push(Layout::Record(extended));
         let sites = Expr::AllocRecord(built.sites_layout, built.site_closures);
-        body = reload::extend_root(body, &mut cx, ret, sites_ty, extended_layout, fields.len(), sites);
+        body = reload::extend_root(
+            body,
+            &mut cx,
+            ret,
+            sites_ty,
+            extended_layout,
+            fields.len(),
+            sites,
+        );
         ret = MTy::Ptr(HeapKind::Record(extended_layout));
         Some(m.interactive(&root_ty, built.reload, sites_slot))
     } else {
@@ -151,7 +159,9 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
         .flat_map(|(func, key)| {
             let key = m.intern(&key);
             let wrapper = m.wrappers.get(&func).copied();
-            std::iter::once(func).chain(wrapper).map(move |func| MethodSite { func, key })
+            std::iter::once(func)
+                .chain(wrapper)
+                .map(move |func| MethodSite { func, key })
         })
         .collect();
     let mut program = Program {

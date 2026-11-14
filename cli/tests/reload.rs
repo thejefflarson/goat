@@ -171,7 +171,15 @@ fn a_reload_keeps_what_it_can_when_a_method_body_changes() {
     let trace = agree(&[BALLS, &bigger], &[Ticks(1), Reload(1), Draw]);
     assert_eq!(trace.outcomes, [None]);
     assert_eq!(circles(&trace), [5.0, 15.0]);
-    let at = |c: &SceneCommand| matches!(c, SceneCommand::Circle { center: (_, 20.0), .. });
+    let at = |c: &SceneCommand| {
+        matches!(
+            c,
+            SceneCommand::Circle {
+                center: (_, 20.0),
+                ..
+            }
+        )
+    };
     assert!(trace.scene.iter().any(at), "the new draw ran");
 }
 
@@ -223,10 +231,9 @@ fn a_field_the_new_program_adds_comes_from_its_init_and_one_it_drops_goes() {
     let added = MIXED.replace("count: 7", "count: 7, extra: 99");
     let trace = agree(&[MIXED, &added], &[Ticks(1), Reload(1), Draw]);
     assert_eq!(trace.outcomes, [None]);
-    let dropped = MIXED.replace("  flag: true,\n", "").replace(
-        "if model.flag then \"yes\" else \"no\" done",
-        "\"yes\"",
-    );
+    let dropped = MIXED
+        .replace("  flag: true,\n", "")
+        .replace("if model.flag then \"yes\" else \"no\" done", "\"yes\"");
     let trace = agree(&[MIXED, &dropped], &[Ticks(1), Reload(1), Draw]);
     assert_eq!(trace.outcomes, [None]);
     assert_eq!(circles(&trace), [8.0]);
@@ -239,7 +246,10 @@ fn a_field_that_changes_type_resets_and_names_both_types() {
         .replace("x: model.count", "x: 5")
         .replace("count: model.count + 1", "count: model.count");
     let trace = agree(&[MIXED, &changed], &[Ticks(1), Reload(1), Draw]);
-    assert_eq!(trace.outcomes, [reason("type_changed", &["count", "Number", "String"])]);
+    assert_eq!(
+        trace.outcomes,
+        [reason("type_changed", &["count", "Number", "String"])]
+    );
 }
 
 #[test]
@@ -277,7 +287,10 @@ done
 draw = program(model) do [Circle({x: model.ball.x, y: 0, r: 1, color: "red"})] done
 "#;
     let trace = agree(&[source, source], &[Ticks(2), Reload(1), Draw]);
-    assert_eq!(trace.outcomes, [reason("method_captures", &["update", "k"])]);
+    assert_eq!(
+        trace.outcomes,
+        [reason("method_captures", &["update", "k"])]
+    );
     assert_eq!(circles(&trace), [0.0], "the model started over");
 }
 
@@ -410,8 +423,16 @@ fn a_record_held_in_two_places_is_rebuilt_once() {
         (before, after)
     };
     let (shared, apart) = (live(SHARED), live(APART));
-    assert_eq!(apart.0 - shared.0, 1, "setup builds the record twice when apart");
-    assert_eq!(apart.1 - shared.1, 1, "a reload keeps one copy where there was one");
+    assert_eq!(
+        apart.0 - shared.0,
+        1,
+        "setup builds the record twice when apart"
+    );
+    assert_eq!(
+        apart.1 - shared.1,
+        1,
+        "a reload keeps one copy where there was one"
+    );
 }
 
 fn many_balls(count: usize) -> String {
@@ -542,7 +563,10 @@ fn a_reset_also_frees_the_old_modules_static_data() {
         Interactive::new(&reloadable(source), SceneHost::default()).expect("starts");
     let mut marks = Vec::new();
     for module in &reset {
-        assert!(matches!(program.reload(module).unwrap(), Reloaded::Reset(_)));
+        assert!(matches!(
+            program.reload(module).unwrap(),
+            Reloaded::Reset(_)
+        ));
         marks.push((program.live_allocs().unwrap(), program.heap_end().unwrap()));
     }
     for (round, mark) in marks.iter().enumerate().skip(2) {

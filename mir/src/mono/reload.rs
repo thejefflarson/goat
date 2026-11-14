@@ -16,9 +16,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use super::{
-    FnCx, Lambda, Mono, Subst, match_ty, payload_fields, positional_fields, variant_row,
-};
+use super::{FnCx, Lambda, Mono, Subst, match_ty, payload_fields, positional_fields, variant_row};
 use crate::canon::{canonical, ground_fields};
 use crate::mir::*;
 use goat_checker::captures::for_each_node;
@@ -250,7 +248,12 @@ impl<'g, 'a> Gen<'g, 'a> {
         let (refresh, outcome) = g.refresh(&model);
         let part = g.part();
         let site_closures = g.site_closures(root);
-        let closure_tys: Vec<MTy> = g.site_slots.clone().iter().map(|(_, ty)| g.m.lower_ty(ty)).collect();
+        let closure_tys: Vec<MTy> = g
+            .site_slots
+            .clone()
+            .iter()
+            .map(|(_, ty)| g.m.lower_ty(ty))
+            .collect();
         g.m.layouts[sites_layout.0 as usize] = Layout::Record(closure_tys);
         Built {
             reload: Reload {
@@ -456,7 +459,10 @@ impl<'g, 'a> Gen<'g, 'a> {
             (LIST, "List"),
             (METHOD, "Method"),
         ];
-        let arms = names.iter().map(|(tag, text)| (*tag, self.lit(text))).collect();
+        let arms = names
+            .iter()
+            .map(|(tag, text)| (*tag, self.lit(text)))
+            .collect();
         let default = self.lit("Record");
         let body = Self::switch(node, arms, default);
         let id = self.kind_name;
@@ -544,10 +550,7 @@ impl<'g, 'a> Gen<'g, 'a> {
         let mut cx = FnCx::new(Subst::new());
         let (value, pair, image) = (cx.fresh(model_ty), cx.fresh(n), cx.fresh(n));
         let steps = vec![
-            (
-                pair,
-                Expr::CallDirect(body, vec![local(value), self.nil()]),
-            ),
+            (pair, Expr::CallDirect(body, vec![local(value), self.nil()])),
             (image, Expr::Payload(pair, PAIR, 0)),
         ];
         let out = lets(steps, local(image));
@@ -1014,8 +1017,7 @@ impl<'g, 'a> Gen<'g, 'a> {
         let id = self.reserve();
         let mut cx = FnCx::new(Subst::new());
         let chain = cx.fresh(n);
-        let (field, rest, name, value) =
-            (cx.fresh(n), cx.fresh(n), cx.fresh(string), cx.fresh(n));
+        let (field, rest, name, value) = (cx.fresh(n), cx.fresh(n), cx.fresh(string), cx.fresh(n));
         let again = || Expr::TailCall(Callee::Direct(id), vec![local(rest)]);
         let mut known = Expr::Const(Const::Bool(false));
         for (label, _) in fields {
@@ -1137,8 +1139,7 @@ impl<'g, 'a> Gen<'g, 'a> {
             let arm = match (tag, v.label) {
                 (NIL, _) => self.missing(cx, v, ty_mty),
                 (METHOD, Some(label)) => {
-                    let reason =
-                        self.reason(cx, &[Part::Text("method_lost"), Part::Text(label)]);
+                    let reason = self.reason(cx, &[Part::Text("method_lost"), Part::Text(label)]);
                     self.fail(ty_mty, reason)
                 }
                 _ => self.mismatch(cx, v, ty_mty),
@@ -1152,7 +1153,10 @@ impl<'g, 'a> Gen<'g, 'a> {
             Kind::Str => self.payload_ok(ty_mty, node, STR, table),
             Kind::Func => self.rebind(cx, v, ty_mty),
             Kind::Record(_) | Kind::Variant(_) | Kind::List(_) => {
-                let fresh = v.fresh.clone().filter(|_| matches!(kind(v.ty), Kind::Record(_)));
+                let fresh = v
+                    .fresh
+                    .clone()
+                    .filter(|_| matches!(kind(v.ty), Kind::Record(_)));
                 let child = self.rf_fn(v.ty, fresh.is_some());
                 let mut args = vec![local(node)];
                 args.extend(fresh);
@@ -1269,11 +1273,7 @@ impl<'g, 'a> Gen<'g, 'a> {
                 );
             }
         }
-        Expr::Let(
-            binding,
-            boxed(Expr::Payload(v.node, METHOD, 0)),
-            boxed(out),
-        )
+        Expr::Let(binding, boxed(Expr::Payload(v.node, METHOD, 0)), boxed(out))
     }
 
     /// Whether `site`'s literal, specialized, has the type `ty`.

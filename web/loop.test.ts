@@ -290,12 +290,12 @@ test("only an interactive program compiles reloadable", async () => {
   assert.equal(isReloadableModule(await module("forward(10)")), false);
 });
 
-test("a reload that leaves the model's shape alone keeps the model and swaps draw", async () => {
+test("a reload that leaves the model's shape alone refreshes the model and swaps draw", async () => {
   const { scene, page, loop, first, reload } = await liveProgram(counter("", "model.x"));
   loop.send({ kind: "KeyDown", key: "a" });
   loop.send({ kind: "KeyDown", key: "a" });
   page.frame(16);
-  assert.equal(await reload(counter("", "model.x * 2")), "kept");
+  assert.deepEqual(await reload(counter("", "model.x * 2")), { outcome: "refreshed" });
   page.frame(32);
   assert.deepEqual(lineEnds(scene), [20, 40]);
   loop.send({ kind: "KeyDown", key: "a" });
@@ -306,12 +306,82 @@ test("a reload that leaves the model's shape alone keeps the model and swaps dra
   assert.deepEqual(page.errors, []);
 });
 
-test("a reload that changes the model's shape starts over from the new init", async () => {
+test("a field the new program adds comes from its init, and the model carries on", async () => {
   const { scene, page, loop, first, reload } = await liveProgram(counter("", "model.x"));
   loop.send({ kind: "KeyDown", key: "a" });
-  assert.equal(await reload(counter(", y: 5", "model.x + model.y")), "reset");
+  assert.deepEqual(await reload(counter(", y: 5", "model.x + model.y")), { outcome: "refreshed" });
+  page.frame(16);
+  assert.deepEqual(lineEnds(scene), [15]);
+  loop.stop();
+  assert.equal(first.goat_live_allocs(), 0);
+  assert.deepEqual(page.errors, []);
+});
+
+test("a field that changes type starts over from the new init, and the reason names both types", async () => {
+  const { scene, page, loop, first, reload } = await liveProgram(counter("", "model.x"));
+  loop.send({ kind: "KeyDown", key: "a" });
+  const text = counter("", "5").replace("{x: 0}", '{x: "far"}').replace("{...model, x: model.x + 10}", "model");
+  assert.deepEqual(await reload(text), {
+    outcome: "reset",
+    reason: { kind: "type_changed", args: ["x", "Number", "String"] },
+  });
   page.frame(16);
   assert.deepEqual(lineEnds(scene), [5]);
+  loop.stop();
+  assert.equal(first.goat_live_allocs(), 0);
+  assert.deepEqual(page.errors, []);
+});
+
+const balls = (speed: number, make = "make_ball") => `
+speed = ${speed}
+${make} = program(x) do
+  {x: x, update: program(self) do {...self, x: self.x + speed} done}
+done
+init = {tick: 0, balls: [${make}(0), ${make}(10)]}
+update = program(model, event) do
+  match event do
+    KeyDown(key) then {...model, tick: model.tick + 1, balls: change_each(model.balls, program(b) do b.update() done)}
+    else model
+  done
+done
+draw = program(model) do change_each(model.balls, program(b) do Line({x1: b.x, y1: 0, x2: b.x, y2: 1, color: "red"}) done) done
+`;
+
+test("a reload rebinds each method to the new program's closure and keeps the data", async () => {
+  const { scene, page, loop, first, reload } = await liveProgram(balls(5));
+  loop.send({ kind: "KeyDown", key: "a" });
+  assert.deepEqual(await reload(balls(7)), { outcome: "refreshed" });
+  loop.send({ kind: "KeyDown", key: "a" });
+  page.frame(16);
+  assert.deepEqual(lineEnds(scene), [12, 22]);
+  loop.stop();
+  assert.equal(first.goat_live_allocs(), 0);
+  assert.deepEqual(page.errors, []);
+});
+
+test("renaming the binding that made a method resets the model and names the binding that is gone", async () => {
+  const { scene, page, loop, first, reload } = await liveProgram(balls(5));
+  loop.send({ kind: "KeyDown", key: "a" });
+  assert.deepEqual(await reload(balls(5, "new_ball")), {
+    outcome: "reset",
+    reason: { kind: "binding_gone", args: ["make_ball"] },
+  });
+  page.frame(16);
+  assert.deepEqual(lineEnds(scene), [0, 10]);
+  loop.stop();
+  assert.equal(first.goat_live_allocs(), 0);
+  assert.deepEqual(page.errors, []);
+});
+
+test("many reloads leave the live count and the heap's high-water mark where the first left them", async () => {
+  const { hosted, page, loop, first, reload } = await liveProgram(balls(1));
+  const marks: Array<[number, number]> = [];
+  for (let round = 2; round < 10; round++) {
+    loop.send({ kind: "KeyDown", key: "a" });
+    assert.equal((await reload(balls(round))).outcome, "refreshed");
+    marks.push([first.goat_live_allocs(), hosted.heap.value as number]);
+  }
+  assert.deepEqual(marks.slice(1), marks.slice(1).map(() => marks[1]));
   loop.stop();
   assert.equal(first.goat_live_allocs(), 0);
   assert.deepEqual(page.errors, []);

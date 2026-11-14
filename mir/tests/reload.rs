@@ -2,7 +2,7 @@
 //! into the new program's types, keeps the data by name and rebinds each
 //! method to the new program's closure for its site.
 
-use goat_mir::{Program, Refresh, SceneCommand, SceneHost, Session, Value, mono, verify};
+use goat_mir::{Program, SceneCommand, SceneHost, Session, Value, mono, verify};
 
 fn compile(source: &str) -> Program {
     let checked = goat_checker::check(source).unwrap_or_else(|e| panic!("{source}\n{e:?}"));
@@ -60,17 +60,4 @@ fn a_reload_keeps_the_data_and_rebinds_the_methods() {
     session.release_model(model).unwrap();
     assert_eq!(session.shutdown().unwrap(), 0, "leaked");
     assert_eq!(circles(&host.commands), vec![17.0, 27.0]);
-}
-
-#[test]
-fn refresh_without_a_program_change_is_the_identity() {
-    let program = compile(BALLS);
-    let mut host = SceneHost::default();
-    let (mut session, model) = Session::setup(&program, &mut host).unwrap();
-    let image = session.snapshot(model).unwrap();
-    let fresh = session
-        .event("Tick", vec![Value::Float(1.0)])
-        .and_then(|e| Ok(e))
-        .unwrap();
-    let _ = (image, fresh, Refresh::Reset(vec![]));
 }

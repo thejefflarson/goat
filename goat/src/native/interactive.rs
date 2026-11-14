@@ -154,7 +154,9 @@ impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
                 // asked to release it.
                 let image = guest.on(old, |guest| guest.call::<_, i32>("goat_snapshot", model));
                 let refreshed = image.and_then(|image| {
-                    guest.on(new, |guest| guest.call::<_, i32>("goat_refresh", (image, fresh)))
+                    guest.on(new, |guest| {
+                        guest.call::<_, i32>("goat_refresh", (image, fresh))
+                    })
                 });
                 self.carried = started.elapsed();
                 match refreshed {

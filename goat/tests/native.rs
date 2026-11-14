@@ -2,9 +2,7 @@
 //! module through the native drivers.
 #![cfg(feature = "native")]
 
-use goat::native::{
-    Event, Interactive, Reloaded, ResetReason, run_to_end, run_to_end_within,
-};
+use goat::native::{Event, Interactive, Reloaded, ResetReason, run_to_end, run_to_end_within};
 use goat::{Boundary, Host, HostInterface, HostValue, SceneSink, compile};
 use std::time::{Duration, Instant};
 
@@ -308,7 +306,13 @@ fn a_field_that_changes_type_starts_over_from_the_new_init_and_says_which() {
     let changed = counter(7, 1, "").replace("color: \"red\"", "color: 5");
     let changed = changed.replace("color: model.color", "color: \"red\"");
     let reloaded = program.reload(&reloadable(&changed));
-    assert_eq!(reloaded, Ok(Reloaded::Reset(reason("type_changed", &["color", "String", "Int"]))));
+    assert_eq!(
+        reloaded,
+        Ok(Reloaded::Reset(reason(
+            "type_changed",
+            &["color", "String", "Int"]
+        )))
+    );
     program.draw().unwrap();
     let (frames, live) = program.finish().expect("tears down");
     assert_eq!((frames.lines, live), ([line_to(7.0)].to_vec(), 0));
@@ -343,7 +347,10 @@ fn a_reload_can_change_which_events_the_program_handles() {
     let pointer = ticks.replace("Tick(dt)", "PointerDown(at)");
     let mut program = live(&ticks);
     assert_eq!(program.subscriptions(), ["Tick"]);
-    assert_eq!(program.reload(&reloadable(&pointer)), Ok(Reloaded::Refreshed));
+    assert_eq!(
+        program.reload(&reloadable(&pointer)),
+        Ok(Reloaded::Refreshed)
+    );
     assert_eq!(program.subscriptions(), ["PointerDown"]);
     assert!(!program.send(&Event::Tick(16.0)).unwrap());
     assert!(

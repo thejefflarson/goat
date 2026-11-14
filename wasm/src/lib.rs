@@ -656,12 +656,10 @@ fn interactive_exports(
     };
     let (update_kind, model_kind) = (kind(update.params.first())?, kind(update.params.get(1))?);
     let draw_kind = kind(draw.params.first())?;
-    let sites_kind = match program.layouts.get(
-        match root_kind {
-            HeapKind::Record(l) => l.0 as usize,
-            _ => return Err(EmitError::Malformed("interactive root is not a record")),
-        },
-    ) {
+    let sites_kind = match program.layouts.get(match root_kind {
+        HeapKind::Record(l) => l.0 as usize,
+        _ => return Err(EmitError::Malformed("interactive root is not a record")),
+    }) {
         Some(Layout::Record(fields)) => match fields.get(interactive.sites_slot) {
             Some(MTy::Ptr(kind)) => *kind,
             _ => return Err(EmitError::Malformed("interactive root has no sites")),
@@ -781,7 +779,10 @@ fn interactive_exports(
         Instruction::LocalSet(4),
     ]);
     retain(4, &mut refresh);
-    refresh.extend([Instruction::LocalGet(4), Instruction::GlobalSet(REASON_GLOBAL)]);
+    refresh.extend([
+        Instruction::LocalGet(4),
+        Instruction::GlobalSet(REASON_GLOBAL),
+    ]);
     release(shared, 3, outcome_kind, &mut refresh)?;
     refresh.extend([Instruction::I32Const(0), Instruction::End]);
 

@@ -95,7 +95,10 @@ fn the_model_cannot_hold_a_plain_function() {
             message.starts_with("the model can hold methods but not plain functions"),
             "{message}"
         );
-        assert!(message.ends_with("or keep it at the top level."), "{message}");
+        assert!(
+            message.ends_with("or keep it at the top level."),
+            "{message}"
+        );
         assert_eq!(text, init);
     }
 }
@@ -115,7 +118,10 @@ fn the_model_can_hold_methods() {
 fn a_method_does_not_license_a_plain_function_beside_it() {
     let init = "{x: 0, bump: program(self) do self.x done, f: program(a) do a done}";
     let (message, text) = the_error(&interactive(init, UPDATE, DRAW));
-    assert!(message.starts_with("the model can hold methods"), "{message}");
+    assert!(
+        message.starts_with("the model can hold methods"),
+        "{message}"
+    );
     assert_eq!(text, init);
 }
 
