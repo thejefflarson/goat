@@ -30,6 +30,12 @@ wrong state unrepresentable *before* you reach for a comment.
   plus `cargo test --doc` (nextest skips doctests); locally prefer
   `cargo nextest run` — it runs test binaries in parallel and is several times
   faster than `cargo test`, which still works. Config is `.config/nextest.toml`.
+- **Proof gate (ADR 0037).** A PR that changes `grammar/goat.peg`,
+  `checker/src/{infer,lower,ty}.rs` or `prelude/prelude.goat` must also change
+  `proofs/`. The `proof-gate` check waives this only for a PR with the
+  `no-semantics-change` label and a body line starting `No semantics change:`
+  followed by the reason. The `coq` check runs on every PR and skips its build
+  when nothing it depends on changed.
 - **Errors come only from the checker**, with one deliberate exception: mono may
   raise a spanned *resource-limit* diagnostic ("program too complex") when a
   well-typed program would explode monomorphization — a resource bound, not a
