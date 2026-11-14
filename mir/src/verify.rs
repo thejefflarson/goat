@@ -616,6 +616,28 @@ impl<'a> Checker<'a> {
                 }
                 Ty::Val(MTy::Bool)
             }
+            Expr::Addr(x) => self.borrow_ptr(*x).map_or(Ty::Bad, |_| Ty::Val(MTy::Int)),
+            Expr::Shared(x) => self.borrow_ptr(*x).map_or(Ty::Bad, |_| Ty::Val(MTy::Bool)),
+            Expr::Retain(x, ty) => {
+                if !ty.is_ptr() {
+                    return self.err(ErrorKind::NotAPointer(*ty));
+                }
+                match self.borrow(*x) {
+                    Some(found) => {
+                        self.expect(Ty::Val(found), MTy::Int);
+                        Ty::Val(*ty)
+                    }
+                    None => Ty::Bad,
+                }
+            }
+            Expr::KeepStr(s) => self
+                .borrow_str(*s)
+                .map_or(Ty::Bad, |()| Ty::Val(MTy::Ptr(HeapKind::Str))),
+            Expr::MethodKey(c) => match self.borrow(*c) {
+                Some(MTy::Ptr(HeapKind::Closure(_))) => Ty::Val(MTy::Ptr(HeapKind::Str)),
+                Some(other) => self.err(ErrorKind::NotAClosure(other)),
+                None => Ty::Bad,
+            },
             Expr::StrLen(s) | Expr::StrChars(s) => {
                 if self.borrow_str(*s).is_none() {
                     return Ty::Bad;

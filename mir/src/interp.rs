@@ -113,6 +113,15 @@ pub struct Session<'p> {
     interactive: &'p Interactive,
     update: Value,
     draw: Value,
+    sites: Value,
+}
+
+/// What `refresh` made of a snapshot: the model rebuilt in this program, or
+/// the parts of the reason it could not be.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Refresh {
+    Refreshed(Value),
+    Reset(Vec<String>),
 }
 
 impl<'p> Session<'p> {
@@ -135,12 +144,14 @@ impl<'p> Session<'p> {
         let draw = interp.field(root, interactive.draw_slot, None)?;
         let model = interp.field(root, interactive.init_slot, None)?;
         let update = interp.field(root, interactive.update_slot, None)?;
+        let sites = interp.field(root, interactive.sites_slot, None)?;
         interp.release(root)?;
         let session = Session {
             interp,
             interactive,
             update,
             draw,
+            sites,
         };
         Ok((session, model))
     }
@@ -197,11 +208,99 @@ impl<'p> Session<'p> {
         }
     }
 
+    /// The image of `model`, which it consumes (ADR 0035).
+    pub fn snapshot(&mut self, model: Value) -> Result<Value, InterpError> {
+        self.call(self.interactive.reload.snapshot, vec![model])
+    }
+
+    /// Rebuild a model from `image`, which it consumes, with `fresh`, this
+    /// program's own `init`, which it borrows.
+    pub fn refresh(&mut self, image: Value, fresh: Value) -> Result<Refresh, InterpError> {
+        let reload = &self.interactive.reload;
+        let fresh = self.interp.retain(fresh)?;
+        let sites = self.interp.retain(self.sites)?;
+        let outcome = self.call(reload.refresh, vec![image, fresh, sites])?;
+        let Value::Ptr(at) = outcome else {
+            return Err(InterpError::Malformed("refresh returned a non-pointer"));
+        };
+        let (tag, held) = match &self.interp.obj(at)?.body {
+            Body::Variant(tag, fields) => (*tag, fields[0]),
+            _ => return Err(InterpError::Malformed("refresh returned a non-variant")),
+        };
+        let held = self.interp.retain(held)?;
+        self.interp.release(outcome)?;
+        if tag == REFRESHED {
+            return Ok(Refresh::Refreshed(held));
+        }
+        let mut parts = Vec::new();
+        loop {
+            let reason = self.interp.retain(held)?;
+            let part = self.call(
+                self.interactive.reload.part,
+                vec![reason, Value::Int(parts.len() as i64)],
+            )?;
+            let text = String::from_utf8_lossy(self.interp.string_bytes(part)?).into_owned();
+            self.interp.release(part)?;
+            if text.is_empty() {
+                break;
+            }
+            parts.push(text);
+        }
+        self.interp.release(held)?;
+        Ok(Refresh::Reset(parts))
+    }
+
+    /// Swap this session's program for the recompiled `next` over the same
+    /// heap, carrying `model` across by snapshot and refresh (ADR 0035). The
+    /// model that comes back is the refreshed one, or `next`'s own `init`
+    /// with the reason it could not be refreshed.
+    pub fn reload(
+        &mut self,
+        next: &'p Program,
+        model: Value,
+    ) -> Result<(Value, Option<Vec<String>>), InterpError> {
+        let image = self.snapshot(model)?;
+        for old in [self.update, self.draw, self.sites] {
+            self.interp.release(old)?;
+        }
+        self.interp.freeze_literals();
+        self.interp.program = next;
+        self.interactive = next
+            .interactive
+            .as_ref()
+            .ok_or(InterpError::Malformed("not an interactive program"))?;
+        let entry = Pending {
+            func: next.entry,
+            env: None,
+            args: Vec::new(),
+        };
+        let root = self.interp.call(entry, 0)?;
+        let interactive = self.interactive;
+        self.draw = self.interp.field(root, interactive.draw_slot, None)?;
+        let fresh = self.interp.field(root, interactive.init_slot, None)?;
+        self.update = self.interp.field(root, interactive.update_slot, None)?;
+        self.sites = self.interp.field(root, interactive.sites_slot, None)?;
+        self.interp.release(root)?;
+        match self.refresh(image, fresh)? {
+            Refresh::Refreshed(model) => {
+                self.interp.release(fresh)?;
+                Ok((model, None))
+            }
+            Refresh::Reset(reason) => Ok((fresh, Some(reason))),
+        }
+    }
+
     /// Release the stored closures and return the number of objects still live.
     pub fn shutdown(mut self) -> Result<usize, InterpError> {
         self.interp.release(self.update)?;
         self.interp.release(self.draw)?;
+        self.interp.release(self.sites)?;
         Ok(self.interp.live)
+    }
+
+    /// The number of heap objects live now.
+    pub fn live(&self) -> usize {
+        self.interp.live
     }
 
     fn call(&mut self, func: FuncId, args: Vec<Value>) -> Result<Value, InterpError> {
@@ -312,6 +411,18 @@ impl<'p> Interp<'p> {
             line: Vec::new(),
             printed: Vec::new(),
         }
+    }
+
+    /// Turn each string literal into a string of its own bytes, so it still
+    /// reads right once the program whose data table it indexes is gone.
+    fn freeze_literals(&mut self) {
+        let program = self.program;
+        for obj in self.slots.iter_mut().flatten() {
+            if let Body::Str(data) = obj.body {
+                obj.body = Body::Text(program.data[data.0 as usize].clone());
+            }
+        }
+        self.strings.clear();
     }
 
     fn alloc(&mut self, body: Body, rc: u32) -> Result<Value, InterpError> {
@@ -894,6 +1005,44 @@ impl<'p> Interp<'p> {
                     Value::Ptr(addr)
                 }
             },
+            Expr::Addr(x) => match frame.get(*x)? {
+                Value::Ptr(addr) => Value::Int(addr as i64),
+                _ => return Err(InterpError::Malformed("address of a non-pointer")),
+            },
+            Expr::Shared(x) => match frame.get(*x)? {
+                Value::Ptr(addr) => {
+                    let rc = self.obj(addr)?.rc;
+                    Value::Bool(rc != IMMORTAL && rc > 1)
+                }
+                _ => return Err(InterpError::Malformed("sharing of a non-pointer")),
+            },
+            Expr::Retain(x, _) => match frame.get(*x)? {
+                Value::Int(addr) => self.retain(Value::Ptr(addr as usize))?,
+                _ => return Err(InterpError::Malformed("retain of a non-address")),
+            },
+            Expr::KeepStr(s) => {
+                let held = frame.get(*s)?;
+                let Value::Ptr(addr) = held else {
+                    return Err(InterpError::Malformed("not a string"));
+                };
+                if self.obj(addr)?.rc == IMMORTAL {
+                    let bytes = self.string_bytes(held)?.to_vec();
+                    self.alloc(Body::Text(bytes), 1)?
+                } else {
+                    self.retain(held)?
+                }
+            }
+            Expr::MethodKey(c) => {
+                let func = self.closure_target(frame.get(*c)?)?;
+                let key = self
+                    .program
+                    .method_sites
+                    .iter()
+                    .find(|site| site.func == func)
+                    .map(|site| site.key)
+                    .ok_or_else(|| InterpError::Trap("this closure is not a method".into()))?;
+                return self.eval_node(&Expr::StrLit(key), frame, depth);
+            }
             Expr::StrEq(..)
             | Expr::StrLen(_)
             | Expr::StrByte(..)
