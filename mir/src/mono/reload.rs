@@ -98,14 +98,27 @@ fn kind(ty: &Ty) -> Kind {
         Ty::Record(row) => Kind::Record(owned_fields(&row)),
         head @ Ty::Variant(_) => {
             let tags = owned_fields(&variant_row(&head));
-            let link = tags.iter().find(|(label, _)| label == "Link");
-            let is_list = tags.len() == 2 && tags.iter().any(|(label, _)| label == "Empty");
-            match link.and_then(|(_, payload)| positional_fields(payload)) {
-                Some(fields) if is_list && fields.len() == 2 => Kind::List(fields[0].clone()),
-                _ => Kind::Variant(tags),
+            match list_item(ty, &tags) {
+                Some(item) => Kind::List(item),
+                None => Kind::Variant(tags),
             }
         }
         other => unreachable!("a model type is a value type, not {other:?}"),
+    }
+}
+
+/// The element type if `tags` make `ty` the list itself: `Empty` with no
+/// payload and `Link(item, rest)` whose `rest` is `ty`. A user variant with
+/// the list's tag names but another tail has the list's shape and not its
+/// layout, so it stays an ordinary variant.
+fn list_item(ty: &Ty, tags: &[(String, Ty)]) -> Option<Ty> {
+    let find = |name: &str| tags.iter().find(|(label, _)| label == name).map(|(_, t)| t);
+    if tags.len() != 2 || *find("Empty")? != Ty::Unit {
+        return None;
+    }
+    match positional_fields(find("Link")?)?.as_slice() {
+        [item, rest] if canonical(rest) == canonical(ty) => Some(item.clone()),
+        _ => None,
     }
 }
 
@@ -1787,4 +1800,45 @@ pub(super) fn extend_root(
         Expr::AllocRecord(layout, fields),
     );
     lets(spine, extended)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canon::row_from;
+
+    fn pair(item: Ty, rest: Ty) -> Ty {
+        Ty::Record(row_from(vec![("0".into(), item), ("1".into(), rest)]))
+    }
+
+    fn tags(empty: Ty, link: Ty) -> Ty {
+        Ty::Variant(row_from(vec![
+            ("Empty".into(), empty),
+            ("Link".into(), link),
+        ]))
+    }
+
+    fn list_of(empty: Ty) -> Ty {
+        Ty::Rec(1, Box::new(tags(empty, pair(Ty::Int, Ty::Var(1)))))
+    }
+
+    #[test]
+    fn only_the_list_whose_tail_is_itself_is_a_list() {
+        assert!(matches!(kind(&list_of(Ty::Unit)), Kind::List(Ty::Int)));
+        let unrolled = tags(Ty::Unit, pair(Ty::Int, list_of(Ty::Unit)));
+        assert!(matches!(kind(&unrolled), Kind::List(Ty::Int)));
+    }
+
+    #[test]
+    fn a_variant_with_the_lists_tags_and_another_tail_is_an_ordinary_variant() {
+        let string_tail = tags(Ty::Unit, pair(Ty::Int, Ty::Str));
+        assert!(matches!(kind(&string_tail), Kind::Variant(_)));
+        let int_tail = tags(Ty::Unit, pair(Ty::Int, Ty::Int));
+        assert!(matches!(kind(&int_tail), Kind::Variant(_)));
+    }
+
+    #[test]
+    fn an_empty_that_carries_a_payload_is_not_the_lists_empty() {
+        assert!(matches!(kind(&list_of(Ty::Int)), Kind::Variant(_)));
+    }
 }

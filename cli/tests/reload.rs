@@ -574,3 +574,42 @@ fn a_reset_also_frees_the_old_modules_static_data() {
     }
     program.finish().unwrap();
 }
+
+/// A user variant of `Empty` and `Link(Int, String)` has the list's two tags
+/// but its second field is a string, not the list.
+const LOOKALIKE: &str = r##"
+init = {
+  v: if true then Link(1, "AAAAAAAAAAAAAAAAAAAAAAAA") else Empty done,
+  count: 7
+}
+update = program(model, event) do
+  match event do Tick(dt) then {...model, count: model.count + 1} done
+done
+draw = program(model) do
+  [
+    Text({x: 0, y: 0, text: match model.v do Link(n, s) then s Empty then "none" done, color: "black"}),
+    Circle({x: model.count, y: 0, r: 1, color: "red"})
+  ]
+done
+"##;
+
+#[test]
+fn a_variant_shaped_like_the_list_but_with_a_string_tail_reloads_as_an_ordinary_variant() {
+    let other = LOOKALIKE.replace("count: 7", "count: 70");
+    let trace = agree(&[LOOKALIKE, &other], &[Ticks(1), Reload(1), Draw]);
+    assert_eq!(trace.outcomes, [None]);
+    assert_eq!(texts(&trace), ["AAAAAAAAAAAAAAAAAAAAAAAA"]);
+    assert_eq!(circles(&trace), [8.0]);
+
+    let source = LOOKALIKE;
+    let mut program: Interactive<SceneHost> =
+        Interactive::new(&reloadable(source), SceneHost::default()).expect("starts");
+    let mut marks = Vec::new();
+    for round in 1..=4 {
+        let module = reloadable(&source.replace("count: 7", &format!("count: {round}")));
+        assert_eq!(program.reload(&module).unwrap(), Reloaded::Refreshed);
+        marks.push((program.live_allocs().unwrap(), program.heap_end().unwrap()));
+    }
+    assert!(marks.windows(2).skip(1).all(|w| w[0] == w[1]), "{marks:?}");
+    program.finish().unwrap();
+}
