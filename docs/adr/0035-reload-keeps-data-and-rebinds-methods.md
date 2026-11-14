@@ -1,11 +1,11 @@
 # ADR 0035 — Reload snapshots the model by name and rebinds methods by site
 
-- Status: proposed (2026-11-11)
+- Status: accepted (2026-11-13; proposed 2026-11-11)
 - Amends: ADR 0015's hot-reload addendum (§1 "a model that contains a function
   is a checker error", §3 "the model-layout fingerprint decides keep or reset").
 - Context: ADR 0034 (a method is a record field whose first parameter is
   `self`), ADR 0020 (the host vocabulary feeds tag numbering), ADR 0009
-  (strings are immortal), ADR 0026 (bounded stack). Canvas live reload today:
+  (string literals are immortal; run-time strings are reference counted), ADR 0026 (bounded stack; tail calls run in constant stack). Canvas live reload today:
   `web/loop.ts` `reload`, `web/worker-core.ts` `reloadProgram`,
   `mir/src/fingerprint.rs`, and the "the model can't hold a function" rule in
   `checker/src/infer.rs` (the `find_func` check on the model, near line 1279).
@@ -28,9 +28,27 @@ addendum, Consequences).
 ## Decision
 
 1. **No object crosses modules.** The old module exports a generated
-   `goat_snapshot(model) -> image`: a self-describing tree of records (by field
+   `goat_snapshot(model) -> image`: a self-describing graph of records (by field
    name), variants (by tag name), lists, scalars and strings. A method slot
    holds a site key, not a function index. The image has a format version.
+   - **Each heap object is written once.** The snapshot keeps a table of the
+     objects it has written, keyed by address; a second reference to the same
+     object becomes a back-reference to its first entry, and refresh rebuilds
+     it once and shares it. goat values are immutable and acyclic (Perceus
+     reference counting), so the image is a DAG, never a cycle, and its size is
+     linear in the model's live objects. No size cap is needed; an allocation
+     failure traps and takes the reset path in decision 4.
+   - **Strings.** A string built at run time is a reference-counted heap object
+     (ADR 0009, `char_at` onward). The image carries its pointer and the
+     snapshot adds one to its count, so the old and new model share it and
+     the normal drop path frees it. A string literal lives in the old module's
+     static block (ADR 0015 addendum §2); the snapshot copies it into a new
+     heap string with a count of one, because that block is about to be freed.
+   - **Lists are walked by tail calls.** The generated snapshot and refresh
+     walk a list with an accumulator in tail-call form, which ADR 0026 runs in
+     constant stack, so a list's length never limits a reload. Records and
+     variants nested inside an element recurse only as deep as the model's type
+     is nested.
 2. **The new module rebuilds the model** with a generated
    `goat_refresh(image, fresh) -> model | 0`, where `fresh` is the new module's
    own `init` value:
@@ -45,6 +63,13 @@ addendum, Consequences).
    method. Lists rebind each element by key, not by index. A method that a
    spread inherits (`{...ball, size: 10}`) keeps the key of the literal that
    wrote it, here `(ball, moved)`.
+   - **A rename carries methods over.** When an old key's binding no longer
+     exists, refresh looks for a renamed binding: exactly one top-level binding
+     that is new in this program and whose method labels include the old key's
+     label. If there is exactly one, the old key maps to it (`init` renamed to
+     `make_ball` keeps `(init, update)` as `(make_ball, update)`) and the status
+     says so. If there is none or more than one, the reload resets and the
+     reason names both sides.
 4. **Host sequence.**
    1. New `goat_setup` gives `fresh`. If it traps, the old program keeps
       running.
@@ -53,6 +78,9 @@ addendum, Consequences).
    4. Old `goat_release_model`.
    5. Old `goat_shutdown`.
    6. Free the image.
+   7. Free the old module's static block. After a refresh nothing points into
+      it: the new model holds its own closures and copies of the old literals.
+      This ends the per-reload leak that ADR 0015's addendum accepted.
 
    If step 2 or 3 traps or returns 0, the host releases whichever model it
    holds and keeps the new module's `fresh` (a reset); it never leaves the old
@@ -64,7 +92,8 @@ addendum, Consequences).
    go away. A reason carries the names the copy needs (`field_added(spin)`,
    `field_removed(vy)`, `type_changed(x, Number, String)`,
    `method_added(grow)`, `method_lost(grow)`, `method_captures(update, speed)`,
-   `ambiguous_site(update)`, `too_large`, `reshaped`).
+   `ambiguous_site(update)`, `rename_unclear(init)`, `reshaped`). A refresh
+   that followed a rename carries `renamed(init, make_ball)`.
 6. **A plain function in the model stays a checker error, reworded.** The rule
    at `infer.rs` ~1279 keeps rejecting a function whose field is not a method,
    and accepts one the field flag from ADR 0034 marks `METHOD`:
@@ -79,6 +108,8 @@ Status copy (the host shows these; the table is part of the contract):
 | Situation | Message |
 |---|---|
 | Refreshed | Updated: the ball kept going with your new `update`. |
+| Refreshed after a rename | Updated: `init` is now `make_ball`, and the ball kept going. |
+| A rename that can't be matched | Your sketch started over because `init` is gone and goat couldn't tell which new name it became. |
 | A field was added | Your sketch started over because you added `spin` to what it remembers. |
 | A field was removed | Your sketch started over because it no longer remembers `vy`. |
 | A field's type changed | Your sketch started over because `x` changed from a `Number` to a `String`. |
@@ -229,7 +260,7 @@ What the prototype does not measure, and why it is still enough to decide:
 - It allocates the image in the goat heap rather than writing a flat buffer.
   The real snapshot writes a few stores per field into linear memory, which is
   no more work than the allocation it replaces.
-- It copies no strings. See open question 3.
+- It copies no strings. Decision 1 shares run-time strings by reference count and copies literals.
 - **Depth, not time, is the limit.** The non-tail recursive walk over a
   10,000-element list overflowed V8's default stack (`RangeError: Maximum call
   stack size exceeded`), while 3,000 ran. A generated snapshot and refresh that
@@ -265,38 +296,19 @@ goat behavior re-expressed in native code).
 
 ## Risks and open questions
 
-1. **Renaming a top-level binding resets every method under it**, because the
-   key's first half changed. A kid who renames `init` to `make_ball` sees
-   "got a new method" for methods they did not touch. Options: key on label and
-   arity only (collides more, so more `ambiguous_site` resets), or keep the
-   rule and word the reason well. This ADR keeps the ticket's rule.
-2. **A shared value becomes two.** The image is a tree. A model that holds one
-   record in two places (immutable, so harmless) comes back as two copies, and
-   a model that nests shared values deeply can make the image exponentially
-   larger than the heap. The snapshot needs a size cap that resets with
-   `too_large`. The cap's number is not decided here.
-3. **Strings.** Strings are immortal and the heap is shared (ADR 0009, ADR 0015
-   addendum §2), so a string pointer in the image would stay valid. Copying
-   instead honors "no object crosses modules" but allocates an immortal string
-   per string field per reload, a leak proportional to model size times
-   reloads. Recommended: carry the pointer for strings only, and say so in the
-   image format, because immortality makes it safe and copying makes a
-   1,000-ball model with a `color` string leak a few kilobytes per edit.
-4. **Stack depth on long lists** (measured above). The generated walk must not
-   recurse once per list element, or a model of several thousand balls cannot
-   reload even though it runs. This needs either a loop form in MIR or an
-   accumulator form the existing tail-call support handles.
-5. **Static data still accumulates.** Each reload leaves the new module's static
-   block in the heap (ADR 0015 addendum, Consequences). After refresh nothing in
-   the new model points into the old module's block, so it could be freed; this
-   ADR does not require it. `goat_live_allocs` is zero already because that block
-   hands its count back.
-6. **Mono-instance sites.** One source literal can have several specializations
+1. **Rename matching is a heuristic.** It handles one renamed binding per edit.
+   Renaming two bindings that hold the same method label in one edit resets
+   with `rename_unclear`. That is the safe failure: a wrong match would run one
+   ball's data under another binding's methods.
+2. **A reset after a failed snapshot still leaves the old static block** until
+   the old module is released; step 7 runs only after a refresh or a reset that
+   completed steps 4 and 5.
+3. **Mono-instance sites.** One source literal can have several specializations
    with different layouts. The site table must hold the closure for the
    specialization whose layout the refreshed record uses; two specializations of
    one site are one key. Phase 2 must test a method literal inside a polymorphic
    function used at two types.
-7. **A reset still re-enters the host's fresh model**, so a reset throws away
+4. **A reset still re-enters the host's fresh model**, so a reset throws away
    the ball's position, as today. Nothing in this ADR makes a reset gentler.
 
 ## Recommendation
@@ -311,6 +323,11 @@ goat behavior re-expressed in native code).
   budget, three orders of magnitude of headroom, so the cost of copying the
   model by name is not a reason to prefer a cheaper, riskier mechanism.
 
-Phase 2 should settle open questions 2, 3 and 4 first, since each shapes the
-image format, and should include tests for the two reset paths that no program
-on master reaches (`method_captures`, `ambiguous_site`).
+The owner settled the image format on 2026-11-13: a DAG with back-references,
+string pointers shared by reference count with literals copied, tail-call list
+walks, rename matching, and freeing the old static block. Phase 2 must include
+tests for the reset paths that no program on master reaches
+(`method_captures`, `ambiguous_site`, `rename_unclear`), a model that shares one
+record in two places (rebuilt once), a 10,000-ball reload, and a heap check that
+repeated reloads return `goat_live_allocs` and the heap's high-water mark to
+their starting values.
