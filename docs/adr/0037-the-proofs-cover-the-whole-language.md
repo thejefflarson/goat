@@ -1,6 +1,6 @@
 # ADR 0037 — The proofs cover the whole language, and CI blocks a feature without one
 
-- Status: proposed (2026-11-13)
+- Status: accepted (2026-11-13)
 - Amends: ADR 0030 ("the parser is verified for the core fragment only"), ADR 0032
   §5 ("neither proof route is needed now").
 - Context: issue #435. `proofs/goat.ott` and `goat_ln.ott` define the core
@@ -46,7 +46,15 @@ are well typed.
    where the checker and the proof meet, and the checker-model proof of
    decision 2 is stated over that elaboration.
 4. **Hard gate in CI.** Once this ADR is accepted:
-   - the `coq` workflow becomes a required check on `master`;
+   - the `coq` workflow runs on every PR, not only on PRs that touch
+     `proofs/` (a PR that touches nothing it builds finishes in seconds), and
+     becomes a required check on `master`, because a path-filtered required
+     check never reports on other PRs and blocks them;
+   - a `proof-gate` job, also required, fails a PR that changes
+     `grammar/goat.peg`, the checker's typing (`checker/src/infer.rs`,
+     `lower.rs`, `ty.rs`) or the prelude's language surface without changing
+     `proofs/`, unless the PR carries the `no-semantics-change` label and its
+     body says why (for example a diagnostic-wording change);
    - a PR that changes the grammar, a typing rule, or the evaluation semantics
      must update the `.ott` files, `docs/semantics.md` and the proofs in the
      same PR, with 0 admits (`make -C proofs ci`, `EXPECTED_ADMITS = 0`);
@@ -67,26 +75,18 @@ are well typed.
    7. The algorithm proof for the core (decision 2's second theorem), then
       extended phase by phase; and the parser over the full grammar.
 
-## Open question
-
-**What "the checker" means in decision 2.** The proof covers a model of the
-algorithm written in Coq. `checker/src/infer.rs` is a separate Rust program, so
-a proof about the model doesn't by itself cover the Rust. The options:
-
-- **(a) Coq model plus differential testing.** Extract the Coq algorithm to an
-  executable and run it against `infer.rs` on the test corpus and the fuzzer's
-  programs (`nightly-fuzz.yml`), failing CI on any disagreement in accept or
-  reject and in the inferred type. Cheapest; a disagreement is caught only on
-  programs that are tested.
-- **(b) Replace the checker with the extracted Coq algorithm.** The proven code
-  is the code that runs. The extracted checker must build for
-  `wasm32-unknown-unknown`, keep spanned diagnostics and kid-facing messages,
-  and match today's speed; a large rewrite.
-- **(c) Verify the Rust directly** (for example with a Rust verifier). The
-  tools for Rust code of this kind are immature; the largest effort.
-
-Recommended: (a) now, with (b) reconsidered once the algorithm proof covers the
-whole language.
+6. **The proven algorithm is tied to the Rust checker by differential testing.**
+   The algorithm proof of decision 2 covers a model of inference written in
+   Coq. That model is extracted to an executable and run against
+   `checker/src/infer.rs` on the whole test corpus in CI and on the fuzzer's
+   programs nightly (`nightly-fuzz.yml`). Any disagreement, in accept or reject
+   or in the inferred type up to renaming, fails the run. A disagreement is
+   caught only on programs that are tested; that is the accepted gap.
+   - Rejected for now: replacing the Rust checker with the extracted Coq one
+     (it must build for `wasm32-unknown-unknown`, keep spanned kid-facing
+     diagnostics and match today's speed, a large rewrite), and verifying the
+     Rust directly (the tools for Rust code of this kind are immature). The
+     first is reconsidered once the algorithm proof covers the whole language.
 
 ## Consequences
 
