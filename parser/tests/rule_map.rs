@@ -170,8 +170,13 @@ fn every_ott_production_is_reached_by_some_core_rule() {
         .collect();
     for production in ott_names() {
         // `e_unit` has no literal in the grammar: the unit value is what an
-        // `if` without an `else` lowers its missing branch to.
-        if !matches!(production.as_str(), "e" | "fs" | "fs_nil" | "e_unit") {
+        // `if` without an `else` lowers its missing branch to. `e_dec` is the
+        // semantic form of a decimal literal; the Coq token has no payload for
+        // one yet, so the parser fragment reaches whole numbers only.
+        if !matches!(
+            production.as_str(),
+            "e" | "fs" | "fs_nil" | "e_unit" | "e_dec"
+        ) {
             assert!(
                 reached.contains(production.as_str()),
                 "no rule takes part in `{production}`"

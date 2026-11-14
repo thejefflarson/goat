@@ -67,6 +67,7 @@ Proof.
   - intros i P. cbn [block]. occ_simp. reflexivity.
   - intros y P. reflexivity.
   - intros n P. cbn [block]. occ_simp. reflexivity.
+  - intros d P. cbn [block lbls]. occ_simp. reflexivity.
   - intros P. cbn [block]. occ_simp. reflexivity.
   - intros P. cbn [block]. occ_simp. reflexivity.
   - intros b IH P. cbn [block lbls]. unfold function_tree. occ_simp. exact (IH (S P)).

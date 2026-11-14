@@ -150,6 +150,7 @@ Proof.
   - fsetdec.
   - fsetdec.
   - fsetdec.
+  - fsetdec.
   - (* Arrow *) rewrite AtomSetFacts.union_iff in H1. destruct H1 as [H1|H1].
     + destruct (H _ _ _ H1) as [[b [Hb Ha]]|[p [Hp Ha]]].
       * left; exists b; split; [fsetdec|auto].
@@ -183,6 +184,7 @@ Lemma frv_ap_mut :
      (exists q, q `in` frv_row R /\ p `in` frv_row (sr q))).
 Proof.
   apply typ_row_mutind; intros; simpl in *.
+  - fsetdec.
   - fsetdec.
   - fsetdec.
   - fsetdec.
@@ -238,6 +240,7 @@ Proof.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
+  - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - rewrite AtomSetFacts.union_iff.
     destruct H1 as [[b [Hb Ha]]|[p [Hp Ha]]].
     + rewrite AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb];
@@ -278,6 +281,7 @@ Lemma frv_ap_in_mut :
      a `in` frv_row (ap_row st sr R)).
 Proof.
   apply typ_row_mutind; intros; simpl in *.
+  - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
@@ -767,6 +771,8 @@ Proof.
     destruct (ctx_subst_binds _ _ _ _ _ _ Hcs Hb) as [s' [Hb' Hss]].
     apply T_Var with (s := s'); auto.
   - intros G n Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_Num; auto.
+  - intros G n Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_NumFloat; auto.
+  - intros G d Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_Dec; auto.
   - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_True; auto.
   - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_False; auto.
   - (* Case: a function [fun x => e] (T_Abs).  We must type its body with the
@@ -967,25 +973,18 @@ Proof.
     eapply T_Proj. simpl in IH. eapply IH; eauto.
   - (* T_Conv *) intros G e T T' Ht IH Hte st sr G' A Hu' Hcs Hsupp Hcompat.
     eapply T_Conv; [ eapply IH; eauto | apply teq_ap; auto ].
-  - (* T_AppPoly: the rank-2 rule.  Its premise is a [let]-typing at the SAME
-       context and type, and type/row substitution does not touch the term, so
-       the substituted derivation is just the IH re-wrapped by [T_AppPoly].
-       This is why the novel rank-2 + scoped-label-row case needs no new theory:
-       its substitution obligation IS the (closed) [T_Let] one. *)
-    intros G e g T Ht IH st sr G' A Hu' Hcs Hsupp Hcompat.
-    apply T_AppPoly. eapply IH; eauto.
   - (* T_Unit *) intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. simpl. apply T_Unit; auto.
   - (* T_Str *) intros G q Hu st sr G' A Hu' Hcs Hsupp Hcompat. simpl. apply T_Str; auto.
   - (* T_If: no variable is bound, so the IHs and the rule again. *)
     intros G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3 st sr G' A Hu' Hcs Hsupp Hcompat.
     simpl in *. eapply T_If; [ eapply IH1 | eapply IH2 | eapply IH3 ]; eauto.
-  - (* T_Arith *)
-    intros G e1 o e2 Ho Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
-    simpl in *. eapply T_Arith; [ exact Ho | eapply IH1 | eapply IH2 ]; eauto.
-  - (* T_Cmp: a base type is untouched by substitution ([base_ap]). *)
-    intros G e1 o e2 B Ho HB Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
-    simpl in *. eapply T_Cmp with (B := ap_typ st sr B);
-      [ exact Ho | rewrite (base_ap st sr B HB); exact HB | eapply IH1 | eapply IH2 ]; eauto.
+  - (* T_Bin: the signature's types are closed, so substitution leaves them
+       alone ([bin_sig_ap]). *)
+    intros G e1 o e2 A1 B1 R1 Ht1 IH1 Ht2 IH2 Hs st sr G' A Hu' Hcs Hsupp Hcompat.
+    destruct (bin_sig_ap o A1 B1 R1 st sr Hs) as [HA [HB HR]].
+    pose proof (IH1 st sr G' A Hu' Hcs Hsupp Hcompat) as H1. rewrite HA in H1.
+    pose proof (IH2 st sr G' A Hu' Hcs Hsupp Hcompat) as H2. rewrite HB in H2.
+    simpl. rewrite HR. eapply T_Bin; eassumption.
   - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. simpl. apply FT_nil; auto.
   - intros G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat. simpl.
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.
@@ -1121,6 +1120,8 @@ Proof.
       apply T_Var with (s := s);
         [ solve_uniq | eapply binds_remove_mid; [ exact Hb | congruence ] | exact Hi ].
   - (* T_Num *) intros G n Huq G2 Heq; subst. simpl. apply T_Num. solve_uniq.
+  - (* T_NumFloat *) intros G n Huq G2 Heq; subst. simpl. apply T_NumFloat. solve_uniq.
+  - (* T_Dec *) intros G d Huq G2 Heq; subst. simpl. apply T_Dec. solve_uniq.
   - (* T_True *) intros G Huq G2 Heq; subst. simpl. apply T_True. solve_uniq.
   - (* T_False *) intros G Huq G2 Heq; subst. simpl. apply T_False. solve_uniq.
   - (* T_Abs *) intros L G e T1 T2 Hr IH G2 Heq; subst. simpl.
@@ -1148,16 +1149,12 @@ Proof.
   - (* T_Record *) intros G fs R Hr IH G2 Heq; subst. simpl. apply T_Record. apply (IH G2); reflexivity.
   - (* T_Proj *) intros G e l T R Hr IH G2 Heq; subst. simpl. eapply T_Proj. apply (IH G2); reflexivity.
   - (* T_Conv *) intros G e T T' Hr IH Hteq G2 Heq; subst. eapply T_Conv; [ apply (IH G2); reflexivity | exact Hteq ].
-  - (* T_AppPoly *) intros G e g0 T Hr IH G2 Heq; subst. simpl.
-    apply T_AppPoly. apply (IH G2); reflexivity.
   - (* T_Unit *) intros G Huq G2 Heq; subst. simpl. apply T_Unit. solve_uniq.
   - (* T_Str *) intros G q Huq G2 Heq; subst. simpl. apply T_Str. solve_uniq.
   - (* T_If *) intros G e1 e2 e3 T Hr1 IH1 Hr2 IH2 Hr3 IH3 G2 Heq; subst. simpl.
     eapply T_If; [ apply (IH1 G2) | apply (IH2 G2) | apply (IH3 G2) ]; reflexivity.
-  - (* T_Arith *) intros G e1 o e2 Ho Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
-    eapply T_Arith; [ exact Ho | apply (IH1 G2) | apply (IH2 G2) ]; reflexivity.
-  - (* T_Cmp *) intros G e1 o e2 B Ho HB Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
-    eapply T_Cmp; [ exact Ho | exact HB | apply (IH1 G2) | apply (IH2 G2) ]; reflexivity.
+  - (* T_Bin *) intros G e1 o e2 A B R Hr1 IH1 Hr2 IH2 Hs G2 Heq; subst. simpl.
+    eapply T_Bin; [ apply (IH1 G2) | apply (IH2 G2) | exact Hs ]; reflexivity.
   - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
   - (* FT_cons *) intros G l e T fs R Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply FT_cons.
     + apply (IH1 G2); reflexivity.
@@ -1207,6 +1204,8 @@ Proof.
       apply T_Var with (s := s);
         [ solve_uniq | eapply binds_remove_mid; [ exact Hb | congruence ] | exact Hi ].
   - (* T_Num *) intros G n Huq G2 Heq; subst. simpl. apply T_Num. solve_uniq.
+  - (* T_NumFloat *) intros G n Huq G2 Heq; subst. simpl. apply T_NumFloat. solve_uniq.
+  - (* T_Dec *) intros G d Huq G2 Heq; subst. simpl. apply T_Dec. solve_uniq.
   - (* T_True *) intros G Huq G2 Heq; subst. simpl. apply T_True. solve_uniq.
   - (* T_False *) intros G Huq G2 Heq; subst. simpl. apply T_False. solve_uniq.
   - (* T_Abs *) intros L G e T0 T2 Hr IH G2 Heq; subst. simpl.
@@ -1234,16 +1233,12 @@ Proof.
   - (* T_Record *) intros G fs R Hr IH G2 Heq; subst. simpl. apply T_Record. apply (IH G2); reflexivity.
   - (* T_Proj *) intros G e l T R Hr IH G2 Heq; subst. simpl. eapply T_Proj. apply (IH G2); reflexivity.
   - (* T_Conv *) intros G e T T' Hr IH Hteq G2 Heq; subst. eapply T_Conv; [ apply (IH G2); reflexivity | exact Hteq ].
-  - (* T_AppPoly *) intros G e g0 T Hr IH G2 Heq; subst. simpl.
-    apply T_AppPoly. apply (IH G2); reflexivity.
   - (* T_Unit *) intros G Huq G2 Heq; subst. simpl. apply T_Unit. solve_uniq.
   - (* T_Str *) intros G q Huq G2 Heq; subst. simpl. apply T_Str. solve_uniq.
   - (* T_If *) intros G e1 e2 e3 T Hr1 IH1 Hr2 IH2 Hr3 IH3 G2 Heq; subst. simpl.
     eapply T_If; [ apply (IH1 G2) | apply (IH2 G2) | apply (IH3 G2) ]; reflexivity.
-  - (* T_Arith *) intros G e1 o e2 Ho Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
-    eapply T_Arith; [ exact Ho | apply (IH1 G2) | apply (IH2 G2) ]; reflexivity.
-  - (* T_Cmp *) intros G e1 o e2 B Ho HB Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
-    eapply T_Cmp; [ exact Ho | exact HB | apply (IH1 G2) | apply (IH2 G2) ]; reflexivity.
+  - (* T_Bin *) intros G e1 o e2 A B R Hr1 IH1 Hr2 IH2 Hs G2 Heq; subst. simpl.
+    eapply T_Bin; [ apply (IH1 G2) | apply (IH2 G2) | exact Hs ]; reflexivity.
   - (* FT_nil *) intros G Huq G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
   - (* FT_cons *) intros G l e T fs R Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply FT_cons.
     + apply (IH1 G2); reflexivity.
@@ -1287,22 +1282,28 @@ Qed.
 Lemma typing_of_bool : forall G b, uniq G -> typing G (of_bool b) typ_Bool.
 Proof. intros G b Hu. destruct b; [ apply T_True | apply T_False ]; exact Hu. Qed.
 
-Lemma eval_bin_cmp : forall G o v1 v2 B,
-  is_arith o = false -> base_typ B -> value v1 -> value v2 ->
-  typing G v1 B -> typing G v2 B ->
-  exists b, eval_bin o v1 v2 = of_bool b.
+(* An operator's result has the type its signature gives.  Pairing each way
+   the operator can compute ([bin_step]) with each signature, almost every pair
+   is ruled out by the operator's class.  The one mismatch left to refute is
+   two whole numbers computing a decimal under the signature for two Ints. *)
+Lemma bin_step_typing : forall G o v1 v2 v A B R,
+  bin_sig o A B R -> value v1 -> value v2 ->
+  typing G v1 A -> typing G v2 B -> bin_step o v1 v2 v -> typing G v R.
 Proof.
-  intros G o v1 v2 B Ho HB Hv1 Hv2 H1 H2.
-  inversion HB; subst.
-  - destruct (canon_base _ _ _ Hv1 H1) as [C1 _]. destruct (C1 (teq_refl _)) as [a ->].
-    destruct (canon_base _ _ _ Hv2 H2) as [C2 _]. destruct (C2 (teq_refl _)) as [b ->].
-    unfold eval_bin. rewrite Ho. eexists. reflexivity.
-  - destruct (canon_base _ _ _ Hv1 H1) as [_ [C1 _]]. destruct (C1 (teq_refl _)) as [p ->].
-    destruct (canon_base _ _ _ Hv2 H2) as [_ [C2 _]]. destruct (C2 (teq_refl _)) as [q ->].
-    eexists. reflexivity.
-  - destruct (canon_base _ _ _ Hv1 H1) as [_ [_ C1]]. destruct (C1 (teq_refl _)) as [-> | ->];
-    destruct (canon_base _ _ _ Hv2 H2) as [_ [_ C2]]; destruct (C2 (teq_refl _)) as [-> | ->];
-    eexists; reflexivity.
+  intros G o v1 v2 v A B R Hs Hv1 Hv2 H1 H2 Hb.
+  assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
+  destruct Hb; inversion Hs; subst;
+    try (exfalso; first [ congruence | (simpl in *; discriminate) ]);
+    try (exfalso;
+         match goal with
+         | Hn : ~ both_whole ?x ?y |- _ =>
+             apply Hn;
+             destruct (canon_base _ _ _ Hv1 H1) as [C1 _]; destruct (C1 (teq_refl _)) as [a Ha];
+             destruct (canon_base _ _ _ Hv2 H2) as [C2 _]; destruct (C2 (teq_refl _)) as [b Hb];
+             exists a, b; auto
+         end);
+    first [ apply T_Num; exact Hu | apply T_NumFloat; exact Hu
+          | apply T_Dec; exact Hu | apply typing_of_bool; exact Hu ].
 Qed.
 
 Scheme step_mut := Induction for step Sort Prop
@@ -1324,61 +1325,34 @@ Proof.
        substitution lemma [typing_subst] says plugging [v] into the body keeps
        the type [B]. *)
     intros e v Hv G T Hty.
-    (* "Look inside" the typing of a call: it came either from [T_App] (the
-       function has an arrow type) or from the rank-2 [T_AppPoly] (the call was
-       typed as a [let]).  Both reduce to a substitution lemma. *)
-    apply app_inv in Hty. destruct Hty as [ [A [B [Habs [Harg Hbt]]]] | [body [T' [Heqabs [Hlet Hbt]]]] ].
-    + (* T_App: its body types once the parameter is added to the context. *)
-      apply abs_inv in Habs. destruct Habs as [L [A' [B' [Hbody Harr]]]].
-      apply teq_Arrow_inv in Harr. destruct Harr as [A2 [B2 [Heq [HA HB]]]].
-      inversion Heq; subst.
-      (* Choose a name [x] for the parameter that clashes with nothing. *)
-      pick fresh x for (L \u fv_exp e).
-      assert (HxL : x `notin` L) by fsetdec.
-      assert (Hxe : x `notin` fv_exp e) by fsetdec.
-      assert (Hv' : typing G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
-      assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
-        by (eapply typing_subst; [ apply Hbody; exact HxL | exact Hv' ]).
-      (* Plugging [v] into the body opened with [x] equals opening the body with
-         [v] directly (that is [subst_intro]); that is exactly the stepped
-         term.  The final lines just match up the types, which agree. *)
-      rewrite <- subst_intro in Hopen by exact Hxe.
-      eapply T_Conv; [ exact Hopen | ].
-      eapply teq_trans; [ exact HB | exact Hbt ].
-    + (* T_AppPoly: the call was typed as [let x = v in e]; [v] is a value, so
-         plugging it in uses the POLYMORPHIC substitution lemma, exactly as the
-         st_letv case below.  This is the rank-2 redex's preservation. *)
-      injection Heqabs as Hbe; subst body.
-      apply let_inv in Hlet. destruct Hlet as [L [T1 [T2 [Hty1 [Hbody Hteq2]]]]].
-      pick fresh x for (L \u fv_exp e).
-      assert (HxL : x `notin` L) by fsetdec.
-      assert (Hxe : x `notin` fv_exp e) by fsetdec.
-      assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) T2)
-        by (eapply typing_subst_poly; [ apply Hbody; exact HxL | exact Hty1 ]).
-      rewrite <- subst_intro in Hopen by exact Hxe.
-      eapply T_Conv; [ exact Hopen | ].
-      eapply teq_trans; [ exact Hteq2 | exact Hbt ].
+    apply app_inv in Hty. destruct Hty as [A [B [Habs [Harg Hbt]]]].
+    apply abs_inv in Habs. destruct Habs as [L [A' [B' [Hbody Harr]]]].
+    apply teq_Arrow_inv in Harr. destruct Harr as [A2 [B2 [Heq [HA HB]]]].
+    inversion Heq; subst.
+    (* Choose a name [x] for the parameter that clashes with nothing. *)
+    pick fresh x for (L \u fv_exp e).
+    assert (HxL : x `notin` L) by fsetdec.
+    assert (Hxe : x `notin` fv_exp e) by fsetdec.
+    assert (Hv' : typing G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
+    assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
+      by (eapply typing_subst; [ apply Hbody; exact HxL | exact Hv' ]).
+    (* Plugging [v] into the body opened with [x] equals opening the body with
+       [v] directly (that is [subst_intro]); that is exactly the stepped
+       term.  The final lines just match up the types, which agree. *)
+    rewrite <- subst_intro in Hopen by exact Hxe.
+    eapply T_Conv; [ exact Hopen | ].
+    eapply teq_trans; [ exact HB | exact Hbt ].
   - (* Case: the function part of a call stepped, [e1 e2] to [e1' e2]
        (st_app1).  Congruence: [IH] says [e1'] keeps [e1]'s type, so the call
        is still well typed. *)
     intros e1 e1' e2 Hstep IH G T Hty.
-    apply app_inv in Hty. destruct Hty as [ [A [B [Hty1 [Hty2 Hbt]]]] | [body [T' [Heqabs [Hlet Hbt]]]] ].
-    + eapply T_Conv; [ eapply T_App; [ apply IH; exact Hty1 | exact Hty2 ] | exact Hbt ].
-    + (* T_AppPoly: the function is an abstraction, a value, so it cannot step. *)
-      subst e1. inversion Hstep.
+    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
+    eapply T_Conv; [ eapply T_App; [ apply IH; exact Hty1 | exact Hty2 ] | exact Hbt ].
   - (* Case: the argument of a call stepped, [v e2] to [v e2'] (st_app2).
        Same idea, on the argument. *)
     intros v e2 e2' Hv Hstep IH G T Hty.
-    apply app_inv in Hty. destruct Hty as [ [A [B [Hty1 [Hty2 Hbt]]]] | [body [T' [Heqabs [Hlet Hbt]]]] ].
-    + eapply T_Conv; [ eapply T_App; [ exact Hty1 | apply IH; exact Hty2 ] | exact Hbt ].
-    + (* T_AppPoly: the argument stepped; rebuild the [let] with the stepped
-         argument (its type is preserved by [IH]) and re-apply [T_AppPoly]. *)
-      subst v.
-      apply let_inv in Hlet. destruct Hlet as [L [T1 [T2 [Hty1 [Hbody Hteq2]]]]].
-      eapply T_Conv.
-      * apply T_AppPoly. eapply T_Let with (L := L) (T1 := T1);
-          [ apply IH; exact Hty1 | exact Hbody ].
-      * eapply teq_trans; [ exact Hteq2 | exact Hbt ].
+    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
+    eapply T_Conv; [ eapply T_App; [ exact Hty1 | apply IH; exact Hty2 ] | exact Hbt ].
   - (* Case: [let x = v in e2] with [v] a value steps to [e2] with [v] plugged
        in for [x] (st_letv).  The real work, and where polymorphism matters:
        [x] may be used at several types in [e2], so we use the POLYMORPHIC
@@ -1436,35 +1410,21 @@ Proof.
     intros e2 e3 G T Hty.
     apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
     eapply T_Conv; [ exact H3 | exact Hteq ].
-  - (* Case: the left operand stepped (st_bin1).  Congruence, for either
-       typing rule of an operator. *)
+  - (* Case: the left operand stepped (st_bin1).  Congruence. *)
     intros e1 e1' o e2 Hstep IH G T Hty.
-    destruct (bin_inv _ _ _ _ _ Hty)
-      as [[Ho [H1 [H2 Hteq]]] | [Ho [B [HB [H1 [H2 Hteq]]]]]].
-    + eapply T_Conv; [ eapply T_Arith; [ exact Ho | apply IH; exact H1 | exact H2 ] | exact Hteq ].
-    + eapply T_Conv;
-        [ eapply T_Cmp; [ exact Ho | exact HB | apply IH; exact H1 | exact H2 ] | exact Hteq ].
+    destruct (bin_inv _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
+    eapply T_Conv; [ eapply T_Bin; [ apply IH; exact H1 | exact H2 | exact Hs ] | exact Hteq ].
   - (* st_bin2: the right operand stepped. *)
     intros v o e2 e2' Hv Hstep IH G T Hty.
-    destruct (bin_inv _ _ _ _ _ Hty)
-      as [[Ho [H1 [H2 Hteq]]] | [Ho [B [HB [H1 [H2 Hteq]]]]]].
-    + eapply T_Conv; [ eapply T_Arith; [ exact Ho | exact H1 | apply IH; exact H2 ] | exact Hteq ].
-    + eapply T_Conv;
-        [ eapply T_Cmp; [ exact Ho | exact HB | exact H1 | apply IH; exact H2 ] | exact Hteq ].
-  - (* Case: an operator on two values (st_bin).  The real work for the
-       base types: canonical forms say each operand is a literal of the
-       operator's type, so [eval_bin] returns a number (arithmetic) or a
-       boolean (comparison), the type the rule gives. *)
-    intros v1 o v2 Hv1 Hv2 G T Hty.
-    destruct (bin_inv _ _ _ _ _ Hty)
-      as [[Ho [H1 [H2 Hteq]]] | [Ho [B [HB [H1 [H2 Hteq]]]]]].
-    + destruct (canon_base _ _ _ Hv1 H1) as [C1 _]. destruct (C1 (teq_refl _)) as [a ->].
-      destruct (canon_base _ _ _ Hv2 H2) as [C2 _]. destruct (C2 (teq_refl _)) as [b ->].
-      unfold eval_bin. rewrite Ho.
-      eapply T_Conv; [ apply T_Num; eapply typing_uniq; exact H1 | exact Hteq ].
-    + destruct (eval_bin_cmp G o v1 v2 B Ho HB Hv1 Hv2 H1 H2) as [b Hb].
-      rewrite Hb.
-      eapply T_Conv; [ apply typing_of_bool; eapply typing_uniq; exact H1 | exact Hteq ].
+    destruct (bin_inv _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
+    eapply T_Conv; [ eapply T_Bin; [ exact H1 | apply IH; exact H2 | exact Hs ] | exact Hteq ].
+  - (* Case: an operator on two values (st_bin).  The real work for the base
+       types: [bin_step_typing] shows the result has the type the operator's
+       signature gives. *)
+    intros v1 o v2 v Hv1 Hv2 Hb G T Hty.
+    destruct (bin_inv _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
+    eapply T_Conv;
+      [ exact (bin_step_typing _ _ _ _ _ _ _ _ Hs Hv1 Hv2 H1 H2 Hb) | exact Hteq ].
   - (* Case: the FIRST field of a record stepped (stf_here).  Congruence. *)
     intros l e e' fs Hstep IH G R Hft.
     inversion Hft; subst.
@@ -1497,18 +1457,19 @@ Proof. intros G e e' T Hty Hstep. eapply (proj1 preservation_mut); eauto. Qed.
 (* ================================================================== *)
 
 Theorem soundness : forall e T e',
-  typing nil e T -> multistep e e' -> value e' \/ exists e'', step e' e''.
+  typing nil e T -> multistep e e' ->
+  value e' \/ (exists e'', step e' e'') \/ (exists k, traps e' k).
 Proof.
   (* Assume the program is well typed ([Hty]) and that it ran from [e] to [e']
-     ([Hms]).  Goal: [e'] is a value or can step.  We prove it by induction
-     on HOW the run went, which is a list of steps: either zero steps, or one
-     step followed by a shorter run.  ([revert T Hty] just makes the typing
-     assumption part of what the induction proves, so it can change as the
-     program changes.) *)
+     ([Hms]).  Goal: [e'] is a value, can step, or traps.  We prove it by
+     induction on HOW the run went, which is a list of steps: either zero
+     steps, or one step followed by a shorter run.  ([revert T Hty] just makes
+     the typing assumption part of what the induction proves, so it can change
+     as the program changes.) *)
   intros e T e' Hty Hms. revert T Hty.
   induction Hms as [ e | e1 e2 e3 Hstep Hms IH ]; intros T Hty.
   - (* Case: zero steps, so [e'] is [e] itself.  It is well typed, so
-       [progress] says it is a value or can step.  Done. *)
+       [progress] says it is a value, can step, or traps.  Done. *)
     apply progress with (T := T); exact Hty.
   - (* Case: one step [e1 -> e2], then a shorter run [e2 ->* e3].  By
        [preservation], [e2] is well typed at the same [T] as [e1] was; so the
@@ -1517,13 +1478,14 @@ Proof.
     apply IH with (T := T). eapply preservation; eauto.
 Qed.
 
-(* The same fact phrased with the name [stuck] (not a value, and no step
-   possible): a reachable state is never stuck. *)
+(* The same fact phrased with the name [stuck] (not a value, no step possible,
+   and no error raised): a reachable state is never stuck. *)
 Corollary soundness_not_stuck : forall e T e',
   typing nil e T -> multistep e e' -> ~ stuck e'.
 Proof.
-  intros e T e' Hty Hms [Hnv Hns].
-  destruct (soundness _ _ _ Hty Hms) as [Hv | [e'' Hstep]].
-  - contradiction.
-  - eapply Hns; exact Hstep.
+  intros e T e' Hty Hms [Hnv [Hns Hnt]].
+  destruct (soundness e T e' Hty Hms) as [Hv | [[e'' Hs] | [k Hk]]].
+  - exact (Hnv Hv).
+  - exact (Hns e'' Hs).
+  - exact (Hnt k Hk).
 Qed.

@@ -7,6 +7,7 @@ From Coq Require Import String List.
 Import ListNotations.
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
+Require Import Goat.GoatNum.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
 Require Import Goat.GoatDen.
@@ -1356,7 +1357,7 @@ Section Steps.
   Lemma step_number : Step R_number.
   Proof.
     intros cs H _ _. destruct (shape_number cs H) as (n & ->).
-    simpl. exists (e_num n). apply D_num.
+    simpl. exists (e_num (z_of_nat n)). apply D_num.
   Qed.
 
   Lemma step_name : Step R_name.

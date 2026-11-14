@@ -24,6 +24,7 @@ Fixpoint inst_rec (var_of : string -> termvar) (k D : nat) (e : exp) {struct e} 
       if Nat.ltb i k then e_fvar_b i else e_fvar_f (var_of (nm (D + k - 1 - i)))
   | e_fvar_f y => e_fvar_f y
   | e_num n => e_num n
+  | e_dec d => e_dec d
   | e_true => e_true
   | e_false => e_false
   | e_abs b => e_abs (inst_rec var_of (S k) D b)
@@ -83,6 +84,7 @@ Proof.
         reflexivity.
   - intros y k Hs. destruct Hs.
   - intros n k Hs. reflexivity.
+  - intros d k Hs. reflexivity.
   - intros k Hs. reflexivity.
   - intros k Hs. reflexivity.
   - (* abs *)
@@ -274,9 +276,12 @@ Proof.
     apply den_pack; exact Hchain.
   - intros y P Hs. destruct Hs.
   - intros n P Hs Hl.
+    assert (Hn : Den var_of tbl (Node R_number [Leaf (TNum (nat_of_z n))]) (e_num n)).
+    { rewrite <- (z_of_nat_of_z n Hs) at 2. apply D_num. }
     assert (Hchain : Den_chain var_of tbl (block P (e_num n)) (e_num n))
-      by (apply den_chain_single; apply D_num).
+      by (apply den_chain_single; exact Hn).
     apply den_pack; exact Hchain.
+  - intros d P Hs. destruct Hs.
   - intros P Hs Hl.
     assert (Hchain : Den_chain var_of tbl (block P e_true) e_true)
       by (apply den_chain_single; apply D_true).

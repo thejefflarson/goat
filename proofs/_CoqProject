@@ -1,6 +1,8 @@
 -R . Goat
 Goat_ott.v
 GoatProofs.v
+GoatNum.v
+GoatLit.v
 GoatRows.v
 GoatDefs.v
 GoatMeta.v
@@ -8,7 +10,6 @@ GoatSubst.v
 GoatBij.v
 GoatHM.v
 GoatSound.v
-GoatRank2.v
 GoatPhase1.v
 GoatGrammar.v
 GoatPeg.v

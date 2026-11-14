@@ -37,15 +37,18 @@ metavar rowvar, r, s ::= {{ coq atom }}
   {{ com free row variable (metalib atom) }}
 metavar label, l ::= {{ coq nat }}
   {{ com record label }}
-metavar num, n ::= {{ coq nat }}
-  {{ com numeral constant }}
+metavar num, n ::= {{ coq BinNums.Z }}
+  {{ com whole-number literal, an integer }}
+metavar dec, d ::= {{ coq (BinNums.Z * BinNums.positive) }}
+  {{ com decimal literal as a numerator and a positive denominator }}
 metavar str, q ::= {{ coq (list nat) }}
   {{ com string literal, as its bytes }}
 
 grammar
 
 typ, T :: 'typ_' ::= {{ com monotype }}
-  | Number        ::   :: Number
+  | Int           ::   :: Int
+  | Float         ::   :: Float
   | Bool          ::   :: Bool
   | Unit          ::   :: Unit
   | String        ::   :: String
@@ -75,7 +78,8 @@ bop, o :: 'bop_' ::= {{ com binary operator }}
 
 exp, e :: 'e_' ::= {{ com term }}
   | x                        ::   :: fvar  {{ com variable }}
-  | n                        ::   :: num
+  | n                        ::   :: num   {{ com whole-number literal }}
+  | d                        ::   :: dec   {{ com decimal literal }}
   | true                     ::   :: true
   | false                    ::   :: false
   | program ( x ) do e done  ::   :: abs
@@ -123,8 +127,11 @@ defn
 T1 ~= T2 :: :: teq :: 'teq_'
   {{ tex [[T1]] \cong [[T2]] }} by
 
-  --------------- :: num
-  Number ~= Number
+  ----------- :: int
+  Int ~= Int
+
+  ----------------- :: float
+  Float ~= Float
 
   ----------- :: bool
   Bool ~= Bool

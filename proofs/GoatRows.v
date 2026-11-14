@@ -47,19 +47,26 @@ Lemma req_refl : forall R, req R R. Proof. apply teq_req_refl. Qed.
 
 Definition thead_tag (T : typ) : nat :=
   match T with
-  | typ_Number => 0
+  | typ_Int => 0
   | typ_Bool => 1
   | typ_Arrow _ _ => 2
   | typ_Record _ => 3
   | typ_Var _ => 4
   | typ_Unit => 5
   | typ_String => 6
+  | typ_Float => 7
   end.
 
 Lemma teq_thead : forall T1 T2, teq T1 T2 -> thead_tag T1 = thead_tag T2.
 Proof. induction 1; simpl in *; congruence. Qed.
 
-Lemma teq_Number_inv : forall T, teq typ_Number T -> T = typ_Number.
+Lemma teq_Int_inv : forall T, teq typ_Int T -> T = typ_Int.
+Proof.
+  intros T H. apply teq_thead in H; simpl in H.
+  destruct T; simpl in H; try discriminate; reflexivity.
+Qed.
+
+Lemma teq_Float_inv : forall T, teq typ_Float T -> T = typ_Float.
 Proof.
   intros T H. apply teq_thead in H; simpl in H.
   destruct T; simpl in H; try discriminate; reflexivity.
@@ -96,7 +103,8 @@ Lemma teq_shape : forall T1 T2, teq T1 T2 ->
   (forall R, T2 = typ_Record R -> exists R', T1 = typ_Record R' /\ req R R').
 Proof.
   induction 1.
-  - (* num *) repeat split; intros; discriminate.
+  - (* int *) repeat split; intros; discriminate.
+  - (* float *) repeat split; intros; discriminate.
   - (* bool *) repeat split; intros; discriminate.
   - (* unit *) repeat split; intros; discriminate.
   - (* string *) repeat split; intros; discriminate.

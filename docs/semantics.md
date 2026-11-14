@@ -11,9 +11,11 @@ definitions are both generated from that one Ott file so they cannot drift.
 
 The job of this model is narrow and deliberate: make the **sharp edge** —
 lambda-bound parameters are monomorphic (docs/plan.md, "Known limitation") —
-*stateable and provable*, so the later rank-2 fix (#72) can be shown to repair
-it without reintroducing unsoundness. Everything that does not bear on that
-theorem is left out, and §8 says exactly what and why.
+*stateable and provable*. Rank-2 inference, which would repair it, is not part
+of the language (no type-annotation syntax exists to express it, and ADR 0027
+declines the annotation-free form), so the model states the edge as the
+documented limit of the language. Everything that does not bear on that
+theorem is left out, and §9 says exactly what and why.
 
 The model is kept faithful to the real checker, not to an idealized variant. The
 type and row grammar mirrors [`checker/src/ty.rs`](../checker/src/ty.rs)
@@ -32,11 +34,14 @@ the implementation diverge, §8 flags it.
 - Hindley–Milner `let`-generalization: a binding `x = e₁  e₂` generalizes, so
   `=`-bound names are polymorphic; **lambda-bound parameters stay monomorphic**
   (this asymmetry *is* the sharp edge);
-- four base types: `Number`, `Bool`, `String` and `Unit`. Their introduction
-  forms are numerals, `true` and `false`, string literals, and the unit value;
-  their elimination forms are `if` on a `Bool`, the arithmetic operators
-  `+ - * / // %` on `Number`s, and the comparisons `< <= > >= == !=` on two
-  values of one of `Number`, `String` or `Bool` (ADR 0017, ADR 0036);
+- five base types: `Int`, `Float`, `Bool`, `String` and `Unit`. Their
+  introduction forms are whole-number literals, decimal literals, `true` and
+  `false`, string literals, and the unit value; their elimination forms are
+  `if` on a `Bool`, the arithmetic operators `+ - * / // %`, and the
+  comparisons `< <= > >= == !=` (ADR 0017, ADR 0036), each at concrete types
+  (§4). Integers are unbounded and signed; a `Float` is an exact rational;
+- a **trap**: integer `//` or `%` by zero is a defined runtime error, one of
+  the three outcomes of a closed well-typed term (§7);
 - records as **scoped-label rows** (Leijen, *Extensible records with scoped
   labels*, `papers/scopedlabels.pdf`): construction `{l₁: e₁,…,lₖ: eₖ}` and
   field projection `e.l`, with Leijen's row-equivalence relation.
@@ -55,20 +60,23 @@ what the sharp-edge theorem is about.
 **Out of the core (modeled by nothing — see §9 for the "why").** Reference
 counting / heap / the Perceus model; variants, `match`, and recursive (μ)
 types; recursive and mutually-recursive bindings; the `Eq`, `Numeric` and
-`Ordered` constraints (an operator is typed at a concrete base type only);
-the `Int`/`Float` split; comparison of records and tags; `and`, `or`, `not`
+`Ordered` constraints (an operator is typed at concrete types only, so a
+generic operator waits for phase 2); integer overflow and the `trap()` builtin;
+IEEE infinities and NaN; comparison of `Unit`, records and tags; rank-2
+inference; `and`, `or`, `not`
 and unary minus; monomorphization.
 
 ## 2. Syntax
 
-Term variables `x, y, z, f, g, m, p`; labels `l`; numeral constants `n`; string
-literals `q` (a list of bytes, ADR 0009). Type
+Term variables `x, y, z, f, g, m, p`; labels `l`; string
+literals `q` (a list of bytes, ADR 0009); whole-number literals `n` (integers)
+and decimal literals `d` (rationals). Type
 variables `α, β`; row variables `r, s`. Metavariables range over: `e` terms,
 `v` values, `τ` monotypes, `ρ` rows, `σ` type schemes, `Γ` contexts.
 
 ```
 e  ::=  x                              variable
-     |  n  |  true  |  false           numeral and boolean constants
+     |  n  |  d  |  true  |  false     whole-number, decimal and boolean constants
      |  q  |  unit                       string literal (its bytes), the unit value
      |  program(x₁,…,xₖ) do e done     abstraction        (k ≥ 0, the xᵢ distinct)
      |  e(e₁,…,eₖ)                     application        (k ≥ 0)
@@ -78,12 +86,12 @@ e  ::=  x                              variable
      |  if e₁ then e₂ else e₃          conditional
      |  e₁ ⊙ e₂                        binary operation   (⊙ ∈ + - * / // %  < <= > >= == !=)
 
-v  ::=  n  |  true  |  false           constant value
+v  ::=  n  |  d  |  true  |  false     constant value
      |  q  |  unit                      string and unit values
      |  program(x₁,…,xₖ) do e done     closure value
      |  {l₁: v₁, …, lₖ: vₖ}            record value
 
-τ  ::=  Number  |  Bool  |  String  |  Unit   base types
+τ  ::=  Int  |  Float  |  Bool  |  String  |  Unit   base types
      |  (τ₁,…,τₖ) → τ                  function type
      |  {ρ}                            record type
      |  α                              type variable
@@ -125,11 +133,11 @@ label keep their relative order. This is Leijen's scoped-label equality (Figure
 mutually on types and rows as the least relation closed under these rules.
 
 ```
-——————————————— (≅-num)     ——————————————— (≅-bool)     ——————————————— (≅-unit)
- Number ≅ Number             Bool ≅ Bool                   Unit ≅ Unit
+——————————————— (≅-int)     ——————————————— (≅-float)     ——————————————— (≅-bool)
+ Int ≅ Int                   Float ≅ Float                 Bool ≅ Bool
 
-——————————————— (≅-string)    ——————— (≅-tvar)
- String ≅ String              α ≅ α
+——————————————— (≅-unit)     ——————————————— (≅-string)    ——————— (≅-tvar)
+ Unit ≅ Unit                 String ≅ String              α ≅ α
 
  τ₁ ≅ τ₁'  …  τₖ ≅ τₖ'   τ ≅ τ'
 —————————————————————————————————— (≅-arrow)
@@ -189,7 +197,10 @@ generalization are defined in §5.
 ```
  x : σ ∈ Γ      τ ≺ σ
 ———————————————————————— (T-Var)      ———————————————— (T-Num)
-       Γ ⊢ x : τ                       Γ ⊢ n : Number
+       Γ ⊢ x : τ                       Γ ⊢ n : Int
+
+———————————————— (T-NumFloat)      ———————————————— (T-Dec)
+ Γ ⊢ n : Float                      Γ ⊢ d : Float
 
 ———————————————— (T-True)      ———————————————— (T-False)
  Γ ⊢ true : Bool                Γ ⊢ false : Bool
@@ -201,14 +212,31 @@ generalization are defined in §5.
 ————————————————————————————————————————————————— (T-If)
         Γ ⊢ if e₁ then e₂ else e₃ : τ
 
- ⊙ ∈ {+, -, *, /, //, %}      Γ ⊢ e₁ : Number      Γ ⊢ e₂ : Number
-—————————————————————————————————————————————————————————————————— (T-Arith)
-                    Γ ⊢ e₁ ⊙ e₂ : Number
+ Γ ⊢ e₁ : τ₁      Γ ⊢ e₂ : τ₂      ⊙ : τ₁, τ₂ ⇒ τ
+————————————————————————————————————————————————————— (T-Bin)
+                 Γ ⊢ e₁ ⊙ e₂ : τ
 
- ⊙ ∈ {<, <=, >, >=, ==, !=}   τ ∈ {Number, String, Bool}   Γ ⊢ e₁ : τ   Γ ⊢ e₂ : τ
-————————————————————————————————————————————————————————————————————————————————— (T-Cmp)
-                           Γ ⊢ e₁ ⊙ e₂ : Bool
+```
 
+The operator signature `⊙ : τ₁, τ₂ ⇒ τ` (ADR 0017, ADR 0036) says which operand
+types an operator takes and what it gives. `ν` ranges over `Int` and `Float`.
+
+```
+ ⊙ ∈ {+, -, *}                    ⊙ ∈ {+, -, *}    ν₁ = Float or ν₂ = Float
+—————————————————— (S-RingInt)    ————————————————————————————————————————— (S-RingFloat)
+ ⊙ : Int, Int ⇒ Int                     ⊙ : ν₁, ν₂ ⇒ Float
+
+—————————————————————— (S-Quot)       ⊙ ∈ {//, %}
+ / : ν₁, ν₂ ⇒ Float                  —————————————————— (S-Whole)
+                                       ⊙ : Int, Int ⇒ Int
+
+ ⊙ ∈ {<, <=, >, >=, ==, !=}                 ⊙ ∈ {<, <=, >, >=, ==, !=}   τ ∈ {String, Bool}
+——————————————————————————— (S-CmpNum)    ————————————————————————————————————————————————— (S-CmpBase)
+ ⊙ : ν₁, ν₂ ⇒ Bool                                      ⊙ : τ, τ ⇒ Bool
+
+```
+
+```
  Γ, x₁:τ₁, …, xₖ:τₖ ⊢ e : τ
 ————————————————————————————————————————————————— (T-Abs)
  Γ ⊢ program(x₁,…,xₖ) do e done : (τ₁,…,τₖ) → τ
@@ -261,16 +289,26 @@ Rule by rule:
 - **`T-If`** types both branches at one type, so the whole `if` has that type
   whichever branch runs. The condition must be a `Bool`: `if 1 then …` has no
   derivation, and the checker reports `expected Bool, found Number`.
-- **`T-Arith`** wants two `Number`s and gives a `Number`. `true + true` and
-  `1 + "a"` have no derivation (the checker: `` `+` needs numbers… ``,
-  `expected Number, found String`).
-- **`T-Cmp`** compares two values of one base type and gives a `Bool`. The two
-  operands share the type `τ`, so `1 < "a"` has no derivation; `Int` meeting
-  `Float` widening (ADR 0017) is the one mixed comparison the checker accepts and
-  the model does not have, because the model has one `Number`.
+- **`T-Bin`** types an operation by the signature of its operator, at the
+  concrete types of its operands.
+  - `+ - *` on two `Int`s give an `Int`; with a `Float` on either side they give
+    a `Float`, the `Int` widening at the operator (`S-RingInt`, `S-RingFloat`).
+  - `/` takes any two numbers and always gives a `Float`, so `7 / 2 : Float`
+    (`S-Quot`).
+  - `//` and `%` take two `Int`s and give an `Int`; `1.5 // 2` has no derivation
+    (`S-Whole`), and the checker says `` `//` needs whole numbers ``.
+  - A comparison takes any two numbers, so `1 < 1.5` types by widening
+    (`S-CmpNum`), or two strings or two booleans of one type (`S-CmpBase`); so
+    `1 < "a"` has no derivation and `true + true` has none (the checker:
+    `expected Number, found String`, `` `+` needs numbers… ``).
+- **`T-NumFloat`.** A whole-number literal has type `Int`, and also `Float`
+  where a `Float` is wanted: `if c then 1 else 2.5 done` types at `Float`. This
+  models the checker settling an unconstrained literal as `Float` (ADR 0017).
+  A concrete `Int` does not do the same: `if c then 7 // 2 else 2.5 done` has no
+  derivation, and the checker rejects it too.
 - **`T-Conv`** closes typing under `≅`: anywhere a type is produced, an
   equivalent type may be used. This is where row reordering happens — e.g.
-  passing a `{b:Bool ; a:Number ; ·}` value where `{a:Number ; b:Bool ; ·}` is
+  passing a `{b:Bool ; a:Int ; ·}` value where `{a:Int ; b:Bool ; ·}` is
   expected (`a ≠ b`, so `(≅-swap)` applies). A standalone conversion rule keeps
   every elimination form oblivious to row order; the cost is one extra case in
   every induction, discharged by L2 (§7). (An equivalent presentation folds `≅`
@@ -347,20 +385,39 @@ fix left-to-right evaluation order:
 ———————————————————————————————— (ST-If1)    ——————————————————— (ST-Op1)
  if e₁ then e₂ else e₃ ⟶ if e₁' …            e₁ ⊙ e₂ ⟶ e₁' ⊙ e₂
 
-     e₂ ⟶ e₂'                                  v₁, v₂ values
-——————————————————— (ST-Op2)           ————————————————————————————— (ST-Op)
- v ⊙ e₂ ⟶ v ⊙ e₂'                        v₁ ⊙ v₂ ⟶ eval(⊙, v₁, v₂)
+     e₂ ⟶ e₂'                                  v₁, v₂ values      ⊙(v₁, v₂) = v
+——————————————————— (ST-Op2)           ————————————————————————————————————— (ST-Op)
+ v ⊙ e₂ ⟶ v ⊙ e₂'                        v₁ ⊙ v₂ ⟶ v
 ```
 
-`eval(⊙, v₁, v₂)` is a total function on literals of one type. Arithmetic on
-numerals `a` and `b` gives the numeral `a + b`, `a − b` (truncated at 0), `a · b`,
-and `⌊a / b⌋` for both `/` and `//`, and `a mod b`, where `⌊a / 0⌋ = 0` and
-`a mod 0 = a`. A comparison orders two numerals by value, two strings bytewise
-with a prefix first, and two booleans with `false` before `true` (ADR 0036), and
-gives `true` or `false` as the operator asks (`==` and `!=` ask for equal and
-unequal). On any other pair of values `eval` gives `unit`; canonical forms
-(L7) show a well-typed term never reaches that case. §9 lists where `eval`
-departs from the compiler.
+`⊙(v₁, v₂) = v` is the value an operator gives on two literals. It is a relation
+because one case has no single answer; every other case has exactly one.
+
+- **Integers.** `+`, `-` and `*` on whole numbers `a` and `b` give `a + b`,
+  `a − b` and `a · b` over ℤ, so `1 - 2 = -1`. `a // b` is `⌊a / b⌋` (rounding
+  toward negative infinity) and `a % b` has the sign of `b`, so `-7 // 2 = -4`
+  and `-7 % 3 = 2`. A zero divisor does not step: it traps (below).
+- **Floats.** A decimal is a rational. If either operand of `+ - *` is a
+  decimal, both read as rationals and the result is a decimal. `/` divides the
+  rationals, and `7 / 2 = 7/2`. A `Float` quotient by zero is IEEE infinity or
+  NaN in the compiler (`5 / 0` prints `inf`); the model leaves its result
+  unspecified, so `⊙(v₁, 0)` is any decimal and the term still steps.
+- **Comparison.** Two numbers, whole or decimal, compare as rationals, so
+  `1 < 1.5` and `2 == 2.0` hold. Two strings compare bytewise with a prefix
+  first, and two booleans with `false` before `true` (ADR 0036). The result is
+  `true` or `false` as the operator asks (`==` and `!=` ask for equal and
+  unequal).
+
+On any other pair of values `⊙` has no result; canonical forms (L7) show a
+well-typed term never reaches that case. §9 lists where `⊙` departs from the
+compiler.
+
+**Traps.** A closed term *traps* with `Div_by_zero`, written `e ↯ Div_by_zero`,
+when evaluation reaches `v₁ // 0` or `v₁ % 0`. The trap rises through the
+enclosing context in the same left-to-right order as `⟶`: if `e₁ ↯ k` then
+`e₁(…) ↯ k`, `e₁ ⊙ e₂ ↯ k`, `if e₁ … ↯ k`, and so on, and if `v` is a value and
+`e₂ ↯ k` then `v ⊙ e₂ ↯ k`. A trapped term has no `⟶` step. Overflow and the
+`trap()` builtin are not in the core (§9).
 
 Values do not step. A binding reduces by first evaluating `e₁` to a value
 (`ST-Let1`) and then substituting (`ST-LetV`); because `e₁` is closed-up-to-`Γ`
@@ -371,8 +428,8 @@ the reflexive-transitive closure of `⟶`.
 ## 7. Metatheory
 
 **Definitions.** A term is a *value* if it is in the `v` grammar. A term `e` is
-*stuck* if it is not a value and no `e'` has `e ⟶ e'`. Stuck terms are exactly
-the errors a type system must rule out: projecting an absent label, calling a
+*stuck* if it is not a value, no `e'` has `e ⟶ e'`, and it does not trap. Stuck
+terms are exactly the errors a type system must rule out: projecting an absent label, calling a
 non-function, calling at the wrong arity, applying `.l` to a non-record.
 
 The proofs (#71) rest on these lemmas; they are stated here so #70 knows the
@@ -383,15 +440,15 @@ obligations it must generate.
   constructor; it is the least such relation containing `(≅-swap)`. *(= Leijen
   Fig. 1.)*
 - **L2 — `≅` preserves head shape ("no confusion").** If `τ ≅ τ'` then `τ` and
-  `τ'` have the same outermost constructor: `Number ≅ τ'` ⟹ `τ' = Number`;
-  likewise `Bool`, `String` and `Unit`; `(τ₁,…,τₖ)→τ ≅ τ'` ⟹ `τ' = (τ₁',…,τₖ')→τ'₀` with the **same
+  `τ'` have the same outermost constructor: `Int ≅ τ'` ⟹ `τ' = Int`;
+  likewise `Float`, `Bool`, `String` and `Unit`; `(τ₁,…,τₖ)→τ ≅ τ'` ⟹ `τ' = (τ₁',…,τₖ')→τ'₀` with the **same
   arity `k`** and componentwise `≅`; `{ρ} ≅ τ'` ⟹ `τ' = {ρ'}` with `ρ ≅ ρ'`. In
-  particular `Number ≅ Bool` is *not* derivable, and arities never change. This
+  particular `Int ≅ Bool` is *not* derivable, and arities never change. This
   is what lets canonical forms survive `T-Conv`.
 - **L2′ — `≅` preserves labels.** If `ρ ≅ ρ'` then they have the same tail and,
   for each label `l`, the same-length, componentwise-`≅` list `π_l` (the
   characterization in §3). Hence rows with different label sets (e.g.
-  `{x:Number;·}` vs `{x:Number;y:Number;·}`) are never `≅`.
+  `{x:Int;·}` vs `{x:Int;y:Int;·}`) are never `≅`.
 - **L3 — row surfacing (scoped-label core).** If `ρ ≅ (l:τ ; ρ')`, then `ρ`
   contains a field labeled `l`; letting `(l:τⱼ)` be the **first** `l`-field of
   `ρ`, we have `τⱼ ≅ τ` and `ρ' ≅ (ρ minus its first l-field)`. So the type `τ`
@@ -411,7 +468,8 @@ obligations it must generate.
     Each occurrence of `x` used `v` at some instance `θτ₀` of `σ`; by L5, `v`
     has that instance because the quantified `V` are not free in `Γ`.
 - **L7 — canonical forms.** If `· ⊢ v : τ` for a value `v`:
-  - `τ ≅ Number` ⟹ `v` is a numeral `n`;
+  - `τ ≅ Int` ⟹ `v` is a whole-number literal `n`;
+  - `τ ≅ Float` ⟹ `v` is a whole-number literal `n` or a decimal literal `d`;
   - `τ ≅ Bool` ⟹ `v ∈ {true, false}`;
   - `τ ≅ String` ⟹ `v` is a string literal `q`;
   - `τ ≅ Unit` ⟹ `v = unit`;
@@ -426,21 +484,23 @@ obligations it must generate.
 
 ### Progress
 
-> **Theorem (Progress).** If `· ⊢ e : τ`, then either `e` is a value or there
-> exists `e'` with `e ⟶ e'`.
+> **Theorem (Progress).** If `· ⊢ e : τ`, then `e` is a value, or there exists
+> `e'` with `e ⟶ e'`, or `e` traps (`e ↯ k` for some `k`).
 
-Proof by induction on `· ⊢ e : τ`. `T-Conv` uses the IH directly (being a value
-or being able to step does not depend on the type). `T-If`: by L7 an evaluated
+Proof by induction on `· ⊢ e : τ`. `T-Conv` uses the IH directly (being a value,
+stepping or trapping does not depend on the type). `T-If`: by L7 an evaluated
 condition is `true` or `false`, so `ST-IfTrue` or `ST-IfFalse` fires (or the
-condition steps by `ST-If1`). `T-Arith` and `T-Cmp`: either an operand steps
-(`ST-Op1`, `ST-Op2`) or both are values and `ST-Op` fires, since `eval` is total.
-`T-App`: by L7 the evaluated
+condition steps by `ST-If1`, or traps). `T-Bin`: either an operand steps
+(`ST-Op1`, `ST-Op2`) or traps, or both are values, and the operator's signature
+and L7 give the operands' forms. Then `ST-Op` fires, except for `//` and `%` at a
+zero divisor, which trap, and a `Float` quotient by zero, which steps to an
+unspecified decimal. `T-App`: by L7 the evaluated
 callee is a `k`-ary `program` and the arguments are `k` values, so `ST-Beta`
-fires (or a subterm steps by `ST-App1/2`). `T-Proj`: by L7 and L3 the evaluated
-record has a first-`l` field, so `ST-ProjRec` fires (or `ST-Proj1`). `T-Let`:
-either `e₁` steps (`ST-Let1`) or it is a value and `ST-LetV` fires. Constants,
-abstractions, and record values are values. **No well-typed closed term is
-stuck.** (A numeral, string, unit and boolean are values already.)
+fires (or a subterm steps by `ST-App1/2`, or traps). `T-Proj`: by L7 and L3 the
+evaluated record has a first-`l` field, so `ST-ProjRec` fires (or `ST-Proj1`).
+`T-Let`: either `e₁` steps (`ST-Let1`), or traps, or it is a value and `ST-LetV`
+fires. Constants, abstractions, and record values are values. **No well-typed
+closed term is stuck.**
 
 ### Preservation
 
@@ -453,20 +513,20 @@ uses L6b (its side condition `V ∩ ftv(Γ) = ∅` holds because `gen` quantifie
 exactly `ftv(τ₁) \ ftv(Γ)`); `ST-ProjRec` uses L7/L3 to show the first-`l`
 value has the projected type `τ`; `ST-IfTrue` and `ST-IfFalse` return the branch,
 which has the type of the whole `if`; `ST-Op` uses L7 to read both operands as
-literals of the operator's type, so `eval` yields a numeral (arithmetic) or a
-boolean (comparison), the type `T-Arith` or `T-Cmp` assigns; the congruence rules
-use the IH. The theorem
+literals of the operator's types, so the result is a whole number or decimal
+(arithmetic) or a boolean (comparison), the type its signature assigns; a whole
+number met by a `Float` signature is the literal rule `T-NumFloat`; the
+congruence rules use the IH. The theorem
 is stated for arbitrary `Γ` because the induction needs it; soundness uses the
 closed case `Γ = ·`.
 
 ### Soundness
 
 > **Corollary (Type soundness).** If `· ⊢ e : τ` and `e ⟶* e'`, then `e'` is not
-> stuck: `e'` is a value or steps further.
+> stuck: `e'` is a value, steps further, or traps.
 
 Immediate from Progress and Preservation. This is the theorem the whole
-development exists to establish, and the fixed target the sharp-edge fix (#72)
-must preserve.
+development exists to establish.
 
 ## 8. The sharp edge, worked
 
@@ -480,9 +540,9 @@ body `e₂` ignores `a` — it forces `e₁` to be typed, then types `e₂`.
 - `T-Record` on `{id: I}` with `· ⊢ I : (α)→α` gives `{id: I} : {id:(α)→α ; ·}`.
 - `gen(·, {id:(α)→α ; ·}) = ∀α. {id:(α)→α ; ·}`, since `α ∉ ftv(·)`. Call it
   `σ_m`; bind `m : σ_m`.
-- First use: `T-Var` instantiates `σ_m` at `α := Number`, so
-  `m : {id:(Number)→Number ; ·}`, `T-Proj` gives `m.id : (Number)→Number`, and
-  `T-App` with `1 : Number` gives `(m.id)(1) : Number`. Bind `a : Number`.
+- First use: `T-Var` instantiates `σ_m` at `α := Int`, so
+  `m : {id:(Int)→Int ; ·}`, `T-Proj` gives `m.id : (Int)→Int`, and
+  `T-App` with `1 : Int` gives `(m.id)(1) : Int`. Bind `a : Int`.
 - Second use: `T-Var` instantiates `σ_m` **again**, at `α := Bool`, so
   `m.id : (Bool)→Bool` and `(m.id)(true) : Bool`.
 - Whole program: `Bool`. ✓
@@ -497,11 +557,11 @@ Typing the body needs `Γ, m:τ_m ⊢ …`, with `m` bound at a **monotype** `τ
 (`T-Abs`, no `∀`). `m.id` requires, by `T-Proj` (+ `T-Conv`), that
 `τ_m ≅ {id:τ_id ; ρ}` for a single fixed `τ_id`.
 
-- `(m.id)(1)` forces, by `T-App`, `τ_id ≅ (Number)→τ`.
+- `(m.id)(1)` forces, by `T-App`, `τ_id ≅ (Int)→τ`.
 - `(m.id)(true)` reuses the **same** `τ_id` (a monotype has only itself as
   instance) and forces `τ_id ≅ (Bool)→τ'`.
 
-So `(Number)→τ ≅ (Bool)→τ'`, which by L2 forces `Number ≅ Bool` — not derivable.
+So `(Int)→τ ≅ (Bool)→τ'`, which by L2 forces `Int ≅ Bool` — not derivable.
 No `τ_id` exists, so there is no derivation of the body, and `use` is
 untypeable; the program is rejected. The checker reports this as the targeted
 "`m` is a parameter, so it can only be used at one type here" error
@@ -509,10 +569,11 @@ untypeable; the program is rejected. The checker reports this as the targeted
 
 ### 8.3 `both = program(f) do a = f(1)  f(true) done` — **rejects** (no record needed)
 
-`T-Abs` binds `f : τ_f` at a monotype. `f(1)` forces `τ_f ≅ (Number)→τ`;
-`f(true)` forces the same `τ_f ≅ (Bool)→τ'`. By L2, `Number ≅ Bool` — impossible.
-No derivation; rejected. This is the sharp edge with no record in sight, and it
-is the case only the rank-2 fix (#72) can repair. ✗
+`T-Abs` binds `f : τ_f` at a monotype. `f(1)` forces `τ_f ≅ (Int)→τ`;
+`f(true)` forces the same `τ_f ≅ (Bool)→τ'`. By L2, `Int ≅ Bool` — impossible.
+No derivation; rejected. This is the sharp edge with no record in sight. The
+language has no rank-2 inference and no annotation syntax to ask for it, so this
+is the intended limit. ✗
 
 ### 8.4 `getx = program(p) do p.x done` with `use2 = program(g) do a = g({x:1})  g({x:2,y:3}) done` — **rejects** (row mismatch)
 
@@ -522,12 +583,12 @@ that happens to be an open record), `T-Proj` gives `p.x : α`, so
 
 `use2` does not. `T-Abs` binds `g : τ_g` at a monotype.
 
-- `g({x:1})`: `T-Record` gives `{x:1} : {x:Number ; ·}`, so `T-App` forces
-  `τ_g ≅ ({x:Number ; ·})→τ`.
-- `g({x:2,y:3})`: `{x:2,y:3} : {x:Number ; y:Number ; ·}`, so
-  `τ_g ≅ ({x:Number ; y:Number ; ·})→τ'`.
+- `g({x:1})`: `T-Record` gives `{x:1} : {x:Int ; ·}`, so `T-App` forces
+  `τ_g ≅ ({x:Int ; ·})→τ`.
+- `g({x:2,y:3})`: `{x:2,y:3} : {x:Int ; y:Int ; ·}`, so
+  `τ_g ≅ ({x:Int ; y:Int ; ·})→τ'`.
 
-By L2 these force `{x:Number ; ·} ≅ {x:Number ; y:Number ; ·}`, i.e. two rows
+By L2 these force `{x:Int ; ·} ≅ {x:Int ; y:Int ; ·}`, i.e. two rows
 with label sets `{x}` and `{x,y}`; by L2′ they are not `≅`. No derivation;
 rejected (`record is missing field y`). ✗
 
@@ -556,25 +617,35 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   references* is precisely what licenses both the unrestricted generalization
   and the RC abstraction above.
 - **Base types and their operators (phase 1, ADR 0037).** The core has
-  `Number`, `Bool`, `String` and `Unit`, with `if`, the arithmetic operators and
-  the comparisons of §4. What the model abstracts, each verified against
-  `goat check` and `goat run`:
-  - *One `Number`.* The checker has `Int` and `Float`, widens an `Int` to a
-    `Float` at an operator, makes `/` always give a `Float` and `//` and `%`
-    `Int`-only (ADR 0017). The model has one `Number` and one `eval` for `/` and
-    `//`, so `1.5 // 2` has a derivation here and the checker rejects it, and
-    `7 / 2` evaluates to 3 here and to 3.5 there.
-  - *Numerals are naturals.* `1 - 2` evaluates to 0 here and to −1 there.
-    There is no overflow trap (ADR 0017) and no IEEE value.
-  - *Traps.* A zero divisor traps in the compiler (ADR 0023: `5 // 0` prints
-    `trap: division by zero`); `eval` is total and the model gives 0, so the
-    soundness theorems say a well-typed term is not stuck, and say nothing about
-    traps.
+  `Int`, `Float`, `Bool`, `String` and `Unit`, with `if`, the operators and the
+  comparisons of §4. `proofs/GoatPhase1.v` holds each of the cases below as a
+  checked example, and the examples were compared with `goat check` and
+  `goat run` from a release build. What the model abstracts:
+  - *Integers are unbounded.* The compiler's `Int` is an `i64` on desktop and an
+    `i32` on embedded, and an operation that does not fit traps
+    (`this number got too big`, ADR 0017). The model has no width, so no
+    operation overflows and there is no overflow trap. Which width the model
+    should take is open (phase 1 records it as a decision for the owner).
+  - *A `Float` is an exact rational.* The compiler's `Float` is an `f64` (`f32`
+    on embedded) with IEEE rounding, infinities and NaN. `0.1 + 0.2 == 0.3` is
+    `false` there and `true` here. A `Float` quotient by zero (`5 / 0` prints
+    `inf`) steps to an unspecified decimal, and a comparison with NaN is not
+    modeled.
+  - *Traps.* A zero divisor in `//` or `%` traps in the compiler (ADR 0023:
+    `5 // 0` prints `trap: division by zero`) and traps here: it has no `⟶` step
+    and is a third outcome of Progress and Soundness. Overflow and the `trap()`
+    builtin raise no trap here, because the model has neither.
+  - *A call does not widen.* The compiler accepts an `Int` argument where the
+    parameter is a `Float` (`f(7 // 2)` with `f` forced to take a `Float`). The
+    model widens at an operator and settles a literal as a `Float`, but has no
+    subsumption at a call. A parameter used only in arithmetic with a `Float`
+    still accepts an `Int`, because the parameter takes the type `Int`.
   - *Operators at concrete types.* The checker types `a < b` with an `Eq`
     constraint and `a + b` with `Numeric`, so a generic function stays
     polymorphic over them. The calculus has no constraints, so an operator
-    applies at `Number`, `String` or `Bool` only; a function that uses `<` at a
-    type variable has no derivation here.
+    applies at `Int`, `Float`, `String` or `Bool` only; a function that uses `<`
+    at a type variable has no derivation here. Constraint-polymorphic operators
+    are phase 2.
   - *A string token has no payload.* The lexer is trusted, so the parse tree
     carries no bytes, and a string denotes `q` for every `q`.
   - *`if` has an `else`.* `if c then a done` lowers to `if c then a else ()`;

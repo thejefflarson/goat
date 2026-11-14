@@ -8,6 +8,8 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatMeta.
 Require Import Lia.
+Require Export Goat.GoatLit.
+Require Import Goat.GoatNum.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
 Open Scope string_scope.
@@ -19,6 +21,7 @@ Fixpoint close_exp_rec (k : nat) (x : termvar) (e : exp) {struct e} : exp :=
   | e_fvar_b i => e_fvar_b i
   | e_fvar_f y => if y == x then e_fvar_b k else e_fvar_f y
   | e_num n => e_num n
+  | e_dec d => e_dec d
   | e_true => e_true
   | e_false => e_false
   | e_abs b => e_abs (close_exp_rec (S k) x b)
@@ -58,6 +61,7 @@ Proof.
   - (* free variable: x becomes index k, below S k; any other stays *)
     intros y k x _. simpl. destruct (y == x); simpl; [ lia | exact I ].
   - intros n k x _. exact I.
+  - intros d k x _. exact I.
   - intros k x _. exact I.
   - intros k x _. exact I.
   - (* abs: the body is one level deeper *)
@@ -160,7 +164,7 @@ Section Denotation.
 
   Inductive Den : tree -> exp -> Prop :=
     | D_num : forall n,
-        Den (Node R_number [Leaf (TNum n)]) (e_num n)
+        Den (Node R_number [Leaf (TNum n)]) (e_num (z_of_nat n))
     | D_true :
         Den (Node R_boolean [Node R_true_lit [sym "true"]]) e_true
     | D_false :
@@ -394,7 +398,7 @@ Qed.
 
 Fixpoint size (e : exp) : nat :=
   match e with
-  | e_fvar_b _ | e_fvar_f _ | e_num _ | e_true | e_false | e_unit | e_str _ => 1
+  | e_fvar_b _ | e_fvar_f _ | e_num _ | e_dec _ | e_true | e_false | e_unit | e_str _ => 1
   | e_abs b => S (size b)
   | e_app a b | e_let a b => S (size a + size b)
   | e_rec fs => S (size_fields fs)
@@ -415,6 +419,7 @@ Proof.
   apply exp_fields_mutind; simpl; intros.
   - (* bound index *)
     destruct (lt_eq_lt_dec n k) as [[Hlt | Heq] | Hgt]; reflexivity.
+  - reflexivity.
   - reflexivity.
   - reflexivity.
   - reflexivity.
@@ -443,6 +448,7 @@ Proof.
   - exact I.
   - exact I.
   - exact I.
+  - exact I.
   - (* abs *) apply H. assumption.
   - (* app *) destruct H1 as [Ha Hb]. split; [ apply H | apply H0 ]; assumption.
   - (* let *) destruct H1 as [Ha Hb]. split; [ apply H | apply H0 ]; assumption.
@@ -464,11 +470,12 @@ Proof.
   - destruct t; simpl in Hsize; lia.
   - destruct t; simpl in Hsize; lia.
   - destruct IH as [IHe IHfs].
-    destruct t as [i | x | n | | | b | a b | a b | fs | a l | | q | a b c | a o b];
+    destruct t as [i | x | n | d | | | b | a b | a b | fs | a l | | q | a b c | a o b];
       unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
     + lia.
     + apply lc_e_fvar_f.
     + apply lc_e_num.
+    + apply lc_e_dec.
     + apply lc_e_true.
     + apply lc_e_false.
     + (* abs *)

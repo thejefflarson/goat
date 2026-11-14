@@ -15,8 +15,9 @@
   undecidable (Wells 1999). Annotation-free rank-2 is deliberately not pursued: it
   needs a different inference architecture (intersection types plus
   anti-unification over scoped-label rows) for near-zero audience value, and goat
-  has no type annotations to fall back on. `proofs/GoatRank2.v` stays as a valid
-  artifact of the rank-2 analysis; nothing depends on it.
+  has no type annotations to fall back on. The rank-2 typing rule and
+  `proofs/GoatRank2.v` that once modeled it were deleted from the proofs, which
+  now state the sharp edge as the language's limit.
   The miscompile is a **value-restriction** problem, decoupled from rank-2:
   rank-2 would not fix it, because the obstacle is lowering one once-evaluated
   value at two types. A `=` binding therefore generalizes its type variables only

@@ -11,6 +11,8 @@ From Coq Require Import String List Decimal DecimalString.
 Import ListNotations.
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
+Require Export Goat.GoatLit.
+Require Import Goat.GoatNum.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
 Require Import Goat.GoatDen.
@@ -85,7 +87,8 @@ Fixpoint block (P : nat) (e : exp) {struct e} : list tree :=
   match e with
   | e_fvar_b i => [ident (nm (P - 1 - i))]
   | e_fvar_f _ => []
-  | e_num n => [Node R_number [Leaf (TNum n)]]
+  | e_num n => [Node R_number [Leaf (TNum (nat_of_z n))]]
+  | e_dec _ => []
   | e_true => [Node R_boolean [Node R_true_lit [sym "true"]]]
   | e_false => [Node R_boolean [Node R_false_lit [sym "false"]]]
   | e_abs b => [function_tree P (block (S P) b)]
@@ -163,8 +166,9 @@ Fixpoint scoped (n : nat) (e : exp) {struct e} : Prop :=
   match e with
   | e_fvar_b i => i < n
   | e_fvar_f _ => False
-  | e_num _ | e_true | e_false | e_str _ => True
-  | e_unit => False
+  | e_num z => z_nonneg z = true
+  | e_true | e_false | e_str _ => True
+  | e_dec _ | e_unit => False
   | e_ite c a b => scoped n c /\ scoped n a /\ scoped n b
   | e_bin a _ b => scoped n a /\ scoped n b
   | e_abs b => scoped (S n) b

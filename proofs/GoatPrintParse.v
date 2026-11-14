@@ -168,6 +168,8 @@ Proof.
     intros y n P Hs. destruct Hs.
   - intros k n P Hs. apply blk_chain; [ exact I | ].
     exact (chain_prim _ (prim_number _)).
+  - (* decimal literal: not in the printable fragment *)
+    intros d n P Hs. destruct Hs.
   - intros n P Hs. apply blk_chain; [ exact I | ].
     exact (chain_prim _ prim_true).
   - intros n P Hs. apply blk_chain; [ exact I | ].
