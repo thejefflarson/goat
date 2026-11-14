@@ -25,8 +25,17 @@ wrong state unrepresentable *before* you reach for a comment.
 - **Tracker.** GitHub issues (`thejefflarson/goat`). Decisions that outlive a
   ticket go in `docs/adr/`.
 - **Gates (CI-enforced).** `cargo fmt --all -- --check`,
-  `cargo clippy --all-targets -- -D warnings`, and `cargo test` must all be
-  green before a PR merges.
+  `cargo clippy --all-targets -- -D warnings`, and the tests must all be green
+  before a PR merges. CI runs the tests with `cargo nextest run --profile ci`
+  plus `cargo test --doc` (nextest skips doctests); locally prefer
+  `cargo nextest run` — it runs test binaries in parallel and is several times
+  faster than `cargo test`, which still works. Config is `.config/nextest.toml`.
+- **Proof gate (ADR 0037).** A PR that changes `grammar/goat.peg`,
+  `checker/src/{infer,lower,ty}.rs` or `prelude/prelude.goat` must also change
+  `proofs/`. The `proof-gate` check waives this only for a PR with the
+  `no-semantics-change` label and a body line starting `No semantics change:`
+  followed by the reason. The `coq` check runs on every PR and skips its build
+  when nothing it depends on changed.
 - **Errors come only from the checker**, with one deliberate exception: mono may
   raise a spanned *resource-limit* diagnostic ("program too complex") when a
   well-typed program would explode monomorphization — a resource bound, not a
@@ -44,11 +53,16 @@ wrong state unrepresentable *before* you reach for a comment.
   checked-out directory; the branch and its commits live in this repo's `.git`
   regardless, so an in-repo worktree loses nothing and keeps the tree self-
   contained.
-- **Local Coq toolchain.** The opam root for building the `proofs/` development
+- **Local Rocq toolchain.** The opam root for building the `proofs/` development
   lives at `/coq-toolchain/` (gitignored — it is ~1 GB and must never be
   committed). An opam root records absolute paths and breaks when moved, so a
-  fresh root is **rebuilt in place** at that path (Coq 8.20.1, Ott 0.34, metalib
-  pinned — the recipe in `.github/workflows/coq.yml`), never relocated from
-  elsewhere. CI builds the proofs in a Coq Docker image, so nothing in the repo
-  depends on this local toolchain; it is a convenience for running
-  `make -C proofs ci` without the Docker round-trip.
+  fresh root is **rebuilt in place** at that path, never relocated from
+  elsewhere. The switch is `rocq-9`: OCaml 4.14.2, `opam install coq.9.1.1
+  ott.0.34` (Rocq 9.1.1; `coq` is the compatibility metapackage that pulls in
+  `rocq-core`, and metalib depends on it), then `opam pin add -n coq-metalib
+  <plclub/metalib>#144ddcd0fff6717229140314cf559d85fad6eae0` and `opam install
+  coq-metalib`. Build with `opam exec --switch=rocq-9 -- make -C proofs ci`. Rocq
+  9.2 and 9.3 do not work yet: metalib's `CoqListFacts.v` fails to compile on
+  them. CI runs the same switch on the self-hosted runner image
+  (`.github/workflows/coq.yml`), so nothing in the repo depends on this local
+  toolchain; it is a convenience for running `make -C proofs ci` locally.
