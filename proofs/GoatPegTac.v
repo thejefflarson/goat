@@ -1,7 +1,7 @@
 (* Helper lemmas and tactics for building derivations of the PEG relation
    (GoatPeg.v). No theorem about goat lives here. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.

@@ -2,7 +2,7 @@
    field accesses). The facts the later proofs need about where such a chain
    stops and what it can be mistaken for. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
