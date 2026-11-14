@@ -1213,16 +1213,16 @@ mod tests {
         assert_eq!(
             type_of("use = program(m) do a = m.id + 1\n if m.id then 1 else 2 done done use(1)")
                 .unwrap_err(),
-            "`m` is a parameter, so m.id can only be used at one type here; bind it with `=` instead"
+            "`m.id` gets a Number here and a Bool there, but a value you pass in can only be one kind of thing.\nPass a separate value for each kind, or give it a name with `=` where you use it."
         );
         assert_eq!(
             type_of("both = program(f) do a = f(1)\n b = f(true)\n b done").unwrap_err(),
-            "`f` is a parameter, so it can only be used at one type here; bind it with `=` instead"
+            "`f` gets a Number here and a Bool there, but a function you pass in can only take one kind of thing.\nPass a separate function for each kind, or give the function a name with `=` where you use it."
         );
         assert_eq!(
             type_of("use2 = program(g) do a = g({x: 1})\n b = g({x: 2, y: 3})\n b done use2(1)")
                 .unwrap_err(),
-            "`g` is a parameter, so it can only be used at one type here; bind it with `=` instead"
+            "`g` gets `{x: Number}` here and `{x: Number, y: Number}` there, but a function you pass in can only take one kind of thing.\nPass a separate function for each kind, or give the function a name with `=` where you use it."
         );
     }
 

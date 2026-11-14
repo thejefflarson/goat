@@ -436,7 +436,7 @@ Typing the body needs `Γ, m:τ_m ⊢ …`, with `m` bound at a **monotype** `τ
 So `(Number)→τ ≅ (Bool)→τ'`, which by L2 forces `Number ≅ Bool` — not derivable.
 No `τ_id` exists, so there is no derivation of the body, and `use` is
 untypeable; the program is rejected. The checker reports this as the targeted
-"`m` is a parameter, so it can only be used at one type here" error
+"`m.id` gets a Number here and a Bool there, but a function you pass in can only take one kind of thing" error
 ([`unify_use`](../checker/src/infer.rs)). ✗
 
 ### 8.3 `both = program(f) do a = f(1)  f(true) done` — **rejects** (no record needed)

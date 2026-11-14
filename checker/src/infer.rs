@@ -140,6 +140,28 @@ pub fn infer_partial(
     (typed, errors)
 }
 
+/// The first place two function types disagree, so a message can name the
+/// kinds that clash rather than the whole function.
+fn first_difference(a: &Ty, b: &Ty) -> (Ty, Ty) {
+    if let (Ty::Func(a_args, a_ret), Ty::Func(b_args, b_ret)) = (a, b)
+        && a_args.len() == b_args.len()
+    {
+        let pairs = a_args.iter().zip(b_args).chain([(&**a_ret, &**b_ret)]);
+        if let Some((x, y)) = pairs.into_iter().find(|(x, y)| x != y) {
+            return first_difference(x, y);
+        }
+    }
+    (a.clone(), b.clone())
+}
+
+/// A type as a kid reads it in a sentence: `a Number`, or the written type.
+fn kind_of(ty: &Ty) -> String {
+    match ty {
+        Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => format!("a {ty}"),
+        _ => format!("`{ty}`"),
+    }
+}
+
 /// How `var` sits inside `ty`, outermost step first: `its argument`,
 /// `its `g` field`. Empty when `var` is `ty` itself, the route is unclear, or
 /// it runs deeper than unification lets a type nest.
@@ -275,6 +297,12 @@ struct Inferer {
     /// generalizing looks the variable up instead of scanning the symbol.
     lone_vars: HashMap<TypeVar, HashSet<Symbol>>,
     params: HashMap<Symbol, String>,
+    /// Where each parameter (or field path off one) was first used, for the
+    /// message when a later use disagrees.
+    first_uses: HashMap<(Symbol, String), Span>,
+    /// A parameter given a function literal right at its call, by the text of
+    /// that literal and of the body the call's function runs.
+    literal_args: HashMap<Symbol, (String, String)>,
     /// Computed `=` bindings that keep a monotype where a value would have
     /// been generalized, by their name.
     restricted: HashMap<Symbol, String>,
@@ -759,17 +787,17 @@ impl Inferer {
         }
     }
 
-    /// For a parameter or a field chain off one, the parameter's name and the
-    /// written path (`m`, `m.id`).
-    fn param_path(&self, expr: &Expr) -> Option<(String, String)> {
+    /// For a parameter or a field chain off one, the parameter and the written
+    /// path (`m`, `m.id`).
+    fn param_path(&self, expr: &Expr) -> Option<(Symbol, String, String)> {
         match &expr.kind {
             ExprKind::Var { symbol, name } => self
                 .params
                 .contains_key(symbol)
-                .then(|| (name.clone(), name.clone())),
+                .then(|| (*symbol, name.clone(), name.clone())),
             ExprKind::Field { record, label } => {
-                let (root, path) = self.param_path(record)?;
-                Some((root, format!("{path}.{label}")))
+                let (symbol, root, path) = self.param_path(record)?;
+                Some((symbol, root, format!("{path}.{label}")))
             }
             _ => None,
         }
@@ -784,20 +812,103 @@ impl Inferer {
             Ty::Var(v) => self.is_scalar(v),
             _ => true,
         };
+        let param = self.param_path(used);
+        let first = param
+            .as_ref()
+            .and_then(|(symbol, _, path)| self.first_uses.get(&(*symbol, path.clone())))
+            .copied();
+        self.note_first_use(used, span);
         let before = self.errors.len();
         self.unify(actual, expected, span);
         if reused
             && self.errors.len() > before
-            && let Some((root, path)) = self.param_path(used)
+            && let Some((symbol, root, path)) = param
         {
             self.errors.truncate(before);
-            let what = if path == root { "it" } else { path.as_str() };
-            self.errors.push(GoatError::new(
-                span,
-                format!(
-                    "`{root}` is a parameter, so {what} can only be used at one type here; bind it with `=` instead"
-                ),
-            ));
+            let error =
+                self.two_ways_error(symbol, (&root, &path), first, actual, (span, expected));
+            self.errors.push(error);
+        }
+    }
+
+    /// Remember where a parameter, or a field path off one, is first used.
+    fn note_first_use(&mut self, used: &Expr, span: Span) {
+        if let Some((symbol, _, path)) = self.param_path(used) {
+            self.first_uses.entry((symbol, path)).or_insert(span);
+        }
+    }
+
+    /// The error for a parameter used at two types: the two kinds found, a
+    /// note on each use, and how to name the value so each use gets its own.
+    /// `found` is the type the earlier use fixed, `second` what this use needs.
+    fn two_ways_error(
+        &self,
+        symbol: Symbol,
+        (root, path): (&str, &str),
+        first: Option<Span>,
+        found: &Ty,
+        (span, needed): (Span, &Ty),
+    ) -> GoatError {
+        let (here, there) = first_difference(&self.shown(found), &self.shown(needed));
+        let is_function = matches!(self.resolve(found), Ty::Func(..));
+        let (here, there) = (kind_of(&here), kind_of(&there));
+        let (thing, one_kind) = if is_function {
+            ("a function", "take")
+        } else {
+            ("a value", "be")
+        };
+        let mut message = format!(
+            "`{path}` gets {here} here and {there} there, but {thing} you pass in can only {one_kind} one kind of thing."
+        );
+        match self.literal_args.get(&symbol).filter(|_| path == root) {
+            Some((literal, body)) => message.push_str(&format!(
+                "\nGive the function a name first, then use it both ways:\n```\n{root} = {literal}\n{body}\n```"
+            )),
+            None if is_function => message.push_str(
+                "\nPass a separate function for each kind, or give the function a name with `=` where you use it.",
+            ),
+            None => message.push_str(
+                "\nPass a separate value for each kind, or give it a name with `=` where you use it.",
+            ),
+        }
+        let mut error = GoatError::new(span, message);
+        if let Some(first) = first {
+            error = error.with_label(first, format!("`{path}` gets {here} here"));
+        }
+        error.with_label(span, format!("`{path}` gets {there} here"))
+    }
+
+    /// Remember the function literals passed straight to a function literal
+    /// that is called on the spot, so a message can quote them.
+    fn note_literal_args(&mut self, callee: &Expr, args: &[Expr]) {
+        let ExprKind::Func { params, body } = &callee.kind else {
+            return;
+        };
+        for (param, arg) in params.iter().zip(args) {
+            if matches!(arg.kind, ExprKind::Func { .. }) {
+                let body = self.quoted(body.span);
+                let literal = self.quoted(arg.span);
+                self.literal_args.insert(param.symbol, (literal, body));
+            }
+        }
+    }
+
+    /// The source text at `span`, kept to a short single line: a longer
+    /// function literal reads `program(x) do … done`, anything else `…`.
+    fn quoted(&self, span: Span) -> String {
+        const SHORT: usize = 40;
+        let text = self
+            .dots
+            .source
+            .get(span.start..span.end)
+            .unwrap_or("")
+            .trim();
+        if text.len() <= SHORT && !text.contains('\n') {
+            return text.to_string();
+        }
+        match text.find(" do") {
+            Some(at) if text.ends_with("done") => format!("{} do … done", &text[..at]),
+            _ => "…".to_string(),
         }
     }
 
@@ -2339,6 +2450,7 @@ impl Inferer {
         (lhs, lhs_ty): (&Expr, Ty),
         (rhs, rhs_ty): (&Expr, Ty),
     ) -> Ty {
+        self.note_first_use(lhs, lhs.span);
         let operands = ((lhs, lhs_ty), (rhs, rhs_ty));
         if matches!(op, BinOp::FloorDiv | BinOp::Mod) {
             self.type_whole_division(op, operands)
@@ -2394,6 +2506,7 @@ impl Inferer {
     /// [`Inferer::infer_kind`] frame.
     #[inline(never)]
     fn infer_app(&mut self, id: ExprId, span: Span, callee: &Expr, args: &[Expr]) -> Ty {
+        self.note_literal_args(callee, args);
         let before_callee = self.errors.len();
         if self.dots.takes.contains_key(&callee.id) {
             self.take_args = Some((callee.id, args.iter().map(|a| a.span).collect()));
