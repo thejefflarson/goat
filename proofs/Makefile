@@ -2,7 +2,7 @@
 #
 # `make`              regenerate Goat_ott.v from the Ott source, then compile.
 # `make gen`          regenerate Goat_ott.v only.
-# `make coq`          compile the committed .v files under coqc.
+# `make coq`          compile the committed .v files under rocq.
 # `make check-admits` fail unless proofs/*.v holds exactly the tracked admits.
 # `make gen-grammar`  regenerate GoatGrammar.v from grammar/goat.peg.
 # `make check-grammar` fail if GoatGrammar.v is stale against grammar/goat.peg.
@@ -10,11 +10,11 @@
 # `make ci`           check Ott and grammar sync + admit count, compile, check assumptions.
 # `make clean`        remove generated build artifacts.
 #
-# Tools come from an opam switch (Coq 8.20.1, Ott 0.34, metalib). metalib is on
+# Tools come from an opam switch (Rocq 9.1.1, Ott 0.34, metalib). metalib is on
 # Coq's user-contrib path, so no extra -R is needed for it.
 
 OTT         ?= ott
-COQMAKEFILE ?= coq_makefile
+COQMAKEFILE ?= rocq makefile
 
 OTT_SRC   = goat_ln.ott
 GEN       = Goat_ott.v
@@ -66,7 +66,7 @@ check-grammar: ../grammar/goat.peg
 
 # T1, T2 and T3 must rest on no axiom and no admit.
 check-assumptions: coq
-	@out=$$(coqc -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
+	@out=$$(rocq compile -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
 	n=$$(echo "$$out" | grep -c '^Closed under the global context'); \
 	if [ "$$n" != "3" ]; then \
 	  echo "ERROR: expected peg_deterministic, parse_denotes_lc and print_parse_roundtrip closed under the global context:"; \

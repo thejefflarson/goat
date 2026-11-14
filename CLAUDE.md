@@ -50,11 +50,16 @@ wrong state unrepresentable *before* you reach for a comment.
   checked-out directory; the branch and its commits live in this repo's `.git`
   regardless, so an in-repo worktree loses nothing and keeps the tree self-
   contained.
-- **Local Coq toolchain.** The opam root for building the `proofs/` development
+- **Local Rocq toolchain.** The opam root for building the `proofs/` development
   lives at `/coq-toolchain/` (gitignored — it is ~1 GB and must never be
   committed). An opam root records absolute paths and breaks when moved, so a
-  fresh root is **rebuilt in place** at that path (Coq 8.20.1, Ott 0.34, metalib
-  pinned — the recipe in `.github/workflows/coq.yml`), never relocated from
-  elsewhere. CI builds the proofs in a Coq Docker image, so nothing in the repo
-  depends on this local toolchain; it is a convenience for running
-  `make -C proofs ci` without the Docker round-trip.
+  fresh root is **rebuilt in place** at that path, never relocated from
+  elsewhere. The switch is `rocq-9`: OCaml 4.14.2, `opam install coq.9.1.1
+  ott.0.34` (Rocq 9.1.1; `coq` is the compatibility metapackage that pulls in
+  `rocq-core`, and metalib depends on it), then `opam pin add -n coq-metalib
+  <plclub/metalib>#144ddcd0fff6717229140314cf559d85fad6eae0` and `opam install
+  coq-metalib`. Build with `opam exec --switch=rocq-9 -- make -C proofs ci`. Rocq
+  9.2 and 9.3 do not work yet: metalib's `CoqListFacts.v` fails to compile on
+  them. CI runs the same switch on the self-hosted runner image
+  (`.github/workflows/coq.yml`), so nothing in the repo depends on this local
+  toolchain; it is a convenience for running `make -C proofs ci` locally.
