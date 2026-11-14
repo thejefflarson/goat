@@ -26,6 +26,7 @@ preservation) is B3 (#71).
 | `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`, scheme/context alpha-renaming) feeding the T-Let freshening (#151). |
 | `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
 | `GoatRank2.v` | B4 (issue #72): the rank-2 intersection examples. The sharp-edge programs `both` (no-record) and `use2` (scoped-label rows) now type under `T_AppPoly`, and the extended `soundness` shows they never get stuck. |
+| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples for `Unit`, strings, `if`, arithmetic and comparison. Programs the rules accept type and run; rejected ones (`1 < "a"`, `true + true`, `if 1 then ...`) have no derivation. |
 | `GoatSound.v` | The two canonical HM lemmas — `typing_weaken` (L4) and `typing_tsubst_fix` (L5) — via the general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`); then term substitution **L6a/L6b**, **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
 | `GoatPeg.v` | Ford-style relational PEG semantics of the generated grammar over a token stream, and **T2** `peg_deterministic`. |
@@ -42,6 +43,29 @@ preservation) is B3 (#71).
 | `GoatExample.v` | A fuel-bounded PEG interpreter, sound for the relation, parsing two small programs; T1 applied to one of them. |
 | `GoatAssumptions.v` | `make check-assumptions` fails unless T1, T2 and T3 print "Closed under the global context". |
 | `_CoqProject`, `Makefile` | Build. |
+
+## Phase 1: Unit, strings, `if`, arithmetic, comparison (ADR 0037)
+
+`goat_ln.ott` adds the types `Unit` and `String`, the terms `unit`, a string
+literal, `if e1 then e2 else e3` and `e1 o e2`, and the operator syntax `o`.
+`GoatDefs.v` adds the typing rules `T_Unit`, `T_Str`, `T_If`, `T_Arith` and
+`T_Cmp` and the reduction rules for `if` and operators. `eval_bin` is the total
+function on literals: numerals are naturals, strings compare bytewise with a
+prefix first, `false` is before `true` (ADR 0036). `progress`, `preservation`
+and `soundness` hold for the extended calculus with 0 admits, and
+`make check-assumptions` now checks all six theorems (T1, T2, T3 and these).
+
+What the model leaves out, each checked against `goat check` and `goat run`:
+the `Int`/`Float` split (one `Number`), the sign of a difference (`1 - 2` is 0),
+the trap on a zero divisor (the model gives 0), and the `Eq`, `Numeric` and
+`Ordered` constraints (an operator applies at a concrete base type). See
+`docs/semantics.md` section 9.
+
+The parser fragment widens in step: a string, a conditional with an `else`, and
+one operator between two chains. `GoatShape.v` counts operator nodes
+(`count_ops`) and `Complete` allows at most one, with no dot call;
+`GoatDen.v` reads `c1 o c2` as `e_bin` (`Den_math`); the printer parenthesises
+the operand of an operator when it is a binding or another operation.
 
 ## Records and projection in the Ott source
 

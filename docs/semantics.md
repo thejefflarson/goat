@@ -32,8 +32,11 @@ the implementation diverge, §8 flags it.
 - Hindley–Milner `let`-generalization: a binding `x = e₁  e₂` generalizes, so
   `=`-bound names are polymorphic; **lambda-bound parameters stay monomorphic**
   (this asymmetry *is* the sharp edge);
-- two base types, `Number` and `Bool`, each inhabited only by constants
-  (numerals, `true`, `false`);
+- four base types: `Number`, `Bool`, `String` and `Unit`. Their introduction
+  forms are numerals, `true` and `false`, string literals, and the unit value;
+  their elimination forms are `if` on a `Bool`, the arithmetic operators
+  `+ - * / // %` on `Number`s, and the comparisons `< <= > >= == !=` on two
+  values of one of `Number`, `String` or `Bool` (ADR 0017, ADR 0036);
 - records as **scoped-label rows** (Leijen, *Extensible records with scoped
   labels*, `papers/scopedlabels.pdf`): construction `{l₁: e₁,…,lₖ: eₖ}` and
   field projection `e.l`, with Leijen's row-equivalence relation.
@@ -49,32 +52,38 @@ ADR 0008. The checker's unification is a known sound-and-complete *algorithm*
 for the declarative relation (Leijen, Thms 1–2); the declarative relation is
 what the sharp-edge theorem is about.
 
-**Out of the core (modeled by nothing — see §8 for the "why").** Reference
+**Out of the core (modeled by nothing — see §9 for the "why").** Reference
 counting / heap / the Perceus model; variants, `match`, and recursive (μ)
-types; strings; the `Unit` type; `if`/conditionals and arithmetic (the
-eliminators of `Bool` and `Number`); numeric constraints; monomorphization;
-recursive and mutually-recursive bindings.
+types; recursive and mutually-recursive bindings; the `Eq`, `Numeric` and
+`Ordered` constraints (an operator is typed at a concrete base type only);
+the `Int`/`Float` split; comparison of records and tags; `and`, `or`, `not`
+and unary minus; monomorphization.
 
 ## 2. Syntax
 
-Term variables `x, y, z, f, g, m, p`; labels `l`; numeral constants `n`. Type
+Term variables `x, y, z, f, g, m, p`; labels `l`; numeral constants `n`; string
+literals `q` (a list of bytes, ADR 0009). Type
 variables `α, β`; row variables `r, s`. Metavariables range over: `e` terms,
 `v` values, `τ` monotypes, `ρ` rows, `σ` type schemes, `Γ` contexts.
 
 ```
 e  ::=  x                              variable
-     |  n  |  true  |  false           constants
+     |  n  |  true  |  false           numeral and boolean constants
+     |  q  |  unit                       string literal (its bytes), the unit value
      |  program(x₁,…,xₖ) do e done     abstraction        (k ≥ 0, the xᵢ distinct)
      |  e(e₁,…,eₖ)                     application        (k ≥ 0)
      |  x = e₁  e₂                     binding (let)      (x bound in e₂ only)
      |  {l₁: e₁, …, lₖ: eₖ}            record             (k ≥ 0)
      |  e.l                            field projection
+     |  if e₁ then e₂ else e₃          conditional
+     |  e₁ ⊙ e₂                        binary operation   (⊙ ∈ + - * / // %  < <= > >= == !=)
 
 v  ::=  n  |  true  |  false           constant value
+     |  q  |  unit                      string and unit values
      |  program(x₁,…,xₖ) do e done     closure value
      |  {l₁: v₁, …, lₖ: vₖ}            record value
 
-τ  ::=  Number  |  Bool               base types
+τ  ::=  Number  |  Bool  |  String  |  Unit   base types
      |  (τ₁,…,τₖ) → τ                  function type
      |  {ρ}                            record type
      |  α                              type variable
@@ -116,8 +125,11 @@ label keep their relative order. This is Leijen's scoped-label equality (Figure
 mutually on types and rows as the least relation closed under these rules.
 
 ```
-——————————————— (≅-num)     ——————————————— (≅-bool)     ——————— (≅-tvar)
- Number ≅ Number             Bool ≅ Bool                   α ≅ α
+——————————————— (≅-num)     ——————————————— (≅-bool)     ——————————————— (≅-unit)
+ Number ≅ Number             Bool ≅ Bool                   Unit ≅ Unit
+
+——————————————— (≅-string)    ——————— (≅-tvar)
+ String ≅ String              α ≅ α
 
  τ₁ ≅ τ₁'  …  τₖ ≅ τₖ'   τ ≅ τ'
 —————————————————————————————————— (≅-arrow)
@@ -182,6 +194,21 @@ generalization are defined in §5.
 ———————————————— (T-True)      ———————————————— (T-False)
  Γ ⊢ true : Bool                Γ ⊢ false : Bool
 
+———————————————— (T-Unit)      ———————————————— (T-Str)
+ Γ ⊢ unit : Unit                Γ ⊢ q : String
+
+ Γ ⊢ e₁ : Bool      Γ ⊢ e₂ : τ      Γ ⊢ e₃ : τ
+————————————————————————————————————————————————— (T-If)
+        Γ ⊢ if e₁ then e₂ else e₃ : τ
+
+ ⊙ ∈ {+, -, *, /, //, %}      Γ ⊢ e₁ : Number      Γ ⊢ e₂ : Number
+—————————————————————————————————————————————————————————————————— (T-Arith)
+                    Γ ⊢ e₁ ⊙ e₂ : Number
+
+ ⊙ ∈ {<, <=, >, >=, ==, !=}   τ ∈ {Number, String, Bool}   Γ ⊢ e₁ : τ   Γ ⊢ e₂ : τ
+————————————————————————————————————————————————————————————————————————————————— (T-Cmp)
+                           Γ ⊢ e₁ ⊙ e₂ : Bool
+
  Γ, x₁:τ₁, …, xₖ:τₖ ⊢ e : τ
 ————————————————————————————————————————————————— (T-Abs)
  Γ ⊢ program(x₁,…,xₖ) do e done : (τ₁,…,τₖ) → τ
@@ -231,6 +258,16 @@ Rule by rule:
   `l` past another `l`, `T-Conv` can bring only the **first** `l` to the head —
   so `T-Proj` types `e.l` at the type of the first `l`, exactly as the
   operational rule `ST-ProjRec` (§6) selects the first `l`.
+- **`T-If`** types both branches at one type, so the whole `if` has that type
+  whichever branch runs. The condition must be a `Bool`: `if 1 then …` has no
+  derivation, and the checker reports `expected Bool, found Number`.
+- **`T-Arith`** wants two `Number`s and gives a `Number`. `true + true` and
+  `1 + "a"` have no derivation (the checker: `` `+` needs numbers… ``,
+  `expected Number, found String`).
+- **`T-Cmp`** compares two values of one base type and gives a `Bool`. The two
+  operands share the type `τ`, so `1 < "a"` has no derivation; `Int` meeting
+  `Float` widening (ADR 0017) is the one mixed comparison the checker accepts and
+  the model does not have, because the model has one `Number`.
 - **`T-Conv`** closes typing under `≅`: anywhere a type is produced, an
   equivalent type may be used. This is where row reordering happens — e.g.
   passing a `{b:Bool ; a:Number ; ·}` value where `{a:Number ; b:Bool ; ·}` is
@@ -302,7 +339,28 @@ fix left-to-right evaluation order:
    e ⟶ e'
 ——————————————— (ST-Proj1)
  e.l ⟶ e'.l
+
+—————————————————————————— (ST-IfTrue)     ———————————————————————————— (ST-IfFalse)
+ if true then e₂ else e₃ ⟶ e₂              if false then e₂ else e₃ ⟶ e₃
+
+      e₁ ⟶ e₁'                                   e₁ ⟶ e₁'
+———————————————————————————————— (ST-If1)    ——————————————————— (ST-Op1)
+ if e₁ then e₂ else e₃ ⟶ if e₁' …            e₁ ⊙ e₂ ⟶ e₁' ⊙ e₂
+
+     e₂ ⟶ e₂'                                  v₁, v₂ values
+——————————————————— (ST-Op2)           ————————————————————————————— (ST-Op)
+ v ⊙ e₂ ⟶ v ⊙ e₂'                        v₁ ⊙ v₂ ⟶ eval(⊙, v₁, v₂)
 ```
+
+`eval(⊙, v₁, v₂)` is a total function on literals of one type. Arithmetic on
+numerals `a` and `b` gives the numeral `a + b`, `a − b` (truncated at 0), `a · b`,
+and `⌊a / b⌋` for both `/` and `//`, and `a mod b`, where `⌊a / 0⌋ = 0` and
+`a mod 0 = a`. A comparison orders two numerals by value, two strings bytewise
+with a prefix first, and two booleans with `false` before `true` (ADR 0036), and
+gives `true` or `false` as the operator asks (`==` and `!=` ask for equal and
+unequal). On any other pair of values `eval` gives `unit`; canonical forms
+(L7) show a well-typed term never reaches that case. §9 lists where `eval`
+departs from the compiler.
 
 Values do not step. A binding reduces by first evaluating `e₁` to a value
 (`ST-Let1`) and then substituting (`ST-LetV`); because `e₁` is closed-up-to-`Γ`
@@ -326,7 +384,7 @@ obligations it must generate.
   Fig. 1.)*
 - **L2 — `≅` preserves head shape ("no confusion").** If `τ ≅ τ'` then `τ` and
   `τ'` have the same outermost constructor: `Number ≅ τ'` ⟹ `τ' = Number`;
-  likewise `Bool`; `(τ₁,…,τₖ)→τ ≅ τ'` ⟹ `τ' = (τ₁',…,τₖ')→τ'₀` with the **same
+  likewise `Bool`, `String` and `Unit`; `(τ₁,…,τₖ)→τ ≅ τ'` ⟹ `τ' = (τ₁',…,τₖ')→τ'₀` with the **same
   arity `k`** and componentwise `≅`; `{ρ} ≅ τ'` ⟹ `τ' = {ρ'}` with `ρ ≅ ρ'`. In
   particular `Number ≅ Bool` is *not* derivable, and arities never change. This
   is what lets canonical forms survive `T-Conv`.
@@ -355,6 +413,8 @@ obligations it must generate.
 - **L7 — canonical forms.** If `· ⊢ v : τ` for a value `v`:
   - `τ ≅ Number` ⟹ `v` is a numeral `n`;
   - `τ ≅ Bool` ⟹ `v ∈ {true, false}`;
+  - `τ ≅ String` ⟹ `v` is a string literal `q`;
+  - `τ ≅ Unit` ⟹ `v = unit`;
   - `τ ≅ (τ₁,…,τₖ)→τ₀` ⟹ `v = program(x₁,…,xₖ) do e done` with **exactly `k`**
     parameters;
   - `τ ≅ {ρ}` ⟹ `v = {l₁:v₁,…,lₘ:vₘ}` whose natural row
@@ -370,13 +430,17 @@ obligations it must generate.
 > exists `e'` with `e ⟶ e'`.
 
 Proof by induction on `· ⊢ e : τ`. `T-Conv` uses the IH directly (being a value
-or being able to step does not depend on the type). `T-App`: by L7 the evaluated
+or being able to step does not depend on the type). `T-If`: by L7 an evaluated
+condition is `true` or `false`, so `ST-IfTrue` or `ST-IfFalse` fires (or the
+condition steps by `ST-If1`). `T-Arith` and `T-Cmp`: either an operand steps
+(`ST-Op1`, `ST-Op2`) or both are values and `ST-Op` fires, since `eval` is total.
+`T-App`: by L7 the evaluated
 callee is a `k`-ary `program` and the arguments are `k` values, so `ST-Beta`
 fires (or a subterm steps by `ST-App1/2`). `T-Proj`: by L7 and L3 the evaluated
 record has a first-`l` field, so `ST-ProjRec` fires (or `ST-Proj1`). `T-Let`:
 either `e₁` steps (`ST-Let1`) or it is a value and `ST-LetV` fires. Constants,
 abstractions, and record values are values. **No well-typed closed term is
-stuck.**
+stuck.** (A numeral, string, unit and boolean are values already.)
 
 ### Preservation
 
@@ -387,7 +451,11 @@ Proof by induction on the derivation of `e ⟶ e'` (equivalently on `Γ ⊢ e : 
 inverting typing through `T-Conv` with L2/L2′. `ST-Beta` uses L6a; `ST-LetV`
 uses L6b (its side condition `V ∩ ftv(Γ) = ∅` holds because `gen` quantifies
 exactly `ftv(τ₁) \ ftv(Γ)`); `ST-ProjRec` uses L7/L3 to show the first-`l`
-value has the projected type `τ`; the congruence rules use the IH. The theorem
+value has the projected type `τ`; `ST-IfTrue` and `ST-IfFalse` return the branch,
+which has the type of the whole `if`; `ST-Op` uses L7 to read both operands as
+literals of the operator's type, so `eval` yields a numeral (arithmetic) or a
+boolean (comparison), the type `T-Arith` or `T-Cmp` assigns; the congruence rules
+use the IH. The theorem
 is stated for arbitrary `Γ` because the induction needs it; soundness uses the
 closed case `Γ = ·`.
 
@@ -487,12 +555,33 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   references/effects. Modeling immutability *as the absence of mutable
   references* is precisely what licenses both the unrestricted generalization
   and the RC abstraction above.
-- **`Bool`/`Number` have constructors but no eliminators.** The core omits `if`
-  and arithmetic. Both base types are present (the §8 programs need `1` and
-  `true`), but their elimination forms are trivial later deltas — `if` is a
-  boolean eliminator with the obvious two reduction rules and a progress/
-  preservation case each — that add nothing to the sharp-edge theorem. The real
-  checker has `If` and `Bin`; the core deliberately does not.
+- **Base types and their operators (phase 1, ADR 0037).** The core has
+  `Number`, `Bool`, `String` and `Unit`, with `if`, the arithmetic operators and
+  the comparisons of §4. What the model abstracts, each verified against
+  `goat check` and `goat run`:
+  - *One `Number`.* The checker has `Int` and `Float`, widens an `Int` to a
+    `Float` at an operator, makes `/` always give a `Float` and `//` and `%`
+    `Int`-only (ADR 0017). The model has one `Number` and one `eval` for `/` and
+    `//`, so `1.5 // 2` has a derivation here and the checker rejects it, and
+    `7 / 2` evaluates to 3 here and to 3.5 there.
+  - *Numerals are naturals.* `1 - 2` evaluates to 0 here and to −1 there.
+    There is no overflow trap (ADR 0017) and no IEEE value.
+  - *Traps.* A zero divisor traps in the compiler (ADR 0023: `5 // 0` prints
+    `trap: division by zero`); `eval` is total and the model gives 0, so the
+    soundness theorems say a well-typed term is not stuck, and say nothing about
+    traps.
+  - *Operators at concrete types.* The checker types `a < b` with an `Eq`
+    constraint and `a + b` with `Numeric`, so a generic function stays
+    polymorphic over them. The calculus has no constraints, so an operator
+    applies at `Number`, `String` or `Bool` only; a function that uses `<` at a
+    type variable has no derivation here.
+  - *A string token has no payload.* The lexer is trusted, so the parse tree
+    carries no bytes, and a string denotes `q` for every `q`.
+  - *`if` has an `else`.* `if c then a done` lowers to `if c then a else ()`;
+    the core has the three-armed form only, and the unit value has no literal.
+  - *Not here:* comparison of `Unit`, records and tags (ADR 0036), `and`, `or`,
+    `not`, unary minus, and the precedence of a run of operators (the parser
+    fragment has at most one operator in an expression).
 - **`let` is non-recursive here; goat's is recursive for `program` values.**
   ADR 0003 makes a `program`-valued binding recursive (and all function
   bindings in a scope a mutually-recursive, order-free group), seeded
@@ -508,8 +597,7 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   `Ty::Func(Vec<Ty>, Box<Ty>)` and the arity-checked calling convention (ADR
   0004); currying would misrepresent both and erase the arity-mismatch error.
   The cost is borne by the mechanization, not the model (§ below).
-- **`Unit`, strings, variants/`match`, recursive (μ) types, numeric
-  constraints, mono — all out.** Each is a later delta on the proven core (ADR
+- **Variants/`match`, recursive (μ) types, constraints, mono — all out.** Each is a later delta on the proven core (ADR
   0008). Variants reuse this very row machinery (plan.md Phase 7), so the row
   lemmas L1–L3 are the reusable part.
 - **Declarative, not algorithmic.** `≺`/`gen` here are the declarative
@@ -523,9 +611,8 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
 out above: (1) the recursion gap — the core's `let` is non-recursive while the
 checker makes `program`-valued bindings recursive; I judged this orthogonal to
 the theorem and deferred it, but a reviewer may want the `letrec` delta modeled
-now rather than later. (2) The core omits `if`/arithmetic/`Unit` that the
-checker implements; the §8 programs do not need them, but they are real surface
-language and their deltas should be scheduled.
+now rather than later. (2) Phase 1 of ADR 0037 added `if`, arithmetic, comparison, strings and `Unit`;
+the remaining constructs are scheduled in that ADR's phase order.
 
 ## 10. For the mechanization (#70 B2, #71 B3)
 

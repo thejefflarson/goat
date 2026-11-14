@@ -25,12 +25,15 @@
 % The core models: n-ary program/application, HM let-generalization (= binds
 % generalize; lambda params are monomorphic), base types Number and Bool,
 % records as scoped-label rows (Leijen) with construction and first-label
-% projection. Out of scope (deltas on the proven core): RC/heap, variants/match,
-% recursive (mu) types, strings, Unit, if/arithmetic, recursion, mono.
+% projection, and (phase 1 of ADR 0037) Unit, String, `if`, arithmetic and
+% comparison of the base types Number, String and Bool. Out of scope (deltas on
+% the proven core): RC/heap, variants/match, recursive (mu) types, recursion,
+% constraint-polymorphic operators, mono.
 
 metavar termvar, x, y, z, f, g, m, p ::= {{ com term variable }}
 metavar label, l ::= {{ com record label }}
 metavar num, n ::= {{ com numeral constant }}
+metavar str, q ::= {{ com string literal, as its bytes }}
 metavar typvar, a, b ::= {{ com type variable (free-variable set, not a binder) }}
 metavar rowvar, r, s ::= {{ com row variable (free-variable set, not a binder) }}
 
@@ -41,6 +44,8 @@ grammar
 T {{ tex \tau }} :: 'T_' ::= {{ com monotype }}
   | Number                    ::   :: Number
   | Bool                      ::   :: Bool
+  | Unit                      ::   :: Unit
+  | String                    ::   :: String
   | ( T1 , ... , Tk ) -> T    ::   :: Arrow   {{ com n-ary function }}
   | { R }                     ::   :: Record
   | a                         ::   :: Var
@@ -61,6 +66,20 @@ G {{ tex \Gamma }} :: 'G_' ::= {{ com typing context }}
   | empty      ::   :: Empty {{ tex \cdot }}
   | G , x : S  ::   :: Cons
 
+o :: 'o_' ::= {{ com binary operator }}
+  | +    ::   :: Add     {{ com addition }}
+  | -    ::   :: Sub     {{ com subtraction }}
+  | *    ::   :: Mul     {{ com multiplication }}
+  | /    ::   :: Div     {{ com division }}
+  | //   ::   :: FDiv    {{ com floor division }}
+  | %    ::   :: Rem     {{ com remainder }}
+  | <    ::   :: Lt
+  | <=   ::   :: Lte
+  | >    ::   :: Gt
+  | >=   ::   :: Gte
+  | ==   ::   :: Eq
+  | !=   ::   :: Ne
+
 e :: 'e_' ::= {{ com term }}
   | x                                   ::   :: Var
   | n                                   ::   :: Num
@@ -73,6 +92,10 @@ e :: 'e_' ::= {{ com term }}
     ( + bind x in e2 + )                {{ com binding; x scopes over e2 only }}
   | { </ li : ei // i /> }              ::   :: Rec  {{ com record literal (closed) }}
   | e . l                               ::   :: Proj {{ com field projection }}
+  | unit                                ::   :: Unit {{ com the unit value }}
+  | q                                   ::   :: Str  {{ com string literal }}
+  | if e1 then e2 else e3               ::   :: If   {{ com conditional }}
+  | e1 o e2                             ::   :: Bin  {{ com binary operation }}
   | ( e )                               :: S :: Paren {{ coq [[e]] }}
   | e1 [ x := e2 ]                      :: M :: Subst {{ coq (subst_e [[e2]] [[x]] [[e1]]) }}
 
@@ -80,6 +103,8 @@ v :: 'v_' ::= {{ com value }}
   | n                                   ::   :: Num
   | true                                ::   :: True
   | false                               ::   :: False
+  | unit                                ::   :: Unit
+  | q                                   ::   :: Str
   | program ( </ xi // i /> ) do e done ::   :: Abs
   | { </ li : vi // i /> }              ::   :: Rec
 
@@ -128,6 +153,12 @@ T1 ~= T2 :: :: teq :: 'teq_'
 
   ----------- :: bool
   Bool ~= Bool
+
+  ------------- :: unit
+  Unit ~= Unit
+
+  ----------------- :: string
+  String ~= String
 
   ----- :: var
   a ~= a
@@ -215,6 +246,30 @@ G |- e : T :: :: typ :: 'T_'
   ----------------- :: False
   G |- false : Bool
 
+  ---------------- :: Unit
+  G |- unit : Unit
+
+  ------------------ :: Str
+  G |- q : String
+
+  G |- e1 : Bool
+  G |- e2 : T
+  G |- e3 : T
+  ---------------------------------- :: If
+  G |- if e1 then e2 else e3 : T
+
+  % o is one of + - * / // %
+  G |- e1 : Number
+  G |- e2 : Number
+  ------------------------ :: Arith
+  G |- e1 o e2 : Number
+
+  % o is one of < <= > >= == !=; B is Number, String or Bool
+  G |- e1 : B
+  G |- e2 : B
+  ---------------------- :: Cmp
+  G |- e1 o e2 : Bool
+
   G , </ xi : Ti // i /> |- e : T
   ------------------------------------------------------ :: Abs
   G |- program ( </ xi // i /> ) do e done : ( </ Ti // i /> ) -> T
@@ -262,6 +317,31 @@ e --> e' :: :: red :: 'red_'
   l notin </ li // i />
   ------------------------------------------------------ :: ProjRec
   { </ li : vi // i /> , l : v , </ lk' : vk' // k /> } . l --> v
+
+  % --- conditional and operators ---
+
+  ------------------------------------------ :: IfTrue
+  if true then e2 else e3 --> e2
+
+  ------------------------------------------- :: IfFalse
+  if false then e2 else e3 --> e3
+
+  % [[o]] applied to two literals of one type: arithmetic gives a number,
+  % comparison a boolean (strings bytewise, false before true).
+  ------------------------------ :: Op
+  v1 o v2 --> eval ( o , v1 , v2 )
+
+  e1 --> e1'
+  ---------------------------------- :: If1
+  if e1 then e2 else e3 --> if e1' then e2 else e3
+
+  e1 --> e1'
+  ------------------ :: Op1
+  e1 o e2 --> e1' o e2
+
+  e2 --> e2'
+  ------------------ :: Op2
+  v o e2 --> v o e2'
 
   % --- congruence (fix left-to-right order) ---
 
