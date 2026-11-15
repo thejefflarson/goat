@@ -40,7 +40,7 @@ Qed.
 Lemma sch_subst_apS : forall s sc, OkS s -> WfSch sc ->
   sch_subst (sT s) (sR s) sc (apS s sc).
 Proof.
-  intros s sc Hs (Hq & Hr & Hf & Hfr) W [pt [pr [Hpt [Hpr HW]]]].
+  intros s sc Hs (Hq & Hr & Hf & Hfr) D D' Hk W [pt [pr [Hpt [Hpr [HW Hsat]]]]].
   pose proof Hs as Hs0.
   destruct Hs as [_ [Ht [Hrw [Hfx Hfxr]]]].
   set (pt' := fun a => if AtomSetImpl.mem a (s_tq sc)
@@ -56,7 +56,7 @@ Proof.
   { intros c Hc. unfold pr'.
     destruct (AtomSetImpl.mem c (s_rq sc)) eqn:Em; [|reflexivity].
     apply AtomSetFacts.mem_iff in Em. exfalso. exact (not_ev_od c (Hr c Em) Hc). }
-  exists pt', pr'. split; [|split].
+  exists pt', pr'. split; [|split; [|split]].
   - intros a Ha. cbn [apS s_tq] in Ha. unfold pt'.
     destruct (AtomSetImpl.mem a (s_tq sc)) eqn:Em;
       [ apply AtomSetFacts.mem_iff in Em; contradiction | reflexivity ].
@@ -89,6 +89,9 @@ Proof.
         symmetry. apply ap_row_fix.
         -- intros c Hc. apply Hpt'ev. exact (proj1 (Hrw r (Hfr r Hin)) c Hc).
         -- intros c Hc. apply Hpr'ev. exact (proj2 (Hrw r (Hfr r Hin)) c Hc).
+  - intros a Ha. cbn [apS s_tq s_sk] in Ha |- *. unfold pt'.
+    assert (Hm : AtomSetImpl.mem a (s_tq sc) = true) by (apply AtomSetFacts.mem_iff; exact Ha).
+    rewrite Hm. eapply sat_ap; [ exact Hk | apply Hsat; exact Ha ].
 Qed.
 
 Lemma tr_compat_apC : forall s G, OkS s -> WfCtx G ->
@@ -143,13 +146,16 @@ Proof.
 Qed.
 
 Lemma typing_ap : forall s G e T,
-  OkS s -> WfCtx G -> typing G e T -> typing (apC s G) e (apT s T).
+  OkS s -> WfCtx G -> typing d_any G e T -> typing d_any (apC s G) e (apT s T).
 Proof.
   intros s G e T Hs [Hu Hw] Hty.
   pose proof Hs as Hs0.
   destruct Hs as [[A Hsup] [Ht [Hrw [Hfx Hfxr]]]].
-  apply (proj1 typing_tsubst_gen_mut G e T Hty (sT s) (sR s) (apC s G) A).
+  apply (proj1 typing_tsubst_gen_mut d_any G e T Hty (sT s) (sR s) (apC s G) d_any A {} {}).
   - apply uniq_apC; exact Hu.
+  - intros a _. reflexivity.
+  - intros a _. reflexivity.
+  - intros a. apply sat_any.
   - intros x sc Hb. exists (apS s sc). split.
     + apply binds_apC; exact Hb.
     + apply sch_subst_apS; [exact Hs0 | exact (Hw _ _ Hb)].
