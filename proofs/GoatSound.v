@@ -1272,3 +1272,205 @@ Proof.
     + rewrite (Hsr a ltac:(intro Hc; apply AtomSetFacts.diff_iff in Hc; tauto)). simpl. fsetdec.
     + rewrite (Hsr a ltac:(intro Hc; apply AtomSetFacts.diff_iff in Hc; tauto)). simpl. fsetdec.
 Qed.
+
+(* ================================================================== *)
+(* Term substitution (L6a/L6b).                                          *)
+(*                                                                        *)
+(* Now we switch from substituting TYPES for type variables to            *)
+(* substituting a TERM for a term variable.  Calling a function           *)
+(* [(fun x => body) v] steps to [body] with [v] plugged in for [x].       *)
+(* The lemma says: if [body] is well typed assuming [x : s], and [v] has  *)
+(* every instance of [s], then [body] with [v] in place of [x] is still   *)
+(* well typed with the same type.  One lemma covers both uses: [s] is the *)
+(* monomorphic scheme of a function parameter (L6a, for ST-Beta), or the  *)
+(* generalization of a [let] (L6b, for ST-LetV and ST-Letrec).            *)
+(*                                                                        *)
+(* The kinding environment changes as the induction goes under a [let]    *)
+(* (its bound term is typed under an extension), so the lemma speaks of   *)
+(* every environment [D] that satisfies [Agree]; the extensions a [let]   *)
+(* adds are on variables the context does not mention, and [Agree] must   *)
+(* survive them.                                                          *)
+(* ================================================================== *)
+
+Lemma ftv_ctx_mid : forall G2 x s G1,
+  ftv_ctx (G2 ++ G1) [<=] ftv_ctx (G2 ++ (x ~ s) ++ G1).
+Proof. intros. rewrite !ftv_ctx_app. simpl. fsetdec. Qed.
+
+Lemma typing_subst_gen_mut : forall x s u G1 (Agree : denv -> Prop),
+  is_gen_value u = true -> lc u ->
+  (forall D V k, (forall a, a `in` V -> a `notin` ftv_ctx G1 `union` ftv_sch s) ->
+     Agree D -> Agree (ext D V k)) ->
+  (forall D Sd T, supp_ok D Sd -> Agree D -> inst D T s -> typing D G1 u T) ->
+  (forall D Gm e T, typing D Gm e T -> forall Sd, supp_ok D Sd -> Agree D ->
+     forall G2, Gm = G2 ++ (x ~ s) ++ G1 ->
+     typing D (G2 ++ G1) (subst_exp u x e) T) /\
+  (forall D Gm fs R, field_typing D Gm fs R -> forall Sd, supp_ok D Sd -> Agree D ->
+     forall G2, Gm = G2 ++ (x ~ s) ++ G1 ->
+     field_typing D (G2 ++ G1) (subst_fields u x fs) R).
+Proof.
+  intros x s u G1 Agree Hgu Hlc Hext Hinst.
+  (* the generalizing binders only see variables the whole context mentions *)
+  assert (HV : forall G2 T V, V = AtomSetImpl.diff (ftv_typ T) (ftv_ctx (G2 ++ (x ~ s) ++ G1)) ->
+                forall a, a `in` V -> a `notin` ftv_ctx G1 `union` ftv_sch s).
+  { intros G2 T V HVe a Ha. subst V. apply AtomSetFacts.diff_iff in Ha as [_ Hn].
+    rewrite ftv_ctx_app in Hn. simpl in Hn. fsetdec. }
+  apply typing_field_mutind.
+  - (* T_Var *) intros D G y s0 T Huq Hb Hi Sd HSd Hag G2 Heq; subst.
+    destruct (y == x) as [Hx|Hx].
+    + subst y.
+      assert (s0 = s) as Hs by (eapply binds_mid_eq; [ exact Hb | exact Huq ]).
+      subst s0. rewrite subst_self.
+      apply (typing_weaken D Sd nil G2 G1 u T HSd).
+      * simpl. exact (Hinst D Sd T HSd Hag Hi).
+      * simpl_alist. solve_uniq.
+    + rewrite subst_neq by congruence.
+      apply T_Var with (s := s0);
+        [ solve_uniq | eapply binds_remove_mid; [ exact Hb | congruence ] | exact Hi ].
+  - (* T_Num *) intros D G n T Huq Hs Sd HSd Hag G2 Heq; subst. simpl. apply T_Num; [ solve_uniq | exact Hs ].
+  - (* T_Dec *) intros D G d Huq Sd HSd Hag G2 Heq; subst. simpl. apply T_Dec. solve_uniq.
+  - (* T_True *) intros D G Huq Sd HSd Hag G2 Heq; subst. simpl. apply T_True. solve_uniq.
+  - (* T_False *) intros D G Huq Sd HSd Hag G2 Heq; subst. simpl. apply T_False. solve_uniq.
+  - (* T_Abs *) intros L D G e T1 T2 Hr IH Sd HSd Hag G2 Heq; subst. simpl.
+    apply T_Abs with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u).
+    intros x0 Hx0.
+    rewrite <- (subst_open_var e u x x0) by (first [ fsetdec | exact Hlc ]).
+    rewrite_env (((x0 ~ sch_mono T1) ++ G2) ++ G1).
+    apply (IH x0 ltac:(fsetdec) Sd HSd Hag ((x0 ~ sch_mono T1) ++ G2)). simpl_alist. reflexivity.
+  - (* T_App *) intros D G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl. eapply T_App.
+    + apply (IH1 Sd HSd Hag G2); reflexivity.
+    + apply (IH2 Sd HSd Hag G2); reflexivity.
+  - (* T_Let *) intros L D G e1 e2 T1 T2 k Hgv Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
+    set (V := AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (G2 ++ (x ~ s) ++ G1))).
+    apply T_Let with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (T1 := T1)
+      (k := kup D V k).
+    + apply is_gen_subst; assumption.
+    + eapply typing_pw.
+      * apply (IH1 (Sd `union` V) (supp_ok_ext _ _ _ _ HSd)
+                 (Hext D V k (HV G2 T1 V eq_refl) Hag) G2); reflexivity.
+      * intros a. apply ext_kup. intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
+        apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
+        intro Hd. apply Hc. apply ftv_ctx_mid. exact Hd.
+    + intros x0 Hx0.
+      rewrite <- (subst_open_var e2 u x x0) by (first [ fsetdec | exact Hlc ]).
+      eapply typing_ftv_mono.
+      * rewrite_env (((x0 ~ gen (G2 ++ (x ~ s) ++ G1) T1 k) ++ G2) ++ G1).
+        apply (IH2 x0 ltac:(fsetdec) Sd HSd Hag ((x0 ~ gen (G2 ++ (x ~ s) ++ G1) T1 k) ++ G2)).
+        simpl_alist. reflexivity.
+      * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
+        apply gen_more_gen; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
+  - (* T_LetMono *) intros L D G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
+    apply T_LetMono with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (T1 := T1).
+    + apply (IH1 Sd HSd Hag G2); reflexivity.
+    + intros x0 Hx0.
+      rewrite <- (subst_open_var e2 u x x0) by (first [ fsetdec | exact Hlc ]).
+      rewrite_env (((x0 ~ sch_mono T1) ++ G2) ++ G1).
+      apply (IH2 x0 ltac:(fsetdec) Sd HSd Hag ((x0 ~ sch_mono T1) ++ G2)). simpl_alist. reflexivity.
+  - (* T_Letrec *) intros L D G fs e2 R T k Hfg Hfs IHfs Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
+    set (V := AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx (G2 ++ (x ~ s) ++ G1))).
+    apply T_Letrec with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (R := R)
+      (k := kup D V k).
+    + apply fn_group_subst; assumption.
+    + intros p Hp.
+      rewrite <- (subst_open_fields_var fs u x p) by (first [ fsetdec | exact Hlc ]).
+      eapply field_typing_pw.
+      * rewrite_env (((p ~ sch_mono (typ_Record R)) ++ G2) ++ G1).
+        apply (IHfs p ltac:(fsetdec) (Sd `union` V) (supp_ok_ext _ _ _ _ HSd)
+                 (Hext D V k (HV G2 (typ_Record R) V eq_refl) Hag)
+                 ((p ~ sch_mono (typ_Record R)) ++ G2)). simpl_alist. reflexivity.
+      * intros a. apply ext_kup. intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
+        apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
+        intro Hd. apply Hc. apply ftv_ctx_mid. exact Hd.
+    + intros p Hp.
+      rewrite <- (subst_open_var e2 u x p) by (first [ fsetdec | exact Hlc ]).
+      eapply typing_ftv_mono.
+      * rewrite_env (((p ~ gen (G2 ++ (x ~ s) ++ G1) (typ_Record R) k) ++ G2) ++ G1).
+        apply (IH2 p ltac:(fsetdec) Sd HSd Hag
+                 ((p ~ gen (G2 ++ (x ~ s) ++ G1) (typ_Record R) k) ++ G2)).
+        simpl_alist. reflexivity.
+      * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
+        apply gen_more_gen; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
+  - (* T_Record *) intros D G fs R Hr IH Sd HSd Hag G2 Heq; subst. simpl. apply T_Record.
+    apply (IH Sd HSd Hag G2); reflexivity.
+  - (* T_Proj *) intros D G e l T R Hr IH Sd HSd Hag G2 Heq; subst. simpl. eapply T_Proj.
+    apply (IH Sd HSd Hag G2); reflexivity.
+  - (* T_Conv *) intros D G e T T' Hr IH Hteq Sd HSd Hag G2 Heq; subst.
+    eapply T_Conv; [ apply (IH Sd HSd Hag G2); reflexivity | exact Hteq ].
+  - (* T_Unit *) intros D G Huq Sd HSd Hag G2 Heq; subst. simpl. apply T_Unit. solve_uniq.
+  - (* T_Str *) intros D G q Huq Sd HSd Hag G2 Heq; subst. simpl. apply T_Str. solve_uniq.
+  - (* T_If *) intros D G e1 e2 e3 T Hr1 IH1 Hr2 IH2 Hr3 IH3 Sd HSd Hag G2 Heq; subst. simpl.
+    eapply T_If; [ apply (IH1 Sd HSd Hag G2) | apply (IH2 Sd HSd Hag G2) | apply (IH3 Sd HSd Hag G2) ];
+      reflexivity.
+  - (* T_ToFloat *) intros D G e A0 Hr IH Hs Sd HSd Hag G2 Heq; subst. simpl.
+    eapply T_ToFloat; [ apply (IH Sd HSd Hag G2); reflexivity | exact Hs ].
+  - (* T_Bin *) intros D G e1 o e2 A0 B0 R0 Hr1 IH1 Hr2 IH2 Hs Sd HSd Hag G2 Heq; subst. simpl.
+    eapply T_Bin; [ apply (IH1 Sd HSd Hag G2) | apply (IH2 Sd HSd Hag G2) | exact Hs ]; reflexivity.
+  - (* FT_nil *) intros D G Huq Sd HSd Hag G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
+  - (* FT_cons *) intros D G l e T fs R Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl. eapply FT_cons.
+    + apply (IH1 Sd HSd Hag G2); reflexivity.
+    + apply (IH2 Sd HSd Hag G2); reflexivity.
+Qed.
+
+(* L6a: the parameter of a function is replaced by a value of its type. *)
+Lemma typing_subst : forall D Sd G x U e T u,
+  supp_ok D Sd ->
+  typing D ((x ~ sch_mono U) ++ G) e T ->
+  is_gen_value u = true ->
+  typing D G u U ->
+  typing D G (subst_exp u x e) T.
+Proof.
+  intros D Sd G x U e T u HS Hty Hgu Hu.
+  set (S0 := ftv_ctx G `union` ftv_sch (sch_mono U)).
+  refine (proj1 (typing_subst_gen_mut x (sch_mono U) u G
+                   (fun D' => forall a, a `in` S0 -> D' a = D a)
+                   Hgu (typing_regular _ _ _ _ Hu) _ _) D _ e T Hty Sd HS _ nil eq_refl).
+  - intros D' V k Hv Hag a Ha. rewrite ext_out; [ apply Hag; exact Ha | intro Hav; exact (Hv a Hav Ha) ].
+  - intros D' Sd' T' HS' Hag Hi. apply inst_mono_eq in Hi. subst T'.
+    eapply typing_denv_agree with (D0 := D) (Sd0 := Sd) (S0 := S0); [ exact Hu | exact HS | exact HS' | | | exact Hag ].
+    + unfold S0. fsetdec.
+    + unfold S0. rewrite ftv_sch_mono. fsetdec.
+  - intros a Ha. reflexivity.
+Qed.
+
+Lemma field_typing_subst : forall D Sd G x U fs R u,
+  supp_ok D Sd ->
+  field_typing D ((x ~ sch_mono U) ++ G) fs R ->
+  is_gen_value u = true ->
+  typing D G u U ->
+  field_typing D G (subst_fields u x fs) R.
+Proof.
+  intros D Sd G x U fs R u HS Hty Hgu Hu.
+  set (S0 := ftv_ctx G `union` ftv_sch (sch_mono U)).
+  refine (proj2 (typing_subst_gen_mut x (sch_mono U) u G
+                   (fun D' => forall a, a `in` S0 -> D' a = D a)
+                   Hgu (typing_regular _ _ _ _ Hu) _ _) D _ fs R Hty Sd HS _ nil eq_refl).
+  - intros D' V k Hv Hag a Ha. rewrite ext_out; [ apply Hag; exact Ha | intro Hav; exact (Hv a Hav Ha) ].
+  - intros D' Sd' T' HS' Hag Hi. apply inst_mono_eq in Hi. subst T'.
+    eapply typing_denv_agree with (D0 := D) (Sd0 := Sd) (S0 := S0); [ exact Hu | exact HS | exact HS' | | | exact Hag ].
+    + unfold S0. fsetdec.
+    + unfold S0. rewrite ftv_sch_mono. fsetdec.
+  - intros a Ha. reflexivity.
+Qed.
+
+(* L6b: a [let]-bound name is replaced by its value.  The bound term was typed
+   under the environment extended with the sorts the scheme records, and every
+   instance of the scheme is typed through [typing_inst_gen]. *)
+Lemma typing_subst_poly : forall D Sd G x T1 k e T2 v,
+  supp_ok D Sd ->
+  typing D ((x ~ gen G T1 k) ++ G) e T2 ->
+  is_gen_value v = true ->
+  typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k) G v T1 ->
+  typing D G (subst_exp v x e) T2.
+Proof.
+  intros D Sd G x T1 k e T2 v HS Hty Hgv Hv.
+  set (S0 := ftv_ctx G `union` ftv_sch (gen G T1 k)).
+  refine (proj1 (typing_subst_gen_mut x (gen G T1 k) v G
+                   (fun D' => forall a, a `in` S0 -> D' a = D a)
+                   Hgv (typing_regular _ _ _ _ Hv) _ _) D _ e T2 Hty Sd HS _ nil eq_refl).
+  - intros D' V k' Hvv Hag a Ha. rewrite ext_out; [ apply Hag; exact Ha | intro Hav; exact (Hvv a Hav Ha) ].
+  - intros D' Sd' T' HS' Hag Hi.
+    eapply typing_inst_gen with (D0 := D) (Sd0 := Sd);
+      [ exact Hv | exact Hi | exact HS | exact HS' | ].
+    intros a Ha.
+    apply Hag. unfold S0. fsetdec.
+  - intros a Ha. reflexivity.
+Qed.
