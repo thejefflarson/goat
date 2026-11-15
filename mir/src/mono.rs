@@ -567,6 +567,7 @@ impl Mono<'_> {
             .into_iter()
             .rev()
             .fold(Row::Empty, |rest, (label, field)| Row::Extend {
+                at: Default::default(),
                 label,
                 field: Box::new(field),
                 method: Box::new(PLAIN),
@@ -1791,6 +1792,7 @@ fn match_row(
                     .into_iter()
                     .rev()
                     .fold(Row::Empty, |r, (l, f)| Row::Extend {
+                        at: Default::default(),
                         label: l.clone(),
                         field: Box::new(f.clone()),
                         method: Box::new(PLAIN),

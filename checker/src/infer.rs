@@ -27,7 +27,7 @@
 //! on [`Inferer::unify_ty`].
 
 use crate::captures::for_each_node;
-use crate::error::GoatError;
+use crate::error::{GoatError, Label};
 use crate::hir::{
     BinOp, Builtin, ContractBinding, Expr, ExprId, ExprKind, Interactive, MatchArm, PatternPayload,
     Span, Symbol,
@@ -481,6 +481,7 @@ fn front<'r>(row: &'r Row, label: &str) -> Option<(Ty, &'r Ty, &'r Ty, &'r Row)>
             field,
             method,
             rest,
+            ..
         } if l == label => Some((PRESENT, field, method, rest)),
         Row::Maybe {
             label: l,
@@ -490,6 +491,32 @@ fn front<'r>(row: &'r Row, label: &str) -> Option<(Ty, &'r Ty, &'r Ty, &'r Row)>
             rest,
         } if l == label => Some((Ty::Var(*pres), field, method, rest)),
         _ => None,
+    }
+}
+
+/// Where `row`'s first field, if it is `label`, was written.
+fn origin_at(row: &Row, label: &str) -> Option<Span> {
+    match row {
+        Row::Extend { label: l, at, .. } if l == label => at.0,
+        _ => None,
+    }
+}
+
+/// Record `span` as where the list element in a `Link` payload was written.
+fn mark_element(payload: &mut Ty, span: Span) {
+    let Ty::Record(row) = payload else {
+        return;
+    };
+    let mut row = row;
+    while let Row::Extend {
+        label, at, rest, ..
+    } = row
+    {
+        if label == "0" {
+            *at = ty::Origin(Some(span));
+            return;
+        }
+        row = rest;
     }
 }
 
@@ -802,11 +829,13 @@ impl Inferer {
                 label,
                 field,
                 method,
+                at,
                 rest,
             } => Row::Extend {
                 label: label.clone(),
                 field: Box::new(self.resolve(field)),
                 method: Box::new(self.resolve(method)),
+                at: *at,
                 rest: Box::new(self.resolve_row(rest)),
             },
             Row::Maybe {
@@ -817,6 +846,7 @@ impl Inferer {
                 rest,
             } => match self.resolve(&Ty::Var(*pres)) {
                 present if present == PRESENT => Row::Extend {
+                    at: Default::default(),
                     label: label.clone(),
                     field: Box::new(self.resolve(field)),
                     method: Box::new(self.resolve(method)),
@@ -1200,6 +1230,25 @@ impl Inferer {
         }
     }
 
+    /// Unify a field's types. A list element carries where it was written, so
+    /// a clash inside it is reported there, with a note at the use.
+    fn unify_element(&mut self, a: &Ty, b: &Ty, origin: Option<Span>, span: Span) {
+        let before = self.errors.len();
+        self.unify_ty(a, b, span);
+        let Some(element) = origin.filter(|o| *o != span && !o.in_prelude()) else {
+            return;
+        };
+        for error in &mut self.errors[before..] {
+            if error.span == span {
+                error.span = element;
+                error.labels.push(Label {
+                    span,
+                    message: "…and the list meets here".to_string(),
+                });
+            }
+        }
+    }
+
     fn unify_row(&mut self, a: &Row, b: &Row, span: Span, kind: RowKind) {
         match self.peel(a) {
             Peel::Done => {}
@@ -1301,6 +1350,7 @@ impl Inferer {
                     label,
                     field,
                     method,
+                    at,
                     rest,
                 },
                 _,
@@ -1308,7 +1358,8 @@ impl Inferer {
                 Some((b_pres, b_field, b_method, b_rest)) => {
                     self.unify_presence(&PRESENT, &b_pres, span);
                     self.unify_method(label, method, b_method, span);
-                    self.unify_ty(field, b_field, span);
+                    let origin = at.0.or_else(|| origin_at(b, label));
+                    self.unify_element(field, b_field, origin, span);
                     self.unify_row(rest, b_rest, span, kind);
                 }
                 None => match self.surface_bounded(label, b, false, span) {
@@ -1316,7 +1367,7 @@ impl Inferer {
                     Ok(Some((b_pres, b_field, b_method, b_rest))) => {
                         self.unify_presence(&PRESENT, &b_pres, span);
                         self.unify_method(label, method, &b_method, span);
-                        self.unify_ty(field, &b_field, span);
+                        self.unify_element(field, &b_field, at.0, span);
                         self.unify_row(rest, &b_rest, span, kind);
                     }
                     Ok(None) => {
@@ -1391,6 +1442,7 @@ impl Inferer {
             } => match self.resolve(&Ty::Var(*pres)) {
                 absent if absent == ABSENT => Peel::Rest(rest),
                 present if present == PRESENT => Peel::Present(Row::Extend {
+                    at: Default::default(),
                     label: label.clone(),
                     field: field.clone(),
                     method: method.clone(),
@@ -1525,6 +1577,7 @@ impl Inferer {
                 label: l2,
                 field,
                 method,
+                at,
                 rest,
             } => {
                 if l2 == label {
@@ -1539,6 +1592,7 @@ impl Inferer {
                             label: l2,
                             field,
                             method,
+                            at,
                             rest: Box::new(r),
                         },
                     ))
@@ -1608,6 +1662,7 @@ impl Inferer {
                     (
                         PRESENT,
                         Row::Extend {
+                            at: Default::default(),
                             label: label.to_string(),
                             field: Box::new(field.clone()),
                             method: Box::new(method.clone()),
@@ -2493,6 +2548,7 @@ impl Inferer {
                 }
                 let rest = self.fresh_row();
                 let expected = Ty::Record(Row::Extend {
+                    at: Default::default(),
                     label: label.clone(),
                     field: Box::new(field_ty.clone()),
                     method: Box::new(method.clone()),
@@ -2509,15 +2565,25 @@ impl Inferer {
                 payload,
                 group,
             } => {
-                let payload_ty = match payload {
+                let mut payload_ty = match payload {
                     Some(p) => self.infer(p),
                     None => Ty::Unit,
                 };
+                if name == "Link"
+                    && let Some(Expr {
+                        kind: ExprKind::Record { fields },
+                        ..
+                    }) = payload.as_deref()
+                    && let Some((_, element)) = fields.first()
+                {
+                    mark_element(&mut payload_ty, element.span);
+                }
                 self.constructed.push((name.clone(), expr.span));
                 if let Some(group) = group {
                     return self.construct_grouped(group, name, &payload_ty, expr.span);
                 }
                 Ty::Variant(Row::Extend {
+                    at: Default::default(),
                     label: name.clone(),
                     field: Box::new(payload_ty),
                     method: Box::new(PLAIN),
@@ -2956,6 +3022,7 @@ impl Inferer {
                     field,
                     method,
                     rest,
+                    ..
                 } => {
                     if self.resolve(&method) == PLAIN
                         && let Ty::Func(params, _) = self.resolve_head(&field)
@@ -2995,6 +3062,7 @@ impl Inferer {
                 .zip(tys)
                 .rev()
                 .fold(Row::Empty, |rest, ((label, _), field)| Row::Extend {
+                    at: Default::default(),
                     label: label.clone(),
                     field: Box::new(field),
                     method: Box::new(PLAIN),
@@ -3011,6 +3079,7 @@ impl Inferer {
         let self_row = fields.iter().zip(&slots).zip(&flags).rev().fold(
             tail,
             |rest, (((label, _), slot), flag)| Row::Extend {
+                at: Default::default(),
                 label: label.clone(),
                 field: Box::new(slot.clone()),
                 method: Box::new(flag.clone()),
@@ -3036,6 +3105,7 @@ impl Inferer {
         let row = fields.iter().zip(&flags).zip(tied).rev().fold(
             Row::Empty,
             |rest, (((label, _), flag), field)| Row::Extend {
+                at: Default::default(),
                 label: label.clone(),
                 field: Box::new(field),
                 method: Box::new(flag.clone()),
@@ -3107,6 +3177,7 @@ impl Inferer {
         let body = fields.iter().zip(flags).zip(slots).rev().fold(
             self.resolve_row(&row_after(&receiver_row, fields.len())),
             |rest, (((label, _), flag), slot)| Row::Extend {
+                at: Default::default(),
                 label: label.clone(),
                 field: Box::new(self.resolve(slot)),
                 method: Box::new(flag.clone()),
@@ -3193,6 +3264,7 @@ impl Inferer {
                 label: l,
                 field,
                 method,
+                at,
                 rest,
             } => {
                 if l == label {
@@ -3202,6 +3274,7 @@ impl Inferer {
                         label: l,
                         field,
                         method,
+                        at,
                         rest,
                     }
                 } else {
@@ -3210,6 +3283,7 @@ impl Inferer {
                         label: l,
                         field,
                         method,
+                        at,
                         rest: Box::new(rest),
                     }
                 }
@@ -3225,6 +3299,7 @@ impl Inferer {
                     self.keep_field_type(label, &field, &ty, span, copied);
                     self.unify_method(label, &method, &flag, span);
                     Row::Extend {
+                        at: Default::default(),
                         label: l,
                         field,
                         method,
@@ -3242,6 +3317,7 @@ impl Inferer {
                 }
             }
             Row::Empty => Row::Extend {
+                at: Default::default(),
                 label: label.to_string(),
                 field: Box::new(ty),
                 method: Box::new(flag),
@@ -3269,6 +3345,7 @@ impl Inferer {
                     };
                     self.unify(&Ty::Record(Row::Var(v)), &Ty::Record(maybe), span);
                     return Row::Extend {
+                        at: Default::default(),
                         label: label.to_string(),
                         field: Box::new(ty),
                         method: Box::new(flag),
@@ -3276,6 +3353,7 @@ impl Inferer {
                     };
                 }
                 Row::Extend {
+                    at: Default::default(),
                     label: label.to_string(),
                     field: Box::new(ty),
                     method: Box::new(flag),
@@ -3320,6 +3398,7 @@ impl Inferer {
         let mut expected = tail.clone();
         for label in labels.iter().rev() {
             expected = Row::Extend {
+                at: Default::default(),
                 label: label.clone(),
                 field: Box::new(self.fresh()),
                 method: Box::new(self.fresh()),
@@ -3412,6 +3491,7 @@ impl Inferer {
                     let ty = self.fresh();
                     self.bind_binder(binder.symbol, &ty);
                     row = Row::Extend {
+                        at: Default::default(),
                         label: label.clone(),
                         field: Box::new(ty),
                         method: Box::new(self.fresh()),
@@ -3455,6 +3535,7 @@ impl Inferer {
             return;
         }
         let expected = Ty::Variant(Row::Extend {
+            at: Default::default(),
             label: tag.to_string(),
             field: Box::new(payload_ty),
             method: Box::new(PLAIN),
@@ -3618,11 +3699,13 @@ fn plug_row<'a>(row: &'a Row, hole: &Hole, with: &Ty, at: Guard, bound: &mut Vec
             label,
             field,
             method,
+            at: origin,
             rest,
         } => Row::Extend {
             label: label.clone(),
             field: Box::new(plug(field, hole, with, at, bound)),
             method: method.clone(),
+            at: *origin,
             rest: Box::new(plug_row(rest, hole, with, at, bound)),
         },
         Row::Maybe {
@@ -3697,11 +3780,13 @@ fn replace_tail(row: &Row, tail: Row) -> Row {
             label,
             field,
             method,
+            at,
             rest,
         } => Row::Extend {
             label: label.clone(),
             field: field.clone(),
             method: method.clone(),
+            at: *at,
             rest: Box::new(replace_tail(rest, tail)),
         },
         Row::Maybe {
@@ -3839,11 +3924,13 @@ fn subst_row(row: &Row, mapping: &HashMap<TypeVar, TypeVar>) -> Row {
             label,
             field,
             method,
+            at,
             rest,
         } => Row::Extend {
             label: label.clone(),
             field: Box::new(subst_vars(field, mapping)),
             method: Box::new(subst_vars(method, mapping)),
+            at: *at,
             rest: Box::new(subst_row(rest, mapping)),
         },
         Row::Maybe {
@@ -3870,6 +3957,7 @@ mod tests {
 
     fn extend(label: &str, field: Ty, rest: Row) -> Row {
         Row::Extend {
+            at: Default::default(),
             label: label.to_string(),
             field: Box::new(field),
             method: Box::new(PLAIN),

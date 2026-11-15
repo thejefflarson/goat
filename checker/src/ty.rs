@@ -1,11 +1,12 @@
 //! The type language: monomorphic types, rows for records, and type schemes
 //! for let-polymorphism.
 
-use crate::hir::Boundary;
+use crate::hir::{Boundary, Span};
 use crate::infer::subst_vars;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 /// A unification variable. The same numbering space is shared by type variables
@@ -70,6 +71,8 @@ pub enum Row {
         /// Whether the field is a method: [`METHOD`], [`PLAIN`], or a flag
         /// variable that a dot call or a unification will settle.
         method: Box<Ty>,
+        /// Where a list element was written, for blaming it in a clash.
+        at: Origin,
         rest: Box<Row>,
     },
     /// A field that is there or not, by the presence variable `pres` (Rémy):
@@ -83,6 +86,23 @@ pub enum Row {
         method: Box<Ty>,
         rest: Box<Row>,
     },
+}
+
+/// The source span a type was written at. It is not part of the type: any two
+/// origins compare equal and hash alike, so it never changes how types unify.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Origin(pub Option<Span>);
+
+impl PartialEq for Origin {
+    fn eq(&self, _: &Origin) -> bool {
+        true
+    }
+}
+
+impl Eq for Origin {}
+
+impl Hash for Origin {
+    fn hash<H: Hasher>(&self, _: &mut H) {}
 }
 
 /// What a presence variable is bound to, as a type, so that the substitutions
@@ -154,6 +174,7 @@ impl Row {
             .into_iter()
             .rev()
             .fold(Row::Empty, |rest, (label, field)| Row::Extend {
+                at: Default::default(),
                 label,
                 field: Box::new(field),
                 method: Box::new(PLAIN),
@@ -484,12 +505,14 @@ impl Row {
                     field: a_field,
                     method: a_method,
                     rest: a_rest,
+                    ..
                 },
                 Row::Extend {
                     label: b_label,
                     field: b_field,
                     method: b_method,
                     rest: b_rest,
+                    ..
                 },
             ) => {
                 a_label == b_label
@@ -529,11 +552,13 @@ impl Row {
                 label,
                 field,
                 method,
+                at,
                 rest,
             } => Row::Extend {
                 label: label.clone(),
                 field: Box::new(f(field)),
                 method: Box::new(f(method)),
+                at: *at,
                 rest: Box::new(rest.map_fields(f)),
             },
             Row::Maybe {
@@ -827,6 +852,7 @@ mod tests {
             .iter()
             .rev()
             .fold(tail, |rest, (label, field)| Row::Extend {
+                at: Default::default(),
                 label: label.to_string(),
                 field: Box::new(field.clone()),
                 method: Box::new(PLAIN),
@@ -837,10 +863,12 @@ mod tests {
 
     fn list(binder: TypeVar) -> Ty {
         let link = Ty::Record(Row::Extend {
+            at: Default::default(),
             label: "0".into(),
             field: Box::new(Ty::Int),
             method: Box::new(PLAIN),
             rest: Box::new(Row::Extend {
+                at: Default::default(),
                 label: "1".into(),
                 field: Box::new(Ty::Var(binder)),
                 method: Box::new(PLAIN),
@@ -934,12 +962,14 @@ mod tests {
                 label: "x".into(),
                 field: Box::new(Ty::Int),
                 method: Box::new(PLAIN),
+                at: Default::default(),
                 rest: Box::new(Row::Var(9)),
             },
             |rest, label| Row::Extend {
                 label: label.into(),
                 field: Box::new(method.clone()),
                 method: Box::new(METHOD),
+                at: Default::default(),
                 rest: Box::new(rest),
             },
         );

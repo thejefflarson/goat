@@ -346,7 +346,10 @@ fn a_shape_payload_the_host_cannot_read_is_a_spanned_error() {
         let draw = draw_of(&format!("[{shape}]"));
         let (message, text) = the_error(&interactive("{x: 0}", UPDATE, &draw));
         assert!(message.contains("shape needs"), "{shape}: {message}");
-        assert!(text.starts_with("program(model)"), "{text}");
+        assert!(
+            text.starts_with("program(model)") || shape.contains(&text),
+            "{shape}: blamed `{text}`"
+        );
     }
 }
 
