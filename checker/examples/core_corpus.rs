@@ -444,6 +444,7 @@ impl Canon<'_> {
                             field,
                             method,
                             rest,
+                            ..
                         } => {
                             if **method != goat_checker::ty::PLAIN {
                                 return None;
