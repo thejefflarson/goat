@@ -53,3 +53,24 @@ test("a label becomes an info note at its own place", () => {
     { from: 2, to: 5, severity: "info", message: "note: <b>x</b>" },
   ]);
 });
+
+test("a two-ways error keeps its lines and notes each use", async () => {
+  const source = "(program(f) do {a: f(1), b: f(true)} done)(program(x) do x done)";
+  const [error, ...notes] = await lint(source);
+  assert.equal(error.severity, "error");
+  assert.deepEqual(error.message.split("\n"), [
+    "`f` gets a Number here and a Bool there, but a function you pass in can only take one kind of thing.",
+    "Give the function a name first, then use it both ways:",
+    "```",
+    "f = program(x) do x done",
+    "{a: f(1), b: f(true)}",
+    "```",
+  ]);
+  assert.deepEqual(
+    notes.map(({ severity, message }) => [severity, message]),
+    [
+      ["info", "note: `f` gets a Number here"],
+      ["info", "note: `f` gets a Bool here"],
+    ],
+  );
+});

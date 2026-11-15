@@ -189,6 +189,25 @@ fn a_helpers_failed_requirement_is_a_second_location_on_stderr() {
 }
 
 #[test]
+fn a_function_used_two_ways_is_two_notes_and_a_suggestion_on_stderr() {
+    let (_, stderr) =
+        failure_of("(program(f) do {a: f(1), b: f(true)} done)(program(x) do x done)");
+    assert!(
+        stderr.contains("1:29: `f` gets a Number here and a Bool there"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("f = program(x) do x done"), "{stderr}");
+    assert!(
+        stderr.contains("1:20: note: `f` gets a Number here"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("1:29: note: `f` gets a Bool here"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn an_undeclared_tag_is_a_spanned_error_on_stderr() {
     let out = run_source("p.goat", "match Empty do Dwon then 1 else 0 done");
     assert!(!out.status.success());
