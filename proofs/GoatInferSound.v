@@ -90,14 +90,17 @@ Proof.
     destruct B; destruct A; cbn in H; inversion H; subst; unfold ground; auto.
 Qed.
 
-Lemma bin_ty_sig : forall o T R, bin_ty o T = Some R -> bin_sig o T T R.
+Lemma bin_ty_sig : forall o T R, bin_ty o T = Some R -> bin_sig d_any o T T R.
 Proof.
   intros o T R H. unfold bin_ty in H.
   destruct o; cbn in H; destruct T; try discriminate H;
-    inversion H; subst; try (apply sig_ring_int; reflexivity);
-    first [ apply sig_ring_float; reflexivity | apply sig_quot
+    inversion H; subst;
+    first [ (apply sig_ring; [ reflexivity | exact I ]) | apply sig_quot
           | apply sig_whole; reflexivity | (apply sig_cmp; [ reflexivity | constructor ]) ].
 Qed.
+
+Lemma ext_any : forall V a, ext d_any V (fun _ => k_Any) a = d_any a.
+Proof. intros V a. unfold ext. destruct (AtomSetImpl.mem a V); reflexivity. Qed.
 
 Lemma bin_ty_EvT : forall o T R, bin_ty o T = Some R -> EvT R.
 Proof.
@@ -108,7 +111,7 @@ Proof.
 Qed.
 
 Lemma typing_ap_Bool : forall s G e,
-  OkS s -> WfCtx G -> typing G e typ_Bool -> typing (apC s G) e typ_Bool.
+  OkS s -> WfCtx G -> typing d_any G e typ_Bool -> typing d_any (apC s G) e typ_Bool.
 Proof. intros s G e Hs HG H. exact (typing_ap s G e typ_Bool Hs HG H). Qed.
 
 Lemma EvT_arrow : forall A B, EvT A -> EvT B -> EvT (typ_Arrow A B).
@@ -119,9 +122,9 @@ Qed.
 
 Theorem infer_sound : forall f,
   (forall G e n s T n', infer f G e n = Some (s, T, n') -> WfCtx G ->
-     OkS s /\ EvT T /\ typing (apC s G) e T) /\
+     OkS s /\ EvT T /\ typing d_any (apC s G) e T) /\
   (forall G fs n s R n', infer_fields f G fs n = Some (s, R, n') -> WfCtx G ->
-     OkS s /\ EvR R /\ field_typing (apC s G) fs R).
+     OkS s /\ EvR R /\ field_typing d_any (apC s G) fs R).
 Proof.
   induction f as [|f IH]; [ split; intros; discriminate | ].
   destruct IH as [IHe IHf]. split.
@@ -137,7 +140,7 @@ Proof.
       rewrite apC_sid. eapply T_Var; [ exact (proj1 HG) | exact Hb | exact Hinst ].
     + inversion H; try subst s; try subst T; try subst n'; clear H.
       split; [apply OkS_id|]. split; [apply EvT_Int|].
-      apply T_Num. apply uniq_apC. exact (proj1 HG).
+      apply T_Num; [ apply uniq_apC; exact (proj1 HG) | exact I ].
     + inversion H; try subst s; try subst T; try subst n'; clear H.
       split; [apply OkS_id|]. split; [apply EvT_Float|].
       apply T_Dec. apply uniq_apC. exact (proj1 HG).
@@ -162,7 +165,7 @@ Proof.
       apply T_Abs with (L := dom G `union` {{fresh_var G b}}).
       intros y Hy.
       assert (Hdom : y `notin` dom (apC s0 G)) by (rewrite dom_apC; fsetdec).
-      apply (typing_rename_var (apC s0 G) (fresh_var G b) y).
+      apply (typing_rename_var d_any (apC s0 G) (fresh_var G b) y).
       * exact Hty.
       * apply fresh_var_notin_fv.
       * exact Hdom.
@@ -209,7 +212,7 @@ Proof.
       * intros y Hy.
         assert (Hdom : y `notin` dom (apC s2 (apC s1 G)))
           by (rewrite dom_apC, dom_apC; fsetdec).
-        exact (typing_rename_var (apC s2 (apC s1 G)) (fresh_var (apC s1 G) e2) y
+        exact (typing_rename_var d_any (apC s2 (apC s1 G)) (fresh_var (apC s1 G) e2) y
                  (apS s2 (sch_mono T1)) e2 T2 Hty2
                  (fresh_var_notin_fv _ _) Hdom ltac:(fsetdec)). }
       destruct (infer f G e1 n) as [[[s1 T1] n1]|] eqn:E1; [|discriminate].
@@ -227,14 +230,15 @@ Proof.
       rewrite <- apC_comp.
       rewrite apC_app, apC_single in Hty2.
       apply T_Let with (L := dom G `union` {{fresh_var (apC s1 G) e2}})
-                       (T1 := apT s2 (s_body (gen_ren (apC s1 G) T1))).
+                       (T1 := apT s2 (s_body (gen_ren (apC s1 G) T1))) (k := fun _ => k_Any).
       * exact Hgv.
-      * apply (typing_ap s2 _ _ _ Hs2 HG1).
+      * eapply typing_pw; [ | intros a; symmetry; apply ext_any ].
+        apply (typing_ap s2 _ _ _ Hs2 HG1).
         apply typing_gen_ren. exact Hty1.
       * intros y Hy.
         assert (Hdom : y `notin` dom (apC s2 (apC s1 G)))
           by (rewrite dom_apC, dom_apC; fsetdec).
-        pose proof (typing_rename_var (apC s2 (apC s1 G)) (fresh_var (apC s1 G) e2) y
+        pose proof (typing_rename_var d_any (apC s2 (apC s1 G)) (fresh_var (apC s1 G) e2) y
                       (apS s2 (gen_ren (apC s1 G) T1)) e2 T2 Hty2
                       (fresh_var_notin_fv _ _) Hdom ltac:(fsetdec)) as Hren.
         eapply typing_sch_equiv_ctx; [ exact Hren | ].
@@ -267,7 +271,7 @@ Proof.
       assert (Hs21 : OkS (scomp s2 s1)) by (apply OkS_comp; assumption).
       assert (HRf : EvR Rf) by (apply EvR_ap; assumption).
       assert (HG21 : WfCtx G1) by (apply WfCtx_ap; assumption).
-      assert (Hty3 : field_typing ((p ~ sch_mono (typ_Record Rf)) ++ G1)
+      assert (Hty3 : field_typing d_any ((p ~ sch_mono (typ_Record Rf)) ++ G1)
                        (open_fields_wrt_exp fl (e_fvar_f p)) Rf).
       { unfold Rf, G1. rewrite <- apR_comp. rewrite <- apC_comp.
         apply pw_conv with (R := apR s2 R1); [ | exact Hpw ].
@@ -284,10 +288,12 @@ Proof.
       pose proof (fields_ap s3 _ _ _ _ _ Hs3 HG21 Hty5) as Hty6.
       apply T_Letrec with (L := dom G `union` {{p}} `union` {{q}})
         (R := apR s3 (ap_row (rename_t (gen_vars_t G1 (typ_Record Rf)))
-                             (rename_r (gen_vars_r G1 (typ_Record Rf))) Rf)).
+                             (rename_r (gen_vars_r G1 (typ_Record Rf))) Rf))
+        (k := fun _ => k_Any).
       * apply is_fn_group_sound. exact Hfg.
       * intros y Hy.
         assert (Hdom : y `notin` dom (apC s3 G1)) by (rewrite dom_apC; unfold G1; rewrite dom_apC; fsetdec).
+        eapply field_typing_pw; [ | intros a; symmetry; apply ext_any ].
         apply (fields_rename_var (apC s3 G1) p y).
         -- exact Hty6.
         -- apply fresh_var_notin_fv.
@@ -295,7 +301,7 @@ Proof.
         -- fsetdec.
       * intros y Hy.
         assert (Hdom : y `notin` dom (apC s3 G1)) by (rewrite dom_apC; unfold G1; rewrite dom_apC; fsetdec).
-        pose proof (typing_rename_var (apC s3 G1) q y
+        pose proof (typing_rename_var d_any (apC s3 G1) q y
                       (apS s3 (gen_ren G1 (typ_Record Rf))) el T3 Hty4
                       (fresh_var_notin_fv _ _) Hdom ltac:(fsetdec)) as Hren.
         eapply typing_sch_equiv_ctx; [ exact Hren | ].
@@ -351,7 +357,7 @@ Proof.
       split; [ repeat (apply OkS_comp; [ assumption | ]); assumption | ].
       split; [ apply EvT_ap; auto | ].
       rewrite <- !apC_comp.
-      assert (Hc : typing (apC s2 (apC s1 G)) c0 typ_Bool).
+      assert (Hc : typing d_any (apC s2 (apC s1 G)) c0 typ_Bool).
       { eapply T_Conv; [ | exact Hteq2 ].
         apply (typing_ap s2 _ _ _ Hs2 HG1). exact Hty1. }
       eapply T_If.
@@ -405,7 +411,7 @@ Proof.
       destruct ((proj1 (unify_sound f)) _ _ _ _ _ E2 HT1 EvT_Int) as [Hs2 Hteq].
       split; [ apply OkS_comp; auto | ]. split; [ apply EvT_Float | ].
       rewrite <- apC_comp.
-      apply T_ToFloat.
+      apply T_ToFloat with (A := typ_Int); [ | exact I ].
       eapply T_Conv; [ | exact Hteq ].
       apply (typing_ap s2 _ _ _ Hs2 HG1). exact Hty1.
   - intros G fs n s R n' H HG. cbn [infer_fields] in H.
@@ -430,7 +436,7 @@ Qed.
 (* The statement for programs: a closed term the algorithm accepts has the
    type it returns. *)
 Theorem infer_closed_sound : forall fuel e T,
-  infer_closed fuel e = Some T -> typing nil e T.
+  infer_closed fuel e = Some T -> typing d_any nil e T.
 Proof.
   intros fuel e T H. unfold infer_closed in H.
   destruct (infer fuel nil e 0) as [[[s T0] n]|] eqn:Ei; [|discriminate].
