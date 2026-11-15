@@ -128,7 +128,7 @@ Proof.
   induction f as [|f IH]; [ split; intros; discriminate | ].
   destruct IH as [IHe IHf]. split.
   - intros G e n s T n' H HG. cbn [infer] in H.
-    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3];
+    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3];
       try discriminate H.
     + (* variable *)
       destruct (lookup x G) as [sc|] eqn:Hl; [|discriminate].
@@ -191,6 +191,7 @@ Proof.
         apply (typing_ap s2 _ _ _ Hs2 HG1). exact Hty1.
       * apply (typing_ap s3 _ _ _ Hs3 HG2). exact Hty2.
     + (* let *)
+      destruct (is_gen_value e1) eqn:Hgv; [|discriminate].
       destruct (infer f G e1 n) as [[[s1 T1] n1]|] eqn:E1; [|discriminate].
       destruct (infer f ((fresh_var (apC s1 G) e2 ~ gen_ren (apC s1 G) T1) ++ apC s1 G)
                   (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC s1 G) e2))) n1)
@@ -207,6 +208,7 @@ Proof.
       rewrite apC_app, apC_single in Hty2.
       apply T_Let with (L := dom G `union` {{fresh_var (apC s1 G) e2}})
                        (T1 := apT s2 (s_body (gen_ren (apC s1 G) T1))).
+      * exact Hgv.
       * apply (typing_ap s2 _ _ _ Hs2 HG1).
         apply typing_gen_ren. exact Hty1.
       * intros y Hy.

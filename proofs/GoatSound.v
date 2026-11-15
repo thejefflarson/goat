@@ -730,93 +730,46 @@ Definition tr_compat (st:tsub) (sr:rsub) (G G':ctx) : Prop :=
    everything else.  Do not confuse it with the type-variable renaming above.)
    ====================================================================== *)
 
-(* The general type/row substitution lemma: a kind-respecting substitution
-   applied to a derivation, with the context substituted capture-avoidingly
-   ([ctx_subst]), finite support ([tr_supp]) and image-compatibility
-   ([tr_compat]).  Every case is structural except T-Let, which freshens the
-   let-generalized variables (via [mk_rename]) so that [casch_inst] supplies the
-   instances and [casch_gen_sch_equiv] lines the scheme back up with [gen].
-
-   What it says, in everyday terms: take any typing derivation, and a
-   substitution [st]/[sr] ([st] replaces type variables, [sr] replaces row
-   variables).  If the new context [G'] is what you get from [G] by applying
-   the substitution (that is [ctx_subst]), and the substitution only changes
-   a bounded set [A] of names ([tr_supp]) and does not smuggle in names that
-   [G'] lacks ([tr_compat]), then the same term still type checks, at the
-   substituted type.  [G'] may have extra variables; that slack is what lets
-   the identity substitution double as WEAKENING (adding unused variables).
-
-   How the proof goes: we prove it for every typing derivation by taking each
-   typing rule in turn (the typing derivation is built from rules, so this
-   covers all of them).  When the rule has sub-derivations, we may assume the
-   lemma already holds for them: that assumption is the induction hypothesis,
-   named [IH], [IH1], [IH2] below. *)
-Lemma typing_tsubst_gen_mut :
-  (forall G e T, typing G e T -> forall st sr G' A,
-      uniq G' -> ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
-      typing G' e (ap_typ st sr T)) /\
-  (forall G fs R, field_typing G fs R -> forall st sr G' A,
-      uniq G' -> ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
-      field_typing G' fs (ap_row st sr R)).
+(* Adding a monomorphic binding keeps the substitution's image compatible. *)
+Lemma tr_compat_cons_mono : forall st sr G G' x T,
+  tr_compat st sr G G' ->
+  tr_compat st sr ((x ~ sch_mono T) ++ G) ((x ~ sch_mono (ap_typ st sr T)) ++ G').
 Proof.
-  (* Do induction over typing derivations (and, mutually, over the field lists
-     of a record).  This produces one case per typing rule; each [intros]
-     below names the pieces of that rule so we can talk about them. *)
-  apply typing_field_mutind.
-  - (* Case: the term is a variable [x], looked up in the context. *)
-    (* Its scheme [s] in [G] has a matching scheme [s'] in [G'] (this is what
-       [ctx_subst] promises), and any instance of [s] becomes an instance of
-       [s'] after substituting.  So the variable rule applies again. *)
-    intros G x s T Hu Hb Hi st sr G' A Hu' Hcs Hsupp Hcompat.
-    destruct (ctx_subst_binds _ _ _ _ _ _ Hcs Hb) as [s' [Hb' Hss]].
-    apply T_Var with (s := s'); auto.
-  - intros G n Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_Num; auto.
-  - intros G d Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_Dec; auto.
-  - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_True; auto.
-  - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_False; auto.
-  - (* Case: a function [fun x => e] (T_Abs).  We must type its body with the
-       parameter [x] added to the context at type [T1].  [x] is a brand new
-       name picked fresh (not in [L] or [G']); the induction hypothesis then
-       types the body in the extended context.  The lengthy last bullet only
-       shows that adding [x] keeps the [tr_compat] side condition true. *)
-    intros L G e T1 T2 Ht IH st sr G' A Hu' Hcs Hsupp Hcompat. simpl.
-    apply T_Abs with (L := L `union` dom G'). intros x Hx.
-    apply (IH x ltac:(fsetdec) st sr ((x ~ sch_mono (ap_typ st sr T1)) ++ G') A).
-    + constructor; [ assumption | fsetdec ].
-    + apply ctx_subst_cons; [ apply sch_subst_mono | assumption ].
-    + assumption.
-    + (* tr_compat for the extended ctx *)
-      destruct Hcompat as [HcT [HcFr [HcRt HcRfr]]].
-      unfold tr_compat; simpl. repeat split.
-      * intros a Ha. rewrite AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
-        -- rewrite ftv_sch_mono in Ha. intros z Hz. apply AtomSetFacts.union_iff. left.
-           rewrite ftv_sch_mono. apply (ftv_ap_in1 st sr T1 z a); [ exact Ha | exact Hz ].
-        -- intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcT a Ha). exact Hz.
-      * intros a Ha. rewrite AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
-        -- rewrite ftv_sch_mono in Ha. intros z Hz. apply AtomSetFacts.union_iff. left.
-           rewrite frv_sch_mono. apply (frv_ap_in1 st sr T1 z a); [ exact Ha | exact Hz ].
-        -- intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcFr a Ha). exact Hz.
-      * intros r Hr. rewrite AtomSetFacts.union_iff in Hr. destruct Hr as [Hr|Hr].
-        -- rewrite frv_sch_mono in Hr. intros z Hz. apply AtomSetFacts.union_iff. left.
-           rewrite ftv_sch_mono. apply (ftv_ap_in2 st sr T1 z r); [ exact Hr | exact Hz ].
-        -- intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcRt r Hr). exact Hz.
-      * intros r Hr. rewrite AtomSetFacts.union_iff in Hr. destruct Hr as [Hr|Hr].
-        -- rewrite frv_sch_mono in Hr. intros z Hz. apply AtomSetFacts.union_iff. left.
-           rewrite frv_sch_mono. apply (frv_ap_in2 st sr T1 z r); [ exact Hr | exact Hz ].
-        -- intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcRfr r Hr). exact Hz.
-  - (* Case: a call [e1 e2] (T_App).  Nothing is bound here, so we just apply
-       the induction hypotheses to the function part and the argument part. *)
-    intros G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat. simpl in *.
-    eapply T_App; [ eapply IH1 | eapply IH2 ]; eauto.
-  - (* Case: [let x = e1 in e2] (T_Let).  THIS IS THE HARD CASE; read the
-       story above the lemma first.  Roughly:
-         - [s] is the scheme the [let] gives to [x] (generalizing [e1]'s type).
-         - We rename [s]'s quantified variables to fresh names (below, [g]
-           and [gr]), so the substitution cannot capture them.
-         - We then rebuild a [let] derivation in the new context [G'].
-       Most lines below are bookkeeping that proves the names really are
-       fresh and the renaming changes nothing; the idea is just the renaming. *)
-    intros L0 G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
+  intros st sr G G' x T [HcT [HcFr [HcRt HcRfr]]].
+  unfold tr_compat; simpl. repeat split.
+  - intros a Ha. rewrite AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
+    + rewrite ftv_sch_mono in Ha. intros z Hz. apply AtomSetFacts.union_iff. left.
+      rewrite ftv_sch_mono. apply (ftv_ap_in1 st sr T z a); [ exact Ha | exact Hz ].
+    + intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcT a Ha). exact Hz.
+  - intros a Ha. rewrite AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
+    + rewrite ftv_sch_mono in Ha. intros z Hz. apply AtomSetFacts.union_iff. left.
+      rewrite frv_sch_mono. apply (frv_ap_in1 st sr T z a); [ exact Ha | exact Hz ].
+    + intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcFr a Ha). exact Hz.
+  - intros r Hr. rewrite AtomSetFacts.union_iff in Hr. destruct Hr as [Hr|Hr].
+    + rewrite frv_sch_mono in Hr. intros z Hz. apply AtomSetFacts.union_iff. left.
+      rewrite ftv_sch_mono. apply (ftv_ap_in2 st sr T z r); [ exact Hr | exact Hz ].
+    + intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcRt r Hr). exact Hz.
+  - intros r Hr. rewrite AtomSetFacts.union_iff in Hr. destruct Hr as [Hr|Hr].
+    + rewrite frv_sch_mono in Hr. intros z Hz. apply AtomSetFacts.union_iff. left.
+      rewrite frv_sch_mono. apply (frv_ap_in2 st sr T z r); [ exact Hr | exact Hz ].
+    + intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcRfr r Hr). exact Hz.
+Qed.
+
+(* The renaming step shared by every binder that generalizes ([let] and a
+   recursive group): rename the quantified variables of [gen G T1] to fresh
+   names so the substitution cannot capture them (see the story above).  It
+   returns the composed substitution under which the bound term is typed, the
+   substituted scheme, and the facts the body needs about it. *)
+Lemma tsubst_gen_core : forall G T1 st sr G' A,
+  ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
+  exists (s' : scheme) (st1 : tsub) (sr1 : rsub) (A1 : atoms),
+    ctx_subst st1 sr1 G G' /\ tr_supp st1 sr1 A1 /\ tr_compat st1 sr1 G G' /\
+    sch_subst st sr (gen G T1) s' /\
+    sch_equiv s' (gen G' (ap_typ st1 sr1 T1)) /\
+    (forall x, tr_compat st sr ((x ~ gen G T1) ++ G) ((x ~ s') ++ G')).
+Proof.
+  intros G T1 st sr G' A Hcs Hsupp Hcompat.
+
     destruct Hsupp as [HsuppT HsuppR].
     destruct Hcompat as [HcT [HcFr [HcRt HcRfr]]].
     set (s := gen G T1).
@@ -909,59 +862,170 @@ Proof.
       - intros r Hr. apply HcRt. fsetdec.
       - intros a Ha. apply HcFr. fsetdec.
       - intros r Hr. apply HcRfr. fsetdec. }
-    set (B' := ap_typ st sr (ren_typ g gr T1)).
+    set (A2 := A `union` s_tq s `union` lset Ng `union` s_rq s `union` lset Ngr).
     assert (HbodyT1 : s_body s = T1) by (unfold s, gen; reflexivity).
-    (* Now rebuild the [let].  The [let] rule has two premises: [e1] has some
-       type (here the renamed-then-substituted type [B']), and the body types
-       when [x] is bound to the generalized scheme. *)
-    apply T_Let with (L := L0 `union` dom G') (T1 := B').
-    + (* Premise 1: [e1] has type [B'].  Use the induction hypothesis for [e1],
-         with the substitution adjusted to run after the renaming [g]. *)
-      (* e1 : B' *)
-      unfold B'. rewrite <- ap_precomp.
-      set (A2 := A `union` s_tq s `union` lset Ng `union` s_rq s `union` lset Ngr).
-      apply (IH1 (fun a => st (g a)) (fun r => sr (gr r)) G' A2 Hu').
-      * apply ctx_subst_precomp; [ exact Hcs | exact HgfixG | exact HgrfixG ].
-      * (* tr_supp *)
-        split.
-        -- intros a Ha. unfold A2 in Ha.
-           assert (g a = a).
-           { apply Hgfix; [ fsetdec | ]. intro Hc. apply lset_in in Hc. fsetdec. }
-           rewrite H. apply HsuppT. fsetdec.
-        -- intros r Hr. unfold A2 in Hr.
-           assert (gr r = r).
-           { apply Hgrfix; [ fsetdec | ]. intro Hc. apply lset_in in Hc. fsetdec. }
-           rewrite H. apply HsuppR. fsetdec.
-      * (* tr_compat *)
-        unfold tr_compat. repeat split.
-        -- intros a Ha. rewrite (HgfixG a Ha). apply HcT; exact Ha.
-        -- intros a Ha. rewrite (HgfixG a Ha). apply HcFr; exact Ha.
-        -- intros r Hr. rewrite (HgrfixG r Hr). apply HcRt; exact Hr.
-        -- intros r Hr. rewrite (HgrfixG r Hr). apply HcRfr; exact Hr.
-    + (* Premise 2: the body.  For a fresh [x], use the induction hypothesis on
-         the body with [x] bound to the substituted scheme [casch]; then swap
-         in [gen G' ...], which is the same scheme (Payoff 2), by
-         [typing_sch_equiv_ctx] (typing does not care which of two equivalent
-         schemes a variable has). *)
-      (* body *)
-      intros x Hx.
-      apply typing_sch_equiv_ctx with (G := (x ~ casch st sr g gr s) ++ G').
-      * apply (IH2 x ltac:(fsetdec) st sr ((x ~ casch st sr g gr s) ++ G') A).
+    exists (casch st sr g gr s), (fun a => st (g a)), (fun r => sr (gr r)), A2.
+    refine (conj _ (conj _ (conj _ (conj Hcaschinst (conj _ _))))).
+    - (* the bound term is typed under the substitution run after the renaming *)
+      apply ctx_subst_precomp; [ exact Hcs | exact HgfixG | exact HgrfixG ].
+    - (* tr_supp *)
+      split.
+      + intros a Ha. unfold A2 in Ha.
+        assert (g a = a).
+        { apply Hgfix; [ fsetdec | ]. intro Hc. apply lset_in in Hc. fsetdec. }
+        rewrite H. apply HsuppT. fsetdec.
+      + intros r Hr. unfold A2 in Hr.
+        assert (gr r = r).
+        { apply Hgrfix; [ fsetdec | ]. intro Hc. apply lset_in in Hc. fsetdec. }
+        rewrite H. apply HsuppR. fsetdec.
+    - (* tr_compat *)
+      unfold tr_compat. repeat split.
+      + intros a Ha. rewrite (HgfixG a Ha). apply HcT; exact Ha.
+      + intros a Ha. rewrite (HgfixG a Ha). apply HcFr; exact Ha.
+      + intros r Hr. rewrite (HgrfixG r Hr). apply HcRt; exact Hr.
+      + intros r Hr. rewrite (HgrfixG r Hr). apply HcRfr; exact Hr.
+    - rewrite ap_precomp. rewrite HbodyT1 in Hbridge. exact Hbridge.
+    - (* tr_compat for the context extended with the substituted scheme *)
+      intros x. unfold tr_compat; simpl. repeat split.
+      + intros a Ha. intros z Hz. apply AtomSetFacts.union_iff. right.
+        apply (HcT a); [ fold s; fsetdec | exact Hz ].
+      + intros a Ha. intros z Hz. apply AtomSetFacts.union_iff. right.
+        apply (HcFr a); [ fold s; fsetdec | exact Hz ].
+      + intros r Hr. intros z Hz. apply AtomSetFacts.union_iff. right.
+        apply (HcRt r); [ fold s; fsetdec | exact Hz ].
+      + intros r Hr. intros z Hz. apply AtomSetFacts.union_iff. right.
+        apply (HcRfr r); [ fold s; fsetdec | exact Hz ].
+Qed.
+
+
+(* The general type/row substitution lemma: a kind-respecting substitution
+   applied to a derivation, with the context substituted capture-avoidingly
+   ([ctx_subst]), finite support ([tr_supp]) and image-compatibility
+   ([tr_compat]).  Every case is structural except T-Let, which freshens the
+   let-generalized variables (via [mk_rename]) so that [casch_inst] supplies the
+   instances and [casch_gen_sch_equiv] lines the scheme back up with [gen].
+
+   What it says, in everyday terms: take any typing derivation, and a
+   substitution [st]/[sr] ([st] replaces type variables, [sr] replaces row
+   variables).  If the new context [G'] is what you get from [G] by applying
+   the substitution (that is [ctx_subst]), and the substitution only changes
+   a bounded set [A] of names ([tr_supp]) and does not smuggle in names that
+   [G'] lacks ([tr_compat]), then the same term still type checks, at the
+   substituted type.  [G'] may have extra variables; that slack is what lets
+   the identity substitution double as WEAKENING (adding unused variables).
+
+   How the proof goes: we prove it for every typing derivation by taking each
+   typing rule in turn (the typing derivation is built from rules, so this
+   covers all of them).  When the rule has sub-derivations, we may assume the
+   lemma already holds for them: that assumption is the induction hypothesis,
+   named [IH], [IH1], [IH2] below. *)
+Lemma typing_tsubst_gen_mut :
+  (forall G e T, typing G e T -> forall st sr G' A,
+      uniq G' -> ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
+      typing G' e (ap_typ st sr T)) /\
+  (forall G fs R, field_typing G fs R -> forall st sr G' A,
+      uniq G' -> ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
+      field_typing G' fs (ap_row st sr R)).
+Proof.
+  (* Do induction over typing derivations (and, mutually, over the field lists
+     of a record).  This produces one case per typing rule; each [intros]
+     below names the pieces of that rule so we can talk about them. *)
+  apply typing_field_mutind.
+  - (* Case: the term is a variable [x], looked up in the context. *)
+    (* Its scheme [s] in [G] has a matching scheme [s'] in [G'] (this is what
+       [ctx_subst] promises), and any instance of [s] becomes an instance of
+       [s'] after substituting.  So the variable rule applies again. *)
+    intros G x s T Hu Hb Hi st sr G' A Hu' Hcs Hsupp Hcompat.
+    destruct (ctx_subst_binds _ _ _ _ _ _ Hcs Hb) as [s' [Hb' Hss]].
+    apply T_Var with (s := s'); auto.
+  - intros G n Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_Num; auto.
+  - intros G d Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_Dec; auto.
+  - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_True; auto.
+  - intros G Hu st sr G' A Hu' Hcs Hsupp Hcompat. apply T_False; auto.
+  - (* Case: a function [fun x => e] (T_Abs).  We must type its body with the
+       parameter [x] added to the context at type [T1].  [x] is a brand new
+       name picked fresh (not in [L] or [G']); the induction hypothesis then
+       types the body in the extended context.  The lengthy last bullet only
+       shows that adding [x] keeps the [tr_compat] side condition true. *)
+    intros L G e T1 T2 Ht IH st sr G' A Hu' Hcs Hsupp Hcompat. simpl.
+    apply T_Abs with (L := L `union` dom G'). intros x Hx.
+    apply (IH x ltac:(fsetdec) st sr ((x ~ sch_mono (ap_typ st sr T1)) ++ G') A).
+    + constructor; [ assumption | fsetdec ].
+    + apply ctx_subst_cons; [ apply sch_subst_mono | assumption ].
+    + assumption.
+    + (* tr_compat for the extended ctx *)
+      destruct Hcompat as [HcT [HcFr [HcRt HcRfr]]].
+      unfold tr_compat; simpl. repeat split.
+      * intros a Ha. rewrite AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
+        -- rewrite ftv_sch_mono in Ha. intros z Hz. apply AtomSetFacts.union_iff. left.
+           rewrite ftv_sch_mono. apply (ftv_ap_in1 st sr T1 z a); [ exact Ha | exact Hz ].
+        -- intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcT a Ha). exact Hz.
+      * intros a Ha. rewrite AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
+        -- rewrite ftv_sch_mono in Ha. intros z Hz. apply AtomSetFacts.union_iff. left.
+           rewrite frv_sch_mono. apply (frv_ap_in1 st sr T1 z a); [ exact Ha | exact Hz ].
+        -- intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcFr a Ha). exact Hz.
+      * intros r Hr. rewrite AtomSetFacts.union_iff in Hr. destruct Hr as [Hr|Hr].
+        -- rewrite frv_sch_mono in Hr. intros z Hz. apply AtomSetFacts.union_iff. left.
+           rewrite ftv_sch_mono. apply (ftv_ap_in2 st sr T1 z r); [ exact Hr | exact Hz ].
+        -- intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcRt r Hr). exact Hz.
+      * intros r Hr. rewrite AtomSetFacts.union_iff in Hr. destruct Hr as [Hr|Hr].
+        -- rewrite frv_sch_mono in Hr. intros z Hz. apply AtomSetFacts.union_iff. left.
+           rewrite frv_sch_mono. apply (frv_ap_in2 st sr T1 z r); [ exact Hr | exact Hz ].
+        -- intros z Hz. apply AtomSetFacts.union_iff. right. apply (HcRfr r Hr). exact Hz.
+  - (* Case: a call [e1 e2] (T_App).  Nothing is bound here, so we just apply
+       the induction hypotheses to the function part and the argument part. *)
+    intros G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat. simpl in *.
+    eapply T_App; [ eapply IH1 | eapply IH2 ]; eauto.
+  - (* Case: [let x = e1 in e2] with [e1] a syntactic value (T_Let).  The
+       renaming of the generalized variables is [tsubst_gen_core]; here we
+       rebuild the [let] around it. *)
+    intros L0 G e1 e2 T1 T2 Hgv Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
+    destruct (tsubst_gen_core G T1 st sr G' A Hcs Hsupp Hcompat)
+      as [s' [st1 [sr1 [A1 [Hcs1 [Hsupp1 [Hcompat1 [Hsi [Hbr Hcx]]]]]]]]].
+    apply T_Let with (L := L0 `union` dom G') (T1 := ap_typ st1 sr1 T1);
+      [ assumption | eapply IH1; eauto | ].
+    intros x Hx.
+    apply typing_sch_equiv_ctx with (G := (x ~ s') ++ G').
+    + apply (IH2 x ltac:(fsetdec) st sr ((x ~ s') ++ G') A).
+      * constructor; [ assumption | fsetdec ].
+      * apply ctx_subst_cons; [ exact Hsi | exact Hcs ].
+      * exact Hsupp.
+      * apply Hcx.
+    + apply ctx_equiv_cons; [ exact Hbr | apply ctx_equiv_refl ].
+  - (* T_LetMono: the binding is monomorphic, so it is the function case. *)
+    intros L0 G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
+    apply T_LetMono with (L := L0 `union` dom G') (T1 := ap_typ st sr T1);
+      [ eapply IH1; eauto | ].
+    intros x Hx.
+    apply (IH2 x ltac:(fsetdec) st sr ((x ~ sch_mono (ap_typ st sr T1)) ++ G') A).
+    + constructor; [ assumption | fsetdec ].
+    + apply ctx_subst_cons; [ apply sch_subst_mono | assumption ].
+    + assumption.
+    + apply tr_compat_cons_mono; assumption.
+  - (* Case: a recursive group (T_Letrec).  The members are typed with the
+       group's record type [R] monomorphic (as a function's parameter is), and
+       the body with the group generalized like a [let]. *)
+    intros L0 G fs e2 R T Hfg Hfs IHfs Ht2 IH2 st sr G' A Hu' Hcs Hsupp Hcompat.
+    destruct (tsubst_gen_core G (typ_Record R) st sr G' A Hcs Hsupp Hcompat)
+      as [s' [st1 [sr1 [A1 [Hcs1 [Hsupp1 [Hcompat1 [Hsi [Hbr Hcx]]]]]]]]].
+    apply T_Letrec with (L := L0 `union` dom G') (R := ap_row st1 sr1 R);
+      [ assumption | | ].
+    + intros p Hp.
+      apply (IHfs p ltac:(fsetdec) st1 sr1
+               ((p ~ sch_mono (ap_typ st1 sr1 (typ_Record R))) ++ G') A1).
+      * constructor; [ assumption | fsetdec ].
+      * apply ctx_subst_cons; [ apply sch_subst_mono | assumption ].
+      * assumption.
+      * apply tr_compat_cons_mono; assumption.
+    + intros p Hp.
+      apply typing_sch_equiv_ctx with (G := (p ~ s') ++ G').
+      * apply (IH2 p ltac:(fsetdec) st sr ((p ~ s') ++ G') A).
         -- constructor; [ assumption | fsetdec ].
-        -- apply ctx_subst_cons; [ exact Hcaschinst | exact Hcs ].
-        -- split; [exact HsuppT | exact HsuppR].
-        -- (* tr_compat for extended ctx *)
-           unfold tr_compat; simpl. repeat split.
-           ++ intros a Ha. intros z Hz. apply AtomSetFacts.union_iff. right.
-              apply (HcT a); [ assert (ftv_sch s [<=] ftv_ctx G) by exact HsubST; fold s; fsetdec | exact Hz ].
-           ++ intros a Ha. intros z Hz. apply AtomSetFacts.union_iff. right.
-              apply (HcFr a); [ fold s; fsetdec | exact Hz ].
-           ++ intros r Hr. intros z Hz. apply AtomSetFacts.union_iff. right.
-              apply (HcRt r); [ fold s; fsetdec | exact Hz ].
-           ++ intros r Hr. intros z Hz. apply AtomSetFacts.union_iff. right.
-              apply (HcRfr r); [ fold s; fsetdec | exact Hz ].
-      * apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
-        rewrite HbodyT1 in Hbridge. fold B' in Hbridge. exact Hbridge.
+        -- apply ctx_subst_cons; [ exact Hsi | exact Hcs ].
+        -- exact Hsupp.
+        -- apply Hcx.
+      * apply ctx_equiv_cons; [ exact Hbr | apply ctx_equiv_refl ].
+
   - (* Remaining cases (records, field access, conversion): no variable is
        bound, so each is the induction hypothesis plus re-applying the rule.
        T_Conv additionally needs that type equality survives substitution
@@ -1102,7 +1166,7 @@ Qed.
 (* ================================================================== *)
 
 Lemma typing_subst_mut : forall x U u G1,
-  typing G1 u U ->
+  is_gen_value u = true -> typing G1 u U ->
   (forall Gm e T, typing Gm e T ->
      forall G2, Gm = G2 ++ (x ~ sch_mono U) ++ G1 ->
      typing (G2 ++ G1) (subst_exp u x e) T) /\
@@ -1110,7 +1174,7 @@ Lemma typing_subst_mut : forall x U u G1,
      forall G2, Gm = G2 ++ (x ~ sch_mono U) ++ G1 ->
      field_typing (G2 ++ G1) (subst_fields u x fs) R).
 Proof.
-  intros x U u G1 Hu.
+  intros x U u G1 Hgu Hu.
   apply typing_field_mutind.
   - (* T_Var *) intros G y s T Huq Hb Hi G2 Heq; subst.
     destruct (y == x) as [Hx|Hx].
@@ -1135,8 +1199,9 @@ Proof.
   - (* T_App *) intros G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply T_App.
     + apply (IH1 G2); reflexivity.
     + apply (IH2 G2); reflexivity.
-  - (* T_Let *) intros L G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+  - (* T_Let *) intros L G e1 e2 T1 T2 Hgv Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
     apply T_Let with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (T1 := T1).
+    + apply is_gen_subst; assumption.
     + apply (IH1 G2); reflexivity.
     + intros x0 Hx0.
       rewrite <- (subst_open_var e2 u x x0) by
@@ -1144,6 +1209,32 @@ Proof.
       eapply typing_ftv_mono.
       * rewrite_env (((x0 ~ gen (G2 ++ (x ~ sch_mono U) ++ G1) T1) ++ G2) ++ G1).
         apply (IH2 x0 ltac:(fsetdec) ((x0 ~ gen (G2 ++ (x ~ sch_mono U) ++ G1) T1) ++ G2)).
+        simpl_alist. reflexivity.
+      * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
+        apply gen_antimono; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
+  - (* T_LetMono *) intros L G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+    apply T_LetMono with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (T1 := T1).
+    + apply (IH1 G2); reflexivity.
+    + intros x0 Hx0.
+      rewrite <- (subst_open_var e2 u x x0) by
+        (first [ fsetdec | eapply typing_regular; exact Hu ]).
+      rewrite_env (((x0 ~ sch_mono T1) ++ G2) ++ G1).
+      apply (IH2 x0 ltac:(fsetdec) ((x0 ~ sch_mono T1) ++ G2)). simpl_alist. reflexivity.
+  - (* T_Letrec *) intros L G fs e2 R T Hfg Hfs IHfs Hr2 IH2 G2 Heq; subst. simpl.
+    apply T_Letrec with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (R := R).
+    + apply fn_group_subst; assumption.
+    + intros p Hp.
+      rewrite <- (subst_open_fields_var fs u x p) by
+        (first [ fsetdec | eapply typing_regular; exact Hu ]).
+      rewrite_env (((p ~ sch_mono (typ_Record R)) ++ G2) ++ G1).
+      apply (IHfs p ltac:(fsetdec) ((p ~ sch_mono (typ_Record R)) ++ G2)). simpl_alist. reflexivity.
+    + intros p Hp.
+      rewrite <- (subst_open_var e2 u x p) by
+        (first [ fsetdec | eapply typing_regular; exact Hu ]).
+      eapply typing_ftv_mono.
+      * rewrite_env (((p ~ gen (G2 ++ (x ~ sch_mono U) ++ G1) (typ_Record R)) ++ G2) ++ G1).
+        apply (IH2 p ltac:(fsetdec)
+                 ((p ~ gen (G2 ++ (x ~ sch_mono U) ++ G1) (typ_Record R)) ++ G2)).
         simpl_alist. reflexivity.
       * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
         apply gen_antimono; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
@@ -1166,11 +1257,22 @@ Qed.
 
 Lemma typing_subst : forall G x U e T u,
   typing ((x ~ sch_mono U) ++ G) e T ->
+  is_gen_value u = true ->
   typing G u U ->
   typing G (subst_exp u x e) T.
 Proof.
-  intros G x U e T u Hty Hu.
-  exact (proj1 (typing_subst_mut x U u G Hu) _ e T Hty nil eq_refl).
+  intros G x U e T u Hty Hgu Hu.
+  exact (proj1 (typing_subst_mut x U u G Hgu Hu) _ e T Hty nil eq_refl).
+Qed.
+
+Lemma field_typing_subst : forall G x U fs R u,
+  field_typing ((x ~ sch_mono U) ++ G) fs R ->
+  is_gen_value u = true ->
+  typing G u U ->
+  field_typing G (subst_fields u x fs) R.
+Proof.
+  intros G x U fs R u Hty Hgu Hu.
+  exact (proj2 (typing_subst_mut x U u G Hgu Hu) _ fs R Hty nil eq_refl).
 Qed.
 
 (* ================================================================== *)
@@ -1185,7 +1287,7 @@ Qed.
 (* ================================================================== *)
 
 Lemma typing_subst_poly_mut : forall x T1 v G1,
-  typing G1 v T1 ->
+  is_gen_value v = true -> typing G1 v T1 ->
   (forall Gm e T, typing Gm e T ->
      forall G2, Gm = G2 ++ (x ~ gen G1 T1) ++ G1 ->
      typing (G2 ++ G1) (subst_exp v x e) T) /\
@@ -1193,7 +1295,7 @@ Lemma typing_subst_poly_mut : forall x T1 v G1,
      forall G2, Gm = G2 ++ (x ~ gen G1 T1) ++ G1 ->
      field_typing (G2 ++ G1) (subst_fields v x fs) R).
 Proof.
-  intros x T1 v G1 Hv.
+  intros x T1 v G1 Hgv Hv.
   apply typing_field_mutind.
   - (* T_Var *) intros G y s T Huq Hb Hi G2 Heq; subst.
     destruct (y == x) as [Hx|Hx].
@@ -1220,8 +1322,9 @@ Proof.
   - (* T_App *) intros G e1 e2 T0 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl. eapply T_App.
     + apply (IH1 G2); reflexivity.
     + apply (IH2 G2); reflexivity.
-  - (* T_Let *) intros L G e1 e2 T0 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+  - (* T_Let *) intros L G e1 e2 T0 T2 Hgv0 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
     apply T_Let with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp v) (T1 := T0).
+    + apply is_gen_subst; assumption.
     + apply (IH1 G2); reflexivity.
     + intros x0 Hx0.
       rewrite <- (subst_open_var e2 v x x0) by
@@ -1229,6 +1332,32 @@ Proof.
       eapply typing_ftv_mono.
       * rewrite_env (((x0 ~ gen (G2 ++ (x ~ gen G1 T1) ++ G1) T0) ++ G2) ++ G1).
         apply (IH2 x0 ltac:(fsetdec) ((x0 ~ gen (G2 ++ (x ~ gen G1 T1) ++ G1) T0) ++ G2)).
+        simpl_alist. reflexivity.
+      * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
+        apply gen_antimono; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
+  - (* T_LetMono *) intros L G e1 e2 T0 T2 Hr1 IH1 Hr2 IH2 G2 Heq; subst. simpl.
+    apply T_LetMono with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp v) (T1 := T0).
+    + apply (IH1 G2); reflexivity.
+    + intros x0 Hx0.
+      rewrite <- (subst_open_var e2 v x x0) by
+        (first [ fsetdec | eapply typing_regular; exact Hv ]).
+      rewrite_env (((x0 ~ sch_mono T0) ++ G2) ++ G1).
+      apply (IH2 x0 ltac:(fsetdec) ((x0 ~ sch_mono T0) ++ G2)). simpl_alist. reflexivity.
+  - (* T_Letrec *) intros L G fs e2 R T Hfg Hfs IHfs Hr2 IH2 G2 Heq; subst. simpl.
+    apply T_Letrec with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp v) (R := R).
+    + apply fn_group_subst; assumption.
+    + intros p Hp.
+      rewrite <- (subst_open_fields_var fs v x p) by
+        (first [ fsetdec | eapply typing_regular; exact Hv ]).
+      rewrite_env (((p ~ sch_mono (typ_Record R)) ++ G2) ++ G1).
+      apply (IHfs p ltac:(fsetdec) ((p ~ sch_mono (typ_Record R)) ++ G2)). simpl_alist. reflexivity.
+    + intros p Hp.
+      rewrite <- (subst_open_var e2 v x p) by
+        (first [ fsetdec | eapply typing_regular; exact Hv ]).
+      eapply typing_ftv_mono.
+      * rewrite_env (((p ~ gen (G2 ++ (x ~ gen G1 T1) ++ G1) (typ_Record R)) ++ G2) ++ G1).
+        apply (IH2 p ltac:(fsetdec)
+                 ((p ~ gen (G2 ++ (x ~ gen G1 T1) ++ G1) (typ_Record R)) ++ G2)).
         simpl_alist. reflexivity.
       * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
         apply gen_antimono; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
@@ -1251,11 +1380,12 @@ Qed.
 
 Lemma typing_subst_poly : forall G x T1 e T2 v,
   typing ((x ~ gen G T1) ++ G) e T2 ->
+  is_gen_value v = true ->
   typing G v T1 ->
   typing G (subst_exp v x e) T2.
 Proof.
-  intros G x T1 e T2 v Hty Hv.
-  exact (proj1 (typing_subst_poly_mut x T1 v G Hv) _ e T2 Hty nil eq_refl).
+  intros G x T1 e T2 v Hty Hgv Hv.
+  exact (proj1 (typing_subst_poly_mut x T1 v G Hgv Hv) _ e T2 Hty nil eq_refl).
 Qed.
 
 (* ================================================================== *)
@@ -1319,6 +1449,32 @@ Scheme step_mut := Induction for step Sort Prop
 with   step_fields_mut := Induction for step_fields Sort Prop.
 Combined Scheme step_step_fields_mutind from step_mut, step_fields_mut.
 
+(* A syntactic value stays one when it steps (a record of syntactic values
+   steps only inside a field that is a recursive group around a value). *)
+Lemma step_gen_mut :
+  (forall e e', step e e' -> is_gen_value e = true -> is_gen_value e' = true) /\
+  (forall fs fs', step_fields fs fs' -> is_gen_fields fs = true -> is_gen_fields fs' = true).
+Proof.
+  apply step_step_fields_mutind; try (intros; discriminate).
+  - (* st_letrec *) intros fs e2 Hfg Hgen. simpl in Hgen |- *.
+    apply andb_prop in Hgen. destruct Hgen as [Hfs He2].
+    apply is_gen_open; [ | exact He2 ].
+    simpl. apply is_gen_open_fields; [ simpl; rewrite Hfs; reflexivity | exact Hfs ].
+  - (* st_rec *) intros fs fs' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
+  - (* st_tofloat1 *) intros e e' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
+  - (* st_tofloat *) intros z d Hgen. reflexivity.
+  - (* stf_here *) intros l e e' fs Hstep IH Hgen. simpl in Hgen |- *.
+    apply andb_prop in Hgen. destruct Hgen as [He Hfs].
+    rewrite (IH He), Hfs. reflexivity.
+  - (* stf_cons *) intros l v fs fs' Hv Hstep IH Hgen. simpl in Hgen |- *.
+    apply andb_prop in Hgen. destruct Hgen as [Hv0 Hfs].
+    rewrite Hv0, (IH Hfs). reflexivity.
+Qed.
+
+Lemma step_gen : forall e e',
+  step e e' -> is_gen_value e = true -> is_gen_value e' = true.
+Proof. apply step_gen_mut. Qed.
+
 (* Do induction on the step relation: one case per step rule.  Each case
    begins by assuming the term before the step is typed at [T] in context
    [G] (that is the [Hty] below) and must show the stepped term is too. *)
@@ -1344,7 +1500,7 @@ Proof.
     assert (Hxe : x `notin` fv_exp e) by fsetdec.
     assert (Hv' : typing G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
     assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
-      by (eapply typing_subst; [ apply Hbody; exact HxL | exact Hv' ]).
+      by (eapply typing_subst; [ apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hv' ]).
     (* Plugging [v] into the body opened with [x] equals opening the body with
        [v] directly (that is [subst_intro]); that is exactly the stepped
        term.  The final lines just match up the types, which agree. *)
@@ -1371,8 +1527,10 @@ Proof.
     pick fresh x for (L \u fv_exp e2).
     assert (HxL : x `notin` L) by fsetdec.
     assert (Hxe : x `notin` fv_exp e2) by fsetdec.
-    assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e2 (e_fvar_f x))) T2)
-      by (eapply typing_subst_poly; [ apply Hbody; exact HxL | exact Hty1 ]).
+    assert (Hopen : typing G (subst_exp v x (open_exp_wrt_exp e2 (e_fvar_f x))) T2).
+    { destruct Hbody as [[_ Hbody] | Hbody].
+      - eapply typing_subst_poly; [ apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hty1 ].
+      - eapply typing_subst; [ apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hty1 ]. }
     rewrite <- subst_intro in Hopen by exact Hxe.
     eapply T_Conv; [ exact Hopen | exact Hteq ].
   - (* Case: the bound expression of a [let] stepped (st_let1).  Congruence.
@@ -1380,8 +1538,58 @@ Proof.
        is the same, so the generalization and the body's typing carry over. *)
     intros e1 e1' e2 Hstep IH G T Hty.
     apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
-    eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1);
-                     [ apply IH; exact Hty1 | exact Hbody ] | exact Hteq ].
+    destruct Hbody as [[Hgv Hbody] | Hbody].
+    + (* a generalized binding stays a syntactic value when it steps *)
+      eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1);
+                       [ eapply step_gen; eassumption | apply IH; exact Hty1 | exact Hbody ]
+                     | exact Hteq ].
+    + eapply T_Conv; [ eapply T_LetMono with (L := L) (T1 := T1);
+                       [ apply IH; exact Hty1 | exact Hbody ] | exact Hteq ].
+  - (* Case: a recursive group unrolls (st_letrec).  Name the group's
+       record type [R].  The group itself, [letrec fs in p], has type [R]
+       (the body is the group name, typed by an instance of its scheme).
+       Substituting that group for the name inside the members, which were
+       typed with the name at [R], types the unrolled members at [R]; those
+       members form a record value, and substituting it for the name in the
+       body is the polymorphic substitution lemma. *)
+    intros fs e2 Hfg G T Hty.
+    destruct (letrec_inv _ _ _ _ Hty) as [L [R [T2 [Hfg' [Hfs [Hbody Hteq]]]]]].
+    pick fresh p for (L \u fv_exp e2 \u fv_fields fs).
+    assert (HpL : p `notin` L) by fsetdec.
+    assert (Hpe : p `notin` fv_exp e2) by fsetdec.
+    assert (Hpf : p `notin` fv_fields fs) by fsetdec.
+    assert (Hu : uniq G).
+    { pose proof (proj2 typing_uniq_mut _ _ _ (Hfs p HpL)) as Hup.
+      eapply uniq_cons_1; exact Hup. }
+    assert (Hgrp : typing G (e_letrec fs (e_fvar_b 0)) (typ_Record R)).
+    { apply T_Letrec with (L := L) (R := R); [ exact Hfg' | exact Hfs | ].
+      intros q Hq. unfold open_exp_wrt_exp. cbn [open_exp_wrt_exp_rec].
+      apply T_Var with (s := gen G (typ_Record R)).
+      - pose proof (proj2 typing_uniq_mut _ _ _ (Hfs q Hq)) as Huq.
+        apply uniq_cons_3; [ eapply uniq_cons_1; exact Huq | eapply uniq_cons_2; exact Huq ].
+      - apply binds_cons_2; reflexivity.
+      - exists idt, idr. split; [ | split ].
+        + intros a _. reflexivity.
+        + intros r _. reflexivity.
+        + symmetry. apply ap_typ_pointwise_id; reflexivity. }
+    assert (Hgengrp : is_gen_value (e_letrec fs (e_fvar_b 0)) = true).
+    { simpl. rewrite (fn_group_gen _ Hfg). reflexivity. }
+    assert (Hmem : field_typing G
+              (subst_fields (e_letrec fs (e_fvar_b 0)) p (open_fields_wrt_exp fs (e_fvar_f p))) R)
+      by (eapply field_typing_subst; [ apply Hfs; exact HpL | exact Hgengrp | exact Hgrp ]).
+    rewrite <- subst_intro_fields in Hmem by exact Hpf.
+    assert (Hrec : typing G
+              (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))) (typ_Record R))
+      by (apply T_Record; exact Hmem).
+    assert (Hrecgen : is_gen_value
+              (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))) = true).
+    { simpl. apply is_gen_open_fields; [ exact Hgengrp | apply fn_group_gen; exact Hfg ]. }
+    assert (Hopen : typing G
+              (subst_exp (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))) p
+                 (open_exp_wrt_exp e2 (e_fvar_f p))) T2)
+      by (eapply typing_subst_poly; [ apply Hbody; exact HpL | exact Hrecgen | exact Hrec ]).
+    rewrite <- subst_intro in Hopen by exact Hpe.
+    eapply T_Conv; [ exact Hopen | exact Hteq ].
   - (* Case: the record in a field access [e.l] stepped (st_proj).
        Congruence. *)
     intros e e' l Hstep IH G T Hty.

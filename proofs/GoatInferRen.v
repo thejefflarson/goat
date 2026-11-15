@@ -92,8 +92,9 @@ Proof.
     intros G e1 e2 T1 T2 H1 IH1 H2 IH2 G2 Hg Hy. subst G. cbn [subst_exp].
     eapply T_App; [ eapply IH1 | eapply IH2 ]; eauto.
   - (* T_Let *)
-    intros L G e1 e2 T1 T2 H1 IH1 Hb IH2 G2 Hg Hy. subst G. cbn [subst_exp].
+    intros L G e1 e2 T1 T2 Hgv H1 IH1 Hb IH2 G2 Hg Hy. subst G. cbn [subst_exp].
     apply T_Let with (L := L `union` {{x}} `union` {{y}}) (T1 := T1).
+    + apply is_gen_subst; [ reflexivity | exact Hgv ].
     + eapply IH1; eauto.
     + intros z Hz.
       assert (Hzx : z <> x) by fsetdec.
@@ -104,6 +105,49 @@ Proof.
       assert (Hydom : y `notin` dom ((z ~ gen (G2 ++ (x ~ sc) ++ G1) T1) ++ G2 ++ (x ~ sc) ++ G1))
         by (simpl in *; fsetdec).
       pose proof (IH2 z HzL ((z ~ gen (G2 ++ (x ~ sc) ++ G1) T1) ++ G2) Hshape Hydom) as IH'.
+      rewrite (subst_open_var e2 (e_fvar_f y) x z Hzx (lc_fvar_f y)) in IH'.
+      rewrite <- app_assoc in IH'.
+      eapply typing_sch_equiv_ctx; [ exact IH' | ].
+      apply ctx_equiv_cons; [ apply gen_swap_mid | apply ctx_equiv_refl ].
+  - (* T_LetMono *)
+    intros L G e1 e2 T1 T2 H1 IH1 Hb IH2 G2 Hg Hy. subst G. cbn [subst_exp].
+    apply T_LetMono with (L := L `union` {{x}} `union` {{y}}) (T1 := T1).
+    + eapply IH1; eauto.
+    + intros z Hz.
+      assert (Hzx : z <> x) by fsetdec.
+      assert (HzL : z `notin` L) by fsetdec.
+      assert (Hshape : (z ~ sch_mono T1) ++ G2 ++ (x ~ sc) ++ G1
+                       = ((z ~ sch_mono T1) ++ G2) ++ (x ~ sc) ++ G1)
+        by (rewrite <- app_assoc; reflexivity).
+      assert (Hydom : y `notin` dom ((z ~ sch_mono T1) ++ G2 ++ (x ~ sc) ++ G1))
+        by (simpl in *; fsetdec).
+      pose proof (IH2 z HzL ((z ~ sch_mono T1) ++ G2) Hshape Hydom) as IH'.
+      rewrite (subst_open_var e2 (e_fvar_f y) x z Hzx (lc_fvar_f y)) in IH'.
+      rewrite <- app_assoc in IH'. exact IH'.
+  - (* T_Letrec *)
+    intros L G fs e2 R T Hfg Hf IHf Hb IH2 G2 Hg Hy. subst G. cbn [subst_exp].
+    apply T_Letrec with (L := L `union` {{x}} `union` {{y}}) (R := R).
+    + apply fn_group_subst; exact Hfg.
+    + intros z Hz.
+      assert (Hzx : z <> x) by fsetdec.
+      assert (HzL : z `notin` L) by fsetdec.
+      assert (Hshape : (z ~ sch_mono (typ_Record R)) ++ G2 ++ (x ~ sc) ++ G1
+                       = ((z ~ sch_mono (typ_Record R)) ++ G2) ++ (x ~ sc) ++ G1)
+        by (rewrite <- app_assoc; reflexivity).
+      assert (Hydom : y `notin` dom ((z ~ sch_mono (typ_Record R)) ++ G2 ++ (x ~ sc) ++ G1))
+        by (simpl in *; fsetdec).
+      pose proof (IHf z HzL ((z ~ sch_mono (typ_Record R)) ++ G2) Hshape Hydom) as IH'.
+      rewrite (subst_open_fields_var fs (e_fvar_f y) x z Hzx (lc_fvar_f y)) in IH'.
+      rewrite <- app_assoc in IH'. exact IH'.
+    + intros z Hz.
+      assert (Hzx : z <> x) by fsetdec.
+      assert (HzL : z `notin` L) by fsetdec.
+      assert (Hshape : (z ~ gen (G2 ++ (x ~ sc) ++ G1) (typ_Record R)) ++ G2 ++ (x ~ sc) ++ G1
+                       = ((z ~ gen (G2 ++ (x ~ sc) ++ G1) (typ_Record R)) ++ G2) ++ (x ~ sc) ++ G1)
+        by (rewrite <- app_assoc; reflexivity).
+      assert (Hydom : y `notin` dom ((z ~ gen (G2 ++ (x ~ sc) ++ G1) (typ_Record R)) ++ G2 ++ (x ~ sc) ++ G1))
+        by (simpl in *; fsetdec).
+      pose proof (IH2 z HzL ((z ~ gen (G2 ++ (x ~ sc) ++ G1) (typ_Record R)) ++ G2) Hshape Hydom) as IH'.
       rewrite (subst_open_var e2 (e_fvar_f y) x z Hzx (lc_fvar_f y)) in IH'.
       rewrite <- app_assoc in IH'.
       eapply typing_sch_equiv_ctx; [ exact IH' | ].

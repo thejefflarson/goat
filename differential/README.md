@@ -59,8 +59,10 @@ parameter or argument (`U` lines) is compared in both directions. A program with
 several (`N` lines) is compared only when the Rust checker accepts it, since the
 Rust checker rejects a partial call that the curried calculus accepts.
 
-A `let` of a computed value is skipped because the Rust checker does not
-generalize it (the value restriction, ADR 0027) and the calculus does.
+A `let` of a computed value is skipped: the calculus types it monomorphically
+(`T_LetMono`, the value restriction of ADR 0027) but the proven algorithm only
+accepts a `let` of a syntactic value. A recursive function is skipped for the
+same reason (`T_Letrec`); the algorithm covers both in a later phase.
 
 ## Types up to renaming
 

@@ -27,9 +27,10 @@
 % records as scoped-label rows (Leijen) with construction and first-label
 % projection, and (phase 1 of ADR 0037) Unit, String, `if`, and the operators on
 % Int, Float, String and Bool at concrete types (ADR 0017, ADR 0036), with a
-% defined runtime error (a trap) for integer division by zero. Out of scope
+% defined runtime error (a trap) for integer division by zero, and (phase 2)
+% the value restriction and recursive groups of functions. Out of scope
 % (deltas on the proven core): RC/heap, variants/match, recursive (mu) types,
-% recursion, constraint-polymorphic operators, comparison of Unit, mono.
+% constraint-polymorphic operators, comparison of Unit, mono.
 % An Int is a signed 64-bit integer and a result outside the range traps; a
 % Float is opaque (every Float operation is unspecified); an explicit
 % Int-to-Float coercion float(e), inserted by elaboration, is the only way an
@@ -98,6 +99,9 @@ e :: 'e_' ::= {{ com term }}
   | e ( </ ei // i /> )                 ::   :: App  {{ com n-ary application }}
   | x = e1  e2                          ::   :: Let
     ( + bind x in e2 + )                {{ com binding; x scopes over e2 only }}
+  | letrec </ fi = ei // i /> in e     ::   :: Letrec
+    ( + bind </ fi // i /> in </ ei // i /> + )
+    ( + bind </ fi // i /> in e + )     {{ com recursive group of functions }}
   | { </ li : ei // i /> }              ::   :: Rec  {{ com record literal (closed) }}
   | e . l                               ::   :: Proj {{ com field projection }}
   | unit                                ::   :: Unit {{ com the unit value }}
@@ -147,6 +151,13 @@ grammar
     | l notin </ li // i />                                  ::   :: label_fresh
       {{ com l does not occur in the list }}
       {{ tex [[l]] \notin \{ [[</ li // i />]] \} }}
+    | gen_value e                                            ::   :: genvalue
+      {{ com e is a syntactic value: unit, a constant, a name, a function, a record of those, float of one, or a letrec around one }}
+    | </ ei is a function // i />                            ::   :: functions
+      {{ com each e_i is a program literal }}
+    | </ ai // i /> </ rj // j /> = gen ( G , </ Ti // i /> )  ::   :: genvarsgroup
+      {{ com the a_i and r_j are exactly the variables free in the T_i and not in G }}
+      {{ tex \{[[</ ai // i />]]\} \cup \{[[</ rj // j />]]\} = \mathrm{ftv}([[</ Ti // i />]]) \setminus \mathrm{ftv}([[G]]) }}
     | </ ai // i /> </ rj // j /> = gen ( G , T )            ::   :: genvars
       {{ com the a_i and r_j are exactly ftv(T) \ ftv(G): the generalized set }}
       {{ tex \{[[</ ai // i />]]\} \cup \{[[</ rj // j />]]\} = \mathrm{ftv}([[T]]) \setminus \mathrm{ftv}([[G]]) }}
@@ -294,11 +305,27 @@ G |- e : T :: :: typ :: 'T_'
   ------------------------------- :: App
   G |- e ( </ ei // i /> ) : T
 
+  gen_value e1
   G |- e1 : T1
   </ ai // i /> </ rj // j /> = gen ( G , T1 )
   G , x : ( forall </ ai // i /> </ rj // j /> . T1 ) |- e2 : T2
   ------------------------------------------------------------- :: Let
   G |- x = e1  e2 : T2
+
+  % any binding may stay monomorphic; a computed e1 has no other rule
+  G |- e1 : T1
+  G , x : T1 |- e2 : T2
+  --------------------- :: LetMono
+  G |- x = e1  e2 : T2
+
+  % the group is generalized as a whole: each member's scheme quantifies the
+  % variables of the group's types that G does not fix
+  </ ei is a function // i />
+  </ G , </ fk : Tk // k /> |- ei : Ti // i />
+  </ ak // k /> </ rm // m /> = gen ( G , </ Ti // i /> )
+  G , </ fi : ( forall </ ak // k /> </ rm // m /> . Ti ) // i /> |- e : T
+  ------------------------------------------------------------------------ :: Letrec
+  G |- letrec </ fi = ei // i /> in e : T
 
   </ G |- ei : Ti // i />
   ---------------------------------------------------- :: Record
@@ -327,6 +354,12 @@ e --> e' :: :: red :: 'red_'
 
   --------------------- :: LetV
   x = v  e2 --> e2 [ x := v ]
+
+  % a group unrolls when it is reached: each member name becomes that member's
+  % function, whose own references to the group are the group again
+  </ ei is a function // i />
+  ---------------------------------------------------------------------------------------------------------------- :: Letrec
+  letrec </ fi = ei // i /> in e --> e </ [ fi := ei </ [ fk := letrec </ fj = ej // j /> in fk ] // k /> ] // i />
 
   % First field labeled l: no earlier field carries l (matches rewrite_row).
   l notin </ li // i />

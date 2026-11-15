@@ -14,9 +14,12 @@
 //! unit, booleans, functions, calls, `if` with an `else`, the twelve binary
 //! operators on Int, Float, String and Bool, `let` of a syntactic value that
 //! does not name itself, record literals with distinct labels, and field
-//! access, using only names it binds. The value restriction (ADR 0027) is
-//! outside the calculus, so a `let` of anything but a syntactic value is
-//! outside the fragment.
+//! access, using only names it binds. The calculus generalizes a `let` of a
+//! syntactic value (`is_gen_value` in `proofs/GoatDefs.v`, the checker's
+//! `is_syntactic_value`) and types any other `let` monomorphically, and it has
+//! recursive groups; the proven inference algorithm covers neither yet, so a
+//! `let` of anything but a syntactic value, and a function that names itself or
+//! a later function, is outside the fragment.
 //!
 //! The calculus has no implicit Int-to-Float widening: elaboration writes
 //! `float(e)` where the checker accepts an Int for a Float (a literal the

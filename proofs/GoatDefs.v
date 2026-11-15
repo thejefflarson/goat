@@ -194,6 +194,39 @@ Fixpoint lookup_first (l : label) (fs : fields) : option exp :=
   | fs_cons l' e fs' => if Nat.eqb l l' then Some e else lookup_first l fs'
   end.
 
+(* The value restriction (ADR 0027): a [let] generalizes its binding only when
+   the bound term is a syntactic value, one whose evaluation does no work: unit,
+   a literal, a name, a function, or a record of those.  (The checker's
+   builtins are names here; variants and spreads join with their phases.)  A
+   recursive group of functions around a value is one too, as in ML's
+   nonexpansive terms: unrolling the group only rewrites it.  That case is what
+   lets a name bound to the unrolled group stay generalizable after
+   substitution.  So is the coercion of a value, the [float(n)] elaboration
+   writes where the checker widens a literal. *)
+Fixpoint is_gen_value (e : exp) {struct e} : bool :=
+  match e with
+  | e_fvar_b _ | e_fvar_f _ | e_num _ | e_dec _ | e_true | e_false
+  | e_unit | e_str _ | e_abs _ => true
+  | e_rec fs => is_gen_fields fs
+  | e_letrec fs e2 => is_gen_fields fs && is_gen_value e2
+  | e_tofloat e1 => is_gen_value e1
+  | _ => false
+  end
+with is_gen_fields (fs : fields) {struct fs} : bool :=
+  match fs with
+  | fs_nil => true
+  | fs_cons _ e fs' => is_gen_value e && is_gen_fields fs'
+  end.
+
+(* The members of a recursive group are functions, as in the checker, where a
+   binding is recursive exactly when its value is a [program(..)] literal
+   (ADR 0003). *)
+Inductive fn_group : fields -> Prop :=
+ | fg_nil : fn_group fs_nil
+ | fg_cons : forall l e fs, fn_group fs -> fn_group (fs_cons l (e_abs e) fs).
+
+#[export] Hint Constructors fn_group : core.
+
 (* ================================================================== *)
 (* Base-type operators (ADR 0017, ADR 0036).                            *)
 (* An [Int] is a signed 64-bit integer: an arithmetic result outside the *)
@@ -372,6 +405,11 @@ Inductive step : exp -> exp -> Prop :=
      step (e_let v e2) (open_exp_wrt_exp e2 v)
  | st_let1 : forall e1 e1' e2,
      step e1 e1' -> step (e_let e1 e2) (e_let e1' e2)
+ | st_letrec : forall fs e2,
+     fn_group fs ->
+     step (e_letrec fs e2)
+       (open_exp_wrt_exp e2
+          (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))))
  | st_proj : forall e e' l,
      step e e' -> step (e_proj e l) (e_proj e' l)
  | st_projrec : forall fs l v,
@@ -445,10 +483,24 @@ Inductive typing : ctx -> exp -> typ -> Prop :=
      typing G e2 T1 ->
      typing G (e_app e1 e2) T2
  | T_Let : forall (L : vars) G e1 e2 T1 T2,
+     is_gen_value e1 = true ->
      typing G e1 T1 ->
      (forall x, x `notin` L ->
         typing ((x ~ gen G T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
      typing G (e_let e1 e2) T2
+ | T_LetMono : forall (L : vars) G e1 e2 T1 T2,
+     typing G e1 T1 ->
+     (forall x, x `notin` L ->
+        typing ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
+     typing G (e_let e1 e2) T2
+ | T_Letrec : forall (L : vars) G fs e2 R T,
+     fn_group fs ->
+     (forall p, p `notin` L ->
+        field_typing ((p ~ sch_mono (typ_Record R)) ++ G)
+          (open_fields_wrt_exp fs (e_fvar_f p)) R) ->
+     (forall p, p `notin` L ->
+        typing ((p ~ gen G (typ_Record R)) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T) ->
+     typing G (e_letrec fs e2) T
  | T_Record : forall G fs R,
      field_typing G fs R -> typing G (e_rec fs) (typ_Record R)
  | T_Proj : forall G e l T R,

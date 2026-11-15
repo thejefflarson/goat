@@ -27,6 +27,7 @@ Fixpoint close_exp_rec (k : nat) (x : termvar) (e : exp) {struct e} : exp :=
   | e_abs b => e_abs (close_exp_rec (S k) x b)
   | e_app a b => e_app (close_exp_rec k x a) (close_exp_rec k x b)
   | e_let a b => e_let (close_exp_rec k x a) (close_exp_rec (S k) x b)
+  | e_letrec fs b => e_letrec (close_fields_rec (S k) x fs) (close_exp_rec (S k) x b)
   | e_rec fs => e_rec (close_fields_rec k x fs)
   | e_proj a l => e_proj (close_exp_rec k x a) l
   | e_unit => e_unit
@@ -73,6 +74,9 @@ Proof.
   - (* let: the body is one level deeper, the value is not *)
     intros a IHa b IHb k x [Ha Hb]. simpl.
     split; [ exact (IHa k x Ha) | exact (IHb (S k) x Hb) ].
+  - (* letrec: the group and the body are one level deeper *)
+    intros fs IHfs b IHb k x [Hfs Hb]. simpl.
+    split; [ exact (IHfs (S k) x Hfs) | exact (IHb (S k) x Hb) ].
   - (* record *)
     intros fs IH k x Hfs. simpl in *. exact (IH k x Hfs).
   - (* projection *)
@@ -404,6 +408,7 @@ Fixpoint size (e : exp) : nat :=
   | e_fvar_b _ | e_fvar_f _ | e_num _ | e_dec _ | e_true | e_false | e_unit | e_str _ => 1
   | e_abs b => S (size b)
   | e_app a b | e_let a b => S (size a + size b)
+  | e_letrec fs b => S (size_fields fs + size b)
   | e_rec fs => S (size_fields fs)
   | e_proj a _ => S (size a)
   | e_ite a b c => S (size a + size b + size c)
@@ -431,6 +436,7 @@ Proof.
   - (* abs *) rewrite H. reflexivity.
   - (* app *) rewrite H, H0. reflexivity.
   - (* let *) rewrite H, H0. reflexivity.
+  - (* letrec *) rewrite H, H0. reflexivity.
   - (* rec *) rewrite H. reflexivity.
   - (* proj *) rewrite H. reflexivity.
   - reflexivity.
@@ -457,6 +463,7 @@ Proof.
   - (* abs *) apply H. assumption.
   - (* app *) destruct H1 as [Ha Hb]. split; [ apply H | apply H0 ]; assumption.
   - (* let *) destruct H1 as [Ha Hb]. split; [ apply H | apply H0 ]; assumption.
+  - (* letrec *) destruct H1 as [Ha Hb]. split; [ apply H | apply H0 ]; assumption.
   - (* rec *) apply H. assumption.
   - (* proj *) apply H. assumption.
   - exact I.
@@ -476,7 +483,7 @@ Proof.
   - destruct t; simpl in Hsize; lia.
   - destruct t; simpl in Hsize; lia.
   - destruct IH as [IHe IHfs].
-    destruct t as [i | x | n | d | | | b | a b | a b | fs | a l | | q | a b c | a o b | a];
+    destruct t as [i | x | n | d | | | b | a b | a b | fs0 b0 | fs | a l | | q | a b c | a o b | a];
       unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
     + lia.
     + apply lc_e_fvar_f.
@@ -502,6 +509,21 @@ Proof.
         assert (Hopen : lc (open_exp_wrt_exp b (e_fvar_f x)))
           by (apply (proj1 open_lc_at_mut); exact Hb).
         assert (Hsmaller : size (open_exp_wrt_exp b (e_fvar_f x)) <= m)
+          by (unfold open_exp_wrt_exp; rewrite (proj1 open_size_mut); lia).
+        exact (IHe _ Hsmaller Hopen).
+    + (* letrec *)
+      destruct Hlc as [Hfs Hb].
+      apply lc_e_letrec.
+      * intros x.
+        assert (Hopen : lcf (open_fields_wrt_exp fs0 (e_fvar_f x)))
+          by (apply (proj2 open_lc_at_mut); exact Hfs).
+        assert (Hsmaller : size_fields (open_fields_wrt_exp fs0 (e_fvar_f x)) <= m)
+          by (unfold open_fields_wrt_exp; rewrite (proj2 open_size_mut); lia).
+        exact (IHfs _ Hsmaller Hopen).
+      * intros x.
+        assert (Hopen : lc (open_exp_wrt_exp b0 (e_fvar_f x)))
+          by (apply (proj1 open_lc_at_mut); exact Hb).
+        assert (Hsmaller : size (open_exp_wrt_exp b0 (e_fvar_f x)) <= m)
           by (unfold open_exp_wrt_exp; rewrite (proj1 open_size_mut); lia).
         exact (IHe _ Hsmaller Hopen).
     + (* rec *)

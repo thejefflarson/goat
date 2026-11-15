@@ -28,6 +28,7 @@ preservation) is B3 (#71).
 | `GoatNum.v` | The integer arithmetic behind whole-number literals and the 64-bit `Int` range, kept apart because ZArith defines notations that clash with Metalib's `x ~ T`. |
 | `GoatLit.v` | Reads the argument of `e_num` as an integer, so `e_num 3` works in a file that never imports ZArith (and in the generated printer table). |
 | `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion: which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1.5 // 2`, `1 + 1.5` with no coercion, `1 < "a"`, `true + true`, `if 1 then ...`). |
+| `GoatPhase2.v` | Phase 2 of ADR 0037: worked examples for the value restriction (which terms `is_gen_value` accepts), a generalized binding used at two types, a recursive group (its typing, its unrolling, a run) and a group member that is not a function (no derivation). |
 | `GoatSound.v` | The two canonical HM lemmas — `typing_weaken` (L4) and `typing_tsubst_fix` (L5) — via the general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`); then term substitution **L6a/L6b**, **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
 | `GoatPeg.v` | Ford-style relational PEG semantics of the generated grammar over a token stream, and **T2** `peg_deterministic`. |
@@ -91,19 +92,56 @@ What the model leaves out, each checked against `goat check` and `goat run`
 rounding, infinities and NaN (a `Float` is opaque), the `trap()` builtin,
 comparison of `Unit` (phase 6), and the `Eq`, `Numeric` and `Ordered`
 constraints (an operator applies at concrete types; constraint-polymorphic
-operators are phase 2). The inference algorithm (`GoatInfer.v`) covers the
+operators are the kinded type variables of the rest of phase 2). The inference algorithm (`GoatInfer.v`) covers the
 whole of phase 1: `Unit`, strings, Float values, `if`, `float(e)` and the
 operators, besides functions, bindings and records. `infer_closed_sound` keeps
 its statement. An operator unifies both operands with one type taken from
 whichever operand type is already known (`bin_arg`), so `x * 1.5` fixes `x` to
 `Float`, and an operator whose two operands are both still variables is
-rejected: that is the generic operator of phase 2.
+rejected: that is the generic operator of the rest of phase 2.
 
 The parser fragment widens in step: a string, a conditional with an `else`, and
 one operator between two chains. `GoatShape.v` counts operator nodes
 (`count_ops`) and `Complete` allows at most one, with no dot call;
 `GoatDen.v` reads `c1 o c2` as `e_bin` (`Den_math`); the printer parenthesises
 the operand of an operator when it is a binding or another operation.
+
+## Phase 2: recursion and the value restriction (ADR 0037)
+
+`goat_ln.ott` has one new term, `letrec x = { fs } e2`: a recursive group. The
+group's name `x` is one locally-nameless binder over the record of the group's
+functions `fs` and over the body `e2`; a member `f` of the surface group
+`letrec f1 = e1, ..., fn = en in e` is the projection `x.l` of its label. The
+surface form is the n-ary letrec of `docs/semantics.md`; the single binder is
+what the locally-nameless infrastructure handles, as the curried single-binder
+`program` is for `program(x1, ..., xk)`. `GoatDefs.v` adds:
+
+- `is_gen_value`, the value restriction's predicate (ADR 0027): unit, literals,
+  names, functions, and records of those, with `float(v)` of a value and a
+  `letrec` around a value (what substituting an unrolled group for its name
+  needs);
+- `T_Let` generalizes only when `is_gen_value e1`; `T_LetMono` types any `let`
+  with a monomorphic binding, and a computed binding has no other rule;
+- `T_Letrec`: the members (`fn_group`: all `program` literals) are typed with
+  the group's name at the record type of the members, and the body with the
+  name generalized against the context, so each use of a member instantiates
+  the group afresh;
+- `st_letrec`: the group unrolls at once, replacing its name in the body by
+  the record of its members, in each of which the name is the group again.
+
+`progress`, `preservation` and `soundness` cover the new terms with 0 admits.
+`step_gen` (a syntactic value stays one when it steps) keeps `T_Let` after
+`st_let1`; `is_gen_subst` keeps it under the term substitutions of `ST-Beta`,
+`ST-LetV` and `ST-Letrec`; `tsubst_gen_core` is the capture-avoiding renaming
+that `T_Let` and `T_Letrec` share in the type-substitution lemma.
+
+The inference algorithm accepts a `let` of a syntactic value only and rejects a
+`letrec` (`GoatInfer.v`); extending it to `T_LetMono` and `T_Letrec` is a
+separate phase (the algorithm proof, ADR 0037 phase 7). The parser fragment
+does not change: a group is name resolution (ADR 0003), the grammar has no new
+form, and the printed core still reads a binding as the non-recursive `let`.
+Not in this phase: constraint-polymorphic operators (the kinded type variables
+of the rest of phase 2).
 
 ## Records and projection in the Ott source
 

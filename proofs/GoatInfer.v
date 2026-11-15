@@ -273,6 +273,7 @@ Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
               end
           end
       | e_let e1 e2 =>
+          if is_gen_value e1 then
           match infer f' G e1 n with
           | None => None
           | Some (s1, T1, n1) =>
@@ -284,6 +285,8 @@ Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
               | Some (s2, T2, n2) => Some (scomp s2 s1, T2, n2)
               end
           end
+          else None
+      | e_letrec _ _ => None
       | e_rec fs =>
           match infer_fields f' G fs n with
           | None => None
