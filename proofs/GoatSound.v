@@ -1474,3 +1474,320 @@ Proof.
     apply Hag. unfold S0. fsetdec.
   - intros a Ha. reflexivity.
 Qed.
+
+(* The result of a comparison of two literals of one base type is a boolean. *)
+Lemma typing_of_bool : forall D G b, uniq G -> typing D G (of_bool b) typ_Bool.
+Proof. intros D G b Hu. destruct b; [ apply T_True | apply T_False ]; exact Hu. Qed.
+
+(* A decimal literal has type [Float], through any conversion. *)
+Lemma dec_inv : forall D G d T, typing D G (e_dec d) T -> teq typ_Float T.
+Proof.
+  intros D G d T H. remember (e_dec d) as e0 eqn:He.
+  induction H; try discriminate He.
+  - apply teq_refl.
+  - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
+Qed.
+
+Lemma ext_idem : forall D V k a, ext (ext D V k) V k a = ext D V k a.
+Proof. intros. unfold ext. destruct (AtomSetImpl.mem a V); reflexivity. Qed.
+
+(* An operator's result has the type its signature gives.  Pairing each way
+   the operator can compute ([bin_step]) with each signature, almost every pair
+   is ruled out by the operator's class.  What is left: a ring operation on two
+   numerals gives a numeral at the operand type (a [Literal] type, by the
+   numeral's own typing); a Float operation has a decimal operand, which fixes
+   the operand type to [Float]. *)
+Lemma bin_step_typing : forall D G o v1 v2 v A B R,
+  bin_sig D o A B R -> value v1 -> value v2 ->
+  typing D G v1 A -> typing D G v2 B -> bin_step o v1 v2 v -> typing D G v R.
+Proof.
+  intros D G o v1 v2 v A B R Hs Hv1 Hv2 H1 H2 Hb.
+  assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
+  destruct Hb; inversion Hs; subst;
+    try (exfalso; first [ congruence | (simpl in *; discriminate)
+      | (match goal with Hd : kind _ = _ \/ kind _ = _ |- _ => destruct Hd; congruence end) ]);
+    try (apply T_Dec; exact Hu);
+    try (apply typing_of_bool; exact Hu);
+    try (apply T_Num; [ exact Hu | first [ exact I | exact (num_inv _ _ _ _ H1) ] ]).
+  all: try (match goal with Hf : fl_pair _ _ |- _ => destruct Hf end).
+  all: first
+    [ (eapply T_Conv; [ apply T_Dec; exact Hu | exact (dec_inv _ _ _ _ H1) ])
+    | (eapply T_Conv; [ apply T_Dec; exact Hu | exact (dec_inv _ _ _ _ H2) ]) ].
+Qed.
+
+
+Scheme step_mut := Induction for step Sort Prop
+with   step_fields_mut := Induction for step_fields Sort Prop.
+Combined Scheme step_step_fields_mutind from step_mut, step_fields_mut.
+
+(* A syntactic value stays one when it steps (a record of syntactic values
+   steps only inside a field that is a recursive group around a value). *)
+Lemma step_gen_mut :
+  (forall e e', step e e' -> is_gen_value e = true -> is_gen_value e' = true) /\
+  (forall fs fs', step_fields fs fs' -> is_gen_fields fs = true -> is_gen_fields fs' = true).
+Proof.
+  apply step_step_fields_mutind; try (intros; discriminate).
+  - (* st_letrec *) intros fs e2 Hfg Hgen. simpl in Hgen |- *.
+    apply andb_prop in Hgen. destruct Hgen as [Hfs He2].
+    apply is_gen_open; [ | exact He2 ].
+    simpl. apply is_gen_open_fields; [ simpl; rewrite Hfs; reflexivity | exact Hfs ].
+  - (* st_rec *) intros fs fs' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
+  - (* st_tofloat1 *) intros e e' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
+  - (* st_tofloat *) intros z d Hgen. reflexivity.
+  - (* st_tofloat_dec *) intros d Hgen. reflexivity.
+  - (* stf_here *) intros l e e' fs Hstep IH Hgen. simpl in Hgen |- *.
+    apply andb_prop in Hgen. destruct Hgen as [He Hfs].
+    rewrite (IH He), Hfs. reflexivity.
+  - (* stf_cons *) intros l v fs fs' Hv Hstep IH Hgen. simpl in Hgen |- *.
+    apply andb_prop in Hgen. destruct Hgen as [Hv0 Hfs].
+    rewrite Hv0, (IH Hfs). reflexivity.
+Qed.
+
+Lemma step_gen : forall e e',
+  step e e' -> is_gen_value e = true -> is_gen_value e' = true.
+Proof. apply step_gen_mut. Qed.
+
+
+
+(* Do induction on the step relation: one case per step rule.  Each case
+   begins by assuming the term before the step is typed at [T] in context
+   [G] under a kinding environment [D] that is [Any] outside the finite set
+   [S] (that is the [Hty] below) and must show the stepped term is too. *)
+Lemma preservation_mut :
+  (forall e e', step e e' -> forall D S G T, supp_ok D S -> typing D G e T -> typing D G e' T) /\
+  (forall fs fs', step_fields fs fs' ->
+     forall D S G R, supp_ok D S -> field_typing D G fs R -> field_typing D G fs' R).
+Proof.
+  apply step_step_fields_mutind.
+  - (* Case: a function call on a value, [(fun x => e) v] steps to [e] with
+       [v] plugged in (st_beta).  The real work.  Plan: read off from [Hty]
+       that the function has type [A -> B] and [v] has type [A]; then the
+       substitution lemma [typing_subst] says plugging [v] into the body keeps
+       the type [B]. *)
+    intros e v Hv D S G T HS Hty.
+    apply app_inv in Hty. destruct Hty as [A [B [Habs [Harg Hbt]]]].
+    apply abs_inv in Habs. destruct Habs as [L [A' [B' [Hbody Harr]]]].
+    apply teq_Arrow_inv in Harr. destruct Harr as [A2 [B2 [Heq [HA HB]]]].
+    inversion Heq; subst.
+    pick fresh x for (L \u fv_exp e).
+    assert (HxL : x `notin` L) by fsetdec.
+    assert (Hxe : x `notin` fv_exp e) by fsetdec.
+    assert (Hv' : typing D G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
+    assert (Hopen : typing D G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
+      by (eapply typing_subst; [ exact HS | apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hv' ]).
+    rewrite <- subst_intro in Hopen by exact Hxe.
+    eapply T_Conv; [ exact Hopen | ].
+    eapply teq_trans; [ exact HB | exact Hbt ].
+  - (* st_app1: the function part of a call stepped.  Congruence. *)
+    intros e1 e1' e2 Hstep IH D S G T HS Hty.
+    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
+    eapply T_Conv; [ eapply T_App; [ eapply IH; [ exact HS | exact Hty1 ] | exact Hty2 ] | exact Hbt ].
+  - (* st_app2: the argument of a call stepped. *)
+    intros v e2 e2' Hv Hstep IH D S G T HS Hty.
+    apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
+    eapply T_Conv; [ eapply T_App; [ exact Hty1 | eapply IH; [ exact HS | exact Hty2 ] ] | exact Hbt ].
+  - (* Case: [let x = v in e2] with [v] a value steps to [e2] with [v] plugged
+       in for [x] (st_letv).  [x] may be used at several types in [e2], so a
+       generalized binding uses the POLYMORPHIC substitution lemma. *)
+    intros v e2 Hv D S G T HS Hty.
+    apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 Hteq]]]].
+    pick fresh x for (L \u fv_exp e2).
+    assert (HxL : x `notin` L) by fsetdec.
+    assert (Hxe : x `notin` fv_exp e2) by fsetdec.
+    assert (Hopen : typing D G (subst_exp v x (open_exp_wrt_exp e2 (e_fvar_f x))) T2).
+    { destruct Hty1 as [[_ [k [Hty1 Hbody]]] | [Hty1 Hbody]].
+      - eapply typing_subst_poly; [ exact HS | apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hty1 ].
+      - eapply typing_subst; [ exact HS | apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hty1 ]. }
+    rewrite <- subst_intro in Hopen by exact Hxe.
+    eapply T_Conv; [ exact Hopen | exact Hteq ].
+  - (* st_let1: the bound expression of a [let] stepped.  Congruence.  The
+       bound term of a generalized binding is typed under the extended
+       environment, which is still [Any] outside a finite set. *)
+    intros e1 e1' e2 Hstep IH D S G T HS Hty.
+    apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 Hteq]]]].
+    destruct Hty1 as [[Hgv [k [Hty1 Hbody]]] | [Hty1 Hbody]].
+    + eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1) (k := k);
+                       [ eapply step_gen; eassumption
+                       | eapply IH; [ apply supp_ok_ext; exact HS | exact Hty1 ]
+                       | exact Hbody ]
+                     | exact Hteq ].
+    + eapply T_Conv; [ eapply T_LetMono with (L := L) (T1 := T1);
+                       [ eapply IH; [ exact HS | exact Hty1 ] | exact Hbody ] | exact Hteq ].
+  - (* Case: a recursive group unrolls (st_letrec).  Name the group's
+       record type [R].  The group itself, [letrec fs in p], has type [R]
+       under the environment its members are typed in (the body is the group
+       name, typed by an instance of its scheme).  Substituting that group for
+       the name inside the members, which were typed with the name at [R],
+       types the unrolled members at [R]; those members form a record value,
+       and substituting it for the name in the body is the polymorphic
+       substitution lemma. *)
+    intros fs e2 Hfg D S G T HS Hty.
+    destruct (letrec_inv _ _ _ _ _ Hty) as [L [R [T2 [k [Hfg' [Hfs [Hbody Hteq]]]]]]].
+    set (V := AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)).
+    pick fresh p for (L \u fv_exp e2 \u fv_fields fs).
+    assert (HpL : p `notin` L) by fsetdec.
+    assert (Hpe : p `notin` fv_exp e2) by fsetdec.
+    assert (Hpf : p `notin` fv_fields fs) by fsetdec.
+    assert (Hu : uniq G).
+    { pose proof (proj2 typing_uniq_mut _ _ _ _ (Hfs p HpL)) as Hup.
+      eapply uniq_cons_1; exact Hup. }
+    assert (HSV : supp_ok (ext D V k) (S `union` V)) by (apply supp_ok_ext; exact HS).
+    assert (Hgrp : typing (ext D V k) G (e_letrec fs (e_fvar_b 0)) (typ_Record R)).
+    { apply T_Letrec with (L := L) (R := R) (k := k); [ exact Hfg' | | ].
+      - intros q Hq. eapply field_typing_pw; [ exact (Hfs q Hq) | ].
+        intros a. symmetry. apply ext_idem.
+      - intros q Hq. unfold open_exp_wrt_exp. cbn [open_exp_wrt_exp_rec].
+        apply T_Var with (s := gen G (typ_Record R) k).
+        + pose proof (proj2 typing_uniq_mut _ _ _ _ (Hfs q Hq)) as Huq.
+          apply uniq_cons_3; [ eapply uniq_cons_1; exact Huq | eapply uniq_cons_2; exact Huq ].
+        + apply binds_cons_2; reflexivity.
+        + exists idt, idr. split; [ | split; [ | split ] ].
+          * intros a _. reflexivity.
+          * intros r _. reflexivity.
+          * symmetry. apply ap_typ_pointwise_id; reflexivity.
+          * intros a Ha. cbn [gen s_tq s_sk] in Ha |- *. unfold idt. cbn [sat].
+            rewrite (ext_in D V k a Ha). apply finer_refl. }
+    assert (Hgengrp : is_gen_value (e_letrec fs (e_fvar_b 0)) = true).
+    { simpl. rewrite (fn_group_gen _ Hfg). reflexivity. }
+    assert (Hmem : field_typing (ext D V k) G
+              (subst_fields (e_letrec fs (e_fvar_b 0)) p (open_fields_wrt_exp fs (e_fvar_f p))) R)
+      by (eapply field_typing_subst; [ exact HSV | apply Hfs; exact HpL | exact Hgengrp | exact Hgrp ]).
+    rewrite <- subst_intro_fields in Hmem by exact Hpf.
+    assert (Hrec : typing (ext D V k) G
+              (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))) (typ_Record R))
+      by (apply T_Record; exact Hmem).
+    assert (Hrecgen : is_gen_value
+              (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))) = true).
+    { simpl. apply is_gen_open_fields; [ exact Hgengrp | apply fn_group_gen; exact Hfg ]. }
+    assert (Hopen : typing D G
+              (subst_exp (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))) p
+                 (open_exp_wrt_exp e2 (e_fvar_f p))) T2)
+      by (eapply typing_subst_poly; [ exact HS | apply Hbody; exact HpL | exact Hrecgen | exact Hrec ]).
+    rewrite <- subst_intro in Hopen by exact Hpe.
+    eapply T_Conv; [ exact Hopen | exact Hteq ].
+  - (* st_proj: the record in a field access stepped.  Congruence. *)
+    intros e e' l Hstep IH D S G T HS Hty.
+    apply proj_inv in Hty. destruct Hty as [T0 [R [Hty0 Hteq]]].
+    eapply T_Conv; [ eapply T_Proj; eapply IH; [ exact HS | exact Hty0 ] | exact Hteq ].
+  - (* st_projrec: field access on a finished record steps to the field. *)
+    intros fs l v Hrv Hlook D S G T HS Hty.
+    apply proj_inv in Hty. destruct Hty as [T0 [R [Hrec Hteq]]].
+    apply rec_inv in Hrec. destruct Hrec as [R' [Hft Hreq]].
+    apply teq_Record_inv in Hreq. destruct Hreq as [R2 [Heq Hreq]].
+    inversion Heq; subst.
+    apply req_surface in Hreq. destruct Hreq as [T1 [rest [Hpi Hteq1]]].
+    destruct (field_lookup_some _ _ _ _ _ _ _ Hft Hpi) as [v0 [Hlook0 Hty0]].
+    assert (v0 = v) by congruence. subst v0.
+    eapply T_Conv; [ exact Hty0 | ].
+    eapply teq_trans; [ exact Hteq1 | exact Hteq ].
+  - (* st_rec: a field inside a record stepped.  Congruence. *)
+    intros fs fs' Hstep IHf D S G T HS Hty.
+    apply rec_inv in Hty. destruct Hty as [R [Hft Hteq]].
+    eapply T_Conv; [ eapply T_Record; eapply IHf; [ exact HS | exact Hft ] | exact Hteq ].
+  - (* st_ite1: the condition of an [if] stepped. *)
+    intros e1 e1' e2 e3 Hstep IH D S G T HS Hty.
+    apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
+    eapply T_Conv; [ eapply T_If; [ eapply IH; [ exact HS | exact H1 ] | exact H2 | exact H3 ] | exact Hteq ].
+  - (* st_ite_true *)
+    intros e2 e3 D S G T HS Hty.
+    apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
+    eapply T_Conv; [ exact H2 | exact Hteq ].
+  - (* st_ite_false *)
+    intros e2 e3 D S G T HS Hty.
+    apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
+    eapply T_Conv; [ exact H3 | exact Hteq ].
+  - (* st_bin1: the left operand stepped. *)
+    intros e1 e1' o e2 Hstep IH D S G T HS Hty.
+    destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
+    eapply T_Conv; [ eapply T_Bin; [ eapply IH; [ exact HS | exact H1 ] | exact H2 | exact Hs ] | exact Hteq ].
+  - (* st_bin2: the right operand stepped. *)
+    intros v o e2 e2' Hv Hstep IH D S G T HS Hty.
+    destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
+    eapply T_Conv; [ eapply T_Bin; [ exact H1 | eapply IH; [ exact HS | exact H2 ] | exact Hs ] | exact Hteq ].
+  - (* st_bin: an operator on two values.  [bin_step_typing] shows the result
+       has the type the operator's signature gives. *)
+    intros v1 o v2 v Hv1 Hv2 Hb D S G T HS Hty.
+    destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
+    eapply T_Conv;
+      [ exact (bin_step_typing _ _ _ _ _ _ _ _ _ Hs Hv1 Hv2 H1 H2 Hb) | exact Hteq ].
+  - (* st_tofloat1: the operand of a coercion stepped. *)
+    intros e e' Hstep IH D S G T HS Hty.
+    destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].
+    eapply T_Conv; [ eapply T_ToFloat; [ eapply IH; [ exact HS | exact H1 ] | exact Hsat ] | exact Hteq ].
+  - (* st_tofloat: [float(n)] steps to a Float.  A Float value has type
+       [Float] whatever its payload. *)
+    intros z d D S G T HS Hty.
+    destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].
+    assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
+    eapply T_Conv; [ apply T_Dec; exact Hu | exact Hteq ].
+  - (* st_tofloat_dec: [float(d)] of a decimal is the decimal. *)
+    intros d D S G T HS Hty.
+    destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].
+    assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
+    eapply T_Conv; [ apply T_Dec; exact Hu | exact Hteq ].
+  - (* stf_here: the FIRST field of a record stepped.  Congruence. *)
+    intros l e e' fs Hstep IH D S G R HS Hft.
+    inversion Hft; subst.
+    eapply FT_cons; [ eapply IH; [ exact HS | eassumption ] | eassumption ].
+  - (* stf_cons: the first field is a value and a LATER field stepped. *)
+    intros l v fs fs' Hv Hstep IHf D S G R HS Hft.
+    inversion Hft; subst.
+    eapply FT_cons; [ eassumption | eapply IHf; [ exact HS | eassumption ] ].
+Qed.
+
+(* The headline form of the induction above: with just the first half of the
+   combined statement. *)
+Theorem preservation : forall D S G e e' T,
+  supp_ok D S -> typing D G e T -> step e e' -> typing D G e' T.
+Proof. intros D S G e e' T HS Hty Hstep. eapply (proj1 preservation_mut); eauto. Qed.
+
+
+(* ================================================================== *)
+(* Soundness (docs/semantics.md section 7): a well-typed closed term     *)
+(* never reaches a stuck state.                                           *)
+(*                                                                        *)
+(* WHAT THIS SAYS: take a program [e] that type checks in the empty       *)
+(* context ([nil], a closed program: no free variables, nothing from      *)
+(* outside).  Run it for any number of steps ([multistep e e']).  Then    *)
+(* wherever it has got to, [e'] is either finished (a value) or can take  *)
+(* another step.  It is never stuck.                                      *)
+(*                                                                        *)
+(* WHY: progress says one program is not stuck; preservation says each    *)
+(* step keeps the type.  We chain them over the steps of the run.         *)
+(* ================================================================== *)
+
+Theorem soundness : forall e T e',
+  typing d_any nil e T -> multistep e e' ->
+  value e' \/ (exists e'', step e' e'') \/ (exists k, traps e' k).
+Proof.
+  (* Assume the program is well typed ([Hty]) and that it ran from [e] to [e']
+     ([Hms]).  Goal: [e'] is a value, can step, or traps.  We prove it by
+     induction on HOW the run went, which is a list of steps: either zero
+     steps, or one step followed by a shorter run.  ([revert T Hty] just makes
+     the typing assumption part of what the induction proves, so it can change
+     as the program changes.) *)
+  intros e T e' Hty Hms. revert T Hty.
+  induction Hms as [ e | e1 e2 e3 Hstep Hms IH ]; intros T Hty.
+  - (* Case: zero steps, so [e'] is [e] itself.  It is well typed, so
+       [progress] says it is a value, can step, or traps.  Done. *)
+    eapply progress; exact Hty.
+  - (* Case: one step [e1 -> e2], then a shorter run [e2 ->* e3].  By
+       [preservation], [e2] is well typed at the same [T] as [e1] was; so the
+       induction hypothesis (the claim for the shorter run) applies to [e2].
+       That gives exactly what we need about [e3]. *)
+    apply IH with (T := T).
+    apply (preservation d_any {} nil e1 e2 T); [ | exact Hty | exact Hstep ].
+    intros a _. reflexivity.
+Qed.
+
+(* The same fact phrased with the name [stuck] (not a value, no step possible,
+   and no error raised): a reachable state is never stuck. *)
+Corollary soundness_not_stuck : forall e T e',
+  typing d_any nil e T -> multistep e e' -> ~ stuck e'.
+Proof.
+  intros e T e' Hty Hms [Hnv [Hns Hnt]].
+  destruct (soundness e T e' Hty Hms) as [Hv | [[e'' Hs] | [k Hk]]].
+  - exact (Hnv Hv).
+  - exact (Hns e'' Hs).
+  - exact (Hnt k Hk).
+Qed.
