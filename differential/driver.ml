@@ -54,9 +54,30 @@ let parse_sexp s =
 
 let int_of = function Atom a -> int_of_string a | List _ -> failwith "expected a number"
 
+let bop_of = function
+  | "add" -> Bop_add
+  | "sub" -> Bop_sub
+  | "mul" -> Bop_mul
+  | "div" -> Bop_div
+  | "fdiv" -> Bop_fdiv
+  | "rem" -> Bop_rem
+  | "lt" -> Bop_lt
+  | "lte" -> Bop_lte
+  | "gt" -> Bop_gt
+  | "gte" -> Bop_gte
+  | "eq" -> Bop_eq
+  | "ne" -> Bop_ne
+  | o -> failwith ("unknown operator " ^ o)
+
 let rec exp_of = function
   | Atom "t" -> E_true
   | Atom "f" -> E_false
+  | Atom "u" -> E_unit
+  | List [ Atom "d"; k ] -> E_dec (int_of k)
+  | List (Atom "str" :: bytes) -> E_str (List.map int_of bytes)
+  | List [ Atom "if"; c; a; b ] -> E_ite (exp_of c, exp_of a, exp_of b)
+  | List [ Atom "bin"; Atom o; a; b ] -> E_bin (exp_of a, bop_of o, exp_of b)
+  | List [ Atom "float"; e ] -> E_tofloat (exp_of e)
   | List [ Atom "b"; i ] -> E_fvar_b (int_of i)
   | List [ Atom "n"; k ] -> E_num (int_of k)
   | List [ Atom "abs"; e ] -> E_abs (exp_of e)

@@ -12,6 +12,7 @@ Require Import Goat.GoatRows.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
+Require Import Goat.GoatInfer.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 
@@ -409,3 +410,27 @@ Proof.
     by (eapply teq_trans; [ exact H3 | apply teq_sym; exact H2 ]).
   apply teq_Float_inv in Hf. discriminate.
 Qed.
+
+(* ---- the inference algorithm accepts and rejects them ---- *)
+
+Example infer_float_sum :
+  infer_closed 20 (e_bin (e_tofloat (e_num 1)) bop_add (e_dec 0)) = Some typ_Float.
+Proof. vm_compute. reflexivity. Qed.
+
+Example infer_if_branches :
+  infer_closed 20 (e_ite (e_bin (e_str [97]) bop_lt (e_str [98])) e_unit e_unit)
+  = Some typ_Unit.
+Proof. vm_compute. reflexivity. Qed.
+
+(* The bare Int has no coercion, so the operands disagree *)
+Example infer_rejects_mixed_sum :
+  infer_closed 20 (e_bin (e_num 1) bop_add (e_dec 0)) = None.
+Proof. vm_compute. reflexivity. Qed.
+
+Example infer_rejects_float_floor_division :
+  infer_closed 20 (e_bin (e_dec 0) bop_fdiv (e_num 2)) = None.
+Proof. vm_compute. reflexivity. Qed.
+
+Example infer_rejects_number_condition :
+  infer_closed 20 (e_ite (e_num 1) (e_num 2) (e_num 3)) = None.
+Proof. vm_compute. reflexivity. Qed.

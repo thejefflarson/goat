@@ -20,13 +20,39 @@ and of the `coq` workflow).
 
 Every goat source the repository holds: `examples/*.goat`, the `goat` blocks of
 `docs/llm.md`, every string literal of the Rust sources under `checker/` and
-`parser/` (tests included), a short list of hand-written programs, and 4000
-programs from a fixed-seed generator. A program is compared when it is in the
-core fragment of `proofs/goat_ln.ott`: numerals, booleans, functions, calls,
-`let` of a syntactic value that does not name itself, record literals with
-distinct labels, and field access, binding every name it uses. Anything else
-(strings, `if`, arithmetic, the prelude, tags, `::`, dot calls, `self`, a
-`let` of a computed value) is outside the calculus and skipped.
+`parser/` (tests included), a short list of hand-written programs, 4000
+programs from a fixed-seed generator of the core, and 6000 from a fixed-seed
+typed generator of the phase-1 forms. A program is compared when it is in the
+fragment of `proofs/goat_ln.ott`: numerals, Float literals, strings, unit,
+booleans, functions, calls, `if` with an `else`, the twelve binary operators on
+Int, Float, String and Bool, `let` of a syntactic value that does not name
+itself, record literals with distinct labels, and field access, binding every
+name it uses. Anything else (the prelude, tags, `::`, dot calls, `self`, a `let`
+of a computed value, an operator on records or on Unit) is outside the
+calculus and skipped.
+
+Two more kinds of program are skipped because the owner deferred them to phase
+2 (generic operators): a program the checker accepts with a numeric type
+variable left in a generalized function (`add = program(a, b) do a + b done`),
+and a program that applies an operator to two operands whose types only a later
+use settles (`program(x) do x > x done("a")`). The algorithm infers a function
+before it sees the call, so it has no signature for such an operator.
+
+## Where `float(e)` goes
+
+The calculus has no implicit Int-to-Float widening, so the corpus writer
+elaborates it from the checker's node types and the driver then requires the
+proven algorithm to accept the result. It writes `float(e)` around
+
+- an Int literal whose node type is Float (the context settled it);
+- the Int operand of `+ - * < <= > >= == !=` whose other operand is a Float;
+- each Int operand of `/` (a quotient is always a Float);
+- an Int argument to a call whose callee's parameter is a Float.
+
+If the checker widened anywhere else, the elaborated program would be rejected
+and the driver would report a mismatch. A rejected program has no node types
+and is written with no coercions. This is a differential check, not a theorem:
+a full proof would need a model of the checker's elaborator.
 
 The calculus is curried, so a program whose functions and calls all take one
 parameter or argument (`U` lines) is compared in both directions. A program with

@@ -91,7 +91,10 @@ Fixpoint unify_t (f : nat) (T1 T2 : typ) (n : nat) {struct f} : option (sub * na
   | S f' =>
       match T1, T2 with
       | typ_Int, typ_Int => Some (sid, n)
+      | typ_Float, typ_Float => Some (sid, n)
       | typ_Bool, typ_Bool => Some (sid, n)
+      | typ_Unit, typ_Unit => Some (sid, n)
+      | typ_String, typ_String => Some (sid, n)
       | typ_Var a, typ_Var b =>
           if Atom.eq_dec a b then Some (sid, n) else Some (sbT a T2, n)
       | typ_Var a, _ => if occT a T2 then None else Some (sbT a T2, n)
@@ -192,6 +195,40 @@ Definition gen_ren (G : ctx) (T : typ) : scheme :=
 (* Algorithm W                                                          *)
 (* ------------------------------------------------------------------ *)
 
+(* The type both operands of a binary operator are unified with, taken from
+   whichever operand type is already known (the right first).  [/] takes Floats
+   and [//] and [%] take Ints whatever the operands are.  Two operands that are
+   both still variables fix nothing, so the operator has no signature there:
+   generic operators are not in this phase. *)
+Definition num_ty (A : typ) : bool :=
+  match A with typ_Int | typ_Float => true | _ => false end.
+
+Definition cmp_ty (A : typ) : bool :=
+  match A with typ_Int | typ_Float | typ_String | typ_Bool => true | _ => false end.
+
+Definition bin_arg (o : bop) (A B : typ) : option typ :=
+  match kind o with
+  | k_ring => if num_ty B then Some B else if num_ty A then Some A else None
+  | k_quot => Some typ_Float
+  | k_whole => Some typ_Int
+  | k_cmp => if cmp_ty B then Some B else if cmp_ty A then Some A else None
+  end.
+
+(* The result type of a binary operator at an operand type, mirroring
+   [bin_sig]. *)
+Definition bin_ty (o : bop) (A : typ) : option typ :=
+  match kind o, A with
+  | k_ring, typ_Int => Some typ_Int
+  | k_ring, typ_Float => Some typ_Float
+  | k_quot, typ_Float => Some typ_Float
+  | k_whole, typ_Int => Some typ_Int
+  | k_cmp, typ_Int => Some typ_Bool
+  | k_cmp, typ_Float => Some typ_Bool
+  | k_cmp, typ_String => Some typ_Bool
+  | k_cmp, typ_Bool => Some typ_Bool
+  | _, _ => None
+  end.
+
 Definition fresh_var (G : ctx) (e : exp) : atom :=
   fresh (AtomSetImpl.elements (dom G `union` fv_exp e)).
 
@@ -208,6 +245,9 @@ Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
           | Some s => let (T, n1) := instantiate s n in Some (sid, T, n1)
           end
       | e_num _ => Some (sid, typ_Int, n)
+      | e_dec _ => Some (sid, typ_Float, n)
+      | e_unit => Some (sid, typ_Unit, n)
+      | e_str _ => Some (sid, typ_String, n)
       | e_true => Some (sid, typ_Bool, n)
       | e_false => Some (sid, typ_Bool, n)
       | e_abs b =>
@@ -260,7 +300,59 @@ Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
               | Some (s2, n2) => Some (scomp s2 s1, apT s2 a, n2)
               end
           end
-      | _ => None
+      | e_ite c a b =>
+          match infer f' G c n with
+          | None => None
+          | Some (s1, T1, n1) =>
+              match unify_t f' T1 typ_Bool n1 with
+              | None => None
+              | Some (s2, n2) =>
+                  match infer f' (apC s2 (apC s1 G)) a n2 with
+                  | None => None
+                  | Some (s3, T2, n3) =>
+                      match infer f' (apC s3 (apC s2 (apC s1 G))) b n3 with
+                      | None => None
+                      | Some (s4, T3, n4) =>
+                          match unify_t f' (apT s4 T2) T3 n4 with
+                          | None => None
+                          | Some (s5, n5) =>
+                              Some (scomp s5 (scomp s4 (scomp s3 (scomp s2 s1))), apT s5 T3, n5)
+                          end
+                      end
+                  end
+              end
+          end
+      | e_tofloat e1 =>
+          match infer f' G e1 n with
+          | None => None
+          | Some (s1, T1, n1) =>
+              match unify_t f' T1 typ_Int n1 with
+              | None => None
+              | Some (s2, n2) => Some (scomp s2 s1, typ_Float, n2)
+              end
+          end
+      | e_bin e1 o e2 =>
+          match infer f' G e1 n with
+          | None => None
+          | Some (s1, T1, n1) =>
+              match infer f' (apC s1 G) e2 n1 with
+              | None => None
+              | Some (s2, T2, n2) =>
+                  match bin_arg o (apT s2 T1) T2 with
+                  | None => None
+                  | Some T =>
+                      match unify_t f' (apT s2 T1) T n2 with
+                      | None => None
+                      | Some (s3, n3) =>
+                          match unify_t f' (apT s3 T2) T n3, bin_ty o T with
+                          | Some (s4, n4), Some R =>
+                              Some (scomp s4 (scomp s3 (scomp s2 s1)), R, n4)
+                          | _, _ => None
+                          end
+                      end
+                  end
+              end
+          end
       end
   end
 with infer_fields (f : nat) (G : ctx) (fs : fields) (n : nat) {struct f}

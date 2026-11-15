@@ -61,6 +61,55 @@ Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
 Lemma EvT_Bool : EvT typ_Bool.
 Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
 
+Lemma EvT_Float : EvT typ_Float.
+Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
+
+Lemma EvT_Unit : EvT typ_Unit.
+Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
+
+Lemma EvT_String : EvT typ_String.
+Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
+
+Definition ground (T : typ) : Prop :=
+  T = typ_Int \/ T = typ_Float \/ T = typ_String \/ T = typ_Bool.
+
+Lemma ground_ap : forall s T, ground T -> apT s T = T.
+Proof. intros s T [H|[H|[H|H]]]; subst; reflexivity. Qed.
+
+Lemma ground_EvT : forall T, ground T -> EvT T.
+Proof.
+  intros T [H|[H|[H|H]]]; subst;
+    first [ apply EvT_Int | apply EvT_Float | apply EvT_String | apply EvT_Bool ].
+Qed.
+
+Lemma bin_arg_ground : forall o A B T, bin_arg o A B = Some T -> ground T.
+Proof.
+  intros o A B T H. unfold bin_arg in H.
+  destruct (kind o); try (inversion H; subst; unfold ground; auto; fail);
+    destruct B; destruct A; cbn in H; inversion H; subst; unfold ground; auto.
+Qed.
+
+Lemma bin_ty_sig : forall o T R, bin_ty o T = Some R -> bin_sig o T T R.
+Proof.
+  intros o T R H. unfold bin_ty in H.
+  destruct o; cbn in H; destruct T; try discriminate H;
+    inversion H; subst; try (apply sig_ring_int; reflexivity);
+    first [ apply sig_ring_float; reflexivity | apply sig_quot
+          | apply sig_whole; reflexivity | (apply sig_cmp; [ reflexivity | constructor ]) ].
+Qed.
+
+Lemma bin_ty_EvT : forall o T R, bin_ty o T = Some R -> EvT R.
+Proof.
+  intros o T R H. unfold bin_ty in H.
+  destruct (kind o); destruct T; try discriminate H;
+    inversion H; subst;
+    first [ apply EvT_Int | apply EvT_Float | apply EvT_Bool ].
+Qed.
+
+Lemma typing_ap_Bool : forall s G e,
+  OkS s -> WfCtx G -> typing G e typ_Bool -> typing (apC s G) e typ_Bool.
+Proof. intros s G e Hs HG H. exact (typing_ap s G e typ_Bool Hs HG H). Qed.
+
 Lemma EvR_Empty : EvR row_Empty.
 Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
 
@@ -79,7 +128,8 @@ Proof.
   induction f as [|f IH]; [ split; intros; discriminate | ].
   destruct IH as [IHe IHf]. split.
   - intros G e n s T n' H HG. cbn [infer] in H.
-    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3]; try discriminate H.
+    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3];
+      try discriminate H.
     + (* variable *)
       destruct (lookup x G) as [sc|] eqn:Hl; [|discriminate].
       destruct (instantiate sc n) as [T0 n1] eqn:Hi. inversion H; try subst s; try subst T; try subst n'; clear H.
@@ -90,6 +140,9 @@ Proof.
     + inversion H; try subst s; try subst T; try subst n'; clear H.
       split; [apply OkS_id|]. split; [apply EvT_Int|].
       apply T_Num. apply uniq_apC. exact (proj1 HG).
+    + inversion H; try subst s; try subst T; try subst n'; clear H.
+      split; [apply OkS_id|]. split; [apply EvT_Float|].
+      apply T_Dec. apply uniq_apC. exact (proj1 HG).
     + inversion H; try subst s; try subst T; try subst n'; clear H.
       split; [apply OkS_id|]. split; [apply EvT_Bool|].
       apply T_True. apply uniq_apC. exact (proj1 HG).
@@ -185,6 +238,91 @@ Proof.
       split; [ apply EvT_ap; [exact Hs2 | apply EvT_var, ev_ea] | ].
       rewrite <- apC_comp.
       eapply T_Proj.
+      eapply T_Conv; [ | exact Hteq ].
+      apply (typing_ap s2 _ _ _ Hs2 HG1). exact Hty1.
+    + inversion H; try subst s; try subst T; try subst n'; clear H.
+      split; [apply OkS_id|]. split; [apply EvT_Unit|].
+      apply T_Unit. apply uniq_apC. exact (proj1 HG).
+    + inversion H; try subst s; try subst T; try subst n'; clear H.
+      split; [apply OkS_id|]. split; [apply EvT_String|].
+      apply T_Str. apply uniq_apC. exact (proj1 HG).
+    + (* conditional *)
+      destruct (infer f G c0 n) as [[[s1 T1] n1]|] eqn:E1; [|discriminate].
+      destruct (unify_t f T1 typ_Bool n1) as [[s2 n2]|] eqn:E2; [|discriminate].
+      destruct (infer f (apC s2 (apC s1 G)) a0 n2) as [[[s3 T2] n3]|] eqn:E3; [|discriminate].
+      destruct (infer f (apC s3 (apC s2 (apC s1 G))) b0 n3) as [[[s4 T3] n4]|] eqn:E4;
+        [|discriminate].
+      destruct (unify_t f (apT s4 T2) T3 n4) as [[s5 n5]|] eqn:E5; [|discriminate].
+      inversion H; try subst s; try subst T; try subst n'; clear H.
+      destruct (IHe _ _ _ _ _ _ E1 HG) as (Hs1 & HT1 & Hty1).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ E2 HT1 EvT_Bool) as [Hs2 Hteq2].
+      pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
+      destruct (IHe _ _ _ _ _ _ E3 HG2) as (Hs3 & HT2 & Hty2).
+      pose proof (WfCtx_ap s3 _ Hs3 HG2) as HG3.
+      destruct (IHe _ _ _ _ _ _ E4 HG3) as (Hs4 & HT3 & Hty3).
+      pose proof (WfCtx_ap s4 _ Hs4 HG3) as HG4.
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ E5 (EvT_ap s4 T2 Hs4 HT2) HT3)
+        as [Hs5 Hteq5].
+      pose proof (WfCtx_ap s5 _ Hs5 HG4) as HG5.
+      split; [ repeat (apply OkS_comp; [ assumption | ]); assumption | ].
+      split; [ apply EvT_ap; auto | ].
+      rewrite <- !apC_comp.
+      assert (Hc : typing (apC s2 (apC s1 G)) c0 typ_Bool).
+      { eapply T_Conv; [ | exact Hteq2 ].
+        apply (typing_ap s2 _ _ _ Hs2 HG1). exact Hty1. }
+      eapply T_If.
+      * exact (typing_ap_Bool s5 _ _ Hs5 HG4
+                 (typing_ap_Bool s4 _ _ Hs4 HG3 (typing_ap_Bool s3 _ _ Hs3 HG2 Hc))).
+      * eapply T_Conv; [ | exact Hteq5 ].
+        apply (typing_ap s5 _ _ _ Hs5 HG4).
+        apply (typing_ap s4 _ _ _ Hs4 HG3). exact Hty2.
+      * apply (typing_ap s5 _ _ _ Hs5 HG4). exact Hty3.
+    + (* binary operation *)
+      destruct (infer f G a1 n) as [[[s1 T1] n1]|] eqn:E1; [|discriminate].
+      destruct (infer f (apC s1 G) a2 n1) as [[[s2 T2] n2]|] eqn:E2; [|discriminate].
+      destruct (bin_arg o (apT s2 T1) T2) as [Ta|] eqn:E3; [|discriminate].
+      destruct (unify_t f (apT s2 T1) Ta n2) as [[s3 n3]|] eqn:E4; [|discriminate].
+      destruct (unify_t f (apT s3 T2) Ta n3) as [[s4 n4]|] eqn:E5; [|discriminate].
+      destruct (bin_ty o Ta) as [R|] eqn:E6; [|discriminate].
+      inversion H; try subst s; try subst T; try subst n'; clear H.
+      pose proof (bin_arg_ground _ _ _ _ E3) as Hg.
+      pose proof (ground_EvT _ Hg) as HTa.
+      destruct (IHe _ _ _ _ _ _ E1 HG) as (Hs1 & HT1 & Hty1).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      destruct (IHe _ _ _ _ _ _ E2 HG1) as (Hs2 & HT2 & Hty2).
+      pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ E4 (EvT_ap s2 T1 Hs2 HT1) HTa)
+        as [Hs3 Hteq3].
+      pose proof (WfCtx_ap s3 _ Hs3 HG2) as HG3.
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ E5 (EvT_ap s3 T2 Hs3 HT2) HTa)
+        as [Hs4 Hteq4].
+      pose proof (WfCtx_ap s4 _ Hs4 HG3) as HG4.
+      rewrite (ground_ap s3 _ Hg) in Hteq3.
+      rewrite (ground_ap s4 _ Hg) in Hteq4.
+      split; [ repeat (apply OkS_comp; [ assumption | ]); assumption | ].
+      split; [ exact (bin_ty_EvT _ _ _ E6) | ].
+      rewrite <- !apC_comp.
+      eapply T_Bin; [ | | exact (bin_ty_sig _ _ _ E6) ].
+      * pose proof (teq_apT s4 _ _ Hteq3) as Hteq3'.
+        rewrite (ground_ap s4 _ Hg) in Hteq3'.
+        eapply T_Conv; [ | exact Hteq3' ].
+        apply (typing_ap s4 _ _ _ Hs4 HG3).
+        apply (typing_ap s3 _ _ _ Hs3 HG2).
+        apply (typing_ap s2 _ _ _ Hs2 HG1). exact Hty1.
+      * eapply T_Conv; [ | exact Hteq4 ].
+        apply (typing_ap s4 _ _ _ Hs4 HG3).
+        apply (typing_ap s3 _ _ _ Hs3 HG2). exact Hty2.
+    + (* Int-to-Float coercion *)
+      destruct (infer f G a3 n) as [[[s1 T1] n1]|] eqn:E1; [|discriminate].
+      destruct (unify_t f T1 typ_Int n1) as [[s2 n2]|] eqn:E2; [|discriminate].
+      inversion H; try subst s; try subst T; try subst n'; clear H.
+      destruct (IHe _ _ _ _ _ _ E1 HG) as (Hs1 & HT1 & Hty1).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ E2 HT1 EvT_Int) as [Hs2 Hteq].
+      split; [ apply OkS_comp; auto | ]. split; [ apply EvT_Float | ].
+      rewrite <- apC_comp.
+      apply T_ToFloat.
       eapply T_Conv; [ | exact Hteq ].
       apply (typing_ap s2 _ _ _ Hs2 HG1). exact Hty1.
   - intros G fs n s R n' H HG. cbn [infer_fields] in H.
