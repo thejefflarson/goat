@@ -47,10 +47,10 @@ Inductive pw_teq : row -> row -> Prop :=
  | pw_cons : forall l T T' R R',
      teq T T' -> pw_teq R R' -> pw_teq (row_Ext l T R) (row_Ext l T' R').
 
-Lemma pw_conv : forall G fs R R',
-  field_typing G fs R -> pw_teq R R' -> field_typing G fs R'.
+Lemma pw_conv : forall D G fs R R',
+  field_typing D G fs R -> pw_teq R R' -> field_typing D G fs R'.
 Proof.
-  intros G fs R R' H. revert R'. induction H; intros R' Hp; inversion Hp; subst.
+  intros D G fs R R' H. revert R'. induction H; intros R' Hp; inversion Hp; subst.
   - apply FT_nil. assumption.
   - eapply FT_cons; [ eapply T_Conv; eauto | eauto ].
 Qed.
@@ -83,16 +83,19 @@ Qed.
    monotype, survives a substitution of the algorithm. *)
 Lemma fields_ap : forall s G p T0 fs R,
   OkS s -> WfCtx G ->
-  field_typing ((p ~ sch_mono T0) ++ G) fs R ->
-  field_typing ((p ~ sch_mono (apT s T0)) ++ apC s G) fs (apR s R).
+  field_typing d_any ((p ~ sch_mono T0) ++ G) fs R ->
+  field_typing d_any ((p ~ sch_mono (apT s T0)) ++ apC s G) fs (apR s R).
 Proof.
   intros s G p T0 fs R Hs HG Hty.
-  pose proof (proj2 typing_uniq_mut _ _ _ Hty) as Hu0.
+  pose proof (proj2 typing_uniq_mut _ _ _ _ Hty) as Hu0.
   apply uniq_cons_iff in Hu0. destruct Hu0 as [Hu Hp].
   pose proof Hs as Hs0. destruct Hs as [[A Hsup] _].
-  apply (proj2 typing_tsubst_gen_mut _ fs R Hty (sT s) (sR s)
-           ((p ~ sch_mono (apT s T0)) ++ apC s G) A).
+  apply (proj2 typing_tsubst_gen_mut d_any _ fs R Hty (sT s) (sR s)
+           ((p ~ sch_mono (apT s T0)) ++ apC s G) d_any A {} {}).
   - constructor; [ apply uniq_apC; exact Hu | rewrite dom_apC; exact Hp ].
+  - intros a _. reflexivity.
+  - intros a _. reflexivity.
+  - intros a. apply sat_any.
   - apply ctx_subst_cons; [ apply sch_subst_mono | ].
     intros x sc Hb. exists (apS s sc). split.
     + apply binds_apC; exact Hb.
@@ -103,10 +106,10 @@ Qed.
 
 (* A substitution that leaves the context alone, applied to the group's row. *)
 Lemma fields_tsubst_fix : forall G p R fs st sr,
-  field_typing ((p ~ sch_mono (typ_Record R)) ++ G) fs R ->
+  field_typing d_any ((p ~ sch_mono (typ_Record R)) ++ G) fs R ->
   (forall a, a `in` ftv_ctx G -> st a = typ_Var a) ->
   (forall r, r `in` frv_ctx G -> sr r = row_Var r) ->
-  field_typing ((p ~ sch_mono (typ_Record (ap_row st sr R))) ++ G) fs (ap_row st sr R).
+  field_typing d_any ((p ~ sch_mono (typ_Record (ap_row st sr R))) ++ G) fs (ap_row st sr R).
 Proof.
   intros G p R fs st sr Hty Hfa Hfr.
   set (T := typ_Record R).
@@ -118,7 +121,7 @@ Proof.
         [reflexivity | apply AtomSetFacts.not_mem_iff in Em; contradiction].
     - intros r Hr. unfold sr0. destruct (AtomSetImpl.mem r (frv_typ T)) eqn:Em;
         [reflexivity | apply AtomSetFacts.not_mem_iff in Em; contradiction]. }
-  pose proof (proj2 typing_uniq_mut _ _ _ Hty) as Hu0.
+  pose proof (proj2 typing_uniq_mut _ _ _ _ Hty) as Hu0.
   apply uniq_cons_iff in Hu0. destruct Hu0 as [Hu Hp].
   subst T. simpl in Heq. injection Heq as Heq.
   rewrite <- Heq.
@@ -137,12 +140,15 @@ Proof.
       * rewrite (Hfr r Hr). simpl. fsetdec.
       * simpl. fsetdec. }
   assert (Hrow : ap_typ st0 sr0 (typ_Record R) = typ_Record (ap_row st0 sr0 R)) by reflexivity.
-  pose proof (proj2 typing_tsubst_gen_mut _ fs R Hty st0 sr0
-                ((p ~ sch_mono (ap_typ st0 sr0 (typ_Record R))) ++ G)
-                (ftv_typ (typ_Record R) `union` frv_typ (typ_Record R))) as H.
+  pose proof (proj2 typing_tsubst_gen_mut d_any _ fs R Hty st0 sr0
+                ((p ~ sch_mono (ap_typ st0 sr0 (typ_Record R))) ++ G) d_any
+                (ftv_typ (typ_Record R) `union` frv_typ (typ_Record R)) {} {}) as H.
   rewrite Hrow in H.
   apply H.
   - constructor; [ exact Hu | exact Hp ].
+  - intros a _. reflexivity.
+  - intros a _. reflexivity.
+  - intros a. apply sat_any.
   - apply ctx_subst_cons; [ rewrite <- Hrow; apply sch_subst_mono | ].
     apply ctx_subst_fix.
     + intros a Ha. unfold st0. destruct (AtomSetImpl.mem a (ftv_typ (typ_Record R)));
@@ -159,8 +165,8 @@ Qed.
 
 (* The renaming that generalizes the group's type, applied to its members. *)
 Lemma fields_gen_ren : forall G p R fs,
-  field_typing ((p ~ sch_mono (typ_Record R)) ++ G) fs R ->
-  field_typing
+  field_typing d_any ((p ~ sch_mono (typ_Record R)) ++ G) fs R ->
+  field_typing d_any
     ((p ~ sch_mono (s_body (gen_ren G (typ_Record R)))) ++ G) fs
     (ap_row (rename_t (gen_vars_t G (typ_Record R))) (rename_r (gen_vars_r G (typ_Record R))) R).
 Proof.
@@ -176,12 +182,12 @@ Qed.
 (* The members derived with the group's name opened at one fresh name hold at
    any other. *)
 Lemma fields_rename_var : forall G x y sc fs R,
-  field_typing ((x ~ sc) ++ G) (open_fields_wrt_exp fs (e_fvar_f x)) R ->
+  field_typing d_any ((x ~ sc) ++ G) (open_fields_wrt_exp fs (e_fvar_f x)) R ->
   x `notin` fv_fields fs -> y `notin` dom G -> y <> x ->
-  field_typing ((y ~ sc) ++ G) (open_fields_wrt_exp fs (e_fvar_f y)) R.
+  field_typing d_any ((y ~ sc) ++ G) (open_fields_wrt_exp fs (e_fvar_f y)) R.
 Proof.
   intros G x y sc fs R Hty Hx Hy Hne.
-  pose proof (proj2 (typing_rename_var_mut x y sc G) _ _ _ Hty nil eq_refl) as H.
+  pose proof (proj2 (typing_rename_var_mut x y sc G) _ _ _ _ Hty nil eq_refl) as H.
   simpl in H. rewrite (subst_intro_fields fs x (e_fvar_f y) Hx).
   apply H. simpl. fsetdec.
 Qed.
