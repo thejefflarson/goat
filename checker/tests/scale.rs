@@ -131,3 +131,42 @@ fn every_error_of_a_run_of_failing_bindings_is_spanned() {
 fn a_run_of_erroring_field_reads_scales_linearly() {
     assert_scales_linearly(|n| format!("r = {{x: 1}}\n{}1", "r.y; ".repeat(n)), true);
 }
+
+/// `count` functions that each call the next, the last calling the first: one
+/// group the checker generalizes after all of them are inferred.
+fn cyclic_functions(count: usize) -> String {
+    let functions = repeated(count, |i| {
+        format!("f{i} = program(x) do f{}(x) done", (i + 1) % count)
+    });
+    format!("{functions}\nf0(true)")
+}
+
+/// A group in which each function mentions three others, spread across it.
+fn dense_group(count: usize) -> String {
+    let functions = repeated(count, |i| {
+        let [a, b, c] = [1, 7, 13].map(|step| (i + step) % count);
+        format!(
+            "f{i} = program(x) do if true then f{a}(x) else if true then f{b}(x) else f{c}(x) done done done"
+        )
+    });
+    format!("{functions}\nf0(true)")
+}
+
+#[test]
+fn a_cyclic_group_scales_linearly() {
+    assert_scales_linearly(cyclic_functions, false);
+}
+
+#[test]
+fn a_dense_group_scales_linearly() {
+    assert_scales_linearly(dense_group, false);
+}
+
+#[test]
+fn a_group_of_two_thousand_functions_checks_quickly() {
+    for source in [cyclic_functions(SMALL), dense_group(SMALL)] {
+        let (time, result) = time_to_check(source);
+        assert_eq!(result, Ok(()));
+        assert!(time < Duration::from_secs(5), "took {time:?}");
+    }
+}

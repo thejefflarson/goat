@@ -136,21 +136,26 @@ what the locally-nameless infrastructure handles, as the curried single-binder
 `ST-LetV` and `ST-Letrec`; `tsubst_gen_core` is the capture-avoiding renaming
 that `T_Let` and `T_Letrec` share in the type-substitution lemma.
 
-The inference algorithm accepts a `let` of a syntactic value only and rejects a
-`letrec` (`GoatInfer.v`); extending it to `T_LetMono` and `T_Letrec` is a
-separate phase (the algorithm proof, ADR 0037 phase 7). The grammar has no new
+The inference algorithm covers these forms (`GoatInfer.v`, `GoatInferRec.v`,
+`GoatInferSound.v`): a `let` of a computed value is typed monomorphically
+(`T_LetMono`), and a `letrec` infers its members with the group's name bound
+to a row of fresh variables, unifies each member's type with its variable
+(`unify_pw`), and generalizes the group's record type for the body
+(`T_Letrec`). The grammar has no new
 form, but the parser fragment now reads the surface group: the function
 bindings that lead a block (`f = program(x) do ... done`, ADR 0003) are one
 `letrec`, each member named by its position (`GoatDen.v`, `DB_group`). Every
 occurrence of a member's name in the members and the rest of the block becomes
 the projection of that member from the group (`bind_group`). A function binding
-after a value binding in the same block is outside the fragment, because the
-group would have to be placed after the values its members read. A binding
+after a value binding in the same block is outside the fragment (decided: the
+group would have to be placed after the values its members read, which needs
+name resolution). A binding
 whose value is a parenthesised function is a plain `let`, so the printer
 parenthesises a function that is a binding's value. T1 covers groups, and
 `GoatExample.v` shows one program parsing to the group `GoatPhase2.v` types. T3
-does not: the printer does not write a `letrec`, which would need the group's
-projections printed as bare member names.
+does not (decided: deferred to the tail of phase 8): the printer does not write a
+`letrec`, which would need the group's projections printed as bare member names.
+The lexer stays trusted until phases 3 to 6 land, then is verified once (decided).
 Not in this phase: constraint-polymorphic operators (the kinded type variables
 of the rest of phase 2).
 

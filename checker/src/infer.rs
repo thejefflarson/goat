@@ -321,6 +321,64 @@ impl<T> Bindings<T> {
     }
 }
 
+/// A function binding being inferred, and the pending members of its block
+/// its body mentions so far.
+struct MemberFrame {
+    block: u32,
+    member: Symbol,
+    uses: Vec<Symbol>,
+    seen: HashSet<Symbol>,
+}
+
+/// The pending function bindings of one block, grouped. Two members are in one
+/// group when one mentions the other, directly or through a third. A group
+/// counts the members it has seen mentioned but not yet inferred, and is ready
+/// to generalize when that count is zero.
+#[derive(Default)]
+struct Deferred {
+    node: HashMap<Symbol, usize>,
+    parent: Vec<usize>,
+    /// Per group root: the members mentioned but not yet inferred.
+    uninferred: Vec<usize>,
+    /// Per group root: all its members.
+    members: Vec<Vec<Symbol>>,
+}
+
+impl Deferred {
+    fn find(&mut self, mut at: usize) -> usize {
+        while self.parent[at] != at {
+            self.parent[at] = self.parent[self.parent[at]];
+            at = self.parent[at];
+        }
+        at
+    }
+
+    fn add(&mut self, member: Symbol, uninferred: usize) -> usize {
+        let at = self.parent.len();
+        self.parent.push(at);
+        self.uninferred.push(uninferred);
+        self.members.push(vec![member]);
+        self.node.insert(member, at);
+        at
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let (a, b) = (self.find(a), self.find(b));
+        if a == b {
+            return;
+        }
+        let (big, small) = if self.members[a].len() >= self.members[b].len() {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        self.parent[small] = big;
+        self.uninferred[big] += self.uninferred[small];
+        let moved = std::mem::take(&mut self.members[small]);
+        self.members[big].extend(moved);
+    }
+}
+
 #[derive(Default)]
 struct Inferer {
     next: TypeVar,
@@ -355,6 +413,13 @@ struct Inferer {
     /// Computed `=` bindings that keep a monotype where a value would have
     /// been generalized, by their name.
     restricted: HashMap<Symbol, String>,
+    /// The function bindings of the blocks being inferred that are seeded but
+    /// not generalized yet, by the block they belong to.
+    pending_members: HashMap<Symbol, u32>,
+    /// The blocks seeded so far, to name the next one.
+    blocks: u32,
+    /// The function bindings whose bodies are being inferred, innermost last.
+    member_frames: Vec<MemberFrame>,
     dots: DotCalls,
     /// The type `self` takes in the method the next `Func` is, set just before
     /// inferring it.
@@ -2054,8 +2119,11 @@ impl Inferer {
 
     /// Give each function binding in the `Let` chain from `expr` a monomorphic
     /// type up front, so bodies can use bindings not yet inferred (self and
-    /// mutual recursion). Each is generalized when its own `Let` is reached.
+    /// mutual recursion). A member is generalized once every member it shares
+    /// type variables with has been inferred: see [`Self::settle`].
     fn seed_function_group(&mut self, expr: &Expr) {
+        let block = self.blocks;
+        self.blocks += 1;
         let mut cursor = Some(expr);
         while let Some(Expr {
             kind:
@@ -2071,6 +2139,7 @@ impl Inferer {
             if matches!(value.kind, ExprKind::Func { .. }) && !self.env.contains_key(symbol) {
                 let ty = self.fresh();
                 self.bind_env(*symbol, Scheme::mono(ty));
+                self.pending_members.insert(*symbol, block);
             }
             cursor = rest.as_deref();
         }
@@ -2386,6 +2455,7 @@ impl Inferer {
     fn infer_spine(&mut self, first: &Expr) -> Ty {
         let mut spine = Vec::new();
         let mut seeded = false;
+        let mut deferred = Deferred::default();
         let mut cursor = first;
         let ty = loop {
             let ExprKind::Let {
@@ -2397,30 +2467,52 @@ impl Inferer {
             else {
                 break self.infer(cursor);
             };
-            if !seeded && matches!(value.kind, ExprKind::Func { .. }) {
+            let is_function = matches!(value.kind, ExprKind::Func { .. });
+            if !seeded && is_function {
                 self.seed_function_group(cursor);
                 seeded = true;
             }
-            let value_ty = self.infer(value);
-            let rec = match self.unbind_env(symbol) {
-                Some(seed) => {
-                    self.unify(&value_ty, &seed.ty, value.span);
-                    seed.ty
+            match self.pending_members.get(symbol).copied() {
+                Some(block) if is_function => {
+                    self.member_frames.push(MemberFrame {
+                        block,
+                        member: *symbol,
+                        uses: Vec::new(),
+                        seen: HashSet::new(),
+                    });
+                    let value_ty = self.infer(value);
+                    let frame = self.member_frames.pop().expect("the frame pushed above");
+                    let seed = self.env[symbol].ty.clone();
+                    self.unify(&value_ty, &seed, value.span);
+                    self.settle(&mut deferred, *symbol, &frame.uses);
                 }
-                None => value_ty,
-            };
-
-            let mut scheme = self.generalize(&rec, matches!(value.kind, ExprKind::Func { .. }));
-            if !scheme.vars.is_empty() && !is_syntactic_value(value) {
-                self.restricted.insert(*symbol, name.clone());
-                scheme = Scheme::mono(scheme.ty);
+                _ => {
+                    let value_ty = self.infer(value);
+                    let rec = match self.unbind_env(symbol) {
+                        Some(seed) => {
+                            self.unify(&value_ty, &seed.ty, value.span);
+                            seed.ty
+                        }
+                        None => value_ty,
+                    };
+                    let mut scheme = self.generalize(&rec, is_function);
+                    if !scheme.vars.is_empty() && !is_syntactic_value(value) {
+                        self.restricted.insert(*symbol, name.clone());
+                        scheme = Scheme::mono(scheme.ty);
+                    }
+                    self.bind_env(*symbol, scheme.clone());
+                    self.schemes.insert(*symbol, scheme);
+                }
             }
-            self.bind_env(*symbol, scheme.clone());
-            self.schemes.insert(*symbol, scheme.clone());
             spine.push((cursor.id, symbol));
             match rest {
                 Some(rest) => cursor = rest,
-                None => break self.instantiate(&scheme),
+                None => {
+                    let rest: Vec<Symbol> = deferred.node.keys().copied().collect();
+                    self.generalize_members(rest);
+                    let scheme = self.env[symbol].clone();
+                    break self.instantiate(&scheme);
+                }
             }
         };
         for (id, symbol) in spine.into_iter().rev() {
@@ -2428,6 +2520,75 @@ impl Inferer {
             self.node_types.insert(id, ty.clone());
         }
         ty
+    }
+
+    /// Record that the function binding `symbol`'s body mentions the pending
+    /// member `used`, which its type then shares variables with.
+    fn note_member_use(&mut self, used: Symbol) {
+        let Some(&block) = self.pending_members.get(&used) else {
+            return;
+        };
+        if let Some(frame) = self
+            .member_frames
+            .iter_mut()
+            .rev()
+            .find(|f| f.block == block)
+            && frame.member != used
+            && frame.seen.insert(used)
+        {
+            frame.uses.push(used);
+        }
+    }
+
+    /// Record that the member `start`, whose body mentions `uses`, is inferred,
+    /// and generalize its group if every member of it has been. A group is the
+    /// members that mention each other, directly or through a third, among
+    /// those not yet generalized: generalizing one of them before the rest
+    /// would leave its type tied to the others' monotypes, so
+    /// `f = program(x) do g(x) done` and `g = program(y) do y done` are
+    /// generalized together, after both.
+    fn settle(&mut self, deferred: &mut Deferred, start: Symbol, uses: &[Symbol]) {
+        let at = match deferred.node.get(&start).copied() {
+            Some(at) => {
+                let root = deferred.find(at);
+                deferred.uninferred[root] -= 1;
+                at
+            }
+            None => deferred.add(start, 0),
+        };
+        for used in uses {
+            if !self.pending_members.contains_key(used) {
+                continue;
+            }
+            let other = match deferred.node.get(used).copied() {
+                Some(other) => other,
+                None => deferred.add(*used, 1),
+            };
+            deferred.union(at, other);
+        }
+        let root = deferred.find(at);
+        if deferred.uninferred[root] == 0 {
+            let group = std::mem::take(&mut deferred.members[root]);
+            for member in &group {
+                deferred.node.remove(member);
+            }
+            self.generalize_members(group);
+        }
+    }
+
+    /// Generalize `members` together: take them all out of the environment
+    /// first, so none holds back another's variables.
+    fn generalize_members(&mut self, members: Vec<Symbol>) {
+        let seeds: Vec<(Symbol, Ty)> = members
+            .iter()
+            .filter_map(|m| Some((*m, self.unbind_env(m)?.ty)))
+            .collect();
+        for (symbol, ty) in seeds {
+            let scheme = self.generalize(&ty, true);
+            self.bind_env(symbol, scheme.clone());
+            self.schemes.insert(symbol, scheme);
+            self.pending_members.remove(&symbol);
+        }
     }
 
     #[cold]
@@ -2470,10 +2631,15 @@ impl Inferer {
             ExprKind::Float(_) => Ty::Float,
             ExprKind::Str(_) => Ty::Str,
             ExprKind::Bool(_) => Ty::Bool,
-            ExprKind::Var { symbol, .. } => match self.env.get(symbol).cloned() {
-                Some(scheme) => self.instantiate(&scheme),
-                None => self.fresh(),
-            },
+            ExprKind::Var { symbol, .. } => {
+                if !self.pending_members.is_empty() {
+                    self.note_member_use(*symbol);
+                }
+                match self.env.get(symbol).cloned() {
+                    Some(scheme) => self.instantiate(&scheme),
+                    None => self.fresh(),
+                }
+            }
             ExprKind::Foreign { params, ret, .. } => Ty::func(
                 params.iter().copied().map(Ty::from).collect(),
                 Ty::from(*ret),

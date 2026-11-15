@@ -107,6 +107,10 @@ expression. `Complete` excludes both. A run of two operators stays outside: its
 precedence is lowering's (ADR 0013), and `and`, `or`, `not` and unary minus are
 not in the calculus.
 
+Decided (owner, on #457): the lexer stays trusted until phases 3 to 6 land and is
+then verified once; T3 for `letrec` is deferred to the tail of phase 8; the
+exclusion of a function binding after a value binding stands.
+
 T1 covers all of this. T3 covers `Float` literals and the `if` without an
 `else` (the printer writes `e_ite c a e_unit` without the `else`), and no longer
 prints a function as the bare value of a binding: it parenthesises it, because a
