@@ -39,6 +39,7 @@ pub(crate) fn row_from(fields: Vec<(String, Ty)>) -> Row {
         .into_iter()
         .rev()
         .fold(Row::Empty, |rest, (label, field)| Row::Extend {
+            at: Default::default(),
             label,
             field: Box::new(field),
             method: Box::new(PLAIN),
@@ -112,6 +113,7 @@ fn rename_row(row: &Row, scope: &mut Vec<(TypeVar, TypeVar)>) -> Row {
         Row::Extend {
             label, field, rest, ..
         } => Row::Extend {
+            at: Default::default(),
             label: label.clone(),
             field: Box::new(rename_binders(field, scope)),
             method: Box::new(PLAIN),
