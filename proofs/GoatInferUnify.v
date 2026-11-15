@@ -189,6 +189,9 @@ Proof.
     all: try (exact (var_right_T _ _ _ _ _ H H1 H2)).
     + inversion H; subst. split; [apply OkS_id | apply teq_refl].
     + inversion H; subst. split; [apply OkS_id | apply teq_refl].
+    + inversion H; subst. split; [apply OkS_id | apply teq_refl].
+    + inversion H; subst. split; [apply OkS_id | apply teq_refl].
+    + inversion H; subst. split; [apply OkS_id | apply teq_refl].
     + (* Arrow, Arrow *)
       destruct (unify_t f A A' n) as [[s1 n1]|] eqn:E1; [|discriminate].
       destruct (unify_t f (apT s1 B) (apT s1 B') n1) as [[s2 n2]|] eqn:E2; [|discriminate].

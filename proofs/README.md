@@ -27,7 +27,7 @@ preservation) is B3 (#71).
 | `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
 | `GoatNum.v` | The integer arithmetic behind whole-number literals and the 64-bit `Int` range, kept apart because ZArith defines notations that clash with Metalib's `x ~ T`. |
 | `GoatLit.v` | Reads the argument of `e_num` as an integer, so `e_num 3` works in a file that never imports ZArith (and in the generated printer table). |
-| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion: which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1.5 // 2`, `1 + 1.5` with no coercion, `1 < "a"`, `true + true`, `if 1 then ...`). |
+| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion: which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1.5 // 2`, `1 + 1.5` with no coercion, `1 < "a"`, `true + true`, `if 1 then ...`). |
 | `GoatSound.v` | The two canonical HM lemmas — `typing_weaken` (L4) and `typing_tsubst_fix` (L5) — via the general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`); then term substitution **L6a/L6b**, **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
 | `GoatPeg.v` | Ford-style relational PEG semantics of the generated grammar over a token stream, and **T2** `peg_deterministic`. |
@@ -76,8 +76,11 @@ The coercion `float(e)` is what elaboration inserts wherever the checker accepts
 an `Int` for a `Float`: a call whose parameter is a `Float`, an operator with a
 `Float` on one side, a literal settled as a `Float`. The calculus has no
 subtyping, so the rule is `T_ToFloat`: `float(e)` is a `Float` when `e` is an
-`Int`. Preservation and progress cover it like any other term; that the
-elaborator inserts it where the checker accepts is not a theorem here.
+`Int`. Preservation and progress cover it like any other term. That the
+elaborator inserts it exactly where the checker accepts an `Int` for a `Float`
+is not a theorem: the differential test checks it (`differential/README.md`),
+by writing `float(e)` from the checker's own node types and requiring the
+proven algorithm to accept the result with the checker's type.
 
 `progress`, `preservation` and `soundness` hold with 0 admits, and
 `make check-assumptions` checks all seven theorems (T1, T2, T3, these three and
@@ -89,8 +92,12 @@ rounding, infinities and NaN (a `Float` is opaque), the `trap()` builtin,
 comparison of `Unit` (phase 6), and the `Eq`, `Numeric` and `Ordered`
 constraints (an operator applies at concrete types; constraint-polymorphic
 operators are phase 2). The inference algorithm (`GoatInfer.v`) covers the
-fragment before phase 1, `Int`, `Bool`, functions, bindings and records; any
-other term is rejected.
+whole of phase 1: `Unit`, strings, Float values, `if`, `float(e)` and the
+operators, besides functions, bindings and records. `infer_closed_sound` keeps
+its statement. An operator unifies both operands with one type taken from
+whichever operand type is already known (`bin_arg`), so `x * 1.5` fixes `x` to
+`Float`, and an operator whose two operands are both still variables is
+rejected: that is the generic operator of phase 2.
 
 The parser fragment widens in step: a string, a conditional with an `else`, and
 one operator between two chains. `GoatShape.v` counts operator nodes

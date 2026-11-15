@@ -10,23 +10,39 @@
 //! The programs are every goat source the repository holds (`examples/`, the
 //! code blocks of `docs/llm.md`, every string literal in the checker's Rust
 //! sources and tests) plus a fixed-seed generator. A program is kept when it is
-//! in the core fragment of `proofs/goat_ln.ott`: numerals, booleans, functions,
-//! calls, `let` of a syntactic value that does not name itself, record literals
-//! with distinct labels, and field access, using only names it binds. The value
-//! restriction (ADR 0027) is outside the calculus, so a `let` of anything but a
-//! syntactic value is outside the fragment.
+//! in the fragment of `proofs/goat_ln.ott`: numerals, Float literals, strings,
+//! unit, booleans, functions, calls, `if` with an `else`, the twelve binary
+//! operators on Int, Float, String and Bool, `let` of a syntactic value that
+//! does not name itself, record literals with distinct labels, and field
+//! access, using only names it binds. The value restriction (ADR 0027) is
+//! outside the calculus, so a `let` of anything but a syntactic value is
+//! outside the fragment.
+//!
+//! The calculus has no implicit Int-to-Float widening: elaboration writes
+//! `float(e)` where the checker accepts an Int for a Float (a literal the
+//! context needs as a Float, an operand beside a Float operand, an operand of
+//! `/`, an argument to a Float parameter). This reader inserts it from the
+//! checker's node types, so the differential test also checks that those
+//! places are exactly where the checker widens. A program whose operator
+//! operands are not all Int, Float, String or Bool (a record operand, a Unit
+//! comparison), or that leaves a numeric type variable in a generalized
+//! function, or that applies an operator to two operands whose types only a
+//! later use settles (a generic operator), is outside the fragment: those are
+//! deferred by the owner's decision.
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
 
 use goat_checker::check_with_prelude;
-use goat_checker::hir::{Expr, ExprId, ExprKind, Symbol};
+use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, Symbol};
 use goat_checker::lower::lower;
 use goat_checker::ty::{Row, Ty};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
 
 const GENERATED: usize = 4000;
+const GENERATED_TYPED: usize = 6000;
+const TYPED_DEPTH: u32 = 4;
 const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 const MAX_DEPTH: u32 = 6;
 
@@ -35,7 +51,13 @@ const MAX_DEPTH: u32 = 6;
 enum Core {
     Var(usize),
     Num(u64),
+    Float,
+    Str(Vec<u8>),
+    Unit,
     Bool(bool),
+    If(Box<Core>, Box<Core>, Box<Core>),
+    Bin(BinOp, Box<Core>, Box<Core>),
+    ToFloat(Box<Core>),
     Abs(Box<Core>),
     App(Box<Core>, Box<Core>),
     Let(Box<Core>, Box<Core>),
@@ -48,6 +70,36 @@ impl Core {
         match self {
             Core::Var(i) => write!(out, "(b {i})").unwrap(),
             Core::Num(n) => write!(out, "(n {n})").unwrap(),
+            Core::Float => out.push_str("(d 0)"),
+            Core::Unit => out.push('u'),
+            Core::Str(bytes) => {
+                out.push_str("(str");
+                for byte in bytes {
+                    write!(out, " {byte}").unwrap();
+                }
+                out.push(')');
+            }
+            Core::If(c, a, b) => {
+                out.push_str("(if ");
+                c.sexp(out);
+                out.push(' ');
+                a.sexp(out);
+                out.push(' ');
+                b.sexp(out);
+                out.push(')');
+            }
+            Core::Bin(op, a, b) => {
+                write!(out, "(bin {} ", bop_atom(*op)).unwrap();
+                a.sexp(out);
+                out.push(' ');
+                b.sexp(out);
+                out.push(')');
+            }
+            Core::ToFloat(e) => {
+                out.push_str("(float ");
+                e.sexp(out);
+                out.push(')');
+            }
             Core::Bool(true) => out.push('t'),
             Core::Bool(false) => out.push('f'),
             Core::Abs(body) => {
@@ -87,8 +139,88 @@ impl Core {
     }
 }
 
+impl Core {
+    /// Whether the algorithm knows this term's type when it reaches it, without
+    /// a later use fixing it. `env` holds that fact for each binder in scope,
+    /// innermost last.
+    fn known(&self, env: &mut Vec<bool>) -> bool {
+        match self {
+            Core::Var(i) => env[env.len() - 1 - i],
+            Core::Num(_) | Core::Float | Core::Str(_) | Core::Unit | Core::Bool(_) => true,
+            Core::ToFloat(_) | Core::Bin(..) => true,
+            Core::If(_, a, b) => a.known(env) || b.known(env),
+            Core::Let(v, b) => {
+                let known = v.known(env);
+                env.push(known);
+                let result = b.known(env);
+                env.pop();
+                result
+            }
+            Core::Abs(_) | Core::App(..) | Core::Rec(_) | Core::Proj(..) => false,
+        }
+    }
+
+    /// Whether every binary operator in this term has an operand the algorithm
+    /// knows, so it has a signature when the algorithm reaches it. An operator
+    /// on two operands that only a later use settles (a generic operator) has
+    /// none, and is deferred.
+    fn operators_resolve(&self, env: &mut Vec<bool>) -> bool {
+        match self {
+            Core::Var(_)
+            | Core::Num(_)
+            | Core::Float
+            | Core::Str(_)
+            | Core::Unit
+            | Core::Bool(_) => true,
+            Core::ToFloat(e) | Core::Proj(e, _) => e.operators_resolve(env),
+            Core::Abs(body) => {
+                env.push(false);
+                let ok = body.operators_resolve(env);
+                env.pop();
+                ok
+            }
+            Core::Let(v, b) => {
+                let value_ok = v.operators_resolve(env);
+                let known = v.known(env);
+                env.push(known);
+                let ok = value_ok && b.operators_resolve(env);
+                env.pop();
+                ok
+            }
+            Core::App(f, a) => f.operators_resolve(env) && a.operators_resolve(env),
+            Core::If(c, a, b) => {
+                c.operators_resolve(env) && a.operators_resolve(env) && b.operators_resolve(env)
+            }
+            Core::Rec(fields) => fields.iter().all(|(_, e)| e.operators_resolve(env)),
+            Core::Bin(op, a, b) => {
+                let fixed = matches!(op, BinOp::Div | BinOp::FloorDiv | BinOp::Mod);
+                (fixed || a.known(env) || b.known(env))
+                    && a.operators_resolve(env)
+                    && b.operators_resolve(env)
+            }
+        }
+    }
+}
+
+fn bop_atom(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "add",
+        BinOp::Sub => "sub",
+        BinOp::Mul => "mul",
+        BinOp::Div => "div",
+        BinOp::FloorDiv => "fdiv",
+        BinOp::Mod => "rem",
+        BinOp::Lt => "lt",
+        BinOp::Lte => "lte",
+        BinOp::Gt => "gt",
+        BinOp::Gte => "gte",
+        BinOp::Eq => "eq",
+        BinOp::Ne => "ne",
+    }
+}
+
 /// Reads lowered HIR as a core term, or says it is outside the fragment.
-struct Reader {
+struct Reader<'a> {
     /// The nodes lowering marked as dot calls and takes, which pass or move a
     /// receiver and are outside the calculus.
     special: HashSet<ExprId>,
@@ -96,17 +228,26 @@ struct Reader {
     scope: Vec<(String, Symbol)>,
     /// Cleared when a function or call has more than one parameter or argument.
     unary: bool,
+    /// The checker's node types when it accepted the program; a rejected
+    /// program has none, so it is read without coercions.
+    types: Option<&'a HashMap<ExprId, Ty>>,
 }
 
 fn is_syntactic_value(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Var { .. } | ExprKind::Func { .. } => true,
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Str(_)
+        | ExprKind::Unit
+        | ExprKind::Bool(_)
+        | ExprKind::Var { .. }
+        | ExprKind::Func { .. } => true,
         ExprKind::Record { fields } => fields.iter().all(|(_, f)| is_syntactic_value(f)),
         _ => false,
     }
 }
 
-impl Reader {
+impl Reader<'_> {
     fn label(&mut self, name: &str) -> usize {
         match self.labels.iter().position(|l| l == name) {
             Some(at) => at,
@@ -117,16 +258,64 @@ impl Reader {
         }
     }
 
+    fn node_ty(&self, expr: &Expr) -> Option<&Ty> {
+        self.types?.get(&expr.id)
+    }
+
+    /// The type of an operator's operand, which must be one the calculus has
+    /// an operator signature for.
+    fn operand_ty(&self, expr: &Expr) -> Option<Ty> {
+        match self.node_ty(expr)? {
+            ty @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool) => Some(ty.clone()),
+            _ => None,
+        }
+    }
+
     fn read(&mut self, expr: &Expr) -> Option<Core> {
         if self.special.contains(&expr.id) {
             return None;
         }
         match &expr.kind {
-            ExprKind::Int(n) => u64::try_from(*n)
-                .ok()
-                .filter(|n| *n < 1 << 30)
-                .map(Core::Num),
+            ExprKind::Int(n) => {
+                let num = u64::try_from(*n)
+                    .ok()
+                    .filter(|n| *n < 1 << 30)
+                    .map(Core::Num)?;
+                match self.node_ty(expr) {
+                    Some(Ty::Float) => Some(Core::ToFloat(Box::new(num))),
+                    _ => Some(num),
+                }
+            }
+            ExprKind::Float(_) => Some(Core::Float),
+            ExprKind::Str(text) => Some(Core::Str(text.bytes().collect())),
+            ExprKind::Unit => Some(Core::Unit),
             ExprKind::Bool(b) => Some(Core::Bool(*b)),
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch: Some(else_branch),
+            } => Some(Core::If(
+                Box::new(self.read(cond)?),
+                Box::new(self.read(then_branch)?),
+                Box::new(self.read(else_branch)?),
+            )),
+            ExprKind::Bin { op, lhs, rhs } => {
+                let (mut a, mut b) = (self.read(lhs)?, self.read(rhs)?);
+                if self.types.is_some() {
+                    let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
+                    let to_float = |c: Core| Core::ToFloat(Box::new(c));
+                    match (op, x, y) {
+                        (BinOp::Div, Ty::Int, Ty::Int) => (a, b) = (to_float(a), to_float(b)),
+                        (BinOp::Div, Ty::Int, _) => a = to_float(a),
+                        (BinOp::Div, _, Ty::Int) => b = to_float(b),
+                        (BinOp::FloorDiv | BinOp::Mod, _, _) => {}
+                        (_, Ty::Int, Ty::Float) => a = to_float(a),
+                        (_, Ty::Float, Ty::Int) => b = to_float(b),
+                        _ => {}
+                    }
+                }
+                Some(Core::Bin(*op, Box::new(a), Box::new(b)))
+            }
             ExprKind::Var { symbol, name } => {
                 let at = self.scope.iter().rposition(|(n, _)| n == name)?;
                 (self.scope[at].1 == *symbol).then(|| Core::Var(self.scope.len() - 1 - at))
@@ -152,10 +341,23 @@ impl Reader {
                     return None;
                 }
                 self.unary &= args.len() == 1;
+                let params = match self.node_ty(callee) {
+                    Some(Ty::Func(params, _)) if params.len() == args.len() => Some(params.clone()),
+                    _ => None,
+                };
                 let callee = self.read(callee)?;
-                args.iter().try_fold(callee, |callee, arg| {
-                    Some(Core::App(Box::new(callee), Box::new(self.read(arg)?)))
-                })
+                args.iter()
+                    .enumerate()
+                    .try_fold(callee, |callee, (i, arg)| {
+                        let mut value = self.read(arg)?;
+                        if let Some(params) = &params
+                            && params[i] == Ty::Float
+                            && self.node_ty(arg) == Some(&Ty::Int)
+                        {
+                            value = Core::ToFloat(Box::new(value));
+                        }
+                        Some(Core::App(Box::new(callee), Box::new(value)))
+                    })
             }
             ExprKind::Let {
                 symbol,
@@ -216,6 +418,9 @@ impl Canon<'_> {
     fn ty(&mut self, ty: &Ty, out: &mut String) -> Option<()> {
         match ty {
             Ty::Int => out.push_str("Number"),
+            Ty::Float => out.push_str("Float"),
+            Ty::Str => out.push_str("String"),
+            Ty::Unit => out.push_str("Unit"),
             Ty::Bool => out.push_str("Bool"),
             Ty::Var(v) => write!(out, "v{}", self.var(*v)).unwrap(),
             Ty::Func(params, ret) => {
@@ -277,6 +482,13 @@ fn line(source: &str) -> Option<String> {
     if !lowered.errors.is_empty() {
         return None;
     }
+    let checked = check_with_prelude("", source).ok();
+    if checked
+        .as_ref()
+        .is_some_and(|c| !c.typed.number_vars.is_empty())
+    {
+        return None;
+    }
     let mut reader = Reader {
         special: lowered
             .dot_calls
@@ -287,10 +499,14 @@ fn line(source: &str) -> Option<String> {
         labels: Vec::new(),
         scope: Vec::new(),
         unary: true,
+        types: checked.as_ref().map(|c| &c.typed.node_types),
     };
     let core = reader.read(&lowered.root)?;
-    let verdict = match check_with_prelude("", source) {
-        Ok(checked) => {
+    if !core.operators_resolve(&mut Vec::new()) {
+        return None;
+    }
+    let verdict = match &checked {
+        Some(checked) => {
             let mut canon = Canon {
                 labels: &reader.labels,
                 vars: Vec::new(),
@@ -299,7 +515,7 @@ fn line(source: &str) -> Option<String> {
             canon.ty(&checked.typed.root_ty, &mut text)?;
             text
         }
-        Err(_) => "ERR".to_string(),
+        None => "ERR".to_string(),
     };
     let mut sexp = String::new();
     core.sexp(&mut sexp);
@@ -549,6 +765,138 @@ impl Gen {
     }
 }
 
+/// The types the typed generator writes.
+#[derive(Clone, Copy, PartialEq)]
+enum Prim {
+    Int,
+    Float,
+    Bool,
+    Str,
+}
+
+const PRIMS: [Prim; 4] = [Prim::Int, Prim::Float, Prim::Bool, Prim::Str];
+
+/// Writes closed curried programs that use the phase-1 forms, aiming each
+/// subterm at a type so most programs check. Now and then an operand gets the
+/// wrong type, which the checker and the model must both reject. Every compound
+/// term is parenthesised, so it is safe as an operand.
+struct TypedGen {
+    rng: Rng,
+    scope: Vec<(String, Prim)>,
+    names: u32,
+    /// Whether the program being written still owes one wrong-typed operand.
+    fault: bool,
+}
+
+impl TypedGen {
+    fn literal(&mut self, ty: Prim) -> String {
+        match ty {
+            Prim::Int => self.rng.below(100).to_string(),
+            Prim::Float => format!("{}.{}", self.rng.below(10), self.rng.below(10)),
+            Prim::Bool => ["true", "false"][self.rng.below(2)].to_string(),
+            Prim::Str => format!("\"{}\"", ["a", "b", "ab", ""][self.rng.below(4)]),
+        }
+    }
+
+    fn leaf(&mut self, ty: Prim) -> String {
+        let vars: Vec<String> = self
+            .scope
+            .iter()
+            .filter(|(_, t)| *t == ty)
+            .map(|(n, _)| n.clone())
+            .collect();
+        if !vars.is_empty() && self.rng.below(2) == 0 {
+            vars[self.rng.below(vars.len())].clone()
+        } else {
+            self.literal(ty)
+        }
+    }
+
+    fn fresh_name(&mut self) -> String {
+        self.names += 1;
+        format!("v{}", self.names)
+    }
+
+    fn operand(&mut self, ty: Prim, depth: u32) -> String {
+        if self.fault && self.rng.below(6) == 0 {
+            self.fault = false;
+            let wrong = PRIMS[self.rng.below(PRIMS.len())];
+            self.term(wrong, depth)
+        } else {
+            self.term(ty, depth)
+        }
+    }
+
+    fn pick(&mut self, options: &[&str]) -> String {
+        options[self.rng.below(options.len())].to_string()
+    }
+
+    fn operation(&mut self, ty: Prim, depth: u32) -> Option<String> {
+        let (op, left, right) = match ty {
+            Prim::Int => (self.pick(&["+", "-", "*", "//", "%"]), Prim::Int, Prim::Int),
+            Prim::Float => {
+                let op = self.pick(&["+", "-", "*", "/"]);
+                let left = PRIMS[self.rng.below(2)];
+                let mut right = PRIMS[self.rng.below(2)];
+                if op != "/" && left == Prim::Int {
+                    right = Prim::Float;
+                }
+                (op, left, right)
+            }
+            Prim::Bool => {
+                let op = self.pick(&["<", "<=", ">", ">=", "==", "!="]);
+                let side = PRIMS[self.rng.below(PRIMS.len())];
+                let mixed = side == Prim::Int && self.rng.below(3) == 0;
+                (op, side, if mixed { Prim::Float } else { side })
+            }
+            Prim::Str => return None,
+        };
+        let a = self.operand(left, depth);
+        let b = self.operand(right, depth);
+        Some(format!("({a} {op} {b})"))
+    }
+
+    fn term(&mut self, ty: Prim, depth: u32) -> String {
+        if depth >= TYPED_DEPTH {
+            return self.leaf(ty);
+        }
+        let depth = depth + 1;
+        match self.rng.below(9) {
+            0 | 1 => self.leaf(ty),
+            2 => {
+                let c = self.term(Prim::Bool, depth);
+                let a = self.term(ty, depth);
+                let b = self.term(ty, depth);
+                format!("(if {c} then {a} else {b} done)")
+            }
+            3 => {
+                let bound = PRIMS[self.rng.below(PRIMS.len())];
+                let value = self.term(bound, depth);
+                let name = self.fresh_name();
+                self.scope.push((name.clone(), bound));
+                let body = self.term(ty, depth);
+                self.scope.pop();
+                format!("({name} = {value}; {body})")
+            }
+            4 => {
+                let param = PRIMS[self.rng.below(PRIMS.len())];
+                let name = self.fresh_name();
+                self.scope.push((name.clone(), param));
+                let body = self.term(ty, depth);
+                self.scope.pop();
+                let arg_ty = if param == Prim::Float && self.rng.below(3) == 0 {
+                    Prim::Int
+                } else {
+                    param
+                };
+                let arg = self.operand(arg_ty, depth);
+                format!("(program({name}) do {body} done({arg}))")
+            }
+            _ => self.operation(ty, depth).unwrap_or_else(|| self.leaf(ty)),
+        }
+    }
+}
+
 /// Programs the repository's sources may not hold: let-polymorphism, row
 /// polymorphism, rejections, and calls with several arguments.
 const HANDWRITTEN: &[&str] = &[
@@ -571,6 +919,20 @@ const HANDWRITTEN: &[&str] = &[
     "swap = program(p) do {first: p.second, second: p.first} done\nswap",
     "choose = program(a, b) do a done\nchoose(1, 2)",
     "apply = program(f, x) do f(x) done\napply(program(n) do n done, 1)",
+    "1 + 1.5",
+    "7 / 2",
+    "1.5 < 2",
+    "\"a\" < \"b\"",
+    "if true then 1 else 2 done",
+    "if true then 1 else 2.5 done",
+    "n = 3\nn + 1.5",
+    "n = 3\nn / 2",
+    "f = program(x) do x * 1.5 done\nf(2)",
+    "7 // 2.0",
+    "\"a\" + 1",
+    "if 1 then 2 else 3 done",
+    "",
+    "() == ()",
 ];
 
 fn main() {
@@ -613,6 +975,19 @@ fn main() {
     for _ in 0..GENERATED {
         gen_.functions = 0;
         sources.push(gen_.term(0).0);
+    }
+
+    let mut typed_gen = TypedGen {
+        rng: Rng(SEED ^ 0xA5A5),
+        scope: Vec::new(),
+        names: 0,
+        fault: false,
+    };
+    for _ in 0..GENERATED_TYPED {
+        typed_gen.names = 0;
+        typed_gen.fault = typed_gen.rng.below(4) == 0;
+        let ty = PRIMS[typed_gen.rng.below(PRIMS.len())];
+        sources.push(typed_gen.term(ty, 0));
     }
 
     let mut seen = HashSet::new();
