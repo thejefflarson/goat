@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import test from "node:test";
 import { assemble } from "./bundle.ts";
 import { compile, loadCompiler } from "./compile.ts";
 import { ISOLATION_HEADERS, createSiteServer } from "./serve.ts";
 
 const outDir = mkdtempSync(`${tmpdir()}/goat-site-`);
-assemble(outDir);
+const build = assemble(outDir);
+const versionDir = `./v/${build}/`;
 
 const server = createSiteServer(outDir);
 await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
@@ -26,10 +28,47 @@ function relativeSpecifiers(source: string): string[] {
   return [...source.matchAll(/(?:from\s+|import\s*\(\s*)["']([^"']+)["']/g)].map((m) => m[1]);
 }
 
-const compilerUrl = html.match(/COMPILER_URL = "([^"]+)"/)![1];
+const compilerUrl = html.match(/COMPILER_URL = "([^"]+)"/)![1]!;
+
+test("the build id is a content hash and no placeholder survives", () => {
+  assert.match(build, /^[0-9a-f]{12}$/);
+  assert.doesNotMatch(html, /__BUILD__/);
+});
+
+test("every import, the wasm and the fetched sources in the page resolve inside the version directory", () => {
+  const fetched = [...html.matchAll(/fetch\("([^"]+)"\)/g)].map((m) => m[1]!);
+  assert.ok(fetched.length >= 2);
+  for (const spec of [...relativeSpecifiers(html), compilerUrl, ...fetched]) {
+    assert.ok(spec.startsWith(versionDir), `${spec} is outside ${versionDir}`);
+  }
+  assert.deepEqual(readdirSync(`${outDir}/v`), [build]);
+  assert.deepEqual(readdirSync(outDir).sort(), ["index.html", "v"]);
+});
+
+test("every import in a built module stays inside its own version directory", () => {
+  const dist = `${outDir}/v/${build}/dist`;
+  const root = `${outDir}/v/${build}`;
+  for (const name of readdirSync(dist).filter((n) => n.endsWith(".js") && !n.endsWith(".bundle.js"))) {
+    for (const spec of relativeSpecifiers(readFileSync(`${dist}/${name}`, "utf8"))) {
+      assert.match(spec, /^\.\.?\//, `${name} imports ${spec}`);
+      const target = resolve(dist, spec);
+      assert.ok(target.startsWith(`${root}/`), `${name} imports ${spec} outside the version directory`);
+      assert.ok(existsSync(target), `${name} imports missing ${spec}`);
+    }
+  }
+});
+
+test("the build id is deterministic for the same inputs", () => {
+  const other = mkdtempSync(`${tmpdir()}/goat-site-`);
+  try {
+    assert.equal(assemble(other), build);
+  } finally {
+    rmSync(other, { recursive: true, force: true });
+  }
+});
 
 test("the page references only relative paths", () => {
-  assert.equal(compilerUrl, "./goat_web.wasm");
+  assert.equal(compilerUrl, `${versionDir}goat_web.wasm`);
   for (const spec of [...relativeSpecifiers(html), compilerUrl]) {
     assert.match(spec, /^\.\/[^.]/, spec);
   }
@@ -63,27 +102,40 @@ test("every module the page imports is served, transitively", async () => {
 });
 
 test("the editor is one served bundle that imports nothing by package name", async () => {
-  assert.ok(relativeSpecifiers(html).includes("./dist/editor.bundle.js"));
-  const bundle = await (await fetch(new URL("dist/editor.bundle.js", page))).text();
+  assert.ok(relativeSpecifiers(html).includes(`${versionDir}dist/editor.bundle.js`));
+  const bundle = await (await fetch(new URL(`${versionDir}dist/editor.bundle.js`, page))).text();
   assert.match(bundle, /export\s*\{[^}]*\bmountEditor\b/);
   assert.doesNotMatch(bundle, /^\s*import[\s{*"']/);
 });
 
 test("the worker the supervisor spawns is served with all it imports", async () => {
-  const workerUrl = new URL("dist/worker.js", page);
+  const workerUrl = new URL(`${versionDir}dist/worker.js`, page);
   const seen = await servedClosure([workerUrl]);
   assert.ok(seen.has(workerUrl.href));
   assert.ok([...seen].some((href) => href.endsWith("/dist/worker-core.js")));
-  assert.ok(readFileSync(`${outDir}/dist/browser.js`, "utf8").includes('"./worker.js"'));
+  assert.ok(readFileSync(`${outDir}/v/${build}/dist/browser.js`, "utf8").includes('"./worker.js"'));
 });
 
 test("every response carries the headers that cross-origin isolate the page", async () => {
-  for (const path of ["/", "/dist/worker.js", "/goat_web.wasm", "/missing"]) {
+  for (const path of ["/", `${versionDir.slice(1)}dist/worker.js`, `${versionDir.slice(1)}goat_web.wasm`, "/missing"]) {
     const response = await fetch(new URL(path, origin));
     for (const [name, value] of Object.entries(ISOLATION_HEADERS)) {
       assert.equal(response.headers.get(name), value, `${path} ${name}`);
     }
   }
+});
+
+test("a stale page recovers from a missing build by reloading once past the cache", () => {
+  assert.match(html, /querySelector\('script\[type="module"\]'\)\.addEventListener\("error"/);
+  assert.match(html, /cache: "reload"/);
+  assert.match(html, /sessionStorage\.getItem\("goat-stale-reload"\)/);
+});
+
+test("nginx revalidates everything but a found versioned asset, which is immutable", () => {
+  const conf = readFileSync(new URL("nginx.conf", import.meta.url), "utf8");
+  assert.match(conf, /add_header Cache-Control \$goat_cache_control always;/);
+  assert.match(conf, /default "no-cache";/);
+  assert.match(conf, /"~\^200:\/v\/\[0-9a-f\]\+\/" "public, max-age=31536000, immutable";/);
 });
 
 test("nginx sends the same isolation headers", () => {
@@ -94,8 +146,8 @@ test("nginx sends the same isolation headers", () => {
 });
 
 test("the default theme is served, and the page fetches it from a relative path", async () => {
-  assert.match(html, /fetch\("\.\/theme\.goat"\)/);
-  const served = await (await fetch(new URL("theme.goat", page))).text();
+  assert.ok(html.includes(`fetch("${versionDir}theme.goat")`));
+  const served = await (await fetch(new URL(`${versionDir}theme.goat`, page))).text();
   assert.equal(served, readFileSync(new URL("../editor/theme.goat", import.meta.url), "utf8"));
 });
 

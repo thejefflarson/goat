@@ -79,15 +79,17 @@
   <pre id="output" aria-label="printed output" hidden></pre>
 </main>
 <script type="module">
-  import { compileLive, loadCompiler } from "./dist/compile.js";
-  import { canSupervise, superviseCanvas, superviseHighlighter } from "./dist/browser.js";
-  import { GoatHighlighter } from "./dist/highlighter.js";
-  import { isInteractiveModule } from "./dist/loop.js";
-  import { reloadSays } from "./dist/reload-says.js";
-  import { ThemeEngine, themeApplier, themeStore } from "./dist/theme.js";
-  import { mountEditor } from "./dist/editor.bundle.js";
+  import { compileLive, loadCompiler } from "./v/__BUILD__/dist/compile.js";
+  import { canSupervise, superviseCanvas, superviseHighlighter } from "./v/__BUILD__/dist/browser.js";
+  import { GoatHighlighter } from "./v/__BUILD__/dist/highlighter.js";
+  import { isInteractiveModule } from "./v/__BUILD__/dist/loop.js";
+  import { reloadSays } from "./v/__BUILD__/dist/reload-says.js";
+  import { ThemeEngine, themeApplier, themeStore } from "./v/__BUILD__/dist/theme.js";
+  import { mountEditor } from "./v/__BUILD__/dist/editor.bundle.js";
 
-  const COMPILER_URL = "./goat_web.wasm";
+  try { sessionStorage.removeItem("goat-stale-reload"); } catch {}
+
+  const COMPILER_URL = "./v/__BUILD__/goat_web.wasm";
 
   const $ = (id) => document.getElementById(id);
   const [sourceHost, button, canvas, problems, output, example, live, status, themeButton, resetTheme] =
@@ -337,7 +339,7 @@ print("done")
   let highlighter;
   if (compiler && new URLSearchParams(location.search).get("highlighter") === "goat") {
     try {
-      const source = await (await fetch("./highlight.goat")).text();
+      const source = await (await fetch("./v/__BUILD__/highlight.goat")).text();
       highlighter = new GoatHighlighter({ compiler, source, runner: superviseHighlighter(), host: () => host });
       highlighter.start();
     } catch {
@@ -369,7 +371,7 @@ print("done")
   })();
   if (compiler && canSupervise()) {
     try {
-      defaultTheme = await (await fetch("./theme.goat")).text();
+      defaultTheme = await (await fetch("./v/__BUILD__/theme.goat")).text();
       themes = new ThemeEngine({
         compiler,
         runner: superviseHighlighter(),
@@ -483,6 +485,18 @@ print("done")
     } finally {
       button.disabled = false;
     }
+  });
+</script>
+<script>
+  // A cached copy of this page can name a build the server no longer has, so
+  // its module import 404s. Refetch the page past the cache and reload, once.
+  document.querySelector('script[type="module"]').addEventListener("error", async () => {
+    try {
+      if (sessionStorage.getItem("goat-stale-reload")) return;
+      sessionStorage.setItem("goat-stale-reload", "1");
+      await fetch(location.href, { cache: "reload" });
+    } catch {}
+    location.reload();
   });
 </script>
 </body>
