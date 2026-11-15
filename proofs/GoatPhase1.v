@@ -399,6 +399,124 @@ Proof.
               | apply T_Dec; constructor ].
 Qed.
 
+(* ---- generic operators: sorted type variables (ADR 0037) ---- *)
+
+Definition ga : atom := fresh nil.
+
+(* Every variable a [let] generalizes below is a numeral's: [Literal]. *)
+Definition k_lit : sort_fn := fun _ => k_Literal.
+
+Lemma inst_at_lit : forall U,
+  sat d_any k_Literal U ->
+  inst d_any (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit).
+Proof.
+  intros U HU.
+  exists (fun a => if a == ga then U else typ_Var a), idr.
+  split; [ | split; [ | split ] ].
+  - intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
+      [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
+  - intros r _. reflexivity.
+  - simpl. destruct (ga == ga) as [E|E]; [ reflexivity | congruence ].
+  - intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
+    simpl in Ha. assert (a = ga) by fsetdec. subst a.
+    destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+Qed.
+
+(* A function that multiplies by a numeral is generic over [Literal]: a string
+   instance of its scheme does not exist. *)
+Example generic_scheme_rejects_strings :
+  ~ inst d_any (typ_Arrow typ_String typ_String)
+      (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit).
+Proof.
+  intros [st [sr [Hst [Hsr [Heq Hsat]]]]]. simpl in Heq.
+  injection Heq as Hs _.
+  assert (Hin : ga `in` AtomSetImpl.diff (ftv_typ (typ_Arrow (typ_Var ga) (typ_Var ga))) {})
+    by (simpl; apply AtomSetFacts.diff_iff; split; [ fsetdec | fsetdec ]).
+  pose proof (Hsat ga Hin) as H. cbn [gen s_sk s_tq] in H. rewrite <- Hs in H. simpl in H. discriminate.
+Qed.
+
+(* let double = program(x) do x * 2 done, then {0: double(1), 1: double(1.5)} *)
+Definition double_pair : exp :=
+  e_let (e_abs (e_bin (e_fvar_b 0) bop_mul (e_num 2)))
+        (e_rec (fs_cons 0 (e_app (e_fvar_b 0) (e_num 1))
+               (fs_cons 1 (e_app (e_fvar_b 0) (e_dec 0)) fs_nil))).
+
+Example generic_function_is_used_at_int_and_float :
+  typing d_any nil double_pair
+    (typ_Record (row_Ext 0 typ_Int (row_Ext 1 typ_Float row_Empty))).
+Proof.
+  unfold double_pair.
+  apply T_Let with (L := {}) (T1 := typ_Arrow (typ_Var ga) (typ_Var ga)) (k := k_lit);
+    [ reflexivity | | ].
+  - apply T_Abs with (L := {}). intros x Hx.
+    cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
+    assert (Hga : ga `in` AtomSetImpl.diff (ftv_typ (typ_Arrow (typ_Var ga) (typ_Var ga))) (ftv_ctx nil))
+      by (simpl; apply AtomSetFacts.diff_iff; split; [ fsetdec | fsetdec ]).
+    assert (Hs : forall k0, finer k_Literal k0 ->
+               sat (ext d_any (AtomSetImpl.diff (ftv_typ (typ_Arrow (typ_Var ga) (typ_Var ga))) (ftv_ctx nil)) k_lit)
+                   k0 (typ_Var ga)).
+    { intros k0 Hf. cbn [sat]. rewrite (ext_in _ _ _ ga Hga). exact Hf. }
+    eapply T_Bin; [ | | apply sig_ring ].
+    + apply T_Var with (s := sch_mono (typ_Var ga));
+        [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_mono_self ].
+    + apply T_Num; [ solve_uniq | apply Hs; apply finer_refl ].
+    + reflexivity.
+    + apply Hs. apply finer_lit.
+  - intros f Hf.
+    cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
+    apply T_Record. eapply FT_cons.
+    + eapply T_App; [ | apply T_Num; [ solve_uniq | ] ].
+      * apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit);
+          [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_at_lit; exact I ].
+      * exact I.
+    + eapply FT_cons; [ | apply FT_nil; solve_uniq ].
+      eapply T_App; [ | apply T_Dec; solve_uniq ].
+      apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit);
+        [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_at_lit; exact I ].
+Qed.
+
+(* let n = 1 in n: a numeral binding is generic, so it is an Int or a Float
+   as its use asks.  Which one an unconstrained use takes is the elaborator's
+   choice at the program judgment (ADR 0017 defaults to Int). *)
+Lemma numeral_binding_at : forall U,
+  sat d_any k_Literal U ->
+  typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) U.
+Proof.
+  intros U HU.
+  apply T_Let with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
+  - apply T_Num; [ constructor | ].
+    cbn [sat]. rewrite (ext_in _ _ _ ga).
+    + apply finer_refl.
+    + simpl. apply AtomSetFacts.diff_iff. split; [ fsetdec | fsetdec ].
+  - intros f Hf. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
+    apply T_Var with (s := gen nil (typ_Var ga) k_lit);
+      [ solve_uniq | apply binds_cons_2; reflexivity | ].
+    exists (fun a => if a == ga then U else typ_Var a), idr.
+    split; [ | split; [ | split ] ].
+    + intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
+        [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
+    + intros r _. reflexivity.
+    + simpl. destruct (ga == ga) as [E|E]; [ reflexivity | congruence ].
+    + intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
+      simpl in Ha. assert (a = ga) by fsetdec. subst a.
+      destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+Qed.
+
+Example numeral_binding_is_generic :
+  typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) typ_Int /\
+  typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) typ_Float.
+Proof. split; apply numeral_binding_at; exact I. Qed.
+
+(* A generic function runs as the concrete one: (program(x) do x * 2 done)(1.5)
+   multiplies two Floats, and two bare numerals multiply as Ints. *)
+Example generic_call_on_a_decimal_runs : forall d,
+  bin_step bop_mul (e_dec d) (e_num 2) (e_dec d).
+Proof. intros d. apply bs_float; [ left; reflexivity | constructor ]. Qed.
+
+Example generic_call_on_numerals_runs :
+  bin_step bop_mul (e_num 3) (e_num 2) (e_num 6).
+Proof. pose proof (bs_ring_int bop_mul 3 2 eq_refl eq_refl) as H. exact H. Qed.
+
 (* ---- the inference algorithm accepts and rejects them ---- *)
 
 Example infer_float_sum :

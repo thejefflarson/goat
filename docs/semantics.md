@@ -66,9 +66,9 @@ what the sharp-edge theorem is about.
 
 **Out of the core (modeled by nothing — see §9 for the "why").** Reference
 counting / heap / the Perceus model; variants, `match`, and recursive (μ)
-types; the `Eq`, `Numeric` and `Ordered` constraints (an operator is typed at
-concrete types only, so a generic operator waits for the kinded type variables
-of the rest of phase 2); the `trap()` builtin; the 32-bit `Int` of
+types; the `Eq` and `Ordered` constraints (a comparison is typed at concrete
+types only, so a generic comparison waits for those sorts); the `trap()`
+builtin; the 32-bit `Int` of
 the embedded target; IEEE rounding, infinities and NaN (a `Float` is opaque);
 comparison of `Unit`, records and tags (phase 6); rank-2
 inference; `and`, `or`, `not`
@@ -208,18 +208,27 @@ rewriting — and so surfaces the **first** `l`. The declarative counterpart is
 
 ## 4. Typing
 
-The judgment `Γ ⊢ e : τ` assigns a **monotype** to a term. Schemes appear only
-in the context and are introduced at a binding (`T-Let`) and eliminated at a
-variable (`T-Var`). The instance relation `τ ≺ σ` and the context's
-generalization are defined in §5.
+The judgment `Δ ; Γ ⊢ e : τ` assigns a **monotype** to a term. Schemes appear
+only in the context and are introduced at a binding (`T-Let`) and eliminated at
+a variable (`T-Var`). The instance relation `τ ≺_Δ σ` and the context's
+generalization are defined in §5. `Δ` is a **kinding environment** (ADR 0037):
+it gives each free type variable a *sort*, `Any`, `Numeric` or `Literal`, and
+is `Any` outside a finite set of variables. `Δ ⊢ τ : κ` says `τ` may stand
+where a variable of sort `κ` stands: `Int` and `Float` have every sort, a
+variable `a` has the sorts at or above `Δ(a)` (a `Literal` variable is also
+`Numeric`, and every variable is `Any`), and any other type has sort `Any`
+only. A judgment that omits `Δ` is the one with `Δ` the all-`Any` environment,
+which is the one a closed program is typed in.
 
 ```
- x : σ ∈ Γ      τ ≺ σ
-———————————————————————— (T-Var)      ———————————————— (T-Num)
-       Γ ⊢ x : τ                       Γ ⊢ n : Int
+ x : σ ∈ Γ      τ ≺_Δ σ
+———————————————————————— (T-Var)      ———————————————————— (T-Num)
+       Δ;Γ ⊢ x : τ                       Δ ⊢ τ : Literal
+                                          ————————————————
+                                           Δ;Γ ⊢ n : τ
 
 ———————————————— (T-Dec)
- Γ ⊢ d : Float
+ Δ;Γ ⊢ d : Float
 
 ———————————————— (T-True)      ———————————————— (T-False)
  Γ ⊢ true : Bool                Γ ⊢ false : Bool
@@ -231,25 +240,26 @@ generalization are defined in §5.
 ————————————————————————————————————————————————— (T-If)
         Γ ⊢ if e₁ then e₂ else e₃ : τ
 
- Γ ⊢ e : Int
-———————————————————————— (T-ToFloat)
- Γ ⊢ float(e) : Float
+ Δ;Γ ⊢ e : τ      Δ ⊢ τ : Numeric
+———————————————————————————————————— (T-ToFloat)
+ Δ;Γ ⊢ float(e) : Float
 
- Γ ⊢ e₁ : τ₁      Γ ⊢ e₂ : τ₂      ⊙ : τ₁, τ₂ ⇒ τ
-————————————————————————————————————————————————————— (T-Bin)
-                 Γ ⊢ e₁ ⊙ e₂ : τ
+ Δ;Γ ⊢ e₁ : τ₁      Δ;Γ ⊢ e₂ : τ₂      ⊙ : τ₁, τ₂ ⇒_Δ τ
+——————————————————————————————————————————————————————————— (T-Bin)
+                 Δ;Γ ⊢ e₁ ⊙ e₂ : τ
 
 ```
 
 The operator signature `⊙ : τ₁, τ₂ ⇒ τ` (ADR 0017, ADR 0036) says which operand
 types an operator takes and what it gives. Both operands of an arithmetic or
-comparison operator have one type: an `Int` meets a `Float` only through
-`float(e)`.
+comparison operator have one type. `+ - *` are generic: the one type may be any
+`Numeric` type, `Int`, `Float` or a `Numeric` variable. A comparison stays at
+the four concrete types.
 
 ```
- ⊙ ∈ {+, -, *}                    ⊙ ∈ {+, -, *}
-—————————————————— (S-RingInt)    ———————————————————————— (S-RingFloat)
- ⊙ : Int, Int ⇒ Int               ⊙ : Float, Float ⇒ Float
+ ⊙ ∈ {+, -, *}      Δ ⊢ τ : Numeric
+———————————————————————————————————— (S-Ring)
+        ⊙ : τ, τ ⇒_Δ τ
 
 —————————————————————————— (S-Quot)       ⊙ ∈ {//, %}
  / : Float, Float ⇒ Float             —————————————————— (S-Whole)
@@ -262,35 +272,40 @@ comparison operator have one type: an `Int` meets a `Float` only through
 ```
 
 ```
- Γ, x₁:τ₁, …, xₖ:τₖ ⊢ e : τ
+ Δ;Γ, x₁:τ₁, …, xₖ:τₖ ⊢ e : τ
 ————————————————————————————————————————————————— (T-Abs)
- Γ ⊢ program(x₁,…,xₖ) do e done : (τ₁,…,τₖ) → τ
+ Δ;Γ ⊢ program(x₁,…,xₖ) do e done : (τ₁,…,τₖ) → τ
 
- Γ ⊢ e : (τ₁,…,τₖ) → τ      Γ ⊢ eᵢ : τᵢ   (each i)
-——————————————————————————————————————————————————— (T-App)
-            Γ ⊢ e(e₁,…,eₖ) : τ
+ Δ;Γ ⊢ e : (τ₁,…,τₖ) → τ      Δ;Γ ⊢ eᵢ : τᵢ   (each i)
+————————————————————————————————————————————————————— (T-App)
+            Δ;Γ ⊢ e(e₁,…,eₖ) : τ
 
- gen_value(e₁)    Γ ⊢ e₁ : τ₁      σ = gen(Γ, τ₁)      Γ, x:σ ⊢ e₂ : τ₂
+ gen_value(e₁)    V = ftv(τ₁) \ ftv(Γ)    Δ[V↦κ] ; Γ ⊢ e₁ : τ₁
+ σ = gen(Γ, τ₁, κ)      Δ;Γ, x:σ ⊢ e₂ : τ₂
 ————————————————————————————————————————————————————————————————————— (T-Let)
-                        Γ ⊢ (x = e₁  e₂) : τ₂
+                        Δ;Γ ⊢ (x = e₁  e₂) : τ₂
 
- Γ ⊢ e₁ : τ₁      Γ, x:τ₁ ⊢ e₂ : τ₂
-————————————————————————————————————— (T-LetMono)
-        Γ ⊢ (x = e₁  e₂) : τ₂
+ Δ;Γ ⊢ e₁ : τ₁      Δ;Γ, x:τ₁ ⊢ e₂ : τ₂
+——————————————————————————————————————————— (T-LetMono)
+        Δ;Γ ⊢ (x = e₁  e₂) : τ₂
 
- eᵢ = program(…) do … done   (each i)      Γ, f₁:τ₁, …, fₙ:τₙ ⊢ eᵢ : τᵢ   (each i)
- σᵢ = gen(Γ, {f₁:τ₁ ; … ; fₙ:τₙ ; ·}) with the body τᵢ        Γ, f₁:σ₁, …, fₙ:σₙ ⊢ e : τ
+ eᵢ = program(…) do … done   (each i)      V = ftv(τ) \ ftv(Γ)   with τ = {f₁:τ₁ ; … ; fₙ:τₙ ; ·}
+ Δ[V↦κ] ; Γ, f₁:τ₁, …, fₙ:τₙ ⊢ eᵢ : τᵢ   (each i)
+ σᵢ = gen(Γ, τ, κ) with the body τᵢ        Δ;Γ, f₁:σ₁, …, fₙ:σₙ ⊢ e : τ'
 ————————————————————————————————————————————————————————————————————————————————————————— (T-Letrec)
-                     Γ ⊢ letrec f₁ = e₁, …, fₙ = eₙ in e : τ
+                     Δ;Γ ⊢ letrec f₁ = e₁, …, fₙ = eₙ in e : τ'
 
- Γ ⊢ eᵢ : τᵢ   (each i)
+ Δ;Γ ⊢ eᵢ : τᵢ   (each i)
 ——————————————————————————————————————————————————— (T-Record)
- Γ ⊢ {l₁: e₁, …, lₖ: eₖ} : {l₁:τ₁ ; … ; lₖ:τₖ ; ·}
+ Δ;Γ ⊢ {l₁: e₁, …, lₖ: eₖ} : {l₁:τ₁ ; … ; lₖ:τₖ ; ·}
 
- Γ ⊢ e : {l : τ ; ρ}             Γ ⊢ e : τ      τ ≅ τ'
-——————————————————— (T-Proj)    ———————————————————————— (T-Conv)
-   Γ ⊢ e.l : τ                        Γ ⊢ e : τ'
+ Δ;Γ ⊢ e : {l : τ ; ρ}             Δ;Γ ⊢ e : τ      τ ≅ τ'
+——————————————————————— (T-Proj)    ———————————————————————————— (T-Conv)
+   Δ;Γ ⊢ e.l : τ                        Δ;Γ ⊢ e : τ'
 ```
+
+(`T-If`, `T-Unit`, `T-Str`, `T-True`, `T-False` and `T-Dec` carry `Δ` through
+unchanged.)
 
 Rule by rule:
 
@@ -309,7 +324,12 @@ Rule by rule:
   check in `unify`'s `Func` case).
 - **`T-Let`** generalizes a syntactic value: `e₁` is typed, its type `τ₁` is
   generalized against the current context (§5), and the resulting scheme is what
-  `x` is bound to in `e₂`.
+  `x` is bound to in `e₂`. The variables it generalizes carry the sorts `κ`
+  the scheme records, and `e₁` is typed in `Δ` extended with them, so that
+  `let double = program(x) do x * 2 done` has the scheme
+  `∀ a:Literal. a → a` and `double(1.5)` types at `Float`. Each use then
+  instantiates `a` at a type of that sort (`Int`, `Float`, or a `Literal`
+  variable), and `double("a")` has no derivation.
 - **`T-LetMono`** is the value restriction's other half (ADR 0027): any binding
   may instead give `x` the monotype `τ₁`, and a computed `e₁` (a call, a
   projection, an operation, a `let`) has no other rule. A name bound to
@@ -338,9 +358,10 @@ Rule by rule:
   whichever branch runs. The condition must be a `Bool`: `if 1 then …` has no
   derivation, and the checker reports `expected Bool, found Number`.
 - **`T-Bin`** types an operation by the signature of its operator, at the
-  concrete types of its operands.
-  - `+ - *` take two `Int`s and give an `Int`, or take two `Float`s and give a
-    `Float` (`S-RingInt`, `S-RingFloat`).
+  types of its operands.
+  - `+ - *` take two operands of one `Numeric` type and give that type
+    (`S-Ring`): two `Int`s, two `Float`s, or two operands of a `Numeric`
+    variable, so `program(x) do x * x done` is generic.
   - `/` takes two `Float`s and gives a `Float` (`S-Quot`). The checker accepts
     `7 / 2` and types it `Float`; elaboration writes it `float(7) / float(2)`.
   - `//` and `%` take two `Int`s and give an `Int`; `1.5 // 2` has no derivation
@@ -349,13 +370,17 @@ Rule by rule:
     (`S-Cmp`); so `1 < "a"` has no derivation and `true + true` has none (the
     checker: `expected Number, found String`, `` `+` needs numbers… ``). The
     checker accepts `1 < 1.5`; elaboration writes it `float(1) < 1.5`.
+- **`T-Num`.** A whole-number literal has any `Literal` type: `Int`, `Float`,
+  or a `Literal` variable (ADR 0017's literal defaulting is a choice of type for
+  that variable). So `1 + 1.5` has a derivation, with both operands at
+  `Float`, and `if c then 1 else 2.5` types at `Float`. `1 < "a"` and `if 1 …`
+  have none: `String` and `Bool` are not `Literal`.
 - **`T-ToFloat`.** Wherever the checker accepts an `Int` where a `Float` is
-  wanted (an operator with a `Float` on one side, a call whose parameter is a
-  `Float`, a whole-number literal settled as a `Float`, ADR 0017), elaboration
-  inserts `float(e)`, which has type `Float` when `e` has type `Int`. The
-  calculus has no subtyping and no literal that is both an `Int` and a `Float`:
-  `1 + 1.5` has no derivation, and `float(1) + 1.5` has one. Only an `Int` is
-  coerced, so `float(1.5)` and `float(true)` have none.
+  wanted (a call whose parameter is a `Float`, ADR 0017), elaboration inserts
+  `float(e)`. It takes any `Numeric` operand and gives a `Float`; on a `Float`
+  it is the identity (`ST-ToFloat`), so a generic function can coerce its
+  argument. `float(true)` has no derivation. The calculus has no subtyping:
+  `float(e)` is how an `Int` operand reaches a `Float` slot.
 - **`T-Conv`** closes typing under `≅`: anywhere a type is produced, an
   equivalent type may be used. This is where row reordering happens — e.g.
   passing a `{b:Bool ; a:Int ; ·}` value where `{a:Int ; b:Bool ; ·}` is
@@ -377,17 +402,22 @@ ftv(Γ)       =   ⋃ { ftv(σ) : (x:σ) ∈ Γ }
 context:
 
 ```
-gen(Γ, τ)  =  ∀ (ftv(τ) \ ftv(Γ)). τ
+gen(Γ, τ, κ)  =  ∀ (ftv(τ) \ ftv(Γ)) with sorts κ. τ
 ```
 
 This is `Inferer::generalize`: the difference of the type's free variables and
-the environment's. Both type and row variables are quantified.
+the environment's. Both type and row variables are quantified. A scheme records
+the sort of each quantified type variable (`∀ a:κ`); a row variable has no sort.
+The sorts `κ` are the ones the bound term was typed under (`T-Let`).
 
-**Instantiation** `τ ≺ σ`: for `σ = ∀ α₁…αₘ r₁…rₙ. τ₀`, we have `τ ≺ σ` when
-`τ = [α₁↦τ₁,…,αₘ↦τₘ, r₁↦ρ₁,…,rₙ↦ρₙ] τ₀` for some monotypes `τⱼ` and rows `ρⱼ`
-(kind-respecting: type variables go to types, row variables to rows). A monotype
-`σ = τ₀` has `τ₀` as its only instance. This is `Inferer::instantiate` (fresh
-images per use site).
+**Instantiation** `τ ≺_Δ σ`: for `σ = ∀ α₁:κ₁…αₘ:κₘ r₁…rₙ. τ₀`, we have
+`τ ≺_Δ σ` when `τ = [α₁↦τ₁,…,αₘ↦τₘ, r₁↦ρ₁,…,rₙ↦ρₙ] τ₀` for some monotypes `τⱼ`
+and rows `ρⱼ` with `Δ ⊢ τⱼ : κⱼ` (kind-respecting: type variables go to types of
+their sort, row variables to rows). A monotype `σ = τ₀` has `τ₀` as its only
+instance. This is `Inferer::instantiate` (fresh images per use site).
+
+A substitution `θ` **respects** `Δ ⊢ Δ'` when `Δ' ⊢ θ(α) : Δ(α)` for every `α`.
+Typing is preserved by such a substitution (L5).
 
 A **type/row substitution** `θ` maps type variables to monotypes and row
 variables to rows, applied capture-avoidingly to `τ`, `ρ`, `σ` (skipping a
@@ -446,6 +476,9 @@ fix left-to-right evaluation order:
       e ⟶ e'                                    d is any Float
 ——————————————————————— (ST-ToFloat1)    ————————————————————————— (ST-ToFloat)
  float(e) ⟶ float(e')                     float(n) ⟶ d
+
+ ————————————————————————— (ST-ToFloat-Dec)
+  float(d) ⟶ d
 ```
 
 `⊙(v₁, v₂) = v` is the value an operator gives on two literals. It is a relation
@@ -462,6 +495,9 @@ one.
 - **Floats.** A `Float` value `d` is opaque. Any `+ - * /` on two `Float` values
   gives any `Float`, so `⊙(d₁, d₂) = d` holds for every `d`: the model is a
   relation, and a property of it holds for any function a compiler computes.
+  A numeral beside a decimal is a `Float` operand (`1 + 1.5`), since a numeral
+  may have type `Float`; two bare numerals step as `Int`s, whatever type they
+  were typed at.
   This covers IEEE rounding, a quotient by zero, infinities and NaN, none of
   which the model separates out. A comparison of two `Float` values gives either
   boolean. `float(n)` gives any `Float` (`ST-ToFloat`).
@@ -531,22 +567,30 @@ obligations it must generate.
   `ST-ProjRec`.
 - **L4 — structural lemmas.** Weakening, permutation, and `≅`-respecting
   variants, for `Γ`.
-- **L5 — type/row substitution preserves typing.** If `Γ ⊢ e : τ` and `θ` is a
-  kind-respecting type/row substitution, then `θΓ ⊢ e : θτ`. (Drives
-  instantiation, and the `let` case below.)
+- **L5 — type/row substitution preserves typing.** If `Δ;Γ ⊢ e : τ` and `θ`
+  is a type/row substitution that respects `Δ ⊢ Δ'`, then `Δ';θΓ ⊢ e : θτ`.
+  (Drives instantiation, and the `let` case below, where the generalized
+  variables are renamed to fresh ones that are `Any` in `Δ'`, so renaming never
+  loses a sort.)
 - **L6 — term substitution.** The substituted `v` is a syntactic value
   (`gen_value(v)`), so a `let` inside `e` keeps the premise of `T-Let`: a
   syntactic value stays one under substituting a syntactic value for a name.
   - **(a) monomorphic:** if `Γ, x:τ' ⊢ e : τ` and `Γ ⊢ v : τ'`, then
     `Γ ⊢ e[x↦v] : τ`. (For `ST-Beta`, and for the group's members in
     `ST-Letrec`.)
-  - **(b) polymorphic:** if `Γ, x:σ ⊢ e : τ` and `Γ ⊢ v : τ₀` where
-    `σ = ∀ V. τ₀` and `V ∩ ftv(Γ) = ∅`, then `Γ ⊢ e[x↦v] : τ`. (For `ST-LetV`.)
-    Each occurrence of `x` used `v` at some instance `θτ₀` of `σ`; by L5, `v`
-    has that instance because the quantified `V` are not free in `Γ`.
+  - **(b) polymorphic:** if `Δ;Γ, x:σ ⊢ e : τ` and `Δ[V↦κ];Γ ⊢ v : τ₀` where
+    `σ = ∀ V:κ. τ₀` and `V ∩ ftv(Γ) = ∅`, then `Δ;Γ ⊢ e[x↦v] : τ`. (For
+    `ST-LetV`.) Each occurrence of `x` used `v` at some instance `θτ₀` of `σ`;
+    by L5, `v` has that instance because the quantified `V` are not free in `Γ`
+    and `θ` respects the sorts `κ`. Inside `e` the environment grows at each
+    `let`; a derivation of `v` moves between two environments that agree on the
+    free variables of `Γ` and `τ₀` by sending the other variables `v` uses to
+    `Int`, which has every sort.
 - **L7 — canonical forms.** If `· ⊢ v : τ` for a value `v`:
   - `τ ≅ Int` ⟹ `v` is a whole-number literal `n`;
-  - `τ ≅ Float` ⟹ `v` is a `Float` value `d`;
+  - `τ ≅ Float` ⟹ `v` is a `Float` value `d`, or a whole-number literal `n`
+    (a numeral has any `Literal` type);
+  - `τ ≅ α` for a type variable `α` ⟹ `v` is a whole-number literal `n`;
   - `τ ≅ Bool` ⟹ `v ∈ {true, false}`;
   - `τ ≅ String` ⟹ `v` is a string literal `q`;
   - `τ ≅ Unit` ⟹ `v = unit`;
@@ -571,8 +615,8 @@ condition steps by `ST-If1`, or traps). `T-Bin`: either an operand steps
 (`ST-Op1`, `ST-Op2`) or traps, or both are values, and the operator's signature
 and L7 give the operands' forms. Then `ST-Op` fires, except for an `Int`
 operation that divides by zero or leaves the 64-bit range, which traps. `T-ToFloat`:
-by L7 an evaluated operand is a whole number, so `ST-ToFloat` fires (or the
-operand steps by `ST-ToFloat1`, or traps). `T-App`: by L7 the evaluated
+by L7 an evaluated operand is a whole number or a `Float` value, so `ST-ToFloat`
+or `ST-ToFloat-Dec` fires (or the operand steps by `ST-ToFloat1`, or traps). `T-App`: by L7 the evaluated
 callee is a `k`-ary `program` and the arguments are `k` values, so `ST-Beta`
 fires (or a subterm steps by `ST-App1/2`, or traps). `T-Proj`: by L7 and L3 the
 evaluated record has a first-`l` field, so `ST-ProjRec` fires (or `ST-Proj1`).
@@ -600,7 +644,9 @@ value has the projected type `τ`; `ST-IfTrue` and `ST-IfFalse` return the branc
 which has the type of the whole `if`; `ST-Op` uses L7 to read both operands as
 literals of the operator's types, so the result is a whole number or `Float`
 value (arithmetic) or a boolean (comparison), the type its signature assigns;
-`ST-ToFloat` gives a `Float` value, which has type `Float` by `T-Dec`; the
+`ST-ToFloat` and `ST-ToFloat-Dec` give a `Float` value, which has type `Float`
+by `T-Dec`; an `ST-Op` on numerals at a `Literal` variable gives a numeral at
+that variable, by the numerals' own typing (L7); the
 congruence rules use the IH. The theorem
 is stated for arbitrary `Γ` because the induction needs it; soundness uses the
 closed case `Γ = ·`.
@@ -735,12 +781,24 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
     soundness theorems apply to the elaborated term. Whether the checker inserts
     it exactly where the compiler accepts an `Int` is the elaborator's
     obligation, not a theorem here.
-  - *Operators at concrete types.* The checker types `a < b` with an `Eq`
-    constraint and `a + b` with `Numeric`, so a generic function stays
-    polymorphic over them. The calculus has no constraints, so an operator
-    applies at `Int`, `Float`, `String` or `Bool` only; a function that uses `<`
-    at a type variable has no derivation here. Constraint-polymorphic operators
-    are phase 2.
+  - *Generic operators.* The checker types `a < b` with an `Eq` constraint
+    and `a + b` with `Numeric`, so a generic function stays polymorphic over
+    them. The calculus models `Numeric` and `Literal` as sorts of type variables
+    (§4, §5), so `+ - *` and a numeral apply at any `Numeric` or `Literal`
+    type, a variable included. A comparison applies at `Int`, `Float`, `String`
+    or `Bool` only; a function that uses `<` at a type variable has no
+    derivation here, and generic comparisons wait for the `Eq` and `Ordered`
+    sorts.
+  - *Defaulting.* ADR 0017 settles a `Literal` variable left unconstrained at
+    `Int`; `Numeric` has no default. The calculus has no defaulting rule: a
+    closed program is typed in the all-`Any` environment, where each use of a
+    generalized `Literal` variable is at a concrete `Int` or `Float`, so the
+    default is a choice of instance, made by the elaborator at the top-level
+    program judgment, and a theorem here holds for every choice.
+  - *Algorithm W.* The algorithm of the checker infers concrete operand types.
+    It is sound for the generic calculus (every type it infers is derivable) but
+    not complete: it rejects `1 + 1.5`, which has a derivation at `Float`.
+    Extending it to infer sorted variables is a follow-up.
   - *A string token has no payload.* The lexer is trusted, so the parse tree
     carries no bytes, and a string denotes `q` for every `q`.
   - *`if` has an `else`.* `if c then a done` lowers to `if c then a else ()`;

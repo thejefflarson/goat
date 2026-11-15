@@ -22,14 +22,14 @@ preservation) is B3 (#71).
 | `GoatRows.v` | Row-equivalence theory: L1 (equivalence + congruence), L2 (head-shape "no confusion" + arrow/record inversion up to `≅`), L2′ (the §3 per-label characterization, soundness direction), L3 (row surfacing). Over `typ`/`row`/`teq`/`req` only. |
 | `GoatDefs.v` | The declarative type system and operational semantics (`docs/semantics.md` §4–§6), hand-written over the generated syntax: type/row substitution, free-variable predicates, schemes, contexts, instantiation, generalization, values, small-step reduction, typing. |
 | `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, and **Progress**. |
-| `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), bijective renaming (`typing_rename`), and `gen_antimono`. What `GoatBij`/`GoatHM`/`GoatSound` build on. |
-| `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`, scheme/context alpha-renaming) feeding the T-Let freshening (#151). |
+| `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), the free-variable facts of a bijective renaming, and `gen_more_gen` (generalizing over a smaller context quantifies more, at the sorts the extra atoms already had). What `GoatBij`/`GoatHM`/`GoatSound` build on. |
+| `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`) feeding the T-Let freshening (#151). |
 | `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
 | `GoatNum.v` | The integer arithmetic behind whole-number literals and the 64-bit `Int` range, kept apart because ZArith defines notations that clash with Metalib's `x ~ T`. |
 | `GoatLit.v` | Reads the argument of `e_num` as an integer, so `e_num 3` works in a file that never imports ZArith (and in the generated printer table). |
-| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion: which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1.5 // 2`, `1 + 1.5` with no coercion, `1 < "a"`, `true + true`, `if 1 then ...`). |
+| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1.5 // 2`, `1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`). |
 | `GoatPhase2.v` | Phase 2 of ADR 0037: worked examples for the value restriction (which terms `is_gen_value` accepts), a generalized binding used at two types, a recursive group (its typing, its unrolling, a run) and a group member that is not a function (no derivation). |
-| `GoatSound.v` | The two canonical HM lemmas — `typing_weaken` (L4) and `typing_tsubst_fix` (L5) — via the general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`); then term substitution **L6a/L6b**, **Preservation** and **Soundness**. All axiom- and admit-free. |
+| `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
 | `GoatPeg.v` | Ford-style relational PEG semantics of the generated grammar over a token stream, and **T2** `peg_deterministic`. |
 | `GoatDen.v` | The denotation of core-fragment parse trees as Ott terms (curried, locally nameless via `close_exp`, labels interned by first occurrence, a block's leading function bindings grouped as a `letrec` by `bind_group`), and its local closure. |
@@ -90,15 +90,17 @@ the inference algorithm's soundness).
 What the model leaves out, each checked against `goat check` and `goat run`
 (`docs/semantics.md` section 9): the embedded target's 32-bit `Int`, IEEE
 rounding, infinities and NaN (a `Float` is opaque), the `trap()` builtin,
-comparison of `Unit` (phase 6), and the `Eq`, `Numeric` and `Ordered`
-constraints (an operator applies at concrete types; constraint-polymorphic
-operators are the kinded type variables of the rest of phase 2). The inference algorithm (`GoatInfer.v`) covers the
+comparison of `Unit` (phase 6), and the `Eq` and `Ordered` constraints (a
+comparison applies at concrete types; a generic comparison waits for those
+sorts). `+ - *` and numerals are generic over the sorts `Numeric` and
+`Literal`, below. The inference algorithm (`GoatInfer.v`) covers the
 whole of phase 1: `Unit`, strings, Float values, `if`, `float(e)` and the
 operators, besides functions, bindings and records. `infer_closed_sound` keeps
 its statement. An operator unifies both operands with one type taken from
 whichever operand type is already known (`bin_arg`), so `x * 1.5` fixes `x` to
 `Float`, and an operator whose two operands are both still variables is
-rejected: that is the generic operator of the rest of phase 2.
+rejected: inferring the generic operators of the calculus is a follow-up, so the
+algorithm is sound for them (it infers only derivable types) and not complete.
 
 The parser fragment widens in step: a string, a `Float` literal (a `TDec` token
 that denotes the opaque `e_dec`), a conditional with or without an `else` (the
@@ -156,8 +158,41 @@ parenthesises a function that is a binding's value. T1 covers groups, and
 does not (decided: deferred to the tail of phase 8): the printer does not write a
 `letrec`, which would need the group's projections printed as bare member names.
 The lexer stays trusted until phases 3 to 6 land, then is verified once (decided).
-Not in this phase: constraint-polymorphic operators (the kinded type variables
-of the rest of phase 2).
+
+## Generic operators: sorted type variables (design Q)
+
+The typing judgment carries a kinding environment `D` (`typing D G e T`): a
+total map from type variables to a **sort** (`k_Any`, `k_Numeric`,
+`k_Literal`), `k_Any` outside a finite support. A type satisfies a sort
+(`sat D k T`) when it is `Int` or `Float`, or a variable whose sort in `D` is at
+or above `k`. A scheme records the sort of each quantified variable
+(`Sch tq rq body sk`), so `gen G T k` quantifies the free variables of `T` not in
+`G` at the sorts `k`. `T_Let` and `T_Letrec` type the bound term under
+`ext D V k`, `D` extended on the generalized set `V` by `k`, which is why the
+sort of a variable lives in the environment and a type variable stays a plain
+`typ_Var a`. A numeral has any `k_Literal` type, `float(e)` takes any
+`k_Numeric` operand, and `+ - *` take two operands of one `k_Numeric` type. A
+substitution respects the sorts when `kres D D' st`: each `a` goes to a type
+that satisfies `D a` in `D'`.
+
+The substitution lemma needs three things the plain calculus did not.
+`sch_subst` and `ctx_subst` quantify over all pairs of environments the
+substitution respects, so renaming the generalized variables moves the
+environment by the renaming (`dperm`). The target and source environments are
+`k_Any` outside a finite set (`supp_ok`), so a fresh name a `let` is renamed
+onto is `k_Any` and carries any sort. And a derivation moves between two
+environments that agree on the free variables of its context and type
+(`typing_denv_agree`), sending the variables it uses internally to `Int`, which
+satisfies every sort; term substitution under a `let` needs exactly that, because
+the bound term is typed in an extended environment. `sch_more_gen` (for
+`typing_ftv_mono`) is indexed by the environment for the same reason.
+
+The program judgment is `typing d_any nil e T` with `d_any` the all-`k_Any`
+environment. Defaulting (ADR 0017: a `Literal` variable left unconstrained is
+`Int`; `Numeric` has none) is therefore a choice among derivations, not a rule:
+in `d_any` a closed derivation instantiates each generalized `Literal` variable
+at `Int` or `Float`, and `numeral_binding_is_generic` in `GoatPhase1.v` shows
+both choices.
 
 ## Records and projection in the Ott source
 
@@ -263,18 +298,20 @@ Fully closed, no admits:
   `typing_regular`, canonical forms (L7), the T-Conv-aware typing inversions,
   **Progress**, all **Preservation** congruence cases, and `ST-ProjRec`.
 - **Term substitution** (`GoatSound.v`): `typing_subst` (L6a, monomorphic, for
-  `ST-Beta`) and `typing_subst_poly` (L6b, polymorphic, for `ST-LetV`), by mutual
-  induction on the typing derivation, prefix-generalized over the context so the
-  induction goes under binders. Their `let` cases need no new theory: dropping a
-  binding from the context only makes `gen` more general with no new free
-  variables (`gen_antimono`), the good direction for `typing_ftv_mono`. Also
+  `ST-Beta`) and `typing_subst_poly` (L6b, polymorphic, for `ST-LetV`), both
+  instances of one lemma `typing_subst_gen_mut`, by mutual induction on the typing
+  derivation, prefix-generalized over the context so the induction goes under
+  binders. Their `let` cases need no new theory: dropping a binding from the
+  context only makes `gen` more general with no new free variables
+  (`gen_more_gen`), the good direction for `typing_ftv_mono`. Also
   `typing_inst_gen` (every instance of a generalization is derivable).
 
 - **The two canonical HM lemmas** (`GoatSound.v`), on which the term-substitution
   lemmas (hence Preservation's `ST-Beta`/`ST-LetV` and Soundness) rest:
   - `typing_weaken` (L4): inserting a middle block of bindings preserves typing;
   - `typing_tsubst_fix` (L5): substituting the type/row variables *not* free in
-    the context preserves typing.
+    the context preserves typing (in the all-`k_Any` environment, where
+    algorithm W works).
 
   Both follow from one general lemma, `typing_tsubst_gen_mut`: a type/row
   substitution applied to a derivation, with the context substituted

@@ -248,8 +248,3 @@ Proof.
     + apply HxV. apply In_elements; auto.
     + contradiction.
 Qed.
-
-(* ============ alpha-renaming of a scheme preserves instances ============ *)
-
-Lemma inj_of_invol : forall (f : atom -> atom), (forall a, f (f a) = a) -> forall a b, f a = f b -> a = b.
-Proof. intros f Hinv a b H. rewrite <- (Hinv a), <- (Hinv b), H. reflexivity. Qed.
