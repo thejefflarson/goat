@@ -1,8 +1,9 @@
 //! The core fragment (ADR 0030): print a term of `proofs/goat_ln.ott` as goat
 //! source, parse and lower it with the real front end, and read the result
-//! back as the same term. A fixed-seed generator keeps CI deterministic.
+//! back as the same term. The terms cover strings, `if` with an `else` and one
+//! operator between two operands. A fixed-seed generator keeps CI deterministic.
 
-use goat_checker::hir::{Expr, ExprKind, Symbol};
+use goat_checker::hir::{BinOp, Expr, ExprKind, Symbol};
 use goat_checker::lower::lower;
 
 const CASES: usize = 10_000;
@@ -16,11 +17,65 @@ enum Term {
     Var(String),
     Num(u32),
     Bool(bool),
+    Str(&'static str),
     Abs(String, Box<Term>),
     App(Box<Term>, Box<Term>),
     Let(String, Box<Term>, Box<Term>),
     Rec(Vec<(u32, Term)>),
     Proj(Box<Term>, u32),
+    If(Box<Term>, Box<Term>, Box<Term>),
+    Bin(Box<Term>, BinOp, Box<Term>),
+}
+
+const STRINGS: [&str; 3] = ["", "hi", "a # b"];
+
+const OPERATORS: [BinOp; 12] = [
+    BinOp::Add,
+    BinOp::Sub,
+    BinOp::Mul,
+    BinOp::Div,
+    BinOp::FloorDiv,
+    BinOp::Mod,
+    BinOp::Lt,
+    BinOp::Lte,
+    BinOp::Gt,
+    BinOp::Gte,
+    BinOp::Eq,
+    BinOp::Ne,
+];
+
+fn operator_text(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::FloorDiv => "//",
+        BinOp::Mod => "%",
+        BinOp::Lt => "<",
+        BinOp::Lte => "<=",
+        BinOp::Gt => ">",
+        BinOp::Gte => ">=",
+        BinOp::Eq => "==",
+        BinOp::Ne => "!=",
+    }
+}
+
+fn operator_constructor(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "bop_add",
+        BinOp::Sub => "bop_sub",
+        BinOp::Mul => "bop_mul",
+        BinOp::Div => "bop_div",
+        BinOp::FloorDiv => "bop_fdiv",
+        BinOp::Mod => "bop_rem",
+        BinOp::Lt => "bop_lt",
+        BinOp::Lte => "bop_lte",
+        BinOp::Gt => "bop_gt",
+        BinOp::Gte => "bop_gte",
+        BinOp::Eq => "bop_eq",
+        BinOp::Ne => "bop_ne",
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -44,10 +99,17 @@ fn label_name(label: u32) -> String {
 }
 
 /// A postfix chain (`.l` and calls) applies to a primary. These forms are not
-/// primaries: a `let` would take the rest of the text as its scope, and a
-/// number before `.` reads as a decimal point.
+/// primaries: a `let` would take the rest of the text as its scope, a number
+/// before `.` reads as a decimal point, and an operation would take the call
+/// or the field as the operand of its own right-hand side.
 fn needs_parens_as_operand(term: &Term) -> bool {
-    matches!(term, Term::Let(..) | Term::Num(_))
+    matches!(term, Term::Let(..) | Term::Num(_) | Term::Bin(..))
+}
+
+/// An operand of an operator is a chain: a `let` or another operation is
+/// parenthesised, because a run of operators is outside the fragment.
+fn needs_parens_as_operator_operand(term: &Term) -> bool {
+    matches!(term, Term::Let(..) | Term::Bin(..))
 }
 
 /// A `let`'s value is a single operand: a nested `let` there would take the
@@ -71,6 +133,18 @@ fn print(term: &Term, style: Style) -> String {
         Term::Var(name) => name.clone(),
         Term::Num(n) => n.to_string(),
         Term::Bool(b) => b.to_string(),
+        Term::Str(text) => format!("\"{text}\""),
+        Term::If(cond, then_branch, else_branch) => format!(
+            "if {} then {} else {} done",
+            print(cond, style),
+            print(then_branch, style),
+            print(else_branch, style)
+        ),
+        Term::Bin(lhs, op, rhs) => {
+            let lhs = parenthesise(lhs, style, needs_parens_as_operator_operand(lhs));
+            let rhs = parenthesise(rhs, style, needs_parens_as_operator_operand(rhs));
+            format!("{lhs} {} {rhs}", operator_text(*op))
+        }
         Term::Abs(..) => {
             let (params, body) = abstraction_group(term, style);
             format!(
@@ -177,11 +251,12 @@ struct Gen {
 
 impl Gen {
     fn leaf(&mut self) -> Term {
-        match self.rng.below(3) {
+        match self.rng.below(4) {
             0 if !self.scope.is_empty() => {
                 Term::Var(self.scope[self.rng.below(self.scope.len())].clone())
             }
             1 => Term::Bool(self.rng.below(2) == 0),
+            2 => Term::Str(STRINGS[self.rng.below(STRINGS.len())]),
             _ => Term::Num(self.rng.below(1000) as u32),
         }
     }
@@ -195,7 +270,7 @@ impl Gen {
             return self.leaf();
         }
         let depth = depth + 1;
-        match self.rng.below(10) {
+        match self.rng.below(13) {
             0..=2 => self.leaf(),
             3 | 4 => {
                 let name = self.value_name();
@@ -216,9 +291,18 @@ impl Gen {
                 }
                 Term::Rec(labels.into_iter().map(|l| (l, self.term(depth))).collect())
             }
-            _ => {
+            9 => {
                 let base = self.term(depth);
                 Term::Proj(Box::new(base), self.rng.next() as u32 % LABELS)
+            }
+            10 => Term::If(
+                Box::new(self.term(depth)),
+                Box::new(self.term(depth)),
+                Box::new(self.term(depth)),
+            ),
+            _ => {
+                let op = OPERATORS[self.rng.below(OPERATORS.len())];
+                Term::Bin(Box::new(self.term(depth)), op, Box::new(self.term(depth)))
             }
         }
     }
@@ -249,7 +333,16 @@ fn intern_labels(term: &mut Term, seen: &mut Vec<u32>) {
         *label = at as u32;
     }
     match term {
-        Term::Var(_) | Term::Num(_) | Term::Bool(_) => {}
+        Term::Var(_) | Term::Num(_) | Term::Bool(_) | Term::Str(_) => {}
+        Term::If(cond, then_branch, else_branch) => {
+            intern_labels(cond, seen);
+            intern_labels(then_branch, seen);
+            intern_labels(else_branch, seen);
+        }
+        Term::Bin(lhs, _, rhs) => {
+            intern_labels(lhs, seen);
+            intern_labels(rhs, seen);
+        }
         Term::Abs(_, body) => intern_labels(body, seen),
         Term::App(callee, arg) => {
             intern_labels(callee, seen);
@@ -297,6 +390,24 @@ impl Reader {
         match &expr.kind {
             ExprKind::Int(n) => Term::Num(u32::try_from(*n).expect("generated numbers fit")),
             ExprKind::Bool(b) => Term::Bool(*b),
+            ExprKind::Str(text) => Term::Str(
+                STRINGS
+                    .into_iter()
+                    .find(|s| s == text)
+                    .expect("generated strings come from the table"),
+            ),
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch: Some(else_branch),
+            } => Term::If(
+                Box::new(self.read(cond)),
+                Box::new(self.read(then_branch)),
+                Box::new(self.read(else_branch)),
+            ),
+            ExprKind::Bin { op, lhs, rhs } => {
+                Term::Bin(Box::new(self.read(lhs)), *op, Box::new(self.read(rhs)))
+            }
             ExprKind::Var { symbol, name } => {
                 let innermost = self.scope.iter().rev().find(|(n, _)| n == name);
                 assert_eq!(
@@ -440,7 +551,17 @@ fn canonical(term: &Term, scope: &mut Vec<(String, String)>) -> Term {
                 .expect("generated terms are closed");
             Term::Var(canon.clone())
         }
-        Term::Num(_) | Term::Bool(_) => term.clone(),
+        Term::Num(_) | Term::Bool(_) | Term::Str(_) => term.clone(),
+        Term::If(cond, then_branch, else_branch) => Term::If(
+            Box::new(canonical(cond, scope)),
+            Box::new(canonical(then_branch, scope)),
+            Box::new(canonical(else_branch, scope)),
+        ),
+        Term::Bin(lhs, op, rhs) => Term::Bin(
+            Box::new(canonical(lhs, scope)),
+            *op,
+            Box::new(canonical(rhs, scope)),
+        ),
         Term::Abs(name, body) => {
             let canon = format!("v{}", scope.len());
             scope.push((name.clone(), canon.clone()));
@@ -485,6 +606,19 @@ fn coq_term(term: &Term, scope: &mut Vec<String>) -> String {
         Term::Num(n) => format!("(e_num {n})"),
         Term::Bool(true) => "e_true".into(),
         Term::Bool(false) => "e_false".into(),
+        Term::Str(_) => "(e_str [])".into(),
+        Term::If(cond, then_branch, else_branch) => format!(
+            "(e_ite {} {} {})",
+            coq_term(cond, scope),
+            coq_term(then_branch, scope),
+            coq_term(else_branch, scope)
+        ),
+        Term::Bin(lhs, op, rhs) => format!(
+            "(e_bin {} {} {})",
+            coq_term(lhs, scope),
+            operator_constructor(*op),
+            coq_term(rhs, scope)
+        ),
         Term::Abs(name, body) => {
             scope.push(name.clone());
             let body = coq_term(body, scope);
@@ -526,6 +660,7 @@ fn coq_tokens(source: &str) -> String {
             match token.kind {
                 TokenKind::Name => format!("TName \"{text}\""),
                 TokenKind::Number => format!("TNum {text}"),
+                TokenKind::String => "TStr".into(),
                 TokenKind::Keyword
                 | TokenKind::Literal
                 | TokenKind::Operator
@@ -631,4 +766,61 @@ fn a_function_sees_a_later_function_of_its_block_unlike_the_ott_let() {
 fn lowering_rejects_a_record_the_core_allows() {
     let errors = lower("{a: 1, a: 2}").expect("parses").errors;
     assert!(errors.iter().any(|e| e.message.contains("duplicate field")));
+}
+
+#[test]
+fn the_generated_terms_use_every_operator_string_and_conditional() {
+    fn visit(term: &Term, ops: &mut Vec<BinOp>, strings: &mut Vec<&'static str>, ifs: &mut usize) {
+        match term {
+            Term::Str(text) => {
+                if !strings.contains(text) {
+                    strings.push(text);
+                }
+            }
+            Term::If(a, b, c) => {
+                *ifs += 1;
+                for t in [a, b, c] {
+                    visit(t, ops, strings, ifs);
+                }
+            }
+            Term::Bin(a, op, b) => {
+                if !ops.contains(op) {
+                    ops.push(*op);
+                }
+                visit(a, ops, strings, ifs);
+                visit(b, ops, strings, ifs);
+            }
+            Term::Abs(_, body) | Term::Proj(body, _) => visit(body, ops, strings, ifs),
+            Term::App(a, b) | Term::Let(_, a, b) => {
+                visit(a, ops, strings, ifs);
+                visit(b, ops, strings, ifs);
+            }
+            Term::Rec(fields) => fields.iter().for_each(|(_, t)| visit(t, ops, strings, ifs)),
+            Term::Var(_) | Term::Num(_) | Term::Bool(_) => {}
+        }
+    }
+    let mut builder = Gen {
+        rng: Rng(SEED),
+        scope: Vec::new(),
+        functions: 0,
+    };
+    let (mut ops, mut strings, mut ifs) = (Vec::new(), Vec::new(), 0);
+    for _ in 0..CASES {
+        builder.functions = 0;
+        visit(&builder.term(0), &mut ops, &mut strings, &mut ifs);
+    }
+    assert_eq!(ops.len(), OPERATORS.len());
+    assert_eq!(strings.len(), STRINGS.len());
+    assert!(ifs > 100, "{ifs} conditionals");
+}
+
+#[test]
+fn an_operand_that_is_a_binding_or_an_operation_is_parenthesised() {
+    let num = |n| Box::new(Term::Num(n));
+    let sum = Term::Bin(num(1), BinOp::Add, num(2));
+    let nested = Term::Bin(Box::new(sum.clone()), BinOp::Mul, num(3));
+    assert_eq!(print(&nested, Style::Curried), "(1 + 2) * 3");
+    assert_eq!(lower_to_term(&print(&nested, Style::Curried)), nested);
+    let field = Term::Proj(Box::new(sum), 0);
+    assert_eq!(print(&field, Style::Curried), "(1 + 2).lab0");
 }
