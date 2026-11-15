@@ -85,6 +85,48 @@ fn far_away_names_resolve_in_constant_time() {
     );
 }
 
+/// Each binding wraps the one before it, so its type nests one level deeper
+/// until it passes the depth limit and the binding fails; the next binding then
+/// nests again from nothing. Every binding stays open (its literals are still
+/// undecided), which made generalizing each one rescan every binding before it.
+fn nested_bindings(count: usize) -> String {
+    let chain = repeated(count, |i| format!("a{} = {{w: a{i}, v: {i}}}", i + 1));
+    format!("a0 = 0\n{chain}\n1")
+}
+
+#[test]
+fn bindings_that_keep_failing_scale_linearly() {
+    const FEW: usize = 500;
+    const MANY: usize = 2_000;
+    let (few, few_errors) = time_to_check(nested_bindings(FEW));
+    let (many, many_errors) = time_to_check(nested_bindings(MANY));
+    assert!(matches!(few_errors, Err(n) if n > 0));
+    assert!(matches!(many_errors, Err(n) if n > 0));
+    assert!(
+        many < few.max(Duration::from_millis(50)) * 10,
+        "{FEW} bindings took {few:?}, {MANY} took {many:?}"
+    );
+}
+
+#[test]
+fn every_error_of_a_run_of_failing_bindings_is_spanned() {
+    let source = nested_bindings(1_000);
+    let errors = std::thread::Builder::new()
+        .stack_size(256 << 20)
+        .spawn({
+            let source = source.clone();
+            move || goat_checker::check(&source).err().expect("errors")
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(!errors.is_empty());
+    for error in &errors {
+        assert!(error.span.start < error.span.end && error.span.end <= source.len());
+        assert!(error.message.starts_with("program too complex"));
+    }
+}
+
 #[test]
 fn a_run_of_erroring_field_reads_scales_linearly() {
     assert_scales_linearly(|n| format!("r = {{x: 1}}\n{}1", "r.y; ".repeat(n)), true);
