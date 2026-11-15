@@ -1819,7 +1819,10 @@ mod tests {
     }
 
     fn list_of(empty: Ty) -> Ty {
-        Ty::Rec(1, Box::new(tags(empty, pair(Ty::Int, Ty::Var(1)))))
+        Ty::Rec(
+            1,
+            std::sync::Arc::new(tags(empty, pair(Ty::Int, Ty::Var(1)))),
+        )
     }
 
     #[test]

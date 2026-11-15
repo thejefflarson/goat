@@ -15,6 +15,7 @@
 
 use goat_checker::ty::{PLAIN, Row, Ty, TypeVar};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Canonical binders count up from here. A ground type has no free variables,
 /// so these ids cannot collide with a variable.
@@ -96,7 +97,7 @@ fn rename_binders(ty: &Ty, scope: &mut Vec<(TypeVar, TypeVar)>) -> Ty {
             scope.push((*binder, renamed));
             let body = rename_binders(body, scope);
             scope.pop();
-            Ty::Rec(renamed, Box::new(body))
+            Ty::Rec(renamed, Arc::new(body))
         }
         Ty::Func(args, ret) => Ty::Func(
             args.iter().map(|a| rename_binders(a, scope)).collect(),
@@ -268,7 +269,7 @@ impl Graph {
         let ty = build(shape, kids);
         let (_, looped) = path.pop().expect("pushed above");
         if looped {
-            Ty::Rec(BINDER_BASE + path.len() as TypeVar, Box::new(ty))
+            Ty::Rec(BINDER_BASE + path.len() as TypeVar, Arc::new(ty))
         } else {
             ty
         }
@@ -311,7 +312,7 @@ mod tests {
             ("Empty", Ty::Unit),
             ("Link", link(head, Ty::Var(binder))),
         ]);
-        Ty::Rec(binder, Box::new(body))
+        Ty::Rec(binder, Arc::new(body))
     }
 
     #[test]
@@ -342,7 +343,7 @@ mod tests {
         ]);
         let two = Ty::Rec(
             2,
-            Box::new(variant(vec![
+            Arc::new(variant(vec![
                 ("Empty", Ty::Unit),
                 ("Link", link(Ty::Int, inner)),
             ])),
@@ -361,14 +362,14 @@ mod tests {
         let inner = list(5, Ty::Int);
         let outer = Ty::Rec(
             9,
-            Box::new(variant(vec![
+            Arc::new(variant(vec![
                 ("Nil", Ty::Unit),
                 ("Cons", link(inner, Ty::Var(9))),
             ])),
         );
         let again = Ty::Rec(
             4,
-            Box::new(variant(vec![
+            Arc::new(variant(vec![
                 ("Nil", Ty::Unit),
                 ("Cons", link(list(6, Ty::Int), Ty::Var(4))),
             ])),
@@ -384,7 +385,7 @@ mod tests {
 
     #[test]
     fn a_vacuous_binder_is_dropped() {
-        let vacuous = Ty::Rec(1, Box::new(variant(vec![("A", Ty::Int)])));
+        let vacuous = Ty::Rec(1, Arc::new(variant(vec![("A", Ty::Int)])));
         assert_eq!(canonical(&vacuous), variant(vec![("A", Ty::Int)]));
     }
 }

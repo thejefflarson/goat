@@ -477,7 +477,7 @@ pub fn list(binder: TypeVar, item: Ty) -> Ty {
     let link = record([("0", item), ("1", Ty::Var(binder))]);
     Ty::Rec(
         binder,
-        Box::new(Ty::Variant(row([("Empty", Ty::Unit), ("Link", link)]))),
+        std::sync::Arc::new(Ty::Variant(row([("Empty", Ty::Unit), ("Link", link)]))),
     )
 }
 
@@ -519,7 +519,10 @@ mod tests {
         let point = record([("x", Ty::Float), ("y", Ty::Float)]);
         assert_eq!(list_element(&payload_list(point.clone())), Some(&point));
         assert_eq!(list_element(&point), None);
-        assert_eq!(list_element(&Ty::Rec(0, Box::new(Ty::Unit))), None);
+        assert_eq!(
+            list_element(&Ty::Rec(0, std::sync::Arc::new(Ty::Unit))),
+            None
+        );
     }
 
     #[test]

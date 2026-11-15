@@ -40,6 +40,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// Most type terms (constructors, fields, variables) one expression's type may
 /// hold. Composing generic functions with themselves doubles a type at every
@@ -364,7 +365,7 @@ struct Inferer {
     /// is never bound until the literal is done, so a method that calls a
     /// sibling through `self` mentions it without cycling through its own
     /// type; unifying it unifies its record instead.
-    self_defs: HashMap<TypeVar, Ty>,
+    self_defs: HashMap<TypeVar, Rc<Ty>>,
     /// The method flag of each `Field` a dot call or a `::` names.
     field_flags: HashMap<ExprId, Ty>,
     /// The argument spans of the call whose callee is the `r::f` inferred next.
@@ -737,7 +738,7 @@ impl Inferer {
             ),
             Ty::Record(row) => Ty::Record(self.resolve_row(row)),
             Ty::Variant(row) => Ty::Variant(self.resolve_row(row)),
-            Ty::Rec(binder, body) => Ty::Rec(*binder, Box::new(self.resolve(body))),
+            Ty::Rec(binder, body) => Ty::Rec(*binder, Arc::new(self.resolve(body))),
             other => other.clone(),
         }
     }
@@ -756,7 +757,7 @@ impl Inferer {
     /// inferred.
     fn self_def(&self, ty: &Ty) -> Option<&Ty> {
         match ty {
-            Ty::Var(v) => self.self_defs.get(v),
+            Ty::Var(v) => self.self_defs.get(v).map(|def| &**def),
             _ => None,
         }
     }
@@ -780,7 +781,7 @@ impl Inferer {
             opened.push(var);
             let body = self.open_selves_except(self.resolve(def), opened);
             opened.pop();
-            ty.substitute(var, &Ty::Rec(var, Box::new(body)))
+            ty.substitute(var, &Ty::Rec(var, Arc::new(body)))
         })
     }
 
@@ -1197,7 +1198,11 @@ impl Inferer {
         if self.self_defs.is_empty() {
             return false;
         }
-        let (a_def, b_def) = (self.self_def(a).cloned(), self.self_def(b).cloned());
+        let shared_def = |ty: &Ty| match ty {
+            Ty::Var(v) => self.self_defs.get(v).cloned(),
+            _ => None,
+        };
+        let (a_def, b_def) = (shared_def(a), shared_def(b));
         match (a_def, b_def) {
             (None, None) => false,
             (Some(_), Some(_)) if a == b => true,
@@ -1292,7 +1297,8 @@ impl Inferer {
                     self.errors.push(GoatError::new(span, message));
                     return;
                 };
-                self.row_subst.insert(*x, Rc::new(bound.clone()));
+                let bound = Rc::new(bound);
+                self.row_subst.insert(*x, bound.clone());
                 if let Some(kinds) = self.row_kinds.remove(x) {
                     for kind_to_check in kinds.iter() {
                         let mut seen = Vec::new();
@@ -1301,7 +1307,7 @@ impl Inferer {
                             self.report_violation(
                                 span,
                                 &violation,
-                                &kind.wrap(bound.clone()),
+                                &kind.wrap(Row::clone(&bound)),
                                 None,
                             );
                             break;
@@ -1517,7 +1523,7 @@ impl Inferer {
             Guard::default(),
             &mut Vec::new(),
         );
-        (!occurs(x, &body)).then(|| Ty::Rec(binder, Box::new(body)))
+        (!occurs(x, &body)).then(|| Ty::Rec(binder, Arc::new(body)))
     }
 
     /// `x = row` where `row` mentions `x`. Allowed only when every mention is
@@ -1538,7 +1544,7 @@ impl Inferer {
         if occurs_row(x, &inner) {
             return None;
         }
-        let rec = Ty::Rec(binder, Box::new(kind.wrap(replace_tail(&mention, inner))));
+        let rec = Ty::Rec(binder, Arc::new(kind.wrap(replace_tail(&mention, inner))));
         if occurs(x, &rec) {
             return None;
         }
@@ -1553,7 +1559,19 @@ impl Inferer {
     /// long, which [`MAX_TYPE_TERMS`] caps: every row grows by one inferred
     /// expression at a time and each is checked.
     fn surface(&mut self, label: &str, row: &Row, optional: bool) -> Option<(Ty, Ty, Ty, Row)> {
-        match self.resolve_row(row) {
+        let resolved = self.resolve_row(row);
+        self.surface_resolved(label, resolved, optional)
+    }
+
+    /// [`Self::surface`] on a row already resolved, which its tail is too, so
+    /// the walk down it resolves nothing again.
+    fn surface_resolved(
+        &mut self,
+        label: &str,
+        row: Row,
+        optional: bool,
+    ) -> Option<(Ty, Ty, Ty, Row)> {
+        match row {
             Row::Empty => None,
             Row::Extend {
                 label: l2,
@@ -1565,7 +1583,7 @@ impl Inferer {
                 if l2 == label {
                     Some((PRESENT, *field, *method, *rest))
                 } else {
-                    let (p, f, m, r) = self.surface(label, &rest, optional)?;
+                    let (p, f, m, r) = self.surface_resolved(label, *rest, optional)?;
                     Some((
                         p,
                         f,
@@ -1590,7 +1608,7 @@ impl Inferer {
                 if l2 == label {
                     Some((Ty::Var(pres), *field, *method, *rest))
                 } else {
-                    let (p, f, m, r) = self.surface(label, &rest, optional)?;
+                    let (p, f, m, r) = self.surface_resolved(label, *rest, optional)?;
                     Some((
                         p,
                         f,
@@ -1697,7 +1715,13 @@ impl Inferer {
     /// variable. A label `row` already has makes this impossible, and is
     /// returned.
     fn lack(&mut self, row: &Row, labels: &BTreeSet<String>) -> Option<String> {
-        match self.resolve_row(row) {
+        let resolved = self.resolve_row(row);
+        self.lack_resolved(resolved, labels)
+    }
+
+    /// [`Self::lack`] on a row already resolved, which its tail is too.
+    fn lack_resolved(&mut self, row: Row, labels: &BTreeSet<String>) -> Option<String> {
+        match row {
             Row::Empty => None,
             Row::Var(v) => {
                 if !labels.is_empty() {
@@ -1712,7 +1736,7 @@ impl Inferer {
                 if labels.contains(&label) {
                     Some(label)
                 } else {
-                    self.lack(&rest, labels)
+                    self.lack_resolved(*rest, labels)
                 }
             }
             Row::Maybe {
@@ -1721,7 +1745,7 @@ impl Inferer {
                 if labels.contains(&label) {
                     self.subst.insert(pres, Rc::new(ABSENT));
                 }
-                self.lack(&rest, labels)
+                self.lack_resolved(*rest, labels)
             }
         }
     }
@@ -3063,7 +3087,8 @@ impl Inferer {
             },
         );
         let receiver = self.fresh_id();
-        self.self_defs.insert(receiver, Ty::Record(self_row));
+        self.self_defs
+            .insert(receiver, Rc::new(Ty::Record(self_row)));
         let mut tys = vec![Ty::Unit; fields.len()];
         for at in inference_order(fields) {
             let (value, slot) = (&fields[at].1, &slots[at]);
@@ -3161,7 +3186,7 @@ impl Inferer {
         );
         let recursive = Ty::Rec(
             binder,
-            Box::new(Ty::Record(body).substitute(receiver, &Ty::Var(binder))),
+            Arc::new(Ty::Record(body).substitute(receiver, &Ty::Var(binder))),
         );
         self.self_defs.remove(&receiver);
         self.bind_var(receiver, Rc::new(recursive));
@@ -3661,7 +3686,7 @@ fn plug<'a>(ty: &'a Ty, hole: &Hole, with: &Ty, at: Guard, bound: &mut Vec<&'a T
             bound.push(ty);
             let body = plug(body, hole, with, at, bound);
             bound.pop();
-            Ty::Rec(*binder, Box::new(body))
+            Ty::Rec(*binder, Arc::new(body))
         }
         other => other.clone(),
     }
@@ -3885,7 +3910,7 @@ pub(crate) fn subst_vars(ty: &Ty, mapping: &HashMap<TypeVar, TypeVar>) -> Ty {
         Ty::Variant(row) => Ty::Variant(subst_row(row, mapping)),
         Ty::Rec(binder, body) => Ty::Rec(
             mapping.get(binder).copied().unwrap_or(*binder),
-            Box::new(subst_vars(body, mapping)),
+            Arc::new(subst_vars(body, mapping)),
         ),
         other => other.clone(),
     }
@@ -3944,7 +3969,7 @@ mod tests {
     fn chain(binder: TypeVar, label: &str, tail: Row) -> Ty {
         Ty::Rec(
             binder,
-            Box::new(Ty::Variant(extend(label, Ty::Var(binder), tail))),
+            Arc::new(Ty::Variant(extend(label, Ty::Var(binder), tail))),
         )
     }
 
@@ -4005,7 +4030,7 @@ mod tests {
         let one = chain(100, "A", Row::Empty);
         let two = Ty::Rec(
             101,
-            Box::new(Ty::Variant(extend(
+            Arc::new(Ty::Variant(extend(
                 "A",
                 Ty::Variant(extend("A", Ty::Var(101), Row::Empty)),
                 Row::Empty,
@@ -4020,7 +4045,7 @@ mod tests {
         let one = chain(100, "A", Row::Var(1));
         let two = Ty::Rec(
             101,
-            Box::new(Ty::Variant(extend(
+            Arc::new(Ty::Variant(extend(
                 "A",
                 Ty::Variant(extend("A", Ty::Var(101), Row::Var(2))),
                 Row::Var(2),
@@ -4148,7 +4173,7 @@ mod tests {
         inf.subst.insert(1, Rc::new(Ty::Int));
         let rec = Ty::Rec(
             5,
-            Box::new(Ty::Variant(extend(
+            Arc::new(Ty::Variant(extend(
                 "A",
                 Ty::Record(extend("0", Ty::Var(1), extend("1", Ty::Var(5), Row::Empty))),
                 Row::Empty,
@@ -4169,7 +4194,7 @@ mod tests {
         ));
         Ty::Rec(
             binder,
-            Box::new(Ty::Variant(extend(
+            Arc::new(Ty::Variant(extend(
                 "Empty",
                 Ty::Unit,
                 extend("Link", link, Row::Empty),

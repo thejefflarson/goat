@@ -13,6 +13,7 @@ use goat_checker::ty::{ABSENT, PLAIN, PRESENT, Row, Scheme, Ty, TypeVar};
 use goat_checker::{Checked, GoatError, Target, Vocab};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 mod interactive;
 mod reload;
@@ -550,7 +551,7 @@ impl Mono<'_> {
                 bound.push(*binder);
                 let body = self.ground_in(body, subst, bound);
                 bound.pop();
-                Ty::Rec(*binder, Box::new(body))
+                Ty::Rec(*binder, Arc::new(body))
             }
             other => other.clone(),
         }
