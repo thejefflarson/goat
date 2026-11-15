@@ -34,7 +34,7 @@ Definition paren_kids (b : list tree) : list tree := [sym "("; Node R_expr b; sy
    field as the operand of its own right-hand side). *)
 Definition as_operand (e : exp) (b : list tree) : list tree :=
   match e with
-  | e_let _ _ | e_num _ | e_bin _ _ _ => paren_kids b
+  | e_let _ _ | e_num _ | e_dec _ | e_bin _ _ _ => paren_kids b
   | _ => b
   end.
 
@@ -55,10 +55,12 @@ Definition as_callee (e : exp) (b : list tree) : list tree :=
   | _ => as_operand e b
   end.
 
-(* A binding's value is one operand: a nested binding is parenthesised. *)
+(* A binding's value is one operand: a nested binding is parenthesised, and so
+   is a function, because a binding whose value is a bare function literal is a
+   member of the block's recursive group (ADR 0003) rather than a plain let. *)
 Definition as_value (e : exp) (b : list tree) : list tree :=
   match e with
-  | e_let _ _ => paren_kids b
+  | e_let _ _ | e_abs _ => paren_kids b
   | _ => b
   end.
 
@@ -77,6 +79,9 @@ Definition cond_tree (c t e : list tree) : tree :=
   Node R_conditional [sym "if"; Node R_expr c; sym "then"; Node R_expr t;
                       sym "else"; Node R_expr e; sym "done"].
 
+Definition cond_tree_noelse (c t : list tree) : tree :=
+  Node R_conditional [sym "if"; Node R_expr c; sym "then"; Node R_expr t; sym "done"].
+
 Definition function_tree (P : nat) (b : list tree) : tree :=
   Node R_function [sym "program"; sym "("; Node R_params [ident (nm P)];
                    sym ")"; sym "do"; Node R_expr b; sym "done"].
@@ -88,7 +93,7 @@ Fixpoint block (P : nat) (e : exp) {struct e} : list tree :=
   | e_fvar_b i => [ident (nm (P - 1 - i))]
   | e_fvar_f _ => []
   | e_num n => [Node R_number [Leaf (TNum (nat_of_z n))]]
-  | e_dec _ => []
+  | e_dec d => [Node R_number [Leaf (TDec d)]]
   | e_true => [Node R_boolean [Node R_true_lit [sym "true"]]]
   | e_false => [Node R_boolean [Node R_false_lit [sym "false"]]]
   | e_abs b => [function_tree P (block (S P) b)]
@@ -98,6 +103,7 @@ Fixpoint block (P : nat) (e : exp) {struct e} : list tree :=
   | e_proj f l => as_operand f (block P f) ++ [access_tree l]
   | e_unit | e_tofloat _ | e_letrec _ _ => []
   | e_str _ => [Node R_string [Leaf TStr]]
+  | e_ite c a e_unit => [cond_tree_noelse (block P c) (block P a)]
   | e_ite c a b => [cond_tree (block P c) (block P a) (block P b)]
   | e_bin a o b => as_binop a (block P a) ++ op_tree o :: as_binop b (block P b)
   end
@@ -167,9 +173,9 @@ Fixpoint scoped (n : nat) (e : exp) {struct e} : Prop :=
   | e_fvar_b i => i < n
   | e_fvar_f _ => False
   | e_num z => z_nonneg z = true
-  | e_true | e_false | e_str _ => True
-  | e_dec _ | e_unit | e_tofloat _ | e_letrec _ _ => False
-  | e_ite c a b => scoped n c /\ scoped n a /\ scoped n b
+  | e_true | e_false | e_str _ | e_dec _ => True
+  | e_unit | e_tofloat _ | e_letrec _ _ => False
+  | e_ite c a b => scoped n c /\ scoped n a /\ (b = e_unit \/ scoped n b)
   | e_bin a _ b => scoped n a /\ scoped n b
   | e_abs b => scoped (S n) b
   | e_app f a => scoped n f /\ scoped n a
@@ -182,6 +188,22 @@ with scoped_fields (n : nat) (fs : Goat_ott.fields) {struct fs} : Prop :=
   | fs_nil => True
   | fs_cons _ e rest => scoped n e /\ scoped_fields n rest
   end.
+
+Lemma block_ite_else : forall P c a b,
+  scoped P b -> block P (e_ite c a b) = [cond_tree (block P c) (block P a) (block P b)].
+Proof. intros P c a b H. destruct b; try reflexivity; destruct H. Qed.
+
+Lemma block_ite_cases : forall P c a b,
+  (b = e_unit /\ block P (e_ite c a b) = [cond_tree_noelse (block P c) (block P a)])
+  \/ (b <> e_unit /\ block P (e_ite c a b) = [cond_tree (block P c) (block P a) (block P b)]).
+Proof.
+  intros P c a b. destruct b;
+    first [ (left; split; reflexivity) | (right; split; [ discriminate | reflexivity ]) ].
+Qed.
+
+Lemma block_ite_unit : forall P c a,
+  block P (e_ite c a e_unit) = [cond_tree_noelse (block P c) (block P a)].
+Proof. reflexivity. Qed.
 
 (* Labels in the order the printer writes them. *)
 Fixpoint lbls (e : exp) {struct e} : list nat :=

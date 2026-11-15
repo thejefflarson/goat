@@ -90,9 +90,13 @@ Proof.
       [ unfold paren_kids; occ_simp; try rewrite IH; reflexivity | rewrite IH; reflexivity ].
   - intros P. cbn [block lbls]. occ_simp. reflexivity.
   - intros q P. cbn [block lbls]. occ_simp. reflexivity.
-  - intros c IHc a IHa b IHb P. cbn [block lbls]. rewrite !List.map_app.
-    unfold cond_tree. occ_simp. rewrite IHc, IHa, IHb.
-    repeat rewrite <- List.app_assoc. reflexivity.
+  - intros c IHc a IHa b IHb P.
+    cbn [lbls]. rewrite !List.map_app.
+    destruct (block_ite_cases P c a b) as [(-> & E) | (_ & E)]; rewrite E.
+    + unfold cond_tree_noelse. occ_simp. rewrite IHc, IHa. cbn [lbls List.map].
+      rewrite ?List.app_nil_r. reflexivity.
+    + unfold cond_tree. occ_simp. rewrite IHc, IHa, IHb.
+      repeat rewrite <- List.app_assoc. reflexivity.
   - intros a IHa o b IHb P. cbn [block lbls].
     rewrite occs_app, occs_cons, occs_op, !occs_as_binop, IHa, IHb, List.map_app.
     reflexivity.

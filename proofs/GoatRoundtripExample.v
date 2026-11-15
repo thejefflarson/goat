@@ -16,7 +16,7 @@ Definition sample : exp :=
   e_let (e_num 1) (e_proj (e_rec (fs_cons 0 (e_fvar_b 0) fs_nil)) 0).
 
 Example sample_scoped : scoped 0 sample.
-Proof. simpl. repeat split. lia. Qed.
+Proof. simpl. repeat split; first [ lia | (right; exact I) ]. Qed.
 
 Example sample_interned : Interned sample.
 Proof.
@@ -47,7 +47,7 @@ Definition sample_operations : exp :=
            (e_str [])).
 
 Example sample_operations_scoped : scoped 0 sample_operations.
-Proof. simpl. repeat split. lia. Qed.
+Proof. simpl. repeat split; first [ lia | (right; exact I) ]. Qed.
 
 Example sample_operations_interned : Interned sample_operations.
 Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
@@ -62,6 +62,28 @@ Proof.
            sample_operations_scoped sample_operations_interned).
 Qed.
 
-(* The unit value has no literal in the grammar, so it is not printable. *)
+(* x = 1.5; if true then x done: a Float literal, and a conditional whose
+   missing else the parser reads as the unit value. *)
+Definition sample_float_noelse : exp :=
+  e_let (e_dec 5) (e_ite e_true (e_fvar_b 0) e_unit).
+
+Example sample_float_noelse_scoped : scoped 0 sample_float_noelse.
+Proof. simpl. repeat split; first [ exact I | lia | (left; reflexivity) ]. Qed.
+
+Example sample_float_noelse_interned : Interned sample_float_noelse.
+Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
+
+Example sample_float_noelse_roundtrip : forall var_of,
+  names_distinct var_of ->
+  exists t, peg (E_rule R_goat) (print sample_float_noelse) (Ok [t] []) /\
+            Den_goat var_of t sample_float_noelse.
+Proof.
+  intros var_of Hdistinct.
+  exact (print_parse_roundtrip var_of sample_float_noelse Hdistinct
+           sample_float_noelse_scoped sample_float_noelse_interned).
+Qed.
+
+(* The unit value has no literal in the grammar, so it is not printable on its
+   own. *)
 Example unit_is_not_printed : ~ scoped 0 e_unit.
 Proof. intros H. exact H. Qed.

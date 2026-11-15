@@ -1,17 +1,20 @@
 (* Evidence that the hypotheses of T1 are satisfiable: a fuel-bounded
-   interpreter of the PEG relation, sound for it, parses two small programs, and
+   interpreter of the PEG relation, sound for it, parses small programs, and
    the trees it builds are in the core fragment. *)
 
 From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
+Require Import Goat.GoatLit.
+Require Import Goat.GoatDefs.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
 Require Import Goat.GoatDen.
 Require Import Goat.GoatShape.
 Require Import Goat.GoatParse.
+Require Import Goat.GoatPhase2.
 Open Scope string_scope.
 Open Scope list_scope.
 
@@ -145,20 +148,21 @@ Proof.
     [ apply Forall_nil | apply Forall_cons | apply Cp_leaf | apply Cp_node ];
     simpl; try exact I.
   - (* the program has an expression *) eexists. in_list.
-  - (* the block does not end in a binding, and has no dot call *)
+  - (* the block does not end in a binding, and has no dot call; its one
+       function binding leads *)
     split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-         | split; [ exact I | left; reflexivity ] ].
+         | split; [ exact I | split; [ left; reflexivity | exact I ] ] ].
   - (* the bound value has no dot call and no operator *)
     split; [ exact I | left; reflexivity ].
   - (* the function has parameters and a body *)
     split; eexists; in_list.
   - (* the body is a single name *)
     split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-         | split; [ exact I | left; reflexivity ] ].
+         | split; [ exact I | split; [ left; reflexivity | exact I ] ] ].
   - (* the call has arguments *) eexists. in_list.
   - (* the argument is a single number *)
     split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-         | split; [ exact I | left; reflexivity ] ].
+         | split; [ exact I | split; [ left; reflexivity | exact I ] ] ].
 Qed.
 
 (* T1 applies to a concrete program: f = program(y) do y done  f(1). *)
@@ -238,8 +242,10 @@ Proof.
   all: first
     [ solve [ eexists; in_list ]
     | solve [ split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-                     | split; [ exact I | first [ left; reflexivity
-                                                | (right; split; [ reflexivity | exact I ]) ] ] ] ]
+                     | split; [ exact I | split;
+                                  [ first [ left; reflexivity
+                                          | (right; split; [ reflexivity | exact I ]) ]
+                                  | exact I ] ] ] ]
     | solve [ in_list ] ].
 Qed.
 
@@ -263,4 +269,194 @@ Proof.
   apply (DM_bin var_of tbl [Node R_number [Leaf (TNum 3)]]
            [Node R_number [Leaf (TNum 4)]] bop_add (e_num 3) (e_num 4));
     (eapply DC_head; [ apply D_num | apply DP_nil ]).
+Qed.
+
+(* ---- a recursive group (ADR 0003, ADR 0037 phase 2) ---- *)
+
+(* countdown = program(n) do if n < 1 then 0 else countdown(n - 1) done done
+   countdown(2): the function binding leading the block is a one-member group,
+   so the program denotes the recursive group of GoatPhase2.v, whose typing and
+   unrolling are proved there. *)
+Definition countdown_program : list tok :=
+  [TName "countdown"; TSym "="; TSym "program"; TSym "("; TName "n"; TSym ")";
+   TSym "do"; TSym "if"; TName "n"; TSym "<"; TNum 1; TSym "then"; TNum 0;
+   TSym "else"; TName "countdown"; TSym "("; TName "n"; TSym "-"; TNum 1; TSym ")";
+   TSym "done"; TSym "done"; TName "countdown"; TSym "("; TNum 2; TSym ")"].
+
+Definition countdown_body : list tree :=
+  [Node R_conditional
+     [sym "if";
+      Node R_expr [ident "n"; Node R_lt [sym "<"]; Node R_number [Leaf (TNum 1)]];
+      sym "then"; Node R_expr [Node R_number [Leaf (TNum 0)]]; sym "else";
+      Node R_expr
+        [ident "countdown";
+         Node R_call
+           [sym "("; Node R_arguments
+              [Node R_expr [ident "n"; Node R_minus [sym "-"]; Node R_number [Leaf (TNum 1)]]];
+            sym ")"]];
+      sym "done"]].
+
+Definition countdown_decl : tree :=
+  Node R_declaration
+    [ident "countdown"; sym "=";
+     Node R_value
+       [Node R_function
+          [sym "program"; sym "("; Node R_params [ident "n"]; sym ")"; sym "do";
+           Node R_expr countdown_body; sym "done"]]].
+
+Definition countdown_rest : list tree :=
+  [ident "countdown";
+   Node R_call [sym "("; Node R_arguments [Node R_expr [Node R_number [Leaf (TNum 2)]]]; sym ")"]].
+
+Definition countdown_tree : tree :=
+  Node R_goat [Node R_expr (countdown_decl :: countdown_rest)].
+
+Example countdown_parses :
+  peg (E_rule R_goat) countdown_program (Ok [countdown_tree] []).
+Proof. apply (run_sound 1200). vm_compute. reflexivity. Qed.
+
+Lemma countdown_core : Forall core_tree [countdown_tree].
+Proof.
+  repeat first
+    [ apply Forall_nil | apply Forall_cons | apply Core_leaf
+    | (apply Core_node; [ reflexivity | ]) ].
+Qed.
+
+Lemma countdown_complete : Forall Complete [countdown_tree].
+Proof.
+  repeat first
+    [ apply Forall_nil | apply Forall_cons | apply Cp_leaf | apply Cp_node ];
+    simpl; try exact I.
+  all: first
+    [ solve [ eexists; in_list ]
+    | solve [ split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
+                     | split; [ exact I | split;
+                                  [ first [ left; reflexivity
+                                          | (right; split; [ reflexivity | exact I ]) ]
+                                  | exact I ] ] ] ]
+    | solve [ split; [ exact I | left; reflexivity ] ]
+    | solve [ split; eexists; in_list ]
+    | solve [ in_list ] ].
+Qed.
+
+Example countdown_denotes_lc : forall var_of,
+  exists t e,
+    [countdown_tree] = [t] /\ Den_goat var_of t e /\ lc_exp e /\ lc e.
+Proof.
+  intros var_of.
+  exact (parse_denotes_lc var_of countdown_program [countdown_tree] []
+           countdown_parses countdown_core countdown_complete).
+Qed.
+
+Section CountdownDenotation.
+
+  Variable var_of : string -> termvar.
+  Hypothesis Hne : var_of "n" <> var_of "countdown".
+  Let n := var_of "n".
+  Let c := var_of "countdown".
+
+  Let chain1 (t : tree) (e : exp) (H : Den var_of [] t e) : Den_chain var_of [] [t] e :=
+    DC_head var_of [] t [] e e H (DP_nil var_of [] e).
+
+  Let expr_of (cs : list tree) (e : exp) (H : Den_math var_of [] cs e) :
+    Den var_of [] (Node R_expr cs) e :=
+    D_expr var_of [] cs e (DB_chain var_of [] cs e H).
+
+  Let expr_of_block (cs : list tree) (e : exp) (H : Den_block var_of [] cs e) :
+    Den var_of [] (Node R_expr cs) e := D_expr var_of [] cs e H.
+
+  Let name_of (x : string) : Den var_of [] (ident x) (e_fvar_f (var_of x)) := D_name var_of [] x.
+
+  Let number_of (k : nat) : Den var_of [] (Node R_number [Leaf (TNum k)]) (e_num (z_of_nat k)) :=
+    D_num var_of [] k.
+
+  Let inner : exp :=
+    e_ite (e_bin (e_fvar_f n) bop_lt (e_num 1)) (e_num 0)
+          (e_app (e_fvar_f c) (e_bin (e_fvar_f n) bop_sub (e_num 1))).
+
+  Lemma countdown_inner : Den var_of [] (Node R_expr countdown_body) inner.
+  Proof.
+    unfold countdown_body, inner.
+    apply expr_of. apply DM_chain. apply chain1.
+    apply (D_cond var_of [] _ _ _ (e_bin (e_fvar_f n) bop_lt (e_num 1)) (e_num 0)
+             (e_app (e_fvar_f c) (e_bin (e_fvar_f n) bop_sub (e_num 1)))).
+    - apply expr_of.
+      apply (DM_bin var_of [] [ident "n"] [Node R_number [Leaf (TNum 1)]] bop_lt
+               (e_fvar_f n) (e_num 1));
+        apply chain1; [ apply name_of | apply (number_of 1) ].
+    - apply expr_of. apply DM_chain. apply chain1. apply (number_of 0).
+    - apply expr_of. apply DM_chain.
+      eapply DC_head; [ apply name_of | ].
+      eapply DP_call with (es := [e_bin (e_fvar_f n) bop_sub (e_num 1)]);
+        [ | apply DP_nil ].
+      apply DA_last. apply expr_of.
+      apply (DM_bin var_of [] [ident "n"] [Node R_number [Leaf (TNum 1)]] bop_sub
+               (e_fvar_f n) (e_num 1));
+        apply chain1; [ apply name_of | apply (number_of 1) ].
+  Qed.
+
+  Lemma countdown_member_den :
+    Den_decl var_of [] countdown_decl "countdown" (curry [n] inner).
+  Proof.
+    unfold countdown_decl. apply DD_plain. apply D_value. apply DM_chain. apply chain1.
+    apply (D_function var_of [] (TSym "program") [ident "n"] ["n"] countdown_body inner).
+    - apply DPa_one.
+    - exact countdown_inner.
+  Qed.
+
+  Lemma countdown_group_den :
+    Den var_of [] (Node R_expr (countdown_decl :: countdown_rest))
+      (e_letrec (group_fields [c] [curry [n] inner])
+                (bind_group [c] (e_app (e_fvar_f c) (e_num 2)))).
+  Proof.
+    apply expr_of_block.
+    change (countdown_decl :: countdown_rest) with ([countdown_decl] ++ countdown_rest).
+    apply (DB_group var_of [] [countdown_decl] ["countdown"] [curry [n] inner]
+             countdown_rest (e_app (e_fvar_f c) (e_num 2))).
+    - apply DDs_cons with (x := "countdown") (v := curry [n] inner).
+      + exact countdown_member_den.
+      + reflexivity.
+      + apply DDs_nil.
+    - discriminate.
+    - unfold countdown_rest. apply DB_chain. apply DM_chain.
+      eapply DC_head; [ apply name_of | ].
+      eapply DP_call with (es := [e_num 2]); [ | apply DP_nil ].
+      apply DA_last. apply expr_of. apply DM_chain. apply chain1. apply (number_of 2).
+  Qed.
+
+  Lemma countdown_group_is_the_phase_2_term :
+    e_letrec (group_fields [c] [curry [n] inner])
+             (bind_group [c] (e_app (e_fvar_f c) (e_num 2))) = countdown.
+  Proof.
+    unfold countdown, countdown_member, inner, group_fields, group_fields_from, bind_group.
+    unfold n, c in *. simpl.
+    repeat match goal with |- context [ ?a == ?b ] => destruct (a == b) end;
+      simpl.
+    all: first
+      [ congruence | reflexivity
+      | (destruct (var_of "countdown" == var_of "countdown") as [_ | Hx];
+         [ simpl; reflexivity | exfalso; apply Hx; reflexivity ]) ].
+  Qed.
+
+End CountdownDenotation.
+
+Example countdown_denotes_the_group : forall var_of,
+  var_of "n" <> var_of "countdown" ->
+  Den_goat var_of countdown_tree countdown.
+Proof.
+  intros var_of Hne. unfold Den_goat.
+  exists (countdown_decl :: countdown_rest). split; [ reflexivity | ].
+  assert (Hlabels : labels countdown_tree = []) by (vm_compute; reflexivity).
+  rewrite Hlabels.
+  rewrite <- (countdown_group_is_the_phase_2_term var_of Hne).
+  exact (countdown_group_den var_of).
+Qed.
+
+(* The program that parses is the term GoatPhase2.v types as an Int. *)
+Example countdown_source_types : forall var_of,
+  var_of "n" <> var_of "countdown" ->
+  Den_goat var_of countdown_tree countdown /\ typing nil countdown typ_Int.
+Proof.
+  intros var_of Hne.
+  exact (conj (countdown_denotes_the_group var_of Hne) recursive_group_types).
 Qed.

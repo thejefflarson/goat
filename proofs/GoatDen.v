@@ -51,6 +51,58 @@ Definition curry (xs : list termvar) (b : exp) : exp :=
 (* f(a1, ..., ak) *)
 Definition apps (f : exp) (args : list exp) : exp := fold_left e_app args f.
 
+(* A recursive group's name is one binder over its members and its body: each
+   free occurrence of a member's name becomes the projection of that member
+   from the group (ADR 0003). A member's label is its position in the group. *)
+Fixpoint index_in (y : termvar) (names : list termvar) : option nat :=
+  match names with
+  | [] => None
+  | n :: rest => if y == n then Some 0 else option_map S (index_in y rest)
+  end.
+
+Fixpoint bind_group_rec (k : nat) (names : list termvar) (e : exp) {struct e} : exp :=
+  match e with
+  | e_fvar_b i => e_fvar_b i
+  | e_fvar_f y =>
+      match index_in y names with
+      | Some i => e_proj (e_fvar_b k) i
+      | None => e_fvar_f y
+      end
+  | e_num n => e_num n
+  | e_dec d => e_dec d
+  | e_true => e_true
+  | e_false => e_false
+  | e_abs b => e_abs (bind_group_rec (S k) names b)
+  | e_app a b => e_app (bind_group_rec k names a) (bind_group_rec k names b)
+  | e_let a b => e_let (bind_group_rec k names a) (bind_group_rec (S k) names b)
+  | e_letrec fs b => e_letrec (bind_group_fields (S k) names fs) (bind_group_rec (S k) names b)
+  | e_rec fs => e_rec (bind_group_fields k names fs)
+  | e_proj a l => e_proj (bind_group_rec k names a) l
+  | e_unit => e_unit
+  | e_str q => e_str q
+  | e_ite a b c =>
+      e_ite (bind_group_rec k names a) (bind_group_rec k names b) (bind_group_rec k names c)
+  | e_bin a o b => e_bin (bind_group_rec k names a) o (bind_group_rec k names b)
+  | e_tofloat a => e_tofloat (bind_group_rec k names a)
+  end
+with bind_group_fields (k : nat) (names : list termvar) (fs : fields) {struct fs} : fields :=
+  match fs with
+  | fs_nil => fs_nil
+  | fs_cons l e fs' => fs_cons l (bind_group_rec k names e) (bind_group_fields k names fs')
+  end.
+
+Definition bind_group (names : list termvar) (e : exp) : exp := bind_group_rec 0 names e.
+
+(* The record of a group's members, labelled by position. *)
+Fixpoint group_fields_from (names : list termvar) (i : nat) (vs : list exp) : fields :=
+  match vs with
+  | [] => fs_nil
+  | v :: rest => fs_cons i (bind_group names v) (group_fields_from names (S i) rest)
+  end.
+
+Definition group_fields (names : list termvar) (vs : list exp) : fields :=
+  group_fields_from names 0 vs.
+
 (* ---- closing preserves local closure ---- *)
 
 Lemma lc_close_mut :
@@ -96,6 +148,52 @@ Proof.
     intros l e IHe fs IHfs k x [He Hfs]. simpl.
     split; [ exact (IHe k x He) | exact (IHfs k x Hfs) ].
 Qed.
+
+Lemma lc_bind_group_mut :
+  (forall e k names, lc_at k e -> lc_at (S k) (bind_group_rec k names e)) /\
+  (forall fs k names, lcf_at k fs -> lcf_at (S k) (bind_group_fields k names fs)).
+Proof.
+  apply exp_fields_mutind.
+  - intros i k names Hi. simpl in *. lia.
+  - intros y k names _. simpl. destruct (index_in y names); simpl; [ lia | exact I ].
+  - intros n k names _. exact I.
+  - intros d k names _. exact I.
+  - intros k names _. exact I.
+  - intros k names _. exact I.
+  - intros b IH k names Hb. simpl in *. exact (IH (S k) names Hb).
+  - intros a IHa b IHb k names [Ha Hb]. simpl.
+    split; [ exact (IHa k names Ha) | exact (IHb k names Hb) ].
+  - intros a IHa b IHb k names [Ha Hb]. simpl.
+    split; [ exact (IHa k names Ha) | exact (IHb (S k) names Hb) ].
+  - intros fs IHfs b IHb k names [Hfs Hb]. simpl.
+    split; [ exact (IHfs (S k) names Hfs) | exact (IHb (S k) names Hb) ].
+  - intros fs IH k names Hfs. simpl in *. exact (IH k names Hfs).
+  - intros a IH l k names Ha. simpl in *. exact (IH k names Ha).
+  - intros k names _. exact I.
+  - intros q k names _. exact I.
+  - intros a IHa b IHb c IHc k names [Ha [Hb Hc]]. simpl.
+    split; [ exact (IHa k names Ha) | split; [ exact (IHb k names Hb) | exact (IHc k names Hc) ] ].
+  - intros a IHa o b IHb k names [Ha Hb]. simpl.
+    split; [ exact (IHa k names Ha) | exact (IHb k names Hb) ].
+  - intros a IH k names Ha. simpl in *. exact (IH k names Ha).
+  - intros k names _. exact I.
+  - intros l e IHe fs IHfs k names [He Hfs]. simpl.
+    split; [ exact (IHe k names He) | exact (IHfs k names Hfs) ].
+Qed.
+
+Lemma lcf_group_fields_from : forall names vs i,
+  Forall lc vs -> lcf_at 1 (group_fields_from names i vs).
+Proof.
+  intros names vs i Hvs. revert i.
+  induction Hvs as [| v vs Hv Hvs IH]; intros i; simpl; [ exact I | ].
+  split.
+  - exact (proj1 lc_bind_group_mut v 0 names Hv).
+  - exact (IH (S i)).
+Qed.
+
+Lemma lcf_group_fields : forall names vs,
+  Forall lc vs -> lcf_at 1 (group_fields names vs).
+Proof. intros names vs Hvs. exact (lcf_group_fields_from names vs 0 Hvs). Qed.
 
 Lemma lc_curry : forall xs b, lc b -> lc (curry xs b).
 Proof.
@@ -159,6 +257,17 @@ Definition op_text (o : bop) : string :=
 
 Definition op_tree (o : bop) : tree := Node (op_rule o) [Leaf (TSym (op_text o))].
 
+(* A declaration whose value is exactly a function literal is a member of the
+   block's recursive group (ADR 0003); a parenthesised function is a value. *)
+Definition fn_value (cs : list tree) : bool :=
+  match cs with Node R_function _ :: [] => true | _ => false end.
+
+Definition is_fn_decl (d : tree) : bool :=
+  match d with
+  | Node R_declaration (_ :: _ :: Node R_value v :: _) => fn_value v
+  | _ => false
+  end.
+
 Section Denotation.
 
   Variable var_of : string -> termvar.
@@ -172,6 +281,8 @@ Section Denotation.
   Inductive Den : tree -> exp -> Prop :=
     | D_num : forall n,
         Den (Node R_number [Leaf (TNum n)]) (e_num (z_of_nat n))
+    | D_dec : forall d,
+        Den (Node R_number [Leaf (TDec d)]) (e_dec d)
     | D_true :
         Den (Node R_boolean [Node R_true_lit [sym "true"]]) e_true
     | D_false :
@@ -195,6 +306,7 @@ Section Denotation.
         Den (Node R_record (sym "{" :: items)) (e_rec fs)
     | D_local : forall d x v cs body,
         Den_decl d x v ->
+        is_fn_decl d = false ->
         Den (Node R_expr cs) body ->
         Den (Node R_local [d; Node R_expr cs])
             (e_let v (close_exp (var_of x) body))
@@ -207,6 +319,12 @@ Section Denotation.
         Den (Node R_conditional [sym "if"; Node R_expr cs1; sym "then";
                                  Node R_expr cs2; sym "else"; Node R_expr cs3; sym "done"])
             (e_ite e1 e2 e3)
+    | D_cond_noelse : forall cs1 cs2 e1 e2,
+        Den (Node R_expr cs1) e1 ->
+        Den (Node R_expr cs2) e2 ->
+        Den (Node R_conditional [sym "if"; Node R_expr cs1; sym "then";
+                                 Node R_expr cs2; sym "done"])
+            (e_ite e1 e2 e_unit)
   with Den_decl : tree -> string -> exp -> Prop :=
     | DD_plain : forall x cs v,
         Den (Node R_value cs) v ->
@@ -220,8 +338,24 @@ Section Denotation.
         Den_block cs e
     | DB_decl : forall d rest x v body,
         Den_decl d x v ->
+        is_fn_decl d = false ->
         Den_block rest body ->
         Den_block (d :: rest) (e_let v (close_exp (var_of x) body))
+    | DB_group : forall ds xs vs rest body,
+        Den_decls ds xs vs ->
+        ds <> [] ->
+        Den_block rest body ->
+        Den_block (ds ++ rest)
+          (e_letrec (group_fields (List.map var_of xs) vs)
+                    (bind_group (List.map var_of xs) body))
+  with Den_decls : list tree -> list string -> list exp -> Prop :=
+    | DDs_nil :
+        Den_decls [] [] []
+    | DDs_cons : forall d x v ds xs vs,
+        Den_decl d x v ->
+        is_fn_decl d = true ->
+        Den_decls ds xs vs ->
+        Den_decls (d :: ds) (x :: xs) (v :: vs)
   with Den_math : list tree -> exp -> Prop :=
     | DM_chain : forall cs e,
         Den_chain cs e ->
@@ -299,6 +433,7 @@ End Denotation.
 Scheme Den_ind' := Induction for Den Sort Prop
 with Den_decl_ind' := Induction for Den_decl Sort Prop
 with Den_block_ind' := Induction for Den_block Sort Prop
+with Den_decls_ind' := Induction for Den_decls Sort Prop
 with Den_math_ind' := Induction for Den_math Sort Prop
 with Den_chain_ind' := Induction for Den_chain Sort Prop
 with Den_posts_ind' := Induction for Den_posts Sort Prop
@@ -308,7 +443,7 @@ with Den_items_ind' := Induction for Den_items Sort Prop
 with Den_sep_ind' := Induction for Den_sep Sort Prop
 with Den_field_ind' := Induction for Den_field Sort Prop.
 Combined Scheme Den_mutind from Den_ind', Den_decl_ind', Den_block_ind',
-  Den_math_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
+  Den_decls_ind', Den_math_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
   Den_items_ind', Den_sep_ind', Den_field_ind'.
 
 (* ---- T1, the denotation half: whatever a derivation denotes is locally closed ---- *)
@@ -317,6 +452,7 @@ Lemma den_lc : forall var_of tbl,
   (forall t e, Den var_of tbl t e -> lc e) /\
   (forall d x v, Den_decl var_of tbl d x v -> lc v) /\
   (forall cs e, Den_block var_of tbl cs e -> lc e) /\
+  (forall cs xs vs, Den_decls var_of tbl cs xs vs -> Forall lc vs) /\
   (forall cs e, Den_math var_of tbl cs e -> lc e) /\
   (forall cs e, Den_chain var_of tbl cs e -> lc e) /\
   (forall e0 cs e, Den_posts var_of tbl e0 cs e -> lc e0 -> lc e) /\
@@ -329,6 +465,7 @@ Proof.
   intros var_of tbl.
   apply Den_mutind.
   - (* num *) intros n. exact I.
+  - (* dec *) intros d. exact I.
   - (* true *) exact I.
   - (* false *) exact I.
   - (* name *) intros x. exact I.
@@ -341,21 +478,31 @@ Proof.
     exact Hcurry.
   - (* record *) intros items fs Hitems IH. exact IH.
   - (* local *)
-    intros d x v cs body Hd IHd Hbody IHbody.
+    intros d x v cs body Hd IHd _ Hbody IHbody.
     assert (Hclose : lc_at 1 (close_exp (var_of x) body))
       by (apply (proj1 lc_close_mut); exact IHbody).
     exact (conj IHd Hclose).
   - (* string *) intros q. exact I.
   - (* conditional *)
     intros cs1 cs2 cs3 e1 e2 e3 H1 IH1 H2 IH2 H3 IH3. exact (conj IH1 (conj IH2 IH3)).
+  - (* conditional, no else: the missing branch is the unit value *)
+    intros cs1 cs2 e1 e2 H1 IH1 H2 IH2. exact (conj IH1 (conj IH2 I)).
   - (* decl, plain *) intros x cs v Hv IH. exact IH.
   - (* decl, with semicolon *) intros x cs v Hv IH. exact IH.
   - (* block, chain *) intros cs e Hmath IH. exact IH.
   - (* block, declaration *)
-    intros d rest x v body Hd IHd Hrest IHrest.
+    intros d rest x v body Hd IHd _ Hrest IHrest.
     assert (Hclose : lc_at 1 (close_exp (var_of x) body))
       by (apply (proj1 lc_close_mut); exact IHrest).
     exact (conj IHd Hclose).
+  - (* block, recursive group *)
+    intros ds xs vs rest body Hds IHds _ Hrest IHrest.
+    split.
+    + exact (lcf_group_fields _ _ IHds).
+    + exact (proj1 lc_bind_group_mut body 0 _ IHrest).
+  - (* decls, none *) apply Forall_nil.
+  - (* decls, one more *)
+    intros d x v ds xs vs Hd IHd _ Hds IHds. exact (Forall_cons v IHd IHds).
   - (* math, chain *) intros cs e Hchain IH. exact IH.
   - (* math, binary operation *)
     intros c1 c2 o e1 e2 H1 IH1 H2 IH2. exact (conj IH1 IH2).
