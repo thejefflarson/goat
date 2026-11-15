@@ -26,33 +26,17 @@ Arguments st_tofloat z%_znum_scope d.
 
 (* ---- inversion for the literals, used by the rejections below ---- *)
 
-Lemma num_inv : forall G n T, typing G (e_num n) T -> teq typ_Int T.
+Lemma str_inv : forall D G q T, typing D G (e_str q) T -> teq typ_String T.
 Proof.
-  intros G n T H. remember (e_num n) as e0 eqn:He.
-  induction H; try discriminate He.
-  - apply teq_refl.
-  - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
-Qed.
-
-Lemma dec_inv : forall G d T, typing G (e_dec d) T -> teq typ_Float T.
-Proof.
-  intros G d T H. remember (e_dec d) as e0 eqn:He.
-  induction H; try discriminate He.
-  - apply teq_refl.
-  - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
-Qed.
-
-Lemma str_inv : forall G q T, typing G (e_str q) T -> teq typ_String T.
-Proof.
-  intros G q T H. remember (e_str q) as e0 eqn:He.
+  intros D G q T H. remember (e_str q) as e0 eqn:He.
   induction H; try discriminate He.
   - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
   - apply teq_refl.
 Qed.
 
-Lemma true_inv : forall G T, typing G e_true T -> teq typ_Bool T.
+Lemma true_inv : forall D G T, typing D G e_true T -> teq typ_Bool T.
 Proof.
-  intros G T H. remember e_true as e0 eqn:He.
+  intros D G T H. remember e_true as e0 eqn:He.
   induction H; try discriminate He.
   - apply teq_refl.
   - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
@@ -64,6 +48,7 @@ Ltac sig_absurd Hs :=
   repeat match goal with
          | H : cmp_typ _ |- _ => inversion H; subst; clear H
          end;
+  simpl in *;
   first [ discriminate | congruence ].
 
 (* A type [T] equal to a known head is that head. *)
@@ -74,77 +59,78 @@ Ltac head_eq H :=
 (* ---- accepted ---- *)
 
 (* 1.5 / 2.5 is a Float *)
-Example quot_types : typing nil (e_bin (e_dec 0) bop_div (e_dec 1)) typ_Float.
+Example quot_types : typing d_any nil (e_bin (e_dec 0) bop_div (e_dec 1)) typ_Float.
 Proof.
   eapply T_Bin; [ apply T_Dec | apply T_Dec | apply sig_quot ]; constructor.
 Qed.
 
 (* 1 - 2 is an Int *)
-Example sub_types : typing nil (e_bin (e_num 1) bop_sub (e_num 2)) typ_Int.
+Example sub_types : typing d_any nil (e_bin (e_num 1) bop_sub (e_num 2)) typ_Int.
 Proof.
-  eapply T_Bin; [ apply T_Num | apply T_Num | apply sig_ring_int ]; constructor || reflexivity.
+  eapply T_Bin; [ apply T_Num | apply T_Num | apply sig_ring ]; first [ constructor | reflexivity | exact I ].
 Qed.
 
 (* 5 // 0 is an Int, and traps when it runs *)
-Example floor_division_types : typing nil (e_bin (e_num 5) bop_fdiv (e_num 0)) typ_Int.
+Example floor_division_types : typing d_any nil (e_bin (e_num 5) bop_fdiv (e_num 0)) typ_Int.
 Proof.
   eapply T_Bin; [ apply T_Num | apply T_Num | apply sig_whole ]; constructor || reflexivity.
 Qed.
 
 (* 7 / 2 is a Float: elaboration coerces both Ints, so the quotient is Float / Float *)
 Example int_quotient_types :
-  typing nil (e_bin (e_tofloat (e_num 7)) bop_div (e_tofloat (e_num 2))) typ_Float.
+  typing d_any nil (e_bin (e_tofloat (e_num 7)) bop_div (e_tofloat (e_num 2))) typ_Float.
 Proof.
   eapply T_Bin;
-    [ apply T_ToFloat; apply T_Num | apply T_ToFloat; apply T_Num | apply sig_quot ];
-    constructor.
+    [ apply T_ToFloat with (A := typ_Int); [ apply T_Num | exact I ] | apply T_ToFloat with (A := typ_Int); [ apply T_Num | exact I ]
+    | apply sig_quot ];
+    first [ constructor | exact I ].
 Qed.
 
 (* 1 + 1.5 is a Float: elaboration coerces the Int *)
 Example mixed_sum_types :
-  typing nil (e_bin (e_tofloat (e_num 1)) bop_add (e_dec 0)) typ_Float.
+  typing d_any nil (e_bin (e_tofloat (e_num 1)) bop_add (e_dec 0)) typ_Float.
 Proof.
-  eapply T_Bin; [ apply T_ToFloat; apply T_Num | apply T_Dec | apply sig_ring_float ];
-    first [ reflexivity | constructor ].
+  eapply T_Bin; [ apply T_ToFloat with (A := typ_Int); [ apply T_Num | exact I ] | apply T_Dec | apply sig_ring ];
+    first [ reflexivity | constructor | exact I ].
 Qed.
 
 (* 1 < 1.5: a comparison coerces the Int *)
 Example mixed_comparison_types :
-  typing nil (e_bin (e_tofloat (e_num 1)) bop_lt (e_dec 0)) typ_Bool.
+  typing d_any nil (e_bin (e_tofloat (e_num 1)) bop_lt (e_dec 0)) typ_Bool.
 Proof.
-  eapply T_Bin; [ apply T_ToFloat; apply T_Num | apply T_Dec | apply sig_cmp ];
-    constructor || reflexivity.
+  eapply T_Bin; [ apply T_ToFloat with (A := typ_Int); [ apply T_Num | exact I ] | apply T_Dec | apply sig_cmp ];
+    first [ constructor | reflexivity | exact I ].
 Qed.
 
 (* (program(x) do x + 1.5 done)(1): the checker accepts an Int for a Float
    parameter, and elaboration writes float(1) at the call *)
 Example call_coerces_its_argument :
-  typing nil
+  typing d_any nil
     (e_app (e_abs (e_bin (e_fvar_b 0) bop_add (e_dec 0))) (e_tofloat (e_num 1)))
     typ_Float.
 Proof.
-  eapply T_App; [ | apply T_ToFloat; apply T_Num; constructor ].
+  eapply T_App; [ | apply T_ToFloat with (A := typ_Int); [ apply T_Num; first [ constructor | exact I ] | exact I ] ].
   apply T_Abs with (L := {}). intros x Hx.
   cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
-  eapply T_Bin; [ eapply T_Var | apply T_Dec | apply sig_ring_float ].
+  eapply T_Bin; [ eapply T_Var | apply T_Dec | apply sig_ring ].
   all: first [ solve_uniq
              | (unfold binds; simpl; destruct (x == x); [ reflexivity | congruence ])
-             | apply inst_mono_self | reflexivity ].
+             | apply inst_mono_self | reflexivity | exact I ].
 Qed.
 
-Example unit_types : typing nil e_unit typ_Unit.
+Example unit_types : typing d_any nil e_unit typ_Unit.
 Proof. apply T_Unit; constructor. Qed.
 
 (* "a" < "b" *)
 Example string_order_types :
-  typing nil (e_bin (e_str [97]) bop_lt (e_str [98])) typ_Bool.
+  typing d_any nil (e_bin (e_str [97]) bop_lt (e_str [98])) typ_Bool.
 Proof.
   eapply T_Bin; [ apply T_Str | apply T_Str | apply sig_cmp ];
     first [ constructor | reflexivity ].
 Qed.
 
 (* false < true *)
-Example bool_order_types : typing nil (e_bin e_false bop_lt e_true) typ_Bool.
+Example bool_order_types : typing d_any nil (e_bin e_false bop_lt e_true) typ_Bool.
 Proof.
   eapply T_Bin; [ apply T_False | apply T_True | apply sig_cmp ];
     first [ constructor | reflexivity ].
@@ -203,16 +189,16 @@ Qed.
    infinity or NaN.  A quotient by a zero Float is an ordinary Float step. *)
 Example float_sum_is_any_float : forall x y d,
   bin_step bop_add (e_dec x) (e_dec y) (e_dec d).
-Proof. intros. apply bs_float. left. reflexivity. Qed.
+Proof. intros. apply bs_float; [ left; reflexivity | constructor ]. Qed.
 
 Example float_division_by_zero_is_not_a_trap : forall x y d,
   bin_step bop_div (e_dec x) (e_dec y) (e_dec d).
-Proof. intros. apply bs_float. right. reflexivity. Qed.
+Proof. intros. apply bs_float; [ right; reflexivity | constructor ]. Qed.
 
 (* A comparison of two Floats is unspecified: either Bool *)
 Example float_comparison_is_either_bool : forall x y c,
   bin_step bop_lt (e_dec x) (e_dec y) (of_bool c).
-Proof. intros. apply bs_cmp_float. reflexivity. Qed.
+Proof. intros. apply bs_cmp_float; [ reflexivity | constructor ]. Qed.
 
 (* The Int comparison is exact *)
 Example int_comparison_runs : bin_step bop_lt (e_num 1) (e_num 2) e_true.
@@ -307,7 +293,9 @@ Proof.
   - match goal with Hs : step (e_num _) _ |- _ => inversion Hs end.
   - match goal with Hs : step (e_num _) _ |- _ => inversion Hs end.
   - match goal with Hb : bin_step _ _ _ _ |- _ => inversion Hb; subst end;
-      first [ discriminate | (vm_compute in *; discriminate) ].
+      first [ discriminate | (vm_compute in *; discriminate)
+            | (match goal with Hf : fl_pair _ _ |- _ => inversion Hf end)
+            | (match goal with Hd : _ \/ _ |- _ => destruct Hd; vm_compute in *; discriminate end) ].
 Qed.
 
 Example addition_overflow_does_not_step : forall e',
@@ -317,7 +305,9 @@ Proof.
   - match goal with Hs : step (e_num _) _ |- _ => inversion Hs end.
   - match goal with Hs : step (e_num _) _ |- _ => inversion Hs end.
   - match goal with Hb : bin_step _ _ _ _ |- _ => inversion Hb; subst end;
-      first [ discriminate | (vm_compute in *; discriminate) ].
+      first [ discriminate | (vm_compute in *; discriminate)
+            | (match goal with Hf : fl_pair _ _ |- _ => inversion Hf end)
+            | (match goal with Hd : _ \/ _ |- _ => destruct Hd; vm_compute in *; discriminate end) ].
 Qed.
 
 (* 1 + (5 // 0): the trap rises out of the right operand *)
@@ -336,79 +326,77 @@ Proof. apply tr_tofloat. apply floor_division_by_zero_traps. Qed.
 
 (* 1.5 // 2: floor division wants whole numbers *)
 Example float_floor_division_rejected : forall T,
-  ~ typing nil (e_bin (e_dec 0) bop_fdiv (e_num 2)) T.
+  ~ typing d_any nil (e_bin (e_dec 0) bop_fdiv (e_num 2)) T.
 Proof.
-  intros T H. destruct (bin_inv _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
+  intros T H. destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
   apply dec_inv in H1. head_eq H1. subst A. sig_absurd Hs.
 Qed.
 
 (* 1.5 % 2 likewise *)
 Example float_remainder_rejected : forall T,
-  ~ typing nil (e_bin (e_dec 0) bop_rem (e_num 2)) T.
+  ~ typing d_any nil (e_bin (e_dec 0) bop_rem (e_num 2)) T.
 Proof.
-  intros T H. destruct (bin_inv _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
+  intros T H. destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
   apply dec_inv in H1. head_eq H1. subst A. sig_absurd Hs.
 Qed.
 
-(* 1 + 1.5 with no coercion has no derivation: the calculus has no mixed
-   signature, so an Int meets a Float only through float(...) *)
-Example uncoerced_mixed_sum_rejected : forall T,
-  ~ typing nil (e_bin (e_num 1) bop_add (e_dec 0)) T.
+(* 1 + 1.5 with no coercion is a Float: the numeral is typed at [Float], a
+   [Literal] type, so the operands agree *)
+Example uncoerced_mixed_sum_types :
+  typing d_any nil (e_bin (e_num 1) bop_add (e_dec 0)) typ_Float.
 Proof.
-  intros T H. destruct (bin_inv _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
-  apply num_inv in H1. head_eq H1. subst A.
-  apply dec_inv in H2. head_eq H2. subst B. sig_absurd Hs.
+  eapply T_Bin; [ apply T_Num | apply T_Dec | apply sig_ring ];
+    first [ reflexivity | constructor | exact I ].
 Qed.
 
-(* float(true), float(1.5): the coercion takes an Int *)
+(* float(true): the coercion takes a number *)
 Example coercion_of_bool_rejected : forall T,
-  ~ typing nil (e_tofloat e_true) T.
+  ~ typing d_any nil (e_tofloat e_true) T.
 Proof.
-  intros T H. destruct (tofloat_inv _ _ _ H) as [H1 _].
-  apply true_inv in H1. head_eq H1. discriminate.
+  intros T H. destruct (tofloat_inv _ _ _ _ H) as [A [H1 [Hs _]]].
+  apply true_inv in H1. head_eq H1. subst A. simpl in Hs. discriminate.
 Qed.
 
-Example coercion_of_float_rejected : forall T,
-  ~ typing nil (e_tofloat (e_dec 0)) T.
-Proof.
-  intros T H. destruct (tofloat_inv _ _ _ H) as [H1 _].
-  apply dec_inv in H1. head_eq H1. discriminate.
-Qed.
+(* float(1.5) is the Float itself: the coercion is the identity on a Float *)
+Example coercion_of_float_types :
+  typing d_any nil (e_tofloat (e_dec 0)) typ_Float.
+Proof. apply T_ToFloat with (A := typ_Float); [ apply T_Dec; constructor | exact I ]. Qed.
+
+Example coercion_of_float_runs : forall d, step (e_tofloat (e_dec d)) (e_dec d).
+Proof. intros d. apply st_tofloat_dec. Qed.
 
 (* 1 < "a": a number does not meet a string *)
 Example mixed_comparison_rejected : forall T,
-  ~ typing nil (e_bin (e_num 1) bop_lt (e_str [97])) T.
+  ~ typing d_any nil (e_bin (e_num 1) bop_lt (e_str [97])) T.
 Proof.
-  intros T H. destruct (bin_inv _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
+  intros T H. destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
   apply str_inv in H2. head_eq H2. subst B.
-  apply num_inv in H1. head_eq H1. subst A. sig_absurd Hs.
+  inversion Hs; subst;
+    first [ (apply num_inv in H1; simpl in H1; discriminate) | (simpl in *; discriminate) | congruence ].
 Qed.
 
 (* true + true: arithmetic wants numbers *)
 Example boolean_arithmetic_rejected : forall T,
-  ~ typing nil (e_bin e_true bop_add e_true) T.
+  ~ typing d_any nil (e_bin e_true bop_add e_true) T.
 Proof.
-  intros T H. destruct (bin_inv _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
+  intros T H. destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
   apply true_inv in H1. head_eq H1. subst A. sig_absurd Hs.
 Qed.
 
 (* if 1 then 2 else 3: the condition is a number *)
 Example number_condition_rejected : forall T,
-  ~ typing nil (e_ite (e_num 1) (e_num 2) (e_num 3)) T.
+  ~ typing d_any nil (e_ite (e_num 1) (e_num 2) (e_num 3)) T.
 Proof.
-  intros T H. destruct (ite_inv _ _ _ _ _ H) as [T' [H1 _]].
-  apply num_inv in H1. head_eq H1. discriminate.
+  intros T H. destruct (ite_inv _ _ _ _ _ _ H) as [T' [H1 _]].
+  apply num_inv in H1. simpl in H1. discriminate.
 Qed.
 
-(* if true then 1 else 2.5 done: with no coercion the branches disagree *)
-Example int_branch_against_float_rejected : forall T,
-  ~ typing nil (e_ite e_true (e_num 1) (e_dec 0)) T.
+(* if true then 1 else 2.5 done is a Float: the numeral takes the branch's type *)
+Example int_branch_against_float_types :
+  typing d_any nil (e_ite e_true (e_num 1) (e_dec 0)) typ_Float.
 Proof.
-  intros T H. destruct (ite_inv _ _ _ _ _ H) as [T' [_ [H2 [H3 E]]]].
-  apply num_inv in H2. apply dec_inv in H3.
-  assert (Hf : teq typ_Float typ_Int)
-    by (eapply teq_trans; [ exact H3 | apply teq_sym; exact H2 ]).
-  apply teq_Float_inv in Hf. discriminate.
+  apply T_If; [ apply T_True; constructor | apply T_Num; first [ constructor | exact I ]
+              | apply T_Dec; constructor ].
 Qed.
 
 (* ---- the inference algorithm accepts and rejects them ---- *)
@@ -422,7 +410,10 @@ Example infer_if_branches :
   = Some typ_Unit.
 Proof. vm_compute. reflexivity. Qed.
 
-(* The bare Int has no coercion, so the operands disagree *)
+(* Algorithm W unifies the operands at concrete types, so the bare numeral
+   (an Int to it) meets the Float and W rejects what the declarative rules
+   accept at [Float] (see [uncoerced_mixed_sum_types]).  Inferring the
+   generic operators is a follow-up. *)
 Example infer_rejects_mixed_sum :
   infer_closed 20 (e_bin (e_num 1) bop_add (e_dec 0)) = None.
 Proof. vm_compute. reflexivity. Qed.
