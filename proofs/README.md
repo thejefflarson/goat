@@ -135,9 +135,12 @@ what the locally-nameless infrastructure handles, as the curried single-binder
 `ST-LetV` and `ST-Letrec`; `tsubst_gen_core` is the capture-avoiding renaming
 that `T_Let` and `T_Letrec` share in the type-substitution lemma.
 
-The inference algorithm accepts a `let` of a syntactic value only and rejects a
-`letrec` (`GoatInfer.v`); extending it to `T_LetMono` and `T_Letrec` is a
-separate phase (the algorithm proof, ADR 0037 phase 7). The parser fragment
+The inference algorithm covers these forms (`GoatInfer.v`, `GoatInferRec.v`,
+`GoatInferSound.v`): a `let` of a computed value is typed monomorphically
+(`T_LetMono`), and a `letrec` infers its members with the group's name bound
+to a row of fresh variables, unifies each member's type with its variable
+(`unify_pw`), and generalizes the group's record type for the body
+(`T_Letrec`). The parser fragment
 does not change: a group is name resolution (ADR 0003), the grammar has no new
 form, and the printed core still reads a binding as the non-recursive `let`.
 Not in this phase: constraint-polymorphic operators (the kinded type variables

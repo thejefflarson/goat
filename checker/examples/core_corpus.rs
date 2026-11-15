@@ -12,14 +12,15 @@
 //! sources and tests) plus a fixed-seed generator. A program is kept when it is
 //! in the fragment of `proofs/goat_ln.ott`: numerals, Float literals, strings,
 //! unit, booleans, functions, calls, `if` with an `else`, the twelve binary
-//! operators on Int, Float, String and Bool, `let` of a syntactic value that
-//! does not name itself, record literals with distinct labels, and field
-//! access, using only names it binds. The calculus generalizes a `let` of a
-//! syntactic value (`is_gen_value` in `proofs/GoatDefs.v`, the checker's
-//! `is_syntactic_value`) and types any other `let` monomorphically, and it has
-//! recursive groups; the proven inference algorithm covers neither yet, so a
-//! `let` of anything but a syntactic value, and a function that names itself or
-//! a later function, is outside the fragment.
+//! operators on Int, Float, String and Bool, `let` of any value, record
+//! literals with distinct labels, and field access, using only names it binds.
+//! The calculus generalizes a `let` of a syntactic value (`is_gen_value` in
+//! `proofs/GoatDefs.v`, the checker's `is_syntactic_value`) and types any other
+//! `let` monomorphically (`T_LetMono`). A function that calls itself, or that
+//! belongs to a group of functions that mention each other, is a `letrec` of
+//! the group (`T_Letrec`), generalized once the whole group is typed, as the
+//! checker does. A group whose functions are not next to each other in their
+//! block (a value binding between them) is outside the fragment.
 //!
 //! The calculus has no implicit Int-to-Float widening: elaboration writes
 //! `float(e)` where the checker accepts an Int for a Float (a literal the
@@ -35,6 +36,7 @@
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
 
+use goat_checker::captures::for_each_node;
 use goat_checker::check_with_prelude;
 use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, Symbol};
 use goat_checker::lower::lower;
@@ -45,6 +47,7 @@ use std::path::Path;
 
 const GENERATED: usize = 4000;
 const GENERATED_TYPED: usize = 6000;
+const GENERATED_GROUPS: usize = 8000;
 const TYPED_DEPTH: u32 = 4;
 const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 const MAX_DEPTH: u32 = 6;
@@ -64,8 +67,21 @@ enum Core {
     Abs(Box<Core>),
     App(Box<Core>, Box<Core>),
     Let(Box<Core>, Box<Core>),
+    /// A group of functions under one binder naming the record of them, and
+    /// the body that binder scopes over.
+    Letrec(Vec<(usize, Core)>, Box<Core>),
     Rec(Vec<(usize, Core)>),
     Proj(Box<Core>, usize),
+}
+
+fn fields_sexp(fields: &[(usize, Core)], out: &mut String) {
+    out.push_str("(rec");
+    for (label, value) in fields {
+        write!(out, " ({label} ").unwrap();
+        value.sexp(out);
+        out.push(')');
+    }
+    out.push(')');
 }
 
 impl Core {
@@ -124,13 +140,12 @@ impl Core {
                 b.sexp(out);
                 out.push(')');
             }
-            Core::Rec(fields) => {
-                out.push_str("(rec");
-                for (label, value) in fields {
-                    write!(out, " ({label} ").unwrap();
-                    value.sexp(out);
-                    out.push(')');
-                }
+            Core::Rec(fields) => fields_sexp(fields, out),
+            Core::Letrec(fields, body) => {
+                out.push_str("(letrec ");
+                fields_sexp(fields, out);
+                out.push(' ');
+                body.sexp(out);
                 out.push(')');
             }
             Core::Proj(e, label) => {
@@ -156,6 +171,12 @@ impl Core {
                 let known = v.known(env);
                 env.push(known);
                 let result = b.known(env);
+                env.pop();
+                result
+            }
+            Core::Letrec(_, body) => {
+                env.push(false);
+                let result = body.known(env);
                 env.pop();
                 result
             }
@@ -195,6 +216,13 @@ impl Core {
                 c.operators_resolve(env) && a.operators_resolve(env) && b.operators_resolve(env)
             }
             Core::Rec(fields) => fields.iter().all(|(_, e)| e.operators_resolve(env)),
+            Core::Letrec(fields, body) => {
+                env.push(false);
+                let ok = fields.iter().all(|(_, e)| e.operators_resolve(env))
+                    && body.operators_resolve(env);
+                env.pop();
+                ok
+            }
             Core::Bin(op, a, b) => {
                 let fixed = matches!(op, BinOp::Div | BinOp::FloorDiv | BinOp::Mod);
                 (fixed || a.known(env) || b.known(env))
@@ -228,7 +256,7 @@ struct Reader<'a> {
     /// receiver and are outside the calculus.
     special: HashSet<ExprId>,
     labels: Vec<String>,
-    scope: Vec<(String, Symbol)>,
+    scope: Vec<Binder>,
     /// Cleared when a function or call has more than one parameter or argument.
     unary: bool,
     /// The checker's node types when it accepted the program; a rejected
@@ -236,18 +264,54 @@ struct Reader<'a> {
     types: Option<&'a HashMap<ExprId, Ty>>,
 }
 
-fn is_syntactic_value(expr: &Expr) -> bool {
-    match &expr.kind {
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Str(_)
-        | ExprKind::Unit
-        | ExprKind::Bool(_)
-        | ExprKind::Var { .. }
-        | ExprKind::Func { .. } => true,
-        ExprKind::Record { fields } => fields.iter().all(|(_, f)| is_syntactic_value(f)),
-        _ => false,
+/// What a name in scope is bound by: a parameter or `let`, one binder; or a
+/// group of functions, which share one binder naming the record of them, each
+/// reached by the label it has in that record.
+enum Binder {
+    Bound(String, Symbol),
+    Group(Vec<(String, Symbol, usize)>),
+}
+
+/// How the checker settles a block's function bindings into groups. `mentions[m]`
+/// holds the other members that member `m` mentions. The checker infers the
+/// members in order and generalizes a member only once every member it is
+/// connected to, through what either mentions among the members not yet
+/// generalized, has been inferred; a group is those members, in the order the
+/// checker generalizes them.
+fn function_groups(mentions: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let mut pending = vec![true; mentions.len()];
+    let mut inferred: Vec<usize> = Vec::new();
+    let mut groups = Vec::new();
+    for member in 0..mentions.len() {
+        inferred.push(member);
+        let mut group = vec![member];
+        let mut at = 0;
+        while at < group.len() {
+            let current = group[at];
+            at += 1;
+            if inferred.contains(&current) {
+                for &used in &mentions[current] {
+                    if pending[used] && !group.contains(&used) {
+                        group.push(used);
+                    }
+                }
+            }
+            for &other in &inferred {
+                if mentions[other].contains(&current) && !group.contains(&other) {
+                    group.push(other);
+                }
+            }
+        }
+        if group.iter().all(|m| inferred.contains(m)) {
+            group.sort_unstable();
+            for &m in &group {
+                pending[m] = false;
+            }
+            inferred.retain(|m| !group.contains(m));
+            groups.push(group);
+        }
     }
+    groups
 }
 
 impl Reader<'_> {
@@ -272,6 +336,117 @@ impl Reader<'_> {
             ty @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool) => Some(ty.clone()),
             _ => None,
         }
+    }
+
+    /// The core term for a use of the name `name`, bound as `symbol`, or `None`
+    /// when an inner binding of the name hides it.
+    fn var(&self, symbol: &Symbol, name: &str) -> Option<Core> {
+        for (depth, binder) in self.scope.iter().rev().enumerate() {
+            match binder {
+                Binder::Bound(n, s) if n == name => {
+                    return (s == symbol).then_some(Core::Var(depth));
+                }
+                Binder::Group(members) => {
+                    if let Some((_, s, label)) = members.iter().find(|(n, ..)| n == name) {
+                        return (s == symbol)
+                            .then(|| Core::Proj(Box::new(Core::Var(depth)), *label));
+                    }
+                }
+                Binder::Bound(..) => {}
+            }
+        }
+        None
+    }
+
+    /// A chain of `let`s and its result. A `program` binding that mentions
+    /// itself, or belongs to a group with another, is a `letrec`; the others
+    /// are `let`s.
+    fn block(&mut self, first: &Expr) -> Option<Core> {
+        let mut bindings = Vec::new();
+        let mut cursor = first;
+        while let ExprKind::Let {
+            symbol,
+            name,
+            value,
+            rest,
+        } = &cursor.kind
+        {
+            bindings.push((*symbol, name.as_str(), &**value));
+            cursor = rest.as_deref()?;
+        }
+        let tail = cursor;
+        let members: Vec<usize> = (0..bindings.len())
+            .filter(|&i| matches!(bindings[i].2.kind, ExprKind::Func { .. }))
+            .collect();
+        let symbols: Vec<Symbol> = members.iter().map(|&i| bindings[i].0).collect();
+        let mut mentions = Vec::new();
+        let mut recursive = Vec::new();
+        for &i in &members {
+            let mut used = HashSet::new();
+            for_each_node(bindings[i].2, &mut |e| {
+                if let ExprKind::Var { symbol, .. } = &e.kind {
+                    used.insert(*symbol);
+                }
+            });
+            recursive.push(used.contains(&bindings[i].0));
+            mentions.push(
+                (0..members.len())
+                    .filter(|&m| symbols[m] != bindings[i].0 && used.contains(&symbols[m]))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        // For each binding that starts a group, the bindings the group spans.
+        let mut group_at: HashMap<usize, Vec<usize>> = HashMap::new();
+        for group in function_groups(&mentions) {
+            let at: Vec<usize> = group.iter().map(|&m| members[m]).collect();
+            if at.windows(2).any(|w| w[1] != w[0] + 1) {
+                return None;
+            }
+            if at.len() > 1 || recursive[group[0]] {
+                group_at.insert(at[0], at);
+            }
+        }
+        self.chain(&bindings, &group_at, 0, tail)
+    }
+
+    fn chain(
+        &mut self,
+        bindings: &[(Symbol, &str, &Expr)],
+        group_at: &HashMap<usize, Vec<usize>>,
+        from: usize,
+        tail: &Expr,
+    ) -> Option<Core> {
+        let Some(&(symbol, name, value)) = bindings.get(from) else {
+            return self.read(tail);
+        };
+        let Some(group) = group_at.get(&from) else {
+            let value = self.read(value)?;
+            self.scope.push(Binder::Bound(name.to_string(), symbol));
+            let body = self.chain(bindings, group_at, from + 1, tail);
+            self.scope.pop();
+            return Some(Core::Let(Box::new(value), Box::new(body?)));
+        };
+        let members: Vec<(String, Symbol, usize)> = group
+            .iter()
+            .map(|&i| {
+                let (symbol, name, _) = bindings[i];
+                (name.to_string(), symbol, self.label(name))
+            })
+            .collect();
+        self.scope.push(Binder::Group(members));
+        let fields: Option<Vec<(usize, Core)>> = group
+            .iter()
+            .map(|&i| {
+                let label = self.label(bindings[i].1);
+                Some((label, self.read(bindings[i].2)?))
+            })
+            .collect();
+        let body = fields.and_then(|fields| {
+            let body = self.chain(bindings, group_at, from + group.len(), tail)?;
+            Some(Core::Letrec(fields, Box::new(body)))
+        });
+        self.scope.pop();
+        body
     }
 
     fn read(&mut self, expr: &Expr) -> Option<Core> {
@@ -319,18 +494,18 @@ impl Reader<'_> {
                 }
                 Some(Core::Bin(*op, Box::new(a), Box::new(b)))
             }
-            ExprKind::Var { symbol, name } => {
-                let at = self.scope.iter().rposition(|(n, _)| n == name)?;
-                (self.scope[at].1 == *symbol).then(|| Core::Var(self.scope.len() - 1 - at))
-            }
+            ExprKind::Var { symbol, name } => self.var(symbol, name),
             ExprKind::Func { params, body } => {
                 if params.is_empty() || params.iter().any(|p| p.name == "self") {
                     return None;
                 }
                 self.unary &= params.len() == 1;
                 let mark = self.scope.len();
-                self.scope
-                    .extend(params.iter().map(|p| (p.name.clone(), p.symbol)));
+                self.scope.extend(
+                    params
+                        .iter()
+                        .map(|p| Binder::Bound(p.name.clone(), p.symbol)),
+                );
                 let body = self.read(body);
                 self.scope.truncate(mark);
                 Some(
@@ -362,21 +537,7 @@ impl Reader<'_> {
                         Some(Core::App(Box::new(callee), Box::new(value)))
                     })
             }
-            ExprKind::Let {
-                symbol,
-                name,
-                value,
-                rest: Some(rest),
-            } => {
-                if !is_syntactic_value(value) {
-                    return None;
-                }
-                let value = self.read(value)?;
-                self.scope.push((name.clone(), *symbol));
-                let body = self.read(rest);
-                self.scope.pop();
-                Some(Core::Let(Box::new(value), Box::new(body?)))
-            }
+            ExprKind::Let { .. } => self.block(expr),
             ExprKind::Record { fields } => {
                 let mut seen = Vec::new();
                 let mut out = Vec::new();
@@ -901,6 +1062,158 @@ impl TypedGen {
     }
 }
 
+/// Writes closed curried programs built from blocks of functions that call
+/// themselves and each other, in any order and at any depth, with computed
+/// values between them. Most bodies and uses are not aimed at a type, so the
+/// checker and the model must agree on rejections too.
+struct GroupGen {
+    rng: Rng,
+    names: u32,
+    /// Whether the program being written keeps to bodies that mostly check.
+    careful: bool,
+}
+
+impl GroupGen {
+    fn name(&mut self, prefix: &str) -> String {
+        self.names += 1;
+        format!("{prefix}{}", self.names)
+    }
+
+    fn pick(&mut self, from: &[String]) -> String {
+        from[self.rng.below(from.len())].clone()
+    }
+
+    fn call(&mut self, functions: &[String], argument: &str) -> String {
+        format!("{}({argument})", self.pick(functions))
+    }
+
+    /// A value to pass or bind: a name, a literal, a record, or a call.
+    fn value(&mut self, functions: &[String], vars: &[String]) -> String {
+        match self.rng.below(8) {
+            0 | 1 if !vars.is_empty() => self.pick(vars),
+            2 => format!("({} // 1)", self.rng.below(10)),
+            3 => "true".to_string(),
+            4 => "\"s\"".to_string(),
+            5 => format!("{{lab{}: {}}}", self.rng.below(2), "true"),
+            6 if !functions.is_empty() => {
+                let argument = format!("({} // 1)", self.rng.below(10));
+                self.call(functions, &argument)
+            }
+            _ => "true".to_string(),
+        }
+    }
+
+    fn body(&mut self, param: &str, functions: &[String], vars: &[String], depth: u32) -> String {
+        let choice = if self.careful {
+            [0, 1, 1, 2, 5, 8, 12][self.rng.below(7)]
+        } else {
+            self.rng.below(13)
+        };
+        match choice {
+            0 => param.to_string(),
+            1 | 2 => self.call(functions, param),
+            3 => format!("{{lab0: {param}, lab1: {}}}", self.call(functions, param)),
+            4 => {
+                let inner = self.call(functions, param);
+                self.call(functions, &inner)
+            }
+            5 | 6 => {
+                let rest = self.call(functions, &format!("{param} // 2"));
+                format!("(if {param} // 2 < 1 then (0 // 1) else {rest} done)")
+            }
+            7 => {
+                let rest = self.call(functions, &format!("{param} // 2"));
+                format!("(if {param} // 2 == 0 then true else {rest} done)")
+            }
+            8 => {
+                let (a, b) = (self.call(functions, param), self.call(functions, param));
+                format!("(if true then {a} else {b} done)")
+            }
+            9 => format!("{param}.lab0"),
+            10 => {
+                let argument = self.value(functions, vars);
+                self.call(functions, &argument)
+            }
+            11 => {
+                let callee = self.call(functions, param);
+                format!("{callee}.lab1")
+            }
+            _ if depth < 2 => format!("({})", self.block(depth + 1, functions, vars)),
+            _ => param.to_string(),
+        }
+    }
+
+    /// A block of `count` functions and a few values, then a result that uses
+    /// them. `outer` holds the functions and `vars` the names the block sees.
+    fn block(&mut self, depth: u32, outer: &[String], vars: &[String]) -> String {
+        let count = 1 + self.rng.below(3);
+        let functions: Vec<String> = (0..count).map(|_| self.name("g")).collect();
+        let all: Vec<String> = outer.iter().chain(&functions).cloned().collect();
+        let values = self.rng.below(3);
+        // A slot is a function (`Some`) or a value (`None`). Values mostly go
+        // first, sometimes after the functions, and now and then between them.
+        let mut slots: Vec<Option<usize>> = (0..count).map(Some).collect();
+        let layout = self.rng.below(6);
+        for _ in 0..values {
+            let at = match layout {
+                0..=3 => 0,
+                4 => slots.len(),
+                _ => self.rng.below(slots.len() + 1),
+            };
+            slots.insert(at, None);
+        }
+        let mut seen: Vec<String> = Vec::new();
+        let mut bound: Vec<String> = vars.to_vec();
+        let mut text = String::new();
+        for slot in slots {
+            match slot {
+                Some(i) => {
+                    let param = self.name("p");
+                    let mut inside = bound.clone();
+                    inside.push(param.clone());
+                    let body = self.body(&param, &all, &inside, depth);
+                    text.push_str(&format!(
+                        "{} = program({param}) do {body} done; ",
+                        functions[i]
+                    ));
+                    seen.push(functions[i].clone());
+                }
+                None => {
+                    let name = self.name("v");
+                    let value = self.value(&seen, &bound);
+                    text.push_str(&format!("{name} = {value}; "));
+                    bound.push(name);
+                }
+            }
+        }
+        let result = match self.rng.below(6) {
+            0 => self.call(&functions, "(1 // 1)"),
+            1 => {
+                let (a, b) = (
+                    self.call(&functions, "(1 // 1)"),
+                    self.call(&functions, "true"),
+                );
+                format!("{{lab0: {a}, lab1: {b}}}")
+            }
+            2 => {
+                let (a, b) = (
+                    self.call(&functions, "(1 // 1)"),
+                    self.call(&functions, "{lab0: true}"),
+                );
+                format!("{{lab0: {a}, lab1: {b}}}")
+            }
+            3 => self.pick(&functions),
+            4 if bound.len() > vars.len() => self.pick(&bound),
+            _ => {
+                let inner = self.call(&functions, "(1 // 1)");
+                self.call(&functions, &inner)
+            }
+        };
+        text.push_str(&result);
+        text
+    }
+}
+
 /// Programs the repository's sources may not hold: let-polymorphism, row
 /// polymorphism, rejections, and calls with several arguments.
 const HANDWRITTEN: &[&str] = &[
@@ -937,6 +1250,23 @@ const HANDWRITTEN: &[&str] = &[
     "if 1 then 2 else 3 done",
     "",
     "() == ()",
+    "f = program(x) do g(x) done\ng = program(y) do y done\na = f(1)\nb = f(true)\nb",
+    "g = program(y) do y done\nf = program(x) do g(x) done\n{a: f(1), b: f(true)}",
+    "f = program(x) do {a: g(1), b: g(true)} done\ng = program(y) do y done\nf(1)",
+    "even = program(n) do if n == 0 then true else odd(n - 1) done done\nodd = program(n) do if n == 0 then false else even(n - 1) done done\neven(4)",
+    "count = program(n) do if n < 1 then 0 else count(n - 1) done done\ncount(3)",
+    "loop = program(x) do loop(x) done\n{a: loop(1), b: loop(true)}",
+    "ping = program(x) do pong(x) done\npong = program(y) do ping(y) done\n{a: ping(1), b: pong(true)}",
+    "outer = program(k) do\n  f = program(x) do g(x) done\n  g = program(y) do y done\n  {a: f(1), b: f(k)}\ndone\nouter(true)",
+    "n = 1 + 2\nm = n * 2\nm",
+    "id = program(x) do x done\nr = id(3)\n{a: r, b: id(true)}",
+    "f = program(x) do x done\nv = f(1)\ng = program(y) do f(y) done\ng(true)",
+    "f = program(x) do g(x) done\ng = program(y) do y done\na = f(1.5)\nb = f(true)\nb",
+    "f = program(x) do g(x) done\ng = program(y) do y done\n{a: f(\"s\"), b: f(true)}",
+    "even = program(n) do if n // 1 == 0 then true else odd(n // 2) done done\nodd = program(n) do if n // 1 == 0 then false else even(n // 2) done done\neven(4 // 1)",
+    "count = program(n) do if n // 1 < 1 then 0 // 1 else count(n // 2) done done\ncount(3 // 1)",
+    "total = 1 // 1 + 2 // 1\nscaled = total * 2\nscaled",
+    "ping = program(x, k) do pong(x, k) done\npong = program(y, k) do ping(y, k) done\n{a: ping(true, true), b: pong(\"s\", true)}",
 ];
 
 fn main() {
@@ -992,6 +1322,17 @@ fn main() {
         typed_gen.fault = typed_gen.rng.below(4) == 0;
         let ty = PRIMS[typed_gen.rng.below(PRIMS.len())];
         sources.push(typed_gen.term(ty, 0));
+    }
+
+    let mut group_gen = GroupGen {
+        rng: Rng(SEED ^ 0x5EED),
+        names: 0,
+        careful: false,
+    };
+    for _ in 0..GENERATED_GROUPS {
+        group_gen.names = 0;
+        group_gen.careful = group_gen.rng.below(2) == 0;
+        sources.push(group_gen.block(0, &[], &[]));
     }
 
     let mut seen = HashSet::new();

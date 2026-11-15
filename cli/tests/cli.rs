@@ -152,6 +152,19 @@ fn runs_the_groups_example() {
 }
 
 #[test]
+fn runs_the_function_groups_example() {
+    let out = goat(&[
+        "run",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../examples/function_groups.goat"
+        ),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "7\nseven\n1\ntwo\n");
+}
+
+#[test]
 fn runs_the_literals_example() {
     let out = goat(&[
         "run",

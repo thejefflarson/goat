@@ -761,14 +761,14 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
     Name resolution, not the type system, keeps those out of reach (ADR 0003).
   - *The group is generalized as a whole.* Each member is generalized against
     the context outside the group, so a member whose type shares a variable with
-    another member is still polymorphic in it. The checker generalizes a member
-    when its own binding is reached, with its neighbours still in the
-    environment, so such a member stays monomorphic in the shared variables:
+    another member is still polymorphic in it. The checker does the same: it
+    infers the members in order and generalizes one once every member it is
+    connected to (through what either mentions, among the members not yet
+    generalized) has been inferred, so
     `f = program(x) do g(x) done  g = program(y) do y done` types `f` at
-    `(α) → α` here, and the checker rejects `f(1)` followed by `f(true)`. That is
-    the rules accepting a program the checker refuses, which the completeness
-    proof would report; it is a checker fix, tracked with that proof, and not a
-    rule change.
+    `forall a. (a) -> a` and `f(1)` followed by `f(true)` checks (`Infer::settle`).
+    A member that mentions no pending member, and that none mentions, is
+    generalized when its own binding is reached, as before.
   - *No recursive values.* Only a function may name itself.
 - **n-ary functions, not curried.** `program`/application are n-ary to match
   `Ty::Func(Vec<Ty>, Box<Ty>)` and the arity-checked calling convention (ADR
@@ -784,9 +784,10 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   termination** (the `tail(r) ∉ dom(θ₁)` side condition, paper §7) are out of
   scope per ADR 0008.
 
-**Where the model differs from `checker/src`.** The group generalization above
-(the rules accept `f(1)`, `f(true)` after the group where the checker refuses);
-and the constructs still to come in ADR 0037's phase order.
+**Where the model differs from `checker/src`.** The constructs still to come in
+ADR 0037's phase order. A value binding between two members of a group is
+visible to the checker (it sees the group's monotypes), which the elaboration
+into one `letrec` does not model; the differential test skips such programs.
 
 ## 10. For the mechanization (#70 B2, #71 B3)
 

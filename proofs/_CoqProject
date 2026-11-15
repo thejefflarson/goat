@@ -14,6 +14,7 @@ GoatInfer.v
 GoatInferSub.v
 GoatInferTyp.v
 GoatInferGen.v
+GoatInferRec.v
 GoatInferSound.v
 GoatInferRen.v
 GoatInferUnify.v
