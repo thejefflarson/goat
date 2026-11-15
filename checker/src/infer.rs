@@ -327,13 +327,56 @@ struct MemberFrame {
     block: u32,
     member: Symbol,
     uses: Vec<Symbol>,
+    seen: HashSet<Symbol>,
 }
 
-/// The function bindings of one block that are inferred but not generalized,
-/// each with the pending members of its block that its body mentions.
+/// The pending function bindings of one block, grouped. Two members are in one
+/// group when one mentions the other, directly or through a third. A group
+/// counts the members it has seen mentioned but not yet inferred, and is ready
+/// to generalize when that count is zero.
 #[derive(Default)]
 struct Deferred {
-    members: Vec<(Symbol, Vec<Symbol>)>,
+    node: HashMap<Symbol, usize>,
+    parent: Vec<usize>,
+    /// Per group root: the members mentioned but not yet inferred.
+    uninferred: Vec<usize>,
+    /// Per group root: all its members.
+    members: Vec<Vec<Symbol>>,
+}
+
+impl Deferred {
+    fn find(&mut self, mut at: usize) -> usize {
+        while self.parent[at] != at {
+            self.parent[at] = self.parent[self.parent[at]];
+            at = self.parent[at];
+        }
+        at
+    }
+
+    fn add(&mut self, member: Symbol, uninferred: usize) -> usize {
+        let at = self.parent.len();
+        self.parent.push(at);
+        self.uninferred.push(uninferred);
+        self.members.push(vec![member]);
+        self.node.insert(member, at);
+        at
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let (a, b) = (self.find(a), self.find(b));
+        if a == b {
+            return;
+        }
+        let (big, small) = if self.members[a].len() >= self.members[b].len() {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        self.parent[small] = big;
+        self.uninferred[big] += self.uninferred[small];
+        let moved = std::mem::take(&mut self.members[small]);
+        self.members[big].extend(moved);
+    }
 }
 
 #[derive(Default)]
@@ -2435,13 +2478,13 @@ impl Inferer {
                         block,
                         member: *symbol,
                         uses: Vec::new(),
+                        seen: HashSet::new(),
                     });
                     let value_ty = self.infer(value);
                     let frame = self.member_frames.pop().expect("the frame pushed above");
                     let seed = self.env[symbol].ty.clone();
                     self.unify(&value_ty, &seed, value.span);
-                    deferred.members.push((*symbol, frame.uses));
-                    self.settle(&mut deferred, *symbol);
+                    self.settle(&mut deferred, *symbol, &frame.uses);
                 }
                 _ => {
                     let value_ty = self.infer(value);
@@ -2465,7 +2508,8 @@ impl Inferer {
             match rest {
                 Some(rest) => cursor = rest,
                 None => {
-                    self.generalize_members(&mut deferred, |_| true);
+                    let rest: Vec<Symbol> = deferred.node.keys().copied().collect();
+                    self.generalize_members(rest);
                     let scheme = self.env[symbol].clone();
                     break self.instantiate(&scheme);
                 }
@@ -2490,58 +2534,54 @@ impl Inferer {
             .rev()
             .find(|f| f.block == block)
             && frame.member != used
-            && !frame.uses.contains(&used)
+            && frame.seen.insert(used)
         {
             frame.uses.push(used);
         }
     }
 
-    /// Generalize the group the just-inferred member `start` belongs to, if
-    /// every member of it has been inferred. A group is the members that
-    /// mention each other, directly or through a third, among those not yet
-    /// generalized: generalizing one of them before the rest would leave its
-    /// type tied to the others' monotypes, so `f = program(x) do g(x) done` and
-    /// `g = program(y) do y done` are generalized together, after both.
-    fn settle(&mut self, deferred: &mut Deferred, start: Symbol) {
-        let mut group = vec![start];
-        let mut at = 0;
-        while at < group.len() {
-            let member = group[at];
-            at += 1;
-            let mentioned = deferred
-                .members
-                .iter()
-                .find(|(m, _)| *m == member)
-                .map_or(&[][..], |(_, uses)| uses.as_slice());
-            for used in mentioned {
-                if self.pending_members.contains_key(used) && !group.contains(used) {
-                    group.push(*used);
-                }
+    /// Record that the member `start`, whose body mentions `uses`, is inferred,
+    /// and generalize its group if every member of it has been. A group is the
+    /// members that mention each other, directly or through a third, among
+    /// those not yet generalized: generalizing one of them before the rest
+    /// would leave its type tied to the others' monotypes, so
+    /// `f = program(x) do g(x) done` and `g = program(y) do y done` are
+    /// generalized together, after both.
+    fn settle(&mut self, deferred: &mut Deferred, start: Symbol, uses: &[Symbol]) {
+        let at = match deferred.node.get(&start).copied() {
+            Some(at) => {
+                let root = deferred.find(at);
+                deferred.uninferred[root] -= 1;
+                at
             }
-            for (other, uses) in &deferred.members {
-                if uses.contains(&member) && !group.contains(other) {
-                    group.push(*other);
-                }
+            None => deferred.add(start, 0),
+        };
+        for used in uses {
+            if !self.pending_members.contains_key(used) {
+                continue;
             }
+            let other = match deferred.node.get(used).copied() {
+                Some(other) => other,
+                None => deferred.add(*used, 1),
+            };
+            deferred.union(at, other);
         }
-        if group
-            .iter()
-            .all(|m| deferred.members.iter().any(|(d, _)| d == m))
-        {
-            self.generalize_members(deferred, |m| group.contains(&m));
+        let root = deferred.find(at);
+        if deferred.uninferred[root] == 0 {
+            let group = std::mem::take(&mut deferred.members[root]);
+            for member in &group {
+                deferred.node.remove(member);
+            }
+            self.generalize_members(group);
         }
     }
 
-    /// Generalize the deferred members `chosen` selects together: take them all
-    /// out of the environment first, so none holds back another's variables.
-    fn generalize_members(&mut self, deferred: &mut Deferred, chosen: impl Fn(Symbol) -> bool) {
-        let (these, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut deferred.members)
-            .into_iter()
-            .partition(|(m, _)| chosen(*m));
-        deferred.members = rest;
-        let seeds: Vec<(Symbol, Ty)> = these
+    /// Generalize `members` together: take them all out of the environment
+    /// first, so none holds back another's variables.
+    fn generalize_members(&mut self, members: Vec<Symbol>) {
+        let seeds: Vec<(Symbol, Ty)> = members
             .iter()
-            .filter_map(|(m, _)| Some((*m, self.unbind_env(m)?.ty)))
+            .filter_map(|m| Some((*m, self.unbind_env(m)?.ty)))
             .collect();
         for (symbol, ty) in seeds {
             let scheme = self.generalize(&ty, true);
