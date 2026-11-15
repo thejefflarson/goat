@@ -73,3 +73,70 @@ fn a_value_binding_cannot_name_itself() {
     let errors = errors_of("x = x + 1\nx");
     assert!(!errors.is_empty());
 }
+
+#[test]
+fn a_group_is_generalized_after_all_its_members() {
+    // `f` shares its type variable with `g`, which is typed after it, so both
+    // wait for the whole group: the plain Hindley-Milner binding-group rule.
+    checks(
+        "f = program(x) do g(x) done\n\
+         g = program(y) do y done\n\
+         a = f(1)\n\
+         b = f(true)\n\
+         b",
+    );
+    checks(
+        "g = program(y) do y done\n\
+         f = program(x) do g(x) done\n\
+         a = f(1)\n\
+         b = f(true)\n\
+         b",
+    );
+}
+
+#[test]
+fn a_mutual_group_is_generalized_after_all_its_members() {
+    checks(
+        "ping = program(x, n) do if n < 1 then x else pong(x, n - 1) done done\n\
+         pong = program(x, n) do if n < 1 then x else ping(x, n - 1) done done\n\
+         a = ping(1, 3)\n\
+         b = pong(true, 3)\n\
+         b",
+    );
+}
+
+#[test]
+fn a_group_inside_a_function_body_is_generalized_after_all_its_members() {
+    checks(
+        "outer = program(k) do\n\
+           f = program(x) do g(x) done\n\
+           g = program(y) do y done\n\
+           a = f(1)\n\
+           f(k)\n\
+         done\n\
+         outer(true)",
+    );
+}
+
+#[test]
+fn a_member_still_has_one_type_inside_its_group() {
+    // `g` is used at two types in `f`, which is inside `g`'s group.
+    let errors = errors_of(
+        "f = program(x) do {a: g(1), b: g(true)} done\n\
+         g = program(y) do y done\n\
+         f(1)",
+    );
+    assert!(!errors.is_empty());
+}
+
+#[test]
+fn a_function_that_names_no_later_function_is_generalized_when_reached() {
+    checks(
+        "id = program(x) do x done\n\
+         a = id(1)\n\
+         twice = program(y) do id(id(y)) done\n\
+         b = id(true)\n\
+         c = twice(1)\n\
+         twice(false)",
+    );
+}

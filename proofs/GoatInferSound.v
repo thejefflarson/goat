@@ -20,6 +20,7 @@ Require Import Goat.GoatInferTyp.
 Require Import Goat.GoatInferRen.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatInferGen.
+Require Import Goat.GoatInferRec.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 
@@ -110,9 +111,6 @@ Lemma typing_ap_Bool : forall s G e,
   OkS s -> WfCtx G -> typing G e typ_Bool -> typing (apC s G) e typ_Bool.
 Proof. intros s G e Hs HG H. exact (typing_ap s G e typ_Bool Hs HG H). Qed.
 
-Lemma EvR_Empty : EvR row_Empty.
-Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
-
 Lemma EvT_arrow : forall A B, EvT A -> EvT B -> EvT (typ_Arrow A B).
 Proof.
   intros A B [H1 H2] [H3 H4]. split; intros a Ha; simpl in Ha;
@@ -191,7 +189,29 @@ Proof.
         apply (typing_ap s2 _ _ _ Hs2 HG1). exact Hty1.
       * apply (typing_ap s3 _ _ _ Hs3 HG2). exact Hty2.
     + (* let *)
-      destruct (is_gen_value e1) eqn:Hgv; [|discriminate].
+      destruct (is_gen_value e1) eqn:Hgv.
+      2: { (* a computed value: monomorphic *)
+      destruct (infer f G e1 n) as [[[s1 T1] n1]|] eqn:E1; [|discriminate].
+      destruct (infer f ((fresh_var (apC s1 G) e2 ~ sch_mono T1) ++ apC s1 G)
+                  (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC s1 G) e2))) n1)
+        as [[[s2 T2] n2]|] eqn:E2; [|discriminate].
+      inversion H; try subst s; try subst T; try subst n'; clear H.
+      destruct (IHe _ _ _ _ _ _ E1 HG) as (Hs1 & HT1 & Hty1).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      assert (Hwf : WfCtx ((fresh_var (apC s1 G) e2 ~ sch_mono T1) ++ apC s1 G))
+        by (apply WfCtx_cons; [ exact HG1 | apply fresh_var_notin_dom | apply WfSch_mono; exact HT1 ]).
+      destruct (IHe _ _ _ _ _ _ E2 Hwf) as (Hs2 & HT2 & Hty2).
+      split; [ apply OkS_comp; auto | ]. split; [ exact HT2 | ].
+      rewrite <- apC_comp.
+      rewrite apC_app, apC_single in Hty2.
+      apply T_LetMono with (L := dom G `union` {{fresh_var (apC s1 G) e2}}) (T1 := apT s2 T1).
+      * apply (typing_ap s2 _ _ _ Hs2 HG1). exact Hty1.
+      * intros y Hy.
+        assert (Hdom : y `notin` dom (apC s2 (apC s1 G)))
+          by (rewrite dom_apC, dom_apC; fsetdec).
+        exact (typing_rename_var (apC s2 (apC s1 G)) (fresh_var (apC s1 G) e2) y
+                 (apS s2 (sch_mono T1)) e2 T2 Hty2
+                 (fresh_var_notin_fv _ _) Hdom ltac:(fsetdec)). }
       destruct (infer f G e1 n) as [[[s1 T1] n1]|] eqn:E1; [|discriminate].
       destruct (infer f ((fresh_var (apC s1 G) e2 ~ gen_ren (apC s1 G) T1) ++ apC s1 G)
                   (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC s1 G) e2))) n1)
@@ -220,6 +240,67 @@ Proof.
         eapply typing_sch_equiv_ctx; [ exact Hren | ].
         apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
         apply gen_ren_equiv; auto.
+    + (* recursive group *)
+      destruct (is_fn_group fl) eqn:Hfg; [|discriminate].
+      set (p := fresh_var G (e_rec fl)) in *.
+      set (R0 := group_row fl n) in *.
+      destruct (infer_fields f ((p ~ sch_mono (typ_Record R0)) ++ G)
+                  (open_fields_wrt_exp fl (e_fvar_f p)) (n + nfields fl))
+        as [[[s1 R1] n1]|] eqn:E1; [|discriminate].
+      destruct (unify_pw f R1 (apR s1 R0) n1) as [[s2 n2]|] eqn:E2; [|discriminate].
+      set (G1 := apC (scomp s2 s1) G) in *.
+      set (Rf := apR (scomp s2 s1) R0) in *.
+      set (q := fresh_var G1 el) in *.
+      destruct (infer f ((q ~ gen_ren G1 (typ_Record Rf)) ++ G1)
+                  (open_exp_wrt_exp el (e_fvar_f q)) n2)
+        as [[[s3 T3] n3]|] eqn:E3; [|discriminate].
+      inversion H; try subst s; try subst T; try subst n'; clear H.
+      assert (HR0 : EvR R0) by apply EvR_group_row.
+      assert (Hwf0 : WfCtx ((p ~ sch_mono (typ_Record R0)) ++ G))
+        by (apply WfCtx_cons; [ exact HG | apply fresh_var_notin_dom | apply WfSch_mono, EvT_Record; exact HR0 ]).
+      destruct (IHf _ _ _ _ _ _ E1 Hwf0) as (Hs1 & HR1 & Hty1).
+      rewrite apC_app, apC_single in Hty1.
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      pose proof (EvR_ap s1 _ Hs1 HR0) as HR0'.
+      destruct (unify_pw_sound f _ _ _ _ _ E2 HR1 HR0') as [Hs2 Hpw].
+      pose proof (fields_ap s2 _ _ _ _ _ Hs2 HG1 Hty1) as Hty2.
+      assert (Hs21 : OkS (scomp s2 s1)) by (apply OkS_comp; assumption).
+      assert (HRf : EvR Rf) by (apply EvR_ap; assumption).
+      assert (HG21 : WfCtx G1) by (apply WfCtx_ap; assumption).
+      assert (Hty3 : field_typing ((p ~ sch_mono (typ_Record Rf)) ++ G1)
+                       (open_fields_wrt_exp fl (e_fvar_f p)) Rf).
+      { unfold Rf, G1. rewrite <- apR_comp. rewrite <- apC_comp.
+        apply pw_conv with (R := apR s2 R1); [ | exact Hpw ].
+        change (typ_Record (apR s2 (apR s1 R0))) with (apT s2 (apT s1 (typ_Record R0))) in Hty2.
+        exact Hty2. }
+      pose proof (gen_ren_wf G1 (typ_Record Rf) (proj2 (EvT_Record _) HRf)) as Hwsc.
+      assert (Hwf1 : WfCtx ((q ~ gen_ren G1 (typ_Record Rf)) ++ G1))
+        by (apply WfCtx_cons; [ exact HG21 | apply fresh_var_notin_dom | exact Hwsc ]).
+      destruct (IHe _ _ _ _ _ _ E3 Hwf1) as (Hs3 & HT3 & Hty4).
+      split; [ apply OkS_comp; assumption | ]. split; [ exact HT3 | ].
+      rewrite <- apC_comp. fold G1.
+      rewrite apC_app, apC_single in Hty4.
+      pose proof (fields_gen_ren G1 p Rf _ Hty3) as Hty5.
+      pose proof (fields_ap s3 _ _ _ _ _ Hs3 HG21 Hty5) as Hty6.
+      apply T_Letrec with (L := dom G `union` {{p}} `union` {{q}})
+        (R := apR s3 (ap_row (rename_t (gen_vars_t G1 (typ_Record Rf)))
+                             (rename_r (gen_vars_r G1 (typ_Record Rf))) Rf)).
+      * apply is_fn_group_sound. exact Hfg.
+      * intros y Hy.
+        assert (Hdom : y `notin` dom (apC s3 G1)) by (rewrite dom_apC; unfold G1; rewrite dom_apC; fsetdec).
+        apply (fields_rename_var (apC s3 G1) p y).
+        -- exact Hty6.
+        -- apply fresh_var_notin_fv.
+        -- exact Hdom.
+        -- fsetdec.
+      * intros y Hy.
+        assert (Hdom : y `notin` dom (apC s3 G1)) by (rewrite dom_apC; unfold G1; rewrite dom_apC; fsetdec).
+        pose proof (typing_rename_var (apC s3 G1) q y
+                      (apS s3 (gen_ren G1 (typ_Record Rf))) el T3 Hty4
+                      (fresh_var_notin_fv _ _) Hdom ltac:(fsetdec)) as Hren.
+        eapply typing_sch_equiv_ctx; [ exact Hren | ].
+        apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
+        exact (gen_ren_equiv G1 (typ_Record Rf) s3 Hs3 HG21 (proj2 (EvT_Record _) HRf)).
     + (* record *)
       destruct (infer_fields f G fs n) as [[[s0 R0] n0]|] eqn:Ei; [|discriminate].
       inversion H; try subst s; try subst T; try subst n'; clear H.

@@ -25,7 +25,7 @@ Import ListNotations.
 Fixpoint pre (n : nat) : list atom :=
   match n with
   | O => nil
-  | S k => fresh (pre k) :: pre k
+  | S k => let l := pre k in fresh l :: l
   end.
 
 Definition idx_atom (n : nat) : atom := fresh (pre n).
@@ -139,6 +139,30 @@ with unify_r (f : nat) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :
       end
   end.
 
+(* Unify two rows field by field: they list the same labels in the same
+   order, as the row of a recursive group's members does against the types its
+   members were inferred at. *)
+Fixpoint unify_pw (f : nat) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :=
+  match f with
+  | O => None
+  | S f' =>
+      match R1, R2 with
+      | row_Empty, row_Empty => Some (sid, n)
+      | row_Ext l T R1', row_Ext l' T' R2' =>
+          if Nat.eqb l l' then
+            match unify_t f' T T' n with
+            | None => None
+            | Some (s1, n1) =>
+                match unify_pw f' (apR s1 R1') (apR s1 R2') n1 with
+                | None => None
+                | Some (s2, n2) => Some (scomp s2 s1, n2)
+                end
+            end
+          else None
+      | _, _ => None
+      end
+  end.
+
 (* ------------------------------------------------------------------ *)
 (* Instantiation and generalization                                     *)
 (* ------------------------------------------------------------------ *)
@@ -229,6 +253,27 @@ Definition bin_ty (o : bop) (A : typ) : option typ :=
   | _, _ => None
   end.
 
+(* A recursive group's members are functions. *)
+Fixpoint is_fn_group (fs : fields) : bool :=
+  match fs with
+  | fs_nil => true
+  | fs_cons _ (e_abs _) rest => is_fn_group rest
+  | fs_cons _ _ _ => false
+  end.
+
+Fixpoint nfields (fs : fields) : nat :=
+  match fs with
+  | fs_nil => 0
+  | fs_cons _ _ rest => S (nfields rest)
+  end.
+
+(* The row of a group's members, each at a fresh type variable numbered from [n]. *)
+Fixpoint group_row (fs : fields) (n : nat) : row :=
+  match fs with
+  | fs_nil => row_Empty
+  | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
+  end.
+
 Definition fresh_var (G : ctx) (e : exp) : atom :=
   fresh (AtomSetImpl.elements (dom G `union` fv_exp e)).
 
@@ -285,8 +330,39 @@ Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
               | Some (s2, T2, n2) => Some (scomp s2 s1, T2, n2)
               end
           end
+          else
+          match infer f' G e1 n with
+          | None => None
+          | Some (s1, T1, n1) =>
+              let x := fresh_var (apC s1 G) e2 in
+              match infer f' ((x ~ sch_mono T1) ++ apC s1 G) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
+              | None => None
+              | Some (s2, T2, n2) => Some (scomp s2 s1, T2, n2)
+              end
+          end
+      | e_letrec fs e2 =>
+          if is_fn_group fs then
+          let R0 := group_row fs n in
+          let p := fresh_var G (e_rec fs) in
+          match infer_fields f'
+                  ((p ~ sch_mono (typ_Record R0)) ++ G)
+                  (open_fields_wrt_exp fs (e_fvar_f p)) (n + nfields fs) with
+          | None => None
+          | Some (s1, R1, n1) =>
+              match unify_pw f' R1 (apR s1 R0) n1 with
+              | None => None
+              | Some (s2, n2) =>
+                  let s := scomp s2 s1 in
+                  let G1 := apC s G in
+                  let sc := gen_ren G1 (typ_Record (apR s R0)) in
+                  let q := fresh_var G1 e2 in
+                  match infer f' ((q ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f q)) n2 with
+                  | None => None
+                  | Some (s3, T, n3) => Some (scomp s3 s, T, n3)
+                  end
+              end
+          end
           else None
-      | e_letrec _ _ => None
       | e_rec fs =>
           match infer_fields f' G fs n with
           | None => None

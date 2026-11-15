@@ -69,7 +69,15 @@ let bop_of = function
   | "ne" -> Bop_ne
   | o -> failwith ("unknown operator " ^ o)
 
-let rec exp_of = function
+let rec fields_of fields =
+  List.fold_right
+    (fun f rest ->
+      match f with
+      | List [ l; e ] -> Fs_cons (int_of l, exp_of e, rest)
+      | _ -> failwith "malformed field")
+    fields Fs_nil
+
+and exp_of = function
   | Atom "t" -> E_true
   | Atom "f" -> E_false
   | Atom "u" -> E_unit
@@ -84,14 +92,9 @@ let rec exp_of = function
   | List [ Atom "app"; f; a ] -> E_app (exp_of f, exp_of a)
   | List [ Atom "let"; v; b ] -> E_let (exp_of v, exp_of b)
   | List [ Atom "proj"; e; l ] -> E_proj (exp_of e, int_of l)
-  | List (Atom "rec" :: fields) ->
-      List.fold_right
-        (fun f rest ->
-          match f with
-          | List [ l; e ] -> Fs_cons (int_of l, exp_of e, rest)
-          | _ -> failwith "malformed field")
-        fields Fs_nil
-      |> fun fs -> E_rec fs
+  | List (Atom "rec" :: fields) -> E_rec (fields_of fields)
+  | List [ Atom "letrec"; List (Atom "rec" :: fields); body ] ->
+      E_letrec (fields_of fields, exp_of body)
   | _ -> failwith "malformed term"
 
 (* ---- the canonical type ---- *)

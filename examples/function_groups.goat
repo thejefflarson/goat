@@ -1,0 +1,14 @@
+# The functions of a block are typed as one group and generalized together,
+# once all of them are typed. `relay` hands its argument to `echo`, which is
+# defined after it, and is still usable at a different type at every call.
+relay = program(x) do echo(x) done
+echo = program(y) do y done
+
+# A group of functions that call each other, used at two types.
+ping = program(x, n) do if n < 1 then x else pong(x, n - 1) done done
+pong = program(x, n) do if n < 1 then x else ping(x, n - 1) done done
+
+print(relay(7));
+print(relay("seven"));
+print(ping(1, 3));
+print(pong("two", 3));
