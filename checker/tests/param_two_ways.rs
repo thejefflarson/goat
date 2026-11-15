@@ -90,3 +90,67 @@ fn a_field_of_a_parameter_used_two_ways_says_a_value() {
     );
     assert_eq!(error.labels.len(), 2);
 }
+
+#[test]
+fn a_field_of_a_parameter_has_a_note_at_each_use() {
+    let source = "use = program(m) do a = m.id + 1\n if m.id then 1 else 2 done done use(1)";
+    let notes: Vec<_> = first_error(source)
+        .labels
+        .iter()
+        .map(|l| l.message.clone())
+        .collect();
+    assert_eq!(
+        notes,
+        ["`m.id` gets a Number here", "`m.id` gets a Bool here"]
+    );
+}
+
+#[test]
+fn a_bare_value_is_a_value_not_a_function() {
+    let message =
+        first_error("use = program(x) do a = x + 1\n if x then 1 else 2 done done use(1)").message;
+    assert_eq!(
+        message,
+        "`x` gets a Number here and a Bool there, but a value you pass in can only be one kind of thing.\n\
+         Pass a separate value for each kind, or give it a name with `=` where you use it."
+    );
+}
+
+fn suggestion_for(function: &str) -> String {
+    let source = format!("(program(f) do {{a: f(1), b: f(true)}} done)({function})");
+    let message = first_error(&source).message;
+    message
+        .lines()
+        .nth(3)
+        .expect("a suggestion line")
+        .to_string()
+}
+
+#[test]
+fn a_function_up_to_forty_characters_is_quoted_verbatim() {
+    let one_over = "program(x) do x + 111111111111111111 done";
+    assert_eq!(one_over.len(), 41);
+    let at_the_limit = "program(x) do x + 11111111111111111 done";
+    assert_eq!(at_the_limit.len(), 40);
+    assert_eq!(suggestion_for(at_the_limit), format!("f = {at_the_limit}"));
+    assert_eq!(suggestion_for(one_over), "f = program(x) do … done");
+}
+
+#[test]
+fn a_function_over_several_lines_is_elided_however_short() {
+    assert_eq!(
+        suggestion_for("program(x) do\n x done"),
+        "f = program(x) do … done"
+    );
+}
+
+#[test]
+fn a_value_passed_in_never_shows_the_example() {
+    let message =
+        first_error("(program(f) do {a: f(1), b: f(true)} done)(program(x) do x done)").message;
+    assert!(message.contains("```"));
+    let message =
+        first_error("use = program(m) do a = m.id + 1\n if m.id then 1 else 2 done done use(1)")
+            .message;
+    assert!(!message.contains("```"), "{message}");
+}
