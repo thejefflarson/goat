@@ -198,6 +198,11 @@ impl<'p> Cx<'p> {
             | Expr::Payload(x, ..)
             | Expr::StrLen(x)
             | Expr::StrChars(x)
+            | Expr::Addr(x)
+            | Expr::Shared(x)
+            | Expr::Retain(x, _)
+            | Expr::KeepStr(x)
+            | Expr::MethodKey(x)
             | Expr::Write(Write::Str(x)) => self.borrow(e.clone(), *x, after),
             Expr::StrEq(a, b) | Expr::StrByte(a, b) | Expr::StrChar(a, b) => {
                 let b = self.borrow(Expr::Const(Const::Unit), *b, after);

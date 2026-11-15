@@ -219,6 +219,9 @@ is interactive. The ADR-0015 reload fingerprint (FNV-1a over the model's layout)
 hashes those numbers, so layout stability depends on the numbering being a pure
 function of the tag *set*.
 
+> ADR 0035 retired the fingerprint: a reload's image names its tags, so a tag's
+> number no longer affects whether a model survives a reload.
+
 A host-supplied vocabulary changes which tags enter that set, not how they are
 numbered. The rule holds unchanged:
 

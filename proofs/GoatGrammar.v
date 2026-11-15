@@ -1,5 +1,5 @@
 (* Generated from grammar/goat.peg by parser/examples/emit_coq.rs; do not edit. *)
-From Coq Require Import String.
+From Stdlib Require Import String.
 Open Scope string_scope.
 
 Inductive terminal : Type :=

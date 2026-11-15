@@ -50,8 +50,22 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      # The runner image bakes a pinned cargo-nextest (see the goat-runners
+      # Dockerfile); fail loudly rather than silently falling back to serial
+      # `cargo test`.
+      - name: Runner cores and nextest version
+        run: |
+          echo "cores: $(nproc)"
+          cargo nextest --version
+
+      # nextest runs test binaries in parallel; it skips doctests, so those
+      # run separately. Profile `ci` (.config/nextest.toml) lets one failure
+      # not hide the others.
       - name: Test
-        run: cargo test
+        run: cargo nextest run --profile ci
+
+      - name: Doctests
+        run: cargo test --doc
 
       - name: Check the standalone fuzz crate builds
         # fuzz/ is not a workspace member, so the clippy/test steps above never

@@ -129,6 +129,14 @@ fn an_interactive_program_is_unsupported() {
         draw: FuncId(0),
         events: vec![],
         model: MTy::Unit,
+        sites_slot: 3,
+        reload: Reload {
+            node: LayoutId(0),
+            snapshot: FuncId(0),
+            refresh: FuncId(0),
+            outcome: LayoutId(0),
+            part: FuncId(0),
+        },
     });
     assert!(matches!(emit(&p), Err(EmitError::Unsupported(_))));
 }

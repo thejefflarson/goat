@@ -2,7 +2,7 @@
    A block is the run of bindings and the final statement an expression node
    holds. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatGrammar.

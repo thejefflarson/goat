@@ -61,7 +61,12 @@ fn switch_on(scrutinee: Local, mut arms: Vec<(u32, Expr)>) -> Expr {
 impl Mono<'_> {
     /// The host-facing functions of an interactive program, whose root type
     /// `root_ty` is the record of its `draw`, `init` and `update`.
-    pub(super) fn interactive(&mut self, root_ty: &Ty) -> Interactive {
+    pub(super) fn interactive(
+        &mut self,
+        root_ty: &Ty,
+        reload: Reload,
+        sites_slot: usize,
+    ) -> Interactive {
         let Ty::Record(row) = root_ty else {
             unreachable!("an interactive root is a record");
         };
@@ -111,6 +116,8 @@ impl Mono<'_> {
             draw,
             events,
             model,
+            sites_slot,
+            reload,
         }
     }
 

@@ -46,11 +46,12 @@ const SITES_SECTION: &str = "goat.sites";
 /// closures, after the site.
 const UPDATE_GLOBAL: u32 = 3;
 const DRAW_GLOBAL: u32 = 4;
-/// An interactive program's model fingerprint, exported as
-/// `goat_model_fingerprint`, and (in a reloadable module) the address its
-/// static data was copied to.
-const FINGERPRINT_GLOBAL: u32 = 5;
-const DATA_BASE_GLOBAL: u32 = 6;
+/// The record of closures `setup` builds for a refresh to rebind methods to,
+/// the reason the last refresh failed, and (in a reloadable module) the
+/// address its static data was copied to.
+const SITES_GLOBAL: u32 = 5;
+const REASON_GLOBAL: u32 = 6;
+const DATA_BASE_GLOBAL: u32 = 7;
 /// Where a reloadable module expects the host's heap to begin: the free-list
 /// table sits at `DATA_BASE`, the heap right after it.
 pub const HOSTED_HEAP_START: u32 = DATA_BASE + allocator::TABLE_BYTES;
@@ -370,9 +371,13 @@ fn emit_module(
         let (one, two) = (vec![ValType::I32], vec![ValType::I32; 2]);
         for (params, results) in [
             (vec![], one.clone()),
-            (two, one.clone()),
+            (two.clone(), one.clone()),
             (one.clone(), vec![]),
-            (one, vec![]),
+            (one.clone(), vec![]),
+            (vec![], vec![]),
+            (one.clone(), one.clone()),
+            (two, one.clone()),
+            (one.clone(), one),
             (vec![], vec![]),
         ] {
             func_types.push(shared.types.intern(params, results));
@@ -482,7 +487,7 @@ fn emit_module(
     let mut globals = GlobalSection::new();
     let allocator_globals: &[i32] = if hosted { &[] } else { &[heap_start as i32, 0] };
     let site_and_closure_globals = match (&program.interactive, bounded) {
-        (Some(_), _) => 3,
+        (Some(_), _) => 5,
         (None, true) => 2,
         (None, false) => 1,
     };
@@ -493,17 +498,8 @@ fn emit_module(
     {
         globals.global(i32_cell(), &ConstExpr::i32_const(init));
     }
-    if let Some(interactive) = &program.interactive {
-        let fingerprint = model_fingerprint(&program.layouts, interactive.model);
-        let immutable_i64 = GlobalType {
-            val_type: ValType::I64,
-            mutable: false,
-            shared: false,
-        };
-        globals.global(immutable_i64, &ConstExpr::i64_const(fingerprint as i64));
-        if hosted {
-            globals.global(i32_cell(), &ConstExpr::i32_const(0));
-        }
+    if hosted {
+        globals.global(i32_cell(), &ConstExpr::i32_const(0));
     }
     module.section(&globals);
 
@@ -527,7 +523,6 @@ fn emit_module(
             let name = format!("goat_event_{}", event.label);
             exports.export(&name, ExportKind::Func, imports + event.func.0);
         }
-        exports.export(FINGERPRINT_EXPORT, ExportKind::Global, FINGERPRINT_GLOBAL);
     }
     module.section(&exports);
 
@@ -582,10 +577,6 @@ fn emit_module(
     Ok(module.finish())
 }
 
-/// The host reads this immutable `i64` global to learn whether a recompiled
-/// program still lays its model out the way the running one does.
-pub const FINGERPRINT_EXPORT: &str = "goat_model_fingerprint";
-
 /// A reloadable module's start function: it takes a block from the shared
 /// allocator for its static data, hands the block's count back (the data is
 /// immortal, not a live object), and copies the data in.
@@ -625,12 +616,16 @@ fn assemble(mut f: Function, code: &[Instruction]) -> Function {
 
 /// The exports an interactive program adds, in the order `interactive_exports`
 /// builds their bodies.
-const INTERACTIVE_EXPORTS: [&str; 5] = [
+const INTERACTIVE_EXPORTS: [&str; 9] = [
     "goat_setup",
     "goat_update",
     "goat_draw",
     "goat_release_model",
     "goat_shutdown",
+    "goat_snapshot",
+    "goat_refresh",
+    "goat_reason_part",
+    "goat_free_static",
 ];
 
 /// The host-facing functions of an interactive program (ADR 0015). The host
@@ -661,6 +656,19 @@ fn interactive_exports(
     };
     let (update_kind, model_kind) = (kind(update.params.first())?, kind(update.params.get(1))?);
     let draw_kind = kind(draw.params.first())?;
+    let sites_kind = match program.layouts.get(match root_kind {
+        HeapKind::Record(l) => l.0 as usize,
+        _ => return Err(EmitError::Malformed("interactive root is not a record")),
+    }) {
+        Some(Layout::Record(fields)) => match fields.get(interactive.sites_slot) {
+            Some(MTy::Ptr(kind)) => *kind,
+            _ => return Err(EmitError::Malformed("interactive root has no sites")),
+        },
+        _ => return Err(EmitError::Malformed("interactive root is not a record")),
+    };
+    let reload = &interactive.reload;
+    let node_kind = HeapKind::Variant(reload.node);
+    let outcome_kind = HeapKind::Variant(reload.outcome);
 
     let mut setup = Code::new();
     setup.extend([
@@ -671,6 +679,7 @@ fn interactive_exports(
         (interactive.draw_slot, 1),
         (interactive.init_slot, 2),
         (interactive.update_slot, 3),
+        (interactive.sites_slot, 4),
     ] {
         setup.extend([
             Instruction::LocalGet(0),
@@ -685,6 +694,8 @@ fn interactive_exports(
         Instruction::GlobalSet(DRAW_GLOBAL),
         Instruction::LocalGet(3),
         Instruction::GlobalSet(UPDATE_GLOBAL),
+        Instruction::LocalGet(4),
+        Instruction::GlobalSet(SITES_GLOBAL),
         Instruction::LocalGet(2),
     ]);
 
@@ -718,22 +729,150 @@ fn interactive_exports(
     release(shared, 0, model_kind, &mut release_code)?;
 
     let mut shutdown = Code::new();
-    for (global, kind) in [(UPDATE_GLOBAL, update_kind), (DRAW_GLOBAL, draw_kind)] {
-        shutdown.extend([Instruction::GlobalGet(global), Instruction::LocalSet(0)]);
-        release(shared, 0, kind, &mut shutdown)?;
-        shutdown.extend([Instruction::I32Const(0), Instruction::GlobalSet(global)]);
+    for (global, kind) in [
+        (UPDATE_GLOBAL, update_kind),
+        (DRAW_GLOBAL, draw_kind),
+        (SITES_GLOBAL, sites_kind),
+        (REASON_GLOBAL, node_kind),
+    ] {
+        release_global(shared, global, kind, &mut shutdown)?;
+    }
+
+    // Consumes the model (ADR 0035): the snapshot takes it apart as it goes,
+    // so the host must not release it afterwards.
+    let mut snapshot = Code::new();
+    snapshot.extend([
+        Instruction::LocalGet(0),
+        Instruction::Call(imports + reload.snapshot.0),
+    ]);
+
+    // Borrows `image` no more than it must: the rebuilt model shares what it
+    // can, and the host keeps its own `fresh` for a reset.
+    let mut refresh = Code::new();
+    retain(1, &mut refresh);
+    refresh.extend([
+        Instruction::GlobalGet(SITES_GLOBAL),
+        Instruction::LocalSet(2),
+    ]);
+    retain(2, &mut refresh);
+    refresh.extend([
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(2),
+        Instruction::Call(imports + reload.refresh.0),
+        Instruction::LocalSet(3),
+        Instruction::LocalGet(3),
+        Instruction::I32Load(memarg(layout::TAG, 2)),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::LocalGet(3),
+        Instruction::I32Load(memarg(layout::slot(layout::PAYLOAD, 0), 2)),
+        Instruction::LocalSet(4),
+    ]);
+    retain(4, &mut refresh);
+    release(shared, 3, outcome_kind, &mut refresh)?;
+    refresh.extend([Instruction::LocalGet(4), Instruction::Else]);
+    release_global(shared, REASON_GLOBAL, node_kind, &mut refresh)?;
+    refresh.extend([
+        Instruction::LocalGet(3),
+        Instruction::I32Load(memarg(layout::slot(layout::PAYLOAD, 0), 2)),
+        Instruction::LocalSet(4),
+    ]);
+    retain(4, &mut refresh);
+    refresh.extend([
+        Instruction::LocalGet(4),
+        Instruction::GlobalSet(REASON_GLOBAL),
+    ]);
+    release(shared, 3, outcome_kind, &mut refresh)?;
+    refresh.extend([Instruction::I32Const(0), Instruction::End]);
+
+    // The `index`th part of the last failed refresh's reason, valid until the
+    // next refresh: the reason holds it.
+    let mut part = Code::new();
+    let wide = program.profile == Profile::Desktop;
+    part.extend([
+        Instruction::GlobalGet(REASON_GLOBAL),
+        Instruction::LocalSet(1),
+        Instruction::LocalGet(1),
+        Instruction::If(BlockType::Result(ValType::I32)),
+    ]);
+    retain(1, &mut part);
+    part.push(Instruction::LocalGet(1));
+    part.push(Instruction::LocalGet(0));
+    if wide {
+        part.push(Instruction::I64ExtendI32U);
+    }
+    part.extend([
+        Instruction::Call(imports + reload.part.0),
+        Instruction::LocalSet(2),
+    ]);
+    release(shared, 2, HeapKind::Str, &mut part)?;
+    part.extend([
+        Instruction::LocalGet(2),
+        Instruction::Else,
+        Instruction::I32Const(0),
+        Instruction::End,
+    ]);
+
+    // Frees the block this module copied its strings, nullary cells and static
+    // closures into. Once a refresh has rebuilt the model nothing points there.
+    let mut free_static = Code::new();
+    if shared.hosted {
+        free_static.extend([
+            Instruction::GlobalGet(DATA_BASE_GLOBAL),
+            Instruction::I32Const(layout::HEADER as i32),
+            Instruction::I32Sub,
+            Instruction::LocalSet(0),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(0),
+            Instruction::I32Store(memarg(layout::RC, 2)),
+            Instruction::GlobalGet(allocator::LIVE_GLOBAL),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::GlobalSet(allocator::LIVE_GLOBAL),
+            Instruction::LocalGet(0),
+            Instruction::Call(shared.free_fn),
+            Instruction::I32Const(0),
+            Instruction::GlobalSet(DATA_BASE_GLOBAL),
+        ]);
     }
 
     Ok([
-        (4, setup),
+        (5, setup),
         (1, update_code),
         (1, draw_code),
         (0, release_code),
         (1, shutdown),
+        (0, snapshot),
+        (5, refresh),
+        (3, part),
+        (1, free_static),
     ]
     .into_iter()
     .map(|(locals, code)| assemble(Function::new([(locals, ValType::I32)]), &code))
     .collect())
+}
+
+/// Releases the reference a module global holds, if it holds one, and clears it.
+fn release_global(
+    shared: &mut Shared,
+    global: u32,
+    kind: HeapKind,
+    out: &mut Code,
+) -> Result<(), EmitError> {
+    out.extend([
+        Instruction::GlobalGet(global),
+        Instruction::LocalSet(0),
+        Instruction::LocalGet(0),
+        Instruction::If(BlockType::Empty),
+    ]);
+    release(shared, 0, kind, out)?;
+    out.extend([
+        Instruction::End,
+        Instruction::I32Const(0),
+        Instruction::GlobalSet(global),
+    ]);
+    Ok(())
 }
 
 /// An immortal string: the count never reaches zero, so it is never freed.
@@ -1848,6 +1987,105 @@ impl<'p> FuncCx<'_, 'p> {
             Expr::StrChar(s, i) => {
                 let s = self.string(*s)?;
                 self.string_char(s, *i, out)?;
+                Ok(Some(MTy::Ptr(HeapKind::Str)))
+            }
+            Expr::Addr(x) => {
+                let (ptr, _) = self.pointer(*x)?;
+                out.push(Instruction::LocalGet(ptr));
+                self.widen_unsigned(out);
+                Ok(Some(MTy::Int))
+            }
+            Expr::Shared(x) => {
+                let (ptr, _) = self.pointer(*x)?;
+                out.extend([
+                    Instruction::LocalGet(ptr),
+                    rc_load(),
+                    Instruction::I32Const(2),
+                    Instruction::I32Sub,
+                    Instruction::I32Const(-3),
+                    Instruction::I32LtU,
+                ]);
+                Ok(Some(MTy::Bool))
+            }
+            Expr::Retain(x, ty) => {
+                let &(address, held) = self.scope.get(x).ok_or(EmitError::UnboundLocal(*x))?;
+                let (Some(address), MTy::Int) = (address, held) else {
+                    return Err(EmitError::Malformed("retain of a non-address"));
+                };
+                let ptr = self.scratch(ValType::I32);
+                out.push(Instruction::LocalGet(address));
+                if self.program.profile == Profile::Desktop {
+                    out.push(Instruction::I32WrapI64);
+                }
+                out.push(Instruction::LocalSet(ptr));
+                retain(ptr, out);
+                out.push(Instruction::LocalGet(ptr));
+                Ok(Some(*ty))
+            }
+            Expr::KeepStr(s) => {
+                let s = self.string(*s)?;
+                let (len, ptr) = (self.scratch(ValType::I32), self.scratch(ValType::I32));
+                out.extend([
+                    Instruction::LocalGet(s),
+                    rc_load(),
+                    Instruction::I32Const(IMMORTAL),
+                    Instruction::I32Eq,
+                    Instruction::If(BlockType::Result(ValType::I32)),
+                    Instruction::LocalGet(s),
+                    Instruction::I32Load(memarg(layout::STR_LEN, 2)),
+                    Instruction::LocalSet(len),
+                    Instruction::LocalGet(len),
+                    Instruction::I32Const(layout::STR_BYTES as i32),
+                    Instruction::I32Add,
+                    Instruction::Call(self.shared.alloc_fn),
+                    Instruction::LocalSet(ptr),
+                    Instruction::LocalGet(ptr),
+                    Instruction::LocalGet(len),
+                    Instruction::I32Store(memarg(layout::STR_LEN, 2)),
+                    Instruction::LocalGet(ptr),
+                    Instruction::I32Const(layout::STR_BYTES as i32),
+                    Instruction::I32Add,
+                    Instruction::LocalGet(s),
+                    Instruction::I32Const(layout::STR_BYTES as i32),
+                    Instruction::I32Add,
+                    Instruction::LocalGet(len),
+                    Instruction::MemoryCopy {
+                        src_mem: 0,
+                        dst_mem: 0,
+                    },
+                    Instruction::LocalGet(ptr),
+                    Instruction::Else,
+                ]);
+                retain(s, out);
+                out.extend([Instruction::LocalGet(s), Instruction::End]);
+                Ok(Some(MTy::Ptr(HeapKind::Str)))
+            }
+            Expr::MethodKey(closure) => {
+                let (ptr, _) = self.pointer(*closure)?;
+                let code = self.scratch(ValType::I32);
+                out.extend([
+                    Instruction::LocalGet(ptr),
+                    Instruction::I32Load(memarg(layout::CODE, 2)),
+                    Instruction::LocalSet(code),
+                ]);
+                let program = self.program;
+                for site in &program.method_sites {
+                    let slot = self.shared.table_slot(self.shared.imports + site.func.0);
+                    out.extend([
+                        Instruction::LocalGet(code),
+                        Instruction::I32Const(slot as i32),
+                        Instruction::I32Eq,
+                        Instruction::If(BlockType::Result(ValType::I32)),
+                    ]);
+                    self.shared
+                        .push_data_address(self.string_address(site.key)?, out);
+                    out.push(Instruction::Else);
+                }
+                out.push(Instruction::Unreachable);
+                out.extend(std::iter::repeat_n(
+                    Instruction::End,
+                    program.method_sites.len(),
+                ));
                 Ok(Some(MTy::Ptr(HeapKind::Str)))
             }
             Expr::CallForeign(f, args) => self.call_foreign(*f, args, out),

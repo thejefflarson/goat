@@ -8,6 +8,13 @@ GoatSubst.v
 GoatBij.v
 GoatHM.v
 GoatSound.v
+GoatInfer.v
+GoatInferSub.v
+GoatInferTyp.v
+GoatInferGen.v
+GoatInferSound.v
+GoatInferRen.v
+GoatInferUnify.v
 GoatRank2.v
 GoatGrammar.v
 GoatPeg.v

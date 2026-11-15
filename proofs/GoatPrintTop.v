@@ -1,7 +1,7 @@
 (* The top rule parses a printed program, and reading the bound indices back is
    the identity on a closed term. *)
 
-From Coq Require Import String List Arith Lia.
+From Stdlib Require Import String List Arith Lia.
 Import ListNotations.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.

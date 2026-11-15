@@ -3,7 +3,7 @@
    binder's name, and each binder closes that variable again, so the term is
    recovered exactly (up to the label table). *)
 
-From Coq Require Import String List Arith Lia.
+From Stdlib Require Import String List Arith Lia.
 Import ListNotations.
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.

@@ -17,7 +17,7 @@
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 
 (* ------------------------------------------------------------------ *)
 (* L1: equivalence + congruence.                                       *)

@@ -2,7 +2,7 @@
    closed core term and the token stream the Rust printer writes for it (the
    curried style, binders named by depth). The Coq printer must agree. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatPeg.

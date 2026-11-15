@@ -271,15 +271,25 @@ const reloaded = new Uint8Array([1]);
 
 test("a reload goes to a ready interactive program and its outcome reaches the sink", () => {
   const { supervisor, events, sink, last } = harness();
-  const outcomes: string[] = [];
+  const outcomes: unknown[] = [];
   supervisor.start(interactive, { ...sink, onReloaded: (o) => outcomes.push(o), onReloadFailed: (m) => outcomes.push(m) });
   assert.equal(supervisor.reload(reloaded), false);
   last().emit({ type: "ready", subscriptions: [] });
   assert.equal(supervisor.reload(reloaded), true);
   assert.deepEqual(last().posted.at(-1)!.message, { type: "reload", module: reloaded });
-  last().emit({ type: "reloaded", outcome: "reset", subscriptions: ["KeyDown"] });
+  last().emit({
+    type: "reloaded",
+    outcome: "reset",
+    reason: { kind: "field_added", args: ["spin"] },
+    subscriptions: ["KeyDown"],
+  });
+  last().emit({ type: "reloaded", outcome: "refreshed", subscriptions: ["KeyDown"] });
   last().emit({ type: "reload_failed", message: "no" });
-  assert.deepEqual(outcomes, ["reset", "no"]);
+  assert.deepEqual(outcomes, [
+    { outcome: "reset", reason: { kind: "field_added", args: ["spin"] } },
+    { outcome: "refreshed" },
+    "no",
+  ]);
   assert.equal(supervisor.wants("KeyDown"), true);
   assert.deepEqual(events, ["ready"]);
 });
@@ -297,7 +307,7 @@ test("a restart after a stuck call runs the last module that reloaded, not one t
   supervisor.start(interactive, sink);
   last().emit({ type: "ready", subscriptions: [] });
   supervisor.reload(reloaded);
-  last().emit({ type: "reloaded", outcome: "kept", subscriptions: [] });
+  last().emit({ type: "reloaded", outcome: "refreshed", subscriptions: [] });
   supervisor.reload(failed);
   last().emit({ type: "reload_failed", message: "no" });
   last().heartbeat.enter();

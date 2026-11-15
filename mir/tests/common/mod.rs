@@ -48,6 +48,7 @@ pub fn program(funcs: Vec<Func>) -> Program {
         data: vec![],
         foreign: vec![],
         interactive: None,
+        method_sites: vec![],
     }
 }
 

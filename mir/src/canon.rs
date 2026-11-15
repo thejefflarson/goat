@@ -34,7 +34,7 @@ pub fn ground_fields(row: &Row) -> impl Iterator<Item = (&String, &Ty)> {
     })
 }
 
-fn row_from(fields: Vec<(String, Ty)>) -> Row {
+pub(crate) fn row_from(fields: Vec<(String, Ty)>) -> Row {
     fields
         .into_iter()
         .rev()

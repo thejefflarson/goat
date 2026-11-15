@@ -130,7 +130,7 @@ Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatBij.
 Require Import Goat.GoatHM.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 Import ListNotations.
 
 (* ===== free-variable image of a substitution (membership form) ===== *)

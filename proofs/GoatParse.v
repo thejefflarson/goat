@@ -5,7 +5,7 @@
    rules outside the fragment (rule_map.rs lists them), and the Rust lowering
    are not covered. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.

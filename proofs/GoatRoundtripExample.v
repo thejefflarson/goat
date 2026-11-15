@@ -1,6 +1,6 @@
 (* The hypotheses of T3 are satisfiable, and the labels one is not vacuous. *)
 
-From Coq Require Import String List Lia.
+From Stdlib Require Import String List Lia.
 Import ListNotations.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatGrammar.

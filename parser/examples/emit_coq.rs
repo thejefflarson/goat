@@ -53,7 +53,7 @@ fn main() {
     let mut out = String::new();
     out.push_str(
         "(* Generated from grammar/goat.peg by parser/examples/emit_coq.rs; do not edit. *)\n\
-         From Coq Require Import String.\n\
+         From Stdlib Require Import String.\n\
          Open Scope string_scope.\n\n\
          Inductive terminal : Type :=\n  | T_text (s : string)\n  | T_name\n  | T_number\n  | T_string\n  | T_eoi.\n\n\
          Inductive rule : Type :=\n",

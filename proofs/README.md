@@ -58,15 +58,17 @@ the metatheory needs. Type and row variables remain a free-variable set
 
 ## Build
 
-Needs an opam switch with Coq 8.20.1, Ott 0.34, and metalib (not on opam —
-pinned from `github.com/plclub/metalib`). With those on `PATH`:
+Needs an opam switch with Rocq 9.1.1 (the opam `coq.9.1.1` package), Ott 0.34,
+and metalib (not on opam — pinned from `github.com/plclub/metalib` at
+`144ddcd0fff6717229140314cf559d85fad6eae0`). Rocq 9.2 and 9.3 fail to build
+metalib. With those on `PATH` (or under `opam exec --switch=rocq-9 --`):
 
 ```
-make        # regenerate Goat_ott.v from goat_ln.ott, then compile under coqc
+make        # regenerate Goat_ott.v from goat_ln.ott, then compile under Rocq
 make ci     # check the committed Goat_ott.v matches the source, then compile
 ```
 
-metalib installs onto Coq's `user-contrib` path, so no extra `-R` is needed for
+metalib installs onto Rocq's `user-contrib` path, so no extra `-R` is needed for
 it; `_CoqProject` maps this directory to the logical name `Goat`.
 
 ## Why two Ott files
@@ -297,8 +299,9 @@ a `var_of` that gives the printer's binder names `v0`, `v1`, ... distinct atoms
 
 ## CI
 
-`.github/workflows/coq.yml` builds this directory under `coqc` in the
-`coqorg/coq:8.20` image, installing Ott and metalib first. It triggers only on
+`.github/workflows/coq.yml` builds this directory under Rocq on the self-hosted
+runner image, in its baked `rocq-9` opam switch (Rocq 9.1.1, Ott 0.34, metalib).
+The job fails with the expected versions when the switch is missing. It triggers only on
 changes under `proofs/**` (or to the workflow), plus manual dispatch, so
 ordinary Rust PRs do not pay for a Coq image. It is intended as an
 informational check, not a required one — promote it in branch protection once

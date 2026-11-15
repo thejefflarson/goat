@@ -31,7 +31,7 @@ Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatMeta.
-Require Import Coq.Lists.List.
+Require Import Stdlib.Lists.List.
 
 (* ================= type-substitution algebra (from L5 groundwork) ========== *)
 

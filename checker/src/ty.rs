@@ -122,6 +122,27 @@ impl Group {
 }
 
 impl Row {
+    fn find_plain_func(&self) -> Option<&Ty> {
+        match self {
+            Row::Empty | Row::Var(_) => None,
+            Row::Extend {
+                field,
+                method,
+                rest,
+                ..
+            }
+            | Row::Maybe {
+                field,
+                method,
+                rest,
+                ..
+            } => (**method != METHOD)
+                .then(|| field.find_plain_func())
+                .flatten()
+                .or_else(|| rest.find_plain_func()),
+        }
+    }
+
     /// A closed row of `fields`, in order.
     pub fn of(
         fields: impl IntoIterator<Item = (String, Ty), IntoIter: DoubleEndedIterator>,
@@ -178,11 +199,14 @@ impl Ty {
     }
 
     /// The first function type in this type, looking inside records, variant
-    /// payloads and recursive bodies.
-    pub fn find_func(&self) -> Option<&Ty> {
+    /// payloads and recursive bodies, but not at a record field flagged
+    /// [`METHOD`]: the model may hold those.
+    pub fn find_plain_func(&self) -> Option<&Ty> {
         match self {
             Ty::Func(..) => Some(self),
-            _ => self.children().into_iter().find_map(Ty::find_func),
+            Ty::Record(row) | Ty::Variant(row) => row.find_plain_func(),
+            Ty::Rec(_, body) => body.find_plain_func(),
+            Ty::Var(_) | Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => None,
         }
     }
 

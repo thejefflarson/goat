@@ -14,7 +14,7 @@
    each binder by its depth, so no name repeats, and the model reads a binding
    as the non-recursive [let] of the Ott source. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatGrammar.

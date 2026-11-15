@@ -2,7 +2,7 @@
    interpreter of the PEG relation, sound for it, parses two small programs, and
    the trees it builds are in the core fragment. *)
 
-From Coq Require Import String List.
+From Stdlib Require Import String List.
 Import ListNotations.
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
