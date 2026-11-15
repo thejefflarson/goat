@@ -221,7 +221,7 @@ Qed.
 
 Definition WfSch (s : scheme) : Prop :=
   (forall a, a `in` s_tq s -> od a) /\ (forall r, r `in` s_rq s -> od r) /\
-  EvS (ftv_sch s) /\ EvS (frv_sch s).
+  EvS (ftv_sch s) /\ EvS (frv_sch s) /\ (forall a, s_sk s a = k_Any).
 
 Definition WfCtx (G : ctx) : Prop :=
   uniq G /\ forall x s, binds x s G -> WfSch s.
@@ -245,10 +245,10 @@ Qed.
 
 Lemma WfSch_ap : forall s sc, OkS s -> WfSch sc -> WfSch (apS s sc).
 Proof.
-  intros s sc Hs (Hq & Hr & Hf & Hfr).
+  intros s sc Hs (Hq & Hr & Hf & Hfr & Hk).
   pose proof Hs as Hs0.
   destruct Hs as [_ [Ht [Hrw [Hfx Hfxr]]]].
-  unfold WfSch, apS. simpl. split; [exact Hq|]. split; [exact Hr|]. split.
+  unfold WfSch, apS. simpl. split; [exact Hq|]. split; [exact Hr|]. split; [ | split ].
   - intros a Ha. unfold ftv_sch in Ha. simpl in Ha.
     apply AtomSetFacts.diff_iff in Ha. destruct Ha as [Ha Hnq].
     apply ftv_ap_typ in Ha. destruct Ha as [[b [Hb Ha]]|[p [Hp Ha]]].
@@ -277,6 +277,7 @@ Proof.
         apply AtomSetFacts.singleton_iff in Ha. subst. contradiction.
       * assert (Hp' : p `in` frv_sch sc) by (unfold frv_sch; apply AtomSetFacts.diff_iff; auto).
         exact (proj2 (Hrw p (Hfr p Hp')) a Ha).
+  - exact Hk.
 Qed.
 
 Lemma binds_apC_inv : forall s x sc G,

@@ -1203,6 +1203,29 @@ Proof.
     + unfold idr; simpl. fsetdec.
 Qed.
 
+(* Every variable is [Any] in [d_any], so a substitution that fixes the
+   context's variables and has finite support preserves typing there. *)
+Lemma typing_tsubst_fix : forall G e T st sr A,
+  typing d_any G e T -> tr_supp st sr A ->
+  (forall a, a `in` ftv_ctx G -> st a = typ_Var a) ->
+  (forall r, r `in` frv_ctx G -> sr r = row_Var r) ->
+  typing d_any G e (ap_typ st sr T).
+Proof.
+  intros G e T st sr A Hty Hsupp Hfa Hfr.
+  apply (proj1 typing_tsubst_gen_mut d_any G e T Hty st sr G d_any A {} {}).
+  - eapply typing_uniq; exact Hty.
+  - intros a _. reflexivity.
+  - intros a _. reflexivity.
+  - intros a. apply sat_any.
+  - apply ctx_subst_fix; assumption.
+  - exact Hsupp.
+  - unfold tr_compat. repeat split.
+    + intros a Ha. rewrite (Hfa a Ha). simpl. fsetdec.
+    + intros a Ha. rewrite (Hfa a Ha). simpl. fsetdec.
+    + intros r Hr. rewrite (Hfr r Hr). simpl. fsetdec.
+    + intros r Hr. rewrite (Hfr r Hr). simpl. fsetdec.
+Qed.
+
 (* A value typed at the body of a generalization has every instance of the
    generalization.  The bound term is typed under the environment extended
    with the sorts the scheme records; the instance is typed in an environment

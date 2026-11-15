@@ -34,7 +34,7 @@ Qed.
 Lemma frv_ctx_even : forall G a, WfCtx G -> a `in` frv_ctx G -> ev a.
 Proof.
   intros G a [Hu Hw] Ha. destruct (frv_ctx_has _ _ Ha) as [x [sc [Hb Hin]]].
-  exact ((proj2 (proj2 (proj2 (Hw _ _ Hb)))) a Hin).
+  exact ((proj1 (proj2 (proj2 (proj2 (Hw _ _ Hb))))) a Hin).
 Qed.
 
 (* ------------------------------------------------------------------ *)
@@ -42,12 +42,12 @@ Qed.
 (* ------------------------------------------------------------------ *)
 
 Lemma instantiate_sound : forall sc n T n',
-  instantiate sc n = (T, n') -> WfSch sc -> inst T sc /\ EvT T.
+  instantiate sc n = (T, n') -> WfSch sc -> inst d_any T sc /\ EvT T.
 Proof.
-  intros sc n T n' H (Hq & Hr & Hf & Hfr).
+  intros sc n T n' H (Hq & Hr & Hf & Hfr & Hk).
   unfold instantiate in H. inversion H; subst T n'; clear H.
   split.
-  - exists (sT (inst_sub sc n)), (sR (inst_sub sc n)). split; [|split].
+  - exists (sT (inst_sub sc n)), (sR (inst_sub sc n)). split; [|split; [|split]].
     + intros a Ha. unfold inst_sub; cbn [sT].
       destruct (in_dec Atom.eq_dec a (AtomSetImpl.elements (s_tq sc))) as [Hin|Hin];
         [ apply In_elements in Hin; contradiction | reflexivity ].
@@ -55,6 +55,7 @@ Proof.
       destruct (in_dec Atom.eq_dec r (AtomSetImpl.elements (s_rq sc))) as [Hin|Hin];
         [ apply In_elements in Hin; contradiction | reflexivity ].
     + reflexivity.
+    + intros a Ha. rewrite (Hk a). apply sat_any.
   - split; intros c Hc.
     + apply ftv_ap_typ in Hc. destruct Hc as [[b [Hb Hc]]|[p [Hp Hc]]].
       * unfold inst_sub in Hc; cbn [sT] in Hc.
@@ -171,18 +172,25 @@ Proof. intros a Ha. apply gen_ren_rq in Ha. destruct Ha as [b [_ ->]]. apply od_
 
 Lemma gen_ren_wf : EvT T -> WfSch (gen_ren G T).
 Proof.
-  intros [HT1 HT2]. split; [exact gen_ren_od_t | split; [exact gen_ren_od_r | split]].
+  intros [HT1 HT2]. split; [exact gen_ren_od_t | split; [exact gen_ren_od_r | split; [ | split ]]].
   - intros a Ha. unfold ftv_sch in Ha. apply AtomSetFacts.diff_iff in Ha. destruct Ha as [Ha Hnq].
     destruct (body_ftv a Ha) as [H|[H _]]; [contradiction | exact (HT1 a H)].
   - intros a Ha. unfold frv_sch in Ha. apply AtomSetFacts.diff_iff in Ha. destruct Ha as [Ha Hnq].
     destruct (body_frv a Ha) as [H|[H _]]; [contradiction | exact (HT2 a H)].
+  - intros a. reflexivity.
 Qed.
 
 (* A derivation for the type carries over to the renamed type. *)
 Lemma typing_gen_ren : forall e,
-  typing G e T -> typing G e (s_body (gen_ren G T)).
+  typing d_any G e T -> typing d_any G e (s_body (gen_ren G T)).
 Proof.
-  intros e Hty. rewrite gen_body. apply typing_tsubst_fix; [exact Hty | | ].
+  intros e Hty. rewrite gen_body.
+  apply typing_tsubst_fix with (A := aset la `union` aset lr); [exact Hty | | | ].
+  - split.
+    + intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a la) as [Hin|Hin]; [ | reflexivity ].
+      exfalso. apply Ha. apply AtomSetFacts.union_iff. left. apply aset_in. exact Hin.
+    + intros r Ha. unfold rename_r. destruct (in_dec Atom.eq_dec r lr) as [Hin|Hin]; [ | reflexivity ].
+      exfalso. apply Ha. apply AtomSetFacts.union_iff. right. apply aset_in. exact Hin.
   - intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a la) as [Hin|Hin];
       [ apply In_la in Hin; destruct Hin as [_ Hin]; contradiction | reflexivity ].
   - intros a Ha. unfold rename_r. destruct (in_dec Atom.eq_dec a lr) as [Hin|Hin];
@@ -192,7 +200,7 @@ Qed.
 (* Substituting after generalizing is generalizing after substituting. *)
 Lemma gen_ren_equiv : forall s, OkS s -> WfCtx G -> EvT T ->
   sch_equiv (apS s (gen_ren G T))
-            (gen (apC s G) (apT s (s_body (gen_ren G T)))).
+            (gen (apC s G) (apT s (s_body (gen_ren G T))) (fun _ => k_Any)).
 Proof.
   intros s Hs HG HT.
   pose proof (tr_compat_apC s G Hs HG) as (C1 & C2 & C3 & C4).
@@ -200,7 +208,7 @@ Proof.
   pose proof Hs as Hs0.
   destruct Hs as [_ [Ht [Hrw [Hfx Hfxr]]]].
   unfold sch_equiv, gen. cbn [apS s_tq s_rq s_body].
-  split; [|split; [|reflexivity]].
+  split; [|split; [|split; [ reflexivity | intros a Ha; reflexivity ]]].
   - intros a. split.
     + intros Ha. apply AtomSetFacts.diff_iff. split.
       * unfold apT. eapply ftv_ap_in1; [ apply tq_in_body; exact Ha | ].

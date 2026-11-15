@@ -40,7 +40,7 @@ Qed.
 Lemma sch_subst_apS : forall s sc, OkS s -> WfSch sc ->
   sch_subst (sT s) (sR s) sc (apS s sc).
 Proof.
-  intros s sc Hs (Hq & Hr & Hf & Hfr) D D' Hk W [pt [pr [Hpt [Hpr [HW Hsat]]]]].
+  intros s sc Hs (Hq & Hr & Hf & Hfr & Hk0) D D' Hk W [pt [pr [Hpt [Hpr [HW Hsat]]]]].
   pose proof Hs as Hs0.
   destruct Hs as [_ [Ht [Hrw [Hfx Hfxr]]]].
   set (pt' := fun a => if AtomSetImpl.mem a (s_tq sc)
@@ -102,7 +102,7 @@ Proof.
     assert (Hct : forall a, a `in` ftv_ctx G -> ev a ->
               ftv_typ (sT s a) [<=] ftv_ctx (apC s G) /\ frv_typ (sT s a) [<=] frv_ctx (apC s G)).
     { intros a Ha Hev. destruct (ftv_ctx_has _ _ Ha) as [x [sc [Hb Hin]]].
-      pose proof (Hw _ _ Hb) as (Hq & Hr & Hf & Hfr).
+      pose proof (Hw _ _ Hb) as (Hq & Hr & Hf & Hfr & Hk0).
       assert (Hbs := binds_apC s _ _ _ Hb).
       pose proof (binds_ftv_sch _ _ _ Hbs) as Hsub1.
       pose proof (binds_frv_sch _ _ _ Hbs) as Hsub2.
@@ -118,7 +118,7 @@ Proof.
     assert (Hcr : forall r, r `in` frv_ctx G -> ev r ->
               ftv_row (sR s r) [<=] ftv_ctx (apC s G) /\ frv_row (sR s r) [<=] frv_ctx (apC s G)).
     { intros r Hr0 Hev. destruct (frv_ctx_has _ _ Hr0) as [x [sc [Hb Hin]]].
-      pose proof (Hw _ _ Hb) as (Hq & Hr & Hf & Hfr).
+      pose proof (Hw _ _ Hb) as (Hq & Hr & Hf & Hfr & Hk0).
       assert (Hbs := binds_apC s _ _ _ Hb).
       pose proof (binds_ftv_sch _ _ _ Hbs) as Hsub1.
       pose proof (binds_frv_sch _ _ _ Hbs) as Hsub2.
@@ -137,7 +137,7 @@ Proof.
       exact ((proj1 (proj2 (proj2 (Hw _ _ Hb)))) a Hin). }
     assert (Hevr : forall r, r `in` frv_ctx G -> ev r).
     { intros r Ha. destruct (frv_ctx_has _ _ Ha) as [x [sc [Hb Hin]]].
-      exact ((proj2 (proj2 (proj2 (Hw _ _ Hb)))) r Hin). }
+      exact ((proj1 (proj2 (proj2 (proj2 (Hw _ _ Hb))))) r Hin). }
     unfold tr_compat. repeat split.
     + intros a Ha. exact (proj1 (Hct a Ha (Hevc a Ha))).
     + intros a Ha. exact (proj2 (Hct a Ha (Hevc a Ha))).
