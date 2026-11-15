@@ -189,6 +189,8 @@ Proof.
     eapply peg_star_cons;
       [ apply decl_parses; exact (value_fin _ _ (IHv n P Hv))
       | exact (Hstar r Hr) | reflexivity ].
+  - (* recursive group: not a term of the printed fragment *)
+    intros fs IHfs b IHb n P Hs. destruct Hs.
   - (* record *)
     intros fs IHfs n P Hs. apply blk_chain; [ exact I | ].
     exact (chain_prim _ (prim_record _ _ (IHfs n P Hs))).

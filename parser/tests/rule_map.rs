@@ -173,10 +173,12 @@ fn every_ott_production_is_reached_by_some_core_rule() {
         // `if` without an `else` lowers its missing branch to. `e_dec` is an
         // opaque Float value, which the parser fragment never writes (a
         // decimal literal has no payload in the Coq token). `e_tofloat` is
-        // inserted by elaboration, so no source text parses to it.
+        // inserted by elaboration, so no source text parses to it. `e_letrec`
+        // is a recursive group, which elaboration builds from the function
+        // bindings of a scope (ADR 0003); the parse reads each as a `let`.
         if !matches!(
             production.as_str(),
-            "e" | "fs" | "fs_nil" | "e_unit" | "e_dec" | "e_tofloat"
+            "e" | "fs" | "fs_nil" | "e_unit" | "e_dec" | "e_tofloat" | "e_letrec"
         ) {
             assert!(
                 reached.contains(production.as_str()),

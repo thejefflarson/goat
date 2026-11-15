@@ -33,6 +33,7 @@ Fixpoint lc_at (n : nat) (e : exp) {struct e} : Prop :=
   | e_abs e => lc_at (S n) e
   | e_app a b => lc_at n a /\ lc_at n b
   | e_let a b => lc_at n a /\ lc_at (S n) b
+  | e_letrec fs e2 => lcf_at (S n) fs /\ lc_at (S n) e2
   | e_rec fs => lcf_at n fs
   | e_proj e _ => lc_at n e
   | e_unit => True
@@ -67,6 +68,8 @@ Proof.
       [ apply (IHa m n) | apply (IHb m n) ]; auto.
   - (* let *) intros a IHa b IHb m n Hle [H1 H2]; simpl; split;
       [ apply (IHa m n Hle H1) | apply (IHb (S m) (S n)); [ lia | auto ] ].
+  - (* letrec *) intros fs IHfs e2 IHe2 m n Hle [H1 H2]; simpl; split;
+      [ apply (IHfs (S m) (S n)); [ lia | auto ] | apply (IHe2 (S m) (S n)); [ lia | auto ] ].
   - (* rec *) intros fs IH m n Hle H; simpl in *; apply (IH m n Hle H).
   - (* proj *) intros e0 IH l m n Hle H; simpl in *; apply (IH m n Hle H).
   - (* unit *) intros; simpl; auto.
@@ -102,6 +105,8 @@ Proof.
       split; [ apply (IHa n x H1) | apply (IHb n x H2) ].
   - (* let *) intros a IHa b IHb n x H; simpl in *; destruct H as [H1 H2];
       split; [ apply (IHa n x H1) | apply (IHb (S n) x H2) ].
+  - (* letrec *) intros fs IHfs e2 IHe2 n x H; simpl in *; destruct H as [H1 H2];
+      split; [ apply (IHfs (S n) x H1) | apply (IHe2 (S n) x H2) ].
   - (* rec *) intros fs IH n x H; simpl in *; apply (IH n x H).
   - (* proj *) intros e0 IH l n x H; simpl in *; apply (IH n x H).
   - (* unit *) intros; simpl; auto.
@@ -118,6 +123,10 @@ Qed.
 
 Lemma lc_at_open_inv : forall e n x,
   lc_at n (open_exp_wrt_exp_rec n (e_fvar_f x) e) -> lc_at (S n) e.
+Proof. apply lc_at_open_inv_mut. Qed.
+
+Lemma lcf_at_open_inv : forall fs n x,
+  lcf_at n (open_fields_wrt_exp_rec n (e_fvar_f x) fs) -> lcf_at (S n) fs.
 Proof. apply lc_at_open_inv_mut. Qed.
 
 (* a locally-closed term is unaffected by opening at any index >= its level *)
@@ -139,6 +148,8 @@ Proof.
       [ apply (IHa n H1 k w Hle) | apply (IHb n H2 k w Hle) ].
   - (* let *) intros a IHa b IHb n [H1 H2] k w Hle; simpl; f_equal;
       [ apply (IHa n H1 k w Hle) | apply (IHb (S n) H2 (S k) w); lia ].
+  - (* letrec *) intros fs IHfs e2 IHe2 n [H1 H2] k w Hle; simpl; f_equal;
+      [ apply (IHfs (S n) H1 (S k) w); lia | apply (IHe2 (S n) H2 (S k) w); lia ].
   - (* rec *) intros fs IH n H k w Hle; simpl in *; f_equal; apply (IH n H k w Hle).
   - (* proj *) intros e0 IH l n H k w Hle; simpl in *; f_equal; apply (IH n H k w Hle).
   - (* unit *) intros; simpl; reflexivity.
@@ -195,6 +206,8 @@ Proof.
       [ apply IHa | apply IHb ]; fsetdec.
   - (* let *) intros a IHa b IHb x v k Hfv; simpl in *; f_equal;
       [ apply IHa | apply IHb ]; fsetdec.
+  - (* letrec *) intros fs IHfs e2 IHe2 x v k Hfv; simpl in *; f_equal;
+      [ apply IHfs | apply IHe2 ]; fsetdec.
   - (* rec *) intros fs IH x v k Hfv; simpl in *; f_equal; apply IH; auto.
   - (* proj *) intros e0 IH l x v k Hfv; simpl in *; f_equal; apply IH; auto.
   - (* unit *) intros; reflexivity.
@@ -214,6 +227,13 @@ Lemma subst_intro : forall e x v,
   open_exp_wrt_exp e v = subst_exp v x (open_exp_wrt_exp e (e_fvar_f x)).
 Proof.
   intros. unfold open_exp_wrt_exp. apply (proj1 subst_intro_rec_mut); auto.
+Qed.
+
+Lemma subst_intro_fields : forall fs x v,
+  x `notin` fv_fields fs ->
+  open_fields_wrt_exp fs v = subst_fields v x (open_fields_wrt_exp fs (e_fvar_f x)).
+Proof.
+  intros. unfold open_fields_wrt_exp. apply (proj2 subst_intro_rec_mut); auto.
 Qed.
 
 (* substitution commutes with opening (needs the substituted term lc) *)
@@ -245,6 +265,8 @@ Proof.
       [ apply IHa | apply IHb ]; auto.
   - (* let *) intros a IHa b IHb u x w k Hlc; simpl; f_equal;
       [ apply IHa | apply IHb ]; auto.
+  - (* letrec *) intros fs IHfs e2 IHe2 u x w k Hlc; simpl; f_equal;
+      [ apply IHfs | apply IHe2 ]; auto.
   - (* rec *) intros fs IH u x w k Hlc; simpl; f_equal; apply IH; auto.
   - (* proj *) intros e0 IH l u x w k Hlc; simpl; f_equal; apply IH; auto.
   - (* unit *) intros; reflexivity.
@@ -268,6 +290,129 @@ Proof.
   rewrite (proj1 subst_open_rec_mut) by assumption.
   rewrite subst_neq by congruence. reflexivity.
 Qed.
+
+Lemma subst_open_fields_var : forall fs u x y,
+  y <> x -> lc u ->
+  subst_fields u x (open_fields_wrt_exp fs (e_fvar_f y)) =
+  open_fields_wrt_exp (subst_fields u x fs) (e_fvar_f y).
+Proof.
+  intros fs u x y Hneq Hlc. unfold open_fields_wrt_exp.
+  rewrite (proj2 subst_open_rec_mut) by assumption.
+  rewrite subst_neq by congruence. reflexivity.
+Qed.
+
+(* ================================================================== *)
+(* The value restriction is stable under substituting or opening with a  *)
+(* syntactic value, and a recursive group stays a group of functions.     *)
+(* ================================================================== *)
+
+Lemma is_gen_subst_mut :
+  (forall e u x, is_gen_value u = true -> is_gen_value e = true ->
+     is_gen_value (subst_exp u x e) = true) /\
+  (forall fs u x, is_gen_value u = true -> is_gen_fields fs = true ->
+     is_gen_fields (subst_fields u x fs) = true).
+Proof.
+  apply exp_fields_mutind.
+  - (* fvar_b *) intros; reflexivity.
+  - (* fvar_f *) intros y u x Hu He. simpl.
+    destruct (eq_var y x); [ exact Hu | reflexivity ].
+  - intros; reflexivity.
+  - intros; reflexivity.
+  - intros; reflexivity.
+  - intros; reflexivity.
+  - (* abs *) intros; reflexivity.
+  - (* app *) intros a IHa b IHb u x Hu He; discriminate He.
+  - (* let *) intros a IHa b IHb u x Hu He; discriminate He.
+  - (* letrec *) intros fs IHfs e2 IHe2 u x Hu He. simpl in He |- *.
+    apply andb_prop in He. destruct He as [H1 H2].
+    rewrite (IHfs u x Hu H1), (IHe2 u x Hu H2). reflexivity.
+  - (* rec *) intros fs IH u x Hu He. simpl in He |- *. apply IH; assumption.
+  - (* proj *) intros e0 IH l u x Hu He; discriminate He.
+  - intros; reflexivity.
+  - intros; reflexivity.
+  - (* ite *) intros a IHa b IHb c IHc u x Hu He; discriminate He.
+  - (* bin *) intros a IHa o b IHb u x Hu He; discriminate He.
+  - (* tofloat *) intros e0 IH u x Hu He. simpl in He |- *. apply IH; assumption.
+  - (* fs_nil *) intros; reflexivity.
+  - (* fs_cons *) intros l e0 IHe fs0 IHfs u x Hu He. simpl in He |- *.
+    apply andb_prop in He. destruct He as [H1 H2].
+    rewrite (IHe u x Hu H1), (IHfs u x Hu H2). reflexivity.
+Qed.
+
+Lemma is_gen_subst : forall e u x,
+  is_gen_value u = true -> is_gen_value e = true ->
+  is_gen_value (subst_exp u x e) = true.
+Proof. apply is_gen_subst_mut. Qed.
+
+Lemma is_gen_open_mut :
+  (forall e u k, is_gen_value u = true -> is_gen_value e = true ->
+     is_gen_value (open_exp_wrt_exp_rec k u e) = true) /\
+  (forall fs u k, is_gen_value u = true -> is_gen_fields fs = true ->
+     is_gen_fields (open_fields_wrt_exp_rec k u fs) = true).
+Proof.
+  apply exp_fields_mutind.
+  - (* fvar_b *) intros i u k Hu He. cbn [open_exp_wrt_exp_rec].
+    destruct (lt_eq_lt_dec i k) as [[?|?]|?]; first [ exact Hu | reflexivity ].
+  - intros; reflexivity.
+  - intros; reflexivity.
+  - intros; reflexivity.
+  - intros; reflexivity.
+  - intros; reflexivity.
+  - (* abs *) intros; reflexivity.
+  - (* app *) intros a IHa b IHb u k Hu He; discriminate He.
+  - (* let *) intros a IHa b IHb u k Hu He; discriminate He.
+  - (* letrec *) intros fs IHfs e2 IHe2 u k Hu He. simpl in He |- *.
+    apply andb_prop in He. destruct He as [H1 H2].
+    rewrite (IHfs u (S k) Hu H1), (IHe2 u (S k) Hu H2). reflexivity.
+  - (* rec *) intros fs IH u k Hu He. simpl in He |- *. apply IH; assumption.
+  - (* proj *) intros e0 IH l u k Hu He; discriminate He.
+  - intros; reflexivity.
+  - intros; reflexivity.
+  - (* ite *) intros a IHa b IHb c IHc u k Hu He; discriminate He.
+  - (* bin *) intros a IHa o b IHb u k Hu He; discriminate He.
+  - (* tofloat *) intros e0 IH u k Hu He. simpl in He |- *. apply IH; assumption.
+  - (* fs_nil *) intros; reflexivity.
+  - (* fs_cons *) intros l e0 IHe fs0 IHfs u k Hu He. simpl in He |- *.
+    apply andb_prop in He. destruct He as [H1 H2].
+    rewrite (IHe u k Hu H1), (IHfs u k Hu H2). reflexivity.
+Qed.
+
+Lemma is_gen_open : forall e u,
+  is_gen_value u = true -> is_gen_value e = true ->
+  is_gen_value (open_exp_wrt_exp e u) = true.
+Proof. intros. apply (proj1 is_gen_open_mut); assumption. Qed.
+
+Lemma is_gen_open_fields : forall fs u,
+  is_gen_value u = true -> is_gen_fields fs = true ->
+  is_gen_fields (open_fields_wrt_exp fs u) = true.
+Proof. intros. apply (proj2 is_gen_open_mut); assumption. Qed.
+
+Lemma fn_group_subst : forall fs u x,
+  fn_group fs -> fn_group (subst_fields u x fs).
+Proof. induction 1; simpl; constructor; assumption. Qed.
+
+Lemma fn_group_open : forall fs u k,
+  fn_group fs -> fn_group (open_fields_wrt_exp_rec k u fs).
+Proof. induction 1; simpl; constructor; assumption. Qed.
+
+Lemma fn_group_gen : forall fs, fn_group fs -> is_gen_fields fs = true.
+Proof. induction 1; simpl; auto. Qed.
+
+Scheme value_mut := Induction for value Sort Prop
+with   rec_value_mut := Induction for rec_value Sort Prop.
+Combined Scheme value_rec_value_mutind from value_mut, rec_value_mut.
+
+Lemma value_gen_mut :
+  (forall v, value v -> is_gen_value v = true) /\
+  (forall fs, rec_value fs -> is_gen_fields fs = true).
+Proof.
+  apply value_rec_value_mutind; try (intros; reflexivity).
+  - intros fs Hrv IH. simpl. exact IH.
+  - intros l v fs Hv IHv Hrv IHrv. simpl. rewrite IHv, IHrv. reflexivity.
+Qed.
+
+Lemma value_gen : forall v, value v -> is_gen_value v = true.
+Proof. apply value_gen_mut. Qed.
 
 (* ================================================================== *)
 (* Mutual induction principle for the typing relation.                  *)
@@ -295,10 +440,19 @@ Proof.
     pick fresh x for L.
     apply (lc_at_open_inv e 0 x). unfold open_exp_wrt_exp in IH. apply IH; auto.
   - (* T_App *) intros G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2; simpl; split; assumption.
-  - (* T_Let *) intros L G e1 e2 T1 T2 Hty1 IH1 Hpre IH2; simpl; split.
+  - (* T_Let *) intros L G e1 e2 T1 T2 Hgv Hty1 IH1 Hpre IH2; simpl; split.
     + assumption.
     + pick fresh x for L.
       apply (lc_at_open_inv e2 0 x). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
+  - (* T_LetMono *) intros L G e1 e2 T1 T2 Hty1 IH1 Hpre IH2; simpl; split.
+    + assumption.
+    + pick fresh x for L.
+      apply (lc_at_open_inv e2 0 x). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
+  - (* T_Letrec *) intros L G fs e2 R T Hfg Hfs IHfs Hpre IH2; simpl; split.
+    + pick fresh p for L.
+      apply (lcf_at_open_inv fs 0 p). unfold open_fields_wrt_exp in IHfs. apply IHfs; auto.
+    + pick fresh p for L.
+      apply (lc_at_open_inv e2 0 p). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
   - (* T_Record *) intros G fs R Hft IH; simpl; assumption.
   - (* T_Proj *) intros G e l T R Hty IH; simpl; assumption.
   - (* T_Conv *) intros G e T T' Hty IH Hteq; simpl; assumption.
@@ -540,11 +694,21 @@ Proof.
     + right. exists k. apply tr_app1; auto.
   - (* Case: [let x = e1 in e2].  If [e1] is finished, plug it into [e2]
        (st_letv); otherwise step [e1] (st_let1) or propagate its trap. *)
+    intros L G e1 e2 T1 T2 Hgv Hty1 IH1 Hbody IH2 HG; subst.
+    right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk]]].
+    + left. exists (open_exp_wrt_exp e2 e1). apply st_letv; auto.
+    + left. exists (e_let e1' e2). apply st_let1; auto.
+    + right. exists k. apply tr_let1; auto.
+  - (* T_LetMono: the same, the binding is just not generalized. *)
     intros L G e1 e2 T1 T2 Hty1 IH1 Hbody IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk]]].
     + left. exists (open_exp_wrt_exp e2 e1). apply st_letv; auto.
     + left. exists (e_let e1' e2). apply st_let1; auto.
     + right. exists k. apply tr_let1; auto.
+  - (* Case: a recursive group.  Never a value; it unrolls at once
+       (st_letrec), because its members are functions. *)
+    intros L G fs e2 R T Hfg Hfs IHfs Hbody IH2 HG; subst.
+    right; left. eexists. apply st_letrec; exact Hfg.
   - (* Case: a record.  Finished if every field is; otherwise a field steps
        or traps.  The field list has its own companion claim (second half of
        the statement), which [IH] provides. *)
@@ -657,20 +821,46 @@ Proof.
     exists L, T1, T2. split; try assumption. eauto using teq_trans.
 Qed.
 
+(* A [let] is typed either with its binding generalized (it is a syntactic
+   value) or monomorphic. *)
 Lemma let_inv : forall G e1 e2 T,
   typing G (e_let e1 e2) T ->
   exists (L : vars) T1 T2,
     typing G e1 T1 /\
-    (forall x, x `notin` L ->
-       typing ((x ~ gen G T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) /\
+    ((is_gen_value e1 = true /\
+      forall x, x `notin` L ->
+        typing ((x ~ gen G T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) \/
+     (forall x, x `notin` L ->
+        typing ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2)) /\
     teq T2 T.
 Proof.
   intros G e1 e2 T H. remember (e_let e1 e2) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Let *) inversion He; subst. exists L, T1, T2.
     repeat split; auto using teq_refl.
+  - (* T_LetMono *) inversion He; subst. exists L, T1, T2.
+    repeat split; auto using teq_refl.
   - (* T_Conv *) destruct (IHtyping He) as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
     exists L, T1, T2. repeat split; try assumption. eauto using teq_trans.
+Qed.
+
+Lemma letrec_inv : forall G fs e2 T,
+  typing G (e_letrec fs e2) T ->
+  exists (L : vars) R T2,
+    fn_group fs /\
+    (forall p, p `notin` L ->
+       field_typing ((p ~ sch_mono (typ_Record R)) ++ G)
+         (open_fields_wrt_exp fs (e_fvar_f p)) R) /\
+    (forall p, p `notin` L ->
+       typing ((p ~ gen G (typ_Record R)) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T2) /\
+    teq T2 T.
+Proof.
+  intros G fs e2 T H. remember (e_letrec fs e2) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_Letrec *) inversion He; subst. exists L, R, T.
+    repeat split; auto using teq_refl.
+  - (* T_Conv *) destruct (IHtyping He) as [L [R [T2 [Hfg [Hfs [Hbody Hteq]]]]]].
+    exists L, R, T2. repeat split; try assumption. eauto using teq_trans.
 Qed.
 
 Lemma proj_inv : forall G e l T,

@@ -18,6 +18,7 @@ GoatInferSound.v
 GoatInferRen.v
 GoatInferUnify.v
 GoatPhase1.v
+GoatPhase2.v
 GoatGrammar.v
 GoatPeg.v
 GoatDen.v

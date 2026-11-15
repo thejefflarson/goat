@@ -87,6 +87,9 @@ exp, e :: 'e_' ::= {{ com term }}
   | e1 ( e2 )                ::   :: app
   | x = e1  e2               ::   :: let
     (+ bind x in e2 +)       {{ com bind x in e2 only }}
+  | letrec x = { fs }  e2    ::   :: letrec
+    (+ bind x in fs +)
+    (+ bind x in e2 +)       {{ com a group of functions, one binder naming the group record }}
   | { fs }                   ::   :: rec   {{ com record literal (closed) }}
   | e . l                    ::   :: proj  {{ com field projection }}
   | unit                     ::   :: unit  {{ com the unit value }}

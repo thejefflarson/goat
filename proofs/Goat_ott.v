@@ -33,6 +33,7 @@ Inductive exp : Set :=  (* term *)
  | e_abs (e:exp) (* single-binder abstraction *)
  | e_app (e1:exp) (e2:exp)
  | e_let (e1:exp) (e2:exp) (* bind x in e2 only *)
+ | e_letrec (fs:fields) (e2:exp) (* a group of functions, one binder naming the group record *)
  | e_rec (fs:fields) (* record literal (closed) *)
  | e_proj (e:exp) (l:label) (* field projection *)
  | e_unit : exp (* the unit value *)
@@ -85,6 +86,7 @@ with open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
   | (e_abs e) => e_abs (open_exp_wrt_exp_rec (S k) e_5 e)
   | (e_app e1 e2) => e_app (open_exp_wrt_exp_rec k e_5 e1) (open_exp_wrt_exp_rec k e_5 e2)
   | (e_let e1 e2) => e_let (open_exp_wrt_exp_rec k e_5 e1) (open_exp_wrt_exp_rec (S k) e_5 e2)
+  | (e_letrec fs e2) => e_letrec (open_fields_wrt_exp_rec (S k) e_5 fs) (open_exp_wrt_exp_rec (S k) e_5 e2)
   | (e_rec fs) => e_rec (open_fields_wrt_exp_rec k e_5 fs)
   | (e_proj e l) => e_proj (open_exp_wrt_exp_rec k e_5 e) l
   | e_unit => e_unit 
@@ -131,6 +133,10 @@ with lc_exp : exp -> Prop :=    (* defn lc_exp *)
      (lc_exp e1) ->
       ( forall x , lc_exp  ( open_exp_wrt_exp e2 (e_fvar_f x) )  )  ->
      (lc_exp (e_let e1 e2))
+ | lc_e_letrec : forall (fs:fields) (e2:exp),
+      ( forall x , lc_fields  ( open_fields_wrt_exp fs (e_fvar_f x) )  )  ->
+      ( forall x , lc_exp  ( open_exp_wrt_exp e2 (e_fvar_f x) )  )  ->
+     (lc_exp (e_letrec fs e2))
  | lc_e_rec : forall (fs:fields),
      (lc_fields fs) ->
      (lc_exp (e_rec fs))
@@ -170,6 +176,7 @@ with fv_exp (e_5:exp) : vars :=
   | (e_abs e) => (fv_exp e)
   | (e_app e1 e2) => (fv_exp e1) \u (fv_exp e2)
   | (e_let e1 e2) => (fv_exp e1) \u (fv_exp e2)
+  | (e_letrec fs e2) => (fv_fields fs) \u (fv_exp e2)
   | (e_rec fs) => (fv_fields fs)
   | (e_proj e l) => (fv_exp e)
   | e_unit => {}
@@ -196,6 +203,7 @@ with subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
   | (e_abs e) => e_abs (subst_exp e_5 x5 e)
   | (e_app e1 e2) => e_app (subst_exp e_5 x5 e1) (subst_exp e_5 x5 e2)
   | (e_let e1 e2) => e_let (subst_exp e_5 x5 e1) (subst_exp e_5 x5 e2)
+  | (e_letrec fs e2) => e_letrec (subst_fields e_5 x5 fs) (subst_exp e_5 x5 e2)
   | (e_rec fs) => e_rec (subst_fields e_5 x5 fs)
   | (e_proj e l) => e_proj (subst_exp e_5 x5 e) l
   | e_unit => e_unit 

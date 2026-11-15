@@ -111,3 +111,66 @@ fn a_spread_with_a_computed_base_keeps_one_type() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].message.contains("type mismatch"), "{errors:?}");
 }
+
+// The calculus's `is_gen_value` (`proofs/GoatDefs.v`) is unit, constants, names,
+// functions and records of those; every other term keeps one type.
+
+#[test]
+fn a_name_generalizes() {
+    checks("id = program(x) do x done\nalias = id\np = alias(1)\nq = alias(true)\nq");
+}
+
+#[test]
+fn a_record_of_a_name_and_a_function_generalizes() {
+    checks(
+        "id = program(x) do x done\n\
+         r = {a: id, b: program(y) do y done}\n\
+         p = (r.b)(1)\n\
+         q = (r.b)(true)\n\
+         q",
+    );
+}
+
+#[test]
+fn a_projection_keeps_one_type() {
+    let errors = errors_of(
+        "r = {f: program(x) do x done}\n\
+         g = r.f\n\
+         p = g(1)\n\
+         q = g(true)\n\
+         q",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].message.contains("is a computed value"),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_conditional_keeps_one_type() {
+    let errors = errors_of(
+        "g = if true then program(x) do x done else program(y) do y done done\n\
+         p = g(1)\n\
+         q = g(true)\n\
+         q",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].message.contains("is a computed value"),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_record_with_a_computed_field_keeps_one_type() {
+    let errors = errors_of(
+        "id = program(x) do x done\n\
+         r = {f: program(y) do y done, n: id(1)}\n\
+         p = (r.f)(1)\n\
+         q = (r.f)(true)\n\
+         q",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].message.contains("type mismatch"), "{errors:?}");
+}

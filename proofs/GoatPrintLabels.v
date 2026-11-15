@@ -81,6 +81,7 @@ Proof.
     rewrite IHb.
     destruct v; cbn [as_value]; first
       [ unfold paren_kids; occ_simp; try rewrite IHv; reflexivity | rewrite IHv; reflexivity ].
+  - intros fs IHfs b IHb P. cbn [block lbls]. occ_simp. reflexivity.
   - intros fs IH P. cbn [block lbls]. occ_simp.
     exact (proj1 (IH P)).
   - intros f IH l P. cbn [block lbls]. rewrite occs_app, List.map_app.

@@ -31,9 +31,12 @@ the implementation diverge, §8 flags it.
 - n-ary abstraction `program(x₁,…,xₖ) do e done` and n-ary application
   `e(e₁,…,eₖ)` (goat functions are genuinely n-ary, not curried; see
   [`Ty::Func(Vec<Ty>, Box<Ty>)`](../checker/src/ty.rs) and ADR 0004);
-- Hindley–Milner `let`-generalization: a binding `x = e₁  e₂` generalizes, so
-  `=`-bound names are polymorphic; **lambda-bound parameters stay monomorphic**
+- Hindley–Milner `let`-generalization: a binding `x = e₁  e₂` whose `e₁` is a
+  syntactic value generalizes, so such `=`-bound names are polymorphic (ADR
+  0027, the value restriction); **lambda-bound parameters stay monomorphic**
   (this asymmetry *is* the sharp edge);
+- **recursion**: a group of functions that call themselves and each other,
+  `letrec f₁ = e₁, …, fₙ = eₙ in e`, the order-free mutual group of ADR 0003;
 - five base types: `Int`, `Float`, `Bool`, `String` and `Unit`. Their
   introduction forms are whole-number literals, decimal literals, `true` and
   `false`, string literals, and the unit value; their elimination forms are
@@ -63,9 +66,9 @@ what the sharp-edge theorem is about.
 
 **Out of the core (modeled by nothing — see §9 for the "why").** Reference
 counting / heap / the Perceus model; variants, `match`, and recursive (μ)
-types; recursive and mutually-recursive bindings; the `Eq`, `Numeric` and
-`Ordered` constraints (an operator is typed at concrete types only, so a
-generic operator waits for phase 2); the `trap()` builtin; the 32-bit `Int` of
+types; the `Eq`, `Numeric` and `Ordered` constraints (an operator is typed at
+concrete types only, so a generic operator waits for the kinded type variables
+of the rest of phase 2); the `trap()` builtin; the 32-bit `Int` of
 the embedded target; IEEE rounding, infinities and NaN (a `Float` is opaque);
 comparison of `Unit`, records and tags (phase 6); rank-2
 inference; `and`, `or`, `not`
@@ -86,6 +89,9 @@ e  ::=  x                              variable
      |  program(x₁,…,xₖ) do e done     abstraction        (k ≥ 0, the xᵢ distinct)
      |  e(e₁,…,eₖ)                     application        (k ≥ 0)
      |  x = e₁  e₂                     binding (let)      (x bound in e₂ only)
+     |  letrec f₁ = e₁, …, fₙ = eₙ in e
+                                       recursive group    (n ≥ 1, each eᵢ a function;
+                                                           the fᵢ bound in every eⱼ and in e)
      |  {l₁: e₁, …, lₖ: eₖ}            record             (k ≥ 0)
      |  e.l                            field projection
      |  if e₁ then e₂ else e₃          conditional
@@ -110,6 +116,13 @@ v  ::=  n  |  d  |  true  |  false     constant value
 
 Γ  ::=  ·  |  Γ, x : σ                typing context
 ```
+
+The `letrec` is the elaboration of a scope's function bindings (ADR 0003):
+every `name = program(…) do … done` in a chain of bindings is a member of one
+group, and the chain's remaining bindings and result are its body `e`. A
+`program` literal is a *syntactic value* — a term whose evaluation does no work
+— as are the constants, a variable, `float(v)` of a value, a record of syntactic
+values, and a `letrec` whose body is one (`gen_value(e)`, §4).
 
 The binding form `x = e₁  e₂` is goat's `name = value  rest`; it is written here
 with an explicit body `e₂`. A trailing binding with no body (`name = value` as
@@ -257,9 +270,18 @@ comparison operator have one type: an `Int` meets a `Float` only through
 ——————————————————————————————————————————————————— (T-App)
             Γ ⊢ e(e₁,…,eₖ) : τ
 
- Γ ⊢ e₁ : τ₁      σ = gen(Γ, τ₁)      Γ, x:σ ⊢ e₂ : τ₂
-———————————————————————————————————————————————————————— (T-Let)
-            Γ ⊢ (x = e₁  e₂) : τ₂
+ gen_value(e₁)    Γ ⊢ e₁ : τ₁      σ = gen(Γ, τ₁)      Γ, x:σ ⊢ e₂ : τ₂
+————————————————————————————————————————————————————————————————————— (T-Let)
+                        Γ ⊢ (x = e₁  e₂) : τ₂
+
+ Γ ⊢ e₁ : τ₁      Γ, x:τ₁ ⊢ e₂ : τ₂
+————————————————————————————————————— (T-LetMono)
+        Γ ⊢ (x = e₁  e₂) : τ₂
+
+ eᵢ = program(…) do … done   (each i)      Γ, f₁:τ₁, …, fₙ:τₙ ⊢ eᵢ : τᵢ   (each i)
+ σᵢ = gen(Γ, {f₁:τ₁ ; … ; fₙ:τₙ ; ·}) with the body τᵢ        Γ, f₁:σ₁, …, fₙ:σₙ ⊢ e : τ
+————————————————————————————————————————————————————————————————————————————————————————— (T-Letrec)
+                     Γ ⊢ letrec f₁ = e₁, …, fₙ = eₙ in e : τ
 
  Γ ⊢ eᵢ : τᵢ   (each i)
 ——————————————————————————————————————————————————— (T-Record)
@@ -285,12 +307,26 @@ Rule by rule:
   number of arguments, and each argument to have the corresponding domain type.
   Arity disagreement is a type error, never a stuck term (matches the arity
   check in `unify`'s `Func` case).
-- **`T-Let`** generalizes: `e₁` is typed, its type `τ₁` is generalized against
-  the current context (§5), and the resulting scheme is what `x` is bound to in
-  `e₂`. Generalization is **unrestricted** — it applies to every `e₁`, not only
-  syntactic values. This is sound here precisely because the language is pure:
-  the value restriction exists only to tame mutable references, and core goat
-  has none (§8).
+- **`T-Let`** generalizes a syntactic value: `e₁` is typed, its type `τ₁` is
+  generalized against the current context (§5), and the resulting scheme is what
+  `x` is bound to in `e₂`.
+- **`T-LetMono`** is the value restriction's other half (ADR 0027): any binding
+  may instead give `x` the monotype `τ₁`, and a computed `e₁` (a call, a
+  projection, an operation, a `let`) has no other rule. A name bound to
+  `id(program(x) do x done)` therefore has one type, and using it at two types
+  has no derivation. The rule does not require `e₁` to be a computed term: a
+  syntactic value may also be left monomorphic, which loses nothing, and keeps
+  preservation simple because a step can turn a computed `e₁` into a value.
+- **`T-Letrec`** types the members with the whole group in scope at one
+  monotype each (a function can call itself and its neighbours, but only at the
+  types it has inside the group, so recursion is monomorphic), then types the
+  body with each member generalized against `Γ` alone. Every member's scheme
+  quantifies the variables of the whole group's types that `Γ` does not fix, so
+  each use of a member instantiates the group afresh. The members must be
+  `program` literals: a `letrec` is a group of functions, as in the checker,
+  where only a `program` value is recursive (ADR 0003). That is the whole of
+  recursion: there is no recursive value (`ones = Link(1, ones)` is an unknown
+  name).
 - **`T-Record`** builds a **closed** row (tail `·`) in written order, so a
   literal's type records its labels and their order, duplicates included.
 - **`T-Proj`** requires `e` to have a record type whose row presents `l` at the
@@ -370,6 +406,10 @@ redex rules:
 ————————————————————————— (ST-LetV)
  (x = v  e₂) ⟶ e₂[x↦v]
 
+ e' = e[f₁↦v₁, …, fₙ↦vₙ]      vᵢ = eᵢ[f₁↦(letrec …in f₁), …, fₙ↦(letrec … in fₙ)]
+——————————————————————————————————————————————————————————————————————————————— (ST-Letrec)
+ (letrec f₁ = e₁, …, fₙ = eₙ in e) ⟶ e'
+
  lⱼ = l      l ∉ {l₁, …, lⱼ₋₁}
 ——————————————————————————————————— (ST-ProjRec)
  {l₁:v₁, …, lₘ:vₘ}.l ⟶ vⱼ
@@ -446,8 +486,18 @@ has no `⟶` step. The `trap()` builtin is not in the core (§9).
 Values do not step. A binding reduces by first evaluating `e₁` to a value
 (`ST-Let1`) and then substituting (`ST-LetV`); because `e₁` is closed-up-to-`Γ`
 and fully evaluated before substitution, the polymorphic substitution lemma (L6b,
-§7) applies and `let`-polymorphism is sound without a value restriction. `⟶*` is
-the reflexive-transitive closure of `⟶`.
+§7) applies to a generalized binding. A recursive group unrolls when it is
+reached (`ST-Letrec`): each member name becomes that member's function, whose
+own references to the group are the group again, so the next use unrolls it
+again; the members are closures, so the unrolling does no work and a group is
+never stuck. `⟶*` is the reflexive-transitive closure of `⟶`.
+
+In the mechanization the group has one bound name `p` for the record of its
+functions, a member `fᵢ` is the projection `p.lᵢ`, and the unrolling replaces
+`p` in the body by that record, in which each `p` is the group again
+(`proofs/GoatDefs.v`, `st_letrec`). The two presentations are the same
+reduction; the single binder is what the locally-nameless infrastructure
+handles (§10).
 
 ## 7. Metatheory
 
@@ -484,9 +534,12 @@ obligations it must generate.
 - **L5 — type/row substitution preserves typing.** If `Γ ⊢ e : τ` and `θ` is a
   kind-respecting type/row substitution, then `θΓ ⊢ e : θτ`. (Drives
   instantiation, and the `let` case below.)
-- **L6 — term substitution.**
+- **L6 — term substitution.** The substituted `v` is a syntactic value
+  (`gen_value(v)`), so a `let` inside `e` keeps the premise of `T-Let`: a
+  syntactic value stays one under substituting a syntactic value for a name.
   - **(a) monomorphic:** if `Γ, x:τ' ⊢ e : τ` and `Γ ⊢ v : τ'`, then
-    `Γ ⊢ e[x↦v] : τ`. (For `ST-Beta`.)
+    `Γ ⊢ e[x↦v] : τ`. (For `ST-Beta`, and for the group's members in
+    `ST-Letrec`.)
   - **(b) polymorphic:** if `Γ, x:σ ⊢ e : τ` and `Γ ⊢ v : τ₀` where
     `σ = ∀ V. τ₀` and `V ∩ ftv(Γ) = ∅`, then `Γ ⊢ e[x↦v] : τ`. (For `ST-LetV`.)
     Each occurrence of `x` used `v` at some instance `θτ₀` of `σ`; by L5, `v`
@@ -523,8 +576,9 @@ operand steps by `ST-ToFloat1`, or traps). `T-App`: by L7 the evaluated
 callee is a `k`-ary `program` and the arguments are `k` values, so `ST-Beta`
 fires (or a subterm steps by `ST-App1/2`, or traps). `T-Proj`: by L7 and L3 the
 evaluated record has a first-`l` field, so `ST-ProjRec` fires (or `ST-Proj1`).
-`T-Let`: either `e₁` steps (`ST-Let1`), or traps, or it is a value and `ST-LetV`
-fires. Constants, abstractions, and record values are values. **No well-typed
+`T-Let` and `T-LetMono`: either `e₁` steps (`ST-Let1`), or traps, or it is a
+value and `ST-LetV` fires. `T-Letrec`: the members are `program` literals, so
+`ST-Letrec` fires. Constants, abstractions, and record values are values. **No well-typed
 closed term is stuck.**
 
 ### Preservation
@@ -534,8 +588,14 @@ closed term is stuck.**
 
 Proof by induction on the derivation of `e ⟶ e'` (equivalently on `Γ ⊢ e : τ`),
 inverting typing through `T-Conv` with L2/L2′. `ST-Beta` uses L6a; `ST-LetV`
-uses L6b (its side condition `V ∩ ftv(Γ) = ∅` holds because `gen` quantifies
-exactly `ftv(τ₁) \ ftv(Γ)`); `ST-ProjRec` uses L7/L3 to show the first-`l`
+uses L6b for a generalized binding (its side condition `V ∩ ftv(Γ) = ∅` holds
+because `gen` quantifies exactly `ftv(τ₁) \ ftv(Γ)`) and L6a for a monomorphic
+one; `ST-Let1` keeps `gen_value(e₁)` because a syntactic value that steps is
+still one; `ST-Letrec` types the unrolled group at the record type of its
+members by L6a (the group, whose body is its own name, has that type, and
+substituting it for the name in the members, typed with the name at that type,
+types the unrolled members) and then substitutes the record of unrolled members
+into the body by L6b; `ST-ProjRec` uses L7/L3 to show the first-`l`
 value has the projected type `τ`; `ST-IfTrue` and `ST-IfFalse` return the branch,
 which has the type of the whole `if`; `ST-Op` uses L7 to read both operands as
 literals of the operator's types, so the result is a whole number or `Float`
@@ -634,13 +694,19 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   nor Preservation; modeling it is large and buys the sharp-edge theorem
   nothing. RC memory-safety (Phase 6) is a separate obligation this proof does
   not cover.
-- **Immutability ⟹ no value restriction.** Core goat has no mutable reference,
-  cell, or assignment, so `T-Let` generalizes **every** `e₁`, matching
-  `infer.rs` (which has no syntactic-value check). This is the classical result
-  that the value restriction is needed only in the presence of mutable
-  references/effects. Modeling immutability *as the absence of mutable
-  references* is precisely what licenses both the unrestricted generalization
-  and the RC abstraction above.
+- **The value restriction is modeled (phase 2, ADR 0037).** Core goat has no
+  mutable reference, so unrestricted generalization would be sound, but the
+  checker restricts it (ADR 0027: a computed binding keeps one type, because mono
+  specializes a generalized binding per use and so would repeat the computation),
+  and the rules say what the checker does. `gen_value` is the checker's
+  `is_syntactic_value` on the constructs the core has: unit, constants, names,
+  functions and records of those. Variants and spreads join with phases 3 and 4.
+  Two additions a proof needs, both agreeing with the checker: `float(v)` of a
+  value is a value (a literal the context settles as a `Float` is elaborated to
+  `float(n)` and stays generalizable), and a `letrec` whose body is a value is a
+  value (ML's nonexpansive terms: the unrolled group is substituted for a name,
+  and the name must stay generalizable afterwards). `proofs/GoatPhase2.v` holds
+  the classification as checked examples.
 - **Base types and their operators (phase 1, ADR 0037).** The core has
   `Int`, `Float`, `Bool`, `String` and `Unit`, with `if`, the operators and the
   comparisons of §4. `proofs/GoatPhase1.v` holds each of the cases below as a
@@ -683,17 +749,27 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
     tags (ADR 0036), `and`, `or`,
     `not`, unary minus, and the precedence of a run of operators (the parser
     fragment has at most one operator in an expression).
-- **`let` is non-recursive here; goat's is recursive for `program` values.**
-  ADR 0003 makes a `program`-valued binding recursive (and all function
-  bindings in a scope a mutually-recursive, order-free group), seeded
-  monomorphically and generalized afterward (`seed_function_group`). The core
-  models **non-recursive** `let`, which is faithful to goat's *value* bindings
-  (sequential, shadowing) and sufficient for all of §8 — none of those programs
-  uses a binding that refers to itself. Recursion is orthogonal to the
-  monomorphic-parameter sharp edge; the faithful extension is a `letrec`/`fix`
-  delta (monomorphic self-reference, generalize at the binding, an unfolding
-  reduction), deferred like variants. **This is the clearest gap from the
-  implementation; flagged.**
+- **Recursion is a group of functions (phase 2, ADR 0037).** ADR 0003 makes
+  every `program`-valued binding in a scope part of one mutually recursive,
+  order-free group, seeded monomorphically (`seed_function_group`); a *value*
+  binding is non-recursive, sequential and shadowing, which is the plain `let`.
+  The core's `letrec` is that group (`T-Letrec`, `ST-Letrec`). What it abstracts
+  or differs on:
+  - *Elaboration hoists the group.* A function may see the value bindings above
+    it but not those below; the `letrec` is placed after the value bindings its
+    members use, so a member also sees value bindings between them and the group.
+    Name resolution, not the type system, keeps those out of reach (ADR 0003).
+  - *The group is generalized as a whole.* Each member is generalized against
+    the context outside the group, so a member whose type shares a variable with
+    another member is still polymorphic in it. The checker generalizes a member
+    when its own binding is reached, with its neighbours still in the
+    environment, so such a member stays monomorphic in the shared variables:
+    `f = program(x) do g(x) done  g = program(y) do y done` types `f` at
+    `(α) → α` here, and the checker rejects `f(1)` followed by `f(true)`. That is
+    the rules accepting a program the checker refuses, which the completeness
+    proof would report; it is a checker fix, tracked with that proof, and not a
+    rule change.
+  - *No recursive values.* Only a function may name itself.
 - **n-ary functions, not curried.** `program`/application are n-ary to match
   `Ty::Func(Vec<Ty>, Box<Ty>)` and the arity-checked calling convention (ADR
   0004); currying would misrepresent both and erase the arity-mismatch error.
@@ -708,12 +784,9 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   termination** (the `tail(r) ∉ dom(θ₁)` side condition, paper §7) are out of
   scope per ADR 0008.
 
-**Where I was unsure the model matches `checker/src`.** Two places, both called
-out above: (1) the recursion gap — the core's `let` is non-recursive while the
-checker makes `program`-valued bindings recursive; I judged this orthogonal to
-the theorem and deferred it, but a reviewer may want the `letrec` delta modeled
-now rather than later. (2) Phase 1 of ADR 0037 added `if`, arithmetic, comparison, strings and `Unit`;
-the remaining constructs are scheduled in that ADR's phase order.
+**Where the model differs from `checker/src`.** The group generalization above
+(the rules accept `f(1)`, `f(true)` after the group where the checker refuses);
+and the constructs still to come in ADR 0037's phase order.
 
 ## 10. For the mechanization (#70 B2, #71 B3)
 

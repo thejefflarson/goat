@@ -30,6 +30,7 @@ Fixpoint inst_rec (var_of : string -> termvar) (k D : nat) (e : exp) {struct e} 
   | e_abs b => e_abs (inst_rec var_of (S k) D b)
   | e_app a b => e_app (inst_rec var_of k D a) (inst_rec var_of k D b)
   | e_let a b => e_let (inst_rec var_of k D a) (inst_rec var_of (S k) D b)
+  | e_letrec fs b => e_letrec (inst_fields var_of (S k) D fs) (inst_rec var_of (S k) D b)
   | e_rec fs => e_rec (inst_fields var_of k D fs)
   | e_proj a l => e_proj (inst_rec var_of k D a) l
   | e_unit => e_unit
@@ -97,6 +98,8 @@ Proof.
   - (* let *)
     intros a IHa b IHb k [Ha Hb]. simpl.
     rewrite (IHa k Ha), (IHb (S k) Hb). reflexivity.
+  - (* recursive group: not a term of the printed fragment *)
+    intros fs IHfs b IHb k Hs. destruct Hs.
   - (* record *)
     intros fs IH k Hs. simpl in *. rewrite (IH k Hs). reflexivity.
   - (* projection *)
@@ -335,6 +338,8 @@ Proof.
     { unfold inst at 1. simpl. rewrite (close_inst_exp var_of P b Hdist Hb). reflexivity. }
     rewrite Hlet. cbn [block].
     eapply DB_decl; [ exact Hdecl | exact Hbb ].
+  - (* recursive group: not a term of the printed fragment *)
+    intros fs IHfs b IHb P Hs. destruct Hs.
   - (* record *)
     intros fs IH P Hs Hl.
     destruct (IH P Hs Hl) as [Hitems _].

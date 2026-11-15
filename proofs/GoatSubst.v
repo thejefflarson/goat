@@ -242,6 +242,14 @@ Proof.
   - (* T_Let *) apply T_Let with (L := L) (T1 := T1); auto.
     intros x Hx. apply H0; auto.
     apply ctx_equiv_cons; auto. apply gen_ctx_equiv; auto.
+  - (* T_LetMono *) apply T_LetMono with (L := L) (T1 := T1); auto.
+    intros x Hx. apply H0; auto.
+    apply ctx_equiv_cons; auto using sch_equiv_refl.
+  - (* T_Letrec *) apply T_Letrec with (L := L) (R := R); auto.
+    + intros p Hp. apply H; auto.
+      apply ctx_equiv_cons; auto using sch_equiv_refl.
+    + intros p Hp. apply H0; auto.
+      apply ctx_equiv_cons; auto. apply gen_ctx_equiv; auto.
   - (* T_Record *) apply T_Record; eauto.
   - (* T_Proj *) eapply T_Proj; eauto.
   - (* T_Conv *) eapply T_Conv; eauto.
@@ -355,6 +363,13 @@ Proof.
   - eapply T_App; eauto.
   - (* T_Let *) apply T_Let with (L := L) (T1 := T1); auto. intros x Hx.
     apply H0; auto. apply ctx_more_gen_cons; auto. apply gen_more_gen; auto.
+  - (* T_LetMono *) apply T_LetMono with (L := L) (T1 := T1); auto. intros x Hx.
+    apply H0; auto. apply ctx_more_gen_cons; auto using sch_more_gen_refl.
+  - (* T_Letrec *) apply T_Letrec with (L := L) (R := R); auto.
+    + intros p Hp. apply H; auto.
+      apply ctx_more_gen_cons; auto using sch_more_gen_refl.
+    + intros p Hp. apply H0; auto.
+      apply ctx_more_gen_cons; auto. apply gen_more_gen; auto.
   - apply T_Record; eauto.
   - eapply T_Proj; eauto.
   - eapply T_Conv; eauto.
@@ -629,10 +644,25 @@ Proof.
     apply ctx_equiv_cons; [ apply ren_sch_mono_equiv | apply ctx_equiv_refl ].
   - (* T_App *) unfold ren_typ in H; simpl in H. eapply T_App; [ exact H | exact H0 ].
   - (* T_Let *) unfold ren_typ; simpl. apply T_Let with (L := L) (T1 := ren_typ T1);
-      [ exact H | ].
+      [ exact e | exact H | ].
     intros x Hx. specialize (H0 x Hx).
     eapply typing_sch_equiv_ctx; [ exact H0 | ].
     apply ctx_equiv_cons; [ apply gen_ren | apply ctx_equiv_refl ].
+  - (* T_LetMono *) unfold ren_typ; simpl. apply T_LetMono with (L := L) (T1 := ren_typ T1);
+      [ exact H | ].
+    intros x Hx. specialize (H0 x Hx). rewrite ren_ctx_app in H0.
+    eapply typing_sch_equiv_ctx; [ exact H0 | ].
+    apply ctx_equiv_cons; [ apply ren_sch_mono_equiv | apply ctx_equiv_refl ].
+  - (* T_Letrec *) unfold ren_typ; simpl.
+    apply T_Letrec with (L := L) (R := ren_row R); [ assumption | | ].
+    + intros p Hp. specialize (H p Hp). rewrite ren_ctx_app in H.
+      eapply (proj2 typing_sch_equiv_ctx_mut); [ exact H | ].
+      apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
+      exact (ren_sch_mono_equiv (typ_Record R)).
+    + intros p Hp. specialize (H0 p Hp).
+      eapply typing_sch_equiv_ctx; [ exact H0 | ].
+      apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
+      exact (gen_ren G (typ_Record R)).
   - (* T_Record *) unfold ren_typ; simpl. apply T_Record. exact H.
   - (* T_Proj *) unfold ren_typ, ren_row in H; simpl in H. eapply T_Proj. exact H.
   - (* T_Conv *) eapply T_Conv; [ exact H | apply teq_ap; auto ].
