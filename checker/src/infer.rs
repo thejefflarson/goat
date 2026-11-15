@@ -263,18 +263,61 @@ fn infer_with_variable_markers(
     (typed, inf.errors)
 }
 
+/// A substitution that remembers which variables were bound since
+/// [`Inferer::sync_env_vars`] last looked.
+struct Bindings<T> {
+    map: HashMap<TypeVar, Rc<T>>,
+    newly_bound: Vec<TypeVar>,
+}
+
+impl<T> Default for Bindings<T> {
+    fn default() -> Self {
+        Bindings {
+            map: HashMap::new(),
+            newly_bound: Vec::new(),
+        }
+    }
+}
+
+impl<T> Bindings<T> {
+    fn get(&self, var: &TypeVar) -> Option<&Rc<T>> {
+        self.map.get(var)
+    }
+
+    fn contains_key(&self, var: &TypeVar) -> bool {
+        self.map.contains_key(var)
+    }
+
+    fn insert(&mut self, var: TypeVar, bound: Rc<T>) {
+        self.newly_bound.push(var);
+        self.map.insert(var, bound);
+    }
+
+    fn remove(&mut self, var: &TypeVar) {
+        self.map.remove(var);
+    }
+}
+
 #[derive(Default)]
 struct Inferer {
     next: TypeVar,
     ids_spent: bool,
-    subst: HashMap<TypeVar, Rc<Ty>>,
-    row_subst: HashMap<TypeVar, Rc<Row>>,
+    subst: Bindings<Ty>,
+    row_subst: Bindings<Row>,
     env: HashMap<Symbol, Scheme>,
     /// The `env` symbols whose types may still mention a variable that is
-    /// neither quantified nor bound, other than those in `lone_vars`.
-    /// [`Inferer::env_free_vars`] drops a symbol once its type is closed,
-    /// which it stays.
+    /// neither quantified nor bound, other than those in `lone_vars`, and that
+    /// [`Inferer::sync_env_vars`] has not indexed yet. It drops a symbol once
+    /// its type is closed, which it stays.
     open_env: HashSet<Symbol>,
+    /// The variables each indexed open symbol's resolved type mentions,
+    /// quantified ones included, as of the last sync.
+    open_vars: HashMap<Symbol, Vec<TypeVar>>,
+    /// The inverse of `open_vars`: the open symbols mentioning each variable.
+    /// Generalizing asks about a handful of variables, so it looks them up
+    /// here instead of collecting the whole environment's variables, which
+    /// costs the environment's size at every binding.
+    var_users: HashMap<TypeVar, HashSet<Symbol>>,
     /// The `env` symbols whose type is exactly one unbound variable, by that
     /// variable. Such a symbol adds only its variable to the environment's, so
     /// generalizing looks the variable up instead of scanning the symbol.
@@ -1705,10 +1748,10 @@ impl Inferer {
         resolved.free_vars(&mut in_ty);
         in_ty.retain(|v| function || !self.is_literal(*v));
         if !in_ty.is_empty() {
-            let in_env = self.env_free_vars();
+            self.sync_env_vars();
             let in_selves = self.self_def_vars();
             in_ty.retain(|v| {
-                !in_env.contains(v) && !in_selves.contains(v) && !self.lone_vars.contains_key(v)
+                !self.env_mentions(*v) && !in_selves.contains(v) && !self.lone_vars.contains_key(v)
             });
         }
         Scheme {
@@ -1745,6 +1788,7 @@ impl Inferer {
     fn unbind_env(&mut self, symbol: &Symbol) -> Option<Scheme> {
         let scheme = self.env.remove(symbol)?;
         self.open_env.remove(symbol);
+        self.unindex(symbol);
         if let Ty::Var(v) = &scheme.ty
             && let Some(symbols) = self.lone_vars.get_mut(v)
         {
@@ -1765,24 +1809,57 @@ impl Inferer {
         }
     }
 
-    fn env_free_vars(&mut self) -> BTreeSet<TypeVar> {
-        let mut out = BTreeSet::new();
-        let mut open = std::mem::take(&mut self.open_env);
-        open.retain(|symbol| {
-            let Some(scheme) = self.env.get(symbol) else {
-                return false;
+    /// Whether an open environment symbol, other than as a quantified
+    /// variable of its own, mentions `var`. Exact after [`Self::sync_env_vars`].
+    fn env_mentions(&self, var: TypeVar) -> bool {
+        self.var_users.get(&var).is_some_and(|users| {
+            users
+                .iter()
+                .any(|symbol| self.env.get(symbol).is_some_and(|s| !s.vars.contains(&var)))
+        })
+    }
+
+    /// Bring `var_users` up to date: index symbols that became open, and
+    /// re-resolve those mentioning a variable bound since the last sync. A
+    /// symbol's free variables change only when one of them is bound, so the
+    /// work follows the bindings made, not the size of the environment.
+    fn sync_env_vars(&mut self) {
+        let mut stale: HashSet<Symbol> = std::mem::take(&mut self.open_env);
+        let newly_bound = std::mem::take(&mut self.subst.newly_bound)
+            .into_iter()
+            .chain(std::mem::take(&mut self.row_subst.newly_bound));
+        for var in newly_bound {
+            if let Some(users) = self.var_users.get(&var) {
+                stale.extend(users.iter().copied());
+            }
+        }
+        for symbol in stale {
+            self.unindex(&symbol);
+            let Some(scheme) = self.env.get(&symbol) else {
+                continue;
             };
             let mut free = BTreeSet::new();
             self.resolve(&scheme.ty).free_vars(&mut free);
-            for bound in &scheme.vars {
-                free.remove(bound);
+            let quantified: HashSet<&TypeVar> = scheme.vars.iter().collect();
+            if free.iter().all(|v| quantified.contains(v)) {
+                continue;
             }
-            let still_open = !free.is_empty();
-            out.extend(free);
-            still_open
-        });
-        self.open_env = open;
-        out
+            for var in &free {
+                self.var_users.entry(*var).or_default().insert(symbol);
+            }
+            self.open_vars.insert(symbol, free.into_iter().collect());
+        }
+    }
+
+    fn unindex(&mut self, symbol: &Symbol) {
+        for var in self.open_vars.remove(symbol).unwrap_or_default() {
+            if let Some(users) = self.var_users.get_mut(&var) {
+                users.remove(symbol);
+                if users.is_empty() {
+                    self.var_users.remove(&var);
+                }
+            }
+        }
     }
 
     /// Give each function binding in the `Let` chain from `expr` a monomorphic
