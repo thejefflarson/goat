@@ -6,6 +6,7 @@ use crate::infer::subst_vars;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::sync::Arc;
 
 /// A unification variable. The same numbering space is shared by type variables
 /// and row variables; any given id is only ever used in one role.
@@ -39,8 +40,10 @@ pub enum Ty {
     /// A recursive type `μv. body`: `Var(v)` inside `body` stands for the whole
     /// type. The binder is a fresh id that is never bound by unification, and
     /// every path from the binder to an occurrence crosses a variant payload,
-    /// so unfolding always exposes a constructor.
-    Rec(TypeVar, Box<Ty>),
+    /// so unfolding always exposes a constructor. The body is shared
+    /// because an unfolding puts the whole type at each mention of the binder,
+    /// and a record of n methods mentions it 2n times.
+    Rec(TypeVar, Arc<Ty>),
 }
 
 impl From<Boundary> for Ty {
@@ -114,7 +117,7 @@ impl Group {
         );
         let body = Ty::Variant(row);
         if self.recursive {
-            Ty::Rec(binder, Box::new(body))
+            Ty::Rec(binder, Arc::new(body))
         } else {
             body
         }
@@ -220,12 +223,25 @@ impl Ty {
         }
     }
 
+    /// [`Self::children`] without collecting them.
+    fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a Ty)) {
+        match self {
+            Ty::Func(args, ret) => {
+                args.iter().for_each(&mut f);
+                f(ret);
+            }
+            Ty::Record(row) | Ty::Variant(row) => row.fields().for_each(f),
+            Ty::Rec(_, body) => f(body),
+            Ty::Var(_) | Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => {}
+        }
+    }
+
     pub(crate) fn map_children(&self, f: &impl Fn(&Ty) -> Ty) -> Ty {
         match self {
             Ty::Func(args, ret) => Ty::Func(args.iter().map(f).collect(), Box::new(f(ret))),
             Ty::Record(row) => Ty::Record(row.map_fields(f)),
             Ty::Variant(row) => Ty::Variant(row.map_fields(f)),
-            Ty::Rec(binder, body) => Ty::Rec(*binder, Box::new(f(body))),
+            Ty::Rec(binder, body) => Ty::Rec(*binder, Arc::new(f(body))),
             Ty::Var(_) | Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => self.clone(),
         }
     }
@@ -244,6 +260,38 @@ impl Ty {
         match self {
             Ty::Rec(binder, body) => body.substitute(*binder, self),
             other => other.clone(),
+        }
+    }
+
+    /// Whether `target` is one unfolding of this type, `self.unfold() == target`
+    /// without building the unfolding.
+    fn unfolds_to(&self, target: &Ty) -> bool {
+        match self {
+            Ty::Rec(binder, body) => body.equals_with(*binder, self, target),
+            _ => false,
+        }
+    }
+
+    /// `self[var := with] == other`, without building the left side.
+    fn equals_with(&self, var: TypeVar, with: &Ty, other: &Ty) -> bool {
+        match (self, other) {
+            (Ty::Var(v), _) if *v == var => with == other,
+            (Ty::Rec(binder, _), _) if *binder == var => self == other,
+            (Ty::Func(a_args, a_ret), Ty::Func(b_args, b_ret)) => {
+                a_args.len() == b_args.len()
+                    && a_args
+                        .iter()
+                        .zip(b_args)
+                        .all(|(a, b)| a.equals_with(var, with, b))
+                    && a_ret.equals_with(var, with, b_ret)
+            }
+            (Ty::Record(a), Ty::Record(b)) | (Ty::Variant(a), Ty::Variant(b)) => {
+                a.equals_with(var, with, b)
+            }
+            (Ty::Rec(a_binder, a_body), Ty::Rec(b_binder, b_body)) => {
+                a_binder == b_binder && a_body.equals_with(var, with, b_body)
+            }
+            _ => self == other,
         }
     }
 
@@ -276,11 +324,26 @@ impl Ty {
 
     /// [`Self::fold_rec`], rebuilding the type only when something folds.
     pub fn into_folded(self) -> Ty {
-        if self.scan_folds(&mut Vec::new()) {
-            self.fold_rec_noting().0
-        } else {
-            self
+        if !self.scan_folds(&mut Vec::new()) {
+            return self;
         }
+        if !matches!(self, Ty::Rec(..))
+            && !self.children_fold()
+            && let Some(rec) = self.find_unfolding_to(&self)
+        {
+            return rec;
+        }
+        self.fold_rec_noting().0
+    }
+
+    /// Whether some sub-term below this one, not this term itself, is the
+    /// unfolding of a `Rec` inside it. When none is, the type is its own
+    /// folding but for the term at its head.
+    fn children_fold(&self) -> bool {
+        let mut recs = Vec::new();
+        let mut folds = false;
+        self.for_each_child(|child| folds |= child.scan_folds(&mut recs));
+        folds
     }
 
     /// Whether some sub-term of this type is the unfolding of a `Rec` inside
@@ -289,14 +352,12 @@ impl Ty {
     fn scan_folds<'a>(&'a self, recs: &mut Vec<&'a Ty>) -> bool {
         let below = recs.len();
         let mut folds = false;
-        for child in self.children() {
-            folds |= child.scan_folds(recs);
-        }
+        self.for_each_child(|child| folds |= child.scan_folds(recs));
         if matches!(self, Ty::Rec(..)) {
             recs.push(self);
         } else if !folds {
             folds = recs[below..].iter().any(|rec| match rec {
-                Ty::Rec(_, body) => body.has_head_of(self) && rec.unfold() == *self,
+                Ty::Rec(_, body) => body.has_head_of(self) && rec.unfolds_to(self),
                 _ => false,
             });
         }
@@ -340,7 +401,7 @@ impl Ty {
         for child in self.children() {
             if let Ty::Rec(_, body) = child
                 && body.has_head_of(target)
-                && child.unfold() == *target
+                && child.unfolds_to(target)
             {
                 return Some(child.clone());
             }
@@ -412,6 +473,54 @@ impl Row {
             }
             Row::Empty | Row::Var(_) => None,
         })
+    }
+
+    /// `self[var := with] == other`, as [`Ty::equals_with`].
+    fn equals_with(&self, var: TypeVar, with: &Ty, other: &Row) -> bool {
+        match (self, other) {
+            (
+                Row::Extend {
+                    label: a_label,
+                    field: a_field,
+                    method: a_method,
+                    rest: a_rest,
+                },
+                Row::Extend {
+                    label: b_label,
+                    field: b_field,
+                    method: b_method,
+                    rest: b_rest,
+                },
+            ) => {
+                a_label == b_label
+                    && a_field.equals_with(var, with, b_field)
+                    && a_method.equals_with(var, with, b_method)
+                    && a_rest.equals_with(var, with, b_rest)
+            }
+            (
+                Row::Maybe {
+                    label: a_label,
+                    pres: a_pres,
+                    field: a_field,
+                    method: a_method,
+                    rest: a_rest,
+                },
+                Row::Maybe {
+                    label: b_label,
+                    pres: b_pres,
+                    field: b_field,
+                    method: b_method,
+                    rest: b_rest,
+                },
+            ) => {
+                a_label == b_label
+                    && a_pres == b_pres
+                    && a_field.equals_with(var, with, b_field)
+                    && a_method.equals_with(var, with, b_method)
+                    && a_rest.equals_with(var, with, b_rest)
+            }
+            _ => self == other,
+        }
     }
 
     fn map_fields(&self, f: &impl Fn(&Ty) -> Ty) -> Row {
@@ -739,7 +848,7 @@ mod tests {
             }),
         });
         let body = variant(&[("Empty", Ty::Unit), ("Link", link)], Row::Empty);
-        Ty::Rec(binder, Box::new(body))
+        Ty::Rec(binder, Arc::new(body))
     }
 
     fn free(ty: &Ty) -> Vec<TypeVar> {
@@ -763,19 +872,19 @@ mod tests {
 
     #[test]
     fn degenerate_recursive_types_print_and_unfold_without_looping() {
-        let vacuous = Ty::Rec(0, Box::new(Ty::Int));
+        let vacuous = Ty::Rec(0, Arc::new(Ty::Int));
         assert_eq!(vacuous.to_string(), "μt0. Number");
         assert_eq!(vacuous.unfold_head(), Ty::Int);
 
-        let empty = Ty::Rec(0, Box::new(Ty::Variant(Row::Empty)));
+        let empty = Ty::Rec(0, Arc::new(Ty::Variant(Row::Empty)));
         assert_eq!(empty.to_string(), "μt0. []");
         assert_eq!(empty.unfold_head(), Ty::Variant(Row::Empty));
 
-        let bare = Ty::Rec(0, Box::new(Ty::Var(0)));
+        let bare = Ty::Rec(0, Arc::new(Ty::Var(0)));
         assert_eq!(bare.to_string(), "μt0. t0");
         assert_eq!(bare.unfold_head(), bare);
 
-        let stacked = Ty::Rec(0, Box::new(Ty::Rec(1, Box::new(Ty::Var(0)))));
+        let stacked = Ty::Rec(0, Arc::new(Ty::Rec(1, Arc::new(Ty::Var(0)))));
         assert!(matches!(stacked.unfold_head(), Ty::Rec(..)));
         assert_eq!(stacked.fold_rec().to_string(), stacked.to_string());
     }
@@ -800,7 +909,7 @@ mod tests {
     #[test]
     fn the_binder_is_not_a_free_variable() {
         assert_eq!(free(&list(5)), Vec::<TypeVar>::new());
-        let open = Ty::Rec(5, Box::new(variant(&[("Link", Ty::Var(5))], Row::Var(9))));
+        let open = Ty::Rec(5, Arc::new(variant(&[("Link", Ty::Var(5))], Row::Var(9))));
         assert_eq!(free(&open), vec![9]);
         let outside = Ty::func(vec![Ty::Var(5)], list(5));
         assert_eq!(free(&outside), vec![5]);
@@ -815,6 +924,60 @@ mod tests {
             outside.substitute(5, &Ty::Bool),
             Ty::func(vec![Ty::Bool], list(5))
         );
+    }
+
+    /// `μs. {x: Int | ρ9, m0: s -> s, m1: s -> s}`, a receiver's type.
+    fn receiver(binder: TypeVar) -> Ty {
+        let method = Ty::func(vec![Ty::Var(binder)], Ty::Var(binder));
+        let row = ["m1", "m0"].into_iter().fold(
+            Row::Extend {
+                label: "x".into(),
+                field: Box::new(Ty::Int),
+                method: Box::new(PLAIN),
+                rest: Box::new(Row::Var(9)),
+            },
+            |rest, label| Row::Extend {
+                label: label.into(),
+                field: Box::new(method.clone()),
+                method: Box::new(METHOD),
+                rest: Box::new(rest),
+            },
+        );
+        Ty::Rec(binder, Arc::new(Ty::Record(row)))
+    }
+
+    #[test]
+    fn unfolds_to_agrees_with_building_the_unfolding() {
+        for rec in [list(3), receiver(7), Ty::Rec(1, Arc::new(Ty::Var(1)))] {
+            assert!(rec.unfolds_to(&rec.unfold()), "{rec}");
+            assert!(!rec.unfolds_to(&Ty::Int), "{rec}");
+        }
+        assert!(!list(3).unfolds_to(&list(4).unfold()));
+        assert!(!receiver(7).unfolds_to(&receiver(7)));
+        let stacked = Ty::Rec(0, Arc::new(Ty::Rec(1, Arc::new(Ty::Var(0)))));
+        assert!(stacked.unfolds_to(&stacked.unfold()));
+    }
+
+    #[test]
+    fn a_record_that_is_its_own_unfolding_folds_to_the_recursive_type() {
+        let rec = receiver(7);
+        let unfolded = rec.unfold();
+        assert_ne!(unfolded, rec);
+        assert_eq!(unfolded.clone().into_folded(), rec);
+        assert_eq!(unfolded.fold_rec_noting().0, rec);
+    }
+
+    #[test]
+    fn folding_inside_a_type_agrees_with_folding_everywhere() {
+        let rec = receiver(7);
+        for ty in [
+            Ty::func(vec![rec.unfold()], rec.unfold()),
+            Ty::func(vec![Ty::Int], rec.unfold()),
+            Ty::func(vec![list(3).unfold_head()], Ty::Int),
+            list(3).unfold_head(),
+        ] {
+            assert_eq!(ty.clone().into_folded(), ty.fold_rec_noting().0, "{ty}");
+        }
     }
 
     #[test]
