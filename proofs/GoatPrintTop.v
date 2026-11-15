@@ -52,7 +52,7 @@ Proof.
     apply Nat.ltb_ge in Hik. lia.
   - intros y k Hs. destruct Hs.
   - intros n k Hs. reflexivity.
-  - intros d k Hs. destruct Hs.
+  - intros d k Hs. reflexivity.
   - intros k Hs. reflexivity.
   - intros k Hs. reflexivity.
   - intros b IH k Hs. simpl in Hs. cbn [inst_rec]. rewrite (IH (S k) Hs). reflexivity.
@@ -64,7 +64,8 @@ Proof.
   - intros k Hs. destruct Hs.
   - intros q k Hs. reflexivity.
   - intros a IHa b IHb c IHc k [Ha [Hb Hc]]. cbn [inst_rec].
-    rewrite (IHa k Ha), (IHb k Hb), (IHc k Hc). reflexivity.
+    rewrite (IHa k Ha), (IHb k Hb).
+    destruct Hc as [-> | Hc]; [ reflexivity | rewrite (IHc k Hc); reflexivity ].
   - intros a IHa o b IHb k [Ha Hb]. cbn [inst_rec]. rewrite (IHa k Ha), (IHb k Hb). reflexivity.
   - intros a IH k Hs. destruct Hs.
   - intros k Hs. reflexivity.

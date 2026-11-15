@@ -73,21 +73,72 @@ The fragment now also holds:
   is resolved by lowering (ADR 0013) and the model does not resolve it. A dot
   call inside an expression with an operator is also outside it.
 
-Still outside: `and`, `or`, `not`, unary minus, an `if` without an `else`
-(lowering supplies the `()`), and the unit value, which has no literal. T3 covers
-the printable core: `scoped` is false for the unit value, for a `Float` value
-and for `float(e)`. The coercion `float(e)` has no surface syntax: elaboration
+Still outside (at this amendment; the one below brings in an `if` without an
+`else` and `Float` literals): `and`, `or`, `not`, unary minus, an `if` without an
+`else` (lowering supplies the `()`), and the unit value, which has no literal. T3
+covers the printable core: `scoped` is false for the unit value, for a `Float`
+value and for `float(e)`. The coercion `float(e)` has no surface syntax: elaboration
 inserts it, so no source text parses to it and the Rust round-trip cannot print
 it; `parser/tests/rule_map.rs` exempts it for that reason. The Rust round-trip
 test and the printer table (`checker/tests/core_roundtrip.rs`) generate strings,
 `if`, and every operator alongside the old core, so each form the Coq printer
 writes has a Rust counterpart.
 
+## Amendment: phases 1 and 2 of the proof coverage (#457)
+
+The fragment now also holds:
+- a `Float` literal: a decimal NUMBER token (`TDec`) denotes the opaque `e_dec`.
+  The lexer is still trusted, so the token carries the part before the point and
+  the claim says nothing about which decimal text a payload stands for;
+- an `if` without an `else`, which denotes `if c then a else unit`;
+- a block's leading function bindings as one recursive group. A declaration
+  whose value is exactly a `program(...)` literal is a member (the parse tree
+  shape `Node R_value [Node R_function _]`); a parenthesised function is a value.
+  `f1 = program(...) ... fn = program(...) rest` denotes
+  `letrec x = {0: e1, ..., n-1: en} rest'`, where the group name `x` is one binder
+  and each occurrence of a member's name in the members and `rest` is the
+  projection of that member, labelled by its position. Value bindings still denote
+  the non-recursive `let`.
+
+Outside, deliberately: a function binding after a value binding in the same block
+(the group would have to be placed after the values its members read, which
+needs name resolution), and a function binding that is an operand of an
+expression. `Complete` excludes both. A run of two operators stays outside: its
+precedence is lowering's (ADR 0013), and `and`, `or`, `not` and unary minus are
+not in the calculus.
+
+Decided (owner, on #457): the lexer stays trusted until phases 3 to 6 land and is
+then verified once; T3 for `letrec` is deferred to the tail of phase 8; the
+exclusion of a function binding after a value binding stands.
+
+T1 covers all of this. T3 covers `Float` literals and the `if` without an
+`else` (the printer writes `e_ite c a e_unit` without the `else`), and no longer
+prints a function as the bare value of a binding: it parenthesises it, because a
+bare function is a group member now. T3 does not cover `letrec`: the printer
+would have to write a group's projections as bare member names, which means
+tracking which binders are groups. `GoatExample.v` instead parses a one-member
+group and shows it denotes the term `GoatPhase2.v` types. The Rust round-trip
+test generates groups, and checks the lowered let chain names each member where
+the text mentions it.
+
+The parser rules still outside the fragment (`parser/tests/rule_map.rs`): `tag_decl`,
+`tag_kw`, `group_name`, `tag_case`, `sequel`, `and_op`, `or_op`, `not_op`,
+`negation`, `spread`, `foreign_kw`, `foreign_decl`, `foreign_name`, `fn_type`,
+`_type_expr`, `list_type`, `record_type`, `field_type`, `type_name`,
+`destructure`, `record_pattern`, `list_pattern`, `rest_binding`, `list`,
+`match_expr`, `arm`, `pattern`, `labels`, `literal_pattern`, `repeat_loop`,
+`count_loop`, `each_loop`, `for_kw`, `from_kw`, `to_kw`, `in_kw`. They belong to
+phases 3 to 6 (tags, variants, `match`, lists, spread, loops, destructuring,
+`foreign`) and to constructs outside the numbered phases (`and`, `or`, `not`,
+unary minus, statement sequencing with `;`).
+
 ## Consequences
 
-- The real parser and lowering disagree with the Ott core in three places. They
+- The real parser and lowering disagreed with the Ott core in three places. They
   are findings, not bugs the fragment hides, and each is pinned by a test in
-  `checker/tests/core_roundtrip.rs`:
+  `checker/tests/core_roundtrip.rs`. The first two are now modelled (see the
+  amendment above: the group is `letrec`, and a parenthesised function is the
+  plain `let`); the tests pin the lowering side:
   - **A function binding is recursive** (ADR 0003): in `x = program(y) do x done; x`
     the inner `x` is the binding itself. The Ott `let` binds `x` in `e2` only. The
     fragment's `let` is non-recursive, so the verified claim must either take the

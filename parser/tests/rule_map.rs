@@ -1,7 +1,7 @@
 //! Every rule of `grammar/goat.peg` is classified against the core fragment of
-//! `proofs/goat_ln.ott` (ADR 0030): `Core` names the Ott production the rule
-//! takes part in (or `e`/`fs` for a rule that dispatches among them), and
-//! `Outside` marks a rule the verified parser does not claim. Adding a rule
+//! `proofs/goat_ln.ott` (ADR 0030): `Core` names the Ott productions the rule
+//! takes part in, separated by `|` (or `e`/`fs` for a rule that dispatches
+//! among them), and `Outside` marks a rule the verified parser does not claim. Adding a rule
 //! without classifying it, or leaving a stale entry, fails here.
 
 use goat_parser::peg::Grammar;
@@ -23,7 +23,7 @@ const RULES: &[(&str, Class)] = &[
     ("tag_case", Outside),
     ("expr", Core("e")),
     ("sequel", Outside),
-    ("_part", Core("e_let")),
+    ("_part", Core("e_letrec")),
     ("_statement", Core("e")),
     ("_more_math", Core("e_bin")),
     ("_operand", Core("e")),
@@ -52,7 +52,7 @@ const RULES: &[(&str, Class)] = &[
     ("call", Core("e_app")),
     ("arguments", Core("e_app")),
     ("_primary", Core("e")),
-    ("number", Core("e_num")),
+    ("number", Core("e_num|e_dec")),
     ("string", Core("e_str")),
     ("boolean", Core("e")),
     ("true_lit", Core("e_true")),
@@ -80,7 +80,7 @@ const RULES: &[(&str, Class)] = &[
     ("function", Core("e_abs")),
     ("params", Core("e_abs")),
     ("_param", Core("e_abs")),
-    ("conditional", Core("e_ite")),
+    ("conditional", Core("e_ite|e_unit")),
     ("_else_branch", Core("e_ite")),
     ("list", Outside),
     ("match_expr", Outside),
@@ -150,11 +150,13 @@ fn every_grammar_rule_is_classified_and_no_entry_is_stale() {
 fn core_rules_name_real_ott_productions() {
     let ott = ott_names();
     for (rule, class) in RULES {
-        if let Core(production) = class {
-            assert!(
-                ott.contains(*production),
-                "`{rule}` maps to `{production}`, which goat_ln.ott lacks (has {ott:?})"
-            );
+        if let Core(productions) = class {
+            for production in productions.split('|') {
+                assert!(
+                    ott.contains(production),
+                    "`{rule}` maps to `{production}`, which goat_ln.ott lacks (has {ott:?})"
+                );
+            }
         }
     }
 }
@@ -164,22 +166,17 @@ fn every_ott_production_is_reached_by_some_core_rule() {
     let reached: BTreeSet<&str> = RULES
         .iter()
         .filter_map(|(_, class)| match class {
-            Core(production) => Some(*production),
+            Core(productions) => Some(productions.split('|')),
             Outside => None,
         })
+        .flatten()
         .collect();
     for production in ott_names() {
-        // `e_unit` has no literal in the grammar: the unit value is what an
-        // `if` without an `else` lowers its missing branch to. `e_dec` is an
-        // opaque Float value, which the parser fragment never writes (a
-        // decimal literal has no payload in the Coq token). `e_tofloat` is
-        // inserted by elaboration, so no source text parses to it. `e_letrec`
-        // is a recursive group, which elaboration builds from the function
-        // bindings of a scope (ADR 0003); the parse reads each as a `let`.
-        if !matches!(
-            production.as_str(),
-            "e" | "fs" | "fs_nil" | "e_unit" | "e_dec" | "e_tofloat" | "e_letrec"
-        ) {
+        // `e_tofloat` is inserted by elaboration, so no source text parses to
+        // it. `e_unit` has no literal: it is the missing branch of an `if`
+        // without an `else`, and `e_letrec` is the group a block's leading
+        // function bindings form (ADR 0003).
+        if !matches!(production.as_str(), "e" | "fs" | "fs_nil" | "e_tofloat") {
             assert!(
                 reached.contains(production.as_str()),
                 "no rule takes part in `{production}`"

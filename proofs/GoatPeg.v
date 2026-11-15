@@ -10,6 +10,7 @@ Require Import Goat.GoatGrammar.
 Inductive tok : Type :=
   | TName (s : string)
   | TNum (n : nat)
+  | TDec (d : nat)
   | TStr
   | TSym (s : string).
 
@@ -26,6 +27,7 @@ Definition accepts (t : terminal) (k : tok) : bool :=
   | T_text s, TSym s' => String.eqb s s'
   | T_name, TName _ => true
   | T_number, TNum _ => true
+  | T_number, TDec _ => true
   | T_string, TStr => true
   | _, _ => false
   end.

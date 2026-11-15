@@ -88,32 +88,32 @@ Proof. intros r H. inversion H; subst; pok nope. Qed.
 
 Lemma notdecl_fail : forall s, NotDecl s -> peg (E_rule R_declaration) s Fail.
 Proof.
-  intros s H. destruct s as [| [x | n | | y] s1]; try (pfail nope; fail).
-  destruct s1 as [| [x1 | n1 | | y1] s2]; simpl in H; try (pfail nope; fail).
+  intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
+  destruct s1 as [| [x1 | n1 | d1 | | y1] s2]; simpl in H; try (pfail nope; fail).
   pfail ext_text.
 Qed.
 
 Lemma plain_not : forall s, Plain s -> peg (E_rule R_not_op) s Fail.
 Proof.
-  intros s H. destruct s as [| [x | n | | y] s1]; try (pfail nope; fail).
+  intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
   simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
 Qed.
 
 Lemma plain_neg : forall s, Plain s -> peg (E_rule R_negation) s Fail.
 Proof.
-  intros s H. destruct s as [| [x | n | | y] s1]; try (pfail nope; fail).
+  intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
   simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
 Qed.
 
 Lemma plain_foreign : forall s, Plain s -> peg (E_rule R_foreign_decl) s Fail.
 Proof.
-  intros s H. destruct s as [| [x | n | | y] s1]; try (pfail nope; fail).
+  intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
   simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
 Qed.
 
 Lemma plain_tag : forall s, Plain s -> peg (E_rule R_tag_decl) s Fail.
 Proof.
-  intros s H. destruct s as [| [x | n | | y] s1]; try (pfail nope; fail).
+  intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
   simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
 Qed.
 

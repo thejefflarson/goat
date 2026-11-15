@@ -1,7 +1,8 @@
 //! The core fragment (ADR 0030): print a term of `proofs/goat_ln.ott` as goat
 //! source, parse and lower it with the real front end, and read the result
-//! back as the same term. The terms cover strings, `if` with an `else` and one
-//! operator between two operands. A fixed-seed generator keeps CI deterministic.
+//! back as the same term. The terms cover strings, `Float` literals, `if` with
+//! and without an `else`, one operator between two operands, and recursive
+//! groups of functions. A fixed-seed generator keeps CI deterministic.
 
 use goat_checker::hir::{BinOp, Expr, ExprKind, Symbol};
 use goat_checker::lower::lower;
@@ -11,11 +12,15 @@ const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 const MAX_DEPTH: u32 = 6;
 
 /// A term of the Ott core: single-binder abstraction and application, a `let`
-/// binding its name in the body only, records over interned labels.
+/// binding its name in the body only, records over interned labels, and a
+/// recursive group (`Letrec`): its members are functions that see every member
+/// of the group and the body sees them too.
 #[derive(Clone, Debug, PartialEq)]
 enum Term {
     Var(String),
     Num(u32),
+    /// A `Float` literal `d.5`: the payload is the part before the point.
+    Dec(u32),
     Bool(bool),
     Str(&'static str),
     Abs(String, Box<Term>),
@@ -24,7 +29,10 @@ enum Term {
     Rec(Vec<(u32, Term)>),
     Proj(Box<Term>, u32),
     If(Box<Term>, Box<Term>, Box<Term>),
+    /// `if c then t done`: the missing branch is the unit value.
+    When(Box<Term>, Box<Term>),
     Bin(Box<Term>, BinOp, Box<Term>),
+    Letrec(Vec<(String, Term)>, Box<Term>),
 }
 
 const STRINGS: [&str; 3] = ["", "hi", "a # b"];
@@ -103,19 +111,23 @@ fn label_name(label: u32) -> String {
 /// before `.` reads as a decimal point, and an operation would take the call
 /// or the field as the operand of its own right-hand side.
 fn needs_parens_as_operand(term: &Term) -> bool {
-    matches!(term, Term::Let(..) | Term::Num(_) | Term::Bin(..))
+    matches!(
+        term,
+        Term::Let(..) | Term::Letrec(..) | Term::Num(_) | Term::Dec(_) | Term::Bin(..)
+    )
 }
 
 /// An operand of an operator is a chain: a `let` or another operation is
 /// parenthesised, because a run of operators is outside the fragment.
 fn needs_parens_as_operator_operand(term: &Term) -> bool {
-    matches!(term, Term::Let(..) | Term::Bin(..))
+    matches!(term, Term::Let(..) | Term::Letrec(..) | Term::Bin(..))
 }
 
 /// A `let`'s value is a single operand: a nested `let` there would take the
-/// rest of the text as its scope.
+/// rest of the text as its scope, and a bare function would make the binding a
+/// member of the block's recursive group (ADR 0003) instead of a plain `let`.
 fn needs_parens_as_value(term: &Term) -> bool {
-    matches!(term, Term::Let(..))
+    matches!(term, Term::Let(..) | Term::Letrec(..) | Term::Abs(..))
 }
 
 /// A projection in callee position is parenthesised: `r.f(x)` passes `r`.
@@ -132,8 +144,21 @@ fn print(term: &Term, style: Style) -> String {
     match term {
         Term::Var(name) => name.clone(),
         Term::Num(n) => n.to_string(),
+        Term::Dec(d) => format!("{d}.5"),
         Term::Bool(b) => b.to_string(),
         Term::Str(text) => format!("\"{text}\""),
+        Term::When(cond, then_branch) => format!(
+            "if {} then {} done",
+            print(cond, style),
+            print(then_branch, style)
+        ),
+        Term::Letrec(members, body) => {
+            let members: String = members
+                .iter()
+                .map(|(name, function)| format!("{name} = {}; ", print(function, style)))
+                .collect();
+            format!("{members}{}", print(body, style))
+        }
         Term::If(cond, then_branch, else_branch) => format!(
             "if {} then {} else {} done",
             print(cond, style),
@@ -247,16 +272,20 @@ struct Gen {
     rng: Rng,
     scope: Vec<String>,
     functions: u32,
+    /// Whether to generate recursive groups. The Coq printer does not write
+    /// them, so the printer table is built without.
+    groups: bool,
 }
 
 impl Gen {
     fn leaf(&mut self) -> Term {
-        match self.rng.below(4) {
+        match self.rng.below(5) {
             0 if !self.scope.is_empty() => {
                 Term::Var(self.scope[self.rng.below(self.scope.len())].clone())
             }
             1 => Term::Bool(self.rng.below(2) == 0),
             2 => Term::Str(STRINGS[self.rng.below(STRINGS.len())]),
+            3 => Term::Dec(self.rng.below(1000) as u32),
             _ => Term::Num(self.rng.below(1000) as u32),
         }
     }
@@ -270,7 +299,7 @@ impl Gen {
             return self.leaf();
         }
         let depth = depth + 1;
-        match self.rng.below(13) {
+        match self.rng.below(15) {
             0..=2 => self.leaf(),
             3 | 4 => {
                 let name = self.value_name();
@@ -300,11 +329,39 @@ impl Gen {
                 Box::new(self.term(depth)),
                 Box::new(self.term(depth)),
             ),
+            11 => Term::When(Box::new(self.term(depth)), Box::new(self.term(depth))),
+            12 if self.groups => self.group(depth),
             _ => {
                 let op = OPERATORS[self.rng.below(OPERATORS.len())];
                 Term::Bin(Box::new(self.term(depth)), op, Box::new(self.term(depth)))
             }
         }
+    }
+
+    /// Members named `g<n>` (a name used nowhere else), each a function over
+    /// one parameter that may call any member, itself included.
+    fn group(&mut self, depth: u32) -> Term {
+        let mark = self.scope.len();
+        let names: Vec<String> = (0..1 + self.rng.below(3))
+            .map(|_| {
+                self.functions += 1;
+                format!("g{}", self.functions)
+            })
+            .collect();
+        self.scope.extend(names.iter().cloned());
+        let members = names
+            .into_iter()
+            .map(|name| {
+                let param = self.value_name();
+                self.scope.push(param.clone());
+                let body = self.term(depth);
+                self.scope.pop();
+                (name, Term::Abs(param, Box::new(body)))
+            })
+            .collect();
+        let body = self.term(depth);
+        self.scope.truncate(mark);
+        Term::Letrec(members, Box::new(body))
     }
 
     fn binding(&mut self, depth: u32) -> Term {
@@ -333,11 +390,21 @@ fn intern_labels(term: &mut Term, seen: &mut Vec<u32>) {
         *label = at as u32;
     }
     match term {
-        Term::Var(_) | Term::Num(_) | Term::Bool(_) | Term::Str(_) => {}
+        Term::Var(_) | Term::Num(_) | Term::Dec(_) | Term::Bool(_) | Term::Str(_) => {}
         Term::If(cond, then_branch, else_branch) => {
             intern_labels(cond, seen);
             intern_labels(then_branch, seen);
             intern_labels(else_branch, seen);
+        }
+        Term::When(cond, then_branch) => {
+            intern_labels(cond, seen);
+            intern_labels(then_branch, seen);
+        }
+        Term::Letrec(members, body) => {
+            for (_, function) in members {
+                intern_labels(function, seen);
+            }
+            intern_labels(body, seen);
         }
         Term::Bin(lhs, _, rhs) => {
             intern_labels(lhs, seen);
@@ -386,9 +453,30 @@ impl Reader {
         at as u32
     }
 
+    /// A function binding opens its block's recursive group: the function
+    /// bindings that follow it in a run are in scope before any body is read,
+    /// itself included (ADR 0003).
+    fn bind_group(&mut self, first: &Expr) {
+        let mut at = first;
+        while let ExprKind::Let {
+            symbol,
+            name,
+            value,
+            rest: Some(rest),
+        } = &at.kind
+        {
+            if !matches!(value.kind, ExprKind::Func { .. }) {
+                break;
+            }
+            self.scope.push((name.clone(), *symbol));
+            at = rest;
+        }
+    }
+
     fn read(&mut self, expr: &Expr) -> Term {
         match &expr.kind {
             ExprKind::Int(n) => Term::Num(u32::try_from(*n).expect("generated numbers fit")),
+            ExprKind::Float(f) => Term::Dec((*f - 0.5) as u32),
             ExprKind::Bool(b) => Term::Bool(*b),
             ExprKind::Str(text) => Term::Str(
                 STRINGS
@@ -405,6 +493,11 @@ impl Reader {
                 Box::new(self.read(then_branch)),
                 Box::new(self.read(else_branch)),
             ),
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch: None,
+            } => Term::When(Box::new(self.read(cond)), Box::new(self.read(then_branch))),
             ExprKind::Bin { op, lhs, rhs } => {
                 Term::Bin(Box::new(self.read(lhs)), *op, Box::new(self.read(rhs)))
             }
@@ -440,16 +533,17 @@ impl Reader {
                 value,
                 rest: Some(rest),
             } => {
+                let mark = self.scope.len();
                 let is_function = matches!(value.kind, ExprKind::Func { .. });
-                if is_function {
-                    self.scope.push((name.clone(), *symbol));
+                if is_function && !self.scope.iter().any(|(_, bound)| bound == symbol) {
+                    self.bind_group(expr);
                 }
                 let value = self.read(value);
                 if !is_function {
                     self.scope.push((name.clone(), *symbol));
                 }
                 let body = self.read(rest);
-                self.scope.pop();
+                self.scope.truncate(mark);
                 Term::Let(name.clone(), Box::new(value), Box::new(body))
             }
             ExprKind::Record { fields } => Term::Rec(
@@ -490,19 +584,42 @@ fn printed_core_terms_parse_back_as_the_same_term() {
         rng: Rng(SEED),
         scope: Vec::new(),
         functions: 0,
+        groups: true,
     };
     for case in 0..CASES {
         builder.functions = 0;
         let mut term = builder.term(0);
         intern_labels(&mut term, &mut Vec::new());
+        let expected = ungroup(&term);
         for style in [Style::Curried, Style::Grouped, Style::Dot] {
             let source = print(&term, style);
             assert_eq!(
                 lower_to_term(&source),
-                term,
+                expected,
                 "case {case}, source {source:?}"
             );
         }
+    }
+}
+
+/// A recursive group lowers to the chain of its function bindings: the group is
+/// name resolution, so the read-back is the `let` chain, with every name read
+/// as the member it names (`Reader` checks the resolution).
+fn ungroup(term: &Term) -> Term {
+    let boxed = |t: &Term| Box::new(ungroup(t));
+    match term {
+        Term::Var(_) | Term::Num(_) | Term::Dec(_) | Term::Bool(_) | Term::Str(_) => term.clone(),
+        Term::Abs(name, body) => Term::Abs(name.clone(), boxed(body)),
+        Term::App(f, a) => Term::App(boxed(f), boxed(a)),
+        Term::Let(name, v, b) => Term::Let(name.clone(), boxed(v), boxed(b)),
+        Term::Rec(fields) => Term::Rec(fields.iter().map(|(l, t)| (*l, ungroup(t))).collect()),
+        Term::Proj(base, label) => Term::Proj(boxed(base), *label),
+        Term::If(c, t, e) => Term::If(boxed(c), boxed(t), boxed(e)),
+        Term::When(c, t) => Term::When(boxed(c), boxed(t)),
+        Term::Bin(a, op, b) => Term::Bin(boxed(a), *op, boxed(b)),
+        Term::Letrec(members, body) => members.iter().rev().fold(ungroup(body), |rest, (n, f)| {
+            Term::Let(n.clone(), boxed(f), Box::new(rest))
+        }),
     }
 }
 
@@ -551,12 +668,17 @@ fn canonical(term: &Term, scope: &mut Vec<(String, String)>) -> Term {
                 .expect("generated terms are closed");
             Term::Var(canon.clone())
         }
-        Term::Num(_) | Term::Bool(_) | Term::Str(_) => term.clone(),
+        Term::Num(_) | Term::Dec(_) | Term::Bool(_) | Term::Str(_) => term.clone(),
         Term::If(cond, then_branch, else_branch) => Term::If(
             Box::new(canonical(cond, scope)),
             Box::new(canonical(then_branch, scope)),
             Box::new(canonical(else_branch, scope)),
         ),
+        Term::When(cond, then_branch) => Term::When(
+            Box::new(canonical(cond, scope)),
+            Box::new(canonical(then_branch, scope)),
+        ),
+        Term::Letrec(..) => unreachable!("the printer table has no recursive group"),
         Term::Bin(lhs, op, rhs) => Term::Bin(
             Box::new(canonical(lhs, scope)),
             *op,
@@ -604,6 +726,7 @@ fn coq_term(term: &Term, scope: &mut Vec<String>) -> String {
             format!("(e_fvar_b {index})")
         }
         Term::Num(n) => format!("(e_num {n})"),
+        Term::Dec(d) => format!("(e_dec {d})"),
         Term::Bool(true) => "e_true".into(),
         Term::Bool(false) => "e_false".into(),
         Term::Str(_) => "(e_str [])".into(),
@@ -613,6 +736,12 @@ fn coq_term(term: &Term, scope: &mut Vec<String>) -> String {
             coq_term(then_branch, scope),
             coq_term(else_branch, scope)
         ),
+        Term::When(cond, then_branch) => format!(
+            "(e_ite {} {} e_unit)",
+            coq_term(cond, scope),
+            coq_term(then_branch, scope)
+        ),
+        Term::Letrec(..) => unreachable!("the printer table has no recursive group"),
         Term::Bin(lhs, op, rhs) => format!(
             "(e_bin {} {} {})",
             coq_term(lhs, scope),
@@ -659,7 +788,10 @@ fn coq_tokens(source: &str) -> String {
             let text = &source[token.start..token.end];
             match token.kind {
                 TokenKind::Name => format!("TName \"{text}\""),
-                TokenKind::Number => format!("TNum {text}"),
+                TokenKind::Number => match text.split_once('.') {
+                    Some((whole, _)) => format!("TDec {whole}"),
+                    None => format!("TNum {text}"),
+                },
                 TokenKind::String => "TStr".into(),
                 TokenKind::Keyword
                 | TokenKind::Literal
@@ -677,6 +809,7 @@ fn printer_table() -> String {
         rng: Rng(SEED),
         scope: Vec::new(),
         functions: 0,
+        groups: false,
     };
     let mut rows = Vec::new();
     for _ in 0..TABLE_CASES {
@@ -724,42 +857,60 @@ fn the_coq_printer_table_matches_the_rust_printer() {
     );
 }
 
-#[test]
-fn a_function_binding_sees_itself_unlike_the_ott_let() {
-    let Term::Let(_, value, _) = lower_to_term("x = program(y) do x done; x") else {
-        panic!("a let")
-    };
-    assert_eq!(
-        *value,
-        Term::Abs("y".into(), Box::new(Term::Var("x".into())))
-    );
+/// The symbol of the variable a function body reads, and the symbols the
+/// block's bindings bind, in order.
+fn symbols_of_chain(source: &str) -> (Vec<Symbol>, Symbol) {
+    let root = lower(source).expect("parses").root;
+    let mut at = &root;
+    let mut bound = Vec::new();
+    let mut read = None;
+    while let ExprKind::Let {
+        symbol,
+        value,
+        rest: Some(rest),
+        ..
+    } = &at.kind
+    {
+        bound.push(*symbol);
+        if let (ExprKind::Func { body, .. }, None) = (&value.kind, &read)
+            && let ExprKind::Var { symbol, .. } = &body.kind
+        {
+            read = Some(*symbol);
+        }
+        at = rest;
+    }
+    (bound, read.expect("a function reads a variable"))
 }
 
 #[test]
-fn a_function_sees_a_later_function_of_its_block_unlike_the_ott_let() {
+fn a_function_binding_is_a_one_member_group_that_reads_itself() {
+    let (bound, read) = symbols_of_chain("x = program(y) do x done; x");
+    assert_eq!(read, bound[0]);
+}
+
+#[test]
+fn a_parenthesised_function_binding_is_a_plain_let_that_does_not_read_itself() {
+    let source = "x = 1; x = (program(y) do x done); x";
+    let (bound, read) = symbols_of_chain(source);
+    assert_eq!(read, bound[0], "the body reads the earlier `x`");
+    assert_ne!(read, bound[1]);
+}
+
+#[test]
+fn a_group_member_reads_a_later_member() {
+    let (bound, read) = symbols_of_chain("f = program(y) do g done; g = program(z) do z done; f");
+    assert_eq!(read, bound[1]);
+}
+
+#[test]
+fn a_function_sees_a_later_function_of_its_block_not_a_later_value() {
     let source = "g = 1; f = program(y) do g done; g = program(z) do z done; f";
-    let root = lower(source).expect("parses").root;
-    let ExprKind::Let {
-        symbol: first_g,
-        rest: Some(rest),
-        ..
-    } = &root.kind
-    else {
-        panic!("a let")
-    };
-    let ExprKind::Let { value, .. } = &rest.kind else {
-        panic!("a let")
-    };
-    let ExprKind::Func { body, .. } = &value.kind else {
-        panic!("a function")
-    };
-    let ExprKind::Var { symbol, .. } = &body.kind else {
-        panic!("a variable")
-    };
+    let (bound, read) = symbols_of_chain(source);
     assert_ne!(
-        symbol, first_g,
+        read, bound[0],
         "the body of `f` does not read the earlier `g`"
     );
+    assert_eq!(read, bound[2]);
 }
 
 #[test]
@@ -770,32 +921,54 @@ fn lowering_rejects_a_record_the_core_allows() {
 
 #[test]
 fn the_generated_terms_use_every_operator_string_and_conditional() {
-    fn visit(term: &Term, ops: &mut Vec<BinOp>, strings: &mut Vec<&'static str>, ifs: &mut usize) {
+    #[derive(Default)]
+    struct Seen {
+        ops: Vec<BinOp>,
+        strings: Vec<&'static str>,
+        ifs: usize,
+        whens: usize,
+        decs: usize,
+        groups: usize,
+        members: usize,
+    }
+    fn visit(term: &Term, seen: &mut Seen) {
         match term {
             Term::Str(text) => {
-                if !strings.contains(text) {
-                    strings.push(text);
+                if !seen.strings.contains(text) {
+                    seen.strings.push(text);
                 }
             }
+            Term::Dec(_) => seen.decs += 1,
             Term::If(a, b, c) => {
-                *ifs += 1;
+                seen.ifs += 1;
                 for t in [a, b, c] {
-                    visit(t, ops, strings, ifs);
+                    visit(t, seen);
                 }
+            }
+            Term::When(a, b) => {
+                seen.whens += 1;
+                visit(a, seen);
+                visit(b, seen);
             }
             Term::Bin(a, op, b) => {
-                if !ops.contains(op) {
-                    ops.push(*op);
+                if !seen.ops.contains(op) {
+                    seen.ops.push(*op);
                 }
-                visit(a, ops, strings, ifs);
-                visit(b, ops, strings, ifs);
+                visit(a, seen);
+                visit(b, seen);
             }
-            Term::Abs(_, body) | Term::Proj(body, _) => visit(body, ops, strings, ifs),
+            Term::Abs(_, body) | Term::Proj(body, _) => visit(body, seen),
             Term::App(a, b) | Term::Let(_, a, b) => {
-                visit(a, ops, strings, ifs);
-                visit(b, ops, strings, ifs);
+                visit(a, seen);
+                visit(b, seen);
             }
-            Term::Rec(fields) => fields.iter().for_each(|(_, t)| visit(t, ops, strings, ifs)),
+            Term::Letrec(members, body) => {
+                seen.groups += 1;
+                seen.members += members.len();
+                members.iter().for_each(|(_, f)| visit(f, seen));
+                visit(body, seen);
+            }
+            Term::Rec(fields) => fields.iter().for_each(|(_, t)| visit(t, seen)),
             Term::Var(_) | Term::Num(_) | Term::Bool(_) => {}
         }
     }
@@ -803,15 +976,50 @@ fn the_generated_terms_use_every_operator_string_and_conditional() {
         rng: Rng(SEED),
         scope: Vec::new(),
         functions: 0,
+        groups: true,
     };
-    let (mut ops, mut strings, mut ifs) = (Vec::new(), Vec::new(), 0);
+    let mut seen = Seen::default();
     for _ in 0..CASES {
         builder.functions = 0;
-        visit(&builder.term(0), &mut ops, &mut strings, &mut ifs);
+        visit(&builder.term(0), &mut seen);
     }
-    assert_eq!(ops.len(), OPERATORS.len());
-    assert_eq!(strings.len(), STRINGS.len());
-    assert!(ifs > 100, "{ifs} conditionals");
+    assert_eq!(seen.ops.len(), OPERATORS.len());
+    assert_eq!(seen.strings.len(), STRINGS.len());
+    assert!(seen.ifs > 100, "{} conditionals", seen.ifs);
+    assert!(
+        seen.whens > 100,
+        "{} conditionals without an else",
+        seen.whens
+    );
+    assert!(seen.decs > 100, "{} Float literals", seen.decs);
+    assert!(seen.groups > 100, "{} groups", seen.groups);
+    assert!(seen.members > seen.groups, "{} members", seen.members);
+}
+
+#[test]
+fn a_recursive_group_reads_back_with_each_name_resolved_to_its_member() {
+    let var = |name: &str| Box::new(Term::Var(name.to_string()));
+    let group = Term::Letrec(
+        vec![
+            (
+                "even".into(),
+                Term::Abs("n".into(), Box::new(Term::App(var("odd"), var("n")))),
+            ),
+            (
+                "odd".into(),
+                Term::Abs("n".into(), Box::new(Term::App(var("even"), var("n")))),
+            ),
+        ],
+        Box::new(Term::App(var("even"), Box::new(Term::Num(2)))),
+    );
+    assert_eq!(
+        print(&group, Style::Curried),
+        "even = program(n) do odd(n) done; odd = program(n) do even(n) done; even(2)"
+    );
+    assert_eq!(
+        lower_to_term(&print(&group, Style::Curried)),
+        ungroup(&group)
+    );
 }
 
 #[test]

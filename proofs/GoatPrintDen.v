@@ -108,7 +108,8 @@ Proof.
   - intros q k Hs. reflexivity.
   - (* conditional *)
     intros a IHa b IHb c IHc k [Ha [Hb Hc]]. simpl.
-    rewrite (IHa k Ha), (IHb k Hb), (IHc k Hc). reflexivity.
+    rewrite (IHa k Ha), (IHb k Hb).
+    destruct Hc as [-> | Hc]; [ reflexivity | rewrite (IHc k Hc); reflexivity ].
   - (* operation *)
     intros a IHa o b IHb k [Ha Hb]. simpl.
     rewrite (IHa k Ha), (IHb k Hb). reflexivity.
@@ -231,12 +232,15 @@ Qed.
    parenthesised. *)
 Lemma callee_not_access : forall P f, ~ ends_in_access (as_callee f (block P f)).
 Proof.
-  intros P f. destruct f; cbn [as_callee as_operand block paren_kids];
+  intros P f. destruct f; try (cbn [as_callee as_operand block paren_kids];
     first
     [ (intros [init [c H]]; destruct init; discriminate H)
     | (apply (ends_access_last [sym "("; Node R_expr _]); intros c Hc; discriminate Hc)
     | (apply (ends_access_last []); intros c Hc; discriminate Hc)
-    | (apply ends_access_last; intros c Hc; discriminate Hc) ].
+    | (apply ends_access_last; intros c Hc; discriminate Hc) ]; fail).
+  destruct (block_ite_cases P f1 f2 f3) as [(-> & E) | (_ & E)];
+    cbn [as_callee as_operand]; rewrite E;
+    apply (ends_access_last []); intros c Hc; discriminate Hc.
 Qed.
 
 Lemma den_pack : forall var_of tbl P e x,
@@ -260,6 +264,44 @@ Lemma den_chain_paren : forall var_of tbl b e,
 Proof.
   intros var_of tbl b e H. unfold paren_kids.
   eapply DC_paren; [ apply D_expr; exact H | apply DP_nil ].
+Qed.
+
+(* A printed binding's value is never a bare function literal, so the binding is
+   a plain let and not a group member. *)
+Lemma fn_value_single : forall cs,
+  fn_value cs = true -> exists c, cs = [Node R_function c].
+Proof.
+  intros cs H. destruct cs as [| t [| t2 cs']].
+  - discriminate H.
+  - destruct t as [k | r c]; try discriminate H.
+    destruct r; try discriminate H. eauto.
+  - destruct t as [k | r c]; try discriminate H.
+    destruct r; discriminate H.
+Qed.
+
+Lemma value_not_fn : forall P v,
+  is_fn_decl (decl_tree P (as_value v (block P v))) = false.
+Proof.
+  intros P v. unfold decl_tree, is_fn_decl.
+  destruct (fn_value (as_value v (block P v))) eqn:H; [ | reflexivity ].
+  exfalso. destruct (fn_value_single _ H) as (c & Hc).
+  destruct v; try (cbn [as_value block] in Hc;
+    first
+    [ discriminate Hc
+    | (assert (Hin : In (call_tree _) [Node R_function c])
+         by (rewrite <- Hc; apply in_or_app; right; left; reflexivity);
+       destruct Hin as [Hin | []]; discriminate Hin)
+    | (assert (Hin : In (access_tree _) [Node R_function c])
+         by (rewrite <- Hc; apply in_or_app; right; left; reflexivity);
+       destruct Hin as [Hin | []]; discriminate Hin)
+    | (match goal with
+       | o : bop |- _ =>
+           assert (Hin : In (op_tree o) [Node R_function c])
+             by (rewrite <- Hc; apply in_or_app; right; left; reflexivity);
+           destruct Hin as [Hin | []]; destruct o; discriminate Hin
+       end) ]; fail).
+  cbn [as_value] in Hc.
+  destruct (block_ite_cases P v1 v2 v3) as [(_ & E) | (_ & E)]; rewrite E in Hc; discriminate Hc.
 Qed.
 
 (* ---- the main lemma ---- *)
@@ -287,7 +329,10 @@ Proof.
     assert (Hchain : Den_chain var_of tbl (block P (e_num n)) (e_num n))
       by (apply den_chain_single; exact Hn).
     apply den_pack; exact Hchain.
-  - intros d P Hs. destruct Hs.
+  - intros d P Hs Hl.
+    assert (Hchain : Den_chain var_of tbl (block P (e_dec d)) (e_dec d))
+      by (apply den_chain_single; apply D_dec).
+    apply den_pack; exact Hchain.
   - intros P Hs Hl.
     assert (Hchain : Den_chain var_of tbl (block P e_true) e_true)
       by (apply den_chain_single; apply D_true).
@@ -337,7 +382,7 @@ Proof.
                    = e_let (inst var_of P v) (close_exp (var_of (nm P)) (inst var_of (S P) b))).
     { unfold inst at 1. simpl. rewrite (close_inst_exp var_of P b Hdist Hb). reflexivity. }
     rewrite Hlet. cbn [block].
-    eapply DB_decl; [ exact Hdecl | exact Hbb ].
+    eapply DB_decl; [ exact Hdecl | apply value_not_fn | exact Hbb ].
   - (* recursive group: not a term of the printed fragment *)
     intros fs IHfs b IHb P Hs. destruct Hs.
   - (* record *)
@@ -370,13 +415,25 @@ Proof.
     intros c IHc a IHa b IHb P [Hc [Ha Hb]] Hl.
     destruct (IHc P Hc (labelsok_app_l _ _ _ Hl)) as [Hbc _].
     destruct (IHa P Ha (labelsok_app_l _ _ _ (labelsok_app_r _ _ _ Hl))) as [Hba _].
-    destruct (IHb P Hb (labelsok_app_r _ _ _ (labelsok_app_r _ _ _ Hl))) as [Hbb _].
-    assert (Hcond : Den var_of tbl (cond_tree (block P c) (block P a) (block P b))
-                      (e_ite (inst var_of P c) (inst var_of P a) (inst var_of P b))).
-    { unfold cond_tree. apply D_cond; apply D_expr; assumption. }
-    assert (Hchain : Den_chain var_of tbl (block P (e_ite c a b)) (inst var_of P (e_ite c a b)))
-      by (apply den_chain_single; exact Hcond).
-    apply den_pack; exact Hchain.
+    destruct (block_ite_cases P c a b) as [(-> & E) | (Hne & E)]; rewrite E.
+    + assert (Hcond : Den var_of tbl (cond_tree_noelse (block P c) (block P a))
+                        (e_ite (inst var_of P c) (inst var_of P a) e_unit)).
+      { unfold cond_tree_noelse. apply D_cond_noelse; apply D_expr; assumption. }
+      assert (Hchain : Den_chain var_of tbl [cond_tree_noelse (block P c) (block P a)]
+                         (e_ite (inst var_of P c) (inst var_of P a) e_unit))
+        by (apply den_chain_single; exact Hcond).
+      rewrite <- E.
+      apply den_pack. rewrite E. exact Hchain.
+    + destruct Hb as [Hb | Hb]; [ exfalso; exact (Hne Hb) | ].
+      destruct (IHb P Hb (labelsok_app_r _ _ _ (labelsok_app_r _ _ _ Hl))) as [Hbb _].
+      assert (Hcond : Den var_of tbl (cond_tree (block P c) (block P a) (block P b))
+                        (e_ite (inst var_of P c) (inst var_of P a) (inst var_of P b))).
+      { unfold cond_tree. apply D_cond; apply D_expr; assumption. }
+      assert (Hchain : Den_chain var_of tbl [cond_tree (block P c) (block P a) (block P b)]
+                         (e_ite (inst var_of P c) (inst var_of P a) (inst var_of P b)))
+        by (apply den_chain_single; exact Hcond).
+      rewrite <- E.
+      apply den_pack. rewrite E. exact Hchain.
   - (* operation *)
     intros a IHa o b IHb P [Ha Hb] Hl.
     destruct (IHa P Ha (labelsok_app_l _ _ _ Hl)) as [Hba [_ Hca]].

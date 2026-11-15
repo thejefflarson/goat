@@ -25,7 +25,7 @@ Lemma prim_name : forall x, PrimOK [ident x].
 Proof.
   intros x r Hne.
   assert (Hnd : NotDecl (TName x :: r))
-    by (destruct r as [| [? | ? | | ?] ?]; simpl in *; exact I || exact Hne).
+    by (destruct r as [| [? | ? | ? | | ?] ?]; simpl in *; exact I || exact Hne).
   flat_simp. refine (conj _ (conj _ _)).
   - exact I.
   - exact Hnd.
@@ -35,6 +35,14 @@ Qed.
 Lemma prim_number : forall n, PrimOK [Node R_number [Leaf (TNum n)]].
 Proof.
   intros n r Hne. flat_simp. refine (conj _ (conj _ _)).
+  - exact I.
+  - exact I.
+  - pok nope.
+Qed.
+
+Lemma prim_decimal : forall d, PrimOK [Node R_number [Leaf (TDec d)]].
+Proof.
+  intros d r Hne. flat_simp. refine (conj _ (conj _ _)).
   - exact I.
   - exact I.
   - pok nope.
@@ -105,4 +113,16 @@ Proof.
   - exact I.
   - pok ltac:(first
       [ (eapply Hc; constructor) | (eapply Ht; constructor) | (eapply He; constructor) ]).
+Qed.
+
+Lemma prim_conditional_noelse : forall c t,
+  ExprParses c -> ExprParses t -> PrimOK [cond_tree_noelse c t].
+Proof.
+  intros c t Hc Ht r Hne. unfold cond_tree_noelse. flat_simp. rewrite <- ?app_assoc.
+  cbn [app]. rewrite <- ?app_assoc. cbn [app]. rewrite <- ?app_assoc.
+  refine (conj _ (conj _ _)).
+  - plain_head.
+  - exact I.
+  - pok ltac:(first
+      [ (eapply Hc; constructor) | (eapply Ht; constructor) ]).
 Qed.

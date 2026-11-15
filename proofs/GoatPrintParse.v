@@ -168,8 +168,8 @@ Proof.
     intros y n P Hs. destruct Hs.
   - intros k n P Hs. apply blk_chain; [ exact I | ].
     exact (chain_prim _ (prim_number _)).
-  - (* decimal literal: not in the printable fragment *)
-    intros d n P Hs. destruct Hs.
+  - intros d n P Hs. apply blk_chain; [ exact I | ].
+    exact (chain_prim _ (prim_decimal _)).
   - intros n P Hs. apply blk_chain; [ exact I | ].
     exact (chain_prim _ prim_true).
   - intros n P Hs. apply blk_chain; [ exact I | ].
@@ -204,9 +204,13 @@ Proof.
     exact (chain_prim _ prim_string).
   - (* conditional *)
     intros c IHc a IHa b IHb n P [Hc [Ha Hb]]. apply blk_chain; [ exact I | ].
-    exact (chain_prim _ (prim_conditional _ _ _
-             (expr_parses _ _ (IHc n P Hc)) (expr_parses _ _ (IHa n P Ha))
-             (expr_parses _ _ (IHb n P Hb)))).
+    destruct (block_ite_cases P c a b) as [(-> & E) | (Hne & E)]; rewrite E.
+    + exact (chain_prim _ (prim_conditional_noelse _ _
+               (expr_parses _ _ (IHc n P Hc)) (expr_parses _ _ (IHa n P Ha)))).
+    + destruct Hb as [Hb | Hb]; [ exfalso; exact (Hne Hb) | ].
+      exact (chain_prim _ (prim_conditional _ _ _
+               (expr_parses _ _ (IHc n P Hc)) (expr_parses _ _ (IHa n P Ha))
+               (expr_parses _ _ (IHb n P Hb)))).
   - (* operation *)
     intros a IHa o b IHb n P [Ha Hb].
     apply blk_nonlet; [ exact I | | intros Hx; discriminate Hx ].
