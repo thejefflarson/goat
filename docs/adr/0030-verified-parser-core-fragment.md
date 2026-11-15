@@ -75,9 +75,13 @@ The fragment now also holds:
 
 Still outside: `and`, `or`, `not`, unary minus, an `if` without an `else`
 (lowering supplies the `()`), and the unit value, which has no literal. T3 covers
-the printable core: `scoped` is false for the unit value. The Rust round-trip
-test and the printer table (`checker/tests/core_roundtrip.rs`) still generate the
-old core only, so the Coq printer's new forms have no Rust counterpart.
+the printable core: `scoped` is false for the unit value, for a `Float` value
+and for `float(e)`. The coercion `float(e)` has no surface syntax: elaboration
+inserts it, so no source text parses to it and the Rust round-trip cannot print
+it; `parser/tests/rule_map.rs` exempts it for that reason. The Rust round-trip
+test and the printer table (`checker/tests/core_roundtrip.rs`) generate strings,
+`if`, and every operator alongside the old core, so each form the Coq printer
+writes has a Rust counterpart.
 
 ## Consequences
 
