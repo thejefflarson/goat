@@ -49,6 +49,15 @@ Ltac occ_simp :=
   repeat (progress rewrite ?lo_node, ?lo_leaf, ?occs_nil, ?occs_cons, ?occs_app);
   cbn [lo_head app]; rewrite ?List.app_nil_l, ?List.app_nil_r.
 
+Lemma occs_as_binop : forall e b, occs (as_binop e b) = occs b.
+Proof.
+  intros e b. destruct e; cbn [as_binop]; try reflexivity;
+    unfold paren_kids; occ_simp; reflexivity.
+Qed.
+
+Lemma occs_op : forall o, label_occurrences (op_tree o) = [].
+Proof. intros o. destruct o; reflexivity. Qed.
+
 Lemma occs_block :
   (forall e P, occs (block P e) = List.map lname (lbls e)) /\
   (forall fs P, occs (field_trees P fs) = List.map lname (lbls_fields fs)
@@ -58,6 +67,7 @@ Proof.
   - intros i P. cbn [block]. occ_simp. reflexivity.
   - intros y P. reflexivity.
   - intros n P. cbn [block]. occ_simp. reflexivity.
+  - intros d P. cbn [block lbls]. occ_simp. reflexivity.
   - intros P. cbn [block]. occ_simp. reflexivity.
   - intros P. cbn [block]. occ_simp. reflexivity.
   - intros b IH P. cbn [block lbls]. unfold function_tree. occ_simp. exact (IH (S P)).
@@ -77,6 +87,15 @@ Proof.
     unfold access_tree. occ_simp.
     destruct f; cbn [as_operand]; first
       [ unfold paren_kids; occ_simp; try rewrite IH; reflexivity | rewrite IH; reflexivity ].
+  - intros P. cbn [block lbls]. occ_simp. reflexivity.
+  - intros q P. cbn [block lbls]. occ_simp. reflexivity.
+  - intros c IHc a IHa b IHb P. cbn [block lbls]. rewrite !List.map_app.
+    unfold cond_tree. occ_simp. rewrite IHc, IHa, IHb.
+    repeat rewrite <- List.app_assoc. reflexivity.
+  - intros a IHa o b IHb P. cbn [block lbls].
+    rewrite occs_app, occs_cons, occs_op, !occs_as_binop, IHa, IHb, List.map_app.
+    reflexivity.
+  - intros a IH P. cbn [block lbls]. occ_simp. reflexivity.
   - intros P. split; reflexivity.
   - intros l e IHe rest IHrest P. destruct (IHrest P) as [IHf IHm].
     cbn [field_trees more_field_trees lbls_fields]. unfold field_tree.

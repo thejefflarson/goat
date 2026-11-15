@@ -61,6 +61,24 @@ small enough to finish.
      same term. Its printer holds the parenthesisation rules the Coq printer
      mirrors.
 
+## Amendment: phase 1 of the proof coverage (ADR 0037)
+
+The fragment now also holds:
+- a string literal (the lexer is trusted, so the token carries no bytes and the
+  string denotes `q` for every `q`);
+- `if c then a else b done`, with the `else`;
+- one binary operator between two operands (`+ - * / // %` and `== != < <= > >=`),
+  where an operand is a chain, so a nested operation or a binding is
+  parenthesised. A run of two operators is outside the fragment: its precedence
+  is resolved by lowering (ADR 0013) and the model does not resolve it. A dot
+  call inside an expression with an operator is also outside it.
+
+Still outside: `and`, `or`, `not`, unary minus, an `if` without an `else`
+(lowering supplies the `()`), and the unit value, which has no literal. T3 covers
+the printable core: `scoped` is false for the unit value. The Rust round-trip
+test and the printer table (`checker/tests/core_roundtrip.rs`) still generate the
+old core only, so the Coq printer's new forms have no Rust counterpart.
+
 ## Consequences
 
 - The real parser and lowering disagree with the Ott core in three places. They

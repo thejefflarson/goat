@@ -86,3 +86,23 @@ Proof.
   - intros r. unfold call_tree. flat_simp. simpl. discriminate.
   - intros r. unfold call_tree. flat_simp. rewrite <- ?app_assoc. pok ltac:(eapply Hb; constructor).
 Qed.
+
+Lemma prim_string : PrimOK [Node R_string [Leaf TStr]].
+Proof.
+  intros r Hne. flat_simp. refine (conj _ (conj _ _)).
+  - exact I.
+  - exact I.
+  - pok nope.
+Qed.
+
+Lemma prim_conditional : forall c t e,
+  ExprParses c -> ExprParses t -> ExprParses e -> PrimOK [cond_tree c t e].
+Proof.
+  intros c t e Hc Ht He r Hne. unfold cond_tree. flat_simp. rewrite <- ?app_assoc.
+  cbn [app]. rewrite <- ?app_assoc. cbn [app]. rewrite <- ?app_assoc.
+  refine (conj _ (conj _ _)).
+  - plain_head.
+  - exact I.
+  - pok ltac:(first
+      [ (eapply Hc; constructor) | (eapply Ht; constructor) | (eapply He; constructor) ]).
+Qed.

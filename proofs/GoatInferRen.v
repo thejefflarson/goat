@@ -71,6 +71,7 @@ Proof.
     + rewrite subst_neq by congruence.
       eapply T_Var; [ eapply uniq_rename_mid; eauto | exact Hb' | exact Hi ].
   - intros G n Hu G2 Hg Hy. subst G. cbn [subst_exp]. apply T_Num. eapply uniq_rename_mid; eauto.
+  - intros G d Hu G2 Hg Hy. subst G. cbn [subst_exp]. apply T_Dec. eapply uniq_rename_mid; eauto.
   - intros G Hu G2 Hg Hy. subst G. cbn [subst_exp]. apply T_True. eapply uniq_rename_mid; eauto.
   - intros G Hu G2 Hg Hy. subst G. cbn [subst_exp]. apply T_False. eapply uniq_rename_mid; eauto.
   - (* T_Abs *)
@@ -116,9 +117,17 @@ Proof.
   - (* T_Conv *)
     intros G e T T' Ht IH Hteq G2 Hg Hy. subst G.
     eapply T_Conv; [ eapply IH; eauto | exact Hteq ].
-  - (* T_AppPoly *)
-    intros G e g T Ht IH G2 Hg Hy. subst G. cbn [subst_exp].
-    apply T_AppPoly. eapply IH; eauto.
+  - intros G Hu G2 Hg Hy. subst G. cbn [subst_exp]. apply T_Unit. eapply uniq_rename_mid; eauto.
+  - intros G q Hu G2 Hg Hy. subst G. cbn [subst_exp]. apply T_Str. eapply uniq_rename_mid; eauto.
+  - (* T_If *)
+    intros G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3 G2 Hg Hy. subst G. cbn [subst_exp].
+    apply T_If; [ eapply IH1 | eapply IH2 | eapply IH3 ]; eauto.
+  - (* T_ToFloat *)
+    intros G e Ht IH G2 Hg Hy. subst G. cbn [subst_exp].
+    apply T_ToFloat. eapply IH; eauto.
+  - (* T_Bin *)
+    intros G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs G2 Hg Hy. subst G. cbn [subst_exp].
+    eapply T_Bin; [ eapply IH1 | eapply IH2 | exact Hs ]; eauto.
   - intros G Hu G2 Hg Hy. subst G. cbn [subst_fields]. apply FT_nil. eapply uniq_rename_mid; eauto.
   - intros G l e T fs R Ht IH1 Hf IH2 G2 Hg Hy. subst G. cbn [subst_fields].
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.

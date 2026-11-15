@@ -90,7 +90,7 @@ Fixpoint unify_t (f : nat) (T1 T2 : typ) (n : nat) {struct f} : option (sub * na
   | O => None
   | S f' =>
       match T1, T2 with
-      | typ_Number, typ_Number => Some (sid, n)
+      | typ_Int, typ_Int => Some (sid, n)
       | typ_Bool, typ_Bool => Some (sid, n)
       | typ_Var a, typ_Var b =>
           if Atom.eq_dec a b then Some (sid, n) else Some (sbT a T2, n)
@@ -207,7 +207,7 @@ Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
           | None => None
           | Some s => let (T, n1) := instantiate s n in Some (sid, T, n1)
           end
-      | e_num _ => Some (sid, typ_Number, n)
+      | e_num _ => Some (sid, typ_Int, n)
       | e_true => Some (sid, typ_Bool, n)
       | e_false => Some (sid, typ_Bool, n)
       | e_abs b =>
@@ -260,6 +260,7 @@ Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
               | Some (s2, n2) => Some (scomp s2 s1, apT s2 a, n2)
               end
           end
+      | _ => None
       end
   end
 with infer_fields (f : nat) (G : ctx) (fs : fields) (n : nat) {struct f}

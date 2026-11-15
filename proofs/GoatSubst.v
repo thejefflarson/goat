@@ -233,6 +233,7 @@ Proof.
   - (* T_Var *) destruct (ctx_equiv_binds _ _ _ _ H b) as [s' [Hb' Heq]].
     apply T_Var with (s := s'); eauto using ctx_equiv_uniq, inst_sch_equiv.
   - (* T_Num *) apply T_Num; eauto using ctx_equiv_uniq.
+  - (* T_Dec *) apply T_Dec; eauto using ctx_equiv_uniq.
   - (* T_True *) apply T_True; eauto using ctx_equiv_uniq.
   - (* T_False *) apply T_False; eauto using ctx_equiv_uniq.
   - (* T_Abs *) apply T_Abs with (L := L); intros x Hx.
@@ -244,7 +245,11 @@ Proof.
   - (* T_Record *) apply T_Record; eauto.
   - (* T_Proj *) eapply T_Proj; eauto.
   - (* T_Conv *) eapply T_Conv; eauto.
-  - (* T_AppPoly *) apply T_AppPoly; auto.
+  - (* T_Unit *) apply T_Unit; eauto using ctx_equiv_uniq.
+  - (* T_Str *) apply T_Str; eauto using ctx_equiv_uniq.
+  - (* T_If *) eapply T_If; eauto.
+  - (* T_ToFloat *) apply T_ToFloat; eauto.
+  - (* T_Bin *) eapply T_Bin; eauto.
   - (* FT_nil *) apply FT_nil; eauto using ctx_equiv_uniq.
   - (* FT_cons *) eapply FT_cons; eauto.
 Qed.
@@ -342,6 +347,7 @@ Proof.
   - (* T_Var *) destruct (ctx_more_gen_binds _ _ _ _ H b) as [s' [Hb' [Hinst _]]].
     apply T_Var with (s := s'); eauto using ctx_more_gen_uniq.
   - apply T_Num; eauto using ctx_more_gen_uniq.
+  - apply T_Dec; eauto using ctx_more_gen_uniq.
   - apply T_True; eauto using ctx_more_gen_uniq.
   - apply T_False; eauto using ctx_more_gen_uniq.
   - (* T_Abs *) apply T_Abs with (L := L); intros x Hx.
@@ -352,7 +358,11 @@ Proof.
   - apply T_Record; eauto.
   - eapply T_Proj; eauto.
   - eapply T_Conv; eauto.
-  - (* T_AppPoly *) apply T_AppPoly; auto.
+  - (* T_Unit *) apply T_Unit; eauto using ctx_more_gen_uniq.
+  - (* T_Str *) apply T_Str; eauto using ctx_more_gen_uniq.
+  - (* T_If *) eapply T_If; eauto.
+  - (* T_ToFloat *) apply T_ToFloat; eauto.
+  - (* T_Bin *) eapply T_Bin; eauto.
   - apply FT_nil; eauto using ctx_more_gen_uniq.
   - eapply FT_cons; eauto.
 Qed.
@@ -374,6 +384,9 @@ Lemma teq_ap_mut :
   (forall R R', req R R' -> forall st sr, req (ap_row st sr R) (ap_row st sr R')).
 Proof.
   apply teq_req_mutind; intros; simpl in *.
+  - apply teq_refl.
+  - apply teq_refl.
+  - apply teq_refl.
   - apply teq_refl.
   - apply teq_refl.
   - apply teq_refl.
@@ -460,6 +473,9 @@ Proof.
   apply typ_row_mutind; intros; simpl.
   - fsetdec.
   - fsetdec.
+  - fsetdec.
+  - fsetdec.
+  - fsetdec.
   - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
   - apply H.
   - (* Var a0 *) unfold rt; simpl. rewrite !AtomSetFacts.singleton_iff.
@@ -474,6 +490,9 @@ Lemma Frv_ren_mut :
   (forall R r, r `in` frv_row (ap_row rt rr R) <-> gr r `in` frv_row R).
 Proof.
   apply typ_row_mutind; intros; simpl.
+  - fsetdec.
+  - fsetdec.
+  - fsetdec.
   - fsetdec.
   - fsetdec.
   - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
@@ -601,6 +620,7 @@ Proof.
   - (* T_Var *) apply T_Var with (s := ren_sch s);
       [ apply uniq_ren_ctx; auto | apply binds_ren_ctx; auto | apply inst_ren; auto ].
   - apply T_Num; apply uniq_ren_ctx; auto.
+  - apply T_Dec; apply uniq_ren_ctx; auto.
   - apply T_True; apply uniq_ren_ctx; auto.
   - apply T_False; apply uniq_ren_ctx; auto.
   - (* T_Abs *) unfold ren_typ; simpl. apply T_Abs with (L := L).
@@ -616,7 +636,15 @@ Proof.
   - (* T_Record *) unfold ren_typ; simpl. apply T_Record. exact H.
   - (* T_Proj *) unfold ren_typ, ren_row in H; simpl in H. eapply T_Proj. exact H.
   - (* T_Conv *) eapply T_Conv; [ exact H | apply teq_ap; auto ].
-  - (* T_AppPoly *) apply T_AppPoly; exact H.
+  - (* T_Unit *) apply T_Unit; apply uniq_ren_ctx; auto.
+  - (* T_Str *) apply T_Str; apply uniq_ren_ctx; auto.
+  - (* T_If *) unfold ren_typ in *; simpl in *. eapply T_If; eauto.
+  - (* T_ToFloat *) unfold ren_typ in *; simpl in *. apply T_ToFloat. exact H.
+  - (* T_Bin: the signature's types are closed, so renaming leaves them alone *)
+    unfold ren_typ in *.
+    destruct (bin_sig_ap _ _ _ _ rt rr b) as [HA [HB HR]].
+    rewrite HA in H. rewrite HB in H0. rewrite HR.
+    eapply T_Bin; eauto.
   - apply FT_nil; apply uniq_ren_ctx; auto.
   - (* FT_cons *) unfold ren_row; simpl. eapply FT_cons; [ exact H | exact H0 ].
 Qed.

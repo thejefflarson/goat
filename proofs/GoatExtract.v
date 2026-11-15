@@ -9,6 +9,7 @@
 
 Require Import Goat.GoatInfer.
 Require Import Stdlib.extraction.ExtrOcamlNatInt.
+Require Import Stdlib.extraction.ExtrOcamlZInt.
 
 Set Warnings "-extraction-opaque-accessed,-extraction-default-directory,-extraction-reserved-identifier".
 Extraction Language OCaml.

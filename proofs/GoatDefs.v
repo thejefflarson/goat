@@ -22,6 +22,8 @@
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
 Require Import Stdlib.Lists.List.
+Require Import Goat.GoatNum.
+Require Import Goat.GoatLit.
 
 (* ================================================================== *)
 (* Type / row variable substitution (section 5).                       *)
@@ -33,8 +35,11 @@ Definition rsub := rowvar -> row.
 
 Fixpoint ap_typ (st : tsub) (sr : rsub) (T : typ) {struct T} : typ :=
   match T with
-  | typ_Number => typ_Number
+  | typ_Int => typ_Int
+  | typ_Float => typ_Float
   | typ_Bool => typ_Bool
+  | typ_Unit => typ_Unit
+  | typ_String => typ_String
   | typ_Arrow A B => typ_Arrow (ap_typ st sr A) (ap_typ st sr B)
   | typ_Record R => typ_Record (ap_row st sr R)
   | typ_Var a => st a
@@ -58,8 +63,11 @@ Definition idr : rsub := fun r => row_Var r.
 
 Fixpoint ftv_typ (T : typ) {struct T} : atoms :=
   match T with
-  | typ_Number => {}
+  | typ_Int => {}
+  | typ_Float => {}
   | typ_Bool => {}
+  | typ_Unit => {}
+  | typ_String => {}
   | typ_Arrow A B => ftv_typ A `union` ftv_typ B
   | typ_Record R => ftv_row R
   | typ_Var a => {{a}}
@@ -73,8 +81,11 @@ with ftv_row (R : row) {struct R} : atoms :=
 
 Fixpoint frv_typ (T : typ) {struct T} : atoms :=
   match T with
-  | typ_Number => {}
+  | typ_Int => {}
+  | typ_Float => {}
   | typ_Bool => {}
+  | typ_Unit => {}
+  | typ_String => {}
   | typ_Arrow A B => frv_typ A `union` frv_typ B
   | typ_Record R => frv_row R
   | typ_Var _ => {}
@@ -162,8 +173,11 @@ Definition gen (G : ctx) (T : typ) : scheme :=
 
 Inductive value : exp -> Prop :=
  | v_num : forall n, value (e_num n)
+ | v_dec : forall d, value (e_dec d)
  | v_true : value e_true
  | v_false : value e_false
+ | v_unit : value e_unit
+ | v_str : forall q, value (e_str q)
  | v_abs : forall e, value (e_abs e)
  | v_rec : forall fs, rec_value fs -> value (e_rec fs)
 with rec_value : fields -> Prop :=
@@ -179,6 +193,163 @@ Fixpoint lookup_first (l : label) (fs : fields) : option exp :=
   | fs_nil => None
   | fs_cons l' e fs' => if Nat.eqb l l' then Some e else lookup_first l fs'
   end.
+
+(* ================================================================== *)
+(* Base-type operators (ADR 0017, ADR 0036).                            *)
+(* An [Int] is a signed 64-bit integer: an arithmetic result outside the *)
+(* range is a trap, as in the compiler.  A [Float] is opaque: a decimal  *)
+(* value [e_dec d] carries a payload no rule reads, and each Float       *)
+(* operation relates its operands to every Float (a comparison, to every  *)
+(* Bool).  A property of that relation holds for any function a compiler  *)
+(* might compute, so IEEE rounding, infinities and NaN need no model.    *)
+(* ================================================================== *)
+
+(* What an operator does, by its row in ADR 0017. *)
+Inductive bop_kind : Set := k_ring | k_quot | k_whole | k_cmp.
+
+Definition kind (o : bop) : bop_kind :=
+  match o with
+  | bop_add | bop_sub | bop_mul => k_ring
+  | bop_div => k_quot
+  | bop_fdiv | bop_rem => k_whole
+  | bop_lt | bop_lte | bop_gt | bop_gte | bop_eq | bop_ne => k_cmp
+  end.
+
+(* [+ - *] over the integers; meaningful when [kind o = k_ring]. *)
+Definition ring_Z (o : bop) (a b : znum) : znum :=
+  match o with
+  | bop_add => z_add a b
+  | bop_sub => z_sub a b
+  | _ => z_mul a b
+  end.
+
+(* [//] floors and [%] takes the sign of the divisor (Z.div and Z.modulo do
+   both); meaningful when [kind o = k_whole] and the divisor is not zero. *)
+Definition whole_Z (o : bop) (a b : znum) : znum :=
+  match o with
+  | bop_fdiv => z_div a b
+  | _ => z_mod a b
+  end.
+
+(* Which comparison results satisfy a comparison operator. *)
+Definition cmp_holds (o : bop) (c : comparison) : bool :=
+  match o, c with
+  | bop_lt, Lt => true
+  | bop_lte, (Lt | Eq) => true
+  | bop_gt, Gt => true
+  | bop_gte, (Gt | Eq) => true
+  | bop_eq, Eq => true
+  | bop_ne, (Lt | Gt) => true
+  | _, _ => false
+  end.
+
+(* Strings order bytewise, and a prefix comes first (ADR 0036). *)
+Fixpoint str_compare (p q : list nat) {struct p} : comparison :=
+  match p, q with
+  | nil, nil => Eq
+  | nil, _ :: _ => Lt
+  | _ :: _, nil => Gt
+  | a :: p', b :: q' =>
+      match Nat.compare a b with
+      | Eq => str_compare p' q'
+      | c => c
+      end
+  end.
+
+(* [false] orders before [true] (ADR 0036). *)
+Definition bool_compare (a b : bool) : comparison :=
+  match a, b with
+  | false, true => Lt
+  | true, false => Gt
+  | _, _ => Eq
+  end.
+
+Definition of_bool (b : bool) : exp := if b then e_true else e_false.
+
+Definition val_bool (v : exp) : option bool :=
+  match v with
+  | e_true => Some true
+  | e_false => Some false
+  | _ => None
+  end.
+
+(* What an operator computes from two values.  A relation, because a Float
+   operation is unspecified: any Float, or for a comparison any Bool.  Every
+   Int case has one answer, and none when the divisor is zero or the result
+   leaves the 64-bit range (those trap, see [bin_trap]). *)
+Inductive bin_step : bop -> exp -> exp -> exp -> Prop :=
+ | bs_ring_int : forall o a b,
+     kind o = k_ring -> in_int (ring_Z o a b) = true ->
+     bin_step o (e_num a) (e_num b) (e_num (ring_Z o a b))
+ | bs_whole : forall o a b,
+     kind o = k_whole -> z_is_zero b = false -> in_int (whole_Z o a b) = true ->
+     bin_step o (e_num a) (e_num b) (e_num (whole_Z o a b))
+ | bs_float : forall o x y d,
+     (kind o = k_ring \/ kind o = k_quot) ->
+     bin_step o (e_dec x) (e_dec y) (e_dec d)
+ | bs_cmp_int : forall o a b,
+     kind o = k_cmp ->
+     bin_step o (e_num a) (e_num b) (of_bool (cmp_holds o (z_cmp a b)))
+ | bs_cmp_float : forall o x y c,
+     kind o = k_cmp -> bin_step o (e_dec x) (e_dec y) (of_bool c)
+ | bs_cmp_str : forall o p q,
+     kind o = k_cmp ->
+     bin_step o (e_str p) (e_str q) (of_bool (cmp_holds o (str_compare p q)))
+ | bs_cmp_bool : forall o x y a b,
+     kind o = k_cmp -> val_bool x = Some a -> val_bool y = Some b ->
+     bin_step o x y (of_bool (cmp_holds o (bool_compare a b))).
+
+(* Why a program stops: the defined runtime errors of the fragment. *)
+Inductive trap_kind : Set := trap_div_zero | trap_overflow.
+
+Inductive bin_trap : bop -> exp -> exp -> trap_kind -> Prop :=
+ | bt_div_zero : forall o a b,
+     kind o = k_whole -> z_is_zero b = true ->
+     bin_trap o (e_num a) (e_num b) trap_div_zero
+ | bt_ring_overflow : forall o a b,
+     kind o = k_ring -> in_int (ring_Z o a b) = false ->
+     bin_trap o (e_num a) (e_num b) trap_overflow
+ | bt_whole_overflow : forall o a b,
+     kind o = k_whole -> z_is_zero b = false -> in_int (whole_Z o a b) = false ->
+     bin_trap o (e_num a) (e_num b) trap_overflow.
+
+(* The types an operator accepts, and what it gives (ADR 0017, ADR 0036):
+   [+ - *] take two Ints or two Floats; [/] takes two Floats and gives a
+   Float; [//] and [%] take two Ints; a comparison takes two of one of Int,
+   Float, String or Bool.  The checker accepts an Int where a Float is wanted;
+   elaboration inserts [e_tofloat] there, so the calculus has no mixed
+   signature.  Operators are at concrete types: a constraint variable has no
+   signature in this phase. *)
+Inductive cmp_typ : typ -> Prop :=
+ | ct_int : cmp_typ typ_Int
+ | ct_float : cmp_typ typ_Float
+ | ct_string : cmp_typ typ_String
+ | ct_bool : cmp_typ typ_Bool.
+
+Inductive bin_sig : bop -> typ -> typ -> typ -> Prop :=
+ | sig_ring_int : forall o,
+     kind o = k_ring -> bin_sig o typ_Int typ_Int typ_Int
+ | sig_ring_float : forall o,
+     kind o = k_ring -> bin_sig o typ_Float typ_Float typ_Float
+ | sig_quot : bin_sig bop_div typ_Float typ_Float typ_Float
+ | sig_whole : forall o,
+     kind o = k_whole -> bin_sig o typ_Int typ_Int typ_Int
+ | sig_cmp : forall o B,
+     kind o = k_cmp -> cmp_typ B -> bin_sig o B B typ_Bool.
+
+#[export] Hint Constructors cmp_typ : core.
+
+(* Every type in a signature is closed, so substitution leaves it alone. *)
+Lemma bin_sig_ap : forall o A B R st sr,
+  bin_sig o A B R ->
+  ap_typ st sr A = A /\ ap_typ st sr B = B /\ ap_typ st sr R = R.
+Proof.
+  intros o A B R st sr H.
+  assert (Hc : forall N, cmp_typ N -> ap_typ st sr N = N)
+    by (intros N HN; destruct HN; reflexivity).
+  destruct H; simpl; repeat split;
+    first [ reflexivity | apply Hc; assumption ].
+Qed.
 
 (* ================================================================== *)
 (* Small-step, call-by-value, left-to-right (section 6).                 *)
@@ -208,6 +379,19 @@ Inductive step : exp -> exp -> Prop :=
      step (e_proj (e_rec fs) l) v
  | st_rec : forall fs fs',
      step_fields fs fs' -> step (e_rec fs) (e_rec fs')
+ | st_ite1 : forall e1 e1' e2 e3,
+     step e1 e1' -> step (e_ite e1 e2 e3) (e_ite e1' e2 e3)
+ | st_ite_true : forall e2 e3, step (e_ite e_true e2 e3) e2
+ | st_ite_false : forall e2 e3, step (e_ite e_false e2 e3) e3
+ | st_bin1 : forall e1 e1' o e2,
+     step e1 e1' -> step (e_bin e1 o e2) (e_bin e1' o e2)
+ | st_bin2 : forall v o e2 e2',
+     value v -> step e2 e2' -> step (e_bin v o e2) (e_bin v o e2')
+ | st_bin : forall v1 o v2 v,
+     value v1 -> value v2 -> bin_step o v1 v2 v ->
+     step (e_bin v1 o v2) v
+ | st_tofloat1 : forall e e', step e e' -> step (e_tofloat e) (e_tofloat e')
+ | st_tofloat : forall z d, step (e_tofloat (e_num z)) (e_dec d)
 with step_fields : fields -> fields -> Prop :=
  | stf_here : forall l e e' fs,
      step e e' -> step_fields (fs_cons l e fs) (fs_cons l e' fs)
@@ -215,6 +399,29 @@ with step_fields : fields -> fields -> Prop :=
      value v -> step_fields fs fs' -> step_fields (fs_cons l v fs) (fs_cons l v fs').
 
 #[export] Hint Constructors step step_fields : core.
+
+(* A runtime trap: the same evaluation order as [step], with the error
+   rising out of the one operator that raises it.  Progress says a well-typed
+   term is a value, steps, or traps. *)
+Inductive traps : exp -> trap_kind -> Prop :=
+ | tr_app1 : forall e1 e2 k, traps e1 k -> traps (e_app e1 e2) k
+ | tr_app2 : forall v e2 k, value v -> traps e2 k -> traps (e_app v e2) k
+ | tr_let1 : forall e1 e2 k, traps e1 k -> traps (e_let e1 e2) k
+ | tr_proj : forall e l k, traps e k -> traps (e_proj e l) k
+ | tr_rec : forall fs k, traps_fields fs k -> traps (e_rec fs) k
+ | tr_ite1 : forall e1 e2 e3 k, traps e1 k -> traps (e_ite e1 e2 e3) k
+ | tr_bin1 : forall e1 o e2 k, traps e1 k -> traps (e_bin e1 o e2) k
+ | tr_bin2 : forall v o e2 k,
+     value v -> traps e2 k -> traps (e_bin v o e2) k
+ | tr_tofloat : forall e k, traps e k -> traps (e_tofloat e) k
+ | tr_bin : forall v1 o v2 k,
+     value v1 -> value v2 -> bin_trap o v1 v2 k -> traps (e_bin v1 o v2) k
+with traps_fields : fields -> trap_kind -> Prop :=
+ | trf_here : forall l e fs k, traps e k -> traps_fields (fs_cons l e fs) k
+ | trf_cons : forall l v fs k,
+     value v -> traps_fields fs k -> traps_fields (fs_cons l v fs) k.
+
+#[export] Hint Constructors traps traps_fields : core.
 
 (* ================================================================== *)
 (* Declarative typing (section 4), mutual with record-field typing.      *)
@@ -225,7 +432,8 @@ with step_fields : fields -> fields -> Prop :=
 Inductive typing : ctx -> exp -> typ -> Prop :=
  | T_Var : forall G x s T,
      uniq G -> binds x s G -> inst T s -> typing G (e_fvar_f x) T
- | T_Num : forall G n, uniq G -> typing G (e_num n) typ_Number
+ | T_Num : forall G n, uniq G -> typing G (e_num n) typ_Int
+ | T_Dec : forall G d, uniq G -> typing G (e_dec d) typ_Float
  | T_True : forall G, uniq G -> typing G e_true typ_Bool
  | T_False : forall G, uniq G -> typing G e_false typ_Bool
  | T_Abs : forall (L : vars) G e T1 T2,
@@ -247,20 +455,16 @@ Inductive typing : ctx -> exp -> typ -> Prop :=
      typing G e (typ_Record (row_Ext l T R)) -> typing G (e_proj e l) T
  | T_Conv : forall G e T T',
      typing G e T -> teq T T' -> typing G e T'
-   (* Rank-2 intersection inference at the point where a generic function
-      meets its argument (ADR 0008, issue #72), which is where goat's sharp
-      edge bites: a parameter used at several types.  [T_App] binds the
-      parameter monomorphically ([sch_mono T1]), so [program(f) do f(1) f(true)]
-      is untypeable.  [T_AppPoly] types the redex [(program(e) done)(g)] exactly
-      as [let x = g in e]: the argument [g] is generalized against [G] and the
-      parameter is usable at every instance of that scheme inside [e].  This is
-      rank-2 (a quantifier only to the left of the application arrow) realized as
-      HM generalization of the argument -- so the rule's whole metatheory reduces
-      to the already-proven polymorphic term substitution ([typing_subst_poly]),
-      including the scoped-label-row case ([use2]), with no new theory. *)
- | T_AppPoly : forall G e g T,
-     typing G (e_let g e) T ->
-     typing G (e_app (e_abs e) g) T
+ | T_Unit : forall G, uniq G -> typing G e_unit typ_Unit
+ | T_Str : forall G q, uniq G -> typing G (e_str q) typ_String
+ | T_If : forall G e1 e2 e3 T,
+     typing G e1 typ_Bool -> typing G e2 T -> typing G e3 T ->
+     typing G (e_ite e1 e2 e3) T
+ | T_ToFloat : forall G e,
+     typing G e typ_Int -> typing G (e_tofloat e) typ_Float
+ | T_Bin : forall G e1 o e2 A B R,
+     typing G e1 A -> typing G e2 B -> bin_sig o A B R ->
+     typing G (e_bin e1 o e2) R
 with field_typing : ctx -> fields -> row -> Prop :=
  | FT_nil : forall G, uniq G -> field_typing G fs_nil row_Empty
  | FT_cons : forall G l e T fs R,
@@ -274,5 +478,7 @@ Inductive multistep : exp -> exp -> Prop :=
  | ms_refl : forall e, multistep e e
  | ms_step : forall e1 e2 e3, step e1 e2 -> multistep e2 e3 -> multistep e1 e3.
 
-(* A term is stuck if it is not a value and cannot step (section 7). *)
-Definition stuck (e : exp) : Prop := ~ value e /\ forall e', ~ step e e'.
+(* A term is stuck if it is not a value, cannot step, and raises no error
+   (section 7). *)
+Definition stuck (e : exp) : Prop :=
+  ~ value e /\ (forall e', ~ step e e') /\ (forall k, ~ traps e k).

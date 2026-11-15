@@ -55,7 +55,7 @@ Proof.
   rewrite apT_sid. reflexivity.
 Qed.
 
-Lemma EvT_Number : EvT typ_Number.
+Lemma EvT_Int : EvT typ_Int.
 Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
 
 Lemma EvT_Bool : EvT typ_Bool.
@@ -79,7 +79,7 @@ Proof.
   induction f as [|f IH]; [ split; intros; discriminate | ].
   destruct IH as [IHe IHf]. split.
   - intros G e n s T n' H HG. cbn [infer] in H.
-    destruct e as [i | x | k | | | b | e1 e2 | e1 e2 | fs | e1 l]; try discriminate H.
+    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3]; try discriminate H.
     + (* variable *)
       destruct (lookup x G) as [sc|] eqn:Hl; [|discriminate].
       destruct (instantiate sc n) as [T0 n1] eqn:Hi. inversion H; try subst s; try subst T; try subst n'; clear H.
@@ -88,7 +88,7 @@ Proof.
       split; [apply OkS_id|]. split; [exact Hev|].
       rewrite apC_sid. eapply T_Var; [ exact (proj1 HG) | exact Hb | exact Hinst ].
     + inversion H; try subst s; try subst T; try subst n'; clear H.
-      split; [apply OkS_id|]. split; [apply EvT_Number|].
+      split; [apply OkS_id|]. split; [apply EvT_Int|].
       apply T_Num. apply uniq_apC. exact (proj1 HG).
     + inversion H; try subst s; try subst T; try subst n'; clear H.
       split; [apply OkS_id|]. split; [apply EvT_Bool|].

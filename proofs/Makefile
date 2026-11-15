@@ -6,7 +6,7 @@
 # `make check-admits` fail unless proofs/*.v holds exactly the tracked admits.
 # `make gen-grammar`  regenerate GoatGrammar.v from grammar/goat.peg.
 # `make check-grammar` fail if GoatGrammar.v is stale against grammar/goat.peg.
-# `make check-assumptions` fail unless T1, T2, T3 and the inference soundness theorem are closed.
+# `make check-assumptions` fail unless T1, T2, T3, progress, preservation, soundness and the inference soundness theorem are closed.
 # `make differential` extract the proven inference algorithm and compare it with the Rust checker.
 # `make ci`           check Ott and grammar sync + admit count, compile, check assumptions, differential.
 # `make clean`        remove generated build artifacts.
@@ -64,16 +64,16 @@ check-grammar: ../grammar/goat.peg
 	@rm -f GoatGrammar.gen.v
 	@echo "$(GRAMMAR) is in sync with grammar/goat.peg."
 
-# T1, T2, T3 and the soundness of the inference algorithm must rest on no axiom
-# and no admit.
+# T1, T2, T3, progress, preservation, soundness and the soundness of the
+# inference algorithm must rest on no axiom and no admit.
 check-assumptions: coq
 	@out=$$(rocq compile -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
 	n=$$(echo "$$out" | grep -c '^Closed under the global context'); \
-	if [ "$$n" != "4" ]; then \
-	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip and infer_closed_sound closed under the global context:"; \
+	if [ "$$n" != "7" ]; then \
+	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation, soundness and infer_closed_sound closed under the global context:"; \
 	  echo "$$out"; exit 1; \
 	fi; \
-	echo "check-assumptions: peg_deterministic, parse_denotes_lc, print_parse_roundtrip and infer_closed_sound are closed -- ok."
+	echo "check-assumptions: T1, T2, T3, progress, preservation, soundness and infer_closed_sound are closed -- ok."
 
 # Frozen-admit guard: fail if the `Admitted.` count in the sources drifts from
 # EXPECTED_ADMITS, so a green proof build never hides an open lemma.
