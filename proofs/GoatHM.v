@@ -52,7 +52,8 @@ Qed.
    them).  The body is the substituted, quantifier-renamed monotype. *)
 Definition casch (st:tsub) (sr:rsub) (g gr:atom->atom) (s:scheme) : scheme :=
   Sch (amap g (s_tq s)) (amap gr (s_rq s))
-      (ap_typ st sr (ren_typ g gr (s_body s))).
+      (ap_typ st sr (ren_typ g gr (s_body s)))
+      (fun a => s_sk s (g a)).
 
 (* The key lemma: capture-avoiding substitution preserves instances. *)
 Lemma casch_inst : forall st sr g gr s,
@@ -65,12 +66,13 @@ Lemma casch_inst : forall st sr g gr s,
   (forall a r, r `in` frv_sch s -> a `in` amap g (s_tq s) -> a `notin` ftv_row (sr r)) ->
   (forall p b, b `in` ftv_sch s -> p `in` amap gr (s_rq s) -> p `notin` frv_typ (st b)) ->
   (forall p r, r `in` frv_sch s -> p `in` amap gr (s_rq s) -> p `notin` frv_row (sr r)) ->
-  forall W, inst W s -> inst (ap_typ st sr W) (casch st sr g gr s).
+  forall D D', kres D D' st ->
+  forall W, inst D W s -> inst D' (ap_typ st sr W) (casch st sr g gr s).
 Proof.
-  intros st sr g gr s Hgi Hgri Hgf Hgrf Hfx1 Hfx2 Hnc1 Hnc2 Hnc3 Hnc4 W [pt [pr [Hpt [Hpr HW]]]].
+  intros st sr g gr s Hgi Hgri Hgf Hgrf Hfx1 Hfx2 Hnc1 Hnc2 Hnc3 Hnc4 D D' Hk W [pt [pr [Hpt [Hpr [HW Hsat]]]]].
   exists (fun b => if AtomSetImpl.mem b (amap g (s_tq s)) then ap_typ st sr (pt (g b)) else typ_Var b),
          (fun p => if AtomSetImpl.mem p (amap gr (s_rq s)) then ap_row st sr (pr (gr p)) else row_Var p).
-  split; [| split].
+  split; [| split; [| split]].
   - intros a Ha. cbn [casch s_tq] in Ha.
     destruct (AtomSetImpl.mem a (amap g (s_tq s))) eqn:Em;
       [ apply AtomSetFacts.mem_iff in Em; contradiction | reflexivity ].
@@ -111,4 +113,8 @@ Proof.
            apply AtomSetFacts.mem_iff in Em. exfalso. apply (Hnc2 b r Hrfsch Em). exact Hb.
         -- intros q Hq. destruct (AtomSetImpl.mem q (amap gr (s_rq s))) eqn:Em; [|reflexivity].
            apply AtomSetFacts.mem_iff in Em. exfalso. apply (Hnc4 q r Hrfsch Em). exact Hq.
+  - intros b Hb. cbn [casch s_tq] in Hb. cbn [casch s_sk].
+    assert (Hm : AtomSetImpl.mem b (amap g (s_tq s)) = true) by (apply AtomSetFacts.mem_iff; exact Hb).
+    rewrite Hm. apply amap_in in Hb. destruct Hb as [a [Ha Hga]]. subst b.
+    rewrite Hgi. eapply sat_ap; [ exact Hk | apply Hsat; exact Ha ].
 Qed.

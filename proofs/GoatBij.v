@@ -1,26 +1,18 @@
-(* Freshening infrastructure toward the two remaining HM admits in GoatSubst.v
-   (typing_weaken = L4, typing_tsubst_fix = L5; issue #151).
+(* Freshening infrastructure for the type-substitution lemma (issue #151).
 
-   Closing those lemmas' [T-Let] case means renaming the let-generalized type/row
+   Closing the lemma's [T-Let] case means renaming the let-generalized type/row
    variables to atoms fresh for the inserted/substituted context before [gen]
    lines up.  Because the variables are metalib [atom]s, that renaming is a
-   concrete finite permutation, built here and fed to [GoatSubst.typing_rename]:
+   concrete finite permutation, built here:
 
    - [transp]/[perm]: a finite composition of atom transpositions, with
      [perm_invol] (an involution on a duplicate-free support, so it is its own
-     inverse -- exactly the bijection [typing_rename] wants).
+     inverse -- exactly the bijection the renaming wants).
    - [fresh_list], [mk_rename]: package a bijection that fixes a chosen finite
      set and maps a chosen finite set [V] to atoms fresh for an avoid-set.
-   - [sch_more_gen_ren]: alpha-renaming a scheme's quantified variables (any
-     bijection fixing the scheme's FREE variables) preserves its instance set --
-     the step that lets [typing_ftv_mono] swap a renamed generalization in.  The
-     instance witness is rebuilt pointwise using decidable [atom] membership,
-     which is what the set representation (#151) unlocks.
-   - [ctx_more_gen_ren]: the same, pointwise over a context.
 
-   This is the reusable core of the sub-development ADR 0008 budgets separately.
-   [mk_rename] and [sch_more_gen_ren] feed the T-Let freshening in GoatSound,
-   which (with [casch_inst]/[casch_gen_sch_equiv]) closes both HM lemmas. *)
+   [mk_rename] feeds the T-Let freshening in GoatSound, which (with
+   [casch_inst]/[casch_gen_sch_equiv]) closes both HM lemmas. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
@@ -261,67 +253,3 @@ Qed.
 
 Lemma inj_of_invol : forall (f : atom -> atom), (forall a, f (f a) = a) -> forall a b, f a = f b -> a = b.
 Proof. intros f Hinv a b H. rewrite <- (Hinv a), <- (Hinv b), H. reflexivity. Qed.
-
-Lemma sch_more_gen_ren : forall f fr s,
-  (forall a, a `in` ftv_sch s -> f a = a) ->
-  (forall r, r `in` frv_sch s -> fr r = r) ->
-  (forall a, f (f a) = a) -> (forall r, fr (fr r) = r) ->
-  sch_more_gen (ren_sch f fr s) s.
-Proof.
-  intros f fr s Hf Hfr Hfi Hfri.
-  assert (Hfinj := inj_of_invol f Hfi).
-  assert (Hfrinj := inj_of_invol fr Hfri).
-  split; [| split].
-  - (* inst W (ren_sch f fr s) -> inst W s *)
-    intros W [st [sr [Hst [Hsr HW]]]].
-    cbn [s_tq s_rq s_body ren_sch] in Hst, Hsr, HW.
-    exists (fun a => if AtomSetImpl.mem a (s_tq s) then st (f a) else typ_Var a),
-           (fun r => if AtomSetImpl.mem r (s_rq s) then sr (fr r) else row_Var r).
-    split; [| split].
-    + intros a Ha. destruct (AtomSetImpl.mem a (s_tq s)) eqn:Em; [ apply AtomSetFacts.mem_iff in Em; contradiction | reflexivity ].
-    + intros r Hr. destruct (AtomSetImpl.mem r (s_rq s)) eqn:Em; [ apply AtomSetFacts.mem_iff in Em; contradiction | reflexivity ].
-    + rewrite HW. unfold ren_typ. rewrite ap_typ_comp.
-      apply ap_typ_ext.
-      * intros a Hain. unfold tcomp. simpl.
-        destruct (AtomSetImpl.mem a (s_tq s)) eqn:E.
-        -- reflexivity.
-        -- apply AtomSetFacts.not_mem_iff in E.
-           assert (Hfa : f a = a) by (apply Hf; unfold ftv_sch; apply AtomSetImpl.diff_3; auto).
-           assert (Hni : a `notin` amap f (s_tq s)).
-           { rewrite amap_in. intros [b [Hb Hfb]]. apply E.
-             replace a with b; [ exact Hb | apply Hfinj; rewrite Hfb; symmetry; exact Hfa ]. }
-           rewrite Hfa. rewrite (Hst a Hni). reflexivity.
-      * intros r Hrin. unfold rcomp. simpl.
-        destruct (AtomSetImpl.mem r (s_rq s)) eqn:E.
-        -- reflexivity.
-        -- apply AtomSetFacts.not_mem_iff in E.
-           assert (Hfrr : fr r = r) by (apply Hfr; unfold frv_sch; apply AtomSetImpl.diff_3; auto).
-           assert (Hni : r `notin` amap fr (s_rq s)).
-           { rewrite amap_in. intros [b [Hb Hfb]]. apply E.
-             replace r with b; [ exact Hb | apply Hfrinj; rewrite Hfb; symmetry; exact Hfrr ]. }
-           rewrite Hfrr. rewrite (Hsr r Hni). reflexivity.
-  - (* Ftv_sch s a -> Ftv_sch (ren_sch f fr s) a *)
-    intros a Ha. apply (Ftv_sch_ren f f fr Hfi Hfi).
-    assert (f a = a) by (apply Hf; exact Ha). rewrite H. exact Ha.
-  - intros r Hr. apply (Frv_sch_ren f fr fr Hfri Hfri).
-    assert (fr r = r) by (apply Hfr; exact Hr). rewrite H. exact Hr.
-Qed.
-
-Lemma ctx_more_gen_ren : forall f fr G,
-  (forall a, a `in` ftv_ctx G -> f a = a) ->
-  (forall r, r `in` frv_ctx G -> fr r = r) ->
-  (forall a, f (f a) = a) -> (forall r, fr (fr r) = r) ->
-  ctx_more_gen (ren_ctx f fr G) G.
-Proof.
-  intros f fr G Hf Hfr Hfi Hfri.
-  induction G as [|[x s] G IH]; simpl.
-  - constructor.
-  - constructor.
-    + simpl. split; [reflexivity|].
-      apply sch_more_gen_ren; auto.
-      * intros a Ha. apply Hf. simpl. fsetdec.
-      * intros r Hr. apply Hfr. simpl. fsetdec.
-    + apply IH.
-      * intros a Ha. apply Hf. simpl. fsetdec.
-      * intros r Hr. apply Hfr. simpl. fsetdec.
-Qed.
