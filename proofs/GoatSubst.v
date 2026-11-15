@@ -51,22 +51,23 @@ Lemma ap_typ_pointwise_id : forall T st sr,
 Proof. apply ap_pointwise_id_mut. Qed.
 
 (* the only instance of a monotype scheme is itself *)
-Lemma inst_mono_eq : forall T U, inst T (sch_mono U) -> T = U.
+Lemma inst_mono_eq : forall D T U, inst D T (sch_mono U) -> T = U.
 Proof.
-  intros T U [st [sr [Ht [Hr Heq]]]]. simpl in *.
+  intros D T U [st [sr [Ht [Hr [Heq _]]]]]. simpl in *.
   rewrite Heq. apply ap_typ_pointwise_id.
   - intros a. apply Ht. simpl. fsetdec.
   - intros r. apply Hr. simpl. fsetdec.
 Qed.
 
 (* sch_mono is always an instance of itself *)
-Lemma inst_mono_self : forall U, inst U (sch_mono U).
+Lemma inst_mono_self : forall D U, inst D U (sch_mono U).
 Proof.
-  intros U. exists idt, idr.
-  split; [|split].
+  intros D U. exists idt, idr.
+  split; [|split; [|split]].
   - intros a _. reflexivity.
   - intros r _. reflexivity.
   - symmetry. apply ap_typ_pointwise_id; reflexivity.
+  - intros a Ha. simpl in Ha. fsetdec.
 Qed.
 
 (* ================= type-substitution algebra ================= *)
@@ -120,37 +121,44 @@ Proof. apply ap_comp_mut. Qed.
 
 (* scheme equivalence up to the quantifier sets *)
 Definition sch_equiv (s s' : scheme) : Prop :=
-  s_tq s [=] s_tq s' /\ s_rq s [=] s_rq s' /\ s_body s = s_body s'.
+  s_tq s [=] s_tq s' /\ s_rq s [=] s_rq s' /\ s_body s = s_body s' /\
+  (forall a, a `in` s_tq s -> s_sk s a = s_sk s' a).
 
 Lemma sch_equiv_refl : forall s, sch_equiv s s.
-Proof. intros s. unfold sch_equiv. split; [|split]; [ fsetdec | fsetdec | reflexivity ]. Qed.
+Proof.
+  intros s. unfold sch_equiv.
+  split; [|split; [|split]]; [ fsetdec | fsetdec | reflexivity | intros; reflexivity ].
+Qed.
 
 Lemma sch_equiv_sym : forall s s', sch_equiv s s' -> sch_equiv s' s.
 Proof.
-  intros s s' (A & B & C). unfold sch_equiv.
-  split; [ fsetdec | split; [ fsetdec | congruence ] ].
+  intros s s' (A & B & C & E). unfold sch_equiv.
+  split; [ fsetdec | split; [ fsetdec | split; [ congruence | ] ] ].
+  intros a Ha. assert (a `in` s_tq s) by (apply A; exact Ha). symmetry. apply E. exact H.
 Qed.
 
 (* inst respects sch_equiv *)
-Lemma inst_sch_equiv : forall T s s',
-  sch_equiv s s' -> inst T s -> inst T s'.
+Lemma inst_sch_equiv : forall D T s s',
+  sch_equiv s s' -> inst D T s -> inst D T s'.
 Proof.
-  intros T s s' [Htq [Hrq Hbody]] [st [sr [Ht [Hr Heq]]]].
+  intros D T s s' [Htq [Hrq [Hbody Hsk]]] [st [sr [Ht [Hr [Heq Hk]]]]].
   exists st, sr. repeat split.
   - intros a Ha. apply Ht. fsetdec.
   - intros r Hr0. apply Hr. fsetdec.
   - rewrite <- Hbody. exact Heq.
+  - intros a Ha. assert (Hs : a `in` s_tq s) by (apply Htq; exact Ha).
+    rewrite <- (Hsk a Hs). apply Hk. exact Hs.
 Qed.
 
 (* Ftv_sch respects sch_equiv *)
 Lemma Ftv_sch_equiv : forall s s' a, sch_equiv s s' -> (Ftv_sch s a <-> Ftv_sch s' a).
 Proof.
-  intros s s' a (Htq & Hrq & Hbody). unfold Ftv_sch, ftv_sch. rewrite Hbody. fsetdec.
+  intros s s' a (Htq & Hrq & Hbody & _). unfold Ftv_sch, ftv_sch. rewrite Hbody. fsetdec.
 Qed.
 
 Lemma Frv_sch_equiv : forall s s' r, sch_equiv s s' -> (Frv_sch s r <-> Frv_sch s' r).
 Proof.
-  intros s s' r (Htq & Hrq & Hbody). unfold Frv_sch, frv_sch. rewrite Hbody. fsetdec.
+  intros s s' r (Htq & Hrq & Hbody & _). unfold Frv_sch, frv_sch. rewrite Hbody. fsetdec.
 Qed.
 
 (* pointwise scheme-equivalence of contexts *)
@@ -210,10 +218,10 @@ Proof.
 Qed.
 
 (* generalization respects context equivalence *)
-Lemma gen_ctx_equiv : forall G G' T,
-  ctx_equiv G G' -> sch_equiv (gen G T) (gen G' T).
+Lemma gen_ctx_equiv : forall G G' T k,
+  ctx_equiv G G' -> sch_equiv (gen G T k) (gen G' T k).
 Proof.
-  intros G G' T H. unfold sch_equiv, gen; simpl. split; [| split]; [| |reflexivity].
+  intros G G' T k H. unfold sch_equiv, gen; simpl. split; [| split; [| split]]; [| |reflexivity|intros; reflexivity].
   - assert (ftv_ctx G [=] ftv_ctx G') by (intro z; apply (ctx_equiv_Ftv _ _ z H)).
     fsetdec.
   - assert (frv_ctx G [=] frv_ctx G') by (intro z; apply (ctx_equiv_Frv _ _ z H)).
@@ -224,10 +232,88 @@ Lemma ctx_equiv_cons : forall x s s' G G',
   sch_equiv s s' -> ctx_equiv G G' -> ctx_equiv ((x ~ s) ++ G) ((x ~ s') ++ G').
 Proof. intros. constructor; simpl; auto. Qed.
 
+(* ================= typing depends on the kinding environment pointwise ===== *)
+
+Lemma ext_pw : forall D D2 V k, (forall a, D a = D2 a) -> forall a, ext D V k a = ext D2 V k a.
+Proof. intros. unfold ext. destruct (AtomSetImpl.mem a V); auto. Qed.
+
+Lemma ext_set_eq : forall D V V' k, V [=] V' -> forall a, ext D V k a = ext D V' k a.
+Proof.
+  intros D V V' k H a. unfold ext.
+  destruct (AtomSetImpl.mem a V) eqn:E1, (AtomSetImpl.mem a V') eqn:E2; auto.
+  - apply AtomSetFacts.mem_iff in E1. apply AtomSetFacts.not_mem_iff in E2. exfalso. apply E2. apply H. exact E1.
+  - apply AtomSetFacts.mem_iff in E2. apply AtomSetFacts.not_mem_iff in E1. exfalso. apply E1. apply H. exact E2.
+Qed.
+
+Lemma ext_in : forall D V k a, a `in` V -> ext D V k a = k a.
+Proof.
+  intros. unfold ext. destruct (AtomSetImpl.mem a V) eqn:E; [ reflexivity | ].
+  apply AtomSetFacts.not_mem_iff in E. contradiction.
+Qed.
+
+Lemma ext_out : forall D V k a, a `notin` V -> ext D V k a = D a.
+Proof.
+  intros. unfold ext. destruct (AtomSetImpl.mem a V) eqn:E; [ | reflexivity ].
+  apply AtomSetFacts.mem_iff in E. contradiction.
+Qed.
+
+Lemma sat_pw : forall D D2 k T, (forall a, D a = D2 a) -> sat D k T -> sat D2 k T.
+Proof. intros D D2 k T H Hs. destruct T; simpl in *; auto. rewrite <- H. exact Hs. Qed.
+
+Lemma inst_pw : forall D D2 T s, (forall a, D a = D2 a) -> inst D T s -> inst D2 T s.
+Proof.
+  intros D D2 T s H [st [sr [A [B [C E]]]]]. exists st, sr. repeat split; auto.
+  intros a Ha. eapply sat_pw; eauto.
+Qed.
+
+Lemma bin_sig_pw : forall D D2 o A B R, (forall a, D a = D2 a) -> bin_sig D o A B R -> bin_sig D2 o A B R.
+Proof.
+  intros D D2 o A B R H Hs. destruct Hs.
+  - apply sig_ring; [ assumption | eapply sat_pw; eauto ].
+  - apply sig_quot.
+  - apply sig_whole; assumption.
+  - apply sig_cmp; assumption.
+Qed.
+
+Lemma typing_pw_mut :
+  (forall D G e T, typing D G e T -> forall D2, (forall a, D a = D2 a) -> typing D2 G e T) /\
+  (forall D G fs R, field_typing D G fs R -> forall D2, (forall a, D a = D2 a) -> field_typing D2 G fs R).
+Proof.
+  apply typing_field_mutind; intros.
+  - eapply T_Var; eauto. eapply inst_pw; eauto.
+  - apply T_Num; auto. eapply sat_pw; eauto.
+  - apply T_Dec; auto.
+  - apply T_True; auto.
+  - apply T_False; auto.
+  - eapply T_Abs with (L := L). intros. eauto.
+  - eapply T_App; eauto.
+  - eapply T_Let with (L := L) (k := k);
+      [ assumption | apply H; apply ext_pw; assumption | intros; eauto ].
+  - eapply T_LetMono with (L := L); eauto.
+  - eapply T_Letrec with (L := L) (k := k); [ assumption | | intros; eauto ].
+    intros p Hp. apply H; auto. apply ext_pw. auto.
+  - apply T_Record; eauto.
+  - eapply T_Proj; eauto.
+  - eapply T_Conv; eauto.
+  - apply T_Unit; auto.
+  - apply T_Str; auto.
+  - eapply T_If; eauto.
+  - eapply T_ToFloat; eauto. eapply sat_pw; eauto.
+  - eapply T_Bin; eauto. eapply bin_sig_pw; eauto.
+  - apply FT_nil; auto.
+  - eapply FT_cons; eauto.
+Qed.
+
+Lemma typing_pw : forall D G e T D2, typing D G e T -> (forall a, D a = D2 a) -> typing D2 G e T.
+Proof. intros. eapply (proj1 typing_pw_mut); eauto. Qed.
+
+Lemma field_typing_pw : forall D G fs R D2, field_typing D G fs R -> (forall a, D a = D2 a) -> field_typing D2 G fs R.
+Proof. intros. eapply (proj2 typing_pw_mut); eauto. Qed.
+
 (* typing respects pointwise scheme-equivalence of the context *)
 Lemma typing_sch_equiv_ctx_mut :
-  (forall G e T, typing G e T -> forall G', ctx_equiv G G' -> typing G' e T) /\
-  (forall G fs R, field_typing G fs R -> forall G', ctx_equiv G G' -> field_typing G' fs R).
+  (forall D G e T, typing D G e T -> forall G', ctx_equiv G G' -> typing D G' e T) /\
+  (forall D G fs R, field_typing D G fs R -> forall G', ctx_equiv G G' -> field_typing D G' fs R).
 Proof.
   apply typing_field_mutind; intros.
   - (* T_Var *) destruct (ctx_equiv_binds _ _ _ _ H b) as [s' [Hb' Heq]].
@@ -239,15 +325,23 @@ Proof.
   - (* T_Abs *) apply T_Abs with (L := L); intros x Hx.
     apply H; auto. apply ctx_equiv_cons; auto using sch_equiv_refl.
   - (* T_App *) eapply T_App; eauto.
-  - (* T_Let *) apply T_Let with (L := L) (T1 := T1); auto.
-    intros x Hx. apply H0; auto.
-    apply ctx_equiv_cons; auto. apply gen_ctx_equiv; auto.
+  - (* T_Let *) apply T_Let with (L := L) (T1 := T1) (k := k); auto.
+    + eapply typing_pw; [ apply H; exact H1 | ].
+      intros a. apply ext_set_eq.
+      assert (Hf : ftv_ctx G [=] ftv_ctx G') by (intro z; apply (ctx_equiv_Ftv _ _ z H1)).
+      rewrite Hf. reflexivity.
+    + intros x Hx. apply H0; auto.
+      apply ctx_equiv_cons; auto. apply gen_ctx_equiv; auto.
   - (* T_LetMono *) apply T_LetMono with (L := L) (T1 := T1); auto.
     intros x Hx. apply H0; auto.
     apply ctx_equiv_cons; auto using sch_equiv_refl.
-  - (* T_Letrec *) apply T_Letrec with (L := L) (R := R); auto.
-    + intros p Hp. apply H; auto.
-      apply ctx_equiv_cons; auto using sch_equiv_refl.
+  - (* T_Letrec *) apply T_Letrec with (L := L) (R := R) (k := k); auto.
+    + intros p Hp. eapply field_typing_pw.
+      * apply H; auto. apply ctx_equiv_cons; auto using sch_equiv_refl.
+      * intros a. apply ext_set_eq.
+        match goal with Hc : ctx_equiv G G' |- _ =>
+          assert (Hf : ftv_ctx G [=] ftv_ctx G') by (intro z; apply (ctx_equiv_Ftv _ _ z Hc));
+          rewrite Hf; reflexivity end.
     + intros p Hp. apply H0; auto.
       apply ctx_equiv_cons; auto. apply gen_ctx_equiv; auto.
   - (* T_Record *) apply T_Record; eauto.
@@ -256,14 +350,14 @@ Proof.
   - (* T_Unit *) apply T_Unit; eauto using ctx_equiv_uniq.
   - (* T_Str *) apply T_Str; eauto using ctx_equiv_uniq.
   - (* T_If *) eapply T_If; eauto.
-  - (* T_ToFloat *) apply T_ToFloat; eauto.
+  - (* T_ToFloat *) eapply T_ToFloat; eauto.
   - (* T_Bin *) eapply T_Bin; eauto.
   - (* FT_nil *) apply FT_nil; eauto using ctx_equiv_uniq.
   - (* FT_cons *) eapply FT_cons; eauto.
 Qed.
 
-Lemma typing_sch_equiv_ctx : forall G G' e T,
-  typing G e T -> ctx_equiv G G' -> typing G' e T.
+Lemma typing_sch_equiv_ctx : forall D G G' e T,
+  typing D G e T -> ctx_equiv G G' -> typing D G' e T.
 Proof. intros. eapply (proj1 typing_sch_equiv_ctx_mut); eauto. Qed.
 
 (* "s' is at least as general as s, and mentions no more free variables" *)
@@ -348,8 +442,8 @@ Proof. intros. constructor; simpl; auto. Qed.
 
 (* L4-style: typing is preserved under a more-general / fewer-ftv context *)
 Lemma typing_ftv_mono_mut :
-  (forall G e T, typing G e T -> forall G', ctx_more_gen G G' -> typing G' e T) /\
-  (forall G fs R, field_typing G fs R -> forall G', ctx_more_gen G G' -> field_typing G' fs R).
+  (forall D G e T, typing D G e T -> forall G', ctx_more_gen G G' -> typing D G' e T) /\
+  (forall D G fs R, field_typing D G fs R -> forall G', ctx_more_gen G G' -> field_typing D G' fs R).
 Proof.
   apply typing_field_mutind; intros.
   - (* T_Var *) destruct (ctx_more_gen_binds _ _ _ _ H b) as [s' [Hb' [Hinst _]]].
@@ -376,14 +470,14 @@ Proof.
   - (* T_Unit *) apply T_Unit; eauto using ctx_more_gen_uniq.
   - (* T_Str *) apply T_Str; eauto using ctx_more_gen_uniq.
   - (* T_If *) eapply T_If; eauto.
-  - (* T_ToFloat *) apply T_ToFloat; eauto.
+  - (* T_ToFloat *) eapply T_ToFloat; eauto.
   - (* T_Bin *) eapply T_Bin; eauto.
   - apply FT_nil; eauto using ctx_more_gen_uniq.
   - eapply FT_cons; eauto.
 Qed.
 
 Lemma typing_ftv_mono : forall G e T G',
-  typing G e T -> ctx_more_gen G G' -> typing G' e T.
+  typing D G e T -> ctx_more_gen G G' -> typing D G' e T.
 Proof. intros. eapply (proj1 typing_ftv_mono_mut); eauto. Qed.
 
 (* ================= teq under substitution; L5 for bijective renamings ====== *)
@@ -628,8 +722,8 @@ Qed.
 
 (* typing is preserved by a bijective type/row-variable renaming *)
 Lemma typing_rename_mut :
-  (forall G e T, typing G e T -> typing (ren_ctx G) e (ren_typ T)) /\
-  (forall G fs R, field_typing G fs R -> field_typing (ren_ctx G) fs (ren_row R)).
+  (forall D G e T, typing D G e T -> typing D (ren_ctx G) e (ren_typ T)) /\
+  (forall D G fs R, field_typing D G fs R -> field_typing D (ren_ctx G) fs (ren_row R)).
 Proof.
   apply typing_field_mutind; intros.
   - (* T_Var *) apply T_Var with (s := ren_sch s);
@@ -679,7 +773,7 @@ Proof.
   - (* FT_cons *) unfold ren_row; simpl. eapply FT_cons; [ exact H | exact H0 ].
 Qed.
 
-Lemma typing_rename : forall G e T, typing G e T -> typing (ren_ctx G) e (ren_typ T).
+Lemma typing_rename : forall D G e T, typing D G e T -> typing D (ren_ctx G) e (ren_typ T).
 Proof. apply typing_rename_mut. Qed.
 End Renaming.
 
