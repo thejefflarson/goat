@@ -924,6 +924,24 @@ mod tests {
     }
 
     #[test]
+    fn a_negated_numeral_adapts_too() {
+        let src = "n = -3  {a: n + 1.5, b: n // 2}";
+        assert_eq!(exact_type_of(src), "{a: Float, b: Int}");
+        let swapped = "n = -3  {b: n // 2, a: n + 1.5}";
+        assert_eq!(exact_type_of(swapped), "{b: Int, a: Float}");
+        let twice = "n = - -3  {a: n + 1.5, b: n // 2}";
+        assert_eq!(exact_type_of(twice), "{a: Float, b: Int}");
+        let whole = "`//` needs whole numbers, but this is a `Float`";
+        for src in [
+            "n = -(2 * 3)  {a: n + 1.5, b: n // 2}",
+            "n = -3 * 2  {a: n + 1.5, b: n // 2}",
+            "p = {x: -3}  {a: p.x + 1.5, b: p.x // 2}",
+        ] {
+            assert!(type_of(src).unwrap_err().starts_with(whole), "{src}");
+        }
+    }
+
+    #[test]
     fn only_a_bare_numeral_adapts() {
         let whole = "`//` needs whole numbers, but this is a `Float`";
         for src in [
