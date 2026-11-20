@@ -73,7 +73,15 @@ Qed.
 (* 5 // 0 is an Int, and traps when it runs *)
 Example floor_division_types : typing d_any nil (e_bin (e_num 5) bop_fdiv (e_num 0)) typ_Int.
 Proof.
-  eapply T_Bin; [ apply T_Num | apply T_Num | apply sig_whole ]; constructor || reflexivity.
+  eapply T_Bin; [ apply T_Num | apply T_Num | apply sig_whole ]; first [ constructor | reflexivity | exact I ].
+Qed.
+
+(* 7.5 // 2.5 and 7.5 % 2.5 are Floats *)
+Example float_floor_division_types :
+  typing d_any nil (e_bin (e_dec 0) bop_fdiv (e_dec 1)) typ_Float /\
+  typing d_any nil (e_bin (e_dec 0) bop_rem (e_dec 1)) typ_Float.
+Proof.
+  split; (eapply T_Bin; [ apply T_Dec | apply T_Dec | apply sig_whole ]; first [ constructor | reflexivity | exact I ]).
 Qed.
 
 (* 7 / 2 is a Float: elaboration coerces both Ints, so the quotient is Float / Float *)
@@ -190,6 +198,11 @@ Qed.
 Example float_sum_is_any_float : forall x y d,
   bin_step bop_add (e_dec x) (e_dec y) (e_dec d).
 Proof. intros. apply bs_float; [ left; reflexivity | constructor ]. Qed.
+
+Example float_floor_division_and_remainder_are_any_float : forall x y d,
+  bin_step bop_fdiv (e_dec x) (e_dec y) (e_dec d) /\
+  bin_step bop_rem (e_dec x) (e_dec y) (e_dec d).
+Proof. intros. split; apply bs_whole_float; [ reflexivity | constructor | reflexivity | constructor ]. Qed.
 
 Example float_division_by_zero_is_not_a_trap : forall x y d,
   bin_step bop_div (e_dec x) (e_dec y) (e_dec d).
@@ -322,23 +335,7 @@ Example trap_rises_through_a_coercion :
   traps (e_tofloat (e_bin (e_num 5) bop_fdiv (e_num 0))) trap_div_zero.
 Proof. apply tr_tofloat. apply floor_division_by_zero_traps. Qed.
 
-(* ---- rejected ---- *)
-
-(* 1.5 // 2: floor division wants whole numbers *)
-Example float_floor_division_rejected : forall T,
-  ~ typing d_any nil (e_bin (e_dec 0) bop_fdiv (e_num 2)) T.
-Proof.
-  intros T H. destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
-  apply dec_inv in H1. head_eq H1. subst A. sig_absurd Hs.
-Qed.
-
-(* 1.5 % 2 likewise *)
-Example float_remainder_rejected : forall T,
-  ~ typing d_any nil (e_bin (e_dec 0) bop_rem (e_num 2)) T.
-Proof.
-  intros T H. destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
-  apply dec_inv in H1. head_eq H1. subst A. sig_absurd Hs.
-Qed.
+(* ---- accepted by the unsugared rules ---- *)
 
 (* 1 + 1.5 with no coercion is a Float: the numeral is typed at [Float], a
    [Literal] type, so the operands agree *)
@@ -527,9 +524,3 @@ Example infer_if_branches :
   infer_closed 20 (e_ite (e_bin (e_str [97]) bop_lt (e_str [98])) e_unit e_unit)
   = Some typ_Unit.
 Proof. vm_compute. reflexivity. Qed.
-
-Example infer_rejects_float_floor_division :
-  infer_closed 20 (e_bin (e_dec 0) bop_fdiv (e_num 2)) = None.
-Proof. vm_compute. reflexivity. Qed.
-
-

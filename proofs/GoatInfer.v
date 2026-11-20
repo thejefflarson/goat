@@ -287,7 +287,7 @@ Definition bin_arg (D : denv) (o : bop) (A B : typ) : option typ :=
   match kind o with
   | k_ring => None
   | k_quot => Some typ_Float
-  | k_whole => Some typ_Int
+  | k_whole => None
   | k_cmp => if cmp_ty B then Some B else if cmp_ty A then Some A
              else if orb (is_literal D A) (is_literal D B) then Some typ_Int else None
   end.
@@ -299,7 +299,6 @@ Definition bin_ty (o : bop) (A : typ) : option typ :=
   | k_ring, typ_Int => Some typ_Int
   | k_ring, typ_Float => Some typ_Float
   | k_quot, typ_Float => Some typ_Float
-  | k_whole, typ_Int => Some typ_Int
   | k_cmp, typ_Int => Some typ_Bool
   | k_cmp, typ_Float => Some typ_Bool
   | k_cmp, typ_String => Some typ_Bool
@@ -328,8 +327,8 @@ Fixpoint group_row (fs : fields) (n : nat) : row :=
   | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
   end.
 
-Definition is_ring_op (o : bop) : bool :=
-  match kind o with k_ring => true | _ => false end.
+Definition is_generic_op (o : bop) : bool :=
+  match kind o with k_ring | k_whole => true | _ => false end.
 
 Definition fresh_var (G : ctx) (e : exp) : atom :=
   fresh (AtomSetImpl.elements (dom G `union` fv_exp e)).
@@ -480,7 +479,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
               | Some (s2, D2, T2, n2) =>
-                  if is_ring_op o then
+                  if is_generic_op o then
                       let D2' := upd D2 (ea n2) k_Numeric in
                       let c := typ_Var (ea n2) in
                       match unify_t f' D2' (apT s2 T1) c (S n2) with

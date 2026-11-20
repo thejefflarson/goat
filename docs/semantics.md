@@ -46,7 +46,7 @@ the implementation diverge, §8 flags it.
   `Float` operation is unspecified (§6);
 - an explicit **Int-to-Float coercion** `float(e)`, which elaboration inserts
   wherever the checker accepts an `Int` for a `Float` (§4);
-- a **trap**: integer `//` or `%` by zero, and an integer result outside the
+- a **trap**: integer `//` or `%` by zero (a `Float` one is not a trap), and an integer result outside the
   64-bit range, are defined runtime errors, one of the three outcomes of a
   closed well-typed term (§7);
 - records as **scoped-label rows** (Leijen, *Extensible records with scoped
@@ -252,18 +252,17 @@ which is the one a closed program is typed in.
 
 The operator signature `⊙ : τ₁, τ₂ ⇒ τ` (ADR 0017, ADR 0036) says which operand
 types an operator takes and what it gives. Both operands of an arithmetic or
-comparison operator have one type. `+ - *` are generic: the one type may be any
+comparison operator have one type. `+ - * // %` are generic: the one type may be any
 `Numeric` type, `Int`, `Float` or a `Numeric` variable. A comparison stays at
 the four concrete types.
 
 ```
- ⊙ ∈ {+, -, *}      Δ ⊢ τ : Numeric
-———————————————————————————————————— (S-Ring)
-        ⊙ : τ, τ ⇒_Δ τ
+ ⊙ ∈ {+, -, *}      Δ ⊢ τ : Numeric         ⊙ ∈ {//, %}      Δ ⊢ τ : Numeric
+———————————————————————————————————— (S-Ring)   ———————————————————————————————————— (S-Whole)
+        ⊙ : τ, τ ⇒_Δ τ                                 ⊙ : τ, τ ⇒_Δ τ
 
-—————————————————————————— (S-Quot)       ⊙ ∈ {//, %}
- / : Float, Float ⇒ Float             —————————————————— (S-Whole)
-                                       ⊙ : Int, Int ⇒ Int
+—————————————————————————— (S-Quot)
+ / : Float, Float ⇒ Float
 
  ⊙ ∈ {<, <=, >, >=, ==, !=}      τ ∈ {Int, Float, String, Bool}
 ——————————————————————————————————————————————————————— (S-Cmp)
@@ -360,12 +359,14 @@ Rule by rule:
 - **`T-Bin`** types an operation by the signature of its operator, at the
   types of its operands.
   - `+ - *` take two operands of one `Numeric` type and give that type
-    (`S-Ring`): two `Int`s, two `Float`s, or two operands of a `Numeric`
+    (`S-Ring`), and so do `//` and `%` (`S-Whole`): two `Int`s, two `Float`s, or two operands of a `Numeric`
     variable, so `program(x) do x * x done` is generic.
   - `/` takes two `Float`s and gives a `Float` (`S-Quot`). The checker accepts
     `7 / 2` and types it `Float`; elaboration writes it `float(7) / float(2)`.
-  - `//` and `%` take two `Int`s and give an `Int`; `1.5 // 2` has no derivation
-    (`S-Whole`), and the checker says `` `//` needs whole numbers ``.
+  - `//` and `%` are generic like `+ - *`: two `Int`s give an `Int`, two
+    `Float`s a `Float`, so `7.5 // 2` is a `Float` and
+    `program(x) do x // 2 done` is generic. The checker accepts `7 // 2.5` and
+    types it `Float`; elaboration writes it `float(7) // 2.5`.
   - A comparison takes two `Int`s, two `Float`s, two strings or two booleans
     (`S-Cmp`); so `1 < "a"` has no derivation and `true + true` has none (the
     checker: `expected Number, found String`, `` `+` needs numbers… ``). The
@@ -492,8 +493,9 @@ one.
   `b`, so `-7 // 2 = -4` and `-7 % 3 = 2`. A zero divisor does not step, and
   neither does a result outside the range: both trap (below). The one quotient
   that does not fit is `-2⁶³ // -1`; `-2⁶³ % -1` is `0`, which fits.
+  The same operators on two `Float`s are Floats below.
 - **Floats.** A `Float` value `d` is opaque. Any `+ - * /` on two `Float` values
-  gives any `Float`, so `⊙(d₁, d₂) = d` holds for every `d`: the model is a
+  gives any `Float`, and so does `//` or `%` with a decimal operand, so `⊙(d₁, d₂) = d` holds for every `d`: the model is a
   relation, and a property of it holds for any function a compiler computes.
   A numeral beside a decimal is a `Float` operand (`1 + 1.5`), since a numeral
   may have type `Float`; two bare numerals step as `Int`s, whatever type they
@@ -769,7 +771,15 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
     operation, comparison included, is an unspecified function, modeled as a
     relation that allows every result. `0.1 + 0.2 == 0.3` and `x == x` can step
     either way. Soundness holds for every choice, so it holds for the compiler's.
-  - *Traps.* A zero divisor in `//` or `%` traps in the compiler (ADR 0023:
+  - *Float `//` and `%`.* The compiler computes them as Python does (CPython's
+    `float_divmod`): `//` is the floor of the quotient of the two doubles and `%`
+    takes the divisor's sign, so `7.5 // 2 = 3`, `-7.5 % 2 = 0.5` and
+    `1 // 0.1 = 9` (not the `10` that `floor(1 / 0.1)` gives). A zero divisor
+    follows IEEE rather than trapping: `x // 0.0` is `x / 0.0` (`inf`, `-inf` or
+    `nan`) and `x % 0.0` is `nan`. The model relates every `Float` pair to every
+    `Float`, so none of this is modeled. On the embedded profile the operands
+    are `f32`s, computed in `f64` and rounded back to `f32` (ADR 0017).
+  - *Traps.* A zero divisor in an `Int` `//` or `%` traps in the compiler (ADR 0023:
     `5 // 0` prints `trap: division by zero`) and traps here: it has no `⟶` step
     and is a third outcome of Progress and Soundness. So does an `Int` result
     outside the range. The `trap()` builtin raises no trap here, because the

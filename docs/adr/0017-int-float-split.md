@@ -29,8 +29,9 @@ hardware-mapped**, made *safe* rather than *unbounded*.
 2. **Literals.** A numeric literal with a decimal point or exponent is `Float`;
    otherwise `Int`. `3` : Int; `3.0`, `3.5`, `1e3` : Float.
 3. **Division.** `/` always yields `Float` (`7 / 2 == 3.5`). Integer
-   floor-division is `//` and remainder is `%`, both Int-only. Trig, `sqrt`, and
-   `/` all live in Float.
+   floor-division is `//` and remainder is `%`; they are generic over `Numeric` like
+   `+ - *`, so on `Float`s they give a `Float` (see the implementation notes).
+   Trig, `sqrt`, and `/` all live in Float.
 4. **Mixing.** Int widens to Float implicitly in a mixed numeric expression or
    comparison (`3 + 1.5 == 4.5`). Float→Int is **never** implicit — it needs an
    explicit `round` / `floor` / `truncate`.
@@ -86,8 +87,14 @@ hardware-mapped**, made *safe* rather than *unbounded*.
 - **`//` and `%` floor.** `//` rounds toward negative infinity and `%` takes the
   sign of the divisor, so `-7 // 2 == -4`, `-7 % 3 == 2`, and
   `(a // b) * b + a % b == a` for every `a` and `b`. A kid's `angle % 360` is
-  never negative. Both are `Int` only: a `Float` operand is a spanned checker
-  error that points at `round`, `floor` and `truncate`. A zero divisor traps
+  never negative. On `Float`s they are Python's: `//` floors the quotient of
+  the two doubles and `%` takes the divisor's sign, computed from an exact `fmod`
+  as CPython's `float_divmod` does, so `1 // 0.1 == 9`. The result is a `Float`,
+  and a zero `Float` divisor follows IEEE (`x // 0.0` is `x / 0.0`, `x % 0.0` is
+  NaN) instead of trapping. The wasm backend emits `fmod` as a module-local
+  function, because wasm has no instruction for it and a host import would put a
+  requirement on every host; the embedded profile computes in `f64` and rounds the
+  result to `f32`, as for `+ - * /`. An `Int` zero divisor traps
   (`division by zero`); `i64::MIN // -1` traps like any overflow; `i64::MIN % -1`
   is `0`.
 - **Two compiler primitives, the rest in the prelude.** `sqrt` and `truncate`

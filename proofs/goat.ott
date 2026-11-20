@@ -442,8 +442,12 @@ o : T1 , T2 => T :: :: sig :: 'sig_'
   / : Float , Float => Float
 
   % o is one of // %
-  ---------------------------- :: Whole
+  ---------------------------- :: WholeInt
   o : Int , Int => Int
+
+  % o is one of // %
+  ---------------------------- :: WholeFloat
+  o : Float , Float => Float
 
   % o is one of < <= > >= == !=; T is Int, Float, String or Bool
   ---------------------------- :: Cmp

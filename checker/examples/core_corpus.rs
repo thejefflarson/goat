@@ -520,16 +520,17 @@ impl Reader<'_> {
                 let (mut a, mut b) = (operands.0?, operands.1?);
                 if self.types.is_some() {
                     let to_float = |c: Core| Core::ToFloat(Box::new(c));
-                    let generic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul)
-                        && [lhs, rhs]
-                            .iter()
-                            .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
+                    let generic = matches!(
+                        op,
+                        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod
+                    ) && [lhs, rhs]
+                        .iter()
+                        .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
                     self.generic_ring |= generic;
                     if !generic {
                         let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
                         match (op, x, y) {
                             (BinOp::Div, ..) => (a, b) = (to_float(a), to_float(b)),
-                            (BinOp::FloorDiv | BinOp::Mod, _, _) => {}
                             (_, Ty::Int, Ty::Float) => a = to_float(a),
                             (_, Ty::Float, Ty::Int) => b = to_float(b),
                             _ => {}
