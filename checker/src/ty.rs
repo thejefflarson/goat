@@ -28,7 +28,7 @@ pub enum Ty {
     Unit,
     /// A function from positional argument types to a result type. Goat's
     /// `program(a, b) do ... done`.
-    Func(Vec<Ty>, Box<Ty>),
+    Func(Vec<Ty>, Arc<Ty>),
     /// A record: a collection of labeled fields, represented as a [`Row`]. This
     /// is the scoped-labels foundation — a record literal is a closed row, and
     /// field access unifies against an open one.
@@ -67,13 +67,13 @@ pub enum Row {
     Var(TypeVar),
     Extend {
         label: String,
-        field: Box<Ty>,
+        field: Arc<Ty>,
         /// Whether the field is a method: [`METHOD`], [`PLAIN`], or a flag
         /// variable that a dot call or a unification will settle.
-        method: Box<Ty>,
+        method: Arc<Ty>,
         /// Where a list element was written, for blaming it in a clash.
         at: Origin,
-        rest: Box<Row>,
+        rest: Arc<Row>,
     },
     /// A field that is there or not, by the presence variable `pres` (Rémy):
     /// a spread over a base of unknown shape, `{...r, x: 1}`, reads `r`'s `x`
@@ -82,9 +82,9 @@ pub enum Row {
     Maybe {
         label: String,
         pres: TypeVar,
-        field: Box<Ty>,
-        method: Box<Ty>,
-        rest: Box<Row>,
+        field: Arc<Ty>,
+        method: Arc<Ty>,
+        rest: Arc<Row>,
     },
 }
 
@@ -176,16 +176,16 @@ impl Row {
             .fold(Row::Empty, |rest, (label, field)| Row::Extend {
                 at: Default::default(),
                 label,
-                field: Box::new(field),
-                method: Box::new(PLAIN),
-                rest: Box::new(rest),
+                field: Arc::new(field),
+                method: Arc::new(PLAIN),
+                rest: Arc::new(rest),
             })
     }
 }
 
 impl Ty {
     pub fn func(args: Vec<Ty>, ret: Ty) -> Ty {
-        Ty::Func(args, Box::new(ret))
+        Ty::Func(args, Arc::new(ret))
     }
 
     /// The free variables of this type (type and row variables alike), in
@@ -259,7 +259,7 @@ impl Ty {
 
     pub(crate) fn map_children(&self, f: &impl Fn(&Ty) -> Ty) -> Ty {
         match self {
-            Ty::Func(args, ret) => Ty::Func(args.iter().map(f).collect(), Box::new(f(ret))),
+            Ty::Func(args, ret) => Ty::Func(args.iter().map(f).collect(), Arc::new(f(ret))),
             Ty::Record(row) => Ty::Record(row.map_fields(f)),
             Ty::Variant(row) => Ty::Variant(row.map_fields(f)),
             Ty::Rec(binder, body) => Ty::Rec(*binder, Arc::new(f(body))),
@@ -556,10 +556,10 @@ impl Row {
                 rest,
             } => Row::Extend {
                 label: label.clone(),
-                field: Box::new(f(field)),
-                method: Box::new(f(method)),
+                field: Arc::new(f(field)),
+                method: Arc::new(f(method)),
                 at: *at,
-                rest: Box::new(rest.map_fields(f)),
+                rest: Arc::new(rest.map_fields(f)),
             },
             Row::Maybe {
                 label,
@@ -570,9 +570,9 @@ impl Row {
             } => Row::Maybe {
                 label: label.clone(),
                 pres: *pres,
-                field: Box::new(f(field)),
-                method: Box::new(f(method)),
-                rest: Box::new(rest.map_fields(f)),
+                field: Arc::new(f(field)),
+                method: Arc::new(f(method)),
+                rest: Arc::new(rest.map_fields(f)),
             },
             other => other.clone(),
         }
@@ -854,9 +854,9 @@ mod tests {
             .fold(tail, |rest, (label, field)| Row::Extend {
                 at: Default::default(),
                 label: label.to_string(),
-                field: Box::new(field.clone()),
-                method: Box::new(PLAIN),
-                rest: Box::new(rest),
+                field: Arc::new(field.clone()),
+                method: Arc::new(PLAIN),
+                rest: Arc::new(rest),
             });
         Ty::Variant(row)
     }
@@ -865,14 +865,14 @@ mod tests {
         let link = Ty::Record(Row::Extend {
             at: Default::default(),
             label: "0".into(),
-            field: Box::new(Ty::Int),
-            method: Box::new(PLAIN),
-            rest: Box::new(Row::Extend {
+            field: Arc::new(Ty::Int),
+            method: Arc::new(PLAIN),
+            rest: Arc::new(Row::Extend {
                 at: Default::default(),
                 label: "1".into(),
-                field: Box::new(Ty::Var(binder)),
-                method: Box::new(PLAIN),
-                rest: Box::new(Row::Empty),
+                field: Arc::new(Ty::Var(binder)),
+                method: Arc::new(PLAIN),
+                rest: Arc::new(Row::Empty),
             }),
         });
         let body = variant(&[("Empty", Ty::Unit), ("Link", link)], Row::Empty);
@@ -960,17 +960,17 @@ mod tests {
         let row = ["m1", "m0"].into_iter().fold(
             Row::Extend {
                 label: "x".into(),
-                field: Box::new(Ty::Int),
-                method: Box::new(PLAIN),
+                field: Arc::new(Ty::Int),
+                method: Arc::new(PLAIN),
                 at: Default::default(),
-                rest: Box::new(Row::Var(9)),
+                rest: Arc::new(Row::Var(9)),
             },
             |rest, label| Row::Extend {
                 label: label.into(),
-                field: Box::new(method.clone()),
-                method: Box::new(METHOD),
+                field: Arc::new(method.clone()),
+                method: Arc::new(METHOD),
                 at: Default::default(),
-                rest: Box::new(rest),
+                rest: Arc::new(rest),
             },
         );
         Ty::Rec(binder, Arc::new(Ty::Record(row)))

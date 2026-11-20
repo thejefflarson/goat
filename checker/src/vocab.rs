@@ -7,6 +7,7 @@ use crate::infer::subst_vars;
 use crate::kinds::is_list_tag;
 use crate::ty::{Group, Row, Ty, TypeVar};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// The turtle's `key_of`, which decodes a browser `KeyboardEvent.key` into a `Key`.
 const TURTLE_KEYS: &str = include_str!("../../prelude/turtle_keys.goat");
@@ -46,7 +47,7 @@ impl EventTag {
     /// The type of this event's decoder: its wire to its payload.
     fn decoder_ty(&self) -> Option<Ty> {
         let wire = self.decode.as_ref()?.wire.clone();
-        Some(Ty::Func(vec![wire], Box::new(self.payload.clone())))
+        Some(Ty::Func(vec![wire], Arc::new(self.payload.clone())))
     }
 }
 
@@ -508,7 +509,7 @@ mod tests {
 
     #[test]
     fn a_type_without_a_flat_form_has_no_leaves() {
-        assert_eq!(leaves(&Ty::Func(Vec::new(), Box::new(Ty::Unit))), None);
+        assert_eq!(leaves(&Ty::Func(Vec::new(), Arc::new(Ty::Unit))), None);
         assert_eq!(leaves(&record([("f", Ty::Unit)])), None);
         assert_eq!(leaves(&payload_list(Ty::Float)), None);
         assert_eq!(leaves(&Ty::Record(Row::Var(0))), None);
@@ -571,7 +572,7 @@ mod tests {
             turtle.decoder_ty("key_of"),
             Some(Ty::Func(
                 vec![Ty::Str],
-                Box::new(turtle.keys.instantiate(0))
+                Arc::new(turtle.keys.instantiate(0))
             ))
         );
     }

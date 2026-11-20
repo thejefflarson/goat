@@ -1154,7 +1154,10 @@ mod tests {
         let quantified = scheme.vars[0];
         assert_eq!(
             scheme.ty,
-            Ty::Func(vec![Ty::Var(quantified)], Box::new(Ty::Var(quantified)))
+            Ty::Func(
+                vec![Ty::Var(quantified)],
+                std::sync::Arc::new(Ty::Var(quantified))
+            )
         );
 
         let callee_ty = |call: &crate::hir::Expr| {

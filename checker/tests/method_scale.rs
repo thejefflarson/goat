@@ -38,7 +38,7 @@ fn record_of_methods(count: usize, callers: bool) -> String {
 fn thirty_methods_half_of_them_calling_siblings_check() {
     let source = record_of_methods(30, true);
     let elapsed = best_time(&source);
-    let limit = if cfg!(debug_assertions) { 5000 } else { 10 };
+    let limit = if cfg!(debug_assertions) { 5000 } else { 8 };
     assert!(elapsed < Duration::from_millis(limit), "{elapsed:?}");
 }
 
@@ -59,8 +59,12 @@ fn the_three_method_model_checks_in_about_a_millisecond_in_release() {
         m = run(init(), 4)
         m.nudge().update().draw()";
     let elapsed = best_time(source);
-    let limit = if cfg!(debug_assertions) { 2000 } else { 2 };
-    assert!(elapsed < Duration::from_millis(limit), "{elapsed:?}");
+    let limit = if cfg!(debug_assertions) {
+        2_000_000
+    } else {
+        1500
+    };
+    assert!(elapsed < Duration::from_micros(limit), "{elapsed:?}");
 }
 
 #[test]

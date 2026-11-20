@@ -42,9 +42,9 @@ pub(crate) fn row_from(fields: Vec<(String, Ty)>) -> Row {
         .fold(Row::Empty, |rest, (label, field)| Row::Extend {
             at: Default::default(),
             label,
-            field: Box::new(field),
-            method: Box::new(PLAIN),
-            rest: Box::new(rest),
+            field: Arc::new(field),
+            method: Arc::new(PLAIN),
+            rest: Arc::new(rest),
         })
 }
 
@@ -101,7 +101,7 @@ fn rename_binders(ty: &Ty, scope: &mut Vec<(TypeVar, TypeVar)>) -> Ty {
         }
         Ty::Func(args, ret) => Ty::Func(
             args.iter().map(|a| rename_binders(a, scope)).collect(),
-            Box::new(rename_binders(ret, scope)),
+            Arc::new(rename_binders(ret, scope)),
         ),
         Ty::Record(row) => Ty::Record(rename_row(row, scope)),
         Ty::Variant(row) => Ty::Variant(rename_row(row, scope)),
@@ -116,9 +116,9 @@ fn rename_row(row: &Row, scope: &mut Vec<(TypeVar, TypeVar)>) -> Row {
         } => Row::Extend {
             at: Default::default(),
             label: label.clone(),
-            field: Box::new(rename_binders(field, scope)),
-            method: Box::new(PLAIN),
-            rest: Box::new(rename_row(rest, scope)),
+            field: Arc::new(rename_binders(field, scope)),
+            method: Arc::new(PLAIN),
+            rest: Arc::new(rename_row(rest, scope)),
         },
         other => other.clone(),
     }
@@ -180,7 +180,7 @@ fn build(shape: &Shape, kids: Vec<Ty>) -> Ty {
         Shape::Func(n) => {
             let mut args = kids;
             let ret = args.split_off(*n);
-            Ty::Func(args, Box::new(ret.into_iter().next().unwrap_or(Ty::Unit)))
+            Ty::Func(args, Arc::new(ret.into_iter().next().unwrap_or(Ty::Unit)))
         }
         Shape::Record(labels) => Ty::Record(row_from(labels.iter().cloned().zip(kids).collect())),
         Shape::Variant(labels) => Ty::Variant(row_from(labels.iter().cloned().zip(kids).collect())),

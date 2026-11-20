@@ -240,7 +240,7 @@ fn a_vocabulary_that_cannot_be_realized_is_a_spanned_error() {
             v.events[0].name = "Link".into()
         }),
         ("numbers, strings or records", |v| {
-            v.events[1].payload = Ty::Func(vec![], Box::new(Ty::Unit))
+            v.events[1].payload = Ty::Func(vec![], std::sync::Arc::new(Ty::Unit))
         }),
         ("do not match", |v| {
             v.shapes[0].scene = SceneCalls::Stream {
