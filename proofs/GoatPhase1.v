@@ -512,7 +512,7 @@ Lemma inst_numeral_at : forall U,
 Proof.
   intros U HU.
   exists (fun a => if a == ga then U else typ_Var a), idr.
-  split; [ | split; [ | split ] ].
+  split; [ | split; [ | split; [ | split ] ] ].
   - intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
       [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
@@ -520,6 +520,11 @@ Proof.
   - intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
     simpl in Ha. assert (a = ga) by fsetdec. subst a.
     destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+  - split; [ | intros r; exact I ].
+    intros a. simpl.
+    match goal with |- context [if ?c then _ else _] => destruct c end;
+      [ | exact I ].
+    destruct U; first [ exact I | discriminate HU ].
 Qed.
 
 (* n = 3 {a: n + 1.5, b: n * 2}: the one numeral is a Float in the first field
