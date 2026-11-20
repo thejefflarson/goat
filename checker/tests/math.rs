@@ -35,8 +35,7 @@ fn a_float_is_never_an_int_without_one_of_them() {
         exact_type_of(&format!("{take}take(round(2.5))")).as_deref(),
         Ok("Unit")
     );
-    let message = exact_type_of("7 // (3 / 2)").unwrap_err();
-    assert!(message.contains("needs whole numbers"), "{message}");
+    assert_eq!(exact_type_of("7 // (3 / 2)").as_deref(), Ok("Float"));
     assert_eq!(exact_type_of("7 // round(3 / 2)").as_deref(), Ok("Int"));
 }
 

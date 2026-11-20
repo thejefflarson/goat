@@ -610,6 +610,20 @@ Proof.
   - right. exists trap_overflow. apply bt_ring_overflow; assumption.
 Qed.
 
+(* Two numerals divide or take a remainder as [Int]s, unless the divisor is
+   zero or the quotient is out of range, which trap. *)
+Lemma whole_nums : forall o a b,
+  kind o = k_whole ->
+  (exists v, bin_step o (e_num a) (e_num b) v) \/
+  (exists k, bin_trap o (e_num a) (e_num b) k).
+Proof.
+  intros o a b Hk. destruct (z_is_zero b) eqn:Hz.
+  - right. exists trap_div_zero. apply bt_div_zero; assumption.
+  - destruct (in_int (whole_Z o a b)) eqn:Hr.
+    + left. eexists. apply bs_whole; assumption.
+    + right. exists trap_overflow. apply bt_whole_overflow; assumption.
+Qed.
+
 (* An operator applied to two values of the types its signature wants either
    computes a value or raises a defined error. *)
 Lemma bin_progress : forall D G o v1 v2 A B R,
@@ -623,7 +637,7 @@ Proof.
   assert (Hflt : forall v, value v -> typing D G v typ_Float ->
                  (exists n, v = e_num n) \/ (exists d, v = e_dec d))
     by (intros v Hv Hty; destruct (canon_base _ _ _ _ Hv Hty) as [_ [C _]]; exact (C (teq_refl _))).
-  destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o Hk | D0 o B Hk HB ].
+  destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o A Hk Hsat | D0 o B Hk HB ].
   - (* [+ - *] on two numbers of one Numeric type *)
     destruct A; simpl in Hsat; try discriminate.
     + (* Int: in range it steps, out of range it traps *)
@@ -646,13 +660,21 @@ Proof.
     + apply bs_float; [ right; reflexivity | constructor ].
     + apply bs_float; [ right; reflexivity | constructor ].
     + apply bs_float; [ right; reflexivity | constructor ].
-  - (* [//] and [%]: a zero divisor traps, and so does a quotient out of range *)
-    destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
-    destruct (z_is_zero b) eqn:Hz.
-    + right. exists trap_div_zero. apply bt_div_zero; assumption.
-    + destruct (in_int (whole_Z o a b)) eqn:Hr.
-      * left. eexists. apply bs_whole; assumption.
-      * right. exists trap_overflow. apply bt_whole_overflow; assumption.
+  - (* [//] and [%] on two numbers of one Numeric type *)
+    destruct A; simpl in Hsat; try discriminate.
+    + (* Int: a zero divisor traps, and so does a quotient out of range *)
+      destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
+      apply whole_nums; assumption.
+    + (* Float: two numerals step as Ints; with a decimal, any Float *)
+      destruct (Hflt _ Hv1 H1) as [[a ->] | [x ->]]; destruct (Hflt _ Hv2 H2) as [[b ->] | [y ->]].
+      * apply whole_nums; assumption.
+      * left. exists (e_dec 0). apply bs_whole_float; [ assumption | constructor ].
+      * left. exists (e_dec 0). apply bs_whole_float; [ assumption | constructor ].
+      * left. exists (e_dec 0). apply bs_whole_float; [ assumption | constructor ].
+    + (* a Numeric variable: a value there is a numeral *)
+      destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
+      destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
+      apply whole_nums; assumption.
   - (* a comparison of two Ints, Floats, strings or booleans *)
     inversion HB; subst.
     + destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].

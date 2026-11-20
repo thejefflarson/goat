@@ -376,6 +376,8 @@ Inductive bin_step : bop -> exp -> exp -> exp -> Prop :=
  | bs_float : forall o x y d,
      (kind o = k_ring \/ kind o = k_quot) -> fl_pair x y ->
      bin_step o x y (e_dec d)
+ | bs_whole_float : forall o x y d,
+     kind o = k_whole -> fl_pair x y -> bin_step o x y (e_dec d)
  | bs_quot_num : forall o a b d,
      kind o = k_quot -> bin_step o (e_num a) (e_num b) (e_dec d)
  | bs_cmp_int : forall o a b,
@@ -405,11 +407,12 @@ Inductive bin_trap : bop -> exp -> exp -> trap_kind -> Prop :=
      bin_trap o (e_num a) (e_num b) trap_overflow.
 
 (* The types an operator accepts, and what it gives (ADR 0017, ADR 0036):
-   [+ - *] take two Ints or two Floats; [/] takes two Floats and gives a
-   Float; [//] and [%] take two Ints; a comparison takes two of one of Int,
-   Float, String or Bool.  [+ - *] are generic: they take two operands of one
+   [+ - * // %] take two Ints or two Floats; [/] takes two Floats and gives a
+   Float; a comparison takes two of one of Int, Float, String or Bool.
+   [+ - * // %] are generic: they take two operands of one
    type that is [Numeric] in the kinding environment, a [Numeric] variable
-   included.  The checker accepts an Int where a Float is wanted; elaboration
+   included.  An [Int] [//] or [%] traps on a zero divisor; a [Float] one is
+   unspecified like any Float operation, so IEEE's infinity and NaN fit.  The checker accepts an Int where a Float is wanted; elaboration
    inserts [e_tofloat] there, so the calculus has no mixed signature.  A
    comparison is at concrete types: a generic one waits for the [Eq] and
    [Ordered] sorts. *)
@@ -423,8 +426,8 @@ Inductive bin_sig : denv -> bop -> typ -> typ -> typ -> Prop :=
  | sig_ring : forall D o A,
      kind o = k_ring -> sat D k_Numeric A -> bin_sig D o A A A
  | sig_quot : forall D, bin_sig D bop_div typ_Float typ_Float typ_Float
- | sig_whole : forall D o,
-     kind o = k_whole -> bin_sig D o typ_Int typ_Int typ_Int
+ | sig_whole : forall D o A,
+     kind o = k_whole -> sat D k_Numeric A -> bin_sig D o A A A
  | sig_cmp : forall D o B,
      kind o = k_cmp -> cmp_typ B -> bin_sig D o B B typ_Bool.
 
@@ -465,7 +468,7 @@ Proof.
   destruct H; simpl.
   - apply sig_ring; [ assumption | eapply sat_ap; eassumption ].
   - apply sig_quot.
-  - apply sig_whole; assumption.
+  - apply sig_whole; [ assumption | eapply sat_ap; eassumption ].
   - rewrite (Hc B H0). apply sig_cmp; assumption.
 Qed.
 

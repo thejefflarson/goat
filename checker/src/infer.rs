@@ -3042,9 +3042,7 @@ impl Inferer {
     ) -> Ty {
         self.note_first_use(lhs, lhs.span);
         let operands = ((lhs, lhs_ty), (rhs, rhs_ty));
-        if matches!(op, BinOp::FloorDiv | BinOp::Mod) {
-            self.type_whole_division(op, operands)
-        } else if op == BinOp::Div {
+        if op == BinOp::Div {
             self.type_division(op, operands)
         } else if op.is_arithmetic() {
             let (lhs, lhs_ty) = &operands.0;
@@ -3284,25 +3282,6 @@ impl Inferer {
                 *arg = Ty::Float;
             }
         }
-    }
-
-    /// `//` and `%` take and give whole numbers. A `Float` operand is named
-    /// rather than reported as a bare mismatch, because both read `Number`.
-    fn type_whole_division(&mut self, op: BinOp, operands: ((&Expr, Ty), (&Expr, Ty))) -> Ty {
-        for (operand, ty) in [operands.0, operands.1] {
-            if self.resolve(&ty) == Ty::Float {
-                self.errors.push(GoatError::new(
-                    operand.span,
-                    format!(
-                        "`{}` needs whole numbers, but this is a `Float`; use `round`, `floor` or `truncate` first",
-                        op.symbol()
-                    ),
-                ));
-            } else {
-                self.unify_use(operand, &ty, &Ty::Int, operand.span);
-            }
-        }
-        Ty::Int
     }
 
     fn require_float_fields(&mut self, ty: &Ty, span: Span) {

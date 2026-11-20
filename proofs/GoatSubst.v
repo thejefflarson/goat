@@ -271,7 +271,7 @@ Proof.
   intros D D2 o A B R H Hs. destruct Hs.
   - apply sig_ring; [ assumption | eapply sat_pw; eauto ].
   - apply sig_quot.
-  - apply sig_whole; assumption.
+  - apply sig_whole; [ assumption | eapply sat_pw; eauto ].
   - apply sig_cmp; assumption.
 Qed.
 

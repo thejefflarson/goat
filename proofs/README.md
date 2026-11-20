@@ -27,7 +27,7 @@ preservation) is B3 (#71).
 | `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
 | `GoatNum.v` | The integer arithmetic behind whole-number literals and the 64-bit `Int` range, kept apart because ZArith defines notations that clash with Metalib's `x ~ T`. |
 | `GoatLit.v` | Reads the argument of `e_num` as an integer, so `e_num 3` works in a file that never imports ZArith (and in the generated printer table). |
-| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1.5 // 2`, `1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`). |
+| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`). |
 | `GoatPhase2.v` | Phase 2 of ADR 0037: worked examples for the value restriction (which terms `is_gen_value` accepts), a generalized binding used at two types, a recursive group (its typing, its unrolling, a run) and a group member that is not a function (no derivation). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
@@ -64,7 +64,7 @@ a string literal, `if e1 then e2 else e3`, `e1 o e2` and the coercion
   result is in `[int_min, int_max]` (`in_int`), `//` and `%` floor, and a zero
   divisor or a result outside the range is a trap;
 - `Float` is opaque. `e_dec d` carries a payload no rule reads, and every
-  `Float` operation (`+ - * /`, `float(n)`) relates its operands to every
+  `Float` operation (`+ - * / // %`, `float(n)`) relates its operands to every
   `Float`, and a `Float` comparison to either boolean. That is an unspecified
   function written as a relation, so it needs no axiom or parameter, and a
   theorem about it holds for any function a compiler computes;

@@ -282,12 +282,17 @@ pub enum FloatFn {
     Truncate,
 }
 
+/// `FloorDiv` and `Mod` on `Float`s are Python's `//` and `%`: the quotient
+/// rounds toward negative infinity and the remainder takes the divisor's sign.
+/// A zero divisor follows IEEE: `x // 0` is `x / 0` and `x % 0` is NaN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FloatOp {
     Add,
     Sub,
     Mul,
     Div,
+    FloorDiv,
+    Mod,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
