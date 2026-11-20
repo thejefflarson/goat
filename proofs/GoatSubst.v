@@ -30,6 +30,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatMu.
 Require Import Goat.GoatMeta.
 Require Import Stdlib.Lists.List.
 
@@ -63,11 +64,12 @@ Qed.
 Lemma inst_mono_self : forall D U, inst D U (sch_mono U).
 Proof.
   intros D U. exists idt, idr.
-  split; [|split; [|split]].
+  split; [|split; [|split; [|split]]].
   - intros a _. reflexivity.
   - intros r _. reflexivity.
   - symmetry. apply ap_typ_pointwise_id; reflexivity.
   - intros a Ha. simpl in Ha. fsetdec.
+  - apply lc_sub_id.
 Qed.
 
 (* ================= type-substitution algebra ================= *)
@@ -87,6 +89,7 @@ Proof.
   - (* Arrow *) f_equal; [ apply H | apply H0 ]; intros; [apply H1|apply H2|apply H1|apply H2]; fsetdec.
   - (* Record *) f_equal; apply H; intros; [apply H0|apply H1]; fsetdec.
   - (* Var a *) apply H. fsetdec.
+  - (* Mu *) f_equal. apply H; assumption.
   - (* row_Var *) apply H0. fsetdec.
   - (* row_Ext *) f_equal; [ apply H | apply H0 ]; intros; [apply H1|apply H2|apply H1|apply H2]; fsetdec.
 Qed.
@@ -141,13 +144,15 @@ Qed.
 Lemma inst_sch_equiv : forall D T s s',
   sch_equiv s s' -> inst D T s -> inst D T s'.
 Proof.
-  intros D T s s' [Htq [Hrq [Hbody Hsk]]] [st [sr [Ht [Hr [Heq Hk]]]]].
+  intros D T s s' [Htq [Hrq [Hbody Hsk]]] [st [sr [Ht [Hr [Heq [Hk Hl]]]]]].
   exists st, sr. repeat split.
   - intros a Ha. apply Ht. fsetdec.
   - intros r Hr0. apply Hr. fsetdec.
   - rewrite <- Hbody. exact Heq.
   - intros a Ha. assert (Hs : a `in` s_tq s) by (apply Htq; exact Ha).
     rewrite <- (Hsk a Hs). apply Hk. exact Hs.
+  - exact (proj1 Hl).
+  - exact (proj2 Hl).
 Qed.
 
 (* Ftv_sch respects sch_equiv *)
@@ -262,8 +267,10 @@ Proof. intros D D2 k T H Hs. destruct T; simpl in *; auto. rewrite <- H. exact H
 
 Lemma inst_pw : forall D D2 T s, (forall a, D a = D2 a) -> inst D T s -> inst D2 T s.
 Proof.
-  intros D D2 T s H [st [sr [A [B [C E]]]]]. exists st, sr. repeat split; auto.
-  intros a Ha. eapply sat_pw; eauto.
+  intros D D2 T s H [st [sr [A [B [C [E Hl]]]]]]. exists st, sr. repeat split; auto.
+  - intros a Ha. eapply sat_pw; eauto.
+  - exact (proj1 Hl).
+  - exact (proj2 Hl).
 Qed.
 
 Lemma bin_sig_pw : forall D D2 o A B R, (forall a, D a = D2 a) -> bin_sig D o A B R -> bin_sig D2 o A B R.
@@ -300,6 +307,8 @@ Proof.
   - eapply T_If; eauto.
   - eapply T_ToFloat; eauto. eapply sat_pw; eauto.
   - eapply T_Bin; eauto. eapply bin_sig_pw; eauto.
+  - eapply T_Fold; eauto.
+  - eapply T_Unfold; eauto.
   - apply FT_nil; auto.
   - eapply FT_cons; eauto.
 Qed.
@@ -352,6 +361,8 @@ Proof.
   - (* T_If *) eapply T_If; eauto.
   - (* T_ToFloat *) eapply T_ToFloat; eauto.
   - (* T_Bin *) eapply T_Bin; eauto.
+  - (* T_Fold *) eapply T_Fold; eauto.
+  - (* T_Unfold *) eapply T_Unfold; eauto.
   - (* FT_nil *) apply FT_nil; eauto using ctx_equiv_uniq.
   - (* FT_cons *) eapply FT_cons; eauto.
 Qed.
@@ -409,7 +420,7 @@ Qed.
 Lemma sch_more_gen_inst : forall D s s' W,
   sch_more_gen D s s' -> inst D W s -> inst D W s'.
 Proof.
-  intros D s s' W (A & B & C & E & F) [st [sr [Ht [Hr [Hw Hk]]]]].
+  intros D s s' W (A & B & C & E & F) [st [sr [Ht [Hr [Hw [Hk Hl]]]]]].
   exists st, sr. repeat split.
   - intros a Ha. apply Ht. intro Hc. apply Ha. apply A. exact Hc.
   - intros r Hrr. apply Hr. intro Hc. apply Hrr. apply B. exact Hc.
@@ -417,6 +428,8 @@ Proof.
   - intros a Ha. destruct (AtomSetProperties.In_dec a (s_tq s)) as [Hin|Hn].
     + rewrite (E a Hin). apply Hk. exact Hin.
     + destruct (F a Ha Hn) as [_ Hs]. rewrite Hs. rewrite (Ht a Hn). simpl. apply finer_refl.
+  - exact (proj1 Hl).
+  - exact (proj2 Hl).
 Qed.
 
 Definition ctx_more_gen (D : denv) (G G' : ctx) : Prop :=
@@ -572,6 +585,8 @@ Proof.
   - (* T_If *) eapply T_If; eauto.
   - (* T_ToFloat *) eapply T_ToFloat; eauto.
   - (* T_Bin *) eapply T_Bin; eauto.
+  - (* T_Fold *) eapply T_Fold; eauto.
+  - (* T_Unfold *) eapply T_Unfold; eauto.
   - apply FT_nil; eauto using ctx_more_gen_uniq.
   - eapply FT_cons; eauto.
 Qed.
@@ -584,10 +599,6 @@ Proof. intros. eapply (proj1 typing_ftv_mono_mut); eauto. Qed.
 
 (* type-equivalence is a congruence closed under any type/row substitution
    (labels are untouched by substitution, so the swap rule still applies). *)
-Scheme teq_mutind := Induction for teq Sort Prop
-with   req_mutind := Induction for req Sort Prop.
-Combined Scheme teq_req_mutind from teq_mutind, req_mutind.
-
 Lemma teq_ap_mut :
   (forall T T', teq T T' -> forall st sr, teq (ap_typ st sr T) (ap_typ st sr T')) /\
   (forall R R', req R R' -> forall st sr, req (ap_row st sr R) (ap_row st sr R')).
@@ -600,6 +611,8 @@ Proof.
   - apply teq_refl.
   - apply teq_refl.
   - apply teq_arrow; auto.
+  - apply teq_refl.
+  - apply teq_mu; auto.
   - apply teq_rec; auto.
   - eapply teq_trans; eauto.
   - apply teq_sym; auto.
@@ -690,6 +703,8 @@ Proof.
   - (* Var a0 *) unfold rt; simpl. rewrite !AtomSetFacts.singleton_iff.
     split; [ intro HH; rewrite <- HH; symmetry; apply gf | intro HH; rewrite HH; apply fg ].
   - fsetdec.
+  - apply H.
+  - fsetdec.
   - (* row_Var *) unfold rr; simpl. fsetdec.
   - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
 Qed.
@@ -707,6 +722,8 @@ Proof.
   - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
   - apply H.
   - (* Var a0 *) unfold rt; simpl. fsetdec.
+  - fsetdec.
+  - apply H.
   - fsetdec.
   - (* row_Var *) unfold rr; simpl. rewrite !AtomSetFacts.singleton_iff.
     split; [ intro HH; rewrite <- HH; symmetry; apply grfr | intro HH; rewrite HH; apply frgr ].

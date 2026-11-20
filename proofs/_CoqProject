@@ -5,6 +5,7 @@ GoatNum.v
 GoatLit.v
 GoatRows.v
 GoatDefs.v
+GoatMu.v
 GoatMeta.v
 GoatSubst.v
 GoatBij.v

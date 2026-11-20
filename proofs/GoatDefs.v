@@ -22,6 +22,7 @@
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
 Require Import Stdlib.Lists.List.
+Require Import Stdlib.Arith.Compare_dec.
 Require Import Goat.GoatNum.
 Require Import Goat.GoatLit.
 
@@ -43,6 +44,8 @@ Fixpoint ap_typ (st : tsub) (sr : rsub) (T : typ) {struct T} : typ :=
   | typ_Arrow A B => typ_Arrow (ap_typ st sr A) (ap_typ st sr B)
   | typ_Record R => typ_Record (ap_row st sr R)
   | typ_Var a => st a
+  | typ_Bvar i => typ_Bvar i
+  | typ_Mu B => typ_Mu (ap_typ st sr B)
   end
 with ap_row (st : tsub) (sr : rsub) (R : row) {struct R} : row :=
   match R with
@@ -53,6 +56,79 @@ with ap_row (st : tsub) (sr : rsub) (R : row) {struct R} : row :=
 
 Definition idt : tsub := fun a => typ_Var a.
 Definition idr : rsub := fun r => row_Var r.
+
+(* ================================================================== *)
+(* Recursive types (ADR 0037, decision 3).  [typ_Mu B] binds the index    *)
+(* 0 of its body [B] with a de Bruijn index; type and row variables stay    *)
+(* atoms.  [open_typ k U T] replaces the index [k] of [T] by [U] and         *)
+(* lowers the indices above it, so [open_typ 0 (typ_Mu B) B] is the          *)
+(* unrolling of [typ_Mu B].  [lct k T] says every index of [T] is bound by   *)
+(* one of [k] enclosing mus.                                                  *)
+(* ================================================================== *)
+
+Fixpoint open_typ (k : nat) (U : typ) (T : typ) {struct T} : typ :=
+  match T with
+  | typ_Int => typ_Int
+  | typ_Float => typ_Float
+  | typ_Bool => typ_Bool
+  | typ_Unit => typ_Unit
+  | typ_String => typ_String
+  | typ_Arrow A B => typ_Arrow (open_typ k U A) (open_typ k U B)
+  | typ_Record R => typ_Record (open_row k U R)
+  | typ_Var a => typ_Var a
+  | typ_Bvar n =>
+      match lt_eq_lt_dec n k with
+      | inleft (left _) => typ_Bvar n
+      | inleft (right _) => U
+      | inright _ => typ_Bvar (n - 1)
+      end
+  | typ_Mu B => typ_Mu (open_typ (S k) U B)
+  end
+with open_row (k : nat) (U : typ) (R : row) {struct R} : row :=
+  match R with
+  | row_Empty => row_Empty
+  | row_Var r => row_Var r
+  | row_Ext l T R' => row_Ext l (open_typ k U T) (open_row k U R')
+  end.
+
+Fixpoint lct (k : nat) (T : typ) {struct T} : Prop :=
+  match T with
+  | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String | typ_Var _ => True
+  | typ_Arrow A B => lct k A /\ lct k B
+  | typ_Record R => lcr k R
+  | typ_Bvar n => n < k
+  | typ_Mu B => lct (S k) B
+  end
+with lcr (k : nat) (R : row) {struct R} : Prop :=
+  match R with
+  | row_Empty | row_Var _ => True
+  | row_Ext _ T R' => lct k T /\ lcr k R'
+  end.
+
+(* A substitution is locally closed when no image has a free index; only
+   then does it commute with unrolling ([ap_open_mut], GoatRows.v). *)
+Definition lc_sub (st : tsub) (sr : rsub) : Prop :=
+  (forall a, lct 0 (st a)) /\ (forall r, lcr 0 (sr r)).
+
+(* Guarded recursion, mirroring ADR 0032: every mention of the index [k] sits
+   under a record field and under a function type.  [r] and [f] record whether
+   the traversal has passed one of each.  (A variant payload will guard on its
+   own once variants join the calculus.) *)
+Fixpoint gd (r f : bool) (k : nat) (T : typ) {struct T} : Prop :=
+  match T with
+  | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String | typ_Var _ => True
+  | typ_Arrow A B => gd r true k A /\ gd r true k B
+  | typ_Record R => gdr true f k R
+  | typ_Bvar n => n = k -> r = true /\ f = true
+  | typ_Mu B => gd r f (S k) B
+  end
+with gdr (r f : bool) (k : nat) (R : row) {struct R} : Prop :=
+  match R with
+  | row_Empty | row_Var _ => True
+  | row_Ext _ T R' => gd r f k T /\ gdr r f k R'
+  end.
+
+Definition guarded (B : typ) : Prop := gd false false 0 B.
 
 (* ================================================================== *)
 (* Free type / row variables, as computable finite [atoms] sets        *)
@@ -71,6 +147,8 @@ Fixpoint ftv_typ (T : typ) {struct T} : atoms :=
   | typ_Arrow A B => ftv_typ A `union` ftv_typ B
   | typ_Record R => ftv_row R
   | typ_Var a => {{a}}
+  | typ_Bvar _ => {}
+  | typ_Mu B => ftv_typ B
   end
 with ftv_row (R : row) {struct R} : atoms :=
   match R with
@@ -89,6 +167,8 @@ Fixpoint frv_typ (T : typ) {struct T} : atoms :=
   | typ_Arrow A B => frv_typ A `union` frv_typ B
   | typ_Record R => frv_row R
   | typ_Var _ => {}
+  | typ_Bvar _ => {}
+  | typ_Mu B => frv_typ B
   end
 with frv_row (R : row) {struct R} : atoms :=
   match R with
@@ -201,7 +281,8 @@ Definition inst (D : denv) (T : typ) (s : scheme) : Prop :=
     (forall a, a `notin` s_tq s -> st a = typ_Var a) /\
     (forall r, r `notin` s_rq s -> sr r = row_Var r) /\
     T = ap_typ st sr (s_body s) /\
-    (forall a, a `in` s_tq s -> sat D (s_sk s a) (st a)).
+    (forall a, a `in` s_tq s -> sat D (s_sk s a) (st a)) /\
+    lc_sub st sr.
 
 (* ================================================================== *)
 (* Generalization (section 5): quantify exactly the variables free in     *)
@@ -225,6 +306,7 @@ Inductive value : exp -> Prop :=
  | v_unit : value e_unit
  | v_str : forall q, value (e_str q)
  | v_abs : forall e, value (e_abs e)
+ | v_fold : forall v, value v -> value (e_fold v)
  | v_rec : forall fs, rec_value fs -> value (e_rec fs)
 with rec_value : fields -> Prop :=
  | rv_nil : rec_value fs_nil
@@ -248,7 +330,7 @@ Fixpoint lookup_first (l : label) (fs : fields) : option exp :=
    nonexpansive terms: unrolling the group only rewrites it.  That case is what
    lets a name bound to the unrolled group stay generalizable after
    substitution.  So is the coercion of a value, the [float(n)] elaboration
-   writes where the checker widens a literal. *)
+   writes where the checker widens a literal, and the [fold] of a value. *)
 Fixpoint is_gen_value (e : exp) {struct e} : bool :=
   match e with
   | e_fvar_b _ | e_fvar_f _ | e_num _ | e_dec _ | e_true | e_false
@@ -256,6 +338,7 @@ Fixpoint is_gen_value (e : exp) {struct e} : bool :=
   | e_rec fs => is_gen_fields fs
   | e_letrec fs e2 => is_gen_fields fs && is_gen_value e2
   | e_tofloat e1 => is_gen_value e1
+  | e_fold e1 => is_gen_value e1
   | _ => false
   end
 with is_gen_fields (fs : fields) {struct fs} : bool :=
@@ -516,6 +599,9 @@ Inductive step : exp -> exp -> Prop :=
  | st_tofloat1 : forall e e', step e e' -> step (e_tofloat e) (e_tofloat e')
  | st_tofloat : forall z d, step (e_tofloat (e_num z)) (e_dec d)
  | st_tofloat_dec : forall d, step (e_tofloat (e_dec d)) (e_dec d)
+ | st_fold1 : forall e e', step e e' -> step (e_fold e) (e_fold e')
+ | st_unfold1 : forall e e', step e e' -> step (e_unfold e) (e_unfold e')
+ | st_unfold_fold : forall v, value v -> step (e_unfold (e_fold v)) v
 with step_fields : fields -> fields -> Prop :=
  | stf_here : forall l e e' fs,
      step e e' -> step_fields (fs_cons l e fs) (fs_cons l e' fs)
@@ -538,6 +624,8 @@ Inductive traps : exp -> trap_kind -> Prop :=
  | tr_bin2 : forall v o e2 k,
      value v -> traps e2 k -> traps (e_bin v o e2) k
  | tr_tofloat : forall e k, traps e k -> traps (e_tofloat e) k
+ | tr_fold : forall e k, traps e k -> traps (e_fold e) k
+ | tr_unfold : forall e k, traps e k -> traps (e_unfold e) k
  | tr_bin : forall v1 o v2 k,
      value v1 -> value v2 -> bin_trap o v1 v2 k -> traps (e_bin v1 o v2) k
 with traps_fields : fields -> trap_kind -> Prop :=
@@ -604,6 +692,12 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
  | T_Bin : forall D G e1 o e2 A B R,
      typing D G e1 A -> typing D G e2 B -> bin_sig D o A B R ->
      typing D G (e_bin e1 o e2) R
+ | T_Fold : forall D G e B,
+     lct 0 (typ_Mu B) -> guarded B ->
+     typing D G e (open_typ 0 (typ_Mu B) B) -> typing D G (e_fold e) (typ_Mu B)
+ | T_Unfold : forall D G e B,
+     lct 0 (typ_Mu B) -> guarded B ->
+     typing D G e (typ_Mu B) -> typing D G (e_unfold e) (open_typ 0 (typ_Mu B) B)
 with field_typing : denv -> ctx -> fields -> row -> Prop :=
  | FT_nil : forall D G, uniq G -> field_typing D G fs_nil row_Empty
  | FT_cons : forall D G l e T fs R,
