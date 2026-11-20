@@ -925,12 +925,11 @@ mod tests {
 
     #[test]
     fn only_a_bare_numeral_adapts() {
-        let whole = "`//` needs whole numbers, but this is a `Float`";
         for src in [
             "n = 2 * 3  {a: n + 1.5, b: n // 2}",
             "p = {x: 1}  {a: p.x + 1.5, b: p.x // 2}",
         ] {
-            assert!(type_of(src).unwrap_err().starts_with(whole), "{src}");
+            assert_eq!(exact_type_of(src), "{a: Float, b: Float}", "{src}");
         }
     }
 
