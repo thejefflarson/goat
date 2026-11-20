@@ -103,6 +103,50 @@ Definition Ftv_typ (T : typ) (a : typvar) : Prop := a `in` ftv_typ T.
 Definition Frv_typ (T : typ) (r : rowvar) : Prop := r `in` frv_typ T.
 
 (* ================================================================== *)
+(* Sorts (ADR 0037, phase 2).  A type variable has a sort: [Any] stands   *)
+(* for any type, [Numeric] and [Literal] for [Int] or [Float].  A         *)
+(* [Literal] variable is also [Numeric], so one sort is finer than another *)
+(* when its variables may stand wherever the other is asked.  The sort of  *)
+(* a free variable comes from a kinding environment [denv], a total map    *)
+(* that is [Any] outside a finite support; a quantified variable's sort    *)
+(* is recorded in its scheme.                                              *)
+(* ================================================================== *)
+
+Inductive sort : Set := k_Any | k_Numeric | k_Literal.
+
+Inductive finer : sort -> sort -> Prop :=
+ | finer_refl : forall k, finer k k
+ | finer_any : forall k, finer k k_Any
+ | finer_lit : forall k, finer k_Literal k.
+
+#[export] Hint Constructors finer : core.
+
+Definition sort_fn := typvar -> sort.
+Definition denv := typvar -> sort.
+
+(* [sat D k T]: T may stand where a variable of sort [k] stands.  A concrete
+   [Int] or [Float] satisfies every sort; any other type only [Any]; a
+   variable satisfies the sorts its own (in [D]) is finer than. *)
+Definition sat (D : denv) (k : sort) (T : typ) : Prop :=
+  match T with
+  | typ_Int | typ_Float => True
+  | typ_Var a => finer (D a) k
+  | _ => k = k_Any
+  end.
+
+(* A substitution from one environment to another gives each variable a type
+   of its sort. *)
+Definition kres (D D' : denv) (st : tsub) : Prop := forall a, sat D' (D a) (st a).
+
+(* The environment D, extended on V by the sorts k. *)
+Definition ext (D : denv) (V : atoms) (k : sort_fn) : denv :=
+  fun a => if AtomSetImpl.mem a V then k a else D a.
+
+Definition supp_ok (D : denv) (S : atoms) : Prop := forall a, a `notin` S -> D a = k_Any.
+
+Definition d_any : denv := fun _ => k_Any.
+
+(* ================================================================== *)
 (* Type schemes (section 5): a quantified set of type and row variables  *)
 (* over a monotype body.  Quantified sets are finite [atoms]; a monotype  *)
 (* scheme quantifies nothing.                                            *)
@@ -111,10 +155,11 @@ Definition Frv_typ (T : typ) (r : rowvar) : Prop := r `in` frv_typ T.
 Record scheme : Type := Sch {
   s_tq : atoms;
   s_rq : atoms;
-  s_body : typ
+  s_body : typ;
+  s_sk : sort_fn
 }.
 
-Definition sch_mono (T : typ) : scheme := Sch {} {} T.
+Definition sch_mono (T : typ) : scheme := Sch {} {} T (fun _ => k_Any).
 
 (* Free variables of a scheme: free in the body and not quantified. *)
 Definition ftv_sch (s : scheme) : atoms := AtomSetImpl.diff (ftv_typ (s_body s)) (s_tq s).
@@ -151,21 +196,22 @@ Definition Frv_ctx (G : ctx) (r : rowvar) : Prop := r `in` frv_ctx G.
 (* A monotype scheme has only itself as an instance.                        *)
 (* ================================================================== *)
 
-Definition inst (T : typ) (s : scheme) : Prop :=
+Definition inst (D : denv) (T : typ) (s : scheme) : Prop :=
   exists (st : tsub) (sr : rsub),
     (forall a, a `notin` s_tq s -> st a = typ_Var a) /\
     (forall r, r `notin` s_rq s -> sr r = row_Var r) /\
-    T = ap_typ st sr (s_body s).
+    T = ap_typ st sr (s_body s) /\
+    (forall a, a `in` s_tq s -> sat D (s_sk s a) (st a)).
 
 (* ================================================================== *)
 (* Generalization (section 5): quantify exactly the variables free in     *)
 (* the type but not in the context.                                        *)
 (* ================================================================== *)
 
-Definition gen (G : ctx) (T : typ) : scheme :=
+Definition gen (G : ctx) (T : typ) (k : sort_fn) : scheme :=
   Sch (AtomSetImpl.diff (ftv_typ T) (ftv_ctx G))
       (AtomSetImpl.diff (frv_typ T) (frv_ctx G))
-      T.
+      T k.
 
 (* ================================================================== *)
 (* Values (section 2).                                                   *)
@@ -306,6 +352,16 @@ Definition val_bool (v : exp) : option bool :=
   | _ => None
   end.
 
+(* A Float value may be a numeral: a whole-number literal is typed at any
+   [Literal] type, [Float] included.  Two numerals step as [Int]s; a Float
+   operation is the case where one operand is a decimal. *)
+Inductive fl_pair : exp -> exp -> Prop :=
+ | fp_dd : forall x y, fl_pair (e_dec x) (e_dec y)
+ | fp_dn : forall x n, fl_pair (e_dec x) (e_num n)
+ | fp_nd : forall n y, fl_pair (e_num n) (e_dec y).
+
+#[export] Hint Constructors fl_pair : core.
+
 (* What an operator computes from two values.  A relation, because a Float
    operation is unspecified: any Float, or for a comparison any Bool.  Every
    Int case has one answer, and none when the divisor is zero or the result
@@ -318,13 +374,15 @@ Inductive bin_step : bop -> exp -> exp -> exp -> Prop :=
      kind o = k_whole -> z_is_zero b = false -> in_int (whole_Z o a b) = true ->
      bin_step o (e_num a) (e_num b) (e_num (whole_Z o a b))
  | bs_float : forall o x y d,
-     (kind o = k_ring \/ kind o = k_quot) ->
-     bin_step o (e_dec x) (e_dec y) (e_dec d)
+     (kind o = k_ring \/ kind o = k_quot) -> fl_pair x y ->
+     bin_step o x y (e_dec d)
+ | bs_quot_num : forall o a b d,
+     kind o = k_quot -> bin_step o (e_num a) (e_num b) (e_dec d)
  | bs_cmp_int : forall o a b,
      kind o = k_cmp ->
      bin_step o (e_num a) (e_num b) (of_bool (cmp_holds o (z_cmp a b)))
  | bs_cmp_float : forall o x y c,
-     kind o = k_cmp -> bin_step o (e_dec x) (e_dec y) (of_bool c)
+     kind o = k_cmp -> fl_pair x y -> bin_step o x y (of_bool c)
  | bs_cmp_str : forall o p q,
      kind o = k_cmp ->
      bin_step o (e_str p) (e_str q) (of_bool (cmp_holds o (str_compare p q)))
@@ -349,39 +407,66 @@ Inductive bin_trap : bop -> exp -> exp -> trap_kind -> Prop :=
 (* The types an operator accepts, and what it gives (ADR 0017, ADR 0036):
    [+ - *] take two Ints or two Floats; [/] takes two Floats and gives a
    Float; [//] and [%] take two Ints; a comparison takes two of one of Int,
-   Float, String or Bool.  The checker accepts an Int where a Float is wanted;
-   elaboration inserts [e_tofloat] there, so the calculus has no mixed
-   signature.  Operators are at concrete types: a constraint variable has no
-   signature in this phase. *)
+   Float, String or Bool.  [+ - *] are generic: they take two operands of one
+   type that is [Numeric] in the kinding environment, a [Numeric] variable
+   included.  The checker accepts an Int where a Float is wanted; elaboration
+   inserts [e_tofloat] there, so the calculus has no mixed signature.  A
+   comparison is at concrete types: a generic one waits for the [Eq] and
+   [Ordered] sorts. *)
 Inductive cmp_typ : typ -> Prop :=
  | ct_int : cmp_typ typ_Int
  | ct_float : cmp_typ typ_Float
  | ct_string : cmp_typ typ_String
  | ct_bool : cmp_typ typ_Bool.
 
-Inductive bin_sig : bop -> typ -> typ -> typ -> Prop :=
- | sig_ring_int : forall o,
-     kind o = k_ring -> bin_sig o typ_Int typ_Int typ_Int
- | sig_ring_float : forall o,
-     kind o = k_ring -> bin_sig o typ_Float typ_Float typ_Float
- | sig_quot : bin_sig bop_div typ_Float typ_Float typ_Float
- | sig_whole : forall o,
-     kind o = k_whole -> bin_sig o typ_Int typ_Int typ_Int
- | sig_cmp : forall o B,
-     kind o = k_cmp -> cmp_typ B -> bin_sig o B B typ_Bool.
+Inductive bin_sig : denv -> bop -> typ -> typ -> typ -> Prop :=
+ | sig_ring : forall D o A,
+     kind o = k_ring -> sat D k_Numeric A -> bin_sig D o A A A
+ | sig_quot : forall D, bin_sig D bop_div typ_Float typ_Float typ_Float
+ | sig_whole : forall D o,
+     kind o = k_whole -> bin_sig D o typ_Int typ_Int typ_Int
+ | sig_cmp : forall D o B,
+     kind o = k_cmp -> cmp_typ B -> bin_sig D o B B typ_Bool.
 
 #[export] Hint Constructors cmp_typ : core.
 
-(* Every type in a signature is closed, so substitution leaves it alone. *)
-Lemma bin_sig_ap : forall o A B R st sr,
-  bin_sig o A B R ->
-  ap_typ st sr A = A /\ ap_typ st sr B = B /\ ap_typ st sr R = R.
+Lemma finer_trans : forall k1 k2 k3, finer k1 k2 -> finer k2 k3 -> finer k1 k3.
 Proof.
-  intros o A B R st sr H.
+  intros k1 k2 k3 H1 H2. inversion H1; subst; auto.
+  inversion H2; subst; auto.
+Qed.
+
+Lemma sat_finer : forall D k k' T, finer k' k -> sat D k' T -> sat D k T.
+Proof.
+  intros D k k' T Hf H. destruct T; simpl in *; try exact I.
+  all: try (subst; inversion Hf; subst; auto; fail).
+  eapply finer_trans; eauto.
+Qed.
+
+(* A kind-respecting substitution keeps a type within its sort. *)
+Lemma sat_ap : forall D D' k T st sr,
+  kres D D' st -> sat D k T -> sat D' k (ap_typ st sr T).
+Proof.
+  intros D D' k T st sr Hk H. destruct T; simpl in *; try exact H.
+  eapply sat_finer; [ exact H | apply Hk ].
+Qed.
+
+Lemma sat_any : forall D T, sat D k_Any T.
+Proof. intros D T. destruct T; simpl; try reflexivity. apply finer_any. Qed.
+
+(* The signature of an operator at the substituted types. *)
+Lemma bin_sig_ap : forall D D' o A B R st sr,
+  kres D D' st -> bin_sig D o A B R ->
+  bin_sig D' o (ap_typ st sr A) (ap_typ st sr B) (ap_typ st sr R).
+Proof.
+  intros D D' o A B R st sr Hk H.
   assert (Hc : forall N, cmp_typ N -> ap_typ st sr N = N)
     by (intros N HN; destruct HN; reflexivity).
-  destruct H; simpl; repeat split;
-    first [ reflexivity | apply Hc; assumption ].
+  destruct H; simpl.
+  - apply sig_ring; [ assumption | eapply sat_ap; eassumption ].
+  - apply sig_quot.
+  - apply sig_whole; assumption.
+  - rewrite (Hc B H0). apply sig_cmp; assumption.
 Qed.
 
 (* ================================================================== *)
@@ -430,6 +515,7 @@ Inductive step : exp -> exp -> Prop :=
      step (e_bin v1 o v2) v
  | st_tofloat1 : forall e e', step e e' -> step (e_tofloat e) (e_tofloat e')
  | st_tofloat : forall z d, step (e_tofloat (e_num z)) (e_dec d)
+ | st_tofloat_dec : forall d, step (e_tofloat (e_dec d)) (e_dec d)
 with step_fields : fields -> fields -> Prop :=
  | stf_here : forall l e e' fs,
      step e e' -> step_fields (fs_cons l e fs) (fs_cons l e' fs)
@@ -467,61 +553,62 @@ with traps_fields : fields -> trap_kind -> Prop :=
 (* derivable judgment has a well-formed context.                           *)
 (* ================================================================== *)
 
-Inductive typing : ctx -> exp -> typ -> Prop :=
- | T_Var : forall G x s T,
-     uniq G -> binds x s G -> inst T s -> typing G (e_fvar_f x) T
- | T_Num : forall G n, uniq G -> typing G (e_num n) typ_Int
- | T_Dec : forall G d, uniq G -> typing G (e_dec d) typ_Float
- | T_True : forall G, uniq G -> typing G e_true typ_Bool
- | T_False : forall G, uniq G -> typing G e_false typ_Bool
- | T_Abs : forall (L : vars) G e T1 T2,
+Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
+ | T_Var : forall D G x s T,
+     uniq G -> binds x s G -> inst D T s -> typing D G (e_fvar_f x) T
+ | T_Num : forall D G n T, uniq G -> sat D k_Literal T -> typing D G (e_num n) T
+ | T_Dec : forall D G d, uniq G -> typing D G (e_dec d) typ_Float
+ | T_True : forall D G, uniq G -> typing D G e_true typ_Bool
+ | T_False : forall D G, uniq G -> typing D G e_false typ_Bool
+ | T_Abs : forall (L : vars) D G e T1 T2,
      (forall x, x `notin` L ->
-        typing ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e (e_fvar_f x)) T2) ->
-     typing G (e_abs e) (typ_Arrow T1 T2)
- | T_App : forall G e1 e2 T1 T2,
-     typing G e1 (typ_Arrow T1 T2) ->
-     typing G e2 T1 ->
-     typing G (e_app e1 e2) T2
- | T_Let : forall (L : vars) G e1 e2 T1 T2,
+        typing D ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e (e_fvar_f x)) T2) ->
+     typing D G (e_abs e) (typ_Arrow T1 T2)
+ | T_App : forall D G e1 e2 T1 T2,
+     typing D G e1 (typ_Arrow T1 T2) ->
+     typing D G e2 T1 ->
+     typing D G (e_app e1 e2) T2
+ | T_Let : forall (L : vars) D G e1 e2 T1 T2 (k : sort_fn),
      is_gen_value e1 = true ->
-     typing G e1 T1 ->
+     typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k) G e1 T1 ->
      (forall x, x `notin` L ->
-        typing ((x ~ gen G T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
-     typing G (e_let e1 e2) T2
- | T_LetMono : forall (L : vars) G e1 e2 T1 T2,
-     typing G e1 T1 ->
+        typing D ((x ~ gen G T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
+     typing D G (e_let e1 e2) T2
+ | T_LetMono : forall (L : vars) D G e1 e2 T1 T2,
+     typing D G e1 T1 ->
      (forall x, x `notin` L ->
-        typing ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
-     typing G (e_let e1 e2) T2
- | T_Letrec : forall (L : vars) G fs e2 R T,
+        typing D ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
+     typing D G (e_let e1 e2) T2
+ | T_Letrec : forall (L : vars) D G fs e2 R T (k : sort_fn),
      fn_group fs ->
      (forall p, p `notin` L ->
-        field_typing ((p ~ sch_mono (typ_Record R)) ++ G)
+        field_typing (ext D (AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)) k)
+          ((p ~ sch_mono (typ_Record R)) ++ G)
           (open_fields_wrt_exp fs (e_fvar_f p)) R) ->
      (forall p, p `notin` L ->
-        typing ((p ~ gen G (typ_Record R)) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T) ->
-     typing G (e_letrec fs e2) T
- | T_Record : forall G fs R,
-     field_typing G fs R -> typing G (e_rec fs) (typ_Record R)
- | T_Proj : forall G e l T R,
-     typing G e (typ_Record (row_Ext l T R)) -> typing G (e_proj e l) T
- | T_Conv : forall G e T T',
-     typing G e T -> teq T T' -> typing G e T'
- | T_Unit : forall G, uniq G -> typing G e_unit typ_Unit
- | T_Str : forall G q, uniq G -> typing G (e_str q) typ_String
- | T_If : forall G e1 e2 e3 T,
-     typing G e1 typ_Bool -> typing G e2 T -> typing G e3 T ->
-     typing G (e_ite e1 e2 e3) T
- | T_ToFloat : forall G e,
-     typing G e typ_Int -> typing G (e_tofloat e) typ_Float
- | T_Bin : forall G e1 o e2 A B R,
-     typing G e1 A -> typing G e2 B -> bin_sig o A B R ->
-     typing G (e_bin e1 o e2) R
-with field_typing : ctx -> fields -> row -> Prop :=
- | FT_nil : forall G, uniq G -> field_typing G fs_nil row_Empty
- | FT_cons : forall G l e T fs R,
-     typing G e T -> field_typing G fs R ->
-     field_typing G (fs_cons l e fs) (row_Ext l T R).
+        typing D ((p ~ gen G (typ_Record R) k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T) ->
+     typing D G (e_letrec fs e2) T
+ | T_Record : forall D G fs R,
+     field_typing D G fs R -> typing D G (e_rec fs) (typ_Record R)
+ | T_Proj : forall D G e l T R,
+     typing D G e (typ_Record (row_Ext l T R)) -> typing D G (e_proj e l) T
+ | T_Conv : forall D G e T T',
+     typing D G e T -> teq T T' -> typing D G e T'
+ | T_Unit : forall D G, uniq G -> typing D G e_unit typ_Unit
+ | T_Str : forall D G q, uniq G -> typing D G (e_str q) typ_String
+ | T_If : forall D G e1 e2 e3 T,
+     typing D G e1 typ_Bool -> typing D G e2 T -> typing D G e3 T ->
+     typing D G (e_ite e1 e2 e3) T
+ | T_ToFloat : forall D G e A,
+     typing D G e A -> sat D k_Numeric A -> typing D G (e_tofloat e) typ_Float
+ | T_Bin : forall D G e1 o e2 A B R,
+     typing D G e1 A -> typing D G e2 B -> bin_sig D o A B R ->
+     typing D G (e_bin e1 o e2) R
+with field_typing : denv -> ctx -> fields -> row -> Prop :=
+ | FT_nil : forall D G, uniq G -> field_typing D G fs_nil row_Empty
+ | FT_cons : forall D G l e T fs R,
+     typing D G e T -> field_typing D G fs R ->
+     field_typing D G (fs_cons l e fs) (row_Ext l T R).
 
 #[export] Hint Constructors typing field_typing : core.
 

@@ -455,7 +455,7 @@ Qed.
 (* The program that parses is the term GoatPhase2.v types as an Int. *)
 Example countdown_source_types : forall var_of,
   var_of "n" <> var_of "countdown" ->
-  Den_goat var_of countdown_tree countdown /\ typing nil countdown typ_Int.
+  Den_goat var_of countdown_tree countdown /\ typing d_any nil countdown typ_Int.
 Proof.
   intros var_of Hne.
   exact (conj (countdown_denotes_the_group var_of Hne) recursive_group_types).

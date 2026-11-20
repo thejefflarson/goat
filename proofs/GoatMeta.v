@@ -427,8 +427,8 @@ Combined Scheme typing_field_mutind from typing_mut, field_typing_mut.
 (* ================================================================== *)
 
 Lemma typing_regular_mut :
-  (forall G e T, typing G e T -> lc e) /\
-  (forall G fs R, field_typing G fs R -> lcf fs).
+  (forall D G e T, typing D G e T -> lc e) /\
+  (forall D G fs R, field_typing D G fs R -> lcf fs).
 Proof.
   apply typing_field_mutind; unfold lc, lcf.
   - (* T_Var *) intros; simpl; auto.
@@ -436,39 +436,39 @@ Proof.
   - (* T_Dec *) intros; simpl; auto.
   - (* T_True *) intros; simpl; auto.
   - (* T_False *) intros; simpl; auto.
-  - (* T_Abs *) intros L G e T1 T2 Hpre IH; simpl.
+  - (* T_Abs *) intros L D G e T1 T2 Hpre IH; simpl.
     pick fresh x for L.
     apply (lc_at_open_inv e 0 x). unfold open_exp_wrt_exp in IH. apply IH; auto.
-  - (* T_App *) intros G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2; simpl; split; assumption.
-  - (* T_Let *) intros L G e1 e2 T1 T2 Hgv Hty1 IH1 Hpre IH2; simpl; split.
+  - (* T_App *) intros D G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2; simpl; split; assumption.
+  - (* T_Let *) intros L D G e1 e2 T1 T2 k Hgv Hty1 IH1 Hpre IH2; simpl; split.
     + assumption.
     + pick fresh x for L.
       apply (lc_at_open_inv e2 0 x). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
-  - (* T_LetMono *) intros L G e1 e2 T1 T2 Hty1 IH1 Hpre IH2; simpl; split.
+  - (* T_LetMono *) intros L D G e1 e2 T1 T2 Hty1 IH1 Hpre IH2; simpl; split.
     + assumption.
     + pick fresh x for L.
       apply (lc_at_open_inv e2 0 x). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
-  - (* T_Letrec *) intros L G fs e2 R T Hfg Hfs IHfs Hpre IH2; simpl; split.
+  - (* T_Letrec *) intros L D G fs e2 R T k Hfg Hfs IHfs Hpre IH2; simpl; split.
     + pick fresh p for L.
       apply (lcf_at_open_inv fs 0 p). unfold open_fields_wrt_exp in IHfs. apply IHfs; auto.
     + pick fresh p for L.
       apply (lc_at_open_inv e2 0 p). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
-  - (* T_Record *) intros G fs R Hft IH; simpl; assumption.
-  - (* T_Proj *) intros G e l T R Hty IH; simpl; assumption.
-  - (* T_Conv *) intros G e T T' Hty IH Hteq; simpl; assumption.
+  - (* T_Record *) intros D G fs R Hft IH; simpl; assumption.
+  - (* T_Proj *) intros D G e l T R Hty IH; simpl; assumption.
+  - (* T_Conv *) intros D G e T T' Hty IH Hteq; simpl; assumption.
   - (* T_Unit *) intros; simpl; auto.
   - (* T_Str *) intros; simpl; auto.
-  - (* T_If *) intros G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3; simpl; auto.
-  - (* T_ToFloat *) intros G e Ht IH; simpl; assumption.
-  - (* T_Bin *) intros G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs; simpl; auto.
+  - (* T_If *) intros D G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3; simpl; auto.
+  - (* T_ToFloat *) intros D G e A Ht IH Hs; simpl; assumption.
+  - (* T_Bin *) intros D G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs; simpl; auto.
   - (* FT_nil *) intros; simpl; auto.
-  - (* FT_cons *) intros G l e T fs R Hty IH1 Hft IH2; simpl; split; assumption.
+  - (* FT_cons *) intros D G l e T fs R Hty IH1 Hft IH2; simpl; split; assumption.
 Qed.
 
-Lemma typing_regular : forall G e T, typing G e T -> lc e.
+Lemma typing_regular : forall D G e T, typing D G e T -> lc e.
 Proof. apply typing_regular_mut. Qed.
 
-Lemma field_typing_regular : forall G fs R, field_typing G fs R -> lcf fs.
+Lemma field_typing_regular : forall D G fs R, field_typing D G fs R -> lcf fs.
 Proof. apply typing_regular_mut. Qed.
 
 (* ================================================================== *)
@@ -478,13 +478,13 @@ Proof. apply typing_regular_mut. Qed.
 (* term-level bridge to L3/L7 for the record cases.                        *)
 (* ================================================================== *)
 
-Lemma field_lookup_some : forall G fs R l T rest,
-  field_typing G fs R ->
+Lemma field_lookup_some : forall D G fs R l T rest,
+  field_typing D G fs R ->
   pi l R = T :: rest ->
-  exists e, lookup_first l fs = Some e /\ typing G e T.
+  exists e, lookup_first l fs = Some e /\ typing D G e T.
 Proof.
-  intros G fs R l T rest Hft. revert T rest.
-  induction Hft as [G0 Hu | G0 lbl e0 T1 fs1 R1 Hty0 Hft1 IH];
+  intros D G fs R l T rest Hft. revert T rest.
+  induction Hft as [D0 G0 Hu | D0 G0 lbl e0 T1 fs1 R1 Hty0 Hft1 IH];
     intros T0 rest Hpi.
   - (* FT_nil: R = row_Empty, pi = nil *) simpl in Hpi. discriminate.
   - (* FT_cons lbl e0 T1 fs1 R1 *) simpl in *.
@@ -503,14 +503,15 @@ Qed.
 (* A value typed at an arrow type is an abstraction.  Holds at any context:
    a variable (T_Var's subject) is never a value, so that case is closed by
    inversion on [value], not by the context being empty. *)
-Lemma canon_arrow : forall G v T1 T2,
-  value v -> typing G v (typ_Arrow T1 T2) -> exists e, v = e_abs e.
+Lemma canon_arrow : forall D G v T1 T2,
+  value v -> typing D G v (typ_Arrow T1 T2) -> exists e, v = e_abs e.
 Proof.
-  intros G v T1 T2 Hval Hty.
+  intros D G v T1 T2 Hval Hty.
   remember (typ_Arrow T1 T2) as T eqn:HT.
   revert T1 T2 HT Hval.
   induction Hty; intros T1' T2' HT Hval;
     try discriminate;
+    try solve [ subst; simpl in *; discriminate ];
     try solve [ inversion Hval ].
   - (* T_Abs *) eexists; reflexivity.
   - (* T_Conv *) subst.
@@ -524,15 +525,16 @@ Qed.
 
 (* A value typed at a record type is a record value, and its natural row is
    equivalent to the record type's row (L7, record case). *)
-Lemma canon_record : forall G v R,
-  value v -> typing G v (typ_Record R) ->
-  exists fs R0, v = e_rec fs /\ rec_value fs /\ field_typing G fs R0 /\ req R0 R.
+Lemma canon_record : forall D G v R,
+  value v -> typing D G v (typ_Record R) ->
+  exists fs R0, v = e_rec fs /\ rec_value fs /\ field_typing D G fs R0 /\ req R0 R.
 Proof.
-  intros G v R Hval Hty.
+  intros D G v R Hval Hty.
   remember (typ_Record R) as T eqn:HT.
   revert R HT Hval.
   induction Hty; intros R0 HT Hval;
     try discriminate;
+    try solve [ subst; simpl in *; discriminate ];
     try solve [ inversion Hval ].
   - (* T_Record *)
     inversion HT; subst.
@@ -551,49 +553,99 @@ Proof.
 Qed.
 
 (* A value at (a type equal to) a base type is a literal of that type. *)
-Lemma canon_base : forall G v T,
-  value v -> typing G v T ->
+Lemma canon_base : forall D G v T,
+  value v -> typing D G v T ->
   (teq T typ_Int -> exists n, v = e_num n) /\
-  (teq T typ_Float -> exists d, v = e_dec d) /\
+  (teq T typ_Float -> (exists n, v = e_num n) \/ (exists d, v = e_dec d)) /\
   (teq T typ_String -> exists q, v = e_str q) /\
   (teq T typ_Bool -> v = e_true \/ v = e_false).
 Proof.
-  intros G v T Hval Hty. revert Hval.
+  intros D G v T Hval Hty. revert Hval.
   induction Hty; intros Hval; try solve [ inversion Hval ];
     (* a literal, a function or a record: the head type decides every clause *)
     try solve [ repeat apply conj; intros Hq; apply teq_thead in Hq; simpl in Hq;
       first [ discriminate | (eexists; reflexivity) | (left; eexists; reflexivity)
             | (right; eexists; reflexivity) | (left; reflexivity) | (right; reflexivity) ] ].
-  - (* T_Conv *) destruct (IHHty Hval) as [A [B [C D]]].
+  - (* T_Num: the type is Int, Float or a Literal variable *)
+    destruct T; simpl in *; try discriminate;
+      repeat apply conj; intros Hq; apply teq_thead in Hq; simpl in Hq;
+      first [ discriminate | (eexists; reflexivity) | (left; eexists; reflexivity) ].
+  - (* T_Conv *) destruct (IHHty Hval) as [A [B [C E]]].
     repeat apply conj; intros Hq;
-      [ apply A | apply B | apply C | apply D ];
+      [ apply A | apply B | apply C | apply E ];
       (eapply teq_trans; [ eassumption | exact Hq ]).
+Qed.
+
+(* A value at a type variable is a numeral: only [T_Num] types a value there. *)
+Lemma canon_var : forall D G v T a,
+  value v -> typing D G v T -> teq T (typ_Var a) -> exists n, v = e_num n.
+Proof.
+  intros D G v T a Hval Hty. revert Hval.
+  induction Hty; intros Hval Hq; try solve [ inversion Hval ];
+    try solve [ apply teq_thead in Hq; simpl in Hq; discriminate ].
+  - (* T_Num *) eexists; reflexivity.
+  - (* T_Conv *) apply IHHty; auto. eapply teq_trans; eassumption.
+Qed.
+
+(* A value of a Numeric type is a numeral or a decimal. *)
+Lemma canon_numeric : forall D G v A,
+  value v -> typing D G v A -> sat D k_Numeric A ->
+  (exists n, v = e_num n) \/ (exists d, v = e_dec d).
+Proof.
+  intros D G v A Hv Hty Hs. destruct A; simpl in Hs; try discriminate.
+  - destruct (canon_base _ _ _ _ Hv Hty) as [C _]. left. exact (C (teq_refl _)).
+  - destruct (canon_base _ _ _ _ Hv Hty) as [_ [C _]]. exact (C (teq_refl _)).
+  - left. exact (canon_var _ _ _ _ _ Hv Hty (teq_refl _)).
+Qed.
+
+(* Two numerals add, subtract or multiply as [Int]s, or the result is out of
+   range and traps. *)
+Lemma ring_nums : forall o a b,
+  kind o = k_ring ->
+  (exists v, bin_step o (e_num a) (e_num b) v) \/
+  (exists k, bin_trap o (e_num a) (e_num b) k).
+Proof.
+  intros o a b Hk. destruct (in_int (ring_Z o a b)) eqn:Hr.
+  - left. eexists. apply bs_ring_int; assumption.
+  - right. exists trap_overflow. apply bt_ring_overflow; assumption.
 Qed.
 
 (* An operator applied to two values of the types its signature wants either
    computes a value or raises a defined error. *)
-Lemma bin_progress : forall G o v1 v2 A B R,
-  bin_sig o A B R -> value v1 -> value v2 ->
-  typing G v1 A -> typing G v2 B ->
+Lemma bin_progress : forall D G o v1 v2 A B R,
+  bin_sig D o A B R -> value v1 -> value v2 ->
+  typing D G v1 A -> typing D G v2 B ->
   (exists v, bin_step o v1 v2 v) \/ (exists k, bin_trap o v1 v2 k).
 Proof.
-  intros G o v1 v2 A B R Hs Hv1 Hv2 H1 H2.
-  assert (Hint : forall v, value v -> typing G v typ_Int -> exists a, v = e_num a)
-    by (intros v Hv Hty; destruct (canon_base _ _ _ Hv Hty) as [C _]; exact (C (teq_refl _))).
-  assert (Hflt : forall v, value v -> typing G v typ_Float -> exists d, v = e_dec d)
-    by (intros v Hv Hty; destruct (canon_base _ _ _ Hv Hty) as [_ [C _]]; exact (C (teq_refl _))).
-  destruct Hs as [ o Hk | o Hk | | o Hk | o B Hk HB ].
-  - (* [+ - *] on two Ints: in range it steps, out of range it traps *)
-    destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
-    destruct (in_int (ring_Z o a b)) eqn:Hr.
-    + left. eexists. apply bs_ring_int; assumption.
-    + right. exists trap_overflow. apply bt_ring_overflow; assumption.
-  - (* [+ - *] on two Floats: any Float *)
-    destruct (Hflt _ Hv1 H1) as [x ->]. destruct (Hflt _ Hv2 H2) as [y ->].
-    left. exists (e_dec 0). apply bs_float. left; assumption.
+  intros D G o v1 v2 A B R Hs Hv1 Hv2 H1 H2.
+  assert (Hint : forall v, value v -> typing D G v typ_Int -> exists a, v = e_num a)
+    by (intros v Hv Hty; destruct (canon_base _ _ _ _ Hv Hty) as [C _]; exact (C (teq_refl _))).
+  assert (Hflt : forall v, value v -> typing D G v typ_Float ->
+                 (exists n, v = e_num n) \/ (exists d, v = e_dec d))
+    by (intros v Hv Hty; destruct (canon_base _ _ _ _ Hv Hty) as [_ [C _]]; exact (C (teq_refl _))).
+  destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o Hk | D0 o B Hk HB ].
+  - (* [+ - *] on two numbers of one Numeric type *)
+    destruct A; simpl in Hsat; try discriminate.
+    + (* Int: in range it steps, out of range it traps *)
+      destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
+      apply ring_nums; assumption.
+    + (* Float: two numerals step as Ints; with a decimal, any Float *)
+      destruct (Hflt _ Hv1 H1) as [[a ->] | [x ->]]; destruct (Hflt _ Hv2 H2) as [[b ->] | [y ->]].
+      * apply ring_nums; assumption.
+      * left. exists (e_dec 0). apply bs_float; [ left; assumption | constructor ].
+      * left. exists (e_dec 0). apply bs_float; [ left; assumption | constructor ].
+      * left. exists (e_dec 0). apply bs_float; [ left; assumption | constructor ].
+    + (* a Numeric variable: a value there is a numeral *)
+      destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
+      destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
+      apply ring_nums; assumption.
   - (* [/] on two Floats: any Float, a zero divisor included *)
-    destruct (Hflt _ Hv1 H1) as [x ->]. destruct (Hflt _ Hv2 H2) as [y ->].
-    left. exists (e_dec 0). apply bs_float. right; reflexivity.
+    destruct (Hflt _ Hv1 H1) as [[a ->] | [x ->]]; destruct (Hflt _ Hv2 H2) as [[b ->] | [y ->]];
+      left; exists (e_dec 0).
+    + apply bs_quot_num; reflexivity.
+    + apply bs_float; [ right; reflexivity | constructor ].
+    + apply bs_float; [ right; reflexivity | constructor ].
+    + apply bs_float; [ right; reflexivity | constructor ].
   - (* [//] and [%]: a zero divisor traps, and so does a quotient out of range *)
     destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
     destruct (z_is_zero b) eqn:Hz.
@@ -605,13 +657,17 @@ Proof.
     inversion HB; subst.
     + destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
       left. eexists. apply bs_cmp_int; assumption.
-    + destruct (Hflt _ Hv1 H1) as [x ->]. destruct (Hflt _ Hv2 H2) as [y ->].
-      left. exists (of_bool true). apply bs_cmp_float; assumption.
-    + destruct (canon_base _ _ _ Hv1 H1) as [_ [_ [C1 _]]]. destruct (C1 (teq_refl _)) as [p ->].
-      destruct (canon_base _ _ _ Hv2 H2) as [_ [_ [C2 _]]]. destruct (C2 (teq_refl _)) as [q ->].
+    + destruct (Hflt _ Hv1 H1) as [[a ->] | [x ->]]; destruct (Hflt _ Hv2 H2) as [[b ->] | [y ->]];
+        left.
+      * eexists. apply bs_cmp_int; assumption.
+      * exists (of_bool true). apply bs_cmp_float; [ assumption | constructor ].
+      * exists (of_bool true). apply bs_cmp_float; [ assumption | constructor ].
+      * exists (of_bool true). apply bs_cmp_float; [ assumption | constructor ].
+    + destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [C1 _]]]. destruct (C1 (teq_refl _)) as [p ->].
+      destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [C2 _]]]. destruct (C2 (teq_refl _)) as [q ->].
       left. eexists. apply bs_cmp_str; assumption.
-    + destruct (canon_base _ _ _ Hv1 H1) as [_ [_ [_ C1]]].
-      destruct (canon_base _ _ _ Hv2 H2) as [_ [_ [_ C2]]].
+    + destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [_ C1]]].
+      destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [_ C2]]].
       destruct (C1 (teq_refl _)) as [-> | ->]; destruct (C2 (teq_refl _)) as [-> | ->];
         (left; eexists; eapply bs_cmp_bool; [ exact Hk | reflexivity | reflexivity ]).
 Qed.
@@ -653,9 +709,9 @@ Qed.
 (* ================================================================== *)
 
 Lemma progress_mut :
-  (forall G e T, typing G e T -> G = nil ->
+  (forall D G e T, typing D G e T -> G = nil ->
      value e \/ (exists e', step e e') \/ (exists k, traps e k)) /\
-  (forall G fs R, field_typing G fs R -> G = nil ->
+  (forall D G fs R, field_typing D G fs R -> G = nil ->
      rec_value fs \/ (exists fs', step_fields fs fs') \/ (exists k, traps_fields fs k)).
 Proof.
   (* Induction over typing derivations: one case per typing rule. *)
@@ -663,7 +719,7 @@ Proof.
   - (* Case: a variable.  Impossible here: the context is empty, so there is
        nothing for the variable to be bound to.  We show that by looking at
        the claim that [x] is in an empty list, which has no way to hold. *)
-    intros G x s T Hu Hb Hi HG; subst. inversion Hb.
+    intros D G x s T Hu Hb Hi HG; subst. inversion Hb.
   - (* T_Num: numbers are values (the left side of the "value or can step"
        claim). *)
     intros; left; auto.
@@ -672,17 +728,17 @@ Proof.
   - (* T_False *) intros; left; auto.
   - (* Case: a function.  Functions are values: we do not run the body until
        the function is called. *)
-    intros L G e T1 T2 Hbody IH HG; subst. left; auto.
+    intros L D G e T1 T2 Hbody IH HG; subst. left; auto.
   - (* Case: a call [e1 e2].  A call is never a value.  Look at the function
        part [e1] first:
          - either it is finished, then we look at [e2];
          - or it can step, and then the whole call steps (st_app1);
          - or it traps, and then so does the call (tr_app1). *)
-    intros G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2 HG; subst.
+    intros D G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk1]]].
     + (* [e1] is a finished value with a function type, so by canonical forms
          it is literally [fun x => e0]. *)
-      destruct (canon_arrow _ _ _ _ Hv1 Hty1) as [e0 Hev]; subst.
+      destruct (canon_arrow _ _ _ _ _ Hv1 Hty1) as [e0 Hev]; subst.
       destruct (IH2 eq_refl) as [Hv2 | [[e2' Hs2] | [k Hk2]]].
       * (* Argument is finished too: perform the call, plugging [e2] into the
            body (st_beta). *)
@@ -694,25 +750,25 @@ Proof.
     + right. exists k. apply tr_app1; auto.
   - (* Case: [let x = e1 in e2].  If [e1] is finished, plug it into [e2]
        (st_letv); otherwise step [e1] (st_let1) or propagate its trap. *)
-    intros L G e1 e2 T1 T2 Hgv Hty1 IH1 Hbody IH2 HG; subst.
+    intros L D G e1 e2 T1 T2 kf Hgv Hty1 IH1 Hbody IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk]]].
     + left. exists (open_exp_wrt_exp e2 e1). apply st_letv; auto.
     + left. exists (e_let e1' e2). apply st_let1; auto.
     + right. exists k. apply tr_let1; auto.
   - (* T_LetMono: the same, the binding is just not generalized. *)
-    intros L G e1 e2 T1 T2 Hty1 IH1 Hbody IH2 HG; subst.
+    intros L D G e1 e2 T1 T2 Hty1 IH1 Hbody IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk]]].
     + left. exists (open_exp_wrt_exp e2 e1). apply st_letv; auto.
     + left. exists (e_let e1' e2). apply st_let1; auto.
     + right. exists k. apply tr_let1; auto.
   - (* Case: a recursive group.  Never a value; it unrolls at once
        (st_letrec), because its members are functions. *)
-    intros L G fs e2 R T Hfg Hfs IHfs Hbody IH2 HG; subst.
+    intros L D G fs e2 R T kf Hfg Hfs IHfs Hbody IH2 HG; subst.
     right; left. eexists. apply st_letrec; exact Hfg.
   - (* Case: a record.  Finished if every field is; otherwise a field steps
        or traps.  The field list has its own companion claim (second half of
        the statement), which [IH] provides. *)
-    intros G fs R Hft IH HG; subst.
+    intros D G fs R Hft IH HG; subst.
     destruct (IH eq_refl) as [Hrv | [[fs' Hs] | [k Hk]]].
     + left; auto.
     + right; left. exists (e_rec fs'). apply st_rec; auto.
@@ -720,27 +776,27 @@ Proof.
   - (* Case: field access [e.l].  If [e] is not finished, step it.  If it is,
        canonical forms says it is a record, and its type says field [l]
        exists, so we can look the field up and take it (st_projrec). *)
-    intros G e l T R Hty IH HG; subst.
+    intros D G e l T R Hty IH HG; subst.
     right. destruct (IH eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
-    + destruct (canon_record _ _ _ Hv Hty) as [fs [R0 [Hev [Hrv [Hft Hreq]]]]]; subst.
+    + destruct (canon_record _ _ _ _ Hv Hty) as [fs [R0 [Hev [Hrv [Hft Hreq]]]]]; subst.
       apply req_surface in Hreq. destruct Hreq as [T0 [rest [Hpi Hteq]]].
-      destruct (field_lookup_some _ _ _ _ _ _ Hft Hpi) as [e0 [Hlook Hty0]].
+      destruct (field_lookup_some _ _ _ _ _ _ _ Hft Hpi) as [e0 [Hlook Hty0]].
       left. exists e0. apply st_projrec; auto.
     + left. exists (e_proj e' l). apply st_proj; auto.
     + right. exists k. apply tr_proj; auto.
   - (* Case: a conversion (T_Conv): the same term viewed at an equal type.
        Whether it is finished or can step does not depend on the type, so
        the induction hypothesis already answers it. *)
-    intros G e T T' Hty IH Hteq HG; subst.
+    intros D G e T T' Hty IH Hteq HG; subst.
     exact (IH eq_refl).
   - (* T_Unit *) intros; left; auto.
   - (* T_Str *) intros; left; auto.
   - (* Case: [if e1 then e2 else e3].  Never a value.  If [e1] is finished,
        canonical forms says it is [true] or [false], and the matching branch
        is taken; otherwise [e1] steps or traps. *)
-    intros G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3 HG; subst.
+    intros D G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv | [[e1' Hs] | [k Hk]]].
-    + destruct (canon_base _ _ _ Hv Ht1) as [_ [_ [_ C]]].
+    + destruct (canon_base _ _ _ _ Hv Ht1) as [_ [_ [_ C]]].
       destruct (C (teq_refl _)) as [-> | ->].
       * left. exists e2. apply st_ite_true.
       * left. exists e3. apply st_ite_false.
@@ -749,19 +805,19 @@ Proof.
   - (* Case: a coercion [float(e)].  If [e] is finished, canonical forms says
        it is a whole number, and the coercion steps to a Float (st_tofloat);
        otherwise [e] steps or traps. *)
-    intros G e Ht IH HG; subst.
+    intros D G e A Ht IH Hsat HG; subst.
     right. destruct (IH eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
-    + destruct (canon_base _ _ _ Hv Ht) as [C _].
-      destruct (C (teq_refl _)) as [a ->].
-      left. exists (e_dec 0). apply st_tofloat.
+    + destruct (canon_numeric _ _ _ _ Hv Ht Hsat) as [[a ->] | [d ->]].
+      * left. exists (e_dec 0). apply st_tofloat.
+      * left. exists (e_dec d). apply st_tofloat_dec.
     + left. exists (e_tofloat e'). apply st_tofloat1; auto.
     + right. exists k. apply tr_tofloat; auto.
   - (* Case: an operator [e1 o e2].  Evaluate [e1], then [e2]; then the
        operator computes a value or raises its error ([bin_progress]). *)
-    intros G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs HG; subst.
+    intros D G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk1]]].
     + destruct (IH2 eq_refl) as [Hv2 | [[e2' Hs2] | [k Hk2]]].
-      * destruct (bin_progress _ _ _ _ _ _ _ Hs Hv1 Hv2 Ht1 Ht2)
+      * destruct (bin_progress _ _ _ _ _ _ _ _ Hs Hv1 Hv2 Ht1 Ht2)
           as [[v Hb] | [k Hb]].
         -- left. exists v. apply st_bin; auto.
         -- right. exists k. apply tr_bin; auto.
@@ -770,7 +826,7 @@ Proof.
     + left. exists (e_bin e1' o e2). apply st_bin1; auto.
     + right. exists k. apply tr_bin1; auto.
   - (* FT_nil *) intros; left; auto.
-  - (* FT_cons *) intros G l e T fs R Hty IH1 Hft IH2 HG; subst.
+  - (* FT_cons *) intros D G l e T fs R Hty IH1 Hft IH2 HG; subst.
     destruct (IH1 eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
     + destruct (IH2 eq_refl) as [Hrv | [[fs' Hs'] | [k Hk']]].
       * left; auto.
@@ -782,10 +838,10 @@ Qed.
 
 (* Progress, in its final form: a closed, well-typed program is a value, can
    take a step, or stops with a defined runtime error. *)
-Theorem progress : forall e T,
-  typing nil e T ->
+Theorem progress : forall D e T,
+  typing D nil e T ->
   value e \/ (exists e', step e e') \/ (exists k, traps e k).
-Proof. intros e T H. apply (proj1 progress_mut nil e T H). reflexivity. Qed.
+Proof. intros D e T H. apply (proj1 progress_mut D nil e T H). reflexivity. Qed.
 
 (* ================================================================== *)
 (* Typing inversion up to conversion (the T-Conv "induction tax",       *)
@@ -794,11 +850,11 @@ Proof. intros e T H. apply (proj1 progress_mut nil e T H). reflexivity. Qed.
 (* ================================================================== *)
 
 (* Inversion for a call, up to conversion. *)
-Lemma app_inv : forall G e1 e2 T,
-  typing G (e_app e1 e2) T ->
-  exists A B, typing G e1 (typ_Arrow A B) /\ typing G e2 A /\ teq B T.
+Lemma app_inv : forall D G e1 e2 T,
+  typing D G (e_app e1 e2) T ->
+  exists A B, typing D G e1 (typ_Arrow A B) /\ typing D G e2 A /\ teq B T.
 Proof.
-  intros G e1 e2 T H. remember (e_app e1 e2) as e0 eqn:He.
+  intros D G e1 e2 T H. remember (e_app e1 e2) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_App *) inversion He; subst. exists T1, T2.
     repeat split; auto using teq_refl.
@@ -806,14 +862,14 @@ Proof.
     exists A, B. repeat split; try assumption. eauto using teq_trans.
 Qed.
 
-Lemma abs_inv : forall G e T,
-  typing G (e_abs e) T ->
+Lemma abs_inv : forall D G e T,
+  typing D G (e_abs e) T ->
   exists (L : vars) T1 T2,
     (forall x, x `notin` L ->
-       typing ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e (e_fvar_f x)) T2) /\
+       typing D ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e (e_fvar_f x)) T2) /\
     teq (typ_Arrow T1 T2) T.
 Proof.
-  intros G e T H. remember (e_abs e) as e0 eqn:He.
+  intros D G e T H. remember (e_abs e) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Abs *) inversion He; subst. exists L, T1, T2.
     split; auto using teq_refl.
@@ -823,51 +879,53 @@ Qed.
 
 (* A [let] is typed either with its binding generalized (it is a syntactic
    value) or monomorphic. *)
-Lemma let_inv : forall G e1 e2 T,
-  typing G (e_let e1 e2) T ->
+Lemma let_inv : forall D G e1 e2 T,
+  typing D G (e_let e1 e2) T ->
   exists (L : vars) T1 T2,
-    typing G e1 T1 /\
-    ((is_gen_value e1 = true /\
+    ((is_gen_value e1 = true /\ exists (k : sort_fn),
+      typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k) G e1 T1 /\
       forall x, x `notin` L ->
-        typing ((x ~ gen G T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) \/
-     (forall x, x `notin` L ->
-        typing ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2)) /\
+        typing D ((x ~ gen G T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) \/
+     (typing D G e1 T1 /\
+      forall x, x `notin` L ->
+        typing D ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2)) /\
     teq T2 T.
 Proof.
-  intros G e1 e2 T H. remember (e_let e1 e2) as e0 eqn:He.
+  intros D G e1 e2 T H. remember (e_let e1 e2) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Let *) inversion He; subst. exists L, T1, T2.
-    repeat split; auto using teq_refl.
+    split; [ left; split; [ assumption | exists k; auto ] | apply teq_refl ].
   - (* T_LetMono *) inversion He; subst. exists L, T1, T2.
-    repeat split; auto using teq_refl.
-  - (* T_Conv *) destruct (IHtyping He) as [L [T1 [T2 [Hty1 [Hbody Hteq]]]]].
-    exists L, T1, T2. repeat split; try assumption. eauto using teq_trans.
+    split; [ right; auto | apply teq_refl ].
+  - (* T_Conv *) destruct (IHtyping He) as [L [T1 [T2 [Hbody Hteq]]]].
+    exists L, T1, T2. split; [ assumption | eauto using teq_trans ].
 Qed.
 
-Lemma letrec_inv : forall G fs e2 T,
-  typing G (e_letrec fs e2) T ->
-  exists (L : vars) R T2,
+Lemma letrec_inv : forall D G fs e2 T,
+  typing D G (e_letrec fs e2) T ->
+  exists (L : vars) R T2 (k : sort_fn),
     fn_group fs /\
     (forall p, p `notin` L ->
-       field_typing ((p ~ sch_mono (typ_Record R)) ++ G)
+       field_typing (ext D (AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)) k)
+         ((p ~ sch_mono (typ_Record R)) ++ G)
          (open_fields_wrt_exp fs (e_fvar_f p)) R) /\
     (forall p, p `notin` L ->
-       typing ((p ~ gen G (typ_Record R)) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T2) /\
+       typing D ((p ~ gen G (typ_Record R) k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T2) /\
     teq T2 T.
 Proof.
-  intros G fs e2 T H. remember (e_letrec fs e2) as e0 eqn:He.
+  intros D G fs e2 T H. remember (e_letrec fs e2) as e0 eqn:He.
   induction H; try discriminate He.
-  - (* T_Letrec *) inversion He; subst. exists L, R, T.
+  - (* T_Letrec *) inversion He; subst. exists L, R, T, k.
     repeat split; auto using teq_refl.
-  - (* T_Conv *) destruct (IHtyping He) as [L [R [T2 [Hfg [Hfs [Hbody Hteq]]]]]].
-    exists L, R, T2. repeat split; try assumption. eauto using teq_trans.
+  - (* T_Conv *) destruct (IHtyping He) as [L [R [T2 [kk [Hfg [Hfs [Hbody Hteq]]]]]]].
+    exists L, R, T2, kk. repeat split; try assumption. eauto using teq_trans.
 Qed.
 
-Lemma proj_inv : forall G e l T,
-  typing G (e_proj e l) T ->
-  exists T0 R, typing G e (typ_Record (row_Ext l T0 R)) /\ teq T0 T.
+Lemma proj_inv : forall D G e l T,
+  typing D G (e_proj e l) T ->
+  exists T0 R, typing D G e (typ_Record (row_Ext l T0 R)) /\ teq T0 T.
 Proof.
-  intros G e l T H. remember (e_proj e l) as e0 eqn:He.
+  intros D G e l T H. remember (e_proj e l) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Proj *) inversion He; subst. exists T, R.
     split; auto using teq_refl.
@@ -875,11 +933,11 @@ Proof.
     exists T0, R. split; try assumption. eauto using teq_trans.
 Qed.
 
-Lemma rec_inv : forall G fs T,
-  typing G (e_rec fs) T ->
-  exists R, field_typing G fs R /\ teq (typ_Record R) T.
+Lemma rec_inv : forall D G fs T,
+  typing D G (e_rec fs) T ->
+  exists R, field_typing D G fs R /\ teq (typ_Record R) T.
 Proof.
-  intros G fs T H. remember (e_rec fs) as e0 eqn:He.
+  intros D G fs T H. remember (e_rec fs) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Record *) inversion He; subst. exists R.
     split; auto using teq_refl.
@@ -887,32 +945,54 @@ Proof.
     exists R. split; try assumption. eauto using teq_trans.
 Qed.
 
-Lemma ite_inv : forall G e1 e2 e3 T,
-  typing G (e_ite e1 e2 e3) T ->
-  exists T', typing G e1 typ_Bool /\ typing G e2 T' /\ typing G e3 T' /\ teq T' T.
+Lemma ite_inv : forall D G e1 e2 e3 T,
+  typing D G (e_ite e1 e2 e3) T ->
+  exists T', typing D G e1 typ_Bool /\ typing D G e2 T' /\ typing D G e3 T' /\ teq T' T.
 Proof.
-  intros G e1 e2 e3 T H. remember (e_ite e1 e2 e3) as e0 eqn:He.
+  intros D G e1 e2 e3 T H. remember (e_ite e1 e2 e3) as e0 eqn:He.
   induction H; try discriminate He.
-  - (* T_Conv *) destruct (IHtyping He) as [T0 [A [B [C D]]]].
+  - (* T_Conv *) destruct (IHtyping He) as [T0 [A [B [C E]]]].
     exists T0. repeat split; try assumption. eauto using teq_trans.
   - (* T_If *) inversion He; subst. eexists. repeat split; try eassumption; apply teq_refl.
 Qed.
 
-Lemma tofloat_inv : forall G e T,
-  typing G (e_tofloat e) T -> typing G e typ_Int /\ teq typ_Float T.
+Lemma tofloat_inv : forall D G e T,
+  typing D G (e_tofloat e) T ->
+  exists A, typing D G e A /\ sat D k_Numeric A /\ teq typ_Float T.
 Proof.
-  intros G e T H. remember (e_tofloat e) as e0 eqn:He.
+  intros D G e T H. remember (e_tofloat e) as e0 eqn:He.
   induction H; try discriminate He.
-  - (* T_Conv *) destruct (IHtyping He) as [A B].
-    split; [ exact A | eauto using teq_trans ].
-  - (* T_ToFloat *) inversion He; subst. split; [ assumption | apply teq_refl ].
+  - (* T_Conv *) destruct (IHtyping He) as [A [B [C E]]].
+    exists A. repeat split; [ exact B | exact C | eauto using teq_trans ].
+  - (* T_ToFloat *) inversion He; subst. exists A. repeat split; auto using teq_refl.
 Qed.
 
-Lemma bin_inv : forall G e1 o e2 T,
-  typing G (e_bin e1 o e2) T ->
-  exists A B R, typing G e1 A /\ typing G e2 B /\ bin_sig o A B R /\ teq R T.
+(* A numeral's type is a Literal type, through any conversion: the equivalence
+   moves only the shape of a record or an arrow, never a base type or a
+   variable. *)
+Lemma teq_sat_iff : forall T T', teq T T' -> forall D k, sat D k T <-> sat D k T'.
 Proof.
-  intros G e1 o e2 T H. remember (e_bin e1 o e2) as e0 eqn:He.
+  induction 1; intros D kk; try (simpl; tauto).
+  - rewrite (IHteq1 D kk). apply IHteq2.
+  - symmetry. apply IHteq.
+Qed.
+
+Lemma teq_sat : forall T T' D k, teq T T' -> sat D k T -> sat D k T'.
+Proof. intros T T' D k H. apply (teq_sat_iff _ _ H). Qed.
+
+Lemma num_inv : forall D G n T, typing D G (e_num n) T -> sat D k_Literal T.
+Proof.
+  intros D G n T H. remember (e_num n) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_Num *) inversion He; subst. assumption.
+  - (* T_Conv *) eapply teq_sat; [ exact H0 | apply IHtyping; exact He ].
+Qed.
+
+Lemma bin_inv : forall D G e1 o e2 T,
+  typing D G (e_bin e1 o e2) T ->
+  exists A B R, typing D G e1 A /\ typing D G e2 B /\ bin_sig D o A B R /\ teq R T.
+Proof.
+  intros D G e1 o e2 T H. remember (e_bin e1 o e2) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Conv *) destruct (IHtyping He) as [A [B [R [H1 [H2 [H3 H4]]]]]].
     exists A, B, R. repeat split; try assumption. eauto using teq_trans.

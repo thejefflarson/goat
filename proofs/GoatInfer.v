@@ -54,7 +54,7 @@ Definition sbR (r : atom) (R : row) : sub :=
   Sub idt (fun s => if Atom.eq_dec s r then R else row_Var s).
 
 Definition apC (s : sub) (G : ctx) : ctx :=
-  List.map (fun p => (fst p, Sch (s_tq (snd p)) (s_rq (snd p)) (apT s (s_body (snd p))))) G.
+  List.map (fun p => (fst p, Sch (s_tq (snd p)) (s_rq (snd p)) (apT s (s_body (snd p))) (s_sk (snd p)))) G.
 
 (* ------------------------------------------------------------------ *)
 (* Unification                                                          *)
@@ -213,7 +213,8 @@ Definition gen_ren (G : ctx) (T : typ) : scheme :=
   let lr := gen_vars_r G T in
   Sch (aset (List.map (fun a => oa (idx a la)) la))
       (aset (List.map (fun r => oa (idx r lr)) lr))
-      (ap_typ (rename_t la) (rename_r lr) T).
+      (ap_typ (rename_t la) (rename_r lr) T)
+      (fun _ => k_Any).
 
 (* ------------------------------------------------------------------ *)
 (* Algorithm W                                                          *)

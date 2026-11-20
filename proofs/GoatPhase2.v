@@ -69,22 +69,23 @@ Definition id_pair : exp :=
                (fs_cons 1 (e_app (e_fvar_b 0) e_true) fs_nil))).
 
 Lemma inst_id_at : forall U,
-  inst (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var a0) (typ_Var a0))).
+  inst d_any (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any)).
 Proof.
   intros U.
   exists (fun a => if a == a0 then U else typ_Var a), idr.
-  split; [ | split ].
+  split; [ | split; [ | split ] ].
   - intros a Ha. simpl in Ha. destruct (a == a0) as [E|E]; [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
   - simpl. destruct (a0 == a0) as [E|E]; [ reflexivity | congruence ].
+  - intros a Ha. apply sat_any.
 Qed.
 
 Example let_of_a_function_is_used_at_two_types :
-  typing nil id_pair
+  typing d_any nil id_pair
     (typ_Record (row_Ext 0 typ_Int (row_Ext 1 typ_Bool row_Empty))).
 Proof.
   unfold id_pair.
-  apply T_Let with (L := {}) (T1 := typ_Arrow (typ_Var a0) (typ_Var a0));
+  apply T_Let with (L := {}) (T1 := typ_Arrow (typ_Var a0) (typ_Var a0)) (k := fun _ => k_Any);
     [ reflexivity | | ].
   - apply T_Abs with (L := {}). intros x Hx.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
@@ -93,12 +94,13 @@ Proof.
   - intros f Hf.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
     apply T_Record. eapply FT_cons.
-    + eapply T_App; [ | apply T_Num; solve_uniq ].
-      apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)));
-        [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at ].
+    + eapply T_App; [ | apply T_Num; [ solve_uniq | ] ].
+      * apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any));
+          [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at ].
+      * exact I.
     + eapply FT_cons; [ | apply FT_nil; solve_uniq ].
       eapply T_App; [ | apply T_True; solve_uniq ].
-      apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)));
+      apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any));
         [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at ].
 Qed.
 
@@ -118,10 +120,10 @@ Definition countdown : exp :=
 
 Definition countdown_row : row := row_Ext 0 (typ_Arrow typ_Int typ_Int) row_Empty.
 
-Example recursive_group_types : typing nil countdown typ_Int.
+Example recursive_group_types : typing d_any nil countdown typ_Int.
 Proof.
   unfold countdown.
-  apply T_Letrec with (L := {}) (R := countdown_row).
+  apply T_Letrec with (L := {}) (R := countdown_row) (k := fun _ => k_Any).
   - repeat constructor.
   - intros p Hp.
     unfold open_fields_wrt_exp. cbn [open_fields_wrt_exp_rec open_exp_wrt_exp_rec].
@@ -133,31 +135,33 @@ Proof.
     + eapply T_Bin; [ | | apply sig_cmp ].
       * apply T_Var with (s := sch_mono typ_Int);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_mono_self ].
-      * apply T_Num. solve_uniq.
+      * apply T_Num; [ solve_uniq | exact I ].
       * constructor.
       * constructor.
-    + apply T_Num. solve_uniq.
+    + apply T_Num; [ solve_uniq | exact I ].
     + eapply T_App.
       * eapply T_Proj.
         apply T_Var with (s := sch_mono (typ_Record countdown_row));
           [ solve_uniq | apply binds_cons_3; apply binds_cons_2; reflexivity
           | apply inst_mono_self ].
-      * eapply T_Bin; [ | | apply sig_ring_int ].
+      * eapply T_Bin; [ | | apply sig_ring ].
         -- apply T_Var with (s := sch_mono typ_Int);
              [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_mono_self ].
-        -- apply T_Num. solve_uniq.
+        -- apply T_Num; [ solve_uniq | exact I ].
         -- reflexivity.
+        -- exact I.
   - intros p Hp.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
     eapply T_App.
     + eapply T_Proj.
-      apply T_Var with (s := gen nil (typ_Record countdown_row));
+      apply T_Var with (s := gen nil (typ_Record countdown_row) (fun _ => k_Any));
         [ solve_uniq | apply binds_cons_2; reflexivity | ].
-      exists idt, idr. split; [ | split ].
+      exists idt, idr. split; [ | split; [ | split ] ].
       * intros a Ha. reflexivity.
       * intros r Hr. reflexivity.
       * symmetry. apply ap_typ_pointwise_id; reflexivity.
-    + apply T_Num. solve_uniq.
+      * intros a Ha. apply sat_any.
+    + apply T_Num; [ solve_uniq | exact I ].
 Qed.
 
 (* The group unrolls when it is reached: its name becomes the record of its
@@ -194,8 +198,8 @@ Qed.
 (* A group member must be a function: a member that is a literal has no
    derivation, because the group would not unroll to a record of values. *)
 Example group_member_must_be_a_function : forall e2 T,
-  ~ typing nil (e_letrec (fs_cons 0 (e_num 1) fs_nil) e2) T.
+  ~ typing d_any nil (e_letrec (fs_cons 0 (e_num 1) fs_nil) e2) T.
 Proof.
-  intros e2 T H. destruct (letrec_inv _ _ _ _ H) as [L [R [T2 [Hfg _]]]].
+  intros e2 T H. destruct (letrec_inv _ _ _ _ _ H) as [L [R [T2 [k [Hfg _]]]]].
   inversion Hfg.
 Qed.
