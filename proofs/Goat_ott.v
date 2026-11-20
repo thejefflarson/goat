@@ -5,6 +5,7 @@ Definition termvar : Set := var. (* term variable (locally-nameless) *)
 Definition typvar : Set := atom. (* free type variable (metalib atom) *)
 Definition rowvar : Set := atom. (* free row variable (metalib atom) *)
 Definition label : Set := nat. (* record label *)
+Definition bidx : Set := nat. (* de Bruijn index of a mu binder *)
 Definition num : Set := BinNums.Z. (* whole-number literal, an integer *)
 Definition dec : Set := nat. (* a Float value, opaque: no rule reads the payload *)
 Definition str : Set := (list nat). (* string literal, as its bytes *)
@@ -41,6 +42,8 @@ Inductive exp : Set :=  (* term *)
  | e_ite (e1:exp) (e2:exp) (e3:exp) (* conditional *)
  | e_bin (e1:exp) (o:bop) (e2:exp) (* binary operation *)
  | e_tofloat (e:exp) (* Int-to-Float coercion, inserted by elaboration *)
+ | e_fold (e:exp) (* roll a value into a recursive type *)
+ | e_unfold (e:exp) (* unroll a value of a recursive type *)
 with fields : Set :=  (* record spine (cons-list; duplicates allowed) *)
  | fs_nil : fields
  | fs_cons (l:label) (e:exp) (fs:fields).
@@ -54,6 +57,8 @@ Inductive typ : Set :=  (* monotype *)
  | typ_Arrow (T1:typ) (T2:typ) (* unary (curried) function; see header *)
  | typ_Record (R:row)
  | typ_Var (a:typvar)
+ | typ_Bvar (i:bidx) (* index of an enclosing mu; no sort (ADR 0038) *)
+ | typ_Mu (T:typ) (* iso-recursive type; the body counts the mu as index 0 *)
 with row : Set :=  (* row (scoped labels, duplicates allowed) *)
  | row_Empty : row
  | row_Var (r:rowvar)
@@ -94,6 +99,8 @@ with open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
   | (e_ite e1 e2 e3) => e_ite (open_exp_wrt_exp_rec k e_5 e1) (open_exp_wrt_exp_rec k e_5 e2) (open_exp_wrt_exp_rec k e_5 e3)
   | (e_bin e1 o e2) => e_bin (open_exp_wrt_exp_rec k e_5 e1) o (open_exp_wrt_exp_rec k e_5 e2)
   | (e_tofloat e) => e_tofloat (open_exp_wrt_exp_rec k e_5 e)
+  | (e_fold e) => e_fold (open_exp_wrt_exp_rec k e_5 e)
+  | (e_unfold e) => e_unfold (open_exp_wrt_exp_rec k e_5 e)
 end.
 
 Definition open_fields_wrt_exp e5 fs5 := open_fields_wrt_exp_rec 0 fs5 e5.
@@ -158,7 +165,13 @@ with lc_exp : exp -> Prop :=    (* defn lc_exp *)
      (lc_exp (e_bin e1 o e2))
  | lc_e_tofloat : forall (e:exp),
      (lc_exp e) ->
-     (lc_exp (e_tofloat e)).
+     (lc_exp (e_tofloat e))
+ | lc_e_fold : forall (e:exp),
+     (lc_exp e) ->
+     (lc_exp (e_fold e))
+ | lc_e_unfold : forall (e:exp),
+     (lc_exp e) ->
+     (lc_exp (e_unfold e)).
 (** free variables *)
 Fixpoint fv_fields (fs5:fields) : vars :=
   match fs5 with
@@ -184,6 +197,8 @@ with fv_exp (e_5:exp) : vars :=
   | (e_ite e1 e2 e3) => (fv_exp e1) \u (fv_exp e2) \u (fv_exp e3)
   | (e_bin e1 o e2) => (fv_exp e1) \u (fv_exp e2)
   | (e_tofloat e) => (fv_exp e)
+  | (e_fold e) => (fv_exp e)
+  | (e_unfold e) => (fv_exp e)
 end.
 
 (** substitutions *)
@@ -211,6 +226,8 @@ with subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
   | (e_ite e1 e2 e3) => e_ite (subst_exp e_5 x5 e1) (subst_exp e_5 x5 e2) (subst_exp e_5 x5 e3)
   | (e_bin e1 o e2) => e_bin (subst_exp e_5 x5 e1) o (subst_exp e_5 x5 e2)
   | (e_tofloat e) => e_tofloat (subst_exp e_5 x5 e)
+  | (e_fold e) => e_fold (subst_exp e_5 x5 e)
+  | (e_unfold e) => e_unfold (subst_exp e_5 x5 e)
 end.
 
 
@@ -234,6 +251,11 @@ Inductive teq : typ -> typ -> Prop :=    (* defn teq *)
      teq T1 T1' ->
      teq T2 T2' ->
      teq (typ_Arrow T1 T2) (typ_Arrow T1' T2')
+ | teq_bvar : forall (i:bidx),
+     teq (typ_Bvar i) (typ_Bvar i)
+ | teq_mu : forall (T T':typ),
+     teq T T' ->
+     teq (typ_Mu T) (typ_Mu T')
  | teq_rec : forall (R R':row),
      req R R' ->
      teq (typ_Record R) (typ_Record R')

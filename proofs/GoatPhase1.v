@@ -404,12 +404,12 @@ Definition ga : atom := fresh nil.
 Definition k_lit : sort_fn := fun _ => k_Literal.
 
 Lemma inst_at_lit : forall U,
-  sat d_any k_Literal U ->
+  sat d_any k_Literal U -> lct 0 U ->
   inst d_any (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit).
 Proof.
-  intros U HU.
+  intros U HU HL.
   exists (fun a => if a == ga then U else typ_Var a), idr.
-  split; [ | split; [ | split ] ].
+  split; [ | split; [ | split; [ | split ] ] ].
   - intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
       [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
@@ -417,6 +417,7 @@ Proof.
   - intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
     simpl in Ha. assert (a = ga) by fsetdec. subst a.
     destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+  - split; [ intros a; simpl; match goal with |- context [if ?c then _ else _] => destruct c end; [ exact HL | exact I ] | intros r; exact I ].
 Qed.
 
 (* A function that multiplies by a numeral is generic over [Literal]: a string
@@ -425,7 +426,7 @@ Example generic_scheme_rejects_strings :
   ~ inst d_any (typ_Arrow typ_String typ_String)
       (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit).
 Proof.
-  intros [st [sr [Hst [Hsr [Heq Hsat]]]]]. simpl in Heq.
+  intros [st [sr [Hst [Hsr [Heq [Hsat _]]]]]]. simpl in Heq.
   injection Heq as Hs _.
   assert (Hin : ga `in` AtomSetImpl.diff (ftv_typ (typ_Arrow (typ_Var ga) (typ_Var ga))) {})
     by (simpl; apply AtomSetFacts.diff_iff; split; [ fsetdec | fsetdec ]).
@@ -476,10 +477,10 @@ Qed.
    as its use asks.  Which one an unconstrained use takes is the elaborator's
    choice at the program judgment (ADR 0017 defaults to Int). *)
 Lemma numeral_binding_at : forall U,
-  sat d_any k_Literal U ->
+  sat d_any k_Literal U -> lct 0 U ->
   typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) U.
 Proof.
-  intros U HU.
+  intros U HU HL.
   apply T_Let with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
   - apply T_Num; [ constructor | ].
     cbn [sat]. rewrite (ext_in _ _ _ ga).
@@ -489,7 +490,7 @@ Proof.
     apply T_Var with (s := gen nil (typ_Var ga) k_lit);
       [ solve_uniq | apply binds_cons_2; reflexivity | ].
     exists (fun a => if a == ga then U else typ_Var a), idr.
-    split; [ | split; [ | split ] ].
+    split; [ | split; [ | split; [ | split ] ] ].
     + intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
         [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
     + intros r _. reflexivity.
@@ -497,6 +498,7 @@ Proof.
     + intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
       simpl in Ha. assert (a = ga) by fsetdec. subst a.
       destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+    + split; [ intros a; simpl; match goal with |- context [if ?c then _ else _] => destruct c end; [ exact HL | exact I ] | intros r; exact I ].
 Qed.
 
 Example numeral_binding_is_generic :

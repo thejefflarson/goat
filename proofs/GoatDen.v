@@ -35,6 +35,8 @@ Fixpoint close_exp_rec (k : nat) (x : termvar) (e : exp) {struct e} : exp :=
   | e_ite a b c => e_ite (close_exp_rec k x a) (close_exp_rec k x b) (close_exp_rec k x c)
   | e_bin a o b => e_bin (close_exp_rec k x a) o (close_exp_rec k x b)
   | e_tofloat a => e_tofloat (close_exp_rec k x a)
+  | e_fold a => e_fold (close_exp_rec k x a)
+  | e_unfold a => e_unfold (close_exp_rec k x a)
   end
 with close_fields_rec (k : nat) (x : termvar) (fs : fields) {struct fs} : fields :=
   match fs with
@@ -84,6 +86,8 @@ Fixpoint bind_group_rec (k : nat) (names : list termvar) (e : exp) {struct e} : 
       e_ite (bind_group_rec k names a) (bind_group_rec k names b) (bind_group_rec k names c)
   | e_bin a o b => e_bin (bind_group_rec k names a) o (bind_group_rec k names b)
   | e_tofloat a => e_tofloat (bind_group_rec k names a)
+  | e_fold a => e_fold (bind_group_rec k names a)
+  | e_unfold a => e_unfold (bind_group_rec k names a)
   end
 with bind_group_fields (k : nat) (names : list termvar) (fs : fields) {struct fs} : fields :=
   match fs with
@@ -143,6 +147,8 @@ Proof.
     split; [ exact (IHa k x Ha) | exact (IHb k x Hb) ].
   - (* coercion *)
     intros a IH k x Ha. simpl in *. exact (IH k x Ha).
+  - intros a IH k x Ha. simpl in *. exact (IH k x Ha).
+  - intros a IH k x Ha. simpl in *. exact (IH k x Ha).
   - intros k x _. exact I.
   - (* field list *)
     intros l e IHe fs IHfs k x [He Hfs]. simpl.
@@ -175,6 +181,8 @@ Proof.
     split; [ exact (IHa k names Ha) | split; [ exact (IHb k names Hb) | exact (IHc k names Hc) ] ].
   - intros a IHa o b IHb k names [Ha Hb]. simpl.
     split; [ exact (IHa k names Ha) | exact (IHb k names Hb) ].
+  - intros a IH k names Ha. simpl in *. exact (IH k names Ha).
+  - intros a IH k names Ha. simpl in *. exact (IH k names Ha).
   - intros a IH k names Ha. simpl in *. exact (IH k names Ha).
   - intros k names _. exact I.
   - intros l e IHe fs IHfs k names [He Hfs]. simpl.
@@ -561,6 +569,8 @@ Fixpoint size (e : exp) : nat :=
   | e_ite a b c => S (size a + size b + size c)
   | e_bin a _ b => S (size a + size b)
   | e_tofloat a => S (size a)
+  | e_fold a => S (size a)
+  | e_unfold a => S (size a)
   end
 with size_fields (fs : fields) : nat :=
   match fs with
@@ -591,6 +601,8 @@ Proof.
   - (* ite *) rewrite H, H0, H1. reflexivity.
   - (* bin *) rewrite H, H0. reflexivity.
   - (* tofloat *) rewrite H. reflexivity.
+  - (* fold *) rewrite H. reflexivity.
+  - (* unfold *) rewrite H. reflexivity.
   - reflexivity.
   - (* cons *) rewrite H, H0. reflexivity.
 Qed.
@@ -618,6 +630,8 @@ Proof.
   - (* ite *) destruct H2 as [Ha [Hb Hc]]. split; [ apply H | split; [ apply H0 | apply H1 ] ]; assumption.
   - (* bin *) destruct H1 as [Ha Hb]. split; [ apply H | apply H0 ]; assumption.
   - (* tofloat *) apply H. assumption.
+  - (* fold *) apply H. assumption.
+  - (* unfold *) apply H. assumption.
   - exact I.
   - (* cons *) destruct H1 as [He Hfs]. split; [ apply H | apply H0 ]; assumption.
 Qed.
@@ -630,7 +644,7 @@ Proof.
   - destruct t; simpl in Hsize; lia.
   - destruct t; simpl in Hsize; lia.
   - destruct IH as [IHe IHfs].
-    destruct t as [i | x | n | d | | | b | a b | a b | fs0 b0 | fs | a l | | q | a b c | a o b | a];
+    destruct t as [i | x | n | d | | | b | a b | a b | fs0 b0 | fs | a l | | q | a b c | a o b | a | a1 | a2];
       unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
     + lia.
     + apply lc_e_fvar_f.
@@ -687,6 +701,10 @@ Proof.
       apply lc_e_bin; apply IHe; try assumption; lia.
     + (* tofloat *)
       apply lc_e_tofloat. apply IHe; [ lia | exact Hlc ].
+    + (* fold *)
+      apply lc_e_fold. apply IHe; [ lia | exact Hlc ].
+    + (* unfold *)
+      apply lc_e_unfold. apply IHe; [ lia | exact Hlc ].
   - destruct IH as [IHe IHfs].
     destruct t as [| l e fs]; unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
     + apply lc_fs_nil.

@@ -17,6 +17,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatMu.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatBij.
@@ -66,13 +67,14 @@ Lemma casch_inst : forall st sr g gr s,
   (forall a r, r `in` frv_sch s -> a `in` amap g (s_tq s) -> a `notin` ftv_row (sr r)) ->
   (forall p b, b `in` ftv_sch s -> p `in` amap gr (s_rq s) -> p `notin` frv_typ (st b)) ->
   (forall p r, r `in` frv_sch s -> p `in` amap gr (s_rq s) -> p `notin` frv_row (sr r)) ->
+  lc_sub st sr ->
   forall D D', kres D D' st ->
   forall W, inst D W s -> inst D' (ap_typ st sr W) (casch st sr g gr s).
 Proof.
-  intros st sr g gr s Hgi Hgri Hgf Hgrf Hfx1 Hfx2 Hnc1 Hnc2 Hnc3 Hnc4 D D' Hk W [pt [pr [Hpt [Hpr [HW Hsat]]]]].
+  intros st sr g gr s Hgi Hgri Hgf Hgrf Hfx1 Hfx2 Hnc1 Hnc2 Hnc3 Hnc4 Hl D D' Hk W [pt [pr [Hpt [Hpr [HW [Hsat Hpl]]]]]].
   exists (fun b => if AtomSetImpl.mem b (amap g (s_tq s)) then ap_typ st sr (pt (g b)) else typ_Var b),
          (fun p => if AtomSetImpl.mem p (amap gr (s_rq s)) then ap_row st sr (pr (gr p)) else row_Var p).
-  split; [| split; [| split]].
+  split; [| split; [| split; [| split]]].
   - intros a Ha. cbn [casch s_tq] in Ha.
     destruct (AtomSetImpl.mem a (amap g (s_tq s))) eqn:Em;
       [ apply AtomSetFacts.mem_iff in Em; contradiction | reflexivity ].
@@ -117,4 +119,9 @@ Proof.
     assert (Hm : AtomSetImpl.mem b (amap g (s_tq s)) = true) by (apply AtomSetFacts.mem_iff; exact Hb).
     rewrite Hm. apply amap_in in Hb. destruct Hb as [a [Ha Hga]]. subst b.
     rewrite Hgi. eapply sat_ap; [ exact Hk | apply Hsat; exact Ha ].
+  - split.
+    + intros b. cbv beta. destruct (AtomSetImpl.mem b (amap g (s_tq s)));
+        [ apply ap_lc; [ exact Hl | apply (proj1 Hpl) ] | exact I ].
+    + intros p. cbv beta. destruct (AtomSetImpl.mem p (amap gr (s_rq s)));
+        [ apply ap_lcr; [ exact Hl | apply (proj2 Hpl) ] | exact I ].
 Qed.

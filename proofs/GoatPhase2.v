@@ -8,6 +8,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatLit.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatRows.
+Require Import Goat.GoatMu.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
@@ -68,16 +69,17 @@ Definition id_pair : exp :=
         (e_rec (fs_cons 0 (e_app (e_fvar_b 0) (e_num 1))
                (fs_cons 1 (e_app (e_fvar_b 0) e_true) fs_nil))).
 
-Lemma inst_id_at : forall U,
+Lemma inst_id_at : forall U, lct 0 U ->
   inst d_any (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any)).
 Proof.
-  intros U.
+  intros U HL.
   exists (fun a => if a == a0 then U else typ_Var a), idr.
-  split; [ | split; [ | split ] ].
+  split; [ | split; [ | split; [ | split ] ] ].
   - intros a Ha. simpl in Ha. destruct (a == a0) as [E|E]; [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
   - simpl. destruct (a0 == a0) as [E|E]; [ reflexivity | congruence ].
   - intros a Ha. apply sat_any.
+  - split; [ intros a; simpl; match goal with |- context [if ?c then _ else _] => destruct c end; [ exact HL | exact I ] | intros r; exact I ].
 Qed.
 
 Example let_of_a_function_is_used_at_two_types :
@@ -96,12 +98,12 @@ Proof.
     apply T_Record. eapply FT_cons.
     + eapply T_App; [ | apply T_Num; [ solve_uniq | ] ].
       * apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any));
-          [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at ].
+          [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at; exact I ].
       * exact I.
     + eapply FT_cons; [ | apply FT_nil; solve_uniq ].
       eapply T_App; [ | apply T_True; solve_uniq ].
       apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any));
-        [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at ].
+        [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at; exact I ].
 Qed.
 
 (* ---- a recursive group ---- *)
@@ -156,11 +158,12 @@ Proof.
     + eapply T_Proj.
       apply T_Var with (s := gen nil (typ_Record countdown_row) (fun _ => k_Any));
         [ solve_uniq | apply binds_cons_2; reflexivity | ].
-      exists idt, idr. split; [ | split; [ | split ] ].
+      exists idt, idr. split; [ | split; [ | split; [ | split ] ] ].
       * intros a Ha. reflexivity.
       * intros r Hr. reflexivity.
       * symmetry. apply ap_typ_pointwise_id; reflexivity.
       * intros a Ha. apply sat_any.
+      * apply lc_sub_id.
     + apply T_Num; [ solve_uniq | exact I ].
 Qed.
 

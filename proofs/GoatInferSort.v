@@ -269,7 +269,7 @@ Proof.
   - exact HS.
   - exact HS'.
   - exact Hk.
-  - apply ctx_subst_fix; assumption.
+  - apply ctx_subst_fix; [ assumption | assumption | exact (proj2 (proj2 Hsupp)) ].
   - exact Hsupp.
   - unfold tr_compat. repeat split.
     + intros a Ha. rewrite (Hfa a Ha). simpl. fsetdec.
@@ -290,8 +290,8 @@ Proof. intros [] []; simpl; intros H; try discriminate; constructor. Qed.
 
 Lemma sat_b_sound : forall D k T, sat_b D k T = true -> sat D k T.
 Proof.
-  intros D k T H. destruct T; simpl in *; try exact I.
-  1-5: destruct k; [ reflexivity | discriminate | discriminate ].
+  intros D k T H. destruct T; simpl in *; try exact I;
+    try (destruct k; [ reflexivity | discriminate | discriminate ]).
   apply finer_b_sound. exact H.
 Qed.
 

@@ -7,6 +7,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatMu.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
@@ -90,10 +91,42 @@ Proof.
   apply EvT_Record; exact HR.
 Qed.
 
+Lemma lcb_lct_mut :
+  (forall T k, lcb k T = true -> lct k T) /\
+  (forall R k, lcrb k R = true -> lcr k R).
+Proof.
+  apply typ_row_mutind; simpl; intros; try exact I;
+    repeat match goal with H : (_ && _) = true |- _ => apply Bool.andb_true_iff in H; destruct H end;
+    try split; eauto.
+  apply Nat.ltb_lt. assumption.
+Qed.
+
+Lemma lcb_lct : forall T k, lcb k T = true -> lct k T.
+Proof. apply lcb_lct_mut. Qed.
+
+Lemma lcrb_lcr : forall R k, lcrb k R = true -> lcr k R.
+Proof. apply lcb_lct_mut. Qed.
+
+Lemma occT_false : forall a T, occT a T = false -> a `notin` ftv_typ T /\ lct 0 T.
+Proof.
+  intros a T H. unfold occT in H. apply Bool.orb_false_iff in H as [H1 H2].
+  split.
+  - apply AtomSetFacts.not_mem_iff. exact H1.
+  - apply lcb_lct. destruct (lcb 0 T); [ reflexivity | discriminate ].
+Qed.
+
+Lemma occR_false : forall r R, occR r R = false -> r `notin` frv_row R /\ lcr 0 R.
+Proof.
+  intros r R H. unfold occR in H. apply Bool.orb_false_iff in H as [H1 H2].
+  split.
+  - apply AtomSetFacts.not_mem_iff. exact H1.
+  - apply lcrb_lcr. destruct (lcrb 0 R); [ reflexivity | discriminate ].
+Qed.
+
 Lemma OkS_id : OkS sid.
 Proof.
   split; [|split; [|split; [|split]]].
-  - exists {}. split; intros; reflexivity.
+  - exists {}. split; [ intros; reflexivity | split; [ intros; reflexivity | apply lc_sub_id ] ].
   - intros a Ha. split; intros b Hb; unfold sid, idt in Hb; simpl in Hb.
     + apply AtomSetFacts.singleton_iff in Hb. subst. exact Ha.
     + fsetdec.
@@ -111,13 +144,14 @@ Proof.
   destruct Hok2 as [[A2 Hsup2] [Ht2 [Hr2 [Hf2 Hfr2]]]].
   destruct Hok1 as [[A1 Hsup1] [Ht1 [Hr1 [Hf1 Hfr1]]]].
   split; [|split; [|split; [|split]]].
-  - exists (A1 `union` A2). split.
+  - exists (A1 `union` A2). split; [ | split ].
     + intros a Ha. unfold scomp, tcomp; simpl.
       rewrite (proj1 Hsup1 a) by fsetdec.
       cbn [ap_typ]. apply (proj1 Hsup2 a). fsetdec.
     + intros r Hr. unfold scomp, rcomp; simpl.
-      rewrite (proj2 Hsup1 r) by fsetdec.
-      cbn [ap_row]. apply (proj2 Hsup2 r). fsetdec.
+      rewrite (proj1 (proj2 Hsup1) r) by fsetdec.
+      cbn [ap_row]. apply (proj1 (proj2 Hsup2) r). fsetdec.
+    + exact (lc_sub_comp _ _ _ _ (proj2 (proj2 Hsup2)) (proj2 (proj2 Hsup1))).
   - intros a Ha. unfold scomp, tcomp; simpl.
     apply (EvT_ap s2 (sT s1 a) Hok2'). apply Ht1; exact Ha.
   - intros r Hr. unfold scomp, rcomp; simpl.
@@ -128,13 +162,15 @@ Proof.
     cbn [ap_row]. apply Hfr2; exact Hr.
 Qed.
 
-Lemma OkS_sbT : forall a T, ev a -> EvT T -> OkS (sbT a T).
+Lemma OkS_sbT : forall a T, ev a -> EvT T -> lct 0 T -> OkS (sbT a T).
 Proof.
-  intros a T Ha HT.
+  intros a T Ha HT HL.
   split; [|split; [|split; [|split]]].
-  - exists {{a}}. split.
+  - exists {{a}}. split; [ | split ].
     + intros b Hb. unfold sbT; simpl. destruct (Atom.eq_dec b a) as [->|]; [fsetdec | reflexivity].
     + intros r Hr. reflexivity.
+    + split; [ intros b; unfold sbT; simpl; destruct (Atom.eq_dec b a); [ exact HL | exact I ]
+             | intros r; exact I ].
   - intros b Hb. unfold sbT; simpl. destruct (Atom.eq_dec b a); [ exact HT | ].
     split; intros c Hin; simpl in Hin.
     + apply AtomSetFacts.singleton_iff in Hin. subst; exact Hb.
@@ -146,13 +182,15 @@ Proof.
   - intros r Hr. reflexivity.
 Qed.
 
-Lemma OkS_sbR : forall r R, ev r -> EvR R -> OkS (sbR r R).
+Lemma OkS_sbR : forall r R, ev r -> EvR R -> lcr 0 R -> OkS (sbR r R).
 Proof.
-  intros r R Hr HR.
+  intros r R Hr HR HL.
   split; [|split; [|split; [|split]]].
-  - exists {{r}}. split.
+  - exists {{r}}. split; [ | split ].
     + intros b Hb. reflexivity.
     + intros s Hs. unfold sbR; simpl. destruct (Atom.eq_dec s r) as [->|]; [fsetdec | reflexivity].
+    + split; [ intros b; exact I
+             | intros s; unfold sbR; simpl; destruct (Atom.eq_dec s r); [ exact HL | exact I ] ].
   - intros b Hb. unfold sbR, idt; simpl. split; intros c Hin; simpl in Hin.
     + apply AtomSetFacts.singleton_iff in Hin. subst; exact Hb.
     + fsetdec.

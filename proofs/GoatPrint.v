@@ -101,7 +101,7 @@ Fixpoint block (P : nat) (e : exp) {struct e} : list tree :=
   | e_let v b => decl_tree P (as_value v (block P v)) :: block (S P) b
   | e_rec fs => [Node R_record ((sym "{" :: field_trees P fs) ++ [sym "}"])]
   | e_proj f l => as_operand f (block P f) ++ [access_tree l]
-  | e_unit | e_tofloat _ | e_letrec _ _ => []
+  | e_unit | e_tofloat _ | e_fold _ | e_unfold _ | e_letrec _ _ => []
   | e_str _ => [Node R_string [Leaf TStr]]
   | e_ite c a e_unit => [cond_tree_noelse (block P c) (block P a)]
   | e_ite c a b => [cond_tree (block P c) (block P a) (block P b)]
@@ -174,7 +174,7 @@ Fixpoint scoped (n : nat) (e : exp) {struct e} : Prop :=
   | e_fvar_f _ => False
   | e_num z => z_nonneg z = true
   | e_true | e_false | e_str _ | e_dec _ => True
-  | e_unit | e_tofloat _ | e_letrec _ _ => False
+  | e_unit | e_tofloat _ | e_fold _ | e_unfold _ | e_letrec _ _ => False
   | e_ite c a b => scoped n c /\ scoped n a /\ (b = e_unit \/ scoped n b)
   | e_bin a _ b => scoped n a /\ scoped n b
   | e_abs b => scoped (S n) b

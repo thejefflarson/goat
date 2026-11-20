@@ -96,8 +96,26 @@ Definition is_literal (D : denv) (T : typ) : bool :=
 (* Unification                                                          *)
 (* ------------------------------------------------------------------ *)
 
-Definition occT (a : atom) (T : typ) : bool := AtomSetImpl.mem a (ftv_typ T).
-Definition occR (r : atom) (R : row) : bool := AtomSetImpl.mem r (frv_row R).
+(* A type with a free recursion index is closed by no substitution, so the
+   occurs check refuses to bind a variable to one. *)
+Fixpoint lcb (k : nat) (T : typ) {struct T} : bool :=
+  match T with
+  | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String | typ_Var _ => true
+  | typ_Arrow A B => lcb k A && lcb k B
+  | typ_Record R => lcrb k R
+  | typ_Bvar n => Nat.ltb n k
+  | typ_Mu B => lcb (S k) B
+  end
+with lcrb (k : nat) (R : row) {struct R} : bool :=
+  match R with
+  | row_Empty | row_Var _ => true
+  | row_Ext _ T R' => lcb k T && lcrb k R'
+  end.
+
+Definition occT (a : atom) (T : typ) : bool :=
+  AtomSetImpl.mem a (ftv_typ T) || negb (lcb 0 T).
+Definition occR (r : atom) (R : row) : bool :=
+  AtomSetImpl.mem r (frv_row R) || negb (lcrb 0 R).
 
 (* Rewrite [R] so that it presents label [l] first: [Some (T, R', s, n')] with
    [s R] equivalent to [l : T ; R'].  [av] holds the row variables the row
@@ -462,6 +480,8 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                   end
               end
           end
+      | e_fold _ => None
+      | e_unfold _ => None
       | e_tofloat e1 =>
           match infer f' D G e1 n with
           | None => None

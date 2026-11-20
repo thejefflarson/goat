@@ -7,6 +7,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatMu.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatHM.
 Require Import Goat.GoatSound.
@@ -33,6 +34,13 @@ Qed.
 (* Instantiation                                                        *)
 (* ------------------------------------------------------------------ *)
 
+Lemma lc_sub_rename : forall la lr, lc_sub (rename_t la) (rename_r lr).
+Proof.
+  intros la lr. split.
+  - intros a. unfold rename_t. destruct (in_dec Atom.eq_dec a la); exact I.
+  - intros r. unfold rename_r. destruct (in_dec Atom.eq_dec r lr); exact I.
+Qed.
+
 Lemma instantiate_sound : forall D sc n T D' n',
   instantiate D sc n = (T, D', n') -> WfSch sc -> DOk D n ->
   inst D' T sc /\ EvT T /\ DOk D' n' /\ kres D D' idt.
@@ -40,7 +48,7 @@ Proof.
   intros D sc n T D' n' H (Hq & Hr & Hf & Hfr) HD.
   unfold instantiate in H. inversion H; subst T D' n'; clear H.
   split; [|split; [|split]].
-  - exists (sT (inst_sub sc n)), (sR (inst_sub sc n)). split; [|split; [|split]].
+  - exists (sT (inst_sub sc n)), (sR (inst_sub sc n)). split; [|split; [|split; [|split]]].
     + intros a Ha. unfold inst_sub; cbn [sT].
       destruct (in_dec Atom.eq_dec a (AtomSetImpl.elements (s_tq sc))) as [Hin|Hin];
         [ apply In_elements in Hin; contradiction | reflexivity ].
@@ -53,6 +61,11 @@ Proof.
       destruct (in_dec Atom.eq_dec a (AtomSetImpl.elements (s_tq sc))) as [_|Hn];
         [ | contradiction ].
       simpl. rewrite (inst_den_at D sc n a Hin). apply finer_refl.
+    + split.
+      * intros a. unfold inst_sub; cbn [sT].
+        destruct (in_dec Atom.eq_dec a (AtomSetImpl.elements (s_tq sc))); exact I.
+      * intros r. unfold inst_sub; cbn [sR].
+        destruct (in_dec Atom.eq_dec r (AtomSetImpl.elements (s_rq sc))); exact I.
   - split; intros c Hc.
     + apply ftv_ap_typ in Hc. destruct Hc as [[b [Hb Hc]]|[p [Hp Hc]]].
       * unfold inst_sub in Hc; cbn [sT] in Hc.
@@ -208,7 +221,7 @@ Proof.
     (S' := S `union` s_tq (gen_ren D G T)) (A := aset la `union` aset lr);
     [ exact Hty | exact HS | apply supp_ok_ext_set; exact HS
     | apply (kres_rename n); exact HD | | | ].
-  - split.
+  - split; [ | split; [ | apply lc_sub_rename ] ].
     + intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a la) as [Hin|Hin]; [ | reflexivity ].
       exfalso. apply Ha. apply AtomSetFacts.union_iff. left. apply aset_in. exact Hin.
     + intros r Ha. unfold rename_r. destruct (in_dec Atom.eq_dec r lr) as [Hin|Hin]; [ | reflexivity ].

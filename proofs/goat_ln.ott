@@ -37,6 +37,8 @@ metavar rowvar, r, s ::= {{ coq atom }}
   {{ com free row variable (metalib atom) }}
 metavar label, l ::= {{ coq nat }}
   {{ com record label }}
+metavar bidx, i ::= {{ coq nat }}
+  {{ com de Bruijn index of a mu binder }}
 metavar num, n ::= {{ coq BinNums.Z }}
   {{ com whole-number literal, an integer }}
 metavar dec, d ::= {{ coq nat }}
@@ -55,6 +57,8 @@ typ, T :: 'typ_' ::= {{ com monotype }}
   | ( T1 ) -> T2  ::   :: Arrow   {{ com unary (curried) function; see header }}
   | { R }         ::   :: Record
   | a             ::   :: Var
+  | bv i          ::   :: Bvar    {{ com index of an enclosing mu; no sort (ADR 0038) }}
+  | mu T          ::   :: Mu      {{ com iso-recursive type; the body counts the mu as index 0 }}
   | ( T )         :: S :: Paren   {{ coq [[T]] }}
 
 row, R :: 'row_' ::= {{ com row (scoped labels, duplicates allowed) }}
@@ -97,6 +101,8 @@ exp, e :: 'e_' ::= {{ com term }}
   | if e1 then e2 else e3    ::   :: ite   {{ com conditional }}
   | e1 o e2                  ::   :: bin   {{ com binary operation }}
   | float ( e )              ::   :: tofloat {{ com Int-to-Float coercion, inserted by elaboration }}
+  | fold ( e )               ::   :: fold  {{ com roll a value into a recursive type }}
+  | unfold ( e )             ::   :: unfold {{ com unroll a value of a recursive type }}
   | ( e )                    :: S :: paren {{ coq [[e]] }}
   | e1 [ x := e2 ]           :: M :: subst {{ coq (subst_exp [[e2]] [[x]] [[e1]]) }}
 
@@ -153,6 +159,13 @@ T1 ~= T2 :: :: teq :: 'teq_'
   T2 ~= T2'
   ------------------------------- :: arrow
   ( T1 ) -> T2 ~= ( T1' ) -> T2'
+
+  ----------- :: bvar
+  bv i ~= bv i
+
+  T ~= T'
+  ------------- :: mu
+  mu T ~= mu T'
 
   R ~= R'
   --------------- :: rec
