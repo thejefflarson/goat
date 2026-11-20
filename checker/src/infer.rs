@@ -2263,10 +2263,11 @@ impl Inferer {
         subst_vars(&scheme.ty, &mapping)
     }
 
-    /// A value that is not a function keeps its literals' types shared (still
-    /// open to `Float`) rather than generalized: `n = 3` is one number, not a
-    /// fresh one at every use.
-    fn generalize(&mut self, ty: &Ty, function: bool) -> Scheme {
+    /// A value that is neither a function nor a bare numeral keeps its
+    /// literals' types shared (still open to `Float`) rather than generalized:
+    /// `{a: 1}` is one record, not a fresh one at every use. `open_literals`
+    /// lets a literal's variable quantify (ADR 0039).
+    fn generalize(&mut self, ty: &Ty, open_literals: bool) -> Scheme {
         // A value that is the receiver of the literal being inferred (a method
         // call's result bound to a temporary) stays that variable: opening it
         // would copy the whole record type into every use.
@@ -2278,7 +2279,7 @@ impl Inferer {
         let resolved = self.finish(ty);
         let mut in_ty = BTreeSet::new();
         resolved.free_vars(&mut in_ty);
-        in_ty.retain(|v| function || !self.is_literal(*v));
+        in_ty.retain(|v| open_literals || !self.is_literal(*v));
         if !in_ty.is_empty() {
             self.sync_env_vars();
             let in_selves = self.self_def_vars();
@@ -2745,7 +2746,8 @@ impl Inferer {
                         }
                         None => value_ty,
                     };
-                    let mut scheme = self.generalize(&rec, is_function);
+                    let open_literals = is_function || matches!(value.kind, ExprKind::Int(_));
+                    let mut scheme = self.generalize(&rec, open_literals);
                     if !scheme.vars.is_empty() && !is_syntactic_value(value) {
                         self.restricted.insert(*symbol, name.clone());
                         scheme = Scheme::mono(scheme.ty);

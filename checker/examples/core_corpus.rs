@@ -33,8 +33,8 @@
 //! and are compared. A program is outside the fragment when an operator's
 //! operands are not all Int, Float, String or Bool or open numeric variables, when
 //! a comparison or `/` has an operand that only a later use settles, when a
-//! `let` of a value with a numeral in it would be generalized by the calculus and
-//! not by the checker, when a record reaches a generic `+ - *`, or when a
+//! `let` of a record or a name holding a numeral would be generalized by the
+//! calculus and not by the checker, when a record reaches a generic `+ - *`, or when a
 //! record holds a group's function by name (`differential/README.md`).
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
@@ -163,14 +163,18 @@ impl Core {
 impl Core {
     /// Whether a `let` of this value is a syntactic value that has a numeral's
     /// type in it, which the calculus generalizes and the checker, for a value
-    /// that is not a function, leaves as one variable.
+    /// that is neither a function nor a bare numeral, leaves as one variable.
     fn generalizes_numeral(&self) -> bool {
         match self {
-            Core::Num(_) | Core::Var(_) => true,
-            Core::ToFloat(e) => e.generalizes_numeral(),
-            Core::Rec(fields) => fields.iter().any(|(_, e)| e.generalizes_numeral()),
+            Core::Var(_) => true,
+            Core::ToFloat(e) => e.holds_numeral(),
+            Core::Rec(fields) => fields.iter().any(|(_, e)| e.holds_numeral()),
             _ => false,
         }
+    }
+
+    fn holds_numeral(&self) -> bool {
+        matches!(self, Core::Num(_)) || self.generalizes_numeral()
     }
 
     /// Whether the algorithm knows this term's type when it reaches it, without

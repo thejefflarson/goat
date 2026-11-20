@@ -15,7 +15,7 @@ use crate::captures::for_each_node;
 use crate::hir::{Builtin, Expr, ExprKind, FileId};
 use crate::infer::{DotCalls, Typed, infer_partial};
 use crate::lower::{RECEIVER_NAME, lower_with_vocab};
-use crate::ty::{Row, Ty};
+use crate::ty::{Row, Scheme, Ty};
 use crate::vocab::Vocab;
 use goat_parser::cst::{Child, Cst, Goat, Match, Node, TagCase};
 use goat_parser::interp::parse_recovering;
@@ -207,13 +207,23 @@ impl Analysis {
     }
 }
 
+/// A scheme's type for the editor: a quantified variable that can only be a
+/// number reads as `Number`, not as a bare variable.
+fn shown(typed: &Typed, scheme: &Scheme) -> Ty {
+    scheme
+        .vars
+        .iter()
+        .filter(|var| typed.number_vars.contains(var))
+        .fold(scheme.ty.clone(), |ty, var| ty.substitute(*var, &Ty::Float))
+}
+
 fn known(typed: &Typed, symbol: &u32, value: &Expr) -> Known {
     let params = match &value.kind {
         ExprKind::Func { params, .. } => Some(params.iter().map(|p| p.name.clone()).collect()),
         _ => None,
     };
     Known {
-        ty: typed.schemes.get(symbol).map(|s| s.ty.clone()),
+        ty: typed.schemes.get(symbol).map(|s| shown(typed, s)),
         params,
     }
 }

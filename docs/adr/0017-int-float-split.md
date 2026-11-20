@@ -66,9 +66,10 @@ hardware-mapped**, made *safe* rather than *unbounded*.
   `1.5` work without a conversion at every call: the `3` simply *is* `3.0`
   there. A *concrete* `Int` (a host function declared `-> Int`) beside a
   `Float` widens at the operator instead, and mono converts it.
-- A binding that is not a function (`n = 3`) keeps its literals' types shared
-  rather than generalized, so `n` is one number, `Float` once anything needs a
-  `Float`; a function's literals stay free for each call to decide.
+- A binding that is neither a function nor a bare numeral (`{a: 1}`) keeps its
+  literals' types shared rather than generalized; a function's literals stay free
+  for each call to decide, and `n = 3` adapts at each use
+  ([ADR 0039](0039-a-bare-numeral-binding-adapts-at-each-use.md)).
 - `/` types its operands separately and always yields `Float`; the `Int` side
   of a quotient is converted. A record of numbers divides field by field, and
   its fields must be `Float`.
