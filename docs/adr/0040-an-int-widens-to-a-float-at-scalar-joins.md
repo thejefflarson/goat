@@ -89,7 +89,10 @@ with a non-number end binds variables and removes edges, so it terminates too.
 **Elaboration.** Node types are not changed: an `Int` producer keeps its type
 and its slot becomes `Float`. Mono already converts at operators and at call
 arguments from the node types; it now also converts an `if` or `match` branch
-and a list element whose type is `Int` where the result is `Float`. A tail call
+and a list element whose type is `Int` where the result is `Float`. An arithmetic
+result that a later unification made a `Float` while both operands are `Int` is
+computed on `Float`s: the operands flow into the result slot, so each is
+converted (mono and the differential corpus both write `float(e)` on them). A tail call
 in a branch that is converted is not a tail call. The differential test writes
 `float(e)` at each of these sites.
 

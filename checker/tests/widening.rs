@@ -228,3 +228,14 @@ fn a_list_literal_still_open_when_it_is_used_adapts_to_the_use() {
     let total = "total = program(xs) do match xs do [] then 0.5 [x, ...r] then x + 1.5 done done  ";
     assert_all(&[&format!("{total}total([whole()])")], "Float");
 }
+
+#[test]
+fn an_operator_result_joined_later_with_a_float_checks() {
+    let source = "f = program(c, x) do \
+                    p = if c then truncate(x) else 0 done \
+                    r = if c then {x: p + p} else {x: 1.5} done \
+                    r.x \
+                  done \
+                  f(true, 2.5)";
+    assert_eq!(type_of(source), "Float");
+}

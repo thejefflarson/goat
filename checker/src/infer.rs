@@ -3086,16 +3086,53 @@ impl Inferer {
         }
     }
 
-    /// Decide the flows of a binding about to be generalized (ADR 0040): each
-    /// variable takes the join of what flows into it, variables nothing
-    /// decides become one, and a `Float` that would become an `Int` is an
-    /// error. An `Int` that widens needs nothing here: its node keeps its type
-    /// and mono converts it where its slot is a `Float`.
-    fn solve_flows(&mut self, flows: Vec<Flow>) {
-        let mut flows = flows;
+    /// Unify and drop every flow with an end that is neither a number nor a
+    /// variable. Unifying can turn another flow's variable into such a type,
+    /// so the flows on a variable are looked at again when it is bound; this
+    /// visits each flow once per variable it waits on, not once per pass.
+    fn unify_flows_without_numbers(&mut self, flows: &mut Vec<Flow>) {
+        let mut removed = vec![false; flows.len()];
+        let mut waiting: HashMap<TypeVar, Vec<usize>> = HashMap::new();
+        let mut queue: Vec<usize> = (0..flows.len()).rev().collect();
+        while let Some(i) = queue.pop() {
+            if removed[i] {
+                continue;
+            }
+            let (producer, slot) = (&flows[i].producer, &flows[i].slot);
+            let ends = [self.flow_end(producer), self.flow_end(slot)];
+            if let [Some(p), Some(s)] = ends {
+                for end in [p, s] {
+                    if let End::Var(v) = end {
+                        waiting.entry(v).or_default().push(i);
+                    }
+                }
+                continue;
+            }
+            removed[i] = true;
+            let vars: Vec<TypeVar> = [producer, slot]
+                .iter()
+                .filter_map(|ty| match self.resolve(ty) {
+                    Ty::Var(v) => Some(v),
+                    _ => None,
+                })
+                .collect();
+            let span = flows[i].span;
+            let (producer, slot) = (flows[i].producer.clone(), flows[i].slot.clone());
+            self.unify(&producer, &slot, span);
+            for v in vars {
+                queue.extend(waiting.remove(&v).into_iter().flatten());
+            }
+        }
+        let mut index = 0;
+        flows.retain(|_| {
+            index += 1;
+            !removed[index - 1]
+        });
+        // Binding a variable inside a type can reach flows not waiting on it.
         loop {
             let before = flows.len();
-            flows = std::mem::take(&mut flows)
+            let kept = std::mem::take(flows);
+            *flows = kept
                 .into_iter()
                 .filter_map(|f| {
                     if self.flow_end(&f.producer).is_some() && self.flow_end(&f.slot).is_some() {
@@ -3109,6 +3146,16 @@ impl Inferer {
                 break;
             }
         }
+    }
+
+    /// Decide the flows of a binding about to be generalized (ADR 0040): each
+    /// variable takes the join of what flows into it, variables nothing
+    /// decides become one, and a `Float` that would become an `Int` is an
+    /// error. An `Int` that widens needs nothing here: its node keeps its type
+    /// and mono converts it where its slot is a `Float`.
+    fn solve_flows(&mut self, flows: Vec<Flow>) {
+        let mut flows = flows;
+        self.unify_flows_without_numbers(&mut flows);
         let end = |this: &Self, ty: &Ty| {
             this.flow_end(ty)
                 .expect("a kept flow ends in a number or a variable")

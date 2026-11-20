@@ -547,6 +547,11 @@ impl Reader<'_> {
                         let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
                         match (op, x, y) {
                             (BinOp::Div, ..) => (a, b) = (to_float(a), to_float(b)),
+                            (_, Ty::Int, Ty::Int)
+                                if !comparison && self.node_ty(expr) == Some(&Ty::Float) =>
+                            {
+                                (a, b) = (to_float(a), to_float(b));
+                            }
                             (_, Ty::Int, Ty::Float) => a = to_float(a),
                             (_, Ty::Float, Ty::Int) => b = to_float(b),
                             _ => {}

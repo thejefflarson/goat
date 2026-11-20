@@ -95,3 +95,19 @@ fn the_order_of_the_uses_does_not_change_the_answer() {
     assert_eq!(run(a), "{a: 7.5, b: 3}");
     assert_eq!(run(b), "{a: 7.5, b: 3}");
 }
+
+#[test]
+fn an_arithmetic_result_a_later_join_makes_a_float_is_computed_on_floats() {
+    let head = "f = program(c, x) do\n  p = if c then truncate(x) else 0 done\n";
+    let bodies = [
+        "r = if c then {x: p + p} else {x: 1.5} done\n  r.x",
+        "if c then p + p else 1.5 done",
+        "sum([p * p, 1.5])",
+        "g = program(y) do y + 0.5 done\n  g(p - 1)",
+        "p // 2 + 1.5",
+    ];
+    for (body, expected) in bodies.iter().zip(["6", "6", "10.5", "2.5", "2.5"]) {
+        let src = format!("{head}  {body}\ndone\nprint(f(true, 3.5))");
+        assert_eq!(run(&src), expected, "{body}");
+    }
+}

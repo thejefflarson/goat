@@ -1251,7 +1251,7 @@ impl Mono<'_> {
             ExprKind::Bin { op, lhs, rhs } => {
                 let a = Box::new(self.expr(cx, lhs, false));
                 let b = Box::new(self.expr(cx, rhs, false));
-                self.bin(cx, (*op, e.span), (lhs, rhs), (a, b), tail)
+                self.bin(cx, (*op, e.span, e.id), (lhs, rhs), (a, b), tail)
             }
             ExprKind::Foreign { .. } => {
                 unreachable!("a foreign function is only a declaration's value")
@@ -1354,7 +1354,7 @@ impl Mono<'_> {
     fn bin(
         &mut self,
         cx: &mut FnCx,
-        (op, span): (BinOp, Span),
+        (op, span, id): (BinOp, Span, ExprId),
         (lhs, rhs): (&hir::Expr, &hir::Expr),
         (a, b): (Box<Expr>, Box<Expr>),
         tail: bool,
@@ -1364,11 +1364,22 @@ impl Mono<'_> {
         let scalars = [&lhs_ty, &rhs_ty]
             .iter()
             .all(|ty| matches!(ty, Ty::Int | Ty::Float));
-        let (operand_ty, a, b) = if scalars && (lhs_ty != rhs_ty || op == BinOp::Div) {
-            (Ty::Float, widen(*a, &lhs_ty), widen(*b, &rhs_ty))
-        } else {
-            (lhs_ty, *a, *b)
-        };
+        // An arithmetic result the checker made a `Float` (a later use joined
+        // it with one) is computed on `Float` operands, whatever they were.
+        let result_widens = scalars
+            && lhs_ty == Ty::Int
+            && rhs_ty == Ty::Int
+            && matches!(
+                op,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod
+            )
+            && self.node_ty(cx, id) == Ty::Float;
+        let (operand_ty, a, b) =
+            if scalars && (lhs_ty != rhs_ty || op == BinOp::Div || result_widens) {
+                (Ty::Float, widen(*a, &lhs_ty), widen(*b, &rhs_ty))
+            } else {
+                (lhs_ty, *a, *b)
+            };
         match op {
             BinOp::Add => self.arith(cx, Some(span), FloatOp::Add, &operand_ty, a, b),
             BinOp::Sub => self.arith(cx, Some(span), FloatOp::Sub, &operand_ty, a, b),

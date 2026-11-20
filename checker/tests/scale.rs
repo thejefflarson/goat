@@ -170,3 +170,14 @@ fn a_group_of_two_thousand_functions_checks_quickly() {
         assert!(time < Duration::from_secs(5), "took {time:?}");
     }
 }
+
+#[test]
+fn a_chain_of_sums_ending_in_a_record_scales_linearly() {
+    assert_scales_linearly(
+        |n| {
+            let sums = repeated(n, |i| format!("a{} = a{i} + a{i}", i + 1));
+            format!("a0 = 1\n{sums}\n{{x: a{n}}}")
+        },
+        false,
+    );
+}
