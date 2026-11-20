@@ -41,13 +41,20 @@ Qed.
 (* Instantiation                                                        *)
 (* ------------------------------------------------------------------ *)
 
+Lemma lc_sub_rename : forall la lr, lc_sub (rename_t la) (rename_r lr).
+Proof.
+  intros la lr. split.
+  - intros a. unfold rename_t. destruct (in_dec Atom.eq_dec a la); exact I.
+  - intros r. unfold rename_r. destruct (in_dec Atom.eq_dec r lr); exact I.
+Qed.
+
 Lemma instantiate_sound : forall sc n T n',
   instantiate sc n = (T, n') -> WfSch sc -> inst d_any T sc /\ EvT T.
 Proof.
   intros sc n T n' H (Hq & Hr & Hf & Hfr & Hk).
   unfold instantiate in H. inversion H; subst T n'; clear H.
   split.
-  - exists (sT (inst_sub sc n)), (sR (inst_sub sc n)). split; [|split; [|split]].
+  - exists (sT (inst_sub sc n)), (sR (inst_sub sc n)). split; [|split; [|split; [|split]]].
     + intros a Ha. unfold inst_sub; cbn [sT].
       destruct (in_dec Atom.eq_dec a (AtomSetImpl.elements (s_tq sc))) as [Hin|Hin];
         [ apply In_elements in Hin; contradiction | reflexivity ].
@@ -56,6 +63,11 @@ Proof.
         [ apply In_elements in Hin; contradiction | reflexivity ].
     + reflexivity.
     + intros a Ha. rewrite (Hk a). apply sat_any.
+    + split.
+      * intros a. unfold inst_sub; cbn [sT].
+        destruct (in_dec Atom.eq_dec a (AtomSetImpl.elements (s_tq sc))); exact I.
+      * intros r. unfold inst_sub; cbn [sR].
+        destruct (in_dec Atom.eq_dec r (AtomSetImpl.elements (s_rq sc))); exact I.
   - split; intros c Hc.
     + apply ftv_ap_typ in Hc. destruct Hc as [[b [Hb Hc]]|[p [Hp Hc]]].
       * unfold inst_sub in Hc; cbn [sT] in Hc.
@@ -186,11 +198,14 @@ Lemma typing_gen_ren : forall e,
 Proof.
   intros e Hty. rewrite gen_body.
   apply typing_tsubst_fix with (A := aset la `union` aset lr); [exact Hty | | | ].
-  - split.
+  - split; [ | split ].
     + intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a la) as [Hin|Hin]; [ | reflexivity ].
       exfalso. apply Ha. apply AtomSetFacts.union_iff. left. apply aset_in. exact Hin.
     + intros r Ha. unfold rename_r. destruct (in_dec Atom.eq_dec r lr) as [Hin|Hin]; [ | reflexivity ].
       exfalso. apply Ha. apply AtomSetFacts.union_iff. right. apply aset_in. exact Hin.
+    + split.
+      * intros a. unfold rename_t. destruct (in_dec Atom.eq_dec a la); exact I.
+      * intros r. unfold rename_r. destruct (in_dec Atom.eq_dec r lr); exact I.
   - intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a la) as [Hin|Hin];
       [ apply In_la in Hin; destruct Hin as [_ Hin]; contradiction | reflexivity ].
   - intros a Ha. unfold rename_r. destruct (in_dec Atom.eq_dec a lr) as [Hin|Hin];

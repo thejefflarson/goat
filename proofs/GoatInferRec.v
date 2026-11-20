@@ -10,6 +10,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatMu.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatHM.
@@ -109,9 +110,10 @@ Lemma fields_tsubst_fix : forall G p R fs st sr,
   field_typing d_any ((p ~ sch_mono (typ_Record R)) ++ G) fs R ->
   (forall a, a `in` ftv_ctx G -> st a = typ_Var a) ->
   (forall r, r `in` frv_ctx G -> sr r = row_Var r) ->
+  lc_sub st sr ->
   field_typing d_any ((p ~ sch_mono (typ_Record (ap_row st sr R))) ++ G) fs (ap_row st sr R).
 Proof.
-  intros G p R fs st sr Hty Hfa Hfr.
+  intros G p R fs st sr Hty Hfa Hfr Hlc.
   set (T := typ_Record R).
   set (st0 := fun a => if AtomSetImpl.mem a (ftv_typ T) then st a else typ_Var a).
   set (sr0 := fun r => if AtomSetImpl.mem r (frv_typ T) then sr r else row_Var r).
@@ -121,6 +123,10 @@ Proof.
         [reflexivity | apply AtomSetFacts.not_mem_iff in Em; contradiction].
     - intros r Hr. unfold sr0. destruct (AtomSetImpl.mem r (frv_typ T)) eqn:Em;
         [reflexivity | apply AtomSetFacts.not_mem_iff in Em; contradiction]. }
+  assert (Hlc0 : lc_sub st0 sr0).
+  { split.
+    - intros a. unfold st0. destruct (AtomSetImpl.mem a (ftv_typ T)); [ exact (proj1 Hlc a) | exact I ].
+    - intros r. unfold sr0. destruct (AtomSetImpl.mem r (frv_typ T)); [ exact (proj2 Hlc r) | exact I ]. }
   pose proof (proj2 typing_uniq_mut _ _ _ _ Hty) as Hu0.
   apply uniq_cons_iff in Hu0. destruct Hu0 as [Hu Hp].
   subst T. simpl in Heq. injection Heq as Heq.
@@ -150,12 +156,12 @@ Proof.
   - intros a _. reflexivity.
   - intros a. apply sat_any.
   - apply ctx_subst_cons; [ rewrite <- Hrow; apply sch_subst_mono | ].
-    apply ctx_subst_fix.
+    apply ctx_subst_fix; [ | | exact Hlc0 ].
     + intros a Ha. unfold st0. destruct (AtomSetImpl.mem a (ftv_typ (typ_Record R)));
         [ apply Hfa; auto | reflexivity ].
     + intros r Hr. unfold sr0. destruct (AtomSetImpl.mem r (frv_typ (typ_Record R)));
         [ apply Hfr; auto | reflexivity ].
-  - split.
+  - split; [ | split; [ | exact Hlc0 ] ].
     + intros a Ha. unfold st0. destruct (AtomSetImpl.mem a (ftv_typ (typ_Record R))) eqn:Em;
         [ apply AtomSetFacts.mem_iff in Em; exfalso; fsetdec | reflexivity ].
     + intros r Hr. unfold sr0. destruct (AtomSetImpl.mem r (frv_typ (typ_Record R))) eqn:Em;
@@ -172,11 +178,12 @@ Lemma fields_gen_ren : forall G p R fs,
 Proof.
   intros G p R fs Hty.
   rewrite gen_body. simpl.
-  apply fields_tsubst_fix; [ exact Hty | | ].
+  apply fields_tsubst_fix; [ exact Hty | | | ].
   - intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a (gen_vars_t G (typ_Record R))) as [Hin|Hin];
       [ apply In_la in Hin; destruct Hin as [_ Hin]; contradiction | reflexivity ].
   - intros a Ha. unfold rename_r. destruct (in_dec Atom.eq_dec a (gen_vars_r G (typ_Record R))) as [Hin|Hin];
       [ apply In_lr in Hin; destruct Hin as [_ Hin]; contradiction | reflexivity ].
+  - apply lc_sub_rename.
 Qed.
 
 (* The members derived with the group's name opened at one fresh name hold at

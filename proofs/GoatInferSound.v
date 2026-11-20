@@ -129,7 +129,7 @@ Proof.
   induction f as [|f IH]; [ split; intros; discriminate | ].
   destruct IH as [IHe IHf]. split.
   - intros G e n s T n' H HG. cbn [infer] in H.
-    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3];
+    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3 | a4 | a5];
       try discriminate H.
     + (* variable *)
       destruct (lookup x G) as [sc|] eqn:Hl; [|discriminate].

@@ -7,6 +7,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatMu.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatHM.
@@ -40,9 +41,10 @@ Qed.
 Lemma sch_subst_apS : forall s sc, OkS s -> WfSch sc ->
   sch_subst (sT s) (sR s) sc (apS s sc).
 Proof.
-  intros s sc Hs (Hq & Hr & Hf & Hfr & Hk0) D D' Hk W [pt [pr [Hpt [Hpr [HW Hsat]]]]].
+  intros s sc Hs (Hq & Hr & Hf & Hfr & Hk0) D D' Hk W [pt [pr [Hpt [Hpr [HW [Hsat Hpl]]]]]].
   pose proof Hs as Hs0.
-  destruct Hs as [_ [Ht [Hrw [Hfx Hfxr]]]].
+  destruct Hs as [[A0 Hs_sup] [Ht [Hrw [Hfx Hfxr]]]].
+  pose proof (proj2 (proj2 Hs_sup)) as HlS.
   set (pt' := fun a => if AtomSetImpl.mem a (s_tq sc)
                        then ap_typ (sT s) (sR s) (pt a) else typ_Var a).
   set (pr' := fun r => if AtomSetImpl.mem r (s_rq sc)
@@ -56,7 +58,7 @@ Proof.
   { intros c Hc. unfold pr'.
     destruct (AtomSetImpl.mem c (s_rq sc)) eqn:Em; [|reflexivity].
     apply AtomSetFacts.mem_iff in Em. exfalso. exact (not_ev_od c (Hr c Em) Hc). }
-  exists pt', pr'. split; [|split; [|split]].
+  exists pt', pr'. split; [|split; [|split; [|split]]].
   - intros a Ha. cbn [apS s_tq] in Ha. unfold pt'.
     destruct (AtomSetImpl.mem a (s_tq sc)) eqn:Em;
       [ apply AtomSetFacts.mem_iff in Em; contradiction | reflexivity ].
@@ -92,6 +94,11 @@ Proof.
   - intros a Ha. cbn [apS s_tq s_sk] in Ha |- *. unfold pt'.
     assert (Hm : AtomSetImpl.mem a (s_tq sc) = true) by (apply AtomSetFacts.mem_iff; exact Ha).
     rewrite Hm. eapply sat_ap; [ exact Hk | apply Hsat; exact Ha ].
+  - split.
+    + intros a. unfold pt'. destruct (AtomSetImpl.mem a (s_tq sc));
+        [ apply ap_lc; [ exact HlS | apply (proj1 Hpl) ] | exact I ].
+    + intros r. unfold pr'. destruct (AtomSetImpl.mem r (s_rq sc));
+        [ apply ap_lcr; [ exact HlS | apply (proj2 Hpl) ] | exact I ].
 Qed.
 
 Lemma tr_compat_apC : forall s G, OkS s -> WfCtx G ->

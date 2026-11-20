@@ -47,8 +47,8 @@ Proof. intros a Ha. split; intros b Hb; simpl in Hb;
 Lemma sound_bindT : forall a T, ev a -> EvT T -> occT a T = false ->
   OkS (sbT a T) /\ teq (apT (sbT a T) (typ_Var a)) (apT (sbT a T) T).
 Proof.
-  intros a T Ha HT Hocc. split; [apply OkS_sbT; auto|].
-  assert (Hnot : a `notin` ftv_typ T) by (apply AtomSetFacts.not_mem_iff; exact Hocc).
+  intros a T Ha HT Hocc. destruct (occT_false _ _ Hocc) as [Hnot HL].
+  split; [exact (OkS_sbT a T Ha HT HL)|].
   assert (E1 : apT (sbT a T) (typ_Var a) = T).
   { unfold apT, sbT; simpl. destruct (Atom.eq_dec a a); [reflexivity | contradiction]. }
   assert (E2 : apT (sbT a T) T = T).
@@ -61,8 +61,8 @@ Qed.
 Lemma sound_bindR : forall r R, ev r -> EvR R -> occR r R = false ->
   OkS (sbR r R) /\ req (apR (sbR r R) (row_Var r)) (apR (sbR r R) R).
 Proof.
-  intros r R Hr HR Hocc. split; [apply OkS_sbR; auto|].
-  assert (Hnot : r `notin` frv_row R) by (apply AtomSetFacts.not_mem_iff; exact Hocc).
+  intros r R Hr HR Hocc. destruct (occR_false _ _ Hocc) as [Hnot HL].
+  split; [exact (OkS_sbR r R Hr HR HL)|].
   assert (E1 : apR (sbR r R) (row_Var r) = R).
   { unfold apR, sbR; simpl. destruct (Atom.eq_dec r r); [reflexivity | contradiction]. }
   assert (E2 : apR (sbR r R) R = R).
@@ -105,7 +105,7 @@ Proof.
     assert (Hr : ev r) by exact (ev_var_R r HR).
     assert (HEv : EvR (row_Ext l (typ_Var (ea n)) (row_Var (ea (S n))))).
     { apply EvR_ext; [ apply EvT_var, ev_ea | apply EvR_var, ev_ea ]. }
-    split; [ apply OkS_sbR; auto | ].
+    split; [ apply OkS_sbR; [ auto | auto | exact (conj I I) ] | ].
     split; [ apply EvT_var, ev_ea | ].
     split; [ apply EvR_var, ev_ea | ].
     unfold apR, sbR; simpl. destruct (Atom.eq_dec r r); [|contradiction].
@@ -183,7 +183,7 @@ Proof.
   destruct IH as [IHt IHr].
   split.
   - intros T1 T2 n s n' H H1 H2. cbn [unify_t] in H.
-    destruct T1 as [| | | | | A B | R | a]; destruct T2 as [| | | | | A' B' | R' | b];
+    destruct T1 as [| | | | | A B | R | a | i | B1]; destruct T2 as [| | | | | A' B' | R' | b | i' | B1'];
       try discriminate H.
     all: try (exact (var_left_T _ _ _ _ _ H H1 H2)).
     all: try (exact (var_right_T _ _ _ _ _ H H1 H2)).
@@ -216,7 +216,8 @@ Proof.
       * inversion H; subst. split; [apply OkS_id | apply teq_refl].
       * inversion H; subst; clear H.
         assert (Eo : occT a (typ_Var b) = false).
-        { unfold occT. simpl. apply AtomSetFacts.not_mem_iff. intro Hin.
+        { unfold occT. simpl. apply Bool.orb_false_iff. split; [ | reflexivity ].
+          apply AtomSetFacts.not_mem_iff. intro Hin.
           apply AtomSetFacts.singleton_iff in Hin. congruence. }
         exact (sound_bindT a (typ_Var b) (ev_var_T a H1) H2 Eo).
   - intros R1 R2 n s n' H H1 H2. cbn [unify_r] in H.
@@ -230,7 +231,8 @@ Proof.
       * inversion H; subst. split; [apply OkS_id | apply req_refl].
       * inversion H; subst; clear H.
         assert (Eo : occR r (row_Var q) = false).
-        { unfold occR. simpl. apply AtomSetFacts.not_mem_iff. intro Hin.
+        { unfold occR. simpl. apply Bool.orb_false_iff. split; [ | reflexivity ].
+          apply AtomSetFacts.not_mem_iff. intro Hin.
           apply AtomSetFacts.singleton_iff in Hin. congruence. }
         exact (sound_bindR r (row_Var q) (ev_var_R r H1) H2 Eo).
     + (* Ext, Ext *)
