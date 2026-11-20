@@ -3,6 +3,8 @@
 
    This file holds only the algorithm, so that it extracts to OCaml (see
    [GoatExtract.v]).  GoatInferSound.v proves it sound against [typing].
+   A type variable carries a sort (ADR 0038), read from a kinding environment
+   the algorithm threads.
 
    Naming discipline that the soundness proof leans on.  The algorithm draws
    every type or row variable it invents from the EVEN atoms [ea n], and
