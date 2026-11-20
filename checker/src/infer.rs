@@ -36,6 +36,7 @@ use crate::kinds::{Kind, Kinds, Offender, Violation, is_list_tag};
 use crate::lower::{DotCall, SELF_NAME, Take};
 use crate::ty::{self, ABSENT, Group, METHOD, PLAIN, PRESENT, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{Vocab, list};
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
@@ -234,7 +235,10 @@ fn infer_with_variable_markers(
         dots,
         ..Inferer::default()
     };
+    let g = crate::prof::enter("P:infer");
     let ty = inf.infer(root);
+    drop(g);
+    let g = crate::prof::enter("P:post");
     if let (true, Some(contract)) = (inf.errors.is_empty(), interactive) {
         inf.check_contract(contract, vocab);
     }
@@ -247,6 +251,8 @@ fn infer_with_variable_markers(
     } else {
         Vec::new()
     };
+    drop(g);
+    let g = crate::prof::enter("P:finish_all");
     let root_ty = inf.finish_within_budget(&ty).unwrap_or(Ty::Unit);
     let node_types = inf
         .node_types
@@ -275,6 +281,7 @@ fn infer_with_variable_markers(
         .filter(|(_, kinds)| kinds.is_scalar())
         .map(|(var, _)| *var)
         .collect();
+    drop(g);
     let typed = Typed {
         root_ty,
         node_types,
@@ -286,11 +293,30 @@ fn infer_with_variable_markers(
     (typed, inf.errors)
 }
 
+/// What an occurs check has already searched, which holds no match: a
+/// variable or a shared recursive body is searched once however often it is
+/// mentioned.
+#[derive(Default)]
+struct Seen {
+    vars: HashSet<TypeVar>,
+    row_vars: HashSet<TypeVar>,
+    bodies: HashSet<*const Ty>,
+}
+
+/// Types and rows resolved since the substitution last changed.
+#[derive(Default)]
+struct Resolved {
+    epoch: u64,
+    vars: HashMap<TypeVar, Ty>,
+    rows: HashMap<TypeVar, Row>,
+}
+
 /// A substitution that remembers which variables were bound since
 /// [`Inferer::sync_env_vars`] last looked.
 struct Bindings<T> {
     map: HashMap<TypeVar, Rc<T>>,
     newly_bound: Vec<TypeVar>,
+    epoch: u64,
 }
 
 impl<T> Default for Bindings<T> {
@@ -298,6 +324,7 @@ impl<T> Default for Bindings<T> {
         Bindings {
             map: HashMap::new(),
             newly_bound: Vec::new(),
+            epoch: 0,
         }
     }
 }
@@ -312,11 +339,13 @@ impl<T> Bindings<T> {
     }
 
     fn insert(&mut self, var: TypeVar, bound: Rc<T>) {
+        self.epoch += 1;
         self.newly_bound.push(var);
         self.map.insert(var, bound);
     }
 
     fn remove(&mut self, var: &TypeVar) {
+        self.epoch += 1;
         self.map.remove(var);
     }
 }
@@ -385,6 +414,7 @@ struct Inferer {
     ids_spent: bool,
     subst: Bindings<Ty>,
     row_subst: Bindings<Row>,
+    resolved: RefCell<Resolved>,
     env: HashMap<Symbol, Scheme>,
     /// The `env` symbols whose types may still mention a variable that is
     /// neither quantified nor bound, other than those in `lone_vars`, and that
@@ -581,7 +611,7 @@ fn mark_element(payload: &mut Ty, span: Span) {
             *at = ty::Origin(Some(span));
             return;
         }
-        row = rest;
+        row = Arc::make_mut(rest);
     }
 }
 
@@ -686,7 +716,7 @@ const MAX_UNFOLDED_TERMS: usize = 4 * MAX_TYPE_TERMS;
 /// The same for how deep the type nests.
 const MAX_UNFOLDED_DEPTH: usize = 4 * MAX_TYPE_DEPTH;
 
-/// What walking a type may still spend: terms to count, and levels to descend.
+/// How large a type may be: terms to count, and levels to descend.
 struct Budget {
     terms: usize,
     levels: usize,
@@ -706,10 +736,132 @@ impl Budget {
             levels: MAX_UNFOLDED_DEPTH,
         }
     }
+}
 
-    fn spend(&mut self, depth: usize) -> Option<()> {
-        self.terms = self.terms.checked_sub(1)?;
-        (depth <= self.levels).then_some(())
+/// Measures a type with its variables followed through the substitution, as
+/// the terms it has and the levels it nests, giving up past a [`Budget`]. A
+/// large type a variable stands for is measured once however often it is
+/// mentioned, since the substitution does not change during the walk, so a
+/// record whose receiver appears at every method costs its size as a graph,
+/// not as the tree it unfolds to.
+struct Extent<'a> {
+    inf: &'a Inferer,
+    budget: &'a Budget,
+    vars: HashMap<TypeVar, Size>,
+    row_vars: HashMap<TypeVar, Size>,
+    bodies: HashMap<*const Ty, Size>,
+}
+
+/// A measured type: its terms and the levels below its head.
+#[derive(Clone, Copy)]
+struct Size {
+    terms: usize,
+    height: usize,
+}
+
+/// Types smaller than this are measured again at each mention: remembering
+/// one costs more than walking it.
+const WORTH_REMEMBERING: usize = 24;
+
+impl Size {
+    const LEAF: Size = Size {
+        terms: 1,
+        height: 0,
+    };
+
+    /// This type with `child` below it.
+    fn over(&mut self, child: Size) {
+        self.terms += child.terms;
+        self.height = self.height.max(child.height + 1);
+    }
+}
+
+impl<'a> Extent<'a> {
+    fn new(inf: &'a Inferer, budget: &'a Budget) -> Self {
+        Extent {
+            inf,
+            budget,
+            vars: HashMap::new(),
+            row_vars: HashMap::new(),
+            bodies: HashMap::new(),
+        }
+    }
+
+    fn within(&self, size: Size, depth: usize) -> Option<Size> {
+        (size.terms <= self.budget.terms && depth + size.height <= self.budget.levels)
+            .then_some(size)
+    }
+
+    fn ty(&mut self, ty: &Ty, depth: usize) -> Option<Size> {
+        (depth <= self.budget.levels).then_some(())?;
+        let mut size = Size::LEAF;
+        match ty {
+            Ty::Var(v) => {
+                if let Some(bound) = self.inf.subst.get(v) {
+                    let below = match self.vars.get(v) {
+                        Some(&known) => known,
+                        None => {
+                            let below = self.ty(bound, depth + 1)?;
+                            if below.terms >= WORTH_REMEMBERING {
+                                self.vars.insert(*v, below);
+                            }
+                            below
+                        }
+                    };
+                    size.over(below);
+                }
+            }
+            Ty::Func(args, ret) => {
+                for part in args.iter().chain(std::iter::once(&**ret)) {
+                    size.over(self.ty(part, depth + 1)?);
+                }
+            }
+            Ty::Record(row) | Ty::Variant(row) => size.over(self.row(row, depth + 1)?),
+            Ty::Rec(_, body) => {
+                let key = Arc::as_ptr(body);
+                let below = match self.bodies.get(&key) {
+                    Some(&known) => known,
+                    None => {
+                        let below = self.ty(body, depth + 1)?;
+                        if below.terms >= WORTH_REMEMBERING {
+                            self.bodies.insert(key, below);
+                        }
+                        below
+                    }
+                };
+                size.over(below);
+            }
+            Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => {}
+        }
+        self.within(size, depth)
+    }
+
+    fn row(&mut self, row: &Row, depth: usize) -> Option<Size> {
+        (depth <= self.budget.levels).then_some(())?;
+        let mut size = Size::LEAF;
+        match row {
+            Row::Var(v) => {
+                if let Some(bound) = self.inf.row_subst.get(v) {
+                    let below = match self.row_vars.get(v) {
+                        Some(&known) => known,
+                        None => {
+                            let below = self.row(bound, depth + 1)?;
+                            if below.terms >= WORTH_REMEMBERING {
+                                self.row_vars.insert(*v, below);
+                            }
+                            below
+                        }
+                    };
+                    size.over(below);
+                }
+            }
+            Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
+                size.over(self.ty(field, depth + 1)?);
+                size.over(self.row(rest, depth + 1)?);
+            }
+            Row::Empty => {}
+        }
+        self.within(size, depth)
     }
 }
 
@@ -790,20 +942,89 @@ impl Inferer {
         Row::Var(self.fresh_id())
     }
 
+    /// `bound`, the type `var` is bound to, resolved. A variable's resolution
+    /// is kept until the next binding, and its parts are shared by every type
+    /// that mentions the variable, so a receiver mentioned at each method is
+    /// built once.
+    fn resolve_bound(&self, var: TypeVar, bound: &Ty) -> Ty {
+        self.refresh_resolved();
+        if let Some(hit) = self.resolved.borrow().vars.get(&var) {
+            return hit.clone();
+        }
+        let resolved = self.resolve(bound);
+        self.resolved
+            .borrow_mut()
+            .vars
+            .insert(var, resolved.clone());
+        resolved
+    }
+
+    fn resolve_row_bound(&self, var: TypeVar, bound: &Row) -> Row {
+        self.refresh_resolved();
+        if let Some(hit) = self.resolved.borrow().rows.get(&var) {
+            return hit.clone();
+        }
+        let resolved = self.resolve_row(bound);
+        self.resolved
+            .borrow_mut()
+            .rows
+            .insert(var, resolved.clone());
+        resolved
+    }
+
+    /// Forget resolutions the substitution has since changed.
+    fn refresh_resolved(&self) {
+        let epoch = self.subst.epoch + self.row_subst.epoch;
+        let mut resolved = self.resolved.borrow_mut();
+        if resolved.epoch != epoch {
+            resolved.epoch = epoch;
+            resolved.vars.clear();
+            resolved.rows.clear();
+        }
+    }
+
+    /// [`Self::resolve`], keeping `ty` itself when nothing in it changes.
+    fn shared(&self, ty: &Arc<Ty>) -> Arc<Ty> {
+        let resolved = self.resolve(ty);
+        if resolved == **ty {
+            Arc::clone(ty)
+        } else {
+            Arc::new(resolved)
+        }
+    }
+
+    fn shared_row(&self, row: &Arc<Row>) -> Arc<Row> {
+        let resolved = self.resolve_row(row);
+        if resolved == **row {
+            Arc::clone(row)
+        } else {
+            Arc::new(resolved)
+        }
+    }
+
+    fn shared_spine(&self, row: &Arc<Row>) -> Arc<Row> {
+        let resolved = self.resolve_spine(row);
+        if resolved == **row {
+            Arc::clone(row)
+        } else {
+            Arc::new(resolved)
+        }
+    }
+
     /// Follow the substitution to the type's current best-known form.
     fn resolve(&self, ty: &Ty) -> Ty {
         match ty {
             Ty::Var(v) => match self.subst.get(v) {
-                Some(t) => self.resolve(t),
+                Some(t) => self.resolve_bound(*v, t),
                 None => Ty::Var(*v),
             },
             Ty::Func(args, ret) => Ty::Func(
                 args.iter().map(|a| self.resolve(a)).collect(),
-                Box::new(self.resolve(ret)),
+                self.shared(ret),
             ),
             Ty::Record(row) => Ty::Record(self.resolve_row(row)),
             Ty::Variant(row) => Ty::Variant(self.resolve_row(row)),
-            Ty::Rec(binder, body) => Ty::Rec(*binder, Arc::new(self.resolve(body))),
+            Ty::Rec(binder, body) => Ty::Rec(*binder, self.shared(body)),
             other => other.clone(),
         }
     }
@@ -811,6 +1032,7 @@ impl Inferer {
     /// [`Self::resolve`] with a recursive type unfolded until its head is a
     /// constructor, for code that inspects the head (`match`, calls).
     fn resolve_head(&self, ty: &Ty) -> Ty {
+        let _g = crate::prof::enter("resolve_head");
         let head = self.resolve(ty).unfold_head();
         match self.self_def(&head) {
             Some(def) => self.resolve(def),
@@ -830,6 +1052,7 @@ impl Inferer {
     /// `ty` with each receiver variable in it replaced by the recursive type
     /// it stands for, for output a person reads.
     fn open_selves(&self, ty: Ty) -> Ty {
+        let _g = crate::prof::enter("open_selves");
         if self.self_defs.is_empty() {
             return ty;
         }
@@ -870,7 +1093,15 @@ impl Inferer {
     /// The resolved type in its final shape: every variable substituted, and
     /// recursive types folded back to their `μ` form.
     fn finish(&self, ty: &Ty) -> Ty {
-        self.open_selves(self.resolve(ty)).into_folded()
+        let _g = crate::prof::enter("finish");
+        let g = crate::prof::enter("f.resolve");
+        let r = self.resolve(ty);
+        drop(g);
+        let g = crate::prof::enter("f.open");
+        let o = self.open_selves(r);
+        drop(g);
+        let _g = crate::prof::enter("f.fold");
+        o.into_folded()
     }
 
     /// [`Self::finish`] for a message: a literal whose type is still open
@@ -884,10 +1115,14 @@ impl Inferer {
             .fold(resolved, |ty, var| ty.substitute(var, &Ty::Int))
     }
 
-    fn resolve_row(&self, row: &Row) -> Row {
+    /// [`Self::resolve_row`] down the row's own links only: the labels, the
+    /// presence of each and the tail are settled, and field types are left as
+    /// they are, for code that finds a label or unifies one field at a time and
+    /// resolves a field when it reaches it.
+    fn resolve_spine(&self, row: &Row) -> Row {
         match row {
             Row::Var(v) => match self.row_subst.get(v) {
-                Some(r) => self.resolve_row(r),
+                Some(r) => self.resolve_spine(r),
                 None => Row::Var(*v),
             },
             Row::Extend {
@@ -898,10 +1133,10 @@ impl Inferer {
                 rest,
             } => Row::Extend {
                 label: label.clone(),
-                field: Box::new(self.resolve(field)),
-                method: Box::new(self.resolve(method)),
+                field: field.clone(),
+                method: self.shared(method),
                 at: *at,
-                rest: Box::new(self.resolve_row(rest)),
+                rest: self.shared_spine(rest),
             },
             Row::Maybe {
                 label,
@@ -913,17 +1148,64 @@ impl Inferer {
                 present if present == PRESENT => Row::Extend {
                     at: Default::default(),
                     label: label.clone(),
-                    field: Box::new(self.resolve(field)),
-                    method: Box::new(self.resolve(method)),
-                    rest: Box::new(self.resolve_row(rest)),
+                    field: field.clone(),
+                    method: self.shared(method),
+                    rest: self.shared_spine(rest),
+                },
+                absent if absent == ABSENT => self.resolve_spine(rest),
+                Ty::Var(pres) => Row::Maybe {
+                    label: label.clone(),
+                    pres,
+                    field: field.clone(),
+                    method: self.shared(method),
+                    rest: self.shared_spine(rest),
+                },
+                _ => unreachable!("a presence variable is bound to a presence or a variable"),
+            },
+            Row::Empty => Row::Empty,
+        }
+    }
+
+    fn resolve_row(&self, row: &Row) -> Row {
+        match row {
+            Row::Var(v) => match self.row_subst.get(v) {
+                Some(r) => self.resolve_row_bound(*v, r),
+                None => Row::Var(*v),
+            },
+            Row::Extend {
+                label,
+                field,
+                method,
+                at,
+                rest,
+            } => Row::Extend {
+                label: label.clone(),
+                field: self.shared(field),
+                method: self.shared(method),
+                at: *at,
+                rest: self.shared_row(rest),
+            },
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                method,
+                rest,
+            } => match self.resolve(&Ty::Var(*pres)) {
+                present if present == PRESENT => Row::Extend {
+                    at: Default::default(),
+                    label: label.clone(),
+                    field: self.shared(field),
+                    method: self.shared(method),
+                    rest: self.shared_row(rest),
                 },
                 absent if absent == ABSENT => self.resolve_row(rest),
                 Ty::Var(pres) => Row::Maybe {
                     label: label.clone(),
                     pres,
-                    field: Box::new(self.resolve(field)),
-                    method: Box::new(self.resolve(method)),
-                    rest: Box::new(self.resolve_row(rest)),
+                    field: self.shared(field),
+                    method: self.shared(method),
+                    rest: self.shared_row(rest),
                 },
                 _ => unreachable!("a presence variable is bound to a presence or a variable"),
             },
@@ -1057,6 +1339,7 @@ impl Inferer {
     }
 
     fn unify(&mut self, a: &Ty, b: &Ty, span: Span) {
+        let _g = crate::prof::enter("unify");
         self.unify_ty(a, b, span);
         self.assumed.clear();
         self.knots_tied = 0;
@@ -1260,6 +1543,7 @@ impl Inferer {
     /// against any other type its record is unified instead. Whether the pair
     /// is settled here.
     fn unify_selves(&mut self, a: &Ty, b: &Ty, span: Span) -> bool {
+        let _g = crate::prof::enter("unify_selves");
         if self.self_defs.is_empty() {
             return false;
         }
@@ -1336,20 +1620,14 @@ impl Inferer {
                 {
                     self.report_hidden_label(span, &label);
                 }
-                if self
-                    .spend_on_row(other, &mut Budget::for_unfolding(), 0)
-                    .is_none()
-                {
+                if self.spend_on_row(other, &Budget::for_unfolding()).is_none() {
                     self.report_too_complex(span);
                     return;
                 }
                 let bound = if !self.occurs_row_deep(*x, other) {
                     other.clone()
                 } else if let Some(rec) = self.tie_row_knot(*x, kind, &self.resolve_row(other)) {
-                    if self
-                        .spend_on_row(&rec, &mut Budget::for_unfolding(), 0)
-                        .is_none()
-                    {
+                    if self.spend_on_row(&rec, &Budget::for_unfolding()).is_none() {
                         self.report_too_complex(span);
                         return;
                     }
@@ -1479,10 +1757,8 @@ impl Inferer {
         optional: bool,
         span: Span,
     ) -> Result<Option<(Ty, Ty, Ty, Row)>, Spent> {
-        if self
-            .spend_on_row(row, &mut Budget::for_unfolding(), 0)
-            .is_none()
-        {
+        let _g = crate::prof::enter("surface_bounded");
+        if self.spend_on_row(row, &Budget::for_unfolding()).is_none() {
             self.report_too_complex(span);
             return Err(Spent);
         }
@@ -1492,6 +1768,7 @@ impl Inferer {
     /// What stands between `row` and its first field: a row variable bound to
     /// a row, a field known to be absent, or a field known to be present.
     fn peel<'r>(&self, row: &'r Row) -> Peel<'r> {
+        let _g = crate::prof::enter("peel");
         match row {
             Row::Var(v) => self
                 .row_subst
@@ -1522,6 +1799,7 @@ impl Inferer {
     /// `ty`, followed through the substitution until its outermost
     /// constructor or an unbound variable shows, without copying anything.
     fn head<'a>(&self, ty: &'a Ty) -> Head<'a> {
+        let _g = crate::prof::enter("head");
         let Ty::Var(v) = ty else {
             return Head::Borrowed(ty);
         };
@@ -1538,35 +1816,43 @@ impl Inferer {
     }
 
     fn occurs_deep(&self, var: TypeVar, ty: &Ty) -> bool {
+        self.occurs_in(var, ty, &mut Seen::default())
+    }
+
+    fn occurs_row_deep(&self, var: TypeVar, row: &Row) -> bool {
+        self.occurs_in_row(var, row, &mut Seen::default())
+    }
+
+    fn occurs_in(&self, var: TypeVar, ty: &Ty, seen: &mut Seen) -> bool {
         match ty {
             Ty::Var(v) => {
                 *v == var
-                    || self
-                        .subst
-                        .get(v)
-                        .is_some_and(|bound| self.occurs_deep(var, bound))
+                    || self.subst.get(v).is_some_and(|bound| {
+                        seen.vars.insert(*v) && self.occurs_in(var, bound, seen)
+                    })
             }
             Ty::Func(args, ret) => {
-                args.iter().any(|a| self.occurs_deep(var, a)) || self.occurs_deep(var, ret)
+                args.iter().any(|a| self.occurs_in(var, a, seen)) || self.occurs_in(var, ret, seen)
             }
-            Ty::Record(row) | Ty::Variant(row) => self.occurs_row_deep(var, row),
-            Ty::Rec(_, body) => self.occurs_deep(var, body),
+            Ty::Record(row) | Ty::Variant(row) => self.occurs_in_row(var, row, seen),
+            Ty::Rec(_, body) => {
+                seen.bodies.insert(Arc::as_ptr(body)) && self.occurs_in(var, body, seen)
+            }
             _ => false,
         }
     }
 
-    fn occurs_row_deep(&self, var: TypeVar, row: &Row) -> bool {
+    fn occurs_in_row(&self, var: TypeVar, row: &Row, seen: &mut Seen) -> bool {
         match row {
             Row::Empty => false,
             Row::Var(v) => {
                 *v == var
-                    || self
-                        .row_subst
-                        .get(v)
-                        .is_some_and(|bound| self.occurs_row_deep(var, bound))
+                    || self.row_subst.get(v).is_some_and(|bound| {
+                        seen.row_vars.insert(*v) && self.occurs_in_row(var, bound, seen)
+                    })
             }
             Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
-                self.occurs_deep(var, field) || self.occurs_row_deep(var, rest)
+                self.occurs_in(var, field, seen) || self.occurs_in_row(var, rest, seen)
             }
         }
     }
@@ -1579,6 +1865,7 @@ impl Inferer {
     /// `x = t` where `t` mentions `x`: the recursive type `μv. t[x := v]`, if
     /// every mention is guarded (see [`Guard`]).
     fn tie_ty_knot(&mut self, x: TypeVar, t: &Ty) -> Option<Ty> {
+        let _g = crate::prof::enter("tie_ty_knot");
         self.spend_knot()?;
         let binder = self.fresh_id();
         let body = plug(
@@ -1597,6 +1884,7 @@ impl Inferer {
     /// it is the recursive type `μv. [prefix | row[mention := v]]`. `x` becomes
     /// `row` with that type in place of the mentions.
     fn tie_row_knot(&mut self, x: TypeVar, kind: RowKind, row: &Row) -> Option<Row> {
+        let _g = crate::prof::enter("tie_row_knot");
         self.spend_knot()?;
         let under_tag = match kind {
             RowKind::Variant => Guard::default().tag(),
@@ -1624,7 +1912,8 @@ impl Inferer {
     /// long, which [`MAX_TYPE_TERMS`] caps: every row grows by one inferred
     /// expression at a time and each is checked.
     fn surface(&mut self, label: &str, row: &Row, optional: bool) -> Option<(Ty, Ty, Ty, Row)> {
-        let resolved = self.resolve_row(row);
+        let _g = crate::prof::enter("surface");
+        let resolved = self.resolve_spine(row);
         self.surface_resolved(label, resolved, optional)
     }
 
@@ -1646,9 +1935,15 @@ impl Inferer {
                 rest,
             } => {
                 if l2 == label {
-                    Some((PRESENT, *field, *method, *rest))
+                    Some((
+                        PRESENT,
+                        Arc::unwrap_or_clone(field),
+                        Arc::unwrap_or_clone(method),
+                        Arc::unwrap_or_clone(rest),
+                    ))
                 } else {
-                    let (p, f, m, r) = self.surface_resolved(label, *rest, optional)?;
+                    let (p, f, m, r) =
+                        self.surface_resolved(label, Arc::unwrap_or_clone(rest), optional)?;
                     Some((
                         p,
                         f,
@@ -1658,7 +1953,7 @@ impl Inferer {
                             field,
                             method,
                             at,
-                            rest: Box::new(r),
+                            rest: Arc::new(r),
                         },
                     ))
                 }
@@ -1671,9 +1966,15 @@ impl Inferer {
                 rest,
             } => {
                 if l2 == label {
-                    Some((Ty::Var(pres), *field, *method, *rest))
+                    Some((
+                        Ty::Var(pres),
+                        Arc::unwrap_or_clone(field),
+                        Arc::unwrap_or_clone(method),
+                        Arc::unwrap_or_clone(rest),
+                    ))
                 } else {
-                    let (p, f, m, r) = self.surface_resolved(label, *rest, optional)?;
+                    let (p, f, m, r) =
+                        self.surface_resolved(label, Arc::unwrap_or_clone(rest), optional)?;
                     Some((
                         p,
                         f,
@@ -1683,7 +1984,7 @@ impl Inferer {
                             pres,
                             field,
                             method,
-                            rest: Box::new(r),
+                            rest: Arc::new(r),
                         },
                     ))
                 }
@@ -1718,9 +2019,9 @@ impl Inferer {
                         Row::Maybe {
                             label: label.to_string(),
                             pres,
-                            field: Box::new(field.clone()),
-                            method: Box::new(method.clone()),
-                            rest: Box::new(rest.clone()),
+                            field: Arc::new(field.clone()),
+                            method: Arc::new(method.clone()),
+                            rest: Arc::new(rest.clone()),
                         },
                     )
                 } else {
@@ -1729,9 +2030,9 @@ impl Inferer {
                         Row::Extend {
                             at: Default::default(),
                             label: label.to_string(),
-                            field: Box::new(field.clone()),
-                            method: Box::new(method.clone()),
-                            rest: Box::new(rest.clone()),
+                            field: Arc::new(field.clone()),
+                            method: Arc::new(method.clone()),
+                            rest: Arc::new(rest.clone()),
                         },
                     )
                 };
@@ -1780,7 +2081,7 @@ impl Inferer {
     /// variable. A label `row` already has makes this impossible, and is
     /// returned.
     fn lack(&mut self, row: &Row, labels: &BTreeSet<String>) -> Option<String> {
-        let resolved = self.resolve_row(row);
+        let resolved = self.resolve_spine(row);
         self.lack_resolved(resolved, labels)
     }
 
@@ -1801,7 +2102,7 @@ impl Inferer {
                 if labels.contains(&label) {
                     Some(label)
                 } else {
-                    self.lack_resolved(*rest, labels)
+                    self.lack_resolved(Arc::unwrap_or_clone(rest), labels)
                 }
             }
             Row::Maybe {
@@ -1810,7 +2111,7 @@ impl Inferer {
                 if labels.contains(&label) {
                     self.subst.insert(pres, Rc::new(ABSENT));
                 }
-                self.lack_resolved(*rest, labels)
+                self.lack_resolved(Arc::unwrap_or_clone(rest), labels)
             }
         }
     }
@@ -1829,6 +2130,7 @@ impl Inferer {
     /// `ty` takes on the constraint, to be checked when it is bound; a type that
     /// can never satisfy it is a [`Violation`].
     fn constrain(&mut self, ty: &Ty, kinds: Kinds) -> Result<(), Violation> {
+        let _g = crate::prof::enter("constrain");
         kinds
             .iter()
             .try_for_each(|kind| self.constrain_kind(ty, kind, &mut Vec::new()))
@@ -1960,6 +2262,7 @@ impl Inferer {
     }
 
     fn instantiate(&mut self, scheme: &Scheme) -> Ty {
+        let _g = crate::prof::enter("instantiate");
         let mut binders = Vec::new();
         scheme.ty.rec_binders(&mut binders);
         let mapping: HashMap<TypeVar, TypeVar> = scheme
@@ -1990,6 +2293,7 @@ impl Inferer {
     /// open to `Float`) rather than generalized: `n = 3` is one number, not a
     /// fresh one at every use.
     fn generalize(&mut self, ty: &Ty, function: bool) -> Scheme {
+        let _g = crate::prof::enter("generalize");
         // A value that is the receiver of the literal being inferred (a method
         // call's result bound to a temporary) stays that variable: opening it
         // would copy the whole record type into every use.
@@ -2404,8 +2708,8 @@ impl Inferer {
     }
 
     fn within_unfold_budget(&self, ty: &Ty) -> bool {
-        self.spend_on_ty(ty, &mut Budget::for_unfolding(), 0)
-            .is_some()
+        let _g = crate::prof::enter("within_unfold_budget");
+        self.spend_on_ty(ty, &Budget::for_unfolding()).is_some()
     }
 
     /// Whether `ty`, followed through the substitution, has at most
@@ -2413,41 +2717,18 @@ impl Inferer {
     /// Counting stops once the budget is spent, so the cost is bounded however
     /// large the type is.
     fn within_term_budget(&self, ty: &Ty) -> bool {
-        self.spend_on_ty(ty, &mut Budget::for_type(), 0).is_some()
+        let _g = crate::prof::enter("within_term_budget");
+        self.spend_on_ty(ty, &Budget::for_type()).is_some()
     }
 
-    fn spend_on_ty(&self, ty: &Ty, budget: &mut Budget, depth: usize) -> Option<()> {
-        budget.spend(depth)?;
-        match ty {
-            Ty::Var(v) => match self.subst.get(v) {
-                Some(bound) => self.spend_on_ty(bound, budget, depth + 1),
-                None => Some(()),
-            },
-            Ty::Func(args, ret) => {
-                for arg in args {
-                    self.spend_on_ty(arg, budget, depth + 1)?;
-                }
-                self.spend_on_ty(ret, budget, depth + 1)
-            }
-            Ty::Record(row) | Ty::Variant(row) => self.spend_on_row(row, budget, depth + 1),
-            Ty::Rec(_, body) => self.spend_on_ty(body, budget, depth + 1),
-            Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => Some(()),
-        }
+    fn spend_on_ty(&self, ty: &Ty, budget: &Budget) -> Option<()> {
+        let _g = crate::prof::enter("spend_on_ty");
+        Extent::new(self, budget).ty(ty, 0).map(drop)
     }
 
-    fn spend_on_row(&self, row: &Row, budget: &mut Budget, depth: usize) -> Option<()> {
-        budget.spend(depth)?;
-        match row {
-            Row::Var(v) => match self.row_subst.get(v) {
-                Some(bound) => self.spend_on_row(bound, budget, depth + 1),
-                None => Some(()),
-            },
-            Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
-                self.spend_on_ty(field, budget, depth + 1)?;
-                self.spend_on_row(rest, budget, depth + 1)
-            }
-            Row::Empty => Some(()),
-        }
+    fn spend_on_row(&self, row: &Row, budget: &Budget) -> Option<()> {
+        let _g = crate::prof::enter("spend_on_row");
+        Extent::new(self, budget).row(row, 0).map(drop)
     }
 
     /// The chain of `Let`s from `first`, walked in a loop so a long block costs
@@ -2716,9 +2997,9 @@ impl Inferer {
                 let expected = Ty::Record(Row::Extend {
                     at: Default::default(),
                     label: label.clone(),
-                    field: Box::new(field_ty.clone()),
-                    method: Box::new(method.clone()),
-                    rest: Box::new(rest),
+                    field: Arc::new(field_ty.clone()),
+                    method: Arc::new(method.clone()),
+                    rest: Arc::new(rest),
                 });
                 self.unify(&record_ty, &expected, expr.span);
                 if let Some(take) = self.dots.takes.get(&expr.id).cloned() {
@@ -2751,9 +3032,9 @@ impl Inferer {
                 Ty::Variant(Row::Extend {
                     at: Default::default(),
                     label: name.clone(),
-                    field: Box::new(payload_ty),
-                    method: Box::new(PLAIN),
-                    rest: Box::new(self.fresh_row()),
+                    field: Arc::new(payload_ty),
+                    method: Arc::new(PLAIN),
+                    rest: Arc::new(self.fresh_row()),
                 })
             }
             ExprKind::Match {
@@ -3060,7 +3341,7 @@ impl Inferer {
                 while let Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } = cursor
                 {
                     self.require_float_fields(&field, span);
-                    cursor = *rest;
+                    cursor = Arc::unwrap_or_clone(rest);
                 }
             }
             _ => self.unify(ty, &Ty::Float, span),
@@ -3195,9 +3476,9 @@ impl Inferer {
                     {
                         return Some((label, params.len()));
                     }
-                    next = *rest;
+                    next = Arc::unwrap_or_clone(rest);
                 }
-                Row::Maybe { rest, .. } => next = *rest,
+                Row::Maybe { rest, .. } => next = Arc::unwrap_or_clone(rest),
                 Row::Empty | Row::Var(_) => return None,
             }
         }
@@ -3213,6 +3494,7 @@ impl Inferer {
     /// returns `{...self, …}` returns that same type, and the one recursive
     /// type has one shape however many methods there are (ADR 0034).
     fn infer_record(&mut self, fields: &[(String, Expr)], span: Span) -> Ty {
+        let _g = crate::prof::enter("infer_record");
         for (label, value) in fields {
             if let ExprKind::Func { params, .. } = &value.kind
                 && !is_method(value)
@@ -3230,9 +3512,9 @@ impl Inferer {
                 .fold(Row::Empty, |rest, ((label, _), field)| Row::Extend {
                     at: Default::default(),
                     label: label.clone(),
-                    field: Box::new(field),
-                    method: Box::new(PLAIN),
-                    rest: Box::new(rest),
+                    field: Arc::new(field),
+                    method: Arc::new(PLAIN),
+                    rest: Arc::new(rest),
                 });
             return Ty::Record(row);
         }
@@ -3247,9 +3529,9 @@ impl Inferer {
             |rest, (((label, _), slot), flag)| Row::Extend {
                 at: Default::default(),
                 label: label.clone(),
-                field: Box::new(slot.clone()),
-                method: Box::new(flag.clone()),
-                rest: Box::new(rest),
+                field: Arc::new(slot.clone()),
+                method: Arc::new(flag.clone()),
+                rest: Arc::new(rest),
             },
         );
         let receiver = self.fresh_id();
@@ -3273,9 +3555,9 @@ impl Inferer {
             |rest, (((label, _), flag), field)| Row::Extend {
                 at: Default::default(),
                 label: label.clone(),
-                field: Box::new(field),
-                method: Box::new(flag.clone()),
-                rest: Box::new(rest),
+                field: Arc::new(field),
+                method: Arc::new(flag.clone()),
+                rest: Arc::new(rest),
             },
         );
         Ty::Record(row)
@@ -3314,6 +3596,7 @@ impl Inferer {
         receiver: TypeVar,
         span: Span,
     ) -> Vec<Ty> {
+        let _g = crate::prof::enter("tie_methods");
         let def = self.self_defs[&receiver].clone();
         if !self.within_unfold_budget(&def) || tys.iter().any(|ty| !self.within_unfold_budget(ty)) {
             return self.abandon_receiver(receiver, slots, span);
@@ -3345,9 +3628,9 @@ impl Inferer {
             |rest, (((label, _), flag), slot)| Row::Extend {
                 at: Default::default(),
                 label: label.clone(),
-                field: Box::new(self.resolve(slot)),
-                method: Box::new(flag.clone()),
-                rest: Box::new(rest),
+                field: Arc::new(self.resolve(slot)),
+                method: Arc::new(flag.clone()),
+                rest: Arc::new(rest),
             },
         );
         let recursive = Ty::Rec(
@@ -3376,6 +3659,7 @@ impl Inferer {
     /// presence-variable field in it (there or not, at `e`'s type) and a
     /// present one in the result, so the type is the same either way (ADR 0033).
     fn infer_spread(&mut self, base: &Expr, fields: &[(String, Expr)]) -> Ty {
+        let _g = crate::prof::enter("infer_spread");
         let base_ty = self.infer(base);
         let receiver = match &*self.head(&base_ty) {
             Ty::Var(var) if self.self_defs.contains_key(var) => Some(*var),
@@ -3425,6 +3709,7 @@ impl Inferer {
         span: Span,
         copied: &Copied,
     ) -> Row {
+        let _g = crate::prof::enter("override_field");
         match self.resolve_row(&row) {
             Row::Extend {
                 label: l,
@@ -3444,13 +3729,19 @@ impl Inferer {
                         rest,
                     }
                 } else {
-                    let rest = self.override_field(*rest, label, (ty, flag), span, copied);
+                    let rest = self.override_field(
+                        Arc::unwrap_or_clone(rest),
+                        label,
+                        (ty, flag),
+                        span,
+                        copied,
+                    );
                     Row::Extend {
                         label: l,
                         field,
                         method,
                         at,
-                        rest: Box::new(rest),
+                        rest: Arc::new(rest),
                     }
                 }
             }
@@ -3472,22 +3763,28 @@ impl Inferer {
                         rest,
                     }
                 } else {
-                    let rest = self.override_field(*rest, label, (ty, flag), span, copied);
+                    let rest = self.override_field(
+                        Arc::unwrap_or_clone(rest),
+                        label,
+                        (ty, flag),
+                        span,
+                        copied,
+                    );
                     Row::Maybe {
                         label: l,
                         pres,
                         field,
                         method,
-                        rest: Box::new(rest),
+                        rest: Arc::new(rest),
                     }
                 }
             }
             Row::Empty => Row::Extend {
                 at: Default::default(),
                 label: label.to_string(),
-                field: Box::new(ty),
-                method: Box::new(flag),
-                rest: Box::new(Row::Empty),
+                field: Arc::new(ty),
+                method: Arc::new(flag),
+                rest: Arc::new(Row::Empty),
             },
             Row::Var(v) => {
                 let mut banned = self.lacks.get(&v).cloned().unwrap_or_default();
@@ -3505,25 +3802,25 @@ impl Inferer {
                     let maybe = Row::Maybe {
                         label: label.to_string(),
                         pres,
-                        field: Box::new(ty.clone()),
-                        method: Box::new(flag.clone()),
-                        rest: Box::new(rest.clone()),
+                        field: Arc::new(ty.clone()),
+                        method: Arc::new(flag.clone()),
+                        rest: Arc::new(rest.clone()),
                     };
                     self.unify(&Ty::Record(Row::Var(v)), &Ty::Record(maybe), span);
                     return Row::Extend {
                         at: Default::default(),
                         label: label.to_string(),
-                        field: Box::new(ty),
-                        method: Box::new(flag),
-                        rest: Box::new(rest),
+                        field: Arc::new(ty),
+                        method: Arc::new(flag),
+                        rest: Arc::new(rest),
                     };
                 }
                 Row::Extend {
                     at: Default::default(),
                     label: label.to_string(),
-                    field: Box::new(ty),
-                    method: Box::new(flag),
-                    rest: Box::new(Row::Var(v)),
+                    field: Arc::new(ty),
+                    method: Arc::new(flag),
+                    rest: Arc::new(Row::Var(v)),
                 }
             }
         }
@@ -3566,9 +3863,9 @@ impl Inferer {
             expected = Row::Extend {
                 at: Default::default(),
                 label: label.clone(),
-                field: Box::new(self.fresh()),
-                method: Box::new(self.fresh()),
-                rest: Box::new(expected),
+                field: Arc::new(self.fresh()),
+                method: Arc::new(self.fresh()),
+                rest: Arc::new(expected),
             };
         }
         self.unify(&record_ty, &Ty::Record(expected), span);
@@ -3659,9 +3956,9 @@ impl Inferer {
                     row = Row::Extend {
                         at: Default::default(),
                         label: label.clone(),
-                        field: Box::new(ty),
-                        method: Box::new(self.fresh()),
-                        rest: Box::new(row),
+                        field: Arc::new(ty),
+                        method: Arc::new(self.fresh()),
+                        rest: Arc::new(row),
                     };
                 }
                 Ty::Record(row)
@@ -3703,9 +4000,9 @@ impl Inferer {
         let expected = Ty::Variant(Row::Extend {
             at: Default::default(),
             label: tag.to_string(),
-            field: Box::new(payload_ty),
-            method: Box::new(PLAIN),
-            rest: Box::new(self.fresh_row()),
+            field: Arc::new(payload_ty),
+            method: Arc::new(PLAIN),
+            rest: Arc::new(self.fresh_row()),
         });
         self.unify(scrut_ty, &expected, span);
     }
@@ -3844,7 +4141,7 @@ fn plug<'a>(ty: &'a Ty, hole: &Hole, with: &Ty, at: Guard, bound: &mut Vec<&'a T
             args.iter()
                 .map(|a| plug(a, hole, with, at.func(), bound))
                 .collect(),
-            Box::new(plug(ret, hole, with, at.func(), bound)),
+            Arc::new(plug(ret, hole, with, at.func(), bound)),
         ),
         Ty::Record(row) => Ty::Record(plug_row(row, hole, with, at.field(), bound)),
         Ty::Variant(row) => Ty::Variant(plug_row(row, hole, with, at.tag(), bound)),
@@ -3869,10 +4166,10 @@ fn plug_row<'a>(row: &'a Row, hole: &Hole, with: &Ty, at: Guard, bound: &mut Vec
             rest,
         } => Row::Extend {
             label: label.clone(),
-            field: Box::new(plug(field, hole, with, at, bound)),
+            field: Arc::new(plug(field, hole, with, at, bound)),
             method: method.clone(),
             at: *origin,
-            rest: Box::new(plug_row(rest, hole, with, at, bound)),
+            rest: Arc::new(plug_row(rest, hole, with, at, bound)),
         },
         Row::Maybe {
             label,
@@ -3883,9 +4180,9 @@ fn plug_row<'a>(row: &'a Row, hole: &Hole, with: &Ty, at: Guard, bound: &mut Vec
         } => Row::Maybe {
             label: label.clone(),
             pres: *pres,
-            field: Box::new(plug(field, hole, with, at, bound)),
+            field: Arc::new(plug(field, hole, with, at, bound)),
             method: method.clone(),
-            rest: Box::new(plug_row(rest, hole, with, at, bound)),
+            rest: Arc::new(plug_row(rest, hole, with, at, bound)),
         },
         other => other.clone(),
     }
@@ -3953,7 +4250,7 @@ fn replace_tail(row: &Row, tail: Row) -> Row {
             field: field.clone(),
             method: method.clone(),
             at: *at,
-            rest: Box::new(replace_tail(rest, tail)),
+            rest: Arc::new(replace_tail(rest, tail)),
         },
         Row::Maybe {
             label,
@@ -3966,7 +4263,7 @@ fn replace_tail(row: &Row, tail: Row) -> Row {
             pres: *pres,
             field: field.clone(),
             method: method.clone(),
-            rest: Box::new(replace_tail(rest, tail)),
+            rest: Arc::new(replace_tail(rest, tail)),
         },
         _ => tail,
     }
@@ -4070,7 +4367,7 @@ pub(crate) fn subst_vars(ty: &Ty, mapping: &HashMap<TypeVar, TypeVar>) -> Ty {
         Ty::Var(v) => Ty::Var(mapping.get(v).copied().unwrap_or(*v)),
         Ty::Func(args, ret) => Ty::Func(
             args.iter().map(|a| subst_vars(a, mapping)).collect(),
-            Box::new(subst_vars(ret, mapping)),
+            Arc::new(subst_vars(ret, mapping)),
         ),
         Ty::Record(row) => Ty::Record(subst_row(row, mapping)),
         Ty::Variant(row) => Ty::Variant(subst_row(row, mapping)),
@@ -4094,10 +4391,10 @@ fn subst_row(row: &Row, mapping: &HashMap<TypeVar, TypeVar>) -> Row {
             rest,
         } => Row::Extend {
             label: label.clone(),
-            field: Box::new(subst_vars(field, mapping)),
-            method: Box::new(subst_vars(method, mapping)),
+            field: Arc::new(subst_vars(field, mapping)),
+            method: Arc::new(subst_vars(method, mapping)),
             at: *at,
-            rest: Box::new(subst_row(rest, mapping)),
+            rest: Arc::new(subst_row(rest, mapping)),
         },
         Row::Maybe {
             label,
@@ -4108,9 +4405,9 @@ fn subst_row(row: &Row, mapping: &HashMap<TypeVar, TypeVar>) -> Row {
         } => Row::Maybe {
             label: label.clone(),
             pres: mapping.get(pres).copied().unwrap_or(*pres),
-            field: Box::new(subst_vars(field, mapping)),
-            method: Box::new(subst_vars(method, mapping)),
-            rest: Box::new(subst_row(rest, mapping)),
+            field: Arc::new(subst_vars(field, mapping)),
+            method: Arc::new(subst_vars(method, mapping)),
+            rest: Arc::new(subst_row(rest, mapping)),
         },
     }
 }
@@ -4125,9 +4422,9 @@ mod tests {
         Row::Extend {
             at: Default::default(),
             label: label.to_string(),
-            field: Box::new(field),
-            method: Box::new(PLAIN),
-            rest: Box::new(rest),
+            field: Arc::new(field),
+            method: Arc::new(PLAIN),
+            rest: Arc::new(rest),
         }
     }
 
@@ -4150,10 +4447,10 @@ mod tests {
     fn a_cycle_route_deeper_than_a_type_may_nest_is_left_out() {
         let mut ty = Ty::Var(1);
         for _ in 0..=MAX_UNFOLDED_DEPTH {
-            ty = Ty::Func(vec![ty], Box::new(Ty::Unit));
+            ty = Ty::Func(vec![ty], Arc::new(Ty::Unit));
         }
         assert!(cycle_route(1, &ty).is_empty());
-        let shallow = Ty::Func(vec![Ty::Var(1)], Box::new(Ty::Unit));
+        let shallow = Ty::Func(vec![Ty::Var(1)], Arc::new(Ty::Unit));
         assert_eq!(cycle_route(1, &shallow), ["its argument"]);
     }
 

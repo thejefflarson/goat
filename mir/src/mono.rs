@@ -543,7 +543,7 @@ impl Mono<'_> {
                 args.iter()
                     .map(|a| self.ground_in(a, subst, bound))
                     .collect(),
-                Box::new(self.ground_in(ret, subst, bound)),
+                Arc::new(self.ground_in(ret, subst, bound)),
             ),
             Ty::Record(row) => Ty::Record(self.ground_row(row, subst, bound)),
             Ty::Variant(row) => Ty::Variant(self.ground_row(row, subst, bound)),
@@ -569,9 +569,9 @@ impl Mono<'_> {
             .fold(Row::Empty, |rest, (label, field)| Row::Extend {
                 at: Default::default(),
                 label,
-                field: Box::new(field),
-                method: Box::new(PLAIN),
-                rest: Box::new(rest),
+                field: Arc::new(field),
+                method: Arc::new(PLAIN),
+                rest: Arc::new(rest),
             })
     }
 
@@ -1794,9 +1794,9 @@ fn match_row(
                     .fold(Row::Empty, |r, (l, f)| Row::Extend {
                         at: Default::default(),
                         label: l.clone(),
-                        field: Box::new(f.clone()),
-                        method: Box::new(PLAIN),
-                        rest: Box::new(r),
+                        field: Arc::new(f.clone()),
+                        method: Arc::new(PLAIN),
+                        rest: Arc::new(r),
                     });
                 subst.insert(*v, wrap(tail));
                 break;
