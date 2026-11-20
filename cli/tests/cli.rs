@@ -100,6 +100,18 @@ fn runs_the_examples() {
 }
 
 #[test]
+fn runs_the_widening_example() {
+    let out = goat(&[
+        "run",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/widening.goat"),
+    ]);
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "5.5\n3\n[3, 2.5]\ntrue\n"
+    );
+}
+
+#[test]
 fn runs_the_whole_numbers_example() {
     let out = goat(&[
         "run",

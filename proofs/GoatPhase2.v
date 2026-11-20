@@ -198,6 +198,39 @@ Proof.
   cbn. apply ms_refl.
 Qed.
 
+(* ---- widening at a join site (ADR 0040) ----
+   The checker accepts [if c then 7 // 2 else 2.5 done] and a call
+   [f(7 // 2, 2.5)] to [program(a, b) do a + b done]: an Int branch or argument
+   widens to the Float it meets. There is no subtyping: elaboration writes
+   [float(e)] at the Int side, and the rules type the elaborated term. *)
+
+Example widened_branch_types :
+  typing d_any nil
+    (e_ite e_true (e_tofloat (e_num 3)) (e_dec 0)) typ_Float.
+Proof.
+  apply T_If; [ apply T_True; solve_uniq | | apply T_Dec; solve_uniq ].
+  apply T_ToFloat with (A := typ_Int); [ apply T_Num; [ solve_uniq | exact I ] | exact I ].
+Qed.
+
+Example widened_call_types :
+  typing d_any nil
+    (e_app (e_app (e_abs (e_abs (e_bin (e_fvar_b 1) bop_add (e_fvar_b 0))))
+              (e_tofloat (e_num 3)))
+           (e_dec 0))
+    typ_Float.
+Proof.
+  eapply T_App; [ | apply T_Dec; solve_uniq ].
+  eapply T_App; [ | apply T_ToFloat with (A := typ_Int); [ apply T_Num; [ solve_uniq | exact I ] | exact I ] ].
+  apply T_Abs with (L := {}). intros x Hx.
+  cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
+  apply T_Abs with (L := {{x}}). intros y Hy.
+  cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
+  eapply T_Bin; [ eapply T_Var | eapply T_Var | apply sig_ring ].
+  all: first [ solve_uniq
+             | (unfold binds; simpl; destruct (x == x); [ reflexivity | congruence ])
+             | apply inst_mono_self | reflexivity | exact I ].
+Qed.
+
 (* A group member must be a function: a member that is a literal has no
    derivation, because the group would not unroll to a record of values. *)
 Example group_member_must_be_a_function : forall e2 T,

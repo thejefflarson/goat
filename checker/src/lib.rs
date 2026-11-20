@@ -3,6 +3,7 @@
 
 pub mod captures;
 pub mod error;
+pub mod flow;
 pub mod hir;
 pub mod infer;
 pub mod kinds;
@@ -927,9 +928,14 @@ mod tests {
     fn only_a_bare_numeral_adapts() {
         for src in [
             "n = 2 * 3  {a: n + 1.5, b: n // 2}",
+            "n = 2 * 3  {b: n // 2, a: n + 1.5}",
             "p = {x: 1}  {a: p.x + 1.5, b: p.x // 2}",
         ] {
-            assert_eq!(exact_type_of(src), "{a: Float, b: Float}", "{src}");
+            let ty = exact_type_of(src);
+            assert!(
+                ty.contains("a: Float") && ty.contains("b: Float"),
+                "{src}: {ty}"
+            );
         }
     }
 

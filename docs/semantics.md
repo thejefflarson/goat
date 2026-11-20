@@ -422,7 +422,12 @@ Rule by rule:
   have none: `String` and `Bool` are not `Literal`.
 - **`T-ToFloat`.** Wherever the checker accepts an `Int` where a `Float` is
   wanted (a call whose parameter is a `Float`, ADR 0017), elaboration inserts
-  `float(e)`. It takes any `Numeric` operand and gives a `Float`; on a `Float`
+  `float(e)`. That is every *scalar join site* (ADR 0040): an operand of an
+  operator or a comparison, an argument whose parameter is a `Float` or a
+  `Numeric` variable, a branch of an `if` or `match`, an item of a list
+  literal. Never under a constructor: a record, a list or a function passed
+  whole stays exact. `GoatPhase2.v` pins an elaborated widened branch and call
+  (`widened_branch_types`, `widened_call_types`). It takes any `Numeric` operand and gives a `Float`; on a `Float`
   it is the identity (`ST-ToFloat`), so a generic function can coerce its
   argument. `float(true)` has no derivation. The calculus has no subtyping:
   `float(e)` is how an `Int` operand reaches a `Float` slot.
@@ -891,7 +896,8 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   - *A call coerces.* The compiler accepts an `Int` argument where the
     parameter is a `Float` (`f(7 // 2)` with `f` forced to take a `Float`), and
     an `Int` beside a `Float` at an operator. The calculus has no subtyping:
-    elaboration writes `float(e)` at each such place (`T-ToFloat`), so the
+    elaboration writes `float(e)` at each such place (`T-ToFloat`), including
+    the branches of an `if` and the arguments of a generic call (ADR 0040), so the
     soundness theorems apply to the elaborated term. Whether the checker inserts
     it exactly where the compiler accepts an `Int` is the elaborator's
     obligation, not a theorem here.
