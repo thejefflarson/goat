@@ -1,0 +1,12 @@
+# A whole number widens to a decimal wherever the two have to agree: the two
+# sides of `+`, an argument, the branches of an `if` or a `match`, and the items
+# of a list. A decimal never narrows by itself; `round`, `floor` and `truncate`
+# say how.
+plus = program(a, b) do a + b done
+whole = floor(3.7)
+flag = true
+
+print(plus(whole, 2.5));
+print(if flag then whole else 2.5 done);
+print([whole, 2.5]);
+print(whole < 3.5)

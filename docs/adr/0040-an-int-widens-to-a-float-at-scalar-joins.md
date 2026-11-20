@@ -102,6 +102,11 @@ in a branch that is converted is not a tail call. The differential test writes
   index is accepted by one and not the other.
 - **Joins, not minima.** A free parameter used beside an `Int` in one place and
   a `Float` in another is a `Float`; the `Int` side is converted.
+- **A list literal's element type stays open until its flows are solved.** Each
+  `Link` shares the element slot of the list it extends, so one `Float` makes
+  the whole literal a list of `Float`s. A computed `xs = [i]` is not solved at
+  its binding, so a later use that needs `Float`s widens the elements; a list
+  built inside a function is exact once the function is generalized.
 - `(i + j) + 1.5` adds as `Int` and then converts; `i + (j + 1.5)` adds as
   `Float`. Widening happens at the operator that meets the `Float`.
 

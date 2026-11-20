@@ -25,7 +25,7 @@
 //! The calculus has no implicit Int-to-Float widening: elaboration writes
 //! `float(e)` where the checker accepts an Int for a Float (an operand beside a
 //! Float operand, each operand of `/`, an argument to a Float parameter, a
-//! numeral inside a comparison). A numeral the checker settled as a Float
+//! branch of an `if` whose result is a Float, a numeral inside a comparison). A numeral the checker settled as a Float
 //! elsewhere is written bare, which the calculus types at `Float`. This reader
 //! inserts the coercions from the checker's node types, so the differential test
 //! also checks that those places are exactly where the checker widens. `+ - *`
@@ -508,11 +508,23 @@ impl Reader<'_> {
                 cond,
                 then_branch,
                 else_branch: Some(else_branch),
-            } => Some(Core::If(
-                Box::new(self.read(cond)?),
-                Box::new(self.read(then_branch)?),
-                Box::new(self.read(else_branch)?),
-            )),
+            } => {
+                let result = self.node_ty(expr) == Some(&Ty::Float);
+                let branch = |this: &mut Self, branch: &Expr| {
+                    let value = this.read(branch)?;
+                    let widens = result && this.node_ty(branch) == Some(&Ty::Int);
+                    Some(if widens {
+                        Core::ToFloat(Box::new(value))
+                    } else {
+                        value
+                    })
+                };
+                Some(Core::If(
+                    Box::new(self.read(cond)?),
+                    Box::new(branch(self, then_branch)?),
+                    Box::new(branch(self, else_branch)?),
+                ))
+            }
             ExprKind::Bin { op, lhs, rhs } => {
                 let comparison = matches!(
                     op,

@@ -66,7 +66,10 @@ proven algorithm to accept the result. It writes `float(e)` around
   Int operand of `+ - *` in the same position;
 - each operand of `/`, Int or Float (a quotient takes Floats, and `float(e)` is
   the identity on a Float);
-- an Int argument to a call whose callee's parameter is a Float;
+- an Int argument to a call whose callee's parameter is a Float, including a
+  parameter the checker settled as a Float by joining the call's arguments
+  (`f(7 // 2, 2.5)` for `f = program(a, b) do a + b done`);
+- an Int branch of an `if` whose result is a Float (ADR 0040);
 - a numeral inside an operand of a comparison whose type is Float.
 
 An Int literal whose node type is Float anywhere else is written as the bare
