@@ -235,10 +235,7 @@ fn infer_with_variable_markers(
         dots,
         ..Inferer::default()
     };
-    let g = crate::prof::enter("P:infer");
     let ty = inf.infer(root);
-    drop(g);
-    let g = crate::prof::enter("P:post");
     if let (true, Some(contract)) = (inf.errors.is_empty(), interactive) {
         inf.check_contract(contract, vocab);
     }
@@ -251,8 +248,6 @@ fn infer_with_variable_markers(
     } else {
         Vec::new()
     };
-    drop(g);
-    let g = crate::prof::enter("P:finish_all");
     let root_ty = inf.finish_within_budget(&ty).unwrap_or(Ty::Unit);
     let node_types = inf
         .node_types
@@ -281,7 +276,6 @@ fn infer_with_variable_markers(
         .filter(|(_, kinds)| kinds.is_scalar())
         .map(|(var, _)| *var)
         .collect();
-    drop(g);
     let typed = Typed {
         root_ty,
         node_types,
@@ -1032,7 +1026,6 @@ impl Inferer {
     /// [`Self::resolve`] with a recursive type unfolded until its head is a
     /// constructor, for code that inspects the head (`match`, calls).
     fn resolve_head(&self, ty: &Ty) -> Ty {
-        let _g = crate::prof::enter("resolve_head");
         let head = self.resolve(ty).unfold_head();
         match self.self_def(&head) {
             Some(def) => self.resolve(def),
@@ -1052,7 +1045,6 @@ impl Inferer {
     /// `ty` with each receiver variable in it replaced by the recursive type
     /// it stands for, for output a person reads.
     fn open_selves(&self, ty: Ty) -> Ty {
-        let _g = crate::prof::enter("open_selves");
         if self.self_defs.is_empty() {
             return ty;
         }
@@ -1093,15 +1085,7 @@ impl Inferer {
     /// The resolved type in its final shape: every variable substituted, and
     /// recursive types folded back to their `μ` form.
     fn finish(&self, ty: &Ty) -> Ty {
-        let _g = crate::prof::enter("finish");
-        let g = crate::prof::enter("f.resolve");
-        let r = self.resolve(ty);
-        drop(g);
-        let g = crate::prof::enter("f.open");
-        let o = self.open_selves(r);
-        drop(g);
-        let _g = crate::prof::enter("f.fold");
-        o.into_folded()
+        self.open_selves(self.resolve(ty)).into_folded()
     }
 
     /// [`Self::finish`] for a message: a literal whose type is still open
@@ -1339,7 +1323,6 @@ impl Inferer {
     }
 
     fn unify(&mut self, a: &Ty, b: &Ty, span: Span) {
-        let _g = crate::prof::enter("unify");
         self.unify_ty(a, b, span);
         self.assumed.clear();
         self.knots_tied = 0;
@@ -1543,7 +1526,6 @@ impl Inferer {
     /// against any other type its record is unified instead. Whether the pair
     /// is settled here.
     fn unify_selves(&mut self, a: &Ty, b: &Ty, span: Span) -> bool {
-        let _g = crate::prof::enter("unify_selves");
         if self.self_defs.is_empty() {
             return false;
         }
@@ -1757,7 +1739,6 @@ impl Inferer {
         optional: bool,
         span: Span,
     ) -> Result<Option<(Ty, Ty, Ty, Row)>, Spent> {
-        let _g = crate::prof::enter("surface_bounded");
         if self.spend_on_row(row, &Budget::for_unfolding()).is_none() {
             self.report_too_complex(span);
             return Err(Spent);
@@ -1768,7 +1749,6 @@ impl Inferer {
     /// What stands between `row` and its first field: a row variable bound to
     /// a row, a field known to be absent, or a field known to be present.
     fn peel<'r>(&self, row: &'r Row) -> Peel<'r> {
-        let _g = crate::prof::enter("peel");
         match row {
             Row::Var(v) => self
                 .row_subst
@@ -1799,7 +1779,6 @@ impl Inferer {
     /// `ty`, followed through the substitution until its outermost
     /// constructor or an unbound variable shows, without copying anything.
     fn head<'a>(&self, ty: &'a Ty) -> Head<'a> {
-        let _g = crate::prof::enter("head");
         let Ty::Var(v) = ty else {
             return Head::Borrowed(ty);
         };
@@ -1865,7 +1844,6 @@ impl Inferer {
     /// `x = t` where `t` mentions `x`: the recursive type `μv. t[x := v]`, if
     /// every mention is guarded (see [`Guard`]).
     fn tie_ty_knot(&mut self, x: TypeVar, t: &Ty) -> Option<Ty> {
-        let _g = crate::prof::enter("tie_ty_knot");
         self.spend_knot()?;
         let binder = self.fresh_id();
         let body = plug(
@@ -1884,7 +1862,6 @@ impl Inferer {
     /// it is the recursive type `μv. [prefix | row[mention := v]]`. `x` becomes
     /// `row` with that type in place of the mentions.
     fn tie_row_knot(&mut self, x: TypeVar, kind: RowKind, row: &Row) -> Option<Row> {
-        let _g = crate::prof::enter("tie_row_knot");
         self.spend_knot()?;
         let under_tag = match kind {
             RowKind::Variant => Guard::default().tag(),
@@ -1912,7 +1889,6 @@ impl Inferer {
     /// long, which [`MAX_TYPE_TERMS`] caps: every row grows by one inferred
     /// expression at a time and each is checked.
     fn surface(&mut self, label: &str, row: &Row, optional: bool) -> Option<(Ty, Ty, Ty, Row)> {
-        let _g = crate::prof::enter("surface");
         let resolved = self.resolve_spine(row);
         self.surface_resolved(label, resolved, optional)
     }
@@ -2130,7 +2106,6 @@ impl Inferer {
     /// `ty` takes on the constraint, to be checked when it is bound; a type that
     /// can never satisfy it is a [`Violation`].
     fn constrain(&mut self, ty: &Ty, kinds: Kinds) -> Result<(), Violation> {
-        let _g = crate::prof::enter("constrain");
         kinds
             .iter()
             .try_for_each(|kind| self.constrain_kind(ty, kind, &mut Vec::new()))
@@ -2262,7 +2237,6 @@ impl Inferer {
     }
 
     fn instantiate(&mut self, scheme: &Scheme) -> Ty {
-        let _g = crate::prof::enter("instantiate");
         let mut binders = Vec::new();
         scheme.ty.rec_binders(&mut binders);
         let mapping: HashMap<TypeVar, TypeVar> = scheme
@@ -2293,7 +2267,6 @@ impl Inferer {
     /// open to `Float`) rather than generalized: `n = 3` is one number, not a
     /// fresh one at every use.
     fn generalize(&mut self, ty: &Ty, function: bool) -> Scheme {
-        let _g = crate::prof::enter("generalize");
         // A value that is the receiver of the literal being inferred (a method
         // call's result bound to a temporary) stays that variable: opening it
         // would copy the whole record type into every use.
@@ -2708,7 +2681,6 @@ impl Inferer {
     }
 
     fn within_unfold_budget(&self, ty: &Ty) -> bool {
-        let _g = crate::prof::enter("within_unfold_budget");
         self.spend_on_ty(ty, &Budget::for_unfolding()).is_some()
     }
 
@@ -2717,17 +2689,14 @@ impl Inferer {
     /// Counting stops once the budget is spent, so the cost is bounded however
     /// large the type is.
     fn within_term_budget(&self, ty: &Ty) -> bool {
-        let _g = crate::prof::enter("within_term_budget");
         self.spend_on_ty(ty, &Budget::for_type()).is_some()
     }
 
     fn spend_on_ty(&self, ty: &Ty, budget: &Budget) -> Option<()> {
-        let _g = crate::prof::enter("spend_on_ty");
         Extent::new(self, budget).ty(ty, 0).map(drop)
     }
 
     fn spend_on_row(&self, row: &Row, budget: &Budget) -> Option<()> {
-        let _g = crate::prof::enter("spend_on_row");
         Extent::new(self, budget).row(row, 0).map(drop)
     }
 
@@ -3494,7 +3463,6 @@ impl Inferer {
     /// returns `{...self, …}` returns that same type, and the one recursive
     /// type has one shape however many methods there are (ADR 0034).
     fn infer_record(&mut self, fields: &[(String, Expr)], span: Span) -> Ty {
-        let _g = crate::prof::enter("infer_record");
         for (label, value) in fields {
             if let ExprKind::Func { params, .. } = &value.kind
                 && !is_method(value)
@@ -3596,7 +3564,6 @@ impl Inferer {
         receiver: TypeVar,
         span: Span,
     ) -> Vec<Ty> {
-        let _g = crate::prof::enter("tie_methods");
         let def = self.self_defs[&receiver].clone();
         if !self.within_unfold_budget(&def) || tys.iter().any(|ty| !self.within_unfold_budget(ty)) {
             return self.abandon_receiver(receiver, slots, span);
@@ -3659,7 +3626,6 @@ impl Inferer {
     /// presence-variable field in it (there or not, at `e`'s type) and a
     /// present one in the result, so the type is the same either way (ADR 0033).
     fn infer_spread(&mut self, base: &Expr, fields: &[(String, Expr)]) -> Ty {
-        let _g = crate::prof::enter("infer_spread");
         let base_ty = self.infer(base);
         let receiver = match &*self.head(&base_ty) {
             Ty::Var(var) if self.self_defs.contains_key(var) => Some(*var),
@@ -3709,7 +3675,6 @@ impl Inferer {
         span: Span,
         copied: &Copied,
     ) -> Row {
-        let _g = crate::prof::enter("override_field");
         match self.resolve_row(&row) {
             Row::Extend {
                 label: l,
@@ -4778,6 +4743,81 @@ mod tests {
         assert_eq!(
             inf.errors[0].message,
             "arithmetic needs numbers or records of numbers, but this is `{y: Bool | t1001}`"
+        );
+    }
+
+    /// `v_n = (v_{n-1}, v_{n-1})`: a type of 2^n terms that is n nodes as a
+    /// graph.
+    fn doubled(inf: &mut Inferer, depth: TypeVar) -> Ty {
+        for var in 1..=depth {
+            let below = Ty::Var(var - 1);
+            inf.subst
+                .insert(var, Rc::new(Ty::Func(vec![below.clone()], Arc::new(below))));
+        }
+        Ty::Var(depth)
+    }
+
+    #[test]
+    fn types_are_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Ty>();
+        assert_send_sync::<Row>();
+    }
+
+    #[test]
+    fn measuring_a_type_follows_variables_once_however_often_they_are_mentioned() {
+        let mut inf = inferer();
+        let small = doubled(&mut inf, 12);
+        let huge = doubled(&mut inf, 60);
+        assert!(inf.within_unfold_budget(&small));
+        assert!(!inf.within_unfold_budget(&huge));
+        assert!(!inf.within_term_budget(&small));
+    }
+
+    #[test]
+    fn the_occurs_check_searches_a_shared_part_once() {
+        let mut inf = inferer();
+        let huge = doubled(&mut inf, 60);
+        assert!(!inf.occurs_deep(999, &huge));
+        inf.subst.insert(0, Rc::new(Ty::Var(999)));
+        assert!(inf.occurs_deep(999, &huge));
+    }
+
+    #[test]
+    fn resolving_keeps_the_parts_the_substitution_leaves_alone() {
+        let mut inf = inferer();
+        let receiver = Arc::new(Ty::Record(extend("n", Ty::Int, Row::Empty)));
+        let before = Ty::Func(vec![Ty::Var(1)], Arc::clone(&receiver));
+        inf.subst.insert(1, Rc::new(Ty::Bool));
+        let Ty::Func(args, after) = inf.resolve(&Ty::Func(
+            vec![Ty::Var(1)],
+            Arc::new(Ty::Record(extend("m", before, Row::Empty))),
+        )) else {
+            panic!("a function resolves to a function");
+        };
+        assert_eq!(args, [Ty::Bool]);
+        let Ty::Record(Row::Extend { field, .. }) = &*after else {
+            panic!("the result stays a record");
+        };
+        let Ty::Func(_, kept) = &**field else {
+            panic!("the field stays a function");
+        };
+        assert!(Arc::ptr_eq(kept, &receiver));
+    }
+
+    #[test]
+    fn a_variable_resolves_afresh_after_it_is_bound_further() {
+        let mut inf = inferer();
+        inf.subst
+            .insert(1, Rc::new(Ty::Func(vec![Ty::Var(2)], Arc::new(Ty::Int))));
+        assert_eq!(
+            inf.resolve(&Ty::Var(1)),
+            Ty::Func(vec![Ty::Var(2)], Arc::new(Ty::Int))
+        );
+        inf.subst.insert(2, Rc::new(Ty::Str));
+        assert_eq!(
+            inf.resolve(&Ty::Var(1)),
+            Ty::Func(vec![Ty::Str], Arc::new(Ty::Int))
         );
     }
 }
