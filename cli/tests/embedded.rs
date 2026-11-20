@@ -30,7 +30,8 @@
 //! SVG coordinates); and nine in `numbers`, which pins 64-bit and 15-digit answers
 //! (`an_int_is_a_64_bit_integer`, `an_int_at_the_edge_does_not_trap`,
 //! `the_most_negative_int_floor_divides_by_minus_one_only_as_a_remainder`,
-//! `a_float_follows_ieee_and_never_traps`, `rounding_a_float_with_no_int_traps`,
+//! `a_float_follows_ieee_and_never_traps`,
+//! `a_float_floor_divides_and_takes_a_remainder_exactly_as_python_does` (f64 digits), `rounding_a_float_with_no_int_traps`,
 //! `round_floor_ceil_and_truncate_turn_a_float_into_an_int`,
 //! `the_result_of_a_rounding_function_is_an_int`,
 //! `trig_takes_degrees_and_is_exact_at_the_quarter_turns` and
@@ -93,6 +94,24 @@ fn differs(src: &str, desktop: &str, embedded: &str) {
 fn example(file: &str) -> String {
     let path = format!("{}/../examples/{file}", env!("CARGO_MANIFEST_DIR"));
     fs::read_to_string(path).unwrap()
+}
+
+#[test]
+fn float_floor_division_and_remainder_agree_where_the_operands_fit_an_f32() {
+    for (sum, expected) in [
+        ("7.5 // 2", "3"),
+        ("-7.5 // 2", "-4"),
+        ("7.5 % -2", "-0.5"),
+        ("-7.5 % 2", "0.5"),
+        ("5.5 % 0.5", "0"),
+        ("6.5 // -2.5", "-3"),
+        ("-1.0 % 3.0", "2"),
+        ("-5.0 // (1.0 / 0.0)", "-1"),
+        ("7 % 2.5", "2"),
+    ] {
+        assert_eq!(same_on_both(&format!("print({sum})")), expected, "{sum}");
+    }
+    assert_eq!(same_on_both("print(1 // 0.1)"), "9");
 }
 
 #[test]

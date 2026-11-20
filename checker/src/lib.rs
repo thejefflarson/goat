@@ -948,28 +948,30 @@ mod tests {
     }
 
     #[test]
-    fn floor_division_and_remainder_reject_a_float() {
-        for (source, operand) in [
-            ("7.5 // 2", "7.5"),
-            ("7 // 2.0", "2.0"),
-            ("7 % 2.5", "2.5"),
-            ("1e3 % 7", "1e3"),
-            ("x = 2.5  7 // x", "x"),
-            ("(7 / 2) // 2", "7 / 2"),
+    fn floor_division_and_remainder_take_a_float_and_give_one() {
+        for source in [
+            "7.5 // 2",
+            "7 // 2.0",
+            "7 % 2.5",
+            "1e3 % 7",
+            "x = 2.5  7 // x",
+            "(7 / 2) // 2",
         ] {
-            let (message, shown) = spanned_error(source);
-            assert!(message.contains("needs whole numbers"), "{message}");
-            assert!(message.contains("round"), "{message}");
-            assert_eq!(shown, operand, "{source}");
+            assert_eq!(exact_type_of(source), "Float", "{source}");
         }
         let halve = "halve = program(n) do n // 2 done ";
+        assert_eq!(exact_type_of(&format!("{halve} halve(2.5)")), "Float");
         assert_eq!(
-            type_of(&format!("{halve} halve(2.5)")).unwrap_err(),
-            "type mismatch: expected `Int`, found `Float`"
+            exact_type_of("{x: 7.5, y: 9.0} // {x: 2.0, y: 4.0}"),
+            "{x: Float, y: Float}"
+        );
+        assert_eq!(
+            exact_type_of("{x: 7, y: 9} % {x: 2, y: 4}"),
+            "{x: Int, y: Int}"
         );
         assert_eq!(
             type_of("\"a\" // 2").unwrap_err(),
-            "type mismatch: expected `Number`, found `String`"
+            "`//` needs numbers or records of numbers, but this is `String`"
         );
     }
 

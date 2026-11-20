@@ -109,9 +109,9 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
-    /// `//`: Int-only floor division.
+    /// `//`: floor division.
     FloorDiv,
-    /// `%`: Int-only remainder, taking the sign of the divisor.
+    /// `%`: remainder, taking the sign of the divisor.
     Mod,
     Lt,
     Lte,
@@ -122,9 +122,12 @@ pub enum BinOp {
 }
 
 impl BinOp {
-    /// `+ - * /`: defined on numbers and on records of numbers.
+    /// `+ - * / // %`: defined on numbers and on records of numbers.
     pub fn is_arithmetic(self) -> bool {
-        matches!(self, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
+        matches!(
+            self,
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::FloorDiv | BinOp::Mod
+        )
     }
 
     /// The operator as written, for messages.

@@ -1147,7 +1147,47 @@ fn float_op(op: FloatOp, a: Value, b: Value) -> Result<Value, InterpError> {
         FloatOp::Sub => a - b,
         FloatOp::Mul => a * b,
         FloatOp::Div => a / b,
+        FloatOp::FloorDiv => floor_div_float(a, b),
+        FloatOp::Mod => mod_float(a, b),
     }))
+}
+
+/// CPython's `float_divmod` (`Objects/floatobject.c`), minus its zero-divisor
+/// error: Rust's `%` on `f64` is C's `fmod`.
+fn divmod_float(a: f64, b: f64) -> (f64, f64) {
+    let mut modulus = a % b;
+    let mut quotient = (a - modulus) / b;
+    if modulus != 0.0 {
+        if (b < 0.0) != (modulus < 0.0) {
+            modulus += b;
+            quotient -= 1.0;
+        }
+    } else {
+        modulus = 0.0_f64.copysign(b);
+    }
+    let floored = if quotient != 0.0 {
+        let floor = quotient.floor();
+        if quotient - floor > 0.5 {
+            floor + 1.0
+        } else {
+            floor
+        }
+    } else {
+        0.0_f64.copysign(a / b)
+    };
+    (floored, modulus)
+}
+
+fn floor_div_float(a: f64, b: f64) -> f64 {
+    if b == 0.0 {
+        a / b
+    } else {
+        divmod_float(a, b).0
+    }
+}
+
+fn mod_float(a: f64, b: f64) -> f64 {
+    divmod_float(a, b).1
 }
 
 fn compare(op: CmpOp, a: Value, b: Value) -> Result<Value, InterpError> {
