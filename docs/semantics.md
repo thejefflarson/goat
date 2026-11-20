@@ -795,10 +795,17 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
     generalized `Literal` variable is at a concrete `Int` or `Float`, so the
     default is a choice of instance, made by the elaborator at the top-level
     program judgment, and a theorem here holds for every choice.
-  - *Algorithm W.* The algorithm of the checker infers concrete operand types.
-    It is sound for the generic calculus (every type it infers is derivable) but
-    not complete: it rejects `1 + 1.5`, which has a derivation at `Float`.
-    Extending it to infer sorted variables is a follow-up.
+  - *Algorithm W.* The proofs' inference algorithm threads a kinding environment
+    (`proofs/GoatInfer.v`): a numeral is a fresh `Literal` variable, `float(e)`
+    and `+ - *` unify their operands with a fresh `Numeric` variable,
+    unification checks a sorted variable against a type and binds the coarser of
+    two variables to the finer, `generalize` records the sorts of the variables
+    it quantifies and `instantiate` gives each fresh variable its scheme's sort.
+    So it infers `1 + 1.5 : Float` and `program(x) do x * 2 done : a -> a` with
+    `a` `Literal`. Every type it infers is derivable (`infer_closed_sound`, in the
+    environment it returns). It is not complete: a comparison has no signature at
+    a variable, so one on a numeral's variable settles at `Int`, and a comparison
+    of two other variables is rejected.
   - *A string token has no payload.* The lexer is trusted, so the parse tree
     carries no bytes, and a string denotes `q` for every `q`.
   - *`if` has an `else`.* `if c then a done` lowers to `if c then a else ()`;

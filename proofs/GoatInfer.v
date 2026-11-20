@@ -3,6 +3,8 @@
 
    This file holds only the algorithm, so that it extracts to OCaml (see
    [GoatExtract.v]).  GoatInferSound.v proves it sound against [typing].
+   A type variable carries a sort (ADR 0038), read from a kinding environment
+   the algorithm threads.
 
    Naming discipline that the soundness proof leans on.  The algorithm draws
    every type or row variable it invents from the EVEN atoms [ea n], and
@@ -57,6 +59,40 @@ Definition apC (s : sub) (G : ctx) : ctx :=
   List.map (fun p => (fst p, Sch (s_tq (snd p)) (s_rq (snd p)) (apT s (s_body (snd p))) (s_sk (snd p)))) G.
 
 (* ------------------------------------------------------------------ *)
+(* Sorts                                                                *)
+(* ------------------------------------------------------------------ *)
+
+(* A type variable carries a sort (ADR 0038), read from the kinding
+   environment the algorithm threads.  Unification never changes it: it
+   binds the coarser of two variables to the finer, and a sorted variable to a
+   type only when the type satisfies the sort.  Only a fresh variable gets a
+   sort, so the environment changes by [upd] on atoms no one has used. *)
+
+Definition upd (D : denv) (a : atom) (k : sort) : denv :=
+  fun b => if Atom.eq_dec b a then k else D b.
+
+Definition finer_b (k1 k2 : sort) : bool :=
+  match k1, k2 with
+  | _, k_Any => true
+  | k_Literal, _ => true
+  | k_Numeric, k_Numeric => true
+  | _, _ => false
+  end.
+
+Definition sat_b (D : denv) (k : sort) (T : typ) : bool :=
+  match T with
+  | typ_Int | typ_Float => true
+  | typ_Var a => finer_b (D a) k
+  | _ => match k with k_Any => true | _ => false end
+  end.
+
+Definition is_literal (D : denv) (T : typ) : bool :=
+  match T with
+  | typ_Var a => match D a with k_Literal => true | _ => false end
+  | _ => false
+  end.
+
+(* ------------------------------------------------------------------ *)
 (* Unification                                                          *)
 (* ------------------------------------------------------------------ *)
 
@@ -85,7 +121,7 @@ Fixpoint rewrite_row (l : label) (av : atoms) (R : row) (n : nat)
         end
   end.
 
-Fixpoint unify_t (f : nat) (T1 T2 : typ) (n : nat) {struct f} : option (sub * nat) :=
+Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f} : option (sub * nat) :=
   match f with
   | O => None
   | S f' =>
@@ -96,23 +132,26 @@ Fixpoint unify_t (f : nat) (T1 T2 : typ) (n : nat) {struct f} : option (sub * na
       | typ_Unit, typ_Unit => Some (sid, n)
       | typ_String, typ_String => Some (sid, n)
       | typ_Var a, typ_Var b =>
-          if Atom.eq_dec a b then Some (sid, n) else Some (sbT a T2, n)
-      | typ_Var a, _ => if occT a T2 then None else Some (sbT a T2, n)
-      | _, typ_Var b => if occT b T1 then None else Some (sbT b T1, n)
+          if Atom.eq_dec a b then Some (sid, n)
+          else if finer_b (D b) (D a) then Some (sbT a T2, n) else Some (sbT b T1, n)
+      | typ_Var a, _ =>
+          if occT a T2 then None else if sat_b D (D a) T2 then Some (sbT a T2, n) else None
+      | _, typ_Var b =>
+          if occT b T1 then None else if sat_b D (D b) T1 then Some (sbT b T1, n) else None
       | typ_Arrow A B, typ_Arrow A' B' =>
-          match unify_t f' A A' n with
+          match unify_t f' D A A' n with
           | None => None
           | Some (s1, n1) =>
-              match unify_t f' (apT s1 B) (apT s1 B') n1 with
+              match unify_t f' D (apT s1 B) (apT s1 B') n1 with
               | None => None
               | Some (s2, n2) => Some (scomp s2 s1, n2)
               end
           end
-      | typ_Record R, typ_Record R' => unify_r f' R R' n
+      | typ_Record R, typ_Record R' => unify_r f' D R R' n
       | _, _ => None
       end
   end
-with unify_r (f : nat) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :=
+with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :=
   match f with
   | O => None
   | S f' =>
@@ -126,10 +165,10 @@ with unify_r (f : nat) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :
           match rewrite_row l (frv_row R1) R2 n with
           | None => None
           | Some (T', R2', s0, n1) =>
-              match unify_t f' (apT s0 T) T' n1 with
+              match unify_t f' D (apT s0 T) T' n1 with
               | None => None
               | Some (s1, n2) =>
-                  match unify_r f' (apR s1 (apR s0 R1')) (apR s1 R2') n2 with
+                  match unify_r f' D (apR s1 (apR s0 R1')) (apR s1 R2') n2 with
                   | None => None
                   | Some (s2, n3) => Some (scomp s2 (scomp s1 s0), n3)
                   end
@@ -142,7 +181,7 @@ with unify_r (f : nat) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :
 (* Unify two rows field by field: they list the same labels in the same
    order, as the row of a recursive group's members does against the types its
    members were inferred at. *)
-Fixpoint unify_pw (f : nat) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :=
+Fixpoint unify_pw (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :=
   match f with
   | O => None
   | S f' =>
@@ -150,10 +189,10 @@ Fixpoint unify_pw (f : nat) (R1 R2 : row) (n : nat) {struct f} : option (sub * n
       | row_Empty, row_Empty => Some (sid, n)
       | row_Ext l T R1', row_Ext l' T' R2' =>
           if Nat.eqb l l' then
-            match unify_t f' T T' n with
+            match unify_t f' D T T' n with
             | None => None
             | Some (s1, n1) =>
-                match unify_pw f' (apR s1 R1') (apR s1 R2') n1 with
+                match unify_pw f' D (apR s1 R1') (apR s1 R2') n1 with
                 | None => None
                 | Some (s2, n2) => Some (scomp s2 s1, n2)
                 end
@@ -188,8 +227,15 @@ Definition inst_sub (s : scheme) (n : nat) : sub :=
       (fun r => if in_dec Atom.eq_dec r lr
                 then row_Var (ea (n + length lq + idx r lr)) else row_Var r).
 
-Definition instantiate (s : scheme) (n : nat) : typ * nat :=
-  (apT (inst_sub s n) (s_body s),
+(* The fresh variable standing for a quantified one has the sort the scheme
+   recorded for it. *)
+Definition inst_den (D : denv) (s : scheme) (n : nat) : denv :=
+  let lq := AtomSetImpl.elements (s_tq s) in
+  fun b => fold_right (fun a acc => if Atom.eq_dec b (ea (n + idx a lq)) then s_sk s a else acc)
+                      (D b) lq.
+
+Definition instantiate (D : denv) (s : scheme) (n : nat) : typ * denv * nat :=
+  (apT (inst_sub s n) (s_body s), inst_den D s n,
    n + length (AtomSetImpl.elements (s_tq s)) + length (AtomSetImpl.elements (s_rq s))).
 
 Definition aset (l : list atom) : atoms := fold_right AtomSetImpl.add AtomSetImpl.empty l.
@@ -206,37 +252,44 @@ Definition gen_vars_t (G : ctx) (T : typ) : list atom :=
 Definition gen_vars_r (G : ctx) (T : typ) : list atom :=
   AtomSetImpl.elements (AtomSetImpl.diff (frv_typ T) (frv_ctx G)).
 
+(* The sort of each renamed quantified variable is the sort its original has
+   in [D]. *)
+Definition gen_sk (D : denv) (la : list atom) : sort_fn :=
+  fun b => fold_right (fun a acc => if Atom.eq_dec b (oa (idx a la)) then D a else acc) k_Any la.
+
 (* The generalization of [T] over [G], with the quantified variables renamed to
-   odd atoms. *)
-Definition gen_ren (G : ctx) (T : typ) : scheme :=
+   odd atoms and recorded at their sorts in [D]. *)
+Definition gen_ren (D : denv) (G : ctx) (T : typ) : scheme :=
   let la := gen_vars_t G T in
   let lr := gen_vars_r G T in
   Sch (aset (List.map (fun a => oa (idx a la)) la))
       (aset (List.map (fun r => oa (idx r lr)) lr))
       (ap_typ (rename_t la) (rename_r lr) T)
-      (fun _ => k_Any).
+      (gen_sk D la).
 
 (* ------------------------------------------------------------------ *)
 (* Algorithm W                                                          *)
 (* ------------------------------------------------------------------ *)
 
-(* The type both operands of a binary operator are unified with, taken from
-   whichever operand type is already known (the right first).  [/] takes Floats
-   and [//] and [%] take Ints whatever the operands are.  Two operands that are
-   both still variables fix nothing, so the operator has no signature there:
-   generic operators are not in this phase. *)
+(* The type a comparison, [/], [//] or [%] unifies both operands with, taken
+   from whichever operand type is already known (the right first).  [/] takes
+   Floats and [//] and [%] take Ints whatever the operands are.  A comparison
+   is at a concrete type, and an operand that is a numeral's variable settles
+   at [Int]: the comparison has no signature at a variable, so this picks the
+   derivation at [Int].  [+ - *] are generic and take no such type. *)
 Definition num_ty (A : typ) : bool :=
   match A with typ_Int | typ_Float => true | _ => false end.
 
 Definition cmp_ty (A : typ) : bool :=
   match A with typ_Int | typ_Float | typ_String | typ_Bool => true | _ => false end.
 
-Definition bin_arg (o : bop) (A B : typ) : option typ :=
+Definition bin_arg (D : denv) (o : bop) (A B : typ) : option typ :=
   match kind o with
-  | k_ring => if num_ty B then Some B else if num_ty A then Some A else None
+  | k_ring => None
   | k_quot => Some typ_Float
   | k_whole => Some typ_Int
-  | k_cmp => if cmp_ty B then Some B else if cmp_ty A then Some A else None
+  | k_cmp => if cmp_ty B then Some B else if cmp_ty A then Some A
+             else if orb (is_literal D A) (is_literal D B) then Some typ_Int else None
   end.
 
 (* The result type of a binary operator at an operand type, mirroring
@@ -275,11 +328,18 @@ Fixpoint group_row (fs : fields) (n : nat) : row :=
   | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
   end.
 
+Definition is_ring_op (o : bop) : bool :=
+  match kind o with k_ring => true | _ => false end.
+
 Definition fresh_var (G : ctx) (e : exp) : atom :=
   fresh (AtomSetImpl.elements (dom G `union` fv_exp e)).
 
-Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
-  : option (sub * typ * nat) :=
+(* [infer f D G e n] returns the substitution, the kinding environment the
+   result type lives in, the type, and the next unused variable number.  The
+   environment [D] has [Any] on every even atom from [n] on, so a fresh
+   variable is [Any] unless the algorithm gives it a sort with [upd]. *)
+Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
+  : option (sub * denv * typ * nat) :=
   match f with
   | O => None
   | S f' =>
@@ -288,145 +348,161 @@ Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
       | e_fvar_f x =>
           match lookup x G with
           | None => None
-          | Some s => let (T, n1) := instantiate s n in Some (sid, T, n1)
+          | Some s => let (p, n1) := instantiate D s n in
+                      let (T, D1) := p in Some (sid, D1, T, n1)
           end
-      | e_num _ => Some (sid, typ_Int, n)
-      | e_dec _ => Some (sid, typ_Float, n)
-      | e_unit => Some (sid, typ_Unit, n)
-      | e_str _ => Some (sid, typ_String, n)
-      | e_true => Some (sid, typ_Bool, n)
-      | e_false => Some (sid, typ_Bool, n)
+      | e_num _ => Some (sid, upd D (ea n) k_Literal, typ_Var (ea n), S n)
+      | e_dec _ => Some (sid, D, typ_Float, n)
+      | e_unit => Some (sid, D, typ_Unit, n)
+      | e_str _ => Some (sid, D, typ_String, n)
+      | e_true => Some (sid, D, typ_Bool, n)
+      | e_false => Some (sid, D, typ_Bool, n)
       | e_abs b =>
           let x := fresh_var G b in
           let beta := typ_Var (ea n) in
-          match infer f' ((x ~ sch_mono beta) ++ G) (open_exp_wrt_exp b (e_fvar_f x)) (S n) with
+          match infer f' D ((x ~ sch_mono beta) ++ G) (open_exp_wrt_exp b (e_fvar_f x)) (S n) with
           | None => None
-          | Some (s, T, n1) => Some (s, typ_Arrow (apT s beta) T, n1)
+          | Some (s, D1, T, n1) => Some (s, D1, typ_Arrow (apT s beta) T, n1)
           end
       | e_app e1 e2 =>
-          match infer f' G e1 n with
+          match infer f' D G e1 n with
           | None => None
-          | Some (s1, T1, n1) =>
-              match infer f' (apC s1 G) e2 n1 with
+          | Some (s1, D1, T1, n1) =>
+              match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
-              | Some (s2, T2, n2) =>
+              | Some (s2, D2, T2, n2) =>
                   let beta := typ_Var (ea n2) in
-                  match unify_t f' (apT s2 T1) (typ_Arrow T2 beta) (S n2) with
+                  match unify_t f' D2 (apT s2 T1) (typ_Arrow T2 beta) (S n2) with
                   | None => None
                   | Some (s3, n3) =>
-                      Some (scomp s3 (scomp s2 s1), apT s3 beta, n3)
+                      Some (scomp s3 (scomp s2 s1), D2, apT s3 beta, n3)
                   end
               end
           end
       | e_let e1 e2 =>
           if is_gen_value e1 then
-          match infer f' G e1 n with
+          match infer f' D G e1 n with
           | None => None
-          | Some (s1, T1, n1) =>
+          | Some (s1, D1, T1, n1) =>
               let G1 := apC s1 G in
-              let sc := gen_ren G1 T1 in
+              let sc := gen_ren D1 G1 T1 in
               let x := fresh_var G1 e2 in
-              match infer f' ((x ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
+              match infer f' D1 ((x ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
               | None => None
-              | Some (s2, T2, n2) => Some (scomp s2 s1, T2, n2)
+              | Some (s2, D2, T2, n2) => Some (scomp s2 s1, D2, T2, n2)
               end
           end
           else
-          match infer f' G e1 n with
+          match infer f' D G e1 n with
           | None => None
-          | Some (s1, T1, n1) =>
+          | Some (s1, D1, T1, n1) =>
               let x := fresh_var (apC s1 G) e2 in
-              match infer f' ((x ~ sch_mono T1) ++ apC s1 G) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
+              match infer f' D1 ((x ~ sch_mono T1) ++ apC s1 G) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
               | None => None
-              | Some (s2, T2, n2) => Some (scomp s2 s1, T2, n2)
+              | Some (s2, D2, T2, n2) => Some (scomp s2 s1, D2, T2, n2)
               end
           end
       | e_letrec fs e2 =>
           if is_fn_group fs then
           let R0 := group_row fs n in
           let p := fresh_var G (e_rec fs) in
-          match infer_fields f'
+          match infer_fields f' D
                   ((p ~ sch_mono (typ_Record R0)) ++ G)
                   (open_fields_wrt_exp fs (e_fvar_f p)) (n + nfields fs) with
           | None => None
-          | Some (s1, R1, n1) =>
-              match unify_pw f' R1 (apR s1 R0) n1 with
+          | Some (s1, D1, R1, n1) =>
+              match unify_pw f' D1 R1 (apR s1 R0) n1 with
               | None => None
               | Some (s2, n2) =>
                   let s := scomp s2 s1 in
                   let G1 := apC s G in
-                  let sc := gen_ren G1 (typ_Record (apR s R0)) in
+                  let sc := gen_ren D1 G1 (typ_Record (apR s R0)) in
                   let q := fresh_var G1 e2 in
-                  match infer f' ((q ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f q)) n2 with
+                  match infer f' D1 ((q ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f q)) n2 with
                   | None => None
-                  | Some (s3, T, n3) => Some (scomp s3 s, T, n3)
+                  | Some (s3, D3, T, n3) => Some (scomp s3 s, D3, T, n3)
                   end
               end
           end
           else None
       | e_rec fs =>
-          match infer_fields f' G fs n with
+          match infer_fields f' D G fs n with
           | None => None
-          | Some (s, R, n1) => Some (s, typ_Record R, n1)
+          | Some (s, D1, R, n1) => Some (s, D1, typ_Record R, n1)
           end
       | e_proj e1 l =>
-          match infer f' G e1 n with
+          match infer f' D G e1 n with
           | None => None
-          | Some (s1, T1, n1) =>
+          | Some (s1, D1, T1, n1) =>
               let a := typ_Var (ea n1) in
               let r := row_Var (ea (S n1)) in
-              match unify_t f' T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
+              match unify_t f' D1 T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
               | None => None
-              | Some (s2, n2) => Some (scomp s2 s1, apT s2 a, n2)
+              | Some (s2, n2) => Some (scomp s2 s1, D1, apT s2 a, n2)
               end
           end
       | e_ite c a b =>
-          match infer f' G c n with
+          match infer f' D G c n with
           | None => None
-          | Some (s1, T1, n1) =>
-              match unify_t f' T1 typ_Bool n1 with
+          | Some (s1, D1, T1, n1) =>
+              match unify_t f' D1 T1 typ_Bool n1 with
               | None => None
               | Some (s2, n2) =>
-                  match infer f' (apC s2 (apC s1 G)) a n2 with
+                  match infer f' D1 (apC s2 (apC s1 G)) a n2 with
                   | None => None
-                  | Some (s3, T2, n3) =>
-                      match infer f' (apC s3 (apC s2 (apC s1 G))) b n3 with
+                  | Some (s3, D3, T2, n3) =>
+                      match infer f' D3 (apC s3 (apC s2 (apC s1 G))) b n3 with
                       | None => None
-                      | Some (s4, T3, n4) =>
-                          match unify_t f' (apT s4 T2) T3 n4 with
+                      | Some (s4, D4, T3, n4) =>
+                          match unify_t f' D4 (apT s4 T2) T3 n4 with
                           | None => None
                           | Some (s5, n5) =>
-                              Some (scomp s5 (scomp s4 (scomp s3 (scomp s2 s1))), apT s5 T3, n5)
+                              Some (scomp s5 (scomp s4 (scomp s3 (scomp s2 s1))), D4, apT s5 T3, n5)
                           end
                       end
                   end
               end
           end
       | e_tofloat e1 =>
-          match infer f' G e1 n with
+          match infer f' D G e1 n with
           | None => None
-          | Some (s1, T1, n1) =>
-              match unify_t f' T1 typ_Int n1 with
+          | Some (s1, D1, T1, n1) =>
+              let D1' := upd D1 (ea n1) k_Numeric in
+              match unify_t f' D1' T1 (typ_Var (ea n1)) (S n1) with
               | None => None
-              | Some (s2, n2) => Some (scomp s2 s1, typ_Float, n2)
+              | Some (s2, n2) => Some (scomp s2 s1, D1', typ_Float, n2)
               end
           end
       | e_bin e1 o e2 =>
-          match infer f' G e1 n with
+          match infer f' D G e1 n with
           | None => None
-          | Some (s1, T1, n1) =>
-              match infer f' (apC s1 G) e2 n1 with
+          | Some (s1, D1, T1, n1) =>
+              match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
-              | Some (s2, T2, n2) =>
-                  match bin_arg o (apT s2 T1) T2 with
-                  | None => None
-                  | Some T =>
-                      match unify_t f' (apT s2 T1) T n2 with
+              | Some (s2, D2, T2, n2) =>
+                  if is_ring_op o then
+                      let D2' := upd D2 (ea n2) k_Numeric in
+                      let c := typ_Var (ea n2) in
+                      match unify_t f' D2' (apT s2 T1) c (S n2) with
                       | None => None
                       | Some (s3, n3) =>
-                          match unify_t f' (apT s3 T2) T n3, bin_ty o T with
+                          match unify_t f' D2' (apT s3 T2) (apT s3 c) n3 with
+                          | None => None
+                          | Some (s4, n4) =>
+                              Some (scomp s4 (scomp s3 (scomp s2 s1)), D2',
+                                    apT s4 (apT s3 c), n4)
+                          end
+                      end
+                  else
+                  match bin_arg D2 o (apT s2 T1) T2 with
+                  | None => None
+                  | Some T =>
+                      match unify_t f' D2 (apT s2 T1) T n2 with
+                      | None => None
+                      | Some (s3, n3) =>
+                          match unify_t f' D2 (apT s3 T2) T n3, bin_ty o T with
                           | Some (s4, n4), Some R =>
-                              Some (scomp s4 (scomp s3 (scomp s2 s1)), R, n4)
+                              Some (scomp s4 (scomp s3 (scomp s2 s1)), D2, R, n4)
                           | _, _ => None
                           end
                       end
@@ -435,29 +511,37 @@ Fixpoint infer (f : nat) (G : ctx) (e : exp) (n : nat) {struct f}
           end
       end
   end
-with infer_fields (f : nat) (G : ctx) (fs : fields) (n : nat) {struct f}
-  : option (sub * row * nat) :=
+with infer_fields (f : nat) (D : denv) (G : ctx) (fs : fields) (n : nat) {struct f}
+  : option (sub * denv * row * nat) :=
   match f with
   | O => None
   | S f' =>
       match fs with
-      | fs_nil => Some (sid, row_Empty, n)
+      | fs_nil => Some (sid, D, row_Empty, n)
       | fs_cons l e rest =>
-          match infer f' G e n with
+          match infer f' D G e n with
           | None => None
-          | Some (s1, T1, n1) =>
-              match infer_fields f' (apC s1 G) rest n1 with
+          | Some (s1, D1, T1, n1) =>
+              match infer_fields f' D1 (apC s1 G) rest n1 with
               | None => None
-              | Some (s2, R2, n2) =>
-                  Some (scomp s2 s1, row_Ext l (apT s2 T1) R2, n2)
+              | Some (s2, D2, R2, n2) =>
+                  Some (scomp s2 s1, D2, row_Ext l (apT s2 T1) R2, n2)
               end
           end
       end
   end.
 
-(* A program is a closed term; the result is its type. *)
-Definition infer_closed (fuel : nat) (e : exp) : option typ :=
-  match infer fuel nil e 0 with
+(* A program is a closed term; the result is its type, with the sorts of its
+   free variables.  A variable left free in a program's type is one the
+   program's derivations may instantiate at any type of its sort. *)
+Definition infer_closed_env (fuel : nat) (e : exp) : option (denv * typ) :=
+  match infer fuel d_any nil e 0 with
   | None => None
-  | Some (_, T, _) => Some T
+  | Some (_, D, T, _) => Some (D, T)
+  end.
+
+Definition infer_closed (fuel : nat) (e : exp) : option typ :=
+  match infer_closed_env fuel e with
+  | None => None
+  | Some (_, T) => Some T
   end.

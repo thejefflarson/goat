@@ -12,6 +12,7 @@ GoatHM.v
 GoatSound.v
 GoatInfer.v
 GoatInferSub.v
+GoatInferSort.v
 GoatInferTyp.v
 GoatInferGen.v
 GoatInferRec.v

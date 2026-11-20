@@ -13,4 +13,4 @@ Require Import Stdlib.extraction.ExtrOcamlZInt.
 
 Set Warnings "-extraction-opaque-accessed,-extraction-default-directory,-extraction-reserved-identifier".
 Extraction Language OCaml.
-Extraction "goat_infer.ml" infer_closed.
+Extraction "goat_infer.ml" infer_closed_env.
