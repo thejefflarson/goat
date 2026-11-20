@@ -3,6 +3,7 @@
 
 pub mod captures;
 pub mod error;
+pub mod flow;
 pub mod hir;
 pub mod infer;
 pub mod kinds;
