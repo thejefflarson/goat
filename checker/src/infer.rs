@@ -3046,22 +3046,7 @@ impl Inferer {
                     && let Some((_, element)) = fields.first()
                 {
                     mark_element(&mut payload_ty, element.span);
-                    if group.is_some()
-                        && let Some(item) = swap_element(&mut payload_ty, Ty::Unit)
-                    {
-                        let slot = if self.may_be_number(&item) {
-                            let slot = self.fresh();
-                            self.flows.push(Flow {
-                                producer: item,
-                                slot: slot.clone(),
-                                span: element.span,
-                            });
-                            slot
-                        } else {
-                            item
-                        };
-                        swap_element(&mut payload_ty, slot);
-                    }
+                    self.share_element_slot(&mut payload_ty, element.span);
                 }
                 self.constructed.push((name.clone(), expr.span));
                 if let Some(group) = group {
@@ -3231,6 +3216,52 @@ impl Inferer {
             }
             _ => false,
         }
+    }
+
+    /// A number in a `Link` payload flows into the slot the rest of the list
+    /// already uses for its elements, so one `Float` among `Int`s makes the
+    /// whole literal a list of `Float`s and no element's type is left apart.
+    fn share_element_slot(&mut self, payload: &mut Ty, span: Span) {
+        let Some(item) = swap_element(payload, Ty::Unit) else {
+            return;
+        };
+        if !self.may_be_number(&item) {
+            swap_element(payload, item);
+            return;
+        }
+        let rest = match payload {
+            Ty::Record(row) => field_of(row, "1").cloned(),
+            _ => None,
+        };
+        let slot = match rest.and_then(|rest| self.list_element(&rest)) {
+            Some(element) if self.flow_end(&element).is_none() => {
+                swap_element(payload, item);
+                return;
+            }
+            Some(element) => element,
+            None => self.fresh(),
+        };
+        if self.is_certainly_number(&item) {
+            self.require_number(&self.resolve(&slot));
+        }
+        self.flows.push(Flow {
+            producer: item,
+            slot: slot.clone(),
+            span,
+        });
+        swap_element(payload, slot);
+    }
+
+    /// The type of the elements of `list`, if it is already known to be a
+    /// `Link`.
+    fn list_element(&self, list: &Ty) -> Option<Ty> {
+        let Ty::Variant(row) = self.resolve_head(list) else {
+            return None;
+        };
+        let Ty::Record(link) = self.resolve(field_of(&row, "Link")?) else {
+            return None;
+        };
+        field_of(&link, "0").cloned()
     }
 
     /// Whether `ty` is an `Int`, a `Float` or a variable that must be one, so
