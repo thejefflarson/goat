@@ -507,6 +507,52 @@ Example numeral_binding_is_generic :
   typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) typ_Float.
 Proof. split; apply numeral_binding_at; exact I. Qed.
 
+Lemma inst_numeral_at : forall U,
+  sat d_any k_Literal U ->
+  inst d_any U (gen nil (typ_Var ga) k_lit).
+Proof.
+  intros U HU.
+  exists (fun a => if a == ga then U else typ_Var a), idr.
+  split; [ | split; [ | split ] ].
+  - intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
+      [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
+  - intros r _. reflexivity.
+  - simpl. destruct (ga == ga) as [E|E]; [ reflexivity | congruence ].
+  - intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
+    simpl in Ha. assert (a = ga) by fsetdec. subst a.
+    destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+Qed.
+
+(* n = 3 {a: n + 1.5, b: n * 2}: the one numeral is a Float in the first field
+   and an Int in the second, whichever order the fields are written in (the
+   rules have no order; ADR 0039).  The checker accepts it the same way. *)
+Example numeral_binding_adapts_in_one_record :
+  typing d_any nil
+    (e_let (e_num 3)
+       (e_rec (fs_cons 0 (e_bin (e_fvar_b 0) bop_add (e_dec 0))
+              (fs_cons 1 (e_bin (e_fvar_b 0) bop_mul (e_num 2)) fs_nil))))
+    (typ_Record (row_Ext 0 typ_Float (row_Ext 1 typ_Int row_Empty))).
+Proof.
+  apply T_Let with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
+  - apply T_Num; [ constructor | ].
+    cbn [sat]. rewrite (ext_in _ _ _ ga).
+    + apply finer_refl.
+    + simpl. apply AtomSetFacts.diff_iff. split; [ fsetdec | fsetdec ].
+  - intros f Hf. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
+    apply T_Record. eapply FT_cons.
+    + eapply T_Bin with (A := typ_Float); [ | apply T_Dec; solve_uniq | apply sig_ring ].
+      * apply T_Var with (s := gen nil (typ_Var ga) k_lit);
+          [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_numeral_at; exact I ].
+      * reflexivity.
+      * exact I.
+    + eapply FT_cons; [ | apply FT_nil; solve_uniq ].
+      eapply T_Bin with (A := typ_Int) (B := typ_Int); [ | apply T_Num; [ solve_uniq | exact I ] | apply sig_ring ].
+      * apply T_Var with (s := gen nil (typ_Var ga) k_lit);
+          [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_numeral_at; exact I ].
+      * reflexivity.
+      * exact I.
+Qed.
+
 (* A generic function runs as the concrete one: (program(x) do x * 2 done)(1.5)
    multiplies two Floats, and two bare numerals multiply as Ints. *)
 Example generic_call_on_a_decimal_runs : forall d,

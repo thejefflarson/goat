@@ -170,6 +170,12 @@ fn the_whole_numbers_example_agrees_where_it_is_exact() {
 }
 
 #[test]
+fn a_number_bound_with_equals_adapts_on_both_profiles() {
+    let src = "n = 3  print({a: n + 1.5, b: n // 2})";
+    assert_eq!(same_on_both(src), "{a: 4.5, b: 1}");
+}
+
+#[test]
 fn floor_division_and_remainder_agree() {
     for (src, expected) in [
         ("7 // 2", "3"),

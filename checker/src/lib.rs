@@ -913,9 +913,25 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_number_is_a_float_once_anything_needs_a_float() {
-        assert_eq!(exact_type_of("n = 3  a = n + 1.5  n"), "Float");
+    fn a_number_bound_with_equals_adapts_at_each_use() {
+        assert_eq!(exact_type_of("n = 3  a = n + 1.5  n"), "Int");
+        assert_eq!(exact_type_of("n = 3  a = n + 1.5  a"), "Float");
         assert_eq!(exact_type_of("n = 3  a = n / 2  n"), "Int");
+        let both = "n = 3  {a: n + 1.5, b: n // 2}";
+        let swapped = "n = 3  {b: n // 2, a: n + 1.5}";
+        assert_eq!(exact_type_of(both), "{a: Float, b: Int}");
+        assert_eq!(exact_type_of(swapped), "{b: Int, a: Float}");
+    }
+
+    #[test]
+    fn only_a_bare_numeral_adapts() {
+        let whole = "`//` needs whole numbers, but this is a `Float`";
+        for src in [
+            "n = 2 * 3  {a: n + 1.5, b: n // 2}",
+            "p = {x: 1}  {a: p.x + 1.5, b: p.x // 2}",
+        ] {
+            assert!(type_of(src).unwrap_err().starts_with(whole), "{src}");
+        }
     }
 
     #[test]

@@ -42,10 +42,11 @@ program are skipped, each because the calculus and the checker differ on it:
   (`program(x) do x > x done("a")`): a generic comparison waits for the `Eq` and
   `Ordered` sorts, and `/` on an open operand is typed `Ordered` by the checker
   and `Numeric` by the calculus;
-- a `let` of a syntactic value with a numeral in it (`n = 3`, `r = {a: 1}`): the
+- a `let` of a record or a name with a numeral in it (`r = {a: 1}`, `m = n`): the
   calculus generalizes it (`numeral_binding_is_generic`), the checker generalizes
-  a numeral's variable only in a function's type, so
-  `n = 3  {a: n + 1.5, b: n // 2}` types in the calculus and not in the checker;
+  a numeral's variable only in a function's type and in a bare numeral binding
+  (`n = 3`, ADR 0039), so `r = {a: 1}  {x: r.a + 1.5, y: r.a // 2}` types in the
+  calculus and not in the checker;
 - a program with `+ - *` on open operands that passes a record to a call: the
   checker applies them to a record field by field, and the calculus has no
   operator on records;

@@ -382,3 +382,34 @@ fn an_int_widens_at_a_call_to_a_float_parameter() {
     let scale = "scale = program(x) do x * 1.5 done\nprint(scale(7 // 2))";
     assert_eq!(run(scale), "4.5");
 }
+
+#[test]
+fn a_number_bound_with_equals_runs_at_int_and_at_float() {
+    let both = "n = 3  print({a: n + 1.5, b: n // 2})";
+    let swapped = "n = 3  print({b: n // 2, a: n + 1.5})";
+    assert_eq!(run(both), "{a: 4.5, b: 1}");
+    assert_eq!(run(swapped), "{a: 4.5, b: 1}");
+    let indexed = "n = 3  xs = [10, 20, 30, 40]  print(n + 0.5);  print(item(xs, n))";
+    assert_eq!(run(indexed), "3.5\n30");
+}
+
+#[test]
+fn a_bound_number_is_an_int_where_a_float_is_not_needed() {
+    let src = "n = 4611686018427387904  a = n + 1.5  b = n * 2  print(a);  print(b)";
+    assert_traps(src, OVERFLOW);
+    assert_eq!(
+        run("n = 5  m = n + 1.5  print(m);  print(n * 2)"),
+        "6.5\n10"
+    );
+}
+
+#[test]
+fn a_zero_divisor_traps_where_the_bound_number_is_an_int() {
+    let src = "n = 5  m = n + 1.5  print(m);  print(n // 0)";
+    assert_traps(src, "division by zero");
+}
+
+#[test]
+fn a_computed_number_stays_one_shared_number() {
+    assert_eq!(run("n = 2 * 3  print(n + 1.5)"), "7.5");
+}
