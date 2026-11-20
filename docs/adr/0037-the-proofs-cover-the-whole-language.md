@@ -70,7 +70,8 @@ are well typed.
    3. Tags, variants, `match`, lists.
    4. Spread update-or-extend with presence variables.
    5. Iso-recursive types, the elaboration theorem, methods, `self`, `.` and
-      `::` on any receiver.
+      `::` on any receiver. (Amended 2026-11-20, below: the calculus half of
+      iso-recursive types moves ahead of phase 3.)
    6. Structural ordering as a typed primitive.
    7. The algorithm proof for the core (decision 2's second theorem), then
       extended phase by phase; and the parser over the full grammar.
@@ -87,6 +88,51 @@ are well typed.
      diagnostics and match today's speed, a large rewrite), and verifying the
      Rust directly (the tools for Rust code of this kind are immature). The
      first is reconsidered once the algorithm proof covers the whole language.
+
+## Amendment (2026-11-20): iso-recursive types move ahead of phase 3
+
+Decision 3 put iso-recursive types in phase 5. Issue #488 moves the *calculus*
+half forward, so the phase order reads:
+
+1. Unit, strings, `if`, arithmetic, comparison of base types.
+2. Recursion and the value restriction.
+3. **Iso-recursive types in the calculus** (decision 3's `mu`, `fold` and
+   `unfold`, with guarded recursion). Done in #488.
+4. Tags, variants, `match`, lists.
+5. Spread update-or-extend with presence variables.
+6. **The elaboration theorem**, methods, `self`, `.` and `::` on any receiver.
+7. Structural ordering as a typed primitive.
+8. The algorithm proof for the core, then extended phase by phase; and the
+   parser over the full grammar.
+
+Why the reorder: tags and lists are recursive (`mu t. <Empty | Link: {0: a, 1: t}>`),
+and a phase that adds a binder to `typ` after the tag rules exist would change
+their statements (the phase-2 lesson: a type-system change made late rewrites
+every lemma already written). Doing it before tags costs one pass over the
+existing files. Decision 3's elaboration theorem needs variants, methods and the
+algorithm model, so it stays with the later phase.
+
+What #488 settled, with the owner (`docs/design/recursive-types-plan.md` has the
+options weighed):
+
+- `fold(e)` and `unfold(e)` are explicit terms, `fold` is unannotated, and
+  `unfold(fold(v)) ⟶ v` is the only new redex.
+- Recursion is **guarded**, as ADR 0032 has it (under a record field and a
+  function type): `T-Fold` and `T-Unfold` require it, so `mu t. (t) -> t` has no
+  term. A variant payload will guard on its own in the tag phase.
+- Type equality on `mu` is congruence only: no unrolling equation, so the
+  recursion is iso.
+- The binder is a de Bruijn index in the grammar (`typ_Bvar n`, `typ_Mu T`),
+  with unrolling and closure written by hand. The bound index has no sort, and a
+  `mu` satisfies only `Any`.
+- The parser fragment does not change: `mu`, `fold` and `unfold` have no surface
+  syntax.
+- Algorithm W does not produce a `mu`: it rejects `fold` and `unfold`, and its
+  occurs check refuses to bind a variable to a type with a free index. Extending
+  it is a follow-up.
+- The type of an open-extensible recursive receiver (ADR 0034 decision 3) waits
+  for methods and `self`; the intended reading is `forall r. mu t. {moved: (t) -> t;
+  x: Int | r}`.
 
 ## Consequences
 

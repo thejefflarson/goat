@@ -1,6 +1,6 @@
 # Iso-recursive types in the calculus: design pass
 
-Status: DRAFT for owner decisions. Issue #488, part of #435, governed by ADR 0037 (decision 3) and ADR 0038. Written against `master` at 590d6b5 (PR #485, the kinding environment `D`, is merged). Reads the phase-3 note (`docs/design/phase3-proof-plan.md` on `ticket/452-phase3-design`, Q5 and risks). No semantics question is decided here. The only Coq written is the spike `docs/design/spikes/MuSpike.v`.
+Status: DECIDED and implemented in #488 (ADR 0037 amendment, 2026-11-20). The owner accepted every recommendation below: Q1 A, Q2 A, Q3 B, Q4 A, Q5 A, Q6 E3, Q7 A, Q8 A, Q9 no parser work, Q10 C with A as the intended reading. Sections 2 to 6 are the design as drafted; section 7 records what the implementation changed and what phase 3 needs from it. Issue #488, part of #435, governed by ADR 0037 (decision 3) and ADR 0038. Written against `master` at 590d6b5 (PR #485, the kinding environment `D`, is merged). Reads the phase-3 note (`docs/design/phase3-proof-plan.md` on `ticket/452-phase3-design`, Q5 and risks). The spike is `docs/design/spikes/MuSpike.v`.
 
 ## 1. What the checker does today
 
@@ -201,3 +201,27 @@ If Q3 is B, add about 150 for `guarded` and its closure under `open` and `ap`. T
 4. **Phase-2 repeat.** If a guard predicate (Q3) or `Delta` is added after the first lemma is written, statements change. Fix Q3 first.
 5. **Without Q3 restriction**, the rules type self-application; soundness still holds (spike), but the later completeness statement must say "the rules accept more than the checker".
 6. **Interaction with `Delta` (phase 3):** payload types may now contain indices under a mu; `Delta` lemmas must use `lct`-closedness, not "no free variables".
+
+## 7. As built, and what phase 3 needs
+
+The implementation follows the recommendations; where it differs from the draft:
+
+- **Guarded recursion (Q3 B)** is `gd r f k T` in `GoatDefs.v` on the index form: `r` and `f` record whether the traversal has passed a record field and a function type, and an index `k` is reachable only when both hold. Both `T_Fold` and `T_Unfold` take `guarded B` as a premise, so `mu t. (t) -> t` has no `fold` and no `unfold`. The predicate is closed under substitution (`guarded_ap`) and under `teq` (`guarded_teq`), the second so a conversion cannot dodge it. The spike did not cover it; it cost about 40 lines.
+- **Substitution needs closed images.** The draft said `lc_sub st sr` becomes "a hypothesis of the substitution lemma". In the real development it is part of `inst` (a generic instance), of `tr_supp` (and so of the algorithm's `OkS`), and of `casch_inst`, because a generic instance, a renaming and an algorithm substitution each feed `typing_tsubst_gen_mut`. Algorithm W stays sound by never binding a variable to a type with a free index (`occT` and `occR` check `lcb`), which never fires on a type the algorithm builds; `fold` and `unfold` are rejected outright.
+- **Guard and rows.** A row variable under a `mu` body is untouched by the guard (it has no index), so `mu t. {moved: (t) -> t | r}` is guarded and the open-extensible receiver of Q10 is expressible; its rules wait for methods.
+- **Size.** About 1000 lines added and 80 removed in 29 files under `proofs/`, against the draft's 1350 to 1500 (the draft counted an `Infer` rewrite that the closed-index occurs check made unnecessary). Much of the churn is in files that case on `exp` (the parser, printer and denotation proofs each gained a case for `fold` and `unfold`) and in threading `lc_sub`.
+
+### What phase 3 needs from this (the `Delta` hooks)
+
+Phase 3's tag signature `Delta` maps each tag to a payload type. With `mu` in the calculus:
+
+1. **Closed payloads are `lct 0`-closed, not variable-free.** A payload under a `mu` mentions an index (`mu t. <Empty | Link: {0: a, 1: t}>` has the payload `{0: a, 1: #0}` under the binder). A `Delta` lemma that says "the payload has no free variables" is wrong; it must say `lct k` for the depth the tag is read at. `Delta` is stable under `ap` when its payloads are closed in this sense and `lc_sub` holds, by `ap_lc`.
+2. **A variant payload guards on its own.** `gd` gains one case, a payload (a tag's argument) sets both flags, exactly as ADR 0032 has it. `guarded_ap` and `guarded_teq` extend by one case each.
+3. **Tags and `match` need nothing else from `mu`.** `Link(x, xs)` is elaborated with a `fold` and `match` scrutinizes `unfold xs`; that is the elaboration theorem, phase 5. In the calculus a list value is `fold(Link ...)`, and `canon_mu` plus the variant canonical form give the shape of a closed value of `mu t. <...>`.
+4. **`teq` and `thead_tag`.** A variant type adds a head tag and an inversion lemma next to `teq_Mu_inv`; `teq_mu_shape` is a template.
+5. **The sorts.** A variant type satisfies only `Any`, like a `mu` (`sat` falls into the `k = k_Any` case).
+
+### Follow-ups opened by #488
+
+- Algorithm W for `mu` (Q8): infer `fold` and `unfold` where the checker's equi-recursive types need them. Opened as an issue mirroring the generic-operator follow-up.
+- The elaboration theorem and the open-extensible receiver (Q4, Q10): phase 5.

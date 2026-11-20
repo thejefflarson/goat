@@ -51,7 +51,11 @@ the implementation diverge, §8 flags it.
   closed well-typed term (§7);
 - records as **scoped-label rows** (Leijen, *Extensible records with scoped
   labels*, `papers/scopedlabels.pdf`): construction `{l₁: e₁,…,lₖ: eₖ}` and
-  field projection `e.l`, with Leijen's row-equivalence relation.
+  field projection `e.l`, with Leijen's row-equivalence relation;
+- **iso-recursive types** (ADR 0037, decision 3): the type `μ.τ` with explicit
+  `fold(e)` and `unfold(e)` terms, restricted to **guarded** recursion (§4).
+  The checker's equi-recursive types are related to these by an elaboration
+  theorem that lands in phase 5 (§9).
 
 Values are immutable: record values and closures (program literals) are values,
 and there is no mutable reference, cell, or assignment in the language.
@@ -65,8 +69,7 @@ for the declarative relation (Leijen, Thms 1–2); the declarative relation is
 what the sharp-edge theorem is about.
 
 **Out of the core (modeled by nothing — see §9 for the "why").** Reference
-counting / heap / the Perceus model; variants, `match`, and recursive (μ)
-types; the `Eq` and `Ordered` constraints (a comparison is typed at concrete
+counting / heap / the Perceus model; variants and `match`; the `Eq` and `Ordered` constraints (a comparison is typed at concrete
 types only, so a generic comparison waits for those sorts); the `trap()`
 builtin; the 32-bit `Int` of
 the embedded target; IEEE rounding, infinities and NaN (a `Float` is opaque);
@@ -97,16 +100,20 @@ e  ::=  x                              variable
      |  if e₁ then e₂ else e₃          conditional
      |  e₁ ⊙ e₂                        binary operation   (⊙ ∈ + - * / // %  < <= > >= == !=)
      |  float(e)                       Int-to-Float coercion (inserted by elaboration)
+     |  fold(e)  |  unfold(e)           roll into, and unroll out of, a recursive type
 
 v  ::=  n  |  d  |  true  |  false     constant value
      |  q  |  unit                      string and unit values
      |  program(x₁,…,xₖ) do e done     closure value
      |  {l₁: v₁, …, lₖ: vₖ}            record value
+     |  fold(v)                        rolled value
 
 τ  ::=  Int  |  Float  |  Bool  |  String  |  Unit   base types
      |  (τ₁,…,τₖ) → τ                  function type
      |  {ρ}                            record type
      |  α                              type variable
+     |  μ.τ                            recursive type     (binds the index 0 of τ)
+     |  #i                             index of an enclosing μ   (i ≥ 0)
 
 ρ  ::=  ·                             empty row (closed tail)
      |  r                             row variable (open tail)
@@ -137,6 +144,14 @@ use `;` throughout to match `Row::Extend`. **Duplicate labels are allowed and
 retained** (`{x:τ ; x:τ' ; ·}` is a legal two-field row), which is the whole
 point of scoped labels.
 
+A recursive type `μ.τ` binds with a de Bruijn index: `#0` in `τ` is the
+`μ` itself, `#1` the next `μ` out, and so on. Written with a name, `μ t. {moved: (t) → t; x: Int}`
+is `μ.{moved: (#0) → #0; x: Int}`. The index is for the mechanization; the
+surface language has no syntax for `μ`, `fold` or `unfold`, which belong to the
+elaborated program (§9). `τ[μ.τ/#0]`, written `unroll(μ.τ)`, replaces the index
+`#0` of `τ` by `μ.τ` and lowers the indices above it. A type is *closed*
+(`lc`) when every index is bound by an enclosing `μ`.
+
 Type and row variables are **not** term binders. They are a free-variable set
 acted on by a kind-respecting type/row substitution over types, schemes, and
 contexts (§5), exactly as `checker/src/ty.rs` treats `TypeVar`: one id space,
@@ -165,6 +180,10 @@ mutually on types and rows as the least relation closed under these rules.
    ρ ≅ ρ'                  τ ≅ τ'     ρ ≅ ρ'
 ——————————— (≅-rec)      ——————————————————————— (≅-head)
   {ρ} ≅ {ρ'}               l:τ ; ρ  ≅  l:τ' ; ρ'
+
+——————— (≅-index)         τ ≅ τ'
+ #i ≅ #i                 ——————————— (≅-mu)
+                           μ.τ ≅ μ.τ'
 
 ——————— (≅r-empty)      ——————— (≅r-var)
  · ≅ ·                    r ≅ r
@@ -199,6 +218,15 @@ types (mod `≅`); `≅` permutes distinct labels and nothing else. This is the
 precise theory the row lemmas (§7, L1–L3) pin down, and completeness of the
 swap-generated congruence with respect to this semantic characterization is the
 single hardest row obligation for the Coq development (§9).
+
+**No unrolling equation.** `(≅-mu)` compares the bodies of two recursive types
+and nothing else: `μ.τ ≅ unroll(μ.τ)` is *not* a rule, so `≅` stays a
+syntactic congruence and a type equal to a `μ` is a `μ` (L2). That is what makes
+the recursion iso-recursive: a value of type `μ.τ` and a value of its unrolling
+are different things, and `fold` and `unfold` are the explicit passages between
+them (§4). The checker's types are equi-recursive (a type equals its unrolling,
+ADR 0032); the elaboration theorem of phase 5 (§9) inserts the `fold`s and
+`unfold`s that connect the two.
 
 The checker realizes `≅` operationally through `rewrite_row`
 ([`infer.rs`](../checker/src/infer.rs)), which surfaces a label `l` by searching
@@ -302,7 +330,23 @@ the four concrete types.
  Δ;Γ ⊢ e : {l : τ ; ρ}             Δ;Γ ⊢ e : τ      τ ≅ τ'
 ——————————————————————— (T-Proj)    ———————————————————————————— (T-Conv)
    Δ;Γ ⊢ e.l : τ                        Δ;Γ ⊢ e : τ'
+
+ μ.τ closed      guarded(τ)      Δ;Γ ⊢ e : unroll(μ.τ)
+——————————————————————————————————————————————————————— (T-Fold)
+                Δ;Γ ⊢ fold(e) : μ.τ
+
+ μ.τ closed      guarded(τ)      Δ;Γ ⊢ e : μ.τ
+——————————————————————————————————————————————————— (T-Unfold)
+              Δ;Γ ⊢ unfold(e) : unroll(μ.τ)
 ```
+
+`guarded(τ)` mirrors ADR 0032: every mention of the index `#0` in `τ` sits under
+a record field **and** under a function type (a parameter or the result),
+counting each `μ` between as transparent (under it the index is `#1`, and so
+on). So `μ.{moved: (#0) → #0; x: Int}` is guarded; `μ.(#0) → #0` (the
+self-application the checker rejects as `x(x)`), `μ.#0` (vacuous), and
+`μ.{a: #0}` (no function) are not. A variant payload will guard on its own
+once variants join the calculus (phase 3).
 
 (`T-If`, `T-Unit`, `T-Str`, `T-True`, `T-False` and `T-Dec` carry `Δ` through
 unchanged.)
@@ -381,6 +425,29 @@ Rule by rule:
   it is the identity (`ST-ToFloat`), so a generic function can coerce its
   argument. `float(true)` has no derivation. The calculus has no subtyping:
   `float(e)` is how an `Int` operand reaches a `Float` slot.
+- **`T-Fold`** and **`T-Unfold`** are the two explicit passages between a
+  recursive type and its unrolling. `fold(e)` is typed by the unrolling of the
+  type it produces and is *unannotated*: it has every guarded `μ.τ` whose
+  unrolling `e` has, as `float(e)` has several types today, so terms stay free
+  of types. Both rules require the `μ` closed and guarded, so no term has the
+  type `μ.(#0) → #0`: there is no `fold` at it, and no `unfold` of a value of it
+  (`GoatRecTypes.v`, `no_fold_at_self_application`). A recursive type satisfies
+  only the sort `Any`: a `μ` is never `Numeric` or `Literal`, and an index has
+  no sort of its own, since it stands for a type that is substituted, never for
+  a type variable that is quantified.
+
+  A worked example in goat source, with the recursion through a record field
+  and a function type, as ADR 0034's methods have it:
+
+  ```
+  P    = μ t. {moved: (t) → t; x: Int}
+  ball = fold({moved: program(s) do s done, x: 1})        : P
+  step = program(p) do (unfold(p).moved)(p) done          : (P) → P
+  ```
+
+  `step(ball)` runs: `ST-UnfoldFold` cancels the pair, `ST-ProjRec` reads the
+  method off the record, and the receiver comes back (`GoatRecTypes.v`). The
+  receiver is passed explicitly, as ADR 0031 has it.
 - **`T-Conv`** closes typing under `≅`: anywhere a type is produced, an
   equivalent type may be used. This is where row reordering happens — e.g.
   passing a `{b:Bool ; a:Int ; ·}` value where `{a:Int ; b:Bool ; ·}` is
@@ -479,6 +546,10 @@ fix left-to-right evaluation order:
 
  ————————————————————————— (ST-ToFloat-Dec)
   float(d) ⟶ d
+
+   v a value                      e ⟶ e'                    e ⟶ e'
+———————————————————— (ST-UnfoldFold)  ——————————————————— (ST-Fold1)  ———————————————————————— (ST-Unfold1)
+ unfold(fold(v)) ⟶ v              fold(e) ⟶ fold(e')          unfold(e) ⟶ unfold(e')
 ```
 
 `⊙(v₁, v₂) = v` is the value an operator gives on two literals. It is a relation
@@ -516,7 +587,7 @@ an `Int` operation `v₁ ⊙ v₂` (`+ - * // %`) whose result is outside the 64
 range (the compiler's `this number got too big`, ADR 0017). The trap rises through the
 enclosing context in the same left-to-right order as `⟶`: if `e₁ ↯ k` then
 `e₁(…) ↯ k`, `e₁ ⊙ e₂ ↯ k`, `if e₁ … ↯ k`, and so on, and if `v` is a value and
-`e₂ ↯ k` then `v ⊙ e₂ ↯ k`, and if `e ↯ k` then `float(e) ↯ k`. A trapped term
+`e₂ ↯ k` then `v ⊙ e₂ ↯ k`, and if `e ↯ k` then `float(e) ↯ k`, `fold(e) ↯ k` and `unfold(e) ↯ k`. A trapped term
 has no `⟶` step. The `trap()` builtin is not in the core (§9).
 
 Values do not step. A binding reduces by first evaluating `e₁` to a value
@@ -600,8 +671,21 @@ obligations it must generate.
     `ρ_v = (l₁:τ₁;…;lₘ:τₘ;·) ≅ ρ`; and for any `(l:τ'';ρ'') ≅ ρ`, `v` has a
     first-`l` field whose value has a type `≅ τ''`.
 
+  - `τ ≅ μ.τ₀` ⟹ `v = fold(v')` for a value `v'` with `· ⊢ v' : unroll(μ.τ₀)`.
+
   (Each case: induction on the value's typing, using L2/L2′ to push `T-Conv`
   through and L3 for the record case.)
+- **L8 — recursive types.** Three facts carry `fold` and `unfold` through the
+  rest. *Substitution commutes with unrolling:* `θ(unroll(μ.τ)) =
+  unroll(θ(μ.τ))` when every type `θ` substitutes in is closed. That premise is
+  why a generic instance (`τ ≺_Δ σ`), a renaming and an algorithm substitution
+  each carry "closed images", and why L5 does: a type with a free index put
+  under a `μ` would be captured. *Equality respects unrolling:* if `τ ≅ τ'` and
+  `υ ≅ υ'` then `τ[υ/#k] ≅ τ'[υ'/#k]`, so folding at an equal type unrolls to an
+  equal type (this is what `ST-UnfoldFold` and L7 use). *The guard is invariant:*
+  `guarded` is preserved by `θ` and by `≅`, so a conversion cannot dodge it.
+  Neither a `μ` nor an index adds a free type or row variable of its own, so
+  `ftv`, `frv`, generalization and the sorts of §5 are untouched.
 
 ### Progress
 
@@ -753,6 +837,26 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   value (ML's nonexpansive terms: the unrolled group is substituted for a name,
   and the name must stay generalizable afterwards). `proofs/GoatPhase2.v` holds
   the classification as checked examples.
+- **Recursive types are iso-recursive in the calculus (phase 5a, ADR 0037
+  decision 3).** The calculus has `μ.τ` with explicit `fold` and `unfold`, a
+  congruence-only `≅` on it, and the `guarded` restriction of §4. Decided with
+  the owner (ADR 0037 amendment): `fold` is unannotated; the binder is a de
+  Bruijn index in the grammar, with unrolling and closure written by hand in
+  `proofs/GoatDefs.v` and `proofs/GoatMu.v` (a cofinite `μ` rule would make the
+  substitution lemma need finite-support hypotheses on every substitution, and
+  Ott's generated open and closure for types would go unused); the bound index
+  has no sort, and a `μ` satisfies only `Any`; the parser fragment is unchanged,
+  since `μ`, `fold` and `unfold` have no surface syntax. **Left to phase 5
+  proper:** the elaboration theorem (every program the checker's algorithm
+  accepts elaborates, by inserting `fold`s and `unfold`s, into one the
+  iso-recursive rules accept), extending algorithm W to produce a `μ` (it
+  rejects `fold` and `unfold` today, and its occurs check refuses to bind a
+  variable to a type with a free index, so it stays sound), and the type of an
+  open-extensible recursive receiver (ADR 0034 decision 3: intended reading is
+  `∀ r. μ t. {moved: (t) → t; x: Int ; r}`, instantiated at the extension and
+  refolded by the elaborator; it needs methods and `self`). Phase 3's tag
+  signature `Δ` must keep closed payload types in the sense of `lc` (a payload
+  under a `μ` mentions an index), not "no free variables".
 - **Base types and their operators (phase 1, ADR 0037).** The core has
   `Int`, `Float`, `Bool`, `String` and `Unit`, with `if`, the operators and the
   comparisons of §4. `proofs/GoatPhase1.v` holds each of the cases below as a
