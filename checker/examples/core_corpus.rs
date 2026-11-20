@@ -167,8 +167,23 @@ impl Core {
     fn generalizes_numeral(&self) -> bool {
         match self {
             Core::Var(_) => true,
+            Core::Bin(BinOp::Sub, zero, e) => {
+                matches!(**zero, Core::Num(0)) && e.is_negated_numeral()
+            }
             Core::ToFloat(e) => e.holds_numeral(),
             Core::Rec(fields) => fields.iter().any(|(_, e)| e.holds_numeral()),
+            _ => false,
+        }
+    }
+
+    /// A numeral, or `0 - e` of one: the checker reads `-3` as a bare numeral and
+    /// the calculus, where `0 - 3` is a computation, does not.
+    fn is_negated_numeral(&self) -> bool {
+        match self {
+            Core::Num(_) => true,
+            Core::Bin(BinOp::Sub, zero, e) => {
+                matches!(**zero, Core::Num(0)) && e.is_negated_numeral()
+            }
             _ => false,
         }
     }

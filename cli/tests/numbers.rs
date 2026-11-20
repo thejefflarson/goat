@@ -413,3 +413,12 @@ fn a_zero_divisor_traps_where_the_bound_number_is_an_int() {
 fn a_computed_number_stays_one_shared_number() {
     assert_eq!(run("n = 2 * 3  print(n + 1.5)"), "7.5");
 }
+
+#[test]
+fn a_negated_number_runs_at_int_and_at_float() {
+    assert_eq!(
+        run("n = -3  print({a: n + 1.5, b: n // 2})"),
+        "{a: -1.5, b: -2}"
+    );
+    assert_eq!(run("n = -3  print(n * 2);  print(n - 0.5)"), "-6\n-3.5");
+}
