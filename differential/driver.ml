@@ -101,7 +101,7 @@ and exp_of = function
 
 (* Fields in label order (a stable sort, so equal labels keep their order, which
    is the scoped-label equivalence), variables numbered by first occurrence. *)
-let canonical_type t =
+let canonical_type d t =
   let vars = ref [] in
   let name a =
     let a = Atom.nat_of a in
@@ -146,7 +146,10 @@ let canonical_type t =
             Buffer.add_string b (if fields = [] then "| " else " | ");
             Buffer.add_string b (Printf.sprintf "v%d" (name a)));
         Buffer.add_char b '}'
-    | Typ_Var a -> Buffer.add_string b (Printf.sprintf "v%d" (name a))
+    | Typ_Var a -> (
+        match d a with
+        | K_Literal -> Buffer.add_string b "Number"
+        | _ -> Buffer.add_string b (Printf.sprintf "v%d" (name a)))
   in
   typ t;
   Buffer.contents b
@@ -167,8 +170,8 @@ let () =
        match String.split_on_char '\t' line with
        | mode :: sexp :: verdict :: source ->
            let ours =
-             match infer_closed fuel (exp_of (parse_sexp sexp)) with
-             | Some t -> "OK " ^ canonical_type t
+             match infer_closed_env fuel (exp_of (parse_sexp sexp)) with
+             | Some (d, t) -> "OK " ^ canonical_type d t
              | None -> "ERR"
            in
            let report () =

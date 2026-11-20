@@ -23,16 +23,19 @@
 //! block (a value binding between them) is outside the fragment.
 //!
 //! The calculus has no implicit Int-to-Float widening: elaboration writes
-//! `float(e)` where the checker accepts an Int for a Float (a literal the
-//! context needs as a Float, an operand beside a Float operand, an operand of
-//! `/`, an argument to a Float parameter). This reader inserts it from the
-//! checker's node types, so the differential test also checks that those
-//! places are exactly where the checker widens. A program whose operator
-//! operands are not all Int, Float, String or Bool (a record operand, a Unit
-//! comparison), or that leaves a numeric type variable in a generalized
-//! function, or that applies an operator to two operands whose types only a
-//! later use settles (a generic operator), is outside the fragment: those are
-//! deferred by the owner's decision.
+//! `float(e)` where the checker accepts an Int for a Float (an operand beside a
+//! Float operand, each operand of `/`, an argument to a Float parameter, a
+//! numeral inside a comparison). A numeral the checker settled as a Float
+//! elsewhere is written bare, which the calculus types at `Float`. This reader
+//! inserts the coercions from the checker's node types, so the differential test
+//! also checks that those places are exactly where the checker widens. `+ - *`
+//! on operands the checker leaves as type variables are generic in the calculus
+//! and are compared. A program is outside the fragment when an operator's
+//! operands are not all Int, Float, String or Bool or open numeric variables, when
+//! a comparison or `/` has an operand that only a later use settles, when a
+//! `let` of a value with a numeral in it would be generalized by the calculus and
+//! not by the checker, when a record reaches a generic `+ - *`, or when a
+//! record holds a group's function by name (`differential/README.md`).
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
 
@@ -158,6 +161,18 @@ impl Core {
 }
 
 impl Core {
+    /// Whether a `let` of this value is a syntactic value that has a numeral's
+    /// type in it, which the calculus generalizes and the checker, for a value
+    /// that is not a function, leaves as one variable.
+    fn generalizes_numeral(&self) -> bool {
+        match self {
+            Core::Num(_) | Core::Var(_) => true,
+            Core::ToFloat(e) => e.generalizes_numeral(),
+            Core::Rec(fields) => fields.iter().any(|(_, e)| e.generalizes_numeral()),
+            _ => false,
+        }
+    }
+
     /// Whether the algorithm knows this term's type when it reaches it, without
     /// a later use fixing it. `env` holds that fact for each binder in scope,
     /// innermost last.
@@ -165,7 +180,10 @@ impl Core {
         match self {
             Core::Var(i) => env[env.len() - 1 - i],
             Core::Num(_) | Core::Float | Core::Str(_) | Core::Unit | Core::Bool(_) => true,
-            Core::ToFloat(_) | Core::Bin(..) => true,
+            Core::ToFloat(_) => true,
+            Core::Bin(op, a, b) => {
+                !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) || a.known(env) || b.known(env)
+            }
             Core::If(_, a, b) => a.known(env) || b.known(env),
             Core::Let(v, b) => {
                 let known = v.known(env);
@@ -224,10 +242,12 @@ impl Core {
                 ok
             }
             Core::Bin(op, a, b) => {
-                let fixed = matches!(op, BinOp::Div | BinOp::FloorDiv | BinOp::Mod);
-                (fixed || a.known(env) || b.known(env))
-                    && a.operators_resolve(env)
-                    && b.operators_resolve(env)
+                let known = match op {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod => true,
+                    BinOp::Div => a.known(env) && b.known(env),
+                    _ => a.known(env) || b.known(env),
+                };
+                known && a.operators_resolve(env) && b.operators_resolve(env)
             }
         }
     }
@@ -262,6 +282,15 @@ struct Reader<'a> {
     /// The checker's node types when it accepted the program; a rejected
     /// program has none, so it is read without coercions.
     types: Option<&'a HashMap<ExprId, Ty>>,
+    /// How many comparison operands the reader is inside.
+    in_comparison: usize,
+    /// Whether a `+ - *` has an operand whose type the checker left open.
+    generic_ring: bool,
+    /// Whether a call passes a record, which `+ - *` accept in the checker
+    /// (field by field) and the calculus does not.
+    record_arg: bool,
+    /// Whether a record field holds a function of a recursive group by name.
+    member_in_record: bool,
 }
 
 /// What a name in scope is bound by: a parameter or `let`, one binder; or a
@@ -421,6 +450,9 @@ impl Reader<'_> {
         };
         let Some(group) = group_at.get(&from) else {
             let value = self.read(value)?;
+            if value.generalizes_numeral() {
+                return None;
+            }
             self.scope.push(Binder::Bound(name.to_string(), symbol));
             let body = self.chain(bindings, group_at, from + 1, tail);
             self.scope.pop();
@@ -460,7 +492,7 @@ impl Reader<'_> {
                     .filter(|n| *n < 1 << 30)
                     .map(Core::Num)?;
                 match self.node_ty(expr) {
-                    Some(Ty::Float) => Some(Core::ToFloat(Box::new(num))),
+                    Some(Ty::Float) if self.in_comparison > 0 => Some(Core::ToFloat(Box::new(num))),
                     _ => Some(num),
                 }
             }
@@ -478,18 +510,30 @@ impl Reader<'_> {
                 Box::new(self.read(else_branch)?),
             )),
             ExprKind::Bin { op, lhs, rhs } => {
-                let (mut a, mut b) = (self.read(lhs)?, self.read(rhs)?);
+                let comparison = matches!(
+                    op,
+                    BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte | BinOp::Eq | BinOp::Ne
+                );
+                self.in_comparison += usize::from(comparison);
+                let operands = (self.read(lhs), self.read(rhs));
+                self.in_comparison -= usize::from(comparison);
+                let (mut a, mut b) = (operands.0?, operands.1?);
                 if self.types.is_some() {
-                    let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
                     let to_float = |c: Core| Core::ToFloat(Box::new(c));
-                    match (op, x, y) {
-                        (BinOp::Div, Ty::Int, Ty::Int) => (a, b) = (to_float(a), to_float(b)),
-                        (BinOp::Div, Ty::Int, _) => a = to_float(a),
-                        (BinOp::Div, _, Ty::Int) => b = to_float(b),
-                        (BinOp::FloorDiv | BinOp::Mod, _, _) => {}
-                        (_, Ty::Int, Ty::Float) => a = to_float(a),
-                        (_, Ty::Float, Ty::Int) => b = to_float(b),
-                        _ => {}
+                    let generic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul)
+                        && [lhs, rhs]
+                            .iter()
+                            .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
+                    self.generic_ring |= generic;
+                    if !generic {
+                        let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
+                        match (op, x, y) {
+                            (BinOp::Div, ..) => (a, b) = (to_float(a), to_float(b)),
+                            (BinOp::FloorDiv | BinOp::Mod, _, _) => {}
+                            (_, Ty::Int, Ty::Float) => a = to_float(a),
+                            (_, Ty::Float, Ty::Int) => b = to_float(b),
+                            _ => {}
+                        }
                     }
                 }
                 Some(Core::Bin(*op, Box::new(a), Box::new(b)))
@@ -523,6 +567,10 @@ impl Reader<'_> {
                     Some(Ty::Func(params, _)) if params.len() == args.len() => Some(params.clone()),
                     _ => None,
                 };
+                self.record_arg |= params
+                    .iter()
+                    .flatten()
+                    .any(|param| matches!(param, Ty::Record(_)));
                 let callee = self.read(callee)?;
                 args.iter()
                     .enumerate()
@@ -544,6 +592,12 @@ impl Reader<'_> {
                 for (label, value) in fields {
                     if seen.contains(label) {
                         return None;
+                    }
+                    if let ExprKind::Var { symbol, .. } = &value.kind {
+                        self.member_in_record |= self.scope.iter().any(|binder| {
+                            matches!(binder, Binder::Group(members)
+                                if members.iter().any(|(_, s, _)| s == symbol))
+                        });
                     }
                     seen.push(label.clone());
                     let label = self.label(label);
@@ -648,12 +702,6 @@ fn line(source: &str) -> Option<String> {
         return None;
     }
     let checked = check_with_prelude("", source).ok();
-    if checked
-        .as_ref()
-        .is_some_and(|c| !c.typed.number_vars.is_empty())
-    {
-        return None;
-    }
     let mut reader = Reader {
         special: lowered
             .dot_calls
@@ -665,8 +713,15 @@ fn line(source: &str) -> Option<String> {
         scope: Vec::new(),
         unary: true,
         types: checked.as_ref().map(|c| &c.typed.node_types),
+        in_comparison: 0,
+        generic_ring: false,
+        record_arg: false,
+        member_in_record: false,
     };
     let core = reader.read(&lowered.root)?;
+    if (reader.generic_ring && reader.record_arg) || reader.member_in_record {
+        return None;
+    }
     if !core.operators_resolve(&mut Vec::new()) {
         return None;
     }
@@ -1237,6 +1292,19 @@ const HANDWRITTEN: &[&str] = &[
     "choose = program(a, b) do a done\nchoose(1, 2)",
     "apply = program(f, x) do f(x) done\napply(program(n) do n done, 1)",
     "1 + 1.5",
+    "1.5 + 1",
+    "1.5 / 2.5",
+    "program(x) do x * 2 done",
+    "program(x) do x * x done",
+    "program(a, b) do a + b done",
+    "f = program(x) do x * 2 done\n{a: f(1), b: f(1.5)}",
+    "f = program(x) do x * 2 done\nf(1.5)",
+    "f = program(x) do x * 2 done\nf",
+    "add = program(a, b) do a + b done\n{p: add(1, 2), q: add(1.5, 2.5), r: add(1, 2.5)}",
+    "f = program(x) do x + 1 done\ng = program(y) do f(y) * 2.5 done\ng(3)",
+    "f = program(x) do x * 2 done\nf(\"a\")",
+    "f = program(x) do x * 2 done\nf(true)",
+    "if true then 1 else 2.5 done + 1",
     "7 / 2",
     "1.5 < 2",
     "\"a\" < \"b\"",

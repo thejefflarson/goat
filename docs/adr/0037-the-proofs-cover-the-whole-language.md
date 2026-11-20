@@ -129,7 +129,7 @@ options weighed):
   syntax.
 - Algorithm W does not produce a `mu`: it rejects `fold` and `unfold`, and its
   occurs check refuses to bind a variable to a type with a free index. Extending
-  it is a follow-up.
+  it is a follow-up (#497).
 - The type of an open-extensible recursive receiver (ADR 0034 decision 3) waits
   for methods and `self`; the intended reading is `forall r. mu t. {moved: (t) -> t;
   x: Int | r}`.

@@ -223,5 +223,5 @@ Phase 3's tag signature `Delta` maps each tag to a payload type. With `mu` in th
 
 ### Follow-ups opened by #488
 
-- Algorithm W for `mu` (Q8): infer `fold` and `unfold` where the checker's equi-recursive types need them. Opened as an issue mirroring the generic-operator follow-up.
+- Algorithm W for `mu` (Q8): infer `fold` and `unfold` where the checker's equi-recursive types need them. Issue #497, mirroring the generic-operator follow-up.
 - The elaboration theorem and the open-extensible receiver (Q4, Q10): phase 5.

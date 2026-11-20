@@ -41,7 +41,8 @@ preservation must survive it. Three representations were weighed:
    hold for every choice.
 4. **Algorithm W is not extended here.** The algorithm stays sound (every type
    it infers is derivable in `d_any`) and is incomplete for the generic
-   operators; extending it is a follow-up.
+   operators. (Extended afterwards: the algorithm threads the kinding
+   environment, `proofs/README.md`, "Algorithm W with sorted variables".)
 
 ## Consequences
 

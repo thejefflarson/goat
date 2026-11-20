@@ -97,12 +97,12 @@ comparison applies at concrete types; a generic comparison waits for those
 sorts). `+ - *` and numerals are generic over the sorts `Numeric` and
 `Literal`, below. The inference algorithm (`GoatInfer.v`) covers the
 whole of phase 1: `Unit`, strings, Float values, `if`, `float(e)` and the
-operators, besides functions, bindings and records. `infer_closed_sound` keeps
-its statement. An operator unifies both operands with one type taken from
-whichever operand type is already known (`bin_arg`), so `x * 1.5` fixes `x` to
-`Float`, and an operator whose two operands are both still variables is
-rejected: inferring the generic operators of the calculus is a follow-up, so the
-algorithm is sound for them (it infers only derivable types) and not complete.
+operators, besides functions, bindings and records, and it infers the generic
+operators (below). A comparison unifies both operands with one type taken from
+whichever operand type is already known (`bin_arg`), so `x < 1.5` fixes `x` to
+`Float`; an operand that is a numeral's variable settles at `Int`, and a
+comparison of two other variables is rejected, because a generic comparison
+waits for the `Eq` and `Ordered` sorts.
 
 The parser fragment widens in step: a string, a `Float` literal (a `TDec` token
 that denotes the opaque `e_dec`), a conditional with or without an `else` (the
@@ -241,6 +241,48 @@ environment. Defaulting (ADR 0017: a `Literal` variable left unconstrained is
 in `d_any` a closed derivation instantiates each generalized `Literal` variable
 at `Int` or `Float`, and `numeral_binding_is_generic` in `GoatPhase1.v` shows
 both choices.
+
+## Algorithm W with sorted variables
+
+`GoatInfer.v` threads a kinding environment `D` through the algorithm
+(`infer f D G e n` returns `(s, D', T, n')`), so a type variable has the sort
+`D` gives it. `D` is `Any` on every even atom from the supply number `n` on
+(`DOk`, `GoatInferSort.v`), and only a fresh variable gets a sort, by `upd`.
+
+- **Unification** (`unify_t f D T1 T2 n`) never changes `D`. A variable meets a
+  non-variable type only if the type satisfies the variable's sort (`sat_b`: an
+  `Int` or `Float` satisfies every sort, any other type only `Any`); two
+  variables bind the coarser to the finer (`finer_b`), so the survivor keeps its
+  sort. It returns a substitution that respects `D` (`kres D D (sT s)`).
+- **A numeral** is a fresh `Literal` variable, **`float(e)`** unifies its operand
+  with a fresh `Numeric` variable, and **`+ - *`** unify both operands with one
+  fresh `Numeric` variable, the type of the result. So `1 + 1.5` infers `Float`
+  and `program(x) do x * 2 done` infers `a -> a` with `a` `Literal`.
+- **`generalize`** (`gen_ren D`) records the sort `D` gives each variable it
+  quantifies, on the renamed variable (`gen_sk`), and **`instantiate`** gives each
+  fresh variable its scheme's sort (`inst_den`).
+- **`infer_closed_env`** returns the type and the kinding environment, so the
+  sorts of the variables the type leaves free. `infer_closed_sound` says the
+  program has that type in that environment: `typing D nil e T`. A closed program
+  is typed in `d_any`, where each such variable stands for any type of its
+  sort, so the defaulting of ADR 0017 (a `Literal` variable left free is `Int`) is
+  the choice of that instance; the algorithm makes no choice and the theorem
+  covers every one. The one place it commits is a comparison: `1 < 2` has no
+  derivation at a variable, so the algorithm takes the derivation at `Int`
+  (`bin_arg`).
+
+The soundness proof (`GoatInferSound.v`) carries one invariant per step, `Good D
+n s D' n'`: `D` is `Any` beyond `n`, `s` is a substitution of the algorithm, the
+supply only grows, `D'` refines `D`, and `s` respects the sorts. A derivation
+moves forward through a step by the substitution lemma (`typing_ap`), which
+already quantified over the environments a substitution respects. At a `let`
+the bound term is typed in `ext D V k`, the environment extended with the sorts
+the scheme records on the renamed variables (`typing_gen_ren`,
+`kres_ext_lift`).
+
+Metalib's atoms are opaque to computation, so the Coq examples that run the
+algorithm on a numeral (a fresh variable) do not reduce; the differential test
+runs the extracted algorithm on them instead.
 
 ## Records and projection in the Ott source
 
