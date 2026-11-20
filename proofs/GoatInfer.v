@@ -326,6 +326,9 @@ Fixpoint group_row (fs : fields) (n : nat) : row :=
   | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
   end.
 
+Definition is_ring_op (o : bop) : bool :=
+  match kind o with k_ring => true | _ => false end.
+
 Definition fresh_var (G : ctx) (e : exp) : atom :=
   fresh (AtomSetImpl.elements (dom G `union` fv_exp e)).
 
@@ -475,8 +478,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
               | Some (s2, D2, T2, n2) =>
-                  match kind o with
-                  | k_ring =>
+                  if is_ring_op o then
                       let D2' := upd D2 (ea n2) k_Numeric in
                       let c := typ_Var (ea n2) in
                       match unify_t f' D2' (apT s2 T1) c (S n2) with
@@ -489,7 +491,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                                     apT s4 (apT s3 c), n4)
                           end
                       end
-                  | _ =>
+                  else
                   match bin_arg D2 o (apT s2 T1) T2 with
                   | None => None
                   | Some T =>
@@ -502,7 +504,6 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                           | _, _ => None
                           end
                       end
-                  end
                   end
               end
           end
