@@ -6,6 +6,12 @@ print(17 % 5);
 print(-17 // 5);
 print(-17 % 5);
 
+# They work on decimals too, the same way: the floor of the quotient, and a
+# remainder with the sign of the number you divide by. Dividing a decimal by zero
+# gives `inf` or `nan`.
+print(7.5 // 2);
+print(-7.5 % 2);
+
 # A decimal never turns into a whole number by itself. `round`, `floor`, `ceil`
 # and `truncate` each say which way to go.
 print(round(2.5));

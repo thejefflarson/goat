@@ -57,11 +57,14 @@ value and returns it.
 Whole numbers have their own type, `Int`. `a // b` divides and rounds down,
 `a % b` is the remainder (it takes the sign of `b`), and `round`, `floor`,
 `ceil` and `truncate` turn a decimal into an `Int`. `sqrt` takes a number;
-`sin`, `cos` and `tan` take degrees.
+`sin`, `cos` and `tan` take degrees. `//` and `%` work on decimals too: the
+result is a decimal, `7.5 // 2` is `3`, and dividing a decimal by zero gives
+`inf` or `nan`.
 
 ```goat
 print(17 // 5);              # 3
 print(17 % 5);               # 2
+print(7.5 // 2);             # 3
 print(round(2.5));           # 3
 print(sqrt(16))              # 4
 ```
