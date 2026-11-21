@@ -56,6 +56,14 @@ program are skipped, each because the calculus and the checker differ on it:
 - the cases the README already listed: the prelude, tags, `::`, dot calls,
   `self`.
 
+A sixth kind is counted apart from these. When the checker types a program in
+the fragment with a recursive type (`Ty::Rec`, as for `(p.moved)(p)`), the
+corpus writes it as an `R` line and the driver prints it as "skipped for a
+recursive type", with no comparison. The algorithm never builds a `mu`
+(`infer_mu_free`, `proofs/GoatInferMuFree.v`), so it cannot agree on such a
+program. The count tells the reader whether the fragment still reaches
+recursive types.
+
 ## Where `float(e)` goes
 
 The calculus has no implicit Int-to-Float widening, so the corpus writer
