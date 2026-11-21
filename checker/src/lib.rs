@@ -440,12 +440,32 @@ mod tests {
             type_of("tag Circle Circle(5)").unwrap(),
             "[Circle: Number | t1]"
         );
-        assert_eq!(type_of("Empty").unwrap(), "[Empty | t0]");
+    }
+
+    #[test]
+    fn the_list_tags_build_the_closed_list() {
+        assert_eq!(
+            type_of("Empty").unwrap(),
+            "μt0. [Empty, Link: {0: t1, 1: t0}]"
+        );
         let link = type_of("Link(1, Empty)").unwrap();
         assert!(
-            link.starts_with("[Link: {0: Number, 1: [Empty | t"),
+            link.starts_with("μt") && link.contains("[Empty, Link: {0: Number, 1: t"),
             "{link}"
         );
+    }
+
+    #[test]
+    fn a_list_and_a_lone_tag_are_different_types() {
+        let err = type_of("tag Stop if true then [1, 2] else Stop done").unwrap_err();
+        assert!(err.contains("not allowed here"), "{err}");
+    }
+
+    #[test]
+    fn a_list_tag_matches_no_other_tag() {
+        let err =
+            type_of("tag Full match Empty do Empty then true Full then false done").unwrap_err();
+        assert!(err.contains("`Full`"), "{err}");
     }
 
     #[test]
@@ -462,7 +482,7 @@ mod tests {
             "Number"
         );
         assert_eq!(
-            type_of("tag Full match Empty do Empty then true Full then false done").unwrap(),
+            type_of("tag Full tag Done match Full do Full then true Done then false done").unwrap(),
             "Bool"
         );
     }
@@ -665,9 +685,13 @@ mod tests {
 
     #[test]
     fn a_fixed_length_pattern_rejects_a_list_that_may_be_longer() {
+        assert!(check("[a, b] = [1, 2] a").is_ok());
+        let errors = check("f = program(xs) do [a, b] = xs a done f([1, 2])")
+            .err()
+            .expect("an error");
+        assert!(errors[0].message.contains("`Empty`"), "{errors:?}");
         let errors = check("[a, b] = [1, 2, 3] a").err().expect("an error");
         assert!(errors[0].message.contains("doesn't handle"), "{errors:?}");
-        assert!(check("[a, b] = [1, 2] a").is_ok());
         assert!(
             check("f = program(xs) do match xs do [a, b] then a else 0 done done f([1])").is_ok()
         );
@@ -694,16 +718,14 @@ mod tests {
     }
 
     #[test]
-    fn building_a_recursive_value_types_as_an_open_recursive_variant() {
+    fn building_a_recursive_value_types_as_a_closed_list() {
         let src =
             "build = program(n) do if n < 1 then Empty else Link(n, build(n - 1)) done done build";
         let ty = type_of(src).unwrap();
         let t = binder(&ty);
-        assert!(
-            ty.starts_with(&format!(
-                "(Number) -> μ{t}. [Empty, Link: {{0: Number, 1: {t}}} | t"
-            )),
-            "{ty}"
+        assert_eq!(
+            ty,
+            format!("(Number) -> μ{t}. [Empty, Link: {{0: Number, 1: {t}}}]")
         );
     }
 
@@ -751,10 +773,8 @@ mod tests {
                    done f";
         let ty = type_of(src).unwrap();
         let t = binder(&ty);
-        assert!(
-            ty.starts_with(&format!("(μ{t}. [Empty, Link: {{0: Number, 1: {t}}} | t")),
-            "{ty}"
-        );
+        let list = format!("μ{t}. [Empty, Link: {{0: Number, 1: {t}}}]");
+        assert_eq!(ty, format!("({list}) -> {list}"));
         let after_empty = "f = program(xs) do \
                      z = match xs do Empty then 0 else 1 done \
                      if true then xs else Link(1, xs) done \

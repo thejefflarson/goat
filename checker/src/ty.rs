@@ -117,19 +117,41 @@ pub const METHOD: Ty = Ty::Int;
 pub const PLAIN: Ty = Ty::Str;
 
 /// The tags of one `tag` declaration: a closed variant type. A payload that
-/// mentions the group itself holds `Ty::Var(Group::SELF)`.
+/// mentions the group itself holds `Ty::Var(Group::SELF)`, and one that
+/// mentions its `i`th parameter holds `Ty::Var(Group::param(i))`, which each
+/// instantiation replaces with a fresh variable. Only built-in groups have
+/// parameters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Group {
     pub tags: Vec<(String, Ty)>,
     pub recursive: bool,
+    pub params: usize,
 }
 
 impl Group {
     pub const SELF: TypeVar = TypeVar::MAX;
 
-    /// The group as a type, closed over `binder` when it is recursive.
+    /// The placeholder for the group's `index`th parameter in a payload.
+    pub const fn param(index: usize) -> TypeVar {
+        Self::SELF - 1 - index as TypeVar
+    }
+
+    /// The group as a type, closed over `binder` when it is recursive, for a
+    /// group without parameters.
     pub fn instantiate(&self, binder: TypeVar) -> Ty {
-        let mapping = HashMap::from([(Self::SELF, binder)]);
+        debug_assert_eq!(self.params, 0);
+        self.instantiate_with(binder, &[])
+    }
+
+    /// The group as a type with `args` standing for its parameters in order.
+    pub fn instantiate_with(&self, binder: TypeVar, args: &[TypeVar]) -> Ty {
+        debug_assert_eq!(args.len(), self.params);
+        let mut mapping = HashMap::from([(Self::SELF, binder)]);
+        mapping.extend(
+            args.iter()
+                .enumerate()
+                .map(|(i, arg)| (Self::param(i), *arg)),
+        );
         let row = Row::of(
             self.tags
                 .iter()
@@ -846,6 +868,30 @@ impl Scheme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_group_parameter_is_replaced_at_each_instantiation() {
+        let group = Group {
+            tags: vec![
+                ("Nil".to_string(), Ty::Unit),
+                (
+                    "Cons".to_string(),
+                    Ty::Record(Row::of([
+                        ("0".to_string(), Ty::Var(Group::param(0))),
+                        ("1".to_string(), Ty::Var(Group::SELF)),
+                    ])),
+                ),
+            ],
+            recursive: true,
+            params: 1,
+        };
+        let (first, second) = (
+            group.instantiate_with(1, &[2]),
+            group.instantiate_with(3, &[4]),
+        );
+        assert_eq!(first.to_string(), "μt1. [Nil, Cons: {0: t2, 1: t1}]");
+        assert_ne!(first, second);
+    }
 
     fn variant(tags: &[(&str, Ty)], tail: Row) -> Ty {
         let row = tags

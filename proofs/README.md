@@ -207,6 +207,13 @@ the algorithm model; the type of an open-extensible recursive receiver; and
 phase 3's tag signature, which must keep closed payload types in the sense of
 `lct`, since a payload under a `mu` mentions an index.
 
+Tags are outside the proven fragment, so the checker's change to closed groups
+with parameters (every tag closed, lists a built-in recursive group whose
+element type is instantiated afresh per literal) touches no rule proved here.
+Phase 3 models it as the design in `docs/design/closed-tags-plan.md` says: a
+group is a declared tag signature with a parameter list, one construction rule
+instantiates it with fresh variables, and a recursive group is a `mu`.
+
 ## Generic operators: sorted type variables (design Q)
 
 The typing judgment carries a kinding environment `D` (`typing D G e T`): a

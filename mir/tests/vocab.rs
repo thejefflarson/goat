@@ -19,6 +19,7 @@ fn toy() -> Vocab {
     let pad = Group {
         tags: vec![("A".into(), Ty::Unit), ("B".into(), Ty::Unit)],
         recursive: false,
+        params: 0,
     };
     let event = |name: &str, payload, decode| EventTag {
         name: name.into(),
