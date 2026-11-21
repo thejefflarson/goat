@@ -747,7 +747,13 @@ fn line(source: &str) -> Option<String> {
     if !core.operators_resolve(&mut Vec::new()) {
         return None;
     }
+    let recursive = checked.as_ref().is_some_and(|checked| {
+        let mut binders = Vec::new();
+        checked.typed.root_ty.rec_binders(&mut binders);
+        !binders.is_empty()
+    });
     let verdict = match &checked {
+        Some(_) if recursive => "REC".to_string(),
         Some(checked) => {
             let mut canon = Canon {
                 labels: &reader.labels,
@@ -761,7 +767,13 @@ fn line(source: &str) -> Option<String> {
     };
     let mut sexp = String::new();
     core.sexp(&mut sexp);
-    let mode = if reader.unary { 'U' } else { 'N' };
+    let mode = if recursive {
+        'R'
+    } else if reader.unary {
+        'U'
+    } else {
+        'N'
+    };
     let text = source
         .replace('\\', "\\\\")
         .replace('\n', "\\n")
