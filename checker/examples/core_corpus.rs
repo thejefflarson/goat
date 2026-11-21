@@ -902,6 +902,16 @@ impl Rng {
     }
 }
 
+/// A quarter of the generated whole numbers are negative literals, chosen from
+/// the number itself so the generators draw the same random stream as without.
+fn negate_some(n: usize) -> String {
+    if n % 4 == 3 {
+        format!("-{n}")
+    } else {
+        n.to_string()
+    }
+}
+
 /// How a generated expression must be wrapped where it is an operand.
 #[derive(Clone, Copy, PartialEq)]
 enum Shape {
@@ -944,10 +954,7 @@ impl Gen {
                 .to_string(),
                 Shape::Plain,
             ),
-            _ => {
-                let sign = ["", "", "", "-"][self.rng.below(4)];
-                (format!("{sign}{}", self.rng.below(1000)), Shape::Num)
-            }
+            _ => (negate_some(self.rng.below(1000)), Shape::Num),
         }
     }
 
@@ -1035,10 +1042,7 @@ struct TypedGen {
 impl TypedGen {
     fn literal(&mut self, ty: Prim) -> String {
         match ty {
-            Prim::Int => {
-                let sign = ["", "", "", "-"][self.rng.below(4)];
-                format!("{sign}{}", self.rng.below(100))
-            }
+            Prim::Int => negate_some(self.rng.below(100)),
             Prim::Float => format!("{}.{}", self.rng.below(10), self.rng.below(10)),
             Prim::Bool => ["true", "false"][self.rng.below(2)].to_string(),
             Prim::Str => format!("\"{}\"", ["a", "b", "ab", ""][self.rng.below(4)]),
