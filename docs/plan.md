@@ -477,7 +477,8 @@ allocation or indirect call. The scheme below is the general fallback.)
 - [x] **List patterns use the same syntax:** `[first, ...rest]` →
       `Link(first, rest)`, `[]` → `Empty`, `[a, b]` → a fixed-length list.
       Lowering compiles a `match`'s list arms into nested `Empty`/`Link`
-      matches; `[..] = xs` and `program([a, b])` use the same compiler.
+      matches; `[..] = xs` uses the same compiler, on a list literal only (a
+      list of unknown length is taken apart with `match`).
 
 ### Warnings (whole-program)
 - [ ] "Tag `Cirle` is constructed but never matched anywhere" — catches tag

@@ -216,6 +216,14 @@ fn contract_bindings(root: &Expr) -> Option<[(Symbol, Span); 3]> {
     Some([init?, update?, draw?])
 }
 
+/// A list pattern fixes a length, which the checker can know only for a list
+/// literal.
+fn take_apart_with_match(source: &str) -> String {
+    format!(
+        "a list can be any length, so take it apart with `match`: `match {source} do [] then … [x, ...rest] then … done`"
+    )
+}
+
 /// How many items the list literal `expr` writes out; `None` for anything else.
 fn literal_len(expr: &Expr) -> Option<usize> {
     let mut len = 0;
@@ -1724,6 +1732,22 @@ impl Lower {
             if fits {
                 return self.bind_literal_items(pattern, literal_items(value), rest_pair);
             }
+            let message = match literal_len(&value) {
+                Some(len) => {
+                    let takes = pattern.items.len();
+                    let takes = if pattern.rest.is_some() {
+                        format!("at least {takes}")
+                    } else {
+                        takes.to_string()
+                    };
+                    format!("this list has {len} items but the pattern takes {takes}")
+                }
+                None => match &value.kind {
+                    ExprKind::Var { name, .. } => take_apart_with_match(name),
+                    _ => take_apart_with_match("xs"),
+                },
+            };
+            self.errors.push(GoatError::new(pattern.span, message));
             let unpacked = self.bind_list_pattern(source, pattern, Then::Rest(rest_pair));
             return self.node(
                 span,
@@ -2419,6 +2443,8 @@ impl Lower {
         then: Then<'i>,
     ) -> Expr {
         let pattern = self.list_pattern(pattern);
+        self.errors
+            .push(GoatError::new(pattern.span, take_apart_with_match("xs")));
         self.bind_list_pattern(source, pattern, then)
     }
 

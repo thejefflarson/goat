@@ -689,9 +689,9 @@ mod tests {
         let errors = check("f = program(xs) do [a, b] = xs a done f([1, 2])")
             .err()
             .expect("an error");
-        assert!(errors[0].message.contains("`Empty`"), "{errors:?}");
+        assert!(errors[0].message.contains("take it apart"), "{errors:?}");
         let errors = check("[a, b] = [1, 2, 3] a").err().expect("an error");
-        assert!(errors[0].message.contains("doesn't handle"), "{errors:?}");
+        assert!(errors[0].message.contains("3 items"), "{errors:?}");
         assert!(
             check("f = program(xs) do match xs do [a, b] then a else 0 done done f([1])").is_ok()
         );
