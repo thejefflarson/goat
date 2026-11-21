@@ -109,7 +109,7 @@ Proof.
   destruct o; cbn in H; destruct T; try discriminate H;
     inversion H; subst;
     first [ (apply sig_ring; [ reflexivity | exact I ]) | apply sig_quot
-          | apply sig_whole; reflexivity | (apply sig_cmp; [ reflexivity | constructor ]) ].
+          | (apply sig_cmp; [ reflexivity | constructor ]) ].
 Qed.
 
 Lemma bin_ty_EvT : forall o T R, bin_ty o T = Some R -> EvT R.
@@ -225,7 +225,7 @@ Proof.
   induction f as [|f IH]; [ split; intros; discriminate | ].
   destruct IH as [IHe IHf]. split.
   - intros D G e n s D' T n' H HG HD. cbn [infer] in H.
-    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3];
+    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3 | a4 | a5];
       try discriminate H.
     + (* variable *)
       destruct (lookup x G) as [sc|] eqn:Hl; [|discriminate].
@@ -523,10 +523,10 @@ Proof.
       destruct (IHe _ _ _ _ _ _ _ _ E2 HG1 HD1) as (Gd2 & HT2 & Hty2).
       pose proof Gd2 as (_ & Hs2 & HD2 & _).
       pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
-      destruct (is_ring_op o) eqn:Hring.
-      * (* [+ - *]: both operands at one Numeric variable's type *)
-        assert (Hko : kind o = k_ring)
-          by (unfold is_ring_op in Hring; destruct (kind o); [ reflexivity | discriminate | discriminate | discriminate ]).
+      destruct (is_generic_op o) eqn:Hring.
+      * (* [+ - * // %]: both operands at one Numeric variable's type *)
+        assert (Hko : kind o = k_ring \/ kind o = k_whole)
+          by (unfold is_generic_op in Hring; destruct (kind o); [ left; reflexivity | discriminate | right; reflexivity | discriminate ]).
         set (D2' := upd D2 (ea n2) k_Numeric) in *.
         destruct (unify_t f D2' (apT s2 T1) (typ_Var (ea n2)) (S n2)) as [[s3 n3]|] eqn:E3; [|discriminate].
         destruct (unify_t f D2' (apT s3 T2) (apT s3 (typ_Var (ea n2))) n3) as [[s4 n4]|] eqn:E4; [|discriminate].
@@ -562,7 +562,7 @@ Proof.
            apply (typing_ap_G D2' n3 s4 D2' n4 _ _ _ Gd4 HG3).
            apply (typing_ap_G D2' (S n2) s3 D2' n3 _ _ _ Gd3 HG2).
            apply (typing_refine D2 n2 D2' (S n2) _ _ _ GdU HG2). exact Hty2.
-        -- apply sig_ring; [ exact Hko | exact Hsat ].
+        -- destruct Hko as [Hko | Hko]; [ apply sig_ring | apply sig_whole ]; [ exact Hko | exact Hsat | exact Hko | exact Hsat ].
       * destruct (bin_arg D2 o (apT s2 T1) T2) as [Ta|] eqn:E3; [|discriminate].
         destruct (unify_t f D2 (apT s2 T1) Ta n2) as [[s3 n3]|] eqn:E4; [|discriminate].
         destruct (unify_t f D2 (apT s3 T2) Ta n3) as [[s4 n4]|] eqn:E5; [|discriminate].

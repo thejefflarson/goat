@@ -26,11 +26,11 @@ disagreed.
    settles on its own, as `Int` unless its context needs a `Float`. Mono already
    rematerializes a generalized value at each use's type (#376), so no mono or
    codegen change is needed.
-2. **Only a bare numeral**, which includes a negated one: `-3` lowers to
-   `0 - 3`, and a kid reads it as one number, so `n = -3` adapts. The checker
-   recognizes `0 - e` of a numeral at any depth (a hand-written `0 - 3` is the
-   same term, so it adapts too). The calculus treats `0 - 3` as a computation, so
-   the differential corpus skips a `let` of one. A record or list of literals stays one shared value
+2. **Only a bare numeral**, which includes a negative one: lowering reads
+   `-3` as the one literal `-3`, as the calculus does (`e_num` takes any
+   integer), so `n = -3` adapts, and so does `-9223372036854775808`. `0 - 3`
+   written out, `- -3`, `-(2 * 3)` and `-3 * 2` are computations and stay one
+   number. A record or list of literals stays one shared value
    with its literals' types shared, so the reload snapshot keeps its sharing
    ([ADR 0035](0035-reload-keeps-data-and-rebinds-methods.md)) and a record is not
    rebuilt at every use.

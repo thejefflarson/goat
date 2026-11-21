@@ -38,6 +38,8 @@ Fixpoint inst_rec (var_of : string -> termvar) (k D : nat) (e : exp) {struct e} 
   | e_ite a b c => e_ite (inst_rec var_of k D a) (inst_rec var_of k D b) (inst_rec var_of k D c)
   | e_bin a o b => e_bin (inst_rec var_of k D a) o (inst_rec var_of k D b)
   | e_tofloat a => e_tofloat (inst_rec var_of k D a)
+  | e_fold a => e_fold (inst_rec var_of k D a)
+  | e_unfold a => e_unfold (inst_rec var_of k D a)
   end
 with inst_fields (var_of : string -> termvar) (k D : nat) (fs : Goat_ott.fields) {struct fs}
   : Goat_ott.fields :=
@@ -115,6 +117,8 @@ Proof.
     rewrite (IHa k Ha), (IHb k Hb). reflexivity.
   - (* coercion: not a term of the printed fragment *)
     intros a IH k Hs. destruct Hs.
+  - intros a IH k Hs. destruct Hs.
+  - intros a IH k Hs. destruct Hs.
   - intros k Hs. reflexivity.
   - intros l e IHe fs IHfs k [He Hfs]. simpl.
     rewrite (IHe k He), (IHfs k Hfs). reflexivity.
@@ -450,6 +454,8 @@ Proof.
            | split; [ intros _; exact Hmath | intros _ Hx; discriminate Hx ] ].
   - (* coercion: not a term of the printed fragment *)
     intros a IH P Hs Hl. destruct Hs.
+  - intros a IH P Hs Hl. destruct Hs.
+  - intros a IH P Hs Hl. destruct Hs.
   - (* no fields *)
     intros P Hs Hl. split.
     + apply DI_end.

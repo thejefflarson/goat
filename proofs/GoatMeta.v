@@ -15,6 +15,7 @@ Require Import Goat.GoatProofs.   (* exp_fields_mutind *)
 Require Import Goat.GoatRows.
 Require Import Goat.GoatNum.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatMu.
 Require Import Stdlib.Lists.List.
 From Stdlib Require Import Lia.
 
@@ -41,6 +42,8 @@ Fixpoint lc_at (n : nat) (e : exp) {struct e} : Prop :=
   | e_ite a b c => lc_at n a /\ lc_at n b /\ lc_at n c
   | e_bin a _ b => lc_at n a /\ lc_at n b
   | e_tofloat a => lc_at n a
+  | e_fold a => lc_at n a
+  | e_unfold a => lc_at n a
   end
 with lcf_at (n : nat) (fs : fields) {struct fs} : Prop :=
   match fs with
@@ -79,6 +82,8 @@ Proof.
   - (* bin *) intros a IHa o b IHb m n Hle [H1 H2]; simpl; split;
       [ apply (IHa m n Hle H1) | apply (IHb m n Hle H2) ].
   - (* tofloat *) intros e0 IH m n Hle H; simpl in *; apply (IH m n Hle H).
+  - (* fold *) intros e0 IH m n Hle H; simpl in *; apply (IH m n Hle H).
+  - (* unfold *) intros e0 IH m n Hle H; simpl in *; apply (IH m n Hle H).
   - (* fs_nil *) intros; simpl; auto.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs m n Hle [H1 H2]; simpl; split;
       [ apply (IHe m n Hle H1) | apply (IHfs m n Hle H2) ].
@@ -116,6 +121,8 @@ Proof.
   - (* bin *) intros a IHa o b IHb n x H; simpl in *; destruct H as [H1 H2];
       split; [ apply (IHa n x H1) | apply (IHb n x H2) ].
   - (* tofloat *) intros e0 IH n x H; simpl in *; apply (IH n x H).
+  - (* fold *) intros e0 IH n x H; simpl in *; apply (IH n x H).
+  - (* unfold *) intros e0 IH n x H; simpl in *; apply (IH n x H).
   - (* fs_nil *) intros; simpl; auto.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs n x H; simpl in *; destruct H as [H1 H2];
       split; [ apply (IHe n x H1) | apply (IHfs n x H2) ].
@@ -159,6 +166,8 @@ Proof.
   - (* bin *) intros a IHa o b IHb n [H1 H2] k w Hle; simpl; f_equal;
       [ apply (IHa n H1 k w Hle) | apply (IHb n H2 k w Hle) ].
   - (* tofloat *) intros e0 IH n H k w Hle; simpl; f_equal; apply (IH n H k w Hle).
+  - (* fold *) intros e0 IH n H k w Hle; simpl; f_equal; apply (IH n H k w Hle).
+  - (* unfold *) intros e0 IH n H k w Hle; simpl; f_equal; apply (IH n H k w Hle).
   - (* fs_nil *) intros; simpl; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs n [H1 H2] k w Hle; simpl; f_equal;
       [ apply (IHe n H1 k w Hle) | apply (IHfs n H2 k w Hle) ].
@@ -217,6 +226,8 @@ Proof.
   - (* bin *) intros a IHa o b IHb x v k Hfv; simpl in *; f_equal;
       [ apply IHa | apply IHb ]; fsetdec.
   - (* tofloat *) intros e0 IH x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
+  - (* fold *) intros e0 IH x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
+  - (* unfold *) intros e0 IH x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
   - (* fs_nil *) intros; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs x v k Hfv; simpl in *; f_equal;
       [ apply IHe | apply IHfs ]; fsetdec.
@@ -276,6 +287,8 @@ Proof.
   - (* bin *) intros a IHa o b IHb u x w k Hlc; simpl; f_equal;
       [ apply IHa | apply IHb ]; auto.
   - (* tofloat *) intros e0 IH u x w k Hlc; simpl; f_equal; apply IH; auto.
+  - (* fold *) intros e0 IH u x w k Hlc; simpl; f_equal; apply IH; auto.
+  - (* unfold *) intros e0 IH u x w k Hlc; simpl; f_equal; apply IH; auto.
   - (* fs_nil *) intros; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs u x w k Hlc; simpl; f_equal;
       [ apply IHe | apply IHfs ]; auto.
@@ -333,6 +346,8 @@ Proof.
   - (* ite *) intros a IHa b IHb c IHc u x Hu He; discriminate He.
   - (* bin *) intros a IHa o b IHb u x Hu He; discriminate He.
   - (* tofloat *) intros e0 IH u x Hu He. simpl in He |- *. apply IH; assumption.
+  - (* fold *) intros e0 IH u x Hu He. simpl in He |- *. apply IH; assumption.
+  - (* unfold *) intros e0 IH u x Hu He. discriminate He.
   - (* fs_nil *) intros; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs u x Hu He. simpl in He |- *.
     apply andb_prop in He. destruct He as [H1 H2].
@@ -371,6 +386,8 @@ Proof.
   - (* ite *) intros a IHa b IHb c IHc u k Hu He; discriminate He.
   - (* bin *) intros a IHa o b IHb u k Hu He; discriminate He.
   - (* tofloat *) intros e0 IH u k Hu He. simpl in He |- *. apply IH; assumption.
+  - (* fold *) intros e0 IH u k Hu He. simpl in He |- *. apply IH; assumption.
+  - (* unfold *) intros e0 IH u k Hu He. discriminate He.
   - (* fs_nil *) intros; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs u k Hu He. simpl in He |- *.
     apply andb_prop in He. destruct He as [H1 H2].
@@ -407,6 +424,7 @@ Lemma value_gen_mut :
   (forall fs, rec_value fs -> is_gen_fields fs = true).
 Proof.
   apply value_rec_value_mutind; try (intros; reflexivity).
+  - intros v Hv IH. simpl. exact IH.
   - intros fs Hrv IH. simpl. exact IH.
   - intros l v fs Hv IHv Hrv IHrv. simpl. rewrite IHv, IHrv. reflexivity.
 Qed.
@@ -461,6 +479,8 @@ Proof.
   - (* T_If *) intros D G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3; simpl; auto.
   - (* T_ToFloat *) intros D G e A Ht IH Hs; simpl; assumption.
   - (* T_Bin *) intros D G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs; simpl; auto.
+  - (* T_Fold *) intros D G e B Hlc Hg Ht IH; simpl; assumption.
+  - (* T_Unfold *) intros D G e B Hlc Hg Ht IH; simpl; assumption.
   - (* FT_nil *) intros; simpl; auto.
   - (* FT_cons *) intros D G l e T fs R Hty IH1 Hft IH2; simpl; split; assumption.
 Qed.
@@ -552,6 +572,25 @@ Proof.
     apply req_trans with (R2 := R'); auto.
 Qed.
 
+(* A value typed at a recursive type is a fold.  Holds at any context, as
+   [canon_arrow] does. *)
+Lemma canon_mu : forall D G v B T,
+  value v -> typing D G v T -> teq T (typ_Mu B) ->
+  exists v', v = e_fold v' /\ value v' /\ typing D G v' (open_typ 0 (typ_Mu B) B).
+Proof.
+  intros D G v B T Hval Hty. revert Hval B.
+  induction Hty; intros Hval B0 Heq;
+    try solve [ inversion Hval ];
+    try solve [ apply teq_thead in Heq; simpl in Heq; discriminate ].
+  - (* T_Num *) destruct T; simpl in *; try discriminate;
+      apply teq_thead in Heq; simpl in Heq; discriminate.
+  - (* T_Conv *) apply IHHty; auto. eapply teq_trans; eassumption.
+  - (* T_Fold *) inversion Hval; subst.
+    exists e. repeat split; auto.
+    eapply T_Conv; [ eassumption | ].
+    apply teq_unroll. exact Heq.
+Qed.
+
 (* A value at (a type equal to) a base type is a literal of that type. *)
 Lemma canon_base : forall D G v T,
   value v -> typing D G v T ->
@@ -610,6 +649,20 @@ Proof.
   - right. exists trap_overflow. apply bt_ring_overflow; assumption.
 Qed.
 
+(* Two numerals divide or take a remainder as [Int]s, unless the divisor is
+   zero or the quotient is out of range, which trap. *)
+Lemma whole_nums : forall o a b,
+  kind o = k_whole ->
+  (exists v, bin_step o (e_num a) (e_num b) v) \/
+  (exists k, bin_trap o (e_num a) (e_num b) k).
+Proof.
+  intros o a b Hk. destruct (z_is_zero b) eqn:Hz.
+  - right. exists trap_div_zero. apply bt_div_zero; assumption.
+  - destruct (in_int (whole_Z o a b)) eqn:Hr.
+    + left. eexists. apply bs_whole; assumption.
+    + right. exists trap_overflow. apply bt_whole_overflow; assumption.
+Qed.
+
 (* An operator applied to two values of the types its signature wants either
    computes a value or raises a defined error. *)
 Lemma bin_progress : forall D G o v1 v2 A B R,
@@ -623,7 +676,7 @@ Proof.
   assert (Hflt : forall v, value v -> typing D G v typ_Float ->
                  (exists n, v = e_num n) \/ (exists d, v = e_dec d))
     by (intros v Hv Hty; destruct (canon_base _ _ _ _ Hv Hty) as [_ [C _]]; exact (C (teq_refl _))).
-  destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o Hk | D0 o B Hk HB ].
+  destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o A Hk Hsat | D0 o B Hk HB ].
   - (* [+ - *] on two numbers of one Numeric type *)
     destruct A; simpl in Hsat; try discriminate.
     + (* Int: in range it steps, out of range it traps *)
@@ -646,13 +699,21 @@ Proof.
     + apply bs_float; [ right; reflexivity | constructor ].
     + apply bs_float; [ right; reflexivity | constructor ].
     + apply bs_float; [ right; reflexivity | constructor ].
-  - (* [//] and [%]: a zero divisor traps, and so does a quotient out of range *)
-    destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
-    destruct (z_is_zero b) eqn:Hz.
-    + right. exists trap_div_zero. apply bt_div_zero; assumption.
-    + destruct (in_int (whole_Z o a b)) eqn:Hr.
-      * left. eexists. apply bs_whole; assumption.
-      * right. exists trap_overflow. apply bt_whole_overflow; assumption.
+  - (* [//] and [%] on two numbers of one Numeric type *)
+    destruct A; simpl in Hsat; try discriminate.
+    + (* Int: a zero divisor traps, and so does a quotient out of range *)
+      destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
+      apply whole_nums; assumption.
+    + (* Float: two numerals step as Ints; with a decimal, any Float *)
+      destruct (Hflt _ Hv1 H1) as [[a ->] | [x ->]]; destruct (Hflt _ Hv2 H2) as [[b ->] | [y ->]].
+      * apply whole_nums; assumption.
+      * left. exists (e_dec 0). apply bs_whole_float; [ assumption | constructor ].
+      * left. exists (e_dec 0). apply bs_whole_float; [ assumption | constructor ].
+      * left. exists (e_dec 0). apply bs_whole_float; [ assumption | constructor ].
+    + (* a Numeric variable: a value there is a numeral *)
+      destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
+      destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
+      apply whole_nums; assumption.
   - (* a comparison of two Ints, Floats, strings or booleans *)
     inversion HB; subst.
     + destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
@@ -825,6 +886,22 @@ Proof.
       * right. exists k. apply tr_bin2; auto.
     + left. exists (e_bin e1' o e2). apply st_bin1; auto.
     + right. exists k. apply tr_bin1; auto.
+  - (* Case: [fold e].  A fold of a finished value is finished; otherwise
+       [e] steps or traps. *)
+    intros D G e B Hlc Hg Ht IH HG; subst.
+    destruct (IH eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
+    + left. apply v_fold; auto.
+    + right; left. exists (e_fold e'). apply st_fold1; auto.
+    + right; right. exists k. apply tr_fold; auto.
+  - (* Case: [unfold e].  If [e] is finished, canonical forms says it is a
+       fold of a value, and the pair cancels (st_unfold_fold); otherwise [e]
+       steps or traps. *)
+    intros D G e B Hlc Hg Ht IH HG; subst.
+    right. destruct (IH eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
+    + destruct (canon_mu _ _ _ _ _ Hv Ht (teq_refl _)) as [v' [-> [Hv' _]]].
+      left. exists v'. apply st_unfold_fold; auto.
+    + left. exists (e_unfold e'). apply st_unfold1; auto.
+    + right. exists k. apply tr_unfold; auto.
   - (* FT_nil *) intros; left; auto.
   - (* FT_cons *) intros D G l e T fs R Hty IH1 Hft IH2 HG; subst.
     destruct (IH1 eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
@@ -954,6 +1031,30 @@ Proof.
   - (* T_Conv *) destruct (IHtyping He) as [T0 [A [B [C E]]]].
     exists T0. repeat split; try assumption. eauto using teq_trans.
   - (* T_If *) inversion He; subst. eexists. repeat split; try eassumption; apply teq_refl.
+Qed.
+
+Lemma fold_inv : forall D G e T,
+  typing D G (e_fold e) T ->
+  exists B, teq (typ_Mu B) T /\ lct 0 (typ_Mu B) /\ guarded B /\
+    typing D G e (open_typ 0 (typ_Mu B) B).
+Proof.
+  intros D G e T H. remember (e_fold e) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_Conv *) destruct (IHtyping He) as [B [C [D1 [E F]]]].
+    exists B. repeat split; try assumption. eauto using teq_trans.
+  - (* T_Fold *) inversion He; subst. exists B. repeat split; auto using teq_refl.
+Qed.
+
+Lemma unfold_inv : forall D G e T,
+  typing D G (e_unfold e) T ->
+  exists B, lct 0 (typ_Mu B) /\ guarded B /\
+    typing D G e (typ_Mu B) /\ teq (open_typ 0 (typ_Mu B) B) T.
+Proof.
+  intros D G e T H. remember (e_unfold e) as e0 eqn:He.
+  induction H; try discriminate He.
+  - (* T_Conv *) destruct (IHtyping He) as [B [C [C' [C'' E]]]].
+    exists B. repeat split; [ exact C | exact C' | exact C'' | eauto using teq_trans ].
+  - (* T_Unfold *) inversion He; subst. exists B. repeat split; auto using teq_refl.
 Qed.
 
 Lemma tofloat_inv : forall D G e T,

@@ -32,6 +32,10 @@ Scheme typ_mutind := Induction for typ Sort Prop
 with   row_mutind := Induction for row Sort Prop.
 Combined Scheme typ_row_mutind from typ_mutind, row_mutind.
 
+Scheme teq_mutind := Induction for teq Sort Prop
+with   req_mutind := Induction for req Sort Prop.
+Combined Scheme teq_req_mutind from teq_mutind, req_mutind.
+
 Lemma teq_req_refl :
   (forall T : typ, teq T T) /\ (forall R : row, req R R).
 Proof. apply typ_row_mutind; intros; eauto. Qed.
@@ -55,6 +59,8 @@ Definition thead_tag (T : typ) : nat :=
   | typ_Unit => 5
   | typ_String => 6
   | typ_Float => 7
+  | typ_Bvar _ => 8
+  | typ_Mu _ => 9
   end.
 
 Lemma teq_thead : forall T1 T2, teq T1 T2 -> thead_tag T1 = thead_tag T2.
@@ -113,6 +119,8 @@ Proof.
       match goal with H : typ_Arrow _ _ = typ_Arrow _ _ |- _ => inversion H; subst end.
     + exists T1', T2'; auto.
     + exists T1, T2; auto using teq_sym.
+  - (* bvar *) repeat split; intros; discriminate.
+  - (* mu *) repeat split; intros; discriminate.
   - (* rec *) repeat split; intros; try discriminate;
       match goal with H : typ_Record _ = typ_Record _ |- _ => inversion H; subst end.
     + exists R'; auto.
@@ -148,6 +156,30 @@ Proof.
   intros R T H.
   apply (proj1 (proj2 (proj2 (teq_shape _ _ H)))); reflexivity.
 Qed.
+
+(* A recursive type is equal only to a recursive type with an equal body.
+   There is no unrolling equation (the recursion is iso), so this is plain
+   congruence; the statement is two-sided for the same reason as
+   [teq_shape]. *)
+Lemma teq_mu_shape : forall T1 T2, teq T1 T2 ->
+  (forall B, T1 = typ_Mu B -> exists B', T2 = typ_Mu B' /\ teq B B') /\
+  (forall B, T2 = typ_Mu B -> exists B', T1 = typ_Mu B' /\ teq B B').
+Proof.
+  induction 1; try (split; intros; discriminate).
+  - split; intros ? X; inversion X; subst.
+    + eexists; split; [ reflexivity | assumption ].
+    + eexists; split; [ reflexivity | apply teq_sym; assumption ].
+  - destruct IHteq1 as [A1 A2], IHteq2 as [B1 B2]. split; intros.
+    + destruct (A1 _ H1) as [? [? ?]]. destruct (B1 _ H2) as [? [? ?]].
+      eexists; split; eauto using teq_trans.
+    + destruct (B2 _ H1) as [? [? ?]]. destruct (A2 _ H2) as [? [? ?]].
+      eexists; split; eauto using teq_trans.
+  - destruct IHteq as [A1 A2]. split; eauto.
+Qed.
+
+Lemma teq_Mu_inv : forall B T, teq (typ_Mu B) T ->
+  exists B', T = typ_Mu B' /\ teq B B'.
+Proof. intros B T H. apply (proj1 (teq_mu_shape _ _ H)); reflexivity. Qed.
 
 (* ------------------------------------------------------------------ *)
 (* L2': labels are preserved -- the section-3 characterization, proved  *)

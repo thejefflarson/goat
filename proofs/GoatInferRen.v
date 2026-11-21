@@ -181,6 +181,12 @@ Proof.
   - (* T_Bin *)
     intros D G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs G2 Hg Hy. subst G. cbn [subst_exp].
     eapply T_Bin; [ eapply IH1 | eapply IH2 | exact Hs ]; eauto.
+  - (* T_Fold *)
+    intros D G e B Hlc Hgd Ht IH G2 Hg Hy. subst G. cbn [subst_exp].
+    eapply T_Fold; [ exact Hlc | exact Hgd | eapply IH; eauto ].
+  - (* T_Unfold *)
+    intros D G e B Hlc Hgd Ht IH G2 Hg Hy. subst G. cbn [subst_exp].
+    eapply T_Unfold; [ exact Hlc | exact Hgd | eapply IH; eauto ].
   - intros D G Hu G2 Hg Hy. subst G. cbn [subst_fields]. apply FT_nil. eapply uniq_rename_mid; eauto.
   - intros D G l e T fs R Ht IH1 Hf IH2 G2 Hg Hy. subst G. cbn [subst_fields].
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.

@@ -25,7 +25,7 @@
 //! The calculus has no implicit Int-to-Float widening: elaboration writes
 //! `float(e)` where the checker accepts an Int for a Float (an operand beside a
 //! Float operand, each operand of `/`, an argument to a Float parameter, a
-//! numeral inside a comparison). A numeral the checker settled as a Float
+//! branch of an `if` whose result is a Float, a numeral inside a comparison). A numeral the checker settled as a Float
 //! elsewhere is written bare, which the calculus types at `Float`. This reader
 //! inserts the coercions from the checker's node types, so the differential test
 //! also checks that those places are exactly where the checker widens. `+ - *`
@@ -59,7 +59,7 @@ const MAX_DEPTH: u32 = 6;
 /// between its use and its binder.
 enum Core {
     Var(usize),
-    Num(u64),
+    Num(i64),
     Float,
     Str(Vec<u8>),
     Unit,
@@ -167,23 +167,8 @@ impl Core {
     fn generalizes_numeral(&self) -> bool {
         match self {
             Core::Var(_) => true,
-            Core::Bin(BinOp::Sub, zero, e) => {
-                matches!(**zero, Core::Num(0)) && e.is_negated_numeral()
-            }
             Core::ToFloat(e) => e.holds_numeral(),
             Core::Rec(fields) => fields.iter().any(|(_, e)| e.holds_numeral()),
-            _ => false,
-        }
-    }
-
-    /// A numeral, or `0 - e` of one: the checker reads `-3` as a bare numeral and
-    /// the calculus, where `0 - 3` is a computation, does not.
-    fn is_negated_numeral(&self) -> bool {
-        match self {
-            Core::Num(_) => true,
-            Core::Bin(BinOp::Sub, zero, e) => {
-                matches!(**zero, Core::Num(0)) && e.is_negated_numeral()
-            }
             _ => false,
         }
     }
@@ -506,9 +491,8 @@ impl Reader<'_> {
         }
         match &expr.kind {
             ExprKind::Int(n) => {
-                let num = u64::try_from(*n)
-                    .ok()
-                    .filter(|n| *n < 1 << 30)
+                let num = Some(*n)
+                    .filter(|n| n.unsigned_abs() < 1 << 30)
                     .map(Core::Num)?;
                 match self.node_ty(expr) {
                     Some(Ty::Float) if self.in_comparison > 0 => Some(Core::ToFloat(Box::new(num))),
@@ -523,11 +507,23 @@ impl Reader<'_> {
                 cond,
                 then_branch,
                 else_branch: Some(else_branch),
-            } => Some(Core::If(
-                Box::new(self.read(cond)?),
-                Box::new(self.read(then_branch)?),
-                Box::new(self.read(else_branch)?),
-            )),
+            } => {
+                let result = self.node_ty(expr) == Some(&Ty::Float);
+                let branch = |this: &mut Self, branch: &Expr| {
+                    let value = this.read(branch)?;
+                    let widens = result && this.node_ty(branch) == Some(&Ty::Int);
+                    Some(if widens {
+                        Core::ToFloat(Box::new(value))
+                    } else {
+                        value
+                    })
+                };
+                Some(Core::If(
+                    Box::new(self.read(cond)?),
+                    Box::new(branch(self, then_branch)?),
+                    Box::new(branch(self, else_branch)?),
+                ))
+            }
             ExprKind::Bin { op, lhs, rhs } => {
                 let comparison = matches!(
                     op,
@@ -539,16 +535,22 @@ impl Reader<'_> {
                 let (mut a, mut b) = (operands.0?, operands.1?);
                 if self.types.is_some() {
                     let to_float = |c: Core| Core::ToFloat(Box::new(c));
-                    let generic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul)
-                        && [lhs, rhs]
-                            .iter()
-                            .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
+                    let generic = matches!(
+                        op,
+                        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod
+                    ) && [lhs, rhs]
+                        .iter()
+                        .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
                     self.generic_ring |= generic;
                     if !generic {
                         let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
                         match (op, x, y) {
                             (BinOp::Div, ..) => (a, b) = (to_float(a), to_float(b)),
-                            (BinOp::FloorDiv | BinOp::Mod, _, _) => {}
+                            (_, Ty::Int, Ty::Int)
+                                if !comparison && self.node_ty(expr) == Some(&Ty::Float) =>
+                            {
+                                (a, b) = (to_float(a), to_float(b));
+                            }
                             (_, Ty::Int, Ty::Float) => a = to_float(a),
                             (_, Ty::Float, Ty::Int) => b = to_float(b),
                             _ => {}
@@ -942,7 +944,10 @@ impl Gen {
                 .to_string(),
                 Shape::Plain,
             ),
-            _ => (self.rng.below(1000).to_string(), Shape::Num),
+            _ => {
+                let sign = ["", "", "", "-"][self.rng.below(4)];
+                (format!("{sign}{}", self.rng.below(1000)), Shape::Num)
+            }
         }
     }
 
@@ -1030,7 +1035,10 @@ struct TypedGen {
 impl TypedGen {
     fn literal(&mut self, ty: Prim) -> String {
         match ty {
-            Prim::Int => self.rng.below(100).to_string(),
+            Prim::Int => {
+                let sign = ["", "", "", "-"][self.rng.below(4)];
+                format!("{sign}{}", self.rng.below(100))
+            }
             Prim::Float => format!("{}.{}", self.rng.below(10), self.rng.below(10)),
             Prim::Bool => ["true", "false"][self.rng.below(2)].to_string(),
             Prim::Str => format!("\"{}\"", ["a", "b", "ab", ""][self.rng.below(4)]),

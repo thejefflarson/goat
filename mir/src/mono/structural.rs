@@ -12,7 +12,7 @@
 use super::{FnCx, Mono, Subst, payload_fields, positional_fields};
 use crate::canon::{canonical, ground_fields};
 use crate::mir::*;
-use goat_checker::hir::{BinOp, Span};
+use goat_checker::hir::Span;
 use goat_checker::ty::{Row, Ty};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,6 +63,8 @@ fn int_counterpart(op: FloatOp) -> IntOp {
         FloatOp::Sub => IntOp::Sub,
         FloatOp::Mul => IntOp::Mul,
         FloatOp::Div => IntOp::Div,
+        FloatOp::FloorDiv => IntOp::FloorDiv,
+        FloatOp::Mod => IntOp::Mod,
     }
 }
 
@@ -157,23 +159,6 @@ impl Mono<'_> {
             }
             _ => Expr::Trap("arithmetic on a type that is not a number".into()),
         }
-    }
-
-    /// `//` or `%`, out of line so `bin`, which a long chain of operators
-    /// recurses through, keeps a small frame.
-    #[inline(never)]
-    pub(super) fn whole_division(
-        cx: &mut FnCx,
-        (op, span): (BinOp, Span),
-        a: Expr,
-        b: Expr,
-    ) -> Expr {
-        let op = if op == BinOp::Mod {
-            IntOp::Mod
-        } else {
-            IntOp::FloorDiv
-        };
-        Self::int_arith(cx, Some(span), op, a, b)
     }
 
     /// The site is set after both operands run, so an operand's own call cannot

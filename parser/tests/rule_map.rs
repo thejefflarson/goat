@@ -175,8 +175,13 @@ fn every_ott_production_is_reached_by_some_core_rule() {
         // `e_tofloat` is inserted by elaboration, so no source text parses to
         // it. `e_unit` has no literal: it is the missing branch of an `if`
         // without an `else`, and `e_letrec` is the group a block's leading
-        // function bindings form (ADR 0003).
-        if !matches!(production.as_str(), "e" | "fs" | "fs_nil" | "e_tofloat") {
+        // function bindings form (ADR 0003). `e_fold` and `e_unfold` are
+        // inserted by elaboration of recursive types, which have no surface
+        // syntax (ADR 0037, iso-recursive types).
+        if !matches!(
+            production.as_str(),
+            "e" | "fs" | "fs_nil" | "e_tofloat" | "e_fold" | "e_unfold"
+        ) {
             assert!(
                 reached.contains(production.as_str()),
                 "no rule takes part in `{production}`"

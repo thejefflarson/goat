@@ -21,13 +21,15 @@ preservation) is B3 (#71).
 | `GoatProofs.v` | Hand-written locally-nameless infrastructure lemma (`subst_exp_fresh_eq`) and derived row-equivalence reflexivity. |
 | `GoatRows.v` | Row-equivalence theory: L1 (equivalence + congruence), L2 (head-shape "no confusion" + arrow/record inversion up to `≅`), L2′ (the §3 per-label characterization, soundness direction), L3 (row surfacing). Over `typ`/`row`/`teq`/`req` only. |
 | `GoatDefs.v` | The declarative type system and operational semantics (`docs/semantics.md` §4–§6), hand-written over the generated syntax: type/row substitution, free-variable predicates, schemes, contexts, instantiation, generalization, values, small-step reduction, typing. |
+| `GoatMu.v` | The type algebra of the one binder in `typ`: unrolling `open_typ`, local closure `lct`, how substitution commutes with unrolling (`ap_open_mut`), how type equality respects unrolling (`teq_open`, `teq_unroll`), and the guard `gd`/`guarded` with its closure under substitution and `teq`. |
+| `GoatRecTypes.v` | Iso-recursive types: worked examples. `P = mu t. {moved: (t) -> t; x: Int}`, a `fold`ed ball, a `step` that unfolds its receiver, a run, and what has no derivation (a fold missing its `x`, self-application, a record with no function). |
 | `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, and **Progress**. |
 | `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), the free-variable facts of a bijective renaming, and `gen_more_gen` (generalizing over a smaller context quantifies more, at the sorts the extra atoms already had). What `GoatBij`/`GoatHM`/`GoatSound` build on. |
 | `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`) feeding the T-Let freshening (#151). |
 | `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
 | `GoatNum.v` | The integer arithmetic behind whole-number literals and the 64-bit `Int` range, kept apart because ZArith defines notations that clash with Metalib's `x ~ T`. |
 | `GoatLit.v` | Reads the argument of `e_num` as an integer, so `e_num 3` works in a file that never imports ZArith (and in the generated printer table). |
-| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1.5 // 2`, `1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`). |
+| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`). |
 | `GoatPhase2.v` | Phase 2 of ADR 0037: worked examples for the value restriction (which terms `is_gen_value` accepts), a generalized binding used at two types, a recursive group (its typing, its unrolling, a run) and a group member that is not a function (no derivation). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
@@ -64,7 +66,7 @@ a string literal, `if e1 then e2 else e3`, `e1 o e2` and the coercion
   result is in `[int_min, int_max]` (`in_int`), `//` and `%` floor, and a zero
   divisor or a result outside the range is a trap;
 - `Float` is opaque. `e_dec d` carries a payload no rule reads, and every
-  `Float` operation (`+ - * /`, `float(n)`) relates its operands to every
+  `Float` operation (`+ - * / // %`, `float(n)`) relates its operands to every
   `Float`, and a `Float` comparison to either boolean. That is an unspecified
   function written as a relation, so it needs no axiom or parameter, and a
   theorem about it holds for any function a compiler computes;
@@ -158,6 +160,52 @@ parenthesises a function that is a binding's value. T1 covers groups, and
 does not (decided: deferred to the tail of phase 8): the printer does not write a
 `letrec`, which would need the group's projections printed as bare member names.
 The lexer stays trusted until phases 3 to 6 land, then is verified once (decided).
+
+## Phase 3 (ADR 0037, amended): iso-recursive types
+
+`goat_ln.ott` has two new types, `bv i` (the index of an enclosing `mu`) and
+`mu T` (the body counts the `mu` as index 0), and two new terms `fold(e)` and
+`unfold(e)`; a `fold` of a value is a value. `GoatDefs.v` adds:
+
+- `open_typ k U T` (replace the index `k` by `U`, lower the ones above), the
+  closure predicate `lct k T`, and the guard `gd`/`guarded`: every mention of
+  the index sits under a record field and under a function type (ADR 0032);
+- `T_Fold`: `fold(e) : mu B` when `mu B` is closed, `B` is guarded and `e` has
+  the unrolling `open_typ 0 (mu B) B`; `T_Unfold` is its converse. `fold` carries
+  no type annotation, so terms stay free of types;
+- `st_unfold_fold` (`unfold(fold(v)) --> v`) and the two congruences.
+
+`teq_mu` is congruence only. There is no unrolling equation: that is what makes
+the recursion iso, and it keeps `teq_Mu_inv` (a type equal to a `mu` is a `mu`)
+a plain induction. The binder is a de Bruijn index written into the grammar, not
+an Ott binder: a cofinite `teq_mu` would make `teq_ap` (type equality under
+substitution) need a fresh atom the substitution fixes, and so a finite-support
+hypothesis on every substitution that reaches `T_Conv`. The index has no sort
+(ADR 0038), and a `mu` satisfies only `k_Any`, so `kres` is untouched.
+
+One price: `ap_open_mut` (substitution commutes with unrolling) needs the
+substituted types closed. `lc_sub st sr` says so, and it rides along where a
+substitution did already: in `inst` (a generic instance has closed images), in
+`tr_supp` (so in `OkS`, the algorithm's substitution invariant) and in
+`casch_inst`. `GoatInfer.v` stays sound by construction: it rejects `fold` and
+`unfold`, and its occurs check (`occT`, `occR`) refuses to bind a variable to a
+type with a free index (`lcb`), which never fires on a type the algorithm
+builds. Extending the algorithm to produce a `mu` is a follow-up.
+
+`progress`, `preservation`, `soundness` and `infer_closed_sound` hold with 0
+admits. `canon_mu` (a value typed at a type equal to a `mu` is a `fold`) joins
+the canonical forms; `teq_unroll` (equal `mu`s have equal unrollings) retypes a
+fold at an equal type. `GoatRecTypes.v` shows the guard doing its job
+(`no_fold_at_self_application`: a `fold` has no type equal to
+`mu t. (t) -> t`, through any conversion). The parser fragment is unchanged:
+`mu`, `fold` and `unfold` have no surface syntax, so T1 to T3 only gained the
+cases that say a printed term is never one.
+
+What waits: the elaboration theorem (every program the checker's algorithm
+accepts elaborates into an iso-recursive one), which needs variants, methods and
+the algorithm model; the type of an open-extensible recursive receiver; and
+phase 3's tag signature, which must keep closed payload types in the sense of
+`lct`, since a payload under a `mu` mentions an index.
 
 ## Generic operators: sorted type variables (design Q)
 

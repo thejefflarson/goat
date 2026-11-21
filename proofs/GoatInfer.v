@@ -96,8 +96,26 @@ Definition is_literal (D : denv) (T : typ) : bool :=
 (* Unification                                                          *)
 (* ------------------------------------------------------------------ *)
 
-Definition occT (a : atom) (T : typ) : bool := AtomSetImpl.mem a (ftv_typ T).
-Definition occR (r : atom) (R : row) : bool := AtomSetImpl.mem r (frv_row R).
+(* A type with a free recursion index is closed by no substitution, so the
+   occurs check refuses to bind a variable to one. *)
+Fixpoint lcb (k : nat) (T : typ) {struct T} : bool :=
+  match T with
+  | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String | typ_Var _ => true
+  | typ_Arrow A B => lcb k A && lcb k B
+  | typ_Record R => lcrb k R
+  | typ_Bvar n => Nat.ltb n k
+  | typ_Mu B => lcb (S k) B
+  end
+with lcrb (k : nat) (R : row) {struct R} : bool :=
+  match R with
+  | row_Empty | row_Var _ => true
+  | row_Ext _ T R' => lcb k T && lcrb k R'
+  end.
+
+Definition occT (a : atom) (T : typ) : bool :=
+  AtomSetImpl.mem a (ftv_typ T) || negb (lcb 0 T).
+Definition occR (r : atom) (R : row) : bool :=
+  AtomSetImpl.mem r (frv_row R) || negb (lcrb 0 R).
 
 (* Rewrite [R] so that it presents label [l] first: [Some (T, R', s, n')] with
    [s R] equivalent to [l : T ; R'].  [av] holds the row variables the row
@@ -287,7 +305,7 @@ Definition bin_arg (D : denv) (o : bop) (A B : typ) : option typ :=
   match kind o with
   | k_ring => None
   | k_quot => Some typ_Float
-  | k_whole => Some typ_Int
+  | k_whole => None
   | k_cmp => if cmp_ty B then Some B else if cmp_ty A then Some A
              else if orb (is_literal D A) (is_literal D B) then Some typ_Int else None
   end.
@@ -299,7 +317,6 @@ Definition bin_ty (o : bop) (A : typ) : option typ :=
   | k_ring, typ_Int => Some typ_Int
   | k_ring, typ_Float => Some typ_Float
   | k_quot, typ_Float => Some typ_Float
-  | k_whole, typ_Int => Some typ_Int
   | k_cmp, typ_Int => Some typ_Bool
   | k_cmp, typ_Float => Some typ_Bool
   | k_cmp, typ_String => Some typ_Bool
@@ -328,8 +345,8 @@ Fixpoint group_row (fs : fields) (n : nat) : row :=
   | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
   end.
 
-Definition is_ring_op (o : bop) : bool :=
-  match kind o with k_ring => true | _ => false end.
+Definition is_generic_op (o : bop) : bool :=
+  match kind o with k_ring | k_whole => true | _ => false end.
 
 Definition fresh_var (G : ctx) (e : exp) : atom :=
   fresh (AtomSetImpl.elements (dom G `union` fv_exp e)).
@@ -463,6 +480,8 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                   end
               end
           end
+      | e_fold _ => None
+      | e_unfold _ => None
       | e_tofloat e1 =>
           match infer f' D G e1 n with
           | None => None
@@ -480,7 +499,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
               | Some (s2, D2, T2, n2) =>
-                  if is_ring_op o then
+                  if is_generic_op o then
                       let D2' := upd D2 (ea n2) k_Numeric in
                       let c := typ_Var (ea n2) in
                       match unify_t f' D2' (apT s2 T1) c (S n2) with

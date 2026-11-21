@@ -73,7 +73,15 @@ Qed.
 (* 5 // 0 is an Int, and traps when it runs *)
 Example floor_division_types : typing d_any nil (e_bin (e_num 5) bop_fdiv (e_num 0)) typ_Int.
 Proof.
-  eapply T_Bin; [ apply T_Num | apply T_Num | apply sig_whole ]; constructor || reflexivity.
+  eapply T_Bin; [ apply T_Num | apply T_Num | apply sig_whole ]; first [ constructor | reflexivity | exact I ].
+Qed.
+
+(* 7.5 // 2.5 and 7.5 % 2.5 are Floats *)
+Example float_floor_division_types :
+  typing d_any nil (e_bin (e_dec 0) bop_fdiv (e_dec 1)) typ_Float /\
+  typing d_any nil (e_bin (e_dec 0) bop_rem (e_dec 1)) typ_Float.
+Proof.
+  split; (eapply T_Bin; [ apply T_Dec | apply T_Dec | apply sig_whole ]; first [ constructor | reflexivity | exact I ]).
 Qed.
 
 (* 7 / 2 is a Float: elaboration coerces both Ints, so the quotient is Float / Float *)
@@ -190,6 +198,11 @@ Qed.
 Example float_sum_is_any_float : forall x y d,
   bin_step bop_add (e_dec x) (e_dec y) (e_dec d).
 Proof. intros. apply bs_float; [ left; reflexivity | constructor ]. Qed.
+
+Example float_floor_division_and_remainder_are_any_float : forall x y d,
+  bin_step bop_fdiv (e_dec x) (e_dec y) (e_dec d) /\
+  bin_step bop_rem (e_dec x) (e_dec y) (e_dec d).
+Proof. intros. split; apply bs_whole_float; [ reflexivity | constructor | reflexivity | constructor ]. Qed.
 
 Example float_division_by_zero_is_not_a_trap : forall x y d,
   bin_step bop_div (e_dec x) (e_dec y) (e_dec d).
@@ -322,23 +335,7 @@ Example trap_rises_through_a_coercion :
   traps (e_tofloat (e_bin (e_num 5) bop_fdiv (e_num 0))) trap_div_zero.
 Proof. apply tr_tofloat. apply floor_division_by_zero_traps. Qed.
 
-(* ---- rejected ---- *)
-
-(* 1.5 // 2: floor division wants whole numbers *)
-Example float_floor_division_rejected : forall T,
-  ~ typing d_any nil (e_bin (e_dec 0) bop_fdiv (e_num 2)) T.
-Proof.
-  intros T H. destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
-  apply dec_inv in H1. head_eq H1. subst A. sig_absurd Hs.
-Qed.
-
-(* 1.5 % 2 likewise *)
-Example float_remainder_rejected : forall T,
-  ~ typing d_any nil (e_bin (e_dec 0) bop_rem (e_num 2)) T.
-Proof.
-  intros T H. destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
-  apply dec_inv in H1. head_eq H1. subst A. sig_absurd Hs.
-Qed.
+(* ---- accepted by the unsugared rules ---- *)
 
 (* 1 + 1.5 with no coercion is a Float: the numeral is typed at [Float], a
    [Literal] type, so the operands agree *)
@@ -407,12 +404,12 @@ Definition ga : atom := fresh nil.
 Definition k_lit : sort_fn := fun _ => k_Literal.
 
 Lemma inst_at_lit : forall U,
-  sat d_any k_Literal U ->
+  sat d_any k_Literal U -> lct 0 U ->
   inst d_any (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit).
 Proof.
-  intros U HU.
+  intros U HU HL.
   exists (fun a => if a == ga then U else typ_Var a), idr.
-  split; [ | split; [ | split ] ].
+  split; [ | split; [ | split; [ | split ] ] ].
   - intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
       [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
@@ -420,6 +417,7 @@ Proof.
   - intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
     simpl in Ha. assert (a = ga) by fsetdec. subst a.
     destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+  - split; [ intros a; simpl; match goal with |- context [if ?c then _ else _] => destruct c end; [ exact HL | exact I ] | intros r; exact I ].
 Qed.
 
 (* A function that multiplies by a numeral is generic over [Literal]: a string
@@ -428,7 +426,7 @@ Example generic_scheme_rejects_strings :
   ~ inst d_any (typ_Arrow typ_String typ_String)
       (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit).
 Proof.
-  intros [st [sr [Hst [Hsr [Heq Hsat]]]]]. simpl in Heq.
+  intros [st [sr [Hst [Hsr [Heq [Hsat _]]]]]]. simpl in Heq.
   injection Heq as Hs _.
   assert (Hin : ga `in` AtomSetImpl.diff (ftv_typ (typ_Arrow (typ_Var ga) (typ_Var ga))) {})
     by (simpl; apply AtomSetFacts.diff_iff; split; [ fsetdec | fsetdec ]).
@@ -475,14 +473,14 @@ Proof.
         [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_at_lit; exact I ].
 Qed.
 
-(* let n = 1 in n: a numeral binding is generic, so it is an Int or a Float
+(* let n = 1 in n, or n = -3: a numeral binding is generic, so it is an Int or a Float
    as its use asks.  Which one an unconstrained use takes is the elaborator's
    choice at the program judgment (ADR 0017 defaults to Int). *)
-Lemma numeral_binding_at : forall U,
-  sat d_any k_Literal U ->
-  typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) U.
+Lemma numeral_binding_at : forall n U,
+  sat d_any k_Literal U -> lct 0 U ->
+  typing d_any nil (e_let (e_num n) (e_fvar_b 0)) U.
 Proof.
-  intros U HU.
+  intros n U HU HL.
   apply T_Let with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
   - apply T_Num; [ constructor | ].
     cbn [sat]. rewrite (ext_in _ _ _ ga).
@@ -492,7 +490,7 @@ Proof.
     apply T_Var with (s := gen nil (typ_Var ga) k_lit);
       [ solve_uniq | apply binds_cons_2; reflexivity | ].
     exists (fun a => if a == ga then U else typ_Var a), idr.
-    split; [ | split; [ | split ] ].
+    split; [ | split; [ | split; [ | split ] ] ].
     + intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
         [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
     + intros r _. reflexivity.
@@ -500,11 +498,19 @@ Proof.
     + intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
       simpl in Ha. assert (a = ga) by fsetdec. subst a.
       destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+    + split; [ intros a; simpl; match goal with |- context [if ?c then _ else _] => destruct c end; [ exact HL | exact I ] | intros r; exact I ].
 Qed.
 
 Example numeral_binding_is_generic :
   typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) typ_Int /\
   typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) typ_Float.
+Proof. split; apply numeral_binding_at; exact I. Qed.
+
+(* A negative literal is one numeral too: the checker lowers -3 to it, not to
+   0 - 3. *)
+Example negative_numeral_binding_is_generic :
+  typing d_any nil (e_let (e_num (-3)) (e_fvar_b 0)) typ_Int /\
+  typing d_any nil (e_let (e_num (-3)) (e_fvar_b 0)) typ_Float.
 Proof. split; apply numeral_binding_at; exact I. Qed.
 
 Lemma inst_numeral_at : forall U,
@@ -513,7 +519,7 @@ Lemma inst_numeral_at : forall U,
 Proof.
   intros U HU.
   exists (fun a => if a == ga then U else typ_Var a), idr.
-  split; [ | split; [ | split ] ].
+  split; [ | split; [ | split; [ | split ] ] ].
   - intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
       [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
@@ -521,6 +527,11 @@ Proof.
   - intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
     simpl in Ha. assert (a = ga) by fsetdec. subst a.
     destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+  - split; [ | intros r; exact I ].
+    intros a. simpl.
+    match goal with |- context [if ?c then _ else _] => destruct c end;
+      [ | exact I ].
+    destruct U; first [ exact I | discriminate HU ].
 Qed.
 
 (* n = 3 {a: n + 1.5, b: n * 2}: the one numeral is a Float in the first field
@@ -573,9 +584,3 @@ Example infer_if_branches :
   infer_closed 20 (e_ite (e_bin (e_str [97]) bop_lt (e_str [98])) e_unit e_unit)
   = Some typ_Unit.
 Proof. vm_compute. reflexivity. Qed.
-
-Example infer_rejects_float_floor_division :
-  infer_closed 20 (e_bin (e_dec 0) bop_fdiv (e_num 2)) = None.
-Proof. vm_compute. reflexivity. Qed.
-
-

@@ -29,8 +29,10 @@
 % Int, Float, String and Bool at concrete types (ADR 0017, ADR 0036), with a
 % defined runtime error (a trap) for integer division by zero, and (phase 2)
 % the value restriction and recursive groups of functions. Out of scope
-% (deltas on the proven core): RC/heap, variants/match, recursive (mu) types,
-% constraint-polymorphic operators, comparison of Unit, mono.
+% (deltas on the proven core): RC/heap, variants/match, the checker's
+% equi-recursive types (iso-recursive mu types are in the core, with explicit
+% fold and unfold; the elaboration theorem is phase 5), constraint-polymorphic
+% operators, comparison of Unit, mono.
 % An Int is a signed 64-bit integer and a result outside the range traps; a
 % Float is opaque (every Float operation is unspecified); an explicit
 % Int-to-Float coercion float(e), inserted by elaboration, is the only way an
@@ -41,6 +43,7 @@ metavar label, l ::= {{ com record label }}
 metavar num, n ::= {{ com whole-number literal, an integer }}
 metavar dec, d ::= {{ com Float value, opaque }}
 metavar str, q ::= {{ com string literal, as its bytes }}
+metavar bidx, h ::= {{ com de Bruijn index of a mu binder }}
 metavar typvar, a, b ::= {{ com type variable (free-variable set, not a binder) }}
 metavar rowvar, r, s ::= {{ com row variable (free-variable set, not a binder) }}
 
@@ -57,7 +60,12 @@ T {{ tex \tau }} :: 'T_' ::= {{ com monotype }}
   | ( T1 , ... , Tk ) -> T    ::   :: Arrow   {{ com n-ary function }}
   | { R }                     ::   :: Record
   | a                         ::   :: Var
+  | bv h                      ::   :: Bvar    {{ com index of an enclosing mu; no sort }}
+  | mu T                      ::   :: Mu      {{ com iso-recursive type; the body counts the mu as index 0 }}
   | ( T )                     :: S :: Paren  {{ coq [[T]] }}
+  | unroll ( T )              :: M :: Unroll
+    {{ com the body of a mu with the mu put for its index 0 }}
+    {{ coq (open_typ 0 (typ_Mu [[T]]) [[T]]) }}
 
 R {{ tex \rho }} :: 'R_' ::= {{ com row }}
   | nil                       ::   :: Empty   {{ tex \cdot }} {{ com closed tail }}
@@ -109,6 +117,8 @@ e :: 'e_' ::= {{ com term }}
   | if e1 then e2 else e3               ::   :: If   {{ com conditional }}
   | e1 o e2                             ::   :: Bin  {{ com binary operation }}
   | float ( e )                         ::   :: ToFloat {{ com Int-to-Float coercion, inserted by elaboration }}
+  | fold ( e )                          ::   :: Fold    {{ com roll into a recursive type }}
+  | unfold ( e )                        ::   :: Unfold  {{ com unroll out of a recursive type }}
   | ( e )                               :: S :: Paren {{ coq [[e]] }}
   | e1 [ x := e2 ]                      :: M :: Subst {{ coq (subst_e [[e2]] [[x]] [[e1]]) }}
 
@@ -121,6 +131,7 @@ v :: 'v_' ::= {{ com value }}
   | q                                   ::   :: Str
   | program ( </ xi // i /> ) do e done ::   :: Abs
   | { </ li : vi // i /> }              ::   :: Rec
+  | fold ( v )                          ::   :: Fold
 
 subrules
   v <:: e   % value syntax is a syntactic subset of expression syntax
@@ -153,6 +164,10 @@ grammar
       {{ tex [[l]] \notin \{ [[</ li // i />]] \} }}
     | gen_value e                                            ::   :: genvalue
       {{ com e is a syntactic value: unit, a constant, a name, a function, a record of those, float of one, or a letrec around one }}
+    | closed T                                               ::   :: closed
+      {{ com T has no free mu index }}
+    | guarded T                                              ::   :: guarded
+      {{ com the index 0 of T sits under a record field and a function type (ADR 0032) }}
     | </ ei is a function // i />                            ::   :: functions
       {{ com each e_i is a program literal }}
     | </ ai // i /> </ rj // j /> = gen ( G , </ Ti // i /> )  ::   :: genvarsgroup
@@ -186,6 +201,13 @@ T1 ~= T2 :: :: teq :: 'teq_'
 
   ----- :: var
   a ~= a
+
+  ----------- :: bvar
+  bv h ~= bv h
+
+  T ~= T'
+  ------------- :: mu
+  mu T ~= mu T'
 
   </ Ti ~= Ti' // i />
   T ~= T'
@@ -340,6 +362,18 @@ G |- e : T :: :: typ :: 'T_'
   ---------- :: Conv
   G |- e : T'
 
+  closed ( mu T )
+  guarded T
+  G |- e : unroll ( T )
+  ------------------------ :: Fold
+  G |- fold ( e ) : mu T
+
+  closed ( mu T )
+  guarded T
+  G |- e : mu T
+  ---------------------------- :: Unfold
+  G |- unfold ( e ) : unroll ( T )
+
 defns
 Jred :: '' ::= {{ com call-by-value, left-to-right small step }}
 
@@ -423,6 +457,19 @@ e --> e' :: :: red :: 'red_'
   --------------- :: Proj1
   e . l --> e' . l
 
+  % --- recursive types ---
+
+  ---------------------------- :: UnfoldFold
+  unfold ( fold ( v ) ) --> v
+
+  e --> e'
+  ------------------------ :: Fold1
+  fold ( e ) --> fold ( e' )
+
+  e --> e'
+  ---------------------------- :: Unfold1
+  unfold ( e ) --> unfold ( e' )
+
 defns
 Jsig :: '' ::= {{ com operator signatures (ADR 0017, ADR 0036), at concrete types }}
 
@@ -442,8 +489,12 @@ o : T1 , T2 => T :: :: sig :: 'sig_'
   / : Float , Float => Float
 
   % o is one of // %
-  ---------------------------- :: Whole
+  ---------------------------- :: WholeInt
   o : Int , Int => Int
+
+  % o is one of // %
+  ---------------------------- :: WholeFloat
+  o : Float , Float => Float
 
   % o is one of < <= > >= == !=; T is Int, Float, String or Bool
   ---------------------------- :: Cmp

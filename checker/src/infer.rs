@@ -28,6 +28,7 @@
 
 use crate::captures::for_each_node;
 use crate::error::{GoatError, Label};
+use crate::flow::{self, Edge, End, Scalar};
 use crate::hir::{
     BinOp, Builtin, ContractBinding, Expr, ExprId, ExprKind, Interactive, MatchArm, PatternPayload,
     Span, Symbol,
@@ -236,6 +237,7 @@ fn infer_with_variable_markers(
         ..Inferer::default()
     };
     let ty = inf.infer(root);
+    inf.solve_all_flows();
     if let (true, Some(contract)) = (inf.errors.is_empty(), interactive) {
         inf.check_contract(contract, vocab);
     }
@@ -402,6 +404,13 @@ impl Deferred {
     }
 }
 
+/// A scalar `producer` that a `slot` must accept, `Int` widening to `Float`.
+struct Flow {
+    producer: Ty,
+    slot: Ty,
+    span: Span,
+}
+
 #[derive(Default)]
 struct Inferer {
     next: TypeVar,
@@ -464,6 +473,11 @@ struct Inferer {
     /// The parameter names of the plain functions written in record literals,
     /// by field label, for the hint a dot call on one gives.
     plain_fns: HashMap<String, Vec<String>>,
+    /// The scalar joins recorded and not yet solved (ADR 0040).
+    flows: Vec<Flow>,
+    /// The flows of each recursive-group member inferred but not generalized,
+    /// solved with the group.
+    member_flows: HashMap<Symbol, Vec<Flow>>,
     node_types: HashMap<ExprId, Ty>,
     node_spans: HashMap<ExprId, Span>,
     schemes: HashMap<Symbol, Scheme>,
@@ -609,6 +623,25 @@ fn mark_element(payload: &mut Ty, span: Span) {
     }
 }
 
+/// Put `element` in place of the list element in a `Link` payload, giving back
+/// the type that was there.
+fn swap_element(payload: &mut Ty, element: Ty) -> Option<Ty> {
+    let Ty::Record(row) = payload else {
+        return None;
+    };
+    let mut row = row;
+    while let Row::Extend {
+        label, field, rest, ..
+    } = row
+    {
+        if label == "0" {
+            return Some(std::mem::replace(Arc::make_mut(field), element));
+        }
+        row = Arc::make_mut(rest);
+    }
+    None
+}
+
 /// Whether `text` names a record the way a receiver does: `ball`, `a.b`.
 fn is_path(text: &str) -> bool {
     text.split('.').all(|part| {
@@ -674,18 +707,10 @@ fn inference_order(fields: &[(String, Expr)]) -> Vec<usize> {
         .collect()
 }
 
-/// A whole-number literal, or one negated: `-3` lowers to `0 - 3`, and a kid
-/// reads it as one number (ADR 0039).
+/// A whole-number literal, `-3` included: a negative literal is one number
+/// (ADR 0039).
 fn is_bare_numeral(expr: &Expr) -> bool {
-    match &expr.kind {
-        ExprKind::Int(_) => true,
-        ExprKind::Bin {
-            op: BinOp::Sub,
-            lhs,
-            rhs,
-        } => matches!(lhs.kind, ExprKind::Int(0)) && is_bare_numeral(rhs),
-        _ => false,
-    }
+    matches!(expr.kind, ExprKind::Int(_))
 }
 
 /// Whether evaluating `expr` can do no work, so its binding may be generalized:
@@ -1109,7 +1134,7 @@ impl Inferer {
         let mut vars = BTreeSet::new();
         resolved.free_vars(&mut vars);
         vars.into_iter()
-            .filter(|var| self.is_literal(*var))
+            .filter(|var| self.is_scalar(*var))
             .fold(resolved, |ty, var| ty.substitute(var, &Ty::Int))
     }
 
@@ -2739,6 +2764,7 @@ impl Inferer {
             }
             match self.pending_members.get(symbol).copied() {
                 Some(block) if is_function => {
+                    let flows_from = self.flows.len();
                     self.member_frames.push(MemberFrame {
                         block,
                         member: *symbol,
@@ -2749,9 +2775,12 @@ impl Inferer {
                     let frame = self.member_frames.pop().expect("the frame pushed above");
                     let seed = self.env[symbol].ty.clone();
                     self.unify(&value_ty, &seed, value.span);
+                    let flows = self.flows.split_off(flows_from);
+                    self.member_flows.insert(*symbol, flows);
                     self.settle(&mut deferred, *symbol, &frame.uses);
                 }
                 _ => {
+                    let flows_from = self.flows.len();
                     let value_ty = self.infer(value);
                     let rec = match self.unbind_env(symbol) {
                         Some(seed) => {
@@ -2760,6 +2789,10 @@ impl Inferer {
                         }
                         None => value_ty,
                     };
+                    if is_function || is_syntactic_value(value) {
+                        let flows = self.flows.split_off(flows_from);
+                        self.solve_flows(flows);
+                    }
                     let bare_numeral = is_bare_numeral(value);
                     let mut scheme = self.generalize(&rec, is_function || bare_numeral);
                     if !scheme.vars.is_empty() && !bare_numeral && !is_syntactic_value(value) {
@@ -2845,6 +2878,12 @@ impl Inferer {
     /// Generalize `members` together: take them all out of the environment
     /// first, so none holds back another's variables.
     fn generalize_members(&mut self, members: Vec<Symbol>) {
+        let flows = members
+            .iter()
+            .filter_map(|m| self.member_flows.remove(m))
+            .flatten()
+            .collect();
+        self.solve_flows(flows);
         let seeds: Vec<(Symbol, Ty)> = members
             .iter()
             .filter_map(|m| Some((*m, self.unbind_env(m)?.ty)))
@@ -2940,8 +2979,12 @@ impl Inferer {
                 match else_branch {
                     Some(else_expr) => {
                         let else_ty = self.infer(else_expr);
-                        self.unify(&else_ty, &then_ty, else_expr.span);
-                        then_ty
+                        let spans = [then_branch.span, else_expr.span];
+                        let joined =
+                            self.join([(&then_ty, spans[0]), (&else_ty, spans[1])], None, |this| {
+                                this.unify(&else_ty, &then_ty, spans[1])
+                            });
+                        joined.unwrap_or(then_ty)
                     }
                     None => {
                         self.unify(&then_ty, &Ty::Unit, then_branch.span);
@@ -3009,6 +3052,7 @@ impl Inferer {
                     && let Some((_, element)) = fields.first()
                 {
                     mark_element(&mut payload_ty, element.span);
+                    self.share_element_slot(&mut payload_ty, element.span);
                 }
                 self.constructed.push((name.clone(), expr.span));
                 if let Some(group) = group {
@@ -3027,6 +3071,134 @@ impl Inferer {
                 arms,
                 else_branch,
             } => self.infer_match(scrutinee, arms, else_branch.as_deref()),
+        }
+    }
+
+    /// Solve every flow still waiting, once the whole program is inferred.
+    fn solve_all_flows(&mut self) {
+        let mut flows: Vec<Flow> = self.member_flows.drain().flat_map(|(_, f)| f).collect();
+        flows.append(&mut self.flows);
+        self.solve_flows(flows);
+    }
+
+    /// The end of a flow `ty`, or `None` when it is neither a number nor a
+    /// variable, so the flow is plain unification.
+    fn flow_end(&self, ty: &Ty) -> Option<End> {
+        match self.resolve(ty) {
+            Ty::Int => Some(End::Fixed(Scalar::Int)),
+            Ty::Float => Some(End::Fixed(Scalar::Float)),
+            Ty::Var(v) if !self.self_defs.contains_key(&v) => Some(End::Var(v)),
+            _ => None,
+        }
+    }
+
+    /// Unify and drop every flow with an end that is neither a number nor a
+    /// variable. Unifying can turn another flow's variable into such a type,
+    /// so the flows on a variable are looked at again when it is bound; this
+    /// visits each flow once per variable it waits on, not once per pass.
+    fn unify_flows_without_numbers(&mut self, flows: &mut Vec<Flow>) {
+        let mut removed = vec![false; flows.len()];
+        let mut waiting: HashMap<TypeVar, Vec<usize>> = HashMap::new();
+        let mut queue: Vec<usize> = (0..flows.len()).rev().collect();
+        while let Some(i) = queue.pop() {
+            if removed[i] {
+                continue;
+            }
+            let (producer, slot) = (&flows[i].producer, &flows[i].slot);
+            let ends = [self.flow_end(producer), self.flow_end(slot)];
+            if let [Some(p), Some(s)] = ends {
+                for end in [p, s] {
+                    if let End::Var(v) = end {
+                        waiting.entry(v).or_default().push(i);
+                    }
+                }
+                continue;
+            }
+            removed[i] = true;
+            let vars: Vec<TypeVar> = [producer, slot]
+                .iter()
+                .filter_map(|ty| match self.resolve(ty) {
+                    Ty::Var(v) => Some(v),
+                    _ => None,
+                })
+                .collect();
+            let span = flows[i].span;
+            let (producer, slot) = (flows[i].producer.clone(), flows[i].slot.clone());
+            self.unify(&producer, &slot, span);
+            for v in vars {
+                queue.extend(waiting.remove(&v).into_iter().flatten());
+            }
+        }
+        let mut index = 0;
+        flows.retain(|_| {
+            index += 1;
+            !removed[index - 1]
+        });
+        // Binding a variable inside a type can reach flows not waiting on it.
+        loop {
+            let before = flows.len();
+            let kept = std::mem::take(flows);
+            *flows = kept
+                .into_iter()
+                .filter_map(|f| {
+                    if self.flow_end(&f.producer).is_some() && self.flow_end(&f.slot).is_some() {
+                        return Some(f);
+                    }
+                    self.unify(&f.producer, &f.slot, f.span);
+                    None
+                })
+                .collect();
+            if flows.len() == before {
+                break;
+            }
+        }
+    }
+
+    /// Decide the flows of a binding about to be generalized (ADR 0040): each
+    /// variable takes the join of what flows into it, variables nothing
+    /// decides become one, and a `Float` that would become an `Int` is an
+    /// error. An `Int` that widens needs nothing here: its node keeps its type
+    /// and mono converts it where its slot is a `Float`.
+    fn solve_flows(&mut self, flows: Vec<Flow>) {
+        let mut flows = flows;
+        self.unify_flows_without_numbers(&mut flows);
+        let end = |this: &Self, ty: &Ty| {
+            this.flow_end(ty)
+                .expect("a kept flow ends in a number or a variable")
+        };
+        let edges: Vec<Edge> = flows
+            .iter()
+            .map(|f| Edge {
+                producer: end(self, &f.producer),
+                slot: end(self, &f.slot),
+            })
+            .collect();
+        let solution = flow::solve(&edges);
+        let mut spans: HashMap<TypeVar, Span> = HashMap::new();
+        for (flow, edge) in flows.iter().zip(&edges) {
+            for end in [edge.producer, edge.slot] {
+                if let End::Var(v) = end {
+                    spans.entry(v).or_insert(flow.span);
+                }
+            }
+        }
+        for (var, scalar) in solution.bound {
+            let ty = match scalar {
+                Scalar::Int => Ty::Int,
+                Scalar::Float => Ty::Float,
+            };
+            self.unify(&Ty::Var(var), &ty, spans[&var]);
+        }
+        for group in solution.joined {
+            for pair in group.windows(2) {
+                self.unify(&Ty::Var(pair[0]), &Ty::Var(pair[1]), spans[&pair[0]]);
+            }
+        }
+        for at in solution.narrowed {
+            self.errors.push(GoatError::new(
+                flows[at].span,
+                "this is a `Float`, but an `Int` is needed here; use `round`, `floor` or `truncate`",
+            ));
         }
     }
 
@@ -3056,33 +3228,156 @@ impl Inferer {
     ) -> Ty {
         self.note_first_use(lhs, lhs.span);
         let operands = ((lhs, lhs_ty), (rhs, rhs_ty));
-        if matches!(op, BinOp::FloorDiv | BinOp::Mod) {
-            self.type_whole_division(op, operands)
-        } else if op == BinOp::Div {
+        if op == BinOp::Div {
             self.type_division(op, operands)
         } else if op.is_arithmetic() {
             let (lhs, lhs_ty) = &operands.0;
             if self.require(lhs_ty, Kind::Numeric, op, lhs.span) {
-                return self.join_operands(operands);
+                return self.join_operands(operands, Some(Kinds::of(Kind::Numeric)));
             }
             lhs_ty.clone()
         } else {
-            let ty = self.join_operands(operands);
+            let ty = self.join_operands(operands, None);
             self.require(&ty, Kind::Eq, op, expr.span);
             Ty::Bool
         }
     }
 
-    /// The type both operands share. An `Int` meeting a `Float` widens to
-    /// `Float` (mono converts the `Int` side); anything else must be one type.
-    fn join_operands(&mut self, ((_, lhs_ty), (rhs, rhs_ty)): ((&Expr, Ty), (&Expr, Ty))) -> Ty {
-        match (self.resolve(&lhs_ty), self.resolve(&rhs_ty)) {
-            (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => Ty::Float,
-            _ => {
-                self.unify_use(rhs, &rhs_ty, &lhs_ty, rhs.span);
-                lhs_ty
+    /// The type both operands share (ADR 0040).
+    fn join_operands(
+        &mut self,
+        ((lhs, lhs_ty), (rhs, rhs_ty)): ((&Expr, Ty), (&Expr, Ty)),
+        kinds: Option<Kinds>,
+    ) -> Ty {
+        self.note_first_use(rhs, rhs.span);
+        let joined = self.join([(&lhs_ty, lhs.span), (&rhs_ty, rhs.span)], kinds, |this| {
+            this.unify_use(rhs, &rhs_ty, &lhs_ty, rhs.span)
+        });
+        joined.unwrap_or(lhs_ty)
+    }
+
+    /// Whether `ty` is, or may turn out to be, an `Int` or a `Float`.
+    fn may_be_number(&self, ty: &Ty) -> bool {
+        match self.resolve(ty) {
+            Ty::Int | Ty::Float => true,
+            Ty::Var(v) => {
+                !self.self_defs.contains_key(&v)
+                    && self
+                        .kinds
+                        .get(&v)
+                        .is_some_and(|kinds| kinds.can_be_number())
+            }
+            _ => false,
+        }
+    }
+
+    /// A number in a `Link` payload flows into the slot the rest of the list
+    /// already uses for its elements, so one `Float` among `Int`s makes the
+    /// whole literal a list of `Float`s and no element's type is left apart.
+    fn share_element_slot(&mut self, payload: &mut Ty, span: Span) {
+        let Some(item) = swap_element(payload, Ty::Unit) else {
+            return;
+        };
+        if !self.may_be_number(&item) {
+            swap_element(payload, item);
+            return;
+        }
+        let rest = match payload {
+            Ty::Record(row) => field_of(row, "1").cloned(),
+            _ => None,
+        };
+        let slot = match rest.and_then(|rest| self.list_element(&rest)) {
+            Some(element) if self.flow_end(&element).is_none() => {
+                swap_element(payload, item);
+                return;
+            }
+            Some(element) => element,
+            None => self.fresh(),
+        };
+        if self.is_certainly_number(&item) {
+            self.require_number(&self.resolve(&slot));
+        }
+        self.flows.push(Flow {
+            producer: item,
+            slot: slot.clone(),
+            span,
+        });
+        swap_element(payload, slot);
+    }
+
+    /// The type of the elements of `list`, if it is already known to be a
+    /// `Link`.
+    fn list_element(&self, list: &Ty) -> Option<Ty> {
+        let Ty::Variant(row) = self.resolve_head(list) else {
+            return None;
+        };
+        let Ty::Record(link) = self.resolve(field_of(&row, "Link")?) else {
+            return None;
+        };
+        field_of(&link, "0").cloned()
+    }
+
+    /// Whether `ty` is an `Int`, a `Float` or a variable that must be one, so
+    /// whatever it flows into is a number and not a record of numbers.
+    fn is_certainly_number(&self, ty: &Ty) -> bool {
+        match self.resolve(ty) {
+            Ty::Int | Ty::Float => true,
+            Ty::Var(v) => self.is_scalar(v),
+            _ => false,
+        }
+    }
+
+    /// Narrow a variable that flows beside a number from `Numeric`, which a
+    /// record also satisfies, to a number. A clash is reported when the flow
+    /// is solved.
+    fn require_number(&mut self, ty: &Ty) {
+        if matches!(ty, Ty::Var(_)) {
+            let _ = self.constrain(ty, Kinds::of(Kind::Ordered));
+        }
+    }
+
+    /// The type two scalar operands, branches or elements share. `Int` beside
+    /// `Float` is a `Float` and mono converts the `Int` side; a pair that is
+    /// not decided yet becomes two flows into a fresh slot, solved when the
+    /// binding is generalized; anything else is `unify_eagerly`, so the errors
+    /// about it read as ever. `None` means the caller keeps the first type.
+    fn join(
+        &mut self,
+        [(a, a_span), (b, b_span)]: [(&Ty, Span); 2],
+        kinds: Option<Kinds>,
+        unify_eagerly: impl FnOnce(&mut Self),
+    ) -> Option<Ty> {
+        let (ra, rb) = (self.resolve(a), self.resolve(b));
+        match (&ra, &rb) {
+            (Ty::Int, Ty::Int) | (Ty::Float, Ty::Float) => return None,
+            (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => return Some(Ty::Float),
+            _ => {}
+        }
+        let is_var = |ty: &Ty| matches!(ty, Ty::Var(v) if !self.self_defs.contains_key(v));
+        let decided = |ty: &Ty| matches!(ty, Ty::Int | Ty::Float);
+        let numeric = self.may_be_number(&ra) || self.may_be_number(&rb);
+        let open = (is_var(&ra) || decided(&ra)) && (is_var(&rb) || decided(&rb));
+        if !(numeric && open) {
+            unify_eagerly(self);
+            return None;
+        }
+        let slot = self.fresh();
+        if let Some(kinds) = kinds {
+            let _ = self.constrain(&slot, kinds);
+        }
+        if self.is_certainly_number(&ra) || self.is_certainly_number(&rb) {
+            for ty in [&slot, &ra, &rb] {
+                self.require_number(ty);
             }
         }
+        for (producer, span) in [(a, a_span), (b, b_span)] {
+            self.flows.push(Flow {
+                producer: producer.clone(),
+                slot: slot.clone(),
+                span,
+            });
+        }
+        Some(slot)
     }
 
     /// `/` always yields a `Float`, whatever its operands are. A record of
@@ -3135,7 +3430,7 @@ impl Inferer {
         }
         let head = self.resolve_head(&callee_ty);
         if let Ty::Func(params, _) = &head {
-            self.widen_arguments(params, &mut arg_tys);
+            self.widen_arguments(params, &mut arg_tys, args);
         }
         match head {
             Ty::Func(..) | Ty::Var(_) => {
@@ -3290,33 +3585,33 @@ impl Inferer {
             })
     }
 
-    /// A concrete `Int` argument to a `Float` parameter is taken as the
-    /// `Float` it widens to; mono converts it at the call.
-    fn widen_arguments(&self, params: &[Ty], args: &mut [Ty]) {
-        for (param, arg) in params.iter().zip(args) {
-            if self.resolve(param) == Ty::Float && self.resolve(arg) == Ty::Int {
-                *arg = Ty::Float;
+    /// An argument to a parameter that is a `Float` or may be any number
+    /// flows into the parameter, so an `Int` there is taken as the `Float` it
+    /// widens to; mono converts it at the call. An argument that is not
+    /// decided yet is solved with the binding (ADR 0040).
+    fn widen_arguments(&mut self, params: &[Ty], arg_tys: &mut [Ty], args: &[Expr]) {
+        for ((param, arg), expr) in params.iter().zip(arg_tys).zip(args) {
+            let (resolved_param, resolved_arg) = (self.resolve(param), self.resolve(arg));
+            let takes_any_number =
+                matches!(resolved_param, Ty::Var(_)) && self.may_be_number(param);
+            if !(resolved_param == Ty::Float || takes_any_number) || !self.may_be_number(arg) {
+                continue;
+            }
+            if resolved_param == Ty::Float || self.is_certainly_number(arg) {
+                self.require_number(&resolved_arg);
+                self.require_number(&resolved_param);
+            }
+            if resolved_arg != Ty::Int && resolved_arg != Ty::Float || takes_any_number {
+                self.flows.push(Flow {
+                    producer: arg.clone(),
+                    slot: param.clone(),
+                    span: expr.span,
+                });
+            }
+            if resolved_arg != Ty::Float || takes_any_number {
+                *arg = param.clone();
             }
         }
-    }
-
-    /// `//` and `%` take and give whole numbers. A `Float` operand is named
-    /// rather than reported as a bare mismatch, because both read `Number`.
-    fn type_whole_division(&mut self, op: BinOp, operands: ((&Expr, Ty), (&Expr, Ty))) -> Ty {
-        for (operand, ty) in [operands.0, operands.1] {
-            if self.resolve(&ty) == Ty::Float {
-                self.errors.push(GoatError::new(
-                    operand.span,
-                    format!(
-                        "`{}` needs whole numbers, but this is a `Float`; use `round`, `floor` or `truncate` first",
-                        op.symbol()
-                    ),
-                ));
-            } else {
-                self.unify_use(operand, &ty, &Ty::Int, operand.span);
-            }
-        }
-        Ty::Int
     }
 
     fn require_float_fields(&mut self, ty: &Ty, span: Span) {
@@ -3882,7 +4177,7 @@ impl Inferer {
             }
         };
 
-        let mut result: Option<Ty> = None;
+        let mut result: Option<(Ty, Span)> = None;
         let mut handled: Vec<&str> = Vec::new();
         for arm in arms {
             let pattern = &arm.pattern;
@@ -3911,7 +4206,7 @@ impl Inferer {
             None if is_variant => self.close_match(&scrut_ty, &handled, scrutinee.span),
             None => {}
         }
-        result.unwrap_or_else(|| self.fresh())
+        result.map_or_else(|| self.fresh(), |(ty, _)| ty)
     }
 
     fn bind_binder(&mut self, symbol: Symbol, ty: &Ty) {
@@ -4012,11 +4307,18 @@ impl Inferer {
         }
     }
 
-    /// Unify a branch's type with the type of the branches before it.
-    fn join_branch(&mut self, result: &mut Option<Ty>, ty: Ty, span: Span) {
+    /// Join a branch's type with the type of the branches before it.
+    fn join_branch(&mut self, result: &mut Option<(Ty, Span)>, ty: Ty, span: Span) {
         match result {
-            Some(first) => self.unify(&ty, first, span),
-            None => *result = Some(ty),
+            Some((first, first_span)) => {
+                let joined = self.join([(first, *first_span), (&ty, span)], None, |this| {
+                    this.unify(&ty, first, span)
+                });
+                if let Some(joined) = joined {
+                    *first = joined;
+                }
+            }
+            None => *result = Some((ty, span)),
         }
     }
 

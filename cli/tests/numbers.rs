@@ -246,6 +246,100 @@ print(digit(4096, 1000))";
     assert_eq!(run("print(7 // 2 + 0.5)"), "3.5");
 }
 
+/// Each row is `a`, `b`, `a // b` and `a % b` as CPython computes them, written
+/// so every value reads back exactly; the program compares rather than prints,
+/// so a wrong last digit fails.
+const FLOAT_DIVISIONS: [(&str, &str, &str, &str); 14] = [
+    ("7.5", "2.0", "3.0", "1.5"),
+    ("-7.5", "2.0", "-4.0", "0.5"),
+    ("7.5", "-2.0", "-4.0", "-0.5"),
+    ("-7.5", "-2.0", "3.0", "-1.5"),
+    ("1.0", "0.1", "9.0", "0.09999999999999995"),
+    ("0.3", "0.1", "2.0", "0.09999999999999998"),
+    ("5.5", "0.5", "11.0", "0.0"),
+    ("6.5", "-2.5", "-3.0", "-1.0"),
+    ("2.5", "2.5", "1.0", "0.0"),
+    ("1.0", "3.0", "0.0", "1.0"),
+    ("-1.0", "3.0", "-1.0", "2.0"),
+    ("1e300", "3.0", "3.3333333333333335e+299", "0.0"),
+    (
+        "5.0",
+        "1e-300",
+        "4.9999999999999997e+300",
+        "4.8159326401985574e-301",
+    ),
+    ("1000000000000000.5", "0.25", "4000000000000002.0", "0.0"),
+];
+
+#[test]
+fn a_float_floor_divides_and_takes_a_remainder_exactly_as_python_does() {
+    for (a, b, quotient, remainder) in FLOAT_DIVISIONS {
+        let program = format!("print({a} // {b} == {quotient});\nprint({a} % {b} == {remainder})");
+        assert_eq!(run(&program), "true\ntrue", "{a} {b}");
+    }
+}
+
+#[test]
+fn a_float_quotient_prints_like_any_float() {
+    for (sum, expected) in [
+        ("7.5 // 2", "3"),
+        ("-7.5 // 2", "-4"),
+        ("7.5 % 2", "1.5"),
+        ("-7.5 % 2", "0.5"),
+        ("7.5 % -2", "-0.5"),
+        ("1 // 0.1", "9"),
+        ("1 % 0.1 < 0.1", "true"),
+        ("7 // 2.0", "3"),
+        ("7.5 // 2 + 0.5", "3.5"),
+    ] {
+        assert_eq!(run(&format!("print({sum})")), expected, "{sum}");
+    }
+}
+
+#[test]
+fn a_float_division_by_zero_follows_ieee() {
+    let program = "zero = 0.0;
+inf = 1.0 / zero;
+print(5.5 // zero == inf);
+print(-5.5 // zero == 0.0 - inf);
+print(zero // zero == zero // zero);
+print(5.5 % zero == 5.5 % zero);
+print(inf % 3.0 == inf % 3.0);
+print(5.0 % inf == 5.0);
+print(-5.0 % inf == inf);
+print(-5.0 // inf == -1.0);
+print(5.0 // inf == 0.0)";
+    assert_eq!(
+        run(program),
+        "true\ntrue\nfalse\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue"
+    );
+}
+
+#[test]
+fn an_int_beside_a_float_divides_as_a_float() {
+    assert_eq!(run("print(7 // 2.5)"), "2");
+    assert_eq!(run("print(7.5 % 2)"), "1.5");
+    assert_eq!(
+        run("half = program(x) do x // 2 done;\nprint(half(7.5)); print(half(7))"),
+        "3\n3"
+    );
+    assert_traps(
+        "half = program(x) do x // 2 done;\nhalf(7);\nhalf(1) // (3 - 3)",
+        DIVISION_BY_ZERO,
+    );
+}
+
+#[test]
+fn floor_division_and_remainder_work_on_records_of_numbers() {
+    assert_eq!(
+        run(
+            "print({x: 7.5, y: 9.0} // {x: 2.0, y: 4.0});\nprint({x: 7.5, y: -9.0} % {x: 2.0, y: 4.0})"
+        ),
+        "{x: 3, y: 2}\n{x: 1.5, y: 3}"
+    );
+    assert_eq!(run("print({a: 7, b: 9} % {a: 4, b: 4})"), "{a: 3, b: 1}");
+}
+
 #[test]
 fn floor_division_and_remainder_trap_on_a_zero_divisor() {
     assert_traps("1 // 0", DIVISION_BY_ZERO);
@@ -421,4 +515,17 @@ fn a_negated_number_runs_at_int_and_at_float() {
         "{a: -1.5, b: -2}"
     );
     assert_eq!(run("n = -3  print(n * 2);  print(n - 0.5)"), "-6\n-3.5");
+}
+
+#[test]
+fn the_most_negative_whole_number_is_a_literal() {
+    assert_eq!(
+        run("n = -9223372036854775808  print(n)"),
+        "-9223372036854775808"
+    );
+}
+
+#[test]
+fn a_negated_zero_float_is_zero() {
+    assert_eq!(run("print(1 / -0.0 > 0)"), "true");
 }

@@ -42,8 +42,7 @@ program are skipped, each because the calculus and the checker differ on it:
   (`program(x) do x > x done("a")`): a generic comparison waits for the `Eq` and
   `Ordered` sorts, and `/` on an open operand is typed `Ordered` by the checker
   and `Numeric` by the calculus;
-- a `let` of a negated numeral (`n = -3`, which is `0 - 3`), a record or a name with a
-  numeral in it (`r = {a: 1}`, `m = n`): the
+- a `let` of a record or a name with a numeral in it (`r = {a: 1}`, `m = n`): the
   calculus generalizes it (`numeral_binding_is_generic`), the checker generalizes
   a numeral's variable only in a function's type and in a bare numeral binding
   (`n = 3`, ADR 0039), so `r = {a: 1}  {x: r.a + 1.5, y: r.a // 2}` types in the
@@ -67,7 +66,10 @@ proven algorithm to accept the result. It writes `float(e)` around
   Int operand of `+ - *` in the same position;
 - each operand of `/`, Int or Float (a quotient takes Floats, and `float(e)` is
   the identity on a Float);
-- an Int argument to a call whose callee's parameter is a Float;
+- an Int argument to a call whose callee's parameter is a Float, including a
+  parameter the checker settled as a Float by joining the call's arguments
+  (`f(7 // 2, 2.5)` for `f = program(a, b) do a + b done`);
+- an Int branch of an `if` whose result is a Float (ADR 0040);
 - a numeral inside an operand of a comparison whose type is Float.
 
 An Int literal whose node type is Float anywhere else is written as the bare

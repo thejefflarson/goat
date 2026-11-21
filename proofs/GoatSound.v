@@ -126,6 +126,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatMu.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatBij.
@@ -162,6 +163,8 @@ Proof.
     + left; exists b; auto.
     + right; exists p; auto.
   - (* Var *) left. exists a. split; [fsetdec|auto].
+  - fsetdec.
+  - apply H; assumption.
   - fsetdec.
   - (* row_Var *) right. exists r. split; [fsetdec|auto].
   - (* row_Ext *) rewrite AtomSetFacts.union_iff in H1. destruct H1 as [H1|H1].
@@ -200,6 +203,8 @@ Proof.
     + left; exists b; auto.
     + right; exists q; auto.
   - (* Var *) left. exists a. split; [fsetdec|auto].
+  - fsetdec.
+  - apply H; assumption.
   - fsetdec.
   - (* row_Var *) right. exists r. split; [fsetdec|auto].
   - rewrite AtomSetFacts.union_iff in H1. destruct H1 as [H1|H1].
@@ -252,6 +257,8 @@ Proof.
     + rewrite AtomSetFacts.singleton_iff in Hb. subst b. exact Ha.
     + fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
+  - apply H; assumption.
+  - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp Ha]]]; [fsetdec|].
     rewrite AtomSetFacts.singleton_iff in Hp. subst p. exact Ha.
   - rewrite AtomSetFacts.union_iff.
@@ -296,6 +303,8 @@ Proof.
   - destruct H as [[b [Hb Ha]]|[p [Hp Ha]]].
     + rewrite AtomSetFacts.singleton_iff in Hb. subst b. exact Ha.
     + fsetdec.
+  - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
+  - apply H; assumption.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp Ha]]]; [fsetdec|].
     rewrite AtomSetFacts.singleton_iff in Hp. subst p. exact Ha.
@@ -509,12 +518,13 @@ Qed.
 Lemma sch_subst_fix : forall st sr s,
   (forall a, a `in` ftv_sch s -> st a = typ_Var a) ->
   (forall r, r `in` frv_sch s -> sr r = row_Var r) ->
+  lc_sub st sr ->
   sch_subst st sr s s.
 Proof.
-  intros st sr s Hf Hfr D D' Hk W [pt [pr [Hpt [Hpr [HW Hsat]]]]].
+  intros st sr s Hf Hfr Hl D D' Hk W [pt [pr [Hpt [Hpr [HW [Hsat Hpl]]]]]].
   exists (fun a => if AtomSetImpl.mem a (s_tq s) then ap_typ st sr (pt a) else typ_Var a),
          (fun r => if AtomSetImpl.mem r (s_rq s) then ap_row st sr (pr r) else row_Var r).
-  split; [| split; [| split]].
+  split; [| split; [| split; [| split]]].
   - intros a Ha. destruct (AtomSetImpl.mem a (s_tq s)) eqn:Em;
       [apply AtomSetFacts.mem_iff in Em; contradiction|reflexivity].
   - intros r Hr. destruct (AtomSetImpl.mem r (s_rq s)) eqn:Em;
@@ -535,7 +545,22 @@ Proof.
   - intros a Ha. assert (Hm : AtomSetImpl.mem a (s_tq s) = true)
       by (apply AtomSetFacts.mem_iff; exact Ha).
     rewrite Hm. eapply sat_ap; [ exact Hk | apply Hsat; exact Ha ].
+  - split.
+    + intros a. cbv beta. destruct (AtomSetImpl.mem a (s_tq s));
+        [ apply ap_lc; [ exact Hl | apply (proj1 Hpl) ] | exact I ].
+    + intros r. cbv beta. destruct (AtomSetImpl.mem r (s_rq s));
+        [ apply ap_lcr; [ exact Hl | apply (proj2 Hpl) ] | exact I ].
 Qed.
+
+(* A renaming has closed images. *)
+Lemma lc_sub_ren : forall g gr, lc_sub (fun a => typ_Var (g a)) (fun r => row_Var (gr r)).
+Proof. intros. split; intros; exact I. Qed.
+
+Lemma ren_lc : forall g gr T k, lct k T -> lct k (ren_typ g gr T).
+Proof. intros. unfold ren_typ. apply ap_lc; [ apply lc_sub_ren | assumption ]. Qed.
+
+Lemma ren_lcr : forall g gr R k, lcr k R -> lcr k (ren_row g gr R).
+Proof. intros. unfold ren_row. apply ap_lcr; [ apply lc_sub_ren | assumption ]. Qed.
 
 (* The environment seen through a renaming of its atoms. *)
 Definition dperm (g : atom -> atom) (D : denv) : denv := fun a => D (g a).
@@ -555,10 +580,10 @@ Lemma inst_ren_same : forall g gr D s W,
   (forall a, g (g a) = a) ->
   inst D W s -> inst (dperm g D) (ren_typ g gr W) s.
 Proof.
-  intros g gr D s W Hgf Hgrf Hgi [pt [pr [Hpt [Hpr [HW Hsat]]]]].
+  intros g gr D s W Hgf Hgrf Hgi [pt [pr [Hpt [Hpr [HW [Hsat Hpl]]]]]].
   exists (fun a => if AtomSetImpl.mem a (s_tq s) then ren_typ g gr (pt a) else typ_Var a),
          (fun r => if AtomSetImpl.mem r (s_rq s) then ren_row g gr (pr r) else row_Var r).
-  split; [| split; [| split]].
+  split; [| split; [| split; [| split]]].
   - intros a Ha. destruct (AtomSetImpl.mem a (s_tq s)) eqn:Em;
       [apply AtomSetFacts.mem_iff in Em; contradiction|reflexivity].
   - intros r Hr. destruct (AtomSetImpl.mem r (s_rq s)) eqn:Em;
@@ -579,6 +604,11 @@ Proof.
   - intros a Ha. assert (Hm : AtomSetImpl.mem a (s_tq s) = true)
       by (apply AtomSetFacts.mem_iff; exact Ha).
     rewrite Hm. apply sat_ren; [ exact Hgi | apply Hsat; exact Ha ].
+  - split.
+    + intros a. cbv beta. destruct (AtomSetImpl.mem a (s_tq s));
+        [ apply ren_lc; apply (proj1 Hpl) | exact I ].
+    + intros r. cbv beta. destruct (AtomSetImpl.mem r (s_rq s));
+        [ apply ren_lcr; apply (proj2 Hpl) | exact I ].
 Qed.
 
 (* applying [st,sr] after a renaming equals applying the precomposed subst *)
@@ -654,10 +684,11 @@ Proof. intros. unfold frv_sch, gen; simpl. fsetdec. Qed.
 Lemma ctx_subst_fix : forall st sr G,
   (forall a, a `in` ftv_ctx G -> st a = typ_Var a) ->
   (forall r, r `in` frv_ctx G -> sr r = row_Var r) ->
+  lc_sub st sr ->
   ctx_subst st sr G G.
 Proof.
-  intros st sr G Hf Hfr x s Hb. exists s. split; [exact Hb|].
-  apply sch_subst_fix.
+  intros st sr G Hf Hfr Hl x s Hb. exists s. split; [exact Hb|].
+  apply sch_subst_fix; [ | | exact Hl ].
   - intros a Ha. apply Hf. assert (ftv_sch s [<=] ftv_ctx G) by (eapply binds_ftv_sch; eauto). fsetdec.
   - intros r Hr. apply Hfr. assert (frv_sch s [<=] frv_ctx G) by (eapply binds_frv_sch; eauto). fsetdec.
 Qed.
@@ -669,7 +700,7 @@ Lemma ctx_subst_weaken : forall G G',
   ctx_subst idt idr G G'.
 Proof.
   intros G G' Hsub x s Hb. exists s. split; [ apply Hsub; exact Hb |].
-  apply sch_subst_fix; intros; reflexivity.
+  apply sch_subst_fix; [ intros; reflexivity | intros; reflexivity | apply lc_sub_id ].
 Qed.
 
 Lemma ftv_sch_mono : forall T, ftv_sch (sch_mono T) [=] ftv_typ T.
@@ -679,7 +710,8 @@ Proof. intro T. unfold frv_sch, sch_mono; simpl. fsetdec. Qed.
 
 Definition tr_supp (st:tsub) (sr:rsub) (A:atoms) : Prop :=
   (forall a, a `notin` A -> st a = typ_Var a) /\
-  (forall r, r `notin` A -> sr r = row_Var r).
+  (forall r, r `notin` A -> sr r = row_Var r) /\
+  lc_sub st sr.
 
 Definition tr_compat (st:tsub) (sr:rsub) (G G':ctx) : Prop :=
   (forall a, a `in` ftv_ctx G -> ftv_typ (st a) [<=] ftv_ctx G') /\
@@ -822,7 +854,7 @@ Lemma tsubst_gen_core : forall G T1 k st sr G' A D D' S S',
     (forall x, tr_compat st sr ((x ~ gen G T1 k) ++ G) ((x ~ s') ++ G')).
 Proof.
   intros G T1 k st sr G' A D D' S S' HS HS' Hk Hcs Hsupp Hcompat.
-  destruct Hsupp as [HsuppT HsuppR].
+  destruct Hsupp as [HsuppT [HsuppR HlcS]].
   destruct Hcompat as [HcT [HcFr [HcRt HcRfr]]].
   set (s := gen G T1 k).
   set (V := AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)).
@@ -882,7 +914,7 @@ Proof.
     assert (p `notin` Bav) by (apply HgrF; exact Hp). unfold Bav in *. fsetdec. }
   assert (Hcaschinst : sch_subst st sr s (casch st sr g gr s)).
   { intros D1 D1' Hk1 W HW.
-    exact (casch_inst st sr g gr s Hginv Hgrinv HgfixS HgrfixS HstQ HsrQ Hnc1 Hnc2 Hnc3 Hnc4
+    exact (casch_inst st sr g gr s Hginv Hgrinv HgfixS HgrfixS HstQ HsrQ Hnc1 Hnc2 Hnc3 Hnc4 HlcS
              D1 D1' Hk1 W HW). }
   assert (Hbridge : sch_equiv (casch st sr g gr s)
                       (gen G' (ap_typ st sr (ren_typ g gr (s_body s))) (fun a => s_sk s (g a)))).
@@ -934,7 +966,7 @@ Proof.
   - (* the bound term is typed under the substitution run after the renaming *)
     apply ctx_subst_precomp; [ exact Hginv | exact Hcs | exact HgfixG | exact HgrfixG ].
   - (* tr_supp *)
-    split.
+    split; [ | split ].
     + intros a Ha. unfold A2 in Ha.
       assert (g a = a).
       { apply Hgfix; [ fsetdec | ]. intro Hc. apply lset_in in Hc. fsetdec. }
@@ -943,6 +975,7 @@ Proof.
       assert (gr r = r).
       { apply Hgrfix; [ fsetdec | ]. intro Hc. apply lset_in in Hc. fsetdec. }
       cbv beta. rewrite H. apply HsuppR. fsetdec.
+    + destruct HlcS as [Hl1 Hl2]. split; intros; [ apply Hl1 | apply Hl2 ].
   - (* tr_compat *)
     unfold tr_compat. repeat split.
     + intros a Ha. cbv beta. rewrite (HgfixG a Ha). apply HcT; exact Ha.
@@ -1111,6 +1144,18 @@ Proof.
   - (* T_Bin: the signature is stable under a kind-respecting substitution. *)
     intros D G e1 o e2 A0 B0 R0 Ht1 IH1 Ht2 IH2 Hs st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
     eapply T_Bin; [ eapply IH1; eauto | eapply IH2; eauto | eapply bin_sig_ap; eauto ].
+  - (* T_Fold: the substitution commutes with unrolling because its images are closed *)
+    intros D G e B Hlc Hg Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    pose proof (proj2 (proj2 Hsupp)) as Hl.
+    apply T_Fold; [ apply ap_lc; assumption | apply guarded_ap; assumption | ].
+    pose proof (ap_open st sr B 0 (typ_Mu B) Hl) as E. simpl in E. rewrite <- E.
+    eapply IH; eauto.
+  - (* T_Unfold *)
+    intros D G e B Hlc Hg Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+    pose proof (proj2 (proj2 Hsupp)) as Hl.
+    rewrite (ap_open st sr B 0 (typ_Mu B) Hl).
+    apply T_Unfold; [ apply ap_lc; assumption | apply guarded_ap; assumption | ].
+    eapply IH; eauto.
   - intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl. apply FT_nil; auto.
   - intros D G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.
@@ -1140,7 +1185,7 @@ Proof.
   - exact HS.
   - apply kres_id.
   - apply ctx_subst_weaken. intros x s Hb. apply binds_weaken; exact Hb.
-  - split; intros a Ha; reflexivity.
+  - split; [ intros a Ha; reflexivity | split; [ intros r Hr; reflexivity | apply lc_sub_id ] ].
   - unfold tr_compat. repeat split; intros a Ha.
     + unfold idt; simpl.
       assert (a `in` ftv_ctx (E ++ F ++ G)).
@@ -1175,6 +1220,9 @@ Proof.
   { apply ap_typ_fix.
     - intros a Ha. apply Hst. apply HT. exact Ha.
     - intros r Hr. reflexivity. }
+  assert (Hlcst : lc_sub st idr).
+  { split; [ | intros r; exact I ]. intros a. unfold st.
+    destruct (AtomSetImpl.mem a A); exact I. }
   rewrite <- Heq.
   apply (proj1 typing_tsubst_gen_mut D0 G e T Hty st idr G D A Sd0 Sd).
   - eapply typing_uniq; exact Hty.
@@ -1189,13 +1237,14 @@ Proof.
         { intro Hc. apply Em. unfold A. apply AtomSetFacts.diff_iff. split; [ exact Hc | ].
           apply AtomSetFacts.not_mem_iff in Em2. exact Em2. }
         rewrite (HS0 a Hnot). apply finer_any.
-  - apply ctx_subst_fix.
+  - apply ctx_subst_fix; [ | | exact Hlcst ].
     + intros a Ha. apply Hst. apply HG. exact Ha.
     + intros r Hr. reflexivity.
-  - split.
+  - split; [ | split ].
     + intros a Ha. unfold st. destruct (AtomSetImpl.mem a A) eqn:Em; [ | reflexivity ].
       apply AtomSetFacts.mem_iff in Em. contradiction.
     + intros r Hr. reflexivity.
+    + exact Hlcst.
   - unfold tr_compat. repeat split; intros a Ha.
     + rewrite (Hst a (HG a Ha)). simpl. fsetdec.
     + rewrite (Hst a (HG a Ha)). simpl. fsetdec.
@@ -1217,7 +1266,7 @@ Proof.
   - intros a _. reflexivity.
   - intros a _. reflexivity.
   - intros a. apply sat_any.
-  - apply ctx_subst_fix; assumption.
+  - apply ctx_subst_fix; [ assumption | assumption | exact (proj2 (proj2 Hsupp)) ].
   - exact Hsupp.
   - unfold tr_compat. repeat split.
     + intros a Ha. rewrite (Hfa a Ha). simpl. fsetdec.
@@ -1237,7 +1286,7 @@ Lemma typing_inst_gen : forall D0 D Sd0 Sd G v T1 k W,
   (forall a, a `in` ftv_ctx G -> D a = D0 a) ->
   typing D G v W.
 Proof.
-  intros D0 D Sd0 Sd G v T1 k W Hv [st [sr [Hst [Hsr [HW Hsat]]]]] HS0 HS Hag.
+  intros D0 D Sd0 Sd G v T1 k W Hv [st [sr [Hst [Hsr [HW [Hsat Hlcs]]]]]] HS0 HS Hag.
   cbn [gen s_tq s_rq s_body s_sk] in Hst, Hsr, HW, Hsat.
   set (V := AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) in *.
   set (Vr := AtomSetImpl.diff (frv_typ T1) (frv_ctx G)) in *.
@@ -1251,6 +1300,10 @@ Proof.
     - apply AtomSetFacts.mem_iff in E1. unfold V in E1. apply AtomSetFacts.diff_iff in E1. tauto.
     - destruct (AtomSetImpl.mem a A) eqn:E2; [ | reflexivity ].
       apply AtomSetFacts.mem_iff in E2. unfold A in E2. apply AtomSetFacts.diff_iff in E2. tauto. }
+  assert (Hlc' : lc_sub st' sr).
+  { split; [ | exact (proj2 Hlcs) ]. intros a. unfold st'.
+    destruct (AtomSetImpl.mem a V); [ exact (proj1 Hlcs a) | ].
+    destruct (AtomSetImpl.mem a A); exact I. }
   assert (HW' : W = ap_typ st' sr T1).
   { rewrite HW. apply ap_typ_ext.
     - intros a Ha. unfold st'. destruct (AtomSetImpl.mem a V) eqn:E1; [ reflexivity | ].
@@ -1279,10 +1332,10 @@ Proof.
         -- assert (Hnot : a `notin` Sd0).
            { intro Hc. apply E2. unfold A. apply AtomSetFacts.diff_iff. split; assumption. }
            rewrite (HS0 a Hnot). apply finer_any.
-  - apply ctx_subst_fix.
+  - apply ctx_subst_fix; [ | | exact Hlc' ].
     + intros a Ha. apply Hst'G. exact Ha.
     + intros r Hr. apply Hsr. intro Hc. apply AtomSetFacts.diff_iff in Hc. tauto.
-  - split.
+  - split; [ | split; [ | exact Hlc' ] ].
     + intros a Ha. unfold st'.
       destruct (AtomSetImpl.mem a V) eqn:E1.
       * apply AtomSetFacts.mem_iff in E1. exfalso. apply Ha. fsetdec.
@@ -1427,6 +1480,10 @@ Proof.
     eapply T_ToFloat; [ apply (IH Sd HSd Hag G2); reflexivity | exact Hs ].
   - (* T_Bin *) intros D G e1 o e2 A0 B0 R0 Hr1 IH1 Hr2 IH2 Hs Sd HSd Hag G2 Heq; subst. simpl.
     eapply T_Bin; [ apply (IH1 Sd HSd Hag G2) | apply (IH2 Sd HSd Hag G2) | exact Hs ]; reflexivity.
+  - (* T_Fold *) intros D G e B Hlc0 Hg Hr IH Sd HSd Hag G2 Heq; subst. simpl.
+    eapply T_Fold; [ exact Hlc0 | exact Hg | apply (IH Sd HSd Hag G2); reflexivity ].
+  - (* T_Unfold *) intros D G e B Hlc0 Hg Hr IH Sd HSd Hag G2 Heq; subst. simpl.
+    eapply T_Unfold; [ exact Hlc0 | exact Hg | apply (IH Sd HSd Hag G2); reflexivity ].
   - (* FT_nil *) intros D G Huq Sd HSd Hag G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
   - (* FT_cons *) intros D G l e T fs R Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl. eapply FT_cons.
     + apply (IH1 Sd HSd Hag G2); reflexivity.
@@ -1558,6 +1615,7 @@ Proof.
   - (* st_tofloat1 *) intros e e' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
   - (* st_tofloat *) intros z d Hgen. reflexivity.
   - (* st_tofloat_dec *) intros d Hgen. reflexivity.
+  - (* st_fold1 *) intros e e' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
   - (* stf_here *) intros l e e' fs Hstep IH Hgen. simpl in Hgen |- *.
     apply andb_prop in Hgen. destruct Hgen as [He Hfs].
     rewrite (IH He), Hfs. reflexivity.
@@ -1664,12 +1722,13 @@ Proof.
         + pose proof (proj2 typing_uniq_mut _ _ _ _ (Hfs q Hq)) as Huq.
           apply uniq_cons_3; [ eapply uniq_cons_1; exact Huq | eapply uniq_cons_2; exact Huq ].
         + apply binds_cons_2; reflexivity.
-        + exists idt, idr. split; [ | split; [ | split ] ].
+        + exists idt, idr. split; [ | split; [ | split; [ | split ] ] ].
           * intros a _. reflexivity.
           * intros r _. reflexivity.
           * symmetry. apply ap_typ_pointwise_id; reflexivity.
           * intros a Ha. cbn [gen s_tq s_sk] in Ha |- *. unfold idt. cbn [sat].
-            rewrite (ext_in D V k a Ha). apply finer_refl. }
+            rewrite (ext_in D V k a Ha). apply finer_refl.
+          * apply lc_sub_id. }
     assert (Hgengrp : is_gen_value (e_letrec fs (e_fvar_b 0)) = true).
     { simpl. rewrite (fn_group_gen _ Hfg). reflexivity. }
     assert (Hmem : field_typing (ext D V k) G
@@ -1748,6 +1807,22 @@ Proof.
     destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].
     assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
     eapply T_Conv; [ apply T_Dec; exact Hu | exact Hteq ].
+  - (* st_fold1: the operand of a fold stepped. *)
+    intros e e' Hstep IH D S G T HS Hty.
+    destruct (fold_inv _ _ _ _ Hty) as [B [Hteq [Hlc0 [Hg Hb]]]].
+    eapply T_Conv; [ eapply T_Fold; [ exact Hlc0 | exact Hg | eapply IH; [ exact HS | exact Hb ] ] | exact Hteq ].
+  - (* st_unfold1: the operand of an unfold stepped. *)
+    intros e e' Hstep IH D S G T HS Hty.
+    destruct (unfold_inv _ _ _ _ Hty) as [B [Hlc0 [Hg [Hb Hteq]]]].
+    eapply T_Conv; [ eapply T_Unfold; [ exact Hlc0 | exact Hg | eapply IH; [ exact HS | exact Hb ] ] | exact Hteq ].
+  - (* st_unfold_fold: an unfold cancels the fold of a value.  The fold was
+       typed at a recursive type equal to the one the unfold opens, and
+       equal recursive types have equal unrollings. *)
+    intros v Hv D S G T HS Hty.
+    destruct (unfold_inv _ _ _ _ Hty) as [B [Hlc0 [Hg [Hb Hteq]]]].
+    destruct (fold_inv _ _ _ _ Hb) as [B0 [Hmu [Hlc1 [Hg1 Hv0]]]].
+    eapply T_Conv; [ exact Hv0 | ].
+    eapply teq_trans; [ apply teq_unroll; exact Hmu | exact Hteq ].
   - (* stf_here: the FIRST field of a record stepped.  Congruence. *)
     intros l e e' fs Hstep IH D S G R HS Hft.
     inversion Hft; subst.

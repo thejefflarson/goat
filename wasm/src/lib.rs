@@ -10,6 +10,7 @@ use wasm_encoder::{
 };
 
 mod allocator;
+mod float;
 
 use allocator::FreeList;
 
@@ -362,7 +363,13 @@ fn emit_module(
     while next_helper < shared.helpers.len() {
         let helper = shared.helpers[next_helper];
         bodies.push(helper_body(&mut shared, helper)?);
-        func_types.push(shared.drop_type());
+        func_types.push(if helper.is_float() {
+            shared
+                .types
+                .intern(vec![ValType::F64; 2], vec![ValType::F64])
+        } else {
+            shared.drop_type()
+        });
         next_helper += 1;
     }
 
@@ -904,6 +911,16 @@ enum Helper {
     ClosureDrop(FuncId),
     RecordDrop(LayoutId),
     VariantDrop(LayoutId),
+    /// `Float` `fmod`, `//` and `%` over `f64`; see `float`.
+    Fmod,
+    FloorDiv,
+    FloorMod,
+}
+
+impl Helper {
+    fn is_float(self) -> bool {
+        matches!(self, Helper::Fmod | Helper::FloorDiv | Helper::FloorMod)
+    }
 }
 
 struct Shared<'a> {
@@ -1081,6 +1098,12 @@ impl Uses {
 /// pending list: a child whose count reaches zero is pushed rather than
 /// dropped, so no drop function recurses. See `drop_loop`.
 fn helper_body(shared: &mut Shared, helper: Helper) -> Result<Function, EmitError> {
+    match helper {
+        Helper::Fmod => return Ok(float::fmod()),
+        Helper::FloorDiv => return Ok(float::floored(shared.helper(Helper::Fmod), true)),
+        Helper::FloorMod => return Ok(float::floored(shared.helper(Helper::Fmod), false)),
+        _ => {}
+    }
     let (object, pending) = (0, 1);
     let layout_slots = |tys: &[MTy], base| -> Vec<(MTy, u32)> {
         tys.iter()
@@ -1091,6 +1114,7 @@ fn helper_body(shared: &mut Shared, helper: Helper) -> Result<Function, EmitErro
     let mut code = Code::new();
     match helper {
         Helper::Noop => {}
+        Helper::Fmod | Helper::FloorDiv | Helper::FloorMod => unreachable!("built above"),
         Helper::ClosureDrop(f) => {
             let env = shared.program.funcs[f.0 as usize].env.as_ref();
             let captures = env.map_or(&[][..], |e| &e.captures[..]);
@@ -2189,7 +2213,30 @@ impl<'p> FuncCx<'_, 'p> {
         }
     }
 
-    fn float_op(&self, op: FloatOp, out: &mut Code) {
+    fn float_op(&mut self, op: FloatOp, out: &mut Code) {
+        let helper = match op {
+            FloatOp::FloorDiv => Helper::FloorDiv,
+            FloatOp::Mod => Helper::FloorMod,
+            _ => return self.float_arith(op, out),
+        };
+        let call = Instruction::Call(self.shared.helper(helper));
+        match self.program.profile {
+            Profile::Desktop => out.push(call),
+            Profile::Embedded => {
+                let divisor = self.scratch(ValType::F32);
+                out.extend([
+                    Instruction::LocalSet(divisor),
+                    Instruction::F64PromoteF32,
+                    Instruction::LocalGet(divisor),
+                    Instruction::F64PromoteF32,
+                    call,
+                    Instruction::F32DemoteF64,
+                ]);
+            }
+        }
+    }
+
+    fn float_arith(&self, op: FloatOp, out: &mut Code) {
         out.push(match (self.program.profile, op) {
             (Profile::Desktop, FloatOp::Add) => Instruction::F64Add,
             (Profile::Desktop, FloatOp::Sub) => Instruction::F64Sub,
@@ -2199,6 +2246,7 @@ impl<'p> FuncCx<'_, 'p> {
             (Profile::Embedded, FloatOp::Sub) => Instruction::F32Sub,
             (Profile::Embedded, FloatOp::Mul) => Instruction::F32Mul,
             (Profile::Embedded, FloatOp::Div) => Instruction::F32Div,
+            (_, FloatOp::FloorDiv | FloatOp::Mod) => unreachable!("lowered to a helper call"),
         });
     }
 

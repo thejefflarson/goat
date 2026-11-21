@@ -1090,6 +1090,39 @@ impl Mono<'_> {
         wrap_lets(bound, call)
     }
 
+    #[inline(never)]
+    fn if_(
+        &mut self,
+        cx: &mut FnCx,
+        id: ExprId,
+        (cond, then_branch, else_branch): (&hir::Expr, &hir::Expr, Option<&hir::Expr>),
+        tail: bool,
+    ) -> Expr {
+        let result = self.node_ty(cx, id);
+        Expr::If(
+            Box::new(self.expr(cx, cond, false)),
+            Box::new(self.branch(cx, then_branch, &result, tail)),
+            Box::new(match else_branch {
+                Some(e) => self.branch(cx, e, &result, tail),
+                None => Expr::Const(Const::Unit),
+            }),
+        )
+    }
+
+    /// A branch of an `if` or `match`, or a tag argument, whose result is `result`, widened when
+    /// the branch is an `Int` and the result a `Float`. A converted branch is
+    /// not a tail call, since the conversion runs after it.
+    #[inline(never)]
+    fn branch(&mut self, cx: &mut FnCx, branch: &hir::Expr, result: &Ty, tail: bool) -> Expr {
+        if *result != Ty::Float {
+            return self.expr(cx, branch, tail);
+        }
+        let ty = self.node_ty(cx, branch.id);
+        let widens = ty == Ty::Int;
+        let value = self.expr(cx, branch, tail && !widens);
+        if widens { widen(value, &ty) } else { value }
+    }
+
     /// `arg` lowered, widened when the parameter it is passed to is a `Float`.
     #[inline(never)]
     fn argument(&mut self, cx: &mut FnCx, arg: &hir::Expr, float_param: bool) -> Expr {
@@ -1202,14 +1235,7 @@ impl Mono<'_> {
                 cond,
                 then_branch,
                 else_branch,
-            } => Expr::If(
-                Box::new(self.expr(cx, cond, false)),
-                Box::new(self.expr(cx, then_branch, tail)),
-                Box::new(match else_branch {
-                    Some(e) => self.expr(cx, e, tail),
-                    None => Expr::Const(Const::Unit),
-                }),
-            ),
+            } => self.if_(cx, e.id, (cond, then_branch, else_branch.as_deref()), tail),
             ExprKind::And { lhs, rhs } => Expr::If(
                 Box::new(self.expr(cx, lhs, false)),
                 Box::new(self.expr(cx, rhs, tail)),
@@ -1225,7 +1251,7 @@ impl Mono<'_> {
             ExprKind::Bin { op, lhs, rhs } => {
                 let a = Box::new(self.expr(cx, lhs, false));
                 let b = Box::new(self.expr(cx, rhs, false));
-                self.bin(cx, (*op, e.span), (lhs, rhs), (a, b), tail)
+                self.bin(cx, (*op, e.span, e.id), (lhs, rhs), (a, b), tail)
             }
             ExprKind::Foreign { .. } => {
                 unreachable!("a foreign function is only a declaration's value")
@@ -1258,7 +1284,7 @@ impl Mono<'_> {
                 scrutinee,
                 arms,
                 else_branch,
-            } => self.match_(cx, scrutinee, arms, else_branch.as_deref(), tail),
+            } => self.match_(cx, e.id, (scrutinee, arms, else_branch.as_deref()), tail),
             ExprKind::Field { record, label } => {
                 let ty = self.node_ty(cx, record.id);
                 let Ty::Record(row) = ty.unfold_head() else {
@@ -1328,7 +1354,7 @@ impl Mono<'_> {
     fn bin(
         &mut self,
         cx: &mut FnCx,
-        (op, span): (BinOp, Span),
+        (op, span, id): (BinOp, Span, ExprId),
         (lhs, rhs): (&hir::Expr, &hir::Expr),
         (a, b): (Box<Expr>, Box<Expr>),
         tail: bool,
@@ -1338,17 +1364,29 @@ impl Mono<'_> {
         let scalars = [&lhs_ty, &rhs_ty]
             .iter()
             .all(|ty| matches!(ty, Ty::Int | Ty::Float));
-        let (operand_ty, a, b) = if scalars && (lhs_ty != rhs_ty || op == BinOp::Div) {
-            (Ty::Float, widen(*a, &lhs_ty), widen(*b, &rhs_ty))
-        } else {
-            (lhs_ty, *a, *b)
-        };
+        // An arithmetic result the checker made a `Float` (a later use joined
+        // it with one) is computed on `Float` operands, whatever they were.
+        let result_widens = scalars
+            && lhs_ty == Ty::Int
+            && rhs_ty == Ty::Int
+            && matches!(
+                op,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod
+            )
+            && self.node_ty(cx, id) == Ty::Float;
+        let (operand_ty, a, b) =
+            if scalars && (lhs_ty != rhs_ty || op == BinOp::Div || result_widens) {
+                (Ty::Float, widen(*a, &lhs_ty), widen(*b, &rhs_ty))
+            } else {
+                (lhs_ty, *a, *b)
+            };
         match op {
             BinOp::Add => self.arith(cx, Some(span), FloatOp::Add, &operand_ty, a, b),
             BinOp::Sub => self.arith(cx, Some(span), FloatOp::Sub, &operand_ty, a, b),
             BinOp::Mul => self.arith(cx, Some(span), FloatOp::Mul, &operand_ty, a, b),
             BinOp::Div => self.arith(cx, Some(span), FloatOp::Div, &operand_ty, a, b),
-            BinOp::FloorDiv | BinOp::Mod => Self::whole_division(cx, (op, span), a, b),
+            BinOp::FloorDiv => self.arith(cx, Some(span), FloatOp::FloorDiv, &operand_ty, a, b),
+            BinOp::Mod => self.arith(cx, Some(span), FloatOp::Mod, &operand_ty, a, b),
             BinOp::Eq => self.equal(cx, &operand_ty, a, b, tail),
             BinOp::Ne => Self::not(self.equal(cx, &operand_ty, a, b, false)),
             BinOp::Lt => self.order(cx, CmpOp::Lt, &operand_ty, a, b),
@@ -1433,7 +1471,17 @@ impl Mono<'_> {
             // argument order, so evaluating it in order fills the slots in
             // order.
             ExprKind::Record { fields } => {
-                let values = fields.iter().map(|(_, v)| self.expr(cx, v, false));
+                let slots = match ty.unfold_head() {
+                    Ty::Variant(row) => ground_fields(&row)
+                        .find(|(label, _)| *label == name)
+                        .map(|(_, payload)| payload_fields(payload)),
+                    _ => None,
+                }
+                .unwrap_or_default();
+                let values = fields.iter().enumerate().map(|(i, (_, v))| {
+                    let slot = slots.get(i).unwrap_or(&Ty::Unit);
+                    self.branch(cx, v, slot, false)
+                });
                 Expr::AllocVariant(layout, tag, values.collect())
             }
             // A record of the same shape built elsewhere: take it apart.
@@ -1462,11 +1510,11 @@ impl Mono<'_> {
     fn match_(
         &mut self,
         cx: &mut FnCx,
-        scrutinee: &hir::Expr,
-        arms: &[hir::MatchArm],
-        else_branch: Option<&hir::Expr>,
+        id: ExprId,
+        (scrutinee, arms, else_branch): (&hir::Expr, &[hir::MatchArm], Option<&hir::Expr>),
         tail: bool,
     ) -> Expr {
+        let result = self.node_ty(cx, id);
         let scrutinee_ty = self.node_ty(cx, scrutinee.id);
         let Ty::Variant(row) = scrutinee_ty.unfold_head() else {
             unreachable!("match on a non-variant");
@@ -1488,11 +1536,11 @@ impl Mono<'_> {
                 .map(|(_, ty)| ty.clone())
                 .expect("checked match arm names a tag of the scrutinee");
             let bindings = self.bind_payload(cx, local, tag, &pattern.payload, &payload_ty);
-            let body = self.expr(cx, &arm.body, tail);
+            let body = self.branch(cx, &arm.body, &result, tail);
             lowered.push((tag, wrap_lets(bindings, body)));
         }
         let default = match else_branch {
-            Some(e) => self.expr(cx, e, tail),
+            Some(e) => self.branch(cx, e, &result, tail),
             None => lowered
                 .pop()
                 .map_or_else(|| Expr::Trap("no arm matches".into()), |(_, arm)| arm),
