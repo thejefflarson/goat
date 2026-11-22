@@ -304,6 +304,11 @@ impl Ty {
         }
     }
 
+    /// Whether a `Rec` occurs anywhere in this type.
+    pub fn is_recursive(&self) -> bool {
+        matches!(self, Ty::Rec(..)) || self.children().into_iter().any(Ty::is_recursive)
+    }
+
     /// The first function type in this type, looking inside records, variant
     /// payloads and recursive bodies, but not at a record field flagged
     /// [`METHOD`]: the model may hold those.
@@ -1388,6 +1393,14 @@ mod tests {
         ] {
             assert_eq!(ty.clone().into_folded(), ty.fold_rec_noting().0, "{ty}");
         }
+    }
+
+    #[test]
+    fn a_type_is_recursive_when_a_rec_occurs_anywhere_in_it() {
+        assert!(list(1).is_recursive());
+        assert!(Ty::func(vec![Ty::Int], list(1)).is_recursive());
+        assert!(!Ty::func(vec![Ty::Int], Ty::Var(1)).is_recursive());
+        assert!(!Ty::Int.is_recursive());
     }
 
     #[test]

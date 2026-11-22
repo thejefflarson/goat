@@ -30,7 +30,8 @@ fragment of `proofs/goat_ln.ott`: numerals, Float literals, strings, unit,
 booleans, functions, calls, `if` with an `else`, the twelve binary operators on
 Int, Float, String and Bool, `let` of any value, `letrec` groups of
 functions, record literals with distinct labels, and field access, binding every
-name it uses. Anything else (the prelude, tags, `::`, dot calls, `self`, an operator on records or on Unit) is outside the
+name it uses. Dot calls, `::` and `self` are read as the `proj`, `app` and `let` lowering rewrote them to, and the method flag
+is erased from the type column. Anything else (the prelude, tags, an operator on records or on Unit) is outside the
 calculus and skipped.
 
 The generic operators are compared. `+ - *` on operands the checker leaves as
@@ -63,11 +64,20 @@ program are skipped, each because the calculus and the checker differ on it:
   `{stop: true, g: h}` inside `h`, is one: it is compared when the checker
   accepts it with a finite type and counted under the kind below when it does
   not, so it has no skip reason of its own);
-- the cases the README already listed: the prelude, tags, `::`, dot calls,
-  `self`.
+- a program the checker rejects over the method flag (a dot call on a plain
+  function, `::` on a method or on a data field, a field a method in one record
+  and plain in the other), which the calculus does not track; the checker marks
+  these errors with `ErrorKind::MethodFlag`, and the reader skips them under their
+  own count;
+- a record literal with two or more methods, counted under its own skip: the
+  checker gives the methods one shared receiver type, and the calculus's rules
+  would type each apiece, so they accept programs the checker rejects;
+- a program the checker gives up on as too complex (`ErrorKind::ResourceLimit`),
+  which a budget decides and not the types;
+- the cases the README already listed: the prelude, tags.
 
 A further kind is counted apart from these. When the checker types a program in
-the fragment with a recursive type (`Ty::Rec`, as for `(p.moved)(p)`), the
+the fragment with a recursive type (a `Ty::Rec` anywhere, `Ty::is_recursive`, as for `(p.moved)(p)`), the
 corpus writes it as an `R` line and the driver prints it as "skipped for a
 recursive type", with no comparison. The algorithm never builds a `mu`
 (`infer_mu_free`, `proofs/GoatInferMuFree.v`), so it cannot agree on such a
@@ -142,7 +152,7 @@ mismatched.
 
 A program outside the calculus is counted under one feature it uses, the first
 in this fixed order, which is the order of the proof phases that bring each in:
-a foreign host call; methods, `self` or dot calls; tags and `match`; a spread
+a foreign host call; tags and `match`; a spread
 onto a row variable that lacks the label (below); `print` or `trap`; `and`, `or`, `not`; a loop (a binding named `loop`,
 which lowering gives every `repeat` and `for`); a comparison, then arithmetic,
 on operands that are not `Int`, `Float`, `String` or `Bool`. After those come
@@ -150,8 +160,7 @@ the reasons that are about the shape of a program and not a missing feature: a
 recursive group that a value binding uses before the group's last member (the
 checker types the use at the member's monomorphic type, the hoisted `letrec` at
 its generalized one), a `let` of a numeral the calculus
-would generalize and the checker does not, an inferred type with a method
-field, an `if` without an `else`, a function or call with no parameters,
+would generalize and the checker does not, an inferred type the corpus cannot write, an `if` without an `else`, a function or call with no parameters,
 a program that ends in a binding, a numeral of 2^30 or more, and `none of the
 above`. A program using two features counts only under the earlier, so when a
 phase lands its count falls to 0 and its programs either join the compared set

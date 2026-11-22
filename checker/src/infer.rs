@@ -27,7 +27,7 @@
 //! on [`Inferer::unify_ty`].
 
 use crate::captures::for_each_node;
-use crate::error::{GoatError, Label};
+use crate::error::{ErrorKind, GoatError, Label};
 use crate::flow::{self, Edge, End, Scalar};
 use crate::hir::{
     BinOp, Builtin, ContractBinding, Expr, ExprId, ExprKind, Interactive, MatchArm, PatternPayload,
@@ -1079,7 +1079,7 @@ impl Inferer {
 
     fn report_spent_ids(&mut self, span: Span) {
         if std::mem::take(&mut self.ids_spent) {
-            self.errors.push(GoatError::new(
+            self.errors.push(GoatError::too_complex(
                 span,
                 "program too complex: it needs more type variables than the checker can number",
             ));
@@ -1543,7 +1543,7 @@ impl Inferer {
     fn report_too_complex(&mut self, span: Span) {
         if !self.too_complex {
             self.too_complex = true;
-            self.errors.push(GoatError::new(
+            self.errors.push(GoatError::too_complex(
                 span,
                 "program too complex: these types grow too large to unify",
             ));
@@ -2239,13 +2239,16 @@ impl Inferer {
             (Ty::Var(v), other) | (other, Ty::Var(v)) => {
                 self.subst.insert(*v, Rc::new(other.clone()));
             }
-            _ => self.errors.push(GoatError::new(
-                span,
-                format!(
-                    "`{label}` is a method in one record and a plain function in the other, so they don't have the same shape. \
-                     Start both with `self`, or neither."
-                ),
-            )),
+            _ => self.errors.push(
+                GoatError::new(
+                    span,
+                    format!(
+                        "`{label}` is a method in one record and a plain function in the other, so they don't have the same shape. \
+                         Start both with `self`, or neither."
+                    ),
+                )
+                .of_kind(ErrorKind::MethodFlag),
+            ),
         }
     }
 
@@ -2854,7 +2857,7 @@ impl Inferer {
         let mut ty = self.infer_kind(expr);
         self.report_spent_ids(expr.span);
         if !self.within_term_budget(&ty) {
-            self.errors.push(GoatError::new(
+            self.errors.push(GoatError::too_complex(
                 expr.span,
                 "program too complex: the type of this expression is larger than the checker handles",
             ));
@@ -2881,7 +2884,7 @@ impl Inferer {
             .filter_map(|(id, _)| self.node_spans.get(id).copied())
             .min_by_key(|span| (span.start, span.end));
         if let Some(span) = outgrown {
-            self.errors.push(GoatError::new(
+            self.errors.push(GoatError::too_complex(
                 span,
                 "program too complex: the type of this expression is larger than the checker handles",
             ));
@@ -3754,7 +3757,8 @@ impl Inferer {
             return ret;
         }
         if let Some(message) = self.misused_field_message(id, span, callee, args) {
-            self.errors.push(GoatError::new(span, message));
+            self.errors
+                .push(GoatError::new(span, message).of_kind(ErrorKind::MethodFlag));
             return ret;
         }
         let head = self.resolve_head(&callee_ty);
@@ -4014,9 +4018,9 @@ impl Inferer {
         offenders.sort_by_key(|(span, _)| (span.start, span.end));
         self.errors.splice(
             0..0,
-            offenders
-                .into_iter()
-                .map(|(span, message)| GoatError::new(span, message)),
+            offenders.into_iter().map(|(span, message)| {
+                GoatError::new(span, message).of_kind(ErrorKind::MethodFlag)
+            }),
         );
     }
 
@@ -4060,13 +4064,16 @@ impl Inferer {
             }
             _ => format!("{receiver}.{label}({})", args.join(", ")),
         };
-        self.errors.push(GoatError::new(
-            take.span,
-            format!(
-                "`{label}` has `self`, so call it with a dot: `{call}`. \
-                 `::` is for functions without `self`, like `{example}`."
-            ),
-        ));
+        self.errors.push(
+            GoatError::new(
+                take.span,
+                format!(
+                    "`{label}` has `self`, so call it with a dot: `{call}`. \
+                     `::` is for functions without `self`, like `{example}`."
+                ),
+            )
+            .of_kind(ErrorKind::MethodFlag),
+        );
     }
 
     /// A field of `record` that is a function without `self`, by label and
@@ -4259,9 +4266,9 @@ impl Inferer {
     /// would take longer than the program is worth.
     fn abandon_receiver(&mut self, receiver: TypeVar, slots: &[Ty], span: Span) -> Vec<Ty> {
         self.self_defs.remove(&receiver);
-        self.errors.push(GoatError::new(
-            span,
-            "program too complex: the methods of this record have types larger than the checker handles",
+        self.errors.push(GoatError::too_complex(
+                span,
+                "program too complex: the methods of this record have types larger than the checker handles",
         ));
         slots.to_vec()
     }

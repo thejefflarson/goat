@@ -4,10 +4,24 @@
 use crate::hir::Span;
 use std::fmt;
 
+/// What an error is about, for the callers that treat a class of errors
+/// differently from the rest (the corpus reader skips them).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ErrorKind {
+    #[default]
+    Other,
+    /// A method used as a plain function or the reverse: the dot or `::` met a
+    /// field of the other flag, which the calculus does not track.
+    MethodFlag,
+    /// A "program too complex" diagnostic: a resource bound, not a type error.
+    ResourceLimit,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GoatError {
     pub span: Span,
     pub message: String,
+    pub kind: ErrorKind,
     /// Other places that explain the error, each with what it says there.
     pub labels: Vec<Label>,
 }
@@ -23,8 +37,18 @@ impl GoatError {
         GoatError {
             span,
             message: message.into(),
+            kind: ErrorKind::Other,
             labels: Vec::new(),
         }
+    }
+
+    pub fn of_kind(self, kind: ErrorKind) -> GoatError {
+        GoatError { kind, ..self }
+    }
+
+    /// A resource-limit diagnostic.
+    pub fn too_complex(span: Span, message: impl Into<String>) -> GoatError {
+        GoatError::new(span, message).of_kind(ErrorKind::ResourceLimit)
     }
 
     pub fn with_label(mut self, span: Span, message: impl Into<String>) -> GoatError {

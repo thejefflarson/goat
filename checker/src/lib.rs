@@ -14,7 +14,7 @@ pub mod ty;
 pub mod vocab;
 
 pub use captures::Target;
-pub use error::{GoatError, Label};
+pub use error::{ErrorKind, GoatError, Label};
 pub use hir::Expr;
 pub use infer::Typed;
 pub use ty::Ty;
@@ -1982,7 +1982,21 @@ mod tests {
             blamed.starts_with("compose(f") && blamed.ends_with(')'),
             "{blamed}"
         );
+        assert_eq!(errors[0].kind, ErrorKind::ResourceLimit);
         assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn method_flag_errors_carry_their_kind_and_type_errors_do_not() {
+        let kind = |source: &str| check(source).err().map(|errors| errors[0].kind);
+        let plain_dot = "pair = {first: program(a, b) do a done}\npair.first(1)";
+        let method_take = "ball = {x: 1, get: program(self) do self.x done}\nball::get()";
+        let data_take = "r = {x: 1}\nr::x";
+        let mismatch = "{a: 1}.b";
+        assert_eq!(kind(plain_dot), Some(ErrorKind::MethodFlag));
+        assert_eq!(kind(method_take), Some(ErrorKind::MethodFlag));
+        assert_eq!(kind(data_take), Some(ErrorKind::MethodFlag));
+        assert_eq!(kind(mismatch), Some(ErrorKind::Other));
     }
 
     #[test]

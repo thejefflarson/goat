@@ -43,12 +43,12 @@
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
 
-use goat_checker::Checked;
 use goat_checker::captures::for_each_node;
 use goat_checker::check_with_prelude;
 use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, Symbol};
 use goat_checker::lower::{Lowered, lower};
 use goat_checker::ty::{Row, Ty};
+use goat_checker::{Checked, ErrorKind};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
@@ -216,7 +216,6 @@ impl Core {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Feature {
     ForeignCall,
-    MethodsAndDotCalls,
     TagsAndMatch,
     LacksOnTail,
     Builtin,
@@ -238,7 +237,6 @@ impl Feature {
     fn describe(self) -> &'static str {
         match self {
             Feature::ForeignCall => "outside the calculus: a foreign host call",
-            Feature::MethodsAndDotCalls => "outside the calculus: methods, self or dot calls",
             Feature::TagsAndMatch => "outside the calculus: tags and match",
             Feature::LacksOnTail => {
                 "outside the calculus: a spread onto a row variable that lacks the label"
@@ -256,7 +254,9 @@ impl Feature {
             Feature::NumeralLet => {
                 "outside the calculus: a let of a numeral the calculus would generalize"
             }
-            Feature::UnwritableType => "outside the calculus: an inferred type with a method field",
+            Feature::UnwritableType => {
+                "outside the calculus: an inferred type the corpus cannot write"
+            }
             Feature::IfWithoutElse => "outside the calculus: an if without an else",
             Feature::NoParameters => "outside the calculus: a function or call with no parameters",
             Feature::TrailingBinding => "outside the calculus: a program that ends in a binding",
@@ -270,9 +270,6 @@ impl Feature {
 fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Feature {
     let mut first = gap;
     let mut note = |feature: Feature| first = first.min(feature);
-    if !lowered.dot_calls.is_empty() || !lowered.takes.is_empty() {
-        note(Feature::MethodsAndDotCalls);
-    }
     let types = checked.map(|c| &c.typed.node_types);
     let non_primitive = |e: &Expr| {
         types
@@ -288,9 +285,6 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
         ExprKind::Let { rest: None, .. } => note(Feature::TrailingBinding),
         ExprKind::App { args, .. } if args.is_empty() => note(Feature::NoParameters),
         ExprKind::Func { params, .. } if params.is_empty() => note(Feature::NoParameters),
-        ExprKind::Func { params, .. } if params.iter().any(|p| p.name == "self") => {
-            note(Feature::MethodsAndDotCalls)
-        }
         ExprKind::Tag { .. } | ExprKind::Match { .. } => note(Feature::TagsAndMatch),
         ExprKind::Builtin(_) | ExprKind::Trap(_) => note(Feature::Builtin),
         ExprKind::And { .. } | ExprKind::Or { .. } | ExprKind::Not(_) => note(Feature::Connective),
@@ -318,6 +312,9 @@ enum Skip {
     Rejected,
     OutsideFragment(Feature),
     RecursiveType,
+    SharedReceiver,
+    MethodFlag,
+    ResourceLimit,
     GenericComparison,
 }
 
@@ -327,6 +324,11 @@ impl Skip {
             Skip::Rejected => "does not lower",
             Skip::OutsideFragment(feature) => feature.describe(),
             Skip::RecursiveType => "the checker infers a recursive type",
+            Skip::SharedReceiver => "a record literal with two or more methods",
+            Skip::MethodFlag => {
+                "the checker rejects a method used as a plain function or the reverse"
+            }
+            Skip::ResourceLimit => "the checker gives up on a program too complex",
             Skip::GenericComparison => "a comparison at a parameter left generic",
         }
     }
@@ -351,9 +353,6 @@ fn bop_atom(op: BinOp) -> &'static str {
 
 /// Reads lowered HIR as a core term, or says it is outside the fragment.
 struct Reader<'a> {
-    /// The nodes lowering marked as dot calls and takes, which pass or move a
-    /// receiver and are outside the calculus.
-    special: HashSet<ExprId>,
     labels: Vec<String>,
     scope: Vec<Binder>,
     /// Cleared when a function or call has more than one parameter or argument.
@@ -645,9 +644,6 @@ impl Reader<'_> {
     }
 
     fn read(&mut self, expr: &Expr) -> Option<Core> {
-        if self.special.contains(&expr.id) {
-            return None;
-        }
         match &expr.kind {
             ExprKind::Int(n) => {
                 let num = Some(*n)
@@ -730,7 +726,7 @@ impl Reader<'_> {
             }
             ExprKind::Var { symbol, .. } => self.var(symbol),
             ExprKind::Func { params, body } => {
-                if params.is_empty() || params.iter().any(|p| p.name == "self") {
+                if params.is_empty() {
                     return None;
                 }
                 self.unary &= params.len() == 1;
@@ -853,15 +849,8 @@ impl Canon<'_> {
                         Row::Empty => break None,
                         Row::Var(v) => break Some(*v),
                         Row::Extend {
-                            label,
-                            field,
-                            method,
-                            rest,
-                            ..
+                            label, field, rest, ..
                         } => {
-                            if **method == goat_checker::ty::METHOD {
-                                return None;
-                            }
                             let id = self.labels.iter().position(|l| l == label)?;
                             fields.push((id, None, &**field));
                             at = rest;
@@ -870,12 +859,9 @@ impl Canon<'_> {
                             label,
                             pres,
                             field,
-                            method,
                             rest,
+                            ..
                         } => {
-                            if **method == goat_checker::ty::METHOD {
-                                return None;
-                            }
                             let id = self.labels.iter().position(|l| l == label)?;
                             fields.push((id, Some(*pres), &**field));
                             at = rest;
@@ -952,6 +938,25 @@ fn lacks_on_tail(root: &Expr, types: &HashMap<ExprId, Ty>) -> bool {
     found
 }
 
+/// Whether a record literal has two or more methods, which the checker types
+/// with one receiver they share and the calculus's rules would type apiece.
+fn shares_receiver(root: &Expr) -> bool {
+    let mut found = false;
+    for_each_node(root, &mut |e| {
+        if let ExprKind::Record { fields } = &e.kind {
+            let methods = fields
+                .iter()
+                .filter(|(_, value)| {
+                    matches!(&value.kind, ExprKind::Func { params, .. }
+                        if params.first().is_some_and(|p| p.name == "self"))
+                })
+                .count();
+            found |= methods >= 2;
+        }
+    });
+    found
+}
+
 /// The line for `source`, or why it is not a program of the fragment. A
 /// `forced` program is kept although a comparison in it looks generic: the
 /// checker does not record a `Numeric` variable, which a `%` makes of a parameter.
@@ -966,14 +971,14 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
             .iter()
             .any(|e| e.message.contains("was taken out of this record"))
     });
+    let errors = checked.as_ref().err();
+    let flagged = |kind| errors.is_some_and(|es| es.iter().any(|e| e.kind == kind));
+    let (method_flag, resource_limit) = (
+        flagged(ErrorKind::MethodFlag),
+        flagged(ErrorKind::ResourceLimit),
+    );
     let checked = checked.ok();
     let mut reader = Reader {
-        special: lowered
-            .dot_calls
-            .keys()
-            .chain(lowered.takes.keys())
-            .copied()
-            .collect(),
         labels: Vec::new(),
         scope: Vec::new(),
         unary: true,
@@ -994,14 +999,20 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
     {
         return Err(Skip::OutsideFragment(Feature::LacksOnTail));
     }
-    if checked.as_ref().is_some_and(|checked| {
-        checked
-            .typed
-            .node_types
-            .values()
-            .any(|ty| format!("{ty:?}").contains("Rec("))
-    }) {
+    if resource_limit {
+        return Err(Skip::ResourceLimit);
+    }
+    if method_flag {
+        return Err(Skip::MethodFlag);
+    }
+    if checked
+        .as_ref()
+        .is_some_and(|checked| checked.typed.node_types.values().any(Ty::is_recursive))
+    {
         return Err(Skip::RecursiveType);
+    }
+    if shares_receiver(&lowered.root) {
+        return Err(Skip::SharedReceiver);
     }
     if reader.generic_comparison && !forced {
         return Err(Skip::GenericComparison);
@@ -1650,6 +1661,13 @@ impl SpreadGen {
 /// Programs the repository's sources may not hold: let-polymorphism, row
 /// polymorphism, rejections, and calls with several arguments.
 const HANDWRITTEN: &[&str] = &[
+    "math = {double: program(x) do x * 2 done}\nmath::double(5)",
+    "math = {double: program(x) do x * 2 done}\nd = math::double\nd(5)",
+    "pair = {first: program(a, b) do a done}\npair.first(1)",
+    "{x: 1, get: program(self) do self.x done}.get()",
+    "ball = {x: 1, moved: program(self) do {...self, x: self.x + 1} done}\nball.moved().x",
+    "lit = {a: program(self) do self.x done, b: program(self) do self.y done}\nlit.a()",
+    "f = program(r) do r.m() done\nf({m: program(self) do 1 done})",
     "set_x = program(r) do {...r, x: 1} done\n{a: set_x({x: 4, z: 2}), b: set_x({y: true})}",
     "set_x = program(r) do {...r, x: 1} done\nset_x(set_x({y: true}))",
     "set_x = program(r) do {...r, x: 1} done\nset_x({x: \"s\"})",
