@@ -436,7 +436,7 @@ fn a_host_with_its_own_vocabulary_compiles_to_the_imports_and_exports_it_declare
         }],
         ..Vocab::empty()
     };
-    let host = HostInterface::with_vocab("", vocab);
+    let host = HostInterface::with_vocab("tag List = Empty | Link", vocab);
     let source = "init = {n: 0}\n\
                   update = program(model, event) do match event do Press(pin) then {n: pin} done done\n\
                   draw = program(model) do [Led({pin: model.n, on: true})] done\n";

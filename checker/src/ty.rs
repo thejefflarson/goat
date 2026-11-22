@@ -131,6 +131,31 @@ pub struct Group {
 impl Group {
     pub const SELF: TypeVar = TypeVar::MAX;
 
+    /// What `tag List = Empty | Link` declares: `μl. [Empty, Link: {0: a, 1: l}]`
+    /// with the element type `a` a parameter each list instantiates afresh,
+    /// which is how `[1, "a"]` is rejected where it is written.
+    pub fn list() -> Group {
+        let [empty, link] = crate::vocab::LIST_TAGS.map(String::from);
+        Group {
+            tags: vec![
+                (empty, Ty::Unit),
+                (
+                    link,
+                    Ty::Record(Row::of([
+                        ("0".to_string(), Ty::Var(Self::param(0))),
+                        ("1".to_string(), Ty::Var(Self::SELF)),
+                    ])),
+                ),
+            ],
+            recursive: true,
+            params: 1,
+        }
+    }
+
+    pub fn is_list(&self) -> bool {
+        *self == Self::list()
+    }
+
     /// The placeholder for the group's `index`th parameter in a payload.
     pub const fn param(index: usize) -> TypeVar {
         Self::SELF - 1 - index as TypeVar

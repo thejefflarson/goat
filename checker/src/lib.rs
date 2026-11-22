@@ -154,9 +154,9 @@ mod tests {
     use super::*;
 
     /// These tests count nodes, type variables and warnings, so they run
-    /// without the standard prelude.
+    /// without the standard prelude, only the list's declaration.
     fn check(source: &str) -> Result<Checked, Vec<GoatError>> {
-        check_with_prelude("", source)
+        check_with_prelude("tag List = Empty | Link", source)
     }
 
     /// The inferred type of a program, as a string, or the first error message.
@@ -301,16 +301,32 @@ mod tests {
         for src in [
             "tag A | B tag B | C 1",
             "tag A | A 1",
-            "tag Light = Up | Stop 1",
             "tag Empty | Full 1",
-            "tag Tick | Tock 1",
+            "tag Pale | Full tag Full | Stop 1",
         ] {
             let (message, text) = spanned_error(src);
             assert!(message.starts_with("duplicate tag"), "{src}: {message}");
             assert!(
-                ["B", "A", "Up", "Empty", "Tick"].contains(&text.as_str()),
+                ["B", "A", "Empty", "Full"].contains(&text.as_str()),
                 "{text}"
             );
+        }
+    }
+
+    #[test]
+    fn a_tag_the_host_provides_may_not_be_declared_again() {
+        for (src, name) in [
+            ("tag Circle 1", "Circle"),
+            ("tag Tick | Tock 1", "Tick"),
+            ("tag Light = Up | Stop 1", "Up"),
+        ] {
+            let (message, text) = spanned_error(src);
+            assert!(
+                message.starts_with(&format!("`{name}` is a tag the host already provides")),
+                "{src}: {message}"
+            );
+            assert!(message.contains("pick another name"), "{message}");
+            assert_eq!(text, name);
         }
     }
 
@@ -409,8 +425,9 @@ mod tests {
 
     #[test]
     fn capitalization_does_not_decide_what_a_tag_is() {
-        assert_eq!(type_of("tag up up(1)").unwrap(), "[up: Number | t1]");
+        assert_eq!(type_of("tag up up(1)").unwrap(), "[up: Number]");
         assert_eq!(type_of("tag A tag B 1").unwrap(), "Number");
+        assert_eq!(type_of("tag a | b match b do a then 1 b then 2 done").unwrap(), "Number");
         assert_eq!(
             type_of("tag Foo f = program(Foo) do Foo(1) done f(program(x) do x done)").unwrap(),
             "Number"
@@ -430,16 +447,15 @@ mod tests {
     #[test]
     fn a_tag_declared_in_the_prelude_is_in_scope_for_the_program() {
         let checked = check_with_prelude("tag Mine", "Mine").expect("checks");
-        assert_eq!(checked.typed.root_ty.to_string(), "[Mine | t0]");
+        assert_eq!(checked.typed.root_ty.to_string(), "[Mine]");
         assert!(check_with_prelude("", "Mine").is_err());
     }
 
     #[test]
-    fn constructing_a_tag_gives_an_open_row() {
-        assert_eq!(
-            type_of("tag Circle Circle(5)").unwrap(),
-            "[Circle: Number | t1]"
-        );
+    fn constructing_a_lone_tag_gives_its_closed_group_of_one() {
+        assert_eq!(type_of("tag Ring Ring(5)").unwrap(), "[Ring: Number]");
+        assert_eq!(type_of("tag Ring Ring").unwrap(), "[Ring]");
+        assert_eq!(type_of("tag Ring Ring(\"a\")").unwrap(), "[Ring: String]");
     }
 
     #[test]
@@ -462,6 +478,13 @@ mod tests {
     }
 
     #[test]
+    fn two_lone_tags_are_different_types() {
+        let err = type_of("tag Ping tag Pong if true then Ping else Pong done").unwrap_err();
+        assert!(err.contains("not allowed here"), "{err}");
+        assert!(type_of("tag Ping | Pong if true then Ping else Pong done").is_ok());
+    }
+
+    #[test]
     fn a_list_tag_matches_no_other_tag() {
         let err =
             type_of("tag Full match Empty do Empty then true Full then false done").unwrap_err();
@@ -469,50 +492,49 @@ mod tests {
     }
 
     #[test]
-    fn branches_building_different_tags_merge_into_one_open_row() {
-        let src = "tag Circle tag Square if true then Circle(1) else Square(2) done";
-        let ty = type_of(src).unwrap();
-        assert!(ty.starts_with("[Circle: Number, Square: Number | "), "{ty}");
+    fn branches_building_tags_of_one_group_have_the_whole_group_type() {
+        let src = "tag Ring | Square if true then Ring(1) else Square(2) done";
+        assert_eq!(type_of(src).unwrap(), "[Ring: Number, Square: Number]");
     }
 
     #[test]
     fn match_types_to_its_arm_bodies() {
         assert_eq!(
-            type_of("tag Circle match Circle(5) do Circle(r) then r else 0 done").unwrap(),
+            type_of("tag Ring match Ring(5) do Ring(r) then r else 0 done").unwrap(),
             "Number"
         );
         assert_eq!(
-            type_of("tag Full tag Done match Full do Full then true Done then false done").unwrap(),
+            type_of("tag Full | Done match Full do Full then true Done then false done").unwrap(),
             "Bool"
         );
     }
 
     #[test]
     fn match_without_else_closes_the_row() {
-        let src = "tag Circle tag Square area = program(s) do match s do Circle(r) then r * 2 Square(w) then w * 2 done done area";
+        let src = "tag Ring | Square area = program(s) do match s do Ring(r) then r * 2 Square(w) then w * 2 done done area";
         assert_eq!(
             type_of(src).unwrap(),
-            "([Circle: Number, Square: Number]) -> Number"
+            "([Ring: Number, Square: Number]) -> Number"
         );
     }
 
     #[test]
     fn match_with_else_keeps_the_row_open() {
         let src =
-            "tag Circle area = program(s) do match s do Circle(r) then r * 2 else 0 done done area";
+            "tag Ring | Square area = program(s) do match s do Ring(r) then r * 2 else 0 done done area";
         let ty = type_of(src).unwrap();
-        assert!(ty.starts_with("([Circle: Number | t"), "{ty}");
+        assert!(ty.starts_with("([Ring: Number | t"), "{ty}");
     }
 
     #[test]
-    fn open_tag_fits_a_closed_match_but_a_stranger_does_not() {
-        let area = "tag Circle tag Square area = program(s) do match s do Circle(r) then r Square(w) then w done done ";
+    fn a_group_value_fits_a_closed_match_but_a_stranger_does_not() {
+        let area = "tag Ring | Square area = program(s) do match s do Ring(r) then r Square(w) then w done done ";
         assert_eq!(
-            type_of(&format!("tag Circle {area} area(Circle(1))")).unwrap(),
+            type_of(&format!("tag Triangle {area} area(Ring(1))")).unwrap(),
             "Number"
         );
         assert_eq!(
-            type_of(&format!("tag Square {area} area(Square(1))")).unwrap(),
+            type_of(&format!("tag Triangle {area} area(Square(1))")).unwrap(),
             "Number"
         );
         let err = type_of(&format!("tag Triangle {area} area(Triangle(1))")).unwrap_err();
@@ -521,7 +543,7 @@ mod tests {
 
     #[test]
     fn closed_row_flows_through_an_else_free_match() {
-        let src = "tag A tag B pick = program(s) do match s do A then 1 B then 2 done done \
+        let src = "tag A | B pick = program(s) do match s do A then 1 B then 2 done done \
                    x = pick(A) y = pick(B) x + y";
         assert_eq!(type_of(src).unwrap(), "Number");
     }
@@ -529,10 +551,10 @@ mod tests {
     #[test]
     fn arm_bodies_must_agree() {
         let err =
-            type_of("tag Circle match Circle(5) do Circle(r) then r else true done").unwrap_err();
+            type_of("tag Ring match Ring(5) do Ring(r) then r else true done").unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
         let err = type_of(
-            "tag Circle tag Square match Circle(5) do Circle(r) then r Square(w) then true done",
+            "tag Ring | Square match Ring(5) do Ring(r) then r Square(w) then true done",
         )
         .unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
@@ -541,9 +563,9 @@ mod tests {
     #[test]
     fn match_missing_a_tag_is_an_error() {
         let err =
-            type_of("tag Circle tag Square match Circle(1) do Square(w) then w done").unwrap_err();
-        assert!(err.contains("doesn't handle `Circle`"), "{err}");
-        let src = "tag A tag B f = program(s) do \
+            type_of("tag Ring | Square match Ring(1) do Square(w) then w done").unwrap_err();
+        assert!(err.contains("doesn't handle `Ring`"), "{err}");
+        let src = "tag A | B f = program(s) do \
                      first = match s do A then 1 B then 2 done \
                      match s do A then 1 done \
                    done";
@@ -553,7 +575,7 @@ mod tests {
 
     #[test]
     fn match_arm_for_an_impossible_tag_is_an_error() {
-        let src = "tag A tag B tag C f = program(s) do \
+        let src = "tag A | B tag C f = program(s) do \
                      first = match s do A then 1 B then 2 done \
                      match s do C then 3 else 4 done \
                    done";
@@ -576,9 +598,9 @@ mod tests {
 
     #[test]
     fn payload_mismatch_between_construction_and_pattern_is_an_error() {
-        let err = type_of("tag Circle match Circle(5) do Circle then 0 else 1 done").unwrap_err();
+        let err = type_of("tag Ring match Ring(5) do Ring then 0 else 1 done").unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
-        let err = type_of("tag Circle match Circle(5) do Circle(a) then a + true else 1 done")
+        let err = type_of("tag Ring match Ring(5) do Ring(a) then a + true else 1 done")
             .unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
     }
@@ -591,32 +613,32 @@ mod tests {
 
     #[test]
     fn variant_errors_are_spanned() {
-        let src = "tag Circle tag Square match Circle(1) do Square(w) then w done";
+        let src = "tag Ring | Square match Ring(1) do Square(w) then w done";
         let Err(errors) = check(src) else {
             panic!("expected an error");
         };
-        assert_eq!(&src[errors[0].span.start..errors[0].span.end], "Circle(1)");
+        assert_eq!(&src[errors[0].span.start..errors[0].span.end], "Ring(1)");
     }
 
     #[test]
     fn constructed_but_never_matched_tag_warns() {
-        let src = "tag Cirle tag Circle match Cirle(5) do Circle(r) then r else 0 done";
+        let src = "tag Rng | Ring match Rng(5) do Ring(r) then r else 0 done";
         let warnings = warnings_of(src);
         assert_eq!(warnings.len(), 1);
         assert_eq!(
             warnings[0].message,
-            "tag `Cirle` is constructed but never matched anywhere"
+            "tag `Rng` is constructed but never matched anywhere"
         );
         assert_eq!(
             &src[warnings[0].span.start..warnings[0].span.end],
-            "Cirle(5)"
+            "Rng(5)"
         );
     }
 
     #[test]
     fn matched_tags_do_not_warn_and_each_tag_warns_once() {
         assert!(
-            warnings_of("tag Circle match Circle(5) do Circle(r) then r else 0 done").is_empty()
+            warnings_of("tag Ring match Ring(5) do Ring(r) then r else 0 done").is_empty()
         );
         assert!(warnings_of("1 + 2").is_empty());
         let warnings = warnings_of("tag Oops x = Oops(1) y = Oops(2) 0");
@@ -753,7 +775,7 @@ mod tests {
     fn a_function_returning_its_own_wrapped_result_is_recursive() {
         let ty = type_of("tag Wrap f = program(x) do Wrap(f(x)) done f").unwrap();
         let t = binder(&ty);
-        assert!(ty.contains(&format!("μ{t}. [Wrap: {t} | t")), "{ty}");
+        assert!(ty.contains(&format!("μ{t}. [Wrap: {t}]")), "{ty}");
     }
 
     #[test]

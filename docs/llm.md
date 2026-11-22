@@ -313,18 +313,27 @@ A tag is declared with `tag` and builds a variant when it is called with a
 payload. `match` takes a value apart by its tag. A `match` over numbers or
 strings needs an `else`, since they can never be exhausted.
 
+Every tag belongs to a group, and a group is closed: a `match` over it must
+handle every tag, with no `else`. Tags that go together are declared together,
+`tag Shape = Circle | Square`, and a lone `tag Done` is a group of one. Two
+groups never mix, so `if c then Done else Circle done` is an error.
+
+A tag written without a payload takes whatever you give it, a fresh type each
+time. `Disc(5)` and `Disc("big")` both work: a group of such tags is generic,
+and a list is the example. A tag written with a payload, like `Hit(Int)`,
+keeps it.
+
 ```goat
-tag Circle
-tag Square
+tag Shape = Disc | Square
 
 area = program(shape) do
   match shape do
-    Circle(r) then 3 * r * r
+    Disc(r) then 3 * r * r
     Square(side) then side * side
   done
 done
 
-print(area(Circle(2)));
+print(area(Disc(2)));
 print(area(Square(3)));
 match 5 do
   0 then "zero"
@@ -332,13 +341,14 @@ match 5 do
 done
 ```
 
-A grouped declaration closes its tags into one type, so a `match` must handle
-every tag and needs no `else`. A group that names itself can hold itself in a
-payload.
+A group that names itself can hold itself in a payload, and one with no
+written payloads can be generic. A list is a group in the prelude:
+`tag List = Empty | Link`. You can write your own.
 
 ```goat
 tag Light = Red | Green | Amber
 tag Tree = Leaf | Node({left: Tree, right: Tree})
+tag Pile = Nil | Cons
 
 seconds = program(light) do
   match light do
@@ -355,9 +365,36 @@ size = program(tree) do
   done
 done
 
+count = program(pile) do
+  match pile do
+    Nil then 0
+    Cons(head, rest) then 1 + count(rest)
+  done
+done
+
 print(seconds(Green));
-print(size(Node({left: Leaf, right: Leaf})))
+print(size(Node({left: Leaf, right: Leaf})));
+print(count(Cons(1, Cons(2, Nil))));
+print(count(Cons("a", Nil)))
 ```
+
+A function that walks a pile needs every item to have one type, so a pile of
+numbers and words together is an error:
+
+```goat error
+tag Pile = Nil | Cons
+count = program(pile) do
+  match pile do
+    Nil then 0
+    Cons(head, rest) then 1 + count(rest)
+  done
+done
+count(Cons(1, Cons("a", Nil)))
+```
+
+The host (the turtle) provides tags of its own, like `Circle`, `Tick` and
+`KeyDown`. You use them as they are, and declaring one again is an error. The
+host's own families are the one place a program may handle only some of the tags.
 
 ### Lists
 

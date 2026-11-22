@@ -148,7 +148,7 @@ fn local_names_that_reuse_a_prelude_name_do_not_warn() {
     let user = "f = program(double) do double + 1 done f(1)";
     assert!(warnings(PRELUDE_SRC, user).is_empty());
     let user = "match Link(1, Empty) do Link(double, identity) then double Empty then 0 done";
-    assert!(warnings(PRELUDE_SRC, user).is_empty());
+    assert!(warnings(&format!("tag List = Empty | Link\n{PRELUDE_SRC}"), user).is_empty());
 }
 
 #[test]
@@ -159,9 +159,9 @@ fn programs_that_avoid_prelude_names_do_not_warn() {
 #[test]
 fn tags_the_prelude_constructs_are_not_reported_as_unmatched() {
     let prelude = "tag Oops make = program(n) do Oops(n) done\n";
-    assert!(warnings(prelude, "tag Oops match make(1) do Oops(n) then n done").is_empty());
+    assert!(warnings(prelude, "match make(1) do Oops(n) then n done").is_empty());
     assert!(warnings(prelude, "1").is_empty());
-    let user = warnings(prelude, "tag Oops Oops(1)");
+    let user = warnings(prelude, "Oops(1)");
     assert_eq!(user.len(), 1);
     assert_eq!(user[0].span.file, FileId::User);
 }

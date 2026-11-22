@@ -317,12 +317,12 @@ mod tests {
 
     #[test]
     fn compile_returns_warnings_alongside_the_module() {
-        let src = "tag Cirle tag Circle match Cirle(5) do Circle(r) then r else 0 done";
+        let src = "tag Rng | Ring match Rng(5) do Ring(r) then r else 0 done";
         let (wasm, warnings) =
             compile_with_warnings(src, &HostInterface::turtle()).expect("compiles");
         assert_eq!(&wasm[..4], b"\0asm");
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].message.contains("Cirle"));
+        assert!(warnings[0].message.contains("Rng"));
     }
 
     #[test]

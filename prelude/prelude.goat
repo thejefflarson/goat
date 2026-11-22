@@ -2,17 +2,16 @@
 # binding; the program itself is the rest of the chain. Unused definitions
 # cost nothing: mono only emits what the program reaches.
 #
-# Lists are the built-in closed group `Empty` or `Link(head, tail)`, written
-# `[]` and `[head, ...tail]`.
+# Lists are `Empty` or `Link(head, tail)`, written `[]` and `[head, ...tail]`.
 # Every function that walks a whole list keeps its recursive call in tail
 # position (building results in reverse, then flipping them) so a long list
 # uses constant stack.
 
+tag List = Empty | Link
+
 # The pieces of a dictionary (see `dict_by`) and what its `get` finds.
-tag DictLeaf
-tag DictNode
-tag Found
-tag Missing
+tag Dict = DictLeaf | DictNode
+tag Lookup = Found | Missing
 
 nothing = program() do done
 

@@ -5,7 +5,7 @@
 use goat_checker::{Checked, GoatError, check_with_prelude};
 
 fn check(source: &str) -> Result<Checked, Vec<GoatError>> {
-    check_with_prelude("", source)
+    check_with_prelude("tag List = Empty | Link", source)
 }
 
 fn type_of(source: &str) -> Result<String, String> {
@@ -26,7 +26,7 @@ fn equality_works_on_anything_without_a_function() {
         "true != false",
         "\"a\" == \"b\"",
         "{x: 1, y: true} == {x: 1, y: true}",
-        "tag Circle Circle(1) == Circle(1)",
+        "tag Ring Ring(1) == Ring(1)",
         "Empty == Link(1, Empty)",
         "{a: {b: [1, 2]}} == {a: {b: [1, 2]}}",
     ] {
@@ -109,11 +109,11 @@ fn an_equality_function_is_polymorphic_over_eq_types() {
 
 #[test]
 fn open_rows_inherit_the_equality_constraint() {
-    let src = "tag Circle same = program(a, b) do a == b done  \
-               same(Circle(1), Circle(2))";
+    let src = "tag Ring same = program(a, b) do a == b done  \
+               same(Ring(1), Ring(2))";
     assert_eq!(type_of(src).unwrap(), "Bool");
-    let src = "tag Circle pick = program(s) do match s do Circle(r) then s == s else false done done \
-               pick(Circle(program(x) do x done))";
+    let src = "tag Ring pick = program(s) do match s do Ring(r) then s == s else false done done \
+               pick(Ring(program(x) do x done))";
     assert_eq!(error_of(src), "can't compare functions");
 }
 
@@ -179,7 +179,7 @@ fn arithmetic_on_something_else_says_what_it_needs() {
         "`*` needs numbers or records of numbers, but this is `String`"
     );
     assert_eq!(
-        error_of("tag Circle Circle(1) - Circle(2)")
+        error_of("tag Ring Ring(1) - Ring(2)")
             .split(", but")
             .next()
             .unwrap(),
@@ -298,7 +298,7 @@ fn print_takes_any_one_value_and_returns_unit() {
         "print(1)",
         "print(\"hi\")",
         "print({x: 1})",
-        "tag Circle print(Circle(1))",
+        "tag Ring print(Ring(1))",
         "print([1, 2])",
         "print(program(x) do x done)",
     ] {

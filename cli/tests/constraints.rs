@@ -60,17 +60,17 @@ fn equality_on_records() {
 
 #[test]
 fn equality_on_variants() {
-    assert_eq!(run("tag Circle Circle(1) == Circle(1)"), "true");
-    assert_eq!(run("tag Circle Circle(1) == Circle(2)"), "false");
+    assert_eq!(run("tag Ring Ring(1) == Ring(1)"), "true");
+    assert_eq!(run("tag Ring Ring(1) == Ring(2)"), "false");
     assert_eq!(
         run(
-            "tag Circle tag Square a = if 1 < 2 then Circle(1) else Square(1) done  a == Circle(1)"
+            "tag Ring | Square a = if 1 < 2 then Ring(1) else Square(1) done  a == Ring(1)"
         ),
         "true"
     );
     assert_eq!(
         run(
-            "tag Circle tag Square a = if 1 < 2 then Circle(1) else Square(1) done  a == Square(1)"
+            "tag Ring | Square a = if 1 < 2 then Ring(1) else Square(1) done  a == Square(1)"
         ),
         "false"
     );
@@ -78,7 +78,7 @@ fn equality_on_variants() {
     assert_eq!(run("tag Pair Pair(1, \"a\") == Pair(1, \"b\")"), "false");
     assert_eq!(run("tag Pair Pair(1, \"a\") != Pair(2, \"a\")"), "true");
     assert_eq!(run("tag Wrap Wrap({x: 1}) == Wrap({x: 1})"), "true");
-    let src = "tag None tag Some a = if 1 < 2 then None else Some(1) done  b = if 2 < 1 then None else Some(1) done \
+    let src = "tag Maybe = None | Some a = if 1 < 2 then None else Some(1) done  b = if 2 < 1 then None else Some(1) done \
                a == b";
     assert_eq!(run(src), "false");
 }
@@ -106,7 +106,7 @@ fn equality_on_long_lists_uses_constant_stack() {
 
 #[test]
 fn equality_on_trees() {
-    let tree = "tag Leaf tag Node leaf = Leaf \
+    let tree = "tag Tree = Leaf | Node leaf = Leaf \
                 node = program(l, v, r) do Node(l, v, r) done ";
     let src = format!(
         "{tree} a = node(node(leaf, 1, leaf), 2, node(leaf, 3, leaf)) \
@@ -226,14 +226,14 @@ fn print_records() {
 
 #[test]
 fn print_variants() {
-    assert_eq!(run("tag Circle print(Circle(5))"), "Circle(5)");
+    assert_eq!(run("tag Ring print(Ring(5))"), "Ring(5)");
     assert_eq!(run("print(Empty)"), "[]");
     assert_eq!(run("tag Pair print(Pair(1, \"a\"))"), "Pair(1, \"a\")");
     assert_eq!(run("tag Wrap print(Wrap({x: 1}))"), "Wrap({x: 1})");
     assert_eq!(run("tag Wrap print(Wrap(Wrap(1)))"), "Wrap(Wrap(1))");
-    let src = "tag Circle tag Square s = if 1 < 2 then Circle(1) else Square(2) done  print(s)";
-    assert_eq!(run(src), "Circle(1)");
-    let src = "tag Circle tag Square s = if 2 < 1 then Circle(1) else Square(2) done  print(s)";
+    let src = "tag Ring | Square s = if 1 < 2 then Ring(1) else Square(2) done  print(s)";
+    assert_eq!(run(src), "Ring(1)");
+    let src = "tag Ring | Square s = if 2 < 1 then Ring(1) else Square(2) done  print(s)";
     assert_eq!(run(src), "Square(2)");
     assert_eq!(run("tag Done print(Done)"), "Done");
 }
@@ -265,7 +265,7 @@ fn print_a_long_list_uses_constant_stack() {
 
 #[test]
 fn print_a_tree() {
-    let src = "tag Node tag Leaf t = Node(Node(Leaf, 1, Leaf), 2, Leaf)  print(t)";
+    let src = "tag Tree = Node | Leaf t = Node(Node(Leaf, 1, Leaf), 2, Leaf)  print(t)";
     assert_eq!(run(src), "Node(Node(Leaf, 1, Leaf), 2, Leaf)");
 }
 

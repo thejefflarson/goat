@@ -425,21 +425,21 @@ const LENGTH: &str = "length = program(xs) do match xs do Empty then 0 \
 
 #[test]
 fn nullary_tags_pick_an_arm() {
-    let pick = "tag A tag B f = program(s) do match s do A then 1 B then 2 else 3 done done ";
-    assert_eq!(run(&format!("tag A {pick} f(A)")), "1");
-    assert_eq!(run(&format!("tag B {pick} f(B)")), "2");
-    assert_eq!(run(&format!("tag C {pick} f(C)")), "3");
+    let pick = "tag Abc = A | B | C f = program(s) do match s do A then 1 B then 2 else 3 done done ";
+    assert_eq!(run(&format!("{pick} f(A)")), "1");
+    assert_eq!(run(&format!("{pick} f(B)")), "2");
+    assert_eq!(run(&format!("{pick} f(C)")), "3");
 }
 
 #[test]
 fn a_tag_carries_a_payload() {
     assert_eq!(
-        run("tag Circle match Circle(5) do Circle(r) then r * r else 0 done"),
+        run("tag Ring match Ring(5) do Ring(r) then r * r else 0 done"),
         "25"
     );
-    let src = "tag Circle tag Rect area = program(s) do match s do Circle(r) then 3 * r * r \
-               Rect(w, h) then w * h done done \
-               area(Circle(2)) + area(Rect(3, 4))";
+    let src = "tag Ring | Slab area = program(s) do match s do Ring(r) then 3 * r * r \
+               Slab(w, h) then w * h done done \
+               area(Ring(2)) + area(Slab(3, 4))";
     assert_eq!(run(src), "24");
 }
 
@@ -456,7 +456,7 @@ fn length_of_a_list() {
 
 #[test]
 fn size_of_a_tree() {
-    let src = "tag Leaf tag Node size = program(t) do match t do Leaf then 1 \
+    let src = "tag Tree = Leaf | Node size = program(t) do match t do Leaf then 1 \
                Node(l, r) then size(l) + size(r) done done \
                size(Node(Node(Leaf, Leaf), Node(Leaf, Node(Leaf, Leaf))))";
     assert_eq!(run(src), "5");
@@ -509,7 +509,7 @@ fn a_million_link_list_is_counted_and_then_dropped() {
 
 #[test]
 fn a_deep_left_leaning_tree_is_dropped_in_constant_stack() {
-    let src = "tag Node tag Leaf grow = program(n, t) do \
+    let src = "tag Tree = Node | Leaf grow = program(n, t) do \
                  if n < 1 then t else grow(n - 1, Node(t, Leaf)) done done \
                grow(500000, Leaf)";
     assert_eq!(run(src), "");
@@ -517,7 +517,7 @@ fn a_deep_left_leaning_tree_is_dropped_in_constant_stack() {
 
 #[test]
 fn a_chain_through_a_second_type_is_dropped_in_constant_stack() {
-    let src = "tag Node tag Cons tag Nil tag Leaf grow = program(n, t) do \
+    let src = "tag Tree = Node | Leaf tag Seq = Cons | Nil grow = program(n, t) do \
                  if n < 1 then t else grow(n - 1, Node(Cons(t, Nil))) done done \
                grow(200000, Leaf)";
     assert_eq!(run(src), "");
@@ -525,7 +525,7 @@ fn a_chain_through_a_second_type_is_dropped_in_constant_stack() {
 
 #[test]
 fn a_chain_through_records_and_closures_is_dropped_in_constant_stack() {
-    let src = "tag Wrap tag Stop grow = program(n, t) do if n < 1 then t \
+    let src = "tag Chain = Wrap | Stop grow = program(n, t) do if n < 1 then t \
                else grow(n - 1, Wrap({a: t, b: program(x) do x done})) done done \
                grow(100000, Stop)";
     assert_eq!(run(src), "");
@@ -553,7 +553,7 @@ fn variants_hold_closures_strings_records_and_other_variants() {
 
 #[test]
 fn two_types_may_refer_to_each_other() {
-    let src = "tag Leaf tag Node tag Nil tag Cons len_t = program(t) do match t do Leaf then 0 Node(f) then 1 + len_f(f) done done \
+    let src = "tag Tree = Leaf | Node tag Seq = Nil | Cons len_t = program(t) do match t do Leaf then 0 Node(f) then 1 + len_f(f) done done \
                len_f = program(f) do match f do Nil then 0 \
                  Cons(t, r) then len_t(t) + len_f(r) done done \
                len_t(Node(Cons(Node(Nil), Cons(Leaf, Nil))))";
@@ -572,11 +572,11 @@ fn a_list_changes_its_element_type_through_map() {
 
 #[test]
 fn tags_flow_through_branches_and_nested_matches() {
-    let pick = "tag A tag B pick = program(b) do if b then A(1) else B(2) done done \
+    let pick = "tag Ab = A | B pick = program(b) do if b then A(1) else B(2) done done \
                 f = program(x) do match x do A(n) then n B(n) then n * 10 done done \
                 f(pick(true)) + f(pick(false))";
     assert_eq!(run(pick), "21");
-    let nested = "tag A tag B tag C tag Q f = program(x) do match (match x do A then B else C done) do \
+    let nested = "tag Aq = A | Q tag Bc = B | C f = program(x) do match (match x do A then B else C done) do \
                   B then 1 C then 2 done done f(A) + f(Q)";
     assert_eq!(run(nested), "3");
     let shadow = "tag Pair f = program(x) do match x do Pair(a, b) then \
@@ -596,9 +596,9 @@ fn a_tail_call_in_an_arm_runs_in_constant_stack() {
 
 #[test]
 fn a_tag_bound_once_and_matched_at_two_widths_still_runs() {
-    let src = "tag Circle tag Square s = Circle(5) \
-               narrow = program(v) do match v do Circle(r) then r done done \
-               wide = program(v) do match v do Circle(r) then r Square(w) then w done done \
+    let src = "s = Tick(5) \
+               narrow = program(v) do match v do Tick(r) then r done done \
+               wide = program(v) do match v do Tick(r) then r PointerUp(p) then p.x done done \
                narrow(s) + wide(s)";
     assert_eq!(run(src), "10");
 }
@@ -750,9 +750,9 @@ fn rest_and_spread_round_trip() {
 
 #[test]
 fn spread_and_destructuring_beside_variants() {
-    let src = "tag Circle tag Square area = program({shape, scale}) do \
-                 match shape do Circle(r) then r * r * scale Square(w) then w * w * scale done done \
-               cfg = {shape: Circle(2), scale: 3} \
+    let src = "tag Ring | Square area = program({shape, scale}) do \
+                 match shape do Ring(r) then r * r * scale Square(w) then w * w * scale done done \
+               cfg = {shape: Ring(2), scale: 3} \
                big = {...cfg, shape: Square(5)} \
                area(cfg) + area(big)";
     assert_eq!(run(src), "87");

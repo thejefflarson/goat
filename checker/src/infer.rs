@@ -3059,7 +3059,7 @@ impl Inferer {
                         Some(Expr {
                             kind: ExprKind::Record { fields },
                             ..
-                        }) if group.params > 0
+                        }) if group.is_list()
                             && fields
                                 .iter()
                                 .map(|(label, _)| label.as_str())

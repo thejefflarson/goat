@@ -31,26 +31,6 @@ const MAX_DEPTH: usize = 256;
 /// decision tree reaches it, so nested patterns multiply.
 const MAX_LIST_LEAVES: usize = 4096;
 
-/// The group the list sugar `[]`/`[x, ...xs]` builds, declared even when no
-/// prelude is: `μl. [Empty, Link: {0: a, 1: l}]`, with the element type `a` a
-/// parameter each list literal instantiates afresh.
-fn list_group() -> Group {
-    Group {
-        tags: vec![
-            (LIST_TAGS[0].to_string(), Ty::Unit),
-            (
-                LIST_TAGS[1].to_string(),
-                Ty::Record(Row::of([
-                    ("0".to_string(), Ty::Var(Group::param(0))),
-                    ("1".to_string(), Ty::Var(Group::SELF)),
-                ])),
-            ),
-        ],
-        recursive: true,
-        params: 1,
-    }
-}
-
 /// The name generated bindings for the pieces of a list carry.
 const LIST_NAME: &str = "list";
 
@@ -141,23 +121,19 @@ pub fn lower_with_vocab(
     source: &str,
 ) -> Result<Lowered, Vec<GoatError>> {
     let mut ctx = Lower::default();
-    let list = Arc::new(list_group());
-    for (tag, _) in &list.tags {
-        ctx.tags.insert(tag.clone(), Some(list.clone()));
-        ctx.rank(tag);
-    }
     for tag in vocab.tag_names() {
         ctx.tags.insert(tag.to_string(), None);
         ctx.rank(tag);
+        ctx.host_tags.insert(tag.to_string());
     }
     let key = Arc::new(vocab.keys.clone());
     for (tag, _) in &key.tags {
         ctx.tags.insert(tag.clone(), Some(key.clone()));
         ctx.rank(tag);
+        ctx.host_tags.insert(tag.clone());
     }
     ctx.tag_groups
         .push(key.tags.iter().map(|(tag, _)| tag.clone()).collect());
-    ctx.tag_groups.push(LIST_TAGS.map(String::from).to_vec());
     let mut prelude_root = ctx.lower_source(prelude, FileId::Prelude)?;
 
     ctx.prelude_scope = defined_names(&prelude_root);
@@ -565,6 +541,8 @@ struct Lower {
     /// Every declared tag, built-in and written: one flat namespace for the
     /// whole program, each tag with the closed group it belongs to, if any.
     tags: HashMap<String, Option<Arc<Group>>>,
+    /// The tags the host provides, which a program may not declare again.
+    host_tags: HashSet<String>,
     /// Each tag's place in declaration order, which `<` follows (ADR 0036).
     tag_ranks: HashMap<String, u32>,
     tag_groups: Vec<Vec<String>>,
@@ -630,8 +608,11 @@ impl Lower {
         self.tag_ranks.entry(tag.to_string()).or_insert(next);
     }
 
-    /// `tag Foo` opens one tag. Anything with a group name, a payload or a `|`
-    /// closes its tags into a group, and each tag belongs to one group only.
+    /// Every declaration closes its tags into a group, `tag Foo` included: a
+    /// group of one. A tag written without a payload has its payload inferred,
+    /// a fresh type at each construction, so the group is generic; one written
+    /// with a payload keeps it. Each tag belongs to one group only, and a tag
+    /// the host provides can't be declared again.
     fn declare_tags(&mut self, decl: Node) {
         let mut group_name = None;
         let mut cases = Vec::new();
@@ -642,9 +623,8 @@ impl Lower {
                 _ => {}
             }
         }
-        let is_flat = group_name.is_none()
-            && matches!(cases.as_slice(), [case] if case.clone().children().count() == 1);
         let mut recursive = false;
+        let mut params = 0;
         let mut tags = Vec::new();
         let mut declared: Vec<String> = Vec::new();
         for case in cases {
@@ -655,7 +635,10 @@ impl Lower {
                 .map(|ty| self.payload_ty(&ty, group_name.as_deref(), &mut recursive))
                 .collect();
             let payload = match payload.len() {
-                0 => Ty::Unit,
+                0 => {
+                    params += 1;
+                    Ty::Var(Group::param(params - 1))
+                }
                 1 => payload.into_iter().next().expect("one payload"),
                 _ => Ty::Record(Row::of(
                     payload
@@ -665,12 +648,14 @@ impl Lower {
                 )),
             };
             let name = name.text().to_string();
-            let taken = declared.contains(&name)
-                || self
-                    .tags
-                    .get(&name)
-                    .is_some_and(|group| group.is_some() || !is_flat);
-            if taken {
+            if self.host_tags.contains(&name) {
+                self.errors.push(GoatError::new(
+                    span,
+                    format!(
+                        "`{name}` is a tag the host already provides; use it as it is, or pick another name for yours"
+                    ),
+                ));
+            } else if declared.contains(&name) || self.tags.contains_key(&name) {
                 self.errors.push(GoatError::new(
                     span,
                     format!("duplicate tag `{name}`; a tag belongs to exactly one declaration"),
@@ -679,19 +664,19 @@ impl Lower {
             declared.push(name.clone());
             tags.push((name, payload));
         }
-        let group = (!is_flat).then(|| {
-            Arc::new(Group {
+        let group = Arc::new(if declared == LIST_TAGS && params == 2 {
+            Group::list()
+        } else {
+            Group {
                 tags,
                 recursive,
-                params: 0,
-            })
+                params,
+            }
         });
-        if !is_flat {
-            self.tag_groups.push(declared.clone());
-        }
+        self.tag_groups.push(declared.clone());
         for name in declared {
             self.rank(&name);
-            self.tags.entry(name).or_insert_with(|| group.clone());
+            self.tags.entry(name).or_insert_with(|| Some(group.clone()));
         }
     }
 
@@ -1893,9 +1878,20 @@ impl Lower {
         )
     }
 
+    /// The list sugar builds the tags of the prelude's `tag List = Empty | Link`.
+    fn require_list(&mut self, span: Span) {
+        if LIST_TAGS.iter().any(|tag| !self.tags.contains_key(*tag)) {
+            self.errors.push(GoatError::new(
+                span,
+                "lists come from the prelude's `tag List = Empty | Link`, which this program doesn't have",
+            ));
+        }
+    }
+
     /// `[a, b]` is `Link(a, Link(b, Empty))`.
     fn lower_list(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
+        self.require_list(span);
         let items: Vec<Node> = pair.children().flat_map(|a| a.children()).collect();
         if self.depth + items.len() > MAX_DEPTH {
             self.errors
@@ -2121,6 +2117,7 @@ impl Lower {
 
     fn list_pattern(&mut self, pair: Node) -> ListPattern {
         let span = self.span_of(&pair);
+        self.require_list(span);
         let mut items: Vec<(String, Span)> = Vec::new();
         let mut rest = None;
         for item in pair.children() {
@@ -2882,6 +2879,10 @@ fn prec(op: Op) -> u8 {
 mod tests {
     use super::*;
 
+    fn lower(source: &str) -> Result<Lowered, Vec<GoatError>> {
+        lower_with_prelude("tag List = Empty | Link", source)
+    }
+
     fn string_value(source: &str) -> Result<String, String> {
         let lowered = lower(source).map_err(|e| e[0].message.clone())?;
         if let Some(e) = lowered.errors.first() {
@@ -2932,9 +2933,9 @@ mod tests {
 
     #[test]
     fn single_argument_tag_carries_the_argument_as_its_payload() {
-        let root = lowered("tag Circle Circle(5)").root;
+        let root = lowered("tag Ring Ring(5)").root;
         let (name, payload) = tag_parts(&root);
-        assert_eq!(name, "Circle");
+        assert_eq!(name, "Ring");
         assert!(matches!(payload.unwrap().kind, ExprKind::Int(5)));
     }
 
@@ -2959,7 +2960,7 @@ mod tests {
     #[test]
     fn match_lowers_arms_binders_and_else() {
         let root = lowered(
-            "tag Circle s = Empty match s do Link(a, b) then a Circle(r) then r Empty then 0 else 1 done",
+            "tag Ring s = Empty match s do Link(a, b) then a Ring(r) then r Empty then 0 else 1 done",
         )
         .root;
         let ExprKind::Let { rest, .. } = &root.kind else {
@@ -2991,7 +2992,7 @@ mod tests {
         assert_eq!(symbol, fields[0].1.symbol);
 
         assert!(matches!(&arms[1].pattern.payload, PatternPayload::Whole(p) if p.name == "r"));
-        assert_eq!(arms[1].pattern.tag, "Circle");
+        assert_eq!(arms[1].pattern.tag, "Ring");
         assert!(matches!(arms[2].pattern.payload, PatternPayload::None));
     }
 
@@ -3007,7 +3008,7 @@ mod tests {
     #[test]
     fn pattern_binders_are_scoped_to_their_arm() {
         let lowered =
-            lower("tag Circle match Empty do Circle(r) then r Empty then r done").unwrap();
+            lower("tag Ring match Empty do Ring(r) then r Empty then r done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("unknown name `r`"));
     }

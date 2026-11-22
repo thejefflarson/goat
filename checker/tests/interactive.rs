@@ -16,7 +16,7 @@ const DRAW: &str =
     "draw = program(model) do [Line({x1: 0, y1: 0, x2: model.x, y2: 0, color: \"red\"})] done\n";
 
 /// Declared so the host contract, not name resolution, is what rejects them.
-const OFF_CONTRACT_TAGS: &str = "tag Circle tag Triangle tag Frobnicate\n";
+const OFF_CONTRACT_TAGS: &str = "tag Triangle tag Frobnicate\n";
 
 fn interactive(init: &str, update: &str, draw: &str) -> String {
     format!("{OFF_CONTRACT_TAGS}init = {init}\n{update}{draw}")
@@ -54,7 +54,7 @@ fn a_program_with_the_three_bindings_is_interactive() {
 fn a_program_without_them_is_not() {
     assert!(checks("1 + 2").interactive.is_none());
     assert!(
-        checks("tag Circle init = {x: 0}\ndraw = program(m) do [Circle(1)] done\n1")
+        checks("tag Ring init = {x: 0}\ndraw = program(m) do [Ring(1)] done\n1")
             .interactive
             .is_none()
     );
@@ -388,6 +388,6 @@ fn a_key_match_missing_a_key_is_a_spanned_error() {
 fn a_key_tag_cannot_be_redeclared() {
     let source = format!("tag Up | Sideways\n{}", interactive("{x: 0}", UPDATE, DRAW));
     let (message, text) = the_error(&source);
-    assert!(message.starts_with("duplicate tag `Up`"), "{message}");
+    assert!(message.starts_with("`Up` is a tag the host already provides"), "{message}");
     assert_eq!(text, "Up");
 }
