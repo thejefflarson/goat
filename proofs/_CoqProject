@@ -32,6 +32,7 @@ GoatPhase4.v
 GoatRecArithExamples.v
 GoatRecTypes.v
 GoatElab.v
+GoatInferElab.v
 GoatMethods.v
 GoatGrammar.v
 GoatPeg.v
