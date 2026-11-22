@@ -75,6 +75,12 @@ impl Kinds {
         self.literal || self.ordered
     }
 
+    /// Whether the variable may be an `Int` or a `Float`: a number, a literal,
+    /// or a `Numeric`, which a record of numbers also satisfies.
+    pub fn can_be_number(self) -> bool {
+        self.numeric || self.ordered || self.literal
+    }
+
     pub fn appendable(self) -> bool {
         self.appendable
     }

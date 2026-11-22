@@ -50,6 +50,7 @@ fn every_example_behaves_the_same_with_a_prelude_around_it() {
             "letters.goat",
             "ordering.goat",
             "dict.goat",
+            "widening.goat",
         ]
         .iter()
         .any(|name| path.ends_with(name));

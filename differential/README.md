@@ -56,6 +56,14 @@ program are skipped, each because the calculus and the checker differ on it:
 - the cases the README already listed: the prelude, tags, `::`, dot calls,
   `self`.
 
+A sixth kind is counted apart from these. When the checker types a program in
+the fragment with a recursive type (`Ty::Rec`, as for `(p.moved)(p)`), the
+corpus writes it as an `R` line and the driver prints it as "skipped for a
+recursive type", with no comparison. The algorithm never builds a `mu`
+(`infer_mu_free`, `proofs/GoatInferMuFree.v`), so it cannot agree on such a
+program. The count tells the reader whether the fragment still reaches
+recursive types.
+
 ## Where `float(e)` goes
 
 The calculus has no implicit Int-to-Float widening, so the corpus writer
@@ -66,7 +74,10 @@ proven algorithm to accept the result. It writes `float(e)` around
   Int operand of `+ - *` in the same position;
 - each operand of `/`, Int or Float (a quotient takes Floats, and `float(e)` is
   the identity on a Float);
-- an Int argument to a call whose callee's parameter is a Float;
+- an Int argument to a call whose callee's parameter is a Float, including a
+  parameter the checker settled as a Float by joining the call's arguments
+  (`f(7 // 2, 2.5)` for `f = program(a, b) do a + b done`);
+- an Int branch of an `if` whose result is a Float (ADR 0040);
 - a numeral inside an operand of a comparison whose type is Float.
 
 An Int literal whose node type is Float anywhere else is written as the bare

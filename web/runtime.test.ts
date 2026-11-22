@@ -62,9 +62,9 @@ test("composite values stream through the write_* imports as one line", async ()
 });
 
 test("an Int past 2^53 prints every digit, alone and inside a value", async () => {
-  const wasm = await compileOk("print(9007199254740993); print([9007199254740993, 0.5])");
+  const wasm = await compileOk("print(9007199254740993); print({a: 9007199254740993, b: 0.5})");
   const { output } = await run(wasm);
-  assert.deepEqual(output, ["9007199254740993", "[9007199254740993, 0.5]"]);
+  assert.deepEqual(output, ["9007199254740993", "{a: 9007199254740993, b: 0.5}"]);
 });
 
 test("formatNumber ports goat::format_number", () => {
