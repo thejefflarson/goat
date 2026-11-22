@@ -86,9 +86,9 @@ Definition sat_b (D : denv) (k : sort) (T : typ) : bool :=
   | _ => match k with k_Any => true | _ => false end
   end.
 
-Definition is_literal (D : denv) (T : typ) : bool :=
+Definition is_numeric_var (D : denv) (T : typ) : bool :=
   match T with
-  | typ_Var a => match D a with k_Literal => true | _ => false end
+  | typ_Var a => match D a with k_Literal | k_Numeric => true | _ => false end
   | _ => false
   end.
 
@@ -292,8 +292,8 @@ Definition gen_ren (D : denv) (G : ctx) (T : typ) : scheme :=
 (* The type a comparison, [/], [//] or [%] unifies both operands with, taken
    from whichever operand type is already known (the right first).  [/] takes
    Floats and [//] and [%] take Ints whatever the operands are.  A comparison
-   is at a concrete type, and an operand that is a numeral's variable settles
-   at [Int]: the comparison has no signature at a variable, so this picks the
+   is at a concrete type, and an operand that is a numeral's variable, or
+   the variable of a [+ - * // %], settles at [Int]: the comparison has no signature at a variable, so this picks the
    derivation at [Int].  [+ - *] are generic and take no such type. *)
 Definition num_ty (A : typ) : bool :=
   match A with typ_Int | typ_Float => true | _ => false end.
@@ -307,7 +307,7 @@ Definition bin_arg (D : denv) (o : bop) (A B : typ) : option typ :=
   | k_quot => Some typ_Float
   | k_whole => None
   | k_cmp => if cmp_ty B then Some B else if cmp_ty A then Some A
-             else if orb (is_literal D A) (is_literal D B) then Some typ_Int else None
+             else if orb (is_numeric_var D A) (is_numeric_var D B) then Some typ_Int else None
   end.
 
 (* The result type of a binary operator at an operand type, mirroring

@@ -9,7 +9,7 @@
 //!
 //! The programs are every goat source the repository holds (`examples/`, the
 //! code blocks of `docs/llm.md`, every string literal in the checker's Rust
-//! sources and tests) plus a fixed-seed generator. A program is kept when it is
+//! sources and tests) plus generators run at fixed seeds. A program is kept when it is
 //! in the fragment of `proofs/goat_ln.ott`: numerals, Float literals, strings,
 //! unit, booleans, functions, calls, `if` with an `else`, the twelve binary
 //! operators on Int, Float, String and Bool, `let` of any value, record
@@ -32,7 +32,8 @@
 //! on operands the checker leaves as type variables are generic in the calculus
 //! and are compared. A program is outside the fragment when an operator's
 //! operands are not all Int, Float, String or Bool or open numeric variables, when
-//! a comparison or `/` has an operand that only a later use settles, when a
+//! a comparison or `/` has an operand that only a later use settles and the
+//! algorithm's choice of `Int` could be overturned (`differential/README.md`), when a
 //! `let` of a record or a name holding a numeral would be generalized by the
 //! calculus and not by the checker, when a record reaches a generic `+ - *`, or when a
 //! record holds a group's function by name (`differential/README.md`).
@@ -44,7 +45,7 @@ use goat_checker::check_with_prelude;
 use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, Symbol};
 use goat_checker::lower::lower;
 use goat_checker::ty::{Row, Ty};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
 
@@ -52,7 +53,13 @@ const GENERATED: usize = 4000;
 const GENERATED_TYPED: usize = 6000;
 const GENERATED_GROUPS: usize = 8000;
 const TYPED_DEPTH: u32 = 4;
-const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+/// Each seed drives all three generators, so a change to one stream cannot
+/// hide a mismatch another seed's programs would show.
+const SEEDS: [u64; 3] = [
+    0x9E37_79B9_7F4A_7C15,
+    0xD1B5_4A32_D192_ED03,
+    0x2545_F491_4F6C_DD1D,
+];
 const MAX_DEPTH: u32 = 6;
 
 /// A term of the locally nameless core: a variable is the number of binders
@@ -177,82 +184,161 @@ impl Core {
         matches!(self, Core::Num(_)) || self.generalizes_numeral()
     }
 
-    /// Whether the algorithm knows this term's type when it reaches it, without
-    /// a later use fixing it. `env` holds that fact for each binder in scope,
-    /// innermost last.
-    fn known(&self, env: &mut Vec<bool>) -> bool {
+    /// What the algorithm knows of this term's type when it reaches it. `env`
+    /// holds that for each binder in scope, innermost last.
+    fn class(&self, env: &mut Vec<Class>) -> Class {
         match self {
             Core::Var(i) => env[env.len() - 1 - i],
-            Core::Num(_) | Core::Float | Core::Str(_) | Core::Unit | Core::Bool(_) => true,
-            Core::ToFloat(_) => true,
-            Core::Bin(op, a, b) => {
-                !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) || a.known(env) || b.known(env)
+            Core::Num(_) => Class::Fresh,
+            Core::Float | Core::Str(_) | Core::Unit | Core::Bool(_) | Core::ToFloat(_) => {
+                Class::Concrete
             }
-            Core::If(_, a, b) => a.known(env) || b.known(env),
+            Core::Bin(op, a, b) => match op {
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod => {
+                    Class::join(a.class(env), b.class(env))
+                }
+                _ => Class::Concrete,
+            },
+            Core::If(_, a, b) => Class::join(a.class(env), b.class(env)),
             Core::Let(v, b) => {
-                let known = v.known(env);
-                env.push(known);
-                let result = b.known(env);
+                let bound = match v.class(env) {
+                    Class::Fresh => Class::Shared,
+                    class => class,
+                };
+                env.push(bound);
+                let result = b.class(env);
                 env.pop();
                 result
             }
             Core::Letrec(_, body) => {
-                env.push(false);
-                let result = body.known(env);
+                env.push(Class::Open);
+                let result = body.class(env);
                 env.pop();
                 result
             }
-            Core::Abs(_) | Core::App(..) | Core::Rec(_) | Core::Proj(..) => false,
+            Core::Abs(_) | Core::App(..) | Core::Rec(_) | Core::Proj(..) => Class::Open,
         }
     }
 
-    /// Whether every binary operator in this term has an operand the algorithm
-    /// knows, so it has a signature when the algorithm reaches it. An operator
-    /// on two operands that only a later use settles (a generic operator) has
-    /// none, and is deferred.
-    fn operators_resolve(&self, env: &mut Vec<bool>) -> bool {
+    /// Why the algorithm cannot reach a signature for some binary operator of
+    /// this term, if it cannot. An operator whose operands a later use settles
+    /// is deferred by the checker and settled at `Int` by the algorithm.
+    fn unresolved(&self, env: &mut Vec<Class>) -> Option<Skip> {
         match self {
             Core::Var(_)
             | Core::Num(_)
             | Core::Float
             | Core::Str(_)
             | Core::Unit
-            | Core::Bool(_) => true,
-            Core::ToFloat(e) | Core::Proj(e, _) => e.operators_resolve(env),
+            | Core::Bool(_) => None,
+            Core::ToFloat(e) | Core::Proj(e, _) => e.unresolved(env),
             Core::Abs(body) => {
-                env.push(false);
-                let ok = body.operators_resolve(env);
+                env.push(Class::Open);
+                let result = body.unresolved(env);
                 env.pop();
-                ok
+                result
             }
             Core::Let(v, b) => {
-                let value_ok = v.operators_resolve(env);
-                let known = v.known(env);
-                env.push(known);
-                let ok = value_ok && b.operators_resolve(env);
+                let bound = match v.class(env) {
+                    Class::Fresh => Class::Shared,
+                    class => class,
+                };
+                let value = v.unresolved(env);
+                env.push(bound);
+                let result = value.or_else(|| b.unresolved(env));
                 env.pop();
-                ok
+                result
             }
-            Core::App(f, a) => f.operators_resolve(env) && a.operators_resolve(env),
-            Core::If(c, a, b) => {
-                c.operators_resolve(env) && a.operators_resolve(env) && b.operators_resolve(env)
-            }
-            Core::Rec(fields) => fields.iter().all(|(_, e)| e.operators_resolve(env)),
+            Core::App(f, a) => f.unresolved(env).or_else(|| a.unresolved(env)),
+            Core::If(c, a, b) => c
+                .unresolved(env)
+                .or_else(|| a.unresolved(env))
+                .or_else(|| b.unresolved(env)),
+            Core::Rec(fields) => fields.iter().find_map(|(_, e)| e.unresolved(env)),
             Core::Letrec(fields, body) => {
-                env.push(false);
-                let ok = fields.iter().all(|(_, e)| e.operators_resolve(env))
-                    && body.operators_resolve(env);
+                env.push(Class::Open);
+                let result = fields
+                    .iter()
+                    .find_map(|(_, e)| e.unresolved(env))
+                    .or_else(|| body.unresolved(env));
                 env.pop();
-                ok
+                result
             }
             Core::Bin(op, a, b) => {
-                let known = match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod => true,
-                    BinOp::Div => a.known(env) && b.known(env),
-                    _ => a.known(env) || b.known(env),
+                let (ca, cb) = (a.class(env), b.class(env));
+                let own = match op {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod => None,
+                    BinOp::Div => {
+                        (ca == Class::Open || cb == Class::Open).then_some(Skip::OpenDivision)
+                    }
+                    _ => (!Class::compares(ca, cb)).then_some(Skip::OpenComparison),
                 };
-                known && a.operators_resolve(env) && b.operators_resolve(env)
+                own.or_else(|| a.unresolved(env))
+                    .or_else(|| b.unresolved(env))
             }
+        }
+    }
+}
+
+/// What the algorithm knows of a term's type: a concrete type; a numeral's
+/// own variable, which no other term holds; a numeral's variable some binder
+/// holds, so a later use may still settle it; or a variable of no sort.
+#[derive(Clone, Copy, PartialEq)]
+enum Class {
+    Concrete,
+    Fresh,
+    Shared,
+    Open,
+}
+
+impl Class {
+    /// The class of a term whose type is unified from two operands or branches.
+    fn join(a: Class, b: Class) -> Class {
+        match (a, b) {
+            (Class::Concrete, _) | (_, Class::Concrete) => Class::Concrete,
+            (Class::Fresh, Class::Fresh) => Class::Fresh,
+            (Class::Open, Class::Open) => Class::Open,
+            _ => Class::Shared,
+        }
+    }
+
+    /// Whether a comparison of these operands has a signature that no later
+    /// use can change: one operand is concrete, or one is a numeral's own
+    /// variable, which settles at `Int`, beside an operand that no later use
+    /// can have settled yet.
+    fn compares(a: Class, b: Class) -> bool {
+        matches!(
+            (a, b),
+            (Class::Concrete, _)
+                | (_, Class::Concrete)
+                | (Class::Fresh, Class::Fresh | Class::Open)
+                | (Class::Open, Class::Fresh)
+        )
+    }
+}
+
+/// Why a program is left out of the differential test.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Skip {
+    Rejected,
+    OutsideFragment,
+    RecordAtGenericOperator,
+    GroupMemberInRecord,
+    RecursiveType,
+    OpenComparison,
+    OpenDivision,
+}
+
+impl Skip {
+    fn describe(self) -> &'static str {
+        match self {
+            Skip::Rejected => "does not lower",
+            Skip::OutsideFragment => "outside the calculus",
+            Skip::RecordAtGenericOperator => "a record reaches a generic + - *",
+            Skip::GroupMemberInRecord => "a record holds a group's function by name",
+            Skip::RecursiveType => "the checker infers a recursive type",
+            Skip::OpenComparison => "a comparison on an operand a later use settles",
+            Skip::OpenDivision => "/ on an operand a later use settles",
         }
     }
 }
@@ -542,7 +628,11 @@ impl Reader<'_> {
                         .iter()
                         .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
                     self.generic_ring |= generic;
-                    if !generic {
+                    let open_comparison = comparison
+                        && [lhs, rhs]
+                            .iter()
+                            .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
+                    if !generic && !open_comparison {
                         let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
                         match (op, x, y) {
                             (BinOp::Div, ..) => (a, b) = (to_float(a), to_float(b)),
@@ -716,11 +806,12 @@ impl Canon<'_> {
     }
 }
 
-/// The line for `source`, or `None` when it is not a program of the fragment.
-fn line(source: &str) -> Option<String> {
-    let lowered = lower(source).ok()?;
+/// The line for `source`, or why it is not a program of the fragment. A
+/// `forced` program is kept although an operator in it waits on a later use.
+fn line(source: &str, forced: bool) -> Result<String, Skip> {
+    let lowered = lower(source).map_err(|_| Skip::Rejected)?;
     if !lowered.errors.is_empty() {
-        return None;
+        return Err(Skip::Rejected);
     }
     let checked = check_with_prelude("", source).ok();
     let mut reader = Reader {
@@ -739,12 +830,26 @@ fn line(source: &str) -> Option<String> {
         record_arg: false,
         member_in_record: false,
     };
-    let core = reader.read(&lowered.root)?;
-    if (reader.generic_ring && reader.record_arg) || reader.member_in_record {
-        return None;
+    let core = reader.read(&lowered.root).ok_or(Skip::OutsideFragment)?;
+    if reader.generic_ring && reader.record_arg {
+        return Err(Skip::RecordAtGenericOperator);
     }
-    if !core.operators_resolve(&mut Vec::new()) {
-        return None;
+    if reader.member_in_record {
+        return Err(Skip::GroupMemberInRecord);
+    }
+    if checked.as_ref().is_some_and(|checked| {
+        checked
+            .typed
+            .node_types
+            .values()
+            .any(|ty| format!("{ty:?}").contains("Rec("))
+    }) {
+        return Err(Skip::RecursiveType);
+    }
+    if let Some(skip) = core.unresolved(&mut Vec::new())
+        && !forced
+    {
+        return Err(skip);
     }
     let recursive = checked.as_ref().is_some_and(|checked| {
         let mut binders = Vec::new();
@@ -759,7 +864,9 @@ fn line(source: &str) -> Option<String> {
                 vars: Vec::new(),
             };
             let mut text = String::from("OK ");
-            canon.ty(&checked.typed.root_ty, &mut text)?;
+            canon
+                .ty(&checked.typed.root_ty, &mut text)
+                .ok_or(Skip::OutsideFragment)?;
             text
         }
         None => "ERR".to_string(),
@@ -777,7 +884,7 @@ fn line(source: &str) -> Option<String> {
         .replace('\\', "\\\\")
         .replace('\n', "\\n")
         .replace('\t', "\\t");
-    Some(format!("{mode}\t{sexp}\t{verdict}\t{text}"))
+    Ok(format!("{mode}\t{sexp}\t{verdict}\t{text}"))
 }
 
 /// Every string literal of a Rust source: ordinary and raw, comments skipped.
@@ -1359,6 +1466,7 @@ const HANDWRITTEN: &[&str] = &[
     "7 // 2.0",
     "\"a\" + 1",
     "if 1 then 2 else 3 done",
+    "v = 71 // 88\nif v <= v then v - 3.1 else 4.0 done",
     "",
     "() == ()",
     "f = program(x) do g(x) done\ng = program(y) do y done\na = f(1)\nb = f(true)\nb",
@@ -1379,6 +1487,10 @@ const HANDWRITTEN: &[&str] = &[
     "total = 1 // 1 + 2 // 1\nscaled = total * 2\nscaled",
     "ping = program(x, k) do pong(x, k) done\npong = program(y, k) do ping(y, k) done\n{a: ping(true, true), b: pong(\"s\", true)}",
 ];
+
+/// Programs kept whether or not an operator in them waits on a later use: the
+/// algorithm and the checker agree on each, and the test pins that they do.
+const FORCED: &[&str] = &["f = program(x) do x == x % x done\nf(90)"];
 
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -1412,51 +1524,73 @@ fn main() {
 
     sources.extend(HANDWRITTEN.iter().map(|s| s.to_string()));
 
-    let mut gen_ = Gen {
-        rng: Rng(SEED),
-        scope: Vec::new(),
-        functions: 0,
-    };
-    for _ in 0..GENERATED {
-        gen_.functions = 0;
-        sources.push(gen_.term(0).0);
-    }
+    for seed in SEEDS {
+        let mut gen_ = Gen {
+            rng: Rng(seed),
+            scope: Vec::new(),
+            functions: 0,
+        };
+        for _ in 0..GENERATED {
+            gen_.functions = 0;
+            sources.push(gen_.term(0).0);
+        }
 
-    let mut typed_gen = TypedGen {
-        rng: Rng(SEED ^ 0xA5A5),
-        scope: Vec::new(),
-        names: 0,
-        fault: false,
-    };
-    for _ in 0..GENERATED_TYPED {
-        typed_gen.names = 0;
-        typed_gen.fault = typed_gen.rng.below(4) == 0;
-        let ty = PRIMS[typed_gen.rng.below(PRIMS.len())];
-        sources.push(typed_gen.term(ty, 0));
-    }
+        let mut typed_gen = TypedGen {
+            rng: Rng(seed ^ 0xA5A5),
+            scope: Vec::new(),
+            names: 0,
+            fault: false,
+        };
+        for _ in 0..GENERATED_TYPED {
+            typed_gen.names = 0;
+            typed_gen.fault = typed_gen.rng.below(4) == 0;
+            let ty = PRIMS[typed_gen.rng.below(PRIMS.len())];
+            sources.push(typed_gen.term(ty, 0));
+        }
 
-    let mut group_gen = GroupGen {
-        rng: Rng(SEED ^ 0x5EED),
-        names: 0,
-        careful: false,
-    };
-    for _ in 0..GENERATED_GROUPS {
-        group_gen.names = 0;
-        group_gen.careful = group_gen.rng.below(2) == 0;
-        sources.push(group_gen.block(0, &[], &[]));
+        let mut group_gen = GroupGen {
+            rng: Rng(seed ^ 0x5EED),
+            names: 0,
+            careful: false,
+        };
+        for _ in 0..GENERATED_GROUPS {
+            group_gen.names = 0;
+            group_gen.careful = group_gen.rng.below(2) == 0;
+            sources.push(group_gen.block(0, &[], &[]));
+        }
     }
 
     let mut seen = HashSet::new();
-    for source in sources {
-        if let Some(line) = line(&source)
-            && seen.insert(
-                line.rsplit_once('\t')
-                    .expect("a source column")
-                    .0
-                    .to_string(),
-            )
-        {
-            println!("{line}");
+    let mut skipped: BTreeMap<Skip, usize> = BTreeMap::new();
+    let mut kept = 0;
+    let forced: Vec<String> = FORCED.iter().map(|s| s.to_string()).collect();
+    for (source, forced) in sources
+        .iter()
+        .map(|s| (s, false))
+        .chain(forced.iter().map(|s| (s, true)))
+    {
+        match line(source, forced) {
+            Ok(line) => {
+                if seen.insert(
+                    line.rsplit_once('\t')
+                        .expect("a source column")
+                        .0
+                        .to_string(),
+                ) {
+                    kept += 1;
+                    println!("{line}");
+                }
+            }
+            Err(skip) => {
+                if forced {
+                    eprintln!("FORCED SKIP {}", skip.describe());
+                }
+                *skipped.entry(skip).or_default() += 1
+            }
         }
+    }
+    eprintln!("corpus: {kept} programs written");
+    for (skip, n) in skipped {
+        eprintln!("corpus: skipped {n:>6}  {}", skip.describe());
     }
 }
