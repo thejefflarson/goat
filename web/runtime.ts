@@ -12,6 +12,19 @@
 const STR_LEN = 8;
 const STR_BYTES = 12;
 const MAX_COMMANDS = 1_000_000;
+// What every backend says when calls nest past what the runtime can hold;
+// mirrors STACK_OVERFLOW in mir/src/mir.rs.
+export const STACK_OVERFLOW = "the program called itself too deeply";
+const OUT_OF_STACK = /call stack|too much recursion/i;
+
+// The words for a program that stopped with `e`. A browser reports running out
+// of stack as a bare engine error ("Maximum call stack size exceeded"), so
+// that one is told in goat's words, the same as the other backends.
+export function stopMessage(e: unknown): string {
+  if (!(e instanceof Error)) return String(e);
+  return OUT_OF_STACK.test(e.message) ? STACK_OVERFLOW : e.message;
+}
+
 const COLOR_PATTERN = /^[A-Za-z0-9#]{1,32}$/;
 
 // The one color allowlist (ADR 0014); mirrors check_color in mir/src/host.rs.

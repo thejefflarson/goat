@@ -10,6 +10,8 @@
 
 #[path = "constraints.rs"]
 mod constraints;
+#[path = "deep_comparison.rs"]
+mod deep_comparison;
 #[path = "differential.rs"]
 mod differential;
 #[path = "embedded_limits.rs"]
