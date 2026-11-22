@@ -9,10 +9,12 @@
 //!   block can hold its free-list link just past the header.
 //! - `alloc` stores `rc = 1` and the block's size class in the header's `_pad`
 //!   word; `free` reads the class back, so it needs no size from the caller.
-//! - A freed block has `rc == 0`, its link in the first payload word, and every
-//!   other payload byte set to `POISON`. A second release of the same block
-//!   meets `rc == 0` and traps, and a read through a dangling pointer sees
-//!   `0xFEFEFEFE` (or the link) rather than stale data.
+//! - A freed block has `rc == 0` and its link in the first payload word. A second
+//!   release of the same block meets `rc == 0` and traps. When `poison_freed`
+//!   is set (debug, test and fuzz builds) every other payload byte is also set
+//!   to `POISON`, so a read through a dangling pointer sees `0xFEFEFEFE` (or the
+//!   link) rather than stale data; release modules skip the fill and need no
+//!   `memory.fill`.
 //! - `alloc` traps if a block it pops off a free list has `rc != 0`, which
 //!   catches a write that reached a block after it was freed.
 //! - The live count moves only here. Immortal objects (`rc == u32::MAX`)
@@ -44,6 +46,8 @@ type Code = Vec<Instruction<'static>>;
 /// Free-list heads, one word per size class, at `table` in linear memory.
 pub struct FreeList {
     pub table: u32,
+    /// Fill a freed block with `POISON`; off in release modules.
+    pub poison_freed: bool,
     /// A fixed arena that ends at `end` and never grows, for the embedded
     /// profile; `None` grows memory a page at a time.
     pub budget: Option<Budget>,
@@ -225,7 +229,7 @@ impl FreeList {
     }
 
     /// `free(ptr: i32)`: takes a block whose count just reached zero, poisons
-    /// it, and pushes it on its class's free list.
+    /// it if `poison_freed`, and pushes it on its class's free list.
     pub fn free(&self) -> Function {
         use Instruction::*;
         let (ptr, class, bytes) = (0, 1, 2);
@@ -235,19 +239,21 @@ impl FreeList {
             I32Load(memarg(layout::CLASS, 2)),
             LocalSet(class),
         ]);
-        code.extend(class_bytes(class));
-        code.extend([
-            LocalSet(bytes),
-            LocalGet(ptr),
-            I32Const(layout::HEADER as i32),
-            I32Add,
-            I32Const(POISON),
-            LocalGet(bytes),
-            I32Const(layout::HEADER as i32),
-            I32Sub,
-            MemoryFill(0),
-            LocalGet(ptr),
-        ]);
+        if self.poison_freed {
+            code.extend(class_bytes(class));
+            code.extend([
+                LocalSet(bytes),
+                LocalGet(ptr),
+                I32Const(layout::HEADER as i32),
+                I32Add,
+                I32Const(POISON),
+                LocalGet(bytes),
+                I32Const(layout::HEADER as i32),
+                I32Sub,
+                MemoryFill(0),
+            ]);
+        }
+        code.push(LocalGet(ptr));
         code.extend(head_slot(class));
         code.extend([
             I32Load(memarg(self.table, 2)),

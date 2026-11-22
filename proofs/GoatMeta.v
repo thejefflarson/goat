@@ -45,6 +45,8 @@ Fixpoint lc_at (n : nat) (e : exp) {struct e} : Prop :=
   | e_tofloat a => lc_at n a
   | e_con _ _ a => lc_at n a
   | e_match _ a ars => lc_at n a /\ lca_at n ars
+  | e_spread a _ b => lc_at n a /\ lc_at n b
+  | e_restrict a _ => lc_at n a
   | e_fold a => lc_at n a
   | e_unfold a => lc_at n a
   end
@@ -96,6 +98,9 @@ Proof.
   - (* con *) intros w0 tg e0 IH m n Hle H; simpl in *; apply (IH m n Hle H).
   - (* match *) intros w0 e0 IHe ars IHa m n Hle [H1 H2]; simpl; split;
       [ apply (IHe m n Hle H1) | apply (IHa m n Hle H2) ].
+  - (* spread *) intros a IHa l b IHb m n Hle [H1 H2]; simpl; split;
+      [ apply (IHa m n Hle H1) | apply (IHb m n Hle H2) ].
+  - (* restrict *) intros e0 IH l m n Hle H; simpl in *; apply (IH m n Hle H).
   - (* fold *) intros e0 IH m n Hle H; simpl in *; apply (IH m n Hle H).
   - (* unfold *) intros e0 IH m n Hle H; simpl in *; apply (IH m n Hle H).
   - (* fs_nil *) intros; simpl; auto.
@@ -144,6 +149,9 @@ Proof.
   - (* con *) intros w0 tg e0 IH n x H; simpl in *; apply (IH n x H).
   - (* match *) intros w0 e0 IHe ars IHa n x H; simpl in *; destruct H as [H1 H2];
       split; [ apply (IHe n x H1) | apply (IHa n x H2) ].
+  - (* spread *) intros a IHa l b IHb n x H; simpl in *; destruct H as [H1 H2];
+      split; [ apply (IHa n x H1) | apply (IHb n x H2) ].
+  - (* restrict *) intros e0 IH l n x H; simpl in *; apply (IH n x H).
   - (* fold *) intros e0 IH n x H; simpl in *; apply (IH n x H).
   - (* unfold *) intros e0 IH n x H; simpl in *; apply (IH n x H).
   - (* fs_nil *) intros; simpl; auto.
@@ -198,6 +206,9 @@ Proof.
   - (* con *) intros w0 tg e0 IH n H k w Hle; simpl in *; f_equal; apply (IH n H k w Hle).
   - (* match *) intros w0 e0 IHe ars IHa n [H1 H2] k w Hle; simpl; f_equal;
       [ apply (IHe n H1 k w Hle) | apply (IHa n H2 k w Hle) ].
+  - (* spread *) intros a IHa l b IHb n [H1 H2] k w Hle; simpl; f_equal;
+      [ apply (IHa n H1 k w Hle) | apply (IHb n H2 k w Hle) ].
+  - (* restrict *) intros e0 IH l n H k w Hle; simpl in *; f_equal; apply (IH n H k w Hle).
   - (* fold *) intros e0 IH n H k w Hle; simpl; f_equal; apply (IH n H k w Hle).
   - (* unfold *) intros e0 IH n H k w Hle; simpl; f_equal; apply (IH n H k w Hle).
   - (* fs_nil *) intros; simpl; reflexivity.
@@ -269,6 +280,9 @@ Proof.
   - (* con *) intros w0 tg e0 IH x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
   - (* match *) intros w0 e0 IHe ars IHa x v k Hfv; simpl in *; f_equal;
       [ apply IHe | apply IHa ]; fsetdec.
+  - (* spread *) intros a IHa l b IHb x v k Hfv; simpl in *; f_equal;
+      [ apply IHa | apply IHb ]; fsetdec.
+  - (* restrict *) intros e0 IH l x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
   - (* fold *) intros e0 IH x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
   - (* unfold *) intros e0 IH x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
   - (* fs_nil *) intros; reflexivity.
@@ -341,6 +355,9 @@ Proof.
   - (* con *) intros w0 tg e0 IH u x w k Hlc; simpl; f_equal; apply IH; auto.
   - (* match *) intros w0 e0 IHe ars IHa u x w k Hlc; simpl; f_equal;
       [ apply IHe | apply IHa ]; auto.
+  - (* spread *) intros a IHa l b IHb u x w k Hlc; simpl; f_equal;
+      [ apply IHa | apply IHb ]; auto.
+  - (* restrict *) intros e0 IH l u x w k Hlc; simpl; f_equal; apply IH; auto.
   - (* fold *) intros e0 IH u x w k Hlc; simpl; f_equal; apply IH; auto.
   - (* unfold *) intros e0 IH u x w k Hlc; simpl; f_equal; apply IH; auto.
   - (* fs_nil *) intros; reflexivity.
@@ -408,6 +425,8 @@ Proof.
   - (* tofloat *) intros e0 IH u x Hu He. simpl in He |- *. apply IH; assumption.
   - (* con *) intros w0 tg e0 IH u x Hu He. simpl in He |- *. apply IH; assumption.
   - (* match *) intros w0 e0 IHe ars IHa u x Hu He; discriminate He.
+  - (* spread *) intros a IHa l b IHb u x Hu He; discriminate He.
+  - (* restrict *) intros e0 IH l u x Hu He; discriminate He.
   - (* fold *) intros e0 IH u x Hu He. simpl in He |- *. apply IH; assumption.
   - (* unfold *) intros e0 IH u x Hu He. discriminate He.
   - (* fs_nil *) intros; reflexivity.
@@ -455,6 +474,8 @@ Proof.
   - (* tofloat *) intros e0 IH u k Hu He. simpl in He |- *. apply IH; assumption.
   - (* con *) intros w0 tg e0 IH u k Hu He. simpl in He |- *. apply IH; assumption.
   - (* match *) intros w0 e0 IHe ars IHa u k Hu He; discriminate He.
+  - (* spread *) intros a IHa l b IHb u k Hu He; discriminate He.
+  - (* restrict *) intros e0 IH l u k Hu He; discriminate He.
   - (* fold *) intros e0 IH u k Hu He. simpl in He |- *. apply IH; assumption.
   - (* unfold *) intros e0 IH u k Hu He. discriminate He.
   - (* fs_nil *) intros; reflexivity.
@@ -597,6 +618,8 @@ Proof.
   - (* T_If *) intros D G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3; simpl; auto.
   - (* T_ToFloat *) intros D G e A Ht IH Hs; simpl; assumption.
   - (* T_Bin *) intros D G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs; simpl; auto.
+  - (* T_Spread *) intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2; simpl; split; assumption.
+  - (* T_Restrict *) intros D G e l R0 T R Ht IH Hrm; simpl; assumption.
   - (* T_Fold *) intros D G e B Hlc Hg Ht IH; simpl; assumption.
   - (* T_Unfold *) intros D G e B Hlc Hg Ht IH; simpl; assumption.
   - (* T_Con *) intros D G w tg e Ts Hlt Ht IH; simpl; assumption.
@@ -682,14 +705,14 @@ Proof.
   intros D G v R Hval Hty.
   remember (typ_Record R) as T eqn:HT.
   revert R HT Hval.
-  induction Hty; intros R0 HT Hval;
+  induction Hty; intros Rq HT Hval;
     try discriminate;
     try solve [ subst; simpl in *; discriminate ];
     try solve [ inversion Hval ].
   - (* T_Record *)
     inversion HT; subst.
     inversion Hval; subst.
-    exists fs, R0. repeat split; auto using req_refl.
+    exists fs, Rq. repeat split; auto using req_refl.
   - (* T_Conv *) subst.
     match goal with
     | H : teq ?A (typ_Record _) |- _ =>
@@ -1056,6 +1079,26 @@ Proof.
       * right. exists k. apply tr_bin2; auto.
     + left. exists (e_bin e1' o e2). apply st_bin1; auto.
     + right. exists k. apply tr_bin1; auto.
+  - (* Case: [{...e1, l: e2}].  Never a value.  Once [e1] is finished,
+       canonical forms says it is a record, and the update steps whatever the
+       type says (fs_set is total); otherwise a subterm steps or traps. *)
+    intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2 HG; subst.
+    right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk1]]].
+    + destruct (canon_record _ _ _ _ Hv1 Ht1) as [fs [R0 [-> [Hrv _]]]].
+      destruct (IH2 eq_refl) as [Hv2 | [[e2' Hs2] | [k Hk2]]].
+      * left. exists (e_rec (fs_set l e2 fs)). apply st_spread; auto.
+      * left. exists (e_spread (e_rec fs) l e2'). apply st_spread2; auto.
+      * right. exists k. apply tr_spread2; auto.
+    + left. exists (e_spread e1' l e2). apply st_spread1; auto.
+    + right. exists k. apply tr_spread1; auto.
+  - (* Case: [restrict e l].  A finished [e] is a record, and the first [l]
+       comes out (fs_drop is total). *)
+    intros D G e l R0 T R Ht IH Hrm HG; subst.
+    right. destruct (IH eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
+    + destruct (canon_record _ _ _ _ Hv Ht) as [fs [Rf [-> [Hrv _]]]].
+      left. exists (e_rec (fs_drop l fs)). apply st_restrict; auto.
+    + left. exists (e_restrict e' l). apply st_restrict1; auto.
+    + right. exists k. apply tr_restrict; auto.
   - (* Case: [fold e].  A fold of a finished value is finished; otherwise
        [e] steps or traps. *)
     intros D G e B Hlc Hg Ht IH HG; subst.

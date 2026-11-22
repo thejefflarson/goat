@@ -70,6 +70,7 @@ row, R :: 'row_' ::= {{ com row (scoped labels, duplicates allowed) }}
   | nil           ::   :: Empty
   | r             ::   :: Var
   | l : T ; R     ::   :: Ext
+  | l ^ T1 : T2 ; R ::  :: Maybe {{ com the field l at T2, present or absent as T1 says (Unit present, Bool absent, a variable unknown) }}
 
 bop, o :: 'bop_' ::= {{ com binary operator }}
   | plus      ::   :: add       {{ com + }}
@@ -108,6 +109,8 @@ exp, e :: 'e_' ::= {{ com term }}
   | float ( e )              ::   :: tofloat {{ com Int-to-Float coercion, inserted by elaboration }}
   | con w tg ( e )            ::   :: con   {{ com build tag k of the group w around the payload e }}
   | match w ( e ) with ars    ::   :: match {{ com take a value of the group w apart by its tag }}
+  | spread ( e1 , l , e2 )   ::   :: spread {{ com update the first l of e1 to e2, or add l when e1 has none }}
+  | restrict ( e , l )       ::   :: restrict {{ com e without its first l }}
   | fold ( e )               ::   :: fold  {{ com roll a value into a recursive type }}
   | unfold ( e )             ::   :: unfold {{ com unroll a value of a recursive type }}
   | ( e )                    :: S :: paren {{ coq [[e]] }}
@@ -133,6 +136,27 @@ arms, ars :: 'arms_' ::= {{ com the arms of a match }}
   | tg x => e ; ars   ::   :: cons
     (+ bind x in e +)  {{ com arm for tag tg; x is the payload }}
 
+% l # R: the spine of R names no l and ends in nil.  A row variable lacks
+% nothing, and a Maybe entry of another label does not count.  Defined before
+% the relation that uses it as a premise.  A presence slot reads Unit as
+% present and Bool as absent (the checker's PRESENT and ABSENT).
+embed
+{{ coq
+Definition is_unit (T : typ) : bool :=
+  match T with typ_Unit => true | _ => false end.
+
+Definition is_abs (T : typ) : bool :=
+  match T with typ_Bool => true | _ => false end.
+
+Fixpoint rlacks (l : label) (R : row) {struct R} : bool :=
+  match R with
+  | row_Empty => true
+  | row_Var _ => false
+  | row_Ext l' _ R' => negb (Nat.eqb l l') && rlacks l R'
+  | row_Maybe l' _ _ R' => negb (Nat.eqb l l') && rlacks l R'
+  end.
+}}
+
 substitutions
   single exp x :: subst
 
@@ -142,6 +166,7 @@ freevars
 grammar
   formula :: 'formula_' ::=
     | judgement ::   :: judgement
+    | l # R  ::   :: row_lacks {{ coq (rlacks [[l]] [[R]] = true) }}
     | l1 <> l2  ::   :: label_neq {{ coq [[l1]] <> [[l2]] }}
       {{ tex [[l1]] \neq [[l2]] }}
 
@@ -218,6 +243,27 @@ R1 ~= R2 :: :: req :: 'req_'
   l <> l'
   ------------------------------------------- :: swap
   l : T ; l' : T' ; R ~= l' : T' ; l : T ; R
+
+  T1 ~= T1'
+  T2 ~= T2'
+  R ~= R'
+  ------------------------------------------ :: maybe
+  l ^ T1 : T2 ; R ~= l ^ T1' : T2' ; R'
+
+  ------------------------------------ :: pre
+  l ^ Unit : T ; R ~= l : T ; R
+
+  l # R
+  ------------------------------------ :: abs
+  l ^ Bool : T ; R ~= R
+
+  l <> l'
+  ------------------------------------------------------------ :: swap_em
+  l ^ T1 : T ; l' : T' ; R ~= l' : T' ; l ^ T1 : T ; R
+
+  l <> l'
+  ------------------------------------------------------------ :: swap_mm
+  l ^ T1 : T ; l' ^ T1' : T' ; R ~= l' ^ T1' : T' ; l ^ T1 : T ; R
 
   R1 ~= R2
   R2 ~= R3

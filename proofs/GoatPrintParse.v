@@ -223,6 +223,12 @@ Proof.
     intros w tg a IH n P Hs. destruct Hs.
   - (* match: not a term of the printed fragment *)
     intros w a IHa ars IHars n P Hs. destruct Hs.
+  - (* spread *)
+    intros a IHa l b IHb n P [Ha Hb]. apply blk_chain; [ exact I | ].
+    exact (chain_prim _ (prim_spread _ _ _ (expr_parses _ _ (IHa n P Ha))
+                           (expr_parses _ _ (IHb n P Hb)))).
+  - (* restrict: not a term of the printed fragment *)
+    intros a IH l n P Hs. destruct Hs.
   - (* fold: not a term of the printed fragment *)
     intros a IH n P Hs. destruct Hs.
   - (* unfold: not a term of the printed fragment *)

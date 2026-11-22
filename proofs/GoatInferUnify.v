@@ -108,7 +108,7 @@ Lemma rewrite_row_sound : forall l av R n T' R' s n',
   OkS s /\ EvT T' /\ EvR R' /\ req (apR s R) (row_Ext l T' R') /\
   (forall D, kres D D (sT s)) /\ n <= n'.
 Proof.
-  intros l av R. induction R as [| r | l' T'' R'' IH]; intros n T' R' s n' H HR;
+  intros l av R. induction R as [| r | l' T'' R'' IH | l' P'' T'' R'' IH]; intros n T' R' s n' H HR;
     cbn [rewrite_row] in H.
   - discriminate.
   - destruct (AtomSetImpl.mem r av); [discriminate|]. inversion H; subst; clear H.
@@ -145,6 +145,7 @@ Proof.
         eapply req_trans; [ apply req_head; [ apply teq_refl | exact Hreq ] | ].
         apply req_swap. intro Heq. subst. rewrite Nat.eqb_refl in El. discriminate. }
       split; [ exact Hk0 | exact Hle ].
+  - discriminate.
 Qed.
 
 (* ------------------------------------------------------------------ *)
@@ -264,7 +265,7 @@ Proof.
       destruct (IHt _ _ _ _ _ _ H H1 H2) as (Hs & Ht & Hk & Hl).
       split; [exact Hs | split; [ apply teq_grp; exact Ht | split; [exact Hk | exact Hl]]].
   - intros D R1 R2 n s n' H H1 H2. cbn [unify_r] in H.
-    destruct R1 as [| r | l T R1']; destruct R2 as [| q | l2 T2 R2'];
+    destruct R1 as [| r | l T R1' | lm Pm Tm Rm]; destruct R2 as [| q | l2 T2 R2' | lm2 Pm2 Tm2 Rm2];
       try discriminate H.
     all: try (exact (var_left_R _ _ _ _ _ _ H H1 H2)).
     all: try (exact (var_right_R _ _ _ _ _ _ H H1 H2)).

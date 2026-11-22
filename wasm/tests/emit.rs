@@ -3,7 +3,7 @@ mod common;
 
 use common::*;
 use goat_mir::*;
-use goat_wasm::{EmitError, emit};
+use goat_wasm::{EmitError, EmitOptions, emit, emit_with_options};
 
 fn emit_valid(p: &Program) -> Vec<u8> {
     assert_eq!(verify(p), Ok(()));
@@ -440,9 +440,34 @@ fn allocator_runtime_is_exported_and_records_allocate_and_free_through_it() {
         func_body(&text, 9).contains("call 7"),
         "drop_loop frees the block\n{text}"
     );
+}
+
+fn point_sum_text(poison_freed: bool) -> String {
+    let options = EmitOptions {
+        poison_freed,
+        ..Default::default()
+    };
+    let bytes = emit_with_options(&point_sum(), options).expect("program emits");
+    wasmprinter::print_bytes(bytes).expect("prints")
+}
+
+#[test]
+fn a_debug_module_poisons_freed_blocks() {
+    let text = point_sum_text(true);
     assert!(
         func_body(&text, 7).contains("memory.fill"),
         "free poisons the block\n{text}"
+    );
+}
+
+#[test]
+fn a_release_module_has_no_memory_fill_and_still_checks_the_count() {
+    let text = point_sum_text(false);
+    assert!(!text.contains("memory.fill"), "{text}");
+    let free = func_body(&text, 7);
+    assert!(
+        free.contains("unreachable"),
+        "free keeps its rc guard\n{free}"
     );
 }
 

@@ -28,13 +28,41 @@ unknown = 10
 functions = ["program", "function", "fn"]
 
 keywords = [
-  "if", "match", "then", "else", "done", "do", "start at", "repeat", "times",
-  "for", "and", "or", "not", "return", "tag"
+  "if",
+  "match",
+  "then",
+  "else",
+  "done",
+  "do",
+  "start at",
+  "repeat",
+  "times",
+  "for",
+  "and",
+  "or",
+  "not",
+  "return",
+  "tag"
 ]
 
 literals = ["true", "false"]
 
-operators = ["==", "!=", "<=", "<", ">=", ">", "->", "//", "/", "%", "+", "*", "-", "::"]
+operators = [
+  "==",
+  "!=",
+  "<=",
+  "<",
+  ">=",
+  ">",
+  "->",
+  "//",
+  "/",
+  "%",
+  "+",
+  "*",
+  "-",
+  "::"
+]
 
 puncts = ["(", ")", "{", "}", "[", "]", "=", ":", ";", "|", ",", "...", "."]
 
@@ -151,7 +179,11 @@ lex = program(text, p, found) do
   else
     token = next_token(text, p)
     kept = token.kind != space and token.kind != unknown
-    lex(text, token.end, if kept then Link({kind: token.kind, a: p, b: token.end}, found) else found done)
+    lex(text, token.end, if kept then Link({
+      kind: token.kind,
+      a: p,
+      b: token.end
+    }, found) else found done)
   done
 done
 
@@ -203,7 +235,11 @@ place = program(text, tokens, placed, before, before_before, waiting, depth) do
         before.kind == name, is_keyword(text, before_before, "for"),
         is_punct(text, before, "="), signature, waiting, depth
       )
-      now = {kind: if becomes then keyword else token.kind done, a: token.a, b: token.b}
+      now = {
+        kind: if becomes then keyword else token.kind done,
+        a: token.a,
+        b: token.b
+      }
       next_depth =
         if opens(text, token) then depth + 1
         else if closes(text, token) and depth > 0 then depth - 1
@@ -323,7 +359,10 @@ init = {spans: [], names: ""}
 
 update = program(model, event) do
   match event do
-    Edited(edit) then {spans: highlight(edit.text, model.names), names: model.names}
+    Edited(edit) then {
+      spans: highlight(edit.text, model.names),
+      names: model.names
+    }
     HostTags(host) then {spans: model.spans, names: host.names}
     else model
   done

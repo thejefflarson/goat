@@ -219,14 +219,45 @@ impl Default for EmbeddedLimits {
 pub const HEAP_BUDGET_EXHAUSTED: &str = "the program ran out of memory";
 pub use goat_mir::STACK_OVERFLOW;
 
+/// Knobs on the emitted module that do not change what a program means.
+#[derive(Clone, Copy, Debug)]
+pub struct EmitOptions {
+    /// Embedded budgets; a desktop program has none and ignores them.
+    pub limits: EmbeddedLimits,
+    /// `free` fills a released block with `0xFE`, so a compiler reference-count
+    /// bug reads poison instead of stale data. The fill costs about a quarter
+    /// of an update's time and needs `memory.fill`, so it defaults to debug
+    /// builds (which includes the test and fuzz profiles).
+    pub poison_freed: bool,
+}
+
+impl Default for EmitOptions {
+    fn default() -> Self {
+        EmitOptions {
+            limits: EmbeddedLimits::default(),
+            poison_freed: cfg!(debug_assertions),
+        }
+    }
+}
+
 pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
-    emit_with_limits(program, EmbeddedLimits::default())
+    emit_with_options(program, EmitOptions::default())
 }
 
 /// Like [`emit`], with the embedded limits spelled out. A desktop program has
 /// none, and ignores them.
 pub fn emit_with_limits(program: &Program, limits: EmbeddedLimits) -> Result<Vec<u8>, EmitError> {
-    emit_module(program, false, limits)
+    emit_with_options(
+        program,
+        EmitOptions {
+            limits,
+            ..EmitOptions::default()
+        },
+    )
+}
+
+pub fn emit_with_options(program: &Program, options: EmitOptions) -> Result<Vec<u8>, EmitError> {
+    emit_module(program, false, options)
 }
 
 /// Like [`emit`] for an interactive program, but the module imports its
@@ -239,14 +270,15 @@ pub fn emit_reloadable(program: &Program) -> Result<Vec<u8>, EmitError> {
     if program.interactive.is_none() {
         return Err(EmitError::Unsupported("a reloadable run-once program"));
     }
-    emit_module(program, true, EmbeddedLimits::default())
+    emit_module(program, true, EmitOptions::default())
 }
 
 fn emit_module(
     program: &Program,
     hosted: bool,
-    limits: EmbeddedLimits,
+    options: EmitOptions,
 ) -> Result<Vec<u8>, EmitError> {
+    let limits = options.limits;
     let profile = program.profile;
     let bounded = profile == Profile::Embedded;
     if profile == Profile::Embedded && program.interactive.is_some() {
@@ -410,6 +442,7 @@ fn emit_module(
     let heap_end = heap_start.saturating_add(limits.heap_bytes);
     let free_lists = FreeList {
         table,
+        poison_freed: options.poison_freed,
         budget: bounded.then(|| allocator::Budget {
             end: heap_end,
             trap_import,

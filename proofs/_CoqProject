@@ -5,9 +5,11 @@ GoatNum.v
 GoatLit.v
 GoatRows.v
 GoatDefs.v
+GoatPresence.v
 GoatMu.v
 GoatTags.v
 GoatMeta.v
+GoatSpread.v
 GoatSubst.v
 GoatBij.v
 GoatHM.v
@@ -25,6 +27,7 @@ GoatInferUnify.v
 GoatPhase1.v
 GoatPhase2.v
 GoatPhase3.v
+GoatPhase4.v
 GoatRecTypes.v
 GoatGrammar.v
 GoatPeg.v

@@ -212,11 +212,27 @@ Proof. intros w A T H. apply (proj1 (teq_grp_shape _ _ H)); reflexivity. Qed.
 (* is the row's tail (empty or a row variable).                          *)
 (* ------------------------------------------------------------------ *)
 
+Lemma teq_is_unit : forall T1 T2, teq T1 T2 -> is_unit T1 = is_unit T2.
+Proof.
+  intros T1 T2 H. apply teq_thead in H.
+  destruct T1, T2; simpl in H; try discriminate; reflexivity.
+Qed.
+
+Lemma teq_is_abs : forall T1 T2, teq T1 T2 -> is_abs T1 = is_abs T2.
+Proof.
+  intros T1 T2 H. apply teq_thead in H.
+  destruct T1, T2; simpl in H; try discriminate; reflexivity.
+Qed.
+
+(* A [Maybe] entry shows its field only when its presence is [Unit]: any other
+   presence (absent, a variable, an ill-sorted type) adds none. *)
 Fixpoint pi (l : label) (R : row) : list typ :=
   match R with
   | row_Empty => nil
   | row_Var _ => nil
   | row_Ext l' T R' => if Nat.eqb l l' then T :: pi l R' else pi l R'
+  | row_Maybe l' P T R' =>
+      if Nat.eqb l l' && is_unit P then T :: pi l R' else pi l R'
   end.
 
 Fixpoint rtail (R : row) : row :=
@@ -224,6 +240,7 @@ Fixpoint rtail (R : row) : row :=
   | row_Empty => row_Empty
   | row_Var r => row_Var r
   | row_Ext _ _ R' => rtail R'
+  | row_Maybe _ _ _ R' => rtail R'
   end.
 
 Lemma Forall2_teq_refl : forall l : list typ, Forall2 teq l l.
@@ -257,6 +274,31 @@ Proof.
     + intros l0. simpl.
       destruct (Nat.eqb l0 l) eqn:El; destruct (Nat.eqb l0 l') eqn:El';
         try apply Forall2_teq_refl.
+      apply Nat.eqb_eq in El; apply Nat.eqb_eq in El'; congruence.
+  - (* maybe: P ~ P', T ~ T', R ~ R' *)
+    destruct IHreq as [Htl Hpi]. split.
+    + simpl; assumption.
+    + intros l0. simpl.
+      assert (Hu : is_unit T1 = is_unit T1') by (apply teq_is_unit; assumption).
+      destruct (Nat.eqb l0 l); simpl; [ rewrite Hu | auto ].
+      destruct (is_unit T1'); [ constructor; auto | auto ].
+  - (* pre *)
+    split; [ reflexivity | intros l0; simpl; rewrite Bool.andb_true_r; apply Forall2_teq_refl ].
+  - (* abs *)
+    split; [ reflexivity | intros l0; simpl; rewrite Bool.andb_false_r; apply Forall2_teq_refl ].
+  - (* swap_em: l <> l' *)
+    split.
+    + reflexivity.
+    + intros l0. simpl.
+      destruct (Nat.eqb l0 l) eqn:El; destruct (Nat.eqb l0 l') eqn:El';
+        simpl; try apply Forall2_teq_refl.
+      apply Nat.eqb_eq in El; apply Nat.eqb_eq in El'; congruence.
+  - (* swap_mm: l <> l' *)
+    split.
+    + reflexivity.
+    + intros l0. simpl.
+      destruct (Nat.eqb l0 l) eqn:El; destruct (Nat.eqb l0 l') eqn:El';
+        simpl; try apply Forall2_teq_refl.
       apply Nat.eqb_eq in El; apply Nat.eqb_eq in El'; congruence.
   - (* trans *)
     destruct IHreq1 as [T1 P1]. destruct IHreq2 as [T2 P2].
