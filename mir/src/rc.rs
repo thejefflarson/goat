@@ -59,8 +59,8 @@ pub fn insert_rc(program: &mut Program) {
         && let Some(entry) = program.funcs.get_mut(program.entry.0 as usize)
         && entry.ret.is_discarded_root()
     {
-        let body = std::mem::replace(&mut entry.body, Expr::Const(Const::Unit));
         let next = max_local(entry) + 1;
+        let body = std::mem::replace(&mut entry.body, Expr::Const(Const::Unit));
         let (result, discard) = (Local(next), Local(next + 1));
         entry.body = Expr::Let(
             result,
