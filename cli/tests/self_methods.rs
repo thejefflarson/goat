@@ -136,3 +136,14 @@ fn a_method_declared_after_the_method_that_chains_on_it_runs() {
         print(counter.three().n)";
     assert_eq!(run(src), "3");
 }
+
+#[test]
+fn a_method_reaching_a_later_sibling_through_a_helper_runs() {
+    let src = "go = program(c) do c.twice() done
+counter = {n: 0,
+ three: program(self) do go(self).bump() done,
+ twice: program(self) do self.bump().bump() done,
+ bump: program(self) do {...self, n: self.n + 1} done}
+print(counter.three().n)";
+    assert_eq!(run(src), "3");
+}

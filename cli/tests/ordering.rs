@@ -76,9 +76,9 @@ fn records_order_field_by_field_in_label_order() {
 
 #[test]
 fn tags_order_by_declaration_then_payload() {
-    let tags = "tag Circle tag Square tag Dot \
+    let tags = "tag Shape = Ring(_) | Square(_) | Dot \
                 pick = program(n) do \
-                  if n == 1 then Circle(5) else if n == 2 then Circle(7) else \
+                  if n == 1 then Ring(5) else if n == 2 then Ring(7) else \
                   if n == 3 then Square(1) else Dot done done done \
                 done ";
     let cmp = |a: u32, b: u32, op: &str| run(&format!("{tags} pick({a}) {op} pick({b})"));
@@ -138,8 +138,8 @@ fn one_key_tag_outside_an_interactive_program_numbers_its_whole_group() {
 }
 
 #[test]
-fn individually_declared_tags_order_by_first_appearance() {
-    let src = "tag Zebra tag Apple tag Mango ";
+fn a_group_orders_by_declaration_not_by_name() {
+    let src = "tag Fruit = Zebra | Apple | Mango ";
     assert_eq!(run(&format!("{src} Zebra < Apple")), "true");
     assert_eq!(run(&format!("{src} Apple < Mango")), "true");
     assert_eq!(run(&format!("{src} Mango > Zebra")), "true");
@@ -149,7 +149,7 @@ fn individually_declared_tags_order_by_first_appearance() {
 fn a_group_after_other_tags_keeps_its_own_order() {
     let src = "tag Zebra tag Apple tag Rank = Beta | Alpha ";
     assert_eq!(run(&format!("{src} Beta < Alpha")), "true");
-    assert_eq!(run(&format!("{src} Zebra < Apple")), "true");
+    assert_eq!(run(&format!("{src} Zebra == Zebra")), "true");
 }
 
 #[test]
@@ -162,10 +162,10 @@ fn list_tags_stay_empty_before_link_whatever_the_program_declares() {
 
 #[test]
 fn tags_with_several_arguments_compare_left_to_right() {
-    let src = "tag Pair Pair(1, \"b\") < Pair(1, \"c\")";
+    let src = "tag Pair(_) Pair(1, \"b\") < Pair(1, \"c\")";
     assert_eq!(run(src), "true");
-    assert_eq!(run("tag Pair Pair(2, \"a\") < Pair(1, \"c\")"), "false");
-    assert_eq!(run("tag Pair Pair(1, \"a\") >= Pair(1, \"a\")"), "true");
+    assert_eq!(run("tag Pair(_) Pair(2, \"a\") < Pair(1, \"c\")"), "false");
+    assert_eq!(run("tag Pair(_) Pair(1, \"a\") >= Pair(1, \"a\")"), "true");
 }
 
 #[test]
@@ -205,7 +205,7 @@ fn ordering_long_strings_walks_every_byte() {
 
 #[test]
 fn ordering_trees() {
-    let tree = "tag Leaf tag Node leaf = Leaf \
+    let tree = "tag Tree = Leaf | Node(_) leaf = Leaf \
                 node = program(l, v, r) do Node(l, v, r) done ";
     let src = format!(
         "{tree} a = node(node(leaf, 1, leaf), 2, node(leaf, 3, leaf)) \

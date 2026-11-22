@@ -513,8 +513,8 @@ fn o_on_a_program_that_never_draws_is_an_error_and_writes_nothing() {
     assert!(!svg.exists());
 }
 
-const TYPO_TAG: &str = "match Cirle(5) do Circle(r) then r else 0 done";
-const TYPO_TAG_DECLS: &str = "tag Cirle tag Circle ";
+const TYPO_TAG: &str = "match Rng(5) do Ring(r) then r else 0 done";
+const TYPO_TAG_DECLS: &str = "tag Rng(_) | Ring(_) ";
 
 #[test]
 fn run_warns_on_stderr_and_still_succeeds() {
@@ -525,8 +525,8 @@ fn run_warns_on_stderr_and_still_succeeds() {
     assert!(out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("warning in "), "{stderr}");
-    assert!(stderr.contains("tag `Cirle` is constructed but never matched"));
-    assert!(stderr.contains("^^^^^^^^"), "span caret missing: {stderr}");
+    assert!(stderr.contains("tag `Rng` is constructed but never matched"));
+    assert!(stderr.contains("^^^^^^"), "span caret missing: {stderr}");
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "1\n0\n");
 }
 

@@ -38,7 +38,7 @@ Everything is imported from the `goat` crate root, except the runner in
 | Item | Status | What it is |
 |---|---|---|
 | `HostInterface::with_stdlib(decls)` | stable | The standard library plus your `foreign` declarations. Declarations may not shadow stdlib names (debug builds assert). |
-| `HostInterface::new(prelude)` | experimental | Your whole prelude, stdlib included or not, with the turtle's vocabulary. |
+| `HostInterface::new(prelude)` | experimental | Your whole prelude, stdlib included or not, with the turtle's vocabulary. Lists are declared by the prelude (`tag List = Empty | Link(_, List)`), so a prelude without that line has no `[..]`: a program that writes one gets an error saying so. |
 | `HostInterface::with_vocab(prelude, vocab)` | experimental | Your own events, shapes and keys (ADR 0020). |
 | `Vocab`, `Ty`, `Row`, `Group`, `GoatError`, `Span` | experimental | Re-exported from the checker, so a host names every type `compile`, `check` and `with_vocab` use with only a `goat` dependency. |
 | `check(source, &host)` | experimental | Type-check without emitting code; returns the program's `Ty` and the warnings. `goat check` calls it. |

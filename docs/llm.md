@@ -312,22 +312,34 @@ add = program(self, n) do n done
 
 ### Tags and `match`
 
-A tag is declared with `tag` and builds a variant when it is called with a
-payload. `match` takes a value apart by its tag. A `match` over numbers or
-strings needs an `else`, since they can never be exhausted.
+A tag is declared with `tag`. Written without parentheses it has no payload;
+with them it builds a variant when it is called with one. `match` takes a value
+apart by its tag. A `match` over numbers or strings needs an `else`, since they
+can never be exhausted.
+
+Every tag belongs to a group, and a group is closed: a `match` over it must
+handle every tag, with no `else`. Tags that go together are declared together,
+`tag Shape = Circle(Number) | Dot`, and a lone `tag Done` is a group of one. Two
+groups never mix, so `if c then Done else Dot done` is an error.
+
+A payload type is `Number`, `Int`, `Bool`, `Unit`, `String`, a record or list of
+those, the group's own name, or `_`. Each `_` leaves a type to each use, so a
+group with `_` is generic: `Disc(5)` and `Disc("big")` both work when `tag
+Shape = Disc(_) | Square(_)`. The group's own name marks where it holds itself,
+with the same `_`s, so one value never mixes the types in its slots. A payload
+written with a type, like `Hit(Int)`, keeps it.
 
 ```goat
-tag Circle
-tag Square
+tag Shape = Disc(_) | Square(_)
 
 area = program(shape) do
   match shape do
-    Circle(r) then 3 * r * r
+    Disc(r) then 3 * r * r
     Square(side) then side * side
   done
 done
 
-print(area(Circle(2)));
+print(area(Disc(2)));
 print(area(Square(3)));
 match 5 do
   0 then "zero"
@@ -335,13 +347,13 @@ match 5 do
 done
 ```
 
-A grouped declaration closes its tags into one type, so a `match` must handle
-every tag and needs no `else`. A group that names itself can hold itself in a
-payload.
+A list is a group in the prelude, `tag List = Empty | Link(_, List)`. You can
+write your own.
 
 ```goat
 tag Light = Red | Green | Amber
 tag Tree = Leaf | Node({left: Tree, right: Tree})
+tag Pile = Nil | Cons(_, Pile)
 
 seconds = program(light) do
   match light do
@@ -358,9 +370,29 @@ size = program(tree) do
   done
 done
 
+count = program(pile) do
+  match pile do
+    Nil then 0
+    Cons(head, rest) then 1 + count(rest)
+  done
+done
+
 print(seconds(Green));
-print(size(Node({left: Leaf, right: Leaf})))
+print(size(Node({left: Leaf, right: Leaf})));
+print(count(Cons(1, Cons(2, Nil))));
+print(count(Cons("a", Nil)))
 ```
+
+A pile of numbers and words together is an error where it is built:
+
+```goat error
+tag Pile = Nil | Cons(_, Pile)
+xs = Cons(1, Cons("a", Nil))
+```
+
+The host (the turtle) provides tags of its own, like `Circle`, `Tick` and
+`KeyDown`. You use them as they are, and declaring one again is an error. The
+host's own families are the one place a program may handle only some of the tags.
 
 ### Lists
 
@@ -374,6 +406,22 @@ sum_all = program(xs) do
   done
 done
 sum_all([1, 2, 3, 4])    # 10
+```
+
+A pattern can also take a list apart in one step, on the left of `=` or as a
+parameter: `[a, b] = xs`, `[first, ...rest] = xs`, `program([x, y]) do … done`.
+It works on any list. If the list has a length the pattern doesn't fit, the
+program stops at the pattern with a message such as "this list has 1 item but
+the pattern takes 2", "this list is empty but the pattern takes at least 1" or
+"this list has more than 2 items but the pattern takes 2". For a list written
+out as `[1, 2, 3]`, the mismatch is an error before the program runs. Use
+`match` when a wrong length is an ordinary case to handle.
+
+```goat
+swap = program([a, b]) do [b, a] done
+[x, y] = swap([1, 2])
+print(x);    # 2
+print(y)     # 1
 ```
 
 Lists come with a toolbox, no setup needed: `length`, `first`, `rest`, `item`

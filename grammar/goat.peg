@@ -29,9 +29,10 @@
 # where a rule spells them out.
 
 # Declarations come first and are hoisted: they produce no value, and every tag
-# is visible to the whole program. `tag Circle` declares a tag; `tag Shape =
-# Circle(Number) | Dot` declares a closed group of them, named only when a
-# payload refers back to it.
+# is visible to the whole program. `tag Done` declares a tag with no payload;
+# `tag Shape = Circle(Number) | Dot` declares a closed group of them, named
+# only when a payload refers back to it, and `_` in a payload leaves its type
+# to each use.
 @sync(';')
 goat <- tag_decl* expr? EOI
 tag_decl <- tag_kw (group_name '=')? tag_case@expect ('|' tag_case@expect)*
@@ -121,13 +122,17 @@ foreign_decl <- foreign_kw foreign_name foreign_name fn_type
 foreign_name <- string / number / boolean / name
 @nest
 fn_type <- '(' (_type_expr (',' _type_expr)* ','?)? ')' '->' _type_expr
-_type_expr <- fn_type / list_type / record_type / type_name
+_type_expr <- fn_type / list_type / record_type / infer_type / type_name
 @nest
 list_type <- '[' _type_expr ']'
 @nest
 record_type <- '{' (field_type (',' field_type)* ','?)? '}'
 field_type <- name ':' _type_expr
 type_name <- NAME
+
+# `_` in a tag payload is a slot the group leaves to each use: `tag Pile = Nil |
+# Cons(_, Pile)` holds any one type of item.
+infer_type <- '_'
 
 # `{x, y} = point`, `{x, ...rest} = point`, `[first, ...rest] = xs`. Tried
 # before `record` and `list`: a pattern has bare names where a literal has

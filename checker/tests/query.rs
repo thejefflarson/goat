@@ -228,6 +228,17 @@ fn a_field_of_a_chain_uses_the_type_at_each_step() {
 }
 
 #[test]
+fn a_field_that_holds_a_list_is_detailed_as_list_of_its_item() {
+    let found = complete_at("w = {path: [1, 2], name: \"w\"}\nw.|").expect("completions");
+    let details: Vec<_> = found
+        .items
+        .iter()
+        .map(|i| (i.label.as_str(), i.detail.as_str()))
+        .collect();
+    assert_eq!(details, [("path", "List(Number)"), ("name", "String")]);
+}
+
+#[test]
 fn a_field_of_something_with_no_members_offers_nothing() {
     assert_eq!(complete_at("n = 1\nn.|").map(|c| c.items), None);
 }
