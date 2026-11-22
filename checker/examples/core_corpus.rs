@@ -251,7 +251,7 @@ impl Feature {
                 "outside the calculus: arithmetic on non-primitive operands"
             }
             Feature::SplitGroup => {
-                "outside the calculus: a recursive group split by a value binding"
+                "outside the calculus: a recursive group a value binding uses before its last member"
             }
             Feature::NumeralLet => {
                 "outside the calculus: a let of a numeral the calculus would generalize"
@@ -380,8 +380,16 @@ struct Reader<'a> {
 /// group of functions, which share one binder naming the record of them, each
 /// reached by the label it has in that record.
 enum Binder {
-    Bound(String, Symbol),
-    Group(Vec<(String, Symbol, usize)>),
+    Bound(Symbol),
+    Group(Vec<(Symbol, usize)>),
+}
+
+/// One step of a block once its groups are placed: a value binding, by its
+/// position in the block, or a group, by its position among the block's groups.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Unit {
+    Value(usize),
+    Group(usize),
 }
 
 /// How the checker settles a block's function bindings into groups. `mentions[m]`
@@ -450,21 +458,20 @@ impl Reader<'_> {
         }
     }
 
-    /// The core term for a use of the name `name`, bound as `symbol`, or `None`
-    /// when an inner binding of the name hides it.
-    fn var(&self, symbol: &Symbol, name: &str) -> Option<Core> {
+    /// The core term for a use of the variable bound as `symbol`, or `None`
+    /// when no binder in scope binds it. It looks up by symbol, not by name,
+    /// because a hoisted group can sit past a binding that reuses a name a
+    /// member reads from further out.
+    fn var(&self, symbol: &Symbol) -> Option<Core> {
         for (depth, binder) in self.scope.iter().rev().enumerate() {
             match binder {
-                Binder::Bound(n, s) if n == name => {
-                    return (s == symbol).then_some(Core::Var(depth));
-                }
+                Binder::Bound(s) if s == symbol => return Some(Core::Var(depth)),
                 Binder::Group(members) => {
-                    if let Some((_, s, label)) = members.iter().find(|(n, ..)| n == name) {
-                        return (s == symbol)
-                            .then(|| Core::Proj(Box::new(Core::Var(depth)), *label));
+                    if let Some((_, label)) = members.iter().find(|(s, _)| s == symbol) {
+                        return Some(Core::Proj(Box::new(Core::Var(depth)), *label));
                     }
                 }
-                Binder::Bound(..) => {}
+                Binder::Bound(_) => {}
             }
         }
         None
@@ -472,7 +479,12 @@ impl Reader<'_> {
 
     /// A chain of `let`s and its result. A `program` binding that mentions
     /// itself, or belongs to a group with another, is a `letrec`; the others
-    /// are `let`s.
+    /// are `let`s. A group is placed after the last binding its members
+    /// mention, which is where elaboration hoists it past value bindings that
+    /// split it. A value binding that uses a member before the group's last
+    /// member leaves the group outside the fragment: the checker types that
+    /// use at the member's still-monomorphic type, and the hoisted `letrec`
+    /// would already have generalized it.
     fn block(&mut self, first: &Expr) -> Option<Core> {
         let mut bindings = Vec::new();
         let mut cursor = first;
@@ -490,66 +502,130 @@ impl Reader<'_> {
         let members: Vec<usize> = (0..bindings.len())
             .filter(|&i| matches!(bindings[i].2.kind, ExprKind::Func { .. }))
             .collect();
+        let used: Vec<HashSet<Symbol>> = bindings
+            .iter()
+            .map(|&(.., value)| {
+                let mut used = HashSet::new();
+                for_each_node(value, &mut |e| {
+                    if let ExprKind::Var { symbol, .. } = &e.kind {
+                        used.insert(*symbol);
+                    }
+                });
+                used
+            })
+            .collect();
         let symbols: Vec<Symbol> = members.iter().map(|&i| bindings[i].0).collect();
-        let mut mentions = Vec::new();
-        let mut recursive = Vec::new();
-        for &i in &members {
-            let mut used = HashSet::new();
-            for_each_node(bindings[i].2, &mut |e| {
-                if let ExprKind::Var { symbol, .. } = &e.kind {
-                    used.insert(*symbol);
-                }
-            });
-            recursive.push(used.contains(&bindings[i].0));
-            mentions.push(
+        let mentions: Vec<Vec<usize>> = members
+            .iter()
+            .map(|&i| {
                 (0..members.len())
-                    .filter(|&m| symbols[m] != bindings[i].0 && used.contains(&symbols[m]))
-                    .collect::<Vec<_>>(),
-            );
+                    .filter(|&m| symbols[m] != bindings[i].0 && used[i].contains(&symbols[m]))
+                    .collect()
+            })
+            .collect();
+        let groups: Vec<Vec<usize>> = function_groups(&mentions)
+            .into_iter()
+            .filter(|group| group.len() > 1 || used[members[group[0]]].contains(&symbols[group[0]]))
+            .map(|group| group.into_iter().map(|m| members[m]).collect())
+            .collect();
+        let used_inside = groups.iter().any(|group| {
+            let last = *group.iter().max().expect("a group has a member");
+            (0..last).any(|i| {
+                !group.contains(&i) && group.iter().any(|&m| used[i].contains(&bindings[m].0))
+            })
+        });
+        if used_inside {
+            self.gap = self.gap.min(Feature::SplitGroup);
+            return None;
         }
-        // For each binding that starts a group, the bindings the group spans.
-        let mut group_at: HashMap<usize, Vec<usize>> = HashMap::new();
-        for group in function_groups(&mentions) {
-            let at: Vec<usize> = group.iter().map(|&m| members[m]).collect();
-            if at.windows(2).any(|w| w[1] != w[0] + 1) {
+        let units = self.place_groups(&bindings, &used, &groups)?;
+        self.chain(&bindings, &groups, &units, tail)
+    }
+
+    /// The order of a block's bindings and groups: the value bindings in
+    /// source order, each group directly after the last binding or group its
+    /// members mention. `None` when a binding needs a group whose own
+    /// dependencies come later, which the checker rejects.
+    fn place_groups(
+        &mut self,
+        bindings: &[(Symbol, &str, &Expr)],
+        used: &[HashSet<Symbol>],
+        groups: &[Vec<usize>],
+    ) -> Option<Vec<Unit>> {
+        let grouped: HashSet<usize> = groups.iter().flatten().copied().collect();
+        let owner = |symbol: &Symbol| {
+            let at = bindings.iter().position(|b| b.0 == *symbol)?;
+            Some(match groups.iter().position(|g| g.contains(&at)) {
+                Some(g) => Unit::Group(g),
+                None => Unit::Value(at),
+            })
+        };
+        let needs = |at: usize| used[at].iter().filter_map(&owner).collect::<Vec<_>>();
+        let group_needs: Vec<Vec<Unit>> = groups
+            .iter()
+            .enumerate()
+            .map(|(g, members)| {
+                let mut needed: Vec<Unit> = members.iter().flat_map(|&at| needs(at)).collect();
+                needed.retain(|u| *u != Unit::Group(g));
+                needed
+            })
+            .collect();
+        let mut units = Vec::new();
+        let done = |units: &mut Vec<Unit>| {
+            while let Some(g) = (0..groups.len()).find(|&g| {
+                !units.contains(&Unit::Group(g)) && group_needs[g].iter().all(|u| units.contains(u))
+            }) {
+                units.push(Unit::Group(g));
+            }
+        };
+        done(&mut units);
+        for i in (0..bindings.len()).filter(|i| !grouped.contains(i)) {
+            if !needs(i).iter().all(|u| units.contains(u)) {
                 self.gap = self.gap.min(Feature::SplitGroup);
                 return None;
             }
-            if at.len() > 1 || recursive[group[0]] {
-                group_at.insert(at[0], at);
-            }
+            units.push(Unit::Value(i));
+            done(&mut units);
         }
-        self.chain(&bindings, &group_at, 0, tail)
+        if units.len() != groups.len() + bindings.len() - grouped.len() {
+            self.gap = self.gap.min(Feature::SplitGroup);
+            return None;
+        }
+        Some(units)
     }
 
     fn chain(
         &mut self,
         bindings: &[(Symbol, &str, &Expr)],
-        group_at: &HashMap<usize, Vec<usize>>,
-        from: usize,
+        groups: &[Vec<usize>],
+        units: &[Unit],
         tail: &Expr,
     ) -> Option<Core> {
-        let Some(&(symbol, name, value)) = bindings.get(from) else {
+        let Some((unit, units)) = units.split_first() else {
             return self.read(tail);
         };
-        let Some(group) = group_at.get(&from) else {
-            let names_param = matches!(&value.kind, ExprKind::Var { symbol, .. }
-                if self.params.contains(symbol));
-            let value = self.read(value)?;
-            if value.generalizes_numeral() && !names_param {
-                self.gap = self.gap.min(Feature::NumeralLet);
-                return None;
+        let group = match *unit {
+            Unit::Value(at) => {
+                let (symbol, _, value) = bindings[at];
+                let names_param = matches!(&value.kind, ExprKind::Var { symbol, .. }
+                    if self.params.contains(symbol));
+                let value = self.read(value)?;
+                if value.generalizes_numeral() && !names_param {
+                    self.gap = self.gap.min(Feature::NumeralLet);
+                    return None;
+                }
+                self.scope.push(Binder::Bound(symbol));
+                let body = self.chain(bindings, groups, units, tail);
+                self.scope.pop();
+                return Some(Core::Let(Box::new(value), Box::new(body?)));
             }
-            self.scope.push(Binder::Bound(name.to_string(), symbol));
-            let body = self.chain(bindings, group_at, from + 1, tail);
-            self.scope.pop();
-            return Some(Core::Let(Box::new(value), Box::new(body?)));
+            Unit::Group(g) => &groups[g],
         };
-        let members: Vec<(String, Symbol, usize)> = group
+        let members: Vec<(Symbol, usize)> = group
             .iter()
             .map(|&i| {
                 let (symbol, name, _) = bindings[i];
-                (name.to_string(), symbol, self.label(name))
+                (symbol, self.label(name))
             })
             .collect();
         self.scope.push(Binder::Group(members));
@@ -561,7 +637,7 @@ impl Reader<'_> {
             })
             .collect();
         let body = fields.and_then(|fields| {
-            let body = self.chain(bindings, group_at, from + group.len(), tail)?;
+            let body = self.chain(bindings, groups, units, tail)?;
             Some(Core::Letrec(fields, Box::new(body)))
         });
         self.scope.pop();
@@ -652,7 +728,7 @@ impl Reader<'_> {
                 }
                 Some(Core::Bin(*op, Box::new(a), Box::new(b)))
             }
-            ExprKind::Var { symbol, name } => self.var(symbol, name),
+            ExprKind::Var { symbol, .. } => self.var(symbol),
             ExprKind::Func { params, body } => {
                 if params.is_empty() || params.iter().any(|p| p.name == "self") {
                     return None;
@@ -660,11 +736,8 @@ impl Reader<'_> {
                 self.unary &= params.len() == 1;
                 self.params.extend(params.iter().map(|p| p.symbol));
                 let mark = self.scope.len();
-                self.scope.extend(
-                    params
-                        .iter()
-                        .map(|p| Binder::Bound(p.name.clone(), p.symbol)),
-                );
+                self.scope
+                    .extend(params.iter().map(|p| Binder::Bound(p.symbol)));
                 let body = self.read(body);
                 self.scope.truncate(mark);
                 Some(
