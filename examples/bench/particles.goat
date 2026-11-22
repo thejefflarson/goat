@@ -1,0 +1,48 @@
+# Record-arithmetic benchmark: 1,000 particles, each frame moves every one by
+# `position + velocity`, damps its velocity with a record `*`, and bounces it
+# off the canvas edges. `draw` paints one Dot per particle. The measurement
+# harness (goat/examples/record_arith_bench.rs) replaces the block between the
+# `step` markers to isolate costs, so keep the markers on their own lines.
+count = 1000
+
+spawn = program(i, acc) do
+  if i == 0 then acc else
+    spawn(i - 1, link({
+      p: {x: i * 0.4, y: i * 0.3},
+      v: {x: 1.5 - i * 0.003, y: 0.7 + i * 0.002}
+    }, acc))
+  done
+done
+
+init = {ps: spawn(count, [])}
+
+# step begin
+step = program(q) do
+  p = q.p + q.v
+  v = q.v * {x: 0.999, y: 0.999}
+  hit_x = p.x < 0 or p.x > 400
+  hit_y = p.y < 0 or p.y > 300
+  {
+    p: p,
+    v: {
+      x: if hit_x then 0 - v.x else v.x done,
+      y: if hit_y then 0 - v.y else v.y done
+    }
+  }
+done
+# step end
+
+update = program(model, event) do
+  match event do
+    Frame(dt) then {ps: change_each(model.ps, step)}
+    else model
+  done
+done
+
+dot = program(q) do
+  Dot({x: q.p.x, y: q.p.y, r: 2, fill: "tomato"})
+done
+
+draw = program(model) do
+  change_each(model.ps, dot)
+done

@@ -1,0 +1,50 @@
+# The same particles as particles.goat with the position and velocity inlined
+# into one flat record and the arithmetic written per field. A step allocates
+# one record instead of five, which approximates what unboxing small records
+# and fusing the temporaries would buy. See goat/examples/record_arith_bench.rs.
+count = 1000
+
+spawn = program(i, acc) do
+  if i == 0 then acc else
+    spawn(i - 1, link({
+      px: i * 0.4,
+      py: i * 0.3,
+      vx: 1.5 - i * 0.003,
+      vy: 0.7 + i * 0.002
+    }, acc))
+  done
+done
+
+init = {ps: spawn(count, [])}
+
+# step begin
+step = program(q) do
+  px = q.px + q.vx
+  py = q.py + q.vy
+  vx = q.vx * 0.999
+  vy = q.vy * 0.999
+  hit_x = px < 0 or px > 400
+  hit_y = py < 0 or py > 300
+  {
+    px: px,
+    py: py,
+    vx: if hit_x then 0 - vx else vx done,
+    vy: if hit_y then 0 - vy else vy done
+  }
+done
+# step end
+
+update = program(model, event) do
+  match event do
+    Frame(dt) then {ps: change_each(model.ps, step)}
+    else model
+  done
+done
+
+dot = program(q) do
+  Dot({x: q.px, y: q.py, r: 2, fill: "tomato"})
+done
+
+draw = program(model) do
+  change_each(model.ps, dot)
+done
