@@ -61,7 +61,8 @@ Proof. intros o. destruct o; reflexivity. Qed.
 Lemma occs_block :
   (forall e P, occs (block P e) = List.map lname (lbls e)) /\
   (forall fs P, occs (field_trees P fs) = List.map lname (lbls_fields fs)
-                /\ occs (more_field_trees P fs) = List.map lname (lbls_fields fs)).
+                /\ occs (more_field_trees P fs) = List.map lname (lbls_fields fs)) /\
+  (forall ars : arms, True).
 Proof.
   apply exp_fields_mutind.
   - intros i P. cbn [block]. occ_simp. reflexivity.
@@ -101,6 +102,8 @@ Proof.
     rewrite occs_app, occs_cons, occs_op, !occs_as_binop, IHa, IHb, List.map_app.
     reflexivity.
   - intros a IH P. cbn [block lbls]. occ_simp. reflexivity.
+  - intros w tg a IH P. cbn [block lbls]. occ_simp. reflexivity.
+  - intros w a IHa ars IHars P. cbn [block lbls]. occ_simp. reflexivity.
   - intros a IH P. cbn [block lbls]. occ_simp. reflexivity.
   - intros a IH P. cbn [block lbls]. occ_simp. reflexivity.
   - intros P. split; reflexivity.
@@ -109,6 +112,9 @@ Proof.
     split.
     + rewrite occs_cons. occ_simp. rewrite IHe, IHm. cbn [List.map]. rewrite List.map_app. reflexivity.
     + rewrite occs_cons. occ_simp. rewrite IHe, IHm. cbn [List.map]. rewrite List.map_app. reflexivity.
+  - intros; exact I.
+  - intros; exact I.
+  - intros; exact I.
 Qed.
 
 Lemma labels_print : forall e,

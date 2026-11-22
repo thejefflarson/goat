@@ -212,7 +212,7 @@ Proof.
   destruct IH as [IHi IHf].
   split.
   - intros Dk G e n s D' T n' H HG.
-    destruct e as [i|x|k|d| | |b|e1 e2|e1 e2|fs e2|fs|e1 l| |q|c e1 e2|e1 o e2|e1|e1|e1];
+    destruct e as [i|x|k|d| | |b|e1 e2|e1 e2|fs e2|fs|e1 l| |q|c e1 e2|e1 o e2|e1|w tg e1|w e1 ars|e1|e1];
       simpl in H; try discriminate;
       try (injection H as <- <- <- <-; exact (conj mf_sid I)).
     + destruct (lookup x G) as [sc|] eqn:EL; [|discriminate].

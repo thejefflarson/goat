@@ -44,7 +44,8 @@ Qed.
 
 Lemma inst_closed : forall var_of,
   (forall e k, scoped k e -> inst_rec var_of k 0 e = e) /\
-  (forall fs k, scoped_fields k fs -> inst_fields var_of k 0 fs = fs).
+  (forall fs k, scoped_fields k fs -> inst_fields var_of k 0 fs = fs) /\
+  (forall ars : arms, True).
 Proof.
   intros var_of. apply exp_fields_mutind.
   - intros i k Hs. simpl in Hs. cbn [inst_rec].
@@ -68,9 +69,14 @@ Proof.
     destruct Hc as [-> | Hc]; [ reflexivity | rewrite (IHc k Hc); reflexivity ].
   - intros a IHa o b IHb k [Ha Hb]. cbn [inst_rec]. rewrite (IHa k Ha), (IHb k Hb). reflexivity.
   - intros a IH k Hs. destruct Hs.
+  - intros w tg a IH k Hs. destruct Hs.
+  - intros w a IHa ars IHars k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros k Hs. reflexivity.
   - intros l e IHe fs IHfs k [He Hfs]. cbn [inst_fields].
     rewrite (IHe k He), (IHfs k Hfs). reflexivity.
+  - intros; exact I.
+  - intros; exact I.
+  - intros; exact I.
 Qed.

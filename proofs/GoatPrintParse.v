@@ -158,7 +158,7 @@ Definition Blk (e : exp) : Prop := forall n P, scoped n e -> BlkAt P e.
 Definition FieldsOK (fs : Goat_ott.fields) : Prop :=
   forall n P, scoped_fields n fs -> AllExpr P fs.
 
-Lemma blk_all : (forall e, Blk e) /\ (forall fs, FieldsOK fs).
+Lemma blk_all : (forall e, Blk e) /\ (forall fs, FieldsOK fs) /\ (forall ars : arms, True).
 Proof.
   apply exp_fields_mutind.
   - (* bound variable *)
@@ -219,6 +219,10 @@ Proof.
     split; [ exact (binop_chain _ _ (IHa n P Ha)) | exact (binop_chain _ _ (IHb n P Hb)) ].
   - (* coercion: not a term of the printed fragment *)
     intros a IH n P Hs. destruct Hs.
+  - (* tag construction: not a term of the printed fragment *)
+    intros w tg a IH n P Hs. destruct Hs.
+  - (* match: not a term of the printed fragment *)
+    intros w a IHa ars IHars n P Hs. destruct Hs.
   - (* fold: not a term of the printed fragment *)
     intros a IH n P Hs. destruct Hs.
   - (* unfold: not a term of the printed fragment *)
@@ -226,4 +230,7 @@ Proof.
   - intros n P Hs. exact I.
   - intros l e IHe rest IHrest n P [He Hrest].
     split; [ exact (expr_parses _ _ (IHe n P He)) | exact (IHrest n P Hrest) ].
+  - intros; exact I.
+  - intros; exact I.
+  - intros; exact I.
 Qed.

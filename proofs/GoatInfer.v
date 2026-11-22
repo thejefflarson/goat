@@ -105,6 +105,7 @@ Fixpoint lcb (k : nat) (T : typ) {struct T} : bool :=
   | typ_Record R => lcrb k R
   | typ_Bvar n => Nat.ltb n k
   | typ_Mu B => lcb (S k) B
+  | typ_Grp _ A => lcb k A
   end
 with lcrb (k : nat) (R : row) {struct R} : bool :=
   match R with
@@ -480,6 +481,8 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                   end
               end
           end
+      | e_con _ _ _ => None
+      | e_match _ _ _ => None
       | e_fold _ => None
       | e_unfold _ => None
       | e_tofloat e1 =>

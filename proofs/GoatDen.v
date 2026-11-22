@@ -35,6 +35,8 @@ Fixpoint close_exp_rec (k : nat) (x : termvar) (e : exp) {struct e} : exp :=
   | e_ite a b c => e_ite (close_exp_rec k x a) (close_exp_rec k x b) (close_exp_rec k x c)
   | e_bin a o b => e_bin (close_exp_rec k x a) o (close_exp_rec k x b)
   | e_tofloat a => e_tofloat (close_exp_rec k x a)
+  | e_con w tg a => e_con w tg (close_exp_rec k x a)
+  | e_match w a ars => e_match w (close_exp_rec k x a) (close_arms_rec k x ars)
   | e_fold a => e_fold (close_exp_rec k x a)
   | e_unfold a => e_unfold (close_exp_rec k x a)
   end
@@ -42,6 +44,12 @@ with close_fields_rec (k : nat) (x : termvar) (fs : fields) {struct fs} : fields
   match fs with
   | fs_nil => fs_nil
   | fs_cons l e fs' => fs_cons l (close_exp_rec k x e) (close_fields_rec k x fs')
+  end
+with close_arms_rec (k : nat) (x : termvar) (ars : arms) {struct ars} : arms :=
+  match ars with
+  | arms_nil => arms_nil
+  | arms_else e => arms_else (close_exp_rec k x e)
+  | arms_cons tg e ars' => arms_cons tg (close_exp_rec (S k) x e) (close_arms_rec k x ars')
   end.
 
 Definition close_exp (x : termvar) (e : exp) : exp := close_exp_rec 0 x e.
@@ -86,6 +94,8 @@ Fixpoint bind_group_rec (k : nat) (names : list termvar) (e : exp) {struct e} : 
       e_ite (bind_group_rec k names a) (bind_group_rec k names b) (bind_group_rec k names c)
   | e_bin a o b => e_bin (bind_group_rec k names a) o (bind_group_rec k names b)
   | e_tofloat a => e_tofloat (bind_group_rec k names a)
+  | e_con w tg a => e_con w tg (bind_group_rec k names a)
+  | e_match w a ars => e_match w (bind_group_rec k names a) (bind_group_arms k names ars)
   | e_fold a => e_fold (bind_group_rec k names a)
   | e_unfold a => e_unfold (bind_group_rec k names a)
   end
@@ -93,6 +103,12 @@ with bind_group_fields (k : nat) (names : list termvar) (fs : fields) {struct fs
   match fs with
   | fs_nil => fs_nil
   | fs_cons l e fs' => fs_cons l (bind_group_rec k names e) (bind_group_fields k names fs')
+  end
+with bind_group_arms (k : nat) (names : list termvar) (ars : arms) {struct ars} : arms :=
+  match ars with
+  | arms_nil => arms_nil
+  | arms_else e => arms_else (bind_group_rec k names e)
+  | arms_cons tg e ars' => arms_cons tg (bind_group_rec (S k) names e) (bind_group_arms k names ars')
   end.
 
 Definition bind_group (names : list termvar) (e : exp) : exp := bind_group_rec 0 names e.
@@ -111,7 +127,8 @@ Definition group_fields (names : list termvar) (vs : list exp) : fields :=
 
 Lemma lc_close_mut :
   (forall e k x, lc_at k e -> lc_at (S k) (close_exp_rec k x e)) /\
-  (forall fs k x, lcf_at k fs -> lcf_at (S k) (close_fields_rec k x fs)).
+  (forall fs k x, lcf_at k fs -> lcf_at (S k) (close_fields_rec k x fs)) /\
+  (forall ars k x, lca_at k ars -> lca_at (S k) (close_arms_rec k x ars)).
 Proof.
   apply exp_fields_mutind.
   - (* bound index: below k, so below S k *)
@@ -147,17 +164,29 @@ Proof.
     split; [ exact (IHa k x Ha) | exact (IHb k x Hb) ].
   - (* coercion *)
     intros a IH k x Ha. simpl in *. exact (IH k x Ha).
+  - (* tag construction *)
+    intros w tg a IH k x Ha. simpl in *. exact (IH k x Ha).
+  - (* match: each arm is one level deeper *)
+    intros w a IHa ars IHars k x [Ha Hars]. simpl.
+    split; [ exact (IHa k x Ha) | exact (IHars k x Hars) ].
   - intros a IH k x Ha. simpl in *. exact (IH k x Ha).
   - intros a IH k x Ha. simpl in *. exact (IH k x Ha).
   - intros k x _. exact I.
   - (* field list *)
     intros l e IHe fs IHfs k x [He Hfs]. simpl.
     split; [ exact (IHe k x He) | exact (IHfs k x Hfs) ].
+  - intros k x _. exact I.
+  - (* else *)
+    intros e IH k x He. simpl in *. exact (IH k x He).
+  - (* arm *)
+    intros tg e IHe ars IHars k x [He Hars]. simpl.
+    split; [ exact (IHe (S k) x He) | exact (IHars k x Hars) ].
 Qed.
 
 Lemma lc_bind_group_mut :
   (forall e k names, lc_at k e -> lc_at (S k) (bind_group_rec k names e)) /\
-  (forall fs k names, lcf_at k fs -> lcf_at (S k) (bind_group_fields k names fs)).
+  (forall fs k names, lcf_at k fs -> lcf_at (S k) (bind_group_fields k names fs)) /\
+  (forall ars k names, lca_at k ars -> lca_at (S k) (bind_group_arms k names ars)).
 Proof.
   apply exp_fields_mutind.
   - intros i k names Hi. simpl in *. lia.
@@ -182,11 +211,18 @@ Proof.
   - intros a IHa o b IHb k names [Ha Hb]. simpl.
     split; [ exact (IHa k names Ha) | exact (IHb k names Hb) ].
   - intros a IH k names Ha. simpl in *. exact (IH k names Ha).
+  - intros w tg a IH k names Ha. simpl in *. exact (IH k names Ha).
+  - intros w a IHa ars IHars k names [Ha Hars]. simpl.
+    split; [ exact (IHa k names Ha) | exact (IHars k names Hars) ].
   - intros a IH k names Ha. simpl in *. exact (IH k names Ha).
   - intros a IH k names Ha. simpl in *. exact (IH k names Ha).
   - intros k names _. exact I.
   - intros l e IHe fs IHfs k names [He Hfs]. simpl.
     split; [ exact (IHe k names He) | exact (IHfs k names Hfs) ].
+  - intros k names _. exact I.
+  - intros e IH k names He. simpl in *. exact (IH k names He).
+  - intros tg e IHe ars IHars k names [He Hars]. simpl.
+    split; [ exact (IHe (S k) names He) | exact (IHars k names Hars) ].
 Qed.
 
 Lemma lcf_group_fields_from : forall names vs i,
@@ -569,6 +605,8 @@ Fixpoint size (e : exp) : nat :=
   | e_ite a b c => S (size a + size b + size c)
   | e_bin a _ b => S (size a + size b)
   | e_tofloat a => S (size a)
+  | e_con _ _ a => S (size a)
+  | e_match _ a ars => S (size a + size_arms ars)
   | e_fold a => S (size a)
   | e_unfold a => S (size a)
   end
@@ -576,11 +614,18 @@ with size_fields (fs : fields) : nat :=
   match fs with
   | fs_nil => 1
   | fs_cons _ e fs' => S (size e + size_fields fs')
+  end
+with size_arms (ars : arms) : nat :=
+  match ars with
+  | arms_nil => 1
+  | arms_else e => S (size e)
+  | arms_cons _ e ars' => S (size e + size_arms ars')
   end.
 
 Lemma open_size_mut :
   (forall e k x, size (open_exp_wrt_exp_rec k (e_fvar_f x) e) = size e) /\
-  (forall fs k x, size_fields (open_fields_wrt_exp_rec k (e_fvar_f x) fs) = size_fields fs).
+  (forall fs k x, size_fields (open_fields_wrt_exp_rec k (e_fvar_f x) fs) = size_fields fs) /\
+  (forall ars k x, size_arms (open_arms_wrt_exp_rec k (e_fvar_f x) ars) = size_arms ars).
 Proof.
   apply exp_fields_mutind; simpl; intros.
   - (* bound index *)
@@ -601,15 +646,21 @@ Proof.
   - (* ite *) rewrite H, H0, H1. reflexivity.
   - (* bin *) rewrite H, H0. reflexivity.
   - (* tofloat *) rewrite H. reflexivity.
+  - (* con *) rewrite H. reflexivity.
+  - (* match *) rewrite H, H0. reflexivity.
   - (* fold *) rewrite H. reflexivity.
   - (* unfold *) rewrite H. reflexivity.
   - reflexivity.
   - (* cons *) rewrite H, H0. reflexivity.
+  - reflexivity.
+  - (* else *) rewrite H. reflexivity.
+  - (* arm *) rewrite H, H0. reflexivity.
 Qed.
 
 Lemma open_lc_at_mut :
   (forall e n x, lc_at (S n) e -> lc_at n (open_exp_wrt_exp_rec n (e_fvar_f x) e)) /\
-  (forall fs n x, lcf_at (S n) fs -> lcf_at n (open_fields_wrt_exp_rec n (e_fvar_f x) fs)).
+  (forall fs n x, lcf_at (S n) fs -> lcf_at n (open_fields_wrt_exp_rec n (e_fvar_f x) fs)) /\
+  (forall ars n x, lca_at (S n) ars -> lca_at n (open_arms_wrt_exp_rec n (e_fvar_f x) ars)).
 Proof.
   apply exp_fields_mutind; simpl; intros.
   - (* bound index *)
@@ -630,21 +681,28 @@ Proof.
   - (* ite *) destruct H2 as [Ha [Hb Hc]]. split; [ apply H | split; [ apply H0 | apply H1 ] ]; assumption.
   - (* bin *) destruct H1 as [Ha Hb]. split; [ apply H | apply H0 ]; assumption.
   - (* tofloat *) apply H. assumption.
+  - (* con *) apply H. assumption.
+  - (* match *) destruct H1 as [Ha Hb]. split; [ apply H | apply H0 ]; assumption.
   - (* fold *) apply H. assumption.
   - (* unfold *) apply H. assumption.
   - exact I.
   - (* cons *) destruct H1 as [He Hfs]. split; [ apply H | apply H0 ]; assumption.
+  - exact I.
+  - (* else *) apply H. assumption.
+  - (* arm *) destruct H1 as [He Hars]. split; [ apply H | apply H0 ]; assumption.
 Qed.
 
 Lemma lc_lc_exp_bounded : forall m,
   (forall e, size e <= m -> lc e -> lc_exp e) /\
-  (forall fs, size_fields fs <= m -> lcf fs -> lc_fields fs).
+  (forall fs, size_fields fs <= m -> lcf fs -> lc_fields fs) /\
+  (forall ars, size_arms ars <= m -> lca ars -> lc_arms ars).
 Proof.
-  induction m as [| m IH]; split; intros t Hsize Hlc.
+  induction m as [| m IH]; split; [ | split | | split ]; intros t Hsize Hlc.
   - destruct t; simpl in Hsize; lia.
   - destruct t; simpl in Hsize; lia.
-  - destruct IH as [IHe IHfs].
-    destruct t as [i | x | n | d | | | b | a b | a b | fs0 b0 | fs | a l | | q | a b c | a o b | a | a1 | a2];
+  - destruct t; simpl in Hsize; lia.
+  - destruct IH as [IHe [IHfs IHars]].
+    destruct t as [i | x | n | d | | | b | a b | a b | fs0 b0 | fs | a l | | q | a b c | a o b | a | w tg a0 | w a0 ars | a1 | a2];
       unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
     + lia.
     + apply lc_e_fvar_f.
@@ -677,9 +735,9 @@ Proof.
       apply lc_e_letrec.
       * intros x.
         assert (Hopen : lcf (open_fields_wrt_exp fs0 (e_fvar_f x)))
-          by (apply (proj2 open_lc_at_mut); exact Hfs).
+          by (apply (proj1 (proj2 open_lc_at_mut)); exact Hfs).
         assert (Hsmaller : size_fields (open_fields_wrt_exp fs0 (e_fvar_f x)) <= m)
-          by (unfold open_fields_wrt_exp; rewrite (proj2 open_size_mut); lia).
+          by (unfold open_fields_wrt_exp; rewrite (proj1 (proj2 open_size_mut)); lia).
         exact (IHfs _ Hsmaller Hopen).
       * intros x.
         assert (Hopen : lc (open_exp_wrt_exp b0 (e_fvar_f x)))
@@ -701,15 +759,35 @@ Proof.
       apply lc_e_bin; apply IHe; try assumption; lia.
     + (* tofloat *)
       apply lc_e_tofloat. apply IHe; [ lia | exact Hlc ].
+    + (* tag construction *)
+      apply lc_e_con. apply IHe; [ lia | exact Hlc ].
+    + (* match *)
+      destruct Hlc as [Ha Hars].
+      apply lc_e_match.
+      * apply IHe; [ lia | exact Ha ].
+      * apply IHars; [ lia | exact Hars ].
     + (* fold *)
       apply lc_e_fold. apply IHe; [ lia | exact Hlc ].
     + (* unfold *)
       apply lc_e_unfold. apply IHe; [ lia | exact Hlc ].
-  - destruct IH as [IHe IHfs].
+  - destruct IH as [IHe [IHfs IHars]].
     destruct t as [| l e fs]; unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
     + apply lc_fs_nil.
     + destruct Hlc as [He Hfs].
       apply lc_fs_cons; [ apply IHe | apply IHfs ]; try assumption; lia.
+  - destruct IH as [IHe [IHfs IHars]].
+    destruct t as [| e | tg e ars]; unfold lca in Hlc; simpl in Hsize, Hlc.
+    + apply lc_arms_nil.
+    + apply lc_arms_else. apply IHe; [ lia | exact Hlc ].
+    + destruct Hlc as [He Hars].
+      apply lc_arms_cons.
+      * intros x.
+        assert (Hopen : lc (open_exp_wrt_exp e (e_fvar_f x)))
+          by (apply (proj1 open_lc_at_mut); exact He).
+        assert (Hsmaller : size (open_exp_wrt_exp e (e_fvar_f x)) <= m)
+          by (unfold open_exp_wrt_exp; rewrite (proj1 open_size_mut); lia).
+        exact (IHe _ Hsmaller Hopen).
+      * apply IHars; [ lia | exact Hars ].
 Qed.
 
 Lemma lc_lc_exp : forall e, lc e -> lc_exp e.
