@@ -10,7 +10,7 @@ spawn = program(i, acc) do
     spawn(i - 1, link({
       p: {x: i * 0.4, y: i * 0.3},
       v: {x: 1.5 - i * 0.003, y: 0.7 + i * 0.002}
-      }, acc))
+    }, acc))
   done
 done
 
