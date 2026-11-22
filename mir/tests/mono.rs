@@ -739,10 +739,10 @@ fn a_nested_tag_matched_at_two_widths_has_one_layout_per_level() {
 }
 
 #[test]
-fn a_recursive_value_matched_at_two_widths_has_one_layout() {
+fn a_list_matched_by_two_functions_has_one_layout() {
     let src = "xs = Link(1, Empty) \
                narrow = program(l) do match l do Empty then 0 Link(a, r) then a done done \
-               wide = program(l) do match l do Empty then 0 Link(a, r) then a Other(n) then n done done \
+               wide = program(l) do match l do Empty then 0 Link(a, r) then a done done \
                narrow(xs) + wide(xs)";
     let (p, v) = run_src(src);
     assert_eq!(v, num(2.0));

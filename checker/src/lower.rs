@@ -12,7 +12,7 @@ use crate::hir::{
     Interactive, MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
 };
 use crate::ty::{Group, Row, Ty};
-use crate::vocab::Vocab;
+use crate::vocab::{LIST_TAGS, Vocab};
 use goat_parser::cst::{Children, Goat, Node};
 use goat_parser::interp;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -31,9 +31,25 @@ const MAX_DEPTH: usize = 256;
 /// decision tree reaches it, so nested patterns multiply.
 const MAX_LIST_LEAVES: usize = 4096;
 
-/// The tags the list sugar `[]`/`[x, ...xs]` builds, declared even when no
-/// prelude is.
-const LIST_TAGS: [&str; 2] = ["Empty", "Link"];
+/// The group the list sugar `[]`/`[x, ...xs]` builds, declared even when no
+/// prelude is: `μl. [Empty, Link: {0: a, 1: l}]`, with the element type `a` a
+/// parameter each list literal instantiates afresh.
+fn list_group() -> Group {
+    Group {
+        tags: vec![
+            (LIST_TAGS[0].to_string(), Ty::Unit),
+            (
+                LIST_TAGS[1].to_string(),
+                Ty::Record(Row::of([
+                    ("0".to_string(), Ty::Var(Group::param(0))),
+                    ("1".to_string(), Ty::Var(Group::SELF)),
+                ])),
+            ),
+        ],
+        recursive: true,
+        params: 1,
+    }
+}
 
 /// The name generated bindings for the pieces of a list carry.
 const LIST_NAME: &str = "list";
@@ -125,7 +141,12 @@ pub fn lower_with_vocab(
     source: &str,
 ) -> Result<Lowered, Vec<GoatError>> {
     let mut ctx = Lower::default();
-    for tag in LIST_TAGS.into_iter().chain(vocab.tag_names()) {
+    let list = Arc::new(list_group());
+    for (tag, _) in &list.tags {
+        ctx.tags.insert(tag.clone(), Some(list.clone()));
+        ctx.rank(tag);
+    }
+    for tag in vocab.tag_names() {
         ctx.tags.insert(tag.to_string(), None);
         ctx.rank(tag);
     }
@@ -136,6 +157,7 @@ pub fn lower_with_vocab(
     }
     ctx.tag_groups
         .push(key.tags.iter().map(|(tag, _)| tag.clone()).collect());
+    ctx.tag_groups.push(LIST_TAGS.map(String::from).to_vec());
     let mut prelude_root = ctx.lower_source(prelude, FileId::Prelude)?;
 
     ctx.prelude_scope = defined_names(&prelude_root);
@@ -193,6 +215,61 @@ fn contract_bindings(root: &Expr) -> Option<[(Symbol, Span); 3]> {
     }
     let [init, update, draw] = found.map(|f| <[_; 1]>::try_from(f).ok().map(|[b]| b));
     Some([init?, update?, draw?])
+}
+
+/// A list pattern fixes a length, which the checker can know only for a list
+/// literal.
+fn take_apart_with_match(source: &str) -> String {
+    format!(
+        "a list can be any length, so take it apart with `match`: `match {source} do [] then … [x, ...rest] then … done`"
+    )
+}
+
+/// How many items the list literal `expr` writes out; `None` for anything else.
+fn literal_len(expr: &Expr) -> Option<usize> {
+    let mut len = 0;
+    let mut cursor = expr;
+    loop {
+        match &cursor.kind {
+            ExprKind::Tag { name, payload, .. } if name == "Empty" && payload.is_none() => {
+                return Some(len);
+            }
+            ExprKind::Tag {
+                name,
+                payload: Some(payload),
+                ..
+            } if name == "Link" => {
+                let ExprKind::Record { fields } = &payload.kind else {
+                    return None;
+                };
+                let [(first, _), (second, tail)] = fields.as_slice() else {
+                    return None;
+                };
+                if (first.as_str(), second.as_str()) != ("0", "1") {
+                    return None;
+                }
+                len += 1;
+                cursor = tail;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// The items of a list literal [`literal_len`] accepted.
+fn literal_items(mut expr: Expr) -> Vec<Expr> {
+    let mut items = Vec::new();
+    while let ExprKind::Tag {
+        payload: Some(payload),
+        ..
+    } = &mut expr.kind
+        && let ExprKind::Record { fields } = &mut payload.kind
+    {
+        let tail = fields.pop().expect("a Link has a tail").1;
+        items.push(fields.pop().expect("a Link has an item").1);
+        expr = tail;
+    }
+    items
 }
 
 /// The names bound by the chain of `Let`s that starts at `root`.
@@ -602,7 +679,13 @@ impl Lower {
             declared.push(name.clone());
             tags.push((name, payload));
         }
-        let group = (!is_flat).then(|| Arc::new(Group { tags, recursive }));
+        let group = (!is_flat).then(|| {
+            Arc::new(Group {
+                tags,
+                recursive,
+                params: 0,
+            })
+        });
         if !is_flat {
             self.tag_groups.push(declared.clone());
         }
@@ -1665,9 +1748,43 @@ impl Lower {
 
         let value = self.lower_expr(value_pair);
         let source = self.fresh_symbol();
-        let unpacked = if pattern_pair.is("list_pattern") {
-            Some(self.lower_list_binding(source, pattern_pair, Then::Rest(rest_pair)))
-        } else {
+        if pattern_pair.is("list_pattern") {
+            let pattern = self.list_pattern(pattern_pair);
+            let fits = literal_len(&value).is_some_and(|len| {
+                len == pattern.items.len() || (pattern.rest.is_some() && len >= pattern.items.len())
+            });
+            if fits {
+                return self.bind_literal_items(pattern, literal_items(value), rest_pair);
+            }
+            let message = match literal_len(&value) {
+                Some(len) => {
+                    let takes = pattern.items.len();
+                    let takes = if pattern.rest.is_some() {
+                        format!("at least {takes}")
+                    } else {
+                        takes.to_string()
+                    };
+                    let items = if len == 1 { "item" } else { "items" };
+                    format!("this list has {len} {items} but the pattern takes {takes}")
+                }
+                None => match &value.kind {
+                    ExprKind::Var { name, .. } => take_apart_with_match(name),
+                    _ => take_apart_with_match("xs"),
+                },
+            };
+            self.errors.push(GoatError::new(pattern.span, message));
+            let unpacked = self.bind_list_pattern(source, pattern, Then::Rest(rest_pair));
+            return self.node(
+                span,
+                ExprKind::Let {
+                    symbol: source,
+                    name: source_name,
+                    value: Box::new(value),
+                    rest: Some(Box::new(unpacked)),
+                },
+            );
+        }
+        let unpacked = {
             self.scopes.push();
             let pattern = self.bind_record_pattern(pattern_pair, "name");
             let rest = rest_pair.map(|p| self.lower_expr(p));
@@ -1810,7 +1927,8 @@ impl Lower {
         self.depth -= items.len();
         let empty = self.tag_node(span, "Empty".into(), Vec::new());
         items.into_iter().rev().fold(empty, |tail, item| {
-            self.tag_node(span, "Link".into(), vec![item, tail])
+            let at = item.span;
+            self.tag_node(at, "Link".into(), vec![item, tail])
         })
     }
 
@@ -2350,9 +2468,84 @@ impl Lower {
         then: Then<'i>,
     ) -> Expr {
         let pattern = self.list_pattern(pattern);
+        self.errors
+            .push(GoatError::new(pattern.span, take_apart_with_match("xs")));
+        self.bind_list_pattern(source, pattern, then)
+    }
+
+    fn bind_list_pattern<'i>(
+        &mut self,
+        source: Symbol,
+        pattern: ListPattern,
+        then: Then<'i>,
+    ) -> Expr {
         let span = pattern.span;
         let scrutinee = self.list_var(span, source);
         self.compile_list_match(span, scrutinee, source, vec![(pattern, then, false)], None)
+    }
+
+    /// `[a, b] = [x, y]`: a list literal's length is known, so each name takes
+    /// its item directly and no `match` has to cover other lengths. The items
+    /// are bound first, in order, so a name in the pattern can't capture one
+    /// the items mention.
+    fn bind_literal_items<'i>(
+        &mut self,
+        pattern: ListPattern,
+        items: Vec<Expr>,
+        rest: Option<Node<'i>>,
+    ) -> Expr {
+        let span = pattern.span;
+        let sources: Vec<Symbol> = items.iter().map(|_| self.fresh_symbol()).collect();
+        let (named, spare) = sources.split_at(pattern.items.len());
+        self.scopes.push();
+        let mut bindings: Vec<(Symbol, String, Span, Expr)> = Vec::new();
+        for ((name, name_span), from) in pattern.items.iter().zip(named) {
+            let value = self.list_var(*name_span, *from);
+            bindings.push((self.bind(name), name.clone(), *name_span, value));
+        }
+        if let Some((name, name_span)) = &pattern.rest {
+            let empty = self.tag_node(*name_span, "Empty".into(), Vec::new());
+            let value = spare.iter().rev().fold(empty, |tail, from| {
+                let item = self.list_var(*name_span, *from);
+                self.tag_node(*name_span, "Link".into(), vec![item, tail])
+            });
+            bindings.push((self.bind(name), name.clone(), *name_span, value));
+        }
+        let body = self.lower_then(Then::Rest(rest), span);
+        self.scopes.pop();
+        let named = bindings
+            .into_iter()
+            .rev()
+            .fold(body, |rest, (symbol, name, span, value)| {
+                let rest = Some(Box::new(rest));
+                let value = Box::new(value);
+                self.node(
+                    span,
+                    ExprKind::Let {
+                        symbol,
+                        name,
+                        value,
+                        rest,
+                    },
+                )
+            });
+        sources
+            .into_iter()
+            .zip(items)
+            .rev()
+            .fold(named, |rest, (symbol, item)| {
+                let rest = Some(Box::new(rest));
+                let value = Box::new(item);
+                self.node(
+                    span,
+                    ExprKind::Let {
+                        symbol,
+                        name: LIST_NAME.into(),
+                        value,
+                        rest,
+                    },
+                )
+            })
     }
 
     /// Unpack each list-pattern parameter in turn around `body`.
@@ -2887,9 +3080,12 @@ mod tests {
     }
 
     #[test]
-    fn a_list_literal_spans_its_brackets() {
-        let root = lowered("  [1, 2]").root;
-        assert_eq!((root.span.start, root.span.end), (2, 8));
+    fn each_link_of_a_list_literal_spans_its_item() {
+        let root = lowered("  [1, 22]").root;
+        let (first, tail) = link_parts(&root);
+        assert_eq!((root.span.start, root.span.end), (3, 4));
+        assert_eq!((first.span.start, first.span.end), (3, 4));
+        assert_eq!((tail.span.start, tail.span.end), (6, 8));
     }
 
     #[test]

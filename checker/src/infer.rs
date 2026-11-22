@@ -53,6 +53,9 @@ use std::sync::Arc;
 /// about thirty of them.
 const MAX_TYPE_TERMS: usize = 8192;
 
+/// How a list item that differs from the ones before it is reported.
+const LIST_CLASH: &str = "a list holds one kind of thing";
+
 /// How deep a type may nest, rows included: a row nests one level per field.
 /// The checker recurses as deep as the type does, so this, not the number of
 /// terms, keeps a type from overflowing the stack.
@@ -2657,9 +2660,9 @@ impl Inferer {
         }
     }
 
-    /// Whether `ty` is `[]` or a `Link` list whose items are variants.
+    /// Whether `ty` is a list whose items are variants, or not yet known.
     fn is_list_of_variants(&self, ty: &Ty) -> bool {
-        let Ty::Variant(row) = self.resolve_head(ty) else {
+        let Ty::Variant(row) = self.resolve_head(ty).unfold_head() else {
             return false;
         };
         let (labels, _) = row_shape(&row);
@@ -2672,7 +2675,8 @@ impl Inferer {
         let Ty::Record(link) = self.resolve_head(link) else {
             return false;
         };
-        field_of(&link, "0").is_some_and(|item| matches!(self.resolve_head(item), Ty::Variant(_)))
+        field_of(&link, "0")
+            .is_some_and(|item| matches!(self.resolve_head(item), Ty::Variant(_) | Ty::Var(_)))
     }
 
     fn infer(&mut self, expr: &Expr) -> Ty {
@@ -3040,6 +3044,7 @@ impl Inferer {
                 payload,
                 group,
             } => {
+                let errors_before = self.errors.len();
                 let mut payload_ty = match payload {
                     Some(p) => self.infer(p),
                     None => Ty::Unit,
@@ -3056,7 +3061,21 @@ impl Inferer {
                 }
                 self.constructed.push((name.clone(), expr.span));
                 if let Some(group) = group {
-                    return self.construct_grouped(group, name, &payload_ty, expr.span);
+                    let parts = match payload.as_deref() {
+                        Some(Expr {
+                            kind: ExprKind::Record { fields },
+                            ..
+                        }) if group.params > 0
+                            && fields
+                                .iter()
+                                .map(|(label, _)| label.as_str())
+                                .eq(["0", "1"]) =>
+                        {
+                            Some((fields.iter().map(|(_, e)| e.span).collect(), errors_before))
+                        }
+                        _ => None,
+                    };
+                    return self.construct_grouped(group, name, &payload_ty, parts, expr.span);
                 }
                 Ty::Variant(Row::Extend {
                     at: Default::default(),
@@ -3203,16 +3222,99 @@ impl Inferer {
     }
 
     /// A tag of a declared group builds the group's whole closed type, so a
-    /// `match` over it needs every tag and no annotation.
-    fn construct_grouped(&mut self, group: &Group, tag: &str, payload: &Ty, span: Span) -> Ty {
+    /// `match` over it needs every tag and no annotation. For a group with
+    /// parameters, `parts` holds the spans of the payload's two fields and the
+    /// error count before the payload was inferred: a list's `Link(item, rest)`
+    /// unifies each field where it was written.
+    fn construct_grouped(
+        &mut self,
+        group: &Group,
+        tag: &str,
+        payload: &Ty,
+        parts: Option<(Vec<Span>, usize)>,
+        span: Span,
+    ) -> Ty {
         let binder = self.fresh_id();
-        let whole = group.instantiate(binder);
+        let args: Vec<TypeVar> = (0..group.params).map(|_| self.fresh_id()).collect();
+        let whole = group.instantiate_with(binder, &args);
         if let Ty::Variant(row) = whole.unfold_head()
             && let Some(expected) = field_of(&row, tag)
         {
-            self.unify(payload, expected, span);
+            match (payload, expected, parts) {
+                (Ty::Record(given), Ty::Record(wanted), Some((spans, since)))
+                    if let [item, rest] = spans[..] =>
+                {
+                    self.unify_list_link(given, wanted, &whole, [item, rest], since);
+                }
+                _ => self.unify(payload, expected, span),
+            }
         }
         whole
+    }
+
+    /// `Link(item, rest)`: the item takes the list's element type and `rest`
+    /// must be a list of the same element. The first item that differs from
+    /// those before it is blamed, and a clash further along, which the same
+    /// item caused, is dropped.
+    fn unify_list_link(
+        &mut self,
+        given: &Row,
+        wanted: &Row,
+        whole: &Ty,
+        [item, rest]: [Span; 2],
+        since: usize,
+    ) {
+        let (Some(have), Some(want), Some(tail)) = (
+            field_of(given, "0"),
+            field_of(wanted, "0"),
+            field_of(given, "1"),
+        ) else {
+            self.unify(
+                &Ty::Record(given.clone()),
+                &Ty::Record(wanted.clone()),
+                item,
+            );
+            return;
+        };
+        self.unify(have, want, item);
+        let later = self.list_element(tail);
+        let before = self.errors.len();
+        self.unify(tail, whole, rest);
+        let Some(clash) = self.errors[before..]
+            .iter()
+            .position(|error| error.span == rest && error.message.starts_with("type mismatch"))
+        else {
+            return;
+        };
+        if let Some(message) = later.and_then(|later| self.list_clash_message(have, &later)) {
+            self.errors[before + clash].message = message;
+        }
+        let mut index = 0;
+        self.errors.retain(|error| {
+            index += 1;
+            !(since < index && index <= before && error.message.starts_with(LIST_CLASH))
+        });
+    }
+
+    /// The message for two scalar types, `None` when either is anything more
+    /// involved.
+    fn list_clash_message(&self, earlier: &Ty, later: &Ty) -> Option<String> {
+        let (earlier, later) = (
+            self.shown(earlier).to_string(),
+            self.shown(later).to_string(),
+        );
+        let simple = |name: &str| name.chars().all(char::is_alphabetic);
+        if !simple(&earlier) || !simple(&later) {
+            return None;
+        }
+        let article = if later.starts_with(['A', 'E', 'I', 'O', 'U']) {
+            "an"
+        } else {
+            "a"
+        };
+        Some(format!(
+            "{LIST_CLASH}; this is {article} {later} but the earlier items are {earlier}s"
+        ))
     }
 
     /// The type of `lhs op rhs` given its operands' types. Called after the

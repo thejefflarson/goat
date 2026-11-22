@@ -16,16 +16,13 @@ use crate::hir::{Builtin, Expr, ExprKind, FileId};
 use crate::infer::{DotCalls, Typed, infer_partial};
 use crate::lower::{RECEIVER_NAME, lower_with_vocab};
 use crate::ty::{Row, Scheme, Ty};
-use crate::vocab::Vocab;
+use crate::vocab::{LIST_TAGS, Vocab};
 use goat_parser::cst::{Child, Cst, Goat, Match, Node, TagCase};
 use goat_parser::interp::parse_recovering;
 use goat_parser::lexer;
 use goat_parser::query::Role;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-
-/// The tags the list sugar builds, which every program may use.
-const LIST_TAGS: [&str; 2] = ["Empty", "Link"];
 
 /// The keywords that can begin an expression, besides the function-literal ones.
 const OPERAND_KEYWORDS: [&str; 7] = ["if", "match", "repeat", "for", "true", "false", "not"];

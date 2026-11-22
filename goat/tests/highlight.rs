@@ -93,6 +93,7 @@ fn host_tags(host: &HostInterface) -> HashSet<String> {
         vocab
             .tag_names()
             .chain(vocab.key_tag_names())
+            .chain(goat_checker::vocab::LIST_TAGS)
             .map(String::from),
     );
     tags
