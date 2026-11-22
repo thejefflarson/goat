@@ -631,14 +631,53 @@ impl Row {
 struct Shown<'a> {
     ty: &'a Ty,
     exact: bool,
+    /// The variables that occur once in the whole type being shown. A tag
+    /// whose payload is one of them prints as the bare tag: nothing else in
+    /// the type constrains it, as for the tags of a group never given one.
+    lone: &'a BTreeSet<TypeVar>,
+}
+
+/// The variables that occur exactly once in `ty`.
+fn lone_vars(ty: &Ty) -> BTreeSet<TypeVar> {
+    fn count(ty: &Ty, seen: &mut BTreeMap<TypeVar, usize>) {
+        match ty {
+            Ty::Var(v) => *seen.entry(*v).or_default() += 1,
+            Ty::Func(args, ret) => {
+                args.iter().for_each(|a| count(a, seen));
+                count(ret, seen);
+            }
+            Ty::Record(row) | Ty::Variant(row) => row.fields().for_each(|t| count(t, seen)),
+            Ty::Rec(binder, body) => {
+                *seen.entry(*binder).or_default() += 1;
+                count(body, seen);
+            }
+            _ => {}
+        }
+    }
+    let mut seen = BTreeMap::new();
+    count(ty, &mut seen);
+    seen.into_iter()
+        .filter(|(_, n)| *n == 1)
+        .map(|(v, _)| v)
+        .collect()
 }
 
 impl Ty {
     pub fn exact(&self) -> impl fmt::Display + '_ {
+        ExactTy(self)
+    }
+}
+
+struct ExactTy<'a>(&'a Ty);
+
+impl fmt::Display for ExactTy<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Shown {
-            ty: self,
+            ty: self.0,
             exact: true,
+            lone: &lone_vars(self.0),
         }
+        .fmt(f)
     }
 }
 
@@ -647,6 +686,7 @@ impl fmt::Display for Ty {
         Shown {
             ty: self,
             exact: false,
+            lone: &lone_vars(self),
         }
         .fmt(f)
     }
@@ -657,6 +697,7 @@ impl fmt::Display for Shown<'_> {
         let show = |ty| Shown {
             ty,
             exact: self.exact,
+            lone: self.lone,
         };
         match self.ty {
             Ty::Var(v) => write!(f, "{}", name_of(*v)),
@@ -683,12 +724,12 @@ impl fmt::Display for Shown<'_> {
             }
             Ty::Record(row) => {
                 write!(f, "{{")?;
-                row.fmt_fields(f, true, false, self.exact)?;
+                row.fmt_fields(f, true, false, self)?;
                 write!(f, "}}")
             }
             Ty::Variant(row) => {
                 write!(f, "[")?;
-                row.fmt_fields(f, true, true, self.exact)?;
+                row.fmt_fields(f, true, true, self)?;
                 write!(f, "]")
             }
             Ty::Rec(binder, body)
@@ -759,8 +800,14 @@ impl Row {
         f: &mut fmt::Formatter<'_>,
         first: bool,
         bare_unit: bool,
-        exact: bool,
+        shown: &Shown<'_>,
     ) -> fmt::Result {
+        let exact = shown.exact;
+        let show = |ty| Shown {
+            ty,
+            exact,
+            lone: shown.lone,
+        };
         match self {
             Row::Empty => Ok(()),
             Row::Var(_) if MESSAGE_NAMES.get() => {
@@ -779,12 +826,13 @@ impl Row {
                 if !first {
                     write!(f, ", ")?;
                 }
-                if bare_unit && **field == Ty::Unit {
+                let unused = matches!(**field, Ty::Var(v) if shown.lone.contains(&v));
+                if bare_unit && (**field == Ty::Unit || unused) {
                     write!(f, "{label}")?;
                 } else {
-                    write!(f, "{label}: {}", Shown { ty: field, exact })?;
+                    write!(f, "{label}: {}", show(field))?;
                 }
-                rest.fmt_fields(f, false, bare_unit, exact)
+                rest.fmt_fields(f, false, bare_unit, shown)
             }
             Row::Maybe {
                 label, field, rest, ..
@@ -793,8 +841,8 @@ impl Row {
                     write!(f, ", ")?;
                 }
                 let mark = if exact { "?" } else { "" };
-                write!(f, "{label}{mark}: {}", Shown { ty: field, exact })?;
-                rest.fmt_fields(f, false, bare_unit, exact)
+                write!(f, "{label}{mark}: {}", show(field))?;
+                rest.fmt_fields(f, false, bare_unit, shown)
             }
         }
     }

@@ -102,7 +102,7 @@ fn a_match_over_a_user_group_handles_every_tag() {
 
 #[test]
 fn a_tag_used_with_no_argument_has_no_payload_at_that_use() {
-    assert_eq!(type_of("tag Light = Red | Green Red"), "[Red, Green: t2]");
+    assert_eq!(type_of("tag Light = Red | Green Red"), "[Red, Green]");
     let source = "tag Light = Red | Green \
         f = program(l) do match l do Red then 1 Green then 2 done done \
         f(Red) + f(Green)";
@@ -240,4 +240,38 @@ fn a_user_group_named_like_the_list_has_the_lists_element_rule() {
             .starts_with("a list holds one kind of thing"),
         "{errors:?}"
     );
+}
+
+#[test]
+fn a_tag_whose_payload_nothing_constrains_prints_as_the_bare_tag() {
+    assert_eq!(
+        type_of("tag Light = Red | Green | Amber Green"),
+        "[Red, Green, Amber]"
+    );
+    assert_eq!(
+        type_of("tag Maybe = Nothing | Just Nothing"),
+        "[Nothing, Just]"
+    );
+    assert_eq!(
+        type_of("tag Maybe = Nothing | Just Just(1)"),
+        "[Nothing, Just: Number]"
+    );
+    let pile = type_of("tag Pile = Nil | Cons Nil");
+    assert_eq!(pile, "[Nil, Cons]");
+    let function = type_of(
+        "tag Maybe = Nothing | Just or_else = program(m, d) do match m do Nothing then d Just(v) then v done done or_else",
+    );
+    assert!(
+        function.contains("Just: "),
+        "a shared payload still prints: {function}"
+    );
+}
+
+#[test]
+fn an_error_naming_an_unused_payload_leaves_it_out() {
+    let (message, _) = first_error(
+        "tag Light = Red | Green | Amber f = program(l) do match l do Red then 1 Green then 2 done done f(Amber)",
+    );
+    assert!(!message.contains(": t"), "{message}");
+    assert!(message.contains("Amber"), "{message}");
 }
