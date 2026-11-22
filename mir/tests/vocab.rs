@@ -17,6 +17,7 @@ fn record<const N: usize>(fields: [(&str, Ty); N]) -> Ty {
 
 fn toy() -> Vocab {
     let pad = Group {
+        name: "Pad".into(),
         tags: vec![("A".into(), Ty::Unit), ("B".into(), Ty::Unit)],
         recursive: false,
         params: 0,
@@ -90,7 +91,7 @@ done
 "#;
 
 fn lower(vocab: &Vocab, source: &str) -> Program {
-    let prelude = format!("tag List = Empty | Link\n{}", vocab.prelude);
+    let prelude = format!("tag List = Empty | Link(_, List)\n{}", vocab.prelude);
     let checked = check_with_vocab(&prelude, vocab, source).expect("checks");
     let program = mono(&checked).expect("lowers");
     assert_eq!(verify(&program), Ok(()));
@@ -193,7 +194,7 @@ fn a_decoder_nothing_uses_adds_no_tags_to_the_numbering() {
         events: Vec::new(),
         ..Vocab::turtle()
     };
-    let source = "tag Ring\nRing(1)";
+    let source = "tag Ring(_)\nRing(1)";
     assert_eq!(lower(&with, source), lower(&without, source));
 }
 
@@ -254,7 +255,9 @@ fn a_list_needs_the_prelude_that_declares_it() {
         .err()
         .expect("an error");
     assert!(
-        errors[0].message.contains("tag List = Empty | Link"),
+        errors[0]
+            .message
+            .contains("tag List = Empty | Link(_, List)"),
         "{errors:?}"
     );
     let program = lower(&vocab, source);

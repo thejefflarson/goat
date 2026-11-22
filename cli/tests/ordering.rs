@@ -76,7 +76,7 @@ fn records_order_field_by_field_in_label_order() {
 
 #[test]
 fn tags_order_by_declaration_then_payload() {
-    let tags = "tag Shape = Ring | Square | Dot \
+    let tags = "tag Shape = Ring(_) | Square(_) | Dot \
                 pick = program(n) do \
                   if n == 1 then Ring(5) else if n == 2 then Ring(7) else \
                   if n == 3 then Square(1) else Dot done done done \
@@ -162,10 +162,10 @@ fn list_tags_stay_empty_before_link_whatever_the_program_declares() {
 
 #[test]
 fn tags_with_several_arguments_compare_left_to_right() {
-    let src = "tag Pair Pair(1, \"b\") < Pair(1, \"c\")";
+    let src = "tag Pair(_) Pair(1, \"b\") < Pair(1, \"c\")";
     assert_eq!(run(src), "true");
-    assert_eq!(run("tag Pair Pair(2, \"a\") < Pair(1, \"c\")"), "false");
-    assert_eq!(run("tag Pair Pair(1, \"a\") >= Pair(1, \"a\")"), "true");
+    assert_eq!(run("tag Pair(_) Pair(2, \"a\") < Pair(1, \"c\")"), "false");
+    assert_eq!(run("tag Pair(_) Pair(1, \"a\") >= Pair(1, \"a\")"), "true");
 }
 
 #[test]
@@ -205,7 +205,7 @@ fn ordering_long_strings_walks_every_byte() {
 
 #[test]
 fn ordering_trees() {
-    let tree = "tag Tree = Leaf | Node leaf = Leaf \
+    let tree = "tag Tree = Leaf | Node(_) leaf = Leaf \
                 node = program(l, v, r) do Node(l, v, r) done ";
     let src = format!(
         "{tree} a = node(node(leaf, 1, leaf), 2, node(leaf, 3, leaf)) \

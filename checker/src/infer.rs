@@ -53,9 +53,6 @@ use std::sync::Arc;
 /// about thirty of them.
 const MAX_TYPE_TERMS: usize = 8192;
 
-/// How a list item that differs from the ones before it is reported.
-const LIST_CLASH: &str = "a list holds one kind of thing";
-
 /// How deep a type may nest, rows included: a row nests one level per field.
 /// The checker recurses as deep as the type does, so this, not the number of
 /// terms, keeps a type from overflowing the stack.
@@ -3059,11 +3056,11 @@ impl Inferer {
                         Some(Expr {
                             kind: ExprKind::Record { fields },
                             ..
-                        }) if group.is_list()
+                        }) if group.params > 0
                             && fields
                                 .iter()
-                                .map(|(label, _)| label.as_str())
-                                .eq(["0", "1"]) =>
+                                .enumerate()
+                                .all(|(i, (label, _))| *label == i.to_string()) =>
                         {
                             Some((fields.iter().map(|(_, e)| e.span).collect(), errors_before))
                         }
@@ -3235,10 +3232,8 @@ impl Inferer {
             && let Some(expected) = field_of(&row, tag)
         {
             match (payload, expected, parts) {
-                (Ty::Record(given), Ty::Record(wanted), Some((spans, since)))
-                    if let [item, rest] = spans[..] =>
-                {
-                    self.unify_list_link(given, wanted, &whole, [item, rest], since);
+                (Ty::Record(given), Ty::Record(wanted), Some((spans, since))) => {
+                    self.unify_fields(group, tag, [given, wanted], &whole, (&spans, since));
                 }
                 _ => self.unify(payload, expected, span),
             }
@@ -3246,59 +3241,92 @@ impl Inferer {
         whole
     }
 
-    /// `Link(item, rest)`: the item takes the list's element type and `rest`
-    /// must be a list of the same element. The first item that differs from
-    /// those before it is blamed, and a clash further along, which the same
-    /// item caused, is dropped.
-    fn unify_list_link(
+    /// A positional construction `Cons(item, rest)` of a group with parameters:
+    /// each field is unified where it was written, and a field that holds the
+    /// group itself must be the same group instance, so one value never mixes
+    /// the types of its slots. The first item that differs from those before
+    /// it is blamed, and a clash further along, which the same item caused, is
+    /// dropped. Any other shape of payload is unified whole.
+    fn unify_fields(
         &mut self,
-        given: &Row,
-        wanted: &Row,
+        group: &Group,
+        tag: &str,
+        [given, wanted]: [&Row; 2],
         whole: &Ty,
-        [item, rest]: [Span; 2],
-        since: usize,
+        (spans, since): (&[Span], usize),
     ) {
-        let (Some(have), Some(want), Some(tail)) = (
-            field_of(given, "0"),
-            field_of(wanted, "0"),
-            field_of(given, "1"),
-        ) else {
+        let pairs: Option<Vec<(&Ty, &Ty)>> = (0..spans.len())
+            .map(|i| {
+                let label = i.to_string();
+                Some((field_of(given, &label)?, field_of(wanted, &label)?))
+            })
+            .collect();
+        let Some(pairs) = pairs.filter(|_| {
+            given.fields().count() == spans.len() && wanted.fields().count() == spans.len()
+        }) else {
             self.unify(
                 &Ty::Record(given.clone()),
                 &Ty::Record(wanted.clone()),
-                item,
+                spans[0],
             );
             return;
         };
-        self.unify(have, want, item);
-        let later = self.list_element(tail);
-        let before = self.errors.len();
-        self.unify(tail, whole, rest);
-        let Some(clash) = self.errors[before..]
-            .iter()
-            .position(|error| error.span == rest && error.message.starts_with("type mismatch"))
-        else {
-            return;
-        };
-        if let Some(message) = later.and_then(|later| self.list_clash_message(have, &later)) {
-            self.errors[before + clash].message = message;
+        let slots = group.slots_of(tag);
+        for (i, (have, want)) in pairs.into_iter().enumerate() {
+            if want != whole {
+                self.unify(have, want, spans[i]);
+                continue;
+            }
+            let slot_pairs: Vec<(Ty, Ty)> = slots
+                .iter()
+                .filter_map(|j| {
+                    let earlier = field_of(given, &j.to_string())?.clone();
+                    Some((earlier, self.field_of_tag(have, tag, *j)?))
+                })
+                .collect();
+            let before = self.errors.len();
+            self.unify(have, whole, spans[i]);
+            let Some(clash) = self.errors[before..].iter().position(|error| {
+                error.span == spans[i] && error.message.starts_with("type mismatch")
+            }) else {
+                continue;
+            };
+            let prefix = group.clash();
+            if let Some(message) = slot_pairs
+                .iter()
+                .find_map(|(earlier, later)| self.clash_message(&prefix, earlier, later))
+            {
+                self.errors[before + clash].message = message;
+            }
+            let mut index = 0;
+            self.errors.retain(|error| {
+                index += 1;
+                !(since < index && index <= before && error.message.starts_with(&prefix))
+            });
         }
-        let mut index = 0;
-        self.errors.retain(|error| {
-            index += 1;
-            !(since < index && index <= before && error.message.starts_with(LIST_CLASH))
-        });
+    }
+
+    /// The `index`th field of `tag`'s payload in `ty`, if `ty` is already known
+    /// to be built with that tag.
+    fn field_of_tag(&self, ty: &Ty, tag: &str, index: usize) -> Option<Ty> {
+        let Ty::Variant(row) = self.resolve_head(ty).unfold_head() else {
+            return None;
+        };
+        let Ty::Record(payload) = self.resolve(field_of(&row, tag)?) else {
+            return None;
+        };
+        field_of(&payload, &index.to_string()).cloned()
     }
 
     /// The message for two scalar types, `None` when either is anything more
     /// involved.
-    fn list_clash_message(&self, earlier: &Ty, later: &Ty) -> Option<String> {
+    fn clash_message(&self, prefix: &str, earlier: &Ty, later: &Ty) -> Option<String> {
         let (earlier, later) = (
             self.shown(earlier).to_string(),
             self.shown(later).to_string(),
         );
         let simple = |name: &str| name.chars().all(char::is_alphabetic);
-        if !simple(&earlier) || !simple(&later) {
+        if earlier == later || !simple(&earlier) || !simple(&later) {
             return None;
         }
         let article = if later.starts_with(['A', 'E', 'I', 'O', 'U']) {
@@ -3307,7 +3335,7 @@ impl Inferer {
             "a"
         };
         Some(format!(
-            "{LIST_CLASH}; this is {article} {later} but the earlier items are {earlier}s"
+            "{prefix}; this is {article} {later} but the earlier items are {earlier}s"
         ))
     }
 
@@ -4682,7 +4710,7 @@ fn row_after(row: &Row, n: usize) -> Row {
     }
 }
 
-fn field_of<'a>(row: &'a Row, label: &str) -> Option<&'a Ty> {
+pub(crate) fn field_of<'a>(row: &'a Row, label: &str) -> Option<&'a Ty> {
     match row {
         Row::Extend {
             label: l,

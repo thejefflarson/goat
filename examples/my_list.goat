@@ -1,7 +1,8 @@
-# A list, built from scratch. A tag declared without a payload takes whatever
-# you give it, so one `Pile` works for numbers and for words alike. One pile
-# never mixes the two: `Cons(1, Cons("a", Nil))` is an error.
-tag Pile = Nil | Cons
+# A list, built from scratch. The `_` in `Cons(_, Pile)` leaves the type of an
+# item to each pile, and writing the group's own name, `Pile`, marks where a
+# pile holds the rest of itself. So one `Pile` works for numbers and for words
+# alike, and one pile never mixes the two: `Cons(1, Cons("a", Nil))` is an error.
+tag Pile = Nil | Cons(_, Pile)
 
 size = program(pile) do
   match pile do

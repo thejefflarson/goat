@@ -309,22 +309,25 @@ add = program(self, n) do n done
 
 ### Tags and `match`
 
-A tag is declared with `tag` and builds a variant when it is called with a
-payload. `match` takes a value apart by its tag. A `match` over numbers or
-strings needs an `else`, since they can never be exhausted.
+A tag is declared with `tag`. Written without parentheses it has no payload;
+with them it builds a variant when it is called with one. `match` takes a value
+apart by its tag. A `match` over numbers or strings needs an `else`, since they
+can never be exhausted.
 
 Every tag belongs to a group, and a group is closed: a `match` over it must
 handle every tag, with no `else`. Tags that go together are declared together,
-`tag Shape = Circle | Square`, and a lone `tag Done` is a group of one. Two
-groups never mix, so `if c then Done else Circle done` is an error.
+`tag Shape = Circle(Number) | Dot`, and a lone `tag Done` is a group of one. Two
+groups never mix, so `if c then Done else Dot done` is an error.
 
-A tag written without a payload takes whatever you give it, a fresh type each
-time. `Disc(5)` and `Disc("big")` both work: a group of such tags is generic,
-and a list is the example. A tag written with a payload, like `Hit(Int)`,
-keeps it.
+A payload type is `Number`, `Int`, `Bool`, `Unit`, `String`, a record or list of
+those, the group's own name, or `_`. Each `_` leaves a type to each use, so a
+group with `_` is generic: `Disc(5)` and `Disc("big")` both work when `tag
+Shape = Disc(_) | Square(_)`. The group's own name marks where it holds itself,
+with the same `_`s, so one value never mixes the types in its slots. A payload
+written with a type, like `Hit(Int)`, keeps it.
 
 ```goat
-tag Shape = Disc | Square
+tag Shape = Disc(_) | Square(_)
 
 area = program(shape) do
   match shape do
@@ -341,14 +344,13 @@ match 5 do
 done
 ```
 
-A group that names itself can hold itself in a payload, and one with no
-written payloads can be generic. A list is a group in the prelude:
-`tag List = Empty | Link`. You can write your own.
+A list is a group in the prelude, `tag List = Empty | Link(_, List)`. You can
+write your own.
 
 ```goat
 tag Light = Red | Green | Amber
 tag Tree = Leaf | Node({left: Tree, right: Tree})
-tag Pile = Nil | Cons
+tag Pile = Nil | Cons(_, Pile)
 
 seconds = program(light) do
   match light do
@@ -378,18 +380,11 @@ print(count(Cons(1, Cons(2, Nil))));
 print(count(Cons("a", Nil)))
 ```
 
-A function that walks a pile needs every item to have one type, so a pile of
-numbers and words together is an error:
+A pile of numbers and words together is an error where it is built:
 
 ```goat error
-tag Pile = Nil | Cons
-count = program(pile) do
-  match pile do
-    Nil then 0
-    Cons(head, rest) then 1 + count(rest)
-  done
-done
-count(Cons(1, Cons("a", Nil)))
+tag Pile = Nil | Cons(_, Pile)
+xs = Cons(1, Cons("a", Nil))
 ```
 
 The host (the turtle) provides tags of its own, like `Circle`, `Tick` and

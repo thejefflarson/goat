@@ -133,7 +133,7 @@ patterns) — never a blend of base types.
 - **Moving the host vocabulary into a goat prelude** — amends ADR 0015; separable
   follow-on. v1 only makes the vocab tag *names* declared.
 
-## Amendment: every tag is closed, and a tag without a payload is generic
+## Amendment: every tag is closed, and `_` leaves a payload to each use
 
 The decision above left a lone `tag Ping` open, and left lists open (`Empty`
 and `Link` were lone tags), so `xs = [1, "a"]` was rejected only later, inside
@@ -142,26 +142,27 @@ the function that walked it. This amendment closes both.
 1. **A lone tag is a group of one.** `tag Ping` declares the closed group
    `[Ping]`. Two lone tags never mix: `if c then Ping else Pong done` is an
    error, and `tag Ping | Pong` is how to say they belong together.
-2. **A tag written without a payload has its payload inferred.** In `tag List =
-   Empty | Link` or `tag Maybe = Nothing | Just`, each payload-less tag carries
-   an implicit type parameter, instantiated with a fresh type variable at every
-   construction. `Just(1)` and `Just("a")` both type, with one `Just`.
-   A tag used with no argument still means no payload at that use. A tag
-   written with a payload (`Hit(Int)`) keeps it, concrete. This rule involves no
-   annotation and does not depend on letter case.
-3. **Recursion is found by use.** Constructing a value does not say which field
-   of a payload is the group itself, so the knot is tied where the group is
-   consumed, as it was for the open lists: a function that matches
-   `Cons(head, rest)` and calls itself on `rest` gets the recursive type
-   (ADR 0032), and applying it to a value whose items differ in type is a type
-   mismatch there. The one exception is the list: a group declared exactly
-   `tag List = Empty | Link` is recognised by its tags, with `Link` carrying
-   `{0: item, 1: the list}`, so `[1, "a"]` is rejected where it is written, with
-   the message "a list holds one kind of thing" at the item that differs.
-4. **The list is an ordinary group in the prelude.** The compiler no longer
-   builds it; the sugar `[..]` and the list patterns desugar to `Empty` and
-   `Link`, and a program checked with no prelude says that lists come from
-   `tag List = Empty | Link`.
+2. **A tag written without parentheses has no payload.** `tag Light = Red |
+   Green`. A payload is written in parentheses: `Hit(Int)`.
+3. **`_` in a payload is an inferred slot.** It is allowed wherever a payload
+   type is, including inside a record or list type: `Cons(_, Pile)`,
+   `More(_, _, Pairs)`, `Node(Tree, _, Tree)`, `Hit(Int, _)`,
+   `Cons({x: _, y: _}, Pile)`, `Bag([_])`. Each `_` is an independent implicit
+   parameter of the group, instantiated with a fresh type variable at every
+   construction. Writing the group's own name in a payload marks where the
+   group holds itself, and that occurrence carries the same parameters, so
+   the knot is tied where a value is built: `Cons(1, Cons("a", Nil))` is an
+   error at the line that builds it ("a `Pile` holds one kind of thing; this
+   is a String but the earlier items are Numbers"), and a payload of a
+   different shape is still unified in full. A payload written with a type
+   (`Hit(Int)`) stays concrete. No annotation syntax is added: `_` is not a
+   type, only a slot the declaration leaves open, and letter case never
+   decides what a name means.
+4. **The list is an ordinary group in the prelude**, `tag List = Empty |
+   Link(_, List)`. The compiler does not build it; the sugar `[..]` and the
+   list patterns desugar to `Empty` and `Link`, and a program checked with no
+   prelude says that lists come from that declaration. The built-in list keeps
+   its wording, "a list holds one kind of thing", and its per-item spans.
 5. **The host's families stay open, as the one named exception.** The host's
    event tags (`Tick`, `KeyDown`, ...) and shape tags (`Circle`, `Line`, ...)
    are not groups: a program may handle a subset of them (ADR 0015, ADR 0020).
@@ -170,4 +171,6 @@ the function that walked it. This amendment closes both.
    another name. No two declarations share a tag name.
 
 Mono's layout families (ADR 0010) are unchanged: they remain for the host
-families and for rows narrowed by a partial `match`.
+families and for rows narrowed by a partial `match`. Fixing the numeric
+widening of a list's items (ADR 0040) is still special to the built-in list's
+`Link`; a user group's slots unify plainly.

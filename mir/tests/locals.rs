@@ -42,7 +42,7 @@ fn mono_locals_agree_with_a_walk_of_every_example() {
 
 #[test]
 fn mono_records_a_type_for_every_pointer_binder() {
-    let src = "tag Box\nb = Box(1)\nr = {x: 1, y: \"s\"}\nmatch b do Box(n) then r.y done";
+    let src = "tag Box(_)\nb = Box(1)\nr = {x: 1, y: \"s\"}\nmatch b do Box(n) then r.y done";
     let program = mono(&check(src).expect("checks")).expect("lowers");
     assert_table_matches_walk("inline", &program);
     let entry = &program.funcs[0];

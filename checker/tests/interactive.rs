@@ -16,7 +16,7 @@ const DRAW: &str =
     "draw = program(model) do [Line({x1: 0, y1: 0, x2: model.x, y2: 0, color: \"red\"})] done\n";
 
 /// Declared so the host contract, not name resolution, is what rejects them.
-const OFF_CONTRACT_TAGS: &str = "tag Triangle tag Frobnicate\n";
+const OFF_CONTRACT_TAGS: &str = "tag Triangle(_) tag Frobnicate\n";
 
 fn interactive(init: &str, update: &str, draw: &str) -> String {
     format!("{OFF_CONTRACT_TAGS}init = {init}\n{update}{draw}")
@@ -54,7 +54,7 @@ fn a_program_with_the_three_bindings_is_interactive() {
 fn a_program_without_them_is_not() {
     assert!(checks("1 + 2").interactive.is_none());
     assert!(
-        checks("tag Ring init = {x: 0}\ndraw = program(m) do [Ring(1)] done\n1")
+        checks("tag Ring(_) init = {x: 0}\ndraw = program(m) do [Ring(1)] done\n1")
             .interactive
             .is_none()
     );

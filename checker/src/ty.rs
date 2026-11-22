@@ -2,7 +2,7 @@
 //! for let-polymorphism.
 
 use crate::hir::{Boundary, Span};
-use crate::infer::subst_vars;
+use crate::infer::{field_of, subst_vars};
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -118,11 +118,12 @@ pub const PLAIN: Ty = Ty::Str;
 
 /// The tags of one `tag` declaration: a closed variant type. A payload that
 /// mentions the group itself holds `Ty::Var(Group::SELF)`, and one that
-/// mentions its `i`th parameter holds `Ty::Var(Group::param(i))`, which each
-/// instantiation replaces with a fresh variable. Only built-in groups have
-/// parameters.
+/// mentions its `i`th parameter, written `_` in the declaration, holds
+/// `Ty::Var(Group::param(i))`, which each instantiation replaces with a fresh
+/// variable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Group {
+    pub name: String,
     pub tags: Vec<(String, Ty)>,
     pub recursive: bool,
     pub params: usize,
@@ -131,29 +132,28 @@ pub struct Group {
 impl Group {
     pub const SELF: TypeVar = TypeVar::MAX;
 
-    /// What `tag List = Empty | Link` declares: `μl. [Empty, Link: {0: a, 1: l}]`
-    /// with the element type `a` a parameter each list instantiates afresh,
-    /// which is how `[1, "a"]` is rejected where it is written.
-    pub fn list() -> Group {
-        let [empty, link] = crate::vocab::LIST_TAGS.map(String::from);
-        Group {
-            tags: vec![
-                (empty, Ty::Unit),
-                (
-                    link,
-                    Ty::Record(Row::of([
-                        ("0".to_string(), Ty::Var(Self::param(0))),
-                        ("1".to_string(), Ty::Var(Self::SELF)),
-                    ])),
-                ),
-            ],
-            recursive: true,
-            params: 1,
+    /// How a value of this group that mixes the types of its slots starts to
+    /// be described: the built-in list keeps its own wording.
+    pub fn clash(&self) -> String {
+        match self.name.as_str() {
+            "List" => "a list holds one kind of thing".to_string(),
+            "" => "a group holds one kind of thing".to_string(),
+            name => format!("a `{name}` holds one kind of thing"),
         }
     }
 
-    pub fn is_list(&self) -> bool {
-        *self == Self::list()
+    /// The positions of the fields of `tag`'s payload that are bare
+    /// parameters: the items a recursive group is built around.
+    pub fn slots_of(&self, tag: &str) -> Vec<usize> {
+        let Some((_, Ty::Record(row))) = self.tags.iter().find(|(name, _)| name == tag) else {
+            return Vec::new();
+        };
+        (0..row.fields().count())
+            .filter(|i| {
+                matches!(field_of(row, &i.to_string()), Some(&Ty::Var(v))
+                    if v < Self::SELF && Self::SELF - 1 - v < self.params as TypeVar)
+            })
+            .collect()
     }
 
     /// The placeholder for the group's `index`th parameter in a payload.
@@ -532,7 +532,7 @@ impl Row {
         })
     }
 
-    fn fields(&self) -> impl Iterator<Item = &Ty> {
+    pub(crate) fn fields(&self) -> impl Iterator<Item = &Ty> {
         let mut cursor = Some(self);
         std::iter::from_fn(move || match cursor? {
             Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
@@ -945,6 +945,7 @@ mod tests {
     #[test]
     fn a_group_parameter_is_replaced_at_each_instantiation() {
         let group = Group {
+            name: "List".to_string(),
             tags: vec![
                 ("Nil".to_string(), Ty::Unit),
                 (

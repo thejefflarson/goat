@@ -1,7 +1,8 @@
-//! A tag written without a payload takes whatever it is given, a fresh type at
-//! each construction, so a group of such tags is generic and a kid can define
-//! a list in pure goat. Every tag is in a closed group; a lone tag is a group
-//! of one.
+//! A `_` in a tag payload leaves that slot's type to each use: a fresh type at
+//! every construction, the same throughout one value, because the group's own
+//! name inside its payload carries the same slots. A tag written without
+//! parentheses has no payload. Every tag is in a closed group; a lone tag is a
+//! group of one.
 
 use goat_checker::{GoatError, PRELUDE, check, check_with_prelude};
 
@@ -26,7 +27,7 @@ fn type_of(source: &str) -> String {
         .to_string()
 }
 
-const PILE: &str = "tag Pile = Nil | Cons \
+const PILE: &str = "tag Pile = Nil | Cons(_, Pile) \
     size = program(xs) do match xs do Nil then 0 Cons(head, rest) then 1 + size(rest) done done ";
 
 #[test]
@@ -39,23 +40,40 @@ fn one_user_list_function_counts_numbers_and_words() {
 fn a_user_list_may_hold_lists() {
     let nested = format!("{PILE} size(Cons(Cons(1, Nil), Cons(Cons(2, Nil), Nil)))");
     assert_eq!(type_of(&nested), "Number");
+    let mixed = format!("{PILE} size(Cons(Cons(1, Nil), Cons(Cons(\"a\", Nil), Nil)))");
+    assert!(errors_of(&mixed)[0].message.contains("type mismatch"));
 }
 
 #[test]
-fn a_user_list_never_mixes_element_types_where_it_is_walked() {
-    let source = format!("{PILE} size(Cons(1, Cons(\"a\", Nil)))");
-    let (message, text) = first_error(&source);
-    assert!(message.contains("type mismatch"), "{message}");
-    assert!(text.starts_with("size("), "{text}");
+fn mixing_item_types_is_caught_where_the_pile_is_built() {
+    let source = "tag Pile = Nil | Cons(_, Pile) xs = Cons(1, Cons(\"a\", Nil)) 1";
+    let errors = errors_of(source);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(
+        errors[0].message,
+        "a `Pile` holds one kind of thing; this is a String but the earlier items are Numbers"
+    );
+    assert_eq!(
+        &source[errors[0].span.start..errors[0].span.end],
+        "Cons(\"a\", Nil)"
+    );
+}
+
+#[test]
+fn the_third_item_is_the_one_blamed() {
+    let source = "tag Pile = Nil | Cons(_, Pile) xs = Cons(1, Cons(2, Cons(true, Nil))) 1";
+    let errors = errors_of(source);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].message.contains("this is a Bool"), "{errors:?}");
 }
 
 #[test]
 fn a_function_over_a_user_list_keeps_the_element_type() {
-    let source = "tag Pile = Nil | Cons \
+    let source = "tag Pile = Nil | Cons(_, Pile) \
         first_or = program(xs, fallback) do match xs do Nil then fallback Cons(head, rest) then head done done \
         first_or(Cons(1, Nil), 0) + first_or(Nil, 5)";
     assert_eq!(type_of(source), "Number");
-    let mixed = "tag Pile = Nil | Cons \
+    let mixed = "tag Pile = Nil | Cons(_, Pile) \
         first_or = program(xs, fallback) do match xs do Nil then fallback Cons(head, rest) then head done done \
         first_or(Cons(1, Nil), \"none\")";
     assert!(errors_of(mixed)[0].message.contains("type mismatch"));
@@ -63,46 +81,116 @@ fn a_function_over_a_user_list_keeps_the_element_type() {
 
 #[test]
 fn a_maybe_holds_one_value_of_any_type() {
-    let source = "tag Maybe = Nothing | Just \
-        or_else = program(m, fallback) do match m do Nothing then fallback Just(v) then v done done \
-        or_else(Just(3), 0) + or_else(Nothing, 1)";
-    assert_eq!(type_of(source), "Number");
-    let words = "tag Maybe = Nothing | Just \
-        or_else = program(m, fallback) do match m do Nothing then fallback Just(v) then v done done \
-        or_else(Just(\"hi\"), \"\")";
-    assert_eq!(type_of(words), "String");
-    let wrong = "tag Maybe = Nothing | Just \
-        or_else = program(m, fallback) do match m do Nothing then fallback Just(v) then v done done \
-        or_else(Just(3), \"\")";
-    assert!(errors_of(wrong)[0].message.contains("type mismatch"));
+    let or_else = "tag Maybe = Nothing | Just(_) \
+        or_else = program(m, fallback) do match m do Nothing then fallback Just(v) then v done done ";
+    assert_eq!(
+        type_of(&format!(
+            "{or_else} or_else(Just(3), 0) + or_else(Nothing, 1)"
+        )),
+        "Number"
+    );
+    assert_eq!(
+        type_of(&format!("{or_else} or_else(Just(\"hi\"), \"\")")),
+        "String"
+    );
+    let wrong = format!("{or_else} or_else(Just(3), \"\")");
+    assert!(errors_of(&wrong)[0].message.contains("type mismatch"));
 }
 
 #[test]
-fn a_user_tree_is_generic_in_what_it_holds() {
-    let source = "tag Tree = Leaf | Node \
-        total = program(t) do match t do Leaf then 0 Node(l, v, r) then total(l) + v + total(r) done done \
-        count = program(t) do match t do Leaf then 0 Node(l, v, r) then count(l) + 1 + count(r) done done \
-        total(Node(Leaf, 1, Node(Leaf, 2, Leaf))) + count(Node(Leaf, \"a\", Leaf))";
-    assert_eq!(type_of(source), "Number");
+fn a_tree_has_one_slot_type_throughout() {
+    let tree = "tag Tree = Leaf | Node(Tree, _, Tree) \
+        count = program(t) do match t do Leaf then 0 Node(l, v, r) then count(l) + 1 + count(r) done done ";
+    let good = format!(
+        "{tree} count(Node(Leaf, 1, Node(Leaf, 2, Leaf))) + count(Node(Leaf, \"a\", Leaf))"
+    );
+    assert_eq!(type_of(&good), "Number");
+    let source = format!("{tree} t = Node(Leaf, 1, Node(Leaf, \"a\", Leaf)) 1");
+    let (message, text) = first_error(&source);
+    assert_eq!(
+        message,
+        "a `Tree` holds one kind of thing; this is a String but the earlier items are Numbers"
+    );
+    assert_eq!(text, "Node(Leaf, \"a\", Leaf)");
+}
+
+#[test]
+fn two_slots_may_differ_from_each_other_but_not_along_the_value() {
+    let pairs = "tag Pairs = End | More(_, _, Pairs) ";
+    assert!(
+        check(&format!(
+            "{pairs} x = More(1, \"a\", More(2, \"b\", End)) 1"
+        ))
+        .is_ok()
+    );
+    let (message, _) = first_error(&format!(
+        "{pairs} x = More(1, \"a\", More(\"x\", \"b\", End)) 1"
+    ));
+    assert!(message.contains("holds one kind of thing"), "{message}");
+    let (message, _) = first_error(&format!("{pairs} x = More(1, \"a\", More(2, 3, End)) 1"));
+    assert!(
+        message.contains("this is a Number but the earlier items are Strings"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_slot_may_sit_beside_a_written_type() {
+    let shots = "tag Shots = Miss | Hit(Int, _) ";
+    assert!(check(&format!("{shots} Hit(3, \"far\")")).is_ok());
+    assert!(check(&format!("{shots} Hit(3, 4)")).is_ok());
+    let (message, _) = first_error(&format!("{shots} Hit(\"3\", 4)"));
+    assert!(message.contains("type mismatch"), "{message}");
+}
+
+#[test]
+fn a_slot_may_sit_inside_a_record_or_a_list_type() {
+    let points = "tag Path = Stop | Go({x: _, y: _}, Path) ";
+    assert!(
+        check(&format!(
+            "{points} x = Go({{x: 1, y: 2}}, Go({{x: 3, y: 4}}, Stop)) 1"
+        ))
+        .is_ok()
+    );
+    assert!(
+        check(&format!(
+            "{points} x = Go({{x: 1, y: 2}}, Go({{x: \"a\", y: 4}}, Stop)) 1"
+        ))
+        .is_err()
+    );
+    let bag = "tag Bag(_, [_]) ";
+    assert!(check(&format!("{bag} Bag(1, [2, 3])")).is_ok());
+    assert!(check(&format!("{bag} Bag(1, [\"a\"])")).is_ok());
+    assert!(check("tag Bag([_]) Bag([1, 2])").is_ok());
+    assert!(check("tag Bag([Int]) Bag([\"a\"])").is_err());
 }
 
 #[test]
 fn a_match_over_a_user_group_handles_every_tag() {
     let (message, _) = first_error(
-        "tag Pile = Nil | Cons \
+        "tag Pile = Nil | Cons(_, Pile) \
          size = program(xs) do match xs do Cons(head, rest) then 1 + size(rest) done done \
          size(Cons(1, Nil))",
     );
     assert!(message.contains("`Nil`"), "{message}");
-    let covered = "tag Pile = Nil | Cons \
+    let covered = "tag Pile = Nil | Cons(_, Pile) \
          size = program(xs) do match xs do Cons(head, rest) then 1 + size(rest) else 0 done done \
          size(Cons(1, Nil))";
     assert!(check(covered).is_ok());
 }
 
 #[test]
-fn a_tag_used_with_no_argument_has_no_payload_at_that_use() {
-    assert_eq!(type_of("tag Light = Red | Green Red"), "[Red, Green]");
+fn a_tag_without_parentheses_has_no_payload() {
+    assert_eq!(
+        type_of("tag Light = Red | Green | Amber Green"),
+        "[Red, Green, Amber]"
+    );
+    let (message, _) = first_error("tag Light = Red | Green Red(1)");
+    assert!(message.contains("type mismatch"), "{message}");
+    let (message, _) = first_error(
+        "tag Light = Red | Green f = program(l) do match l do Red(n) then n else 0 done done f(Red)",
+    );
+    assert!(message.contains("type mismatch"), "{message}");
     let source = "tag Light = Red | Green \
         f = program(l) do match l do Red then 1 Green then 2 done done \
         f(Red) + f(Green)";
@@ -113,14 +201,19 @@ fn a_tag_used_with_no_argument_has_no_payload_at_that_use() {
 fn a_group_with_written_payloads_keeps_them() {
     let (message, _) = first_error("tag Shot = Miss | Hit(Int) Hit(\"far\")");
     assert!(message.contains("type mismatch"), "{message}");
-    assert!(type_of("tag Shot = Miss | Hit(Int) Hit(3)").contains("Hit: Number"));
+    assert_eq!(
+        type_of("tag Shot = Miss | Hit(Int) Hit(3)"),
+        "[Miss, Hit: Number]"
+    );
 }
 
 #[test]
 fn a_lone_tag_is_a_group_of_one() {
     assert_eq!(type_of("tag Done Done"), "[Done]");
-    assert_eq!(type_of("tag Boxed Boxed(1)"), "[Boxed: Number]");
-    assert_eq!(type_of("tag Boxed Boxed(\"a\")"), "[Boxed: String]");
+    assert_eq!(type_of("tag Boxed(_) Boxed(1)"), "[Boxed: Number]");
+    assert_eq!(type_of("tag Boxed(_) Boxed(\"a\")"), "[Boxed: String]");
+    let (message, _) = first_error("tag Done Done(1)");
+    assert!(message.contains("type mismatch"), "{message}");
 }
 
 #[test]
@@ -196,70 +289,71 @@ fn a_program_with_no_prelude_has_no_list_syntax_and_says_so() {
     ] {
         let errors = check_with_prelude("", source).err().expect("an error");
         assert!(
-            errors[0].message.contains("tag List = Empty | Link"),
+            errors[0]
+                .message
+                .contains("tag List = Empty | Link(_, List)"),
             "{source}: {errors:?}"
         );
     }
-    assert!(check_with_prelude("", "tag List = Empty | Link [1, 2]").is_ok());
+    assert!(check_with_prelude("", "tag List = Empty | Link(_, List) [1, 2]").is_ok());
     assert!(check_with_prelude("", "1 + 2").is_ok());
 }
 
 #[test]
-fn a_function_may_be_a_payload_and_still_runs_through_the_checker() {
-    let source = "tag Box = B match B(program(x) do x + 1 done) do B(g) then g(41) done";
+fn a_function_may_be_a_payload() {
+    let source = "tag Box(_) match Box(program(x) do x + 1 done) do Box(g) then g(41) done";
     assert_eq!(type_of(source), "Number");
     let (message, _) =
-        first_error("tag Box = B B(program(x) do x done) == B(program(x) do x done)");
+        first_error("tag Box(_) Box(program(x) do x done) == Box(program(x) do x done)");
     assert!(message.contains("function"), "{message}");
 }
 
 #[test]
-fn a_tag_used_with_a_different_arity_at_two_uses_is_two_types() {
-    assert!(check("tag P = Pr f = Pr(1) g = Pr(1, 2) 1").is_ok());
-    let (message, _) = first_error("tag P = Pr if 1 < 2 then Pr(1) else Pr(1, 2) done");
+fn a_tag_used_with_a_different_arity_at_two_uses_is_an_error() {
+    let (message, _) = first_error("tag P(_) if 1 < 2 then P(1) else P(1, 2) done");
     assert!(message.contains("type mismatch"), "{message}");
+    assert!(check("tag P(_) f = P(1) g = P(1, 2) 1").is_ok());
 }
 
 #[test]
 fn a_group_holding_itself_under_a_record_checks() {
-    let source = "tag Tree = Leaf | Node \
+    let source = "tag Tree = Leaf | Node({kids: Tree}) \
         grow = program(n, t) do if n < 1 then t else grow(n - 1, Node({kids: t})) done done \
         x = grow(3, Leaf) 1";
     assert_eq!(type_of(source), "Number");
 }
 
 #[test]
-fn a_user_group_named_like_the_list_has_the_lists_element_rule() {
-    let (message, text) = first_error("tag List = Empty | Link xs = [1, \"a\"] 1");
-    assert!(message.contains("duplicate tag"), "{message}: {text}");
-    let source = "xs = [1, \"a\"] 1";
-    let errors = check_with_prelude(PRELUDE, source).err().expect("an error");
-    assert!(
-        errors[0]
-            .message
-            .starts_with("a list holds one kind of thing"),
-        "{errors:?}"
+fn recursion_at_two_element_types_checks() {
+    let source =
+        format!("{PILE} size(Cons(1, Nil)) + size(Cons(\"a\", Nil)) + size(Cons([1], Nil))");
+    assert_eq!(type_of(&source), "Number");
+}
+
+#[test]
+fn the_built_in_list_keeps_its_own_wording() {
+    let errors = check_with_prelude(PRELUDE, "xs = [1, \"a\"] 1")
+        .err()
+        .expect("an error");
+    assert_eq!(
+        errors[0].message,
+        "a list holds one kind of thing; this is a String but the earlier items are Numbers"
     );
 }
 
 #[test]
 fn a_tag_whose_payload_nothing_constrains_prints_as_the_bare_tag() {
     assert_eq!(
-        type_of("tag Light = Red | Green | Amber Green"),
-        "[Red, Green, Amber]"
-    );
-    assert_eq!(
-        type_of("tag Maybe = Nothing | Just Nothing"),
+        type_of("tag Maybe = Nothing | Just(_) Nothing"),
         "[Nothing, Just]"
     );
     assert_eq!(
-        type_of("tag Maybe = Nothing | Just Just(1)"),
+        type_of("tag Maybe = Nothing | Just(_) Just(1)"),
         "[Nothing, Just: Number]"
     );
-    let pile = type_of("tag Pile = Nil | Cons Nil");
-    assert_eq!(pile, "[Nil, Cons]");
+    assert!(type_of("tag Pile = Nil | Cons(_, Pile) Nil").ends_with("[Nil, Cons: {0: t1, 1: t0}]"));
     let function = type_of(
-        "tag Maybe = Nothing | Just or_else = program(m, d) do match m do Nothing then d Just(v) then v done done or_else",
+        "tag Maybe = Nothing | Just(_) or_else = program(m, d) do match m do Nothing then d Just(v) then v done done or_else",
     );
     assert!(
         function.contains("Just: "),
@@ -268,9 +362,9 @@ fn a_tag_whose_payload_nothing_constrains_prints_as_the_bare_tag() {
 }
 
 #[test]
-fn an_error_naming_an_unused_payload_leaves_it_out() {
+fn an_error_naming_an_unused_slot_leaves_it_out() {
     let (message, _) = first_error(
-        "tag Light = Red | Green | Amber f = program(l) do match l do Red then 1 Green then 2 done done f(Amber)",
+        "tag Light = Red | Green(_) | Amber f = program(l) do match l do Red then 1 Green(n) then 2 done done f(Amber)",
     );
     assert!(!message.contains(": t"), "{message}");
     assert!(message.contains("Amber"), "{message}");

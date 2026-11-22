@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn compile_returns_warnings_alongside_the_module() {
-        let src = "tag Rng | Ring match Rng(5) do Ring(r) then r else 0 done";
+        let src = "tag Rng(_) | Ring(_) match Rng(5) do Ring(r) then r else 0 done";
         let (wasm, warnings) =
             compile_with_warnings(src, &HostInterface::turtle()).expect("compiles");
         assert_eq!(&wasm[..4], b"\0asm");

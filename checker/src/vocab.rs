@@ -213,6 +213,7 @@ impl Vocab {
             events: Vec::new(),
             shapes: Vec::new(),
             keys: Group {
+                name: "Key".into(),
                 tags: Vec::new(),
                 recursive: false,
                 params: 0,
@@ -270,6 +271,7 @@ impl Vocab {
     /// The vocabulary of the turtle host, the CLI and the web player.
     pub fn turtle() -> Vocab {
         let keys = Group {
+            name: "Key".into(),
             tags: ["Up", "Down", "Left", "Right"]
                 .map(|tag| (tag.to_string(), Ty::Unit))
                 .into_iter()

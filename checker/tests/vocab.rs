@@ -21,6 +21,7 @@ const PAD_OF: &str = "pad_of = program(n) do if n == 0 then A else B done done\n
 /// tilt sensor and a bare press in; one LED and a strip of pixels out.
 fn toy() -> Vocab {
     let pad = Group {
+        name: "Pad".into(),
         tags: vec![("A".into(), Ty::Unit), ("B".into(), Ty::Unit)],
         recursive: false,
         params: 0,
@@ -73,7 +74,7 @@ fn toy() -> Vocab {
 fn check_toy(source: &str) -> Result<Checked, Vec<GoatError>> {
     let vocab = toy();
     check_with_vocab(
-        &format!("tag List = Empty | Link\n{}", vocab.prelude),
+        &format!("tag List = Empty | Link(_, List)\n{}", vocab.prelude),
         &vocab,
         source,
     )
@@ -142,7 +143,7 @@ fn else_is_the_catch_all_over_the_hosts_group() {
 
 #[test]
 fn the_turtles_events_are_not_the_toy_hosts() {
-    let source = format!("tag Tick\n{}", program("Tick then model", LED));
+    let source = format!("tag Tick(_)\n{}", program("Tick then model", LED));
     let (message, text) = the_error(&source);
     assert_eq!(
         message,
@@ -161,7 +162,7 @@ fn a_tag_no_host_declared_is_an_unknown_name() {
 #[test]
 fn the_turtles_shapes_are_not_the_toy_hosts() {
     let source = format!(
-        "tag Line\n{}",
+        "tag Line(_)\n{}",
         program(
             "Press then model",
             "[Line({x1: 0, y1: 0, x2: 1, y2: 1, color: \"red\"})]"
@@ -203,7 +204,7 @@ fn a_decoder_of_the_wrong_type_is_a_spanned_error_in_the_prelude() {
     vocab.prelude = "pad_of = program(n) do 5 done\n".into();
     let source = program("Press then model", LED);
     let errors = check_with_vocab(
-        &format!("tag List = Empty | Link\n{}", vocab.prelude),
+        &format!("tag List = Empty | Link(_, List)\n{}", vocab.prelude),
         &vocab,
         &source,
     )
@@ -224,7 +225,7 @@ fn a_decoder_of_the_wrong_type_is_a_spanned_error_in_the_prelude() {
 fn a_host_prelude_that_lacks_its_decoder_is_a_spanned_error() {
     let vocab = toy();
     let source = program("Press then model", LED);
-    let errors = check_with_vocab("tag List = Empty | Link", &vocab, &source)
+    let errors = check_with_vocab("tag List = Empty | Link(_, List)", &vocab, &source)
         .err()
         .expect("should not check");
     assert_eq!(errors.len(), 1, "{errors:?}");

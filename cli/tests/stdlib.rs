@@ -275,7 +275,9 @@ fn trap_is_only_taken_when_reached() {
     assert_eq!(run("if 1 < 2 then 5 else trap(\"no\") done"), "5");
     assert_eq!(run("if 2 < 1 then trap(\"no\") else 6 done"), "6");
     assert_eq!(
-        run("tag Ring | Square match Ring(2) do Ring(r) then r Square(s) then trap(\"no\") done"),
+        run(
+            "tag Ring(_) | Square(_) match Ring(2) do Ring(r) then r Square(s) then trap(\"no\") done"
+        ),
         "2"
     );
 }

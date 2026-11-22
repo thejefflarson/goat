@@ -7,11 +7,11 @@
 # position (building results in reverse, then flipping them) so a long list
 # uses constant stack.
 
-tag List = Empty | Link
+tag List = Empty | Link(_, List)
 
 # The pieces of a dictionary (see `dict_by`) and what its `get` finds.
-tag Dict = DictLeaf | DictNode
-tag Lookup = Found | Missing
+tag Dict = DictLeaf | DictNode(Dict, _, _, Dict, Int)
+tag Lookup = Missing | Found(_)
 
 nothing = program() do done
 

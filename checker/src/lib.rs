@@ -156,7 +156,7 @@ mod tests {
     /// These tests count nodes, type variables and warnings, so they run
     /// without the standard prelude, only the list's declaration.
     fn check(source: &str) -> Result<Checked, Vec<GoatError>> {
-        check_with_prelude("tag List = Empty | Link", source)
+        check_with_prelude("tag List = Empty | Link(_, List)", source)
     }
 
     /// The inferred type of a program, as a string, or the first error message.
@@ -365,8 +365,10 @@ mod tests {
             "{message}"
         );
         assert_eq!(text, "Widget");
-        let (message, _) = spanned_error("tag Bag(Number, [Number]) | Empty2 1");
-        assert!(message.contains("a list"), "{message}");
+        let (message, _) = spanned_error("tag Fun((Number) -> Number) 1");
+        assert!(message.contains("a function"), "{message}");
+        assert!(check("tag Bag(Number, [Number]) | Nothing 1").is_ok());
+        assert!(check("tag Bag([_]) Bag([1, 2])").is_ok());
     }
 
     #[test]
@@ -377,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn a_flat_tag_stays_open() {
+    fn a_lone_tag_matched_with_an_else_checks() {
         let src = "tag A tag B match A do A then 1 else 2 done";
         assert_eq!(type_of(src).unwrap(), "Number");
     }
@@ -419,24 +421,24 @@ mod tests {
     fn constructing_an_undeclared_tag_is_an_unknown_name() {
         let errors = errors_of("Ball(5)");
         assert_eq!(errors[0].message, "unknown name `Ball`");
-        let errors = errors_of("tag Ball ball(5)");
+        let errors = errors_of("tag Ball(_) ball(5)");
         assert!(errors[0].message.contains("did you mean the tag `Ball`?"));
     }
 
     #[test]
     fn capitalization_does_not_decide_what_a_tag_is() {
-        assert_eq!(type_of("tag up up(1)").unwrap(), "[up: Number]");
+        assert_eq!(type_of("tag up(_) up(1)").unwrap(), "[up: Number]");
         assert_eq!(type_of("tag A tag B 1").unwrap(), "Number");
         assert_eq!(
             type_of("tag a | b match b do a then 1 b then 2 done").unwrap(),
             "Number"
         );
         assert_eq!(
-            type_of("tag Foo f = program(Foo) do Foo(1) done f(program(x) do x done)").unwrap(),
+            type_of("tag Foo(_) f = program(Foo) do Foo(1) done f(program(x) do x done)").unwrap(),
             "Number"
         );
         assert_eq!(
-            type_of("tag Foo Foo = program(x) do x done Foo(2)").unwrap(),
+            type_of("tag Foo(_) Foo = program(x) do x done Foo(2)").unwrap(),
             "Number"
         );
     }
@@ -456,9 +458,12 @@ mod tests {
 
     #[test]
     fn constructing_a_lone_tag_gives_its_closed_group_of_one() {
-        assert_eq!(type_of("tag Ring Ring(5)").unwrap(), "[Ring: Number]");
-        assert_eq!(type_of("tag Ring Ring").unwrap(), "[Ring]");
-        assert_eq!(type_of("tag Ring Ring(\"a\")").unwrap(), "[Ring: String]");
+        assert_eq!(type_of("tag Ring(_) Ring(5)").unwrap(), "[Ring: Number]");
+        assert_eq!(type_of("tag Ring(_) Ring").unwrap(), "[Ring]");
+        assert_eq!(
+            type_of("tag Ring(_) Ring(\"a\")").unwrap(),
+            "[Ring: String]"
+        );
     }
 
     #[test]
@@ -496,14 +501,14 @@ mod tests {
 
     #[test]
     fn branches_building_tags_of_one_group_have_the_whole_group_type() {
-        let src = "tag Ring | Square if true then Ring(1) else Square(2) done";
+        let src = "tag Ring(_) | Square(_) if true then Ring(1) else Square(2) done";
         assert_eq!(type_of(src).unwrap(), "[Ring: Number, Square: Number]");
     }
 
     #[test]
     fn match_types_to_its_arm_bodies() {
         assert_eq!(
-            type_of("tag Ring match Ring(5) do Ring(r) then r else 0 done").unwrap(),
+            type_of("tag Ring(_) match Ring(5) do Ring(r) then r else 0 done").unwrap(),
             "Number"
         );
         assert_eq!(
@@ -514,7 +519,7 @@ mod tests {
 
     #[test]
     fn match_without_else_closes_the_row() {
-        let src = "tag Ring | Square area = program(s) do match s do Ring(r) then r * 2 Square(w) then w * 2 done done area";
+        let src = "tag Ring(_) | Square(_) area = program(s) do match s do Ring(r) then r * 2 Square(w) then w * 2 done done area";
         assert_eq!(
             type_of(src).unwrap(),
             "([Ring: Number, Square: Number]) -> Number"
@@ -523,23 +528,23 @@ mod tests {
 
     #[test]
     fn match_with_else_keeps_the_row_open() {
-        let src = "tag Ring | Square area = program(s) do match s do Ring(r) then r * 2 else 0 done done area";
+        let src = "tag Ring(_) | Square(_) area = program(s) do match s do Ring(r) then r * 2 else 0 done done area";
         let ty = type_of(src).unwrap();
         assert!(ty.starts_with("([Ring: Number | t"), "{ty}");
     }
 
     #[test]
     fn a_group_value_fits_a_closed_match_but_a_stranger_does_not() {
-        let area = "tag Ring | Square area = program(s) do match s do Ring(r) then r Square(w) then w done done ";
+        let area = "tag Ring(_) | Square(_) area = program(s) do match s do Ring(r) then r Square(w) then w done done ";
         assert_eq!(
-            type_of(&format!("tag Triangle {area} area(Ring(1))")).unwrap(),
+            type_of(&format!("tag Triangle(_) {area} area(Ring(1))")).unwrap(),
             "Number"
         );
         assert_eq!(
-            type_of(&format!("tag Triangle {area} area(Square(1))")).unwrap(),
+            type_of(&format!("tag Triangle(_) {area} area(Square(1))")).unwrap(),
             "Number"
         );
-        let err = type_of(&format!("tag Triangle {area} area(Triangle(1))")).unwrap_err();
+        let err = type_of(&format!("tag Triangle(_) {area} area(Triangle(1))")).unwrap_err();
         assert!(err.contains("`Triangle`"), "{err}");
     }
 
@@ -552,17 +557,20 @@ mod tests {
 
     #[test]
     fn arm_bodies_must_agree() {
-        let err = type_of("tag Ring match Ring(5) do Ring(r) then r else true done").unwrap_err();
-        assert!(err.contains("type mismatch"), "{err}");
         let err =
-            type_of("tag Ring | Square match Ring(5) do Ring(r) then r Square(w) then true done")
-                .unwrap_err();
+            type_of("tag Ring(_) match Ring(5) do Ring(r) then r else true done").unwrap_err();
+        assert!(err.contains("type mismatch"), "{err}");
+        let err = type_of(
+            "tag Ring(_) | Square(_) match Ring(5) do Ring(r) then r Square(w) then true done",
+        )
+        .unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
     }
 
     #[test]
     fn match_missing_a_tag_is_an_error() {
-        let err = type_of("tag Ring | Square match Ring(1) do Square(w) then w done").unwrap_err();
+        let err =
+            type_of("tag Ring(_) | Square(_) match Ring(1) do Square(w) then w done").unwrap_err();
         assert!(err.contains("doesn't handle `Ring`"), "{err}");
         let src = "tag A | B f = program(s) do \
                      first = match s do A then 1 B then 2 done \
@@ -597,22 +605,22 @@ mod tests {
 
     #[test]
     fn payload_mismatch_between_construction_and_pattern_is_an_error() {
-        let err = type_of("tag Ring match Ring(5) do Ring then 0 else 1 done").unwrap_err();
+        let err = type_of("tag Ring(_) match Ring(5) do Ring then 0 else 1 done").unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
         let err =
-            type_of("tag Ring match Ring(5) do Ring(a) then a + true else 1 done").unwrap_err();
+            type_of("tag Ring(_) match Ring(5) do Ring(a) then a + true else 1 done").unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
     }
 
     #[test]
     fn multi_argument_payload_binds_positional_fields() {
-        let src = "tag Pair match Pair(1, true) do Pair(a, b) then if b then a else 0 done done";
+        let src = "tag Pair(_) match Pair(1, true) do Pair(a, b) then if b then a else 0 done done";
         assert_eq!(type_of(src).unwrap(), "Number");
     }
 
     #[test]
     fn variant_errors_are_spanned() {
-        let src = "tag Ring | Square match Ring(1) do Square(w) then w done";
+        let src = "tag Ring(_) | Square(_) match Ring(1) do Square(w) then w done";
         let Err(errors) = check(src) else {
             panic!("expected an error");
         };
@@ -621,7 +629,7 @@ mod tests {
 
     #[test]
     fn constructed_but_never_matched_tag_warns() {
-        let src = "tag Rng | Ring match Rng(5) do Ring(r) then r else 0 done";
+        let src = "tag Rng(_) | Ring(_) match Rng(5) do Ring(r) then r else 0 done";
         let warnings = warnings_of(src);
         assert_eq!(warnings.len(), 1);
         assert_eq!(
@@ -633,11 +641,11 @@ mod tests {
 
     #[test]
     fn matched_tags_do_not_warn_and_each_tag_warns_once() {
-        assert!(warnings_of("tag Ring match Ring(5) do Ring(r) then r else 0 done").is_empty());
+        assert!(warnings_of("tag Ring(_) match Ring(5) do Ring(r) then r else 0 done").is_empty());
         assert!(warnings_of("1 + 2").is_empty());
-        let warnings = warnings_of("tag Oops x = Oops(1) y = Oops(2) 0");
+        let warnings = warnings_of("tag Oops(_) x = Oops(1) y = Oops(2) 0");
         assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].span.start, 13);
+        assert_eq!(warnings[0].span.start, 16);
     }
 
     const LENGTH: &str = "length = program(xs) do match xs do Empty then 0 \
@@ -723,7 +731,7 @@ mod tests {
 
     #[test]
     fn a_tree_recurses_through_both_children() {
-        let src = "tag Leaf tag Node size = program(t) do match t do Leaf then 0 \
+        let src = "tag Leaf tag Node(_) size = program(t) do match t do Leaf then 0 \
                    Node(l, r) then 1 + size(l) + size(r) done done size";
         let ty = type_of(src).unwrap();
         let t = binder(&ty);
@@ -757,17 +765,17 @@ mod tests {
 
     #[test]
     fn a_recursion_with_no_base_case_still_has_a_type() {
-        let src = "tag Next f = program(xs) do match xs do Next(n) then f(n) done done f";
+        let src = "tag Next(_) f = program(xs) do match xs do Next(n) then f(n) done done f";
         let ty = type_of(src).unwrap();
         let t = binder(&ty);
         assert!(ty.starts_with(&format!("(μ{t}. [Next: {t}]) -> t")), "{ty}");
-        let two = "tag Next f = program(xs) do match xs do Next(n) then match n do Next(m) then f(m) done done done f";
+        let two = "tag Next(_) f = program(xs) do match xs do Next(n) then match n do Next(m) then f(m) done done done f";
         assert!(type_of(two).is_ok());
     }
 
     #[test]
     fn a_function_returning_its_own_wrapped_result_is_recursive() {
-        let ty = type_of("tag Wrap f = program(x) do Wrap(f(x)) done f").unwrap();
+        let ty = type_of("tag Wrap(_) f = program(x) do Wrap(f(x)) done f").unwrap();
         let t = binder(&ty);
         assert!(ty.contains(&format!("μ{t}. [Wrap: {t}]")), "{ty}");
     }
@@ -802,7 +810,7 @@ mod tests {
     fn a_cycle_outside_a_variant_tag_is_still_infinite() {
         for src in [
             "f = program(x) do x(x) done f",
-            "tag Wrap f = program(x) do Wrap(x(x)) done f",
+            "tag Wrap(_) f = program(x) do Wrap(x(x)) done f",
             "f = program(x) do {a: x(x)} done f",
             "f = program(r) do if true then r else {a: r} done done f",
         ] {

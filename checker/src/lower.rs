@@ -11,8 +11,8 @@ use crate::hir::{
     BinOp, Boundary, Builtin, ContractBinding, Decoder, Expr, ExprId, ExprKind, FileId,
     Interactive, MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
 };
-use crate::ty::{Group, Row, Ty};
-use crate::vocab::{LIST_TAGS, Vocab};
+use crate::ty::{Group, Row, Ty, TypeVar};
+use crate::vocab::{self, LIST_TAGS, Vocab};
 use goat_parser::cst::{Children, Goat, Node};
 use goat_parser::interp;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -30,6 +30,10 @@ const MAX_DEPTH: usize = 256;
 /// `[a, ...rest]` after `[a, b, c, d]` re-lowers its body at each place the
 /// decision tree reaches it, so nested patterns multiply.
 const MAX_LIST_LEAVES: usize = 4096;
+
+/// The binder of a list type written in a tag payload, `[_]` or `[Int]`; no
+/// instantiation's own variable is this large.
+const LIST_SLOT_BINDER: TypeVar = Group::SELF - 4096;
 
 /// The name generated bindings for the pieces of a list carry.
 const LIST_NAME: &str = "list";
@@ -609,10 +613,11 @@ impl Lower {
     }
 
     /// Every declaration closes its tags into a group, `tag Foo` included: a
-    /// group of one. A tag written without a payload has its payload inferred,
-    /// a fresh type at each construction, so the group is generic; one written
-    /// with a payload keeps it. Each tag belongs to one group only, and a tag
-    /// the host provides can't be declared again.
+    /// group of one. A tag written without parentheses has no payload. Each `_`
+    /// in a payload is a parameter of the group, a fresh type at each
+    /// construction, so the group is generic; the group's own name marks where
+    /// it holds itself, with the same parameters. Each tag belongs to one
+    /// group only, and a tag the host provides can't be declared again.
     fn declare_tags(&mut self, decl: Node) {
         let mut group_name = None;
         let mut cases = Vec::new();
@@ -632,13 +637,10 @@ impl Lower {
             let name = parts.next().expect("a tag case names its tag");
             let span = self.span_of(&name);
             let payload: Vec<Ty> = parts
-                .map(|ty| self.payload_ty(&ty, group_name.as_deref(), &mut recursive))
+                .map(|ty| self.payload_ty(&ty, group_name.as_deref(), &mut recursive, &mut params))
                 .collect();
             let payload = match payload.len() {
-                0 => {
-                    params += 1;
-                    Ty::Var(Group::param(params - 1))
-                }
+                0 => Ty::Unit,
                 1 => payload.into_iter().next().expect("one payload"),
                 _ => Ty::Record(Row::of(
                     payload
@@ -664,14 +666,11 @@ impl Lower {
             declared.push(name.clone());
             tags.push((name, payload));
         }
-        let group = Arc::new(if declared == LIST_TAGS && params == 2 {
-            Group::list()
-        } else {
-            Group {
-                tags,
-                recursive,
-                params,
-            }
+        let group = Arc::new(Group {
+            name: group_name.unwrap_or_default(),
+            tags,
+            recursive,
+            params,
         });
         self.tag_groups.push(declared.clone());
         for name in declared {
@@ -681,8 +680,18 @@ impl Lower {
     }
 
     /// A tag payload's type: `group` stands for the group being declared.
-    fn payload_ty(&mut self, ty: &Node, group: Option<&str>, recursive: &mut bool) -> Ty {
+    fn payload_ty(
+        &mut self,
+        ty: &Node,
+        group: Option<&str>,
+        recursive: &mut bool,
+        params: &mut usize,
+    ) -> Ty {
         let (shape, hint) = match ty.kind() {
+            "infer_type" => {
+                *params += 1;
+                return Ty::Var(Group::param(*params - 1));
+            }
             "type_name" if group == Some(ty.text()) => {
                 *recursive = true;
                 return Ty::Var(Group::SELF);
@@ -691,7 +700,7 @@ impl Lower {
                 Some(boundary) => return boundary.into(),
                 None => (
                     format!("`{}`", ty.text()),
-                    "; a payload is Number, Int, Bool, Unit, String, a record of those, or the group itself",
+                    "; a payload is Number, Int, Bool, Unit, String, `_`, a record or list of those, or the group itself",
                 ),
             },
             "record_type" => {
@@ -702,13 +711,21 @@ impl Lower {
                         let mut parts = field.children();
                         let label = parts.next().expect("a field type has a label");
                         let ty = parts.next().expect("a field type has a type");
-                        let ty = self.payload_ty(&ty, group, recursive);
+                        let ty = self.payload_ty(&ty, group, recursive, params);
                         (label.text().to_string(), ty)
                     })
                     .collect();
                 return Ty::Record(Row::of(fields));
             }
-            "list_type" => ("a list".to_string(), ""),
+            "list_type" => {
+                let item = ty
+                    .clone()
+                    .children()
+                    .next()
+                    .expect("a list type has an item");
+                let item = self.payload_ty(&item, group, recursive, params);
+                return vocab::list(LIST_SLOT_BINDER, item);
+            }
             "fn_type" => ("a function".to_string(), ""),
             other => unreachable!("unexpected type rule {other:?}"),
         };
@@ -1878,12 +1895,12 @@ impl Lower {
         )
     }
 
-    /// The list sugar builds the tags of the prelude's `tag List = Empty | Link`.
+    /// The list sugar builds the tags of the prelude's `tag List = Empty | Link(_, List)`.
     fn require_list(&mut self, span: Span) {
         if LIST_TAGS.iter().any(|tag| !self.tags.contains_key(*tag)) {
             self.errors.push(GoatError::new(
                 span,
-                "lists come from the prelude's `tag List = Empty | Link`, which this program doesn't have",
+                "lists come from the prelude's `tag List = Empty | Link(_, List)`, which this program doesn't have",
             ));
         }
     }
@@ -2880,7 +2897,7 @@ mod tests {
     use super::*;
 
     fn lower(source: &str) -> Result<Lowered, Vec<GoatError>> {
-        lower_with_prelude("tag List = Empty | Link", source)
+        lower_with_prelude("tag List = Empty | Link(_, List)", source)
     }
 
     fn string_value(source: &str) -> Result<String, String> {
@@ -2933,7 +2950,7 @@ mod tests {
 
     #[test]
     fn single_argument_tag_carries_the_argument_as_its_payload() {
-        let root = lowered("tag Ring Ring(5)").root;
+        let root = lowered("tag Ring(_) Ring(5)").root;
         let (name, payload) = tag_parts(&root);
         assert_eq!(name, "Ring");
         assert!(matches!(payload.unwrap().kind, ExprKind::Int(5)));
@@ -2960,7 +2977,7 @@ mod tests {
     #[test]
     fn match_lowers_arms_binders_and_else() {
         let root = lowered(
-            "tag Ring s = Empty match s do Link(a, b) then a Ring(r) then r Empty then 0 else 1 done",
+            "tag Ring(_) s = Empty match s do Link(a, b) then a Ring(r) then r Empty then 0 else 1 done",
         )
         .root;
         let ExprKind::Let { rest, .. } = &root.kind else {
@@ -3007,7 +3024,7 @@ mod tests {
 
     #[test]
     fn pattern_binders_are_scoped_to_their_arm() {
-        let lowered = lower("tag Ring match Empty do Ring(r) then r Empty then r done").unwrap();
+        let lowered = lower("tag Ring(_) match Empty do Ring(r) then r Empty then r done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("unknown name `r`"));
     }
@@ -3189,7 +3206,7 @@ mod tests {
 
     #[test]
     fn duplicate_pattern_binder_is_an_error() {
-        let lowered = lower("tag Pair match Empty do Pair(a, a) then a done").unwrap();
+        let lowered = lower("tag Pair(_) match Empty do Pair(a, a) then a done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("duplicate binding `a`"));
     }

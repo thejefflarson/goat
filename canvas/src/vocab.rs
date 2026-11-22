@@ -29,6 +29,7 @@ fn shape(name: &str, scene: &str, numbers: &[&str], extra: Option<(&str, Ty)>) -
 
 pub fn vocab() -> Vocab {
     let keys = Group {
+        name: "Key".into(),
         tags: ["Space", "Left", "Right", "Up", "Down"]
             .map(|tag| (tag.to_string(), Ty::Unit))
             .into_iter()

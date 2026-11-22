@@ -8,7 +8,7 @@ mod support;
 
 use support::{run, run_with_prelude};
 
-const PRELUDE: &str = "tag List = Empty | Link tag Wrapped double = program(n) do n * 2 done\n\
+const PRELUDE: &str = "tag List = Empty | Link(_, List) tag Wrapped(_) double = program(n) do n * 2 done\n\
                        apply = program(f, x) do f(x) done\n\
                        fib = program(n) do if n < 2 then n else fib(n - 1) + fib(n - 2) done done\n\
                        sum_to = program(n, acc) do if n < 1 then acc else sum_to(n - 1, acc + n) done done\n\

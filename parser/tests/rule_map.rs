@@ -73,6 +73,7 @@ const RULES: &[(&str, Class)] = &[
     ("record_type", Outside),
     ("field_type", Outside),
     ("type_name", Outside),
+    ("infer_type", Outside),
     ("destructure", Outside),
     ("record_pattern", Outside),
     ("list_pattern", Outside),

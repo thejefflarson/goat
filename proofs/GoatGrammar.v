@@ -67,6 +67,7 @@ Inductive rule : Type :=
   | R_record_type
   | R_field_type
   | R_type_name
+  | R_infer_type
   | R_destructure
   | R_record_pattern
   | R_list_pattern
@@ -225,7 +226,7 @@ Definition body (r : rule) : pexpr :=
   | R_fn_type =>
     (E_seq (E_term (T_text "(")) (E_seq (E_opt (E_seq (E_rule R__type_expr) (E_seq (E_star (E_seq (E_term (T_text ",")) (E_rule R__type_expr))) (E_opt (E_term (T_text ",")))))) (E_seq (E_term (T_text ")")) (E_seq (E_term (T_text "->")) (E_rule R__type_expr)))))
   | R__type_expr =>
-    (E_alt (E_rule R_fn_type) (E_alt (E_rule R_list_type) (E_alt (E_rule R_record_type) (E_rule R_type_name))))
+    (E_alt (E_rule R_fn_type) (E_alt (E_rule R_list_type) (E_alt (E_rule R_record_type) (E_alt (E_rule R_infer_type) (E_rule R_type_name)))))
   | R_list_type =>
     (E_seq (E_term (T_text "[")) (E_seq (E_rule R__type_expr) (E_term (T_text "]"))))
   | R_record_type =>
@@ -234,6 +235,8 @@ Definition body (r : rule) : pexpr :=
     (E_seq (E_rule R_name) (E_seq (E_term (T_text ":")) (E_rule R__type_expr)))
   | R_type_name =>
     (E_term T_name)
+  | R_infer_type =>
+    (E_term (T_text "_"))
   | R_destructure =>
     (E_seq (E_alt (E_rule R_record_pattern) (E_rule R_list_pattern)) (E_seq (E_term (T_text "=")) (E_seq (E_expect (E_rule R_value)) (E_seq (E_opt (E_term (T_text ";"))) (E_opt (E_rule R_expr))))))
   | R_record_pattern =>

@@ -502,7 +502,7 @@ fn o_on_a_program_that_never_draws_is_an_error_and_writes_nothing() {
 }
 
 const TYPO_TAG: &str = "match Rng(5) do Ring(r) then r else 0 done";
-const TYPO_TAG_DECLS: &str = "tag Rng | Ring ";
+const TYPO_TAG_DECLS: &str = "tag Rng(_) | Ring(_) ";
 
 #[test]
 fn run_warns_on_stderr_and_still_succeeds() {
