@@ -130,7 +130,8 @@ Proof.
     intros a IH k Hs. destruct Hs.
   - intros w tg a IH k Hs. destruct Hs.
   - intros w a IHa ars IHars k Hs. destruct Hs.
-  - intros a IHa l b IHb k Hs. destruct Hs.
+  - intros a IHa l b IHb k [Ha Hb]. simpl.
+    rewrite (IHa k Ha), (IHb k Hb). reflexivity.
   - intros a IH l k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
@@ -475,7 +476,33 @@ Proof.
     intros a IH P Hs Hl. destruct Hs.
   - intros w tg a IH P Hs. destruct Hs.
   - intros w a IHa ars IHars P Hs. destruct Hs.
-  - intros a IHa l b IHb P Hs. destruct Hs.
+  - (* spread *)
+    intros a IHa l b IHb P [Ha Hb] Hl.
+    assert (Hl' : LabelsOK tbl (lbls a ++ l :: lbls b)) by exact Hl.
+    assert (Hla : LabelsOK tbl (lbls a)) by exact (labelsok_app_l _ _ _ Hl').
+    assert (Hlrest : LabelsOK tbl (l :: lbls b)) by exact (labelsok_app_r _ _ _ Hl').
+    assert (Hll : LabelsOK tbl [l]).
+    { intros n Hn. apply Hlrest. destruct Hn as [<- | []]. left. reflexivity. }
+    assert (Hlb : LabelsOK tbl (lbls b)).
+    { intros n Hn. apply Hlrest. right. exact Hn. }
+    destruct (IHa P Ha Hla) as [Hbase _].
+    destruct (IHb P Hb Hlb) as [Hbv _].
+    assert (Hbasep : Den var_of tbl (Node R_expr (paren_kids (block P a))) (inst var_of P a))
+      by (apply D_expr; apply DB_chain; apply DM_chain; apply den_chain_paren; exact Hbase).
+    assert (Hfield : Den_field var_of tbl (field_tree l (block P b)) (lname l) (inst var_of P b)).
+    { unfold field_tree. apply DF. apply D_expr. exact Hbv. }
+    assert (Hsep : Den_sep var_of tbl [sym ","; field_tree l (block P b); sym "}"]
+                     (fs_cons (lab tbl (lname l)) (inst var_of P b) fs_nil)).
+    { apply DS_more. exact (DI_field var_of tbl _ _ _ _ _ Hfield (DS_end var_of tbl)). }
+    assert (Hrec : Den var_of tbl (Node R_record [sym "{"; spread_tree (block P a); sym ",";
+                                                  field_tree l (block P b); sym "}"])
+                     (e_spread (inst var_of P a) l (inst var_of P b))).
+    { rewrite <- (lab_lname tbl l Hll) at 2.
+      exact (D_spread_record var_of tbl _ _ _ _ Hbasep Hsep). }
+    assert (Hchain : Den_chain var_of tbl (block P (e_spread a l b))
+                       (inst var_of P (e_spread a l b)))
+      by (apply den_chain_single; exact Hrec).
+    apply den_pack; exact Hchain.
   - intros a IH l P Hs. destruct Hs.
   - intros a IH P Hs Hl. destruct Hs.
   - intros a IH P Hs Hl. destruct Hs.

@@ -2,7 +2,8 @@
 //! source, parse and lower it with the real front end, and read the result
 //! back as the same term. The terms cover strings, `Float` literals, `if` with
 //! and without an `else`, one operator between two operands, and recursive
-//! groups of functions. A fixed-seed generator keeps CI deterministic.
+//! groups of functions, and the spread `{...(base), l: v}`. A fixed-seed
+//! generator keeps CI deterministic.
 
 use goat_checker::hir::{BinOp, Expr, ExprKind, Symbol};
 use goat_checker::lower::lower;
@@ -27,6 +28,9 @@ enum Term {
     App(Box<Term>, Box<Term>),
     Let(String, Box<Term>, Box<Term>),
     Rec(Vec<(u32, Term)>),
+    /// `{...(base), l: v}`: the base is parenthesised so that a name there is
+    /// not the rest binding of a record pattern.
+    Spread(Box<Term>, u32, Box<Term>),
     Proj(Box<Term>, u32),
     If(Box<Term>, Box<Term>, Box<Term>),
     /// `if c then t done`: the missing branch is the unit value.
@@ -207,6 +211,12 @@ fn print(term: &Term, style: Style) -> String {
                 .collect();
             format!("{{{}}}", fields.join(", "))
         }
+        Term::Spread(base, label, value) => format!(
+            "{{...({}), {}: {}}}",
+            print(base, style),
+            label_name(*label),
+            print(value, style)
+        ),
         Term::Proj(base, label) => {
             let base = parenthesise(base, style, needs_parens_as_operand(base));
             format!("{base}.{}", label_name(*label))
@@ -324,6 +334,11 @@ impl Gen {
                 let base = self.term(depth);
                 Term::Proj(Box::new(base), self.rng.next() as u32 % LABELS)
             }
+            13 => {
+                let base = self.term(depth);
+                let label = self.rng.next() as u32 % LABELS;
+                Term::Spread(Box::new(base), label, Box::new(self.term(depth)))
+            }
             10 => Term::If(
                 Box::new(self.term(depth)),
                 Box::new(self.term(depth)),
@@ -424,6 +439,11 @@ fn intern_labels(term: &mut Term, seen: &mut Vec<u32>) {
                 intern(label, seen);
                 intern_labels(value, seen);
             }
+        }
+        Term::Spread(base, label, value) => {
+            intern_labels(base, seen);
+            intern(label, seen);
+            intern_labels(value, seen);
         }
         Term::Proj(base, label) => {
             intern_labels(base, seen);
@@ -559,6 +579,13 @@ impl Reader {
                 let base = self.read(record);
                 Term::Proj(Box::new(base), self.label(label))
             }
+            ExprKind::Spread { base, fields } => {
+                let base = self.read(base);
+                fields.iter().fold(base, |nest, (label, value)| {
+                    let label = self.label(label);
+                    Term::Spread(Box::new(nest), label, Box::new(self.read(value)))
+                })
+            }
             other => panic!("outside the core fragment: {other:?}"),
         }
     }
@@ -614,6 +641,7 @@ fn ungroup(term: &Term) -> Term {
         Term::Let(name, v, b) => Term::Let(name.clone(), boxed(v), boxed(b)),
         Term::Rec(fields) => Term::Rec(fields.iter().map(|(l, t)| (*l, ungroup(t))).collect()),
         Term::Proj(base, label) => Term::Proj(boxed(base), *label),
+        Term::Spread(base, label, value) => Term::Spread(boxed(base), *label, boxed(value)),
         Term::If(c, t, e) => Term::If(boxed(c), boxed(t), boxed(e)),
         Term::When(c, t) => Term::When(boxed(c), boxed(t)),
         Term::Bin(a, op, b) => Term::Bin(boxed(a), *op, boxed(b)),
@@ -709,6 +737,11 @@ fn canonical(term: &Term, scope: &mut Vec<(String, String)>) -> Term {
                 .map(|(label, value)| (*label, canonical(value, scope)))
                 .collect(),
         ),
+        Term::Spread(base, label, value) => Term::Spread(
+            Box::new(canonical(base, scope)),
+            *label,
+            Box::new(canonical(value, scope)),
+        ),
         Term::Proj(base, label) => Term::Proj(Box::new(canonical(base, scope)), *label),
     }
 }
@@ -775,6 +808,11 @@ fn coq_term(term: &Term, scope: &mut Vec<String>) -> String {
             }
             format!("(e_rec {list})")
         }
+        Term::Spread(base, label, value) => format!(
+            "(e_spread {} {label} {})",
+            coq_term(base, scope),
+            coq_term(value, scope)
+        ),
         Term::Proj(base, label) => format!("(e_proj {} {label})", coq_term(base, scope)),
     }
 }
@@ -930,6 +968,7 @@ fn the_generated_terms_use_every_operator_string_and_conditional() {
         decs: usize,
         groups: usize,
         members: usize,
+        spreads: usize,
     }
     fn visit(term: &Term, seen: &mut Seen) {
         match term {
@@ -956,6 +995,11 @@ fn the_generated_terms_use_every_operator_string_and_conditional() {
                 }
                 visit(a, seen);
                 visit(b, seen);
+            }
+            Term::Spread(base, _, value) => {
+                seen.spreads += 1;
+                visit(base, seen);
+                visit(value, seen);
             }
             Term::Abs(_, body) | Term::Proj(body, _) => visit(body, seen),
             Term::App(a, b) | Term::Let(_, a, b) => {
@@ -994,6 +1038,92 @@ fn the_generated_terms_use_every_operator_string_and_conditional() {
     assert!(seen.decs > 100, "{} Float literals", seen.decs);
     assert!(seen.groups > 100, "{} groups", seen.groups);
     assert!(seen.members > seen.groups, "{} members", seen.members);
+    assert!(seen.spreads > 100, "{} spreads", seen.spreads);
+}
+
+/// A multi-field spread is the nest of single ones, the first field innermost.
+#[test]
+fn a_multi_field_spread_reads_back_as_the_nest_of_single_spreads() {
+    let var = |name: &str| Box::new(Term::Var(name.to_string()));
+    let nest = Term::Spread(
+        Box::new(Term::Spread(var("p"), 0, Box::new(Term::Num(1)))),
+        1,
+        Box::new(Term::Num(2)),
+    );
+    let source = "p = {}; {...(p), lab0: 1, lab1: 2}";
+    let expected = Term::Let("p".into(), Box::new(Term::Rec(vec![])), Box::new(nest));
+    assert_eq!(lower_to_term(source), expected);
+}
+
+#[test]
+fn lowering_rejects_a_spread_the_core_leaves_out() {
+    for (source, message) in [
+        ("p = {}; {a: 1, ...p}", "must come first"),
+        ("p = {}; q = {}; {...p, ...q}", "can't merge two records"),
+    ] {
+        let errors = lower(source).expect("parses").errors;
+        assert!(
+            errors.iter().any(|e| e.message.contains(message)),
+            "{source:?}: {errors:?}"
+        );
+    }
+}
+
+/// `{x, y, ...r} = p` reads `p` once, binds each name to its field, and binds
+/// `r` to the source without those labels: the rest pattern with k labels is k
+/// restricts of one source (proofs/GoatDen.v, `unpack`).
+#[test]
+fn a_rest_pattern_unpacks_one_source_and_restricts_every_label() {
+    let root = lower("p = {a: 1, b: 2, c: 3}; {a, b, ...r} = p r")
+        .expect("parses")
+        .root;
+    let ExprKind::Let { rest: Some(at), .. } = &root.kind else {
+        panic!("`p` is bound first: {root:?}");
+    };
+    let ExprKind::Let {
+        symbol: source,
+        value,
+        rest: Some(inner),
+        ..
+    } = &at.kind
+    else {
+        panic!("the pattern binds its source: {at:?}");
+    };
+    let mut at: &Expr = inner;
+    assert!(matches!(&value.kind, ExprKind::Var { name, .. } if name == "p"));
+    let mut fields = Vec::new();
+    let mut restricted = None;
+    while let ExprKind::Let {
+        name,
+        value,
+        rest: Some(rest),
+        ..
+    } = &at.kind
+    {
+        match &value.kind {
+            ExprKind::Field { record, label } => {
+                assert!(
+                    matches!(&record.kind, ExprKind::Var { symbol, .. } if symbol == source),
+                    "`{name}` reads the source"
+                );
+                fields.push((name.as_str(), label.as_str()));
+            }
+            ExprKind::Restrict { record, labels } => {
+                assert!(
+                    matches!(&record.kind, ExprKind::Var { symbol, .. } if symbol == source),
+                    "`{name}` restricts the source"
+                );
+                restricted = Some((name.as_str(), labels.clone()));
+            }
+            other => panic!("unexpected binding {other:?}"),
+        }
+        at = rest;
+    }
+    assert_eq!(fields, [("a", "a"), ("b", "b")]);
+    assert_eq!(
+        restricted,
+        Some(("r", vec!["a".to_string(), "b".to_string()]))
+    );
 }
 
 #[test]
