@@ -356,3 +356,23 @@ Risks, most serious first.
 4. **A late change of judgment**, the phase-2 lesson. Nothing here changes the
    judgment. If Q2-B is later wanted, `l # R` gains a `D` argument; the rule text
    and every lemma except the variable case carry over.
+
+## 8. Outcome of the proof PR
+
+The plan held. Differences from the text above, all small:
+
+- `rm` is a function (`rmf`, returning an option) with `rm l R T R'` its graph,
+  not an inductive relation: inverting an inductive `rm` over a row variable
+  unrolls forever, and the functional form makes each `req` rule a computation.
+- The guard `gd` of a recursive type skips the field type of an absent entry
+  (`Bool` presence). `abs` drops that type, and a guard that counted it would
+  not be preserved by equality in both directions.
+- `ftv_row` and `frv_row` of a `Maybe` entry include the presence slot, as the
+  plan says, and `GoatInferMuFree.v` counts it too (`mu_free_row`).
+- The proof needs no change to `typing D G e T`, `inst`, `gen`, `kres` or any
+  sort, as the plan predicted. About 1500 lines added across 28 files, 900 of
+  them the new `GoatPresence.v` (`presence_inv`, `rm` respecting `req`),
+  `GoatSpread.v` and `GoatPhase4.v`.
+- Algorithm W, the corpus reader and the parser fragment are the follow-ups
+  section 6 lists. `Feature::Spread` is therefore still in `core_corpus.rs`; it
+  goes to 0 with the algorithm ticket.

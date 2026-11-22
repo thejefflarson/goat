@@ -40,6 +40,8 @@ Fixpoint inst_rec (var_of : string -> termvar) (k D : nat) (e : exp) {struct e} 
   | e_tofloat a => e_tofloat (inst_rec var_of k D a)
   | e_con w tg a => e_con w tg (inst_rec var_of k D a)
   | e_match w a ars => e_match w (inst_rec var_of k D a) (inst_arms var_of k D ars)
+  | e_spread a l b => e_spread (inst_rec var_of k D a) l (inst_rec var_of k D b)
+  | e_restrict a l => e_restrict (inst_rec var_of k D a) l
   | e_fold a => e_fold (inst_rec var_of k D a)
   | e_unfold a => e_unfold (inst_rec var_of k D a)
   end
@@ -128,6 +130,8 @@ Proof.
     intros a IH k Hs. destruct Hs.
   - intros w tg a IH k Hs. destruct Hs.
   - intros w a IHa ars IHars k Hs. destruct Hs.
+  - intros a IHa l b IHb k Hs. destruct Hs.
+  - intros a IH l k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros k Hs. reflexivity.
@@ -471,6 +475,8 @@ Proof.
     intros a IH P Hs Hl. destruct Hs.
   - intros w tg a IH P Hs. destruct Hs.
   - intros w a IHa ars IHars P Hs. destruct Hs.
+  - intros a IHa l b IHb P Hs. destruct Hs.
+  - intros a IH l P Hs. destruct Hs.
   - intros a IH P Hs Hl. destruct Hs.
   - intros a IH P Hs Hl. destruct Hs.
   - (* no fields *)

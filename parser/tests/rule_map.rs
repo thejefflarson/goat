@@ -181,10 +181,20 @@ fn every_ott_production_is_reached_by_some_core_rule() {
         // syntax (ADR 0037, iso-recursive types). `e_con` and `e_match` are
         // the proof calculus's tag groups (proofs/README.md, phase 3); the
         // grammar does not denote tag declarations, construction or `match`
-        // into them until the parser fragment grows them.
+        // into them until the parser fragment grows them. `e_spread` and
+        // `e_restrict` are the calculus's spread and rest-pattern terms
+        // (phase 4), exempt for the same reason.
         if !matches!(
             production.as_str(),
-            "e" | "fs" | "fs_nil" | "e_tofloat" | "e_fold" | "e_unfold" | "e_con" | "e_match"
+            "e" | "fs"
+                | "fs_nil"
+                | "e_tofloat"
+                | "e_fold"
+                | "e_unfold"
+                | "e_con"
+                | "e_match"
+                | "e_spread"
+                | "e_restrict"
         ) {
             assert!(
                 reached.contains(production.as_str()),

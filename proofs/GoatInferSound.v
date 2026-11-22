@@ -375,7 +375,7 @@ Proof.
   induction f as [|f IH]; intros ora Hora; [ refine (conj _ (conj _ _)); intros; discriminate | ].
   destruct (IH ora Hora) as [IHe [IHf IHa]]. refine (conj _ (conj _ _)).
   - intros D G e n s D' T n' H HG HD. cbn [infer] in H.
-    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3 | w1 tg1 a6 | w2 a7 ars2 | a4 | a5];
+    destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3 | w1 tg1 a6 | w2 a7 ars2 | a8 l8 a9 | a10 l10 | a4 | a5];
       try discriminate H.
     + (* variable *)
       destruct (lookup x G) as [sc|] eqn:Hl; [|discriminate].

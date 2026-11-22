@@ -182,6 +182,12 @@ Proof.
   - (* T_Bin *)
     intros D G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs G2 Hg Hy. subst G. cbn [subst_exp].
     eapply T_Bin; [ eapply IH1 | eapply IH2 | exact Hs ]; eauto.
+  - (* T_Spread *)
+    intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2 G2 Hg Hy. subst G. cbn [subst_exp].
+    eapply T_Spread; [ eapply IH1 | eapply IH2 ]; eauto.
+  - (* T_Restrict *)
+    intros D G e l R0 T R Ht IH Hrm G2 Hg Hy. subst G. cbn [subst_exp].
+    eapply T_Restrict; [ eapply IH; eauto | exact Hrm ].
   - (* T_Fold *)
     intros D G e B Hlc Hgd Ht IH G2 Hg Hy. subst G. cbn [subst_exp].
     eapply T_Fold; [ exact Hlc | exact Hgd | eapply IH; eauto ].

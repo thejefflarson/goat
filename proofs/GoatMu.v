@@ -19,6 +19,65 @@ Require Import Stdlib.Arith.Compare_dec.
 From Stdlib Require Import Lia.
 
 (* ------------------------------------------------------------------ *)
+(* A row that lacks a label still lacks it after a substitution or an   *)
+(* unrolling: both rewrite the types in a spine and leave its labels     *)
+(* alone, and a lacking row has no row variable to replace.               *)
+(* ------------------------------------------------------------------ *)
+
+Lemma rlacks_ap_mut : forall st sr l,
+  (forall T : typ, True) /\
+  (forall R, rlacks l R = true -> rlacks l (ap_row st sr R) = true).
+Proof.
+  intros st sr l.
+  apply typ_row_mutind; simpl; intros; try exact I; try discriminate; auto.
+  - apply Bool.andb_true_iff in H1 as [H1 H2]. rewrite H1. auto.
+  - apply Bool.andb_true_iff in H2 as [H2 H3]. rewrite H2. auto.
+Qed.
+
+Lemma rlacks_ap : forall st sr l R,
+  rlacks l R = true -> rlacks l (ap_row st sr R) = true.
+Proof. intros. apply (proj2 (rlacks_ap_mut st sr l)); auto. Qed.
+
+Lemma rlacks_open_mut : forall k U l,
+  (forall T : typ, True) /\
+  (forall R, rlacks l R = true -> rlacks l (open_row k U R) = true).
+Proof.
+  intros k U l.
+  apply typ_row_mutind; simpl; intros; try exact I; try discriminate; auto.
+  - apply Bool.andb_true_iff in H1 as [H1 H2]. rewrite H1. auto.
+  - apply Bool.andb_true_iff in H2 as [H2 H3]. rewrite H2. auto.
+Qed.
+
+Lemma rlacks_open : forall k U l R,
+  rlacks l R = true -> rlacks l (open_row k U R) = true.
+Proof. intros. apply (proj2 (rlacks_open_mut k U l)); auto. Qed.
+
+Lemma rmf_ap_mut : forall st sr l,
+  (forall T : typ, True) /\
+  (forall R T R0, rmf l R = Some (T, R0) ->
+     rmf l (ap_row st sr R) = Some (ap_typ st sr T, ap_row st sr R0)).
+Proof.
+  intros st sr l.
+  apply typ_row_mutind; try (intros; exact I).
+  - intros T0 R0 H. simpl in H. discriminate.
+  - intros r T0 R0 H. simpl in H. discriminate.
+  - intros l0 T1 _ R1 IH T0 R0 H. simpl in H |- *.
+    destruct (Nat.eqb l l0).
+    + inversion H; subst. reflexivity.
+    + destruct (rmf l R1) as [[T2 R2]|] eqn:E; [ | discriminate ].
+      inversion H; subst. rewrite (IH _ _ eq_refl). reflexivity.
+  - intros l0 P _ T1 _ R1 IH T0 R0 H. simpl in H |- *.
+    destruct (Nat.eqb l l0).
+    + destruct P; simpl in H; try discriminate. inversion H; subst. reflexivity.
+    + destruct (rmf l R1) as [[T2 R2]|] eqn:E; [ | discriminate ].
+      inversion H; subst. rewrite (IH _ _ eq_refl). reflexivity.
+Qed.
+
+Lemma rm_ap : forall st sr l R0 T R,
+  rm l R0 T R -> rm l (ap_row st sr R0) (ap_typ st sr T) (ap_row st sr R).
+Proof. intros. apply (proj2 (rmf_ap_mut st sr l)); auto. Qed.
+
+(* ------------------------------------------------------------------ *)
 (* Local closure                                                         *)
 (* ------------------------------------------------------------------ *)
 
@@ -33,6 +92,8 @@ Proof.
   - eapply H; eauto. lia.
   - eapply H; eauto.
   - destruct H1; split; eauto.
+  - repeat match goal with H : _ /\ _ |- _ => destruct H end;
+      repeat split; eauto.
 Qed.
 
 Lemma lct_mono : forall T k m, lct k T -> k <= m -> lct m T.
@@ -53,6 +114,8 @@ Proof.
   - rewrite H; auto.
   - rewrite H; auto.
   - destruct H1. rewrite H, H0; auto.
+  - repeat match goal with H : _ /\ _ |- _ => destruct H end.
+    rewrite H, H0, H1; auto.
 Qed.
 
 Lemma open_typ_closed : forall T k U, lct k T -> open_typ k U T = T.
@@ -78,6 +141,7 @@ Proof.
   - rewrite H; reflexivity.
   - symmetry. apply open_row_closed. eapply lcr_mono; [ apply Hr | lia ].
   - rewrite H, H0; reflexivity.
+  - rewrite H, H0, H1; reflexivity.
 Qed.
 
 Lemma ap_open : forall st sr T k U, lc_sub st sr ->
@@ -124,7 +188,7 @@ Lemma teq_open_body_mut : forall U,
   (forall R R', req R R' -> forall k, req (open_row k U R) (open_row k U R')).
 Proof.
   intros U.
-  apply teq_req_mutind; simpl; intros; eauto using teq_refl.
+  apply teq_req_mutind; simpl; intros; eauto using teq_refl, rlacks_open.
 Qed.
 
 (* ... and in the argument. *)
@@ -168,6 +232,8 @@ Proof.
   - eapply H; [ eassumption | lia ].
   - eapply H; eauto.
   - destruct H1. split; [ eapply H | eapply H0 ]; eauto.
+  - repeat match goal with H : _ /\ _ |- _ => destruct H end.
+    repeat split; [ eapply H | right; eapply H0 | eapply H1 ]; eauto.
 Qed.
 
 Lemma gd_ap_mut : forall st sr, lc_sub st sr ->
@@ -184,6 +250,14 @@ Proof.
   - eauto.
   - eapply (proj2 gd_closed_mut); [ apply Hr | lia ].
   - destruct H1. split; eauto.
+  - repeat match goal with H : _ /\ _ |- _ => destruct H end.
+    repeat split; [ eauto | | eauto ].
+    match goal with
+    | Ha : is_abs ?P = true \/ _ |- _ =>
+        destruct Ha as [Ha | Hb];
+        [ left; destruct P; simpl in Ha; try discriminate; reflexivity
+        | right; eauto ]
+    end.
 Qed.
 
 Lemma guarded_ap : forall st sr B,
@@ -205,6 +279,11 @@ Proof.
   - intros A C B _ IH1 _ IH2 rr ff kk. rewrite (IH1 rr ff kk). apply IH2.
   - intros A B _ IH rr ff kk. symmetry. apply IH.
   - intros l T T' R R' _ IH1 _ IH2 rr ff kk. rewrite (IH1 rr ff kk), (IH2 rr ff kk). tauto.
+  - intros l P T R P' T' R' H1 IH1 _ IH2 _ IH3 rr ff kk.
+    rewrite (teq_is_abs _ _ H1), (IH1 rr ff kk), (IH2 rr ff kk), (IH3 rr ff kk). tauto.
+  - intros l T R rr ff kk.
+    split; [ intros [_ [[Hd | Hd] H]]; [ discriminate | split; assumption ]
+           | intros [Hd H]; split; [ exact I | split; [ right; exact Hd | exact H ] ] ].
   - intros A C B _ IH1 _ IH2 rr ff kk. rewrite (IH1 rr ff kk). apply IH2.
   - intros A B _ IH rr ff kk. symmetry. apply IH.
 Qed.

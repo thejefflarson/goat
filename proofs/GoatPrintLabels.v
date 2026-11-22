@@ -104,6 +104,8 @@ Proof.
   - intros a IH P. cbn [block lbls]. occ_simp. reflexivity.
   - intros w tg a IH P. cbn [block lbls]. occ_simp. reflexivity.
   - intros w a IHa ars IHars P. cbn [block lbls]. occ_simp. reflexivity.
+  - intros a IHa l b IHb P. cbn [block lbls]. occ_simp. reflexivity.
+  - intros a IH l P. cbn [block lbls]. occ_simp. reflexivity.
   - intros a IH P. cbn [block lbls]. occ_simp. reflexivity.
   - intros a IH P. cbn [block lbls]. occ_simp. reflexivity.
   - intros P. split; reflexivity.

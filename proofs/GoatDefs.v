@@ -53,6 +53,8 @@ with ap_row (st : tsub) (sr : rsub) (R : row) {struct R} : row :=
   | row_Empty => row_Empty
   | row_Var r => sr r
   | row_Ext l T R' => row_Ext l (ap_typ st sr T) (ap_row st sr R')
+  | row_Maybe l P T R' =>
+      row_Maybe l (ap_typ st sr P) (ap_typ st sr T) (ap_row st sr R')
   end.
 
 Definition idt : tsub := fun a => typ_Var a.
@@ -91,6 +93,8 @@ with open_row (k : nat) (U : typ) (R : row) {struct R} : row :=
   | row_Empty => row_Empty
   | row_Var r => row_Var r
   | row_Ext l T R' => row_Ext l (open_typ k U T) (open_row k U R')
+  | row_Maybe l P T R' =>
+      row_Maybe l (open_typ k U P) (open_typ k U T) (open_row k U R')
   end.
 
 Fixpoint lct (k : nat) (T : typ) {struct T} : Prop :=
@@ -106,6 +110,7 @@ with lcr (k : nat) (R : row) {struct R} : Prop :=
   match R with
   | row_Empty | row_Var _ => True
   | row_Ext _ T R' => lct k T /\ lcr k R'
+  | row_Maybe _ P T R' => lct k P /\ lct k T /\ lcr k R'
   end.
 
 (* A substitution is locally closed when no image has a free index; only
@@ -130,6 +135,8 @@ with gdr (r f : bool) (k : nat) (R : row) {struct R} : Prop :=
   match R with
   | row_Empty | row_Var _ => True
   | row_Ext _ T R' => gd r f k T /\ gdr r f k R'
+  | row_Maybe _ P T R' =>
+      gd r f k P /\ (is_abs P = true \/ gd r f k T) /\ gdr r f k R'
   end.
 
 Definition guarded (B : typ) : Prop := gd false false 0 B.
@@ -160,6 +167,7 @@ with ftv_row (R : row) {struct R} : atoms :=
   | row_Empty => {}
   | row_Var _ => {}
   | row_Ext _ T R' => ftv_typ T `union` ftv_row R'
+  | row_Maybe _ P T R' => ftv_typ P `union` (ftv_typ T `union` ftv_row R')
   end.
 
 Fixpoint frv_typ (T : typ) {struct T} : atoms :=
@@ -181,6 +189,7 @@ with frv_row (R : row) {struct R} : atoms :=
   | row_Empty => {}
   | row_Var s => {{s}}
   | row_Ext _ T R' => frv_typ T `union` frv_row R'
+  | row_Maybe _ P T R' => frv_typ P `union` (frv_typ T `union` frv_row R')
   end.
 
 (* Membership wrappers: the metatheory is phrased with these predicates, and
@@ -405,6 +414,52 @@ Fixpoint lookup_first (l : label) (fs : fields) : option exp :=
   | fs_nil => None
   | fs_cons l' e fs' => if Nat.eqb l l' then Some e else lookup_first l fs'
   end.
+
+(* A spread sets the first field labeled [l] to [v] when there is one, and puts
+   [l: v] in front otherwise; a restrict takes the first [l] out.  Both look
+   at the record, not its type: the types make the two cases agree. *)
+Fixpoint fs_replace (l : label) (v : exp) (fs : fields) {struct fs} : fields :=
+  match fs with
+  | fs_nil => fs_nil
+  | fs_cons l' e fs' =>
+      if Nat.eqb l l' then fs_cons l' v fs' else fs_cons l' e (fs_replace l v fs')
+  end.
+
+Definition fs_set (l : label) (v : exp) (fs : fields) : fields :=
+  match lookup_first l fs with
+  | Some _ => fs_replace l v fs
+  | None => fs_cons l v fs
+  end.
+
+Fixpoint fs_drop (l : label) (fs : fields) {struct fs} : fields :=
+  match fs with
+  | fs_nil => fs_nil
+  | fs_cons l' e fs' =>
+      if Nat.eqb l l' then fs' else fs_cons l' e (fs_drop l fs')
+  end.
+
+(* The first [l] of a row: its type and the row without it.  Entries of other
+   labels are skipped, and a [Maybe] entry is a present [l] only when its
+   presence is [Unit]. *)
+Fixpoint rmf (l : label) (R : row) {struct R} : option (typ * row) :=
+  match R with
+  | row_Empty | row_Var _ => None
+  | row_Ext l' T R' =>
+      if Nat.eqb l l' then Some (T, R')
+      else match rmf l R' with
+           | Some (T0, R0) => Some (T0, row_Ext l' T R0)
+           | None => None
+           end
+  | row_Maybe l' P T R' =>
+      if Nat.eqb l l' then (if is_unit P then Some (T, R') else None)
+      else match rmf l R' with
+           | Some (T0, R0) => Some (T0, row_Maybe l' P T R0)
+           | None => None
+           end
+  end.
+
+Definition rm (l : label) (R : row) (T : typ) (R' : row) : Prop :=
+  rmf l R = Some (T, R').
 
 (* The value restriction (ADR 0027): a [let] generalizes its binding only when
    the bound term is a syntactic value, one whose evaluation does no work: unit,
@@ -687,6 +742,17 @@ Inductive step : exp -> exp -> Prop :=
  | st_tofloat1 : forall e e', step e e' -> step (e_tofloat e) (e_tofloat e')
  | st_tofloat : forall z d, step (e_tofloat (e_num z)) (e_dec d)
  | st_tofloat_dec : forall d, step (e_tofloat (e_dec d)) (e_dec d)
+ | st_spread1 : forall e1 e1' l e2,
+     step e1 e1' -> step (e_spread e1 l e2) (e_spread e1' l e2)
+ | st_spread2 : forall v1 l e2 e2',
+     value v1 -> step e2 e2' -> step (e_spread v1 l e2) (e_spread v1 l e2')
+ | st_spread : forall fs l v,
+     rec_value fs -> value v ->
+     step (e_spread (e_rec fs) l v) (e_rec (fs_set l v fs))
+ | st_restrict1 : forall e e' l,
+     step e e' -> step (e_restrict e l) (e_restrict e' l)
+ | st_restrict : forall fs l,
+     rec_value fs -> step (e_restrict (e_rec fs) l) (e_rec (fs_drop l fs))
  | st_fold1 : forall e e', step e e' -> step (e_fold e) (e_fold e')
  | st_unfold1 : forall e e', step e e' -> step (e_unfold e) (e_unfold e')
  | st_unfold_fold : forall v, value v -> step (e_unfold (e_fold v)) v
@@ -721,6 +787,10 @@ Inductive traps : exp -> trap_kind -> Prop :=
  | tr_bin2 : forall v o e2 k,
      value v -> traps e2 k -> traps (e_bin v o e2) k
  | tr_tofloat : forall e k, traps e k -> traps (e_tofloat e) k
+ | tr_spread1 : forall e1 l e2 k, traps e1 k -> traps (e_spread e1 l e2) k
+ | tr_spread2 : forall v1 l e2 k,
+     value v1 -> traps e2 k -> traps (e_spread v1 l e2) k
+ | tr_restrict : forall e l k, traps e k -> traps (e_restrict e l) k
  | tr_fold : forall e k, traps e k -> traps (e_fold e) k
  | tr_unfold : forall e k, traps e k -> traps (e_unfold e) k
  | tr_con : forall w tg e k, traps e k -> traps (e_con w tg e) k
@@ -791,6 +861,13 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
  | T_Bin : forall D G e1 o e2 A B R,
      typing D G e1 A -> typing D G e2 B -> bin_sig D o A B R ->
      typing D G (e_bin e1 o e2) R
+ | T_Spread : forall D G e1 l e2 P T R,
+     typing D G e1 (typ_Record (row_Maybe l P T R)) ->
+     typing D G e2 T ->
+     typing D G (e_spread e1 l e2) (typ_Record (row_Ext l T R))
+ | T_Restrict : forall D G e l R0 T R,
+     typing D G e (typ_Record R0) -> rm l R0 T R ->
+     typing D G (e_restrict e l) (typ_Record R)
  | T_Fold : forall D G e B,
      lct 0 (typ_Mu B) -> guarded B ->
      typing D G e (open_typ 0 (typ_Mu B) B) -> typing D G (e_fold e) (typ_Mu B)
