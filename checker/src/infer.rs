@@ -418,6 +418,9 @@ struct Inferer {
     subst: Bindings<Ty>,
     row_subst: Bindings<Row>,
     resolved: RefCell<Resolved>,
+    /// The `Rec` binders [`Inferer::resolve`] is inside, whose variables the
+    /// substitution must not touch.
+    shadowed: RefCell<Vec<TypeVar>>,
     env: HashMap<Symbol, Scheme>,
     /// The `env` symbols whose types may still mention a variable that is
     /// neither quantified nor bound, other than those in `lone_vars`, and that
@@ -978,7 +981,7 @@ impl Inferer {
         if let Some(hit) = self.resolved.borrow().vars.get(&var) {
             return hit.clone();
         }
-        let resolved = self.resolve(bound);
+        let resolved = self.unshadowed(|| self.resolve(bound));
         self.resolved
             .borrow_mut()
             .vars
@@ -986,12 +989,21 @@ impl Inferer {
         resolved
     }
 
+    /// Run `f` with no `Rec` binder shadowing: a binding's own type is
+    /// resolved the same wherever the variable is mentioned.
+    fn unshadowed<T>(&self, f: impl FnOnce() -> T) -> T {
+        let outer = std::mem::take(&mut *self.shadowed.borrow_mut());
+        let out = f();
+        *self.shadowed.borrow_mut() = outer;
+        out
+    }
+
     fn resolve_row_bound(&self, var: TypeVar, bound: &Row) -> Row {
         self.refresh_resolved();
         if let Some(hit) = self.resolved.borrow().rows.get(&var) {
             return hit.clone();
         }
-        let resolved = self.resolve_row(bound);
+        let resolved = self.unshadowed(|| self.resolve_row(bound));
         self.resolved
             .borrow_mut()
             .rows
@@ -1041,6 +1053,7 @@ impl Inferer {
     /// Follow the substitution to the type's current best-known form.
     fn resolve(&self, ty: &Ty) -> Ty {
         match ty {
+            Ty::Var(v) if self.shadowed.borrow().contains(v) => Ty::Var(*v),
             Ty::Var(v) => match self.subst.get(v) {
                 Some(t) => self.resolve_bound(*v, t),
                 None => Ty::Var(*v),
@@ -1051,7 +1064,12 @@ impl Inferer {
             ),
             Ty::Record(row) => Ty::Record(self.resolve_row(row)),
             Ty::Variant(row) => Ty::Variant(self.resolve_row(row)),
-            Ty::Rec(binder, body) => Ty::Rec(*binder, self.shared(body)),
+            Ty::Rec(binder, body) => {
+                self.shadowed.borrow_mut().push(*binder);
+                let body = self.shared(body);
+                self.shadowed.borrow_mut().pop();
+                Ty::Rec(*binder, body)
+            }
             other => other.clone(),
         }
     }
@@ -3047,6 +3065,7 @@ impl Inferer {
                             kind: ExprKind::Record { fields },
                             ..
                         }) if group.params > 0
+                            && !fields.is_empty()
                             && fields
                                 .iter()
                                 .enumerate()
@@ -3234,7 +3253,7 @@ impl Inferer {
         {
             match (payload, expected, parts) {
                 (Ty::Record(given), Ty::Record(wanted), Some((spans, since))) => {
-                    self.unify_fields(group, tag, [given, wanted], &whole, (&spans, since));
+                    self.unify_fields(group, tag, [given, wanted], &whole, (&spans, since), span);
                 }
                 _ => self.unify(payload, expected, span),
             }
@@ -3255,6 +3274,7 @@ impl Inferer {
         [given, wanted]: [&Row; 2],
         whole: &Ty,
         (spans, since): (&[Span], usize),
+        span: Span,
     ) {
         let pairs: Option<Vec<(&Ty, &Ty)>> = (0..spans.len())
             .map(|i| {
@@ -3268,7 +3288,7 @@ impl Inferer {
             self.unify(
                 &Ty::Record(given.clone()),
                 &Ty::Record(wanted.clone()),
-                spans[0],
+                spans.first().copied().unwrap_or(span),
             );
             return;
         };
@@ -4850,6 +4870,29 @@ mod tests {
             next: 1000,
             ..Inferer::default()
         }
+    }
+
+    #[test]
+    fn resolve_leaves_a_variable_its_enclosing_binder_shadows() {
+        let mut inf = inferer();
+        inf.unify(&Ty::Var(7), &Ty::Str, SPAN);
+        let shadowed = chain(7, "Link", Row::Empty);
+        assert_eq!(inf.resolve(&shadowed), shadowed);
+        let outside = Ty::func(vec![Ty::Var(7)], shadowed.clone());
+        assert_eq!(
+            inf.resolve(&outside),
+            Ty::func(vec![Ty::Str], shadowed.clone())
+        );
+        let through = Ty::Rec(
+            8,
+            Arc::new(Ty::Variant(extend(
+                "Cons",
+                Ty::Record(extend("0", Ty::Var(7), Row::Empty)),
+                extend("Link", Ty::Var(8), Row::Empty),
+            ))),
+        );
+        let resolved = inf.resolve(&through);
+        assert!(resolved.to_string().contains("String"), "{resolved}");
     }
 
     #[test]

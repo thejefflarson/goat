@@ -420,3 +420,30 @@ fn only_the_slot_that_mixes_widens_and_a_written_slot_never_does() {
     assert!(check(&format!("{shots} x = Hit(7 // 2, 2.5) 1")).is_ok());
     assert!(check(&format!("{shots} x = Hit(2.5, 1) 1")).is_err());
 }
+
+#[test]
+fn an_empty_or_misshapen_positional_payload_is_a_spanned_error() {
+    for (source, text) in [
+        ("x = Link({}) 1", "Link({})"),
+        ("tag Pair = P(_, Int) x = P({}) 1", "P({})"),
+        ("tag Pile = Nil | Cons(_, Pile) x = Cons({}) 1", "Cons({})"),
+        ("x = Link({}, {}) 1", "{}"),
+        ("x = DictNode({}) 1", "DictNode({})"),
+    ] {
+        let errors = errors_of(source);
+        let error = &errors[0];
+        assert!(!error.message.is_empty(), "{source}");
+        assert_eq!(&source[error.span.start..error.span.end], text, "{source}");
+    }
+}
+
+#[test]
+fn more_slots_than_a_group_allows_is_a_spanned_error() {
+    let slots = |n: usize| format!("tag T = A({}) 1", vec!["_"; n].join(", "));
+    assert!(check(&slots(256)).is_ok());
+    let (message, text) = first_error(&slots(4200));
+    assert!(message.contains("at most 256"), "{message}");
+    assert_eq!(text, "_");
+    let lists = format!("tag T = A({}, [_]) 1", vec!["_"; 4096].join(", "));
+    assert!(check(&lists).is_err());
+}

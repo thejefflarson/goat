@@ -31,9 +31,14 @@ const MAX_DEPTH: usize = 256;
 /// decision tree reaches it, so nested patterns multiply.
 const MAX_LIST_LEAVES: usize = 4096;
 
-/// The binder of a list type written in a tag payload, `[_]` or `[Int]`; no
-/// instantiation's own variable is this large.
+/// Most `_` slots one tag group declares; each is a parameter of the group.
+const MAX_GROUP_SLOTS: usize = 256;
+
+/// The binder of a list type written in a tag payload, `[_]` or `[Int]`. It
+/// lies below every parameter placeholder (`MAX_GROUP_SLOTS` bounds those), so
+/// instantiating a group never renames it into a parameter's variable.
 const LIST_SLOT_BINDER: TypeVar = Group::SELF - 4096;
+const _: () = assert!(Group::param(MAX_GROUP_SLOTS) > LIST_SLOT_BINDER);
 
 /// The name generated bindings for the pieces of a list carry.
 const LIST_NAME: &str = "list";
@@ -688,6 +693,13 @@ impl Lower {
         params: &mut usize,
     ) -> Ty {
         let (shape, hint) = match ty.kind() {
+            "infer_type" if *params >= MAX_GROUP_SLOTS => {
+                self.errors.push(GoatError::new(
+                    self.span_of(ty),
+                    format!("a tag group can have at most {MAX_GROUP_SLOTS} `_` slots"),
+                ));
+                return Ty::Unit;
+            }
             "infer_type" => {
                 *params += 1;
                 return Ty::Var(Group::param(*params - 1));
