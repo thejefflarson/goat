@@ -32,6 +32,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::hoist::hoist_fields;
 use crate::mir::*;
 
 type Set = BTreeSet<Local>;
@@ -42,6 +43,7 @@ type Set = BTreeSet<Local>;
 /// to the host, and so is an interactive program's, which holds its model and
 /// closures.
 pub fn insert_rc(program: &mut Program) {
+    hoist_fields(program);
     let bodies: Vec<Expr> = program
         .funcs
         .iter()
@@ -75,7 +77,7 @@ pub fn insert_rc(program: &mut Program) {
     }
 }
 
-fn max_local(func: &Func) -> u32 {
+pub(crate) fn max_local(func: &Func) -> u32 {
     let mut max = 0;
     func.params.iter().for_each(|(l, _)| max = max.max(l.0));
     if let Some(env) = &func.env {
@@ -248,13 +250,14 @@ impl<'p> Cx<'p> {
             Expr::Switch(x, arms, default) => self.switch(*x, arms, default, after),
             Expr::CallDirect(f, args) => {
                 let parts = self.seq(&args.iter().collect::<Vec<_>>(), after);
-                parts.into_out(|args| Expr::CallDirect(*f, args))
+                self.drop_before_call(parts, |args| Expr::CallDirect(*f, args))
             }
             Expr::CallClosure(callee, args) => {
-                let (callee, parts) = self.call_parts(Some(callee), args, after);
-                parts.into_out(|args| {
-                    let callee = callee.unwrap_or(Expr::Const(Const::Unit));
-                    Expr::CallClosure(Box::new(callee), args)
+                let items: Vec<&Expr> = std::iter::once(&**callee).chain(args).collect();
+                let parts = self.seq(&items, after);
+                self.drop_before_call(parts, |mut operands| {
+                    let callee = operands.remove(0);
+                    Expr::CallClosure(Box::new(callee), operands)
                 })
             }
             Expr::TailCall(callee, args) => self.tail_call(callee, args, after),
@@ -343,6 +346,38 @@ impl<'p> Cx<'p> {
         let mut parts = self.seq(&items, after);
         let callee = callee.map(|_| parts.exprs.remove(0));
         (callee, parts)
+    }
+
+    /// A call whose operands borrow a local for the last time releases it
+    /// before the call rather than after, so the loaded values are not shared
+    /// with a record that is already dead and the callee can reuse them. The
+    /// operands are evaluated into temporaries first, which keeps their order.
+    fn drop_before_call(&mut self, parts: Parts, build: impl FnOnce(Vec<Expr>) -> Expr) -> Out {
+        if parts.pending.is_empty() {
+            return parts.into_out(build);
+        }
+        let mut bindings = Vec::new();
+        let operands: Vec<Expr> = parts
+            .exprs
+            .into_iter()
+            .map(|operand| match operand {
+                Expr::Const(_) | Expr::Local(_) => operand,
+                operand => {
+                    let t = self.fresh();
+                    bindings.push((t, operand));
+                    Expr::Local(t)
+                }
+            })
+            .collect();
+        let mut body = self.drops(parts.pending, build(operands));
+        for (t, value) in bindings.into_iter().rev() {
+            body = Expr::Let(t, Box::new(value), Box::new(body));
+        }
+        Out {
+            expr: body,
+            uses: parts.uses,
+            pending: Set::new(),
+        }
     }
 
     fn binary(

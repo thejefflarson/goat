@@ -489,6 +489,82 @@ impl Expr {
         }
     }
 
+    /// Calls `f` on each direct subexpression, mutably.
+    pub fn for_each_child_mut<'a>(&'a mut self, f: &mut impl FnMut(&'a mut Expr)) {
+        match self {
+            Expr::Const(_)
+            | Expr::Local(_)
+            | Expr::Capture(_)
+            | Expr::Field(..)
+            | Expr::Payload(..)
+            | Expr::Free(_)
+            | Expr::StrLit(_)
+            | Expr::StrEq(..)
+            | Expr::StrLen(_)
+            | Expr::StrByte(..)
+            | Expr::StrChars(_)
+            | Expr::StrChar(..)
+            | Expr::Addr(_)
+            | Expr::Shared(_)
+            | Expr::Retain(..)
+            | Expr::KeepStr(_)
+            | Expr::MethodKey(_)
+            | Expr::CallForeign(..)
+            | Expr::Write(Write::Str(_) | Write::Lit(_) | Write::End)
+            | Expr::Dup(_)
+            | Expr::Drop(_)
+            | Expr::Trap(_)
+            | Expr::Site(..) => {}
+            Expr::Let(_, a, b)
+            | Expr::BinInt(_, a, b)
+            | Expr::BinFloat(_, a, b)
+            | Expr::Cmp(_, a, b) => {
+                f(a);
+                f(b);
+            }
+            Expr::If(c, t, o) => {
+                f(c);
+                f(t);
+                f(o);
+            }
+            Expr::Switch(_, arms, default) => {
+                arms.iter_mut().for_each(|(_, b)| f(b));
+                f(default);
+            }
+            Expr::CallDirect(_, args)
+            | Expr::MakeClosure(_, args)
+            | Expr::AllocRecord(_, args)
+            | Expr::AllocVariant(_, _, args)
+            | Expr::ReuseVariant(_, _, _, args)
+            | Expr::ReuseRecord(_, _, args) => args.iter_mut().for_each(f),
+            Expr::CallClosure(c, args) => {
+                f(c);
+                args.iter_mut().for_each(f);
+            }
+            Expr::TailCall(callee, args) => {
+                if let Callee::Closure(c) = callee {
+                    f(c);
+                }
+                args.iter_mut().for_each(f);
+            }
+            Expr::Unpack(_, _, _, body) => f(body),
+            Expr::IntToFloat(value)
+            | Expr::FloatFn(_, value)
+            | Expr::Write(Write::Number(value)) => f(value),
+        }
+    }
+
+    /// Calls `f` on `self` and everything under it, mutably, with no stack
+    /// proportional to the tree's depth. A node's children are visited after
+    /// `f` has changed it.
+    pub fn for_each_node_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
+        let mut pending = vec![self];
+        while let Some(e) = pending.pop() {
+            f(e);
+            e.for_each_child_mut(&mut |c| pending.push(c));
+        }
+    }
+
     /// The subexpression a `Let` or operator node evaluates first: a `Let`'s
     /// right-hand side, the left side of a binary operator or comparison, the
     /// value under a conversion, the condition of an `If`. A left-associative

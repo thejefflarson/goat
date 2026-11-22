@@ -199,7 +199,7 @@ impl Mono<'_> {
                     m.arith(cx, None, op, field, Expr::Field(a, i), Expr::Field(b, i))
                 })
                 .collect();
-            Expr::AllocRecord(layout, fields)
+            Expr::ReuseRecord(a, layout, fields)
         })
     }
 
