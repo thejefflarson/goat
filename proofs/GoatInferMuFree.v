@@ -317,7 +317,7 @@ Proof.
             + injection EB as <-. destruct T2; simpl in C2; try discriminate; exact I.
             + destruct (cmp_ty (apT s2 T1)) eqn:C1.
               * injection EB as <-. destruct (apT s2 T1); simpl in C1; try discriminate; exact I.
-              * destruct (is_literal D2 (apT s2 T1) || is_literal D2 T2); [|discriminate].
+              * destruct (is_numeric_var D2 (apT s2 T1) || is_numeric_var D2 T2); [|discriminate].
                 injection EB as <-. exact I. }
         assert (S3 := proj1 (unify_mf f) _ _ _ _ _ _ E3 (apT_mf _ _ S2 M1) MT).
         assert (S4 := proj1 (unify_mf f) _ _ _ _ _ _ E4 (apT_mf _ _ S3 M2) MT).
