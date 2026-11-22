@@ -667,26 +667,42 @@ fn is_method(expr: &Expr) -> bool {
 /// that the methods take each other's places so a method comes after the
 /// siblings it calls through `self`. A caller that reaches a sibling's result
 /// before the sibling is typed cannot tell it is the receiver (see
-/// [`Inferer::settle_updater`]). Methods that call each other in a cycle keep
-/// source order.
+/// [`Inferer::settle_updater`]). A method that hands `self` on whole (to a
+/// helper, say) may reach any sibling, so it goes after all of them when it
+/// can. Methods that call each other in a cycle keep source order.
 fn inference_order(fields: &[(String, Expr)]) -> Vec<usize> {
     let methods: Vec<usize> = (0..fields.len())
         .filter(|&i| is_method(&fields[i].1))
         .collect();
+    let is_self = |e: &Expr| matches!(&e.kind, ExprKind::Var { name, .. } if name == SELF_NAME);
+    let mut hands_on_self = vec![false; methods.len()];
     let calls: Vec<Vec<usize>> = methods
         .iter()
-        .map(|&i| {
+        .enumerate()
+        .map(|(m, &i)| {
             let mut called = Vec::new();
-            for_each_node(&fields[i].1, &mut |e| {
-                if let ExprKind::Field { record, label } = &e.kind
-                    && matches!(&record.kind, ExprKind::Var { name, .. } if name == SELF_NAME)
-                    && let Some(&j) = methods.iter().find(|&&j| fields[j].0 == *label)
-                    && j != i
-                    && !called.contains(&j)
+            let (mut uses, mut named) = (0, 0);
+            for_each_node(&fields[i].1, &mut |e| match &e.kind {
+                ExprKind::Var { .. } if is_self(e) => uses += 1,
+                ExprKind::Spread { base, .. } if is_self(base) => named += 1,
+                ExprKind::App { callee, args }
+                    if matches!(&callee.kind, ExprKind::Field { record, .. } if is_self(record))
+                        && args.first().is_some_and(is_self) =>
                 {
-                    called.push(j);
+                    named += 1
                 }
+                ExprKind::Field { record, label } if is_self(record) => {
+                    named += 1;
+                    if let Some(&j) = methods.iter().find(|&&j| fields[j].0 == *label)
+                        && j != i
+                        && !called.contains(&j)
+                    {
+                        called.push(j);
+                    }
+                }
+                _ => {}
             });
+            hands_on_self[m] = uses > named;
             called
         })
         .collect();
@@ -694,8 +710,11 @@ fn inference_order(fields: &[(String, Expr)]) -> Vec<usize> {
     let mut ordered = Vec::with_capacity(methods.len());
     while ordered.len() < methods.len() {
         let pending = || (0..methods.len()).filter(|&m| !done[methods[m]]);
+        let after_calls = |m: &usize| calls[*m].iter().all(|&j| done[j]);
+        let after_all = |m: &usize| !hands_on_self[*m] || ordered.len() + 1 == methods.len();
         let next = pending()
-            .find(|&m| calls[m].iter().all(|&j| done[j]))
+            .find(|m| after_calls(m) && after_all(m))
+            .or_else(|| pending().find(after_calls))
             .or_else(|| pending().next())
             .expect("a method is left");
         done[methods[next]] = true;
