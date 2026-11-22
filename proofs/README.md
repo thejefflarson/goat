@@ -538,6 +538,11 @@ the bound term is typed in `ext D V k`, the environment extended with the sorts
 the scheme records on the renamed variables (`typing_gen_ren`,
 `kres_ext_lift`).
 
+The algorithm is incomplete for one use of the operators: the checker applies
+`+ - *` to two records field by field, and `sat` holds of no record at `Numeric`
+(ADR 0038, decision 4). The differential corpus skips only the calls that pass a
+record at a variable some `+ - *` takes as an operand.
+
 Metalib's atoms are opaque to computation, so the Coq examples that run the
 algorithm on a numeral (a fresh variable) do not reduce; the differential test
 runs the extracted algorithm on them instead.
