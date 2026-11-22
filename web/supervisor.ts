@@ -14,7 +14,7 @@ import {
   type ToWorker,
   missingCapability,
 } from "./protocol.ts";
-import type { EventKind, HostEvent, RawSpan, RawSwatch } from "./scene.ts";
+import type { EventKind, HostEvent, RawEdit, RawSpan, RawSwatch } from "./scene.ts";
 
 export const RUN_ONCE_BUDGET_MS = 10_000;
 export const POLL_MS = 100;
@@ -52,9 +52,9 @@ export interface RunSink {
   // The recompiled program could not replace the running one, which keeps running.
   onReloadFailed?(message: string): void;
   onOutput(lines: string[]): void;
-  // A `highlight` program drew spans for the input sent with `ticket`. The
-  // spans are the program's own words, to be validated before use.
-  onSpans?(ticket: number, spans: RawSpan[]): void;
+  // A `highlight` program drew spans and edits for the input sent with
+  // `ticket`. They are the program's own words, to be validated before use.
+  onSpans?(ticket: number, spans: RawSpan[], edits: RawEdit[]): void;
   // A `theme` program drew its swatches: the program's own words, to be
   // validated before use.
   onSwatches?(swatches: RawSwatch[]): void;
@@ -189,7 +189,7 @@ export class Supervisor implements Runner {
         session.sink.onOutput(message.lines);
         break;
       case "spans":
-        session.sink.onSpans?.(message.ticket, message.spans);
+        session.sink.onSpans?.(message.ticket, message.spans, message.edits);
         break;
       case "swatches":
         session.sink.onSwatches?.(message.swatches);

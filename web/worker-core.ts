@@ -33,7 +33,8 @@ const NO_LISTENERS: ListenerTarget = {
 };
 
 // A program over the editor vocabulary: `update` takes each input event, and
-// `draw` runs once after an `Edited` one, so the spans cost one scan per edit.
+// `draw` runs once after an `Edited` one, so the spans or edits cost one scan
+// per edit.
 interface Highlighter {
   exports: InteractiveExports;
   scene: SpanScene;
@@ -96,7 +97,7 @@ export function createWorkerCore(env: WorkerCoreEnv) {
     });
     if (event.kind !== "Edited") return;
     heartbeat.during(() => exports.goat_draw(session.model));
-    env.post({ type: "spans", ticket: ticket ?? 0, spans: scene.take() });
+    env.post({ type: "spans", ticket: ticket ?? 0, spans: scene.take(), edits: scene.takeEdits() });
   };
 
   const reloadProgram = async (module: Uint8Array<ArrayBuffer>) => {

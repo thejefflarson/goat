@@ -73,6 +73,12 @@ pub enum SceneCommand {
         to: i64,
         kind: String,
     },
+    Edit {
+        from: i64,
+        to: i64,
+        newlines: i64,
+        indent: i64,
+    },
     Swatch {
         role: String,
         light: String,
@@ -97,6 +103,10 @@ pub trait SceneSink {
     /// A style span over `from..to`, byte offsets into the host's text; `kind`
     /// is a role the host styles, never a color. Hosts with no text ignore it.
     fn span(&mut self, _from: i64, _to: i64, _kind: &str) {}
+
+    /// A whitespace edit: the host's text bytes `from..to` become `newlines`
+    /// line breaks followed by `indent` spaces. Hosts with no text ignore it.
+    fn edit(&mut self, _from: i64, _to: i64, _newlines: i64, _indent: i64) {}
 
     /// The colors a theme gives a style role on a light page and a dark one.
     /// They are the program's words, not checked here: the host that reads a
@@ -131,6 +141,7 @@ fn scene_signature(module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)
         "rect" => (vec![Number, Number, Number, Number, Str], Unit),
         "text" => (vec![Number, Number, Str, Str], Unit),
         "span" => (vec![Int, Int, Str], Unit),
+        "edit" => (vec![Int, Int, Int, Int], Unit),
         "swatch" => (vec![Str, Str, Str], Unit),
         _ => return None,
     })
@@ -168,6 +179,9 @@ fn scene_call(
             sink.text((*x, *y), text, color)
         }
         ("span", [Int(from), Int(to), Str(kind)]) => sink.span(*from, *to, kind),
+        ("edit", [Int(from), Int(to), Int(newlines), Int(indent)]) => {
+            sink.edit(*from, *to, *newlines, *indent)
+        }
         ("swatch", [Str(role), Str(light), Str(dark)]) => sink.swatch(role, light, dark),
         _ => return Err(format!("bad call to scene.{name}")),
     }
@@ -241,6 +255,15 @@ impl SceneSink for SceneHost {
             from,
             to,
             kind: kind.to_string(),
+        });
+    }
+
+    fn edit(&mut self, from: i64, to: i64, newlines: i64, indent: i64) {
+        self.commands.push(SceneCommand::Edit {
+            from,
+            to,
+            newlines,
+            indent,
         });
     }
 
