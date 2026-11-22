@@ -22,6 +22,7 @@ Fixpoint mu_free (T : typ) : Prop :=
   | typ_Mu _ | typ_Bvar _ => False
   | typ_Arrow A B => mu_free A /\ mu_free B
   | typ_Record R => mu_free_row R
+  | typ_Grp _ A => mu_free A
   | _ => True
   end
 with mu_free_row (R : row) : Prop :=
@@ -132,6 +133,8 @@ Proof.
       apply mf_scomp; [|exact Hs1].
       eapply IHt; [exact E2 | apply apT_mf; auto; apply H1 | apply apT_mf; auto; apply H2].
     + eapply IHr; [exact H | exact H1 | exact H2].
+    + destruct (gdecl_eq_dec _ _); [|discriminate].
+      eapply IHt; [exact H | exact H1 | exact H2].
   - intros Dk R1 R2 n s n' H H1 H2. simpl in H.
     destruct R1 as [|r|l T R1'].
     + destruct R2 as [|r2|l2 T2 R2']; try discriminate.
@@ -202,15 +205,52 @@ Proof.
   split; [exact I | apply IH].
 Qed.
 
+Lemma mf_spine : forall Ts, Forall mu_free Ts -> mu_free (spine Ts).
+Proof. intros Ts H. induction H; simpl; [exact I | split; assumption]. Qed.
+
+Lemma mf_nth : forall Ts j, Forall mu_free Ts -> mu_free (nth j Ts typ_Unit).
+Proof.
+  intros Ts j H. revert j. induction H as [|T Ts HT HTs IH]; intros [|j]; simpl;
+    [ exact I | exact I | exact HT | apply IH ].
+Qed.
+
+Lemma mf_slot_ty : forall w Ts c, Forall mu_free Ts -> mu_free (slot_ty w Ts c).
+Proof.
+  intros w Ts c H. unfold slot_ty. destruct c as [|[|[|[|[|[|c]]]]]]; simpl;
+    first [ exact I | exact (mf_spine _ H) | exact (mf_nth _ _ H) ].
+Qed.
+
+Lemma mf_slots_row : forall w Ts cs i, Forall mu_free Ts -> mu_free_row (slots_row w Ts i cs).
+Proof.
+  intros w Ts cs. induction cs as [|c cs IH]; intros i H; simpl;
+    [ exact I | split; [ apply mf_slot_ty; exact H | apply IH; exact H ] ].
+Qed.
+
+Lemma mf_tag_payload : forall w Ts tg, Forall mu_free Ts -> mu_free (tag_payload w Ts tg).
+Proof.
+  intros w Ts tg H. unfold tag_payload. destruct (nth_error w tg) as [cs|]; [|exact I].
+  unfold payload_ty. destruct cs; [ exact I | cbn [mu_free]; apply mf_slots_row; exact H ].
+Qed.
+
+Lemma mf_fresh_tys : forall k n, Forall mu_free (fresh_tys n k).
+Proof. induction k as [|k IH]; intros n; simpl; [constructor | constructor; [exact I | apply IH]]. Qed.
+
+Lemma mf_map : forall s Ts, mf_sub s -> Forall mu_free Ts -> Forall mu_free (map (apT s) Ts).
+Proof.
+  intros s Ts Hs H. induction H; simpl; constructor; [ apply apT_mf; assumption | assumption ].
+Qed.
+
 Lemma infer_mf : forall f,
   (forall Dk G e n s D' T n', infer f Dk G e n = Some (s, D', T, n') ->
      mf_ctx G -> mf_sub s /\ mu_free T) /\
   (forall Dk G fs n s D' R n', infer_fields f Dk G fs n = Some (s, D', R, n') ->
-     mf_ctx G -> mf_sub s /\ mu_free_row R).
+     mf_ctx G -> mf_sub s /\ mu_free_row R) /\
+  (forall Dk G w Ts x res ars n s D' T n', infer_arms f Dk G w Ts x res ars n = Some (s, D', T, n') ->
+     mf_ctx G -> Forall mu_free Ts -> mu_free res -> mf_sub s /\ mu_free T).
 Proof.
-  induction f as [|f IH]; [split; intros; discriminate|].
-  destruct IH as [IHi IHf].
-  split.
+  induction f as [|f IH]; [refine (conj _ (conj _ _)); intros; discriminate|].
+  destruct IH as [IHi [IHf IHa]].
+  refine (conj _ (conj _ _)).
   - intros Dk G e n s D' T n' H HG.
     destruct e as [i|x|k|d| | |b|e1 e2|e1 e2|fs e2|fs|e1 l| |q|c e1 e2|e1 o e2|e1|w tg e1|w e1 ars|e1|e1];
       simpl in H; try discriminate;
@@ -330,6 +370,29 @@ Proof.
       injection H as <- <- <- <-.
       assert (S2 := proj1 (unify_mf f) _ _ _ _ _ _ E2 M1 I).
       exact (conj (mf_scomp _ _ S2 S1) I).
+    + destruct (Nat.ltb tg (length w)); [|discriminate].
+      destruct (infer f Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
+      destruct (unify_t f D1 T1 (tag_payload w (fresh_tys n1 (nparams w)) tg) (n1 + nparams w))
+        as [[s2 n2]|] eqn:E2; [|discriminate].
+      injection H as <- <- <- <-.
+      pose proof (mf_fresh_tys (nparams w) n1) as HTs.
+      assert (S2 := proj1 (unify_mf f) _ _ _ _ _ _ E2 M1 (mf_tag_payload _ _ _ HTs)).
+      exact (conj (mf_scomp _ _ S2 S1) (apT_mf _ _ S2 (mf_spine _ HTs))).
+    + destruct (arms_wf_b w ars); [|discriminate].
+      destruct (infer f Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
+      destruct (unify_t f D1 T1 (typ_Grp w (spine (fresh_tys n1 (nparams w)))) (n1 + nparams w))
+        as [[s2 n2]|] eqn:E2; [|discriminate].
+      pose proof (mf_fresh_tys (nparams w) n1) as HTs.
+      assert (S2 := proj1 (unify_mf f) _ _ _ _ _ _ E2 M1 (mf_spine _ HTs)).
+      destruct (infer_arms f D1 (apC s2 (apC s1 G)) w (map (apT s2) (fresh_tys n1 (nparams w)))
+                  (fresh_var G (e_match w e1 ars)) (typ_Var (ea n2)) ars (S n2))
+        as [[[[s3 D3] T3] n3]|] eqn:E3; [|discriminate].
+      injection H as <- <- <- <-.
+      destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ E3 (mf_apC _ _ S2 (mf_apC _ _ S1 HG))
+                  (mf_map _ _ S2 HTs) I) as [S3 M3].
+      exact (conj (mf_scomp _ _ S3 (mf_scomp _ _ S2 S1)) M3).
   - intros Dk G fs n s D' R n' H HG.
     destruct fs as [|l e rest]; simpl in H; [injection H as <- <- <- <-; exact (conj mf_sid I)|].
     destruct (infer f Dk G e n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
@@ -338,6 +401,28 @@ Proof.
     destruct (IHf _ _ _ _ _ _ _ _ E2 (mf_apC _ _ S1 HG)) as [S2 M2].
     injection H as <- <- <- <-.
     exact (conj (mf_scomp _ _ S2 S1) (conj (apT_mf _ _ S2 M1) M2)).
+  - intros Dk G w Ts x res ars n s D' T n' H HG HTs Hres.
+    destruct ars as [|e|tg e rest]; simpl in H.
+    + injection H as <- <- <- <-. exact (conj mf_sid Hres).
+    + destruct (infer f Dk G e n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
+      destruct (unify_t f D1 (apT s1 res) T1 n1) as [[s2 n2]|] eqn:E2; [|discriminate].
+      injection H as <- <- <- <-.
+      assert (S2 := proj1 (unify_mf f) _ _ _ _ _ _ E2 (apT_mf _ _ S1 Hres) M1).
+      exact (conj (mf_scomp _ _ S2 S1) (apT_mf _ _ S2 M1)).
+    + destruct (infer f Dk ((x, sch_mono (tag_payload w Ts tg)) :: G)
+                  (open_exp_wrt_exp e (e_fvar_f x)) n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (IHi _ _ _ _ _ _ _ _ E1 (mf_cons _ (sch_mono (tag_payload w Ts tg)) _
+                  (mf_tag_payload _ _ _ HTs) HG)) as [S1 M1].
+      destruct (unify_t f D1 (apT s1 res) T1 n1) as [[s2 n2]|] eqn:E2; [|discriminate].
+      assert (S2 := proj1 (unify_mf f) _ _ _ _ _ _ E2 (apT_mf _ _ S1 Hres) M1).
+      assert (S12 := mf_scomp _ _ S2 S1).
+      destruct (infer_arms f D1 (apC (scomp s2 s1) G) w (map (apT (scomp s2 s1)) Ts) x (apT s2 T1) rest n2)
+        as [[[[s3 D3] T3] n3]|] eqn:E3; [|discriminate].
+      injection H as <- <- <- <-.
+      destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ E3 (mf_apC _ _ S12 HG) (mf_map _ _ S12 HTs)
+                  (apT_mf _ _ S2 M1)) as [S3 M3].
+      exact (conj (mf_scomp _ _ S3 S12) M3).
 Qed.
 
 Theorem infer_mu_free : forall fuel e D T,

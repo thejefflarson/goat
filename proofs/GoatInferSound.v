@@ -15,6 +15,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatTags.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
@@ -216,14 +217,161 @@ Proof.
     rewrite (Hfx a Hna) in Hb. inversion Hb; subst. contradiction.
 Qed.
 
+(* ------------------------------------------------------------------ *)
+(* Tag groups                                                           *)
+(* ------------------------------------------------------------------ *)
+
+Lemma apT_grp : forall s w A, apT s (typ_Grp w A) = typ_Grp w (apT s A).
+Proof. reflexivity. Qed.
+
+Lemma apT_spine : forall s Ts, apT s (spine Ts) = spine (map (apT s) Ts).
+Proof. intros s Ts. exact (ap_spine (sT s) (sR s) Ts). Qed.
+
+Lemma apT_tag_payload : forall s w Ts tg,
+  apT s (tag_payload w Ts tg) = tag_payload w (map (apT s) Ts) tg.
+Proof. intros s w Ts tg. exact (ap_tag_payload (sT s) (sR s) w Ts tg). Qed.
+
+Lemma apS_mono : forall s T, apS s (sch_mono T) = sch_mono (apT s T).
+Proof. reflexivity. Qed.
+
+Lemma map_apT_comp : forall s2 s1 Ts,
+  map (apT s2) (map (apT s1) Ts) = map (apT (scomp s2 s1)) Ts.
+Proof. intros s2 s1 Ts. rewrite map_map. apply map_ext. intros T. apply apT_comp. Qed.
+
+Lemma EvT_grp : forall w A, EvT A -> EvT (typ_Grp w A).
+Proof. intros w A H. exact H. Qed.
+
+Lemma EvT_spine : forall Ts, Forall EvT Ts -> EvT (spine Ts).
+Proof.
+  intros Ts H. induction H; simpl; [ apply EvT_Unit | apply EvT_arrow; assumption ].
+Qed.
+
+Lemma EvT_nth : forall Ts j, Forall EvT Ts -> EvT (nth j Ts typ_Unit).
+Proof.
+  intros Ts j H. revert j. induction H as [|T Ts HT HTs IH]; intros [|j]; simpl;
+    [ apply EvT_Unit | apply EvT_Unit | exact HT | apply IH ].
+Qed.
+
+Lemma EvT_slot_ty : forall w Ts c, Forall EvT Ts -> EvT (slot_ty w Ts c).
+Proof.
+  intros w Ts c H. unfold slot_ty. destruct c as [|[|[|[|[|[|c]]]]]]; simpl;
+    first [ apply EvT_Int | apply EvT_Float | apply EvT_Bool | apply EvT_Unit | apply EvT_String
+          | (apply EvT_grp; apply EvT_spine; exact H) | (apply EvT_nth; exact H) ].
+Qed.
+
+Lemma EvR_slots_row : forall w Ts cs i, Forall EvT Ts -> EvR (slots_row w Ts i cs).
+Proof.
+  intros w Ts cs. induction cs as [|c cs IH]; intros i H; simpl;
+    [ apply EvR_Empty | apply EvR_ext; [ apply EvT_slot_ty; exact H | apply IH; exact H ] ].
+Qed.
+
+Lemma EvT_tag_payload : forall w Ts tg, Forall EvT Ts -> EvT (tag_payload w Ts tg).
+Proof.
+  intros w Ts tg H. unfold tag_payload. destruct (nth_error w tg) as [cs|]; [|apply EvT_Unit].
+  unfold payload_ty. destruct cs; [ apply EvT_Unit | apply EvT_Record; apply EvR_slots_row; exact H ].
+Qed.
+
+Lemma EvT_fresh_tys : forall k n, Forall EvT (fresh_tys n k).
+Proof.
+  induction k as [|k IH]; intros n; simpl; [ constructor | constructor; [ apply EvT_var, ev_ea | apply IH ] ].
+Qed.
+
+Lemma Forall_EvT_ap : forall s Ts, OkS s -> Forall EvT Ts -> Forall EvT (map (apT s) Ts).
+Proof.
+  intros s Ts Hs H. induction H; simpl; constructor; [ apply EvT_ap; assumption | assumption ].
+Qed.
+
+Lemma nodup_b_sound : forall l, nodup_b l = true -> NoDup l.
+Proof.
+  induction l as [|a l IH]; intros H; simpl in H; [ constructor | ].
+  apply Bool.andb_true_iff in H. destruct H as [H1 H2]. constructor.
+  - intro Hin. apply Bool.negb_true_iff in H1.
+    assert (Hex : existsb (Nat.eqb a) l = true)
+      by (apply existsb_exists; exists a; split; [ exact Hin | apply Nat.eqb_refl ]).
+    congruence.
+  - apply IH. exact H2.
+Qed.
+
+Lemma arms_wf_b_sound : forall w ars, arms_wf_b w ars = true -> arms_wf w ars.
+Proof.
+  intros w ars H. unfold arms_wf_b in H. rewrite !Bool.andb_true_iff in H.
+  destruct H as [[H1 H2] H3]. unfold arms_wf. split; [ apply nodup_b_sound; exact H1 | split ].
+  - intros tg Hin. rewrite forallb_forall in H2. apply Nat.ltb_lt. apply H2. exact Hin.
+  - destruct (arms_default ars) as [e|] eqn:Ed; [ left; discriminate | right ].
+    intros tg Hlt. rewrite forallb_forall in H3.
+    assert (Hs : In tg (seq 0 (length w))) by (apply in_seq; lia).
+    pose proof (H3 tg Hs) as Hex. apply existsb_exists in Hex.
+    destruct Hex as [y [Hy Heq]]. apply Nat.eqb_eq in Heq. subst. exact Hy.
+Qed.
+
+(* What [T_Match] asks of the arms of a match. *)
+Definition arms_typ (L : vars) (D : denv) (G : ctx) (w : gdecl) (Ts : list typ)
+  (ars : arms) (T : typ) : Prop :=
+  (forall tg body, arms_find tg ars = Some body -> forall y, y `notin` L ->
+     typing D ((y ~ sch_mono (tag_payload w Ts tg)) ++ G)
+       (open_exp_wrt_exp body (e_fvar_f y)) T) /\
+  (forall e0, arms_default ars = Some e0 -> typing D G e0 T).
+
+Lemma arms_typ_nil : forall L D G w Ts T, arms_typ L D G w Ts arms_nil T.
+Proof.
+  intros L D G w Ts T. split; intros; simpl in *; discriminate.
+Qed.
+
+Lemma arms_typ_else : forall L D G w Ts e T,
+  typing D G e T -> arms_typ L D G w Ts (arms_else e) T.
+Proof.
+  intros L D G w Ts e T H. split.
+  - intros tg body Hf. simpl in Hf. discriminate.
+  - intros e0 Hd. simpl in Hd. inversion Hd; subst. exact H.
+Qed.
+
+Lemma arms_typ_cons : forall L D G w Ts tg e rest T,
+  (forall y, y `notin` L ->
+     typing D ((y ~ sch_mono (tag_payload w Ts tg)) ++ G) (open_exp_wrt_exp e (e_fvar_f y)) T) ->
+  arms_typ L D G w Ts rest T -> arms_typ L D G w Ts (arms_cons tg e rest) T.
+Proof.
+  intros L D G w Ts tg e rest T Hb [Hr Hd]. split.
+  - intros tg0 body Hf y Hy. simpl in Hf. destruct (Nat.eqb tg0 tg) eqn:E.
+    + inversion Hf; subst. apply Nat.eqb_eq in E. subst. apply Hb. exact Hy.
+    + eapply Hr; eauto.
+  - intros e0 Hd0. simpl in Hd0. apply Hd. exact Hd0.
+Qed.
+
+Lemma arms_typ_L : forall L1 L2 D G w Ts ars T,
+  L1 [<=] L2 -> arms_typ L1 D G w Ts ars T -> arms_typ L2 D G w Ts ars T.
+Proof.
+  intros L1 L2 D G w Ts ars T Hsub [Hr Hd]. split.
+  - intros tg body Hf y Hy. eapply Hr; [ exact Hf | fsetdec ].
+  - exact Hd.
+Qed.
+
+(* A derivation under the payload binder survives a step of the algorithm. *)
+Lemma arm_lift : forall D n s D' n' G w Ts tg y b T,
+  Good D n s D' n' -> WfCtx G -> Forall EvT Ts -> y `notin` dom G ->
+  typing D ((y ~ sch_mono (tag_payload w Ts tg)) ++ G) b T ->
+  typing D' ((y ~ sch_mono (tag_payload w (map (apT s) Ts) tg)) ++ apC s G) b (apT s T).
+Proof.
+  intros D n s D' n' G w Ts tg y b T Hg HG HTs Hy Hty.
+  assert (Hwf : WfCtx ((y ~ sch_mono (tag_payload w Ts tg)) ++ G))
+    by (apply WfCtx_cons; [ exact HG | exact Hy | apply WfSch_mono, EvT_tag_payload; exact HTs ]).
+  pose proof (typing_ap_G D n s D' n' _ _ _ Hg Hwf Hty) as H.
+  rewrite apC_app, apC_single, apS_mono, apT_tag_payload in H. exact H.
+Qed.
+
 Theorem infer_sound : forall f,
   (forall D G e n s D' T n', infer f D G e n = Some (s, D', T, n') -> WfCtx G -> DOk D n ->
      Good D n s D' n' /\ EvT T /\ typing D' (apC s G) e T) /\
   (forall D G fs n s D' R n', infer_fields f D G fs n = Some (s, D', R, n') -> WfCtx G -> DOk D n ->
-     Good D n s D' n' /\ EvR R /\ field_typing D' (apC s G) fs R).
+     Good D n s D' n' /\ EvR R /\ field_typing D' (apC s G) fs R) /\
+  (forall D G w Ts x res ars n s D' T n',
+     infer_arms f D G w Ts x res ars n = Some (s, D', T, n') ->
+     WfCtx G -> DOk D n -> Forall EvT Ts -> EvT res ->
+     x `notin` dom G `union` fv_arms ars ->
+     Good D n s D' n' /\ EvT T /\ teq T (apT s res) /\
+     arms_typ (dom G `union` {{x}}) D' (apC s G) w (map (apT s) Ts) ars T).
 Proof.
-  induction f as [|f IH]; [ split; intros; discriminate | ].
-  destruct IH as [IHe IHf]. split.
+  induction f as [|f IH]; [ refine (conj _ (conj _ _)); intros; discriminate | ].
+  destruct IH as [IHe [IHf IHa]]. refine (conj _ (conj _ _)).
   - intros D G e n s D' T n' H HG HD. cbn [infer] in H.
     destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3 | w1 tg1 a6 | w2 a7 ars2 | a4 | a5];
       try discriminate H.
@@ -616,6 +764,73 @@ Proof.
         apply (typing_ap_G D1' (S n1) s2 D1' n2 _ _ _ Gd2 HG1).
         apply (typing_refine D1 n1 D1' (S n1) _ _ _ GdU HG1). exact Hty1.
       * pose proof (Hk2 (ea n1)) as H3. rewrite HN in H3. exact H3.
+    + (* tag construction *)
+      destruct (Nat.ltb tg1 (length w1)) eqn:Hlt; [|discriminate].
+      destruct (infer f D G a6 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (unify_t f D1 T1 (tag_payload w1 (fresh_tys n1 (nparams w1)) tg1) (n1 + nparams w1))
+        as [[s2 n2]|] eqn:E2; [|discriminate].
+      inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
+      destruct (IHe _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1).
+      pose proof Gd1 as (_ & Hs1 & HD1 & _).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      pose proof (EvT_fresh_tys (nparams w1) n1) as HTs.
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E2 HT1 (EvT_tag_payload _ _ _ HTs))
+        as (Hs2 & Hteq & Hk2 & Hl2).
+      pose proof (Good_unify D1 (n1 + nparams w1) s2 n2 Hs2 Hk2 Hl2
+                    (DOk_mono D1 n1 (n1 + nparams w1) HD1 ltac:(lia))) as Gd2'.
+      pose proof (Good_pre D1 n1 (n1 + nparams w1) s2 D1 n2 ltac:(lia) HD1 Gd2') as Gd2.
+      split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
+      split; [ apply EvT_ap; [ exact Hs2 | apply EvT_grp, EvT_spine; exact HTs ] | ].
+      rewrite <- apC_comp. rewrite apT_grp, apT_spine.
+      apply T_Con; [ apply Nat.ltb_lt; exact Hlt | ].
+      rewrite <- apT_tag_payload.
+      eapply T_Conv; [ | exact Hteq ].
+      apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1.
+    + (* match *)
+      destruct (arms_wf_b w2 ars2) eqn:Hwb; [|discriminate].
+      destruct (infer f D G a7 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (unify_t f D1 T1 (typ_Grp w2 (spine (fresh_tys n1 (nparams w2)))) (n1 + nparams w2))
+        as [[s2 n2]|] eqn:E2; [|discriminate].
+      destruct (infer_arms f D1 (apC s2 (apC s1 G)) w2 (map (apT s2) (fresh_tys n1 (nparams w2)))
+                  (fresh_var G (e_match w2 a7 ars2)) (typ_Var (ea n2)) ars2 (S n2))
+        as [[[[s3 D3] T3] n3]|] eqn:E3; [|discriminate].
+      inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
+      destruct (IHe _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1).
+      pose proof Gd1 as (_ & Hs1 & HD1 & _).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      pose proof (EvT_fresh_tys (nparams w2) n1) as HTs.
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E2 HT1 (EvT_grp _ _ (EvT_spine _ HTs)))
+        as (Hs2 & Hteq & Hk2 & Hl2).
+      pose proof (Good_unify D1 (n1 + nparams w2) s2 n2 Hs2 Hk2 Hl2
+                    (DOk_mono D1 n1 (n1 + nparams w2) HD1 ltac:(lia))) as Gd2'.
+      pose proof (Good_pre D1 n1 (n1 + nparams w2) s2 D1 n2 ltac:(lia) HD1 Gd2') as Gd2.
+      assert (HD2 : DOk D1 n2) by (destruct Gd2 as (_ & _ & H2 & _); exact H2).
+      pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
+      assert (Hx : fresh_var G (e_match w2 a7 ars2) `notin` dom (apC s2 (apC s1 G)) `union` fv_arms ars2).
+      { pose proof (fresh_var_notin_dom G (e_match w2 a7 ars2)) as H1.
+        pose proof (fresh_var_notin_fv G (e_match w2 a7 ars2)) as H2. simpl in H2.
+        pose proof (dom_apC s1 G) as H3. pose proof (dom_apC s2 (apC s1 G)) as H4. fsetdec. }
+      destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ E3 HG2 (DOk_mono D1 n2 (S n2) HD2 (le_S _ _ (le_n n2)))
+                  (Forall_EvT_ap s2 _ Hs2 HTs) (EvT_var _ (ev_ea n2)) Hx)
+        as (Gd3' & HT3 & _ & Harms).
+      pose proof (Good_pre D1 n2 (S n2) s3 D3 n3 (le_S _ _ (le_n n2)) HD2 Gd3') as Gd3.
+      split; [ exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) | ].
+      split; [ exact HT3 | ].
+      rewrite <- !apC_comp.
+      apply T_Match with (L := dom G `union` {{fresh_var G (e_match w2 a7 ars2)}})
+        (w := w2) (Ts := map (apT s3) (map (apT s2) (fresh_tys n1 (nparams w2)))).
+      * assert (Hc : typing D1 (apC s2 (apC s1 G)) a7
+                       (typ_Grp w2 (spine (map (apT s2) (fresh_tys n1 (nparams w2)))))).
+        { rewrite <- apT_spine, <- apT_grp.
+          eapply T_Conv; [ | exact Hteq ].
+          apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1. }
+        pose proof (typing_ap_G D1 n2 s3 D3 n3 _ _ _ Gd3 HG2 Hc) as Hl.
+        rewrite apT_grp, apT_spine in Hl. exact Hl.
+      * apply arms_wf_b_sound. exact Hwb.
+      * intros tg body Hf y Hy.
+        apply (proj1 Harms tg body Hf y).
+        pose proof (dom_apC s1 G) as H3. pose proof (dom_apC s2 (apC s1 G)) as H4. fsetdec.
+      * intros e0 Hd. exact (proj2 Harms e0 Hd).
   - intros D G fs n s D' R n' H HG HD. cbn [infer_fields] in H.
     destruct fs as [| l e rest]; try discriminate H.
     + inversion H; try subst s; try subst D'; try subst R; try subst n'; clear H.
@@ -635,6 +850,71 @@ Proof.
       eapply FT_cons.
       * apply (typing_ap_G D1 n1 s2 D2 n2 _ _ _ Gd2 HG1). exact Hty1.
       * exact Hty2.
+  - intros D G w Ts x res ars n s D' T n' H HG HD HTs Hres Hx. cbn [infer_arms] in H.
+    destruct ars as [|e|tg e rest].
+    + inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
+      split; [ apply Good_id; exact HD | ]. split; [ exact Hres | ].
+      split; [ rewrite apT_sid; apply teq_refl | apply arms_typ_nil ].
+    + destruct (infer f D G e n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (unify_t f D1 (apT s1 res) T1 n1) as [[s2 n2]|] eqn:E2; [|discriminate].
+      inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
+      destruct (IHe _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1).
+      pose proof Gd1 as (_ & Hs1 & HD1 & _).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E2 (EvT_ap s1 res Hs1 Hres) HT1)
+        as (Hs2 & Hteq & Hk2 & Hl2).
+      pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
+      split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
+      split; [ exact (EvT_ap s2 T1 Hs2 HT1) | ].
+      split.
+      { rewrite <- apT_comp. apply teq_sym. exact Hteq. }
+      apply arms_typ_else. rewrite <- apC_comp.
+      apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1.
+    + simpl in Hx.
+      destruct (infer f D ((x ~ sch_mono (tag_payload w Ts tg)) ++ G)
+                  (open_exp_wrt_exp e (e_fvar_f x)) n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (unify_t f D1 (apT s1 res) T1 n1) as [[s2 n2]|] eqn:E2; [|discriminate].
+      destruct (infer_arms f D1 (apC (scomp s2 s1) G) w (map (apT (scomp s2 s1)) Ts) x (apT s2 T1) rest n2)
+        as [[[[s3 D3] T3] n3]|] eqn:E3; [|discriminate].
+      inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
+      assert (Hwf : WfCtx ((x ~ sch_mono (tag_payload w Ts tg)) ++ G))
+        by (apply WfCtx_cons; [ exact HG | fsetdec | apply WfSch_mono; apply EvT_tag_payload; exact HTs ]).
+      destruct (IHe _ _ _ _ _ _ _ _ E1 Hwf HD) as (Gd1 & HT1 & Hty1).
+      pose proof Gd1 as (_ & Hs1 & HD1 & _).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      rewrite apC_app, apC_single, apS_mono, apT_tag_payload in Hty1.
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E2 (EvT_ap s1 res Hs1 Hres) HT1)
+        as (Hs2 & Hteq2 & Hk2 & Hl2).
+      pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
+      pose proof (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) as Gd12.
+      pose proof Gd12 as (_ & Hs12 & _).
+      pose proof (WfCtx_ap _ G Hs12 HG) as HG12.
+      assert (HD2 : DOk D1 n2) by (destruct Gd2 as (_ & _ & H2 & _); exact H2).
+      assert (Hx3 : x `notin` dom (apC (scomp s2 s1) G) `union` fv_arms rest)
+        by (pose proof (dom_apC (scomp s2 s1) G) as H3; fsetdec).
+      destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ E3 HG12 HD2 (Forall_EvT_ap _ _ Hs12 HTs)
+                  (EvT_ap s2 T1 Hs2 HT1) Hx3) as (Gd3 & HT3 & Hteq3 & Harms).
+      pose proof Gd3 as (_ & Hs3 & _).
+      split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd12 Gd3) | ].
+      split; [ exact HT3 | ].
+      split.
+      { rewrite <- !apT_comp. eapply teq_trans; [ exact Hteq3 | ].
+        apply teq_apT. apply teq_sym. exact Hteq2. }
+      rewrite <- (apC_comp s3 (scomp s2 s1) G), <- (map_apT_comp s3 (scomp s2 s1) Ts).
+      apply arms_typ_cons.
+      * intros y Hy.
+        assert (Hyd : y `notin` dom (apC s1 G)) by (rewrite dom_apC; fsetdec).
+        pose proof (typing_rename_var D1 (apC s1 G) x y _ e T1 Hty1 ltac:(fsetdec) Hyd ltac:(fsetdec)) as Hr.
+        pose proof (arm_lift D1 n1 s2 D1 n2 (apC s1 G) w (map (apT s1) Ts) tg y _ _
+                      Gd2 HG1 (Forall_EvT_ap _ _ Hs1 HTs) Hyd Hr) as Hlift2.
+        assert (Hyd2 : y `notin` dom (apC s2 (apC s1 G))) by (rewrite !dom_apC; fsetdec).
+        pose proof (arm_lift D1 n2 s3 D3 n3 (apC s2 (apC s1 G)) w (map (apT s2) (map (apT s1) Ts)) tg y _ _
+                      Gd3 (WfCtx_ap s2 _ Hs2 HG1) (Forall_EvT_ap _ _ Hs2 (Forall_EvT_ap _ _ Hs1 HTs))
+                      Hyd2 Hlift2) as Hlift3.
+        rewrite (map_apT_comp s2 s1 Ts), (apC_comp s2 s1 G) in Hlift3.
+        eapply T_Conv; [ exact Hlift3 | ]. apply teq_sym. exact Hteq3.
+      * eapply arms_typ_L; [ | exact Harms ].
+        pose proof (dom_apC (scomp s2 s1) G) as H3. fsetdec.
 Qed.
 
 (* The statement for programs: a closed term the algorithm accepts has the

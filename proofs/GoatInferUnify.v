@@ -259,6 +259,10 @@ Proof.
            destruct (sound_bindT b (typ_Var a) (ev_var_T b H2) H1 Eob) as [Hs Ht].
            split; [exact Hs|]. split; [apply teq_sym; exact Ht|].
            split; [ apply kres_sbT; simpl; apply finer_b_total; exact Ef | lia ].
+    + (* Grp, Grp *)
+      destruct (gdecl_eq_dec w1 w1') as [->|]; [|discriminate].
+      destruct (IHt _ _ _ _ _ _ H H1 H2) as (Hs & Ht & Hk & Hl).
+      split; [exact Hs | split; [ apply teq_grp; exact Ht | split; [exact Hk | exact Hl]]].
   - intros D R1 R2 n s n' H H1 H2. cbn [unify_r] in H.
     destruct R1 as [| r | l T R1']; destruct R2 as [| q | l2 T2 R2'];
       try discriminate H.

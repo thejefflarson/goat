@@ -140,6 +140,9 @@ Fixpoint rewrite_row (l : label) (av : atoms) (R : row) (n : nat)
         end
   end.
 
+Definition gdecl_eq_dec (w w' : gdecl) : {w = w'} + {w <> w'} :=
+  list_eq_dec (list_eq_dec Nat.eq_dec) w w'.
+
 Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f} : option (sub * nat) :=
   match f with
   | O => None
@@ -167,6 +170,8 @@ Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f} : optio
               end
           end
       | typ_Record R, typ_Record R' => unify_r f' D R R' n
+      | typ_Grp w A, typ_Grp w' A' =>
+          if gdecl_eq_dec w w' then unify_t f' D A A' n else None
       | _, _ => None
       end
   end
@@ -346,6 +351,34 @@ Fixpoint group_row (fs : fields) (n : nat) : row :=
   | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
   end.
 
+(* The number of parameters a group declares: the largest [6 + j] among its
+   slot codes, less five. *)
+Definition nparams (w : gdecl) : nat :=
+  fold_right (fun cs a => fold_right (fun c b => Nat.max (c - 5) b) a cs) 0 w.
+
+(* [k] fresh variables, from atom [n]. *)
+Fixpoint fresh_tys (n k : nat) : list typ :=
+  match k with
+  | O => nil
+  | S k' => typ_Var (ea n) :: fresh_tys (S n) k'
+  end.
+
+Fixpoint nodup_b (l : list nat) : bool :=
+  match l with
+  | nil => true
+  | a :: l' => negb (existsb (Nat.eqb a) l') && nodup_b l'
+  end.
+
+(* A match is well formed when it names each tag once, only tags of its group,
+   and either has an else or names them all ([arms_wf]). *)
+Definition arms_wf_b (w : gdecl) (ars : arms) : bool :=
+  nodup_b (arms_idx ars)
+  && forallb (fun tg => Nat.ltb tg (length w)) (arms_idx ars)
+  && match arms_default ars with
+     | Some _ => true
+     | None => forallb (fun tg => existsb (Nat.eqb tg) (arms_idx ars)) (seq 0 (length w))
+     end.
+
 Definition is_generic_op (o : bop) : bool :=
   match kind o with k_ring | k_whole => true | _ => false end.
 
@@ -481,8 +514,36 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                   end
               end
           end
-      | e_con _ _ _ => None
-      | e_match _ _ _ => None
+      | e_con w tg e1 =>
+          if Nat.ltb tg (length w) then
+          match infer f' D G e1 n with
+          | None => None
+          | Some (s1, D1, T1, n1) =>
+              let Ts := fresh_tys n1 (nparams w) in
+              match unify_t f' D1 T1 (tag_payload w Ts tg) (n1 + nparams w) with
+              | None => None
+              | Some (s2, n2) =>
+                  Some (scomp s2 s1, D1, apT s2 (typ_Grp w (spine Ts)), n2)
+              end
+          end
+          else None
+      | e_match w e1 ars =>
+          if arms_wf_b w ars then
+          match infer f' D G e1 n with
+          | None => None
+          | Some (s1, D1, T1, n1) =>
+              let Ts := fresh_tys n1 (nparams w) in
+              match unify_t f' D1 T1 (typ_Grp w (spine Ts)) (n1 + nparams w) with
+              | None => None
+              | Some (s2, n2) =>
+                  match infer_arms f' D1 (apC s2 (apC s1 G)) w (map (apT s2) Ts)
+                          (fresh_var G (e_match w e1 ars)) (typ_Var (ea n2)) ars (S n2) with
+                  | None => None
+                  | Some (s3, D3, T3, n3) => Some (scomp s3 (scomp s2 s1), D3, T3, n3)
+                  end
+              end
+          end
+          else None
       | e_fold _ => None
       | e_unfold _ => None
       | e_tofloat e1 =>
@@ -548,6 +609,44 @@ with infer_fields (f : nat) (D : denv) (G : ctx) (fs : fields) (n : nat) {struct
               | None => None
               | Some (s2, D2, R2, n2) =>
                   Some (scomp s2 s1, D2, row_Ext l (apT s2 T1) R2, n2)
+              end
+          end
+      end
+  end
+
+(* The arms of a match, in order, against a result type [res] each arm's type
+   is unified with.  Each tag's payload binder is [x], typed by the slot
+   record of its tag at the group's parameters [Ts]. *)
+with infer_arms (f : nat) (D : denv) (G : ctx) (w : gdecl) (Ts : list typ) (x : var)
+       (res : typ) (ars : arms) (n : nat) {struct f}
+  : option (sub * denv * typ * nat) :=
+  match f with
+  | O => None
+  | S f' =>
+      match ars with
+      | arms_nil => Some (sid, D, res, n)
+      | arms_else e =>
+          match infer f' D G e n with
+          | None => None
+          | Some (s1, D1, T1, n1) =>
+              match unify_t f' D1 (apT s1 res) T1 n1 with
+              | None => None
+              | Some (s2, n2) => Some (scomp s2 s1, D1, apT s2 T1, n2)
+              end
+          end
+      | arms_cons tg e rest =>
+          match infer f' D ((x ~ sch_mono (tag_payload w Ts tg)) ++ G)
+                  (open_exp_wrt_exp e (e_fvar_f x)) n with
+          | None => None
+          | Some (s1, D1, T1, n1) =>
+              match unify_t f' D1 (apT s1 res) T1 n1 with
+              | None => None
+              | Some (s2, n2) =>
+                  match infer_arms f' D1 (apC (scomp s2 s1) G) w
+                          (map (apT (scomp s2 s1)) Ts) x (apT s2 T1) rest n2 with
+                  | None => None
+                  | Some (s3, D3, T3, n3) => Some (scomp s3 (scomp s2 s1), D3, T3, n3)
+                  end
               end
           end
       end
