@@ -5,6 +5,11 @@
 
 ## Context
 
+Amended by ADR 0016 (every tag closed): a tag a program declares is a closed
+group, so a value of it has one type and the example below is now a type error.
+The families this ADR describes still serve the host's event and shape tags and
+rows narrowed by a partial `match`, which stay open.
+
 Mono keys each specialization and each variant layout on a ground type. A value
 binding that is let-generalized over an open variant row has no single ground
 type: it can be matched at two different row widths in the same scope.
