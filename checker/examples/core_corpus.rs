@@ -37,18 +37,23 @@
 //! `let` of a record or a name holding a numeral would be generalized by the
 //! calculus and not by the checker, when a record reaches a generic `+ - *`, or when a
 //! record holds a group's function by name (`differential/README.md`).
+//! Every other program outside the fragment is counted under one `Feature` it
+//! uses, the first in that enum's order.
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
 
+use goat_checker::Checked;
 use goat_checker::captures::for_each_node;
 use goat_checker::check_with_prelude;
 use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, Symbol};
-use goat_checker::lower::lower;
+use goat_checker::lower::{Lowered, lower};
 use goat_checker::ty::{Row, Ty};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
 
+/// The name lowering gives the local function every loop becomes.
+const LOOP_BINDING: &str = "loop";
 const GENERATED: usize = 4000;
 const GENERATED_TYPED: usize = 6000;
 const GENERATED_GROUPS: usize = 8000;
@@ -185,11 +190,116 @@ impl Core {
     }
 }
 
+/// What a program outside the calculus uses that the calculus lacks. A program
+/// that uses several is counted under the first in this order, which is the
+/// order of the proof phases that will bring each in: a count falls to 0 when
+/// its phase lands, and its programs then show up under the next feature they
+/// use, or are compared.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Feature {
+    ForeignCall,
+    MethodsAndDotCalls,
+    TagsAndMatch,
+    Spread,
+    Builtin,
+    Connective,
+    Loop,
+    Ordering,
+    OperatorOperand,
+    SplitGroup,
+    NumeralLet,
+    UnwritableType,
+    IfWithoutElse,
+    NoParameters,
+    TrailingBinding,
+    LargeNumeral,
+    Other,
+}
+
+impl Feature {
+    fn describe(self) -> &'static str {
+        match self {
+            Feature::ForeignCall => "outside the calculus: a foreign host call",
+            Feature::MethodsAndDotCalls => "outside the calculus: methods, self or dot calls",
+            Feature::TagsAndMatch => "outside the calculus: tags and match",
+            Feature::Spread => "outside the calculus: spread or restrict",
+            Feature::Builtin => "outside the calculus: print or trap",
+            Feature::Connective => "outside the calculus: and, or, not",
+            Feature::Loop => "outside the calculus: a loop (repeat, for)",
+            Feature::Ordering => "outside the calculus: a comparison of non-primitive operands",
+            Feature::OperatorOperand => {
+                "outside the calculus: arithmetic on non-primitive operands"
+            }
+            Feature::SplitGroup => {
+                "outside the calculus: a recursive group split by a value binding"
+            }
+            Feature::NumeralLet => {
+                "outside the calculus: a let of a numeral the calculus would generalize"
+            }
+            Feature::UnwritableType => {
+                "outside the calculus: an inferred type with a method or presence row"
+            }
+            Feature::IfWithoutElse => "outside the calculus: an if without an else",
+            Feature::NoParameters => "outside the calculus: a function or call with no parameters",
+            Feature::TrailingBinding => "outside the calculus: a program that ends in a binding",
+            Feature::LargeNumeral => "outside the calculus: a numeral of 2^30 or more",
+            Feature::Other => "outside the calculus: none of the above",
+        }
+    }
+}
+
+/// The first feature, in `Feature` order, that `lowered` uses.
+fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Feature {
+    let mut first = gap;
+    let mut note = |feature: Feature| first = first.min(feature);
+    if !lowered.dot_calls.is_empty() || !lowered.takes.is_empty() {
+        note(Feature::MethodsAndDotCalls);
+    }
+    let types = checked.map(|c| &c.typed.node_types);
+    let non_primitive = |e: &Expr| {
+        types
+            .and_then(|t| t.get(&e.id))
+            .is_some_and(|t| !matches!(t, Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Var(_)))
+    };
+    for_each_node(&lowered.root, &mut |e| match &e.kind {
+        ExprKind::Foreign { .. } => note(Feature::ForeignCall),
+        ExprKind::Int(n) if n.unsigned_abs() >= 1 << 30 => note(Feature::LargeNumeral),
+        ExprKind::If {
+            else_branch: None, ..
+        } => note(Feature::IfWithoutElse),
+        ExprKind::Let { rest: None, .. } => note(Feature::TrailingBinding),
+        ExprKind::App { args, .. } if args.is_empty() => note(Feature::NoParameters),
+        ExprKind::Func { params, .. } if params.is_empty() => note(Feature::NoParameters),
+        ExprKind::Func { params, .. } if params.iter().any(|p| p.name == "self") => {
+            note(Feature::MethodsAndDotCalls)
+        }
+        ExprKind::Tag { .. } | ExprKind::Match { .. } => note(Feature::TagsAndMatch),
+        ExprKind::Spread { .. } | ExprKind::Restrict { .. } => note(Feature::Spread),
+        ExprKind::Builtin(_) | ExprKind::Trap(_) => note(Feature::Builtin),
+        ExprKind::And { .. } | ExprKind::Or { .. } | ExprKind::Not(_) => note(Feature::Connective),
+        ExprKind::Let { name, value, .. }
+            if name == LOOP_BINDING && matches!(value.kind, ExprKind::Func { .. }) =>
+        {
+            note(Feature::Loop)
+        }
+        ExprKind::Bin { op, lhs, rhs } if non_primitive(lhs) || non_primitive(rhs) => {
+            note(match op {
+                BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte | BinOp::Eq | BinOp::Ne => {
+                    Feature::Ordering
+                }
+                _ => Feature::OperatorOperand,
+            })
+        }
+        _ => {}
+    });
+    first
+}
+
 /// Why a program is left out of the differential test.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Skip {
     Rejected,
-    OutsideFragment,
+    OutsideFragment(Feature),
     RecordAtGenericOperator,
     GroupMemberInRecord,
     RecursiveType,
@@ -200,7 +310,7 @@ impl Skip {
     fn describe(self) -> &'static str {
         match self {
             Skip::Rejected => "does not lower",
-            Skip::OutsideFragment => "outside the calculus",
+            Skip::OutsideFragment(feature) => feature.describe(),
             Skip::RecordAtGenericOperator => "a record reaches a generic + - *",
             Skip::GroupMemberInRecord => "a record holds a group's function by name",
             Skip::RecursiveType => "the checker infers a recursive type",
@@ -252,6 +362,9 @@ struct Reader<'a> {
     record_arg: bool,
     /// Whether a record field holds a function of a recursive group by name.
     member_in_record: bool,
+    /// Why the reader stopped, when the cause is the shape of the program and
+    /// not a node the calculus lacks.
+    gap: Feature,
 }
 
 /// What a name in scope is bound by: a parameter or `let`, one binder; or a
@@ -390,6 +503,7 @@ impl Reader<'_> {
         for group in function_groups(&mentions) {
             let at: Vec<usize> = group.iter().map(|&m| members[m]).collect();
             if at.windows(2).any(|w| w[1] != w[0] + 1) {
+                self.gap = self.gap.min(Feature::SplitGroup);
                 return None;
             }
             if at.len() > 1 || recursive[group[0]] {
@@ -412,6 +526,7 @@ impl Reader<'_> {
         let Some(group) = group_at.get(&from) else {
             let value = self.read(value)?;
             if value.generalizes_numeral() {
+                self.gap = self.gap.min(Feature::NumeralLet);
                 return None;
             }
             self.scope.push(Binder::Bound(name.to_string(), symbol));
@@ -710,8 +825,11 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
         generic_comparison: false,
         record_arg: false,
         member_in_record: false,
+        gap: Feature::Other,
     };
-    let core = reader.read(&lowered.root).ok_or(Skip::OutsideFragment)?;
+    let core = reader
+        .read(&lowered.root)
+        .ok_or_else(|| Skip::OutsideFragment(feature_of(&lowered, checked.as_ref(), reader.gap)))?;
     if reader.generic_ring && reader.record_arg {
         return Err(Skip::RecordAtGenericOperator);
     }
@@ -745,7 +863,7 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
             let mut text = String::from("OK ");
             canon
                 .ty(&checked.typed.root_ty, &mut text)
-                .ok_or(Skip::OutsideFragment)?;
+                .ok_or(Skip::OutsideFragment(Feature::UnwritableType))?;
             text
         }
         None => "ERR".to_string(),

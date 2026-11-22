@@ -140,6 +140,21 @@ skipped, by reason, and a pinned program it had to skip is reported as
 `FORCED SKIP`. The driver prints how many programs it compared and how many
 mismatched.
 
+A program outside the calculus is counted under one feature it uses, the first
+in this fixed order, which is the order of the proof phases that bring each in:
+a foreign host call; methods, `self` or dot calls; tags and `match`; spread or
+restrict; `print` or `trap`; `and`, `or`, `not`; a loop (a binding named `loop`,
+which lowering gives every `repeat` and `for`); a comparison, then arithmetic,
+on operands that are not `Int`, `Float`, `String` or `Bool`. After those come
+the reasons that are about the shape of a program and not a missing feature: a
+recursive group split by a value binding, a `let` of a numeral the calculus
+would generalize and the checker does not, an inferred type with a method or
+presence row, an `if` without an `else`, a function or call with no parameters,
+a program that ends in a binding, a numeral of 2^30 or more, and `none of the
+above`. A program using two features counts only under the earlier, so when a
+phase lands its count falls to 0 and its programs either join the compared set
+or appear under the next feature they use.
+
 ## Tag groups (waiting for the checker's groups)
 
 `infer` types `con` and `match` and `unify_t` unifies `grp` types
