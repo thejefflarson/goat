@@ -43,14 +43,15 @@ preservation must survive it. Three representations were weighed:
    it infers is derivable in `d_any`) and is incomplete for the generic
    operators. (Extended afterwards: the algorithm threads the kinding
    environment, `proofs/README.md`, "Algorithm W with sorted variables".)
-   One incompleteness remains: the checker applies `+ - *` to two records field
-   by field, so `add({x: 1}, {x: 2})` types in the checker and has no derivation
-   here. A record would have to satisfy `Numeric` (`sat`), and the operators
-   would need a step rule on records, so progress, preservation and the
-   substitution lemma change; it waits for a ticket that carries that change.
-   The differential corpus skips exactly the calls that pass a record where a
-   quantified variable is an operand of `+ - *`; a record passed to any other
-   function is compared.
+   (Closed afterwards, 2026-11-22: a closed record whose fields all satisfy
+   `Numeric` satisfies it, and `+ - * // %` step on two records field by field,
+   pairing fields by label (`rec_zip`, `proofs/GoatRecArith.v`). A record is
+   never `Literal`, so `float(e)` takes a `Literal` operand, where decision 2
+   wrote `Numeric`: `float` of a record has no step. The algorithm binds a
+   `Numeric` variable to a record whose fields satisfy `Numeric`, and does not
+   push the sort onto a variable inside the record, because a substitution
+   keeps the kinding environment. The differential corpus no longer skips the
+   calls that pass a record to a generic operator.)
 
 ## Consequences
 

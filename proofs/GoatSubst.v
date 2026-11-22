@@ -265,8 +265,20 @@ Proof.
   apply AtomSetFacts.mem_iff in E. contradiction.
 Qed.
 
+Lemma sat_pw_mut : forall D D2, (forall a, D a = D2 a) ->
+  (forall T k, sat D k T -> sat D2 k T) /\ (forall R, rsat D R -> rsat D2 R).
+Proof.
+  intros D D2 H. apply typ_row_mutind; simpl; intros.
+  all: first
+    [ assumption | exact I | contradiction
+    | (destruct k; simpl in *; auto; contradiction)
+    | (rewrite <- H; assumption)
+    | (destruct H1 as [H1 H2]; split; auto)
+    | (destruct H2 as [H2 H3]; split; auto) ].
+Qed.
+
 Lemma sat_pw : forall D D2 k T, (forall a, D a = D2 a) -> sat D k T -> sat D2 k T.
-Proof. intros D D2 k T H Hs. destruct T; simpl in *; auto. rewrite <- H. exact Hs. Qed.
+Proof. intros D D2 k T H Hs. exact (proj1 (sat_pw_mut D D2 H) T k Hs). Qed.
 
 Lemma inst_pw : forall D D2 T s, (forall a, D a = D2 a) -> inst D T s -> inst D2 T s.
 Proof.
@@ -282,6 +294,7 @@ Proof.
   - apply sig_ring; [ assumption | eapply sat_pw; eauto ].
   - apply sig_quot.
   - apply sig_whole; [ assumption | eapply sat_pw; eauto ].
+  - apply sig_quot_rec; assumption.
   - apply sig_cmp; assumption.
 Qed.
 

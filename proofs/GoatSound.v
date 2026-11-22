@@ -128,6 +128,7 @@ Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatMu.
 Require Import Goat.GoatTags.
+Require Import Goat.GoatRecArith.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSpread.
 Require Import Goat.GoatSubst.
@@ -613,11 +614,23 @@ Proof. intros. unfold ren_row. apply ap_lcr; [ apply lc_sub_ren | assumption ]. 
 (* The environment seen through a renaming of its atoms. *)
 Definition dperm (g : atom -> atom) (D : denv) : denv := fun a => D (g a).
 
+Lemma sat_ren_mut : forall g gr D, (forall a, g (g a) = a) ->
+  (forall T k, sat D k T -> sat (dperm g D) k (ap_typ (fun a => typ_Var (g a)) (fun r => row_Var (gr r)) T)) /\
+  (forall R, rsat D R -> rsat (dperm g D) (ap_row (fun a => typ_Var (g a)) (fun r => row_Var (gr r)) R)).
+Proof.
+  intros g gr D Hi. apply typ_row_mutind; simpl; intros.
+  all: first
+    [ assumption | exact I | contradiction
+    | (destruct k; simpl in *; auto; contradiction)
+    | (unfold dperm; rewrite Hi; assumption)
+    | (destruct H1 as [H1 H2]; split; auto)
+    | (destruct H2 as [H2 H3]; split; auto) ].
+Qed.
+
 Lemma sat_ren : forall g gr D k T, (forall a, g (g a) = a) ->
   sat D k T -> sat (dperm g D) k (ren_typ g gr T).
 Proof.
-  intros g gr D k T Hi H. destruct T; simpl in *; try exact H.
-  unfold dperm. rewrite Hi. exact H.
+  intros g gr D k T Hi H. exact (proj1 (sat_ren_mut g gr D Hi) T k H).
 Qed.
 
 (* renaming a scheme's instance along a bijection fixing the scheme's free vars
@@ -872,15 +885,28 @@ Proof.
   - apply Hs. fsetdec.
 Qed.
 
+Lemma sat_ext_mono_mut : forall D V k S,
+  supp_ok D S -> (forall a, a `in` V -> a `notin` S) ->
+  (forall T k0, sat D k0 T -> sat (ext D V k) k0 T) /\
+  (forall R, rsat D R -> rsat (ext D V k) R).
+Proof.
+  intros D V k S Hs Hv. apply typ_row_mutind; simpl; intros.
+  all: first
+    [ assumption | exact I | contradiction
+    | (destruct k0; simpl in *; auto; contradiction)
+    | (destruct H1 as [H1 H2]; split; auto)
+    | (destruct H2 as [H2 H3]; split; auto)
+    | (unfold ext; destruct (AtomSetImpl.mem a V) eqn:Em;
+       [ apply AtomSetFacts.mem_iff in Em; rewrite (Hs a (Hv a Em)) in H;
+         inversion H; subst; apply finer_any
+       | exact H ]) ].
+Qed.
+
 Lemma sat_ext_mono : forall D V k S k0 T,
   supp_ok D S -> (forall a, a `in` V -> a `notin` S) ->
   sat D k0 T -> sat (ext D V k) k0 T.
 Proof.
-  intros D V k S k0 T Hs Hv H. destruct T; simpl in *; try exact H.
-  unfold ext. destruct (AtomSetImpl.mem a V) eqn:Em.
-  - apply AtomSetFacts.mem_iff in Em. rewrite (Hs a (Hv a Em)) in H.
-    inversion H; subst; apply finer_any.
-  - exact H.
+  intros D V k S k0 T Hs Hv H. exact (proj1 (sat_ext_mono_mut D V k S Hs Hv) T k0 H).
 Qed.
 
 (* The renaming step shared by every binder that generalizes ([let] and a
@@ -1686,7 +1712,13 @@ Lemma bin_step_typing : forall D G o v1 v2 v A B R,
 Proof.
   intros D G o v1 v2 v A B R Hs Hv1 Hv2 H1 H2 Hb.
   assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
+  assert (HnR : forall R0, A <> typ_Record R0).
+  { intros R0 HA. subst A.
+    destruct (canon_record _ _ _ _ Hv1 H1) as [fs [Rf [-> _]]].
+    inversion Hb; subst; try (simpl in *; discriminate);
+      try (match goal with Hf : fl_pair _ _ |- _ => inversion Hf end). }
   destruct Hb; inversion Hs; subst;
+    try (exfalso; eapply HnR; reflexivity);
     try (exfalso; first [ congruence | (simpl in *; discriminate)
       | (match goal with Hd : kind _ = _ \/ kind _ = _ |- _ => destruct Hd; congruence end) ]);
     try (apply T_Dec; exact Hu);
@@ -1698,6 +1730,23 @@ Proof.
     | (eapply T_Conv; [ apply T_Dec; exact Hu | exact (dec_inv _ _ _ _ H2) ]) ].
 Qed.
 
+
+(* The record of operator applications that [st_binrec] steps to has the type
+   of the operands. *)
+Lemma binrec_typing : forall D G o fs1 fs2 fs A B R,
+  bin_sig D o A B R -> typing D G (e_rec fs1) A -> typing D G (e_rec fs2) B ->
+  rec_zip o fs1 fs2 fs -> typing D G (e_rec fs) R.
+Proof.
+  intros D G o fs1 fs2 fs A B R Hs H1 H2 Hz.
+  destruct (rec_inv _ _ _ _ H1) as [Rf1 [Hf1 Hq1]].
+  destruct (rec_inv _ _ _ _ H2) as [Rf2 [Hf2 Hq2]].
+  destruct (teq_Record_inv _ _ Hq1) as [R1 [-> Hr1]].
+  destruct (bin_sig_record _ _ _ _ _ Hs) as [-> [-> Hrow]].
+  destruct (teq_Record_inv _ _ Hq2) as [R2 [Heq Hr2]]. inversion Heq; subst R2.
+  destruct (zip_typing _ _ o _ _ Hf1 _ _ _ Hf2 Hr1 Hr2 Hrow) as [fs' [Ro [Hz' [Hf Hq]]]].
+  rewrite (rec_zip_det _ _ _ _ Hz _ Hz').
+  eapply T_Conv; [ apply T_Record; exact Hf | apply teq_rec; exact Hq ].
+Qed.
 
 Scheme step_mut := Induction for step Sort Prop
 with   step_fields_mut := Induction for step_fields Sort Prop.
@@ -1896,6 +1945,13 @@ Proof.
     destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
     eapply T_Conv;
       [ exact (bin_step_typing _ _ _ _ _ _ _ _ _ Hs Hv1 Hv2 H1 H2 Hb) | exact Hteq ].
+  - (* st_binrec: an operator on two records.  The record of operator
+       applications, field by field, has the row the operands have
+       ([binrec_typing]). *)
+    intros fs1 o fs2 fs Hv1 Hv2 Hz D S G T HS Hty.
+    destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
+    eapply T_Conv;
+      [ exact (binrec_typing _ _ _ _ _ _ _ _ _ Hs H1 H2 Hz) | exact Hteq ].
   - (* st_tofloat1: the operand of a coercion stepped. *)
     intros e e' Hstep IH D S G T HS Hty.
     destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].

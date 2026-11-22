@@ -25,6 +25,7 @@ Require Import Stdlib.Lists.List.
 Require Import Stdlib.Arith.Compare_dec.
 Require Import Goat.GoatNum.
 Require Import Goat.GoatLit.
+Require Import Goat.GoatRows.
 
 (* ================================================================== *)
 (* Type / row variable substitution (section 5).                       *)
@@ -220,13 +221,38 @@ Definition sort_fn := typvar -> sort.
 Definition denv := typvar -> sort.
 
 (* [sat D k T]: T may stand where a variable of sort [k] stands.  A concrete
-   [Int] or [Float] satisfies every sort; any other type only [Any]; a
-   variable satisfies the sorts its own (in [D]) is finer than. *)
-Definition sat (D : denv) (k : sort) (T : typ) : Prop :=
+   [Int] or [Float] satisfies every sort; a variable satisfies the sorts its
+   own (in [D]) is finer than.  A closed record whose fields are all [Numeric]
+   is [Numeric] too, field by field (ADR 0012), and never [Literal]: a numeral
+   is a number.  Any other type satisfies only [Any]. *)
+Fixpoint sat (D : denv) (k : sort) (T : typ) {struct T} : Prop :=
   match T with
   | typ_Int | typ_Float => True
   | typ_Var a => finer (D a) k
+  | typ_Record R =>
+      match k with k_Any => True | k_Numeric => rsat D R | k_Literal => False end
   | _ => k = k_Any
+  end
+with rsat (D : denv) (R : row) {struct R} : Prop :=
+  match R with
+  | row_Empty => True
+  | row_Ext _ T R' => sat D k_Numeric T /\ rsat D R'
+  | _ => False
+  end.
+
+(* [fsat T]: [T] is [Float], or a closed record of such, which is what [/]
+   takes on records (ADR 0012): a quotient is a [Float]. *)
+Fixpoint fsat (T : typ) {struct T} : Prop :=
+  match T with
+  | typ_Float => True
+  | typ_Record R => rfsat R
+  | _ => False
+  end
+with rfsat (R : row) {struct R} : Prop :=
+  match R with
+  | row_Empty => True
+  | row_Ext _ T R' => fsat T /\ rfsat R'
+  | _ => False
   end.
 
 (* A substitution from one environment to another gives each variable a type
@@ -651,6 +677,8 @@ Inductive bin_sig : denv -> bop -> typ -> typ -> typ -> Prop :=
  | sig_quot : forall D, bin_sig D bop_div typ_Float typ_Float typ_Float
  | sig_whole : forall D o A,
      kind o = k_whole -> sat D k_Numeric A -> bin_sig D o A A A
+ | sig_quot_rec : forall D R, rfsat R ->
+     bin_sig D bop_div (typ_Record R) (typ_Record R) (typ_Record R)
  | sig_cmp : forall D o B,
      kind o = k_cmp -> cmp_typ B -> bin_sig D o B B typ_Bool.
 
@@ -666,19 +694,42 @@ Lemma sat_finer : forall D k k' T, finer k' k -> sat D k' T -> sat D k T.
 Proof.
   intros D k k' T Hf H. destruct T; simpl in *; try exact I.
   all: try (subst; inversion Hf; subst; auto; fail).
-  eapply finer_trans; eauto.
+  - destruct k'; destruct k; simpl in *; try contradiction; try exact I;
+      inversion Hf; subst; auto.
+  - eapply finer_trans; eauto.
 Qed.
 
 (* A kind-respecting substitution keeps a type within its sort. *)
+Lemma sat_ap_mut : forall D D' st sr,
+  kres D D' st ->
+  (forall T k, sat D k T -> sat D' k (ap_typ st sr T)) /\
+  (forall R, rsat D R -> rsat D' (ap_row st sr R)).
+Proof.
+  intros D D' st sr Hk. apply typ_row_mutind; simpl; intros.
+  all: first
+    [ assumption | exact I | contradiction
+    | (destruct k; simpl in *; auto; contradiction)
+    | (eapply sat_finer; [ exact H | apply Hk ])
+    | (destruct H1 as [H1 H2]; split; auto)
+    | (destruct H2 as [H2 H3]; split; auto) ].
+Qed.
+
 Lemma sat_ap : forall D D' k T st sr,
   kres D D' st -> sat D k T -> sat D' k (ap_typ st sr T).
-Proof.
-  intros D D' k T st sr Hk H. destruct T; simpl in *; try exact H.
-  eapply sat_finer; [ exact H | apply Hk ].
-Qed.
+Proof. intros. eapply (proj1 (sat_ap_mut D D' st sr H)); eassumption. Qed.
 
 Lemma sat_any : forall D T, sat D k_Any T.
 Proof. intros D T. destruct T; simpl; try reflexivity. apply finer_any. Qed.
+
+(* A closed record of [Float]s has no variables to substitute. *)
+Lemma fsat_ap_mut : forall st sr,
+  (forall T, fsat T -> ap_typ st sr T = T) /\
+  (forall R, rfsat R -> ap_row st sr R = R).
+Proof.
+  intros st sr. apply typ_row_mutind; simpl; intros; try contradiction; try reflexivity.
+  - rewrite H by assumption. reflexivity.
+  - destruct H1 as [H1 H2]. rewrite H by assumption. rewrite H0 by assumption. reflexivity.
+Qed.
 
 (* The signature of an operator at the substituted types. *)
 Lemma bin_sig_ap : forall D D' o A B R st sr,
@@ -692,6 +743,7 @@ Proof.
   - apply sig_ring; [ assumption | eapply sat_ap; eassumption ].
   - apply sig_quot.
   - apply sig_whole; [ assumption | eapply sat_ap; eassumption ].
+  - rewrite (proj2 (fsat_ap_mut st sr) R H). apply sig_quot_rec; assumption.
   - rewrite (Hc B H0). apply sig_cmp; assumption.
 Qed.
 
@@ -702,6 +754,21 @@ Qed.
 (* (GoatMeta.typing_regular), so reduction need not re-assert it.  [open]   *)
 (* is the capture-avoiding substitution of the single bound variable.       *)
 (* ================================================================== *)
+
+(* The field-wise operator on two records (ADR 0012): each field of the first
+   record meets the first field of the second with its label, in the first
+   record's order; the second record's field is then spent.  The result is a
+   record of operator applications, which the field rules then evaluate, so a
+   trap in one field is the record's trap.  Typing leaves nothing of the
+   second record once the first is used up. *)
+Inductive rec_zip (o : bop) : fields -> fields -> fields -> Prop :=
+ | rz_nil : forall fs2, rec_zip o fs_nil fs2 fs_nil
+ | rz_cons : forall l v1 r1 fs2 v2 rs,
+     lookup_first l fs2 = Some v2 ->
+     rec_zip o r1 (fs_drop l fs2) rs ->
+     rec_zip o (fs_cons l v1 r1) fs2 (fs_cons l (e_bin v1 o v2) rs).
+
+#[export] Hint Constructors rec_zip : core.
 
 Inductive step : exp -> exp -> Prop :=
  | st_beta : forall e v,
@@ -739,6 +806,9 @@ Inductive step : exp -> exp -> Prop :=
  | st_bin : forall v1 o v2 v,
      value v1 -> value v2 -> bin_step o v1 v2 v ->
      step (e_bin v1 o v2) v
+ | st_binrec : forall fs1 o fs2 fs,
+     rec_value fs1 -> rec_value fs2 -> rec_zip o fs1 fs2 fs ->
+     step (e_bin (e_rec fs1) o (e_rec fs2)) (e_rec fs)
  | st_tofloat1 : forall e e', step e e' -> step (e_tofloat e) (e_tofloat e')
  | st_tofloat : forall z d, step (e_tofloat (e_num z)) (e_dec d)
  | st_tofloat_dec : forall d, step (e_tofloat (e_dec d)) (e_dec d)
@@ -857,7 +927,7 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
      typing D G e1 typ_Bool -> typing D G e2 T -> typing D G e3 T ->
      typing D G (e_ite e1 e2 e3) T
  | T_ToFloat : forall D G e A,
-     typing D G e A -> sat D k_Numeric A -> typing D G (e_tofloat e) typ_Float
+     typing D G e A -> sat D k_Literal A -> typing D G (e_tofloat e) typ_Float
  | T_Bin : forall D G e1 o e2 A B R,
      typing D G e1 A -> typing D G e2 B -> bin_sig D o A B R ->
      typing D G (e_bin e1 o e2) R

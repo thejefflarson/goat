@@ -79,11 +79,19 @@ Definition finer_b (k1 k2 : sort) : bool :=
   | _, _ => false
   end.
 
-Definition sat_b (D : denv) (k : sort) (T : typ) : bool :=
+Fixpoint sat_b (D : denv) (k : sort) (T : typ) {struct T} : bool :=
   match T with
   | typ_Int | typ_Float => true
   | typ_Var a => finer_b (D a) k
+  | typ_Record R =>
+      match k with k_Any => true | k_Numeric => rsat_b D R | k_Literal => false end
   | _ => match k with k_Any => true | _ => false end
+  end
+with rsat_b (D : denv) (R : row) {struct R} : bool :=
+  match R with
+  | row_Empty => true
+  | row_Ext _ T R' => sat_b D k_Numeric T && rsat_b D R'
+  | _ => false
   end.
 
 (* ------------------------------------------------------------------ *)
@@ -630,7 +638,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
           match infer f' lenient ora D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1) =>
-              let D1' := upd D1 (ea n1) k_Numeric in
+              let D1' := upd D1 (ea n1) k_Literal in
               match unify_t f' D1' T1 (typ_Var (ea n1)) (S n1) with
               | None => None
               | Some (s2, n2) => Some (scomp s2 s1, D1', typ_Float, n2)
