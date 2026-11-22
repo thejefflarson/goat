@@ -13,16 +13,16 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   proof-gate:
-    runs-on: goat-runners
-    # A fork's PR must not run on the self-hosted runners.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Only git and shell, so it runs on a GitHub-hosted runner, which also makes
+    # it safe for fork PRs.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         if: github.event_name == 'pull_request'
