@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const here = new URL(".", import.meta.url);
 const wasmSource = new URL("../target/wasm32-unknown-unknown/release/goat_web.wasm", here);
 const highlighterSource = new URL("../editor/highlight.goat", here);
+const formatterSource = new URL("../editor/format.goat", here);
 const themeSource = new URL("../editor/theme.goat", here);
 
 export const BUILD_PLACEHOLDER = "__BUILD__";
@@ -29,6 +30,7 @@ export function assemble(outDir: string, pages: string[] = ["index.html"], versi
   cpSync(new URL("dist", here), `${assetDir}/dist`, { recursive: true });
   copyFileSync(wasmSource, `${assetDir}/goat_web.wasm`);
   copyFileSync(highlighterSource, `${assetDir}/highlight.goat`);
+  copyFileSync(formatterSource, `${assetDir}/format.goat`);
   copyFileSync(themeSource, `${assetDir}/theme.goat`);
   let build = "";
   if (versioned) {

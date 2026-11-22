@@ -309,6 +309,45 @@ draw = program(m) do [Span({from: 1, to: 3, kind: "keyword"}), Span({from: 4, to
   assert.deepEqual(scene.take(), []);
 });
 
+test("an editor program's edits reach the scene as numbers, beside its spans", async () => {
+  const module = await compileEditor(
+    compiler,
+    `init = {n: 0}
+update = program(m, e) do match e do Edited(x) then {n: 7} else m done done
+draw = program(m) do [Edit({from: 1, to: 3, newlines: 2, indent: 4}), Span({from: 0, to: 1, kind: "number"}), Edit({from: 5, to: 5, newlines: 0, indent: 1})] done`,
+  );
+  assert.ok(module.ok);
+  const scene = new SpanScene();
+  let memory: WebAssembly.Memory | undefined;
+  const { instance } = await WebAssembly.instantiate(module.module, {
+    goat: createHost(() => memory!).imports.goat,
+    ...sceneImports(() => memory!, scene),
+  });
+  memory = instance.exports.memory as WebAssembly.Memory;
+  const exports = instance.exports as unknown as {
+    goat_setup(): number;
+    goat_update(model: number, event: number): number;
+    goat_draw(model: number): void;
+  };
+  const edited = constructEvent(instance.exports, { kind: "Edited", text: "hello", cursor: 0 });
+  exports.goat_draw(exports.goat_update(exports.goat_setup(), edited!));
+  assert.deepEqual(scene.takeEdits(), [
+    { from: 1, to: 3, newlines: 2, indent: 4 },
+    { from: 5, to: 5, newlines: 0, indent: 1 },
+  ]);
+  assert.deepEqual(scene.takeEdits(), []);
+  assert.deepEqual(scene.take(), [{ from: 0, to: 1, kind: "number" }]);
+});
+
+test("a frame with more edits than the cap traps the program", () => {
+  const scene = new SpanScene();
+  for (let i = 0; i < MAX_SPANS; i++) scene.edit(i, i + 1, 0, 1);
+  assert.throws(() => scene.edit(0, 1, 0, 1), /more than/);
+  scene.begin();
+  scene.edit(0, 1, 0, 1);
+  assert.equal(scene.takeEdits().length, 1);
+});
+
 test("a frame with more spans than the cap traps the program", () => {
   const scene = new SpanScene();
   for (let i = 0; i < MAX_SPANS; i++) scene.span(i, i + 1, "number");

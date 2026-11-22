@@ -9,6 +9,8 @@ pub use goat_mir::{
 pub use goat_wasm::{EmbeddedLimits, STACK_OVERFLOW};
 
 #[cfg(feature = "native")]
+pub mod format;
+#[cfg(feature = "native")]
 pub mod native;
 
 /// What a host provides: the `foreign` functions a program may call, declared

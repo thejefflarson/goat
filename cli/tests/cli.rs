@@ -588,3 +588,49 @@ fn error_program_still_fails() {
             .contains("error(s) in")
     );
 }
+
+fn fmt_file(source: &str, args: &[&str]) -> (Output, String) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("p.goat");
+    fs::write(&path, source).unwrap();
+    let out = goat(&[&["fmt"], args, &[path.to_str().unwrap()]].concat());
+    (out, fs::read_to_string(&path).unwrap())
+}
+
+#[test]
+fn fmt_rewrites_a_file_in_the_house_style() {
+    let (out, text) = fmt_file("f = program(x) do\nx+1\ndone\n", &[]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(text, "f = program(x) do\n  x + 1\ndone\n");
+}
+
+#[test]
+fn fmt_check_fails_on_an_unformatted_file_and_leaves_it_alone() {
+    let source = "x=1\n";
+    let (out, text) = fmt_file(source, &["--check"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("is not formatted"));
+    assert_eq!(text, source);
+}
+
+#[test]
+fn fmt_check_passes_on_a_formatted_file() {
+    let (out, text) = fmt_file("x = 1\n", &["--check"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(text, "x = 1\n");
+}
+
+#[test]
+fn fmt_without_a_file_says_how_to_use_it() {
+    let out = goat(&["fmt"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("usage: goat fmt"));
+}
