@@ -54,7 +54,12 @@ carries no type id. `_pad` is reserved for a type/drop id only if a later phase
 proves one is needed.
 
 `rc == u32::MAX` is the **immortal sentinel**: literals and static (top-level)
-closures carry it and skip every inc/dec.
+closures carry it and skip every inc/dec. So does a record whose fields are all
+constants (`AllocRecord` of `Const` operands): both backends build one immortal
+cell per distinct set of values rather than allocating at each evaluation. It is
+never unique, so a reuse (`ReuseRecord`) allocates instead of overwriting it, and
+a reload's snapshot copies it into the refreshed model like any other record.
+The layout is unchanged.
 
 ### Layouts
 

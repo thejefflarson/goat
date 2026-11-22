@@ -273,3 +273,33 @@ V8's `full` result under default tiering is unexplained: the variants around it
 improve 13-29% while `full` does not. Not yet measured: reuse of the particle's
 own cell for the new particle, the damping literal built once, and the list cells
 in `change_each`.
+
+## After constant records became static cells (issue 558)
+
+A record whose fields are all constants, such as the damping literal
+`{x: 0.999, y: 0.999}`, is now one immortal cell in the module's data section,
+the way a nullary tag is. It costs no allocation, no count change and no free.
+Layouts are unchanged (ADR 0010 identity holds); a reload copies the cell into
+the refreshed model like any record, and an operation that would overwrite a
+unique record allocates instead, because the cell's count is never 1.
+
+One update frame now allocates 4,002 records, down from 5,002
+(`mir/tests/reuse.rs` counts 4 per particle). Median of 300 frames, 1,000
+particles, Apple M1 Pro, same tree with and without the change, two runs each
+(this session's machine runs faster than the table above, so compare within
+this table only):
+
+| | before | after |
+|---|---|---|
+| wasmtime `full` update | 90.8 us | 79-81 us (-12%) |
+| wasmtime `mul-only` | 79 us | 56 us |
+| V8 `full` update | 49.7-52.2 us | 42.0-42.9 us (-16%) |
+| V8 `mul-only` | 36-39 us | 30-31 us |
+
+Unmoved: the hand-flattened `flat` variant (52 us wasmtime, 28-29 us V8), so
+the nested-record layout still costs about 28 us (wasmtime) and 14 us (V8) per
+frame. Closing that needs the nested record stored inline in its parent with the
+derived arithmetic inlined, so that `q.p + q.v` reads the four scalars from one
+cell; scalar replacement alone gains nothing here, because the `*` result already
+reuses `q.v`'s cell. Still open: reuse of the particle's own cell for the new
+particle, and list cells in `change_each`.
