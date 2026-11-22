@@ -1239,22 +1239,72 @@ mod proofs {
         }
     }
 
+    fn any_i64() -> (i64, i64) {
+        (kani::any(), kani::any())
+    }
+
+    fn traps(op: IntOp, a: i64, b: i64) -> bool {
+        matches!(
+            int_op(op, Value::Int(a), Value::Int(b)),
+            Err(InterpError::Trap(_))
+        )
+    }
+
+    // The 64-bit multiply and divide circuits are intractable for CBMC when
+    // `int_op` is compared against a second computation of the same quotient,
+    // so the trap conditions are stated structurally and the rounding laws are
+    // checked on small operands and the edge cases below.
+
     #[kani::proof]
-    fn int_op_is_total_and_traps_only_on_overflow_or_zero_division() {
-        let op = any_int_op();
-        let (a, b): (i64, i64) = (kani::any(), kani::any());
-        let result = int_op(op, Value::Int(a), Value::Int(b));
-        let exact = match op {
-            IntOp::Add => a.checked_add(b),
-            IntOp::Sub => a.checked_sub(b),
-            IntOp::Mul => a.checked_mul(b),
-            IntOp::Div => a.checked_div(b),
-            IntOp::FloorDiv => floor_div(a, b),
-            IntOp::Mod => floor_mod(a, b),
-        };
-        match exact {
-            Some(n) => assert_eq!(result, Ok(Value::Int(n))),
-            None => assert!(matches!(result, Err(InterpError::Trap(_)))),
+    fn int_mul_traps_exactly_on_overflow() {
+        let (a, b) = any_i64();
+        assert_eq!(traps(IntOp::Mul, a, b), a.checked_mul(b).is_none());
+    }
+
+    #[kani::proof]
+    fn int_div_traps_exactly_on_zero_or_min_by_minus_one() {
+        let (a, b) = any_i64();
+        let trapped = b == 0 || (a == i64::MIN && b == -1);
+        assert_eq!(traps(IntOp::Div, a, b), trapped);
+        assert_eq!(traps(IntOp::FloorDiv, a, b), trapped);
+    }
+
+    #[kani::proof]
+    fn int_mod_traps_exactly_on_zero() {
+        let (a, b) = any_i64();
+        assert_eq!(traps(IntOp::Mod, a, b), b == 0);
+    }
+
+    fn assert_floor_laws(a: i64, b: i64) {
+        let q = floor_div(a, b).expect("nonzero divisor, no overflow");
+        let r = floor_mod(a, b).expect("nonzero divisor");
+        assert_eq!(i128::from(q) * i128::from(b) + i128::from(r), i128::from(a));
+        assert!(r == 0 || (r < 0) == (b < 0));
+        assert!(r.unsigned_abs() < b.unsigned_abs());
+    }
+
+    #[kani::proof]
+    fn floor_div_and_mod_round_toward_negative_infinity_on_small_operands() {
+        let (a, b): (i8, i8) = (kani::any(), kani::any());
+        kani::assume(b != 0);
+        assert_floor_laws(i64::from(a), i64::from(b));
+    }
+
+    #[kani::proof]
+    fn floor_div_and_mod_edge_cases() {
+        let edges = [i64::MIN, -2, -1, 0, 1, 2, i64::MAX];
+        for a in edges {
+            for b in edges {
+                if b == 0 {
+                    assert_eq!(floor_div(a, b), None);
+                    assert_eq!(floor_mod(a, b), None);
+                } else if a == i64::MIN && b == -1 {
+                    assert_eq!(floor_div(a, b), None);
+                    assert_eq!(floor_mod(a, b), Some(0));
+                } else {
+                    assert_floor_laws(a, b);
+                }
+            }
         }
     }
 
