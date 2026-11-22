@@ -1901,8 +1901,27 @@ impl Lower {
         let name = name.text().to_string();
         if args.is_empty() {
             self.check_not_bare(&name, span);
+        } else {
+            self.check_no_payload(&name, span);
         }
         self.tag_node(span, name, args)
+    }
+
+    /// A tag declared bare is written bare.
+    fn check_no_payload(&mut self, tag: &str, span: Span) {
+        let Some(Some(group)) = self.tags.get(tag) else {
+            return;
+        };
+        if group
+            .tags
+            .iter()
+            .any(|(name, payload)| name == tag && *payload == Ty::Unit)
+        {
+            self.errors.push(GoatError::new(
+                span,
+                format!("`{tag}` has no value: write `{tag}`, or declare it `{tag}(_)`"),
+            ));
+        }
     }
 
     /// A tag declared with a payload is written with one.
@@ -2181,7 +2200,10 @@ impl Lower {
                 self.check_not_bare(&tag, self.span_of(&head));
                 PatternPayload::None
             }
-            1 => PatternPayload::Whole(binders.remove(0)),
+            1 => {
+                self.check_no_payload(&tag, span);
+                PatternPayload::Whole(binders.remove(0))
+            }
             _ => PatternPayload::Fields(
                 binders
                     .into_iter()

@@ -613,6 +613,30 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_tag_given_a_payload_says_it_has_no_value() {
+        let want = "`A` has no value: write `A`, or declare it `A(_)`";
+        let src = "tag A | B x = if true then A else A(1) done x";
+        assert_eq!(type_of(src).unwrap_err(), want);
+        let Err(errors) = check(src) else {
+            panic!("expected an error");
+        };
+        assert_eq!(&src[errors[0].span.start..errors[0].span.end], "A(1)");
+
+        let src = "tag A | B match A do A(x) then 1 else 2 done";
+        assert_eq!(type_of(src).unwrap_err(), want);
+        let Err(errors) = check(src) else {
+            panic!("expected an error");
+        };
+        assert_eq!(&src[errors[0].span.start..errors[0].span.end], "A(x)");
+
+        let src = "tag Ping Ping(3)";
+        assert_eq!(
+            type_of(src).unwrap_err(),
+            "`Ping` has no value: write `Ping`, or declare it `Ping(_)`"
+        );
+    }
+
+    #[test]
     fn multi_argument_payload_binds_positional_fields() {
         let src = "tag Pair(_) match Pair(1, true) do Pair(a, b) then if b then a else 0 done done";
         assert_eq!(type_of(src).unwrap(), "Number");

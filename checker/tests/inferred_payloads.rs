@@ -185,12 +185,20 @@ fn a_tag_without_parentheses_has_no_payload() {
         type_of("tag Light = Red | Green | Amber Green"),
         "[Red, Green, Amber]"
     );
-    let (message, _) = first_error("tag Light = Red | Green Red(1)");
-    assert!(message.contains("type mismatch"), "{message}");
-    let (message, _) = first_error(
+    let (message, text) = first_error("tag Light = Red | Green Red(1)");
+    assert_eq!(
+        message,
+        "`Red` has no value: write `Red`, or declare it `Red(_)`"
+    );
+    assert_eq!(text, "Red(1)");
+    let (message, text) = first_error(
         "tag Light = Red | Green f = program(l) do match l do Red(n) then n else 0 done done f(Red)",
     );
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_eq!(
+        message,
+        "`Red` has no value: write `Red`, or declare it `Red(_)`"
+    );
+    assert_eq!(text, "Red(n)");
     let source = "tag Light = Red | Green \
         f = program(l) do match l do Red then 1 Green then 2 done done \
         f(Red) + f(Green)";
@@ -212,8 +220,12 @@ fn a_lone_tag_is_a_group_of_one() {
     assert_eq!(type_of("tag Done Done"), "[Done]");
     assert_eq!(type_of("tag Boxed(_) Boxed(1)"), "[Boxed: Number]");
     assert_eq!(type_of("tag Boxed(_) Boxed(\"a\")"), "[Boxed: String]");
-    let (message, _) = first_error("tag Done Done(1)");
-    assert!(message.contains("type mismatch"), "{message}");
+    let (message, text) = first_error("tag Done Done(1)");
+    assert_eq!(
+        message,
+        "`Done` has no value: write `Done`, or declare it `Done(_)`"
+    );
+    assert_eq!(text, "Done(1)");
 }
 
 #[test]
