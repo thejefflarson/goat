@@ -822,34 +822,10 @@ Qed.
 Definition last_is_decl (cs : list tree) : Prop :=
   exists c, List.last cs (Leaf TStr) = Node R_declaration c.
 
-(* No access is followed by a call. *)
-Fixpoint no_dot (cs : list tree) : Prop :=
-  match cs with
-  | Node R_access _ :: rest => ~ starts_call rest /\ no_dot rest
-  | _ :: rest => no_dot rest
-  | [] => True
-  end.
-
-(* The postfixes of a variable: a leading dot call is allowed. *)
-Definition head_ok (ps : list tree) : Prop :=
-  match ps with
-  | Node R_access _ :: Node R_call _ :: rest => no_dot rest
-  | _ => no_dot ps
-  end.
-
-(* A dot call has a variable receiver: the chain after any bindings is either
-   headed by a name or has no dot call. *)
-Fixpoint dots_ok (cs : list tree) : Prop :=
-  match cs with
-  | Node R_declaration _ :: rest => dots_ok rest
-  | Node R_name _ :: rest => head_ok rest
-  | _ => no_dot cs
-  end.
-
-(* An expression with an operator has exactly one, and no dot call: its
-   operands are chains, and precedence between operators is not modelled. *)
+(* An expression with an operator has exactly one: its operands are chains,
+   and precedence between operators is not modelled. *)
 Definition ops_ok (cs : list tree) : Prop :=
-  count_ops cs = 0 \/ (count_ops cs = 1 /\ no_dot cs).
+  count_ops cs = 0 \/ count_ops cs = 1.
 
 (* Declarations of a block: the function bindings come first and form the
    block's recursive group; value bindings follow. A function binding after a
@@ -878,8 +854,7 @@ Definition local_ok (cs : list tree) : Prop :=
   end.
 
 (* The fragment has no empty parameter list, empty body, empty call, empty
-   program, block that ends in a binding, or dot call on a receiver that is not
-   a variable. *)
+   program, or block that ends in a binding. *)
 Definition not_spread (t : tree) : Prop := forall c, t <> Node R_spread c.
 
 (* A spread comes first in a record, and at most once (the lowering reports the
@@ -899,8 +874,8 @@ Definition complete_node (r : rule) (cs : list tree) : Prop :=
   | R_local => has R_expr cs /\ local_ok cs
   | R_function => has R_params cs /\ has R_expr cs
   | R_call => has R_arguments cs
-  | R_expr => ~ last_is_decl cs /\ dots_ok cs /\ ops_ok cs /\ fns_first cs
-  | R_value => dots_ok cs /\ ops_ok cs
+  | R_expr => ~ last_is_decl cs /\ ops_ok cs /\ fns_first cs
+  | R_value => ops_ok cs
   | _ => True
   end.
 
@@ -1073,109 +1048,93 @@ Section Totality.
         end
     end.
 
-  Lemma posts_den : forall ps,
-    gen (E_star (E_rule R__postfix)) ps -> Forall TotKind ps -> no_dot ps ->
-    forall acc, exists e', Den_posts var_of tbl acc ps e'.
+  Lemma fresh_for_args : forall es,
+    exists s, Forall (fun a => ~ AtomSetImpl.In s (fv_exp a)) es.
   Proof.
-    intros ps H.
-    apply (gen_star_ind (E_rule R__postfix)
-             (fun ps => Forall TotKind ps -> no_dot ps ->
-                        forall acc, exists e', Den_posts var_of tbl acc ps e'));
-      [ | | exact H ].
-    - (* no postfix left *)
-      intros _ _ acc. exists acc. apply DP_nil.
-    - intros ts1 ts2 Hpost IH Hkids Hnd acc.
-      apply Forall_app in Hkids as [Hkids1 Hkids2].
-      pose proof (gen_splice_inv Hpost eq_refl) as Halt. simpl in Halt.
-      destruct (gen_alt_inv Halt) as [Haccess | Htake_call].
-      + (* .label *)
-        destruct (gen_node_of Haccess eq_refl) as (c & -> & _).
-        inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
-        destruct Hkid as (l & ->).
-        simpl in Hnd. destruct Hnd as [Hnocall Hnd2].
-        destruct (IH Hkids2 Hnd2 (e_proj acc (lab tbl l))) as (e' & Hrest).
-        exists e'. apply DP_access; assumption.
-      + destruct (gen_alt_inv Htake_call) as [Htake | Hcall].
-        * (* ::label *)
-          destruct (gen_node_of Htake eq_refl) as (c & -> & _).
-          inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
-          destruct Hkid as (l & ->).
-          simpl in Hnd.
-          destruct (IH Hkids2 Hnd (e_proj acc (lab tbl l))) as (e' & Hrest).
-          exists e'. apply DP_take. exact Hrest.
-        * (* (arguments) *)
-          destruct (gen_node_of Hcall eq_refl) as (c & -> & _).
-          inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
-          destruct Hkid as (args & es & -> & Hargs).
-          simpl in Hnd.
-          destruct (IH Hkids2 Hnd (apps acc es)) as (e' & Hrest).
-          exists e'. apply DP_call with (es := es); assumption.
+    intros es.
+    destruct (atom_fresh (fold_right (fun a acc => fv_exp a `union` acc)
+                                     AtomSetImpl.empty es)) as [s Hs].
+    exists s. revert Hs. induction es as [| a es IH]; intros Hs.
+    - apply Forall_nil.
+    - simpl in Hs. apply Forall_cons.
+      + intros Hin. apply Hs. fsetdec.
+      + apply IH. intros Hin. apply Hs. fsetdec.
   Qed.
 
-  Lemma posts_den_var : forall x ps,
-    gen (E_star (E_rule R__postfix)) ps -> Forall TotKind ps -> head_ok ps ->
-    exists e', Den_posts var_of tbl (e_fvar_f x) ps e'.
+  Lemma dot_den : forall acc l args es rest,
+    Den_args var_of tbl args es ->
+    (forall acc', exists e'', Den_posts var_of tbl acc' rest e'') ->
+    exists e'', Den_posts var_of tbl acc
+      (Node R_access [sym "."; ident l]
+         :: Node R_call [sym "("; Node R_arguments args; sym ")"] :: rest) e''.
   Proof.
-    intros x ps H Hkids Hhead.
-    destruct (gen_star_inv H) as [-> | (ts1 & ts2 & -> & Hpost & Hrest)].
-    - exists (e_fvar_f x). apply DP_nil.
-    - apply Forall_app in Hkids as [Hkids1 Hkids2].
+    intros acc l args es rest Hargs Hrest.
+    destruct (is_path acc) eqn:Hpath.
+    - destruct (Hrest (apps (e_proj acc (lab tbl l)) (acc :: es))) as (e'' & Hposts).
+      exists e''. apply DP_dot_path with (es := es); assumption.
+    - destruct (fresh_for_args es) as (s & Hfresh).
+      destruct (Hrest (e_let acc (close_exp s (apps (e_proj (e_fvar_f s) (lab tbl l))
+                                                     (e_fvar_f s :: es)))))
+        as (e'' & Hposts).
+      exists e''. apply DP_dot_bind with (s := s) (es := es); assumption.
+  Qed.
+
+  Lemma posts_den : forall n ps,
+    length ps <= n ->
+    gen (E_star (E_rule R__postfix)) ps -> Forall TotKind ps ->
+    forall acc, exists e', Den_posts var_of tbl acc ps e'.
+  Proof.
+    induction n as [| n IH]; intros ps Hlen H Hkids acc.
+    - destruct ps as [| t ps]; [ | simpl in Hlen; lia ].
+      exists acc. apply DP_nil.
+    - destruct (gen_star_inv H) as [-> | (ts1 & ts2 & -> & Hpost & Hrest)].
+      { exists acc. apply DP_nil. }
+      apply Forall_app in Hkids as [Hkids1 Hkids2].
       pose proof (gen_splice_inv Hpost eq_refl) as Halt. simpl in Halt.
       destruct (gen_alt_inv Halt) as [Haccess | Htake_call].
       + (* .label, then perhaps a call *)
         destruct (gen_node_of Haccess eq_refl) as (c & -> & _).
         inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
         destruct Hkid as (l & ->).
+        simpl in Hlen.
         destruct (gen_star_inv Hrest) as [-> | (ts3 & ts4 & -> & Hpost3 & Hrest4)].
-        * (* nothing after the access *)
-          exists (e_proj (e_fvar_f x) (lab tbl l)).
-          apply DP_access; [ exact (proj1 Hhead) | apply DP_nil ].
+        * destruct (IH [] (le_0_n _) Hrest Hkids2 (e_proj acc (lab tbl l))) as (e' & Hposts).
+          exists e'. apply DP_access; [ intros [] | exact Hposts ].
         * pose proof (gen_splice_inv Hpost3 eq_refl) as Halt3. simpl in Halt3.
           apply Forall_app in Hkids2 as [Hkids3 Hkids4].
           destruct (gen_alt_inv Halt3) as [Haccess3 | Htake_call3].
-          -- (* a second access: the first is a plain projection *)
-             destruct (gen_node_of Haccess3 eq_refl) as (c3 & -> & _).
-             assert (Hrest34 : gen (E_star (E_rule R__postfix))
-                                 ([Node R_access c3] ++ ts4))
-               by (apply G_star_cons; assumption).
-             assert (Hk34 : Forall TotKind ([Node R_access c3] ++ ts4))
+          -- destruct (gen_node_of Haccess3 eq_refl) as (c3 & -> & _).
+             assert (Hk : Forall TotKind ([Node R_access c3] ++ ts4))
                by (apply Forall_app; split; assumption).
-             destruct (posts_den _ Hrest34 Hk34 (proj2 Hhead)
-                         (e_proj (e_fvar_f x) (lab tbl l))) as (e' & Hposts).
-             exists e'. apply DP_access; [ exact (proj1 Hhead) | exact Hposts ].
+             destruct (IH ([Node R_access c3] ++ ts4) ltac:(simpl; simpl in Hlen; lia) Hrest Hk
+                         (e_proj acc (lab tbl l))) as (e' & Hposts).
+             exists e'. apply DP_access; [ intros [] | exact Hposts ].
           -- destruct (gen_alt_inv Htake_call3) as [Htake3 | Hcall3].
-             ++ (* a take: the first is a plain projection *)
-                destruct (gen_node_of Htake3 eq_refl) as (c3 & -> & _).
-                assert (Hrest34 : gen (E_star (E_rule R__postfix))
-                                    ([Node R_take c3] ++ ts4))
-                  by (apply G_star_cons; assumption).
-                assert (Hk34 : Forall TotKind ([Node R_take c3] ++ ts4))
+             ++ destruct (gen_node_of Htake3 eq_refl) as (c3 & -> & _).
+                assert (Hk : Forall TotKind ([Node R_take c3] ++ ts4))
                   by (apply Forall_app; split; assumption).
-                destruct (posts_den _ Hrest34 Hk34 (proj2 Hhead)
-                            (e_proj (e_fvar_f x) (lab tbl l))) as (e' & Hposts).
-                exists e'. apply DP_access; [ exact (proj1 Hhead) | exact Hposts ].
-             ++ (* a call: a dot call on the variable *)
+                destruct (IH ([Node R_take c3] ++ ts4) ltac:(simpl; simpl in Hlen; lia) Hrest Hk
+                            (e_proj acc (lab tbl l))) as (e' & Hposts).
+                exists e'. apply DP_access; [ intros [] | exact Hposts ].
+             ++ (* a call straight after the access: a dot call *)
                 destruct (gen_node_of Hcall3 eq_refl) as (c3 & -> & _).
                 inversion Hkids3 as [| ? ? Hkid3 _]; subst. simpl in Hkid3.
                 destruct Hkid3 as (args & es & -> & Hargs).
-                destruct (posts_den ts4 Hrest4 Hkids4 Hhead
-                            (apps (e_proj (e_fvar_f x) (lab tbl l)) (e_fvar_f x :: es)))
-                  as (e' & Hposts).
-                exists e'. apply DP_dot_call with (es := es); assumption.
+                apply (dot_den acc l args es ts4 Hargs).
+                intros acc'. apply (IH ts4 ltac:(simpl in Hlen; simpl; lia) Hrest4 Hkids4 acc').
       + destruct (gen_alt_inv Htake_call) as [Htake | Hcall].
         * (* ::label *)
           destruct (gen_node_of Htake eq_refl) as (c & -> & _).
           inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
           destruct Hkid as (l & ->).
-          assert (Hnd : no_dot ts2) by exact Hhead.
-          destruct (posts_den ts2 Hrest Hkids2 Hnd (e_proj (e_fvar_f x) (lab tbl l)))
+          destruct (IH ts2 ltac:(simpl in Hlen; lia) Hrest Hkids2 (e_proj acc (lab tbl l)))
             as (e' & Hposts).
           exists e'. apply DP_take. exact Hposts.
         * (* (arguments) *)
           destruct (gen_node_of Hcall eq_refl) as (c & -> & _).
           inversion Hkids1 as [| ? ? Hkid _]; subst. simpl in Hkid.
           destruct Hkid as (args & es & -> & Hargs).
-          destruct (posts_den ts2 Hrest Hkids2 Hhead (apps (e_fvar_f x) es))
+          destruct (IH ts2 ltac:(simpl in Hlen; lia) Hrest Hkids2 (apps acc es))
             as (e' & Hposts).
           exists e'. apply DP_call with (es := es); assumption.
   Qed.
@@ -1183,125 +1142,44 @@ Section Totality.
   Lemma chain_head : forall t posts e0,
     Den var_of tbl t e0 ->
     gen (E_star (E_rule R__postfix)) posts -> Forall TotKind posts ->
-    no_dot posts ->
     exists e, Den_chain var_of tbl (t :: posts) e.
   Proof.
-    intros t posts e0 Hden Hposts Hkids Hnd.
-    destruct (posts_den posts Hposts Hkids Hnd e0) as (e & Hchain).
+    intros t posts e0 Hden Hposts Hkids.
+    destruct (posts_den (length posts) posts (le_n _) Hposts Hkids e0) as (e & Hchain).
     exists e. apply DC_head with (e0 := e0); assumption.
   Qed.
 
   Lemma chain_den : forall cs,
-    gen (E_rule R__term) cs -> Forall TotKind cs -> dots_ok cs ->
+    gen (E_rule R__term) cs -> Forall TotKind cs ->
     exists e, Den_chain var_of tbl cs e.
   Proof.
-    intros cs H Hkids Hdots.
+    intros cs H Hkids.
     destruct (term_shape cs H) as (prim & posts & -> & Hprim & Hposts).
     apply Forall_app in Hkids as [Hkprim Hkposts].
     destruct (primary_shape prim Hprim) as
-      [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | (c & ->)]]]]]]]]].
-    - (* number *)
-      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hnd : no_dot posts) by exact Hdots.
-      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
-    - (* string *)
-      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hnd : no_dot posts) by exact Hdots.
-      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
-    - (* conditional *)
-      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hnd : no_dot posts) by exact Hdots.
-      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
-    - (* boolean *)
-      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hnd : no_dot posts) by exact Hdots.
-      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
-    - (* local *)
-      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hnd : no_dot posts) by exact Hdots.
-      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
-    - (* function *)
-      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hnd : no_dot posts) by exact Hdots.
-      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
-    - (* record *)
-      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hnd : no_dot posts) by exact Hdots.
-      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
-    - (* name: a dot call may follow *)
-      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hhead : head_ok posts) by exact Hdots.
-      inversion Hden; subst.
-      destruct (posts_den_var (var_of x) posts Hposts Hkposts Hhead) as (e & Hposts').
-      exists e. apply DC_head with (e0 := e_fvar_f (var_of x)); assumption.
-    - (* parenthesised expression *)
-      inversion Hkprim as [| ? ? _ Hrest]; subst.
-      inversion Hrest as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hnd : no_dot posts) by exact Hdots.
-      destruct (posts_den posts Hposts Hkposts Hnd e0) as (e & Hchain).
-      exists e. apply DC_paren with (e0 := e0); assumption.
-    - (* destructuring *)
-      inversion Hkprim as [| ? ? Hk _]; subst. simpl in Hk.
-      destruct Hk as (e0 & Hden).
-      assert (Hnd : no_dot posts) by exact Hdots.
-      exact (chain_head _ _ e0 Hden Hposts Hkposts Hnd).
+      [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | (c & ->)]]]]]]]]];
+      try (inversion Hkprim as [| ? ? Hk _]; subst; simpl in Hk;
+           destruct Hk as (e0 & Hden);
+           exact (chain_head _ _ e0 Hden Hposts Hkposts)).
+    (* parenthesised expression *)
+    inversion Hkprim as [| ? ? _ Hrest]; subst.
+    inversion Hrest as [| ? ? Hk _]; subst. simpl in Hk.
+    destruct Hk as (e0 & Hden).
+    destruct (posts_den (length posts) posts (le_n _) Hposts Hkposts e0) as (e & Hchain).
+    exists e. apply DC_paren with (e0 := e0); assumption.
   Qed.
-
-  Lemma no_dot_app : forall a b, no_dot (a ++ b) -> no_dot a /\ no_dot b.
-  Proof.
-    induction a as [| t a IH]; intros b H; [ split; [ exact I | exact H ] | ].
-    destruct t as [k | r c].
-    - simpl in H |- *. exact (IH b H).
-    - destruct r; simpl in H |- *; try exact (IH b H).
-      destruct H as [Hnc Hrest]. destruct (IH b Hrest) as [Ha Hb].
-      split; [ split | exact Hb ].
-      + destruct a as [| x a']; [ intros [] | exact Hnc ].
-      + exact Ha.
-  Qed.
-
-  Lemma no_dot_head_ok : forall ps, no_dot ps -> head_ok ps.
-  Proof.
-    intros ps H. unfold head_ok.
-    destruct ps as [| t1 ps1]; [ exact H | ].
-    destruct t1 as [k | r1 c1]; [ exact H | ].
-    destruct r1; try exact H.
-    destruct ps1 as [| t2 ps2]; [ exact H | ].
-    destruct t2 as [k2 | r2 c2]; [ exact H | ].
-    destruct r2; try exact H.
-    exfalso. simpl in H. destruct H as [H _]. apply H. simpl. exact I.
-  Qed.
-
-  Lemma no_dot_dots_ok : forall cs, no_dot cs -> dots_ok cs.
-  Proof.
-    induction cs as [| t cs IH]; intros H; [ exact I | ].
-    destruct t as [k | r c]; [ exact H | ].
-    destruct r; try exact H;
-      first [ exact (IH H) | exact (no_dot_head_ok cs H) ].
-  Qed.
-
-  Lemma no_dot_op : forall o c2, no_dot (op_tree o :: c2) -> no_dot c2.
-  Proof. intros o c2 H. destruct o; exact H. Qed.
 
   Lemma math_den : forall cs,
     gen (E_seq (E_rule R__operand) (E_star (E_rule R__more_math))) cs ->
-    Forall TotKind cs -> dots_ok cs -> ops_ok cs ->
+    Forall TotKind cs -> ops_ok cs ->
     exists e, Den_math var_of tbl cs e.
   Proof.
-    intros cs H Hkids Hdots Hops.
+    intros cs H Hkids Hops.
     split_seq H as (tso & tsm & -> & Hop & Hmore).
     pose proof (operand_term _ Hop) as Hterm.
     destruct (gen_star_inv Hmore) as [-> | (m1 & m2 & -> & Hm1 & Hm2)].
     - rewrite app_nil_r in *.
-      destruct (chain_den tso Hterm Hkids Hdots) as (e & Hchain).
+      destruct (chain_den tso Hterm Hkids) as (e & Hchain).
       exists e. apply DM_chain. exact Hchain.
     - destruct (more_math_shape _ Hm1) as (o & c2 & -> & Hc2).
       pose proof (operand_term _ Hc2) as Hterm2.
@@ -1312,15 +1190,12 @@ Section Totality.
         lia. }
       assert (Hm2nil : m2 = []).
       { apply (star_more_math_zero _ Hm2).
-        destruct Hops as [Hz | [Hone _]]; lia. }
+        destruct Hops as [Hz | Hone]; lia. }
       subst m2. rewrite app_nil_r in *.
-      assert (Hnd : no_dot (tso ++ op_tree o :: c2)).
-      { destruct Hops as [Hz | [_ Hnd]]; [ rewrite Hz in Hcount; simpl in Hcount; lia | exact Hnd ]. }
-      destruct (no_dot_app _ _ Hnd) as [Hnd1 Hnd2].
       apply Forall_app in Hkids as [Hk1 Hk2].
       inversion Hk2 as [| ? ? _ Hk3]; subst.
-      destruct (chain_den tso Hterm Hk1 (no_dot_dots_ok _ Hnd1)) as (e1 & Hc1).
-      destruct (chain_den c2 Hterm2 Hk3 (no_dot_dots_ok _ (no_dot_op _ _ Hnd2))) as (e2 & Hc2').
+      destruct (chain_den tso Hterm Hk1) as (e1 & Hc1).
+      destruct (chain_den c2 Hterm2 Hk3) as (e2 & Hc2').
       exists (e_bin e1 o e2). apply DM_bin; assumption.
   Qed.
 
@@ -1330,9 +1205,7 @@ Section Totality.
   Proof.
     intros ds ss Hds. induction Hds as [| d ds [c ->] _ IH]; intros Hops.
     - exact Hops.
-    - apply IH. destruct Hops as [Hz | [Hone Hnd]].
-      + left. exact Hz.
-      + right. split; [ exact Hone | exact Hnd ].
+    - exact (IH Hops).
   Qed.
 
   Lemma vals_block : forall ds,
@@ -1454,20 +1327,11 @@ Section Totality.
     exact (Hall _ Hin).
   Qed.
 
-  Lemma dots_ok_decls : forall ds ss,
-    Forall (fun t => exists c, t = Node R_declaration c) ds ->
-    dots_ok (ds ++ ss) -> dots_ok ss.
-  Proof.
-    intros ds ss Hds. induction Hds as [| d ds [c ->] _ IH]; intros Hdots.
-    - exact Hdots.
-    - exact (IH Hdots).
-  Qed.
-
   Lemma block_den : forall cs,
     gen (E_rule R__part) cs -> Forall TotKind cs -> ~ last_is_decl cs ->
-    dots_ok cs -> ops_ok cs -> fns_first cs -> exists e, Den_block var_of tbl cs e.
+    ops_ok cs -> fns_first cs -> exists e, Den_block var_of tbl cs e.
   Proof.
-    intros cs H Hkids Hlast Hdots Hops Hfns.
+    intros cs H Hkids Hlast Hops Hfns.
     destruct (part_shape cs H) as [(ds & ss & -> & Hds & Hss) | Hstatement].
     - (* declarations, then perhaps a chain *)
       destruct Hss as [Hstatement | ->].
@@ -1475,20 +1339,17 @@ Section Totality.
         destruct (gen_seq_inv (gen_plus_inv Hds)) as (d1 & drest & Hsplit & Hd1 & Hrest).
         assert (Hstar : gen (E_star (E_rule R_declaration)) ds).
         { rewrite Hsplit. apply G_star_cons; assumption. }
-        assert (Hdots_ss : dots_ok ss).
-        { apply (dots_ok_decls ds ss); [ | exact Hdots ].
-          apply declaration_nodes. exact Hstar. }
         assert (Hops_ss : ops_ok ss).
         { apply (ops_ok_decls ds ss); [ | exact Hops ].
           apply declaration_nodes. exact Hstar. }
-        destruct (math_den ss (statement_math _ Hstatement) Hkss Hdots_ss Hops_ss)
+        destruct (math_den ss (statement_math _ Hstatement) Hkss Hops_ss)
           as (e & Hmath).
         assert (Hss : Den_block var_of tbl ss e) by (apply DB_chain; exact Hmath).
         exact (decls_block ds (declaration_nodes ds Hstar) Hkds
                  (fns_first_app ds ss (declaration_nodes ds Hstar) Hfns) ss e Hss).
       + exfalso. apply Hlast. rewrite app_nil_r. exact (plus_decls_last ds Hds).
     - (* a chain alone *)
-      destruct (math_den cs (statement_math _ Hstatement) Hkids Hdots Hops)
+      destruct (math_den cs (statement_math _ Hstatement) Hkids Hops)
         as (e & Hmath).
       exists e. apply DB_chain. exact Hmath.
   Qed.
@@ -1657,8 +1518,8 @@ Section Steps.
   Lemma step_expr : Step R_expr.
   Proof.
     intros cs H Hcomplete Hkids. simpl in Hcomplete.
-    destruct Hcomplete as [Hlast [Hdots [Hops Hfns]]].
-    destruct (block_den var_of tbl cs (expr_part cs H) Hkids Hlast Hdots Hops Hfns)
+    destruct Hcomplete as [Hlast [Hops Hfns]].
+    destruct (block_den var_of tbl cs (expr_part cs H) Hkids Hlast Hops Hfns)
       as (e & Hblock).
     simpl. exists e. apply D_expr. exact Hblock.
   Qed.
@@ -1666,8 +1527,7 @@ Section Steps.
   Lemma step_value : Step R_value.
   Proof.
     intros cs H Hcomplete Hkids. simpl in Hcomplete.
-    destruct Hcomplete as [Hdots Hops].
-    destruct (math_den var_of tbl cs (statement_math_value cs H) Hkids Hdots Hops)
+    destruct (math_den var_of tbl cs (statement_math_value cs H) Hkids Hcomplete)
       as (e & Hmath).
     simpl. exists e. apply D_value. exact Hmath.
   Qed.
