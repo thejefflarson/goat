@@ -6,7 +6,12 @@ init = {basket: 200, coin_x: 100, coin_y: 0, score: 0}
 reach = 40
 ground = 270
 
-with_basket = program(model, to) do {basket: to, coin_x: model.coin_x, coin_y: model.coin_y, score: model.score} done
+with_basket = program(model, to) do {
+  basket: to,
+  coin_x: model.coin_x,
+  coin_y: model.coin_y,
+  score: model.score
+} done
 
 caught = program(model) do
   model.coin_x > model.basket - reach and model.coin_x < model.basket + reach
@@ -25,7 +30,12 @@ done
 
 fall = program(model, dt) do
   y = model.coin_y + 160 * dt / 1000
-  if y < ground then {basket: model.basket, coin_x: model.coin_x, coin_y: y, score: model.score} else land(model) done
+  if y < ground then {
+    basket: model.basket,
+    coin_x: model.coin_x,
+    coin_y: y,
+    score: model.score
+  } else land(model) done
 done
 
 update = program(model, event) do
@@ -46,6 +56,11 @@ draw = program(model) do
     Box({x: model.basket - reach, y: ground, w: 2 * reach, h: 20, fill: "navy"}),
     Dot({x: model.coin_x, y: model.coin_y, r: 10, fill: "gold"}),
     Box({x: 10, y: 10, w: 20 * model.score, h: 10, fill: "green"}),
-    Label({x: 10, y: 30, text: if model.score >= 5 then "you win!" else "catch the gold" done, fill: "black"})
+    Label({
+      x: 10,
+      y: 30,
+      text: if model.score >= 5 then "you win!" else "catch the gold" done,
+      fill: "black"
+    })
   ]
 done

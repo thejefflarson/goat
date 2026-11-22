@@ -40,9 +40,10 @@ freed by a loop is reused by the next iteration, which is what lets a long-runni
 `update` run in a small arena (tested with a 1 KiB budget and 100000 iterations).
 Revisit with per-class regions if a real board shows class-mix fragmentation.
 
-`free` still poisons freed blocks with `memory.fill`, so the board floor keeps
-bulk-memory (ADR 0019). A poison-free allocator would drop that requirement; it is not
-part of this decision.
+`free` poisons freed blocks with `memory.fill` only in debug, test and fuzz builds
+(`EmitOptions::poison_freed`); release board modules skip the fill and keep just the
+double-free and popped-block `rc` checks. The board floor still includes bulk-memory
+because `KeepStr` emits `memory.copy` (ADR 0019).
 
 ## The stack: a depth counter, not a byte count
 

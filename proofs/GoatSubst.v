@@ -93,6 +93,8 @@ Proof.
   - (* Grp *) f_equal. apply H; assumption.
   - (* row_Var *) apply H0. fsetdec.
   - (* row_Ext *) f_equal; [ apply H | apply H0 ]; intros; [apply H1|apply H2|apply H1|apply H2]; fsetdec.
+  - (* row_Maybe *) f_equal; [ apply H | apply H0 | apply H1 ]; intros;
+      first [ apply H2 | apply H3 ]; fsetdec.
 Qed.
 
 Lemma ap_typ_ext : forall T st sr st' sr',
@@ -308,6 +310,8 @@ Proof.
   - eapply T_If; eauto.
   - eapply T_ToFloat; eauto. eapply sat_pw; eauto.
   - eapply T_Bin; eauto. eapply bin_sig_pw; eauto.
+  - eapply T_Spread; eauto.
+  - eapply T_Restrict; eauto.
   - eapply T_Fold; eauto.
   - eapply T_Unfold; eauto.
   - eapply T_Con; eauto.
@@ -364,6 +368,8 @@ Proof.
   - (* T_If *) eapply T_If; eauto.
   - (* T_ToFloat *) eapply T_ToFloat; eauto.
   - (* T_Bin *) eapply T_Bin; eauto.
+  - (* T_Spread *) eapply T_Spread; eauto.
+  - (* T_Restrict *) eapply T_Restrict; eauto.
   - (* T_Fold *) eapply T_Fold; eauto.
   - (* T_Unfold *) eapply T_Unfold; eauto.
   - (* T_Con *) eapply T_Con; eauto.
@@ -592,6 +598,8 @@ Proof.
   - (* T_If *) eapply T_If; eauto.
   - (* T_ToFloat *) eapply T_ToFloat; eauto.
   - (* T_Bin *) eapply T_Bin; eauto.
+  - (* T_Spread *) eapply T_Spread; eauto.
+  - (* T_Restrict *) eapply T_Restrict; eauto.
   - (* T_Fold *) eapply T_Fold; eauto.
   - (* T_Unfold *) eapply T_Unfold; eauto.
   - (* T_Con *) eapply T_Con; eauto.
@@ -632,6 +640,11 @@ Proof.
   - apply req_refl.
   - apply req_head; auto.
   - apply req_swap; auto.
+  - apply req_maybe; auto.
+  - apply req_pre.
+  - apply req_abs. apply rlacks_ap; auto.
+  - apply req_swap_em; auto.
+  - apply req_swap_mm; auto.
   - eapply req_trans; eauto.
   - apply req_sym; auto.
 Qed.
@@ -720,6 +733,7 @@ Proof.
   - fsetdec.
   - (* row_Var *) unfold rr; simpl. fsetdec.
   - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
+  - rewrite !AtomSetFacts.union_iff. rewrite H, H0, H1. reflexivity.
 Qed.
 
 Lemma Frv_ren_mut :
@@ -742,6 +756,7 @@ Proof.
   - (* row_Var *) unfold rr; simpl. rewrite !AtomSetFacts.singleton_iff.
     split; [ intro HH; rewrite <- HH; symmetry; apply grfr | intro HH; rewrite HH; apply frgr ].
   - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
+  - rewrite !AtomSetFacts.union_iff. rewrite H, H0, H1. reflexivity.
 Qed.
 
 End Renaming.

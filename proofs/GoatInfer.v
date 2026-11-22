@@ -105,6 +105,7 @@ with lcrb (k : nat) (R : row) {struct R} : bool :=
   match R with
   | row_Empty | row_Var _ => true
   | row_Ext _ T R' => lcb k T && lcrb k R'
+  | row_Maybe _ P T R' => lcb k P && lcb k T && lcrb k R'
   end.
 
 Definition occT (a : atom) (T : typ) : bool :=
@@ -132,6 +133,7 @@ Fixpoint rewrite_row (l : label) (av : atoms) (R : row) (n : nat)
         | None => None
         | Some (T0, R''', s, n1) => Some (T0, row_Ext l' (apT s T') R''', s, n1)
         end
+  | row_Maybe _ _ _ _ => None
   end.
 
 Definition gdecl_eq_dec (w w' : gdecl) : {w = w'} + {w <> w'} :=
@@ -565,6 +567,8 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
               end
           end
           else None
+      | e_spread _ _ _ => None
+      | e_restrict _ _ => None
       | e_fold _ => None
       | e_unfold _ => None
       | e_tofloat e1 =>

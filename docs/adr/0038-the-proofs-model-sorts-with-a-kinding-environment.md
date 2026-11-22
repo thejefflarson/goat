@@ -43,6 +43,14 @@ preservation must survive it. Three representations were weighed:
    it infers is derivable in `d_any`) and is incomplete for the generic
    operators. (Extended afterwards: the algorithm threads the kinding
    environment, `proofs/README.md`, "Algorithm W with sorted variables".)
+   One incompleteness remains: the checker applies `+ - *` to two records field
+   by field, so `add({x: 1}, {x: 2})` types in the checker and has no derivation
+   here. A record would have to satisfy `Numeric` (`sat`), and the operators
+   would need a step rule on records, so progress, preservation and the
+   substitution lemma change; it waits for a ticket that carries that change.
+   The differential corpus skips exactly the calls that pass a record where a
+   quantified variable is an operand of `+ - *`; a record passed to any other
+   function is compared.
 
 ## Consequences
 

@@ -116,8 +116,8 @@ million-element chain uses one call frame. A drop function never calls another.
 
 The wasm backend implements the free-list strategy (`wasm/src/allocator.rs`).
 `alloc` records the block's size class in the header's `_pad` word, so `free`
-needs no size from the caller; a freed block has `rc == 0` and a poisoned
-payload, which turns a second release into a trap. The live-allocation count
+needs no size from the caller; a freed block has `rc == 0`, which turns a second
+release into a trap, and debug, test and fuzz builds also poison its payload. The live-allocation count
 (`goat_live_allocs`) moves only on a real `alloc` and `free`, never for
 immortal objects.
 

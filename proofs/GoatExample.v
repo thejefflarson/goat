@@ -156,6 +156,8 @@ Proof.
     split; [ exact I | left; reflexivity ].
   - (* the function has parameters and a body *)
     split; eexists; in_list.
+  - (* the parameter is a name, not a record pattern *)
+    intros c Hc; discriminate Hc.
   - (* the body is a single name *)
     split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
          | split; [ exact I | split; [ left; reflexivity | exact I ] ] ].
@@ -336,7 +338,8 @@ Proof.
                                   | exact I ] ] ] ]
     | solve [ split; [ exact I | left; reflexivity ] ]
     | solve [ split; eexists; in_list ]
-    | solve [ in_list ] ].
+    | solve [ in_list ]
+    | solve [ intros c Hc; discriminate Hc ] ].
 Qed.
 
 Example countdown_denotes_lc : forall var_of,
@@ -459,4 +462,37 @@ Example countdown_source_types : forall var_of,
 Proof.
   intros var_of Hne.
   exact (conj (countdown_denotes_the_group var_of Hne) recursive_group_types).
+Qed.
+
+(* {x, y, ...r} = p  r : a rest pattern with two labels is two restricts of the
+   one source variable [s], which is none of the names the program uses. *)
+Definition rest_pattern_tree : tree :=
+  Node R_destructure
+    [Node R_record_pattern
+       [sym "{"; ident "x"; sym ","; ident "y"; sym ","; rest_node "r"; sym "}"];
+     sym "="; Node R_value [ident "p"]; Node R_expr [ident "r"]].
+
+Example rest_pattern_denotes_two_restricts : forall var_of s,
+  s <> var_of "x" -> s <> var_of "y" -> s <> var_of "r" ->
+  Den var_of ["x"; "y"] rest_pattern_tree
+    (e_let (e_fvar_f (var_of "p"))
+       (close_exp s
+          (e_let (e_proj (e_fvar_f s) 0)
+             (close_exp (var_of "x")
+                (e_let (e_proj (e_fvar_f s) 1)
+                   (close_exp (var_of "y")
+                      (e_let (e_restrict (e_restrict (e_fvar_f s) 0) 1)
+                         (close_exp (var_of "r") (e_fvar_f (var_of "r")))))))))).
+Proof.
+  intros var_of s Hx Hy Hr.
+  eapply (D_destructure var_of ["x"; "y"]
+            [ident "x"; sym ","; ident "y"; sym ","; rest_node "r"; sym "}"]
+            ["x"; "y"] (Some "r") [ident "p"] [] [ident "r"]
+            (e_fvar_f (var_of "p")) (e_fvar_f (var_of "r")) s).
+  - apply DPS_name. apply DPM_name. exact (DPM_rest "r" []  (or_introl eq_refl)).
+  - left. reflexivity.
+  - apply D_value. apply DM_chain. eapply DC_head; [ apply D_name | apply DP_nil ].
+  - apply D_expr. apply DB_chain. apply DM_chain. eapply DC_head; [ apply D_name | apply DP_nil ].
+  - simpl. intros Hin. apply Hr. apply AtomSetImpl.singleton_1 in Hin. symmetry. exact Hin.
+  - simpl. intros z [<- | [<- | [<- | []]]]; assumption.
 Qed.

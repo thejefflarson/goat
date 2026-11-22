@@ -64,7 +64,7 @@ Lemma unify_pw_sound : forall f D R1 R2 n s n',
 Proof.
   induction f as [|f IH]; intros D R1 R2 n s n' H H1 H2; [discriminate|].
   cbn [unify_pw] in H.
-  destruct R1 as [|r|l T R1']; destruct R2 as [|r2|l2 T2 R2']; try discriminate H.
+  destruct R1 as [|r|l T R1'|lm Pm Tm Rm]; destruct R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2]; try discriminate H.
   - inversion H; subst.
     split; [apply OkS_id | split; [rewrite apR_id; apply pw_nil | split; [ exact (kres_id D) | lia ]]].
   - destruct (Nat.eqb l l2) eqn:Hl; [|discriminate].

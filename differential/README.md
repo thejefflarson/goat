@@ -36,7 +36,7 @@ calculus and skipped.
 The generic operators are compared. `+ - *` on operands the checker leaves as
 type variables (`program(x) do x * 2 done`, `add = program(a, b) do a + b done`),
 a numeral at `Float` (`1 + 1.5`, written as the bare numeral), and a generic
-function used at `Int` and at `Float` are all in the corpus. Five kinds of
+function used at `Int` and at `Float` are all in the corpus. Four kinds of
 program are skipped, each because the calculus and the checker differ on it:
 
 - a comparison at a parameter's generic type (`program(a, b) do a == b done`,
@@ -55,18 +55,23 @@ program are skipped, each because the calculus and the checker differ on it:
   a numeral's variable only in a function's type and in a bare numeral binding
   (`n = 3`, ADR 0039), so `r = {a: 1}  {x: r.a + 1.5, y: r.a // 2}` types in the
   calculus and not in the checker;
-- a program with `+ - *` on open operands that passes a record to a call: the
-  checker applies them to a record field by field, and the calculus has no
-  operator on records;
-- a record that holds a function of a recursive group by name
-  (`{stop: true, g: h}` inside `h`): the checker accepts a type with no finite
-  derivation;
+- a program in which a record reaches a `+ - *` whose operand type is a
+  variable (`add = program(a, b) do a + b done` called as `add({x: 1}, {x: 2})`):
+  the checker applies the operator to the record field by field, and the calculus
+  has no operator on records, so the algorithm cannot type the call. The corpus
+  skips a call only when the callee's scheme has a quantified variable that some
+  `+ - *` takes as an operand type and the call passes a record there; a record
+  passed to a function that does not apply an operator to it is compared
+  (it was skipped before, 301 programs, of which 2 are this kind);
 - a program in which the checker infers a recursive type, which the algorithm
-  does not;
+  does not (a record that holds a function of a recursive group by name, as
+  `{stop: true, g: h}` inside `h`, is one: it is compared when the checker
+  accepts it with a finite type and counted under the sixth kind when it does
+  not, so it has no skip reason of its own);
 - the cases the README already listed: the prelude, tags, `::`, dot calls,
   `self`.
 
-A sixth kind is counted apart from these. When the checker types a program in
+A fifth kind is counted apart from these. When the checker types a program in
 the fragment with a recursive type (`Ty::Rec`, as for `(p.moved)(p)`), the
 corpus writes it as an `R` line and the driver prints it as "skipped for a
 recursive type", with no comparison. The algorithm never builds a `mu`
