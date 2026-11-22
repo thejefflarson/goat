@@ -993,11 +993,11 @@ mod tests {
         assert_eq!(type_of(&format!("{take}take(3)")).unwrap(), "Unit");
         assert_eq!(
             type_of(&format!("{take}take(1.5)")).unwrap_err(),
-            "type mismatch: expected `Int`, found `Float`"
+            "this is a `Float`, but an `Int` is needed here; use `round`, `floor` or `truncate`"
         );
         assert_eq!(
             type_of(&format!("{take}take(2.0)")).unwrap_err(),
-            "type mismatch: expected `Int`, found `Float`"
+            "this is a `Float`, but an `Int` is needed here; use `round`, `floor` or `truncate`"
         );
     }
 

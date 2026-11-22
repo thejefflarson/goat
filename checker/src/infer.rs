@@ -44,6 +44,9 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::Arc;
 
+const FLOAT_FOR_INT: &str =
+    "this is a `Float`, but an `Int` is needed here; use `round`, `floor` or `truncate`";
+
 /// Most type terms (constructors, fields, variables) one expression's type may
 /// hold. Composing generic functions with themselves doubles a type at every
 /// level, and inference over a type that large is slower than quadratic, so a
@@ -3214,10 +3217,8 @@ impl Inferer {
             }
         }
         for at in solution.narrowed {
-            self.errors.push(GoatError::new(
-                flows[at].span,
-                "this is a `Float`, but an `Int` is needed here; use `round`, `floor` or `truncate`",
-            ));
+            self.errors
+                .push(GoatError::new(flows[at].span, FLOAT_FOR_INT));
         }
     }
 
@@ -3694,6 +3695,11 @@ impl Inferer {
     fn widen_arguments(&mut self, params: &[Ty], arg_tys: &mut [Ty], args: &[Expr]) {
         for ((param, arg), expr) in params.iter().zip(arg_tys).zip(args) {
             let (resolved_param, resolved_arg) = (self.resolve(param), self.resolve(arg));
+            if resolved_param == Ty::Int && resolved_arg == Ty::Float {
+                self.errors.push(GoatError::new(expr.span, FLOAT_FOR_INT));
+                *arg = param.clone();
+                continue;
+            }
             let takes_any_number =
                 matches!(resolved_param, Ty::Var(_)) && self.may_be_number(param);
             if !(resolved_param == Ty::Float || takes_any_number) || !self.may_be_number(arg) {

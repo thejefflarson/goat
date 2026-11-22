@@ -256,7 +256,6 @@ fn item_outside_the_list_is_a_trap() {
     assert_traps("item([], 1)", message);
     assert_traps("item([1, 2], 0)", message);
     assert_traps("item([1, 2], -1)", message);
-    assert_traps("item([1, 2], 1.5)", message);
 }
 
 #[test]
