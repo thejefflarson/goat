@@ -46,6 +46,7 @@ Fixpoint ap_typ (st : tsub) (sr : rsub) (T : typ) {struct T} : typ :=
   | typ_Var a => st a
   | typ_Bvar i => typ_Bvar i
   | typ_Mu B => typ_Mu (ap_typ st sr B)
+  | typ_Grp w A => typ_Grp w (ap_typ st sr A)
   end
 with ap_row (st : tsub) (sr : rsub) (R : row) {struct R} : row :=
   match R with
@@ -83,6 +84,7 @@ Fixpoint open_typ (k : nat) (U : typ) (T : typ) {struct T} : typ :=
       | inright _ => typ_Bvar (n - 1)
       end
   | typ_Mu B => typ_Mu (open_typ (S k) U B)
+  | typ_Grp w A => typ_Grp w (open_typ k U A)
   end
 with open_row (k : nat) (U : typ) (R : row) {struct R} : row :=
   match R with
@@ -98,6 +100,7 @@ Fixpoint lct (k : nat) (T : typ) {struct T} : Prop :=
   | typ_Record R => lcr k R
   | typ_Bvar n => n < k
   | typ_Mu B => lct (S k) B
+  | typ_Grp _ A => lct k A
   end
 with lcr (k : nat) (R : row) {struct R} : Prop :=
   match R with
@@ -121,6 +124,7 @@ Fixpoint gd (r f : bool) (k : nat) (T : typ) {struct T} : Prop :=
   | typ_Record R => gdr true f k R
   | typ_Bvar n => n = k -> r = true /\ f = true
   | typ_Mu B => gd r f (S k) B
+  | typ_Grp _ A => gd true true k A
   end
 with gdr (r f : bool) (k : nat) (R : row) {struct R} : Prop :=
   match R with
@@ -149,6 +153,7 @@ Fixpoint ftv_typ (T : typ) {struct T} : atoms :=
   | typ_Var a => {{a}}
   | typ_Bvar _ => {}
   | typ_Mu B => ftv_typ B
+  | typ_Grp _ A => ftv_typ A
   end
 with ftv_row (R : row) {struct R} : atoms :=
   match R with
@@ -169,6 +174,7 @@ Fixpoint frv_typ (T : typ) {struct T} : atoms :=
   | typ_Var _ => {}
   | typ_Bvar _ => {}
   | typ_Mu B => frv_typ B
+  | typ_Grp _ A => frv_typ A
   end
 with frv_row (R : row) {struct R} : atoms :=
   match R with
@@ -295,6 +301,83 @@ Definition gen (G : ctx) (T : typ) (k : sort_fn) : scheme :=
       T k.
 
 (* ================================================================== *)
+(* Tag groups (ADR 0016, the closed-tags amendment).  A group is declared  *)
+(* by [w : gdecl], a list of its tags in declaration order, each a list of *)
+(* slot codes: 0 is the group itself (the recursion), 1 to 5 are the       *)
+(* concrete types Int, Float, Bool, Unit, String, and [6 + j] is the       *)
+(* group's implicit parameter [j] (a [_] in the declaration).  The type of *)
+(* a value of the group is [typ_Grp w A], where [A] spells the parameters  *)
+(* as the spine [spine Ts] = [(T0) -> (T1) -> ... -> Unit]: that reuses    *)
+(* the arrow's congruence for the arguments, with no new list in [typ].    *)
+(* A tag with no slots carries [Unit]; one with slots carries the closed   *)
+(* record of them, labeled by position.                                     *)
+(* ================================================================== *)
+
+Fixpoint spine (Ts : list typ) : typ :=
+  match Ts with
+  | nil => typ_Unit
+  | T :: Ts' => typ_Arrow T (spine Ts')
+  end.
+
+Definition slot_ty (w : gdecl) (Ts : list typ) (c : nat) : typ :=
+  match c with
+  | 0 => typ_Grp w (spine Ts)
+  | 1 => typ_Int
+  | 2 => typ_Float
+  | 3 => typ_Bool
+  | 4 => typ_Unit
+  | 5 => typ_String
+  | _ => nth (c - 6) Ts typ_Unit
+  end.
+
+Fixpoint slots_row (w : gdecl) (Ts : list typ) (i : label) (cs : list nat) : row :=
+  match cs with
+  | nil => row_Empty
+  | c :: cs' => row_Ext i (slot_ty w Ts c) (slots_row w Ts (S i) cs')
+  end.
+
+Definition payload_ty (w : gdecl) (Ts : list typ) (cs : list nat) : typ :=
+  match cs with
+  | nil => typ_Unit
+  | _ :: _ => typ_Record (slots_row w Ts 0 cs)
+  end.
+
+(* The payload type of tag [tg] of [w] at the parameters [Ts]; a tag outside
+   the group has none (no construction of one types, see [T_Con]). *)
+Definition tag_payload (w : gdecl) (Ts : list typ) (tg : nat) : typ :=
+  match nth_error w tg with
+  | Some cs => payload_ty w Ts cs
+  | None => typ_Unit
+  end.
+
+(* The arms of a match: the first arm for a tag, the else, and the tags the
+   arms name.  A well-formed match names each tag at most once, names only
+   tags of its group, and either has an else or names them all. *)
+Fixpoint arms_find (tg : tagidx) (ars : arms) {struct ars} : option exp :=
+  match ars with
+  | arms_nil | arms_else _ => None
+  | arms_cons tg' e ars' => if Nat.eqb tg tg' then Some e else arms_find tg ars'
+  end.
+
+Fixpoint arms_default (ars : arms) {struct ars} : option exp :=
+  match ars with
+  | arms_nil => None
+  | arms_else e => Some e
+  | arms_cons _ _ ars' => arms_default ars'
+  end.
+
+Fixpoint arms_idx (ars : arms) {struct ars} : list nat :=
+  match ars with
+  | arms_nil | arms_else _ => nil
+  | arms_cons tg _ ars' => tg :: arms_idx ars'
+  end.
+
+Definition arms_wf (w : gdecl) (ars : arms) : Prop :=
+  NoDup (arms_idx ars) /\
+  (forall tg, In tg (arms_idx ars) -> tg < length w) /\
+  (arms_default ars <> None \/ forall tg, tg < length w -> In tg (arms_idx ars)).
+
+(* ================================================================== *)
 (* Values (section 2).                                                   *)
 (* ================================================================== *)
 
@@ -307,6 +390,7 @@ Inductive value : exp -> Prop :=
  | v_str : forall q, value (e_str q)
  | v_abs : forall e, value (e_abs e)
  | v_fold : forall v, value v -> value (e_fold v)
+ | v_con : forall w tg v, value v -> value (e_con w tg v)
  | v_rec : forall fs, rec_value fs -> value (e_rec fs)
 with rec_value : fields -> Prop :=
  | rv_nil : rec_value fs_nil
@@ -339,6 +423,7 @@ Fixpoint is_gen_value (e : exp) {struct e} : bool :=
   | e_letrec fs e2 => is_gen_fields fs && is_gen_value e2
   | e_tofloat e1 => is_gen_value e1
   | e_fold e1 => is_gen_value e1
+  | e_con _ _ e1 => is_gen_value e1
   | _ => false
   end
 with is_gen_fields (fs : fields) {struct fs} : bool :=
@@ -605,6 +690,15 @@ Inductive step : exp -> exp -> Prop :=
  | st_fold1 : forall e e', step e e' -> step (e_fold e) (e_fold e')
  | st_unfold1 : forall e e', step e e' -> step (e_unfold e) (e_unfold e')
  | st_unfold_fold : forall v, value v -> step (e_unfold (e_fold v)) v
+ | st_con1 : forall w tg e e', step e e' -> step (e_con w tg e) (e_con w tg e')
+ | st_match1 : forall w e e' ars,
+     step e e' -> step (e_match w e ars) (e_match w e' ars)
+ | st_match_arm : forall w w' tg v ars body,
+     value v -> arms_find tg ars = Some body ->
+     step (e_match w (e_con w' tg v) ars) (open_exp_wrt_exp body v)
+ | st_match_else : forall w w' tg v ars e0,
+     value v -> arms_find tg ars = None -> arms_default ars = Some e0 ->
+     step (e_match w (e_con w' tg v) ars) e0
 with step_fields : fields -> fields -> Prop :=
  | stf_here : forall l e e' fs,
      step e e' -> step_fields (fs_cons l e fs) (fs_cons l e' fs)
@@ -629,6 +723,8 @@ Inductive traps : exp -> trap_kind -> Prop :=
  | tr_tofloat : forall e k, traps e k -> traps (e_tofloat e) k
  | tr_fold : forall e k, traps e k -> traps (e_fold e) k
  | tr_unfold : forall e k, traps e k -> traps (e_unfold e) k
+ | tr_con : forall w tg e k, traps e k -> traps (e_con w tg e) k
+ | tr_match : forall w e ars k, traps e k -> traps (e_match w e ars) k
  | tr_bin : forall v1 o v2 k,
      value v1 -> value v2 -> bin_trap o v1 v2 k -> traps (e_bin v1 o v2) k
 with traps_fields : fields -> trap_kind -> Prop :=
@@ -701,6 +797,19 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
  | T_Unfold : forall D G e B,
      lct 0 (typ_Mu B) -> guarded B ->
      typing D G e (typ_Mu B) -> typing D G (e_unfold e) (open_typ 0 (typ_Mu B) B)
+ | T_Con : forall D G w tg e Ts,
+     tg < length w ->
+     typing D G e (tag_payload w Ts tg) ->
+     typing D G (e_con w tg e) (typ_Grp w (spine Ts))
+ | T_Match : forall (L : vars) D G w Ts e ars T,
+     typing D G e (typ_Grp w (spine Ts)) ->
+     arms_wf w ars ->
+     (forall tg body, arms_find tg ars = Some body ->
+        forall x, x `notin` L ->
+          typing D ((x ~ sch_mono (tag_payload w Ts tg)) ++ G)
+            (open_exp_wrt_exp body (e_fvar_f x)) T) ->
+     (forall e0, arms_default ars = Some e0 -> typing D G e0 T) ->
+     typing D G (e_match w e ars) T
 with field_typing : denv -> ctx -> fields -> row -> Prop :=
  | FT_nil : forall D G, uniq G -> field_typing D G fs_nil row_Empty
  | FT_cons : forall D G l e T fs R,

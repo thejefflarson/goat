@@ -9,6 +9,8 @@ Definition bidx : Set := nat. (* de Bruijn index of a mu binder *)
 Definition num : Set := BinNums.Z. (* whole-number literal, an integer *)
 Definition dec : Set := nat. (* a Float value, opaque: no rule reads the payload *)
 Definition str : Set := (list nat). (* string literal, as its bytes *)
+Definition gdecl : Set := (list (list nat)). (* a declared tag group: the slot codes of each of its tags, decoded by GoatGroup.v *)
+Definition tagidx : Set := nat. (* position of a tag in its group's declaration *)
 
 Inductive bop : Set :=  (* binary operator *)
  | bop_add : bop (* + *)
@@ -42,11 +44,17 @@ Inductive exp : Set :=  (* term *)
  | e_ite (e1:exp) (e2:exp) (e3:exp) (* conditional *)
  | e_bin (e1:exp) (o:bop) (e2:exp) (* binary operation *)
  | e_tofloat (e:exp) (* Int-to-Float coercion, inserted by elaboration *)
+ | e_con (w:gdecl) (tg:tagidx) (e:exp) (* build tag k of the group w around the payload e *)
+ | e_match (w:gdecl) (e:exp) (ars:arms) (* take a value of the group w apart by its tag *)
  | e_fold (e:exp) (* roll a value into a recursive type *)
  | e_unfold (e:exp) (* unroll a value of a recursive type *)
 with fields : Set :=  (* record spine (cons-list; duplicates allowed) *)
  | fs_nil : fields
- | fs_cons (l:label) (e:exp) (fs:fields).
+ | fs_cons (l:label) (e:exp) (fs:fields)
+with arms : Set :=  (* the arms of a match *)
+ | arms_nil : arms (* no else: the arms are exhaustive *)
+ | arms_else (e:exp) (* the tags no arm names *)
+ | arms_cons (tg:tagidx) (e:exp) (ars:arms) (* arm for tag tg; x is the payload *).
 
 Inductive typ : Set :=  (* monotype *)
  | typ_Int : typ
@@ -59,6 +67,7 @@ Inductive typ : Set :=  (* monotype *)
  | typ_Var (a:typvar)
  | typ_Bvar (i:bidx) (* index of an enclosing mu; no sort (ADR 0038) *)
  | typ_Mu (T:typ) (* iso-recursive type; the body counts the mu as index 0 *)
+ | typ_Grp (w:gdecl) (T:typ) (* a value of the tag group w; T spells the group's implicit parameters as a spine (GoatGroup.v) *)
 with row : Set :=  (* row (scoped labels, duplicates allowed) *)
  | row_Empty : row
  | row_Var (r:rowvar)
@@ -70,7 +79,13 @@ with row : Set :=  (* row (scoped labels, duplicates allowed) *)
 (** subrules *)
 (** arities *)
 (** opening up abstractions *)
-Fixpoint open_fields_wrt_exp_rec (k:nat) (e5:exp) (fs5:fields) {struct fs5}: fields :=
+Fixpoint open_arms_wrt_exp_rec (k:nat) (e5:exp) (ars5:arms) {struct ars5}: arms :=
+  match ars5 with
+  | arms_nil => arms_nil 
+  | (arms_else e) => arms_else (open_exp_wrt_exp_rec k e5 e)
+  | (arms_cons tg e ars) => arms_cons tg (open_exp_wrt_exp_rec (S k) e5 e) (open_arms_wrt_exp_rec k e5 ars)
+end
+with open_fields_wrt_exp_rec (k:nat) (e5:exp) (fs5:fields) {struct fs5}: fields :=
   match fs5 with
   | fs_nil => fs_nil 
   | (fs_cons l e fs) => fs_cons l (open_exp_wrt_exp_rec k e5 e) (open_fields_wrt_exp_rec k e5 fs)
@@ -99,9 +114,13 @@ with open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
   | (e_ite e1 e2 e3) => e_ite (open_exp_wrt_exp_rec k e_5 e1) (open_exp_wrt_exp_rec k e_5 e2) (open_exp_wrt_exp_rec k e_5 e3)
   | (e_bin e1 o e2) => e_bin (open_exp_wrt_exp_rec k e_5 e1) o (open_exp_wrt_exp_rec k e_5 e2)
   | (e_tofloat e) => e_tofloat (open_exp_wrt_exp_rec k e_5 e)
+  | (e_con w tg e) => e_con w tg (open_exp_wrt_exp_rec k e_5 e)
+  | (e_match w e ars) => e_match w (open_exp_wrt_exp_rec k e_5 e) (open_arms_wrt_exp_rec k e_5 ars)
   | (e_fold e) => e_fold (open_exp_wrt_exp_rec k e_5 e)
   | (e_unfold e) => e_unfold (open_exp_wrt_exp_rec k e_5 e)
 end.
+
+Definition open_arms_wrt_exp e5 ars5 := open_arms_wrt_exp_rec 0 ars5 e5.
 
 Definition open_fields_wrt_exp e5 fs5 := open_fields_wrt_exp_rec 0 fs5 e5.
 
@@ -110,8 +129,18 @@ Definition open_exp_wrt_exp e_5 e__6 := open_exp_wrt_exp_rec 0 e__6 e_5.
 (** terms are locally-closed pre-terms *)
 (* definitions *)
 
-(* defns LC_fields_exp *)
-Inductive lc_fields : fields -> Prop :=    (* defn lc_fields *)
+(* defns LC_arms_fields_exp *)
+Inductive lc_arms : arms -> Prop :=    (* defn lc_arms *)
+ | lc_arms_nil : 
+     (lc_arms arms_nil)
+ | lc_arms_else : forall (e:exp),
+     (lc_exp e) ->
+     (lc_arms (arms_else e))
+ | lc_arms_cons : forall (tg:tagidx) (e:exp) (ars:arms),
+      ( forall x , lc_exp  ( open_exp_wrt_exp e (e_fvar_f x) )  )  ->
+     (lc_arms ars) ->
+     (lc_arms (arms_cons tg e ars))
+with lc_fields : fields -> Prop :=    (* defn lc_fields *)
  | lc_fs_nil : 
      (lc_fields fs_nil)
  | lc_fs_cons : forall (l:label) (e:exp) (fs:fields),
@@ -166,6 +195,13 @@ with lc_exp : exp -> Prop :=    (* defn lc_exp *)
  | lc_e_tofloat : forall (e:exp),
      (lc_exp e) ->
      (lc_exp (e_tofloat e))
+ | lc_e_con : forall (w:gdecl) (tg:tagidx) (e:exp),
+     (lc_exp e) ->
+     (lc_exp (e_con w tg e))
+ | lc_e_match : forall (w:gdecl) (e:exp) (ars:arms),
+     (lc_exp e) ->
+     (lc_arms ars) ->
+     (lc_exp (e_match w e ars))
  | lc_e_fold : forall (e:exp),
      (lc_exp e) ->
      (lc_exp (e_fold e))
@@ -173,7 +209,13 @@ with lc_exp : exp -> Prop :=    (* defn lc_exp *)
      (lc_exp e) ->
      (lc_exp (e_unfold e)).
 (** free variables *)
-Fixpoint fv_fields (fs5:fields) : vars :=
+Fixpoint fv_arms (ars5:arms) : vars :=
+  match ars5 with
+  | arms_nil => {}
+  | (arms_else e) => (fv_exp e)
+  | (arms_cons tg e ars) => (fv_exp e) \u (fv_arms ars)
+end
+with fv_fields (fs5:fields) : vars :=
   match fs5 with
   | fs_nil => {}
   | (fs_cons l e fs) => (fv_exp e) \u (fv_fields fs)
@@ -197,12 +239,20 @@ with fv_exp (e_5:exp) : vars :=
   | (e_ite e1 e2 e3) => (fv_exp e1) \u (fv_exp e2) \u (fv_exp e3)
   | (e_bin e1 o e2) => (fv_exp e1) \u (fv_exp e2)
   | (e_tofloat e) => (fv_exp e)
+  | (e_con w tg e) => (fv_exp e)
+  | (e_match w e ars) => (fv_exp e) \u (fv_arms ars)
   | (e_fold e) => (fv_exp e)
   | (e_unfold e) => (fv_exp e)
 end.
 
 (** substitutions *)
-Fixpoint subst_fields (e5:exp) (x5:termvar) (fs5:fields) {struct fs5} : fields :=
+Fixpoint subst_arms (e5:exp) (x5:termvar) (ars5:arms) {struct ars5} : arms :=
+  match ars5 with
+  | arms_nil => arms_nil 
+  | (arms_else e) => arms_else (subst_exp e5 x5 e)
+  | (arms_cons tg e ars) => arms_cons tg (subst_exp e5 x5 e) (subst_arms e5 x5 ars)
+end
+with subst_fields (e5:exp) (x5:termvar) (fs5:fields) {struct fs5} : fields :=
   match fs5 with
   | fs_nil => fs_nil 
   | (fs_cons l e fs) => fs_cons l (subst_exp e5 x5 e) (subst_fields e5 x5 fs)
@@ -226,6 +276,8 @@ with subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
   | (e_ite e1 e2 e3) => e_ite (subst_exp e_5 x5 e1) (subst_exp e_5 x5 e2) (subst_exp e_5 x5 e3)
   | (e_bin e1 o e2) => e_bin (subst_exp e_5 x5 e1) o (subst_exp e_5 x5 e2)
   | (e_tofloat e) => e_tofloat (subst_exp e_5 x5 e)
+  | (e_con w tg e) => e_con w tg (subst_exp e_5 x5 e)
+  | (e_match w e ars) => e_match w (subst_exp e_5 x5 e) (subst_arms e_5 x5 ars)
   | (e_fold e) => e_fold (subst_exp e_5 x5 e)
   | (e_unfold e) => e_unfold (subst_exp e_5 x5 e)
 end.
@@ -256,6 +308,9 @@ Inductive teq : typ -> typ -> Prop :=    (* defn teq *)
  | teq_mu : forall (T T':typ),
      teq T T' ->
      teq (typ_Mu T) (typ_Mu T')
+ | teq_grp : forall (w:gdecl) (T T':typ),
+     teq T T' ->
+     teq (typ_Grp w T) (typ_Grp w T')
  | teq_rec : forall (R R':row),
      req R R' ->
      teq (typ_Record R) (typ_Record R')
@@ -288,6 +343,6 @@ with req : row -> row -> Prop :=    (* defn req *)
 
 
 (** infrastructure *)
-#[export] Hint Constructors teq req lc_fields lc_exp : core.
+#[export] Hint Constructors teq req lc_arms lc_fields lc_exp : core.
 
 

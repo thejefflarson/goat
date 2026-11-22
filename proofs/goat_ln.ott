@@ -45,6 +45,10 @@ metavar dec, d ::= {{ coq nat }}
   {{ com a Float value, opaque: no rule reads the payload }}
 metavar str, q ::= {{ coq (list nat) }}
   {{ com string literal, as its bytes }}
+metavar gdecl, w ::= {{ coq (list (list nat)) }}
+  {{ com a declared tag group: the slot codes of each of its tags, decoded by GoatGroup.v }}
+metavar tagidx, tg ::= {{ coq nat }}
+  {{ com position of a tag in its group's declaration }}
 
 grammar
 
@@ -59,6 +63,7 @@ typ, T :: 'typ_' ::= {{ com monotype }}
   | a             ::   :: Var
   | bv i          ::   :: Bvar    {{ com index of an enclosing mu; no sort (ADR 0038) }}
   | mu T          ::   :: Mu      {{ com iso-recursive type; the body counts the mu as index 0 }}
+  | grp w T       ::   :: Grp     {{ com a value of the tag group w; T spells the group's implicit parameters as a spine (GoatGroup.v) }}
   | ( T )         :: S :: Paren   {{ coq [[T]] }}
 
 row, R :: 'row_' ::= {{ com row (scoped labels, duplicates allowed) }}
@@ -101,6 +106,8 @@ exp, e :: 'e_' ::= {{ com term }}
   | if e1 then e2 else e3    ::   :: ite   {{ com conditional }}
   | e1 o e2                  ::   :: bin   {{ com binary operation }}
   | float ( e )              ::   :: tofloat {{ com Int-to-Float coercion, inserted by elaboration }}
+  | con w tg ( e )            ::   :: con   {{ com build tag k of the group w around the payload e }}
+  | match w ( e ) with ars    ::   :: match {{ com take a value of the group w apart by its tag }}
   | fold ( e )               ::   :: fold  {{ com roll a value into a recursive type }}
   | unfold ( e )             ::   :: unfold {{ com unroll a value of a recursive type }}
   | ( e )                    :: S :: paren {{ coq [[e]] }}
@@ -116,6 +123,15 @@ exp, e :: 'e_' ::= {{ com term }}
 fields, fs :: 'fs_' ::= {{ com record spine (cons-list; duplicates allowed) }}
   | fnil             ::   :: nil
   | l : e ; fs       ::   :: cons
+
+% The arms of a match, a cons-list in the same mutual block as exp, ending
+% either in nothing (the arms must then name every tag of the group) or in an
+% else.  Each arm binds one variable, the payload of its tag.
+arms, ars :: 'arms_' ::= {{ com the arms of a match }}
+  | anil              ::   :: nil   {{ com no else: the arms are exhaustive }}
+  | else e            ::   :: else  {{ com the tags no arm names }}
+  | tg x => e ; ars   ::   :: cons
+    (+ bind x in e +)  {{ com arm for tag tg; x is the payload }}
 
 substitutions
   single exp x :: subst
@@ -166,6 +182,10 @@ T1 ~= T2 :: :: teq :: 'teq_'
   T ~= T'
   ------------- :: mu
   mu T ~= mu T'
+
+  T ~= T'
+  ----------------- :: grp
+  grp w T ~= grp w T'
 
   R ~= R'
   --------------- :: rec

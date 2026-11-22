@@ -61,6 +61,7 @@ Definition thead_tag (T : typ) : nat :=
   | typ_Float => 7
   | typ_Bvar _ => 8
   | typ_Mu _ => 9
+  | typ_Grp _ _ => 10
   end.
 
 Lemma teq_thead : forall T1 T2, teq T1 T2 -> thead_tag T1 = thead_tag T2.
@@ -121,6 +122,7 @@ Proof.
     + exists T1, T2; auto using teq_sym.
   - (* bvar *) repeat split; intros; discriminate.
   - (* mu *) repeat split; intros; discriminate.
+  - (* grp *) repeat split; intros; discriminate.
   - (* rec *) repeat split; intros; try discriminate;
       match goal with H : typ_Record _ = typ_Record _ |- _ => inversion H; subst end.
     + exists R'; auto.
@@ -180,6 +182,28 @@ Qed.
 Lemma teq_Mu_inv : forall B T, teq (typ_Mu B) T ->
   exists B', T = typ_Mu B' /\ teq B B'.
 Proof. intros B T H. apply (proj1 (teq_mu_shape _ _ H)); reflexivity. Qed.
+
+(* A group type is equal only to a type of the same group with equal
+   arguments: plain congruence, as for [typ_Mu]. *)
+Lemma teq_grp_shape : forall T1 T2, teq T1 T2 ->
+  (forall w A, T1 = typ_Grp w A -> exists A', T2 = typ_Grp w A' /\ teq A A') /\
+  (forall w A, T2 = typ_Grp w A -> exists A', T1 = typ_Grp w A' /\ teq A A').
+Proof.
+  induction 1; try (split; intros; discriminate).
+  - split; intros ? ? X; inversion X; subst.
+    + eexists; split; [ reflexivity | assumption ].
+    + eexists; split; [ reflexivity | apply teq_sym; assumption ].
+  - destruct IHteq1 as [A1 A2], IHteq2 as [B1 B2]. split; intros.
+    + destruct (A1 _ _ H1) as [? [? ?]]. destruct (B1 _ _ H2) as [? [? ?]].
+      eexists; split; eauto using teq_trans.
+    + destruct (B2 _ _ H1) as [? [? ?]]. destruct (A2 _ _ H2) as [? [? ?]].
+      eexists; split; eauto using teq_trans.
+  - destruct IHteq as [A1 A2]. split; eauto.
+Qed.
+
+Lemma teq_Grp_inv : forall w A T, teq (typ_Grp w A) T ->
+  exists A', T = typ_Grp w A' /\ teq A A'.
+Proof. intros w A T H. apply (proj1 (teq_grp_shape _ _ H)); reflexivity. Qed.
 
 (* ------------------------------------------------------------------ *)
 (* L2': labels are preserved -- the section-3 characterization, proved  *)

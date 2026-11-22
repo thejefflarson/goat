@@ -127,6 +127,7 @@ Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatMu.
+Require Import Goat.GoatTags.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatBij.
@@ -164,6 +165,7 @@ Proof.
     + right; exists p; auto.
   - (* Var *) left. exists a. split; [fsetdec|auto].
   - fsetdec.
+  - apply H; assumption.
   - apply H; assumption.
   - fsetdec.
   - (* row_Var *) right. exists r. split; [fsetdec|auto].
@@ -204,6 +206,7 @@ Proof.
     + right; exists q; auto.
   - (* Var *) left. exists a. split; [fsetdec|auto].
   - fsetdec.
+  - apply H; assumption.
   - apply H; assumption.
   - fsetdec.
   - (* row_Var *) right. exists r. split; [fsetdec|auto].
@@ -258,6 +261,7 @@ Proof.
     + fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - apply H; assumption.
+  - apply H; assumption.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp Ha]]]; [fsetdec|].
     rewrite AtomSetFacts.singleton_iff in Hp. subst p. exact Ha.
@@ -304,6 +308,7 @@ Proof.
     + rewrite AtomSetFacts.singleton_iff in Hb. subst b. exact Ha.
     + fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
+  - apply H; assumption.
   - apply H; assumption.
   - destruct H as [[b [Hb _]]|[p [Hp _]]]; fsetdec.
   - destruct H as [[b [Hb _]]|[p [Hp Ha]]]; [fsetdec|].
@@ -1156,6 +1161,31 @@ Proof.
     rewrite (ap_open st sr B 0 (typ_Mu B) Hl).
     apply T_Unfold; [ apply ap_lc; assumption | apply guarded_ap; assumption | ].
     eapply IH; eauto.
+  - (* T_Con: the payload type depends on the parameters alone, and a
+       substitution acts on the parameters. *)
+    intros D G w tg e Ts Hlt Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    rewrite ap_spine. apply T_Con; [ exact Hlt | ].
+    rewrite <- ap_tag_payload. eapply IH; eauto.
+  - (* T_Match: the arms bind the payload at its substituted type, as a
+       function binds its parameter. *)
+    intros L D G w Ts e ars T Ht IHe Hwf Harm IHarm Hdef IHdef
+      st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+    apply T_Match with (L := L `union` dom G') (w := w) (Ts := map (ap_typ st sr) Ts).
+    + rewrite <- ap_spine.
+      change (typing D' G' e (ap_typ st sr (typ_Grp w (spine Ts)))).
+      eapply IHe; eauto.
+    + exact Hwf.
+    + intros tg b Hf x Hx. rewrite <- ap_tag_payload.
+      apply (IHarm tg b Hf x ltac:(fsetdec) st sr
+               ((x ~ sch_mono (ap_typ st sr (tag_payload w Ts tg))) ++ G') D' A S S').
+      * constructor; [ assumption | fsetdec ].
+      * assumption.
+      * assumption.
+      * assumption.
+      * apply ctx_subst_cons; [ apply sch_subst_mono | assumption ].
+      * assumption.
+      * apply tr_compat_cons_mono; assumption.
+    + intros e0 Hd. eapply IHdef; eauto.
   - intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl. apply FT_nil; auto.
   - intros D G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.
@@ -1484,6 +1514,26 @@ Proof.
     eapply T_Fold; [ exact Hlc0 | exact Hg | apply (IH Sd HSd Hag G2); reflexivity ].
   - (* T_Unfold *) intros D G e B Hlc0 Hg Hr IH Sd HSd Hag G2 Heq; subst. simpl.
     eapply T_Unfold; [ exact Hlc0 | exact Hg | apply (IH Sd HSd Hag G2); reflexivity ].
+  - (* T_Con *) intros D G w tg e Ts Hlt Hr IH Sd HSd Hag G2 Heq; subst. simpl.
+    eapply T_Con; [ exact Hlt | apply (IH Sd HSd Hag G2); reflexivity ].
+  - (* T_Match: each arm is substituted under its binder, as a function body
+       is; the arms of the result are the substituted arms, with the same
+       tags, so the exhaustiveness premise carries over. *)
+    intros L D G w Ts e ars T Ht IHe Hwf Harm IHarm Hdef IHdef Sd HSd Hag G2 Heq; subst. simpl.
+    apply T_Match with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u)
+      (w := w) (Ts := Ts).
+    + apply (IHe Sd HSd Hag G2); reflexivity.
+    + apply arms_wf_subst. exact Hwf.
+    + intros tg b Hf x0 Hx0.
+      destruct (arms_find_subst_inv _ _ _ _ _ Hf) as [b0 [-> Hf0]].
+      rewrite <- (subst_open_var b0 u x x0) by (first [ fsetdec | exact Hlc ]).
+      rewrite_env (((x0 ~ sch_mono (tag_payload w Ts tg)) ++ G2) ++ G1).
+      apply (IHarm tg b0 Hf0 x0 ltac:(fsetdec) Sd HSd Hag
+               ((x0 ~ sch_mono (tag_payload w Ts tg)) ++ G2)).
+      simpl_alist. reflexivity.
+    + intros e0 Hd.
+      destruct (arms_default_subst_inv _ _ _ _ Hd) as [e1 [-> Hd0]].
+      apply (IHdef e1 Hd0 Sd HSd Hag G2); reflexivity.
   - (* FT_nil *) intros D G Huq Sd HSd Hag G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
   - (* FT_cons *) intros D G l e T fs R Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl. eapply FT_cons.
     + apply (IH1 Sd HSd Hag G2); reflexivity.
@@ -1616,6 +1666,7 @@ Proof.
   - (* st_tofloat *) intros z d Hgen. reflexivity.
   - (* st_tofloat_dec *) intros d Hgen. reflexivity.
   - (* st_fold1 *) intros e e' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
+  - (* st_con1 *) intros w tg e e' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
   - (* stf_here *) intros l e e' fs Hstep IH Hgen. simpl in Hgen |- *.
     apply andb_prop in Hgen. destruct Hgen as [He Hfs].
     rewrite (IH He), Hfs. reflexivity.
@@ -1823,6 +1874,45 @@ Proof.
     destruct (fold_inv _ _ _ _ Hb) as [B0 [Hmu [Hlc1 [Hg1 Hv0]]]].
     eapply T_Conv; [ exact Hv0 | ].
     eapply teq_trans; [ apply teq_unroll; exact Hmu | exact Hteq ].
+  - (* st_con1: the payload of a construction stepped. *)
+    intros w tg e e' Hstep IH D S G T HS Hty.
+    destruct (con_inv _ _ _ _ _ _ Hty) as [Ts [Hlt [Hp Hteq]]].
+    eapply T_Conv;
+      [ eapply T_Con; [ exact Hlt | eapply IH; [ exact HS | exact Hp ] ] | exact Hteq ].
+  - (* st_match1: the scrutinee of a match stepped. *)
+    intros w e e' ars Hstep IH D S G T HS Hty.
+    destruct (match_inv _ _ _ _ _ _ Hty) as [L [Ts [T0 [Hs [Hwf [Harm [Hdef Hteq]]]]]]].
+    eapply T_Conv;
+      [ eapply T_Match with (L := L);
+          [ eapply IH; [ exact HS | exact Hs ] | exact Hwf | exact Harm | exact Hdef ]
+      | exact Hteq ].
+  - (* st_match_arm: a match on a finished construction runs the arm for its
+       tag, with the payload in place of the arm's variable.  The scrutinee's
+       type names the group, so the construction is of the same group, and
+       its payload has the payload type the arm's variable was given: the
+       arguments of the two group types are equal, and equal arguments give
+       equal payloads.  Then the substitution lemma plugs the payload in,
+       as it does for a function call. *)
+    intros w w' tg v ars body Hv Hf D S G T HS Hty.
+    destruct (match_inv _ _ _ _ _ _ Hty) as [L [Ts [T0 [Hs [Hwf [Harm [Hdef Hteq]]]]]]].
+    destruct (con_inv _ _ _ _ _ _ Hs) as [Ts' [Hlt [Hp Hgrp]]].
+    apply teq_Grp_inv in Hgrp. destruct Hgrp as [A [Eg Hsp]].
+    injection Eg as Ew EA. subst w' A.
+    apply teq_spine_inv in Hsp.
+    assert (Hv' : typing D G v (tag_payload w Ts tg))
+      by (eapply T_Conv; [ exact Hp | apply teq_tag_payload; exact Hsp ]).
+    pick fresh x for (L \u fv_exp body).
+    assert (HxL : x `notin` L) by fsetdec.
+    assert (Hxe : x `notin` fv_exp body) by fsetdec.
+    assert (Hopen : typing D G (subst_exp v x (open_exp_wrt_exp body (e_fvar_f x))) T0)
+      by (eapply typing_subst;
+            [ exact HS | exact (Harm tg body Hf x HxL) | apply value_gen; exact Hv | exact Hv' ]).
+    rewrite <- subst_intro in Hopen by exact Hxe.
+    eapply T_Conv; [ exact Hopen | exact Hteq ].
+  - (* st_match_else: no arm names the tag, so the else runs. *)
+    intros w w' tg v ars e0 Hv Hf Hd D S G T HS Hty.
+    destruct (match_inv _ _ _ _ _ _ Hty) as [L [Ts [T0 [Hs [Hwf [Harm [Hdef Hteq]]]]]]].
+    eapply T_Conv; [ exact (Hdef e0 Hd) | exact Hteq ].
   - (* stf_here: the FIRST field of a record stepped.  Congruence. *)
     intros l e e' fs Hstep IH D S G R HS Hft.
     inversion Hft; subst.

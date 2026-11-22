@@ -31,8 +31,9 @@ Proof. apply teq_req_refl. Qed.
    literal makes [exp] mutually recursive with [fields] (goat_ln.ott), so the
    locally-nameless infrastructure lemmas need the companion [fields] motive. *)
 Scheme exp_mut := Induction for exp Sort Prop
-with   fields_mut := Induction for fields Sort Prop.
-Combined Scheme exp_fields_mutind from exp_mut, fields_mut.
+with   fields_mut := Induction for fields Sort Prop
+with   arms_mut := Induction for arms Sort Prop.
+Combined Scheme exp_fields_mutind from exp_mut, fields_mut, arms_mut.
 
 (* Substituting for a variable not free in a term is the identity. This is the
    LNgen-emitted [subst_exp_fresh_eq]; it is proved by hand here because LNgen
@@ -43,7 +44,9 @@ Lemma subst_fresh_eq_mut :
   (forall (e : exp) (y : termvar) (u : exp),
       y `notin` fv_exp e -> subst_exp u y e = e) /\
   (forall (fs : fields) (y : termvar) (u : exp),
-      y `notin` fv_fields fs -> subst_fields u y fs = fs).
+      y `notin` fv_fields fs -> subst_fields u y fs = fs) /\
+  (forall (ars : arms) (y : termvar) (u : exp),
+      y `notin` fv_arms ars -> subst_arms u y ars = ars).
 Proof.
   apply exp_fields_mutind; intros; simpl in *;
     try reflexivity;

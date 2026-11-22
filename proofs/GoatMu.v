@@ -31,6 +31,7 @@ Proof.
   - eauto.
   - lia.
   - eapply H; eauto. lia.
+  - eapply H; eauto.
   - destruct H1; split; eauto.
 Qed.
 
@@ -49,6 +50,7 @@ Proof.
   - destruct H1. rewrite H, H0; auto.
   - rewrite H; auto.
   - destruct (lt_eq_lt_dec i k) as [[?|?]|?]; auto; lia.
+  - rewrite H; auto.
   - rewrite H; auto.
   - destruct H1. rewrite H, H0; auto.
 Qed.
@@ -72,6 +74,7 @@ Proof.
   - rewrite H; reflexivity.
   - symmetry. apply open_typ_closed. eapply lct_mono; [ apply Hs | lia ].
   - destruct (lt_eq_lt_dec i k) as [[?|?]|?]; reflexivity.
+  - rewrite H; reflexivity.
   - rewrite H; reflexivity.
   - symmetry. apply open_row_closed. eapply lcr_mono; [ apply Hr | lia ].
   - rewrite H, H0; reflexivity.
@@ -163,6 +166,7 @@ Proof.
   - eapply H; eauto.
   - exfalso. lia.
   - eapply H; [ eassumption | lia ].
+  - eapply H; eauto.
   - destruct H1. split; [ eapply H | eapply H0 ]; eauto.
 Qed.
 
@@ -176,6 +180,7 @@ Proof.
   - eauto.
   - eapply (proj1 gd_closed_mut); [ apply Hs | lia ].
   - exact (H H0).
+  - eapply H; eauto.
   - eauto.
   - eapply (proj2 gd_closed_mut); [ apply Hr | lia ].
   - destruct H1. split; eauto.
@@ -195,6 +200,7 @@ Proof.
   apply teq_req_mutind; simpl; try (intros; tauto).
   - intros A B A' B' _ IH1 _ IH2 rr ff kk. rewrite (IH1 rr true kk), (IH2 rr true kk). tauto.
   - intros A A' _ IH rr ff kk. apply IH.
+  - intros w A A' _ IH rr ff kk. apply IH.
   - intros R R' _ IH rr ff kk. apply IH.
   - intros A C B _ IH1 _ IH2 rr ff kk. rewrite (IH1 rr ff kk). apply IH2.
   - intros A B _ IH rr ff kk. symmetry. apply IH.
