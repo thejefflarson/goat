@@ -32,8 +32,8 @@
 //! on operands the checker leaves as type variables are generic in the calculus
 //! and are compared. A program is outside the fragment when an operator's
 //! operands are not all Int, Float, String or Bool or open numeric variables, when
-//! a comparison or `/` has an operand that only a later use settles and the
-//! algorithm's choice of `Int` could be overturned (`differential/README.md`), when a
+//! a comparison has an operand that is a parameter's generic type
+//! (`differential/README.md`), when a
 //! `let` of a record or a name holding a numeral would be generalized by the
 //! calculus and not by the checker, when a record reaches a generic `+ - *`, or when a
 //! record holds a group's function by name (`differential/README.md`).
@@ -183,138 +183,6 @@ impl Core {
     fn holds_numeral(&self) -> bool {
         matches!(self, Core::Num(_)) || self.generalizes_numeral()
     }
-
-    /// What the algorithm knows of this term's type when it reaches it. `env`
-    /// holds that for each binder in scope, innermost last.
-    fn class(&self, env: &mut Vec<Class>) -> Class {
-        match self {
-            Core::Var(i) => env[env.len() - 1 - i],
-            Core::Num(_) => Class::Fresh,
-            Core::Float | Core::Str(_) | Core::Unit | Core::Bool(_) | Core::ToFloat(_) => {
-                Class::Concrete
-            }
-            Core::Bin(op, a, b) => match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod => {
-                    Class::join(a.class(env), b.class(env))
-                }
-                _ => Class::Concrete,
-            },
-            Core::If(_, a, b) => Class::join(a.class(env), b.class(env)),
-            Core::Let(v, b) => {
-                let bound = match v.class(env) {
-                    Class::Fresh => Class::Shared,
-                    class => class,
-                };
-                env.push(bound);
-                let result = b.class(env);
-                env.pop();
-                result
-            }
-            Core::Letrec(_, body) => {
-                env.push(Class::Open);
-                let result = body.class(env);
-                env.pop();
-                result
-            }
-            Core::Abs(_) | Core::App(..) | Core::Rec(_) | Core::Proj(..) => Class::Open,
-        }
-    }
-
-    /// Why the algorithm cannot reach a signature for some binary operator of
-    /// this term, if it cannot. An operator whose operands a later use settles
-    /// is deferred by the checker and settled at `Int` by the algorithm.
-    fn unresolved(&self, env: &mut Vec<Class>) -> Option<Skip> {
-        match self {
-            Core::Var(_)
-            | Core::Num(_)
-            | Core::Float
-            | Core::Str(_)
-            | Core::Unit
-            | Core::Bool(_) => None,
-            Core::ToFloat(e) | Core::Proj(e, _) => e.unresolved(env),
-            Core::Abs(body) => {
-                env.push(Class::Open);
-                let result = body.unresolved(env);
-                env.pop();
-                result
-            }
-            Core::Let(v, b) => {
-                let bound = match v.class(env) {
-                    Class::Fresh => Class::Shared,
-                    class => class,
-                };
-                let value = v.unresolved(env);
-                env.push(bound);
-                let result = value.or_else(|| b.unresolved(env));
-                env.pop();
-                result
-            }
-            Core::App(f, a) => f.unresolved(env).or_else(|| a.unresolved(env)),
-            Core::If(c, a, b) => c
-                .unresolved(env)
-                .or_else(|| a.unresolved(env))
-                .or_else(|| b.unresolved(env)),
-            Core::Rec(fields) => fields.iter().find_map(|(_, e)| e.unresolved(env)),
-            Core::Letrec(fields, body) => {
-                env.push(Class::Open);
-                let result = fields
-                    .iter()
-                    .find_map(|(_, e)| e.unresolved(env))
-                    .or_else(|| body.unresolved(env));
-                env.pop();
-                result
-            }
-            Core::Bin(op, a, b) => {
-                let (ca, cb) = (a.class(env), b.class(env));
-                let own = match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod => None,
-                    BinOp::Div => {
-                        (ca == Class::Open || cb == Class::Open).then_some(Skip::OpenDivision)
-                    }
-                    _ => (!Class::compares(ca, cb)).then_some(Skip::OpenComparison),
-                };
-                own.or_else(|| a.unresolved(env))
-                    .or_else(|| b.unresolved(env))
-            }
-        }
-    }
-}
-
-/// What the algorithm knows of a term's type: a concrete type; a numeral's
-/// own variable, which no other term holds; a numeral's variable some binder
-/// holds, so a later use may still settle it; or a variable of no sort.
-#[derive(Clone, Copy, PartialEq)]
-enum Class {
-    Concrete,
-    Fresh,
-    Shared,
-    Open,
-}
-
-impl Class {
-    /// The class of a term whose type is unified from two operands or branches.
-    fn join(a: Class, b: Class) -> Class {
-        match (a, b) {
-            (Class::Concrete, _) | (_, Class::Concrete) => Class::Concrete,
-            (Class::Fresh, Class::Fresh) => Class::Fresh,
-            (Class::Open, Class::Open) => Class::Open,
-            _ => Class::Shared,
-        }
-    }
-
-    /// Whether a comparison of these operands has a signature that no later
-    /// use can change: one operand is concrete, or one is a numeral's own
-    /// variable, which settles at `Int`, beside an operand that no later use
-    /// can have settled yet.
-    fn compares(a: Class, b: Class) -> bool {
-        matches!(
-            (a, b),
-            (Class::Concrete, _)
-                | (_, Class::Concrete)
-                | (Class::Fresh, Class::Fresh | Class::Open)
-                | (Class::Open, Class::Fresh)
-        )
-    }
 }
 
 /// Why a program is left out of the differential test.
@@ -325,8 +193,7 @@ enum Skip {
     RecordAtGenericOperator,
     GroupMemberInRecord,
     RecursiveType,
-    OpenComparison,
-    OpenDivision,
+    GenericComparison,
 }
 
 impl Skip {
@@ -337,8 +204,7 @@ impl Skip {
             Skip::RecordAtGenericOperator => "a record reaches a generic + - *",
             Skip::GroupMemberInRecord => "a record holds a group's function by name",
             Skip::RecursiveType => "the checker infers a recursive type",
-            Skip::OpenComparison => "a comparison on an operand a later use settles",
-            Skip::OpenDivision => "/ on an operand a later use settles",
+            Skip::GenericComparison => "a comparison at a parameter left generic",
         }
     }
 }
@@ -372,10 +238,15 @@ struct Reader<'a> {
     /// The checker's node types when it accepted the program; a rejected
     /// program has none, so it is read without coercions.
     types: Option<&'a HashMap<ExprId, Ty>>,
+    /// The type variables the checker leaves free that can only be a number.
+    number_vars: Option<&'a HashSet<goat_checker::ty::TypeVar>>,
     /// How many comparison operands the reader is inside.
     in_comparison: usize,
     /// Whether a `+ - *` has an operand whose type the checker left open.
     generic_ring: bool,
+    /// Whether a comparison has an operand whose type is a variable of no
+    /// sort, which the checker leaves open and the calculus cannot compare.
+    generic_comparison: bool,
     /// Whether a call passes a record, which `+ - *` accept in the checker
     /// (field by field) and the calculus does not.
     record_arg: bool,
@@ -632,6 +503,13 @@ impl Reader<'_> {
                         && [lhs, rhs]
                             .iter()
                             .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
+                    self.generic_comparison |= comparison
+                        && [lhs, rhs].iter().any(|e| match self.node_ty(e) {
+                            Some(Ty::Var(v)) => {
+                                self.number_vars.is_some_and(|numbers| !numbers.contains(v))
+                            }
+                            _ => false,
+                        });
                     if !generic && !open_comparison {
                         let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
                         match (op, x, y) {
@@ -807,7 +685,8 @@ impl Canon<'_> {
 }
 
 /// The line for `source`, or why it is not a program of the fragment. A
-/// `forced` program is kept although an operator in it waits on a later use.
+/// `forced` program is kept although a comparison in it looks generic: the
+/// checker does not record a `Numeric` variable, which a `%` makes of a parameter.
 fn line(source: &str, forced: bool) -> Result<String, Skip> {
     let lowered = lower(source).map_err(|_| Skip::Rejected)?;
     if !lowered.errors.is_empty() {
@@ -825,8 +704,10 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
         scope: Vec::new(),
         unary: true,
         types: checked.as_ref().map(|c| &c.typed.node_types),
+        number_vars: checked.as_ref().map(|c| &c.typed.number_vars),
         in_comparison: 0,
         generic_ring: false,
+        generic_comparison: false,
         record_arg: false,
         member_in_record: false,
     };
@@ -846,10 +727,8 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
     }) {
         return Err(Skip::RecursiveType);
     }
-    if let Some(skip) = core.unresolved(&mut Vec::new())
-        && !forced
-    {
-        return Err(skip);
+    if reader.generic_comparison && !forced {
+        return Err(Skip::GenericComparison);
     }
     let recursive = checked.as_ref().is_some_and(|checked| {
         let mut binders = Vec::new();
@@ -1466,7 +1345,6 @@ const HANDWRITTEN: &[&str] = &[
     "7 // 2.0",
     "\"a\" + 1",
     "if 1 then 2 else 3 done",
-    "v = 71 // 88\nif v <= v then v - 3.1 else 4.0 done",
     "",
     "() == ()",
     "f = program(x) do g(x) done\ng = program(y) do y done\na = f(1)\nb = f(true)\nb",
@@ -1488,9 +1366,14 @@ const HANDWRITTEN: &[&str] = &[
     "ping = program(x, k) do pong(x, k) done\npong = program(y, k) do ping(y, k) done\n{a: ping(true, true), b: pong(\"s\", true)}",
 ];
 
-/// Programs kept whether or not an operator in them waits on a later use: the
-/// algorithm and the checker agree on each, and the test pins that they do.
-const FORCED: &[&str] = &["f = program(x) do x == x % x done\nf(90)"];
+/// Programs the test pins as compared: the algorithm and the checker agree on
+/// each, and `FORCED SKIP` is printed if one stops being a program of the
+/// fragment. The first two settle a comparison on a variable a later use
+/// forces to Float and to Int.
+const FORCED: &[&str] = &[
+    "v = 71 // 88\nif v <= v then v - 3.1 else 4.0 done",
+    "f = program(x) do x == x % x done\nf(90)",
+];
 
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
