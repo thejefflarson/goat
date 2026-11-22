@@ -18,6 +18,7 @@ GoatInferTyp.v
 GoatInferGen.v
 GoatInferRec.v
 GoatInferSound.v
+GoatInferMuFree.v
 GoatInferRen.v
 GoatInferUnify.v
 GoatPhase1.v
