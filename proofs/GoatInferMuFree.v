@@ -202,14 +202,14 @@ Proof.
   split; [exact I | apply IH].
 Qed.
 
-Lemma infer_mf : forall f,
-  (forall Dk G e n s D' T n', infer f Dk G e n = Some (s, D', T, n') ->
+Lemma infer_mf : forall f ora,
+  (forall Dk G e n s D' T n', infer f false ora Dk G e n = Some (s, D', T, n') ->
      mf_ctx G -> mf_sub s /\ mu_free T) /\
-  (forall Dk G fs n s D' R n', infer_fields f Dk G fs n = Some (s, D', R, n') ->
+  (forall Dk G fs n s D' R n', infer_fields f false ora Dk G fs n = Some (s, D', R, n') ->
      mf_ctx G -> mf_sub s /\ mu_free_row R).
 Proof.
-  induction f as [|f IH]; [split; intros; discriminate|].
-  destruct IH as [IHi IHf].
+  induction f as [|f IH]; intros ora; [split; intros; discriminate|].
+  destruct (IH ora) as [IHi IHf].
   split.
   - intros Dk G e n s D' T n' H HG.
     destruct e as [i|x|k|d| | |b|e1 e2|e1 e2|fs e2|fs|e1 l| |q|c e1 e2|e1 o e2|e1|e1|e1];
@@ -219,15 +219,15 @@ Proof.
       destruct (instantiate Dk sc n) as [[T0 D1] n1] eqn:EI.
       injection H as <- <- <- <-.
       exact (conj mf_sid (apT_mf _ _ (inst_sub_mf _ _) (lookup_mf _ _ _ EL HG))).
-    + destruct (infer f Dk ((fresh_var G b, sch_mono (typ_Var (ea n))) :: G)
+    + destruct (infer f false ora Dk ((fresh_var G b, sch_mono (typ_Var (ea n))) :: G)
                   (open_exp_wrt_exp b (e_fvar_f (fresh_var G b))) (S n))
         as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
       injection H as <- <- <- <-.
       destruct (IHi _ _ _ _ _ _ _ _ E1 (mf_cons _ (sch_mono (typ_Var (ea n))) _ I HG)) as [S1 M1].
       exact (conj S1 (conj (apT_mf _ (typ_Var _) S1 I) M1)).
-    + destruct (infer f Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+    + destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
-      destruct (infer f D1 (apC s1 G) e2 n1) as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
+      destruct (infer f false ora D1 (apC s1 G) e2 n1) as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E2 (mf_apC _ _ S1 HG)) as [S2 M2].
       destruct (unify_t f D2 (apT s2 T1) (typ_Arrow T2 (typ_Var (ea n2))) (S n2))
         as [[s3 n3]|] eqn:E3; [|discriminate].
@@ -235,31 +235,31 @@ Proof.
       assert (S3 := proj1 (unify_mf f) _ _ _ _ _ _ E3 (apT_mf _ _ S2 M1) (conj M2 I)).
       exact (conj (mf_scomp _ _ S3 (mf_scomp _ _ S2 S1)) (apT_mf _ (typ_Var _) S3 I)).
     + destruct (is_gen_value e1).
-      * destruct (infer f Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      * destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
         destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
-        destruct (infer f D1 ((fresh_var (apC s1 G) e2, gen_ren D1 (apC s1 G) T1) :: apC s1 G)
+        destruct (infer f false ora D1 ((fresh_var (apC s1 G) e2, gen_ren D1 (apC s1 G) T1) :: apC s1 G)
                     (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC s1 G) e2))) n1)
           as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
         injection H as <- <- <- <-.
         destruct (IHi _ _ _ _ _ _ _ _ E2 (mf_cons _ _ _ (gen_ren_mf _ _ _ M1) (mf_apC _ _ S1 HG))) as [S2 M2].
         exact (conj (mf_scomp _ _ S2 S1) M2).
-      * destruct (infer f Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      * destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
         destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
-        destruct (infer f D1 ((fresh_var (apC s1 G) e2, sch_mono T1) :: apC s1 G)
+        destruct (infer f false ora D1 ((fresh_var (apC s1 G) e2, sch_mono T1) :: apC s1 G)
                     (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC s1 G) e2))) n1)
           as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
         injection H as <- <- <- <-.
         destruct (IHi _ _ _ _ _ _ _ _ E2 (mf_cons _ (sch_mono T1) _ M1 (mf_apC _ _ S1 HG))) as [S2 M2].
         exact (conj (mf_scomp _ _ S2 S1) M2).
     + destruct (is_fn_group fs); [|discriminate].
-      destruct (infer_fields f Dk ((fresh_var G (e_rec fs), sch_mono (typ_Record (group_row fs n))) :: G)
+      destruct (infer_fields f false ora Dk ((fresh_var G (e_rec fs), sch_mono (typ_Record (group_row fs n))) :: G)
                   (open_fields_wrt_exp fs (e_fvar_f (fresh_var G (e_rec fs)))) (n + nfields fs))
         as [[[[s1 D1] R1] n1]|] eqn:E1; [|discriminate].
       destruct (IHf _ _ _ _ _ _ _ _ E1 (mf_cons _ (sch_mono (typ_Record (group_row fs n))) _ (group_row_mf _ _) HG)) as [S1 M1].
       destruct (unify_pw f D1 R1 (apR s1 (group_row fs n)) n1) as [[s2 n2]|] eqn:E2; [|discriminate].
       assert (S2 := proj2 (proj2 (unify_mf f)) _ _ _ _ _ _ E2 M1 (apR_mf _ _ S1 (group_row_mf _ _))).
       assert (Sc := mf_scomp _ _ S2 S1).
-      destruct (infer f D1 ((fresh_var (apC (scomp s2 s1) G) e2,
+      destruct (infer f false ora D1 ((fresh_var (apC (scomp s2 s1) G) e2,
                    gen_ren D1 (apC (scomp s2 s1) G) (typ_Record (apR (scomp s2 s1) (group_row fs n))))
                   :: apC (scomp s2 s1) G)
                   (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC (scomp s2 s1) G) e2))) n2)
@@ -268,32 +268,32 @@ Proof.
       destruct (IHi _ _ _ _ _ _ _ _ E3
         (mf_cons _ _ _ (gen_ren_mf _ _ (typ_Record _) (apR_mf _ _ Sc (group_row_mf _ _))) (mf_apC _ _ Sc HG))) as [S3 M3].
       exact (conj (mf_scomp _ _ S3 Sc) M3).
-    + destruct (infer_fields f Dk G fs n) as [[[[s1 D1] R1] n1]|] eqn:E1; [|discriminate].
+    + destruct (infer_fields f false ora Dk G fs n) as [[[[s1 D1] R1] n1]|] eqn:E1; [|discriminate].
       injection H as <- <- <- <-.
       destruct (IHf _ _ _ _ _ _ _ _ E1 HG) as [S1 M1]. exact (conj S1 M1).
-    + destruct (infer f Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+    + destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       destruct (unify_t f D1 T1 (typ_Record (row_Ext l (typ_Var (ea n1)) (row_Var (ea (S n1))))) (n1 + 2))
         as [[s2 n2]|] eqn:E2; [|discriminate].
       injection H as <- <- <- <-.
       assert (S2 := proj1 (unify_mf f) _ _ _ _ _ _ E2 M1 (conj I I)).
       exact (conj (mf_scomp _ _ S2 S1) (apT_mf _ (typ_Var _) S2 I)).
-    + destruct (infer f Dk G c n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+    + destruct (infer f false ora Dk G c n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       destruct (unify_t f D1 T1 typ_Bool n1) as [[s2 n2]|] eqn:E2; [|discriminate].
       assert (S2 := proj1 (unify_mf f) _ _ _ _ _ _ E2 M1 I).
-      destruct (infer f D1 (apC s2 (apC s1 G)) e1 n2) as [[[[s3 D3] T2] n3]|] eqn:E3; [|discriminate].
+      destruct (infer f false ora D1 (apC s2 (apC s1 G)) e1 n2) as [[[[s3 D3] T2] n3]|] eqn:E3; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E3 (mf_apC _ _ S2 (mf_apC _ _ S1 HG))) as [S3 M2].
-      destruct (infer f D3 (apC s3 (apC s2 (apC s1 G))) e2 n3) as [[[[s4 D4] T3] n4]|] eqn:E4; [|discriminate].
+      destruct (infer f false ora D3 (apC s3 (apC s2 (apC s1 G))) e2 n3) as [[[[s4 D4] T3] n4]|] eqn:E4; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E4 (mf_apC _ _ S3 (mf_apC _ _ S2 (mf_apC _ _ S1 HG)))) as [S4 M3].
       destruct (unify_t f D4 (apT s4 T2) T3 n4) as [[s5 n5]|] eqn:E5; [|discriminate].
       injection H as <- <- <- <-.
       assert (S5 := proj1 (unify_mf f) _ _ _ _ _ _ E5 (apT_mf _ _ S4 M2) M3).
       exact (conj (mf_scomp _ _ S5 (mf_scomp _ _ S4 (mf_scomp _ _ S3 (mf_scomp _ _ S2 S1))))
                   (apT_mf _ _ S5 M3)).
-    + destruct (infer f Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+    + destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
-      destruct (infer f D1 (apC s1 G) e2 n1) as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
+      destruct (infer f false ora D1 (apC s1 G) e2 n1) as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E2 (mf_apC _ _ S1 HG)) as [S2 M2].
       destruct (is_generic_op o).
       * destruct (unify_t f (upd D2 (ea n2) k_Numeric) (apT s2 T1) (typ_Var (ea n2)) (S n2))
@@ -305,7 +305,7 @@ Proof.
         assert (S4 := proj1 (unify_mf f) _ _ _ _ _ _ E4 (apT_mf _ _ S3 M2) (apT_mf _ (typ_Var _) S3 I)).
         exact (conj (mf_scomp _ _ S4 (mf_scomp _ _ S3 (mf_scomp _ _ S2 S1)))
                     (apT_mf _ _ S4 (apT_mf _ (typ_Var _) S3 I))).
-      * destruct (bin_arg D2 o (apT s2 T1) T2) as [T0|] eqn:EB; [|discriminate].
+      * destruct (bin_arg false ora D2 o (apT s2 T1) T2) as [T0|] eqn:EB; [|discriminate].
         destruct (unify_t f D2 (apT s2 T1) T0 n2) as [[s3 n3]|] eqn:E3; [|discriminate].
         destruct (unify_t f D2 (apT s3 T2) T0 n3) as [[s4 n4]|] eqn:E4; [|discriminate].
         destruct (bin_ty o T0) as [R|] eqn:ER; [|discriminate].
@@ -317,13 +317,13 @@ Proof.
             + injection EB as <-. destruct T2; simpl in C2; try discriminate; exact I.
             + destruct (cmp_ty (apT s2 T1)) eqn:C1.
               * injection EB as <-. destruct (apT s2 T1); simpl in C1; try discriminate; exact I.
-              * destruct (is_numeric_var D2 (apT s2 T1) || is_numeric_var D2 T2); [|discriminate].
-                injection EB as <-. exact I. }
+              * destruct (open_var D2 (apT s2 T1)) as [a|]; [|destruct (open_var D2 T2) as [b|]; [|discriminate]];
+                  injection EB as <-; unfold settle; destruct (ora _); exact I. }
         assert (S3 := proj1 (unify_mf f) _ _ _ _ _ _ E3 (apT_mf _ _ S2 M1) MT).
         assert (S4 := proj1 (unify_mf f) _ _ _ _ _ _ E4 (apT_mf _ _ S3 M2) MT).
         refine (conj (mf_scomp _ _ S4 (mf_scomp _ _ S3 (mf_scomp _ _ S2 S1))) _).
         unfold bin_ty in ER. destruct (kind o), T0; try discriminate; injection ER as <-; exact I.
-    + destruct (infer f Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+    + destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       destruct (unify_t f (upd D1 (ea n1) k_Numeric) T1 (typ_Var (ea n1)) (S n1))
         as [[s2 n2]|] eqn:E2; [|discriminate].
@@ -332,9 +332,9 @@ Proof.
       exact (conj (mf_scomp _ _ S2 S1) I).
   - intros Dk G fs n s D' R n' H HG.
     destruct fs as [|l e rest]; simpl in H; [injection H as <- <- <- <-; exact (conj mf_sid I)|].
-    destruct (infer f Dk G e n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+    destruct (infer f false ora Dk G e n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
     destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
-    destruct (infer_fields f D1 (apC s1 G) rest n1) as [[[[s2 D2] R2] n2]|] eqn:E2; [|discriminate].
+    destruct (infer_fields f false ora D1 (apC s1 G) rest n1) as [[[[s2 D2] R2] n2]|] eqn:E2; [|discriminate].
     destruct (IHf _ _ _ _ _ _ _ _ E2 (mf_apC _ _ S1 HG)) as [S2 M2].
     injection H as <- <- <- <-.
     exact (conj (mf_scomp _ _ S2 S1) (conj (apT_mf _ _ S2 M1) M2)).
@@ -344,13 +344,14 @@ Theorem infer_mu_free : forall fuel e D T,
   infer_closed_env fuel e = Some (D, T) -> mu_free T.
 Proof.
   intros fuel e D T H. unfold infer_closed_env in H.
-  destruct (infer fuel d_any nil e 0) as [[[[s D1] T1] n]|] eqn:E; [|discriminate].
+  destruct (infer fuel true (fun _ => false) d_any nil e 0) as [[[[s0 D00] T00] n0]|]; [|discriminate].
+  destruct (infer fuel false (forced_float s0) d_any nil e 0) as [[[[s D1] T1] n]|] eqn:E; [|discriminate].
   injection H as <- <-.
-  exact (proj2 (proj1 (infer_mf fuel) _ _ _ _ _ _ _ _ E (fun x s0 Hin => match Hin with end))).
+  exact (proj2 (proj1 (infer_mf fuel (forced_float s0)) _ _ _ _ _ _ _ _ E (fun x s0 Hin => match Hin with end))).
 Qed.
 
-Lemma infer_fold_none : forall f D G e n, infer f D G (e_fold e) n = None.
-Proof. intros [|f] D G e n; reflexivity. Qed.
+Lemma infer_fold_none : forall f lz ora D G e n, infer f lz ora D G (e_fold e) n = None.
+Proof. intros [|f] lz ora D G e n; reflexivity. Qed.
 
-Lemma infer_unfold_none : forall f D G e n, infer f D G (e_unfold e) n = None.
-Proof. intros [|f] D G e n; reflexivity. Qed.
+Lemma infer_unfold_none : forall f lz ora D G e n, infer f lz ora D G (e_unfold e) n = None.
+Proof. intros [|f] lz ora D G e n; reflexivity. Qed.
