@@ -199,6 +199,32 @@ fn a_missing_arm_in_a_grouped_match_is_a_spanned_error_on_stderr() {
 }
 
 #[test]
+fn a_function_matching_a_group_without_every_tag_fails_at_the_match() {
+    let out = run_source(
+        "p.goat",
+        "tag Light = Red | Green f = program(l) do match l do Red then 1 done done f(Red)",
+    );
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("doesn't handle `Green`"), "{stderr}");
+}
+
+#[test]
+fn an_else_after_every_tag_warns_but_still_runs() {
+    let out = run_source(
+        "p.goat",
+        "tag Ping f = program(p) do match p do Ping then 1 else 2 done done print(f(Ping))",
+    );
+    assert!(out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("`else` can't happen here; `Ping` is the only tag"),
+        "{stderr}"
+    );
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "1\n");
+}
+
+#[test]
 fn a_helpers_failed_requirement_is_a_second_location_on_stderr() {
     let (_, stderr) = failure_of(
         "step = program(p) do q = p.moved(); q.x done\n\

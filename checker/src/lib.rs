@@ -278,6 +278,57 @@ mod tests {
     }
 
     #[test]
+    fn a_match_pins_its_scrutinee_and_misses_a_tag_at_the_match() {
+        let src = "tag Light = Red | Green f = program(l) do match l do Red then 1 done done f";
+        let (message, text) = spanned_error(src);
+        assert!(message.contains("doesn't handle `Green`"), "{message}");
+        assert_eq!(text, "l");
+    }
+
+    #[test]
+    fn a_pinned_match_takes_the_whole_group_without_a_call() {
+        let src = "tag Light = Red | Green f = program(l) do match l do Red then 1 Green then 2 done done f";
+        assert_eq!(type_of(src).unwrap(), "([Red, Green]) -> Number");
+        let src =
+            "tag Light = Red | Green f = program(l) do match l do Red then 1 else 2 done done f";
+        assert_eq!(type_of(src).unwrap(), "([Red, Green]) -> Number");
+    }
+
+    #[test]
+    fn arms_from_different_groups_are_reported_at_the_offending_tag() {
+        let src =
+            "tag Disc tag Box area = program(s) do match s do Disc then 1 Box then 2 done done";
+        let (message, text) = spanned_error(src);
+        assert!(
+            message.contains("`Box` isn't in the same group as `Disc`"),
+            "{message}"
+        );
+        assert_eq!(text, "Box");
+    }
+
+    #[test]
+    fn an_else_after_every_tag_warns() {
+        let src = "tag Ping f = program(p) do match p do Ping then 1 else 2 done done f(Ping)";
+        let warnings = warnings_of(src);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(
+            warnings[0].message,
+            "`else` can't happen here; `Ping` is the only tag"
+        );
+        assert_eq!(&src[warnings[0].span.start..warnings[0].span.end], "2");
+        let src =
+            format!("{SHAPE} match Dot do Disc(r) then r Square(w) then w Dot then 0 else 1 done");
+        let warnings = warnings_of(&src);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].message.contains("every tag"), "{warnings:?}");
+        let partial = warnings_of(&format!("{SHAPE} match Dot do Disc(r) then r else 1 done"));
+        assert!(
+            partial.iter().all(|w| !w.message.contains("`else`")),
+            "{partial:?}"
+        );
+    }
+
+    #[test]
     fn a_grouped_match_may_still_have_an_else() {
         let src = format!("{SHAPE} match Dot do Disc(r) then r else 0 done");
         assert_eq!(type_of(&src).unwrap(), "Number");
@@ -528,10 +579,11 @@ mod tests {
     }
 
     #[test]
-    fn match_with_else_keeps_the_row_open() {
+    fn match_with_else_still_pins_the_scrutinee_to_the_group() {
         let src = "tag Ring(_) | Square(_) area = program(s) do match s do Ring(r) then r * 2 else 0 done done area";
         let ty = type_of(src).unwrap();
-        assert!(ty.starts_with("([Ring: Number | t"), "{ty}");
+        assert!(ty.starts_with("([Ring: Number, Square"), "{ty}");
+        assert!(!ty.contains('|'), "{ty}");
     }
 
     #[test]
@@ -669,7 +721,7 @@ mod tests {
 
     #[test]
     fn matched_tags_do_not_warn_and_each_tag_warns_once() {
-        assert!(warnings_of("tag Ring(_) match Ring(5) do Ring(r) then r else 0 done").is_empty());
+        assert!(warnings_of("tag Ring(_) match Ring(5) do Ring(r) then r done").is_empty());
         assert!(warnings_of("1 + 2").is_empty());
         let warnings = warnings_of("tag Oops(_) x = Oops(1) y = Oops(2) 0");
         assert_eq!(warnings.len(), 1);
@@ -707,7 +759,8 @@ mod tests {
              [first, ...rest] then 1 + length(rest) done done length",
         )
         .unwrap();
-        assert_eq!(from_lists, from_tags);
+        let numbered = |ty: &str| ty.replace(|c: char| c.is_ascii_digit(), "");
+        assert_eq!(numbered(&from_lists), numbered(&from_tags));
     }
 
     #[test]
@@ -756,7 +809,7 @@ mod tests {
 
     #[test]
     fn a_tree_recurses_through_both_children() {
-        let src = "tag Leaf tag Node(_) size = program(t) do match t do Leaf then 0 \
+        let src = "tag Tree = Leaf | Node(Tree, Tree) size = program(t) do match t do Leaf then 0 \
                    Node(l, r) then 1 + size(l) + size(r) done done size";
         let ty = type_of(src).unwrap();
         let t = binder(&ty);
@@ -823,7 +876,10 @@ mod tests {
         let ty = type_of(src).unwrap();
         let t = binder(&ty);
         let list = format!("μ{t}. [Empty, Link: {{0: Number, 1: {t}}}]");
-        assert_eq!(ty, format!("({list}) -> {list}"));
+        let (arg, ret) = ty.split_once(" -> ").unwrap();
+        let ret_binder = binder(ret);
+        assert_eq!(arg, format!("({list})"));
+        assert_eq!(ret.replace(ret_binder, t), list);
         let after_empty = "f = program(xs) do \
                      z = match xs do Empty then 0 else 1 done \
                      if true then xs else Link(1, xs) done \

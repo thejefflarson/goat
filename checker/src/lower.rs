@@ -2041,14 +2041,31 @@ impl Lower {
         if children.iter().any(is_literal_arm) {
             return self.lower_literal_match(span, scrutinee, children);
         }
-        let mut arms = Vec::new();
+        let mut arms: Vec<MatchArm> = Vec::new();
         let mut else_branch = None;
+        let mut first: Option<(String, Option<Arc<Group>>)> = None;
         for child in children {
             match child.kind() {
-                "arm" => arms.push(self.lower_arm(child)),
+                "arm" => {
+                    let arm = self.lower_arm(child);
+                    self.check_arm_group(&arm.pattern, &mut first);
+                    arms.push(arm);
+                }
                 "expr" => else_branch = Some(Box::new(self.lower_expr(child))),
                 other => unreachable!("unexpected match child {other:?}"),
             }
+        }
+        if let (Some(else_expr), Some((_, Some(group)))) = (&else_branch, &first)
+            && group
+                .tags
+                .iter()
+                .all(|(tag, _)| arms.iter().any(|arm| arm.pattern.tag == *tag))
+        {
+            let message = match group.tags.as_slice() {
+                [(only, _)] => format!("`else` can't happen here; `{only}` is the only tag"),
+                _ => "`else` can't happen here; the arms already handle every tag".to_string(),
+            };
+            self.warnings.push(GoatError::new(else_expr.span, message));
         }
         self.node(
             span,
@@ -2180,6 +2197,36 @@ impl Lower {
         }
     }
 
+    /// Every arm of a `match` names a tag of one group, the first arm's.
+    fn check_arm_group(
+        &mut self,
+        pattern: &Pattern,
+        first: &mut Option<(String, Option<Arc<Group>>)>,
+    ) {
+        if !self.tags.contains_key(&pattern.tag) {
+            return;
+        }
+        let Some((first_tag, first_group)) = first else {
+            *first = Some((pattern.tag.clone(), pattern.group.clone()));
+            return;
+        };
+        let same = match (&*first_group, &pattern.group) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            let tag_span = Span::new(pattern.span.start, pattern.span.start + pattern.tag.len());
+            self.errors.push(GoatError::new(
+                tag_span,
+                format!(
+                    "`{}` isn't in the same group as `{first_tag}`; a `match` takes the tags of one group",
+                    pattern.tag
+                ),
+            ));
+        }
+    }
+
     fn lower_arm(&mut self, pair: Node) -> MatchArm {
         let mut inner = pair.children();
         let pattern_pair = inner.next().expect("an arm begins with a pattern");
@@ -2243,7 +2290,13 @@ impl Lower {
                 )
             }
         };
-        Pattern { tag, span, payload }
+        let group = self.tags.get(&tag).cloned().flatten();
+        Pattern {
+            tag,
+            group,
+            span,
+            payload,
+        }
     }
 
     fn list_pattern(&mut self, pair: Node) -> ListPattern {
@@ -2401,6 +2454,7 @@ impl Lower {
             let body = self.list_leaf(m, at);
             let pattern = Pattern {
                 tag: "Empty".into(),
+                group: self.tags.get("Empty").cloned().flatten(),
                 span,
                 payload: PatternPayload::None,
             };
@@ -2431,6 +2485,7 @@ impl Lower {
             };
             let pattern = Pattern {
                 tag: "Link".into(),
+                group: self.tags.get("Link").cloned().flatten(),
                 span,
                 payload: PatternPayload::Fields(vec![
                     ("0".into(), binder(head, "head")),
@@ -2818,6 +2873,7 @@ impl Lower {
         let link = MatchArm {
             pattern: Pattern {
                 tag: "Link".into(),
+                group: self.tags.get("Link").cloned().flatten(),
                 span,
                 payload: PatternPayload::Fields(vec![
                     ("0".into(), param(item, name_pair.text())),
@@ -2829,6 +2885,7 @@ impl Lower {
         let empty = MatchArm {
             pattern: Pattern {
                 tag: "Empty".into(),
+                group: self.tags.get("Empty").cloned().flatten(),
                 span,
                 payload: PatternPayload::None,
             },
@@ -3104,7 +3161,7 @@ mod tests {
     #[test]
     fn match_lowers_arms_binders_and_else() {
         let root = lowered(
-            "tag Ring(_) s = Empty match s do Link(a, b) then a Ring(r) then r Empty then 0 else 1 done",
+            "tag Pile = Two(_, _) | One(_) | Zero s = Zero match s do Two(a, b) then a One(r) then r Zero then 0 else 1 done",
         )
         .root;
         let ExprKind::Let { rest, .. } = &root.kind else {
@@ -3136,7 +3193,7 @@ mod tests {
         assert_eq!(symbol, fields[0].1.symbol);
 
         assert!(matches!(&arms[1].pattern.payload, PatternPayload::Whole(p) if p.name == "r"));
-        assert_eq!(arms[1].pattern.tag, "Ring");
+        assert_eq!(arms[1].pattern.tag, "One");
         assert!(matches!(arms[2].pattern.payload, PatternPayload::None));
     }
 
@@ -3151,7 +3208,8 @@ mod tests {
 
     #[test]
     fn pattern_binders_are_scoped_to_their_arm() {
-        let lowered = lower("tag Ring(_) match Empty do Ring(r) then r Empty then r done").unwrap();
+        let lowered =
+            lower("tag Shape = Ring(_) | Dot match Dot do Ring(r) then r Dot then r done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("unknown name `r`"));
     }
