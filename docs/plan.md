@@ -33,7 +33,8 @@ turtle.**
 
 ### Platform and backends
 - **Targets:** browser, iOS, desktop, any host embedding a wasm runtime, and
-  microcontrollers (Phase 12). Microcontrollers are native-only (ADR 0042).
+  microcontrollers (Phase 12). Microcontrollers run native release builds and
+  WAMR for hot-swap development (ADR 0042).
 - **Two backends, both emitted from MIR** (ADR 0042):
   - **WebAssembly**, with `wasm-encoder`: the web editor, the iOS web view,
     desktop `goat run`, live coding and hot reload, and any host that embeds a
@@ -43,8 +44,9 @@ turtle.**
     (ESP32-C6, C3, RP2040, RP2350). goat links no LLVM library; the emitter is a
     pure-text compiler crate. Tail calls use `tailcc` and `musttail`, with loops
     and merged recursive groups everywhere and a trampoline on Thumb-1.
-  - WAMR stays, with no new work, until native boards run; then the owner
-    decides whether to remove it. WAMR AOT is dropped.
+  - **Three ways to run:** wasm for development, native for release, and WAMR's
+    interpreter for hot-swap development on boards (live coding over serial,
+    #119). WAMR AOT is dropped.
   - MIR stays backend-neutral (structured, no pointer size baked in), so each
     backend computes its own offsets.
 - **Wasm toolchain (Rust crates, Bytecode Alliance):**
