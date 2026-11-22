@@ -23,11 +23,12 @@ records needs an order on more than numbers.
      the first unequal field decides;
    - tags by declaration order, then by payload left to right. In `tag Level =
      Low | Medium | High` the leftmost is lowest, so `Low < Medium < High`.
-     A tag declared by itself (`tag Circle`) ranks by where it first appears
-     in the source, the prelude's tags before the program's, and a group's
-     tags take consecutive places where the group is written. The list tags
-     `Empty` and `Link(first, rest)` come first of all, so `Empty < Link`
-     gives lexicographic order with a prefix first;
+     Every tag belongs to a group (ADR 0016), and tags are compared only
+     within one type, so a tag's rank matters only against the other tags of
+     its group. A group's tags take consecutive places where it is written, the
+     prelude's before the program's. The list group `tag List = Empty | Link(_,
+     List)` comes first of all, so `Empty < Link` gives lexicographic order
+     with a prefix first;
    - `Unit` equals itself.
 2. **Typing reuses the `Eq` constraint.** `a < b` unifies its operands (an
    `Int` beside a `Float` still widens) and requires the shared type to have no

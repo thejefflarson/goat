@@ -16,7 +16,7 @@ use crate::hir::{Builtin, Expr, ExprKind, FileId};
 use crate::infer::{DotCalls, Typed, infer_partial};
 use crate::lower::{RECEIVER_NAME, lower_with_vocab};
 use crate::ty::{Row, Scheme, Ty};
-use crate::vocab::{LIST_TAGS, Vocab};
+use crate::vocab::Vocab;
 use goat_parser::cst::{Child, Cst, Goat, Match, Node, TagCase};
 use goat_parser::interp::parse_recovering;
 use goat_parser::lexer;
@@ -357,7 +357,7 @@ fn declared_tags(cst: &Cst, next_group: &mut usize) -> Vec<TagInfo> {
 }
 
 /// Every tag a program may use: its own declarations first, in order, then the
-/// list sugar's, the prelude's and the host's by name.
+/// prelude's (the list's `Empty` and `Link` among them) and the host's by name.
 fn tags(prelude: &str, vocab: &Vocab, cst: &Cst) -> Vec<TagInfo> {
     let mut groups = 0;
     let mut tags = declared_tags(cst, &mut groups);
@@ -367,10 +367,8 @@ fn tags(prelude: &str, vocab: &Vocab, cst: &Cst) -> Vec<TagInfo> {
         group: None,
     };
     let from_prelude = declared_tags(&parse_recovering(prelude).cst, &mut groups);
-    let mut rest: Vec<TagInfo> = LIST_TAGS
+    let mut rest: Vec<TagInfo> = from_prelude
         .into_iter()
-        .map(|name| bare(name, String::new()))
-        .chain(from_prelude)
         .chain(
             vocab
                 .events

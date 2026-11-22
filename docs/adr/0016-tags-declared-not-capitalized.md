@@ -170,6 +170,10 @@ the function that walked it. This amendment closes both.
    "`Circle` is a tag the host already provides" with a hint to use it or pick
    another name. No two declarations share a tag name.
 
+A `match` pins the group of its arms: every arm's tag must belong to one
+group, and the `match` must handle every tag of that group or end in `else`.
+A host family is the exception, as above: a program may handle a subset of it.
+
 Mono's layout families (ADR 0010) are unchanged: they remain for the host
 families and for rows narrowed by a partial `match`. An `Int` and a `Float` in
 one `_` slot of a group value widen as list items do (ADR 0040), through one

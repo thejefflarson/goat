@@ -105,7 +105,9 @@ turtle.**
   `Empty`, `Link(1, rest)`. A grouped declaration closes its tags into one
   variant type: `tag Shape = Circle(Number) | Dot` makes `match` over a `Shape`
   exhaustive with no `else`, and a named group may hold itself
-  (`tag Tree = Leaf | Node({left: Tree, right: Tree})`). The host's `Key`
+  (`tag Tree = Leaf | Node({left: Tree, right: Tree})`). A `_` in a payload
+  leaves its type to each use, so a kid can write a generic list in pure goat:
+  `tag Pile = Nil | Cons(_, Pile)`. The host's `Key`
   (`Up | Down | Left | Right | Other(String)`) is such a built-in group. A
   lone `tag Foo` is a closed group of one
   (ADR 0016's amendment); only the host's own tag families stay open.
@@ -114,7 +116,7 @@ turtle.**
   `Tree` definable in goat with full inference, while `f(f)`-style mistakes
   keep their occurs-check error.
 - **`List` is defined in the goat prelude**, not built into the compiler, as
-  `Empty | Link(first, rest)`.
+  `tag List = Empty | Link(_, List)`.
 - **Kid-facing names are plain words** (Pyret/Logo/Scratch heritage), not CS
   jargon. See the prelude table in Phase 8.
 - **List indexing is 1-based** (`item(xs, 1)` is the first item).
@@ -426,8 +428,11 @@ allocation or indirect call. The scheme below is the general fallback.)
 ### Types
 - Variant types are rows (Leijen's scoped labels — `papers/scopedlabels.pdf`
   covers variants as the dual of records): `Ty::Variant(Row)`.
-- Constructing a tag gives an open row `[Circle: Number | ρ]`. A `match`
-  without `else` closes the row; with `else` it stays open.
+- Constructing a declared tag gives its group's closed type (ADR 0016's
+  amendment), and a `match` must handle every tag of that group or have an
+  `else`. Only the host's event and shape tags are open rows `[Tick: Float | ρ]`:
+  a `match` without `else` closes the row to the tags it names, and a program
+  may handle a subset of the family.
 - **Guarded recursive types.** In `unify` (`checker/src/infer.rs`, around
   the `occurs` check at the top of `unify` and in `unify_row`): when the
   occurs check fails, allow the binding *if every occurrence of the variable

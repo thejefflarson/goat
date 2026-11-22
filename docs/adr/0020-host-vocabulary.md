@@ -100,6 +100,11 @@ those tags, so a key `match` with no `else` must name all five `Key` tags. ADR
 0016 makes a `tag` declaration a closed variant type and relies on the same
 `close_match` machinery for exhaustiveness.
 
+ADR 0016's amendment (every tag closed) leaves this vocabulary as its one named
+exception: the event and shape tags are closed sets the host sends, but a program
+handles a subset of them, so they are not declared groups and a program may not
+declare a tag with one of their names.
+
 Making the vocabulary host-supplied is a question of *where the closed set comes
 from*, not whether it is closed. **"Configurable per host" is not "open in the
 type system."** Each host declares its own closed set of event/shape/key tags;

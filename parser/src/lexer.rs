@@ -497,6 +497,22 @@ mod tests {
     }
 
     #[test]
+    fn a_slot_in_a_declaration_does_not_hide_the_tags_after_it() {
+        let source = "tag Pile = Nil | Cons(_, Pile)\nCons(1, Nil)";
+        assert_eq!(
+            kinds_of(source, TokenKind::Tag),
+            ["Nil", "Cons", "Cons", "Nil"]
+        );
+        assert_eq!(
+            kinds_of(source, TokenKind::Punct)
+                .iter()
+                .filter(|p| **p == "_")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn capitalization_alone_does_not_make_a_tag() {
         assert!(kinds_of("Circle(1)", TokenKind::Tag).is_empty());
     }
