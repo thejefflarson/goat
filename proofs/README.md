@@ -356,6 +356,35 @@ What waits: the differential test for tag programs. The checker's tag groups
 `differential/README.md` lists what the corpus and the driver must add. The
 typeset `goat.ott` and `docs/semantics.md` do not yet state the group rules.
 
+## Loops and foreign calls (decided)
+
+**Loops need no calculus extension** (phase 6a of #435, a check and not a build). `lower.rs` desugars `repeat`, `for ... from
+... to` and `for ... in` to a local function that runs the body and calls itself
+(`go = program(i) do if i < stop then _ = B  go(i + 1) else () done done`, then
+`go(start)`), as ADR 0013 says: the loop is tail self-recursion, with no loop
+node. The proofs read lowered HIR, so a counted loop is `let`, `program`, a
+recursive call, `if`, `+` and a comparison: phase 1 and phase 2 already type and
+run it, and `progress`, `preservation` and `soundness` cover it. A `for ... in`
+loop walks a list with the list tags and `match`, so it is in-fragment once
+phase 3's list sugar is. The corpus counts a program under "a loop" only when it
+uses no feature that comes earlier in the order of `differential/README.md`; a
+loop whose body is plain arithmetic is compared today. What a loop does need is
+elaboration agreement, which the differential test already checks, since the
+Rust lowering and the proofs both read the desugared form.
+
+**A `foreign` call is an opaque typed constant.** The checker gives a `foreign
+"module" "name" (params) -> ret` binding the fixed monomorphic scheme
+`(params) -> ret` over the boundary types `Number` (a `Float`), `Int`, `Bool`,
+`Unit` and `String`. The calculus models it as a name in the typing context at
+that arrow type, with no body and no free variables, and a call steps to any
+value of the return type or traps, as the host may do either. That is the same
+device as the opaque `Float` operations (a relation, so no axiom): `progress`
+and `preservation` hold for whatever the host returns, which is the claim the
+embedding needs, and `goat_ln.ott` needs a context entry and one step rule, not a
+new type or term. What the proofs do not say is what a host function computes.
+This waits behind phase 1 (the boundary types) and is cheap; it is listed as
+phase 6b of #435.
+
 ## Generic operators: sorted type variables (design Q)
 
 The typing judgment carries a kinding environment `D` (`typing D G e T`): a
@@ -655,6 +684,11 @@ a `var_of` that gives the printer's binder names `v0`, `v1`, ... distinct atoms
   (`UPDATE_PRINTER_TABLE=1 cargo test -p goat_checker --test core_roundtrip`
   rewrites it), and the Coq build fails when the Coq printer disagrees with a
   row.
+- **Match rule.** The checker types a `match` as phase 3 models it: the
+  scrutinee is pinned to the group of the arms' tags, and the arms name every
+  tag of that group or end in an `else`. The host's event and shape families
+  are the one exception: a match on them still narrows an open row, outside
+  this model.
 - **Not covered.** Free variables (T3 is for programs), the grouped style, a
   `letrec` (T1 reads one; the printer does not write one), the unit value on its
   own, `float(e)`, everything T1 leaves out.

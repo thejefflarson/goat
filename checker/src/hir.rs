@@ -211,6 +211,8 @@ impl PatternPayload {
 #[derive(Clone, Debug)]
 pub struct Pattern {
     pub tag: String,
+    /// The declared group the tag belongs to; `None` for a tag the host provides.
+    pub group: Option<Arc<Group>>,
     pub span: Span,
     pub payload: PatternPayload,
 }

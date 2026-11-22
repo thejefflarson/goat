@@ -135,6 +135,9 @@ fn configure(interp: Interp, renames: Option<&Path>) -> cc::Build {
         // Third-party code, and an interpreter loop that is unusably slow
         // unoptimized, so the profile's opt level does not apply.
         .warnings(false)
+        // WAMR declares `void (*native_code)()` and calls it with arguments,
+        // which C23 (the GCC 15 default) rejects: `()` means no parameters.
+        .std("gnu11")
         .opt_level(2)
         .debug(false)
         .define(arch.0, None)

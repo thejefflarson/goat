@@ -61,6 +61,7 @@
   <section>
     <div id="source"></div>
     <button id="run" disabled>Run</button>
+    <button id="format" type="button" disabled title="Format (Shift-Alt-F)">Format</button>
     <select id="example" aria-label="example program">
       <option value="arrow_draw">Arrow keys draw (interactive)</option>
       <option value="spiral">Spiral (run once)</option>
@@ -81,6 +82,7 @@
 <script type="module">
   import { compileLive, loadCompiler } from "./v/__BUILD__/dist/compile.js";
   import { canSupervise, superviseCanvas, superviseHighlighter } from "./v/__BUILD__/dist/browser.js";
+  import { GoatFormatter } from "./v/__BUILD__/dist/formatter.js";
   import { GoatHighlighter } from "./v/__BUILD__/dist/highlighter.js";
   import { isInteractiveModule } from "./v/__BUILD__/dist/loop.js";
   import { reloadSays } from "./v/__BUILD__/dist/reload-says.js";
@@ -92,8 +94,8 @@
   const COMPILER_URL = "./v/__BUILD__/goat_web.wasm";
 
   const $ = (id) => document.getElementById(id);
-  const [sourceHost, button, canvas, problems, output, example, live, status, themeButton, resetTheme] =
-    ["source", "run", "canvas", "problems", "output", "example", "live", "status", "theme", "reset-theme"].map($);
+  const [sourceHost, button, canvas, problems, output, example, live, status, themeButton, resetTheme, formatButton] =
+    ["source", "run", "canvas", "problems", "output", "example", "live", "status", "theme", "reset-theme", "format"].map($);
   const RELOAD_DELAY_MS = 400;
 
   // An example names its vocabulary: the turtle's, or the canvas host's.
@@ -347,8 +349,25 @@ print("done")
     }
   }
 
+  // The formatter is editor/format.goat in a worker of its own. Without it the
+  // Format button stays disabled and the shortcut does nothing.
+  let formatter;
+  if (compiler && canSupervise()) {
+    try {
+      const source = await (await fetch("./v/__BUILD__/format.goat")).text();
+      formatter = new GoatFormatter({ compiler, source, runner: superviseHighlighter() });
+      formatter.start().then((running) => { formatButton.disabled = !running; });
+    } catch {
+      formatter = undefined;
+    }
+  }
+
   // Without the compiler the editor still edits; it just neither colors nor checks.
-  const editor = mountEditor(sourceHost, EXAMPLES.arrow_draw, compiler, () => host, highlighter);
+  const editor = mountEditor(sourceHost, EXAMPLES.arrow_draw, compiler, () => host, highlighter, formatter);
+  formatButton.addEventListener("click", async () => {
+    await editor.format();
+    sourceHost.querySelector(".cm-content")?.focus();
+  });
   example.addEventListener("change", () => {
     if (editingTheme) setThemeMode(false);
     host = HOSTS[example.value];

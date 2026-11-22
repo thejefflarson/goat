@@ -4,10 +4,11 @@
 // polls, because a worker spinning inside wasm can send nothing.
 
 import type { Reloaded } from "./loop.ts";
-import type { EventKind, HostEvent, RawSpan, RawSwatch } from "./scene.ts";
+import type { EventKind, HostEvent, RawEdit, RawSpan, RawSwatch } from "./scene.ts";
 
-// `highlight` runs a program over the editor vocabulary: it draws once per
-// `Edited` input, not once per animation frame, and has no canvas.
+// `highlight` runs a program over the editor vocabulary (the highlighter, which
+// draws spans, or the formatter, which draws edits): it draws once per `Edited`
+// input, not once per animation frame, and has no canvas.
 // `theme` runs a program over the theme vocabulary: it draws once, on start,
 // and takes no input.
 export type Mode = "interactive" | "once" | "highlight" | "theme";
@@ -28,7 +29,7 @@ export type FromWorker =
   | ({ type: "reloaded"; subscriptions: EventKind[] } & Reloaded)
   | { type: "reload_failed"; message: string }
   | { type: "output"; lines: string[] }
-  | { type: "spans"; ticket: number; spans: RawSpan[] }
+  | { type: "spans"; ticket: number; spans: RawSpan[]; edits: RawEdit[] }
   | { type: "swatches"; swatches: RawSwatch[] }
   | { type: "finished" }
   | { type: "failed"; message: string };

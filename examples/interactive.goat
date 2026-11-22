@@ -15,7 +15,7 @@ update = program(model, event) do
       Left then {...model, x: model.x - 10}
       Up then {...model, y: model.y - 10}
       Down then {...model, y: model.y + 10}
-    else model done
+      else model done
   done
 done
 

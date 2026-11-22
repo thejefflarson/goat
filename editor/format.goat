@@ -1,0 +1,501 @@
+# The goat formatter (ADR 0041), written in goat. It changes whitespace only:
+# `update` receives the text on each Edited event and keeps one Edit per gap
+# between tokens that is not already as the style wants it, and `draw` hands
+# the edits back. An edit replaces the bytes `from` to `to` (0-based, `to`
+# exclusive) with `newlines` line breaks followed by `indent` spaces; the host
+# applies them. A text that does not lex gets no edits.
+#
+# The scanner below is `editor/highlight.goat`'s, copied because goat programs
+# cannot import one another; both are tested against `parser::lexer`. It keeps
+# unrecognized bytes as tokens, so the formatter can leave such a text alone.
+
+# Token kinds. Spans carry only those up to `operator`.
+comment = 0
+keyword = 1
+literal = 2
+number = 3
+string = 4
+tag_name = 5
+operator = 6
+name = 7
+punct = 8
+space = 9
+unknown = 10
+
+functions = ["program", "function", "fn"]
+
+keywords = [
+  "if", "match", "then", "else", "done", "do", "start at", "repeat", "times",
+  "for", "and", "or", "not", "return", "tag"
+]
+
+literals = ["true", "false"]
+
+operators = ["==", "!=", "<=", "<", ">=", ">", "->", "//", "/", "%", "+", "*", "-", "::"]
+
+puncts = ["(", ")", "{", "}", "[", "]", "=", ":", ";", "|", ",", "...", "."]
+
+# The byte at 0-based position p, or -1 outside the text.
+at = program(text, p) do
+  if p >= 0 and p < byte_length(text) then byte_at(text, p + 1) else 0 - 1 done
+done
+
+is_space = program(c) do c == 32 or c == 9 or c == 10 or c == 13 done
+
+is_digit = program(c) do c >= 48 and c <= 57 done
+
+is_letter = program(c) do (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c >= 128 done
+
+is_inner = program(c) do is_letter(c) or is_digit(c) or c == 95 done
+
+is_not_newline = program(c) do c != 10 and c != 13 and c != 0 - 1 done
+
+is_not_space = program(c) do c != 32 and c != 0 - 1 done
+
+# Where the run of bytes satisfying `test` that starts at p ends.
+run_end = program(text, p, test) do
+  if test(at(text, p)) then run_end(text, p + 1, test) else p done
+done
+
+# The end of a string whose opening quote is before p, or -1 if it never closes.
+string_end = program(text, p) do
+  c = at(text, p)
+  if c == 34 then p + 1
+  else if c == 0 - 1 then 0 - 1
+  else if c == 92 then
+    if at(text, p + 1) == 0 - 1 then 0 - 1 else string_end(text, p + 2) done
+  else string_end(text, p + 1) done done done
+done
+
+# The end of the number starting at p, or -1 if none does: digits with an
+# optional fraction and exponent, or a bare fraction.
+number_end = program(text, p) do
+  whole = run_end(text, p, is_digit)
+  fraction = run_end(text, p + 1, is_digit)
+  base = if whole > p
+    then if at(text, whole) == 46 then run_end(text, whole + 1, is_digit) else whole done
+    else if at(text, p) == 46 and fraction > p + 1 then fraction else 0 - 1 done
+  done
+  marker = at(text, base)
+  sign = if at(text, base + 1) == 43 or at(text, base + 1) == 45 then 1 else 0 done
+  exponent = run_end(text, base + 1 + sign, is_digit)
+  if base < 0 then base
+  else if (marker == 101 or marker == 69) and exponent > base + 1 + sign then exponent
+  else base done done
+done
+
+# Does `word` sit at p, counting its bytes from i?
+spelled_at = program(text, p, word, i) do
+  if i > byte_length(word) then true
+  else if at(text, p + i - 1) == byte_at(word, i) then spelled_at(text, p, word, i + 1)
+  else false done done
+done
+
+# Do the `length` bytes of `one` at p and of `other` at q match, counting from i?
+same_bytes = program(one, p, other, q, i, length) do
+  if i > length then true
+  else if at(one, p + i - 1) == at(other, q + i - 1) then same_bytes(one, p, other, q, i + 1, length)
+  else false done done
+done
+
+# Does `word` sit at p as a whole word, not the start of a longer name?
+word_at = program(text, p, word) do
+  spelled_at(text, p, word, 1) and not is_inner(at(text, p + byte_length(word)))
+done
+
+# The length of the first of `words` at p as a whole word, or 0.
+word_length = program(text, p, words) do
+  match words do
+    [head, ...tail] then
+      if word_at(text, p, head) then byte_length(head) else word_length(text, p, tail) done
+    [] then 0
+  done
+done
+
+# The length of the first of `symbols` at p, or 0.
+symbol_length = program(text, p, symbols) do
+  match symbols do
+    [head, ...tail] then
+      if spelled_at(text, p, head, 1) then byte_length(head) else symbol_length(text, p, tail) done
+    [] then 0
+  done
+done
+
+# The kind and end of the token at p, tried in the lexer's order.
+next_token = program(text, p) do
+  c = at(text, p)
+  closed = if c == 34 then string_end(text, p + 1) else 0 - 1 done
+  digits = number_end(text, p)
+  literal_length = word_length(text, p, literals)
+  keyword_length = word_length(text, p, functions) + word_length(text, p, keywords)
+  operator_length = symbol_length(text, p, operators)
+  punct_length = symbol_length(text, p, puncts)
+  if is_space(c) then {kind: space, end: run_end(text, p, is_space)}
+  else if c == 35 then {kind: comment, end: run_end(text, p, is_not_newline)}
+  else if closed > 0 then {kind: string, end: closed}
+  else if digits > 0 then {kind: number, end: digits}
+  else if literal_length > 0 then {kind: literal, end: p + literal_length}
+  else if keyword_length > 0 then {kind: keyword, end: p + keyword_length}
+  else if is_letter(c) then {kind: name, end: run_end(text, p, is_inner)}
+  else if operator_length > 0 then {kind: operator, end: p + operator_length}
+  else if punct_length > 0 then {kind: punct, end: p + punct_length}
+  else {kind: unknown, end: p + 1} done done done done done done done done done
+done
+
+# The kind of the sentinel token before the first one.
+start = 11
+
+# What a gap's spacing is on one line: none, one space, the writer's own
+# (no space where there was none, one where there was any), or untouched.
+none = 0
+one = 1
+keep = 2
+leave = 3
+
+# What an open block is: `if ... done`, `do ... done`, a bracket pair, or the
+# body of a branch or `match` arm that starts on the line after its `then` or
+# `else`, which indents once more.
+if_block = 0
+do_block = 1
+bracket_block = 2
+body_block = 3
+
+indent_width = 2
+
+# Every token but the whitespace, in order.
+lex = program(text, p, found) do
+  if p >= byte_length(text) then reverse(found)
+  else
+    token = next_token(text, p)
+    lex(text, token.end, if token.kind == space then found else Link({kind: token.kind, a: p, b: token.end}, found) done)
+  done
+done
+
+has_unknown = program(tokens) do
+  match tokens do
+    [token, ...rest] then token.kind == unknown or has_unknown(rest)
+    [] then false
+  done
+done
+
+is_text = program(text, token, word) do
+  token.b - token.a == byte_length(word) and spelled_at(text, token.a, word, 1)
+done
+
+is_punct = program(text, token, word) do token.kind == punct and is_text(text, token, word) done
+
+is_keyword = program(text, token, word) do token.kind == keyword and is_text(text, token, word) done
+
+is_operator = program(text, token, word) do token.kind == operator and is_text(text, token, word) done
+
+opens_bracket = program(text, token) do
+  is_punct(text, token, "(") or is_punct(text, token, "{") or is_punct(text, token, "[")
+done
+
+closes_bracket = program(text, token) do
+  is_punct(text, token, ")") or is_punct(text, token, "}") or is_punct(text, token, "]")
+done
+
+closes = program(text, token) do closes_bracket(text, token) or is_keyword(text, token, "done") done
+
+# Is this the word that a parameter list follows?
+opens_function = program(text, token) do
+  is_keyword(text, token, "program") or is_keyword(text, token, "function") or is_keyword(text, token, "fn")
+done
+
+# Is this a name that a `for` header or a foreign declaration reads as a keyword?
+is_contextual = program(text, token) do
+  is_text(text, token, "in") or is_text(text, token, "from") or is_text(text, token, "to")
+    or is_text(text, token, "foreign")
+done
+
+# Can this token end an expression, so that a `-` after it subtracts?
+ends_value = program(text, token) do
+  token.kind == name or token.kind == number or token.kind == string or token.kind == literal
+    or closes_bracket(text, token) or is_keyword(text, token, "done")
+done
+
+# The line breaks in the bytes from p to end: `\n`, and `\r` not followed by `\n`.
+count_breaks = program(text, p, end, n) do
+  if p >= end then n
+  else
+    c = at(text, p)
+    here = if c == 10 or (c == 13 and at(text, p + 1) != 10) then 1 else 0 done
+    count_breaks(text, p + 1, end, n + here)
+  done
+done
+
+# Are the bytes from p to end exactly `newlines` line breaks and `indent` spaces?
+gap_is = program(text, p, end, newlines, indent) do
+  if newlines > 0 then p < end and at(text, p) == 10 and gap_is(text, p + 1, end, newlines - 1, indent)
+  else if indent > 0 then p < end and at(text, p) == 32 and gap_is(text, p + 1, end, 0, indent - 1)
+  else p == end done done
+done
+
+# `edits` with the gap from start to stop made `newlines` and `indent`, unless it already is.
+mend = program(text, start_at, stop, newlines, indent, edits) do
+  if gap_is(text, start_at, stop, newlines, indent) then edits
+  else Link(Edit({from: start_at, to: stop, newlines: newlines, indent: indent}), edits) done
+done
+
+weight_of = program(stack) do
+  match stack do
+    [open, ...rest] then open.weight + weight_of(rest)
+    [] then 0
+  done
+done
+
+# Is a weighted block already open on this line? Its contents indent once.
+opened_on = program(stack, line) do
+  match stack do
+    [open, ...rest] then
+      if open.line != line then false
+      else if open.weight > 0 then true
+      else opened_on(rest, line) done done
+    [] then false
+  done
+done
+
+nobody = {kind: 0 - 1, weight: 0, line: 0, col: 0, chain: false, inline: false}
+
+# The innermost block that is not an `else if` link: the one whose branches a
+# `then` or `else` belongs to.
+branching = program(stack) do
+  match stack do
+    [open, ...rest] then if open.chain then branching(rest) else open done
+    [] then nobody
+  done
+done
+
+# The stack with the `if` on top marked as having its `then` on the line of the
+# `if`, which tells an `if` whose head is one line from one whose head runs on.
+mark_then = program(stack, line) do
+  match stack do
+    [open, ...rest] then
+      if open.kind == if_block and open.line == line
+        then Link({kind: open.kind, weight: open.weight, line: open.line, col: open.col, chain: open.chain, inline: true}, rest)
+        else stack done
+    [] then stack
+  done
+done
+
+# The stack without the body of a branch that a new branch, or the end of the
+# block, closes.
+leave_body = program(stack) do
+  match stack do
+    [open, ...rest] then if open.kind == body_block then rest else stack done
+    [] then stack
+  done
+done
+
+# The stack without the block that this closing token ends.
+pop = program(text, token, stack) do
+  match leave_body(stack) do
+    [open, ...rest] then
+      if is_keyword(text, token, "done")
+        then (if open.kind != bracket_block then rest else leave_body(stack) done)
+        else (if open.kind == bracket_block then rest else leave_body(stack) done) done
+    [] then []
+  done
+done
+
+# The stack as the closing tokens that start the line leave it.
+leading_pop = program(text, tokens, stack) do
+  match tokens do
+    [token, ...rest] then
+      if closes(text, token) then
+        popped = pop(text, token, stack)
+        match rest do
+          [next, ...more] then
+            if count_breaks(text, token.b, next.a, 0) > 0 then popped else leading_pop(text, rest, popped) done
+          [] then popped
+        done
+      else stack done
+    [] then stack
+  done
+done
+
+block_kind = program(text, token) do
+  if is_keyword(text, token, "do") then do_block
+  else if is_keyword(text, token, "if") then if_block
+  else if opens_bracket(text, token) then bracket_block
+  else 0 - 1 done done done
+done
+
+# Does the line that starts at this token begin a `match` arm? Its first `then`
+# comes before any `if`.
+starts_arm = program(text, tokens) do
+  match tokens do
+    [token, ...rest] then
+      if is_keyword(text, token, "then") then true
+      else if is_keyword(text, token, "if") then false
+      else
+        match rest do
+          [next, ...more] then count_breaks(text, token.b, next.a, 0) == 0 and starts_arm(text, rest)
+          [] then false
+        done
+      done done
+    [] then false
+  done
+done
+
+# Does a break follow this token?
+ends_line = program(text, token, rest) do
+  match rest do
+    [next, ...more] then count_breaks(text, token.b, next.a, 0) > 0
+    [] then false
+  done
+done
+
+# The stack after a `then` or an `else`, which sits on `line`. A branch whose
+# body starts on the next line opens a body, unless it belongs to an `if` that
+# is written on one line, whose body is indented by the `if` itself.
+branch = program(text, token, stack, line, rest) do
+  left = leave_body(stack)
+  marked = if is_keyword(text, token, "then") then mark_then(left, line) else left done
+  inner = branching(marked)
+  nested = inner.kind == do_block or (inner.kind == if_block and not inner.inline)
+  if nested and ends_line(text, token, rest)
+    then Link({kind: body_block, weight: 1, line: line, col: 0, chain: false, inline: false}, marked)
+    else marked done
+done
+
+# The stack after this token, which sits on `line` in a line indented by `col`.
+# An `if` straight after `else`, on its line, continues a chain and adds no indent of its own.
+advance = program(text, token, rest, stack, line, col, prev_code, joined) do
+  kind = block_kind(text, token)
+  chain = kind == if_block and joined and is_keyword(text, prev_code, "else")
+  weight = if chain or opened_on(stack, line) then 0 else 1 done
+  open = {kind: kind, weight: weight, line: line, col: col, chain: chain, inline: false}
+  if closes(text, token) then pop(text, token, stack)
+  else if kind >= 0 then Link(open, stack)
+  else if is_keyword(text, token, "then") or is_keyword(text, token, "else") then branch(text, token, stack, line, rest)
+  else stack done done done
+done
+
+# Does a line starting with this token continue the expression before it?
+continues = program(text, token, prev_code) do
+  if token.kind == operator then not is_text(text, token, "-") or ends_value(text, prev_code)
+  else is_keyword(text, token, "and") or is_keyword(text, token, "or") or is_punct(text, token, "|") done
+done
+
+# Does a line after this token continue its expression?
+continued = program(text, token) do
+  token.kind == operator or is_keyword(text, token, "and") or is_keyword(text, token, "or")
+    or is_punct(text, token, "=") or is_punct(text, token, "|")
+done
+
+# The spaces that a line starting with `token` is indented by, `stack` being
+# the blocks open at it. An `if` written on one line has its `else` lines up
+# with the line of the `if`; one whose `then` starts a line indents its branches.
+indent_of = program(text, token, tokens, stack, prev_code) do
+  branches = is_keyword(text, token, "then") or is_keyword(text, token, "else")
+  shown = if branches or starts_arm(text, tokens) then leave_body(stack) else stack done
+  inner = branching(shown)
+  more = if continues(text, token, prev_code) or continued(text, prev_code) then indent_width else 0 done
+  if branches and inner.kind == if_block and inner.inline then inner.col
+  else indent_width * weight_of(shown) + more done
+done
+
+# How the gap between `before` and `token` on one line is spaced. `earlier` is
+# the token before `before`, which says whether a `-` is a sign.
+spacing = program(text, earlier, before, token) do
+  if token.kind == comment then one
+  else if is_text(text, before, "start") and is_text(text, token, "at") and before.kind == name and token.kind == name then leave
+  else if opens_bracket(text, before) then none
+  else if closes_bracket(text, token) then none
+  else if is_punct(text, token, ",") or is_punct(text, token, ";") then none
+  else if is_punct(text, token, ":") then
+    if before.kind == name or before.kind == string or before.kind == number or before.kind == literal or closes_bracket(text, before)
+      then none
+      else keep done
+  else if is_punct(text, before, ":") or is_punct(text, before, ",") or is_punct(text, before, ";") then one
+  else if is_punct(text, before, "...") then
+    if token.kind == name or opens_bracket(text, token) then none else keep done
+  else if is_punct(text, before, ".") then
+    if token.kind == name then none else keep done
+  else if is_punct(text, token, "(") then
+    if (before.kind == name and not is_contextual(text, before)) or opens_function(text, before)
+        or is_punct(text, before, ")") or is_punct(text, before, "]")
+      then none
+      else one done
+  else if is_punct(text, token, ".") then
+    if before.kind == name or closes_bracket(text, before) then none else keep done
+  else if is_operator(text, before, "::") or is_operator(text, token, "::") then keep
+  else if is_operator(text, before, "-") and not ends_value(text, earlier) then none
+  else one done done done done done done done done done done done done done
+done
+
+# Are the bytes from p to end all spaces?
+only_spaces = program(text, p, end) do
+  if p >= end then true else at(text, p) == 32 and only_spaces(text, p + 1, end) done
+done
+
+rest_of = program(tokens) do
+  match tokens do
+    [token, ...rest] then rest
+    [] then []
+  done
+done
+
+# One edit for the gap before `token`, and the state for the next token.
+step = program(text, token, tokens, state) do
+  breaks = count_breaks(text, state.before.b, token.a, 0)
+  first = state.before.kind == start
+  line = state.line + breaks
+  at_start = first or breaks > 0
+  stack = if at_start then leading_pop(text, tokens, state.stack) else state.stack done
+  tight = opens_bracket(text, state.before) or is_keyword(text, state.before, "do") or closes(text, token)
+  newlines = if tight or breaks == 1 then 1 else 2 done
+  width = spacing(text, state.earlier, state.before, token)
+  indent = if first then 0 else if at_start then indent_of(text, token, tokens, stack, state.prev_code) else state.indent done done
+  gap = if width == keep then (if token.a > state.before.b then one else none done) else width done
+  trailing = if only_spaces(text, state.before.b, token.a) and token.a > state.before.b then token.a - state.before.b else one done
+  edits =
+    if first then mend(text, 0, token.a, 0, 0, state.edits)
+    else if at_start then mend(text, state.before.b, token.a, newlines, indent, state.edits)
+    else if token.kind == comment then mend(text, state.before.b, token.a, 0, trailing, state.edits)
+    else if width == leave then state.edits
+    else mend(text, state.before.b, token.a, 0, gap, state.edits) done done done done
+  {
+    stack: advance(text, token, rest_of(tokens), state.stack, line, indent, state.prev_code, breaks == 0),
+    line: line,
+    indent: indent,
+    earlier: state.before,
+    before: token,
+    prev_code: if token.kind == comment then state.prev_code else token done,
+    edits: edits
+  }
+done
+
+# The edits once every token is laid out; the text ends in one line break.
+finish = program(text, state) do
+  size = byte_length(text)
+  if state.before.kind == start then (if size > 0 then [Edit({from: 0, to: size, newlines: 0, indent: 0})] else [] done)
+  else reverse(mend(text, state.before.b, size, 1, 0, state.edits)) done
+done
+
+layout = program(text, tokens, state) do
+  match tokens do
+    [token, ...rest] then layout(text, rest, step(text, token, tokens, state))
+    [] then finish(text, state)
+  done
+done
+
+format = program(text) do
+  tokens = lex(text, 0, [])
+  nowhere = {kind: start, a: 0, b: 0}
+  if has_unknown(tokens) then []
+  else layout(text, tokens, {stack: [], line: 0, indent: 0, earlier: nowhere, before: nowhere, prev_code: nowhere, edits: []}) done
+done
+
+init = {edits: []}
+
+update = program(model, event) do
+  match event do
+    Edited(edit) then {edits: format(edit.text)}
+    else model
+  done
+done
+
+draw = program(model) do model.edits done

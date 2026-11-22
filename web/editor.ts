@@ -4,7 +4,7 @@
 // compile.ts, and the decorations in `tokenDecorations`.
 
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { Compartment, RangeSetBuilder, StateEffect, type Extension } from "@codemirror/state";
+import { Compartment, RangeSetBuilder, StateEffect, type Extension, type TransactionSpec } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -19,6 +19,7 @@ import { linter, lintGutter } from "@codemirror/lint";
 import { autocompletion } from "@codemirror/autocomplete";
 import { check, createCompleter, createTokenizer, type Host, type Token } from "./compile.ts";
 import { goatCompletions } from "./completion.ts";
+import type { Formatter, TextEdit } from "./formatter.ts";
 import type { TokenSource } from "./highlighter.ts";
 import { lintDiagnostics } from "./lint.ts";
 
@@ -80,6 +81,40 @@ function sourcedHighlighting(source: TokenSource): Extension {
   );
 }
 
+// The formatter's edits as one transaction, so one undo takes the whole
+// formatting back and the cursor rides along with the text it was in.
+export function formatTransaction(edits: TextEdit[]): TransactionSpec {
+  return { changes: edits, userEvent: "input.format" };
+}
+
+// Formats the document, unless there is nothing to change or the text moved on
+// while the formatter was working. True if it changed the text.
+export async function formatDocument(view: EditorView, formatter: Formatter): Promise<boolean> {
+  const text = view.state.doc.toString();
+  let edits: TextEdit[];
+  try {
+    edits = await formatter.format(text);
+  } catch {
+    return false;
+  }
+  if (edits.length === 0 || view.state.doc.toString() !== text) return false;
+  view.dispatch(formatTransaction(edits));
+  return true;
+}
+
+function formatting(formatter: Formatter): Extension {
+  return keymap.of([
+    {
+      key: "Shift-Alt-f",
+      preventDefault: true,
+      run: (view) => {
+        void formatDocument(view, formatter);
+        return true;
+      },
+    },
+  ]);
+}
+
 function liveChecking(compiler: WebAssembly.Module, host: () => Host): Extension {
   const source = async (view: EditorView) => {
     const text = view.state.doc.toString();
@@ -130,17 +165,22 @@ export interface GoatEditor {
   text(): string;
   setText(text: string): void;
   onChange(listener: () => void): void;
+  // Lays the text out in the house style, as one undoable change. False if
+  // there was nothing to change or no formatter could answer.
+  format(): Promise<boolean>;
 }
 
 // Without a `compiler` the editor still edits; it just neither colors, checks nor completes.
 // `host` names the vocabulary the buffer is colored, checked and completed against, asked each time.
 // `tokens` replaces the built-in tokenizer as the source of the colors.
+// `formatter` answers the Format command and its shortcut, Shift-Alt-F.
 export function mountEditor(
   parent: HTMLElement,
   doc: string,
   compiler?: WebAssembly.Module,
   host: () => Host = () => "turtle",
   tokens?: TokenSource,
+  formatter?: Formatter,
 ): GoatEditor {
   const scheme = matchMedia("(prefers-color-scheme: dark)");
   const darkness = new Compartment();
@@ -165,6 +205,7 @@ export function mountEditor(
         autocorrect: "off",
         autocapitalize: "off",
       }),
+      ...(formatter ? [formatting(formatter)] : []),
       ...(compiler ? withCompiler(compiler, host, tokens) : []),
     ],
   });
@@ -175,5 +216,6 @@ export function mountEditor(
     text: () => view.state.doc.toString(),
     onChange: (listener) => void listeners.push(listener),
     setText: (text) => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } }),
+    format: () => (formatter ? formatDocument(view, formatter) : Promise.resolve(false)),
   };
 }
