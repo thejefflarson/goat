@@ -94,7 +94,10 @@ What the model leaves out, each checked against `goat check` and `goat run`
 rounding, infinities and NaN (a `Float` is opaque), the `trap()` builtin,
 comparison of `Unit` (phase 6), and the `Eq` and `Ordered` constraints (a
 comparison applies at concrete types; a generic comparison waits for those
-sorts). `+ - *` and numerals are generic over the sorts `Numeric` and
+sorts). One gap is accepted: `5 // 0` typed at `Float` (two bare numerals the
+checker settles as `Float`, as in `f(5 // 0)` for `f = program(x) do x + 1.5 done`)
+steps as two `Int`s in the calculus, so it traps with `Div_by_zero`, while the
+compiled program divides decimals and gives `inf`. `+ - *` and numerals are generic over the sorts `Numeric` and
 `Literal`, below. The inference algorithm (`GoatInfer.v`) covers the
 whole of phase 1: `Unit`, strings, Float values, `if`, `float(e)` and the
 operators, besides functions, bindings and records, and it infers the generic

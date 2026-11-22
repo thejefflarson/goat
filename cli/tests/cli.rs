@@ -123,7 +123,7 @@ fn runs_the_whole_numbers_example() {
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        "3\n2\n-4\n3\n3\n-3\n-2\n-2\n0.5\n4\n50\n"
+        "3\n2\n-4\n3\n3\n0.5\n3\n-3\n-2\n-2\n0.5\n4\n50\n"
     );
 }
 
