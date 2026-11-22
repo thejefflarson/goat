@@ -273,6 +273,15 @@ Qed.
 Definition starts_call (ts : list tree) : Prop :=
   match ts with Node R_call _ :: _ => True | _ => False end.
 
+(* A receiver that is a name or a path of field accesses is repeated by a dot
+   call; any other receiver is bound once to a hidden name (ADR 0031). *)
+Fixpoint is_path (e : exp) : bool :=
+  match e with
+  | e_fvar_f _ => true
+  | e_proj a _ => is_path a
+  | _ => false
+  end.
+
 Fixpoint index_of (l : string) (tbl : list string) : nat :=
   match tbl with
   | [] => 0
@@ -537,10 +546,20 @@ Section Denotation.
     | DP_take : forall e l rest e',
         Den_posts (e_proj e (lab l)) rest e' ->
         Den_posts e (Node R_take [sym "::"; ident l] :: rest) e'
-    | DP_dot_call : forall x l args es rest e',
+    | DP_dot_path : forall e l args es rest e',
+        is_path e = true ->
         Den_args args es ->
-        Den_posts (apps (e_proj (e_fvar_f x) (lab l)) (e_fvar_f x :: es)) rest e' ->
-        Den_posts (e_fvar_f x)
+        Den_posts (apps (e_proj e (lab l)) (e :: es)) rest e' ->
+        Den_posts e
+          (Node R_access [sym "."; ident l]
+             :: Node R_call [sym "("; Node R_arguments args; sym ")"] :: rest) e'
+    | DP_dot_bind : forall e s l args es rest e',
+        is_path e = false ->
+        Forall (fun a => ~ AtomSetImpl.In s (fv_exp a)) es ->
+        Den_args args es ->
+        Den_posts (e_let e (close_exp s (apps (e_proj (e_fvar_f s) (lab l))
+                                             (e_fvar_f s :: es)))) rest e' ->
+        Den_posts e
           (Node R_access [sym "."; ident l]
              :: Node R_call [sym "("; Node R_arguments args; sym ")"] :: rest) e'
     | DP_call : forall e args es rest e',
@@ -681,13 +700,22 @@ Proof.
     intros e l rest e' Hrest IHrest Hlc.
     assert (Hproj : lc (e_proj e (lab tbl l))) by exact Hlc.
     exact (IHrest Hproj).
-  - (* posts, dot call: the receiver is a variable, passed first *)
-    intros x l args es rest e' Hargs IHargs Hrest IHrest Hlc.
-    assert (Hrecv : Forall lc (e_fvar_f x :: es))
-      by (apply Forall_cons; [ exact I | exact IHargs ]).
-    assert (Happs : lc (apps (e_proj (e_fvar_f x) (lab tbl l)) (e_fvar_f x :: es)))
-      by (apply lc_apps; [ exact I | exact Hrecv ]).
+  - (* posts, dot call on a path: the receiver is repeated and passed first *)
+    intros e l args es rest e' Hpath Hargs IHargs Hrest IHrest Hlc.
+    assert (Hrecv : Forall lc (e :: es)) by (apply Forall_cons; assumption).
+    assert (Happs : lc (apps (e_proj e (lab tbl l)) (e :: es)))
+      by (apply lc_apps; [ exact Hlc | exact Hrecv ]).
     exact (IHrest Happs).
+  - (* posts, dot call on another receiver: bound once to a hidden name *)
+    intros e s l args es rest e' Hnotpath Hfresh Hargs IHargs Hrest IHrest Hlc.
+    assert (Hrecv : Forall lc (e_fvar_f s :: es))
+      by (apply Forall_cons; [ exact I | exact IHargs ]).
+    assert (Happs : lc (apps (e_proj (e_fvar_f s) (lab tbl l)) (e_fvar_f s :: es)))
+      by (apply lc_apps; [ exact I | exact Hrecv ]).
+    assert (Hclose : lc_at 1 (close_exp s (apps (e_proj (e_fvar_f s) (lab tbl l))
+                                              (e_fvar_f s :: es))))
+      by (apply (proj1 lc_close_mut); exact Happs).
+    exact (IHrest (conj Hlc Hclose)).
   - (* posts, call *)
     intros e args es rest e' Hargs IHargs Hrest IHrest Hlc.
     assert (Happs : lc (apps e es)) by (apply lc_apps; assumption).

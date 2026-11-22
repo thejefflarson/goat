@@ -117,7 +117,7 @@ waits for the `Eq` and `Ordered` sorts.
 The parser fragment widens in step: a string, a `Float` literal (a `TDec` token
 that denotes the opaque `e_dec`), a conditional with or without an `else` (the
 missing branch is `e_unit`), and one operator between two chains. `GoatShape.v` counts operator nodes
-(`count_ops`) and `Complete` allows at most one, with no dot call;
+(`count_ops`) and `Complete` allows at most one;
 `GoatDen.v` reads `c1 o c2` as `e_bin` (`Den_math`); the printer parenthesises
 the operand of an operator when it is a binding or another operation.
 
@@ -744,6 +744,17 @@ Boundary:
   `core_roundtrip.rs` checks the lowering of a rest pattern directly instead.
   Label numbering for a destructure follows text order (pattern names first);
   nothing in T3 depends on it, because the printer never writes one.
+- **Dot calls and `::`.** `r.f(a)` denotes `(r.f)(r, a)` when `r` is a name or a
+  path of field accesses (`is_path`: the receiver is repeated, `DP_dot_path`), and
+  `let s = r in (s.f)(s, a)` for any other receiver (`DP_dot_bind`), where `s` is
+  a variable no argument uses, as lowering's fresh `@receiver` symbol is. `r::f(a)`
+  is `(r.f)(a)` (`DP_take`, `DP_call`). A call straight after an access is always
+  a dot call, on any receiver and in an expression with an operator. T1 covers all
+  of it (`posts_den`). T3 needs nothing new: the printer parenthesises a
+  projection callee, so it never writes a dot call, and a printed chain parses
+  through the ordinary call rule. `core_roundtrip.rs` checks the lowering of a
+  path receiver, a computed receiver and a take directly, and its generator
+  writes `p.l(a)` for path receivers in the dot style.
 - **Core fragment only.** The rules of `grammar/goat.peg` that `goat_ln.ott` has
   a production for (`core_rule` in `GoatShape.v`, checked against
   `parser/tests/rule_map.rs` by a Rust test), minus the shapes ADR 0030 excludes

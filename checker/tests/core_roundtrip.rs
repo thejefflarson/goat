@@ -2,11 +2,12 @@
 //! source, parse and lower it with the real front end, and read the result
 //! back as the same term. The terms cover strings, `Float` literals, `if` with
 //! and without an `else`, one operator between two operands, and recursive
-//! groups of functions, and the spread `{...(base), l: v}`. A fixed-seed
+//! groups of functions, the spread `{...(base), l: v}`, and a dot call on a name
+//! or a path of field accesses. A fixed-seed
 //! generator keeps CI deterministic.
 
 use goat_checker::hir::{BinOp, Expr, ExprKind, Symbol};
-use goat_checker::lower::lower;
+use goat_checker::lower::{RECEIVER_NAME, lower};
 
 const CASES: usize = 10_000;
 const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -96,7 +97,8 @@ enum Style {
     Curried,
     /// `f(a, b)` and `program(x, y) do e done`.
     Grouped,
-    /// `Grouped`, writing `v.l(a)` for `(v.l)(v, a)`.
+    /// `Grouped`, writing `p.l(a)` for `(p.l)(p, a)` when `p` is a name or a
+    /// path of field accesses.
     Dot,
 }
 
@@ -132,6 +134,15 @@ fn needs_parens_as_operator_operand(term: &Term) -> bool {
 /// member of the block's recursive group (ADR 0003) instead of a plain `let`.
 fn needs_parens_as_value(term: &Term) -> bool {
     matches!(term, Term::Let(..) | Term::Letrec(..) | Term::Abs(..))
+}
+
+/// A name or a path of field accesses: the receivers a dot call repeats.
+fn is_path(term: &Term) -> bool {
+    match term {
+        Term::Var(_) => true,
+        Term::Proj(base, _) => is_path(base),
+        _ => false,
+    }
 }
 
 /// A projection in callee position is parenthesised: `r.f(x)` passes `r`.
@@ -186,7 +197,9 @@ fn print(term: &Term, style: Style) -> String {
             let (callee, args) = application_group(term, style);
             if let (Style::Dot, Term::Proj(base, label), Some((first, rest))) =
                 (style, callee, args.split_first())
-                && matches!((&**base, first), (Term::Var(v), Term::Var(w)) if v == w)
+                && is_path(base)
+                && **base == **first
+                && !rest.is_empty()
             {
                 let rest: Vec<String> = rest.iter().map(|arg| print(arg, style)).collect();
                 return format!(
@@ -300,6 +313,19 @@ impl Gen {
         }
     }
 
+    /// A name in scope with up to two field accesses after it, or a number
+    /// when nothing is in scope.
+    fn path(&mut self) -> Term {
+        if self.scope.is_empty() {
+            return Term::Num(self.rng.below(1000) as u32);
+        }
+        let mut path = Term::Var(self.scope[self.rng.below(self.scope.len())].clone());
+        for _ in 0..self.rng.below(3) {
+            path = Term::Proj(Box::new(path), self.rng.next() as u32 % LABELS);
+        }
+        path
+    }
+
     fn value_name(&mut self) -> String {
         format!("v{}", self.rng.below(VALUE_NAMES))
     }
@@ -309,7 +335,7 @@ impl Gen {
             return self.leaf();
         }
         let depth = depth + 1;
-        match self.rng.below(15) {
+        match self.rng.below(16) {
             0..=2 => self.leaf(),
             3 | 4 => {
                 let name = self.value_name();
@@ -333,6 +359,13 @@ impl Gen {
             9 => {
                 let base = self.term(depth);
                 Term::Proj(Box::new(base), self.rng.next() as u32 % LABELS)
+            }
+            15 => {
+                let receiver = self.path();
+                let method =
+                    Term::Proj(Box::new(receiver.clone()), self.rng.next() as u32 % LABELS);
+                let called = Term::App(Box::new(method), Box::new(receiver));
+                Term::App(Box::new(called), Box::new(self.term(depth)))
             }
             13 => {
                 let base = self.term(depth);
@@ -680,6 +713,65 @@ fn a_dot_call_reads_back_as_the_application_that_passes_the_record() {
     assert_eq!(lower_to_term(&print(&stored, Style::Dot)), stored);
 }
 
+#[test]
+fn a_dot_call_repeats_a_path_receiver_and_binds_any_other_once() {
+    let var = |name: &str| Term::Var(name.to_string());
+    let proj = |base: Term, label: u32| Term::Proj(Box::new(base), label);
+    let app = |f: Term, a: Term| Term::App(Box::new(f), Box::new(a));
+    let id = || Term::Abs("s".into(), Box::new(var("s")));
+    let bind = |name: &str, value: Term, body: Term| {
+        Term::Let(name.into(), Box::new(value), Box::new(body))
+    };
+
+    let on_path = bind(
+        "x",
+        Term::Rec(vec![(0, Term::Rec(vec![(1, id())]))]),
+        app(
+            app(proj(proj(var("x"), 0), 1), proj(var("x"), 0)),
+            Term::Num(1),
+        ),
+    );
+    assert_eq!(
+        lower_to_term("x = {lab0: {lab1: program(s) do s done}}; x.lab0.lab1(1)"),
+        on_path
+    );
+
+    let hidden = || var(RECEIVER_NAME);
+    let on_record = bind(
+        RECEIVER_NAME,
+        Term::Rec(vec![(0, id())]),
+        app(app(proj(hidden(), 0), hidden()), Term::Num(1)),
+    );
+    assert_eq!(
+        lower_to_term("{lab0: program(s) do s done}.lab0(1)"),
+        on_record
+    );
+
+    let on_call = bind(
+        "f",
+        Term::Abs("a".into(), Box::new(var("a"))),
+        bind(
+            RECEIVER_NAME,
+            app(var("f"), Term::Num(1)),
+            app(app(proj(hidden(), 0), hidden()), Term::Num(2)),
+        ),
+    );
+    assert_eq!(
+        lower_to_term("f = program(a) do a done; f(1).lab0(2)"),
+        on_call
+    );
+
+    let taken = bind(
+        "x",
+        Term::Rec(vec![(0, id())]),
+        app(proj(var("x"), 0), Term::Num(1)),
+    );
+    assert_eq!(
+        lower_to_term("x = {lab0: program(s) do s done}; x::lab0(1)"),
+        taken
+    );
+}
+
 /// The terms the Coq printer is checked against (proofs/GoatPrinterTable.v).
 const TABLE_CASES: usize = 200;
 const TABLE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../proofs/GoatPrinterTable.v");
@@ -969,6 +1061,7 @@ fn the_generated_terms_use_every_operator_string_and_conditional() {
         groups: usize,
         members: usize,
         spreads: usize,
+        dot_calls: usize,
     }
     fn visit(term: &Term, seen: &mut Seen) {
         match term {
@@ -1003,6 +1096,11 @@ fn the_generated_terms_use_every_operator_string_and_conditional() {
             }
             Term::Abs(_, body) | Term::Proj(body, _) => visit(body, seen),
             Term::App(a, b) | Term::Let(_, a, b) => {
+                if let (Term::App(callee, first), Term::App(..)) = (&**a, term)
+                    && matches!(&**callee, Term::Proj(base, _) if is_path(base) && **base == **first)
+                {
+                    seen.dot_calls += 1;
+                }
                 visit(a, seen);
                 visit(b, seen);
             }
@@ -1039,6 +1137,7 @@ fn the_generated_terms_use_every_operator_string_and_conditional() {
     assert!(seen.groups > 100, "{} groups", seen.groups);
     assert!(seen.members > seen.groups, "{} members", seen.members);
     assert!(seen.spreads > 100, "{} spreads", seen.spreads);
+    assert!(seen.dot_calls > 100, "{} dot calls", seen.dot_calls);
 }
 
 /// A multi-field spread is the nest of single ones, the first field innermost.

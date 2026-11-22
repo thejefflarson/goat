@@ -148,23 +148,23 @@ Proof.
     [ apply Forall_nil | apply Forall_cons | apply Cp_leaf | apply Cp_node ];
     simpl; try exact I.
   - (* the program has an expression *) eexists. in_list.
-  - (* the block does not end in a binding, and has no dot call; its one
+  - (* the block does not end in a binding; its one
        function binding leads *)
     split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-         | split; [ exact I | split; [ left; reflexivity | exact I ] ] ].
-  - (* the bound value has no dot call and no operator *)
-    split; [ exact I | left; reflexivity ].
+         | split; [ left; reflexivity | exact I ] ].
+  - (* the bound value has no operator *)
+    left; reflexivity.
   - (* the function has parameters and a body *)
     split; eexists; in_list.
   - (* the parameter is a name, not a record pattern *)
     intros c Hc; discriminate Hc.
   - (* the body is a single name *)
     split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-         | split; [ exact I | split; [ left; reflexivity | exact I ] ] ].
+         | split; [ left; reflexivity | exact I ] ].
   - (* the call has arguments *) eexists. in_list.
   - (* the argument is a single number *)
     split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-         | split; [ exact I | split; [ left; reflexivity | exact I ] ] ].
+         | split; [ left; reflexivity | exact I ] ].
 Qed.
 
 (* T1 applies to a concrete program: f = program(y) do y done  f(1). *)
@@ -185,7 +185,40 @@ Example dot_call_passes_the_receiver : forall var_of x,
     (e_app (e_app (e_proj (e_fvar_f x) 0) (e_fvar_f x)) (e_num 1)).
 Proof.
   intros var_of x.
-  eapply DP_dot_call with (es := [e_num 1]).
+  eapply DP_dot_path with (es := [e_num 1]).
+  - reflexivity.
+  - apply DA_last. apply D_expr. apply DB_chain. apply DM_chain.
+    eapply DC_head; [ apply D_num | apply DP_nil ].
+  - apply DP_nil.
+Qed.
+
+(* A path receiver is repeated too: x.a.f(1) is (x.a.f)(x.a, 1). *)
+Example dot_call_repeats_a_path : forall var_of x,
+  Den_posts var_of ["a"; "f"] (e_proj (e_fvar_f x) 0)
+    [Node R_access [sym "."; ident "f"];
+     Node R_call [sym "("; Node R_arguments [Node R_expr [Node R_number [Leaf (TNum 1)]]]; sym ")"]]
+    (e_app (e_app (e_proj (e_proj (e_fvar_f x) 0) 1) (e_proj (e_fvar_f x) 0)) (e_num 1)).
+Proof.
+  intros var_of x.
+  eapply DP_dot_path with (es := [e_num 1]).
+  - reflexivity.
+  - apply DA_last. apply D_expr. apply DB_chain. apply DM_chain.
+    eapply DC_head; [ apply D_num | apply DP_nil ].
+  - apply DP_nil.
+Qed.
+
+(* Any other receiver is evaluated once: 7.f(1) is let s = 7 in (s.f)(s, 1). *)
+Example dot_call_binds_a_computed_receiver : forall var_of s,
+  Den_posts var_of ["f"] (e_num 7)
+    [Node R_access [sym "."; ident "f"];
+     Node R_call [sym "("; Node R_arguments [Node R_expr [Node R_number [Leaf (TNum 1)]]]; sym ")"]]
+    (e_let (e_num 7)
+       (close_exp s (e_app (e_app (e_proj (e_fvar_f s) 0) (e_fvar_f s)) (e_num 1)))).
+Proof.
+  intros var_of s.
+  eapply DP_dot_bind with (s := s) (es := [e_num 1]).
+  - reflexivity.
+  - apply Forall_cons; [ simpl; fsetdec | apply Forall_nil ].
   - apply DA_last. apply D_expr. apply DB_chain. apply DM_chain.
     eapply DC_head; [ apply D_num | apply DP_nil ].
   - apply DP_nil.
@@ -244,10 +277,9 @@ Proof.
   all: first
     [ solve [ eexists; in_list ]
     | solve [ split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-                     | split; [ exact I | split;
-                                  [ first [ left; reflexivity
-                                          | (right; split; [ reflexivity | exact I ]) ]
-                                  | exact I ] ] ] ]
+                     | split; [ first [ left; reflexivity | right; reflexivity ]
+                              | exact I ] ] ]
+    | solve [ first [ left; reflexivity | right; reflexivity ] ]
     | solve [ in_list ] ].
 Qed.
 
@@ -332,10 +364,9 @@ Proof.
   all: first
     [ solve [ eexists; in_list ]
     | solve [ split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-                     | split; [ exact I | split;
-                                  [ first [ left; reflexivity
-                                          | (right; split; [ reflexivity | exact I ]) ]
-                                  | exact I ] ] ] ]
+                     | split; [ first [ left; reflexivity | right; reflexivity ]
+                              | exact I ] ] ]
+    | solve [ first [ left; reflexivity | right; reflexivity ] ]
     | solve [ split; [ exact I | left; reflexivity ] ]
     | solve [ split; eexists; in_list ]
     | solve [ in_list ]
