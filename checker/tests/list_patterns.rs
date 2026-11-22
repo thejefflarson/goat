@@ -60,7 +60,7 @@ fn a_literal_of_the_wrong_length_says_how_long_it_is() {
     );
     assert_eq!(
         blame("[a, b, ...r] = [1] a").1,
-        "this list has 1 items but the pattern takes at least 2"
+        "this list has 1 item but the pattern takes at least 2"
     );
 }
 

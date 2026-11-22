@@ -1740,7 +1740,8 @@ impl Lower {
                     } else {
                         takes.to_string()
                     };
-                    format!("this list has {len} items but the pattern takes {takes}")
+                    let items = if len == 1 { "item" } else { "items" };
+                    format!("this list has {len} {items} but the pattern takes {takes}")
                 }
                 None => match &value.kind {
                     ExprKind::Var { name, .. } => take_apart_with_match(name),
