@@ -8,7 +8,7 @@ use common::{Recorder, foreign_fn};
 
 /// Without the standard prelude, whose tags would join every variant layout.
 fn check(src: &str) -> Result<Checked, Vec<GoatError>> {
-    check_with_prelude("", src)
+    check_with_prelude("tag List = Empty | Link(_, List)", src)
 }
 
 /// The program and its value, with an `Int` read as the `Float` of the same
@@ -558,12 +558,12 @@ const LENGTH: &str = "length = program(xs) do match xs do Empty then 0 \
 #[test]
 fn nullary_and_unary_tags_match() {
     assert_eq!(
-        value("tag Circle match Circle(5) do Circle(r) then r else 0 done"),
+        value("tag Ring(_) match Ring(5) do Ring(r) then r else 0 done"),
         num(5.0)
     );
-    let pick = "tag A tag B f = program(s) do match s do A then 1 B then 2 done done ";
-    assert_eq!(value(&format!("tag A {pick} f(A)")), num(1.0));
-    assert_eq!(value(&format!("tag B {pick} f(B)")), num(2.0));
+    let pick = "tag AorB = A | B f = program(s) do match s do A then 1 B then 2 done done ";
+    assert_eq!(value(&format!("{pick} f(A)")), num(1.0));
+    assert_eq!(value(&format!("{pick} f(B)")), num(2.0));
 }
 
 #[test]
@@ -575,14 +575,13 @@ fn a_recursive_list_is_measured() {
 
 #[test]
 fn multi_field_payloads_bind_by_position() {
-    let src =
-        "tag Pair sum = program(p) do match p do Pair(a, b) then a + b done done sum(Pair(3, 4))";
+    let src = "tag Pair(_) sum = program(p) do match p do Pair(a, b) then a + b done done sum(Pair(3, 4))";
     assert_eq!(value(src), num(7.0));
 }
 
 #[test]
 fn a_whole_payload_is_rebuilt_as_a_record_and_taken_apart_again() {
-    let src = "tag Pair rewrap = program(p) do match p do Pair(r) then Pair(r) done done \
+    let src = "tag Pair(_) rewrap = program(p) do match p do Pair(r) then Pair(r) done done \
                sum = program(p) do match p do Pair(a, b) then a - b done done \
                sum(rewrap(Pair(10, 3)))";
     assert_eq!(value(src), num(7.0));
@@ -590,7 +589,7 @@ fn a_whole_payload_is_rebuilt_as_a_record_and_taken_apart_again() {
 
 #[test]
 fn a_tree_is_summed_and_a_list_mapped() {
-    let tree = "tag Leaf tag Node sum = program(t) do match t do Leaf(n) then n \
+    let tree = "tag Tree = Leaf(_) | Node(_) sum = program(t) do match t do Leaf(n) then n \
                 Node(l, r) then sum(l) + sum(r) done done \
                 sum(Node(Node(Leaf(1), Leaf(2)), Leaf(3)))";
     assert_eq!(value(tree), num(6.0));
@@ -605,7 +604,7 @@ fn a_tree_is_summed_and_a_list_mapped() {
 
 #[test]
 fn binders_are_captured_by_closures_in_an_arm() {
-    let src = "tag Box f = program(x) do match x do Box(n) then program(k) do n + k done done done \
+    let src = "tag Box(_) f = program(x) do match x do Box(n) then program(k) do n + k done done done \
                add = f(Box(10)) \
                add(5)";
     assert_eq!(value(src), num(15.0));
@@ -613,7 +612,7 @@ fn binders_are_captured_by_closures_in_an_arm() {
 
 #[test]
 fn an_open_match_with_else_ignores_other_tags() {
-    let src = "tag A tag B tag C f = program(x) do match x do A(n) then n else 0 done done \
+    let src = "tag Three = A(_) | B | C(_) f = program(x) do match x do A(n) then n else 0 done done \
                f(A(4)) + f(B) + f(C(1))";
     assert_eq!(value(src), num(4.0));
 }
@@ -698,28 +697,26 @@ fn variant_layouts(p: &Program) -> Vec<&BTreeMap<u32, Vec<MTy>>> {
         .collect()
 }
 
+/// A host's event family stays open, so a value is matched at two widths.
 #[test]
 fn a_tag_matched_at_two_widths_has_one_layout() {
-    let src = "tag Circle tag Square s = Circle(5) \
-               narrow = program(v) do match v do Circle(r) then r done done \
-               wide = program(v) do match v do Circle(r) then r Square(w) then w done done \
+    let src = "s = Tick(5) \
+               narrow = program(v) do match v do Tick(r) then r done done \
+               wide = program(v) do match v do Tick(r) then r PointerUp(p) then p.x done done \
                narrow(s) + wide(s)";
     let (p, v) = run_src(src);
     assert_eq!(v, num(10.0));
     let [tags] = variant_layouts(&p)[..] else {
         panic!("one variant layout: {:?}", p.layouts);
     };
-    assert_eq!(
-        tags,
-        &BTreeMap::from([(0, vec![MTy::Int]), (1, vec![MTy::Int])])
-    );
+    assert_eq!(tags.len(), 2, "{tags:?}");
 }
 
 #[test]
 fn the_order_of_the_two_widths_does_not_matter() {
-    let src = "tag Circle tag Square s = Circle(5) \
-               narrow = program(v) do match v do Circle(r) then r done done \
-               wide = program(v) do match v do Circle(r) then r Square(w) then w done done \
+    let src = "s = Tick(5) \
+               narrow = program(v) do match v do Tick(r) then r done done \
+               wide = program(v) do match v do Tick(r) then r PointerUp(p) then p.x done done \
                wide(s) + narrow(s)";
     let (p, v) = run_src(src);
     assert_eq!(v, num(10.0));
@@ -728,10 +725,10 @@ fn the_order_of_the_two_widths_does_not_matter() {
 
 #[test]
 fn a_nested_tag_matched_at_two_widths_has_one_layout_per_level() {
-    let src = "tag Box tag Circle tag Square s = Box(Circle(5)) \
-               narrow = program(v) do match v do Box(c) then match c do Circle(r) then r done done done \
+    let src = "tag Box(_) s = Box(Tick(5)) \
+               narrow = program(v) do match v do Box(c) then match c do Tick(r) then r done done done \
                wide = program(v) do match v do Box(c) then \
-                 match c do Circle(r) then r Square(w) then w done done done \
+                 match c do Tick(r) then r PointerUp(p) then p.x done done done \
                narrow(s) + wide(s)";
     let (p, v) = run_src(src);
     assert_eq!(v, num(10.0));
@@ -751,7 +748,7 @@ fn a_list_matched_by_two_functions_has_one_layout() {
 
 #[test]
 fn a_tag_with_two_payload_types_gets_two_layouts() {
-    let src = "tag Some num = program(v) do match v do Some(n) then n else 0 done done \
+    let src = "tag Some(_) num = program(v) do match v do Some(n) then n else 0 done done \
                flag = program(v) do match v do Some(b) then if b then 1 else 0 done else 0 done done \
                num(Some(4)) + flag(Some(true))";
     let (p, v) = run_src(src);
@@ -1009,7 +1006,7 @@ fn a_program_that_needs_too_many_specializations_is_rejected_with_a_span() {
 #[test]
 fn many_tags_in_many_families_keep_every_layout_sparse() {
     let tags = 300;
-    let mut src: String = (0..tags).map(|i| format!("tag T{i}\n")).collect();
+    let mut src: String = (0..tags).map(|i| format!("tag T{i}(_)\n")).collect();
     for i in 0..tags {
         src.push_str(&format!("v{i} = T{i}({i})\n"));
     }

@@ -56,9 +56,6 @@ const FLOAT_FOR_INT: &str =
 /// about thirty of them.
 const MAX_TYPE_TERMS: usize = 8192;
 
-/// How a list item that differs from the ones before it is reported.
-const LIST_CLASH: &str = "a list holds one kind of thing";
-
 /// How deep a type may nest, rows included: a row nests one level per field.
 /// The checker recurses as deep as the type does, so this, not the number of
 /// terms, keeps a type from overflowing the stack.
@@ -424,6 +421,9 @@ struct Inferer {
     subst: Bindings<Ty>,
     row_subst: Bindings<Row>,
     resolved: RefCell<Resolved>,
+    /// The `Rec` binders [`Inferer::resolve`] is inside, whose variables the
+    /// substitution must not touch.
+    shadowed: RefCell<Vec<TypeVar>>,
     env: HashMap<Symbol, Scheme>,
     /// The `env` symbols whose types may still mention a variable that is
     /// neither quantified nor bound, other than those in `lone_vars`, and that
@@ -611,8 +611,8 @@ fn origin_at(row: &Row, label: &str) -> Option<Span> {
     }
 }
 
-/// Record `span` as where the list element in a `Link` payload was written.
-fn mark_element(payload: &mut Ty, span: Span) {
+/// Record `span` as where the item in field `index` of a payload was written.
+fn mark_element(payload: &mut Ty, index: usize, span: Span) {
     let Ty::Record(row) = payload else {
         return;
     };
@@ -621,7 +621,7 @@ fn mark_element(payload: &mut Ty, span: Span) {
         label, at, rest, ..
     } = row
     {
-        if label == "0" {
+        if *label == index.to_string() {
             *at = ty::Origin(Some(span));
             return;
         }
@@ -629,9 +629,9 @@ fn mark_element(payload: &mut Ty, span: Span) {
     }
 }
 
-/// Put `element` in place of the list element in a `Link` payload, giving back
-/// the type that was there.
-fn swap_element(payload: &mut Ty, element: Ty) -> Option<Ty> {
+/// Put `element` in place of field `index` of a payload, giving back the type
+/// that was there.
+fn swap_element(payload: &mut Ty, index: usize, element: Ty) -> Option<Ty> {
     let Ty::Record(row) = payload else {
         return None;
     };
@@ -640,7 +640,7 @@ fn swap_element(payload: &mut Ty, element: Ty) -> Option<Ty> {
         label, field, rest, ..
     } = row
     {
-        if label == "0" {
+        if *label == index.to_string() {
             return Some(std::mem::replace(Arc::make_mut(field), element));
         }
         row = Arc::make_mut(rest);
@@ -990,7 +990,7 @@ impl Inferer {
         if let Some(hit) = self.resolved.borrow().vars.get(&var) {
             return hit.clone();
         }
-        let resolved = self.resolve(bound);
+        let resolved = self.unshadowed(|| self.resolve(bound));
         self.resolved
             .borrow_mut()
             .vars
@@ -998,12 +998,21 @@ impl Inferer {
         resolved
     }
 
+    /// Run `f` with no `Rec` binder shadowing: a binding's own type is
+    /// resolved the same wherever the variable is mentioned.
+    fn unshadowed<T>(&self, f: impl FnOnce() -> T) -> T {
+        let outer = std::mem::take(&mut *self.shadowed.borrow_mut());
+        let out = f();
+        *self.shadowed.borrow_mut() = outer;
+        out
+    }
+
     fn resolve_row_bound(&self, var: TypeVar, bound: &Row) -> Row {
         self.refresh_resolved();
         if let Some(hit) = self.resolved.borrow().rows.get(&var) {
             return hit.clone();
         }
-        let resolved = self.resolve_row(bound);
+        let resolved = self.unshadowed(|| self.resolve_row(bound));
         self.resolved
             .borrow_mut()
             .rows
@@ -1053,6 +1062,7 @@ impl Inferer {
     /// Follow the substitution to the type's current best-known form.
     fn resolve(&self, ty: &Ty) -> Ty {
         match ty {
+            Ty::Var(v) if self.shadowed.borrow().contains(v) => Ty::Var(*v),
             Ty::Var(v) => match self.subst.get(v) {
                 Some(t) => self.resolve_bound(*v, t),
                 None => Ty::Var(*v),
@@ -1063,7 +1073,12 @@ impl Inferer {
             ),
             Ty::Record(row) => Ty::Record(self.resolve_row(row)),
             Ty::Variant(row) => Ty::Variant(self.resolve_row(row)),
-            Ty::Rec(binder, body) => Ty::Rec(*binder, self.shared(body)),
+            Ty::Rec(binder, body) => {
+                self.shadowed.borrow_mut().push(*binder);
+                let body = self.shared(body);
+                self.shadowed.borrow_mut().pop();
+                Ty::Rec(*binder, body)
+            }
             other => other.clone(),
         }
     }
@@ -3052,16 +3067,6 @@ impl Inferer {
                     Some(p) => self.infer(p),
                     None => Ty::Unit,
                 };
-                if name == "Link"
-                    && let Some(Expr {
-                        kind: ExprKind::Record { fields },
-                        ..
-                    }) = payload.as_deref()
-                    && let Some((_, element)) = fields.first()
-                {
-                    mark_element(&mut payload_ty, element.span);
-                    self.share_element_slot(&mut payload_ty, element.span);
-                }
                 self.constructed.push((name.clone(), expr.span));
                 if let Some(group) = group {
                     let parts = match payload.as_deref() {
@@ -3069,15 +3074,27 @@ impl Inferer {
                             kind: ExprKind::Record { fields },
                             ..
                         }) if group.params > 0
+                            && !fields.is_empty()
                             && fields
                                 .iter()
-                                .map(|(label, _)| label.as_str())
-                                .eq(["0", "1"]) =>
+                                .enumerate()
+                                .all(|(i, (label, _))| *label == i.to_string()) =>
                         {
-                            Some((fields.iter().map(|(_, e)| e.span).collect(), errors_before))
+                            Some((
+                                fields.iter().map(|(_, e)| e.span).collect::<Vec<Span>>(),
+                                errors_before,
+                            ))
                         }
                         _ => None,
                     };
+                    if let Some((spans, _)) = &parts {
+                        for slot in group.slots_of(name) {
+                            if let Some(&span) = spans.get(slot) {
+                                mark_element(&mut payload_ty, slot, span);
+                                self.share_slot(&mut payload_ty, (group, name, slot), span);
+                            }
+                        }
+                    }
                     return self.construct_grouped(group, name, &payload_ty, parts, expr.span);
                 }
                 Ty::Variant(Row::Extend {
@@ -3242,10 +3259,8 @@ impl Inferer {
             && let Some(expected) = field_of(&row, tag)
         {
             match (payload, expected, parts) {
-                (Ty::Record(given), Ty::Record(wanted), Some((spans, since)))
-                    if let [item, rest] = spans[..] =>
-                {
-                    self.unify_list_link(given, wanted, &whole, [item, rest], since);
+                (Ty::Record(given), Ty::Record(wanted), Some((spans, since))) => {
+                    self.unify_fields(group, tag, [given, wanted], &whole, (&spans, since), span);
                 }
                 _ => self.unify(payload, expected, span),
             }
@@ -3253,59 +3268,93 @@ impl Inferer {
         whole
     }
 
-    /// `Link(item, rest)`: the item takes the list's element type and `rest`
-    /// must be a list of the same element. The first item that differs from
-    /// those before it is blamed, and a clash further along, which the same
-    /// item caused, is dropped.
-    fn unify_list_link(
+    /// A positional construction `Cons(item, rest)` of a group with parameters:
+    /// each field is unified where it was written, and a field that holds the
+    /// group itself must be the same group instance, so one value never mixes
+    /// the types of its slots. The first item that differs from those before
+    /// it is blamed, and a clash further along, which the same item caused, is
+    /// dropped. Any other shape of payload is unified whole.
+    fn unify_fields(
         &mut self,
-        given: &Row,
-        wanted: &Row,
+        group: &Group,
+        tag: &str,
+        [given, wanted]: [&Row; 2],
         whole: &Ty,
-        [item, rest]: [Span; 2],
-        since: usize,
+        (spans, since): (&[Span], usize),
+        span: Span,
     ) {
-        let (Some(have), Some(want), Some(tail)) = (
-            field_of(given, "0"),
-            field_of(wanted, "0"),
-            field_of(given, "1"),
-        ) else {
+        let pairs: Option<Vec<(&Ty, &Ty)>> = (0..spans.len())
+            .map(|i| {
+                let label = i.to_string();
+                Some((field_of(given, &label)?, field_of(wanted, &label)?))
+            })
+            .collect();
+        let Some(pairs) = pairs.filter(|_| {
+            given.fields().count() == spans.len() && wanted.fields().count() == spans.len()
+        }) else {
             self.unify(
                 &Ty::Record(given.clone()),
                 &Ty::Record(wanted.clone()),
-                item,
+                spans.first().copied().unwrap_or(span),
             );
             return;
         };
-        self.unify(have, want, item);
-        let later = self.list_element(tail);
-        let before = self.errors.len();
-        self.unify(tail, whole, rest);
-        let Some(clash) = self.errors[before..]
-            .iter()
-            .position(|error| error.span == rest && error.message.starts_with("type mismatch"))
-        else {
-            return;
-        };
-        if let Some(message) = later.and_then(|later| self.list_clash_message(have, &later)) {
-            self.errors[before + clash].message = message;
+        let slots = group.slots_of(tag);
+        for (i, (have, want)) in pairs.into_iter().enumerate() {
+            if want != whole {
+                self.unify(have, want, spans[i]);
+                continue;
+            }
+            let slot_pairs: Vec<(Ty, Ty)> = slots
+                .iter()
+                .filter_map(|j| {
+                    let earlier = field_of(given, &j.to_string())?.clone();
+                    Some((earlier, self.field_of_tag(have, tag, *j)?))
+                })
+                .collect();
+            let before = self.errors.len();
+            self.unify(have, whole, spans[i]);
+            let Some(clash) = self.errors[before..].iter().position(|error| {
+                error.span == spans[i] && error.message.starts_with("type mismatch")
+            }) else {
+                continue;
+            };
+            let prefix = group.clash();
+            if let Some(message) = slot_pairs
+                .iter()
+                .find_map(|(earlier, later)| self.clash_message(&prefix, earlier, later))
+            {
+                self.errors[before + clash].message = message;
+            }
+            let mut index = 0;
+            self.errors.retain(|error| {
+                index += 1;
+                !(since < index && index <= before && error.message.starts_with(&prefix))
+            });
         }
-        let mut index = 0;
-        self.errors.retain(|error| {
-            index += 1;
-            !(since < index && index <= before && error.message.starts_with(LIST_CLASH))
-        });
+    }
+
+    /// The `index`th field of `tag`'s payload in `ty`, if `ty` is already known
+    /// to be built with that tag.
+    fn field_of_tag(&self, ty: &Ty, tag: &str, index: usize) -> Option<Ty> {
+        let Ty::Variant(row) = self.resolve_head(ty).unfold_head() else {
+            return None;
+        };
+        let Ty::Record(payload) = self.resolve(field_of(&row, tag)?) else {
+            return None;
+        };
+        field_of(&payload, &index.to_string()).cloned()
     }
 
     /// The message for two scalar types, `None` when either is anything more
     /// involved.
-    fn list_clash_message(&self, earlier: &Ty, later: &Ty) -> Option<String> {
+    fn clash_message(&self, prefix: &str, earlier: &Ty, later: &Ty) -> Option<String> {
         let (earlier, later) = (
             self.shown(earlier).to_string(),
             self.shown(later).to_string(),
         );
         let simple = |name: &str| name.chars().all(char::is_alphabetic);
-        if !simple(&earlier) || !simple(&later) {
+        if earlier == later || !simple(&earlier) || !simple(&later) {
             return None;
         }
         let article = if later.starts_with(['A', 'E', 'I', 'O', 'U']) {
@@ -3314,7 +3363,7 @@ impl Inferer {
             "a"
         };
         Some(format!(
-            "{LIST_CLASH}; this is {article} {later} but the earlier items are {earlier}s"
+            "{prefix}; this is {article} {later} but the earlier items are {earlier}s"
         ))
     }
 
@@ -3374,50 +3423,51 @@ impl Inferer {
         }
     }
 
-    /// A number in a `Link` payload flows into the slot the rest of the list
-    /// already uses for its elements, so one `Float` among `Int`s makes the
-    /// whole literal a list of `Float`s and no element's type is left apart.
-    fn share_element_slot(&mut self, payload: &mut Ty, span: Span) {
-        let Some(item) = swap_element(payload, Ty::Unit) else {
+    /// A number in a `_` slot of a payload flows into the slot the rest of the
+    /// group value already uses, so one `Float` among `Int`s makes the whole
+    /// value hold `Float`s and no item's type is left apart. A slot written
+    /// with a type does not widen.
+    fn share_slot(
+        &mut self,
+        payload: &mut Ty,
+        (group, tag, slot): (&Group, &str, usize),
+        span: Span,
+    ) {
+        let Some(item) = swap_element(payload, slot, Ty::Unit) else {
             return;
         };
         if !self.may_be_number(&item) {
-            swap_element(payload, item);
+            swap_element(payload, slot, item);
             return;
         }
-        let rest = match payload {
-            Ty::Record(row) => field_of(row, "1").cloned(),
-            _ => None,
+        let rests: Vec<Ty> = match payload {
+            Ty::Record(row) => group
+                .tails_of(tag)
+                .into_iter()
+                .filter_map(|tail| field_of(row, &tail.to_string()).cloned())
+                .collect(),
+            _ => Vec::new(),
         };
-        let slot = match rest.and_then(|rest| self.list_element(&rest)) {
+        let known = rests
+            .iter()
+            .find_map(|rest| self.field_of_tag(rest, tag, slot));
+        let slot_ty = match known {
             Some(element) if self.flow_end(&element).is_none() => {
-                swap_element(payload, item);
+                swap_element(payload, slot, item);
                 return;
             }
             Some(element) => element,
             None => self.fresh(),
         };
         if self.is_certainly_number(&item) {
-            self.require_number(&self.resolve(&slot));
+            self.require_number(&self.resolve(&slot_ty));
         }
         self.flows.push(Flow {
             producer: item,
-            slot: slot.clone(),
+            slot: slot_ty.clone(),
             span,
         });
-        swap_element(payload, slot);
-    }
-
-    /// The type of the elements of `list`, if it is already known to be a
-    /// `Link`.
-    fn list_element(&self, list: &Ty) -> Option<Ty> {
-        let Ty::Variant(row) = self.resolve_head(list) else {
-            return None;
-        };
-        let Ty::Record(link) = self.resolve(field_of(&row, "Link")?) else {
-            return None;
-        };
-        field_of(&link, "0").cloned()
+        swap_element(payload, slot, slot_ty);
     }
 
     /// Whether `ty` is an `Int`, a `Float` or a variable that must be one, so
@@ -4694,7 +4744,7 @@ fn row_after(row: &Row, n: usize) -> Row {
     }
 }
 
-fn field_of<'a>(row: &'a Row, label: &str) -> Option<&'a Ty> {
+pub(crate) fn field_of<'a>(row: &'a Row, label: &str) -> Option<&'a Ty> {
     match row {
         Row::Extend {
             label: l,
@@ -4832,6 +4882,29 @@ mod tests {
             next: 1000,
             ..Inferer::default()
         }
+    }
+
+    #[test]
+    fn resolve_leaves_a_variable_its_enclosing_binder_shadows() {
+        let mut inf = inferer();
+        inf.unify(&Ty::Var(7), &Ty::Str, SPAN);
+        let shadowed = chain(7, "Link", Row::Empty);
+        assert_eq!(inf.resolve(&shadowed), shadowed);
+        let outside = Ty::func(vec![Ty::Var(7)], shadowed.clone());
+        assert_eq!(
+            inf.resolve(&outside),
+            Ty::func(vec![Ty::Str], shadowed.clone())
+        );
+        let through = Ty::Rec(
+            8,
+            Arc::new(Ty::Variant(extend(
+                "Cons",
+                Ty::Record(extend("0", Ty::Var(7), Row::Empty)),
+                extend("Link", Ty::Var(8), Row::Empty),
+            ))),
+        );
+        let resolved = inf.resolve(&through);
+        assert!(resolved.to_string().contains("String"), "{resolved}");
     }
 
     #[test]

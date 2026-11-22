@@ -107,7 +107,8 @@ turtle.**
   exhaustive with no `else`, and a named group may hold itself
   (`tag Tree = Leaf | Node({left: Tree, right: Tree})`). The host's `Key`
   (`Up | Down | Left | Right | Other(String)`) is such a built-in group. A
-  lone `tag Foo` stays an open tag.
+  lone `tag Foo` is a closed group of one
+  (ADR 0016's amendment); only the host's own tag families stay open.
 - **Recursive types are allowed only when the cycle passes through a variant
   tag** (OCaml's default for polymorphic variants). This makes `List` and
   `Tree` definable in goat with full inference, while `f(f)`-style mistakes

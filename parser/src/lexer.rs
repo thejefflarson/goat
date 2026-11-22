@@ -84,7 +84,7 @@ const OPERATORS: &[&str] = &[
 ];
 
 const PUNCTUATION: &[&str] = &[
-    "(", ")", "{", "}", "[", "]", "=", ":", ";", "|", ",", "...", ".",
+    "(", ")", "{", "}", "[", "]", "=", ":", ";", "|", ",", "...", ".", "_",
 ];
 
 /// A name is runs of one `XID_START` and up to this many `XID_CONTINUE`
@@ -639,7 +639,7 @@ mod tests {
         use TokenKind::*;
         assert_eq!(lex("héllo_2"), [tok(Name, 0, 8)]);
         assert_eq!(lex("a-b").len(), 3);
-        assert_eq!(lex("_x"), [tok(Unknown, 0, 1), tok(Name, 1, 2)]);
+        assert_eq!(lex("_x"), [tok(Punct, 0, 1), tok(Name, 1, 2)]);
         let long = "a".repeat(300);
         assert_eq!(lex(&long), [tok(Name, 0, 300)]);
         let digit_after_a_full_run = format!("{}1", "a".repeat(NAME_RUN));

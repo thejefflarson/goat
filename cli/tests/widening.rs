@@ -111,3 +111,28 @@ fn an_arithmetic_result_a_later_join_makes_a_float_is_computed_on_floats() {
         assert_eq!(run(&src), expected, "{body}");
     }
 }
+
+#[test]
+fn a_user_list_widens_its_items_like_a_built_in_one() {
+    let pile = "tag Pile = Nil | Cons(_, Pile)\n";
+    assert_eq!(
+        run(&format!("{pile}print(Cons(7 // 2, Cons(2.5, Nil)));")),
+        "Cons(3, Cons(2.5, Nil))"
+    );
+    assert_eq!(
+        run(&format!("{pile}print(Cons(2.5, Cons(7 // 2, Nil)));")),
+        "Cons(2.5, Cons(3, Nil))"
+    );
+    assert_eq!(run("print([7 // 2, 2.5]);"), "[3, 2.5]");
+}
+
+#[test]
+fn only_the_slot_that_mixes_widens() {
+    let pairs = "tag P = End | More(_, _, P)\n";
+    assert_eq!(
+        run(&format!(
+            "{pairs}print(More(7 // 2, 1, More(2.5, 5 // 2, End)));"
+        )),
+        "More(3, 1, More(2.5, 2, End))"
+    );
+}

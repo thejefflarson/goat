@@ -368,6 +368,17 @@ fn tag_declarations_come_before_the_program() {
 }
 
 #[test]
+fn an_underscore_is_an_inferred_payload_slot() {
+    assert_eq!(
+        shape("tag T = Nil | Cons(_, T)"),
+        "goat[tag_decl[tag_kw(\"tag\") group_name[name(\"T\")] tag_case[name(\"Nil\")] \
+         tag_case[name(\"Cons\") infer_type(\"_\") type_name(\"T\")]]]"
+    );
+    assert_accepts(&["tag Bag([_])", "tag P({x: _, y: _}, Number)"]);
+    assert_rejects(&["tag Bag(_x)", "_ = 1"]);
+}
+
+#[test]
 fn grouped_tag_declarations() {
     assert_eq!(
         shape("tag T = A | B(Number)"),

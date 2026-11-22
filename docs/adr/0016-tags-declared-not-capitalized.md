@@ -132,3 +132,47 @@ patterns) — never a blend of base types.
   ever add them.
 - **Moving the host vocabulary into a goat prelude** — amends ADR 0015; separable
   follow-on. v1 only makes the vocab tag *names* declared.
+
+## Amendment: every tag is closed, and `_` leaves a payload to each use
+
+The decision above left a lone `tag Ping` open, and left lists open (`Empty`
+and `Link` were lone tags), so `xs = [1, "a"]` was rejected only later, inside
+the function that walked it. This amendment closes both.
+
+1. **A lone tag is a group of one.** `tag Ping` declares the closed group
+   `[Ping]`. Two lone tags never mix: `if c then Ping else Pong done` is an
+   error, and `tag Ping | Pong` is how to say they belong together.
+2. **A tag written without parentheses has no payload.** `tag Light = Red |
+   Green`. A payload is written in parentheses: `Hit(Int)`.
+3. **`_` in a payload is an inferred slot.** It is allowed wherever a payload
+   type is, including inside a record or list type: `Cons(_, Pile)`,
+   `More(_, _, Pairs)`, `Node(Tree, _, Tree)`, `Hit(Int, _)`,
+   `Cons({x: _, y: _}, Pile)`, `Bag([_])`. Each `_` is an independent implicit
+   parameter of the group, instantiated with a fresh type variable at every
+   construction. Writing the group's own name in a payload marks where the
+   group holds itself, and that occurrence carries the same parameters, so
+   the knot is tied where a value is built: `Cons(1, Cons("a", Nil))` is an
+   error at the line that builds it ("a `Pile` holds one kind of thing; this
+   is a String but the earlier items are Numbers"), and a payload of a
+   different shape is still unified in full. A payload written with a type
+   (`Hit(Int)`) stays concrete. No annotation syntax is added: `_` is not a
+   type, only a slot the declaration leaves open, and letter case never
+   decides what a name means.
+4. **The list is an ordinary group in the prelude**, `tag List = Empty |
+   Link(_, List)`. The compiler does not build it; the sugar `[..]` and the
+   list patterns desugar to `Empty` and `Link`, and a program checked with no
+   prelude says that lists come from that declaration. The built-in list keeps
+   its wording, "a list holds one kind of thing", and its per-item spans.
+5. **The host's families stay open, as the one named exception.** The host's
+   event tags (`Tick`, `KeyDown`, ...) and shape tags (`Circle`, `Line`, ...)
+   are not groups: a program may handle a subset of them (ADR 0015, ADR 0020).
+   A program may not declare a tag the host already provides: the error is
+   "`Circle` is a tag the host already provides" with a hint to use it or pick
+   another name. No two declarations share a tag name.
+
+Mono's layout families (ADR 0010) are unchanged: they remain for the host
+families and for rows narrowed by a partial `match`. An `Int` and a `Float` in
+one `_` slot of a group value widen as list items do (ADR 0040), through one
+path for the built-in list and user groups; a slot written with a type does not
+widen. A tag declared with a payload and written bare is an error ("`Just`
+takes a value: write `Just(…)`"), as is a bare-declared tag given one.

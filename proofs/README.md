@@ -227,11 +227,16 @@ phase 3's tag signature, which must keep closed payload types in the sense of
 `lct`, since a payload under a `mu` mentions an index.
 
 Tags are outside the proven fragment, so the checker's change to closed groups
-with parameters (every tag closed, lists a built-in recursive group whose
-element type is instantiated afresh per literal) touches no rule proved here.
-Phase 3 models it as the design in `docs/design/closed-tags-plan.md` says: a
-group is a declared tag signature with a parameter list, one construction rule
-instantiates it with fresh variables, and a recursive group is a `mu`.
+(every tag closed, a lone tag a group of one, lists an ordinary prelude group)
+touches no rule proved here. The grammar gained one rule, `infer_type` (`_` in a
+tag payload), which lies outside the core fragment like the other tag rules.
+Phase 3 models groups with `_` slots as **implicit parameters**: each `_` is a
+parameter the construction rule instantiates with a fresh type variable, a
+payload written with a type keeps it, and a recursive group is a `mu` whose own
+name carries the same parameters. The host's event and shape families stay
+open, the one named exception, so they sit outside the proven fragment too. The
+design notes are in `docs/design/closed-tags-plan.md` and the ADR 0016
+amendment.
 
 ## Generic operators: sorted type variables (design Q)
 

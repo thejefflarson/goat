@@ -186,7 +186,7 @@ fn a_reload_keeps_what_it_can_when_a_method_body_changes() {
 /// A model that is not all numbers: a string built at run time, a string
 /// literal, a variant with and without a payload, and a list of records.
 const MIXED: &str = r##"
-tag Run tag Idle
+tag Mode = Run(_) | Idle
 init = {
   built: char_at("hello", 2),
   literal: "lit",
@@ -267,7 +267,7 @@ draw = program(model) do [Circle({x: model.n, y: 0, r: 1, color: "red"})] done
 #[test]
 fn a_tag_the_new_type_lacks_resets_as_reshaped() {
     let new = MIXED
-        .replace("tag Run", "tag Walk")
+        .replace("= Run(_) |", "= Walk(_) |")
         .replace("Run(3)", "Walk(3)")
         .replace("Run(n) then \"run\"", "Walk(n) then \"run\"");
     let trace = agree(&[MIXED, &new], &[Reload(1), Draw]);

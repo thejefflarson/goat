@@ -2,7 +2,7 @@
 //! for let-polymorphism.
 
 use crate::hir::{Boundary, Span};
-use crate::infer::subst_vars;
+use crate::infer::{field_of, subst_vars};
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -118,11 +118,12 @@ pub const PLAIN: Ty = Ty::Str;
 
 /// The tags of one `tag` declaration: a closed variant type. A payload that
 /// mentions the group itself holds `Ty::Var(Group::SELF)`, and one that
-/// mentions its `i`th parameter holds `Ty::Var(Group::param(i))`, which each
-/// instantiation replaces with a fresh variable. Only built-in groups have
-/// parameters.
+/// mentions its `i`th parameter, written `_` in the declaration, holds
+/// `Ty::Var(Group::param(i))`, which each instantiation replaces with a fresh
+/// variable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Group {
+    pub name: String,
     pub tags: Vec<(String, Ty)>,
     pub recursive: bool,
     pub params: usize,
@@ -130,6 +131,41 @@ pub struct Group {
 
 impl Group {
     pub const SELF: TypeVar = TypeVar::MAX;
+
+    /// How a value of this group that mixes the types of its slots starts to
+    /// be described: the built-in list keeps its own wording.
+    pub fn clash(&self) -> String {
+        match self.name.as_str() {
+            "List" => "a list holds one kind of thing".to_string(),
+            "" => "a group holds one kind of thing".to_string(),
+            name => format!("a `{name}` holds one kind of thing"),
+        }
+    }
+
+    /// The positions of the fields of `tag`'s payload that are bare
+    /// parameters: the items a recursive group is built around.
+    pub fn slots_of(&self, tag: &str) -> Vec<usize> {
+        let Some((_, Ty::Record(row))) = self.tags.iter().find(|(name, _)| name == tag) else {
+            return Vec::new();
+        };
+        (0..row.fields().count())
+            .filter(|i| {
+                matches!(field_of(row, &i.to_string()), Some(&Ty::Var(v))
+                    if v < Self::SELF && Self::SELF - 1 - v < self.params as TypeVar)
+            })
+            .collect()
+    }
+
+    /// The positions of the fields of `tag`'s payload that hold the group
+    /// itself.
+    pub fn tails_of(&self, tag: &str) -> Vec<usize> {
+        let Some((_, Ty::Record(row))) = self.tags.iter().find(|(name, _)| name == tag) else {
+            return Vec::new();
+        };
+        (0..row.fields().count())
+            .filter(|i| matches!(field_of(row, &i.to_string()), Some(&Ty::Var(Self::SELF))))
+            .collect()
+    }
 
     /// The placeholder for the group's `index`th parameter in a payload.
     pub const fn param(index: usize) -> TypeVar {
@@ -507,7 +543,7 @@ impl Row {
         })
     }
 
-    fn fields(&self) -> impl Iterator<Item = &Ty> {
+    pub(crate) fn fields(&self) -> impl Iterator<Item = &Ty> {
         let mut cursor = Some(self);
         std::iter::from_fn(move || match cursor? {
             Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
@@ -606,14 +642,53 @@ impl Row {
 struct Shown<'a> {
     ty: &'a Ty,
     exact: bool,
+    /// The variables that occur once in the whole type being shown. A tag
+    /// whose payload is one of them prints as the bare tag: nothing else in
+    /// the type constrains it, as for the tags of a group never given one.
+    lone: &'a BTreeSet<TypeVar>,
+}
+
+/// The variables that occur exactly once in `ty`.
+fn lone_vars(ty: &Ty) -> BTreeSet<TypeVar> {
+    fn count(ty: &Ty, seen: &mut BTreeMap<TypeVar, usize>) {
+        match ty {
+            Ty::Var(v) => *seen.entry(*v).or_default() += 1,
+            Ty::Func(args, ret) => {
+                args.iter().for_each(|a| count(a, seen));
+                count(ret, seen);
+            }
+            Ty::Record(row) | Ty::Variant(row) => row.fields().for_each(|t| count(t, seen)),
+            Ty::Rec(binder, body) => {
+                *seen.entry(*binder).or_default() += 1;
+                count(body, seen);
+            }
+            _ => {}
+        }
+    }
+    let mut seen = BTreeMap::new();
+    count(ty, &mut seen);
+    seen.into_iter()
+        .filter(|(_, n)| *n == 1)
+        .map(|(v, _)| v)
+        .collect()
 }
 
 impl Ty {
     pub fn exact(&self) -> impl fmt::Display + '_ {
+        ExactTy(self)
+    }
+}
+
+struct ExactTy<'a>(&'a Ty);
+
+impl fmt::Display for ExactTy<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Shown {
-            ty: self,
+            ty: self.0,
             exact: true,
+            lone: &lone_vars(self.0),
         }
+        .fmt(f)
     }
 }
 
@@ -622,6 +697,7 @@ impl fmt::Display for Ty {
         Shown {
             ty: self,
             exact: false,
+            lone: &lone_vars(self),
         }
         .fmt(f)
     }
@@ -632,6 +708,7 @@ impl fmt::Display for Shown<'_> {
         let show = |ty| Shown {
             ty,
             exact: self.exact,
+            lone: self.lone,
         };
         match self.ty {
             Ty::Var(v) => write!(f, "{}", name_of(*v)),
@@ -658,12 +735,12 @@ impl fmt::Display for Shown<'_> {
             }
             Ty::Record(row) => {
                 write!(f, "{{")?;
-                row.fmt_fields(f, true, false, self.exact)?;
+                row.fmt_fields(f, true, false, self)?;
                 write!(f, "}}")
             }
             Ty::Variant(row) => {
                 write!(f, "[")?;
-                row.fmt_fields(f, true, true, self.exact)?;
+                row.fmt_fields(f, true, true, self)?;
                 write!(f, "]")
             }
             Ty::Rec(binder, body)
@@ -734,8 +811,14 @@ impl Row {
         f: &mut fmt::Formatter<'_>,
         first: bool,
         bare_unit: bool,
-        exact: bool,
+        shown: &Shown<'_>,
     ) -> fmt::Result {
+        let exact = shown.exact;
+        let show = |ty| Shown {
+            ty,
+            exact,
+            lone: shown.lone,
+        };
         match self {
             Row::Empty => Ok(()),
             Row::Var(_) if MESSAGE_NAMES.get() => {
@@ -754,12 +837,13 @@ impl Row {
                 if !first {
                     write!(f, ", ")?;
                 }
-                if bare_unit && **field == Ty::Unit {
+                let unused = matches!(**field, Ty::Var(v) if shown.lone.contains(&v));
+                if bare_unit && (**field == Ty::Unit || unused) {
                     write!(f, "{label}")?;
                 } else {
-                    write!(f, "{label}: {}", Shown { ty: field, exact })?;
+                    write!(f, "{label}: {}", show(field))?;
                 }
-                rest.fmt_fields(f, false, bare_unit, exact)
+                rest.fmt_fields(f, false, bare_unit, shown)
             }
             Row::Maybe {
                 label, field, rest, ..
@@ -768,8 +852,8 @@ impl Row {
                     write!(f, ", ")?;
                 }
                 let mark = if exact { "?" } else { "" };
-                write!(f, "{label}{mark}: {}", Shown { ty: field, exact })?;
-                rest.fmt_fields(f, false, bare_unit, exact)
+                write!(f, "{label}{mark}: {}", show(field))?;
+                rest.fmt_fields(f, false, bare_unit, shown)
             }
         }
     }
@@ -872,6 +956,7 @@ mod tests {
     #[test]
     fn a_group_parameter_is_replaced_at_each_instantiation() {
         let group = Group {
+            name: "List".to_string(),
             tags: vec![
                 ("Nil".to_string(), Ty::Unit),
                 (
