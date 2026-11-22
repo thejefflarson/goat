@@ -1,4 +1,5 @@
 mod canon;
+mod hoist;
 pub mod host;
 pub mod interp;
 pub mod mir;

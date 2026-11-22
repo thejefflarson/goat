@@ -245,3 +245,31 @@ from `wasm-dis`, a text edit of the disassembly, and `wasm-as
 edits are two lines each (remove the `memory.fill` in the free function, or
 replace the two scalar arithmetic blocks in the derived functions with one
 vector op).
+
+## After the reuse change (issue 558)
+
+Two compiler changes, no language or layout change (ADR 0010 identity holds):
+
+- The derived record `+ - * /` builds its result with `ReuseRecord` on its first
+  operand, so an operand nothing else holds is overwritten in place.
+- `mir/src/hoist.rs` loads the fields of a record that is only read through
+  `Field`, on the straight line below its binding, right after the binding. The
+  RC pass then releases the record before the call that consumes the loads
+  (`drop_before_call` in `mir/src/rc.rs`), so a field of a dying record has one
+  reference when it reaches the derived function.
+
+One update frame of the benchmark allocates 5,002 records, down from 7,002
+(`mir/tests/reuse.rs` counts 5 per particle, down from 7). Update time, median
+of 300 frames, 1,000 particles, same machine:
+
+| | before | after |
+|---|---|---|
+| wasmtime `full` | 144-149 us | 121-123 us (-17%) |
+| V8 `full` (default tiers) | 88.4 us | 87.0 us (-1.5%) |
+| V8 `add-only` / `mul-only` / `hoisted` | 54 / 81 / 84 us | 42 / 71 / 60 us |
+| V8 `full`, `--no-liftoff` | 109.5 us | 94.5 us (-14%) |
+
+V8's `full` result under default tiering is unexplained: the variants around it
+improve 13-29% while `full` does not. Not yet measured: reuse of the particle's
+own cell for the new particle, the damping literal built once, and the list cells
+in `change_each`.
