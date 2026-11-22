@@ -35,8 +35,8 @@
 //! a comparison has an operand that is a parameter's generic type
 //! (`differential/README.md`), when a
 //! `let` of a record or a name holding a numeral would be generalized by the
-//! calculus and not by the checker, when a record reaches a generic `+ - *`, or when a
-//! record holds a group's function by name (`differential/README.md`).
+//! calculus and not by the checker, or when a record reaches a generic `+ - *`
+//! (`differential/README.md`).
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
 
@@ -44,7 +44,7 @@ use goat_checker::captures::for_each_node;
 use goat_checker::check_with_prelude;
 use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, Symbol};
 use goat_checker::lower::lower;
-use goat_checker::ty::{Row, Ty};
+use goat_checker::ty::{Row, Scheme, Ty};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
@@ -191,7 +191,6 @@ enum Skip {
     Rejected,
     OutsideFragment,
     RecordAtGenericOperator,
-    GroupMemberInRecord,
     RecursiveType,
     GenericComparison,
 }
@@ -202,7 +201,6 @@ impl Skip {
             Skip::Rejected => "does not lower",
             Skip::OutsideFragment => "outside the calculus",
             Skip::RecordAtGenericOperator => "a record reaches a generic + - *",
-            Skip::GroupMemberInRecord => "a record holds a group's function by name",
             Skip::RecursiveType => "the checker infers a recursive type",
             Skip::GenericComparison => "a comparison at a parameter left generic",
         }
@@ -247,11 +245,14 @@ struct Reader<'a> {
     /// Whether a comparison has an operand whose type is a variable of no
     /// sort, which the checker leaves open and the calculus cannot compare.
     generic_comparison: bool,
-    /// Whether a call passes a record, which `+ - *` accept in the checker
-    /// (field by field) and the calculus does not.
+    /// Whether a call passes a record where the callee's own type has a
+    /// quantified variable that an `+ - *` takes as operand type, which they accept in the checker (field by
+    /// field) and the calculus does not.
     record_arg: bool,
-    /// Whether a record field holds a function of a recursive group by name.
-    member_in_record: bool,
+    /// The type variables an operand of `+ - *` has, which a record may stand for.
+    ring_vars: HashSet<goat_checker::ty::TypeVar>,
+    /// The generalized scheme of every `let`-bound symbol.
+    schemes: Option<&'a HashMap<Symbol, Scheme>>,
 }
 
 /// What a name in scope is bound by: a parameter or `let`, one binder; or a
@@ -317,6 +318,25 @@ impl Reader<'_> {
 
     fn node_ty(&self, expr: &Expr) -> Option<&Ty> {
         self.types?.get(&expr.id)
+    }
+
+    /// Whether a call passes a record at a parameter whose quantified type
+    /// variable some `+ - *` takes as an operand type.
+    fn record_at_quantified(&self, callee: &Expr, params: Option<&[Ty]>) -> bool {
+        let ExprKind::Var { symbol, .. } = &callee.kind else {
+            return false;
+        };
+        let (Some(scheme), Some(params)) = (self.schemes.and_then(|s| s.get(symbol)), params)
+        else {
+            return false;
+        };
+        let Ty::Func(generic, _) = &scheme.ty else {
+            return false;
+        };
+        generic.iter().zip(params).any(|(own, used)| {
+            matches!(own, Ty::Var(v) if scheme.vars.contains(v) && self.ring_vars.contains(v))
+                && matches!(used, Ty::Record(_))
+        })
     }
 
     /// The type of an operator's operand, which must be one the calculus has
@@ -499,6 +519,16 @@ impl Reader<'_> {
                         .iter()
                         .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
                     self.generic_ring |= generic;
+                    if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+                        let vars: Vec<_> = [lhs, rhs]
+                            .iter()
+                            .filter_map(|e| match self.node_ty(e) {
+                                Some(Ty::Var(v)) => Some(*v),
+                                _ => None,
+                            })
+                            .collect();
+                        self.ring_vars.extend(vars);
+                    }
                     let open_comparison = comparison
                         && [lhs, rhs]
                             .iter()
@@ -556,10 +586,7 @@ impl Reader<'_> {
                     Some(Ty::Func(params, _)) if params.len() == args.len() => Some(params.clone()),
                     _ => None,
                 };
-                self.record_arg |= params
-                    .iter()
-                    .flatten()
-                    .any(|param| matches!(param, Ty::Record(_)));
+                self.record_arg |= self.record_at_quantified(callee, params.as_deref());
                 let callee = self.read(callee)?;
                 args.iter()
                     .enumerate()
@@ -581,12 +608,6 @@ impl Reader<'_> {
                 for (label, value) in fields {
                     if seen.contains(label) {
                         return None;
-                    }
-                    if let ExprKind::Var { symbol, .. } = &value.kind {
-                        self.member_in_record |= self.scope.iter().any(|binder| {
-                            matches!(binder, Binder::Group(members)
-                                if members.iter().any(|(_, s, _)| s == symbol))
-                        });
                     }
                     seen.push(label.clone());
                     let label = self.label(label);
@@ -709,14 +730,12 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
         generic_ring: false,
         generic_comparison: false,
         record_arg: false,
-        member_in_record: false,
+        ring_vars: HashSet::new(),
+        schemes: checked.as_ref().map(|c| &c.typed.schemes),
     };
     let core = reader.read(&lowered.root).ok_or(Skip::OutsideFragment)?;
     if reader.generic_ring && reader.record_arg {
         return Err(Skip::RecordAtGenericOperator);
-    }
-    if reader.member_in_record {
-        return Err(Skip::GroupMemberInRecord);
     }
     if checked.as_ref().is_some_and(|checked| {
         checked
