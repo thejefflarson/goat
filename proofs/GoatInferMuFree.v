@@ -91,23 +91,39 @@ Proof.
   - exact (HG y s Hin).
 Qed.
 
-Lemma rewrite_row_mf : forall l av R n T R' s n',
-  rewrite_row l av R n = Some (T, R', s, n') ->
-  mu_free_row R -> mu_free T /\ mu_free_row R' /\ mf_sub s.
+Lemma rewrite_row_mf : forall l av R n P T R' s n',
+  rewrite_row l av R n = Some (P, T, R', s, n') ->
+  mu_free_row R -> mu_free P /\ mu_free T /\ mu_free_row R' /\ mf_sub s.
 Proof.
-  intros l av R. induction R as [|r|l' T' R'' IH|l' P' T' R'' IH]; intros n T R' s n' H HR; simpl in H.
-  - discriminate.
+  intros l av R. induction R as [|r|l' T' R'' IH|l' P' T' R'' IH]; intros n P T R' s n' H HR; simpl in H.
+  - injection H as <- <- <- <- <-. exact (conj I (conj I (conj I mf_sid))).
   - destruct (AtomSetImpl.mem r av); [discriminate|].
-    injection H as <- <- <- <-.
-    exact (conj I (conj I (mf_sbR r (row_Ext l (typ_Var (ea n)) (row_Var (ea (S n)))) (conj I I)))).
+    injection H as <- <- <- <- <-.
+    exact (conj I (conj I (conj I (mf_sbR r (row_Maybe l (typ_Var (ea n)) (typ_Var (ea (S n)))
+                                                         (row_Var (ea (n + 2)))) (conj I (conj I I)))))).
   - destruct HR as [HT' HR''].
     destruct (Nat.eqb l l').
-    + injection H as <- <- <- <-. exact (conj HT' (conj HR'' mf_sid)).
-    + destruct (rewrite_row l av R'' n) as [[[[T0 R3] s0] n1]|] eqn:E; [|discriminate].
-      injection H as <- <- <- <-.
-      destruct (IH _ _ _ _ _ E HR'') as [H1 [H2 H3]].
-      refine (conj H1 (conj _ H3)). exact (conj (apT_mf _ _ H3 HT') H2).
-  - discriminate.
+    + injection H as <- <- <- <- <-. exact (conj I (conj HT' (conj HR'' mf_sid))).
+    + destruct (rewrite_row l av R'' n) as [[[[[P0 T0] R3] s0] n1]|] eqn:E; [|discriminate].
+      injection H as <- <- <- <- <-.
+      destruct (IH _ _ _ _ _ _ E HR'') as [H0 [H1 [H2 H3]]].
+      refine (conj H0 (conj H1 (conj _ H3))). exact (conj (apT_mf _ _ H3 HT') H2).
+  - destruct HR as [HP' [HT' HR'']].
+    destruct (Nat.eqb l l').
+    + injection H as <- <- <- <- <-. exact (conj HP' (conj HT' (conj HR'' mf_sid))).
+    + destruct (rewrite_row l av R'' n) as [[[[[P0 T0] R3] s0] n1]|] eqn:E; [|discriminate].
+      injection H as <- <- <- <- <-.
+      destruct (IH _ _ _ _ _ _ E HR'') as [H0 [H1 [H2 H3]]].
+      refine (conj H0 (conj H1 (conj _ H3))). exact (conj (apT_mf _ _ H3 HP') (conj (apT_mf _ _ H3 HT') H2)).
+Qed.
+
+Lemma row_head_mf : forall R l P T R',
+  row_head R = Some (l, P, T, R') -> mu_free_row R -> mu_free P /\ mu_free T /\ mu_free_row R'.
+Proof.
+  intros R l P T R' H HR. destruct R as [|r|l0 T0 R0|l0 P0 T0 R0]; simpl in H; try discriminate;
+    injection H as <- <- <- <-.
+  - exact (conj I HR).
+  - exact HR.
 Qed.
 
 Lemma unify_mf : forall f,
@@ -138,29 +154,55 @@ Proof.
     + destruct (gdecl_eq_dec _ _); [|discriminate].
       eapply IHt; [exact H | exact H1 | exact H2].
   - intros Dk R1 R2 n s n' H H1 H2. simpl in H.
-    destruct R1 as [|r|l T R1'|lm Pm Tm Rm].
-    + destruct R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2]; try discriminate.
-      * injection H as <- <-. exact mf_sid.
-      * destruct (occR r2 row_Empty); [discriminate|]. injection H as <- <-. apply mf_sbR. exact I.
-    + destruct R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2].
-      * destruct (occR r row_Empty); [discriminate|]. injection H as <- <-. apply mf_sbR. exact I.
-      * destruct (Atom.eq_dec r r2); [injection H as <- <-; exact mf_sid|].
-        injection H as <- <-. apply mf_sbR. exact I.
-      * destruct (occR r _); [discriminate|]. injection H as <- <-. apply mf_sbR. exact H2.
-      * destruct (occR r _); [discriminate|]. injection H as <- <-. apply mf_sbR. exact H2.
-    + destruct R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2]; try discriminate.
-      * destruct (occR r2 _); [discriminate|]. injection H as <- <-. apply mf_sbR. exact H1.
-      * destruct (rewrite_row l _ _ n) as [[[[T' R2x] s0] n1]|] eqn:E0; [|discriminate].
-        destruct (unify_t f Dk (apT s0 T) T' n1) as [[s1 n2]|] eqn:E1; [|discriminate].
-        destruct (unify_r f Dk (apR s1 (apR s0 R1')) (apR s1 R2x) n2) as [[s2 n3]|] eqn:E2; [|discriminate].
-        injection H as <- <-.
-        destruct (rewrite_row_mf _ _ _ _ _ _ _ _ E0 H2) as [M1 [M2 M3]].
-        destruct H1 as [H1a H1b].
-        assert (Hs1 := IHt _ _ _ _ _ _ E1 (apT_mf _ _ M3 H1a) M1).
-        assert (Hs2 := IHr _ _ _ _ _ _ E2 (apR_mf _ _ Hs1 (apR_mf _ _ M3 H1b)) (apR_mf _ _ Hs1 M2)).
-        apply mf_scomp; [exact Hs2|]. apply mf_scomp; assumption.
-    + destruct R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2]; try discriminate.
-      destruct (occR r2 _); [discriminate|]. injection H as <- <-. apply mf_sbR. exact H1.
+    assert (Hgen : forall R1 R2, mu_free_row R1 -> mu_free_row R2 -> forall s n',
+      (match row_head R1 with
+       | None => None
+       | Some (l, P, T, R1') =>
+           match rewrite_row l (frv_row R1) R2 n with
+           | None => None
+           | Some (P', T', R2', s0, n1) =>
+               match unify_t f Dk (apT s0 P) P' n1 with
+               | None => None
+               | Some (sp, n2) =>
+                   match unify_t f Dk (apT sp (apT s0 T)) (apT sp T') n2 with
+                   | None => None
+                   | Some (s1, n3) =>
+                       match unify_r f Dk (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 with
+                       | None => None
+                       | Some (s2, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), n4)
+                       end
+                   end
+               end
+           end
+       end) = Some (s, n') -> mf_sub s).
+    { intros R1' R2' Hg1 Hg2 s' n'' Hg.
+      destruct (row_head R1') as [[[[l P] T] R1'']|] eqn:Eh; [|discriminate].
+      destruct (rewrite_row l (frv_row R1') R2' n) as [[[[[P' T'] R2''] s0] n1]|] eqn:Erw; [|discriminate].
+      destruct (unify_t f Dk (apT s0 P) P' n1) as [[sp n2]|] eqn:Eu0; [|discriminate].
+      destruct (unify_t f Dk (apT sp (apT s0 T)) (apT sp T') n2) as [[s1 n3]|] eqn:Eu1; [|discriminate].
+      destruct (unify_r f Dk (apR s1 (apR sp (apR s0 R1''))) (apR s1 (apR sp R2'')) n3)
+        as [[s2 n4]|] eqn:Eu2; [|discriminate].
+      injection Hg as <- <-.
+      destruct (row_head_mf _ _ _ _ _ Eh Hg1) as [HP [HT HR1]].
+      destruct (rewrite_row_mf _ _ _ _ _ _ _ _ _ Erw Hg2) as [M0 [M1 [M2 M3]]].
+      assert (Sp := IHt _ _ _ _ _ _ Eu0 (apT_mf _ _ M3 HP) M0).
+      assert (S1 := IHt _ _ _ _ _ _ Eu1 (apT_mf _ _ Sp (apT_mf _ _ M3 HT)) (apT_mf _ _ Sp M1)).
+      assert (S2 := IHr _ _ _ _ _ _ Eu2
+                      (apR_mf _ _ S1 (apR_mf _ _ Sp (apR_mf _ _ M3 HR1)))
+                      (apR_mf _ _ S1 (apR_mf _ _ Sp M2))).
+      exact (mf_scomp _ _ S2 (mf_scomp _ _ S1 (mf_scomp _ _ Sp M3))). }
+    destruct R1 as [|r|l T R1'|lm Pm Tm Rm]; destruct R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2];
+      try (exact (Hgen _ _ H1 H2 _ _ H)).
+    + injection H as <- <-. exact mf_sid.
+    + destruct (occR r2 row_Empty); [discriminate|]. injection H as <- <-. apply mf_sbR. exact I.
+    + eapply IHr; [exact H | exact H2 | exact H1].
+    + destruct (occR r row_Empty); [discriminate|]. injection H as <- <-. apply mf_sbR. exact I.
+    + destruct (Atom.eq_dec r r2); [injection H as <- <-; exact mf_sid|].
+      injection H as <- <-. apply mf_sbR. exact I.
+    + destruct (occR r _); [discriminate|]. injection H as <- <-. apply mf_sbR. exact H2.
+    + destruct (occR r _); [discriminate|]. injection H as <- <-. apply mf_sbR. exact H2.
+    + destruct (occR r2 _); [discriminate|]. injection H as <- <-. apply mf_sbR. exact H1.
+    + destruct (occR r2 _); [discriminate|]. injection H as <- <-. apply mf_sbR. exact H1.
   - intros Dk R1 R2 n s n' H H1 H2. simpl in H.
     destruct R1 as [|r|l T R1'|lm Pm Tm Rm], R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2]; try discriminate.
     + injection H as <- <-. exact mf_sid.
@@ -398,6 +440,22 @@ Proof.
       destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ E3 (mf_apC _ _ S2 (mf_apC _ _ S1 HG))
                   (mf_map _ _ S2 HTs) I) as [S3 M3].
       exact (conj (mf_scomp _ _ S3 (mf_scomp _ _ S2 S1)) M3).
+    + destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
+      destruct (infer f false ora D1 (apC s1 G) e2 n1) as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
+      destruct (IHi _ _ _ _ _ _ _ _ E2 (mf_apC _ _ S1 HG)) as [S2 M2].
+      destruct (unify_t f D2 (apT s2 T1) (typ_Record (row_Maybe l (typ_Var (ea n2)) T2 (row_Var (ea (S n2)))))
+                  (n2 + 2)) as [[s3 n3]|] eqn:E3; [|discriminate].
+      injection H as <- <- <- <-.
+      assert (S3 := proj1 (unify_mf f) _ _ _ _ _ _ E3 (apT_mf _ _ S2 M1) (conj I (conj M2 I))).
+      exact (conj (mf_scomp _ _ S3 (mf_scomp _ _ S2 S1)) (apT_mf _ (typ_Record (row_Ext l T2 (row_Var (ea (S n2))))) S3 (conj M2 I))).
+    + destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
+      destruct (unify_t f D1 T1 (typ_Record (row_Ext l (typ_Var (ea n1)) (row_Var (ea (S n1)))))
+                  (n1 + 2)) as [[s2 n2]|] eqn:E2; [|discriminate].
+      injection H as <- <- <- <-.
+      assert (S2 := proj1 (unify_mf f) _ _ _ _ _ _ E2 M1 (conj I I)).
+      exact (conj (mf_scomp _ _ S2 S1) (apT_mf _ (typ_Record (row_Var (ea (S n1)))) S2 I)).
   - intros Dk G fs n s D' R n' H HG.
     destruct fs as [|l e rest]; simpl in H; [injection H as <- <- <- <-; exact (conj mf_sid I)|].
     destruct (infer f false ora Dk G e n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].

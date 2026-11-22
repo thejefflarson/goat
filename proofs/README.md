@@ -422,11 +422,21 @@ Modelling calls made for this phase, each the conservative choice:
   with `req` instead.
 - **The `method` flag of a row entry is not modelled** (phase 6).
 
-What waits, each its own ticket: algorithm W on `Maybe` rows and a differential
-test of spread and restrict (`GoatInfer.v` returns no type for a `Maybe` entry
-and for the two terms, so `infer_closed_sound` and `infer_mu_free` are
-unchanged), the parser fragment (`rule_map.rs` exempts `e_spread` and
-`e_restrict`, as it exempts the tag terms), and the typeset `goat.ott`.
+Algorithm W infers both terms (`GoatInfer.v`, `GoatInferUnify.v`).
+`rewrite_row` presents a label with a presence: `Unit` for a field the row has,
+`Bool` for a closed row that has none, and for a row variable a binding to
+`l ^ p : a ; r'` with `p` fresh. `unify_r` treats a plain field as a presence of
+`Unit` and unifies the presences, the field types and the rests. A spread
+unifies the base with `{l ^ p : T2 | r}` and returns `{l : T2 | r}`, and a
+restrict unifies with `{l : a | r}` and returns `{r}`. `infer_sound`,
+`infer_closed_sound` and `infer_mu_free` keep 0 admits and no new axiom, and the
+differential test compares spread and restrict programs (`differential/README.md`).
+The algorithm is incomplete where the calculus's syntactic `l # R` is: it never
+uses a `lacks` fact about a row variable (`LacksOnTail` counts those programs).
+
+What waits, each its own ticket: a `lacks` sort on row variables, the parser
+fragment (`rule_map.rs` exempts `e_spread` and `e_restrict`, as it exempts the
+tag terms), and the typeset `goat.ott`.
 
 ## Loops and foreign calls (decided)
 

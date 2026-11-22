@@ -95,6 +95,8 @@ and exp_of = function
   | List [ Atom "let"; v; b ] -> E_let (exp_of v, exp_of b)
   | List [ Atom "proj"; e; l ] -> E_proj (exp_of e, int_of l)
   | List (Atom "rec" :: fields) -> E_rec (fields_of fields)
+  | List [ Atom "spread"; e; l; v ] -> E_spread (exp_of e, int_of l, exp_of v)
+  | List [ Atom "restrict"; e; l ] -> E_restrict (exp_of e, int_of l)
   | List [ Atom "letrec"; List (Atom "rec" :: fields); body ] ->
       E_letrec (fields_of fields, exp_of body)
   | _ -> failwith "malformed term"
@@ -128,18 +130,28 @@ let canonical_type d t =
         typ y;
         Buffer.add_char b ')'
     | Typ_Record r ->
+        (* A presence entry is a field when its presence is Unit, absent (and
+           dropped) when it is Bool, and keeps its presence variable otherwise. *)
         let rec spine fields = function
           | Row_Empty -> (List.rev fields, None)
           | Row_Var a -> (List.rev fields, Some a)
-          | Row_Ext (l, t, rest) -> spine ((l, t) :: fields) rest
+          | Row_Ext (l, t, rest) -> spine ((l, None, t) :: fields) rest
+          | Row_Maybe (l, Typ_Unit, t, rest) -> spine ((l, None, t) :: fields) rest
+          | Row_Maybe (_, Typ_Bool, _, rest) -> spine fields rest
+          | Row_Maybe (l, p, t, rest) -> spine ((l, Some p, t) :: fields) rest
         in
         let fields, tail = spine [] r in
-        let fields = List.stable_sort (fun (l, _) (m, _) -> compare l m) fields in
+        let fields = List.stable_sort (fun (l, _, _) (m, _, _) -> compare l m) fields in
         Buffer.add_char b '{';
         List.iteri
-          (fun i (l, t) ->
+          (fun i (l, pres, t) ->
             if i > 0 then Buffer.add_string b ", ";
-            Buffer.add_string b (Printf.sprintf "l%d: " l);
+            Buffer.add_string b (Printf.sprintf "l%d" l);
+            (match pres with
+            | None -> ()
+            | Some (Typ_Var a) -> Buffer.add_string b (Printf.sprintf "^v%d" (name a))
+            | Some _ -> Buffer.add_string b "^?");
+            Buffer.add_string b ": ";
             typ t)
           fields;
         (match tail with

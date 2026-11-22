@@ -113,27 +113,48 @@ Definition occT (a : atom) (T : typ) : bool :=
 Definition occR (r : atom) (R : row) : bool :=
   AtomSetImpl.mem r (frv_row R) || negb (lcrb 0 R).
 
-(* Rewrite [R] so that it presents label [l] first: [Some (T, R', s, n')] with
-   [s R] equivalent to [l : T ; R'].  [av] holds the row variables the row
-   variable at the tail of [R] may not be (Leijen's side condition). *)
+(* Rewrite [R] so that it presents label [l] first, with a presence:
+   [Some (P, T, R', s, n')] with [s R] equivalent to [l ^ P : T ; R'].  A field
+   [R] has gives presence [Unit], a closed row that has none gives [Bool] (the
+   absent field's type is a fresh variable, and [l] is absent from the rest),
+   and a row variable is bound to [l ^ p : a ; r'] for a fresh presence
+   variable [p].  [av] holds the row variables the row variable at the tail of
+   [R] may not be (Leijen's side condition). *)
 Fixpoint rewrite_row (l : label) (av : atoms) (R : row) (n : nat)
-  : option (typ * row * sub * nat) :=
+  : option (typ * typ * row * sub * nat) :=
   match R with
-  | row_Empty => None
+  | row_Empty => Some (typ_Bool, typ_Var (ea n), row_Empty, sid, S n)
   | row_Var r =>
       if AtomSetImpl.mem r av then None
       else
-        let a := typ_Var (ea n) in
-        let r' := row_Var (ea (S n)) in
-        Some (a, r', sbR r (row_Ext l a r'), n + 2)
+        let p := typ_Var (ea n) in
+        let a := typ_Var (ea (S n)) in
+        let r' := row_Var (ea (n + 2)) in
+        Some (p, a, r', sbR r (row_Maybe l p a r'), n + 3)
   | row_Ext l' T' R'' =>
-      if Nat.eqb l l' then Some (T', R'', sid, n)
+      if Nat.eqb l l' then Some (typ_Unit, T', R'', sid, n)
       else
         match rewrite_row l av R'' n with
         | None => None
-        | Some (T0, R''', s, n1) => Some (T0, row_Ext l' (apT s T') R''', s, n1)
+        | Some (P0, T0, R3, s, n1) => Some (P0, T0, row_Ext l' (apT s T') R3, s, n1)
         end
-  | row_Maybe _ _ _ _ => None
+  | row_Maybe l' P' T' R'' =>
+      if Nat.eqb l l' then Some (P', T', R'', sid, n)
+      else
+        match rewrite_row l av R'' n with
+        | None => None
+        | Some (P0, T0, R3, s, n1) =>
+            Some (P0, T0, row_Maybe l' (apT s P') (apT s T') R3, s, n1)
+        end
+  end.
+
+(* The first entry of a row, as a presence, a type and the rest: a plain field
+   is present. *)
+Definition row_head (R : row) : option (label * typ * typ * row) :=
+  match R with
+  | row_Ext l T R' => Some (l, typ_Unit, T, R')
+  | row_Maybe l P T R' => Some (l, P, T, R')
+  | _ => None
   end.
 
 Definition gdecl_eq_dec (w w' : gdecl) : {w = w'} + {w <> w'} :=
@@ -181,20 +202,28 @@ with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f} : option (s
       | row_Var r, _ => if occR r R2 then None else Some (sbR r R2, n)
       | _, row_Var s => if occR s R1 then None else Some (sbR s R1, n)
       | row_Empty, row_Empty => Some (sid, n)
-      | row_Ext l T R1', _ =>
-          match rewrite_row l (frv_row R1) R2 n with
+      | row_Empty, row_Maybe _ _ _ _ => unify_r f' D R2 R1 n
+      | _, _ =>
+          match row_head R1 with
           | None => None
-          | Some (T', R2', s0, n1) =>
-              match unify_t f' D (apT s0 T) T' n1 with
+          | Some (l, P, T, R1') =>
+              match rewrite_row l (frv_row R1) R2 n with
               | None => None
-              | Some (s1, n2) =>
-                  match unify_r f' D (apR s1 (apR s0 R1')) (apR s1 R2') n2 with
+              | Some (P', T', R2', s0, n1) =>
+                  match unify_t f' D (apT s0 P) P' n1 with
                   | None => None
-                  | Some (s2, n3) => Some (scomp s2 (scomp s1 s0), n3)
+                  | Some (sp, n2) =>
+                      match unify_t f' D (apT sp (apT s0 T)) (apT sp T') n2 with
+                      | None => None
+                      | Some (s1, n3) =>
+                          match unify_r f' D (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 with
+                          | None => None
+                          | Some (s2, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), n4)
+                          end
+                      end
                   end
               end
           end
-      | _, _ => None
       end
   end.
 
@@ -567,8 +596,34 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
               end
           end
           else None
-      | e_spread _ _ _ => None
-      | e_restrict _ _ => None
+      | e_spread e1 l e2 =>
+          match infer f' lenient ora D G e1 n with
+          | None => None
+          | Some (s1, D1, T1, n1) =>
+              match infer f' lenient ora D1 (apC s1 G) e2 n1 with
+              | None => None
+              | Some (s2, D2, T2, n2) =>
+                  let p := typ_Var (ea n2) in
+                  let r := row_Var (ea (S n2)) in
+                  match unify_t f' D2 (apT s2 T1) (typ_Record (row_Maybe l p T2 r)) (n2 + 2) with
+                  | None => None
+                  | Some (s3, n3) =>
+                      Some (scomp s3 (scomp s2 s1), D2,
+                            apT s3 (typ_Record (row_Ext l T2 r)), n3)
+                  end
+              end
+          end
+      | e_restrict e1 l =>
+          match infer f' lenient ora D G e1 n with
+          | None => None
+          | Some (s1, D1, T1, n1) =>
+              let a := typ_Var (ea n1) in
+              let r := row_Var (ea (S n1)) in
+              match unify_t f' D1 T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
+              | None => None
+              | Some (s2, n2) => Some (scomp s2 s1, D1, apT s2 (typ_Record r), n2)
+              end
+          end
       | e_fold _ => None
       | e_unfold _ => None
       | e_tofloat e1 =>

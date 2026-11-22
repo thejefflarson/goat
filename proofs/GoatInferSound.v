@@ -65,13 +65,7 @@ Qed.
 Lemma EvT_Int : EvT typ_Int.
 Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
 
-Lemma EvT_Bool : EvT typ_Bool.
-Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
-
 Lemma EvT_Float : EvT typ_Float.
-Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
-
-Lemma EvT_Unit : EvT typ_Unit.
 Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
 
 Lemma EvT_String : EvT typ_String.
@@ -834,6 +828,54 @@ Proof.
         apply (proj1 Harms tg body Hf y).
         pose proof (dom_apC s1 G) as H3. pose proof (dom_apC s2 (apC s1 G)) as H4. fsetdec.
       * intros e0 Hd. exact (proj2 Harms e0 Hd).
+    + (* spread *)
+      destruct (infer f false ora D G a8 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (infer f false ora D1 (apC s1 G) a9 n1) as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
+      destruct (unify_t f D2 (apT s2 T1)
+                  (typ_Record (row_Maybe l8 (typ_Var (ea n2)) T2 (row_Var (ea (S n2))))) (n2 + 2))
+        as [[s3 n3]|] eqn:E3; [|discriminate].
+      inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
+      destruct (IHe _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1).
+      pose proof Gd1 as (_ & Hs1 & HD1 & _).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      destruct (IHe _ _ _ _ _ _ _ _ E2 HG1 HD1) as (Gd2 & HT2 & Hty2).
+      pose proof Gd2 as (_ & Hs2 & HD2 & _).
+      pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
+      assert (Hrow : EvT (typ_Record (row_Maybe l8 (typ_Var (ea n2)) T2 (row_Var (ea (S n2)))))).
+      { apply EvT_Record, EvR_maybe; [ apply EvT_var, ev_ea | exact HT2 | apply EvR_var, ev_ea ]. }
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E3 (EvT_ap s2 T1 Hs2 HT1) Hrow)
+        as (Hs3 & Hteq & Hk3 & Hl3).
+      pose proof (Good_unify D2 n2 s3 n3 Hs3 Hk3 ltac:(lia) HD2) as Gd3.
+      split; [ exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) | ].
+      split.
+      { apply EvT_ap; [ exact Hs3 | ]. apply EvT_Record, EvR_ext; [ exact HT2 | apply EvR_var, ev_ea ]. }
+      rewrite <- !apC_comp.
+      apply T_Spread with (P := apT s3 (typ_Var (ea n2))) (T := apT s3 T2)
+        (R := apR s3 (row_Var (ea (S n2)))).
+      * eapply T_Conv; [ | exact Hteq ].
+        apply (typing_ap_G D2 n2 s3 D2 n3 _ _ _ Gd3 HG2).
+        apply (typing_ap_G D1 n1 s2 D2 n2 _ _ _ Gd2 HG1). exact Hty1.
+      * apply (typing_ap_G D2 n2 s3 D2 n3 _ _ _ Gd3 HG2). exact Hty2.
+    + (* restrict *)
+      destruct (infer f false ora D G a10 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
+      destruct (unify_t f D1 T1 (typ_Record (row_Ext l10 (typ_Var (ea n1)) (row_Var (ea (S n1)))))
+                  (n1 + 2)) as [[s2 n2]|] eqn:E2; [|discriminate].
+      inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
+      destruct (IHe _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1).
+      pose proof Gd1 as (_ & Hs1 & HD1 & _).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      assert (Hrow : EvT (typ_Record (row_Ext l10 (typ_Var (ea n1)) (row_Var (ea (S n1)))))).
+      { apply EvT_Record, EvR_ext; [ apply EvT_var, ev_ea | apply EvR_var, ev_ea ]. }
+      destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E2 HT1 Hrow) as (Hs2 & Hteq & Hk2 & Hl2).
+      pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 ltac:(lia) HD1) as Gd2.
+      split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
+      split; [ apply EvT_ap; [ exact Hs2 | apply EvT_Record, EvR_var, ev_ea ] | ].
+      rewrite <- apC_comp.
+      apply T_Restrict with (R0 := apR s2 (row_Ext l10 (typ_Var (ea n1)) (row_Var (ea (S n1)))))
+        (T := apT s2 (typ_Var (ea n1))).
+      * eapply T_Conv; [ | exact Hteq ].
+        apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1.
+      * unfold rm. simpl. rewrite Nat.eqb_refl. reflexivity.
   - intros D G fs n s D' R n' H HG HD. cbn [infer_fields] in H.
     destruct fs as [| l e rest]; try discriminate H.
     + inversion H; try subst s; try subst D'; try subst R; try subst n'; clear H.

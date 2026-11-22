@@ -13,7 +13,8 @@
 //! in the fragment of `proofs/goat_ln.ott`: numerals, Float literals, strings,
 //! unit, booleans, functions, calls, `if` with an `else`, the twelve binary
 //! operators on Int, Float, String and Bool, `let` of any value, record
-//! literals with distinct labels, and field access, using only names it binds.
+//! literals with distinct labels, field access, spread (`{...p, x: v}`) and
+//! rest patterns, using only names it binds.
 //! The calculus generalizes a `let` of a syntactic value (`is_gen_value` in
 //! `proofs/GoatDefs.v`, the checker's `is_syntactic_value`) and types any other
 //! `let` monomorphically (`T_LetMono`). A function that calls itself, or that
@@ -57,6 +58,7 @@ const LOOP_BINDING: &str = "loop";
 const GENERATED: usize = 4000;
 const GENERATED_TYPED: usize = 6000;
 const GENERATED_GROUPS: usize = 8000;
+const GENERATED_SPREADS: usize = 3000;
 const TYPED_DEPTH: u32 = 4;
 /// Each seed drives all three generators, so a change to one stream cannot
 /// hide a mismatch another seed's programs would show.
@@ -87,6 +89,10 @@ enum Core {
     Letrec(Vec<(usize, Core)>, Box<Core>),
     Rec(Vec<(usize, Core)>),
     Proj(Box<Core>, usize),
+    /// `{...base, label: value}`: one field, so a spread of several is a nest.
+    Spread(Box<Core>, usize, Box<Core>),
+    /// `record` with its first `label` taken out.
+    Restrict(Box<Core>, usize),
 }
 
 fn fields_sexp(fields: &[(usize, Core)], out: &mut String) {
@@ -168,6 +174,18 @@ impl Core {
                 e.sexp(out);
                 write!(out, " {label})").unwrap();
             }
+            Core::Spread(base, label, value) => {
+                out.push_str("(spread ");
+                base.sexp(out);
+                write!(out, " {label} ").unwrap();
+                value.sexp(out);
+                out.push(')');
+            }
+            Core::Restrict(record, label) => {
+                out.push_str("(restrict ");
+                record.sexp(out);
+                write!(out, " {label})").unwrap();
+            }
         }
     }
 }
@@ -200,7 +218,7 @@ enum Feature {
     ForeignCall,
     MethodsAndDotCalls,
     TagsAndMatch,
-    Spread,
+    LacksOnTail,
     Builtin,
     Connective,
     Loop,
@@ -222,7 +240,9 @@ impl Feature {
             Feature::ForeignCall => "outside the calculus: a foreign host call",
             Feature::MethodsAndDotCalls => "outside the calculus: methods, self or dot calls",
             Feature::TagsAndMatch => "outside the calculus: tags and match",
-            Feature::Spread => "outside the calculus: spread or restrict",
+            Feature::LacksOnTail => {
+                "outside the calculus: a spread onto a row variable that lacks the label"
+            }
             Feature::Builtin => "outside the calculus: print or trap",
             Feature::Connective => "outside the calculus: and, or, not",
             Feature::Loop => "outside the calculus: a loop (repeat, for)",
@@ -236,9 +256,7 @@ impl Feature {
             Feature::NumeralLet => {
                 "outside the calculus: a let of a numeral the calculus would generalize"
             }
-            Feature::UnwritableType => {
-                "outside the calculus: an inferred type with a method or presence row"
-            }
+            Feature::UnwritableType => "outside the calculus: an inferred type with a method field",
             Feature::IfWithoutElse => "outside the calculus: an if without an else",
             Feature::NoParameters => "outside the calculus: a function or call with no parameters",
             Feature::TrailingBinding => "outside the calculus: a program that ends in a binding",
@@ -274,7 +292,6 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
             note(Feature::MethodsAndDotCalls)
         }
         ExprKind::Tag { .. } | ExprKind::Match { .. } => note(Feature::TagsAndMatch),
-        ExprKind::Spread { .. } | ExprKind::Restrict { .. } => note(Feature::Spread),
         ExprKind::Builtin(_) | ExprKind::Trap(_) => note(Feature::Builtin),
         ExprKind::And { .. } | ExprKind::Or { .. } | ExprKind::Not(_) => note(Feature::Connective),
         ExprKind::Let { name, value, .. }
@@ -362,6 +379,9 @@ struct Reader<'a> {
     record_arg: bool,
     /// Whether a record field holds a function of a recursive group by name.
     member_in_record: bool,
+    /// The symbols of function parameters. A `let` of one (a record pattern
+    /// binds its source so) holds no numeral the calculus could generalize.
+    params: HashSet<Symbol>,
     /// Why the reader stopped, when the cause is the shape of the program and
     /// not a node the calculus lacks.
     gap: Feature,
@@ -524,8 +544,10 @@ impl Reader<'_> {
             return self.read(tail);
         };
         let Some(group) = group_at.get(&from) else {
+            let names_param = matches!(&value.kind, ExprKind::Var { symbol, .. }
+                if self.params.contains(symbol));
             let value = self.read(value)?;
-            if value.generalizes_numeral() {
+            if value.generalizes_numeral() && !names_param {
                 self.gap = self.gap.min(Feature::NumeralLet);
                 return None;
             }
@@ -648,6 +670,7 @@ impl Reader<'_> {
                     return None;
                 }
                 self.unary &= params.len() == 1;
+                self.params.extend(params.iter().map(|p| p.symbol));
                 let mark = self.scope.len();
                 self.scope.extend(
                     params
@@ -713,6 +736,23 @@ impl Reader<'_> {
                 let base = self.read(record)?;
                 Some(Core::Proj(Box::new(base), self.label(label)))
             }
+            ExprKind::Spread { base, fields } => {
+                fields
+                    .iter()
+                    .try_fold(self.read(base)?, |base, (label, value)| {
+                        let label = self.label(label);
+                        Some(Core::Spread(
+                            Box::new(base),
+                            label,
+                            Box::new(self.read(value)?),
+                        ))
+                    })
+            }
+            ExprKind::Restrict { record, labels } => {
+                labels.iter().try_fold(self.read(record)?, |record, label| {
+                    Some(Core::Restrict(Box::new(record), self.label(label)))
+                })
+            }
             _ => None,
         }
     }
@@ -768,23 +808,40 @@ impl Canon<'_> {
                             rest,
                             ..
                         } => {
-                            if **method != goat_checker::ty::PLAIN {
+                            if **method == goat_checker::ty::METHOD {
                                 return None;
                             }
                             let id = self.labels.iter().position(|l| l == label)?;
-                            fields.push((id, &**field));
+                            fields.push((id, None, &**field));
                             at = rest;
                         }
-                        Row::Maybe { .. } => return None,
+                        Row::Maybe {
+                            label,
+                            pres,
+                            field,
+                            method,
+                            rest,
+                        } => {
+                            if **method == goat_checker::ty::METHOD {
+                                return None;
+                            }
+                            let id = self.labels.iter().position(|l| l == label)?;
+                            fields.push((id, Some(*pres), &**field));
+                            at = rest;
+                        }
                     }
                 };
-                fields.sort_by_key(|(id, _)| *id);
+                fields.sort_by_key(|(id, ..)| *id);
                 out.push('{');
-                for (i, (id, field)) in fields.iter().enumerate() {
+                for (i, (id, pres, field)) in fields.iter().enumerate() {
                     if i > 0 {
                         out.push_str(", ");
                     }
-                    write!(out, "l{id}: ").unwrap();
+                    write!(out, "l{id}").unwrap();
+                    if let Some(pres) = pres {
+                        write!(out, "^v{}", self.var(*pres)).unwrap();
+                    }
+                    out.push_str(": ");
                     self.ty(field, out)?;
                 }
                 if let Some(v) = tail {
@@ -799,6 +856,51 @@ impl Canon<'_> {
     }
 }
 
+/// The labels of a row's entries and the variable it ends in, if any.
+fn row_spine(row: &Row) -> (Vec<&str>, Option<goat_checker::ty::TypeVar>) {
+    let mut labels = Vec::new();
+    let mut at = row;
+    loop {
+        match at {
+            Row::Empty => return (labels, None),
+            Row::Var(v) => return (labels, Some(*v)),
+            Row::Extend { label, rest, .. } | Row::Maybe { label, rest, .. } => {
+                labels.push(label);
+                at = rest;
+            }
+        }
+    }
+}
+
+/// Whether some spread writes a label onto a record whose row has no entry for
+/// it and ends in a row variable the checker knows lacks it, which only a
+/// rest pattern's remainder does. The calculus's `l # R` holds of a closed spine
+/// alone, so such a program is accepted by the checker and has no derivation
+/// (`docs/design/phase4-proof-plan.md`, decision Q2).
+fn lacks_on_tail(root: &Expr, types: &HashMap<ExprId, Ty>) -> bool {
+    let mut lacking = HashSet::new();
+    for_each_node(root, &mut |e| {
+        if let (ExprKind::Restrict { labels, .. }, Some(Ty::Record(row))) =
+            (&e.kind, types.get(&e.id))
+            && let (_, Some(tail)) = row_spine(row)
+        {
+            lacking.extend(labels.iter().map(|l| (tail, l.clone())));
+        }
+    });
+    let mut found = false;
+    for_each_node(root, &mut |e| {
+        if let ExprKind::Spread { base, fields } = &e.kind
+            && let Some(Ty::Record(row)) = types.get(&base.id)
+            && let (present, Some(tail)) = row_spine(row)
+        {
+            found |= fields.iter().any(|(l, _)| {
+                !present.contains(&l.as_str()) && lacking.contains(&(tail, l.clone()))
+            });
+        }
+    });
+    found
+}
+
 /// The line for `source`, or why it is not a program of the fragment. A
 /// `forced` program is kept although a comparison in it looks generic: the
 /// checker does not record a `Numeric` variable, which a `%` makes of a parameter.
@@ -807,7 +909,13 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
     if !lowered.errors.is_empty() {
         return Err(Skip::Rejected);
     }
-    let checked = check_with_prelude("", source).ok();
+    let checked = check_with_prelude("", source);
+    let hides_label = checked.as_ref().is_err_and(|errors| {
+        errors
+            .iter()
+            .any(|e| e.message.contains("was taken out of this record"))
+    });
+    let checked = checked.ok();
     let mut reader = Reader {
         special: lowered
             .dot_calls
@@ -824,12 +932,20 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
         generic_ring: false,
         generic_comparison: false,
         record_arg: false,
+        params: HashSet::new(),
         member_in_record: false,
         gap: Feature::Other,
     };
     let core = reader
         .read(&lowered.root)
         .ok_or_else(|| Skip::OutsideFragment(feature_of(&lowered, checked.as_ref(), reader.gap)))?;
+    if hides_label
+        || reader
+            .types
+            .is_some_and(|types| lacks_on_tail(&lowered.root, types))
+    {
+        return Err(Skip::OutsideFragment(Feature::LacksOnTail));
+    }
     if reader.generic_ring && reader.record_arg {
         return Err(Skip::RecordAtGenericOperator);
     }
@@ -1416,9 +1532,106 @@ impl GroupGen {
     }
 }
 
+/// Programs of spreads and rest patterns over records of three labels: a
+/// function that sets or drops a label, called at records that have it and
+/// records that lack it, and spreads of record literals, nested. Values are
+/// numerals, booleans and strings, so a call or an update often changes a
+/// field's type and the checker and the model must agree on the rejection.
+struct SpreadGen {
+    rng: Rng,
+}
+
+impl SpreadGen {
+    const LABELS: [&'static str; 3] = ["a", "b", "c"];
+
+    fn label(&mut self) -> &'static str {
+        Self::LABELS[self.rng.below(Self::LABELS.len())]
+    }
+
+    fn value(&mut self) -> String {
+        match self.rng.below(3) {
+            0 => negate_some(self.rng.below(100)),
+            1 => ["true", "false"][self.rng.below(2)].to_string(),
+            _ => "\"s\"".to_string(),
+        }
+    }
+
+    /// Distinct labels, each with a value.
+    fn fields(&mut self, most: usize) -> Vec<(&'static str, String)> {
+        let mut out: Vec<(&'static str, String)> = Vec::new();
+        for _ in 0..self.rng.below(most + 1) {
+            let label = self.label();
+            if out.iter().all(|(l, _)| *l != label) {
+                out.push((label, self.value()));
+            }
+        }
+        out
+    }
+
+    fn record(&mut self, depth: u32) -> String {
+        if depth == 0 || self.rng.below(2) == 0 {
+            let fields = self.fields(3);
+            let body: Vec<String> = fields.iter().map(|(l, v)| format!("{l}: {v}")).collect();
+            return format!("{{{}}}", body.join(", "));
+        }
+        let base = self.record(depth - 1);
+        let mut fields = self.fields(2);
+        if fields.is_empty() {
+            fields.push((self.label(), self.value()));
+        }
+        let body: Vec<String> = fields.iter().map(|(l, v)| format!("{l}: {v}")).collect();
+        format!("{{...{base}, {}}}", body.join(", "))
+    }
+
+    fn program(&mut self) -> String {
+        let (one, two) = (self.label(), self.label());
+        let value = self.value();
+        let (first, second) = (self.record(2), self.record(2));
+        match self.rng.below(5) {
+            0 => format!(
+                "f = program(p) do {{...p, {one}: {value}}} done\n{{x: f({first}), y: f({second})}}"
+            ),
+            1 => format!("f = program(p) do\n  {{{one}, ...r}} = p\n  r\ndone\nf({first})"),
+            2 => format!(
+                "f = program(p) do\n  {{{one}, ...r}} = p\n  {{...r, {two}: {value}}}\ndone\nf({first})"
+            ),
+            3 => format!(
+                "f = program(p) do\n  {{{one}, {two}, ...r}} = p\n  r\ndone\n{{x: f({first}), y: f({second})}}"
+            ),
+            _ => {
+                format!("f = program(p, q) do {{...p, {one}: q.{two}}} done\nf({first}, {second})")
+            }
+        }
+    }
+}
+
 /// Programs the repository's sources may not hold: let-polymorphism, row
 /// polymorphism, rejections, and calls with several arguments.
 const HANDWRITTEN: &[&str] = &[
+    "set_x = program(r) do {...r, x: 1} done\n{a: set_x({x: 4, z: 2}), b: set_x({y: true})}",
+    "set_x = program(r) do {...r, x: 1} done\nset_x(set_x({y: true}))",
+    "set_x = program(r) do {...r, x: 1} done\nset_x({x: \"s\"})",
+    "{...{x: 1, y: true}, x: 2}",
+    "{...{x: 1}, y: true}",
+    "{...{x: 1}, x: true}",
+    "{...{x: 1, y: 2}, x: 3, y: 4}",
+    "{...{x: 1}, y: true, z: \"s\"}",
+    "f = program(p) do {...p, a: true} done\nf({a: false, b: 1})",
+    "program(p) do {...p, a: p.b} done",
+    "program(p, q) do {...p, x: q.x} done",
+    "program(p) do if true then {...p, x: 1} else p done",
+    "program(p) do {...{...p, a: 1}, b: true} done",
+    "program(r) do q = {...r, x: 1}\nq.x done",
+    "f = program(p) do {...p, x: 1} done\ng = program(q) do f(q) done\ng({y: true})",
+    "program(p) do {a, ...r} = p\nr done",
+    "program(p) do {a, b, ...r} = p\nr done",
+    "program(p) do {a, ...r} = p\n{...r, b: a} done",
+    "program(p) do {x, ...r} = p\n{...r, x: 2} done",
+    "program(p) do\n  {x, ...r} = p\n  if true then r else {x: 1}\ndone",
+    "program(p) do\n  {x, ...r} = p\n  {...r, x: 1}\ndone",
+    "f = program(p) do\n  {x, ...r} = p\n  r\ndone\nf({x: 1, y: true, z: \"s\"})",
+    "f = program(p) do\n  {x, ...r} = p\n  r\ndone\nf({y: true})",
+    "f = program(p) do\n  {x, y, ...r} = p\n  {...r, y: x}\ndone\nf({x: 1, y: true, z: \"s\"})",
     "id = program(x) do x done\n{a: id(1), b: id(true)}",
     "get = program(r) do r.x done\n{a: get({x: 1, y: true}), b: get({x: false})}",
     "add = program(a, b) do {x: a, y: b} done\nadd(1, true)",
@@ -1491,6 +1704,8 @@ const HANDWRITTEN: &[&str] = &[
 const FORCED: &[&str] = &[
     "v = 71 // 88\nif v <= v then v - 3.1 else 4.0 done",
     "f = program(x) do x == x % x done\nf(90)",
+    "set_x = program(r) do {...r, x: 1} done\n{a: set_x({x: 4, z: 2}), b: set_x({y: true})}",
+    "f = program(p) do\n  {x, ...r} = p\n  r\ndone\nf({x: 1, y: true})",
 ];
 
 fn main() {
@@ -1558,6 +1773,13 @@ fn main() {
             group_gen.names = 0;
             group_gen.careful = group_gen.rng.below(2) == 0;
             sources.push(group_gen.block(0, &[], &[]));
+        }
+
+        let mut spread_gen = SpreadGen {
+            rng: Rng(seed ^ 0x5B4E),
+        };
+        for _ in 0..GENERATED_SPREADS {
+            sources.push(spread_gen.program());
         }
     }
 
