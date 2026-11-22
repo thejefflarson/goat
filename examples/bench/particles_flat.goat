@@ -11,7 +11,7 @@ spawn = program(i, acc) do
       py: i * 0.3,
       vx: 1.5 - i * 0.003,
       vy: 0.7 + i * 0.002
-      }, acc))
+    }, acc))
   done
 done
 
