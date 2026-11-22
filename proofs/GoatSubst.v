@@ -90,6 +90,7 @@ Proof.
   - (* Record *) f_equal; apply H; intros; [apply H0|apply H1]; fsetdec.
   - (* Var a *) apply H. fsetdec.
   - (* Mu *) f_equal. apply H; assumption.
+  - (* Grp *) f_equal. apply H; assumption.
   - (* row_Var *) apply H0. fsetdec.
   - (* row_Ext *) f_equal; [ apply H | apply H0 ]; intros; [apply H1|apply H2|apply H1|apply H2]; fsetdec.
 Qed.
@@ -309,6 +310,8 @@ Proof.
   - eapply T_Bin; eauto. eapply bin_sig_pw; eauto.
   - eapply T_Fold; eauto.
   - eapply T_Unfold; eauto.
+  - eapply T_Con; eauto.
+  - eapply T_Match with (L := L); intros; eauto.
   - apply FT_nil; auto.
   - eapply FT_cons; eauto.
 Qed.
@@ -363,6 +366,10 @@ Proof.
   - (* T_Bin *) eapply T_Bin; eauto.
   - (* T_Fold *) eapply T_Fold; eauto.
   - (* T_Unfold *) eapply T_Unfold; eauto.
+  - (* T_Con *) eapply T_Con; eauto.
+  - (* T_Match *) eapply T_Match with (L := L); [ eauto | assumption | | intros e0 Hd; eauto ].
+    intros tg b Hf x Hx. eapply (H0 tg b Hf x Hx).
+    apply ctx_equiv_cons; auto using sch_equiv_refl.
   - (* FT_nil *) apply FT_nil; eauto using ctx_equiv_uniq.
   - (* FT_cons *) eapply FT_cons; eauto.
 Qed.
@@ -587,6 +594,10 @@ Proof.
   - (* T_Bin *) eapply T_Bin; eauto.
   - (* T_Fold *) eapply T_Fold; eauto.
   - (* T_Unfold *) eapply T_Unfold; eauto.
+  - (* T_Con *) eapply T_Con; eauto.
+  - (* T_Match *) eapply T_Match with (L := L); [ eauto | assumption | | intros e0 Hd; eauto ].
+    intros tg b Hf x Hx. eapply (H0 tg b Hf x Hx).
+    apply ctx_more_gen_cons; auto using sch_more_gen_refl.
   - apply FT_nil; eauto using ctx_more_gen_uniq.
   - eapply FT_cons; eauto.
 Qed.
@@ -613,6 +624,7 @@ Proof.
   - apply teq_arrow; auto.
   - apply teq_refl.
   - apply teq_mu; auto.
+  - apply teq_grp; auto.
   - apply teq_rec; auto.
   - eapply teq_trans; eauto.
   - apply teq_sym; auto.
@@ -704,6 +716,7 @@ Proof.
     split; [ intro HH; rewrite <- HH; symmetry; apply gf | intro HH; rewrite HH; apply fg ].
   - fsetdec.
   - apply H.
+  - apply H.
   - fsetdec.
   - (* row_Var *) unfold rr; simpl. fsetdec.
   - rewrite !AtomSetFacts.union_iff. rewrite H, H0. reflexivity.
@@ -723,6 +736,7 @@ Proof.
   - apply H.
   - (* Var a0 *) unfold rt; simpl. fsetdec.
   - fsetdec.
+  - apply H.
   - apply H.
   - fsetdec.
   - (* row_Var *) unfold rr; simpl. rewrite !AtomSetFacts.singleton_iff.

@@ -38,6 +38,8 @@ Fixpoint inst_rec (var_of : string -> termvar) (k D : nat) (e : exp) {struct e} 
   | e_ite a b c => e_ite (inst_rec var_of k D a) (inst_rec var_of k D b) (inst_rec var_of k D c)
   | e_bin a o b => e_bin (inst_rec var_of k D a) o (inst_rec var_of k D b)
   | e_tofloat a => e_tofloat (inst_rec var_of k D a)
+  | e_con w tg a => e_con w tg (inst_rec var_of k D a)
+  | e_match w a ars => e_match w (inst_rec var_of k D a) (inst_arms var_of k D ars)
   | e_fold a => e_fold (inst_rec var_of k D a)
   | e_unfold a => e_unfold (inst_rec var_of k D a)
   end
@@ -46,6 +48,12 @@ with inst_fields (var_of : string -> termvar) (k D : nat) (fs : Goat_ott.fields)
   match fs with
   | fs_nil => fs_nil
   | fs_cons l e rest => fs_cons l (inst_rec var_of k D e) (inst_fields var_of k D rest)
+  end
+with inst_arms (var_of : string -> termvar) (k D : nat) (ars : arms) {struct ars} : arms :=
+  match ars with
+  | arms_nil => arms_nil
+  | arms_else e => arms_else (inst_rec var_of k D e)
+  | arms_cons tg e ars' => arms_cons tg (inst_rec var_of (S k) D e) (inst_arms var_of k D ars')
   end.
 
 Definition inst (var_of : string -> termvar) (D : nat) (e : exp) : exp :=
@@ -63,7 +71,8 @@ Lemma close_inst : forall var_of, names_distinct var_of -> forall D,
      = inst_rec var_of (S k) D e) /\
   (forall fs k, scoped_fields (k + S D) fs ->
      close_fields_rec k (var_of (nm D)) (inst_fields var_of k (S D) fs)
-     = inst_fields var_of (S k) D fs).
+     = inst_fields var_of (S k) D fs) /\
+  (forall ars : arms, True).
 Proof.
   intros var_of Hdist D.
   apply exp_fields_mutind.
@@ -117,11 +126,16 @@ Proof.
     rewrite (IHa k Ha), (IHb k Hb). reflexivity.
   - (* coercion: not a term of the printed fragment *)
     intros a IH k Hs. destruct Hs.
+  - intros w tg a IH k Hs. destruct Hs.
+  - intros w a IHa ars IHars k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros k Hs. reflexivity.
   - intros l e IHe fs IHfs k [He Hfs]. simpl.
     rewrite (IHe k He), (IHfs k Hfs). reflexivity.
+  - intros; exact I.
+  - intros; exact I.
+  - intros; exact I.
 Qed.
 
 Lemma close_inst_exp : forall var_of D b,
@@ -317,7 +331,8 @@ Lemma print_den : forall var_of tbl, names_distinct var_of ->
      (NonLet e -> bin_end e = false -> Den_chain var_of tbl (block P e) (inst var_of P e))) /\
   (forall fs P, scoped_fields P fs -> LabelsOK tbl (lbls_fields fs) ->
      Den_items var_of tbl (field_trees P fs ++ [sym "}"]) (inst_fields var_of 0 P fs) /\
-     Den_sep var_of tbl (more_field_trees P fs ++ [sym "}"]) (inst_fields var_of 0 P fs)).
+     Den_sep var_of tbl (more_field_trees P fs ++ [sym "}"]) (inst_fields var_of 0 P fs)) /\
+  (forall ars : arms, True).
 Proof.
   intros var_of tbl Hdist.
   apply exp_fields_mutind.
@@ -454,6 +469,8 @@ Proof.
            | split; [ intros _; exact Hmath | intros _ Hx; discriminate Hx ] ].
   - (* coercion: not a term of the printed fragment *)
     intros a IH P Hs Hl. destruct Hs.
+  - intros w tg a IH P Hs. destruct Hs.
+  - intros w a IHa ars IHars P Hs. destruct Hs.
   - intros a IH P Hs Hl. destruct Hs.
   - intros a IH P Hs Hl. destruct Hs.
   - (* no fields *)
@@ -482,4 +499,7 @@ Proof.
     split; [ exact Hitems' | ].
     cbn [more_field_trees]. simpl. apply DS_more.
     exact Hitems'.
+  - intros; exact I.
+  - intros; exact I.
+  - intros; exact I.
 Qed.

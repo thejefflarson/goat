@@ -178,10 +178,13 @@ fn every_ott_production_is_reached_by_some_core_rule() {
         // without an `else`, and `e_letrec` is the group a block's leading
         // function bindings form (ADR 0003). `e_fold` and `e_unfold` are
         // inserted by elaboration of recursive types, which have no surface
-        // syntax (ADR 0037, iso-recursive types).
+        // syntax (ADR 0037, iso-recursive types). `e_con` and `e_match` are
+        // the proof calculus's tag groups (proofs/README.md, phase 3); the
+        // grammar does not denote tag declarations, construction or `match`
+        // into them until the parser fragment grows them.
         if !matches!(
             production.as_str(),
-            "e" | "fs" | "fs_nil" | "e_tofloat" | "e_fold" | "e_unfold"
+            "e" | "fs" | "fs_nil" | "e_tofloat" | "e_fold" | "e_unfold" | "e_con" | "e_match"
         ) {
             assert!(
                 reached.contains(production.as_str()),

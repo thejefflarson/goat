@@ -7,6 +7,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatTags.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
@@ -187,6 +188,28 @@ Proof.
   - (* T_Unfold *)
     intros D G e B Hlc Hgd Ht IH G2 Hg Hy. subst G. cbn [subst_exp].
     eapply T_Unfold; [ exact Hlc | exact Hgd | eapply IH; eauto ].
+  - (* T_Con *)
+    intros D G w tg e Ts Hlt Ht IH G2 Hg Hy. subst G. cbn [subst_exp].
+    eapply T_Con; [ exact Hlt | eapply IH; eauto ].
+  - (* T_Match *)
+    intros L D G w Ts e ars T Ht IHe Hwf Harm IHarm Hdef IHdef G2 Hg Hy. subst G. cbn [subst_exp].
+    apply T_Match with (L := L `union` {{x}} `union` {{y}}) (w := w) (Ts := Ts).
+    + eapply IHe; eauto.
+    + apply arms_wf_subst. exact Hwf.
+    + intros tg b Hf z Hz.
+      destruct (arms_find_subst_inv _ _ _ _ _ Hf) as [b0 [-> Hf0]].
+      assert (Hzx : z <> x) by fsetdec.
+      assert (HzL : z `notin` L) by fsetdec.
+      assert (Hshape : (z ~ sch_mono (tag_payload w Ts tg)) ++ G2 ++ (x ~ sc) ++ G1
+                       = ((z ~ sch_mono (tag_payload w Ts tg)) ++ G2) ++ (x ~ sc) ++ G1)
+        by (rewrite <- app_assoc; reflexivity).
+      assert (Hydom : y `notin` dom ((z ~ sch_mono (tag_payload w Ts tg)) ++ G2 ++ (x ~ sc) ++ G1))
+        by (simpl in *; fsetdec).
+      pose proof (IHarm tg b0 Hf0 z HzL ((z ~ sch_mono (tag_payload w Ts tg)) ++ G2) Hshape Hydom) as IH'.
+      rewrite (subst_open_var b0 (e_fvar_f y) x z Hzx (lc_fvar_f y)) in IH'.
+      rewrite <- app_assoc in IH'. exact IH'.
+    + intros e0 Hd.
+      destruct (arms_default_subst_inv _ _ _ _ Hd) as [e1 [-> Hd0]]. eapply IHdef; eauto.
   - intros D G Hu G2 Hg Hy. subst G. cbn [subst_fields]. apply FT_nil. eapply uniq_rename_mid; eauto.
   - intros D G l e T fs R Ht IH1 Hf IH2 G2 Hg Hy. subst G. cbn [subst_fields].
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.
