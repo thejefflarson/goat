@@ -412,6 +412,18 @@ fn a_number_that_gets_too_big_is_blamed_on_the_operation() {
 }
 
 #[test]
+fn a_comparison_of_values_nested_too_deeply_is_blamed_on_the_comparison() {
+    let src = "nest = program(n, acc) do if n < 1 then acc else nest(n - 1, [acc]) done done\n\
+               a = nest(300000, [])\nb = nest(300000, [])\nprint(a == b)";
+    let (_, stderr) = failure_of(src);
+    assert!(
+        stderr.contains("trap: 4:7: the program called itself too deeply"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("a == b"), "{stderr}");
+}
+
+#[test]
 fn lines_printed_before_a_trap_survive() {
     let (stdout, stderr) = failure_of("a = print(1)\nb = print(\"two\")\nfirst([]) + 1");
     assert_eq!(stdout, "1\ntwo\n");

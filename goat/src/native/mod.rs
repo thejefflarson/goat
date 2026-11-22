@@ -289,6 +289,20 @@ fn interrupted(error: &wasmtime::Error) -> bool {
     error.downcast_ref::<Trap>() == Some(&Trap::Interrupt)
 }
 
+fn out_of_stack(error: &wasmtime::Error) -> bool {
+    error.downcast_ref::<Trap>() == Some(&Trap::StackOverflow)
+}
+
+/// The user's source range the module last blamed, from its `goat_site` global.
+fn blamed_site<T>(store: &mut Store<State<T>>, instance: &Instance) -> Option<(usize, usize)> {
+    let number = instance
+        .get_global(&mut *store, "goat_site")?
+        .get(&mut *store)
+        .i32()?;
+    let index = usize::try_from(number).ok()?.checked_sub(1)?;
+    store.data().sites.get(index).copied()
+}
+
 fn engine() -> Result<Engine, String> {
     let mut config = Config::new();
     config.wasm_tail_call(true);
@@ -558,13 +572,20 @@ pub fn run_to_end_within<H: Host + 'static>(
                 .and_then(|live| live.call(&mut store, ()))
                 .map_err(|e| format!("goat_live_allocs: {e}"))?)
         }
-        Err(error) => Err(store.data_mut().stopped.take().unwrap_or_else(|| Stopped {
-            message: match &deadline {
-                Some(deadline) if interrupted(&error) => deadline.stuck(),
-                _ => format!("{error:#}"),
+        Err(error) => Err(match store.data_mut().stopped.take() {
+            Some(stopped) => stopped,
+            None if out_of_stack(&error) => Stopped {
+                message: goat_wasm::STACK_OVERFLOW.into(),
+                site: blamed_site(&mut store, &instance),
             },
-            site: None,
-        })),
+            None => Stopped {
+                message: match &deadline {
+                    Some(deadline) if interrupted(&error) => deadline.stuck(),
+                    _ => format!("{error:#}"),
+                },
+                site: None,
+            },
+        }),
     };
     let State {
         mut output, host, ..
@@ -660,6 +681,9 @@ impl<H: Host + 'static> Guest<H> {
             .map_err(|error| match &self.deadline {
                 Some(deadline) if interrupted(&error) => {
                     format!("{name} stopped: {}", deadline.stuck())
+                }
+                _ if out_of_stack(&error) => {
+                    format!("{name} trapped: {}", goat_wasm::STACK_OVERFLOW)
                 }
                 _ => format!("{name} trapped: {error:#}"),
             })

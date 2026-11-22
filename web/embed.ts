@@ -5,7 +5,7 @@
 import { type BeatMessage, createBeat } from "./beat.ts";
 import { compile } from "./compile.ts";
 import { isInteractiveModule, runInteractive, type Loop } from "./loop.ts";
-import { animate, run } from "./runtime.ts";
+import { animate, run, stopMessage } from "./runtime.ts";
 import type { Runner } from "./supervisor.ts";
 
 // `line` and `column` are 1-based, `column` and `length` count characters, and
@@ -150,7 +150,7 @@ export function createEngine({ canvas, compiler, post, runner, heartbeat = false
       });
       if (current()) post({ type: "state", state: "finished" });
     } catch (e) {
-      fail(e instanceof Error ? e.message : String(e));
+      fail(stopMessage(e));
     }
   };
 
