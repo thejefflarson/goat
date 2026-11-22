@@ -268,4 +268,12 @@ fn applying_edits_refuses_to_touch_anything_but_whitespace() {
     assert!(apply("a b", &[edit(1, 9)]).is_err());
     assert!(apply("a  b", &[edit(2, 3), edit(1, 2)]).is_err());
     assert_eq!(apply("a  b", &[edit(1, 3)]).unwrap(), "ab");
+    let huge = |newlines, indent| Edit {
+        from: 1,
+        to: 2,
+        newlines,
+        indent,
+    };
+    assert!(apply("a b", &[huge(0, 1 << 40)]).is_err());
+    assert!(apply("a b", &[huge(1 << 40, 0)]).is_err());
 }

@@ -92,6 +92,11 @@ impl Formatter {
     }
 }
 
+/// The same bounds the web editor applies, so a wrong edit fails instead of
+/// allocating without limit.
+const MAX_NEWLINES: usize = 8;
+const MAX_INDENT: usize = 256;
+
 /// `source` with `edits` applied. The edits must be in order, inside the text,
 /// on character boundaries and over whitespace only: the formatter changes how
 /// a program is laid out and never what it says.
@@ -103,6 +108,12 @@ pub fn apply(source: &str, edits: &[Edit]) -> Result<String, String> {
             .get(edit.from..edit.to)
             .filter(|_| edit.from >= at)
             .ok_or_else(|| format!("an edit over {}..{} is out of place", edit.from, edit.to))?;
+        if edit.newlines > MAX_NEWLINES || edit.indent > MAX_INDENT {
+            return Err(format!(
+                "an edit over {}..{} asks for {} line breaks and {} spaces",
+                edit.from, edit.to, edit.newlines, edit.indent
+            ));
+        }
         if !gap.chars().all(char::is_whitespace) {
             return Err(format!(
                 "an edit over {}..{} is not whitespace",
