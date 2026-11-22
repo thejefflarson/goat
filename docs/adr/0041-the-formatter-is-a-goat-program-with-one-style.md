@@ -63,11 +63,23 @@ text. It can return data.
    - Comments are kept as written. A comment on its own line is indented like
      the line after the previous token; a trailing comment keeps the spaces
      before it when they are spaces, or becomes one space.
-4. **Version 1 does not break or join lines.** The writer's line breaks stay.
-   There is no maximum width, no reflowing of long records, lists or calls, and
-   no alignment of columns. Those are possible later, as more edits that insert
-   a break (a gap of `newlines: 1`) where a gap was one space; they would change
-   the style, so each needs its own decision.
+4. **Long records and lists break; nothing else does.** A record `{...}` or
+   list `[...]` literal whose one-line form would end past column 80 is laid out
+   one field or item per line: `{` stays on its line, each item sits on its own
+   line two spaces past the line that holds `{`, each `,` stays at the end of its
+   line, and `}` (or `]`) takes its own line at the indent of the line that holds
+   the opener. The grammar allows a trailing comma, but adding one would not be a
+   whitespace edit, so the last item gets none (one the author wrote stays).
+   - Width is counted in characters (a byte that is not a UTF-8 continuation
+     byte), from the start of the line, indent included, to the closing bracket.
+   - A broken record is checked again field by field: an inner record that fits
+     stays on one line, and one that does not breaks in turn.
+   - A record or list the author already wrote across lines, or with a comment
+     inside, stays broken, and is laid out one item to a line. The formatter
+     never joins lines, so a deliberate layout survives and a second pass changes
+     nothing.
+   - Call arguments, parameter lists and everything else are never broken, and
+     there is no other line-width rule: a long call stays on its line.
 5. **Hosts.** `goat fmt FILE...` rewrites each file in place; `goat fmt --check
    FILE...` changes nothing and fails if any file is not formatted. The web editor
    has a Format command and a shortcut. The Apple editor is a follow-up.

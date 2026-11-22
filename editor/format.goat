@@ -25,13 +25,41 @@ unknown = 10
 functions = ["program", "function", "fn"]
 
 keywords = [
-  "if", "match", "then", "else", "done", "do", "start at", "repeat", "times",
-  "for", "and", "or", "not", "return", "tag"
+  "if",
+  "match",
+  "then",
+  "else",
+  "done",
+  "do",
+  "start at",
+  "repeat",
+  "times",
+  "for",
+  "and",
+  "or",
+  "not",
+  "return",
+  "tag"
 ]
 
 literals = ["true", "false"]
 
-operators = ["==", "!=", "<=", "<", ">=", ">", "->", "//", "/", "%", "+", "*", "-", "::"]
+operators = [
+  "==",
+  "!=",
+  "<=",
+  "<",
+  ">=",
+  ">",
+  "->",
+  "//",
+  "/",
+  "%",
+  "+",
+  "*",
+  "-",
+  "::"
+]
 
 puncts = ["(", ")", "{", "}", "[", "]", "=", ":", ";", "|", ",", "...", "."]
 
@@ -162,12 +190,19 @@ body_block = 3
 
 indent_width = 2
 
+# A record or list whose one-line form would end past this column is broken.
+max_width = 80
+
 # Every token but the whitespace, in order.
 lex = program(text, p, found) do
   if p >= byte_length(text) then reverse(found)
   else
     token = next_token(text, p)
-    lex(text, token.end, if token.kind == space then found else Link({kind: token.kind, a: p, b: token.end}, found) done)
+    lex(text, token.end, if token.kind == space then found else Link({
+      kind: token.kind,
+      a: p,
+      b: token.end
+    }, found) done)
   done
 done
 
@@ -256,7 +291,15 @@ opened_on = program(stack, line) do
   done
 done
 
-nobody = {kind: 0 - 1, weight: 0, line: 0, col: 0, chain: false, inline: false}
+nobody = {
+  kind: 0 - 1,
+  weight: 0,
+  line: 0,
+  col: 0,
+  chain: false,
+  inline: false,
+  broken: false
+}
 
 # The innermost block that is not an `else if` link: the one whose branches a
 # `then` or `else` belongs to.
@@ -273,7 +316,15 @@ mark_then = program(stack, line) do
   match stack do
     [open, ...rest] then
       if open.kind == if_block and open.line == line
-        then Link({kind: open.kind, weight: open.weight, line: open.line, col: open.col, chain: open.chain, inline: true}, rest)
+        then Link({
+          kind: open.kind,
+          weight: open.weight,
+          line: open.line,
+          col: open.col,
+          chain: open.chain,
+          inline: true,
+          broken: open.broken
+        }, rest)
         else stack done
     [] then stack
   done
@@ -307,7 +358,7 @@ leading_pop = program(text, tokens, stack) do
         popped = pop(text, token, stack)
         match rest do
           [next, ...more] then
-            if count_breaks(text, token.b, next.a, 0) > 0 then popped else leading_pop(text, rest, popped) done
+            if count_breaks(text, token.b, next.a, 0) > 0 or forced_break(text, next, token, popped) then popped else leading_pop(text, rest, popped) done
           [] then popped
         done
       else stack done
@@ -339,6 +390,56 @@ starts_arm = program(text, tokens) do
   done
 done
 
+# The characters in the bytes from p to end: every byte but a UTF-8 continuation byte.
+chars = program(text, p, end, n) do
+  if p >= end then n
+  else
+    c = at(text, p)
+    chars(text, p + 1, end, if c >= 128 and c < 192 then n else n + 1 done)
+  done
+done
+
+# How many characters a gap of this spacing takes, before `token` and after `before`.
+gap_chars = program(width, before, token) do
+  if width == keep then (if token.a > before.b then 1 else 0 done)
+  else if width == leave then token.a - before.b
+  else width done done
+done
+
+nesting = program(text, token) do
+  if opens_bracket(text, token) then 1
+  else if closes_bracket(text, token) then 0 - 1
+  else 0 done done
+done
+
+# The characters from after the opening bracket `before` to its closing one, laid
+# out on one line; -1 if a comment or a line break sits inside, so the author
+# meant it broken; -2 if it never closes.
+measure = program(text, tokens, earlier, before, depth, acc) do
+  match tokens do
+    [token, ...rest] then
+      if token.kind == comment or count_breaks(text, before.b, token.a, 0) > 0 then 0 - 1
+      else
+        width = acc + gap_chars(spacing(text, earlier, before, token), before, token) + chars(text, token.a, token.b, 0)
+        if closes_bracket(text, token) and depth == 0 then width
+        else measure(text, rest, before, token, depth + nesting(text, token), width) done
+      done
+    [] then 0 - 2
+  done
+done
+
+# Does a break go before this token, because it starts a field or ends a record
+# that is laid out one field to a line? A comment stays on its line.
+forced_break = program(text, token, before, stack) do
+  match leave_body(stack) do
+    [open, ...rest] then
+      if open.kind != bracket_block or not open.broken or token.kind == comment then false
+      else if closes_bracket(text, token) then not opens_bracket(text, before)
+      else opens_bracket(text, before) or is_punct(text, before, ",") done done
+    [] then false
+  done
+done
+
 # Does a break follow this token?
 ends_line = program(text, token, rest) do
   match rest do
@@ -356,17 +457,33 @@ branch = program(text, token, stack, line, rest) do
   inner = branching(marked)
   nested = inner.kind == do_block or (inner.kind == if_block and not inner.inline)
   if nested and ends_line(text, token, rest)
-    then Link({kind: body_block, weight: 1, line: line, col: 0, chain: false, inline: false}, marked)
+    then Link({
+      kind: body_block,
+      weight: 1,
+      line: line,
+      col: 0,
+      chain: false,
+      inline: false,
+      broken: false
+    }, marked)
     else marked done
 done
 
 # The stack after this token, which sits on `line` in a line indented by `col`.
 # An `if` straight after `else`, on its line, continues a chain and adds no indent of its own.
-advance = program(text, token, rest, stack, line, col, prev_code, joined) do
+advance = program(text, token, rest, stack, line, col, prev_code, joined, broken) do
   kind = block_kind(text, token)
   chain = kind == if_block and joined and is_keyword(text, prev_code, "else")
   weight = if chain or opened_on(stack, line) then 0 else 1 done
-  open = {kind: kind, weight: weight, line: line, col: col, chain: chain, inline: false}
+  open = {
+    kind: kind,
+    weight: weight,
+    line: line,
+    col: col,
+    chain: chain,
+    inline: false,
+    broken: broken
+  }
   if closes(text, token) then pop(text, token, stack)
   else if kind >= 0 then Link(open, stack)
   else if is_keyword(text, token, "then") or is_keyword(text, token, "else") then branch(text, token, stack, line, rest)
@@ -385,16 +502,53 @@ continued = program(text, token) do
     or is_punct(text, token, "=") or is_punct(text, token, "|")
 done
 
+# The indent of a line inside a record or list laid out one item to a line:
+# two past the line that opened it, plus the blocks opened since; -1 outside one.
+inside = program(stack, acc) do
+  match stack do
+    [open, ...rest] then
+      if open.kind == bracket_block and open.broken then open.col + indent_width + acc
+      else inside(rest, acc + indent_width * open.weight) done
+    [] then 0 - 1
+  done
+done
+
+# The indent of the line that opened the last such record or list that the
+# closing tokens starting this line close, or -1.
+closing_col = program(text, tokens, stack, found) do
+  match tokens do
+    [token, ...rest] then
+      if closes(text, token) then
+        now = match leave_body(stack) do
+          [open, ...more] then
+            if closes_bracket(text, token) and open.kind == bracket_block and open.broken then open.col else found done
+          [] then found
+        done
+        popped = pop(text, token, stack)
+        match rest do
+          [next, ...more] then
+            if count_breaks(text, token.b, next.a, 0) > 0 or forced_break(text, next, token, popped) then now else closing_col(text, rest, popped, now) done
+          [] then now
+        done
+      else found done
+    [] then found
+  done
+done
+
 # The spaces that a line starting with `token` is indented by, `stack` being
 # the blocks open at it. An `if` written on one line has its `else` lines up
 # with the line of the `if`; one whose `then` starts a line indents its branches.
-indent_of = program(text, token, tokens, stack, prev_code) do
+indent_of = program(text, token, tokens, stack, before_stack, prev_code) do
   branches = is_keyword(text, token, "then") or is_keyword(text, token, "else")
   shown = if branches or starts_arm(text, tokens) then leave_body(stack) else stack done
   inner = branching(shown)
   more = if continues(text, token, prev_code) or continued(text, prev_code) then indent_width else 0 done
+  closing = closing_col(text, tokens, before_stack, 0 - 1)
+  within = inside(shown, 0)
   if branches and inner.kind == if_block and inner.inline then inner.col
-  else indent_width * weight_of(shown) + more done
+  else if closing >= 0 then closing
+  else if within >= 0 then within + more
+  else indent_width * weight_of(shown) + more done done done
 done
 
 # How the gap between `before` and `token` on one line is spaced. `earlier` is
@@ -440,7 +594,9 @@ done
 
 # One edit for the gap before `token`, and the state for the next token.
 step = program(text, token, tokens, state) do
-  breaks = count_breaks(text, state.before.b, token.a, 0)
+  forced = forced_break(text, token, state.before, state.stack)
+  raw = count_breaks(text, state.before.b, token.a, 0)
+  breaks = if forced and raw == 0 then 1 else raw done
   first = state.before.kind == start
   line = state.line + breaks
   at_start = first or breaks > 0
@@ -448,9 +604,15 @@ step = program(text, token, tokens, state) do
   tight = opens_bracket(text, state.before) or is_keyword(text, state.before, "do") or closes(text, token)
   newlines = if tight or breaks == 1 then 1 else 2 done
   width = spacing(text, state.earlier, state.before, token)
-  indent = if first then 0 else if at_start then indent_of(text, token, tokens, stack, state.prev_code) else state.indent done done
+  indent = if first then 0 else if at_start then indent_of(text, token, tokens, stack, state.stack, state.prev_code) else state.indent done done
+  tw = chars(text, token.a, token.b, 0)
   gap = if width == keep then (if token.a > state.before.b then one else none done) else width done
   trailing = if only_spaces(text, state.before.b, token.a) and token.a > state.before.b then token.a - state.before.b else one done
+  glen = if token.kind == comment then trailing else gap_chars(width, state.before, token) done
+  col = (if at_start then indent else state.column + glen done) + tw
+  sized = is_punct(text, token, "{") or is_punct(text, token, "[")
+  span = if sized then measure(text, rest_of(tokens), state.before, token, 0, 0) else 0 - 2 done
+  broken = sized and (span == 0 - 1 or (span >= 0 and col + span > max_width))
   edits =
     if first then mend(text, 0, token.a, 0, 0, state.edits)
     else if at_start then mend(text, state.before.b, token.a, newlines, indent, state.edits)
@@ -458,9 +620,10 @@ step = program(text, token, tokens, state) do
     else if width == leave then state.edits
     else mend(text, state.before.b, token.a, 0, gap, state.edits) done done done done
   {
-    stack: advance(text, token, rest_of(tokens), state.stack, line, indent, state.prev_code, breaks == 0),
+    stack: advance(text, token, rest_of(tokens), state.stack, line, indent, state.prev_code, breaks == 0, broken),
     line: line,
     indent: indent,
+    column: col,
     earlier: state.before,
     before: token,
     prev_code: if token.kind == comment then state.prev_code else token done,
@@ -471,7 +634,9 @@ done
 # The edits once every token is laid out; the text ends in one line break.
 finish = program(text, state) do
   size = byte_length(text)
-  if state.before.kind == start then (if size > 0 then [Edit({from: 0, to: size, newlines: 0, indent: 0})] else [] done)
+  if state.before.kind == start then (if size > 0 then [
+    Edit({from: 0, to: size, newlines: 0, indent: 0})
+  ] else [] done)
   else reverse(mend(text, state.before.b, size, 1, 0, state.edits)) done
 done
 
@@ -486,7 +651,16 @@ format = program(text) do
   tokens = lex(text, 0, [])
   nowhere = {kind: start, a: 0, b: 0}
   if has_unknown(tokens) then []
-  else layout(text, tokens, {stack: [], line: 0, indent: 0, earlier: nowhere, before: nowhere, prev_code: nowhere, edits: []}) done
+  else layout(text, tokens, {
+    stack: [],
+    line: 0,
+    indent: 0,
+    column: 0,
+    earlier: nowhere,
+    before: nowhere,
+    prev_code: nowhere,
+    edits: []
+  }) done
 done
 
 init = {edits: []}
