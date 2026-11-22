@@ -76,3 +76,22 @@ fn a_list_of_one_kind_checks_with_any_element() {
             .unwrap_or_else(|e| panic!("{source}: {e:?}"));
     }
 }
+
+#[test]
+fn a_link_whose_payload_is_not_an_item_and_a_tail_is_rejected_at_the_check() {
+    for (source, blamed) in [
+        (
+            "xs = Link({a: \"hi\", b: 7})\nn = match xs do [x, ...rest] then x + 1 [] then 0 done\nprint(n)",
+            "{a: \"hi\", b: 7}",
+        ),
+        ("print(length(Link({a: 1, b: 2})))", "{a: 1, b: 2}"),
+        ("xs = Link(1)\nlength(xs)", "1"),
+    ] {
+        let error = first_error(source);
+        assert!(!error.span.in_prelude(), "{source}: {error:?}");
+        assert!(
+            text(source, error.span).contains(blamed),
+            "{source}: {error:?}"
+        );
+    }
+}

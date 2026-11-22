@@ -157,6 +157,7 @@ pub fn lower_with_vocab(
     }
     ctx.tag_groups
         .push(key.tags.iter().map(|(tag, _)| tag.clone()).collect());
+    ctx.tag_groups.push(LIST_TAGS.map(String::from).to_vec());
     let mut prelude_root = ctx.lower_source(prelude, FileId::Prelude)?;
 
     ctx.prelude_scope = defined_names(&prelude_root);
@@ -241,9 +242,12 @@ fn literal_len(expr: &Expr) -> Option<usize> {
                 let ExprKind::Record { fields } = &payload.kind else {
                     return None;
                 };
-                let [(_, _), (_, tail)] = fields.as_slice() else {
+                let [(first, _), (second, tail)] = fields.as_slice() else {
                     return None;
                 };
+                if (first.as_str(), second.as_str()) != ("0", "1") {
+                    return None;
+                }
                 len += 1;
                 cursor = tail;
             }

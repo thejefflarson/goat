@@ -3059,7 +3059,12 @@ impl Inferer {
                         Some(Expr {
                             kind: ExprKind::Record { fields },
                             ..
-                        }) if group.params > 0 => {
+                        }) if group.params > 0
+                            && fields
+                                .iter()
+                                .map(|(label, _)| label.as_str())
+                                .eq(["0", "1"]) =>
+                        {
                             Some((fields.iter().map(|(_, e)| e.span).collect(), errors_before))
                         }
                         _ => None,
@@ -3258,6 +3263,11 @@ impl Inferer {
             field_of(wanted, "0"),
             field_of(given, "1"),
         ) else {
+            self.unify(
+                &Ty::Record(given.clone()),
+                &Ty::Record(wanted.clone()),
+                item,
+            );
             return;
         };
         self.unify(have, want, item);

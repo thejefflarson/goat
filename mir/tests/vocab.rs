@@ -242,3 +242,12 @@ fn the_turtle_streams_circle_rect_and_text_as_single_scene_calls() {
     );
     assert_eq!(import(&program, "text"), [float, float, string, string]);
 }
+
+#[test]
+fn a_list_lowers_with_no_prelude_at_all() {
+    let source = "init = {n: 0}\n\
+                  update = program(m, e) do match e do Press then m done done\n\
+                  draw = program(m) do [] done";
+    let program = lower(&toy(), source);
+    assert!(program.interactive.is_some());
+}
