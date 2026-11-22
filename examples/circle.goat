@@ -1,7 +1,7 @@
 # A circle drawn as 36 short sides. `sin` takes degrees, like `left` and `right`,
 # so a side that fits a circle of this radius is 2 * radius * sin(half a turn
-# over the number of sides). `//` divides whole numbers and `%` is what is left
-# over, which is how every other side comes out red.
+# over the number of sides). `//` divides whole numbers (it works on decimals
+# too) and `%` is what is left over, which is how every other side comes out red.
 sides = 36
 radius = 100
 side = 2 * radius * sin(180 / sides)

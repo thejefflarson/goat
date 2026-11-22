@@ -39,17 +39,17 @@ a numeral at `Float` (`1 + 1.5`, written as the bare numeral), and a generic
 function used at `Int` and at `Float` are all in the corpus. Five kinds of
 program are skipped, each because the calculus and the checker differ on it:
 
-- a comparison, or a `/`, on an operand whose type only a later use settles
-  (`program(x) do x > x done("a")`): a generic comparison waits for the `Eq` and
-  `Ordered` sorts, and `/` on an open operand is typed `Ordered` by the checker
-  and `Numeric` by the calculus. The algorithm settles a comparison on a
-  numeral's variable, or on the variable of a `+ - * // %`, at `Int`, so a
-  comparison is compared when one operand is concrete, or one is a numeral's own
-  variable and the other cannot have been settled yet. The rest are skipped:
-  `v = 71 // 88` then `if v <= v then v - 3.1 else 4.0 done` types at `Float` in
-  the checker, where the algorithm has already chosen `Int`. A program whose
-  comparison the algorithm settles correctly may be pinned in `FORCED` in
-  `core_corpus.rs` (`f = program(x) do x == x % x done` then `f(90)`);
+- a comparison at a parameter's generic type (`program(a, b) do a == b done`,
+  or `same` of that used at `Int` and at `String`): the checker leaves the
+  parameter a variable with an `Eq` or `Ordered` kind, and the calculus has no
+  such sort, so the algorithm takes one concrete type and cannot type both
+  uses. A comparison on a variable a later use settles is compared: the first run
+  of the algorithm leaves it open and the second settles it at what the program
+  forced (`v = 71 // 88` then `if v <= v then v - 3.1 else 4.0 done` is
+  `Float`), and `/` on an open operand is compared too. The reader skips a
+  comparison whose operand type is a checker variable outside `number_vars`; the
+  checker does not record a `Numeric` variable there (`x == x % x` in a function),
+  so `FORCED` in `core_corpus.rs` pins such programs as compared anyway;
 - a `let` of a record or a name with a numeral in it (`r = {a: 1}`, `m = n`): the
   calculus generalizes it (`numeral_binding_is_generic`), the checker generalizes
   a numeral's variable only in a function's type and in a bare numeral binding
@@ -93,9 +93,7 @@ proven algorithm to accept the result. It writes `float(e)` around
 An Int literal whose node type is Float anywhere else is written as the bare
 numeral, which the calculus types at `Float` (`T_Num`); the checker settled the
 literal there rather than widening it. A numeral inside a comparison is written
-`float(n)` because the algorithm has no derivation of a comparison at a variable
-and takes `Int` for a numeral's variable there, so a numeral that a later use
-makes a `Float` would be rejected. If the checker widened anywhere else, the
+`float(n)` because the checker widens a numeral beside a Float there. If the checker widened anywhere else, the
 elaborated program would be rejected and the driver would report a mismatch. A
 rejected program has no node types and is written with no coercions. This is a
 differential check, not a theorem: a full proof would need a model of the

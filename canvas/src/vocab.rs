@@ -35,6 +35,7 @@ pub fn vocab() -> Vocab {
             .chain([("Char".to_string(), Ty::Str)])
             .collect(),
         recursive: false,
+        params: 0,
     };
     let key = keys.instantiate(0);
     let mouse = || record([("x", Ty::Float), ("y", Ty::Float)]);

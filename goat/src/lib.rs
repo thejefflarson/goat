@@ -6,7 +6,7 @@ pub use goat_checker::{GoatError, Label, Vocab};
 pub use goat_mir::{
     Host, HostValue, NoHost, Profile, Scene, SceneCommand, SceneHost, SceneSink, check_color,
 };
-pub use goat_wasm::EmbeddedLimits;
+pub use goat_wasm::{EmbeddedLimits, STACK_OVERFLOW};
 
 #[cfg(feature = "native")]
 pub mod native;

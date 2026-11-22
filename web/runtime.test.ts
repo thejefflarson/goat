@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { compile } from "./compile.ts";
-import { type Command, formatNumber, readString, run, strokes } from "./runtime.ts";
+import { type Command, formatNumber, readString, run, STACK_OVERFLOW, stopMessage, strokes } from "./runtime.ts";
 
 const compilerWasm = new URL(
   "../target/wasm32-unknown-unknown/release/goat_web.wasm",
@@ -121,4 +121,21 @@ test("an invalid color and a non-finite number trap", async () => {
 test("a trap in the program reaches the host with its message", async () => {
   const empty = await compileOk("first([]) + 1");
   await assert.rejects(run(empty), /first of an empty list/);
+});
+
+test("a comparison nested too deeply stops in goat's words, not the engine's", async () => {
+  const wasm = await compileOk(
+    "nest = program(n, acc) do if n < 1 then acc else nest(n - 1, [acc]) done done\n" +
+      "a = nest(300000, [])\nb = nest(300000, [])\nprint(a == b)",
+  );
+  await assert.rejects(run(wasm), (e) => stopMessage(e) === STACK_OVERFLOW);
+  assert.equal(STACK_OVERFLOW, "the program called itself too deeply");
+});
+
+test("stopMessage names running out of stack and leaves other stops as they are", () => {
+  assert.equal(stopMessage(new RangeError("Maximum call stack size exceeded")), STACK_OVERFLOW);
+  assert.equal(stopMessage(new Error("too much recursion")), STACK_OVERFLOW);
+  assert.equal(stopMessage(new Error("this number got too big")), "this number got too big");
+  assert.equal(stopMessage(new RangeError("WebAssembly.Memory.grow(): Maximum memory size exceeded")), "WebAssembly.Memory.grow(): Maximum memory size exceeded");
+  assert.equal(stopMessage("boom"), "boom");
 });

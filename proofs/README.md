@@ -96,7 +96,10 @@ What the model leaves out, each checked against `goat check` and `goat run`
 rounding, infinities and NaN (a `Float` is opaque), the `trap()` builtin,
 comparison of `Unit` (phase 6), and the `Eq` and `Ordered` constraints (a
 comparison applies at concrete types; a generic comparison waits for those
-sorts). `+ - *` and numerals are generic over the sorts `Numeric` and
+sorts). One gap is accepted: `5 // 0` typed at `Float` (two bare numerals the
+checker settles as `Float`, as in `f(5 // 0)` for `f = program(x) do x + 1.5 done`)
+steps as two `Int`s in the calculus, so it traps with `Div_by_zero`, while the
+compiled program divides decimals and gives `inf`. `+ - *` and numerals are generic over the sorts `Numeric` and
 `Literal`, below. The inference algorithm (`GoatInfer.v`) covers the
 whole of phase 1: `Unit`, strings, Float values, `if`, `float(e)` and the
 operators, besides functions, bindings and records, and it infers the generic
@@ -391,8 +394,16 @@ both choices.
   sort, so the defaulting of ADR 0017 (a `Literal` variable left free is `Int`) is
   the choice of that instance; the algorithm makes no choice and the theorem
   covers every one. The one place it commits is a comparison: `1 < 2` has no
-  derivation at a variable, so the algorithm takes the derivation at `Int`
-  (`bin_arg`).
+  derivation at a variable (`cmp_typ` is concrete), so the comparison waits.
+  `infer_closed_env` runs `infer` twice. The first run (`lenient`) leaves a
+  comparison whose operands are all variables unconstrained, so the rest of the
+  program may force the variable (`v = 71 // 88` then `v <= v` and `v - 3.1`
+  makes it `Float`). The second run settles each such comparison at the concrete
+  type the first run's final substitution gave the variable, else `Int`
+  (`resolved`, the `ora` argument of `bin_arg`), and checks it. Only the second
+  run is returned. `infer_sound` holds for every `ora` of concrete types, so
+  the choice needs no proof: a wrong one makes the second run fail, never
+  return a wrong type.
 
 The soundness proof (`GoatInferSound.v`) carries one invariant per step, `Good D
 n s D' n'`: `D` is `Any` beyond `n`, `s` is a substitution of the algorithm, the

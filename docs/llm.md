@@ -57,11 +57,14 @@ value and returns it.
 Whole numbers have their own type, `Int`. `a // b` divides and rounds down,
 `a % b` is the remainder (it takes the sign of `b`), and `round`, `floor`,
 `ceil` and `truncate` turn a decimal into an `Int`. `sqrt` takes a number;
-`sin`, `cos` and `tan` take degrees.
+`sin`, `cos` and `tan` take degrees. `//` and `%` work on decimals too: the
+result is a decimal, `7.5 // 2` is `3`, and dividing a decimal by zero gives
+`inf` or `nan`.
 
 ```goat
 print(17 // 5);              # 3
 print(17 % 5);               # 2
+print(7.5 // 2);             # 3
 print(round(2.5));           # 3
 print(sqrt(16))              # 4
 ```
@@ -421,8 +424,8 @@ d = Hit(1) < Hit(2)                  # true
 e = [1, 9] < [2]                     # true: 1 < 2 decides
 f = [1, 2] < [1, 2, 0]               # true: the shorter list runs out first
 g = {name: "Zed", age: 3} < {name: "Amy", age: 9}   # true: age is compared before name
-h = [[2, "b"], [1, "z"], [2, "a"]]
-sort(h)                              # [[1, "z"], [2, "a"], [2, "b"]]
+h = [[2, 8], [1, 9], [2, 3]]
+sort(h)                              # [[1, 9], [2, 3], [2, 8]]
 ```
 
 `sort`, `biggest`, `smallest` and `insert_sorted` use the same order, so they

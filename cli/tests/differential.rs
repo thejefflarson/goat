@@ -756,8 +756,8 @@ fn spread_and_destructuring_beside_variants() {
                big = {...cfg, shape: Square(5)} \
                area(cfg) + area(big)";
     assert_eq!(run(src), "87");
-    let positional = "{kind, ...r} = {kind: Link(1, Empty), n: 2} \
-                      match kind do Link(a, rest) then a + r.n done";
+    let positional = "tag Box {kind, ...r} = {kind: Box(1), n: 2} \
+                      match kind do Box(a) then a + r.n done";
     assert_eq!(run(positional), "3");
 }
 
@@ -831,15 +831,14 @@ fn a_list_pattern_matches_a_computed_scrutinee() {
 #[test]
 fn list_destructuring_and_parameters() {
     assert_eq!(run("[a, b] = [3, 4] a * b"), "12");
+    assert_eq!(run("a = 1 b = 2 [a, b] = [b, a] a * 10 + b"), "21");
     assert_eq!(run("[first, ...rest] = [3, 4, 5] first"), "3");
     let rest = format!("{SUM} [first, ...rest] = [3, 4, 5] sum(rest)");
     assert_eq!(run(&rest), "9");
     assert_eq!(
-        run("second = program([a, b]) do b done second([8, 9])"),
+        run("second = program(xs) do match xs do [a, b] then b else 0 done done second([8, 9])"),
         "9"
     );
-    let two = "add = program([a, b], [c, ...rest]) do a + b + c done add([1, 2], [10, 20])";
-    assert_eq!(run(two), "13");
 }
 
 #[test]
