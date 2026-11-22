@@ -106,6 +106,8 @@ pub struct Lowered {
     /// The tags of each declared group, which a value of the group's type
     /// carries whether or not the program names them all.
     pub tag_groups: Vec<Vec<String>>,
+    /// The named groups, which a message calls their types by.
+    pub groups: Vec<Arc<Group>>,
 }
 
 /// Parse and lower `source` on its own, with no prelude.
@@ -158,6 +160,12 @@ pub fn lower_with_vocab(
     };
     let mut root = root;
     let interactive = ctx.make_interactive(&mut root, vocab);
+    let mut groups: Vec<Arc<Group>> = Vec::new();
+    for group in ctx.tags.values().flatten() {
+        if !group.name.is_empty() && !groups.iter().any(|g| Arc::ptr_eq(g, group)) {
+            groups.push(group.clone());
+        }
+    }
     Ok(Lowered {
         root,
         dot_calls: ctx.dot_calls,
@@ -167,6 +175,7 @@ pub fn lower_with_vocab(
         interactive,
         tag_ranks: ctx.tag_ranks,
         tag_groups: ctx.tag_groups,
+        groups,
     })
 }
 

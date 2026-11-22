@@ -3,7 +3,7 @@
 
 use crate::hir::{Boundary, Span};
 use crate::infer::{field_of, subst_vars};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -710,6 +710,13 @@ impl fmt::Display for Shown<'_> {
             exact: self.exact,
             lone: self.lone,
         };
+        if let Some((group, args)) = named_group(self.ty) {
+            write!(f, "{}", group.name)?;
+            for (i, arg) in args.iter().enumerate() {
+                write!(f, "{}{}", if i == 0 { "(" } else { ", " }, show(arg))?;
+            }
+            return write!(f, "{}", if args.is_empty() { "" } else { ")" });
+        }
         match self.ty {
             Ty::Var(v) => write!(f, "{}", name_of(*v)),
             Ty::Int if self.exact => write!(f, "Int"),
@@ -890,6 +897,78 @@ impl MessageNames {
 impl Drop for MessageNames {
     fn drop(&mut self) {
         MESSAGE_NAMES.set(self.0);
+    }
+}
+
+thread_local! {
+    static GROUPS: RefCell<Vec<Arc<Group>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// While alive, `Display` writes a closed variant that is a declared group's
+/// type by the group's name and its inferred parameters, `List(Number)`, in
+/// place of its tags and its `μ` binder.
+pub(crate) struct GroupNames(Vec<Arc<Group>>);
+
+impl GroupNames {
+    pub(crate) fn enter(groups: &[Arc<Group>]) -> GroupNames {
+        GroupNames(GROUPS.replace(groups.to_vec()))
+    }
+}
+
+impl Drop for GroupNames {
+    fn drop(&mut self) {
+        GROUPS.set(std::mem::take(&mut self.0));
+    }
+}
+
+/// The declared group `ty` is the closed type of, with the types in its
+/// parameter slots. A tag belongs to one group, so the tags identify it.
+fn named_group(ty: &Ty) -> Option<(Arc<Group>, Vec<Ty>)> {
+    let body = match ty {
+        Ty::Rec(_, body) => &**body,
+        other => other,
+    };
+    let Ty::Variant(row) = body else { return None };
+    if !matches!(row.tail(), Row::Empty) {
+        return None;
+    }
+    let group = GROUPS.with_borrow(|groups| {
+        groups
+            .iter()
+            .find(|g| {
+                g.tags.len() == row.labels().count()
+                    && g.tags.iter().all(|(tag, _)| field_of(row, tag).is_some())
+            })
+            .cloned()
+    })?;
+    let mut slots = vec![None; group.params];
+    for (tag, payload) in &group.tags {
+        if let Some(actual) = field_of(row, tag) {
+            read_slots(payload, actual, &mut slots);
+        }
+    }
+    let args = slots
+        .into_iter()
+        .map(|slot| slot.cloned())
+        .collect::<Option<Vec<_>>>()?;
+    Some((group, args))
+}
+
+/// The parts of `actual` that stand where `pattern` holds a group parameter.
+fn read_slots<'a>(pattern: &Ty, actual: &'a Ty, slots: &mut [Option<&'a Ty>]) {
+    match (pattern, actual) {
+        (&Ty::Var(v), _) if v < Group::SELF && Group::SELF - 1 - v < slots.len() as TypeVar => {
+            slots[(Group::SELF - 1 - v) as usize].get_or_insert(actual);
+        }
+        (Ty::Record(wanted), Ty::Record(given)) => {
+            for label in wanted.labels() {
+                if let (Some(field), Some(part)) = (field_of(wanted, label), field_of(given, label))
+                {
+                    read_slots(field, part, slots);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
