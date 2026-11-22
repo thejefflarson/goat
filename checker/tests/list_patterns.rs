@@ -1,5 +1,6 @@
-//! A list pattern fixes a length, so it takes apart only a list literal of
-//! that length; anything else is told to use `match`.
+//! A list pattern takes apart any list. Only a list literal has a length the
+//! checker knows, so only it is checked for fit here; any other length is
+//! checked when the program runs.
 
 use goat_checker::check_with_prelude;
 
@@ -14,39 +15,19 @@ fn blame(source: &str) -> (String, String) {
     )
 }
 
-fn match_advice(name: &str) -> String {
-    format!(
-        "a list can be any length, so take it apart with `match`: `match {name} do [] then … [x, ...rest] then … done`"
-    )
-}
-
 #[test]
-fn a_list_parameter_pattern_is_told_to_use_match() {
-    assert_eq!(
-        blame("f = program([a, b]) do a done f([1, 2])"),
-        ("[a, b]".to_string(), match_advice("xs"))
-    );
-    assert_eq!(
-        blame("f = program([x, ...rest]) do x done f([1])").1,
-        match_advice("xs")
-    );
-}
-
-#[test]
-fn a_destructure_of_a_named_list_names_it_in_the_advice() {
-    assert_eq!(
-        blame("ys = [1, 2] [a, b] = ys a"),
-        ("[a, b]".to_string(), match_advice("ys"))
-    );
-    assert_eq!(
-        blame("f = program(xs) do [a, ...r] = xs a done f([1])").1,
-        match_advice("xs")
-    );
-}
-
-#[test]
-fn a_destructure_of_a_computed_list_uses_xs_in_the_advice() {
-    assert_eq!(blame("[a, b] = reverse([1, 2]) a").1, match_advice("xs"));
+fn a_pattern_takes_apart_any_list() {
+    for source in [
+        "f = program([a, b]) do a done f([1, 2])",
+        "f = program([x, ...rest]) do x done f([1])",
+        "ys = [1, 2] [a, b] = ys a",
+        "f = program(xs) do [a, ...r] = xs a done f([1])",
+        "[a, b] = reverse([1, 2]) a",
+        "f = program([a], [b, ...c]) do a + b done f([1], [2, 3])",
+    ] {
+        check_with_prelude(goat_checker::PRELUDE, source)
+            .unwrap_or_else(|e| panic!("{source}: {e:?}"));
+    }
 }
 
 #[test]
@@ -61,6 +42,10 @@ fn a_literal_of_the_wrong_length_says_how_long_it_is() {
     assert_eq!(
         blame("[a, b, ...r] = [1] a").1,
         "this list has 1 item but the pattern takes at least 2"
+    );
+    assert_eq!(
+        blame("[a] = [] a").1,
+        "this list is empty but the pattern takes 1"
     );
 }
 

@@ -408,6 +408,22 @@ done
 sum_all([1, 2, 3, 4])    # 10
 ```
 
+A pattern can also take a list apart in one step, on the left of `=` or as a
+parameter: `[a, b] = xs`, `[first, ...rest] = xs`, `program([x, y]) do … done`.
+It works on any list. If the list has a length the pattern doesn't fit, the
+program stops at the pattern with a message such as "this list has 1 item but
+the pattern takes 2", "this list is empty but the pattern takes at least 1" or
+"this list has more than 2 items but the pattern takes 2". For a list written
+out as `[1, 2, 3]`, the mismatch is an error before the program runs. Use
+`match` when a wrong length is an ordinary case to handle.
+
+```goat
+swap = program([a, b]) do [b, a] done
+[x, y] = swap([1, 2])
+print(x);    # 2
+print(y)     # 1
+```
+
 Lists come with a toolbox, no setup needed: `length`, `first`, `rest`, `item`
 (counts from 1), `add`, `join`, `reverse`, `sort`, `sum`, `biggest`, `smallest`,
 `has`, `each`, `change_each`, `keep` and `count`.

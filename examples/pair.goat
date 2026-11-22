@@ -1,0 +1,9 @@
+# A list pattern on the left of `=` takes a list apart.
+# A list of any other length stops the program at the pattern.
+swap = program([a, b]) do [b, a] done
+
+[first, second] = swap([1, 2])
+[head, ...others] = [first, second, 3]
+print(head);
+print(others);
+first + second
