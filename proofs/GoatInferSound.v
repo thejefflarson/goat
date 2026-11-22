@@ -100,7 +100,7 @@ Proof.
   - inversion H; subst; unfold ground; auto.
   - destruct (cmp_ty B) eqn:EB; [ inversion H; subst; exact (cmp_ty_ground _ EB) | ].
     destruct (cmp_ty A) eqn:EA; [ inversion H; subst; exact (cmp_ty_ground _ EA) | ].
-    destruct (orb (is_literal D A) (is_literal D B)); inversion H; subst; unfold ground; auto.
+    destruct (orb (is_numeric_var D A) (is_numeric_var D B)); inversion H; subst; unfold ground; auto.
 Qed.
 
 Lemma bin_ty_sig : forall D o T R, bin_ty o T = Some R -> bin_sig D o T T R.
