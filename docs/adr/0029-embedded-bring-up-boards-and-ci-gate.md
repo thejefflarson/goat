@@ -1,6 +1,11 @@
 # ADR 0029 — Embedded bring-up: boards, memory presets, and what CI proves without a board
 
 - Status: accepted (2026-11-11)
+- Amended by [ADR 0042](0042-a-second-backend-emits-llvm-ir-for-native-binaries.md)
+  (2026-11-22): boards run native builds, not WAMR. The C6, C3 and RP2040 stay
+  the boards, and the RP2040 is built natively with a trampoline for the tail
+  calls Thumb-1 cannot make. A native board's heap is not limited to whole 64 KiB
+  pages, so the presets below are revisited when native boards run.
 - Decision:
   1. **Two boards, two jobs.** The ESP32-C6 is the first *engineering* bring-up board:
      it has first-party WAMR support through ESP-IDF, and its 512 KB of SRAM holds the
