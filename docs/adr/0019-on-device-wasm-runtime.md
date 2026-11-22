@@ -1,6 +1,11 @@
 # ADR 0019 — Embedded strategy: WAMR on-device now, native host-compilation later
 
 - Status: accepted (2026-11-08)
+- Amended by [ADR 0042](0042-a-second-backend-emits-llvm-ir-for-native-binaries.md)
+  (2026-11-22): Phase B is a native backend that emits LLVM IR, which settles
+  §B3. Boards are native-only, the RP2040 included, with a trampoline for the
+  tail calls Thumb-1 cannot make. WAMR AOT (ticket E4) is dropped. The WAMR
+  interpreter work stays, with no new investment, until native boards run.
 - Decision: a **two-phase embedded strategy**. Phase A (near-term) runs goat on a
   board through an on-device wasm runtime, **WAMR**, reusing the existing wasm
   backend to get boards running now. Phase B (endgame) replaces the on-device
