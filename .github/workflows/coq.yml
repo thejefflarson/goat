@@ -31,6 +31,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Same memory bound as ci.yml: the differential step builds the corpus
+  # generator with cargo on the shared self-hosted pool.
+  CARGO_BUILD_JOBS: "2"
+  CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
+
 jobs:
   coq:
     runs-on: goat-runners
