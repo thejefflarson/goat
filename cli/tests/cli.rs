@@ -123,7 +123,7 @@ fn runs_the_whole_numbers_example() {
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        "3\n2\n-4\n3\n3\n-3\n-2\n-2\n0.5\n4\n50\n"
+        "3\n2\n-4\n3\n3\n0.5\n3\n-3\n-2\n-2\n0.5\n4\n50\n"
     );
 }
 
@@ -409,6 +409,18 @@ fn a_number_that_gets_too_big_is_blamed_on_the_operation() {
         stderr.contains("trap: 1:19: this number got too big"),
         "{stderr}"
     );
+}
+
+#[test]
+fn a_comparison_of_values_nested_too_deeply_is_blamed_on_the_comparison() {
+    let src = "nest = program(n, acc) do if n < 1 then acc else nest(n - 1, [acc]) done done\n\
+               a = nest(300000, [])\nb = nest(300000, [])\nprint(a == b)";
+    let (_, stderr) = failure_of(src);
+    assert!(
+        stderr.contains("trap: 4:7: the program called itself too deeply"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("a == b"), "{stderr}");
 }
 
 #[test]
