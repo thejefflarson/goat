@@ -387,3 +387,28 @@ fn a_method_called_on_a_number_result_is_rejected_with_a_message() {
     let (message, _) = first_diagnostic(&source);
     assert!(!message.contains("too complex"), "{message}");
 }
+
+#[test]
+fn a_method_may_reach_a_later_sibling_through_a_helper() {
+    let source = "go = program(c) do c.twice() done
+        counter = {n: 0,
+            three: program(self) do go(self).bump() done,
+            twice: program(self) do self.bump().bump() done,
+            bump: program(self) do {...self, n: self.n + 1} done}
+        counter.three().n";
+    assert_eq!(type_of(source), "Number");
+}
+
+#[test]
+fn binding_a_sibling_with_a_double_colon_says_to_use_a_dot() {
+    let source = "counter = {n: 0,
+            three: program(self) do
+                f = self::twice
+                f(self).bump()
+            done,
+            twice: program(self) do self.bump().bump() done}
+        counter.n";
+    let (message, covered) = first_diagnostic(source);
+    assert!(message.contains("call it with a dot"), "{message}");
+    assert_eq!(covered, "self::twice");
+}
