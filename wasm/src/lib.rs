@@ -288,7 +288,7 @@ fn emit_module(
     }
     let mut uses = Uses::default();
     for func in &program.funcs {
-        uses.scan(&func.body);
+        uses.scan(program, &func.body);
     }
     if profile == Profile::Embedded && program.foreign.iter().any(|f| f.ret == MTy::Int) {
         uses.note_trap(INT_OVERFLOW);
@@ -351,6 +351,11 @@ fn emit_module(
             data.extend(word.to_le_bytes());
         }
     }
+    let mut record_cells = Vec::new();
+    for bytes in uses.records {
+        record_cells.push((bytes.clone(), DATA_BASE + data.len() as u32));
+        data.extend(bytes);
+    }
     let static_base = DATA_BASE + data.len() as u32;
     let runtime_base = imports + program.funcs.len() as u32 + 1;
     let runtime_len = allocator::FUNCTIONS + needs_drop as u32;
@@ -373,6 +378,7 @@ fn emit_module(
         static_base,
         nullary_base,
         nullary: uses.nullary,
+        record_cells,
         indirect: needs_drop,
         call_depth: bounded.then_some(limits.call_depth),
         alloc_fn: runtime_base,
@@ -915,6 +921,38 @@ fn release_global(
     Ok(())
 }
 
+/// The immortal cell of a record whose fields are all constants, or `None`
+/// when some field is computed or does not fit a slot. Records are immutable
+/// and a reuse overwrites only a cell whose count is 1, so one cell can stand
+/// for every evaluation of the literal.
+fn constant_record(program: &Program, l: LayoutId, fields: &[Expr]) -> Option<Vec<u8>> {
+    let Some(Layout::Record(types)) = program.layouts.get(l.0 as usize) else {
+        return None;
+    };
+    if types.len() != fields.len() {
+        return None;
+    }
+    let mut cell = vec![0; layout::object_size(layout::HEADER, fields.len()) as usize];
+    cell[layout::RC as usize..][..4].copy_from_slice(&IMMORTAL.to_le_bytes());
+    for (i, (ty, field)) in types.iter().zip(fields).enumerate() {
+        let Expr::Const(value) = field else {
+            return None;
+        };
+        let at = layout::slot(layout::HEADER, i) as usize;
+        let word: &[u8] = match (*ty, *value, program.profile) {
+            (MTy::Float, Const::Float(x), Profile::Desktop) => &x.to_le_bytes(),
+            (MTy::Float, Const::Float(x), Profile::Embedded) => &(x as f32).to_le_bytes(),
+            (MTy::Int, Const::Int(n), Profile::Desktop) => &n.to_le_bytes(),
+            (MTy::Int, Const::Int(n), Profile::Embedded) => &i32::try_from(n).ok()?.to_le_bytes(),
+            (MTy::Bool, Const::Bool(b), _) => &(b as i32).to_le_bytes(),
+            (MTy::Unit, Const::Unit, _) => &[],
+            _ => return None,
+        };
+        cell[at..][..word.len()].copy_from_slice(word);
+    }
+    Some(cell)
+}
+
 /// An immortal string: the count never reaches zero, so it is never freed.
 fn string_object(bytes: &[u8]) -> Vec<u8> {
     let start = layout::STR_BYTES as usize;
@@ -985,6 +1023,9 @@ struct Shared<'a> {
     /// from `nullary_base`.
     nullary_base: u32,
     nullary: Vec<u32>,
+    /// The immortal cells of records built from constants alone, each with the
+    /// bytes it holds and its address.
+    record_cells: Vec<(Vec<u8>, u32)>,
     indirect: bool,
     /// The bound on nested calls, when the profile has one.
     call_depth: Option<u32>,
@@ -1026,6 +1067,11 @@ impl Shared<'_> {
         } else {
             out.push(Instruction::I32Const(address as i32));
         }
+    }
+
+    fn record_cell(&self, bytes: &[u8]) -> Option<u32> {
+        let cell = self.record_cells.iter().find(|(cell, _)| cell == bytes);
+        cell.map(|&(_, address)| address)
     }
 
     fn nullary_cell(&self, tag: u32) -> Result<u32, EmitError> {
@@ -1086,6 +1132,9 @@ struct Uses {
     writes: bool,
     /// Tags built without a payload, each served by one immortal cell.
     nullary: Vec<u32>,
+    /// The cell of each distinct record built from constants alone: such a
+    /// record is one immortal object in the data section, not an allocation.
+    records: Vec<Vec<u8>>,
     /// Each distinct `Trap` message, so the module imports `goat.trap`.
     traps: Vec<String>,
     /// Each distinct `Site` range, numbered from 1 in this order.
@@ -1093,7 +1142,7 @@ struct Uses {
 }
 
 impl Uses {
-    fn scan(&mut self, root: &Expr) {
+    fn scan(&mut self, program: &Program, root: &Expr) {
         root.for_each_node(&mut |e| match e {
             Expr::Drop(_) | Expr::ReuseRecord(..) => self.drops = true,
             Expr::Write(_) => self.writes = true,
@@ -1110,6 +1159,11 @@ impl Uses {
             Expr::AllocVariant(_, tag, fields) if fields.is_empty() => {
                 if let Err(at) = self.nullary.binary_search(tag) {
                     self.nullary.insert(at, *tag);
+                }
+            }
+            Expr::AllocRecord(l, fields) => {
+                if let Some(bytes) = constant_record(program, *l, fields) {
+                    intern(&mut self.records, bytes);
                 }
             }
             _ => {}
@@ -1918,6 +1972,13 @@ impl<'p> FuncCx<'_, 'p> {
             }
             Expr::AllocRecord(l, fields) => {
                 let types = self.record_fields(*l, fields.len())?;
+                let result = Some(MTy::Ptr(HeapKind::Record(*l)));
+                if let Some(bytes) = constant_record(self.program, *l, fields)
+                    && let Some(address) = self.shared.record_cell(&bytes)
+                {
+                    self.shared.push_data_address(address, out);
+                    return Ok(result);
+                }
                 let Some(temps) = self.evaluate(fields, out)? else {
                     return Ok(None);
                 };
@@ -1925,7 +1986,7 @@ impl<'p> FuncCx<'_, 'p> {
                 let slots: Vec<_> = types.iter().copied().zip(temps).collect();
                 self.fill(ptr, &slots, layout::HEADER, out);
                 out.push(Instruction::LocalGet(ptr));
-                Ok(Some(MTy::Ptr(HeapKind::Record(*l))))
+                Ok(result)
             }
             Expr::ReuseRecord(x, l, fields) => self.reuse_record(*x, *l, fields, out),
             Expr::Field(x, i) => {

@@ -164,7 +164,7 @@ fn dangling_read(poison_freed: bool) -> Vec<String> {
     let pair = LayoutId(2);
     let body = let_(
         0,
-        Expr::AllocRecord(pair, vec![int(3), int(4)]),
+        Expr::AllocRecord(pair, vec![add(int(3), int(0)), int(4)]),
         let_(1, drop_(0), Expr::Field(Local(0), 1)),
     );
     let mut p = program(vec![func(MTy::Int, body)]);

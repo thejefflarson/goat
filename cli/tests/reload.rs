@@ -386,14 +386,32 @@ draw = program(model) do [Circle({x: model.n, y: 0, r: 1, color: "red"})] done
 /// One record in two places: the image writes it once and the refreshed model
 /// rebuilds it once.
 const SHARED: &str = r#"
-palette = {r: 1, g: 2, b: 3}
+palette = {r: 1, g: 2, b: 1 + 2}
 init = {a: palette, b: palette, n: 0}
 update = program(model, event) do match event do Tick(dt) then {...model, n: model.n + 1} done done
 draw = program(model) do [Circle({x: model.a.r + model.b.g + model.n, y: 0, r: 1, color: "red"})] done
 "#;
 
+/// A model holding records of constants alone, which are static cells in the
+/// module a reload replaces.
+const STATIC_PALETTE: &str = r#"
+palette = {r: 1, g: 2, b: 3}
+init = {a: palette, b: {r: 4, g: 5, b: 6}, n: 0}
+update = program(model, event) do match event do Tick(dt) then {...model, n: model.n + 1} done done
+draw = program(model) do [Circle({x: model.a.r + model.b.g + model.n, y: 0, r: 1, color: "red"})] done
+"#;
+
+#[test]
+fn a_model_of_static_records_survives_a_reload() {
+    let trace = agree(
+        &[STATIC_PALETTE, STATIC_PALETTE, STATIC_PALETTE],
+        &[Ticks(1), Reload(1), Draw, Ticks(1), Reload(2), Draw],
+    );
+    assert_eq!(circles(&trace), [7.0, 8.0]);
+}
+
 const APART: &str = r#"
-init = {a: {r: 1, g: 2, b: 3}, b: {r: 1, g: 2, b: 3}, n: 0}
+init = {a: {r: 1, g: 2, b: 1 + 2}, b: {r: 1, g: 2, b: 1 + 2}, n: 0}
 update = program(model, event) do match event do Tick(dt) then {...model, n: model.n + 1} done done
 draw = program(model) do [Circle({x: model.a.r + model.b.g + model.n, y: 0, r: 1, color: "red"})] done
 "#;
