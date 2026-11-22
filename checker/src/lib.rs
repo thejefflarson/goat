@@ -708,12 +708,9 @@ mod tests {
     }
 
     #[test]
-    fn a_fixed_length_pattern_rejects_a_list_that_may_be_longer() {
+    fn a_fixed_length_pattern_takes_apart_a_list_of_any_length() {
         assert!(check("[a, b] = [1, 2] a").is_ok());
-        let errors = check("f = program(xs) do [a, b] = xs a done f([1, 2])")
-            .err()
-            .expect("an error");
-        assert!(errors[0].message.contains("take it apart"), "{errors:?}");
+        assert!(check("f = program(xs) do [a, b] = xs a done f([1, 2])").is_ok());
         let errors = check("[a, b] = [1, 2, 3] a").err().expect("an error");
         assert!(errors[0].message.contains("3 items"), "{errors:?}");
         assert!(

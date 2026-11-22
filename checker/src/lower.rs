@@ -202,12 +202,38 @@ fn contract_bindings(root: &Expr) -> Option<[(Symbol, Span); 3]> {
     Some([init?, update?, draw?])
 }
 
-/// A list pattern fixes a length, which the checker can know only for a list
-/// literal.
-fn take_apart_with_match(source: &str) -> String {
-    format!(
-        "a list can be any length, so take it apart with `match`: `match {source} do [] then … [x, ...rest] then … done`"
-    )
+/// What a `[a, b] = xs` binding says when `xs` has a length the pattern does
+/// not fit: how many items the pattern takes, and whether it takes more.
+#[derive(Clone, Copy)]
+struct Leftover {
+    takes: usize,
+    at_least: bool,
+}
+
+impl Leftover {
+    fn takes(self) -> String {
+        match self.at_least {
+            true => format!("at least {}", self.takes),
+            false => self.takes.to_string(),
+        }
+    }
+
+    fn too_short(self, has: usize) -> String {
+        let takes = self.takes();
+        match has {
+            0 => format!("this list is empty but the pattern takes {takes}"),
+            1 => format!("this list has 1 item but the pattern takes {takes}"),
+            _ => format!("this list has {has} items but the pattern takes {takes}"),
+        }
+    }
+
+    fn too_long(self) -> String {
+        let takes = self.takes();
+        format!(
+            "this list has more than {} items but the pattern takes {takes}",
+            self.takes
+        )
+    }
 }
 
 /// How many items the list literal `expr` writes out; `None` for anything else.
@@ -447,6 +473,8 @@ struct ListMatch<'i> {
     rows: Vec<(ListPattern, Then<'i>, bool)>,
     otherwise: Option<Node<'i>>,
     otherwise_lowered: bool,
+    /// Set for a destructuring binding, whose missing arms stop the program.
+    leftover: Option<Leftover>,
 }
 
 impl ListMatch<'_> {
@@ -1770,23 +1798,14 @@ impl Lower {
             if fits {
                 return self.bind_literal_items(pattern, literal_items(value), rest_pair);
             }
-            let message = match literal_len(&value) {
-                Some(len) => {
-                    let takes = pattern.items.len();
-                    let takes = if pattern.rest.is_some() {
-                        format!("at least {takes}")
-                    } else {
-                        takes.to_string()
-                    };
-                    let items = if len == 1 { "item" } else { "items" };
-                    format!("this list has {len} {items} but the pattern takes {takes}")
-                }
-                None => match &value.kind {
-                    ExprKind::Var { name, .. } => take_apart_with_match(name),
-                    _ => take_apart_with_match("xs"),
-                },
-            };
-            self.errors.push(GoatError::new(pattern.span, message));
+            if let Some(len) = literal_len(&value) {
+                let leftover = Leftover {
+                    takes: pattern.items.len(),
+                    at_least: pattern.rest.is_some(),
+                };
+                self.errors
+                    .push(GoatError::new(pattern.span, leftover.too_short(len)));
+            }
             let unpacked = self.bind_list_pattern(source, pattern, Then::Rest(rest_pair));
             return self.node(
                 span,
@@ -2262,14 +2281,14 @@ impl Lower {
             .iter()
             .any(|(p, ..)| p.items.is_empty() && p.rest.is_some());
         if let ExprKind::Var { symbol, .. } = scrutinee.kind {
-            return self.compile_list_match(span, scrutinee, symbol, rows, otherwise);
+            return self.compile_list_match(span, scrutinee, symbol, rows, otherwise, None);
         }
         let source = self.fresh_symbol();
         if !needs_name {
-            return self.compile_list_match(span, scrutinee, source, rows, otherwise);
+            return self.compile_list_match(span, scrutinee, source, rows, otherwise, None);
         }
         let var = self.list_var(scrutinee.span, source);
-        let rest = self.compile_list_match(span, var, source, rows, otherwise);
+        let rest = self.compile_list_match(span, var, source, rows, otherwise, None);
         self.node(
             span,
             ExprKind::Let {
@@ -2296,6 +2315,7 @@ impl Lower {
         source: Symbol,
         rows: Vec<(ListPattern, Then<'i>, bool)>,
         otherwise: Option<Node<'i>>,
+        leftover: Option<Leftover>,
     ) -> Expr {
         // Each item adds a nested match, and each name a binding around the body.
         let extra = rows
@@ -2320,6 +2340,7 @@ impl Lower {
             rows,
             otherwise,
             otherwise_lowered: false,
+            leftover,
         };
         let tree = self.build_list_tree(&mut m, scrutinee, live);
         self.lower_unreached_arms(&mut m);
@@ -2340,6 +2361,7 @@ impl Lower {
             return Some(self.list_leaf(m, first));
         }
         let span = m.rows[first.row].0.span;
+        let depth = first.bound.len();
         let mut arms = Vec::new();
         if let Some(at) = live.iter().find(|at| m.is_done(at)) {
             let body = self.list_leaf(m, at);
@@ -2387,12 +2409,19 @@ impl Lower {
             return None;
         }
 
-        let else_branch = match m.otherwise {
-            Some(body) if arms.len() < 2 => {
+        let else_branch = match (m.otherwise, m.leftover) {
+            (Some(body), _) if arms.len() < 2 => {
                 let first_time = !std::mem::replace(&mut m.otherwise_lowered, true);
                 Some(Box::new(
                     self.relower(first_time, |this| this.lower_expr(body)),
                 ))
+            }
+            (None, Some(leftover)) if arms.len() < 2 => {
+                let message = match arms[0].pattern.tag.as_str() {
+                    "Empty" => leftover.too_long(),
+                    _ => leftover.too_short(depth),
+                };
+                Some(Box::new(self.node(span, ExprKind::Trap(message))))
             }
             _ => None,
         };
@@ -2523,8 +2552,6 @@ impl Lower {
         then: Then<'i>,
     ) -> Expr {
         let pattern = self.list_pattern(pattern);
-        self.errors
-            .push(GoatError::new(pattern.span, take_apart_with_match("xs")));
         self.bind_list_pattern(source, pattern, then)
     }
 
@@ -2536,7 +2563,12 @@ impl Lower {
     ) -> Expr {
         let span = pattern.span;
         let scrutinee = self.list_var(span, source);
-        self.compile_list_match(span, scrutinee, source, vec![(pattern, then, false)], None)
+        let leftover = Leftover {
+            takes: pattern.items.len(),
+            at_least: pattern.rest.is_some(),
+        };
+        let rows = vec![(pattern, then, false)];
+        self.compile_list_match(span, scrutinee, source, rows, None, Some(leftover))
     }
 
     /// `[a, b] = [x, y]`: a list literal's length is known, so each name takes
