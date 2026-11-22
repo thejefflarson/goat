@@ -202,14 +202,14 @@ Proof.
   split; [exact I | apply IH].
 Qed.
 
-Lemma infer_mf : forall f ora,
+Lemma infer_mf : forall f ora, (forall a, mu_free (ora a)) ->
   (forall Dk G e n s D' T n', infer f false ora Dk G e n = Some (s, D', T, n') ->
      mf_ctx G -> mf_sub s /\ mu_free T) /\
   (forall Dk G fs n s D' R n', infer_fields f false ora Dk G fs n = Some (s, D', R, n') ->
      mf_ctx G -> mf_sub s /\ mu_free_row R).
 Proof.
-  induction f as [|f IH]; intros ora; [split; intros; discriminate|].
-  destruct (IH ora) as [IHi IHf].
+  induction f as [|f IH]; intros ora Hora; [split; intros; discriminate|].
+  destruct (IH ora Hora) as [IHi IHf].
   split.
   - intros Dk G e n s D' T n' H HG.
     destruct e as [i|x|k|d| | |b|e1 e2|e1 e2|fs e2|fs|e1 l| |q|c e1 e2|e1 o e2|e1|e1|e1];
@@ -317,8 +317,8 @@ Proof.
             + injection EB as <-. destruct T2; simpl in C2; try discriminate; exact I.
             + destruct (cmp_ty (apT s2 T1)) eqn:C1.
               * injection EB as <-. destruct (apT s2 T1); simpl in C1; try discriminate; exact I.
-              * destruct (open_var D2 (apT s2 T1)) as [a|]; [|destruct (open_var D2 T2) as [b|]; [|discriminate]];
-                  injection EB as <-; unfold settle; destruct (ora _); exact I. }
+              * destruct (open_var (apT s2 T1)) as [a|]; [|destruct (open_var T2) as [b|]; [|discriminate]];
+                  injection EB as <-; apply Hora. }
         assert (S3 := proj1 (unify_mf f) _ _ _ _ _ _ E3 (apT_mf _ _ S2 M1) MT).
         assert (S4 := proj1 (unify_mf f) _ _ _ _ _ _ E4 (apT_mf _ _ S3 M2) MT).
         refine (conj (mf_scomp _ _ S4 (mf_scomp _ _ S3 (mf_scomp _ _ S2 S1))) _).
@@ -340,14 +340,19 @@ Proof.
     exact (conj (mf_scomp _ _ S2 S1) (conj (apT_mf _ _ S2 M1) M2)).
 Qed.
 
+Lemma resolved_mf : forall s a, mu_free (resolved s a).
+Proof.
+  intros s a. unfold resolved. destruct (apT s (typ_Var a)); simpl; exact I.
+Qed.
+
 Theorem infer_mu_free : forall fuel e D T,
   infer_closed_env fuel e = Some (D, T) -> mu_free T.
 Proof.
   intros fuel e D T H. unfold infer_closed_env in H.
-  destruct (infer fuel true (fun _ => false) d_any nil e 0) as [[[[s0 D00] T00] n0]|]; [|discriminate].
-  destruct (infer fuel false (forced_float s0) d_any nil e 0) as [[[[s D1] T1] n]|] eqn:E; [|discriminate].
+  destruct (infer fuel true (fun _ => typ_Int) d_any nil e 0) as [[[[s0 D00] T00] n0]|]; [|discriminate].
+  destruct (infer fuel false (resolved s0) d_any nil e 0) as [[[[s D1] T1] n]|] eqn:E; [|discriminate].
   injection H as <- <-.
-  exact (proj2 (proj1 (infer_mf fuel (forced_float s0)) _ _ _ _ _ _ _ _ E (fun x s0 Hin => match Hin with end))).
+  exact (proj2 (proj1 (infer_mf fuel (resolved s0) (resolved_mf s0)) _ _ _ _ _ _ _ _ E (fun x s0 Hin => match Hin with end))).
 Qed.
 
 Lemma infer_fold_none : forall f lz ora D G e n, infer f lz ora D G (e_fold e) n = None.

@@ -91,17 +91,18 @@ Qed.
 Lemma cmp_ty_ground : forall A, cmp_ty A = true -> ground A.
 Proof. intros A H. destruct A; simpl in H; try discriminate; unfold ground; auto. Qed.
 
-Lemma bin_arg_ground : forall ora D o A B T, bin_arg false ora D o A B = Some T -> ground T.
+Lemma bin_arg_ground : forall ora D o A B T,
+  (forall a, ground (ora a)) -> bin_arg false ora D o A B = Some T -> ground T.
 Proof.
-  intros ora D o A B T H. unfold bin_arg in H.
+  intros ora D o A B T Hora H. unfold bin_arg in H.
   destruct (kind o).
   - discriminate.
   - inversion H; subst; unfold ground; auto.
   - inversion H; subst; unfold ground; auto.
   - destruct (cmp_ty B) eqn:EB; [ inversion H; subst; exact (cmp_ty_ground _ EB) | ].
     destruct (cmp_ty A) eqn:EA; [ inversion H; subst; exact (cmp_ty_ground _ EA) | ].
-    destruct (open_var D A) as [a|]; [ | destruct (open_var D B) as [b|]; [ | discriminate ] ];
-      inversion H; subst; unfold settle; destruct (ora _); unfold ground; auto.
+    destruct (open_var A) as [a|]; [ | destruct (open_var B) as [b|]; [ | discriminate ] ];
+      inversion H; subst; apply Hora.
 Qed.
 
 Lemma bin_ty_sig : forall D o T R, bin_ty o T = Some R -> bin_sig D o T T R.
@@ -217,14 +218,14 @@ Proof.
     rewrite (Hfx a Hna) in Hb. inversion Hb; subst. contradiction.
 Qed.
 
-Theorem infer_sound : forall f ora,
+Theorem infer_sound : forall f ora, (forall a, ground (ora a)) ->
   (forall D G e n s D' T n', infer f false ora D G e n = Some (s, D', T, n') -> WfCtx G -> DOk D n ->
      Good D n s D' n' /\ EvT T /\ typing D' (apC s G) e T) /\
   (forall D G fs n s D' R n', infer_fields f false ora D G fs n = Some (s, D', R, n') -> WfCtx G -> DOk D n ->
      Good D n s D' n' /\ EvR R /\ field_typing D' (apC s G) fs R).
 Proof.
-  induction f as [|f IH]; intros ora; [ split; intros; discriminate | ].
-  destruct (IH ora) as [IHe IHf]. split.
+  induction f as [|f IH]; intros ora Hora; [ split; intros; discriminate | ].
+  destruct (IH ora Hora) as [IHe IHf]. split.
   - intros D G e n s D' T n' H HG HD. cbn [infer] in H.
     destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3 | a4 | a5];
       try discriminate H.
@@ -570,7 +571,7 @@ Proof.
         destruct (bin_res false o Ta) as [R|] eqn:E6; [|discriminate].
         change (bin_res false o Ta) with (bin_ty o Ta) in E6.
         inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
-        pose proof (bin_arg_ground _ _ _ _ _ _ E3) as Hg.
+        pose proof (bin_arg_ground _ _ _ _ _ _ Hora E3) as Hg.
         pose proof (ground_EvT _ Hg) as HTa.
         destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E4 (EvT_ap s2 T1 Hs2 HT1) HTa)
           as (Hs3 & Hteq3 & Hk3 & Hl3).
@@ -642,14 +643,20 @@ Qed.
 (* The statement for programs: a closed term the algorithm accepts has the
    type it returns, in the kinding environment it returns, which records the
    sort of each variable the type leaves free. *)
+Lemma resolved_ground : forall s a, ground (resolved s a).
+Proof.
+  intros s a. unfold resolved. destruct (cmp_ty (apT s (typ_Var a))) eqn:E;
+    [ exact (cmp_ty_ground _ E) | unfold ground; auto ].
+Qed.
+
 Theorem infer_closed_sound : forall fuel e D T,
   infer_closed_env fuel e = Some (D, T) -> typing D nil e T.
 Proof.
   intros fuel e D T H. unfold infer_closed_env in H.
-  destruct (infer fuel true (fun _ => false) d_any nil e 0) as [[[[s0 D00] T00] n0]|]; [|discriminate].
-  destruct (infer fuel false (forced_float s0) d_any nil e 0) as [[[[s D0] T0] n]|] eqn:Ei; [|discriminate].
+  destruct (infer fuel true (fun _ => typ_Int) d_any nil e 0) as [[[[s0 D00] T00] n0]|]; [|discriminate].
+  destruct (infer fuel false (resolved s0) d_any nil e 0) as [[[[s D0] T0] n]|] eqn:Ei; [|discriminate].
   inversion H; subst; clear H.
   assert (Hwf : WfCtx nil) by (split; [constructor | intros x sc Hb; inversion Hb]).
-  destruct ((proj1 (infer_sound fuel (forced_float s0))) _ _ _ _ _ _ _ _ Ei Hwf (d_any_DOk 0)) as (_ & _ & Hty).
+  destruct ((proj1 (infer_sound fuel (resolved s0) (resolved_ground s0))) _ _ _ _ _ _ _ _ Ei Hwf (d_any_DOk 0)) as (_ & _ & Hty).
   exact Hty.
 Qed.

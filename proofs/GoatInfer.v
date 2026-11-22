@@ -86,12 +86,6 @@ Definition sat_b (D : denv) (k : sort) (T : typ) : bool :=
   | _ => match k with k_Any => true | _ => false end
   end.
 
-Definition is_numeric_var (D : denv) (T : typ) : bool :=
-  match T with
-  | typ_Var a => match D a with k_Literal | k_Numeric => true | _ => false end
-  | _ => false
-  end.
-
 (* ------------------------------------------------------------------ *)
 (* Unification                                                          *)
 (* ------------------------------------------------------------------ *)
@@ -292,38 +286,36 @@ Definition gen_ren (D : denv) (G : ctx) (T : typ) : scheme :=
 (* The type a comparison, [/], [//] or [%] unifies both operands with, taken
    from whichever operand type is already known (the right first).  [/] takes
    Floats and [//] and [%] take Ints whatever the operands are.  A comparison
-   is at a concrete type, so a comparison whose operands are both open numeric
-   variables (a numeral's, or the result of a [+ - * // %]) waits for the type
-   the rest of the program gives the variable.  [infer_closed_env] runs the
-   algorithm twice.  The first run, [lenient], leaves such a comparison
-   unconstrained and so lets the rest of the program force the variable; the
-   second run settles the comparison at [Float] where the first run forced the
-   variable there and at [Int] otherwise ([ora] holds that choice), and checks
-   it.  Only the second run is returned, and it is proved sound for every
-   [ora].  [+ - *] are generic and take no such type. *)
+   is at a concrete type, so a comparison whose operands are all type
+   variables (a numeral's, the result of a [+ - * // %], a parameter's) waits
+   for the type the rest of the program gives the variable.
+   [infer_closed_env] runs the algorithm twice.  The first run, [lenient],
+   leaves such a comparison unconstrained and so lets the rest of the program
+   force the variable.  The second run settles the comparison at the type the
+   first run gave the variable, or at [Int] if it gave none ([ora] holds that
+   choice), and checks it.  Only the second run is returned, and it is proved
+   sound for every [ora] of concrete types.  [+ - *] are generic and take no
+   such type. *)
 Definition num_ty (A : typ) : bool :=
   match A with typ_Int | typ_Float => true | _ => false end.
 
 Definition cmp_ty (A : typ) : bool :=
   match A with typ_Int | typ_Float | typ_String | typ_Bool => true | _ => false end.
 
-Definition open_var (D : denv) (T : typ) : option atom :=
-  match T with
-  | typ_Var a => if is_numeric_var D T then Some a else None
-  | _ => None
-  end.
+Definition open_var (T : typ) : option atom :=
+  match T with typ_Var a => Some a | _ => None end.
 
-Definition settle (lenient : bool) (ora : atom -> bool) (a : atom) : typ :=
-  if lenient then typ_Var a else if ora a then typ_Float else typ_Int.
+Definition settle (lenient : bool) (ora : atom -> typ) (a : atom) : typ :=
+  if lenient then typ_Var a else ora a.
 
-Definition bin_arg (lenient : bool) (ora : atom -> bool) (D : denv) (o : bop) (A B : typ)
+Definition bin_arg (lenient : bool) (ora : atom -> typ) (D : denv) (o : bop) (A B : typ)
   : option typ :=
   match kind o with
   | k_ring => None
   | k_quot => Some typ_Float
   | k_whole => None
   | k_cmp => if cmp_ty B then Some B else if cmp_ty A then Some A
-             else match open_var D A, open_var D B with
+             else match open_var A, open_var B with
                   | Some a, _ => Some (settle lenient ora a)
                   | None, Some b => Some (settle lenient ora b)
                   | None, None => None
@@ -384,7 +376,7 @@ Definition fresh_var (G : ctx) (e : exp) : atom :=
    result type lives in, the type, and the next unused variable number.  The
    environment [D] has [Any] on every even atom from [n] on, so a fresh
    variable is [Any] unless the algorithm gives it a sort with [upd]. *)
-Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> bool) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
+Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
   : option (sub * denv * typ * nat) :=
   match f with
   | O => None
@@ -559,7 +551,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> bool) (D : denv) (G : c
           end
       end
   end
-with infer_fields (f : nat) (lenient : bool) (ora : atom -> bool) (D : denv) (G : ctx) (fs : fields) (n : nat) {struct f}
+with infer_fields (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (fs : fields) (n : nat) {struct f}
   : option (sub * denv * row * nat) :=
   match f with
   | O => None
@@ -579,19 +571,19 @@ with infer_fields (f : nat) (lenient : bool) (ora : atom -> bool) (D : denv) (G 
       end
   end.
 
-(* The comparisons the first run left pending are settled at Float where that
-   run's final substitution made the variable a Float, else at Int. *)
-Definition forced_float (s : sub) (a : atom) : bool :=
-  match apT s (typ_Var a) with typ_Float => true | _ => false end.
+(* A comparison the first run left pending is settled at the concrete type its
+   final substitution gave the variable, else at Int. *)
+Definition resolved (s : sub) (a : atom) : typ :=
+  let T := apT s (typ_Var a) in if cmp_ty T then T else typ_Int.
 
 (* A program is a closed term; the result is its type, with the sorts of its
    free variables.  A variable left free in a program's type is one the
    program's derivations may instantiate at any type of its sort. *)
 Definition infer_closed_env (fuel : nat) (e : exp) : option (denv * typ) :=
-  match infer fuel true (fun _ => false) d_any nil e 0 with
+  match infer fuel true (fun _ => typ_Int) d_any nil e 0 with
   | None => None
   | Some (s0, _, _, _) =>
-      match infer fuel false (forced_float s0) d_any nil e 0 with
+      match infer fuel false (resolved s0) d_any nil e 0 with
       | None => None
       | Some (_, D, T, _) => Some (D, T)
       end

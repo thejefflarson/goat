@@ -284,8 +284,16 @@ both choices.
   sort, so the defaulting of ADR 0017 (a `Literal` variable left free is `Int`) is
   the choice of that instance; the algorithm makes no choice and the theorem
   covers every one. The one place it commits is a comparison: `1 < 2` has no
-  derivation at a variable, so the algorithm takes the derivation at `Int`
-  (`bin_arg`).
+  derivation at a variable (`cmp_typ` is concrete), so the comparison waits.
+  `infer_closed_env` runs `infer` twice. The first run (`lenient`) leaves a
+  comparison whose operands are all variables unconstrained, so the rest of the
+  program may force the variable (`v = 71 // 88` then `v <= v` and `v - 3.1`
+  makes it `Float`). The second run settles each such comparison at the concrete
+  type the first run's final substitution gave the variable, else `Int`
+  (`resolved`, the `ora` argument of `bin_arg`), and checks it. Only the second
+  run is returned. `infer_sound` holds for every `ora` of concrete types, so
+  the choice needs no proof: a wrong one makes the second run fail, never
+  return a wrong type.
 
 The soundness proof (`GoatInferSound.v`) carries one invariant per step, `Good D
 n s D' n'`: `D` is `Any` beyond `n`, `s` is a substitution of the algorithm, the
