@@ -75,6 +75,11 @@ Definition access_tree (l : label) : tree := Node R_access [sym "."; ident (lnam
 Definition field_tree (l : label) (b : list tree) : tree :=
   Node R_field [ident (lname l); sym ":"; Node R_expr b].
 
+(* The base of a spread is parenthesised: a bare name there would read as the
+   rest binding of a record pattern. *)
+Definition spread_tree (b : list tree) : tree :=
+  Node R_spread [sym "..."; Node R_expr (paren_kids b)].
+
 Definition cond_tree (c t e : list tree) : tree :=
   Node R_conditional [sym "if"; Node R_expr c; sym "then"; Node R_expr t;
                       sym "else"; Node R_expr e; sym "done"].
@@ -101,8 +106,11 @@ Fixpoint block (P : nat) (e : exp) {struct e} : list tree :=
   | e_let v b => decl_tree P (as_value v (block P v)) :: block (S P) b
   | e_rec fs => [Node R_record ((sym "{" :: field_trees P fs) ++ [sym "}"])]
   | e_proj f l => as_operand f (block P f) ++ [access_tree l]
+  | e_spread a l b =>
+      [Node R_record [sym "{"; spread_tree (block P a); sym ",";
+                      field_tree l (block P b); sym "}"]]
   | e_unit | e_tofloat _ | e_con _ _ _ | e_match _ _ _ | e_fold _ | e_unfold _
-  | e_spread _ _ _ | e_restrict _ _
+  | e_restrict _ _
   | e_letrec _ _ => []
   | e_str _ => [Node R_string [Leaf TStr]]
   | e_ite c a e_unit => [cond_tree_noelse (block P c) (block P a)]
@@ -177,8 +185,9 @@ Fixpoint scoped (n : nat) (e : exp) {struct e} : Prop :=
   | e_num z => z_nonneg z = true
   | e_true | e_false | e_str _ | e_dec _ => True
   | e_unit | e_tofloat _ | e_con _ _ _ | e_match _ _ _ | e_fold _ | e_unfold _
-  | e_spread _ _ _ | e_restrict _ _
+  | e_restrict _ _
   | e_letrec _ _ => False
+  | e_spread a _ b => scoped n a /\ scoped n b
   | e_ite c a b => scoped n c /\ scoped n a /\ (b = e_unit \/ scoped n b)
   | e_bin a _ b => scoped n a /\ scoped n b
   | e_abs b => scoped (S n) b
@@ -217,6 +226,7 @@ Fixpoint lbls (e : exp) {struct e} : list nat :=
   | e_let v b => lbls v ++ lbls b
   | e_rec fs => lbls_fields fs
   | e_proj f l => lbls f ++ [l]
+  | e_spread a l b => lbls a ++ l :: lbls b
   | e_ite c a b => lbls c ++ lbls a ++ lbls b
   | e_bin a _ b => lbls a ++ lbls b
   | _ => []

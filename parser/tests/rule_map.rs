@@ -58,9 +58,9 @@ const RULES: &[(&str, Class)] = &[
     ("true_lit", Core("e_true")),
     ("false_lit", Core("e_false")),
     ("name", Core("e_fvar")),
-    ("record", Core("e_rec")),
+    ("record", Core("e_rec|e_spread")),
     ("_record_item", Core("fs_cons")),
-    ("spread", Outside),
+    ("spread", Core("e_spread")),
     ("field", Core("fs_cons")),
     ("local", Core("e_let")),
     ("declaration", Core("e_let")),
@@ -74,10 +74,10 @@ const RULES: &[(&str, Class)] = &[
     ("field_type", Outside),
     ("type_name", Outside),
     ("infer_type", Outside),
-    ("destructure", Outside),
-    ("record_pattern", Outside),
+    ("destructure", Core("e_let|e_proj|e_restrict")),
+    ("record_pattern", Core("e_let|e_proj")),
     ("list_pattern", Outside),
-    ("rest_binding", Outside),
+    ("rest_binding", Core("e_restrict")),
     ("function", Core("e_abs")),
     ("params", Core("e_abs")),
     ("_param", Core("e_abs")),
@@ -181,20 +181,10 @@ fn every_ott_production_is_reached_by_some_core_rule() {
         // syntax (ADR 0037, iso-recursive types). `e_con` and `e_match` are
         // the proof calculus's tag groups (proofs/README.md, phase 3); the
         // grammar does not denote tag declarations, construction or `match`
-        // into them until the parser fragment grows them. `e_spread` and
-        // `e_restrict` are the calculus's spread and rest-pattern terms
-        // (phase 4), exempt for the same reason.
+        // into them until the parser fragment grows them.
         if !matches!(
             production.as_str(),
-            "e" | "fs"
-                | "fs_nil"
-                | "e_tofloat"
-                | "e_fold"
-                | "e_unfold"
-                | "e_con"
-                | "e_match"
-                | "e_spread"
-                | "e_restrict"
+            "e" | "fs" | "fs_nil" | "e_tofloat" | "e_fold" | "e_unfold" | "e_con" | "e_match"
         ) {
             assert!(
                 reached.contains(production.as_str()),
