@@ -24,37 +24,20 @@
   (export "goat_live_allocs" (func 8))
   (elem (;0;) (table 0) (i32.const 0) func 10)
   (func (;4;) (type 3) (result i64)
-    (local i64 i64 i32 i32 i64 i64 i64 i64)
-    i64.const 3
-    local.set 0
-    i64.const 4
+    (local i64 i64 i64 i64 i64 i32 i32 i64 i64 i64 i64)
+    i64.const 1
+    i64.const 2
     local.set 1
-    i32.const 24
-    call 6
-    local.set 2
-    local.get 2
+    local.set 0
     local.get 0
-    i64.store offset=8
-    local.get 2
     local.get 1
-    i64.store offset=16
-    local.get 2
-    local.set 3
-    local.get 3
-    i64.load offset=8
-    local.get 3
-    i64.load offset=16
-    local.set 5
-    local.set 4
-    local.get 4
-    local.get 5
     i64.add
-    local.set 6
-    local.get 4
-    local.get 6
+    local.set 2
+    local.get 0
+    local.get 2
     i64.xor
-    local.get 5
-    local.get 6
+    local.get 1
+    local.get 2
     i64.xor
     i64.and
     i64.const 0
@@ -64,35 +47,74 @@
       call 3
       unreachable
     end
-    local.get 6
-    local.set 7
+    local.get 2
+    local.set 3
+    i64.const 4
+    local.set 4
+    i32.const 24
+    call 6
+    local.set 5
+    local.get 5
     local.get 3
+    i64.store offset=8
+    local.get 5
+    local.get 4
+    i64.store offset=16
+    local.get 5
+    local.set 6
+    local.get 6
+    i64.load offset=8
+    local.get 6
+    i64.load offset=16
+    local.set 8
+    local.set 7
+    local.get 7
+    local.get 8
+    i64.add
+    local.set 9
+    local.get 7
+    local.get 9
+    i64.xor
+    local.get 8
+    local.get 9
+    i64.xor
+    i64.and
+    i64.const 0
+    i64.lt_s
+    if ;; label = @1
+      i32.const 8
+      call 3
+      unreachable
+    end
+    local.get 9
+    local.set 10
+    local.get 6
     i32.load
     i32.const -1
     i32.ne
     if ;; label = @1
-      local.get 3
+      local.get 6
       i32.load
       i32.eqz
       if ;; label = @2
         unreachable
       end
-      local.get 3
-      local.get 3
+      local.get 6
+      local.get 6
       i32.load
       i32.const 1
       i32.sub
       i32.store
-      local.get 3
+      local.get 6
       i32.load
       i32.eqz
       if ;; label = @2
-        local.get 3
+        local.get 6
         i32.const 0
         call 9
       end
     end
-    local.get 7
+    local.get 10
   )
   (func (;5;) (type 2)
     call 4

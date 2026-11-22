@@ -121,3 +121,25 @@ fn fields_read_in_a_branch_and_outside_it_agree() {
         "{x: 4, y: 5}\n{x: 5, y: 7}\n{p: {x: 1, y: 1}, v: {x: 2, y: 3}}"
     );
 }
+
+#[test]
+fn a_record_of_constants_is_one_cell_that_nothing_writes_into() {
+    let src = program(&[
+        "bump = program(i) do",
+        "  base = {x: 1.0, y: 2.0}",
+        "  base + {x: i * 1.0, y: 0.5}",
+        "done",
+        "keep = program(i) do {...{n: 7, ok: true, x: 1.5}, n: i} done",
+        "print(bump(1))",
+        "print(bump(2))",
+        "print(keep(3))",
+        "print(keep(4))",
+        "print({n: 7, ok: true, x: 1.5})",
+        "print({x: 1.0, y: 2.0} * {x: 3.0, y: 3.0})",
+    ]);
+    assert_eq!(
+        run(&src),
+        "{x: 2, y: 2.5}\n{x: 3, y: 2.5}\n{n: 3, ok: true, x: 1.5}\n{n: 4, ok: true, x: 1.5}\n\
+         {n: 7, ok: true, x: 1.5}\n{x: 3, y: 6}"
+    );
+}

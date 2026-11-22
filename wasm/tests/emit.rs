@@ -401,7 +401,7 @@ fn point_sum() -> Program {
         MTy::Int,
         let_(
             0,
-            Expr::AllocRecord(LayoutId(2), vec![int(3), int(4)]),
+            Expr::AllocRecord(LayoutId(2), vec![add(int(1), int(2)), int(4)]),
             let_(
                 1,
                 add(Expr::Field(Local(0), 0), Expr::Field(Local(0), 1)),
@@ -411,6 +411,38 @@ fn point_sum() -> Program {
     )]);
     p.layouts.push(Layout::Record(vec![MTy::Int, MTy::Int]));
     p
+}
+
+/// Two equal literals of constants, read and released.
+fn constant_points() -> Program {
+    let point = || Expr::AllocRecord(LayoutId(2), vec![int(3), int(4)]);
+    let mut p = program(vec![func(
+        MTy::Int,
+        let_(
+            0,
+            point(),
+            let_(
+                1,
+                point(),
+                let_(
+                    2,
+                    add(Expr::Field(Local(0), 0), Expr::Field(Local(1), 1)),
+                    let_(3, drop_(0), let_(4, drop_(1), local(2))),
+                ),
+            ),
+        ),
+    )]);
+    p.layouts.push(Layout::Record(vec![MTy::Int, MTy::Int]));
+    p
+}
+
+#[test]
+fn a_record_of_constants_is_one_immortal_cell_in_the_data_section() {
+    let text = wat(&constant_points());
+    let root = func_body(&text, 4);
+    assert!(!root.contains("call 6"), "allocates nothing\n{root}");
+    let cell = r"\ff\ff\ff\ff\00\00\00\00\03\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00";
+    assert_eq!(text.matches(cell).count(), 1, "one cell for both\n{text}");
 }
 
 #[test]

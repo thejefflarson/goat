@@ -97,8 +97,10 @@ pub fn record_ty() -> MTy {
     MTy::Ptr(HeapKind::Record(RECORD))
 }
 
+/// A record with a computed field: a record of constants alone is one shared
+/// immortal cell, which these tests need to be a real allocation.
 pub fn alloc_record(n: i64) -> Expr {
-    Expr::AllocRecord(RECORD, vec![int(n)])
+    Expr::AllocRecord(RECORD, vec![add(int(n), int(0))])
 }
 
 pub fn mul(a: Expr, b: Expr) -> Expr {

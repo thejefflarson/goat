@@ -603,7 +603,7 @@ fn the_timeout_restarts_with_every_call() {
 /// An all-scalar model, so a steady-state `update` allocates nothing but the
 /// model's own cell, which it should reuse.
 const COUNTER: &str = r##"
-init = {x: 0, y: 0, n: 0}
+init = {x: 0 + 0, y: 0, n: 0}
 
 update = program(model, event) do
   match event do

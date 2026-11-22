@@ -392,6 +392,9 @@ struct Interp<'p> {
     live: usize,
     allocations: usize,
     strings: HashMap<DataId, usize>,
+    /// The immortal record built from each distinct set of constant fields,
+    /// as the wasm backend does: one object, not an allocation per evaluation.
+    constant_records: Vec<(Vec<Value>, usize)>,
     line: Vec<Piece>,
     printed: Vec<Vec<Piece>>,
 }
@@ -407,6 +410,7 @@ impl<'p> Interp<'p> {
             live: 0,
             allocations: 0,
             strings: HashMap::new(),
+            constant_records: Vec::new(),
             line: Vec::new(),
             printed: Vec::new(),
         }
@@ -434,6 +438,24 @@ impl<'p> Interp<'p> {
         }
         self.slots.push(Some(Obj { rc, body }));
         Ok(Value::Ptr(self.slots.len() - 1))
+    }
+
+    fn constant_record(&mut self, fields: Vec<Value>) -> Result<Value, InterpError> {
+        let same = |a: &Value, b: &Value| match (a, b) {
+            (Value::Float(a), Value::Float(b)) => a.to_bits() == b.to_bits(),
+            _ => a == b,
+        };
+        let cached = self.constant_records.iter().find(|(held, _)| {
+            held.len() == fields.len() && held.iter().zip(&fields).all(|(a, b)| same(a, b))
+        });
+        if let Some(&(_, addr)) = cached {
+            return Ok(Value::Ptr(addr));
+        }
+        let record = self.alloc(Body::Record(fields.clone()), IMMORTAL)?;
+        if let Value::Ptr(addr) = record {
+            self.constant_records.push((fields, addr));
+        }
+        Ok(record)
     }
 
     fn obj(&self, addr: usize) -> Result<&Obj, InterpError> {
@@ -955,8 +977,13 @@ impl<'p> Interp<'p> {
                 self.retain(value)?
             }
             Expr::AllocRecord(_, fields) => {
+                let constant = fields.iter().all(|f| matches!(f, Expr::Const(_)));
                 let fields = self.values(fields, frame, depth)?;
-                self.alloc(Body::Record(fields), 1)?
+                if constant {
+                    self.constant_record(fields)?
+                } else {
+                    self.alloc(Body::Record(fields), 1)?
+                }
             }
             Expr::Field(x, i) => {
                 let record = frame.get(*x)?;
