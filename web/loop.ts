@@ -10,7 +10,7 @@
 // watchdog does, fed by `around`. A call that returns but took longer than a
 // frame budget stops the loop too.
 
-import { createHost, readString } from "./runtime.ts";
+import { createHost, readString, stopMessage } from "./runtime.ts";
 import {
   CanvasScene,
   type DrawingContext,
@@ -156,7 +156,7 @@ export function startLoop(initial: InteractiveExports, env: LoopEnv): Loop {
       }
       return result;
     } catch (e) {
-      fail(`your program stopped: ${e instanceof Error ? e.message : String(e)}`);
+      fail(`your program stopped: ${stopMessage(e)}`);
       return undefined;
     }
   };

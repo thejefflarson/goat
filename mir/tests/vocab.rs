@@ -17,8 +17,10 @@ fn record<const N: usize>(fields: [(&str, Ty); N]) -> Ty {
 
 fn toy() -> Vocab {
     let pad = Group {
+        name: "Pad".into(),
         tags: vec![("A".into(), Ty::Unit), ("B".into(), Ty::Unit)],
         recursive: false,
+        params: 0,
     };
     let event = |name: &str, payload, decode| EventTag {
         name: name.into(),
@@ -89,7 +91,8 @@ done
 "#;
 
 fn lower(vocab: &Vocab, source: &str) -> Program {
-    let checked = check_with_vocab(&vocab.prelude, vocab, source).expect("checks");
+    let prelude = format!("tag List = Empty | Link(_, List)\n{}", vocab.prelude);
+    let checked = check_with_vocab(&prelude, vocab, source).expect("checks");
     let program = mono(&checked).expect("lowers");
     assert_eq!(verify(&program), Ok(()));
     program
@@ -191,7 +194,7 @@ fn a_decoder_nothing_uses_adds_no_tags_to_the_numbering() {
         events: Vec::new(),
         ..Vocab::turtle()
     };
-    let source = "tag Circle\nCircle(1)";
+    let source = "tag Ring(_)\nRing(1)";
     assert_eq!(lower(&with, source), lower(&without, source));
 }
 
@@ -240,4 +243,23 @@ fn the_turtle_streams_circle_rect_and_text_as_single_scene_calls() {
         [float, float, float, float, string]
     );
     assert_eq!(import(&program, "text"), [float, float, string, string]);
+}
+
+#[test]
+fn a_list_needs_the_prelude_that_declares_it() {
+    let source = "init = {n: 0}\n\
+                  update = program(m, e) do match e do Press then m done done\n\
+                  draw = program(m) do [] done";
+    let vocab = toy();
+    let errors = check_with_vocab("", &vocab, source)
+        .err()
+        .expect("an error");
+    assert!(
+        errors[0]
+            .message
+            .contains("tag List = Empty | Link(_, List)"),
+        "{errors:?}"
+    );
+    let program = lower(&vocab, source);
+    assert!(program.interactive.is_some());
 }

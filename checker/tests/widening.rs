@@ -107,9 +107,12 @@ fn the_arms_of_a_match_widen_in_either_order() {
 
 #[test]
 fn the_elements_of_a_list_literal_widen_in_either_order() {
-    let all_floats = "[Link: {0: Float, 1: [Link: {0: Float, 1: [Empty | t1]} | t3]} | t4]";
     for source in ["i = whole()  [i, 2.5]", "i = whole()  [2.5, i]"] {
-        assert_eq!(type_of(&with_count(source)), all_floats, "{source}");
+        let ty = type_of(&with_count(source));
+        assert!(
+            ty.contains("[Empty, Link: {0: Float, 1: t"),
+            "{source}: {ty}"
+        );
     }
     assert_eq!(
         type_of(&with_count("i = whole()  sum([2.5, i, 3])")),
@@ -189,9 +192,36 @@ fn a_float_where_an_int_is_needed_names_the_way_out() {
 }
 
 #[test]
-fn a_float_the_call_site_already_knows_is_a_plain_mismatch() {
-    let (message, _) = error_of(&with_count("take(2.5)"));
-    assert_eq!(message, "type mismatch: expected `Int`, found `Float`");
+fn a_float_argument_for_an_int_parameter_names_the_way_out_at_the_argument() {
+    let source = with_count("take(2.5)");
+    let (message, at) = error_of(&source);
+    assert_eq!(
+        message,
+        "this is a `Float`, but an `Int` is needed here; use `round`, `floor` or `truncate`"
+    );
+    assert_eq!(at, "2.5");
+}
+
+#[test]
+fn a_list_position_is_a_whole_number() {
+    let message =
+        "this is a `Float`, but an `Int` is needed here; use `round`, `floor` or `truncate`";
+    for (source, at) in [
+        ("item([1, 2, 3], 7.5)", "7.5"),
+        ("item([1, 2, 3], 1.0 + 1)", "1.0"),
+        ("f = program(x) do item([1, 2, 3], x) done\nf(2.5)", "2.5"),
+    ] {
+        let (got, span) = error_of(source);
+        assert_eq!(got, message, "{source}");
+        assert_eq!(span, at, "{source}");
+    }
+    for source in [
+        "item([1, 2, 3], 2)",
+        "n = 2\nitem([1, 2, 3], n)",
+        "item([1, 2, 3], truncate(2.5))",
+    ] {
+        assert_eq!(type_of(source), "Int", "{source}");
+    }
 }
 
 #[test]

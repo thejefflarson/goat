@@ -557,6 +557,13 @@ pub fn run_to_end_on<H: Host>(interp: Interp, wasm: &[u8], host: H) -> Result<Fi
                 .map_err(|e| format!("goat_live_allocs: {e}"))
         })
     };
+    let out_of_stack = session.stopped.is_none()
+        && outcome
+            .as_ref()
+            .is_err_and(|message| message.contains("stack overflow"));
+    let out_of_stack_site = out_of_stack
+        .then(|| trap_site(api, loaded.env, &session.sites))
+        .flatten();
     // SAFETY: pairs the init above.
     unsafe { (api.destroy_thread_env)() };
     drop(loaded);
@@ -568,9 +575,18 @@ pub fn run_to_end_on<H: Host>(interp: Interp, wasm: &[u8], host: H) -> Result<Fi
         ..
     } = session;
     let result = outcome.map_err(|message| {
-        stopped.unwrap_or(Stopped {
-            message,
-            site: None,
+        stopped.unwrap_or_else(|| {
+            if out_of_stack {
+                Stopped {
+                    message: goat::STACK_OVERFLOW.into(),
+                    site: out_of_stack_site,
+                }
+            } else {
+                Stopped {
+                    message,
+                    site: None,
+                }
+            }
         })
     });
     if result.is_err() && !output.line.is_empty() {

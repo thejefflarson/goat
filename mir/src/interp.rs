@@ -25,7 +25,6 @@ pub enum InterpError {
     Trap(String),
     DoubleFree(usize),
     UseAfterFree(usize),
-    StackOverflow,
     /// The program holds more than `MAX_OBJECTS` heap objects.
     OutOfMemory,
     Malformed(&'static str),
@@ -682,7 +681,7 @@ impl<'p> Interp<'p> {
 
     fn call(&mut self, mut pending: Pending, depth: usize) -> Result<Value, InterpError> {
         if depth > self.max_depth {
-            return Err(InterpError::StackOverflow);
+            return Err(InterpError::Trap(STACK_OVERFLOW.into()));
         }
         loop {
             let func = self

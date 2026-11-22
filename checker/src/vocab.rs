@@ -16,6 +16,10 @@ const TURTLE_KEYS: &str = include_str!("../../prelude/turtle_keys.goat");
 /// renames it to a fresh one per use.
 const LIST_BINDER: TypeVar = TypeVar::MAX;
 
+/// The tags of the built-in list group, which every program may use whatever
+/// its host.
+pub const LIST_TAGS: [&str; 2] = ["Empty", "Link"];
+
 /// One host's closed vocabulary. Tag numbers are not part of it: mono numbers
 /// every tag in sorted-label order (ADR 0010), so the order tags are listed in
 /// here changes nothing.
@@ -209,8 +213,10 @@ impl Vocab {
             events: Vec::new(),
             shapes: Vec::new(),
             keys: Group {
+                name: "Key".into(),
                 tags: Vec::new(),
                 recursive: false,
+                params: 0,
             },
             prelude: String::new(),
         }
@@ -265,12 +271,14 @@ impl Vocab {
     /// The vocabulary of the turtle host, the CLI and the web player.
     pub fn turtle() -> Vocab {
         let keys = Group {
+            name: "Key".into(),
             tags: ["Up", "Down", "Left", "Right"]
                 .map(|tag| (tag.to_string(), Ty::Unit))
                 .into_iter()
                 .chain([("Other".to_string(), Ty::Str)])
                 .collect(),
             recursive: false,
+            params: 0,
         };
         let key = keys.instantiate(0);
         let point = || record([float("x"), float("y")]);

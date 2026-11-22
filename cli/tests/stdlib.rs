@@ -256,7 +256,6 @@ fn item_outside_the_list_is_a_trap() {
     assert_traps("item([], 1)", message);
     assert_traps("item([1, 2], 0)", message);
     assert_traps("item([1, 2], -1)", message);
-    assert_traps("item([1, 2], 1.5)", message);
 }
 
 #[test]
@@ -276,7 +275,7 @@ fn trap_is_only_taken_when_reached() {
     assert_eq!(run("if 2 < 1 then trap(\"no\") else 6 done"), "6");
     assert_eq!(
         run(
-            "tag Circle tag Square match Circle(2) do Circle(r) then r Square(s) then trap(\"no\") done"
+            "tag Ring(_) | Square(_) match Ring(2) do Ring(r) then r Square(s) then trap(\"no\") done"
         ),
         "2"
     );

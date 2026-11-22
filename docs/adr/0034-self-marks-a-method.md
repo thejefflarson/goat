@@ -144,7 +144,9 @@ wasm with one recursive type and no nested knots.
    `.bump()` would wrap in another layer of record type. Methods are inferred
    after the siblings they call through `self`, in source order otherwise
    (methods that call each other in a cycle keep source order), so a chain
-   works wherever its callee is declared. A call's result bound to a
+   works wherever its callee is declared. A method that hands `self` on whole,
+   to a helper such as `go(self)`, may reach any sibling, so it goes after all
+   of them. A call's result bound to a
    temporary, which is how a dot call on a call is lowered, keeps the type `s`
    instead of the receiver's whole record opened at the binding. A method
    that returns a different shape (a spread that adds a field, a number) is

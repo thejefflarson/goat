@@ -123,7 +123,7 @@ fn runs_the_whole_numbers_example() {
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        "3\n2\n-4\n3\n3\n-3\n-2\n-2\n0.5\n4\n50\n"
+        "3\n2\n-4\n3\n3\n0.5\n3\n-3\n-2\n-2\n0.5\n4\n50\n"
     );
 }
 
@@ -412,6 +412,18 @@ fn a_number_that_gets_too_big_is_blamed_on_the_operation() {
 }
 
 #[test]
+fn a_comparison_of_values_nested_too_deeply_is_blamed_on_the_comparison() {
+    let src = "nest = program(n, acc) do if n < 1 then acc else nest(n - 1, [acc]) done done\n\
+               a = nest(300000, [])\nb = nest(300000, [])\nprint(a == b)";
+    let (_, stderr) = failure_of(src);
+    assert!(
+        stderr.contains("trap: 4:7: the program called itself too deeply"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("a == b"), "{stderr}");
+}
+
+#[test]
 fn lines_printed_before_a_trap_survive() {
     let (stdout, stderr) = failure_of("a = print(1)\nb = print(\"two\")\nfirst([]) + 1");
     assert_eq!(stdout, "1\ntwo\n");
@@ -501,8 +513,8 @@ fn o_on_a_program_that_never_draws_is_an_error_and_writes_nothing() {
     assert!(!svg.exists());
 }
 
-const TYPO_TAG: &str = "match Cirle(5) do Circle(r) then r else 0 done";
-const TYPO_TAG_DECLS: &str = "tag Cirle tag Circle ";
+const TYPO_TAG: &str = "match Rng(5) do Ring(r) then r else 0 done";
+const TYPO_TAG_DECLS: &str = "tag Rng(_) | Ring(_) ";
 
 #[test]
 fn run_warns_on_stderr_and_still_succeeds() {
@@ -513,8 +525,8 @@ fn run_warns_on_stderr_and_still_succeeds() {
     assert!(out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("warning in "), "{stderr}");
-    assert!(stderr.contains("tag `Cirle` is constructed but never matched"));
-    assert!(stderr.contains("^^^^^^^^"), "span caret missing: {stderr}");
+    assert!(stderr.contains("tag `Rng` is constructed but never matched"));
+    assert!(stderr.contains("^^^^^^"), "span caret missing: {stderr}");
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "1\n0\n");
 }
 

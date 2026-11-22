@@ -282,7 +282,7 @@ fn unbounded_non_tail_recursion_overflows() {
     let main = func(MTy::Int, Expr::CallDirect(FuncId(1), vec![]));
     assert_eq!(
         run(&program(vec![main, recur])),
-        Err(InterpError::StackOverflow)
+        Err(InterpError::Trap(STACK_OVERFLOW.into()))
     );
 }
 

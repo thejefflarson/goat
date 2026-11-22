@@ -16,7 +16,7 @@ import {
   startLoop,
 } from "./loop.ts";
 import { type FromWorker, Heartbeat, type ToWorker } from "./protocol.ts";
-import { animate, run } from "./runtime.ts";
+import { animate, run, stopMessage } from "./runtime.ts";
 import { type DrawingContext, type HostEvent, SpanScene, SwatchScene, constructEvent, subscriptions } from "./scene.ts";
 
 export interface WorkerCoreEnv {
@@ -145,7 +145,7 @@ export function createWorkerCore(env: WorkerCoreEnv) {
         if (message.mode === "theme") return await runTheme(message);
         await (message.mode === "interactive" ? runInteractiveProgram(message) : runOnceProgram(message));
       } catch (e) {
-        env.post({ type: "failed", message: `your program stopped: ${e instanceof Error ? e.message : String(e)}` });
+        env.post({ type: "failed", message: `your program stopped: ${stopMessage(e)}` });
       }
     },
   };

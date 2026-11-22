@@ -295,9 +295,3 @@ Proof.
   apply finer_b_sound. exact H.
 Qed.
 
-Lemma is_numeric_var_sound : forall D T,
-  is_numeric_var D T = true -> exists a, T = typ_Var a /\ (D a = k_Literal \/ D a = k_Numeric).
-Proof.
-  intros D T H. destruct T; simpl in H; try discriminate.
-  destruct (D a) eqn:E; try discriminate; exists a; (split; [ reflexivity | auto ]).
-Qed.

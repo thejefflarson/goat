@@ -1387,12 +1387,54 @@ impl Mono<'_> {
             BinOp::Div => self.arith(cx, Some(span), FloatOp::Div, &operand_ty, a, b),
             BinOp::FloorDiv => self.arith(cx, Some(span), FloatOp::FloorDiv, &operand_ty, a, b),
             BinOp::Mod => self.arith(cx, Some(span), FloatOp::Mod, &operand_ty, a, b),
-            BinOp::Eq => self.equal(cx, &operand_ty, a, b, tail),
-            BinOp::Ne => Self::not(self.equal(cx, &operand_ty, a, b, false)),
-            BinOp::Lt => self.order(cx, CmpOp::Lt, &operand_ty, a, b),
-            BinOp::Lte => self.order(cx, CmpOp::Le, &operand_ty, a, b),
-            BinOp::Gt => self.order(cx, CmpOp::Gt, &operand_ty, a, b),
-            BinOp::Gte => self.order(cx, CmpOp::Ge, &operand_ty, a, b),
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte => {
+                self.comparison(cx, (op, span), &operand_ty, (a, b), tail)
+            }
+        }
+    }
+
+    /// A comparison of two values. One of records or variants recurses, so it
+    /// can run out of stack on a deeply nested value; the site is set after
+    /// both operands run so the stop is blamed on this comparison.
+    fn comparison(
+        &mut self,
+        cx: &mut FnCx,
+        (op, span): (BinOp, Span),
+        ty: &Ty,
+        (a, b): (Expr, Expr),
+        tail: bool,
+    ) -> Expr {
+        let nested = matches!(ty.unfold_head(), Ty::Record(_) | Ty::Variant(_));
+        if !nested || span.in_prelude() {
+            return self.compare_with(cx, op, ty, (a, b), tail);
+        }
+        let mty = self.lower_ty(&canonical(ty));
+        let (x, y) = (cx.fresh(mty), cx.fresh(mty));
+        let test = self.compare_with(cx, op, ty, (Expr::Local(x), Expr::Local(y)), tail);
+        let blamed = Self::at_site(cx, span, test);
+        Expr::Let(
+            x,
+            Box::new(a),
+            Box::new(Expr::Let(y, Box::new(b), Box::new(blamed))),
+        )
+    }
+
+    fn compare_with(
+        &mut self,
+        cx: &mut FnCx,
+        op: BinOp,
+        ty: &Ty,
+        (a, b): (Expr, Expr),
+        tail: bool,
+    ) -> Expr {
+        match op {
+            BinOp::Eq => self.equal(cx, ty, a, b, tail),
+            BinOp::Ne => Self::not(self.equal(cx, ty, a, b, false)),
+            BinOp::Lt => self.order(cx, CmpOp::Lt, ty, a, b),
+            BinOp::Lte => self.order(cx, CmpOp::Le, ty, a, b),
+            BinOp::Gt => self.order(cx, CmpOp::Gt, ty, a, b),
+            BinOp::Gte => self.order(cx, CmpOp::Ge, ty, a, b),
+            _ => unreachable!("only comparisons reach compare_with"),
         }
     }
 

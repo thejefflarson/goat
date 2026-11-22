@@ -11,8 +11,8 @@ use crate::hir::{
     BinOp, Boundary, Builtin, ContractBinding, Decoder, Expr, ExprId, ExprKind, FileId,
     Interactive, MatchArm, Param, Pattern, PatternPayload, Span, Symbol,
 };
-use crate::ty::{Group, Row, Ty};
-use crate::vocab::Vocab;
+use crate::ty::{Group, Row, Ty, TypeVar};
+use crate::vocab::{self, LIST_TAGS, Vocab};
 use goat_parser::cst::{Children, Goat, Node};
 use goat_parser::interp;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -31,9 +31,14 @@ const MAX_DEPTH: usize = 256;
 /// decision tree reaches it, so nested patterns multiply.
 const MAX_LIST_LEAVES: usize = 4096;
 
-/// The tags the list sugar `[]`/`[x, ...xs]` builds, declared even when no
-/// prelude is.
-const LIST_TAGS: [&str; 2] = ["Empty", "Link"];
+/// Most `_` slots one tag group declares; each is a parameter of the group.
+const MAX_GROUP_SLOTS: usize = 256;
+
+/// The binder of a list type written in a tag payload, `[_]` or `[Int]`. It
+/// lies below every parameter placeholder (`MAX_GROUP_SLOTS` bounds those), so
+/// instantiating a group never renames it into a parameter's variable.
+const LIST_SLOT_BINDER: TypeVar = Group::SELF - 4096;
+const _: () = assert!(Group::param(MAX_GROUP_SLOTS) > LIST_SLOT_BINDER);
 
 /// The name generated bindings for the pieces of a list carry.
 const LIST_NAME: &str = "list";
@@ -95,12 +100,14 @@ pub struct Lowered {
     pub errors: Vec<GoatError>,
     pub warnings: Vec<GoatError>,
     pub interactive: Option<Interactive>,
-    /// Each tag's place in declaration order: the list tags first, then the
-    /// host's, then the prelude's and the program's in source order.
+    /// Each tag's place in declaration order: the host's first, then the
+    /// prelude's and the program's in source order.
     pub tag_ranks: HashMap<String, u32>,
     /// The tags of each declared group, which a value of the group's type
     /// carries whether or not the program names them all.
     pub tag_groups: Vec<Vec<String>>,
+    /// The named groups, which a message calls their types by.
+    pub groups: Vec<Arc<Group>>,
 }
 
 /// Parse and lower `source` on its own, with no prelude.
@@ -125,14 +132,16 @@ pub fn lower_with_vocab(
     source: &str,
 ) -> Result<Lowered, Vec<GoatError>> {
     let mut ctx = Lower::default();
-    for tag in LIST_TAGS.into_iter().chain(vocab.tag_names()) {
+    for tag in vocab.tag_names() {
         ctx.tags.insert(tag.to_string(), None);
         ctx.rank(tag);
+        ctx.host_tags.insert(tag.to_string());
     }
     let key = Arc::new(vocab.keys.clone());
     for (tag, _) in &key.tags {
         ctx.tags.insert(tag.clone(), Some(key.clone()));
         ctx.rank(tag);
+        ctx.host_tags.insert(tag.clone());
     }
     ctx.tag_groups
         .push(key.tags.iter().map(|(tag, _)| tag.clone()).collect());
@@ -151,6 +160,12 @@ pub fn lower_with_vocab(
     };
     let mut root = root;
     let interactive = ctx.make_interactive(&mut root, vocab);
+    let mut groups: Vec<Arc<Group>> = Vec::new();
+    for group in ctx.tags.values().flatten() {
+        if !group.name.is_empty() && !groups.iter().any(|g| Arc::ptr_eq(g, group)) {
+            groups.push(group.clone());
+        }
+    }
     Ok(Lowered {
         root,
         dot_calls: ctx.dot_calls,
@@ -160,6 +175,7 @@ pub fn lower_with_vocab(
         interactive,
         tag_ranks: ctx.tag_ranks,
         tag_groups: ctx.tag_groups,
+        groups,
     })
 }
 
@@ -193,6 +209,87 @@ fn contract_bindings(root: &Expr) -> Option<[(Symbol, Span); 3]> {
     }
     let [init, update, draw] = found.map(|f| <[_; 1]>::try_from(f).ok().map(|[b]| b));
     Some([init?, update?, draw?])
+}
+
+/// What a `[a, b] = xs` binding says when `xs` has a length the pattern does
+/// not fit: how many items the pattern takes, and whether it takes more.
+#[derive(Clone, Copy)]
+struct Leftover {
+    takes: usize,
+    at_least: bool,
+}
+
+impl Leftover {
+    fn takes(self) -> String {
+        match self.at_least {
+            true => format!("at least {}", self.takes),
+            false => self.takes.to_string(),
+        }
+    }
+
+    fn too_short(self, has: usize) -> String {
+        let takes = self.takes();
+        match has {
+            0 => format!("this list is empty but the pattern takes {takes}"),
+            1 => format!("this list has 1 item but the pattern takes {takes}"),
+            _ => format!("this list has {has} items but the pattern takes {takes}"),
+        }
+    }
+
+    fn too_long(self) -> String {
+        let takes = self.takes();
+        format!(
+            "this list has more than {} items but the pattern takes {takes}",
+            self.takes
+        )
+    }
+}
+
+/// How many items the list literal `expr` writes out; `None` for anything else.
+fn literal_len(expr: &Expr) -> Option<usize> {
+    let mut len = 0;
+    let mut cursor = expr;
+    loop {
+        match &cursor.kind {
+            ExprKind::Tag { name, payload, .. } if name == "Empty" && payload.is_none() => {
+                return Some(len);
+            }
+            ExprKind::Tag {
+                name,
+                payload: Some(payload),
+                ..
+            } if name == "Link" => {
+                let ExprKind::Record { fields } = &payload.kind else {
+                    return None;
+                };
+                let [(first, _), (second, tail)] = fields.as_slice() else {
+                    return None;
+                };
+                if (first.as_str(), second.as_str()) != ("0", "1") {
+                    return None;
+                }
+                len += 1;
+                cursor = tail;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// The items of a list literal [`literal_len`] accepted.
+fn literal_items(mut expr: Expr) -> Vec<Expr> {
+    let mut items = Vec::new();
+    while let ExprKind::Tag {
+        payload: Some(payload),
+        ..
+    } = &mut expr.kind
+        && let ExprKind::Record { fields } = &mut payload.kind
+    {
+        let tail = fields.pop().expect("a Link has a tail").1;
+        items.push(fields.pop().expect("a Link has an item").1);
+        expr = tail;
+    }
+    items
 }
 
 /// The names bound by the chain of `Let`s that starts at `root`.
@@ -385,6 +482,8 @@ struct ListMatch<'i> {
     rows: Vec<(ListPattern, Then<'i>, bool)>,
     otherwise: Option<Node<'i>>,
     otherwise_lowered: bool,
+    /// Set for a destructuring binding, whose missing arms stop the program.
+    leftover: Option<Leftover>,
 }
 
 impl ListMatch<'_> {
@@ -488,6 +587,8 @@ struct Lower {
     /// Every declared tag, built-in and written: one flat namespace for the
     /// whole program, each tag with the closed group it belongs to, if any.
     tags: HashMap<String, Option<Arc<Group>>>,
+    /// The tags the host provides, which a program may not declare again.
+    host_tags: HashSet<String>,
     /// Each tag's place in declaration order, which `<` follows (ADR 0036).
     tag_ranks: HashMap<String, u32>,
     tag_groups: Vec<Vec<String>>,
@@ -553,8 +654,12 @@ impl Lower {
         self.tag_ranks.entry(tag.to_string()).or_insert(next);
     }
 
-    /// `tag Foo` opens one tag. Anything with a group name, a payload or a `|`
-    /// closes its tags into a group, and each tag belongs to one group only.
+    /// Every declaration closes its tags into a group, `tag Foo` included: a
+    /// group of one. A tag written without parentheses has no payload. Each `_`
+    /// in a payload is a parameter of the group, a fresh type at each
+    /// construction, so the group is generic; the group's own name marks where
+    /// it holds itself, with the same parameters. Each tag belongs to one
+    /// group only, and a tag the host provides can't be declared again.
     fn declare_tags(&mut self, decl: Node) {
         let mut group_name = None;
         let mut cases = Vec::new();
@@ -565,9 +670,8 @@ impl Lower {
                 _ => {}
             }
         }
-        let is_flat = group_name.is_none()
-            && matches!(cases.as_slice(), [case] if case.clone().children().count() == 1);
         let mut recursive = false;
+        let mut params = 0;
         let mut tags = Vec::new();
         let mut declared: Vec<String> = Vec::new();
         for case in cases {
@@ -575,7 +679,7 @@ impl Lower {
             let name = parts.next().expect("a tag case names its tag");
             let span = self.span_of(&name);
             let payload: Vec<Ty> = parts
-                .map(|ty| self.payload_ty(&ty, group_name.as_deref(), &mut recursive))
+                .map(|ty| self.payload_ty(&ty, group_name.as_deref(), &mut recursive, &mut params))
                 .collect();
             let payload = match payload.len() {
                 0 => Ty::Unit,
@@ -588,12 +692,14 @@ impl Lower {
                 )),
             };
             let name = name.text().to_string();
-            let taken = declared.contains(&name)
-                || self
-                    .tags
-                    .get(&name)
-                    .is_some_and(|group| group.is_some() || !is_flat);
-            if taken {
+            if self.host_tags.contains(&name) {
+                self.errors.push(GoatError::new(
+                    span,
+                    format!(
+                        "`{name}` is a tag the host already provides; use it as it is, or pick another name for yours"
+                    ),
+                ));
+            } else if declared.contains(&name) || self.tags.contains_key(&name) {
                 self.errors.push(GoatError::new(
                     span,
                     format!("duplicate tag `{name}`; a tag belongs to exactly one declaration"),
@@ -602,19 +708,39 @@ impl Lower {
             declared.push(name.clone());
             tags.push((name, payload));
         }
-        let group = (!is_flat).then(|| Arc::new(Group { tags, recursive }));
-        if !is_flat {
-            self.tag_groups.push(declared.clone());
-        }
+        let group = Arc::new(Group {
+            name: group_name.unwrap_or_default(),
+            tags,
+            recursive,
+            params,
+        });
+        self.tag_groups.push(declared.clone());
         for name in declared {
             self.rank(&name);
-            self.tags.entry(name).or_insert_with(|| group.clone());
+            self.tags.entry(name).or_insert_with(|| Some(group.clone()));
         }
     }
 
     /// A tag payload's type: `group` stands for the group being declared.
-    fn payload_ty(&mut self, ty: &Node, group: Option<&str>, recursive: &mut bool) -> Ty {
+    fn payload_ty(
+        &mut self,
+        ty: &Node,
+        group: Option<&str>,
+        recursive: &mut bool,
+        params: &mut usize,
+    ) -> Ty {
         let (shape, hint) = match ty.kind() {
+            "infer_type" if *params >= MAX_GROUP_SLOTS => {
+                self.errors.push(GoatError::new(
+                    self.span_of(ty),
+                    format!("a tag group can have at most {MAX_GROUP_SLOTS} `_` slots"),
+                ));
+                return Ty::Unit;
+            }
+            "infer_type" => {
+                *params += 1;
+                return Ty::Var(Group::param(*params - 1));
+            }
             "type_name" if group == Some(ty.text()) => {
                 *recursive = true;
                 return Ty::Var(Group::SELF);
@@ -623,7 +749,7 @@ impl Lower {
                 Some(boundary) => return boundary.into(),
                 None => (
                     format!("`{}`", ty.text()),
-                    "; a payload is Number, Int, Bool, Unit, String, a record of those, or the group itself",
+                    "; a payload is Number, Int, Bool, Unit, String, `_`, a record or list of those, or the group itself",
                 ),
             },
             "record_type" => {
@@ -634,13 +760,21 @@ impl Lower {
                         let mut parts = field.children();
                         let label = parts.next().expect("a field type has a label");
                         let ty = parts.next().expect("a field type has a type");
-                        let ty = self.payload_ty(&ty, group, recursive);
+                        let ty = self.payload_ty(&ty, group, recursive, params);
                         (label.text().to_string(), ty)
                     })
                     .collect();
                 return Ty::Record(Row::of(fields));
             }
-            "list_type" => ("a list".to_string(), ""),
+            "list_type" => {
+                let item = ty
+                    .clone()
+                    .children()
+                    .next()
+                    .expect("a list type has an item");
+                let item = self.payload_ty(&item, group, recursive, params);
+                return vocab::list(LIST_SLOT_BINDER, item);
+            }
             "fn_type" => ("a function".to_string(), ""),
             other => unreachable!("unexpected type rule {other:?}"),
         };
@@ -1665,9 +1799,34 @@ impl Lower {
 
         let value = self.lower_expr(value_pair);
         let source = self.fresh_symbol();
-        let unpacked = if pattern_pair.is("list_pattern") {
-            Some(self.lower_list_binding(source, pattern_pair, Then::Rest(rest_pair)))
-        } else {
+        if pattern_pair.is("list_pattern") {
+            let pattern = self.list_pattern(pattern_pair);
+            let fits = literal_len(&value).is_some_and(|len| {
+                len == pattern.items.len() || (pattern.rest.is_some() && len >= pattern.items.len())
+            });
+            if fits {
+                return self.bind_literal_items(pattern, literal_items(value), rest_pair);
+            }
+            if let Some(len) = literal_len(&value) {
+                let leftover = Leftover {
+                    takes: pattern.items.len(),
+                    at_least: pattern.rest.is_some(),
+                };
+                self.errors
+                    .push(GoatError::new(pattern.span, leftover.too_short(len)));
+            }
+            let unpacked = self.bind_list_pattern(source, pattern, Then::Rest(rest_pair));
+            return self.node(
+                span,
+                ExprKind::Let {
+                    symbol: source,
+                    name: source_name,
+                    value: Box::new(value),
+                    rest: Some(Box::new(unpacked)),
+                },
+            );
+        }
+        let unpacked = {
             self.scopes.push();
             let pattern = self.bind_record_pattern(pattern_pair, "name");
             let rest = rest_pair.map(|p| self.lower_expr(p));
@@ -1767,7 +1926,52 @@ impl Lower {
             }
             None => Vec::new(),
         };
-        self.tag_node(span, name.text().to_string(), args)
+        let name = name.text().to_string();
+        if args.is_empty() {
+            self.check_not_bare(&name, span);
+        } else {
+            self.check_no_payload(&name, span);
+        }
+        self.tag_node(span, name, args)
+    }
+
+    /// A tag declared bare is written bare.
+    fn check_no_payload(&mut self, tag: &str, span: Span) {
+        let Some(Some(group)) = self.tags.get(tag) else {
+            return;
+        };
+        if group
+            .tags
+            .iter()
+            .any(|(name, payload)| name == tag && *payload == Ty::Unit)
+        {
+            self.errors.push(GoatError::new(
+                span,
+                format!("`{tag}` has no value: write `{tag}`, or declare it `{tag}(_)`"),
+            ));
+        }
+    }
+
+    /// A tag declared with a payload is written with one.
+    fn check_not_bare(&mut self, tag: &str, span: Span) {
+        let Some(Some(group)) = self.tags.get(tag) else {
+            return;
+        };
+        let Some((_, payload)) = group.tags.iter().find(|(name, _)| name == tag) else {
+            return;
+        };
+        let message = match payload {
+            Ty::Unit => return,
+            Ty::Record(row)
+                if row.fields().count() > 1 && crate::infer::field_of(row, "0").is_some() =>
+            {
+                let n = row.fields().count();
+                let dots = vec!["…"; n].join(", ");
+                format!("`{tag}` takes {n} values: write `{tag}({dots})`")
+            }
+            _ => format!("`{tag}` takes a value: write `{tag}(…)`"),
+        };
+        self.errors.push(GoatError::new(span, message));
     }
 
     /// One argument is the payload as is; several become a record labelled
@@ -1796,9 +2000,20 @@ impl Lower {
         )
     }
 
+    /// The list sugar builds the tags of the prelude's `tag List = Empty | Link(_, List)`.
+    fn require_list(&mut self, span: Span) {
+        if LIST_TAGS.iter().any(|tag| !self.tags.contains_key(*tag)) {
+            self.errors.push(GoatError::new(
+                span,
+                "lists come from the prelude's `tag List = Empty | Link(_, List)`, which this program doesn't have",
+            ));
+        }
+    }
+
     /// `[a, b]` is `Link(a, Link(b, Empty))`.
     fn lower_list(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
+        self.require_list(span);
         let items: Vec<Node> = pair.children().flat_map(|a| a.children()).collect();
         if self.depth + items.len() > MAX_DEPTH {
             self.errors
@@ -1810,7 +2025,8 @@ impl Lower {
         self.depth -= items.len();
         let empty = self.tag_node(span, "Empty".into(), Vec::new());
         items.into_iter().rev().fold(empty, |tail, item| {
-            self.tag_node(span, "Link".into(), vec![item, tail])
+            let at = item.span;
+            self.tag_node(at, "Link".into(), vec![item, tail])
         })
     }
 
@@ -2008,21 +2224,31 @@ impl Lower {
             });
         }
         let payload = match binders.len() {
-            0 => PatternPayload::None,
-            1 => PatternPayload::Whole(binders.remove(0)),
-            _ => PatternPayload::Fields(
-                binders
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, b)| (i.to_string(), b))
-                    .collect(),
-            ),
+            0 => {
+                self.check_not_bare(&tag, self.span_of(&head));
+                PatternPayload::None
+            }
+            1 => {
+                self.check_no_payload(&tag, span);
+                PatternPayload::Whole(binders.remove(0))
+            }
+            _ => {
+                self.check_no_payload(&tag, span);
+                PatternPayload::Fields(
+                    binders
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, b)| (i.to_string(), b))
+                        .collect(),
+                )
+            }
         };
         Pattern { tag, span, payload }
     }
 
     fn list_pattern(&mut self, pair: Node) -> ListPattern {
         let span = self.span_of(&pair);
+        self.require_list(span);
         let mut items: Vec<(String, Span)> = Vec::new();
         let mut rest = None;
         for item in pair.children() {
@@ -2089,14 +2315,14 @@ impl Lower {
             .iter()
             .any(|(p, ..)| p.items.is_empty() && p.rest.is_some());
         if let ExprKind::Var { symbol, .. } = scrutinee.kind {
-            return self.compile_list_match(span, scrutinee, symbol, rows, otherwise);
+            return self.compile_list_match(span, scrutinee, symbol, rows, otherwise, None);
         }
         let source = self.fresh_symbol();
         if !needs_name {
-            return self.compile_list_match(span, scrutinee, source, rows, otherwise);
+            return self.compile_list_match(span, scrutinee, source, rows, otherwise, None);
         }
         let var = self.list_var(scrutinee.span, source);
-        let rest = self.compile_list_match(span, var, source, rows, otherwise);
+        let rest = self.compile_list_match(span, var, source, rows, otherwise, None);
         self.node(
             span,
             ExprKind::Let {
@@ -2123,6 +2349,7 @@ impl Lower {
         source: Symbol,
         rows: Vec<(ListPattern, Then<'i>, bool)>,
         otherwise: Option<Node<'i>>,
+        leftover: Option<Leftover>,
     ) -> Expr {
         // Each item adds a nested match, and each name a binding around the body.
         let extra = rows
@@ -2147,6 +2374,7 @@ impl Lower {
             rows,
             otherwise,
             otherwise_lowered: false,
+            leftover,
         };
         let tree = self.build_list_tree(&mut m, scrutinee, live);
         self.lower_unreached_arms(&mut m);
@@ -2167,6 +2395,7 @@ impl Lower {
             return Some(self.list_leaf(m, first));
         }
         let span = m.rows[first.row].0.span;
+        let depth = first.bound.len();
         let mut arms = Vec::new();
         if let Some(at) = live.iter().find(|at| m.is_done(at)) {
             let body = self.list_leaf(m, at);
@@ -2214,12 +2443,19 @@ impl Lower {
             return None;
         }
 
-        let else_branch = match m.otherwise {
-            Some(body) if arms.len() < 2 => {
+        let else_branch = match (m.otherwise, m.leftover) {
+            (Some(body), _) if arms.len() < 2 => {
                 let first_time = !std::mem::replace(&mut m.otherwise_lowered, true);
                 Some(Box::new(
                     self.relower(first_time, |this| this.lower_expr(body)),
                 ))
+            }
+            (None, Some(leftover)) if arms.len() < 2 => {
+                let message = match arms[0].pattern.tag.as_str() {
+                    "Empty" => leftover.too_long(),
+                    _ => leftover.too_short(depth),
+                };
+                Some(Box::new(self.node(span, ExprKind::Trap(message))))
             }
             _ => None,
         };
@@ -2350,9 +2586,87 @@ impl Lower {
         then: Then<'i>,
     ) -> Expr {
         let pattern = self.list_pattern(pattern);
+        self.bind_list_pattern(source, pattern, then)
+    }
+
+    fn bind_list_pattern<'i>(
+        &mut self,
+        source: Symbol,
+        pattern: ListPattern,
+        then: Then<'i>,
+    ) -> Expr {
         let span = pattern.span;
         let scrutinee = self.list_var(span, source);
-        self.compile_list_match(span, scrutinee, source, vec![(pattern, then, false)], None)
+        let leftover = Leftover {
+            takes: pattern.items.len(),
+            at_least: pattern.rest.is_some(),
+        };
+        let rows = vec![(pattern, then, false)];
+        self.compile_list_match(span, scrutinee, source, rows, None, Some(leftover))
+    }
+
+    /// `[a, b] = [x, y]`: a list literal's length is known, so each name takes
+    /// its item directly and no `match` has to cover other lengths. The items
+    /// are bound first, in order, so a name in the pattern can't capture one
+    /// the items mention.
+    fn bind_literal_items<'i>(
+        &mut self,
+        pattern: ListPattern,
+        items: Vec<Expr>,
+        rest: Option<Node<'i>>,
+    ) -> Expr {
+        let span = pattern.span;
+        let sources: Vec<Symbol> = items.iter().map(|_| self.fresh_symbol()).collect();
+        let (named, spare) = sources.split_at(pattern.items.len());
+        self.scopes.push();
+        let mut bindings: Vec<(Symbol, String, Span, Expr)> = Vec::new();
+        for ((name, name_span), from) in pattern.items.iter().zip(named) {
+            let value = self.list_var(*name_span, *from);
+            bindings.push((self.bind(name), name.clone(), *name_span, value));
+        }
+        if let Some((name, name_span)) = &pattern.rest {
+            let empty = self.tag_node(*name_span, "Empty".into(), Vec::new());
+            let value = spare.iter().rev().fold(empty, |tail, from| {
+                let item = self.list_var(*name_span, *from);
+                self.tag_node(*name_span, "Link".into(), vec![item, tail])
+            });
+            bindings.push((self.bind(name), name.clone(), *name_span, value));
+        }
+        let body = self.lower_then(Then::Rest(rest), span);
+        self.scopes.pop();
+        let named = bindings
+            .into_iter()
+            .rev()
+            .fold(body, |rest, (symbol, name, span, value)| {
+                let rest = Some(Box::new(rest));
+                let value = Box::new(value);
+                self.node(
+                    span,
+                    ExprKind::Let {
+                        symbol,
+                        name,
+                        value,
+                        rest,
+                    },
+                )
+            });
+        sources
+            .into_iter()
+            .zip(items)
+            .rev()
+            .fold(named, |rest, (symbol, item)| {
+                let rest = Some(Box::new(rest));
+                let value = Box::new(item);
+                self.node(
+                    span,
+                    ExprKind::Let {
+                        symbol,
+                        name: LIST_NAME.into(),
+                        value,
+                        rest,
+                    },
+                )
+            })
     }
 
     /// Unpack each list-pattern parameter in turn around `body`.
@@ -2709,6 +3023,10 @@ fn prec(op: Op) -> u8 {
 mod tests {
     use super::*;
 
+    fn lower(source: &str) -> Result<Lowered, Vec<GoatError>> {
+        lower_with_prelude("tag List = Empty | Link(_, List)", source)
+    }
+
     fn string_value(source: &str) -> Result<String, String> {
         let lowered = lower(source).map_err(|e| e[0].message.clone())?;
         if let Some(e) = lowered.errors.first() {
@@ -2759,9 +3077,9 @@ mod tests {
 
     #[test]
     fn single_argument_tag_carries_the_argument_as_its_payload() {
-        let root = lowered("tag Circle Circle(5)").root;
+        let root = lowered("tag Ring(_) Ring(5)").root;
         let (name, payload) = tag_parts(&root);
-        assert_eq!(name, "Circle");
+        assert_eq!(name, "Ring");
         assert!(matches!(payload.unwrap().kind, ExprKind::Int(5)));
     }
 
@@ -2786,7 +3104,7 @@ mod tests {
     #[test]
     fn match_lowers_arms_binders_and_else() {
         let root = lowered(
-            "tag Circle s = Empty match s do Link(a, b) then a Circle(r) then r Empty then 0 else 1 done",
+            "tag Ring(_) s = Empty match s do Link(a, b) then a Ring(r) then r Empty then 0 else 1 done",
         )
         .root;
         let ExprKind::Let { rest, .. } = &root.kind else {
@@ -2818,7 +3136,7 @@ mod tests {
         assert_eq!(symbol, fields[0].1.symbol);
 
         assert!(matches!(&arms[1].pattern.payload, PatternPayload::Whole(p) if p.name == "r"));
-        assert_eq!(arms[1].pattern.tag, "Circle");
+        assert_eq!(arms[1].pattern.tag, "Ring");
         assert!(matches!(arms[2].pattern.payload, PatternPayload::None));
     }
 
@@ -2833,8 +3151,7 @@ mod tests {
 
     #[test]
     fn pattern_binders_are_scoped_to_their_arm() {
-        let lowered =
-            lower("tag Circle match Empty do Circle(r) then r Empty then r done").unwrap();
+        let lowered = lower("tag Ring(_) match Empty do Ring(r) then r Empty then r done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("unknown name `r`"));
     }
@@ -2887,9 +3204,12 @@ mod tests {
     }
 
     #[test]
-    fn a_list_literal_spans_its_brackets() {
-        let root = lowered("  [1, 2]").root;
-        assert_eq!((root.span.start, root.span.end), (2, 8));
+    fn each_link_of_a_list_literal_spans_its_item() {
+        let root = lowered("  [1, 22]").root;
+        let (first, tail) = link_parts(&root);
+        assert_eq!((root.span.start, root.span.end), (3, 4));
+        assert_eq!((first.span.start, first.span.end), (3, 4));
+        assert_eq!((tail.span.start, tail.span.end), (6, 8));
     }
 
     #[test]
@@ -3013,7 +3333,7 @@ mod tests {
 
     #[test]
     fn duplicate_pattern_binder_is_an_error() {
-        let lowered = lower("tag Pair match Empty do Pair(a, a) then a done").unwrap();
+        let lowered = lower("tag Pair(_) match Empty do Pair(a, a) then a done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("duplicate binding `a`"));
     }

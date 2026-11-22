@@ -7,14 +7,11 @@
 # position (building results in reverse, then flipping them) so a long list
 # uses constant stack.
 
-tag Empty
-tag Link
+tag List = Empty | Link(_, List)
 
 # The pieces of a dictionary (see `dict_by`) and what its `get` finds.
-tag DictLeaf
-tag DictNode
-tag Found
-tag Missing
+tag Dict = DictLeaf | DictNode(Dict, _, _, Dict, Int)
+tag Lookup = Missing | Found(_)
 
 nothing = program() do done
 
@@ -57,10 +54,14 @@ rest = program(xs) do
   done
 done
 
-# `item(xs, 1)` is the first item.
+# Drops the fraction: `truncate(-2.5)` is `-2`.
+truncate = foreign "math" "truncate" (Number) -> Int
+
+# `item(xs, 1)` is the first item. Counting down by an `Int` makes the position
+# an `Int`, so `item(xs, 7.5)` is rejected where it is called.
 item = program(xs, n) do
   match xs do
-    [head, ...tail] then if n == 1 then head else item(tail, n - 1) done
+    [head, ...tail] then if n == 1 then head else item(tail, n - truncate(1)) done
     [] then trap("item past the end of the list")
   done
 done
@@ -162,9 +163,6 @@ done
 sort = program(xs) do sort_onto(xs, []) done
 
 sqrt = foreign "math" "sqrt" (Number) -> Number
-
-# Drops the fraction: `truncate(-2.5)` is `-2`.
-truncate = foreign "math" "truncate" (Number) -> Int
 
 # How many bytes of UTF-8 a string holds, not how many characters: `"é"` is 2.
 byte_length = foreign "text" "byte_length" (String) -> Int

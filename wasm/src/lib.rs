@@ -217,7 +217,7 @@ impl Default for EmbeddedLimits {
 /// What a trap says when the heap budget is used up, and when calls nest past
 /// the bound.
 pub const HEAP_BUDGET_EXHAUSTED: &str = "the program ran out of memory";
-pub const STACK_OVERFLOW: &str = "the program called itself too deeply";
+pub use goat_mir::STACK_OVERFLOW;
 
 pub fn emit(program: &Program) -> Result<Vec<u8>, EmitError> {
     emit_with_limits(program, EmbeddedLimits::default())

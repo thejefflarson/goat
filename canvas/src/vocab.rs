@@ -29,12 +29,14 @@ fn shape(name: &str, scene: &str, numbers: &[&str], extra: Option<(&str, Ty)>) -
 
 pub fn vocab() -> Vocab {
     let keys = Group {
+        name: "Key".into(),
         tags: ["Space", "Left", "Right", "Up", "Down"]
             .map(|tag| (tag.to_string(), Ty::Unit))
             .into_iter()
             .chain([("Char".to_string(), Ty::Str)])
             .collect(),
         recursive: false,
+        params: 0,
     };
     let key = keys.instantiate(0);
     let mouse = || record([("x", Ty::Float), ("y", Ty::Float)]);
