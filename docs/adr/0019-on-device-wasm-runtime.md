@@ -151,10 +151,11 @@ The floor goat's emitted modules may require is **the WebAssembly MVP plus the
 tail-call and bulk-memory proposals** — the full enumeration is in *Feature floor:
 what goat emits vs. what the runtime must provide* below. This section decides the
 load-bearing, expensive-to-reverse half, the tail-call requirement; the audit adds
-one more opcode (`memory.fill`, in the allocator's `free`) that both candidate
+one more opcode family (`memory.copy`, which `KeepStr` emits to copy an immortal
+string, and `memory.fill` in debug builds' allocator `free`) that both candidate
 runtimes already run. Concretely: every host — browser, wasmtime, the Apple shell,
 and the microcontroller — must run `return_call` / `return_call_indirect` and
-`memory.fill`. The three real options for the tail-call half and their costs:
+`memory.copy`. The three real options for the tail-call half and their costs:
 
 **(a) Pick a runtime that supports tail calls — chosen.** Cost: constrains §A1/§A2 to
 WAMR (flag on) or wasm3 (maintenance-mode), and excludes any runtime whose tail-call
@@ -426,9 +427,11 @@ emitted floor is one proposal wider: **MVP + the tail-call proposal + the bulk-m
 proposal**. "Bulk memory" is the proposal that adds `memory.fill` / `memory.copy` /
 `memory.init` / `data.drop` and *passive* data segments (a data segment the module
 copies into memory with an explicit `memory.init` at run time, rather than an *active*
-segment the engine lays down at instantiation). The extra requirement over §A3 is one
-opcode, `memory.fill`, emitted unconditionally by the allocator's `free`; everything
-else goat emits is MVP or tail-call. This section lists the whole emitted set, maps
+segment the engine lays down at instantiation). The extra requirement over §A3 is
+`memory.copy`, emitted by `KeepStr` (copying an immortal string literal into a
+heap block) in any module that uses it, plus `memory.fill` in the allocator's
+`free` in debug, test and fuzz builds only; everything else goat emits is MVP or
+tail-call. This section lists the whole emitted set, maps
 each item to WAMR and wasm3 at their 2026 defaults, and separates what the *board*
 needs from what only desktop/browser hot-reload needs.
 
@@ -439,7 +442,8 @@ needs from what only desktop/browser hot-reload needs.
 | i32/i64/f32/f64 numerics; `if`/`block`/`loop`/`br*`; `call`; `call_indirect` on a funcref table (`CallIndirect { table_index: 0 }`); active element + active data segments; owned, exported `memory`; `memory.size`/`memory.grow`; mutable globals, including *exporting* `goat_site` (and, until ADR 0021's fuel-removal lands, `goat_fuel`); `unreachable` | **MVP** | throughout `lib.rs` / `allocator.rs` | every module |
 | Trapping `i32.trunc_f32_s` / `i64.trunc_f64_s` behind an explicit range guard (`truncate_to_int`); `f32.trunc`/`f64.trunc`; `f32.sqrt`/`f64.sqrt`; `i64.extend_i32_s`, `i32.wrap_i64`, `f64.promote_f32`, `f32.demote_f64` at the host/profile boundary | **MVP** | `truncate_to_int`, `checked_int32`, `narrow_int`, `call_foreign` | every module |
 | `return_call` (direct tail call) and `return_call_indirect` (closure-loop tail call — the common case, per the Context) | **tail-call** | `Expr::TailCall` lowering | every module |
-| `memory.fill` — the allocator's `free` poisons a freed block for use-after-free detection (`allocator.rs` invariants) | **bulk-memory** | `FreeList::free` | **every module** |
+| `memory.fill` — the allocator's `free` poisons a freed block for use-after-free detection (`allocator.rs` invariants) | **bulk-memory** | `FreeList::free` | **debug, test and fuzz builds only** (`EmitOptions::poison_freed`, default `cfg!(debug_assertions)`); release modules (web editor, the CLI's `run`, boards) emit no `memory.fill`. `free` still traps on a double free and `alloc` on a popped block with `rc != 0` |
+| `memory.copy` — `KeepStr` copies an immortal string literal into a heap block | **bulk-memory** | `Expr::KeepStr` lowering | any module that uses `KeepStr`, release or debug |
 | passive data segment + `DataCountSection` + `memory.init` + `data.drop`; *imported* `memory`; *imported* mutable globals `heap`/`live`; a `start` function; an immutable `i64` fingerprint global | **bulk-memory** (init/drop/passive) + **MVP** (imported memory/globals, start, i64 global) | `emit_reloadable` / `load_data` | **hosted/reloadable only** — interactive hot-reload; `emit_module` rejects interactive programs on the embedded profile, so the board emits none of it |
 
 **Candidates the audit refutes** — proposals goat does *not* require, each read out of
@@ -456,8 +460,10 @@ the code rather than assumed:
 Two things the "i32/f32 embedded profile" label can hide: a board module still
 *imports* `print_int` with an `i64` parameter and widens `Int`→`i64`
 (`i64.extend_i32_s`) at that boundary, so the module is not i64-free — but `i64` is MVP
-and universal, a note, not a risk. And `memory.fill` is load-bearing for a *safety*
-feature (poison-on-free), not an incidental optimization that could be dropped for free.
+and universal, a note, not a risk. And `memory.fill` was a *safety* feature
+(poison-on-free) that bought bug detection for the compiler's own reference-count
+mistakes; it is now debug-only (measured at about 25% of update time in wasmtime and
+V8), because a goat program cannot itself use a freed block.
 
 ### Runtime support, 2026 defaults
 
@@ -478,8 +484,9 @@ proposal *groups* "⭐ Ready" — a milestone marker, not a per-opcode guarantee
 ### Differences that matter
 
 1. **The board build carries two flags, not one.** The "one build flag" (tail-call,
-   default off) is half the story. `memory.fill` in `free` means a goat module also
-   needs `WAMR_BUILD_BULK_MEMORY`. That flag is *on* by default, so the ordinary build
+   default off) is half the story. `memory.copy` in `KeepStr` means a goat module also
+   needs `WAMR_BUILD_BULK_MEMORY` (before poisoning became debug-only, `free`'s
+   `memory.fill` required it in every module). That flag is *on* by default, so the ordinary build
    is fine — but a footprint-minimized board build that turns it off would fail to
    *load* every goat module (WAMR validates the whole module at load, so the opcode is
    rejected even in a program that never frees). The board config must assert both:
@@ -492,21 +499,21 @@ proposal *groups* "⭐ Ready" — a milestone marker, not a per-opcode guarantee
    reloadable path — passive data, `memory.init`/`data.drop`, imported memory, imported
    mutable globals, `start` — is interactive-only and rejected on the embedded profile,
    so the board emits *none* of it. The board's only above-MVP requirements are
-   tail-call and the single `memory.fill`. Desktop and browser hot-reload need the full
+   tail-call and `memory.copy` (from `KeepStr`). Desktop and browser hot-reload need the full
    bulk-memory set; the board needs one opcode of it.
-4. **A future embedded allocator could lower the board floor by one proposal — but
-   nothing emitted today does.** `memory.fill` is required only because the shared bump
-   allocator poisons freed blocks. `allocator.rs` already anticipates a pooled embedded
-   allocator "behind the same three functions"; one written without
-   `memory.fill`/`memory.copy` would drop bulk-memory from the *board* floor (desktop
-   reload would still need it). That is allocator work (ticket E5) — recorded here as a
-   lever, not a change this ADR makes.
+4. **Poisoning is debug-only, but the board floor still includes bulk-memory.**
+   `memory.fill` is emitted only when `EmitOptions::poison_freed` is set (default
+   `cfg!(debug_assertions)`: debug, test and fuzz builds), so a release board module
+   has none. Bulk-memory stays in the floor because `KeepStr` emits `memory.copy`
+   whenever a program copies an immortal string. Dropping bulk-memory from the board
+   would also need a byte-loop copy for `KeepStr`; that is not done here, and the
+   WAMR build flags are unchanged.
 5. **wasm3 now has two proposals to verify, and it is minimal-maintenance.** Both
    tail-call and bulk-memory sit in "Ready" groups of the current `main` README,
    consistent with keeping wasm3 a fallback — but a README milestone marker is not a
    verified per-opcode guarantee, and if wasm3's bulk-memory were incomplete (an older
    vendored snapshot marked it "partial"), wasm3 could run *no* goat module at all,
-   tail calls or not. Verify tail-call **and** `memory.fill` against the pinned wasm3
+   tail calls or not. Verify tail-call **and** `memory.copy` against the pinned wasm3
    build before the fallback is trusted.
 
 ### Bottom line
