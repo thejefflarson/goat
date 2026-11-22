@@ -708,9 +708,7 @@ fn inference_order(fields: &[(String, Expr)]) -> Vec<usize> {
     while ordered.len() < methods.len() {
         let pending = || (0..methods.len()).filter(|&m| !done[methods[m]]);
         let after_calls = |m: &usize| calls[*m].iter().all(|&j| done[j]);
-        let after_all = |m: &usize| {
-            !hands_on_self[*m] || methods.iter().enumerate().all(|(o, &j)| o == *m || done[j])
-        };
+        let after_all = |m: &usize| !hands_on_self[*m] || ordered.len() + 1 == methods.len();
         let next = pending()
             .find(|m| after_calls(m) && after_all(m))
             .or_else(|| pending().find(after_calls))
