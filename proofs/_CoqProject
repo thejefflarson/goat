@@ -31,6 +31,8 @@ GoatPhase3.v
 GoatPhase4.v
 GoatRecArithExamples.v
 GoatRecTypes.v
+GoatElab.v
+GoatMethods.v
 GoatGrammar.v
 GoatPeg.v
 GoatDen.v

@@ -217,6 +217,22 @@ Decision rule: if the measured count of deep-coercion programs is under 1% of th
 programs that tie a knot, A and the named skip; if it is a large share, B. The
 architect decides on the number. Nothing before stage 3 depends on it.
 
+**Measured (2026-11-22, stage 3 spike).** `unify_ty` was instrumented (a depth
+counter that does not advance when a `Rec` unfolds in place) and every program
+`core_corpus` checks was run (63578 checks, release build). A head event is a
+`Rec` meeting a non-`Rec`, or two unequal `Rec`s, at depth d from the root of the
+unify call. 3693 programs tie a knot or log an event (3652 tie a knot; 41 log an
+event without one). Of the 48 programs where a `Rec` meets a non-`Rec`: 29 have
+every event at depth 0, 15 reach depth 1, and 4 reach depth 2 or more. Depth 1
+is mostly the argument of a call, where the unify root is the callee's function
+type, so that coercion is a head coercion on the argument node. Counting depth
+1 as deep, 19 of 3693 programs (0.5%) need a coercion below a function type or
+a record field; counting only depth 2 and up, 4 (0.1%). Another 6 programs
+unify two unequal `Rec`s and nothing else; they need `~~`, not a coercion
+below a constructor. The 48 are almost all hand-written (docs, examples,
+tests: methods, tag groups, `step(ball)`); the generated programs tie knots
+without a `Rec` meeting a non-`Rec`. Q3-A stands, and stage 3 takes the head-coercion route.
+
 ### Q4. How `self` is visible to W **(load-bearing)**
 
 W works on locally nameless terms, where a binder has no name, so `program(self)`
