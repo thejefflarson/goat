@@ -29,7 +29,7 @@ fn a_float_is_never_an_int_without_one_of_them() {
     let take = "take = foreign \"m\" \"take\" (Int) -> Unit\n";
     assert_eq!(
         exact_type_of(&format!("{take}take(2.5)")).unwrap_err(),
-        "type mismatch: expected `Int`, found `Float`"
+        "this is a `Float`, but an `Int` is needed here; use `round`, `floor` or `truncate`"
     );
     assert_eq!(
         exact_type_of(&format!("{take}take(round(2.5))")).as_deref(),
