@@ -139,3 +139,47 @@ corpus are finite, which is the gap ADR 0037 accepts.
 skipped, by reason, and a pinned program it had to skip is reported as
 `FORCED SKIP`. The driver prints how many programs it compared and how many
 mismatched.
+
+## Tag groups (waiting for the checker's groups)
+
+`infer` types `con` and `match` and `unify_t` unifies `grp` types
+(`proofs/GoatInfer.v`; both are proved sound), but the corpus and the driver do
+not exercise them: the checker's tag groups (#517) are not on master. Once they
+are, the corpus writer and the driver need the following, and nothing in
+`proofs/` changes.
+
+- **Terms the driver reads** (`driver.ml`, `exp_of`), locally nameless like the
+  rest: `(con W TG E)` and `(match W E ARS)`, where `W` is the group's
+  declaration (a list of tags, each a list of slot codes) and `ARS` a list of
+  `(arm TG E)` ending in nothing or `(else E)`. An arm body binds its payload as
+  `(b 0)`, opened one level deeper than the arms around it; an `else` body binds
+  nothing, and is opened at the same level as the scrutinee (see
+  `open_arms_wrt_exp_rec` in `Goat_ott.v`).
+- **Slot codes** (`GoatDefs.v`, `slot_ty`): `0` is the group itself, `1` to `5`
+  are `Int`, `Float`, `Bool`, `Unit`, `String`, and `6 + j` is parameter `j`.
+  The parameters are numbered by the order of the `_` slots across the whole
+  declaration, left to right, and the printed type lists them in that order. A
+  tag with no slots carries `Unit`; one with slots carries the closed record
+  `{0: s0, 1: s1, ...}` of them, so `Tag(a, b)` is `(con W TG (rec (l 0 a) (l 1
+  b)))` and an arm reads a slot as a projection of its binder.
+- **What to skip, with a counted reason**: a group with a slot that is a record,
+  a list or a function (the slot codes cannot name them yet); a `match` with a
+  literal or list pattern, or destructuring (not calculus forms); a `match` on a
+  host event or shape family (open rows in the checker, not groups).
+- **The type printer** needs a `Typ_Grp (w, a)` case: print the group by its
+  name (the corpus can write the name beside the term, or the driver can number
+  groups by first occurrence of `w`) followed by the parameters read off the
+  spine `a`, each as `canonical_type` prints it, in order. The checker's
+  printer for a group type must agree on the parameter order and on an
+  unconstrained parameter: `Empty` has type `List(v0)` on both sides, one free
+  variable per parameter the program leaves undecided.
+- **Verdicts to compare both ways**: a missing tag, a repeated arm and a tag
+  outside the group have no derivation; an `else` with full cover has one. The
+  checker's verdict must agree on each.
+- **Widening** (#506): an `Int` payload where the declaration says `Float`, and
+  an `Int` arm joined with a `Float` arm, are elaborated with `float(e)` the way
+  the other join sites are (see "Where `float(e)` goes"); the algorithm has no
+  implicit widening.
+- **Generators**: a typed generator of groups (declarations with parameters,
+  recursive groups such as `List`, and matches that use `else`), run with the
+  same three fixed seeds as the others.

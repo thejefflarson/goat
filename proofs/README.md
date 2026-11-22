@@ -303,8 +303,9 @@ language change:
   congruence and `typ` gains no list. A parameter slot beyond the spine reads
   `Unit`; the checker never builds one.
 - **Concrete slots are the five base types.** Records, lists and functions as
-  concrete payload slots (the checker allows them) are an extension of the slot
-  codes; they change no proof.
+  concrete payload slots (the checker allows them) need slot codes that name a
+  type, not a number; that changes `gdecl`, `slot_ty` and the denotation, so it
+  is left to its own ticket.
 - **Rank** (ADR 0036) is the tag's position in `w`. No phase-3 rule reads it.
 - **Else with full cover** is accepted, as the checker accepts it. A repeated
   arm has no derivation.
@@ -325,13 +326,35 @@ functions (`close_exp_rec`, `bind_group_rec`, `inst_rec`) gained the cases that
 carry the arms through. Tag declarations, construction and `match` have no
 denotation yet, so `rule_map.rs` exempts `e_con` and `e_match`.
 
-What waits, in the next ticket (Algorithm W and the differential test for tag
-groups, filed from this one): `infer` returns `None` on `con` and `match`, and
-`unify_t` has no `grp` case, so the algorithm is incomplete on every tagged
-program; extending it needs unification of group types (equal `w`, then the
-spines), the checker's `close_match`, and the corpus and differential driver for
-tag programs against the checker of #517. The typeset `goat.ott` and
-`docs/semantics.md` do not yet state the group rules.
+### Algorithm W on tag groups
+
+`GoatInfer.v` infers `con` and `match`, and `unify_t` unifies two group types
+when their declarations are equal (`gdecl_eq_dec`) by unifying their spines;
+different declarations do not unify. `infer_closed_sound` and `infer_mu_free`
+still hold with 0 admits and no axiom (`make check-assumptions`).
+
+- `con w tg (e)`: `tg` must be a tag of `w`. The algorithm infers `e`, takes
+  `nparams w` fresh parameters (the largest `6 + j` among the slot codes, less
+  five), unifies the payload's type with `tag_payload w Ts tg`, and returns
+  `grp w (spine Ts)` under the unifier.
+- `match w (e) with ars`: `arms_wf_b w ars` must hold (each tag at most once,
+  only tags of `w`, an `else` or every tag; `arms_wf_b_sound`). The scrutinee is
+  unified with `grp w (spine Ts)` at fresh parameters. `infer_arms` then walks
+  the arms in order against a result variable: an arm's payload binder is typed
+  by `tag_payload w Ts tg`, every arm's type is unified with the result so far,
+  and the parameters and context are re-applied after each unifier. One binder
+  name (`fresh_var` of the whole match) serves every arm, so `T_Match`'s
+  `forall x notin L` is stated once.
+- `arms_typ` is `T_Match`'s two premises on the arms (each arm under a binder,
+  the `else`); `arm_lift` carries an arm's derivation across a later
+  substitution, the one new fact beyond the lifts `ite` already needs.
+- `mu_free` now looks into a group's spine, so `infer_mu_free` says the
+  parameters are `mu`-free too (`mf_tag_payload`).
+
+What waits: the differential test for tag programs. The checker's tag groups
+(#517) are not on master, so `core_corpus.rs` cannot write them yet;
+`differential/README.md` lists what the corpus and the driver must add. The
+typeset `goat.ott` and `docs/semantics.md` do not yet state the group rules.
 
 ## Generic operators: sorted type variables (design Q)
 
