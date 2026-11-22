@@ -147,18 +147,43 @@ mismatched.
 
 A program outside the calculus is counted under one feature it uses, the first
 in this fixed order, which is the order of the proof phases that bring each in:
-a foreign host call; methods, `self` or dot calls; tags and `match`; spread or
-restrict; `print` or `trap`; `and`, `or`, `not`; a loop (a binding named `loop`,
+a foreign host call; methods, `self` or dot calls; tags and `match`; a spread
+onto a row variable that lacks the label (below); `print` or `trap`; `and`, `or`, `not`; a loop (a binding named `loop`,
 which lowering gives every `repeat` and `for`); a comparison, then arithmetic,
 on operands that are not `Int`, `Float`, `String` or `Bool`. After those come
 the reasons that are about the shape of a program and not a missing feature: a
 recursive group split by a value binding, a `let` of a numeral the calculus
-would generalize and the checker does not, an inferred type with a method or
-presence row, an `if` without an `else`, a function or call with no parameters,
+would generalize and the checker does not, an inferred type with a method
+field, an `if` without an `else`, a function or call with no parameters,
 a program that ends in a binding, a numeral of 2^30 or more, and `none of the
 above`. A program using two features counts only under the earlier, so when a
 phase lands its count falls to 0 and its programs either join the compared set
 or appear under the next feature they use.
+
+## Spread and restrict
+
+`{...p, x: v}` is read as `(spread E l e)` and a rest pattern `{x, ...r} = p`
+as `(restrict E l)`, one per label, nested. The algorithm infers both
+(`proofs/GoatInfer.v`: unification surfaces a label through a presence entry
+`l ^ P : T`, binds `P` to `Unit` or `Bool`, and a row variable to
+`l ^ p : a ; r`). A presence entry prints as `l3^v2: T`; a `Unit` entry prints as
+a field and a `Bool` entry is dropped, as the checker's resolved rows read.
+
+The 222 programs once counted as "a method or presence row" held method flag
+variables, none a presence entry: an open row that field access made
+(`program(r) do r.x done`) carries a flag variable that only a dot call or a
+`METHOD` settles. The calculus has no flag, so the reader ignores a flag
+variable and skips only a field flagged `METHOD`.
+
+One kind of program is skipped because the calculus is stricter than the
+checker. The calculus's `l # R` holds only of a closed row, so a spread of `l`
+onto a record whose row ends in a row variable the checker knows lacks `l` (the
+remainder of a rest pattern, put back: `{x, ...r} = p` then `{...r, x: 2}`) has
+no derivation, and a program that puts a record with `x` in the remainder's
+place is rejected by the checker (`was taken out of this record`) and accepted
+by the algorithm. These count under `LacksOnTail`. A `lacks` sort on row
+variables in the kinding environment would remove the skip; it extends `sat`,
+`kres` and `inst` from type variables to row variables.
 
 ## Tag groups (waiting for the checker's groups)
 
