@@ -166,6 +166,44 @@ updates `x` in place, and the result `{x: 1}` is not of the claimed type
   free-variable lemmas), which `req` rules do not. Rejected: the cost lands in
   the lemmas that already carry the proof's difficulty.
 
+#### Q2-B, worked out
+
+An attempt at B found which parts of it are load-bearing. Record them before
+the next try.
+
+- **Environment.** `denv` becomes a record `{dsort; dlk}` with a coercion to
+  `dsort`, so `D a` still reads a sort; `dlk D r l = true` says the row variable
+  `r` lacks `l`. `rlacksD D l R` is `rlacks` with a variable tail read from
+  `dlk`. A row substitution is `rkres D D' sr`: every label `r` lacks, `sr r`
+  lacks in `D'`. `rlacksD_ap` (stable under `ap_row`) is a one-line induction.
+- **A new rule, not a change to `req`.** Indexing `req` (hence `teq`) by `D`
+  touches every file. Instead add `T_SpreadL`: `G |- e1 : {R}`, `rlacksD D l R`,
+  `G |- e2 : T` give `G |- {...e1, l: e2} : {l: T; R}`. For a value `e1` the row
+  `R` equals a literal's row, so it has no variable (`req` preserves the tail),
+  `rlacksD` is `rlacks`, and `req_abs` turns the derivation into a `T_Spread`
+  one; preservation reuses `spread_step_typing`. Progress and the inversions
+  gain one case each, mechanical.
+- **What a `let` must do (the part that decides the cost).** A scheme must
+  record the lacks of the row variables it quantifies, and `T_Let`/`T_Letrec`
+  must choose them the way they choose `k`: `typing (extr (ext D V k) Vr rk) G e1
+  T1` and `x : gen G T1 k rk`, with `inst` demanding `rlacksD D l (sr r)` for
+  every `l` in `rk r`. The shortcut "generalized rows carry no lacks" (a
+  `lacks_free` premise on `T_Let`) type checks the rule but **breaks
+  preservation**: term substitution removes a binder from the context, which
+  makes a row variable generalizable that was free before, and the `let` body's
+  derivation then needs a premise the original one did not have
+  (`typing_ftv_mono`, `ctx_more_gen`). So `rk` has to ride along wherever `k`
+  does: `gen`, `casch` (`rk` through the renaming `gr`), `casch_inst`,
+  `casch_gen_sch_equiv`, `sch_more_gen` (an `rkup` beside `kup`),
+  `typing_denv_agree` (rows outside the agreed set map to `Empty`, which lacks
+  everything), `typing_inst_gen`, and `Sch` in all its constructors.
+- **Algorithm W.** Needs a lacks map next to `D` in the unifier: binding `r :=
+  R` checks `rlacksD`, `l^P:T;R1 ~ r` with `r` lacking `l` binds `P := Bool` and
+  `R1 := r`, and `restrict` gives its fresh tail the label. Every `kres D D'
+  (sT s)` in `GoatInfer*.v` gains the row half, and `gen_ren` carries `rk`.
+- **Corpus.** Delete `lacks_on_tail` and the error-text test once the count
+  is 0.
+
 ### Q3. Scoped labels stay
 
 ADR 0033 rule 5 says no record type holds two fields with one label. The
