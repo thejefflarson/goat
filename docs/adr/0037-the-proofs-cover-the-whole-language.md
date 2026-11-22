@@ -134,6 +134,26 @@ options weighed):
   for methods and `self`; the intended reading is `forall r. mu t. {moved: (t) -> t;
   x: Int | r}`.
 
+## Amendment (2026-11-22): what the elaboration theorem states
+
+Decision 3's "with the same behaviour" is made precise, in `proofs/GoatElab.v`
+and `docs/design/phase5-proof-plan.md` section 2.3.
+
+- **The theorem is the soundness of W, with W returning the elaborated term.**
+  `infer_elab fuel e = Some (D, e', T)` implies `typing D nil e' T` and
+  `erase e' = e`. There is no second, equi-recursive typing relation.
+- **`erase` drops `fold` and `unfold`.** `erase_step` says a step of an
+  elaborated term is a step of its erasure, or an `unfold(fold v) --> v` that
+  erasure cannot see; `erase_traps` says the same of a trap.
+- **Head coercions only.** A mismatch between a mu type and its unrolling is
+  repaired by one `fold` or `unfold` at the node (`coerce_typing`), so
+  `erase e' = e` holds exactly. A program that needs a coercion below a function
+  type or a record field would need an eta-expansion; it is outside the theorem
+  and counted under `DeepCoercion`. The measurement behind this choice is in the
+  plan, section 3, Q3.
+- **The equality W's unifier decides** is the bounded-unrolling relation
+  `T ~~[n] T'`, not a coinductive bisimulation.
+
 ## Consequences
 
 - Language work slows by the cost of each proof, and the first PR to touch a
