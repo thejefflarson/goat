@@ -22,9 +22,10 @@ and of the `coq` workflow).
 Every goat source the repository holds: `examples/*.goat`, the `goat` blocks of
 `docs/llm.md`, every string literal of the Rust sources under `checker/` and
 `parser/` (tests included), a short list of hand-written programs, 4000
-programs from a fixed-seed generator of the core, and 6000 from a fixed-seed
-typed generator of the phase-1 forms, and 8000 from a fixed-seed generator of
-blocks of functions that call themselves and each other. A program is compared when it is in the
+programs from a generator of the core, 6000 from a typed generator of the
+phase-1 forms, and 8000 from a generator of blocks of functions that call
+themselves and each other, each run with three fixed seeds so that a change to
+one random stream cannot hide or reveal a mismatch by chance. A program is compared when it is in the
 fragment of `proofs/goat_ln.ott`: numerals, Float literals, strings, unit,
 booleans, functions, calls, `if` with an `else`, the twelve binary operators on
 Int, Float, String and Bool, `let` of any value, `letrec` groups of
@@ -41,7 +42,14 @@ program are skipped, each because the calculus and the checker differ on it:
 - a comparison, or a `/`, on an operand whose type only a later use settles
   (`program(x) do x > x done("a")`): a generic comparison waits for the `Eq` and
   `Ordered` sorts, and `/` on an open operand is typed `Ordered` by the checker
-  and `Numeric` by the calculus;
+  and `Numeric` by the calculus. The algorithm settles a comparison on a
+  numeral's variable, or on the variable of a `+ - * // %`, at `Int`, so a
+  comparison is compared when one operand is concrete, or one is a numeral's own
+  variable and the other cannot have been settled yet. The rest are skipped:
+  `v = 71 // 88` then `if v <= v then v - 3.1 else 4.0 done` types at `Float` in
+  the checker, where the algorithm has already chosen `Int`. A program whose
+  comparison the algorithm settles correctly may be pinned in `FORCED` in
+  `core_corpus.rs` (`f = program(x) do x == x % x done` then `f(90)`);
 - a `let` of a record or a name with a numeral in it (`r = {a: 1}`, `m = n`): the
   calculus generalizes it (`numeral_binding_is_generic`), the checker generalizes
   a numeral's variable only in a function's type and in a bare numeral binding
@@ -53,8 +61,18 @@ program are skipped, each because the calculus and the checker differ on it:
 - a record that holds a function of a recursive group by name
   (`{stop: true, g: h}` inside `h`): the checker accepts a type with no finite
   derivation;
+- a program in which the checker infers a recursive type, which the algorithm
+  does not;
 - the cases the README already listed: the prelude, tags, `::`, dot calls,
   `self`.
+
+A sixth kind is counted apart from these. When the checker types a program in
+the fragment with a recursive type (`Ty::Rec`, as for `(p.moved)(p)`), the
+corpus writes it as an `R` line and the driver prints it as "skipped for a
+recursive type", with no comparison. The algorithm never builds a `mu`
+(`infer_mu_free`, `proofs/GoatInferMuFree.v`), so it cannot agree on such a
+program. The count tells the reader whether the fragment still reaches
+recursive types.
 
 ## Where `float(e)` goes
 
@@ -118,3 +136,8 @@ variable, as the checker's does. So `program(x) do x * 2 done` prints
 
 A disagreement is caught only on a tested program. The generator and the
 corpus are finite, which is the gap ADR 0037 accepts.
+
+`core_corpus` prints on stderr how many programs it wrote and how many it
+skipped, by reason, and a pinned program it had to skip is reported as
+`FORCED SKIP`. The driver prints how many programs it compared and how many
+mismatched.

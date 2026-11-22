@@ -707,6 +707,12 @@ fn inference_order(fields: &[(String, Expr)]) -> Vec<usize> {
         .collect()
 }
 
+/// A whole-number literal, `-3` included: a negative literal is one number
+/// (ADR 0039).
+fn is_bare_numeral(expr: &Expr) -> bool {
+    matches!(expr.kind, ExprKind::Int(_))
+}
+
 /// Whether evaluating `expr` can do no work, so its binding may be generalized:
 /// a function, a literal, a name, or a record or variant of such values.
 /// Anything else is computed and keeps one type.
@@ -2787,9 +2793,9 @@ impl Inferer {
                         let flows = self.flows.split_off(flows_from);
                         self.solve_flows(flows);
                     }
-                    let open_literals = is_function || matches!(value.kind, ExprKind::Int(_));
-                    let mut scheme = self.generalize(&rec, open_literals);
-                    if !scheme.vars.is_empty() && !is_syntactic_value(value) {
+                    let bare_numeral = is_bare_numeral(value);
+                    let mut scheme = self.generalize(&rec, is_function || bare_numeral);
+                    if !scheme.vars.is_empty() && !bare_numeral && !is_syntactic_value(value) {
                         self.restricted.insert(*symbol, name.clone());
                         scheme = Scheme::mono(scheme.ty);
                     }
