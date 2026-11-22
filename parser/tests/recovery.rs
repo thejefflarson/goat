@@ -191,6 +191,21 @@ fn panic_mode_at_the_top_skips_through_the_next_semicolon() {
 }
 
 #[test]
+fn a_statement_starting_a_line_after_a_complete_one_gets_a_missing_semicolon() {
+    let (shape, diagnostics) = recover("f(1)\ng(2)");
+    assert!(shape.contains("MISSING(;) ERROR(\"g(2)\")"), "{shape}");
+    assert_eq!(
+        diagnostics,
+        [(
+            "put a `;` after `f(1)` to start a new statement".into(),
+            String::new()
+        )]
+    );
+    let (_, diagnostics) = recover("f(1) g(2)");
+    assert_eq!(messages(&diagnostics), ["unexpected input"]);
+}
+
+#[test]
 fn an_anchor_keeps_an_inner_recovery_from_crossing_into_its_construct() {
     // The `)` a few tokens on belongs to the `if`'s condition, but `then` is a
     // wall: the paren is left unclosed and `then c` stays in the conditional.
