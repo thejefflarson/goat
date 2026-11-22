@@ -324,6 +324,30 @@ Definition gen_ren (D : denv) (G : ctx) (T : typ) : scheme :=
       (ap_typ (rename_t la) (rename_r lr) T)
       (gen_sk D la).
 
+(* A [let] of a function or a bare numeral generalizes the variables of its
+   type whatever their sort.  Any other syntactic value keeps the [Literal]
+   variables of its type shared, still open to [Float], as the checker does
+   (ADR 0038, the numeral-let addendum).  [let_pin] is the type whose free
+   variables a [let] leaves monomorphic: [gen_ren] generalizes over the context
+   extended with a binding of it. *)
+Definition let_open (e : exp) : bool :=
+  match e with
+  | e_abs _ | e_num _ | e_letrec _ _ => true
+  | _ => false
+  end.
+
+Definition is_lit_sort (k : sort) : bool :=
+  match k with k_Literal => true | _ => false end.
+
+Definition lit_vars (D : denv) (T : typ) : list atom :=
+  filter (fun a => is_lit_sort (D a)) (AtomSetImpl.elements (ftv_typ T)).
+
+Definition pin_of (la : list atom) : typ :=
+  fold_right (fun a acc => typ_Arrow (typ_Var a) acc) typ_Unit la.
+
+Definition let_pin (D : denv) (e : exp) (T : typ) : typ :=
+  if let_open e then typ_Unit else pin_of (lit_vars D T).
+
 (* ------------------------------------------------------------------ *)
 (* Algorithm W                                                          *)
 (* ------------------------------------------------------------------ *)
@@ -496,7 +520,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
           | None => None
           | Some (s1, D1, T1, n1) =>
               let G1 := apC s1 G in
-              let sc := gen_ren D1 G1 T1 in
+              let sc := gen_ren D1 (pin_ctx (let_pin D1 e1 T1) G1) T1 in
               let x := fresh_var G1 e2 in
               match infer f' lenient ora D1 ((x ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
               | None => None

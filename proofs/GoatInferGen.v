@@ -232,6 +232,31 @@ Proof.
       [ apply In_lr in Hin; destruct Hin as [_ Hin]; contradiction | reflexivity ].
 Qed.
 
+(* The same for a term typed in a context [G0] the generalization is taken
+   over a wider context than: a [let] that keeps some variables monomorphic
+   generalizes over its context extended by a binding that mentions them. *)
+Lemma typing_gen_ren_on : forall G0 n e,
+  ftv_ctx G0 [<=] ftv_ctx G -> frv_ctx G0 [<=] frv_ctx G ->
+  DOk D n -> typing D G0 e T ->
+  typing (ext D (s_tq (gen_ren D G T)) (s_sk (gen_ren D G T))) G0 e (s_body (gen_ren D G T)).
+Proof.
+  intros G0 n e Hft Hfr HD Hty. rewrite gen_body.
+  destruct (DOk_supp D n HD) as [S HS].
+  apply typing_tsubst_fix_k with (D := D) (S := S)
+    (S' := S `union` s_tq (gen_ren D G T)) (A := aset la `union` aset lr);
+    [ exact Hty | exact HS | apply supp_ok_ext_set; exact HS
+    | apply (kres_rename n); exact HD | | | ].
+  - split; [ | split; [ | apply lc_sub_rename ] ].
+    + intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a la) as [Hin|Hin]; [ | reflexivity ].
+      exfalso. apply Ha. apply AtomSetFacts.union_iff. left. apply aset_in. exact Hin.
+    + intros r Ha. unfold rename_r. destruct (in_dec Atom.eq_dec r lr) as [Hin|Hin]; [ | reflexivity ].
+      exfalso. apply Ha. apply AtomSetFacts.union_iff. right. apply aset_in. exact Hin.
+  - intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a la) as [Hin|Hin];
+      [ apply In_la in Hin; destruct Hin as [_ Hin]; exfalso; apply Hin; apply Hft; exact Ha | reflexivity ].
+  - intros a Ha. unfold rename_r. destruct (in_dec Atom.eq_dec a lr) as [Hin|Hin];
+      [ apply In_lr in Hin; destruct Hin as [_ Hin]; exfalso; apply Hin; apply Hfr; exact Ha | reflexivity ].
+Qed.
+
 (* Substituting after generalizing is generalizing after substituting. *)
 Lemma gen_ren_equiv : forall s, OkS s -> WfCtx G -> EvT T ->
   sch_equiv (apS s (gen_ren D G T))

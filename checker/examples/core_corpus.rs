@@ -17,7 +17,9 @@
 //! rest patterns, using only names it binds.
 //! The calculus generalizes a `let` of a syntactic value (`is_gen_value` in
 //! `proofs/GoatDefs.v`, the checker's `is_syntactic_value`) and types any other
-//! `let` monomorphically (`T_LetMono`). A function that calls itself, or that
+//! `let` monomorphically (`T_LetMono`). Of a value that is neither a function
+//! nor a bare numeral, the algorithm leaves the `Literal` variables of its type
+//! shared and generalizes the rest, as the checker does (ADR 0038). A function that calls itself, or that
 //! belongs to a group of functions that mention each other, is a `letrec` of
 //! the group (`T_Letrec`), generalized once the whole group is typed, as the
 //! checker does. A group whose functions are not next to each other in their
@@ -35,9 +37,7 @@
 //! to records of numbers field by field). A program is outside the fragment when an operator's
 //! operands are not all Int, Float, String or Bool or open numeric variables, when
 //! a comparison has an operand that is a parameter's generic type
-//! (`differential/README.md`), when a
-//! `let` of a record or a name holding a numeral would be generalized by the
-//! calculus and not by the checker.
+//! (`differential/README.md`), or when a rest pattern has no fields.
 //! Every other program outside the fragment is counted under one `Feature` it
 //! uses, the first in that enum's order.
 //!
@@ -190,24 +190,6 @@ impl Core {
     }
 }
 
-impl Core {
-    /// Whether a `let` of this value is a syntactic value that has a numeral's
-    /// type in it, which the calculus generalizes and the checker, for a value
-    /// that is neither a function nor a bare numeral, leaves as one variable.
-    fn generalizes_numeral(&self) -> bool {
-        match self {
-            Core::Var(_) => true,
-            Core::ToFloat(e) => e.holds_numeral(),
-            Core::Rec(fields) => fields.iter().any(|(_, e)| e.holds_numeral()),
-            _ => false,
-        }
-    }
-
-    fn holds_numeral(&self) -> bool {
-        matches!(self, Core::Num(_)) || self.generalizes_numeral()
-    }
-}
-
 /// What a program outside the calculus uses that the calculus lacks. A program
 /// that uses several is counted under the first in this order, which is the
 /// order of the proof phases that will bring each in: a count falls to 0 when
@@ -224,7 +206,7 @@ enum Feature {
     Ordering,
     OperatorOperand,
     SplitGroup,
-    NumeralLet,
+    EmptyRest,
     UnwritableType,
     IfWithoutElse,
     NoParameters,
@@ -251,8 +233,8 @@ impl Feature {
             Feature::SplitGroup => {
                 "outside the calculus: a recursive group a value binding uses before its last member"
             }
-            Feature::NumeralLet => {
-                "outside the calculus: a let of a numeral the calculus would generalize"
+            Feature::EmptyRest => {
+                "outside the calculus: a rest pattern with no fields, which only says its source is a record"
             }
             Feature::UnwritableType => {
                 "outside the calculus: an inferred type the corpus cannot write"
@@ -369,7 +351,6 @@ struct Reader<'a> {
     generic_comparison: bool,
     /// The symbols of function parameters. A `let` of one (a record pattern
     /// binds its source so) holds no numeral the calculus could generalize.
-    params: HashSet<Symbol>,
     /// Why the reader stopped, when the cause is the shape of the program and
     /// not a node the calculus lacks.
     gap: Feature,
@@ -606,13 +587,7 @@ impl Reader<'_> {
         let group = match *unit {
             Unit::Value(at) => {
                 let (symbol, _, value) = bindings[at];
-                let names_param = matches!(&value.kind, ExprKind::Var { symbol, .. }
-                    if self.params.contains(symbol));
                 let value = self.read(value)?;
-                if value.generalizes_numeral() && !names_param {
-                    self.gap = self.gap.min(Feature::NumeralLet);
-                    return None;
-                }
                 self.scope.push(Binder::Bound(symbol));
                 let body = self.chain(bindings, groups, units, tail);
                 self.scope.pop();
@@ -730,7 +705,6 @@ impl Reader<'_> {
                     return None;
                 }
                 self.unary &= params.len() == 1;
-                self.params.extend(params.iter().map(|p| p.symbol));
                 let mark = self.scope.len();
                 self.scope
                     .extend(params.iter().map(|p| Binder::Bound(p.symbol)));
@@ -796,6 +770,10 @@ impl Reader<'_> {
                     })
             }
             ExprKind::Restrict { record, labels } => {
+                if labels.is_empty() {
+                    self.gap = self.gap.min(Feature::EmptyRest);
+                    return None;
+                }
                 labels.iter().try_fold(self.read(record)?, |record, label| {
                     Some(Core::Restrict(Box::new(record), self.label(label)))
                 })
@@ -986,7 +964,6 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
         number_vars: checked.as_ref().map(|c| &c.typed.number_vars),
         in_comparison: 0,
         generic_comparison: false,
-        params: HashSet::new(),
         gap: Feature::Other,
     };
     let core = reader
@@ -1661,6 +1638,14 @@ impl SpreadGen {
 /// Programs the repository's sources may not hold: let-polymorphism, row
 /// polymorphism, rejections, and calls with several arguments.
 const HANDWRITTEN: &[&str] = &[
+    "r = {a: 1}\n{x: r.a + 1.5, y: r.a // 2}",
+    "r = {a: 1, id: program(v) do v done}\n{p: (r.id)(1), q: (r.id)(true), x: r.a + 1.5}",
+    "r = {a: 1, id: program(v) do v done}\ns = {...r, b: 2}\n{p: (s.id)(1), q: (s.id)(true)}",
+    "n = 3\nm = n\n{x: m + 1.5, y: m + 1}",
+    "n = 3\n{x: n + 1.5, y: n // 2}",
+    "id = program(v) do v done\nf = id\n{p: f(1), q: f(true)}",
+    "f = program(x) do x + 1 done\ng = f\n{p: g(1), q: g(1.5)}",
+    "{...{a: 1}, b: 2}",
     "math = {double: program(x) do x * 2 done}\nmath::double(5)",
     "math = {double: program(x) do x * 2 done}\nd = math::double\nd(5)",
     "pair = {first: program(a, b) do a done}\npair.first(1)",

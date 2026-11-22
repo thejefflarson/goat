@@ -507,6 +507,17 @@ in `d_any` a closed derivation instantiates each generalized `Literal` variable
 at `Int` or `Float`, and `numeral_binding_is_generic` in `GoatPhase1.v` shows
 both choices.
 
+A `let` may keep some variables of its binding monomorphic: `T_Let` takes a
+type `Tm` and generalizes over the context extended with a binding of `Tm`
+(`pin_ctx`), so the variables of `Tm` stay free. The algorithm pins exactly the
+`Literal` variables of a value that is neither a function nor a bare numeral
+(`let_pin` in `GoatInfer.v`), which is where the checker leaves a numeral's
+variable shared (`r = {a: 1}` is one record, not a fresh one per use). The rule
+itself allows any `Tm`, so it derives more programs than the checker accepts;
+the algorithm is the part that agrees with the checker, and its soundness
+(`infer_sound`) is that every type it infers is derivable. ADR 0038 records the
+choice.
+
 ## Algorithm W with sorted variables
 
 `GoatInfer.v` threads a kinding environment `D` through the algorithm

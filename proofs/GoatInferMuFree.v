@@ -324,7 +324,7 @@ Proof.
     + destruct (is_gen_value e1).
       * destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
         destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
-        destruct (infer f false ora D1 ((fresh_var (apC s1 G) e2, gen_ren D1 (apC s1 G) T1) :: apC s1 G)
+        destruct (infer f false ora D1 ((fresh_var (apC s1 G) e2, gen_ren D1 (pin_ctx (let_pin D1 e1 T1) (apC s1 G)) T1) :: apC s1 G)
                     (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC s1 G) e2))) n1)
           as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
         injection H as <- <- <- <-.

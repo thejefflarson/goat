@@ -40,6 +40,12 @@ a numeral at `Float` (`1 + 1.5`, written as the bare numeral), and a generic
 function used at `Int` and at `Float` are all in the corpus, and so is a call that
 passes a record of numbers to such a function (`add({x: 1}, {x: 2})`: the
 calculus applies `+ - * // %` to records field by field, `GoatRecArith.v`).
+A `let` of a record or a name with a numeral in it is compared too
+(`r = {a: 1}  {x: r.a + 1.5, y: r.a // 2}` is an error in both): the algorithm
+generalizes a function and a bare numeral over every variable of its type, and
+any other syntactic value over every variable but the `Literal` ones, which stay
+shared and open to `Float`, as the checker does (ADR 0038). A spread of
+syntactic values is one too, as in the checker's `is_syntactic_value`.
 Three kinds of
 program are skipped, each because the calculus and the checker differ on it:
 
@@ -54,11 +60,8 @@ program are skipped, each because the calculus and the checker differ on it:
   comparison whose operand type is a checker variable outside `number_vars`; the
   checker does not record a `Numeric` variable there (`x == x % x` in a function),
   so `FORCED` in `core_corpus.rs` pins such programs as compared anyway;
-- a `let` of a record or a name with a numeral in it (`r = {a: 1}`, `m = n`): the
-  calculus generalizes it (`numeral_binding_is_generic`), the checker generalizes
-  a numeral's variable only in a function's type and in a bare numeral binding
-  (`n = 3`, ADR 0039), so `r = {a: 1}  {x: r.a + 1.5, y: r.a // 2}` types in the
-  calculus and not in the checker;
+- a rest pattern with no fields (`program({...r}) do r done`): the checker types
+  it as a record, and the calculus has no way to say that without a label;
 - a program in which the checker infers a recursive type, which the algorithm
   does not (a record that holds a function of a recursive group by name, as
   `{stop: true, g: h}` inside `h`, is one: it is compared when the checker
@@ -159,8 +162,7 @@ on operands that are not `Int`, `Float`, `String` or `Bool`. After those come
 the reasons that are about the shape of a program and not a missing feature: a
 recursive group that a value binding uses before the group's last member (the
 checker types the use at the member's monomorphic type, the hoisted `letrec` at
-its generalized one), a `let` of a numeral the calculus
-would generalize and the checker does not, an inferred type the corpus cannot write, an `if` without an `else`, a function or call with no parameters,
+its generalized one), a rest pattern with no fields, an inferred type the corpus cannot write, an `if` without an `else`, a function or call with no parameters,
 a program that ends in a binding, a numeral of 2^30 or more, and `none of the
 above`. A program using two features counts only under the earlier, so when a
 phase lands its count falls to 0 and its programs either join the compared set

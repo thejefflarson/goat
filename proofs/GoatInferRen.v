@@ -44,6 +44,14 @@ Proof.
   split; [|split; [|split]]; [fsetdec | fsetdec | reflexivity | intros a Ha; reflexivity].
 Qed.
 
+Lemma gen_pin_swap_mid : forall Tm G2 G1 x y (sc : scheme) T k,
+  sch_equiv (gen (pin_ctx Tm (G2 ++ (x ~ sc) ++ G1)) T k)
+            (gen (pin_ctx Tm (G2 ++ (y ~ sc) ++ G1)) T k).
+Proof.
+  intros Tm G2 G1 x y sc T k.
+  exact (gen_swap_mid ((pin_name ~ sch_mono Tm) ++ G2) G1 x y sc T k).
+Qed.
+
 Lemma binds_rename_mid : forall G2 G1 x y z (sc s : scheme),
   binds z s (G2 ++ (x ~ sc) ++ G1) -> uniq (G2 ++ (x ~ sc) ++ G1) ->
   (z = x /\ s = sc /\ binds y sc (G2 ++ (y ~ sc) ++ G1)) \/
@@ -99,24 +107,24 @@ Proof.
     intros D G e1 e2 T1 T2 H1 IH1 H2 IH2 G2 Hg Hy. subst G. cbn [subst_exp].
     eapply T_App; [ eapply IH1 | eapply IH2 ]; eauto.
   - (* T_Let *)
-    intros L D G e1 e2 T1 T2 k Hgv H1 IH1 Hb IH2 G2 Hg Hy. subst G. cbn [subst_exp].
-    apply T_Let with (L := L `union` {{x}} `union` {{y}}) (T1 := T1) (k := k).
+    intros L D G e1 e2 T1 T2 k Tm Hgv H1 IH1 Hb IH2 G2 Hg Hy. subst G. cbn [subst_exp].
+    apply T_Let with (L := L `union` {{x}} `union` {{y}}) (T1 := T1) (k := k) (Tm := Tm).
     + apply is_gen_subst; [ reflexivity | exact Hgv ].
     + eapply typing_pw; [ eapply IH1; eauto | ].
-      intros a. apply ext_set_eq. rewrite (ftv_ctx_swap_mid G2 G1 x y sc). reflexivity.
+      intros a. apply ext_set_eq. rewrite !ftv_pin_ctx, (ftv_ctx_swap_mid G2 G1 x y sc). reflexivity.
     + intros z Hz.
       assert (Hzx : z <> x) by fsetdec.
       assert (HzL : z `notin` L) by fsetdec.
-      assert (Hshape : (z ~ gen (G2 ++ (x ~ sc) ++ G1) T1 k) ++ G2 ++ (x ~ sc) ++ G1
-                       = ((z ~ gen (G2 ++ (x ~ sc) ++ G1) T1 k) ++ G2) ++ (x ~ sc) ++ G1)
+      assert (Hshape : (z ~ gen (pin_ctx Tm (G2 ++ (x ~ sc) ++ G1)) T1 k) ++ G2 ++ (x ~ sc) ++ G1
+                       = ((z ~ gen (pin_ctx Tm (G2 ++ (x ~ sc) ++ G1)) T1 k) ++ G2) ++ (x ~ sc) ++ G1)
         by (rewrite <- app_assoc; reflexivity).
-      assert (Hydom : y `notin` dom ((z ~ gen (G2 ++ (x ~ sc) ++ G1) T1 k) ++ G2 ++ (x ~ sc) ++ G1))
+      assert (Hydom : y `notin` dom ((z ~ gen (pin_ctx Tm (G2 ++ (x ~ sc) ++ G1)) T1 k) ++ G2 ++ (x ~ sc) ++ G1))
         by (simpl in *; fsetdec).
-      pose proof (IH2 z HzL ((z ~ gen (G2 ++ (x ~ sc) ++ G1) T1 k) ++ G2) Hshape Hydom) as IH'.
+      pose proof (IH2 z HzL ((z ~ gen (pin_ctx Tm (G2 ++ (x ~ sc) ++ G1)) T1 k) ++ G2) Hshape Hydom) as IH'.
       rewrite (subst_open_var e2 (e_fvar_f y) x z Hzx (lc_fvar_f y)) in IH'.
       rewrite <- app_assoc in IH'.
       eapply typing_sch_equiv_ctx; [ exact IH' | ].
-      apply ctx_equiv_cons; [ apply gen_swap_mid | apply ctx_equiv_refl ].
+      apply ctx_equiv_cons; [ apply gen_pin_swap_mid | apply ctx_equiv_refl ].
   - (* T_LetMono *)
     intros L D G e1 e2 T1 T2 H1 IH1 Hb IH2 G2 Hg Hy. subst G. cbn [subst_exp].
     apply T_LetMono with (L := L `union` {{x}} `union` {{y}}) (T1 := T1).

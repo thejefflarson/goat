@@ -143,6 +143,13 @@ Proof.
   intros a Ha. assert (a `in` s_tq s) by (apply A; exact Ha). symmetry. apply E. exact H.
 Qed.
 
+Lemma sch_equiv_trans : forall s1 s2 s3, sch_equiv s1 s2 -> sch_equiv s2 s3 -> sch_equiv s1 s3.
+Proof.
+  intros s1 s2 s3 (A1 & B1 & C1 & E1) (A2 & B2 & C2 & E2). unfold sch_equiv.
+  split; [ fsetdec | split; [ fsetdec | split; [ congruence | ] ] ].
+  intros a Ha. rewrite (E1 a Ha). apply E2. apply A1. exact Ha.
+Qed.
+
 (* inst respects sch_equiv *)
 Lemma inst_sch_equiv : forall D T s s',
   sch_equiv s s' -> inst D T s -> inst D T s'.
@@ -310,7 +317,7 @@ Proof.
   - apply T_False; auto.
   - eapply T_Abs with (L := L). intros. eauto.
   - eapply T_App; eauto.
-  - eapply T_Let with (L := L) (k := k);
+  - eapply T_Let with (L := L) (k := k) (Tm := Tm);
       [ assumption | apply H; apply ext_pw; assumption | intros; eauto ].
   - eapply T_LetMono with (L := L); eauto.
   - eapply T_Letrec with (L := L) (k := k); [ assumption | | intros; eauto ].
@@ -354,13 +361,14 @@ Proof.
   - (* T_Abs *) apply T_Abs with (L := L); intros x Hx.
     apply H; auto. apply ctx_equiv_cons; auto using sch_equiv_refl.
   - (* T_App *) eapply T_App; eauto.
-  - (* T_Let *) apply T_Let with (L := L) (T1 := T1) (k := k); auto.
+  - (* T_Let *) apply T_Let with (L := L) (T1 := T1) (k := k) (Tm := Tm); auto.
     + eapply typing_pw; [ apply H; exact H1 | ].
       intros a. apply ext_set_eq.
       assert (Hf : ftv_ctx G [=] ftv_ctx G') by (intro z; apply (ctx_equiv_Ftv _ _ z H1)).
-      rewrite Hf. reflexivity.
+      rewrite !ftv_pin_ctx, Hf. reflexivity.
     + intros x Hx. apply H0; auto.
       apply ctx_equiv_cons; auto. apply gen_ctx_equiv; auto.
+      unfold pin_ctx. apply ctx_equiv_cons; [ apply sch_equiv_refl | exact H1 ].
   - (* T_LetMono *) apply T_LetMono with (L := L) (T1 := T1); auto.
     intros x Hx. apply H0; auto.
     apply ctx_equiv_cons; auto using sch_equiv_refl.
@@ -396,6 +404,26 @@ Qed.
 Lemma typing_sch_equiv_ctx : forall D G G' e T,
   typing D G e T -> ctx_equiv G G' -> typing D G' e T.
 Proof. intros. eapply (proj1 typing_sch_equiv_ctx_mut); eauto. Qed.
+
+(* A [let] that generalizes every variable the context does not mention: the
+   rule with the unit type pinning nothing. *)
+Lemma T_Let_nopin : forall (L : vars) D G e1 e2 T1 T2 (k : sort_fn),
+  is_gen_value e1 = true ->
+  typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k) G e1 T1 ->
+  (forall x, x `notin` L ->
+     typing D ((x ~ gen G T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
+  typing D G (e_let e1 e2) T2.
+Proof.
+  intros L D G e1 e2 T1 T2 k Hg H1 H2.
+  apply T_Let with (L := L) (T1 := T1) (k := k) (Tm := typ_Unit); [ exact Hg | | ].
+  - eapply typing_pw; [ exact H1 | ].
+    intros a. apply ext_set_eq. rewrite ftv_pin_ctx. simpl. fsetdec.
+  - intros x Hx. eapply typing_sch_equiv_ctx; [ apply H2; exact Hx | ].
+    apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
+    unfold sch_equiv, gen. cbn [s_tq s_rq s_body s_sk].
+    rewrite ftv_pin_ctx, frv_pin_ctx. simpl.
+    split; [ | split; [ | split; [ reflexivity | intros; reflexivity ] ] ]; fsetdec.
+Qed.
 
 (* ============ more general schemes and contexts (kinded) ============ *)
 
@@ -575,16 +603,20 @@ Proof.
     apply H; auto. apply ctx_more_gen_cons; auto using sch_more_gen_refl.
   - eapply T_App; eauto.
   - (* T_Let *)
-    assert (HV : forall a, a `in` ftv_ctx G -> a `notin` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G))
-      by (intros a Ha Hd; apply AtomSetFacts.diff_iff in Hd; tauto).
+    assert (HV : forall a, a `in` ftv_ctx G -> a `notin` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G)))
+      by (intros a Ha Hd; apply AtomSetFacts.diff_iff in Hd; rewrite ftv_pin_ctx in Hd; fsetdec).
     assert (HF : ftv_ctx G' [<=] ftv_ctx G) by (intros a Ha; eapply ctx_more_gen_Ftv; eauto).
     assert (HR : frv_ctx G' [<=] frv_ctx G) by (intros a Ha; eapply ctx_more_gen_Frv; eauto).
-    apply T_Let with (L := L) (T1 := T1)
-      (k := kup D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k); auto.
+    assert (HF' : ftv_ctx (pin_ctx Tm G') [<=] ftv_ctx (pin_ctx Tm G))
+      by (rewrite !ftv_pin_ctx; fsetdec).
+    assert (HR' : frv_ctx (pin_ctx Tm G') [<=] frv_ctx (pin_ctx Tm G))
+      by (rewrite !frv_pin_ctx; fsetdec).
+    apply T_Let with (L := L) (T1 := T1) (Tm := Tm)
+      (k := kup D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k); auto.
     + eapply typing_pw.
       * apply H. apply ctx_more_gen_ext; [ exact HV | exact H1 ].
       * intros a. apply ext_kup. intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
-        apply AtomSetFacts.diff_iff. split; [ exact Hb | intro Hd; apply Hc; apply HF; exact Hd ].
+        apply AtomSetFacts.diff_iff. split; [ exact Hb | intro Hd; apply Hc; apply HF'; exact Hd ].
     + intros x Hx. apply H0; auto.
       apply ctx_more_gen_cons; [ apply gen_more_gen; assumption | exact H1 ].
   - (* T_LetMono *) apply T_LetMono with (L := L) (T1 := T1); auto. intros x Hx.
