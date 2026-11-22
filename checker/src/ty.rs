@@ -246,6 +246,30 @@ impl Ty {
         Ty::Func(args, Arc::new(ret))
     }
 
+    /// Feed `state` the top `depth` levels of this type: equal types feed the
+    /// same bytes, and the cost does not grow with the size of the type, which
+    /// hashing the whole of a large receiver type would.
+    pub(crate) fn fingerprint<H: Hasher>(&self, state: &mut H, depth: usize) {
+        std::mem::discriminant(self).hash(state);
+        let Some(depth) = depth.checked_sub(1) else {
+            return;
+        };
+        match self {
+            Ty::Var(v) => v.hash(state),
+            Ty::Func(args, ret) => {
+                args.len().hash(state);
+                args.iter().for_each(|a| a.fingerprint(state, depth));
+                ret.fingerprint(state, depth);
+            }
+            Ty::Record(row) | Ty::Variant(row) => row.fingerprint(state, depth),
+            Ty::Rec(binder, body) => {
+                binder.hash(state);
+                body.fingerprint(state, depth);
+            }
+            Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit => {}
+        }
+    }
+
     /// The free variables of this type (type and row variables alike), in
     /// ascending order.
     pub fn free_vars(&self, out: &mut BTreeSet<TypeVar>) {
@@ -327,10 +351,38 @@ impl Ty {
 
     /// Replace the free occurrences of `Var(var)` with `with`.
     pub fn substitute(&self, var: TypeVar, with: &Ty) -> Ty {
+        self.substituted(var, with).unwrap_or_else(|| self.clone())
+    }
+
+    /// [`Self::substitute`], or `None` when `var` does not occur free, so a
+    /// part with no mention is shared with the original instead of rebuilt.
+    fn substituted(&self, var: TypeVar, with: &Ty) -> Option<Ty> {
         match self {
-            Ty::Var(v) if *v == var => with.clone(),
-            Ty::Rec(binder, _) if *binder == var => self.clone(),
-            _ => self.map_children(&|t| t.substitute(var, with)),
+            Ty::Var(v) if *v == var => Some(with.clone()),
+            Ty::Rec(binder, _) if *binder == var => None,
+            Ty::Func(args, ret) => {
+                let new_args: Vec<Option<Ty>> =
+                    args.iter().map(|a| a.substituted(var, with)).collect();
+                let new_ret = ret.substituted(var, with);
+                if new_ret.is_none() && new_args.iter().all(Option::is_none) {
+                    return None;
+                }
+                let args = args
+                    .iter()
+                    .zip(new_args)
+                    .map(|(old, new)| new.unwrap_or_else(|| old.clone()))
+                    .collect();
+                Some(Ty::Func(
+                    args,
+                    new_ret.map_or_else(|| Arc::clone(ret), Arc::new),
+                ))
+            }
+            Ty::Record(row) => row.substituted(var, with).map(Ty::Record),
+            Ty::Variant(row) => row.substituted(var, with).map(Ty::Variant),
+            Ty::Rec(binder, body) => body
+                .substituted(var, with)
+                .map(|body| Ty::Rec(*binder, Arc::new(body))),
+            _ => None,
         }
     }
 
@@ -524,6 +576,22 @@ impl Row {
         }
     }
 
+    /// [`Ty::fingerprint`] for a row: its first labels and what it ends in.
+    fn fingerprint<H: Hasher>(&self, state: &mut H, depth: usize) {
+        let mut cursor = self;
+        for _ in 0..depth {
+            std::mem::discriminant(cursor).hash(state);
+            match cursor {
+                Row::Extend { label, rest, .. } | Row::Maybe { label, rest, .. } => {
+                    label.hash(state);
+                    cursor = rest;
+                }
+                Row::Var(v) => return v.hash(state),
+                Row::Empty => return,
+            }
+        }
+    }
+
     /// What the row ends in: [`Row::Empty`] or a row variable.
     fn tail(&self) -> &Row {
         match self {
@@ -601,6 +669,59 @@ impl Row {
                     && a_rest.equals_with(var, with, b_rest)
             }
             _ => self == other,
+        }
+    }
+
+    /// [`Ty::substituted`] for the types in a row.
+    fn substituted(&self, var: TypeVar, with: &Ty) -> Option<Row> {
+        match self {
+            Row::Extend {
+                label,
+                field,
+                method,
+                at,
+                rest,
+            } => {
+                let (new_field, new_method, new_rest) = (
+                    field.substituted(var, with),
+                    method.substituted(var, with),
+                    rest.substituted(var, with),
+                );
+                if new_field.is_none() && new_method.is_none() && new_rest.is_none() {
+                    return None;
+                }
+                Some(Row::Extend {
+                    label: label.clone(),
+                    field: new_field.map_or_else(|| Arc::clone(field), Arc::new),
+                    method: new_method.map_or_else(|| Arc::clone(method), Arc::new),
+                    at: *at,
+                    rest: new_rest.map_or_else(|| Arc::clone(rest), Arc::new),
+                })
+            }
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                method,
+                rest,
+            } => {
+                let (new_field, new_method, new_rest) = (
+                    field.substituted(var, with),
+                    method.substituted(var, with),
+                    rest.substituted(var, with),
+                );
+                if new_field.is_none() && new_method.is_none() && new_rest.is_none() {
+                    return None;
+                }
+                Some(Row::Maybe {
+                    label: label.clone(),
+                    pres: *pres,
+                    field: new_field.map_or_else(|| Arc::clone(field), Arc::new),
+                    method: new_method.map_or_else(|| Arc::clone(method), Arc::new),
+                    rest: new_rest.map_or_else(|| Arc::clone(rest), Arc::new),
+                })
+            }
+            Row::Empty | Row::Var(_) => None,
         }
     }
 
@@ -1031,6 +1152,55 @@ impl Scheme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn substituting_shares_the_parts_that_do_not_mention_the_variable() {
+        let untouched = Ty::Record(Row::of([("n".to_string(), Ty::Int)]));
+        let ty = Ty::Record(Row::of([
+            ("a".to_string(), untouched.clone()),
+            ("b".to_string(), Ty::Var(1)),
+        ]));
+        let replaced = ty.substitute(1, &Ty::Bool);
+        let (
+            Ty::Record(Row::Extend {
+                field: kept, rest, ..
+            }),
+            Ty::Record(Row::Extend { field: old, .. }),
+        ) = (&replaced, &ty)
+        else {
+            panic!("a record stays a record");
+        };
+        assert!(Arc::ptr_eq(kept, old));
+        assert_eq!(
+            replaced,
+            Ty::Record(Row::of([
+                ("a".to_string(), untouched),
+                ("b".to_string(), Ty::Bool),
+            ]))
+        );
+        assert_ne!(**rest, Row::Empty);
+        assert_eq!(ty.substitute(2, &Ty::Bool), ty);
+    }
+
+    #[test]
+    fn equal_types_have_equal_fingerprints() {
+        let print = |ty: &Ty| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            ty.fingerprint(&mut hasher, 8);
+            hasher.finish()
+        };
+        let build = || {
+            Ty::Rec(
+                3,
+                Arc::new(Ty::Record(Row::of([
+                    ("x".to_string(), Ty::Int),
+                    ("f".to_string(), Ty::func(vec![Ty::Var(3)], Ty::Var(3))),
+                ]))),
+            )
+        };
+        assert_eq!(print(&build()), print(&build()));
+        assert_ne!(print(&build()), print(&Ty::Int));
+    }
 
     #[test]
     fn a_group_parameter_is_replaced_at_each_instantiation() {
