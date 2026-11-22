@@ -71,7 +71,7 @@ Proof.
   - intros a IH k Hs. destruct Hs.
   - intros w tg a IH k Hs. destruct Hs.
   - intros w a IHa ars IHars k Hs. destruct Hs.
-  - intros a IHa l b IHb k Hs. destruct Hs.
+  - intros a IHa l b IHb k [Ha Hb]. cbn [inst_rec]. rewrite (IHa k Ha), (IHb k Hb). reflexivity.
   - intros a IH l k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.

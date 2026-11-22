@@ -324,6 +324,31 @@ Definition is_fn_decl (d : tree) : bool :=
   | _ => false
   end.
 
+(* A multi-field spread is the nest of single ones, and a rest pattern with k
+   labels is k restricts (ADR 0033). *)
+Fixpoint spread_nest (b : exp) (fs : fields) {struct fs} : exp :=
+  match fs with
+  | fs_nil => b
+  | fs_cons l e rest => spread_nest (e_spread b l e) rest
+  end.
+
+Definition restricts (b : exp) (ls : list label) : exp := fold_left e_restrict ls b.
+
+Lemma lc_spread_nest : forall fs b, lc b -> lcf fs -> lc (spread_nest b fs).
+Proof.
+  induction fs as [| l e rest IH]; intros b Hb Hfs; simpl.
+  - exact Hb.
+  - destruct Hfs as [He Hrest].
+    apply IH; [ exact (conj Hb He) | exact Hrest ].
+Qed.
+
+Lemma lc_restricts : forall ls b, lc b -> lc (restricts b ls).
+Proof.
+  induction ls as [| l ls IH]; intros b Hb; unfold restricts in *; simpl.
+  - exact Hb.
+  - apply IH. exact Hb.
+Qed.
+
 Section Denotation.
 
   Variable var_of : string -> termvar.
@@ -333,6 +358,61 @@ Section Denotation.
 
   Definition sym (s : string) : tree := Leaf (TSym s).
   Definition ident (x : string) : tree := Node R_name [Leaf (TName x)].
+
+  Definition rest_node (r : string) : tree := Node R_rest_binding [sym "..."; ident r].
+
+  (* The children of a record pattern after its brace: the names, then an
+     optional rest binding, then an optional trailing comma. *)
+  Inductive Den_pat_start : list tree -> list string -> option string -> Prop :=
+    | DPS_rest : forall r fin,
+        (fin = [] \/ fin = [sym ","]) ->
+        Den_pat_start (rest_node r :: fin ++ [sym "}"]) [] (Some r)
+    | DPS_name : forall x ts xs ro,
+        Den_pat_more ts xs ro ->
+        Den_pat_start (ident x :: ts) (x :: xs) ro
+  with Den_pat_more : list tree -> list string -> option string -> Prop :=
+    | DPM_end :
+        Den_pat_more [sym "}"] [] None
+    | DPM_trail :
+        Den_pat_more [sym ","; sym "}"] [] None
+    | DPM_rest : forall r fin,
+        (fin = [] \/ fin = [sym ","]) ->
+        Den_pat_more (sym "," :: rest_node r :: fin ++ [sym "}"]) [] (Some r)
+    | DPM_name : forall x ts xs ro,
+        Den_pat_more ts xs ro ->
+        Den_pat_more (sym "," :: ident x :: ts) (x :: xs) ro.
+
+  (* [{x, y, ...r} = v body] reads [v] once, as the variable [s], then binds each
+     name to its field and the rest to [s] without those fields. *)
+  Definition rest_let (s : termvar) (xs : list string) (ro : option string) (body : exp) : exp :=
+    match ro with
+    | None => body
+    | Some r =>
+        e_let (restricts (e_fvar_f s) (List.map lab xs)) (close_exp (var_of r) body)
+    end.
+
+  Definition unpack (s : termvar) (xs : list string) (ro : option string) (body : exp) : exp :=
+    fold_right
+      (fun x acc => e_let (e_proj (e_fvar_f s) (lab x)) (close_exp (var_of x) acc))
+      (rest_let s xs ro body) xs.
+
+  Lemma lc_unpack : forall s xs ro body, lc body -> lc (unpack s xs ro body).
+  Proof.
+    intros s xs ro body Hbody. unfold unpack.
+    assert (Hrest : lc (rest_let s xs ro body)).
+    { unfold rest_let. destruct ro as [r | ]; [ | exact Hbody ].
+      assert (Hclose : lc_at 1 (close_exp (var_of r) body))
+        by (apply (proj1 lc_close_mut); exact Hbody).
+      exact (conj (lc_restricts (List.map lab xs) (e_fvar_f s) I) Hclose). }
+    revert Hrest. generalize (rest_let s xs ro body) as tl. clear Hbody.
+    induction xs as [| x ys IH]; intros tl Hrest; simpl.
+    - exact Hrest.
+    - assert (Hclose : lc_at 1 (close_exp (var_of x)
+                (fold_right (fun x acc => e_let (e_proj (e_fvar_f s) (lab x))
+                                             (close_exp (var_of x) acc)) tl ys)))
+        by (apply (proj1 lc_close_mut); exact (IH tl Hrest)).
+      exact (conj I Hclose).
+  Qed.
 
   Inductive Den : tree -> exp -> Prop :=
     | D_num : forall n,
@@ -360,6 +440,24 @@ Section Denotation.
     | D_record : forall items fs,
         Den_items items fs ->
         Den (Node R_record (sym "{" :: items)) (e_rec fs)
+    | D_spread_record : forall cs base rest fs,
+        Den (Node R_expr cs) base ->
+        Den_sep rest fs ->
+        Den (Node R_record
+               (sym "{" :: Node R_spread [sym "..."; Node R_expr cs] :: rest))
+            (spread_nest base fs)
+    | D_destructure : forall ps xs ro vs semi cs v body s,
+        Den_pat_start ps xs ro ->
+        (semi = [] \/ semi = [sym ";"]) ->
+        Den (Node R_value vs) v ->
+        Den (Node R_expr cs) body ->
+        ~ AtomSetImpl.In s (fv_exp body) ->
+        (forall x, List.In x (xs ++ match ro with Some r => [r] | None => [] end) ->
+                   s <> var_of x) ->
+        Den (Node R_destructure
+               ([Node R_record_pattern (sym "{" :: ps); sym "="; Node R_value vs]
+                  ++ semi ++ [Node R_expr cs]))
+            (e_let v (close_exp s (unpack s xs ro body)))
     | D_local : forall d x v cs body,
         Den_decl d x v ->
         is_fn_decl d = false ->
@@ -533,6 +631,14 @@ Proof.
       by (apply lc_curry; exact IHbody).
     exact Hcurry.
   - (* record *) intros items fs Hitems IH. exact IH.
+  - (* record with a spread: the nest of single spreads *)
+    intros cs base rest fs Hbase IHbase Hsep IHsep.
+    exact (lc_spread_nest fs base IHbase IHsep).
+  - (* destructuring *)
+    intros ps xs ro vs semi cs v body s Hpat Hsemi Hv IHv Hbody IHbody Hfresh Hdistinct.
+    assert (Hclose : lc_at 1 (close_exp s (unpack var_of tbl s xs ro body)))
+      by (apply (proj1 lc_close_mut); exact (lc_unpack var_of tbl s xs ro body IHbody)).
+    exact (conj IHv Hclose).
   - (* local *)
     intros d x v cs body Hd IHd _ Hbody IHbody.
     assert (Hclose : lc_at 1 (close_exp (var_of x) body))

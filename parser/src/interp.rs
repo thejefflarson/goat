@@ -197,7 +197,7 @@ impl<'a> Run<'a> {
                     break;
                 }
             }
-            self.junk(end, "unexpected input");
+            self.statement_junk(end, "unexpected input");
         }
         self.events.push(Event::Skip);
         self.events.push(Event::Close);
@@ -326,7 +326,12 @@ impl<'a> Run<'a> {
                 end += 1;
             }
             if end < self.tokens.len() && self.text(end) == text {
-                self.junk(end, &format!("unexpected input, expected `{text}`"));
+                let message = format!("unexpected input, expected `{text}`");
+                if text == "done" {
+                    self.statement_junk(end, &message);
+                } else {
+                    self.junk(end, &message);
+                }
                 if self.expr(inner) {
                     return true;
                 }
@@ -378,10 +383,68 @@ impl<'a> Run<'a> {
             span: self.tokens[self.position].start..self.tokens[end - 1].end,
             message: message.into(),
         });
+        self.skip_tokens(end);
+    }
+
+    fn skip_tokens(&mut self, end: usize) {
         self.events.push(Event::Open(Kind::Error));
         self.events.extend((self.position..end).map(Event::Token));
         self.events.push(Event::Close);
         self.position = end;
+    }
+
+    /// Junk where a statement could start. When a complete expression ends the
+    /// line before, the fault is a forgotten `;`: say so at the gap, with a
+    /// `MISSING` node standing in for it, and skip the tokens as usual.
+    fn statement_junk(&mut self, end: usize, otherwise: &str) {
+        if end == self.position {
+            return;
+        }
+        let Some(message) = self.missing_semicolon() else {
+            return self.junk(end, otherwise);
+        };
+        self.diagnostics.push(Diagnostic {
+            span: 0..0,
+            message,
+        });
+        self.events.push(Event::Missing(";"));
+        self.skip_tokens(end);
+    }
+
+    fn missing_semicolon(&self) -> Option<String> {
+        const STARTS: [&str; 7] = ["if", "match", "do", "tag", "program", "function", "fn"];
+        const MAX_QUOTED: usize = 40;
+        let (prev, next) = (
+            self.tokens.get(self.position.checked_sub(1)?)?,
+            self.tokens.get(self.position)?,
+        );
+        let ends_expression = match prev.kind {
+            TokenKind::Number | TokenKind::String | TokenKind::Name | TokenKind::Literal => true,
+            TokenKind::Punct | TokenKind::Keyword => {
+                matches!(&self.source[prev.start..prev.end], ")" | "]" | "}" | "done")
+            }
+            _ => false,
+        };
+        let next_text = &self.source[next.start..next.end];
+        let starts_statement = match next.kind {
+            TokenKind::Number | TokenKind::String | TokenKind::Name | TokenKind::Literal => true,
+            TokenKind::Punct => matches!(next_text, "(" | "[" | "{"),
+            TokenKind::Keyword => STARTS.contains(&next_text),
+            _ => false,
+        };
+        if !ends_expression
+            || !starts_statement
+            || !self.source[prev.end..next.start].contains('\n')
+        {
+            return None;
+        }
+        let before = &self.source[..prev.end];
+        let line = before[before.rfind('\n').map_or(0, |i| i + 1)..].trim();
+        Some(if line.len() <= MAX_QUOTED {
+            format!("put a `;` after `{line}` to start a new statement")
+        } else {
+            "put a `;` here to start a new statement".into()
+        })
     }
 
     fn text(&self, at: usize) -> &str {

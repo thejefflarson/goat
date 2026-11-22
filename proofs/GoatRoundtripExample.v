@@ -87,3 +87,30 @@ Qed.
    own. *)
 Example unit_is_not_printed : ~ scoped 0 e_unit.
 Proof. intros H. exact H. Qed.
+
+(* x = 1; {...(x), lab0: x}: a spread, printed with a parenthesised base. *)
+Definition sample_spread : exp :=
+  e_let (e_num 1) (e_spread (e_fvar_b 0) 0 (e_fvar_b 0)).
+
+Example sample_spread_scoped : scoped 0 sample_spread.
+Proof. simpl. repeat split; first [ exact I | lia ]. Qed.
+
+Example sample_spread_interned : Interned sample_spread.
+Proof.
+  intros n Hn. simpl in Hn. destruct Hn as [<- | []]; vm_compute; reflexivity.
+Qed.
+
+Example sample_spread_roundtrip : forall var_of,
+  names_distinct var_of ->
+  exists t, peg (E_rule R_goat) (print sample_spread) (Ok [t] []) /\
+            Den_goat var_of t sample_spread.
+Proof.
+  intros var_of Hdistinct.
+  exact (print_parse_roundtrip var_of sample_spread Hdistinct
+           sample_spread_scoped sample_spread_interned).
+Qed.
+
+(* A restrict is written only inside a rest pattern, which also binds the
+   labels it removes, so the printer has no text for a bare restrict. *)
+Example restrict_is_not_printed : ~ scoped 0 (e_restrict e_true 0).
+Proof. intros H. exact H. Qed.

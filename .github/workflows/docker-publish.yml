@@ -6,6 +6,25 @@ on:
   push:
     branches: [master]
     tags: ['v*.*.*']
+    # The image is built from the web/Dockerfile context allowlist
+    # (web/Dockerfile.dockerignore). Path filters are not evaluated for tags.
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - parser/**
+      - checker/**
+      - mir/**
+      - wasm/**
+      - goat/**
+      - cli/**
+      - canvas/**
+      - wamr/**
+      - grammar/**
+      - web/**
+      - editor/**
+      - prelude/**
+      - examples/**
+      - .github/workflows/docker-publish.yml
 
 permissions:
   contents: read

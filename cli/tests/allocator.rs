@@ -22,7 +22,15 @@ struct Running {
 }
 
 fn instantiate(program: &Program, memory_limit: usize) -> Running {
-    let wasm = goat_wasm::emit(program).expect("program emits");
+    instantiate_poisoning(program, memory_limit, true)
+}
+
+fn instantiate_poisoning(program: &Program, memory_limit: usize, poison_freed: bool) -> Running {
+    let options = goat_wasm::EmitOptions {
+        poison_freed,
+        ..Default::default()
+    };
+    let wasm = goat_wasm::emit_with_options(program, options).expect("program emits");
     let mut config = Config::new();
     config.wasm_tail_call(true);
     let engine = Engine::new(&config).unwrap();
@@ -136,21 +144,23 @@ fn a_planted_leak_is_counted() {
 
 #[test]
 fn a_double_release_faults() {
-    let body = let_(
-        0,
-        alloc_record(1),
-        let_(1, drop_(0), let_(2, drop_(0), int(0))),
-    );
-    let mut run = instantiate(&program(vec![func(MTy::Int, body)]), usize::MAX);
-    let error = run.entry().expect_err("second release must trap");
-    assert!(
-        format!("{error:?}").contains("unreachable"),
-        "expected an unreachable trap, got {error:?}"
-    );
+    for poison_freed in [true, false] {
+        let body = let_(
+            0,
+            alloc_record(1),
+            let_(1, drop_(0), let_(2, drop_(0), int(0))),
+        );
+        let p = program(vec![func(MTy::Int, body)]);
+        let mut run = instantiate_poisoning(&p, usize::MAX, poison_freed);
+        let error = run.entry().expect_err("second release must trap");
+        assert!(
+            format!("{error:?}").contains("unreachable"),
+            "poison_freed={poison_freed}: expected an unreachable trap, got {error:?}"
+        );
+    }
 }
 
-#[test]
-fn a_dangling_read_sees_poison() {
+fn dangling_read(poison_freed: bool) -> Vec<String> {
     let pair = LayoutId(2);
     let body = let_(
         0,
@@ -159,10 +169,20 @@ fn a_dangling_read_sees_poison() {
     );
     let mut p = program(vec![func(MTy::Int, body)]);
     p.layouts.push(Layout::Record(vec![MTy::Int, MTy::Int]));
-    let mut run = instantiate(&p, usize::MAX);
+    let mut run = instantiate_poisoning(&p, usize::MAX, poison_freed);
     run.entry().unwrap();
+    run.store.data().printed.clone()
+}
+
+#[test]
+fn a_dangling_read_sees_poison() {
     let poison = i64::from_le_bytes([0xFE; 8]);
-    assert_eq!(run.store.data().printed, [poison.to_string()]);
+    assert_eq!(dangling_read(true), [poison.to_string()]);
+}
+
+#[test]
+fn a_dangling_read_sees_stale_data_without_poison() {
+    assert_eq!(dangling_read(false), ["4"]);
 }
 
 #[test]
