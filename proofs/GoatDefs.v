@@ -301,7 +301,7 @@ Definition gen (G : ctx) (T : typ) (k : sort_fn) : scheme :=
       T k.
 
 (* ================================================================== *)
-(* Tag groups (ADR 0016, the closed-tags amendment).  A group is declared  *)
+(* Tag groups (docs/design/closed-tags-plan.md).  A group is declared  *)
 (* by [w : gdecl], a list of its tags in declaration order, each a list of *)
 (* slot codes: 0 is the group itself (the recursion), 1 to 5 are the       *)
 (* concrete types Int, Float, Bool, Unit, String, and [6 + j] is the       *)

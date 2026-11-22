@@ -22,6 +22,7 @@ preservation) is B3 (#71).
 | `GoatRows.v` | Row-equivalence theory: L1 (equivalence + congruence), L2 (head-shape "no confusion" + arrow/record inversion up to `≅`), L2′ (the §3 per-label characterization, soundness direction), L3 (row surfacing). Over `typ`/`row`/`teq`/`req` only. |
 | `GoatDefs.v` | The declarative type system and operational semantics (`docs/semantics.md` §4–§6), hand-written over the generated syntax: type/row substitution, free-variable predicates, schemes, contexts, instantiation, generalization, values, small-step reduction, typing. |
 | `GoatMu.v` | The type algebra of the one binder in `typ`: unrolling `open_typ`, local closure `lct`, how substitution commutes with unrolling (`ap_open_mut`), how type equality respects unrolling (`teq_open`, `teq_unroll`), and the guard `gd`/`guarded` with its closure under substitution and `teq`. |
+| `GoatTags.v` | Tag groups (phase 3): the algebra of a group type's parameter spine and of a tag's payload (`teq_spine_inv`, `teq_tag_payload`, `ap_tag_payload`), and the arms of a `match` under substitution. |
 | `GoatRecTypes.v` | Iso-recursive types: worked examples. `P = mu t. {moved: (t) -> t; x: Int}`, a `fold`ed ball, a `step` that unfolds its receiver, a run, and what has no derivation (a fold missing its `x`, self-application, a record with no function). |
 | `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, and **Progress**. |
 | `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), the free-variable facts of a bijective renaming, and `gen_more_gen` (generalizing over a smaller context quantifies more, at the sorts the extra atoms already had). What `GoatBij`/`GoatHM`/`GoatSound` build on. |
@@ -31,6 +32,7 @@ preservation) is B3 (#71).
 | `GoatLit.v` | Reads the argument of `e_num` as an integer, so `e_num 3` works in a file that never imports ZArith (and in the generated printer table). |
 | `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`). |
 | `GoatPhase2.v` | Phase 2 of ADR 0037: worked examples for the value restriction (which terms `is_gen_value` accepts), a generalized binding used at two types, a recursive group (its typing, its unrolling, a run) and a group member that is not a function (no derivation). |
+| `GoatPhase3.v` | Phase 3 of ADR 0037: worked examples for tag groups: `Hit(3)`, a `match` that runs, an `else`, `Link(1, Link(2, Empty))`, and what has no derivation (a match missing a tag, a repeated arm, a tag outside the group, a list that mixes element types). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
 | `GoatPeg.v` | Ford-style relational PEG semantics of the generated grammar over a token stream, and **T2** `peg_deterministic`. |
@@ -222,6 +224,111 @@ accepts elaborates into an iso-recursive one), which needs variants, methods and
 the algorithm model; the type of an open-extensible recursive receiver; and
 phase 3's tag signature, which must keep closed payload types in the sense of
 `lct`, since a payload under a `mu` mentions an index.
+
+## Phase 3 (ADR 0037, continued): tag groups, construction and `match`
+
+The language design this models is `docs/design/closed-tags-plan.md` with the
+owner's later decisions on #500: every tag is closed, and a tag belongs to a
+group. `tag G = A | B(_, G) | C(Int, _)` declares tags whose payload slots are a
+concrete type, the group itself (the recursion), or `_`, an implicit parameter
+of the group: a fresh type at each construction, and the same type throughout
+one value. A tag without parentheses has no payload. A lone `tag Ping` is a
+group of one. A `match` pins its scrutinee to one group and must name every tag
+of it unless it has an `else`. Lists are the prelude group
+`tag List = Empty | Link(_, List)`, with `[..]` as sugar. The plan is
+`docs/design/phase3-proof-plan.md`; its owner answers are on #452.
+
+What the calculus gained, in `goat_ln.ott` (and `Goat_ott.v`, regenerated):
+
+- a type `grp w T`, the type of a value of the group `w`, whose argument `T`
+  spells the group's parameters as a spine `(T0) -> (T1) -> ... -> Unit`;
+- a term `con w tg (e)`, tag `tg` of the group `w` around the payload `e`, and a
+  term `match w (e) with ars`, whose arms `ars` are a list ending in nothing
+  (the arms must then be exhaustive) or in `else e`. Each arm
+  `tg x => e` binds one variable, the payload. The arms are a third nonterminal
+  in the mutual block with `exp` and `fields`, so Ott generates `open`, `lc`,
+  `fv` and `subst` for them, and every proof that inducts over terms gained a
+  third conjunct.
+
+`GoatDefs.v` defines the group declaration `gdecl` (a list of tags, each a list
+of slot codes: `0` the group, `1` to `5` the concrete `Int`, `Float`, `Bool`,
+`Unit`, `String`, and `6 + j` the group's parameter `j`), the payload type of a
+tag (`tag_payload`: `Unit` for no slots, else the closed record of the slots,
+labelled by position), the arms functions (`arms_find`, `arms_default`,
+`arms_idx`, `arms_wf`), and:
+
+- `T_Con`: tag `tg < length w` around a payload of `tag_payload w Ts tg` has type
+  `grp w (spine Ts)`. This is where the group instantiates its `_`s: `Ts` is any
+  list of types;
+- `T_Match`: a scrutinee of type `grp w (spine Ts)`; arms that name each tag at
+  most once, only tags of `w`, and either every tag or an `else` (`arms_wf`,
+  ADR 0037 decision 1, exhaustiveness in the rules); every arm typed with its
+  variable at `tag_payload w Ts tg`, and the `else` typed, at one result type;
+- `st_con1`, `st_match1`, `st_match_arm` (the arm for a finished construction's
+  tag runs on the payload) and `st_match_else`; `tr_con` and `tr_match` carry a
+  trap out of the subterm.
+
+`GoatTags.v` is the algebra the proofs need: equal parameter spines are equal
+lists (`teq_spine_inv`), equal parameters give equal payloads
+(`teq_tag_payload`), substitution acts on the parameters alone
+(`ap_tag_payload`), and substituting into arms keeps `arms_wf`.
+
+`progress`, `preservation`, `soundness` and `infer_closed_sound` hold with 0
+admits and no axiom (`make check-assumptions`). The new canonical form is
+`canon_grp_spine` (a value at a group type is a construction of one of its
+tags around a value), and `match_inv` and `con_inv` are the inversions
+preservation uses. `GoatPhase3.v` shows the rules working: `Hit(3)`, a `match`
+that runs, an `else`, `Link(1, Link(2, Empty))`, `Empty` at every element type,
+and what has no derivation (a match missing a tag, a repeated arm, a tag outside
+the group, `Link(true, Link("a", Empty))`).
+
+Modelling calls made for this phase, each the conservative choice, none a
+language change:
+
+- **Groups are nominal.** The recursion is carried by the group's declaration,
+  not by `mu` and `fold`: `T_Con` and `T_Match` are the fold and unfold of a
+  group type, built in. A value of a recursive group needs no `fold` term, and
+  `mu` stays what ADR 0032 uses it for (recursive records). The declaration `w`
+  sits in the type and in the term, so no tag signature threads through the
+  judgment: every `typing` statement is unchanged, and no theorem has a
+  well-formedness hypothesis, because the rules are sound for any `w`. (The
+  owner's Q1 option A, a signature on the judgment, was written before the
+  declaration moved into the group type; the declaration in the type removes
+  the threading cost Q1 was about.)
+- **Parameters are a spine.** The arguments of `grp w T` are `(T0) -> (T1) -> ... -> Unit`
+  rather than a list or a row, so type equality (`teq_grp`) reuses the arrow's
+  congruence and `typ` gains no list. A parameter slot beyond the spine reads
+  `Unit`; the checker never builds one.
+- **Concrete slots are the five base types.** Records, lists and functions as
+  concrete payload slots (the checker allows them) are an extension of the slot
+  codes; they change no proof.
+- **Rank** (ADR 0036) is the tag's position in `w`. No phase-3 rule reads it.
+- **Else with full cover** is accepted, as the checker accepts it. A repeated
+  arm has no derivation.
+- **A payload is the closed record of its slots** (a tag with one slot, too);
+  surface `Tag(a, b)` denotes to a construction of the record `{0: a; 1: b}` and
+  an arm to projections of its variable, as in the plan's Q7.
+- **Literal `match`, list patterns, `for`, destructuring** are not calculus
+  forms (plan Q8): they denote to `if v == lit` and to nested `match`es.
+
+Outside the proven fragment, by decision D5(b): the host's event and shape
+families (`Tick`, `KeyDown`, `Circle`, `Line`, and the rest of the vocabulary)
+stay open rows in the checker and are not modelled here. A `match` on a host
+event with an `else` is the checker's, not the calculus's.
+
+The parser and printer proofs (T1 to T3) are unchanged: the printed fragment
+never contains `con` or `match` (`scoped` excludes them), and the denotation
+functions (`close_exp_rec`, `bind_group_rec`, `inst_rec`) gained the cases that
+carry the arms through. Tag declarations, construction and `match` have no
+denotation yet, so `rule_map.rs` exempts `e_con` and `e_match`.
+
+What waits, in the next ticket (Algorithm W and the differential test for tag
+groups, filed from this one): `infer` returns `None` on `con` and `match`, and
+`unify_t` has no `grp` case, so the algorithm is incomplete on every tagged
+program; extending it needs unification of group types (equal `w`, then the
+spines), the checker's `close_match`, and the corpus and differential driver for
+tag programs against the checker of #517. The typeset `goat.ott` and
+`docs/semantics.md` do not yet state the group rules.
 
 ## Generic operators: sorted type variables (design Q)
 

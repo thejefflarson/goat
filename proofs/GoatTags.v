@@ -1,5 +1,5 @@
-(* Tag groups: the algebra of group types and payloads (ADR 0016, the
-   closed-tags amendment; GoatDefs.v defines [spine], [slot_ty], [tag_payload]
+(* Tag groups: the algebra of group types and payloads (docs/design/closed-tags-plan.md;
+   GoatDefs.v defines [spine], [slot_ty], [tag_payload]
    and the arms functions).  What the metatheory needs of them: the arguments
    of a group type are equal exactly when their lists are, equal arguments
    give equal payloads, and substitution acts on the arguments alone. *)
