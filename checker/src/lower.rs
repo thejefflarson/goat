@@ -2204,13 +2204,16 @@ impl Lower {
                 self.check_no_payload(&tag, span);
                 PatternPayload::Whole(binders.remove(0))
             }
-            _ => PatternPayload::Fields(
-                binders
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, b)| (i.to_string(), b))
-                    .collect(),
-            ),
+            _ => {
+                self.check_no_payload(&tag, span);
+                PatternPayload::Fields(
+                    binders
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, b)| (i.to_string(), b))
+                        .collect(),
+                )
+            }
         };
         Pattern { tag, span, payload }
     }

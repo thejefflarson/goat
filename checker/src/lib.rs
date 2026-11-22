@@ -629,6 +629,9 @@ mod tests {
         };
         assert_eq!(&src[errors[0].span.start..errors[0].span.end], "A(x)");
 
+        let src = "tag A | B match A do A(x, y) then 1 else 2 done";
+        assert_eq!(type_of(src).unwrap_err(), want);
+
         let src = "tag Ping Ping(3)";
         assert_eq!(
             type_of(src).unwrap_err(),
