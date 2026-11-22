@@ -369,3 +369,54 @@ fn an_error_naming_an_unused_slot_leaves_it_out() {
     assert!(!message.contains(": t"), "{message}");
     assert!(message.contains("Amber"), "{message}");
 }
+
+#[test]
+fn a_tag_declared_with_a_payload_is_not_written_bare() {
+    for (source, message) in [
+        (
+            "tag Maybe = Nothing | Just(_) x = Just 1",
+            "`Just` takes a value: write `Just(…)`",
+        ),
+        (
+            "tag P = End | More(_, _, P) x = More 1",
+            "`More` takes 3 values: write `More(…, …, …)`",
+        ),
+        (
+            "tag Hit(_) x = Hit 1",
+            "`Hit` takes a value: write `Hit(…)`",
+        ),
+        (
+            "tag Maybe = Nothing | Just(_) match Nothing do Nothing then 0 Just then 1 done",
+            "`Just` takes a value: write `Just(…)`",
+        ),
+    ] {
+        let (found, text) = first_error(source);
+        assert_eq!(found, message, "{source}");
+        assert!(["Just", "More", "Hit"].contains(&text.as_str()), "{text}");
+    }
+}
+
+#[test]
+fn an_int_and_a_float_in_one_slot_widen_like_list_items() {
+    let pile = "tag Pile = Nil | Cons(_, Pile) ";
+    assert!(check(&format!("{pile} x = Cons(7 // 2, Cons(2.5, Nil)) 1")).is_ok());
+    assert!(check(&format!("{pile} x = Cons(2.5, Cons(7 // 2, Nil)) 1")).is_ok());
+    assert!(check_with_prelude(PRELUDE, "xs = [7 // 2, 2.5] 1").is_ok());
+    let (message, _) = first_error(&format!("{pile} x = Cons(7 // 2, Cons(\"a\", Nil)) 1"));
+    assert!(message.contains("holds one kind of thing"), "{message}");
+}
+
+#[test]
+fn only_the_slot_that_mixes_widens_and_a_written_slot_never_does() {
+    let pairs = "tag P = End | More(_, _, P) ";
+    assert!(
+        check(&format!(
+            "{pairs} x = More(7 // 2, 1, More(2.5, 5 // 2, End)) 1"
+        ))
+        .is_ok()
+    );
+    assert!(check(&format!("{pairs} x = More(1, 7 // 2, More(2, 2.5, End)) 1")).is_ok());
+    let shots = "tag Shots = Miss | Hit(Int, _) ";
+    assert!(check(&format!("{shots} x = Hit(7 // 2, 2.5) 1")).is_ok());
+    assert!(check(&format!("{shots} x = Hit(2.5, 1) 1")).is_err());
+}

@@ -561,7 +561,7 @@ fn nullary_and_unary_tags_match() {
         value("tag Ring(_) match Ring(5) do Ring(r) then r else 0 done"),
         num(5.0)
     );
-    let pick = "tag AorB = A(_) | B f = program(s) do match s do A then 1 B then 2 done done ";
+    let pick = "tag AorB = A | B f = program(s) do match s do A then 1 B then 2 done done ";
     assert_eq!(value(&format!("{pick} f(A)")), num(1.0));
     assert_eq!(value(&format!("{pick} f(B)")), num(2.0));
 }

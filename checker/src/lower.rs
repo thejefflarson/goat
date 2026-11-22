@@ -1866,7 +1866,33 @@ impl Lower {
             }
             None => Vec::new(),
         };
-        self.tag_node(span, name.text().to_string(), args)
+        let name = name.text().to_string();
+        if args.is_empty() {
+            self.check_not_bare(&name, span);
+        }
+        self.tag_node(span, name, args)
+    }
+
+    /// A tag declared with a payload is written with one.
+    fn check_not_bare(&mut self, tag: &str, span: Span) {
+        let Some(Some(group)) = self.tags.get(tag) else {
+            return;
+        };
+        let Some((_, payload)) = group.tags.iter().find(|(name, _)| name == tag) else {
+            return;
+        };
+        let message = match payload {
+            Ty::Unit => return,
+            Ty::Record(row)
+                if row.fields().count() > 1 && crate::infer::field_of(row, "0").is_some() =>
+            {
+                let n = row.fields().count();
+                let dots = vec!["…"; n].join(", ");
+                format!("`{tag}` takes {n} values: write `{tag}({dots})`")
+            }
+            _ => format!("`{tag}` takes a value: write `{tag}(…)`"),
+        };
+        self.errors.push(GoatError::new(span, message));
     }
 
     /// One argument is the payload as is; several become a record labelled
@@ -2119,7 +2145,10 @@ impl Lower {
             });
         }
         let payload = match binders.len() {
-            0 => PatternPayload::None,
+            0 => {
+                self.check_not_bare(&tag, self.span_of(&head));
+                PatternPayload::None
+            }
             1 => PatternPayload::Whole(binders.remove(0)),
             _ => PatternPayload::Fields(
                 binders

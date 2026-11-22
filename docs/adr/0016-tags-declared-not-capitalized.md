@@ -171,6 +171,8 @@ the function that walked it. This amendment closes both.
    another name. No two declarations share a tag name.
 
 Mono's layout families (ADR 0010) are unchanged: they remain for the host
-families and for rows narrowed by a partial `match`. Fixing the numeric
-widening of a list's items (ADR 0040) is still special to the built-in list's
-`Link`; a user group's slots unify plainly.
+families and for rows narrowed by a partial `match`. An `Int` and a `Float` in
+one `_` slot of a group value widen as list items do (ADR 0040), through one
+path for the built-in list and user groups; a slot written with a type does not
+widen. A tag declared with a payload and written bare is an error ("`Just`
+takes a value: write `Just(…)`"), as is a bare-declared tag given one.

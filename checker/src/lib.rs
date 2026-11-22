@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn constructing_a_lone_tag_gives_its_closed_group_of_one() {
         assert_eq!(type_of("tag Ring(_) Ring(5)").unwrap(), "[Ring: Number]");
-        assert_eq!(type_of("tag Ring(_) Ring").unwrap(), "[Ring]");
+        assert_eq!(type_of("tag Ring Ring").unwrap(), "[Ring]");
         assert_eq!(
             type_of("tag Ring(_) Ring(\"a\")").unwrap(),
             "[Ring: String]"
@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn payload_mismatch_between_construction_and_pattern_is_an_error() {
         let err = type_of("tag Ring(_) match Ring(5) do Ring then 0 else 1 done").unwrap_err();
-        assert!(err.contains("type mismatch"), "{err}");
+        assert_eq!(err, "`Ring` takes a value: write `Ring(…)`");
         let err =
             type_of("tag Ring(_) match Ring(5) do Ring(a) then a + true else 1 done").unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");

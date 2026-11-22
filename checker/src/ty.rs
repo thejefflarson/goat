@@ -156,6 +156,17 @@ impl Group {
             .collect()
     }
 
+    /// The positions of the fields of `tag`'s payload that hold the group
+    /// itself.
+    pub fn tails_of(&self, tag: &str) -> Vec<usize> {
+        let Some((_, Ty::Record(row))) = self.tags.iter().find(|(name, _)| name == tag) else {
+            return Vec::new();
+        };
+        (0..row.fields().count())
+            .filter(|i| matches!(field_of(row, &i.to_string()), Some(&Ty::Var(Self::SELF))))
+            .collect()
+    }
+
     /// The placeholder for the group's `index`th parameter in a payload.
     pub const fn param(index: usize) -> TypeVar {
         Self::SELF - 1 - index as TypeVar

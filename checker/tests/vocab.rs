@@ -143,7 +143,7 @@ fn else_is_the_catch_all_over_the_hosts_group() {
 
 #[test]
 fn the_turtles_events_are_not_the_toy_hosts() {
-    let source = format!("tag Tick(_)\n{}", program("Tick then model", LED));
+    let source = format!("tag Tick\n{}", program("Tick then model", LED));
     let (message, text) = the_error(&source);
     assert_eq!(
         message,

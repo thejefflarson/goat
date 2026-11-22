@@ -425,7 +425,8 @@ const LENGTH: &str = "length = program(xs) do match xs do Empty then 0 \
 
 #[test]
 fn nullary_tags_pick_an_arm() {
-    let pick = "tag Abc = A(_) | B(_) | C f = program(s) do match s do A then 1 B then 2 else 3 done done ";
+    let pick =
+        "tag Abc = A | B | C f = program(s) do match s do A then 1 B then 2 else 3 done done ";
     assert_eq!(run(&format!("{pick} f(A)")), "1");
     assert_eq!(run(&format!("{pick} f(B)")), "2");
     assert_eq!(run(&format!("{pick} f(C)")), "3");
@@ -576,7 +577,7 @@ fn tags_flow_through_branches_and_nested_matches() {
                 f = program(x) do match x do A(n) then n B(n) then n * 10 done done \
                 f(pick(true)) + f(pick(false))";
     assert_eq!(run(pick), "21");
-    let nested = "tag Aq = A(_) | Q tag Bc = B(_) | C f = program(x) do match (match x do A then B else C done) do \
+    let nested = "tag Aq = A | Q tag Bc = B | C f = program(x) do match (match x do A then B else C done) do \
                   B then 1 C then 2 done done f(A) + f(Q)";
     assert_eq!(run(nested), "3");
     let shadow = "tag Pair(_) f = program(x) do match x do Pair(a, b) then \

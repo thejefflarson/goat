@@ -605,8 +605,8 @@ fn origin_at(row: &Row, label: &str) -> Option<Span> {
     }
 }
 
-/// Record `span` as where the list element in a `Link` payload was written.
-fn mark_element(payload: &mut Ty, span: Span) {
+/// Record `span` as where the item in field `index` of a payload was written.
+fn mark_element(payload: &mut Ty, index: usize, span: Span) {
     let Ty::Record(row) = payload else {
         return;
     };
@@ -615,7 +615,7 @@ fn mark_element(payload: &mut Ty, span: Span) {
         label, at, rest, ..
     } = row
     {
-        if label == "0" {
+        if *label == index.to_string() {
             *at = ty::Origin(Some(span));
             return;
         }
@@ -623,9 +623,9 @@ fn mark_element(payload: &mut Ty, span: Span) {
     }
 }
 
-/// Put `element` in place of the list element in a `Link` payload, giving back
-/// the type that was there.
-fn swap_element(payload: &mut Ty, element: Ty) -> Option<Ty> {
+/// Put `element` in place of field `index` of a payload, giving back the type
+/// that was there.
+fn swap_element(payload: &mut Ty, index: usize, element: Ty) -> Option<Ty> {
     let Ty::Record(row) = payload else {
         return None;
     };
@@ -634,7 +634,7 @@ fn swap_element(payload: &mut Ty, element: Ty) -> Option<Ty> {
         label, field, rest, ..
     } = row
     {
-        if label == "0" {
+        if *label == index.to_string() {
             return Some(std::mem::replace(Arc::make_mut(field), element));
         }
         row = Arc::make_mut(rest);
@@ -3040,16 +3040,6 @@ impl Inferer {
                     Some(p) => self.infer(p),
                     None => Ty::Unit,
                 };
-                if name == "Link"
-                    && let Some(Expr {
-                        kind: ExprKind::Record { fields },
-                        ..
-                    }) = payload.as_deref()
-                    && let Some((_, element)) = fields.first()
-                {
-                    mark_element(&mut payload_ty, element.span);
-                    self.share_element_slot(&mut payload_ty, element.span);
-                }
                 self.constructed.push((name.clone(), expr.span));
                 if let Some(group) = group {
                     let parts = match payload.as_deref() {
@@ -3062,10 +3052,21 @@ impl Inferer {
                                 .enumerate()
                                 .all(|(i, (label, _))| *label == i.to_string()) =>
                         {
-                            Some((fields.iter().map(|(_, e)| e.span).collect(), errors_before))
+                            Some((
+                                fields.iter().map(|(_, e)| e.span).collect::<Vec<Span>>(),
+                                errors_before,
+                            ))
                         }
                         _ => None,
                     };
+                    if let Some((spans, _)) = &parts {
+                        for slot in group.slots_of(name) {
+                            if let Some(&span) = spans.get(slot) {
+                                mark_element(&mut payload_ty, slot, span);
+                                self.share_slot(&mut payload_ty, (group, name, slot), span);
+                            }
+                        }
+                    }
                     return self.construct_grouped(group, name, &payload_ty, parts, expr.span);
                 }
                 Ty::Variant(Row::Extend {
@@ -3395,50 +3396,51 @@ impl Inferer {
         }
     }
 
-    /// A number in a `Link` payload flows into the slot the rest of the list
-    /// already uses for its elements, so one `Float` among `Int`s makes the
-    /// whole literal a list of `Float`s and no element's type is left apart.
-    fn share_element_slot(&mut self, payload: &mut Ty, span: Span) {
-        let Some(item) = swap_element(payload, Ty::Unit) else {
+    /// A number in a `_` slot of a payload flows into the slot the rest of the
+    /// group value already uses, so one `Float` among `Int`s makes the whole
+    /// value hold `Float`s and no item's type is left apart. A slot written
+    /// with a type does not widen.
+    fn share_slot(
+        &mut self,
+        payload: &mut Ty,
+        (group, tag, slot): (&Group, &str, usize),
+        span: Span,
+    ) {
+        let Some(item) = swap_element(payload, slot, Ty::Unit) else {
             return;
         };
         if !self.may_be_number(&item) {
-            swap_element(payload, item);
+            swap_element(payload, slot, item);
             return;
         }
-        let rest = match payload {
-            Ty::Record(row) => field_of(row, "1").cloned(),
-            _ => None,
+        let rests: Vec<Ty> = match payload {
+            Ty::Record(row) => group
+                .tails_of(tag)
+                .into_iter()
+                .filter_map(|tail| field_of(row, &tail.to_string()).cloned())
+                .collect(),
+            _ => Vec::new(),
         };
-        let slot = match rest.and_then(|rest| self.list_element(&rest)) {
+        let known = rests
+            .iter()
+            .find_map(|rest| self.field_of_tag(rest, tag, slot));
+        let slot_ty = match known {
             Some(element) if self.flow_end(&element).is_none() => {
-                swap_element(payload, item);
+                swap_element(payload, slot, item);
                 return;
             }
             Some(element) => element,
             None => self.fresh(),
         };
         if self.is_certainly_number(&item) {
-            self.require_number(&self.resolve(&slot));
+            self.require_number(&self.resolve(&slot_ty));
         }
         self.flows.push(Flow {
             producer: item,
-            slot: slot.clone(),
+            slot: slot_ty.clone(),
             span,
         });
-        swap_element(payload, slot);
-    }
-
-    /// The type of the elements of `list`, if it is already known to be a
-    /// `Link`.
-    fn list_element(&self, list: &Ty) -> Option<Ty> {
-        let Ty::Variant(row) = self.resolve_head(list) else {
-            return None;
-        };
-        let Ty::Record(link) = self.resolve(field_of(&row, "Link")?) else {
-            return None;
-        };
-        field_of(&link, "0").cloned()
+        swap_element(payload, slot, slot_ty);
     }
 
     /// Whether `ty` is an `Int`, a `Float` or a variable that must be one, so
