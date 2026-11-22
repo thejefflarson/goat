@@ -147,7 +147,9 @@ onto a row variable that lacks the label (below); `print` or `trap`; `and`, `or`
 which lowering gives every `repeat` and `for`); a comparison, then arithmetic,
 on operands that are not `Int`, `Float`, `String` or `Bool`. After those come
 the reasons that are about the shape of a program and not a missing feature: a
-recursive group split by a value binding, a `let` of a numeral the calculus
+recursive group that a value binding uses before the group's last member (the
+checker types the use at the member's monomorphic type, the hoisted `letrec` at
+its generalized one), a `let` of a numeral the calculus
 would generalize and the checker does not, an inferred type with a method
 field, an `if` without an `else`, a function or call with no parameters,
 a program that ends in a binding, a numeral of 2^30 or more, and `none of the
