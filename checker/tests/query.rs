@@ -358,6 +358,33 @@ fn a_match_arm_offers_the_scrutinees_tags() {
 }
 
 #[test]
+fn a_match_over_a_list_group_offers_its_tags_and_not_another_groups() {
+    let marked = "tag Pile = Nil | Cons(_, Pile)\np = Nil\nmatch p do\n  |";
+    let found = complete_at(marked).unwrap();
+    let tags: Vec<_> = found
+        .items
+        .iter()
+        .filter(|i| i.kind == ItemKind::Tag)
+        .map(|i| i.label.as_str())
+        .collect();
+    assert_eq!(tags, ["Nil", "Cons"]);
+    assert_eq!(item(marked, "Cons").detail, "{0: a, 1: Pile(a)}");
+}
+
+#[test]
+fn a_match_over_a_list_offers_the_preludes_list_tags() {
+    let marked = "xs = [1, 2]\nmatch xs do\n  |";
+    let tags: Vec<_> = complete_at(marked)
+        .unwrap()
+        .items
+        .iter()
+        .filter(|i| i.kind == ItemKind::Tag)
+        .map(|i| i.label.clone())
+        .collect();
+    assert_eq!(tags, ["Empty", "Link"]);
+}
+
+#[test]
 fn a_match_arm_leaves_out_the_tags_already_matched() {
     let marked = "tag Shape = Circle(Number) | Square(Number) | Dot\ns = Dot\n\
         match s do\n  Circle(r) then 1\n  |";

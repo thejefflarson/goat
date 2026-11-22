@@ -97,6 +97,13 @@ test("a match arm offers the scrutinee's tags with their payloads, minus the arm
   assert.deepEqual(at(`${head}match s do\n  Sq|`)!.labels, ["Square"]);
 });
 
+test("a match over a user list offers that group's tags, and over a list the prelude's", () => {
+  const pile = at("tag Pile = Nil | Cons(_, Pile)\np = Nil\nmatch p do\n  |")!;
+  assert.deepEqual(pile.options.filter((o) => o.kind === "tag").map((o) => o.label), ["Nil", "Cons"]);
+  const list = at("xs = [1, 2]\nmatch xs do\n  |")!;
+  assert.deepEqual(list.options.filter((o) => o.kind === "tag").map((o) => o.label), ["Empty", "Link"]);
+});
+
 test("a match arm, a binding value and a member all complete on a buffer that does not parse", () => {
   assert.ok(at("p = {x: 1, y: 2}\nforward(p.|\nback(3")!.labels.includes("y"));
   assert.ok(at("a = 1\nb = {x: 2\nc = |")!.labels.includes("b"));
