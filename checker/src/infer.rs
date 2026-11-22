@@ -4374,6 +4374,16 @@ impl Inferer {
             }
         };
 
+        if is_variant
+            && let Some(group) = arms.first().and_then(|arm| arm.pattern.group.as_ref())
+            && !matches!(self.resolve_head(&scrut_ty), Ty::Variant(row) if row_shape(&row).1.is_none())
+        {
+            let binder = self.fresh_id();
+            let args: Vec<TypeVar> = (0..group.params).map(|_| self.fresh_id()).collect();
+            let whole = group.instantiate_with(binder, &args);
+            self.unify(&scrut_ty, &whole, scrutinee.span);
+        }
+
         let mut result: Option<(Ty, Span)> = None;
         let mut handled: Vec<&str> = Vec::new();
         for arm in arms {

@@ -129,7 +129,7 @@ fn a_key_match_without_else_must_name_every_tag_of_the_hosts_group() {
     let source = program("Button(pad) then match pad do A then {n: 1} done", LED);
     let (message, text) = the_error(&source);
     assert!(message.contains("`B`"), "{message}");
-    assert!(text.starts_with("program(model, event)"), "{text}");
+    assert_eq!(text, "pad");
 }
 
 #[test]

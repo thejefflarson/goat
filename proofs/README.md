@@ -650,6 +650,11 @@ a `var_of` that gives the printer's binder names `v0`, `v1`, ... distinct atoms
   (`UPDATE_PRINTER_TABLE=1 cargo test -p goat_checker --test core_roundtrip`
   rewrites it), and the Coq build fails when the Coq printer disagrees with a
   row.
+- **Match rule.** The checker types a `match` as phase 3 models it: the
+  scrutinee is pinned to the group of the arms' tags, and the arms name every
+  tag of that group or end in an `else`. The host's event and shape families
+  are the one exception: a match on them still narrows an open row, outside
+  this model.
 - **Not covered.** Free variables (T3 is for programs), the grouped style, a
   `letrec` (T1 reads one; the printer does not write one), the unit value on its
   own, `float(e)`, everything T1 leaves out.

@@ -275,10 +275,10 @@ fn an_unknown_event_tag_is_a_spanned_error() {
     let update = update_of("    Tick(dt) then model\n    Frobnicate then model");
     let (message, text) = the_error(&interactive("{x: 0}", &update, DRAW));
     assert!(
-        message.starts_with("the host doesn't send a `Frobnicate` event"),
+        message.starts_with("`Frobnicate` isn't in the same group as `Tick`"),
         "{message}"
     );
-    assert!(text.starts_with("program(model, event)"), "{text}");
+    assert_eq!(text, "Frobnicate");
 }
 
 #[test]
@@ -305,8 +305,9 @@ fn an_event_payload_the_host_does_not_send_is_a_spanned_error() {
 #[test]
 fn a_partial_key_match_without_else_is_rejected() {
     let update = update_of("    KeyDown(k) then match k do Up then model Down then model done");
-    let (message, _) = the_error(&interactive("{x: 0}", &update, DRAW));
-    assert!(message.contains("`KeyDown` event carries"), "{message}");
+    let (message, text) = the_error(&interactive("{x: 0}", &update, DRAW));
+    assert!(message.contains("doesn't handle `Left`"), "{message}");
+    assert_eq!(text, "k");
 }
 
 #[test]
@@ -381,7 +382,7 @@ fn a_key_match_missing_a_key_is_a_spanned_error() {
     let arms = EVERY_KEY.replace("Right then model ", "");
     let (message, text) = the_error(&interactive("{x: 0}", &key_update(&arms), DRAW));
     assert!(message.contains("`Right`"), "{message}");
-    assert!(text.starts_with("program(model, event)"), "{text}");
+    assert_eq!(text, "key");
 }
 
 #[test]
