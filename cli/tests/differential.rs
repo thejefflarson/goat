@@ -425,7 +425,8 @@ const LENGTH: &str = "length = program(xs) do match xs do Empty then 0 \
 
 #[test]
 fn nullary_tags_pick_an_arm() {
-    let pick = "tag Abc = A | B | C f = program(s) do match s do A then 1 B then 2 else 3 done done ";
+    let pick =
+        "tag Abc = A | B | C f = program(s) do match s do A then 1 B then 2 else 3 done done ";
     assert_eq!(run(&format!("{pick} f(A)")), "1");
     assert_eq!(run(&format!("{pick} f(B)")), "2");
     assert_eq!(run(&format!("{pick} f(C)")), "3");

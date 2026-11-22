@@ -3007,8 +3007,7 @@ mod tests {
 
     #[test]
     fn pattern_binders_are_scoped_to_their_arm() {
-        let lowered =
-            lower("tag Ring match Empty do Ring(r) then r Empty then r done").unwrap();
+        let lowered = lower("tag Ring match Empty do Ring(r) then r Empty then r done").unwrap();
         assert_eq!(lowered.errors.len(), 1);
         assert!(lowered.errors[0].message.contains("unknown name `r`"));
     }

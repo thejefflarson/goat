@@ -132,3 +132,42 @@ patterns) — never a blend of base types.
   ever add them.
 - **Moving the host vocabulary into a goat prelude** — amends ADR 0015; separable
   follow-on. v1 only makes the vocab tag *names* declared.
+
+## Amendment: every tag is closed, and a tag without a payload is generic
+
+The decision above left a lone `tag Ping` open, and left lists open (`Empty`
+and `Link` were lone tags), so `xs = [1, "a"]` was rejected only later, inside
+the function that walked it. This amendment closes both.
+
+1. **A lone tag is a group of one.** `tag Ping` declares the closed group
+   `[Ping]`. Two lone tags never mix: `if c then Ping else Pong done` is an
+   error, and `tag Ping | Pong` is how to say they belong together.
+2. **A tag written without a payload has its payload inferred.** In `tag List =
+   Empty | Link` or `tag Maybe = Nothing | Just`, each payload-less tag carries
+   an implicit type parameter, instantiated with a fresh type variable at every
+   construction. `Just(1)` and `Just("a")` both type, with one `Just`.
+   A tag used with no argument still means no payload at that use. A tag
+   written with a payload (`Hit(Int)`) keeps it, concrete. This rule involves no
+   annotation and does not depend on letter case.
+3. **Recursion is found by use.** Constructing a value does not say which field
+   of a payload is the group itself, so the knot is tied where the group is
+   consumed, as it was for the open lists: a function that matches
+   `Cons(head, rest)` and calls itself on `rest` gets the recursive type
+   (ADR 0032), and applying it to a value whose items differ in type is a type
+   mismatch there. The one exception is the list: a group declared exactly
+   `tag List = Empty | Link` is recognised by its tags, with `Link` carrying
+   `{0: item, 1: the list}`, so `[1, "a"]` is rejected where it is written, with
+   the message "a list holds one kind of thing" at the item that differs.
+4. **The list is an ordinary group in the prelude.** The compiler no longer
+   builds it; the sugar `[..]` and the list patterns desugar to `Empty` and
+   `Link`, and a program checked with no prelude says that lists come from
+   `tag List = Empty | Link`.
+5. **The host's families stay open, as the one named exception.** The host's
+   event tags (`Tick`, `KeyDown`, ...) and shape tags (`Circle`, `Line`, ...)
+   are not groups: a program may handle a subset of them (ADR 0015, ADR 0020).
+   A program may not declare a tag the host already provides: the error is
+   "`Circle` is a tag the host already provides" with a hint to use it or pick
+   another name. No two declarations share a tag name.
+
+Mono's layout families (ADR 0010) are unchanged: they remain for the host
+families and for rows narrowed by a partial `match`.

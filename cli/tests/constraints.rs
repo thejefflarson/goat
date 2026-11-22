@@ -63,15 +63,11 @@ fn equality_on_variants() {
     assert_eq!(run("tag Ring Ring(1) == Ring(1)"), "true");
     assert_eq!(run("tag Ring Ring(1) == Ring(2)"), "false");
     assert_eq!(
-        run(
-            "tag Ring | Square a = if 1 < 2 then Ring(1) else Square(1) done  a == Ring(1)"
-        ),
+        run("tag Ring | Square a = if 1 < 2 then Ring(1) else Square(1) done  a == Ring(1)"),
         "true"
     );
     assert_eq!(
-        run(
-            "tag Ring | Square a = if 1 < 2 then Ring(1) else Square(1) done  a == Square(1)"
-        ),
+        run("tag Ring | Square a = if 1 < 2 then Ring(1) else Square(1) done  a == Square(1)"),
         "false"
     );
     assert_eq!(run("tag Pair Pair(1, \"a\") == Pair(1, \"a\")"), "true");

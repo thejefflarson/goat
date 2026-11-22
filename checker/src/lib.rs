@@ -427,7 +427,10 @@ mod tests {
     fn capitalization_does_not_decide_what_a_tag_is() {
         assert_eq!(type_of("tag up up(1)").unwrap(), "[up: Number]");
         assert_eq!(type_of("tag A tag B 1").unwrap(), "Number");
-        assert_eq!(type_of("tag a | b match b do a then 1 b then 2 done").unwrap(), "Number");
+        assert_eq!(
+            type_of("tag a | b match b do a then 1 b then 2 done").unwrap(),
+            "Number"
+        );
         assert_eq!(
             type_of("tag Foo f = program(Foo) do Foo(1) done f(program(x) do x done)").unwrap(),
             "Number"
@@ -520,8 +523,7 @@ mod tests {
 
     #[test]
     fn match_with_else_keeps_the_row_open() {
-        let src =
-            "tag Ring | Square area = program(s) do match s do Ring(r) then r * 2 else 0 done done area";
+        let src = "tag Ring | Square area = program(s) do match s do Ring(r) then r * 2 else 0 done done area";
         let ty = type_of(src).unwrap();
         assert!(ty.starts_with("([Ring: Number | t"), "{ty}");
     }
@@ -550,20 +552,17 @@ mod tests {
 
     #[test]
     fn arm_bodies_must_agree() {
-        let err =
-            type_of("tag Ring match Ring(5) do Ring(r) then r else true done").unwrap_err();
+        let err = type_of("tag Ring match Ring(5) do Ring(r) then r else true done").unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
-        let err = type_of(
-            "tag Ring | Square match Ring(5) do Ring(r) then r Square(w) then true done",
-        )
-        .unwrap_err();
+        let err =
+            type_of("tag Ring | Square match Ring(5) do Ring(r) then r Square(w) then true done")
+                .unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
     }
 
     #[test]
     fn match_missing_a_tag_is_an_error() {
-        let err =
-            type_of("tag Ring | Square match Ring(1) do Square(w) then w done").unwrap_err();
+        let err = type_of("tag Ring | Square match Ring(1) do Square(w) then w done").unwrap_err();
         assert!(err.contains("doesn't handle `Ring`"), "{err}");
         let src = "tag A | B f = program(s) do \
                      first = match s do A then 1 B then 2 done \
@@ -600,8 +599,8 @@ mod tests {
     fn payload_mismatch_between_construction_and_pattern_is_an_error() {
         let err = type_of("tag Ring match Ring(5) do Ring then 0 else 1 done").unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
-        let err = type_of("tag Ring match Ring(5) do Ring(a) then a + true else 1 done")
-            .unwrap_err();
+        let err =
+            type_of("tag Ring match Ring(5) do Ring(a) then a + true else 1 done").unwrap_err();
         assert!(err.contains("type mismatch"), "{err}");
     }
 
@@ -629,17 +628,12 @@ mod tests {
             warnings[0].message,
             "tag `Rng` is constructed but never matched anywhere"
         );
-        assert_eq!(
-            &src[warnings[0].span.start..warnings[0].span.end],
-            "Rng(5)"
-        );
+        assert_eq!(&src[warnings[0].span.start..warnings[0].span.end], "Rng(5)");
     }
 
     #[test]
     fn matched_tags_do_not_warn_and_each_tag_warns_once() {
-        assert!(
-            warnings_of("tag Ring match Ring(5) do Ring(r) then r else 0 done").is_empty()
-        );
+        assert!(warnings_of("tag Ring match Ring(5) do Ring(r) then r else 0 done").is_empty());
         assert!(warnings_of("1 + 2").is_empty());
         let warnings = warnings_of("tag Oops x = Oops(1) y = Oops(2) 0");
         assert_eq!(warnings.len(), 1);

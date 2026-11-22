@@ -72,7 +72,11 @@ fn toy() -> Vocab {
 
 fn check_toy(source: &str) -> Result<Checked, Vec<GoatError>> {
     let vocab = toy();
-    check_with_vocab(&format!("tag List = Empty | Link\n{}", vocab.prelude), &vocab, source)
+    check_with_vocab(
+        &format!("tag List = Empty | Link\n{}", vocab.prelude),
+        &vocab,
+        source,
+    )
 }
 
 fn program(update_arms: &str, draw_body: &str) -> String {
@@ -198,9 +202,13 @@ fn a_decoder_of_the_wrong_type_is_a_spanned_error_in_the_prelude() {
     let mut vocab = toy();
     vocab.prelude = "pad_of = program(n) do 5 done\n".into();
     let source = program("Press then model", LED);
-    let errors = check_with_vocab(&format!("tag List = Empty | Link\n{}", vocab.prelude), &vocab, &source)
-        .err()
-        .expect("should not check");
+    let errors = check_with_vocab(
+        &format!("tag List = Empty | Link\n{}", vocab.prelude),
+        &vocab,
+        &source,
+    )
+    .err()
+    .expect("should not check");
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
         errors[0]

@@ -388,6 +388,9 @@ fn a_key_match_missing_a_key_is_a_spanned_error() {
 fn a_key_tag_cannot_be_redeclared() {
     let source = format!("tag Up | Sideways\n{}", interactive("{x: 0}", UPDATE, DRAW));
     let (message, text) = the_error(&source);
-    assert!(message.starts_with("`Up` is a tag the host already provides"), "{message}");
+    assert!(
+        message.starts_with("`Up` is a tag the host already provides"),
+        "{message}"
+    );
     assert_eq!(text, "Up");
 }

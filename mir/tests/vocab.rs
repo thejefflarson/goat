@@ -250,8 +250,13 @@ fn a_list_needs_the_prelude_that_declares_it() {
                   update = program(m, e) do match e do Press then m done done\n\
                   draw = program(m) do [] done";
     let vocab = toy();
-    let errors = check_with_vocab("", &vocab, source).err().expect("an error");
-    assert!(errors[0].message.contains("tag List = Empty | Link"), "{errors:?}");
+    let errors = check_with_vocab("", &vocab, source)
+        .err()
+        .expect("an error");
+    assert!(
+        errors[0].message.contains("tag List = Empty | Link"),
+        "{errors:?}"
+    );
     let program = lower(&vocab, source);
     assert!(program.interactive.is_some());
 }

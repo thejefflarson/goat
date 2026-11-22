@@ -1,0 +1,25 @@
+# A list, built from scratch. A tag declared without a payload takes whatever
+# you give it, so one `Pile` works for numbers and for words alike. One pile
+# never mixes the two: `Cons(1, Cons("a", Nil))` is an error.
+tag Pile = Nil | Cons
+
+size = program(pile) do
+  match pile do
+    Nil then 0
+    Cons(head, rest) then 1 + size(rest)
+  done
+done
+
+total = program(pile) do
+  match pile do
+    Nil then 0
+    Cons(head, rest) then head + total(rest)
+  done
+done
+
+numbers = Cons(10, Cons(20, Cons(30, Nil)))
+words = Cons("a", Cons("b", Nil))
+
+print(size(numbers));
+print(size(words));
+total(numbers)
