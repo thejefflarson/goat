@@ -1,5 +1,5 @@
 //! A diagnostic is read by a child, so it never shows an internal type
-//! variable such as `t36`. The corpus is every program the docs and the checker
+//! variable such as `t36`, and never a `μ` binder. The corpus is every program the docs and the checker
 //! tests mention, plus the programs that once leaked one.
 
 use goat_checker::check;
@@ -36,8 +36,8 @@ fn rendered(source: &str) -> Vec<String> {
 fn assert_clean(source: &str) {
     for text in rendered(source) {
         assert!(
-            !leaks_variable(&text),
-            "raw type variable in:\n{text}\nfor program:\n{source}"
+            !leaks_variable(&text) && !text.contains('μ'),
+            "raw type variable or `μ` in:\n{text}\nfor program:\n{source}"
         );
     }
 }

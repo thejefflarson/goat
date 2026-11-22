@@ -102,7 +102,8 @@ impl Analysis {
             lower_with_vocab(prelude, vocab, "")
         });
         let program = lowered.ok().map(|lowered| {
-            let dots = DotCalls::new(lowered.dot_calls, lowered.takes, healed.source.clone());
+            let mut dots = DotCalls::new(lowered.dot_calls, lowered.takes, healed.source.clone());
+            dots.groups = lowered.groups;
             let (typed, _) =
                 infer_partial(&lowered.root, lowered.interactive.as_ref(), vocab, dots);
             Program {
@@ -156,6 +157,14 @@ impl Analysis {
             }
         });
         program.typed.node_types.get(&found?).cloned()
+    }
+
+    /// `ty` as a kid reads it: a group by its name, a type variable as a letter.
+    pub fn show(&self, ty: &Ty) -> String {
+        match &self.program {
+            Some(program) => program.typed.show(ty),
+            None => ty.to_string(),
+        }
     }
 
     /// The names visible at `offset`: the program's own, innermost and latest
@@ -606,7 +615,7 @@ fn item(label: &str, kind: ItemKind, detail: impl Into<String>) -> Item {
     }
 }
 
-fn binding_item(b: &Binding) -> Item {
+fn binding_item(analysis: &Analysis, b: &Binding) -> Item {
     let is_function = b.params.is_some() || matches!(b.ty, Some(Ty::Func(..)));
     let kind = if is_function {
         ItemKind::Function
@@ -616,17 +625,17 @@ fn binding_item(b: &Binding) -> Item {
     let detail = match (&b.params, &b.ty) {
         (Some(params), _) => format!("({})", params.join(", ")),
         (None, Some(Ty::Var(_)) | None) => String::new(),
-        (None, Some(ty)) => ty.to_string(),
+        (None, Some(ty)) => analysis.show(ty),
     };
     item(&b.name, kind, detail)
 }
 
 /// A tag's payload as the detail of a completion: nothing for a bare tag.
-fn payload_detail(payload: &Ty) -> String {
+fn payload_detail(analysis: &Analysis, payload: &Ty) -> String {
     if *payload == Ty::Unit {
         String::new()
     } else {
-        payload.to_string()
+        analysis.show(payload)
     }
 }
 
@@ -655,7 +664,7 @@ pub fn complete(prelude: &str, vocab: &Vocab, source: &str, offset: usize) -> Op
             items.extend(
                 row_fields(&row)
                     .into_iter()
-                    .map(|(label, ty)| item(label, ItemKind::Field, ty.to_string())),
+                    .map(|(label, ty)| item(label, ItemKind::Field, analysis.show(ty))),
             );
         }
         Role::ArmPattern { scrutinee, covered } => {
@@ -671,7 +680,7 @@ pub fn complete(prelude: &str, vocab: &Vocab, source: &str, offset: usize) -> Op
                 let payload = known
                     .iter()
                     .find(|(name, _)| *name == tag.name)
-                    .map_or(tag.payload.clone(), |(_, ty)| payload_detail(ty));
+                    .map_or(tag.payload.clone(), |(_, ty)| payload_detail(&analysis, ty));
                 item(&tag.name, ItemKind::Tag, payload)
             };
             let group = known
@@ -687,9 +696,9 @@ pub fn complete(prelude: &str, vocab: &Vocab, source: &str, offset: usize) -> Op
                 ),
                 None => {
                     items.extend(
-                        known
-                            .iter()
-                            .map(|(tag, ty)| item(tag, ItemKind::Tag, payload_detail(ty))),
+                        known.iter().map(|(tag, ty)| {
+                            item(tag, ItemKind::Tag, payload_detail(&analysis, ty))
+                        }),
                     );
                     if open {
                         items.extend(analysis.tags().iter().map(declared));
@@ -704,7 +713,7 @@ pub fn complete(prelude: &str, vocab: &Vocab, source: &str, offset: usize) -> Op
                 analysis
                     .scope_at(context.prefix.start)
                     .iter()
-                    .map(binding_item),
+                    .map(|b| binding_item(&analysis, b)),
             );
             items.extend(
                 analysis

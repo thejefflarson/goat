@@ -79,6 +79,19 @@ pub struct Typed {
     pub number_vars: HashSet<TypeVar>,
     /// Diagnostics that do not stop compilation.
     pub warnings: Vec<GoatError>,
+    /// The named groups, which call their types by name in [`Typed::show`].
+    pub groups: Vec<Arc<Group>>,
+}
+
+impl Typed {
+    /// `ty` as a kid reads it: a group by its name, a type variable as a letter.
+    pub fn show(&self, ty: &Ty) -> String {
+        let _names = ty::MessageNames::enter();
+        let _groups = ty::GroupNames::enter(&self.groups);
+        let mut text = ty.to_string();
+        ty::name_variables([&mut text]);
+        text
+    }
 }
 
 pub fn infer(root: &Expr) -> Result<Typed, Vec<GoatError>> {
@@ -97,6 +110,8 @@ pub struct DotCalls {
     /// Tags matched by prelude code the program never reaches, so left
     /// uninferred; they still count as matched.
     pub pruned_matches: HashSet<String>,
+    /// The named groups, which a message calls their types by.
+    pub groups: Vec<Arc<Group>>,
 }
 
 impl DotCalls {
@@ -112,6 +127,7 @@ impl DotCalls {
             source,
             callees,
             pruned_matches: HashSet::new(),
+            groups: Vec::new(),
         }
     }
 }
@@ -141,8 +157,11 @@ pub fn infer_partial(
     dots: DotCalls,
 ) -> (Typed, Vec<GoatError>) {
     let names = ty::MessageNames::enter();
-    let (typed, mut errors) = infer_with_variable_markers(root, interactive, vocab, dots);
+    let groups = dots.groups.clone();
+    let _group_names = ty::GroupNames::enter(&groups);
+    let (mut typed, mut errors) = infer_with_variable_markers(root, interactive, vocab, dots);
     drop(names);
+    typed.groups = groups;
     for error in &mut errors {
         let labels = error.labels.iter_mut().map(|label| &mut label.message);
         ty::name_variables(std::iter::once(&mut error.message).chain(labels));
@@ -288,6 +307,7 @@ fn infer_with_variable_markers(
         binder_types,
         number_vars,
         warnings,
+        groups: Vec::new(),
     };
     (typed, inf.errors)
 }

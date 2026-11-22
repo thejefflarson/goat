@@ -121,6 +121,7 @@ fn check_pruning(
     };
     let mut dots = infer::DotCalls::new(lowered.dot_calls, lowered.takes, source.to_string());
     dots.pruned_matches = matched;
+    dots.groups = lowered.groups;
     let mut typed = infer::infer_program(&root, lowered.interactive.as_ref(), vocab, dots)?;
     typed.warnings.splice(0..0, lowered.warnings);
     let generalized = typed
