@@ -225,7 +225,9 @@ impl Vocab {
     /// The vocabulary of a text-editing host: it reports what the person typed,
     /// where the selection is and which names its language declares as tags
     /// (`HostTags`, space separated), and `draw` answers with style spans over
-    /// the text, each a role name (`"keyword"`) and never a colour.
+    /// the text, each a role name (`"keyword"`) and never a colour, or with
+    /// whitespace edits (`Edit`): replace the bytes `from..to` with `newlines`
+    /// line breaks and then `indent` spaces.
     pub fn editor() -> Vocab {
         let event = |name: &str, payload: Ty| EventTag {
             name: name.to_string(),
@@ -238,11 +240,23 @@ impl Vocab {
                 event("Selected", record([("anchor", Ty::Int), ("head", Ty::Int)])),
                 event("HostTags", record([("names", Ty::Str)])),
             ],
-            shapes: vec![ShapeTag {
-                name: "Span".to_string(),
-                payload: record([("from", Ty::Int), ("to", Ty::Int), ("kind", Ty::Str)]),
-                scene: SceneCalls::Call("span".to_string()),
-            }],
+            shapes: vec![
+                ShapeTag {
+                    name: "Span".to_string(),
+                    payload: record([("from", Ty::Int), ("to", Ty::Int), ("kind", Ty::Str)]),
+                    scene: SceneCalls::Call("span".to_string()),
+                },
+                ShapeTag {
+                    name: "Edit".to_string(),
+                    payload: record([
+                        ("from", Ty::Int),
+                        ("to", Ty::Int),
+                        ("newlines", Ty::Int),
+                        ("indent", Ty::Int),
+                    ]),
+                    scene: SceneCalls::Call("edit".to_string()),
+                },
+            ],
             ..Vocab::empty()
         }
     }
@@ -592,6 +606,9 @@ mod tests {
         let span = shape_leaves(&editor.shape("Span").unwrap().payload).unwrap();
         assert_eq!(paths(&span.head), ["from", "to", "kind"]);
         assert!(span.list.is_none());
+        let edit = shape_leaves(&editor.shape("Edit").unwrap().payload).unwrap();
+        assert_eq!(paths(&edit.head), ["from", "to", "newlines", "indent"]);
+        assert!(edit.list.is_none());
         assert!(editor.decoders().is_empty());
     }
 

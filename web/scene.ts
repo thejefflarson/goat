@@ -24,6 +24,7 @@ export type SceneCommand =
   | { kind: "rect"; x: number; y: number; w: number; h: number; color: string }
   | { kind: "text"; x: number; y: number; text: string; color: string }
   | { kind: "span"; from: number; to: number; role: string }
+  | { kind: "edit"; from: number; to: number; newlines: number; indent: number }
   | { kind: "swatch"; role: string; light: string; dark: string };
 
 // A style span the editor vocabulary draws: byte offsets into the edited text
@@ -32,6 +33,16 @@ export interface RawSpan {
   from: number;
   to: number;
   kind: string;
+}
+
+// A whitespace edit the editor vocabulary draws: replace the bytes `from` to
+// `to` of the edited text with `newlines` line breaks and then `indent` spaces.
+// The numbers are the goat program's words, which the page must not trust.
+export interface RawEdit {
+  from: number;
+  to: number;
+  newlines: number;
+  indent: number;
 }
 
 // The colors a theme gives one style role, on a light page and a dark one. They
@@ -53,6 +64,7 @@ export interface Scene {
   rect(x: number, y: number, w: number, h: number, color: string): void;
   text(x: number, y: number, text: string, color: string): void;
   span(from: number, to: number, role: string): void;
+  edit(from: number, to: number, newlines: number, indent: number): void;
   swatch(role: string, light: string, dark: string): void;
   end(): void;
 }
@@ -69,6 +81,7 @@ export interface SceneImports {
     rect(x: number, y: number, w: number, h: number, color: number): void;
     text(x: number, y: number, text: number, color: number): void;
     span(from: bigint, to: bigint, role: number): void;
+    edit(from: bigint, to: bigint, newlines: bigint, indent: bigint): void;
     swatch(role: number, light: number, dark: number): void;
   };
 }
@@ -97,6 +110,7 @@ export function sceneImports(memory: () => WebAssembly.Memory, scene: Scene): Sc
       text: (x, y, textPtr, ptr) =>
         scene.text(finite("text", x), finite("text", y), readString(memory(), textPtr), color(ptr)),
       span: (from, to, ptr) => scene.span(Number(from), Number(to), readString(memory(), ptr)),
+      edit: (from, to, newlines, indent) => scene.edit(Number(from), Number(to), Number(newlines), Number(indent)),
       swatch: (role, light, dark) =>
         scene.swatch(readString(memory(), role), readString(memory(), light), readString(memory(), dark)),
     },
@@ -134,6 +148,9 @@ export class RecordingScene implements Scene {
   span(from: number, to: number, role: string) {
     this.commands.push({ kind: "span", from, to, role });
   }
+  edit(from: number, to: number, newlines: number, indent: number) {
+    this.commands.push({ kind: "edit", from, to, newlines, indent });
+  }
   swatch(role: string, light: string, dark: string) {
     this.commands.push({ kind: "swatch", role, light, dark });
   }
@@ -144,13 +161,24 @@ export class RecordingScene implements Scene {
 
 export const MAX_SPANS = 1_000_000;
 
-// The spans of the frame being drawn, for the editor host: `begin` starts a
-// frame over, and nothing else is drawn. More than `MAX_SPANS` in one frame
-// traps the program instead of growing without bound.
+// The spans and edits of the frame being drawn, for the editor host: `begin`
+// starts a frame over, and nothing else is drawn. More than `MAX_SPANS` spans
+// or edits in one frame traps the program instead of growing without bound.
 export class SpanScene implements Scene {
   #spans: RawSpan[] = [];
+  #edits: RawEdit[] = [];
   begin() {
     this.#spans = [];
+    this.#edits = [];
+  }
+  edit(from: number, to: number, newlines: number, indent: number) {
+    if (this.#edits.length >= MAX_SPANS) throw new Error(`the formatter drew more than ${MAX_SPANS} edits`);
+    this.#edits.push({ from, to, newlines, indent });
+  }
+  takeEdits(): RawEdit[] {
+    const edits = this.#edits;
+    this.#edits = [];
+    return edits;
   }
   span(from: number, to: number, role: string) {
     if (this.#spans.length >= MAX_SPANS) throw new Error(`the highlighter drew more than ${MAX_SPANS} spans`);
@@ -191,6 +219,7 @@ export class SwatchScene implements Scene {
     return swatches;
   }
   span() {}
+  edit() {}
   line() {}
   polylineBegin() {}
   vertex() {}
@@ -294,6 +323,7 @@ export class CanvasScene implements Scene {
 
   // The picture has no text to style and no theme to read.
   span() {}
+  edit() {}
   swatch() {}
 
   end() {

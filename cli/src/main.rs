@@ -6,6 +6,10 @@
 //!   wasmtime; `-o` saves the turtle's drawing as an SVG. A program runs as
 //!   long as it likes unless `--timeout` bounds it; `Ctrl-C` stops it either way.
 //!
+//! - `goat fmt [--check] FILE...`  lay each file out in the one house style
+//!   (ADR 0041), rewriting it in place; with `--check`, change nothing and
+//!   fail if a file is not already formatted.
+//!
 //! `build` and `run` take `--target desktop|embedded` (default `desktop`):
 //! `embedded` makes an `Int` an `i32` and a `Float` an `f32`; with it,
 //! `--board c6|c3|rp2040` sizes the heap arena and call depth for that board
@@ -66,13 +70,45 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let timeout = parse_timeout_flag(&args[3..])?;
             run_program(&wasm, &source, parse_out_flag(&args[3..]), timeout)
         }
+        Some("fmt") => format_files(&args[2..]),
         _ => {
             eprintln!(
-                "usage: goat <check|build|run> FILE [-o OUT] [--target desktop|embedded] [--board c6|c3|rp2040] [--timeout MS]"
+                "usage: goat <check|build|run|fmt> FILE [-o OUT] [--target desktop|embedded] [--board c6|c3|rp2040] [--timeout MS]"
             );
             Ok(ExitCode::FAILURE)
         }
     }
+}
+
+/// `goat fmt`: format each file, or with `--check` only report the ones that
+/// are not formatted. A file that does not lex has no edits and is left alone.
+fn format_files(args: &[String]) -> Result<ExitCode, String> {
+    let check = args.iter().any(|a| a == "--check");
+    let files: Vec<&String> = args.iter().filter(|a| *a != "--check").collect();
+    if files.is_empty() {
+        return Err("usage: goat fmt [--check] FILE...".to_string());
+    }
+    let mut formatter = goat::format::Formatter::new()?;
+    let mut unformatted = 0;
+    for file in files {
+        let source = read(file)?;
+        let formatted = formatter.format(&source)?;
+        if formatted == source {
+            continue;
+        }
+        unformatted += 1;
+        if check {
+            eprintln!("goat: {file} is not formatted");
+        } else {
+            fs::write(file, formatted).map_err(|e| format!("cannot write {file}: {e}"))?;
+            eprintln!("goat: formatted {file}");
+        }
+    }
+    Ok(if check && unformatted > 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 /// Run `wasm` under wasmtime with the turtle as its host and print what it

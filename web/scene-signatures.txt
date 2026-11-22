@@ -8,4 +8,5 @@ circle number number number string
 rect number number number number string
 text number number string string
 span int int string
+edit int int int int
 swatch string string string
