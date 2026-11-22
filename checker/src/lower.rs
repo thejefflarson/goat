@@ -91,8 +91,8 @@ pub struct Lowered {
     pub errors: Vec<GoatError>,
     pub warnings: Vec<GoatError>,
     pub interactive: Option<Interactive>,
-    /// Each tag's place in declaration order: the list tags first, then the
-    /// host's, then the prelude's and the program's in source order.
+    /// Each tag's place in declaration order: the host's first, then the
+    /// prelude's and the program's in source order.
     pub tag_ranks: HashMap<String, u32>,
     /// The tags of each declared group, which a value of the group's type
     /// carries whether or not the program names them all.
