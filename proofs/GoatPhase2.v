@@ -37,6 +37,14 @@ Example record_of_values_generalizes :
   is_gen_value (e_rec (fs_cons 0 (e_abs (e_fvar_b 0)) (fs_cons 1 (e_num 1) fs_nil))) = true.
 Proof. reflexivity. Qed.
 
+Example spread_of_values_generalizes :
+  is_gen_value (e_spread (e_rec (fs_cons 0 (e_abs (e_fvar_b 0)) fs_nil)) 1 (e_num 1)) = true.
+Proof. reflexivity. Qed.
+
+Example spread_of_a_call_is_not_generalized :
+  is_gen_value (e_spread (e_rec fs_nil) 0 (e_app (e_abs (e_fvar_b 0)) (e_num 1))) = false.
+Proof. reflexivity. Qed.
+
 Example coerced_literal_generalizes : is_gen_value (e_tofloat (e_num 3)) = true.
 Proof. reflexivity. Qed.
 
@@ -87,7 +95,7 @@ Example let_of_a_function_is_used_at_two_types :
     (typ_Record (row_Ext 0 typ_Int (row_Ext 1 typ_Bool row_Empty))).
 Proof.
   unfold id_pair.
-  apply T_Let with (L := {}) (T1 := typ_Arrow (typ_Var a0) (typ_Var a0)) (k := fun _ => k_Any);
+  apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var a0) (typ_Var a0)) (k := fun _ => k_Any);
     [ reflexivity | | ].
   - apply T_Abs with (L := {}). intros x Hx.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].

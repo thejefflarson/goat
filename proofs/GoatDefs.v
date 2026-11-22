@@ -335,6 +335,25 @@ Definition gen (G : ctx) (T : typ) (k : sort_fn) : scheme :=
       (AtomSetImpl.diff (frv_typ T) (frv_ctx G))
       T k.
 
+(* A [let] may keep some variables of its binding monomorphic by generalizing
+   over the context extended with a binding of a type [Tm] that mentions them
+   (ADR 0038, the numeral-let addendum).  Only the free variables of the
+   extended context matter to [gen], never its names, so one fixed name serves
+   every extension. *)
+Definition pin_name : var := proj1_sig (atom_fresh empty).
+
+Definition pin_ctx (Tm : typ) (G : ctx) : ctx := (pin_name ~ sch_mono Tm) ++ G.
+
+Lemma ftv_pin_ctx : forall Tm G, ftv_ctx (pin_ctx Tm G) [=] ftv_typ Tm `union` ftv_ctx G.
+Proof.
+  intros Tm G. unfold pin_ctx. simpl. unfold ftv_sch. simpl. fsetdec.
+Qed.
+
+Lemma frv_pin_ctx : forall Tm G, frv_ctx (pin_ctx Tm G) [=] frv_typ Tm `union` frv_ctx G.
+Proof.
+  intros Tm G. unfold pin_ctx. simpl. unfold frv_sch. simpl. fsetdec.
+Qed.
+
 (* ================================================================== *)
 (* Tag groups (docs/design/closed-tags-plan.md).  A group is declared  *)
 (* by [w : gdecl], a list of its tags in declaration order, each a list of *)
@@ -495,7 +514,8 @@ Definition rm (l : label) (R : row) (T : typ) (R' : row) : Prop :=
    nonexpansive terms: unrolling the group only rewrites it.  That case is what
    lets a name bound to the unrolled group stay generalizable after
    substitution.  So is the coercion of a value, the [float(n)] elaboration
-   writes where the checker widens a literal, and the [fold] of a value. *)
+   writes where the checker widens a literal, the [fold] of a value, and a
+   spread of a value onto a value, as in the checker's [is_syntactic_value]. *)
 Fixpoint is_gen_value (e : exp) {struct e} : bool :=
   match e with
   | e_fvar_b _ | e_fvar_f _ | e_num _ | e_dec _ | e_true | e_false
@@ -505,6 +525,7 @@ Fixpoint is_gen_value (e : exp) {struct e} : bool :=
   | e_tofloat e1 => is_gen_value e1
   | e_fold e1 => is_gen_value e1
   | e_con _ _ e1 => is_gen_value e1
+  | e_spread e1 _ e2 => is_gen_value e1 && is_gen_value e2
   | _ => false
   end
 with is_gen_fields (fs : fields) {struct fs} : bool :=
@@ -895,11 +916,11 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
      typing D G e1 (typ_Arrow T1 T2) ->
      typing D G e2 T1 ->
      typing D G (e_app e1 e2) T2
- | T_Let : forall (L : vars) D G e1 e2 T1 T2 (k : sort_fn),
+ | T_Let : forall (L : vars) D G e1 e2 T1 T2 (k : sort_fn) (Tm : typ),
      is_gen_value e1 = true ->
-     typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k) G e1 T1 ->
+     typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k) G e1 T1 ->
      (forall x, x `notin` L ->
-        typing D ((x ~ gen G T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
+        typing D ((x ~ gen (pin_ctx Tm G) T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
      typing D G (e_let e1 e2) T2
  | T_LetMono : forall (L : vars) D G e1 e2 T1 T2,
      typing D G e1 T1 ->

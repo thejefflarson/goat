@@ -444,7 +444,7 @@ Example generic_function_is_used_at_int_and_float :
     (typ_Record (row_Ext 0 typ_Int (row_Ext 1 typ_Float row_Empty))).
 Proof.
   unfold double_pair.
-  apply T_Let with (L := {}) (T1 := typ_Arrow (typ_Var ga) (typ_Var ga)) (k := k_lit);
+  apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var ga) (typ_Var ga)) (k := k_lit);
     [ reflexivity | | ].
   - apply T_Abs with (L := {}). intros x Hx.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
@@ -481,7 +481,7 @@ Lemma numeral_binding_at : forall n U,
   typing d_any nil (e_let (e_num n) (e_fvar_b 0)) U.
 Proof.
   intros n U HU HL.
-  apply T_Let with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
+  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
   - apply T_Num; [ constructor | ].
     cbn [sat]. rewrite (ext_in _ _ _ ga).
     + apply finer_refl.
@@ -544,7 +544,7 @@ Example numeral_binding_adapts_in_one_record :
               (fs_cons 1 (e_bin (e_fvar_b 0) bop_mul (e_num 2)) fs_nil))))
     (typ_Record (row_Ext 0 typ_Float (row_Ext 1 typ_Int row_Empty))).
 Proof.
-  apply T_Let with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
+  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
   - apply T_Num; [ constructor | ].
     cbn [sat]. rewrite (ext_in _ _ _ ga).
     + apply finer_refl.

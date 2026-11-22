@@ -427,7 +427,9 @@ Proof.
   - (* tofloat *) intros e0 IH u x Hu He. simpl in He |- *. apply IH; assumption.
   - (* con *) intros w0 tg e0 IH u x Hu He. simpl in He |- *. apply IH; assumption.
   - (* match *) intros w0 e0 IHe ars IHa u x Hu He; discriminate He.
-  - (* spread *) intros a IHa l b IHb u x Hu He; discriminate He.
+  - (* spread *) intros a IHa l b IHb u x Hu He. simpl in He |- *.
+    apply andb_prop in He. destruct He as [H1 H2].
+    rewrite (IHa u x Hu H1), (IHb u x Hu H2). reflexivity.
   - (* restrict *) intros e0 IH l u x Hu He; discriminate He.
   - (* fold *) intros e0 IH u x Hu He. simpl in He |- *. apply IH; assumption.
   - (* unfold *) intros e0 IH u x Hu He. discriminate He.
@@ -476,7 +478,9 @@ Proof.
   - (* tofloat *) intros e0 IH u k Hu He. simpl in He |- *. apply IH; assumption.
   - (* con *) intros w0 tg e0 IH u k Hu He. simpl in He |- *. apply IH; assumption.
   - (* match *) intros w0 e0 IHe ars IHa u k Hu He; discriminate He.
-  - (* spread *) intros a IHa l b IHb u k Hu He; discriminate He.
+  - (* spread *) intros a IHa l b IHb u k Hu He. simpl in He |- *.
+    apply andb_prop in He. destruct He as [H1 H2].
+    rewrite (IHa u k Hu H1), (IHb u k Hu H2). reflexivity.
   - (* restrict *) intros e0 IH l u k Hu He; discriminate He.
   - (* fold *) intros e0 IH u k Hu He. simpl in He |- *. apply IH; assumption.
   - (* unfold *) intros e0 IH u k Hu He. discriminate He.
@@ -599,7 +603,7 @@ Proof.
     pick fresh x for L.
     apply (lc_at_open_inv e 0 x). unfold open_exp_wrt_exp in IH. apply IH; auto.
   - (* T_App *) intros D G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2; simpl; split; assumption.
-  - (* T_Let *) intros L D G e1 e2 T1 T2 k Hgv Hty1 IH1 Hpre IH2; simpl; split.
+  - (* T_Let *) intros L D G e1 e2 T1 T2 k Tm Hgv Hty1 IH1 Hpre IH2; simpl; split.
     + assumption.
     + pick fresh x for L.
       apply (lc_at_open_inv e2 0 x). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
@@ -1030,7 +1034,7 @@ Proof.
     + right. exists k. apply tr_app1; auto.
   - (* Case: [let x = e1 in e2].  If [e1] is finished, plug it into [e2]
        (st_letv); otherwise step [e1] (st_let1) or propagate its trap. *)
-    intros L D G e1 e2 T1 T2 kf Hgv Hty1 IH1 Hbody IH2 HG; subst.
+    intros L D G e1 e2 T1 T2 kf Tm Hgv Hty1 IH1 Hbody IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk]]].
     + left. exists (open_exp_wrt_exp e2 e1). apply st_letv; auto.
     + left. exists (e_let e1' e2). apply st_let1; auto.
@@ -1225,10 +1229,10 @@ Qed.
 Lemma let_inv : forall D G e1 e2 T,
   typing D G (e_let e1 e2) T ->
   exists (L : vars) T1 T2,
-    ((is_gen_value e1 = true /\ exists (k : sort_fn),
-      typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k) G e1 T1 /\
+    ((is_gen_value e1 = true /\ exists (k : sort_fn) (Tm : typ),
+      typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k) G e1 T1 /\
       forall x, x `notin` L ->
-        typing D ((x ~ gen G T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) \/
+        typing D ((x ~ gen (pin_ctx Tm G) T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) \/
      (typing D G e1 T1 /\
       forall x, x `notin` L ->
         typing D ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2)) /\
@@ -1237,7 +1241,7 @@ Proof.
   intros D G e1 e2 T H. remember (e_let e1 e2) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Let *) inversion He; subst. exists L, T1, T2.
-    split; [ left; split; [ assumption | exists k; auto ] | apply teq_refl ].
+    split; [ left; split; [ assumption | exists k, Tm; auto ] | apply teq_refl ].
   - (* T_LetMono *) inversion He; subst. exists L, T1, T2.
     split; [ right; auto | apply teq_refl ].
   - (* T_Conv *) destruct (IHtyping He) as [L [T1 [T2 [Hbody Hteq]]]].

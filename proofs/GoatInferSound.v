@@ -123,6 +123,64 @@ Proof.
     apply AtomSetFacts.union_iff in Ha; destruct Ha as [Ha|Ha]; auto.
 Qed.
 
+Lemma pin_of_ev : forall D T, EvT T -> EvT (pin_of (lit_vars D T)).
+Proof.
+  intros D T [Ht Hr]. unfold lit_vars.
+  assert (Hin : forall la, (forall a, In a la -> ev a) -> EvT (pin_of la)).
+  { induction la as [|a la IH]; intros H; simpl.
+    - apply EvT_Unit.
+    - apply EvT_arrow; [ apply EvT_var; apply H; left; reflexivity | ].
+      apply IH. intros b Hb. apply H. right. exact Hb. }
+  apply Hin. intros a Ha. apply filter_In in Ha as [Ha _].
+  apply Ht. apply In_elements. exact Ha.
+Qed.
+
+Lemma let_pin_EvT : forall D e T, EvT T -> EvT (let_pin D e T).
+Proof.
+  intros D e T H. unfold let_pin. destruct (let_open e); [ apply EvT_Unit | apply pin_of_ev; exact H ].
+Qed.
+
+(* What a [let] keeps monomorphic: nothing for a function or a bare numeral,
+   and the [Literal] variables of its type, only those, for any other value. *)
+Lemma let_pin_open : forall D e T, let_open e = true -> let_pin D e T = typ_Unit.
+Proof. intros D e T H. unfold let_pin. rewrite H. reflexivity. Qed.
+
+Lemma ftv_pin_of : forall la a, a `in` ftv_typ (pin_of la) <-> In a la.
+Proof.
+  induction la as [|b la IH]; intros a; simpl.
+  - split; [ intros H; exfalso; fsetdec | intros [] ].
+  - rewrite AtomSetFacts.union_iff, AtomSetFacts.singleton_iff, IH.
+    split; intros [->|H]; [ left; reflexivity | right; exact H | left; reflexivity | right; exact H ].
+Qed.
+
+Lemma let_pin_ftv : forall D e T a,
+  let_open e = false ->
+  (a `in` ftv_typ (let_pin D e T) <-> a `in` ftv_typ T /\ D a = k_Literal).
+Proof.
+  intros D e T a H. unfold let_pin. rewrite H, ftv_pin_of. unfold lit_vars.
+  rewrite filter_In, In_elements.
+  split; intros [H1 H2]; split; auto.
+  - destruct (D a); simpl in H2; congruence.
+  - rewrite H2. reflexivity.
+Qed.
+
+Example numeral_binding_pins_nothing : forall D n T, let_pin D (e_num n) T = typ_Unit.
+Proof. intros. apply let_pin_open. reflexivity. Qed.
+
+Example function_binding_pins_nothing : forall D e T, let_pin D (e_abs e) T = typ_Unit.
+Proof. intros. apply let_pin_open. reflexivity. Qed.
+
+Example name_binding_pins_its_literals : forall D x T a,
+  a `in` ftv_typ T -> D a = k_Literal -> a `in` ftv_typ (let_pin D (e_fvar_f x) T).
+Proof. intros D x T a H1 H2. apply let_pin_ftv; [ reflexivity | split; assumption ]. Qed.
+
+Example record_binding_leaves_other_sorts_open : forall D fs T a,
+  D a <> k_Literal -> a `notin` ftv_typ (let_pin D (e_rec fs) T).
+Proof.
+  intros D fs T a H Hin. apply let_pin_ftv in Hin; [ | reflexivity ]. destruct Hin as [_ Hin]. contradiction.
+Qed.
+
+
 (* ------------------------------------------------------------------ *)
 (* What each step of the algorithm preserves                            *)
 (* ------------------------------------------------------------------ *)
@@ -470,47 +528,64 @@ Proof.
                  (apS s2 (sch_mono T1)) e2 T2 Hty2
                  (fresh_var_notin_fv _ _) Hdom ltac:(fsetdec)). }
       destruct (infer f false ora D G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
-      destruct (infer f false ora D1 ((fresh_var (apC s1 G) e2 ~ gen_ren D1 (apC s1 G) T1) ++ apC s1 G)
+      destruct (infer f false ora D1
+                  ((fresh_var (apC s1 G) e2 ~ gen_ren D1 (pin_ctx (let_pin D1 e1 T1) (apC s1 G)) T1) ++ apC s1 G)
                   (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC s1 G) e2))) n1)
         as [[[[s2 D2] T2] n2]|] eqn:E2; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-      pose proof (gen_ren_wf D1 (apC s1 G) T1 HT1) as Hwsc.
-      assert (Hwf : WfCtx ((fresh_var (apC s1 G) e2 ~ gen_ren D1 (apC s1 G) T1) ++ apC s1 G))
+      set (Tm := let_pin D1 e1 T1) in *.
+      set (Pz := (fresh_var (apC s1 G) e2 ~ sch_mono Tm) ++ apC s1 G).
+      assert (HTm : EvT Tm) by (apply let_pin_EvT; exact HT1).
+      assert (HPz : WfCtx Pz)
+        by (apply WfCtx_cons; [ exact HG1 | apply fresh_var_notin_dom | apply WfSch_mono; exact HTm ]).
+      assert (Hsc : gen_ren D1 (pin_ctx Tm (apC s1 G)) T1 = gen_ren D1 Pz T1) by reflexivity.
+      rewrite Hsc in E2.
+      pose proof (gen_ren_wf D1 Pz T1 HT1) as Hwsc.
+      assert (Hwf : WfCtx ((fresh_var (apC s1 G) e2 ~ gen_ren D1 Pz T1) ++ apC s1 G))
         by (apply WfCtx_cons; [ exact HG1 | apply fresh_var_notin_dom | exact Hwsc ]).
       destruct (IHe _ _ _ _ _ _ _ _ E2 Hwf HD1) as (Gd2 & HT2 & Hty2).
       pose proof Gd2 as (_ & Hs2 & HD2 & Hl2 & Hi2 & Hk2).
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ]. split; [ exact HT2 | ].
       rewrite <- apC_comp.
       rewrite apC_app, apC_single in Hty2.
-      pose proof (gen_ren_equiv D1 (apC s1 G) T1 s2 Hs2 HG1 HT1) as Hequiv.
+      pose proof (gen_ren_equiv D1 Pz T1 s2 Hs2 HPz HT1) as Hequiv.
       pose proof Hequiv as (Htq & _).
+      assert (Hpt : ftv_ctx (apC s2 Pz) [=] ftv_ctx (pin_ctx (apT s2 Tm) (apC s2 (apC s1 G)))).
+      { unfold Pz, pin_ctx. simpl. unfold ftv_sch. simpl. fsetdec. }
+      assert (Hpr : frv_ctx (apC s2 Pz) [=] frv_ctx (pin_ctx (apT s2 Tm) (apC s2 (apC s1 G)))).
+      { unfold Pz, pin_ctx. simpl. unfold frv_sch. simpl. fsetdec. }
       apply T_Let with (L := dom G `union` {{fresh_var (apC s1 G) e2}})
-                       (T1 := apT s2 (s_body (gen_ren D1 (apC s1 G) T1)))
-                       (k := s_sk (gen_ren D1 (apC s1 G) T1)).
+                       (T1 := apT s2 (s_body (gen_ren D1 Pz T1)))
+                       (k := s_sk (gen_ren D1 Pz T1)) (Tm := apT s2 Tm).
       * exact Hgv.
-      * pose proof (typing_gen_ren D1 (apC s1 G) T1 n1 e1 HD1 Hty1) as Hg.
+      * pose proof (typing_gen_ren_on D1 Pz T1 (apC s1 G) n1 e1
+                      ltac:(unfold Pz; simpl; fsetdec) ltac:(unfold Pz; simpl; fsetdec)
+                      HD1 Hty1) as Hg.
         destruct (DOk_supp D1 n1 HD1) as [S1 HS1].
         destruct (DOk_supp D2 n2 HD2) as [S2 HS2].
-        pose proof (typing_ap (ext D1 (s_tq (gen_ren D1 (apC s1 G) T1)) (s_sk (gen_ren D1 (apC s1 G) T1)))
-                      (ext D2 (s_tq (gen_ren D1 (apC s1 G) T1)) (s_sk (gen_ren D1 (apC s1 G) T1)))
-                      s2 (apC s1 G) e1 (s_body (gen_ren D1 (apC s1 G) T1)) Hs2 HG1
+        pose proof (typing_ap (ext D1 (s_tq (gen_ren D1 Pz T1)) (s_sk (gen_ren D1 Pz T1)))
+                      (ext D2 (s_tq (gen_ren D1 Pz T1)) (s_sk (gen_ren D1 Pz T1)))
+                      s2 (apC s1 G) e1 (s_body (gen_ren D1 Pz T1)) Hs2 HG1
                       (ex_intro _ _ (supp_ok_ext_set _ _ _ _ HS1))
                       (ex_intro _ _ (supp_ok_ext_set _ _ _ _ HS2))
-                      (kres_ext_lift D1 D2 s2 _ _ Hs2 Hk2 (gen_ren_od_t D1 (apC s1 G) T1)) Hg) as Hl.
+                      (kres_ext_lift D1 D2 s2 _ _ Hs2 Hk2 (gen_ren_od_t D1 Pz T1)) Hg) as Hl.
         eapply typing_pw; [ exact Hl | ].
-        intros a. apply ext_set_eq. exact Htq.
+        intros a. apply ext_set_eq.
+        cbn [apS s_tq gen s_body s_sk] in Htq. rewrite Htq. rewrite Hpt. reflexivity.
       * intros y Hy.
         assert (Hdom : y `notin` dom (apC s2 (apC s1 G)))
           by (rewrite dom_apC, dom_apC; fsetdec).
         pose proof (typing_rename_var D2 (apC s2 (apC s1 G)) (fresh_var (apC s1 G) e2) y
-                      (apS s2 (gen_ren D1 (apC s1 G) T1)) e2 T2 Hty2
+                      (apS s2 (gen_ren D1 Pz T1)) e2 T2 Hty2
                       (fresh_var_notin_fv _ _) Hdom ltac:(fsetdec)) as Hren.
         eapply typing_sch_equiv_ctx; [ exact Hren | ].
         apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
-        exact Hequiv.
+        eapply sch_equiv_trans; [ exact Hequiv | ].
+        unfold sch_equiv, gen. cbn [s_tq s_rq s_body s_sk].
+        split; [ | split; [ | split; [ reflexivity | intros a Ha; reflexivity ] ] ]; fsetdec.
     + (* recursive group *)
       destruct (is_fn_group fl) eqn:Hfg; [|discriminate].
       set (p := fresh_var G (e_rec fl)) in *.

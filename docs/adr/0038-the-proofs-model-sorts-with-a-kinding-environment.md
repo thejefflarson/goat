@@ -53,6 +53,39 @@ preservation must survive it. Three representations were weighed:
    keeps the kinding environment. The differential corpus no longer skips the
    calls that pass a record to a generic operator.)
 
+5. **A `let` may keep variables monomorphic (addendum, 2026-11-22).** The
+   checker generalizes a numeral's `Literal` variable at a function and at a bare
+   numeral (`n = 3`, ADR 0039) and nowhere else: `r = {a: 1}` is one record, so
+   `r = {a: 1}  {x: r.a + 1.5, y: r.a // 2}` is an error, while a name, a
+   `float(...)` or a record of numerals bound by `let` kept the numeral's
+   variable shared. The calculus generalized every variable at every syntactic
+   value, which made about 3,100 corpus programs (2,743 distinct) skip as
+   `NumeralLet`. Measured with the skip off, 2 of them disagreed, both a record
+   holding a numeral used at two types; the 2,519 that bind a name (`m = n`) did
+   not (a name's variable is shared too, and no program used it at two types).
+   Two options were weighed: restrict `T_Let` so it never quantifies a `Literal`
+   variable except at a function or a bare numeral, or give `T_Let` a type `Tm`
+   whose free variables stay monomorphic. The restriction cannot state the
+   algorithm's invariant, because the algorithm leaves a shared `Literal`
+   variable free in the context of the `let` body, in an environment where it
+   still has its sort, and the restricted rule has no scheme with a free sorted
+   variable to give it. So `T_Let` takes `Tm` and generalizes over the context
+   extended with a binding of `Tm` (`pin_ctx`, `gen (pin_ctx Tm G)`); the bound
+   term and the body are still typed over `G` alone. The rule allows any `Tm`
+   (generalizing less is always sound), and the algorithm picks
+   `let_pin D e T`: nothing for a function, a bare numeral or a recursive group,
+   and the `Literal` variables of `T` for any other value. Progress,
+   preservation and the substitution lemma are re-proved for the rule
+   (`tsubst_gen_pin`, `typing_inst_gen` over a pinned context), as is the
+   algorithm's soundness (`typing_gen_ren_on`); no admits, no new axioms. The
+   declarative rule still derives programs the checker rejects, as it did
+   before; only the algorithm has to agree with the checker. The same run found
+   that the calculus did not generalize a spread of syntactic values, which the
+   checker does (`is_syntactic_value`), so `{...b, k: 5}` over a record of a
+   generic function typed its function monomorphically; `is_gen_value` now
+   includes `e_spread`, and a rest pattern with no fields is outside the
+   fragment, because it only says its source is a record.
+
 ## Consequences
 
 - The substitution lemma quantifies over the environments a substitution
