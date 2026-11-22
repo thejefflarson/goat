@@ -223,6 +223,10 @@ Proof.
     intros w tg a IH n P Hs. destruct Hs.
   - (* match: not a term of the printed fragment *)
     intros w a IHa ars IHars n P Hs. destruct Hs.
+  - (* spread: not a term of the printed fragment *)
+    intros a IHa l b IHb n P Hs. destruct Hs.
+  - (* restrict: not a term of the printed fragment *)
+    intros a IH l n P Hs. destruct Hs.
   - (* fold: not a term of the printed fragment *)
     intros a IH n P Hs. destruct Hs.
   - (* unfold: not a term of the printed fragment *)

@@ -46,6 +46,8 @@ Inductive exp : Set :=  (* term *)
  | e_tofloat (e:exp) (* Int-to-Float coercion, inserted by elaboration *)
  | e_con (w:gdecl) (tg:tagidx) (e:exp) (* build tag k of the group w around the payload e *)
  | e_match (w:gdecl) (e:exp) (ars:arms) (* take a value of the group w apart by its tag *)
+ | e_spread (e1:exp) (l:label) (e2:exp) (* update the first l of e1 to e2, or add l when e1 has none *)
+ | e_restrict (e:exp) (l:label) (* e without its first l *)
  | e_fold (e:exp) (* roll a value into a recursive type *)
  | e_unfold (e:exp) (* unroll a value of a recursive type *)
 with fields : Set :=  (* record spine (cons-list; duplicates allowed) *)
@@ -71,7 +73,8 @@ Inductive typ : Set :=  (* monotype *)
 with row : Set :=  (* row (scoped labels, duplicates allowed) *)
  | row_Empty : row
  | row_Var (r:rowvar)
- | row_Ext (l:label) (T:typ) (R:row).
+ | row_Ext (l:label) (T:typ) (R:row)
+ | row_Maybe (l:label) (T1:typ) (T2:typ) (R:row) (* the field l at T2, present or absent as T1 says (Unit present, Bool absent, a variable unknown) *).
 
 (* EXPERIMENTAL *)
 (** auxiliary functions on the new list types *)
@@ -116,6 +119,8 @@ with open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
   | (e_tofloat e) => e_tofloat (open_exp_wrt_exp_rec k e_5 e)
   | (e_con w tg e) => e_con w tg (open_exp_wrt_exp_rec k e_5 e)
   | (e_match w e ars) => e_match w (open_exp_wrt_exp_rec k e_5 e) (open_arms_wrt_exp_rec k e_5 ars)
+  | (e_spread e1 l e2) => e_spread (open_exp_wrt_exp_rec k e_5 e1) l (open_exp_wrt_exp_rec k e_5 e2)
+  | (e_restrict e l) => e_restrict (open_exp_wrt_exp_rec k e_5 e) l
   | (e_fold e) => e_fold (open_exp_wrt_exp_rec k e_5 e)
   | (e_unfold e) => e_unfold (open_exp_wrt_exp_rec k e_5 e)
 end.
@@ -202,6 +207,13 @@ with lc_exp : exp -> Prop :=    (* defn lc_exp *)
      (lc_exp e) ->
      (lc_arms ars) ->
      (lc_exp (e_match w e ars))
+ | lc_e_spread : forall (e1:exp) (l:label) (e2:exp),
+     (lc_exp e1) ->
+     (lc_exp e2) ->
+     (lc_exp (e_spread e1 l e2))
+ | lc_e_restrict : forall (e:exp) (l:label),
+     (lc_exp e) ->
+     (lc_exp (e_restrict e l))
  | lc_e_fold : forall (e:exp),
      (lc_exp e) ->
      (lc_exp (e_fold e))
@@ -241,6 +253,8 @@ with fv_exp (e_5:exp) : vars :=
   | (e_tofloat e) => (fv_exp e)
   | (e_con w tg e) => (fv_exp e)
   | (e_match w e ars) => (fv_exp e) \u (fv_arms ars)
+  | (e_spread e1 l e2) => (fv_exp e1) \u (fv_exp e2)
+  | (e_restrict e l) => (fv_exp e)
   | (e_fold e) => (fv_exp e)
   | (e_unfold e) => (fv_exp e)
 end.
@@ -278,9 +292,25 @@ with subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
   | (e_tofloat e) => e_tofloat (subst_exp e_5 x5 e)
   | (e_con w tg e) => e_con w tg (subst_exp e_5 x5 e)
   | (e_match w e ars) => e_match w (subst_exp e_5 x5 e) (subst_arms e_5 x5 ars)
+  | (e_spread e1 l e2) => e_spread (subst_exp e_5 x5 e1) l (subst_exp e_5 x5 e2)
+  | (e_restrict e l) => e_restrict (subst_exp e_5 x5 e) l
   | (e_fold e) => e_fold (subst_exp e_5 x5 e)
   | (e_unfold e) => e_unfold (subst_exp e_5 x5 e)
 end.
+
+Definition is_unit (T : typ) : bool :=
+  match T with typ_Unit => true | _ => false end.
+
+Definition is_abs (T : typ) : bool :=
+  match T with typ_Bool => true | _ => false end.
+
+Fixpoint rlacks (l : label) (R : row) {struct R} : bool :=
+  match R with
+  | row_Empty => true
+  | row_Var _ => false
+  | row_Ext l' _ R' => negb (Nat.eqb l l') && rlacks l R'
+  | row_Maybe l' _ _ R' => negb (Nat.eqb l l') && rlacks l R'
+  end.
 
 
 (* definitions *)
@@ -333,6 +363,22 @@ with req : row -> row -> Prop :=    (* defn req *)
  | req_swap : forall (l:label) (T:typ) (l':label) (T':typ) (R:row),
       l  <>  l'  ->
      req (row_Ext l T (row_Ext l' T' R)) (row_Ext l' T' (row_Ext l T R))
+ | req_maybe : forall (l:label) (T1 T2:typ) (R:row) (T1' T2':typ) (R':row),
+     teq T1 T1' ->
+     teq T2 T2' ->
+     req R R' ->
+     req (row_Maybe l T1 T2 R) (row_Maybe l T1' T2' R')
+ | req_pre : forall (l:label) (T:typ) (R:row),
+     req (row_Maybe l typ_Unit T R) (row_Ext l T R)
+ | req_abs : forall (l:label) (T:typ) (R:row),
+      (rlacks  l   R  = true)  ->
+     req (row_Maybe l typ_Bool T R) R
+ | req_swap_em : forall (l:label) (T1 T:typ) (l':label) (T':typ) (R:row),
+      l  <>  l'  ->
+     req (row_Maybe l T1 T (row_Ext l' T' R)) (row_Ext l' T' (row_Maybe l T1 T R))
+ | req_swap_mm : forall (l:label) (T1 T:typ) (l':label) (T1' T':typ) (R:row),
+      l  <>  l'  ->
+     req (row_Maybe l T1 T (row_Maybe l' T1' T' R)) (row_Maybe l' T1' T' (row_Maybe l T1 T R))
  | req_trans : forall (R1 R3 R2:row),
      req R1 R2 ->
      req R2 R3 ->

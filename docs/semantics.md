@@ -864,6 +864,24 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   refolded by the elaborator; it needs methods and `self`). Phase 3's tag
   signature `Δ` must keep closed payload types in the sense of `lc` (a payload
   under a `μ` mentions an index), not "no free variables".
+- **Spread and restrict (phase 4, ADR 0033, ADR 0037).** A row entry
+  `l ^ P : T ; R` holds the field `l` at `T` when its presence `P` is `Unit`,
+  holds none when `P` is `Bool` and `R` has no `l`, and is stuck when `P` is a
+  variable (the checker's `PRESENT` and `ABSENT`, `ty.rs`). Row equivalence
+  gains `l ^ Unit : T ; R ≅ l : T ; R`, `l ^ Bool : T ; R ≅ R` (when `R`'s
+  spine, to its `nil`, names no `l`) and the swaps of an entry past another.
+  `{...e1, l: e2}` has type `{l : T ; R}` when `e1 : {l ^ P : T ; R}` and
+  `e2 : T`, so one rule covers an update (`P = Unit`), an extension
+  (`P = Bool`) and a parameter of unknown shape (`P` a variable). It steps, once
+  both are values, to the record with its first `l` set to the value, or with
+  `l` added in front when there is none. `restrict(e, l)` takes the first `l`
+  out of a record whose type has one. Scoped labels stay, so a row may hold a
+  label twice and the checker's rule that it never does (ADR 0033 decision 5)
+  is stricter than the model. Row variables carry no `lacks` constraint: a
+  spread of a row that ends in a row variable the checker knows lacks the label
+  has no derivation, and the checker accepts it. `proofs/GoatPhase4.v` holds
+  the cases as checked examples; `docs/design/phase4-proof-plan.md` has the
+  decisions and what waits (algorithm W, the parser fragment, `lacks`).
 - **Base types and their operators (phase 1, ADR 0037).** The core has
   `Int`, `Float`, `Bool`, `String` and `Unit`, with `if`, the operators and the
   comparisons of §4. `proofs/GoatPhase1.v` holds each of the cases below as a

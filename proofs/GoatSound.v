@@ -129,6 +129,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatMu.
 Require Import Goat.GoatTags.
 Require Import Goat.GoatMeta.
+Require Import Goat.GoatSpread.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatBij.
 Require Import Goat.GoatHM.
@@ -176,6 +177,17 @@ Proof.
     + destruct (H0 _ _ _ H1) as [[b [Hb Ha]]|[p [Hp Ha]]].
       * left; exists b; split; [fsetdec|auto].
       * right; exists p; split; [fsetdec|auto].
+  - (* row_Maybe *) rewrite AtomSetFacts.union_iff in H2. destruct H2 as [H2|H2].
+    + destruct (H _ _ _ H2) as [[b [Hb Ha]]|[p [Hp Ha]]].
+      * left; exists b; split; [fsetdec|auto].
+      * right; exists p; split; [fsetdec|auto].
+    + rewrite AtomSetFacts.union_iff in H2. destruct H2 as [H2|H2].
+      * destruct (H0 _ _ _ H2) as [[b [Hb Ha]]|[p [Hp Ha]]].
+        -- left; exists b; split; [fsetdec|auto].
+        -- right; exists p; split; [fsetdec|auto].
+      * destruct (H1 _ _ _ H2) as [[b [Hb Ha]]|[p [Hp Ha]]].
+        -- left; exists b; split; [fsetdec|auto].
+        -- right; exists p; split; [fsetdec|auto].
 Qed.
 
 Lemma frv_ap_mut :
@@ -217,6 +229,17 @@ Proof.
     + destruct (H0 _ _ _ H1) as [[b [Hb Ha]]|[q [Hq Ha]]].
       * left; exists b; split; [fsetdec|auto].
       * right; exists q; split; [fsetdec|auto].
+  - (* row_Maybe *) rewrite AtomSetFacts.union_iff in H2. destruct H2 as [H2|H2].
+    + destruct (H _ _ _ H2) as [[b [Hb Ha]]|[q [Hq Ha]]].
+      * left; exists b; split; [fsetdec|auto].
+      * right; exists q; split; [fsetdec|auto].
+    + rewrite AtomSetFacts.union_iff in H2. destruct H2 as [H2|H2].
+      * destruct (H0 _ _ _ H2) as [[b [Hb Ha]]|[q [Hq Ha]]].
+        -- left; exists b; split; [fsetdec|auto].
+        -- right; exists q; split; [fsetdec|auto].
+      * destruct (H1 _ _ _ H2) as [[b [Hb Ha]]|[q [Hq Ha]]].
+        -- left; exists b; split; [fsetdec|auto].
+        -- right; exists q; split; [fsetdec|auto].
 Qed.
 
 Lemma ftv_ap_typ : forall st sr T a,
@@ -271,6 +294,16 @@ Proof.
         [left; apply H; left; eauto | right; apply H0; left; eauto].
     + rewrite AtomSetFacts.union_iff in Hp. destruct Hp as [Hp|Hp];
         [left; apply H; right; eauto | right; apply H0; right; eauto].
+  - (* row_Maybe *) rewrite !AtomSetFacts.union_iff.
+    destruct H2 as [[b [Hb Ha]]|[p [Hp Ha]]].
+    + rewrite !AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|[Hb|Hb]];
+        [ left; apply H; left; eauto
+        | right; left; apply H0; left; eauto
+        | right; right; apply H1; left; eauto ].
+    + rewrite !AtomSetFacts.union_iff in Hp. destruct Hp as [Hp|[Hp|Hp]];
+        [ left; apply H; right; eauto
+        | right; left; apply H0; right; eauto
+        | right; right; apply H1; right; eauto ].
 Qed.
 
 Lemma ftv_ap_in1 : forall st sr T a b,
@@ -319,6 +352,16 @@ Proof.
         [left; apply H; left; eauto | right; apply H0; left; eauto].
     + rewrite AtomSetFacts.union_iff in Hp. destruct Hp as [Hp|Hp];
         [left; apply H; right; eauto | right; apply H0; right; eauto].
+  - (* row_Maybe *) rewrite !AtomSetFacts.union_iff.
+    destruct H2 as [[b [Hb Ha]]|[p [Hp Ha]]].
+    + rewrite !AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|[Hb|Hb]];
+        [ left; apply H; left; eauto
+        | right; left; apply H0; left; eauto
+        | right; right; apply H1; left; eauto ].
+    + rewrite !AtomSetFacts.union_iff in Hp. destruct Hp as [Hp|[Hp|Hp]];
+        [ left; apply H; right; eauto
+        | right; left; apply H0; right; eauto
+        | right; right; apply H1; right; eauto ].
 Qed.
 
 Lemma frv_ap_in1 : forall st sr T a b,
@@ -1149,6 +1192,12 @@ Proof.
   - (* T_Bin: the signature is stable under a kind-respecting substitution. *)
     intros D G e1 o e2 A0 B0 R0 Ht1 IH1 Ht2 IH2 Hs st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
     eapply T_Bin; [ eapply IH1; eauto | eapply IH2; eauto | eapply bin_sig_ap; eauto ].
+  - (* T_Spread: the entry's types are substituted, its label is not. *)
+    intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    eapply T_Spread; [ eapply IH1; eauto | eapply IH2; eauto ].
+  - (* T_Restrict: [rm] is stable under substitution. *)
+    intros D G e l R0 T R Ht IH Hrm st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    eapply T_Restrict; [ eapply IH; eauto | eapply rm_ap; eauto ].
   - (* T_Fold: the substitution commutes with unrolling because its images are closed *)
     intros D G e B Hlc Hg Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
     pose proof (proj2 (proj2 Hsupp)) as Hl.
@@ -1510,6 +1559,10 @@ Proof.
     eapply T_ToFloat; [ apply (IH Sd HSd Hag G2); reflexivity | exact Hs ].
   - (* T_Bin *) intros D G e1 o e2 A0 B0 R0 Hr1 IH1 Hr2 IH2 Hs Sd HSd Hag G2 Heq; subst. simpl.
     eapply T_Bin; [ apply (IH1 Sd HSd Hag G2) | apply (IH2 Sd HSd Hag G2) | exact Hs ]; reflexivity.
+  - (* T_Spread *) intros D G e1 l e2 P T R Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
+    eapply T_Spread; [ apply (IH1 Sd HSd Hag G2) | apply (IH2 Sd HSd Hag G2) ]; reflexivity.
+  - (* T_Restrict *) intros D G e l R0 T R Hr IH Hrm Sd HSd Hag G2 Heq; subst. simpl.
+    eapply T_Restrict; [ apply (IH Sd HSd Hag G2); reflexivity | exact Hrm ].
   - (* T_Fold *) intros D G e B Hlc0 Hg Hr IH Sd HSd Hag G2 Heq; subst. simpl.
     eapply T_Fold; [ exact Hlc0 | exact Hg | apply (IH Sd HSd Hag G2); reflexivity ].
   - (* T_Unfold *) intros D G e B Hlc0 Hg Hr IH Sd HSd Hag G2 Heq; subst. simpl.
@@ -1858,6 +1911,31 @@ Proof.
     destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].
     assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
     eapply T_Conv; [ apply T_Dec; exact Hu | exact Hteq ].
+  - (* st_spread1: the base of a spread stepped. *)
+    intros e1 e1' l e2 Hstep IH D S G T HS Hty.
+    destruct (spread_inv _ _ _ _ _ _ Hty) as [P [T0 [R [H1 [H2 Hteq]]]]].
+    eapply T_Conv;
+      [ eapply T_Spread; [ eapply IH; [ exact HS | exact H1 ] | exact H2 ] | exact Hteq ].
+  - (* st_spread2: the new value of a spread stepped. *)
+    intros v1 l e2 e2' Hv Hstep IH D S G T HS Hty.
+    destruct (spread_inv _ _ _ _ _ _ Hty) as [P [T0 [R [H1 [H2 Hteq]]]]].
+    eapply T_Conv;
+      [ eapply T_Spread; [ exact H1 | eapply IH; [ exact HS | exact H2 ] ] | exact Hteq ].
+  - (* st_spread: a spread of a finished record sets or adds the field.  The
+       base's type says which, and [spread_step_typing] shows either way the
+       result has the type the rule gives. *)
+    intros fs l v Hrv Hv D S G T HS Hty.
+    destruct (spread_inv _ _ _ _ _ _ Hty) as [P [T0 [R [H1 [H2 Hteq]]]]].
+    eapply T_Conv; [ eapply spread_step_typing; eassumption | exact Hteq ].
+  - (* st_restrict1: the operand of a restrict stepped. *)
+    intros e e' l Hstep IH D S G T HS Hty.
+    destruct (restrict_inv _ _ _ _ _ Hty) as [R0 [T0 [R [H1 [H2 Hteq]]]]].
+    eapply T_Conv;
+      [ eapply T_Restrict; [ eapply IH; [ exact HS | exact H1 ] | exact H2 ] | exact Hteq ].
+  - (* st_restrict: a restrict of a finished record takes out its first field. *)
+    intros fs l Hrv D S G T HS Hty.
+    destruct (restrict_inv _ _ _ _ _ Hty) as [R0 [T0 [R [H1 [H2 Hteq]]]]].
+    eapply T_Conv; [ eapply restrict_step_typing; eassumption | exact Hteq ].
   - (* st_fold1: the operand of a fold stepped. *)
     intros e e' Hstep IH D S G T HS Hty.
     destruct (fold_inv _ _ _ _ Hty) as [B [Hteq [Hlc0 [Hg Hb]]]].

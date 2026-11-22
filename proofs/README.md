@@ -33,6 +33,9 @@ preservation) is B3 (#71).
 | `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`). |
 | `GoatPhase2.v` | Phase 2 of ADR 0037: worked examples for the value restriction (which terms `is_gen_value` accepts), a generalized binding used at two types, a recursive group (its typing, its unrolling, a run) and a group member that is not a function (no derivation). |
 | `GoatPhase3.v` | Phase 3 of ADR 0037: worked examples for tag groups: `Hit(3)`, a `match` that runs, an `else`, `Link(1, Link(2, Empty))`, and what has no derivation (a match missing a tag, a repeated arm, a tag outside the group, a list that mixes element types). |
+| `GoatPresence.v` | Presence rows (phase 4): the old row equivalence `req0` (no `pre` or `abs`), the normalizer `nf`, `presence_inv` (a record literal's row equals `l ^ P : T ; R` only when `P` is `Unit`, or `Bool` with the row equal to `R` and no `l`), and `rm` (the first field of a row) respecting `req`. |
+| `GoatSpread.v` | Spread and restrict (phase 4): the inversions, and `spread_step_typing` and `restrict_step_typing`, which preservation uses. |
+| `GoatPhase4.v` | Phase 4 of ADR 0037: worked examples for spread (an update, an extension, one `set_x` for a record with and without `x`), restrict, and what has no derivation (a type-changing update, a restrict on a record without the label). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
 | `GoatPeg.v` | Ford-style relational PEG semantics of the generated grammar over a token stream, and **T2** `peg_deterministic`. |
@@ -355,6 +358,75 @@ What waits: the differential test for tag programs. The checker's tag groups
 (#517) are not on master, so `core_corpus.rs` cannot write them yet;
 `differential/README.md` lists what the corpus and the driver must add. The
 typeset `goat.ott` and `docs/semantics.md` do not yet state the group rules.
+
+## Phase 4 (ADR 0037, ADR 0033): spread and restrict
+
+The language design this models is ADR 0033: `{...p, x: v}` updates a field `p`
+has, keeping its type, or extends `p` with a field it lacks, and the type of a
+function that does either, `program(r) do {...r, x: 1} done`, carries a
+presence variable (Rémy) so that one function serves both records. The plan is
+`docs/design/phase4-proof-plan.md`.
+
+What the calculus gained, in `goat_ln.ott` (and `Goat_ott.v`, regenerated):
+
+- a row entry `l ^ P : T ; R` (`row_Maybe`): the field `l` at `T`, present when
+  the presence `P` is `Unit`, absent when it is `Bool`, unknown when it is a
+  type variable. `P` is a type, so a presence variable is a `typ_Var` and
+  `ftv`, `gen`, `inst` and substitution handle it unchanged; the pun is the
+  checker's (`PRESENT = Unit`, `ABSENT = Bool`);
+- five rules of row equivalence: congruence, `l ^ Unit : T ; R ≅ l : T ; R`,
+  `l ^ Bool : T ; R ≅ R` when `l # R` (the spine of `R` names no `l` and ends in
+  `nil`; `rlacks`, embedded before the relation), and the swaps of a `Maybe`
+  entry past an `Ext` entry or another `Maybe` entry;
+- terms `spread(e1, l, e2)` and `restrict(e, l)`. A multi-field spread is the nest
+  of single ones, and a rest pattern with `k` labels is `k` restricts;
+- `T_Spread` (`e1 : {l ^ P : T ; R}`, `e2 : T` gives `{l : T ; R}`) and
+  `T_Restrict` (`e : {R0}` and `rm l R0 T R` gives `{R}`, where `rm` is the first
+  `l` of the row, skipping other entries); `st_spread1`, `st_spread2`,
+  `st_spread` (`fs_set`: replace the first `l`, or add one in front),
+  `st_restrict1`, `st_restrict` (`fs_drop`), and `tr_spread1`, `tr_spread2`,
+  `tr_restrict`.
+
+`progress`, `preservation` and `soundness` hold with 0 admits and no axiom
+(`make check-assumptions`); `typing D G e T` is unchanged. Progress needs no new
+idea: a finished base is a record literal, and `fs_set` and `fs_drop` are total.
+Preservation is where the model pays. `presence_inv` (`GoatPresence.v`) answers
+which presence the type of a literal's row can have: the normalizer `nf` turns a
+`Unit` entry into a field and drops a `Bool` entry whose normalized tail lacks
+its label; `nf` commutes with every `req` rule up to `req0`; and a literal's row
+has no `Maybe` entry, which `req0` counts. So the literal's row meets
+`l ^ P : T ; R` only through `Unit` (the field is there, and an update keeps its
+type up to equality) or a lacking `Bool` (no `l`, and the row equals `R`).
+`rm` respects `req` by induction on the derivation, both directions for `sym`.
+The guard `gd` of a recursive type skips the field type of an absent entry,
+because `abs` drops it and a guard that counted it would not survive equality.
+
+Modelling calls made for this phase, each the conservative choice:
+
+- **`lacks` is syntactic.** `l # R` holds only of a closed spine, so it is stable
+  under substitution and `teq_ap` needs no new idea. A row variable lacks nothing:
+  a spread of a base whose row ends in a row variable the checker knows lacks the
+  label (the remainder of a rest pattern put back) has no derivation, though the
+  checker accepts it. A `lacks` sort on row variables in the kinding environment
+  would close that; it is left to the algorithm proof, where completeness needs
+  it.
+- **Scoped labels stay.** A row may hold a label twice and the first one wins, so
+  a spread or restrict touches the first. The checker's rows never do (ADR 0033
+  decision 5); the calculus accepts a superset of types, which is sound.
+- **A presence is a type, ill-sorted ones included.** `P` instantiated at `Int`
+  is stuck: no rule reads the slot except `pre` and `abs`, so such a row never
+  equals a record literal's, and no value has it.
+- **Restrict carries its premise.** `T_Restrict` states `rm`, not "`R0` is
+  `l : T ; R`", because preservation of the latter needs `req` to cancel an
+  entry (the completeness direction `GoatRows.v` does not prove); `rm` commutes
+  with `req` instead.
+- **The `method` flag of a row entry is not modelled** (phase 6).
+
+What waits, each its own ticket: algorithm W on `Maybe` rows and a differential
+test of spread and restrict (`GoatInfer.v` returns no type for a `Maybe` entry
+and for the two terms, so `infer_closed_sound` and `infer_mu_free` are
+unchanged), the parser fragment (`rule_map.rs` exempts `e_spread` and
+`e_restrict`, as it exempts the tag terms), and the typeset `goat.ott`.
 
 ## Loops and foreign calls (decided)
 

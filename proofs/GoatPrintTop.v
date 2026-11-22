@@ -71,6 +71,8 @@ Proof.
   - intros a IH k Hs. destruct Hs.
   - intros w tg a IH k Hs. destruct Hs.
   - intros w a IHa ars IHars k Hs. destruct Hs.
+  - intros a IHa l b IHb k Hs. destruct Hs.
+  - intros a IH l k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros a IH k Hs. destruct Hs.
   - intros k Hs. reflexivity.
