@@ -945,6 +945,29 @@ mod tests {
     }
 
     #[test]
+    fn a_negated_numeral_adapts_too() {
+        let src = "n = -3  {a: n + 1.5, b: n // 2}";
+        assert_eq!(exact_type_of(src), "{a: Float, b: Int}");
+        let swapped = "n = -3  {b: n // 2, a: n + 1.5}";
+        assert_eq!(exact_type_of(swapped), "{b: Int, a: Float}");
+        let at_the_end = "n = -9223372036854775808  {a: n + 1.5, b: n // 2}";
+        assert_eq!(exact_type_of(at_the_end), "{a: Float, b: Int}");
+        for src in [
+            "n = -(2 * 3)  {a: n + 1.5, b: n // 2}",
+            "n = -3 * 2  {a: n + 1.5, b: n // 2}",
+            "n = - -3  {a: n + 1.5, b: n // 2}",
+            "n = 0 - 3  {a: n + 1.5, b: n // 2}",
+            "p = {x: -3}  {a: p.x + 1.5, b: p.x // 2}",
+        ] {
+            let ty = exact_type_of(src);
+            assert!(
+                ty.contains("a: Float") && ty.contains("b: Float"),
+                "{src}: {ty}"
+            );
+        }
+    }
+
+    #[test]
     fn only_a_bare_numeral_adapts() {
         for src in [
             "n = 2 * 3  {a: n + 1.5, b: n // 2}",

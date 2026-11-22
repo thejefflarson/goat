@@ -1197,19 +1197,28 @@ impl Lower {
 
     /// A literal with a `.` or an exponent is a `Float`; bare digits are an
     /// `Int`, which must fit in an `i64`.
-    fn lower_number(&mut self, span: Span, text: &str) -> Expr {
+    fn lower_number(&mut self, span: Span, text: &str, negative: bool) -> Expr {
         let is_float = text.contains(['.', 'e', 'E']);
-        let kind = if is_float {
-            text.trim_end_matches('.').parse().map(ExprKind::Float).ok()
+        let signed = if negative {
+            format!("-{text}")
         } else {
-            text.parse().map(ExprKind::Int).ok()
+            text.to_string()
+        };
+        let kind = if is_float {
+            signed
+                .trim_end_matches('.')
+                .parse::<f64>()
+                .map(|f| ExprKind::Float(f + 0.0))
+                .ok()
+        } else {
+            signed.parse().map(ExprKind::Int).ok()
         };
         let kind = kind.unwrap_or_else(|| {
             let message = if is_float {
                 format!("invalid number `{text}`")
             } else {
                 format!(
-                    "`{text}` is too big a whole number (the most is {})",
+                    "`{signed}` is too big a whole number (the most is {})",
                     i64::MAX
                 )
             };
@@ -1219,11 +1228,22 @@ impl Lower {
         self.node(span, kind)
     }
 
-    /// `-x` is `0 - x`: the HIR has no negation node.
+    /// `-3` is one negative literal, as in the calculus; any other `-x` is
+    /// `0 - x`, as the HIR has no negation node. Adding `0.0` turns `-0.0` into
+    /// `0.0`, which is what `0 - 0.0` computes.
     fn lower_negation(&mut self, pair: Node) -> Expr {
         let span = self.span_of(&pair);
         let mut inner = pair.children().peekable();
         let minus = inner.next().expect("negation begins with `-`");
+        let mut ahead = inner.clone();
+        let bare_number = ahead.next().is_some_and(|n| n.is("number"))
+            && ahead
+                .peek()
+                .is_none_or(|p| !matches!(p.kind(), "access" | "take" | "call"));
+        if bare_number {
+            let number = inner.next().expect("a bare number follows the `-`");
+            return self.lower_number(span, number.text(), true);
+        }
         let operand = self.lower_operand(&mut inner);
         let zero = self.node(self.span_of(&minus), ExprKind::Int(0));
         self.node(
@@ -1299,7 +1319,7 @@ impl Lower {
         let span = self.span_of(&pair);
         match pair.kind() {
             "expr" => self.lower_expr(pair),
-            "number" => self.lower_number(span, pair.text()),
+            "number" => self.lower_number(span, pair.text(), false),
             "string" => {
                 let raw = pair.text();
                 let decoded = self.decode_string(span, &raw[1..raw.len() - 1]);

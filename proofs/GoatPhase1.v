@@ -473,14 +473,14 @@ Proof.
         [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_at_lit; exact I ].
 Qed.
 
-(* let n = 1 in n: a numeral binding is generic, so it is an Int or a Float
+(* let n = 1 in n, or n = -3: a numeral binding is generic, so it is an Int or a Float
    as its use asks.  Which one an unconstrained use takes is the elaborator's
    choice at the program judgment (ADR 0017 defaults to Int). *)
-Lemma numeral_binding_at : forall U,
+Lemma numeral_binding_at : forall n U,
   sat d_any k_Literal U -> lct 0 U ->
-  typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) U.
+  typing d_any nil (e_let (e_num n) (e_fvar_b 0)) U.
 Proof.
-  intros U HU HL.
+  intros n U HU HL.
   apply T_Let with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
   - apply T_Num; [ constructor | ].
     cbn [sat]. rewrite (ext_in _ _ _ ga).
@@ -504,6 +504,13 @@ Qed.
 Example numeral_binding_is_generic :
   typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) typ_Int /\
   typing d_any nil (e_let (e_num 1) (e_fvar_b 0)) typ_Float.
+Proof. split; apply numeral_binding_at; exact I. Qed.
+
+(* A negative literal is one numeral too: the checker lowers -3 to it, not to
+   0 - 3. *)
+Example negative_numeral_binding_is_generic :
+  typing d_any nil (e_let (e_num (-3)) (e_fvar_b 0)) typ_Int /\
+  typing d_any nil (e_let (e_num (-3)) (e_fvar_b 0)) typ_Float.
 Proof. split; apply numeral_binding_at; exact I. Qed.
 
 Lemma inst_numeral_at : forall U,

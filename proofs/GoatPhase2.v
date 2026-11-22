@@ -239,3 +239,46 @@ Proof.
   intros e2 T H. destruct (letrec_inv _ _ _ _ _ H) as [L [R [T2 [k [Hfg _]]]]].
   inversion Hfg.
 Qed.
+
+(* ---- a comparison on a number a later use settles ----
+   Both terms are derivable, so the checker is sound where it accepts them: the
+   numeral's type is whatever the rules need, here chosen as Float and as Int. *)
+
+Example compared_let_bound_numeral_types :
+  typing d_any nil
+    (e_let (e_bin (e_num 71) bop_fdiv (e_num 88))
+           (e_ite (e_bin (e_fvar_b 0) bop_lte (e_fvar_b 0))
+                  (e_bin (e_fvar_b 0) bop_sub (e_dec 0))
+                  (e_dec 0)))
+    typ_Float.
+Proof.
+  apply T_LetMono with (L := {}) (T1 := typ_Float).
+  - apply T_Bin with (A := typ_Float) (B := typ_Float); [ apply T_Num | apply T_Num | apply sig_whole ].
+    all: first [ solve_uniq | reflexivity | exact I ].
+  - intros x Hx.
+    cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
+    apply T_If; [ | | apply T_Dec; solve_uniq ].
+    + eapply T_Bin; [ eapply T_Var | eapply T_Var | apply sig_cmp ].
+      all: first [ solve_uniq
+                 | (unfold binds; simpl; destruct (x == x); [ reflexivity | congruence ])
+                 | apply inst_mono_self | reflexivity | constructor ].
+    + eapply T_Bin; [ eapply T_Var | apply T_Dec | apply sig_ring ].
+      all: first [ solve_uniq
+                 | (unfold binds; simpl; destruct (x == x); [ reflexivity | congruence ])
+                 | apply inst_mono_self | reflexivity | exact I ].
+Qed.
+
+Example compared_parameter_types :
+  typing d_any nil
+    (e_app (e_abs (e_bin (e_fvar_b 0) bop_eq (e_bin (e_fvar_b 0) bop_rem (e_fvar_b 0))))
+           (e_num 90))
+    typ_Bool.
+Proof.
+  apply T_App with (T1 := typ_Int); [ | apply T_Num; [ solve_uniq | exact I ] ].
+  apply T_Abs with (L := {}). intros x Hx.
+  cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
+  eapply T_Bin; [ eapply T_Var | eapply T_Bin; [ eapply T_Var | eapply T_Var | apply sig_whole ] | apply sig_cmp ].
+  all: first [ solve_uniq
+             | (unfold binds; simpl; destruct (x == x); [ reflexivity | congruence ])
+             | apply inst_mono_self | reflexivity | exact I | constructor ].
+Qed.
