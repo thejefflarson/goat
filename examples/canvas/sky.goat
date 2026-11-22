@@ -5,23 +5,37 @@
 init = {t: 0}
 
 sun = {
-  x: 90, y: 90, size: 30, fill: "gold",
+  x: 90,
+  y: 90,
+  size: 30,
+  fill: "gold",
   look: program(self, t) do
     Dot({x: self.x, y: self.y, r: self.size + 4 * sin(t / 10), fill: self.fill})
   done
 }
 
 moon = {
-  x: 300, y: 70, size: 22, fill: "white",
+  x: 300,
+  y: 70,
+  size: 22,
+  fill: "white",
   look: program(self, t) do
     Dot({x: self.x - 20 * sin(t / 30), y: self.y, r: self.size, fill: self.fill})
   done
 }
 
 star = {
-  x: 200, y: 40, size: 3, fill: "white",
+  x: 200,
+  y: 40,
+  size: 3,
+  fill: "white",
   look: program(self, t) do
-    Dot({x: self.x, y: self.y, r: if sin(t / 5) > 0 then self.size else 1 done, fill: self.fill})
+    Dot({
+      x: self.x,
+      y: self.y,
+      r: if sin(t / 5) > 0 then self.size else 1 done,
+      fill: self.fill
+    })
   done
 }
 

@@ -277,3 +277,75 @@ fn applying_edits_refuses_to_touch_anything_but_whitespace() {
     assert!(apply("a b", &[huge(0, 1 << 40)]).is_err());
     assert!(apply("a b", &[huge(1 << 40, 0)]).is_err());
 }
+
+#[test]
+fn a_record_that_would_end_past_column_80_breaks_one_field_per_line() {
+    let source =
+        "x = {alpha: 1000000, beta: 2000000, gamma: 3000000, delta: 4000000, epsilon: 5000000}\n";
+    let expected = "x = {\n  alpha: 1000000,\n  beta: 2000000,\n  gamma: 3000000,\n  delta: 4000000,\n  epsilon: 5000000\n}\n";
+    assert_eq!(formats(source), expected);
+    assert_eq!(formats(expected), expected);
+}
+
+#[test]
+fn a_record_that_fits_stays_on_one_line() {
+    let source = "x = {alpha: 1, beta: 2}\n";
+    assert_eq!(formats(source), source);
+    let exact = format!("x = {{s: \"{}\"}}\n", "a".repeat(80 - 11));
+    assert_eq!(formats(&exact), exact);
+    let over = format!("x = {{s: \"{}\"}}\n", "a".repeat(80 - 10));
+    assert!(formats(&over).starts_with("x = {\n  s: "));
+}
+
+#[test]
+fn the_width_is_in_characters_not_bytes() {
+    let source = format!("v = {{s: \"{}\"}}\n", "é".repeat(65));
+    assert_eq!(formats(&source), source);
+}
+
+#[test]
+fn only_the_records_that_are_too_long_break_inside_a_long_record() {
+    let source = "x = {a: {p: 1, q: 2}, b: {rrrrrrrrrrrrrrrrrrrrrrrrr: 111111111111111, sssssssssssssssssssssss: 22222222222222}, c: 3}\n";
+    let expected = "x = {\n  a: {p: 1, q: 2},\n  b: {\n    rrrrrrrrrrrrrrrrrrrrrrrrr: 111111111111111,\n    sssssssssssssssssssssss: 22222222222222\n  },\n  c: 3\n}\n";
+    assert_eq!(formats(source), expected);
+    assert_eq!(formats(expected), expected);
+}
+
+#[test]
+fn a_record_written_across_lines_stays_broken_one_field_to_a_line() {
+    assert_eq!(
+        formats("y = {a: 1,\n  b: 2}\n"),
+        "y = {\n  a: 1,\n  b: 2\n}\n"
+    );
+    let broken = "y = {\n  a: 1,\n  b: 2\n}\n";
+    assert_eq!(formats(broken), broken);
+}
+
+#[test]
+fn a_long_list_breaks_like_a_record() {
+    let source = "xs = [111111111111, 222222222222, 333333333333, 444444444444, 555555555555, 666666666666]\n";
+    let expected = "xs = [\n  111111111111,\n  222222222222,\n  333333333333,\n  444444444444,\n  555555555555,\n  666666666666\n]\n";
+    assert_eq!(formats(source), expected);
+}
+
+#[test]
+fn a_comment_inside_a_record_breaks_it_and_stays_on_its_line() {
+    assert_eq!(
+        formats("x = {a: 1, # first\nb: 2}\n"),
+        "x = {\n  a: 1, # first\n  b: 2\n}\n"
+    );
+}
+
+#[test]
+fn call_arguments_are_never_broken() {
+    let source = "w = f(111111111111111, 222222222222222, 333333333333333, 444444444444444, 55555555555555)\n";
+    assert_eq!(formats(source), source);
+}
+
+#[test]
+fn a_broken_record_inside_a_call_closes_at_the_indent_of_the_line_that_opened_it() {
+    let source = "f = program(a) do\nlexed(a, if a then Link({kind: aaaaaaaaaaaaaaaaaaaa, start: bbbbbbbbbbbbbbbbbbbbbbb, stop: cccccccccccccccc}, a) else a done)\ndone\n";
+    let expected = "f = program(a) do\n  lexed(a, if a then Link({\n    kind: aaaaaaaaaaaaaaaaaaaa,\n    start: bbbbbbbbbbbbbbbbbbbbbbb,\n    stop: cccccccccccccccc\n  }, a) else a done)\ndone\n";
+    assert_eq!(formats(source), expected);
+    assert_eq!(formats(expected), expected);
+}
