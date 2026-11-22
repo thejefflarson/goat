@@ -175,10 +175,9 @@ are, the corpus writer and the driver need the following, and nothing in
   printer for a group type must agree on the parameter order and on an
   unconstrained parameter: `Empty` has type `List(v0)` on both sides, one free
   variable per parameter the program leaves undecided.
-- **Verdicts to compare both ways**: a missing tag, a repeated arm, a tag
-  outside the group, and an `else` with full cover (accepted) have no derivation
-  or a derivation as the calculus says; the checker's verdict must match. A
-  `match` with no arms on a group with no tags is rejected by neither.
+- **Verdicts to compare both ways**: a missing tag, a repeated arm and a tag
+  outside the group have no derivation; an `else` with full cover has one. The
+  checker's verdict must agree on each.
 - **Widening** (#506): an `Int` payload where the declaration says `Float`, and
   an `Int` arm joined with a `Float` arm, are elaborated with `float(e)` the way
   the other join sites are (see "Where `float(e)` goes"); the algorithm has no
