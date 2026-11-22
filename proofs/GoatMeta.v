@@ -15,6 +15,8 @@ Require Import Goat.GoatProofs.   (* exp_fields_mutind *)
 Require Import Goat.GoatRows.
 Require Import Goat.GoatNum.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatPresence.
+Require Import Goat.GoatRecArith.
 Require Import Goat.GoatMu.
 Require Import Goat.GoatTags.
 Require Import Stdlib.Lists.List.
@@ -707,7 +709,7 @@ Proof.
   revert R HT Hval.
   induction Hty; intros Rq HT Hval;
     try discriminate;
-    try solve [ subst; simpl in *; discriminate ];
+    try solve [ subst; simpl in *; first [ discriminate | contradiction ] ];
     try solve [ inversion Hval ].
   - (* T_Record *)
     inversion HT; subst.
@@ -799,7 +801,7 @@ Proof.
       first [ discriminate | (eexists; reflexivity) | (left; eexists; reflexivity)
             | (right; eexists; reflexivity) | (left; reflexivity) | (right; reflexivity) ] ].
   - (* T_Num: the type is Int, Float or a Literal variable *)
-    destruct T; simpl in *; try discriminate;
+    destruct T; simpl in *; try discriminate; try contradiction;
       repeat apply conj; intros Hq; apply teq_thead in Hq; simpl in Hq;
       first [ discriminate | (eexists; reflexivity) | (left; eexists; reflexivity) ].
   - (* T_Conv *) destruct (IHHty Hval) as [A [B [C E]]].
@@ -819,12 +821,12 @@ Proof.
   - (* T_Conv *) apply IHHty; auto. eapply teq_trans; eassumption.
 Qed.
 
-(* A value of a Numeric type is a numeral or a decimal. *)
+(* A value of a Literal type is a numeral or a decimal. *)
 Lemma canon_numeric : forall D G v A,
-  value v -> typing D G v A -> sat D k_Numeric A ->
+  value v -> typing D G v A -> sat D k_Literal A ->
   (exists n, v = e_num n) \/ (exists d, v = e_dec d).
 Proof.
-  intros D G v A Hv Hty Hs. destruct A; simpl in Hs; try discriminate.
+  intros D G v A Hv Hty Hs. destruct A; simpl in Hs; try discriminate; try contradiction.
   - destruct (canon_base _ _ _ _ Hv Hty) as [C _]. left. exact (C (teq_refl _)).
   - destruct (canon_base _ _ _ _ Hv Hty) as [_ [C _]]. exact (C (teq_refl _)).
   - left. exact (canon_var _ _ _ _ _ Hv Hty (teq_refl _)).
@@ -858,20 +860,20 @@ Qed.
 
 (* An operator applied to two values of the types its signature wants either
    computes a value or raises a defined error. *)
-Lemma bin_progress : forall D G o v1 v2 A B R,
+Lemma bin_progress_scalar : forall D G o v1 v2 A B R,
   bin_sig D o A B R -> value v1 -> value v2 ->
-  typing D G v1 A -> typing D G v2 B ->
+  typing D G v1 A -> typing D G v2 B -> (forall R0, A <> typ_Record R0) ->
   (exists v, bin_step o v1 v2 v) \/ (exists k, bin_trap o v1 v2 k).
 Proof.
-  intros D G o v1 v2 A B R Hs Hv1 Hv2 H1 H2.
+  intros D G o v1 v2 A B R Hs Hv1 Hv2 H1 H2 HnR.
   assert (Hint : forall v, value v -> typing D G v typ_Int -> exists a, v = e_num a)
     by (intros v Hv Hty; destruct (canon_base _ _ _ _ Hv Hty) as [C _]; exact (C (teq_refl _))).
   assert (Hflt : forall v, value v -> typing D G v typ_Float ->
                  (exists n, v = e_num n) \/ (exists d, v = e_dec d))
     by (intros v Hv Hty; destruct (canon_base _ _ _ _ Hv Hty) as [_ [C _]]; exact (C (teq_refl _))).
-  destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o A Hk Hsat | D0 o B Hk HB ].
+  destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o A Hk Hsat | D0 R0 Hr | D0 o B Hk HB ].
   - (* [+ - *] on two numbers of one Numeric type *)
-    destruct A; simpl in Hsat; try discriminate.
+    destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity).
     + (* Int: in range it steps, out of range it traps *)
       destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
       apply ring_nums; assumption.
@@ -893,7 +895,7 @@ Proof.
     + apply bs_float; [ right; reflexivity | constructor ].
     + apply bs_float; [ right; reflexivity | constructor ].
   - (* [//] and [%] on two numbers of one Numeric type *)
-    destruct A; simpl in Hsat; try discriminate.
+    destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity).
     + (* Int: a zero divisor traps, and so does a quotient out of range *)
       destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
       apply whole_nums; assumption.
@@ -907,6 +909,8 @@ Proof.
       destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
       destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
       apply whole_nums; assumption.
+  - (* [/] on records is not a scalar operation *)
+    exfalso. eapply HnR. reflexivity.
   - (* a comparison of two Ints, Floats, strings or booleans *)
     inversion HB; subst.
     + destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
@@ -924,6 +928,28 @@ Proof.
       destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [_ C2]]].
       destruct (C1 (teq_refl _)) as [-> | ->]; destruct (C2 (teq_refl _)) as [-> | ->];
         (left; eexists; eapply bs_cmp_bool; [ exact Hk | reflexivity | reflexivity ]).
+Qed.
+
+(* An operator applied to two values of the types its signature wants either
+   computes a value, raises a defined error, or, on two records, steps to the
+   record of the operator applied field by field ([st_binrec]): the two
+   records' rows are equivalent to one numeric row, so every field of the first
+   finds a field of the second. *)
+Lemma bin_progress : forall D G o v1 v2 A B R,
+  bin_sig D o A B R -> value v1 -> value v2 ->
+  typing D G v1 A -> typing D G v2 B ->
+  (exists v, bin_step o v1 v2 v) \/ (exists k, bin_trap o v1 v2 k)
+  \/ (exists e, step (e_bin v1 o v2) e).
+Proof.
+  intros D G o v1 v2 A B R Hs Hv1 Hv2 H1 H2.
+  destruct A as [ | | | | | | R0 | | | | ];
+    try (destruct (bin_progress_scalar _ _ _ _ _ _ _ _ Hs Hv1 Hv2 H1 H2
+           (fun R0 H => ltac:(discriminate H))) as [Hb | Hb]; [ left | right; left ]; exact Hb).
+  destruct (bin_sig_record _ _ _ _ _ Hs) as [-> [_ Hrow]].
+  destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 [Hf1 Hq1]]]]].
+  destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 [Hf2 Hq2]]]]].
+  destruct (zip_typing _ _ o _ _ Hf1 _ _ _ Hf2 Hq1 Hq2 Hrow) as [fs [Ro [Hz _]]].
+  right. right. exists (e_rec fs). apply st_binrec; assumption.
 Qed.
 
 (* ================================================================== *)
@@ -1072,9 +1098,10 @@ Proof.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk1]]].
     + destruct (IH2 eq_refl) as [Hv2 | [[e2' Hs2] | [k Hk2]]].
       * destruct (bin_progress _ _ _ _ _ _ _ _ Hs Hv1 Hv2 Ht1 Ht2)
-          as [[v Hb] | [k Hb]].
+          as [[v Hb] | [[k Hb] | [e' Hb]]].
         -- left. exists v. apply st_bin; auto.
         -- right. exists k. apply tr_bin; auto.
+        -- left. exists e'. exact Hb.
       * left. exists (e_bin e1 o e2'). apply st_bin2; auto.
       * right. exists k. apply tr_bin2; auto.
     + left. exists (e_bin e1' o e2). apply st_bin1; auto.
@@ -1330,7 +1357,7 @@ Qed.
 
 Lemma tofloat_inv : forall D G e T,
   typing D G (e_tofloat e) T ->
-  exists A, typing D G e A /\ sat D k_Numeric A /\ teq typ_Float T.
+  exists A, typing D G e A /\ sat D k_Literal A /\ teq typ_Float T.
 Proof.
   intros D G e T H. remember (e_tofloat e) as e0 eqn:He.
   induction H; try discriminate He.
@@ -1341,23 +1368,26 @@ Qed.
 
 (* A numeral's type is a Literal type, through any conversion: the equivalence
    moves only the shape of a record or an arrow, never a base type or a
-   variable. *)
-Lemma teq_sat_iff : forall T T', teq T T' -> forall D k, sat D k T <-> sat D k T'.
+   variable.  A record's [Numeric] sort is not kept, since [rsat] reads the row
+   as it is written, so the lemma excludes it. *)
+Lemma teq_sat_iff : forall T T', teq T T' -> forall D k, k <> k_Numeric ->
+  (sat D k T <-> sat D k T').
 Proof.
-  induction 1; intros D kk; try (simpl; tauto).
-  - rewrite (IHteq1 D kk). apply IHteq2.
-  - symmetry. apply IHteq.
+  induction 1; intros D kk Hk; try (simpl; tauto).
+  - destruct kk; simpl; tauto.
+  - rewrite (IHteq1 D kk Hk). apply IHteq2. exact Hk.
+  - symmetry. apply IHteq. exact Hk.
 Qed.
 
-Lemma teq_sat : forall T T' D k, teq T T' -> sat D k T -> sat D k T'.
-Proof. intros T T' D k H. apply (teq_sat_iff _ _ H). Qed.
+Lemma teq_sat : forall T T' D k, teq T T' -> k <> k_Numeric -> sat D k T -> sat D k T'.
+Proof. intros T T' D k H Hk. apply (teq_sat_iff _ _ H D k Hk). Qed.
 
 Lemma num_inv : forall D G n T, typing D G (e_num n) T -> sat D k_Literal T.
 Proof.
   intros D G n T H. remember (e_num n) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Num *) inversion He; subst. assumption.
-  - (* T_Conv *) eapply teq_sat; [ exact H0 | apply IHtyping; exact He ].
+  - (* T_Conv *) eapply teq_sat; [ exact H0 | discriminate | apply IHtyping; exact He ].
 Qed.
 
 Lemma bin_inv : forall D G e1 o e2 T,

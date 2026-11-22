@@ -34,8 +34,10 @@ preservation) is B3 (#71).
 | `GoatPhase2.v` | Phase 2 of ADR 0037: worked examples for the value restriction (which terms `is_gen_value` accepts), a generalized binding used at two types, a recursive group (its typing, its unrolling, a run) and a group member that is not a function (no derivation). |
 | `GoatPhase3.v` | Phase 3 of ADR 0037: worked examples for tag groups: `Hit(3)`, a `match` that runs, an `else`, `Link(1, Link(2, Empty))`, and what has no derivation (a match missing a tag, a repeated arm, a tag outside the group, a list that mixes element types). |
 | `GoatPresence.v` | Presence rows (phase 4): the old row equivalence `req0` (no `pre` or `abs`), the normalizer `nf`, `presence_inv` (a record literal's row equals `l ^ P : T ; R` only when `P` is `Unit`, or `Bool` with the row equal to `R` and no `l`), and `rm` (the first field of a row) respecting `req`. |
+| `GoatRecArith.v` | Record arithmetic (ADR 0012): `row_sig` (every field of a row takes the operator), `bin_sig_record`, and `zip_typing`, which pairs the fields of two records typed by rows equivalent to one numeric row and types the record of operator applications that `rec_zip` builds. Progress and preservation use it. |
 | `GoatSpread.v` | Spread and restrict (phase 4): the inversions, and `spread_step_typing` and `restrict_step_typing`, which preservation uses. |
 | `GoatPhase4.v` | Phase 4 of ADR 0037: worked examples for spread (an update, an extension, one `set_x` for a record with and without `x`), restrict, and what has no derivation (a type-changing update, a restrict on a record without the label). |
+| `GoatRecArithExamples.v` | Record arithmetic, worked: a record sum, a nested product with the fields in another order at both levels, a record with a non-number field (no derivation). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
 | `GoatPeg.v` | Ford-style relational PEG semantics of the generated grammar over a token stream, and **T2** `peg_deterministic`. |
@@ -479,7 +481,7 @@ or above `k`. A scheme records the sort of each quantified variable
 `ext D V k`, `D` extended on the generalized set `V` by `k`, which is why the
 sort of a variable lives in the environment and a type variable stays a plain
 `typ_Var a`. A numeral has any `k_Literal` type, `float(e)` takes any
-`k_Numeric` operand, and `+ - *` take two operands of one `k_Numeric` type. A
+`k_Literal` operand, and `+ - *` take two operands of one `k_Numeric` type. A
 substitution respects the sorts when `kres D D' st`: each `a` goes to a type
 that satisfies `D a` in `D'`.
 
@@ -548,10 +550,20 @@ the bound term is typed in `ext D V k`, the environment extended with the sorts
 the scheme records on the renamed variables (`typing_gen_ren`,
 `kres_ext_lift`).
 
-The algorithm is incomplete for one use of the operators: the checker applies
-`+ - *` to two records field by field, and `sat` holds of no record at `Numeric`
-(ADR 0038, decision 4). The differential corpus skips only the calls that pass a
-record at a variable some `+ - *` takes as an operand.
+Record arithmetic (ADR 0012, `GoatRecArith.v`): a closed record whose fields are
+all `Numeric` is `Numeric` (`sat`, `rsat`), so `+ - * // %` take two records of
+one such type, and `/` takes two records of `Float`s (`sig_quot_rec`). Two
+records step by `st_binrec`: `rec_zip` pairs each field of the first with the
+first field of the second under its label, in the first's order, and the result
+is a record of operator applications, which the field rules then evaluate; a
+trap in one field is the record's trap. The two operands may list their fields
+in different orders. A record is never `Literal`, so `float(e)` takes a
+`Literal` operand (`T_ToFloat`), not a `Numeric` one: `float` of a record has
+no step. The algorithm binds a `Numeric` variable to a record whose fields all
+satisfy `Numeric` (`sat_b`); it does not push the sort onto a variable inside
+the record, as the checker does, because a substitution keeps the kinding
+environment, so a record that holds a variable of no sort is rejected where the
+checker accepts it. It does not infer `/` on records.
 
 Metalib's atoms are opaque to computation, so the Coq examples that run the
 algorithm on a numeral (a fresh variable) do not reduce; the differential test

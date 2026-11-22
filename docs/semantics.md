@@ -244,7 +244,8 @@ it gives each free type variable a *sort*, `Any`, `Numeric` or `Literal`, and
 is `Any` outside a finite set of variables. `Δ ⊢ τ : κ` says `τ` may stand
 where a variable of sort `κ` stands: `Int` and `Float` have every sort, a
 variable `a` has the sorts at or above `Δ(a)` (a `Literal` variable is also
-`Numeric`, and every variable is `Any`), and any other type has sort `Any`
+`Numeric`, and every variable is `Any`), a closed record whose fields all have
+sort `Numeric` has sort `Numeric` (ADR 0012), and any other type has sort `Any`
 only. A judgment that omits `Δ` is the one with `Δ` the all-`Any` environment,
 which is the one a closed program is typed in.
 
@@ -268,7 +269,7 @@ which is the one a closed program is typed in.
 ————————————————————————————————————————————————— (T-If)
         Γ ⊢ if e₁ then e₂ else e₃ : τ
 
- Δ;Γ ⊢ e : τ      Δ ⊢ τ : Numeric
+ Δ;Γ ⊢ e : τ      Δ ⊢ τ : Literal
 ———————————————————————————————————— (T-ToFloat)
  Δ;Γ ⊢ float(e) : Float
 
@@ -281,8 +282,8 @@ which is the one a closed program is typed in.
 The operator signature `⊙ : τ₁, τ₂ ⇒ τ` (ADR 0017, ADR 0036) says which operand
 types an operator takes and what it gives. Both operands of an arithmetic or
 comparison operator have one type. `+ - * // %` are generic: the one type may be any
-`Numeric` type, `Int`, `Float` or a `Numeric` variable. A comparison stays at
-the four concrete types.
+`Numeric` type, `Int`, `Float`, a `Numeric` variable or a closed record of
+`Numeric` types. A comparison stays at the four concrete types.
 
 ```
  ⊙ ∈ {+, -, *}      Δ ⊢ τ : Numeric         ⊙ ∈ {//, %}      Δ ⊢ τ : Numeric
@@ -405,6 +406,12 @@ Rule by rule:
   - `+ - *` take two operands of one `Numeric` type and give that type
     (`S-Ring`), and so do `//` and `%` (`S-Whole`): two `Int`s, two `Float`s, or two operands of a `Numeric`
     variable, so `program(x) do x * x done` is generic.
+  - On records, `+ - * // %` act field by field (ADR 0012): two records of one
+    numeric type step to the record of the operator applied to each field of
+    the first and the field of the second with its label, so the operands may
+    list their fields in another order, and a trap in one field is the
+    record's trap. `/` takes two records of `Float`s the same way.
+    `proofs/GoatRecArithExamples.v` holds the cases.
   - `/` takes two `Float`s and gives a `Float` (`S-Quot`). The checker accepts
     `7 / 2` and types it `Float`; elaboration writes it `float(7) / float(2)`.
   - `//` and `%` are generic like `+ - *`: two `Int`s give an `Int`, two
@@ -427,7 +434,7 @@ Rule by rule:
   `Numeric` variable, a branch of an `if` or `match`, an item of a list
   literal. Never under a constructor: a record, a list or a function passed
   whole stays exact. `GoatPhase2.v` pins an elaborated widened branch and call
-  (`widened_branch_types`, `widened_call_types`). It takes any `Numeric` operand and gives a `Float`; on a `Float`
+  (`widened_branch_types`, `widened_call_types`). It takes any `Literal` operand and gives a `Float`; on a `Float`
   it is the identity (`ST-ToFloat`), so a generic function can coerce its
   argument. `float(true)` has no derivation. The calculus has no subtyping:
   `float(e)` is how an `Int` operand reaches a `Float` slot.

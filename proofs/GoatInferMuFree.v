@@ -412,7 +412,7 @@ Proof.
         unfold bin_ty in ER. destruct (kind o), T0; try discriminate; injection ER as <-; exact I.
     + destruct (infer f false ora Dk G e1 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
       destruct (IHi _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
-      destruct (unify_t f (upd D1 (ea n1) k_Numeric) T1 (typ_Var (ea n1)) (S n1))
+      destruct (unify_t f (upd D1 (ea n1) k_Literal) T1 (typ_Var (ea n1)) (S n1))
         as [[s2 n2]|] eqn:E2; [|discriminate].
       injection H as <- <- <- <-.
       assert (S2 := proj1 (unify_mf f) _ _ _ _ _ _ E2 M1 I).

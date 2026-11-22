@@ -208,9 +208,10 @@ Proof.
     apply sat_ext_out; [ exact Hka | ].
     intros b Hb Hbv.
     assert (Hna : ~ ev a).
-    { intro Hea. pose proof (Ht a Hea) as HE. rewrite Hb in HE.
-      exact (ev_od b (ev_var_T b HE) (Hodd b Hbv)). }
-    rewrite (Hfx a Hna) in Hb. inversion Hb; subst. contradiction.
+    { intro Hea. pose proof (Ht a Hea) as HE.
+      exact (ev_od b ((proj1 HE) b Hb) (Hodd b Hbv)). }
+    rewrite (Hfx a Hna) in Hb. simpl in Hb.
+    assert (b = a) by fsetdec. subst. contradiction.
 Qed.
 
 (* ------------------------------------------------------------------ *)
@@ -741,15 +742,15 @@ Proof.
            apply (typing_ap_G D2 n2 s3 D2 n3 _ _ _ Gd3 HG2). exact Hty2.
     + (* Int-to-Float coercion at any Numeric type *)
       destruct (infer f false ora D G a3 n) as [[[[s1 D1] T1] n1]|] eqn:E1; [|discriminate].
-      set (D1' := upd D1 (ea n1) k_Numeric) in *.
+      set (D1' := upd D1 (ea n1) k_Literal) in *.
       destruct (unify_t f D1' T1 (typ_Var (ea n1)) (S n1)) as [[s2 n2]|] eqn:E2; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-      assert (HN : D1' (ea n1) = k_Numeric) by (unfold D1'; apply upd_same).
+      assert (HN : D1' (ea n1) = k_Literal) by (unfold D1'; apply upd_same).
       assert (HEc : EvT (typ_Var (ea n1))) by (apply EvT_var, ev_ea).
-      pose proof (Good_upd D1 n1 k_Numeric HD1) as GdU. fold D1' in GdU.
+      pose proof (Good_upd D1 n1 k_Literal HD1) as GdU. fold D1' in GdU.
       assert (HD1' : DOk D1' (S n1)) by (destruct GdU as (_ & _ & H2 & _); exact H2).
       destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E2 HT1 HEc) as (Hs2 & Hteq & Hk2 & Hl2).
       pose proof (Good_unify D1' (S n1) s2 n2 Hs2 Hk2 Hl2 HD1') as Gd2.

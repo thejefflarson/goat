@@ -17,6 +17,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatPresence.
+Require Import Goat.GoatRecArith.
 Require Import Goat.GoatMeta.
 Require Import Stdlib.Lists.List.
 
@@ -95,19 +96,6 @@ Proof.
   - destruct (Nat.eqb l l1) eqn:E; simpl.
     + inversion Hpi; subst. apply req_head; [ apply teq_sym; assumption | apply req_refl ].
     + apply req_head; [ apply teq_refl | eapply IH; eassumption ].
-Qed.
-
-Lemma field_typing_drop : forall D G fs R l T R',
-  field_typing D G fs R -> rm l R T R' -> field_typing D G (fs_drop l fs) R'.
-Proof.
-  intros D G fs R l T R' H. revert T R'.
-  induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH];
-    intros T0 R0 Hrm.
-  - exfalso. eapply rm_empty_inv; eassumption.
-  - destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R2 [E ->]]]].
-    + subst. simpl. rewrite Nat.eqb_refl. exact Hft.
-    + simpl. rewrite (proj2 (Nat.eqb_neq _ _) Hne).
-      apply FT_cons; [ exact Hty | eapply IH; exact E ].
 Qed.
 
 (* Preservation of a spread of a record literal. *)

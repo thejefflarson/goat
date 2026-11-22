@@ -136,11 +136,26 @@ Proof.
   apply AtomSetFacts.mem_iff in E. contradiction.
 Qed.
 
-Lemma sat_ext_out : forall D V k0 k T,
-  sat D k T -> (forall b, T = typ_Var b -> b `notin` V) -> sat (ext D V k0) k T.
+Lemma sat_ext_out_mut : forall D V k0,
+  (forall T k, sat D k T -> (forall b, b `in` ftv_typ T -> b `notin` V) ->
+     sat (ext D V k0) k T) /\
+  (forall R, rsat D R -> (forall b, b `in` ftv_row R -> b `notin` V) ->
+     rsat (ext D V k0) R).
 Proof.
-  intros D V k0 k T H Hout. destruct T; simpl in *; try exact H.
-  rewrite ext_out; [ exact H | apply Hout; reflexivity ].
+  intros D V k0. apply typ_row_mutind; simpl; intros.
+  all: first
+    [ assumption | exact I | contradiction
+    | (destruct k; [ exact I | apply H; assumption | contradiction ])
+    | (rewrite ext_out; [ assumption | apply H0; fsetdec ])
+    | (destruct H1 as [H3 H4]; split;
+       [ apply H; [ exact H3 | intros b Hb; apply H2; fsetdec ]
+       | apply H0; [ exact H4 | intros b Hb; apply H2; fsetdec ] ]) ].
+Qed.
+
+Lemma sat_ext_out : forall D V k0 k T,
+  sat D k T -> (forall b, b `in` ftv_typ T -> b `notin` V) -> sat (ext D V k0) k T.
+Proof.
+  intros D V k0 k T H Hout. exact (proj1 (sat_ext_out_mut D V k0) T k H Hout).
 Qed.
 
 Lemma supp_ok_ext_set : forall D S V k,
@@ -288,10 +303,19 @@ Proof. intros [] []; simpl; intros H; try discriminate; constructor. Qed.
 Lemma finer_b_total : forall k1 k2, finer_b k1 k2 = false -> finer k2 k1.
 Proof. intros [] []; simpl; intros H; try discriminate; constructor. Qed.
 
-Lemma sat_b_sound : forall D k T, sat_b D k T = true -> sat D k T.
+Lemma sat_b_sound_mut : forall D,
+  (forall T k, sat_b D k T = true -> sat D k T) /\
+  (forall R, rsat_b D R = true -> rsat D R).
 Proof.
-  intros D k T H. destruct T; simpl in *; try exact I;
-    try (destruct k; [ reflexivity | discriminate | discriminate ]).
-  apply finer_b_sound. exact H.
+  intros D. apply typ_row_mutind; simpl; intros.
+  all: first
+    [ exact I | discriminate
+    | (destruct k; [ reflexivity | discriminate | discriminate ])
+    | (destruct k; [ exact I | apply H; assumption | discriminate ])
+    | (apply finer_b_sound; assumption)
+    | (apply Bool.andb_true_iff in H1 as [H1 H2]; split; auto) ].
 Qed.
+
+Lemma sat_b_sound : forall D k T, sat_b D k T = true -> sat D k T.
+Proof. intros D k T H. exact (proj1 (sat_b_sound_mut D) T k H). Qed.
 
