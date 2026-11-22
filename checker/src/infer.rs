@@ -69,6 +69,35 @@ type IdMap<K, V> = HashMap<K, V, BuildHasherDefault<IdHasher>>;
 #[derive(Default)]
 struct IdHasher(u64);
 
+/// A hasher that folds every write into its state, for hashing a structure
+/// piece by piece at a fraction of the default hasher's cost per piece.
+#[derive(Default)]
+struct FoldHasher(u64);
+
+impl Hasher for FoldHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.write_u64(u64::from(*byte));
+        }
+    }
+
+    fn write_u64(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+
+    fn write_u32(&mut self, word: u32) {
+        self.write_u64(u64::from(word));
+    }
+
+    fn write_usize(&mut self, word: usize) {
+        self.write_u64(word as u64);
+    }
+}
+
 impl Hasher for IdHasher {
     fn finish(&self) -> u64 {
         self.0
@@ -477,6 +506,9 @@ struct Inferer {
     /// the substitution no longer changes: a receiver mentioned at every
     /// method is finished once and shared.
     finished: RefCell<IdMap<TypeVar, Option<Ty>>>,
+    /// Sizes measured while finishing, kept across types for the same reason:
+    /// a large `μ` mentioned by many nodes is measured once.
+    finished_sizes: RefCell<Sizes>,
     /// The `Rec` binders [`Inferer::resolve`] is inside, whose variables the
     /// substitution must not touch.
     shadowed: RefCell<Vec<TypeVar>>,
@@ -594,7 +626,7 @@ struct Assumed {
 impl Assumed {
     /// Record the pair, and whether it was new.
     fn insert(&mut self, a: &Ty, b: &Ty) -> bool {
-        let mut hasher = std::hash::DefaultHasher::new();
+        let mut hasher = FoldHasher::default();
         a.fingerprint(&mut hasher, FINGERPRINT_DEPTH);
         b.fingerprint(&mut hasher, FINGERPRINT_DEPTH);
         let bucket = self.buckets.entry(hasher.finish()).or_default();
@@ -866,6 +898,13 @@ impl Budget {
 struct Extent<'a> {
     inf: &'a Inferer,
     budget: &'a Budget,
+    sizes: Sizes,
+}
+
+/// What an [`Extent`] has measured: the large types variables and `Rec` bodies
+/// stand for. It is valid only while the substitution does not change.
+#[derive(Default)]
+struct Sizes {
     vars: IdMap<TypeVar, Size>,
     row_vars: IdMap<TypeVar, Size>,
     bodies: IdMap<*const Ty, Size>,
@@ -896,14 +935,8 @@ impl Size {
 }
 
 impl<'a> Extent<'a> {
-    fn new(inf: &'a Inferer, budget: &'a Budget) -> Self {
-        Extent {
-            inf,
-            budget,
-            vars: IdMap::default(),
-            row_vars: IdMap::default(),
-            bodies: IdMap::default(),
-        }
+    fn new(inf: &'a Inferer, budget: &'a Budget, sizes: Sizes) -> Self {
+        Extent { inf, budget, sizes }
     }
 
     fn within(&self, size: Size, depth: usize) -> Option<Size> {
@@ -917,12 +950,12 @@ impl<'a> Extent<'a> {
         match ty {
             Ty::Var(v) => {
                 if let Some(bound) = self.inf.subst.get(v) {
-                    let below = match self.vars.get(v) {
+                    let below = match self.sizes.vars.get(v) {
                         Some(&known) => known,
                         None => {
                             let below = self.ty(bound, depth + 1)?;
                             if below.terms >= WORTH_REMEMBERING {
-                                self.vars.insert(*v, below);
+                                self.sizes.vars.insert(*v, below);
                             }
                             below
                         }
@@ -938,12 +971,12 @@ impl<'a> Extent<'a> {
             Ty::Record(row) | Ty::Variant(row) => size.over(self.row(row, depth + 1)?),
             Ty::Rec(_, body) => {
                 let key = Arc::as_ptr(body);
-                let below = match self.bodies.get(&key) {
+                let below = match self.sizes.bodies.get(&key) {
                     Some(&known) => known,
                     None => {
                         let below = self.ty(body, depth + 1)?;
                         if below.terms >= WORTH_REMEMBERING {
-                            self.bodies.insert(key, below);
+                            self.sizes.bodies.insert(key, below);
                         }
                         below
                     }
@@ -961,12 +994,12 @@ impl<'a> Extent<'a> {
         match row {
             Row::Var(v) => {
                 if let Some(bound) = self.inf.row_subst.get(v) {
-                    let below = match self.row_vars.get(v) {
+                    let below = match self.sizes.row_vars.get(v) {
                         Some(&known) => known,
                         None => {
                             let below = self.row(bound, depth + 1)?;
                             if below.terms >= WORTH_REMEMBERING {
-                                self.row_vars.insert(*v, below);
+                                self.sizes.row_vars.insert(*v, below);
                             }
                             below
                         }
@@ -2858,7 +2891,7 @@ impl Inferer {
     /// [`Self::finish`], or `None` for a type over [`MAX_UNFOLDED_TERMS`],
     /// which [`Self::report_outgrown_types`] has reported.
     fn finish_within_budget(&self, ty: &Ty) -> Option<Ty> {
-        let finish = || self.within_unfold_budget(ty).then(|| self.finish(ty));
+        let finish = || self.within_finished_budget(ty).then(|| self.finish(ty));
         let Ty::Var(var) = ty else {
             return finish();
         };
@@ -2868,6 +2901,17 @@ impl Inferer {
         let done = finish();
         self.finished.borrow_mut().insert(*var, done.clone());
         done
+    }
+
+    /// [`Self::within_unfold_budget`] for a type of the final substitution,
+    /// sharing what earlier calls measured.
+    fn within_finished_budget(&self, ty: &Ty) -> bool {
+        let budget = Budget::for_unfolding();
+        let sizes = std::mem::take(&mut *self.finished_sizes.borrow_mut());
+        let mut extent = Extent::new(self, &budget, sizes);
+        let within = extent.ty(ty, 0).is_some();
+        *self.finished_sizes.borrow_mut() = extent.sizes;
+        within
     }
 
     fn within_unfold_budget(&self, ty: &Ty) -> bool {
@@ -2883,11 +2927,15 @@ impl Inferer {
     }
 
     fn spend_on_ty(&self, ty: &Ty, budget: &Budget) -> Option<()> {
-        Extent::new(self, budget).ty(ty, 0).map(drop)
+        Extent::new(self, budget, Sizes::default())
+            .ty(ty, 0)
+            .map(drop)
     }
 
     fn spend_on_row(&self, row: &Row, budget: &Budget) -> Option<()> {
-        Extent::new(self, budget).row(row, 0).map(drop)
+        Extent::new(self, budget, Sizes::default())
+            .row(row, 0)
+            .map(drop)
     }
 
     /// The chain of `Let`s from `first`, walked in a loop so a long block costs
@@ -5409,6 +5457,18 @@ mod tests {
         assert!(inf.within_unfold_budget(&small));
         assert!(!inf.within_unfold_budget(&huge));
         assert!(!inf.within_term_budget(&small));
+    }
+
+    #[test]
+    fn finished_types_share_what_was_measured_without_changing_the_verdict() {
+        let mut inf = inferer();
+        let small = doubled(&mut inf, 12);
+        let huge = doubled(&mut inf, 60);
+        for _ in 0..2 {
+            assert!(inf.within_finished_budget(&small));
+            assert!(!inf.within_finished_budget(&huge));
+            assert!(inf.within_finished_budget(&small));
+        }
     }
 
     #[test]
