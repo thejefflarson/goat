@@ -6,13 +6,22 @@ on:
     tags: ['v*.*.*']
   pull_request:
 
-# Cancel superseded runs for the same ref so a fast push doesn't pile up jobs.
+# Cancel superseded PR runs so a fast push doesn't pile up jobs; master and tag
+# runs always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
+  # The goat-runners pods share two minis with other scale sets, and their
+  # memory request is far below their limit, so a node can be overcommitted; a
+  # build that peaks high gets the pod killed mid-job ("runner lost
+  # communication"). Two rustc jobs and line tables only (not full debuginfo,
+  # whose linking dominates peak memory) keep the peak well under the limit.
+  CARGO_BUILD_JOBS: "2"
+  CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
+  CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
 
 jobs:
   check:
@@ -62,7 +71,7 @@ jobs:
       # run separately. Profile `ci` (.config/nextest.toml) lets one failure
       # not hide the others.
       - name: Test
-        run: cargo nextest run --profile ci
+        run: cargo nextest run --profile ci --test-threads 2
 
       - name: Doctests
         run: cargo test --doc
@@ -71,7 +80,7 @@ jobs:
         # fuzz/ is not a workspace member, so the clippy/test steps above never
         # touch it; this catches a fuzz target that stops compiling (e.g. a stale
         # dep) before it silently rots the nightly fuzz run. See #326.
-        run: cd fuzz && cargo check --tests
+        run: cd fuzz && CARGO_BUILD_JOBS=1 cargo check --tests
 
   # Keeps the front end and wasm backend buildable for wasm32 so the compiler
   # can run in a browser or embedded host.

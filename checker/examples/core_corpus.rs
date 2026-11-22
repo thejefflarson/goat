@@ -66,7 +66,7 @@ const MAX_DEPTH: u32 = 6;
 /// between its use and its binder.
 enum Core {
     Var(usize),
-    Num(u64),
+    Num(i64),
     Float,
     Str(Vec<u8>),
     Unit,
@@ -448,9 +448,8 @@ impl Reader<'_> {
         }
         match &expr.kind {
             ExprKind::Int(n) => {
-                let num = u64::try_from(*n)
-                    .ok()
-                    .filter(|n| *n < 1 << 30)
+                let num = Some(*n)
+                    .filter(|n| n.unsigned_abs() < 1 << 30)
                     .map(Core::Num)?;
                 match self.node_ty(expr) {
                     Some(Ty::Float) if self.in_comparison > 0 => Some(Core::ToFloat(Box::new(num))),
@@ -901,6 +900,16 @@ impl Rng {
     }
 }
 
+/// A quarter of the generated whole numbers are negative literals, chosen from
+/// the number itself so the generators draw the same random stream as without.
+fn negate_some(n: usize) -> String {
+    if n % 4 == 3 {
+        format!("-{n}")
+    } else {
+        n.to_string()
+    }
+}
+
 /// How a generated expression must be wrapped where it is an operand.
 #[derive(Clone, Copy, PartialEq)]
 enum Shape {
@@ -943,7 +952,7 @@ impl Gen {
                 .to_string(),
                 Shape::Plain,
             ),
-            _ => (self.rng.below(1000).to_string(), Shape::Num),
+            _ => (negate_some(self.rng.below(1000)), Shape::Num),
         }
     }
 
@@ -1031,7 +1040,7 @@ struct TypedGen {
 impl TypedGen {
     fn literal(&mut self, ty: Prim) -> String {
         match ty {
-            Prim::Int => self.rng.below(100).to_string(),
+            Prim::Int => negate_some(self.rng.below(100)),
             Prim::Float => format!("{}.{}", self.rng.below(10), self.rng.below(10)),
             Prim::Bool => ["true", "false"][self.rng.below(2)].to_string(),
             Prim::Str => format!("\"{}\"", ["a", "b", "ab", ""][self.rng.below(4)]),
