@@ -273,7 +273,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               end
           end
       | e_con w tg e1 =>
-          if Nat.ltb tg (length w) then
+          if Nat.ltb tg (length (gtags w)) then
           match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>

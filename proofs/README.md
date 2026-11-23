@@ -301,14 +301,17 @@ What the calculus gained, in `goat_ln.ott` (and `Goat_ott.v`, regenerated):
   `fv` and `subst` for them, and every proof that inducts over terms gained a
   third conjunct.
 
-`GoatDefs.v` defines the group declaration `gdecl` (a list of tags, each a list
-of slot codes: `0` the group, `1` to `5` the concrete `Int`, `Float`, `Bool`,
+`GoatDefs.v` defines the group declaration `gdecl` (the group's name as bytes,
+then a list of tags, each a list of slot codes; the name makes groups nominal, so
+two declarations of one shape are two types and `if c then Ping else Pong` with
+`tag A = Ping` and `tag B = Pong` has no type, `ping_or_pong_rejected`. The slot
+codes are `0` the group, `1` to `5` the concrete `Int`, `Float`, `Bool`,
 `Unit`, `String`, and `6 + j` the group's parameter `j`), the payload type of a
 tag (`tag_payload`: `Unit` for no slots, else the closed record of the slots,
 labelled by position), the arms functions (`arms_find`, `arms_default`,
 `arms_idx`, `arms_wf`), and:
 
-- `T_Con`: tag `tg < length w` around a payload of `tag_payload w Ts tg` has type
+- `T_Con`: tag `tg < length (gtags w)` around a payload of `tag_payload w Ts tg` has type
   `grp w (spine Ts)`. This is where the group instantiates its `_`s: `Ts` is any
   list of types;
 - `T_Match`: a scrutinee of type `grp w (spine Ts)`; arms that name each tag at

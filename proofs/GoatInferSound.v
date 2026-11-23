@@ -223,7 +223,7 @@ Qed.
 
 Lemma EvT_tag_payload : forall w Ts tg, Forall EvT Ts -> EvT (tag_payload w Ts tg).
 Proof.
-  intros w Ts tg H. unfold tag_payload. destruct (nth_error w tg) as [cs|]; [|apply EvT_Unit].
+  intros w Ts tg H. unfold tag_payload. destruct (nth_error (gtags w) tg) as [cs|]; [|apply EvT_Unit].
   unfold payload_ty. destruct cs; [ apply EvT_Unit | apply EvT_Record; apply EvR_slots_row; exact H ].
 Qed.
 
@@ -255,7 +255,7 @@ Proof.
   - intros tg Hin. rewrite forallb_forall in H2. apply Nat.ltb_lt. apply H2. exact Hin.
   - destruct (arms_default ars) as [e|] eqn:Ed; [ left; discriminate | right ].
     intros tg Hlt. rewrite forallb_forall in H3.
-    assert (Hs : In tg (seq 0 (length w))) by (apply in_seq; lia).
+    assert (Hs : In tg (seq 0 (length (gtags w)))) by (apply in_seq; lia).
     pose proof (H3 tg Hs) as Hex. apply existsb_exists in Hex.
     destruct Hex as [y [Hy Heq]]. apply Nat.eqb_eq in Heq. subst. exact Hy.
 Qed.
@@ -1251,7 +1251,7 @@ Proof.
         apply (typing_refine D1 n1 D1' (S n1) _ _ _ GdU HG1). exact Hty1.
       * pose proof (Good_kres _ _ _ _ _ Gd2 (ea n1)) as H3. rewrite HN in H3. exact H3.
     + (* tag construction *)
-      destruct (Nat.ltb tg1 (length w1)) eqn:Hlt; [|discriminate].
+      destruct (Nat.ltb tg1 (length (gtags w1))) eqn:Hlt; [|discriminate].
       destruct (infer f D G a6 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (unify_co f D1 T1 (tag_payload w1 (fresh_tys n1 (nparams w1)) tg1) (n1 + nparams w1))
         as [[[[s2 Du2] cs2] n2]|] eqn:E2; [|discriminate].

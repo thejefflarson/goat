@@ -45,8 +45,8 @@ metavar dec, d ::= {{ coq nat }}
   {{ com a Float value, opaque: no rule reads the payload }}
 metavar str, q ::= {{ coq (list nat) }}
   {{ com string literal, as its bytes }}
-metavar gdecl, w ::= {{ coq (list (list nat)) }}
-  {{ com a declared tag group: the slot codes of each of its tags, decoded by GoatGroup.v }}
+metavar gdecl, w ::= {{ coq (list nat * list (list nat)) }}
+  {{ com a declared tag group: its name as bytes, then the slot codes of each of its tags (GoatDefs.v); two groups are one type only when both agree }}
 metavar tagidx, tg ::= {{ coq nat }}
   {{ com position of a tag in its group's declaration }}
 

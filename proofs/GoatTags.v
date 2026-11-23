@@ -70,7 +70,7 @@ Lemma teq_tag_payload : forall w Ts Ts' tg, Forall2 teq Ts Ts' ->
   teq (tag_payload w Ts tg) (tag_payload w Ts' tg).
 Proof.
   intros w Ts Ts' tg H. unfold tag_payload.
-  destruct (nth_error w tg) as [cs|]; [ | apply teq_unit ].
+  destruct (nth_error (gtags w) tg) as [cs|]; [ | apply teq_unit ].
   unfold payload_ty. destruct cs; [ apply teq_unit | ].
   apply teq_rec. apply teq_slots_row; assumption.
 Qed.
@@ -111,7 +111,7 @@ Lemma ap_tag_payload : forall st sr w Ts tg,
   ap_typ st sr (tag_payload w Ts tg) = tag_payload w (map (ap_typ st sr) Ts) tg.
 Proof.
   intros st sr w Ts tg. unfold tag_payload.
-  destruct (nth_error w tg) as [cs|]; [ | reflexivity ].
+  destruct (nth_error (gtags w) tg) as [cs|]; [ | reflexivity ].
   unfold payload_ty. destruct cs; [ reflexivity | ].
   cbn [ap_typ]. f_equal. apply ap_slots_row.
 Qed.

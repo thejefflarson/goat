@@ -9,7 +9,7 @@ Definition bidx : Set := nat. (* de Bruijn index of a mu binder *)
 Definition num : Set := BinNums.Z. (* whole-number literal, an integer *)
 Definition dec : Set := nat. (* a Float value, opaque: no rule reads the payload *)
 Definition str : Set := (list nat). (* string literal, as its bytes *)
-Definition gdecl : Set := (list (list nat)). (* a declared tag group: the slot codes of each of its tags, decoded by GoatGroup.v *)
+Definition gdecl : Set := (list nat * list (list nat)). (* a declared tag group: its name as bytes, then the slot codes of each of its tags (GoatDefs.v); two groups are one type only when both agree *)
 Definition tagidx : Set := nat. (* position of a tag in its group's declaration *)
 
 Inductive bop : Set :=  (* binary operator *)
