@@ -1379,7 +1379,7 @@ variable is not bound to a type with a presence variable), which needs the
 extension `S2` to agree with `Sg` on the old atoms through every leaf, and `NN`
 over the atoms of the types in play rather than over the environment.
 
-**What remains of 7.6.**
+**What remains of 7.6** (as of 7.6l; stage 7.6m below supersedes it).
 
 1. *Absent entries (waits on #667).* The hypothesis `ps` is the strong side of
    the ratified list. Dropping it brings back (i) to (iv) of the 7.6f ruling as
@@ -1414,6 +1414,82 @@ over the atoms of the types in play rather than over the environment.
    entry). Waiting on #667, because each concerns an entry `Sg` makes absent: the
    four pairs of the 7.6f ruling, `fld` at an absent entry, and `Hfield` at an
    absent presentation.
+
+*As built (stage 7.6m, `GoatCompleteBind.v`, `GoatCompleteBindRow.v`,
+`GoatCompleteRows.v`, `GoatCompleteOcc.v`, `GoatCompleteRfRows.v`).* Tag groups
+outside `mu` are in the fragment. `unify_tD_complete_full` and
+`unify_rD_complete_full` keep their statements; `pf` now admits `typ_Grp w A`.
+
+**What is proved.**
+
+- *The fragment.* `pf (typ_Grp w A)` is `pf A /\ spn w 0 A`. `spn w j A` says the
+  payload spells the group's parameters: arrows ending in `Unit`, and slot `j`
+  (code `6 + j`) is used by some tag of `gtags w`. `spn_ap` keeps the shape under
+  a substitution. `ps S (typ_Grp w A)` is `ps S A`; `atT` needs nothing (the free
+  variables of a group are those of its payload); `fld D1 S k (typ_Grp w A)` is
+  `fld D1 S k A`.
+- *The sort at a group.* `sat D k (typ_Grp w A)` is `True` at `Any`, `spine_sat` at
+  `Eq`, `False` at `Numeric` and `Literal`. `spine_sat` asks a component to be `Eq`
+  only for a slot some tag uses, and `spn` makes every slot used, so it is the
+  conjunction of `sat D Eq` on the components. `sat_ren_mut` and `sat_reach_mut`
+  are derived from `sat_ren_aux` and `sat_reach_aux`, whose motive for a type is a
+  pair: the original statement, and (at `k = k_Eq`) the same statement for
+  `spine_sat D w j` of a payload, proved by induction down the arrows. The group
+  case of each is that second half at `j = 0`. The renaming and the reach lemmas
+  then serve `bind_prop` of a variable to a type with a group inside
+  (`bind_prop_sorted_complete` is unchanged). `lcb_ap_var`, `ftv_ren`, `nf_sz` and
+  `ps_nf` needed no group case: they are stated for every type, and `nfT` does not
+  enter a group (`nfT D (typ_Grp w A) = typ_Grp w A`), so `S` is carried at a group
+  as it is, with no `nfS D1 S`.
+- *The measure and the occurs check.* `tsz (typ_Grp w A)` is `S (tsz A)`, so it
+  falls from a group to its payload, and `po S vt vr (typ_Grp w A)` is `po S vt vr
+  A`, so `po_size` and `bind_prop_occ` reach a variable inside a payload (a
+  variable bound to a group that contains it has a strictly larger image).
+  `ps_po`, `ps_pos` and `ps_fld` follow the payload; `pf_ap`, `pf_lcb`, `ps_pull`
+  and `fld_pull` carry a group through a step.
+- *The arm.* The group arm of `unify_tD` and of `unify_t` both call `unify_t` on
+  the payloads when the declarations agree. `teq_Grp_inv` gives the declaration
+  (`w' = w`) and `teq` of the images of the payloads, the measure falls, and the
+  induction hypothesis on the payloads at the same `Sg` returns the plain-unifier
+  success it needs (the second conjunct of the induction's `Stable`); the arm
+  concludes both unifiers from it, with its `Pkg`. `pkg_bind_prop_nl` has a group
+  case (a group satisfies no `Numeric` or `Literal` sort). `pf_group_param` is a
+  concrete member of the fragment.
+
+DECISION NEEDED: `spn` requires every slot of a group's payload to be used by a
+tag. `bind_prop` pushes the sort of the variable it binds onto every free
+variable of the type (`push_sort` over `ftv_typ T`), unused slots included, while
+`spine_sat` asks `Eq` only of used slots. A variable `a` of sort `Eq` bound to
+`typ_Grp w (b -> Unit)` with slot 0 unused is then bound with `b` renamed to a
+fresh variable of sort `Eq`; a substitution `Sg` that sends `b` to a function
+satisfies `sat D1 Eq (Sg a)` and unifies, but no extension `S2` respects the new
+environment, so the unifier is not complete for it. That is a gap between W and the
+declarative rule, not a limit of the proof. Options: (a) accept `spn` as the
+stage-7.6m result (chosen: it covers every group whose parameters all appear in a
+tag, which is what lists and the tag examples are, and it states the corner); (b)
+have `push_sort` skip unused slots, a checker change (and a change to
+`infer.rs`, which this plan does not touch) that the owner would have to decide;
+(c) declare that a group declaration cannot have an unused parameter, if the
+checker already enforces it (not checked here), which would make `spn` a lemma.
+
+**What remains of 7.6.**
+
+1. *Absent entries (waits on #667).* Unchanged from 7.6l: dropping `ps` brings back
+   (i) to (iv) of the 7.6f ruling as predicates on `Sg` at each leaf, the
+   lexicographic measure, the `Empty`/`Maybe` swap arm, `fld_pull` and an occurs
+   analogue with `S2`, the field condition's absent half and `Hfield` at an
+   absent presentation, and the conversion of the 7.6i item 2 (`reqD` against
+   `req`). A principal-verdicts change in #667 changes how W treats an absent
+   presence, so none of it is started.
+
+Nothing else is left of the unifier's completeness. Stage 7.6 can be called done
+modulo #667: the groups outside `mu` of the 7.6l list are in, the sorted
+environments are in, and the plain unifier runs beside the one W calls. The
+hypotheses L3 has to meet are the ones carried through the induction and proved of
+every step, none of them open: every entry present (`ps`), `KR`, `Drow` and `NN`
+(DECISION NEEDED of 7.6l), and `spn` on each group (DECISION NEEDED above).
+`unify_coD` needs no copy: `unify_coD_stable` turns a `unify_tD` success into a
+coercion-free `unify_coD` one.
 
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):

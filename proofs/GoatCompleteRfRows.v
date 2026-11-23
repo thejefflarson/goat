@@ -30,8 +30,15 @@
    the sort onto, and [Sg] sends no [Numeric] variable to a record, so no entry
    is under it.
 
-   Absent entries and groups are the hypotheses this stage does not discharge;
-   they are listed in the plan under what remains of 7.6.
+   A tag group [typ_Grp w A] is in the fragment when its payload [A] is
+   ([pf A]) and spells the group's parameters ([spn]: arrows ending in [Unit],
+   every slot used by a tag).  [unify_tD] hands the payload to the plain
+   unifier, which the induction runs beside it, so the group arm is the
+   induction hypothesis on the payload at the same [Sg]: [nfT] does not enter a
+   group, so nothing is normalized, and [tsz] falls from a group to its payload.
+
+   Absent entries are the hypothesis this stage does not discharge; they are
+   listed in the plan under what remains of 7.6.
 
    Axiom- and admit-free. *)
 
@@ -206,6 +213,7 @@ Proof.
   apply typ_row_mutind; simpl; try (intros; reflexivity); try (intros; contradiction).
   - intros A IHA B IHB [HA HB] k. rewrite (IHA HA), (IHB HB). reflexivity.
   - intros R IH HR k. exact (IH HR k).
+  - intros w B IH [HB _] k. exact (IH HB k).
   - intros l T IHT R IHR [HT HR] k. rewrite (IHT HT), (IHR HR). reflexivity.
   - intros l P IHP T IHT R IHR [HP [HT HR]] k. rewrite (IHP HP), (IHT HT), (IHR HR). reflexivity.
 Qed.
@@ -222,6 +230,7 @@ Proof.
       | apply IHB; [ exact HB | intros x Hx'; apply Hx; fsetdec | intros q Hq'; apply Hq; fsetdec ] ].
   - intros R IH HR Hx Hq. exact (IH HR Hx Hq).
   - intros a _ Hx Hq. apply Hx. fsetdec.
+  - intros w B IH [HB Hn] Hx Hq. exact (conj (IH HB Hx Hq) (spn_ap _ _ B w 0 Hn)).
   - intros r _ Hx Hq. apply Hq. fsetdec.
   - intros l T IHT R IHR [HT HR] Hx Hq. split;
       [ apply IHT; [ exact HT | intros x Hx'; apply Hx; fsetdec | intros q Hq'; apply Hq; fsetdec ]
@@ -238,6 +247,7 @@ Fixpoint ps (S : sub) (T : typ) {struct T} : Prop :=
   match T with
   | typ_Arrow A B => ps S A /\ ps S B
   | typ_Record R => psr S R
+  | typ_Grp _ A => ps S A
   | _ => True
   end
 with psr (S : sub) (R : row) {struct R} : Prop :=
@@ -283,6 +293,7 @@ Proof.
       | apply IHB; [ exact HB | exact PB | intros x Hx'; apply Hx; fsetdec | intros q Hq'; apply Hq; fsetdec ] ].
   - intros R IH HR PR Hx Hq. exact (IH HR PR Hx Hq).
   - intros a _ _ Hx Hq. exact (proj2 (Hx a ltac:(fsetdec))).
+  - intros w B IH [HB _] PB Hx Hq. exact (IH HB PB Hx Hq).
   - intros r _ _ Hx Hq. exact (Hq r ltac:(fsetdec)).
   - intros l T IHT R IHR [HT HR] [PT PR] Hx Hq. split;
       [ apply IHT; [ exact HT | exact PT | intros x Hx'; apply Hx; fsetdec | intros q Hq'; apply Hq; fsetdec ]
@@ -320,6 +331,7 @@ Proof.
     destruct Hin as [H|H]; [ left; exact (IHA HA PA H) | right; exact (IHB HB PB H) ].
   - intros R IH HR PR Hin. exact (IH HR PR Hin).
   - intros b _ _ Hin. apply AtomSetFacts.singleton_iff in Hin. symmetry. exact Hin.
+  - intros w B IH [HB _] PB Hin. exact (IH HB PB Hin).
   - intros l T IHT R IHR [HT HR] [PT PR] Hin. apply AtomSetFacts.union_iff in Hin.
     destruct Hin as [H|H]; [ left; exact (IHT HT PT H) | right; exact (IHR HR PR H) ].
   - intros l P IHP T IHT R IHR [HP [HT HR]] [PP [PT PR]] Hin.
@@ -341,6 +353,7 @@ Proof.
   - intros A IHA B IHB [HA HB] [PA PB] Hin. apply AtomSetFacts.union_iff in Hin.
     destruct Hin as [H|H]; [ left; exact (IHA HA PA H) | right; exact (IHB HB PB H) ].
   - intros R IH HR PR Hin. exact (IH HR PR Hin).
+  - intros w B IH [HB _] PB Hin. exact (IH HB PB Hin).
   - intros q _ _ Hin. apply AtomSetFacts.singleton_iff in Hin. symmetry. exact Hin.
   - intros l T IHT R IHR [HT HR] [PT PR] Hin. apply AtomSetFacts.union_iff in Hin.
     destruct Hin as [H|H]; [ left; exact (IHT HT PT H) | right; exact (IHR HR PR H) ].
@@ -482,6 +495,7 @@ Proof.
   intros S k Hk. apply typ_row_mutind; simpl; try (intros; exact I); try (intros; contradiction).
   - intros A IHA B IHB [HA HB] [PA PB]. exact (conj (IHA HA PA) (IHB HB PB)).
   - intros R IH HR PR. exact (IH HR PR).
+  - intros w B IH [HB _] PB. exact (IH HB PB).
   - intros l T IHT R IHR [HT HR] [PT PR]. exact (conj (IHT HT PT) (IHR HR PR)).
   - intros l P IHP T IHT R IHR [HP [HT HR]] [PP [PT PR]].
     refine (conj _ (conj _ (conj (IHP HP (ps_pres S P HP PP)) (conj (IHT HT PT) (IHR HR PR))))).
@@ -779,7 +793,7 @@ Proof.
   { destruct T as [ | | | | | A B | R | x | i | B | w A ]; try (left; reflexivity); try (right; reflexivity);
       try (simpl in HT; contradiction); try (exfalso; exact (Hv _ eq_refl));
       try (exfalso; destruct HaN as [E|E]; rewrite E in Hsat; simpl in Hsat;
-           first [ discriminate Hsat | (destruct Hsat as [H|H]; discriminate H) ]; fail).
+           first [ discriminate Hsat | contradiction | (destruct Hsat as [H|H]; discriminate H) ]; fail).
     exfalso. destruct HaN as [E|E]; rewrite E in Hsat; simpl in Hsat.
     - exact (teq_not_record _ _ Heq (proj2 Hs a E) (apR Sg R) eq_refl).
     - exact Hsat. }
@@ -1535,6 +1549,17 @@ Proof.
                  intros f [Hf1 Hf2]. rewrite Hf1, Hf2. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef.
                  split; reflexivity.
               ** exact (Pkg_sbT Sg D n a' a Hd Ht Hk (proj1 A1 a ltac:(simpl; fsetdec)) (teq_sym _ _ Hteq)).
+      * (* Group, Group *)
+        destruct P1 as [PA1 _], P2 as [PA2 _].
+        change (apT Sg (typ_Grp w A1')) with (typ_Grp w (apT Sg A1')) in Hlt, Hteq.
+        change (apT Sg (typ_Grp w' A1'')) with (typ_Grp w' (apT Sg A1'')) in Hteq.
+        cbn [tsz] in Hlt.
+        destruct (teq_Grp_inv _ _ _ Hteq) as (X & EX & H1). injection EX as Ew Ex. subst X w'.
+        destruct (IHt Sg D A1' A1'' n ltac:(lia) Hd Ht Hk PA1 PA2 A1 A2 S1 S2 H1) as (s & D' & n' & S3 & E & K).
+        exists s, D', n', S3. split; [ | exact K ].
+        eapply Stable_mono; [ | exact (Stable_below _ E) ].
+        intros [|f] Hf; [ contradiction | ]. cbn [unify_tD unify_t].
+        destruct (gdecl_eq_dec w w) as [_|N]; [ | exfalso; exact (N eq_refl) ]. exact (conj (proj2 Hf) (proj2 Hf)).
     + intros Sg D R1 R2 n Hlt Hd Ht Hk HR1 HR2 AR1 AR2 PR1 PR2 Hreq.
       destruct R1 as [ | r | l T R1' | l P T R1' ].
       * destruct R2 as [ | s | l2 T2 R2' | l2 P2 T2 R2' ].
@@ -1606,3 +1631,8 @@ Proof.
 Qed.
 
 End Sorted.
+
+(* A group over one parameter, whose tag uses that parameter, is in the fragment. *)
+Example pf_group_param : forall w a, (exists cs, In cs (gtags w) /\ In 6 cs) ->
+  pf (typ_Grp w (typ_Arrow (typ_Var a) typ_Unit)).
+Proof. intros w a H. exact (conj (conj I I) (conj H I)). Qed.

@@ -212,11 +212,30 @@ Qed.
 
 (* ---- a plain type, and the entries whose field the sort reaches ---- *)
 
+(* A group's payload spells its parameters: arrows ending in [Unit], and every
+   slot is used by a tag of the declaration.  [spine_sat] then asks every
+   component to be [Eq], so the sort reaches every variable of the payload, as it
+   does for the other types of the fragment. *)
+Fixpoint spn (w : gdecl) (j : nat) (A : typ) {struct A} : Prop :=
+  match A with
+  | typ_Arrow _ A' => (exists cs, In cs (gtags w) /\ In (6 + j) cs) /\ spn w (Datatypes.S j) A'
+  | typ_Unit => True
+  | _ => False
+  end.
+
+Lemma spn_ap : forall st sr A w j, spn w j A -> spn w j (ap_typ st sr A).
+Proof.
+  intros st sr A. induction A as [ | | | | | A1 IH1 A2 IH2 | R | a | i | B IHB | v B IHB ];
+    intros w j H; simpl in H |- *; try contradiction; try exact I.
+  destruct H as [Hc H]. exact (conj Hc (IH2 w _ H)).
+Qed.
+
 Fixpoint pf (T : typ) {struct T} : Prop :=
   match T with
   | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String | typ_Var _ => True
   | typ_Arrow A B => pf A /\ pf B
   | typ_Record R => prf R
+  | typ_Grp w A => pf A /\ spn w 0 A
   | _ => False
   end
 with prf (R : row) {struct R} : Prop :=
@@ -232,6 +251,7 @@ Fixpoint fld (D1 : denv) (S : sub) (k : sort) (T : typ) {struct T} : Prop :=
   match T with
   | typ_Arrow A B => fld D1 S k A /\ fld D1 S k B
   | typ_Record R => frld D1 S k R
+  | typ_Grp _ A => fld D1 S k A
   | _ => True
   end
 with frld (D1 : denv) (S : sub) (k : sort) (R : row) {struct R} : Prop :=
@@ -244,7 +264,72 @@ with frld (D1 : denv) (S : sub) (k : sort) (R : row) {struct R} : Prop :=
   end.
 
 (* A type whose variables [ren] sends to variables of a finer sort satisfies
-   the sort when its image under [Sg] does, given the field condition. *)
+   the sort when its image under [Sg] does, given the field condition.  The
+   second half reads a group's payload: its [spine_sat] at [Eq], which asks each
+   component to be [Eq], is carried component by component. *)
+Lemma sat_ren_aux : forall (D2 D1 : denv) Sg ren k,
+  (forall T,
+     (pf T -> fld D1 Sg k T ->
+        (forall x, x `in` ftv_typ T -> exists y, sT ren x = typ_Var y /\ finer (D2 y) k) ->
+        (forall q, q `in` frv_typ T -> exists q', sR ren q = row_Var q' /\ finer (rk_sort (drk D2 q')) k) ->
+        sat D1 k (apT Sg T) -> sat D2 k (apT ren T)) /\
+     (k = k_Eq -> forall w j, spn w j T -> pf T -> fld D1 Sg k T ->
+        (forall x, x `in` ftv_typ T -> exists y, sT ren x = typ_Var y /\ finer (D2 y) k) ->
+        (forall q, q `in` frv_typ T -> exists q', sR ren q = row_Var q' /\ finer (rk_sort (drk D2 q')) k) ->
+        spine_sat D1 w j (apT Sg T) -> spine_sat D2 w j (apT ren T))) /\
+  (forall R, prf R -> frld D1 Sg k R ->
+     (forall x, x `in` ftv_row R -> exists y, sT ren x = typ_Var y /\ finer (D2 y) k) ->
+     (forall q, q `in` frv_row R -> exists q', sR ren q = row_Var q' /\ finer (rk_sort (drk D2 q')) k) ->
+     rsat D1 k (apR Sg R) -> rsat D2 k (apR ren R)).
+Proof.
+  intros D2 D1 Sg ren k. unfold apT, apR. apply typ_row_mutind.
+  - split; [ intros _ _ _ _ Hs; simpl in Hs |- *; exact Hs | intros _ w j Hn; simpl in Hn; contradiction ].
+  - split; [ intros _ _ _ _ Hs; simpl in Hs |- *; exact Hs | intros _ w j Hn; simpl in Hn; contradiction ].
+  - split; [ intros _ _ _ _ Hs; simpl in Hs |- *; exact Hs | intros _ w j Hn; simpl in Hn; contradiction ].
+  - split; [ intros _ _ _ _ Hs; simpl in Hs |- *; exact Hs | intros _ w j _ _ _ _ _ _; simpl; exact I ].
+  - split; [ intros _ _ _ _ Hs; simpl in Hs |- *; exact Hs | intros _ w j Hn; simpl in Hn; contradiction ].
+  - intros A IHA B IHB. split.
+    + intros _ _ _ _ Hs. simpl in Hs |- *. exact Hs.
+    + intros Hk w j Hn Hpf Hfld Hv Hq Hs. subst k. simpl in Hn, Hpf, Hfld, Hs |- *.
+      destruct Hn as [Hc Hn]. destruct Hpf as [HpA HpB]. destruct Hfld as [HfA HfB].
+      destruct Hs as [HsA HsB]. split.
+      * intros Hc'. apply (proj1 IHA HpA HfA);
+          [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec | exact (HsA Hc') ].
+      * apply (proj2 IHB eq_refl w (Datatypes.S j) Hn HpB HfB);
+          [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec | exact HsB ].
+  - intros R IH. split.
+    + intros Hpf Hfld Hv Hq Hs. simpl in Hpf, Hfld, Hv, Hq, Hs |- *.
+      destruct k; first [ exact I | contradiction | exact (IH Hpf Hfld Hv Hq Hs) ].
+    + intros _ w j Hn; simpl in Hn; contradiction.
+  - intros x. split.
+    + intros _ _ Hv _ _. simpl.
+      destruct (Hv x ltac:(simpl; fsetdec)) as (y & E & Hf). rewrite E. simpl. exact Hf.
+    + intros _ w j Hn; simpl in Hn; contradiction.
+  - intros i. split; [ intros Hpf; simpl in Hpf; contradiction | intros _ w j Hn; simpl in Hn; contradiction ].
+  - intros B IH. split; [ intros Hpf; simpl in Hpf; contradiction | intros _ w j Hn; simpl in Hn; contradiction ].
+  - intros w B IH. split.
+    + intros Hpf Hfld Hv Hq Hs. simpl in Hpf, Hfld, Hv, Hq, Hs |- *. destruct Hpf as [HpB Hn].
+      destruct k; first [ exact I | contradiction | exact (proj2 IH eq_refl w 0 Hn HpB Hfld Hv Hq Hs) ].
+    + intros _ w' j Hn; simpl in Hn; contradiction.
+  - intros _ _ _ _ _. simpl. exact I.
+  - intros r _ _ _ Hq _. simpl.
+    destruct (Hq r ltac:(simpl; fsetdec)) as (q' & E & Hf). rewrite E. simpl. exact Hf.
+  - intros l T IHT R IHR Hpf Hfld Hv Hq Hs. simpl in Hpf, Hfld, Hs |- *.
+    destruct Hpf as [HpT HpR]. destruct Hfld as [HfT HfR]. destruct Hs as [HsT HsR]. split.
+    + apply (proj1 IHT); [ exact HpT | exact HfT | | | exact HsT ];
+        [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec ].
+    + apply IHR; [ exact HpR | exact HfR | | | exact HsR ];
+        [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec ].
+  - intros l P IHP T IHT R IHR Hpf Hfld Hv Hq Hs. simpl in Hpf, Hfld, Hs |- *.
+    destruct Hpf as [HpP [HpT HpR]]. destruct Hfld as [HeP [_ [_ [HfT HfR]]]].
+    destruct Hs as [HsP HsR]. split.
+    + right. apply (proj1 IHT); [ exact HpT | exact HfT | | | ];
+        [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec | ].
+      destruct HsP as [E|HsT]; [ exact (HeP E) | exact HsT ].
+    + apply IHR; [ exact HpR | exact HfR | | | exact HsR ];
+        [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec ].
+Qed.
+
 Lemma sat_ren_mut : forall (D2 D1 : denv) Sg ren k,
   (forall T, pf T -> fld D1 Sg k T ->
      (forall x, x `in` ftv_typ T -> exists y, sT ren x = typ_Var y /\ finer (D2 y) k) ->
@@ -255,40 +340,82 @@ Lemma sat_ren_mut : forall (D2 D1 : denv) Sg ren k,
      (forall q, q `in` frv_row R -> exists q', sR ren q = row_Var q' /\ finer (rk_sort (drk D2 q')) k) ->
      rsat D1 k (apR Sg R) -> rsat D2 k (apR ren R)).
 Proof.
-  intros D2 D1 Sg ren k. unfold apT, apR. apply typ_row_mutind.
-  - intros _ _ _ _ Hs. simpl in Hs |- *. exact Hs.
-  - intros _ _ _ _ Hs. simpl in Hs |- *. exact Hs.
-  - intros _ _ _ _ Hs. simpl in Hs |- *. exact Hs.
-  - intros _ _ _ _ Hs. simpl in Hs |- *. exact Hs.
-  - intros _ _ _ _ Hs. simpl in Hs |- *. exact Hs.
-  - intros A IHA B IHB _ _ _ _ Hs. simpl in Hs |- *. exact Hs.
-  - intros R IH Hpf Hfld Hv Hq Hs. simpl in Hpf, Hfld, Hv, Hq, Hs |- *.
-    destruct k; first [ exact I | contradiction | exact (IH Hpf Hfld Hv Hq Hs) ].
-  - intros x _ _ Hv _ _. simpl.
-    destruct (Hv x ltac:(simpl; fsetdec)) as (y & E & Hf). rewrite E. simpl. exact Hf.
-  - intros i Hpf. simpl in Hpf. contradiction.
-  - intros B IH Hpf. simpl in Hpf. contradiction.
-  - intros w B IH Hpf. simpl in Hpf. contradiction.
-  - intros _ _ _ _ _. simpl. exact I.
-  - intros r _ _ _ Hq _. simpl.
-    destruct (Hq r ltac:(simpl; fsetdec)) as (q' & E & Hf). rewrite E. simpl. exact Hf.
-  - intros l T IHT R IHR Hpf Hfld Hv Hq Hs. simpl in Hpf, Hfld, Hs |- *.
-    destruct Hpf as [HpT HpR]. destruct Hfld as [HfT HfR]. destruct Hs as [HsT HsR]. split.
-    + apply IHT; [ exact HpT | exact HfT | | | exact HsT ];
-        [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec ].
-    + apply IHR; [ exact HpR | exact HfR | | | exact HsR ];
-        [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec ].
-  - intros l P IHP T IHT R IHR Hpf Hfld Hv Hq Hs. simpl in Hpf, Hfld, Hs |- *.
-    destruct Hpf as [HpP [HpT HpR]]. destruct Hfld as [HeP [_ [_ [HfT HfR]]]].
-    destruct Hs as [HsP HsR]. split.
-    + right. apply IHT; [ exact HpT | exact HfT | | | ];
-        [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec | ].
-      destruct HsP as [E|HsT]; [ exact (HeP E) | exact HsT ].
-    + apply IHR; [ exact HpR | exact HfR | | | exact HsR ];
-        [ intros x Hx; apply Hv; simpl; fsetdec | intros q Hx; apply Hq; simpl; fsetdec ].
+  intros D2 D1 Sg ren k. destruct (sat_ren_aux D2 D1 Sg ren k) as [Ht Hr].
+  split; [ intros T; exact (proj1 (Ht T)) | exact Hr ].
 Qed.
 
 (* ---- the sort reaches the variables of a type that satisfies it ---- *)
+
+Lemma sat_reach_aux : forall (D1 : denv) S k,
+  (forall T,
+     (pf T -> fld D1 S k T -> sat D1 k (apT S T) ->
+        (forall b, b `in` ftv_typ T -> sat D1 k (sT S b)) /\
+        (forall q, q `in` frv_typ T -> rsat D1 k (sR S q))) /\
+     (k = k_Eq -> forall w j, spn w j T -> pf T -> fld D1 S k T -> spine_sat D1 w j (apT S T) ->
+        (forall b, b `in` ftv_typ T -> sat D1 k (sT S b)) /\
+        (forall q, q `in` frv_typ T -> rsat D1 k (sR S q)))) /\
+  (forall R, prf R -> frld D1 S k R -> rsat D1 k (apR S R) ->
+     (forall b, b `in` ftv_row R -> sat D1 k (sT S b)) /\
+     (forall q, q `in` frv_row R -> rsat D1 k (sR S q))).
+Proof.
+  intros D1 S k. unfold apT, apR. apply typ_row_mutind.
+  - split; [ intros _ _ _; split; intros x Hx; exfalso; simpl in Hx; fsetdec
+           | intros _ w j Hn; simpl in Hn; contradiction ].
+  - split; [ intros _ _ _; split; intros x Hx; exfalso; simpl in Hx; fsetdec
+           | intros _ w j Hn; simpl in Hn; contradiction ].
+  - split; [ intros _ _ _; split; intros x Hx; exfalso; simpl in Hx; fsetdec
+           | intros _ w j Hn; simpl in Hn; contradiction ].
+  - split; [ intros _ _ _; split; intros x Hx; exfalso; simpl in Hx; fsetdec
+           | intros _ w j _ _ _ _; split; intros x Hx; exfalso; simpl in Hx; fsetdec ].
+  - split; [ intros _ _ _; split; intros x Hx; exfalso; simpl in Hx; fsetdec
+           | intros _ w j Hn; simpl in Hn; contradiction ].
+  - intros A IHA B IHB. split.
+    + intros _ _ Hs. simpl in Hs. subst k. split; intros; [ apply sat_any | apply rsat_any ].
+    + intros Hk w j Hn Hpf Hfld Hs. subst k. simpl in Hn, Hpf, Hfld, Hs |- *.
+      destruct Hn as [Hc Hn]. destruct Hpf as [HpA HpB]. destruct Hfld as [HfA HfB].
+      destruct Hs as [HsA HsB].
+      destruct (proj1 IHA HpA HfA (HsA Hc)) as [A1 A2].
+      destruct (proj2 IHB eq_refl w (Datatypes.S j) Hn HpB HfB HsB) as [B1 B2]. split.
+      * intros b Hb. apply AtomSetFacts.union_iff in Hb. destruct Hb as [H|H]; [ apply A1 | apply B1 ]; exact H.
+      * intros q Hq. apply AtomSetFacts.union_iff in Hq. destruct Hq as [H|H]; [ apply A2 | apply B2 ]; exact H.
+  - intros R IH. split.
+    + intros Hpf Hfld Hs. simpl in Hpf, Hfld, Hs |- *.
+      destruct k; first [ split; intros; [ apply sat_any | apply rsat_any ] | contradiction
+                        | exact (IH Hpf Hfld Hs) ].
+    + intros _ w j Hn; simpl in Hn; contradiction.
+  - intros x. split.
+    + intros _ _ Hs. simpl in Hs |- *. split.
+      * intros b Hb. apply AtomSetFacts.singleton_iff in Hb. subst. exact Hs.
+      * intros q Hq. exfalso. fsetdec.
+    + intros _ w j Hn; simpl in Hn; contradiction.
+  - intros i. split; [ intros Hpf; simpl in Hpf; contradiction | intros _ w j Hn; simpl in Hn; contradiction ].
+  - intros B IH. split; [ intros Hpf; simpl in Hpf; contradiction | intros _ w j Hn; simpl in Hn; contradiction ].
+  - intros w B IH. split.
+    + intros Hpf Hfld Hs. simpl in Hpf, Hfld, Hs |- *. destruct Hpf as [HpB Hn].
+      destruct k; first [ split; intros; [ apply sat_any | apply rsat_any ] | contradiction
+                        | exact (proj2 IH eq_refl w 0 Hn HpB Hfld Hs) ].
+    + intros _ w' j Hn; simpl in Hn; contradiction.
+  - intros _ _ _. split; intros x Hx; exfalso; simpl in Hx; fsetdec.
+  - intros r _ _ Hs. simpl in Hs |- *. split.
+    + intros b Hb. exfalso. fsetdec.
+    + intros q Hq. apply AtomSetFacts.singleton_iff in Hq. subst. exact Hs.
+  - intros l T IHT R IHR Hpf Hfld Hs. simpl in Hpf, Hfld, Hs |- *.
+    destruct Hpf as [HpT HpR]. destruct Hfld as [HfT HfR]. destruct Hs as [HsT HsR].
+    destruct (proj1 IHT HpT HfT HsT) as [T1 T2]. destruct (IHR HpR HfR HsR) as [R1 R2]. split.
+    + intros b Hb. apply AtomSetFacts.union_iff in Hb. destruct Hb as [H|H]; [ apply T1 | apply R1 ]; exact H.
+    + intros q Hq. apply AtomSetFacts.union_iff in Hq. destruct Hq as [H|H]; [ apply T2 | apply R2 ]; exact H.
+  - intros l P IHP T IHT R IHR Hpf Hfld Hs. simpl in Hpf, Hfld, Hs |- *.
+    destruct Hpf as [HpP [HpT HpR]]. destruct Hfld as [HeP [HsPP [HfP [HfT HfR]]]].
+    destruct Hs as [HsP HsR].
+    assert (HsT : sat D1 k (ap_typ (sT S) (sR S) T))
+      by (destruct HsP as [E|H]; [ exact (HeP E) | exact H ]).
+    destruct (proj1 IHP HpP HfP HsPP) as [P1 P2].
+    destruct (proj1 IHT HpT HfT HsT) as [T1 T2]. destruct (IHR HpR HfR HsR) as [R1 R2]. split.
+    + intros b Hb. apply AtomSetFacts.union_iff in Hb. destruct Hb as [H|H]; [ apply P1; exact H | ].
+      apply AtomSetFacts.union_iff in H. destruct H as [H|H]; [ apply T1 | apply R1 ]; exact H.
+    + intros q Hq. apply AtomSetFacts.union_iff in Hq. destruct Hq as [H|H]; [ apply P2; exact H | ].
+      apply AtomSetFacts.union_iff in H. destruct H as [H|H]; [ apply T2 | apply R2 ]; exact H.
+Qed.
 
 Lemma sat_reach_mut : forall (D1 : denv) S k,
   (forall T, pf T -> fld D1 S k T -> sat D1 k (apT S T) ->
@@ -298,42 +425,8 @@ Lemma sat_reach_mut : forall (D1 : denv) S k,
      (forall b, b `in` ftv_row R -> sat D1 k (sT S b)) /\
      (forall q, q `in` frv_row R -> rsat D1 k (sR S q))).
 Proof.
-  intros D1 S k. unfold apT, apR. apply typ_row_mutind.
-  - intros _ _ _. split; intros x Hx; exfalso; simpl in Hx; fsetdec.
-  - intros _ _ _. split; intros x Hx; exfalso; simpl in Hx; fsetdec.
-  - intros _ _ _. split; intros x Hx; exfalso; simpl in Hx; fsetdec.
-  - intros _ _ _. split; intros x Hx; exfalso; simpl in Hx; fsetdec.
-  - intros _ _ _. split; intros x Hx; exfalso; simpl in Hx; fsetdec.
-  - intros A IHA B IHB _ _ Hs. simpl in Hs. subst k. split; intros; [ apply sat_any | apply rsat_any ].
-  - intros R IH Hpf Hfld Hs. simpl in Hpf, Hfld, Hs |- *.
-    destruct k; first [ split; intros; [ apply sat_any | apply rsat_any ] | contradiction
-                      | exact (IH Hpf Hfld Hs) ].
-  - intros x _ _ Hs. simpl in Hs |- *. split.
-    + intros b Hb. apply AtomSetFacts.singleton_iff in Hb. subst. exact Hs.
-    + intros q Hq. exfalso. fsetdec.
-  - intros i Hpf. simpl in Hpf. contradiction.
-  - intros B IH Hpf. simpl in Hpf. contradiction.
-  - intros w B IH Hpf. simpl in Hpf. contradiction.
-  - intros _ _ _. split; intros x Hx; exfalso; simpl in Hx; fsetdec.
-  - intros r _ _ Hs. simpl in Hs |- *. split.
-    + intros b Hb. exfalso. fsetdec.
-    + intros q Hq. apply AtomSetFacts.singleton_iff in Hq. subst. exact Hs.
-  - intros l T IHT R IHR Hpf Hfld Hs. simpl in Hpf, Hfld, Hs |- *.
-    destruct Hpf as [HpT HpR]. destruct Hfld as [HfT HfR]. destruct Hs as [HsT HsR].
-    destruct (IHT HpT HfT HsT) as [T1 T2]. destruct (IHR HpR HfR HsR) as [R1 R2]. split.
-    + intros b Hb. apply AtomSetFacts.union_iff in Hb. destruct Hb as [H|H]; [ apply T1 | apply R1 ]; exact H.
-    + intros q Hq. apply AtomSetFacts.union_iff in Hq. destruct Hq as [H|H]; [ apply T2 | apply R2 ]; exact H.
-  - intros l P IHP T IHT R IHR Hpf Hfld Hs. simpl in Hpf, Hfld, Hs |- *.
-    destruct Hpf as [HpP [HpT HpR]]. destruct Hfld as [HeP [HsPP [HfP [HfT HfR]]]].
-    destruct Hs as [HsP HsR].
-    assert (HsT : sat D1 k (ap_typ (sT S) (sR S) T))
-      by (destruct HsP as [E|H]; [ exact (HeP E) | exact H ]).
-    destruct (IHP HpP HfP HsPP) as [P1 P2].
-    destruct (IHT HpT HfT HsT) as [T1 T2]. destruct (IHR HpR HfR HsR) as [R1 R2]. split.
-    + intros b Hb. apply AtomSetFacts.union_iff in Hb. destruct Hb as [H|H]; [ apply P1; exact H | ].
-      apply AtomSetFacts.union_iff in H. destruct H as [H|H]; [ apply T1 | apply R1 ]; exact H.
-    + intros q Hq. apply AtomSetFacts.union_iff in Hq. destruct Hq as [H|H]; [ apply P2; exact H | ].
-      apply AtomSetFacts.union_iff in H. destruct H as [H|H]; [ apply T2 | apply R2 ]; exact H.
+  intros D1 S k. destruct (sat_reach_aux D1 S k) as [Ht Hr].
+  split; [ intros T; exact (proj1 (Ht T)) | exact Hr ].
 Qed.
 
 (* ---- renaming by variables keeps a type locally closed ---- *)
