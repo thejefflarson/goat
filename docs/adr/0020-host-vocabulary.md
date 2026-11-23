@@ -434,3 +434,14 @@ palette's color for the role stays the default; and a theme with a color under
 4.5:1 contrast on the editor's panel or selection is rejected whole, keeping
 the previous theme. The page writes only validated `#rrggbb` values to
 `--tok-*` custom properties.
+
+### The frame carries the scene calls (ADR 0015, second addendum)
+
+The `SceneCalls` a shape names are still the vocabulary's own, and a shape's
+leaves still fix each call's value types. What changed is the transport: the
+compiled module no longer imports each call as `scene.<name>`. It declares the
+call, with its leaf types, in the header of the frame it hands `scene.frame`, so
+a host implements a name it never had to be told the number or the signature of.
+A vocabulary of a new host adds shapes and the host adds the matching handlers;
+neither the compiler's glue nor the frame decoders change. `Vocab::validate`
+now rejects a vocabulary that names more than 255 distinct scene calls.

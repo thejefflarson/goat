@@ -397,6 +397,8 @@ struct Interp<'p> {
     constant_records: Vec<(Vec<Value>, usize)>,
     line: Vec<Piece>,
     printed: Vec<Vec<Piece>>,
+    /// The frame being encoded (`frame.rs`).
+    frame: Vec<u8>,
 }
 
 impl<'p> Interp<'p> {
@@ -413,6 +415,7 @@ impl<'p> Interp<'p> {
             constant_records: Vec::new(),
             line: Vec::new(),
             printed: Vec::new(),
+            frame: Vec::new(),
         }
     }
 
@@ -557,6 +560,55 @@ impl<'p> Interp<'p> {
             }
             _ => Err(InterpError::Malformed("not a text operation")),
         }
+    }
+
+    /// Encode into the frame buffer as the wasm backend does, so a host sees
+    /// the same bytes from either.
+    #[inline(never)]
+    fn frame_op(&mut self, op: &FrameOp, frame: &Frame) -> Result<Value, InterpError> {
+        match op {
+            FrameOp::Reset => self.frame.clear(),
+            FrameOp::Put(items) => {
+                for item in items {
+                    match *item {
+                        FrameItem::Byte(b) => self.frame.push(b),
+                        FrameItem::Lit(d) => self.frame.extend_from_slice(
+                            self.program
+                                .data
+                                .get(d.0 as usize)
+                                .ok_or(InterpError::Malformed("unknown data"))?,
+                        ),
+                        FrameItem::Int(x) => match frame.get(x)? {
+                            Value::Int(n) => self.frame.extend(n.to_le_bytes()),
+                            _ => return Err(InterpError::Malformed("frame value is not an Int")),
+                        },
+                        FrameItem::Float(x) => match frame.get(x)? {
+                            Value::Float(v) => self.frame.extend(v.to_le_bytes()),
+                            _ => return Err(InterpError::Malformed("frame value is not a Float")),
+                        },
+                        FrameItem::Bool(x) => match frame.get(x)? {
+                            Value::Bool(b) => self.frame.push(b.into()),
+                            _ => return Err(InterpError::Malformed("frame value is not a Bool")),
+                        },
+                        FrameItem::Str(x) => {
+                            let bytes = self.string_bytes(frame.get(x)?)?.to_vec();
+                            let len = u32::try_from(bytes.len())
+                                .map_err(|_| InterpError::Trap(crate::frame::TOO_BIG.into()))?;
+                            self.frame.extend(len.to_le_bytes());
+                            self.frame.extend(bytes);
+                        }
+                    }
+                    if self.frame.len() > crate::frame::LIMIT {
+                        return Err(InterpError::Trap(crate::frame::TOO_BIG.into()));
+                    }
+                }
+            }
+            FrameOp::Present => {
+                let bytes = std::mem::take(&mut self.frame);
+                self.host.frame(&bytes).map_err(InterpError::Trap)?;
+            }
+        }
+        Ok(Value::Unit)
     }
 
     /// A host call, out of `eval` so its frame stays small. Strings cross by
@@ -1078,6 +1130,7 @@ impl<'p> Interp<'p> {
                 return self.text_op(e, frame, depth).map(Flow::Val);
             }
             Expr::CallForeign(f, args) => self.call_foreign(*f, args, frame)?,
+            Expr::Frame(op) => self.frame_op(op, frame)?,
             Expr::Dup(x) => {
                 self.retain(frame.get(*x)?)?;
                 Value::Unit

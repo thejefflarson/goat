@@ -3,6 +3,7 @@
 //! host provides. One implementation serves both, so a differential test can
 //! run a program with a foreign call on each backend and compare.
 
+use crate::frame;
 use goat_checker::hir::Boundary;
 
 /// A value crossing the host boundary. A string is copied: the host never
@@ -24,6 +25,13 @@ pub trait Host {
 
     /// Run `module.name` on `args`; an error traps the program.
     fn call(&mut self, module: &str, name: &str, args: &[HostValue]) -> Result<HostValue, String>;
+
+    /// One frame of an interactive program's picture, encoded as `frame.rs`
+    /// says. A host that draws replays it; the bytes are the program's, so a
+    /// malformed frame is an error.
+    fn frame(&mut self, _bytes: &[u8]) -> Result<(), String> {
+        Err("this host draws no pictures".to_string())
+    }
 }
 
 /// The host of a program that calls nothing foreign.
@@ -125,6 +133,15 @@ impl<S: SceneSink> Host for Scene<S> {
     fn call(&mut self, _: &str, name: &str, args: &[HostValue]) -> Result<HostValue, String> {
         scene_call(&mut self.0, name, args)
     }
+
+    fn frame(&mut self, bytes: &[u8]) -> Result<(), String> {
+        scene_frame(&mut self.0, bytes)
+    }
+}
+
+/// Replay a frame as the per-shape calls it encodes.
+fn scene_frame(sink: &mut impl SceneSink, bytes: &[u8]) -> Result<(), String> {
+    frame::replay(bytes, |name, args| scene_call(sink, name, args).map(|_| ()))
 }
 
 fn scene_signature(module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)> {
@@ -133,7 +150,9 @@ fn scene_signature(module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)
         return None;
     }
     Some(match name {
-        "begin" | "end" | "polyline_end" => (vec![], Unit),
+        // `frame` is answered by `Host::frame`, which reads its bytes from the
+        // guest's memory; listing it says the host draws.
+        "begin" | "end" | "polyline_end" | "frame" => (vec![], Unit),
         "line" => (vec![Number, Number, Number, Number, Str], Unit),
         "polyline_begin" => (vec![Str], Unit),
         "vertex" => (vec![Number, Number], Unit),
@@ -283,6 +302,10 @@ impl Host for SceneHost {
 
     fn call(&mut self, _: &str, name: &str, args: &[HostValue]) -> Result<HostValue, String> {
         scene_call(self, name, args)
+    }
+
+    fn frame(&mut self, bytes: &[u8]) -> Result<(), String> {
+        scene_frame(self, bytes)
     }
 }
 

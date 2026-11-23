@@ -11,6 +11,7 @@ use wasm_encoder::{
 
 mod allocator;
 mod float;
+mod frame;
 
 use allocator::FreeList;
 
@@ -302,6 +303,9 @@ fn emit_module(
     let print_number = types.intern(vec![ValType::F64], vec![]);
     let print_bool = types.intern(vec![ValType::I32], vec![]);
     let entry_ty = types.intern(vec![], vec![]);
+    let frame_ty = uses
+        .frames
+        .then(|| types.intern(vec![ValType::I32; 2], vec![]));
 
     let mut func_types = Vec::new();
     for func in &program.funcs {
@@ -322,7 +326,8 @@ fn emit_module(
         .get(program.entry.0 as usize)
         .is_some_and(|root| root.ret == MTy::Ptr(HeapKind::Str));
     let writes_base = PRINT_STRING + prints_string as u32;
-    let foreign_base = writes_base + if uses.writes { WRITE_IMPORTS } else { 0 };
+    let frame_import = writes_base + if uses.writes { WRITE_IMPORTS } else { 0 };
+    let foreign_base = frame_import + uses.frames as u32;
     let trap_import = foreign_base + program.foreign.len() as u32;
     let imports = trap_import + !uses.traps.is_empty() as u32;
     let foreign_types: Vec<u32> = program
@@ -365,6 +370,7 @@ fn emit_module(
         types,
         imports,
         writes_base,
+        frame_import,
         foreign_base,
         trap_import,
         trap_messages,
@@ -401,12 +407,13 @@ fn emit_module(
     while next_helper < shared.helpers.len() {
         let helper = shared.helpers[next_helper];
         bodies.push(helper_body(&mut shared, helper)?);
-        func_types.push(if helper.is_float() {
-            shared
+        func_types.push(match helper {
+            Helper::Fmod | Helper::FloorDiv | Helper::FloorMod => shared
                 .types
-                .intern(vec![ValType::F64; 2], vec![ValType::F64])
-        } else {
-            shared.drop_type()
+                .intern(vec![ValType::F64; 2], vec![ValType::F64]),
+            Helper::FrameReserve => shared.types.intern(vec![ValType::I64], vec![ValType::I32]),
+            Helper::FrameReset | Helper::FramePresent => shared.types.intern(vec![], vec![]),
+            _ => shared.drop_type(),
         });
         next_helper += 1;
     }
@@ -487,6 +494,9 @@ fn emit_module(
         import_section.import("goat", "write_end", EntityType::Function(entry_ty));
         import_section.import("goat", "write_int", EntityType::Function(print_int));
     }
+    if let Some(frame_ty) = frame_ty {
+        import_section.import("scene", "frame", EntityType::Function(frame_ty));
+    }
     for (foreign, ty) in program.foreign.iter().zip(&foreign_types) {
         import_section.import(&foreign.module, &foreign.name, EntityType::Function(*ty));
     }
@@ -532,8 +542,10 @@ fn emit_module(
 
     let mut globals = GlobalSection::new();
     let allocator_globals: &[i32] = if hosted { &[] } else { &[heap_start as i32, 0] };
+    // An interactive module's globals run on through `DATA_BASE_GLOBAL`
+    // (unused unless hosted) to the three of the frame buffer.
     let site_and_closure_globals = match (&program.interactive, bounded) {
-        (Some(_), _) => 5,
+        (Some(_), _) => 9,
         (None, true) => 2,
         (None, false) => 1,
     };
@@ -543,9 +555,6 @@ fn emit_module(
         .chain(std::iter::repeat_n(0, site_and_closure_globals))
     {
         globals.global(i32_cell(), &ConstExpr::i32_const(init));
-    }
-    if hosted {
-        globals.global(i32_cell(), &ConstExpr::i32_const(0));
     }
     module.section(&globals);
 
@@ -986,12 +995,10 @@ enum Helper {
     Fmod,
     FloorDiv,
     FloorMod,
-}
-
-impl Helper {
-    fn is_float(self) -> bool {
-        matches!(self, Helper::Fmod | Helper::FloorDiv | Helper::FloorMod)
-    }
+    /// The frame buffer's functions; see `frame`.
+    FrameReserve,
+    FrameReset,
+    FramePresent,
 }
 
 struct Shared<'a> {
@@ -1001,6 +1008,8 @@ struct Shared<'a> {
     imports: u32,
     /// The index of the first `write_*` import, when the program has any.
     writes_base: u32,
+    /// The index of the `scene.frame` import, when the program has frames.
+    frame_import: u32,
     /// The index of the import for `ForeignId(0)`; the rest follow in order.
     foreign_base: u32,
     /// The index of the `goat.trap` import, when the program can trap.
@@ -1130,6 +1139,8 @@ struct Uses {
     drops: bool,
     /// Some `Write` exists, so the module imports the host's `write_*`.
     writes: bool,
+    /// Some `Frame` exists, so the module imports the host's `scene.frame`.
+    frames: bool,
     /// Tags built without a payload, each served by one immortal cell.
     nullary: Vec<u32>,
     /// The cell of each distinct record built from constants alone: such a
@@ -1146,6 +1157,10 @@ impl Uses {
         root.for_each_node(&mut |e| match e {
             Expr::Drop(_) | Expr::ReuseRecord(..) => self.drops = true,
             Expr::Write(_) => self.writes = true,
+            Expr::Frame(_) => {
+                self.frames = true;
+                self.note_trap(goat_mir::frame::TOO_BIG);
+            }
             Expr::Trap(message) => self.note_trap(message),
             Expr::BinInt(op, ..) => {
                 self.note_trap(INT_OVERFLOW);
@@ -1189,6 +1204,27 @@ fn helper_body(shared: &mut Shared, helper: Helper) -> Result<Function, EmitErro
         Helper::Fmod => return Ok(float::fmod()),
         Helper::FloorDiv => return Ok(float::floored(shared.helper(Helper::Fmod), true)),
         Helper::FloorMod => return Ok(float::floored(shared.helper(Helper::Fmod), false)),
+        Helper::FrameReserve | Helper::FrameReset | Helper::FramePresent => {
+            let mut too_big = Code::new();
+            if let Some(&address) = shared.trap_messages.get(goat_mir::frame::TOO_BIG) {
+                shared.push_data_address(address, &mut too_big);
+                too_big.extend([
+                    Instruction::Call(shared.trap_import),
+                    Instruction::Unreachable,
+                ]);
+            }
+            let rt = frame::Runtime {
+                alloc: shared.alloc_fn,
+                free: shared.free_fn,
+                import: shared.frame_import,
+                too_big,
+            };
+            return Ok(match helper {
+                Helper::FrameReserve => frame::reserve(&rt),
+                Helper::FrameReset => frame::reset(&rt),
+                _ => frame::present(&rt),
+            });
+        }
         _ => {}
     }
     let (object, pending) = (0, 1);
@@ -1201,7 +1237,12 @@ fn helper_body(shared: &mut Shared, helper: Helper) -> Result<Function, EmitErro
     let mut code = Code::new();
     match helper {
         Helper::Noop => {}
-        Helper::Fmod | Helper::FloorDiv | Helper::FloorMod => unreachable!("built above"),
+        Helper::Fmod
+        | Helper::FloorDiv
+        | Helper::FloorMod
+        | Helper::FrameReserve
+        | Helper::FrameReset
+        | Helper::FramePresent => unreachable!("built above"),
         Helper::ClosureDrop(f) => {
             let env = shared.program.funcs[f.0 as usize].env.as_ref();
             let captures = env.map_or(&[][..], |e| &e.captures[..]);
@@ -2207,6 +2248,20 @@ impl<'p> FuncCx<'_, 'p> {
                 Ok(Some(MTy::Ptr(HeapKind::Str)))
             }
             Expr::CallForeign(f, args) => self.call_foreign(*f, args, out),
+            Expr::Frame(op) => {
+                match op {
+                    FrameOp::Reset => {
+                        let reset = self.shared.helper(Helper::FrameReset);
+                        out.push(Instruction::Call(reset));
+                    }
+                    FrameOp::Put(items) => self.frame_put(items, out)?,
+                    FrameOp::Present => {
+                        let present = self.shared.helper(Helper::FramePresent);
+                        out.push(Instruction::Call(present));
+                    }
+                }
+                Ok(Some(MTy::Unit))
+            }
             Expr::Write(write) => {
                 let call = match write {
                     Write::Number(value) => match self.lower(value, out)? {
@@ -2750,6 +2805,123 @@ impl<'p> FuncCx<'_, 'p> {
             }
         }
         Ok(Some(foreign.ret))
+    }
+
+    /// Appends `items` to the frame buffer: one `reserve` for the whole
+    /// record, then each value stored at its offset from the block it
+    /// returns. A string moves the running pointer past itself, since its
+    /// length is not known until run time.
+    fn frame_put(&mut self, items: &[FrameItem], out: &mut Code) -> Result<(), EmitError> {
+        use Instruction::*;
+        if self.program.profile != Profile::Desktop {
+            return Err(EmitError::Unsupported("a frame on the embedded profile"));
+        }
+        let mut fixed = 0_i64;
+        let mut strings = Vec::new();
+        for item in items {
+            fixed += match *item {
+                FrameItem::Byte(_) | FrameItem::Bool(_) => 1,
+                FrameItem::Int(_) | FrameItem::Float(_) => 8,
+                FrameItem::Lit(d) => self.literal_len(d)? as i64,
+                FrameItem::Str(x) => {
+                    strings.push(self.string(x)?);
+                    4
+                }
+            };
+        }
+        out.push(I64Const(fixed));
+        for &s in &strings {
+            out.extend([
+                LocalGet(s),
+                I32Load(memarg(layout::STR_LEN, 2)),
+                I64ExtendI32U,
+                I64Add,
+            ]);
+        }
+        let reserve = self.shared.helper(Helper::FrameReserve);
+        let cursor = self.scratch(ValType::I32);
+        out.extend([Call(reserve), LocalSet(cursor)]);
+        let mut at = 0_u32;
+        for item in items {
+            match *item {
+                FrameItem::Byte(byte) => {
+                    out.extend([
+                        LocalGet(cursor),
+                        I32Const(byte.into()),
+                        I32Store8(memarg(at, 0)),
+                    ]);
+                    at += 1;
+                }
+                FrameItem::Lit(d) => {
+                    let len = self.literal_len(d)? as u32;
+                    if len > 0 {
+                        out.extend([LocalGet(cursor), I32Const(at as i32), I32Add]);
+                        self.shared.push_data_address(self.string_address(d)?, out);
+                        out.extend([
+                            I32Const(layout::STR_BYTES as i32),
+                            I32Add,
+                            I32Const(len as i32),
+                            MemoryCopy {
+                                src_mem: 0,
+                                dst_mem: 0,
+                            },
+                        ]);
+                    }
+                    at += len;
+                }
+                FrameItem::Int(x) | FrameItem::Float(x) | FrameItem::Bool(x) => {
+                    let &(index, ty) = self.scope.get(&x).ok_or(EmitError::UnboundLocal(x))?;
+                    let Some(index) = index else {
+                        return Err(EmitError::Malformed("frame value has no representation"));
+                    };
+                    let (store, width) = match (item, ty) {
+                        (FrameItem::Int(_), MTy::Int) => (I64Store(memarg(at, 0)), 8),
+                        (FrameItem::Float(_), MTy::Float) => (F64Store(memarg(at, 0)), 8),
+                        (FrameItem::Bool(_), MTy::Bool) => (I32Store8(memarg(at, 0)), 1),
+                        _ => return Err(EmitError::Malformed("frame value type")),
+                    };
+                    out.extend([LocalGet(cursor), LocalGet(index), store]);
+                    at += width;
+                }
+                FrameItem::Str(x) => {
+                    let s = self.string(x)?;
+                    out.extend([
+                        LocalGet(cursor),
+                        LocalGet(s),
+                        I32Load(memarg(layout::STR_LEN, 2)),
+                        I32Store(memarg(at, 0)),
+                        LocalGet(cursor),
+                        I32Const(at as i32 + 4),
+                        I32Add,
+                        LocalGet(s),
+                        I32Const(layout::STR_BYTES as i32),
+                        I32Add,
+                        LocalGet(s),
+                        I32Load(memarg(layout::STR_LEN, 2)),
+                        MemoryCopy {
+                            src_mem: 0,
+                            dst_mem: 0,
+                        },
+                        LocalGet(cursor),
+                        I32Const(at as i32 + 4),
+                        I32Add,
+                        LocalGet(s),
+                        I32Load(memarg(layout::STR_LEN, 2)),
+                        I32Add,
+                        LocalSet(cursor),
+                    ]);
+                    at = 0;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn literal_len(&self, data: DataId) -> Result<usize, EmitError> {
+        let bytes = self.program.data.get(data.0 as usize);
+        bytes
+            .map(Vec::len)
+            .ok_or(EmitError::Malformed("unknown data"))
     }
 
     fn string_address(&self, data: DataId) -> Result<u32, EmitError> {
