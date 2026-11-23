@@ -407,7 +407,6 @@ pub enum Feature {
     ForeignCall,
     GroupComparison,
     TagsAndMatch,
-    LacksOnTail,
     Builtin,
     Loop,
     OperatorOperand,
@@ -427,9 +426,6 @@ impl Feature {
             Feature::TagsAndMatch => "outside the calculus: tags and match",
             Feature::GroupComparison => {
                 "outside the calculus: a comparison in a program with tags, whose Eq sort the algorithm does not decide for groups"
-            }
-            Feature::LacksOnTail => {
-                "outside the calculus: a spread onto a row variable that lacks the label"
             }
             Feature::Builtin => "outside the calculus: print or trap",
             Feature::Loop => "outside the calculus: a loop (repeat, for)",
@@ -1212,51 +1208,6 @@ impl Canon<'_> {
     }
 }
 
-/// The labels of a row's entries and the variable it ends in, if any.
-fn row_spine(row: &Row) -> (Vec<&str>, Option<goat_checker::ty::TypeVar>) {
-    let mut labels = Vec::new();
-    let mut at = row;
-    loop {
-        match at {
-            Row::Empty => return (labels, None),
-            Row::Var(v) => return (labels, Some(*v)),
-            Row::Extend { label, rest, .. } | Row::Maybe { label, rest, .. } => {
-                labels.push(label);
-                at = rest;
-            }
-        }
-    }
-}
-
-/// Whether some spread writes a label onto a record whose row has no entry for
-/// it and ends in a row variable the checker knows lacks it, which only a
-/// rest pattern's remainder does. The calculus's `l # R` holds of a closed spine
-/// alone, so such a program is accepted by the checker and has no derivation
-/// (`docs/design/phase4-proof-plan.md`, decision Q2).
-fn lacks_on_tail(root: &Expr, types: &HashMap<ExprId, Ty>) -> bool {
-    let mut lacking = HashSet::new();
-    for_each_node(root, &mut |e| {
-        if let (ExprKind::Restrict { labels, .. }, Some(Ty::Record(row))) =
-            (&e.kind, types.get(&e.id))
-            && let (_, Some(tail)) = row_spine(row)
-        {
-            lacking.extend(labels.iter().map(|l| (tail, l.clone())));
-        }
-    });
-    let mut found = false;
-    for_each_node(root, &mut |e| {
-        if let ExprKind::Spread { base, fields } = &e.kind
-            && let Some(Ty::Record(row)) = types.get(&base.id)
-            && let (present, Some(tail)) = row_spine(row)
-        {
-            found |= fields.iter().any(|(l, _)| {
-                !present.contains(&l.as_str()) && lacking.contains(&(tail, l.clone()))
-            });
-        }
-    });
-    found
-}
-
 /// Whether `expr` is a function whose first parameter is `self`, which is what
 /// the checker reads as a method when it is a field of a record literal.
 fn is_method(expr: &Expr) -> bool {
@@ -1271,11 +1222,6 @@ pub fn line(source: &str) -> Result<String, Skip> {
         return Err(Skip::Rejected);
     }
     let checked = check_with_prelude("", source);
-    let hides_label = checked.as_ref().is_err_and(|errors| {
-        errors
-            .iter()
-            .any(|e| e.message.contains("was taken out of this record"))
-    });
     let errors = checked.as_ref().err();
     let flagged = |kind| errors.is_some_and(|es| es.iter().any(|e| e.kind == kind));
     let (method_flag, resource_limit) = (
@@ -1300,13 +1246,6 @@ pub fn line(source: &str) -> Result<String, Skip> {
         .read(&lowered.root)
         .ok_or_else(|| Skip::OutsideFragment(feature_of(&lowered, checked.as_ref(), reader.gap)))?;
     reader.number_labels_by_name(&mut core);
-    if hides_label
-        || reader
-            .types
-            .is_some_and(|types| lacks_on_tail(&lowered.root, types))
-    {
-        return Err(Skip::OutsideFragment(Feature::LacksOnTail));
-    }
     if resource_limit {
         return Err(Skip::ResourceLimit);
     }
@@ -2112,6 +2051,16 @@ const HANDWRITTEN: &[&str] = &[
     "f = program(x) do x == x % x done\nf(90)",
     "set_x = program(r) do {...r, x: 1} done\n{a: set_x({x: 4, z: 2}), b: set_x({y: true})}",
     "f = program(p) do\n  {x, ...r} = p\n  r\ndone\nf({x: 1, y: true})",
+    "same = program(a, b) do a == b done\nf = program(x) do same({p: x}, {p: x}) done\nf(1)",
+    "same = program(a, b) do a == b done\nf = program(x) do same({p: x}, {p: x}) done\n{a: f(1), b: f(\"s\")}",
+    "same = program(a, b) do a == b done\nf = program(x) do same({p: x, q: x}, {p: x, q: x}) done\nf(1)",
+    "add = program(a, b) do a + b done\nf = program(x) do add({p: x}, {p: x}) done\nf(1)",
+    "f = program(x) do {p: x} == {p: x} done\nf(1)",
+    "f = program(p) do\n  {x, ...r} = p\n  {...r, x: 2}\ndone\nf({x: 1, y: true})",
+    "f = program(p) do\n  {x, ...r} = p\n  {...r, x: 2}\ndone\n{a: f({x: 1, y: true}), b: f({x: \"s\", z: 3})}",
+    "f = program(p) do\n  {x, ...r} = p\n  if true then r else {x: 1} done\ndone\n1",
+    "program(a, b) do (if a == b then 1 else 2 done) + a.x done",
+    "f = program(a, b) do (if a == b then 1 else 2 done) + a.x done\nf({x: 1, y: 2}, {x: 3, y: 4})",
 ];
 
 /// One program from generator `kind` (taken modulo the four), every choice

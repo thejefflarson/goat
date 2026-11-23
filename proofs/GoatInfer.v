@@ -6,7 +6,7 @@
    them, is in GoatInferW.v, and GoatInferSound.v proves it sound against
    [typing].
    A type variable carries a sort (ADR 0038), read from a kinding environment
-   the algorithm threads.
+   the algorithm threads and the unifiers return.
 
    Naming discipline that the soundness proof leans on.  The algorithm draws
    every type or row variable it invents from the EVEN atoms [ea n], and
@@ -58,20 +58,26 @@ Definition sbR (r : atom) (R : row) : sub :=
   Sub idt (fun s => if Atom.eq_dec s r then R else row_Var s).
 
 Definition apC (s : sub) (G : ctx) : ctx :=
-  List.map (fun p => (fst p, Sch (s_tq (snd p)) (s_rq (snd p)) (apT s (s_body (snd p))) (s_sk (snd p)))) G.
+  List.map (fun p => (fst p, Sch (s_tq (snd p)) (s_rq (snd p)) (apT s (s_body (snd p))) (s_sk (snd p)) (s_rk (snd p)))) G.
 
 (* ------------------------------------------------------------------ *)
 (* Sorts                                                                *)
 (* ------------------------------------------------------------------ *)
 
 (* A type variable carries a sort (ADR 0038), read from the kinding
-   environment the algorithm threads.  Unification never changes it: it
-   binds the coarser of two variables to the finer, and a sorted variable to a
-   type only when the type satisfies the sort.  Only a fresh variable gets a
-   sort, so the environment changes by [upd] on atoms no one has used. *)
+   environment the algorithm threads.  Unification binds the coarser of two
+   variables to the finer, and binds a sorted variable to a type only when the
+   type satisfies the sort, after pushing the sort onto the variables inside
+   the type ([push_sort]).  Only a fresh variable gets a sort, so the
+   environment changes by [upd] on atoms no one has used. *)
 
 Definition upd (D : denv) (a : atom) (k : sort) : denv :=
-  fun b => if Atom.eq_dec b a then k else D b.
+  DEnv (fun b => if Atom.eq_dec b a then k else D b) (drk D).
+
+(* A row variable's kind (a sort and the labels it lacks) is set the same way,
+   on a row variable no one has used. *)
+Definition rupd (D : denv) (r : atom) (K : rkind) : denv :=
+  DEnv (dsort D) (fun b => if Atom.eq_dec b r then K else drk D b).
 
 Definition finer_b (k1 k2 : sort) : bool :=
   match k1, k2 with
@@ -81,6 +87,12 @@ Definition finer_b (k1 k2 : sort) : bool :=
   | k_Eq, k_Eq => true
   | _, _ => false
   end.
+
+(* The kind a row variable standing for two has: the finer sort and every
+   label either lacks. *)
+Definition rk_join (K1 K2 : rkind) : rkind :=
+  RK (if finer_b (rk_sort K1) (rk_sort K2) then rk_sort K1 else rk_sort K2)
+     (fun l => rk_lacks K1 l || rk_lacks K2 l).
 
 Fixpoint sat_b (D : denv) (k : sort) (T : typ) {struct T} : bool :=
   match T with
@@ -95,7 +107,8 @@ with rsat_b (D : denv) (k : sort) (R : row) {struct R} : bool :=
   match R with
   | row_Empty => true
   | row_Ext _ T R' => sat_b D k T && rsat_b D k R'
-  | _ => false
+  | row_Var r => finer_b (rk_sort (drk D r)) k
+  | row_Maybe _ _ _ _ => match k with k_Any => true | _ => false end
   end.
 
 (* ------------------------------------------------------------------ *)
@@ -125,38 +138,141 @@ Definition occT (a : atom) (T : typ) : bool :=
 Definition occR (r : atom) (R : row) : bool :=
   AtomSetImpl.mem r (frv_row R) || negb (lcrb 0 R).
 
-(* Rewrite [R] so that it presents label [l] first, with a presence:
-   [Some (P, T, R', s, n')] with [s R] equivalent to [l ^ P : T ; R'].  A field
-   [R] has gives presence [Unit], a closed row that has none gives [Bool] (the
-   absent field's type is a fresh variable, and [l] is absent from the rest),
-   and a row variable is bound to [l ^ p : a ; r'] for a fresh presence
-   variable [p].  [av] holds the row variables the row variable at the tail of
-   [R] may not be (Leijen's side condition). *)
-Fixpoint rewrite_row (l : label) (av : atoms) (R : row) (n : nat)
-  : option (typ * typ * row * sub * nat) :=
+(* The sort [k] reaches the variables inside the type a variable of sort [k] is
+   bound to: each variable of [l] that is coarser than [k] is renamed to a fresh
+   variable of sort [k], one fresh atom at a time.  The substitution it returns
+   is the renaming, and the environment has the fresh variables' sorts. *)
+Fixpoint push_sort (D : denv) (k : sort) (l : list atom) (n : nat) {struct l}
+  : sub * denv * nat :=
+  match l with
+  | nil => (sid, D, n)
+  | b :: l' =>
+      if finer_b (D b) k then push_sort D k l' n
+      else
+        match push_sort (upd D (ea n) k) k l' (S n) with
+        | (s, D', n') => (scomp s (sbT b (typ_Var (ea n))), D', n')
+        end
+  end.
+
+(* The sort [k] also reaches the row variables inside that type: each row
+   variable of [l] whose sort is coarser than [k] is renamed to a fresh row
+   variable of sort [k] that lacks what it lacked. *)
+Fixpoint push_sort_r (D : denv) (k : sort) (l : list atom) (n : nat) {struct l}
+  : sub * denv * nat :=
+  match l with
+  | nil => (sid, D, n)
+  | q :: l' =>
+      if finer_b (rk_sort (drk D q)) k then push_sort_r D k l' n
+      else
+        match push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D q)))) k l' (S n) with
+        | (s, D', n') => (scomp s (sbR q (row_Var (ea n))), D', n')
+        end
+  end.
+
+(* Bind [a] to [T], at the sort of [a]: the sort is pushed onto the type and
+   the row variables of [T], and the renamed [T] must satisfy it.  The occurs
+   check runs before the renaming, which never touches [a], and after it. *)
+Definition bind_prop (D : denv) (a : atom) (T : typ) (n : nat) : option (sub * denv * nat) :=
+  if occT a T then None
+  else
+    match push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n with
+    | (sp, D1, n1) =>
+        match push_sort_r D1 (D1 a) (AtomSetImpl.elements (frv_typ T)) n1 with
+        | (sr, D2, n2) =>
+            let T' := apT sr (apT sp T) in
+            if occT a T' then None
+            else if sat_b D2 (D2 a) T' then Some (scomp (sbT a T') (scomp sr sp), D2, n2) else None
+        end
+    end.
+
+(* The variable at the end of a row, and the labels before it. *)
+Fixpoint row_tail (R : row) : option atom :=
   match R with
-  | row_Empty => Some (typ_Bool, typ_Var (ea n), row_Empty, sid, S n)
+  | row_Empty => None
+  | row_Var q => Some q
+  | row_Ext _ _ R' => row_tail R'
+  | row_Maybe _ _ _ R' => row_tail R'
+  end.
+
+Fixpoint row_labels (R : row) : list label :=
+  match R with
+  | row_Empty | row_Var _ => nil
+  | row_Ext l _ R' => l :: row_labels R'
+  | row_Maybe l _ _ R' => l :: row_labels R'
+  end.
+
+Definition lacks_ok (K : rkind) (R : row) : bool :=
+  forallb (fun l => negb (rk_lacks K l)) (row_labels R).
+
+(* The second half of [bind_row]: after [sq] renamed the tail of [R] (leaving
+   [D0] and the supply [n0]), the sort of [r] reaches the type variables of the
+   fields, and the renamed row must satisfy the sort and lack the labels [r]
+   lacks.  The occurs check runs again after the renaming. *)
+Definition bind_row_fin (r : atom) (R : row) (sq : sub) (D0 : denv) (n0 : nat)
+  : option (sub * denv * nat) :=
+  let R0 := apR sq R in
+  match push_sort D0 (rk_sort (drk D0 r)) (AtomSetImpl.elements (ftv_row R0)) n0 with
+  | (sp, D1, n1) =>
+      let R1 := apR sp R0 in
+      if occR r R1 then None
+      else if rsat_b D1 (rk_sort (drk D1 r)) R1 && lacks_ok (drk D1 r) R1
+           then Some (scomp (sbR r R1) (scomp sp sq), D1, n1) else None
+  end.
+
+(* Bind the row variable [r] to [R], at the kind of [r]: the variable at the
+   tail of [R] is renamed to a fresh one of the kind both have (a lacks set is
+   a function, so the two cannot be compared), the sort of [r] reaches the
+   type variables of the fields, and the renamed row must satisfy the sort and
+   lack the labels [r] lacks. *)
+Definition bind_row (D : denv) (r : atom) (R : row) (n : nat) : option (sub * denv * nat) :=
+  if occR r R then None
+  else
+    match row_tail R with
+    | None => bind_row_fin r R sid D n
+    | Some q =>
+        bind_row_fin r R (sbR q (row_Var (ea n)))
+          (rupd D (ea n) (rk_join (drk D r) (drk D q))) (S n)
+    end.
+
+(* Rewrite [R] so that it presents label [l] first, with a presence:
+   [Some (P, T, R', s, D', n')] with [s R] equivalent to [l ^ P : T ; R'].  A
+   field [R] has gives presence [Unit], a closed row that has none gives [Bool]
+   (the absent field's type is a fresh variable, and [l] is absent from the
+   rest), and a row variable is bound to [l ^ p : a ; r'] for a fresh presence
+   variable [p] and a fresh row variable [r'] of the kind it had.  A row
+   variable that lacks [l], or whose sort is finer than [Any] (a presence entry
+   has none), cannot be rewritten.  [av] holds the row variables the row
+   variable at the tail of [R] may not be (Leijen's side condition). *)
+Fixpoint rewrite_row (l : label) (av : atoms) (D : denv) (R : row) (n : nat)
+  : option (typ * typ * row * sub * denv * nat) :=
+  match R with
+  | row_Empty => Some (typ_Bool, typ_Var (ea n), row_Empty, sid, D, S n)
   | row_Var r =>
       if AtomSetImpl.mem r av then None
+      else if rk_lacks (drk D r) l then None
       else
-        let p := typ_Var (ea n) in
-        let a := typ_Var (ea (S n)) in
-        let r' := row_Var (ea (n + 2)) in
-        Some (p, a, r', sbR r (row_Maybe l p a r'), n + 3)
+        match rk_sort (drk D r) with
+        | k_Any =>
+            let p := typ_Var (ea n) in
+            let a := typ_Var (ea (S n)) in
+            let r' := row_Var (ea (n + 2)) in
+            Some (p, a, r', sbR r (row_Maybe l p a r'), rupd D (ea (n + 2)) (drk D r), n + 3)
+        | _ => None
+        end
   | row_Ext l' T' R'' =>
-      if Nat.eqb l l' then Some (typ_Unit, T', R'', sid, n)
+      if Nat.eqb l l' then Some (typ_Unit, T', R'', sid, D, n)
       else
-        match rewrite_row l av R'' n with
+        match rewrite_row l av D R'' n with
         | None => None
-        | Some (P0, T0, R3, s, n1) => Some (P0, T0, row_Ext l' (apT s T') R3, s, n1)
+        | Some (P0, T0, R3, s, D1, n1) => Some (P0, T0, row_Ext l' (apT s T') R3, s, D1, n1)
         end
   | row_Maybe l' P' T' R'' =>
-      if Nat.eqb l l' then Some (P', T', R'', sid, n)
+      if Nat.eqb l l' then Some (P', T', R'', sid, D, n)
       else
-        match rewrite_row l av R'' n with
+        match rewrite_row l av D R'' n with
         | None => None
-        | Some (P0, T0, R3, s, n1) =>
-            Some (P0, T0, row_Maybe l' (apT s P') (apT s T') R3, s, n1)
+        | Some (P0, T0, R3, s, D1, n1) =>
+            Some (P0, T0, row_Maybe l' (apT s P') (apT s T') R3, s, D1, n1)
         end
   end.
 
@@ -169,30 +285,29 @@ Definition row_head (R : row) : option (label * typ * typ * row) :=
   | _ => None
   end.
 
-Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f} : option (sub * nat) :=
+Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f}
+  : option (sub * denv * nat) :=
   match f with
   | O => None
   | S f' =>
       match T1, T2 with
-      | typ_Int, typ_Int => Some (sid, n)
-      | typ_Float, typ_Float => Some (sid, n)
-      | typ_Bool, typ_Bool => Some (sid, n)
-      | typ_Unit, typ_Unit => Some (sid, n)
-      | typ_String, typ_String => Some (sid, n)
+      | typ_Int, typ_Int => Some (sid, D, n)
+      | typ_Float, typ_Float => Some (sid, D, n)
+      | typ_Bool, typ_Bool => Some (sid, D, n)
+      | typ_Unit, typ_Unit => Some (sid, D, n)
+      | typ_String, typ_String => Some (sid, D, n)
       | typ_Var a, typ_Var b =>
-          if Atom.eq_dec a b then Some (sid, n)
-          else if finer_b (D b) (D a) then Some (sbT a T2, n) else Some (sbT b T1, n)
-      | typ_Var a, _ =>
-          if occT a T2 then None else if sat_b D (D a) T2 then Some (sbT a T2, n) else None
-      | _, typ_Var b =>
-          if occT b T1 then None else if sat_b D (D b) T1 then Some (sbT b T1, n) else None
+          if Atom.eq_dec a b then Some (sid, D, n)
+          else if finer_b (D b) (D a) then Some (sbT a T2, D, n) else Some (sbT b T1, D, n)
+      | typ_Var a, _ => bind_prop D a T2 n
+      | _, typ_Var b => bind_prop D b T1 n
       | typ_Arrow A B, typ_Arrow A' B' =>
           match unify_t f' D A A' n with
           | None => None
-          | Some (s1, n1) =>
-              match unify_t f' D (apT s1 B) (apT s1 B') n1 with
+          | Some (s1, D1, n1) =>
+              match unify_t f' D1 (apT s1 B) (apT s1 B') n1 with
               | None => None
-              | Some (s2, n2) => Some (scomp s2 s1, n2)
+              | Some (s2, D2, n2) => Some (scomp s2 s1, D2, n2)
               end
           end
       | typ_Record R, typ_Record R' => unify_r f' D R R' n
@@ -201,33 +316,34 @@ Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f} : optio
       | _, _ => None
       end
   end
-with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :=
+with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
+  : option (sub * denv * nat) :=
   match f with
   | O => None
   | S f' =>
       match R1, R2 with
       | row_Var r, row_Var s =>
-          if Atom.eq_dec r s then Some (sid, n) else Some (sbR r R2, n)
-      | row_Var r, _ => if occR r R2 then None else Some (sbR r R2, n)
-      | _, row_Var s => if occR s R1 then None else Some (sbR s R1, n)
-      | row_Empty, row_Empty => Some (sid, n)
+          if Atom.eq_dec r s then Some (sid, D, n) else bind_row D r R2 n
+      | row_Var r, _ => bind_row D r R2 n
+      | _, row_Var s => bind_row D s R1 n
+      | row_Empty, row_Empty => Some (sid, D, n)
       | row_Empty, row_Maybe _ _ _ _ => unify_r f' D R2 R1 n
       | _, _ =>
           match row_head R1 with
           | None => None
           | Some (l, P, T, R1') =>
-              match rewrite_row l (frv_row R1) R2 n with
+              match rewrite_row l (frv_row R1) D R2 n with
               | None => None
-              | Some (P', T', R2', s0, n1) =>
-                  match unify_t f' D (apT s0 P) P' n1 with
+              | Some (P', T', R2', s0, D0, n1) =>
+                  match unify_t f' D0 (apT s0 P) P' n1 with
                   | None => None
-                  | Some (sp, n2) =>
-                      match unify_t f' D (apT sp (apT s0 T)) (apT sp T') n2 with
+                  | Some (sp, D1, n2) =>
+                      match unify_t f' D1 (apT sp (apT s0 T)) (apT sp T') n2 with
                       | None => None
-                      | Some (s1, n3) =>
-                          match unify_r f' D (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 with
+                      | Some (s1, D2, n3) =>
+                          match unify_r f' D2 (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 with
                           | None => None
-                          | Some (s2, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), n4)
+                          | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
                           end
                       end
                   end
@@ -265,8 +381,12 @@ Definition inst_sub (s : scheme) (n : nat) : sub :=
    recorded for it. *)
 Definition inst_den (D : denv) (s : scheme) (n : nat) : denv :=
   let lq := AtomSetImpl.elements (s_tq s) in
-  fun b => fold_right (fun a acc => if Atom.eq_dec b (ea (n + idx a lq)) then s_sk s a else acc)
-                      (D b) lq.
+  let lr := AtomSetImpl.elements (s_rq s) in
+  DEnv (fun b => fold_right (fun a acc => if Atom.eq_dec b (ea (n + idx a lq)) then s_sk s a else acc)
+                            (D b) lq)
+       (fun b => fold_right
+                   (fun r acc => if Atom.eq_dec b (ea (n + length lq + idx r lr)) then s_rk s r else acc)
+                   (drk D b) lr).
 
 Definition instantiate (D : denv) (s : scheme) (n : nat) : typ * denv * nat :=
   (apT (inst_sub s n) (s_body s), inst_den D s n,
@@ -291,28 +411,24 @@ Definition gen_vars_r (G : ctx) (T : typ) : list atom :=
 Definition gen_sk (D : denv) (la : list atom) : sort_fn :=
   fun b => fold_right (fun a acc => if Atom.eq_dec b (oa (idx a la)) then D a else acc) k_Any la.
 
+(* The kind of each renamed quantified row variable is the kind its original
+   has in [D]. *)
+Definition gen_rk (D : denv) (lr : list atom) : rkind_fn :=
+  fun b => fold_right (fun r acc => if Atom.eq_dec b (oa (idx r lr)) then drk D r else acc) rk_any lr.
+
 (* The generalization of [T] over [G], with the quantified variables renamed to
-   odd atoms and recorded at their sorts in [D]. *)
+   odd atoms and recorded at their kinds in [D]. *)
 Definition gen_ren (D : denv) (G : ctx) (T : typ) : scheme :=
   let la := gen_vars_t G T in
   let lr := gen_vars_r G T in
   Sch (aset (List.map (fun a => oa (idx a la)) la))
       (aset (List.map (fun r => oa (idx r lr)) lr))
       (ap_typ (rename_t la) (rename_r lr) T)
-      (gen_sk D la).
+      (gen_sk D la) (gen_rk D lr).
 
-(* A [let] of a function or a bare numeral generalizes the variables of its
-   type whatever their sort.  Any other syntactic value keeps the [Literal]
-   variables of its type shared, still open to [Float], as the checker does
-   (ADR 0038, the numeral-let addendum).  [let_pin] is the type whose free
-   variables a [let] leaves monomorphic: [gen_ren] generalizes over the context
-   extended with a binding of it. *)
-Definition let_open (e : exp) : bool :=
-  match e with
-  | e_abs _ | e_num _ | e_letrec _ _ => true
-  | _ => false
-  end.
-
+(* [let_pin] is the type whose free variables a [let] leaves monomorphic
+   ([let_open], [lit_pinned] in [GoatDefs.v]): [gen_ren] generalizes over the
+   context extended with a binding of it. *)
 Definition is_lit_sort (k : sort) : bool :=
   match k with k_Literal => true | _ => false end.
 

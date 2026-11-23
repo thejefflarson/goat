@@ -10,9 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 goat = { version = "0.1.0", path = "../goat", features = ["native"] }
-goat_canvas = { version = "0.1.0", path = "../canvas", default-features = false }
+goat_canvas = { version = "0.1.0", path = "../canvas" }
+goat_checker = { version = "0.1.0", path = "../checker" }
 goat_mir = { version = "0.1.0", path = "../mir" }
 goat_native = { version = "0.1.0", path = "../native" }
+goat_parser = { version = "0.1.0", path = "../parser" }
 tempfile = "3.27.0"
 
 [dev-dependencies]

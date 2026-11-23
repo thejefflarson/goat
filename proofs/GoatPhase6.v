@@ -54,11 +54,11 @@ Definition k_eq : sort_fn := fun _ => k_Eq.
 
 Lemma inst_same_at : forall U,
   sat d_any k_Eq U -> lct 0 U ->
-  inst d_any (typ_Arrow U typ_Bool) (gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq).
+  inst d_any (typ_Arrow U typ_Bool) (gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq rk_triv).
 Proof.
   intros U HU HL.
   exists (fun a => if a == ga6 then U else typ_Var a), idr.
-  split; [ | split; [ | split; [ | split ] ] ].
+  split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
   - intros a Ha. simpl in Ha. destruct (a == ga6) as [E|E];
       [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
@@ -66,6 +66,7 @@ Proof.
   - intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
     simpl in Ha. assert (a = ga6) by fsetdec. subst a.
     destruct (ga6 == ga6) as [E|E]; [ exact HU | congruence ].
+  - intros r Hr. exfalso. simpl in Hr. fsetdec.
   - split; [ intros a; simpl; match goal with |- context [if ?c then _ else _] => destruct c end; [ exact HL | exact I ] | intros r; exact I ].
 Qed.
 
@@ -81,8 +82,8 @@ Example same_is_used_at_int_string_and_unit :
     (typ_Record (row_Ext 0 typ_Bool (row_Ext 1 typ_Bool (row_Ext 2 typ_Bool row_Empty)))).
 Proof.
   unfold same_triple.
-  apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var ga6) typ_Bool) (k := k_eq);
-    [ reflexivity | | ].
+  apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var ga6) typ_Bool) (k := k_eq) (rk := rk_triv);
+    [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Abs with (L := {}). intros x Hx.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
     assert (Hga : ga6 `in` AtomSetImpl.diff (ftv_typ (typ_Arrow (typ_Var ga6) typ_Bool)) (ftv_ctx nil))
@@ -93,21 +94,21 @@ Proof.
     + apply T_Var with (s := sch_mono (typ_Var ga6));
         [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_mono_self ].
     + reflexivity.
-    + cbn [sat]. rewrite (ext_in _ _ _ ga6 Hga). apply finer_refl.
+    + cbn [sat]. rewrite extr_dsort. rewrite (ext_in _ _ _ ga6 Hga). apply finer_refl.
   - intros f Hf.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
     apply T_Record; [ | reflexivity ]. eapply FT_cons.
     + eapply T_App with (T1 := typ_Int); [ | apply T_Num; [ solve_uniq | ] ].
-      * apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq);
+      * apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq rk_triv);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_same_at; simpl; first [ exact I | (right; reflexivity) ] ].
       * exact I.
     + eapply FT_cons.
       * eapply T_App with (T1 := typ_String); [ | apply T_Str; solve_uniq ].
-        apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq);
+        apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq rk_triv);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_same_at; simpl; first [ exact I | (right; reflexivity) ] ].
       * eapply FT_cons; [ | apply FT_nil; solve_uniq ].
         eapply T_App with (T1 := typ_Unit); [ | apply T_Unit; solve_uniq ].
-        apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq);
+        apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq rk_triv);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_same_at; simpl; first [ exact I | (right; reflexivity) ] ].
 Qed.
 
@@ -115,7 +116,7 @@ Qed.
    of its scheme. *)
 Example same_scheme_rejects_functions :
   ~ inst d_any (typ_Arrow (typ_Arrow typ_Int typ_Int) typ_Bool)
-      (gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq).
+      (gen nil (typ_Arrow (typ_Var ga6) typ_Bool) k_eq rk_triv).
 Proof.
   intros [st [sr [Hst [Hsr [Heq [Hsat _]]]]]]. simpl in Heq.
   injection Heq as Hs.
