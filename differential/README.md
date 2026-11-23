@@ -82,10 +82,16 @@ program are skipped, each because the calculus and the checker differ on it:
 A further kind is counted apart from these. When the checker types a program in
 the fragment with a recursive type (a `Ty::Rec` anywhere, `Ty::is_recursive`, as for `(p.moved)(p)`), the
 corpus writes it as an `R` line and the driver prints it as "skipped for a
-recursive type", with no comparison. The algorithm never builds a `mu`
-(`infer_mu_free`, `proofs/GoatInferMuFree.v`), so it cannot agree on such a
-program. The count tells the reader whether the fragment still reaches
-recursive types.
+recursive type", with no comparison, and says for how many of them the
+algorithm infers a type. The algorithm ties a knot where a variable meets a
+type that mentions it and writes the head `fold` or `unfold` a mu type that
+meets its unrolling needs (`proofs/GoatCoerce.v`, `proofs/GoatInferW.v`); a
+difference below a function type or a record field would need an
+eta-expansion, so it refuses the program (a deep coercion), and a recursive
+group whose members need a recursive type is outside what it elaborates yet.
+The canonical type cannot write a `mu`, so the two sides are not compared; the
+count tells the reader whether the fragment still reaches recursive types and
+how far the algorithm follows it.
 
 ## Where `float(e)` goes
 
