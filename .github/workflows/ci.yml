@@ -35,6 +35,7 @@ jobs:
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
       fuzz: ${{ steps.paths.outputs.fuzz }}
+      native: ${{ steps.paths.outputs.native }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -48,15 +49,17 @@ jobs:
         run: |
           rust='^(Cargo\.(toml|lock)$|rust-toolchain|\.cargo/|\.config/|parser/|checker/|mir/|wasm/|llvm/|wamr/|goat/|cli/|canvas/|web/|fuzz/|differential/|firmware/|prelude/|editor/|examples/|grammar/|docs/llm\.md$|proofs/(goat_ln\.ott|GoatShape\.v|GoatPrinterTable\.v)$|\.github/workflows/ci\.yml$|\.github/scripts/)'
           fuzz='^(Cargo\.(toml|lock)$|rust-toolchain|\.cargo/|\.config/|parser/|checker/|mir/|wamr/|goat/|cli/|fuzz/|prelude/|grammar/|examples/|\.github/workflows/ci\.yml$)'
+          native='^(llvm/|native/|mir/|cli/src/native_build\.rs$|\.github/workflows/ci\.yml$)'
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "No usable base; running everything."
-            printf 'rust=true\nfuzz=true\n' >> "$GITHUB_OUTPUT"
+            printf 'rust=true\nfuzz=true\nnative=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           files=$(git diff --name-only "$BASE...$HEAD")
           matches() { printf '%s\n' "$files" | grep -Eq "$1" && echo true || echo false; }
           echo "rust=$(matches "$rust")" >> "$GITHUB_OUTPUT"
           echo "fuzz=$(matches "$fuzz")" >> "$GITHUB_OUTPUT"
+          echo "native=$(matches "$native")" >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
   check:
@@ -121,6 +124,77 @@ jobs:
       - name: sccache stats
         if: always()
         run: sccache --show-stats || true
+
+  # The native backend (ADR 0042) against the clang floor and a current clang.
+  # The runner image ships both as versioned names; bare `clang` is a different
+  # version. The workspace run under GOAT_RUNTIME=native covers the llvm/ and
+  # native/ tests and the `goat build --native` CLI tests along with the
+  # conformance suites. CLANG feeds the in-process driver, GOAT_CLANG the CLI.
+  native:
+    runs-on: goat-runners
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        clang: [clang-17, clang-23]
+    env:
+      RUSTC_WRAPPER: sccache
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GOAT_RUNTIME: native
+      CLANG: ${{ matrix.clang }}
+      GOAT_CLANG: ${{ matrix.clang }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enable rust
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Start sccache
+        run: bash .github/scripts/start-sccache.sh
+
+      - name: Runner image has clang 17 and 23
+        run: |
+          clang-17 --version && clang-23 --version || {
+            echo "::error::clang-17 or clang-23 is missing: this pod runs an image older than ghcr.io/thejefflarson/runner:main (see thejefflarson/runner#64). Restart the runner pod to pull the current image."
+            exit 1
+          }
+
+      - name: Build the standalone runtime library
+        run: cargo build -p goat_native
+
+      - name: Test with the native backend
+        run: cargo nextest run --profile ci --test-threads 2
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  # Apple's clang and linker differ from the Linux ones (dylibs, -liconv,
+  # -dead_strip), so the native suites run there too. GitHub-hosted macOS is the
+  # one hosted runner the project allows: there is no self-hosted macOS runner.
+  native-macos:
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
+    timeout-minutes: 45
+    env:
+      GOAT_RUNTIME: native
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Apple clang
+        run: clang --version
+
+      - name: Build the standalone runtime library
+        run: cargo build -p goat_native
+
+      - name: Test the llvm and native crates
+        run: cargo test -p goat_llvm -p goat_native -- --test-threads 2
+
+      - name: Test goat build --native
+        run: cargo test -p goat_cli --test native_build -- --test-threads 2
 
   # Keeps the front end and wasm backend buildable for wasm32 so the compiler
   # can run in a browser or embedded host.
