@@ -559,6 +559,158 @@ Proof.
   exact (conj (conj Hs Hl) (conj Hb IH)).
 Qed.
 
+(* ---- loops: the fresh-name tail-recursive terms lowering builds ---- *)
+
+(* The words the lexer reads as names: a rule that spells one out takes the name
+   token, and the generated grammar also takes the keyword token of that spelling. *)
+Definition word_tok (w : string) (k : tok) : Prop := k = TName w \/ k = TSym w.
+
+Definition atoms_of (ns : list termvar) : atoms :=
+  fold_right (fun n acc => singleton n `union` acc) empty ns.
+
+Lemma in_atoms_of : forall ns n, List.In n ns -> AtomSetImpl.In n (atoms_of ns).
+Proof.
+  intros ns n. induction ns as [| m ns IH]; intros Hn; [ destruct Hn | ].
+  simpl. destruct Hn as [<- | Hn].
+  - fsetdec.
+  - specialize (IH Hn). fsetdec.
+Qed.
+
+(* The names a loop makes up are distinct, avoid the atoms [a] (the free
+   variables of the parts the loop wraps) and the counter or item [i]. Lowering
+   draws them from symbols no source name can spell. *)
+Definition apart (a : atoms) (i : termvar) (ns : list termvar) : Prop :=
+  NoDup ns /\ forall n, List.In n ns -> ~ AtomSetImpl.In n a /\ n <> i.
+
+Lemma exists_apart : forall (a : atoms) (i : termvar) (k : nat),
+  exists ns, length ns = k /\ apart a i ns.
+Proof.
+  intros a i k. induction k as [| k (ns & Hlen & Hnodup & Hns)].
+  - exists []. split; [ reflexivity | split; [ apply NoDup_nil | intros n [] ] ].
+  - destruct (atom_fresh (a `union` singleton i `union` atoms_of ns)) as [n Hn].
+    exists (n :: ns). split; [ simpl; rewrite Hlen; reflexivity | ].
+    split.
+    + apply NoDup_cons; [ | exact Hnodup ].
+      intros Hin. apply Hn. apply in_atoms_of in Hin. fsetdec.
+    + intros m [<- | Hm].
+      * split.
+        -- intros Hin. apply Hn. fsetdec.
+        -- intros Heq. apply Hn. subst. fsetdec.
+      * exact (Hns m Hm).
+Qed.
+
+Lemma exists_apart3 : forall a i, exists s t g, apart a i [s; t; g].
+Proof.
+  intros a i. destruct (exists_apart a i 3) as (ns & Hlen & Happ).
+  destruct ns as [| s [| t [| g [| x l]]]]; simpl in Hlen; try (exfalso; lia).
+  exists s, t, g. exact Happ.
+Qed.
+
+Lemma exists_apart4 : forall a i, exists g r sp tp, apart a i [g; r; sp; tp].
+Proof.
+  intros a i. destruct (exists_apart a i 4) as (ns & Hlen & Happ).
+  destruct ns as [| g [| r [| sp [| tp [| x l]]]]]; simpl in Hlen; try (exfalso; lia).
+  exists g, r, sp, tp. exact Happ.
+Qed.
+
+Definition loop_atoms (start stop body : exp) : atoms :=
+  fv_exp start `union` fv_exp stop `union` fv_exp body.
+
+(* `go(i + 1)`, run after the body. *)
+Definition loop_call (g i : termvar) : exp :=
+  e_app (e_fvar_f g) (e_bin (e_fvar_f i) bop_add (e_num 1)).
+
+(* A counted loop (`repeat n times`, with start 0 and `<`, and `for i from a to
+   b`, with `<=`): the start and the stop are each bound once, then the group
+   of one function `go(i)` tests, runs the body and calls itself with the next
+   counter, and the loop enters it at the start. The body's value is bound to
+   a name nothing mentions. *)
+Definition counted_fun (g t i : termvar) (op : bop) (body : exp) : exp :=
+  curry [i] (e_ite (e_bin (e_fvar_f i) op (e_fvar_f t))
+                   (e_let body (loop_call g i))
+                   e_unit).
+
+Definition counted (s t g i : termvar) (start stop : exp) (op : bop) (body : exp) : exp :=
+  e_let start (close_exp s
+    (e_let stop (close_exp t
+      (e_letrec
+        (group_fields [g] [counted_fun g t i op body])
+        (bind_group [g] (e_app (e_fvar_f g) (e_fvar_f s))))))).
+
+(* The arm of a list walk for `Link`: the item and the rest are the payload's
+   slots, the body runs, and the walk goes on with the rest. *)
+Definition link_arm (sp i tp g : termvar) (body : exp) : exp :=
+  close_exp sp
+    (e_let (e_proj (e_fvar_f sp) 0)
+       (close_exp i
+          (e_let (e_proj (e_fvar_f sp) 1)
+             (close_exp tp (e_let body (e_app (e_fvar_f g) (e_fvar_f tp))))))).
+
+(* `for x in xs`: `go(r)` matches the list on `Empty` (done) and `Link` (the
+   body, then `go` on the rest), entered at the list. *)
+Definition each_fun (w : gdecl) (tge tgl : nat) (g r sp tp i : termvar) (body : exp) : exp :=
+  curry [r] (e_match w (e_fvar_f r)
+               (arms_cons tge e_unit
+                  (arms_cons tgl (link_arm sp i tp g body) arms_nil))).
+
+Definition each_term (w : gdecl) (tge tgl : nat) (g r sp tp i : termvar) (xs body : exp) : exp :=
+  e_letrec
+    (group_fields [g] [each_fun w tge tgl g r sp tp i body])
+    (bind_group [g] (e_app (e_fvar_f g) xs)).
+
+Lemma lc_counted : forall s t g i start stop op body,
+  lc start -> lc stop -> lc body -> lc (counted s t g i start stop op body).
+Proof.
+  intros s t g i start stop op body Hstart Hstop Hbody. unfold counted.
+  set (run := e_letrec (group_fields [g] [counted_fun g t i op body])
+                       (bind_group [g] (e_app (e_fvar_f g) (e_fvar_f s)))).
+  assert (Hstep : lc (e_ite (e_bin (e_fvar_f i) op (e_fvar_f t))
+                            (e_let body (loop_call g i)) e_unit))
+    by exact (conj (conj I I) (conj (conj Hbody (conj I (conj I I))) I)).
+  assert (Hfun : Forall lc [counted_fun g t i op body]).
+  { apply Forall_cons; [ | apply Forall_nil ].
+    exact (lc_curry [i] _ Hstep). }
+  assert (Hrun : lc run).
+  { split.
+    - exact (lcf_group_fields [g] _ Hfun).
+    - exact (proj1 lc_bind_group_mut (e_app (e_fvar_f g) (e_fvar_f s)) 0 [g] (conj I I)). }
+  assert (Hin : lc_at 1 (close_exp t run))
+    by (apply (proj1 lc_close_mut); exact Hrun).
+  assert (Hmid : lc (e_let stop (close_exp t run))) by exact (conj Hstop Hin).
+  assert (Hout : lc_at 1 (close_exp s (e_let stop (close_exp t run))))
+    by (apply (proj1 lc_close_mut); exact Hmid).
+  exact (conj Hstart Hout).
+Qed.
+
+Lemma lc_link_arm : forall sp i tp g body, lc body -> lc_at 1 (link_arm sp i tp g body).
+Proof.
+  intros sp i tp g body Hbody. unfold link_arm.
+  set (z := e_let body (e_app (e_fvar_f g) (e_fvar_f tp))).
+  assert (Hz : lc z) by exact (conj Hbody (conj I I)).
+  assert (H1 : lc_at 1 (close_exp tp z)) by (apply (proj1 lc_close_mut); exact Hz).
+  assert (Hy : lc (e_let (e_proj (e_fvar_f sp) 1) (close_exp tp z))) by exact (conj I H1).
+  assert (H2 : lc_at 1 (close_exp i (e_let (e_proj (e_fvar_f sp) 1) (close_exp tp z))))
+    by (apply (proj1 lc_close_mut); exact Hy).
+  assert (Hx : lc (e_let (e_proj (e_fvar_f sp) 0)
+                     (close_exp i (e_let (e_proj (e_fvar_f sp) 1) (close_exp tp z)))))
+    by exact (conj I H2).
+  apply (proj1 lc_close_mut). exact Hx.
+Qed.
+
+Lemma lc_each_term : forall w tge tgl g r sp tp i xs body,
+  lc xs -> lc body -> lc (each_term w tge tgl g r sp tp i xs body).
+Proof.
+  intros w tge tgl g r sp tp i xs body Hxs Hbody. unfold each_term.
+  assert (Hmatch : lc (e_match w (e_fvar_f r)
+            (arms_cons tge e_unit (arms_cons tgl (link_arm sp i tp g body) arms_nil))))
+    by exact (conj I (conj I (conj (lc_link_arm sp i tp g body Hbody) I))).
+  assert (Hfun : Forall lc [each_fun w tge tgl g r sp tp i body]).
+  { apply Forall_cons; [ | apply Forall_nil ]. exact (lc_curry [r] _ Hmatch). }
+  split.
+  - exact (lcf_group_fields [g] _ Hfun).
+  - exact (proj1 lc_bind_group_mut (e_app (e_fvar_f g) xs) 0 [g] (conj I Hxs)).
+Qed.
+
 Section Denotation.
 
   Context {TT : TagTable}.
@@ -750,6 +902,37 @@ Section Denotation.
         Den (Node R_match_expr
                ([sym "match"; Node R_expr cs1; sym "do"] ++ a :: rest ++ [sym "done"]))
             (e_let e (close_exp s (lit_chain (e_fvar_f s) rows els)))
+    | D_repeat : forall cn n bs b s t g c,
+        Den (Node R_expr cn) n ->
+        Den_loop_body bs b ->
+        ~ AtomSetImpl.In c (loop_atoms (e_num 0) n b) ->
+        apart (loop_atoms (e_num 0) n b) c [s; t; g] ->
+        Den (Node R_repeat_loop
+               ([sym "repeat"; Node R_expr cn; sym "times"; sym "do"] ++ bs ++ [sym "done"]))
+            (counted s t g c (e_num 0) n bop_lt b)
+    | D_count : forall x kf kt ca cz a z bs b s t g,
+        word_tok "from" kf ->
+        word_tok "to" kt ->
+        Den (Node R_expr ca) a ->
+        Den (Node R_expr cz) z ->
+        Den_loop_body bs b ->
+        apart (loop_atoms a z b) (var_of x) [s; t; g] ->
+        Den (Node R_count_loop
+               ([Node R_for_kw [sym "for"]; ident x; Node R_from_kw [Leaf kf];
+                 Node R_expr ca; Node R_to_kw [Leaf kt]; Node R_expr cz; sym "do"]
+                  ++ bs ++ [sym "done"]))
+            (counted s t g (var_of x) a z bop_lte b)
+    | D_each : forall x ki cl xs bs b w tge tgl g r sp tp,
+        word_tok "in" ki ->
+        tag_lookup tags "Empty" = Some (w, tge) ->
+        tag_lookup tags "Link" = Some (w, tgl) ->
+        Den (Node R_expr cl) xs ->
+        Den_loop_body bs b ->
+        apart (fv_exp xs `union` fv_exp b) (var_of x) [g; r; sp; tp] ->
+        Den (Node R_each_loop
+               ([Node R_for_kw [sym "for"]; ident x; Node R_in_kw [Leaf ki];
+                 Node R_expr cl; sym "do"] ++ bs ++ [sym "done"]))
+            (each_term w tge tgl g r sp tp (var_of x) xs b)
   with Den_decl : tree -> string -> exp -> Prop :=
     | DD_plain : forall x cs v,
         Den (Node R_value cs) v ->
@@ -915,7 +1098,13 @@ Section Denotation.
     | DLs_cons : forall a l b rest rows els,
         Den_lit_arm a l b ->
         Den_lit_arms rest rows els ->
-        Den_lit_arms (a :: rest) ((l, b) :: rows) els.
+        Den_lit_arms (a :: rest) ((l, b) :: rows) els
+  with Den_loop_body : list tree -> exp -> Prop :=
+    | DLB_none :
+        Den_loop_body [] e_unit
+    | DLB_some : forall cs e,
+        Den (Node R_expr cs) e ->
+        Den_loop_body [Node R_expr cs] e.
 
 End Denotation.
 
@@ -958,11 +1147,12 @@ with Den_field_ind' := Induction for Den_field Sort Prop
 with Den_arm_ind' := Induction for Den_arm Sort Prop
 with Den_arms_ind' := Induction for Den_arms Sort Prop
 with Den_lit_arm_ind' := Induction for Den_lit_arm Sort Prop
-with Den_lit_arms_ind' := Induction for Den_lit_arms Sort Prop.
+with Den_lit_arms_ind' := Induction for Den_lit_arms Sort Prop
+with Den_loop_body_ind' := Induction for Den_loop_body Sort Prop.
 Combined Scheme Den_mutind from Den_ind', Den_decl_ind', Den_block_ind',
   Den_decls_ind', Den_math_ind', Den_opd_ind', Den_run_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
   Den_items_ind', Den_sep_ind', Den_field_ind', Den_arm_ind', Den_arms_ind',
-  Den_lit_arm_ind', Den_lit_arms_ind'.
+  Den_lit_arm_ind', Den_lit_arms_ind', Den_loop_body_ind'.
 
 (* ---- T1, the denotation half: whatever a derivation denotes is locally closed ---- *)
 
@@ -985,7 +1175,8 @@ Lemma den_lc : forall `{TT : TagTable} var_of tbl,
   (forall cs ars, Den_arms var_of tbl cs ars -> lca ars) /\
   (forall a l b, Den_lit_arm var_of tbl a l b -> lc l /\ lc b) /\
   (forall cs rows els, Den_lit_arms var_of tbl cs rows els ->
-     Forall (fun r => lc (fst r) /\ lc (snd r)) rows /\ lc els).
+     Forall (fun r => lc (fst r) /\ lc (snd r)) rows /\ lc els) /\
+  (forall cs e, Den_loop_body var_of tbl cs e -> lc e).
 Proof.
   intros TT var_of tbl.
   apply Den_mutind.
@@ -1042,6 +1233,15 @@ Proof.
     assert (Hclose : lc_at 1 (close_exp s (lit_chain (e_fvar_f s) rows els)))
       by (apply (proj1 lc_close_mut); exact Hchain).
     exact (conj IHe Hclose).
+  - (* repeat *)
+    intros cn n bs b s t g c Hn IHn Hb IHb Hc Happ.
+    exact (lc_counted s t g c (e_num 0) n bop_lt b I IHn IHb).
+  - (* for i from a to b *)
+    intros x kf kt ca cz a z bs b s t g Hf Ht Ha IHa Hz IHz Hb IHb Happ.
+    exact (lc_counted s t g (var_of x) a z bop_lte b IHa IHz IHb).
+  - (* for x in xs *)
+    intros x ki cl xs bs b w tge tgl g r sp tp Hi He Hl Hx IHx Hb IHb Happ.
+    exact (lc_each_term w tge tgl g r sp tp (var_of x) xs b IHx IHb).
   - (* decl, plain *) intros x cs v Hv IH. exact IH.
   - (* decl, with semicolon *) intros x cs v Hv IH. exact IH.
   - (* block, chain *) intros cs e Hmath IH. exact IH.
@@ -1132,6 +1332,8 @@ Proof.
   - (* literal arms, one more *)
     intros a l b rest rows els Ha [IHl IHb] Hrest [IHrows IHels].
     exact (conj (Forall_cons (l, b) (conj IHl IHb) IHrows) IHels).
+  - (* loop body, none *) exact I.
+  - (* loop body, one *) intros cs e He IH. exact IH.
 Qed.
 
 (* ---- the generated local-closure predicate ---- *)

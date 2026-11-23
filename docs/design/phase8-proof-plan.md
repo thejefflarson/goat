@@ -40,7 +40,7 @@ input being a token list (the lexer is trusted, ADR 0030 decision 2).
 | `and_op`, `or_op`, `not_op`, `negation` | `and`, `or`, `not`, unary `-` | No Ott node: the HIR has `And`, `Or`, `Not` and lowering emits `0 - x` for `-x`; the calculus does not |
 | `sequel` | the `;` of a statement | No rule reads it, so the tree is not decoded; `Den` would need to read `a; b` as a binding of a hidden name |
 | `foreign_kw`, `foreign_decl`, `foreign_name`, `fn_type`, `_type_expr`, `list_type`, `record_type`, `field_type`, `type_name`, `infer_type` | `foreign "m" "f" (Number) -> Unit` and the type syntax of tag payloads | The calculus has no foreign constant (phase 6b of #435 is decided but not built) and the only type syntax is in these two places |
-| `repeat_loop`, `count_loop`, `each_loop`, `for_kw`, `from_kw`, `to_kw`, `in_kw` | `repeat`, `for i from a to b`, `for x in xs` | Loops need no calculus extension (README, "Loops and foreign calls"): lowering desugars them to a self-recursive local function. `Den` has no rule for that desugaring |
+| `repeat_loop`, `count_loop`, `each_loop`, `for_kw`, `from_kw`, `to_kw`, `in_kw` | `repeat`, `for i from a to b`, `for x in xs` | Loops need no calculus extension (README, "Loops and foreign calls"): lowering desugars them to a self-recursive local function. Core since stage 5 |
 
 ### 1.2 Shapes the `Complete` predicate excludes
 
@@ -189,6 +189,12 @@ would be a statement the soundness proof never uses. Revisit if the string
 builtins enter the calculus.
 
 ### 2.4 Loops (stage 5)
+
+*Landed.* `counted` and `each_term` in `GoatDen.v` are the terms, `D_repeat`,
+`D_count` and `D_each` the rules, `apart` the freshness condition. The
+differential reader already read loops from the HIR (the "a loop" skip was
+empty), so its evidence is the existing comparison; `checker/tests/loop_shape.rs`
+pins the lowered shape.
 
 `repeat n times do B done`, `for i from a to b do B done` (both ends included),
 `for x in xs do B done` desugar (README, "Loops and foreign calls") to a local

@@ -26,7 +26,8 @@ Definition core_rule (r : rule) : bool :=
   | R_equal | R_not_equal | R_lte | R_lt | R_gte | R_gt
   | R_and_op | R_or_op | R_not_op | R_negation
   | R_tag_decl | R_tag_kw | R_group_name | R_tag_case | R_type_name | R_infer_type
-  | R_list | R_match_expr | R_arm | R_pattern | R_labels | R_literal_pattern => true
+  | R_list | R_match_expr | R_arm | R_pattern | R_labels | R_literal_pattern
+  | R_repeat_loop | R_count_loop | R_each_loop | R_for_kw | R_from_kw | R_to_kw | R_in_kw => true
   | _ => false
   end.
 
@@ -564,6 +565,104 @@ Proof.
   - right. exists a, b. reflexivity.
 Qed.
 
+(* A rule that is one spelled word: the keyword token, or for the contextual
+   words the name token. *)
+Lemma gen_word_inv : forall {w ts},
+  gen (E_term (T_text w)) ts -> exists k, ts = [Leaf k] /\ word_tok w k.
+Proof.
+  intros w ts H. inversion H; subst.
+  - exists (TSym w). split; [ reflexivity | right; reflexivity ].
+  - exists (TName w). split; [ reflexivity | left; reflexivity ].
+Qed.
+
+Lemma shape_word : forall r w ts,
+  silent r = false -> body r = E_term (T_text w) -> gen (E_rule r) ts ->
+  exists k, ts = [Node r [Leaf k]] /\ word_tok w k.
+Proof.
+  intros r w ts Hs Hb H.
+  destruct (gen_node_of H Hs) as (cs & -> & Hbody). rewrite Hb in Hbody.
+  destruct (gen_word_inv Hbody) as (k & -> & Hk). exists k. split; [ reflexivity | exact Hk ].
+Qed.
+
+Lemma shape_for_kw : forall ts,
+  gen (E_rule R_for_kw) ts -> ts = [Node R_for_kw [sym "for"]].
+Proof.
+  intros ts H.
+  destruct (gen_node_of H eq_refl) as (cs & -> & Hbody). simpl in Hbody. text_leaf Hbody.
+  reflexivity.
+Qed.
+
+Definition loop_body_shape (bs : list tree) : Prop :=
+  bs = [] \/ exists cb, bs = [Node R_expr cb].
+
+Lemma gen_loop_body : forall ts, gen (E_opt (E_rule R_expr)) ts -> loop_body_shape ts.
+Proof.
+  intros ts H. destruct (gen_opt_inv H) as [Hbody | ->]; [ | left; reflexivity ].
+  destruct (gen_node_of Hbody eq_refl) as (cb & -> & _). right. exists cb. reflexivity.
+Qed.
+
+Lemma shape_repeat : forall cs,
+  gen (body R_repeat_loop) cs ->
+  exists cn bs,
+    cs = [sym "repeat"; Node R_expr cn; sym "times"; sym "do"] ++ bs ++ [sym "done"]
+    /\ loop_body_shape bs.
+Proof.
+  intros cs H. simpl in H.
+  split_seq H as (tsr & ts1 & -> & Hr & H1). text_leaf Hr.
+  split_seq H1 as (tse & ts2 & -> & He & H2). apply gen_expect_inv in He.
+  destruct (gen_node_of He eq_refl) as (cn & -> & _).
+  split_seq H2 as (tst & ts3 & -> & Ht & H3). apply gen_expect_inv in Ht. text_leaf Ht.
+  split_seq H3 as (tsdo & ts4 & -> & Hdo & H4). apply gen_expect_inv in Hdo. text_leaf Hdo.
+  split_seq H4 as (tsb & tsdone & -> & Hb & Hdone). apply gen_expect_inv in Hdone. text_leaf Hdone.
+  exists cn, tsb. split; [ reflexivity | exact (gen_loop_body tsb Hb) ].
+Qed.
+
+Lemma shape_count : forall cs,
+  gen (body R_count_loop) cs ->
+  exists x kf kt ca cz bs,
+    cs = [Node R_for_kw [sym "for"]; ident x; Node R_from_kw [Leaf kf]; Node R_expr ca;
+          Node R_to_kw [Leaf kt]; Node R_expr cz; sym "do"] ++ bs ++ [sym "done"]
+    /\ word_tok "from" kf /\ word_tok "to" kt /\ loop_body_shape bs.
+Proof.
+  intros cs H. simpl in H.
+  split_seq H as (tsf & ts1 & -> & Hf & H1). rewrite (shape_for_kw tsf Hf). clear Hf.
+  split_seq H1 as (tsn & ts2 & -> & Hn & H2).
+  destruct (gen_ident _ Hn) as (x & ->).
+  split_seq H2 as (tsfrom & ts3 & -> & Hfrom & H3).
+  destruct (shape_word R_from_kw "from" tsfrom eq_refl eq_refl Hfrom) as (kf & -> & Hkf).
+  split_seq H3 as (tsa & ts4 & -> & Ha & H4). apply gen_expect_inv in Ha.
+  destruct (gen_node_of Ha eq_refl) as (ca & -> & _).
+  split_seq H4 as (tsto & ts5 & -> & Hto & H5). apply gen_expect_inv in Hto.
+  destruct (shape_word R_to_kw "to" tsto eq_refl eq_refl Hto) as (kt & -> & Hkt).
+  split_seq H5 as (tsz & ts6 & -> & Hz & H6). apply gen_expect_inv in Hz.
+  destruct (gen_node_of Hz eq_refl) as (cz & -> & _).
+  split_seq H6 as (tsdo & ts7 & -> & Hdo & H7). apply gen_expect_inv in Hdo. text_leaf Hdo.
+  split_seq H7 as (tsb & tsdone & -> & Hb & Hdone). apply gen_expect_inv in Hdone. text_leaf Hdone.
+  exists x, kf, kt, ca, cz, tsb.
+  split; [ reflexivity | exact (conj Hkf (conj Hkt (gen_loop_body tsb Hb))) ].
+Qed.
+
+Lemma shape_each : forall cs,
+  gen (body R_each_loop) cs ->
+  exists x ki cl bs,
+    cs = [Node R_for_kw [sym "for"]; ident x; Node R_in_kw [Leaf ki]; Node R_expr cl; sym "do"]
+           ++ bs ++ [sym "done"]
+    /\ word_tok "in" ki /\ loop_body_shape bs.
+Proof.
+  intros cs H. simpl in H.
+  split_seq H as (tsf & ts1 & -> & Hf & H1). rewrite (shape_for_kw tsf Hf). clear Hf.
+  split_seq H1 as (tsn & ts2 & -> & Hn & H2).
+  destruct (gen_ident _ Hn) as (x & ->).
+  split_seq H2 as (tsin & ts3 & -> & Hin & H3).
+  destruct (shape_word R_in_kw "in" tsin eq_refl eq_refl Hin) as (ki & -> & Hki).
+  split_seq H3 as (tsl & ts4 & -> & Hl & H4). apply gen_expect_inv in Hl.
+  destruct (gen_node_of Hl eq_refl) as (cl & -> & _).
+  split_seq H4 as (tsdo & ts5 & -> & Hdo & H5). apply gen_expect_inv in Hdo. text_leaf Hdo.
+  split_seq H5 as (tsb & tsdone & -> & Hb & Hdone). apply gen_expect_inv in Hdone. text_leaf Hdone.
+  exists x, ki, cl, tsb.
+  split; [ reflexivity | exact (conj Hki (gen_loop_body tsb Hb)) ].
+Qed.
+
 Lemma tag_decl_nodes : forall ds,
   gen (E_star (E_rule R_tag_decl)) ds ->
   Forall (fun t => exists c, t = Node R_tag_decl c) ds.
@@ -828,7 +927,10 @@ Lemma primary_shape : forall prim,
   \/ (exists c, prim = [sym "("; Node R_expr c; sym ")"])
   \/ (exists c, prim = [Node R_destructure c])
   \/ (exists c, prim = [Node R_list c])
-  \/ (exists c, prim = [Node R_match_expr c]).
+  \/ (exists c, prim = [Node R_match_expr c])
+  \/ (exists c, prim = [Node R_repeat_loop c])
+  \/ (exists c, prim = [Node R_count_loop c])
+  \/ (exists c, prim = [Node R_each_loop c]).
 Proof.
   intros prim H.
   pose proof (gen_splice_inv H eq_refl) as Halt. simpl in Halt.
@@ -851,13 +953,19 @@ Proof.
     right; right; right; left. eauto. }
   destruct (gen_alt_inv Halt7) as [Hmatch | Halt8].
   { destruct (gen_node_of Hmatch eq_refl) as (c & -> & _).
-    right; right; right; right; right; right; right; right; right; right; right. eauto. }
+    right; right; right; right; right; right; right; right; right; right; right. left. eauto. }
   destruct (gen_alt_inv Halt8) as [Hrepeat | Halt9].
-  { exfalso. dead. }
+  { destruct (gen_node_of Hrepeat eq_refl) as (c & -> & _).
+    right; right; right; right; right; right; right; right; right; right; right.
+    right; left. eauto. }
   destruct (gen_alt_inv Halt9) as [Hcount | Halt10].
-  { exfalso. dead. }
+  { destruct (gen_node_of Hcount eq_refl) as (c & -> & _).
+    right; right; right; right; right; right; right; right; right; right; right.
+    right; right; left. eauto. }
   destruct (gen_alt_inv Halt10) as [Heach | Halt11].
-  { exfalso. dead. }
+  { destruct (gen_node_of Heach eq_refl) as (c & -> & _).
+    right; right; right; right; right; right; right; right; right; right; right.
+    right; right; right. eauto. }
   destruct (gen_alt_inv Halt11) as [Hrecord | Halt12].
   { destruct (gen_node_of Hrecord eq_refl) as (c & -> & _).
     right; right; right; right; right; right; left. eauto. }
@@ -1042,6 +1150,8 @@ Definition known_node (tt : tagtab) (r : rule) (cs : list tree) : Prop :=
       | _ => True
       end
   | R_list => tag_lookup tt "Empty" <> None /\ tag_lookup tt "Link" <> None
+  | R_each_loop =>
+      exists w tge tgl, tag_lookup tt "Empty" = Some (w, tge) /\ tag_lookup tt "Link" = Some (w, tgl)
   | _ => True
   end.
 
@@ -1204,7 +1314,7 @@ Section Totality.
         match r with
         | R_number | R_boolean | R_function | R_record | R_local
         | R_expr | R_value | R_string | R_conditional | R_destructure | R_negation
-        | R_list | R_match_expr =>
+        | R_list | R_match_expr | R_repeat_loop | R_count_loop | R_each_loop =>
             exists e, Den var_of tbl t e
         | R_name => exists x, cs = [Leaf (TName x)]
         | R_arm =>
@@ -1379,7 +1489,7 @@ Section Totality.
       exact (chain_head _ [] e0 Hden (G_star_nil _) (Forall_nil _)).
     - apply Forall_app in Hkids as [Hkprim Hkposts].
       destruct (primary_shape prim Hprim) as
-        [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | (c & ->)]]]]]]]]]]];
+        [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | (c & ->)]]]]]]]]]]]]]];
         try (inversion Hkprim as [| ? ? Hk _]; subst; simpl in Hk;
              destruct Hk as (e0 & Hden);
              exact (chain_head _ _ e0 Hden Hposts Hkposts)).
@@ -2179,6 +2289,61 @@ Section Steps.
           eexists. eapply D_match_lit_let; eassumption.
   Qed.
 
+  Lemma loop_body_den : forall bs,
+    loop_body_shape bs -> Forall (TotKind var_of tbl) bs ->
+    exists b, Den_loop_body var_of tbl bs b.
+  Proof.
+    intros bs [-> | (cb & ->)] Hk.
+    - exists e_unit. apply DLB_none.
+    - inversion Hk as [| ? ? Hk1 _]; subst. simpl in Hk1.
+      destruct Hk1 as (b & Hb). exists b. apply DLB_some. exact Hb.
+  Qed.
+
+  Lemma step_repeat : StepO R_repeat_loop.
+  Proof.
+    intros cs H _ Hkids.
+    destruct (shape_repeat cs H) as (cn & bs & -> & Hbs).
+    assert (Hn : TotKind var_of tbl (Node R_expr cn))
+      by (rewrite Forall_forall in Hkids; apply Hkids; in_list).
+    apply Forall_app in Hkids as [_ Hk2]. apply Forall_app in Hk2 as [Hkbs _].
+    simpl in Hn. destruct Hn as (n & Hdn).
+    destruct (loop_body_den bs Hbs Hkbs) as (b & Hb).
+    destruct (atom_fresh (loop_atoms (e_num 0) n b)) as [c Hc].
+    destruct (exists_apart3 (loop_atoms (e_num 0) n b) c) as (s & t & g & Happ).
+    simpl. exists (counted s t g c (e_num 0) n bop_lt b).
+    apply (D_repeat var_of tbl cn n bs b s t g c Hdn Hb Hc Happ).
+  Qed.
+
+  Lemma step_count : StepO R_count_loop.
+  Proof.
+    intros cs H _ Hkids.
+    destruct (shape_count cs H) as (x & kf & kt & ca & cz & bs & -> & Hf & Ht & Hbs).
+    assert (Ha : TotKind var_of tbl (Node R_expr ca))
+      by (rewrite Forall_forall in Hkids; apply Hkids; in_list).
+    assert (Hz : TotKind var_of tbl (Node R_expr cz))
+      by (rewrite Forall_forall in Hkids; apply Hkids; in_list).
+    apply Forall_app in Hkids as [_ Hk2]. apply Forall_app in Hk2 as [Hkbs _].
+    simpl in Ha, Hz. destruct Ha as (a & Hda). destruct Hz as (z & Hdz).
+    destruct (loop_body_den bs Hbs Hkbs) as (b & Hb).
+    destruct (exists_apart3 (loop_atoms a z b) (var_of x)) as (s & t & g & Happ).
+    simpl. exists (counted s t g (var_of x) a z bop_lte b).
+    apply (D_count var_of tbl x kf kt ca cz a z bs b s t g Hf Ht Hda Hdz Hb Happ).
+  Qed.
+
+  Lemma step_each : Step R_each_loop.
+  Proof.
+    intros cs H _ Hknown Hkids. destruct Hknown as (w & tge & tgl & HE & HL).
+    destruct (shape_each cs H) as (x & ki & cl & bs & -> & Hi & Hbs).
+    assert (Hl : TotKind var_of tbl (Node R_expr cl))
+      by (rewrite Forall_forall in Hkids; apply Hkids; in_list).
+    apply Forall_app in Hkids as [_ Hk2]. apply Forall_app in Hk2 as [Hkbs _].
+    simpl in Hl. destruct Hl as (xs & Hdl).
+    destruct (loop_body_den bs Hbs Hkbs) as (b & Hb).
+    destruct (exists_apart4 (fv_exp xs `union` fv_exp b) (var_of x)) as (g & r & sp & tp & Happ).
+    simpl. exists (each_term w tge tgl g r sp tp (var_of x) xs b).
+    apply (D_each var_of tbl x ki cl xs bs b w tge tgl g r sp tp Hi HE HL Hdl Hb Happ).
+  Qed.
+
   Lemma step_all : forall r, Step r.
   Proof.
     intros r. destruct r;
@@ -2193,6 +2358,7 @@ Section Steps.
         | exact (lift _ step_pattern) | exact (lift _ step_labels)
         | exact (lift _ step_literal_pattern)
         | exact step_list | exact step_arm | exact step_match
+        | exact (lift _ step_repeat) | exact (lift _ step_count) | exact step_each
         | (intros cs _ _ _ _; exact I) ].
   Qed.
 
