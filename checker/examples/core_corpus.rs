@@ -293,7 +293,6 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
 enum Skip {
     Rejected,
     OutsideFragment(Feature),
-    RecursiveType,
     SharedReceiver,
     MethodFlag,
     ResourceLimit,
@@ -305,7 +304,6 @@ impl Skip {
         match self {
             Skip::Rejected => "does not lower",
             Skip::OutsideFragment(feature) => feature.describe(),
-            Skip::RecursiveType => "the checker infers a recursive type",
             Skip::SharedReceiver => "a record literal with two or more methods",
             Skip::MethodFlag => {
                 "the checker rejects a method used as a plain function or the reverse"
@@ -982,23 +980,15 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
     if method_flag {
         return Err(Skip::MethodFlag);
     }
-    if checked
-        .as_ref()
-        .is_some_and(|checked| checked.typed.node_types.values().any(Ty::is_recursive))
-    {
-        return Err(Skip::RecursiveType);
-    }
     if shares_receiver(&lowered.root) {
         return Err(Skip::SharedReceiver);
     }
     if reader.generic_comparison && !forced {
         return Err(Skip::GenericComparison);
     }
-    let recursive = checked.as_ref().is_some_and(|checked| {
-        let mut binders = Vec::new();
-        checked.typed.root_ty.rec_binders(&mut binders);
-        !binders.is_empty()
-    });
+    let recursive = checked
+        .as_ref()
+        .is_some_and(|checked| checked.typed.node_types.values().any(Ty::is_recursive));
     let verdict = match &checked {
         Some(_) if recursive => "REC".to_string(),
         Some(checked) => {

@@ -6,17 +6,17 @@
    after the coercions of GoatElab.v, and those repair a difference at the HEAD
    of a type, a [fold] or [unfold] of the whole.  A difference below a function
    type or a record field would need an eta-expansion, which [erase] does not
-   undo, so the pass refuses it (a deep coercion, counted by the corpus
-   reader).
+   undo, so the pass refuses it (a deep coercion, counted by the differential
+   test).
 
    [coerce_dec] decides this "head-coercible" relation: it answers with the
    coercions [cs] and [coerce_dec_sound] says [chain cs T T'].  The
    non-recursive part of the comparison is [teq_dec], which finds [teq] by
    syntax or by asking [unify_t], the unifier whose answer is already proved
    to be [teq], to equate the two types without changing either.  [unify_co]
-   is the unifier the elaborating W calls: [unify_k] followed by [coerce_dec],
-   and [unify_co_sound] is the join lemma W's soundness proof uses where
-   [unify_sound] gave a [teq]. *)
+   is the unifier the elaborating W calls: [unify_t] first, and [unify_k]
+   followed by [coerce_dec] when that fails, and [unify_co_sound] is the join
+   lemma W's soundness proof uses where [unify_sound] gave a [teq]. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
@@ -180,17 +180,23 @@ Qed.
 
 (* ---- the unifier W calls ---- *)
 
-(* [unify_k], then the head coercions that take a term of the first type to
-   the second under the substitution it found.  Failing to find them is a
-   deep coercion. *)
+(* The plain unifier first: when it succeeds the two types are [teq] and no
+   coercion is needed, which is every program the algorithm accepted before it
+   tied knots.  Only when it fails does [unify_k] equate them up to unrolling,
+   and then the head coercions that take a term of the first type to the second
+   under the substitution it found.  Failing to find them is a deep coercion. *)
 Definition unify_co (f : nat) (D : denv) (T1 T2 : typ) (n : nat)
   : option (sub * list dir * nat) :=
-  match unify_k f D T1 T2 n with
-  | None => None
-  | Some (s, n') =>
-      match coerce_dec f D (apT s T1) (apT s T2) with
+  match unify_t f D T1 T2 n with
+  | Some (s, n') => Some (s, nil, n')
+  | None =>
+      match unify_k f D T1 T2 n with
       | None => None
-      | Some cs => Some (s, cs, n')
+      | Some (s, n') =>
+          match coerce_dec f D (apT s T1) (apT s T2) with
+          | None => None
+          | Some cs => Some (s, cs, n')
+          end
       end
   end.
 
@@ -199,13 +205,43 @@ Theorem unify_co_sound : forall f D T1 T2 n s cs n',
   OkS s /\ chain cs (apT s T1) (apT s T2) /\ kres D D (sT s) /\ n <= n'.
 Proof.
   intros f D T1 T2 n s cs n' H H1 H2. unfold unify_co in H.
-  destruct (unify_k f D T1 T2 n) as [[s0 n0]|] eqn:E; [ | discriminate ].
-  destruct (coerce_dec f D (apT s0 T1) (apT s0 T2)) as [cs0|] eqn:Ec; [ | discriminate ].
-  inversion H; subst; clear H.
-  destruct ((proj1 (unify_k_sound f)) D T1 T2 n s n' E H1 H2) as (Hs & _ & Hk & Hl).
-  refine (conj Hs (conj _ (conj Hk Hl))).
-  exact (coerce_dec_sound f D _ _ _ (EvT_ap s T1 Hs H1) (EvT_ap s T2 Hs H2) Ec).
+  destruct (unify_t f D T1 T2 n) as [[s0 n0]|] eqn:Et.
+  - inversion H; subst; clear H.
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ Et H1 H2) as (Hs & Ht & Hk & Hl).
+    refine (conj Hs (conj _ (conj Hk Hl))).
+    eapply ch_conv; [ exact Ht | constructor ].
+  - destruct (unify_k f D T1 T2 n) as [[s0 n0]|] eqn:E; [ | discriminate ].
+    destruct (coerce_dec f D (apT s0 T1) (apT s0 T2)) as [cs0|] eqn:Ec; [ | discriminate ].
+    inversion H; subst; clear H.
+    destruct ((proj1 (unify_k_sound f)) D T1 T2 n s n' E H1 H2) as (Hs & _ & Hk & Hl).
+    refine (conj Hs (conj _ (conj Hk Hl))).
+    exact (coerce_dec_sound f D _ _ _ (EvT_ap s T1 Hs H1) (EvT_ap s T2 Hs H2) Ec).
 Qed.
+
+(* A chain survives a substitution whose images are closed: the coercions stay,
+   the types move. *)
+Lemma chain_ap : forall st sr cs T T', lc_sub st sr ->
+  chain cs T T' -> chain cs (ap_typ st sr T) (ap_typ st sr T').
+Proof.
+  intros st sr cs T T' Hlc H. induction H.
+  - constructor.
+  - cbn [ap_typ]. apply ch_unfold.
+    + apply (ap_lc st sr _ 0 Hlc) in H. exact H.
+    + apply guarded_ap; assumption.
+    + pose proof (ap_open st sr B 0 (typ_Mu B) Hlc) as Ho. cbn [ap_typ] in Ho.
+      rewrite <- Ho. exact IHchain.
+  - rewrite (ap_open st sr B 0 (typ_Mu B) Hlc). cbn [ap_typ] in IHchain |- *.
+    apply (ch_fold (ap_typ st sr B) cs (ap_typ st sr T')).
+    + apply (ap_lc st sr _ 0 Hlc) in H. exact H.
+    + apply guarded_ap; assumption.
+    + exact IHchain.
+  - eapply ch_conv; [ | exact IHchain ].
+    exact (teq_ap _ _ st sr H).
+Qed.
+
+Lemma chain_apT : forall s cs T T', OkS s ->
+  chain cs T T' -> chain cs (apT s T) (apT s T').
+Proof. intros s cs T T' Hs H. exact (chain_ap _ _ _ _ _ (OkS_lc s Hs) H). Qed.
 
 (* ---- examples ---- *)
 

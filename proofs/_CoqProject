@@ -22,7 +22,6 @@ GoatInferTyp.v
 GoatInferGen.v
 GoatInferRec.v
 GoatInferSound.v
-GoatInferMuFree.v
 GoatInferRen.v
 GoatInferUnify.v
 GoatPhase1.v
@@ -38,6 +37,7 @@ GoatKnot.v
 GoatInferKnot.v
 GoatCoerce.v
 GoatClose.v
+GoatInferW.v
 GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v

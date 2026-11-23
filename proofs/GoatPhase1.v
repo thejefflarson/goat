@@ -12,7 +12,7 @@ Require Import Goat.GoatRows.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
-Require Import Goat.GoatInfer.
+Require Import Goat.GoatInferW.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 

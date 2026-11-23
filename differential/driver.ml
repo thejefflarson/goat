@@ -11,8 +11,12 @@
    saturated calls, which the curried calculus also accepts, so only an
    acceptance can be compared).  SEXP is the program as a locally nameless
    term; VERDICT is `ERR` or `OK <canonical type>`.  MODE is `R` (VERDICT
-   `REC`) when the checker's type for the program is recursive: the algorithm
-   never builds a recursive type, so the program is counted and not compared.
+   `REC`) when the checker gives some part of the program a recursive type:
+   the algorithm builds recursive types and the coercions they need only up to
+   a head `fold` or `unfold` (a deeper difference is a deep coercion, which it
+   refuses), and the canonical type has no way to write a recursive one, so
+   the program is counted, and counted again when the algorithm infers a type
+   for it, and not compared.
 
    Runs the extracted, proven algorithm on each program and fails on any
    disagreement in acceptance or in the type up to renaming of variables. *)
@@ -175,7 +179,7 @@ let fuel = 100_000
 let () =
   let path = if Array.length Sys.argv > 1 then Sys.argv.(1) else "-" in
   let ic = if path = "-" then stdin else open_in path in
-  let unary = ref 0 and curried = ref 0 and skipped = ref 0 and recursive = ref 0 and bad = ref 0 in
+  let unary = ref 0 and curried = ref 0 and skipped = ref 0 and recursive = ref 0 and inferred = ref 0 and bad = ref 0 in
   let line_no = ref 0 in
   (try
      while true do
@@ -185,7 +189,7 @@ let () =
        | mode :: sexp :: verdict :: source ->
            let ours =
              match infer_closed_env fuel (exp_of (parse_sexp sexp)) with
-             | Some (d, t) -> "OK " ^ canonical_type d t
+             | Some (d, t) -> (try "OK " ^ canonical_type d t with Match_failure _ -> "OK ?")
              | None -> "ERR"
            in
            let report () =
@@ -197,13 +201,13 @@ let () =
            | "U" -> incr unary; if ours <> verdict then report ()
            | "N" when verdict <> "ERR" -> incr curried; if ours <> verdict then report ()
            | "N" -> incr skipped
-           | "R" -> incr recursive
+           | "R" -> incr recursive; if ours <> "ERR" then incr inferred
            | _ -> failwith ("unknown mode " ^ mode))
        | _ -> failwith (Printf.sprintf "line %d is not MODE<TAB>SEXP<TAB>VERDICT<TAB>SOURCE" !line_no)
      done
    with End_of_file -> ());
   Printf.printf
     "programs compared: %d (one-parameter: %d, curried accepts: %d), skipped: %d, \
-     skipped for a recursive type: %d, mismatches: %d\n"
-    (!unary + !curried) !unary !curried !skipped !recursive !bad;
+     skipped for a recursive type: %d (the algorithm infers a type for %d), mismatches: %d\n"
+    (!unary + !curried) !unary !curried !skipped !recursive !inferred !bad;
   if !bad > 0 || !unary + !curried = 0 then exit 1

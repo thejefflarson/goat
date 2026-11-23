@@ -92,17 +92,6 @@ Ltac simp_cases := simp_cases0; simp_cases0.
 
 (* ---- opening ---- *)
 
-Lemma lce_open_mut :
-  (forall e k y, lce (S k) e -> lce k (open_exp_wrt_exp_rec k (e_fvar_f y) e)) /\
-  (forall fs k y, lcef (S k) fs -> lcef k (open_fields_wrt_exp_rec k (e_fvar_f y) fs)) /\
-  (forall ars k y, lcea (S k) ars -> lcea k (open_arms_wrt_exp_rec k (e_fvar_f y) ars)).
-Proof.
-  apply exp_fields_mutind; intros; clean_goal;
-    repeat match goal with H : _ /\ _ |- _ => destruct H end;
-    try exact I; try (split; eauto; fail); try (repeat split; eauto; fail); eauto.
-  all: try (simp_cases; first [ lia | exact I | auto ]).
-Qed.
-
 Lemma lce_open_inv_mut :
   (forall e k y, lce k (open_exp_wrt_exp_rec k (e_fvar_f y) e) -> lce (S k) e) /\
   (forall fs k y, lcef k (open_fields_wrt_exp_rec k (e_fvar_f y) fs) -> lcef (S k) fs) /\
@@ -186,6 +175,3 @@ Proof.
   induction cs as [|d cs IH]; intros e k H; cbn [coerce]; [ exact H | apply IH ].
   destruct d; cbn; exact H.
 Qed.
-
-Lemma erase_coerce_eq : forall cs e, erase (coerce cs e) = erase e.
-Proof. exact erase_coerce. Qed.
