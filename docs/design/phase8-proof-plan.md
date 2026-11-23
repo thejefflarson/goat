@@ -123,6 +123,14 @@ so T3 for tags states the round trip for `(D, e)`, not `e` alone.
 
 ### 2.2 `and`, `or`, `not`, unary minus, operator runs (stage 3)
 
+*Landed.* The theorems are `resolve_total`, `resolve_lc` and the reading lemmas
+(`resolve_one`, `resolve_left`, `resolve_right`, `resolve_not_loose`,
+`resolve_not_tight`) of `GoatPrec.v`; `GoatPrecTable.v` is generated from the
+behaviour of lowering rather than from `lower.rs`'s source text, so the check
+cannot pass by reading the same table twice. The evidence that `and` is the `if`
+is the differential reader reading HIR `And`/`Or`/`Not` as `if`, with 0
+mismatches, in place of the `core_roundtrip.rs` case sketched below.
+
 `ExprKind::And`/`Or`/`Not` have their own typing in the checker
 (`infer_logic`: Bool operands, Bool result) and lowering gives `-x` as `0 - x`
 (with a `+ 0.0` so `-0.0` becomes `0.0`, lowering line 1283). The calculus models
