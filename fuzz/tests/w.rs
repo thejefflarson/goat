@@ -106,16 +106,6 @@ impl<'a> Case<'a> {
             source: column(),
         }
     }
-
-    fn compares(&self) -> bool {
-        ["eq", "ne", "lt", "lte", "gt", "gte"]
-            .iter()
-            .any(|op| self.term.contains(&format!("(bin {op} ")))
-    }
-
-    fn has_method(&self) -> bool {
-        self.term.contains("(meth")
-    }
 }
 
 /// A class of program the algorithm is known to refuse although the checker
@@ -138,11 +128,7 @@ struct Gap {
 /// one regular tree, the row knot, a group member needing a `fold`; stage
 /// 7.11), a program using a binding group's member before its last member
 /// (`SplitGroup`), and every other reader skip.
-const GAPS: [Gap; 1] = [Gap {
-    name: "sat_b answers Any only for mu and tag groups (a comparison where T_Obj gives a mu type)",
-    until: "stage 7.4",
-    covers: |case| case.compares() && case.has_method(),
-}];
+const GAPS: [Gap; 0] = [];
 
 static TALLY: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 const REPORT_EVERY: u64 = 5_000;
@@ -325,16 +311,6 @@ mod tests {
         assert_eq!(program(&data), program(&data));
         assert_eq!(program(&[]), None);
         assert_eq!(program(&[2, 0, 0]), None);
-    }
-
-    #[test]
-    fn a_gap_excuses_only_the_programs_in_its_class() {
-        let covered = |gap: usize, term: &str| {
-            let line = format!("U\t{term}\tOK Number\tsrc");
-            (GAPS[gap].covers)(&Case::parse(&line))
-        };
-        assert!(covered(0, "(bin eq (rec (0 (meth (abs (b 0))))) (b 0))"));
-        assert!(!covered(0, "(bin eq (rec (0 (n 1))) (b 0))"));
     }
 
     /// The harness must see a divergence. A driver that never disagrees would

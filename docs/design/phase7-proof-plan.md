@@ -138,7 +138,7 @@ the theorem already excludes the program, so the gap costs nothing.
 | Sort propagation, #623 | 5 hand-written programs; 0 of 24,295 checker-accepted corpus programs | Yes (`f = program(x) do same({p: x}, {p: x}) done`, `f(1)`) | **Fixed** (stage 7.3, sort half): the unifiers return the environment and push the sort (`push_sort`) |
 | No sort on a row variable (the checker kinds `Eq` on a row tail) | 0 corpus programs; `program(a, b) do (if a == b then 1 else 2 done) + a.x done` shows it | Yes: `rsat` reads the row variable's sort | **Fixed** (stage 7.3b): a sort pushed onto a type variable's binding reaches its row variables (`push_sort_r`) |
 | `lacks` on a row variable, #564 | 222 corpus programs (`LacksOnTail`) | Yes (`T_SpreadL`, stage 7.2) | **Fixed** (stage 7.3b): the unifier passes lacks and sort to a fresh tail, `restrict` gives its tail the label, a spread tries `T_SpreadL` first; the skip is gone and the 222 programs compare |
-| `sat_b` answers `Any` only for `mu` and tag groups | 0 in the corpus (the reader skips tags, 185) | Yes: `sat` holds of a comparable tag group, W refuses to bind an `Eq` variable to it | **Fix first** (stage 7.4) |
+| `sat_b` answers `Any` only for `mu` and tag groups | 0 in the corpus (the reader skips tags, 185) | Yes: `sat` holds of a comparable tag group, W refuses to bind an `Eq` variable to it | **Fixed** (stage 7.4): `sat_b_iff` proves `sat_b` decides `sat`, `mu` and groups included; the reader's group-comparison skip is gone |
 | `T_Let` takes any pin `Tm` | `r = {a: 1}  {x: r.a + 1.5, y: r.a // 2}`, about 2 corpus programs, 3,100 before ADR 0038's addendum | Yes, with `Tm = Unit`: the rule generalizes the record's `Literal` variable; the checker and W reject | **Fix first, in the rule**: add the premise that `Tm` holds every `Literal` variable of `T1` unless `e1` is a function, a bare numeral or a `letrec` (stage 7.1). The checker is the language (ADR 0038 addendum), so the rules narrow, not W widen |
 | Deep coercion (3 programs, #606), the row knot (6), a group member that needs a `fold` around its lambda (1) | 10 corpus programs | No `e'` has `erase e' = e` (it would need an eta-expansion; `T_Letrec` forbids `fold` of a lambda) | **Outside**, because `typable` demands such an `e'` |
 | Two `mu` types for one regular tree, `step(ball).x` (#606) | 1 program | No finite `unroll_eq` relates them (the issue's measurement), so no `e'` | **Outside** |
@@ -183,6 +183,32 @@ sub-runs, so the fuel of the whole run is the sum plus one. The fresh-variable
 supply invariant `DOk` (D is `Any` beyond `n`) is already proved for soundness
 and is reused as is. About 250 lines.
 
+*As built (stage 7.5, `GoatCompleteFuel.v`).* The statement above is true of
+`unify_t` and `unify_r` and false, or at least not provable, of everything that
+calls them. `None` means both "no unifier" and "out of fuel", and four places
+branch on `None`: `coerce_dec` (`teq_dec` first, then unfold, then fold),
+`unify_co` (`unify_t`, then `unify_k` and `coerce_dec`), the two-`mu` case of
+`unify_k` (the bodies, then an unrolling) and `infer`'s own `spread_present`
+fallback and `unify_mem`. A larger fuel can turn the first branch's `None` into a
+`Some` that replaces the fallback's answer, so `infer f = Some r` does not give
+`infer (S f) = Some r`. What is proved instead:
+
+- `unify_t_mono`, `unify_r_mono`: `f <= g` and `Some r` at `f` give `Some r` at
+  `g`. `teq_dec_mono` follows.
+- `Stable P`: `P` holds at every fuel from some point on. It is closed under
+  conjunction (`Stable_and`), under weakening (`Stable_mono`) and under the step
+  from sub-calls at fuel `f` to a caller at `S f` (`Stable_below`).
+- `unify_co_stable`: a `unify_t` success at one fuel is a stable, coercion-free
+  `unify_co` success. The plain fragment (no `fold`, `unfold` or method) reaches
+  `unify_co` only this way.
+- `infer_app_stable`: the composition for one construct, to show the shape every
+  L3 case takes. L3 states each case as "the sub-runs are `Stable`, so the run is
+  `Stable`", and L2 supplies `Stable` unifier runs from `unify_t_stable`. The
+  closed theorem then asks for one fuel in `Stable`, which exists.
+
+So `infer_fuel_mono` is not a lemma of the development and `∃ fuel` in statement A
+is read as `Stable`. The theorem's statement does not change.
+
 **L1, instance order on contexts and schemes.** `sch_le s' s`: every instance of
 `s'` (under the sorts the scheme records) is an instance of `s`; `ctx_le G' G` is
 the pointwise order. Two lemmas: `typing_ctx_le` (a derivation under a context of
@@ -192,6 +218,54 @@ that is no more general, with the recorded sorts carried by `kres`). The `Tm` pi
 joins both: `pin_ctx Tm G` is a context with one more binding, so `gen_mono` is
 proved for `gen (pin_ctx Tm G)`. This is where the rewritten `T_Let` of stage 7.1
 helps: its premise says which variables the pin holds. About 900 lines.
+
+*As built (stage 7.5, `GoatCompleteInst.v`, `GoatCompleteGen.v`,
+`GoatCompleteMono.v`, `GoatCompleteLet.v`).* The orientation is the existing
+`ctx_more_gen`'s: `sch_le D s s'` reads "`s` is an instance of `s'`" (`s'` is the
+more general), and `ctx_le D G G'` is pointwise, same names. Three changes from
+the text above.
+
+1. `sch_le` is stated up to the environment on the scheme's *free* variables
+   only: every `D'` that agrees with `D` on them gives the same inclusion of
+   instances, and the free variables of `s'` are free in `s`. The `let` rule's
+   premises live in `ext D V k` and `extr`, so the order has to survive an
+   extension on variables the context does not mention (`sch_le_ext`,
+   `sch_le_extr`); a plain "every instance in `D`" does not. The containment is
+   what the `T_Let` case of `typing_ctx_le` needs: a context of more general
+   schemes may not mention a variable the derivation generalizes. It is part of the
+   definition, so `ctx_le_ftv` and `ctx_le_frv` are one-liners.
+2. `typing_ctx_le` runs from the instance to the more general context (`ctx_le D
+   G G'`, `typing D G e T`, so `typing D G' e T`). The plan's sentence ("a
+   derivation under more general schemes stays a derivation under an instance")
+   has the direction backwards: a variable the derivation instantiates at the
+   instance's scheme is instantiated at the more general one, never conversely.
+   The proof is `typing_ftv_mono`'s with the instance order in place of
+   `sch_more_gen`; `sch_more_gen_le` embeds the old relation, and `gen_more_gen`
+   gives the `T_Let` and `T_Letrec` generalizations. The completeness induction
+   does not call it (its hypothesis is "the derivation's context is an instance of
+   `S1 G`", so each rule is read at that context); it is the statement that makes
+   `ctx_le` the right order.
+3. `gen_mono` compares the derivation's `gen (pin_ctx Tm Gd) (S2 T') k rk` with
+   `apS S2 (gen_ren Dal (pin_ctx Ta Ga) T')`, the algorithm's scheme under the
+   substitution the induction carries (`sch_le D` of the first to the second).
+   Comparing it to `gen_ren` directly is wrong: the algorithm's quantified
+   variables are odd atoms `S2` leaves alone, and the derivation's instance sends
+   the odd atom standing for `a` to what it sends `S2 a` to. The hypotheses are
+   `OkS S2`, `kres` and `rkres` of `S2` into the environment the derivation's first
+   premise lives in (`extr (ext D V k) Vr rk`), `even_ctx Ga`, and `frozen S2 Ga Gd`
+   (`S2` sends each free variable of the algorithm's context to a type over the
+   derivation's free variables). `T1 = S2 T'` is literal equality: `teq` can
+   drop a variable (an absent presence field), which would change which variables
+   the derivation generalizes. `gen_mono_let` takes the pin as `let_pin` and
+   discharges its half of `frozen` from the derivation's `lit_pinned` premise
+   (`let_pin_frozen`: a numeral variable the algorithm pins maps to a `Literal`
+   variable the derivation cannot have generalized). The L3 `let` case therefore
+   owes `frozen S2 Ga Gd`, which is the induction's "`Gd` is an instance of `S2
+   Ga`" read through `ctx_le`.
+
+Sizes: about 1,100 lines in all (`GoatCompleteFuel.v` 148, `GoatCompleteInst.v` 338,
+`GoatCompleteGen.v` 180, `GoatCompleteMono.v` 366, `GoatCompleteLet.v` 60), against
+the 1,150 estimated.
 
 **L2, the unifier is a most general unifier.** The heart of the proof, split by
 what it unifies:
