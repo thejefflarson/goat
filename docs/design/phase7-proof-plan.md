@@ -364,6 +364,91 @@ variable and presence entries (`rewrite_row`'s fresh variables, `bind_row`'s
 `rk_join`, the invention of `S2` on them), sorts pushed under a record, and the
 mu-free tag group.
 
+*As built (stage 7.6b, `GoatSatTeq.v`).* PR 656 listed four gaps and the
+architect's ruling is the decision procedure: build the smallest goat program for
+each, run the checker on it, and **if the checker accepts it, fix W; if it
+rejects it, tighten the calculus**. The differential target compared each program
+against the extracted algorithm (`checker/examples/core_corpus.rs` with a source
+list in place of the corpus), so "the checker accepts" is the checker's verdict
+on the exact program, and "W refuses" is the driver's `w-refuses`. A random search
+(four seeds of 3,000 programs, about 2,970 accepted each: functions,
+applications, restricts, spreads, `if`, `==`) found the four findings below and
+three more. Before the fixes 56 of 2,969 programs of one seed disagreed; after,
+2 do, and both are findings 2 and 7.
+
+| # | Finding | Smallest program | Checker | Call |
+| --- | --- | --- | --- | --- |
+| 1 | `sat` is not `teq`-invariant under an absent presence | `program(w) do t = {...w, x: program(z) do z done}; u = if true then w else {} done; w == w done` | accepts: an `ABSENT` presence is peeled, so the function field is never compared | `sat` reads through presence, in the calculus (`GoatDefs.rsat`) and in W (`rsat_b`); proved `teq`-invariant (`sat_teq`) |
+| 2 | `rewrite_row` is `None` at a row variable that lacks the label | `f = program(q) do {...q, x: 1} done; g = program(p) do {x, ...r} = p; f(r) done` | accepts (`unify_row`'s `Maybe` arm: `surface_bounded` finds nothing, so `pres := ABSENT` and the rest unifies) | the ruling says fix W; **not done**, see below |
+| 3 | `bind_row`'s occurs check on `r ~ {l^p: a \| r}` | none found | the equation reaches `occurs_row_deep`, then `tie_row_knot` (a recursive row, a driver skip) or "would have to contain itself" | no program needs it; recorded, no change |
+| 4 | `sat_b` is `false` on `Maybe` | `program(q) do e = q == q; {...q, x: 1} done` | accepts: the field of an unresolved presence takes the sort, the row is `Eq` | `sat_b` decides the clause finding 1 defines; `sat_b_iff` re-proved |
+
+**Finding 1, and 4 with it.** The calculus said `rsat D k (Maybe l P T R)` only at
+`Any`, so `Record {l^Unit: Int}` (`req_pre` equals `Record {l: Int}`) was not
+`Eq`. It is now `(P = Bool \/ sat D k T) /\ rsat D k R`: an absent entry is no
+field, any other presence (`Unit`, or a variable the checker has not settled)
+holds a field the sort reaches. `sat_teq_mut` proves `sat` and `spine_sat` agree
+on `teq` types and `rsat` on `req` rows, a case per rule; the `Bool` presence
+comparison goes through `teq_Bool_inv`. The change reaches the sort lemmas that
+inspect a `Maybe` entry (`sat_finer_mut`, `sat_ap_mut`, `sat_mono_mut`,
+`sat_pw_mut`, `sat_loc_mut`, `sat_ext_out_mut`, `sat_open_mut`, `sat_b_iff_mut`,
+`rm_sat`), and `row_sig` of record arithmetic, which now has a `Maybe` clause
+(`rm_row_sig`, `rm_ext_req` take the `rm_maybe_inv` case). It is the checker's
+reading: `constrain_row` constrains the field of every `Maybe` that `resolve_row`
+leaves, and `peel` drops an `ABSENT` one. `Numeric` follows `Eq` (the checker has
+one `constrain_row`).
+
+**A fifth finding, found by the search: `unify_r` compares the field type of an
+absent entry.** `f0 = program(q) do {...q, x: 1}; q done` then
+`v3 = f0({y: 1}); {...v3, x: "s"}`: `v3 : {x^Bool: Int | {y: Number}}` meets
+`{x^p: String | r}` and W unifies `Int` with `String`. The checker has peeled the
+absent entry. `drop_abs` removes an entry whose presence is `Bool` and whose rest
+lacks its label (`req_abs`, so the rows stay `req`), and `unify_t` (records) and
+`unify_r` (the recursive call, after the substitution made an entry absent) call
+it on both rows. `unify_sound` and `unify_t_gsub` carry `req_drop_abs`,
+`EvR_drop_abs`, `mgr_drop_abs`; `unify_r_complete` carries `drop_abs_crow` (a closed
+row has nothing to drop). `unify_k`/`unify_kr` (the knot unifier) are unchanged: a
+recursive-type program with an absent entry stays a driver skip.
+
+**Finding 2, why it is not fixed here.** The program is derivable in the checker
+and in no calculus rule: the argument `r : Record r0` (`r0` lacks `x`) must meet
+`Record {x^Bool: a | r0}`, and `req_abs` keeps the syntactic `rlacks`, which is
+`false` on a row variable (`GoatRows`, stage 7.2: "`req_abs` is unchanged"). So
+W returning `(Bool, a, Var r, sid)` at a lacking variable would give a unifier
+whose result is not `req` to anything, and `unify_sound` could not state it. The
+fix is a conversion that reads `rlacksD D`: a `teqD D` (or two typing rules,
+`T_Absent` in both directions, with `rlacksD D l R = true`) used by `T_Conv`, and
+`unify_sound` stated in it; every induction on `typing` (progress, preservation,
+substitution, `GoatElab`, the cases of W) gains the case. That is a stage of its own
+(7.6c) and the ruling's "fix W" cannot be met without it. `rewrite_row_lacks_gap`
+stays as the statement. The program is not in `HANDWRITTEN` (it would fail the
+differential); the nightly will find it as `w-refuses`.
+
+**Two more W gaps the search found, same shape (checker accepts, W refuses), not
+fixed.**
+- *Sorted row tail.* `rewrite_row` is `None` when the variable's sort is finer
+  than `Any`. With the finding-1 clause the rewrite can be made: the fresh field
+  variable takes the sort and the fresh tail keeps the kind
+  (`rsat D' k (Maybe l p a r')` holds for `D' a = k`). `f0 = program(q) do
+  {...q, y: true} done; program(w) do e0 = w.x; e1 = w == w; f0(w) done` hits it
+  (`w`'s tail is `Eq`, and the call rewrites it to present `y`). Needs
+  `rewrite_row_sound` to carry an `upd` of the field variable through `GoodU`.
+- *Operand order of a comparison.* `infer` unifies the left operand with the
+  sorted result variable, then the right; the checker unifies the operands first
+  (`join_operands`) and then requires `Eq` of the joined type. `program(w) do t =
+  {...w, x: program(z) do z done}; w == {} done` is accepted by the checker and
+  refused by W (the sort reaches `w`'s unresolved `Maybe` before `{}` settles it).
+  Arithmetic requires the sort of the left operand first in the checker too, so
+  only the comparison order differs.
+
+**What L2 gains.** `sat_teq` removes the first of the two definitions that stopped
+L2 (sorted variables under a record: a pushed sort now survives any
+representative). Rows with tail variables stay out: they need finding 2 (the
+rewrite at a lacking variable), the sorted-tail rewrite above, and the invention
+of `S2` for `rewrite_row`'s and `bind_row`'s fresh variables. Tag groups stay
+out: `sat` on a group is `sat_b`-decidable (stage 7.4) but the fragment's
+`Res`/`Fac` need the group's spine in the induction.
+
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):
 

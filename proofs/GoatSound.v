@@ -976,7 +976,9 @@ Proof.
   - intros k1 _. exact I.
   - intros r k1 Hs'. destruct (Hr r) as [E|E]; [ rewrite E; exact Hs' | rewrite E in Hs'; simpl in Hs'; inversion Hs'; subst; apply finer_any ].
   - intros l T [IHT _] R IHR k1 [Hs1 Hs2]. split; [ exact (IHT k1 Hs1) | exact (IHR k1 Hs2) ].
-  - intros l P _ T _ R _ k1 Hs'. exact Hs'.
+  - intros l P _ T [IHT _] R IHR k1 [Hs1 Hs2]. split;
+      [ destruct Hs1 as [Hp | Hs1]; [ left; exact Hp | right; exact (IHT k1 Hs1) ]
+      | exact (IHR k1 Hs2) ].
 Qed.
 
 Lemma sat_mono : forall D D2 k0 T, env_mono D D2 -> sat D k0 T -> sat D2 k0 T.

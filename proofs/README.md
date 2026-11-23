@@ -41,8 +41,9 @@ preservation) is B3 (#71).
 | `GoatCompleteGen.v` | Stage 7.5, L1. A sort or kind reads only the variables of the type (`sat_loc`, `rkok_loc`), and an instance of a generalization carries the sorts of a type from the derivation's kinding environment to the instance's (`gm_sat`, `gm_rkok`). |
 | `GoatCompleteMono.v` | Stage 7.5, L1. `gen_mono`: the derivation's generalization of `S2 T'` over its pinned context is an instance of `S2` applied to the algorithm's `gen_ren`, given `kres`/`rkres` of `S2` and that `S2` sends the algorithm's free variables to the derivation's (`frozen`). `let_pin_frozen`: a variable the algorithm pins is frozen by the derivation's `lit_pinned` premise. |
 | `GoatCompleteLet.v` | Stage 7.5, L1. `gen_mono_let`: `gen_mono` with the algorithm's pin `let_pin`, the let case's comparison as the induction states it. |
+| `GoatSatTeq.v` | Stage 7.6b. `sat_teq`, `rsat_req`: `sat` and `rsat` are invariant under `teq` and `req` (both directions), spine sorts included; a `Maybe` entry reads through its presence (`Bool` is absent, anything else is a field), so a sorted variable may be sent to any representative of a type's class. |
 | `GoatCompleteRows.v` | Stage 7.6, L2. The row combinatorics: sizes `tsz`/`rsz` that `teq`/`req` preserve, and for a closed spine of fields `surface_req` (the first entry of a label can be swapped to the front), `req_of_pi` (equal field lists at every label make two rows `req`: the converse of `req_pres` that the plan asked for), `req_cancel` and `rewrite_row_found`. |
-| `GoatCompleteUnify.v` | Stage 7.6, L2. `unify_t_complete`, `unify_r_complete`, `unify_co_complete`: on types of base types, variables, arrows and (with `b = true`) records of closed rows, a substitution that unifies two types up to `teq`/`req` and respects the sorts makes the unifier succeed (`Stable`) with a substitution `S` factors through (`Res`), with no variable invented. `sat_not_teq_invariant` and `rewrite_row_lacks_gap` record the two definitions that stop the statement short of row tails and of sorted variables under records. |
+| `GoatCompleteUnify.v` | Stage 7.6, L2. `unify_t_complete`, `unify_r_complete`, `unify_co_complete`: on types of base types, variables, arrows and (with `b = true`) records of closed rows, a substitution that unifies two types up to `teq`/`req` and respects the sorts makes the unifier succeed (`Stable`) with a substitution `S` factors through (`Res`), with no variable invented. `rewrite_row_lacks_gap` records the one definition that stops the statement short of row tails (stage 7.6b: `sat` is now `teq`-invariant, `GoatSatTeq.v`). |
 | `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, and **Progress**. |
 | `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), the free-variable facts of a bijective renaming, and `gen_more_gen` (generalizing over a smaller context quantifies more, at the sorts the extra atoms already had). What `GoatBij`/`GoatHM`/`GoatSound` build on. |
 | `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`) feeding the T-Let freshening (#151). |
@@ -680,8 +681,11 @@ defaults outside a finite support (`supp_ok` says both).
 - **Sorts on a row tail.** `rsat D k (row_Var r)` holds when `r`'s sort in `D` is
   at or above `k`, so a record with an open row satisfies `Eq` or `Numeric` when
   its fields do and its tail has the sort. This makes the open-row comparison
-  derivable (`GoatRowKinds.v`). `rsat` at `k_Any` holds of every row, a `Maybe`
-  entry included, so a substitution cannot break it.
+  derivable (`GoatRowKinds.v`). A `Maybe` entry `l ^ P : T ; R` satisfies a sort
+  when `R` does and either `P` is `Bool` (the field is absent, whatever its type)
+  or `T` does, which is what the checker does, so `sat` cannot tell `teq` types
+  apart (`GoatSatTeq.v`, `sat_teq`) and a substitution that sends `P` to `Bool`
+  cannot break it. `sat_b` decides the same clause (`is_abs P || sat_b D k T`).
 - **Lacks.** `rlacksD D l R` is `rlacks` with a variable tail read from `drk D`;
   `T_SpreadL` gives `{...e1, l: e2} : {l : T ; R}` from `e1 : {R}` and
   `rlacksD D l R`. `req_abs` is unchanged: it keeps the syntactic `rlacks`. For a

@@ -304,6 +304,14 @@ Proof.
   destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; reflexivity.
 Qed.
 
+(* A closed row has no presence entry, so there is nothing to drop. *)
+Lemma drop_abs_crow : forall b R, crow b R -> drop_abs R = R.
+Proof.
+  intros b R. induction R as [| r | l T R IH | l P T R IH]; simpl; intros C;
+    try reflexivity; try contradiction.
+  f_equal. apply IH. exact (proj2 C).
+Qed.
+
 (* ---- the theorem ---- *)
 
 Ltac nv := intros ? E; discriminate E.
@@ -356,7 +364,8 @@ Proof.
       destruct (IHr R R' n CR CR' ltac:(lia) H1) as (s & Hr & E).
       exists s. split; [ exact Hr | ].
       eapply Stable_mono; [ | exact (Stable_below _ E) ].
-      intros [|f] Hf; [ contradiction | ]. cbn [unify_t]. exact Hf.
+      intros [|f] Hf; [ contradiction | ]. cbn [unify_t].
+      rewrite (drop_abs_crow b R CR), (drop_abs_crow b R' CR'). exact Hf.
     + (* Var, Var *)
       apply unify_var_var. exact Hteq.
   - (* rows *)
@@ -414,9 +423,11 @@ Proof.
       { exists 1. intros [|f] Hf; [ lia | ]. rewrite apT_id. reflexivity. }
       assert (E1' : Stable (fun f => unify_t f D (apT sid (apT sid T)) (apT sid T') n = Some (s1, D, n))).
       { eapply Stable_mono; [ | exact E1 ]. intros f Hf. rewrite !apT_id. exact Hf. }
-      assert (E3' : Stable (fun f => unify_r f D (apR s1 (apR sid (apR sid R1')))
-                                       (apR s1 (apR sid (rm_l l R2))) n = Some (s2, D, n))).
-      { eapply Stable_mono; [ | exact E3 ]. intros f Hf. rewrite !apR_id. exact Hf. }
+      assert (E3' : Stable (fun f => unify_r f D (drop_abs (apR s1 (apR sid (apR sid R1'))))
+                                       (drop_abs (apR s1 (apR sid (rm_l l R2)))) n = Some (s2, D, n))).
+      { eapply Stable_mono; [ | exact E3 ]. intros f Hf. rewrite !apR_id.
+        rewrite (drop_abs_crow b _ (proj2 (cp_ap b s1 Hc1) _ CR1)),
+                (drop_abs_crow b _ (proj2 (cp_ap b s1 Hc1) _ CRm)). exact Hf. }
       eapply Stable_mono; [ | exact (Stable_below _ (Stable_and _ _ E0 (Stable_and _ _ E1' E3'))) ].
       intros [|f] Hf; [ contradiction | ]. destruct Hf as (Hu0 & Hu1 & Hu3).
       pose proof (rewrite_row_found l (frv_row (row_Ext l T R1')) D R2 n T' Hx2 Eg2) as Erw.
@@ -461,33 +472,19 @@ Qed.
 
 (* ---- what the fragment leaves out, and why ----
 
-   Two facts, both about the definitions and neither about the proof, keep the
-   statements above from reaching rows with a tail variable or a sorted
-   variable under a record (docs/design/phase7-proof-plan.md, stage 7.6). *)
-
-(* [sat] is not invariant under [teq]: a presence entry at [Unit] is a field
-   ([req_pre]) but is never [Eq].  A substitution that respects an [Eq] variable
-   by sending it to a record, and that sends a presence variable of another
-   record to [Unit], unifies the two, yet the pushed sort cannot be carried
-   through the second record's fields: [S] does not factor through the
-   unifier's answer in [kres]. *)
-Example sat_not_teq_invariant : forall l,
-  teq (typ_Record (row_Maybe l typ_Unit typ_Int row_Empty))
-      (typ_Record (row_Ext l typ_Int row_Empty)) /\
-  sat d_any k_Eq (typ_Record (row_Ext l typ_Int row_Empty)) /\
-  ~ sat d_any k_Eq (typ_Record (row_Maybe l typ_Unit typ_Int row_Empty)).
-Proof.
-  intros l. split; [ | split ].
-  - apply teq_rec. apply req_pre.
-  - simpl. exact (conj I I).
-  - simpl. intros H. discriminate H.
-Qed.
+   One fact about the definitions, not about the proof, keeps the statements
+   above from reaching rows with a tail variable
+   (docs/design/phase7-proof-plan.md, stage 7.6b). *)
 
 (* [rewrite_row] gives up at a row variable that lacks the label, although the
    label is then absent from it and a presence of [Bool] would do.  Unifying
    [l^p : a | r'] with [m : B | r], where [r] lacks [l], therefore fails
    ([unify_r] takes the first row's head and rewrites the second), though
-   [p := Bool], [r' := m : B], [r := {}] unifies them. *)
+   [p := Bool], [r' := m : B], [r := {}] unifies them.  The checker accepts the
+   programs this stops, but [req] cannot relate [l ^ Bool : a ; r] to [r] for a
+   row variable that lacks [l] ([req_abs] needs the syntactic [rlacks]), so W has
+   no typing derivation to be sound against until the calculus reads [rlacksD D]
+   there. *)
 Example rewrite_row_lacks_gap : forall l m B r av (D : denv) n,
   l <> m -> AtomSetImpl.mem r av = false -> rk_lacks (drk D r) l = true ->
   rewrite_row l av D (row_Ext m B (row_Var r)) n = None.

@@ -361,7 +361,9 @@ Proof.
   - intros k _. exact I.
   - intros r k Hs. rewrite <- Hr. exact Hs.
   - intros l T [IHT _] R IHR k [Hs1 Hs2]. split; [ exact (IHT k Hs1) | exact (IHR k Hs2) ].
-  - intros l P _ T _ R _ k Hs. exact Hs.
+  - intros l P _ T [IHT _] R IHR k [Hs1 Hs2]. split;
+      [ destruct Hs1 as [Hp | Hs1]; [ left; exact Hp | right; exact (IHT k Hs1) ]
+      | exact (IHR k Hs2) ].
 Qed.
 
 Lemma sat_pw : forall D D2 k T, denv_eq D D2 -> sat D k T -> sat D2 k T.

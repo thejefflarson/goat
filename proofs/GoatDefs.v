@@ -273,7 +273,7 @@ with rsat (D : denv) (k : sort) (R : row) {struct R} : Prop :=
   | row_Empty => True
   | row_Ext _ T R' => sat D k T /\ rsat D k R'
   | row_Var r => finer (rk_sort (drk D r)) k
-  | row_Maybe _ _ _ _ => k = k_Any
+  | row_Maybe _ P T R' => (P = typ_Bool \/ sat D k T) /\ rsat D k R'
   end
 with spine_sat (D : denv) (w : gdecl) (j : nat) (A : typ) {struct A} : Prop :=
   match A with
@@ -896,7 +896,9 @@ Proof.
   - intros k k' Hf _. exact I.
   - intros r k k' Hf H. eapply finer_trans; eassumption.
   - intros l T H R H0 k k' Hf [H1 H2]. split; [ eapply H; eassumption | eapply H0; eassumption ].
-  - intros l T1 _ T2 _ R _ k k' Hf H. eapply finer_anyonly; eassumption.
+  - intros l P _ T IHT R IHR k k' Hf [HA HB]. split;
+      [ destruct HA as [HA|HA]; [ left; exact HA | right; exact (IHT _ _ Hf HA) ]
+      | exact (IHR _ _ Hf HB) ].
 Qed.
 
 Lemma sat_finer : forall D k k' T, finer k' k -> sat D k' T -> sat D k T.
@@ -928,7 +930,8 @@ Proof.
   - exact I.
   - exact (proj2 (sat_finer_mut D') (sr r) k _ H (proj1 (Hr r))).
   - destruct H1 as [H1 H2]. split; [ exact (proj1 H k H1) | exact (H0 k H2) ].
-  - exact H2.
+  - destruct H2 as [[Hp|Hs] Hq]; split; [ left; rewrite Hp; reflexivity | exact (H1 k Hq)
+                                         | right; exact (proj1 H0 k Hs) | exact (H1 k Hq) ].
 Qed.
 
 Lemma sat_ap : forall D D' k T st sr,

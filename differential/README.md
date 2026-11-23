@@ -84,7 +84,13 @@ does and leaves the rest out as a counted reader skip.
 removes it: none is open now (`sat_b` on `mu` and tag groups, stage 7.4, is
 closed). #564 (a sort and a lacks fact on a row variable)
 is closed. #623 (a sort reaching the variables inside a
-type) is closed: its five programs are in `HANDWRITTEN` and compare. A stage that lands deletes its row, and the
+type) is closed: its five programs are in `HANDWRITTEN` and compare. Stage 7.6b
+adds five more (a sort on a row with a presence entry, and an absent entry whose
+field type differs). Three classes of `w-refuses` are known and not yet excused
+here, because no predicate over a program tells them apart: a row variable that
+lacks the label meeting a presence entry for it, a sorted row tail rewritten to
+present a label, and a comparison whose second operand settles a presence the
+first leaves open (`docs/design/phase7-proof-plan.md`, stage 7.6b). A stage that lands deletes its row, and the
 target then fails on the class. A type that differs, or a program the algorithm
 accepts and the checker rejects, is never excused. Recursive-type programs the
 algorithm refuses (#606 and the row knot, stage 7.11) are driver skips, and

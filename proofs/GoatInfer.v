@@ -118,7 +118,7 @@ with rsat_b (D : denv) (k : sort) (R : row) {struct R} : bool :=
   | row_Empty => true
   | row_Ext _ T R' => sat_b D k T && rsat_b D k R'
   | row_Var r => finer_b (rk_sort (drk D r)) k
-  | row_Maybe _ _ _ _ => match k with k_Any => true | _ => false end
+  | row_Maybe _ P T R' => (is_abs P || sat_b D k T) && rsat_b D k R'
   end.
 
 (* ------------------------------------------------------------------ *)
@@ -295,6 +295,19 @@ Definition row_head (R : row) : option (label * typ * typ * row) :=
   | _ => None
   end.
 
+(* An entry whose presence is [Bool] is no field when nothing after it has the
+   label ([req_abs]), whatever its field type says: two rows that differ only
+   in such an entry are one row.  The unifier drops them before comparing, so
+   the type of an absent field is never unified with anything. *)
+Fixpoint drop_abs (R : row) : row :=
+  match R with
+  | row_Ext l T R' => row_Ext l T (drop_abs R')
+  | row_Maybe l P T R' =>
+      let R'' := drop_abs R' in
+      if is_abs P && rlacks l R'' then R'' else row_Maybe l P T R''
+  | _ => R
+  end.
+
 Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f}
   : option (sub * denv * nat) :=
   match f with
@@ -320,7 +333,7 @@ Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f}
               | Some (s2, D2, n2) => Some (scomp s2 s1, D2, n2)
               end
           end
-      | typ_Record R, typ_Record R' => unify_r f' D R R' n
+      | typ_Record R, typ_Record R' => unify_r f' D (drop_abs R) (drop_abs R') n
       | typ_Grp w A, typ_Grp w' A' =>
           if gdecl_eq_dec w w' then unify_t f' D A A' n else None
       | _, _ => None
@@ -351,7 +364,7 @@ with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
                       match unify_t f' D1 (apT sp (apT s0 T)) (apT sp T') n2 with
                       | None => None
                       | Some (s1, D2, n3) =>
-                          match unify_r f' D2 (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 with
+                          match unify_r f' D2 (drop_abs (apR s1 (apR sp (apR s0 R1')))) (drop_abs (apR s1 (apR sp R2'))) n3 with
                           | None => None
                           | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
                           end

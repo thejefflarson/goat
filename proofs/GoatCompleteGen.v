@@ -76,7 +76,10 @@ Proof.
   - intros l T [IHT _] R IHR k Hv Hr [Hs1 Hs2]. split.
     + refine (IHT k _ _ Hs1); intros; [ apply Hv | apply Hr ]; fsetdec.
     + refine (IHR k _ _ Hs2); intros; [ apply Hv | apply Hr ]; fsetdec.
-  - intros l P _ T _ R _ k _ _ Hs. exact Hs.
+  - intros l P _ T [IHT _] R IHR k Hv Hr [Hs1 Hs2]. split.
+    + destruct Hs1 as [Hp | Hs1]; [ left; exact Hp | right ].
+      refine (IHT k _ _ Hs1); intros; [ apply Hv | apply Hr ]; fsetdec.
+    + refine (IHR k _ _ Hs2); intros; [ apply Hv | apply Hr ]; fsetdec.
 Qed.
 
 Lemma sat_loc : forall (D D' : denv) k T,
