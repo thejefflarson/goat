@@ -63,6 +63,18 @@ Proof.
     [ apply msf_refl | eapply msf_step; [ apply stf_here; eassumption | exact IHmultistep ] ].
 Qed.
 
+Lemma msf_here_meth : forall l e e' fs, multistep e e' -> msf (fs_meth l e fs) (fs_meth l e' fs).
+Proof.
+  intros l e e' fs H. induction H;
+    [ apply msf_refl | eapply msf_step; [ apply stf_meth_here; eassumption | exact IHmultistep ] ].
+Qed.
+
+Lemma msf_meth : forall l v fs fs', value v -> msf fs fs' -> msf (fs_meth l v fs) (fs_meth l v fs').
+Proof.
+  intros l v fs fs' Hv H. induction H;
+    [ apply msf_refl | eapply msf_step; [ apply stf_meth_cons; eassumption | exact IHmsf ] ].
+Qed.
+
 Lemma msf_cons : forall l v fs fs', value v -> msf fs fs' -> msf (fs_cons l v fs) (fs_cons l v fs').
 Proof.
   intros l v fs fs' Hv H. induction H;
@@ -162,7 +174,13 @@ Proof.
   - intros L D G e1 e2 T1 T2 kf Tm Hgv H1 IH1 Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros L D G e1 e2 T1 T2 H1 IH1 Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros L D G fs e2 R T kf Hfg Hfs IHfs Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
-  - intros D G fs R Hft IH S HS HG Hv. cbn [erase] in Hv. inversion Hv; subst.
+  - intros D G fs R Hft IH Hnm S HS HG Hv. cbn [erase] in Hv. inversion Hv; subst.
+    destruct (IH S HS eq_refl H0) as [fs' [Hms [Hrv Her]]].
+    exists (e_rec fs'). repeat split.
+    + apply msf_rec. exact Hms.
+    + apply v_rec. exact Hrv.
+    + cbn [erase]. rewrite Her. reflexivity.
+  - intros D G fs R Rt Hft IH Hms0 S HS HG Hv. cbn [erase] in Hv. inversion Hv; subst.
     destruct (IH S HS eq_refl H0) as [fs' [Hms [Hrv Her]]].
     exists (e_rec fs'). repeat split.
     + apply msf_rec. exact Hms.
@@ -200,11 +218,18 @@ Proof.
   - intros L D G w Ts e ars T Ht IHe Hwf Harm IHarm Hdef IHdef S HS HG Hv.
     cbn [erase] in Hv. inversion Hv.
   - intros D G Hu S HS HG Hv. exists fs_nil. auto using msf_refl.
-  - intros D G l e T fs R Hty IH1 Hft IH2 S HS HG Hv. cbn [erase_fields] in Hv. inversion Hv as [ | l0 v0 fs0 Hv0 Hrv0 ]; subst.
+  - intros D G l e T fs R Hty IH1 Hft IH2 S HS HG Hv. cbn [erase_fields] in Hv. inversion Hv as [ | l0 v0 fs0 Hv0 Hrv0 | l0 v0 fs0 Hv0 Hrv0 ]; subst.
     destruct (IH1 S HS eq_refl Hv0) as [v [Hms [Hvv Her]]].
     destruct (IH2 S HS eq_refl Hrv0) as [fs' [Hmf [Hrv Hef]]].
     exists (fs_cons l v fs'). repeat split.
     + eapply msf_trans; [ apply msf_here; exact Hms | apply msf_cons; assumption ].
+    + constructor; assumption.
+    + cbn [erase_fields]. rewrite Her, Hef. reflexivity.
+  - intros D G l e T fs R Hty IH1 Hft IH2 S HS HG Hv. cbn [erase_fields] in Hv. inversion Hv as [ | l0 v0 fs0 Hv0 Hrv0 | l0 v0 fs0 Hv0 Hrv0 ]; subst.
+    destruct (IH1 S HS eq_refl Hv0) as [v [Hms [Hvv Her]]].
+    destruct (IH2 S HS eq_refl Hrv0) as [fs' [Hmf [Hrv Hef]]].
+    exists (fs_meth l v fs'). repeat split.
+    + eapply msf_trans; [ apply msf_here_meth; exact Hms | apply msf_meth; assumption ].
     + constructor; assumption.
     + cbn [erase_fields]. rewrite Her, Hef. reflexivity.
 Qed.
@@ -319,27 +344,30 @@ Qed.
 
 Lemma rec_value_lookup : forall l fs w, rec_value fs -> lookup_first l fs = Some w -> value w.
 Proof.
-  intros l fs w H. induction H; cbn [lookup_first]; intros Hl; [ discriminate | ].
-  destruct (Nat.eqb l l0); [ injection Hl as <-; assumption | auto ].
+  intros l fs w H. induction H; cbn [lookup_first]; intros Hl; [ discriminate | | ];
+    destruct (Nat.eqb l l0); first [ injection Hl as <-; assumption | auto ].
 Qed.
 
 Lemma rec_zip_unerase : forall o fs1' fs2' fs, rec_zip o fs1' fs2' fs ->
-  forall gs1 gs2, erase_fields gs1 = fs1' -> erase_fields gs2 = fs2' ->
-  exists gs, rec_zip o gs1 gs2 gs /\ erase_fields gs = fs.
+  forall gs1 gs2, fs_plain (erase_fields gs1) = fs1' -> fs_plain (erase_fields gs2) = fs2' ->
+  exists gs, rec_zip o (fs_plain gs1) (fs_plain gs2) gs /\ erase_fields gs = fs.
 Proof.
   intros o fs1' fs2' fs H. induction H; intros gs1 gs2 E1 E2.
-  - destruct gs1; cbn [erase_fields] in E1; try discriminate.
+  - destruct gs1; cbn [erase_fields fs_plain] in E1; try discriminate.
     exists fs_nil. split; [ constructor | reflexivity ].
-  - destruct gs1 as [ | l1 w1 g1]; cbn [erase_fields] in E1; try discriminate.
-    injection E1 as El Ew Eg. subst l1.
-    rewrite <- E2, erase_lookup_first in H.
+  - assert (Hg1 : exists w1 g1, fs_plain gs1 = fs_cons l w1 (fs_plain g1) /\
+                    erase w1 = v1 /\ fs_plain (erase_fields g1) = r1).
+    { destruct gs1 as [ | l1 w1 g1 | l1 w1 g1]; cbn [erase_fields fs_plain] in E1; try discriminate;
+        injection E1 as El Ew Eg; subst l1; exists w1, g1; repeat split; auto. }
+    destruct Hg1 as [w1 [g1 [Hp [Ew Eg]]]].
+    rewrite <- E2, lookup_first_plain, erase_lookup_first in H.
     destruct (lookup_first l gs2) as [w2 | ] eqn:Hl; cbn [option_map] in H; try discriminate.
     injection H as Ew2.
     destruct (IHrec_zip g1 (fs_drop l gs2)) as [gs [Hz Hg]].
     + exact Eg.
-    + rewrite erase_fs_drop, E2. reflexivity.
+    + rewrite erase_fs_drop, fs_plain_drop, E2. reflexivity.
     + exists (fs_cons l (e_bin w1 o w2) gs). split.
-      * eapply rz_cons; eassumption.
+      * rewrite Hp. eapply rz_cons; [ rewrite lookup_first_plain; exact Hl | rewrite <- fs_plain_drop; exact Hz ].
       * cbn [erase_fields erase]. rewrite Hg, Ew, Ew2. reflexivity.
 Qed.
 
@@ -427,7 +455,11 @@ Proof.
     + eapply ms_step; [ apply st_letrec; exact Hfg | apply ms_refl ].
     + rewrite erase_open. cbn [erase erase_fields]. rewrite erase_open_fields.
       cbn [erase erase_fields]. reflexivity.
-  - (* record *) intros D G fs R Hft IH S HS HG r Hs. subst G. cbn [erase] in Hs. inversion Hs; subst; flip_erased.
+  - (* record *) intros D G fs R Hft IH Hnm S HS HG r Hs. subst G. cbn [erase] in Hs. inversion Hs; subst; flip_erased.
+    lazymatch goal with Hx : step_fields (erase_fields fs) _ |- _ =>
+      destruct (IH S HS eq_refl _ Hx) as [fsx [Hm He]] end.
+    exists (e_rec fsx). split; [ apply msf_rec; exact Hm | cbn [erase]; rewrite He; reflexivity ].
+  - (* record with methods *) intros D G fs R Rt Hft IH Hms0 S HS HG r Hs. subst G. cbn [erase] in Hs. inversion Hs; subst; flip_erased.
     lazymatch goal with Hx : step_fields (erase_fields fs) _ |- _ =>
       destruct (IH S HS eq_refl _ Hx) as [fsx [Hm He]] end.
     exists (e_rec fsx). split; [ apply msf_rec; exact Hm | cbn [erase]; rewrite He; reflexivity ].
@@ -510,7 +542,7 @@ Proof.
         eapply ms_step; [ apply st_bin; [ apply lit_value; exact La | apply lit_value; exact Lb | exact Hbs ] | apply ms_refl ]
       end.
     + lazymatch goal with
-        Ha : erase e1 = e_rec ?fs1, Hb : erase e2 = e_rec ?fs2, Hz : rec_zip o ?fs1 ?fs2 ?fs |- _ =>
+        Ha : erase e1 = e_rec ?fs1, Hb : erase e2 = e_rec ?fs2, Hz : rec_zip o (fs_plain ?fs1) (fs_plain ?fs2) ?fs |- _ =>
         assert (Hv1 : value (erase e1)) by (rewrite Ha; apply v_rec; assumption);
         assert (Hv2 : value (erase e2)) by (rewrite Hb; apply v_rec; assumption);
         destruct (reach_operand D S e1 o A A R HS Hsig H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
@@ -521,7 +553,7 @@ Proof.
         [ | rewrite (erase_lit _ L2), Hb in Hev2; rewrite Hev2 in L2; cbn [lit] in L2; contradiction ];
         cbn [erase] in Hev1, Hev2; rewrite Ha in Hev1; rewrite Hb in Hev2;
         injection Hev1 as Eg1; injection Hev2 as Eg2;
-        destruct (rec_zip_unerase o _ _ _ Hz gs1 gs2 Eg1 Eg2) as [gs [Hzz Hge]];
+        destruct (rec_zip_unerase o _ _ _ Hz gs1 gs2 (f_equal fs_plain Eg1) (f_equal fs_plain Eg2)) as [gs [Hzz Hge]];
         exists (e_rec gs); split;
         [ eapply multistep_trans; [ apply ms_bin1; exact Hm1 | ];
           eapply multistep_trans; [ apply ms_bin2; [ apply v_rec; exact Hg1 | exact Hm2 ] | ];
@@ -544,11 +576,11 @@ Proof.
         destruct (reach_rec D S e1 _ fs0 HS Ht1 Ha Hrv) as [gs [Hm1 [Hrg Heg]]] end.
       assert (Hv2 : value (erase e2)) by assumption.
       destruct (value_reach D S e2 _ HS Ht2 Hv2) as [v2 [Hm2 [Hvv2 He2]]].
-      exists (e_rec (fs_set l v2 gs)). split.
+      exists (e_rec (fs_plain (fs_set l v2 gs))). split.
       * eapply multistep_trans; [ apply ms_spread1; exact Hm1 | ].
         eapply multistep_trans; [ apply ms_spread2; [ apply v_rec; exact Hrg | exact Hm2 ] | ].
         eapply ms_step; [ apply st_spread; assumption | apply ms_refl ].
-      * cbn [erase]. rewrite erase_fs_set, Heg, He2. reflexivity.
+      * cbn [erase]. rewrite erase_fs_plain, erase_fs_set, Heg, He2. reflexivity.
   - (* restrict *) intros D G e l R0 T R Ht IH Hrm S HS HG r Hs. subst G.
     cbn [erase] in Hs. inversion Hs; subst; flip_erased.
     + lazymatch goal with Hx : step (erase e) _ |- _ =>
@@ -556,10 +588,10 @@ Proof.
       exists (e_restrict e'' l). split; [ apply ms_restrict; exact Hm | cbn [erase]; rewrite He; reflexivity ].
     + lazymatch goal with Ha : erase e = e_rec ?fs0, Hrv : rec_value ?fs0 |- _ =>
         destruct (reach_rec D S e _ fs0 HS Ht Ha Hrv) as [gs [Hm [Hrg Heg]]] end.
-      exists (e_rec (fs_drop l gs)). split.
+      exists (e_rec (fs_plain (fs_drop l gs))). split.
       * eapply multistep_trans; [ apply ms_restrict; exact Hm | ].
         eapply ms_step; [ apply st_restrict; exact Hrg | apply ms_refl ].
-      * cbn [erase]. rewrite erase_fs_drop, Heg. reflexivity.
+      * cbn [erase]. rewrite erase_fs_plain, erase_fs_drop, Heg. reflexivity.
   - (* fold *) intros D G e B Hlc Hg Ht IH S HS HG r Hs. cbn [erase] in Hs.
     destruct (IH S HS HG r Hs) as [e'' [Hm He]].
     exists (e_fold e''). split; [ apply ms_fold; exact Hm | cbn [erase]; exact He ].
@@ -614,6 +646,19 @@ Proof.
         destruct (IH2 S HS eq_refl _ Hx) as [fsx [Hmf Hef]] end.
       exists (fs_cons l v fsx). split.
       * eapply msf_trans; [ apply msf_here; exact Hm | apply msf_cons; assumption ].
+      * cbn [erase_fields]. rewrite He, Hef. reflexivity.
+  - intros D G l e T fs R Hty IH1 Hft IH2 S HS HG fs'' Hs. subst G.
+    cbn [erase_fields] in Hs. inversion Hs; subst.
+    + lazymatch goal with Hx : step (erase e) _ |- _ =>
+        destruct (IH1 S HS eq_refl _ Hx) as [e'' [Hm He]] end.
+      exists (fs_meth l e'' fs). split;
+        [ apply msf_here_meth; exact Hm | cbn [erase_fields]; rewrite He; reflexivity ].
+    + assert (Hv : value (erase e)) by assumption.
+      destruct (value_reach D S e _ HS Hty Hv) as [v [Hm [Hvv He]]].
+      lazymatch goal with Hx : step_fields (erase_fields fs) _ |- _ =>
+        destruct (IH2 S HS eq_refl _ Hx) as [fsx [Hmf Hef]] end.
+      exists (fs_meth l v fsx). split.
+      * eapply msf_trans; [ apply msf_here_meth; exact Hm | apply msf_meth; assumption ].
       * cbn [erase_fields]. rewrite He, Hef. reflexivity.
 Qed.
 

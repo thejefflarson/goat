@@ -12,9 +12,12 @@
    source program, which is the claim of GoatElab.v: the folds and unfolds are
    the only difference.  Nothing here needs a rule the calculus lacks.
 
-   Not here: [big = {...ball, size: 10}] and the three-method model.  They
-   instantiate the receiver's row variable, which is the shared-receiver rule
-   of the plan's stage 5.
+   The second half of the file marks the methods of the literal (a method
+   field is [fs_meth]) and types it with [T_Obj], the shared-receiver rule of
+   ADR 0034: every method of the literal takes the one receiver the literal
+   itself determines, with a row for what a use adds.  [big = {...ball, size: 10}]
+   instantiates that row, and a literal with three methods shares one
+   receiver among them.
 
    The accepted examples fail to compile if a rule is dropped; the rejected
    ones fail if the guard on recursion or the type of a field is weakened. *)
@@ -32,6 +35,7 @@ Require Import Goat.GoatRecTypes.
 Require Import Goat.GoatElab.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
+From Stdlib Require Import Lia.
 
 Definition l_moved : label := 0.
 Definition l_x : label := 1.
@@ -108,7 +112,7 @@ Lemma ball_record_types : typing d_any nil
   (e_rec (fs_cons l_moved (e_abs (bump (e_fvar_b 0))) (fs_cons l_x (e_num 1) fs_nil)))
   (typ_Record P_row).
 Proof.
-  apply T_Record. eapply FT_cons.
+  apply T_Record; [ | reflexivity ]. eapply FT_cons.
   - apply T_Abs with (L := {}). intros s Hs.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec]. unfold bump.
     exact (bump_types s).
@@ -318,4 +322,257 @@ Proof.
   intros G T H. destruct (proj_inv _ _ _ _ _ H) as [T0 [R [Hb _]]].
   unfold ball in Hb. destruct (fold_inv _ _ _ _ Hb) as [B [Hteq _]].
   apply teq_Mu_inv in Hteq. destruct Hteq as [B' [E _]]. discriminate E.
+Qed.
+
+(* ================================================================== *)
+(* The shared receiver (ADR 0034 decision 2): T_Obj                    *)
+(* ================================================================== *)
+
+(* A method literal's methods all take the receiver
+
+     S Rt = mu t. {moved: (t) -> t; x: Int | Rt}
+
+   [Rt] is the row variable the checker keeps open ([rho] in ADR 0034): a use
+   of the literal picks it.  The literal's own type is the closed record. *)
+
+Definition S_body (Rt : row) : typ :=
+  typ_Record (row_Ext l_moved (typ_Arrow (typ_Bvar 0) (typ_Bvar 0)) (row_Ext l_x typ_Int Rt)).
+
+Definition S (Rt : row) : typ := typ_Mu (S_body Rt).
+
+Definition S_row (Rt : row) : row :=
+  row_Ext l_moved (typ_Arrow (S Rt) (S Rt)) (row_Ext l_x typ_Int Rt).
+
+(* the literal's own record type: the fields and no tail *)
+Definition ball_row (Rt : row) : row :=
+  row_Ext l_moved (typ_Arrow (S Rt) (S Rt)) (row_Ext l_x typ_Int row_Empty).
+
+(* ball, with its method marked *)
+Definition ball_lit : exp :=
+  e_rec (fs_meth l_moved (e_abs (bump (e_fvar_b 0))) (fs_cons l_x (e_num 1) fs_nil)).
+
+Section SharedReceiver.
+
+  Variable Rt : row.
+  Hypothesis S_unrolls : open_typ 0 (S Rt) (S_body Rt) = typ_Record (S_row Rt).
+  Hypothesis S_closed : lct 0 (S Rt).
+  Hypothesis S_guarded : guarded (S_body Rt).
+
+  Lemma var_S : forall s, typing d_any ((s ~ sch_mono (S Rt)) ++ nil) (e_fvar_f s) (S Rt).
+  Proof.
+    intros s. apply T_Var with (s := sch_mono (S Rt));
+      [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_mono_self ].
+  Qed.
+
+  Lemma unfold_var_S : forall s,
+    typing d_any ((s ~ sch_mono (S Rt)) ++ nil) (e_unfold (e_fvar_f s)) (typ_Record (S_row Rt)).
+  Proof.
+    intros s. rewrite <- S_unrolls. apply T_Unfold; [ exact S_closed | exact S_guarded | apply var_S ].
+  Qed.
+
+  Lemma S_row_maybe : req (S_row Rt)
+    (row_Maybe l_x typ_Unit typ_Int (row_Ext l_moved (typ_Arrow (S Rt) (S Rt)) Rt)).
+  Proof.
+    unfold S_row, l_x, l_moved.
+    eapply req_trans; [ apply req_swap; discriminate | ].
+    apply req_sym. apply req_pre.
+  Qed.
+
+  Lemma S_row_ext : req (row_Ext l_x typ_Int (row_Ext l_moved (typ_Arrow (S Rt) (S Rt)) Rt))
+                        (S_row Rt).
+  Proof.
+    unfold S_row, l_x, l_moved. apply req_sym. apply req_swap. discriminate.
+  Qed.
+
+  Lemma bump_types_S : forall s,
+    typing d_any ((s ~ sch_mono (S Rt)) ++ nil) (bump (e_fvar_f s)) (S Rt).
+  Proof.
+    intros s. unfold bump. unfold S. apply T_Fold; [ exact S_closed | exact S_guarded | ].
+    change (open_typ 0 (typ_Mu (S_body Rt)) (S_body Rt)) with (open_typ 0 (S Rt) (S_body Rt)).
+    rewrite S_unrolls.
+    eapply T_Conv; [ | apply teq_rec; exact S_row_ext ].
+    eapply T_Spread with (P := typ_Unit) (T := typ_Int)
+      (R := row_Ext l_moved (typ_Arrow (S Rt) (S Rt)) Rt).
+    - eapply T_Conv; [ apply unfold_var_S | apply teq_rec; exact S_row_maybe ].
+    - eapply T_Bin with (A := typ_Int) (B := typ_Int);
+        [ | apply T_Num; [ solve_uniq | exact I ] | apply sig_ring; first [ reflexivity | exact I ] ].
+      eapply T_Proj.
+      eapply T_Conv; [ apply unfold_var_S | apply teq_rec; apply req_sym; exact S_row_ext ].
+  Qed.
+
+  (* The method takes the receiver once unrolled: S is one unrolling from
+     the record the literal builds with [Rt] for its tail. *)
+  Lemma obj_shared : meths_shared (row_tail_with (ball_row Rt) Rt)
+    (fs_meth l_moved (e_abs (bump (e_fvar_b 0))) (fs_cons l_x (e_num 1) fs_nil)) (ball_row Rt).
+  Proof.
+    unfold ball_row. cbn [row_tail_with].
+    eapply MS_meth with (n := 1) (Rr := S Rt).
+    - apply UE_arrow; [ | apply unroll_refl ].
+      change (typ_Record (row_Ext l_moved (typ_Arrow (S Rt) (S Rt)) (row_Ext l_x typ_Int Rt)))
+        with (typ_Record (S_row Rt)).
+      rewrite <- S_unrolls. apply (UE_unfold 0).
+    - apply MS_cons. apply MS_nil.
+  Qed.
+
+  (* The literal, at any tail the receiver allows. *)
+  Theorem ball_lit_types : typing d_any nil ball_lit (typ_Record (ball_row Rt)).
+  Proof.
+    unfold ball_lit. apply T_Obj with (Rt := Rt).
+    - eapply FT_meth.
+      + apply T_Abs with (L := {}). intros s Hs.
+        cbn [open_exp_wrt_exp open_exp_wrt_exp_rec]. unfold bump.
+        exact (bump_types_S s).
+      + eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
+    - exact obj_shared.
+  Qed.
+
+End SharedReceiver.
+
+(* ---- ball: no extension ---- *)
+
+Lemma S_empty_unrolls : open_typ 0 (S row_Empty) (S_body row_Empty) = typ_Record (S_row row_Empty).
+Proof. reflexivity. Qed.
+
+Lemma S_empty_closed : lct 0 (S row_Empty).
+Proof. simpl. repeat split; first [ exact I | lia ]. Qed.
+
+Lemma S_empty_guarded : guarded (S_body row_Empty).
+Proof. unfold guarded. simpl. repeat split; auto. Qed.
+
+Example ball_obj_types : typing d_any nil ball_lit (typ_Record (ball_row row_Empty)).
+Proof. exact (ball_lit_types row_Empty S_empty_unrolls S_empty_closed S_empty_guarded). Qed.
+
+(* ---- big = {...ball, size: 10}: the receiver's row takes a use's field ---- *)
+
+Definition l_size : label := 2.
+Definition size_row : row := row_Ext l_size typ_Int row_Empty.
+
+Lemma S_size_unrolls : open_typ 0 (S size_row) (S_body size_row) = typ_Record (S_row size_row).
+Proof. reflexivity. Qed.
+
+Lemma S_size_closed : lct 0 (S size_row).
+Proof. simpl. repeat split; first [ exact I | lia ]. Qed.
+
+Lemma S_size_guarded : guarded (S_body size_row).
+Proof. unfold guarded. simpl. repeat split; auto. Qed.
+
+(* The same literal with the row variable set to the one field [size].  The
+   literal's record type is the closed one; only the receiver changes. *)
+Example ball_size_types : typing d_any nil ball_lit (typ_Record (ball_row size_row)).
+Proof. exact (ball_lit_types size_row S_size_unrolls S_size_closed S_size_guarded). Qed.
+
+Definition big : exp := e_spread ball_lit l_size (e_num 10).
+
+Example big_types : typing d_any nil big
+  (typ_Record (row_Ext l_size typ_Int (ball_row size_row))).
+Proof.
+  unfold big.
+  eapply T_Spread with (P := typ_Bool) (T := typ_Int) (R := ball_row size_row).
+  - eapply T_Conv; [ exact ball_size_types | ].
+    apply teq_rec. apply req_sym. apply req_abs. reflexivity.
+  - apply T_Num; [ solve_uniq | exact I ].
+Qed.
+
+(* big has the receiver's unrolling with its fields in another order, so one
+   [fold] makes it the receiver. *)
+Lemma big_row_is_receiver :
+  req (row_Ext l_size typ_Int (ball_row size_row)) (S_row size_row).
+Proof.
+  unfold ball_row, S_row, size_row, l_size, l_moved, l_x.
+  eapply req_trans; [ apply req_swap; discriminate | ].
+  apply req_head; [ apply teq_refl | ].
+  apply req_swap. discriminate.
+Qed.
+
+Example big_is_receiver : typing d_any nil (e_fold big) (S size_row).
+Proof.
+  unfold S. apply T_Fold; [ exact S_size_closed | exact S_size_guarded | ].
+  change (open_typ 0 (typ_Mu (S_body size_row)) (S_body size_row))
+    with (open_typ 0 (S size_row) (S_body size_row)).
+  rewrite S_size_unrolls.
+  eapply T_Conv; [ exact big_types | apply teq_rec; exact big_row_is_receiver ].
+Qed.
+
+(* big.moved() *)
+Example big_moved_types : typing d_any nil
+  (e_app (e_proj big l_moved) (e_fold big)) (S size_row).
+Proof.
+  eapply T_App with (T1 := S size_row).
+  - eapply T_Proj with (R := row_Ext l_size typ_Int (row_Ext l_x typ_Int row_Empty)).
+    eapply T_Conv; [ exact big_types | ].
+    apply teq_rec. unfold ball_row, l_size, l_moved, l_x.
+    apply req_swap. discriminate.
+  - exact big_is_receiver.
+Qed.
+
+(* ---- three methods share one receiver ---- *)
+
+Definition l_a : label := 0.
+Definition l_b : label := 1.
+Definition l_c : label := 2.
+Definition l_n : label := 3.
+
+(* mu t. {a: (t) -> t; b: (t) -> t; c: (t) -> t; n: Int} *)
+Definition M_body : typ :=
+  typ_Record (row_Ext l_a (typ_Arrow (typ_Bvar 0) (typ_Bvar 0))
+               (row_Ext l_b (typ_Arrow (typ_Bvar 0) (typ_Bvar 0))
+                 (row_Ext l_c (typ_Arrow (typ_Bvar 0) (typ_Bvar 0))
+                   (row_Ext l_n typ_Int row_Empty)))).
+
+Definition M : typ := typ_Mu M_body.
+
+Definition M_row : row :=
+  row_Ext l_a (typ_Arrow M M) (row_Ext l_b (typ_Arrow M M)
+    (row_Ext l_c (typ_Arrow M M) (row_Ext l_n typ_Int row_Empty))).
+
+(* the three methods hand the receiver back *)
+Definition three : exp :=
+  e_rec (fs_meth l_a (e_abs (e_fvar_b 0))
+           (fs_meth l_b (e_abs (e_fvar_b 0))
+             (fs_meth l_c (e_abs (e_fvar_b 0))
+               (fs_cons l_n (e_num 0) fs_nil)))).
+
+Lemma M_unrolls : open_typ 0 M M_body = typ_Record M_row.
+Proof. reflexivity. Qed.
+
+Lemma M_row_tail : row_tail_with M_row row_Empty = M_row.
+Proof. reflexivity. Qed.
+
+Lemma M_unfold : unroll_eq 1 M (typ_Record M_row).
+Proof. rewrite <- M_unrolls. apply (UE_unfold 0). Qed.
+
+Example three_types : typing d_any nil three (typ_Record M_row).
+Proof.
+  unfold three. apply T_Obj with (Rt := row_Empty).
+  - assert (Hid : typing d_any nil (e_abs (e_fvar_b 0)) (typ_Arrow M M)).
+    { apply T_Abs with (L := {}). intros s Hs. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
+      apply T_Var with (s := sch_mono M);
+        [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_mono_self ]. }
+    eapply FT_meth; [ exact Hid | ].
+    eapply FT_meth; [ exact Hid | ].
+    eapply FT_meth; [ exact Hid | ].
+    eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
+  - rewrite M_row_tail.
+    eapply MS_meth with (n := 1) (Rr := M);
+      [ apply UE_arrow; [ exact M_unfold | apply unroll_refl ] | ].
+    eapply MS_meth with (n := 1) (Rr := M);
+      [ apply UE_arrow; [ exact M_unfold | apply unroll_refl ] | ].
+    eapply MS_meth with (n := 1) (Rr := M);
+      [ apply UE_arrow; [ exact M_unfold | apply unroll_refl ] | ].
+    apply MS_cons. apply MS_nil.
+Qed.
+
+(* ---- what the marker means ---- *)
+
+(* A literal with a method field is typed by T_Obj alone, so the methods of a
+   literal always share one receiver: a derivation hands back one row [Rt]
+   and every method's type is a function of the receiver it determines. *)
+Theorem obj_one_receiver : forall D G fs T,
+  typing D G (e_rec fs) T -> no_meth fs = false ->
+  exists R Rt, field_typing D G fs R /\ meths_shared (row_tail_with R Rt) fs R /\
+               teq (typ_Record R) T.
+Proof.
+  intros D G fs T H Hm. destruct (rec_inv_ok _ _ _ _ H) as [R [Hft [[Hn | [Rt Hs]] Hq]]].
+  - rewrite Hn in Hm. discriminate.
+  - exists R, Rt. repeat split; assumption.
 Qed.

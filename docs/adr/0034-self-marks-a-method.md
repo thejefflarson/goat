@@ -152,3 +152,47 @@ wasm with one recursive type and no nested knots.
    that returns a different shape (a spread that adds a field, a number) is
    not `s -> s`, is tied with the others afterward as before, and is typed or
    rejected by the same rules.
+
+## Proof addendum (2026-11-22): the shared receiver is a typing rule
+
+Decision 2 is now a rule of the calculus in `proofs/`, not only a property of
+the checker's algorithm (phase 5 stage 5 of `docs/design/phase5-proof-plan.md`;
+the owner confirmed on #454 that the shared receiver stays).
+
+1. **The marker.** A method is a field written `l :m e` in the record spine
+   (`fs_meth` in `goat_ln.ott`): it runs, substitutes and steps as a plain
+   field, and only typing reads the difference. The reader of the differential
+   test writes a function with `self` first, directly in a record literal, as
+   a method, exactly the checker's `is_method`.
+2. **The rule.** `T_Obj` types a record literal with methods. Its premises are
+   the field typing of every field at the literal's own closed row `R`, and
+   `meths_shared (R with Rt as its tail) fs R`: each method field has a type
+   that equals, up to unrolling a recursive type (`unroll_eq`), a function
+   whose parameter is the one record `R` extended by the row `Rt`, which is
+   the shared receiver and its row variable `rho`. `T_Record` now also asks for
+   a spine with no method field, so a literal with a method has no
+   per-method reading. `GoatMethods.v` types `ball` at `Rt` empty, the same
+   literal at `Rt = {size: Int}` (what `big = {...ball, size: 10}` needs), and a
+   literal with three methods; `obj_one_receiver` says a typed literal with a
+   method hands back one `Rt` for all of them.
+3. **A spread or restrict of a method record is a plain record.** After a
+   spread, a restrict or record arithmetic the result carries no marker
+   (`fs_plain`), so only a literal as written is typed by `T_Obj`; progress,
+   preservation and `erase_step` hold with the new field.
+4. **The algorithm.** For a literal with a method, `infer` gives the receiver
+   one variable per field (a slot) and one row variable for the tail, infers
+   each method body with the receiver in scope, and only then unifies each
+   slot with its field's type (`tie_obj`). A method that mentions its own
+   receiver makes a variable meet a type that mentions it, which the knot-
+   tying unifier turns into a recursive type; a field that meets its slot only
+   up to unrolling is wrapped in the head coercions (`fold`, `unfold`) that
+   take it there. `infer_sound` proves the elaborated literal is typed by
+   `T_Obj`, so the algorithm's shared receiver is the rule's.
+5. **What is not modelled.** The method flag (`METHOD` against `PLAIN`) still
+   only makes the checker reject more, as before. A literal whose recursive
+   type holds an open row that must itself knot is refused by the algorithm
+   (`DeepKnot`, counted by the differential test). The proofs do not contain a
+   derivation-level non-example of `lit.a()` where `b` needs `y`: refuting
+   `unroll_eq` between two receivers needs an inversion lemma for it that is
+   not proved. The differential test covers the rejection: both sides reject
+   that program.

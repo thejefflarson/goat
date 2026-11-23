@@ -46,7 +46,14 @@ booleans, functions, calls, `if` with an `else`, the twelve binary operators on
 Int, Float, String and Bool, `let` of any value, `letrec` groups of
 functions, record literals with distinct labels, and field access, binding every
 name it uses. Dot calls, `::` and `self` are read as the `proj`, `app` and `let` lowering rewrote them to, and the method flag
-is erased from the type column. Anything else (the prelude, tags, an operator on records or on Unit) is outside the
+is erased from the type column. A function with `self` first, written directly as a field of a record literal, is a
+method: the reader writes it `(meth e)`, the calculus's `fs_meth`, and a literal with a method is typed by `T_Obj`, which gives
+all its methods one receiver (ADR 0034 decision 2). The checker ties a method's receiver to its record
+(`{x: 0, bump: program(self) do {...self, x: self.x + 1} done}` is `mu m. {x: Number, bump: (m -> m) | v}`), and the
+algorithm does the same by giving every method one record of slots for the literal's fields and a row variable for what a
+use adds, unified with the fields' types afterwards (`tie_obj`); so these programs are compared, and a literal whose
+methods need different receivers is rejected by both (`lit = {a: program(self) do self.x done, b: program(self) do self.y done}`
+then `lit.a()`). Anything else (the prelude, tags, an operator on records or on Unit) is outside the
 calculus and skipped.
 
 The generic operators are compared. `+ - *` on operands the checker leaves as
@@ -61,7 +68,7 @@ generalizes a function and a bare numeral over every variable of its type, and
 any other syntactic value over every variable but the `Literal` ones, which stay
 shared and open to `Float`, as the checker does (ADR 0038). A spread of
 syntactic values is one too, as in the checker's `is_syntactic_value`.
-Three kinds of
+A few kinds of
 program are skipped, each because the calculus and the checker differ on it:
 
 - a comparison at a parameter's generic type (`program(a, b) do a == b done`,
@@ -77,21 +84,11 @@ program are skipped, each because the calculus and the checker differ on it:
   so `FORCED` in `core_corpus.rs` pins such programs as compared anyway;
 - a rest pattern with no fields (`program({...r}) do r done`): the checker types
   it as a record, and the calculus has no way to say that without a label;
-- a program whose root type is a recursive type that a method's `self` makes:
-  the checker ties a method's receiver to its record (`{x: 0, bump: program(self)
-  do {...self, x: self.x + 1} done}` is `mu m. {x: Number, bump: (m -> m) | v}`),
-  and the calculus types the receiver apart, as a function of any record with an
-  `x`. Both are right in their own system, so the reader skips these under their
-  own count. A program that uses such a record but whose root type is finite is
-  compared;
 - a program the checker rejects over the method flag (a dot call on a plain
   function, `::` on a method or on a data field, a field a method in one record
   and plain in the other), which the calculus does not track; the checker marks
   these errors with `ErrorKind::MethodFlag`, and the reader skips them under their
   own count;
-- a record literal with two or more methods, counted under its own skip: the
-  checker gives the methods one shared receiver type, and the calculus's rules
-  would type each apiece, so they accept programs the checker rejects;
 - a program the checker gives up on as too complex (`ErrorKind::ResourceLimit`),
   which a budget decides and not the types;
 - the cases the README already listed: the prelude, tags.

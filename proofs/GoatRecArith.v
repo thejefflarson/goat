@@ -88,8 +88,12 @@ Lemma field_typing_lookup_rm : forall D G fs R l T R',
   exists v, lookup_first l fs = Some v /\ typing D G v T.
 Proof.
   intros D G fs R l T R' H. revert T R'.
-  induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH]; intros T0 R0 Hrm.
+  induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH]; intros T0 R0 Hrm.
   - exfalso. eapply rm_empty_inv; eassumption.
+  - destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R2 [E ->]]]].
+    + subst. exists e1. simpl. rewrite Nat.eqb_refl. split; [ reflexivity | exact Hty ].
+    + destruct (IH _ _ E) as [v [Hl Hv]]. exists v. simpl.
+      rewrite (proj2 (Nat.eqb_neq _ _) Hne). split; assumption.
   - destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R2 [E ->]]]].
     + subst. exists e1. simpl. rewrite Nat.eqb_refl. split; [ reflexivity | exact Hty ].
     + destruct (IH _ _ E) as [v [Hl Hv]]. exists v. simpl.
@@ -100,34 +104,39 @@ Lemma field_typing_drop : forall D G fs R l T R',
   field_typing D G fs R -> rm l R T R' -> field_typing D G (fs_drop l fs) R'.
 Proof.
   intros D G fs R l T R' H. revert T R'.
-  induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH];
+  induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH];
     intros T0 R0 Hrm.
   - exfalso. eapply rm_empty_inv; eassumption.
   - destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R2 [E ->]]]].
     + subst. simpl. rewrite Nat.eqb_refl. exact Hft.
     + simpl. rewrite (proj2 (Nat.eqb_neq _ _) Hne).
       apply FT_cons; [ exact Hty | eapply IH; exact E ].
+  - destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R2 [E ->]]]].
+    + subst. simpl. rewrite Nat.eqb_refl. exact Hft.
+    + simpl. rewrite (proj2 (Nat.eqb_neq _ _) Hne).
+      apply FT_meth; [ exact Hty | eapply IH; exact E ].
 Qed.
 
 (* Two records typed by rows equivalent to a numeric row [R] pair up field by
    field, and the pairing is a record of the same type. *)
 Lemma zip_typing : forall D G o fs1 Rf1,
-  field_typing D G fs1 Rf1 ->
+  field_typing D G fs1 Rf1 -> no_meth fs1 = true ->
   forall fs2 Rf2 R,
     field_typing D G fs2 Rf2 -> req Rf1 R -> req Rf2 R -> row_sig D o R ->
     exists fs Rout, rec_zip o fs1 fs2 fs /\ field_typing D G fs Rout /\ req Rout R.
 Proof.
   intros D G o fs1 Rf1 H.
-  induction H as [D0 G0 Hu | D0 G0 l e T fs1' R1 Hty Hft IH];
-    intros fs2 Rf2 R H2 Hq1 Hq2 Hs.
+  induction H as [D0 G0 Hu | D0 G0 l e T fs1' R1 Hty Hft IH | D0 G0 l e T fs1' R1 Hty Hft IH];
+    intros Hnm fs2 Rf2 R H2 Hq1 Hq2 Hs.
   - exists fs_nil, row_Empty.
     split; [ apply rz_nil | split; [ apply FT_nil; exact Hu | exact Hq1 ] ].
-  - destruct (rm_req _ _ Hq1 l T R1 (rm_ext_here l T R1)) as [T' [R'' [Hrm [HT Hq1']]]].
+  - simpl in Hnm.
+    destruct (rm_req _ _ Hq1 l T R1 (rm_ext_here l T R1)) as [T' [R'' [Hrm [HT Hq1']]]].
     destruct (rm_row_sig _ _ _ _ _ _ Hs Hrm) as [Hb Hs'].
     destruct (rm_req _ _ (req_sym _ _ Hq2) l T' R'' Hrm) as [T2 [R2 [Hrm2 [HT2 Hq2']]]].
     destruct (field_typing_lookup_rm _ _ _ _ _ _ _ H2 Hrm2) as [v2 [Hl Hv2]].
     pose proof (field_typing_drop _ _ _ _ _ _ _ H2 Hrm2) as Hd.
-    destruct (IH _ _ _ Hd Hq1' (req_sym _ _ Hq2') Hs') as [fs [Ro [Hz [Hf Hq]]]].
+    destruct (IH Hnm _ _ _ Hd Hq1' (req_sym _ _ Hq2') Hs') as [fs [Ro [Hz [Hf Hq]]]].
     exists (fs_cons l (e_bin e o v2) fs), (row_Ext l T' Ro).
     split; [ eapply rz_cons; eassumption | split ].
     + apply FT_cons; [ | exact Hf ].
@@ -137,7 +146,11 @@ Proof.
       * exact Hb.
     + eapply req_trans; [ apply req_head; [ apply teq_refl | exact Hq ] | ].
       apply req_sym. eapply rm_ext_req; eassumption.
+  - discriminate Hnm.
 Qed.
+
+Lemma rec_zip_no_meth : forall o fs1 fs2 fs, rec_zip o fs1 fs2 fs -> no_meth fs = true.
+Proof. intros o fs1 fs2 fs H. induction H; simpl; auto. Qed.
 
 Lemma rec_zip_det : forall o fs1 fs2 fs,
   rec_zip o fs1 fs2 fs -> forall fs', rec_zip o fs1 fs2 fs' -> fs = fs'.

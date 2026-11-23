@@ -52,6 +52,7 @@ with erase_fields (fs : fields) {struct fs} : fields :=
   match fs with
   | fs_nil => fs_nil
   | fs_cons l e fs' => fs_cons l (erase e) (erase_fields fs')
+  | fs_meth l e fs' => fs_meth l (erase e) (erase_fields fs')
   end
 with erase_arms (ars : arms) {struct ars} : arms :=
   match ars with
@@ -103,22 +104,22 @@ Proof. apply erase_value_mut. Qed.
 Lemma erase_lookup_first : forall l fs,
   lookup_first l (erase_fields fs) = option_map erase (lookup_first l fs).
 Proof.
-  induction fs; cbn [erase_fields lookup_first]; [ reflexivity | ].
-  destruct (Nat.eqb l l0); [ reflexivity | exact IHfs ].
+  induction fs as [|l0 e fs IH|l0 e fs IH]; cbn [erase_fields lookup_first]; try reflexivity;
+    destruct (Nat.eqb l l0); first [ reflexivity | exact IH ].
 Qed.
 
 Lemma erase_fs_replace : forall l v fs,
   erase_fields (fs_replace l v fs) = fs_replace l (erase v) (erase_fields fs).
 Proof.
-  induction fs; cbn [erase_fields fs_replace]; [ reflexivity | ].
-  destruct (Nat.eqb l l0); cbn [erase_fields]; [ reflexivity | rewrite IHfs; reflexivity ].
+  induction fs as [|l0 e fs IH|l0 e fs IH]; cbn [erase_fields fs_replace]; try reflexivity;
+    destruct (Nat.eqb l l0); cbn [erase_fields]; try reflexivity; rewrite IH; reflexivity.
 Qed.
 
 Lemma erase_fs_drop : forall l fs,
   erase_fields (fs_drop l fs) = fs_drop l (erase_fields fs).
 Proof.
-  induction fs; cbn [erase_fields fs_drop]; [ reflexivity | ].
-  destruct (Nat.eqb l l0); cbn [erase_fields]; [ reflexivity | rewrite IHfs; reflexivity ].
+  induction fs as [|l0 e fs IH|l0 e fs IH]; cbn [erase_fields fs_drop]; try reflexivity;
+    destruct (Nat.eqb l l0); cbn [erase_fields]; try reflexivity; rewrite IH; reflexivity.
 Qed.
 
 Lemma erase_fs_set : forall l v fs,
@@ -128,6 +129,13 @@ Proof.
   destruct (lookup_first l fs); cbn [option_map].
   - apply erase_fs_replace.
   - reflexivity.
+Qed.
+
+Lemma erase_fs_plain : forall fs,
+  erase_fields (fs_plain fs) = fs_plain (erase_fields fs).
+Proof.
+  induction fs as [|l e fs IH|l e fs IH]; cbn [erase_fields fs_plain]; try reflexivity;
+    rewrite IH; reflexivity.
 Qed.
 
 Lemma erase_arms_find : forall tg ars,
@@ -216,16 +224,17 @@ Proof.
       [ left; rewrite E; reflexivity | right; apply st_bin2; [ auto | exact S ] ].
   - (* bin *) right. destruct (erase_bin_step _ _ _ _ b) as [E1 [E2 E3]].
     rewrite E1, E2, E3. apply st_bin; auto.
-  - (* binrec *) right. apply st_binrec; auto. apply erase_rec_zip. exact r1.
+  - (* binrec *) right. apply st_binrec; auto.
+    rewrite <- !erase_fs_plain. apply erase_rec_zip. exact r1.
   - (* tofloat1 *) destruct H as [E | S]; [ left; rewrite E; reflexivity | right; apply st_tofloat1; exact S ].
   - (* tofloat *) right. apply st_tofloat.
   - (* tofloat dec *) right. apply st_tofloat_dec.
   - (* spread1 *) destruct H as [E | S]; [ left; rewrite E; reflexivity | right; apply st_spread1; exact S ].
   - (* spread2 *) destruct H as [E | S];
       [ left; rewrite E; reflexivity | right; apply st_spread2; [ auto | exact S ] ].
-  - (* spread *) right. rewrite erase_fs_set. apply st_spread; auto.
+  - (* spread *) right. rewrite erase_fs_plain, erase_fs_set. apply st_spread; auto.
   - (* restrict1 *) destruct H as [E | S]; [ left; rewrite E; reflexivity | right; apply st_restrict1; exact S ].
-  - (* restrict *) right. rewrite erase_fs_drop. apply st_restrict; auto.
+  - (* restrict *) right. rewrite erase_fs_plain, erase_fs_drop. apply st_restrict; auto.
   - (* fold1 *) exact H.
   - (* unfold1 *) exact H.
   - (* unfold_fold *) left. reflexivity.
@@ -239,6 +248,9 @@ Proof.
   - (* stf_here *) destruct H as [E | S]; [ left; rewrite E; reflexivity | right; apply stf_here; exact S ].
   - (* stf_cons *) destruct H as [E | S];
       [ left; rewrite E; reflexivity | right; apply stf_cons; [ auto | exact S ] ].
+  - (* stf_meth_here *) destruct H as [E | S]; [ left; rewrite E; reflexivity | right; apply stf_meth_here; exact S ].
+  - (* stf_meth_cons *) destruct H as [E | S];
+      [ left; rewrite E; reflexivity | right; apply stf_meth_cons; [ auto | exact S ] ].
 Qed.
 
 Theorem erase_step : forall e e', step e e' ->
@@ -275,38 +287,7 @@ Proof. apply erase_traps_mut. Qed.
 
 (* ---- the bounded-unrolling equality, T ~~[n] T' ---- *)
 
-(* [unroll_eq n T T'] holds when T and T' are equal after at most [n]
-   unrollings of a mu on either side, at any depth of the types.  Equality
-   up to [teq] is free, and budgets add along a chain of equalities.  A
-   reordering or a presence rewrite of rows is [req], which is free too.  There
-   is no mu/mu congruence rule: two unequal mus are compared by unrolling. *)
-Inductive unroll_eq : nat -> typ -> typ -> Prop :=
- | UE_teq : forall n T T', teq T T' -> unroll_eq n T T'
- | UE_trans : forall m n T1 T2 T3,
-     unroll_eq m T1 T2 -> unroll_eq n T2 T3 -> unroll_eq (m + n) T1 T3
- | UE_unfold : forall n B, unroll_eq (S n) (typ_Mu B) (open_typ 0 (typ_Mu B) B)
- | UE_fold : forall n B, unroll_eq (S n) (open_typ 0 (typ_Mu B) B) (typ_Mu B)
- | UE_arrow : forall n T1 T1' T2 T2',
-     unroll_eq n T1 T1' -> unroll_eq n T2 T2' ->
-     unroll_eq n (typ_Arrow T1 T2) (typ_Arrow T1' T2')
- | UE_record : forall n R R', unroll_row n R R' -> unroll_eq n (typ_Record R) (typ_Record R')
- | UE_grp : forall n w T T', unroll_eq n T T' -> unroll_eq n (typ_Grp w T) (typ_Grp w T')
-with unroll_row : nat -> row -> row -> Prop :=
- | UR_req : forall n R R', req R R' -> unroll_row n R R'
- | UR_trans : forall m n R1 R2 R3,
-     unroll_row m R1 R2 -> unroll_row n R2 R3 -> unroll_row (m + n) R1 R3
- | UR_ext : forall n l T T' R R',
-     unroll_eq n T T' -> unroll_row n R R' ->
-     unroll_row n (row_Ext l T R) (row_Ext l T' R')
- | UR_maybe : forall n l P P' T T' R R',
-     unroll_eq n P P' -> unroll_eq n T T' -> unroll_row n R R' ->
-     unroll_row n (row_Maybe l P T R) (row_Maybe l P' T' R').
-
-#[export] Hint Constructors unroll_eq unroll_row : core.
-
-Scheme unroll_eq_ind' := Induction for unroll_eq Sort Prop
-  with unroll_row_ind' := Induction for unroll_row Sort Prop.
-Combined Scheme unroll_mutind from unroll_eq_ind', unroll_row_ind'.
+(* [unroll_eq] is defined in GoatDefs.v, where T_Obj states the shared receiver with it. *)
 
 Lemma unroll_refl : forall n T, unroll_eq n T T.
 Proof. intros. apply UE_teq, teq_refl. Qed.
@@ -369,25 +350,7 @@ Proof.
     [ apply unroll_eq_unfold | apply UR_req, req_refl ].
 Qed.
 
-(* Substitution commutes with the relation: a type or row variable may be
-   replaced by a locally closed type without changing the budget. *)
-Lemma unroll_ap_mut : forall st sr, lc_sub st sr ->
-  (forall n T T', unroll_eq n T T' ->
-     unroll_eq n (ap_typ st sr T) (ap_typ st sr T')) /\
-  (forall n R R', unroll_row n R R' ->
-     unroll_row n (ap_row st sr R) (ap_row st sr R')).
-Proof.
-  intros st sr Hlc.
-  apply unroll_mutind; intros; cbn [ap_typ ap_row] in *; eauto.
-  - apply UE_teq. apply teq_ap. auto.
-  - rewrite (ap_open st sr B 0 (typ_Mu B) Hlc). cbn [ap_typ]. apply UE_unfold.
-  - rewrite (ap_open st sr B 0 (typ_Mu B) Hlc). cbn [ap_typ]. apply UE_fold.
-  - apply UR_req. apply (proj2 teq_ap_mut). auto.
-Qed.
-
-Theorem unroll_ap : forall st sr n T T', lc_sub st sr ->
-  unroll_eq n T T' -> unroll_eq n (ap_typ st sr T) (ap_typ st sr T').
-Proof. intros st sr n T T' Hlc H. exact (proj1 (unroll_ap_mut st sr Hlc) n T T' H). Qed.
+(* [unroll_ap] (substitution commutes with the relation) is in GoatSubst.v. *)
 
 (* ---- head coercions ---- *)
 

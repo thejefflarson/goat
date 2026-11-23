@@ -116,6 +116,11 @@ Proof.
     split.
     + rewrite occs_cons. occ_simp. rewrite IHe, IHm. cbn [List.map]. rewrite List.map_app. reflexivity.
     + rewrite occs_cons. occ_simp. rewrite IHe, IHm. cbn [List.map]. rewrite List.map_app. reflexivity.
+  - intros l e IHe rest IHrest P. destruct (IHrest P) as [IHf IHm].
+    cbn [field_trees more_field_trees lbls_fields]. unfold field_tree.
+    split.
+    + rewrite occs_cons. occ_simp. rewrite IHe, IHm. cbn [List.map]. rewrite List.map_app. reflexivity.
+    + rewrite occs_cons. occ_simp. rewrite IHe, IHm. cbn [List.map]. rewrite List.map_app. reflexivity.
   - intros; exact I.
   - intros; exact I.
   - intros; exact I.

@@ -57,7 +57,7 @@ Definition step_fn : exp :=
 Example ball_types : typing d_any nil ball P.
 Proof.
   unfold ball. apply T_Fold; [ apply P_is_closed | apply P_is_guarded | ].
-  change (typ_Mu P_body) with P. rewrite P_unrolls. apply T_Record. eapply FT_cons.
+  change (typ_Mu P_body) with P. rewrite P_unrolls. apply T_Record; [ | reflexivity ]. eapply FT_cons.
   - apply T_Abs with (L := {}). intros s Hs.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
     apply T_Var with (s := sch_mono P);
