@@ -69,8 +69,6 @@ use std::fmt::Write;
 use std::path::Path;
 use std::sync::Arc;
 
-/// The name lowering gives the local function every loop becomes.
-const LOOP_BINDING: &str = "loop";
 const GENERATED: usize = 4000;
 const GENERATED_TYPED: usize = 6000;
 const GENERATED_GROUPS: usize = 8000;
@@ -411,7 +409,6 @@ pub enum Feature {
     TagsAndMatch,
     LacksOnTail,
     Builtin,
-    Loop,
     OperatorOperand,
     EmptyRest,
     UnwritableType,
@@ -437,7 +434,6 @@ impl Feature {
                 "outside the calculus: a spread onto a row variable that lacks the label"
             }
             Feature::Builtin => "outside the calculus: print or trap",
-            Feature::Loop => "outside the calculus: a loop (repeat, for)",
             Feature::OperatorOperand => {
                 "outside the calculus: arithmetic on non-primitive operands"
             }
@@ -477,11 +473,6 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
         ExprKind::Func { params, .. } if params.is_empty() => note(Feature::NoParameters),
         ExprKind::Tag { .. } | ExprKind::Match { .. } => note(Feature::TagsAndMatch),
         ExprKind::Builtin(_) | ExprKind::Trap(_) => note(Feature::Builtin),
-        ExprKind::Let { name, value, .. }
-            if name == LOOP_BINDING && matches!(value.kind, ExprKind::Func { .. }) =>
-        {
-            note(Feature::Loop)
-        }
         ExprKind::Bin {
             op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::FloorDiv | BinOp::Mod,
             lhs,

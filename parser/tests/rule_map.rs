@@ -89,13 +89,19 @@ const RULES: &[(&str, Class)] = &[
     ("pattern", Core("e_match")),
     ("labels", Core("e_match")),
     ("literal_pattern", Core("e_bin")),
-    ("repeat_loop", Outside),
-    ("count_loop", Outside),
-    ("each_loop", Outside),
-    ("for_kw", Outside),
-    ("from_kw", Outside),
-    ("to_kw", Outside),
-    ("in_kw", Outside),
+    (
+        "repeat_loop",
+        Core("e_let|e_letrec|e_abs|e_app|e_ite|e_bin"),
+    ),
+    ("count_loop", Core("e_let|e_letrec|e_abs|e_app|e_ite|e_bin")),
+    (
+        "each_loop",
+        Core("e_let|e_letrec|e_abs|e_app|e_match|e_proj"),
+    ),
+    ("for_kw", Core("e_letrec")),
+    ("from_kw", Core("e_letrec")),
+    ("to_kw", Core("e_letrec")),
+    ("in_kw", Core("e_letrec")),
 ];
 
 /// The names `proofs/goat_ln.ott` gives the productions of `exp` and `fields`
