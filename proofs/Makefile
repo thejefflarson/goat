@@ -6,7 +6,7 @@
 # `make check-admits` fail unless proofs/*.v holds exactly the tracked admits.
 # `make gen-grammar`  regenerate GoatGrammar.v from grammar/goat.peg.
 # `make check-grammar` fail if GoatGrammar.v is stale against grammar/goat.peg.
-# `make check-assumptions` fail unless T1, T2, T3, progress, preservation, soundness, the inference soundness theorem, infer_mu_free, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse and erase_converse_multistep are closed.
+# `make check-assumptions` fail unless T1, T2, T3, progress, preservation, soundness, the inference soundness theorem, infer_mu_free, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls and unify_k_sound are closed.
 # `make differential` extract the proven inference algorithm and compare it with the Rust checker.
 # `make ci`           check Ott and grammar sync + admit count, compile, check assumptions, differential.
 # `make clean`        remove generated build artifacts.
@@ -69,11 +69,11 @@ check-grammar: ../grammar/goat.peg
 check-assumptions: coq
 	@out=$$(rocq compile -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
 	n=$$(echo "$$out" | grep -c '^Closed under the global context'); \
-	if [ "$$n" != "15" ]; then \
-	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation, soundness, infer_closed_sound, infer_mu_free, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse and erase_converse_multistep closed under the global context:"; \
+	if [ "$$n" != "17" ]; then \
+	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation, soundness, infer_closed_sound, infer_mu_free, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls and unify_k_sound closed under the global context:"; \
 	  echo "$$out"; exit 1; \
 	fi; \
-	echo "check-assumptions: T1, T2, T3, progress, preservation, soundness, infer_closed_sound, infer_mu_free, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse and erase_converse_multistep are closed -- ok."
+	echo "check-assumptions: T1, T2, T3, progress, preservation, soundness, infer_closed_sound, infer_mu_free, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls and unify_k_sound are closed -- ok."
 
 # Frozen-admit guard: fail if the `Admitted.` count in the sources drifts from
 # EXPECTED_ADMITS, so a green proof build never hides an open lemma.
