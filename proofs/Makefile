@@ -6,8 +6,8 @@
 # `make check-admits` fail unless proofs/*.v holds exactly the tracked admits.
 # `make gen-grammar`  regenerate GoatGrammar.v from grammar/goat.peg.
 # `make check-grammar` fail if GoatGrammar.v is stale against grammar/goat.peg.
-# `make check-assumptions` fail unless T1, T2, T3, progress, preservation, soundness, the inference soundness theorem, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound and infer_guarded are closed.
-# `make differential` extract the proven inference algorithm and compare it with the Rust checker.
+# `make check-assumptions` fail unless T1, T2, T3, progress, preservation, soundness, the inference soundness theorem, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total, cmp_unerase and the lexer theorems are closed (T1 over text rests on the two Unicode parameters alone).
+# `make differential` extract the proven inference algorithm and the lexer, and compare them with the Rust checker and lexer.
 # `make ci`           check Ott and grammar sync + admit count, compile, check assumptions, differential.
 # `make clean`        remove generated build artifacts.
 #
@@ -24,6 +24,7 @@ EMIT      = cargo run -q --manifest-path ../Cargo.toml -p goat_parser --example 
 OTT_FLAGS = -coq_lngen true -coq_expand_list_types true
 DIFF_DIR  = _differential
 CORPUS    = cargo run -q --manifest-path ../Cargo.toml -p goat_checker --example core_corpus
+LEXDUMP   = cargo run -q --manifest-path ../Cargo.toml -p goat_parser --example lex_dump
 
 .PHONY: all gen coq ci check-gen check-grammar gen-grammar check-assumptions check-admits differential clean
 
@@ -64,15 +65,22 @@ check-grammar: ../grammar/goat.peg
 	@rm -f GoatGrammar.gen.v
 	@echo "$(GRAMMAR) is in sync with grammar/goat.peg."
 
-# Every theorem GoatAssumptions.v lists must rest on no axiom and no admit.
+# Every theorem GoatAssumptions.v lists must rest on no axiom and no admit,
+# except the lexer's T1 at the Unicode tables (parse_text_denotes_xid), which
+# rests on exactly the two declared parameters xid_start_hi and xid_cont_hi.
 check-assumptions: coq
 	@out=$$(rocq compile -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
 	n=$$(echo "$$out" | grep -c '^Closed under the global context'); \
-	if [ "$$n" != "21" ]; then \
-	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total and cmp_unerase closed under the global context:"; \
+	if [ "$$n" != "27" ]; then \
+	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total, cmp_unerase, lex_concat, step_longest, word_boundary, parse_text_denotes, edits_preserve_tokens and edits_preserve_parse closed under the global context:"; \
 	  echo "$$out"; exit 1; \
 	fi; \
-	echo "check-assumptions: T1, T2, T3, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total and cmp_unerase are closed -- ok."
+	axioms=$$(echo "$$out" | sed -n '/^Axioms:/,$$p' | grep -v '^Axioms:' | sed 's/ :.*//' | sort | tr '\n' ' '); \
+	if [ "$$axioms" != "xid_cont_hi xid_start_hi " ]; then \
+	  echo "ERROR: parse_text_denotes_xid must rest on exactly xid_start_hi and xid_cont_hi, found: $$axioms"; \
+	  echo "$$out"; exit 1; \
+	fi; \
+	echo "check-assumptions: T1, T2, T3, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total, cmp_unerase, lex_concat, step_longest, word_boundary, parse_text_denotes, edits_preserve_tokens and edits_preserve_parse are closed, and the lexer's T1 at the Unicode tables rests on xid_start_hi and xid_cont_hi alone -- ok."
 
 # Frozen-admit guard: fail if the `Admitted.` count in the sources drifts from
 # EXPECTED_ADMITS, so a green proof build never hides an open lemma.
@@ -95,6 +103,11 @@ differential: coq
 	cd $(DIFF_DIR) && ocamlfind ocamlopt -w -a -package unix -linkpkg goat_infer.mli goat_infer.ml driver.ml -o driver
 	$(CORPUS) > $(DIFF_DIR)/corpus.tsv
 	$(DIFF_DIR)/driver $(DIFF_DIR)/corpus.tsv
+	cd $(DIFF_DIR) && rocq compile -R .. Goat ../GoatLexExtract.v
+	cp ../differential/lex_driver.ml $(DIFF_DIR)/
+	cd $(DIFF_DIR) && ocamlfind ocamlopt -w -a goat_lex.mli goat_lex.ml lex_driver.ml -o lex_driver
+	$(CORPUS) -- --sources | $(LEXDUMP) > $(DIFF_DIR)/lex.tsv
+	$(DIFF_DIR)/lex_driver $(DIFF_DIR)/lex.tsv
 
 ci: check-gen check-grammar check-admits coq check-assumptions differential
 

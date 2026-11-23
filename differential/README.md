@@ -17,6 +17,30 @@ ADR 0037 (decision 6) ties the inference algorithm proved in `proofs/` to
 Run it with `make -C proofs differential` (it is part of `make -C proofs ci`
 and of the `coq` workflow).
 
+## The lexer
+
+`proofs/GoatLexExtract.v` extracts the Coq lexer `lex` (`proofs/GoatLex.v`) to
+OCaml, and `lex_driver.ml` compares it with `parser::lexer::lex` token for token,
+kind and span, with spans counted in code points (the model reads a list of
+Unicode code points; the Rust lexer reads UTF-8). `parser/examples/lex_dump.rs`
+writes what the Rust lexer says:
+
+- the Unicode identifier tables, from `unicode_ident`, as ranges of the code
+  points of 128 and up (`X` lines). The Coq development declares the two
+  predicates and does not copy the tables, so this is where they are checked: the
+  driver gives `lex` these tables, and first checks that the model's own ASCII
+  answers are the same as the tables';
+- one line per source (`L` lines): every `.goat` file of the repo, every program
+  `core_corpus --sources` collects (the examples, the code blocks of `docs/llm.md`,
+  every string literal of the checker and parser sources, and the four generators
+  at three seeds, whether or not the program is in the fragment), and a
+  fixed-seed fuzz of lexer fragments (unterminated strings, `1e+`, `start at`,
+  names of 255 characters, non-ASCII identifiers, code points no token takes).
+
+Any disagreement prints the source and both token lists and fails the run. It
+reads the grammar's ordered classes and the model's longest-match choice as the
+same lexer; if they ever differ, this is where it shows.
+
 ## The nightly fuzz
 
 `fuzz/tests/w.rs` (the bolero target `differential_checker_vs_w`, in

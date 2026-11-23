@@ -51,6 +51,10 @@
 //! gives the methods of one literal a single receiver (`T_Obj`).
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
+//!
+//! With `--sources` it writes every source it collected, whether or not it is
+//! in the fragment, one per line as decimal code points: the programs the
+//! lexer's differential test reads (`parser/examples/lex_dump.rs`).
 
 use goat_checker::captures::for_each_node;
 use goat_checker::check_with_prelude;
@@ -1939,6 +1943,14 @@ fn main() {
         for _ in 0..GENERATED_SPREADS {
             sources.push(spread_gen.program());
         }
+    }
+
+    if std::env::args().any(|arg| arg == "--sources") {
+        for source in &sources {
+            let code_points: Vec<String> = source.chars().map(|c| (c as u32).to_string()).collect();
+            println!("{}", code_points.join(" "));
+        }
+        return;
     }
 
     let mut seen = HashSet::new();
