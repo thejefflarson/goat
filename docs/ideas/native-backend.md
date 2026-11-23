@@ -226,10 +226,42 @@ and `f32` keep this to soft-float helpers libgcc has, plus `fmodf`.
 - **Deep non-tail recursion** traps at different depths under wasmtime and native
   desktop. Those cases are tagged resource-bound; the embedded profile stays
   exact.
-- **The speed gain is unmeasured.** Today's time goes to the record lifecycle and
-  host calls, not arithmetic. M1 times the particles benchmark.
+- **The speed gain** was unmeasured here; see "Results: the particles
+  benchmark" below.
 - **Packaging.** The CLI finds `libgoat_native.a` next to its own executable or
   through `GOAT_NATIVE_LIB`. A missing clang gets an actionable message.
+
+## Results: the particles benchmark
+
+Measured for issue 589 with the method of
+[the record-arithmetic study](../design/record-arithmetic-performance.md): the
+1,000, 10,000 and 100,000 particle programs (`examples/bench/particles.goat` and
+`particles_flat.goat`), median of 300 frames after 30 warm-up frames, Apple M1
+Pro, Apple clang 21.0.0 at `-O2`, against wasmtime 50.0.2 and V8 14.6 (node
+v26.13.1) in the same session. Machine load was 7 to 11 (1-minute average, 10
+cores) after being 28 to 45 earlier; two runs agree within 5%. The harness is
+`goat/examples/record_arith_bench.rs --native`, outside CI.
+
+Update + draw, microseconds per frame (1,000 particles, nested records):
+
+| | wasmtime | V8 | native -O2 |
+|---|---|---|---|
+| update | 79.5 | 40.7 | 25.8 |
+| draw | 129.5 | 166.8 | 82.9 |
+
+- Update is 3.1x to 3.6x faster than wasmtime and 1.6x to 2.0x faster than V8
+  across 1,000 to 100,000 particles and both layouts. Draw is 1.5x to 1.6x
+  faster than wasmtime and about 2x faster than V8; most of it is the host
+  decoding the frame, which the backend does not change.
+- Allocations per frame match: 4,002 in `update` for the nested program (the
+  figure the wasm module had after the reuse and static-cell work) and 3,002 for
+  the flat one; `draw` makes 4 per shape plus the batching buffer's doublings.
+  Both engines end with zero live blocks.
+- Compile time for the nested program: 11-15 ms goat to `.ll` (583 KB), 0.69 s
+  for `clang -O2`, against 14 ms goat to wasm. Native pays for its speed with a
+  second-scale build, which is why live coding stays on wasm.
+
+The full table, the allocation counts and the reading are in the study.
 
 ## Milestones
 
