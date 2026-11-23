@@ -70,8 +70,9 @@ does and leaves the rest out as a counted reader skip.
 
 **Known gaps.** The algorithm is not yet complete, so the target excuses a
 `w-refuses` reply for the classes in `GAPS` (`fuzz/tests/w.rs`), each tied to what
-removes it: #623 (stage 7.3), #564 (stage 7.2), `sat_b` answering `Any` only for
-`mu` and tag groups (stage 7.4). A stage that lands deletes its row, and the
+removes it: #564 (stage 7.2), `sat_b` answering `Any` only for
+`mu` and tag groups (stage 7.4). #623 (a sort reaching the variables inside a
+type) is closed: its five programs are in `HANDWRITTEN` and compare. A stage that lands deletes its row, and the
 target then fails on the class. A type that differs, or a program the algorithm
 accepts and the checker rejects, is never excused. Recursive-type programs the
 algorithm refuses (#606 and the row knot, stage 7.11) are driver skips, and

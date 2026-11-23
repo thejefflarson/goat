@@ -140,8 +140,92 @@ Proof.
   rewrite Heq in Hs. exact Hs.
 Qed.
 
+(* A step from environment [D] with supply [n] to [D'] with supply [n'],
+   applying [s]: [D] is [Any] beyond [n], [s] is a substitution of the
+   algorithm, the supply only grows, [D'] refines [D], and [s] respects the
+   sorts. *)
+Definition Good (D : denv) (n : nat) (s : sub) (D' : denv) (n' : nat) : Prop :=
+  DOk D n /\ OkS s /\ DOk D' n' /\ n <= n' /\ kres D D' idt /\ kres D D' (sT s).
+
+Lemma Good_id : forall D n, DOk D n -> Good D n sid D n.
+Proof.
+  intros D n H.
+  exact (conj H (conj OkS_id (conj H (conj (le_n n) (conj (kres_id D) (kres_id D)))))).
+Qed.
+
+Lemma Good_comp : forall D n s1 D1 n1 s2 D2 n2,
+  Good D n s1 D1 n1 -> Good D1 n1 s2 D2 n2 -> Good D n (scomp s2 s1) D2 n2.
+Proof.
+  intros D n s1 D1 n1 s2 D2 n2 (Hd & Hs1 & Hd1 & Hl1 & Hi1 & Hk1) (_ & Hs2 & Hd2 & Hl2 & Hi2 & Hk2).
+  exact (conj Hd (conj (OkS_comp _ _ Hs2 Hs1) (conj Hd2 (conj (Nat.le_trans _ _ _ Hl1 Hl2)
+    (conj (kres_idt_trans _ _ _ (DOk_rtriv _ _ Hd1) Hi1 Hi2)
+          (kres_scomp _ _ _ _ _ (DOk_rtriv _ _ Hd1) Hk1 Hk2)))))).
+Qed.
+
+Lemma Good_unify : forall D n s n',
+  OkS s -> kres D D (sT s) -> n <= n' -> DOk D n -> Good D n s D n'.
+Proof.
+  intros D n s n' Hs Hk Hl Hd.
+  exact (conj Hd (conj Hs (conj (DOk_mono D n n' Hd Hl) (conj Hl (conj (kres_id D) Hk))))).
+Qed.
+
+Lemma Good_lift : forall D n D' n' s D'' n'',
+  Good D n sid D' n' -> Good D' n' s D'' n'' -> Good D n s D'' n''.
+Proof.
+  intros D n D' n' s D'' n'' (Hd & _ & Hd1 & Hl1 & Hi1 & _) (_ & Hs & Hd2 & Hl2 & Hi2 & Hk2).
+  exact (conj Hd (conj Hs (conj Hd2 (conj (Nat.le_trans _ _ _ Hl1 Hl2)
+    (conj (kres_idt_trans _ _ _ (DOk_rtriv _ _ Hd1) Hi1 Hi2) (kres_refine_l _ _ _ _ Hi1 Hk2)))))).
+Qed.
+
+Lemma Good_upd : forall D n k, DOk D n -> Good D n sid (upd D (ea n) k) (S n).
+Proof.
+  intros D n k H.
+  exact (conj H (conj OkS_id (conj (DOk_upd D n k H) (conj (le_S _ _ (le_n n))
+    (conj (kres_upd D n k H) (kres_upd D n k H)))))).
+Qed.
+
+Lemma Good_pre : forall D n m s D' n',
+  n <= m -> DOk D n -> Good D m s D' n' -> Good D n s D' n'.
+Proof.
+  intros D n m s D' n' Hnm Hd (_ & Hs & Hd' & Hl & Hi & Hk).
+  exact (conj Hd (conj Hs (conj Hd' (conj (Nat.le_trans _ _ _ Hnm Hl) (conj Hi Hk))))).
+Qed.
+
+Lemma Good_kres : forall D n s D' n', Good D n s D' n' -> kres D D' (sT s).
+Proof. intros D n s D' n' (_ & _ & _ & _ & _ & H). exact H. Qed.
+
+Lemma Good_dok : forall D n s D' n', Good D n s D' n' -> DOk D' n'.
+Proof. intros D n s D' n' (_ & _ & H & _). exact H. Qed.
+
+(* What a unifier promises of its supply and environments: the supply grows,
+   and from a well-kept environment the step is [Good].  The unifiers' own
+   statements about types need no environment, so the second half is an
+   implication. *)
+Definition GoodU (D : denv) (n : nat) (s : sub) (D' : denv) (n' : nat) : Prop :=
+  n <= n' /\ (DOk D n -> Good D n s D' n').
+
+Lemma GoodU_pre : forall D n m s D' n', DOk D n -> GoodU D m s D' n' -> n <= m -> Good D n s D' n'.
+Proof.
+  intros D n m s D' n' Hd [_ H] Hnm.
+  exact (Good_pre D n m s D' n' Hnm Hd (H (DOk_mono D n m Hd Hnm))).
+Qed.
+
+Lemma GoodU_id :forall D n, GoodU D n sid D n.
+Proof. intros D n. split; [ lia | exact (Good_id D n) ]. Qed.
+
+Lemma GoodU_same : forall D n s n', OkS s -> kres D D (sT s) -> n <= n' -> GoodU D n s D n'.
+Proof. intros D n s n' Hs Hk Hl. split; [ exact Hl | intros Hd; exact (Good_unify D n s n' Hs Hk Hl Hd) ]. Qed.
+
+Lemma GoodU_comp : forall D n s1 D1 n1 s2 D2 n2,
+  GoodU D n s1 D1 n1 -> GoodU D1 n1 s2 D2 n2 -> GoodU D n (scomp s2 s1) D2 n2.
+Proof.
+  intros D n s1 D1 n1 s2 D2 n2 [Hl1 H1] [Hl2 H2]. split; [ lia | ].
+  intros Hd. pose proof (H1 Hd) as G1.
+  exact (Good_comp _ _ _ _ _ _ _ _ G1 (H2 (proj1 (proj2 (proj2 G1))))).
+Qed.
+
 (* ------------------------------------------------------------------ *)
-(* Extension of the environment on a set of atoms                       *)
+(* Extension of the environment on a set of atoms                      *)
 (* ------------------------------------------------------------------ *)
 
 Lemma ext_in : forall D V k a, a `in` V -> ext D V k a = k a.

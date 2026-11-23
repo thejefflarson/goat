@@ -1830,6 +1830,11 @@ const HANDWRITTEN: &[&str] = &[
     "f = program(x) do x == x % x done\nf(90)",
     "set_x = program(r) do {...r, x: 1} done\n{a: set_x({x: 4, z: 2}), b: set_x({y: true})}",
     "f = program(p) do\n  {x, ...r} = p\n  r\ndone\nf({x: 1, y: true})",
+    "same = program(a, b) do a == b done\nf = program(x) do same({p: x}, {p: x}) done\nf(1)",
+    "same = program(a, b) do a == b done\nf = program(x) do same({p: x}, {p: x}) done\n{a: f(1), b: f(\"s\")}",
+    "same = program(a, b) do a == b done\nf = program(x) do same({p: x, q: x}, {p: x, q: x}) done\nf(1)",
+    "add = program(a, b) do a + b done\nf = program(x) do add({p: x}, {p: x}) done\nf(1)",
+    "f = program(x) do {p: x} == {p: x} done\nf(1)",
 ];
 
 /// One program from generator `kind` (taken modulo the four), every choice

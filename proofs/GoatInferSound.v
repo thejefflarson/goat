@@ -158,57 +158,6 @@ Qed.
 (* What each step of the algorithm preserves                            *)
 (* ------------------------------------------------------------------ *)
 
-(* A step from environment [D] with supply [n] to [D'] with supply [n'],
-   applying [s]: [D] is [Any] beyond [n], [s] is a substitution of the
-   algorithm, the supply only grows, [D'] refines [D], and [s] respects the
-   sorts. *)
-Definition Good (D : denv) (n : nat) (s : sub) (D' : denv) (n' : nat) : Prop :=
-  DOk D n /\ OkS s /\ DOk D' n' /\ n <= n' /\ kres D D' idt /\ kres D D' (sT s).
-
-Lemma Good_id : forall D n, DOk D n -> Good D n sid D n.
-Proof.
-  intros D n H.
-  exact (conj H (conj OkS_id (conj H (conj (le_n n) (conj (kres_id D) (kres_id D)))))).
-Qed.
-
-Lemma Good_comp : forall D n s1 D1 n1 s2 D2 n2,
-  Good D n s1 D1 n1 -> Good D1 n1 s2 D2 n2 -> Good D n (scomp s2 s1) D2 n2.
-Proof.
-  intros D n s1 D1 n1 s2 D2 n2 (Hd & Hs1 & Hd1 & Hl1 & Hi1 & Hk1) (_ & Hs2 & Hd2 & Hl2 & Hi2 & Hk2).
-  exact (conj Hd (conj (OkS_comp _ _ Hs2 Hs1) (conj Hd2 (conj (Nat.le_trans _ _ _ Hl1 Hl2)
-    (conj (kres_idt_trans _ _ _ (DOk_rtriv _ _ Hd1) Hi1 Hi2)
-          (kres_scomp _ _ _ _ _ (DOk_rtriv _ _ Hd1) Hk1 Hk2)))))).
-Qed.
-
-Lemma Good_unify : forall D n s n',
-  OkS s -> kres D D (sT s) -> n <= n' -> DOk D n -> Good D n s D n'.
-Proof.
-  intros D n s n' Hs Hk Hl Hd.
-  exact (conj Hd (conj Hs (conj (DOk_mono D n n' Hd Hl) (conj Hl (conj (kres_id D) Hk))))).
-Qed.
-
-Lemma Good_lift : forall D n D' n' s D'' n'',
-  Good D n sid D' n' -> Good D' n' s D'' n'' -> Good D n s D'' n''.
-Proof.
-  intros D n D' n' s D'' n'' (Hd & _ & Hd1 & Hl1 & Hi1 & _) (_ & Hs & Hd2 & Hl2 & Hi2 & Hk2).
-  exact (conj Hd (conj Hs (conj Hd2 (conj (Nat.le_trans _ _ _ Hl1 Hl2)
-    (conj (kres_idt_trans _ _ _ (DOk_rtriv _ _ Hd1) Hi1 Hi2) (kres_refine_l _ _ _ _ Hi1 Hk2)))))).
-Qed.
-
-Lemma Good_upd : forall D n k, DOk D n -> Good D n sid (upd D (ea n) k) (S n).
-Proof.
-  intros D n k H.
-  exact (conj H (conj OkS_id (conj (DOk_upd D n k H) (conj (le_S _ _ (le_n n))
-    (conj (kres_upd D n k H) (kres_upd D n k H)))))).
-Qed.
-
-Lemma Good_pre : forall D n m s D' n',
-  n <= m -> DOk D n -> Good D m s D' n' -> Good D n s D' n'.
-Proof.
-  intros D n m s D' n' Hnm Hd (_ & Hs & Hd' & Hl & Hi & Hk).
-  exact (conj Hd (conj Hs (conj Hd' (conj (Nat.le_trans _ _ _ Hnm Hl) (conj Hi Hk))))).
-Qed.
-
 (* The environment of a step of the algorithm has no constrained row variable:
    a hypothesis that it is well kept ([DOk]) or the source or target of a good
    step says so. *)
@@ -551,15 +500,15 @@ Proof.
     eapply IHmeth_rel; eauto.
 Qed.
 
-Lemma tie_obj_sound : forall f D fs R Rsl n s n' fs2,
-  tie_obj f D fs R Rsl n = Some (s, n', fs2) ->
+Lemma tie_obj_sound : forall f fs D R Rsl n s D' n' fs2,
+  tie_obj f D fs R Rsl n = Some (s, D', n', fs2) ->
   forall G, WfCtx G -> DOk D n -> EvR R -> EvR Rsl -> field_typing D G fs R -> lcef 0 fs ->
-  Good D n s D n' /\ field_typing D (apC s G) fs2 (apR s Rsl) /\
+  Good D n s D' n' /\ field_typing D' (apC s G) fs2 (apR s Rsl) /\
   erase_fields fs2 = erase_fields fs /\ lcef 0 fs2 /\ marks fs2 = marks fs /\
   meth_rel fs (apR s R) (apR s Rsl).
 Proof.
-  intros f D fs. induction fs as [|l e rest IH|l e rest IH];
-    intros R Rsl n s n' fs2 H G HG HD HR HRsl Hft Hlc;
+  intros f fs. induction fs as [|l e rest IH|l e rest IH];
+    intros D R Rsl n s D' n' fs2 H G HG HD HR HRsl Hft Hlc;
     destruct R as [|r|l1 T R'|l1 P0 T0 R'], Rsl as [|r2|l2 A Rsl'|l2 P2 T2 R2'];
     simpl in H; try discriminate H.
   - inversion H; subst; clear H.
@@ -569,17 +518,17 @@ Proof.
   - destruct (Nat.eqb l l1 && Nat.eqb l l2) eqn:Hl; [ | discriminate H ].
     apply Bool.andb_true_iff in Hl. destruct Hl as [Hl1 Hl2].
     apply Nat.eqb_eq in Hl1. apply Nat.eqb_eq in Hl2. subst l1 l2.
-    destruct (unify_co f D T A n) as [[[s1 cs] n1]|] eqn:E1; [ | discriminate H ].
-    destruct (tie_obj f D rest (apR s1 R') (apR s1 Rsl') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
+    destruct (unify_co f D T A n) as [[[[s1 D1] cs] n1]|] eqn:E1; [ | discriminate H ].
+    destruct (tie_obj f D1 rest (apR s1 R') (apR s1 Rsl') n1) as [[[[s2 D2] n2] rest']|] eqn:E2; [ | discriminate H ].
     inversion H; subst; clear H.
     inversion Hft as [ | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 ]; subst.
     destruct (EvR_ext_inv _ _ _ HR) as [HT HR'].
     destruct (EvR_ext_inv _ _ _ HRsl) as [HA HRsl'].
-    destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E1 HT HA) as (Hs1 & Hch & Hk1 & Hl1).
-    pose proof (Good_unify D n s1 n1 Hs1 Hk1 Hl1 HD) as Gd1.
+    destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E1 HT HA) as (Hs1 & Hch & Hgu1).
+    pose proof ((proj2 Hgu1) HD) as Gd1.
     pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-    pose proof (DOk_mono D n n1 HD Hl1) as HD1.
-    destruct (IH _ _ _ _ _ _ E2 (apC s1 G) HG1 HD1 (EvR_ap _ _ Hs1 HR') (EvR_ap _ _ Hs1 HRsl')
+    pose proof (proj1 (proj2 (proj2 Gd1))) as HD1.
+    destruct (IH _ _ _ _ _ _ _ _ E2 (apC s1 G) HG1 HD1 (EvR_ap _ _ Hs1 HR') (EvR_ap _ _ Hs1 HRsl')
                 (fields_ap_G _ _ _ _ _ _ _ _ Gd1 HG Hrest0) (proj2 Hlc))
       as (Gd2 & Hty2 & Her2 & Hlc2 & Hmk2 & Hmr2).
     pose proof Gd2 as (_ & Hs2 & _).
@@ -597,17 +546,17 @@ Proof.
   - destruct (Nat.eqb l l1 && Nat.eqb l l2) eqn:Hl; [ | discriminate H ].
     apply Bool.andb_true_iff in Hl. destruct Hl as [Hl1 Hl2].
     apply Nat.eqb_eq in Hl1. apply Nat.eqb_eq in Hl2. subst l1 l2.
-    destruct (unify_co f D T A n) as [[[s1 cs] n1]|] eqn:E1; [ | discriminate H ].
-    destruct (tie_obj f D rest (apR s1 R') (apR s1 Rsl') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
+    destruct (unify_co f D T A n) as [[[[s1 D1] cs] n1]|] eqn:E1; [ | discriminate H ].
+    destruct (tie_obj f D1 rest (apR s1 R') (apR s1 Rsl') n1) as [[[[s2 D2] n2] rest']|] eqn:E2; [ | discriminate H ].
     inversion H; subst; clear H.
     inversion Hft as [ | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 ]; subst.
     destruct (EvR_ext_inv _ _ _ HR) as [HT HR'].
     destruct (EvR_ext_inv _ _ _ HRsl) as [HA HRsl'].
-    destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E1 HT HA) as (Hs1 & Hch & Hk1 & Hl1).
-    pose proof (Good_unify D n s1 n1 Hs1 Hk1 Hl1 HD) as Gd1.
+    destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E1 HT HA) as (Hs1 & Hch & Hgu1).
+    pose proof ((proj2 Hgu1) HD) as Gd1.
     pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-    pose proof (DOk_mono D n n1 HD Hl1) as HD1.
-    destruct (IH _ _ _ _ _ _ E2 (apC s1 G) HG1 HD1 (EvR_ap _ _ Hs1 HR') (EvR_ap _ _ Hs1 HRsl')
+    pose proof (proj1 (proj2 (proj2 Gd1))) as HD1.
+    destruct (IH _ _ _ _ _ _ _ _ E2 (apC s1 G) HG1 HD1 (EvR_ap _ _ Hs1 HR') (EvR_ap _ _ Hs1 HRsl')
                 (fields_ap_G _ _ _ _ _ _ _ _ Gd1 HG Hrest0) (proj2 Hlc))
       as (Gd2 & Hty2 & Her2 & Hlc2 & Hmk2 & Hmr2).
     pose proof Gd2 as (_ & Hs2 & _).
@@ -685,33 +634,32 @@ Proof.
     apply mc_abs; [ apply teq_apT; exact Hx | apply chain_apT; assumption ].
 Qed.
 
-Lemma unify_mem_sound : forall f D e T A n s n' e', rtriv D ->
-  unify_mem f D e T A n = Some (s, n', e') -> EvT T -> EvT A ->
-  OkS s /\ mem_co e e' (apT s T) (apT s A) /\ kres D D (sT s) /\ n <= n' /\
+Lemma unify_mem_sound : forall f D e T A n s D' n' e',
+  unify_mem f D e T A n = Some (s, D', n', e') -> EvT T -> EvT A ->
+  OkS s /\ mem_co e e' (apT s T) (apT s A) /\ GoodU D n s D' n' /\
   erase e' = erase e /\ (lce 0 e -> lce 0 e') /\ (forall b, e = e_abs b -> exists b', e' = e_abs b').
 Proof.
-  intros f D e T A n s n' e' Hrt H HT HA. unfold unify_mem in H.
-  destruct (unify_t f D T A n) as [[s0 n0]|] eqn:Et.
+  intros f D e T A n s D' n' e' H HT HA. unfold unify_mem in H.
+  destruct (unify_t f D T A n) as [[[s0 D0] n0]|] eqn:Et.
   - inversion H; subst; clear H.
-    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ ltac:(solve_rtriv) Et HT HA) as (Hs & Ht & Hk & Hl).
-    refine (conj Hs (conj (mc_same _ _ _ Ht) (conj Hk (conj Hl (conj eq_refl (conj (fun h => h) _)))))).
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ _ Et HT HA) as (Hs & Ht & Hg).
+    refine (conj Hs (conj (mc_same _ _ _ Ht) (conj Hg (conj eq_refl (conj (fun h => h) _))))).
     intros b ->. eexists; reflexivity.
   - destruct e as [ | | | | | | b | | | | | | | | | | | | | | | | ]; try discriminate H.
     destruct T as [ | | | | | X Y | | | | | ]; try discriminate H.
     destruct A as [ | | | | | X' Y' | | | | | ]; try discriminate H.
-    destruct (unify_t f D X X' n) as [[s1 n1]|] eqn:E1; [ | discriminate H ].
-    destruct (unify_co f D (apT s1 Y) (apT s1 Y') n1) as [[[s2 cs] n2]|] eqn:E2; [ | discriminate H ].
+    destruct (unify_t f D X X' n) as [[[s1 D1] n1]|] eqn:E1; [ | discriminate H ].
+    destruct (unify_co f D1 (apT s1 Y) (apT s1 Y') n1) as [[[[s2 D2] cs] n2]|] eqn:E2; [ | discriminate H ].
     inversion H; subst; clear H.
     destruct (EvT_arrow_inv _ _ HT) as [HX HY]. destruct (EvT_arrow_inv _ _ HA) as [HX' HY'].
-    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ ltac:(solve_rtriv) E1 HX HX') as (Hs1 & Hx & Hk1 & Hl1).
-    destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 (EvT_ap _ _ Hs1 HY) (EvT_ap _ _ Hs1 HY'))
-      as (Hs2 & Hc & Hk2 & Hl2).
-    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (kres_scomp D D D s1 s2 ltac:(solve_rtriv) Hk1 Hk2) (conj _ (conj _ (conj _ _)))))).
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ _ E1 HX HX') as (Hs1 & Hx & Hg1).
+    destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E2 (EvT_ap _ _ Hs1 HY) (EvT_ap _ _ Hs1 HY'))
+      as (Hs2 & Hc & Hg2).
+    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (GoodU_comp _ _ _ _ _ _ _ _ Hg1 Hg2) (conj _ (conj _ _))))).
     + change (mem_co (e_abs b) (e_abs (coerce cs b))
                 (typ_Arrow (apT (scomp s2 s1) X) (apT (scomp s2 s1) Y))
                 (typ_Arrow (apT (scomp s2 s1) X') (apT (scomp s2 s1) Y'))).
       rewrite <- !apT_comp. apply mc_abs; [ apply teq_apT; exact Hx | exact Hc ].
-    + lia.
     + cbn [erase]. rewrite erase_coerce. reflexivity.
     + cbn [lce]. apply lce_coerce.
     + intros b0 Hb. eexists; reflexivity.
@@ -725,32 +673,31 @@ Proof.
   - rewrite !apR_Ext. constructor; [ apply mem_co_ap; assumption | assumption ].
 Qed.
 
-Lemma unify_grp_sound : forall f D fs R1 R2 n s n' fs2, rtriv D ->
-  unify_grp f D fs R1 R2 n = Some (s, n', fs2) -> EvR R1 -> EvR R2 ->
-  OkS s /\ pw_co fs (apR s R1) (apR s R2) fs2 /\ kres D D (sT s) /\ n <= n' /\
+Lemma unify_grp_sound : forall f D fs R1 R2 n s D' n' fs2,
+  unify_grp f D fs R1 R2 n = Some (s, D', n', fs2) -> EvR R1 -> EvR R2 ->
+  OkS s /\ pw_co fs (apR s R1) (apR s R2) fs2 /\ GoodU D n s D' n' /\
   erase_fields fs2 = erase_fields fs /\ (lcef 0 fs -> lcef 0 fs2) /\ (fn_group fs -> fn_group fs2).
 Proof.
-  induction f as [|f IH]; intros D fs R1 R2 n s n' fs2 Hrt H H1 H2; [ discriminate | ].
+  induction f as [|f IH]; intros D fs R1 R2 n s D' n' fs2 H H1 H2; [ discriminate | ].
   cbn [unify_grp] in H.
   destruct fs as [|l e rest|l e rest]; destruct R1 as [|r|l1 T R1'|lm Pm Tm Rm];
     destruct R2 as [|r2|l2 A R2'|lm2 Pm2 Tm2 Rm2]; try discriminate H.
   - inversion H; subst; clear H.
-    refine (conj OkS_id (conj _ (conj (kres_id D) (conj (le_n _) (conj eq_refl (conj (fun h => h) (fun h => h))))))).
+    refine (conj OkS_id (conj _ (conj (GoodU_id _ _) (conj eq_refl (conj (fun h => h) (fun h => h)))))).
     rewrite apR_id. constructor.
   - destruct (Nat.eqb l l1 && Nat.eqb l l2) eqn:Hl; [ | discriminate H ].
     apply Bool.andb_true_iff in Hl. destruct Hl as [Hl1 Hl2].
     apply Nat.eqb_eq in Hl1. apply Nat.eqb_eq in Hl2. subst l1 l2.
-    destruct (unify_mem f D e T A n) as [[[s1 n1] e']|] eqn:E1; [ | discriminate H ].
-    destruct (unify_grp f D rest (apR s1 R1') (apR s1 R2') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
+    destruct (unify_mem f D e T A n) as [[[[s1 D1] n1] e']|] eqn:E1; [ | discriminate H ].
+    destruct (unify_grp f D1 rest (apR s1 R1') (apR s1 R2') n1) as [[[[s2 D2] n2] rest']|] eqn:E2; [ | discriminate H ].
     inversion H; subst; clear H.
     destruct (EvR_ext_inv _ _ _ H1) as [HT HR1]. destruct (EvR_ext_inv _ _ _ H2) as [HA HR2].
-    destruct (unify_mem_sound _ _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E1 HT HA) as (Hs1 & Hm & Hk1 & Hl1 & Her1 & Hlc1 & Hab1).
-    destruct (IH _ _ _ _ _ _ _ _ Hrt E2 (EvR_ap s1 _ Hs1 HR1) (EvR_ap s1 _ Hs1 HR2))
-      as (Hs2 & Hp & Hk2 & Hl2 & Her2 & Hlc2 & Hab2).
-    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (kres_scomp D D D s1 s2 ltac:(solve_rtriv) Hk1 Hk2) (conj _ (conj _ (conj _ _)))))).
+    destruct (unify_mem_sound _ _ _ _ _ _ _ _ _ _ E1 HT HA) as (Hs1 & Hm & Hg1 & Her1 & Hlc1 & Hab1).
+    destruct (IH _ _ _ _ _ _ _ _ _ E2 (EvR_ap s1 _ Hs1 HR1) (EvR_ap s1 _ Hs1 HR2))
+      as (Hs2 & Hp & Hg2 & Her2 & Hlc2 & Hab2).
+    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (GoodU_comp _ _ _ _ _ _ _ _ Hg1 Hg2) (conj _ (conj _ _))))).
     + rewrite !apR_Ext. rewrite <- !apT_comp, <- !apR_comp.
       constructor; [ apply mem_co_ap; assumption | exact Hp ].
-    + lia.
     + cbn [erase_fields]. rewrite Her1, Her2. reflexivity.
     + cbn [lcef]. intros [Ha Hb]. split; [ apply Hlc1; exact Ha | apply Hlc2; exact Hb ].
     + intros Hfg. inversion Hfg; subst.
@@ -857,7 +804,7 @@ Proof.
       destruct (infer f D G e1 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (infer f D1 (apC s1 G) e2 n1) as [[[[[s2 D2] T2] n2] us2]|] eqn:E2; [|discriminate].
       destruct (unify_co f D2 (apT s2 T1) (typ_Arrow T2 (typ_Var (ea n2))) (S n2))
-        as [[[s3 cs3] n3]|] eqn:E3; [|discriminate].
+        as [[[[s3 Du3] cs3] n3]|] eqn:E3; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
@@ -866,9 +813,9 @@ Proof.
       pose proof Gd2 as (_ & Hs2 & HD2 & _).
       pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
       assert (Hbeta : EvT (typ_Var (ea n2))) by (apply EvT_var, ev_ea).
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E3 (EvT_ap s2 T1 Hs2 HT1)
-                  (EvT_arrow _ _ HT2 Hbeta)) as (Hs3 & Hch & Hk3 & Hl3).
-      pose proof (Good_unify D2 n2 s3 n3 Hs3 Hk3 ltac:(lia) HD2) as Gd3.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E3 (EvT_ap s2 T1 Hs2 HT1)
+                  (EvT_arrow _ _ HT2 Hbeta)) as (Hs3 & Hch & Hgu3).
+      pose proof (GoodU_pre D2 n2 _ s3 Du3 n3 HD2 Hgu3 ltac:(lia)) as Gd3.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) | ].
       split; [ apply EvT_ap; auto | ].
       refine (conj _ (conj _ _)).
@@ -877,9 +824,9 @@ Proof.
       rewrite <- !apC_comp.
       eapply T_App.
       * eapply coerce_typing; [ exact Hch | ].
-        apply (typing_ap_G D2 n2 s3 D2 n3 _ _ _ Gd3 HG2).
+        apply (typing_ap_G D2 n2 s3 Du3 n3 _ _ _ Gd3 HG2).
         apply (typing_ap_G D1 n1 s2 D2 n2 _ _ _ Gd2 HG1). exact Hty1.
-      * apply (typing_ap_G D2 n2 s3 D2 n3 _ _ _ Gd3 HG2). exact Hty2.
+      * apply (typing_ap_G D2 n2 s3 Du3 n3 _ _ _ Gd3 HG2). exact Hty2.
     + (* let *)
       destruct (infer f D G e1 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (is_gen_value us1) eqn:Hgv.
@@ -984,11 +931,11 @@ Proof.
       destruct (infer_fields f D ((p ~ sch_mono (typ_Record R0)) ++ G)
                   (open_fields_wrt_exp fl (e_fvar_f p)) (n + nfields fl))
         as [[[[[s1 D1] R1] n1] us1]|] eqn:E1; [|discriminate].
-      destruct (unify_grp f D1 us1 R1 (apR s1 R0) n1) as [[[s2 n2] us2]|] eqn:E2; [|discriminate].
+      destruct (unify_grp f D1 us1 R1 (apR s1 R0) n1) as [[[[s2 D2] n2] us2]|] eqn:E2; [|discriminate].
       set (G1 := apC (scomp s2 s1) G) in *.
       set (Rf := apR (scomp s2 s1) R0) in *.
       set (q := fresh_var G1 el) in *.
-      destruct (infer f D1 ((q ~ gen_ren D1 G1 (typ_Record Rf)) ++ G1)
+      destruct (infer f D2 ((q ~ gen_ren D2 G1 (typ_Record Rf)) ++ G1)
                   (open_exp_wrt_exp el (e_fvar_f q)) n2)
         as [[[[[s3 D3] T3] n3] us3]|] eqn:E3; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
@@ -1002,24 +949,26 @@ Proof.
       rewrite apC_app, apC_single in Hty1.
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       pose proof (EvR_ap s1 _ Hs1 HR0) as HR0'.
-      destruct (unify_grp_sound f D1 _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HR1 HR0') as (Hs2 & Hpw & Hk2 & Hl2 & Her_u & Hlc_u & Hfg_u).
-      pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
+      destruct (unify_grp_sound f D1 _ _ _ _ _ _ _ _ E2 HR1 HR0') as (Hs2 & Hpw & Hgu2 & Her_u & Hlc_u & Hfg_u).
+      pose proof (GoodU_pre D1 n1 _ s2 D2 n2 HD1 Hgu2 ltac:(lia)) as Gd2.
+      pose proof (Good_dok _ _ _ _ _ Gd2) as HD2.
       pose proof (DOk_supp D1 n1 HD1) as HS1.
-      pose proof (fields_ap D1 D1 s2 (apC s1 G) p _ _ _ Hs2 HG1 HS1 HS1 Hk2
+      pose proof (DOk_supp D2 n2 HD2) as HS2.
+      pose proof (fields_ap D1 D2 s2 (apC s1 G) p _ _ _ Hs2 HG1 HS1 HS2 (Good_kres _ _ _ _ _ Gd2)
                     (rkres_triv _ _ _ (DOk_rtriv _ _ HD1)) Hty1) as Hty2.
       pose proof (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) as Gd21.
       assert (Hs21 : OkS (scomp s2 s1)) by (destruct Gd21 as (_ & H21 & _); exact H21).
       assert (HRf : EvR Rf) by (apply EvR_ap; assumption).
       assert (HG21 : WfCtx G1) by (apply WfCtx_ap; assumption).
-      assert (Hty3 : field_typing D1 ((p ~ sch_mono (typ_Record Rf)) ++ G1) us2 Rf).
+      assert (Hty3 : field_typing D2 ((p ~ sch_mono (typ_Record Rf)) ++ G1) us2 Rf).
       { unfold Rf, G1. rewrite <- apR_comp. rewrite <- apC_comp.
         refine (pw_co_typing _ _ _ _ _ _ _ Hpw).
         change (typ_Record (apR s2 (apR s1 R0))) with (apT s2 (apT s1 (typ_Record R0))) in Hty2.
         exact Hty2. }
-      pose proof (gen_ren_wf D1 G1 (typ_Record Rf) (proj2 (EvT_Record _) HRf)) as Hwsc.
-      assert (Hwf1 : WfCtx ((q ~ gen_ren D1 G1 (typ_Record Rf)) ++ G1))
+      pose proof (gen_ren_wf D2 G1 (typ_Record Rf) (proj2 (EvT_Record _) HRf)) as Hwsc.
+      assert (Hwf1 : WfCtx ((q ~ gen_ren D2 G1 (typ_Record Rf)) ++ G1))
         by (apply WfCtx_cons; [ exact HG21 | apply fresh_var_notin_dom | exact Hwsc ]).
-      destruct (IHe _ _ _ _ _ _ _ _ _ E3 Hwf1 (DOk_mono D1 n1 n2 HD1 Hl2)) as (Gd3' & HT3 & Hty4 & Her_Hty4 & Hlc_Hty4).
+      destruct (IHe _ _ _ _ _ _ _ _ _ E3 Hwf1 HD2) as (Gd3' & HT3 & Hty4 & Her_Hty4 & Hlc_Hty4).
       pose proof Gd3' as Gd3.
       pose proof Gd3 as (_ & Hs3 & HD3 & Hl3 & Hi3 & Hk3).
       pose proof (Good_comp _ _ _ _ _ _ _ _ Gd21 Gd3) as Gdf.
@@ -1030,22 +979,22 @@ Proof.
       2: { cbn [erase]. rewrite Herf, Herb. reflexivity. }
       rewrite <- apC_comp. fold G1.
       rewrite apC_app, apC_single in Hty4.
-      pose proof (gen_ren_equiv D1 G1 (typ_Record Rf) s3 Hs3 HG21 (proj2 (EvT_Record _) HRf)) as Hequiv.
+      pose proof (gen_ren_equiv D2 G1 (typ_Record Rf) s3 Hs3 HG21 (proj2 (EvT_Record _) HRf)) as Hequiv.
       pose proof Hequiv as (Htq & _).
-      pose proof (fields_gen_ren D1 n2 G1 p Rf _ (DOk_mono D1 n1 n2 HD1 Hl2) Hty3) as Hty5.
-      destruct (DOk_supp D1 n2 (DOk_mono D1 n1 n2 HD1 Hl2)) as [S1' HS1'].
+      pose proof (fields_gen_ren D2 n2 G1 p Rf _ HD2 Hty3) as Hty5.
+      destruct (DOk_supp D2 n2 HD2) as [S1' HS1'].
       destruct (DOk_supp D3 n3 HD3) as [S3 HS3].
-      pose proof (fields_ap (ext D1 (s_tq (gen_ren D1 G1 (typ_Record Rf))) (s_sk (gen_ren D1 G1 (typ_Record Rf))))
-                    (ext D3 (s_tq (gen_ren D1 G1 (typ_Record Rf))) (s_sk (gen_ren D1 G1 (typ_Record Rf))))
+      pose proof (fields_ap (ext D2 (s_tq (gen_ren D2 G1 (typ_Record Rf))) (s_sk (gen_ren D2 G1 (typ_Record Rf))))
+                    (ext D3 (s_tq (gen_ren D2 G1 (typ_Record Rf))) (s_sk (gen_ren D2 G1 (typ_Record Rf))))
                     s3 G1 p _ _ _ Hs3 HG21
                     (ex_intro _ _ (supp_ok_ext_set _ _ _ _ HS1'))
                     (ex_intro _ _ (supp_ok_ext_set _ _ _ _ HS3))
-                    (kres_ext_lift D1 D3 s3 _ _ Hs3 Hk3 (gen_ren_od_t D1 G1 (typ_Record Rf)))
-                    (rkres_triv _ _ _ (DOk_rtriv _ _ HD1)) Hty5) as Hty6.
+                    (kres_ext_lift D2 D3 s3 _ _ Hs3 Hk3 (gen_ren_od_t D2 G1 (typ_Record Rf)))
+                    (rkres_triv _ _ _ (DOk_rtriv _ _ HD2)) Hty5) as Hty6.
       apply T_Letrec with (L := dom G `union` {{p}} `union` {{q}})
         (R := apR s3 (ap_row (rename_t (gen_vars_t G1 (typ_Record Rf)))
                              (rename_r (gen_vars_r G1 (typ_Record Rf))) Rf))
-        (k := s_sk (gen_ren D1 G1 (typ_Record Rf))) (rk := s_rk (gen_ren D1 G1 (typ_Record Rf))).
+        (k := s_sk (gen_ren D2 G1 (typ_Record Rf))) (rk := s_rk (gen_ren D2 G1 (typ_Record Rf))).
       * apply fn_group_clf. apply Hfg_u. exact (infer_fields_fn_group _ _ _ _ _ _ _ _ _ _
                                      (is_fn_group_open_rec fl 0 (e_fvar_f p) Hfg) E1).
       * intros y Hy.
@@ -1057,7 +1006,7 @@ Proof.
         -- apply denv_eq_extr_triv; [ exact (DOk_rtriv _ _ HD3) | intros r; reflexivity ].
       * intros y Hy.
         pose proof (typing_open_cl D3 (apC s3 G1) q y
-                      (apS s3 (gen_ren D1 G1 (typ_Record Rf))) us3 T3 Hty4 Hlc_Hty4
+                      (apS s3 (gen_ren D2 G1 (typ_Record Rf))) us3 T3 Hty4 Hlc_Hty4
                       ltac:(simpl; rewrite dom_apC; unfold G1; rewrite dom_apC; fsetdec)) as Hren.
         eapply typing_sch_equiv_ctx; [ exact Hren | ].
         apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
@@ -1077,7 +1026,7 @@ Proof.
         set (Tp := typ_Record (obj_row fs n (row_Var (ea (n + nfields fs))))) in *.
         destruct (infer_obj f D G p Tp fs (S (n + nfields fs)))
           as [[[[[s1 D1] R1] n1] fs1]|] eqn:Eo; [|discriminate].
-        destruct (tie_obj f D1 fs1 R1 (apR s1 (group_row fs n)) n1) as [[[s2 n2] fs2]|] eqn:Et; [|discriminate].
+        destruct (tie_obj f D1 fs1 R1 (apR s1 (group_row fs n)) n1) as [[[[s2 D2] n2] fs2]|] eqn:Et; [|discriminate].
         inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
         assert (HTp : EvT Tp) by (apply EvT_Record; apply EvR_obj_row).
         assert (Hle : n <= S (n + nfields fs)) by lia.
@@ -1090,7 +1039,7 @@ Proof.
         pose proof (Good_pre D n _ s1 D1 n1 Hle HD Gd1') as Gd1.
         pose proof Gd1 as (_ & Hs1 & HD1 & _).
         pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-        destruct (tie_obj_sound _ _ _ _ _ _ _ _ _ Et (apC s1 G) HG1 HD1 HR1
+        destruct (tie_obj_sound _ _ _ _ _ _ _ _ _ _ Et (apC s1 G) HG1 HD1 HR1
                     (EvR_ap _ _ Hs1 (EvR_group_row fs n)) Hft1 Hlc1)
           as (Gd2 & Hft2 & Her2 & Hlc2 & Hmk2 & Hmr2).
         pose proof Gd2 as (_ & Hs2 & _).
@@ -1114,15 +1063,15 @@ Proof.
     + (* projection *)
       destruct (infer f D G e1 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (unify_co f D1 T1 (typ_Record (row_Ext l (typ_Var (ea n1)) (row_Var (ea (S n1)))))
-                  (n1 + 2)) as [[[s2 cs2] n2]|] eqn:E2; [|discriminate].
+                  (n1 + 2)) as [[[[s2 Du2] cs2] n2]|] eqn:E2; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       assert (Hrow : EvT (typ_Record (row_Ext l (typ_Var (ea n1)) (row_Var (ea (S n1)))))).
       { apply EvT_Record, EvR_ext; [ apply EvT_var, ev_ea | apply EvR_var, ev_ea ]. }
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 Hrow) as (Hs2 & Hch & Hk2 & Hl2).
-      pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 ltac:(lia) HD1) as Gd2.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E2 HT1 Hrow) as (Hs2 & Hch & Hgu2).
+      pose proof (GoodU_pre D1 n1 _ s2 Du2 n2 HD1 Hgu2 ltac:(lia)) as Gd2.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
       split; [ apply EvT_ap; [exact Hs2 | apply EvT_var, ev_ea] | ].
       refine (conj _ (conj _ _)).
@@ -1131,7 +1080,7 @@ Proof.
       rewrite <- apC_comp.
       eapply T_Proj.
       eapply coerce_typing; [ exact Hch | ].
-      apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1.
+      apply (typing_ap_G D1 n1 s2 Du2 n2 _ _ _ Gd2 HG1). exact Hty1.
     + inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       split; [apply Good_id; exact HD|]. split; [apply EvT_Unit|].
       refine (conj _ (conj eq_refl I)). apply T_Unit. apply uniq_apC. exact (proj1 HG).
@@ -1140,28 +1089,28 @@ Proof.
       refine (conj _ (conj eq_refl I)). apply T_Str. apply uniq_apC. exact (proj1 HG).
     + (* conditional *)
       destruct (infer f D G c0 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
-      destruct (unify_co f D1 T1 typ_Bool n1) as [[[s2 cs2] n2]|] eqn:E2; [|discriminate].
-      destruct (infer f D1 (apC s2 (apC s1 G)) a0 n2) as [[[[[s3 D3] T2] n3] us3]|] eqn:E3; [|discriminate].
+      destruct (unify_co f D1 T1 typ_Bool n1) as [[[[s2 Du2] cs2] n2]|] eqn:E2; [|discriminate].
+      destruct (infer f Du2 (apC s2 (apC s1 G)) a0 n2) as [[[[[s3 D3] T2] n3] us3]|] eqn:E3; [|discriminate].
       destruct (infer f D3 (apC s3 (apC s2 (apC s1 G))) b0 n3) as [[[[[s4 D4] T3] n4] us4]|] eqn:E4;
         [|discriminate].
-      destruct (unify_co f D4 (apT s4 T2) T3 n4) as [[[s5 cs5] n5]|] eqn:E5; [|discriminate].
+      destruct (unify_co f D4 (apT s4 T2) T3 n4) as [[[[s5 Du5] cs5] n5]|] eqn:E5; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 EvT_Bool) as (Hs2 & Hch2 & Hk2 & Hl2).
-      pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E2 HT1 EvT_Bool) as (Hs2 & Hch2 & Hgu2).
+      pose proof (GoodU_pre D1 n1 _ s2 Du2 n2 HD1 Hgu2 ltac:(lia)) as Gd2.
       pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
-      assert (HD2 : DOk D1 n2) by (destruct Gd2 as (_ & _ & H2 & _); exact H2).
+      assert (HD2 : DOk Du2 n2) by (destruct Gd2 as (_ & _ & H2 & _); exact H2).
       destruct (IHe _ _ _ _ _ _ _ _ _ E3 HG2 HD2) as (Gd3 & HT2 & Hty2 & Her_Hty2 & Hlc_Hty2).
       pose proof Gd3 as (_ & Hs3 & HD3 & _).
       pose proof (WfCtx_ap s3 _ Hs3 HG2) as HG3.
       destruct (IHe _ _ _ _ _ _ _ _ _ E4 HG3 HD3) as (Gd4 & HT3 & Hty3 & Her_Hty3 & Hlc_Hty3).
       pose proof Gd4 as (_ & Hs4 & HD4 & _).
       pose proof (WfCtx_ap s4 _ Hs4 HG3) as HG4.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E5 (EvT_ap s4 T2 Hs4 HT2) HT3)
-        as (Hs5 & Hch5 & Hk5 & Hl5).
-      pose proof (Good_unify D4 n4 s5 n5 Hs5 Hk5 Hl5 HD4) as Gd5.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E5 (EvT_ap s4 T2 Hs4 HT2) HT3)
+        as (Hs5 & Hch5 & Hgu5).
+      pose proof ((proj2 Hgu5) HD4) as Gd5.
       pose proof (WfCtx_ap s5 _ Hs5 HG4) as HG5.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _
                  (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) Gd4) Gd5) | ].
@@ -1170,17 +1119,17 @@ Proof.
       2: { cbn [erase]. rewrite !erase_coerce, Her_Hty1, Her_Hty2, Her_Hty3. reflexivity. }
       2: { cbn [lce]. split; [ apply lce_coerce; exact Hlc_Hty1 | split; [ apply lce_coerce; exact Hlc_Hty2 | exact Hlc_Hty3 ] ]. }
       rewrite <- !apC_comp.
-      assert (Hc : typing D1 (apC s2 (apC s1 G)) (coerce cs2 us1) typ_Bool).
+      assert (Hc : typing Du2 (apC s2 (apC s1 G)) (coerce cs2 us1) typ_Bool).
       { eapply coerce_typing; [ exact Hch2 | ].
-        apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1. }
+        apply (typing_ap_G D1 n1 s2 Du2 n2 _ _ _ Gd2 HG1). exact Hty1. }
       eapply T_If.
-      * exact (typing_ap_G D4 n4 s5 D4 n5 _ _ _ Gd5 HG4
+      * exact (typing_ap_G D4 n4 s5 Du5 n5 _ _ _ Gd5 HG4
                  (typing_ap_G D3 n3 s4 D4 n4 _ _ _ Gd4 HG3
-                   (typing_ap_G D1 n2 s3 D3 n3 _ _ _ Gd3 HG2 Hc))).
+                   (typing_ap_G Du2 n2 s3 D3 n3 _ _ _ Gd3 HG2 Hc))).
       * eapply coerce_typing; [ exact Hch5 | ].
-        apply (typing_ap_G D4 n4 s5 D4 n5 _ _ _ Gd5 HG4).
+        apply (typing_ap_G D4 n4 s5 Du5 n5 _ _ _ Gd5 HG4).
         apply (typing_ap_G D3 n3 s4 D4 n4 _ _ _ Gd4 HG3). exact Hty2.
-      * apply (typing_ap_G D4 n4 s5 D4 n5 _ _ _ Gd5 HG4). exact Hty3.
+      * apply (typing_ap_G D4 n4 s5 Du5 n5 _ _ _ Gd5 HG4). exact Hty3.
     + (* binary operation *)
       destruct (infer f D G a1 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (infer f D1 (apC s1 G) a2 n1) as [[[[[s2 D2] T2] n2] us2]|] eqn:E2; [|discriminate].
@@ -1195,21 +1144,21 @@ Proof.
         assert (Hko : kind o = k_ring \/ kind o = k_whole \/ kind o = k_cmp)
           by (unfold is_generic_op in Hring; destruct (kind o); [ left; reflexivity | discriminate | right; left; reflexivity | right; right; reflexivity ]).
         set (D2' := upd D2 (ea n2) (generic_sort o)) in *.
-        destruct (unify_co f D2' (apT s2 T1) (typ_Var (ea n2)) (S n2)) as [[[s3 cs3] n3]|] eqn:E3; [|discriminate].
-        destruct (unify_co f D2' (apT s3 T2) (apT s3 (typ_Var (ea n2))) n3) as [[[s4 cs4] n4]|] eqn:E4; [|discriminate].
+        destruct (unify_co f D2' (apT s2 T1) (typ_Var (ea n2)) (S n2)) as [[[[s3 Du3] cs3] n3]|] eqn:E3; [|discriminate].
+        destruct (unify_co f Du3 (apT s3 T2) (apT s3 (typ_Var (ea n2))) n3) as [[[[s4 Du4] cs4] n4]|] eqn:E4; [|discriminate].
         inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
         assert (HN : D2' (ea n2) = generic_sort o) by (unfold D2'; apply upd_same).
         assert (HEc : EvT (typ_Var (ea n2))) by (apply EvT_var, ev_ea).
         pose proof (Good_upd D2 n2 (generic_sort o) HD2) as GdU.
         fold D2' in GdU.
         assert (HD2' : DOk D2' (S n2)) by (destruct GdU as (_ & _ & H2 & _); exact H2).
-        destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E3 (EvT_ap s2 T1 Hs2 HT1) HEc)
-          as (Hs3 & Hch3 & Hk3 & Hl3).
-        pose proof (Good_unify D2' (S n2) s3 n3 Hs3 Hk3 Hl3 HD2') as Gd3.
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E3 (EvT_ap s2 T1 Hs2 HT1) HEc)
+          as (Hs3 & Hch3 & Hgu3).
+        pose proof ((proj2 Hgu3) HD2') as Gd3.
         pose proof (WfCtx_ap s3 _ Hs3 HG2) as HG3.
-        destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E4 (EvT_ap s3 T2 Hs3 HT2)
-                    (EvT_ap s3 _ Hs3 HEc)) as (Hs4 & Hch4 & Hk4 & Hl4).
-        pose proof (Good_unify D2' n3 s4 n4 Hs4 Hk4 Hl4 (DOk_mono D2' (S n2) n3 HD2' Hl3)) as Gd4.
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E4 (EvT_ap s3 T2 Hs3 HT2)
+                    (EvT_ap s3 _ Hs3 HEc)) as (Hs4 & Hch4 & Hgu4).
+        pose proof ((proj2 Hgu4) (Good_dok _ _ _ _ _ Gd3)) as Gd4.
         split.
         { exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2)
                    (Good_lift _ _ _ _ _ _ _ GdU Gd3)) Gd4). }
@@ -1220,37 +1169,38 @@ Proof.
         2: { cbn [erase]. rewrite !erase_coerce, Her_Hty1, Her_Hty2. reflexivity. }
         2: { cbn [lce]. split; apply lce_coerce; assumption. }
         rewrite <- !apC_comp.
-        assert (Hsat : sat D2' (generic_sort o) (apT s4 (apT s3 (typ_Var (ea n2))))).
-        { pose proof (Hk3 (ea n2)) as H3. rewrite HN in H3.
-          exact (sat_ap D2' D2' (generic_sort o) _ (sT s4) (sR s4) Hk4 (rkres_triv _ _ _ (DOk_rtriv _ _ HD2')) H3). }
+        assert (Hsat : sat Du4 (generic_sort o) (apT s4 (apT s3 (typ_Var (ea n2))))).
+        { pose proof (Good_kres _ _ _ _ _ Gd3 (ea n2)) as H3. rewrite HN in H3.
+          exact (sat_ap Du3 Du4 (generic_sort o) _ (sT s4) (sR s4) (Good_kres _ _ _ _ _ Gd4)
+                   (rkres_triv _ _ _ (DOk_rtriv _ _ (Good_dok _ _ _ _ _ Gd3))) H3). }
         eapply T_Bin with (A := apT s4 (apT s3 (typ_Var (ea n2)))).
         -- pose proof (chain_apT s4 _ _ _ Hs4 Hch3) as Hch3'.
            eapply coerce_typing; [ exact Hch3' | ].
-           apply (typing_ap_G D2' n3 s4 D2' n4 _ _ _ Gd4 HG3).
-           apply (typing_ap_G D2' (S n2) s3 D2' n3 _ _ _ Gd3 HG2).
+           apply (typing_ap_G Du3 n3 s4 Du4 n4 _ _ _ Gd4 HG3).
+           apply (typing_ap_G D2' (S n2) s3 Du3 n3 _ _ _ Gd3 HG2).
            apply (typing_refine D2 n2 D2' (S n2) _ _ _ GdU HG2).
            apply (typing_ap_G D1 n1 s2 D2 n2 _ _ _ Gd2 HG1). exact Hty1.
         -- eapply coerce_typing; [ exact Hch4 | ].
-           apply (typing_ap_G D2' n3 s4 D2' n4 _ _ _ Gd4 HG3).
-           apply (typing_ap_G D2' (S n2) s3 D2' n3 _ _ _ Gd3 HG2).
+           apply (typing_ap_G Du3 n3 s4 Du4 n4 _ _ _ Gd4 HG3).
+           apply (typing_ap_G D2' (S n2) s3 Du3 n3 _ _ _ Gd3 HG2).
            apply (typing_refine D2 n2 D2' (S n2) _ _ _ GdU HG2). exact Hty2.
         -- unfold bin_res, generic_sort in *. destruct Hko as [Hko | [Hko | Hko]]; rewrite Hko in *;
              first [ (apply sig_ring; assumption) | (apply sig_whole; assumption) | (apply sig_cmp; assumption) ].
       * (* [/]: both operands at Float *)
         assert (Ho : o = bop_div)
           by (unfold is_generic_op in Hring; destruct o; first [ reflexivity | (cbn in Hring; discriminate Hring) ]).
-        destruct (unify_co f D2 (apT s2 T1) typ_Float n2) as [[[s3 cs3] n3]|] eqn:E4; [|discriminate].
-        destruct (unify_co f D2 (apT s3 T2) typ_Float n3) as [[[s4 cs4] n4]|] eqn:E5; [|discriminate].
+        destruct (unify_co f D2 (apT s2 T1) typ_Float n2) as [[[[s3 Du3] cs3] n3]|] eqn:E4; [|discriminate].
+        destruct (unify_co f Du3 (apT s3 T2) typ_Float n3) as [[[[s4 Du4] cs4] n4]|] eqn:E5; [|discriminate].
         inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
         assert (Hg : ground typ_Float) by (right; left; reflexivity).
         pose proof (ground_EvT _ Hg) as HTa.
-        destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E4 (EvT_ap s2 T1 Hs2 HT1) HTa)
-          as (Hs3 & Hch3 & Hk3 & Hl3).
-        pose proof (Good_unify D2 n2 s3 n3 Hs3 Hk3 Hl3 HD2) as Gd3.
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E4 (EvT_ap s2 T1 Hs2 HT1) HTa)
+          as (Hs3 & Hch3 & Hgu3).
+        pose proof (GoodU_pre D2 n2 _ s3 Du3 n3 HD2 Hgu3 ltac:(lia)) as Gd3.
         pose proof (WfCtx_ap s3 _ Hs3 HG2) as HG3.
-        destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E5 (EvT_ap s3 T2 Hs3 HT2) HTa)
-          as (Hs4 & Hch4 & Hk4 & Hl4).
-        pose proof (Good_unify D2 n3 s4 n4 Hs4 Hk4 Hl4 (DOk_mono D2 n2 n3 HD2 Hl3)) as Gd4.
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E5 (EvT_ap s3 T2 Hs3 HT2) HTa)
+          as (Hs4 & Hch4 & Hgu4).
+        pose proof ((proj2 Hgu4) (Good_dok _ _ _ _ _ Gd3)) as Gd4.
         pose proof (WfCtx_ap s4 _ Hs4 HG3) as HG4.
         rewrite (ground_ap s3 _ Hg) in Hch3.
         rewrite (ground_ap s4 _ Hg) in Hch4.
@@ -1265,16 +1215,16 @@ Proof.
         -- pose proof (chain_apT s4 _ _ _ Hs4 Hch3) as Hch3'.
            rewrite (ground_ap s4 _ Hg) in Hch3'.
            eapply coerce_typing; [ exact Hch3' | ].
-           apply (typing_ap_G D2 n3 s4 D2 n4 _ _ _ Gd4 HG3).
-           apply (typing_ap_G D2 n2 s3 D2 n3 _ _ _ Gd3 HG2).
+           apply (typing_ap_G Du3 n3 s4 Du4 n4 _ _ _ Gd4 HG3).
+           apply (typing_ap_G D2 n2 s3 Du3 n3 _ _ _ Gd3 HG2).
            apply (typing_ap_G D1 n1 s2 D2 n2 _ _ _ Gd2 HG1). exact Hty1.
         -- eapply coerce_typing; [ exact Hch4 | ].
-           apply (typing_ap_G D2 n3 s4 D2 n4 _ _ _ Gd4 HG3).
-           apply (typing_ap_G D2 n2 s3 D2 n3 _ _ _ Gd3 HG2). exact Hty2.
+           apply (typing_ap_G Du3 n3 s4 Du4 n4 _ _ _ Gd4 HG3).
+           apply (typing_ap_G D2 n2 s3 Du3 n3 _ _ _ Gd3 HG2). exact Hty2.
     + (* Int-to-Float coercion at any Numeric type *)
       destruct (infer f D G a3 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       set (D1' := upd D1 (ea n1) k_Literal) in *.
-      destruct (unify_co f D1' T1 (typ_Var (ea n1)) (S n1)) as [[[s2 cs2] n2]|] eqn:E2; [|discriminate].
+      destruct (unify_co f D1' T1 (typ_Var (ea n1)) (S n1)) as [[[[s2 Du2] cs2] n2]|] eqn:E2; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
@@ -1283,8 +1233,8 @@ Proof.
       assert (HEc : EvT (typ_Var (ea n1))) by (apply EvT_var, ev_ea).
       pose proof (Good_upd D1 n1 k_Literal HD1) as GdU. fold D1' in GdU.
       assert (HD1' : DOk D1' (S n1)) by (destruct GdU as (_ & _ & H2 & _); exact H2).
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 HEc) as (Hs2 & Hch & Hk2 & Hl2).
-      pose proof (Good_unify D1' (S n1) s2 n2 Hs2 Hk2 Hl2 HD1') as Gd2.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E2 HT1 HEc) as (Hs2 & Hch & Hgu2).
+      pose proof ((proj2 Hgu2) HD1') as Gd2.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 (Good_lift _ _ _ _ _ _ _ GdU Gd2)) | ].
       split; [ apply EvT_Float | ].
       refine (conj _ (conj _ _)).
@@ -1293,24 +1243,23 @@ Proof.
       rewrite <- apC_comp.
       apply T_ToFloat with (A := apT s2 (typ_Var (ea n1))).
       * eapply coerce_typing; [ exact Hch | ].
-        apply (typing_ap_G D1' (S n1) s2 D1' n2 _ _ _ Gd2 HG1).
+        apply (typing_ap_G D1' (S n1) s2 Du2 n2 _ _ _ Gd2 HG1).
         apply (typing_refine D1 n1 D1' (S n1) _ _ _ GdU HG1). exact Hty1.
-      * pose proof (Hk2 (ea n1)) as H3. rewrite HN in H3. exact H3.
+      * pose proof (Good_kres _ _ _ _ _ Gd2 (ea n1)) as H3. rewrite HN in H3. exact H3.
     + (* tag construction *)
       destruct (Nat.ltb tg1 (length w1)) eqn:Hlt; [|discriminate].
       destruct (infer f D G a6 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (unify_co f D1 T1 (tag_payload w1 (fresh_tys n1 (nparams w1)) tg1) (n1 + nparams w1))
-        as [[[s2 cs2] n2]|] eqn:E2; [|discriminate].
+        as [[[[s2 Du2] cs2] n2]|] eqn:E2; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       pose proof (EvT_fresh_tys (nparams w1) n1) as HTs.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 (EvT_tag_payload _ _ _ HTs))
-        as (Hs2 & Hch & Hk2 & Hl2).
-      pose proof (Good_unify D1 (n1 + nparams w1) s2 n2 Hs2 Hk2 Hl2
-                    (DOk_mono D1 n1 (n1 + nparams w1) HD1 ltac:(lia))) as Gd2'.
-      pose proof (Good_pre D1 n1 (n1 + nparams w1) s2 D1 n2 ltac:(lia) HD1 Gd2') as Gd2.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E2 HT1 (EvT_tag_payload _ _ _ HTs))
+        as (Hs2 & Hch & Hgu2).
+      pose proof ((proj2 Hgu2) (DOk_mono D1 n1 (n1 + nparams w1) HD1 ltac:(lia))) as Gd2'.
+      pose proof (Good_pre D1 n1 (n1 + nparams w1) s2 Du2 n2 ltac:(lia) HD1 Gd2') as Gd2.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
       split; [ apply EvT_ap; [ exact Hs2 | apply EvT_grp, EvT_spine; exact HTs ] | ].
       refine (conj _ (conj _ _)).
@@ -1320,13 +1269,13 @@ Proof.
       apply T_Con; [ apply Nat.ltb_lt; exact Hlt | ].
       rewrite <- apT_tag_payload.
       eapply coerce_typing; [ exact Hch | ].
-      apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1.
+      apply (typing_ap_G D1 n1 s2 Du2 n2 _ _ _ Gd2 HG1). exact Hty1.
     + (* match *)
       destruct (arms_wf_b w2 ars2) eqn:Hwb; [|discriminate].
       destruct (infer f D G a7 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (unify_co f D1 T1 (typ_Grp w2 (spine (fresh_tys n1 (nparams w2)))) (n1 + nparams w2))
-        as [[[s2 cs2] n2]|] eqn:E2; [|discriminate].
-      destruct (infer_arms f D1 (apC s2 (apC s1 G)) w2 (map (apT s2) (fresh_tys n1 (nparams w2)))
+        as [[[[s2 Du2] cs2] n2]|] eqn:E2; [|discriminate].
+      destruct (infer_arms f Du2 (apC s2 (apC s1 G)) w2 (map (apT s2) (fresh_tys n1 (nparams w2)))
                   (fresh_var G (e_match w2 a7 ars2)) (typ_Var (ea n2)) ars2 (S n2))
         as [[[[[s3 D3] T3] n3] us3]|] eqn:E3; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
@@ -1334,21 +1283,20 @@ Proof.
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       pose proof (EvT_fresh_tys (nparams w2) n1) as HTs.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 (EvT_grp _ _ (EvT_spine _ HTs)))
-        as (Hs2 & Hch & Hk2 & Hl2).
-      pose proof (Good_unify D1 (n1 + nparams w2) s2 n2 Hs2 Hk2 Hl2
-                    (DOk_mono D1 n1 (n1 + nparams w2) HD1 ltac:(lia))) as Gd2'.
-      pose proof (Good_pre D1 n1 (n1 + nparams w2) s2 D1 n2 ltac:(lia) HD1 Gd2') as Gd2.
-      assert (HD2 : DOk D1 n2) by (destruct Gd2 as (_ & _ & H2 & _); exact H2).
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E2 HT1 (EvT_grp _ _ (EvT_spine _ HTs)))
+        as (Hs2 & Hch & Hgu2).
+      pose proof ((proj2 Hgu2) (DOk_mono D1 n1 (n1 + nparams w2) HD1 ltac:(lia))) as Gd2'.
+      pose proof (Good_pre D1 n1 (n1 + nparams w2) s2 Du2 n2 ltac:(lia) HD1 Gd2') as Gd2.
+      assert (HD2 : DOk Du2 n2) by (destruct Gd2 as (_ & _ & H2 & _); exact H2).
       pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
       assert (Hx : fresh_var G (e_match w2 a7 ars2) `notin` dom (apC s2 (apC s1 G)) `union` fv_arms ars2).
       { pose proof (fresh_var_notin_dom G (e_match w2 a7 ars2)) as H1.
         pose proof (fresh_var_notin_fv G (e_match w2 a7 ars2)) as H2. simpl in H2.
         pose proof (dom_apC s1 G) as H3. pose proof (dom_apC s2 (apC s1 G)) as H4. fsetdec. }
-      destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ _ E3 HG2 (DOk_mono D1 n2 (S n2) HD2 (le_S _ _ (le_n n2)))
+      destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ _ E3 HG2 (DOk_mono Du2 n2 (S n2) HD2 (le_S _ _ (le_n n2)))
                   (Forall_EvT_ap s2 _ Hs2 HTs) (EvT_var _ (ev_ea n2)) Hx)
         as (Gd3' & HT3 & _ & Harms & Herarms & Hlcarms).
-      pose proof (Good_pre D1 n2 (S n2) s3 D3 n3 (le_S _ _ (le_n n2)) HD2 Gd3') as Gd3.
+      pose proof (Good_pre Du2 n2 (S n2) s3 D3 n3 (le_S _ _ (le_n n2)) HD2 Gd3') as Gd3.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) | ].
       split; [ exact HT3 | ].
       refine (conj _ (conj _ (conj _ Hlcarms))).
@@ -1357,12 +1305,12 @@ Proof.
       rewrite <- !apC_comp.
       apply T_Match with (L := dom G `union` {{fresh_var G (e_match w2 a7 ars2)}})
         (w := w2) (Ts := map (apT s3) (map (apT s2) (fresh_tys n1 (nparams w2)))).
-      * assert (Hc : typing D1 (apC s2 (apC s1 G)) (coerce cs2 us1)
+      * assert (Hc : typing Du2 (apC s2 (apC s1 G)) (coerce cs2 us1)
                        (typ_Grp w2 (spine (map (apT s2) (fresh_tys n1 (nparams w2)))))).
         { rewrite <- apT_spine, <- apT_grp.
           eapply coerce_typing; [ exact Hch | ].
-          apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1. }
-        pose proof (typing_ap_G D1 n2 s3 D3 n3 _ _ _ Gd3 HG2 Hc) as Hl.
+          apply (typing_ap_G D1 n1 s2 Du2 n2 _ _ _ Gd2 HG1). exact Hty1. }
+        pose proof (typing_ap_G Du2 n2 s3 D3 n3 _ _ _ Gd3 HG2 Hc) as Hl.
         rewrite apT_grp, apT_spine in Hl. exact Hl.
       * apply arms_wf_b_sound. rewrite <- arms_wf_b_erase, Herarms. exact Hwb.
       * intros tg body Hf y Hy.
@@ -1374,7 +1322,7 @@ Proof.
       destruct (infer f D1 (apC s1 G) a9 n1) as [[[[[s2 D2] T2] n2] us2]|] eqn:E2; [|discriminate].
       destruct (unify_co f D2 (apT s2 T1)
                   (typ_Record (row_Maybe l8 (typ_Var (ea n2)) T2 (row_Var (ea (S n2))))) (n2 + 2))
-        as [[[s3 cs3] n3]|] eqn:E3; [|discriminate].
+        as [[[[s3 Du3] cs3] n3]|] eqn:E3; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
@@ -1384,9 +1332,9 @@ Proof.
       pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
       assert (Hrow : EvT (typ_Record (row_Maybe l8 (typ_Var (ea n2)) T2 (row_Var (ea (S n2)))))).
       { apply EvT_Record, EvR_maybe; [ apply EvT_var, ev_ea | exact HT2 | apply EvR_var, ev_ea ]. }
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E3 (EvT_ap s2 T1 Hs2 HT1) Hrow)
-        as (Hs3 & Hch & Hk3 & Hl3).
-      pose proof (Good_unify D2 n2 s3 n3 Hs3 Hk3 ltac:(lia) HD2) as Gd3.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E3 (EvT_ap s2 T1 Hs2 HT1) Hrow)
+        as (Hs3 & Hch & Hgu3).
+      pose proof (GoodU_pre D2 n2 _ s3 Du3 n3 HD2 Hgu3 ltac:(lia)) as Gd3.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) | ].
       split.
       { apply EvT_ap; [ exact Hs3 | ]. apply EvT_Record, EvR_ext; [ exact HT2 | apply EvR_var, ev_ea ]. }
@@ -1397,21 +1345,21 @@ Proof.
       apply T_Spread with (P := apT s3 (typ_Var (ea n2))) (T := apT s3 T2)
         (R := apR s3 (row_Var (ea (S n2)))).
       * eapply coerce_typing; [ exact Hch | ].
-        apply (typing_ap_G D2 n2 s3 D2 n3 _ _ _ Gd3 HG2).
+        apply (typing_ap_G D2 n2 s3 Du3 n3 _ _ _ Gd3 HG2).
         apply (typing_ap_G D1 n1 s2 D2 n2 _ _ _ Gd2 HG1). exact Hty1.
-      * apply (typing_ap_G D2 n2 s3 D2 n3 _ _ _ Gd3 HG2). exact Hty2.
+      * apply (typing_ap_G D2 n2 s3 Du3 n3 _ _ _ Gd3 HG2). exact Hty2.
     + (* restrict *)
       destruct (infer f D G a10 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (unify_co f D1 T1 (typ_Record (row_Ext l10 (typ_Var (ea n1)) (row_Var (ea (S n1)))))
-                  (n1 + 2)) as [[[s2 cs2] n2]|] eqn:E2; [|discriminate].
+                  (n1 + 2)) as [[[[s2 Du2] cs2] n2]|] eqn:E2; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       assert (Hrow : EvT (typ_Record (row_Ext l10 (typ_Var (ea n1)) (row_Var (ea (S n1)))))).
       { apply EvT_Record, EvR_ext; [ apply EvT_var, ev_ea | apply EvR_var, ev_ea ]. }
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 Hrow) as (Hs2 & Hch & Hk2 & Hl2).
-      pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 ltac:(lia) HD1) as Gd2.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E2 HT1 Hrow) as (Hs2 & Hch & Hgu2).
+      pose proof (GoodU_pre D1 n1 _ s2 Du2 n2 HD1 Hgu2 ltac:(lia)) as Gd2.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
       split; [ apply EvT_ap; [ exact Hs2 | apply EvT_Record, EvR_var, ev_ea ] | ].
       refine (conj _ (conj _ _)).
@@ -1421,7 +1369,7 @@ Proof.
       apply T_Restrict with (R0 := apR s2 (row_Ext l10 (typ_Var (ea n1)) (row_Var (ea (S n1)))))
         (T := apT s2 (typ_Var (ea n1))).
       * eapply coerce_typing; [ exact Hch | ].
-        apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1.
+        apply (typing_ap_G D1 n1 s2 Du2 n2 _ _ _ Gd2 HG1). exact Hty1.
       * unfold rm. simpl. rewrite Nat.eqb_refl. reflexivity.
   - intros D G fs n s D' R n' fs' H HG HD. cbn [infer_fields] in H.
     destruct fs as [| l e rest | l e rest]; try discriminate H.
@@ -1452,14 +1400,14 @@ Proof.
       split; [ rewrite apT_sid; reflexivity | ].
       refine (conj _ (conj eq_refl I)). apply arms_typ_nil.
     + destruct (infer f D G e n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
-      destruct (unify_co f D1 T1 (apT s1 res) n1) as [[[s2 cs2] n2]|] eqn:E2; [|discriminate].
+      destruct (unify_co f D1 T1 (apT s1 res) n1) as [[[[s2 Du2] cs2] n2]|] eqn:E2; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst ars'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her1 & Hlc1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 (EvT_ap s1 res Hs1 Hres))
-        as (Hs2 & Hch & Hk2 & Hl2).
-      pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E2 HT1 (EvT_ap s1 res Hs1 Hres))
+        as (Hs2 & Hch & Hgu2).
+      pose proof (GoodU_pre D1 n1 _ s2 Du2 n2 HD1 Hgu2 ltac:(lia)) as Gd2.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
       split; [ exact (EvT_ap s2 _ Hs2 (EvT_ap s1 res Hs1 Hres)) | ].
       split; [ apply apT_comp | ].
@@ -1468,12 +1416,12 @@ Proof.
       2: { cbn [lcea]. apply lce_coerce. exact Hlc1. }
       apply arms_typ_else. rewrite <- apC_comp.
       eapply coerce_typing; [ exact Hch | ].
-      apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1.
+      apply (typing_ap_G D1 n1 s2 Du2 n2 _ _ _ Gd2 HG1). exact Hty1.
     + simpl in Hx.
       destruct (infer f D ((x ~ sch_mono (tag_payload w Ts tg)) ++ G)
                   (open_exp_wrt_exp e (e_fvar_f x)) n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
-      destruct (unify_co f D1 T1 (apT s1 res) n1) as [[[s2 cs2] n2]|] eqn:E2; [|discriminate].
-      destruct (infer_arms f D1 (apC (scomp s2 s1) G) w (map (apT (scomp s2 s1)) Ts) x
+      destruct (unify_co f D1 T1 (apT s1 res) n1) as [[[[s2 Du2] cs2] n2]|] eqn:E2; [|discriminate].
+      destruct (infer_arms f Du2 (apC (scomp s2 s1) G) w (map (apT (scomp s2 s1)) Ts) x
                   (apT s2 (apT s1 res)) rest n2)
         as [[[[[s3 D3] T3] n3] us3]|] eqn:E3; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst ars'; clear H.
@@ -1483,13 +1431,13 @@ Proof.
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       rewrite apC_app, apC_single, apS_mono, apT_tag_payload in Hty1.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 (EvT_ap s1 res Hs1 Hres))
-        as (Hs2 & Hch2 & Hk2 & Hl2).
-      pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E2 HT1 (EvT_ap s1 res Hs1 Hres))
+        as (Hs2 & Hch2 & Hgu2).
+      pose proof (GoodU_pre D1 n1 _ s2 Du2 n2 HD1 Hgu2 ltac:(lia)) as Gd2.
       pose proof (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) as Gd12.
       pose proof Gd12 as (_ & Hs12 & _).
       pose proof (WfCtx_ap _ G Hs12 HG) as HG12.
-      assert (HD2 : DOk D1 n2) by (destruct Gd2 as (_ & _ & H2 & _); exact H2).
+      assert (HD2 : DOk Du2 n2) by (destruct Gd2 as (_ & _ & H2 & _); exact H2).
       assert (Hx3 : x `notin` dom (apC (scomp s2 s1) G) `union` fv_arms rest)
         by (pose proof (dom_apC (scomp s2 s1) G) as H3; fsetdec).
       destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ _ E3 HG12 HD2 (Forall_EvT_ap _ _ Hs12 HTs)
@@ -1510,11 +1458,11 @@ Proof.
       * intros y Hy.
         assert (Hyd : y `notin` dom (apC s1 G)) by (rewrite dom_apC; fsetdec).
         assert (Hxd : x `notin` dom (apC s1 G)) by (rewrite dom_apC; fsetdec).
-        pose proof (arm_lift D1 n1 s2 D1 n2 (apC s1 G) w (map (apT s1) Ts) tg x _ _
+        pose proof (arm_lift D1 n1 s2 Du2 n2 (apC s1 G) w (map (apT s1) Ts) tg x _ _
                       Gd2 HG1 (Forall_EvT_ap _ _ Hs1 HTs) Hxd Hty1) as Hlift2.
         pose proof (coerce_typing _ _ _ _ _ _ Hch2 Hlift2) as Hco.
         assert (Hxd2 : x `notin` dom (apC s2 (apC s1 G))) by (rewrite !dom_apC; fsetdec).
-        pose proof (arm_lift D1 n2 s3 D3 n3 (apC s2 (apC s1 G)) w (map (apT s2) (map (apT s1) Ts)) tg x _ _
+        pose proof (arm_lift Du2 n2 s3 D3 n3 (apC s2 (apC s1 G)) w (map (apT s2) (map (apT s1) Ts)) tg x _ _
                       Gd3 (WfCtx_ap s2 _ Hs2 HG1) (Forall_EvT_ap _ _ Hs2 (Forall_EvT_ap _ _ Hs1 HTs))
                       Hxd2 Hco) as Hlift3.
         rewrite (map_apT_comp s2 s1 Ts), (apC_comp s2 s1 G) in Hlift3.

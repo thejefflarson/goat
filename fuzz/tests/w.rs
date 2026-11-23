@@ -144,7 +144,7 @@ struct Gap {
 /// one regular tree, the row knot, a group member needing a `fold`; stage
 /// 7.11), a program using a binding group's member before its last member
 /// (`SplitGroup`), and every other reader skip.
-const GAPS: [Gap; 3] = [
+const GAPS: [Gap; 2] = [
     Gap {
         name: "sat_b answers Any only for mu and tag groups (a comparison where T_Obj gives a mu type)",
         until: "stage 7.4",
@@ -154,11 +154,6 @@ const GAPS: [Gap; 3] = [
         name: "#564: no sort on a row variable (the checker kinds Eq on a row tail)",
         until: "stage 7.2",
         covers: |case| case.compares() && case.has_record(),
-    },
-    Gap {
-        name: "#623: a sort does not reach a variable inside a type",
-        until: "stage 7.3",
-        covers: |case| case.compares(),
     },
 ];
 
@@ -351,8 +346,6 @@ mod tests {
             let line = format!("U\t{term}\tOK Number\tsrc");
             (GAPS[gap].covers)(&Case::parse(&line))
         };
-        assert!(covered(2, "(bin eq (b 0) (b 0))"));
-        assert!(!covered(2, "(bin add (b 0) (b 0))"));
         assert!(covered(1, "(bin lt (proj (b 0) 0) (n 1))"));
         assert!(!covered(1, "(bin lt (b 0) (n 1))"));
         assert!(covered(0, "(bin eq (rec (0 (meth (abs (b 0))))) (b 0))"));
