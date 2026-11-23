@@ -108,6 +108,13 @@ enum Core {
     Restrict(Box<Core>, usize),
 }
 
+fn relabel_fields(fields: &mut [(usize, Core)], rank: &[usize]) {
+    for (label, value) in fields {
+        *label = rank[*label];
+        value.relabel(rank);
+    }
+}
+
 fn fields_sexp(fields: &[(usize, Core)], out: &mut String) {
     out.push_str("(rec");
     for (label, value) in fields {
@@ -119,6 +126,43 @@ fn fields_sexp(fields: &[(usize, Core)], out: &mut String) {
 }
 
 impl Core {
+    /// Renames every label by `rank`, which maps a label's first-use number to
+    /// its number in sorted-name order.
+    fn relabel(&mut self, rank: &[usize]) {
+        match self {
+            Core::Var(_)
+            | Core::Num(_)
+            | Core::Float
+            | Core::Str(_)
+            | Core::Unit
+            | Core::Bool(_) => {}
+            Core::If(a, b, c) => {
+                for e in [a, b, c] {
+                    e.relabel(rank);
+                }
+            }
+            Core::Bin(_, a, b) | Core::App(a, b) | Core::Let(a, b) => {
+                a.relabel(rank);
+                b.relabel(rank);
+            }
+            Core::ToFloat(e) | Core::Abs(e) | Core::Meth(e) => e.relabel(rank),
+            Core::Rec(fields) => relabel_fields(fields, rank),
+            Core::Letrec(fields, body) => {
+                relabel_fields(fields, rank);
+                body.relabel(rank);
+            }
+            Core::Proj(e, label) | Core::Restrict(e, label) => {
+                *label = rank[*label];
+                e.relabel(rank);
+            }
+            Core::Spread(base, label, value) => {
+                *label = rank[*label];
+                base.relabel(rank);
+                value.relabel(rank);
+            }
+        }
+    }
+
     fn sexp(&self, out: &mut String) {
         match self {
             Core::Var(i) => write!(out, "(b {i})").unwrap(),
@@ -425,6 +469,21 @@ impl Reader<'_> {
                 self.labels.len() - 1
             }
         }
+    }
+
+    /// Renumbers the labels in name order, so the calculus's `nat` order on
+    /// labels is the checker's alphabetical one and a record comparison
+    /// agrees between the two.
+    fn number_labels_by_name(&mut self, core: &mut Core) {
+        let mut sorted = self.labels.clone();
+        sorted.sort();
+        let rank: Vec<usize> = self
+            .labels
+            .iter()
+            .map(|l| sorted.binary_search(l).unwrap())
+            .collect();
+        core.relabel(&rank);
+        self.labels = sorted;
     }
 
     fn node_ty(&self, expr: &Expr) -> Option<&Ty> {
@@ -972,9 +1031,10 @@ fn line(source: &str) -> Result<String, Skip> {
         in_comparison: 0,
         gap: Feature::Other,
     };
-    let core = reader
+    let mut core = reader
         .read(&lowered.root)
         .ok_or_else(|| Skip::OutsideFragment(feature_of(&lowered, checked.as_ref(), reader.gap)))?;
+    reader.number_labels_by_name(&mut core);
     if hides_label
         || reader
             .types

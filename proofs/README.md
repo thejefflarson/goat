@@ -49,7 +49,7 @@ preservation) is B3 (#71).
 | `GoatRecArith.v` | Record arithmetic (ADR 0012): `row_sig` (every field of a row takes the operator), `bin_sig_record`, and `zip_typing`, which pairs the fields of two records typed by rows equivalent to one numeric row and types the record of operator applications that `rec_zip` builds. Progress and preservation use it. |
 | `GoatSpread.v` | Spread and restrict (phase 4): the inversions, and `spread_step_typing` and `restrict_step_typing`, which preservation uses. |
 | `GoatPhase4.v` | Phase 4 of ADR 0037: worked examples for spread (an update, an extension, one `set_x` for a record with and without `x`), restrict, and what has no derivation (a type-changing update, a restrict on a record without the label). |
-| `GoatPhase6.v` | Phase 6, stages 1a and 1b: worked examples for the `Eq` sort and record comparison: `()` compares, a function does not, `same = program(x) do x == x done` is used at `Int`, `String` and `Unit`, records compare equal in either field order, by their second field when the first ties, and in label order, nested records compare, a record holding a function is not `Eq`. The differential test covers the algorithm. |
+| `GoatPhase6.v` | Phase 6: worked examples for the `Eq` sort and structural comparison: `()` compares, a function does not, `same = program(x) do x == x done` is used at `Int`, `String` and `Unit`, records compare equal in either field order, by their second field when the first ties, and in label order, nested records compare, a record holding a function is not `Eq`; tags compare by position (`Low < Medium < High`), a list lexicographically with a prefix first, and a recursive tree by `fold`. The differential test covers the algorithm. |
 | `GoatRecArithExamples.v` | Record arithmetic, worked: a record sum, a nested product with the fields in another order at both levels, a record with a non-number field (no derivation). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
@@ -112,21 +112,53 @@ by writing `float(e)` from the checker's own node types and requiring the
 proven algorithm to accept the result with the checker's type.
 
 `progress`, `preservation` and `soundness` hold with 0 admits, and
-`make check-assumptions` checks all seventeen theorems (T1, T2, T3, these three, the
-inference algorithm's soundness and its mu-freedom, and the three of
-`GoatElab.v`).
+`make check-assumptions` checks every theorem in the list under "Theorems checked
+closed" below.
 
 What the model leaves out, each checked against `goat check` and `goat run`
 (`docs/semantics.md` section 9): the embedded target's 32-bit `Int`, IEEE
 rounding, infinities and NaN (a `Float` is opaque), the `trap()` builtin,
-comparison of tags (phase 6, stage 1c), IEEE behavior inside a compound (a `Float`
-inside a record relates to every result, so a NaN's place in the order is not
-modeled) and the `Ordered` sort. A comparison takes the sort `Eq` (`sat`), which
-`Int`, `Float`, strings, booleans, `Unit` and a closed record of such types satisfy, so a generic comparison
-types and `Unit` compares. Two records compare by `cmp_rel`'s `cr_rec`: field by
+IEEE behavior inside a compound (a `Float`
+inside a record or tag relates to every result, so a NaN's place in the order is not
+modeled) and the `Ordered` sort. A comparison takes the sort `Eq` (`sat`): `Int`,
+`Float`, strings, booleans and `Unit`, a record of `Eq` fields, a recursive type
+whose body is `Eq`, and a tag group whose parameters are. A function inside a type
+makes it not `Eq`. `cmp_rel` is the order (ADR 0036): two records compare field by
 field, in the order of their labels, each label read as its first field in either
-record, so `{x: 1, y: 2} == {y: 2, x: 1}`. `cmp_total` shows two values of one `Eq`
-type always compare, and `rec_align` is the alignment fact it rests on. One gap is accepted: `5 // 0` typed at `Float` (two bare numerals the
+record, so `{x: 1, y: 2} == {y: 2, x: 1}` (`cr_rec`); two tags of one group compare
+by position, then by payload (`cr_con_eq`, `cr_con_lt`, `cr_con_gt`); `fold` compares
+its contents (`cr_fold`). `cmp_total` shows two values of one `Eq` type always
+compare, by induction on the size of the first value, so a recursive type needs no
+well-founded type order; `rec_align` is the record alignment fact it rests on, and
+`cmp_unerase` carries it through elaboration.
+
+What phase 6 does not prove, and where each gap is tracked:
+
+- **Sort propagation (#623).** W's unifier never changes the kinding environment,
+  so `f = program(x) do same({p: x}, {p: x}) done` (`same` compares) is accepted by
+  the checker and refused by W. The spike (`differential/sort_gap.sh`) found 0 of
+  24295 checker-accepted corpus programs that hit it; five hand-written ones do.
+  Sound side only: W refuses more than the checker.
+- **NaN inside a compound.** The compiler orders a number by `==`, then `<`, else
+  greater, so `{x: 0} > {x: NaN}` and `{x: NaN} > {x: 0}` both hold, which breaks
+  antisymmetry and contradicts ADR 0036's "a NaN sorts after everything". The model
+  does not decide it (`cr_float` relates to every result) and no order law is
+  proved for `Float`-bearing values. This is an open question for the owner
+  (`docs/design/phase6-proof-plan.md`, section 9, question 1).
+- **`sat_b` on `mu` and tag groups.** The algorithm's decision procedure answers
+  `Any` only for a recursive type or a tag group, so W refuses a comparison at one
+  that `sat` accepts. The corpus reader skips tags (185 programs), so no program
+  shows it.
+- **The label bridge.** The calculus orders labels as `nat`, the checker by name.
+  The corpus reader numbers labels in sorted-name order (`number_labels_by_name`,
+  `checker/examples/core_corpus.rs`), so a record comparison in the corpus means
+  what the checker means. The differential test compares types, not values, so this
+  and mono's derived comparison computing `cmp_rel` are trusted, not proved.
+- **Order laws.** Reflexivity, antisymmetry and transitivity of `cmp_rel` on
+  `Float`-free values (what `sort` relies on) are not proved; soundness does not
+  need them.
+
+One gap is accepted: `5 // 0` typed at `Float` (two bare numerals the
 checker settles as `Float`, as in `f(5 // 0)` for `f = program(x) do x + 1.5 done`)
 steps as two `Int`s in the calculus, so it traps with `Div_by_zero`, while the
 compiled program divides decimals and gives `inf`. `+ - *` and numerals are generic over the sorts `Numeric` and
@@ -490,23 +522,25 @@ two meet in Algorithm W, which returns the elaborated term:
   repeats the receiver (`DP_dot_path`), another receiver binds a hidden `let`
   (`DP_dot_bind`), and `r::f(a)` is `(r.f)(a)` (`DP_take`). See "The parser claim".
 
-**Theorems checked closed** (`GoatAssumptions.v`, `make check-assumptions`, 25):
+**Theorems checked closed** (`GoatAssumptions.v`, `make check-assumptions`, 27):
 `peg_deterministic`, `parse_denotes_lc`, `print_parse_roundtrip`, `progress`,
 `preservation`, `soundness`, `infer_closed_sound`, `erase_step`, `erase_traps`,
 `coerce_typing`, `infer_elab_sound`, `unroll_eqb_sound`, `erase_converse`,
 `erase_converse_multistep`, `knot_unrolls`, `unify_k_sound`, `coerce_dec_sound`,
-`unify_co_sound`, `infer_guarded`, `lex_concat`, `step_longest`, `word_boundary`,
-`parse_text_denotes`, `edits_preserve_tokens` and `edits_preserve_parse`. 0
-admits, no axioms. The lexer theorems hold for any answer of the two Unicode
-predicates; `parse_text_denotes_xid` is the same T1 at the two declared parameters
-`xid_start_hi` and `xid_cont_hi` (whether a code point of 128 or more may start or
-continue an identifier: the tables of `unicode_ident`, checked by the differential
-test), and `make check-assumptions` requires it to rest on those two and nothing
-else.
+`unify_co_sound`, `infer_guarded`, `cmp_total`, `cmp_unerase`, `lex_concat`,
+`step_longest`, `word_boundary`, `parse_text_denotes`, `edits_preserve_tokens` and
+`edits_preserve_parse`. 0 admits, no axioms. The lexer theorems hold for any answer
+of the two Unicode predicates; `parse_text_denotes_xid` is the same T1 at the two
+declared parameters `xid_start_hi` and `xid_cont_hi` (whether a code point of 128
+or more may start or continue an identifier: the tables of `unicode_ident`, checked
+by the differential test), and `make check-assumptions` requires it to rest on
+those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 44174 programs written, 42781 compared with 0 mismatches, 1382 skipped
-by the driver. Of the 42 programs whose checker type is recursive, 31 are compared
+commit: 44380 programs written, 42958 compared with 0 mismatches, 1411 skipped
+by the driver. The reader numbers labels in name order, which wrote 206 more
+programs than before (a corpus line repeats only if its term, mode and verdict do)
+and changed no checker verdict. Of the 43 programs whose checker type is recursive, 32 are compared
 and 11 refused. The corpus reader's skips, by the feature that keeps a program
 outside the calculus (the first of a fixed order that it uses):
 
@@ -535,15 +569,46 @@ and `RecursiveType` is a compared class, not a skip.
 more restrictive than the checker, never less, and the differential test counts
 the programs and records no mismatch.
 
-- **11 recursive programs W refuses (#606).** 6 need a row knot: a row variable
-  meets a row that contains it (`occR`, corpus lines 7, 18 and 285), or
-  `rewrite_row` finds the tail variable inside the other row (lines 249, 293 and
-  294); it needs a `unify_kr` case that ties the knot over the enclosing record
-  type. 3 are deep coercions (lines 283, 286 and 295, for example
-  `{...ball, size: 10}.moved()`); they need eta-expansion. Line 306,
-  `step(ball).x`, fails in `unify_k` with no occurs check. Line 309, a group
-  member that needs a `fold` around its whole lambda, which `T_Letrec` does not
-  allow.
+- **11 recursive programs W refuses (#606).** Each is sound but incomplete:
+  the checker accepts, W refuses, and there is no mismatch. The refusals were
+  measured again by logging each `None` in the extracted algorithm, and by
+  prototyping the fix the first measurement suggested (in the extracted OCaml,
+  not committed). Corpus lines below are the current `core_corpus` numbering.
+  - **Row variable occurs, 3 (lines 7, 18, 291).** `occR`: a row variable meets
+    a row that contains it, as in `{l1: M, ...} ~ {l0 | r}` where `M` mentions
+    `r`. A prototype `unify_kr` case solves it: split the row at the one field
+    whose type mentions `r`, put a fresh variable `x` there, solve `r := row[x]`
+    with `x := knot x (T[r := row[x]])`, and `unroll_eq` 1 holds between the two
+    sides. It does not make any of the three compared: the substitution leaves
+    `s T1` and `s T2` one unrolling apart below a record field whose row has a
+    variable tail, and `unify_co` fails in `coerce_dec`, which has only head
+    coercions. A record with an open tail cannot be eta-expanded, since the
+    coercion would have to rebuild labels it cannot name.
+  - **Tail occurs, 3 (lines 254, 299, 300).** `rewrite_row` refuses because the
+    tail variable is in the other row. Trying the other row first (same rule,
+    arguments swapped) reaches the row-variable case above and the same
+    `coerce_dec` refusal (line 300), or refuses again (254, 299).
+  - **Deep coercion, 3 (lines 288, 292, 301).** `unify_k` succeeds and
+    `coerce_dec` refuses, for example `{...ball, size: 10}.moved()`.
+  - **Line 312, `step(ball).x`.** Not a `bind_k` fault and not a corpus fault.
+    `bind_k` refuses a type with a free index (the one logged refusal) when
+    `unify_k` compares two mu bodies, which is only the first attempt: the
+    fallback unrolls and meets the same pair (the field's mu against the
+    record-level mu of `ball`) again, until the fuel (100000 calls) runs out.
+    The two types are one regular tree written with the knot in two places, and
+    no `unroll_eq` with a finite budget relates them (there is no mu/mu
+    congruence rule), so the algorithm would need an assumed-pairs set and a
+    spec stronger than `unroll_eq`.
+  - **Line 315, `h = program(r) do ... (r.g)({stop: true, g: h}) ...`.**
+    `unify_t` fails on the member's type against its slot variable (the slot
+    occurs in the member's type); the slot would be bound to a knot, and the
+    member would then need a `fold` around its whole lambda, which `T_Letrec`
+    does not allow (`fn_group`).
+  Three things would be needed to compare these: a coercion below a record with
+  an open row (or a way to place the knot so that no coercion is needed, over the
+  record type that carries the row variable), a coinductive type equality
+  (assumed pairs) in `unify_k`, and a `T_Letrec` that admits a `fold` of a
+  lambda. Each changes the calculus or its spec; none is a local proof.
 - **No `lacks` on a row variable (#564).** The calculus's `lacks` is a premise on
   a closed row spine, so a spread whose base ends in a row variable the checker
   knows lacks the label (`{x, ...rest} = p` then `{...rest, x: 2}`) has no

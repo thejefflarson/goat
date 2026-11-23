@@ -44,6 +44,8 @@ Print Assumptions unify_k_sound.
 Print Assumptions coerce_dec_sound.
 Print Assumptions unify_co_sound.
 Print Assumptions infer_guarded.
+Print Assumptions cmp_total.
+Print Assumptions cmp_unerase.
 Print Assumptions lex_concat.
 Print Assumptions step_longest.
 Print Assumptions word_boundary.

@@ -94,3 +94,24 @@ preservation must survive it. Three representations were weighed:
   environments that agree on its context and type (`typing_denv_agree`).
   `proofs/README.md` explains where each is used.
 - A later sort (`Eq`, `Ordered`) is a new case of `sort`, `finer` and `sat`.
+
+## Follow-up: the `Eq` sort (phase 6, 2026-11-22)
+
+`Eq` (ADR 0036) was added as the first such sort, with no change to the
+decision above. `sort` gained `k_Eq` between `Any` and `Numeric` (`finer_numeric_eq`:
+every `Numeric` type is `Eq`), and `sat` gained its cases: `String`, `Bool` and
+`Unit` are `Eq`; a record is `Eq` when every field is; a `mu` is when its body
+is, with a bound index counting as `Eq`; a tag group is when every parameter its
+declaration uses is. A comparison unifies both operands at one fresh `Eq`
+variable, which replaced the two-run `lenient`/`ora` workaround of #525. The
+sort mechanism held up: the substitution lemma and `kres` needed no change.
+`cmp_total` (two values of one `Eq` type compare) and `cmp_unerase` (the
+elaboration converse for a comparison) are in the checked-closed list.
+
+Two limits of the decision show here, both on the sound side. The unifier does
+not push a sort onto a variable inside a compound it meets (`unify_t` never
+changes `D`), so `f = program(x) do same({p: x}, {p: x}) done` is accepted by
+the checker and refused by W (#623); the corpus has no such program
+(`differential/sort_gap.sh`). And `sat_b`, the algorithm's decision procedure,
+is conservative on `mu` and tag groups: it gives them `Any` only, so W refuses a
+comparison of a recursive or tag type that `sat` accepts.
