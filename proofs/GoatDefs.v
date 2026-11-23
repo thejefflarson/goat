@@ -199,21 +199,23 @@ Definition Ftv_typ (T : typ) (a : typvar) : Prop := a `in` ftv_typ T.
 Definition Frv_typ (T : typ) (r : rowvar) : Prop := r `in` frv_typ T.
 
 (* ================================================================== *)
-(* Sorts (ADR 0037, phase 2).  A type variable has a sort: [Any] stands   *)
-(* for any type, [Numeric] and [Literal] for [Int] or [Float].  A         *)
-(* [Literal] variable is also [Numeric], so one sort is finer than another *)
-(* when its variables may stand wherever the other is asked.  The sort of  *)
+(* Sorts (ADR 0037, phases 2 and 6).  A type variable has a sort: [Any]   *)
+(* stands for any type, [Eq] for a type with no function inside it,        *)
+(* [Numeric] and [Literal] for [Int] or [Float].  A [Literal] variable is   *)
+(* also [Numeric] and a [Numeric] one also [Eq], so one sort is finer than  *)
+(* another when its variables may stand wherever the other is asked.  The sort of  *)
 (* a free variable comes from a kinding environment [denv], a total map    *)
 (* that is [Any] outside a finite support; a quantified variable's sort    *)
 (* is recorded in its scheme.                                              *)
 (* ================================================================== *)
 
-Inductive sort : Set := k_Any | k_Numeric | k_Literal.
+Inductive sort : Set := k_Any | k_Eq | k_Numeric | k_Literal.
 
 Inductive finer : sort -> sort -> Prop :=
  | finer_refl : forall k, finer k k
  | finer_any : forall k, finer k k_Any
- | finer_lit : forall k, finer k_Literal k.
+ | finer_lit : forall k, finer k_Literal k
+ | finer_numeric_eq : finer k_Numeric k_Eq.
 
 #[export] Hint Constructors finer : core.
 
@@ -223,14 +225,16 @@ Definition denv := typvar -> sort.
 (* [sat D k T]: T may stand where a variable of sort [k] stands.  A concrete
    [Int] or [Float] satisfies every sort; a variable satisfies the sorts its
    own (in [D]) is finer than.  A closed record whose fields are all [Numeric]
-   is [Numeric] too, field by field (ADR 0012), and never [Literal]: a numeral
-   is a number.  Any other type satisfies only [Any]. *)
+   is [Numeric] and [Eq] too, field by field (ADR 0012), and never [Literal]:
+   a numeral is a number.  [String], [Bool] and [Unit] are [Eq] and [Any].  A
+   function is neither, and the remaining types satisfy only [Any]. *)
 Fixpoint sat (D : denv) (k : sort) (T : typ) {struct T} : Prop :=
   match T with
   | typ_Int | typ_Float => True
   | typ_Var a => finer (D a) k
   | typ_Record R =>
-      match k with k_Any => True | k_Numeric => rsat D R | k_Literal => False end
+      match k with k_Any => True | k_Eq | k_Numeric => rsat D R | k_Literal => False end
+  | typ_String | typ_Bool | typ_Unit => k = k_Any \/ k = k_Eq
   | _ => k = k_Any
   end
 with rsat (D : denv) (R : row) {struct R} : Prop :=
@@ -588,6 +592,9 @@ Definition kind (o : bop) : bop_kind :=
   | bop_lt | bop_lte | bop_gt | bop_gte | bop_eq | bop_ne => k_cmp
   end.
 
+Lemma kind_cmp_dec : forall o, kind o = k_cmp \/ kind o <> k_cmp.
+Proof. intros o. destruct (kind o); first [ left; reflexivity | right; discriminate ]. Qed.
+
 (* [+ - *] over the integers; meaningful when [kind o = k_ring]. *)
 Definition ring_Z (o : bop) (a b : znum) : znum :=
   match o with
@@ -656,6 +663,18 @@ Inductive fl_pair : exp -> exp -> Prop :=
 
 #[export] Hint Constructors fl_pair : core.
 
+(* The three-way result of comparing two scalar values (ADR 0036).  Two
+   records compare by [st_cmprec], to any result, until their order is
+   modelled. *)
+Inductive cmp_rel : exp -> exp -> comparison -> Prop :=
+ | cr_int : forall a b, cmp_rel (e_num a) (e_num b) (z_cmp a b)
+ | cr_str : forall p q, cmp_rel (e_str p) (e_str q) (str_compare p q)
+ | cr_bool : forall x y a b,
+     val_bool x = Some a -> val_bool y = Some b -> cmp_rel x y (bool_compare a b)
+ | cr_unit : cmp_rel e_unit e_unit Eq.
+
+#[export] Hint Constructors cmp_rel : core.
+
 (* What an operator computes from two values.  A relation, because a Float
    operation is unspecified: any Float, or for a comparison any Bool.  Every
    Int case has one answer, and none when the divisor is zero or the result
@@ -674,17 +693,11 @@ Inductive bin_step : bop -> exp -> exp -> exp -> Prop :=
      kind o = k_whole -> fl_pair x y -> bin_step o x y (e_dec d)
  | bs_quot_num : forall o a b d,
      kind o = k_quot -> bin_step o (e_num a) (e_num b) (e_dec d)
- | bs_cmp_int : forall o a b,
-     kind o = k_cmp ->
-     bin_step o (e_num a) (e_num b) (of_bool (cmp_holds o (z_cmp a b)))
  | bs_cmp_float : forall o x y c,
      kind o = k_cmp -> fl_pair x y -> bin_step o x y (of_bool c)
- | bs_cmp_str : forall o p q,
-     kind o = k_cmp ->
-     bin_step o (e_str p) (e_str q) (of_bool (cmp_holds o (str_compare p q)))
- | bs_cmp_bool : forall o x y a b,
-     kind o = k_cmp -> val_bool x = Some a -> val_bool y = Some b ->
-     bin_step o x y (of_bool (cmp_holds o (bool_compare a b))).
+ | bs_cmp : forall o a b c,
+     kind o = k_cmp -> cmp_rel a b c ->
+     bin_step o a b (of_bool (cmp_holds o c)).
 
 (* Why a program stops: the defined runtime errors of the fragment. *)
 Inductive trap_kind : Set := trap_div_zero | trap_overflow.
@@ -701,21 +714,14 @@ Inductive bin_trap : bop -> exp -> exp -> trap_kind -> Prop :=
      bin_trap o (e_num a) (e_num b) trap_overflow.
 
 (* The types an operator accepts, and what it gives (ADR 0017, ADR 0036):
-   [+ - * // %] take two Ints or two Floats; [/] takes two Floats and gives a
-   Float; a comparison takes two of one of Int, Float, String or Bool.
-   [+ - * // %] are generic: they take two operands of one
-   type that is [Numeric] in the kinding environment, a [Numeric] variable
-   included.  An [Int] [//] or [%] traps on a zero divisor; a [Float] one is
-   unspecified like any Float operation, so IEEE's infinity and NaN fit.  The checker accepts an Int where a Float is wanted; elaboration
-   inserts [e_tofloat] there, so the calculus has no mixed signature.  A
-   comparison is at concrete types: a generic one waits for the [Eq] and
-   [Ordered] sorts. *)
-Inductive cmp_typ : typ -> Prop :=
- | ct_int : cmp_typ typ_Int
- | ct_float : cmp_typ typ_Float
- | ct_string : cmp_typ typ_String
- | ct_bool : cmp_typ typ_Bool.
-
+   [+ - * // %] are generic: they take two operands of one type that is
+   [Numeric] in the kinding environment, a [Numeric] variable included; [/]
+   takes two Floats and gives a Float; a comparison takes two of one type
+   that is [Eq], and gives a Bool.  An [Int] [//] or [%] traps on a zero
+   divisor; a [Float] one is unspecified like any Float operation, so IEEE's
+   infinity and NaN fit.  The checker accepts an Int where a Float is wanted;
+   elaboration inserts [e_tofloat] there, so the calculus has no mixed
+   signature. *)
 Inductive bin_sig : denv -> bop -> typ -> typ -> typ -> Prop :=
  | sig_ring : forall D o A,
      kind o = k_ring -> sat D k_Numeric A -> bin_sig D o A A A
@@ -725,23 +731,21 @@ Inductive bin_sig : denv -> bop -> typ -> typ -> typ -> Prop :=
  | sig_quot_rec : forall D R, rfsat R ->
      bin_sig D bop_div (typ_Record R) (typ_Record R) (typ_Record R)
  | sig_cmp : forall D o B,
-     kind o = k_cmp -> cmp_typ B -> bin_sig D o B B typ_Bool.
-
-#[export] Hint Constructors cmp_typ : core.
+     kind o = k_cmp -> sat D k_Eq B -> bin_sig D o B B typ_Bool.
 
 Lemma finer_trans : forall k1 k2 k3, finer k1 k2 -> finer k2 k3 -> finer k1 k3.
 Proof.
   intros k1 k2 k3 H1 H2. inversion H1; subst; auto.
-  inversion H2; subst; auto.
+  all: inversion H2; subst; auto.
 Qed.
 
 Lemma sat_finer : forall D k k' T, finer k' k -> sat D k' T -> sat D k T.
 Proof.
   intros D k k' T Hf H. destruct T; simpl in *; try exact I.
-  all: try (subst; inversion Hf; subst; auto; fail).
-  - destruct k'; destruct k; simpl in *; try contradiction; try exact I;
-      inversion Hf; subst; auto.
-  - eapply finer_trans; eauto.
+  all: try (eapply finer_trans; eauto; fail).
+  all: destruct k, k'; try (inversion Hf; fail); simpl in *;
+    first [ exact I | assumption | (destruct H as [H|H]; discriminate)
+          | (left; reflexivity) | (right; reflexivity) | discriminate | contradiction ].
 Qed.
 
 (* A kind-respecting substitution keeps a type within its sort. *)
@@ -764,7 +768,10 @@ Lemma sat_ap : forall D D' k T st sr,
 Proof. intros. eapply (proj1 (sat_ap_mut D D' st sr H)); eassumption. Qed.
 
 Lemma sat_any : forall D T, sat D k_Any T.
-Proof. intros D T. destruct T; simpl; try reflexivity. apply finer_any. Qed.
+Proof.
+  intros D T. destruct T; simpl;
+    first [ exact I | reflexivity | (left; reflexivity) | apply finer_any ].
+Qed.
 
 (* A closed record of [Float]s has no variables to substitute. *)
 Lemma fsat_ap_mut : forall st sr,
@@ -782,14 +789,12 @@ Lemma bin_sig_ap : forall D D' o A B R st sr,
   bin_sig D' o (ap_typ st sr A) (ap_typ st sr B) (ap_typ st sr R).
 Proof.
   intros D D' o A B R st sr Hk H.
-  assert (Hc : forall N, cmp_typ N -> ap_typ st sr N = N)
-    by (intros N HN; destruct HN; reflexivity).
   destruct H; simpl.
   - apply sig_ring; [ assumption | eapply sat_ap; eassumption ].
   - apply sig_quot.
   - apply sig_whole; [ assumption | eapply sat_ap; eassumption ].
   - rewrite (proj2 (fsat_ap_mut st sr) R H). apply sig_quot_rec; assumption.
-  - rewrite (Hc B H0). apply sig_cmp; assumption.
+  - apply sig_cmp; [ assumption | eapply sat_ap; eassumption ].
 Qed.
 
 (* ================================================================== *)
@@ -852,8 +857,11 @@ Inductive step : exp -> exp -> Prop :=
      value v1 -> value v2 -> bin_step o v1 v2 v ->
      step (e_bin v1 o v2) v
  | st_binrec : forall fs1 o fs2 fs,
-     rec_value fs1 -> rec_value fs2 -> rec_zip o (fs_plain fs1) (fs_plain fs2) fs ->
+     kind o <> k_cmp -> rec_value fs1 -> rec_value fs2 -> rec_zip o (fs_plain fs1) (fs_plain fs2) fs ->
      step (e_bin (e_rec fs1) o (e_rec fs2)) (e_rec fs)
+ | st_cmprec : forall fs1 o fs2 c,
+     kind o = k_cmp -> rec_value fs1 -> rec_value fs2 ->
+     step (e_bin (e_rec fs1) o (e_rec fs2)) (of_bool (cmp_holds o c))
  | st_tofloat1 : forall e e', step e e' -> step (e_tofloat e) (e_tofloat e')
  | st_tofloat : forall z d, step (e_tofloat (e_num z)) (e_dec d)
  | st_tofloat_dec : forall d, step (e_tofloat (e_dec d)) (e_dec d)

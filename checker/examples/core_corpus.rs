@@ -309,7 +309,6 @@ enum Skip {
     OutsideFragment(Feature),
     MethodFlag,
     ResourceLimit,
-    GenericComparison,
 }
 
 impl Skip {
@@ -321,7 +320,6 @@ impl Skip {
                 "the checker rejects a method used as a plain function or the reverse"
             }
             Skip::ResourceLimit => "the checker gives up on a program too complex",
-            Skip::GenericComparison => "a comparison at a parameter left generic",
         }
     }
 }
@@ -352,13 +350,8 @@ struct Reader<'a> {
     /// The checker's node types when it accepted the program; a rejected
     /// program has none, so it is read without coercions.
     types: Option<&'a HashMap<ExprId, Ty>>,
-    /// The type variables the checker leaves free that can only be a number.
-    number_vars: Option<&'a HashSet<goat_checker::ty::TypeVar>>,
     /// How many comparison operands the reader is inside.
     in_comparison: usize,
-    /// Whether a comparison has an operand whose type is a variable of no
-    /// sort, which the checker leaves open and the calculus cannot compare.
-    generic_comparison: bool,
     /// The symbols of function parameters. A `let` of one (a record pattern
     /// binds its source so) holds no numeral the calculus could generalize.
     /// Why the reader stopped, when the cause is the shape of the program and
@@ -675,24 +668,15 @@ impl Reader<'_> {
                 let (mut a, mut b) = (operands.0?, operands.1?);
                 if self.types.is_some() {
                     let to_float = |c: Core| Core::ToFloat(Box::new(c));
-                    let generic = matches!(
-                        op,
-                        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod
-                    ) && [lhs, rhs]
-                        .iter()
-                        .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
-                    let open_comparison = comparison
+                    let generic = (comparison
+                        || matches!(
+                            op,
+                            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod
+                        ))
                         && [lhs, rhs]
                             .iter()
                             .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
-                    self.generic_comparison |= comparison
-                        && [lhs, rhs].iter().any(|e| match self.node_ty(e) {
-                            Some(Ty::Var(v)) => {
-                                self.number_vars.is_some_and(|numbers| !numbers.contains(v))
-                            }
-                            _ => false,
-                        });
-                    if !generic && !open_comparison {
+                    if !generic {
                         let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
                         match (op, x, y) {
                             (BinOp::Div, ..) => (a, b) = (to_float(a), to_float(b)),
@@ -955,10 +939,8 @@ fn is_method(expr: &Expr) -> bool {
         if params.first().is_some_and(|p| p.name == "self"))
 }
 
-/// The line for `source`, or why it is not a program of the fragment. A
-/// `forced` program is kept although a comparison in it looks generic: the
-/// checker does not record a `Numeric` variable, which a `%` makes of a parameter.
-fn line(source: &str, forced: bool) -> Result<String, Skip> {
+/// The line for `source`, or why it is not a program of the fragment.
+fn line(source: &str) -> Result<String, Skip> {
     let lowered = lower(source).map_err(|_| Skip::Rejected)?;
     if !lowered.errors.is_empty() {
         return Err(Skip::Rejected);
@@ -981,9 +963,7 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
         scope: Vec::new(),
         unary: true,
         types: checked.as_ref().map(|c| &c.typed.node_types),
-        number_vars: checked.as_ref().map(|c| &c.typed.number_vars),
         in_comparison: 0,
-        generic_comparison: false,
         gap: Feature::Other,
     };
     let core = reader
@@ -1001,9 +981,6 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
     }
     if method_flag {
         return Err(Skip::MethodFlag);
-    }
-    if reader.generic_comparison && !forced {
-        return Err(Skip::GenericComparison);
     }
     let recursive = checked
         .as_ref()
@@ -1765,13 +1742,6 @@ const HANDWRITTEN: &[&str] = &[
     "count = program(n) do if n // 1 < 1 then 0 // 1 else count(n // 2) done done\ncount(3 // 1)",
     "total = 1 // 1 + 2 // 1\nscaled = total * 2\nscaled",
     "ping = program(x, k) do pong(x, k) done\npong = program(y, k) do ping(y, k) done\n{a: ping(true, true), b: pong(\"s\", true)}",
-];
-
-/// Programs the test pins as compared: the algorithm and the checker agree on
-/// each, and `FORCED SKIP` is printed if one stops being a program of the
-/// fragment. The first two settle a comparison on a variable a later use
-/// forces to Float and to Int.
-const FORCED: &[&str] = &[
     "v = 71 // 88\nif v <= v then v - 3.1 else 4.0 done",
     "f = program(x) do x == x % x done\nf(90)",
     "set_x = program(r) do {...r, x: 1} done\n{a: set_x({x: 4, z: 2}), b: set_x({y: true})}",
@@ -1856,13 +1826,8 @@ fn main() {
     let mut seen = HashSet::new();
     let mut skipped: BTreeMap<Skip, usize> = BTreeMap::new();
     let mut kept = 0;
-    let forced: Vec<String> = FORCED.iter().map(|s| s.to_string()).collect();
-    for (source, forced) in sources
-        .iter()
-        .map(|s| (s, false))
-        .chain(forced.iter().map(|s| (s, true)))
-    {
-        match line(source, forced) {
+    for source in &sources {
+        match line(source) {
             Ok(line) => {
                 if seen.insert(
                     line.rsplit_once('\t')
@@ -1874,12 +1839,7 @@ fn main() {
                     println!("{line}");
                 }
             }
-            Err(skip) => {
-                if forced {
-                    eprintln!("FORCED SKIP {}", skip.describe());
-                }
-                *skipped.entry(skip).or_default() += 1
-            }
+            Err(skip) => *skipped.entry(skip).or_default() += 1,
         }
     }
     eprintln!("corpus: {kept} programs written");

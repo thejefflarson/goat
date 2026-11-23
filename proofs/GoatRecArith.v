@@ -43,15 +43,15 @@ Qed.
 
 (* An operator on records takes records of one row, and every field of the row
    takes the operator. *)
-Lemma bin_sig_record : forall D o R B X,
+Lemma bin_sig_record : forall D o R B X, kind o <> k_cmp ->
   bin_sig D o (typ_Record R) B X ->
   B = typ_Record R /\ X = typ_Record R /\ row_sig D o R.
 Proof.
-  intros D o R B X H. inversion H; subst.
+  intros D o R B X Hnc H. inversion H; subst.
   - repeat split. apply rsat_row_sig; [ left; assumption | assumption ].
   - repeat split. apply rsat_row_sig; [ right; assumption | assumption ].
   - repeat split. apply rfsat_row_sig; assumption.
-  - match goal with Hc : cmp_typ _ |- _ => inversion Hc end.
+  - contradiction.
 Qed.
 
 Lemma rm_row_sig : forall D o l R T R',

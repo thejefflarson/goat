@@ -92,7 +92,7 @@ Qed.
 
 Definition lit (x : exp) : Prop :=
   match x with
-  | e_num _ | e_dec _ | e_true | e_false | e_str _ => True
+  | e_num _ | e_dec _ | e_true | e_false | e_str _ | e_unit => True
   | _ => False
   end.
 
@@ -104,6 +104,7 @@ Proof.
   intros o a b v H. inversion H; subst;
     repeat match goal with
            | Hp : fl_pair ?x ?y |- _ => inversion Hp; subst; clear Hp
+           | Hc : cmp_rel ?x ?y _ |- _ => inversion Hc; subst; clear Hc
            | Hv : val_bool ?x = Some _ |- _ => destruct x; cbn in Hv; try discriminate; clear Hv
            end;
     split; exact I.
@@ -141,7 +142,8 @@ Proof.
   intros D G o A B R v Hs Hv Hty.
   assert (Hnum : forall A0, sat D k_Numeric A0 -> typing D G v A0 ->
             (exists gs, v = e_rec gs /\ rec_value gs) \/ lit v).
-  { intros A0 Hsat Ht. destruct A0; simpl in Hsat; try discriminate Hsat.
+  { intros A0 Hsat Ht. destruct A0; simpl in Hsat; try discriminate Hsat;
+      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat).
     - right. eapply canon_lit; [ eassumption | eassumption | base_type ].
     - right. eapply canon_lit; [ eassumption | eassumption | base_type ].
     - left. destruct (canon_record _ _ _ _ Hv Ht) as [gs [Rx [-> [Hrv _]]]]. eauto.
@@ -151,7 +153,15 @@ Proof.
   - right. eapply canon_lit; [ eassumption | eassumption | base_type ].
   - eapply Hnum; eassumption.
   - left. destruct (canon_record _ _ _ _ Hv Hty) as [gs [Rx [-> [Hrv _]]]]. eauto.
-  - right. inversion H0; subst; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - match goal with Hs0 : sat D k_Eq ?X |- _ => destruct X; simpl in Hs0;
+      try (destruct Hs0 as [Hs0 | Hs0]; discriminate Hs0); try discriminate Hs0 end.
+    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
+    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
+    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
+    + right. rewrite (canon_unit _ _ _ _ Hv Hty (teq_refl _)). exact I.
+    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
+    + left. destruct (canon_record _ _ _ _ Hv Hty) as [gs [Rx [-> [Hrv _]]]]. eauto.
+    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
 Qed.
 
 (* ---- a term whose erasure is a value reaches a value ---- *)
@@ -559,6 +569,23 @@ Proof.
           eapply multistep_trans; [ apply ms_bin2; [ apply v_rec; exact Hg1 | exact Hm2 ] | ];
           eapply ms_step; [ apply st_binrec; eassumption | apply ms_refl ]
         | cbn [erase]; rewrite Hge; reflexivity ]
+      end.
+    + lazymatch goal with
+        Ha : erase e1 = e_rec ?fs1, Hb : erase e2 = e_rec ?fs2, Hk : kind o = k_cmp |- _ =>
+        assert (Hv1 : value (erase e1)) by (rewrite Ha; apply v_rec; assumption);
+        assert (Hv2 : value (erase e2)) by (rewrite Hb; apply v_rec; assumption);
+        destruct (reach_operand D S e1 o A A R HS Hsig H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
+        destruct (reach_operand D S e2 o A A R HS Hsig H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
+        destruct Hk1 as [[gs1 [-> Hg1]] | L1];
+        [ | rewrite (erase_lit _ L1), Ha in Hev1; rewrite Hev1 in L1; cbn [lit] in L1; contradiction ];
+        destruct Hk2 as [[gs2 [-> Hg2]] | L2];
+        [ | rewrite (erase_lit _ L2), Hb in Hev2; rewrite Hev2 in L2; cbn [lit] in L2; contradiction ];
+        match goal with |- context [of_bool (cmp_holds o ?c)] =>
+          exists (of_bool (cmp_holds o c)); split;
+          [ eapply multistep_trans; [ apply ms_bin1; exact Hm1 | ];
+            eapply multistep_trans; [ apply ms_bin2; [ apply v_rec; exact Hg1 | exact Hm2 ] | ];
+            eapply ms_step; [ apply st_cmprec; assumption | apply ms_refl ]
+          | apply erase_of_bool ] end
       end.
   - (* spread *) intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2 S HS HG r Hs. subst G.
     cbn [erase] in Hs. inversion Hs; subst; flip_erased.

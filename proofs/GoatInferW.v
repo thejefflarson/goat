@@ -119,7 +119,7 @@ Fixpoint unify_grp (f : nat) (D : denv) (fs : fields) (R1 R2 : row) (n : nat) {s
    elaborated term.  The environment [D] has [Any] on every even atom from [n]
    on, so a fresh variable is [Any] unless the algorithm gives it a sort with
    [upd]. *)
-Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
+Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
   : option (sub * denv * typ * nat * exp) :=
   match f with
   | O => None
@@ -141,15 +141,15 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
       | e_abs b =>
           let x := fresh_var G b in
           let beta := typ_Var (ea n) in
-          match infer f' lenient ora D ((x ~ sch_mono beta) ++ G) (open_exp_wrt_exp b (e_fvar_f x)) (S n) with
+          match infer f' D ((x ~ sch_mono beta) ++ G) (open_exp_wrt_exp b (e_fvar_f x)) (S n) with
           | None => None
           | Some (s, D1, T, n1, b') => Some (s, D1, typ_Arrow (apT s beta) T, n1, e_abs (cl 0 x b'))
           end
       | e_app e1 e2 =>
-          match infer f' lenient ora D G e1 n with
+          match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
-              match infer f' lenient ora D1 (apC s1 G) e2 n1 with
+              match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
                   let beta := typ_Var (ea n2) in
@@ -161,21 +161,21 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
               end
           end
       | e_let e1 e2 =>
-          match infer f' lenient ora D G e1 n with
+          match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
               if is_gen_value e1' then
               let G1 := apC s1 G in
               let sc := gen_ren D1 (pin_ctx (let_pin D1 e1 T1) G1) T1 in
               let x := fresh_var G1 e2 in
-              match infer f' lenient ora D1 ((x ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
+              match infer f' D1 ((x ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
                   Some (scomp s2 s1, D2, T2, n2, e_let e1' (cl 0 x e2'))
               end
               else
               let x := fresh_var (apC s1 G) e2 in
-              match infer f' lenient ora D1 ((x ~ sch_mono T1) ++ apC s1 G) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
+              match infer f' D1 ((x ~ sch_mono T1) ++ apC s1 G) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
                   Some (scomp s2 s1, D2, T2, n2, e_let e1' (cl 0 x e2'))
@@ -185,7 +185,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
           if is_fn_group fs then
           let R0 := group_row fs n in
           let p := fresh_var G (e_rec fs) in
-          match infer_fields f' lenient ora D
+          match infer_fields f' D
                   ((p ~ sch_mono (typ_Record R0)) ++ G)
                   (open_fields_wrt_exp fs (e_fvar_f p)) (n + nfields fs) with
           | None => None
@@ -197,7 +197,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
                   let G1 := apC s G in
                   let sc := gen_ren D1 G1 (typ_Record (apR s R0)) in
                   let q := fresh_var G1 e2 in
-                  match infer f' lenient ora D1 ((q ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f q)) n2 with
+                  match infer f' D1 ((q ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f q)) n2 with
                   | None => None
                   | Some (s3, D3, T, n3, e2') =>
                       Some (scomp s3 s, D3, T, n3, e_letrec (clf 0 p fs'') (cl 0 q e2'))
@@ -207,14 +207,14 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
           else None
       | e_rec fs =>
           if no_meth fs then
-          match infer_fields f' lenient ora D G fs n with
+          match infer_fields f' D G fs n with
           | None => None
           | Some (s, D1, R, n1, fs') => Some (s, D1, typ_Record R, n1, e_rec fs')
           end
           else
           let p := fresh_var G (e_rec fs) in
           let Tp := typ_Record (obj_row fs n (row_Var (ea (n + nfields fs)))) in
-          match infer_obj f' lenient ora D G p Tp fs (S (n + nfields fs)) with
+          match infer_obj f' D G p Tp fs (S (n + nfields fs)) with
           | None => None
           | Some (s1, D1, R1, n1, fs1) =>
               match tie_obj f' D1 fs1 R1 (apR s1 (group_row fs n)) n1 with
@@ -224,7 +224,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
               end
           end
       | e_proj e1 l =>
-          match infer f' lenient ora D G e1 n with
+          match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
               let a := typ_Var (ea n1) in
@@ -235,16 +235,16 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
               end
           end
       | e_ite c a b =>
-          match infer f' lenient ora D G c n with
+          match infer f' D G c n with
           | None => None
           | Some (s1, D1, T1, n1, c') =>
               match unify_co f' D1 T1 typ_Bool n1 with
               | None => None
               | Some (s2, cs1, n2) =>
-                  match infer f' lenient ora D1 (apC s2 (apC s1 G)) a n2 with
+                  match infer f' D1 (apC s2 (apC s1 G)) a n2 with
                   | None => None
                   | Some (s3, D3, T2, n3, a') =>
-                      match infer f' lenient ora D3 (apC s3 (apC s2 (apC s1 G))) b n3 with
+                      match infer f' D3 (apC s3 (apC s2 (apC s1 G))) b n3 with
                       | None => None
                       | Some (s4, D4, T3, n4, b') =>
                           match unify_co f' D4 (apT s4 T2) T3 n4 with
@@ -259,7 +259,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
           end
       | e_con w tg e1 =>
           if Nat.ltb tg (length w) then
-          match infer f' lenient ora D G e1 n with
+          match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
               let Ts := fresh_tys n1 (nparams w) in
@@ -272,14 +272,14 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
           else None
       | e_match w e1 ars =>
           if arms_wf_b w ars then
-          match infer f' lenient ora D G e1 n with
+          match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
               let Ts := fresh_tys n1 (nparams w) in
               match unify_co f' D1 T1 (typ_Grp w (spine Ts)) (n1 + nparams w) with
               | None => None
               | Some (s2, cs, n2) =>
-                  match infer_arms f' lenient ora D1 (apC s2 (apC s1 G)) w (map (apT s2) Ts)
+                  match infer_arms f' D1 (apC s2 (apC s1 G)) w (map (apT s2) Ts)
                           (fresh_var G (e_match w e1 ars)) (typ_Var (ea n2)) ars (S n2) with
                   | None => None
                   | Some (s3, D3, T3, n3, ars') =>
@@ -289,10 +289,10 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
           end
           else None
       | e_spread e1 l e2 =>
-          match infer f' lenient ora D G e1 n with
+          match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
-              match infer f' lenient ora D1 (apC s1 G) e2 n1 with
+              match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
                   let p := typ_Var (ea n2) in
@@ -306,7 +306,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
               end
           end
       | e_restrict e1 l =>
-          match infer f' lenient ora D G e1 n with
+          match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
               let a := typ_Var (ea n1) in
@@ -320,7 +320,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
       | e_fold _ => None
       | e_unfold _ => None
       | e_tofloat e1 =>
-          match infer f' lenient ora D G e1 n with
+          match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
               let D1' := upd D1 (ea n1) k_Literal in
@@ -331,14 +331,14 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
               end
           end
       | e_bin e1 o e2 =>
-          match infer f' lenient ora D G e1 n with
+          match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
-              match infer f' lenient ora D1 (apC s1 G) e2 n1 with
+              match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
                   if is_generic_op o then
-                      let D2' := upd D2 (ea n2) k_Numeric in
+                      let D2' := upd D2 (ea n2) (generic_sort o) in
                       let c := typ_Var (ea n2) in
                       match unify_co f' D2' (apT s2 T1) c (S n2) with
                       | None => None
@@ -347,30 +347,26 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
                           | None => None
                           | Some (s4, cs2, n4) =>
                               Some (scomp s4 (scomp s3 (scomp s2 s1)), D2',
-                                    apT s4 (apT s3 c), n4,
+                                    bin_res o (apT s4 (apT s3 c)), n4,
                                     e_bin (coerce cs1 e1') o (coerce cs2 e2'))
                           end
                       end
                   else
-                  match bin_arg lenient ora D2 o (apT s2 T1) T2 with
-                  | None => None
-                  | Some T =>
-                      match unify_co f' D2 (apT s2 T1) T n2 with
+                      match unify_co f' D2 (apT s2 T1) typ_Float n2 with
                       | None => None
                       | Some (s3, cs1, n3) =>
-                          match unify_co f' D2 (apT s3 T2) T n3, bin_res lenient o T with
-                          | Some (s4, cs2, n4), Some R =>
-                              Some (scomp s4 (scomp s3 (scomp s2 s1)), D2, R, n4,
+                          match unify_co f' D2 (apT s3 T2) typ_Float n3 with
+                          | None => None
+                          | Some (s4, cs2, n4) =>
+                              Some (scomp s4 (scomp s3 (scomp s2 s1)), D2, typ_Float, n4,
                                     e_bin (coerce cs1 e1') o (coerce cs2 e2'))
-                          | _, _ => None
                           end
                       end
-                  end
               end
           end
       end
   end
-with infer_fields (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (fs : fields) (n : nat) {struct f}
+with infer_fields (f : nat) (D : denv) (G : ctx) (fs : fields) (n : nat) {struct f}
   : option (sub * denv * row * nat * fields) :=
   match f with
   | O => None
@@ -378,10 +374,10 @@ with infer_fields (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G :
       match fs with
       | fs_nil => Some (sid, D, row_Empty, n, fs_nil)
       | fs_cons l e rest =>
-          match infer f' lenient ora D G e n with
+          match infer f' D G e n with
           | None => None
           | Some (s1, D1, T1, n1, e') =>
-              match infer_fields f' lenient ora D1 (apC s1 G) rest n1 with
+              match infer_fields f' D1 (apC s1 G) rest n1 with
               | None => None
               | Some (s2, D2, R2, n2, rest') =>
                   Some (scomp s2 s1, D2, row_Ext l (apT s2 T1) R2, n2, fs_cons l e' rest')
@@ -398,7 +394,7 @@ with infer_fields (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G :
    over its parameter; the slots are unified with the fields' types
    afterwards by [tie_obj], which is where a method's type meets the receiver
    that contains it and a knot forms. *)
-with infer_obj (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (p : atom) (Tp : typ)
+with infer_obj (f : nat) (D : denv) (G : ctx) (p : atom) (Tp : typ)
        (fs : fields) (n : nat) {struct f}
   : option (sub * denv * row * nat * fields) :=
   match f with
@@ -407,10 +403,10 @@ with infer_obj (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
       match fs with
       | fs_nil => Some (sid, D, row_Empty, n, fs_nil)
       | fs_cons l e rest =>
-          match infer f' lenient ora D G e n with
+          match infer f' D G e n with
           | None => None
           | Some (s1, D1, T1, n1, e') =>
-              match infer_obj f' lenient ora D1 (apC s1 G) p (apT s1 Tp) rest n1 with
+              match infer_obj f' D1 (apC s1 G) p (apT s1 Tp) rest n1 with
               | None => None
               | Some (s2, D2, R2, n2, rest') =>
                   Some (scomp s2 s1, D2, row_Ext l (apT s2 T1) R2, n2, fs_cons l e' rest')
@@ -419,10 +415,10 @@ with infer_obj (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
       | fs_meth l e rest =>
           match e with
           | e_abs b =>
-              match infer f' lenient ora D ((p ~ sch_mono Tp) ++ G) (open_exp_wrt_exp b (e_fvar_f p)) n with
+              match infer f' D ((p ~ sch_mono Tp) ++ G) (open_exp_wrt_exp b (e_fvar_f p)) n with
               | None => None
               | Some (s1, D1, T1, n1, b') =>
-                  match infer_obj f' lenient ora D1 (apC s1 G) p (apT s1 Tp) rest n1 with
+                  match infer_obj f' D1 (apC s1 G) p (apT s1 Tp) rest n1 with
                   | None => None
                   | Some (s2, D2, R2, n2, rest') =>
                       Some (scomp s2 s1, D2,
@@ -438,7 +434,7 @@ with infer_obj (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
 (* The arms of a match, in order, against a result type [res] each arm's type
    is brought to by head coercions.  Each tag's payload binder is [x], typed by
    the slot record of its tag at the group's parameters [Ts]. *)
-with infer_arms (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (w : gdecl) (Ts : list typ) (x : var)
+with infer_arms (f : nat) (D : denv) (G : ctx) (w : gdecl) (Ts : list typ) (x : var)
        (res : typ) (ars : arms) (n : nat) {struct f}
   : option (sub * denv * typ * nat * arms) :=
   match f with
@@ -447,7 +443,7 @@ with infer_arms (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : c
       match ars with
       | arms_nil => Some (sid, D, res, n, arms_nil)
       | arms_else e =>
-          match infer f' lenient ora D G e n with
+          match infer f' D G e n with
           | None => None
           | Some (s1, D1, T1, n1, e') =>
               match unify_co f' D1 T1 (apT s1 res) n1 with
@@ -457,14 +453,14 @@ with infer_arms (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : c
               end
           end
       | arms_cons tg e rest =>
-          match infer f' lenient ora D ((x ~ sch_mono (tag_payload w Ts tg)) ++ G)
+          match infer f' D ((x ~ sch_mono (tag_payload w Ts tg)) ++ G)
                   (open_exp_wrt_exp e (e_fvar_f x)) n with
           | None => None
           | Some (s1, D1, T1, n1, e') =>
               match unify_co f' D1 T1 (apT s1 res) n1 with
               | None => None
               | Some (s2, cs, n2) =>
-                  match infer_arms f' lenient ora D1 (apC (scomp s2 s1) G) w
+                  match infer_arms f' D1 (apC (scomp s2 s1) G) w
                           (map (apT (scomp s2 s1)) Ts) x (apT s2 (apT s1 res)) rest n2 with
                   | None => None
                   | Some (s3, D3, T3, n3, rest') =>
@@ -476,23 +472,14 @@ with infer_arms (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : c
       end
   end.
 
-(* A comparison the first run left pending is settled at the concrete type its
-   final substitution gave the variable, else at Int. *)
-Definition resolved (s : sub) (a : atom) : typ :=
-  let T := apT s (typ_Var a) in if cmp_ty T then T else typ_Int.
-
 (* A program is a closed term; the result is its type, with the sorts of its
    free variables, and its elaboration.  A variable left free in a program's
    type is one the program's derivations may instantiate at any type of its
    sort. *)
 Definition infer_closed_elab (fuel : nat) (e : exp) : option (denv * typ * exp) :=
-  match infer fuel true (fun _ => typ_Int) d_any nil e 0 with
+  match infer fuel d_any nil e 0 with
   | None => None
-  | Some (s0, _, _, _, _) =>
-      match infer fuel false (resolved s0) d_any nil e 0 with
-      | None => None
-      | Some (_, D, T, _, e') => Some (D, T, e')
-      end
+  | Some (_, D, T, _, e') => Some (D, T, e')
   end.
 
 Definition infer_closed_env (fuel : nat) (e : exp) : option (denv * typ) :=
