@@ -171,6 +171,33 @@ Proof.
     end. reflexivity.
 Qed.
 
+(* Two entries of one label that a unifier makes absent, with different field
+   types: [l0^p: Int] against [l0^q: String] is unified by [p := Bool] and
+   [q := Bool] (both rows are the empty row), and W refuses it, because it
+   pairs the two entries and compares their field types.  An absent entry's
+   field type carries no information ([row_cancel]), so statement A's
+   hypothesis on the unifier covers this pair too. *)
+Theorem field_blocks_absent : forall (p q : atom) D n f, p <> q ->
+  req (apR (absent_sub p q p) (row_Maybe 0 (typ_Var p) typ_Int row_Empty))
+      (apR (absent_sub p q p) (row_Maybe 0 (typ_Var q) typ_String row_Empty)) /\
+  unify_rD f D (row_Maybe 0 (typ_Var p) typ_Int row_Empty)
+               (row_Maybe 0 (typ_Var q) typ_String row_Empty) n = None.
+Proof.
+  intros p q D n f Hpq. split.
+  - unfold apR, absent_sub. simpl.
+    destruct (Atom.eq_dec p p) as [_ | N]; [ | congruence ].
+    destruct (Atom.eq_dec q p) as [E | _]; [ congruence | ].
+    destruct (Atom.eq_dec q q) as [_ | N]; [ | congruence ].
+    eapply req_trans; [ apply req_abs; reflexivity | ].
+    apply req_sym. apply req_abs. reflexivity.
+  - destruct f as [ | f ]; [ reflexivity | ].
+    cbn [unify_rD row_head rewrite_row Nat.eqb]. cbn iota beta.
+    destruct f as [ | f ]; [ reflexivity | ].
+    cbn [unify_tD apT ap_typ sT sid idt]. destruct (Atom.eq_dec p q); [ congruence | ].
+    destruct (finer_b (D q) (D p)); cbn iota beta;
+      destruct f as [ | f ]; reflexivity.
+Qed.
+
 (* ---- the occurs checks block unifiable pairs the same way ---- *)
 
 (* A variable against a row it ends, behind an absent entry:
