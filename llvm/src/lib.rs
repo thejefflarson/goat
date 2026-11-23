@@ -1,0 +1,709 @@
+//! MIR to textual LLVM IR (ADR 0042). The output names no target triple or
+//! data layout, so `clang --target` supplies them, and it uses only syntax
+//! LLVM 17 reads (opaque `ptr`). Every function takes the `goat_instance`
+//! pointer first, so reaching the host through a table hanging off it adds
+//! no parameter later.
+//!
+//! The IR never carries `nsw`, `nuw`, fast-math flags or TBAA: arithmetic that
+//! can overflow goes through the `llvm.s*.with.overflow` intrinsics and
+//! branches to the trap.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::{self, Write as _};
+
+use goat_mir::*;
+
+/// The function the program's entry is emitted as.
+pub const ENTRY: &str = "goat_entry";
+
+/// What the generated code calls to trap: `(instance, message, length)`. The
+/// host library defines it, and it does not return.
+pub const TRAP: &str = "goat_trap";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmitError {
+    Unsupported(&'static str),
+    UnknownFunc(FuncId),
+    UnboundLocal(Local),
+    Malformed(&'static str),
+}
+
+impl fmt::Display for EmitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EmitError::Unsupported(what) => {
+                write!(f, "not yet supported by the native backend: {what}")
+            }
+            EmitError::UnknownFunc(id) => write!(f, "unknown function {}", id.0),
+            EmitError::UnboundLocal(l) => write!(f, "unbound local {}", l.0),
+            EmitError::Malformed(what) => write!(f, "malformed MIR: {what}"),
+        }
+    }
+}
+
+impl std::error::Error for EmitError {}
+
+pub fn emit(program: &Program) -> Result<String, EmitError> {
+    let mut module = Module::new(program);
+    let mut functions = String::new();
+    for (index, func) in program.funcs.iter().enumerate() {
+        functions.push_str(&FuncLower::new(&mut module, func).lower(FuncId(index as u32))?);
+        functions.push('\n');
+    }
+    Ok(module.finish(&functions))
+}
+
+/// A lowered value; `Unit` is erased and has no operand.
+#[derive(Clone)]
+enum Val {
+    Unit,
+    Op(MTy, String),
+}
+
+impl Val {
+    fn ty(&self) -> MTy {
+        match self {
+            Val::Unit => MTy::Unit,
+            Val::Op(ty, _) => *ty,
+        }
+    }
+
+    fn operand(&self) -> Result<&str, EmitError> {
+        match self {
+            Val::Op(_, op) => Ok(op),
+            Val::Unit => Err(EmitError::Malformed("a unit operand")),
+        }
+    }
+}
+
+/// `None` is a computation that traps: nothing after it runs.
+type Lowered = Option<Val>;
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Helper {
+    FloorDiv,
+    FloorMod,
+}
+
+impl Helper {
+    fn name(self) -> &'static str {
+        match self {
+            Helper::FloorDiv => "@goat.float_floor_div",
+            Helper::FloorMod => "@goat.float_floor_mod",
+        }
+    }
+}
+
+struct Module<'a> {
+    program: &'a Program,
+    traps: BTreeMap<String, usize>,
+    helpers: BTreeSet<Helper>,
+    declarations: BTreeSet<String>,
+}
+
+impl<'a> Module<'a> {
+    fn new(program: &'a Program) -> Self {
+        Module {
+            program,
+            traps: BTreeMap::new(),
+            helpers: BTreeSet::new(),
+            declarations: BTreeSet::new(),
+        }
+    }
+
+    fn narrow(&self) -> bool {
+        self.program.profile == Profile::Embedded
+    }
+
+    fn int_ty(&self) -> &'static str {
+        if self.narrow() { "i32" } else { "i64" }
+    }
+
+    fn float_ty(&self) -> &'static str {
+        if self.narrow() { "float" } else { "double" }
+    }
+
+    fn float_suffix(&self) -> &'static str {
+        if self.narrow() { "f32" } else { "f64" }
+    }
+
+    /// The LLVM type of a value, `None` for the erased `Unit`.
+    fn llty(&self, ty: MTy) -> Result<Option<&'static str>, EmitError> {
+        match ty {
+            MTy::Int => Ok(Some(self.int_ty())),
+            MTy::Float => Ok(Some(self.float_ty())),
+            MTy::Bool => Ok(Some("i1")),
+            MTy::Unit => Ok(None),
+            MTy::Ptr(_) => Err(EmitError::Unsupported("heap values")),
+        }
+    }
+
+    fn ret_ty(&self, ty: MTy) -> Result<&'static str, EmitError> {
+        Ok(self.llty(ty)?.unwrap_or("void"))
+    }
+
+    fn func_name(&self, id: FuncId) -> String {
+        if id == self.program.entry {
+            format!("@{ENTRY}")
+        } else {
+            format!("@goat_f{}", id.0)
+        }
+    }
+
+    fn trap_message(&mut self, message: &str) -> (usize, usize) {
+        let next = self.traps.len();
+        let index = *self.traps.entry(message.to_string()).or_insert(next);
+        (index, message.len())
+    }
+
+    /// Declares `llvm.{name}` and returns its callee name.
+    fn intrinsic(&mut self, name: &str, ret: &str, params: &str) -> String {
+        let callee = format!("@llvm.{name}");
+        self.declarations
+            .insert(format!("declare {ret} {callee}({params})\n"));
+        callee
+    }
+
+    fn finish(self, functions: &str) -> String {
+        let mut out = String::from("; goat native backend: textual LLVM IR\n\n");
+        let _ = writeln!(out, "declare void @{TRAP}(ptr, ptr, i32) noreturn nounwind");
+        for declaration in &self.declarations {
+            out.push_str(declaration);
+        }
+        out.push('\n');
+        let mut messages: Vec<_> = self.traps.iter().collect();
+        messages.sort_by_key(|(_, index)| **index);
+        for (message, index) in messages {
+            let _ = writeln!(
+                out,
+                "@goat.trap.{index} = private unnamed_addr constant [{} x i8] c\"{}\"",
+                message.len(),
+                escape(message)
+            );
+        }
+        out.push('\n');
+        for helper in &self.helpers {
+            out.push_str(&floored(*helper, self.narrow()));
+            out.push('\n');
+        }
+        out.push_str(functions);
+        out
+    }
+}
+
+fn escape(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        if byte == b' ' || (byte.is_ascii_graphic() && byte != b'"' && byte != b'\\') {
+            out.push(byte as char);
+        } else {
+            let _ = write!(out, "\\{byte:02X}");
+        }
+    }
+    out
+}
+
+/// Python's `x // y` or `x % y` over `Float`, built as CPython's
+/// `float_divmod` builds it on `fmod` (`frem` is C's `fmod`). The embedded
+/// profile widens to `double` around the call, which is exact, and rounds the
+/// result back.
+fn floored(helper: Helper, narrow: bool) -> String {
+    let quotient = helper == Helper::FloorDiv;
+    let name = helper.name();
+    let mut out = String::new();
+    if narrow {
+        let _ = writeln!(
+            out,
+            "define internal float {name}(float %a, float %b) nounwind {{\n  \
+             %x = fpext float %a to double\n  %y = fpext float %b to double\n  \
+             %r = call double {name}.f64(double %x, double %y)\n  \
+             %t = fptrunc double %r to float\n  ret float %t\n}}\n"
+        );
+    }
+    let suffix = if narrow { ".f64" } else { "" };
+    let _ = writeln!(
+        out,
+        "define internal double {name}{suffix}(double %x, double %y) nounwind {{\nentry:"
+    );
+    if quotient {
+        out.push_str(
+            "  %yz = fcmp oeq double %y, 0.0\n  br i1 %yz, label %zero, label %go\n\
+             zero:\n  %zq = fdiv double %x, %y\n  ret double %zq\ngo:\n",
+        );
+    }
+    out.push_str(
+        "  %m0 = frem double %x, %y\n  %xm = fsub double %x, %m0\n  %d = fdiv double %xm, %y\n  \
+         %mnz = fcmp une double %m0, 0.0\n  br i1 %mnz, label %nz, label %z\n\
+         nz:\n  %yneg = fcmp olt double %y, 0.0\n  %mneg = fcmp olt double %m0, 0.0\n  \
+         %diff = xor i1 %yneg, %mneg\n  %ma = fadd double %m0, %y\n  %da = fsub double %d, 1.0\n  \
+         %m1 = select i1 %diff, double %ma, double %m0\n  \
+         %d1 = select i1 %diff, double %da, double %d\n  br label %join\n\
+         z:\n  %m2 = call double @llvm.copysign.f64(double 0.0, double %y)\n  br label %join\n\
+         join:\n  %m = phi double [ %m1, %nz ], [ %m2, %z ]\n  \
+         %dd = phi double [ %d1, %nz ], [ %d, %z ]\n  \
+         %dnz = fcmp une double %dd, 0.0\n  br i1 %dnz, label %fl, label %fz\n\
+         fl:\n  %f0 = call double @llvm.floor.f64(double %dd)\n  %fr = fsub double %dd, %f0\n  \
+         %gt = fcmp ogt double %fr, 0.5\n  %fp = fadd double %f0, 1.0\n  \
+         %f1 = select i1 %gt, double %fp, double %f0\n  br label %end\n\
+         fz:\n  %xy = fdiv double %x, %y\n  \
+         %f2 = call double @llvm.copysign.f64(double 0.0, double %xy)\n  br label %end\n\
+         end:\n  %q = phi double [ %f1, %fl ], [ %f2, %fz ]\n",
+    );
+    let _ = writeln!(
+        out,
+        "  ret double {}\n}}",
+        if quotient { "%q" } else { "%m" }
+    );
+    out
+}
+
+struct FuncLower<'m, 'a> {
+    module: &'m mut Module<'a>,
+    func: &'a Func,
+    body: String,
+    next: u32,
+    block: String,
+    locals: BTreeMap<Local, Val>,
+}
+
+impl<'m, 'a> FuncLower<'m, 'a> {
+    fn new(module: &'m mut Module<'a>, func: &'a Func) -> Self {
+        FuncLower {
+            module,
+            func,
+            body: String::new(),
+            next: 0,
+            block: "entry".to_string(),
+            locals: BTreeMap::new(),
+        }
+    }
+
+    fn lower(mut self, id: FuncId) -> Result<String, EmitError> {
+        if self.func.env.is_some() {
+            return Err(EmitError::Unsupported("closures"));
+        }
+        let mut params = vec!["ptr %inst".to_string()];
+        for (local, ty) in &self.func.params {
+            let value = match self.module.llty(*ty)? {
+                Some(llty) => {
+                    params.push(format!("{llty} %l{}", local.0));
+                    Val::Op(*ty, format!("%l{}", local.0))
+                }
+                None => Val::Unit,
+            };
+            self.locals.insert(*local, value);
+        }
+        let ret = self.module.ret_ty(self.func.ret)?;
+        let func = self.func;
+        match self.expr(&func.body)? {
+            Some(Val::Op(_, op)) => self.line(format!("ret {ret} {op}")),
+            Some(Val::Unit) => self.line("ret void".to_string()),
+            None => {}
+        }
+        let linkage = if id == self.module.program.entry {
+            ""
+        } else {
+            "internal "
+        };
+        Ok(format!(
+            "define {linkage}{ret} {}({}) nounwind {{\nentry:\n{}}}\n",
+            self.module.func_name(id),
+            params.join(", "),
+            self.body
+        ))
+    }
+
+    fn line(&mut self, text: String) {
+        let _ = writeln!(self.body, "  {text}");
+    }
+
+    fn fresh(&mut self) -> String {
+        self.next += 1;
+        format!("%v{}", self.next)
+    }
+
+    fn label(&mut self, hint: &str) -> String {
+        self.next += 1;
+        format!("{hint}{}", self.next)
+    }
+
+    fn start(&mut self, label: &str) {
+        let _ = writeln!(self.body, "{label}:");
+        self.block = label.to_string();
+    }
+
+    fn emit(&mut self, instruction: impl fmt::Display) -> String {
+        let name = self.fresh();
+        self.line(format!("{name} = {instruction}"));
+        name
+    }
+
+    /// Branches on `cond` to a block that traps with `message`; emission goes
+    /// on in the block taken when `cond` is false.
+    fn trap_if(&mut self, cond: &str, message: &str) {
+        let (trap, go) = (self.label("trap"), self.label("go"));
+        self.line(format!("br i1 {cond}, label %{trap}, label %{go}"));
+        self.start(&trap);
+        self.trap(message);
+        self.start(&go);
+    }
+
+    fn trap(&mut self, message: &str) {
+        let (index, len) = self.module.trap_message(message);
+        self.line(format!(
+            "call void @{TRAP}(ptr %inst, ptr @goat.trap.{index}, i32 {len})"
+        ));
+        self.line("unreachable".to_string());
+    }
+
+    fn expr(&mut self, expr: &Expr) -> Result<Lowered, EmitError> {
+        Ok(match expr {
+            Expr::Const(c) => Some(self.constant(*c)),
+            Expr::Local(l) => Some(
+                self.locals
+                    .get(l)
+                    .cloned()
+                    .ok_or(EmitError::UnboundLocal(*l))?,
+            ),
+            Expr::Let(local, rhs, body) => {
+                let Some(value) = self.expr(rhs)? else {
+                    return Ok(None);
+                };
+                let shadowed = self.locals.insert(*local, value);
+                let result = self.expr(body);
+                match shadowed {
+                    Some(old) => self.locals.insert(*local, old),
+                    None => self.locals.remove(local),
+                };
+                result?
+            }
+            Expr::BinInt(op, a, b) => self
+                .operands(a, b, MTy::Int)?
+                .map(|(a, b)| self.int_op(*op, &a, &b)),
+            Expr::BinFloat(op, a, b) => self
+                .operands(a, b, MTy::Float)?
+                .map(|(a, b)| self.float_op(*op, &a, &b)),
+            Expr::Cmp(op, a, b) => self.compare(*op, a, b)?,
+            Expr::IntToFloat(a) => match self.expr(a)? {
+                Some(v) => {
+                    expect(&v, MTy::Int)?;
+                    let operand = v.operand()?;
+                    let (int, float) = (self.module.int_ty(), self.module.float_ty());
+                    Some(Val::Op(
+                        MTy::Float,
+                        self.emit(format!("sitofp {int} {operand} to {float}")),
+                    ))
+                }
+                None => None,
+            },
+            Expr::FloatFn(function, a) => match self.expr(a)? {
+                Some(v) => {
+                    expect(&v, MTy::Float)?;
+                    Some(self.float_fn(*function, v.operand()?))
+                }
+                None => None,
+            },
+            Expr::If(cond, then, els) => self.branch(cond, then, els)?,
+            Expr::CallDirect(callee, args) => self.call(*callee, args)?,
+            Expr::Trap(message) => {
+                self.trap(message);
+                None
+            }
+            Expr::Switch(..) => return Err(EmitError::Unsupported("match")),
+            Expr::TailCall(..) => return Err(EmitError::Unsupported("tail calls")),
+            Expr::CallClosure(..) | Expr::MakeClosure(..) | Expr::Capture(_) => {
+                return Err(EmitError::Unsupported("closures"));
+            }
+            Expr::CallForeign(..) | Expr::Write(_) => {
+                return Err(EmitError::Unsupported("host calls"));
+            }
+            // The site has nowhere to live until the instance has a layout, so
+            // a trap carries only its message for now.
+            Expr::Site(..) => Some(Val::Unit),
+            _ => return Err(EmitError::Unsupported("heap values")),
+        })
+    }
+
+    fn constant(&self, c: Const) -> Val {
+        match c {
+            Const::Int(n) => Val::Op(MTy::Int, n.to_string()),
+            Const::Float(x) => {
+                let rounded = self.module.program.profile.round_float(x);
+                Val::Op(MTy::Float, hex_float(rounded))
+            }
+            Const::Bool(b) => Val::Op(MTy::Bool, b.to_string()),
+            Const::Unit => Val::Unit,
+        }
+    }
+
+    fn operands(
+        &mut self,
+        a: &Expr,
+        b: &Expr,
+        ty: MTy,
+    ) -> Result<Option<(String, String)>, EmitError> {
+        let Some(a) = self.expr(a)? else {
+            return Ok(None);
+        };
+        let Some(b) = self.expr(b)? else {
+            return Ok(None);
+        };
+        expect(&a, ty)?;
+        expect(&b, ty)?;
+        Ok(Some((a.operand()?.to_string(), b.operand()?.to_string())))
+    }
+
+    fn int_op(&mut self, op: IntOp, a: &str, b: &str) -> Val {
+        let t = self.module.int_ty();
+        let value = match op {
+            IntOp::Add | IntOp::Sub | IntOp::Mul => {
+                let name = match op {
+                    IntOp::Add => "sadd",
+                    IntOp::Sub => "ssub",
+                    _ => "smul",
+                };
+                let pair_ty = format!("{{ {t}, i1 }}");
+                let intrinsic = self.module.intrinsic(
+                    &format!("{name}.with.overflow.{t}"),
+                    &pair_ty,
+                    &format!("{t}, {t}"),
+                );
+                let pair = self.emit(format!("call {pair_ty} {intrinsic}({t} {a}, {t} {b})"));
+                let flag = self.emit(format!("extractvalue {pair_ty} {pair}, 1"));
+                self.trap_if(&flag, INT_OVERFLOW);
+                self.emit(format!("extractvalue {pair_ty} {pair}, 0"))
+            }
+            IntOp::Div | IntOp::FloorDiv | IntOp::Mod => self.divide(op, a, b),
+        };
+        Val::Op(MTy::Int, value)
+    }
+
+    /// `a op b` for `Div`, `FloorDiv` and `Mod`, trapping on a zero divisor and
+    /// on the one quotient that does not fit. Both checks come before the
+    /// division, which is undefined behavior in LLVM for either case.
+    fn divide(&mut self, op: IntOp, a: &str, b: &str) -> String {
+        let t = self.module.int_ty();
+        let zero = self.emit(format!("icmp eq {t} {b}, 0"));
+        self.trap_if(&zero, DIVISION_BY_ZERO);
+        let divisor = if op == IntOp::Mod {
+            // `srem MIN, -1` is undefined in LLVM and 0 in goat; a remainder
+            // by -1 is 0, and so is a remainder by 1.
+            let minus_one = self.emit(format!("icmp eq {t} {b}, -1"));
+            self.emit(format!("select i1 {minus_one}, {t} 1, {t} {b}"))
+        } else {
+            let min = if self.module.narrow() {
+                i64::from(i32::MIN)
+            } else {
+                i64::MIN
+            };
+            let is_min = self.emit(format!("icmp eq {t} {a}, {min}"));
+            let minus_one = self.emit(format!("icmp eq {t} {b}, -1"));
+            let both = self.emit(format!("and i1 {is_min}, {minus_one}"));
+            self.trap_if(&both, INT_OVERFLOW);
+            b.to_string()
+        };
+        if op == IntOp::Div {
+            return self.emit(format!("sdiv {t} {a}, {divisor}"));
+        }
+        let r = self.emit(format!("srem {t} {a}, {divisor}"));
+        let nonzero = self.emit(format!("icmp ne {t} {r}, 0"));
+        let signs = self.emit(format!("xor {t} {r}, {b}"));
+        let differ = self.emit(format!("icmp slt {t} {signs}, 0"));
+        let rounds_down = self.emit(format!("and i1 {nonzero}, {differ}"));
+        if op == IntOp::FloorDiv {
+            let q = self.emit(format!("sdiv {t} {a}, {divisor}"));
+            let below = self.emit(format!("sub {t} {q}, 1"));
+            self.emit(format!("select i1 {rounds_down}, {t} {below}, {t} {q}"))
+        } else {
+            let shifted = self.emit(format!("add {t} {r}, {b}"));
+            self.emit(format!("select i1 {rounds_down}, {t} {shifted}, {t} {r}"))
+        }
+    }
+
+    fn float_op(&mut self, op: FloatOp, a: &str, b: &str) -> Val {
+        let t = self.module.float_ty();
+        let instruction = match op {
+            FloatOp::Add => "fadd",
+            FloatOp::Sub => "fsub",
+            FloatOp::Mul => "fmul",
+            FloatOp::Div => "fdiv",
+            FloatOp::FloorDiv | FloatOp::Mod => {
+                let helper = if op == FloatOp::FloorDiv {
+                    Helper::FloorDiv
+                } else {
+                    Helper::FloorMod
+                };
+                self.module.helpers.insert(helper);
+                self.module
+                    .intrinsic("copysign.f64", "double", "double, double");
+                self.module.intrinsic("floor.f64", "double", "double");
+                let name = helper.name();
+                return Val::Op(
+                    MTy::Float,
+                    self.emit(format!("call {t} {name}({t} {a}, {t} {b})")),
+                );
+            }
+        };
+        Val::Op(MTy::Float, self.emit(format!("{instruction} {t} {a}, {b}")))
+    }
+
+    fn compare(&mut self, op: CmpOp, a: &Expr, b: &Expr) -> Result<Lowered, EmitError> {
+        let Some(a) = self.expr(a)? else {
+            return Ok(None);
+        };
+        let Some(b) = self.expr(b)? else {
+            return Ok(None);
+        };
+        if a.ty() != b.ty() {
+            return Err(EmitError::Malformed("comparison operand types differ"));
+        }
+        let (kind, t, predicate) = match a.ty() {
+            MTy::Int => (
+                "icmp",
+                self.module.int_ty(),
+                match op {
+                    CmpOp::Eq => "eq",
+                    CmpOp::Ne => "ne",
+                    CmpOp::Lt => "slt",
+                    CmpOp::Le => "sle",
+                    CmpOp::Gt => "sgt",
+                    CmpOp::Ge => "sge",
+                },
+            ),
+            // Ordered, except `!=`: a NaN is unequal to everything.
+            MTy::Float => (
+                "fcmp",
+                self.module.float_ty(),
+                match op {
+                    CmpOp::Eq => "oeq",
+                    CmpOp::Ne => "une",
+                    CmpOp::Lt => "olt",
+                    CmpOp::Le => "ole",
+                    CmpOp::Gt => "ogt",
+                    CmpOp::Ge => "oge",
+                },
+            ),
+            _ => return Err(EmitError::Malformed("comparison operands")),
+        };
+        let (x, y) = (a.operand()?, b.operand()?);
+        Ok(Some(Val::Op(
+            MTy::Bool,
+            self.emit(format!("{kind} {predicate} {t} {x}, {y}")),
+        )))
+    }
+
+    fn float_fn(&mut self, function: FloatFn, a: &str) -> Val {
+        let (t, suffix) = (self.module.float_ty(), self.module.float_suffix());
+        match function {
+            FloatFn::Sqrt => {
+                let sqrt = self.module.intrinsic(&format!("sqrt.{suffix}"), t, t);
+                Val::Op(MTy::Float, self.emit(format!("call {t} {sqrt}({t} {a})")))
+            }
+            FloatFn::Truncate => {
+                let trunc = self.module.intrinsic(&format!("trunc.{suffix}"), t, t);
+                let whole = self.emit(format!("call {t} {trunc}({t} {a})"));
+                let bits = if self.module.narrow() { 31 } else { 63 };
+                let low = hex_float(-(2.0_f64.powi(bits)));
+                let high = hex_float(2.0_f64.powi(bits));
+                // Ordered compares are false for NaN, which does not fit either.
+                let above = self.emit(format!("fcmp oge {t} {whole}, {low}"));
+                let below = self.emit(format!("fcmp olt {t} {whole}, {high}"));
+                let fits = self.emit(format!("and i1 {above}, {below}"));
+                let overflow = self.emit(format!("xor i1 {fits}, true"));
+                self.trap_if(&overflow, NOT_A_WHOLE_NUMBER);
+                let int = self.module.int_ty();
+                Val::Op(MTy::Int, self.emit(format!("fptosi {t} {whole} to {int}")))
+            }
+        }
+    }
+
+    fn branch(&mut self, cond: &Expr, then: &Expr, els: &Expr) -> Result<Lowered, EmitError> {
+        let Some(cond) = self.expr(cond)? else {
+            return Ok(None);
+        };
+        expect(&cond, MTy::Bool)?;
+        let cond = cond.operand()?.to_string();
+        let (then_label, else_label, join) =
+            (self.label("then"), self.label("else"), self.label("join"));
+        self.line(format!(
+            "br i1 {cond}, label %{then_label}, label %{else_label}"
+        ));
+        let mut arms = Vec::new();
+        for (label, arm) in [(then_label, then), (else_label, els)] {
+            self.start(&label);
+            if let Some(value) = self.expr(arm)? {
+                let from = self.block.clone();
+                self.line(format!("br label %{join}"));
+                arms.push((value, from));
+            }
+        }
+        let Some((first, _)) = arms.first() else {
+            return Ok(None);
+        };
+        let ty = first.ty();
+        if arms.iter().any(|(v, _)| v.ty() != ty) {
+            return Err(EmitError::Malformed("if branches differ in type"));
+        }
+        self.start(&join);
+        let Some(llty) = self.module.llty(ty)? else {
+            return Ok(Some(Val::Unit));
+        };
+        let incoming = arms
+            .iter()
+            .map(|(v, from)| Ok(format!("[ {}, %{from} ]", v.operand()?)))
+            .collect::<Result<Vec<_>, EmitError>>()?
+            .join(", ");
+        Ok(Some(Val::Op(
+            ty,
+            self.emit(format!("phi {llty} {incoming}")),
+        )))
+    }
+
+    fn call(&mut self, callee: FuncId, args: &[Expr]) -> Result<Lowered, EmitError> {
+        let target = self
+            .module
+            .program
+            .funcs
+            .get(callee.0 as usize)
+            .ok_or(EmitError::UnknownFunc(callee))?;
+        if target.params.len() != args.len() {
+            return Err(EmitError::Malformed("call arity"));
+        }
+        let mut passed = vec!["ptr %inst".to_string()];
+        for (arg, (_, ty)) in args.iter().zip(&target.params) {
+            let Some(value) = self.expr(arg)? else {
+                return Ok(None);
+            };
+            expect(&value, *ty)?;
+            if let Some(llty) = self.module.llty(*ty)? {
+                passed.push(format!("{llty} {}", value.operand()?));
+            }
+        }
+        let ret = self.module.ret_ty(target.ret)?;
+        let call = format!(
+            "call {ret} {}({})",
+            self.module.func_name(callee),
+            passed.join(", ")
+        );
+        Ok(Some(if target.ret == MTy::Unit {
+            self.line(call);
+            Val::Unit
+        } else {
+            Val::Op(target.ret, self.emit(call))
+        }))
+    }
+}
+
+/// LLVM reads a floating constant written as the hex of its `double` bits, and
+/// accepts it for a `float` when the value is exactly representable.
+fn hex_float(x: f64) -> String {
+    format!("0x{:016X}", x.to_bits())
+}
+
+fn expect(value: &Val, ty: MTy) -> Result<(), EmitError> {
+    if value.ty() == ty {
+        Ok(())
+    } else {
+        Err(EmitError::Malformed("operand type"))
+    }
+}
