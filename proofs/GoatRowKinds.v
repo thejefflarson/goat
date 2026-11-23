@@ -118,7 +118,7 @@ Example generalized_lacks_instantiates_at_a_row_without_the_label :
 Proof.
   unfold set_x_use.
   apply T_Let_nopin with (L := {}) (T1 := set_x_ty) (k := fun _ => k_Any) (rk := rk7);
-    [ reflexivity | | ].
+    [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Abs with (L := {}). intros p Hp.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
     assert (Hin : rr7 `in` AtomSetImpl.diff (frv_typ set_x_ty) (frv_ctx nil))

@@ -307,7 +307,7 @@ Proof.
   - intros D G Hu S HS HG Hv. exists e_false. auto using ms_refl.
   - intros L D G e T1 T2 Hb IH S HS HG Hv. exists (e_abs e). auto using ms_refl.
   - intros D G e1 e2 T1 T2 H1 IH1 H2 IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
-  - intros L D G e1 e2 T1 T2 kf rkf Tm Hgv H1 IH1 Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
+  - intros L D G e1 e2 T1 T2 kf rkf Tm Hgv Hlp H1 IH1 Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros L D G e1 e2 T1 T2 H1 IH1 Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros L D G fs e2 R T kf rkf Hfg Hfs IHfs Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros D G fs R Hft IH Hnm S HS HG Hv. cbn [erase] in Hv. inversion Hv; subst.
@@ -572,7 +572,7 @@ Proof.
       exists (e_app v1 e2''). split.
       * eapply multistep_trans; [ apply ms_app1; exact Hm1 | apply ms_app2; assumption ].
       * cbn [erase]. rewrite He1, He2. reflexivity.
-  - (* let *) intros L D G e1 e2 T1 T2 kf rkf Tm Hgv H1 IH1 Hb IH2 S HS HG r Hs. subst G.
+  - (* let *) intros L D G e1 e2 T1 T2 kf rkf Tm Hgv Hlp H1 IH1 Hb IH2 S HS HG r Hs. subst G.
     eapply let_converse; [ | | exact Hs ].
     + intros Hv. exact (value_reach _ _ e1 _ (supp_ok_ext2 _ _ _ _ _ _ HS) H1 Hv).
     + intros r1 Hx. exact (IH1 _ (supp_ok_ext2 _ _ _ _ _ _ HS) eq_refl _ Hx).

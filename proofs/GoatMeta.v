@@ -621,7 +621,7 @@ Proof.
     pick fresh x for L.
     apply (lc_at_open_inv e 0 x). unfold open_exp_wrt_exp in IH. apply IH; auto.
   - (* T_App *) intros D G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2; simpl; split; assumption.
-  - (* T_Let *) intros L D G e1 e2 T1 T2 k rk Tm Hgv Hty1 IH1 Hpre IH2; simpl; split.
+  - (* T_Let *) intros L D G e1 e2 T1 T2 k rk Tm Hgv Hlp Hty1 IH1 Hpre IH2; simpl; split.
     + assumption.
     + pick fresh x for L.
       apply (lc_at_open_inv e2 0 x). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
@@ -1419,7 +1419,7 @@ Proof.
     + right. exists k. apply tr_app1; auto.
   - (* Case: [let x = e1 in e2].  If [e1] is finished, plug it into [e2]
        (st_letv); otherwise step [e1] (st_let1) or propagate its trap. *)
-    intros L D G e1 e2 T1 T2 kf rkf Tm Hgv Hty1 IH1 Hbody IH2 HG; subst.
+    intros L D G e1 e2 T1 T2 kf rkf Tm Hgv Hlp Hty1 IH1 Hbody IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk]]].
     + left. exists (open_exp_wrt_exp e2 e1). apply st_letv; auto.
     + left. exists (e_let e1' e2). apply st_let1; auto.
@@ -1640,6 +1640,7 @@ Lemma let_inv : forall D G e1 e2 T,
   typing D G (e_let e1 e2) T ->
   exists (L : vars) T1 T2,
     ((is_gen_value e1 = true /\ exists (k : sort_fn) (rk : rkind_fn) (Tm : typ),
+      lit_pinned e1 (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k /\
       typing (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k)
                    (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm G))) rk) G e1 T1 /\
       forall x, x `notin` L ->

@@ -129,6 +129,15 @@ Qed.
 Lemma gen_body : s_body (gen_ren D G T) = ap_typ (rename_t la) (rename_r lr) T.
 Proof. reflexivity. Qed.
 
+(* A generalization quantifies at the sorts its variables have in [D]. *)
+Lemma gen_ren_sk_not : forall k,
+  (forall b, In b la -> D b <> k) ->
+  forall a, a `in` s_tq (gen_ren D G T) -> s_sk (gen_ren D G T) a <> k.
+Proof.
+  intros k H a Ha. apply gen_ren_tq in Ha. destruct Ha as [b [Hb ->]].
+  cbn [gen_ren s_sk]. fold la. rewrite (gen_sk_at D la b Hb). apply H. exact Hb.
+Qed.
+
 (* Where the free variables of the renamed body come from. *)
 Lemma body_ftv : forall a, a `in` ftv_typ (s_body (gen_ren D G T)) ->
   a `in` s_tq (gen_ren D G T) \/ (a `in` ftv_typ T /\ ~ In a la).
