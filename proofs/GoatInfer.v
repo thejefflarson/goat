@@ -6,7 +6,7 @@
    them, is in GoatInferW.v, and GoatInferSound.v proves it sound against
    [typing].
    A type variable carries a sort (ADR 0038), read from a kinding environment
-   the algorithm threads.
+   the algorithm threads and the unifiers return.
 
    Naming discipline that the soundness proof leans on.  The algorithm draws
    every type or row variable it invents from the EVEN atoms [ea n], and
@@ -58,20 +58,21 @@ Definition sbR (r : atom) (R : row) : sub :=
   Sub idt (fun s => if Atom.eq_dec s r then R else row_Var s).
 
 Definition apC (s : sub) (G : ctx) : ctx :=
-  List.map (fun p => (fst p, Sch (s_tq (snd p)) (s_rq (snd p)) (apT s (s_body (snd p))) (s_sk (snd p)))) G.
+  List.map (fun p => (fst p, Sch (s_tq (snd p)) (s_rq (snd p)) (apT s (s_body (snd p))) (s_sk (snd p)) (s_rk (snd p)))) G.
 
 (* ------------------------------------------------------------------ *)
 (* Sorts                                                                *)
 (* ------------------------------------------------------------------ *)
 
 (* A type variable carries a sort (ADR 0038), read from the kinding
-   environment the algorithm threads.  Unification never changes it: it
-   binds the coarser of two variables to the finer, and a sorted variable to a
-   type only when the type satisfies the sort.  Only a fresh variable gets a
-   sort, so the environment changes by [upd] on atoms no one has used. *)
+   environment the algorithm threads.  Unification binds the coarser of two
+   variables to the finer, and binds a sorted variable to a type only when the
+   type satisfies the sort, after pushing the sort onto the variables inside
+   the type ([push_sort]).  Only a fresh variable gets a sort, so the
+   environment changes by [upd] on atoms no one has used. *)
 
 Definition upd (D : denv) (a : atom) (k : sort) : denv :=
-  fun b => if Atom.eq_dec b a then k else D b.
+  DEnv (fun b => if Atom.eq_dec b a then k else D b) (drk D).
 
 Definition finer_b (k1 k2 : sort) : bool :=
   match k1, k2 with
@@ -125,6 +126,35 @@ Definition occT (a : atom) (T : typ) : bool :=
 Definition occR (r : atom) (R : row) : bool :=
   AtomSetImpl.mem r (frv_row R) || negb (lcrb 0 R).
 
+(* The sort [k] reaches the variables inside the type a variable of sort [k] is
+   bound to: each variable of [l] that is coarser than [k] is renamed to a fresh
+   variable of sort [k], one fresh atom at a time.  The substitution it returns
+   is the renaming, and the environment has the fresh variables' sorts. *)
+Fixpoint push_sort (D : denv) (k : sort) (l : list atom) (n : nat) {struct l}
+  : sub * denv * nat :=
+  match l with
+  | nil => (sid, D, n)
+  | b :: l' =>
+      if finer_b (D b) k then push_sort D k l' n
+      else
+        match push_sort (upd D (ea n) k) k l' (S n) with
+        | (s, D', n') => (scomp s (sbT b (typ_Var (ea n))), D', n')
+        end
+  end.
+
+(* Bind [a] to [T], at the sort of [a]: the sort is pushed onto the variables
+   of [T], and the renamed [T] must satisfy it.  The occurs check runs before
+   the renaming, which never touches [a], and after it. *)
+Definition bind_prop (D : denv) (a : atom) (T : typ) (n : nat) : option (sub * denv * nat) :=
+  if occT a T then None
+  else
+    match push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n with
+    | (sp, D1, n1) =>
+        let T' := apT sp T in
+        if occT a T' then None
+        else if sat_b D1 (D1 a) T' then Some (scomp (sbT a T') sp, D1, n1) else None
+    end.
+
 (* Rewrite [R] so that it presents label [l] first, with a presence:
    [Some (P, T, R', s, n')] with [s R] equivalent to [l ^ P : T ; R'].  A field
    [R] has gives presence [Unit], a closed row that has none gives [Bool] (the
@@ -172,30 +202,29 @@ Definition row_head (R : row) : option (label * typ * typ * row) :=
 Definition gdecl_eq_dec (w w' : gdecl) : {w = w'} + {w <> w'} :=
   list_eq_dec (list_eq_dec Nat.eq_dec) w w'.
 
-Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f} : option (sub * nat) :=
+Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f}
+  : option (sub * denv * nat) :=
   match f with
   | O => None
   | S f' =>
       match T1, T2 with
-      | typ_Int, typ_Int => Some (sid, n)
-      | typ_Float, typ_Float => Some (sid, n)
-      | typ_Bool, typ_Bool => Some (sid, n)
-      | typ_Unit, typ_Unit => Some (sid, n)
-      | typ_String, typ_String => Some (sid, n)
+      | typ_Int, typ_Int => Some (sid, D, n)
+      | typ_Float, typ_Float => Some (sid, D, n)
+      | typ_Bool, typ_Bool => Some (sid, D, n)
+      | typ_Unit, typ_Unit => Some (sid, D, n)
+      | typ_String, typ_String => Some (sid, D, n)
       | typ_Var a, typ_Var b =>
-          if Atom.eq_dec a b then Some (sid, n)
-          else if finer_b (D b) (D a) then Some (sbT a T2, n) else Some (sbT b T1, n)
-      | typ_Var a, _ =>
-          if occT a T2 then None else if sat_b D (D a) T2 then Some (sbT a T2, n) else None
-      | _, typ_Var b =>
-          if occT b T1 then None else if sat_b D (D b) T1 then Some (sbT b T1, n) else None
+          if Atom.eq_dec a b then Some (sid, D, n)
+          else if finer_b (D b) (D a) then Some (sbT a T2, D, n) else Some (sbT b T1, D, n)
+      | typ_Var a, _ => bind_prop D a T2 n
+      | _, typ_Var b => bind_prop D b T1 n
       | typ_Arrow A B, typ_Arrow A' B' =>
           match unify_t f' D A A' n with
           | None => None
-          | Some (s1, n1) =>
-              match unify_t f' D (apT s1 B) (apT s1 B') n1 with
+          | Some (s1, D1, n1) =>
+              match unify_t f' D1 (apT s1 B) (apT s1 B') n1 with
               | None => None
-              | Some (s2, n2) => Some (scomp s2 s1, n2)
+              | Some (s2, D2, n2) => Some (scomp s2 s1, D2, n2)
               end
           end
       | typ_Record R, typ_Record R' => unify_r f' D R R' n
@@ -204,16 +233,17 @@ Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f} : optio
       | _, _ => None
       end
   end
-with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :=
+with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
+  : option (sub * denv * nat) :=
   match f with
   | O => None
   | S f' =>
       match R1, R2 with
       | row_Var r, row_Var s =>
-          if Atom.eq_dec r s then Some (sid, n) else Some (sbR r R2, n)
-      | row_Var r, _ => if occR r R2 then None else Some (sbR r R2, n)
-      | _, row_Var s => if occR s R1 then None else Some (sbR s R1, n)
-      | row_Empty, row_Empty => Some (sid, n)
+          if Atom.eq_dec r s then Some (sid, D, n) else Some (sbR r R2, D, n)
+      | row_Var r, _ => if occR r R2 then None else Some (sbR r R2, D, n)
+      | _, row_Var s => if occR s R1 then None else Some (sbR s R1, D, n)
+      | row_Empty, row_Empty => Some (sid, D, n)
       | row_Empty, row_Maybe _ _ _ _ => unify_r f' D R2 R1 n
       | _, _ =>
           match row_head R1 with
@@ -224,13 +254,13 @@ with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f} : option (s
               | Some (P', T', R2', s0, n1) =>
                   match unify_t f' D (apT s0 P) P' n1 with
                   | None => None
-                  | Some (sp, n2) =>
-                      match unify_t f' D (apT sp (apT s0 T)) (apT sp T') n2 with
+                  | Some (sp, D1, n2) =>
+                      match unify_t f' D1 (apT sp (apT s0 T)) (apT sp T') n2 with
                       | None => None
-                      | Some (s1, n3) =>
-                          match unify_r f' D (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 with
+                      | Some (s1, D2, n3) =>
+                          match unify_r f' D2 (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 with
                           | None => None
-                          | Some (s2, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), n4)
+                          | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
                           end
                       end
                   end
@@ -268,8 +298,9 @@ Definition inst_sub (s : scheme) (n : nat) : sub :=
    recorded for it. *)
 Definition inst_den (D : denv) (s : scheme) (n : nat) : denv :=
   let lq := AtomSetImpl.elements (s_tq s) in
-  fun b => fold_right (fun a acc => if Atom.eq_dec b (ea (n + idx a lq)) then s_sk s a else acc)
-                      (D b) lq.
+  DEnv (fun b => fold_right (fun a acc => if Atom.eq_dec b (ea (n + idx a lq)) then s_sk s a else acc)
+                            (D b) lq)
+       (drk D).
 
 Definition instantiate (D : denv) (s : scheme) (n : nat) : typ * denv * nat :=
   (apT (inst_sub s n) (s_body s), inst_den D s n,
@@ -302,20 +333,11 @@ Definition gen_ren (D : denv) (G : ctx) (T : typ) : scheme :=
   Sch (aset (List.map (fun a => oa (idx a la)) la))
       (aset (List.map (fun r => oa (idx r lr)) lr))
       (ap_typ (rename_t la) (rename_r lr) T)
-      (gen_sk D la).
+      (gen_sk D la) (fun _ => rk_any).
 
-(* A [let] of a function or a bare numeral generalizes the variables of its
-   type whatever their sort.  Any other syntactic value keeps the [Literal]
-   variables of its type shared, still open to [Float], as the checker does
-   (ADR 0038, the numeral-let addendum).  [let_pin] is the type whose free
-   variables a [let] leaves monomorphic: [gen_ren] generalizes over the context
-   extended with a binding of it. *)
-Definition let_open (e : exp) : bool :=
-  match e with
-  | e_abs _ | e_num _ | e_letrec _ _ => true
-  | _ => false
-  end.
-
+(* [let_pin] is the type whose free variables a [let] leaves monomorphic
+   ([let_open], [lit_pinned] in [GoatDefs.v]): [gen_ren] generalizes over the
+   context extended with a binding of it. *)
 Definition is_lit_sort (k : sort) : bool :=
   match k with k_Literal => true | _ => false end.
 

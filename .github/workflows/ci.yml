@@ -210,6 +210,22 @@ jobs:
 
   # Keeps the front end and wasm backend buildable for wasm32 so the compiler
   # can run in a browser or embedded host.
+  # A skipped matrix job reports one check named `native`, never `native
+  # (clang-23)`, so a required per-clang check would wait forever on PRs that
+  # don't touch Rust. Branch protection requires this job instead: it passes when
+  # every native leg passed or the whole matrix was skipped.
+  native-ok:
+    runs-on: goat-runners
+    needs: native
+    if: always()
+    steps:
+      - name: Native legs passed or were skipped
+        run: |
+          case "${{ needs.native.result }}" in
+            success|skipped) echo "native: ${{ needs.native.result }}" ;;
+            *) echo "::error::native jobs ${{ needs.native.result }}"; exit 1 ;;
+          esac
+
   wasm32:
     runs-on: goat-runners
     needs: changes

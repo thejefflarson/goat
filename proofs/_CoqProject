@@ -29,6 +29,7 @@ GoatPhase2.v
 GoatPhase3.v
 GoatPhase4.v
 GoatPhase6.v
+GoatRowKinds.v
 GoatRecArithExamples.v
 GoatRecTypes.v
 GoatElab.v

@@ -57,7 +57,7 @@ Qed.
 Definition teq_dec (f : nat) (D : denv) (T T' : typ) : bool :=
   typ_eqb T T'
   || match unify_t f D T T' 0 with
-     | Some (s, _) => typ_eqb (apT s T) T && typ_eqb (apT s T') T'
+     | Some (s, _, _) => typ_eqb (apT s T) T && typ_eqb (apT s T') T'
      | None => false
      end.
 
@@ -66,9 +66,9 @@ Lemma teq_dec_sound : forall f D T T',
 Proof.
   intros f D T T' H1 H2 H. unfold teq_dec in H. apply Bool.orb_true_iff in H as [H | H].
   - apply typ_eqb_teq; exact H.
-  - destruct (unify_t f D T T' 0) as [[s n']|] eqn:E; [ | discriminate ].
+  - destruct (unify_t f D T T' 0) as [[[s D'] n']|] eqn:E; [ | discriminate ].
     apply Bool.andb_true_iff in H as [Ha Hb].
-    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E H1 H2) as (_ & Ht & _).
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ _ E H1 H2) as (_ & Ht & _).
     rewrite (proj1 typ_eqb_eq_mut _ _ Ha), (proj1 typ_eqb_eq_mut _ _ Hb) in Ht. exact Ht.
 Qed.
 
@@ -138,8 +138,8 @@ Proof.
   - discriminate.
   - inversion H; subst. eapply ch_conv; [ eapply teq_dec_sound; eassumption | constructor ].
   - destruct (co_unfold (coerce_dec f D) T T') as [cs0|] eqn:Eu.
-    + inversion H; subst. eapply co_unfold_sound; [ apply IH | exact H1 | exact H2 | exact Eu ].
-    + eapply co_fold_sound; [ apply IH | exact H1 | exact H2 | exact H ].
+    + inversion H; subst. eapply co_unfold_sound; [ apply (IH D) | exact H1 | exact H2 | exact Eu ].
+    + eapply co_fold_sound; [ apply (IH D) | exact H1 | exact H2 | exact H ].
 Qed.
 
 (* ---- the unifier W calls ---- *)
@@ -150,36 +150,36 @@ Qed.
    and then the head coercions that take a term of the first type to the second
    under the substitution it found.  Failing to find them is a deep coercion. *)
 Definition unify_co (f : nat) (D : denv) (T1 T2 : typ) (n : nat)
-  : option (sub * list dir * nat) :=
+  : option (sub * denv * list dir * nat) :=
   match unify_t f D T1 T2 n with
-  | Some (s, n') => Some (s, nil, n')
+  | Some (s, D', n') => Some (s, D', nil, n')
   | None =>
       match unify_k f D T1 T2 n with
       | None => None
-      | Some (s, n') =>
-          match coerce_dec f D (apT s T1) (apT s T2) with
+      | Some (s, D', n') =>
+          match coerce_dec f D' (apT s T1) (apT s T2) with
           | None => None
-          | Some cs => Some (s, cs, n')
+          | Some cs => Some (s, D', cs, n')
           end
       end
   end.
 
-Theorem unify_co_sound : forall f D T1 T2 n s cs n',
-  unify_co f D T1 T2 n = Some (s, cs, n') -> EvT T1 -> EvT T2 ->
-  OkS s /\ chain cs (apT s T1) (apT s T2) /\ kres D D (sT s) /\ n <= n'.
+Theorem unify_co_sound : forall f D T1 T2 n s D' cs n',
+  unify_co f D T1 T2 n = Some (s, D', cs, n') -> EvT T1 -> EvT T2 ->
+  OkS s /\ chain cs (apT s T1) (apT s T2) /\ GoodU D n s D' n'.
 Proof.
-  intros f D T1 T2 n s cs n' H H1 H2. unfold unify_co in H.
-  destruct (unify_t f D T1 T2 n) as [[s0 n0]|] eqn:Et.
+  intros f D T1 T2 n s D' cs n' H H1 H2. unfold unify_co in H.
+  destruct (unify_t f D T1 T2 n) as [[[s0 D0] n0]|] eqn:Et.
   - inversion H; subst; clear H.
-    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ Et H1 H2) as (Hs & Ht & Hk & Hl).
-    refine (conj Hs (conj _ (conj Hk Hl))).
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ _ Et H1 H2) as (Hs & Ht & Hg).
+    refine (conj Hs (conj _ Hg)).
     eapply ch_conv; [ exact Ht | constructor ].
-  - destruct (unify_k f D T1 T2 n) as [[s0 n0]|] eqn:E; [ | discriminate ].
-    destruct (coerce_dec f D (apT s0 T1) (apT s0 T2)) as [cs0|] eqn:Ec; [ | discriminate ].
+  - destruct (unify_k f D T1 T2 n) as [[[s0 D0] n0]|] eqn:E; [ | discriminate ].
+    destruct (coerce_dec f D0 (apT s0 T1) (apT s0 T2)) as [cs0|] eqn:Ec; [ | discriminate ].
     inversion H; subst; clear H.
-    destruct ((proj1 (unify_k_sound f)) D T1 T2 n s n' E H1 H2) as (Hs & _ & Hk & Hl).
-    refine (conj Hs (conj _ (conj Hk Hl))).
-    exact (coerce_dec_sound f D _ _ _ (EvT_ap s T1 Hs H1) (EvT_ap s T2 Hs H2) Ec).
+    destruct ((proj1 (unify_k_sound f)) D T1 T2 n s D' n' E H1 H2) as (Hs & _ & Hg).
+    refine (conj Hs (conj _ Hg)).
+    exact (coerce_dec_sound f D' _ _ _ (EvT_ap s T1 Hs H1) (EvT_ap s T2 Hs H2) Ec).
 Qed.
 
 (* A chain survives a substitution whose images are closed: the coercions stay,
@@ -241,7 +241,7 @@ Example a_mu_is_not_an_int : coerce_dec 10 d_any ball_ty typ_Int = None.
 Proof. vm_compute. reflexivity. Qed.
 
 Example the_unifier_finds_the_unfold :
-  unify_co 10 d_any ball_ty ball_unrolled 0 = Some (sid, [d_unfold], 0).
+  unify_co 10 d_any ball_ty ball_unrolled 0 = Some (sid, d_any, [d_unfold], 0).
 Proof. vm_compute. reflexivity. Qed.
 
 Example the_unifier_refuses_a_deep_difference :

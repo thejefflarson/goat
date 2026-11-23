@@ -160,7 +160,16 @@ Definition bool_x : exp := e_rec (fs_cons lx e_true fs_nil).
 Example type_change_rejected : forall T,
   ~ typing d_any nil (e_spread bool_x lx (e_str [97])) T.
 Proof.
-  intros T H. destruct (spread_inv _ _ _ _ _ _ H) as [P [T0 [R [H1 [H2 _]]]]].
+  intros T H. destruct (spread_inv _ _ _ _ _ _ H) as [T0 [R [H2 [_ [[P H1] | [H1 Hl]]]]]].
+  2: { (* the base's row would have to lack the label it has *)
+    destruct (rec_inv _ _ _ _ H1) as [Rf [Hft Hteq]].
+    destruct (teq_Record_inv _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.
+    inversion Hft; subst.
+    match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
+    pose proof (req_rtail _ _ Hreq) as Ht. simpl in Ht.
+    rewrite (rlacksD_closed d_any lx R (eq_sym Ht)) in Hl.
+    pose proof (req_pi _ _ Hreq lx) as Hp. simpl in Hp.
+    rewrite (rlacks_pi R lx Hl) in Hp. inversion Hp. }
   apply str_inv in H2.
   destruct (rec_inv _ _ _ _ H1) as [Rf [Hft Hteq]].
   destruct (teq_Record_inv _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.
