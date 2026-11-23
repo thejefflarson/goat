@@ -361,7 +361,9 @@ impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
     /// module snapshots the model, the new one refreshes a model of its own
     /// types from the snapshot, and the old module is unloaded. A model that
     /// cannot be refreshed restarts from the new `init` (or when the program
-    /// had stopped), and the reason says why. If the new program cannot
+    /// had stopped), and the reason says why. A trap in the snapshot or the
+    /// refresh does the same in a fresh instance, as wasm does, since the
+    /// trapped one is dead (ADR 0042). If the new program cannot
     /// start, the old one is left running.
     pub fn reload(&mut self, library: Library) -> Result<Reloaded, String> {
         let core = &mut self.guest.core;
@@ -370,30 +372,46 @@ impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
         let fresh = new.object0(core, "goat_setup")?;
         let old = &mut self.guest.module;
 
-        let (model, outcome) = match self.model.take() {
-            None => (fresh, Reloaded::Reset(ResetReason::reshaped())),
+        let (model, outcome, old_runs) = match self.model.take() {
+            None => (fresh, Reloaded::Reset(ResetReason::reshaped()), true),
             Some(model) => {
                 let started = Instant::now();
                 // The snapshot consumes the model, so the old module is not
                 // asked to release it.
-                let image = old.object1(core, "goat_snapshot", model as *mut u8)?;
-                let refreshed = new.call2::<_, _, _, *mut u8>(
-                    core,
-                    "goat_refresh",
-                    image as *mut u8,
-                    fresh as *mut u8,
-                )? as Object;
+                let refreshed = old
+                    .object1(core, "goat_snapshot", model as *mut u8)
+                    .and_then(|image| {
+                        new.call2::<_, _, _, *mut u8>(
+                            core,
+                            "goat_refresh",
+                            image as *mut u8,
+                            fresh as *mut u8,
+                        )
+                    });
                 self.carried = started.elapsed();
-                if refreshed == 0 {
-                    (fresh, Reloaded::Reset(reason(&mut new, core)))
-                } else {
-                    new.call1::<_, _, ()>(core, "goat_release_model", fresh as *mut u8)?;
-                    (refreshed, Reloaded::Refreshed)
+                match refreshed.map(|p| p as Object) {
+                    Ok(0) => (fresh, Reloaded::Reset(reason(&mut new, core)), true),
+                    Ok(rebuilt) => {
+                        new.call1::<_, _, ()>(core, "goat_release_model", fresh as *mut u8)?;
+                        (rebuilt, Reloaded::Refreshed, true)
+                    }
+                    Err(_) => {
+                        // The trap killed the instance both modules share, so
+                        // the new module starts over in a fresh one and the old
+                        // module goes without a shutdown.
+                        core.instance = Instance::new(DEFAULT_HEAP_BYTES);
+                        new.state = ModuleState::default();
+                        check_versions(&mut new, core)?;
+                        let restarted = new.object0(core, "goat_setup")?;
+                        (restarted, Reloaded::Reset(ResetReason::reshaped()), false)
+                    }
                 }
             }
         };
-        old.call0::<_, ()>(core, "goat_shutdown")?;
-        old.call0::<_, ()>(core, "goat_free_static")?;
+        if old_runs {
+            old.call0::<_, ()>(core, "goat_shutdown")?;
+            old.call0::<_, ()>(core, "goat_free_static")?;
+        }
 
         self.guest.module = new;
         self.subscriptions = self.guest.subscriptions();
