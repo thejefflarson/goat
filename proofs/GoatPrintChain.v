@@ -53,6 +53,7 @@ Definition NotDecl (s : list tok) : Prop :=
 Definition Plain (s : list tok) : Prop :=
   match s with
   | TSym x :: _ => x <> "not" /\ x <> "-" /\ x <> "tag" /\ x <> "foreign"
+  | TName x :: _ => x <> "foreign"
   | _ => True
   end.
 
@@ -63,7 +64,15 @@ Proof.
   apply String.eqb_eq in Heq. subst. contradiction.
 Qed.
 
-Ltac ext_text := eapply text_fail; assumption.
+Lemma text_fail_name : forall t x r, x <> t -> peg (E_term (T_text t)) (TName x :: r) Fail.
+Proof.
+  intros t x r Hne. apply peg_term_fail. simpl.
+  destruct (contextual t); [ | reflexivity ].
+  destruct (String.eqb t x) eqn:Heq; [ | reflexivity ].
+  apply String.eqb_eq in Heq. subst. contradiction.
+Qed.
+
+Ltac ext_text := first [ eapply text_fail; assumption | eapply text_fail_name; assumption ].
 
 Lemma notEq_stop : forall r, Stop r -> NotEq r.
 Proof. intros r H. inversion H; subst; simpl; try exact I; intro Hx; discriminate Hx. Qed.
@@ -108,7 +117,8 @@ Qed.
 Lemma plain_foreign : forall s, Plain s -> peg (E_rule R_foreign_decl) s Fail.
 Proof.
   intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
-  simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
+  - simpl in H. pfail ext_text.
+  - simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
 Qed.
 
 Lemma plain_tag : forall s, Plain s -> peg (E_rule R_tag_decl) s Fail.

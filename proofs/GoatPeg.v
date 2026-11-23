@@ -1,7 +1,10 @@
 (* Ford-style relational semantics of the generated grammar (GoatGrammar.v)
    over a token stream, and its determinism (T2, ADR 0030). Recovery
    annotations are not in the generated grammar, so the relation describes
-   valid input only. The lexer is trusted: a token stream is the input. *)
+   valid input only. A text terminal matches a punctuation or keyword token
+   by its spelling, and a name token by its spelling when the word is
+   [contextual]: [from], [to], [in] and [foreign] are names to the lexer and
+   keywords only where a rule spells them out. *)
 
 From Stdlib Require Import String List.
 Import ListNotations.
@@ -22,9 +25,14 @@ Inductive result : Type :=
   | Fail
   | Ok (ts : list tree) (rest : list tok).
 
+(* The words the lexer reads as names and a rule may still spell out. *)
+Definition contextual (s : string) : bool :=
+  existsb (String.eqb s) ["from"; "to"; "in"; "foreign"]%string.
+
 Definition accepts (t : terminal) (k : tok) : bool :=
   match t, k with
   | T_text s, TSym s' => String.eqb s s'
+  | T_text s, TName s' => contextual s && String.eqb s s'
   | T_name, TName _ => true
   | T_number, TNum _ => true
   | T_number, TDec _ => true
@@ -228,4 +236,31 @@ Proof.
     + reflexivity.
   - (* expect *)
     apply IH. exact (inv_expect D2).
+Qed.
+
+(* The contextual words are matched by spelling, and only they. *)
+Lemma contextual_word_matches : forall w s,
+  contextual w = true ->
+  peg (E_term (T_text w)) (TName w :: s) (Ok [Leaf (TName w)] s).
+Proof.
+  intros w s Hc. replace (Ok [Leaf (TName w)] s) with (term_step (T_text w) (TName w :: s)).
+  - apply P_term.
+  - simpl. rewrite Hc. rewrite String.eqb_refl. reflexivity.
+Qed.
+
+Lemma other_word_no_match : forall w x s,
+  contextual w = false ->
+  peg (E_term (T_text w)) (TName x :: s) Fail.
+Proof.
+  intros w x s Hc. replace Fail with (term_step (T_text w) (TName x :: s)).
+  - apply P_term.
+  - simpl. rewrite Hc. reflexivity.
+Qed.
+
+Example from_kw_matches : forall s,
+  peg (E_rule R_from_kw) (TName "from" :: s) (Ok [Node R_from_kw [Leaf (TName "from")]] s).
+Proof.
+  intros s. replace (Ok [Node R_from_kw [Leaf (TName "from")]] s) with (wrap R_from_kw (Ok [Leaf (TName "from")] s)).
+  - apply P_rule. simpl. apply contextual_word_matches. reflexivity.
+  - reflexivity.
 Qed.

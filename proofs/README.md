@@ -948,9 +948,10 @@ Boundary:
   (`1 + f = program(x) do x done f(2)`).
 - **The lexer is trusted.** The input is a list of tokens; nothing is said about
   how characters become tokens. A text terminal matches a punctuation or keyword
-  token, never a name, so the words `from`, `to`, `in` and `foreign` (names
-  elsewhere) cannot be matched as keywords by the model. No core rule spells them
-  out.
+  token by its spelling, and a name token by its spelling when the word is
+  `contextual` (`from`, `to`, `in`, `foreign`; names elsewhere), so a rule can
+  spell them out. No core rule does; `gen` has `G_word` for the match, and the
+  printer proof shows a printed name is never `foreign`.
 - **Recovery annotations are not in the generated grammar.** They change nothing
   about valid input.
 - **Not verified:** the Rust interpreter `parser/src/interp.rs`, the lowering
