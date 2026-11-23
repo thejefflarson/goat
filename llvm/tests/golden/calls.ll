@@ -1,11 +1,13 @@
 ; goat native backend: textual LLVM IR
 
 %goat_host = type { i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }
-%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64] }
+%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64], i64, i64, [55 x ptr] }
+%goat_value = type { i32, i64, i64 }
 
 declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 
-@goat.trap.0 = private unnamed_addr constant [23 x i8] c"this number got too big"
+@goat.text.0 = private unnamed_addr constant [23 x i8] c"this number got too big"
+
 
 define i64 @goat_entry(ptr %inst) nounwind {
 entry:
@@ -25,7 +27,7 @@ trap3:
   %v8 = load ptr, ptr %v7
   %v9 = getelementptr inbounds %goat_host, ptr %v6, i32 0, i32 9
   %v10 = load ptr, ptr %v9
-  call void %v10(ptr %v8, ptr @goat.trap.0, i64 23) noreturn nounwind
+  call void %v10(ptr %v8, ptr @goat.text.0, i64 23) noreturn nounwind
   unreachable
 go4:
   %v11 = extractvalue { i64, i1 } %v1, 0
@@ -41,7 +43,7 @@ bad_host:
   ret i32 1
 check_instance:
   %instance_version = load i32, ptr %inst
-  %instance_old = icmp ult i32 %instance_version, 1
+  %instance_old = icmp ult i32 %instance_version, 2
   br i1 %instance_old, label %bad_instance, label %run
 bad_instance:
   ret i32 2

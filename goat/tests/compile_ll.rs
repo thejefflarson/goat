@@ -61,7 +61,12 @@ fn compiled_source_parses_with_clang() {
 
 #[test]
 fn an_unsupported_construct_is_a_compiler_error() {
-    let errors = compile_ll(Profile::Desktop, "\"hi\"", &host()).unwrap_err();
+    let errors = compile_ll(
+        Profile::Desktop,
+        "loop = program(i) do if i == 0 then 0 else loop(i - 1) done done\nloop(3)",
+        &host(),
+    )
+    .unwrap_err();
     assert!(
         errors[0]
             .to_string()

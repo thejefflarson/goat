@@ -6,7 +6,7 @@
 use std::ffi::c_void;
 use std::mem::{offset_of, size_of};
 
-pub use goat_llvm::{HOST_VERSION, INSTANCE_VERSION};
+pub use goat_llvm::{FREE_LISTS, HOST_VERSION, INSTANCE_VERSION};
 
 /// The host's own pointer, passed back as the first argument of every table
 /// function. A string argument is a pointer and a byte length.
@@ -72,8 +72,10 @@ pub struct GoatValue {
 }
 
 /// What the generated code keeps for one running program instead of globals.
-/// The host allocates it, sets `version`, `heap` and `heap_size`, and leaves the
-/// rest as [`Instance::new`] does.
+/// The host allocates it, sets `version`, `heap` (8-byte aligned) and
+/// `heap_size`, and leaves the rest as [`Instance::new`] does. `heap_top` is the
+/// allocator's bump offset into the heap, `allocs` the count of every allocation
+/// so far, and `free` the head of each size class's free list.
 #[repr(C)]
 pub struct GoatInstance {
     pub version: u32,
@@ -86,6 +88,9 @@ pub struct GoatInstance {
     pub host: *const GoatHost,
     pub ctx: Ctx,
     pub spill: [u64; 8],
+    pub heap_top: u64,
+    pub allocs: u64,
+    pub free: [*mut u8; FREE_LISTS],
 }
 
 pub fn instance_offsets() -> Vec<(&'static str, usize)> {
@@ -100,6 +105,9 @@ pub fn instance_offsets() -> Vec<(&'static str, usize)> {
         ("host", offset_of!(GoatInstance, host)),
         ("ctx", offset_of!(GoatInstance, ctx)),
         ("spill", offset_of!(GoatInstance, spill)),
+        ("heap_top", offset_of!(GoatInstance, heap_top)),
+        ("allocs", offset_of!(GoatInstance, allocs)),
+        ("free", offset_of!(GoatInstance, free)),
     ]
 }
 
@@ -111,21 +119,35 @@ pub struct Instance {
     dead: bool,
 }
 
-impl Instance {
-    pub fn new(heap_bytes: usize) -> Instance {
-        let mut heap = vec![0u128; heap_bytes.div_ceil(size_of::<u128>())];
-        let raw = Box::new(GoatInstance {
+impl GoatInstance {
+    fn empty(heap: *mut u8, heap_size: u64) -> GoatInstance {
+        GoatInstance {
             version: INSTANCE_VERSION,
             live: 0,
             depth: 0,
             site_start: u32::MAX,
             site_end: 0,
-            heap: heap.as_mut_ptr().cast(),
-            heap_size: (heap.len() * size_of::<u128>()) as u64,
+            heap,
+            heap_size,
             host: std::ptr::null(),
             ctx: std::ptr::null_mut(),
             spill: [0; 8],
-        });
+            heap_top: 0,
+            allocs: 0,
+            free: [std::ptr::null_mut(); FREE_LISTS],
+        }
+    }
+}
+
+impl Instance {
+    /// An instance whose heap is `heap_bytes` of zeroed memory. The operating
+    /// system hands out the pages of a large one as the program touches them.
+    pub fn new(heap_bytes: usize) -> Instance {
+        let mut heap = vec![0u128; heap_bytes.div_ceil(size_of::<u128>())];
+        let raw = Box::new(GoatInstance::empty(
+            heap.as_mut_ptr().cast(),
+            (heap.len() * size_of::<u128>()) as u64,
+        ));
         Instance {
             raw,
             heap,
@@ -148,20 +170,10 @@ impl Instance {
     /// Makes the instance as [`Instance::new`] made it: an empty zeroed heap,
     /// no live blocks, no site, and alive again.
     pub fn reset(&mut self) {
-        self.heap.fill(0);
-        let (heap, heap_size) = (self.raw.heap, self.raw.heap_size);
-        *self.raw = GoatInstance {
-            version: INSTANCE_VERSION,
-            live: 0,
-            depth: 0,
-            site_start: u32::MAX,
-            site_end: 0,
-            heap,
-            heap_size,
-            host: std::ptr::null(),
-            ctx: std::ptr::null_mut(),
-            spill: [0; 8],
-        };
+        let used = (self.raw.heap_top as usize).div_ceil(size_of::<u128>());
+        let used = used.min(self.heap.len());
+        self.heap[..used].fill(0);
+        *self.raw = GoatInstance::empty(self.raw.heap, self.raw.heap_size);
         self.dead = false;
     }
 
@@ -179,6 +191,16 @@ impl Instance {
 
     pub fn live(&self) -> u32 {
         self.raw.live
+    }
+
+    /// How much of the heap the allocator has carved into blocks, in bytes.
+    pub fn heap_used(&self) -> u64 {
+        self.raw.heap_top
+    }
+
+    /// Every allocation the program has made in this instance, freed or not.
+    pub fn allocations(&self) -> u64 {
+        self.raw.allocs
     }
 
     /// The source range the program last named as the user's code running, as

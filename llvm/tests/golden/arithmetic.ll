@@ -1,7 +1,9 @@
 ; goat native backend: textual LLVM IR
 
 %goat_host = type { i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }
-%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64] }
+%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64], i64, i64, [55 x ptr] }
+%goat_value = type { i32, i64, i64 }
+
 
 
 
@@ -21,7 +23,7 @@ bad_host:
   ret i32 1
 check_instance:
   %instance_version = load i32, ptr %inst
-  %instance_old = icmp ult i32 %instance_version, 1
+  %instance_old = icmp ult i32 %instance_version, 2
   br i1 %instance_old, label %bad_instance, label %run
 bad_instance:
   ret i32 2
