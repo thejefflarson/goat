@@ -522,15 +522,46 @@ and `RecursiveType` is a compared class, not a skip.
 more restrictive than the checker, never less, and the differential test counts
 the programs and records no mismatch.
 
-- **11 recursive programs W refuses (#606).** 6 need a row knot: a row variable
-  meets a row that contains it (`occR`, corpus lines 7, 18 and 285), or
-  `rewrite_row` finds the tail variable inside the other row (lines 249, 293 and
-  294); it needs a `unify_kr` case that ties the knot over the enclosing record
-  type. 3 are deep coercions (lines 283, 286 and 295, for example
-  `{...ball, size: 10}.moved()`); they need eta-expansion. Line 306,
-  `step(ball).x`, fails in `unify_k` with no occurs check. Line 309, a group
-  member that needs a `fold` around its whole lambda, which `T_Letrec` does not
-  allow.
+- **11 recursive programs W refuses (#606).** Each is sound but incomplete:
+  the checker accepts, W refuses, and there is no mismatch. The refusals were
+  measured again by logging each `None` in the extracted algorithm, and by
+  prototyping the fix the first measurement suggested (in the extracted OCaml,
+  not committed). Corpus lines below are the current `core_corpus` numbering.
+  - **Row variable occurs, 3 (lines 7, 18, 291).** `occR`: a row variable meets
+    a row that contains it, as in `{l1: M, ...} ~ {l0 | r}` where `M` mentions
+    `r`. A prototype `unify_kr` case solves it: split the row at the one field
+    whose type mentions `r`, put a fresh variable `x` there, solve `r := row[x]`
+    with `x := knot x (T[r := row[x]])`, and `unroll_eq` 1 holds between the two
+    sides. It does not make any of the three compared: the substitution leaves
+    `s T1` and `s T2` one unrolling apart below a record field whose row has a
+    variable tail, and `unify_co` fails in `coerce_dec`, which has only head
+    coercions. A record with an open tail cannot be eta-expanded, since the
+    coercion would have to rebuild labels it cannot name.
+  - **Tail occurs, 3 (lines 254, 299, 300).** `rewrite_row` refuses because the
+    tail variable is in the other row. Trying the other row first (same rule,
+    arguments swapped) reaches the row-variable case above and the same
+    `coerce_dec` refusal (line 300), or refuses again (254, 299).
+  - **Deep coercion, 3 (lines 288, 292, 301).** `unify_k` succeeds and
+    `coerce_dec` refuses, for example `{...ball, size: 10}.moved()`.
+  - **Line 312, `step(ball).x`.** Not a `bind_k` fault and not a corpus fault.
+    `bind_k` refuses a type with a free index (the one logged refusal) when
+    `unify_k` compares two mu bodies, which is only the first attempt: the
+    fallback unrolls and meets the same pair (the field's mu against the
+    record-level mu of `ball`) again, until the fuel (100000 calls) runs out.
+    The two types are one regular tree written with the knot in two places, and
+    no `unroll_eq` with a finite budget relates them (there is no mu/mu
+    congruence rule), so the algorithm would need an assumed-pairs set and a
+    spec stronger than `unroll_eq`.
+  - **Line 315, `h = program(r) do ... (r.g)({stop: true, g: h}) ...`.**
+    `unify_t` fails on the member's type against its slot variable (the slot
+    occurs in the member's type); the slot would be bound to a knot, and the
+    member would then need a `fold` around its whole lambda, which `T_Letrec`
+    does not allow (`fn_group`).
+  Three things would be needed to compare these: a coercion below a record with
+  an open row (or a way to place the knot so that no coercion is needed, over the
+  record type that carries the row variable), a coinductive type equality
+  (assumed pairs) in `unify_k`, and a `T_Letrec` that admits a `fold` of a
+  lambda. Each changes the calculus or its spec; none is a local proof.
 - **No `lacks` on a row variable (#564).** The calculus's `lacks` is a premise on
   a closed row spine, so a spread whose base ends in a row variable the checker
   knows lacks the label (`{x, ...rest} = p` then `{...rest, x: 2}`) has no
