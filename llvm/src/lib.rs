@@ -10,8 +10,13 @@
 //! as new as the code, and returns a nonzero status when they are not.
 //!
 //! Heap values (records, variants, strings) and the allocator, reference
-//! counting and drop loop that serve them are in `heap`; host output and
-//! foreign calls are in `host_calls`.
+//! counting and drop loop that serve them are in `heap`; closures are in
+//! `closures`; host output and foreign calls are in `host_calls`.
+//!
+//! Every goat function and closure body uses LLVM's `tailcc` convention, so a
+//! tail call can become `musttail` without changing a signature. A function
+//! takes the instance first, then (for a closure body) its environment, then
+//! its arguments.
 //!
 //! The IR never carries `nsw`, `nuw`, fast-math flags or TBAA: arithmetic that
 //! can overflow goes through the `llvm.s*.with.overflow` intrinsics and
@@ -22,6 +27,7 @@ use std::fmt::{self, Write as _};
 
 use goat_mir::*;
 
+mod closures;
 mod heap;
 mod heap_nodes;
 mod host_calls;
@@ -46,6 +52,10 @@ pub const STATUS_INSTANCE_VERSION: i32 = 2;
 pub const HOST_VERSION: u32 = 1;
 pub const INSTANCE_VERSION: u32 = 2;
 
+/// The call depth the embedded profile allows by default, as the wasm
+/// backend's `EmbeddedLimits::default()` does.
+pub const DEFAULT_CALL_DEPTH: u32 = 1024;
+
 /// Knobs on the emitted code that do not change what a program means.
 #[derive(Clone, Copy, Debug)]
 pub struct EmitOptions {
@@ -55,12 +65,16 @@ pub struct EmitOptions {
     /// profiles), as the wasm backend's option does. The reference-count checks
     /// that trap on a double release or a write to a freed block are always on.
     pub poison_freed: bool,
+    /// Calls that may be waiting on a result at once on the embedded profile
+    /// (ADR 0026); a desktop program has no bound and ignores it.
+    pub call_depth: u32,
 }
 
 impl Default for EmitOptions {
     fn default() -> Self {
         EmitOptions {
             poison_freed: cfg!(debug_assertions),
+            call_depth: DEFAULT_CALL_DEPTH,
         }
     }
 }
@@ -203,7 +217,7 @@ pub fn emit_with_options(program: &Program, options: EmitOptions) -> Result<Stri
     let mut module = Module::new(program, options);
     let mut functions = String::new();
     for (index, func) in program.funcs.iter().enumerate() {
-        functions.push_str(&FuncLower::new(&mut module, func).lower(FuncId(index as u32))?);
+        functions.push_str(&FuncLower::new(&mut module, FuncId(index as u32), func).lower()?);
         functions.push('\n');
     }
     functions.push_str(&module.main_export()?);
@@ -360,7 +374,7 @@ impl<'a> Module<'a> {
              %ctx_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 {ctx_field}\n  \
              store ptr %ctx, ptr %ctx_slot\n"
         );
-        let call = format!("call {ret} @{ENTRY}(ptr %inst)");
+        let call = format!("call tailcc {ret} @{ENTRY}(ptr %inst)");
         let (printer, arg) = match root.ret {
             MTy::Ptr(HeapKind::Str) => {
                 let (len_at, bytes_at) = (heap::STR_LEN_AT, heap::STR_BYTES_AT);
@@ -510,6 +524,7 @@ fn floored(helper: Helper, narrow: bool) -> String {
 
 struct FuncLower<'m, 'a> {
     module: &'m mut Module<'a>,
+    id: FuncId,
     func: &'a Func,
     body: String,
     next: u32,
@@ -521,9 +536,10 @@ struct FuncLower<'m, 'a> {
 }
 
 impl<'m, 'a> FuncLower<'m, 'a> {
-    fn new(module: &'m mut Module<'a>, func: &'a Func) -> Self {
+    fn new(module: &'m mut Module<'a>, id: FuncId, func: &'a Func) -> Self {
         FuncLower {
             module,
+            id,
             func,
             body: String::new(),
             next: 0,
@@ -533,11 +549,18 @@ impl<'m, 'a> FuncLower<'m, 'a> {
         }
     }
 
-    fn lower(mut self, id: FuncId) -> Result<String, EmitError> {
-        if self.func.env.is_some() {
-            return Err(EmitError::Unsupported("closures"));
-        }
+    fn lower(mut self) -> Result<String, EmitError> {
+        let id = self.id;
         let mut params = vec!["ptr %inst".to_string()];
+        if let Some(env) = &self.func.env {
+            if id == self.module.program.entry {
+                return Err(EmitError::Malformed("the entry function has an env"));
+            }
+            params.push("ptr %env".to_string());
+            let ty = MTy::Ptr(HeapKind::Closure(env.sig));
+            self.locals
+                .insert(env.local, Val::Op(ty, "%env".to_string()));
+        }
         for (local, ty) in &self.func.params {
             let value = match self.module.llty(*ty)? {
                 Some(llty) => {
@@ -561,7 +584,7 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             "internal "
         };
         Ok(format!(
-            "define {linkage}{ret} {}({}) nounwind {{\nentry:\n{}{}}}\n",
+            "define {linkage}tailcc {ret} {}({}) nounwind {{\nentry:\n{}{}}}\n",
             self.module.func_name(id),
             params.join(", "),
             self.allocas,
@@ -676,12 +699,10 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             }
             Expr::Switch(x, arms, default) => self.switch(*x, arms, default)?,
             Expr::TailCall(..) => return Err(EmitError::Unsupported("tail calls")),
-            Expr::CallClosure(..)
-            | Expr::MakeClosure(..)
-            | Expr::Capture(_)
-            | Expr::MethodKey(_) => {
-                return Err(EmitError::Unsupported("closures"));
-            }
+            Expr::CallClosure(closure, args) => self.call_closure(closure, args)?,
+            Expr::MakeClosure(f, captures) => self.make_closure(*f, captures)?,
+            Expr::Capture(i) => Some(self.capture(*i)?),
+            Expr::MethodKey(_) => return Err(EmitError::Unsupported("method sites")),
             Expr::Frame(_) => return Err(EmitError::Unsupported("scene frames")),
             Expr::CallForeign(f, args) => self.call_foreign(*f, args)?,
             Expr::Write(write) => self.write(write)?,
@@ -962,16 +983,38 @@ impl<'m, 'a> FuncLower<'m, 'a> {
         }
         let ret = self.module.ret_ty(target.ret)?;
         let call = format!(
-            "call {ret} {}({})",
+            "call tailcc {ret} {}({})",
             self.module.func_name(callee),
             passed.join(", ")
         );
-        Ok(Some(if target.ret == MTy::Unit {
+        Ok(Some(self.bound_call(call, target.ret)))
+    }
+
+    /// Emits `call`, which waits on a result and returns `ret`. On the
+    /// embedded profile it also counts the call in the instance's `depth` and
+    /// traps past the bound, as the wasm backend does (ADR 0026).
+    fn bound_call(&mut self, call: String, ret: MTy) -> Val {
+        let depth = self.module.narrow().then(|| self.instance_field("depth"));
+        if let Some(depth) = &depth {
+            let before = self.emit(format!("load i32, ptr {depth}"));
+            let waiting = self.emit(format!("add i32 {before}, 1"));
+            self.line(format!("store i32 {waiting}, ptr {depth}"));
+            let limit = self.module.options.call_depth;
+            let over = self.emit(format!("icmp ugt i32 {waiting}, {limit}"));
+            self.trap_if(&over, STACK_OVERFLOW);
+        }
+        let result = if ret == MTy::Unit {
             self.line(call);
             Val::Unit
         } else {
-            Val::Op(target.ret, self.emit(call))
-        }))
+            Val::Op(ret, self.emit(call))
+        };
+        if let Some(depth) = depth {
+            let waiting = self.emit(format!("load i32, ptr {depth}"));
+            let after = self.emit(format!("sub i32 {waiting}, 1"));
+            self.line(format!("store i32 {after}, ptr {depth}"));
+        }
+        result
     }
 }
 

@@ -13,7 +13,7 @@ fn arithmetic_source_compiles_to_ir() {
     )
     .unwrap();
     assert!(
-        ir.contains("define i64 @goat_entry(ptr %inst) nounwind"),
+        ir.contains("define tailcc i64 @goat_entry(ptr %inst) nounwind"),
         "{ir}"
     );
     assert!(ir.contains("@llvm.smul.with.overflow.i64"), "{ir}");

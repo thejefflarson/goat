@@ -16,7 +16,7 @@ declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 %goat.r0 = type { i32, i32, i64 }
 %goat.v1.t1 = type { i32, i32, i32, i32, i64 }
 
-define i64 @goat_entry(ptr %inst) nounwind {
+define tailcc i64 @goat_entry(ptr %inst) nounwind {
 entry:
   %v1 = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 40, i64 0)
   %v2 = extractvalue { i64, i1 } %v1, 1
@@ -76,7 +76,7 @@ run:
   store ptr %host, ptr %host_slot
   %ctx_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
   store ptr %ctx, ptr %ctx_slot
-  %v = call i64 @goat_entry(ptr %inst)
+  %v = call tailcc i64 @goat_entry(ptr %inst)
   %print_slot = getelementptr inbounds %goat_host, ptr %host, i32 0, i32 3
   %print = load ptr, ptr %print_slot
   call void %print(ptr %ctx, i64 %v) nounwind

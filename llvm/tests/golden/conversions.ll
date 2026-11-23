@@ -10,7 +10,7 @@ declare double @llvm.trunc.f64(double)
 @goat.text.0 = private unnamed_addr constant [40 x i8] c"this number can't be made a whole number"
 
 
-define i64 @goat_entry(ptr %inst) nounwind {
+define tailcc i64 @goat_entry(ptr %inst) nounwind {
 entry:
   %v1 = sitofp i64 17 to double
   %v2 = call double @llvm.sqrt.f64(double %v1)
@@ -52,7 +52,7 @@ run:
   store ptr %host, ptr %host_slot
   %ctx_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
   store ptr %ctx, ptr %ctx_slot
-  %v = call i64 @goat_entry(ptr %inst)
+  %v = call tailcc i64 @goat_entry(ptr %inst)
   %print_slot = getelementptr inbounds %goat_host, ptr %host, i32 0, i32 3
   %print = load ptr, ptr %print_slot
   call void %print(ptr %ctx, i64 %v) nounwind

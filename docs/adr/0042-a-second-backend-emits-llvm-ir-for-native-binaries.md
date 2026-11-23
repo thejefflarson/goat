@@ -147,3 +147,24 @@ checks. Where it differs:
   the only user, reload's snapshot, is not on the native backend yet.
 - **Foreign strings.** A `foreign` call returns a string as host memory valid
   until the next call, and the generated code copies it into a heap string.
+
+### Amendment 2026-11-22: closures and calls
+
+- **Calling convention.** Every goat function and closure body is `tailcc`,
+  and every goat-internal call says so, so a later `musttail` needs no change
+  of signature. The exports (`goat_main`) and the runtime helpers keep the C
+  convention. A function takes the instance, then (a closure body) its
+  environment, then its arguments.
+- **Closure object.** `[header][drop id: u32][pad][code: i64][capture slots]`.
+  The code word is the body's address as an `i64`, so the layout does not
+  depend on the pointer width. A closure carries its own drop id (the high
+  bits of `pad` hold it while it waits on the drop list) because its type
+  names a signature, not the captures that decide what dies with it. A
+  closure that captures nothing is one immortal object and allocates nothing.
+- **Call depth.** On the embedded profile each non-tail `CallDirect` and
+  `CallClosure` adds one to the instance's `depth` before the call and removes
+  it after, and traps with the stack-overflow message past
+  `EmitOptions::call_depth` (default 1024), at the same call and with the same
+  blamed site as the embedded wasm build. The desktop profile keeps no count.
+- **Not yet.** Tail calls and method sites (`MethodKey`) still fall back with a
+  reason.

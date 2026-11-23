@@ -9,7 +9,10 @@ use std::process::Command;
 
 /// Goldens and runs use checked builds whatever the profile the tests were
 /// compiled with, so they read the same everywhere.
-const CHECKED: EmitOptions = EmitOptions { poison_freed: true };
+const CHECKED: EmitOptions = EmitOptions {
+    poison_freed: true,
+    call_depth: goat_llvm::DEFAULT_CALL_DEPTH,
+};
 
 fn ll(p: &Program) -> String {
     assert_eq!(verify(p), Ok(()));
@@ -174,8 +177,12 @@ fn emitted_ir_has_no_undefined_behavior_flags_or_triple() {
         calls(),
         heap(),
         strings(),
+        apply_double(),
+        record_of_functions(),
+        capturing_a_record(),
         embedded(division()),
         embedded(heap()),
+        embedded(record_of_functions()),
     ];
     for p in all {
         let text = ll(&p);
@@ -218,8 +225,8 @@ fn unsupported_nodes_are_internal_errors() {
             .contains("not yet supported by the native backend")
     );
 
-    let p = program(vec![func(MTy::Int, Expr::MakeClosure(FuncId(0), vec![]))]);
-    assert_eq!(emit(&p), Err(EmitError::Unsupported("closures")));
+    let p = program(vec![func(MTy::Int, Expr::MethodKey(Local(0)))]);
+    assert_eq!(emit(&p), Err(EmitError::Unsupported("method sites")));
 }
 
 /// A record built and read, a variant matched, and a string read: every kind of
@@ -272,6 +279,153 @@ fn strings() -> Program {
     p
 }
 
+/// `double(x) = x * 2`, taking and dropping its environment.
+fn double() -> Func {
+    closure_fn(
+        vec![(0, MTy::Int)],
+        1,
+        vec![],
+        MTy::Int,
+        let_(2, drop_(1), mul(local(0), int(2))),
+    )
+}
+
+/// `\x -> x + k` with `k` captured.
+fn add_k() -> Func {
+    closure_fn(
+        vec![(0, MTy::Int)],
+        1,
+        vec![MTy::Int],
+        MTy::Int,
+        let_(
+            2,
+            Expr::Capture(0),
+            let_(3, drop_(1), add(local(0), local(2))),
+        ),
+    )
+}
+
+fn apply_double() -> Program {
+    let apply = func_with(
+        vec![(0, closure_ty(0)), (1, MTy::Int)],
+        MTy::Int,
+        call_closure(local(0), vec![local(1)]),
+    );
+    let main = func(
+        MTy::Int,
+        call(2, vec![Expr::MakeClosure(FuncId(1), vec![]), int(21)]),
+    );
+    with_closures(program(vec![main, double(), apply]), vec![MTy::Int])
+}
+
+/// A record holding a static closure and one capturing `10`; releasing the
+/// record releases the closures through the drop id each carries.
+fn record_of_functions() -> Program {
+    let main = func(
+        MTy::Int,
+        let_(
+            0,
+            Expr::AllocRecord(
+                FNS,
+                vec![
+                    Expr::MakeClosure(FuncId(1), vec![]),
+                    Expr::MakeClosure(FuncId(2), vec![int(10)]),
+                ],
+            ),
+            let_(
+                1,
+                call_closure(Expr::Field(Local(0), 0), vec![int(7)]),
+                let_(
+                    2,
+                    call_closure(Expr::Field(Local(0), 1), vec![local(1)]),
+                    let_(3, drop_(0), local(2)),
+                ),
+            ),
+        ),
+    );
+    with_closures(program(vec![main, double(), add_k()]), vec![MTy::Int])
+}
+
+/// A closure that captures a record and is called twice: the second call frees
+/// it, and the capture with it.
+fn capturing_a_record() -> Program {
+    let body = closure_fn(
+        vec![(0, MTy::Int)],
+        1,
+        vec![record_ty()],
+        MTy::Int,
+        let_(
+            2,
+            Expr::Capture(0),
+            let_(
+                3,
+                Expr::Field(Local(2), 0),
+                let_(4, drop_(2), let_(5, drop_(1), add(local(3), local(0)))),
+            ),
+        ),
+    );
+    let main = func(
+        MTy::Int,
+        let_(
+            0,
+            alloc_record(7),
+            let_(
+                1,
+                Expr::MakeClosure(FuncId(1), vec![local(0)]),
+                let_(
+                    2,
+                    Expr::Dup(Local(1)),
+                    let_(
+                        3,
+                        call_closure(local(1), vec![int(5)]),
+                        let_(
+                            4,
+                            call_closure(local(1), vec![int(1)]),
+                            add(local(3), local(4)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    );
+    with_closures(program(vec![main, body]), vec![MTy::Int])
+}
+
+#[test]
+fn closures_match_golden() {
+    golden("closures", &record_of_functions());
+    golden("capturing_closure", &capturing_a_record());
+}
+
+#[test]
+fn closure_code_is_tailcc_and_calls_through_the_closure() {
+    let ir = ll(&apply_double());
+    assert!(
+        ir.contains("define internal tailcc i64 @goat_f1(ptr %inst, ptr %env, i64 %l0)"),
+        "{ir}"
+    );
+    assert!(ir.contains("call tailcc i64 %"), "{ir}");
+    assert!(ir.contains("@goat.static."), "an immortal closure: {ir}");
+}
+
+#[test]
+fn the_call_depth_counter_is_emitted_only_on_the_embedded_profile() {
+    let wide = ll(&apply_double());
+    assert!(!wide.contains("icmp ugt i32"), "{wide}");
+    let narrow = ll(&embedded(apply_double()));
+    assert!(narrow.contains("icmp ugt i32 %"), "{narrow}");
+    assert!(narrow.contains("the program called itself too deeply"));
+    let limited = emit_with_options(
+        &embedded(apply_double()),
+        EmitOptions {
+            call_depth: 7,
+            ..CHECKED
+        },
+    )
+    .unwrap();
+    assert!(limited.contains(", 7\n"), "{limited}");
+}
+
 #[test]
 fn heap_programs_match_golden() {
     golden("heap", &heap());
@@ -281,11 +435,12 @@ fn heap_programs_match_golden() {
 #[test]
 fn poison_is_emitted_only_when_asked_for() {
     let p = heap();
-    let poisoned = emit_with_options(&p, EmitOptions { poison_freed: true }).unwrap();
+    let poisoned = emit_with_options(&p, CHECKED).unwrap();
     let plain = emit_with_options(
         &p,
         EmitOptions {
             poison_freed: false,
+            ..CHECKED
         },
     )
     .unwrap();
@@ -299,7 +454,13 @@ fn poison_is_emitted_only_when_asked_for() {
 
 #[test]
 fn heap_ir_keeps_its_state_in_the_instance() {
-    for p in [heap(), strings(), embedded(heap())] {
+    for p in [
+        heap(),
+        strings(),
+        embedded(heap()),
+        capturing_a_record(),
+        record_of_functions(),
+    ] {
         let ir = ll(&p);
         assert!(
             !ir.lines()
@@ -343,6 +504,10 @@ fn clang_reads_every_program() {
         ("calls", calls()),
         ("heap", heap()),
         ("strings", strings()),
+        ("apply_double", apply_double()),
+        ("record_of_functions", record_of_functions()),
+        ("capturing_a_record", capturing_a_record()),
+        ("embedded_closures", embedded(record_of_functions())),
         ("embedded_heap", embedded(heap())),
         ("embedded_strings", embedded(strings())),
         ("embedded", embedded(checked_int())),
@@ -384,14 +549,14 @@ static void trap(void *ctx, const char *message, uint64_t len) {
     printf("\n");
     exit(0);
 }
-extern RET goat_entry(void *inst);
+extern RET goat_entry_c(void *inst);
 int main(void) {
     struct host host = { .version = 1 };
     host.fns[TRAP_SLOT] = (void *)trap;
     struct instance inst = { .version = 1, .site_start = UINT32_MAX };
     inst.host = &host;
     inst.ctx = &inst;
-    printf(FMT "\n", (CAST)goat_entry(&inst));
+    printf(FMT "\n", (CAST)goat_entry_c(&inst));
     return 0;
 }
 "#;
@@ -406,15 +571,22 @@ enum Ret {
 
 /// Compiles `p` with a C `main`, runs it, and returns what it printed.
 fn run(clang: &str, name: &str, p: &Program, ret: Ret) -> String {
-    let (c_ty, fmt, cast) = match ret {
-        Ret::Int => ("int64_t", "\"%lld\"", "long long"),
-        Ret::Int32 => ("int32_t", "\"%d\"", "int"),
-        Ret::Float => ("double", "\"%.17g\"", "double"),
-        Ret::Bool => ("_Bool", "\"%d\"", "int"),
+    let (c_ty, fmt, cast, ll_ty) = match ret {
+        Ret::Int => ("int64_t", "\"%lld\"", "long long", "i64"),
+        Ret::Int32 => ("int32_t", "\"%d\"", "int", "i32"),
+        Ret::Float => ("double", "\"%.17g\"", "double", "double"),
+        Ret::Bool => ("_Bool", "\"%d\"", "int", "zeroext i1"),
     };
     let dir = scratch(name);
     let (ll_path, c_path, exe) = (dir.join("p.ll"), dir.join("main.c"), dir.join("p"));
-    std::fs::write(&ll_path, ll(p)).unwrap();
+    // `goat_entry` is `tailcc`, which C cannot call, so the harness calls a
+    // C-convention wrapper.
+    let bare = ll_ty.trim_start_matches("zeroext ");
+    let wrapper = format!(
+        "\ndefine {ll_ty} @goat_entry_c(ptr %inst) nounwind {{\n  \
+         %r = call tailcc {bare} @goat_entry(ptr %inst)\n  ret {bare} %r\n}}\n"
+    );
+    std::fs::write(&ll_path, ll(p) + &wrapper).unwrap();
     std::fs::write(&c_path, HARNESS).unwrap();
     let build = Command::new(clang)
         .arg(format!("-DRET={c_ty}"))
@@ -540,6 +712,14 @@ fn comparisons_and_if_run() {
     assert_eq!(run(clang, "nan_eq", &p, Ret::Bool), "0");
     assert_eq!(run(clang, "nested", &nested_conditional(), Ret::Int), "5");
     assert_eq!(run(clang, "calls", &calls(), Ret::Int), "42");
+}
+
+#[test]
+fn a_static_closure_is_called_through_its_code_word() {
+    let Some(clang) = clang() else { return };
+    assert_eq!(run(clang, "static", &apply_double(), Ret::Int), "42");
+    let narrow = run(clang, "static32", &embedded(apply_double()), Ret::Int32);
+    assert_eq!(narrow, "42");
 }
 
 #[test]

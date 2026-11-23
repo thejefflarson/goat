@@ -1,12 +1,13 @@
 //! The MIR nodes that build, read, share and release heap objects.
 
 use super::heap::{
-    RECORD_BASE, STR_BYTES_AT, STR_LEN_AT, TAG_AT, VARIANT_BASE, field_index, size_of,
+    CLOSURE_DROP_AT, RECORD_BASE, STR_BYTES_AT, STR_LEN_AT, TAG_AT, VARIANT_BASE, field_index,
+    size_of,
 };
 use super::*;
 
 impl<'a> FuncLower<'_, 'a> {
-    fn pointer(&self, x: Local) -> Result<(String, HeapKind), EmitError> {
+    pub(crate) fn pointer(&self, x: Local) -> Result<(String, HeapKind), EmitError> {
         match self.locals.get(&x) {
             Some(Val::Op(MTy::Ptr(kind), operand)) => Ok((operand.clone(), *kind)),
             Some(_) => Err(EmitError::Malformed("expected a pointer")),
@@ -42,13 +43,16 @@ impl<'a> FuncLower<'_, 'a> {
     }
 
     pub(crate) fn release(&mut self, p: &str, kind: HeapKind) -> Result<(), EmitError> {
-        let id = self.module.drop_id(kind)?;
+        let id = match kind {
+            HeapKind::Closure(_) => self.load_i32_at(p, CLOSURE_DROP_AT),
+            _ => self.module.drop_id(kind)?.to_string(),
+        };
         let release = self.module.need(Runtime::Release);
         self.line(format!("call void {release}(ptr %inst, ptr {p}, i32 {id})"));
         Ok(())
     }
 
-    fn alloc(&mut self, ty: &str) -> String {
+    pub(crate) fn alloc(&mut self, ty: &str) -> String {
         let alloc = self.module.need(Runtime::Alloc);
         let size = size_of(ty);
         self.emit(format!("call ptr {alloc}(ptr %inst, i32 {size})"))
@@ -62,7 +66,11 @@ impl<'a> FuncLower<'_, 'a> {
 
     /// Each operand of an allocation or a reuse, in order, checked against the
     /// slot types; `None` when one traps.
-    fn values(&mut self, exprs: &[Expr], tys: &[MTy]) -> Result<Option<Vec<Val>>, EmitError> {
+    pub(crate) fn values(
+        &mut self,
+        exprs: &[Expr],
+        tys: &[MTy],
+    ) -> Result<Option<Vec<Val>>, EmitError> {
         if exprs.len() != tys.len() {
             return Err(EmitError::Malformed("field count"));
         }
@@ -91,7 +99,7 @@ impl<'a> FuncLower<'_, 'a> {
         ))
     }
 
-    fn store_slots(
+    pub(crate) fn store_slots(
         &mut self,
         object: &str,
         ty: &str,
@@ -117,7 +125,7 @@ impl<'a> FuncLower<'_, 'a> {
 
     /// Loads slot `i`; a pointer is a fresh owned reference when `retain` is
     /// set, and the cell's own reference moved out when it is not.
-    fn load_slot(
+    pub(crate) fn load_slot(
         &mut self,
         object: &str,
         ty: &str,
@@ -159,7 +167,14 @@ impl<'a> FuncLower<'_, 'a> {
         self.line(format!("store i32 {tag}, ptr {at}"));
     }
 
-    fn load_i32_at(&mut self, object: &str, offset: u32) -> String {
+    pub(crate) fn load_i64_at(&mut self, object: &str, offset: u32) -> String {
+        let at = self.emit(format!(
+            "getelementptr inbounds i8, ptr {object}, i64 {offset}"
+        ));
+        self.emit(format!("load i64, ptr {at}"))
+    }
+
+    pub(crate) fn load_i32_at(&mut self, object: &str, offset: u32) -> String {
         let at = self.emit(format!(
             "getelementptr inbounds i8, ptr {object}, i64 {offset}"
         ));
