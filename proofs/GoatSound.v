@@ -614,23 +614,11 @@ Proof. intros. unfold ren_row. apply ap_lcr; [ apply lc_sub_ren | assumption ]. 
 (* The environment seen through a renaming of its atoms. *)
 Definition dperm (g : atom -> atom) (D : denv) : denv := fun a => D (g a).
 
-Lemma sat_ren_mut : forall g gr D, (forall a, g (g a) = a) ->
-  (forall T k, sat D k T -> sat (dperm g D) k (ap_typ (fun a => typ_Var (g a)) (fun r => row_Var (gr r)) T)) /\
-  (forall R k, rsat D k R -> rsat (dperm g D) k (ap_row (fun a => typ_Var (g a)) (fun r => row_Var (gr r)) R)).
-Proof.
-  intros g gr D Hi. apply typ_row_mutind; simpl; intros.
-  all: first
-    [ assumption | exact I | contradiction
-    | (destruct k; simpl in *; auto; contradiction)
-    | (unfold dperm; rewrite Hi; assumption)
-    | (destruct H1 as [H1 H2]; split; auto)
-    | (destruct H2 as [H2 H3]; split; auto) ].
-Qed.
-
 Lemma sat_ren : forall g gr D k T, (forall a, g (g a) = a) ->
   sat D k T -> sat (dperm g D) k (ren_typ g gr T).
 Proof.
-  intros g gr D k T Hi H. exact (proj1 (sat_ren_mut g gr D Hi) T k H).
+  intros g gr D k T Hi H. unfold ren_typ. eapply sat_ap; [ | exact H ].
+  intros a. simpl. unfold dperm. rewrite Hi. apply finer_refl.
 Qed.
 
 (* renaming a scheme's instance along a bijection fixing the scheme's free vars
@@ -887,26 +875,41 @@ Qed.
 
 Lemma sat_ext_mono_mut : forall D V k S,
   supp_ok D S -> (forall a, a `in` V -> a `notin` S) ->
-  (forall T k0, sat D k0 T -> sat (ext D V k) k0 T) /\
+  (forall T, (forall k0, sat D k0 T -> sat (ext D V k) k0 T) /\
+             (forall w j, spine_sat D w j T -> spine_sat (ext D V k) w j T)) /\
   (forall R k1, rsat D k1 R -> rsat (ext D V k) k1 R).
 Proof.
-  intros D V k S Hs Hv. apply typ_row_mutind; simpl; intros.
-  all: first
-    [ assumption | exact I | contradiction
-    | (destruct k0; simpl in *; auto; contradiction)
-    | (destruct H1 as [H1 H2]; split; auto)
-    | (destruct H2 as [H2 H3]; split; auto)
-    | (unfold ext; destruct (AtomSetImpl.mem a V) eqn:Em;
-       [ apply AtomSetFacts.mem_iff in Em; rewrite (Hs a (Hv a Em)) in H;
-         inversion H; subst; apply finer_any
-       | exact H ]) ].
+  intros D V k S Hs Hv. apply typ_row_mutind; simpl.
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - intros T1 [IH1 _] T2 [_ IH2]. split; [ intros; assumption | ].
+    intros w j [Hu Hs']. split; [ intros Hc; exact (IH1 k_Eq (Hu Hc)) | exact (IH2 w (Datatypes.S j) Hs') ].
+  - intros R IH. split; [ | intros; contradiction ]. intros k0. destruct k0; simpl;
+      first [ (intros _; exact I) | (intros HH; contradiction) | exact (IH _) ].
+  - intros a. split; [ | intros; contradiction ]. intros k0 H.
+    unfold ext; destruct (AtomSetImpl.mem a V) eqn:Em;
+      [ apply AtomSetFacts.mem_iff in Em; rewrite (Hs a (Hv a Em)) in H;
+        inversion H; subst; apply finer_any
+      | exact H ].
+  - intros i. split; intros; first [ assumption | contradiction ].
+  - intros B IH. split; [ | intros; contradiction ]. intros k0 Hs'. destruct k0; try exact I; try contradiction.
+    exact (proj1 IH k_Eq Hs').
+  - intros w A IH. split; [ | intros; contradiction ]. intros k0 Hs'. destruct k0; try exact I; try contradiction.
+    exact (proj2 IH w 0 Hs').
+  - intros k1 _. exact I.
+  - intros r k1 Hs'. contradiction.
+  - intros l T [IHT _] R IHR k1 [Hs1 Hs2]. split; [ exact (IHT k1 Hs1) | exact (IHR k1 Hs2) ].
+  - intros l P _ T _ R _ k1 Hs'. contradiction.
 Qed.
 
 Lemma sat_ext_mono : forall D V k S k0 T,
   supp_ok D S -> (forall a, a `in` V -> a `notin` S) ->
   sat D k0 T -> sat (ext D V k) k0 T.
 Proof.
-  intros D V k S k0 T Hs Hv H. exact (proj1 (sat_ext_mono_mut D V k S Hs Hv) T k0 H).
+  intros D V k S k0 T Hs Hv H. exact (proj1 (proj1 (sat_ext_mono_mut D V k S Hs Hv) T) k0 H).
 Qed.
 
 (* The renaming step shared by every binder that generalizes ([let] and a

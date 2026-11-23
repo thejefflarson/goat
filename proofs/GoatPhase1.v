@@ -531,7 +531,8 @@ Proof.
     intros a. simpl.
     match goal with |- context [if ?c then _ else _] => destruct c end;
       [ | exact I ].
-    destruct U; first [ exact I | discriminate HU | contradiction ].
+    destruct U; first [ exact I | discriminate HU | contradiction
+                      | (destruct HU as [HU | HU]; discriminate HU) ].
 Qed.
 
 (* n = 3 {a: n + 1.5, b: n * 2}: the one numeral is a Float in the first field

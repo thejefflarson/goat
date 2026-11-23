@@ -137,25 +137,45 @@ Proof.
 Qed.
 
 Lemma sat_ext_out_mut : forall D V k0,
-  (forall T k, sat D k T -> (forall b, b `in` ftv_typ T -> b `notin` V) ->
-     sat (ext D V k0) k T) /\
+  (forall T, (forall k, sat D k T -> (forall b, b `in` ftv_typ T -> b `notin` V) ->
+                sat (ext D V k0) k T) /\
+             (forall w j, spine_sat D w j T -> (forall b, b `in` ftv_typ T -> b `notin` V) ->
+                spine_sat (ext D V k0) w j T)) /\
   (forall R k, rsat D k R -> (forall b, b `in` ftv_row R -> b `notin` V) ->
      rsat (ext D V k0) k R).
 Proof.
-  intros D V k0. apply typ_row_mutind; simpl; intros.
-  all: first
-    [ assumption | exact I | contradiction
-    | (destruct k; [ exact I | apply H; assumption | apply H; assumption | contradiction ])
-    | (rewrite ext_out; [ assumption | apply H0; fsetdec ])
-    | (destruct H1 as [H3 H4]; split;
-       [ apply H; [ exact H3 | intros b Hb; apply H2; fsetdec ]
-       | apply H0; [ exact H4 | intros b Hb; apply H2; fsetdec ] ]) ].
+  intros D V k0. apply typ_row_mutind; simpl.
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - intros T1 [IH1 _] T2 [_ IH2]. split; [ intros; assumption | ].
+    intros w j [Hu Hs] Hv. split.
+    + intros Hc. apply (IH1 k_Eq (Hu Hc)). intros b Hb. apply Hv. fsetdec.
+    + apply (IH2 w (S j) Hs). intros b Hb. apply Hv. fsetdec.
+  - intros R IH. split; [ | intros; contradiction ]. intros k.
+    destruct k; [ intros _ _; exact I | | | intros HH; contradiction ];
+      (intros Hs Hv; apply IH; assumption).
+  - intros a. split; [ | intros; contradiction ]. intros k Hs Hv.
+    rewrite ext_out; [ assumption | apply Hv; fsetdec ].
+  - intros i. split; intros; first [ assumption | contradiction ].
+  - intros B IH. split; [ | intros; contradiction ]. intros k Hs Hv.
+    destruct k; try exact I; try contradiction. exact (proj1 IH k_Eq Hs Hv).
+  - intros w A IH. split; [ | intros; contradiction ]. intros k Hs Hv.
+    destruct k; try exact I; try contradiction. exact (proj2 IH w 0 Hs Hv).
+  - intros k _ _. exact I.
+  - intros r k Hs. contradiction.
+  - intros l T [IHT _] R IHR k [Hs1 Hs2] Hv. split.
+    + apply IHT; [ exact Hs1 | intros b Hb; apply Hv; fsetdec ].
+    + apply IHR; [ exact Hs2 | intros b Hb; apply Hv; fsetdec ].
+  - intros l P _ T _ R _ k Hs. contradiction.
 Qed.
 
 Lemma sat_ext_out : forall D V k0 k T,
   sat D k T -> (forall b, b `in` ftv_typ T -> b `notin` V) -> sat (ext D V k0) k T.
 Proof.
-  intros D V k0 k T H Hout. exact (proj1 (sat_ext_out_mut D V k0) T k H Hout).
+  intros D V k0 k T H Hout. exact (proj1 (proj1 (sat_ext_out_mut D V k0) T) k H Hout).
 Qed.
 
 Lemma supp_ok_ext_set : forall D S V k,
@@ -307,13 +327,22 @@ Lemma sat_b_sound_mut : forall D,
   (forall T k, sat_b D k T = true -> sat D k T) /\
   (forall R k, rsat_b D k R = true -> rsat D k R).
 Proof.
-  intros D. apply typ_row_mutind; simpl; intros.
-  all: first
-    [ exact I | discriminate
-    | (destruct k; first [ reflexivity | (left; reflexivity) | (right; reflexivity) | discriminate ])
-    | (destruct k; [ exact I | apply H; assumption | apply H; assumption | discriminate ])
-    | (apply finer_b_sound; assumption)
-    | (apply Bool.andb_true_iff in H1 as [H1 H2]; split; auto) ].
+  intros D. apply typ_row_mutind; simpl.
+  - intros k _. exact I.
+  - intros k _. exact I.
+  - intros k. destruct k; first [ (left; reflexivity) | (right; reflexivity) | discriminate ].
+  - intros k. destruct k; first [ (left; reflexivity) | (right; reflexivity) | discriminate ].
+  - intros k. destruct k; first [ (left; reflexivity) | (right; reflexivity) | discriminate ].
+  - intros T1 _ T2 _ k. destruct k; first [ reflexivity | discriminate ].
+  - intros R IH k. destruct k; [ intros _; exact I | apply IH | apply IH | discriminate ].
+  - intros a k. apply finer_b_sound.
+  - intros i k. destruct k; first [ (left; reflexivity) | discriminate ].
+  - intros B _ k. destruct k; first [ (intros _; exact I) | discriminate ].
+  - intros w A _ k. destruct k; first [ (intros _; exact I) | discriminate ].
+  - intros k _. exact I.
+  - intros r k. discriminate.
+  - intros l T IHT R IHR k H. apply Bool.andb_true_iff in H as [H1 H2]. split; auto.
+  - intros l P _ T _ R _ k. discriminate.
 Qed.
 
 Lemma sat_b_sound : forall D k T, sat_b D k T = true -> sat D k T.

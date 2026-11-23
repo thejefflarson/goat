@@ -273,19 +273,34 @@ Proof.
 Qed.
 
 Lemma sat_pw_mut : forall D D2, (forall a, D a = D2 a) ->
-  (forall T k, sat D k T -> sat D2 k T) /\ (forall R k, rsat D k R -> rsat D2 k R).
+  (forall T, (forall k, sat D k T -> sat D2 k T) /\
+             (forall w j, spine_sat D w j T -> spine_sat D2 w j T)) /\
+  (forall R k, rsat D k R -> rsat D2 k R).
 Proof.
-  intros D D2 H. apply typ_row_mutind; simpl; intros.
-  all: first
-    [ assumption | exact I | contradiction
-    | (destruct k; simpl in *; auto; contradiction)
-    | (rewrite <- H; assumption)
-    | (destruct H1 as [H1 H2]; split; auto)
-    | (destruct H2 as [H2 H3]; split; auto) ].
+  intros D D2 H. apply typ_row_mutind; simpl.
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - intros T1 [IH1 _] T2 [_ IH2]. split; [ intros; assumption | ].
+    intros w j [Hu Hs]. split; [ intros Hc; exact (IH1 k_Eq (Hu Hc)) | exact (IH2 w (S j) Hs) ].
+  - intros R IH. split; [ | intros; contradiction ]. intros k. destruct k; simpl;
+      first [ (intros _; exact I) | (intros HH; contradiction) | exact (IH _) ].
+  - intros a. split; [ intros k Hs; rewrite <- H; exact Hs | intros; contradiction ].
+  - intros i. split; intros; first [ assumption | contradiction ].
+  - intros B IH. split; [ | intros; contradiction ]. intros k Hs. destruct k; try exact I; try contradiction.
+    exact (proj1 IH k_Eq Hs).
+  - intros w A IH. split; [ | intros; contradiction ]. intros k Hs. destruct k; try exact I; try contradiction.
+    exact (proj2 IH w 0 Hs).
+  - intros k _. exact I.
+  - intros r k Hs. contradiction.
+  - intros l T [IHT _] R IHR k [Hs1 Hs2]. split; [ exact (IHT k Hs1) | exact (IHR k Hs2) ].
+  - intros l P _ T _ R _ k Hs. contradiction.
 Qed.
 
 Lemma sat_pw : forall D D2 k T, (forall a, D a = D2 a) -> sat D k T -> sat D2 k T.
-Proof. intros D D2 k T H Hs. exact (proj1 (sat_pw_mut D D2 H) T k Hs). Qed.
+Proof. intros D D2 k T H Hs. exact (proj1 (proj1 (sat_pw_mut D D2 H) T) k Hs). Qed.
 
 Lemma inst_pw : forall D D2 T s, (forall a, D a = D2 a) -> inst D T s -> inst D2 T s.
 Proof.
