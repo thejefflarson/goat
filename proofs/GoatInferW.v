@@ -30,6 +30,40 @@ Require Import Goat.GoatCoerce.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 
+(* The slots of a method literal are unified with its fields' types, field by
+   field: [R] holds the types the fields were inferred at and [Rsl] the slots'
+   types under what has been found.  A field whose type meets its slot only up
+   to unrolling is wrapped in the head coercions that take it there, which is
+   how a method that mentions its own receiver gets a recursive type. *)
+Fixpoint tie_obj (f : nat) (D : denv) (fs : fields) (R Rsl : row) (n : nat) {struct fs}
+  : option (sub * nat * fields) :=
+  match fs, R, Rsl with
+  | fs_nil, row_Empty, row_Empty => Some (sid, n, fs_nil)
+  | fs_cons l e rest, row_Ext l1 T R', row_Ext l2 A Rsl' =>
+      if Nat.eqb l l1 && Nat.eqb l l2 then
+      match unify_co f D T A n with
+      | None => None
+      | Some (s1, cs, n1) =>
+          match tie_obj f D rest (apR s1 R') (apR s1 Rsl') n1 with
+          | None => None
+          | Some (s2, n2, rest') => Some (scomp s2 s1, n2, fs_cons l (coerce cs e) rest')
+          end
+      end
+      else None
+  | fs_meth l e rest, row_Ext l1 T R', row_Ext l2 A Rsl' =>
+      if Nat.eqb l l1 && Nat.eqb l l2 then
+      match unify_co f D T A n with
+      | None => None
+      | Some (s1, cs, n1) =>
+          match tie_obj f D rest (apR s1 R') (apR s1 Rsl') n1 with
+          | None => None
+          | Some (s2, n2, rest') => Some (scomp s2 s1, n2, fs_meth l (coerce cs e) rest')
+          end
+      end
+      else None
+  | _, _, _ => None
+  end.
+
 (* [infer f D G e n] returns the substitution, the kinding environment the
    result type lives in, the type, the next unused variable number, and the
    elaborated term.  The environment [D] has [Any] on every even atom from [n]
@@ -122,9 +156,22 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
           end
           else None
       | e_rec fs =>
+          if no_meth fs then
           match infer_fields f' lenient ora D G fs n with
           | None => None
           | Some (s, D1, R, n1, fs') => Some (s, D1, typ_Record R, n1, e_rec fs')
+          end
+          else
+          let p := fresh_var G (e_rec fs) in
+          let Tp := typ_Record (obj_row fs n (row_Var (ea (n + nfields fs)))) in
+          match infer_obj f' lenient ora D G p Tp fs (S (n + nfields fs)) with
+          | None => None
+          | Some (s1, D1, R1, n1, fs1) =>
+              match tie_obj f' D1 fs1 R1 (apR s1 (group_row fs n)) n1 with
+              | None => None
+              | Some (s2, n2, fs2) =>
+                  Some (scomp s2 s1, D1, typ_Record (apR (scomp s2 s1) (group_row fs n)), n2, e_rec fs2)
+              end
           end
       | e_proj e1 l =>
           match infer f' lenient ora D G e1 n with
@@ -291,6 +338,50 @@ with infer_fields (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G :
               end
           end
       | fs_meth _ _ _ => None
+      end
+  end
+
+(* A record literal with methods (ADR 0034 decision 2).  Every method of the
+   literal takes one receiver [p] of type [Tp]: the literal's own fields at
+   slot variables, and a row variable for a use's extension.  A method's body
+   is inferred with [p] in scope and closed over it again, as a function's is
+   over its parameter; the slots are unified with the fields' types
+   afterwards by [tie_obj], which is where a method's type meets the receiver
+   that contains it and a knot forms. *)
+with infer_obj (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (p : atom) (Tp : typ)
+       (fs : fields) (n : nat) {struct f}
+  : option (sub * denv * row * nat * fields) :=
+  match f with
+  | O => None
+  | S f' =>
+      match fs with
+      | fs_nil => Some (sid, D, row_Empty, n, fs_nil)
+      | fs_cons l e rest =>
+          match infer f' lenient ora D G e n with
+          | None => None
+          | Some (s1, D1, T1, n1, e') =>
+              match infer_obj f' lenient ora D1 (apC s1 G) p (apT s1 Tp) rest n1 with
+              | None => None
+              | Some (s2, D2, R2, n2, rest') =>
+                  Some (scomp s2 s1, D2, row_Ext l (apT s2 T1) R2, n2, fs_cons l e' rest')
+              end
+          end
+      | fs_meth l e rest =>
+          match e with
+          | e_abs b =>
+              match infer f' lenient ora D ((p ~ sch_mono Tp) ++ G) (open_exp_wrt_exp b (e_fvar_f p)) n with
+              | None => None
+              | Some (s1, D1, T1, n1, b') =>
+                  match infer_obj f' lenient ora D1 (apC s1 G) p (apT s1 Tp) rest n1 with
+                  | None => None
+                  | Some (s2, D2, R2, n2, rest') =>
+                      Some (scomp s2 s1, D2,
+                            row_Ext l (typ_Arrow (apT s2 (apT s1 Tp)) (apT s2 T1)) R2, n2,
+                            fs_meth l (e_abs (cl 0 p b')) rest')
+                  end
+              end
+          | _ => None
+          end
       end
   end
 

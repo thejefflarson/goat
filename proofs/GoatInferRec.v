@@ -114,6 +114,27 @@ Proof.
   - apply tr_compat_cons_mono. apply tr_compat_apC; [ exact Hs0 | exact HG ].
 Qed.
 
+(* The same for fields typed in a context with no binding of their own. *)
+Lemma fields_ap0 : forall D D' s G fs R,
+  OkS s -> WfCtx G -> (exists S, supp_ok D S) -> (exists S', supp_ok D' S') ->
+  kres D D' (sT s) ->
+  field_typing D G fs R -> field_typing D' (apC s G) fs (apR s R).
+Proof.
+  intros D D' s G fs R Hs [Hu Hw] [S HS] [S' HS'] Hk Hty.
+  pose proof Hs as Hs0.
+  destruct Hs as [[A Hsup] [Ht [Hrw [Hfx Hfxr]]]].
+  apply (proj2 typing_tsubst_gen_mut D G fs R Hty (sT s) (sR s) (apC s G) D' A S S').
+  - apply uniq_apC; exact Hu.
+  - exact HS.
+  - exact HS'.
+  - exact Hk.
+  - intros x sc Hb. exists (apS s sc). split.
+    + apply binds_apC; exact Hb.
+    + apply sch_subst_apS; [exact Hs0 | exact (Hw _ _ Hb)].
+  - exact Hsup.
+  - apply tr_compat_apC; [ exact Hs0 | exact (conj Hu Hw) ].
+Qed.
+
 (* A substitution that leaves the context alone, applied to the group's row. *)
 Lemma fields_tsubst_fix : forall D D' S S' G p R fs st sr,
   field_typing D ((p ~ sch_mono (typ_Record R)) ++ G) fs R ->

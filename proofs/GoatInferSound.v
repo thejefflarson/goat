@@ -524,6 +524,148 @@ Proof.
   rewrite Hi, erase_arms_default. destruct (arms_default a); reflexivity.
 Qed.
 
+(* ------------------------------------------------------------------ *)
+(* Method literals: the receiver and the slots                           *)
+(* ------------------------------------------------------------------ *)
+
+Lemma fields_ap_G : forall D n s D' n' G fs R,
+  Good D n s D' n' -> WfCtx G -> field_typing D G fs R -> field_typing D' (apC s G) fs (apR s R).
+Proof.
+  intros D n s D' n' G fs R (Hd & Hs & Hd' & _ & _ & Hk) HG Hty.
+  exact (fields_ap0 D D' s G fs R Hs HG (DOk_supp D n Hd) (DOk_supp D' n' Hd') Hk Hty).
+Qed.
+
+(* A method field's type is a function of the receiver [P]. *)
+Inductive meth_ty (P : typ) : fields -> row -> Prop :=
+ | MT_nil : meth_ty P fs_nil row_Empty
+ | MT_cons : forall l e rest T R,
+     meth_ty P rest R -> meth_ty P (fs_cons l e rest) (row_Ext l T R)
+ | MT_meth : forall l e rest T1 R,
+     meth_ty P rest R -> meth_ty P (fs_meth l e rest) (row_Ext l (typ_Arrow P T1) R).
+
+Lemma meth_ty_ap : forall s P fs R, meth_ty P fs R -> meth_ty (apT s P) fs (apR s R).
+Proof. intros s P fs R H. induction H; simpl; constructor; assumption. Qed.
+
+(* Each method field's type meets its slot up to unrolling. *)
+Inductive meth_rel : fields -> row -> row -> Prop :=
+ | MRl_nil : meth_rel fs_nil row_Empty row_Empty
+ | MRl_cons : forall l e rest T A R Rsl,
+     meth_rel rest R Rsl -> meth_rel (fs_cons l e rest) (row_Ext l T R) (row_Ext l A Rsl)
+ | MRl_meth : forall l e rest T A R Rsl n,
+     unroll_eq n A T -> meth_rel rest R Rsl ->
+     meth_rel (fs_meth l e rest) (row_Ext l T R) (row_Ext l A Rsl).
+
+Lemma meths_shared_of : forall fs R Rsl, meth_rel fs R Rsl ->
+  forall P Rs fs2, meth_ty P fs R -> P = typ_Record Rs -> marks fs2 = marks fs ->
+  meths_shared Rs fs2 Rsl.
+Proof.
+  intros fs R Rsl H. induction H; intros P Rs fs2 Hty HP Hm.
+  - destruct fs2; try discriminate Hm. constructor.
+  - inversion Hty; subst.
+    destruct fs2 as [|l2 e2 fs2|l2 e2 fs2]; try discriminate Hm.
+    simpl in Hm. injection Hm as Hl Hm. subst l2. constructor. eapply IHmeth_rel; eauto.
+  - inversion Hty; subst.
+    destruct fs2 as [|l2 e2 fs2|l2 e2 fs2]; try discriminate Hm.
+    simpl in Hm. injection Hm as Hl Hm. subst l2. eapply MS_meth; [ exact H | ].
+    eapply IHmeth_rel; eauto.
+Qed.
+
+Lemma tie_obj_sound : forall f D fs R Rsl n s n' fs2,
+  tie_obj f D fs R Rsl n = Some (s, n', fs2) ->
+  forall G, WfCtx G -> DOk D n -> EvR R -> EvR Rsl -> field_typing D G fs R -> lcef 0 fs ->
+  Good D n s D n' /\ field_typing D (apC s G) fs2 (apR s Rsl) /\
+  erase_fields fs2 = erase_fields fs /\ lcef 0 fs2 /\ marks fs2 = marks fs /\
+  meth_rel fs (apR s R) (apR s Rsl).
+Proof.
+  intros f D fs. induction fs as [|l e rest IH|l e rest IH];
+    intros R Rsl n s n' fs2 H G HG HD HR HRsl Hft Hlc;
+    destruct R as [|r|l1 T R'|l1 P0 T0 R'], Rsl as [|r2|l2 A Rsl'|l2 P2 T2 R2'];
+    simpl in H; try discriminate H.
+  - inversion H; subst; clear H.
+    refine (conj (Good_id _ _ HD) _).
+    rewrite apC_sid, apR_id. refine (conj _ (conj eq_refl (conj I (conj eq_refl MRl_nil)))).
+    apply FT_nil. exact (proj1 HG).
+  - destruct (Nat.eqb l l1 && Nat.eqb l l2) eqn:Hl; [ | discriminate H ].
+    apply Bool.andb_true_iff in Hl. destruct Hl as [Hl1 Hl2].
+    apply Nat.eqb_eq in Hl1. apply Nat.eqb_eq in Hl2. subst l1 l2.
+    destruct (unify_co f D T A n) as [[[s1 cs] n1]|] eqn:E1; [ | discriminate H ].
+    destruct (tie_obj f D rest (apR s1 R') (apR s1 Rsl') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
+    inversion H; subst; clear H.
+    inversion Hft as [ | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 ]; subst.
+    destruct (EvR_ext_inv _ _ _ HR) as [HT HR'].
+    destruct (EvR_ext_inv _ _ _ HRsl) as [HA HRsl'].
+    destruct (unify_co_sound _ _ _ _ _ _ _ _ E1 HT HA) as (Hs1 & Hch & Hk1 & Hl1).
+    pose proof (Good_unify D n s1 n1 Hs1 Hk1 Hl1 HD) as Gd1.
+    pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+    pose proof (DOk_mono D n n1 HD Hl1) as HD1.
+    destruct (IH _ _ _ _ _ _ E2 (apC s1 G) HG1 HD1 (EvR_ap _ _ Hs1 HR') (EvR_ap _ _ Hs1 HRsl')
+                (fields_ap_G _ _ _ _ _ _ _ _ Gd1 HG Hrest0) (proj2 Hlc))
+      as (Gd2 & Hty2 & Her2 & Hlc2 & Hmk2 & Hmr2).
+    pose proof Gd2 as (_ & Hs2 & _).
+    refine (conj (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) _).
+    rewrite <- apC_comp, <- apR_comp, !apR_Ext, <- !apT_comp.
+    refine (conj _ (conj _ (conj _ (conj _ _)))).
+    + eapply FT_cons; [ | exact Hty2 ].
+      apply (typing_ap_G _ _ _ _ _ _ _ _ Gd2 HG1).
+      eapply coerce_typing; [ exact Hch | ].
+      apply (typing_ap_G _ _ _ _ _ _ _ _ Gd1 HG). exact Hty0.
+    + cbn [erase_fields]. rewrite erase_coerce, Her2. reflexivity.
+    + cbn [lcef]. split; [ apply lce_coerce; exact (proj1 Hlc) | exact Hlc2 ].
+    + cbn [marks]. rewrite Hmk2. reflexivity.
+    + constructor. rewrite !apR_comp in Hmr2. rewrite apR_comp. exact Hmr2.
+  - destruct (Nat.eqb l l1 && Nat.eqb l l2) eqn:Hl; [ | discriminate H ].
+    apply Bool.andb_true_iff in Hl. destruct Hl as [Hl1 Hl2].
+    apply Nat.eqb_eq in Hl1. apply Nat.eqb_eq in Hl2. subst l1 l2.
+    destruct (unify_co f D T A n) as [[[s1 cs] n1]|] eqn:E1; [ | discriminate H ].
+    destruct (tie_obj f D rest (apR s1 R') (apR s1 Rsl') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
+    inversion H; subst; clear H.
+    inversion Hft as [ | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 ]; subst.
+    destruct (EvR_ext_inv _ _ _ HR) as [HT HR'].
+    destruct (EvR_ext_inv _ _ _ HRsl) as [HA HRsl'].
+    destruct (unify_co_sound _ _ _ _ _ _ _ _ E1 HT HA) as (Hs1 & Hch & Hk1 & Hl1).
+    pose proof (Good_unify D n s1 n1 Hs1 Hk1 Hl1 HD) as Gd1.
+    pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+    pose proof (DOk_mono D n n1 HD Hl1) as HD1.
+    destruct (IH _ _ _ _ _ _ E2 (apC s1 G) HG1 HD1 (EvR_ap _ _ Hs1 HR') (EvR_ap _ _ Hs1 HRsl')
+                (fields_ap_G _ _ _ _ _ _ _ _ Gd1 HG Hrest0) (proj2 Hlc))
+      as (Gd2 & Hty2 & Her2 & Hlc2 & Hmk2 & Hmr2).
+    pose proof Gd2 as (_ & Hs2 & _).
+    refine (conj (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) _).
+    assert (Hu : unroll_eq (length cs) (apT s2 (apT s1 A)) (apT s2 (apT s1 T))).
+    { exact (unroll_ap (sT s2) (sR s2) _ _ _ (OkS_lc s2 Hs2)
+               (unroll_sym _ _ _ (chain_unroll_eq _ _ _ Hch))). }
+    rewrite <- apC_comp, <- apR_comp, !apR_Ext, <- !apT_comp.
+    refine (conj _ (conj _ (conj _ (conj _ _)))).
+    + eapply FT_meth; [ | exact Hty2 ].
+      apply (typing_ap_G _ _ _ _ _ _ _ _ Gd2 HG1).
+      eapply coerce_typing; [ exact Hch | ].
+      apply (typing_ap_G _ _ _ _ _ _ _ _ Gd1 HG). exact Hty0.
+    + cbn [erase_fields]. rewrite erase_coerce, Her2. reflexivity.
+    + cbn [lcef]. split; [ apply lce_coerce; exact (proj1 Hlc) | exact Hlc2 ].
+    + cbn [marks]. rewrite Hmk2. reflexivity.
+    + eapply MRl_meth; [ exact Hu | ]. rewrite !apR_comp in Hmr2. rewrite apR_comp. exact Hmr2.
+Qed.
+
+Lemma EvR_obj_row : forall fs n m, EvR (obj_row fs n (row_Var (ea m))).
+Proof.
+  induction fs as [|l e rest IH|l e rest IH]; intros n m; simpl.
+  - apply EvR_var, ev_ea.
+  - apply EvR_ext; [ apply EvT_var, ev_ea | apply IH ].
+  - apply EvR_ext; [ apply EvT_var, ev_ea | apply IH ].
+Qed.
+
+Lemma apT_Record : forall s R, apT s (typ_Record R) = typ_Record (apR s R).
+Proof. reflexivity. Qed.
+
+Lemma obj_row_ap : forall s fs n tl,
+  apR s (obj_row fs n tl) = row_tail_with (apR s (group_row fs n)) (apR s tl).
+Proof.
+  intros s. induction fs as [|l e rest IH|l e rest IH]; intros n tl; cbn [obj_row group_row].
+  - reflexivity.
+  - rewrite !apR_Ext. cbn [row_tail_with]. rewrite IH. reflexivity.
+  - rewrite !apR_Ext. cbn [row_tail_with]. rewrite IH. reflexivity.
+Qed.
+
 Theorem infer_sound : forall f ora, (forall a, ground (ora a)) ->
   (forall D G e n s D' T n' e', infer f false ora D G e n = Some (s, D', T, n', e') -> WfCtx G -> DOk D n ->
      Good D n s D' n' /\ EvT T /\
@@ -537,10 +679,16 @@ Theorem infer_sound : forall f ora, (forall a, ground (ora a)) ->
      x `notin` dom G `union` fv_arms ars ->
      Good D n s D' n' /\ EvT T /\ T = apT s res /\
      (arms_typ (dom G `union` {{x}}) D' (apC s G) w (map (apT s) Ts) ars' T /\
-      erase_arms ars' = ars /\ lcea 0 ars')).
+      erase_arms ars' = ars /\ lcea 0 ars')) /\
+  (forall D G p Tp fs n s D' R n' fs',
+     infer_obj f false ora D G p Tp fs n = Some (s, D', R, n', fs') ->
+     WfCtx G -> DOk D n -> EvT Tp -> p `notin` dom G `union` fv_fields fs ->
+     Good D n s D' n' /\ EvR R /\
+     (field_typing D' (apC s G) fs' R /\ erase_fields fs' = fs /\ lcef 0 fs' /\
+      marks fs' = marks fs /\ meth_ty (apT s Tp) fs' R)).
 Proof.
-  induction f as [|f IH]; intros ora Hora; [ refine (conj _ (conj _ _)); intros; discriminate | ].
-  destruct (IH ora Hora) as [IHe [IHf IHa]]. refine (conj _ (conj _ _)).
+  induction f as [|f IH]; intros ora Hora; [ refine (conj _ (conj _ (conj _ _))); intros; discriminate | ].
+  destruct (IH ora Hora) as [IHe [IHf [IHa IHo]]]. refine (conj _ (conj _ (conj _ _))).
   - intros D G e n s D' T n' e' H HG HD. cbn [infer] in H.
     destruct e as [i | x | k | d | | | b | e1 e2 | e1 e2 | fl el | fs | e1 l | | q | c0 a0 b0 | a1 o a2 | a3 | w1 tg1 a6 | w2 a7 ars2 | a8 l8 a9 | a10 l10 | a4 | a5];
       try discriminate H.
@@ -788,13 +936,54 @@ Proof.
         apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
         exact Hequiv.
     + (* record *)
-      destruct (infer_fields f false ora D G fs n) as [[[[[s0 D1] R0] n0] us0]|] eqn:Ei; [|discriminate].
-      inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
-      destruct (IHf _ _ _ _ _ _ _ _ _ Ei HG HD) as (Gd0 & HR0 & Hty & Her_Hty & Hlc_Hty).
-      split; [exact Gd0|]. split; [ apply EvT_Record; exact HR0 | ].
-      refine (conj _ (conj _ Hlc_Hty)).
-      2: { cbn [erase]. rewrite Her_Hty. reflexivity. }
-      apply T_Record; [ exact Hty | eapply infer_fields_no_meth; exact Ei ].
+      destruct (no_meth fs) eqn:Hnm.
+      all: try (rewrite Hnm in H).
+      * destruct (infer_fields f false ora D G fs n) as [[[[[s0 D1] R0] n0] us0]|] eqn:Ei; [|discriminate].
+        inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
+        destruct (IHf _ _ _ _ _ _ _ _ _ Ei HG HD) as (Gd0 & HR0 & Hty & Her_Hty & Hlc_Hty).
+        split; [exact Gd0|]. split; [ apply EvT_Record; exact HR0 | ].
+        refine (conj _ (conj _ Hlc_Hty)).
+        2: { cbn [erase]. rewrite Her_Hty. reflexivity. }
+        apply T_Record; [ exact Hty | eapply infer_fields_no_meth; exact Ei ].
+      * (* methods share one receiver *)
+        set (p := fresh_var G (e_rec fs)) in *.
+        set (Tp := typ_Record (obj_row fs n (row_Var (ea (n + nfields fs))))) in *.
+        destruct (infer_obj f false ora D G p Tp fs (S (n + nfields fs)))
+          as [[[[[s1 D1] R1] n1] fs1]|] eqn:Eo; [|discriminate].
+        destruct (tie_obj f D1 fs1 R1 (apR s1 (group_row fs n)) n1) as [[[s2 n2] fs2]|] eqn:Et; [|discriminate].
+        inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
+        assert (HTp : EvT Tp) by (apply EvT_Record; apply EvR_obj_row).
+        assert (Hle : n <= S (n + nfields fs)) by lia.
+        assert (Hpd : p `notin` dom G) by apply fresh_var_notin_dom.
+        assert (Hpf : p `notin` fv_exp (e_rec fs)) by apply fresh_var_notin_fv.
+        simpl in Hpf.
+        destruct (IHo _ _ _ _ _ _ _ _ _ _ _ Eo HG (DOk_mono D n _ HD Hle) HTp
+                    ltac:(fsetdec))
+          as (Gd1' & HR1 & Hft1 & Her1 & Hlc1 & Hmk1 & Hmt1).
+        pose proof (Good_pre D n _ s1 D1 n1 Hle HD Gd1') as Gd1.
+        pose proof Gd1 as (_ & Hs1 & HD1 & _).
+        pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+        destruct (tie_obj_sound _ _ _ _ _ _ _ _ _ Et (apC s1 G) HG1 HD1 HR1
+                    (EvR_ap _ _ Hs1 (EvR_group_row fs n)) Hft1 Hlc1)
+          as (Gd2 & Hft2 & Her2 & Hlc2 & Hmk2 & Hmr2).
+        pose proof Gd2 as (_ & Hs2 & _).
+        pose proof (OkS_comp _ _ Hs2 Hs1) as Hs21.
+        split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
+        split; [ apply EvT_Record; apply EvR_ap; [ exact Hs21 | apply EvR_group_row ] | ].
+        refine (conj _ (conj _ Hlc2)).
+        2: { cbn [erase]. rewrite Her2, Her1. reflexivity. }
+        rewrite <- apC_comp, <- apR_comp.
+        assert (Hap : apT s2 (apT s1 Tp)
+                      = typ_Record (row_tail_with (apR s2 (apR s1 (group_row fs n)))
+                                                  (apR s2 (apR s1 (row_Var (ea (n + nfields fs))))))).
+        { subst Tp. rewrite apT_comp, apT_Record, obj_row_ap, <- !apR_comp. reflexivity. }
+        eapply T_Obj with (Rt := apR s2 (apR s1 (row_Var (ea (n + nfields fs))))).
+        { exact Hft2. }
+        eapply meths_shared_of.
+        { exact Hmr2. }
+        { exact (meth_ty_ap s2 _ _ _ Hmt1). }
+        { exact Hap. }
+        { exact Hmk2. }
     + (* projection *)
       destruct (infer f false ora D G e1 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (unify_co f D1 T1 (typ_Record (row_Ext l (typ_Var (ea n1)) (row_Var (ea (S n1)))))
@@ -1206,6 +1395,72 @@ Proof.
         pose proof (dom_apC (scomp s2 s1) G) as H4. fsetdec.
       * eapply arms_typ_L; [ | exact Harms ].
         pose proof (dom_apC (scomp s2 s1) G) as H3. fsetdec.
+  - intros D G p Tp fs n s D' R n' fs' H HG HD HTp Hp. cbn [infer_obj] in H.
+    destruct fs as [| l e rest | l e rest]; try discriminate H.
+    + inversion H; try subst s; try subst D'; try subst R; try subst n'; try subst fs'; clear H.
+      split; [apply Good_id; exact HD|]. split; [apply EvR_Empty|].
+      refine (conj _ (conj eq_refl (conj I (conj eq_refl _)))).
+      * apply FT_nil. apply uniq_apC. exact (proj1 HG).
+      * rewrite apT_sid. constructor.
+    + destruct (infer f false ora D G e n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
+      destruct (infer_obj f false ora D1 (apC s1 G) p (apT s1 Tp) rest n1)
+        as [[[[[s2 D2] R2] n2] us2]|] eqn:E2; [|discriminate].
+      inversion H; try subst s; try subst D'; try subst R; try subst n'; try subst fs'; clear H.
+      destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
+      pose proof Gd1 as (_ & Hs1 & HD1 & _).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      simpl in Hp.
+      destruct (IHo _ _ _ _ _ _ _ _ _ _ _ E2 HG1 HD1 (EvT_ap s1 Tp Hs1 HTp)
+                  ltac:(rewrite dom_apC; fsetdec))
+        as (Gd2 & HR2 & Hty2 & Her2 & Hlc2 & Hmk2 & Hmt2).
+      pose proof Gd2 as (_ & Hs2 & _).
+      split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
+      split; [ apply EvR_ext; [ apply EvT_ap; auto | exact HR2 ] | ].
+      refine (conj _ (conj _ (conj (conj Hlc_Hty1 Hlc2) (conj _ _)))).
+      4: { rewrite <- apT_comp. constructor. exact Hmt2. }
+      3: { cbn [marks]. rewrite Hmk2. reflexivity. }
+      2: { cbn [erase_fields]. rewrite Her_Hty1, Her2. reflexivity. }
+      rewrite <- apC_comp.
+      eapply FT_cons.
+      * apply (typing_ap_G _ _ _ _ _ _ _ _ Gd2 HG1). exact Hty1.
+      * exact Hty2.
+    + destruct e; try discriminate H.
+      destruct (infer f false ora D ((p ~ sch_mono Tp) ++ G) (open_exp_wrt_exp e (e_fvar_f p)) n)
+        as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
+      destruct (infer_obj f false ora D1 (apC s1 G) p (apT s1 Tp) rest n1)
+        as [[[[[s2 D2] R2] n2] us2]|] eqn:E2; [|discriminate].
+      inversion H; try subst s; try subst D'; try subst R; try subst n'; try subst fs'; clear H.
+      simpl in Hp.
+      assert (Hwf : WfCtx ((p ~ sch_mono Tp) ++ G))
+        by (apply WfCtx_cons; [ exact HG | fsetdec | apply WfSch_mono; exact HTp ]).
+      destruct (IHe _ _ _ _ _ _ _ _ _ E1 Hwf HD) as (Gd1 & HT1 & Hty1 & Her1 & Hlc1).
+      pose proof Gd1 as (_ & Hs1 & HD1 & _).
+      pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
+      destruct (bind_ok _ e _ Her1 Hlc1 ltac:(fsetdec)) as [Her' Hlc'].
+      destruct (IHo _ _ _ _ _ _ _ _ _ _ _ E2 HG1 HD1 (EvT_ap s1 Tp Hs1 HTp)
+                  ltac:(rewrite dom_apC; fsetdec))
+        as (Gd2 & HR2 & Hty2 & Her2 & Hlc2 & Hmk2 & Hmt2).
+      pose proof Gd2 as (_ & Hs2 & _).
+      split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
+      split.
+      { apply EvR_ext; [ | exact HR2 ].
+        apply EvT_arrow; [ apply EvT_ap; [ exact Hs2 | apply EvT_ap; [ exact Hs1 | exact HTp ] ]
+                         | apply EvT_ap; [ exact Hs2 | exact HT1 ] ]. }
+      refine (conj _ (conj _ (conj _ (conj _ _)))).
+      5: { rewrite <- apT_comp. constructor. exact Hmt2. }
+      4: { cbn [marks]. rewrite Hmk2. reflexivity. }
+      3: { cbn [lcef]. split; [ exact Hlc' | exact Hlc2 ]. }
+      2: { cbn [erase_fields erase]. rewrite Her', Her2. reflexivity. }
+      rewrite <- apC_comp.
+      rewrite apC_app, apC_single in Hty1.
+      eapply FT_meth.
+      * refine (typing_ap_G _ _ _ _ _ _ (e_abs (cl 0 p us1)) (typ_Arrow (apT s1 Tp) T1) Gd2 HG1 _).
+        apply T_Abs with (L := dom G `union` {{p}}).
+        intros y Hy.
+        assert (Hdom : y `notin` dom ((p ~ apS s1 (sch_mono Tp)) ++ apC s1 G))
+          by (simpl; rewrite dom_apC; fsetdec).
+        exact (typing_open_cl D1 (apC s1 G) _ y _ _ _ Hty1 Hlc1 Hdom).
+      * exact Hty2.
 Qed.
 
 (* The statement for programs: a closed term the algorithm accepts has an

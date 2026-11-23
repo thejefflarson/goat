@@ -440,6 +440,15 @@ Fixpoint group_row (fs : fields) (n : nat) : row :=
   | fs_meth l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
   end.
 
+(* The row a method literal's receiver has: the slots of [group_row], then the
+   row variable [tl] for what a use adds (ADR 0034 decision 2). *)
+Fixpoint obj_row (fs : fields) (n : nat) (tl : row) : row :=
+  match fs with
+  | fs_nil => tl
+  | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (obj_row rest (S n) tl)
+  | fs_meth l _ rest => row_Ext l (typ_Var (ea n)) (obj_row rest (S n) tl)
+  end.
+
 (* The number of parameters a group declares: the largest [6 + j] among its
    slot codes, less five. *)
 Definition nparams (w : gdecl) : nat :=

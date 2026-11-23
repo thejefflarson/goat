@@ -445,6 +445,44 @@ Ltac dP H E :=
   match type of H with context [unify_pw ?f ?D ?A ?B ?n] =>
     destruct (unify_pw f D A B n) as [[? ?]|] eqn:E; [|discriminate H] end.
 
+Lemma obj_row_mg : forall fs n a, mgr (obj_row fs n (row_Var a)).
+Proof.
+  induction fs as [|l e rest IH|l e rest IH]; intros n a; simpl.
+  - exact I.
+  - split; [ exact I | apply IH ].
+  - split; [ exact I | apply IH ].
+Qed.
+
+Ltac dO H E :=
+  match type of H with context [infer_obj ?f ?l ?o ?D ?G ?p ?Tp ?e ?n] =>
+    destruct (infer_obj f l o D G p Tp e n) as [[[[[? ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
+
+Ltac dT H E :=
+  match type of H with context [tie_obj ?f ?D ?fs ?R ?Rsl ?n] =>
+    destruct (tie_obj f D fs R Rsl n) as [[[? ?] ?]|] eqn:E; [|discriminate H] end.
+
+Lemma tie_obj_gsub : forall f D fs R Rsl n s n' fs2,
+  tie_obj f D fs R Rsl n = Some (s, n', fs2) -> mgr R -> mgr Rsl -> gsub s.
+Proof.
+  intros f D fs. induction fs as [|l e rest IH|l e rest IH];
+    intros R Rsl n s n' fs2 H HR HRsl;
+    destruct R as [|r|l1 T R'|l1 P0 T0 R'], Rsl as [|r2|l2 A Rsl'|l2 P2 T2 R2'];
+    simpl in H; try discriminate H.
+  - injection H as <- <- <-. exact gs_id.
+  - destruct (Nat.eqb l l1 && Nat.eqb l l2); [ | discriminate H ].
+    destruct (unify_co f D T A n) as [[[s1 cs] n1]|] eqn:E1; [ | discriminate H ].
+    destruct (tie_obj f D rest (apR s1 R') (apR s1 Rsl') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
+    injection H as <- <- <-. destruct HR as [HT HR']. destruct HRsl as [HA HRsl'].
+    pose proof (unify_co_gsub _ _ _ _ _ _ _ _ E1 HT HA) as S1.
+    exact (gs_comp _ _ (IH _ _ _ _ _ _ E2 (mg_apR _ _ S1 HR') (mg_apR _ _ S1 HRsl')) S1).
+  - destruct (Nat.eqb l l1 && Nat.eqb l l2); [ | discriminate H ].
+    destruct (unify_co f D T A n) as [[[s1 cs] n1]|] eqn:E1; [ | discriminate H ].
+    destruct (tie_obj f D rest (apR s1 R') (apR s1 Rsl') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
+    injection H as <- <- <-. destruct HR as [HT HR']. destruct HRsl as [HA HRsl'].
+    pose proof (unify_co_gsub _ _ _ _ _ _ _ _ E1 HT HA) as S1.
+    exact (gs_comp _ _ (IH _ _ _ _ _ _ E2 (mg_apR _ _ S1 HR') (mg_apR _ _ S1 HRsl')) S1).
+Qed.
+
 Theorem infer_guard : forall f ora, (forall a, mg (ora a)) ->
   (forall D G e n s D' T n' e', infer f false ora D G e n = Some (s, D', T, n', e') ->
      mg_ctx G -> gsub s /\ mg T) /\
@@ -452,11 +490,13 @@ Theorem infer_guard : forall f ora, (forall a, mg (ora a)) ->
      mg_ctx G -> gsub s /\ mgr R) /\
   (forall D G w Ts x res ars n s D' T n' ars',
      infer_arms f false ora D G w Ts x res ars n = Some (s, D', T, n', ars') ->
-     mg_ctx G -> Forall mg Ts -> mg res -> gsub s /\ mg T).
+     mg_ctx G -> Forall mg Ts -> mg res -> gsub s /\ mg T) /\
+  (forall D G p Tp fs n s D' R n' fs', infer_obj f false ora D G p Tp fs n = Some (s, D', R, n', fs') ->
+     mg_ctx G -> mg Tp -> gsub s /\ mgr R).
 Proof.
-  induction f as [|f IH]; intros ora Hora; [refine (conj _ (conj _ _)); intros; discriminate|].
-  destruct (IH ora Hora) as [IHi [IHf IHa]].
-  refine (conj _ (conj _ _)).
+  induction f as [|f IH]; intros ora Hora; [refine (conj _ (conj _ (conj _ _))); intros; discriminate|].
+  destruct (IH ora Hora) as [IHi [IHf [IHa IHo]]].
+  refine (conj _ (conj _ (conj _ _))).
   - intros D G e n s D' T n' e' H HG.
     destruct e as [i|x|k|d| | |b|e1 e2|e1 e2|fs e2|fs|e1 l| |q|c e1 e2|e1 o e2|e1|w tg e1|w e1 ars|e1 l e2|e1 l|e1|e1];
       simpl in H; try discriminate H;
@@ -499,8 +539,14 @@ Proof.
                   (mg_cons _ _ _ (gen_ren_mg _ _ (typ_Record _) (mg_apR _ _ Sc (group_row_mg fs n)))
                      (mg_apC _ _ Sc HG))) as [S3 M3].
       exact (conj (gs_comp _ _ S3 Sc) M3).
-    + dF H E1. injection H as <- <- <- <- <-.
-      destruct (IHf _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1]. exact (conj S1 M1).
+    + destruct (no_meth fs) eqn:Hnm; try (rewrite Hnm in H).
+      * dF H E1. injection H as <- <- <- <- <-.
+        destruct (IHf _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1]. exact (conj S1 M1).
+      * dO H E1. dT H E2. injection H as <- <- <- <- <-.
+        destruct (IHo _ _ _ _ _ _ _ _ _ _ _ E1 HG (obj_row_mg fs n _)) as [S1 M1].
+        pose proof (tie_obj_gsub _ _ _ _ _ _ _ _ _ E2 M1 (mg_apR _ _ S1 (group_row_mg fs n))) as S2.
+        exact (conj (gs_comp _ _ S2 S1)
+                    (mg_apT _ (typ_Record (group_row fs n)) (gs_comp _ _ S2 S1) (group_row_mg fs n))).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dC H E2. injection H as <- <- <- <- <-.
       pose proof (unify_co_gsub _ _ _ _ _ _ _ _ E2 M1 (conj I I)) as S2.
@@ -586,6 +632,19 @@ Proof.
       destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ _ E3 (mg_apC _ _ S12 HG) (mg_map _ _ S12 HTs)
                   (mg_apT _ _ S2 (mg_apT _ _ S1 Hres))) as [S3 M3].
       exact (conj (gs_comp _ _ S3 S12) M3).
+  - intros D G p Tp fs n s D' R n' fs' H HG HTp.
+    destruct fs as [|l e rest|l e rest]; simpl in H; try discriminate H.
+    + injection H as <- <- <- <- <-. exact (conj gs_id I).
+    + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
+      dO H E2. destruct (IHo _ _ _ _ _ _ _ _ _ _ _ E2 (mg_apC _ _ S1 HG) (mg_apT _ _ S1 HTp)) as [S2 M2].
+      injection H as <- <- <- <- <-.
+      exact (conj (gs_comp _ _ S2 S1) (conj (mg_apT _ _ S2 M1) M2)).
+    + destruct e; try discriminate H.
+      dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 (mg_cons _ (sch_mono Tp) _ HTp HG)) as [S1 M1].
+      dO H E2. destruct (IHo _ _ _ _ _ _ _ _ _ _ _ E2 (mg_apC _ _ S1 HG) (mg_apT _ _ S1 HTp)) as [S2 M2].
+      injection H as <- <- <- <- <-.
+      exact (conj (gs_comp _ _ S2 S1)
+                  (conj (conj (mg_apT _ _ S2 (mg_apT _ _ S1 HTp)) (mg_apT _ _ S2 M1)) M2)).
 Qed.
 
 Lemma resolved_mg : forall s a, mg (resolved s a).
