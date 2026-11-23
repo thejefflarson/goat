@@ -27,7 +27,7 @@ pub enum Vocabulary {
 }
 
 impl Vocabulary {
-    fn interface(self) -> HostInterface {
+    pub fn interface(self) -> HostInterface {
         match self {
             Vocabulary::Turtle => HostInterface::turtle(),
             Vocabulary::Canvas => goat_canvas::interface(),

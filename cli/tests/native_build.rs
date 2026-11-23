@@ -141,6 +141,23 @@ fn an_interactive_program_is_refused_where_there_is_no_window_host() {
     );
 }
 
+#[test]
+fn build_native_reads_the_vocabulary_from_the_program_and_obeys_the_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    let both =
+        "forward(10)\nupdate = program(m, e) do match e do Frame(d) then m else m done done\n";
+    let ambiguous = build_native(dir.path(), "both", both).unwrap_err();
+    assert!(
+        ambiguous.contains("`forward`") && ambiguous.contains("`Frame`"),
+        "{ambiguous}"
+    );
+    assert!(ambiguous.contains("--turtle or --canvas"), "{ambiguous}");
+
+    let canvas = std::fs::read_to_string("../examples/canvas/sky.goat").unwrap();
+    let forced = build_native_with(dir.path(), "sky", &canvas, &["--turtle"]).unwrap_err();
+    assert!(forced.contains("error(s)"), "{forced}");
+}
+
 /// The AppKit window host (macOS only). Every test runs the binary with
 /// `--headless`, which needs no display: the program runs and its pictures are
 /// decoded as the window would draw them.
@@ -152,7 +169,7 @@ mod window_host {
     const CATCH: &str = include_str!("../../examples/canvas/catch.goat");
 
     fn canvas(dir: &Path, name: &str, source: &str) -> PathBuf {
-        build_native_with(dir, name, source, &["--canvas"]).unwrap_or_else(|e| panic!("{e}"))
+        build_native(dir, name, source).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// The numbers of the first line of `picture` that starts with `shape`.

@@ -78,15 +78,16 @@ Definition id_pair : exp :=
                (fs_cons 1 (e_app (e_fvar_b 0) e_true) fs_nil))).
 
 Lemma inst_id_at : forall U, lct 0 U ->
-  inst d_any (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any)).
+  inst d_any (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any) rk_triv).
 Proof.
   intros U HL.
   exists (fun a => if a == a0 then U else typ_Var a), idr.
-  split; [ | split; [ | split; [ | split ] ] ].
+  split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
   - intros a Ha. simpl in Ha. destruct (a == a0) as [E|E]; [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
   - simpl. destruct (a0 == a0) as [E|E]; [ reflexivity | congruence ].
   - intros a Ha. apply sat_any.
+  - intros r Hr. exfalso. simpl in Hr. fsetdec.
   - split; [ intros a; simpl; match goal with |- context [if ?c then _ else _] => destruct c end; [ exact HL | exact I ] | intros r; exact I ].
 Qed.
 
@@ -95,8 +96,8 @@ Example let_of_a_function_is_used_at_two_types :
     (typ_Record (row_Ext 0 typ_Int (row_Ext 1 typ_Bool row_Empty))).
 Proof.
   unfold id_pair.
-  apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var a0) (typ_Var a0)) (k := fun _ => k_Any);
-    [ reflexivity | | ].
+  apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var a0) (typ_Var a0)) (k := fun _ => k_Any) (rk := rk_triv);
+    [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Abs with (L := {}). intros x Hx.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
     apply T_Var with (s := sch_mono (typ_Var a0));
@@ -105,12 +106,12 @@ Proof.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
     apply T_Record; [ | reflexivity ]. eapply FT_cons.
     + eapply T_App; [ | apply T_Num; [ solve_uniq | ] ].
-      * apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any));
+      * apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any) rk_triv);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at; exact I ].
       * exact I.
     + eapply FT_cons; [ | apply FT_nil; solve_uniq ].
       eapply T_App; [ | apply T_True; solve_uniq ].
-      apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any));
+      apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any) rk_triv);
         [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at; exact I ].
 Qed.
 
@@ -133,7 +134,7 @@ Definition countdown_row : row := row_Ext 0 (typ_Arrow typ_Int typ_Int) row_Empt
 Example recursive_group_types : typing d_any nil countdown typ_Int.
 Proof.
   unfold countdown.
-  apply T_Letrec with (L := {}) (R := countdown_row) (k := fun _ => k_Any).
+  apply T_Letrec with (L := {}) (R := countdown_row) (k := fun _ => k_Any) (rk := rk_triv).
   - repeat constructor.
   - intros p Hp.
     unfold open_fields_wrt_exp. cbn [open_fields_wrt_exp_rec open_exp_wrt_exp_rec].
@@ -164,13 +165,14 @@ Proof.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
     eapply T_App.
     + eapply T_Proj.
-      apply T_Var with (s := gen nil (typ_Record countdown_row) (fun _ => k_Any));
+      apply T_Var with (s := gen nil (typ_Record countdown_row) (fun _ => k_Any) rk_triv);
         [ solve_uniq | apply binds_cons_2; reflexivity | ].
-      exists idt, idr. split; [ | split; [ | split; [ | split ] ] ].
+      exists idt, idr. split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
       * intros a Ha. reflexivity.
       * intros r Hr. reflexivity.
       * symmetry. apply ap_typ_pointwise_id; reflexivity.
       * intros a Ha. apply sat_any.
+      * intros r Hr. exfalso. simpl in Hr. fsetdec.
       * apply lc_sub_id.
     + apply T_Num; [ solve_uniq | exact I ].
 Qed.
@@ -244,7 +246,7 @@ Qed.
 Example group_member_must_be_a_function : forall e2 T,
   ~ typing d_any nil (e_letrec (fs_cons 0 (e_num 1) fs_nil) e2) T.
 Proof.
-  intros e2 T H. destruct (letrec_inv _ _ _ _ _ H) as [L [R [T2 [k [Hfg _]]]]].
+  intros e2 T H. destruct (letrec_inv _ _ _ _ _ H) as [L [R [T2 [k [rk [Hfg _]]]]]].
   inversion Hfg.
 Qed.
 

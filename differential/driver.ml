@@ -184,7 +184,7 @@ let canonical_type d t =
             Buffer.add_string b (Printf.sprintf "v%d" (name a)));
         Buffer.add_char b '}'
     | Typ_Var a -> (
-        match d a with
+        match d.dsort a with
         | K_Literal -> Buffer.add_string b "Number"
         | _ -> Buffer.add_string b (Printf.sprintf "v%d" (name a)))
   in
@@ -298,7 +298,7 @@ let tree_of_typ d t =
         let fields, tail = spine [] r in
         TRecord (List.stable_sort (fun (l, _, _) (m, _, _) -> compare l m) fields, tail)
     | Typ_Var a -> (
-        match d a with K_Literal -> TNum | _ -> TVar (Atom.nat_of a))
+        match d.dsort a with K_Literal -> TNum | _ -> TVar (Atom.nat_of a))
     | Typ_Bvar i -> TBound (depth - 1 - i)
     | Typ_Mu b -> TMu (depth, typ (depth + 1) b)
     | Typ_Grp _ -> failwith "tag group"

@@ -42,13 +42,14 @@ preservation) is B3 (#71).
 | `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
 | `GoatNum.v` | The integer arithmetic behind whole-number literals and the 64-bit `Int` range, kept apart because ZArith defines notations that clash with Metalib's `x ~ T`. |
 | `GoatLit.v` | Reads the argument of `e_num` as an integer, so `e_num 3` works in a file that never imports ZArith (and in the generated printer table). |
-| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`). |
+| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`), and a numeral in a record that stays one type across the body's uses (`shared_numeral_not_int`). |
 | `GoatPhase2.v` | Phase 2 of ADR 0037: worked examples for the value restriction (which terms `is_gen_value` accepts), a generalized binding used at two types, a recursive group (its typing, its unrolling, a run) and a group member that is not a function (no derivation). |
 | `GoatPhase3.v` | Phase 3 of ADR 0037: worked examples for tag groups: `Hit(3)`, a `match` that runs, an `else`, `Link(1, Link(2, Empty))`, and what has no derivation (a match missing a tag, a repeated arm, a tag outside the group, a list that mixes element types). |
 | `GoatPresence.v` | Presence rows (phase 4): the old row equivalence `req0` (no `pre` or `abs`), the normalizer `nf`, `presence_inv` (a record literal's row equals `l ^ P : T ; R` only when `P` is `Unit`, or `Bool` with the row equal to `R` and no `l`), and `rm` (the first field of a row) respecting `req`. |
 | `GoatRecArith.v` | Record arithmetic (ADR 0012): `row_sig` (every field of a row takes the operator), `bin_sig_record`, and `zip_typing`, which pairs the fields of two records typed by rows equivalent to one numeric row and types the record of operator applications that `rec_zip` builds. Progress and preservation use it. |
 | `GoatSpread.v` | Spread and restrict (phase 4): the inversions, and `spread_step_typing` and `restrict_step_typing`, which preservation uses. |
 | `GoatPhase4.v` | Phase 4 of ADR 0037: worked examples for spread (an update, an extension, one `set_x` for a record with and without `x`), restrict, and what has no derivation (a type-changing update, a restrict on a record without the label). |
+| `GoatRowKinds.v` | Stage 7.2: worked examples for row kinds: a comparison of two records whose open row has an `Eq` tail, a spread onto a row variable that lacks the label, and `let set_x = program(p) do {...p, x: 1} done in set_x({y: true})`, where the scheme quantifies a row variable that lacks `x`. |
 | `GoatPhase6.v` | Phase 6: worked examples for the `Eq` sort and structural comparison: `()` compares, a function does not, `same = program(x) do x == x done` is used at `Int`, `String` and `Unit`, records compare equal in either field order, by their second field when the first ties, and in label order, nested records compare, a record holding a function is not `Eq`; tags compare by position (`Low < Medium < High`), a list lexicographically with a prefix first, and a recursive tree by `fold`. The differential test covers the algorithm. |
 | `GoatRecArithExamples.v` | Record arithmetic, worked: a record sum, a nested product with the fields in another order at both levels, a record with a non-number field (no derivation). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
@@ -137,11 +138,11 @@ well-founded type order; `rec_align` is the record alignment fact it rests on, a
 
 What phase 6 does not prove, and where each gap is tracked:
 
-- **Sort propagation (#623).** W's unifier never changes the kinding environment,
-  so `f = program(x) do same({p: x}, {p: x}) done` (`same` compares) is accepted by
-  the checker and refused by W. The spike (`differential/sort_gap.sh`) found 0 of
-  24295 checker-accepted corpus programs that hit it; five hand-written ones do.
-  Sound side only: W refuses more than the checker.
+- **Sort propagation (#623), closed in phase 7 stage 7.3.** The unifiers return the
+  kinding environment and push a sort onto the variables inside the type a
+  variable binds to (see "Algorithm W with sorted variables"), so
+  `f = program(x) do same({p: x}, {p: x}) done` is accepted by W, as the checker
+  accepts it. The five hand-written programs of #623 are in the corpus.
 - **NaN inside a compound.** The compiler orders a number by `==`, then `<`, else
   greater, so `{x: 0} > {x: NaN}` and `{x: NaN} > {x: 0}` both hold, which breaks
   antisymmetry and contradicts ADR 0036's "a NaN sorts after everything". The model
@@ -447,13 +448,12 @@ because `abs` drops it and a guard that counted it would not survive equality.
 
 Modelling calls made for this phase, each the conservative choice:
 
-- **`lacks` is syntactic.** `l # R` holds only of a closed spine, so it is stable
-  under substitution and `teq_ap` needs no new idea. A row variable lacks nothing:
-  a spread of a base whose row ends in a row variable the checker knows lacks the
-  label (the remainder of a rest pattern put back) has no derivation, though the
-  checker accepts it. A `lacks` sort on row variables in the kinding environment
-  would close that; it is left to the algorithm proof, where completeness needs
-  it.
+- **`lacks` is syntactic in `req`.** `l # R` holds only of a closed spine, so it
+  is stable under substitution and `teq_ap` needs no new idea. A row variable's
+  lacks facts live in the kinding environment instead and reach the typing
+  judgment through `T_SpreadL` (the section on row kinds below), so a spread
+  whose base ends in a row variable that lacks the label (the remainder of a rest
+  pattern put back) has a derivation.
 - **Scoped labels stay.** A row may hold a label twice and the first one wins, so
   a spread or restrict touches the first. The checker's rows never do (ADR 0033
   decision 5); the calculus accepts a superset of types, which is sound.
@@ -475,11 +475,10 @@ unifies the base with `{l ^ p : T2 | r}` and returns `{l : T2 | r}`, and a
 restrict unifies with `{l : a | r}` and returns `{r}`. `infer_sound`,
 `infer_closed_sound` and `infer_mu_free` keep 0 admits and no new axiom, and the
 differential test compares spread and restrict programs (`differential/README.md`).
-The algorithm is incomplete where the calculus's syntactic `l # R` is: it never
-uses a `lacks` fact about a row variable (`LacksOnTail` counts those programs).
+The calculus's syntactic `l # R` holds of a closed row alone; phase 7 stage 7.3b
+extends the algorithm with lacks facts on row variables.
 
-What waits, each its own ticket: a `lacks` sort on row variables (#564) and the
-typeset `goat.ott`. The parser fragment now reads spread and rest patterns (the
+What waits, each its own ticket: the typeset `goat.ott`. The parser fragment now reads spread and rest patterns (the
 section on the parser claim says how).
 
 ## Phase 5 (ADR 0037, amended): the elaboration theorem, methods and dot calls
@@ -541,7 +540,7 @@ by the differential test), and `make check-assumptions` requires it to rest on
 those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 44460 programs written, 43038 compared with 0 mismatches, 1411 skipped
+commit: 44680 programs written, 43258 compared with 0 mismatches, 1411 skipped
 by the driver. Inferring a recursive group before the value bindings between its
 members (#628) brought in 59 of the 65 programs it used to skip; the other 6 use
 a later feature or are real cycles the checker rejects. The reader numbers labels in name order, which wrote 206 more
@@ -553,7 +552,6 @@ outside the calculus (the first of a fixed order that it uses):
 | Count | Skip |
 | ---: | --- |
 | 5149 | does not lower (the checker rejects it before typing) |
-| 222 | a spread onto a row variable that lacks the label (`LacksOnTail`, #564) |
 | 185 | tags and `match` |
 | 41 | `print` or `trap` |
 | 37 | a program that ends in a binding |
@@ -613,10 +611,11 @@ the programs and records no mismatch.
   record type that carries the row variable), a coinductive type equality
   (assumed pairs) in `unify_k`, and a `T_Letrec` that admits a `fold` of a
   lambda. Each changes the calculus or its spec; none is a local proof.
-- **No `lacks` on a row variable (#564).** The calculus's `lacks` is a premise on
-  a closed row spine, so a spread whose base ends in a row variable the checker
-  knows lacks the label (`{x, ...rest} = p` then `{...rest, x: 2}`) has no
-  derivation. 222 programs.
+- **`lacks` on a row variable (#564), closed in phase 7 stage 7.3b.** The calculus
+  derives a spread whose base ends in a row variable the checker knows lacks the
+  label (`{x, ...rest} = p` then `{...rest, x: 2}`, by `T_SpreadL`), and algorithm
+  W now carries the lacks facts (see "Algorithm W carries the kinds"), so the 222
+  programs the corpus reader used to skip under `LacksOnTail` are compared.
 - **No non-derivation of `{...lit, x: 1}.a()`.** The checker and W both reject a
   method literal spread and then called, but the calculus has no theorem that no
   derivation exists: it needs an inversion lemma for `unroll_eq`.
@@ -653,6 +652,75 @@ embedding needs, and `goat_ln.ott` needs a context entry and one step rule, not 
 new type or term. What the proofs do not say is what a host function computes.
 This waits behind phase 1 (the boundary types) and is cheap; it is listed as
 phase 6b of #435.
+
+## Row kinds: lacks and sorts on row variables (stage 7.2, #564)
+
+A row variable has a **kind**, as a type variable has a sort: `RK s ls`, where
+`s` is a sort (what the fields of a record it tails must satisfy) and `ls` is
+the set of labels it lacks. The kinding environment is a record
+`DEnv {dsort; drk}`, coerced to `dsort` so `D a` still reads a sort, and
+`drk D r` is the kind of `r`. `k_Any` and `rk_any` (no label lacked) are the
+defaults outside a finite support (`supp_ok` says both).
+
+- **Sorts on a row tail.** `rsat D k (row_Var r)` holds when `r`'s sort in `D` is
+  at or above `k`, so a record with an open row satisfies `Eq` or `Numeric` when
+  its fields do and its tail has the sort. This makes the open-row comparison
+  derivable (`GoatRowKinds.v`). `rsat` at `k_Any` holds of every row, a `Maybe`
+  entry included, so a substitution cannot break it.
+- **Lacks.** `rlacksD D l R` is `rlacks` with a variable tail read from `drk D`;
+  `T_SpreadL` gives `{...e1, l: e2} : {l : T ; R}` from `e1 : {R}` and
+  `rlacksD D l R`. `req_abs` is unchanged: it keeps the syntactic `rlacks`. For a
+  value the row has no variable (`req` preserves the tail, `req_rtail`), so
+  `rlacksD` is `rlacks` and `spread_step_typing_L` turns the derivation into a
+  `T_Spread` one with `req_abs`; preservation reuses `spread_step_typing`.
+- **Substitution.** A row substitution respects the kinds when `rkres D D' sr`:
+  `sr r` satisfies `r`'s sort in `D'` and lacks every label `r` lacks
+  (`rkok`). `sat_ap`, `bin_sig_ap`, `rlacksD_ap` and `casch_inst` take it beside
+  `kres`.
+- **Schemes and `let`.** `Sch` records `s_rk`, the kind of each quantified row
+  variable, and `gen G T k rk` takes it. `T_Let` and `T_Letrec` type the bound
+  term under `extr (ext D V k) Vr rk`, `D` extended on the generalized rows `Vr`
+  by `rk`, and `inst` demands `rkok D (s_rk s r) (sr r)` of each quantified row
+  variable's image. The shortcut "generalized rows carry no lacks" breaks
+  preservation: term substitution removes a binder from the context, which makes
+  a row variable generalizable that was free before, and the `let` body's
+  derivation then needs a lacks premise the original lacked. So `rk` rides
+  wherever `k` does: `casch` (through the row renaming `gr`), `sch_more_gen`
+  (`rkup` beside `kup`), `typing_denv_agree` (a row variable the context does not
+  mention goes to the empty row, which lacks everything), `typing_inst_gen`,
+  `tsubst_gen_core`, and `sch_equiv`.
+- **Algorithm W carries the kinds (stage 7.3b).** `DOk D n` says `D` has the
+  default sort and the default row kind beyond the first `n` even atoms, and
+  `KR D D' s` says `s` respects the sorts and the row kinds (`kres` and `rkres`);
+  `Good` carries one for the substitution and one for the refinement of the
+  environment, and `KR_comp` composes them (`rkok_ap` is its row half). A row
+  variable gets a kind in three places. `bind_row` binds a row variable to a row:
+  the variable at the row's tail is renamed to a fresh one whose kind is the
+  join of both (`rk_join`: the finer sort, the union of the lacks; a lacks set is
+  a function, so the two kinds cannot be compared and the renaming is always
+  made), the sort reaches the type variables of the fields (`push_sort`), and the
+  row must satisfy the sort and avoid the labels the variable lacks (`lacks_ok`,
+  `rlacksD_spine`). A type variable of sort `Eq` or `Numeric` that binds to a
+  record pushes its sort onto the row variables in it too (`push_sort_r`: each
+  coarser row variable is renamed to a fresh one of that sort that lacks the same
+  labels), so `program(a, b) do (if a == b then 1 else 2 done) + a.x done` types
+  at an `Eq` row tail; the fuzz target's `GAPS` row for it is gone. `rewrite_row` fails on a row variable that lacks the label
+  and gives the fresh tail of `l ^ p : a ; r'` the kind it replaces. `restrict`
+  gives its tail the removed label. `gen_ren` records the kind of each
+  quantified row variable (`gen_rk`) and `inst_den` gives each fresh one that kind
+  back; `T_Let` and `T_Letrec` type the bound term in `Dsc D sc`, `D` extended by
+  the scheme's sorts and kinds, which `KR_Dsc_lift` carries across a step.
+  A spread tries `T_SpreadL` first: it unifies the base with a fresh row
+  variable and, when the result lacks the label, types the spread at
+  `{l : T | R}`; otherwise (and when the unifier fails) it falls back to the
+  presence-variable `T_Spread` (`spread_present`), so a base that has the field,
+  or whose row may gain it, types as before. The extracted algorithm is
+  differentially tested on the 222 programs the corpus reader used to skip.
+- **Statement B.** The row environment is read by `sat` only at a `row_Var`, so
+  it extends to recursive types (a `mu` body's row tails are read the same way,
+  `sat_open_mut` is unchanged) and to methods (`T_Obj` is typed against the same
+  environment) without another change to the environment; the algorithm side
+  (a unifier that updates `drk` and a completeness proof against it) is stage 7.3.
 
 ## Generic operators: sorted type variables (design Q)
 
@@ -691,14 +759,18 @@ both choices.
 
 A `let` may keep some variables of its binding monomorphic: `T_Let` takes a
 type `Tm` and generalizes over the context extended with a binding of `Tm`
-(`pin_ctx`), so the variables of `Tm` stay free. The algorithm pins exactly the
-`Literal` variables of a value that is neither a function nor a bare numeral
-(`let_pin` in `GoatInfer.v`), which is where the checker leaves a numeral's
-variable shared (`r = {a: 1}` is one record, not a fresh one per use). The rule
-itself allows any `Tm`, so it derives more programs than the checker accepts;
-the algorithm is the part that agrees with the checker, and its soundness
-(`infer_sound`) is that every type it infers is derivable. ADR 0038 records the
-choice.
+(`pin_ctx`), so the variables of `Tm` stay free. The rule's `lit_pinned`
+premise says that, unless the bound term is a function or a bare numeral
+(`let_open`), no variable it quantifies has the sort `Literal` in `k`: a numeral
+inside a record stays one type across the body's uses, as in the checker
+(`r = {a: 1}` is one record, not a fresh one per use). The algorithm pins
+exactly the `Literal` variables of such a value (`let_pin` in `GoatInfer.v`).
+A derivation that re-pins after the context shrinks (substituting for a
+variable, `typing_ftv_mono`) picks a new `Tm` that stands for the old context's
+variables (`repin`). A recursive group as a `let`'s bound term is not `let_open`:
+it unrolls to a record, which pins. `shared_numeral_not_int` (`GoatPhase1.v`)
+is the non-derivation: `r = {a: 1}  {y: r.a, x: r.a + 1.5}.y` has no derivation
+at `Int`. ADR 0038 records the choice.
 
 ## Algorithm W with sorted variables
 
@@ -707,11 +779,20 @@ choice.
 `D` gives it. `D` is `Any` on every even atom from the supply number `n` on
 (`DOk`, `GoatInferSort.v`), and only a fresh variable gets a sort, by `upd`.
 
-- **Unification** (`unify_t f D T1 T2 n`) never changes `D`. A variable meets a
-  non-variable type only if the type satisfies the variable's sort (`sat_b`: an
-  `Int` or `Float` satisfies every sort, any other type only `Any`); two
-  variables bind the coarser to the finer (`finer_b`), so the survivor keeps its
-  sort. It returns a substitution that respects `D` (`kres D D (sT s)`).
+- **Unification** (`unify_t f D T1 T2 n`, and `unify_r`, `unify_k`, `unify_kr`,
+  `unify_co`) returns `(s, D', n')`. A variable meets a non-variable type only if
+  the type satisfies the variable's sort (`sat_b`: an `Int` or `Float` satisfies
+  every sort, any other type only `Any`); two variables bind the coarser to the
+  finer (`finer_b`), so the survivor keeps its sort. Before the check the sort is
+  pushed onto the type (`push_sort`, `bind_prop`): each variable inside the type
+  that is coarser than the sort is renamed to a fresh variable of that sort, one
+  fresh atom at a time, and `D'` is `D` updated (`upd`) on those atoms. Each
+  renaming is a `Good` step (`Good_rename`: the new atom is `Any` in `D` by `DOk`,
+  and its sort is finer than the renamed variable's), so `push_sort_good` follows
+  by induction on the variable list and the unifier's statement is `GoodU D n s D'
+  n'`: the supply grows, and from a well-kept `D` the step is `Good` (the
+  implication keeps `teq_dec`, which runs the unifier at supply 0, free of
+  `DOk`). A substitution that respects the sorts is `kres D D' (sT s)`.
 - **A numeral** is a fresh `Literal` variable, **`float(e)`** unifies its operand
   with a fresh `Numeric` variable, and **`+ - *`** unify both operands with one
   fresh `Numeric` variable, the type of the result. So `1 + 1.5` infers `Float`
