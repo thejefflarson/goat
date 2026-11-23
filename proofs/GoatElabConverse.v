@@ -307,9 +307,9 @@ Proof.
   - intros D G Hu S HS HG Hv. exists e_false. auto using ms_refl.
   - intros L D G e T1 T2 Hb IH S HS HG Hv. exists (e_abs e). auto using ms_refl.
   - intros D G e1 e2 T1 T2 H1 IH1 H2 IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
-  - intros L D G e1 e2 T1 T2 kf Tm Hgv Hlp H1 IH1 Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
+  - intros L D G e1 e2 T1 T2 kf rkf Tm Hgv Hlp H1 IH1 Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros L D G e1 e2 T1 T2 H1 IH1 Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
-  - intros L D G fs e2 R T kf Hfg Hfs IHfs Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
+  - intros L D G fs e2 R T kf rkf Hfg Hfs IHfs Hb IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros D G fs R Hft IH Hnm S HS HG Hv. cbn [erase] in Hv. inversion Hv; subst.
     destruct (IH S HS eq_refl H0) as [fs' [Hms [Hrv Her]]].
     exists (e_rec fs'). repeat split.
@@ -330,6 +330,7 @@ Proof.
   - intros D G e A Ht IH Hsat S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros D G e1 o e2 A B R H1 IH1 H2 IH2 Hs S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros D G e1 l e2 P T R H1 IH1 H2 IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
+  - intros D G e1 l e2 T R H1 IH1 Hl H2 IH2 S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - intros D G e l R0 T R Ht IH Hrm S HS HG Hv. cbn [erase] in Hv. inversion Hv.
   - (* fold *) intros D G e B Hlc Hg Ht IH S HS HG Hv. cbn [erase] in Hv.
     destruct (IH S HS HG Hv) as [v [Hms [Hvv Her]]].
@@ -571,15 +572,15 @@ Proof.
       exists (e_app v1 e2''). split.
       * eapply multistep_trans; [ apply ms_app1; exact Hm1 | apply ms_app2; assumption ].
       * cbn [erase]. rewrite He1, He2. reflexivity.
-  - (* let *) intros L D G e1 e2 T1 T2 kf Tm Hgv Hlp H1 IH1 Hb IH2 S HS HG r Hs. subst G.
+  - (* let *) intros L D G e1 e2 T1 T2 kf rkf Tm Hgv Hlp H1 IH1 Hb IH2 S HS HG r Hs. subst G.
     eapply let_converse; [ | | exact Hs ].
-    + intros Hv. exact (value_reach _ _ e1 _ (supp_ok_ext _ _ _ _ HS) H1 Hv).
-    + intros r1 Hx. exact (IH1 _ (supp_ok_ext _ _ _ _ HS) eq_refl _ Hx).
+    + intros Hv. exact (value_reach _ _ e1 _ (supp_ok_ext2 _ _ _ _ _ _ HS) H1 Hv).
+    + intros r1 Hx. exact (IH1 _ (supp_ok_ext2 _ _ _ _ _ _ HS) eq_refl _ Hx).
   - (* letmono *) intros L D G e1 e2 T1 T2 H1 IH1 Hb IH2 S HS HG r Hs. subst G.
     eapply let_converse; [ | | exact Hs ].
     + intros Hv. exact (value_reach D S e1 _ HS H1 Hv).
     + intros r1 Hx. exact (IH1 S HS eq_refl _ Hx).
-  - (* letrec *) intros L D G fs e2 R T kf Hfg Hfs IHfs Hb IH2 S HS HG r Hs. subst G.
+  - (* letrec *) intros L D G fs e2 R T kf rkf Hfg Hfs IHfs Hb IH2 S HS HG r Hs. subst G.
     cbn [erase] in Hs. inversion Hs; subst; flip_erased.
     exists (open_exp_wrt_exp e2 (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0))))). split.
     + eapply ms_step; [ apply st_letrec; exact Hfg | apply ms_refl ].
@@ -724,6 +725,28 @@ Proof.
         eapply multistep_trans; [ apply ms_spread2; [ apply v_rec; exact Hrg | exact Hm2 ] | ].
         eapply ms_step; [ apply st_spread; assumption | apply ms_refl ].
       * cbn [erase]. rewrite erase_fs_plain, erase_fs_set, Heg, He2. reflexivity.
+  - (* spread, on a base whose row lacks the label by its kind *)
+    intros D G e1 l e2 T R Ht1 IH1 Hl Ht2 IH2 S HS HG r Hs. subst G.
+    cbn [erase] in Hs. inversion Hs; subst; flip_erased.
+    + lazymatch goal with Hx : step (erase e1) _ |- _ =>
+        destruct (IH1 S HS eq_refl _ Hx) as [e1'' [Hm He]] end.
+      exists (e_spread e1'' l e2). split; [ apply ms_spread1; exact Hm | cbn [erase]; rewrite He; reflexivity ].
+    + assert (Hv1 : value (erase e1)) by assumption.
+      destruct (value_reach D S e1 _ HS Ht1 Hv1) as [v1 [Hm1 [Hvv1 He1]]].
+      lazymatch goal with Hx : step (erase e2) _ |- _ =>
+        destruct (IH2 S HS eq_refl _ Hx) as [e2'' [Hm2 He2]] end.
+      exists (e_spread v1 l e2''). split.
+      * eapply multistep_trans; [ apply ms_spread1; exact Hm1 | apply ms_spread2; assumption ].
+      * cbn [erase]. rewrite He1, He2. reflexivity.
+    + lazymatch goal with Ha : erase e1 = e_rec ?fs0, Hrv : rec_value ?fs0 |- _ =>
+        destruct (reach_rec D S e1 _ fs0 HS Ht1 Ha Hrv) as [gs [Hm1 [Hrg Heg]]] end.
+      assert (Hv2 : value (erase e2)) by assumption.
+      destruct (value_reach D S e2 _ HS Ht2 Hv2) as [v2 [Hm2 [Hvv2 He2]]].
+      exists (e_rec (fs_plain (fs_set l v2 gs))). split.
+      * eapply multistep_trans; [ apply ms_spread1; exact Hm1 | ].
+        eapply multistep_trans; [ apply ms_spread2; [ apply v_rec; exact Hrg | exact Hm2 ] | ].
+        eapply ms_step; [ apply st_spread; assumption | apply ms_refl ].
+      * cbn [erase]. rewrite erase_fs_plain, erase_fs_set, Heg, He2. reflexivity.
   - (* restrict *) intros D G e l R0 T R Ht IH Hrm S HS HG r Hs. subst G.
     cbn [erase] in Hs. inversion Hs; subst; flip_erased.
     + lazymatch goal with Hx : step (erase e) _ |- _ =>
@@ -830,4 +853,4 @@ Qed.
 Corollary erase_converse_closed : forall e T r,
   typing d_any nil e T -> step (erase e) r ->
   exists e'', multistep e e'' /\ erase e'' = r.
-Proof. intros e T r Ht Hs. apply (erase_converse d_any {} e T r); [ | exact Ht | exact Hs ]. intros a _. reflexivity. Qed.
+Proof. intros e T r Ht Hs. apply (erase_converse d_any {} e T r); [ | exact Ht | exact Hs ]. intros a _. split; reflexivity. Qed.

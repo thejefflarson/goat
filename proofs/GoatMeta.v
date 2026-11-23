@@ -621,7 +621,7 @@ Proof.
     pick fresh x for L.
     apply (lc_at_open_inv e 0 x). unfold open_exp_wrt_exp in IH. apply IH; auto.
   - (* T_App *) intros D G e1 e2 T1 T2 Hty1 IH1 Hty2 IH2; simpl; split; assumption.
-  - (* T_Let *) intros L D G e1 e2 T1 T2 k Tm Hgv Hlp Hty1 IH1 Hpre IH2; simpl; split.
+  - (* T_Let *) intros L D G e1 e2 T1 T2 k rk Tm Hgv Hlp Hty1 IH1 Hpre IH2; simpl; split.
     + assumption.
     + pick fresh x for L.
       apply (lc_at_open_inv e2 0 x). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
@@ -629,7 +629,7 @@ Proof.
     + assumption.
     + pick fresh x for L.
       apply (lc_at_open_inv e2 0 x). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
-  - (* T_Letrec *) intros L D G fs e2 R T k Hfg Hfs IHfs Hpre IH2; simpl; split.
+  - (* T_Letrec *) intros L D G fs e2 R T k rk Hfg Hfs IHfs Hpre IH2; simpl; split.
     + pick fresh p for L.
       apply (lcf_at_open_inv fs 0 p). unfold open_fields_wrt_exp in IHfs. apply IHfs; auto.
     + pick fresh p for L.
@@ -644,6 +644,7 @@ Proof.
   - (* T_ToFloat *) intros D G e A Ht IH Hs; simpl; assumption.
   - (* T_Bin *) intros D G e1 o e2 A B R Ht1 IH1 Ht2 IH2 Hs; simpl; auto.
   - (* T_Spread *) intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2; simpl; split; assumption.
+  - (* T_SpreadL *) intros D G e1 l e2 T R Ht1 IH1 Hl Ht2 IH2; simpl; split; assumption.
   - (* T_Restrict *) intros D G e l R0 T R Ht IH Hrm; simpl; assumption.
   - (* T_Fold *) intros D G e B Hlc Hg Ht IH; simpl; assumption.
   - (* T_Unfold *) intros D G e B Hlc Hg Ht IH; simpl; assumption.
@@ -971,7 +972,7 @@ Proof.
     destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R1 [E ->]]]].
     + subst. split; assumption.
     + destruct (IHR _ _ E Hs) as [Hb1 Hs1]. split; [ exact Hb1 | simpl; split; assumption ].
-  - simpl in Hs. contradiction.
+  - simpl in Hs. subst. split; [ apply sat_any | apply rsat_any ].
 Qed.
 
 (* Two records of one row, and a label of the first: the second has the label
@@ -1087,9 +1088,9 @@ Proof.
   - split; [ intros n Hs; exact (proj1 H (S n) Hs) | intros; contradiction ].
   - split; [ intros n Hs; exact (proj2 H n w 0 Hs) | intros; contradiction ].
   - exact I.
-  - contradiction.
+  - assumption.
   - destruct H1 as [H1 H2]. split; [ exact (proj1 H n H1) | exact (H0 n H2) ].
-  - contradiction.
+  - assumption.
 Qed.
 
 Lemma sat_eq_unroll : forall D B,
@@ -1418,7 +1419,7 @@ Proof.
     + right. exists k. apply tr_app1; auto.
   - (* Case: [let x = e1 in e2].  If [e1] is finished, plug it into [e2]
        (st_letv); otherwise step [e1] (st_let1) or propagate its trap. *)
-    intros L D G e1 e2 T1 T2 kf Tm Hgv Hlp Hty1 IH1 Hbody IH2 HG; subst.
+    intros L D G e1 e2 T1 T2 kf rkf Tm Hgv Hlp Hty1 IH1 Hbody IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk]]].
     + left. exists (open_exp_wrt_exp e2 e1). apply st_letv; auto.
     + left. exists (e_let e1' e2). apply st_let1; auto.
@@ -1431,7 +1432,7 @@ Proof.
     + right. exists k. apply tr_let1; auto.
   - (* Case: a recursive group.  Never a value; it unrolls at once
        (st_letrec), because its members are functions. *)
-    intros L D G fs e2 R T kf Hfg Hfs IHfs Hbody IH2 HG; subst.
+    intros L D G fs e2 R T kf rkf Hfg Hfs IHfs Hbody IH2 HG; subst.
     right; left. eexists. apply st_letrec; exact Hfg.
   - (* Case: a record.  Finished if every field is; otherwise a field steps
        or traps.  The field list has its own companion claim (second half of
@@ -1504,6 +1505,17 @@ Proof.
        canonical forms says it is a record, and the update steps whatever the
        type says (fs_set is total); otherwise a subterm steps or traps. *)
     intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2 HG; subst.
+    right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk1]]].
+    + destruct (canon_record _ _ _ _ Hv1 Ht1) as [fs [R0 [-> [Hrv _]]]].
+      destruct (IH2 eq_refl) as [Hv2 | [[e2' Hs2] | [k Hk2]]].
+      * left. exists (e_rec (fs_plain (fs_set l e2 fs))). apply st_spread; auto.
+      * left. exists (e_spread (e_rec fs) l e2'). apply st_spread2; auto.
+      * right. exists k. apply tr_spread2; auto.
+    + left. exists (e_spread e1' l e2). apply st_spread1; auto.
+    + right. exists k. apply tr_spread1; auto.
+  - (* Case: [{...e1, l: e2}] where the base's row lacks [l] by its kind; the
+       same steps. *)
+    intros D G e1 l e2 T R Ht1 IH1 Hl Ht2 IH2 HG; subst.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk1]]].
     + destruct (canon_record _ _ _ _ Hv1 Ht1) as [fs [R0 [-> [Hrv _]]]].
       destruct (IH2 eq_refl) as [Hv2 | [[e2' Hs2] | [k Hk2]]].
@@ -1627,11 +1639,12 @@ Qed.
 Lemma let_inv : forall D G e1 e2 T,
   typing D G (e_let e1 e2) T ->
   exists (L : vars) T1 T2,
-    ((is_gen_value e1 = true /\ exists (k : sort_fn) (Tm : typ),
+    ((is_gen_value e1 = true /\ exists (k : sort_fn) (rk : rkind_fn) (Tm : typ),
       lit_pinned e1 (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k /\
-      typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k) G e1 T1 /\
+      typing (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k)
+                   (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm G))) rk) G e1 T1 /\
       forall x, x `notin` L ->
-        typing D ((x ~ gen (pin_ctx Tm G) T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) \/
+        typing D ((x ~ gen (pin_ctx Tm G) T1 k rk) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) \/
      (typing D G e1 T1 /\
       forall x, x `notin` L ->
         typing D ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2)) /\
@@ -1640,7 +1653,7 @@ Proof.
   intros D G e1 e2 T H. remember (e_let e1 e2) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Let *) inversion He; subst. exists L, T1, T2.
-    split; [ left; split; [ assumption | exists k, Tm; auto ] | apply teq_refl ].
+    split; [ left; split; [ assumption | exists k, rk, Tm; auto ] | apply teq_refl ].
   - (* T_LetMono *) inversion He; subst. exists L, T1, T2.
     split; [ right; auto | apply teq_refl ].
   - (* T_Conv *) destruct (IHtyping He) as [L [T1 [T2 [Hbody Hteq]]]].
@@ -1649,22 +1662,23 @@ Qed.
 
 Lemma letrec_inv : forall D G fs e2 T,
   typing D G (e_letrec fs e2) T ->
-  exists (L : vars) R T2 (k : sort_fn),
+  exists (L : vars) R T2 (k : sort_fn) (rk : rkind_fn),
     fn_group fs /\
     (forall p, p `notin` L ->
-       field_typing (ext D (AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)) k)
+       field_typing (extr (ext D (AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)) k)
+                          (AtomSetImpl.diff (frv_typ (typ_Record R)) (frv_ctx G)) rk)
          ((p ~ sch_mono (typ_Record R)) ++ G)
          (open_fields_wrt_exp fs (e_fvar_f p)) R) /\
     (forall p, p `notin` L ->
-       typing D ((p ~ gen G (typ_Record R) k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T2) /\
+       typing D ((p ~ gen G (typ_Record R) k rk) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T2) /\
     teq T2 T.
 Proof.
   intros D G fs e2 T H. remember (e_letrec fs e2) as e0 eqn:He.
   induction H; try discriminate He.
-  - (* T_Letrec *) inversion He; subst. exists L, R, T, k.
+  - (* T_Letrec *) inversion He; subst. exists L, R, T, k, rk.
     repeat split; auto using teq_refl.
-  - (* T_Conv *) destruct (IHtyping He) as [L [R [T2 [kk [Hfg [Hfs [Hbody Hteq]]]]]]].
-    exists L, R, T2, kk. repeat split; try assumption. eauto using teq_trans.
+  - (* T_Conv *) destruct (IHtyping He) as [L [R [T2 [kk [rkk [Hfg [Hfs [Hbody Hteq]]]]]]]].
+    exists L, R, T2, kk, rkk. repeat split; try assumption. eauto using teq_trans.
 Qed.
 
 Lemma proj_inv : forall D G e l T,

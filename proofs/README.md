@@ -49,6 +49,7 @@ preservation) is B3 (#71).
 | `GoatRecArith.v` | Record arithmetic (ADR 0012): `row_sig` (every field of a row takes the operator), `bin_sig_record`, and `zip_typing`, which pairs the fields of two records typed by rows equivalent to one numeric row and types the record of operator applications that `rec_zip` builds. Progress and preservation use it. |
 | `GoatSpread.v` | Spread and restrict (phase 4): the inversions, and `spread_step_typing` and `restrict_step_typing`, which preservation uses. |
 | `GoatPhase4.v` | Phase 4 of ADR 0037: worked examples for spread (an update, an extension, one `set_x` for a record with and without `x`), restrict, and what has no derivation (a type-changing update, a restrict on a record without the label). |
+| `GoatRowKinds.v` | Stage 7.2: worked examples for row kinds: a comparison of two records whose open row has an `Eq` tail, a spread onto a row variable that lacks the label, and `let set_x = program(p) do {...p, x: 1} done in set_x({y: true})`, where the scheme quantifies a row variable that lacks `x`. |
 | `GoatPhase6.v` | Phase 6: worked examples for the `Eq` sort and structural comparison: `()` compares, a function does not, `same = program(x) do x == x done` is used at `Int`, `String` and `Unit`, records compare equal in either field order, by their second field when the first ties, and in label order, nested records compare, a record holding a function is not `Eq`; tags compare by position (`Low < Medium < High`), a list lexicographically with a prefix first, and a recursive tree by `fold`. The differential test covers the algorithm. |
 | `GoatRecArithExamples.v` | Record arithmetic, worked: a record sum, a nested product with the fields in another order at both levels, a record with a non-number field (no derivation). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
@@ -443,13 +444,12 @@ because `abs` drops it and a guard that counted it would not survive equality.
 
 Modelling calls made for this phase, each the conservative choice:
 
-- **`lacks` is syntactic.** `l # R` holds only of a closed spine, so it is stable
-  under substitution and `teq_ap` needs no new idea. A row variable lacks nothing:
-  a spread of a base whose row ends in a row variable the checker knows lacks the
-  label (the remainder of a rest pattern put back) has no derivation, though the
-  checker accepts it. A `lacks` sort on row variables in the kinding environment
-  would close that; it is left to the algorithm proof, where completeness needs
-  it.
+- **`lacks` is syntactic in `req`.** `l # R` holds only of a closed spine, so it
+  is stable under substitution and `teq_ap` needs no new idea. A row variable's
+  lacks facts live in the kinding environment instead and reach the typing
+  judgment through `T_SpreadL` (the section on row kinds below), so a spread
+  whose base ends in a row variable that lacks the label (the remainder of a rest
+  pattern put back) has a derivation.
 - **Scoped labels stay.** A row may hold a label twice and the first one wins, so
   a spread or restrict touches the first. The checker's rows never do (ADR 0033
   decision 5); the calculus accepts a superset of types, which is sound.
@@ -472,9 +472,11 @@ restrict unifies with `{l : a | r}` and returns `{r}`. `infer_sound`,
 `infer_closed_sound` and `infer_mu_free` keep 0 admits and no new axiom, and the
 differential test compares spread and restrict programs (`differential/README.md`).
 The algorithm is incomplete where the calculus's syntactic `l # R` is: it never
-uses a `lacks` fact about a row variable (`LacksOnTail` counts those programs).
+uses a `lacks` fact about a row variable (`LacksOnTail` counts those programs;
+the calculus now has the derivations, the algorithm does not yet find them).
 
-What waits, each its own ticket: a `lacks` sort on row variables (#564) and the
+What waits, each its own ticket: the algorithm half of row kinds (stage 2 of
+#564: a lacks-aware unifier, `restrict` giving its tail the label) and the
 typeset `goat.ott`. The parser fragment now reads spread and rest patterns (the
 section on the parser claim says how).
 
@@ -610,10 +612,11 @@ the programs and records no mismatch.
   record type that carries the row variable), a coinductive type equality
   (assumed pairs) in `unify_k`, and a `T_Letrec` that admits a `fold` of a
   lambda. Each changes the calculus or its spec; none is a local proof.
-- **No `lacks` on a row variable (#564).** The calculus's `lacks` is a premise on
-  a closed row spine, so a spread whose base ends in a row variable the checker
-  knows lacks the label (`{x, ...rest} = p` then `{...rest, x: 2}`) has no
-  derivation. 222 programs.
+- **`lacks` on a row variable (#564), the algorithm half.** The calculus derives a
+  spread whose base ends in a row variable the checker knows lacks the label
+  (`{x, ...rest} = p` then `{...rest, x: 2}`, by `T_SpreadL`), but algorithm W
+  does not carry the lacks facts, so the 222 programs stay skipped until its
+  unifier does (stage 2 of #564).
 - **No non-derivation of `{...lit, x: 1}.a()`.** The checker and W both reject a
   method literal spread and then called, but the calculus has no theorem that no
   derivation exists: it needs an inversion lemma for `unroll_eq`.
@@ -650,6 +653,53 @@ embedding needs, and `goat_ln.ott` needs a context entry and one step rule, not 
 new type or term. What the proofs do not say is what a host function computes.
 This waits behind phase 1 (the boundary types) and is cheap; it is listed as
 phase 6b of #435.
+
+## Row kinds: lacks and sorts on row variables (stage 7.2, #564)
+
+A row variable has a **kind**, as a type variable has a sort: `RK s ls`, where
+`s` is a sort (what the fields of a record it tails must satisfy) and `ls` is
+the set of labels it lacks. The kinding environment is a record
+`DEnv {dsort; drk}`, coerced to `dsort` so `D a` still reads a sort, and
+`drk D r` is the kind of `r`. `k_Any` and `rk_any` (no label lacked) are the
+defaults outside a finite support (`supp_ok` says both).
+
+- **Sorts on a row tail.** `rsat D k (row_Var r)` holds when `r`'s sort in `D` is
+  at or above `k`, so a record with an open row satisfies `Eq` or `Numeric` when
+  its fields do and its tail has the sort. This makes the open-row comparison
+  derivable (`GoatRowKinds.v`). `rsat` at `k_Any` holds of every row, a `Maybe`
+  entry included, so a substitution cannot break it.
+- **Lacks.** `rlacksD D l R` is `rlacks` with a variable tail read from `drk D`;
+  `T_SpreadL` gives `{...e1, l: e2} : {l : T ; R}` from `e1 : {R}` and
+  `rlacksD D l R`. `req_abs` is unchanged: it keeps the syntactic `rlacks`. For a
+  value the row has no variable (`req` preserves the tail, `req_rtail`), so
+  `rlacksD` is `rlacks` and `spread_step_typing_L` turns the derivation into a
+  `T_Spread` one with `req_abs`; preservation reuses `spread_step_typing`.
+- **Substitution.** A row substitution respects the kinds when `rkres D D' sr`:
+  `sr r` satisfies `r`'s sort in `D'` and lacks every label `r` lacks
+  (`rkok`). `sat_ap`, `bin_sig_ap`, `rlacksD_ap` and `casch_inst` take it beside
+  `kres`.
+- **Schemes and `let`.** `Sch` records `s_rk`, the kind of each quantified row
+  variable, and `gen G T k rk` takes it. `T_Let` and `T_Letrec` type the bound
+  term under `extr (ext D V k) Vr rk`, `D` extended on the generalized rows `Vr`
+  by `rk`, and `inst` demands `rkok D (s_rk s r) (sr r)` of each quantified row
+  variable's image. The shortcut "generalized rows carry no lacks" breaks
+  preservation: term substitution removes a binder from the context, which makes
+  a row variable generalizable that was free before, and the `let` body's
+  derivation then needs a lacks premise the original lacked. So `rk` rides
+  wherever `k` does: `casch` (through the row renaming `gr`), `sch_more_gen`
+  (`rkup` beside `kup`), `typing_denv_agree` (a row variable the context does not
+  mention goes to the empty row, which lacks everything), `typing_inst_gen`,
+  `tsubst_gen_core`, and `sch_equiv`.
+- **Algorithm W is unchanged.** Its environments have no constrained row variable
+  (`rtriv D`, part of `DOk`), so `rkres` holds vacuously (`rkres_triv`) and a
+  scheme it builds has `rk_triv`. The unifier's soundness statements take
+  `rtriv D`: its composed substitution respects the sorts only because no row
+  variable carries a kind.
+- **Statement B.** The row environment is read by `sat` only at a `row_Var`, so
+  it extends to recursive types (a `mu` body's row tails are read the same way,
+  `sat_open_mut` is unchanged) and to methods (`T_Obj` is typed against the same
+  environment) without another change to the environment; the algorithm side
+  (a unifier that updates `drk` and a completeness proof against it) is stage 7.3.
 
 ## Generic operators: sorted type variables (design Q)
 

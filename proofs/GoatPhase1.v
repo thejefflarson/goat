@@ -405,11 +405,11 @@ Definition k_lit : sort_fn := fun _ => k_Literal.
 
 Lemma inst_at_lit : forall U,
   sat d_any k_Literal U -> lct 0 U ->
-  inst d_any (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit).
+  inst d_any (typ_Arrow U U) (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit rk_triv).
 Proof.
   intros U HU HL.
   exists (fun a => if a == ga then U else typ_Var a), idr.
-  split; [ | split; [ | split; [ | split ] ] ].
+  split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
   - intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
       [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
@@ -417,6 +417,7 @@ Proof.
   - intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
     simpl in Ha. assert (a = ga) by fsetdec. subst a.
     destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+  - intros r Hr. exfalso. simpl in Hr. fsetdec.
   - split; [ intros a; simpl; match goal with |- context [if ?c then _ else _] => destruct c end; [ exact HL | exact I ] | intros r; exact I ].
 Qed.
 
@@ -424,7 +425,7 @@ Qed.
    instance of its scheme does not exist. *)
 Example generic_scheme_rejects_strings :
   ~ inst d_any (typ_Arrow typ_String typ_String)
-      (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit).
+      (gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit rk_triv).
 Proof.
   intros [st [sr [Hst [Hsr [Heq [Hsat _]]]]]]. simpl in Heq.
   injection Heq as Hs _.
@@ -444,7 +445,7 @@ Example generic_function_is_used_at_int_and_float :
     (typ_Record (row_Ext 0 typ_Int (row_Ext 1 typ_Float row_Empty))).
 Proof.
   unfold double_pair.
-  apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var ga) (typ_Var ga)) (k := k_lit);
+  apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var ga) (typ_Var ga)) (k := k_lit) (rk := rk_triv);
     [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Abs with (L := {}). intros x Hx.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
@@ -464,12 +465,12 @@ Proof.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
     apply T_Record; [ | reflexivity ]. eapply FT_cons.
     + eapply T_App; [ | apply T_Num; [ solve_uniq | ] ].
-      * apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit);
+      * apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit rk_triv);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_at_lit; exact I ].
       * exact I.
     + eapply FT_cons; [ | apply FT_nil; solve_uniq ].
       eapply T_App; [ | apply T_Dec; solve_uniq ].
-      apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit);
+      apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit rk_triv);
         [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_at_lit; exact I ].
 Qed.
 
@@ -481,16 +482,16 @@ Lemma numeral_binding_at : forall n U,
   typing d_any nil (e_let (e_num n) (e_fvar_b 0)) U.
 Proof.
   intros n U HU HL.
-  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
+  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit) (rk := rk_triv); [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Num; [ constructor | ].
-    cbn [sat]. rewrite (ext_in _ _ _ ga).
+    cbn [sat]. rewrite extr_dsort. rewrite (ext_in _ _ _ ga).
     + apply finer_refl.
     + simpl. apply AtomSetFacts.diff_iff. split; [ fsetdec | fsetdec ].
   - intros f Hf. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
-    apply T_Var with (s := gen nil (typ_Var ga) k_lit);
+    apply T_Var with (s := gen nil (typ_Var ga) k_lit rk_triv);
       [ solve_uniq | apply binds_cons_2; reflexivity | ].
     exists (fun a => if a == ga then U else typ_Var a), idr.
-    split; [ | split; [ | split; [ | split ] ] ].
+    split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
     + intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
         [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
     + intros r _. reflexivity.
@@ -498,6 +499,7 @@ Proof.
     + intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
       simpl in Ha. assert (a = ga) by fsetdec. subst a.
       destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+    + intros r Hr. exfalso. simpl in Hr. fsetdec.
     + split; [ intros a; simpl; match goal with |- context [if ?c then _ else _] => destruct c end; [ exact HL | exact I ] | intros r; exact I ].
 Qed.
 
@@ -515,11 +517,11 @@ Proof. split; apply numeral_binding_at; exact I. Qed.
 
 Lemma inst_numeral_at : forall U,
   sat d_any k_Literal U ->
-  inst d_any U (gen nil (typ_Var ga) k_lit).
+  inst d_any U (gen nil (typ_Var ga) k_lit rk_triv).
 Proof.
   intros U HU.
   exists (fun a => if a == ga then U else typ_Var a), idr.
-  split; [ | split; [ | split; [ | split ] ] ].
+  split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
   - intros a Ha. simpl in Ha. destruct (a == ga) as [E|E];
       [ subst; exfalso; apply Ha; fsetdec | reflexivity ].
   - intros r _. reflexivity.
@@ -527,6 +529,7 @@ Proof.
   - intros a Ha. simpl in Ha. apply AtomSetFacts.diff_iff in Ha as [Ha _].
     simpl in Ha. assert (a = ga) by fsetdec. subst a.
     destruct (ga == ga) as [E|E]; [ exact HU | congruence ].
+  - intros r Hr. exfalso. simpl in Hr. fsetdec.
   - split; [ | intros r; exact I ].
     intros a. simpl.
     match goal with |- context [if ?c then _ else _] => destruct c end;
@@ -545,21 +548,21 @@ Example numeral_binding_adapts_in_one_record :
               (fs_cons 1 (e_bin (e_fvar_b 0) bop_mul (e_num 2)) fs_nil))))
     (typ_Record (row_Ext 0 typ_Float (row_Ext 1 typ_Int row_Empty))).
 Proof.
-  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
+  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit) (rk := rk_triv); [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Num; [ constructor | ].
-    cbn [sat]. rewrite (ext_in _ _ _ ga).
+    cbn [sat]. rewrite extr_dsort. rewrite (ext_in _ _ _ ga).
     + apply finer_refl.
     + simpl. apply AtomSetFacts.diff_iff. split; [ fsetdec | fsetdec ].
   - intros f Hf. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
     apply T_Record; [ | reflexivity ]. eapply FT_cons.
     + eapply T_Bin with (A := typ_Float); [ | apply T_Dec; solve_uniq | apply sig_ring ].
-      * apply T_Var with (s := gen nil (typ_Var ga) k_lit);
+      * apply T_Var with (s := gen nil (typ_Var ga) k_lit rk_triv);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_numeral_at; exact I ].
       * reflexivity.
       * exact I.
     + eapply FT_cons; [ | apply FT_nil; solve_uniq ].
       eapply T_Bin with (A := typ_Int) (B := typ_Int); [ | apply T_Num; [ solve_uniq | exact I ] | apply sig_ring ].
-      * apply T_Var with (s := gen nil (typ_Var ga) k_lit);
+      * apply T_Var with (s := gen nil (typ_Var ga) k_lit rk_triv);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_numeral_at; exact I ].
       * reflexivity.
       * exact I.
@@ -602,7 +605,7 @@ Proof.
   exists T0. split; assumption.
 Qed.
 
-Lemma literal_without_literal_vars : forall D A,
+Lemma literal_without_literal_vars : forall (D : denv) A,
   (forall a, D a <> k_Literal) -> sat D k_Literal A -> A = typ_Int \/ A = typ_Float.
 Proof.
   intros D A Hd Hs. destruct A; simpl in Hs;
@@ -672,17 +675,17 @@ Proof.
   destruct (let_inv _ _ _ _ _ H) as [L [T1 [T2 [Hcase Hteq]]]].
   pick fresh x for L.
   assert (HxL : x `notin` L) by fsetdec.
-  assert (Hlit : forall D A, (forall a, D a <> k_Literal) -> sat D k_Literal A -> A = typ_Int \/ A = typ_Float)
+  assert (Hlit : forall (D : denv) A, (forall a, D a <> k_Literal) -> sat D k_Literal A -> A = typ_Int \/ A = typ_Float)
     by (intros; eapply literal_without_literal_vars; eassumption).
-  destruct Hcase as [[_ [k [Tm [Hlp [H1 Hb]]]]] | [H1 Hb]];
+  destruct Hcase as [[_ [k [rk [Tm [Hlp [H1 Hb]]]]]] | [H1 Hb]];
     destruct (one_field_inv _ _ _ _ _ H1) as [A [Hn Hrec]]; apply num_inv in Hn.
   - assert (HA : A = typ_Int \/ A = typ_Float).
-    { eapply Hlit; [ | exact Hn ]. intros a Ha. unfold ext in Ha.
+    { eapply Hlit; [ | exact Hn ]. intros a Ha. rewrite extr_dsort in Ha. unfold ext in Ha; cbn [dsort] in Ha.
       destruct (AtomSetImpl.mem a (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm nil)))) eqn:Em.
       - apply AtomSetFacts.mem_iff in Em. exact (Hlp eq_refl a Em Ha).
       - unfold d_any in Ha. discriminate Ha. }
     pose proof (Hb x HxL) as Hbx. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec] in Hbx.
-    eapply shared_body_not_int with (s := gen (pin_ctx Tm nil) T1 k); [ exact Hrec | exact HA | exact Hbx | ].
+    eapply shared_body_not_int with (s := gen (pin_ctx Tm nil) T1 k rk); [ exact Hrec | exact HA | exact Hbx | ].
     eapply teq_trans; [ exact Hi | apply teq_sym; exact Hteq ].
   - assert (HA : A = typ_Int \/ A = typ_Float).
     { eapply Hlit; [ | exact Hn ]. intros a Ha. unfold d_any in Ha. discriminate Ha. }

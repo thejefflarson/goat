@@ -67,11 +67,11 @@ Qed.
    monotype, survives a substitution of the algorithm. *)
 Lemma fields_ap : forall D D' s G p T0 fs R,
   OkS s -> WfCtx G -> (exists S, supp_ok D S) -> (exists S', supp_ok D' S') ->
-  kres D D' (sT s) ->
+  kres D D' (sT s) -> rkres D D' (sR s) ->
   field_typing D ((p ~ sch_mono T0) ++ G) fs R ->
   field_typing D' ((p ~ sch_mono (apT s T0)) ++ apC s G) fs (apR s R).
 Proof.
-  intros D D' s G p T0 fs R Hs HG [S HS] [S' HS'] Hk Hty.
+  intros D D' s G p T0 fs R Hs HG [S HS] [S' HS'] Hk Hkr Hty.
   pose proof (proj2 typing_uniq_mut _ _ _ _ Hty) as Hu0.
   apply uniq_cons_iff in Hu0. destruct Hu0 as [Hu Hp].
   pose proof Hs as Hs0. destruct Hs as [[A Hsup] _].
@@ -81,6 +81,7 @@ Proof.
   - exact HS.
   - exact HS'.
   - exact Hk.
+  - exact Hkr.
   - apply ctx_subst_cons; [ apply sch_subst_mono | ].
     intros x sc Hb. exists (apS s sc). split.
     + apply binds_apC; exact Hb.
@@ -92,10 +93,10 @@ Qed.
 (* The same for fields typed in a context with no binding of their own. *)
 Lemma fields_ap0 : forall D D' s G fs R,
   OkS s -> WfCtx G -> (exists S, supp_ok D S) -> (exists S', supp_ok D' S') ->
-  kres D D' (sT s) ->
+  kres D D' (sT s) -> rkres D D' (sR s) ->
   field_typing D G fs R -> field_typing D' (apC s G) fs (apR s R).
 Proof.
-  intros D D' s G fs R Hs [Hu Hw] [S HS] [S' HS'] Hk Hty.
+  intros D D' s G fs R Hs [Hu Hw] [S HS] [S' HS'] Hk Hkr Hty.
   pose proof Hs as Hs0.
   destruct Hs as [[A Hsup] [Ht [Hrw [Hfx Hfxr]]]].
   apply (proj2 typing_tsubst_gen_mut D G fs R Hty (sT s) (sR s) (apC s G) D' A S S').
@@ -103,6 +104,7 @@ Proof.
   - exact HS.
   - exact HS'.
   - exact Hk.
+  - exact Hkr.
   - intros x sc Hb. exists (apS s sc). split.
     + apply binds_apC; exact Hb.
     + apply sch_subst_apS; [exact Hs0 | exact (Hw _ _ Hb)].
@@ -114,12 +116,13 @@ Qed.
 Lemma fields_tsubst_fix : forall D D' S S' G p R fs st sr,
   field_typing D ((p ~ sch_mono (typ_Record R)) ++ G) fs R ->
   supp_ok D S -> supp_ok D' S' -> kres D D' st -> kres D D' idt ->
+  rkres D D' sr -> rkres D D' idr ->
   (forall a, a `in` ftv_ctx G -> st a = typ_Var a) ->
   (forall r, r `in` frv_ctx G -> sr r = row_Var r) ->
   lc_sub st sr ->
   field_typing D' ((p ~ sch_mono (typ_Record (ap_row st sr R))) ++ G) fs (ap_row st sr R).
 Proof.
-  intros D D' S S' G p R fs st sr Hty HS HS' Hk Hid Hfa Hfr Hlc.
+  intros D D' S S' G p R fs st sr Hty HS HS' Hk Hid Hkr Hrid Hfa Hfr Hlc.
   set (T := typ_Record R).
   set (st0 := fun a => if AtomSetImpl.mem a (ftv_typ T) then st a else typ_Var a).
   set (sr0 := fun r => if AtomSetImpl.mem r (frv_typ T) then sr r else row_Var r).
@@ -137,6 +140,8 @@ Proof.
   apply uniq_cons_iff in Hu0. destruct Hu0 as [Hu Hp].
   assert (Hk0 : kres D D' st0).
   { intros a. unfold st0. destruct (AtomSetImpl.mem a (ftv_typ T)); [ apply Hk | apply Hid ]. }
+  assert (Hkr0 : rkres D D' sr0).
+  { intros r. unfold sr0. destruct (AtomSetImpl.mem r (frv_typ T)); [ apply Hkr | apply Hrid ]. }
   subst T. simpl in Heq. injection Heq as Heq.
   rewrite <- Heq.
   assert (HG : tr_compat st0 sr0 G G).
@@ -163,6 +168,7 @@ Proof.
   - exact HS.
   - exact HS'.
   - exact Hk0.
+  - exact Hkr0.
   - apply ctx_subst_cons; [ rewrite <- Hrow; apply sch_subst_mono | ].
     apply ctx_subst_fix; [ | | exact Hlc0 ].
     + intros a Ha. unfold st0. destruct (AtomSetImpl.mem a (ftv_typ (typ_Record R)));
@@ -181,7 +187,7 @@ Qed.
 Lemma kres_ext_odd : forall D n V k,
   DOk D n -> (forall a, a `in` V -> od a) -> kres D (ext D V k) idt.
 Proof.
-  intros D n V k HD Hodd a. unfold idt. simpl.
+  intros D n V k HD Hodd a. unfold idt. cbn [sat].
   destruct (AtomSetImpl.mem a V) eqn:Em.
   - apply AtomSetFacts.mem_iff in Em. rewrite (ext_in _ _ _ _ Em).
     rewrite (DOk_odd D n a HD (Hodd a Em)). apply finer_any.
@@ -205,6 +211,8 @@ Proof.
   - apply supp_ok_ext_set. exact HS.
   - apply (kres_rename D G (typ_Record R) n HD).
   - apply (kres_ext_odd D n). exact HD. intros a Ha. exact (gen_ren_od_t D G (typ_Record R) a Ha).
+  - apply rkres_triv. exact (DOk_rtriv D n HD).
+  - apply rkres_triv. exact (DOk_rtriv D n HD).
   - intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a (gen_vars_t G (typ_Record R))) as [Hin|Hin];
       [ apply In_la in Hin; destruct Hin as [_ Hin]; contradiction | reflexivity ].
   - intros a Ha. unfold rename_r. destruct (in_dec Atom.eq_dec a (gen_vars_r G (typ_Record R))) as [Hin|Hin];

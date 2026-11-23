@@ -58,7 +58,7 @@ Definition sbR (r : atom) (R : row) : sub :=
   Sub idt (fun s => if Atom.eq_dec s r then R else row_Var s).
 
 Definition apC (s : sub) (G : ctx) : ctx :=
-  List.map (fun p => (fst p, Sch (s_tq (snd p)) (s_rq (snd p)) (apT s (s_body (snd p))) (s_sk (snd p)))) G.
+  List.map (fun p => (fst p, Sch (s_tq (snd p)) (s_rq (snd p)) (apT s (s_body (snd p))) (s_sk (snd p)) (s_rk (snd p)))) G.
 
 (* ------------------------------------------------------------------ *)
 (* Sorts                                                                *)
@@ -71,7 +71,7 @@ Definition apC (s : sub) (G : ctx) : ctx :=
    sort, so the environment changes by [upd] on atoms no one has used. *)
 
 Definition upd (D : denv) (a : atom) (k : sort) : denv :=
-  fun b => if Atom.eq_dec b a then k else D b.
+  DEnv (fun b => if Atom.eq_dec b a then k else D b) (drk D).
 
 Definition finer_b (k1 k2 : sort) : bool :=
   match k1, k2 with
@@ -268,8 +268,9 @@ Definition inst_sub (s : scheme) (n : nat) : sub :=
    recorded for it. *)
 Definition inst_den (D : denv) (s : scheme) (n : nat) : denv :=
   let lq := AtomSetImpl.elements (s_tq s) in
-  fun b => fold_right (fun a acc => if Atom.eq_dec b (ea (n + idx a lq)) then s_sk s a else acc)
-                      (D b) lq.
+  DEnv (fun b => fold_right (fun a acc => if Atom.eq_dec b (ea (n + idx a lq)) then s_sk s a else acc)
+                            (D b) lq)
+       (drk D).
 
 Definition instantiate (D : denv) (s : scheme) (n : nat) : typ * denv * nat :=
   (apT (inst_sub s n) (s_body s), inst_den D s n,
@@ -302,7 +303,7 @@ Definition gen_ren (D : denv) (G : ctx) (T : typ) : scheme :=
   Sch (aset (List.map (fun a => oa (idx a la)) la))
       (aset (List.map (fun r => oa (idx r lr)) lr))
       (ap_typ (rename_t la) (rename_r lr) T)
-      (gen_sk D la).
+      (gen_sk D la) (fun _ => rk_any).
 
 (* [let_pin] is the type whose free variables a [let] leaves monomorphic
    ([let_open], [lit_pinned] in [GoatDefs.v]): [gen_ren] generalizes over the

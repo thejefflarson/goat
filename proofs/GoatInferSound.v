@@ -143,11 +143,11 @@ Proof. intros. apply let_pin_open. reflexivity. Qed.
 Example function_binding_pins_nothing : forall D e T, let_pin D (e_abs e) T = typ_Unit.
 Proof. intros. apply let_pin_open. reflexivity. Qed.
 
-Example name_binding_pins_its_literals : forall D x T a,
+Example name_binding_pins_its_literals : forall (D : denv) x T a,
   a `in` ftv_typ T -> D a = k_Literal -> a `in` ftv_typ (let_pin D (e_fvar_f x) T).
 Proof. intros D x T a H1 H2. apply let_pin_ftv; [ reflexivity | split; assumption ]. Qed.
 
-Example record_binding_leaves_other_sorts_open : forall D fs T a,
+Example record_binding_leaves_other_sorts_open : forall (D : denv) fs T a,
   D a <> k_Literal -> a `notin` ftv_typ (let_pin D (e_rec fs) T).
 Proof.
   intros D fs T a H Hin. apply let_pin_ftv in Hin; [ | reflexivity ]. destruct Hin as [_ Hin]. contradiction.
@@ -174,9 +174,10 @@ Qed.
 Lemma Good_comp : forall D n s1 D1 n1 s2 D2 n2,
   Good D n s1 D1 n1 -> Good D1 n1 s2 D2 n2 -> Good D n (scomp s2 s1) D2 n2.
 Proof.
-  intros D n s1 D1 n1 s2 D2 n2 (Hd & Hs1 & _ & Hl1 & Hi1 & Hk1) (_ & Hs2 & Hd2 & Hl2 & Hi2 & Hk2).
+  intros D n s1 D1 n1 s2 D2 n2 (Hd & Hs1 & Hd1 & Hl1 & Hi1 & Hk1) (_ & Hs2 & Hd2 & Hl2 & Hi2 & Hk2).
   exact (conj Hd (conj (OkS_comp _ _ Hs2 Hs1) (conj Hd2 (conj (Nat.le_trans _ _ _ Hl1 Hl2)
-    (conj (kres_idt_trans _ _ _ Hi1 Hi2) (kres_scomp _ _ _ _ _ Hk1 Hk2)))))).
+    (conj (kres_idt_trans _ _ _ (DOk_rtriv _ _ Hd1) Hi1 Hi2)
+          (kres_scomp _ _ _ _ _ (DOk_rtriv _ _ Hd1) Hk1 Hk2)))))).
 Qed.
 
 Lemma Good_unify : forall D n s n',
@@ -189,9 +190,9 @@ Qed.
 Lemma Good_lift : forall D n D' n' s D'' n'',
   Good D n sid D' n' -> Good D' n' s D'' n'' -> Good D n s D'' n''.
 Proof.
-  intros D n D' n' s D'' n'' (Hd & _ & _ & Hl1 & Hi1 & _) (_ & Hs & Hd2 & Hl2 & Hi2 & Hk2).
+  intros D n D' n' s D'' n'' (Hd & _ & Hd1 & Hl1 & Hi1 & _) (_ & Hs & Hd2 & Hl2 & Hi2 & Hk2).
   exact (conj Hd (conj Hs (conj Hd2 (conj (Nat.le_trans _ _ _ Hl1 Hl2)
-    (conj (kres_idt_trans _ _ _ Hi1 Hi2) (kres_refine_l _ _ _ _ Hi1 Hk2)))))).
+    (conj (kres_idt_trans _ _ _ (DOk_rtriv _ _ Hd1) Hi1 Hi2) (kres_refine_l _ _ _ _ Hi1 Hk2)))))).
 Qed.
 
 Lemma Good_upd : forall D n k, DOk D n -> Good D n sid (upd D (ea n) k) (S n).
@@ -208,11 +209,23 @@ Proof.
   exact (conj Hd (conj Hs (conj Hd' (conj (Nat.le_trans _ _ _ Hnm Hl) (conj Hi Hk))))).
 Qed.
 
+(* The environment of a step of the algorithm has no constrained row variable:
+   a hypothesis that it is well kept ([DOk]) or the source or target of a good
+   step says so. *)
+Ltac solve_rtriv :=
+  multimatch goal with
+  | H : rtriv _ |- _ => exact H
+  | H : DOk _ _ |- _ => exact (DOk_rtriv _ _ H)
+  | H : Good _ _ _ _ _ |- _ => exact (DOk_rtriv _ _ (proj1 H))
+  | H : Good _ _ _ _ _ |- _ => exact (DOk_rtriv _ _ (proj1 (proj2 (proj2 H))))
+  end.
+
 Lemma typing_ap_G : forall D n s D' n' G e T,
   Good D n s D' n' -> WfCtx G -> typing D G e T -> typing D' (apC s G) e (apT s T).
 Proof.
   intros D n s D' n' G e T (Hd & Hs & Hd' & _ & _ & Hk) HG Hty.
-  exact (typing_ap D D' s G e T Hs HG (DOk_supp D n Hd) (DOk_supp D' n' Hd') Hk Hty).
+  exact (typing_ap D D' s G e T Hs HG (DOk_supp D n Hd) (DOk_supp D' n' Hd') Hk
+           (rkres_triv _ _ _ (DOk_rtriv _ _ Hd)) Hty).
 Qed.
 
 Lemma typing_refine : forall D n D' n' G e T,
@@ -232,7 +245,7 @@ Proof.
   destruct Hs as [_ [Ht [_ [Hfx _]]]].
   destruct (AtomSetImpl.mem a V) eqn:Em.
   - apply AtomSetFacts.mem_iff in Em. rewrite (ext_in _ _ _ _ Em).
-    rewrite (Hfx a (not_ev_od a (Hodd a Em))). simpl. rewrite (ext_in _ _ _ _ Em). apply finer_refl.
+    rewrite (Hfx a (not_ev_od a (Hodd a Em))). cbn [sat]. rewrite (ext_in _ _ _ _ Em). apply finer_refl.
   - apply AtomSetFacts.not_mem_iff in Em. unfold kres in Hk.
     pose proof (Hk a) as Hka.
     rewrite (ext_out _ _ _ _ Em).
@@ -499,7 +512,8 @@ Lemma fields_ap_G : forall D n s D' n' G fs R,
   Good D n s D' n' -> WfCtx G -> field_typing D G fs R -> field_typing D' (apC s G) fs (apR s R).
 Proof.
   intros D n s D' n' G fs R (Hd & Hs & Hd' & _ & _ & Hk) HG Hty.
-  exact (fields_ap0 D D' s G fs R Hs HG (DOk_supp D n Hd) (DOk_supp D' n' Hd') Hk Hty).
+  exact (fields_ap0 D D' s G fs R Hs HG (DOk_supp D n Hd) (DOk_supp D' n' Hd') Hk
+           (rkres_triv _ _ _ (DOk_rtriv _ _ Hd)) Hty).
 Qed.
 
 (* A method field's type is a function of the receiver [P]. *)
@@ -561,7 +575,7 @@ Proof.
     inversion Hft as [ | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 ]; subst.
     destruct (EvR_ext_inv _ _ _ HR) as [HT HR'].
     destruct (EvR_ext_inv _ _ _ HRsl) as [HA HRsl'].
-    destruct (unify_co_sound _ _ _ _ _ _ _ _ E1 HT HA) as (Hs1 & Hch & Hk1 & Hl1).
+    destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E1 HT HA) as (Hs1 & Hch & Hk1 & Hl1).
     pose proof (Good_unify D n s1 n1 Hs1 Hk1 Hl1 HD) as Gd1.
     pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
     pose proof (DOk_mono D n n1 HD Hl1) as HD1.
@@ -589,7 +603,7 @@ Proof.
     inversion Hft as [ | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 | D0 G0 l0 e0 T0 fs0 R0 Hty0 Hrest0 ]; subst.
     destruct (EvR_ext_inv _ _ _ HR) as [HT HR'].
     destruct (EvR_ext_inv _ _ _ HRsl) as [HA HRsl'].
-    destruct (unify_co_sound _ _ _ _ _ _ _ _ E1 HT HA) as (Hs1 & Hch & Hk1 & Hl1).
+    destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E1 HT HA) as (Hs1 & Hch & Hk1 & Hl1).
     pose proof (Good_unify D n s1 n1 Hs1 Hk1 Hl1 HD) as Gd1.
     pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
     pose proof (DOk_mono D n n1 HD Hl1) as HD1.
@@ -671,15 +685,15 @@ Proof.
     apply mc_abs; [ apply teq_apT; exact Hx | apply chain_apT; assumption ].
 Qed.
 
-Lemma unify_mem_sound : forall f D e T A n s n' e',
+Lemma unify_mem_sound : forall f D e T A n s n' e', rtriv D ->
   unify_mem f D e T A n = Some (s, n', e') -> EvT T -> EvT A ->
   OkS s /\ mem_co e e' (apT s T) (apT s A) /\ kres D D (sT s) /\ n <= n' /\
   erase e' = erase e /\ (lce 0 e -> lce 0 e') /\ (forall b, e = e_abs b -> exists b', e' = e_abs b').
 Proof.
-  intros f D e T A n s n' e' H HT HA. unfold unify_mem in H.
+  intros f D e T A n s n' e' Hrt H HT HA. unfold unify_mem in H.
   destruct (unify_t f D T A n) as [[s0 n0]|] eqn:Et.
   - inversion H; subst; clear H.
-    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ Et HT HA) as (Hs & Ht & Hk & Hl).
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ ltac:(solve_rtriv) Et HT HA) as (Hs & Ht & Hk & Hl).
     refine (conj Hs (conj (mc_same _ _ _ Ht) (conj Hk (conj Hl (conj eq_refl (conj (fun h => h) _)))))).
     intros b ->. eexists; reflexivity.
   - destruct e as [ | | | | | | b | | | | | | | | | | | | | | | | ]; try discriminate H.
@@ -689,10 +703,10 @@ Proof.
     destruct (unify_co f D (apT s1 Y) (apT s1 Y') n1) as [[[s2 cs] n2]|] eqn:E2; [ | discriminate H ].
     inversion H; subst; clear H.
     destruct (EvT_arrow_inv _ _ HT) as [HX HY]. destruct (EvT_arrow_inv _ _ HA) as [HX' HY'].
-    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E1 HX HX') as (Hs1 & Hx & Hk1 & Hl1).
-    destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 (EvT_ap _ _ Hs1 HY) (EvT_ap _ _ Hs1 HY'))
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ ltac:(solve_rtriv) E1 HX HX') as (Hs1 & Hx & Hk1 & Hl1).
+    destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 (EvT_ap _ _ Hs1 HY) (EvT_ap _ _ Hs1 HY'))
       as (Hs2 & Hc & Hk2 & Hl2).
-    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (kres_scomp D D D s1 s2 Hk1 Hk2) (conj _ (conj _ (conj _ _)))))).
+    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (kres_scomp D D D s1 s2 ltac:(solve_rtriv) Hk1 Hk2) (conj _ (conj _ (conj _ _)))))).
     + change (mem_co (e_abs b) (e_abs (coerce cs b))
                 (typ_Arrow (apT (scomp s2 s1) X) (apT (scomp s2 s1) Y))
                 (typ_Arrow (apT (scomp s2 s1) X') (apT (scomp s2 s1) Y'))).
@@ -711,12 +725,12 @@ Proof.
   - rewrite !apR_Ext. constructor; [ apply mem_co_ap; assumption | assumption ].
 Qed.
 
-Lemma unify_grp_sound : forall f D fs R1 R2 n s n' fs2,
+Lemma unify_grp_sound : forall f D fs R1 R2 n s n' fs2, rtriv D ->
   unify_grp f D fs R1 R2 n = Some (s, n', fs2) -> EvR R1 -> EvR R2 ->
   OkS s /\ pw_co fs (apR s R1) (apR s R2) fs2 /\ kres D D (sT s) /\ n <= n' /\
   erase_fields fs2 = erase_fields fs /\ (lcef 0 fs -> lcef 0 fs2) /\ (fn_group fs -> fn_group fs2).
 Proof.
-  induction f as [|f IH]; intros D fs R1 R2 n s n' fs2 H H1 H2; [ discriminate | ].
+  induction f as [|f IH]; intros D fs R1 R2 n s n' fs2 Hrt H H1 H2; [ discriminate | ].
   cbn [unify_grp] in H.
   destruct fs as [|l e rest|l e rest]; destruct R1 as [|r|l1 T R1'|lm Pm Tm Rm];
     destruct R2 as [|r2|l2 A R2'|lm2 Pm2 Tm2 Rm2]; try discriminate H.
@@ -730,10 +744,10 @@ Proof.
     destruct (unify_grp f D rest (apR s1 R1') (apR s1 R2') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
     inversion H; subst; clear H.
     destruct (EvR_ext_inv _ _ _ H1) as [HT HR1]. destruct (EvR_ext_inv _ _ _ H2) as [HA HR2].
-    destruct (unify_mem_sound _ _ _ _ _ _ _ _ _ E1 HT HA) as (Hs1 & Hm & Hk1 & Hl1 & Her1 & Hlc1 & Hab1).
-    destruct (IH _ _ _ _ _ _ _ _ E2 (EvR_ap s1 _ Hs1 HR1) (EvR_ap s1 _ Hs1 HR2))
+    destruct (unify_mem_sound _ _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E1 HT HA) as (Hs1 & Hm & Hk1 & Hl1 & Her1 & Hlc1 & Hab1).
+    destruct (IH _ _ _ _ _ _ _ _ Hrt E2 (EvR_ap s1 _ Hs1 HR1) (EvR_ap s1 _ Hs1 HR2))
       as (Hs2 & Hp & Hk2 & Hl2 & Her2 & Hlc2 & Hab2).
-    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (kres_scomp D D D s1 s2 Hk1 Hk2) (conj _ (conj _ (conj _ _)))))).
+    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (kres_scomp D D D s1 s2 ltac:(solve_rtriv) Hk1 Hk2) (conj _ (conj _ (conj _ _)))))).
     + rewrite !apR_Ext. rewrite <- !apT_comp, <- !apR_comp.
       constructor; [ apply mem_co_ap; assumption | exact Hp ].
     + lia.
@@ -807,7 +821,7 @@ Proof.
       split; [apply EvT_var, ev_ea|].
       refine (conj _ (conj eq_refl I)).
       apply T_Num; [ apply uniq_apC; exact (proj1 HG) | ].
-      simpl. rewrite upd_same. apply finer_refl.
+      cbn [sat]. rewrite upd_same. apply finer_refl.
     + inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       split; [apply Good_id; exact HD|]. split; [apply EvT_Float|].
       refine (conj _ (conj eq_refl I)). apply T_Dec. apply uniq_apC. exact (proj1 HG).
@@ -852,7 +866,7 @@ Proof.
       pose proof Gd2 as (_ & Hs2 & HD2 & _).
       pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
       assert (Hbeta : EvT (typ_Var (ea n2))) by (apply EvT_var, ev_ea).
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E3 (EvT_ap s2 T1 Hs2 HT1)
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E3 (EvT_ap s2 T1 Hs2 HT1)
                   (EvT_arrow _ _ HT2 Hbeta)) as (Hs3 & Hch & Hk3 & Hl3).
       pose proof (Good_unify D2 n2 s3 n3 Hs3 Hk3 ltac:(lia) HD2) as Gd3.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) | ].
@@ -927,7 +941,7 @@ Proof.
       { unfold Pz, pin_ctx. simpl. unfold frv_sch. simpl. fsetdec. }
       apply T_Let with (L := dom G `union` {{fresh_var (apC s1 G) e2}})
                        (T1 := apT s2 (s_body (gen_ren D1 Pz T1)))
-                       (k := s_sk (gen_ren D1 Pz T1)) (Tm := apT s2 Tm).
+                       (k := s_sk (gen_ren D1 Pz T1)) (rk := s_rk (gen_ren D1 Pz T1)) (Tm := apT s2 Tm).
       * exact Hgv.
       * intros Hc a Ha.
         pose proof Htq as Htq'. cbn [apS s_tq gen s_body s_sk] in Htq'.
@@ -946,10 +960,13 @@ Proof.
                       s2 (apC s1 G) us1 (s_body (gen_ren D1 Pz T1)) Hs2 HG1
                       (ex_intro _ _ (supp_ok_ext_set _ _ _ _ HS1))
                       (ex_intro _ _ (supp_ok_ext_set _ _ _ _ HS2))
-                      (kres_ext_lift D1 D2 s2 _ _ Hs2 Hk2 (gen_ren_od_t D1 Pz T1)) Hg) as Hl.
+                      (kres_ext_lift D1 D2 s2 _ _ Hs2 Hk2 (gen_ren_od_t D1 Pz T1))
+                      (rkres_triv _ _ _ (DOk_rtriv _ _ HD1)) Hg) as Hl.
         eapply typing_pw; [ exact Hl | ].
-        intros a. apply ext_set_eq.
-        cbn [apS s_tq gen s_body s_sk] in Htq. rewrite Htq. rewrite Hpt. reflexivity.
+        eapply denv_eq_trans.
+        -- apply ext_set_eq_d.
+           cbn [apS s_tq gen s_body s_sk] in Htq. rewrite Htq. rewrite Hpt. reflexivity.
+        -- apply denv_eq_extr_triv; [ exact (DOk_rtriv _ _ HD2) | intros r; reflexivity ].
       * intros y Hy.
         assert (Hdom : y `notin` dom ((fresh_var (apC s1 G) e2 ~ apS s2 (gen_ren D1 Pz T1)) ++ apC s2 (apC s1 G)))
           by (simpl; rewrite dom_apC, dom_apC; fsetdec).
@@ -958,8 +975,8 @@ Proof.
         eapply typing_sch_equiv_ctx; [ exact Hren | ].
         apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
         eapply sch_equiv_trans; [ exact Hequiv | ].
-        unfold sch_equiv, gen. cbn [s_tq s_rq s_body s_sk].
-        split; [ | split; [ | split; [ reflexivity | intros a Ha; reflexivity ] ] ]; fsetdec.
+        unfold sch_equiv, gen. cbn [s_tq s_rq s_body s_sk s_rk].
+        split; [ | split; [ | split; [ reflexivity | split; [ intros a Ha; reflexivity | intros r Hr; reflexivity ] ] ] ]; fsetdec.
     + (* recursive group *)
       destruct (is_fn_group fl) eqn:Hfg; [|discriminate].
       set (p := fresh_var G (e_rec fl)) in *.
@@ -985,10 +1002,11 @@ Proof.
       rewrite apC_app, apC_single in Hty1.
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       pose proof (EvR_ap s1 _ Hs1 HR0) as HR0'.
-      destruct (unify_grp_sound f D1 _ _ _ _ _ _ _ E2 HR1 HR0') as (Hs2 & Hpw & Hk2 & Hl2 & Her_u & Hlc_u & Hfg_u).
+      destruct (unify_grp_sound f D1 _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HR1 HR0') as (Hs2 & Hpw & Hk2 & Hl2 & Her_u & Hlc_u & Hfg_u).
       pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
       pose proof (DOk_supp D1 n1 HD1) as HS1.
-      pose proof (fields_ap D1 D1 s2 (apC s1 G) p _ _ _ Hs2 HG1 HS1 HS1 Hk2 Hty1) as Hty2.
+      pose proof (fields_ap D1 D1 s2 (apC s1 G) p _ _ _ Hs2 HG1 HS1 HS1 Hk2
+                    (rkres_triv _ _ _ (DOk_rtriv _ _ HD1)) Hty1) as Hty2.
       pose proof (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) as Gd21.
       assert (Hs21 : OkS (scomp s2 s1)) by (destruct Gd21 as (_ & H21 & _); exact H21).
       assert (HRf : EvR Rf) by (apply EvR_ap; assumption).
@@ -1022,17 +1040,21 @@ Proof.
                     s3 G1 p _ _ _ Hs3 HG21
                     (ex_intro _ _ (supp_ok_ext_set _ _ _ _ HS1'))
                     (ex_intro _ _ (supp_ok_ext_set _ _ _ _ HS3))
-                    (kres_ext_lift D1 D3 s3 _ _ Hs3 Hk3 (gen_ren_od_t D1 G1 (typ_Record Rf))) Hty5) as Hty6.
+                    (kres_ext_lift D1 D3 s3 _ _ Hs3 Hk3 (gen_ren_od_t D1 G1 (typ_Record Rf)))
+                    (rkres_triv _ _ _ (DOk_rtriv _ _ HD1)) Hty5) as Hty6.
       apply T_Letrec with (L := dom G `union` {{p}} `union` {{q}})
         (R := apR s3 (ap_row (rename_t (gen_vars_t G1 (typ_Record Rf)))
                              (rename_r (gen_vars_r G1 (typ_Record Rf))) Rf))
-        (k := s_sk (gen_ren D1 G1 (typ_Record Rf))).
+        (k := s_sk (gen_ren D1 G1 (typ_Record Rf))) (rk := s_rk (gen_ren D1 G1 (typ_Record Rf))).
       * apply fn_group_clf. apply Hfg_u. exact (infer_fields_fn_group _ _ _ _ _ _ _ _ _ _
                                      (is_fn_group_open_rec fl 0 (e_fvar_f p) Hfg) E1).
       * intros y Hy.
         pose proof (fields_open_cl _ (apC s3 G1) p y _ _ _ Hty6 (Hlc_u Hlc_Hty1)
                       ltac:(simpl; rewrite dom_apC; unfold G1; rewrite dom_apC; fsetdec)) as Hf.
-        eapply field_typing_pw; [ exact Hf | intros a; apply ext_set_eq; exact Htq ].
+        eapply field_typing_pw; [ exact Hf | ].
+        eapply denv_eq_trans.
+        -- apply ext_set_eq_d. exact Htq.
+        -- apply denv_eq_extr_triv; [ exact (DOk_rtriv _ _ HD3) | intros r; reflexivity ].
       * intros y Hy.
         pose proof (typing_open_cl D3 (apC s3 G1) q y
                       (apS s3 (gen_ren D1 G1 (typ_Record Rf))) us3 T3 Hty4 Hlc_Hty4
@@ -1099,7 +1121,7 @@ Proof.
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       assert (Hrow : EvT (typ_Record (row_Ext l (typ_Var (ea n1)) (row_Var (ea (S n1)))))).
       { apply EvT_Record, EvR_ext; [ apply EvT_var, ev_ea | apply EvR_var, ev_ea ]. }
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 HT1 Hrow) as (Hs2 & Hch & Hk2 & Hl2).
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 Hrow) as (Hs2 & Hch & Hk2 & Hl2).
       pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 ltac:(lia) HD1) as Gd2.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
       split; [ apply EvT_ap; [exact Hs2 | apply EvT_var, ev_ea] | ].
@@ -1127,7 +1149,7 @@ Proof.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 HT1 EvT_Bool) as (Hs2 & Hch2 & Hk2 & Hl2).
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 EvT_Bool) as (Hs2 & Hch2 & Hk2 & Hl2).
       pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
       pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
       assert (HD2 : DOk D1 n2) by (destruct Gd2 as (_ & _ & H2 & _); exact H2).
@@ -1137,7 +1159,7 @@ Proof.
       destruct (IHe _ _ _ _ _ _ _ _ _ E4 HG3 HD3) as (Gd4 & HT3 & Hty3 & Her_Hty3 & Hlc_Hty3).
       pose proof Gd4 as (_ & Hs4 & HD4 & _).
       pose proof (WfCtx_ap s4 _ Hs4 HG3) as HG4.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E5 (EvT_ap s4 T2 Hs4 HT2) HT3)
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E5 (EvT_ap s4 T2 Hs4 HT2) HT3)
         as (Hs5 & Hch5 & Hk5 & Hl5).
       pose proof (Good_unify D4 n4 s5 n5 Hs5 Hk5 Hl5 HD4) as Gd5.
       pose proof (WfCtx_ap s5 _ Hs5 HG4) as HG5.
@@ -1181,11 +1203,11 @@ Proof.
         pose proof (Good_upd D2 n2 (generic_sort o) HD2) as GdU.
         fold D2' in GdU.
         assert (HD2' : DOk D2' (S n2)) by (destruct GdU as (_ & _ & H2 & _); exact H2).
-        destruct (unify_co_sound _ _ _ _ _ _ _ _ E3 (EvT_ap s2 T1 Hs2 HT1) HEc)
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E3 (EvT_ap s2 T1 Hs2 HT1) HEc)
           as (Hs3 & Hch3 & Hk3 & Hl3).
         pose proof (Good_unify D2' (S n2) s3 n3 Hs3 Hk3 Hl3 HD2') as Gd3.
         pose proof (WfCtx_ap s3 _ Hs3 HG2) as HG3.
-        destruct (unify_co_sound _ _ _ _ _ _ _ _ E4 (EvT_ap s3 T2 Hs3 HT2)
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E4 (EvT_ap s3 T2 Hs3 HT2)
                     (EvT_ap s3 _ Hs3 HEc)) as (Hs4 & Hch4 & Hk4 & Hl4).
         pose proof (Good_unify D2' n3 s4 n4 Hs4 Hk4 Hl4 (DOk_mono D2' (S n2) n3 HD2' Hl3)) as Gd4.
         split.
@@ -1200,7 +1222,7 @@ Proof.
         rewrite <- !apC_comp.
         assert (Hsat : sat D2' (generic_sort o) (apT s4 (apT s3 (typ_Var (ea n2))))).
         { pose proof (Hk3 (ea n2)) as H3. rewrite HN in H3.
-          exact (sat_ap D2' D2' (generic_sort o) _ (sT s4) (sR s4) Hk4 H3). }
+          exact (sat_ap D2' D2' (generic_sort o) _ (sT s4) (sR s4) Hk4 (rkres_triv _ _ _ (DOk_rtriv _ _ HD2')) H3). }
         eapply T_Bin with (A := apT s4 (apT s3 (typ_Var (ea n2)))).
         -- pose proof (chain_apT s4 _ _ _ Hs4 Hch3) as Hch3'.
            eapply coerce_typing; [ exact Hch3' | ].
@@ -1222,11 +1244,11 @@ Proof.
         inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
         assert (Hg : ground typ_Float) by (right; left; reflexivity).
         pose proof (ground_EvT _ Hg) as HTa.
-        destruct (unify_co_sound _ _ _ _ _ _ _ _ E4 (EvT_ap s2 T1 Hs2 HT1) HTa)
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E4 (EvT_ap s2 T1 Hs2 HT1) HTa)
           as (Hs3 & Hch3 & Hk3 & Hl3).
         pose proof (Good_unify D2 n2 s3 n3 Hs3 Hk3 Hl3 HD2) as Gd3.
         pose proof (WfCtx_ap s3 _ Hs3 HG2) as HG3.
-        destruct (unify_co_sound _ _ _ _ _ _ _ _ E5 (EvT_ap s3 T2 Hs3 HT2) HTa)
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E5 (EvT_ap s3 T2 Hs3 HT2) HTa)
           as (Hs4 & Hch4 & Hk4 & Hl4).
         pose proof (Good_unify D2 n3 s4 n4 Hs4 Hk4 Hl4 (DOk_mono D2 n2 n3 HD2 Hl3)) as Gd4.
         pose proof (WfCtx_ap s4 _ Hs4 HG3) as HG4.
@@ -1261,7 +1283,7 @@ Proof.
       assert (HEc : EvT (typ_Var (ea n1))) by (apply EvT_var, ev_ea).
       pose proof (Good_upd D1 n1 k_Literal HD1) as GdU. fold D1' in GdU.
       assert (HD1' : DOk D1' (S n1)) by (destruct GdU as (_ & _ & H2 & _); exact H2).
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 HT1 HEc) as (Hs2 & Hch & Hk2 & Hl2).
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 HEc) as (Hs2 & Hch & Hk2 & Hl2).
       pose proof (Good_unify D1' (S n1) s2 n2 Hs2 Hk2 Hl2 HD1') as Gd2.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 (Good_lift _ _ _ _ _ _ _ GdU Gd2)) | ].
       split; [ apply EvT_Float | ].
@@ -1284,7 +1306,7 @@ Proof.
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       pose proof (EvT_fresh_tys (nparams w1) n1) as HTs.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 HT1 (EvT_tag_payload _ _ _ HTs))
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 (EvT_tag_payload _ _ _ HTs))
         as (Hs2 & Hch & Hk2 & Hl2).
       pose proof (Good_unify D1 (n1 + nparams w1) s2 n2 Hs2 Hk2 Hl2
                     (DOk_mono D1 n1 (n1 + nparams w1) HD1 ltac:(lia))) as Gd2'.
@@ -1312,7 +1334,7 @@ Proof.
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       pose proof (EvT_fresh_tys (nparams w2) n1) as HTs.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 HT1 (EvT_grp _ _ (EvT_spine _ HTs)))
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 (EvT_grp _ _ (EvT_spine _ HTs)))
         as (Hs2 & Hch & Hk2 & Hl2).
       pose proof (Good_unify D1 (n1 + nparams w2) s2 n2 Hs2 Hk2 Hl2
                     (DOk_mono D1 n1 (n1 + nparams w2) HD1 ltac:(lia))) as Gd2'.
@@ -1362,7 +1384,7 @@ Proof.
       pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
       assert (Hrow : EvT (typ_Record (row_Maybe l8 (typ_Var (ea n2)) T2 (row_Var (ea (S n2)))))).
       { apply EvT_Record, EvR_maybe; [ apply EvT_var, ev_ea | exact HT2 | apply EvR_var, ev_ea ]. }
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E3 (EvT_ap s2 T1 Hs2 HT1) Hrow)
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E3 (EvT_ap s2 T1 Hs2 HT1) Hrow)
         as (Hs3 & Hch & Hk3 & Hl3).
       pose proof (Good_unify D2 n2 s3 n3 Hs3 Hk3 ltac:(lia) HD2) as Gd3.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) | ].
@@ -1388,7 +1410,7 @@ Proof.
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       assert (Hrow : EvT (typ_Record (row_Ext l10 (typ_Var (ea n1)) (row_Var (ea (S n1)))))).
       { apply EvT_Record, EvR_ext; [ apply EvT_var, ev_ea | apply EvR_var, ev_ea ]. }
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 HT1 Hrow) as (Hs2 & Hch & Hk2 & Hl2).
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 Hrow) as (Hs2 & Hch & Hk2 & Hl2).
       pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 ltac:(lia) HD1) as Gd2.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
       split; [ apply EvT_ap; [ exact Hs2 | apply EvT_Record, EvR_var, ev_ea ] | ].
@@ -1435,7 +1457,7 @@ Proof.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her1 & Hlc1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 HT1 (EvT_ap s1 res Hs1 Hres))
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 (EvT_ap s1 res Hs1 Hres))
         as (Hs2 & Hch & Hk2 & Hl2).
       pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
       split; [ exact (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) | ].
@@ -1461,7 +1483,7 @@ Proof.
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       rewrite apC_app, apC_single, apS_mono, apT_tag_payload in Hty1.
-      destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 HT1 (EvT_ap s1 res Hs1 Hres))
+      destruct (unify_co_sound _ _ _ _ _ _ _ _ ltac:(solve_rtriv) E2 HT1 (EvT_ap s1 res Hs1 Hres))
         as (Hs2 & Hch2 & Hk2 & Hl2).
       pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
       pose proof (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) as Gd12.

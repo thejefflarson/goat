@@ -289,17 +289,17 @@ Proof.
 Qed.
 
 Lemma unify_sound : forall f,
-  (forall D T1 T2 n s n', unify_t f D T1 T2 n = Some (s, n') ->
+  (forall D T1 T2 n s n', rtriv D -> unify_t f D T1 T2 n = Some (s, n') ->
      EvT T1 -> EvT T2 ->
      OkS s /\ teq (apT s T1) (apT s T2) /\ kres D D (sT s) /\ n <= n') /\
-  (forall D R1 R2 n s n', unify_r f D R1 R2 n = Some (s, n') ->
+  (forall D R1 R2 n s n', rtriv D -> unify_r f D R1 R2 n = Some (s, n') ->
      EvR R1 -> EvR R2 ->
      OkS s /\ req (apR s R1) (apR s R2) /\ kres D D (sT s) /\ n <= n').
 Proof.
   induction f as [|f IH]; [ split; intros; discriminate | ].
   destruct IH as [IHt IHr].
   split.
-  - intros D T1 T2 n s n' H H1 H2. cbn [unify_t] in H.
+  - intros D T1 T2 n s n' Hrt H H1 H2. cbn [unify_t] in H.
     destruct T1 as [| | | | | A B | R | a | i | B1 | w1 A1]; destruct T2 as [| | | | | A' B' | R' | b | i' | B1' | w1' A1'];
       try discriminate H.
     all: try (exact (var_left_T _ _ _ _ _ _ H H1 H2)).
@@ -311,8 +311,8 @@ Proof.
       inversion H; subst; clear H.
       destruct (EvT_arrow_inv _ _ H1) as [EA EB].
       destruct (EvT_arrow_inv _ _ H2) as [EA' EB'].
-      destruct (IHt _ _ _ _ _ _ E1 EA EA') as (Hs1 & Ht1 & Hk1 & Hl1).
-      destruct (IHt _ _ _ _ _ _ E2 (EvT_ap s1 B Hs1 EB) (EvT_ap s1 B' Hs1 EB')) as (Hs2 & Ht2 & Hk2 & Hl2).
+      destruct (IHt _ _ _ _ _ _ Hrt E1 EA EA') as (Hs1 & Ht1 & Hk1 & Hl1).
+      destruct (IHt _ _ _ _ _ _ Hrt E2 (EvT_ap s1 B Hs1 EB) (EvT_ap s1 B' Hs1 EB')) as (Hs2 & Ht2 & Hk2 & Hl2).
       split; [ apply OkS_comp; auto | ].
       split.
       { change (apT (scomp s2 s1) (typ_Arrow A B))
@@ -322,9 +322,9 @@ Proof.
         rewrite <- !apT_comp. apply teq_arrow.
         - apply teq_apT; exact Ht1.
         - exact Ht2. }
-      split; [ exact (kres_scomp D D D s1 s2 Hk1 Hk2) | lia ].
+      split; [ exact (kres_scomp D D D s1 s2 Hrt Hk1 Hk2) | lia ].
     + (* Record, Record *)
-      destruct (IHr _ _ _ _ _ _ H) as (Hs & Hr & Hk & Hl); [exact H1 | exact H2 | ].
+      destruct (IHr _ _ _ _ _ _ Hrt H) as (Hs & Hr & Hk & Hl); [exact H1 | exact H2 | ].
       split; [exact Hs | split; [apply teq_rec; exact Hr | split; [exact Hk | exact Hl]]].
     + (* Var, Var *)
       destruct (Atom.eq_dec a b) as [->|Hne].
@@ -348,9 +348,9 @@ Proof.
            split; [ apply kres_sbT; simpl; apply finer_b_total; exact Ef | lia ].
     + (* Grp, Grp *)
       destruct (gdecl_eq_dec w1 w1') as [->|]; [|discriminate].
-      destruct (IHt _ _ _ _ _ _ H H1 H2) as (Hs & Ht & Hk & Hl).
+      destruct (IHt _ _ _ _ _ _ Hrt H H1 H2) as (Hs & Ht & Hk & Hl).
       split; [exact Hs | split; [ apply teq_grp; exact Ht | split; [exact Hk | exact Hl]]].
-  - intros D R1 R2 n s n' H H1 H2. cbn [unify_r] in H.
+  - intros D R1 R2 n s n' Hrt H H1 H2. cbn [unify_r] in H.
     assert (Hgen : forall R1 R2, EvR R1 -> EvR R2 -> forall s n',
       (match row_head R1 with
        | None => None
@@ -383,24 +383,24 @@ Proof.
       inversion Hg; subst; clear Hg.
       destruct (row_head_sound _ _ _ _ _ Eh Hg1) as (HP & HT & HR1' & Hhd).
       destruct (rewrite_row_sound _ _ _ _ _ _ _ _ _ Erw Hg2) as (Hs0 & HP' & HT' & HR2' & Hrw & Hk0 & Hl0).
-      destruct (IHt _ _ _ _ _ _ Eu0 (EvT_ap s0 P Hs0 HP) HP') as (Hsp & Htp & Hkp & Hlp).
-      destruct (IHt _ _ _ _ _ _ Eu1 (EvT_ap sp _ Hsp (EvT_ap s0 T Hs0 HT)) (EvT_ap sp T' Hsp HT'))
+      destruct (IHt _ _ _ _ _ _ Hrt Eu0 (EvT_ap s0 P Hs0 HP) HP') as (Hsp & Htp & Hkp & Hlp).
+      destruct (IHt _ _ _ _ _ _ Hrt Eu1 (EvT_ap sp _ Hsp (EvT_ap s0 T Hs0 HT)) (EvT_ap sp T' Hsp HT'))
         as (Hs1 & Ht1 & Hk1 & Hl1).
-      destruct (IHr _ _ _ _ _ _ Eu2
+      destruct (IHr _ _ _ _ _ _ Hrt Eu2
                   (EvR_ap s1 _ Hs1 (EvR_ap sp _ Hsp (EvR_ap s0 R1'' Hs0 HR1')))
                   (EvR_ap s1 _ Hs1 (EvR_ap sp _ Hsp HR2'))) as (Hs2 & Hr2 & Hk2 & Hl2).
       split; [ apply OkS_comp; [ exact Hs2 | apply OkS_comp; [ exact Hs1 | apply OkS_comp; auto ] ] | ].
       split; [ exact (row_step_req s0 sp s1 s2 R1' R2' _ _ _ _ _ _ _ Hhd Hrw Htp Ht1 Hr2) | ].
-      split; [ exact (kres_scomp D D D (scomp s1 (scomp sp s0)) s2
-                        (kres_scomp D D D (scomp sp s0) s1
-                           (kres_scomp D D D s0 sp (Hk0 D) Hkp) Hk1) Hk2) | lia ]. }
+      split; [ exact (kres_scomp D D D (scomp s1 (scomp sp s0)) s2 Hrt
+                        (kres_scomp D D D (scomp sp s0) s1 Hrt
+                           (kres_scomp D D D s0 sp Hrt (Hk0 D) Hkp) Hk1) Hk2) | lia ]. }
     destruct R1 as [| r | l T R1' | lm Pm Tm Rm]; destruct R2 as [| q | l2 T2 R2' | lm2 Pm2 Tm2 Rm2];
       try (exact (var_left_R _ _ _ _ _ _ H H1 H2));
       try (exact (var_right_R _ _ _ _ _ _ H H1 H2));
       try (exact (Hgen _ _ H1 H2 _ _ H)).
     + inversion H; subst. split; [apply OkS_id | split; [apply req_refl | split; [ exact (kres_id D) | lia ]]].
     + (* Empty, Maybe: the same equation read the other way *)
-      destruct (IHr _ _ _ _ _ _ H H2 H1) as (Hs & Hr & Hk & Hl).
+      destruct (IHr _ _ _ _ _ _ Hrt H H2 H1) as (Hs & Hr & Hk & Hl).
       split; [ exact Hs | split; [ apply req_sym; exact Hr | split; [ exact Hk | exact Hl ]]].
     + (* Var, Var *)
       destruct (Atom.eq_dec r q) as [->|Hne].
