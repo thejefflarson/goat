@@ -1004,13 +1004,34 @@ Proof.
   intros l Hl. eapply rlacksD_mono; [ exact Hm | apply H2; exact Hl ].
 Qed.
 
+(* A renamer picks, for a finite set [V] of quantified variables and a finite
+   set [B] to avoid, an involution that sends [V] into a list [N] of names
+   outside [B] and [V] and fixes everything else.  [P] is a property of the
+   names it picks: the [let] renaming below uses [mk_rename], which promises
+   nothing, and the completeness proofs ask for even names. *)
+Definition renamer (P : atom -> Prop) : Prop :=
+  forall (V B : atoms), exists (f : atom -> atom) (N : list atom),
+    (forall x, f (f x) = x) /\
+    (forall x, In x N -> x `notin` B) /\
+    (forall x, In x N -> x `notin` V) /\
+    (forall x, x `in` V -> In (f x) N) /\
+    (forall x, x `notin` V -> ~ In x N -> f x = x) /\
+    (forall x, In x N -> P x).
+
+Lemma mk_rename_renamer : renamer (fun _ => True).
+Proof.
+  intros V B. destruct (mk_rename V B) as (f & N & H1 & H2 & H3 & H4 & H5).
+  exists f, N. repeat split; auto.
+Qed.
+
 (* The renaming step shared by every binder that generalizes ([let] and a
    recursive group): rename the quantified variables of [gen G T1 k] to fresh
    names so the substitution cannot capture them (see the story above).  It
    returns the composed substitution under which the bound term is typed, the
    sorts that term is typed under, the substituted scheme, and the facts the
    body needs about it. *)
-Lemma tsubst_gen_core : forall G T1 k rk st sr G' A D D' S S',
+Lemma tsubst_gen_core_ren : forall (P : atom -> Prop), renamer P ->
+  forall G T1 k rk st sr G' A D D' S S',
   supp_ok D S -> supp_ok D' S' -> kres D D' st -> rkres D D' sr ->
   ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
   exists (s' : scheme) (st1 : tsub) (sr1 : rsub) (A1 N Nr : atoms) (k' : sort_fn) (rk' : rkind_fn),
@@ -1032,9 +1053,10 @@ Lemma tsubst_gen_core : forall G T1 k rk st sr G' A D D' S S',
        ctx_subst st1 sr1 H H') /\
     (forall a, a `in` ftv_ctx G -> st1 a = st a) /\
     (forall r, r `in` frv_ctx G -> sr1 r = sr r) /\
-    (forall a, a `in` N -> exists b, b `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G) /\ k' a = k b).
+    (forall a, a `in` N -> exists b, b `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G) /\ k' a = k b) /\
+    (forall a, a `in` N -> P a /\ a `notin` A) /\ (forall r, r `in` Nr -> P r /\ r `notin` A).
 Proof.
-  intros G T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
+  intros P Hren G T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
   destruct Hsupp as [HsuppT [HsuppR HlcS]].
   destruct Hcompat as [HcT [HcFr [HcRt HcRfr]]].
   set (s := gen G T1 k rk).
@@ -1045,8 +1067,8 @@ Proof.
      support.  Anything outside it is fresh. *)
   set (Bav := A `union` ftv_ctx G `union` frv_ctx G `union` ftv_ctx G' `union` frv_ctx G'
               `union` S `union` S').
-  destruct (mk_rename (s_tq s) Bav) as [g [Ng [Hginv [HgNB [HgNV [HgVN Hgfix]]]]]].
-  destruct (mk_rename (s_rq s) Bav) as [gr [Ngr [Hgrinv [HgrNB [HgrNV [HgrVN Hgrfix]]]]]].
+  destruct (Hren (s_tq s) Bav) as [g [Ng [Hginv [HgNB [HgNV [HgVN [Hgfix HgP]]]]]]].
+  destruct (Hren (s_rq s) Bav) as [gr [Ngr [Hgrinv [HgrNB [HgrNV [HgrVN [Hgrfix HgrP]]]]]]].
   assert (HgF : forall a, a `in` amap g (s_tq s) -> a `notin` Bav).
   { intros a Ha. apply amap_in in Ha. destruct Ha as [v [Hv Hgv]]. subst a.
     apply HgNB. apply HgVN. exact Hv. }
@@ -1137,7 +1159,7 @@ Proof.
                                         (ftv_ctx G')).
   { rewrite Hap1. exact (proj1 Hbridge). }
   exists (casch st sr g gr s), (fun a => st (g a)), (fun r => sr (gr r)), A2, NS, NR, k', rk'.
-  refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _)))))))))))))).
+  refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _)))))))))))))))).
   - (* the bound term's substitution respects the sorts *)
     intros a. rewrite extr_dsort.
     destruct (AtomSetImpl.mem a V) eqn:EV.
@@ -1218,13 +1240,52 @@ Proof.
   - (* a generalized variable of the target has the sort of the one it renames *)
     intros a Ha. apply amap_in in Ha. destruct Ha as [b [Hb Hab]].
     exists b. split; [ exact Hb | ]. subst a. unfold k'. rewrite Hginv. reflexivity.
+  - (* the generalized variables are among the names the renamer picked *)
+    intros a Ha. apply amap_in in Ha. destruct Ha as [b [Hb Hab]]. subst a.
+    assert (Hn : g b `notin` Bav) by (apply HgNB; apply HgVN; exact Hb).
+    split; [ apply HgP; apply HgVN; exact Hb | unfold Bav in Hn; fsetdec ].
+  - intros r Hr. apply amap_in in Hr. destruct Hr as [b [Hb Hrb]]. subst r.
+    assert (Hn : gr b `notin` Bav) by (apply HgrNB; apply HgrVN; exact Hb).
+    split; [ apply HgrP; apply HgrVN; exact Hb | unfold Bav in Hn; fsetdec ].
+Qed.
+
+Lemma tsubst_gen_core : forall G T1 k rk st sr G' A D D' S S',
+  supp_ok D S -> supp_ok D' S' -> kres D D' st -> rkres D D' sr ->
+  ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
+  exists (s' : scheme) (st1 : tsub) (sr1 : rsub) (A1 N Nr : atoms) (k' : sort_fn) (rk' : rkind_fn),
+    kres (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k)
+              (AtomSetImpl.diff (frv_typ T1) (frv_ctx G)) rk)
+         (extr (ext D' N k') Nr rk') st1 /\
+    rkres (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k)
+                (AtomSetImpl.diff (frv_typ T1) (frv_ctx G)) rk)
+          (extr (ext D' N k') Nr rk') sr1 /\
+    ctx_subst st1 sr1 G G' /\ tr_supp st1 sr1 A1 /\ tr_compat st1 sr1 G G' /\
+    N [=] AtomSetImpl.diff (ftv_typ (ap_typ st1 sr1 T1)) (ftv_ctx G') /\
+    Nr [=] AtomSetImpl.diff (frv_typ (ap_typ st1 sr1 T1)) (frv_ctx G') /\
+    supp_ok (extr (ext D' N k') Nr rk') (S' `union` N `union` Nr) /\
+    sch_subst st sr (gen G T1 k rk) s' /\
+    sch_equiv s' (gen G' (ap_typ st1 sr1 T1) k' rk') /\
+    (forall x, tr_compat st sr ((x ~ gen G T1 k rk) ++ G) ((x ~ s') ++ G')) /\
+    (forall H H', ctx_subst st sr H H' ->
+       ftv_ctx H [<=] ftv_ctx G -> frv_ctx H [<=] frv_ctx G ->
+       ctx_subst st1 sr1 H H') /\
+    (forall a, a `in` ftv_ctx G -> st1 a = st a) /\
+    (forall r, r `in` frv_ctx G -> sr1 r = sr r) /\
+    (forall a, a `in` N -> exists b, b `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G) /\ k' a = k b).
+Proof.
+  intros G T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
+  destruct (tsubst_gen_core_ren (fun _ => True) mk_rename_renamer G T1 k rk st sr G' A D D' S S'
+              HS HS' Hk Hkr Hcs Hsupp Hcompat)
+    as (s' & st1 & sr1 & A1 & N & Nr & k' & rk' & H).
+  exists s', st1, sr1, A1, N, Nr, k', rk'. tauto.
 Qed.
 
 (* [tsubst_gen_core] for a [let] that keeps the variables of [Tm] monomorphic:
    the generalization is over the context extended with a binding of [Tm], and
    the bound term and the body are still typed over [G] alone, so the facts
    about [G] come from [tsubst_gen_core]'s agreement outputs. *)
-Lemma tsubst_gen_pin : forall G Tm T1 k rk st sr G' A D D' S S',
+Lemma tsubst_gen_pin_ren : forall (P : atom -> Prop), renamer P ->
+  forall G Tm T1 k rk st sr G' A D D' S S',
   supp_ok D S -> supp_ok D' S' -> kres D D' st -> rkres D D' sr ->
   ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
   exists (s' : scheme) (st1 : tsub) (sr1 : rsub) (A1 N Nr : atoms) (k' : sort_fn) (rk' : rkind_fn),
@@ -1243,20 +1304,21 @@ Lemma tsubst_gen_pin : forall G Tm T1 k rk st sr G' A D D' S S',
     sch_subst st sr (gen (pin_ctx Tm G) T1 k rk) s' /\
     sch_equiv s' (gen (pin_ctx (ap_typ st sr Tm) G') (ap_typ st1 sr1 T1) k' rk') /\
     (forall x, tr_compat st sr ((x ~ gen (pin_ctx Tm G) T1 k rk) ++ G) ((x ~ s') ++ G')) /\
-    (forall a, a `in` N -> exists b, b `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G)) /\ k' a = k b).
+    (forall a, a `in` N -> exists b, b `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G)) /\ k' a = k b) /\
+    (forall a, a `in` N -> P a /\ a `notin` A) /\ (forall r, r `in` Nr -> P r /\ r `notin` A).
 Proof.
-  intros G Tm T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
+  intros P Hren G Tm T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
   pose proof (ctx_subst_cons st sr pin_name (sch_mono Tm) (sch_mono (ap_typ st sr Tm)) G G'
                 (sch_subst_mono st sr Tm) Hcs) as Hcsp.
   pose proof (tr_compat_cons_mono st sr G G' pin_name Tm Hcompat) as Hcp.
-  destruct (tsubst_gen_core (pin_ctx Tm G) T1 k rk st sr (pin_ctx (ap_typ st sr Tm) G') A D D' S S'
+  destruct (tsubst_gen_core_ren P Hren (pin_ctx Tm G) T1 k rk st sr (pin_ctx (ap_typ st sr Tm) G') A D D' S S'
               HS HS' Hk Hkr Hcsp Hsupp Hcp)
-    as [s' [st1 [sr1 [A1 [N [Nr [k' [rk' [Hk1 [Hkr1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HNr [HS1 [Hsi [Hbr [Hcx [Hctx [Hagt [Hagr Hlk]]]]]]]]]]]]]]]]]]]]]].
+    as [s' [st1 [sr1 [A1 [N [Nr [k' [rk' [Hk1 [Hkr1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HNr [HS1 [Hsi [Hbr [Hcx [Hctx [Hagt [Hagr [Hlk HPP]]]]]]]]]]]]]]]]]]]]]]].
   assert (HGp : ftv_ctx G [<=] ftv_ctx (pin_ctx Tm G)) by (rewrite ftv_pin_ctx; fsetdec).
   assert (HGpr : frv_ctx G [<=] frv_ctx (pin_ctx Tm G)) by (rewrite frv_pin_ctx; fsetdec).
   exists s', st1, sr1, A1, N, Nr, k', rk'.
   refine (conj Hk1 (conj Hkr1 (conj (Hctx G G' Hcs HGp HGpr) (conj Hsupp1 (conj _ (conj HN (conj HNr (conj HS1
-            (conj Hsi (conj Hbr (conj _ Hlk))))))))))).
+            (conj Hsi (conj Hbr (conj _ (conj Hlk HPP)))))))))))).
   - destruct Hcompat as [c1 [c2 [c3 c4]]].
     refine (conj _ (conj _ (conj _ _))).
     + intros a Ha. rewrite (Hagt a (HGp a Ha)). apply c1. exact Ha.
@@ -1308,6 +1370,34 @@ Proof.
         -- unfold T1'. apply (frv_ap_in2 st1 sr1 T1 z r HrT1). rewrite (Hagr r (Hsubr r Hr)). exact Hz.
         -- apply (d4 r (Hsubr r Hr) z Hz).
       * apply AtomSetFacts.union_iff. right. apply (c4 r Hr z Hz).
+Qed.
+
+Lemma tsubst_gen_pin : forall G Tm T1 k rk st sr G' A D D' S S',
+  supp_ok D S -> supp_ok D' S' -> kres D D' st -> rkres D D' sr ->
+  ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
+  exists (s' : scheme) (st1 : tsub) (sr1 : rsub) (A1 N Nr : atoms) (k' : sort_fn) (rk' : rkind_fn),
+    kres (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k)
+              (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm G))) rk)
+         (extr (ext D' N k') Nr rk') st1 /\
+    rkres (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k)
+                (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm G))) rk)
+          (extr (ext D' N k') Nr rk') sr1 /\
+    ctx_subst st1 sr1 G G' /\ tr_supp st1 sr1 A1 /\ tr_compat st1 sr1 G G' /\
+    N [=] AtomSetImpl.diff (ftv_typ (ap_typ st1 sr1 T1))
+                           (ftv_ctx (pin_ctx (ap_typ st sr Tm) G')) /\
+    Nr [=] AtomSetImpl.diff (frv_typ (ap_typ st1 sr1 T1))
+                            (frv_ctx (pin_ctx (ap_typ st sr Tm) G')) /\
+    supp_ok (extr (ext D' N k') Nr rk') (S' `union` N `union` Nr) /\
+    sch_subst st sr (gen (pin_ctx Tm G) T1 k rk) s' /\
+    sch_equiv s' (gen (pin_ctx (ap_typ st sr Tm) G') (ap_typ st1 sr1 T1) k' rk') /\
+    (forall x, tr_compat st sr ((x ~ gen (pin_ctx Tm G) T1 k rk) ++ G) ((x ~ s') ++ G')) /\
+    (forall a, a `in` N -> exists b, b `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G)) /\ k' a = k b).
+Proof.
+  intros G Tm T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
+  destruct (tsubst_gen_pin_ren (fun _ => True) mk_rename_renamer G Tm T1 k rk st sr G' A D D' S S'
+              HS HS' Hk Hkr Hcs Hsupp Hcompat)
+    as (s' & st1 & sr1 & A1 & N & Nr & k' & rk' & H).
+  exists s', st1, sr1, A1, N, Nr, k', rk'. tauto.
 Qed.
 
 (* The general type/row substitution lemma: a kind-respecting substitution

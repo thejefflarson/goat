@@ -1565,7 +1565,7 @@ slots `6 .. 6 + m - 1` in order, each in some tag, and `nparams` counts `m`;
 `spn w 0 (spine Ts)` for `Ts` of length `nparams w`, which is the spine W builds
 (`fresh_tys`). The group constructs of 7.8 use it; nothing in 7.7 does.
 
-**What remains of 7.7.**
+**What remains of 7.7** (as of 7.7; stage 7.7c below supersedes it).
 
 1. *`let` of a value and `letrec`.* Both generalize, so the algorithm's context
    holds schemes (`gen_ren`) and the induction compares them with the derivation's
@@ -1656,6 +1656,97 @@ set and the equivalence needs the same lemmas. Replace W with a constraint-based
 inferrer whose completeness is easier: it throws away the soundness proof and the
 tie to `infer.rs`, which is W-shaped. Prove completeness only for a decidable
 subset of `typing` by a size bound: nothing in `typing` is bounded.
+
+*As built (stage 7.7c, `GoatSound.v`, `GoatCompleteFresh.v`, `GoatCompleteNf.v`).*
+Stage 7.7c proved the normal form for `typing` that `let` of a value and `letrec`
+need. It did not add those two cases to L3, and it did not prove the conversion
+from `typing`; the first section below says why, and the second says what is next.
+
+**The renamer is a parameter (`GoatSound.v`).** `tsubst_gen_core` and
+`tsubst_gen_pin` renamed a binder's generalized atoms with `mk_rename`, which
+promises only that the new atoms are outside a given set. `renamer P` is the
+statement of a renamer whose new atoms all satisfy `P`; `tsubst_gen_core_ren` and
+`tsubst_gen_pin_ren` take one, and also say the new atoms are outside the
+substitution's support `A`. The originals are the instances at `mk_rename`.
+
+**One binder (`GoatCompleteFresh.v`).** `mk_rename_even` is `mk_rename` with even
+fresh atoms (`fresh_even_list`, by pigeonhole on the injection `ea`).
+`typing_let_even` and `typing_letrec_even` are the `T_Let` and `T_Letrec` cases of
+`typing_tsubst_gen_mut` run at the identity substitution with that renamer: a
+binder whose premises hold has another whose first premise is at a renamed type,
+whose generalized atoms (type and row) are even and outside any finite set `B`,
+and whose body is re-derived under the renamed scheme (`sch_equiv`).
+
+**The normal form (`GoatCompleteNf.v`).** `ntyping Av D G e T` is `typing` with,
+at each `T_Let` and `T_Letrec`, generalized atoms that are even and outside
+`bg Av G T`, the atoms of the binder's own conclusion and context and of the
+set `Av` handed down. Every rule hands its premises the atoms of its own
+judgement and of its siblings' types (`bg Av G T` and the premise types), so at a
+binder `Av` holds every atom of the judgements that enclose it and of the
+siblings beside it. `typing_normal` says a derivation over an environment of
+finite support (`supp_ok`) has a normal form at the same judgement and any `Av`;
+`ntyping_typing` says a normal form is a derivation, so the judgement is
+unchanged. The proof is by induction on the size of the term (`esz`): renaming a
+binder's atoms re-derives its premises, so they are not subderivations, and the
+induction hypothesis has to be about terms. The binder cases call
+`typing_let_even`/`typing_letrec_even` and then the induction hypothesis on the
+renamed premise and on the body at each fresh name; every other rule is the
+derivation's own induction hypothesis.
+
+Two choices, each a change from the sketch above.
+
+1. **The avoid set is passed down, not a property of the whole derivation.** "Disjoint
+   from every atom outside the binding's first premise" would be a set computed
+   from the derivation, and a derivation is a proof: no function reads atoms off
+   it, so the set cannot be an index of the normal form without a second
+   inductive that mirrors `typing`. Handing each premise the atoms of the
+   judgements around it gives the atoms that are in play when the binder is
+   reached, which is what the induction uses: the algorithm's substitution
+   carries the derivation's types for the atoms still in the context and the
+   pending types, and those are types of enclosing and sibling judgements. It
+   does not give disjointness from atoms deep inside an earlier sibling, which
+   the algorithm no longer holds in its context.
+2. **No output set.** Threading a set out of each premise would make a
+   binder's premise at one name depend on the name, and `typing`'s cofinite
+   premises would then need a renaming lemma for the normal form. The passed-down
+   set needs none.
+
+**What remains of 7.7.**
+
+1. *`let` of a value and `letrec` in L3.* Three things stand between the normal
+   form and `gen_mono_let`, none of them about the derivation's shape.
+   (a) `OkS S2` needs the images of the algorithm's atoms to be over even
+   atoms. `unify_tD_rf_complete` returns `S2` existentially and `Sem` says
+   nothing about the atoms of its images, so `Sem` has to be strengthened (the
+   new images are over atoms of the images already there and of the
+   derivation's judgement types) and the derivation's atoms made even. The
+   normal form makes the generalized atoms even; the rest are the atoms of the
+   judgement types, which a top-level renaming (`typing_ap` at an injective map
+   to even atoms) makes even once a finite set holds all of them, and no
+   statement in the development bounds a derivation's atoms yet.
+   (b) `KR D Dext Sg`, the sorts for the first premise's environment, needs
+   `Sg`'s images of the atoms in play to avoid the generalized atoms. That is
+   what `Av` gives, once the induction states that the images of the live atoms
+   (those in the algorithm's context and pending types) are over atoms of `Av`.
+   (c) Working the `let` case through shows that the continuation after the premise runs at `Dd`, not `Dext`, and `S2`
+   sends the atoms the binder generalizes (dead once generalized) to types over
+   the generalized atoms at their `Dext` sorts, so `KR D1a Dd Sa` fails at them.
+   `KR`, `CI` and the factoring `F` have to be restated for the live atoms, the
+   ones the context and the result types mention, before a binder can end. This
+   changes the statement of `infer_complete_core`, and it is the next stage's
+   first step; with it, (a) and (b) are statements about live atoms too.
+2. *The conversion from `typing`.* `ctyping` has monomorphic contexts and
+   no `let` of a value, so the conversion of a derivation that uses a generalizing
+   binder needs `ctyping` to carry schemes (`C_Var` by `inst`, `C_Let`,
+   `C_Letrec`, with the normal form's conditions as premises) first; it would
+   be the normal form with a binder's premise at every fresh name and no record
+   division. DECISION NEEDED (record division): `ntyping`'s `T_Bin` rule takes any
+   `bin_sig`, `sig_quot_rec` included. Options: (i) a core normal form whose
+   operator rule takes the operand types as record-free (`rf`), which excludes
+   `sig_quot_rec` for the whole core and leaves 7.8 to add the head-known rule;
+   (ii) keep `typing`'s rule and add a head-known hypothesis to the conversion.
+   (i) is the smaller, and is what the conversion should do until 7.8; chosen.
+3. *Records, spread, restrict, tags, `match`, methods* (7.8), as before.
 
 ## 5. Staged PR plan
 
