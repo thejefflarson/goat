@@ -50,6 +50,10 @@ int32_t goat_shim_run(entry main, const void *host, void *ctx, void *inst,
 }
 "#;
 
+/// The heap a run gets when its caller does not bring an instance: address
+/// space, not memory, since its pages are zeroed on demand.
+pub const DEFAULT_HEAP_BYTES: usize = 1 << 28;
+
 #[derive(Debug)]
 pub enum NativeError {
     /// `clang` is not installed (or `$CLANG` names nothing runnable).
@@ -104,6 +108,8 @@ pub struct Run<H> {
     pub host: H,
     /// The heap blocks still allocated after a clean finish.
     pub live_allocs: u32,
+    /// The allocations the program made, freed or not.
+    pub allocations: u64,
     pub result: Result<(), Stopped>,
 }
 
@@ -202,7 +208,7 @@ impl Library {
         host: H,
         versions: Versions,
     ) -> Result<Run<H>, NativeError> {
-        let mut instance = Instance::new(64 * 1024);
+        let mut instance = Instance::new(DEFAULT_HEAP_BYTES);
         instance.set_version(versions.instance);
         self.run_in(&mut instance, host, versions.host)
     }
@@ -275,6 +281,7 @@ impl Library {
         Ok(Run {
             printed: std::mem::take(&mut adapter.lines),
             live_allocs: instance.live(),
+            allocations: instance.allocations(),
             host: adapter.host,
             result,
         })

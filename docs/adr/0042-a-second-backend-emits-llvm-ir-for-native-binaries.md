@@ -119,3 +119,31 @@ pop them on return.
 - The trampoline lowering, the spill-area register limits and the exact clang
   floor.
 - Which window library the desktop host uses.
+
+### Amendment 2026-11-22: the heap
+
+The generated code now carries the allocator, reference counting and the drop
+loop of `wasm/src/allocator.rs`, with the same size classes and the same
+checks. Where it differs:
+
+- **Instance.** `goat_instance` grows at its end by `heap_top` (the bump
+  offset into the host's region), `allocs` (every allocation, freed or not) and
+  `free` (one list head per size class). `INSTANCE_VERSION` is 2. The host gives
+  a fixed region, 8-byte aligned, and the allocator traps with the heap-budget
+  message when it is used up; it never grows it.
+- **Slots.** Every object has ADR 0002's 8-byte header and 8-byte slots, a
+  pointer slot holding an `i64`, so a layout's size depends on its slot count
+  and not on the target's pointer width (ADR 0010).
+- **Drop list.** A dying child's `rc` word cannot hold a native pointer, so it
+  holds the child's heap offset divided by 8, and the high 24 bits of `pad` hold
+  the id of its drop function, which `drop_loop` switches on in place of a
+  function table.
+- **Checks.** The double-release and write-after-free traps are always on.
+  Poisoning a freed block is behind `EmitOptions::poison_freed`, which defaults
+  on in debug builds as the wasm option does.
+- **`Addr` and `Retain`.** An address is the offset from the heap base, so the
+  embedded profile's 32-bit `Int` holds it on a 64-bit host. An immortal object
+  is not in the heap, so its offset is meaningful only on the desktop profile;
+  the only user, reload's snapshot, is not on the native backend yet.
+- **Foreign strings.** A `foreign` call returns a string as host memory valid
+  until the next call, and the generated code copies it into a heap string.

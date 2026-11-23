@@ -215,10 +215,7 @@ impl Default for EmbeddedLimits {
     }
 }
 
-/// What a trap says when the heap budget is used up, and when calls nest past
-/// the bound.
-pub const HEAP_BUDGET_EXHAUSTED: &str = "the program ran out of memory";
-pub use goat_mir::STACK_OVERFLOW;
+pub use goat_mir::{HEAP_BUDGET_EXHAUSTED, STACK_OVERFLOW};
 
 /// Knobs on the emitted module that do not change what a program means.
 #[derive(Clone, Copy, Debug)]

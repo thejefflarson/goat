@@ -178,8 +178,9 @@ fn a_trap_names_the_site_stored_in_the_instance() {
 
 #[test]
 fn an_unsupported_program_says_why() {
-    let Err(error) = build(Profile::Desktop, "\"hi\"", &HostInterface::new("")) else {
-        panic!("a string program built");
+    let looping = "loop = program(i) do if i == 0 then 0 else loop(i - 1) done done\nloop(3)";
+    let Err(error) = build(Profile::Desktop, looping, &HostInterface::new("")) else {
+        panic!("a program that loops by tail call built");
     };
     assert!(error.unsupported().is_some(), "{error}");
 }

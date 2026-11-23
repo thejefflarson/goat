@@ -1,12 +1,14 @@
 ; goat native backend: textual LLVM IR
 
 %goat_host = type { i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }
-%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64] }
+%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64], i64, i64, [55 x ptr] }
+%goat_value = type { i32, i64, i64 }
 
 declare double @llvm.sqrt.f64(double)
 declare double @llvm.trunc.f64(double)
 
-@goat.trap.0 = private unnamed_addr constant [40 x i8] c"this number can't be made a whole number"
+@goat.text.0 = private unnamed_addr constant [40 x i8] c"this number can't be made a whole number"
+
 
 define i64 @goat_entry(ptr %inst) nounwind {
 entry:
@@ -25,7 +27,7 @@ trap8:
   %v13 = load ptr, ptr %v12
   %v14 = getelementptr inbounds %goat_host, ptr %v11, i32 0, i32 9
   %v15 = load ptr, ptr %v14
-  call void %v15(ptr %v13, ptr @goat.trap.0, i64 40) noreturn nounwind
+  call void %v15(ptr %v13, ptr @goat.text.0, i64 40) noreturn nounwind
   unreachable
 go9:
   %v16 = fptosi double %v3 to i64
@@ -41,7 +43,7 @@ bad_host:
   ret i32 1
 check_instance:
   %instance_version = load i32, ptr %inst
-  %instance_old = icmp ult i32 %instance_version, 1
+  %instance_old = icmp ult i32 %instance_version, 2
   br i1 %instance_old, label %bad_instance, label %run
 bad_instance:
   ret i32 2

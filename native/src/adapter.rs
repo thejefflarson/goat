@@ -16,6 +16,9 @@ pub struct Adapter<H> {
     trap: unsafe extern "C" fn(Ctx, *const u8, u64) -> !,
     /// The message of a trap the host raised, kept alive for the trap call.
     halt: String,
+    /// The string the last `foreign` call returned, which the program copies
+    /// before it calls the host again.
+    returned: String,
 }
 
 impl<H: Host> Adapter<H> {
@@ -27,6 +30,7 @@ impl<H: Host> Adapter<H> {
             line: String::new(),
             trap,
             halt: String::new(),
+            returned: String::new(),
         }
     }
 
@@ -178,9 +182,8 @@ unsafe extern "C" fn scene_frame<H: Host>(ctx: Ctx, ptr: *const u8, len: u64) {
     }
 }
 
-/// Any other host function, by module and name. A string result needs the
-/// program's allocator, which the native backend does not have yet, so it is a
-/// trap.
+/// Any other host function, by module and name. A string result stays in the
+/// adapter until the next call, and the program copies it into its own heap.
 #[allow(clippy::too_many_arguments)]
 unsafe extern "C" fn foreign<H: Host>(
     ctx: Ctx,
@@ -227,9 +230,14 @@ unsafe extern "C" fn foreign<H: Host>(
             a: u64::from(b),
             b: 0,
         },
-        HostValue::Str(_) => a.stop(format!(
-            "{module}.{name} returned a string, which the native backend cannot take yet"
-        )),
+        HostValue::Str(text) => {
+            a.returned = text;
+            GoatValue {
+                tag: VALUE_STR,
+                a: a.returned.as_ptr() as u64,
+                b: a.returned.len() as u64,
+            }
+        }
     };
     unsafe { *result = returned };
 }
