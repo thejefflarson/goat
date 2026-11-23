@@ -62,6 +62,8 @@ GoatCompleteUnifyPlain.v
 GoatCompleteRf.v
 GoatCompleteRfRows.v
 GoatCompleteCore.v
+GoatCompleteFresh.v
+GoatCompleteNf.v
 GoatCompleteSpn.v
 GoatElabConverse.v
 GoatMethods.v

@@ -626,6 +626,33 @@ Definition generic_sort (o : bop) : sort :=
 Definition bin_res (o : bop) (A : typ) : typ :=
   match kind o with k_cmp => typ_Bool | _ => A end.
 
+(* The type [/] works at.  The checker takes the divisor's shape from a record
+   operand, left first (ADR 0012): a closed record becomes the record of the
+   same labels at [Float], and anything else is [Float]. *)
+Fixpoint float_row (R : row) : option row :=
+  match R with
+  | row_Empty => Some row_Empty
+  | row_Ext l _ R' =>
+      match float_row R' with
+      | Some R'' => Some (row_Ext l typ_Float R'')
+      | None => None
+      end
+  | _ => None
+  end.
+
+Definition float_head (T : typ) : option typ :=
+  match T with
+  | typ_Record R =>
+      match float_row R with Some R' => Some (typ_Record R') | None => None end
+  | _ => None
+  end.
+
+Definition quot_ty (T1 T2 : typ) : typ :=
+  match float_head T1 with
+  | Some F => F
+  | None => match float_head T2 with Some F => F | None => typ_Float end
+  end.
+
 (* A recursive group's members are functions. *)
 Fixpoint is_fn_group (fs : fields) : bool :=
   match fs with

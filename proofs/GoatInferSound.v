@@ -91,6 +91,42 @@ Proof.
     first [ apply EvT_Int | apply EvT_Float | apply EvT_String | apply EvT_Bool ].
 Qed.
 
+Lemma float_row_facts : forall R R', float_row R = Some R' ->
+  (forall s, apR s R' = R') /\ EvR R' /\ rfsat R'.
+Proof.
+  induction R as [| | l T R IH |]; intros R' H; cbn [float_row] in H; try discriminate.
+  - injection H as <-. refine (conj _ (conj EvR_Empty I)).
+    intros s. reflexivity.
+  - destruct (float_row R) as [R''|] eqn:E; [|discriminate]. injection H as <-.
+    destruct (IH _ eq_refl) as (H1 & H2 & H3).
+    refine (conj _ (conj _ _)).
+    + intros s. rewrite apR_Ext, H1. rewrite (ground_ap s typ_Float (or_intror (or_introl eq_refl))). reflexivity.
+    + apply EvR_ext; [ apply EvT_Float | exact H2 ].
+    + cbn [rfsat]. exact (conj I H3).
+Qed.
+
+Lemma quot_ty_facts : forall T1 T2,
+  (forall s, apT s (quot_ty T1 T2) = quot_ty T1 T2) /\ EvT (quot_ty T1 T2) /\
+  (forall D, bin_sig D bop_div (quot_ty T1 T2) (quot_ty T1 T2) (quot_ty T1 T2)).
+Proof.
+  assert (Hf : forall T F, float_head T = Some F ->
+    (forall s, apT s F = F) /\ EvT F /\ (forall D, bin_sig D bop_div F F F)).
+  { intros T F H. destruct T; cbn [float_head] in H; try discriminate.
+    destruct (float_row R) as [R'|] eqn:E; [|discriminate]. injection H as <-.
+    destruct (float_row_facts R R' E) as (H1 & H2 & H3).
+    refine (conj _ (conj _ _)).
+    + intros s. change (apT s (typ_Record R')) with (typ_Record (apR s R')). rewrite H1. reflexivity.
+    + apply EvT_Record. exact H2.
+    + intros D. apply sig_quot_rec. exact H3. }
+  intros T1 T2. unfold quot_ty.
+  destruct (float_head T1) as [F|] eqn:E1; [ exact (Hf _ _ E1) | ].
+  destruct (float_head T2) as [F|] eqn:E2; [ exact (Hf _ _ E2) | ].
+  refine (conj _ (conj _ _)).
+  - intros s. exact (ground_ap s _ (or_intror (or_introl eq_refl))).
+  - apply EvT_Float.
+  - intros D. apply sig_quot.
+Qed.
+
 Lemma EvT_arrow : forall A B, EvT A -> EvT B -> EvT (typ_Arrow A B).
 Proof.
   intros A B [H1 H2] [H3 H4]. split; intros a Ha; simpl in Ha;
