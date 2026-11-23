@@ -305,6 +305,20 @@ mod tests {
         assert!(kept > 128, "the reader kept only {kept} of 256 programs");
     }
 
+    /// The reader writes a zero-argument call as a call on `unit`, so a program the
+    /// checker rejects for the arity of a call must not be compared on its
+    /// rejection: the algorithm accepts the unit argument.
+    #[test]
+    fn a_rejected_call_with_the_wrong_arity_is_not_compared_on_rejection() {
+        let line = corpus::line("g = program(p) do g(p) done\n{a: g(1), b: g()}")
+            .expect("a program of the fragment");
+        let case = Case::parse(&line);
+        assert_eq!(case.verdict, "ERR");
+        assert_eq!(case.mode, "N");
+        let accepted = corpus::line("g = program() do 1 done\ng()").expect("a program of the fragment");
+        assert_eq!(Case::parse(&accepted).mode, "U");
+    }
+
     #[test]
     fn a_program_is_a_function_of_its_bytes() {
         let data = [2, 1, 1, 7, 0, 3, 9, 8, 7, 6, 5, 4];

@@ -25,6 +25,7 @@ Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatMu.
 Require Import Goat.GoatSubst.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
 Require Import Goat.GoatInferSort.
@@ -207,6 +208,87 @@ Lemma chain_apT : forall s cs T T', OkS s ->
   chain cs T T' -> chain cs (apT s T) (apT s T').
 Proof. intros s cs T T' Hs H. exact (chain_ap _ _ _ _ _ (OkS_lc s Hs) H). Qed.
 
+
+(* ---- the unifier W calls, with the conversion read at the environment ---- *)
+
+(* [unify_co] with [unify_tD] for the plain unifier: the two types it equates
+   are [teqD] at the environment it returns, and a coercion sits after that
+   conversion.  The recursive-type fallback is unchanged. *)
+Definition unify_coD (f : nat) (D : denv) (T1 T2 : typ) (n : nat)
+  : option (sub * denv * list dir * nat) :=
+  match unify_tD f D T1 T2 n with
+  | Some (s, D', n') => Some (s, D', nil, n')
+  | None =>
+      match unify_k f D T1 T2 n with
+      | None => None
+      | Some (s, D', n') =>
+          match coerce_dec f D' (apT s T1) (apT s T2) with
+          | None => None
+          | Some cs => Some (s, D', cs, n')
+          end
+      end
+  end.
+
+(* The coercions [cs] take a term of [T] to one of [T'] after a conversion at
+   [D]. *)
+Definition chainD (D : denv) (cs : list dir) (T T' : typ) : Prop :=
+  exists T1, teqD D T T1 /\ chain cs T1 T'.
+
+Theorem unify_coD_sound : forall f D T1 T2 n s D' cs n',
+  unify_coD f D T1 T2 n = Some (s, D', cs, n') -> DOk D n -> EvT T1 -> EvT T2 ->
+  OkS s /\ chainD D' cs (apT s T1) (apT s T2) /\ GoodU D n s D' n'.
+Proof.
+  intros f D T1 T2 n s D' cs n' H HD H1 H2. unfold unify_coD in H.
+  destruct (unify_tD f D T1 T2 n) as [[[s0 D0] n0]|] eqn:Et.
+  - inversion H; subst; clear H.
+    destruct ((proj1 (unify_tD_sound f)) _ _ _ _ _ _ _ Et HD H1 H2) as (Hs & Ht & Hg).
+    refine (conj Hs (conj _ Hg)).
+    exists (apT s T2). split; [ exact Ht | constructor ].
+  - destruct (unify_k f D T1 T2 n) as [[[s0 D0] n0]|] eqn:E; [ | discriminate ].
+    destruct (coerce_dec f D0 (apT s0 T1) (apT s0 T2)) as [cs0|] eqn:Ec; [ | discriminate ].
+    inversion H; subst; clear H.
+    destruct ((proj1 (unify_k_sound f)) D T1 T2 n s D' n' E H1 H2) as (Hs & _ & Hg).
+    refine (conj Hs (conj _ Hg)).
+    exists (apT s T1). split; [ apply teqD_refl | ].
+    exact (coerce_dec_sound f D' _ _ _ (EvT_ap s T1 Hs H1) (EvT_ap s T2 Hs H2) Ec).
+Qed.
+
+Lemma coerce_typingD : forall D G cs T T' e,
+  chainD D cs T T' -> typing D G e T -> typing D G (coerce cs e) T'.
+Proof.
+  intros D G cs T T' e (T1 & Ht & Hc) H.
+  eapply coerce_typing; [ exact Hc | eapply T_ConvD; eassumption ].
+Qed.
+
+Lemma chainD_ap : forall D D' st sr cs T T', rkres D D' sr -> lc_sub st sr ->
+  chainD D cs T T' -> chainD D' cs (ap_typ st sr T) (ap_typ st sr T').
+Proof.
+  intros D D' st sr cs T T' Hk Hlc (T1 & Ht & Hc).
+  exists (ap_typ st sr T1). split.
+  - exact (teqD_ap D D' st sr _ _ Hk Ht).
+  - exact (chain_ap st sr cs T1 T' Hlc Hc).
+Qed.
+
+Lemma chainD_apT : forall s D n D' n' cs T T', Good D n s D' n' ->
+  chainD D cs T T' -> chainD D' cs (apT s T) (apT s T').
+Proof.
+  intros s D n D' n' cs T T' G H.
+  exact (chainD_ap D D' (sT s) (sR s) cs T T' (Good_rkres _ _ _ _ _ G)
+           (OkS_lc s (proj1 (proj2 G))) H).
+Qed.
+
+Lemma chainD_of_teqD : forall D T T', teqD D T T' -> chainD D nil T T'.
+Proof. intros D T T' H. exists T'. split; [ exact H | constructor ]. Qed.
+
+Lemma chainD_of_chain : forall D cs T T', chain cs T T' -> chainD D cs T T'.
+Proof. intros D cs T T' H. exists T. split; [ apply teqD_refl | exact H ]. Qed.
+
+Lemma chainD_refine : forall D n D' n' cs T T',
+  Good D n sid D' n' -> chainD D cs T T' -> chainD D' cs T T'.
+Proof.
+  intros D n D' n' cs T T' G H. pose proof (chainD_apT sid D n D' n' cs T T' G H) as H1.
+  rewrite !apT_id in H1. exact H1.
+Qed.
 (* ---- examples ---- *)
 
 Definition swapped_a : typ :=

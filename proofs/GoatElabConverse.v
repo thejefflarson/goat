@@ -23,6 +23,7 @@ Require Import Goat.GoatPresence.
 Require Import Goat.GoatMu.
 Require Import Goat.GoatTags.
 Require Import Goat.GoatMeta.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatElab.
@@ -213,7 +214,8 @@ Proof.
     destruct (rec_align _ _ _ _ _ _ _ Hr1 Hr2 Hf1 Hf2 Hq1 Hq2 l Hl)
       as [T' [R'' [w1' [w2' [Hrm [E1' [E2' [Hw1 [Hw2 [Ht1 Ht2]]]]]]]]]].
     rewrite E1 in E1'. rewrite E2 in E2'. inversion E1'; inversion E2'; subst.
-    destruct (rm_sat D k_Eq _ _ _ _ Hrm Hs) as [Hst _].
+    assert (Hs' : rsat D k_Eq (nfR D R)) by (apply rsat_nf; exact Hs).
+    destruct (rm_sat D k_Eq _ _ _ _ Hrm Hs') as [Hst _].
     refine (IH D G T' _ _ _ Hst Hw1 Hw2 Ht1 Ht2 c' Hc'). lia.
   - refine (lit_unerase _ _ _ _ _ Hc); (eapply canon_lit; [ eassumption | eassumption | base_type ]).
   - exfalso. exact (canon_bvar _ _ _ _ Hv1 H1 eq_refl).

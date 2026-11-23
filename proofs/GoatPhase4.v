@@ -21,6 +21,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatPresence.
 Require Import Goat.GoatMeta.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatSpread.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatPhase1.
@@ -163,26 +164,28 @@ Proof.
   intros T H. destruct (spread_inv _ _ _ _ _ _ H) as [T0 [R [H2 [_ [[P H1] | [H1 Hl]]]]]].
   2: { (* the base's row would have to lack the label it has *)
     destruct (rec_inv _ _ _ _ H1) as [Rf [Hft Hteq]].
-    destruct (teq_Record_inv _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.
+    destruct (teqD_Record_inv _ _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.
     inversion Hft; subst.
     match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
     pose proof (req_pi _ _ Hreq lx) as Hp. simpl in Hp.
-    rewrite (rlacksD_pi d_any lx R Hl) in Hp. inversion Hp. }
+    rewrite (rlacksD_pi d_any lx (nfR d_any R)) in Hp by (rewrite nf_rlacksD; exact Hl).
+    inversion Hp. }
   apply str_inv in H2.
   destruct (rec_inv _ _ _ _ H1) as [Rf [Hft Hteq]].
-  destruct (teq_Record_inv _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.
+  destruct (teqD_Record_inv _ _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.
   inversion Hft; subst.
   match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
   match goal with Ht : typing _ _ e_true _ |- _ => apply true_inv in Ht end.
-  destruct (presence_inv (row_Ext lx T1 row_Empty) lx P T0 R eq_refl Hreq) as [-> | [-> [_ Hpi]]].
-  - assert (Hex : req (row_Ext lx T1 row_Empty) (row_Ext lx T0 R))
-      by (eapply req_trans; [ exact Hreq | apply req_pre ]).
-    destruct (req_surface _ _ _ _ Hex) as [T' [rest [Hpi Hq]]].
+  destruct (presence_invD d_any (row_Ext lx T1 row_Empty) lx P T0 R eq_refl Hreq) as [-> | [-> [_ Hpi]]].
+  - assert (Hex : teqD d_any (typ_Record (row_Ext lx T1 row_Empty)) (typ_Record (row_Ext lx T0 R))).
+    { apply teqD_Record. eapply req_trans; [ exact Hreq | ].
+      rewrite nfR_maybe. cbn [is_abs andb nfT]. cbv iota. rewrite nfR_ext. apply req_pre. }
+    destruct (teqD_Record_pi _ _ _ _ _ Hex) as [T' [rest [Hpi Hq]]].
     cbn in Hpi. inversion Hpi; subst.
-    assert (Hbs : teq typ_Bool typ_String).
-    { eapply teq_trans; [ eassumption | ]. eapply teq_trans; [ exact Hq | ].
-      apply teq_sym. exact H2. }
-    apply teq_Bool_inv in Hbs. discriminate Hbs.
+    assert (Hbs : teqD d_any typ_Bool typ_String).
+    { eapply teqD_trans; [ eassumption | ]. eapply teqD_trans; [ exact Hq | ].
+      apply teqD_sym. exact H2. }
+    apply teqD_Bool_inv in Hbs. discriminate Hbs.
   - cbn in Hpi. discriminate Hpi.
 Qed.
 
@@ -192,10 +195,11 @@ Example restrict_missing_rejected : forall T,
 Proof.
   intros T H. destruct (restrict_inv _ _ _ _ _ H) as [R0 [T0 [R [H1 [Hrm _]]]]].
   destruct (rec_inv _ _ _ _ H1) as [Rf [Hft Hteq]].
-  destruct (teq_Record_inv _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.
-  destruct (rm_req _ _ (req_sym _ _ Hreq) _ _ _ Hrm) as [T' [R' [Hrm' _]]].
+  destruct (teqD_Record_inv _ _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.
+  destruct (rm_req _ _ (req_sym _ _ Hreq) _ _ _ (rm_nf d_any _ _ _ _ Hrm)) as [T' [R' [Hrm' _]]].
   inversion Hft; subst.
   match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
+  rewrite nfR_ext in Hrm'.
   destruct (rm_ext_inv _ _ _ _ _ _ Hrm') as [[E1 _] | [_ [R3 [Hr3 _]]]].
   - unfold lx, ly in *. discriminate E1.
   - exact (rm_empty_inv _ _ _ Hr3).

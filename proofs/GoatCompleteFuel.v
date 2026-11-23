@@ -135,7 +135,7 @@ Qed.
 Lemma infer_app_stable : forall D G e1 e2 n s1 D1 T1 n1 e1' s2 D2 T2 n2 e2' s3 D3 cs n3,
   Stable (fun f => infer f D G e1 n = Some (s1, D1, T1, n1, e1')) ->
   Stable (fun f => infer f D1 (apC s1 G) e2 n1 = Some (s2, D2, T2, n2, e2')) ->
-  Stable (fun f => unify_co f D2 (apT s2 T1) (typ_Arrow T2 (typ_Var (ea n2))) (S n2)
+  Stable (fun f => unify_coD f D2 (apT s2 T1) (typ_Arrow T2 (typ_Var (ea n2))) (S n2)
                      = Some (s3, D3, cs, n3)) ->
   Stable (fun f => infer f D G (e_app e1 e2) n =
     Some (scomp s3 (scomp s2 s1), D3, apT s3 (typ_Var (ea n2)), n3, e_app (coerce cs e1') e2')).

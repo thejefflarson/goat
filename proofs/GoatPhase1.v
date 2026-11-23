@@ -10,6 +10,7 @@ Require Import Goat.GoatLit.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatMeta.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInferW.
@@ -26,20 +27,20 @@ Arguments st_tofloat z%_znum_scope d.
 
 (* ---- inversion for the literals, used by the rejections below ---- *)
 
-Lemma str_inv : forall D G q T, typing D G (e_str q) T -> teq typ_String T.
+Lemma str_inv : forall D G q T, typing D G (e_str q) T -> teqD D typ_String T.
 Proof.
   intros D G q T H. remember (e_str q) as e0 eqn:He.
   induction H; try discriminate He.
-  - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
-  - apply teq_refl.
+  - eapply teqD_trans; [ apply IHtyping; exact He | assumption ].
+  - apply teqD_refl.
 Qed.
 
-Lemma true_inv : forall D G T, typing D G e_true T -> teq typ_Bool T.
+Lemma true_inv : forall D G T, typing D G e_true T -> teqD D typ_Bool T.
 Proof.
   intros D G T H. remember e_true as e0 eqn:He.
   induction H; try discriminate He.
-  - apply teq_refl.
-  - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
+  - apply teqD_refl.
+  - eapply teqD_trans; [ apply IHtyping; exact He | assumption ].
 Qed.
 
 (* What an operator's signature rules out, after the operand types are known. *)
@@ -53,8 +54,8 @@ Ltac sig_absurd Hs :=
 
 (* A type [T] equal to a known head is that head. *)
 Ltac head_eq H :=
-  first [ apply teq_Int_inv in H | apply teq_Float_inv in H
-        | apply teq_Bool_inv in H | apply teq_String_inv in H ].
+  first [ apply teqD_Int_inv in H | apply teqD_Float_inv in H
+        | apply teqD_Bool_inv in H | apply teqD_String_inv in H ].
 
 (* ---- accepted ---- *)
 
@@ -579,26 +580,26 @@ Definition shared_numeral : exp :=
     (e_proj (e_rec (fs_cons 1 (e_proj (e_fvar_b 0) 0)
                    (fs_cons 2 (e_bin (e_proj (e_fvar_b 0) 0) bop_add (e_dec 0)) fs_nil))) 1).
 
-Lemma dec_inv : forall D G d T, typing D G (e_dec d) T -> teq typ_Float T.
+Lemma dec_inv : forall D G d T, typing D G (e_dec d) T -> teqD D typ_Float T.
 Proof.
   intros D G d T H. remember (e_dec d) as e0 eqn:He.
   induction H; try discriminate He.
-  - apply teq_refl.
-  - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
+  - apply teqD_refl.
+  - eapply teqD_trans; [ apply IHtyping; exact He | assumption ].
 Qed.
 
 Lemma var_inv : forall D G x T, typing D G (e_fvar_f x) T ->
-  exists s Tv, binds x s G /\ inst D Tv s /\ teq Tv T.
+  exists s Tv, binds x s G /\ inst D Tv s /\ teqD D Tv T.
 Proof.
   intros D G x T H. remember (e_fvar_f x) as e0 eqn:He.
   induction H; try discriminate He.
-  - inversion He; subst. exists s, T. repeat split; auto using teq_refl.
+  - inversion He; subst. exists s, T. repeat split; auto using teqD_refl.
   - destruct (IHtyping He) as [s [Tv [Hb [Hi Ht]]]].
-    exists s, Tv. repeat split; auto. eapply teq_trans; eauto.
+    exists s, Tv. repeat split; auto. eapply teqD_trans; eauto.
 Qed.
 
 Lemma one_field_inv : forall D G l e T, typing D G (e_rec (fs_cons l e fs_nil)) T ->
-  exists A, typing D G e A /\ teq (typ_Record (row_Ext l A row_Empty)) T.
+  exists A, typing D G e A /\ teqD D (typ_Record (row_Ext l A row_Empty)) T.
 Proof.
   intros D G l e T H. destruct (rec_inv _ _ _ _ H) as [R [Hft Hteq]].
   inversion Hft; subst. match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
@@ -615,61 +616,65 @@ Proof.
     match goal with H : _ = _ |- _ => first [ exact (Hd _ H) | exact (Hd _ (eq_sym H)) ] end.
 Qed.
 
-(* The one field of a variable bound to a one-field record of a closed number. *)
-Lemma proj_of_bound : forall D x s T1 a A U,
-  s_body s = T1 -> teq (typ_Record (row_Ext a A row_Empty)) T1 ->
+(* The one field of a variable bound to a one-field record of a closed number.
+   [D0] is the environment the binding was typed in; [Hres] says an instance of
+   the scheme at [D] is a resolution of it. *)
+Lemma proj_of_bound : forall D D0 x s T1 a A U,
+  (forall sr, (forall r, r `notin` s_rq s -> sr r = row_Var r) ->
+     (forall r, r `in` s_rq s -> rkok D (s_rk s r) (sr r)) -> rkres D0 D sr) ->
+  s_body s = T1 -> teqD D0 (typ_Record (row_Ext a A row_Empty)) T1 ->
   (A = typ_Int \/ A = typ_Float) ->
-  typing D ((x ~ s) ++ nil) (e_proj (e_fvar_f x) a) U -> teq A U.
+  typing D ((x ~ s) ++ nil) (e_proj (e_fvar_f x) a) U -> teqD D A U.
 Proof.
-  intros D x s T1 a A U Hb Hr HA Hty.
+  intros D D0 x s T1 a A U Hres Hb Hr HA Hty.
   destruct (proj_inv _ _ _ _ _ Hty) as [T0 [R [Hx Ht0]]].
   destruct (var_inv _ _ _ _ Hx) as [s0 [Tv [Hbd [Hi Hteq]]]].
   rewrite_env (x ~ s) in Hbd. apply binds_one_iff in Hbd as [_ Hs0]. subst s0.
-  destruct Hi as [st [sr [_ [_ [Hap _]]]]]. rewrite Hb in Hap.
+  destruct Hi as [st [sr [_ [Hsr [Hap [_ [Hrk _]]]]]]]. rewrite Hb in Hap.
   assert (Hap' : ap_typ st sr (typ_Record (row_Ext a A row_Empty)) = typ_Record (row_Ext a A row_Empty))
     by (destruct HA as [-> | ->]; reflexivity).
-  pose proof (teq_ap _ _ st sr (teq_sym _ _ Hr)) as Hs. rewrite Hap' in Hs. rewrite <- Hap in Hs.
-  assert (Hc : teq (typ_Record (row_Ext a A row_Empty)) (typ_Record (row_Ext a T0 R)))
-    by (eapply teq_trans; [ apply teq_sym; exact Hs | exact Hteq ]).
-  destruct (teq_Record_inv _ _ Hc) as [R' [E Hq]]. injection E as E. subst R'.
-  destruct (req_surface _ _ _ _ Hq) as [T00 [rest [Hpi Hte]]].
+  pose proof (teqD_ap _ _ st sr _ _ (Hres sr Hsr Hrk) Hr) as Hs. rewrite Hap' in Hs. rewrite <- Hap in Hs.
+  assert (Hc : teqD D (typ_Record (row_Ext a A row_Empty)) (typ_Record (row_Ext a T0 R)))
+    by (eapply teqD_trans; [ exact Hs | exact Hteq ]).
+  destruct (teqD_Record_pi _ _ _ _ _ Hc) as [T00 [rest [Hpi Hte]]].
   cbn in Hpi. rewrite Nat.eqb_refl in Hpi. injection Hpi as <- _.
-  eapply teq_trans; [ exact Hte | exact Ht0 ].
+  eapply teqD_trans; [ exact Hte | exact Ht0 ].
 Qed.
 
 (* The body, with [x] a one-field record of a closed number: [y] a [Float] or
    [Int] as [A] is, and [x] a Float, so [A] is a Float. *)
-Lemma shared_body_not_int : forall x s A T2,
-  teq (typ_Record (row_Ext 0 A row_Empty)) (s_body s) ->
+Lemma shared_body_not_int : forall D0 x s A T2,
+  (forall sr, (forall r, r `notin` s_rq s -> sr r = row_Var r) ->
+     (forall r, r `in` s_rq s -> rkok d_any (s_rk s r) (sr r)) -> rkres D0 d_any sr) ->
+  teqD D0 (typ_Record (row_Ext 0 A row_Empty)) (s_body s) ->
   (A = typ_Int \/ A = typ_Float) ->
   typing d_any ((x ~ s) ++ nil)
     (e_proj (e_rec (fs_cons 1 (e_proj (e_fvar_f x) 0)
                    (fs_cons 2 (e_bin (e_proj (e_fvar_f x) 0) bop_add (e_dec 0)) fs_nil))) 1) T2 ->
-  teq typ_Int T2 -> False.
+  teqD d_any typ_Int T2 -> False.
 Proof.
-  intros x s A T2 Hr HA Hty Hi.
+  intros D0 x s A T2 Hres Hr HA Hty Hi.
   destruct (proj_inv _ _ _ _ _ Hty) as [T0 [R [Hrec Ht0]]].
   destruct (rec_inv _ _ _ _ Hrec) as [Rf [Hft Hteq]].
-  destruct (teq_Record_inv _ _ Hteq) as [R' [E Hq]]. injection E as E. subst R'.
+  destruct (teqD_Record_pi _ _ _ _ _ Hteq) as [Tp [rest [Hpi Hte]]].
   inversion Hft; subst. match goal with Hf : field_typing _ _ (fs_cons 2 _ _) _ |- _ => inversion Hf; subst end.
   match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
-  destruct (req_surface _ _ _ _ Hq) as [Tp [rest [Hpi Hte]]].
   cbn in Hpi. injection Hpi as E1 E2. subst Tp rest.
-  pose proof (proj_of_bound _ _ _ _ _ _ _ eq_refl Hr HA H5) as Hy'.
-  assert (Hai : teq A typ_Int)
-    by (eapply teq_trans; [ exact Hy' | eapply teq_trans; [ exact Hte | eapply teq_trans; [ exact Ht0 | apply teq_sym; exact Hi ] ] ]).
+  pose proof (proj_of_bound _ _ _ _ _ _ _ _ Hres eq_refl Hr HA H5) as Hy'.
+  assert (Hai : teqD d_any A typ_Int)
+    by (eapply teqD_trans; [ exact Hy' | eapply teqD_trans; [ exact Hte | eapply teqD_trans; [ exact Ht0 | apply teqD_sym; exact Hi ] ] ]).
   assert (HAi : A = typ_Int)
-    by (destruct HA as [-> | ->]; [ reflexivity | apply teq_Float_inv in Hai; discriminate Hai ]).
+    by (destruct HA as [-> | ->]; [ reflexivity | apply teqD_Float_inv in Hai; discriminate Hai ]).
   subst A.
   destruct (bin_inv _ _ _ _ _ _ H7) as [A1 [B [R1 [H1 [H2 [Hs _]]]]]].
-  pose proof (proj_of_bound _ _ _ _ _ _ _ eq_refl Hr HA H1) as Hp.
+  pose proof (proj_of_bound _ _ _ _ _ _ _ _ Hres eq_refl Hr HA H1) as Hp.
   pose proof (dec_inv _ _ _ _ H2) as Hd.
   inversion Hs; subst; try (simpl in *; discriminate).
-  pose proof (teq_trans _ _ _ Hp (teq_sym _ _ Hd)) as Hif.
-  apply teq_Int_inv in Hif. discriminate Hif.
+  pose proof (teqD_trans _ _ _ _ Hp (teqD_sym _ _ _ Hd)) as Hif.
+  apply teqD_Int_inv in Hif. discriminate Hif.
 Qed.
 
-Example shared_numeral_not_int : forall T, typing d_any nil shared_numeral T -> ~ teq typ_Int T.
+Example shared_numeral_not_int : forall T, typing d_any nil shared_numeral T -> ~ teqD d_any typ_Int T.
 Proof.
   intros T H Hi. unfold shared_numeral in H.
   destruct (let_inv _ _ _ _ _ H) as [L [T1 [T2 [Hcase Hteq]]]].
@@ -685,13 +690,22 @@ Proof.
       - apply AtomSetFacts.mem_iff in Em. exact (Hlp eq_refl a Em Ha).
       - unfold d_any in Ha. discriminate Ha. }
     pose proof (Hb x HxL) as Hbx. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec] in Hbx.
-    eapply shared_body_not_int with (s := gen (pin_ctx Tm nil) T1 k rk); [ exact Hrec | exact HA | exact Hbx | ].
-    eapply teq_trans; [ exact Hi | apply teq_sym; exact Hteq ].
+    eapply shared_body_not_int with (s := gen (pin_ctx Tm nil) T1 k rk); [ | exact Hrec | exact HA | exact Hbx | ].
+    + intros sr Hsr Hrk r. unfold extr. cbn [drk].
+      destruct (AtomSetImpl.mem r (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm nil)))) eqn:Em.
+      * apply AtomSetFacts.mem_iff in Em. exact (Hrk r Em).
+      * assert (Hn' : r `notin` s_rq (gen (pin_ctx Tm nil) T1 k rk))
+          by (cbn [s_rq gen]; intro Hin; apply AtomSetFacts.mem_iff in Hin; congruence).
+        rewrite (Hsr r Hn'). split; [ cbn; apply finer_any | intros l Hl; discriminate Hl ].
+    + eapply teqD_trans; [ exact Hi | apply teqD_sym; exact Hteq ].
   - assert (HA : A = typ_Int \/ A = typ_Float).
     { eapply Hlit; [ | exact Hn ]. intros a Ha. unfold d_any in Ha. discriminate Ha. }
     pose proof (Hb x HxL) as Hbx. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec] in Hbx.
-    eapply shared_body_not_int with (s := sch_mono T1); [ exact Hrec | exact HA | exact Hbx | ].
-    eapply teq_trans; [ exact Hi | apply teq_sym; exact Hteq ].
+    eapply shared_body_not_int with (s := sch_mono T1); [ | exact Hrec | exact HA | exact Hbx | ].
+    + intros sr Hsr Hrk r.
+      assert (Hn' : r `notin` s_rq (sch_mono T1)) by (cbn [s_rq sch_mono]; fsetdec).
+      rewrite (Hsr r Hn'). split; [ cbn; apply finer_any | intros l Hl; discriminate Hl ].
+    + eapply teqD_trans; [ exact Hi | apply teqD_sym; exact Hteq ].
 Qed.
 
 (* ... while at a Float the program has a derivation. *)

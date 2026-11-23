@@ -570,7 +570,7 @@ Qed.
 Theorem obj_one_receiver : forall D G fs T,
   typing D G (e_rec fs) T -> no_meth fs = false ->
   exists R Rt, field_typing D G fs R /\ meths_shared (row_tail_with R Rt) fs R /\
-               teq (typ_Record R) T.
+               teqD D (typ_Record R) T.
 Proof.
   intros D G fs T H Hm. destruct (rec_inv_ok _ _ _ _ H) as [R [Hft [[Hn | [Rt Hs]] Hq]]].
   - rewrite Hn in Hm. discriminate.

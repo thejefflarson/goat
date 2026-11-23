@@ -120,7 +120,7 @@ Fixpoint unify_grp (f : nat) (D : denv) (fs : fields) (R1 R2 : row) (n : nat) {s
    [infer] directly: its row is the one the spread's result extends. *)
 Definition spread_present (f : nat) (D2 : denv) (s1 s2 : sub) (T1 T2 : typ) (l : label)
   (e1' e2' : exp) (n2 : nat) : option (sub * denv * typ * nat * exp) :=
-  match unify_co f D2 (apT s2 T1)
+  match unify_coD f D2 (apT s2 T1)
           (typ_Record (row_Maybe l (typ_Var (ea n2)) T2 (row_Var (ea (S n2))))) (n2 + 2) with
   | None => None
   | Some (s3, D3, cs, n3) =>
@@ -168,7 +168,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
                   let beta := typ_Var (ea n2) in
-                  match unify_co f' D2 (apT s2 T1) (typ_Arrow T2 beta) (S n2) with
+                  match unify_coD f' D2 (apT s2 T1) (typ_Arrow T2 beta) (S n2) with
                   | None => None
                   | Some (s3, D3, cs, n3) =>
                       Some (scomp s3 (scomp s2 s1), D3, apT s3 beta, n3, e_app (coerce cs e1') e2')
@@ -244,7 +244,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
           | Some (s1, D1, T1, n1, e1') =>
               let a := typ_Var (ea n1) in
               let r := row_Var (ea (S n1)) in
-              match unify_co f' D1 T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
+              match unify_coD f' D1 T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
               | None => None
               | Some (s2, D2, cs, n2) => Some (scomp s2 s1, D2, apT s2 a, n2, e_proj (coerce cs e1') l)
               end
@@ -253,7 +253,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
           match infer f' D G c n with
           | None => None
           | Some (s1, D1, T1, n1, c') =>
-              match unify_co f' D1 T1 typ_Bool n1 with
+              match unify_coD f' D1 T1 typ_Bool n1 with
               | None => None
               | Some (s2, D1', cs1, n2) =>
                   match infer f' D1' (apC s2 (apC s1 G)) a n2 with
@@ -262,7 +262,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                       match infer f' D3 (apC s3 (apC s2 (apC s1 G))) b n3 with
                       | None => None
                       | Some (s4, D4, T3, n4, b') =>
-                          match unify_co f' D4 (apT s4 T2) T3 n4 with
+                          match unify_coD f' D4 (apT s4 T2) T3 n4 with
                           | None => None
                           | Some (s5, D5, cs2, n5) =>
                               Some (scomp s5 (scomp s4 (scomp s3 (scomp s2 s1))), D5, apT s5 T3, n5,
@@ -278,7 +278,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
               let Ts := fresh_tys n1 (nparams w) in
-              match unify_co f' D1 T1 (tag_payload w Ts tg) (n1 + nparams w) with
+              match unify_coD f' D1 T1 (tag_payload w Ts tg) (n1 + nparams w) with
               | None => None
               | Some (s2, D2, cs, n2) =>
                   Some (scomp s2 s1, D2, apT s2 (typ_Grp w (spine Ts)), n2, e_con w tg (coerce cs e1'))
@@ -291,7 +291,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
               let Ts := fresh_tys n1 (nparams w) in
-              match unify_co f' D1 T1 (typ_Grp w (spine Ts)) (n1 + nparams w) with
+              match unify_coD f' D1 T1 (typ_Grp w (spine Ts)) (n1 + nparams w) with
               | None => None
               | Some (s2, D2, cs, n2) =>
                   match infer_arms f' D2 (apC s2 (apC s1 G)) w (map (apT s2) Ts)
@@ -310,7 +310,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
-                  match unify_co f' D2 (apT s2 T1) (typ_Record (row_Var (ea n2))) (S n2) with
+                  match unify_coD f' D2 (apT s2 T1) (typ_Record (row_Var (ea n2))) (S n2) with
                   | Some (s3, D3, cs, n3) =>
                       if rlacksD D3 l (apR s3 (row_Var (ea n2))) then
                         Some (scomp s3 (scomp s2 s1), D3,
@@ -328,7 +328,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               let a := typ_Var (ea n1) in
               let r := row_Var (ea (S n1)) in
               let D1' := rupd D1 (ea (S n1)) (RK k_Any (Nat.eqb l)) in
-              match unify_co f' D1' T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
+              match unify_coD f' D1' T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
               | None => None
               | Some (s2, D2, cs, n2) =>
                   Some (scomp s2 s1, D2, apT s2 (typ_Record r), n2, e_restrict (coerce cs e1') l)
@@ -341,7 +341,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
           | None => None
           | Some (s1, D1, T1, n1, e1') =>
               let D1' := upd D1 (ea n1) k_Literal in
-              match unify_co f' D1' T1 (typ_Var (ea n1)) (S n1) with
+              match unify_coD f' D1' T1 (typ_Var (ea n1)) (S n1) with
               | None => None
               | Some (s2, D2, cs, n2) =>
                   Some (scomp s2 s1, D2, typ_Float, n2, e_tofloat (coerce cs e1'))
@@ -355,12 +355,12 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
                   if is_cmp_op o then
-                      match unify_co f' D2 (apT s2 T1) T2 n2 with
+                      match unify_coD f' D2 (apT s2 T1) T2 n2 with
                       | None => None
                       | Some (s3, D3, cs1, n3) =>
                           let D3' := upd D3 (ea n3) k_Eq in
                           let c := typ_Var (ea n3) in
-                          match unify_co f' D3' (apT s3 T2) c (S n3) with
+                          match unify_coD f' D3' (apT s3 T2) c (S n3) with
                           | None => None
                           | Some (s4, D4, cs2, n4) =>
                               Some (scomp s4 (scomp s3 (scomp s2 s1)), D4, typ_Bool, n4,
@@ -370,10 +370,10 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                   else if is_generic_op o then
                       let D2' := upd D2 (ea n2) (generic_sort o) in
                       let c := typ_Var (ea n2) in
-                      match unify_co f' D2' (apT s2 T1) c (S n2) with
+                      match unify_coD f' D2' (apT s2 T1) c (S n2) with
                       | None => None
                       | Some (s3, D3, cs1, n3) =>
-                          match unify_co f' D3 (apT s3 T2) (apT s3 c) n3 with
+                          match unify_coD f' D3 (apT s3 T2) (apT s3 c) n3 with
                           | None => None
                           | Some (s4, D4, cs2, n4) =>
                               Some (scomp s4 (scomp s3 (scomp s2 s1)), D4,
@@ -382,10 +382,10 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                           end
                       end
                   else
-                      match unify_co f' D2 (apT s2 T1) typ_Float n2 with
+                      match unify_coD f' D2 (apT s2 T1) typ_Float n2 with
                       | None => None
                       | Some (s3, D3, cs1, n3) =>
-                          match unify_co f' D3 (apT s3 T2) typ_Float n3 with
+                          match unify_coD f' D3 (apT s3 T2) typ_Float n3 with
                           | None => None
                           | Some (s4, D4, cs2, n4) =>
                               Some (scomp s4 (scomp s3 (scomp s2 s1)), D4, typ_Float, n4,
@@ -476,7 +476,7 @@ with infer_arms (f : nat) (D : denv) (G : ctx) (w : gdecl) (Ts : list typ) (x : 
           match infer f' D G e n with
           | None => None
           | Some (s1, D1, T1, n1, e') =>
-              match unify_co f' D1 T1 (apT s1 res) n1 with
+              match unify_coD f' D1 T1 (apT s1 res) n1 with
               | None => None
               | Some (s2, D2, cs, n2) =>
                   Some (scomp s2 s1, D2, apT s2 (apT s1 res), n2, arms_else (coerce cs e'))
@@ -487,7 +487,7 @@ with infer_arms (f : nat) (D : denv) (G : ctx) (w : gdecl) (Ts : list typ) (x : 
                   (open_exp_wrt_exp e (e_fvar_f x)) n with
           | None => None
           | Some (s1, D1, T1, n1, e') =>
-              match unify_co f' D1 T1 (apT s1 res) n1 with
+              match unify_coD f' D1 T1 (apT s1 res) n1 with
               | None => None
               | Some (s2, D2, cs, n2) =>
                   match infer_arms f' D2 (apC (scomp s2 s1) G) w
