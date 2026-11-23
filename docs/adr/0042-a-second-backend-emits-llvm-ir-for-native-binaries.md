@@ -71,10 +71,12 @@ pop them on return.
    `llvm.s*.with.overflow` intrinsics and branch to the spanned trap; division
    guards a zero divisor and MIN / −1; every function is `nounwind`.
 7. **Targets.** Native covers macOS and Linux desktop first, then the ESP32-C6
-   and C3, the RP2040 and the RP2350. Boards are native-only. WAMR AOT (ADR 0019,
-   ticket E4) is dropped. The existing WAMR code stays, with no new work, until
-   native boards run; the owner then decides whether to remove it. Board live
-   coding is not a goal; the compiler still emits wasm for anyone who wants it.
+   and C3, the RP2040 and the RP2350. A board runs a native build for release
+   and WAMR's interpreter for hot-swap development: the board is flashed once
+   with WAMR, then takes new wasm modules over serial without reflashing (#119).
+   WAMR AOT (ADR 0019, ticket E4) is dropped, since native release builds replace
+   it. So goat runs three ways: wasm for development, native for release, and
+   WAMR for hot-swap development on boards. Two backends serve all three.
 8. **Toolchain floor.** LLVM 17 or later on desktop, the first release with only
    opaque pointers (Apple clang from Xcode 15). Boards use a pinned upstream
    clang with RISC-V and Arm, because Apple clang has no RISC-V backend. CI runs
@@ -100,4 +102,3 @@ pop them on return.
 - The trampoline lowering, the spill-area register limits and the exact clang
   floor.
 - Which window library the desktop host uses.
-- Removing the WAMR code, which the owner decides after native boards run.

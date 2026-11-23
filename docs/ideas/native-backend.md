@@ -11,8 +11,10 @@ optimized native binary. No LLVM library is linked into goat: the emitter is a
 pure-text crate that still builds for `wasm32-unknown-unknown`.
 
 The wasm backend stays. It serves the web editor, `goat run` on the desktop and
-live coding. The native backend serves binaries: desktop first, then boards,
-and boards are native-only, the RP2040 included.
+live coding. The native backend serves release binaries: desktop first, then
+boards, the RP2040 included. On boards, WAMR's interpreter runs the wasm build
+for hot-swap development, so goat runs three ways: wasm for development, native
+for release, and WAMR for hot-swap development on boards.
 
 A native binary needs no runtime. The generated code already holds the
 allocator, reference counting, the drop loop, traps and the interactive glue;
@@ -99,7 +101,7 @@ and a nightly sanitizer job take that job over. The rest of what WAMR provides:
 |---|---|---|
 | Stop a runaway loop (ADR 0021) | nothing generated: Ctrl-C kills the process; a windowed host runs goat on a worker thread with an optional watchdog thread | the hardware watchdog, kicked between `update` calls |
 | Stack overflow | the ADR 0026 depth counter, with goat on a thread that reserves a large stack; the OS guard page is the backstop | the same counter with the board's `call_depth` |
-| Load code without reflashing | not needed: live coding stays on wasm | not needed; the wasm path remains for anyone who wants it |
+| Load code without reflashing | not needed: live coding stays on wasm | WAMR's interpreter runs the wasm build for hot-swap development (#119); the native build is the one you flash and keep |
 | Hot reload | deferred; a dylib swap works later because the ADR 0035 snapshot is self-describing | not applicable |
 
 ## Approaches
@@ -181,10 +183,9 @@ the milestones.
   poison-on-free) run in every test. Release builds follow the poison policy the
   owner sets for wasm.
 - **D8. Targets.** Live coding stays on wasm. Native covers macOS and Linux
-  first, then the ESP32-C6 and C3 (RV32) and the RP2040 and RP2350. Boards are
-  native-only; WAMR AOT (ADR 0019, ticket E4) is dropped. The WAMR code stays,
-  with no new work, until native boards run (M4), and then the owner decides
-  whether to remove it.
+  first, then the ESP32-C6 and C3 (RV32) and the RP2040 and RP2350, for release
+  builds. WAMR's interpreter stays the hot-swap development path on boards
+  (#119). WAMR AOT (ADR 0019, ticket E4) is dropped.
 - **D9. Preemption and stack.** As in the table above: nothing generated for
   preemption, the depth counter everywhere.
 - **D10. Toolchain floor.** LLVM 17 or later on desktop (opaque pointers only;
@@ -235,8 +236,8 @@ and `f32` keep this to soft-float helpers libgcc has, plus `fmodf`.
 - **M3: hardening.** Line tables, nightly fuzzing on native, the sanitizer job and
   the release profile.
 - **M4: boards.** C6, then C3, RP2040 and RP2350, with a pinned upstream clang,
-  the SDK link above and the thumbv6m trampoline. Then the owner decides on the
-  WAMR code.
+  the SDK link above and the thumbv6m trampoline. WAMR stays the hot-swap
+  development path.
 - **M5: the Julia path.** Direct `foreign "c"` calls first; SIMD only after a flat
   `Float` array exists, which is a language decision of its own.
 
