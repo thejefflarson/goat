@@ -163,7 +163,7 @@ Proof.
   apply exp_fields_mutind.
   - (* bound variable *)
     intros i n P Hs. apply blk_chain; [ exact I | ].
-    exact (chain_prim _ (prim_name _)).
+    exact (chain_prim _ (prim_name _ (nm_not_foreign _))).
   - (* free variable: not in a closed term *)
     intros y n P Hs. destruct Hs.
   - intros k n P Hs. apply blk_chain; [ exact I | ].

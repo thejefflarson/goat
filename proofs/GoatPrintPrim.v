@@ -21,13 +21,13 @@ Definition ExprParses (b : list tree) : Prop :=
 Ltac plain_head :=
   simpl; repeat split; intro; match goal with H : _ = _ |- _ => discriminate H end.
 
-Lemma prim_name : forall x, PrimOK [ident x].
+Lemma prim_name : forall x, x <> "foreign" -> PrimOK [ident x].
 Proof.
-  intros x r Hne.
+  intros x Hx r Hne.
   assert (Hnd : NotDecl (TName x :: r))
     by (destruct r as [| [? | ? | ? | | ?] ?]; simpl in *; exact I || exact Hne).
   flat_simp. refine (conj _ (conj _ _)).
-  - exact I.
+  - exact Hx.
   - exact Hnd.
   - pok ltac:(eapply notdecl_fail; exact Hnd).
 Qed.

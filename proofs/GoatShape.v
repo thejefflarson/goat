@@ -29,6 +29,8 @@ Definition core_rule (r : rule) : bool :=
 Inductive gen : pexpr -> list tree -> Prop :=
   | G_text : forall s,
       gen (E_term (T_text s)) [Leaf (TSym s)]
+  | G_word : forall s,
+      contextual s = true -> gen (E_term (T_text s)) [Leaf (TName s)]
   | G_name : forall x,
       gen (E_term T_name) [Leaf (TName x)]
   | G_number : forall n,
@@ -68,8 +70,13 @@ Inductive gen : pexpr -> list tree -> Prop :=
 
 (* ---- inversions ---- *)
 
-Lemma gen_text_inv : forall {s ts}, gen (E_term (T_text s)) ts -> ts = [Leaf (TSym s)].
-Proof. intros s ts H. inversion H. reflexivity. Qed.
+Lemma gen_text_inv : forall {s ts},
+  gen (E_term (T_text s)) ts -> contextual s = false -> ts = [Leaf (TSym s)].
+Proof. intros s ts H Hc. inversion H; subst; [reflexivity | congruence]. Qed.
+
+Ltac text_inv H :=
+  let E := fresh in
+  pose proof (gen_text_inv H ltac:(reflexivity)) as E; clear H; rename E into H.
 
 Lemma gen_name_inv : forall {ts}, gen (E_term T_name) ts -> exists x, ts = [Leaf (TName x)].
 Proof. intros ts H. inversion H. eauto. Qed.
@@ -151,7 +158,7 @@ Qed.
 
 (* ---- the children of each core node ---- *)
 
-Ltac text_leaf H := apply gen_text_inv in H; subst.
+Ltac text_leaf H := text_inv H; subst.
 
 Tactic Notation "split_seq" hyp(H) "as" simple_intropattern(p) :=
   destruct (gen_seq_inv H) as p; clear H.
@@ -229,7 +236,7 @@ Proof.
   - destruct (gen_node_of Hvalue eq_refl) as (c & -> & _).
     exists x, c.
     destruct (gen_opt_inv Hsemi) as [Hs | ->].
-    + apply gen_text_inv in Hs. subst. right. reflexivity.
+    + text_inv Hs. subst. right. reflexivity.
     + left. reflexivity.
 Qed.
 
@@ -289,7 +296,7 @@ Proof.
   split_seq H1 as (tail & fin & -> & Htail & Hfin).
   exists c, tail, fin. split; [ reflexivity | split; [ exact Htail | ] ].
   destruct (gen_opt_inv Hfin) as [Hcomma | ->].
-  - apply gen_text_inv in Hcomma. subst. right. reflexivity.
+  - text_inv Hcomma. subst. right. reflexivity.
   - left. reflexivity.
 Qed.
 
@@ -314,9 +321,9 @@ Proof.
   intros cs H. simpl in H.
   destruct (gen_alt_inv H) as [Ht | Hf].
   - left. destruct (gen_node_of Ht eq_refl) as (c & -> & Hc).
-    simpl in Hc. apply gen_text_inv in Hc. subst. reflexivity.
+    simpl in Hc. text_inv Hc. subst. reflexivity.
   - right. destruct (gen_node_of Hf eq_refl) as (c & -> & Hc).
-    simpl in Hc. apply gen_text_inv in Hc. subst. reflexivity.
+    simpl in Hc. text_inv Hc. subst. reflexivity.
 Qed.
 
 Lemma shape_local : forall cs,
@@ -350,9 +357,9 @@ Proof.
   apply gen_expect_inv in Hend. text_leaf Hend.
   assert (Hkw' : exists kw, tskw = [Leaf kw]).
   { destruct (gen_alt_inv Hkw) as [Hk | Hk].
-    - apply gen_text_inv in Hk. eauto.
+    - text_inv Hk. eauto.
     - destruct (gen_alt_inv Hk) as [Hk' | Hk'];
-        apply gen_text_inv in Hk'; eauto. }
+        text_inv Hk'; eauto. }
   destruct Hkw' as (kw & ->).
   destruct (gen_opt_inv Hp) as [Hps | ->].
   - destruct (gen_node_of Hps eq_refl) as (ps & -> & _).
@@ -412,7 +419,7 @@ Proof.
     split_seq H2 as (tail & fin & -> & Htail & Hfin).
     assert (Hfin' : fin = [] \/ fin = [sym ","]).
     { destruct (gen_opt_inv Hfin) as [Hcomma | ->].
-      - apply gen_text_inv in Hcomma. subst. right. reflexivity.
+      - text_inv Hcomma. subst. right. reflexivity.
       - left. reflexivity. }
     destruct (shape_record_item _ Hf) as [(c & ->) | (c & ->)].
     + exists (Node R_field c :: tail ++ fin ++ [sym "}"]).
@@ -456,7 +463,7 @@ Proof.
     + exists [], (Some r). exact (DPM_rest r [sym ","] (or_intror eq_refl)).
   - intros ts1 ts2 Hstep IH opt_rest fin Hopt Hfin.
     split_seq Hstep as (tscomma & tsname & -> & Hcomma & Hname).
-    apply gen_text_inv in Hcomma. subst.
+    text_inv Hcomma. subst.
     destruct (gen_ident _ Hname) as (y & ->).
     destruct (IH opt_rest fin Hopt Hfin) as (xs & ro & Hmore).
     exists (y :: xs), ro. simpl. apply DPM_name. exact Hmore.
@@ -472,7 +479,7 @@ Proof.
   split_seq Ha as (tsb & tsc & -> & Hb & Hc).
   assert (Hfin : tsc = [] \/ tsc = [sym ","]).
   { destruct (gen_opt_inv Hc) as [Hcomma | ->].
-    - apply gen_text_inv in Hcomma. subst. right. reflexivity.
+    - text_inv Hcomma. subst. right. reflexivity.
     - left. reflexivity. }
   destruct (gen_alt_inv Hb) as [Hnamed | Hrest].
   - split_seq Hnamed as (tsx & ts3 & -> & Hx & H3).
@@ -481,7 +488,7 @@ Proof.
     assert (Hopt' : topt = [] \/ exists r, topt = [sym ","; rest_node r]).
     { destruct (gen_opt_inv Hopt) as [Hs | ->].
       - split_seq Hs as (tscomma & tsrest & -> & Hcomma & Hrest).
-        apply gen_text_inv in Hcomma. subst.
+        text_inv Hcomma. subst.
         destruct (shape_rest_binding _ Hrest) as (r & ->).
         right. exists r. reflexivity.
       - left. reflexivity. }
@@ -515,11 +522,11 @@ Proof.
   destruct (gen_opt_inv Hb) as [Hbody | ->]; [ | exfalso ].
   - destruct (gen_node_of Hbody eq_refl) as (b & -> & _).
     destruct (gen_opt_inv Hsemi) as [Hs | ->].
-    + apply gen_text_inv in Hs. subst.
+    + text_inv Hs. subst.
       exists ps, xs, ro, vs, [sym ";"], b. split; [ reflexivity | split; [ right; reflexivity | exact Hps ] ].
     + exists ps, xs, ro, vs, [], b. split; [ reflexivity | split; [ left; reflexivity | exact Hps ] ].
   - destruct (gen_opt_inv Hsemi) as [Hs | ->];
-      [ apply gen_text_inv in Hs; subst | ]; absurd_has Hhas.
+      [ text_inv Hs; subst | ]; absurd_has Hhas.
 Qed.
 
 Lemma shape_string : forall cs, gen (body R_string) cs -> cs = [Leaf TStr].
@@ -603,7 +610,7 @@ Proof. intros o. destruct o; reflexivity. Qed.
 
 Ltac op_case H o :=
   destruct (gen_node_of H eq_refl) as (? & -> & Hc);
-  simpl in Hc; apply gen_text_inv in Hc; subst; exists o; reflexivity.
+  simpl in Hc; text_inv Hc; subst; exists o; reflexivity.
 
 Ltac infix_step Halt o :=
   destruct (gen_alt_inv Halt) as [Hh | Halt']; [ op_case Hh o | clear Halt; rename Halt' into Halt ].
@@ -903,6 +910,7 @@ Proof.
   - apply Forall_cons; [ exact I | apply Forall_nil ].
   - apply Forall_cons; [ exact I | apply Forall_nil ].
   - apply Forall_cons; [ exact I | apply Forall_nil ].
+  - apply Forall_cons; [ exact I | apply Forall_nil ].
   - apply Forall_nil.
   - (* node *)
     apply Forall_cons; [ | apply Forall_nil ].
@@ -930,6 +938,11 @@ Proof.
     injection H as <- _. apply G_eoi.
   - destruct t as [txt | | | | ]; destruct k as [x | n | d | | y]; simpl in H;
       try discriminate H.
+    + (* spelled name *)
+      destruct (contextual txt) eqn:Hc; [ | discriminate H ].
+      destruct (String.eqb txt x) eqn:Hmatch; [ | discriminate H ].
+      injection H as <- _. apply String.eqb_eq in Hmatch. subst.
+      apply G_word; exact Hc.
     + (* text *)
       destruct (String.eqb txt y) eqn:Hmatch; [ | discriminate H ].
       injection H as <- _. apply String.eqb_eq in Hmatch. subst.
@@ -1375,7 +1388,7 @@ Section Totality.
     - intros ts1 ts2 Hstep IH Hkids t e Hden.
       apply Forall_app in Hkids as [Hkids1 Hkids2].
       split_seq Hstep as (tscomma & tsarg & -> & Hcomma & Harg).
-      apply gen_text_inv in Hcomma. subst.
+      text_inv Hcomma. subst.
       destruct (gen_node_of Harg eq_refl) as (c & -> & _).
       inversion Hkids1 as [| ? ? _ Hrest]; subst.
       inversion Hrest as [| ? ? Hk _]; subst. simpl in Hk.
@@ -1410,7 +1423,7 @@ Section Totality.
     - intros ts1 ts2 Hstep IH Hplain x.
       apply Forall_app in Hplain as [Hplain1 Hplain2].
       split_seq Hstep as (tscomma & tsparam & -> & Hcomma & Hparam).
-      apply gen_text_inv in Hcomma. subst.
+      text_inv Hcomma. subst.
       inversion Hplain1 as [| ? ? _ Hplainp]; subst.
       destruct (shape_param _ Hparam Hplainp) as (y & ->).
       destruct (IH Hplain2 y) as (ys & Hys).
@@ -1437,7 +1450,7 @@ Section Totality.
       apply Forall_app in Hkids as [Hkids1 Hkids2].
       apply Forall_app in Hplain as [Hplain1 Hplain2].
       split_seq Hstep as (tscomma & tsitem & -> & Hcomma & Hitem).
-      apply gen_text_inv in Hcomma. subst.
+      text_inv Hcomma. subst.
       destruct (shape_record_item _ Hitem) as [(c & ->) | (c & ->)].
       2: { exfalso. inversion Hplain1 as [| ? ? _ Hrest]; subst.
            inversion Hrest as [| ? ? Hc _]; subst. exact (Hc c eq_refl). }

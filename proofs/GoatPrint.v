@@ -24,6 +24,9 @@ Definition digits (n : nat) : string := NilZero.string_of_uint (Nat.to_uint n).
 Definition nm (d : nat) : string := "v" ++ digits d.
 Definition lname (n : nat) : string := "lab" ++ digits n.
 
+Lemma nm_not_foreign : forall d, nm d <> "foreign".
+Proof. intros d H. unfold nm in H. discriminate H. Qed.
+
 (* ---- the printer, as a parse tree ---- *)
 
 Definition paren_kids (b : list tree) : list tree := [sym "("; Node R_expr b; sym ")"].

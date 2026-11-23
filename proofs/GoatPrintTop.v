@@ -24,7 +24,7 @@ Lemma block_plain : forall P e r,
 Proof.
   intros P e r HB Hr. destruct e;
     first
-    [ (cbn [block]; unfold decl_tree; flat_simp; exact I)
+    [ (cbn [block]; unfold decl_tree; flat_simp; first [exact I | apply nm_not_foreign])
     | exact (fin_plain _ _ (proj1 HB) Hr) ].
 Qed.
 
