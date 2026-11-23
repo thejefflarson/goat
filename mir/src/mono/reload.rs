@@ -1587,7 +1587,8 @@ impl<'g, 'a> Gen<'g, 'a> {
                 .sites
                 .iter()
                 .find(|s| s.expr == expr)
-                .map_or(Span::new(0, 0), |s| s.span);
+                .map(|s| s.span)
+                .expect("a site slot comes from a named site");
             let target = Target::Anon(expr);
             let (func, ty) = self.m.specialize_at(&root.subst, target, ty, span);
             let captures = self.m.lambdas[&target].captures.clone();
