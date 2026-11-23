@@ -574,26 +574,85 @@ Proof. intros [] []; simpl; intros H; try discriminate; constructor. Qed.
 Lemma finer_b_total : forall k1 k2, finer_b k1 k2 = false -> finer k2 k1.
 Proof. intros [] []; simpl; intros H; try discriminate; constructor. Qed.
 
+Lemma finer_b_iff : forall k1 k2, finer_b k1 k2 = true <-> finer k1 k2.
+Proof.
+  intros k1 k2. split; [ apply finer_b_sound | ].
+  destruct k1, k2; simpl; intros H; try reflexivity; inversion H.
+Qed.
+
+Lemma slot_used_iff : forall w j,
+  existsb (fun cs => existsb (Nat.eqb (6 + j)) cs) (gtags w) = true <->
+  exists cs, In cs (gtags w) /\ In (6 + j) cs.
+Proof.
+  intros w j. rewrite existsb_exists. split.
+  - intros [cs [Hc Hj]]. exists cs. split; [ exact Hc | ].
+    apply existsb_exists in Hj as [x [Hx He]]. apply Nat.eqb_eq in He. subst. exact Hx.
+  - intros [cs [Hc Hj]]. exists cs. split; [ exact Hc | ].
+    apply existsb_exists. exists (6 + j). split; [ exact Hj | apply Nat.eqb_refl ].
+Qed.
+
+Ltac sort_cases :=
+  intros k; destruct k; split; intros H;
+  first [ (left; reflexivity) | (right; reflexivity) | discriminate | reflexivity | exact I
+        | (destruct H as [H | H]; discriminate) ].
+
+Lemma sat_b_iff_mut : forall D,
+  (forall T, (forall k, sat_b D k T = true <-> sat D k T) /\
+             (forall w j, spine_sat_b D w j T = true <-> spine_sat D w j T)) /\
+  (forall R k, rsat_b D k R = true <-> rsat D k R).
+Proof.
+  intros D. apply typ_row_mutind; cbn -[Nat.add].
+  - split; [ sort_cases | intros w j; split; intros H; [ discriminate | contradiction ] ].
+  - split; [ sort_cases | intros w j; split; intros H; [ discriminate | contradiction ] ].
+  - split; [ sort_cases | intros w j; split; intros H; [ discriminate | contradiction ] ].
+  - split; [ sort_cases | intros w j; split; intros H; [ exact I | reflexivity ] ].
+  - split; [ sort_cases | intros w j; split; intros H; [ discriminate | contradiction ] ].
+  - intros T1 [IH1 _] T2 [_ IH3]. split.
+    + sort_cases.
+    + intros w j. rewrite Bool.andb_true_iff, Bool.orb_true_iff, Bool.negb_true_iff. split.
+      * intros [[Hn | Hs] H2]; split.
+        -- intros Hu. apply slot_used_iff in Hu. rewrite Hu in Hn. discriminate.
+        -- apply IH3. exact H2.
+        -- intros _. apply IH1. exact Hs.
+        -- apply IH3. exact H2.
+      * intros [H1 H2]. split; [ | apply IH3; exact H2 ].
+        destruct (existsb (fun cs => existsb (Nat.eqb (6 + j)) cs) (gtags w)) eqn:Eu.
+        -- right. apply IH1. apply H1. apply slot_used_iff. exact Eu.
+        -- left. reflexivity.
+  - intros R IH. split.
+    + intros k. destruct k; [ split; intros _; [ exact I | reflexivity ] | apply IH | apply IH | split; [ discriminate | contradiction ] ].
+    + intros w j. split; intros H; [ discriminate | contradiction ].
+  - intros a. split.
+    + intros k. apply finer_b_iff.
+    + intros w j. split; intros H; [ discriminate | contradiction ].
+  - intros i. split; [ sort_cases | intros w j; split; intros H; [ discriminate | contradiction ] ].
+  - intros B [IH _]. split.
+    + intros k. destruct k; [ split; intros _; [ exact I | reflexivity ] | apply IH | split; [ discriminate | contradiction ] | split; [ discriminate | contradiction ] ].
+    + intros w j. split; intros H; [ discriminate | contradiction ].
+  - intros w A [_ IH]. split.
+    + intros k. destruct k; [ split; intros _; [ exact I | reflexivity ] | apply IH | split; [ discriminate | contradiction ] | split; [ discriminate | contradiction ] ].
+    + intros w' j. split; intros H; [ discriminate | contradiction ].
+  - intros k. split; intros _; [ exact I | reflexivity ].
+  - intros r k. apply finer_b_iff.
+  - intros l T [IHT _] R IHR k. rewrite Bool.andb_true_iff. split.
+    + intros [H1 H2]. split; [ apply IHT; exact H1 | apply IHR; exact H2 ].
+    + intros [H1 H2]. split; [ apply IHT; exact H1 | apply IHR; exact H2 ].
+  - intros l P _ T _ R _ k. destruct k; split; intros H; first [ reflexivity | discriminate ].
+Qed.
+
+Lemma sat_b_iff : forall D k T, sat_b D k T = true <-> sat D k T.
+Proof. intros D k T. exact (proj1 (proj1 (sat_b_iff_mut D) T) k). Qed.
+
+Lemma rsat_b_iff : forall D k R, rsat_b D k R = true <-> rsat D k R.
+Proof. intros D k R. exact (proj2 (sat_b_iff_mut D) R k). Qed.
+
 Lemma sat_b_sound_mut : forall D,
   (forall T k, sat_b D k T = true -> sat D k T) /\
   (forall R k, rsat_b D k R = true -> rsat D k R).
 Proof.
-  intros D. apply typ_row_mutind; simpl.
-  - intros k _. exact I.
-  - intros k _. exact I.
-  - intros k. destruct k; first [ (left; reflexivity) | (right; reflexivity) | discriminate ].
-  - intros k. destruct k; first [ (left; reflexivity) | (right; reflexivity) | discriminate ].
-  - intros k. destruct k; first [ (left; reflexivity) | (right; reflexivity) | discriminate ].
-  - intros T1 _ T2 _ k. destruct k; first [ reflexivity | discriminate ].
-  - intros R IH k. destruct k; [ intros _; exact I | apply IH | apply IH | discriminate ].
-  - intros a k. apply finer_b_sound.
-  - intros i k. destruct k; first [ (left; reflexivity) | discriminate ].
-  - intros B _ k. destruct k; first [ (intros _; exact I) | discriminate ].
-  - intros w A _ k. destruct k; first [ (intros _; exact I) | discriminate ].
-  - intros k _. exact I.
-  - intros r k. apply finer_b_sound.
-  - intros l T IHT R IHR k H. apply Bool.andb_true_iff in H as [H1 H2]. split; auto.
-  - intros l P _ T _ R _ k. destruct k; first [ reflexivity | discriminate ].
+  intros D. split.
+  - intros T k. apply sat_b_iff.
+  - intros R k. apply rsat_b_iff.
 Qed.
 
 Lemma sat_b_sound : forall D k T, sat_b D k T = true -> sat D k T.

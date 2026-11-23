@@ -149,10 +149,11 @@ What phase 6 does not prove, and where each gap is tracked:
   does not decide it (`cr_float` relates to every result) and no order law is
   proved for `Float`-bearing values. This is an open question for the owner
   (`docs/design/phase6-proof-plan.md`, section 9, question 1).
-- **`sat_b` on `mu` and tag groups.** The algorithm's decision procedure answers
-  `Any` only for a recursive type or a tag group, so W refuses a comparison at one
-  that `sat` accepts. The corpus reader skips tags (185 programs), so no program
-  shows it.
+- **`sat_b` on `mu` and tag groups (closed, stage 7.4).** `sat_b_iff` proves
+  `sat_b D k T = true <-> sat D k T`, including `mu` (the body at `Eq`), a bound
+  index, and a tag group (`spine_sat_b`, which checks each parameter a tag uses),
+  so W decides a comparison at a recursive type or tag group as the calculus does.
+  The reader no longer skips a comparison in a program with tags.
 - **The label bridge.** The calculus orders labels as `nat`, the checker by name.
   The corpus reader numbers labels in sorted-name order (`number_labels_by_name`,
   `checker/examples/core_corpus.rs`), so a record comparison in the corpus means

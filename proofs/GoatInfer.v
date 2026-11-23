@@ -100,8 +100,18 @@ Fixpoint sat_b (D : denv) (k : sort) (T : typ) {struct T} : bool :=
   | typ_Var a => finer_b (D a) k
   | typ_Record R =>
       match k with k_Any => true | k_Eq | k_Numeric => rsat_b D k R | k_Literal => false end
-  | typ_String | typ_Bool | typ_Unit => match k with k_Any | k_Eq => true | _ => false end
-  | _ => match k with k_Any => true | _ => false end
+  | typ_String | typ_Bool | typ_Unit | typ_Bvar _ => match k with k_Any | k_Eq => true | _ => false end
+  | typ_Mu B => match k with k_Any => true | k_Eq => sat_b D k_Eq B | _ => false end
+  | typ_Grp w A => match k with k_Any => true | k_Eq => spine_sat_b D w 0 A | _ => false end
+  | typ_Arrow _ _ => match k with k_Any => true | _ => false end
+  end
+with spine_sat_b (D : denv) (w : gdecl) (j : nat) (A : typ) {struct A} : bool :=
+  match A with
+  | typ_Arrow T A' =>
+      (negb (existsb (fun cs => existsb (Nat.eqb (6 + j)) cs) (gtags w)) || sat_b D k_Eq T)
+        && spine_sat_b D w (S j) A'
+  | typ_Unit => true
+  | _ => false
   end
 with rsat_b (D : denv) (k : sort) (R : row) {struct R} : bool :=
   match R with
