@@ -1,12 +1,12 @@
 # goat: plan
 
-Working plan for goat, an embeddable language with a single WebAssembly
-backend (browsers, iOS, desktop, microcontrollers, any wasm host), with
-variants, recursive data, a kid-friendly prelude, and turtle graphics. goat
-began on a Cranelift native backend; that direct backend is now removed and
-the single-wasm-backend move is done (the Cranelift notes below are only
-about Wasmtime's wasm JIT). Phases are ordered; each
-ends with something that runs and passes tests.
+Working plan for goat, an embeddable language with two backends: WebAssembly
+(browsers, the web editor, desktop `goat run` and live coding, any wasm host)
+and native binaries through LLVM IR (desktop and microcontrollers, ADR 0042),
+with variants, recursive data, a kid-friendly prelude, and turtle graphics.
+goat began on a Cranelift native backend; that backend is removed, and the
+Cranelift notes below are only about Wasmtime's wasm JIT. Phases are ordered;
+each ends with something that runs and passes tests.
 
 ## What goat is
 
@@ -24,7 +24,7 @@ turtle.**
   Artists: canvas/audio APIs. Host authors: WIT, FFI, named types. Same
   language; hosts choose the level.
 - **Size target: Lua-scale** (tens of thousands of lines), not Roc-scale. Stay
-  narrow: one IR, one backend, one host model.
+  narrow: one IR, two backends (wasm and native), one host model.
 - **Learn from Roc** (closest relative: structural records/tags, inference,
   RC, mono, platforms): study its lambda sets (closures without heap
   allocation via defunctionalization under mono) and its platform/host model.
@@ -33,20 +33,22 @@ turtle.**
 
 ### Platform and backends
 - **Targets:** browser, iOS, desktop, any host embedding a wasm runtime, and
-  later microcontrollers (Phase 12). Embedded is reached only through wasm
-  (WAMR / `wasm3` / `wasm2c` → vendor C toolchain); Cranelift has no 32-bit
-  ARM (Cortex-M), Xtensa, or riscv32 backend.
-- **One backend: WebAssembly**, emitted from MIR with `wasm-encoder`. It's
-  the only path to browsers, the iOS web view, and microcontrollers, and it
-  keeps the sandbox that makes goat embeddable.
-  - Native code on desktop still comes from Cranelift: goat → `.wasm` →
-    Wasmtime → Cranelift → machine code. (Cranelift can't emit wasm; Wasmtime
-    *uses* Cranelift to compile wasm.)
-  - **The direct Cranelift backend is deferred** until there's a measured
-    need for it (see "Later"). The current Cranelift code is removed in
-    Phase 2 and stays in git history.
-  - MIR stays backend-neutral (structured, pointer size a target parameter) so
-    a second backend can be added without redesign.
+  microcontrollers (Phase 12). Microcontrollers run native release builds and
+  WAMR for hot-swap development (ADR 0042).
+- **Two backends, both emitted from MIR** (ADR 0042):
+  - **WebAssembly**, with `wasm-encoder`: the web editor, the iOS web view,
+    desktop `goat run`, live coding and hot reload, and any host that embeds a
+    wasm runtime. It keeps the sandbox that makes goat embeddable.
+  - **Native, through textual LLVM IR** that the system clang compiles and links
+    into a self-contained binary: desktop (macOS, Linux) first, then the boards
+    (ESP32-C6, C3, RP2040, RP2350). goat links no LLVM library; the emitter is a
+    pure-text compiler crate. Tail calls use `tailcc` and `musttail`, with loops
+    and merged recursive groups everywhere and a trampoline on Thumb-1.
+  - **Three ways to run:** wasm for development, native for release, and WAMR's
+    interpreter for hot-swap development on boards (live coding over serial,
+    #119). WAMR AOT is dropped.
+  - MIR stays backend-neutral (structured, no pointer size baked in), so each
+    backend computes its own offsets.
 - **Wasm toolchain (Rust crates, Bytecode Alliance):**
   - `wasm-encoder` — build modules (sections + instructions).
   - `wasmparser` — validate every emitted module in tests/debug builds.
@@ -55,16 +57,15 @@ turtle.**
   - `wasm-opt` (Binaryen) — optional post-pass; skip initially.
   - Not `walrus`: MIR already serves as the transform IR.
 - **MIR is structured** (trees of `If`/`Switch`, no arbitrary CFG), so it
-  maps directly to wasm `block`/`if`/`br_table` with no relooper (and to
-  Cranelift's `FunctionBuilder`, if that backend is ever added).
-- **Execution modes come from runtimes, not extra goat backends:**
+  maps directly to wasm `block`/`if`/`br_table` with no relooper, and to LLVM
+  IR basic blocks.
+- **Execution modes for wasm come from runtimes:**
 
   | Mode | How | Where |
   |---|---|---|
   | JIT | wasmtime (Cranelift) | CLI, desktop hosts, hot reload |
   | JIT | browser engine | web, iOS web view |
   | AOT | wasmtime precompiled modules (`.cwasm`) | servers, desktop, fast startup |
-  | AOT to C | `wasm2c` / `w2c2` → C linked into host | consoles, embedded, native iOS apps |
   | Interpreter | wasmtime Pulley, `wasm3`, WAMR | JIT-banned hosts loading scripts at runtime |
 
 - **The compiler is a library first:** `goat::compile(source, host_interface)
@@ -176,6 +177,7 @@ source + prelude
   → closure conversion + lambda lift   [new: goat_mir]
   → RC insertion (dup/drop)            [new: goat_mir]
   → wasm emit                          [new: goat_wasm]
+  → LLVM IR emit, then clang           [planned: goat_llvm, ADR 0042]
 ```
 
 Goat-specific optimizations (mono, RC elision, reuse, known-closure inlining)
@@ -187,6 +189,8 @@ left to the engine that runs the output.
 | `parser`, `checker` | unchanged roles |
 | `mir` (`goat_mir`) | mono, closure conversion, RC insertion; defines MIR |
 | `wasm` (`goat_wasm`) | MIR → wasm bytes via `wasm-encoder` |
+| `llvm` (`goat_llvm`, planned) | MIR → textual LLVM IR (ADR 0042) |
+| `native` (`goat_native`, planned) | native host library, clang driver, test driver |
 | `goat` (lib) | public API: `compile(source, host_interface)` |
 | `cli` | `check` / `build` (emit `.wasm`) / `run` (wasmtime) |
 
@@ -768,9 +772,10 @@ Espruino. None are statically typed and GC-free.
 
 - [ ] **Compile off-device:** in the browser (compiler-as-wasm) or the CLI;
       flash over WebSerial / WebUSB.
-- [ ] **On-device runtime:** start with an interpreter (WAMR fast-interp or
-      `wasm3`, tens of KB flash); add AOT (WAMR AOT, or `wasm2c` → vendor
-      toolchain) for speed.
+- [ ] **Native board builds (ADR 0042):** goat compiles to a native object
+      that the board SDK links; no runtime on the device. This replaces the
+      on-device wasm runtime plan, and WAMR AOT is dropped. The WAMR
+      interpreter work already done stays until native boards run.
 - [ ] **First boards:** an ESP32 variant and an RP2040/RP2350.
 - [ ] **Host API (WIT):** GPIO, timers, LEDs (NeoPixel strips), basic
       sensors, serial print.
@@ -791,14 +796,9 @@ Espruino. None are statically typed and GC-free.
 
 ## Later (not scheduled)
 
-- **Direct Cranelift backend (MIR → Cranelift IR)**, added only when a
-  measured need shows up. Triggers: wasm's limits on stacks/threads block
-  coroutines or parallelism; a host needs native embedding with no wasm
-  runtime or direct C interop; profiling shows the wasm layer (bounds
-  checks, host-call adapters, lost goat facts) costing real time. Start from
-  the old Cranelift code in git history; it would also become a second
-  differential-testing oracle. Desktop-only: Cranelift doesn't target
-  microcontrollers.
+- **Native backend follow-ons** (ADR 0042, `docs/ideas/native-backend.md`):
+  native hot reload through dynamic libraries, Windows, linking into iOS apps,
+  direct `foreign "c"` calls, and SIMD once a flat `Float` array exists.
 
 - **Module loader** replacing `include_str!` for the prelude and user files.
 - **Named types (advanced tier).** For teachers and library authors; kids
