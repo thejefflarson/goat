@@ -1,6 +1,8 @@
 ; goat native backend: textual LLVM IR
 
-declare void @goat_trap(ptr, ptr, i32) noreturn nounwind
+%goat_host = type { i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }
+%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64] }
+
 declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
@@ -13,26 +15,68 @@ entry:
   %v2 = extractvalue { i64, i1 } %v1, 1
   br i1 %v2, label %trap3, label %go4
 trap3:
-  call void @goat_trap(ptr %inst, ptr @goat.trap.0, i32 23)
+  %v5 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 7
+  %v6 = load ptr, ptr %v5
+  %v7 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
+  %v8 = load ptr, ptr %v7
+  %v9 = getelementptr inbounds %goat_host, ptr %v6, i32 0, i32 9
+  %v10 = load ptr, ptr %v9
+  call void %v10(ptr %v8, ptr @goat.trap.0, i64 23) noreturn nounwind
   unreachable
 go4:
-  %v5 = extractvalue { i64, i1 } %v1, 0
-  %v6 = call { i64, i1 } @llvm.ssub.with.overflow.i64(i64 10, i64 4)
-  %v7 = extractvalue { i64, i1 } %v6, 1
-  br i1 %v7, label %trap8, label %go9
-trap8:
-  call void @goat_trap(ptr %inst, ptr @goat.trap.0, i32 23)
+  %v11 = extractvalue { i64, i1 } %v1, 0
+  %v12 = call { i64, i1 } @llvm.ssub.with.overflow.i64(i64 10, i64 4)
+  %v13 = extractvalue { i64, i1 } %v12, 1
+  br i1 %v13, label %trap14, label %go15
+trap14:
+  %v16 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 7
+  %v17 = load ptr, ptr %v16
+  %v18 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
+  %v19 = load ptr, ptr %v18
+  %v20 = getelementptr inbounds %goat_host, ptr %v17, i32 0, i32 9
+  %v21 = load ptr, ptr %v20
+  call void %v21(ptr %v19, ptr @goat.trap.0, i64 23) noreturn nounwind
   unreachable
-go9:
-  %v10 = extractvalue { i64, i1 } %v6, 0
-  %v11 = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 %v5, i64 %v10)
-  %v12 = extractvalue { i64, i1 } %v11, 1
-  br i1 %v12, label %trap13, label %go14
-trap13:
-  call void @goat_trap(ptr %inst, ptr @goat.trap.0, i32 23)
+go15:
+  %v22 = extractvalue { i64, i1 } %v12, 0
+  %v23 = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 %v11, i64 %v22)
+  %v24 = extractvalue { i64, i1 } %v23, 1
+  br i1 %v24, label %trap25, label %go26
+trap25:
+  %v27 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 7
+  %v28 = load ptr, ptr %v27
+  %v29 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
+  %v30 = load ptr, ptr %v29
+  %v31 = getelementptr inbounds %goat_host, ptr %v28, i32 0, i32 9
+  %v32 = load ptr, ptr %v31
+  call void %v32(ptr %v30, ptr @goat.trap.0, i64 23) noreturn nounwind
   unreachable
-go14:
-  %v15 = extractvalue { i64, i1 } %v11, 0
-  ret i64 %v15
+go26:
+  %v33 = extractvalue { i64, i1 } %v23, 0
+  ret i64 %v33
 }
 
+define i32 @goat_main(ptr %host, ptr %ctx, ptr %inst) nounwind {
+entry:
+  %host_version = load i32, ptr %host
+  %host_old = icmp ult i32 %host_version, 1
+  br i1 %host_old, label %bad_host, label %check_instance
+bad_host:
+  ret i32 1
+check_instance:
+  %instance_version = load i32, ptr %inst
+  %instance_old = icmp ult i32 %instance_version, 1
+  br i1 %instance_old, label %bad_instance, label %run
+bad_instance:
+  ret i32 2
+run:
+  %host_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 7
+  store ptr %host, ptr %host_slot
+  %ctx_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
+  store ptr %ctx, ptr %ctx_slot
+  %v = call i64 @goat_entry(ptr %inst)
+  %print_slot = getelementptr inbounds %goat_host, ptr %host, i32 0, i32 3
+  %print = load ptr, ptr %print_slot
+  call void %print(ptr %ctx, i64 %v) nounwind
+  ret i32 0
+}

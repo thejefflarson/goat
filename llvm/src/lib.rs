@@ -1,8 +1,13 @@
 //! MIR to textual LLVM IR (ADR 0042). The output names no target triple or
 //! data layout, so `clang --target` supplies them, and it uses only syntax
 //! LLVM 17 reads (opaque `ptr`). Every function takes the `goat_instance`
-//! pointer first, so reaching the host through a table hanging off it adds
-//! no parameter later.
+//! pointer first. The generated code keeps no global state: the heap, the
+//! counters and the current site live in that instance, and the host is a
+//! `goat_host` table of function pointers the instance points at.
+//!
+//! Both structs start with a version and only grow at the end. An export takes
+//! `(host, ctx, instance)`, checks that the table and the instance are at least
+//! as new as the code, and returns a nonzero status when they are not.
 //!
 //! The IR never carries `nsw`, `nuw`, fast-math flags or TBAA: arithmetic that
 //! can overflow goes through the `llvm.s*.with.overflow` intrinsics and
@@ -16,9 +21,123 @@ use goat_mir::*;
 /// The function the program's entry is emitted as.
 pub const ENTRY: &str = "goat_entry";
 
-/// What the generated code calls to trap: `(instance, message, length)`. The
-/// host library defines it, and it does not return.
-pub const TRAP: &str = "goat_trap";
+/// The export that runs a run-once program: `(host, ctx, instance) -> status`.
+/// It prints the program's value through the table.
+pub const MAIN: &str = "goat_main";
+
+/// What `goat_main` returns: `STATUS_OK`, or which struct is too old.
+pub const STATUS_OK: i32 = 0;
+pub const STATUS_HOST_VERSION: i32 = 1;
+pub const STATUS_INSTANCE_VERSION: i32 = 2;
+
+/// The oldest `goat_host` and `goat_instance` this emitter's code runs against.
+pub const HOST_VERSION: u32 = 1;
+pub const INSTANCE_VERSION: u32 = 1;
+
+/// The `goat_host` fields after `version`, in order, each a function pointer
+/// whose first argument is the `ctx` the export received. They match the wasm
+/// imports one to one: `print_*`, `write_*` and `trap` are the `goat` module,
+/// `scene_*` and `turtle_*` the modules of those names, and `foreign` is any
+/// other host function. A string argument is a pointer and a byte length.
+pub const HOST_FUNCTIONS: &[&str] = &[
+    "print_number",
+    "print_bool",
+    "print_int",
+    "print_string",
+    "write_number",
+    "write_string",
+    "write_end",
+    "write_int",
+    "trap",
+    "scene_begin",
+    "scene_end",
+    "scene_line",
+    "scene_polyline_begin",
+    "scene_vertex",
+    "scene_polyline_end",
+    "scene_circle",
+    "scene_rect",
+    "scene_text",
+    "scene_span",
+    "scene_edit",
+    "scene_swatch",
+    "turtle_forward",
+    "turtle_back",
+    "turtle_left",
+    "turtle_right",
+    "turtle_pen_up",
+    "turtle_pen_down",
+    "turtle_color",
+    "foreign",
+];
+
+/// The `goat_instance` fields and their LLVM types, in order. `host` and `ctx`
+/// are what the last export call received; `site_start` is `u32::MAX` while no
+/// site is current.
+pub const INSTANCE_FIELDS: &[(&str, &str)] = &[
+    ("version", "i32"),
+    ("live", "i32"),
+    ("depth", "i32"),
+    ("site_start", "i32"),
+    ("site_end", "i32"),
+    ("heap", "ptr"),
+    ("heap_size", "i64"),
+    ("host", "ptr"),
+    ("ctx", "ptr"),
+    ("spill", "[8 x i64]"),
+];
+
+/// The index of `name` among the fields of the `goat_host` type, where
+/// `version` is field 0.
+fn host_slot(name: &str) -> usize {
+    1 + HOST_FUNCTIONS
+        .iter()
+        .position(|f| *f == name)
+        .expect("a goat_host function")
+}
+
+fn instance_slot(name: &str) -> usize {
+    INSTANCE_FIELDS
+        .iter()
+        .position(|(f, _)| *f == name)
+        .expect("a goat_instance field")
+}
+
+fn type_definitions() -> String {
+    let fields: Vec<_> = INSTANCE_FIELDS.iter().map(|(_, ty)| *ty).collect();
+    let pointers = vec!["ptr"; HOST_FUNCTIONS.len()].join(", ");
+    format!(
+        "%goat_host = type {{ i32, {pointers} }}\n%goat_instance = type {{ {} }}\n",
+        fields.join(", ")
+    )
+}
+
+/// A module whose `goat_layout_probe(ptr out)` stores the size of `goat_host`
+/// and the offset of each of its fields, then the same for `goat_instance`, as
+/// `i64`s. A host compares them with its own `#[repr(C)]` mirrors.
+pub fn layout_probe() -> String {
+    let mut out = type_definitions();
+    out.push_str("\ndefine void @goat_layout_probe(ptr %out) nounwind {\nentry:\n");
+    let mut slot = 0;
+    for (ty, fields) in [
+        ("%goat_host", HOST_FUNCTIONS.len() + 1),
+        ("%goat_instance", INSTANCE_FIELDS.len()),
+    ] {
+        let mut addresses = vec![format!("getelementptr ({ty}, ptr null, i32 1)")];
+        addresses
+            .extend((0..fields).map(|i| format!("getelementptr ({ty}, ptr null, i32 0, i32 {i})")));
+        for address in addresses {
+            let _ = writeln!(
+                out,
+                "  %p{slot} = getelementptr i64, ptr %out, i32 {slot}\n  \
+                 store i64 ptrtoint (ptr {address} to i64), ptr %p{slot}"
+            );
+            slot += 1;
+        }
+    }
+    out.push_str("  ret void\n}\n");
+    out
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmitError {
@@ -44,12 +163,16 @@ impl fmt::Display for EmitError {
 impl std::error::Error for EmitError {}
 
 pub fn emit(program: &Program) -> Result<String, EmitError> {
+    if program.interactive.is_some() {
+        return Err(EmitError::Unsupported("interactive programs"));
+    }
     let mut module = Module::new(program);
     let mut functions = String::new();
     for (index, func) in program.funcs.iter().enumerate() {
         functions.push_str(&FuncLower::new(&mut module, func).lower(FuncId(index as u32))?);
         functions.push('\n');
     }
+    functions.push_str(&module.main_export()?);
     Ok(module.finish(&functions))
 }
 
@@ -164,9 +287,82 @@ impl<'a> Module<'a> {
         callee
     }
 
+    /// `goat_main`: checks the versions, records the host and context in the
+    /// instance, runs the entry and prints its value through the table.
+    fn main_export(&self) -> Result<String, EmitError> {
+        let program = self.program;
+        let root = program
+            .funcs
+            .get(program.entry.0 as usize)
+            .ok_or(EmitError::UnknownFunc(program.entry))?;
+        if !root.params.is_empty() {
+            return Err(EmitError::Malformed("entry function takes parameters"));
+        }
+        let ret = self.ret_ty(root.ret)?;
+        let (host_field, ctx_field) = (instance_slot("host"), instance_slot("ctx"));
+        let mut out = format!(
+            "define i32 @{MAIN}(ptr %host, ptr %ctx, ptr %inst) nounwind {{\n\
+             entry:\n  \
+             %host_version = load i32, ptr %host\n  \
+             %host_old = icmp ult i32 %host_version, {HOST_VERSION}\n  \
+             br i1 %host_old, label %bad_host, label %check_instance\n\
+             bad_host:\n  ret i32 {STATUS_HOST_VERSION}\n\
+             check_instance:\n  \
+             %instance_version = load i32, ptr %inst\n  \
+             %instance_old = icmp ult i32 %instance_version, {INSTANCE_VERSION}\n  \
+             br i1 %instance_old, label %bad_instance, label %run\n\
+             bad_instance:\n  ret i32 {STATUS_INSTANCE_VERSION}\n\
+             run:\n  \
+             %host_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 {host_field}\n  \
+             store ptr %host, ptr %host_slot\n  \
+             %ctx_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 {ctx_field}\n  \
+             store ptr %ctx, ptr %ctx_slot\n"
+        );
+        let call = format!("call {ret} @{ENTRY}(ptr %inst)");
+        let (printer, arg) = match root.ret {
+            MTy::Unit => {
+                let _ = writeln!(out, "  {call}");
+                ("", String::new())
+            }
+            MTy::Int if self.narrow() => {
+                let _ = writeln!(out, "  %v = {call}\n  %w = sext i32 %v to i64");
+                ("print_int", "i64 %w".to_string())
+            }
+            MTy::Int => {
+                let _ = writeln!(out, "  %v = {call}");
+                ("print_int", "i64 %v".to_string())
+            }
+            MTy::Float if self.narrow() => {
+                let _ = writeln!(out, "  %v = {call}\n  %w = fpext float %v to double");
+                ("print_number", "double %w".to_string())
+            }
+            MTy::Float => {
+                let _ = writeln!(out, "  %v = {call}");
+                ("print_number", "double %v".to_string())
+            }
+            MTy::Bool => {
+                let _ = writeln!(out, "  %v = {call}\n  %w = zext i1 %v to i32");
+                ("print_bool", "i32 %w".to_string())
+            }
+            MTy::Ptr(_) => return Err(EmitError::Unsupported("heap values")),
+        };
+        if !printer.is_empty() {
+            let slot = host_slot(printer);
+            let _ = writeln!(
+                out,
+                "  %print_slot = getelementptr inbounds %goat_host, ptr %host, i32 0, i32 {slot}\n  \
+                 %print = load ptr, ptr %print_slot\n  \
+                 call void %print(ptr %ctx, {arg}) nounwind"
+            );
+        }
+        out.push_str("  ret i32 0\n}\n");
+        Ok(out)
+    }
+
     fn finish(self, functions: &str) -> String {
         let mut out = String::from("; goat native backend: textual LLVM IR\n\n");
-        let _ = writeln!(out, "declare void @{TRAP}(ptr, ptr, i32) noreturn nounwind");
+        out.push_str(&type_definitions());
+        out.push('\n');
         for declaration in &self.declarations {
             out.push_str(declaration);
         }
@@ -348,10 +544,27 @@ impl<'m, 'a> FuncLower<'m, 'a> {
         self.start(&go);
     }
 
+    /// The address of `field` in the instance.
+    fn instance_field(&mut self, field: &str) -> String {
+        let slot = instance_slot(field);
+        self.emit(format!(
+            "getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 {slot}"
+        ))
+    }
+
     fn trap(&mut self, message: &str) {
         let (index, len) = self.module.trap_message(message);
+        let host = self.instance_field("host");
+        let host = self.emit(format!("load ptr, ptr {host}"));
+        let ctx = self.instance_field("ctx");
+        let ctx = self.emit(format!("load ptr, ptr {ctx}"));
+        let slot = host_slot("trap");
+        let slot = self.emit(format!(
+            "getelementptr inbounds %goat_host, ptr {host}, i32 0, i32 {slot}"
+        ));
+        let trap = self.emit(format!("load ptr, ptr {slot}"));
         self.line(format!(
-            "call void @{TRAP}(ptr %inst, ptr @goat.trap.{index}, i32 {len})"
+            "call void {trap}(ptr {ctx}, ptr @goat.trap.{index}, i64 {len}) noreturn nounwind"
         ));
         self.line("unreachable".to_string());
     }
@@ -417,9 +630,16 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             Expr::CallForeign(..) | Expr::Write(_) => {
                 return Err(EmitError::Unsupported("host calls"));
             }
-            // The site has nowhere to live until the instance has a layout, so
-            // a trap carries only its message for now.
-            Expr::Site(..) => Some(Val::Unit),
+            Expr::Site(start, end) => {
+                let too_long = || EmitError::Unsupported("a source over 4 GiB");
+                let start = u32::try_from(*start).map_err(|_| too_long())?;
+                let end = u32::try_from(*end).map_err(|_| too_long())?;
+                for (field, value) in [("site_start", start), ("site_end", end)] {
+                    let slot = self.instance_field(field);
+                    self.line(format!("store i32 {value}, ptr {slot}"));
+                }
+                Some(Val::Unit)
+            }
             _ => return Err(EmitError::Unsupported("heap values")),
         })
     }

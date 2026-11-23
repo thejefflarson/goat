@@ -270,13 +270,26 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-void goat_trap(void *inst, const char *message, int32_t len) {
-    printf("trap: %.*s\n", (int)len, message);
+struct host { uint32_t version; void *fns[SLOTS]; };
+struct instance {
+    uint32_t version, live, depth, site_start, site_end;
+    void *heap; uint64_t heap_size; void *host; void *ctx; uint64_t spill[8];
+};
+static void trap(void *ctx, const char *message, uint64_t len) {
+    struct instance *inst = ctx;
+    printf("trap: %.*s", (int)len, message);
+    if (inst->site_start != UINT32_MAX) printf(" at %u..%u", inst->site_start, inst->site_end);
+    printf("\n");
     exit(0);
 }
 extern RET goat_entry(void *inst);
 int main(void) {
-    printf(FMT "\n", (CAST)goat_entry(0));
+    struct host host = { .version = 1 };
+    host.fns[TRAP_SLOT] = (void *)trap;
+    struct instance inst = { .version = 1, .site_start = UINT32_MAX };
+    inst.host = &host;
+    inst.ctx = &inst;
+    printf(FMT "\n", (CAST)goat_entry(&inst));
     return 0;
 }
 "#;
@@ -305,6 +318,8 @@ fn run(clang: &str, name: &str, p: &Program, ret: Ret) -> String {
         .arg(format!("-DRET={c_ty}"))
         .arg(format!("-DFMT={fmt}"))
         .arg(format!("-DCAST={cast}"))
+        .arg(format!("-DSLOTS={}", goat_llvm::HOST_FUNCTIONS.len()))
+        .arg(format!("-DTRAP_SLOT={}", trap_slot()))
         .arg(&c_path)
         .args(["-x", "ir"])
         .arg(&ll_path)
@@ -321,6 +336,13 @@ fn run(clang: &str, name: &str, p: &Program, ret: Ret) -> String {
     let out = Command::new(&exe).output().unwrap();
     assert!(out.status.success(), "{name} exited with {:?}", out.status);
     String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+fn trap_slot() -> usize {
+    goat_llvm::HOST_FUNCTIONS
+        .iter()
+        .position(|f| *f == "trap")
+        .unwrap()
 }
 
 fn int_program(body: Expr) -> Program {
@@ -464,4 +486,40 @@ fn truncating_a_float_traps_outside_the_int_range() {
             expected
         );
     }
+}
+
+#[test]
+fn a_trap_reports_the_current_site_from_the_instance() {
+    let Some(clang) = clang() else { return };
+    let body = let_(0, Expr::Site(3, 9), int_op(IntOp::Div, 1, 0));
+    let got = run(clang, "site", &int_program(body), Ret::Int);
+    assert_eq!(got, format!("trap: {DIVISION_BY_ZERO} at 3..9"));
+}
+
+#[test]
+fn the_ir_has_no_global_state_and_no_external_trap() {
+    let ir = ll(&int_program(int_op(IntOp::Div, 1, 0)));
+    assert!(!ir.contains("@goat_trap"), "{ir}");
+    assert!(
+        !ir.lines()
+            .any(|l| l.starts_with('@') && l.contains(" global "))
+    );
+    assert!(ir.contains("define i32 @goat_main(ptr %host, ptr %ctx, ptr %inst)"));
+}
+
+#[test]
+fn the_layout_probe_reads_in_clang() {
+    let Some(clang) = clang() else { return };
+    let path = scratch("probe").join("probe.ll");
+    std::fs::write(&path, goat_llvm::layout_probe()).unwrap();
+    let out = Command::new(clang)
+        .args(["-x", "ir", "-c", "-o", "/dev/null"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
