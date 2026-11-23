@@ -219,7 +219,8 @@ Inductive finer : sort -> sort -> Prop :=
  | finer_quot_numeric : finer k_Quot k_Numeric
  | finer_quot_eq : finer k_Quot k_Eq.
 
-#[export] Hint Constructors finer : core.
+#[export] Hint Resolve finer_refl finer_any finer_numeric_eq finer_quot_numeric finer_quot_eq : core.
+#[export] Hint Extern 2 (finer k_Literal _) => apply finer_lit; discriminate : core.
 
 Definition sort_fn := typvar -> sort.
 
