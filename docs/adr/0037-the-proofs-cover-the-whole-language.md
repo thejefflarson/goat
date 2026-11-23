@@ -154,6 +154,43 @@ and `docs/design/phase5-proof-plan.md` section 2.3.
 - **The equality W's unifier decides** is the bounded-unrolling relation
   `T ~~[n] T'`, not a coinductive bisimulation.
 
+## Amendment (2026-11-22): what phase 5 proved, and what it did not
+
+Phase 5 (#454, stages 1 to 7) landed the elaboration theorem as the amendment
+above states it, with these additions that the work settled.
+
+- **W ties knots and returns the elaborated term.** `infer_elab_sound` and
+  `infer_guarded` (every recursive type W returns is guarded) are checked closed
+  in `GoatAssumptions.v`, 19 theorems in all, with 0 admits and no axioms.
+  `unify_grp` ties the members of a recursive group, and `unify_pw` is gone.
+- **Head coercions, as the amendment chose.** A difference below a function type
+  or a record field is refused, not eta-expanded.
+- **Methods are in the rules.** `T_Obj` gives every method of a literal one
+  receiver (ADR 0034 decision 2, the owner's answer to the plan's question 1),
+  and W's literal case infers each method with that receiver in scope.
+- **The parser fragment covers a dot call on any receiver** (ADR 0031 decision 2),
+  and `::`.
+- **The differential test compares the result.** Of the 42 recursive-type programs
+  in the corpus, 31 are compared with 0 mismatches. `proofs/README.md` holds the
+  per-feature skip counts.
+
+Not proved, and still open. Each is sound (W or the calculus refuses more than the
+checker accepts) and the differential test counts it:
+
+- 11 recursive programs W refuses: a row knot (6), a deep coercion (3), a
+  `unify_k` failure with no occurs check (1), and a group member that needs a
+  `fold` around its whole lambda (1) (#606).
+- No `lacks` sort on a row variable, so a spread over a row-variable tail has no
+  derivation (#564).
+- No theorem that `{...lit, x: 1}.a()`, a method literal spread and then called,
+  has no derivation; the checker and W both reject it.
+- The 65 programs with a recursive group a value binding uses before its last
+  member, which the reader skips.
+
+Decision 3's elaboration theorem is therefore proved for the programs W accepts,
+and W's completeness against the checker is measured and not proved, as
+decision 6 accepts for the algorithm.
+
 ## Consequences
 
 - Language work slows by the cost of each proof, and the first PR to touch a

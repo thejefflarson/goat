@@ -26,10 +26,7 @@ is the root type written with `(mu mK. T)` for a recursive type, `mK` naming the
 binder by its depth. The driver reads that text and the algorithm's type as
 regular trees and compares them by bisimulation with assumed pairs: a pair of
 recursive types met again is taken as equal, and the variables of the two sides
-correspond one to one. A program the algorithm refuses is counted, not compared:
-a recursive group whose members need a knot (`g = program(p) do {a: p, b: g(p)}
-done`; the algorithm unifies the members of a group with `unify_t`) and a row
-that must knot (a `K` line). Any other difference is a mismatch and fails the
+correspond one to one. A program the algorithm refuses is counted, not compared. A recursive group whose members need a knot (`g = program(p) do {a: p, b: g(p)} done`) is compared: `unify_grp` puts the fold under the member's lambda. What W still refuses is a `K` line, a method program the reader's heuristic marks as holding a row variable inside a recursive type. The heuristic is not the cause. Instrumenting the extracted algorithm (a throwaway patch that logs each `None`; not committed) on the 11 `K` lines gave: a row variable meeting a row that contains it (`occR`) in 3, `rewrite_row` finding the tail variable inside the other row in 3, a deep coercion (the coercion sits below a record field or a function type, `{...ball, size: 10}.moved()`) in 3, `unify_k` failing after `bind_k` refused a type with a free index in 1, and, in the last, a recursive group whose member would need a `fold` around the whole lambda, which `T_Letrec` does not allow. Only the first six are the row knot. Any other difference is a mismatch and fails the
 run.
 
 ## Which programs are compared

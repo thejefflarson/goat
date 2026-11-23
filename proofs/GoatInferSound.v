@@ -16,6 +16,7 @@ Require Import Goat.GoatProofs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatTags.
+Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
@@ -646,6 +647,137 @@ Proof.
     + eapply MRl_meth; [ exact Hu | ]. rewrite !apR_comp in Hmr2. rewrite apR_comp. exact Hmr2.
 Qed.
 
+(* ---- a recursive group's members against their slots ---- *)
+
+(* [e'] is [e] at the slot type [A] it met: the same term when the types are
+   equal, and for a function the head coercions [cs] on its result, written
+   under its lambda. *)
+Inductive mem_co : exp -> exp -> typ -> typ -> Prop :=
+ | mc_same : forall e T A, teq T A -> mem_co e e T A
+ | mc_abs : forall b X Y X' Y' cs,
+     teq X X' -> chain cs Y Y' ->
+     mem_co (e_abs b) (e_abs (coerce cs b)) (typ_Arrow X Y) (typ_Arrow X' Y').
+
+Inductive pw_co : fields -> row -> row -> fields -> Prop :=
+ | pc_nil : pw_co fs_nil row_Empty row_Empty fs_nil
+ | pc_cons : forall l e e' T A fs R R' fs',
+     mem_co e e' T A -> pw_co fs R R' fs' ->
+     pw_co (fs_cons l e fs) (row_Ext l T R) (row_Ext l A R') (fs_cons l e' fs').
+
+Lemma open_coerce : forall cs e k u,
+  open_exp_wrt_exp_rec k u (coerce cs e) = coerce cs (open_exp_wrt_exp_rec k u e).
+Proof.
+  induction cs as [|d cs IH]; intros e k u; cbn [coerce]; [ reflexivity | ].
+  rewrite IH. destruct d; reflexivity.
+Qed.
+
+Lemma mem_co_typing : forall D G e e' T A,
+  mem_co e e' T A -> typing D G e T -> typing D G e' A.
+Proof.
+  intros D G e e' T A H Hty. destruct H as [e T A Ht | b X Y X' Y' cs Hx Hc].
+  - eapply T_Conv; eassumption.
+  - destruct (abs_inv _ _ _ _ Hty) as (L & T1 & T2 & Hbody & Hteq).
+    destruct (teq_Arrow_inv _ _ _ Hteq) as (A1 & B1 & Heq & Ha & Hb).
+    injection Heq as <- <-.
+    eapply T_Conv; [ | apply teq_arrow; [ exact Hx | apply teq_refl ] ].
+    eapply T_Conv; [ | apply teq_arrow; [ exact Ha | apply teq_refl ] ].
+    apply (T_Abs L). intros x Hx0.
+    unfold open_exp_wrt_exp. rewrite open_coerce.
+    eapply coerce_typing; [ | exact (Hbody x Hx0) ].
+    eapply ch_conv; [ exact Hb | exact Hc ].
+Qed.
+
+Lemma pw_co_typing : forall D G fs R R' fs',
+  field_typing D G fs R -> pw_co fs R R' fs' -> field_typing D G fs' R'.
+Proof.
+  intros D G fs R R' fs' Hf Hp. revert Hf.
+  induction Hp as [|l e e' T A fs0 R0 R0' fs0' Hm Hp IH]; intros Hf.
+  - exact Hf.
+  - inversion Hf; subst. eapply FT_cons; [ eapply mem_co_typing; eassumption | apply IH; assumption ].
+Qed.
+
+Lemma mem_co_ap : forall s e e' T A, OkS s ->
+  mem_co e e' T A -> mem_co e e' (apT s T) (apT s A).
+Proof.
+  intros s e e' T A Hs H. destruct H as [e T A Ht | b X Y X' Y' cs Hx Hc].
+  - apply mc_same. apply teq_apT. exact Ht.
+  - change (mem_co (e_abs b) (e_abs (coerce cs b)) (typ_Arrow (apT s X) (apT s Y)) (typ_Arrow (apT s X') (apT s Y'))).
+    apply mc_abs; [ apply teq_apT; exact Hx | apply chain_apT; assumption ].
+Qed.
+
+Lemma unify_mem_sound : forall f D e T A n s n' e',
+  unify_mem f D e T A n = Some (s, n', e') -> EvT T -> EvT A ->
+  OkS s /\ mem_co e e' (apT s T) (apT s A) /\ kres D D (sT s) /\ n <= n' /\
+  erase e' = erase e /\ (lce 0 e -> lce 0 e') /\ (forall b, e = e_abs b -> exists b', e' = e_abs b').
+Proof.
+  intros f D e T A n s n' e' H HT HA. unfold unify_mem in H.
+  destruct (unify_t f D T A n) as [[s0 n0]|] eqn:Et.
+  - inversion H; subst; clear H.
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ Et HT HA) as (Hs & Ht & Hk & Hl).
+    refine (conj Hs (conj (mc_same _ _ _ Ht) (conj Hk (conj Hl (conj eq_refl (conj (fun h => h) _)))))).
+    intros b ->. eexists; reflexivity.
+  - destruct e as [ | | | | | | b | | | | | | | | | | | | | | | | ]; try discriminate H.
+    destruct T as [ | | | | | X Y | | | | | ]; try discriminate H.
+    destruct A as [ | | | | | X' Y' | | | | | ]; try discriminate H.
+    destruct (unify_t f D X X' n) as [[s1 n1]|] eqn:E1; [ | discriminate H ].
+    destruct (unify_co f D (apT s1 Y) (apT s1 Y') n1) as [[[s2 cs] n2]|] eqn:E2; [ | discriminate H ].
+    inversion H; subst; clear H.
+    destruct (EvT_arrow_inv _ _ HT) as [HX HY]. destruct (EvT_arrow_inv _ _ HA) as [HX' HY'].
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E1 HX HX') as (Hs1 & Hx & Hk1 & Hl1).
+    destruct (unify_co_sound _ _ _ _ _ _ _ _ E2 (EvT_ap _ _ Hs1 HY) (EvT_ap _ _ Hs1 HY'))
+      as (Hs2 & Hc & Hk2 & Hl2).
+    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (kres_scomp D D D s1 s2 Hk1 Hk2) (conj _ (conj _ (conj _ _)))))).
+    + change (mem_co (e_abs b) (e_abs (coerce cs b))
+                (typ_Arrow (apT (scomp s2 s1) X) (apT (scomp s2 s1) Y))
+                (typ_Arrow (apT (scomp s2 s1) X') (apT (scomp s2 s1) Y'))).
+      rewrite <- !apT_comp. apply mc_abs; [ apply teq_apT; exact Hx | exact Hc ].
+    + lia.
+    + cbn [erase]. rewrite erase_coerce. reflexivity.
+    + cbn [lce]. apply lce_coerce.
+    + intros b0 Hb. eexists; reflexivity.
+Qed.
+
+Lemma pw_co_ap : forall s fs R R' fs', OkS s ->
+  pw_co fs R R' fs' -> pw_co fs (apR s R) (apR s R') fs'.
+Proof.
+  intros s fs R R' fs' Hs H. induction H.
+  - change (apR s row_Empty) with row_Empty. constructor.
+  - rewrite !apR_Ext. constructor; [ apply mem_co_ap; assumption | assumption ].
+Qed.
+
+Lemma unify_grp_sound : forall f D fs R1 R2 n s n' fs2,
+  unify_grp f D fs R1 R2 n = Some (s, n', fs2) -> EvR R1 -> EvR R2 ->
+  OkS s /\ pw_co fs (apR s R1) (apR s R2) fs2 /\ kres D D (sT s) /\ n <= n' /\
+  erase_fields fs2 = erase_fields fs /\ (lcef 0 fs -> lcef 0 fs2) /\ (fn_group fs -> fn_group fs2).
+Proof.
+  induction f as [|f IH]; intros D fs R1 R2 n s n' fs2 H H1 H2; [ discriminate | ].
+  cbn [unify_grp] in H.
+  destruct fs as [|l e rest|l e rest]; destruct R1 as [|r|l1 T R1'|lm Pm Tm Rm];
+    destruct R2 as [|r2|l2 A R2'|lm2 Pm2 Tm2 Rm2]; try discriminate H.
+  - inversion H; subst; clear H.
+    refine (conj OkS_id (conj _ (conj (kres_id D) (conj (le_n _) (conj eq_refl (conj (fun h => h) (fun h => h))))))).
+    rewrite apR_id. constructor.
+  - destruct (Nat.eqb l l1 && Nat.eqb l l2) eqn:Hl; [ | discriminate H ].
+    apply Bool.andb_true_iff in Hl. destruct Hl as [Hl1 Hl2].
+    apply Nat.eqb_eq in Hl1. apply Nat.eqb_eq in Hl2. subst l1 l2.
+    destruct (unify_mem f D e T A n) as [[[s1 n1] e']|] eqn:E1; [ | discriminate H ].
+    destruct (unify_grp f D rest (apR s1 R1') (apR s1 R2') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
+    inversion H; subst; clear H.
+    destruct (EvR_ext_inv _ _ _ H1) as [HT HR1]. destruct (EvR_ext_inv _ _ _ H2) as [HA HR2].
+    destruct (unify_mem_sound _ _ _ _ _ _ _ _ _ E1 HT HA) as (Hs1 & Hm & Hk1 & Hl1 & Her1 & Hlc1 & Hab1).
+    destruct (IH _ _ _ _ _ _ _ _ E2 (EvR_ap s1 _ Hs1 HR1) (EvR_ap s1 _ Hs1 HR2))
+      as (Hs2 & Hp & Hk2 & Hl2 & Her2 & Hlc2 & Hab2).
+    refine (conj (OkS_comp _ _ Hs2 Hs1) (conj _ (conj (kres_scomp D D D s1 s2 Hk1 Hk2) (conj _ (conj _ (conj _ _)))))).
+    + rewrite !apR_Ext. rewrite <- !apT_comp, <- !apR_comp.
+      constructor; [ apply mem_co_ap; assumption | exact Hp ].
+    + lia.
+    + cbn [erase_fields]. rewrite Her1, Her2. reflexivity.
+    + cbn [lcef]. intros [Ha Hb]. split; [ apply Hlc1; exact Ha | apply Hlc2; exact Hb ].
+    + intros Hfg. inversion Hfg; subst.
+      destruct (Hab1 _ eq_refl) as [b' ->]. constructor. apply Hab2. assumption.
+Qed.
+
+
 Lemma EvR_obj_row : forall fs n m, EvR (obj_row fs n (row_Var (ea m))).
 Proof.
   induction fs as [|l e rest IH|l e rest IH]; intros n m; simpl.
@@ -862,7 +994,7 @@ Proof.
       destruct (infer_fields f false ora D ((p ~ sch_mono (typ_Record R0)) ++ G)
                   (open_fields_wrt_exp fl (e_fvar_f p)) (n + nfields fl))
         as [[[[[s1 D1] R1] n1] us1]|] eqn:E1; [|discriminate].
-      destruct (unify_pw f D1 R1 (apR s1 R0) n1) as [[s2 n2]|] eqn:E2; [|discriminate].
+      destruct (unify_grp f D1 us1 R1 (apR s1 R0) n1) as [[[s2 n2] us2]|] eqn:E2; [|discriminate].
       set (G1 := apC (scomp s2 s1) G) in *.
       set (Rf := apR (scomp s2 s1) R0) in *.
       set (q := fresh_var G1 el) in *.
@@ -880,7 +1012,7 @@ Proof.
       rewrite apC_app, apC_single in Hty1.
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
       pose proof (EvR_ap s1 _ Hs1 HR0) as HR0'.
-      destruct (unify_pw_sound f D1 _ _ _ _ _ E2 HR1 HR0') as (Hs2 & Hpw & Hk2 & Hl2).
+      destruct (unify_grp_sound f D1 _ _ _ _ _ _ _ E2 HR1 HR0') as (Hs2 & Hpw & Hk2 & Hl2 & Her_u & Hlc_u & Hfg_u).
       pose proof (Good_unify D1 n1 s2 n2 Hs2 Hk2 Hl2 HD1) as Gd2.
       pose proof (DOk_supp D1 n1 HD1) as HS1.
       pose proof (fields_ap D1 D1 s2 (apC s1 G) p _ _ _ Hs2 HG1 HS1 HS1 Hk2 Hty1) as Hty2.
@@ -888,9 +1020,9 @@ Proof.
       assert (Hs21 : OkS (scomp s2 s1)) by (destruct Gd21 as (_ & H21 & _); exact H21).
       assert (HRf : EvR Rf) by (apply EvR_ap; assumption).
       assert (HG21 : WfCtx G1) by (apply WfCtx_ap; assumption).
-      assert (Hty3 : field_typing D1 ((p ~ sch_mono (typ_Record Rf)) ++ G1) us1 Rf).
+      assert (Hty3 : field_typing D1 ((p ~ sch_mono (typ_Record Rf)) ++ G1) us2 Rf).
       { unfold Rf, G1. rewrite <- apR_comp. rewrite <- apC_comp.
-        apply pw_conv with (R := apR s2 R1); [ | exact Hpw ].
+        refine (pw_co_typing _ _ _ _ _ _ _ Hpw).
         change (typ_Record (apR s2 (apR s1 R0))) with (apT s2 (apT s1 (typ_Record R0))) in Hty2.
         exact Hty2. }
       pose proof (gen_ren_wf D1 G1 (typ_Record Rf) (proj2 (EvT_Record _) HRf)) as Hwsc.
@@ -900,7 +1032,7 @@ Proof.
       pose proof Gd3' as Gd3.
       pose proof Gd3 as (_ & Hs3 & HD3 & Hl3 & Hi3 & Hk3).
       pose proof (Good_comp _ _ _ _ _ _ _ _ Gd21 Gd3) as Gdf.
-      destruct (bind_ok_fields p fl _ Her_Hty1 Hlc_Hty1 (fresh_var_notin_fv G (e_rec fl))) as [Herf Hlcf].
+      destruct (bind_ok_fields p fl _ (eq_trans Her_u Her_Hty1) (Hlc_u Hlc_Hty1) (fresh_var_notin_fv G (e_rec fl))) as [Herf Hlcf].
       destruct (bind_ok q el _ Her_Hty4 Hlc_Hty4 (fresh_var_notin_fv G1 el)) as [Herb Hlcb].
       split; [ exact Gdf | ]. split; [ exact HT3 | ].
       refine (conj _ (conj _ (conj Hlcf Hlcb))).
@@ -922,10 +1054,10 @@ Proof.
         (R := apR s3 (ap_row (rename_t (gen_vars_t G1 (typ_Record Rf)))
                              (rename_r (gen_vars_r G1 (typ_Record Rf))) Rf))
         (k := s_sk (gen_ren D1 G1 (typ_Record Rf))).
-      * apply fn_group_clf. exact (infer_fields_fn_group _ _ _ _ _ _ _ _ _ _ _ _
+      * apply fn_group_clf. apply Hfg_u. exact (infer_fields_fn_group _ _ _ _ _ _ _ _ _ _ _ _
                                      (is_fn_group_open_rec fl 0 (e_fvar_f p) Hfg) E1).
       * intros y Hy.
-        pose proof (fields_open_cl _ (apC s3 G1) p y _ _ _ Hty6 Hlc_Hty1
+        pose proof (fields_open_cl _ (apC s3 G1) p y _ _ _ Hty6 (Hlc_u Hlc_Hty1)
                       ltac:(simpl; rewrite dom_apC; unfold G1; rewrite dom_apC; fsetdec)) as Hf.
         eapply field_typing_pw; [ exact Hf | intros a; apply ext_set_eq; exact Htq ].
       * intros y Hy.

@@ -64,8 +64,7 @@ check-grammar: ../grammar/goat.peg
 	@rm -f GoatGrammar.gen.v
 	@echo "$(GRAMMAR) is in sync with grammar/goat.peg."
 
-# T1, T2, T3, progress, preservation, soundness, the soundness of the
-# inference algorithm and its mu-freedom must rest on no axiom and no admit.
+# Every theorem GoatAssumptions.v lists must rest on no axiom and no admit.
 check-assumptions: coq
 	@out=$$(rocq compile -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
 	n=$$(echo "$$out" | grep -c '^Closed under the global context'); \

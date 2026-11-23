@@ -16,8 +16,9 @@
    body is inferred at its opened form and closed again ([cl], GoatClose.v)
    over the fresh variable that stood for the bound one.
 
-   Recursive groups still unify their members with [unify_t]: a group whose
-   members need a recursive type is outside what the algorithm elaborates. *)
+   A recursive group's members are unified with the slots of their names by
+   [unify_grp], which puts the coercions a member's result needs under its
+   lambda. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
@@ -62,6 +63,55 @@ Fixpoint tie_obj (f : nat) (D : denv) (fs : fields) (R Rsl : row) (n : nat) {str
       end
       else None
   | _, _, _ => None
+  end.
+
+(* A recursive group's member [e] has the type [T] it was inferred at and
+   meets the slot type [A] its name was given.  Where the plain unifier
+   equates them the member stays as it is.  Where it cannot, and the member
+   is a function meeting a function type, the parameters are unified and the
+   head coercions that take the result to the slot's result go under the
+   member's lambda: a method of the group that calls its own group gets a
+   recursive result, and the fold sits where the result is made. *)
+Definition unify_mem (f : nat) (D : denv) (e : exp) (T A : typ) (n : nat)
+  : option (sub * nat * exp) :=
+  match unify_t f D T A n with
+  | Some (s, n1) => Some (s, n1, e)
+  | None =>
+      match e, T, A with
+      | e_abs b, typ_Arrow X Y, typ_Arrow X' Y' =>
+          match unify_t f D X X' n with
+          | None => None
+          | Some (s1, n1) =>
+              match unify_co f D (apT s1 Y) (apT s1 Y') n1 with
+              | None => None
+              | Some (s2, cs, n2) => Some (scomp s2 s1, n2, e_abs (coerce cs b))
+              end
+          end
+      | _, _, _ => None
+      end
+  end.
+
+(* The members of a recursive group against the row of their slots, in order. *)
+Fixpoint unify_grp (f : nat) (D : denv) (fs : fields) (R1 R2 : row) (n : nat) {struct f}
+  : option (sub * nat * fields) :=
+  match f with
+  | O => None
+  | S f' =>
+      match fs, R1, R2 with
+      | fs_nil, row_Empty, row_Empty => Some (sid, n, fs_nil)
+      | fs_cons l e rest, row_Ext l1 T R1', row_Ext l2 A R2' =>
+          if Nat.eqb l l1 && Nat.eqb l l2 then
+          match unify_mem f' D e T A n with
+          | None => None
+          | Some (s1, n1, e') =>
+              match unify_grp f' D rest (apR s1 R1') (apR s1 R2') n1 with
+              | None => None
+              | Some (s2, n2, rest') => Some (scomp s2 s1, n2, fs_cons l e' rest')
+              end
+          end
+          else None
+      | _, _, _ => None
+      end
   end.
 
 (* [infer f D G e n] returns the substitution, the kinding environment the
@@ -140,9 +190,9 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
                   (open_fields_wrt_exp fs (e_fvar_f p)) (n + nfields fs) with
           | None => None
           | Some (s1, D1, R1, n1, fs') =>
-              match unify_pw f' D1 R1 (apR s1 R0) n1 with
+              match unify_grp f' D1 fs' R1 (apR s1 R0) n1 with
               | None => None
-              | Some (s2, n2) =>
+              | Some (s2, n2, fs'') =>
                   let s := scomp s2 s1 in
                   let G1 := apC s G in
                   let sc := gen_ren D1 G1 (typ_Record (apR s R0)) in
@@ -150,7 +200,7 @@ Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ct
                   match infer f' lenient ora D1 ((q ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f q)) n2 with
                   | None => None
                   | Some (s3, D3, T, n3, e2') =>
-                      Some (scomp s3 s, D3, T, n3, e_letrec (clf 0 p fs') (cl 0 q e2'))
+                      Some (scomp s3 s, D3, T, n3, e_letrec (clf 0 p fs'') (cl 0 q e2'))
                   end
               end
           end

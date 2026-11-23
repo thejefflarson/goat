@@ -34,7 +34,7 @@ preservation) is B3 (#71).
 | `GoatInferElab.v` | W returns the elaborated term (phase 5, stage 4). `infer_elab fuel e = Some (D, e', T)` gives `typing D nil e' T` and `erase e' = e` (`infer_elab_sound`). `e'` is `e` with the head `fold` and `unfold` of the joins written in, so it is `e` only when no recursive type meets its unrolling. `infer_mu_free` and `infer_fold_free` are gone: W builds recursive types now, and `erase e' = e` is proved directly; `infer_guarded` (`GoatInferGuard.v`) states what W's types satisfy instead. |
 | `GoatCoerce.v` | The coercion pass (phase 5, stage 4, part 3b). `coerce_dec` decides which head coercions take one type to another and `coerce_dec_sound` says they form a `chain`; `teq_dec` finds `teq` by syntax or by a `unify_t` run that changes neither type. `unify_co` is the unifier W calls: `unify_t` first (the two types are then `teq` and nothing is inserted), then `unify_k` and `coerce_dec`; a difference below a function type or a record field has no head coercion and the unifier fails (a deep coercion). `unify_co_sound` gives `OkS s`, respected sorts and `chain cs (s T1) (s T2)`, the join lemma W's soundness proof uses. `chain_apT`: a chain survives a substitution. |
 | `GoatClose.v` | Closing a term over a variable (phase 5, stage 4, part 3b). W infers a binder's body opened at a fresh variable and returns the elaborated body closed over it again (`cl`). `lce k e` says the indices of `e` are below `k`; closing and opening undo each other on such a term (`cl_open_mut`), opening a closed body is substitution (`open_cl_mut`), and `erase` commutes with closing (`erase_cl_mut`). |
-| `GoatInferW.v` | Algorithm W (the algorithm itself, calling the unifiers of `GoatInfer.v`, `GoatInferKnot.v` and `GoatCoerce.v`), returning a fifth component, the elaborated term, built from the elaborated subterms alone: no substitution rewrites it. `infer_closed_elab` is the program-level entry and `infer_closed_env` drops the term. A recursive group's members are still unified with `unify_t`. A record literal with a method field (`fs_meth`) goes through `infer_obj`, which gives every method one receiver (a record of slot variables for the literal's fields and a row variable for what a use adds) and infers each body with it in scope, and `tie_obj`, which then unifies each slot with its field's type, so a method that mentions its receiver gets a recursive type and a field that meets its slot up to unrolling gets the head coercions. `infer_sound` (`GoatInferSound.v`) proves the result is typed by `T_Obj`: `tie_obj_sound`, `meth_rel`, `meths_shared_of`. |
+| `GoatInferW.v` | Algorithm W (the algorithm itself, calling the unifiers of `GoatInfer.v`, `GoatInferKnot.v` and `GoatCoerce.v`), returning a fifth component, the elaborated term, built from the elaborated subterms alone: no substitution rewrites it. `infer_closed_elab` is the program-level entry and `infer_closed_env` drops the term. A recursive group's members are unified with the slots of their names by `unify_grp`: where `unify_t` fails and the member is a function meeting a function type, the parameters are unified and the head coercions that take the result to the slot's result go under the member's lambda (`unify_mem`, `mem_co`, `pw_co`; `unify_grp_sound` in `GoatInferSound.v`), so `g = program(p) do {a: p, b: g(p)} done` gets a recursive result with a `fold` where the record is made. A record literal with a method field (`fs_meth`) goes through `infer_obj`, which gives every method one receiver (a record of slot variables for the literal's fields and a row variable for what a use adds) and infers each body with it in scope, and `tie_obj`, which then unifies each slot with its field's type, so a method that mentions its receiver gets a recursive type and a field that meets its slot up to unrolling gets the head coercions. `infer_sound` (`GoatInferSound.v`) proves the result is typed by `T_Obj`: `tie_obj_sound`, `meth_rel`, `meths_shared_of`. |
 | `GoatMethods.v` | Methods in the iso calculus, worked: a `ball` with a `moved` method that spreads `self`, `ball.moved()`, `step(ball)`, their runs, the erasure back to the source program, a head coercion, and what has no derivation without the unfold. Then the shared receiver (`T_Obj`, ADR 0034): `ball` with its method marked, typed at the receiver's row empty and at `{size: Int}` (what `big = {...ball, size: 10}` needs, with `big.moved()`), a literal with three methods that share one receiver, and `obj_one_receiver`: a typed literal with a method hands back one row for all its methods. |
 | `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, and **Progress**. |
 | `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), the free-variable facts of a bijective renaming, and `gen_more_gen` (generalizing over a smaller context quantifies more, at the sorts the extra atoms already had). What `GoatBij`/`GoatHM`/`GoatSound` build on. |
@@ -212,24 +212,9 @@ substitution did already: in `inst` (a generic instance has closed images), in
 `tr_supp` (so in `OkS`, the algorithm's substitution invariant) and in
 `casch_inst`. `GoatInfer.v` stays sound by construction: its occurs check (`occT`, `occR`)
 refuses to bind a variable to a type with a free index (`lcb`), which never
-fires on a type the algorithm builds. Until phase 5 the algorithm also never
-produced a `mu` (`docs/design/w-recursive-types-plan.md`, option C) and
-`GoatInferMuFree.v` proved it (`infer_mu_free`); the knot-tying unifier retired
-that file (phase 5, stage 4, part 3b), and the paragraphs below describe the
-algorithm as it stood before.`GoatInferMuFree.v` states what that costs. `infer_mu_free`: if
-`infer_closed_env fuel e = Some (D, T)` then `T` contains no `typ_Mu` and no
-`typ_Bvar`. Its invariant, proved by induction on the fuel, is that every
-substitution the algorithm builds (`mf_sub`) and every type in the context
-(`mf_ctx`) is free of both, through `unify_t`, `unify_r`, `unify_pw`,
-`rewrite_row`, `instantiate` and `gen_ren`. `infer_fold_none` and
-`infer_unfold_none` say that `fold` and `unfold` are never typed. So the
-algorithm is incomplete exactly on the programs the checker types with a
-recursive type (`Ty::Rec`), such as `step = program(p) do (p.moved)(p) done`:
-it returns a mu-free type or none. Completeness itself is still unproved for
-every feature, with or without `mu`. The differential test counts the programs
-it skips for this reason (`differential/README.md`). An algorithm that ties the
-knot, as `tie_ty_knot` does, is option B of the plan and waits for the variants
-and elaboration phase.
+fires on a type the algorithm builds. In this phase W produced no `mu`
+(`docs/design/w-recursive-types-plan.md`, option C); phase 5 gave it knots and
+retired `GoatInferMuFree.v`, and "Phase 5" below says what W returns now.
 
 `progress`, `preservation`, `soundness` and `infer_closed_sound` hold with 0
 admits. `canon_mu` (a value typed at a type equal to a `mu` is a `fold`) joins
@@ -240,11 +225,9 @@ fold at an equal type. `GoatRecTypes.v` shows the guard doing its job
 `mu`, `fold` and `unfold` have no surface syntax, so T1 to T3 only gained the
 cases that say a printed term is never one.
 
-What waits: the elaboration theorem (every program the checker's algorithm
-accepts elaborates into an iso-recursive one), which needs variants, methods and
-the algorithm model; the type of an open-extensible recursive receiver; and
-phase 3's tag signature, which must keep closed payload types in the sense of
-`lct`, since a payload under a `mu` mentions an index.
+The elaboration theorem and the type of an open-extensible recursive receiver
+came in phase 5 (below). Phase 3's tag signature keeps closed payload types in
+the sense of `lct`, since a payload under a `mu` mentions an index.
 
 ## Phase 3 (ADR 0037, continued): tag groups, construction and `match`
 
@@ -452,6 +435,111 @@ uses a `lacks` fact about a row variable (`LacksOnTail` counts those programs).
 What waits, each its own ticket: a `lacks` sort on row variables (#564) and the
 typeset `goat.ott`. The parser fragment now reads spread and rest patterns (the
 section on the parser claim says how).
+
+## Phase 5 (ADR 0037, amended): the elaboration theorem, methods and dot calls
+
+**What is proved.** The checker's types are equi-recursive (a type equals its
+unrolling); the calculus's are iso-recursive (`fold` and `unfold` are terms). The
+two meet in Algorithm W, which returns the elaborated term:
+
+- **The elaboration theorem.** `infer_elab_sound`: if W accepts a program `e` it
+  returns `(D, e', T)` with `typing D nil e' T` and `erase e' = e`. `erase` drops
+  `fold` and `unfold`. There is no second, equi-recursive typing relation, so
+  "the same behaviour" is `erase_step` (a step of `e'` is a step of its erasure,
+  or an `unfold(fold v) --> v` that erasure cannot see), `erase_traps`, and the
+  typed converse `erase_converse` / `erase_converse_multistep` (a step of the
+  erasure is reached by `e'`).
+- **W ties knots.** `unify_k` binds a variable to a recursive type when it
+  occurs in the type it meets and every mention is guarded (`knot_unrolls`,
+  `unify_k_sound`). The equality it decides is the bounded-unrolling relation
+  `T ~~[n] T'`, searched by `unroll_eqb` (`unroll_eqb_sound`, not complete).
+- **Head coercions.** Where a type meets its unrolling, W writes one `fold` or
+  `unfold` at that node (`coerce_dec_sound`, `coerce_typing`, `unify_co_sound`),
+  so `erase e' = e` holds exactly. A difference below a function type or a record
+  field would need an eta-expansion; W refuses such a program (a deep coercion).
+- **Guardedness.** `infer_guarded`: every recursive type W returns is guarded
+  (every mention of the binder sits under a record field and a function type), so
+  `T_Fold` and `T_Unfold` apply. `bind_k` refuses a type with an unguarded mu
+  inside, which gives the knot-tying unifier's substitutions this property with
+  no hypothesis on its arguments.
+- **Recursive groups.** `unify_grp` ties the members of a `letrec` group to the
+  slots of their names and puts the head coercions of a member's result under its
+  lambda (`unify_grp_sound`), so `g = program(p) do {a: p, b: g(p)} done` elaborates
+  with a `fold` where the record is made.
+- **Methods and `self`.** `fs_meth` is a field of the record spine that steps and
+  substitutes as a plain one. `T_Obj` types a literal with methods and gives all
+  of them one receiver (`meths_shared`: each method's type equal up to unrolling
+  to a function of one receiver, the literal's row plus a tail): the shared
+  receiver of ADR 0034 decision 2 is a rule. A spread, restrict or record
+  arithmetic builds a plain record (`fs_plain`). W's literal case (`infer_obj`,
+  `tie_obj`) infers each method body with the receiver in scope and unifies the
+  slots with the fields afterwards; `infer_sound` types the result by `T_Obj`.
+  `GoatMethods.v` works the `ball` with a `moved` method through, with `big =
+  {...ball, size: 10}` typed at a wider receiver.
+- **Dot calls in the parser fragment.** `r.f(a)` on any receiver is in T1: a path
+  repeats the receiver (`DP_dot_path`), another receiver binds a hidden `let`
+  (`DP_dot_bind`), and `r::f(a)` is `(r.f)(a)` (`DP_take`). See "The parser claim".
+
+**Theorems checked closed** (`GoatAssumptions.v`, `make check-assumptions`, 19):
+`peg_deterministic`, `parse_denotes_lc`, `print_parse_roundtrip`, `progress`,
+`preservation`, `soundness`, `infer_closed_sound`, `erase_step`, `erase_traps`,
+`coerce_typing`, `infer_elab_sound`, `unroll_eqb_sound`, `erase_converse`,
+`erase_converse_multistep`, `knot_unrolls`, `unify_k_sound`, `coerce_dec_sound`,
+`unify_co_sound` and `infer_guarded`. 0 admits, no axioms.
+
+**What the differential test covers.** `make -C proofs differential` on this
+commit: 44168 programs written, 42775 compared with 0 mismatches, 1382 skipped
+by the driver. Of the 42 programs whose checker type is recursive, 31 are compared
+and 11 refused. The corpus reader's skips, by the feature that keeps a program
+outside the calculus (the first of a fixed order that it uses):
+
+| Count | Skip |
+| ---: | --- |
+| 4984 | does not lower (the checker rejects it before typing) |
+| 222 | a spread onto a row variable that lacks the label (`LacksOnTail`, #564) |
+| 185 | tags and `match` |
+| 65 | a recursive group a value binding uses before its last member (`SplitGroup`) |
+| 41 | `print` or `trap` |
+| 37 | a program that ends in a binding |
+| 23 | a function or call with no parameters |
+| 21 | `and`, `or`, `not` |
+| 19 | the checker rejects a method used as a plain function or the reverse (`MethodFlag`) |
+| 18 | a foreign host call |
+| 7 | arithmetic on non-primitive operands |
+| 4 | a comparison at a parameter left generic |
+| 4 | an `if` without an `else` |
+| 4 | a numeral of 2^30 or more |
+| 2 | a comparison of non-primitive operands |
+| 2 | a rest pattern with no fields |
+| 2 | none of the above |
+
+`MethodsAndDotCalls`, `SharedReceiver` and `ResourceLimit` are no longer skips
+and `RecursiveType` is a compared class, not a skip.
+
+**Known incompleteness.** Every item is on the sound side: W or the calculus is
+more restrictive than the checker, never less, and the differential test counts
+the programs and records no mismatch.
+
+- **11 recursive programs W refuses (#606).** 6 need a row knot: a row variable
+  meets a row that contains it (`occR`, corpus lines 7, 18 and 285), or
+  `rewrite_row` finds the tail variable inside the other row (lines 249, 293 and
+  294); it needs a `unify_kr` case that ties the knot over the enclosing record
+  type. 3 are deep coercions (lines 283, 286 and 295, for example
+  `{...ball, size: 10}.moved()`); they need eta-expansion. Line 306,
+  `step(ball).x`, fails in `unify_k` with no occurs check. Line 309, a group
+  member that needs a `fold` around its whole lambda, which `T_Letrec` does not
+  allow.
+- **No `lacks` on a row variable (#564).** The calculus's `lacks` is a premise on
+  a closed row spine, so a spread whose base ends in a row variable the checker
+  knows lacks the label (`{x, ...rest} = p` then `{...rest, x: 2}`) has no
+  derivation. 222 programs.
+- **No non-derivation of `{...lit, x: 1}.a()`.** The checker and W both reject a
+  method literal spread and then called, but the calculus has no theorem that no
+  derivation exists: it needs an inversion lemma for `unroll_eq`.
+- **65 `SplitGroup` programs.** A recursive group that a value binding uses before
+  the group's last member. The checker types the use at the member's monomorphic
+  type; the hoisted `letrec` types it at the generalized one, so the two sides
+  disagree by construction and the reader skips them.
 
 ## Loops and foreign calls (decided)
 

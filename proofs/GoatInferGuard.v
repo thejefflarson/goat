@@ -223,13 +223,11 @@ Theorem unify_t_gsub : forall f,
   (forall D T1 T2 n s n', unify_t f D T1 T2 n = Some (s, n') ->
      mg T1 -> mg T2 -> gsub s) /\
   (forall D R1 R2 n s n', unify_r f D R1 R2 n = Some (s, n') ->
-     mgr R1 -> mgr R2 -> gsub s) /\
-  (forall D R1 R2 n s n', unify_pw f D R1 R2 n = Some (s, n') ->
      mgr R1 -> mgr R2 -> gsub s).
 Proof.
-  induction f as [|f IH]; [ refine (conj _ (conj _ _)); intros; discriminate | ].
-  destruct IH as [IHt [IHr IHp]].
-  refine (conj _ (conj _ _)).
+  induction f as [|f IH]; [ refine (conj _ _); intros; discriminate | ].
+  destruct IH as [IHt IHr].
+  refine (conj _ _).
   - intros D T1 T2 n s n' H H1 H2. simpl in H.
     destruct T1, T2; try discriminate;
       try (injection H as <- <-; exact gs_id);
@@ -304,18 +302,6 @@ Proof.
       apply gs_sbR; [ exact (proj2 (occR_false _ _ Eo)) | exact H1 ].
     + destruct (occR r2 _) eqn:Eo; [discriminate|]. injection H as <- <-.
       apply gs_sbR; [ exact (proj2 (occR_false _ _ Eo)) | exact H1 ].
-  - intros D R1 R2 n s n' H H1 H2. simpl in H.
-    destruct R1 as [|r|l T R1'|lm Pm Tm Rm], R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2]; try discriminate.
-    + injection H as <- <-. exact gs_id.
-    + destruct (Nat.eqb l l2); [|discriminate].
-      destruct (unify_t f D T T2 n) as [[s1 n1]|] eqn:E1; [|discriminate].
-      destruct (unify_pw f D (apR s1 R1') (apR s1 R2') n1) as [[s2 n2]|] eqn:E2; [|discriminate].
-      injection H as <- <-.
-      destruct H1 as [H1a H1b]. destruct H2 as [H2a H2b].
-      pose proof (IHt _ _ _ _ _ _ E1 H1a H2a) as Hs1.
-      refine (gs_comp _ _ _ Hs1).
-      eapply IHp; [ exact E2 | apply mg_apR; [ exact Hs1 | exact H1b ]
-                             | apply mg_apR; [ exact Hs1 | exact H2b ] ].
 Qed.
 Lemma group_row_mg : forall fs n, mgr (group_row fs n).
 Proof.
@@ -442,8 +428,8 @@ Ltac dC H E :=
     destruct (unify_co f D A B n) as [[[? ?] ?]|] eqn:E; [|discriminate H] end.
 
 Ltac dP H E :=
-  match type of H with context [unify_pw ?f ?D ?A ?B ?n] =>
-    destruct (unify_pw f D A B n) as [[? ?]|] eqn:E; [|discriminate H] end.
+  match type of H with context [unify_grp ?f ?D ?fs ?A ?B ?n] =>
+    destruct (unify_grp f D fs A B n) as [[[? ?] ?]|] eqn:E; [|discriminate H] end.
 
 Lemma obj_row_mg : forall fs n a, mgr (obj_row fs n (row_Var a)).
 Proof.
@@ -481,6 +467,39 @@ Proof.
     injection H as <- <- <-. destruct HR as [HT HR']. destruct HRsl as [HA HRsl'].
     pose proof (unify_co_gsub _ _ _ _ _ _ _ _ E1 HT HA) as S1.
     exact (gs_comp _ _ (IH _ _ _ _ _ _ E2 (mg_apR _ _ S1 HR') (mg_apR _ _ S1 HRsl')) S1).
+Qed.
+
+Lemma unify_mem_gsub : forall f D e T A n s n' e',
+  unify_mem f D e T A n = Some (s, n', e') -> mg T -> mg A -> gsub s.
+Proof.
+  intros f D e T A n s n' e' H HT HA. unfold unify_mem in H.
+  destruct (unify_t f D T A n) as [[s0 n0]|] eqn:E.
+  - injection H as <- <- <-. exact (proj1 (unify_t_gsub f) _ _ _ _ _ _ E HT HA).
+  - destruct e as [ | | | | | | b | | | | | | | | | | | | | | | | ]; try discriminate H.
+    destruct T as [ | | | | | X Y | | | | | ]; try discriminate H.
+    destruct A as [ | | | | | X' Y' | | | | | ]; try discriminate H.
+    destruct (unify_t f D X X' n) as [[s1 n1]|] eqn:E1; [ | discriminate H ].
+    destruct (unify_co f D (apT s1 Y) (apT s1 Y') n1) as [[[s2 cs] n2]|] eqn:E2; [ | discriminate H ].
+    injection H as <- <- <-. destruct HT as [HX HY]. destruct HA as [HX' HY'].
+    pose proof ((proj1 (unify_t_gsub f)) _ _ _ _ _ _ E1 HX HX') as S1.
+    pose proof (unify_co_gsub _ _ _ _ _ _ _ _ E2 (mg_apT _ _ S1 HY) (mg_apT _ _ S1 HY')) as S2.
+    exact (gs_comp _ _ S2 S1).
+Qed.
+
+Lemma unify_grp_gsub : forall f D fs R1 R2 n s n' fs2,
+  unify_grp f D fs R1 R2 n = Some (s, n', fs2) -> mgr R1 -> mgr R2 -> gsub s.
+Proof.
+  induction f as [|f IH]; intros D fs R1 R2 n s n' fs2 H H1 H2; [ discriminate | ].
+  cbn [unify_grp] in H.
+  destruct fs as [|l e rest|l e rest]; destruct R1 as [|r|l1 T R1'|lm Pm Tm Rm];
+    destruct R2 as [|r2|l2 A R2'|lm2 Pm2 Tm2 Rm2]; try discriminate H.
+  - injection H as <- <- <-. exact gs_id.
+  - destruct (Nat.eqb l l1 && Nat.eqb l l2); [ | discriminate H ].
+    destruct (unify_mem f D e T A n) as [[[s1 n1] e']|] eqn:E1; [ | discriminate H ].
+    destruct (unify_grp f D rest (apR s1 R1') (apR s1 R2') n1) as [[[s2 n2] rest']|] eqn:E2; [ | discriminate H ].
+    injection H as <- <- <-. destruct H1 as [HT HR1]. destruct H2 as [HA HR2].
+    pose proof (unify_mem_gsub _ _ _ _ _ _ _ _ _ E1 HT HA) as S1.
+    exact (gs_comp _ _ (IH _ _ _ _ _ _ _ _ E2 (mg_apR _ _ S1 HR1) (mg_apR _ _ S1 HR2)) S1).
 Qed.
 
 Theorem infer_guard : forall f ora, (forall a, mg (ora a)) ->
@@ -530,7 +549,7 @@ Proof.
       destruct (IHf _ _ _ _ _ _ _ _ _ E1
                   (mg_cons _ (sch_mono (typ_Record (group_row fs n))) _ (group_row_mg _ _) HG)) as [S1 M1].
       dP H E2.
-      pose proof (proj2 (proj2 (unify_t_gsub f)) _ _ _ _ _ _ E2 M1
+      pose proof (unify_grp_gsub _ _ _ _ _ _ _ _ _ E2 M1
                     (mg_apR _ _ S1 (group_row_mg fs n))) as S2.
       pose proof (gs_comp _ _ S2 S1) as Sc.
       dI H E3.
