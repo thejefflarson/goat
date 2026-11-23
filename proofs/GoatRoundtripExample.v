@@ -15,8 +15,8 @@ Open Scope list_scope.
 Definition sample : exp :=
   e_let (e_num 1) (e_proj (e_rec (fs_cons 0 (e_fvar_b 0) fs_nil)) 0).
 
-Example sample_scoped : scoped 0 sample.
-Proof. simpl. repeat split; first [ lia | (right; exact I) ]. Qed.
+Example sample_scoped : scoped [] 0 sample.
+Proof. simpl. repeat split; first [ lia | exact I | reflexivity | (right; exact I) ]. Qed.
 
 Example sample_interned : Interned sample.
 Proof.
@@ -34,7 +34,7 @@ Qed.
 (* A record whose first label is lab1 is numbered 0 when read back. *)
 Example not_interned : ~ Interned (e_rec (fs_cons 1 e_true fs_nil)).
 Proof.
-  intros H. assert (Hin : List.In 1 (lbls (e_rec (fs_cons 1 e_true fs_nil)))) by (left; reflexivity).
+  intros H. assert (Hin : List.In 1 (lbls [] 0 (e_rec (fs_cons 1 e_true fs_nil)))) by (left; reflexivity).
   specialize (H 1 Hin). vm_compute in H. discriminate H.
 Qed.
 
@@ -46,8 +46,8 @@ Definition sample_operations : exp :=
            (e_fvar_b 0)
            (e_str [])).
 
-Example sample_operations_scoped : scoped 0 sample_operations.
-Proof. simpl. repeat split; first [ lia | (right; exact I) ]. Qed.
+Example sample_operations_scoped : scoped [] 0 sample_operations.
+Proof. simpl. repeat split; first [ lia | exact I | reflexivity | (right; exact I) ]. Qed.
 
 Example sample_operations_interned : Interned sample_operations.
 Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
@@ -67,8 +67,8 @@ Qed.
 Definition sample_float_noelse : exp :=
   e_let (e_dec 5) (e_ite e_true (e_fvar_b 0) e_unit).
 
-Example sample_float_noelse_scoped : scoped 0 sample_float_noelse.
-Proof. simpl. repeat split; first [ exact I | lia | (left; reflexivity) ]. Qed.
+Example sample_float_noelse_scoped : scoped [] 0 sample_float_noelse.
+Proof. simpl. repeat split; first [ exact I | lia | reflexivity | (left; reflexivity) ]. Qed.
 
 Example sample_float_noelse_interned : Interned sample_float_noelse.
 Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
@@ -84,16 +84,77 @@ Proof.
 Qed.
 
 (* The unit value has no literal in the grammar, so it is not printable on its
-   own. *)
-Example unit_is_not_printed : ~ scoped 0 e_unit.
+   own; it is printed as an empty function body and as a call with no
+   arguments. *)
+Example unit_is_not_printed : ~ scoped [] 0 e_unit.
 Proof. intros H. exact H. Qed.
+
+(* x = (program(y) do done); x(): the empty function body and a call with no
+   arguments. *)
+Definition sample_unit : exp :=
+  e_let (e_abs e_unit) (e_app (e_fvar_b 0) e_unit).
+
+Example sample_unit_scoped : scoped [] 0 sample_unit.
+Proof. simpl. repeat split; first [ exact I | lia | reflexivity | (left; reflexivity) ]. Qed.
+
+Example sample_unit_interned : Interned sample_unit.
+Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
+
+Example sample_unit_roundtrip : forall var_of,
+  names_distinct var_of ->
+  exists t, peg (E_rule R_goat) (print sample_unit) (Ok [t] []) /\
+            Den_goat var_of [] t sample_unit.
+Proof.
+  intros var_of Hdistinct.
+  exact (print_parse_roundtrip var_of sample_unit Hdistinct
+           sample_unit_scoped sample_unit_interned).
+Qed.
+
+(* Two mutually recursive functions, then a call of the first:
+   g0_0 = program(v1) do g0_1(v1) done; g0_1 = program(v1) do g0_0(v1) done; g0_0(1).
+   The group is first in its block, so its members are the block's hoisted
+   functions, and a member's name stands for the projection of that member from
+   the group's binder. *)
+Definition sample_group : exp :=
+  e_letrec
+    (fs_cons 0 (e_abs (e_app (e_proj (e_fvar_b 1) 1) (e_fvar_b 0)))
+       (fs_cons 1 (e_abs (e_app (e_proj (e_fvar_b 1) 0) (e_fvar_b 0))) fs_nil))
+    (e_app (e_proj (e_fvar_b 0) 0) (e_num 1)).
+
+Example sample_group_printed :
+  print sample_group =
+    [TName "g0_0"; TSym "="; TSym "program"; TSym "("; TName "v1"; TSym ")"; TSym "do";
+     TName "g0_1"; TSym "("; TName "v1"; TSym ")"; TSym "done"; TSym ";";
+     TName "g0_1"; TSym "="; TSym "program"; TSym "("; TName "v1"; TSym ")"; TSym "do";
+     TName "g0_0"; TSym "("; TName "v1"; TSym ")"; TSym "done"; TSym ";";
+     TName "g0_0"; TSym "("; TNum 1; TSym ")"].
+Proof. reflexivity. Qed.
+
+Example sample_group_scoped : scoped [] 0 sample_group.
+Proof.
+  simpl. repeat (first [ exact I | reflexivity | lia | split
+    | (intros m Hm; injection Hm as <-; lia) | right ]).
+Qed.
+
+Example sample_group_interned : Interned sample_group.
+Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
+
+Example sample_group_roundtrip : forall var_of,
+  names_distinct var_of ->
+  exists t, peg (E_rule R_goat) (print sample_group) (Ok [t] []) /\
+            Den_goat var_of [] t sample_group.
+Proof.
+  intros var_of Hdistinct.
+  exact (print_parse_roundtrip var_of sample_group Hdistinct
+           sample_group_scoped sample_group_interned).
+Qed.
 
 (* x = 1; {...(x), lab0: x}: a spread, printed with a parenthesised base. *)
 Definition sample_spread : exp :=
   e_let (e_num 1) (e_spread (e_fvar_b 0) 0 (e_fvar_b 0)).
 
-Example sample_spread_scoped : scoped 0 sample_spread.
-Proof. simpl. repeat split; first [ exact I | lia ]. Qed.
+Example sample_spread_scoped : scoped [] 0 sample_spread.
+Proof. simpl. repeat split; first [ exact I | lia | reflexivity ]. Qed.
 
 Example sample_spread_interned : Interned sample_spread.
 Proof.
@@ -112,5 +173,5 @@ Qed.
 
 (* A restrict is written only inside a rest pattern, which also binds the
    labels it removes, so the printer has no text for a bare restrict. *)
-Example restrict_is_not_printed : ~ scoped 0 (e_restrict e_true 0).
+Example restrict_is_not_printed : ~ scoped [] 0 (e_restrict e_true 0).
 Proof. intros H. exact H. Qed.

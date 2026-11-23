@@ -295,8 +295,7 @@ struct Gen {
     rng: Rng,
     scope: Vec<String>,
     functions: u32,
-    /// Whether to generate recursive groups. The Coq printer does not write
-    /// them, so the printer table is built without.
+    /// Whether to generate recursive groups.
     groups: bool,
 }
 
@@ -776,9 +775,11 @@ fn a_dot_call_repeats_a_path_receiver_and_binds_any_other_once() {
 const TABLE_CASES: usize = 200;
 const TABLE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../proofs/GoatPrinterTable.v");
 
-/// Renames every binder to `v<depth>`, depth counting the binders around it:
-/// the names the Coq printer gives them.
-fn canonical(term: &Term, scope: &mut Vec<(String, String)>) -> Term {
+/// Renames every binder to `v<depth>`, depth counting the binders around it,
+/// and a group's members to `g<depth>_<position>`, depth being the group's own:
+/// the names the Coq printer gives them. A group is one binder around its
+/// members and body.
+fn canonical(term: &Term, scope: &mut Vec<(String, String)>, depth: usize) -> Term {
     match term {
         Term::Var(name) => {
             let (_, canon) = scope
@@ -790,65 +791,89 @@ fn canonical(term: &Term, scope: &mut Vec<(String, String)>) -> Term {
         }
         Term::Num(_) | Term::Dec(_) | Term::Bool(_) | Term::Str(_) => term.clone(),
         Term::If(cond, then_branch, else_branch) => Term::If(
-            Box::new(canonical(cond, scope)),
-            Box::new(canonical(then_branch, scope)),
-            Box::new(canonical(else_branch, scope)),
+            Box::new(canonical(cond, scope, depth)),
+            Box::new(canonical(then_branch, scope, depth)),
+            Box::new(canonical(else_branch, scope, depth)),
         ),
         Term::When(cond, then_branch) => Term::When(
-            Box::new(canonical(cond, scope)),
-            Box::new(canonical(then_branch, scope)),
+            Box::new(canonical(cond, scope, depth)),
+            Box::new(canonical(then_branch, scope, depth)),
         ),
-        Term::Letrec(..) => unreachable!("the printer table has no recursive group"),
+        Term::Letrec(members, body) => {
+            let mark = scope.len();
+            let names: Vec<String> = (0..members.len())
+                .map(|position| format!("g{depth}_{position}"))
+                .collect();
+            for ((name, _), canon) in members.iter().zip(&names) {
+                scope.push((name.clone(), canon.clone()));
+            }
+            let members = members
+                .iter()
+                .zip(names)
+                .map(|((_, function), canon)| (canon, canonical(function, scope, depth + 1)))
+                .collect();
+            let body = canonical(body, scope, depth + 1);
+            scope.truncate(mark);
+            Term::Letrec(members, Box::new(body))
+        }
         Term::Bin(lhs, op, rhs) => Term::Bin(
-            Box::new(canonical(lhs, scope)),
+            Box::new(canonical(lhs, scope, depth)),
             *op,
-            Box::new(canonical(rhs, scope)),
+            Box::new(canonical(rhs, scope, depth)),
         ),
         Term::Abs(name, body) => {
-            let canon = format!("v{}", scope.len());
+            let canon = format!("v{depth}");
             scope.push((name.clone(), canon.clone()));
-            let body = canonical(body, scope);
+            let body = canonical(body, scope, depth + 1);
             scope.pop();
             Term::Abs(canon, Box::new(body))
         }
         Term::App(callee, arg) => Term::App(
-            Box::new(canonical(callee, scope)),
-            Box::new(canonical(arg, scope)),
+            Box::new(canonical(callee, scope, depth)),
+            Box::new(canonical(arg, scope, depth)),
         ),
         Term::Let(name, value, body) => {
-            let value = canonical(value, scope);
-            let canon = format!("v{}", scope.len());
+            let value = canonical(value, scope, depth);
+            let canon = format!("v{depth}");
             scope.push((name.clone(), canon.clone()));
-            let body = canonical(body, scope);
+            let body = canonical(body, scope, depth + 1);
             scope.pop();
             Term::Let(canon, Box::new(value), Box::new(body))
         }
         Term::Rec(fields) => Term::Rec(
             fields
                 .iter()
-                .map(|(label, value)| (*label, canonical(value, scope)))
+                .map(|(label, value)| (*label, canonical(value, scope, depth)))
                 .collect(),
         ),
         Term::Spread(base, label, value) => Term::Spread(
-            Box::new(canonical(base, scope)),
+            Box::new(canonical(base, scope, depth)),
             *label,
-            Box::new(canonical(value, scope)),
+            Box::new(canonical(value, scope, depth)),
         ),
-        Term::Proj(base, label) => Term::Proj(Box::new(canonical(base, scope)), *label),
+        Term::Proj(base, label) => Term::Proj(Box::new(canonical(base, scope, depth)), *label),
     }
 }
 
 /// The term as a locally nameless Coq `exp`: a variable is the number of
-/// binders between it and its own.
-fn coq_term(term: &Term, scope: &mut Vec<String>) -> String {
+/// binders between it and its own, and a member of a recursive group is the
+/// projection of its position from the group's binder. Each scope entry is one
+/// binder: its names, and whether it is a group.
+fn coq_term(term: &Term, scope: &mut Vec<(Vec<String>, bool)>) -> String {
     match term {
         Term::Var(name) => {
-            let index = scope
+            let (index, (names, group)) = scope
                 .iter()
                 .rev()
-                .position(|n| n == name)
+                .enumerate()
+                .find(|(_, (names, _))| names.contains(name))
                 .expect("generated terms are closed");
-            format!("(e_fvar_b {index})")
+            if *group {
+                let position = names.iter().position(|n| n == name).expect("a member");
+                format!("(e_proj (e_fvar_b {index}) {position})")
+            } else {
+                format!("(e_fvar_b {index})")
+            }
         }
         Term::Num(n) => format!("(e_num {n})"),
         Term::Dec(d) => format!("(e_dec {d})"),
@@ -866,7 +891,16 @@ fn coq_term(term: &Term, scope: &mut Vec<String>) -> String {
             coq_term(cond, scope),
             coq_term(then_branch, scope)
         ),
-        Term::Letrec(..) => unreachable!("the printer table has no recursive group"),
+        Term::Letrec(members, body) => {
+            scope.push((members.iter().map(|(name, _)| name.clone()).collect(), true));
+            let mut list = String::from("fs_nil");
+            for (position, (_, function)) in members.iter().enumerate().rev() {
+                list = format!("(fs_cons {position} {} {list})", coq_term(function, scope));
+            }
+            let body = coq_term(body, scope);
+            scope.pop();
+            format!("(e_letrec {list} {body})")
+        }
         Term::Bin(lhs, op, rhs) => format!(
             "(e_bin {} {} {})",
             coq_term(lhs, scope),
@@ -874,7 +908,7 @@ fn coq_term(term: &Term, scope: &mut Vec<String>) -> String {
             coq_term(rhs, scope)
         ),
         Term::Abs(name, body) => {
-            scope.push(name.clone());
+            scope.push((vec![name.clone()], false));
             let body = coq_term(body, scope);
             scope.pop();
             format!("(e_abs {body})")
@@ -888,7 +922,7 @@ fn coq_term(term: &Term, scope: &mut Vec<String>) -> String {
         }
         Term::Let(name, value, body) => {
             let value = coq_term(value, scope);
-            scope.push(name.clone());
+            scope.push((vec![name.clone()], false));
             let body = coq_term(body, scope);
             scope.pop();
             format!("(e_let {value} {body})")
@@ -934,19 +968,46 @@ fn coq_tokens(source: &str) -> String {
     format!("[{}]", tokens.join("; "))
 }
 
+/// Whether the Coq printer writes the term. A recursive group is first in its
+/// block: what continues a block (the body of a binding or of a group) is not
+/// one, or its members would join the earlier group. `continues` says the term
+/// is such a body.
+fn coq_prints(term: &Term, continues: bool) -> bool {
+    match term {
+        Term::Var(_) | Term::Num(_) | Term::Dec(_) | Term::Bool(_) | Term::Str(_) => true,
+        Term::Abs(_, body) | Term::Proj(body, _) => coq_prints(body, false),
+        Term::App(a, b) | Term::Spread(a, _, b) | Term::Bin(a, _, b) | Term::When(a, b) => {
+            coq_prints(a, false) && coq_prints(b, false)
+        }
+        Term::If(c, t, e) => coq_prints(c, false) && coq_prints(t, false) && coq_prints(e, false),
+        Term::Let(_, value, body) => coq_prints(value, false) && coq_prints(body, true),
+        Term::Rec(fields) => fields.iter().all(|(_, value)| coq_prints(value, false)),
+        Term::Letrec(members, body) => {
+            !continues
+                && members
+                    .iter()
+                    .all(|(_, function)| coq_prints(function, false))
+                && coq_prints(body, true)
+        }
+    }
+}
+
 fn printer_table() -> String {
     let mut builder = Gen {
         rng: Rng(SEED),
         scope: Vec::new(),
         functions: 0,
-        groups: false,
+        groups: true,
     };
     let mut rows = Vec::new();
     for _ in 0..TABLE_CASES {
         builder.functions = 0;
         let mut term = builder.term(0);
+        while !coq_prints(&term, false) {
+            term = builder.term(0);
+        }
         intern_labels(&mut term, &mut Vec::new());
-        let source = print(&canonical(&term, &mut Vec::new()), Style::Curried);
+        let source = print(&canonical(&term, &mut Vec::new(), 0), Style::Curried);
         rows.push(format!(
             "  ({}, {})",
             coq_term(&term, &mut Vec::new()),
