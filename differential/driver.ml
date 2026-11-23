@@ -80,6 +80,7 @@ let rec fields_of fields =
   List.fold_right
     (fun f rest ->
       match f with
+      | List [ l; List [ Atom "meth"; e ] ] -> Fs_meth (int_of l, exp_of e, rest)
       | List [ l; e ] -> Fs_cons (int_of l, exp_of e, rest)
       | _ -> failwith "malformed field")
     fields Fs_nil

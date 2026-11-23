@@ -44,9 +44,9 @@
 //! A program in which the checker gives some node a recursive type is mode `R`
 //! (mode `K` when the recursive type's body holds a record with an open row),
 //! and its verdict writes a recursive type as `(mu mK. T)`, `mK` naming the
-//! binder by its depth. A program with a method whose recursive type reaches
-//! the root is skipped: the checker ties a method's `self` to its record, and
-//! the calculus does not.
+//! binder by its depth. A field the checker reads as a method (a `program(self)`
+//! written directly in a record literal) is written `(meth e)`: the calculus
+//! gives the methods of one literal a single receiver (`T_Obj`).
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
 
@@ -89,6 +89,8 @@ enum Core {
     Bin(BinOp, Box<Core>, Box<Core>),
     ToFloat(Box<Core>),
     Abs(Box<Core>),
+    /// A record field the checker reads as a method.
+    Meth(Box<Core>),
     App(Box<Core>, Box<Core>),
     Let(Box<Core>, Box<Core>),
     /// A group of functions under one binder naming the record of them, and
@@ -151,6 +153,11 @@ impl Core {
             Core::Bool(false) => out.push('f'),
             Core::Abs(body) => {
                 out.push_str("(abs ");
+                body.sexp(out);
+                out.push(')');
+            }
+            Core::Meth(body) => {
+                out.push_str("(meth ");
                 body.sexp(out);
                 out.push(')');
             }
@@ -300,8 +307,6 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
 enum Skip {
     Rejected,
     OutsideFragment(Feature),
-    SharedReceiver,
-    RecursiveReceiver,
     MethodFlag,
     ResourceLimit,
     GenericComparison,
@@ -312,10 +317,6 @@ impl Skip {
         match self {
             Skip::Rejected => "does not lower",
             Skip::OutsideFragment(feature) => feature.describe(),
-            Skip::SharedReceiver => "a record literal with two or more methods",
-            Skip::RecursiveReceiver => {
-                "a method's receiver, which the checker ties to its record in a recursive type"
-            }
             Skip::MethodFlag => {
                 "the checker rejects a method used as a plain function or the reverse"
             }
@@ -758,7 +759,15 @@ impl Reader<'_> {
                     }
                     seen.push(label.clone());
                     let label = self.label(label);
-                    out.push((label, self.read(value)?));
+                    let body = self.read(value)?;
+                    out.push((
+                        label,
+                        if is_method(value) {
+                            Core::Meth(Box::new(body))
+                        } else {
+                            body
+                        },
+                    ));
                 }
                 Some(Core::Rec(out))
             }
@@ -939,22 +948,11 @@ fn lacks_on_tail(root: &Expr, types: &HashMap<ExprId, Ty>) -> bool {
     found
 }
 
-/// The most methods any record literal in the program has.
-fn most_methods(root: &Expr) -> usize {
-    let mut most = 0;
-    for_each_node(root, &mut |e| {
-        if let ExprKind::Record { fields } = &e.kind {
-            let methods = fields
-                .iter()
-                .filter(|(_, value)| {
-                    matches!(&value.kind, ExprKind::Func { params, .. }
-                        if params.first().is_some_and(|p| p.name == "self"))
-                })
-                .count();
-            most = most.max(methods);
-        }
-    });
-    most
+/// Whether `expr` is a function whose first parameter is `self`, which is what
+/// the checker reads as a method when it is a field of a record literal.
+fn is_method(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::Func { params, .. }
+        if params.first().is_some_and(|p| p.name == "self"))
 }
 
 /// The line for `source`, or why it is not a program of the fragment. A
@@ -1004,10 +1002,6 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
     if method_flag {
         return Err(Skip::MethodFlag);
     }
-    let methods = most_methods(&lowered.root);
-    if methods >= 2 {
-        return Err(Skip::SharedReceiver);
-    }
     if reader.generic_comparison && !forced {
         return Err(Skip::GenericComparison);
     }
@@ -1027,13 +1021,6 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
                 canon.open_in_rec
             })
         });
-    if methods >= 1
-        && checked
-            .as_ref()
-            .is_some_and(|c| c.typed.root_ty.is_recursive())
-    {
-        return Err(Skip::RecursiveReceiver);
-    }
     let verdict = match &checked {
         Some(checked) => {
             let mut canon = Canon {

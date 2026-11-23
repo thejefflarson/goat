@@ -1897,13 +1897,6 @@ Proof.
     apply andb_prop in H; destruct H as [He Hfs]; rewrite He, (IH Hfs); reflexivity.
 Qed.
 
-Lemma is_gen_fs_drop : forall l fs, is_gen_fields fs = true -> is_gen_fields (fs_drop l fs) = true.
-Proof.
-  intros l. induction fs as [|l' e fs IH|l' e fs IH]; intros H; simpl in *; auto;
-    apply andb_prop in H; destruct H as [He Hfs];
-    destruct (Nat.eqb l l'); simpl; auto; rewrite He, (IH Hfs); reflexivity.
-Qed.
-
 Lemma is_gen_fs_set : forall l v fs,
   is_gen_value v = true -> is_gen_fields fs = true ->
   is_gen_fields (fs_set l v fs) = true.

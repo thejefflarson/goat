@@ -1083,14 +1083,8 @@ with field_typing : denv -> ctx -> fields -> row -> Prop :=
 Lemma no_meth_plain : forall fs, no_meth (fs_plain fs) = true.
 Proof. induction fs as [|l e fs IH|l e fs IH]; simpl; auto. Qed.
 
-Lemma fs_plain_no_meth : forall fs, no_meth fs = true -> fs_plain fs = fs.
-Proof. induction fs as [|l e fs IH|l e fs IH]; simpl; intros H; try discriminate; first [ reflexivity | rewrite IH; auto ]. Qed.
-
 Lemma lookup_first_plain : forall l fs, lookup_first l (fs_plain fs) = lookup_first l fs.
 Proof. induction fs as [|l' e fs IH|l' e fs IH]; simpl; auto; destruct (Nat.eqb l l'); auto. Qed.
-
-Lemma rec_value_plain : forall fs, rec_value fs -> rec_value (fs_plain fs).
-Proof. intros fs H. induction H; simpl; auto. Qed.
 
 Lemma field_typing_fs_plain : forall D G fs R,
   field_typing D G fs R -> field_typing D G (fs_plain fs) R.
