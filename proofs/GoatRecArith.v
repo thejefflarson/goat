@@ -25,7 +25,7 @@ Fixpoint row_sig (D : denv) (o : bop) (R : row) {struct R} : Prop :=
   end.
 
 Lemma rsat_row_sig : forall D o R,
-  (kind o = k_ring \/ kind o = k_whole) -> rsat D R -> row_sig D o R.
+  (kind o = k_ring \/ kind o = k_whole) -> rsat D k_Numeric R -> row_sig D o R.
 Proof.
   intros D o R Hk. induction R using row_ind4; simpl; intros H; try contradiction; auto.
   destruct H as [H1 H2]. split; [ | auto ].

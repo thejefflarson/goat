@@ -139,8 +139,8 @@ Qed.
 Lemma sat_ext_out_mut : forall D V k0,
   (forall T k, sat D k T -> (forall b, b `in` ftv_typ T -> b `notin` V) ->
      sat (ext D V k0) k T) /\
-  (forall R, rsat D R -> (forall b, b `in` ftv_row R -> b `notin` V) ->
-     rsat (ext D V k0) R).
+  (forall R k, rsat D k R -> (forall b, b `in` ftv_row R -> b `notin` V) ->
+     rsat (ext D V k0) k R).
 Proof.
   intros D V k0. apply typ_row_mutind; simpl; intros.
   all: first
@@ -305,7 +305,7 @@ Proof. intros [] []; simpl; intros H; try discriminate; constructor. Qed.
 
 Lemma sat_b_sound_mut : forall D,
   (forall T k, sat_b D k T = true -> sat D k T) /\
-  (forall R, rsat_b D R = true -> rsat D R).
+  (forall R k, rsat_b D k R = true -> rsat D k R).
 Proof.
   intros D. apply typ_row_mutind; simpl; intros.
   all: first

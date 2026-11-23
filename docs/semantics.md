@@ -976,8 +976,7 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
     carries no bytes, and a string denotes `q` for every `q`.
   - *`if` has an `else`.* `if c then a done` lowers to `if c then a else ()`;
     the core has the three-armed form only, and the unit value has no literal.
-  - *Not here:* comparison of `Unit` (phase 6, structural ordering), records and
-    tags (ADR 0036), `and`, `or`,
+  - *Not here:* comparison of tags (ADR 0036, phase 6), `and`, `or`,
     `not`, unary minus, and the precedence of a run of operators (the parser
     fragment has at most one operator in an expression).
 - **Recursion is a group of functions (phase 2, ADR 0037).** ADR 0003 makes

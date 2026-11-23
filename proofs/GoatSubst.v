@@ -273,7 +273,7 @@ Proof.
 Qed.
 
 Lemma sat_pw_mut : forall D D2, (forall a, D a = D2 a) ->
-  (forall T k, sat D k T -> sat D2 k T) /\ (forall R, rsat D R -> rsat D2 R).
+  (forall T k, sat D k T -> sat D2 k T) /\ (forall R k, rsat D k R -> rsat D2 k R).
 Proof.
   intros D D2 H. apply typ_row_mutind; simpl; intros.
   all: first

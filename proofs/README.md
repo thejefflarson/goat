@@ -49,7 +49,7 @@ preservation) is B3 (#71).
 | `GoatRecArith.v` | Record arithmetic (ADR 0012): `row_sig` (every field of a row takes the operator), `bin_sig_record`, and `zip_typing`, which pairs the fields of two records typed by rows equivalent to one numeric row and types the record of operator applications that `rec_zip` builds. Progress and preservation use it. |
 | `GoatSpread.v` | Spread and restrict (phase 4): the inversions, and `spread_step_typing` and `restrict_step_typing`, which preservation uses. |
 | `GoatPhase4.v` | Phase 4 of ADR 0037: worked examples for spread (an update, an extension, one `set_x` for a record with and without `x`), restrict, and what has no derivation (a type-changing update, a restrict on a record without the label). |
-| `GoatPhase6.v` | Phase 6, stage 1a: worked examples for the `Eq` sort: `()` compares, a function does not, `same = program(x) do x == x done` is used at `Int`, `String` and `Unit`. The differential test covers the algorithm. |
+| `GoatPhase6.v` | Phase 6, stages 1a and 1b: worked examples for the `Eq` sort and record comparison: `()` compares, a function does not, `same = program(x) do x == x done` is used at `Int`, `String` and `Unit`, records compare equal in either field order, by their second field when the first ties, and in label order, nested records compare, a record holding a function is not `Eq`. The differential test covers the algorithm. |
 | `GoatRecArithExamples.v` | Record arithmetic, worked: a record sum, a nested product with the fields in another order at both levels, a record with a non-number field (no derivation). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
@@ -113,10 +113,14 @@ inference algorithm's soundness and its mu-freedom, and the three of
 What the model leaves out, each checked against `goat check` and `goat run`
 (`docs/semantics.md` section 9): the embedded target's 32-bit `Int`, IEEE
 rounding, infinities and NaN (a `Float` is opaque), the `trap()` builtin,
-comparison of records and tags (phase 6; a record comparison steps to any `Bool`
-until then, `st_cmprec`) and the `Ordered` sort. A comparison takes the sort `Eq`
-(`sat`), which `Int`, `Float`, strings, booleans, `Unit` and a record of
-numbers satisfy, so a generic comparison types and `Unit` compares. One gap is accepted: `5 // 0` typed at `Float` (two bare numerals the
+comparison of tags (phase 6, stage 1c), IEEE behavior inside a compound (a `Float`
+inside a record relates to every result, so a NaN's place in the order is not
+modeled) and the `Ordered` sort. A comparison takes the sort `Eq` (`sat`), which
+`Int`, `Float`, strings, booleans, `Unit` and a closed record of such types satisfy, so a generic comparison
+types and `Unit` compares. Two records compare by `cmp_rel`'s `cr_rec`: field by
+field, in the order of their labels, each label read as its first field in either
+record, so `{x: 1, y: 2} == {y: 2, x: 1}`. `cmp_total` shows two values of one `Eq`
+type always compare, and `rec_align` is the alignment fact it rests on. One gap is accepted: `5 // 0` typed at `Float` (two bare numerals the
 checker settles as `Float`, as in `f(5 // 0)` for `f = program(x) do x + 1.5 done`)
 steps as two `Int`s in the calculus, so it traps with `Div_by_zero`, while the
 compiled program divides decimals and gives `inf`. `+ - *` and numerals are generic over the sorts `Numeric` and
@@ -488,7 +492,7 @@ two meet in Algorithm W, which returns the elaborated term:
 `unify_co_sound` and `infer_guarded`. 0 admits, no axioms.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 44168 programs written, 42775 compared with 0 mismatches, 1382 skipped
+commit: 44174 programs written, 42781 compared with 0 mismatches, 1382 skipped
 by the driver. Of the 42 programs whose checker type is recursive, 31 are compared
 and 11 refused. The corpus reader's skips, by the feature that keeps a program
 outside the calculus (the first of a fixed order that it uses):
@@ -508,7 +512,6 @@ outside the calculus (the first of a fixed order that it uses):
 | 7 | arithmetic on non-primitive operands |
 | 4 | an `if` without an `else` |
 | 4 | a numeral of 2^30 or more |
-| 2 | a comparison of non-primitive operands |
 | 2 | a rest pattern with no fields |
 | 2 | none of the above |
 

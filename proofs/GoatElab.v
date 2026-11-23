@@ -174,27 +174,52 @@ Proof. destruct b; reflexivity. Qed.
 Lemma erase_fl_pair : forall x y, fl_pair x y -> erase x = x /\ erase y = y.
 Proof. intros x y H. inversion H; subst; split; reflexivity. Qed.
 
-Lemma erase_cmp_rel : forall a b c, cmp_rel a b c -> erase a = a /\ erase b = b.
+Lemma erase_fs_labels : forall fs, fs_labels (erase_fields fs) = fs_labels fs.
+Proof. induction fs as [|l e fs IH|l e fs IH]; cbn [erase_fields fs_labels]; try rewrite IH; reflexivity. Qed.
+
+Lemma erase_rec_labels : forall fs, rec_labels (erase_fields fs) = rec_labels fs.
+Proof. intros fs. unfold rec_labels. rewrite erase_fs_labels. reflexivity. Qed.
+
+Scheme cmp_rel_mind := Induction for cmp_rel Sort Prop
+with cr_fields_mind := Induction for cr_fields Sort Prop.
+Combined Scheme cmp_mutind from cmp_rel_mind, cr_fields_mind.
+
+(* Erasing both operands keeps the comparison's result: [fold] is invisible,
+   and a record's first field of a label erases to the first field of it. *)
+Lemma erase_cmp_rel_mut :
+  (forall a b c, cmp_rel a b c -> cmp_rel (erase a) (erase b) c) /\
+  (forall labs fs1 fs2 c, cr_fields labs fs1 fs2 c ->
+     cr_fields labs (erase_fields fs1) (erase_fields fs2) c).
 Proof.
-  intros a b c H. destruct H; cbn [erase]; try (split; reflexivity).
-  rewrite (erase_val_bool _ _ H), (erase_val_bool _ _ H0). split; reflexivity.
+  apply cmp_mutind; intros; cbn [erase].
+  - apply cr_int.
+  - destruct (erase_fl_pair _ _ f) as [E1 E2]. rewrite E1, E2. apply cr_float. exact f.
+  - apply cr_str.
+  - rewrite (erase_val_bool _ _ e), (erase_val_bool _ _ e0). eapply cr_bool; eassumption.
+  - apply cr_unit.
+  - apply cr_rec. rewrite erase_rec_labels. assumption.
+  - apply cf_nil.
+  - eapply cf_eq; [ rewrite erase_lookup_first, e; reflexivity | rewrite erase_lookup_first, e0; reflexivity | | ]; assumption.
+  - eapply cf_ne; [ rewrite erase_lookup_first, e; reflexivity | rewrite erase_lookup_first, e0; reflexivity | | ]; assumption.
 Qed.
 
+Lemma erase_cmp_rel : forall a b c, cmp_rel a b c -> cmp_rel (erase a) (erase b) c.
+Proof. exact (proj1 erase_cmp_rel_mut). Qed.
+
 Lemma erase_bin_step : forall o a b v,
-  bin_step o a b v -> erase a = a /\ erase b = b /\ erase v = v.
+  bin_step o a b v -> bin_step o (erase a) (erase b) (erase v).
 Proof.
   intros o a b v H. inversion H; subst;
+    try (match goal with Hc : cmp_rel _ _ _ |- _ =>
+           rewrite erase_of_bool; apply bs_cmp; [ assumption | apply erase_cmp_rel; exact Hc ] end);
     repeat match goal with
            | Hp : fl_pair ?x ?y |- _ =>
                destruct (erase_fl_pair _ _ Hp) as [E1 E2]; clear Hp;
                try rewrite E1; try rewrite E2; clear E1 E2
            | Hv : val_bool ?x = Some _ |- _ =>
                rewrite (erase_val_bool _ _ Hv); clear Hv
-           | Hc : cmp_rel ?x ?y _ |- _ =>
-               destruct (erase_cmp_rel _ _ _ Hc) as [E1 E2]; clear Hc;
-               try rewrite E1; try rewrite E2; clear E1 E2
            end;
-    try rewrite erase_of_bool; repeat split; reflexivity.
+    try rewrite erase_of_bool; exact H.
 Qed.
 
 Lemma erase_bin_trap : forall o a b k,
@@ -231,11 +256,9 @@ Proof.
   - (* bin1 *) destruct H as [E | S]; [ left; rewrite E; reflexivity | right; apply st_bin1; exact S ].
   - (* bin2 *) destruct H as [E | S];
       [ left; rewrite E; reflexivity | right; apply st_bin2; [ auto | exact S ] ].
-  - (* bin *) right. destruct (erase_bin_step _ _ _ _ b) as [E1 [E2 E3]].
-    rewrite E1, E2, E3. apply st_bin; auto.
+  - (* bin *) right. apply st_bin; [ auto | auto | apply erase_bin_step; exact b ].
   - (* binrec *) right. apply st_binrec; auto.
     rewrite <- !erase_fs_plain. apply erase_rec_zip. exact r1.
-  - (* cmprec *) right. rewrite erase_of_bool. cbn [erase]. apply st_cmprec; auto.
   - (* tofloat1 *) destruct H as [E | S]; [ left; rewrite E; reflexivity | right; apply st_tofloat1; exact S ].
   - (* tofloat *) right. apply st_tofloat.
   - (* tofloat dec *) right. apply st_tofloat_dec.
