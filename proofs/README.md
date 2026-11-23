@@ -474,13 +474,10 @@ unifies the base with `{l ^ p : T2 | r}` and returns `{l : T2 | r}`, and a
 restrict unifies with `{l : a | r}` and returns `{r}`. `infer_sound`,
 `infer_closed_sound` and `infer_mu_free` keep 0 admits and no new axiom, and the
 differential test compares spread and restrict programs (`differential/README.md`).
-The algorithm is incomplete where the calculus's syntactic `l # R` is: it never
-uses a `lacks` fact about a row variable (`LacksOnTail` counts those programs;
-the calculus now has the derivations, the algorithm does not yet find them).
+The calculus's syntactic `l # R` holds of a closed row alone; phase 7 stage 7.3b
+extends the algorithm with lacks facts on row variables.
 
-What waits, each its own ticket: the algorithm half of row kinds (stage 2 of
-#564: a lacks-aware unifier, `restrict` giving its tail the label) and the
-typeset `goat.ott`. The parser fragment now reads spread and rest patterns (the
+What waits, each its own ticket: the typeset `goat.ott`. The parser fragment now reads spread and rest patterns (the
 section on the parser claim says how).
 
 ## Phase 5 (ADR 0037, amended): the elaboration theorem, methods and dot calls
@@ -542,7 +539,7 @@ by the differential test), and `make check-assumptions` requires it to rest on
 those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 44460 programs written, 43038 compared with 0 mismatches, 1411 skipped
+commit: 44659 programs written, 43239 compared with 0 mismatches, 1411 skipped
 by the driver. Inferring a recursive group before the value bindings between its
 members (#628) brought in 59 of the 65 programs it used to skip; the other 6 use
 a later feature or are real cycles the checker rejects. The reader numbers labels in name order, which wrote 206 more
@@ -553,8 +550,7 @@ outside the calculus (the first of a fixed order that it uses):
 
 | Count | Skip |
 | ---: | --- |
-| 5149 | does not lower (the checker rejects it before typing) |
-| 222 | a spread onto a row variable that lacks the label (`LacksOnTail`, #564) |
+| 5087 | does not lower (the checker rejects it before typing) |
 | 185 | tags and `match` |
 | 41 | `print` or `trap` |
 | 37 | a program that ends in a binding |
@@ -614,11 +610,11 @@ the programs and records no mismatch.
   record type that carries the row variable), a coinductive type equality
   (assumed pairs) in `unify_k`, and a `T_Letrec` that admits a `fold` of a
   lambda. Each changes the calculus or its spec; none is a local proof.
-- **`lacks` on a row variable (#564), the algorithm half.** The calculus derives a
-  spread whose base ends in a row variable the checker knows lacks the label
-  (`{x, ...rest} = p` then `{...rest, x: 2}`, by `T_SpreadL`), but algorithm W
-  does not carry the lacks facts, so the 222 programs stay skipped until its
-  unifier does (stage 2 of #564).
+- **`lacks` on a row variable (#564), closed in phase 7 stage 7.3b.** The calculus
+  derives a spread whose base ends in a row variable the checker knows lacks the
+  label (`{x, ...rest} = p` then `{...rest, x: 2}`, by `T_SpreadL`), and algorithm
+  W now carries the lacks facts (see "Algorithm W carries the kinds"), so the 222
+  programs the corpus reader used to skip under `LacksOnTail` are compared.
 - **No non-derivation of `{...lit, x: 1}.a()`.** The checker and W both reject a
   method literal spread and then called, but the calculus has no theorem that no
   derivation exists: it needs an inversion lemma for `unroll_eq`.
@@ -692,12 +688,33 @@ defaults outside a finite support (`supp_ok` says both).
   (`rkup` beside `kup`), `typing_denv_agree` (a row variable the context does not
   mention goes to the empty row, which lacks everything), `typing_inst_gen`,
   `tsubst_gen_core`, and `sch_equiv`.
-- **Algorithm W is unchanged.** Its environments have no constrained row variable
-  (`rtriv D`, part of `DOk`), so `rkres` holds vacuously (`rkres_triv`) and a
-  scheme it builds has `rk_triv`. The composition of two substitutions (`kres_scomp`)
-  takes `rtriv` of the middle environment for the same reason: no row variable
-  carries a kind, so there is none to respect. Dropping `rtriv` waits on the
-  unifier's row side (lacks on a tail, a restricted row's tail lacking its label).
+- **Algorithm W carries the kinds (stage 7.3b).** `DOk D n` says `D` has the
+  default sort and the default row kind beyond the first `n` even atoms, and
+  `KR D D' s` says `s` respects the sorts and the row kinds (`kres` and `rkres`);
+  `Good` carries one for the substitution and one for the refinement of the
+  environment, and `KR_comp` composes them (`rkok_ap` is its row half). A row
+  variable gets a kind in three places. `bind_row` binds a row variable to a row:
+  the variable at the row's tail is renamed to a fresh one whose kind is the
+  join of both (`rk_join`: the finer sort, the union of the lacks; a lacks set is
+  a function, so the two kinds cannot be compared and the renaming is always
+  made), the sort reaches the type variables of the fields (`push_sort`), and the
+  row must satisfy the sort and avoid the labels the variable lacks (`lacks_ok`,
+  `rlacksD_spine`). A type variable of sort `Eq` or `Numeric` that binds to a
+  record pushes its sort onto the row variables in it too (`push_sort_r`: each
+  coarser row variable is renamed to a fresh one of that sort that lacks the same
+  labels), so `program(a, b) do (if a == b then 1 else 2 done) + a.x done` types
+  at an `Eq` row tail; the fuzz target's `GAPS` row for it is gone. `rewrite_row` fails on a row variable that lacks the label
+  and gives the fresh tail of `l ^ p : a ; r'` the kind it replaces. `restrict`
+  gives its tail the removed label. `gen_ren` records the kind of each
+  quantified row variable (`gen_rk`) and `inst_den` gives each fresh one that kind
+  back; `T_Let` and `T_Letrec` type the bound term in `Dsc D sc`, `D` extended by
+  the scheme's sorts and kinds, which `KR_Dsc_lift` carries across a step.
+  A spread tries `T_SpreadL` first: it unifies the base with a fresh row
+  variable and, when the result lacks the label, types the spread at
+  `{l : T | R}`; otherwise (and when the unifier fails) it falls back to the
+  presence-variable `T_Spread` (`spread_present`), so a base that has the field,
+  or whose row may gain it, types as before. The extracted algorithm is
+  differentially tested on the 222 programs the corpus reader used to skip.
 - **Statement B.** The row environment is read by `sat` only at a `row_Var`, so
   it extends to recursive types (a `mu` body's row tails are read the same way,
   `sat_open_mut` is unchanged) and to methods (`T_Obj` is typed against the same

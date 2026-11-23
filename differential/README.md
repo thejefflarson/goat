@@ -70,8 +70,9 @@ does and leaves the rest out as a counted reader skip.
 
 **Known gaps.** The algorithm is not yet complete, so the target excuses a
 `w-refuses` reply for the classes in `GAPS` (`fuzz/tests/w.rs`), each tied to what
-removes it: #564 (stage 7.2), `sat_b` answering `Any` only for
-`mu` and tag groups (stage 7.4). #623 (a sort reaching the variables inside a
+removes it: `sat_b` answering `Any` only for
+`mu` and tag groups (stage 7.4). #564 (a sort and a lacks fact on a row variable)
+is closed. #623 (a sort reaching the variables inside a
 type) is closed: its five programs are in `HANDWRITTEN` and compare. A stage that lands deletes its row, and the
 target then fails on the class. A type that differs, or a program the algorithm
 accepts and the checker rejects, is never excused. Recursive-type programs the
@@ -290,15 +291,12 @@ variables, none a presence entry: an open row that field access made
 `METHOD` settles. The calculus has no flag, so the reader ignores a flag
 variable and skips only a field flagged `METHOD`.
 
-One kind of program is skipped because the calculus is stricter than the
-checker. The calculus's `l # R` holds only of a closed row, so a spread of `l`
-onto a record whose row ends in a row variable the checker knows lacks `l` (the
-remainder of a rest pattern, put back: `{x, ...r} = p` then `{...r, x: 2}`) has
-no derivation, and a program that puts a record with `x` in the remainder's
-place is rejected by the checker (`was taken out of this record`) and accepted
-by the algorithm. These count under `LacksOnTail`. A `lacks` sort on row
-variables in the kinding environment would remove the skip; it extends `sat`,
-`kres` and `inst` from type variables to row variables.
+A spread of `l` onto a record whose row ends in a row variable the checker
+knows lacks `l` (the remainder of a rest pattern, put back: `{x, ...r} = p` then
+`{...r, x: 2}`) is typed by the algorithm through the row variable's lacks fact,
+and a program that puts a record with `x` in the remainder's place is rejected by
+both (`was taken out of this record` in the checker, a row variable that lacks
+the label in the algorithm). The corpus reader no longer skips these programs.
 
 ## Tag groups (waiting for the checker's groups)
 

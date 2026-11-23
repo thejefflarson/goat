@@ -114,6 +114,21 @@ Fixpoint unify_grp (f : nat) (D : denv) (fs : fields) (R1 R2 : row) (n : nat) {s
       end
   end.
 
+(* A spread onto a record whose row is not known to lack the label: the label
+   is a presence-variable field of the base's row, there or not, and a present
+   one in the result.  A base whose row variable lacks the label is typed by
+   [infer] directly: its row is the one the spread's result extends. *)
+Definition spread_present (f : nat) (D2 : denv) (s1 s2 : sub) (T1 T2 : typ) (l : label)
+  (e1' e2' : exp) (n2 : nat) : option (sub * denv * typ * nat * exp) :=
+  match unify_co f D2 (apT s2 T1)
+          (typ_Record (row_Maybe l (typ_Var (ea n2)) T2 (row_Var (ea (S n2))))) (n2 + 2) with
+  | None => None
+  | Some (s3, D3, cs, n3) =>
+      Some (scomp s3 (scomp s2 s1), D3,
+            apT s3 (typ_Record (row_Ext l T2 (row_Var (ea (S n2))))), n3,
+            e_spread (coerce cs e1') l e2')
+  end.
+
 (* [infer f D G e n] returns the substitution, the kinding environment the
    result type lives in, the type, the next unused variable number, and the
    elaborated term.  The environment [D] has [Any] on every even atom from [n]
@@ -295,13 +310,14 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
-                  let p := typ_Var (ea n2) in
-                  let r := row_Var (ea (S n2)) in
-                  match unify_co f' D2 (apT s2 T1) (typ_Record (row_Maybe l p T2 r)) (n2 + 2) with
-                  | None => None
+                  match unify_co f' D2 (apT s2 T1) (typ_Record (row_Var (ea n2))) (S n2) with
                   | Some (s3, D3, cs, n3) =>
-                      Some (scomp s3 (scomp s2 s1), D3,
-                            apT s3 (typ_Record (row_Ext l T2 r)), n3, e_spread (coerce cs e1') l e2')
+                      if rlacksD D3 l (apR s3 (row_Var (ea n2))) then
+                        Some (scomp s3 (scomp s2 s1), D3,
+                              apT s3 (typ_Record (row_Ext l T2 (row_Var (ea n2)))), n3,
+                              e_spread (coerce cs e1') l e2')
+                      else spread_present f' D2 s1 s2 T1 T2 l e1' e2' n2
+                  | None => spread_present f' D2 s1 s2 T1 T2 l e1' e2' n2
                   end
               end
           end
@@ -311,7 +327,8 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
           | Some (s1, D1, T1, n1, e1') =>
               let a := typ_Var (ea n1) in
               let r := row_Var (ea (S n1)) in
-              match unify_co f' D1 T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
+              let D1' := rupd D1 (ea (S n1)) (RK k_Any (Nat.eqb l)) in
+              match unify_co f' D1' T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
               | None => None
               | Some (s2, D2, cs, n2) =>
                   Some (scomp s2 s1, D2, apT s2 (typ_Record r), n2, e_restrict (coerce cs e1') l)

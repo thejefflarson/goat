@@ -28,34 +28,20 @@ Qed.
 (* The environment is Any beyond the first n even atoms                 *)
 (* ------------------------------------------------------------------ *)
 
-(* No row variable has a constraint: the algorithm never gives one (its
-   schemes quantify rows at the unconstrained kind), so a substitution of the
-   algorithm respects the row kinds whatever it does to a row variable. *)
-Definition rtriv (D : denv) : Prop := forall r, drk D r = rk_any.
-
-Lemma rkres_triv : forall D D' sr, rtriv D -> rkres D D' sr.
-Proof. intros D D' sr H r. rewrite (H r). apply rkok_any. Qed.
-
-(* Extending an environment whose row variables are unconstrained by the
-   unconstrained kind changes nothing. *)
-Lemma denv_eq_extr_triv : forall D V rk, rtriv D -> (forall r, rk r = rk_any) ->
-  denv_eq D (extr D V rk).
-Proof.
-  intros D V rk H Hr. split; [ intros; reflexivity | ]. intros r. unfold extr. simpl.
-  destruct (AtomSetImpl.mem r V); [ rewrite Hr; apply H | reflexivity ].
-Qed.
-
-Definition DOk (D : denv) (n : nat) : Prop :=
-  (forall a, (forall m, m < n -> a <> ea m) -> D a = k_Any) /\ rtriv D.
-
 Lemma ea_inj : forall m n, ea m = ea n -> m = n.
 Proof.
   intros m n H. unfold ea in H. apply idx_atom_inj in H. lia.
 Qed.
 
+(* Beyond the first [n] even atoms, a type variable has sort [Any] and a row
+   variable has the kind [rk_any]: only a fresh variable gets either. *)
+Definition DOk (D : denv) (n : nat) : Prop :=
+  (forall a, (forall m, m < n -> a <> ea m) -> D a = k_Any) /\
+  (forall a, (forall m, m < n -> a <> ea m) -> drk D a = rk_any).
+
 Lemma DOk_mono : forall D n n', DOk D n -> n <= n' -> DOk D n'.
 Proof.
-  intros D n n' [H Hr] Hle. split; [ | exact Hr ]. intros a Ha. apply H. intros m Hm. apply Ha. lia.
+  intros D n n' [H Hr] Hle. split; intros a Ha; [ apply H | apply Hr ]; intros m Hm; apply Ha; lia.
 Qed.
 
 Lemma DOk_ea : forall D n m, DOk D n -> n <= m -> D (ea m) = k_Any.
@@ -63,22 +49,31 @@ Proof.
   intros D n m [H _] Hle. apply H. intros m' Hm' Heq. apply ea_inj in Heq. lia.
 Qed.
 
+Lemma DOk_rea : forall D n m, DOk D n -> n <= m -> drk D (ea m) = rk_any.
+Proof.
+  intros D n m [_ H] Hle. apply H. intros m' Hm' Heq. apply ea_inj in Heq. lia.
+Qed.
+
 Lemma DOk_odd : forall D n a, DOk D n -> od a -> D a = k_Any.
 Proof.
   intros D n a [H _] Ho. apply H. intros m Hm Heq. subst. exact (ev_od _ (ev_ea m) Ho).
 Qed.
 
-Lemma DOk_rtriv : forall D n, DOk D n -> rtriv D.
-Proof. intros D n H. exact (proj2 H). Qed.
+Lemma DOk_rodd : forall D n a, DOk D n -> od a -> drk D a = rk_any.
+Proof.
+  intros D n a [_ H] Ho. apply H. intros m Hm Heq. subst. exact (ev_od _ (ev_ea m) Ho).
+Qed.
 
 Lemma d_any_DOk : forall n, DOk d_any n.
-Proof. intros n. split; [ intros a _; reflexivity | intros r; reflexivity ]. Qed.
+Proof. intros n. split; intros a _; reflexivity. Qed.
 
 Lemma DOk_supp : forall D n, DOk D n -> exists S, supp_ok D S.
 Proof.
   intros D n [H Hr]. exists (aset (List.map ea (seq 0 n))).
-  intros a Ha. split; [ | apply Hr ]. apply H. intros m Hm Heq. apply Ha. apply aset_in.
-  subst. apply in_map_iff. exists m. split; [reflexivity | apply in_seq; lia].
+  assert (Hin : forall a, a `notin` aset (List.map ea (seq 0 n)) -> forall m, m < n -> a <> ea m).
+  { intros a Ha m Hm Heq. apply Ha. apply aset_in. subst. apply in_map_iff.
+    exists m. split; [reflexivity | apply in_seq; lia]. }
+  intros a Ha. split; [ apply H | apply Hr ]; apply Hin; exact Ha.
 Qed.
 
 Lemma upd_same : forall D a k, upd D a k a = k.
@@ -87,70 +82,100 @@ Proof. intros. unfold upd. simpl. destruct (Atom.eq_dec a a); [reflexivity | con
 Lemma upd_other : forall D a k b, b <> a -> upd D a k b = D b.
 Proof. intros. unfold upd. simpl. destruct (Atom.eq_dec b a); [contradiction | reflexivity]. Qed.
 
+Lemma rupd_same : forall D a K, drk (rupd D a K) a = K.
+Proof. intros. unfold rupd. simpl. destruct (Atom.eq_dec a a); [reflexivity | contradiction]. Qed.
+
+Lemma rupd_other : forall D a K b, b <> a -> drk (rupd D a K) b = drk D b.
+Proof. intros. unfold rupd. simpl. destruct (Atom.eq_dec b a); [contradiction | reflexivity]. Qed.
+
 Lemma DOk_upd : forall D n k, DOk D n -> DOk (upd D (ea n) k) (S n).
 Proof.
-  intros D n k [H Hr]. split; [ | intros r; exact (Hr r) ]. intros a Ha. rewrite upd_other.
-  - apply H. intros m Hm. apply Ha. lia.
+  intros D n k [H Hr]. split.
+  - intros a Ha. rewrite upd_other.
+    + apply H. intros m Hm. apply Ha. lia.
+    + apply Ha. lia.
+  - intros r Hr'. cbn [drk upd]. apply Hr. intros m Hm. apply Hr'. lia.
+Qed.
+
+Lemma DOk_rupd : forall D n K, DOk D n -> DOk (rupd D (ea n) K) (S n).
+Proof.
+  intros D n K [H Hr]. split; [ intros a Ha; apply H; intros m Hm; apply Ha; lia | ].
+  intros a Ha. rewrite rupd_other.
+  - apply Hr. intros m Hm. apply Ha. lia.
   - apply Ha. lia.
 Qed.
 
+(* A substitution respects the kinds of two environments when it respects the
+   sorts of its type variables and the kinds of its row variables. *)
+Definition KR (D D' : denv) (s : sub) : Prop := kres D D' (sT s) /\ rkres D D' (sR s).
+
+Lemma KR_id : forall D, KR D D sid.
+Proof. intros D. split; [ apply kres_id | intros r; exact (rkok_self D r) ]. Qed.
+
 (* A refinement of the environment is the identity substitution respecting it. *)
-Lemma kres_upd : forall D n k, DOk D n -> kres D (upd D (ea n) k) idt.
+Lemma KR_upd : forall D n k, DOk D n -> KR D (upd D (ea n) k) sid.
 Proof.
-  intros D n k H a. unfold idt. cbn [sat].
-  destruct (Atom.eq_dec a (ea n)) as [->|Hne].
-  - rewrite (DOk_ea D n n H (le_n n)). apply finer_any.
-  - rewrite upd_other by exact Hne. apply finer_refl.
+  intros D n k H. split.
+  - intros a. cbn [sT sid]. unfold idt. cbn [sat].
+    destruct (Atom.eq_dec a (ea n)) as [->|Hne].
+    + rewrite (DOk_ea D n n H (le_n n)). apply finer_any.
+    + rewrite upd_other by exact Hne. apply finer_refl.
+  - intros r. exact (rkok_self (upd D (ea n) k) r).
 Qed.
 
-Lemma kres_sid : forall D, kres D D (sT sid).
-Proof. intros D. apply kres_id. Qed.
-
-Lemma kres_scomp : forall D D' D'' s1 s2, rtriv D' ->
-  kres D D' (sT s1) -> kres D' D'' (sT s2) -> kres D D'' (sT (scomp s2 s1)).
+Lemma KR_rupd : forall D n K, DOk D n -> KR D (rupd D (ea n) K) sid.
 Proof.
-  intros D D' D'' s1 s2 Ht H1 H2 a. unfold scomp, tcomp. simpl.
-  apply (sat_ap D' D'' (D a) (sT s1 a) (sT s2) (sR s2) H2 (rkres_triv _ _ _ Ht)). apply H1.
+  intros D n K H. split.
+  - intros a. cbn [sT sid]. unfold idt. cbn [sat]. apply finer_refl.
+  - intros r. change (sR sid r) with (row_Var r). split.
+    + cbn [rsat]. destruct (Atom.eq_dec r (ea n)) as [->|Hne].
+      * rewrite (DOk_rea D n n H (le_n n)). apply finer_any.
+      * rewrite rupd_other by exact Hne. apply finer_refl.
+    + intros l Hl. cbn [rlacksD]. destruct (Atom.eq_dec r (ea n)) as [->|Hne].
+      * rewrite (DOk_rea D n n H (le_n n)) in Hl. cbn in Hl. discriminate Hl.
+      * rewrite rupd_other by exact Hne. exact Hl.
 Qed.
 
-Lemma kres_idt_trans : forall D D' D'', rtriv D' ->
-  kres D D' idt -> kres D' D'' idt -> kres D D'' idt.
+Lemma KR_comp : forall D D' D'' s1 s2,
+  KR D D' s1 -> KR D' D'' s2 -> KR D D'' (scomp s2 s1).
 Proof.
-  intros D D' D'' Ht H1 H2. pose proof (kres_scomp D D' D'' sid sid Ht H1 H2) as H.
-  intros a. specialize (H a). exact H.
+  intros D D' D'' s1 s2 [H1 Hr1] [H2 Hr2]. split.
+  - intros a. unfold scomp, tcomp. simpl.
+    apply (sat_ap D' D'' (D a) (sT s1 a) (sT s2) (sR s2) H2 Hr2). apply H1.
+  - intros r. unfold scomp, rcomp. simpl.
+    apply (rkok_ap D' D'' (sT s2) (sR s2) (drk D r) (sR s1 r) H2 Hr2). apply Hr1.
 Qed.
 
-(* A refinement of the environment on either side keeps a substitution's
-   respect. *)
-Lemma kres_refine_l : forall D0 D D' st,
-  kres D0 D idt -> kres D D' st -> kres D0 D' st.
+Lemma KR_idl : forall D D' D'' s, KR D D' sid -> KR D' D'' s -> KR D D'' s.
 Proof.
-  intros D0 D D' st H0 H a.
-  pose proof (H0 a) as Ha. unfold idt in Ha. simpl in Ha.
-  apply (sat_finer D' (D0 a) (D a) (st a)); [ exact Ha | apply H ].
+  intros D D' D'' s H1 H2. pose proof (KR_comp _ _ _ _ _ H1 H2) as [Hk Hr]. split.
+  - intros a. exact (Hk a).
+  - intros r. exact (Hr r).
 Qed.
 
-Lemma kres_refine_r : forall D D' D'' st, rtriv D' ->
-  kres D D' st -> kres D' D'' idt -> kres D D'' st.
+Lemma KR_idr : forall D D' D'' s, KR D D' s -> KR D' D'' sid -> KR D D'' s.
 Proof.
-  intros D D' D'' st Ht H H1 a.
-  pose proof (sat_ap D' D'' (D a) (st a) idt idr H1 (rkres_triv _ _ _ Ht) (H a)) as Hs.
-  assert (Heq : ap_typ idt idr (st a) = st a)
-    by (apply ap_typ_pointwise_id; reflexivity).
-  rewrite Heq in Hs. exact Hs.
+  intros D D' D'' s H1 H2. pose proof (KR_comp _ _ _ _ _ H1 H2) as [Hk Hr]. split.
+  - intros a. specialize (Hk a). unfold scomp, tcomp in Hk. simpl in Hk.
+    assert (Heq : ap_typ idt idr (sT s a) = sT s a) by (apply ap_typ_pointwise_id; reflexivity).
+    rewrite Heq in Hk. exact Hk.
+  - intros r. specialize (Hr r). unfold scomp, rcomp in Hr. simpl in Hr.
+    assert (Heq : ap_row idt idr (sR s r) = sR s r)
+      by (apply (proj2 ap_pointwise_id_mut); reflexivity).
+    rewrite Heq in Hr. exact Hr.
 Qed.
 
 (* A step from environment [D] with supply [n] to [D'] with supply [n'],
    applying [s]: [D] is [Any] beyond [n], [s] is a substitution of the
    algorithm, the supply only grows, [D'] refines [D], and [s] respects the
-   sorts. *)
+   kinds. *)
 Definition Good (D : denv) (n : nat) (s : sub) (D' : denv) (n' : nat) : Prop :=
-  DOk D n /\ OkS s /\ DOk D' n' /\ n <= n' /\ kres D D' idt /\ kres D D' (sT s).
+  DOk D n /\ OkS s /\ DOk D' n' /\ n <= n' /\ KR D D' sid /\ KR D D' s.
 
 Lemma Good_id : forall D n, DOk D n -> Good D n sid D n.
 Proof.
   intros D n H.
-  exact (conj H (conj OkS_id (conj H (conj (le_n n) (conj (kres_id D) (kres_id D)))))).
+  exact (conj H (conj OkS_id (conj H (conj (le_n n) (conj (KR_id D) (KR_id D)))))).
 Qed.
 
 Lemma Good_comp : forall D n s1 D1 n1 s2 D2 n2,
@@ -158,15 +183,14 @@ Lemma Good_comp : forall D n s1 D1 n1 s2 D2 n2,
 Proof.
   intros D n s1 D1 n1 s2 D2 n2 (Hd & Hs1 & Hd1 & Hl1 & Hi1 & Hk1) (_ & Hs2 & Hd2 & Hl2 & Hi2 & Hk2).
   exact (conj Hd (conj (OkS_comp _ _ Hs2 Hs1) (conj Hd2 (conj (Nat.le_trans _ _ _ Hl1 Hl2)
-    (conj (kres_idt_trans _ _ _ (DOk_rtriv _ _ Hd1) Hi1 Hi2)
-          (kres_scomp _ _ _ _ _ (DOk_rtriv _ _ Hd1) Hk1 Hk2)))))).
+    (conj (KR_idl _ _ _ _ Hi1 Hi2) (KR_comp _ _ _ _ _ Hk1 Hk2)))))).
 Qed.
 
 Lemma Good_unify : forall D n s n',
-  OkS s -> kres D D (sT s) -> n <= n' -> DOk D n -> Good D n s D n'.
+  OkS s -> KR D D s -> n <= n' -> DOk D n -> Good D n s D n'.
 Proof.
   intros D n s n' Hs Hk Hl Hd.
-  exact (conj Hd (conj Hs (conj (DOk_mono D n n' Hd Hl) (conj Hl (conj (kres_id D) Hk))))).
+  exact (conj Hd (conj Hs (conj (DOk_mono D n n' Hd Hl) (conj Hl (conj (KR_id D) Hk))))).
 Qed.
 
 Lemma Good_lift : forall D n D' n' s D'' n'',
@@ -174,14 +198,21 @@ Lemma Good_lift : forall D n D' n' s D'' n'',
 Proof.
   intros D n D' n' s D'' n'' (Hd & _ & Hd1 & Hl1 & Hi1 & _) (_ & Hs & Hd2 & Hl2 & Hi2 & Hk2).
   exact (conj Hd (conj Hs (conj Hd2 (conj (Nat.le_trans _ _ _ Hl1 Hl2)
-    (conj (kres_idt_trans _ _ _ (DOk_rtriv _ _ Hd1) Hi1 Hi2) (kres_refine_l _ _ _ _ Hi1 Hk2)))))).
+    (conj (KR_idl _ _ _ _ Hi1 Hi2) (KR_idl _ _ _ _ Hi1 Hk2)))))).
 Qed.
 
 Lemma Good_upd : forall D n k, DOk D n -> Good D n sid (upd D (ea n) k) (S n).
 Proof.
   intros D n k H.
   exact (conj H (conj OkS_id (conj (DOk_upd D n k H) (conj (le_S _ _ (le_n n))
-    (conj (kres_upd D n k H) (kres_upd D n k H)))))).
+    (conj (KR_upd D n k H) (KR_upd D n k H)))))).
+Qed.
+
+Lemma Good_rupd : forall D n K, DOk D n -> Good D n sid (rupd D (ea n) K) (S n).
+Proof.
+  intros D n K H.
+  exact (conj H (conj OkS_id (conj (DOk_rupd D n K H) (conj (le_S _ _ (le_n n))
+    (conj (KR_rupd D n K H) (KR_rupd D n K H)))))).
 Qed.
 
 Lemma Good_pre : forall D n m s D' n',
@@ -191,8 +222,14 @@ Proof.
   exact (conj Hd (conj Hs (conj Hd' (conj (Nat.le_trans _ _ _ Hnm Hl) (conj Hi Hk))))).
 Qed.
 
-Lemma Good_kres : forall D n s D' n', Good D n s D' n' -> kres D D' (sT s).
+Lemma Good_KR : forall D n s D' n', Good D n s D' n' -> KR D D' s.
 Proof. intros D n s D' n' (_ & _ & _ & _ & _ & H). exact H. Qed.
+
+Lemma Good_kres : forall D n s D' n', Good D n s D' n' -> kres D D' (sT s).
+Proof. intros D n s D' n' H. exact (proj1 (Good_KR _ _ _ _ _ H)). Qed.
+
+Lemma Good_rkres : forall D n s D' n', Good D n s D' n' -> rkres D D' (sR s).
+Proof. intros D n s D' n' H. exact (proj2 (Good_KR _ _ _ _ _ H)). Qed.
 
 Lemma Good_dok : forall D n s D' n', Good D n s D' n' -> DOk D' n'.
 Proof. intros D n s D' n' (_ & _ & H & _). exact H. Qed.
@@ -213,7 +250,7 @@ Qed.
 Lemma GoodU_id :forall D n, GoodU D n sid D n.
 Proof. intros D n. split; [ lia | exact (Good_id D n) ]. Qed.
 
-Lemma GoodU_same : forall D n s n', OkS s -> kres D D (sT s) -> n <= n' -> GoodU D n s D n'.
+Lemma GoodU_same : forall D n s n', OkS s -> KR D D s -> n <= n' -> GoodU D n s D n'.
 Proof. intros D n s n' Hs Hk Hl. split; [ exact Hl | intros Hd; exact (Good_unify D n s n' Hs Hk Hl Hd) ]. Qed.
 
 Lemma GoodU_comp : forall D n s1 D1 n1 s2 D2 n2,
@@ -223,6 +260,9 @@ Proof.
   intros Hd. pose proof (H1 Hd) as G1.
   exact (Good_comp _ _ _ _ _ _ _ _ G1 (H2 (proj1 (proj2 (proj2 G1))))).
 Qed.
+
+Lemma GoodU_rupd : forall D n K, GoodU D n sid (rupd D (ea n) K) (S n).
+Proof. intros D n K. split; [ lia | intros H; exact (Good_rupd D n K H) ]. Qed.
 
 (* ------------------------------------------------------------------ *)
 (* Extension of the environment on a set of atoms                      *)
@@ -322,22 +362,22 @@ Proof.
       * right. intros a [Ha|Ha]; [ subst; exact Hne | apply IH; exact Ha ].
 Defined.
 
-Lemma sel_out : forall (key : atom -> atom) (val : atom -> sort) b d l,
+Lemma sel_out : forall {A : Type} (key : atom -> atom) (val : atom -> A) b d l,
   (forall a, In a l -> b <> key a) ->
   fold_right (fun a acc => if Atom.eq_dec b (key a) then val a else acc) d l = d.
 Proof.
-  intros key val b d l H. induction l as [|a l IH]; [ reflexivity | ]. simpl.
+  intros A key val b d l H. induction l as [|a l IH]; [ reflexivity | ]. simpl.
   destruct (Atom.eq_dec b (key a)) as [Heq|Hne].
   - exfalso. exact (H a (or_introl eq_refl) Heq).
   - apply IH. intros a' Ha'. apply H. right. exact Ha'.
 Qed.
 
-Lemma sel_at : forall (key : atom -> atom) (val : atom -> sort) b d l a,
+Lemma sel_at : forall {A : Type} (key : atom -> atom) (val : atom -> A) b d l a,
   In a l -> b = key a ->
   (forall a', In a' l -> key a' = key a -> val a' = val a) ->
   fold_right (fun a acc => if Atom.eq_dec b (key a) then val a else acc) d l = val a.
 Proof.
-  intros key val b d l a Ha Hb Hinj. induction l as [|c l IH]; [ inversion Ha | ]. simpl.
+  intros A key val b d l a Ha Hb Hinj. induction l as [|c l IH]; [ inversion Ha | ]. simpl.
   destruct (Atom.eq_dec b (key c)) as [Heq|Hne].
   - apply Hinj; [ left; reflexivity | congruence ].
   - destruct Ha as [Ha|Ha].
@@ -348,7 +388,9 @@ Qed.
 Section InstDen.
 Variables (D : denv) (s : scheme) (n : nat).
 Let lq := AtomSetImpl.elements (s_tq s).
+Let lr := AtomSetImpl.elements (s_rq s).
 Let key (a : atom) := ea (n + idx a lq).
+Let rkey (r : atom) := ea (n + length lq + idx r lr).
 
 Lemma inst_den_out : forall b,
   (forall a, In a lq -> b <> ea (n + idx a lq)) -> inst_den D s n b = D b.
@@ -362,21 +404,47 @@ Proof.
   assert (idx a' lq = idx a lq) by lia. rewrite (idx_inj a' a lq Ha' Ha H). reflexivity.
 Qed.
 
-Lemma DOk_inst_den : DOk D n ->
-  DOk (inst_den D s n) (n + length lq + length (AtomSetImpl.elements (s_rq s))).
+Lemma inst_rden_out : forall b,
+  (forall r, In r lr -> b <> ea (n + length lq + idx r lr)) -> drk (inst_den D s n) b = drk D b.
 Proof.
-  intros [H Hr]. split; [ | intros r; exact (Hr r) ]. intros b Hb. rewrite inst_den_out.
-  - apply H. intros m Hm. apply Hb. lia.
-  - intros a Ha Heq. apply (Hb (n + idx a lq)); [ | exact Heq ].
-    pose proof (idx_lt a lq Ha). lia.
+  intros b H. unfold inst_den. simpl. fold lq. fold lr.
+  apply (sel_out rkey (s_rk s) b (drk D b) lr H).
 Qed.
 
-Lemma kres_inst_den : DOk D n -> kres D (inst_den D s n) idt.
+Lemma inst_rden_at : forall r, In r lr ->
+  drk (inst_den D s n) (ea (n + length lq + idx r lr)) = s_rk s r.
 Proof.
-  intros H b. unfold idt. cbn [sat].
-  destruct (key_dec key b lq) as [[a [Ha Hb]]|Hn].
-  - rewrite Hb. unfold key. rewrite (DOk_ea D n _ H) by lia. apply finer_any.
-  - rewrite inst_den_out by exact Hn. apply finer_refl.
+  intros r Hr. unfold inst_den. simpl. fold lq. fold lr.
+  apply (sel_at rkey (s_rk s) (ea (n + length lq + idx r lr)) (drk D (ea (n + length lq + idx r lr))) lr r Hr eq_refl).
+  intros r' Hr' Hk. unfold rkey in Hk. apply ea_inj in Hk.
+  assert (idx r' lr = idx r lr) by lia. rewrite (idx_inj r' r lr Hr' Hr H). reflexivity.
+Qed.
+
+Lemma DOk_inst_den : DOk D n ->
+  DOk (inst_den D s n) (n + length lq + length lr).
+Proof.
+  intros [H Hr]. split.
+  - intros b Hb. rewrite inst_den_out.
+    + apply H. intros m Hm. apply Hb. lia.
+    + intros a Ha Heq. apply (Hb (n + idx a lq)); [ | exact Heq ].
+      pose proof (idx_lt a lq Ha). lia.
+  - intros b Hb. rewrite inst_rden_out.
+    + apply Hr. intros m Hm. apply Hb. lia.
+    + intros r Hrr Heq. apply (Hb (n + length lq + idx r lr)); [ | exact Heq ].
+      pose proof (idx_lt r lr Hrr). lia.
+Qed.
+
+Lemma KR_inst_den : DOk D n -> KR D (inst_den D s n) sid.
+Proof.
+  intros H. split.
+  - intros b. cbn [sT sid]. unfold idt. cbn [sat].
+    destruct (key_dec key b lq) as [[a [Ha Hb]]|Hn].
+    + rewrite Hb. unfold key. rewrite (DOk_ea D n _ H) by lia. apply finer_any.
+    + rewrite inst_den_out by exact Hn. apply finer_refl.
+  - intros b. change (sR sid b) with (row_Var b).
+    destruct (key_dec rkey b lr) as [[r [Hr Hb]]|Hn].
+    + rewrite Hb. unfold rkey. rewrite (DOk_rea D n _ H) by lia. apply rkok_any.
+    + rewrite <- (inst_rden_out b Hn). apply rkok_self.
 Qed.
 
 End InstDen.
@@ -392,6 +460,83 @@ Proof.
   apply (sel_at (fun a => oa (idx a la)) D (oa (idx a la)) k_Any la a Ha eq_refl).
   intros a' Ha' Hk. apply idx_atom_inj in Hk.
   assert (idx a' la = idx a la) by lia. rewrite (idx_inj a' a la Ha' Ha H). reflexivity.
+Qed.
+
+Lemma gen_rk_at : forall D lr r, In r lr ->
+  gen_rk D lr (oa (idx r lr)) = drk D r.
+Proof.
+  intros D lr r Hr. unfold gen_rk.
+  apply (sel_at (fun r => oa (idx r lr)) (drk D) (oa (idx r lr)) rk_any lr r Hr eq_refl).
+  intros r' Hr' Hk. apply idx_atom_inj in Hk.
+  assert (idx r' lr = idx r lr) by lia. rewrite (idx_inj r' r lr Hr' Hr H). reflexivity.
+Qed.
+
+(* ------------------------------------------------------------------ *)
+(* The environment a scheme's quantified variables live in             *)
+(* ------------------------------------------------------------------ *)
+
+(* [D] extended with the sorts and kinds a scheme records for the variables it
+   quantifies: the environment a [let]'s bound term is typed in. *)
+Definition Dsc (D : denv) (sc : scheme) : denv :=
+  extr (ext D (s_tq sc) (s_sk sc)) (s_rq sc) (s_rk sc).
+
+Lemma Dsc_sort_in : forall D sc a, a `in` s_tq sc -> Dsc D sc a = s_sk sc a.
+Proof.
+  intros D sc a H. unfold Dsc. rewrite extr_dsort. apply ext_in. exact H.
+Qed.
+
+Lemma Dsc_sort_out : forall D sc a, a `notin` s_tq sc -> Dsc D sc a = D a.
+Proof.
+  intros D sc a H. unfold Dsc. rewrite extr_dsort. apply ext_out. exact H.
+Qed.
+
+Lemma Dsc_rk_in : forall D sc r, r `in` s_rq sc -> drk (Dsc D sc) r = s_rk sc r.
+Proof. intros D sc r H. unfold Dsc. apply extr_in. exact H. Qed.
+
+Lemma Dsc_rk_out : forall D sc r, r `notin` s_rq sc -> drk (Dsc D sc) r = drk D r.
+Proof. intros D sc r H. unfold Dsc. rewrite extr_out by exact H. reflexivity. Qed.
+
+Lemma denv_eq_sets : forall D V V' Vr Vr' k rk,
+  V [=] V' -> Vr [=] Vr' ->
+  denv_eq (extr (ext D V k) Vr rk) (extr (ext D V' k) Vr' rk).
+Proof.
+  intros D V V' Vr Vr' k rk H Hr.
+  eapply denv_eq_trans; [ apply extr_pw; apply ext_set_eq_d; exact H | apply extr_set_eq; exact Hr ].
+Qed.
+
+Lemma env_mono_Dsc : forall D n sc, DOk D n ->
+  (forall a, a `in` s_tq sc -> od a) -> (forall r, r `in` s_rq sc -> od r) ->
+  env_mono D (Dsc D sc).
+Proof.
+  intros D n sc HD Ht Hr. unfold Dsc.
+  eapply env_mono_trans.
+  - apply env_mono_ext_d. intros a Ha. exact (DOk_odd D n a HD (Ht a Ha)).
+  - apply env_mono_extr_d. intros r Hr0. exact (DOk_rodd D n r HD (Hr r Hr0)).
+Qed.
+
+(* A step of the algorithm carries over to the environments that record a
+   scheme's quantified variables, which it does not touch. *)
+Lemma KR_Dsc_lift : forall D D' n n' s sc,
+  OkS s -> DOk D n -> DOk D' n' ->
+  (forall a, a `in` s_tq sc -> od a) -> (forall r, r `in` s_rq sc -> od r) ->
+  KR D D' s -> KR (Dsc D sc) (Dsc D' sc) s.
+Proof.
+  intros D D' n n' s sc Hs HD HD' Ht Hr [Hk Hkr].
+  pose proof (env_mono_Dsc D' n' sc HD' Ht Hr) as Hm.
+  destruct Hs as [_ [_ [_ [Hfx Hfxr]]]]. split.
+  - intros a.
+    destruct (AtomSetImpl.mem a (s_tq sc)) eqn:Em.
+    + apply AtomSetFacts.mem_iff in Em. rewrite (Dsc_sort_in D sc a Em).
+      rewrite (Hfx a (not_ev_od a (Ht a Em))). cbn [sat]. rewrite (Dsc_sort_in D' sc a Em). apply finer_refl.
+    + assert (Hn : a `notin` s_tq sc) by (apply AtomSetFacts.not_mem_iff; exact Em).
+      rewrite (Dsc_sort_out D sc a Hn). exact (sat_mono _ _ _ _ Hm (Hk a)).
+  - intros r.
+    destruct (AtomSetImpl.mem r (s_rq sc)) eqn:Em.
+    + apply AtomSetFacts.mem_iff in Em. rewrite (Dsc_rk_in D sc r Em).
+      rewrite (Hfxr r (not_ev_od r (Hr r Em))).
+      rewrite <- (Dsc_rk_in D' sc r Em). exact (rkok_self _ _).
+    + assert (Hn : r `notin` s_rq sc) by (apply AtomSetFacts.not_mem_iff; exact Em).
+      rewrite (Dsc_rk_out D sc r Hn). exact (rkok_mono _ _ _ _ Hm (Hkr r)).
 Qed.
 
 (* A substitution that fixes the context's variables, applied between two
@@ -446,9 +591,9 @@ Proof.
   - intros B _ k. destruct k; first [ (intros _; exact I) | discriminate ].
   - intros w A _ k. destruct k; first [ (intros _; exact I) | discriminate ].
   - intros k _. exact I.
-  - intros r k. discriminate.
+  - intros r k. apply finer_b_sound.
   - intros l T IHT R IHR k H. apply Bool.andb_true_iff in H as [H1 H2]. split; auto.
-  - intros l P _ T _ R _ k. discriminate.
+  - intros l P _ T _ R _ k. destruct k; first [ reflexivity | discriminate ].
 Qed.
 
 Lemma sat_b_sound : forall D k T, sat_b D k T = true -> sat D k T.
