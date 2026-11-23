@@ -166,7 +166,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
           | Some (s1, D1, T1, n1, e1') =>
               if is_gen_value e1' then
               let G1 := apC s1 G in
-              let sc := gen_ren D1 (pin_ctx (let_pin D1 e1 T1) G1) T1 in
+              let sc := gen_ren D1 (pin_ctx (let_pin D1 e1' T1) G1) T1 in
               let x := fresh_var G1 e2 in
               match infer f' D1 ((x ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
               | None => None

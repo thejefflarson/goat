@@ -78,8 +78,12 @@ preservation must survive it. Three representations were weighed:
    preservation and the substitution lemma are re-proved for the rule
    (`tsubst_gen_pin`, `typing_inst_gen` over a pinned context), as is the
    algorithm's soundness (`typing_gen_ren_on`); no admits, no new axioms. The
-   declarative rule still derives programs the checker rejects, as it did
-   before; only the algorithm has to agree with the checker. The same run found
+   declarative rule first allowed any `Tm`, so it derived types the checker
+   does not give (`r = {a: 1}  {y: r.a, x: r.a + 1.5}.y` at `Int`); stage 7.1 of
+   phase 7 narrowed it with the premise `lit_pinned`: unless the bound term is a
+   function or a bare numeral, no quantified variable has the sort `Literal`.
+   The recursive group left the unpinned set, because it unrolls to a record and
+   preservation needs the stepped `let` to stay derivable. The same run found
    that the calculus did not generalize a spread of syntactic values, which the
    checker does (`is_syntactic_value`), so `{...b, k: 5}` over a record of a
    generic function typed its function monomorphically; `is_gen_value` now

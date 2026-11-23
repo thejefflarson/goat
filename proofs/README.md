@@ -42,7 +42,7 @@ preservation) is B3 (#71).
 | `GoatHM.v` | Capture-avoiding scheme substitution `casch` and its instance-preservation `casch_inst` (#151). |
 | `GoatNum.v` | The integer arithmetic behind whole-number literals and the 64-bit `Int` range, kept apart because ZArith defines notations that clash with Metalib's `x ~ T`. |
 | `GoatLit.v` | Reads the argument of `e_num` as an integer, so `e_num 3` works in a file that never imports ZArith (and in the generated printer table). |
-| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`). |
+| `GoatPhase1.v` | Phase 1 of ADR 0037: worked examples (and the inference algorithm run on a few of them) for `Unit`, strings, `if`, the operators on `Int`, `Float`, `String` and `Bool`, and the Int-to-Float coercion; and the generic operators: a numeral at `Float`, `float(1.5)`, and a `let`-bound function used at `Int` and `Float` but not at `String`. Which programs type, what they evaluate to, which trap (division by zero, overflow), and which have no derivation (`1 < "a"`, `true + true`, `if 1 then ...`, a numeral-sorted function used at `String`), and a numeral in a record that stays one type across the body's uses (`shared_numeral_not_int`). |
 | `GoatPhase2.v` | Phase 2 of ADR 0037: worked examples for the value restriction (which terms `is_gen_value` accepts), a generalized binding used at two types, a recursive group (its typing, its unrolling, a run) and a group member that is not a function (no derivation). |
 | `GoatPhase3.v` | Phase 3 of ADR 0037: worked examples for tag groups: `Hit(3)`, a `match` that runs, an `else`, `Link(1, Link(2, Empty))`, and what has no derivation (a match missing a tag, a repeated arm, a tag outside the group, a list that mixes element types). |
 | `GoatPresence.v` | Presence rows (phase 4): the old row equivalence `req0` (no `pre` or `abs`), the normalizer `nf`, `presence_inv` (a record literal's row equals `l ^ P : T ; R` only when `P` is `Unit`, or `Bool` with the row equal to `R` and no `l`), and `rm` (the first field of a row) respecting `req`. |
@@ -688,14 +688,18 @@ both choices.
 
 A `let` may keep some variables of its binding monomorphic: `T_Let` takes a
 type `Tm` and generalizes over the context extended with a binding of `Tm`
-(`pin_ctx`), so the variables of `Tm` stay free. The algorithm pins exactly the
-`Literal` variables of a value that is neither a function nor a bare numeral
-(`let_pin` in `GoatInfer.v`), which is where the checker leaves a numeral's
-variable shared (`r = {a: 1}` is one record, not a fresh one per use). The rule
-itself allows any `Tm`, so it derives more programs than the checker accepts;
-the algorithm is the part that agrees with the checker, and its soundness
-(`infer_sound`) is that every type it infers is derivable. ADR 0038 records the
-choice.
+(`pin_ctx`), so the variables of `Tm` stay free. The rule's `lit_pinned`
+premise says that, unless the bound term is a function or a bare numeral
+(`let_open`), no variable it quantifies has the sort `Literal` in `k`: a numeral
+inside a record stays one type across the body's uses, as in the checker
+(`r = {a: 1}` is one record, not a fresh one per use). The algorithm pins
+exactly the `Literal` variables of such a value (`let_pin` in `GoatInfer.v`).
+A derivation that re-pins after the context shrinks (substituting for a
+variable, `typing_ftv_mono`) picks a new `Tm` that stands for the old context's
+variables (`repin`). A recursive group as a `let`'s bound term is not `let_open`:
+it unrolls to a record, which pins. `shared_numeral_not_int` (`GoatPhase1.v`)
+is the non-derivation: `r = {a: 1}  {y: r.a, x: r.a + 1.5}.y` has no derivation
+at `Int`. ADR 0038 records the choice.
 
 ## Algorithm W with sorted variables
 

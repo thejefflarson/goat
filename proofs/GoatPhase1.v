@@ -445,7 +445,7 @@ Example generic_function_is_used_at_int_and_float :
 Proof.
   unfold double_pair.
   apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var ga) (typ_Var ga)) (k := k_lit);
-    [ reflexivity | | ].
+    [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Abs with (L := {}). intros x Hx.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
     assert (Hga : ga `in` AtomSetImpl.diff (ftv_typ (typ_Arrow (typ_Var ga) (typ_Var ga))) (ftv_ctx nil))
@@ -481,7 +481,7 @@ Lemma numeral_binding_at : forall n U,
   typing d_any nil (e_let (e_num n) (e_fvar_b 0)) U.
 Proof.
   intros n U HU HL.
-  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
+  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Num; [ constructor | ].
     cbn [sat]. rewrite (ext_in _ _ _ ga).
     + apply finer_refl.
@@ -545,7 +545,7 @@ Example numeral_binding_adapts_in_one_record :
               (fs_cons 1 (e_bin (e_fvar_b 0) bop_mul (e_num 2)) fs_nil))))
     (typ_Record (row_Ext 0 typ_Float (row_Ext 1 typ_Int row_Empty))).
 Proof.
-  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | | ].
+  apply T_Let_nopin with (L := {}) (T1 := typ_Var ga) (k := k_lit); [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Num; [ constructor | ].
     cbn [sat]. rewrite (ext_in _ _ _ ga).
     + apply finer_refl.
@@ -563,6 +563,151 @@ Proof.
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_numeral_at; exact I ].
       * reflexivity.
       * exact I.
+Qed.
+
+(* ---- a numeral inside a record stays one type across the let's uses ---- *)
+
+(* r = {a: 1}  {y: r.a, x: r.a + 1.5}.y.  The checker leaves the record's
+   numeral shared (ADR 0038, the numeral-let addendum), so the use at a Float
+   makes the other use a Float.  A [let] that generalized the numeral could
+   also give [y] the type [Int]; the rule's [lit_pinned] premise forbids it. *)
+Definition shared_numeral : exp :=
+  e_let (e_rec (fs_cons 0 (e_num 1) fs_nil))
+    (e_proj (e_rec (fs_cons 1 (e_proj (e_fvar_b 0) 0)
+                   (fs_cons 2 (e_bin (e_proj (e_fvar_b 0) 0) bop_add (e_dec 0)) fs_nil))) 1).
+
+Lemma dec_inv : forall D G d T, typing D G (e_dec d) T -> teq typ_Float T.
+Proof.
+  intros D G d T H. remember (e_dec d) as e0 eqn:He.
+  induction H; try discriminate He.
+  - apply teq_refl.
+  - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
+Qed.
+
+Lemma var_inv : forall D G x T, typing D G (e_fvar_f x) T ->
+  exists s Tv, binds x s G /\ inst D Tv s /\ teq Tv T.
+Proof.
+  intros D G x T H. remember (e_fvar_f x) as e0 eqn:He.
+  induction H; try discriminate He.
+  - inversion He; subst. exists s, T. repeat split; auto using teq_refl.
+  - destruct (IHtyping He) as [s [Tv [Hb [Hi Ht]]]].
+    exists s, Tv. repeat split; auto. eapply teq_trans; eauto.
+Qed.
+
+Lemma one_field_inv : forall D G l e T, typing D G (e_rec (fs_cons l e fs_nil)) T ->
+  exists A, typing D G e A /\ teq (typ_Record (row_Ext l A row_Empty)) T.
+Proof.
+  intros D G l e T H. destruct (rec_inv _ _ _ _ H) as [R [Hft Hteq]].
+  inversion Hft; subst. match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
+  exists T0. split; assumption.
+Qed.
+
+Lemma literal_without_literal_vars : forall D A,
+  (forall a, D a <> k_Literal) -> sat D k_Literal A -> A = typ_Int \/ A = typ_Float.
+Proof.
+  intros D A Hd Hs. destruct A; simpl in Hs;
+    first [ (left; reflexivity) | (right; reflexivity) | contradiction
+          | (exfalso; destruct Hs as [Hs | Hs]; discriminate Hs) | (exfalso; discriminate Hs) | idtac ].
+  inversion Hs; subst; exfalso;
+    match goal with H : _ = _ |- _ => first [ exact (Hd _ H) | exact (Hd _ (eq_sym H)) ] end.
+Qed.
+
+(* The one field of a variable bound to a one-field record of a closed number. *)
+Lemma proj_of_bound : forall D x s T1 a A U,
+  s_body s = T1 -> teq (typ_Record (row_Ext a A row_Empty)) T1 ->
+  (A = typ_Int \/ A = typ_Float) ->
+  typing D ((x ~ s) ++ nil) (e_proj (e_fvar_f x) a) U -> teq A U.
+Proof.
+  intros D x s T1 a A U Hb Hr HA Hty.
+  destruct (proj_inv _ _ _ _ _ Hty) as [T0 [R [Hx Ht0]]].
+  destruct (var_inv _ _ _ _ Hx) as [s0 [Tv [Hbd [Hi Hteq]]]].
+  rewrite_env (x ~ s) in Hbd. apply binds_one_iff in Hbd as [_ Hs0]. subst s0.
+  destruct Hi as [st [sr [_ [_ [Hap _]]]]]. rewrite Hb in Hap.
+  assert (Hap' : ap_typ st sr (typ_Record (row_Ext a A row_Empty)) = typ_Record (row_Ext a A row_Empty))
+    by (destruct HA as [-> | ->]; reflexivity).
+  pose proof (teq_ap _ _ st sr (teq_sym _ _ Hr)) as Hs. rewrite Hap' in Hs. rewrite <- Hap in Hs.
+  assert (Hc : teq (typ_Record (row_Ext a A row_Empty)) (typ_Record (row_Ext a T0 R)))
+    by (eapply teq_trans; [ apply teq_sym; exact Hs | exact Hteq ]).
+  destruct (teq_Record_inv _ _ Hc) as [R' [E Hq]]. injection E as E. subst R'.
+  destruct (req_surface _ _ _ _ Hq) as [T00 [rest [Hpi Hte]]].
+  cbn in Hpi. rewrite Nat.eqb_refl in Hpi. injection Hpi as <- _.
+  eapply teq_trans; [ exact Hte | exact Ht0 ].
+Qed.
+
+(* The body, with [x] a one-field record of a closed number: [y] a [Float] or
+   [Int] as [A] is, and [x] a Float, so [A] is a Float. *)
+Lemma shared_body_not_int : forall x s A T2,
+  teq (typ_Record (row_Ext 0 A row_Empty)) (s_body s) ->
+  (A = typ_Int \/ A = typ_Float) ->
+  typing d_any ((x ~ s) ++ nil)
+    (e_proj (e_rec (fs_cons 1 (e_proj (e_fvar_f x) 0)
+                   (fs_cons 2 (e_bin (e_proj (e_fvar_f x) 0) bop_add (e_dec 0)) fs_nil))) 1) T2 ->
+  teq typ_Int T2 -> False.
+Proof.
+  intros x s A T2 Hr HA Hty Hi.
+  destruct (proj_inv _ _ _ _ _ Hty) as [T0 [R [Hrec Ht0]]].
+  destruct (rec_inv _ _ _ _ Hrec) as [Rf [Hft Hteq]].
+  destruct (teq_Record_inv _ _ Hteq) as [R' [E Hq]]. injection E as E. subst R'.
+  inversion Hft; subst. match goal with Hf : field_typing _ _ (fs_cons 2 _ _) _ |- _ => inversion Hf; subst end.
+  match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
+  destruct (req_surface _ _ _ _ Hq) as [Tp [rest [Hpi Hte]]].
+  cbn in Hpi. injection Hpi as E1 E2. subst Tp rest.
+  pose proof (proj_of_bound _ _ _ _ _ _ _ eq_refl Hr HA H5) as Hy'.
+  assert (Hai : teq A typ_Int)
+    by (eapply teq_trans; [ exact Hy' | eapply teq_trans; [ exact Hte | eapply teq_trans; [ exact Ht0 | apply teq_sym; exact Hi ] ] ]).
+  assert (HAi : A = typ_Int)
+    by (destruct HA as [-> | ->]; [ reflexivity | apply teq_Float_inv in Hai; discriminate Hai ]).
+  subst A.
+  destruct (bin_inv _ _ _ _ _ _ H7) as [A1 [B [R1 [H1 [H2 [Hs _]]]]]].
+  pose proof (proj_of_bound _ _ _ _ _ _ _ eq_refl Hr HA H1) as Hp.
+  pose proof (dec_inv _ _ _ _ H2) as Hd.
+  inversion Hs; subst; try (simpl in *; discriminate).
+  pose proof (teq_trans _ _ _ Hp (teq_sym _ _ Hd)) as Hif.
+  apply teq_Int_inv in Hif. discriminate Hif.
+Qed.
+
+Example shared_numeral_not_int : forall T, typing d_any nil shared_numeral T -> ~ teq typ_Int T.
+Proof.
+  intros T H Hi. unfold shared_numeral in H.
+  destruct (let_inv _ _ _ _ _ H) as [L [T1 [T2 [Hcase Hteq]]]].
+  pick fresh x for L.
+  assert (HxL : x `notin` L) by fsetdec.
+  assert (Hlit : forall D A, (forall a, D a <> k_Literal) -> sat D k_Literal A -> A = typ_Int \/ A = typ_Float)
+    by (intros; eapply literal_without_literal_vars; eassumption).
+  destruct Hcase as [[_ [k [Tm [Hlp [H1 Hb]]]]] | [H1 Hb]];
+    destruct (one_field_inv _ _ _ _ _ H1) as [A [Hn Hrec]]; apply num_inv in Hn.
+  - assert (HA : A = typ_Int \/ A = typ_Float).
+    { eapply Hlit; [ | exact Hn ]. intros a Ha. unfold ext in Ha.
+      destruct (AtomSetImpl.mem a (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm nil)))) eqn:Em.
+      - apply AtomSetFacts.mem_iff in Em. exact (Hlp eq_refl a Em Ha).
+      - unfold d_any in Ha. discriminate Ha. }
+    pose proof (Hb x HxL) as Hbx. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec] in Hbx.
+    eapply shared_body_not_int with (s := gen (pin_ctx Tm nil) T1 k); [ exact Hrec | exact HA | exact Hbx | ].
+    eapply teq_trans; [ exact Hi | apply teq_sym; exact Hteq ].
+  - assert (HA : A = typ_Int \/ A = typ_Float).
+    { eapply Hlit; [ | exact Hn ]. intros a Ha. unfold d_any in Ha. discriminate Ha. }
+    pose proof (Hb x HxL) as Hbx. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec] in Hbx.
+    eapply shared_body_not_int with (s := sch_mono T1); [ exact Hrec | exact HA | exact Hbx | ].
+    eapply teq_trans; [ exact Hi | apply teq_sym; exact Hteq ].
+Qed.
+
+(* ... while at a Float the program has a derivation. *)
+Example shared_numeral_types_at_float : typing d_any nil shared_numeral typ_Float.
+Proof.
+  unfold shared_numeral.
+  apply T_LetMono with (L := {}) (T1 := typ_Record (row_Ext 0 typ_Float row_Empty)).
+  - apply T_Record; [ | reflexivity ]. apply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
+  - intros x Hx. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
+    set (Gx := (x ~ sch_mono (typ_Record (row_Ext 0 typ_Float row_Empty))) ++ nil).
+    assert (Hu : uniq Gx) by (unfold Gx; solve_uniq).
+    assert (Hxa : typing d_any Gx (e_proj (e_fvar_f x) 0) typ_Float).
+    { eapply T_Proj. apply T_Var with (s := sch_mono (typ_Record (row_Ext 0 typ_Float row_Empty)));
+        [ exact Hu | unfold Gx; apply binds_cons_2; reflexivity | apply inst_mono_self ]. }
+    eapply T_Proj with (R := row_Ext 2 typ_Float row_Empty).
+    apply T_Record; [ | reflexivity ].
+    apply FT_cons; [ exact Hxa | ].
+    apply FT_cons; [ | apply FT_nil; exact Hu ].
+    eapply T_Bin; [ exact Hxa | apply T_Dec; exact Hu | apply sig_ring; [ reflexivity | exact I ] ].
 Qed.
 
 (* A generic function runs as the concrete one: (program(x) do x * 2 done)(1.5)

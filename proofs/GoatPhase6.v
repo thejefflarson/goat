@@ -82,7 +82,7 @@ Example same_is_used_at_int_string_and_unit :
 Proof.
   unfold same_triple.
   apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var ga6) typ_Bool) (k := k_eq);
-    [ reflexivity | | ].
+    [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Abs with (L := {}). intros x Hx.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
     assert (Hga : ga6 `in` AtomSetImpl.diff (ftv_typ (typ_Arrow (typ_Var ga6) typ_Bool)) (ftv_ctx nil))

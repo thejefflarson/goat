@@ -304,18 +304,9 @@ Definition gen_ren (D : denv) (G : ctx) (T : typ) : scheme :=
       (ap_typ (rename_t la) (rename_r lr) T)
       (gen_sk D la).
 
-(* A [let] of a function or a bare numeral generalizes the variables of its
-   type whatever their sort.  Any other syntactic value keeps the [Literal]
-   variables of its type shared, still open to [Float], as the checker does
-   (ADR 0038, the numeral-let addendum).  [let_pin] is the type whose free
-   variables a [let] leaves monomorphic: [gen_ren] generalizes over the context
-   extended with a binding of it. *)
-Definition let_open (e : exp) : bool :=
-  match e with
-  | e_abs _ | e_num _ | e_letrec _ _ => true
-  | _ => false
-  end.
-
+(* [let_pin] is the type whose free variables a [let] leaves monomorphic
+   ([let_open], [lit_pinned] in [GoatDefs.v]): [gen_ren] generalizes over the
+   context extended with a binding of it. *)
 Definition is_lit_sort (k : sort) : bool :=
   match k with k_Literal => true | _ => false end.
 

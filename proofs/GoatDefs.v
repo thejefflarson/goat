@@ -575,6 +575,23 @@ with is_gen_fields (fs : fields) {struct fs} : bool :=
   | fs_meth _ e fs' => is_gen_value e && is_gen_fields fs'
   end.
 
+(* A [let] of a function or a bare numeral generalizes the variables of its
+   type whatever their sort.  Any other value leaves its
+   [Literal] variables shared, still open to [Float], as the checker does
+   (ADR 0038, the numeral-let addendum): [lit_pinned] says that no variable
+   the [let] quantifies, the set [V], has the sort [Literal] in [k]. *)
+Definition let_open (e : exp) : bool :=
+  match e with
+  | e_abs _ | e_num _ => true
+  | _ => false
+  end.
+
+Lemma let_open_subst : forall u x e, let_open (subst_exp u x e) = false -> let_open e = false.
+Proof. intros u x e. destruct e; simpl; auto. Qed.
+
+Definition lit_pinned (e : exp) (V : atoms) (k : sort_fn) : Prop :=
+  let_open e = false -> forall a, a `in` V -> k a <> k_Literal.
+
 (* The members of a recursive group are functions, as in the checker, where a
    binding is recursive exactly when its value is a [program(..)] literal
    (ADR 0003). *)
@@ -1111,6 +1128,7 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
      typing D G (e_app e1 e2) T2
  | T_Let : forall (L : vars) D G e1 e2 T1 T2 (k : sort_fn) (Tm : typ),
      is_gen_value e1 = true ->
+     lit_pinned e1 (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k ->
      typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k) G e1 T1 ->
      (forall x, x `notin` L ->
         typing D ((x ~ gen (pin_ctx Tm G) T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
