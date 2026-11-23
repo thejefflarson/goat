@@ -37,8 +37,9 @@ pub const INSTANCE_VERSION: u32 = 1;
 /// The `goat_host` fields after `version`, in order, each a function pointer
 /// whose first argument is the `ctx` the export received. They match the wasm
 /// imports one to one: `print_*`, `write_*` and `trap` are the `goat` module,
-/// `scene_*` and `turtle_*` the modules of those names, and `foreign` is any
-/// other host function. A string argument is a pointer and a byte length.
+/// `scene_*` and `turtle_*` the modules of those names (`scene_frame` takes a
+/// frame's bytes, `mir/src/frame.rs`, in place of one entry per shape), and
+/// `foreign` is any other host function. A string argument is a pointer and a byte length.
 pub const HOST_FUNCTIONS: &[&str] = &[
     "print_number",
     "print_bool",
@@ -51,16 +52,7 @@ pub const HOST_FUNCTIONS: &[&str] = &[
     "trap",
     "scene_begin",
     "scene_end",
-    "scene_line",
-    "scene_polyline_begin",
-    "scene_vertex",
-    "scene_polyline_end",
-    "scene_circle",
-    "scene_rect",
-    "scene_text",
-    "scene_span",
-    "scene_edit",
-    "scene_swatch",
+    "scene_frame",
     "turtle_forward",
     "turtle_back",
     "turtle_left",

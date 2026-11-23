@@ -49,16 +49,7 @@ impl<H: Host> Adapter<H> {
             trap: self.trap,
             scene_begin: scene_begin::<H>,
             scene_end: scene_end::<H>,
-            scene_line: scene_line::<H>,
-            scene_polyline_begin: scene_polyline_begin::<H>,
-            scene_vertex: scene_vertex::<H>,
-            scene_polyline_end: scene_polyline_end::<H>,
-            scene_circle: scene_circle::<H>,
-            scene_rect: scene_rect::<H>,
-            scene_text: scene_text::<H>,
-            scene_span: scene_span::<H>,
-            scene_edit: scene_edit::<H>,
-            scene_swatch: scene_swatch::<H>,
+            scene_frame: scene_frame::<H>,
             turtle_forward: turtle_forward::<H>,
             turtle_back: turtle_back::<H>,
             turtle_left: turtle_left::<H>,
@@ -158,10 +149,6 @@ fn number(x: f64) -> HostValue {
     HostValue::Number(x)
 }
 
-fn int(n: i64) -> HostValue {
-    HostValue::Int(n)
-}
-
 fn string(ptr: *const u8, len: u64) -> HostValue {
     HostValue::Str(unsafe { text(ptr, len) })
 }
@@ -169,23 +156,6 @@ fn string(ptr: *const u8, len: u64) -> HostValue {
 hosted! {
     scene_begin, "scene", "begin"() => [];
     scene_end, "scene", "end"() => [];
-    scene_line, "scene", "line"(x1: f64, y1: f64, x2: f64, y2: f64, p: *const u8, n: u64)
-        => [number(x1), number(y1), number(x2), number(y2), string(p, n)];
-    scene_polyline_begin, "scene", "polyline_begin"(p: *const u8, n: u64) => [string(p, n)];
-    scene_vertex, "scene", "vertex"(x: f64, y: f64) => [number(x), number(y)];
-    scene_polyline_end, "scene", "polyline_end"() => [];
-    scene_circle, "scene", "circle"(x: f64, y: f64, r: f64, p: *const u8, n: u64)
-        => [number(x), number(y), number(r), string(p, n)];
-    scene_rect, "scene", "rect"(x: f64, y: f64, w: f64, h: f64, p: *const u8, n: u64)
-        => [number(x), number(y), number(w), number(h), string(p, n)];
-    scene_text, "scene", "text"(x: f64, y: f64, tp: *const u8, tn: u64, cp: *const u8, cn: u64)
-        => [number(x), number(y), string(tp, tn), string(cp, cn)];
-    scene_span, "scene", "span"(from: i64, to: i64, p: *const u8, n: u64)
-        => [int(from), int(to), string(p, n)];
-    scene_edit, "scene", "edit"(from: i64, to: i64, newlines: i64, indent: i64)
-        => [int(from), int(to), int(newlines), int(indent)];
-    scene_swatch, "scene", "swatch"(rp: *const u8, rn: u64, lp: *const u8, ln: u64, dp: *const u8, dn: u64)
-        => [string(rp, rn), string(lp, ln), string(dp, dn)];
     turtle_forward, "turtle", "forward"(x: f64) => [number(x)];
     turtle_back, "turtle", "back"(x: f64) => [number(x)];
     turtle_left, "turtle", "left"(x: f64) => [number(x)];
@@ -193,6 +163,19 @@ hosted! {
     turtle_pen_up, "turtle", "pen_up"() => [];
     turtle_pen_down, "turtle", "pen_down"() => [];
     turtle_color, "turtle", "color"(p: *const u8, n: u64) => [string(p, n)];
+}
+
+/// A frame's bytes, replayed by the host's `Host::frame`.
+unsafe extern "C" fn scene_frame<H: Host>(ctx: Ctx, ptr: *const u8, len: u64) {
+    let a = unsafe { adapter::<H>(ctx) };
+    let bytes = if len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr, len as usize) }
+    };
+    if let Err(message) = a.host.frame(bytes) {
+        a.stop(message);
+    }
 }
 
 /// Any other host function, by module and name. A string result needs the
@@ -264,6 +247,11 @@ mod tests {
             None
         }
 
+        fn frame(&mut self, bytes: &[u8]) -> Result<(), String> {
+            self.0.push(format!("frame{bytes:?}"));
+            Ok(())
+        }
+
         fn call(
             &mut self,
             module: &str,
@@ -313,8 +301,7 @@ mod tests {
         let (red, len) = text("red");
         unsafe {
             (table.scene_begin)(ctx);
-            (table.scene_line)(ctx, 1.0, 2.0, 3.0, 4.0, red, len);
-            (table.scene_edit)(ctx, 1, 2, 3, 4);
+            (table.scene_frame)(ctx, [1u8, 0].as_ptr(), 2);
             (table.turtle_forward)(ctx, 10.0);
             (table.turtle_pen_up)(ctx);
             (table.turtle_color)(ctx, red, len);
@@ -323,8 +310,7 @@ mod tests {
             a.host.0,
             [
                 "scene.begin[]",
-                "scene.line[Number(1.0), Number(2.0), Number(3.0), Number(4.0), Str(\"red\")]",
-                "scene.edit[Int(1), Int(2), Int(3), Int(4)]",
+                "frame[1, 0]",
                 "turtle.forward[Number(10.0)]",
                 "turtle.pen_up[]",
                 "turtle.color[Str(\"red\")]",

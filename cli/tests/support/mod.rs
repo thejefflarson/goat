@@ -42,7 +42,17 @@ fn run_native(
         eprintln!("native: skipped, clang is not available: {src:?}");
         return None;
     }
-    let library = match goat_native::build(profile, src, host) {
+    // The emitter recurses over the program, so a very deep one needs more
+    // stack than a test thread has.
+    let built = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(1 << 29)
+            .spawn_scoped(scope, || goat_native::build(profile, src, host))
+            .expect("a build thread")
+            .join()
+            .expect("the native build does not panic")
+    });
+    let library = match built {
         Ok(library) => library,
         Err(error) => match error.unsupported() {
             Some(reason) => {
@@ -151,10 +161,10 @@ pub fn compiled_with_prelude(prelude: &str, src: &str) -> (Vec<String>, u32) {
 
 pub fn compiled_on(profile: Profile, prelude: &str, src: &str) -> (Vec<String>, u32) {
     let host = goat::HostInterface::new(prelude);
-    if uses_native() {
-        if let Some(native) = run_native(profile, src, &host) {
-            return native;
-        }
+    if uses_native()
+        && let Some(native) = run_native(profile, src, &host)
+    {
+        return native;
     }
     let (wasm, _) = goat::compile_for(profile, src, &host).expect("program compiles");
     let run = execute(&wasm).expect("wasm runs");

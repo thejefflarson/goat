@@ -62,14 +62,16 @@ fn the_embedded_profile_prints_through_the_same_table() {
 fn two_programs_run_at_once_each_with_its_own_instance_and_host() {
     need_clang!();
     let (sum, product) = (library("40 + 2"), library("if 1 < 2 then 0.5 else 1 done"));
+    let repeat = |lib: &Library, tag: u32| {
+        let mut run = lib.run(Tagged(tag)).unwrap();
+        for _ in 0..49 {
+            run = lib.run(Tagged(tag)).unwrap();
+        }
+        run
+    };
     let (a, b) = std::thread::scope(|scope| {
-        let a = scope.spawn(|| (0..50).map(|_| sum.run(Tagged(1)).unwrap()).last().unwrap());
-        let b = scope.spawn(|| {
-            (0..50)
-                .map(|_| product.run(Tagged(2)).unwrap())
-                .last()
-                .unwrap()
-        });
+        let a = scope.spawn(|| repeat(&sum, 1));
+        let b = scope.spawn(|| repeat(&product, 2));
         (a.join().unwrap(), b.join().unwrap())
     });
     assert_eq!((a.printed, a.host.0), (vec!["42".to_string()], 1));
