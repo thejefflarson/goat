@@ -14,6 +14,7 @@ Require Import Goat.GoatElabConverse.
 Require Import Goat.GoatKnot.
 Require Import Goat.GoatInferKnot.
 Require Import Goat.GoatCoerce.
+Require Import Goat.GoatInferGuard.
 
 Print Assumptions peg_deterministic.
 Print Assumptions parse_denotes_lc.
@@ -33,3 +34,4 @@ Print Assumptions knot_unrolls.
 Print Assumptions unify_k_sound.
 Print Assumptions coerce_dec_sound.
 Print Assumptions unify_co_sound.
+Print Assumptions infer_guarded.

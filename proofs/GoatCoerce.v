@@ -32,46 +32,10 @@ Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatElab.
 Require Import Goat.GoatUnrollEqb.
 Require Import Goat.GoatKnot.
+Require Import Goat.GoatGuard.
 Require Import Goat.GoatInferKnot.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
-
-(* ---- the guard of a recursive type, decided ---- *)
-
-(* [gdk] is [gd] as a boolean. *)
-Fixpoint gdk (r f : bool) (k : nat) (T : typ) {struct T} : bool :=
-  match T with
-  | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String | typ_Var _ => true
-  | typ_Arrow A B => gdk r true k A && gdk r true k B
-  | typ_Record R => gdkr true f k R
-  | typ_Bvar n => if Nat.eqb n k then r && f else true
-  | typ_Mu B => gdk r f (S k) B
-  | typ_Grp _ A => gdk true true k A
-  end
-with gdkr (r f : bool) (k : nat) (R : row) {struct R} : bool :=
-  match R with
-  | row_Empty | row_Var _ => true
-  | row_Ext _ T R' => gdk r f k T && gdkr r f k R'
-  | row_Maybe _ P T R' => gdk r f k P && (is_abs P || gdk r f k T) && gdkr r f k R'
-  end.
-
-Lemma gdk_gd_mut :
-  (forall T r f k, gdk r f k T = true -> gd r f k T) /\
-  (forall R r f k, gdkr r f k R = true -> gdr r f k R).
-Proof.
-  apply typ_row_mutind; cbn [gdk gdkr gd gdr]; intros;
-    repeat match goal with
-           | H : (_ && _) = true |- _ => apply Bool.andb_true_iff in H as [? ?]
-           end;
-    try exact I; try (split; eauto; fail); eauto.
-  - subst. rewrite Nat.eqb_refl in H. apply Bool.andb_true_iff in H as [-> ->]. split; reflexivity.
-  - split; [ eauto | split; [ | eauto ] ].
-    match goal with Ho : (_ || _) = true |- _ =>
-      apply Bool.orb_true_iff in Ho as [Hp | Hp]; [ left; exact Hp | right; eauto ] end.
-Qed.
-
-Lemma gdk_guarded : forall B, gdk false false 0 B = true -> guarded B.
-Proof. intros. apply (proj1 gdk_gd_mut); assumption. Qed.
 
 (* A recursive type a coercion may fold into or unfold: closed, with a guarded
    body. *)
