@@ -1,0 +1,14 @@
+[package]
+name = "goat_llvm"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+edition = "2024"
+
+[dependencies]
+goat_mir = { path = "../mir" }
+
+[dev-dependencies]
+goat_checker = { path = "../checker" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

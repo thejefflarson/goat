@@ -143,6 +143,20 @@ pub fn compile_for(
     compile_with(profile, source, host, goat_wasm::emit)
 }
 
+/// Like [`compile_for`], emitting textual LLVM IR for the native backend
+/// (ADR 0042) instead of a wasm module. A construct the backend does not cover
+/// yet is a compiler error, never a diagnostic about the program.
+pub fn compile_ll(
+    profile: Profile,
+    source: &str,
+    host: &HostInterface,
+) -> Result<String, Vec<GoatError>> {
+    let checked = goat_checker::check_with_vocab(host.prelude(), host.vocab(), source)?;
+    let program = goat_mir::mono_for(&checked, profile)?;
+    verify_mir(&program)?;
+    goat_llvm::emit(&program).map_err(|e| vec![GoatError::new(Span::new(0, 0), e.to_string())])
+}
+
 /// Like [`compile_for`] on the embedded profile, with the heap and call-depth
 /// budgets spelled out (ADR 0026).
 pub fn compile_embedded(

@@ -663,6 +663,7 @@ version = "0.1.0"
 dependencies = [
  "goat_canvas",
  "goat_checker",
+ "goat_llvm",
  "goat_mir",
  "goat_parser",
  "goat_wasm",
@@ -699,6 +700,14 @@ dependencies = [
  "tempfile",
  "wasm-encoder 0.263.0",
  "wasmtime",
+]
+
+[[package]]
+name = "goat_llvm"
+version = "0.1.0"
+dependencies = [
+ "goat_checker",
+ "goat_mir",
 ]
 
 [[package]]
