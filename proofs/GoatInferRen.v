@@ -113,9 +113,12 @@ Proof.
     intros D G e1 e2 T1 T2 H1 IH1 H2 IH2 G2 Hg Hy. subst G. cbn [subst_exp].
     eapply T_App; [ eapply IH1 | eapply IH2 ]; eauto.
   - (* T_Let *)
-    intros L D G e1 e2 T1 T2 k rk Tm Hgv H1 IH1 Hb IH2 G2 Hg Hy. subst G. cbn [subst_exp].
+    intros L D G e1 e2 T1 T2 k rk Tm Hgv Hlp H1 IH1 Hb IH2 G2 Hg Hy. subst G. cbn [subst_exp].
     apply T_Let with (L := L `union` {{x}} `union` {{y}}) (T1 := T1) (k := k) (rk := rk) (Tm := Tm).
     + apply is_gen_subst; [ reflexivity | exact Hgv ].
+    + pose proof (ftv_ctx_swap_mid G2 G1 x y sc) as Hsw.
+      intros Hc a Ha. apply (Hlp (let_open_subst _ _ _ Hc) a).
+      rewrite !ftv_pin_ctx in *. fsetdec.
     + eapply typing_pw; [ eapply IH1; eauto | ].
       apply denv_eq_trans with (D2 := extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm (G2 ++ (y ~ sc) ++ G1)))) k)
                                  (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm (G2 ++ (x ~ sc) ++ G1)))) rk).

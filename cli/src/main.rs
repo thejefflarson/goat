@@ -2,17 +2,21 @@
 //!
 //! - `goat check FILE`   parse and type-check, printing the program's type.
 //! - `goat build FILE [-o OUT]`  compile to a WebAssembly module.
-//! - `goat build --native [--canvas] FILE [-o OUT]`  compile to a native
+//! - `goat build --native [--turtle|--canvas] FILE [-o OUT]`  compile to a native
 //!   executable: LLVM IR linked by clang with `libgoat_native.a`, found beside
 //!   this executable or at `$GOAT_NATIVE_LIB` (build it with
 //!   `cargo build -p goat_native`). `$GOAT_CLANG` names the clang to use. The
 //!   executable takes `-o OUT.svg`. An interactive program (`init`, `update`,
 //!   `draw`) opens a window on macOS, where `swiftc` (`$GOAT_SWIFTC`) builds
-//!   its AppKit host; `--canvas` writes it in the canvas vocabulary (`Frame`,
-//!   `Dot`, ...) instead of the turtle's.
+//!   its AppKit host. The vocabulary is the canvas's (`Frame`, `Dot`, ...) or
+//!   the turtle's, read from the names the program uses; a program that names
+//!   neither is the turtle's, and one that names both is an error. `--turtle`
+//!   and `--canvas` choose instead, for `run` as well.
 //! - `goat run FILE [-o OUT.svg] [--timeout MS]`  compile and run under
 //!   wasmtime; `-o` saves the turtle's drawing as an SVG. A program runs as
 //!   long as it likes unless `--timeout` bounds it; `Ctrl-C` stops it either way.
+//!   A canvas program is sent 60 `Frame` events and drawn once; it prints the
+//!   frame count, and `-o` saves that last picture as an SVG.
 //!
 //! - `goat fmt [--check] FILE...`  lay each file out in the one house style
 //!   (ADR 0041), rewriting it in place; with `--check`, change nothing and
@@ -55,20 +59,17 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Some("build") if args.get(2).map(String::as_str) == Some("--native") => {
-            let vocabulary = if args.iter().any(|a| a == "--canvas") {
-                Vocabulary::Canvas
-            } else {
-                Vocabulary::Turtle
-            };
             let rest: Vec<String> = args[3..]
                 .iter()
-                .filter(|a| *a != "--canvas")
+                .filter(|a| *a != "--canvas" && *a != "--turtle")
                 .cloned()
                 .collect();
             let file = rest
                 .first()
-                .ok_or("usage: goat build --native [--canvas] FILE [-o OUT]")?;
-            build_native(file, parse_out_flag(&rest[1..]), vocabulary)
+                .ok_or("usage: goat build --native [--turtle|--canvas] FILE [-o OUT]")?;
+            let source = read(file)?;
+            let vocabulary = choose_vocabulary(file, &source, &args[3..])?;
+            build_native(file, &source, parse_out_flag(&rest[1..]), vocabulary)
         }
         Some("build") => {
             let file = args.get(2).ok_or("usage: goat build FILE [-o OUT]")?;
@@ -87,6 +88,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 .get(2)
                 .ok_or("usage: goat run FILE [-o OUT.svg] [--timeout MS]")?;
             let source = read(file)?;
+            if choose_vocabulary(file, &source, &args[3..])? == Vocabulary::Canvas {
+                return run_canvas(file, &source, parse_out_flag(&args[3..]));
+            }
             let wasm = build(
                 file,
                 parse_target_flag(&args[3..])?,
@@ -111,15 +115,54 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 /// extension.
 fn build_native(
     file: &str,
+    source: &str,
     out: Option<PathBuf>,
     vocabulary: Vocabulary,
 ) -> Result<ExitCode, String> {
-    let source = read(file)?;
-    let ll = goat_cli::native_build::emit_ir(&source, vocabulary)
-        .map_err(|errors| render_errors(file, &source, &errors))?;
+    let ll = goat_cli::native_build::emit_ir(source, vocabulary)
+        .map_err(|errors| render_errors(file, source, &errors))?;
     let out = out.unwrap_or_else(|| Path::new(file).with_extension(""));
-    goat_cli::native_build::link(&ll, &source, &out)?;
+    goat_cli::native_build::link(&ll, source, &out)?;
     eprintln!("goat: wrote {}", out.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The vocabulary `source` is written in: `--turtle` or `--canvas` in `flags`
+/// if given, else what its names say.
+fn choose_vocabulary(file: &str, source: &str, flags: &[String]) -> Result<Vocabulary, String> {
+    let has = |flag: &str| flags.iter().any(|a| a == flag);
+    match (has("--turtle"), has("--canvas")) {
+        (true, true) => Err("--turtle and --canvas conflict: pick one".to_string()),
+        (true, false) => Ok(Vocabulary::Turtle),
+        (false, true) => Ok(Vocabulary::Canvas),
+        (false, false) => {
+            goat_cli::detect::detect(source).map_err(|error| render_errors(file, source, &[error]))
+        }
+    }
+}
+
+/// Run a canvas program headlessly: `FRAMES` `Frame` events, then one `draw`.
+/// It prints the frame count; with `out`, the last picture is written there as
+/// an SVG.
+fn run_canvas(file: &str, source: &str, out: Option<PathBuf>) -> Result<ExitCode, String> {
+    const FRAMES: u32 = 60;
+    const FRAME_MS: f64 = 16.0;
+    let wasm = goat::compile(source, &Vocabulary::Canvas.interface())
+        .map_err(|errors| render_errors(file, source, &errors))?;
+    let mut canvas = goat_canvas::Canvas::new(&wasm)?;
+    for _ in 0..FRAMES {
+        canvas.send(&goat_canvas::Event::Frame(FRAME_MS))?;
+    }
+    let picture = canvas.draw()?;
+    let leaked = canvas.finish()?;
+    if leaked != 0 {
+        return Err(format!("the program leaked {leaked} heap blocks"));
+    }
+    println!("ran {FRAMES} frames");
+    if let Some(path) = out {
+        fs::write(&path, goat_canvas::to_svg(&picture))
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
     Ok(ExitCode::SUCCESS)
 }
 

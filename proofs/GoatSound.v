@@ -1027,7 +1027,8 @@ Lemma tsubst_gen_core : forall G T1 k rk st sr G' A D D' S S',
        ftv_ctx H [<=] ftv_ctx G -> frv_ctx H [<=] frv_ctx G ->
        ctx_subst st1 sr1 H H') /\
     (forall a, a `in` ftv_ctx G -> st1 a = st a) /\
-    (forall r, r `in` frv_ctx G -> sr1 r = sr r).
+    (forall r, r `in` frv_ctx G -> sr1 r = sr r) /\
+    (forall a, a `in` N -> exists b, b `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G) /\ k' a = k b).
 Proof.
   intros G T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
   destruct Hsupp as [HsuppT [HsuppR HlcS]].
@@ -1132,7 +1133,7 @@ Proof.
                                         (ftv_ctx G')).
   { rewrite Hap1. exact (proj1 Hbridge). }
   exists (casch st sr g gr s), (fun a => st (g a)), (fun r => sr (gr r)), A2, NS, NR, k', rk'.
-  refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _))))))))))))).
+  refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _)))))))))))))).
   - (* the bound term's substitution respects the sorts *)
     intros a. rewrite extr_dsort.
     destruct (AtomSetImpl.mem a V) eqn:EV.
@@ -1210,6 +1211,9 @@ Proof.
     + intros r Hr. apply HgrfixG. apply HHr. exact Hr.
   - intros a Ha. cbv beta. rewrite (HgfixG a Ha). reflexivity.
   - intros r Hr. cbv beta. rewrite (HgrfixG r Hr). reflexivity.
+  - (* a generalized variable of the target has the sort of the one it renames *)
+    intros a Ha. apply amap_in in Ha. destruct Ha as [b [Hb Hab]].
+    exists b. split; [ exact Hb | ]. subst a. unfold k'. rewrite Hginv. reflexivity.
 Qed.
 
 (* [tsubst_gen_core] for a [let] that keeps the variables of [Tm] monomorphic:
@@ -1234,7 +1238,8 @@ Lemma tsubst_gen_pin : forall G Tm T1 k rk st sr G' A D D' S S',
     supp_ok (extr (ext D' N k') Nr rk') (S' `union` N `union` Nr) /\
     sch_subst st sr (gen (pin_ctx Tm G) T1 k rk) s' /\
     sch_equiv s' (gen (pin_ctx (ap_typ st sr Tm) G') (ap_typ st1 sr1 T1) k' rk') /\
-    (forall x, tr_compat st sr ((x ~ gen (pin_ctx Tm G) T1 k rk) ++ G) ((x ~ s') ++ G')).
+    (forall x, tr_compat st sr ((x ~ gen (pin_ctx Tm G) T1 k rk) ++ G) ((x ~ s') ++ G')) /\
+    (forall a, a `in` N -> exists b, b `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G)) /\ k' a = k b).
 Proof.
   intros G Tm T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
   pose proof (ctx_subst_cons st sr pin_name (sch_mono Tm) (sch_mono (ap_typ st sr Tm)) G G'
@@ -1242,12 +1247,12 @@ Proof.
   pose proof (tr_compat_cons_mono st sr G G' pin_name Tm Hcompat) as Hcp.
   destruct (tsubst_gen_core (pin_ctx Tm G) T1 k rk st sr (pin_ctx (ap_typ st sr Tm) G') A D D' S S'
               HS HS' Hk Hkr Hcsp Hsupp Hcp)
-    as [s' [st1 [sr1 [A1 [N [Nr [k' [rk' [Hk1 [Hkr1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HNr [HS1 [Hsi [Hbr [Hcx [Hctx [Hagt Hagr]]]]]]]]]]]]]]]]]]]]].
+    as [s' [st1 [sr1 [A1 [N [Nr [k' [rk' [Hk1 [Hkr1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HNr [HS1 [Hsi [Hbr [Hcx [Hctx [Hagt [Hagr Hlk]]]]]]]]]]]]]]]]]]]]]].
   assert (HGp : ftv_ctx G [<=] ftv_ctx (pin_ctx Tm G)) by (rewrite ftv_pin_ctx; fsetdec).
   assert (HGpr : frv_ctx G [<=] frv_ctx (pin_ctx Tm G)) by (rewrite frv_pin_ctx; fsetdec).
   exists s', st1, sr1, A1, N, Nr, k', rk'.
   refine (conj Hk1 (conj Hkr1 (conj (Hctx G G' Hcs HGp HGpr) (conj Hsupp1 (conj _ (conj HN (conj HNr (conj HS1
-            (conj Hsi (conj Hbr _)))))))))).
+            (conj Hsi (conj Hbr (conj _ Hlk))))))))))).
   - destruct Hcompat as [c1 [c2 [c3 c4]]].
     refine (conj _ (conj _ (conj _ _))).
     + intros a Ha. rewrite (Hagt a (HGp a Ha)). apply c1. exact Ha.
@@ -1365,12 +1370,14 @@ Proof.
     simpl in *. eapply T_App; [ eapply IH1 | eapply IH2 ]; eauto.
   - (* T_Let: the renaming of the generalized variables is [tsubst_gen_core];
        here we rebuild the [let] around it. *)
-    intros L0 D G e1 e2 T1 T2 k rk Tm Hgv Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
+    intros L0 D G e1 e2 T1 T2 k rk Tm Hgv Hlp Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     destruct (tsubst_gen_pin G Tm T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat)
-      as [s' [st1 [sr1 [A1 [N [Nr [k' [rk' [Hk1 [Hkr1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HNr [HS1 [Hsi [Hbr Hcx]]]]]]]]]]]]]]]]]].
+      as [s' [st1 [sr1 [A1 [N [Nr [k' [rk' [Hk1 [Hkr1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HNr [HS1 [Hsi [Hbr [Hcx Hlk]]]]]]]]]]]]]]]]]]].
     apply T_Let with (L := L0 `union` dom G') (T1 := ap_typ st1 sr1 T1) (k := k') (rk := rk')
       (Tm := ap_typ st sr Tm);
-      [ assumption | | ].
+      [ assumption | | | ].
+    + intros Hc a Ha. apply (proj2 (HN a)) in Ha.
+      destruct (Hlk a Ha) as [b [Hb Hkb]]. rewrite Hkb. apply Hlp; assumption.
     + eapply typing_pw.
       * apply (IH1 st1 sr1 G' (extr (ext D' N k') Nr rk') A1
                  (S `union` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))
@@ -1803,13 +1810,13 @@ Lemma ftv_ctx_mid : forall G2 x s G1,
   ftv_ctx (G2 ++ G1) [<=] ftv_ctx (G2 ++ (x ~ s) ++ G1).
 Proof. intros. rewrite !ftv_ctx_app. simpl. fsetdec. Qed.
 
-Lemma ftv_ctx_mid_pin : forall Tm G2 x s G1,
-  ftv_ctx (pin_ctx Tm (G2 ++ G1)) [<=] ftv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)).
-Proof. intros. rewrite !ftv_pin_ctx, !ftv_ctx_app. simpl. fsetdec. Qed.
-
 Lemma frv_ctx_mid : forall G2 x s G1,
   frv_ctx (G2 ++ G1) [<=] frv_ctx (G2 ++ (x ~ s) ++ G1).
 Proof. intros. rewrite !frv_ctx_app. simpl. fsetdec. Qed.
+
+Lemma ftv_ctx_mid_pin : forall Tm G2 x s G1,
+  ftv_ctx (pin_ctx Tm (G2 ++ G1)) [<=] ftv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)).
+Proof. intros. rewrite !ftv_pin_ctx, !ftv_ctx_app. simpl. fsetdec. Qed.
 
 Lemma frv_ctx_mid_pin : forall Tm G2 x s G1,
   frv_ctx (pin_ctx Tm (G2 ++ G1)) [<=] frv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)).
@@ -1874,25 +1881,31 @@ Proof.
   - (* T_App *) intros D G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl. eapply T_App.
     + apply (IH1 Sd HSd Hag G2); reflexivity.
     + apply (IH2 Sd HSd Hag G2); reflexivity.
-  - (* T_Let *) intros L D G e1 e2 T1 T2 k rk Tm Hgv Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
+  - (* T_Let: removing [x] from the context shrinks it, so a type [Tm'] keeps
+       the old context's variables pinned and the [let] quantifies what it did. *)
+    intros L D G e1 e2 T1 T2 k rk Tm Hgv Hlp Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
+    destruct (repin Tm (G2 ++ (x ~ s) ++ G1) (G2 ++ G1)
+                (ftv_ctx_mid G2 x s G1) (frv_ctx_mid G2 x s G1)) as [Tm' [HFe HRe]].
     set (V := AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)))).
+    assert (HVe : forall a, a `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm' (G2 ++ G1))) <-> a `in` V)
+      by (intro a; unfold V; rewrite HFe; reflexivity).
     set (Vr := AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)))).
     apply T_Let with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (T1 := T1)
-      (k := kup D V k) (rk := rkup D Vr rk) (Tm := Tm).
+      (k := kup D V k) (rk := rkup D Vr rk) (Tm := Tm').
     + apply is_gen_subst; assumption.
+    + apply lit_pinned_kup with (V := V); [ | intros a Ha; apply HVe; exact Ha ].
+      intros Hc a Ha. apply (Hlp (let_open_subst u x e1 Hc) a Ha).
     + eapply typing_pw.
       * apply (IH1 (Sd `union` V `union` Vr) (supp_ok_ext2 _ _ _ _ _ _ HSd)
                  (Hextr _ Vr rk (HVrp Tm G2 T1 Vr eq_refl) (Hext D V k (HVp Tm G2 T1 V eq_refl) Hag)) G2);
           reflexivity.
-      * apply denv_eq_trans with (D2 := extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm (G2 ++ G1))))
+      * apply denv_eq_trans with (D2 := extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm' (G2 ++ G1))))
                                          (kup D V k)) Vr rk).
-        -- apply extr_pw. apply ext_kup_d. intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
-           apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
-           intro Hd. apply Hc. apply ftv_ctx_mid_pin. exact Hd.
+        -- apply extr_pw. apply ext_kup_d. intros b Hb. apply HVe. exact Hb.
         -- apply extr_rkup; [ intros; reflexivity | ].
            intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
            apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
-           intro Hd. apply Hc. apply frv_ctx_mid_pin. exact Hd.
+           intro Hd. apply Hc. apply HRe. exact Hd.
     + intros x0 Hx0.
       rewrite <- (subst_open_var e2 u x x0) by (first [ fsetdec | exact Hlc ]).
       eapply typing_ftv_mono.
@@ -1901,7 +1914,7 @@ Proof.
                  ((x0 ~ gen (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)) T1 k rk) ++ G2)).
         simpl_alist. reflexivity.
       * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
-        apply gen_more_gen; rewrite ?ftv_pin_ctx, ?frv_pin_ctx, ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
+        apply gen_more_gen; [ rewrite HFe; fsetdec | exact HRe ].
   - (* T_LetMono *) intros L D G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
     apply T_LetMono with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (T1 := T1).
     + apply (IH1 Sd HSd Hag G2); reflexivity.
@@ -2238,6 +2251,11 @@ Lemma step_gen : forall e e',
   step e e' -> is_gen_value e = true -> is_gen_value e' = true.
 Proof. apply step_gen_mut. Qed.
 
+(* A function and a numeral are values, so a [let] that pins its literals
+   keeps pinning them when its binding steps. *)
+Lemma step_let_open : forall e e', step e e' -> let_open e' = false -> let_open e = false.
+Proof. intros e e' H Hc. destruct e; simpl; auto; inversion H. Qed.
+
 
 
 (* Do induction on the step relation: one case per step rule.  Each case
@@ -2286,7 +2304,7 @@ Proof.
     assert (HxL : x `notin` L) by fsetdec.
     assert (Hxe : x `notin` fv_exp e2) by fsetdec.
     assert (Hopen : typing D G (subst_exp v x (open_exp_wrt_exp e2 (e_fvar_f x))) T2).
-    { destruct Hty1 as [[_ [k [rk [Tm [Hty1 Hbody]]]]] | [Hty1 Hbody]].
+    { destruct Hty1 as [[_ [k [rk [Tm [_ [Hty1 Hbody]]]]]] | [Hty1 Hbody]].
       - eapply typing_subst_poly with (P := pin_ctx Tm G);
           [ rewrite ftv_pin_ctx; fsetdec | rewrite frv_pin_ctx; fsetdec | exact HS
           | apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hty1 ].
@@ -2298,9 +2316,10 @@ Proof.
        environment, which is still [Any] outside a finite set. *)
     intros e1 e1' e2 Hstep IH D S G T HS Hty.
     apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 Hteq]]]].
-    destruct Hty1 as [[Hgv [k [rk [Tm [Hty1 Hbody]]]]] | [Hty1 Hbody]].
+    destruct Hty1 as [[Hgv [k [rk [Tm [Hlp [Hty1 Hbody]]]]]] | [Hty1 Hbody]].
     + eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1) (k := k) (rk := rk) (Tm := Tm);
                        [ eapply step_gen; eassumption
+                       | intros Hc a Ha; apply (Hlp (step_let_open _ _ Hstep Hc) a Ha)
                        | eapply IH; [ apply supp_ok_ext2; exact HS | exact Hty1 ]
                        | exact Hbody ]
                      | exact Hteq ].

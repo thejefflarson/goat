@@ -855,14 +855,14 @@ Proof.
           by (simpl; rewrite dom_apC, dom_apC; fsetdec).
         exact (typing_open_cl D2 (apC s2 (apC s1 G)) _ y _ _ _ Hty2 Hlc_Hty2 Hdom). }
       destruct (infer f D1
-                  ((fresh_var (apC s1 G) e2 ~ gen_ren D1 (pin_ctx (let_pin D1 e1 T1) (apC s1 G)) T1) ++ apC s1 G)
+                  ((fresh_var (apC s1 G) e2 ~ gen_ren D1 (pin_ctx (let_pin D1 us1 T1) (apC s1 G)) T1) ++ apC s1 G)
                   (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC s1 G) e2))) n1)
         as [[[[[s2 D2] T2] n2] us2]|] eqn:E2; [|discriminate].
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       destruct (IHe _ _ _ _ _ _ _ _ _ E1 HG HD) as (Gd1 & HT1 & Hty1 & Her_Hty1 & Hlc_Hty1).
       pose proof Gd1 as (_ & Hs1 & HD1 & _).
       pose proof (WfCtx_ap s1 G Hs1 HG) as HG1.
-      set (Tm := let_pin D1 e1 T1) in *.
+      set (Tm := let_pin D1 us1 T1) in *.
       set (Pz := (fresh_var (apC s1 G) e2 ~ sch_mono Tm) ++ apC s1 G).
       assert (HTm : EvT Tm) by (apply let_pin_EvT; exact HT1).
       assert (HPz : WfCtx Pz)
@@ -890,6 +890,13 @@ Proof.
                        (T1 := apT s2 (s_body (gen_ren D1 Pz T1)))
                        (k := s_sk (gen_ren D1 Pz T1)) (rk := s_rk (gen_ren D1 Pz T1)) (Tm := apT s2 Tm).
       * exact Hgv.
+      * intros Hc a Ha.
+        pose proof Htq as Htq'. cbn [apS s_tq gen s_body s_sk] in Htq'.
+        assert (Hin : a `in` s_tq (gen_ren D1 Pz T1)) by (apply Htq'; fsetdec).
+        refine (gen_ren_sk_not D1 Pz T1 k_Literal _ a Hin).
+        intros b Hb Hlit. apply (In_la Pz T1) in Hb. destruct Hb as [Hb1 Hb2].
+        assert (Hbt : b `in` ftv_typ Tm) by (apply let_pin_ftv; [ exact Hc | split; assumption ]).
+        apply Hb2. unfold Pz. simpl. unfold ftv_sch. simpl. fsetdec.
       * pose proof (typing_gen_ren_on D1 Pz T1 (apC s1 G) n1 us1
                       ltac:(unfold Pz; simpl; fsetdec) ltac:(unfold Pz; simpl; fsetdec)
                       HD1 Hty1) as Hg.
