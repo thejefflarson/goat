@@ -40,7 +40,7 @@ Proof.
   destruct (exists_apart3 (loop_atoms (e_num 0) (e_num (z_of_nat 2)) e_unit) c)
     as (s & t & g & Happ).
   exists (counted s t g c (e_num 0) (e_num (z_of_nat 2)) bop_lt e_unit). split.
-  - apply (D_repeat var_of [] _ _ [] e_unit s t g c); [ apply number_expr_den | apply DLB_none | exact Hc | exact Happ ].
+  - apply (D_repeat var_of [] _ _ [] e_unit s t g c); [ apply number_expr_den | apply DBo_none | exact Hc | exact Happ ].
   - apply lc_counted; exact I.
 Qed.
 
@@ -55,8 +55,8 @@ Example count_denotes : forall var_of,
     /\ lc e.
 Proof.
   intros var_of.
-  assert (Hbody : Den_loop_body var_of [] [Node R_expr [ident "i"]] (e_fvar_f (var_of "i"))).
-  { apply DLB_some. apply D_expr. apply DB_chain. apply DM_chain.
+  assert (Hbody : Den_body var_of [] [Node R_expr [ident "i"]] (e_fvar_f (var_of "i"))).
+  { apply DBo_some. apply D_expr. apply DB_chain. apply DM_chain.
     eapply DC_head; [ apply D_name; reflexivity | apply DP_nil ]. }
   destruct (exists_apart3 (loop_atoms (e_num (z_of_nat 1)) (e_num (z_of_nat 3)) (e_fvar_f (var_of "i")))
               (var_of "i")) as (s & t & g & Happ).
@@ -87,7 +87,7 @@ Proof.
   exists (each_term list_g 0 1 g r sp tp (var_of "x") (e_fvar_f (var_of "xs")) e_unit). split.
   - apply (D_each (TT := mk_tags (decl_entries list_decl)) var_of []
              "x" (TName "in") _ _ [] e_unit list_g 0 1 g r sp tp);
-      [ left; reflexivity | reflexivity | reflexivity | exact Hlist | apply DLB_none | exact Happ ].
+      [ left; reflexivity | reflexivity | reflexivity | exact Hlist | apply DBo_none | exact Happ ].
   - apply lc_each_term; exact I.
 Qed.
 
@@ -156,11 +156,20 @@ Ltac comp_all :=
 Lemma repeat_complete : Forall Complete repeat_ts.
 Proof. comp_all. all: comp_close'. Qed.
 
+Lemma repeat_accepted : Forall Accepted repeat_ts.
+Proof. acc_all. Qed.
+
 Lemma count_complete : Forall Complete count_ts.
 Proof. comp_all. all: comp_close'. Qed.
 
+Lemma count_accepted : Forall Accepted count_ts.
+Proof. acc_all. Qed.
+
 Lemma each_complete : Forall Complete each_ts.
 Proof. comp_all. all: comp_close'. Qed.
+
+Lemma each_accepted : Forall Accepted each_ts.
+Proof. acc_all. Qed.
 
 Ltac known_all :=
   cbv;
@@ -183,22 +192,22 @@ Example repeat_denotes_lc : forall var_of,
   exists t e, repeat_ts = [t] /\ Den_goat var_of [] t e /\ lc_exp e /\ lc e.
 Proof.
   intros var_of.
-  exact (parse_denotes_lc var_of [] repeat_program repeat_ts []
-           repeat_parses repeat_core repeat_complete repeat_known).
+  exact (parse_denotes_accepted var_of [] repeat_program repeat_ts []
+           repeat_parses repeat_core repeat_complete repeat_known repeat_accepted).
 Qed.
 
 Example count_denotes_lc : forall var_of,
   exists t e, count_ts = [t] /\ Den_goat var_of [] t e /\ lc_exp e /\ lc e.
 Proof.
   intros var_of.
-  exact (parse_denotes_lc var_of [] count_program count_ts []
-           count_parses count_core count_complete count_known).
+  exact (parse_denotes_accepted var_of [] count_program count_ts []
+           count_parses count_core count_complete count_known count_accepted).
 Qed.
 
 Example each_denotes_lc : forall var_of,
   exists t e, each_ts = [t] /\ Den_goat var_of [] t e /\ lc_exp e /\ lc e.
 Proof.
   intros var_of.
-  exact (parse_denotes_lc var_of [] each_program each_ts []
-           each_parses each_core each_complete each_known).
+  exact (parse_denotes_accepted var_of [] each_program each_ts []
+           each_parses each_core each_complete each_known each_accepted).
 Qed.

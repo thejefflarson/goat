@@ -81,6 +81,7 @@ preservation) is B3 (#71).
 | `GoatExample.v` | A fuel-bounded PEG interpreter, sound for the relation, parsing small programs; T1 applied to three of them, the recursive-group program `countdown` shown to denote the `GoatPhase2.v` term that types as an `Int`, and a rest pattern shown to denote two restricts. |
 | `GoatTagExample.v` | Tags, `match` and lists, worked (phase 8, stage 4): the tables the `tag` declarations of GoatPhase3.v's `list_g`, `level` and `shot` build, a list literal shown to denote the term GoatPhase3.v types as a list of Int, and T1 applied to a program that declares a tag and matches on it. |
 | `GoatLoopExample.v` | Loops, worked (phase 8, stage 5): `repeat`, `for ... from ... to` and `for ... in` each shown to denote the tail-recursive term of `GoatDen.v` (`counted`, `each_term`), and T1 applied to a program that runs each. |
+| `GoatBlockExample.v` | The block, worked (phase 8, stage 6): an empty program, a program that ends in a binding, `a; b`, `program()`, `f()`, and a function written after a value it uses, each shown to denote a locally closed term. |
 | `GoatAssumptions.v` | `make check-assumptions` fails unless T1, T2, T3, `progress`, `preservation`, `soundness`, `infer_closed_sound`, `erase_step`, `erase_traps`, `coerce_typing`, `infer_elab_sound`, `unroll_eqb_sound`, `erase_converse`, `erase_converse_multistep`, `knot_unrolls`, `unify_k_sound`, `coerce_dec_sound`, `unify_co_sound`, `infer_guarded`, `lex_concat`, `step_longest`, `word_boundary`, `parse_text_denotes`, `edits_preserve_tokens` and `edits_preserve_parse` print "Closed under the global context", and `parse_text_denotes_xid` rests on exactly the two Unicode parameters. |
 | `_CoqProject`, `Makefile` | Build. |
 
@@ -225,14 +226,12 @@ to a row of fresh variables, unifies each member's type with its variable
 (`T_Letrec`). The grammar has no new
 form, but the parser fragment now reads the surface group: the function
 bindings that lead a block (`f = program(x) do ... done`, ADR 0003) are one
-`letrec`, each member named by its position (`GoatDen.v`, `DB_group`). Every
+`letrec`, each member named by its position (`GoatDen.v`, `DK_hoist`). Every
 occurrence of a member's name in the members and the rest of the block becomes
 the projection of that member from the group (`bind_group`). A function binding
-after a value binding in the same block is outside the fragment (decided: the
-group would have to be placed after the values its members read, which needs
-name resolution). A binding
-whose value is a parenthesised function is a plain `let`, so the printer
-parenthesises a function that is a binding's value. T1 covers groups, and
+after a value binding is placed by what it uses (phase 8 stage 6, see "The
+block"). A binding whose value is a parenthesised function is a plain `let`, so
+the printer parenthesises a function that is a binding's value. T1 covers groups, and
 `GoatExample.v` shows one program parsing to the group `GoatPhase2.v` types. T3
 does not (decided: deferred to the tail of phase 8): the printer does not write a
 `letrec`, which would need the group's projections printed as bare member names.
@@ -550,29 +549,34 @@ by the differential test), and `make check-assumptions` requires it to rest on
 those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 44680 programs written, 43258 compared with 0 mismatches, 1411 skipped
-by the driver. Inferring a recursive group before the value bindings between its
+commit: 44773 programs written, 43348 compared with 0 mismatches, 1412 skipped
+by the driver, and the lexer differential 78617 sources, 4351098 tokens, 0
+disagreements. Inferring a recursive group before the value bindings between its
 members (#628) brought in 59 of the 65 programs it used to skip; the other 6 use
-a later feature or are real cycles the checker rejects. The reader numbers labels in name order, which wrote 206 more
-programs than before (a corpus line repeats only if its term, mode and verdict do)
-and changed no checker verdict. Of the 43 programs whose checker type is recursive, 32 are compared
-and 11 refused. The corpus reader's skips, by the feature that keeps a program
-outside the calculus (the first of a fixed order that it uses):
+a later feature or are real cycles the checker rejects. The reader numbers labels
+in name order, which wrote 206 more programs than before (a corpus line repeats
+only if its term, mode and verdict do) and changed no checker verdict. Of the 43
+programs whose checker type is recursive, 32 are compared and 11 refused. Phase 8
+stage 6 reads a program that ends in a binding (the value of the last binding: the
+checker gives `x = 1` the type of `x`), a function or call with no parameters (a
+hidden parameter pinned to the unit value, and a call passing the unit value), and
+an `if` without an `else` (`ite c t unit`); the three skips are gone and their
+programs, 70 of them before this stage, are compared with 0 mismatches. The
+corpus reader's skips, by the feature that keeps a program outside the calculus
+(the first of a fixed order that it uses):
 
 | Count | Skip |
 | ---: | --- |
-| 5149 | does not lower (the checker rejects it before typing) |
-| 185 | tags and `match` |
+| 5233 | does not lower (the checker rejects it before typing) |
+| 99 | tags and `match` |
+| 43 | an inferred type the corpus cannot write |
 | 41 | `print` or `trap` |
-| 37 | a program that ends in a binding |
-| 29 | a function or call with no parameters |
-| 19 | the checker rejects a method used as a plain function or the reverse (`MethodFlag`) |
+| 23 | the checker rejects a method used as a plain function or the reverse (`MethodFlag`) |
 | 18 | a foreign host call |
 | 7 | arithmetic on non-primitive operands |
-| 4 | an `if` without an `else` |
 | 4 | a numeral of 2^30 or more |
 | 2 | a rest pattern with no fields |
-| 6 | none of the above, among them the real cycles (a group member reading a value that calls the group), which the checker rejects |
+| 12 | none of the above, among them the real cycles (a group member reading a value that calls the group), which the checker rejects |
 
 `MethodsAndDotCalls`, `SharedReceiver` and `ResourceLimit` are no longer skips
 and `RecursiveType` is a compared class, not a skip.
@@ -999,9 +1003,11 @@ untypeable, which `docs/semantics.md` section 8 states as the language's limit.
 ## The parser claim (ADR 0030)
 
 `peg_deterministic` (T2): a token stream has at most one parse. `parse_denotes_lc`
-(T1): every parse of the top rule `goat` whose tree is in the core fragment
-denotes a term that is both `lc` (the local closure the soundness proof uses)
-and the generated `lc_exp`.
+(T1): every parse of the top rule `goat` whose tree is in the core fragment is
+either a tree lowering reports (`Reject`: a record whose spread is not first, or
+that has a second) or denotes a term that is both `lc` (the local closure the
+soundness proof uses) and the generated `lc_exp`. `parse_denotes_accepted` is the
+second half on its own, for a tree `Accepted` (no `Reject` shape in it).
 
 Boundary:
 
@@ -1119,10 +1125,30 @@ Boundary:
 - **Core fragment only.** The rules of `grammar/goat.peg` that `goat_ln.ott` has
   a production for (`core_rule` in `GoatShape.v`, checked against
   `parser/tests/rule_map.rs` by a Rust test), minus the shapes ADR 0030 excludes
-  (`Complete` in `GoatShape.v`): `program()`, an empty body, a call with no
-  arguments, an empty program, a block that ends in a binding, a function binding
-  after a value binding in the same block, a function binding that is an operand
-  (`1 + f = program(x) do x done f(2)`).
+  (`Complete` in `GoatShape.v`), which is now only what no `Den` rule reads yet:
+  a record pattern or any list pattern as a parameter, a payload type with no
+  slot code, and a `match` whose arms mix kinds or are literals with no `else`.
+  Shapes lowering reports are `Reject`.
+- **The block (phase 8 stage 6).** `Den_blk ctx fin cs xs gs b` reads a block
+  from its start: `ctx` holds the value bindings and late functions so far, `fin`
+  is what the block is if it ends here, `xs` and `gs` are the functions hoisted
+  into the block's group, and `b` is the rest. `a; b` is `let _ = a in b`
+  (`DK_seq`, with no name to close in locally nameless form) and a stray `;` is
+  skipped (`DK_skip`), as in lowering. A block that ends in a binding is the
+  value of its last binding (`fin` is that name, `DK_value`): the checker gives a
+  program `x = 1` the type of `x`, which the differential test showed; a block
+  that ends in `a;` is the unit value, and so is an empty program or body
+  (`DBo_none`). A function binding joins the hoisted group when none of its free
+  variables is a name in `ctx` (`mentions_any`, computed over the denoted term;
+  `DK_hoist`), and otherwise stays where it is written, as a plain `let`, or as a
+  group of one when it names itself (`fn_place`, `DK_late`). A binding that is an
+  operand reads the same way (`D_local_fn`). `program()` takes one hidden
+  parameter pinned to the unit value (`unit_arg`: the parameter is compared with
+  the unit value, so its type is `Unit -> t`, which is what the checker's function
+  of no parameters has), and `f()` applies `f` to the unit value; `Tag()` is `Tag`.
+  Mutually recursive functions that both use a value are each placed alone, so a
+  call from one to the other is a free name: a gap in what `Den` says, not in
+  `lc`. `block_shape.rs` pins the HIR lowering gives each form.
 - **The lexer is trusted.** The input is a list of tokens; nothing is said about
   how characters become tokens. A text terminal matches a punctuation or keyword
   token by its spelling, and a name token by its spelling when the word is
@@ -1142,7 +1168,7 @@ conditions on the term, to be hypotheses of the round-trip theorem T3 where they
 matter. T1 does not need them: `close_exp` yields a locally closed term whatever
 names repeat, so T1 is stated without them rather than with unused hypotheses.
 Recursive function bindings and a block's function group are no longer a
-disagreement: `DB_group` is that reading.
+disagreement: `DK_hoist` is that reading.
 
 `print_parse_roundtrip` (T3): for a closed core term `e` (`scoped 0 e`) whose
 labels are numbered by first occurrence in the printed text (`Interned e`), and

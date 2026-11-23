@@ -1161,10 +1161,26 @@ fn lowering_rejects_a_spread_the_core_leaves_out() {
         ("p = {}; q = {}; {...p, ...q}", "can't merge two records"),
     ] {
         let errors = lower(source).expect("parses").errors;
+        let error = errors
+            .iter()
+            .find(|e| e.message.contains(message))
+            .unwrap_or_else(|| panic!("{source:?}: {errors:?}"));
         assert!(
-            errors.iter().any(|e| e.message.contains(message)),
-            "{source:?}: {errors:?}"
+            source[error.span.start..error.span.end].starts_with("..."),
+            "{source:?}: the error is spanned at the spread, not {:?}",
+            &source[error.span.start..error.span.end]
         );
+    }
+}
+
+/// The counterpart of the rejection: `Reject` in `proofs/GoatShape.v` is exactly
+/// a spread that is not first or a second one, so a spread first with fields
+/// after it lowers without an error.
+#[test]
+fn lowering_accepts_a_spread_first_in_its_record() {
+    for source in ["p = {}; {...p}", "p = {}; {...p, a: 1, b: 2}"] {
+        let errors = lower(source).expect("parses").errors;
+        assert!(errors.is_empty(), "{source:?}: {errors:?}");
     }
 }
 

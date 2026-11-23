@@ -408,9 +408,6 @@ pub enum Feature {
     OperatorOperand,
     EmptyRest,
     UnwritableType,
-    IfWithoutElse,
-    NoParameters,
-    TrailingBinding,
     LargeNumeral,
     Other,
 }
@@ -430,9 +427,6 @@ impl Feature {
             Feature::UnwritableType => {
                 "outside the calculus: an inferred type the corpus cannot write"
             }
-            Feature::IfWithoutElse => "outside the calculus: an if without an else",
-            Feature::NoParameters => "outside the calculus: a function or call with no parameters",
-            Feature::TrailingBinding => "outside the calculus: a program that ends in a binding",
             Feature::LargeNumeral => "outside the calculus: a numeral of 2^30 or more",
             Feature::Other => "outside the calculus: none of the above",
         }
@@ -452,12 +446,6 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
     for_each_node(&lowered.root, &mut |e| match &e.kind {
         ExprKind::Foreign { .. } => note(Feature::ForeignCall),
         ExprKind::Int(n) if n.unsigned_abs() >= 1 << 30 => note(Feature::LargeNumeral),
-        ExprKind::If {
-            else_branch: None, ..
-        } => note(Feature::IfWithoutElse),
-        ExprKind::Let { rest: None, .. } => note(Feature::TrailingBinding),
-        ExprKind::App { args, .. } if args.is_empty() => note(Feature::NoParameters),
-        ExprKind::Func { params, .. } if params.is_empty() => note(Feature::NoParameters),
         ExprKind::Tag { .. } | ExprKind::Match { .. } => note(Feature::TagsAndMatch),
         ExprKind::Builtin(_) | ExprKind::Trap(_) => note(Feature::Builtin),
         ExprKind::Bin {
@@ -656,16 +644,16 @@ impl Reader<'_> {
     /// split it; the checker infers the group there too.
     fn block(&mut self, first: &Expr) -> Option<Core> {
         let mut bindings = Vec::new();
-        let mut cursor = first;
-        while let ExprKind::Let {
+        let mut cursor = Some(first);
+        while let Some(ExprKind::Let {
             symbol,
             name,
             value,
             rest,
-        } = &cursor.kind
+        }) = cursor.map(|c| &c.kind)
         {
             bindings.push((*symbol, name.as_str(), &**value));
-            cursor = rest.as_deref()?;
+            cursor = rest.as_deref();
         }
         let tail = cursor;
         let members: Vec<usize> = (0..bindings.len())
@@ -756,10 +744,13 @@ impl Reader<'_> {
         bindings: &[(Symbol, &str, &Expr)],
         groups: &[Vec<usize>],
         units: &[Unit],
-        tail: &Expr,
+        tail: Option<&Expr>,
     ) -> Option<Core> {
         let Some((unit, units)) = units.split_first() else {
-            return self.read(tail);
+            return match tail {
+                Some(tail) => self.read(tail),
+                None => self.var(&bindings.last()?.0),
+            };
         };
         let group = match *unit {
             Unit::Value(at) => {
@@ -921,6 +912,15 @@ impl Reader<'_> {
                     Box::new(branch(self, else_branch)?),
                 ))
             }
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch: None,
+            } => Some(Core::If(
+                Box::new(self.read(cond)?),
+                Box::new(self.read(then_branch)?),
+                Box::new(Core::Unit),
+            )),
             ExprKind::And { lhs, rhs } => Some(Core::If(
                 Box::new(self.read(lhs)?),
                 Box::new(self.read(rhs)?),
@@ -976,10 +976,19 @@ impl Reader<'_> {
                 Some(Core::Bin(*op, Box::new(a), Box::new(b)))
             }
             ExprKind::Var { symbol, .. } => self.var(symbol),
+            ExprKind::Func { params, body } if params.is_empty() => {
+                let mark = self.scope.len();
+                self.scope.push(Binder::Bound(Symbol::MAX));
+                self.scope.push(Binder::Bound(Symbol::MAX));
+                let body = self.read(body);
+                self.scope.truncate(mark);
+                let pin = Core::Bin(BinOp::Eq, Box::new(Core::Var(0)), Box::new(Core::Unit));
+                Some(Core::Abs(Box::new(Core::Let(
+                    Box::new(pin),
+                    Box::new(body?),
+                ))))
+            }
             ExprKind::Func { params, body } => {
-                if params.is_empty() {
-                    return None;
-                }
                 self.unary &= params.len() == 1;
                 let mark = self.scope.len();
                 self.scope
@@ -992,10 +1001,11 @@ impl Reader<'_> {
                         .fold(body?, |body, _| Core::Abs(Box::new(body))),
                 )
             }
+            ExprKind::App { callee, args } if args.is_empty() => Some(Core::App(
+                Box::new(self.read(callee)?),
+                Box::new(Core::Unit),
+            )),
             ExprKind::App { callee, args } => {
-                if args.is_empty() {
-                    return None;
-                }
                 self.unary &= args.len() == 1;
                 let params = match self.node_ty(callee) {
                     Some(Ty::Func(params, _)) if params.len() == args.len() => Some(params.clone()),
@@ -1115,6 +1125,11 @@ impl Canon<'_> {
                 let written = self.ty(body, out);
                 self.binders.pop();
                 written?;
+                out.push(')');
+            }
+            Ty::Func(params, ret) if params.is_empty() => {
+                out.push_str("(Unit -> ");
+                self.ty(ret, out)?;
                 out.push(')');
             }
             Ty::Func(params, ret) => {
