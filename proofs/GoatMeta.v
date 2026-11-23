@@ -1274,7 +1274,7 @@ Proof.
   assert (Hflt : forall v, value v -> typing D G v typ_Float ->
                  (exists n, v = e_num n) \/ (exists d, v = e_dec d))
     by (intros v Hv Hty; destruct (canon_base _ _ _ _ Hv Hty) as [_ [C _]]; exact (C (teq_refl _))).
-  destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o A Hk Hsat | D0 R0 Hr | D0 o B Hk HB ].
+  destruct Hs as [ D0 o A Hk Hsat | D0 A Hsat | D0 o A Hk Hsat | D0 o B Hk HB ].
   - (* [+ - *] on two numbers of one Numeric type *)
     destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity);
       try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat); try contradiction.
@@ -1292,12 +1292,17 @@ Proof.
       destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
       apply ring_nums; assumption.
   - (* [/] on two Floats: any Float, a zero divisor included *)
-    destruct (Hflt _ Hv1 H1) as [[a ->] | [x ->]]; destruct (Hflt _ Hv2 H2) as [[b ->] | [y ->]];
-      left; exists (e_dec 0).
-    + apply bs_quot_num; reflexivity.
-    + apply bs_float; [ right; reflexivity | constructor ].
-    + apply bs_float; [ right; reflexivity | constructor ].
-    + apply bs_float; [ right; reflexivity | constructor ].
+    destruct A; simpl in Hsat; try contradiction; try (exfalso; eapply HnR; reflexivity);
+      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat); try discriminate Hsat.
+    + destruct (Hflt _ Hv1 H1) as [[a ->] | [x ->]]; destruct (Hflt _ Hv2 H2) as [[b ->] | [y ->]];
+        left; exists (e_dec 0).
+      * apply bs_quot_num; reflexivity.
+      * apply bs_float; [ right; reflexivity | constructor ].
+      * apply bs_float; [ right; reflexivity | constructor ].
+      * apply bs_float; [ right; reflexivity | constructor ].
+    + destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
+      destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
+      left. exists (e_dec 0). apply bs_quot_num; reflexivity.
   - (* [//] and [%] on two numbers of one Numeric type *)
     destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity);
       try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat); try contradiction.
@@ -1314,8 +1319,6 @@ Proof.
       destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
       destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
       apply whole_nums; assumption.
-  - (* [/] on records is not a scalar operation *)
-    exfalso. eapply HnR. reflexivity.
   - (* a comparison of two values of one Eq type *)
     destruct (cmp_total _ _ _ _ _ HB Hv1 Hv2 H1 H2) as [c Hc].
     left. eexists. apply bs_cmp; [ exact Hk | exact Hc ].

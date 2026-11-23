@@ -461,7 +461,7 @@ Proof.
         [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_mono_self ].
     + apply T_Num; [ solve_uniq | apply Hs; apply finer_refl ].
     + reflexivity.
-    + apply Hs. apply finer_lit.
+    + apply Hs. apply finer_lit; discriminate.
   - intros f Hf.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
     apply T_Record; [ | reflexivity ]. eapply FT_cons.

@@ -290,9 +290,8 @@ Lemma bin_sig_nf : forall D o A B R,
 Proof.
   intros D o A B R H. inversion H; subst; cbn [nfT].
   - apply sig_ring; [ assumption | apply sat_nf; assumption ].
-  - apply sig_quot.
+  - apply sig_quot. apply sat_nf; assumption.
   - apply sig_whole; [ assumption | apply sat_nf; assumption ].
-  - apply sig_quot_rec. apply (proj2 (fsat_nf_mut D)). assumption.
   - apply sig_cmp; [ assumption | apply sat_nf; assumption ].
 Qed.
 

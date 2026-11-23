@@ -1578,8 +1578,8 @@ Qed.
 
 (* A derivation moves between two kinding environments that agree on the
    variables the context and the type mention.  Any other variable the
-   derivation uses internally is replaced by [Int] (a type variable) or by the
-   empty row (a row variable): [Int] satisfies every sort and the empty row
+   derivation uses internally is replaced by [Float] (a type variable) or by the
+   empty row (a row variable): [Float] satisfies every sort and the empty row
    every kind.  Only variables in the finite support of the source environment
    can carry a constraint, so only those need replacing. *)
 Lemma typing_denv_agree : forall D0 D Sd0 Sd ST SR G e T,
@@ -1593,7 +1593,7 @@ Proof.
   intros D0 D Sd0 Sd ST SR G e T Hty HS0 HS HG HT HGr HTr Hag Hagr.
   set (A := AtomSetImpl.diff Sd0 ST).
   set (AR := AtomSetImpl.diff Sd0 SR).
-  set (st := fun a : typvar => if AtomSetImpl.mem a A then typ_Int else typ_Var a).
+  set (st := fun a : typvar => if AtomSetImpl.mem a A then typ_Float else typ_Var a).
   set (sr := fun r : rowvar => if AtomSetImpl.mem r AR then row_Empty else row_Var r).
   assert (Hst : forall a, a `in` ST -> st a = typ_Var a).
   { intros a Ha. unfold st. destruct (AtomSetImpl.mem a A) eqn:Em; [ | reflexivity ].
@@ -1694,7 +1694,7 @@ Proof.
   set (AR := AtomSetImpl.diff Sd0 (frv_ctx G `union` frv_sch (gen P T1 k rk))).
   set (st' := fun a : typvar =>
         if AtomSetImpl.mem a V then st a
-        else if AtomSetImpl.mem a A then typ_Int else typ_Var a).
+        else if AtomSetImpl.mem a A then typ_Float else typ_Var a).
   set (sr' := fun r : rowvar =>
         if AtomSetImpl.mem r Vr then sr r
         else if AtomSetImpl.mem r AR then row_Empty else row_Var r).
@@ -2132,6 +2132,14 @@ Qed.
    numerals gives a numeral at the operand type (a [Literal] type, by the
    numeral's own typing); a Float operation has a decimal operand, which fixes
    the operand type to [Float]. *)
+Lemma quot_literal_float : forall D A,
+  sat D k_Quot A -> sat D k_Literal A -> A = typ_Float.
+Proof.
+  intros D A H1 H2. destruct A as [ | | | | | T1 T2 | R | a | i | B | w A ]; simpl in H1, H2; try contradiction; try reflexivity;
+    try (destruct H1 as [H1 | H1]; discriminate H1); try discriminate H1.
+  - exfalso. destruct (D a) eqn:E; inversion H1; subst; try (inversion H2; fail); try congruence.
+Qed.
+
 Lemma bin_step_typing : forall D G o v1 v2 v A B R,
   bin_sig D o A B R -> value v1 -> value v2 ->
   typing D G v1 A -> typing D G v2 B -> bin_step o v1 v2 v -> typing D G v R.
@@ -2157,6 +2165,8 @@ Proof.
     try (apply T_Dec; exact Hu);
     try (apply typing_of_bool; exact Hu);
     try (apply T_Num; [ exact Hu | first [ exact I | exact (num_inv _ _ _ _ H1) ] ]).
+  all: try (match goal with Hq : sat ?D0 k_Quot ?A |- typing _ _ (e_dec _) ?A =>
+              rewrite (quot_literal_float _ A Hq (num_inv _ _ _ _ H1)); apply T_Dec; exact Hu end).
   all: try (match goal with Hf : fl_pair _ _ |- _ => destruct Hf end).
   all: first
     [ (eapply T_ConvD; [ apply T_Dec; exact Hu | exact (dec_inv _ _ _ _ H1) ])

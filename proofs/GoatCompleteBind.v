@@ -50,13 +50,15 @@ Qed.
 
 (* ---- what [push_sort] and [push_sort_r] leave behind ---- *)
 
+Definition cmpb (k1 k2 : sort) : Prop := finer_b k1 k2 = true \/ finer_b k2 k1 = true.
+
 Lemma push_sort_facts : forall l D k n sp D' n',
   push_sort D k l n = (sp, D', n') -> (forall b, In b l -> old n b) ->
   (forall r, sR sp r = row_Var r) /\ n <= n' /\
   (forall x, ~ In x l -> sT sp x = typ_Var x) /\
   (forall x, exists y, sT sp x = typ_Var y /\ (y = x \/ exists m, n <= m /\ y = ea m)) /\
   (forall x, old n x -> D' x = D x) /\
-  (forall x, In x l -> exists y, sT sp x = typ_Var y /\ finer_b (D' y) k = true).
+  (forall x, In x l -> cmpb (D x) k -> exists y, sT sp x = typ_Var y /\ finer_b (D' y) k = true).
 Proof.
   induction l as [|b l IH]; intros D k n sp D' n' H Hold; cbn [push_sort] in H.
   - inversion H; subst; clear H. refine (conj _ (conj _ (conj _ (conj _ (conj _ _))))).
@@ -71,13 +73,18 @@ Proof.
         as (H1 & H2 & H3 & H4 & H5 & H6).
       refine (conj H1 (conj H2 (conj _ (conj H4 (conj H5 _))))).
       * intros x Hx. apply H3. intros Hin. apply Hx. right. exact Hin.
-      * intros x [->|Hx].
+      * intros x [->|Hx] Hc.
         -- destruct (in_dec Atom.eq_dec x l) as [Hin|Hnin].
-           ++ exact (H6 x Hin).
+           ++ exact (H6 x Hin Hc).
            ++ exists x. rewrite (H3 x Hnin). split; [ reflexivity | ].
               rewrite (H5 x (Hold x (or_introl eq_refl))). exact Ef.
-        -- exact (H6 x Hx).
-    + destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E.
+        -- exact (H6 x Hx Hc).
+    + destruct (finer_b k (D b)) eqn:Ef2;
+        [ | destruct (IH D k n sp D' n' H (fun c Hc => Hold c (or_intror Hc))) as (H1 & H2 & H3 & H4 & H5 & H6);
+            refine (conj H1 (conj H2 (conj _ (conj H4 (conj H5 _)))));
+            [ intros x Hx; apply H3; intros Hin; apply Hx; right; exact Hin
+            | intros x [->|Hx] Hc; [ exfalso; destruct Hc; congruence | exact (H6 x Hx Hc) ] ] ].
+      destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst; clear H.
       assert (Hold' : forall c, In c l -> old (Datatypes.S n) c).
       { intros c Hc m Hm. apply (Hold c (or_intror Hc)). lia. }
@@ -104,7 +111,7 @@ Proof.
         -- cbn [upd dsort]. destruct (Atom.eq_dec x (ea n)) as [E2|_]; [ | reflexivity ].
            exfalso. exact (Hx n (le_n n) E2).
         -- intros m Hm. apply Hx. lia.
-      * intros x Hx. destruct (Atom.eq_dec x b) as [->|Hxb].
+      * intros x Hx Hc. destruct (Atom.eq_dec x b) as [->|Hxb].
         -- exists (ea n). split.
            ++ change (apT s1 (sT (sbT b (typ_Var (ea n))) b) = typ_Var (ea n)).
               cbn [sT sbT]. rewrite dec_same. exact Hs1.
@@ -112,7 +119,11 @@ Proof.
               ** cbn [upd dsort]. rewrite dec_same. destruct k; reflexivity.
               ** intros m Hm E2. apply ea_inj in E2. lia.
         -- assert (Hx' : In x l) by (destruct Hx as [Eq0|Hx]; [ exfalso; apply Hxb; symmetry; exact Eq0 | exact Hx ]).
-           destruct (H6 x Hx') as (y & Hy & Hf). exists y. split; [ | exact Hf ].
+           assert (Hc' : cmpb (upd D (ea n) k x) k).
+           { cbn [upd dsort]. destruct (Atom.eq_dec x (ea n)) as [E2|_].
+             - exfalso. exact (Hold x (or_intror Hx') n (le_n n) E2).
+             - exact Hc. }
+           destruct (H6 x Hx' Hc') as (y & Hy & Hf). exists y. split; [ | exact Hf ].
            change (apT s1 (sT (sbT b (typ_Var (ea n))) x) = typ_Var y).
            cbn [sT sbT]. rewrite (dec_diff _ _ _ _ _ Hxb). exact Hy.
 Qed.
@@ -126,7 +137,7 @@ Lemma push_sort_r_facts : forall l D k n sr D' n',
   (forall q, ~ In q l -> sR sr q = row_Var q) /\
   (forall q, exists q', sR sr q = row_Var q') /\
   (forall q, old n q -> drk D' q = drk D q) /\
-  (forall q, In q l -> exists q', sR sr q = row_Var q' /\ finer_b (rk_sort (drk D' q')) k = true).
+  (forall q, In q l -> cmpb (rk_sort (drk D q)) k -> exists q', sR sr q = row_Var q' /\ finer_b (rk_sort (drk D' q')) k = true).
 Proof.
   induction l as [|b l IH]; intros D k n sr D' n' H Hold; cbn [push_sort_r] in H.
   - inversion H; subst; clear H. refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _)))))).
@@ -142,13 +153,18 @@ Proof.
         as (H1 & H2 & H3 & H4 & H5 & H6 & H7).
       refine (conj H1 (conj H2 (conj H3 (conj _ (conj H5 (conj H6 _)))))).
       * intros q Hq. apply H4. intros Hin. apply Hq. right. exact Hin.
-      * intros q [->|Hq].
+      * intros q [->|Hq] Hc.
         -- destruct (in_dec Atom.eq_dec q l) as [Hin|Hnin].
-           ++ exact (H7 q Hin).
+           ++ exact (H7 q Hin Hc).
            ++ exists q. rewrite (H4 q Hnin). split; [ reflexivity | ].
               rewrite (H6 q (Hold q (or_introl eq_refl))). exact Ef.
-        -- exact (H7 q Hq).
-    + destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (Datatypes.S n))
+        -- exact (H7 q Hq Hc).
+    + destruct (finer_b k (rk_sort (drk D b))) eqn:Ef2;
+        [ | destruct (IH D k n sr D' n' H (fun c Hc => Hold c (or_intror Hc))) as (H1 & H2 & H3 & H4 & H5 & H6 & H7);
+            refine (conj H1 (conj H2 (conj H3 (conj _ (conj H5 (conj H6 _))))));
+            [ intros q Hq; apply H4; intros Hin; apply Hq; right; exact Hin
+            | intros q [->|Hq] Hc; [ exfalso; destruct Hc; congruence | exact (H7 q Hq Hc) ] ] ].
+      destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (Datatypes.S n))
         as [[s1 D1] n1] eqn:E.
       inversion H; subst; clear H.
       assert (Hold' : forall c, In c l -> old (Datatypes.S n) c).
@@ -174,7 +190,7 @@ Proof.
         -- cbn [drk rupd]. destruct (Atom.eq_dec q (ea n)) as [E2|_]; [ | reflexivity ].
            exfalso. exact (Hq n (le_n n) E2).
         -- intros m Hm. apply Hq. lia.
-      * intros q Hq. destruct (Atom.eq_dec q b) as [->|Hqb].
+      * intros q Hq Hc. destruct (Atom.eq_dec q b) as [->|Hqb].
         -- exists (ea n). split.
            ++ change (apR s1 (sR (sbR b (row_Var (ea n))) b) = row_Var (ea n)).
               cbn [sR sbR]. rewrite dec_same. exact Hs1.
@@ -182,7 +198,11 @@ Proof.
               ** cbn [drk rupd]. rewrite dec_same. cbn [rk_sort]. apply finer_b_refl.
               ** intros m Hm E2. apply ea_inj in E2. lia.
         -- assert (Hx' : In q l) by (destruct Hq as [Eq0|Hq]; [ exfalso; apply Hqb; symmetry; exact Eq0 | exact Hq ]).
-           destruct (H7 q Hx') as (y & Hy & Hf). exists y. split; [ | exact Hf ].
+           assert (Hc' : cmpb (rk_sort (drk (rupd D (ea n) (RK k (rk_lacks (drk D b)))) q)) k).
+           { cbn [drk rupd]. destruct (Atom.eq_dec q (ea n)) as [E2|_].
+             - exfalso. exact (Hold q (or_intror Hx') n (le_n n) E2).
+             - exact Hc. }
+           destruct (H7 q Hx' Hc') as (y & Hy & Hf). exists y. split; [ | exact Hf ].
            change (apR s1 (sR (sbR b (row_Var (ea n))) q) = row_Var y).
            cbn [sR sbR]. rewrite (dec_diff _ _ _ _ _ Hqb). exact Hy.
 Qed.
@@ -194,7 +214,8 @@ Proof.
   - inversion H; subst. exact Hd.
   - destruct (finer_b (D b) k).
     + exact (IH _ _ _ _ _ _ H Hd).
-    + destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E.
+    + destruct (finer_b k (D b)); [ | exact (IH _ _ _ _ _ _ H Hd) ].
+      destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst. exact (IH _ _ _ _ _ _ E (DOk_upd D n k Hd)).
 Qed.
 
@@ -205,7 +226,8 @@ Proof.
   - inversion H; subst. exact Hd.
   - destruct (finer_b (rk_sort (drk D b)) k).
     + exact (IH _ _ _ _ _ _ H Hd).
-    + destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (Datatypes.S n))
+    + destruct (finer_b k (rk_sort (drk D b))); [ | exact (IH _ _ _ _ _ _ H Hd) ].
+      destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (Datatypes.S n))
         as [[s1 D1] n1] eqn:E.
       inversion H; subst. exact (IH _ _ _ _ _ _ E (DOk_rupd D n _ Hd)).
 Qed.
@@ -493,13 +515,15 @@ Variable bx : bool.
 Theorem bind_prop_sorted_complete : forall (D D1 : denv) Sg a T n,
   DOk D n -> KR D D1 Sg -> old n a -> a `notin` ftv_typ T ->
   (forall b, b `in` ftv_typ T -> old n b) -> (forall q, q `in` frv_typ T -> old n q) ->
+  (forall b, b `in` ftv_typ T -> cmpb (D b) (D a)) ->
+  (forall q, q `in` frv_typ T -> cmpb (rk_sort (drk D q)) (D a)) ->
   pf T -> lcb 0 T = true -> fld D1 Sg (D a) T -> teqX bx D1 (sT Sg a) (apT Sg T) ->
   exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
     n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teqX bx D1 (sT Sg x) (apT S2 (sT s x))) /\
     (forall r, old n r -> sR Sg r = apR S2 (sR s r)).
 Proof.
-  intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hpf Hlc Hfld Heq.
+  intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hcb Hcq Hpf Hlc Hfld Heq.
   assert (Hsa : sat D1 (D a) (apT Sg T)).
   { apply (sat_teqX bx D1 (D a) (sT Sg a) (apT Sg T) Heq). exact (proj1 HK a). }
   destruct (sat_reach_mut D1 Sg (D a)) as [Hrt _].
@@ -548,11 +572,12 @@ Proof.
   { assert (HD2 : forall y, D2 y = D1' y) by (intros y; change (dsort D2 y = dsort D1' y); rewrite Q3; reflexivity).
     unfold T'. rewrite (apT_comp sr sp T).
     apply (proj1 (sat_ren_mut D2 D1 Sg (scomp sr sp) (D a)) T Hpf Hfld).
-    - intros x Hx. destruct (P6 x (proj2 (in_elts _ _) Hx)) as (y & Ey & Hf).
+    - intros x Hx. destruct (P6 x (proj2 (in_elts _ _) Hx) (Hcb x Hx)) as (y & Ey & Hf).
       exists y. split.
       + change (apT sr (sT sp x) = typ_Var y). rewrite Ey. unfold apT. simpl. apply Q1.
       + rewrite HD2. apply finer_b_iff. exact Hf.
-    - intros q Hq. destruct (Q7 q (proj2 (in_elts _ _) Hq)) as (q' & Eq0 & Hf).
+    - intros q Hq. destruct (Q7 q (proj2 (in_elts _ _) Hq)
+                              (ltac:(rewrite (push_sort_drk _ _ _ _ _ _ _ Ep); exact (Hcq q Hq)))) as (q' & Eq0 & Hf).
       exists q'. split.
       + change (apR sr (sR sp q) = row_Var q'). rewrite (P1 q). unfold apR. simpl. exact Eq0.
       + apply finer_b_iff. exact Hf.

@@ -54,7 +54,10 @@ Proof.
   - cbn [push_sort] in E. destruct (finer_b (D b) k) eqn:Ef.
     + exact (IH D n k Sg D1 Hd HK (fun b' H => Hs b' (or_intror H))
                (fun b' H => Hnew b' (or_intror H)) sp D' n' E).
-    + destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s D''] n''] eqn:E1.
+    + destruct (finer_b k (D b)) eqn:Ef2;
+        [ | exact (IH D n k Sg D1 Hd HK (fun b' H => Hs b' (or_intror H))
+                     (fun b' H => Hnew b' (or_intror H)) sp D' n' E) ].
+      destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s D''] n''] eqn:E1.
       inversion E; subst sp D' n'.
       set (S' := supd Sg (ea n) (sT Sg b)).
       assert (HK' : KR (upd D (ea n) k) D1 S').
@@ -99,7 +102,10 @@ Proof.
   - cbn [push_sort_r] in E. destruct (finer_b (rk_sort (drk D q)) k) eqn:Ef.
     + exact (IH D n k Sg D1 Hd HK (fun b' H => Hs b' (or_intror H))
                (fun b' H => Hnew b' (or_intror H)) sr D' n' E).
-    + destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D q)))) k l (Datatypes.S n))
+    + destruct (finer_b k (rk_sort (drk D q))) eqn:Ef2;
+        [ | exact (IH D n k Sg D1 Hd HK (fun b' H => Hs b' (or_intror H))
+                     (fun b' H => Hnew b' (or_intror H)) sr D' n' E) ].
+      destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D q)))) k l (Datatypes.S n))
         as [[s D''] n''] eqn:E1.
       inversion E; subst sr D' n'.
       set (S' := srupd Sg (ea n) (sR Sg q)).

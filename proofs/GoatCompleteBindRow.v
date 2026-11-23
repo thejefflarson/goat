@@ -240,7 +240,8 @@ Proof.
   - inversion H; subst. reflexivity.
   - destruct (finer_b (D b) k).
     + exact (IH _ _ _ _ _ _ H).
-    + destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E.
+    + destruct (finer_b k (D b)); [ | exact (IH _ _ _ _ _ _ H) ].
+      destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst. exact (IH _ _ _ _ _ _ E).
 Qed.
 
@@ -255,7 +256,9 @@ Proof.
   - inversion H; subst. cbn [sR sid idr] in E. injection E as <-. left. reflexivity.
   - destruct (finer_b (rk_sort (drk D b)) k).
     + exact (IH _ _ _ _ _ _ H (fun c Hc => Hold c (or_intror Hc)) q q' Hq E).
-    + destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (Datatypes.S n))
+    + destruct (finer_b k (rk_sort (drk D b))) eqn:Ef2;
+        [ | exact (IH _ _ _ _ _ _ H (fun c Hc => Hold c (or_intror Hc)) q q' Hq E) ].
+      destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (Datatypes.S n))
         as [[s1 D1] n1] eqn:E1.
       inversion H; subst.
       assert (Hold' : forall c, In c l -> old (Datatypes.S n) c).

@@ -209,13 +209,15 @@ Definition Frv_typ (T : typ) (r : rowvar) : Prop := r `in` frv_typ T.
 (* is recorded in its scheme.                                              *)
 (* ================================================================== *)
 
-Inductive sort : Set := k_Any | k_Eq | k_Numeric | k_Literal.
+Inductive sort : Set := k_Any | k_Eq | k_Numeric | k_Literal | k_Quot.
 
 Inductive finer : sort -> sort -> Prop :=
  | finer_refl : forall k, finer k k
  | finer_any : forall k, finer k k_Any
- | finer_lit : forall k, finer k_Literal k
- | finer_numeric_eq : finer k_Numeric k_Eq.
+ | finer_lit : forall k, k <> k_Quot -> finer k_Literal k
+ | finer_numeric_eq : finer k_Numeric k_Eq
+ | finer_quot_numeric : finer k_Quot k_Numeric
+ | finer_quot_eq : finer k_Quot k_Eq.
 
 #[export] Hint Constructors finer : core.
 
@@ -259,10 +261,11 @@ Defined.
    and its concrete slots are [Eq] by themselves. *)
 Fixpoint sat (D : denv) (k : sort) (T : typ) {struct T} : Prop :=
   match T with
-  | typ_Int | typ_Float => True
+  | typ_Int => match k with k_Quot => False | _ => True end
+  | typ_Float => True
   | typ_Var a => finer (D a) k
   | typ_Record R =>
-      match k with k_Any => True | k_Eq | k_Numeric => rsat D k R | k_Literal => False end
+      match k with k_Any => True | k_Eq | k_Numeric | k_Quot => rsat D k R | k_Literal => False end
   | typ_String | typ_Bool | typ_Unit | typ_Bvar _ => k = k_Any \/ k = k_Eq
   | typ_Mu B => match k with k_Any => True | k_Eq => sat D k_Eq B | _ => False end
   | typ_Grp w A => match k with k_Any => True | k_Eq => spine_sat D w 0 A | _ => False end
@@ -876,18 +879,22 @@ Inductive bin_trap : bop -> exp -> exp -> trap_kind -> Prop :=
 Inductive bin_sig : denv -> bop -> typ -> typ -> typ -> Prop :=
  | sig_ring : forall D o A,
      kind o = k_ring -> sat D k_Numeric A -> bin_sig D o A A A
- | sig_quot : forall D, bin_sig D bop_div typ_Float typ_Float typ_Float
+ | sig_quot : forall D A, sat D k_Quot A -> bin_sig D bop_div A A A
  | sig_whole : forall D o A,
      kind o = k_whole -> sat D k_Numeric A -> bin_sig D o A A A
- | sig_quot_rec : forall D R, rfsat R ->
-     bin_sig D bop_div (typ_Record R) (typ_Record R) (typ_Record R)
  | sig_cmp : forall D o B,
      kind o = k_cmp -> sat D k_Eq B -> bin_sig D o B B typ_Bool.
 
+Lemma sig_quot_float : forall D, bin_sig D bop_div typ_Float typ_Float typ_Float.
+Proof. intros D. apply sig_quot. exact I. Qed.
+
 Lemma finer_trans : forall k1 k2 k3, finer k1 k2 -> finer k2 k3 -> finer k1 k3.
 Proof.
-  intros k1 k2 k3 H1 H2. inversion H1; subst; auto.
-  all: inversion H2; subst; auto.
+  intros k1 k2 k3 H1 H2. destruct k1, k2, k3;
+    first [ apply finer_refl | apply finer_any | (apply finer_lit; discriminate)
+          | apply finer_numeric_eq | apply finer_quot_numeric | apply finer_quot_eq
+          | (exfalso; inversion H1; subst; congruence)
+          | (exfalso; inversion H2; subst; congruence) ].
 Qed.
 
 Lemma finer_eqany : forall k k', finer k' k ->
@@ -905,7 +912,8 @@ Lemma sat_finer_mut : forall D,
   (forall R k k', finer k' k -> rsat D k' R -> rsat D k R).
 Proof.
   intros D. apply typ_row_mutind; simpl.
-  - intros k k' Hf _. exact I.
+  - intros k k' Hf H. destruct k; try exact I; destruct k'; simpl in H;
+      first [ contradiction | (exfalso; inversion Hf; subst; congruence) ].
   - intros k k' Hf _. exact I.
   - intros k k' Hf. apply finer_eqany. exact Hf.
   - intros k k' Hf. apply finer_eqany. exact Hf.
@@ -1036,9 +1044,8 @@ Proof.
   intros D D' o A B R st sr Hk Hr H.
   destruct H; simpl.
   - apply sig_ring; [ assumption | eapply sat_ap; eassumption ].
-  - apply sig_quot.
+  - apply sig_quot. eapply sat_ap; eassumption.
   - apply sig_whole; [ assumption | eapply sat_ap; eassumption ].
-  - rewrite (proj2 (fsat_ap_mut st sr) R H). apply sig_quot_rec; assumption.
   - apply sig_cmp; [ assumption | eapply sat_ap; eassumption ].
 Qed.
 
