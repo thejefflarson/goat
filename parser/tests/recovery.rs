@@ -261,12 +261,36 @@ fn a_keyword_stays_a_name_where_the_grammar_wants_a_name_while_recovering() {
     assert!(shape.starts_with("goat[expr[declaration[name(\"x\") value[name(\"foreign\")]]"));
 }
 
+/// Every node and token of the tree, trivia included, in order.
+fn entire(node: Node, out: &mut String) {
+    out.push_str(node.kind());
+    out.push('[');
+    for child in node.elements() {
+        match child {
+            Child::Node(inner) => entire(inner, out),
+            Child::Token(token) => {
+                out.push_str(&format!("{:?}:{:?} ", token.kind, token.start..token.end))
+            }
+        }
+    }
+    out.push(']');
+}
+
+fn has_recovery_node(node: Node) -> bool {
+    matches!(node.kind(), "ERROR" | "MISSING") || node.children().any(has_recovery_node)
+}
+
 #[test]
 fn valid_input_recovers_to_the_strict_tree_with_no_diagnostics() {
     let check = |source: &str| {
         let strict = parse(source).ok()?;
         let recovered = parse_recovering(source);
         assert_eq!(recovered.diagnostics, [], "{source:?}");
+        assert!(!has_recovery_node(recovered.cst.root()), "{source:?}");
+        let (mut a, mut b) = (String::new(), String::new());
+        entire(recovered.cst.root(), &mut a);
+        entire(strict.root(), &mut b);
+        assert_eq!(a, b, "{source:?}");
         assert_eq!(
             shape(recovered.cst.root()),
             shape(strict.root()),

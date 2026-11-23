@@ -59,6 +59,7 @@ GoatDen.v
 GoatDenRun.v
 GoatShape.v
 GoatParse.v
+GoatPegExec.v
 GoatExample.v
 GoatTagExample.v
 GoatLoopExample.v
