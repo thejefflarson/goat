@@ -12,6 +12,9 @@ Require Import Goat.GoatPrint.
 Require Import Goat.GoatPrintChain.
 Require Import Goat.GoatPrintPrim.
 Require Import Goat.GoatPrintBlock.
+Require Import Goat.GoatPrintArm.
+Require Import Goat.GoatPrintDecl.
+Require Import Goat.GoatDefs.
 Require Import Goat.GoatPrintParse.
 Require Import Goat.GoatPrintInst.
 Require Import Goat.GoatPrintDen.
@@ -51,24 +54,49 @@ Proof.
     rewrite flats_cons. unfold decl_named. flat_simp. exact Hx.
 Qed.
 
-Lemma goat_parses : forall e,
-  scoped [] 0 e ->
-  peg (E_rule R_goat) (print e) (Ok [print_tree e] []).
+Lemma plain_notbar : forall s, Plain s -> NotBar s.
 Proof.
-  intros e Hs.
+  intros s H. destruct s as [| [x | n | d | | y] s]; try exact I.
+  simpl in H. destruct H as (_ & _ & _ & _ & H). exact H.
+Qed.
+
+(* The tag declarations that open a program, then its expression. When there are
+   declarations the expression must not open with a parenthesis: a case with no
+   slots would read it as the case's slots. *)
+Definition StartsApart (D : list gdecl) (e : exp) : Prop :=
+  D = [] \/ NotParen (flats (block [] 0 e)).
+
+Lemma goat_parses : forall D e,
+  Forall WfGroup D -> StartsApart D e -> scoped [] 0 e ->
+  peg (E_rule R_goat) (print D e) (Ok [print_tree D e] []).
+Proof.
+  intros D e Hwf Hstart Hs.
   assert (HB : BlkAt [] 0 e) by exact (proj1 blk_all e [] 0 Hs).
   assert (Hexpr : ExprParses (block [] 0 e)) by exact (expr_parses [] 0 e HB).
-  assert (Hplain : Plain (flats (block [] 0 e) ++ [])) by exact (block_plain [] 0 e [] Hs HB Stop_nil).
+  assert (Hplain0 : Plain (flats (block [] 0 e) ++ []))
+    by exact (block_plain [] 0 e [] Hs HB Stop_nil).
+  assert (Hplain : Plain (flats (block [] 0 e))) by (rewrite app_nil_r in Hplain0; exact Hplain0).
+  assert (Hbar : NotBar (flats (block [] 0 e))) by exact (plain_notbar _ Hplain).
+  assert (Hparen : D <> [] -> NotParen (flats (block [] 0 e)))
+    by (intros Hd; destruct Hstart as [-> | H]; [ exfalso; exact (Hd eq_refl) | exact H ]).
+  assert (Hdecls : peg (E_star (E_rule R_tag_decl))
+                     (flats (print_decls D) ++ flats (block [] 0 e) ++ [])
+                     (Ok (print_decls D) (flats (block [] 0 e) ++ []))).
+  { rewrite app_nil_r.
+    destruct D as [| w D'].
+    - cbn [print_decls List.map flats flat_map app]. pok ltac:(first [ (eapply plain_tag; exact Hplain) ]).
+    - apply decls_parse; [ exact Hwf | exact Hbar | | exact Hplain ].
+      apply Hparen. intros H. discriminate H. }
   unfold print, print_tree. rewrite <- (app_nil_r (flats (block [] 0 e))).
   pok ltac:(first
-    [ (eapply plain_tag; exact Hplain)
+    [ exact Hdecls
     | (eapply Hexpr; constructor) ]).
 Qed.
 
 Lemma inst_closed : forall var_of,
   (forall e G k, scoped G k e -> inst_rec var_of G k 0 e = e) /\
   (forall fs G k, scoped_fields G k fs -> inst_fields var_of G k 0 fs = fs) /\
-  (forall ars : arms, True).
+  (forall ars : arms, forall w G k, scoped_arms G k w ars -> inst_arms var_of G k 0 ars = ars).
 Proof.
   intros var_of. apply exp_fields_mutind.
   - intros i G k (Hi & _). cbn [inst_rec].
@@ -105,8 +133,12 @@ Proof.
     destruct Hc as [-> | Hc]; [ reflexivity | rewrite (IHc G k Hc); reflexivity ].
   - intros a IHa o b IHb G k [Ha Hb]. cbn [inst_rec]. rewrite (IHa G k Ha), (IHb G k Hb). reflexivity.
   - intros a IH G k Hs. destruct Hs.
-  - intros w tg a IH G k Hs. destruct Hs.
-  - intros w a IHa ars IHars G k Hs. destruct Hs.
+  - intros w tg a IH G k [Htg Ha]. cbn [inst_rec].
+    destruct (payload_scoped _ _ _ Ha) as [-> | Hs]; [ reflexivity | ].
+    rewrite (IH G k Hs). reflexivity.
+  - intros w a IHa ars IHars G k [Ha Hars].
+    destruct ars as [| e | tg b rest]; try (exfalso; exact Hars).
+    cbn [inst_rec]. rewrite (IHa G k Ha), (IHars w G k Hars). reflexivity.
   - intros a IHa l b IHb G k [Ha Hb]. cbn [inst_rec]. rewrite (IHa G k Ha), (IHb G k Hb). reflexivity.
   - intros a IH l G k Hs. destruct Hs.
   - intros a IH G k Hs. destruct Hs.
@@ -115,7 +147,8 @@ Proof.
   - intros l e IHe fs IHfs G k [He Hfs]. cbn [inst_fields].
     rewrite (IHe G k He), (IHfs G k Hfs). reflexivity.
   - intros l e IHe fs IHfs G k Hs. destruct Hs.
-  - intros; exact I.
-  - intros; exact I.
-  - intros; exact I.
+  - intros w G k Hs. reflexivity.
+  - intros e IH w G k Hs. cbn [inst_arms]. rewrite (IH G k Hs). reflexivity.
+  - intros tg b IHb ars IHars w G k (Htg & Hs & _ & _ & Hr). cbn [inst_arms].
+    rewrite (IHb G (S k) Hs), (IHars w G k Hr). reflexivity.
 Qed.

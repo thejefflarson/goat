@@ -11,6 +11,8 @@ Require Import Goat.GoatPeg.
 Require Import Goat.GoatDen.
 Require Import Goat.GoatParse.
 Require Import Goat.GoatPrint.
+Require Import Goat.GoatPrintArm.
+Require Import Goat.GoatPrintInd.
 Open Scope string_scope.
 Open Scope list_scope.
 
@@ -58,15 +60,49 @@ Qed.
 Lemma occs_op : forall o, label_occurrences (op_tree o) = [].
 Proof. intros o. destruct o; reflexivity. Qed.
 
+Definition OccP (e : exp) : Prop :=
+  forall G P, occs (block G P e) = List.map lname (lbls G P e).
+
+Lemma occs_arm_names : forall m q, occs (arm_names q m) = [].
+Proof.
+  induction m as [| m IH]; intros q; [ reflexivity | ].
+  cbn [arm_names]. destruct m as [| m]; [ occ_simp; reflexivity | ].
+  occ_simp. rewrite IH. reflexivity.
+Qed.
+
+Lemma occs_pattern : forall w tg P, occs (arm_pattern w tg P) = [].
+Proof.
+  intros w tg P. unfold arm_pattern. destruct (arm_arity w tg) as [| m]; [ occ_simp; reflexivity | ].
+  occ_simp. rewrite occs_arm_names. reflexivity.
+Qed.
+
+(* The body of an arm is the term left after its slots are bound. *)
+Lemma occs_arm_body : forall m b G Q,
+  (forall k, OccP (arm_inner k b)) ->
+  occs (arm_body G Q (S m) b) = List.map lname (lbls_body G Q (S m) b).
+Proof.
+  induction m as [| m IH]; intros b G Q HP; destruct b; try reflexivity.
+  - cbn [arm_body lbls_body]. exact (HP 1 G (S Q)).
+  - cbn [arm_body lbls_body]. exact (IH b2 G (S Q) (fun k => HP (S k))).
+Qed.
+
+Lemma occs_slot_args : forall fs G P,
+  fields_all OccP fs -> occs (slot_args G P fs) = List.map lname (lbls_slots G P fs).
+Proof.
+  induction fs as [| l e rest IH | l e rest IH]; intros G P Hall; [ reflexivity | | ];
+    destruct Hall as [He Hall]; cbn [slot_args lbls_slots]; rewrite occs_cons;
+    occ_simp; rewrite (He G P), (IH G P Hall), List.map_app; reflexivity.
+Qed.
+
 Lemma occs_block :
   (forall e G P, occs (block G P e) = List.map lname (lbls G P e)) /\
   (forall fs, (forall G P, occs (field_trees G P fs) = List.map lname (lbls_fields G P fs)
                 /\ occs (more_field_trees G P fs) = List.map lname (lbls_fields G P fs))
               /\ (forall G P i, occs (member_trees G P i fs)
                                 = List.map lname (lbls_members G P fs))) /\
-  (forall ars : arms, True).
+  (forall ars, forall w G P, occs (arm_trees G P w ars) = List.map lname (lbls_arms G P w ars)).
 Proof.
-  apply exp_fields_mutind.
+  apply exp_fields_mutind_chain.
   - intros i G P. cbn [block]. occ_simp. reflexivity.
   - intros y G P. reflexivity.
   - intros n G P. cbn [block]. occ_simp. reflexivity.
@@ -115,8 +151,13 @@ Proof.
     rewrite occs_app, occs_cons, occs_op, !occs_as_binop, IHa, IHb, List.map_app.
     reflexivity.
   - intros a IH G P. cbn [block lbls]. occ_simp. reflexivity.
-  - intros w tg a IH G P. cbn [block lbls]. occ_simp. reflexivity.
-  - intros w a IHa ars IHars G P. cbn [block lbls]. occ_simp. reflexivity.
+  - intros w tg a IHa Hall G P. cbn [lbls].
+    destruct a; try (destruct fs as [| l x rest | l x rest]); cbn [block lbls]; occ_simp;
+      try reflexivity.
+    destruct (Hall _ eq_refl) as [Hx Hrall].
+    rewrite (Hx G P), (occs_slot_args _ G P Hrall), List.map_app. reflexivity.
+  - intros w a IHa ars IHars G P. cbn [block lbls]. occ_simp.
+    rewrite (IHa G P), (IHars w G P), List.map_app. reflexivity.
   - intros a IHa l b IHb G P. cbn [block lbls].
     unfold spread_tree, field_tree, paren_kids. occ_simp.
     rewrite IHa, IHb, List.map_app. cbn [List.map]. reflexivity.
@@ -142,14 +183,54 @@ Proof.
       * rewrite occs_cons. occ_simp. rewrite IHe, IHm. cbn [List.map]. rewrite List.map_app. reflexivity.
     + intros G P i. cbn [member_trees lbls_members]. unfold decl_named.
       rewrite occs_cons. occ_simp. rewrite IHe, (IHmem G P (S i)), List.map_app. reflexivity.
-  - intros; exact I.
-  - intros; exact I.
-  - intros; exact I.
+  - intros w G P. reflexivity.
+  - intros e IHe w G P. cbn [arm_trees lbls_arms]. occ_simp. rewrite (IHe G P). reflexivity.
+  - intros tg b IHb IHc rest IHrest w G P. cbn [arm_trees lbls_arms].
+    rewrite occs_cons, List.map_app, <- (IHrest w G P). f_equal.
+    occ_simp. rewrite occs_pattern. cbn [app].
+    destruct (arm_arity w tg) as [| m]; cbn [app].
+    + rewrite (IHb G (S P)). reflexivity.
+    + rewrite (occs_arm_body m b G (S P) IHc). reflexivity.
 Qed.
 
-Lemma labels_print : forall e,
-  labels (print_tree e) = nub_from [] (List.map lname (lbls [] 0 e)).
+(* A declaration mentions no label. *)
+Lemma occs_slot_trees : forall w cs, occs (slot_trees w cs) = [].
 Proof.
-  intros e. unfold labels, print_tree. f_equal.
-  occ_simp. exact (proj1 occs_block e [] 0).
+  intros w. induction cs as [| c cs IH]; [ reflexivity | ].
+  destruct cs as [| c2 cs].
+  - cbn [slot_trees]. unfold slot_tree. destruct (slot_name w c); reflexivity.
+  - rewrite slot_trees_cons2, !occs_cons, IH. unfold slot_tree.
+    destruct (slot_name w c); reflexivity.
+Qed.
+
+Lemma occs_case_tree : forall w tg cs, label_occurrences (case_tree w tg cs) = [].
+Proof.
+  intros w tg cs. unfold case_tree, case_kids. rewrite lo_node. cbn [lo_head].
+  destruct cs as [| c cs]; [ reflexivity | ].
+  repeat (first [ rewrite occs_cons | rewrite occs_app | rewrite occs_slot_trees ]). reflexivity.
+Qed.
+
+Lemma occs_more_case_trees : forall w css tg, occs (more_case_trees w tg css) = [].
+Proof.
+  intros w. induction css as [| cs css IH]; intros tg; [ reflexivity | ].
+  cbn [more_case_trees]. rewrite occs_cons. cbn [label_occurrences]. rewrite occs_cons.
+  rewrite occs_case_tree, (IH (S tg)). reflexivity.
+Qed.
+
+Lemma occs_print_decls : forall D, occs (print_decls D) = [].
+Proof.
+  induction D as [| w D IH]; [ reflexivity | ].
+  unfold print_decls in *. cbn [List.map]. rewrite occs_cons, IH.
+  unfold tag_decl_tree. rewrite lo_node. cbn [lo_head]. rewrite occs_app.
+  destruct (snd w) as [| cs rest].
+  - reflexivity.
+  - repeat (first [ rewrite occs_cons | rewrite occs_case_tree | rewrite occs_more_case_trees ]).
+    reflexivity.
+Qed.
+
+Lemma labels_print : forall D e,
+  labels (print_tree D e) = nub_from [] (List.map lname (lbls [] 0 e)).
+Proof.
+  intros D e. unfold labels, print_tree. f_equal.
+  occ_simp. rewrite occs_print_decls, (proj1 occs_block e [] 0). reflexivity.
 Qed.

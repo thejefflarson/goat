@@ -214,5 +214,5 @@ Definition printer_table : list (exp * list tok) := [
 ].
 
 Lemma printer_agrees :
-  List.map (fun row => print (fst row)) printer_table = List.map snd printer_table.
+  List.map (fun row => print [] (fst row)) printer_table = List.map snd printer_table.
 Proof. vm_compute. reflexivity. Qed.

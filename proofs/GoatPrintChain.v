@@ -21,7 +21,9 @@ Inductive Stop : list tok -> Prop :=
   | Stop_done : forall r, Stop (TSym "done" :: r)
   | Stop_then : forall r, Stop (TSym "then" :: r)
   | Stop_else : forall r, Stop (TSym "else" :: r)
-  | Stop_semi : forall r, Stop (TSym ";" :: r).
+  | Stop_semi : forall r, Stop (TSym ";" :: r)
+  | Stop_do : forall r, Stop (TSym "do" :: r)
+  | Stop_name : forall x r, Stop (TName x :: r).
 
 (* What can follow an expression, as opposed to a value. *)
 Inductive StopE : list tok -> Prop :=
@@ -31,7 +33,9 @@ Inductive StopE : list tok -> Prop :=
   | StopE_rbrace : forall r, StopE (TSym "}" :: r)
   | StopE_done : forall r, StopE (TSym "done" :: r)
   | StopE_then : forall r, StopE (TSym "then" :: r)
-  | StopE_else : forall r, StopE (TSym "else" :: r).
+  | StopE_else : forall r, StopE (TSym "else" :: r)
+  | StopE_do : forall r, StopE (TSym "do" :: r)
+  | StopE_name : forall x r, StopE (TName x :: r).
 
 Lemma stop_of_stopE : forall r, StopE r -> Stop r.
 Proof. intros r H. inversion H; constructor. Qed.
@@ -52,7 +56,7 @@ Definition NotDecl (s : list tok) : Prop :=
    foreign binding. *)
 Definition Plain (s : list tok) : Prop :=
   match s with
-  | TSym x :: _ => x <> "not" /\ x <> "-" /\ x <> "tag" /\ x <> "foreign"
+  | TSym x :: _ => x <> "not" /\ x <> "-" /\ x <> "tag" /\ x <> "foreign" /\ x <> "|"
   | TName x :: _ => x <> "foreign"
   | _ => True
   end.
@@ -105,26 +109,26 @@ Qed.
 Lemma plain_not : forall s, Plain s -> peg (E_rule R_not_op) s Fail.
 Proof.
   intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
-  simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
+  simpl in H. destruct H as (H1 & H2 & H3 & H4 & H5). pfail ext_text.
 Qed.
 
 Lemma plain_neg : forall s, Plain s -> peg (E_rule R_negation) s Fail.
 Proof.
   intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
-  simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
+  simpl in H. destruct H as (H1 & H2 & H3 & H4 & H5). pfail ext_text.
 Qed.
 
 Lemma plain_foreign : forall s, Plain s -> peg (E_rule R_foreign_decl) s Fail.
 Proof.
   intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
   - simpl in H. pfail ext_text.
-  - simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
+  - simpl in H. destruct H as (H1 & H2 & H3 & H4 & H5). pfail ext_text.
 Qed.
 
 Lemma plain_tag : forall s, Plain s -> peg (E_rule R_tag_decl) s Fail.
 Proof.
   intros s H. destruct s as [| [x | n | d | | y] s1]; try (pfail nope; fail).
-  simpl in H. destruct H as (H1 & H2 & H3 & H4). pfail ext_text.
+  simpl in H. destruct H as (H1 & H2 & H3 & H4 & H5). pfail ext_text.
 Qed.
 
 (* ---- chains ---- *)
