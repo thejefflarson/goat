@@ -302,7 +302,7 @@ Proof.
   - apply sig_quot.
   - apply sig_whole; [ assumption | eapply sat_pw; eauto ].
   - apply sig_quot_rec; assumption.
-  - apply sig_cmp; assumption.
+  - apply sig_cmp; [ assumption | eapply sat_pw; eauto ].
 Qed.
 
 Lemma typing_pw_mut :

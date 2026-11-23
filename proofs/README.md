@@ -49,6 +49,7 @@ preservation) is B3 (#71).
 | `GoatRecArith.v` | Record arithmetic (ADR 0012): `row_sig` (every field of a row takes the operator), `bin_sig_record`, and `zip_typing`, which pairs the fields of two records typed by rows equivalent to one numeric row and types the record of operator applications that `rec_zip` builds. Progress and preservation use it. |
 | `GoatSpread.v` | Spread and restrict (phase 4): the inversions, and `spread_step_typing` and `restrict_step_typing`, which preservation uses. |
 | `GoatPhase4.v` | Phase 4 of ADR 0037: worked examples for spread (an update, an extension, one `set_x` for a record with and without `x`), restrict, and what has no derivation (a type-changing update, a restrict on a record without the label). |
+| `GoatPhase6.v` | Phase 6, stage 1a: worked examples for the `Eq` sort: `()` compares, a function does not, `same = program(x) do x == x done` is used at `Int`, `String` and `Unit`. The differential test covers the algorithm. |
 | `GoatRecArithExamples.v` | Record arithmetic, worked: a record sum, a nested product with the fields in another order at both levels, a record with a non-number field (no derivation). |
 | `GoatSound.v` | The general substitution lemma `typing_tsubst_gen_mut` (freshening the let-generalized variables so `gen` commutes with a capturing substitution, `casch_gen_sch_equiv`, and so the sorts they carry survive), with `typing_weaken` (L4) and `typing_denv_agree` / `typing_inst_gen` (a derivation moves between two kinding environments); then term substitution **L6a/L6b** (`typing_subst_gen_mut`), **Preservation** and **Soundness**. All axiom- and admit-free. |
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
@@ -112,20 +113,19 @@ inference algorithm's soundness and its mu-freedom, and the three of
 What the model leaves out, each checked against `goat check` and `goat run`
 (`docs/semantics.md` section 9): the embedded target's 32-bit `Int`, IEEE
 rounding, infinities and NaN (a `Float` is opaque), the `trap()` builtin,
-comparison of `Unit` (phase 6), and the `Eq` and `Ordered` constraints (a
-comparison applies at concrete types; a generic comparison waits for those
-sorts). One gap is accepted: `5 // 0` typed at `Float` (two bare numerals the
+comparison of records and tags (phase 6; a record comparison steps to any `Bool`
+until then, `st_cmprec`) and the `Ordered` sort. A comparison takes the sort `Eq`
+(`sat`), which `Int`, `Float`, strings, booleans, `Unit` and a record of
+numbers satisfy, so a generic comparison types and `Unit` compares. One gap is accepted: `5 // 0` typed at `Float` (two bare numerals the
 checker settles as `Float`, as in `f(5 // 0)` for `f = program(x) do x + 1.5 done`)
 steps as two `Int`s in the calculus, so it traps with `Div_by_zero`, while the
 compiled program divides decimals and gives `inf`. `+ - *` and numerals are generic over the sorts `Numeric` and
 `Literal`, below. The inference algorithm (`GoatInfer.v`) covers the
 whole of phase 1: `Unit`, strings, Float values, `if`, `float(e)` and the
 operators, besides functions, bindings and records, and it infers the generic
-operators (below). A comparison unifies both operands with one type taken from
-whichever operand type is already known (`bin_arg`), so `x < 1.5` fixes `x` to
-`Float`; an operand that is a numeral's variable settles at `Int`, and a
-comparison of two other variables is rejected, because a generic comparison
-waits for the `Eq` and `Ordered` sorts.
+operators (below). A comparison unifies both operands with one fresh variable
+of sort `Eq` (`generic_sort`), so `x < 1.5` fixes `x` to `Float` and
+`program(a, b) do a == b done` is generic.
 
 The parser fragment widens in step: a string, a `Float` literal (a `TDec` token
 that denotes the opaque `e_dec`), a conditional with or without an `else` (the
@@ -506,7 +506,6 @@ outside the calculus (the first of a fixed order that it uses):
 | 19 | the checker rejects a method used as a plain function or the reverse (`MethodFlag`) |
 | 18 | a foreign host call |
 | 7 | arithmetic on non-primitive operands |
-| 4 | a comparison at a parameter left generic |
 | 4 | an `if` without an `else` |
 | 4 | a numeral of 2^30 or more |
 | 2 | a comparison of non-primitive operands |
@@ -641,17 +640,8 @@ choice.
   is typed in `d_any`, where each such variable stands for any type of its
   sort, so the defaulting of ADR 0017 (a `Literal` variable left free is `Int`) is
   the choice of that instance; the algorithm makes no choice and the theorem
-  covers every one. The one place it commits is a comparison: `1 < 2` has no
-  derivation at a variable (`cmp_typ` is concrete), so the comparison waits.
-  `infer_closed_env` runs `infer` twice. The first run (`lenient`) leaves a
-  comparison whose operands are all variables unconstrained, so the rest of the
-  program may force the variable (`v = 71 // 88` then `v <= v` and `v - 3.1`
-  makes it `Float`). The second run settles each such comparison at the concrete
-  type the first run's final substitution gave the variable, else `Int`
-  (`resolved`, the `ora` argument of `bin_arg`), and checks it. Only the second
-  run is returned. `infer_sound` holds for every `ora` of concrete types, so
-  the choice needs no proof: a wrong one makes the second run fail, never
-  return a wrong type.
+  covers every one. A comparison needs no choice either: it unifies its
+  operands at an `Eq` variable.
 
 The soundness proof (`GoatInferSound.v`) carries one invariant per step, `Good D
 n s D' n'`: `D` is `Any` beyond `n`, `s` is a substitution of the algorithm, the

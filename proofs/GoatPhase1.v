@@ -19,7 +19,7 @@ Import ListNotations.
 (* Integer arguments of the constructors below are written as numerals. *)
 Arguments bs_ring_int o a%_znum_scope b%_znum_scope _ _.
 Arguments bs_whole o a%_znum_scope b%_znum_scope _ _ _.
-Arguments bs_cmp_int o a%_znum_scope b%_znum_scope _.
+Arguments cr_int a%_znum_scope b%_znum_scope.
 Arguments bt_ring_overflow o a%_znum_scope b%_znum_scope _ _.
 Arguments bt_whole_overflow o a%_znum_scope b%_znum_scope _ _ _.
 Arguments st_tofloat z%_znum_scope d.
@@ -45,10 +45,10 @@ Qed.
 (* What an operator's signature rules out, after the operand types are known. *)
 Ltac sig_absurd Hs :=
   inversion Hs; subst;
-  repeat match goal with
-         | H : cmp_typ _ |- _ => inversion H; subst; clear H
-         end;
   simpl in *;
+  repeat match goal with
+         | H : _ = _ \/ _ = _ |- _ => destruct H as [H | H]; try discriminate H
+         end;
   first [ discriminate | congruence ].
 
 (* A type [T] equal to a known head is that head. *)
@@ -134,14 +134,14 @@ Example string_order_types :
   typing d_any nil (e_bin (e_str [97]) bop_lt (e_str [98])) typ_Bool.
 Proof.
   eapply T_Bin; [ apply T_Str | apply T_Str | apply sig_cmp ];
-    first [ constructor | reflexivity ].
+    first [ reflexivity | (right; reflexivity) | constructor ].
 Qed.
 
 (* false < true *)
 Example bool_order_types : typing d_any nil (e_bin e_false bop_lt e_true) typ_Bool.
 Proof.
   eapply T_Bin; [ apply T_False | apply T_True | apply sig_cmp ];
-    first [ constructor | reflexivity ].
+    first [ reflexivity | (right; reflexivity) | constructor ].
 Qed.
 
 (* ---- they run ---- *)
@@ -215,7 +215,7 @@ Proof. intros. apply bs_cmp_float; [ reflexivity | constructor ]. Qed.
 
 (* The Int comparison is exact *)
 Example int_comparison_runs : bin_step bop_lt (e_num 1) (e_num 2) e_true.
-Proof. pose proof (bs_cmp_int bop_lt 1 2 eq_refl) as H. exact H. Qed.
+Proof. pose proof (bs_cmp bop_lt (e_num 1) (e_num 2) _ eq_refl (cr_int 1 2)) as H. exact H. Qed.
 
 (* float(n) steps to a Float, and takes a step before its operand is a value *)
 Example coercion_runs : forall d, step (e_tofloat (e_num 3)) (e_dec d).
@@ -231,17 +231,17 @@ Qed.
 (* a prefix comes before the longer string; the first differing byte decides *)
 Example prefix_orders_first :
   bin_step bop_lt (e_str [97]) (e_str [97; 98]) e_true.
-Proof. pose proof (bs_cmp_str bop_lt [97] [97; 98] eq_refl) as H. exact H. Qed.
+Proof. pose proof (bs_cmp bop_lt (e_str [97]) (e_str [97; 98]) _ eq_refl (cr_str [97] [97; 98])) as H. exact H. Qed.
 
 Example first_byte_decides :
   bin_step bop_gt (e_str [98]) (e_str [97; 122]) e_true.
-Proof. pose proof (bs_cmp_str bop_gt [98] [97; 122] eq_refl) as H. exact H. Qed.
+Proof. pose proof (bs_cmp bop_gt (e_str [98]) (e_str [97; 122]) _ eq_refl (cr_str [98] [97; 122])) as H. exact H. Qed.
 
 Example false_before_true : bin_step bop_lt e_false e_true e_true.
-Proof. pose proof (bs_cmp_bool bop_lt e_false e_true false true eq_refl eq_refl eq_refl) as H. exact H. Qed.
+Proof. pose proof (bs_cmp bop_lt e_false e_true _ eq_refl (cr_bool e_false e_true false true eq_refl eq_refl)) as H. exact H. Qed.
 
 Example unequal_strings : bin_step bop_ne (e_str [1]) (e_str [2]) e_true.
-Proof. pose proof (bs_cmp_str bop_ne [1] [2] eq_refl) as H. exact H. Qed.
+Proof. pose proof (bs_cmp bop_ne (e_str [1]) (e_str [2]) _ eq_refl (cr_str [1] [2])) as H. exact H. Qed.
 
 (* if 1 < 2 then 10 else 20 runs to 10 *)
 Example if_runs :
@@ -249,7 +249,7 @@ Example if_runs :
 Proof.
   eapply ms_step.
   - apply st_ite1. apply st_bin; [ constructor | constructor | ].
-    pose proof (bs_cmp_int bop_lt 1 2 eq_refl) as H. exact H.
+    pose proof (bs_cmp bop_lt (e_num 1) (e_num 2) _ eq_refl (cr_int 1 2)) as H. exact H.
   - cbn. eapply ms_step; [ apply st_ite_true | apply ms_refl ].
 Qed.
 
@@ -351,7 +351,7 @@ Example coercion_of_bool_rejected : forall T,
   ~ typing d_any nil (e_tofloat e_true) T.
 Proof.
   intros T H. destruct (tofloat_inv _ _ _ _ H) as [A [H1 [Hs _]]].
-  apply true_inv in H1. head_eq H1. subst A. simpl in Hs. discriminate.
+  apply true_inv in H1. head_eq H1. subst A. simpl in Hs. destruct Hs as [Hs | Hs]; discriminate Hs.
 Qed.
 
 (* float(1.5) is the Float itself: the coercion is the identity on a Float *)
@@ -369,7 +369,7 @@ Proof.
   intros T H. destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
   apply str_inv in H2. head_eq H2. subst B.
   inversion Hs; subst;
-    first [ (apply num_inv in H1; simpl in H1; discriminate) | (simpl in *; discriminate) | congruence ].
+    first [ (apply num_inv in H1; simpl in H1; first [ discriminate | (destruct H1 as [H1 | H1]; discriminate H1) ]) | (simpl in *; discriminate) | congruence ].
 Qed.
 
 (* true + true: arithmetic wants numbers *)
@@ -385,7 +385,7 @@ Example number_condition_rejected : forall T,
   ~ typing d_any nil (e_ite (e_num 1) (e_num 2) (e_num 3)) T.
 Proof.
   intros T H. destruct (ite_inv _ _ _ _ _ _ H) as [T' [H1 _]].
-  apply num_inv in H1. simpl in H1. discriminate.
+  apply num_inv in H1. simpl in H1. destruct H1 as [H1 | H1]; discriminate H1.
 Qed.
 
 (* if true then 1 else 2.5 done is a Float: the numeral takes the branch's type *)
@@ -430,7 +430,7 @@ Proof.
   injection Heq as Hs _.
   assert (Hin : ga `in` AtomSetImpl.diff (ftv_typ (typ_Arrow (typ_Var ga) (typ_Var ga))) {})
     by (simpl; apply AtomSetFacts.diff_iff; split; [ fsetdec | fsetdec ]).
-  pose proof (Hsat ga Hin) as H. cbn [gen s_sk s_tq] in H. rewrite <- Hs in H. simpl in H. discriminate.
+  pose proof (Hsat ga Hin) as H. cbn [gen s_sk s_tq] in H. rewrite <- Hs in H. simpl in H. destruct H as [H | H]; discriminate H.
 Qed.
 
 (* let double = program(x) do x * 2 done, then {0: double(1), 1: double(1.5)} *)
@@ -581,6 +581,6 @@ Proof. pose proof (bs_ring_int bop_mul 3 2 eq_refl eq_refl) as H. exact H. Qed.
    differential test runs the extracted algorithm on them (differential/README.md). *)
 
 Example infer_if_branches :
-  infer_closed 20 (e_ite (e_bin (e_str [97]) bop_lt (e_str [98])) e_unit e_unit)
+  infer_closed 20 (e_ite e_true e_unit e_unit)
   = Some typ_Unit.
 Proof. vm_compute. reflexivity. Qed.

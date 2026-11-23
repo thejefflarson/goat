@@ -835,6 +835,7 @@ Proof.
             | (right; eexists; reflexivity) | (left; reflexivity) | (right; reflexivity) ] ].
   - (* T_Num: the type is Int, Float or a Literal variable *)
     destruct T; simpl in *; try discriminate; try contradiction;
+      try (match goal with Hs : _ = _ \/ _ = _ |- _ => destruct Hs as [Hs | Hs]; discriminate Hs end);
       repeat apply conj; intros Hq; apply teq_thead in Hq; simpl in Hq;
       first [ discriminate | (eexists; reflexivity) | (left; eexists; reflexivity) ].
   - (* T_Conv *) destruct (IHHty Hval) as [A [B [C E]]].
@@ -854,12 +855,26 @@ Proof.
   - (* T_Conv *) apply IHHty; auto. eapply teq_trans; eassumption.
 Qed.
 
+(* A value of type [Unit] is [unit]. *)
+Lemma canon_unit : forall D G v T,
+  value v -> typing D G v T -> teq T typ_Unit -> v = e_unit.
+Proof.
+  intros D G v T Hval Hty. revert Hval.
+  induction Hty; intros Hval Hq; try solve [ inversion Hval ];
+    try solve [ apply teq_thead in Hq; simpl in Hq; discriminate ].
+  - (* T_Num *) destruct T; simpl in *; try contradiction;
+      try (destruct H0 as [H0 | H0]; discriminate H0); apply teq_thead in Hq; simpl in Hq; discriminate.
+  - apply IHHty; [ exact Hval | eapply teq_trans; [ eassumption | exact Hq ] ].
+  - reflexivity.
+Qed.
+
 (* A value of a Literal type is a numeral or a decimal. *)
 Lemma canon_numeric : forall D G v A,
   value v -> typing D G v A -> sat D k_Literal A ->
   (exists n, v = e_num n) \/ (exists d, v = e_dec d).
 Proof.
-  intros D G v A Hv Hty Hs. destruct A; simpl in Hs; try discriminate; try contradiction.
+  intros D G v A Hv Hty Hs. destruct A; simpl in Hs; try discriminate; try contradiction;
+    try (destruct Hs as [Hs | Hs]; discriminate Hs).
   - destruct (canon_base _ _ _ _ Hv Hty) as [C _]. left. exact (C (teq_refl _)).
   - destruct (canon_base _ _ _ _ Hv Hty) as [_ [C _]]. exact (C (teq_refl _)).
   - left. exact (canon_var _ _ _ _ _ Hv Hty (teq_refl _)).
@@ -906,7 +921,8 @@ Proof.
     by (intros v Hv Hty; destruct (canon_base _ _ _ _ Hv Hty) as [_ [C _]]; exact (C (teq_refl _))).
   destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o A Hk Hsat | D0 R0 Hr | D0 o B Hk HB ].
   - (* [+ - *] on two numbers of one Numeric type *)
-    destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity).
+    destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity);
+      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat).
     + (* Int: in range it steps, out of range it traps *)
       destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
       apply ring_nums; assumption.
@@ -928,7 +944,8 @@ Proof.
     + apply bs_float; [ right; reflexivity | constructor ].
     + apply bs_float; [ right; reflexivity | constructor ].
   - (* [//] and [%] on two numbers of one Numeric type *)
-    destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity).
+    destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity);
+      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat).
     + (* Int: a zero divisor traps, and so does a quotient out of range *)
       destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
       apply whole_nums; assumption.
@@ -944,23 +961,29 @@ Proof.
       apply whole_nums; assumption.
   - (* [/] on records is not a scalar operation *)
     exfalso. eapply HnR. reflexivity.
-  - (* a comparison of two Ints, Floats, strings or booleans *)
-    inversion HB; subst.
+  - (* a comparison of two values of one Eq type, but not a record *)
+    destruct B; simpl in HB; try (exfalso; eapply HnR; reflexivity);
+      try (destruct HB as [HB | HB]; discriminate HB); try discriminate HB.
     + destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
-      left. eexists. apply bs_cmp_int; assumption.
+      left. eexists. apply bs_cmp; [ assumption | apply cr_int ].
     + destruct (Hflt _ Hv1 H1) as [[a ->] | [x ->]]; destruct (Hflt _ Hv2 H2) as [[b ->] | [y ->]];
         left.
-      * eexists. apply bs_cmp_int; assumption.
+      * eexists. apply bs_cmp; [ assumption | apply cr_int ].
       * exists (of_bool true). apply bs_cmp_float; [ assumption | constructor ].
       * exists (of_bool true). apply bs_cmp_float; [ assumption | constructor ].
       * exists (of_bool true). apply bs_cmp_float; [ assumption | constructor ].
-    + destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [C1 _]]]. destruct (C1 (teq_refl _)) as [p ->].
-      destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [C2 _]]]. destruct (C2 (teq_refl _)) as [q ->].
-      left. eexists. apply bs_cmp_str; assumption.
     + destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [_ C1]]].
       destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [_ C2]]].
       destruct (C1 (teq_refl _)) as [-> | ->]; destruct (C2 (teq_refl _)) as [-> | ->];
-        (left; eexists; eapply bs_cmp_bool; [ exact Hk | reflexivity | reflexivity ]).
+        (left; eexists; apply bs_cmp; [ exact Hk | eapply cr_bool; reflexivity ]).
+    + rewrite (canon_unit _ _ _ _ Hv1 H1 (teq_refl _)), (canon_unit _ _ _ _ Hv2 H2 (teq_refl _)).
+      left. eexists. apply bs_cmp; [ assumption | apply cr_unit ].
+    + destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [C1 _]]]. destruct (C1 (teq_refl _)) as [p ->].
+      destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [C2 _]]]. destruct (C2 (teq_refl _)) as [q ->].
+      left. eexists. apply bs_cmp; [ assumption | apply cr_str ].
+    + destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
+      destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
+      left. eexists. apply bs_cmp; [ assumption | apply cr_int ].
 Qed.
 
 (* An operator applied to two values of the types its signature wants either
@@ -978,7 +1001,13 @@ Proof.
   destruct A as [ | | | | | | R0 | | | | ];
     try (destruct (bin_progress_scalar _ _ _ _ _ _ _ _ Hs Hv1 Hv2 H1 H2
            (fun R0 H => ltac:(discriminate H))) as [Hb | Hb]; [ left | right; left ]; exact Hb).
-  destruct (bin_sig_record _ _ _ _ _ Hs) as [-> [_ Hrow]].
+  destruct (kind_cmp_dec o) as [Hc | Hnc].
+  - (* two records compare *)
+    inversion Hs; subst; try (simpl in Hc; discriminate Hc); try congruence.
+    destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 _]]]].
+    destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 _]]]].
+    right. right. eexists. apply (st_cmprec _ _ _ Eq); assumption.
+  - destruct (bin_sig_record _ _ _ _ _ Hnc Hs) as [-> [_ Hrow]].
   destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 [Hf1 Hq1]]]]].
   destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 [Hf2 Hq2]]]]].
   destruct (zip_typing _ _ o _ _ (field_typing_fs_plain _ _ _ _ Hf1) (no_meth_plain fs1) _ _ _
@@ -1432,16 +1461,16 @@ Qed.
    moves only the shape of a record or an arrow, never a base type or a
    variable.  A record's [Numeric] sort is not kept, since [rsat] reads the row
    as it is written, so the lemma excludes it. *)
-Lemma teq_sat_iff : forall T T', teq T T' -> forall D k, k <> k_Numeric ->
+Lemma teq_sat_iff : forall T T', teq T T' -> forall D k, (k = k_Any \/ k = k_Literal) ->
   (sat D k T <-> sat D k T').
 Proof.
   induction 1; intros D kk Hk; try (simpl; tauto).
-  - destruct kk; simpl; tauto.
+  - destruct kk; simpl; first [ tauto | (exfalso; destruct Hk as [Hk | Hk]; discriminate Hk) ].
   - rewrite (IHteq1 D kk Hk). apply IHteq2. exact Hk.
   - symmetry. apply IHteq. exact Hk.
 Qed.
 
-Lemma teq_sat : forall T T' D k, teq T T' -> k <> k_Numeric -> sat D k T -> sat D k T'.
+Lemma teq_sat : forall T T' D k, teq T T' -> (k = k_Any \/ k = k_Literal) -> sat D k T -> sat D k T'.
 Proof. intros T T' D k H Hk. apply (teq_sat_iff _ _ H D k Hk). Qed.
 
 Lemma num_inv : forall D G n T, typing D G (e_num n) T -> sat D k_Literal T.
@@ -1449,7 +1478,7 @@ Proof.
   intros D G n T H. remember (e_num n) as e0 eqn:He.
   induction H; try discriminate He.
   - (* T_Num *) inversion He; subst. assumption.
-  - (* T_Conv *) eapply teq_sat; [ exact H0 | discriminate | apply IHtyping; exact He ].
+  - (* T_Conv *) eapply teq_sat; [ exact H0 | right; reflexivity | apply IHtyping; exact He ].
 Qed.
 
 Lemma bin_inv : forall D G e1 o e2 T,

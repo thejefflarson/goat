@@ -33,7 +33,7 @@ preservation must survive it. Three representations were weighed:
 2. **The first cut is `+ - *`, numerals and `float(e)`.** A numeral has any
    `Literal` type, `Float` included, and two bare numerals step as `Int`s.
    `float(e)` takes any `Numeric` operand and is the identity on a `Float`. A
-   comparison stays at concrete types until the `Eq` and `Ordered` sorts exist.
+   comparison takes the `Eq` sort (phase 6, stage 1a); the `Ordered` sort comes later.
 3. **Defaulting is not a rule.** ADR 0017 settles a `Literal` variable left
    unconstrained at `Int`, and `Numeric` has no default. A closed derivation in
    `d_any` instantiates each generalized variable at a concrete type, so the

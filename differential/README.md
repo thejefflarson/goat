@@ -53,7 +53,10 @@ methods need different receivers is rejected by both (`lit = {a: program(self) d
 then `lit.a()`). Anything else (the prelude, tags, an operator on records or on Unit) is outside the
 calculus and skipped.
 
-The generic operators are compared. `+ - *` on operands the checker leaves as
+The generic operators are compared. A comparison takes an `Eq` or `Ordered` sort (`sat` in
+`GoatDefs.v`): `program(a, b) do a == b done` and `same` of it used at `Int` and at `String` are in the corpus,
+and so is a comparison on a variable a later use settles (`v = 71 // 88` then `if v <= v then v - 3.1 else 4.0 done`
+is `Float`), and `/` on an open operand. `+ - *` on operands the checker leaves as
 type variables (`program(x) do x * 2 done`, `add = program(a, b) do a + b done`),
 a numeral at `Float` (`1 + 1.5`, written as the bare numeral), and a generic
 function used at `Int` and at `Float` are all in the corpus, and so is a call that
@@ -68,17 +71,6 @@ syntactic values is one too, as in the checker's `is_syntactic_value`.
 A few kinds of
 program are skipped, each because the calculus and the checker differ on it:
 
-- a comparison at a parameter's generic type (`program(a, b) do a == b done`,
-  or `same` of that used at `Int` and at `String`): the checker leaves the
-  parameter a variable with an `Eq` or `Ordered` kind, and the calculus has no
-  such sort, so the algorithm takes one concrete type and cannot type both
-  uses. A comparison on a variable a later use settles is compared: the first run
-  of the algorithm leaves it open and the second settles it at what the program
-  forced (`v = 71 // 88` then `if v <= v then v - 3.1 else 4.0 done` is
-  `Float`), and `/` on an open operand is compared too. The reader skips a
-  comparison whose operand type is a checker variable outside `number_vars`; the
-  checker does not record a `Numeric` variable there (`x == x % x` in a function),
-  so `FORCED` in `core_corpus.rs` pins such programs as compared anyway;
 - a rest pattern with no fields (`program({...r}) do r done`): the checker types
   it as a record, and the calculus has no way to say that without a label;
 - a program the checker rejects over the method flag (a dot call on a plain

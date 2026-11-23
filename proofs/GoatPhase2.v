@@ -15,7 +15,7 @@ Require Import Goat.GoatSound.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 
-Arguments bs_cmp_int o a%_znum_scope b%_znum_scope _.
+Arguments cr_int a%_znum_scope b%_znum_scope.
 
 Definition a0 : atom := fresh nil.
 

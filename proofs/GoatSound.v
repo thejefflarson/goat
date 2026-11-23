@@ -1841,6 +1841,7 @@ Proof.
   { intros R0 HA. subst A.
     destruct (canon_record _ _ _ _ Hv1 H1) as [fs [Rf [-> _]]].
     inversion Hb; subst; try (simpl in *; discriminate);
+      try (match goal with Hc : cmp_rel _ _ _ |- _ => inversion Hc; subst; simpl in *; discriminate end);
       try (match goal with Hf : fl_pair _ _ |- _ => inversion Hf end). }
   destruct Hb; inversion Hs; subst;
     try (exfalso; eapply HnR; reflexivity);
@@ -1858,15 +1859,15 @@ Qed.
 
 (* The record of operator applications that [st_binrec] steps to has the type
    of the operands. *)
-Lemma binrec_typing : forall D G o fs1 fs2 fs A B R,
+Lemma binrec_typing : forall D G o fs1 fs2 fs A B R, kind o <> k_cmp ->
   bin_sig D o A B R -> typing D G (e_rec fs1) A -> typing D G (e_rec fs2) B ->
   rec_zip o (fs_plain fs1) (fs_plain fs2) fs -> typing D G (e_rec fs) R.
 Proof.
-  intros D G o fs1 fs2 fs A B R Hs H1 H2 Hz.
+  intros D G o fs1 fs2 fs A B R Hnc Hs H1 H2 Hz.
   destruct (rec_inv _ _ _ _ H1) as [Rf1 [Hf1 Hq1]].
   destruct (rec_inv _ _ _ _ H2) as [Rf2 [Hf2 Hq2]].
   destruct (teq_Record_inv _ _ Hq1) as [R1 [-> Hr1]].
-  destruct (bin_sig_record _ _ _ _ _ Hs) as [-> [-> Hrow]].
+  destruct (bin_sig_record _ _ _ _ _ Hnc Hs) as [-> [-> Hrow]].
   destruct (teq_Record_inv _ _ Hq2) as [R2 [Heq Hr2]]. inversion Heq; subst R2.
   destruct (zip_typing _ _ o _ _ (field_typing_fs_plain _ _ _ _ Hf1) (no_meth_plain fs1) _ _ _
               (field_typing_fs_plain _ _ _ _ Hf2) Hr1 Hr2 Hrow) as [fs' [Ro [Hz' [Hf Hq]]]].
@@ -2119,10 +2120,18 @@ Proof.
   - (* st_binrec: an operator on two records.  The record of operator
        applications, field by field, has the row the operands have
        ([binrec_typing]). *)
-    intros fs1 o fs2 fs Hv1 Hv2 Hz D S G T HS Hty.
+    intros fs1 o fs2 fs Hnc Hv1 Hv2 Hz D S G T HS Hty.
     destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
     eapply T_Conv;
-      [ exact (binrec_typing _ _ _ _ _ _ _ _ _ Hs H1 H2 Hz) | exact Hteq ].
+      [ exact (binrec_typing _ _ _ _ _ _ _ _ _ Hnc Hs H1 H2 Hz) | exact Hteq ].
+  - (* st_cmprec: a comparison of two records is a Bool, which is what the
+       comparison signature gives. *)
+    intros fs1 o fs2 c Hk Hv1 Hv2 D S G T HS Hty.
+    destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
+    assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
+    inversion Hs; subst;
+      try (exfalso; first [ congruence | (simpl in Hk; discriminate Hk) ]).
+    eapply T_Conv; [ apply typing_of_bool; exact Hu | exact Hteq ].
   - (* st_tofloat1: the operand of a coercion stepped. *)
     intros e e' Hstep IH D S G T HS Hty.
     destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].

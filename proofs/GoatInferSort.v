@@ -145,7 +145,7 @@ Proof.
   intros D V k0. apply typ_row_mutind; simpl; intros.
   all: first
     [ assumption | exact I | contradiction
-    | (destruct k; [ exact I | apply H; assumption | contradiction ])
+    | (destruct k; [ exact I | apply H; assumption | apply H; assumption | contradiction ])
     | (rewrite ext_out; [ assumption | apply H0; fsetdec ])
     | (destruct H1 as [H3 H4]; split;
        [ apply H; [ exact H3 | intros b Hb; apply H2; fsetdec ]
@@ -310,8 +310,8 @@ Proof.
   intros D. apply typ_row_mutind; simpl; intros.
   all: first
     [ exact I | discriminate
-    | (destruct k; [ reflexivity | discriminate | discriminate ])
-    | (destruct k; [ exact I | apply H; assumption | discriminate ])
+    | (destruct k; first [ reflexivity | (left; reflexivity) | (right; reflexivity) | discriminate ])
+    | (destruct k; [ exact I | apply H; assumption | apply H; assumption | discriminate ])
     | (apply finer_b_sound; assumption)
     | (apply Bool.andb_true_iff in H1 as [H1 H2]; split; auto) ].
 Qed.

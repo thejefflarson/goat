@@ -57,7 +57,7 @@ Example record_sum_runs :
 Proof.
   unfold xrec.
   eapply ms_step.
-  { apply st_binrec; [ repeat constructor | repeat constructor | ].
+  { apply st_binrec; [ (intro Hx; discriminate Hx) | repeat constructor | repeat constructor | ].
     eapply rz_cons; [ reflexivity | apply rz_nil ]. }
   eapply ms_step.
   { apply st_rec, stf_here. apply st_bin; [ constructor | constructor | ].
@@ -123,11 +123,11 @@ Example nested_product_runs :
 Proof.
   unfold outer_l, outer_r, inner_l, inner_r.
   eapply ms_step.
-  { apply st_binrec; [ repeat constructor | repeat constructor | ].
+  { apply st_binrec; [ (intro Hx; discriminate Hx) | repeat constructor | repeat constructor | ].
     eapply rz_cons; [ reflexivity | ].
     eapply rz_cons; [ reflexivity | apply rz_nil ]. }
   eapply ms_step.
-  { apply st_rec, stf_here. apply st_binrec; [ repeat constructor | repeat constructor | ].
+  { apply st_rec, stf_here. apply st_binrec; [ (intro Hx; discriminate Hx) | repeat constructor | repeat constructor | ].
     eapply rz_cons; [ reflexivity | ].
     eapply rz_cons; [ reflexivity | apply rz_nil ]. }
   eapply ms_step.
@@ -158,7 +158,7 @@ Proof.
   destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
   destruct (rec_inv _ _ _ _ H1) as [Rf [Hft Hq]].
   destruct (teq_Record_inv _ _ Hq) as [R2 [-> Hr]].
-  destruct (bin_sig_record _ _ _ _ _ Hs) as [-> [-> Hrow]].
+  destruct (bin_sig_record _ bop_add _ _ _ (ltac:(intro Hx; discriminate Hx)) Hs) as [-> [-> Hrow]].
   inversion Hft; subst.
   match goal with Hf : field_typing _ _ (fs_cons ly e_true fs_nil) _ |- _ => inversion Hf; subst end.
   match goal with Ht : typing _ _ e_true _ |- _ => apply true_inv in Ht end.

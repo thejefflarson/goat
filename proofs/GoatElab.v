@@ -174,6 +174,12 @@ Proof. destruct b; reflexivity. Qed.
 Lemma erase_fl_pair : forall x y, fl_pair x y -> erase x = x /\ erase y = y.
 Proof. intros x y H. inversion H; subst; split; reflexivity. Qed.
 
+Lemma erase_cmp_rel : forall a b c, cmp_rel a b c -> erase a = a /\ erase b = b.
+Proof.
+  intros a b c H. destruct H; cbn [erase]; try (split; reflexivity).
+  rewrite (erase_val_bool _ _ H), (erase_val_bool _ _ H0). split; reflexivity.
+Qed.
+
 Lemma erase_bin_step : forall o a b v,
   bin_step o a b v -> erase a = a /\ erase b = b /\ erase v = v.
 Proof.
@@ -184,6 +190,9 @@ Proof.
                try rewrite E1; try rewrite E2; clear E1 E2
            | Hv : val_bool ?x = Some _ |- _ =>
                rewrite (erase_val_bool _ _ Hv); clear Hv
+           | Hc : cmp_rel ?x ?y _ |- _ =>
+               destruct (erase_cmp_rel _ _ _ Hc) as [E1 E2]; clear Hc;
+               try rewrite E1; try rewrite E2; clear E1 E2
            end;
     try rewrite erase_of_bool; repeat split; reflexivity.
 Qed.
@@ -226,6 +235,7 @@ Proof.
     rewrite E1, E2, E3. apply st_bin; auto.
   - (* binrec *) right. apply st_binrec; auto.
     rewrite <- !erase_fs_plain. apply erase_rec_zip. exact r1.
+  - (* cmprec *) right. rewrite erase_of_bool. cbn [erase]. apply st_cmprec; auto.
   - (* tofloat1 *) destruct H as [E | S]; [ left; rewrite E; reflexivity | right; apply st_tofloat1; exact S ].
   - (* tofloat *) right. apply st_tofloat.
   - (* tofloat dec *) right. apply st_tofloat_dec.

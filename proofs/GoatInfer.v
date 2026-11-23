@@ -77,7 +77,8 @@ Definition finer_b (k1 k2 : sort) : bool :=
   match k1, k2 with
   | _, k_Any => true
   | k_Literal, _ => true
-  | k_Numeric, k_Numeric => true
+  | k_Numeric, (k_Numeric | k_Eq) => true
+  | k_Eq, k_Eq => true
   | _, _ => false
   end.
 
@@ -86,7 +87,8 @@ Fixpoint sat_b (D : denv) (k : sort) (T : typ) {struct T} : bool :=
   | typ_Int | typ_Float => true
   | typ_Var a => finer_b (D a) k
   | typ_Record R =>
-      match k with k_Any => true | k_Numeric => rsat_b D R | k_Literal => false end
+      match k with k_Any => true | k_Eq | k_Numeric => rsat_b D R | k_Literal => false end
+  | typ_String | typ_Bool | typ_Unit => match k with k_Any | k_Eq => true | _ => false end
   | _ => match k with k_Any => true | _ => false end
   end
 with rsat_b (D : denv) (R : row) {struct R} : bool :=
@@ -330,67 +332,15 @@ Definition let_pin (D : denv) (e : exp) (T : typ) : typ :=
 (* Algorithm W                                                          *)
 (* ------------------------------------------------------------------ *)
 
-(* The type a comparison, [/], [//] or [%] unifies both operands with, taken
-   from whichever operand type is already known (the right first).  [/] takes
-   Floats and [//] and [%] take Ints whatever the operands are.  A comparison
-   is at a concrete type, so a comparison whose operands are all type
-   variables (a numeral's, the result of a [+ - * // %], a parameter's) waits
-   for the type the rest of the program gives the variable.
-   [infer_closed_env] runs the algorithm twice.  The first run, [lenient],
-   leaves such a comparison unconstrained and so lets the rest of the program
-   force the variable.  The second run settles the comparison at the type the
-   first run gave the variable, or at [Int] if it gave none ([ora] holds that
-   choice), and checks it.  Only the second run is returned, and it is proved
-   sound for every [ora] of concrete types.  [+ - *] are generic and take no
-   such type. *)
-Definition num_ty (A : typ) : bool :=
-  match A with typ_Int | typ_Float => true | _ => false end.
+(* How a binary operator types its operands.  [/] takes Floats.  Every other
+   operator is generic: both operands get one fresh variable's type, which is
+   [Numeric] for [+ - * // %] and [Eq] for a comparison (ADR 0036), and a
+   comparison gives a [Bool] whatever that type is. *)
+Definition generic_sort (o : bop) : sort :=
+  match kind o with k_cmp => k_Eq | _ => k_Numeric end.
 
-Definition cmp_ty (A : typ) : bool :=
-  match A with typ_Int | typ_Float | typ_String | typ_Bool => true | _ => false end.
-
-Definition open_var (T : typ) : option atom :=
-  match T with typ_Var a => Some a | _ => None end.
-
-Definition settle (lenient : bool) (ora : atom -> typ) (a : atom) : typ :=
-  if lenient then typ_Var a else ora a.
-
-Definition bin_arg (lenient : bool) (ora : atom -> typ) (D : denv) (o : bop) (A B : typ)
-  : option typ :=
-  match kind o with
-  | k_ring => None
-  | k_quot => Some typ_Float
-  | k_whole => None
-  | k_cmp => if cmp_ty B then Some B else if cmp_ty A then Some A
-             else match open_var A, open_var B with
-                  | Some a, _ => Some (settle lenient ora a)
-                  | None, Some b => Some (settle lenient ora b)
-                  | None, None => None
-                  end
-  end.
-
-(* The result type of a binary operator at an operand type, mirroring
-   [bin_sig]. *)
-Definition bin_ty (o : bop) (A : typ) : option typ :=
-  match kind o, A with
-  | k_ring, typ_Int => Some typ_Int
-  | k_ring, typ_Float => Some typ_Float
-  | k_quot, typ_Float => Some typ_Float
-  | k_cmp, typ_Int => Some typ_Bool
-  | k_cmp, typ_Float => Some typ_Bool
-  | k_cmp, typ_String => Some typ_Bool
-  | k_cmp, typ_Bool => Some typ_Bool
-  | _, _ => None
-  end.
-
-(* A pending comparison, at a variable, has a Bool result. *)
-Definition bin_res (lenient : bool) (o : bop) (A : typ) : option typ :=
-  if lenient then
-    match A, kind o with
-    | typ_Var _, k_cmp => Some typ_Bool
-    | _, _ => bin_ty o A
-    end
-  else bin_ty o A.
+Definition bin_res (o : bop) (A : typ) : typ :=
+  match kind o with k_cmp => typ_Bool | _ => A end.
 
 (* A recursive group's members are functions. *)
 Fixpoint is_fn_group (fs : fields) : bool :=
@@ -454,7 +404,7 @@ Definition arms_wf_b (w : gdecl) (ars : arms) : bool :=
      end.
 
 Definition is_generic_op (o : bop) : bool :=
-  match kind o with k_ring | k_whole => true | _ => false end.
+  match kind o with k_quot => false | _ => true end.
 
 Definition fresh_var (G : ctx) (e : exp) : atom :=
   fresh (AtomSetImpl.elements (dom G `union` fv_exp e)).

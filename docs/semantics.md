@@ -41,8 +41,8 @@ the implementation diverge, §8 flags it.
   introduction forms are whole-number literals, decimal literals, `true` and
   `false`, string literals, and the unit value; their elimination forms are
   `if` on a `Bool`, the arithmetic operators `+ - * / // %`, and the
-  comparisons `< <= > >= == !=` (ADR 0017, ADR 0036), each at concrete types
-  (§4). An `Int` is a signed 64-bit integer; a `Float` is opaque: every
+  comparisons `< <= > >= == !=` (ADR 0017, ADR 0036), each at a type of sort
+  `Eq` (§4). An `Int` is a signed 64-bit integer; a `Float` is opaque: every
   `Float` operation is unspecified (§6);
 - an explicit **Int-to-Float coercion** `float(e)`, which elaboration inserts
   wherever the checker accepts an `Int` for a `Float` (§4);
@@ -69,11 +69,11 @@ for the declarative relation (Leijen, Thms 1–2); the declarative relation is
 what the sharp-edge theorem is about.
 
 **Out of the core (modeled by nothing — see §9 for the "why").** Reference
-counting / heap / the Perceus model; variants and `match`; the `Eq` and `Ordered` constraints (a comparison is typed at concrete
-types only, so a generic comparison waits for those sorts); the `trap()`
+counting / heap / the Perceus model; variants and `match`; the `Ordered` sort and a real comparison of records (a record comparison
+steps to any `Bool`); the `trap()`
 builtin; the 32-bit `Int` of
 the embedded target; IEEE rounding, infinities and NaN (a `Float` is opaque);
-comparison of `Unit`, records and tags (phase 6); rank-2
+comparison of records and tags (phase 6); rank-2
 inference; `and`, `or`, `not`
 and unary minus; monomorphization.
 
@@ -283,7 +283,8 @@ The operator signature `⊙ : τ₁, τ₂ ⇒ τ` (ADR 0017, ADR 0036) says whi
 types an operator takes and what it gives. Both operands of an arithmetic or
 comparison operator have one type. `+ - * // %` are generic: the one type may be any
 `Numeric` type, `Int`, `Float`, a `Numeric` variable or a closed record of
-`Numeric` types. A comparison stays at the four concrete types.
+`Numeric` types. A comparison takes one type of sort `Eq`: `Int`, `Float`, `String`,
+`Bool`, `Unit`, an `Eq` variable or a closed record of `Numeric` types.
 
 ```
  ⊙ ∈ {+, -, *}      Δ ⊢ τ : Numeric         ⊙ ∈ {//, %}      Δ ⊢ τ : Numeric
@@ -418,8 +419,8 @@ Rule by rule:
     `Float`s a `Float`, so `7.5 // 2` is a `Float` and
     `program(x) do x // 2 done` is generic. The checker accepts `7 // 2.5` and
     types it `Float`; elaboration writes it `float(7) // 2.5`.
-  - A comparison takes two `Int`s, two `Float`s, two strings or two booleans
-    (`S-Cmp`); so `1 < "a"` has no derivation and `true + true` has none (the
+  - A comparison takes two operands of one `Eq` type (`S-Cmp`), such as two `Int`s,
+    two `Float`s, two strings, two booleans or two `()`s; so `1 < "a"` has no derivation and `true + true` has none (the
     checker: `expected Number, found String`, `` `+` needs numbers… ``). The
     checker accepts `1 < 1.5`; elaboration writes it `float(1) < 1.5`.
 - **`T-Num`.** A whole-number literal has any `Literal` type: `Int`, `Float`,
