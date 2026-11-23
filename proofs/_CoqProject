@@ -9,6 +9,7 @@ GoatPresence.v
 GoatRecArith.v
 GoatMu.v
 GoatTags.v
+GoatConv.v
 GoatMeta.v
 GoatSpread.v
 GoatSubst.v
@@ -48,8 +49,12 @@ GoatCompleteGen.v
 GoatCompleteMono.v
 GoatCompleteLet.v
 GoatSatTeq.v
+GoatRowNf.v
 GoatCompleteRows.v
+GoatCompleteSide.v
 GoatCompleteUnify.v
+GoatCompleteSorts.v
+GoatCompleteBind.v
 GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v

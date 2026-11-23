@@ -16,6 +16,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatMu.
 Require Import Goat.GoatMeta.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Stdlib.Lists.List.
@@ -104,11 +105,11 @@ Example ill_typed_fold_rejected :
   ~ typing d_any nil (e_fold (e_rec (fs_cons 1 e_true fs_nil))) P.
 Proof.
   intros H. destruct (fold_inv _ _ _ _ H) as [B [Hteq [_ [_ Hb]]]].
-  pose proof (teq_unroll B P_body Hteq) as Hun.
+  pose proof (teq_unroll B P_body (teqD_Mu_teq _ _ _ Hteq)) as Hun.
   change (typ_Mu P_body) with P in Hun. rewrite P_unrolls in Hun.
   destruct (rec_inv _ _ _ _ Hb) as [R [Hft Hr]].
-  pose proof (teq_trans _ _ _ Hr Hun) as Hrr.
-  destruct (teq_Record_inv _ _ Hrr) as [R2 [E Hreq]]. injection E as E. subst R2.
+  pose proof (teqD_trans _ _ _ _ Hr (teq_teqD _ _ _ Hun)) as Hrr.
+  destruct (teqD_Record_inv _ _ _ Hrr) as [R2 [E Hreq]]. injection E as E. subst R2.
   inversion Hft; subst.
   match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
   pose proof (req_pi _ _ Hreq 0) as Hpi. cbn in Hpi. inversion Hpi.
@@ -135,7 +136,7 @@ Theorem no_fold_at_self_application : forall D G e T,
   ~ teq T (typ_Mu (typ_Arrow (typ_Bvar 0) (typ_Bvar 0))).
 Proof.
   intros D G e T H Heq. destruct (fold_inv _ _ _ _ H) as [B [Hteq [_ [Hg _]]]].
-  pose proof (teq_trans _ _ _ Hteq Heq) as H2.
+  pose proof (teqD_Mu_teq _ _ _ (teqD_trans _ _ _ _ Hteq (teq_teqD _ _ _ Heq))) as H2.
   destruct (teq_Mu_inv _ _ H2) as [B' [E Hb]]. injection E as E. subst B'.
   apply self_application_is_unguarded. eapply guarded_teq; [ exact Hb | exact Hg ].
 Qed.

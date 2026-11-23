@@ -21,6 +21,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatTags.
 Require Import Goat.GoatMeta.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Stdlib.Lists.List.
@@ -184,41 +185,41 @@ Proof.
   intros T H. destruct (ite_inv _ _ _ _ _ _ H) as [T' [_ [H2 [H3 _]]]].
   destruct (con_inv _ _ _ _ _ _ H2) as [Ts [_ [_ Ha]]].
   destruct (con_inv _ _ _ _ _ _ H3) as [Ts' [_ [_ Hb]]].
-  pose proof (teq_trans _ _ _ Ha (teq_sym _ _ Hb)) as Hab.
-  apply teq_Grp_inv in Hab. destruct Hab as [A' [E _]]. injection E as E. discriminate E.
+  pose proof (teqD_trans _ _ _ _ Ha (teqD_sym _ _ _ Hb)) as Hab.
+  apply teqD_Grp_inv in Hab. destruct Hab as [A' [E _]]. injection E as E. discriminate E.
 Qed.
 
 (* A group is generic but does not mix: the parameter is one type throughout a
    value.  Link(true, Link("a", Empty)) has no derivation, because the tail
    would have to be a list of Bool and it is a list of String. *)
 
-Lemma true_inv : forall D G T, typing D G e_true T -> teq typ_Bool T.
+Lemma true_inv : forall D G T, typing D G e_true T -> teqD D typ_Bool T.
 Proof.
   intros D G T H. remember e_true as e0 eqn:He.
   induction H; try discriminate He.
-  - apply teq_refl.
-  - eauto using teq_trans.
+  - apply teqD_refl.
+  - eauto using teqD_trans.
 Qed.
 
-Lemma str_inv : forall D G q T, typing D G (e_str q) T -> teq typ_String T.
+Lemma str_inv : forall D G q T, typing D G (e_str q) T -> teqD D typ_String T.
 Proof.
   intros D G q T H. remember (e_str q) as e0 eqn:He.
   induction H; try discriminate He.
-  - eauto using teq_trans.
-  - apply teq_refl.
+  - eauto using teqD_trans.
+  - apply teqD_refl.
 Qed.
 
 (* Link(h, t) at a type: the head has the type of the group's parameter, and
    the tail is a list of the same parameter. *)
 Lemma link_inv : forall D G h t T, typing D G (link h t) T ->
   exists A B Ts, typing D G h A /\ typing D G t B /\
-    teq A (nth 0 Ts typ_Unit) /\ teq B (typ_Grp list_g (spine Ts)) /\
-    teq (typ_Grp list_g (spine Ts)) T.
+    teqD D A (nth 0 Ts typ_Unit) /\ teqD D B (typ_Grp list_g (spine Ts)) /\
+    teqD D (typ_Grp list_g (spine Ts)) T.
 Proof.
   intros D G h t T H. unfold link in H.
   destruct (con_inv _ _ _ _ _ _ H) as [Ts [_ [Hp Hg]]]. cbn in Hp.
   destruct (rec_inv _ _ _ _ Hp) as [R [Hft Hr]].
-  apply teq_Record_inv in Hr. destruct Hr as [R2 [E Hreq]]. injection E as E. subst R2.
+  apply teqD_Record_inv in Hr. destruct Hr as [R2 [E Hreq]]. injection E as E. subst R2.
   inversion Hft; subst.
   match goal with Hf : field_typing _ _ (fs_cons 1 _ _) _ |- _ => inversion Hf; subst end.
   exists T0, T1, Ts. refine (conj _ (conj _ (conj _ (conj _ Hg)))); try assumption.
@@ -233,13 +234,13 @@ Proof.
   intros T H. unfold mixed in H.
   destruct (link_inv _ _ _ _ _ H) as [A [B [Ts [Hh [Ht [HA [HB _]]]]]]].
   destruct (link_inv _ _ _ _ _ Ht) as [A' [B' [Ts' [Hh' [_ [HA' [_ Hg']]]]]]].
-  pose proof (teq_trans _ _ _ Hg' HB) as Hsp.
-  apply teq_Grp_inv in Hsp. destruct Hsp as [Z [E Hz]]. injection E as E. subst Z.
+  pose proof (teqD_trans _ _ _ _ Hg' HB) as Hsp.
+  apply teqD_Grp_inv in Hsp. destruct Hsp as [Z [E Hz]]. injection E as E. subst Z.
   pose proof (teq_nth _ _ (teq_spine_inv _ _ Hz) 0) as Hn.
   apply true_inv in Hh. apply str_inv in Hh'.
-  assert (Hbs : teq typ_Bool typ_String).
-  { eapply teq_trans; [ exact Hh | ]. eapply teq_trans; [ exact HA | ].
-    eapply teq_trans; [ apply teq_sym; exact Hn | ].
-    eapply teq_trans; [ apply teq_sym; exact HA' | ]. apply teq_sym. exact Hh'. }
-  apply teq_Bool_inv in Hbs. discriminate Hbs.
+  assert (Hbs : teqD d_any typ_Bool typ_String).
+  { eapply teqD_trans; [ exact Hh | ]. eapply teqD_trans; [ exact HA | ].
+    eapply teqD_trans; [ apply teq_teqD; apply teq_sym; exact Hn | ].
+    eapply teqD_trans; [ apply teqD_sym; exact HA' | ]. apply teqD_sym. exact Hh'. }
+  apply teqD_Bool_inv in Hbs. discriminate Hbs.
 Qed.

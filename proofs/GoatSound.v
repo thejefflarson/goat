@@ -131,6 +131,7 @@ Require Import Goat.GoatTags.
 Require Import Goat.GoatRecArith.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSpread.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatBij.
 Require Import Goat.GoatHM.
@@ -1466,7 +1467,7 @@ Proof.
   - (* T_Proj *) intros D G e l T R Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     eapply T_Proj. simpl in IH. eapply IH; eauto.
   - (* T_Conv *) intros D G e T T' Ht IH Hte st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
-    eapply T_Conv; [ eapply IH; eauto | apply teq_ap; auto ].
+    eapply T_ConvD; [ eapply IH; eauto | eapply teqD_ap; eauto ].
   - (* T_Unit *) intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl. apply T_Unit; auto.
   - (* T_Str *) intros D G q Hu st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl. apply T_Str; auto.
   - (* T_If *)
@@ -1963,8 +1964,8 @@ Proof.
     apply (IH Sd HSd Hag G2); reflexivity.
   - (* T_Proj *) intros D G e l T R Hr IH Sd HSd Hag G2 Heq; subst. simpl. eapply T_Proj.
     apply (IH Sd HSd Hag G2); reflexivity.
-  - (* T_Conv *) intros D G e T T' Hr IH Hteq Sd HSd Hag G2 Heq; subst.
-    eapply T_Conv; [ apply (IH Sd HSd Hag G2); reflexivity | exact Hteq ].
+  - (* T_ConvD *) intros D G e T T' Hr IH Hteq Sd HSd Hag G2 Heq; subst.
+    eapply T_ConvD; [ apply (IH Sd HSd Hag G2); reflexivity | exact Hteq ].
   - (* T_Unit *) intros D G Huq Sd HSd Hag G2 Heq; subst. simpl. apply T_Unit. solve_uniq.
   - (* T_Str *) intros D G q Huq Sd HSd Hag G2 Heq; subst. simpl. apply T_Str. solve_uniq.
   - (* T_If *) intros D G e1 e2 e3 T Hr1 IH1 Hr2 IH2 Hr3 IH3 Sd HSd Hag G2 Heq; subst. simpl.
@@ -2109,12 +2110,12 @@ Lemma typing_of_bool : forall D G b, uniq G -> typing D G (of_bool b) typ_Bool.
 Proof. intros D G b Hu. destruct b; [ apply T_True | apply T_False ]; exact Hu. Qed.
 
 (* A decimal literal has type [Float], through any conversion. *)
-Lemma dec_inv : forall D G d T, typing D G (e_dec d) T -> teq typ_Float T.
+Lemma dec_inv : forall D G d T, typing D G (e_dec d) T -> teqD D typ_Float T.
 Proof.
   intros D G d T H. remember (e_dec d) as e0 eqn:He.
   induction H; try discriminate He.
-  - apply teq_refl.
-  - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
+  - apply teqD_refl.
+  - eapply teqD_trans; [ apply IHtyping; exact He | assumption ].
 Qed.
 
 Lemma ext_idem_d : forall D V k Vr rk,
@@ -2158,8 +2159,8 @@ Proof.
     try (apply T_Num; [ exact Hu | first [ exact I | exact (num_inv _ _ _ _ H1) ] ]).
   all: try (match goal with Hf : fl_pair _ _ |- _ => destruct Hf end).
   all: first
-    [ (eapply T_Conv; [ apply T_Dec; exact Hu | exact (dec_inv _ _ _ _ H1) ])
-    | (eapply T_Conv; [ apply T_Dec; exact Hu | exact (dec_inv _ _ _ _ H2) ]) ].
+    [ (eapply T_ConvD; [ apply T_Dec; exact Hu | exact (dec_inv _ _ _ _ H1) ])
+    | (eapply T_ConvD; [ apply T_Dec; exact Hu | exact (dec_inv _ _ _ _ H2) ]) ].
 Qed.
 
 
@@ -2172,13 +2173,17 @@ Proof.
   intros D G o fs1 fs2 fs A B R Hnc Hs H1 H2 Hz.
   destruct (rec_inv _ _ _ _ H1) as [Rf1 [Hf1 Hq1]].
   destruct (rec_inv _ _ _ _ H2) as [Rf2 [Hf2 Hq2]].
-  destruct (teq_Record_inv _ _ Hq1) as [R1 [-> Hr1]].
+  destruct (teqD_Record_inv _ _ _ Hq1) as [R1 [-> Hr1]].
   destruct (bin_sig_record _ _ _ _ _ Hnc Hs) as [-> [-> Hrow]].
-  destruct (teq_Record_inv _ _ Hq2) as [R2 [Heq Hr2]]. inversion Heq; subst R2.
-  destruct (zip_typing _ _ o _ _ (field_typing_fs_plain _ _ _ _ Hf1) (no_meth_plain fs1) _ _ _
-              (field_typing_fs_plain _ _ _ _ Hf2) Hr1 Hr2 Hrow) as [fs' [Ro [Hz' [Hf Hq]]]].
+  destruct (teqD_Record_inv _ _ _ Hq2) as [R2 [Heq Hr2]]. inversion Heq; subst R2.
+  destruct (zip_typing _ _ o _ _ (field_typing_fs_plain _ _ _ _ (field_typing_nf _ _ _ _ Hf1))
+              (no_meth_plain fs1) _ _ _
+              (field_typing_fs_plain _ _ _ _ (field_typing_nf _ _ _ _ Hf2)) Hr1 Hr2
+              (row_sig_nf _ _ _ Hrow)) as [fs' [Ro [Hz' [Hf Hq]]]].
   rewrite (rec_zip_det _ _ _ _ Hz _ Hz').
-  eapply T_Conv; [ apply T_Record; [ exact Hf | eapply rec_zip_no_meth; exact Hz' ] | apply teq_rec; exact Hq ].
+  eapply T_ConvD; [ apply T_Record; [ exact Hf | eapply rec_zip_no_meth; exact Hz' ] | ].
+  apply teqD_Record. pose proof (req_reqD D _ _ Hq) as H3. unfold reqD in H3.
+  rewrite nfR_idem in H3. exact H3.
 Qed.
 
 Scheme step_mut := Induction for step Sort Prop
@@ -2284,20 +2289,20 @@ Proof.
     pick fresh x for (L \u fv_exp e).
     assert (HxL : x `notin` L) by fsetdec.
     assert (Hxe : x `notin` fv_exp e) by fsetdec.
-    assert (Hv' : typing D G v A') by (eapply T_Conv; [ exact Harg | apply teq_sym; exact HA ]).
+    assert (Hv' : typing D G v A') by (eapply T_ConvD; [ exact Harg | apply teq_sym; exact HA ]).
     assert (Hopen : typing D G (subst_exp v x (open_exp_wrt_exp e (e_fvar_f x))) B')
       by (eapply typing_subst; [ exact HS | apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hv' ]).
     rewrite <- subst_intro in Hopen by exact Hxe.
-    eapply T_Conv; [ exact Hopen | ].
+    eapply T_ConvD; [ exact Hopen | ].
     eapply teq_trans; [ exact HB | exact Hbt ].
   - (* st_app1: the function part of a call stepped.  Congruence. *)
     intros e1 e1' e2 Hstep IH D S G T HS Hty.
     apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
-    eapply T_Conv; [ eapply T_App; [ eapply IH; [ exact HS | exact Hty1 ] | exact Hty2 ] | exact Hbt ].
+    eapply T_ConvD; [ eapply T_App; [ eapply IH; [ exact HS | exact Hty1 ] | exact Hty2 ] | exact Hbt ].
   - (* st_app2: the argument of a call stepped. *)
     intros v e2 e2' Hv Hstep IH D S G T HS Hty.
     apply app_inv in Hty. destruct Hty as [A [B [Hty1 [Hty2 Hbt]]]].
-    eapply T_Conv; [ eapply T_App; [ exact Hty1 | eapply IH; [ exact HS | exact Hty2 ] ] | exact Hbt ].
+    eapply T_ConvD; [ eapply T_App; [ exact Hty1 | eapply IH; [ exact HS | exact Hty2 ] ] | exact Hbt ].
   - (* Case: [let x = v in e2] with [v] a value steps to [e2] with [v] plugged
        in for [x] (st_letv).  [x] may be used at several types in [e2], so a
        generalized binding uses the POLYMORPHIC substitution lemma. *)
@@ -2313,20 +2318,20 @@ Proof.
           | apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hty1 ].
       - eapply typing_subst; [ exact HS | apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hty1 ]. }
     rewrite <- subst_intro in Hopen by exact Hxe.
-    eapply T_Conv; [ exact Hopen | exact Hteq ].
+    eapply T_ConvD; [ exact Hopen | exact Hteq ].
   - (* st_let1: the bound expression of a [let] stepped.  Congruence.  The
        bound term of a generalized binding is typed under the extended
        environment, which is still [Any] outside a finite set. *)
     intros e1 e1' e2 Hstep IH D S G T HS Hty.
     apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 Hteq]]]].
     destruct Hty1 as [[Hgv [k [rk [Tm [Hlp [Hty1 Hbody]]]]]] | [Hty1 Hbody]].
-    + eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1) (k := k) (rk := rk) (Tm := Tm);
+    + eapply T_ConvD; [ eapply T_Let with (L := L) (T1 := T1) (k := k) (rk := rk) (Tm := Tm);
                        [ eapply step_gen; eassumption
                        | intros Hc a Ha; apply (Hlp (step_let_open _ _ Hstep Hc) a Ha)
                        | eapply IH; [ apply supp_ok_ext2; exact HS | exact Hty1 ]
                        | exact Hbody ]
                      | exact Hteq ].
-    + eapply T_Conv; [ eapply T_LetMono with (L := L) (T1 := T1);
+    + eapply T_ConvD; [ eapply T_LetMono with (L := L) (T1 := T1);
                        [ eapply IH; [ exact HS | exact Hty1 ] | exact Hbody ] | exact Hteq ].
   - (* Case: a recursive group unrolls (st_letrec).  Name the group's
        record type [R].  The group itself, [letrec fs in p], has type [R]
@@ -2388,129 +2393,131 @@ Proof.
       by (eapply typing_subst_poly with (P := G);
             [ fsetdec | fsetdec | exact HS | apply Hbody; exact HpL | exact Hrecgen | exact Hrec ]).
     rewrite <- subst_intro in Hopen by exact Hpe.
-    eapply T_Conv; [ exact Hopen | exact Hteq ].
+    eapply T_ConvD; [ exact Hopen | exact Hteq ].
   - (* st_proj: the record in a field access stepped.  Congruence. *)
     intros e e' l Hstep IH D S G T HS Hty.
     apply proj_inv in Hty. destruct Hty as [T0 [R [Hty0 Hteq]]].
-    eapply T_Conv; [ eapply T_Proj; eapply IH; [ exact HS | exact Hty0 ] | exact Hteq ].
+    eapply T_ConvD; [ eapply T_Proj; eapply IH; [ exact HS | exact Hty0 ] | exact Hteq ].
   - (* st_projrec: field access on a finished record steps to the field. *)
     intros fs l v Hrv Hlook D S G T HS Hty.
     apply proj_inv in Hty. destruct Hty as [T0 [R [Hrec Hteq]]].
     apply rec_inv in Hrec. destruct Hrec as [R' [Hft Hreq]].
-    apply teq_Record_inv in Hreq. destruct Hreq as [R2 [Heq Hreq]].
+    apply teqD_Record_inv in Hreq. destruct Hreq as [R2 [Heq Hreq]].
     inversion Heq; subst.
+    rewrite nfR_ext in Hreq.
     apply req_surface in Hreq. destruct Hreq as [T1 [rest [Hpi Hteq1]]].
-    destruct (field_lookup_some _ _ _ _ _ _ _ Hft Hpi) as [v0 [Hlook0 Hty0]].
+    rewrite pi_nf in Hpi. destruct (map_cons_inv _ _ _ _ _ _ Hpi) as [T2 [rest2 [Hpi2 [E1 _]]]].
+    destruct (field_lookup_some _ _ _ _ _ _ _ Hft Hpi2) as [v0 [Hlook0 Hty0]].
     assert (v0 = v) by congruence. subst v0.
-    eapply T_Conv; [ exact Hty0 | ].
-    eapply teq_trans; [ exact Hteq1 | exact Hteq ].
+    eapply T_ConvD; [ exact Hty0 | ].
+    eapply teqD_trans; [ | exact Hteq ]. unfold teqD. rewrite E1. exact Hteq1.
   - (* st_rec: a field inside a record stepped.  Congruence. *)
     intros fs fs' Hstep IHf D S G T HS Hty.
     apply rec_inv_ok in Hty. destruct Hty as [R [Hft [Hok Hteq]]].
-    eapply T_Conv; [ apply T_rec_ok; [ eapply IHf; [ exact HS | exact Hft ] | eapply rec_ok_marks; [ exact Hok | symmetry; eapply marks_step_fields; exact Hstep ] ] | exact Hteq ].
+    eapply T_ConvD; [ apply T_rec_ok; [ eapply IHf; [ exact HS | exact Hft ] | eapply rec_ok_marks; [ exact Hok | symmetry; eapply marks_step_fields; exact Hstep ] ] | exact Hteq ].
   - (* st_ite1: the condition of an [if] stepped. *)
     intros e1 e1' e2 e3 Hstep IH D S G T HS Hty.
     apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
-    eapply T_Conv; [ eapply T_If; [ eapply IH; [ exact HS | exact H1 ] | exact H2 | exact H3 ] | exact Hteq ].
+    eapply T_ConvD; [ eapply T_If; [ eapply IH; [ exact HS | exact H1 ] | exact H2 | exact H3 ] | exact Hteq ].
   - (* st_ite_true *)
     intros e2 e3 D S G T HS Hty.
     apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
-    eapply T_Conv; [ exact H2 | exact Hteq ].
+    eapply T_ConvD; [ exact H2 | exact Hteq ].
   - (* st_ite_false *)
     intros e2 e3 D S G T HS Hty.
     apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
-    eapply T_Conv; [ exact H3 | exact Hteq ].
+    eapply T_ConvD; [ exact H3 | exact Hteq ].
   - (* st_bin1: the left operand stepped. *)
     intros e1 e1' o e2 Hstep IH D S G T HS Hty.
     destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
-    eapply T_Conv; [ eapply T_Bin; [ eapply IH; [ exact HS | exact H1 ] | exact H2 | exact Hs ] | exact Hteq ].
+    eapply T_ConvD; [ eapply T_Bin; [ eapply IH; [ exact HS | exact H1 ] | exact H2 | exact Hs ] | exact Hteq ].
   - (* st_bin2: the right operand stepped. *)
     intros v o e2 e2' Hv Hstep IH D S G T HS Hty.
     destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
-    eapply T_Conv; [ eapply T_Bin; [ exact H1 | eapply IH; [ exact HS | exact H2 ] | exact Hs ] | exact Hteq ].
+    eapply T_ConvD; [ eapply T_Bin; [ exact H1 | eapply IH; [ exact HS | exact H2 ] | exact Hs ] | exact Hteq ].
   - (* st_bin: an operator on two values.  [bin_step_typing] shows the result
        has the type the operator's signature gives. *)
     intros v1 o v2 v Hv1 Hv2 Hb D S G T HS Hty.
     destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
-    eapply T_Conv;
+    eapply T_ConvD;
       [ exact (bin_step_typing _ _ _ _ _ _ _ _ _ Hs Hv1 Hv2 H1 H2 Hb) | exact Hteq ].
   - (* st_binrec: an operator on two records.  The record of operator
        applications, field by field, has the row the operands have
        ([binrec_typing]). *)
     intros fs1 o fs2 fs Hnc Hv1 Hv2 Hz D S G T HS Hty.
     destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
-    eapply T_Conv;
+    eapply T_ConvD;
       [ exact (binrec_typing _ _ _ _ _ _ _ _ _ Hnc Hs H1 H2 Hz) | exact Hteq ].
   - (* st_tofloat1: the operand of a coercion stepped. *)
     intros e e' Hstep IH D S G T HS Hty.
     destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].
-    eapply T_Conv; [ eapply T_ToFloat; [ eapply IH; [ exact HS | exact H1 ] | exact Hsat ] | exact Hteq ].
+    eapply T_ConvD; [ eapply T_ToFloat; [ eapply IH; [ exact HS | exact H1 ] | exact Hsat ] | exact Hteq ].
   - (* st_tofloat: [float(n)] steps to a Float.  A Float value has type
        [Float] whatever its payload. *)
     intros z d D S G T HS Hty.
     destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].
     assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
-    eapply T_Conv; [ apply T_Dec; exact Hu | exact Hteq ].
+    eapply T_ConvD; [ apply T_Dec; exact Hu | exact Hteq ].
   - (* st_tofloat_dec: [float(d)] of a decimal is the decimal. *)
     intros d D S G T HS Hty.
     destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].
     assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
-    eapply T_Conv; [ apply T_Dec; exact Hu | exact Hteq ].
+    eapply T_ConvD; [ apply T_Dec; exact Hu | exact Hteq ].
   - (* st_spread1: the base of a spread stepped. *)
     intros e1 e1' l e2 Hstep IH D S G T HS Hty.
     destruct (spread_inv _ _ _ _ _ _ Hty) as [T0 [R [H2 [Hteq [[P H1] | [H1 Hl]]]]]].
-    + eapply T_Conv;
+    + eapply T_ConvD;
         [ eapply T_Spread; [ eapply IH; [ exact HS | exact H1 ] | exact H2 ] | exact Hteq ].
-    + eapply T_Conv;
+    + eapply T_ConvD;
         [ eapply T_SpreadL; [ eapply IH; [ exact HS | exact H1 ] | exact Hl | exact H2 ] | exact Hteq ].
   - (* st_spread2: the new value of a spread stepped. *)
     intros v1 l e2 e2' Hv Hstep IH D S G T HS Hty.
     destruct (spread_inv _ _ _ _ _ _ Hty) as [T0 [R [H2 [Hteq [[P H1] | [H1 Hl]]]]]].
-    + eapply T_Conv;
+    + eapply T_ConvD;
         [ eapply T_Spread; [ exact H1 | eapply IH; [ exact HS | exact H2 ] ] | exact Hteq ].
-    + eapply T_Conv;
+    + eapply T_ConvD;
         [ eapply T_SpreadL; [ exact H1 | exact Hl | eapply IH; [ exact HS | exact H2 ] ] | exact Hteq ].
   - (* st_spread: a spread of a finished record sets or adds the field.  The
        base's type says which, and [spread_step_typing] shows either way the
        result has the type the rule gives. *)
     intros fs l v Hrv Hv D S G T HS Hty.
     destruct (spread_inv _ _ _ _ _ _ Hty) as [T0 [R [H2 [Hteq [[P H1] | [H1 Hl]]]]]].
-    + eapply T_Conv; [ eapply spread_step_typing; eassumption | exact Hteq ].
-    + eapply T_Conv; [ eapply spread_step_typing_L; eassumption | exact Hteq ].
+    + eapply T_ConvD; [ eapply spread_step_typing; eassumption | exact Hteq ].
+    + eapply T_ConvD; [ eapply spread_step_typing_L; eassumption | exact Hteq ].
   - (* st_restrict1: the operand of a restrict stepped. *)
     intros e e' l Hstep IH D S G T HS Hty.
     destruct (restrict_inv _ _ _ _ _ Hty) as [R0 [T0 [R [H1 [H2 Hteq]]]]].
-    eapply T_Conv;
+    eapply T_ConvD;
       [ eapply T_Restrict; [ eapply IH; [ exact HS | exact H1 ] | exact H2 ] | exact Hteq ].
   - (* st_restrict: a restrict of a finished record takes out its first field. *)
     intros fs l Hrv D S G T HS Hty.
     destruct (restrict_inv _ _ _ _ _ Hty) as [R0 [T0 [R [H1 [H2 Hteq]]]]].
-    eapply T_Conv; [ eapply restrict_step_typing; eassumption | exact Hteq ].
+    eapply T_ConvD; [ eapply restrict_step_typing; eassumption | exact Hteq ].
   - (* st_fold1: the operand of a fold stepped. *)
     intros e e' Hstep IH D S G T HS Hty.
     destruct (fold_inv _ _ _ _ Hty) as [B [Hteq [Hlc0 [Hg Hb]]]].
-    eapply T_Conv; [ eapply T_Fold; [ exact Hlc0 | exact Hg | eapply IH; [ exact HS | exact Hb ] ] | exact Hteq ].
+    eapply T_ConvD; [ eapply T_Fold; [ exact Hlc0 | exact Hg | eapply IH; [ exact HS | exact Hb ] ] | exact Hteq ].
   - (* st_unfold1: the operand of an unfold stepped. *)
     intros e e' Hstep IH D S G T HS Hty.
     destruct (unfold_inv _ _ _ _ Hty) as [B [Hlc0 [Hg [Hb Hteq]]]].
-    eapply T_Conv; [ eapply T_Unfold; [ exact Hlc0 | exact Hg | eapply IH; [ exact HS | exact Hb ] ] | exact Hteq ].
+    eapply T_ConvD; [ eapply T_Unfold; [ exact Hlc0 | exact Hg | eapply IH; [ exact HS | exact Hb ] ] | exact Hteq ].
   - (* st_unfold_fold: an unfold cancels the fold of a value.  The fold was
        typed at a recursive type equal to the one the unfold opens, and
        equal recursive types have equal unrollings. *)
     intros v Hv D S G T HS Hty.
     destruct (unfold_inv _ _ _ _ Hty) as [B [Hlc0 [Hg [Hb Hteq]]]].
     destruct (fold_inv _ _ _ _ Hb) as [B0 [Hmu [Hlc1 [Hg1 Hv0]]]].
-    eapply T_Conv; [ exact Hv0 | ].
-    eapply teq_trans; [ apply teq_unroll; exact Hmu | exact Hteq ].
+    eapply T_ConvD; [ exact Hv0 | ].
+    eapply teqD_trans; [ apply teq_teqD; apply teq_unroll; exact (teqD_Mu_teq _ _ _ Hmu) | exact Hteq ].
   - (* st_con1: the payload of a construction stepped. *)
     intros w tg e e' Hstep IH D S G T HS Hty.
     destruct (con_inv _ _ _ _ _ _ Hty) as [Ts [Hlt [Hp Hteq]]].
-    eapply T_Conv;
+    eapply T_ConvD;
       [ eapply T_Con; [ exact Hlt | eapply IH; [ exact HS | exact Hp ] ] | exact Hteq ].
   - (* st_match1: the scrutinee of a match stepped. *)
     intros w e e' ars Hstep IH D S G T HS Hty.
     destruct (match_inv _ _ _ _ _ _ Hty) as [L [Ts [T0 [Hs [Hwf [Harm [Hdef Hteq]]]]]]].
-    eapply T_Conv;
+    eapply T_ConvD;
       [ eapply T_Match with (L := L);
           [ eapply IH; [ exact HS | exact Hs ] | exact Hwf | exact Harm | exact Hdef ]
       | exact Hteq ].
@@ -2524,7 +2531,7 @@ Proof.
     intros w w' tg v ars body Hv Hf D S G T HS Hty.
     destruct (match_inv _ _ _ _ _ _ Hty) as [L [Ts [T0 [Hs [Hwf [Harm [Hdef Hteq]]]]]]].
     destruct (con_inv _ _ _ _ _ _ Hs) as [Ts' [Hlt [Hp Hgrp]]].
-    apply teq_Grp_inv in Hgrp. destruct Hgrp as [A [Eg Hsp]].
+    apply teqD_Grp_inv in Hgrp. destruct Hgrp as [A [Eg Hsp]].
     injection Eg as Ew EA. subst w' A.
     apply teq_spine_inv in Hsp.
     assert (Hv' : typing D G v (tag_payload w Ts tg))
@@ -2536,11 +2543,11 @@ Proof.
       by (eapply typing_subst;
             [ exact HS | exact (Harm tg body Hf x HxL) | apply value_gen; exact Hv | exact Hv' ]).
     rewrite <- subst_intro in Hopen by exact Hxe.
-    eapply T_Conv; [ exact Hopen | exact Hteq ].
+    eapply T_ConvD; [ exact Hopen | exact Hteq ].
   - (* st_match_else: no arm names the tag, so the else runs. *)
     intros w w' tg v ars e0 Hv Hf Hd D S G T HS Hty.
     destruct (match_inv _ _ _ _ _ _ Hty) as [L [Ts [T0 [Hs [Hwf [Harm [Hdef Hteq]]]]]]].
-    eapply T_Conv; [ exact (Hdef e0 Hd) | exact Hteq ].
+    eapply T_ConvD; [ exact (Hdef e0 Hd) | exact Hteq ].
   - (* stf_here: the FIRST field of a record stepped.  Congruence. *)
     intros l e e' fs Hstep IH D S G R HS Hft.
     inversion Hft; subst.
