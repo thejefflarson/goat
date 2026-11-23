@@ -25,13 +25,87 @@ export interface Formatter {
   format(text: string): Promise<TextEdit[]>;
 }
 
+// The lexer's whitespace (parser/src/lexer.rs). `\s` also matches U+00A0 and
+// other Unicode spaces, which the lexer reads as unrecognized tokens.
+const LEXER_WHITESPACE = /^[ \t\n\r]*$/;
+
+interface Span {
+  kind: "whitespace" | "comment" | "string" | "word" | "other";
+  start: number;
+  end: number;
+}
+
+// The source as spans in UTF-16 offsets, with just the lexer rules the gap
+// guard needs: whitespace, `#` comments to the line break, strings with
+// backslash escapes (an unclosed `"` is one unrecognized character) and runs
+// of identifier characters. parser/src/lexer.rs is the authority.
+function spans(source: string): Span[] {
+  const found: Span[] = [];
+  const isWord = /^\p{ID_Continue}$/u;
+  const width = (i: number) => (source.codePointAt(i)! > 0xffff ? 2 : 1);
+  const wordAt = (i: number) => isWord.test(String.fromCodePoint(source.codePointAt(i)!));
+  const blank = (i: number) => " \t\n\r".includes(source[i]);
+  let i = 0;
+  while (i < source.length) {
+    const start = i;
+    let kind: Span["kind"] = "other";
+    if (blank(i)) {
+      while (i < source.length && blank(i)) i++;
+      kind = "whitespace";
+    } else if (source[i] === "#") {
+      while (i < source.length && source[i] !== "\n" && source[i] !== "\r") i++;
+      kind = "comment";
+    } else if (source[i] === '"') {
+      let j = i + 1;
+      while (j < source.length && source[j] !== '"') j += source[j] === "\\" ? 2 : 1;
+      if (j < source.length) {
+        i = j + 1;
+        kind = "string";
+      } else i++;
+    } else if (wordAt(i)) {
+      while (i < source.length && wordAt(i)) i += width(i);
+      kind = "word";
+    } else i += width(i);
+    found.push({ kind, start, end: i });
+  }
+  return found;
+}
+
+// An edit the guard refuses means the whole format is refused.
+export class RejectedEdit extends Error {}
+
+interface Layout {
+  source: string;
+  endingAt: Map<number, Span>;
+  startingAt: Map<number, Span>;
+}
+
+// Replacing a gap keeps every token only if a gap after a comment keeps a line
+// break and a gap after `start` is not made one space before `at`: ADR 0041's
+// `gap_guard`.
+function guardGap(layout: Layout, start: number, stop: number, edit: { newlines: number; indent: number }): void {
+  const { source, endingAt, startingAt } = layout;
+  const before = endingAt.get(start);
+  if (!before) return;
+  const text = (s: Span | undefined) => (s ? source.slice(s.start, s.end) : "");
+  if (before.kind === "comment" && edit.newlines === 0) {
+    throw new RejectedEdit(`an edit over ${start}..${stop} would join the line after a comment into it`);
+  }
+  if (edit.newlines === 0 && edit.indent === 1 && text(before) === "start" && text(startingAt.get(stop)) === "at") {
+    throw new RejectedEdit(`an edit over ${start}..${stop} would make \`start at\` out of two words`);
+  }
+}
+
 // The formatter program's edits as changes over `source`, in UTF-16 offsets.
 // The program is goat code and its words are not trusted: an edit that is
 // malformed, out of range or out of order, that does not start and end on
-// character boundaries, or that would replace anything but whitespace, is
-// dropped, so no output can change what a program says.
+// character boundaries, or that replaces something with no whitespace in it,
+// is dropped. An edit over whitespace the lexer does not read, or one that
+// fails `guardGap`, throws `RejectedEdit`: no output can change what a
+// program says.
 export function acceptEdits(edits: unknown, source: string): TextEdit[] {
   if (!Array.isArray(edits)) return [];
+  let layout: Layout | undefined;
   const bytes = new TextEncoder().encode(source).length;
   const index = utf16Offsets(source);
   const found: TextEdit[] = [];
@@ -46,6 +120,18 @@ export function acceptEdits(edits: unknown, source: string): TextEdit[] {
     const stop = index(to!);
     const replaced = source.slice(start, stop);
     if (new TextEncoder().encode(replaced).length !== to! - from! || !/^\s*$/.test(replaced)) continue;
+    if (!LEXER_WHITESPACE.test(replaced)) {
+      throw new RejectedEdit(`an edit over ${from}..${to} is not whitespace the lexer reads`);
+    }
+    if (!layout) {
+      const all = spans(source);
+      layout = {
+        source,
+        endingAt: new Map(all.map((s) => [s.end, s])),
+        startingAt: new Map(all.map((s) => [s.start, s])),
+      };
+    }
+    guardGap(layout, start, stop, { newlines: newlines!, indent: indent! });
     end = to!;
     found.push({ from: start, to: stop, insert: "\n".repeat(newlines!) + " ".repeat(indent!) });
   }
@@ -128,7 +214,11 @@ export class GoatFormatter implements Formatter {
     const waiting = this.#waiting.get(ticket);
     if (!waiting) return;
     this.#waiting.delete(ticket);
-    waiting.resolve(acceptEdits(edits, waiting.text));
+    try {
+      waiting.resolve(acceptEdits(edits, waiting.text));
+    } catch (e) {
+      waiting.reject(e instanceof Error ? e : new Error(String(e)));
+    }
   }
 
   // A trap ends the worker, and a stuck call has been terminated.

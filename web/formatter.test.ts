@@ -141,6 +141,27 @@ test("an edit may not start or end inside a character", () => {
   assert.deepEqual(acceptEdits([{ from: 2, to: 3, newlines: 0, indent: 0 }], text), [{ from: 1, to: 2, insert: "" }]);
 });
 
+test("an edit that would make start at, or join a comment to the next line, refuses the format", () => {
+  const edit = (from: number, to: number, newlines: number, indent: number) => ({ from, to, newlines, indent });
+  assert.throws(() => acceptEdits([edit(5, 7, 0, 1)], "start  at 1\n"), /start at/);
+  assert.deepEqual(acceptEdits([edit(5, 7, 0, 3)], "start  at 1\n"), [{ from: 5, to: 7, insert: "   " }]);
+  assert.deepEqual(acceptEdits([edit(6, 8, 0, 1)], "xstart  at 1\n"), [{ from: 6, to: 8, insert: " " }]);
+
+  const commented = "a = 1 # one\nb = 2\n";
+  assert.throws(() => acceptEdits([edit(11, 12, 0, 1)], commented), /comment/);
+  assert.throws(() => acceptEdits([edit(11, 12, 0, 0)], commented), /comment/);
+  assert.deepEqual(acceptEdits([edit(11, 12, 2, 0)], commented), [{ from: 11, to: 12, insert: "\n\n" }]);
+  assert.deepEqual(acceptEdits([edit(5, 6, 0, 2)], commented), [{ from: 5, to: 6, insert: "  " }]);
+
+  const quoted = 'a = "#" + 1\n';
+  assert.deepEqual(acceptEdits([edit(7, 8, 0, 1)], quoted), [{ from: 7, to: 8, insert: " " }]);
+});
+
+test("an edit over whitespace the lexer does not read refuses the format", () => {
+  assert.throws(() => acceptEdits([{ from: 3, to: 5, newlines: 0, indent: 1 }], "a = 1\n"), /not whitespace/);
+  assert.throws(() => acceptEdits([{ from: 3, to: 6, newlines: 0, indent: 1 }], "a =  1\n"), /not whitespace/);
+});
+
 test("a formatter that is not running rejects", async () => {
   const goat = await formatter();
   goat.stop();
