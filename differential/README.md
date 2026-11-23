@@ -17,6 +17,14 @@ ADR 0037 (decision 6) ties the inference algorithm proved in `proofs/` to
 Run it with `make -C proofs differential` (it is part of `make -C proofs ci`
 and of the `coq` workflow).
 
+## The sort gap spike
+
+`differential/sort_gap.sh` (run it after `make -C proofs differential`) counts the
+checker-accepted programs the algorithm refuses only because a sort does not
+reach a variable inside a type, and only because a row variable has no sort
+(`docs/design/phase6-proof-plan.md`, 2.4). On this corpus both counts are 0. It is
+not part of `make ci`.
+
 ## Recursive types
 
 A program in which the checker gives some node a recursive type (`Ty::Rec`) is
