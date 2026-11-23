@@ -76,6 +76,11 @@ let bop_of = function
   | "ne" -> Bop_ne
   | o -> failwith ("unknown operator " ^ o)
 
+let gdecl_of = function
+  | List (Atom "grp" :: tags) ->
+      List.map (function List codes -> List.map int_of codes | _ -> failwith "malformed group") tags
+  | _ -> failwith "malformed group"
+
 let rec fields_of fields =
   List.fold_right
     (fun f rest ->
@@ -105,7 +110,19 @@ and exp_of = function
   | List [ Atom "restrict"; e; l ] -> E_restrict (exp_of e, int_of l)
   | List [ Atom "letrec"; List (Atom "rec" :: fields); body ] ->
       E_letrec (fields_of fields, exp_of body)
+  | List [ Atom "con"; w; tg; payload ] -> E_con (gdecl_of w, int_of tg, exp_of payload)
+  | List (Atom "match" :: w :: scrutinee :: arms) ->
+      E_match (gdecl_of w, exp_of scrutinee, arms_of arms)
   | _ -> failwith "malformed term"
+
+and arms_of arms =
+  List.fold_right
+    (fun a rest ->
+      match a, rest with
+      | List [ Atom "else"; e ], Arms_nil -> Arms_else (exp_of e)
+      | List [ tg; e ], _ -> Arms_cons (int_of tg, exp_of e, rest)
+      | _ -> failwith "malformed arm")
+    arms Arms_nil
 
 (* ---- the canonical type ---- *)
 

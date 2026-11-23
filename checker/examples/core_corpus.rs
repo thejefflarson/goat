@@ -60,13 +60,14 @@
 
 use goat_checker::captures::for_each_node;
 use goat_checker::check_with_prelude;
-use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, Symbol};
+use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, MatchArm, Symbol};
 use goat_checker::lower::{Lowered, lower};
-use goat_checker::ty::{Row, Ty};
+use goat_checker::ty::{Group, Row, Ty, TypeVar};
 use goat_checker::{Checked, ErrorKind};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
+use std::sync::Arc;
 
 /// The name lowering gives the local function every loop becomes.
 const LOOP_BINDING: &str = "loop";
@@ -110,6 +111,19 @@ enum Core {
     Spread(Box<Core>, usize, Box<Core>),
     /// `record` with its first `label` taken out.
     Restrict(Box<Core>, usize),
+    /// `Tag(args)`: the tag's group as the slot codes of each of its tags, the
+    /// tag's position, and the values of its slots (none for a bare tag).
+    Con(Vec<Vec<usize>>, usize, Vec<Core>),
+    /// The `i`th slot of a tag's payload, which an arm reads off its payload.
+    Slot(Box<Core>, usize),
+    /// `match`: the group, the scrutinee, each arm by its tag's position (its
+    /// body binds the payload as index 0), and the `else`.
+    Match(
+        Vec<Vec<usize>>,
+        Box<Core>,
+        Vec<(usize, Core)>,
+        Option<Box<Core>>,
+    ),
 }
 
 fn relabel_fields(fields: &mut [(usize, Core)], rank: &[usize]) {
@@ -117,6 +131,80 @@ fn relabel_fields(fields: &mut [(usize, Core)], rank: &[usize]) {
         *label = rank[*label];
         value.relabel(rank);
     }
+}
+
+fn group_sexp(group: &[Vec<usize>], out: &mut String) {
+    out.push_str("(grp");
+    for tag in group {
+        out.push_str(" (");
+        let codes: Vec<String> = tag.iter().map(usize::to_string).collect();
+        out.push_str(&codes.join(" "));
+        out.push(')');
+    }
+    out.push(')');
+}
+
+/// The calculus's slot code of a payload type: 0 the group itself, 1 to 5 Int,
+/// Float, Bool, Unit, String, and 6 + j the group's `j`th `_`.
+fn slot_code(ty: &Ty, group: &Group) -> Option<usize> {
+    match ty {
+        Ty::Int => Some(1),
+        Ty::Float => Some(2),
+        Ty::Bool => Some(3),
+        Ty::Unit => Some(4),
+        Ty::Str => Some(5),
+        Ty::Var(v) if *v == Group::SELF => Some(0),
+        Ty::Var(v) if *v < Group::SELF && Group::SELF - 1 - *v < group.params as TypeVar => {
+            Some(6 + (Group::SELF - 1 - *v) as usize)
+        }
+        _ => None,
+    }
+}
+
+/// The fields of a closed row labelled `"0"`, `"1"`, ... in order, which is how a
+/// tag with several values holds them; `None` for any other row.
+fn positional_fields(row: &Row) -> Option<Vec<&Ty>> {
+    let mut fields = Vec::new();
+    let mut at = row;
+    loop {
+        match at {
+            Row::Empty => break,
+            Row::Extend {
+                label, field, rest, ..
+            } => {
+                fields.push((label.as_str(), &**field));
+                at = rest;
+            }
+            _ => return None,
+        }
+    }
+    if fields.len() < 2 {
+        return None;
+    }
+    (0..fields.len())
+        .map(|i| {
+            let label = i.to_string();
+            fields.iter().find(|(l, _)| *l == label).map(|(_, ty)| *ty)
+        })
+        .collect()
+}
+
+/// The slot codes of each tag of `group`. A bare tag has none, a tag with one
+/// value has one, and a tag with several has one for each positional field.
+/// `None` when a payload is a type the calculus has no slot for.
+fn group_slots(group: &Group) -> Option<Vec<Vec<usize>>> {
+    group
+        .tags
+        .iter()
+        .map(|(_, payload)| match payload {
+            Ty::Unit => Some(Vec::new()),
+            Ty::Record(row) => positional_fields(row)?
+                .into_iter()
+                .map(|field| slot_code(field, group))
+                .collect(),
+            single => Some(vec![slot_code(single, group)?]),
+        })
+        .collect()
 }
 
 fn fields_sexp(fields: &[(usize, Core)], out: &mut String) {
@@ -163,6 +251,21 @@ impl Core {
                 *label = rank[*label];
                 base.relabel(rank);
                 value.relabel(rank);
+            }
+            Core::Con(_, _, slots) => {
+                for slot in slots {
+                    slot.relabel(rank);
+                }
+            }
+            Core::Slot(e, _) => e.relabel(rank),
+            Core::Match(_, scrutinee, arms, otherwise) => {
+                scrutinee.relabel(rank);
+                for (_, body) in arms {
+                    body.relabel(rank);
+                }
+                if let Some(body) = otherwise {
+                    body.relabel(rank);
+                }
             }
         }
     }
@@ -252,6 +355,45 @@ impl Core {
                 record.sexp(out);
                 write!(out, " {label})").unwrap();
             }
+            Core::Con(group, tag, slots) => {
+                out.push_str("(con ");
+                group_sexp(group, out);
+                write!(out, " {tag} ").unwrap();
+                if slots.is_empty() {
+                    out.push('u');
+                } else {
+                    out.push_str("(rec");
+                    for (i, slot) in slots.iter().enumerate() {
+                        write!(out, " ({i} ").unwrap();
+                        slot.sexp(out);
+                        out.push(')');
+                    }
+                    out.push(')');
+                }
+                out.push(')');
+            }
+            Core::Slot(e, i) => {
+                out.push_str("(proj ");
+                e.sexp(out);
+                write!(out, " {i})").unwrap();
+            }
+            Core::Match(group, scrutinee, arms, otherwise) => {
+                out.push_str("(match ");
+                group_sexp(group, out);
+                out.push(' ');
+                scrutinee.sexp(out);
+                for (tag, body) in arms {
+                    write!(out, " ({tag} ").unwrap();
+                    body.sexp(out);
+                    out.push(')');
+                }
+                if let Some(body) = otherwise {
+                    out.push_str(" (else ");
+                    body.sexp(out);
+                    out.push(')');
+                }
+                out.push(')');
+            }
         }
     }
 }
@@ -264,6 +406,8 @@ impl Core {
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Feature {
     ForeignCall,
+    SameShapeGroups,
+    GroupComparison,
     TagsAndMatch,
     Builtin,
     Loop,
@@ -282,6 +426,12 @@ impl Feature {
         match self {
             Feature::ForeignCall => "outside the calculus: a foreign host call",
             Feature::TagsAndMatch => "outside the calculus: tags and match",
+            Feature::SameShapeGroups => {
+                "outside the calculus: two tag groups with the same slots, which the calculus cannot tell apart"
+            }
+            Feature::GroupComparison => {
+                "outside the calculus: a comparison in a program with tags, whose Eq sort the algorithm does not decide for groups"
+            }
             Feature::Builtin => "outside the calculus: print or trap",
             Feature::Loop => "outside the calculus: a loop (repeat, for)",
             Feature::OperatorOperand => {
@@ -393,6 +543,10 @@ struct Reader<'a> {
     /// Why the reader stopped, when the cause is the shape of the program and
     /// not a node the calculus lacks.
     gap: Feature,
+    /// The tag groups read so far, with their slot codes.
+    groups: Vec<(Arc<Group>, Vec<Vec<usize>>)>,
+    /// Whether the program builds or matches a tag.
+    tagged: bool,
 }
 
 /// What a name in scope is bound by: a parameter or `let`, one binder; or a
@@ -661,6 +815,94 @@ impl Reader<'_> {
         body
     }
 
+    /// The slot codes of `group`. The calculus tells groups apart by their
+    /// slots alone, so a program with two groups of one shape is out.
+    fn group_decl(&mut self, group: &Arc<Group>) -> Option<Vec<Vec<usize>>> {
+        let slots = group_slots(group)?;
+        if !self.groups.iter().any(|(g, _)| Arc::ptr_eq(g, group)) {
+            if self.groups.iter().any(|(_, other)| *other == slots) {
+                self.gap = self.gap.min(Feature::SameShapeGroups);
+                return None;
+            }
+            self.groups.push((group.clone(), slots.clone()));
+        }
+        Some(slots)
+    }
+
+    /// `Tag(a, b)` is the tag with a record of its slots, an `Int` made a
+    /// `Float` where the slot is one.
+    fn tag(&mut self, name: &str, payload: Option<&Expr>, group: &Arc<Group>) -> Option<Core> {
+        let slots = self.group_decl(group)?;
+        let tag = group.tags.iter().position(|(n, _)| n == name)?;
+        let values: Vec<&Expr> = match (payload, slots[tag].len()) {
+            (None, 0) => Vec::new(),
+            (Some(only), 1) => vec![only],
+            (Some(record), n) if n > 1 => match &record.kind {
+                ExprKind::Record { fields } if fields.len() == n => {
+                    fields.iter().map(|(_, value)| value).collect()
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let mut read = Vec::new();
+        for (value, code) in values.into_iter().zip(&slots[tag]) {
+            let mut core = self.read(value)?;
+            if *code == 2 && self.node_ty(value) == Some(&Ty::Int) {
+                core = Core::ToFloat(Box::new(core));
+            }
+            read.push(core);
+        }
+        Some(Core::Con(slots, tag, read))
+    }
+
+    /// Each arm binds the payload as one variable and each name as a `let` of
+    /// its slot, in the arm's body; the `else` binds nothing.
+    fn match_arms(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &[MatchArm],
+        else_branch: Option<&Expr>,
+    ) -> Option<Core> {
+        let group = arms.first()?.pattern.group.as_ref()?;
+        let slots = self.group_decl(group)?;
+        let scrutinee = self.read(scrutinee)?;
+        let mut read = Vec::new();
+        for arm in arms {
+            if !arm
+                .pattern
+                .group
+                .as_ref()
+                .is_some_and(|g| Arc::ptr_eq(g, group))
+            {
+                return None;
+            }
+            let tag = group.tags.iter().position(|(n, _)| *n == arm.pattern.tag)?;
+            let binders: Vec<_> = arm.pattern.payload.binders().collect();
+            if binders.len() > slots[tag].len() {
+                return None;
+            }
+            let mark = self.scope.len();
+            self.scope.push(Binder::Bound(Symbol::MAX));
+            self.scope
+                .extend(binders.iter().map(|p| Binder::Bound(p.symbol)));
+            let body = self.read(&arm.body);
+            self.scope.truncate(mark);
+            let body = (0..binders.len()).rev().fold(body?, |body, i| {
+                Core::Let(
+                    Box::new(Core::Slot(Box::new(Core::Var(i)), i)),
+                    Box::new(body),
+                )
+            });
+            read.push((tag, body));
+        }
+        let otherwise = match else_branch {
+            Some(body) => Some(Box::new(self.read(body)?)),
+            None => None,
+        };
+        Some(Core::Match(slots, Box::new(scrutinee), read, otherwise))
+    }
+
     fn read(&mut self, expr: &Expr) -> Option<Core> {
         match &expr.kind {
             ExprKind::Int(n) => {
@@ -717,6 +959,20 @@ impl Reader<'_> {
                     op,
                     BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte | BinOp::Eq | BinOp::Ne
                 );
+                let primitive = |this: &Self, e: &Expr| {
+                    matches!(
+                        this.node_ty(e),
+                        Some(Ty::Int | Ty::Float | Ty::Str | Ty::Bool)
+                    )
+                };
+                if comparison
+                    && self.tagged
+                    && self.types.is_some()
+                    && !(primitive(self, lhs) && primitive(self, rhs))
+                {
+                    self.gap = self.gap.min(Feature::GroupComparison);
+                    return None;
+                }
                 self.in_comparison += usize::from(comparison);
                 let operands = (self.read(lhs), self.read(rhs));
                 self.in_comparison -= usize::from(comparison);
@@ -829,6 +1085,16 @@ impl Reader<'_> {
                         ))
                     })
             }
+            ExprKind::Tag {
+                name,
+                payload,
+                group: Some(group),
+            } => self.tag(name, payload.as_deref(), group),
+            ExprKind::Match {
+                scrutinee,
+                arms,
+                else_branch,
+            } => self.match_arms(scrutinee, arms, else_branch.as_deref()),
             ExprKind::Restrict { record, labels } => {
                 if labels.is_empty() {
                     self.gap = self.gap.min(Feature::EmptyRest);
@@ -973,7 +1239,12 @@ pub fn line(source: &str) -> Result<String, Skip> {
         types: checked.as_ref().map(|c| &c.typed.node_types),
         in_comparison: 0,
         gap: Feature::Other,
+        groups: Vec::new(),
+        tagged: false,
     };
+    for_each_node(&lowered.root, &mut |e| {
+        reader.tagged |= matches!(e.kind, ExprKind::Tag { .. });
+    });
     let mut core = reader
         .read(&lowered.root)
         .ok_or_else(|| Skip::OutsideFragment(feature_of(&lowered, checked.as_ref(), reader.gap)))?;

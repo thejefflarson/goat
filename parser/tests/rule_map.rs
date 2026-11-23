@@ -17,10 +17,10 @@ use Class::{Core, Outside};
 
 const RULES: &[(&str, Class)] = &[
     ("goat", Core("e")),
-    ("tag_decl", Outside),
-    ("tag_kw", Outside),
-    ("group_name", Outside),
-    ("tag_case", Outside),
+    ("tag_decl", Core("e_con")),
+    ("tag_kw", Core("e_con")),
+    ("group_name", Core("e_con")),
+    ("tag_case", Core("e_con")),
     ("expr", Core("e")),
     ("sequel", Outside),
     ("_part", Core("e_letrec")),
@@ -68,12 +68,12 @@ const RULES: &[(&str, Class)] = &[
     ("foreign_decl", Outside),
     ("foreign_name", Outside),
     ("fn_type", Outside),
-    ("_type_expr", Outside),
+    ("_type_expr", Core("e_con")),
     ("list_type", Outside),
     ("record_type", Outside),
     ("field_type", Outside),
-    ("type_name", Outside),
-    ("infer_type", Outside),
+    ("type_name", Core("e_con")),
+    ("infer_type", Core("e_con")),
     ("destructure", Core("e_let|e_proj|e_restrict")),
     ("record_pattern", Core("e_let|e_proj")),
     ("list_pattern", Outside),
@@ -83,12 +83,12 @@ const RULES: &[(&str, Class)] = &[
     ("_param", Core("e_abs")),
     ("conditional", Core("e_ite|e_unit")),
     ("_else_branch", Core("e_ite")),
-    ("list", Outside),
-    ("match_expr", Outside),
-    ("arm", Outside),
-    ("pattern", Outside),
-    ("labels", Outside),
-    ("literal_pattern", Outside),
+    ("list", Core("e_con")),
+    ("match_expr", Core("e_match|e_ite|e_bin|e_let")),
+    ("arm", Core("e_match|e_ite|e_bin|e_let")),
+    ("pattern", Core("e_match")),
+    ("labels", Core("e_match")),
+    ("literal_pattern", Core("e_bin")),
     ("repeat_loop", Outside),
     ("count_loop", Outside),
     ("each_loop", Outside),
@@ -178,22 +178,12 @@ fn every_ott_production_is_reached_by_some_core_rule() {
         // without an `else`, and `e_letrec` is the group a block's leading
         // function bindings form (ADR 0003). `e_fold` and `e_unfold` are
         // inserted by elaboration of recursive types, which have no surface
-        // syntax (ADR 0037, iso-recursive types). `e_con` and `e_match` are
-        // the proof calculus's tag groups (proofs/README.md, phase 3); the
-        // grammar does not denote tag declarations, construction or `match`
-        // into them until the parser fragment grows them. `fs_meth` marks a
+        // syntax (ADR 0037, iso-recursive types). `fs_meth` marks a
         // method field, which the differential reader writes from a record
         // literal's `self` function; the surface grammar has no mark for it.
         if !matches!(
             production.as_str(),
-            "e" | "fs"
-                | "fs_nil"
-                | "fs_meth"
-                | "e_tofloat"
-                | "e_fold"
-                | "e_unfold"
-                | "e_con"
-                | "e_match"
+            "e" | "fs" | "fs_nil" | "fs_meth" | "e_tofloat" | "e_fold" | "e_unfold"
         ) {
             assert!(
                 reached.contains(production.as_str()),

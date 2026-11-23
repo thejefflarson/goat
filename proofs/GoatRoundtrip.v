@@ -36,7 +36,7 @@ Theorem print_parse_roundtrip : forall var_of e,
   Interned e ->
   exists t,
     peg (E_rule R_goat) (print e) (Ok [t] []) /\
-    Den_goat var_of t e.
+    Den_goat var_of [] t e.
 Proof.
   intros var_of e Hdistinct Hscoped Hinterned.
   set (t := print_tree e).
@@ -52,7 +52,7 @@ Proof.
     by exact (proj1 (inst_closed var_of) e 0 Hscoped).
   assert (Hexpr : Den var_of (labels t) (Node R_expr (block 0 e)) e)
     by (rewrite <- Hinst at 2; apply D_expr; exact Hblock).
-  assert (Hden : Den_goat var_of t e)
-    by (exists (block 0 e); split; [ reflexivity | exact Hexpr ]).
+  assert (Hden : Den_goat var_of [] t e)
+    by (exists [], (block 0 e); split; [ reflexivity | split; [ apply Forall_nil | exact Hexpr ] ]).
   exists t. split; [ exact Hparse | exact Hden ].
 Qed.
