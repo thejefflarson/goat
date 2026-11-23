@@ -61,6 +61,8 @@ GoatCompleteOcc.v
 GoatCompleteUnifyPlain.v
 GoatCompleteRf.v
 GoatCompleteRfRows.v
+GoatCompleteCore.v
+GoatCompleteSpn.v
 GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v
