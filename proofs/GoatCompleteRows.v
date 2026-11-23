@@ -32,6 +32,7 @@ Fixpoint tsz (T : typ) : nat :=
   match T with
   | typ_Arrow A B => S (tsz A + tsz B)
   | typ_Record R => S (rsz R)
+  | typ_Grp _ A => S (tsz A)
   | _ => 1
   end
 with rsz (R : row) : nat :=

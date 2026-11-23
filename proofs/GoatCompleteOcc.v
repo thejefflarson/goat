@@ -67,6 +67,7 @@ Fixpoint po (S : sub) (vt vr : atom -> Prop) (T : typ) {struct T} : Prop :=
   | typ_Var b => vt b
   | typ_Arrow A B => po S vt vr A \/ po S vt vr B
   | typ_Record R => por S vt vr R
+  | typ_Grp _ A => po S vt vr A
   | _ => False
   end
 with por (S : sub) (vt vr : atom -> Prop) (R : row) {struct R} : Prop :=
@@ -96,6 +97,7 @@ Proof.
   - intros A IHA B IHB [H|H]; [ pose proof (IHA H) | pose proof (IHB H) ]; lia.
   - intros R IH H. pose proof (IH H). lia.
   - intros a H. exact (Hb a H).
+  - intros w B IH H. pose proof (IH H). lia.
   - intros r H. exact (Hq r H).
   - intros l T IHT R IHR [H|H]; [ pose proof (IHT H) | pose proof (IHR H) ]; lia.
   - intros l P IHP T IHT R IHR H.
@@ -148,6 +150,7 @@ Proof.
   - destruct Hp as [H|H]; [ pose proof (Ht A H) | pose proof (Ht B H) ];
       unfold apT in *; simpl in E; lia.
   - pose proof (Hr R Hp). unfold apT, apR in *. simpl in E. lia.
+  - pose proof (Ht A1 Hp). unfold apT in *. simpl in E. lia.
 Qed.
 
 (* ---- [bind_row] and [bind_prop] under the ratified occurrence condition ---- *)

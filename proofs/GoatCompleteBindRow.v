@@ -143,6 +143,7 @@ Proof.
   - intros A IHA B IHB [HA HB]. split; auto.
   - intros R IH. exact IH.
   - intros a _. apply Hs.
+  - intros v B IH [HB Hn]. exact (conj (IH HB) (spn_ap _ _ B v 0 Hn)).
   - intros r _. destruct (Hr r) as [q E]. rewrite E. exact I.
   - intros l T IHT R IHR [HT HR]. split; auto.
   - intros l P IHP T IHT R IHR [HP [HT HR]]. split; [ | split ]; auto.
@@ -206,6 +207,7 @@ Proof.
         [ intros x Hx'; apply Hx; fsetdec | intros q Hq'; apply Hq; fsetdec ].
   - intros R IH Hpf Hf Hx Hq. exact (IH Hpf Hf Hx Hq).
   - intros a _ _ _ _. apply Hs.
+  - intros v B IH Hpf Hf Hx Hq. exact (IH (proj1 Hpf) Hf Hx Hq).
   - intros r _ _ _ _. apply Hr.
   - intros l T IHT R IHR Hpf Hf Hx Hq. destruct Hpf as [HpT HpR]. destruct Hf as [HfT HfR]. split.
     + apply IHT; [ exact HpT | exact HfT | | ];
