@@ -221,6 +221,31 @@ fn link_foreign<H: Host + 'static>(
     Ok(())
 }
 
+/// `scene.frame(ptr, len)`: the bytes of the module's memory a frame was
+/// encoded into, handed to the host without a copy. A range outside the memory
+/// is the program's error, not a panic.
+fn link_frame<H: Host + 'static>(linker: &mut Linker<State<H>>, host: &H) -> Result<(), String> {
+    host.signature("scene", "frame")
+        .ok_or("the host provides no function scene.frame")?;
+    linker
+        .func_wrap(
+            "scene",
+            "frame",
+            |mut caller: Caller<'_, State<H>>, ptr: i32, len: i32| -> wasmtime::Result<()> {
+                let memory = memory(&mut caller)?;
+                let (data, state) = memory.data_and_store_mut(&mut caller);
+                let (ptr, len) = (ptr as u32 as usize, len as u32 as usize);
+                let bytes = ptr
+                    .checked_add(len)
+                    .and_then(|end| data.get(ptr..end))
+                    .ok_or_else(|| wasmtime::Error::msg("frame out of bounds"))?;
+                state.host.frame(bytes).map_err(wasmtime::Error::msg)
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn next<'a>(args: &mut impl Iterator<Item = &'a Val>) -> wasmtime::Result<&'a Val> {
     args.next()
         .ok_or_else(|| wasmtime::Error::msg("host call with too few arguments"))
@@ -421,8 +446,13 @@ fn link<H: Host + 'static>(
         .map_err(|e| e.to_string())?;
 
     for import in module.imports() {
-        if let (false, ExternType::Func(ty)) = (import.module() == "goat", import.ty()) {
-            link_foreign(&mut linker, host, import.module(), import.name(), ty)?;
+        let (module_name, name) = (import.module(), import.name());
+        if let (false, ExternType::Func(ty)) = (module_name == "goat", import.ty()) {
+            if (module_name, name) == ("scene", "frame") {
+                link_frame(&mut linker, host)?;
+            } else {
+                link_foreign(&mut linker, host, module_name, name, ty)?;
+            }
         }
     }
 

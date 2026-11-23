@@ -1,18 +1,20 @@
 //! The glue an interactive host calls (ADR 0015): the `update` and `draw`
 //! entry points, one event constructor per tag `update` handles, and the walk
-//! that streams `draw`'s picture out through the `scene.*` imports. The host
-//! never reads goat's heap, so everything that touches variant tags, payload
-//! slots or record layouts lives here, over types the checker has fixed.
+//! that encodes `draw`'s picture into one buffer and hands it to the host's
+//! `scene.frame` (ADR 0015, second addendum). The host never reads goat's heap, so
+//! everything that touches variant tags, payload slots or record layouts lives
+//! here, over types the checker has fixed.
 //!
 //! Both are derived from the host's vocabulary (ADR 0020), not written per
 //! tag. A constructor takes the leaves of its host values, left to right, and
-//! rebuilds the records around them; a shape streams as its leaves, with a
-//! list as a begin, one call per element and an end.
+//! rebuilds the records around them; a shape encodes as its leaves, with a
+//! list as a begin record, one record per element and an end record.
 
 use std::collections::BTreeMap;
 
-use super::{FnCx, Mono, Subst, field_index, positional_fields, variant_row};
+use super::{FnCx, Mono, Subst, field_index, intern_index, positional_fields, variant_row};
 use crate::canon::ground_fields;
+use crate::frame::{Calls, Wire};
 use crate::mir::*;
 use goat_checker::Target;
 use goat_checker::ty::Ty;
@@ -34,6 +36,28 @@ fn lets(bindings: Vec<(Local, Expr)>, body: Expr) -> Expr {
     bindings.into_iter().rev().fold(body, |body, (l, value)| {
         Expr::Let(l, Box::new(value), Box::new(body))
     })
+}
+
+fn wires(leaves: &[Leaf]) -> Vec<Wire> {
+    leaves
+        .iter()
+        .map(|leaf| Wire::of(&leaf.ty).expect("a leaf is a scalar or a string"))
+        .collect()
+}
+
+/// Append the record of the scene call `name` over `leaves`, held in `locals`.
+fn put_record(calls: &mut Calls, name: &str, leaves: &[Leaf], locals: &[Local]) -> Expr {
+    let op = FrameItem::Byte(calls.index(name, &wires(leaves)));
+    let values = wires(leaves)
+        .into_iter()
+        .zip(locals)
+        .map(|(wire, &x)| match wire {
+            Wire::Int => FrameItem::Int(x),
+            Wire::Float => FrameItem::Float(x),
+            Wire::Bool => FrameItem::Bool(x),
+            Wire::Str => FrameItem::Str(x),
+        });
+    Expr::Frame(FrameOp::Put(std::iter::once(op).chain(values).collect()))
 }
 
 /// Take one from `budget`, trapping first if none is left.
@@ -218,13 +242,15 @@ impl Mono<'_> {
             .0
     }
 
-    /// `(closure, model) -> Unit`: run `draw` and stream the shapes it returns
-    /// between `scene.begin` and `scene.end`. The shapes are dropped when the
-    /// walk is done.
+    /// `(closure, model) -> Unit`: run `draw`, encode the shapes it returns
+    /// into the frame buffer, and hand the buffer to `scene.frame` between
+    /// `scene.begin` and `scene.end`. The shapes are dropped when the walk is
+    /// done.
     fn draw_func(&mut self, closure_ty: MTy, model_ty: MTy, shapes_ty: &Ty) -> FuncId {
-        let walk = self.shapes_walk(shapes_ty);
-        let begin = self.scene("begin", Vec::new());
-        let end = self.scene("end", Vec::new());
+        let mut calls = Calls::default();
+        let walk = self.shapes_walk(shapes_ty, &mut calls);
+        let begin = self.scene("begin");
+        let end = self.scene("end");
         let mut cx = FnCx::new(Subst::new());
         let shapes_mty = self.lower_ty(shapes_ty);
         let (closure, model, shapes) = (
@@ -232,6 +258,7 @@ impl Mono<'_> {
             cx.fresh(model_ty),
             cx.fresh(shapes_mty),
         );
+        let frame = |op| Expr::Frame(op);
         let mut steps = vec![
             (
                 shapes,
@@ -240,10 +267,19 @@ impl Mono<'_> {
             (cx.fresh(MTy::Unit), Expr::CallForeign(begin, Vec::new())),
         ];
         if let Some(walk) = walk {
-            steps.push((
-                cx.fresh(MTy::Unit),
-                Expr::CallDirect(walk, vec![local(shapes), int(PICTURE_BUDGET)]),
-            ));
+            let header = DataId(intern_index(&mut self.data, calls.header()) as u32);
+            steps.extend([
+                (cx.fresh(MTy::Unit), frame(FrameOp::Reset)),
+                (
+                    cx.fresh(MTy::Unit),
+                    frame(FrameOp::Put(vec![FrameItem::Lit(header)])),
+                ),
+                (
+                    cx.fresh(MTy::Unit),
+                    Expr::CallDirect(walk, vec![local(shapes), int(PICTURE_BUDGET)]),
+                ),
+                (cx.fresh(MTy::Unit), frame(FrameOp::Present)),
+            ]);
         }
         steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(end, Vec::new())));
         let body = lets(steps, Expr::Const(Const::Unit));
@@ -256,14 +292,14 @@ impl Mono<'_> {
     }
 
     /// `(shapes, budget) -> Unit`, if the picture can hold any shape.
-    fn shapes_walk(&mut self, shapes_ty: &Ty) -> Option<FuncId> {
+    fn shapes_walk(&mut self, shapes_ty: &Ty, calls: &mut Calls) -> Option<FuncId> {
         let (item, link) = self.list_item(shapes_ty)?;
         // An empty picture leaves the item type unconstrained.
         let Ty::Variant(_) = item.unfold_head() else {
             return None;
         };
         let list = self.lower_ty(shapes_ty);
-        let shape = self.shape_func(&item);
+        let shape = self.shape_func(&item, calls);
 
         let id = self.reserve();
         let mut cx = FnCx::new(Subst::new());
@@ -290,9 +326,9 @@ impl Mono<'_> {
         Some(id)
     }
 
-    /// `(shape, budget) -> budget`: stream one shape, returning what its
+    /// `(shape, budget) -> budget`: encode one shape, returning what its
     /// vertices left of the budget.
-    fn shape_func(&mut self, shape_ty: &Ty) -> FuncId {
+    fn shape_func(&mut self, shape_ty: &Ty, calls: &mut Calls) -> FuncId {
         let kind = self.lower_ty(shape_ty);
         let payloads: Vec<(String, Ty)> = ground_fields(&variant_row(shape_ty))
             .map(|(label, payload)| (label.clone(), payload.clone()))
@@ -311,15 +347,10 @@ impl Mono<'_> {
             let record = cx.fresh(self.lower_ty(payload));
             let mut steps = vec![(record, Expr::Payload(shape, tag, 0))];
             let head = self.read_leaves(&mut cx, &mut steps, record, payload, &streamed.head);
-            let head_tys: Vec<MTy> = streamed
-                .head
-                .iter()
-                .map(|leaf| self.lower_ty(&leaf.ty))
-                .collect();
             let body = match (&spec.scene, &streamed.list) {
                 (SceneCalls::Call(name), _) => {
-                    let call = self.scene(name, head_tys);
-                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(call, head)));
+                    let put = put_record(calls, name, &streamed.head, &head);
+                    steps.push((cx.fresh(MTy::Unit), put));
                     local(budget)
                 }
                 (
@@ -333,18 +364,18 @@ impl Mono<'_> {
                     let points_ty = self.field_ty(payload, &list.field);
                     let points = cx.fresh(self.lower_ty(&points_ty));
                     let left = cx.fresh(MTy::Int);
-                    let walk = self.points_walk(&points_ty, element, &list.element);
-                    let begin = self.scene(begin, head_tys);
-                    let end = self.scene(end, Vec::new());
+                    let walk = self.points_walk(&points_ty, element, &list.element, calls);
                     let slot = self.slot(payload, &list.field);
                     steps.push((points, Expr::Field(record, slot)));
-                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(begin, head)));
+                    let put = put_record(calls, begin, &streamed.head, &head);
+                    steps.push((cx.fresh(MTy::Unit), put));
                     let walked = match walk {
                         Some(walk) => Expr::CallDirect(walk, vec![local(points), local(budget)]),
                         None => local(budget),
                     };
                     steps.push((left, walked));
-                    steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(end, Vec::new())));
+                    let put = put_record(calls, end, &[], &[]);
+                    steps.push((cx.fresh(MTy::Unit), put));
                     local(left)
                 }
                 (SceneCalls::Stream { .. }, None) => {
@@ -359,13 +390,17 @@ impl Mono<'_> {
         id
     }
 
-    /// `(points, budget) -> budget`: one `scene.<element>` call per element,
-    /// if the list can hold any.
-    fn points_walk(&mut self, points_ty: &Ty, element: &str, leaves: &[Leaf]) -> Option<FuncId> {
+    /// `(points, budget) -> budget`: one `<element>` record per element, if
+    /// the list can hold any.
+    fn points_walk(
+        &mut self,
+        points_ty: &Ty,
+        element: &str,
+        leaves: &[Leaf],
+        calls: &mut Calls,
+    ) -> Option<FuncId> {
         let (point, link) = self.list_item(points_ty)?;
         let list = self.lower_ty(points_ty);
-        let leaf_tys = leaves.iter().map(|leaf| self.lower_ty(&leaf.ty)).collect();
-        let call = self.scene(element, leaf_tys);
         let id = self.reserve();
         let mut cx = FnCx::new(Subst::new());
         let (points, budget) = (cx.fresh(list), cx.fresh(MTy::Int));
@@ -376,7 +411,10 @@ impl Mono<'_> {
             (rest, Expr::Payload(points, link, 1)),
         ];
         let args = self.read_leaves(&mut cx, &mut steps, head, &point, leaves);
-        steps.push((cx.fresh(MTy::Unit), Expr::CallForeign(call, args)));
+        steps.push((
+            cx.fresh(MTy::Unit),
+            put_record(calls, element, leaves, &args),
+        ));
         let step = spend(budget, |remaining| {
             lets(
                 steps,
@@ -445,12 +483,12 @@ impl Mono<'_> {
         FuncId(self.out.len() as u32 - 1)
     }
 
-    /// The import `scene.name`, registered on first use.
-    fn scene(&mut self, name: &str, params: Vec<MTy>) -> ForeignId {
+    /// The import `scene.name`, which takes nothing, registered on first use.
+    fn scene(&mut self, name: &str) -> ForeignId {
         self.register_import(ForeignFn {
             module: "scene".into(),
             name: name.into(),
-            params,
+            params: Vec::new(),
             ret: MTy::Unit,
         })
     }

@@ -447,7 +447,8 @@ fn a_host_with_its_own_vocabulary_compiles_to_the_imports_and_exports_it_declare
         .imports()
         .map(|i| format!("{}.{}", i.module(), i.name()))
         .collect();
-    assert!(imports.contains(&"scene.led".to_string()), "{imports:?}");
+    assert!(imports.contains(&"scene.frame".to_string()), "{imports:?}");
+    assert!(!imports.contains(&"scene.led".to_string()), "{imports:?}");
     assert!(!imports.contains(&"scene.line".to_string()), "{imports:?}");
     let exports: Vec<_> = module.exports().map(|e| e.name().to_string()).collect();
     assert!(
@@ -503,4 +504,30 @@ fn the_host_owns_how_a_key_string_becomes_a_key() {
     let keys = ["w", "w", "s", "ArrowUp", "ArrowUp"];
     assert_eq!(height_after(&wasd, &keys), 1.0);
     assert_eq!(height_after(&HostInterface::turtle(), &keys), 2.0);
+}
+
+const FRAME_IMPORTER: &str = r#"(module
+  (import "scene" "frame" (func $frame (param i32 i32)))
+  (memory (export "memory") 1)
+  (func (export "go") (param i32 i32) local.get 0 local.get 1 call $frame))"#;
+
+#[test]
+fn a_frame_outside_the_guests_memory_or_malformed_traps_the_guest_without_a_panic() {
+    use goat::SceneHost;
+    use goat::native::Guest;
+    let mut guest = Guest::new(FRAME_IMPORTER.as_bytes(), SceneHost::default()).expect("links");
+    for (ptr, len) in [
+        (65_536, 1),
+        (65_535, 2),
+        (-1, 1),
+        (0, -1),
+        (-1, -1),
+        (0, 0),
+        (0, 64),
+    ] {
+        let error = guest
+            .call::<(i32, i32), ()>("go", (ptr, len))
+            .expect_err("rejected");
+        assert!(!error.is_empty(), "({ptr}, {len})");
+    }
 }

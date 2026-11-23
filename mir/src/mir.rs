@@ -334,6 +334,44 @@ pub enum Write {
 pub enum Effect {
     Foreign(ForeignId),
     Write,
+    Frame,
+}
+
+/// One value a `FrameOp::Put` appends to the frame buffer (ADR 0015, second
+/// addendum): the encoding of each is `frame.rs`'s. `Int`, `Float`, `Bool` and `Str`
+/// read a local and borrow it, as `Write::Str` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameItem {
+    Byte(u8),
+    /// The bytes of a data-segment string.
+    Lit(DataId),
+    Int(Local),
+    Float(Local),
+    Bool(Local),
+    Str(Local),
+}
+
+impl FrameItem {
+    /// The local the item reads, if it reads one.
+    pub fn local(&self) -> Option<Local> {
+        match *self {
+            FrameItem::Int(x) | FrameItem::Float(x) | FrameItem::Bool(x) | FrameItem::Str(x) => {
+                Some(x)
+            }
+            FrameItem::Byte(_) | FrameItem::Lit(_) => None,
+        }
+    }
+}
+
+/// The buffer a frame's shapes are encoded into before the host sees them:
+/// `Reset` empties it, `Put` appends, and `Present` hands the bytes to the
+/// host's `scene.frame` and empties it. Each yields `Unit`, and none may be
+/// dropped or reordered.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FrameOp {
+    Reset,
+    Put(Vec<FrameItem>),
+    Present,
 }
 
 /// Using a pointer-typed `Local` moves it; `Field`, `Payload`, `Capture` and
@@ -409,6 +447,7 @@ pub enum Expr {
     /// borrows the closure. Traps for a closure no method site made.
     MethodKey(Local),
     Write(Write),
+    Frame(FrameOp),
     /// A call to a host function. Effectful even when it returns `Unit`: it is
     /// never dropped, duplicated, or reordered (see `effects`). Arguments are
     /// locals so that a pointer passed to the host is borrowed for the call,
@@ -446,6 +485,7 @@ impl Expr {
             | Expr::MethodKey(_)
             | Expr::CallForeign(..)
             | Expr::Write(Write::Str(_) | Write::Lit(_) | Write::End)
+            | Expr::Frame(_)
             | Expr::Dup(_)
             | Expr::Drop(_)
             | Expr::Trap(_)
@@ -511,6 +551,7 @@ impl Expr {
             | Expr::MethodKey(_)
             | Expr::CallForeign(..)
             | Expr::Write(Write::Str(_) | Write::Lit(_) | Write::End)
+            | Expr::Frame(_)
             | Expr::Dup(_)
             | Expr::Drop(_)
             | Expr::Trap(_)
@@ -632,6 +673,7 @@ pub fn effects(e: &Expr) -> Vec<Effect> {
     e.for_each_node(&mut |e| match e {
         Expr::CallForeign(f, _) => out.push(Effect::Foreign(*f)),
         Expr::Write(_) => out.push(Effect::Write),
+        Expr::Frame(_) => out.push(Effect::Frame),
         _ => {}
     });
     out

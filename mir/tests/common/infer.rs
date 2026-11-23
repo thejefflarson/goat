@@ -177,6 +177,7 @@ impl Infer<'_> {
                 }
                 Some(MTy::Unit)
             }
+            Expr::Frame(_) => Some(MTy::Unit),
             Expr::CallForeign(f, _) => program.foreign.get(f.0 as usize).map(|f| f.ret),
             Expr::Trap(_) => None,
             Expr::Site(..) => Some(MTy::Unit),

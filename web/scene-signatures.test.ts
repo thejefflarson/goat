@@ -32,7 +32,9 @@ test("each scene import takes the golden arity and records the golden field type
     scene: Record<string, (...args: Array<number | bigint>) => void>;
   };
 
-  assert.deepEqual(Object.keys(scene).sort(), [...golden.keys()].sort());
+  // `frame` is the bulk call: it takes (ptr, len), not a shape's fields.
+  assert.equal(scene.frame!.length, 2);
+  assert.deepEqual(Object.keys(scene).filter((name) => name !== "frame").sort(), [...golden.keys()].sort());
   for (const [name, params] of golden) {
     const call = scene[name]!;
     assert.equal(call.length, params.length, `scene.${name} arity`);
