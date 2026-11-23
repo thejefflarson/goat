@@ -83,6 +83,15 @@ addendum, Consequences).
    If step 2 or 3 traps or returns 0, the host releases whichever model it
    holds and keeps the new module's `fresh` (a reset); it never leaves the old
    program half-torn-down.
+
+   A trap in step 2 or 3 leaves the old model half consumed and unreachable,
+   so the host abandons the whole shared heap: it zeroes the allocator's
+   free lists, rewinds the heap pointer, clears the live count, instantiates
+   the new module over it again and runs `goat_setup` for a new `fresh`. The
+   old module's `goat_shutdown` and `goat_free_static` are skipped, since its
+   blocks no longer exist. Nothing else lives in that heap: the host holds no
+   pointers across a reload, and a module's frame buffer is a block its own
+   globals point to.
 5. **Status.** The `Reloaded` outcome becomes
    `{outcome: "refreshed" | "reset", reason?: ResetReason}`, and the
    fingerprint "kept" path is retired: `goat_model_fingerprint`,

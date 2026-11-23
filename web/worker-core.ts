@@ -10,14 +10,16 @@ import {
   type Hosted,
   type LoopCanvas,
   createHosted,
+  instantiateCompiled,
   instantiateInteractive,
+  resetHosted,
   instantiateWithScene,
   isReloadableModule,
   startLoop,
 } from "./loop.ts";
 import { type FromWorker, Heartbeat, type ToWorker } from "./protocol.ts";
 import { animate, run, stopMessage } from "./runtime.ts";
-import { type DrawingContext, type HostEvent, SpanScene, SwatchScene, constructEvent, subscriptions } from "./scene.ts";
+import { CanvasScene, type DrawingContext, type HostEvent, SpanScene, SwatchScene, constructEvent, subscriptions } from "./scene.ts";
 
 export interface WorkerCoreEnv {
   post(message: FromWorker): void;
@@ -106,14 +108,20 @@ export function createWorkerCore(env: WorkerCoreEnv) {
     }
     const { ctx, hosted, heartbeat } = reloadable;
     try {
-      heartbeat.enter();
-      let next;
-      try {
-        next = await instantiateInteractive(module, ctx, hosted);
-      } finally {
-        heartbeat.leave();
-      }
-      const reloaded = loop.reload(next);
+      const compiled = await WebAssembly.compile(module);
+      const instantiate = () => {
+        heartbeat.enter();
+        try {
+          return instantiateCompiled(compiled, new CanvasScene(ctx), hosted);
+        } finally {
+          heartbeat.leave();
+        }
+      };
+      const next = instantiate();
+      const reloaded = loop.reload(next, () => {
+        resetHosted(hosted);
+        return instantiate();
+      });
       if (loop.running) env.post({ type: "reloaded", ...reloaded, subscriptions: subscriptions(next) });
     } catch (e) {
       env.post({ type: "reload_failed", message: e instanceof Error ? e.message : String(e) });

@@ -664,6 +664,22 @@ impl<H: Host + 'static> Guest<H> {
         instantiate_in(&mut self.store, &module, &mut self.hosted)
     }
 
+    /// Forget every object in the shared heap: zero the allocator's free
+    /// lists, rewind its bump pointer and clear the live count. Only a host
+    /// that has abandoned every instance over the heap may call this.
+    fn reset_heap(&mut self) -> Result<(), String> {
+        let hosted = self.hosted.ok_or("this module owns its heap")?;
+        let tables = goat_wasm::DATA_BASE as usize..goat_wasm::HOSTED_HEAP_START as usize;
+        hosted.memory.data_mut(&mut self.store)[tables].fill(0);
+        let set = |global: wasmtime::Global, store: &mut Store<State<H>>, value: u32| {
+            global
+                .set(store, Val::I32(value as i32))
+                .map_err(|e| e.to_string())
+        };
+        set(hosted.heap, &mut self.store, goat_wasm::HOSTED_HEAP_START)?;
+        set(hosted.live, &mut self.store, 0)
+    }
+
     /// Run `f` with `instance` as the current one, then put the current one
     /// back.
     fn on<R>(&mut self, instance: Instance, f: impl FnOnce(&mut Self) -> R) -> R {

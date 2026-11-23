@@ -701,7 +701,8 @@ fn a_trap_while_carrying_the_model_over_resets_as_reshaped_on_both_backends() {
     assert_eq!(outcome, Reloaded::Reset(goat::ResetReason::reshaped()));
     program.send(&Event::Tick(16.0)).unwrap();
     program.draw().unwrap();
-    let (host, _) = program.finish().unwrap();
+    let (host, live) = program.finish().unwrap();
+    assert_eq!(live, 0, "the half-consumed old model leaked");
     assert!(
         host.commands
             .iter()
