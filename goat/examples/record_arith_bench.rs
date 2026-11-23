@@ -6,12 +6,21 @@
 //!
 //!     cargo run --release -p goat --features native --example record_arith_bench -- --wasm A.wasm B.wasm
 //!
+//!     cargo run --release -p goat --features native --example record_arith_bench -- --native [--only a,b]
+//!
+//! `--native` also builds each variant with clang -O2 and times it beside
+//! wasmtime in the same run: update and draw medians, allocations per frame,
+//! and the compile times. `--only` limits it to the named variants. It is a
+//! measurement tool, not a test, and CI does not run it.
+//!
 //! `--emit DIR` writes each variant's `.wasm` instead of timing it, so another
 //! engine can run the same module. `--wasm` times modules already built, such
 //! as hand-edited ones.
 
 use goat::native::{Guest, HostEvent, Interactive};
 use goat::{Host, SceneSink};
+use goat_native::interactive::{Arg, HostEvent as NativeEvent};
+use goat_native::{Interactive as NativeInteractive, Library};
 use std::time::{Duration, Instant};
 use std::{env, fs};
 
@@ -33,6 +42,16 @@ impl HostEvent for Frame {
         constructor: &str,
     ) -> Result<i32, String> {
         guest.call(constructor, self.0)
+    }
+}
+
+impl NativeEvent for Frame {
+    fn tag(&self) -> &'static str {
+        "Frame"
+    }
+
+    fn construct<H: Host>(&self, guest: &mut goat_native::Guest<H>) -> Result<usize, String> {
+        guest.event("Frame", &[Arg::Float(self.0)])
     }
 }
 
@@ -153,6 +172,11 @@ const VARIANTS: &[Variant] = &[
     },
     Variant {
         base: FLAT,
+        count: 10_000,
+        ..variant("flat-10k", STEP_FULL)
+    },
+    Variant {
+        base: FLAT,
         count: 100_000,
         ..variant("flat-100k", STEP_FULL)
     },
@@ -207,7 +231,23 @@ fn micros(d: Duration) -> f64 {
     d.as_secs_f64() * 1e6
 }
 
+struct Timing {
+    update: f64,
+    draw: f64,
+    shapes: usize,
+    leaked: u32,
+}
+
 fn measure(name: &str, wasm: &[u8]) -> Result<(), String> {
+    let t = measure_wasm(wasm)?;
+    println!(
+        "{:<12} update {:>8.1} us  draw {:>8.1} us  shapes {:>5}  leaked {}",
+        name, t.update, t.draw, t.shapes, t.leaked
+    );
+    Ok(())
+}
+
+fn measure_wasm(wasm: &[u8]) -> Result<Timing, String> {
     let mut program: Interactive<Counting, Frame> = Interactive::new(wasm, Counting::default())?;
     let (mut updates, mut draws) = (Vec::new(), Vec::new());
     for frame in 0..WARMUP + FRAMES {
@@ -224,13 +264,101 @@ fn measure(name: &str, wasm: &[u8]) -> Result<(), String> {
     }
     let shapes = program.sink_mut().shapes;
     let (_, leaked) = program.finish()?;
-    println!(
-        "{:<12} update {:>8.1} us  draw {:>8.1} us  shapes {:>5}  leaked {}",
-        name,
-        micros(median(updates)),
-        micros(median(draws)),
+    Ok(Timing {
+        update: micros(median(updates)),
+        draw: micros(median(draws)),
         shapes,
-        leaked
+        leaked,
+    })
+}
+
+struct NativeTiming {
+    timing: Timing,
+    update_allocs: u64,
+    draw_allocs: u64,
+}
+
+fn measure_native(library: Library) -> Result<NativeTiming, String> {
+    let mut program: NativeInteractive<Counting, Frame> =
+        NativeInteractive::new(library, Counting::default())?;
+    let (mut updates, mut draws) = (Vec::new(), Vec::new());
+    let (mut update_allocs, mut draw_allocs) = (0, 0);
+    for frame in 0..WARMUP + FRAMES {
+        let before = program.allocations();
+        let started = Instant::now();
+        program.send(&Frame(16.0))?;
+        let update = started.elapsed();
+        let mid = program.allocations();
+        let started = Instant::now();
+        program.draw()?;
+        let draw = started.elapsed();
+        update_allocs = mid - before;
+        draw_allocs = program.allocations() - mid;
+        if frame >= WARMUP {
+            updates.push(update);
+            draws.push(draw);
+        }
+    }
+    let shapes = program.sink_mut().shapes;
+    let (_, leaked) = program.finish()?;
+    Ok(NativeTiming {
+        timing: Timing {
+            update: micros(median(updates)),
+            draw: micros(median(draws)),
+            shapes,
+            leaked,
+        },
+        update_allocs,
+        draw_allocs,
+    })
+}
+
+fn ms(d: Duration) -> f64 {
+    d.as_secs_f64() * 1e3
+}
+
+/// Times `variant` under wasmtime and as a clang -O2 native library, in the
+/// same process.
+fn compare(variant: &Variant) -> Result<(), String> {
+    let text = source(variant);
+    let started = Instant::now();
+    let wasm = goat_canvas::compile(&text)?;
+    let wasm_compile = started.elapsed();
+    let started = Instant::now();
+    let ll = goat::compile_ll(goat::Profile::Desktop, &text, &goat_canvas::interface()).map_err(
+        |errors| {
+            errors
+                .iter()
+                .map(|e| e.render(&text))
+                .collect::<Vec<_>>()
+                .join("\n")
+        },
+    )?;
+    let to_ll = started.elapsed();
+    let started = Instant::now();
+    let library = Library::build_with(&ll, &["-O2"]).map_err(|e| e.to_string())?;
+    let clang = started.elapsed();
+    let wasm_time = measure_wasm(&wasm)?;
+    let native = measure_native(library)?;
+    println!(
+        "{:<12} wasmtime {:>9.1} + {:>9.1} us   native {:>9.1} + {:>9.1} us   \
+         allocs {} + {}   shapes {}/{}  leaked {}/{}   \
+         compile: wasm {:.0} ms, .ll {:.0} ms + clang -O2 {:.0} ms ({} KB .ll)",
+        variant.name,
+        wasm_time.update,
+        wasm_time.draw,
+        native.timing.update,
+        native.timing.draw,
+        native.update_allocs,
+        native.draw_allocs,
+        wasm_time.shapes,
+        native.timing.shapes,
+        wasm_time.leaked,
+        native.timing.leaked,
+        ms(wasm_compile),
+        ms(to_ll),
+        ms(clang),
+        ll.len() / 1024,
     );
     Ok(())
 }
@@ -274,6 +402,22 @@ fn main() -> Result<(), String> {
     if let Some(at) = args.iter().position(|a| a == "--wasm") {
         for file in &args[at + 1..] {
             measure(file, &fs::read(file).map_err(|e| e.to_string())?)?;
+        }
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--native") {
+        let only: Option<Vec<&str>> = args
+            .iter()
+            .position(|a| a == "--only")
+            .and_then(|at| args.get(at + 1))
+            .map(|names| names.split(',').collect());
+        for variant in VARIANTS {
+            if only
+                .as_ref()
+                .is_none_or(|names| names.contains(&variant.name))
+            {
+                compare(variant)?;
+            }
         }
         return Ok(());
     }

@@ -677,3 +677,36 @@ fn a_reset_also_frees_the_old_modules_static_data() {
     }
     program.finish().unwrap();
 }
+
+/// A model nested so deep that the old module's snapshot overruns the stack
+/// bound and traps.
+fn nested(name: &str) -> Module {
+    reloadable(&format!(
+        r#"
+tag Chain = Leaf | Wrap(Chain)
+build = program(n, acc) do
+  if n == 0 then acc else build(n - 1, Wrap(acc)) done
+done
+init = {{name: "{name}", items: build(2000000, Leaf)}}
+update = program(model, event) do match event do Tick(dt) then model done done
+draw = program(model) do [Text({{x: 0, y: 0, text: model.name, color: "red"}})] done
+"#
+    ))
+}
+
+#[test]
+fn a_trap_while_carrying_the_model_over_resets_as_reshaped_on_both_backends() {
+    let mut program = Running::new(&nested("old")).expect("starts");
+    let outcome = program.reload(&nested("new")).expect("reload survives");
+    assert_eq!(outcome, Reloaded::Reset(goat::ResetReason::reshaped()));
+    program.send(&Event::Tick(16.0)).unwrap();
+    program.draw().unwrap();
+    let (host, _) = program.finish().unwrap();
+    assert!(
+        host.commands
+            .iter()
+            .any(|c| matches!(c, SceneCommand::Text { text, .. } if text == "new")),
+        "the new program's setup drew: {:?}",
+        host.commands
+    );
+}

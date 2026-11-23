@@ -345,3 +345,91 @@ frame's first write, grows by doubling, and is freed when the frame is handed
 over, so a program that draws nothing holds nothing between frames.
 
 To reproduce, run the three commands under "Reproducing" against each tree.
+
+## The native backend, same benchmark (issue 589)
+
+The same two programs, built by the LLVM backend (ADR 0042): goat to `.ll`, then
+`clang -O2 -shared`, loaded with `dlopen` and driven by `goat_native::Interactive`
+with the same counting sink and the same method as above (30 warm-up frames, then
+the median of 300 `Frame` + `update`, then `draw`). Wasmtime, V8 and native all
+run the same tree (`a44fc28` plus this change; the wasmtime and native numbers
+come from one process, V8 from `node web/record-arith.bench.ts` right after).
+Apple M1 Pro, 10 cores, Apple clang 21.0.0, wasmtime 50.0.2, node v26.13.1.
+
+Machine load: the box was heavily loaded earlier in the session (1-minute load
+average 28 to 45 on 10 cores), so measurement waited. Both measured runs started
+at load averages of 9.3 and 7.7 (11 at the first warm-up run). Two runs of the
+wasmtime and native pair agree within 5% on every row (the worst is native
+`full` draw, 80.6 against 85.1 us); two V8 runs agree within 1.5%. The tables
+show the mean of the two runs.
+
+Microseconds per frame, median of 300, update + draw:
+
+| particles | wasmtime | V8 | native -O2 | native vs wasmtime (update / draw) | native vs V8 (update / draw) |
+|---|---|---|---|---|---|
+| `full` 1,000 | 79.5 + 129.5 | 40.7 + 166.8 | 25.8 + 82.9 | 3.1x / 1.6x | 1.6x / 2.0x |
+| `full` 10,000 | 797 + 1,307 | 424 + 1,780 | 242 + 832 | 3.3x / 1.6x | 1.8x / 2.1x |
+| `full` 100,000 | 8,021 + 13,143 | 4,255 + 17,977 | 2,472 + 8,519 | 3.2x / 1.5x | 1.7x / 2.1x |
+| `flat` 1,000 | 51.4 + 128.2 | 27.5 + 168.4 | 16.1 + 81.8 | 3.2x / 1.6x | 1.7x / 2.1x |
+| `flat` 10,000 | 518 + 1,284 | 285 + 1,779 | 144 + 812 | 3.6x / 1.6x | 2.0x / 2.2x |
+| `flat` 100,000 | 5,280 + 13,111 | 2,891 + 18,059 | 1,472 + 8,358 | 3.6x / 1.6x | 2.0x / 2.2x |
+
+`full` is `examples/bench/particles.goat` (nested `{p: {x, y}, v: {x, y}}`),
+`flat` is `examples/bench/particles_flat.goat`. Cost stays linear in all three
+engines up to 100,000 particles.
+
+Allocations per frame, counted by the native instance (`goat_instance.allocs`):
+
+| | update | draw |
+|---|---|---|
+| `full`, 1,000 particles | 4,002 | 4,009 |
+| `full`, 10,000 / 100,000 | 40,002 / 400,002 | 40,012 / 400,015 |
+| `flat`, 1,000 / 10,000 / 100,000 | 3,002 / 30,002 / 300,002 | 4,009 / 40,012 / 400,015 |
+
+Update matches the wasm count after the reuse and static-cell changes above
+(4,002 per frame, 4 per particle plus the frame's own; `mir/tests/reuse.rs`
+asserts 4 per particle in the interpreter). `draw` is 4 per shape (a `Dot`, its
+payload, two list cells) plus the batching buffer's doublings (9 at 1,000 shapes
+up to 15 at 100,000). The wasm module exposes no allocation counter outside a
+hand-instrumented module, so the match is against that counted figure and the
+interpreter, not a fresh wasm count; both engines also finish with zero live
+blocks.
+
+Compile time, `full` (the flat variant is within 5%):
+
+| step | time |
+|---|---|
+| goat to wasm (parse, check, mono, MIR, emit) | 14 ms |
+| goat to `.ll` (same front end, LLVM emitter; 583 KB of text) | 11-15 ms |
+| `clang -O2 -shared` on the `.ll` plus the C shim | 0.69 s (0.60-0.72 s across variants) |
+
+The native backend therefore costs about 0.7 s of clang per build against 14 ms
+for wasm (which wasmtime then compiles with Cranelift at instantiation). That is
+fine for a release build and rules native out for live coding, as ADR 0042
+already says.
+
+Reading the table:
+
+- **Update is 3.1x to 3.6x faster than wasmtime and 1.6x to 2.0x faster than
+  V8.** The work is the record lifecycle; the cause of the gap
+  was not profiled (it is plausibly LLVM's inlining of the allocator and drop
+  paths against Cranelift's, and native's unchecked memory access). 4,002 allocations in 25 us is about 6 ns per
+  allocation and per particle step, against 20 ns under wasmtime.
+- **Draw gains less (1.5x to 1.6x over wasmtime), and V8's is the slowest of the
+  three.** The module's side (building 1,000 `Dot`s, encoding the frame) is fast;
+  what remains is the host decoding the frame buffer and driving the sink, which
+  is Rust in the native and wasmtime cases and JavaScript in V8's. Native draw
+  was not split into module and host time.
+- **The nested-record tax shrinks in absolute terms, not in ratio.** `full` less
+  `flat` is 9.7 us native, 28 us wasmtime, 13 us V8 (1,000 particles).
+- **Not measured:** the other `Variant`s under native (the harness runs them
+  with `--native` and no `--only`), a painted canvas, and the native host's real
+  window (M2).
+
+Reproduce (the native column needs clang on `PATH`):
+
+```
+cargo run --release -p goat --features native --example record_arith_bench -- --native --only full,full-10k,full-100k,flat,flat-10k,flat-100k
+cargo run --release -p goat --features native --example record_arith_bench -- --emit DIR
+node web/record-arith.bench.ts DIR
+```

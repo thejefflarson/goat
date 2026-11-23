@@ -36,6 +36,10 @@ pub fn mono(checked: &Checked) -> Result<Program, Vec<GoatError>> {
 /// profile cannot hold becomes a runtime trap, the one an overflowing
 /// operation takes (ADR 0017).
 pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<GoatError>> {
+    lower(checked, profile, MAX_SPECS)
+}
+
+fn lower(checked: &Checked, profile: Profile, max_steps: usize) -> Result<Program, Vec<GoatError>> {
     let (lambdas, var_tys) = collect_lambdas(&checked.typed, &checked.root, &checked.captures);
     let mut labels = BTreeSet::new();
     collect_tags(&checked.root, &checked.vocab, &mut labels);
@@ -129,13 +133,11 @@ pub fn mono_for(checked: &Checked, profile: Profile) -> Result<Program, Vec<Goat
     m.out[0] = Some(cx.into_func(vec![], None, ret, body));
 
     let mut step = 0usize;
-    while let Some((id, target, subst, capture_tys)) = m.work.pop() {
+    while let Some((id, target, subst, capture_tys, span)) = m.work.pop() {
         step += 1;
-        if step > MAX_SPECS {
-            m.errors.push(GoatError::new(
-                Span::new(0, 0),
-                "program too complex".to_string(),
-            ));
+        if step > max_steps {
+            m.errors
+                .push(GoatError::new(span, "program too complex".to_string()));
             break;
         }
         let func = m.specialize_body(target, subst, capture_tys);
@@ -429,7 +431,8 @@ struct Mono<'a> {
     foreign_fns: HashMap<Symbol, FuncId>,
     specs: HashMap<SpecKey, FuncId>,
     out: Vec<Option<Func>>,
-    work: Vec<(FuncId, Target, Subst, Vec<Ty>)>,
+    /// Each specialization still to lower, with the use site that asked for it.
+    work: Vec<(FuncId, Target, Subst, Vec<Ty>, Span)>,
     sigs: Vec<Sig>,
     layouts: Vec<Layout>,
     /// The layout of each variant type, keyed by its canonical form. Types in
@@ -862,7 +865,8 @@ impl Mono<'_> {
         for (c, capture_ty) in captures.iter().zip(capture_tys) {
             match_ty(&self.var_tys[c], capture_ty, &mut subst);
         }
-        self.work.push((id, target, subst, capture_tys.clone()));
+        self.work
+            .push((id, target, subst, capture_tys.clone(), span));
         let use_ty = use_ty.clone();
         self.specs.insert(key, id);
         (id, use_ty)
@@ -1933,5 +1937,24 @@ fn payload_fields(payload: &Ty) -> Vec<Ty> {
     match payload {
         Ty::Unit => Vec::new(),
         other => positional_fields(other).unwrap_or_else(|| vec![other.clone()]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use goat_checker::check_with_prelude;
+
+    #[test]
+    fn the_step_limit_blames_the_use_site_that_asked_for_the_specialization() {
+        let src = "double = program(x) do x + x done\ndouble(2)";
+        let checked = check_with_prelude("tag List = Empty | Link(_, List)", src).expect("checks");
+        let errors = lower(&checked, Profile::Desktop, 0).expect_err("step limit");
+        let [error] = &errors[..] else {
+            panic!("one error: {errors:?}");
+        };
+        assert_eq!(error.message, "program too complex");
+        assert!(!error.span.in_prelude());
+        assert_eq!(&src[error.span.start..error.span.end], "double");
     }
 }
