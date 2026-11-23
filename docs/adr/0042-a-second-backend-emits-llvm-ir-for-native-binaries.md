@@ -282,8 +282,9 @@ Everywhere else the build still refuses, saying the window host is macOS only.
   found by name only in the generated `entry.c`, so the shared staticlib never
   references a symbol a non-interactive program lacks. The session knows both the
   canvas labels (`Frame`, `KeyPress`, `MouseMove`, ...) and the turtle's (`Tick`,
-  `KeyDown`, `PointerMove`, ...); `goat build --native --canvas` compiles against
-  the canvas vocabulary.
+  `KeyDown`, `PointerMove`, ...); `goat build --native` picks the canvas
+  vocabulary from the names the program uses, and `--canvas` or `--turtle`
+  overrides that.
 - **Drawing.** `Frame.swift` ports `mir/src/frame.rs`'s decoder. The buffer is
   the program's output, so every read is bounds-checked, a malformed frame is an
   error, and colors pass the same alphanumeric-or-`#` rule as `check_color`.
