@@ -96,7 +96,7 @@ Example let_of_a_function_is_used_at_two_types :
 Proof.
   unfold id_pair.
   apply T_Let_nopin with (L := {}) (T1 := typ_Arrow (typ_Var a0) (typ_Var a0)) (k := fun _ => k_Any);
-    [ reflexivity | | ].
+    [ reflexivity | intros Hc; simpl in Hc; discriminate Hc | | ].
   - apply T_Abs with (L := {}). intros x Hx.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec].
     apply T_Var with (s := sch_mono (typ_Var a0));

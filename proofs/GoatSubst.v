@@ -333,7 +333,7 @@ Proof.
   - eapply T_Abs with (L := L). intros. eauto.
   - eapply T_App; eauto.
   - eapply T_Let with (L := L) (k := k) (Tm := Tm);
-      [ assumption | apply H; apply ext_pw; assumption | intros; eauto ].
+      [ assumption | eassumption | apply H; apply ext_pw; assumption | intros; eauto ].
   - eapply T_LetMono with (L := L); eauto.
   - eapply T_Letrec with (L := L) (k := k); [ assumption | | intros; eauto ].
     intros p Hp. apply H; auto. apply ext_pw. auto.
@@ -378,10 +378,12 @@ Proof.
   - (* T_Abs *) apply T_Abs with (L := L); intros x Hx.
     apply H; auto. apply ctx_equiv_cons; auto using sch_equiv_refl.
   - (* T_App *) eapply T_App; eauto.
-  - (* T_Let *) apply T_Let with (L := L) (T1 := T1) (k := k) (Tm := Tm); auto.
+  - (* T_Let *)
+    assert (Hf : ftv_ctx G [=] ftv_ctx G') by (intro z; apply (ctx_equiv_Ftv _ _ z H1)).
+    apply T_Let with (L := L) (T1 := T1) (k := k) (Tm := Tm); auto.
+    + intros Hc a Ha. apply (l Hc a). rewrite !ftv_pin_ctx in *. fsetdec.
     + eapply typing_pw; [ apply H; exact H1 | ].
       intros a. apply ext_set_eq.
-      assert (Hf : ftv_ctx G [=] ftv_ctx G') by (intro z; apply (ctx_equiv_Ftv _ _ z H1)).
       rewrite !ftv_pin_ctx, Hf. reflexivity.
     + intros x Hx. apply H0; auto.
       apply ctx_equiv_cons; auto. apply gen_ctx_equiv; auto.
@@ -428,13 +430,15 @@ Proof. intros. eapply (proj1 typing_sch_equiv_ctx_mut); eauto. Qed.
    rule with the unit type pinning nothing. *)
 Lemma T_Let_nopin : forall (L : vars) D G e1 e2 T1 T2 (k : sort_fn),
   is_gen_value e1 = true ->
+  lit_pinned e1 (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k ->
   typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k) G e1 T1 ->
   (forall x, x `notin` L ->
      typing D ((x ~ gen G T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
   typing D G (e_let e1 e2) T2.
 Proof.
-  intros L D G e1 e2 T1 T2 k Hg H1 H2.
-  apply T_Let with (L := L) (T1 := T1) (k := k) (Tm := typ_Unit); [ exact Hg | | ].
+  intros L D G e1 e2 T1 T2 k Hg Hlp H1 H2.
+  apply T_Let with (L := L) (T1 := T1) (k := k) (Tm := typ_Unit); [ exact Hg | | | ].
+  - intros Hc a Ha. apply Hlp; [ exact Hc | ]. rewrite ftv_pin_ctx in Ha. simpl in Ha. fsetdec.
   - eapply typing_pw; [ exact H1 | ].
     intros a. apply ext_set_eq. rewrite ftv_pin_ctx. simpl. fsetdec.
   - intros x Hx. eapply typing_sch_equiv_ctx; [ apply H2; exact Hx | ].
@@ -459,6 +463,39 @@ Proof.
   destruct (AtomSetImpl.mem a V) eqn:E1, (AtomSetImpl.mem a V') eqn:E2; try reflexivity.
   apply AtomSetFacts.mem_iff in E1. apply AtomSetFacts.not_mem_iff in E2.
   exfalso. apply E2. apply Hs. exact E1.
+Qed.
+
+Lemma lit_pinned_kup : forall D e V V' k,
+  lit_pinned e V k -> V' [<=] V -> lit_pinned e V' (kup D V k).
+Proof.
+  intros D e V V' k Hp Hs Hc a Ha. unfold kup.
+  assert (Hm : AtomSetImpl.mem a V = true) by (apply AtomSetFacts.mem_iff; apply Hs; exact Ha).
+  rewrite Hm. apply Hp; [ exact Hc | apply Hs; exact Ha ].
+Qed.
+
+Lemma typ_with_ftv : forall S : atoms, exists T, ftv_typ T [=] S /\ frv_typ T [=] {}.
+Proof.
+  intros S. induction S using AtomSetProperties.set_induction.
+  - exists typ_Unit. split; simpl; [ | reflexivity ].
+    intro a. split; intro Ha; [ exfalso; fsetdec | exfalso; apply (H a); exact Ha ].
+  - destruct IHS1 as [T [Hf Hr]]. exists (typ_Arrow (typ_Var x) T). simpl.
+    split; [ | rewrite Hr; fsetdec ].
+    intro a. rewrite AtomSetFacts.union_iff, AtomSetFacts.singleton_iff, (Hf a).
+    pose proof (H0 a) as Ha. split; intro H1.
+    + destruct H1 as [->|H1]; [ apply Ha; left; reflexivity | apply Ha; right; exact H1 ].
+    + apply Ha in H1. destruct H1 as [->|H1]; [ left; reflexivity | right; exact H1 ].
+Qed.
+
+(* Shrinking a context: a type standing in for the old context's variables
+   keeps them pinned. *)
+Lemma repin : forall Tm G G',
+  ftv_ctx G' [<=] ftv_ctx G -> frv_ctx G' [<=] frv_ctx G ->
+  exists Tm', ftv_ctx (pin_ctx Tm' G') [=] ftv_ctx (pin_ctx Tm G) /\
+              frv_ctx (pin_ctx Tm' G') [<=] frv_ctx (pin_ctx Tm G).
+Proof.
+  intros Tm G G' Hf Hr.
+  destruct (typ_with_ftv (ftv_ctx (pin_ctx Tm G))) as [T [Ht Hv]].
+  exists T. rewrite !ftv_pin_ctx, !frv_pin_ctx in *. rewrite Hv, Ht. split; fsetdec.
 Qed.
 
 (* [s'] is at least as general as [s]: it quantifies at least the same
@@ -630,14 +667,17 @@ Proof.
       by (rewrite !ftv_pin_ctx; fsetdec).
     assert (HR' : frv_ctx (pin_ctx Tm G') [<=] frv_ctx (pin_ctx Tm G))
       by (rewrite !frv_pin_ctx; fsetdec).
-    apply T_Let with (L := L) (T1 := T1) (Tm := Tm)
-      (k := kup D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k); auto.
+    destruct (repin Tm G G' HF HR) as [Tm' [HFe HRe]].
+    set (V := AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))).
+    assert (HVe : AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm' G')) [=] V)
+      by (unfold V; rewrite HFe; reflexivity).
+    apply T_Let with (L := L) (T1 := T1) (Tm := Tm') (k := kup D V k); auto.
+    + eapply lit_pinned_kup; [ exact l | ]. rewrite HVe. fsetdec.
     + eapply typing_pw.
       * apply H. apply ctx_more_gen_ext; [ exact HV | exact H1 ].
-      * intros a. apply ext_kup. intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
-        apply AtomSetFacts.diff_iff. split; [ exact Hb | intro Hd; apply Hc; apply HF'; exact Hd ].
+      * intros a. apply ext_kup. rewrite HVe. fsetdec.
     + intros x Hx. apply H0; auto.
-      apply ctx_more_gen_cons; [ apply gen_more_gen; assumption | exact H1 ].
+      apply ctx_more_gen_cons; [ apply gen_more_gen; [ rewrite HFe; fsetdec | exact HRe ] | exact H1 ].
   - (* T_LetMono *) apply T_LetMono with (L := L) (T1 := T1); auto. intros x Hx.
     apply H0; auto. apply ctx_more_gen_cons; auto using sch_more_gen_refl.
   - (* T_Letrec *)
