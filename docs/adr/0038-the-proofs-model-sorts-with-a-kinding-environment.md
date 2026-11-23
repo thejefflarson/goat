@@ -78,8 +78,12 @@ preservation must survive it. Three representations were weighed:
    preservation and the substitution lemma are re-proved for the rule
    (`tsubst_gen_pin`, `typing_inst_gen` over a pinned context), as is the
    algorithm's soundness (`typing_gen_ren_on`); no admits, no new axioms. The
-   declarative rule still derives programs the checker rejects, as it did
-   before; only the algorithm has to agree with the checker. The same run found
+   declarative rule first allowed any `Tm`, so it derived types the checker
+   does not give (`r = {a: 1}  {y: r.a, x: r.a + 1.5}.y` at `Int`); stage 7.1 of
+   phase 7 narrowed it with the premise `lit_pinned`: unless the bound term is a
+   function or a bare numeral, no quantified variable has the sort `Literal`.
+   The recursive group left the unpinned set, because it unrolls to a record and
+   preservation needs the stepped `let` to stay derivable. The same run found
    that the calculus did not generalize a spread of syntactic values, which the
    checker does (`is_syntactic_value`), so `{...b, k: 5}` over a record of a
    generic function typed its function monomorphically; `is_gen_value` now
@@ -108,10 +112,45 @@ sort mechanism held up: the substitution lemma and `kres` needed no change.
 `cmp_total` (two values of one `Eq` type compare) and `cmp_unerase` (the
 elaboration converse for a comparison) are in the checked-closed list.
 
-Two limits of the decision show here, both on the sound side. The unifier does
-not push a sort onto a variable inside a compound it meets (`unify_t` never
-changes `D`), so `f = program(x) do same({p: x}, {p: x}) done` is accepted by
-the checker and refused by W (#623); the corpus has no such program
-(`differential/sort_gap.sh`). And `sat_b`, the algorithm's decision procedure,
-is conservative on `mu` and tag groups: it gives them `Any` only, so W refuses a
-comparison of a recursive or tag type that `sat` accepts.
+Two limits of the decision show here, both on the sound side. The unifier did
+not push a sort onto a variable inside a compound it meets, so
+`f = program(x) do same({p: x}, {p: x}) done` was accepted by the checker and
+refused by W (#623); the amendment below closes it. And `sat_b`, the algorithm's
+decision procedure, is conservative on `mu` and tag groups: it gives them `Any`
+only, so W refuses a comparison of a recursive or tag type that `sat` accepts.
+
+## Amendment: sort propagation and row kinds (phase 7, 2026-11-22)
+
+**Sort propagation (#623).** The unifiers return the kinding environment. When a
+variable of sort `k` binds to a type, each variable inside the type that is
+coarser than `k` is renamed to a fresh variable of sort `k` (`push_sort`), then
+the type must satisfy `k`. Renaming rather than mutating the environment keeps
+the invariant `Good` relies on, that only a fresh atom ever gets a sort: the
+renaming substitution respects the sorts (`k` is finer than the sort it
+replaces) and the new environment refines the old one on a fresh atom alone.
+The cost was one extra result in every unifier's signature (`unify_t`, `unify_r`,
+`unify_k`, `unify_kr`, `unify_co`, `unify_mem`, `unify_grp`, `tie_obj`) and `infer`
+passing the returned environment on; the soundness statements say `GoodU D n s D'
+n'` (the supply grows, and a well-kept `D` gives a `Good` step), and `unify_sound`,
+`unify_k_sound`, `unify_co_sound` and `infer_sound` keep their other conclusions.
+
+**Row kinds.** The calculus gave a row variable a kind, a sort and a set of
+labels it lacks (`RK`, `drk`; stage 7.2), so a spread onto an open row has a
+derivation when the tail lacks the label (`T_SpreadL`) and an open record
+satisfies `Eq` or `Numeric` when its fields and its tail do. A scheme records the
+kind of each quantified row variable (`s_rk`) and `T_Let` types its body under
+them. A substitution respects the kinds when `rkres D D' sr`. Algorithm W carries them (stage 7.3b): `DOk`
+no longer says every row variable is unconstrained, only that every variable
+the algorithm has not used is, and a substitution's respect for the kinds
+(`KR`: `kres` and `rkres` together) is part of every step (`Good`). A row
+variable that binds to a row passes its sort and lacks to the row's tail, which
+is renamed to a fresh variable of the joined kind (a lacks set is a function, so
+two kinds cannot be compared, and the renaming is made whether or not one
+subsumes the other); `rewrite_row` refuses a row variable that lacks the label;
+`restrict` gives its tail the removed label; a spread tries `T_SpreadL` and
+falls back to the presence-variable `T_Spread`; and `gen_ren` and `inst_den`
+record and restore each quantified row variable's kind. A sort pushed onto the
+variables inside a type a variable binds to also reaches its row variables
+(`push_sort_r`), so a comparison of records with an open row has a type, as the
+checker gives it. The corpus reader no longer skips a program for a lacks fact on
+a row tail (`LacksOnTail`).

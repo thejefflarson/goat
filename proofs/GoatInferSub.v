@@ -214,7 +214,7 @@ Proof. intros. unfold apR, scomp; simpl. apply (proj2 ap_comp_mut). Qed.
 (* ------------------------------------------------------------------ *)
 
 Definition apS (s : sub) (sc : scheme) : scheme :=
-  Sch (s_tq sc) (s_rq sc) (apT s (s_body sc)) (s_sk sc).
+  Sch (s_tq sc) (s_rq sc) (apT s (s_body sc)) (s_sk sc) (s_rk sc).
 
 Lemma apC_map : forall s G, apC s G = List.map (fun p => (fst p, apS s (snd p))) G.
 Proof. reflexivity. Qed.

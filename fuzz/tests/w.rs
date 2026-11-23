@@ -113,12 +113,6 @@ impl<'a> Case<'a> {
             .any(|op| self.term.contains(&format!("(bin {op} ")))
     }
 
-    fn has_record(&self) -> bool {
-        ["(rec", "(proj", "(spread", "(restrict"]
-            .iter()
-            .any(|form| self.term.contains(form))
-    }
-
     fn has_method(&self) -> bool {
         self.term.contains("(meth")
     }
@@ -144,23 +138,11 @@ struct Gap {
 /// one regular tree, the row knot, a group member needing a `fold`; stage
 /// 7.11), a program using a binding group's member before its last member
 /// (`SplitGroup`), and every other reader skip.
-const GAPS: [Gap; 3] = [
-    Gap {
-        name: "sat_b answers Any only for mu and tag groups (a comparison where T_Obj gives a mu type)",
-        until: "stage 7.4",
-        covers: |case| case.compares() && case.has_method(),
-    },
-    Gap {
-        name: "#564: no sort on a row variable (the checker kinds Eq on a row tail)",
-        until: "stage 7.2",
-        covers: |case| case.compares() && case.has_record(),
-    },
-    Gap {
-        name: "#623: a sort does not reach a variable inside a type",
-        until: "stage 7.3",
-        covers: |case| case.compares(),
-    },
-];
+const GAPS: [Gap; 1] = [Gap {
+    name: "sat_b answers Any only for mu and tag groups (a comparison where T_Obj gives a mu type)",
+    until: "stage 7.4",
+    covers: |case| case.compares() && case.has_method(),
+}];
 
 static TALLY: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 const REPORT_EVERY: u64 = 5_000;
@@ -351,10 +333,6 @@ mod tests {
             let line = format!("U\t{term}\tOK Number\tsrc");
             (GAPS[gap].covers)(&Case::parse(&line))
         };
-        assert!(covered(2, "(bin eq (b 0) (b 0))"));
-        assert!(!covered(2, "(bin add (b 0) (b 0))"));
-        assert!(covered(1, "(bin lt (proj (b 0) 0) (n 1))"));
-        assert!(!covered(1, "(bin lt (b 0) (n 1))"));
         assert!(covered(0, "(bin eq (rec (0 (meth (abs (b 0))))) (b 0))"));
         assert!(!covered(0, "(bin eq (rec (0 (n 1))) (b 0))"));
     }
