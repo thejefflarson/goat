@@ -21,6 +21,28 @@ fn all(a: &str, b: &str) -> String {
         .join(" ")
 }
 
+/// `all`, with `defs` (tag declarations) ahead of the comparison.
+fn all_in(defs: &str, a: &str, b: &str) -> String {
+    ["<", "<=", ">", ">="]
+        .iter()
+        .map(|op| run(&format!("{defs}{a} {op} {b}")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The booleans `a < b`, `a <= b`, `a > b`, `a >= b`, from one program.
+fn verdicts(a: &str, b: &str) -> Vec<bool> {
+    let tests = ["<", "<=", ">", ">="].map(|op| format!("{a} {op} {b}"));
+    let printed = run(&format!("print([{}])", tests.join(", ")));
+    printed
+        .trim_matches(['[', ']'])
+        .split(", ")
+        .map(|word| word == "true")
+        .collect()
+}
+
+const NAN: &str = "(0.0 / 0.0)";
+
 #[test]
 fn numbers_keep_their_semantics() {
     assert_eq!(all("1", "2"), "true true false false");
@@ -256,4 +278,105 @@ fn the_prelude_sorts_anything_ordered() {
         "[\"a\", \"b\", \"c\"]"
     );
     assert_eq!(run("print(sort([3, 1, 2]))"), "[1, 2, 3]");
+}
+
+#[test]
+fn a_nan_inside_a_compound_is_after_every_float_and_equal_to_itself() {
+    let nan = |shape: &str| shape.replace('N', NAN);
+    let table = [
+        ("{x: N}", "{x: 0.0}", "false false true true"),
+        ("{x: 0.0}", "{x: N}", "true true false false"),
+        ("{x: N}", "{x: N}", "false true false true"),
+        ("{x: N}", "{x: 1.0 / 0.0}", "false false true true"),
+        ("{x: 1.0 / 0.0}", "{x: N}", "true true false false"),
+        ("{x: N, y: 1}", "{x: N, y: 2}", "true true false false"),
+        ("{x: 1, y: N}", "{x: 2, y: 0.0}", "true true false false"),
+        ("[1.0, N]", "[1.0, 5.0]", "false false true true"),
+        ("[1.0, 5.0]", "[1.0, N]", "true true false false"),
+        ("[N]", "[N, 0.0]", "true true false false"),
+        ("[N]", "[N]", "false true false true"),
+    ];
+    for (a, b, want) in table {
+        assert_eq!(all(&nan(a), &nan(b)), want, "{a} vs {b}");
+    }
+}
+
+#[test]
+fn a_nan_inside_a_tag_orders_like_one_inside_a_record() {
+    let defs = "tag Box(_) tag Pair(_) ";
+    let nan = |shape: &str| shape.replace('N', NAN);
+    let table = [
+        ("Box(N)", "Box(0.0)", "false false true true"),
+        ("Box(0.0)", "Box(N)", "true true false false"),
+        ("Pair(N, 1)", "Pair(N, 2)", "true true false false"),
+    ];
+    for (a, b, want) in table {
+        assert_eq!(all_in(defs, &nan(a), &nan(b)), want, "{a} vs {b}");
+    }
+}
+
+#[test]
+fn a_nan_deep_in_a_recursive_type_orders_consistently() {
+    let defs = "tag Tree = Leaf | Node(_) ";
+    let node = |v: &str| format!("Node(Leaf, {v}, Leaf)");
+    assert_eq!(
+        all_in(defs, &node(NAN), &node("0.0")),
+        "false false true true"
+    );
+    assert_eq!(
+        all_in(defs, &node("0.0"), &node(NAN)),
+        "true true false false"
+    );
+    assert_eq!(
+        all_in(defs, &node(NAN), &node(NAN)),
+        "false true false true"
+    );
+}
+
+#[test]
+fn bare_float_operators_stay_ieee() {
+    assert_eq!(all(NAN, "0.0"), "false false false false");
+    assert_eq!(all("0.0", NAN), "false false false false");
+    assert_eq!(all(NAN, NAN), "false false false false");
+}
+
+#[test]
+fn sort_places_nan_records_last_and_breaks_ties_on_later_fields() {
+    let src = format!(
+        "print(sort([{{x: {NAN}, y: 2}}, {{x: 3.0, y: 0}}, {{x: {NAN}, y: 1}}, {{x: 1.0, y: 9}}]))"
+    );
+    assert_eq!(
+        run(&src),
+        "[{x: 1, y: 9}, {x: 3, y: 0}, {x: nan, y: 1}, {x: nan, y: 2}]"
+    );
+    let src = format!("print(sort([[{NAN}], [2.0], [{NAN}, 0.0], [1.0]]))");
+    assert_eq!(run(&src), "[[1], [2], [nan], [nan, 0]]");
+}
+
+#[test]
+fn the_derived_order_is_antisymmetric_and_total_over_nan_shapes() {
+    let leaves = [NAN, "0.0", "-2.5", "1.0 / 0.0"];
+    let mut records = Vec::new();
+    let mut lists = Vec::new();
+    for a in leaves {
+        lists.push(format!("[{a}, 1.0]"));
+        for b in &leaves[..2] {
+            records.push(format!("{{x: {a}, y: {b}}}"));
+        }
+    }
+    for group in [records, lists] {
+        for (i, a) in group.iter().enumerate() {
+            for b in &group[i..] {
+                let (ab, ba) = (verdicts(a, b), verdicts(b, a));
+                assert_eq!(ab[0], ba[2], "{a} < {b} must match {b} > {a}");
+                assert_eq!(ab[2], ba[0], "{a} > {b} must match {b} < {a}");
+                assert!(
+                    !(ab[0] && ab[2]),
+                    "{a} and {b} are each bigger than the other"
+                );
+                assert_eq!(ab[1], !ab[2], "{a} <= {b}");
+                assert_eq!(ab[3], !ab[0], "{a} >= {b}");
+            }
+        }
+    }
 }
