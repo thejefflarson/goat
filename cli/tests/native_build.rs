@@ -39,11 +39,21 @@ fn static_lib() -> PathBuf {
 }
 
 fn build_native(dir: &Path, name: &str, source: &str) -> Result<PathBuf, String> {
+    build_native_with(dir, name, source, &[])
+}
+
+fn build_native_with(
+    dir: &Path,
+    name: &str,
+    source: &str,
+    flags: &[&str],
+) -> Result<PathBuf, String> {
     let program = dir.join(format!("{name}.goat"));
     std::fs::write(&program, source).unwrap();
     let exe = dir.join(name);
     let out = Command::new(GOAT)
         .args(["build", "--native"])
+        .args(flags)
         .arg(&program)
         .arg("-o")
         .arg(&exe)
@@ -118,16 +128,144 @@ fn a_trap_prints_goat_runs_message_and_exits_non_zero() {
     assert!(String::from_utf8_lossy(&native.stderr).contains("trap: 2:7: division by zero"));
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
-fn an_interactive_program_is_refused() {
+fn an_interactive_program_is_refused_where_there_is_no_window_host() {
     needs_clang!();
     let dir = tempfile::tempdir().unwrap();
     let source = std::fs::read_to_string("../examples/interactive.goat").unwrap();
     let error = build_native(dir.path(), "interactive", &source).unwrap_err();
     assert!(
-        error.contains("does not support interactive programs"),
+        error.contains("does not support interactive programs") && error.contains("macOS"),
         "{error}"
     );
+}
+
+/// The AppKit window host (macOS only). Every test runs the binary with
+/// `--headless`, which needs no display: the program runs and its pictures are
+/// decoded as the window would draw them.
+#[cfg(target_os = "macos")]
+mod window_host {
+    use super::*;
+
+    const BOUNCE: &str = include_str!("../../examples/canvas/bounce.goat");
+    const CATCH: &str = include_str!("../../examples/canvas/catch.goat");
+
+    fn canvas(dir: &Path, name: &str, source: &str) -> PathBuf {
+        build_native_with(dir, name, source, &["--canvas"]).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// The numbers of the first line of `picture` that starts with `shape`.
+    fn numbers(picture: &str, shape: &str) -> Vec<f64> {
+        let line = picture
+            .lines()
+            .find(|line| line.starts_with(shape))
+            .unwrap_or_else(|| panic!("no {shape} in\n{picture}"));
+        line.split_whitespace()
+            .skip(1)
+            .filter_map(|word| word.parse().ok())
+            .collect()
+    }
+
+    fn headless(exe: &Path, args: &[&str]) -> Output {
+        Command::new(exe)
+            .arg("--headless")
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_canvas_program_links_and_animates() {
+        needs_clang!();
+        let dir = tempfile::tempdir().unwrap();
+        let exe = canvas(dir.path(), "bounce", BOUNCE);
+        let ran = headless(&exe, &["20"]);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let picture = String::from_utf8_lossy(&ran.stdout);
+        let ball = numbers(&picture, "circle");
+        assert!(
+            ball[0] > 40.0 && ball[0] < 380.0,
+            "the ball moved from x = 40: {ball:?}"
+        );
+        assert_eq!(numbers(&picture, "rect"), [0.0, 290.0, 400.0, 10.0]);
+    }
+
+    #[test]
+    fn keys_reach_the_program() {
+        needs_clang!();
+        let dir = tempfile::tempdir().unwrap();
+        let exe = canvas(dir.path(), "catch", CATCH);
+        let still = headless(&exe, &["2"]);
+        let moved = headless(&exe, &["2", "--key", "ArrowLeft", "--key", "ArrowLeft"]);
+        assert_eq!(
+            numbers(&String::from_utf8_lossy(&still.stdout), "rect")[0],
+            160.0
+        );
+        assert_eq!(
+            numbers(&String::from_utf8_lossy(&moved.stdout), "rect")[0],
+            120.0
+        );
+    }
+
+    #[test]
+    fn a_trap_shows_goats_message() {
+        needs_clang!();
+        let dir = tempfile::tempdir().unwrap();
+        let source = "init = {n: 0}\n\
+                      update = program(model, event) do\n  match event do\n    Frame(dt) then {n: 5 // 0}\n    else model\n  done\ndone\n\
+                      draw = program(model) do [Dot({x: 10, y: 10, r: 5, fill: \"red\"})] done\n";
+        let exe = canvas(dir.path(), "traps", source);
+        let ran = headless(&exe, &["50"]);
+        assert_eq!(ran.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&ran.stderr);
+        assert!(
+            stderr.contains("trap: 4:") && stderr.contains("division by zero"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
+    fn a_runaway_update_is_stopped_by_the_watchdog() {
+        needs_clang!();
+        let dir = tempfile::tempdir().unwrap();
+        let source = "init = {n: 0}\n\
+                      spin = program(n, model) do if n < 0 then model else spin(n + 1, model) done done\n\
+                      update = program(model, event) do\n  match event do\n    Frame(dt) then spin(0, model)\n    else model\n  done\ndone\n\
+                      draw = program(model) do [Dot({x: 10, y: 10, r: 5, fill: \"red\"})] done\n";
+        let exe = canvas(dir.path(), "spins", source);
+        let ran = Command::new(&exe)
+            .args(["--headless", "50"])
+            .env("GOAT_STUCK_MS", "300")
+            .output()
+            .unwrap();
+        assert_eq!(ran.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&ran.stderr);
+        assert!(stderr.contains("your program got stuck"), "{stderr}");
+    }
+
+    #[test]
+    fn a_turtle_interactive_program_links_too() {
+        needs_clang!();
+        let dir = tempfile::tempdir().unwrap();
+        let source = std::fs::read_to_string("../examples/interactive.goat").unwrap();
+        let exe =
+            build_native(dir.path(), "interactive", &source).unwrap_or_else(|e| panic!("{e}"));
+        let ran = headless(&exe, &["3", "--key", "ArrowRight"]);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        assert_eq!(
+            numbers(&String::from_utf8_lossy(&ran.stdout), "line"),
+            [0.0, 0.0, 10.0, 0.0]
+        );
+    }
 }
 
 #[test]

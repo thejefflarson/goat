@@ -19,15 +19,45 @@ const MISSING_CLANG: &str = "run `xcode-select --install` to get Apple's clang";
 const MISSING_CLANG: &str =
     "install clang with your package manager (for example `apt install clang`)";
 
+/// The vocabulary a program is written in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Vocabulary {
+    Turtle,
+    Canvas,
+}
+
+impl Vocabulary {
+    fn interface(self) -> HostInterface {
+        match self {
+            Vocabulary::Turtle => HostInterface::turtle(),
+            Vocabulary::Canvas => goat_canvas::interface(),
+        }
+    }
+}
+
 /// The program's LLVM IR, or why the backend has none.
-pub fn emit_ir(source: &str) -> Result<String, Vec<goat::GoatError>> {
-    goat::compile_ll(Profile::Desktop, source, &HostInterface::turtle())
+pub fn emit_ir(source: &str, vocabulary: Vocabulary) -> Result<String, Vec<goat::GoatError>> {
+    goat::compile_ll(Profile::Desktop, source, &vocabulary.interface())
 }
 
 /// Whether `ll` is an interactive program, which has no `goat_main` for a
 /// standalone binary to run.
 pub fn is_interactive(ll: &str) -> bool {
     ll.contains("@goat_attach(")
+}
+
+/// The labels of the `goat_event_<Label>` exports `ll` defines, which an
+/// interactive program's host calls to build the events it sends.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn event_labels(ll: &str) -> Vec<&str> {
+    const EXPORT: &str = "@goat_event_";
+    ll.lines()
+        .filter(|line| line.starts_with("define "))
+        .filter_map(|line| {
+            let after = &line[line.find(EXPORT)? + EXPORT.len()..];
+            Some(&after[..after.find('(')?])
+        })
+        .collect()
 }
 
 /// The clang to run: `$GOAT_CLANG`, else the first of `clang-23`, `clang-17`
@@ -95,6 +125,9 @@ fn entry_c(source: &str) -> String {
 
 /// Links `ll`, the IR of `source`, into the executable `out`.
 pub fn link(ll: &str, source: &str, out: &Path) -> Result<(), String> {
+    if is_interactive(ll) {
+        return link_interactive(ll, source, out);
+    }
     let (clang, lib) = (find_clang()?, find_static_lib()?);
     let dir = tempfile::tempdir().map_err(|e| format!("cannot make a temporary directory: {e}"))?;
     let (ll_path, c_path) = (dir.path().join("program.ll"), dir.path().join("entry.c"));
@@ -121,4 +154,138 @@ pub fn link(ll: &str, source: &str, out: &Path) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr)
         ))
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn link_interactive(_: &str, _: &str, _: &Path) -> Result<(), String> {
+    Err(
+        "goat build --native does not support interactive programs on this platform yet: \
+         their window host is AppKit, so they build on macOS only"
+            .to_string(),
+    )
+}
+
+/// The C file that defines the program's exports and source for the window
+/// host to start.
+#[cfg(target_os = "macos")]
+fn interactive_entry_c(source: &str, events: &[&str]) -> String {
+    let mut bytes: Vec<String> = source.bytes().map(|byte| byte.to_string()).collect();
+    bytes.push("0".to_string());
+    let mut c = String::from(
+        "#include \"goat_host.h\"\n\
+         int32_t goat_attach(const void *, void *, void *);\n\
+         void *goat_setup(const void *, void *, void *);\n\
+         void *goat_update(const void *, void *, void *, void *, void *);\n\
+         void goat_draw(const void *, void *, void *, void *);\n\
+         void *goat_alloc(const void *, void *, void *, uint32_t);\n",
+    );
+    for label in events {
+        c += &format!("void *goat_event_{label}();\n");
+    }
+    c += "static const GoatEvent events[] = {\n";
+    for label in events {
+        c += &format!("    {{\"{label}\", (const void *)goat_event_{label}}},\n");
+    }
+    c += &format!(
+        "    {{0, 0}}\n}};\n\
+         const GoatProgram goat_program = {{goat_attach, goat_setup, goat_update, goat_draw, \
+         goat_alloc, events, {}}};\n\
+         static const uint8_t source[] = {{{}}};\n\
+         const GoatSource goat_source = {{source, sizeof source - 1}};\n",
+        events.len(),
+        bytes.join(",")
+    );
+    c
+}
+
+/// The Swift compiler: `$GOAT_SWIFTC`, else `swiftc`.
+#[cfg(target_os = "macos")]
+fn find_swiftc() -> Result<String, String> {
+    let swiftc = std::env::var("GOAT_SWIFTC").unwrap_or_else(|_| "swiftc".to_string());
+    if runs(&swiftc) {
+        Ok(swiftc)
+    } else {
+        Err(format!(
+            "an interactive goat build needs {swiftc} for its AppKit host, which does not run: {MISSING_CLANG}"
+        ))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run(command: &mut Command, name: &str) -> Result<(), String> {
+    let output = command
+        .output()
+        .map_err(|e| format!("cannot run {name}: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{name} failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+/// Links an interactive program with the AppKit host (`goat_native::appkit`):
+/// clang compiles the program and its entry code, and `swiftc` compiles the
+/// host and links all of it with the runtime library.
+#[cfg(target_os = "macos")]
+fn link_interactive(ll: &str, source: &str, out: &Path) -> Result<(), String> {
+    use goat_native::appkit;
+    let (clang, swiftc, lib) = (find_clang()?, find_swiftc()?, find_static_lib()?);
+    let dir = tempfile::tempdir().map_err(|e| format!("cannot make a temporary directory: {e}"))?;
+    let at = |name: &str| dir.path().join(name);
+    let (header, header_text) = appkit::HEADER;
+    let mut files = vec![
+        (at("program.ll"), ll.to_string()),
+        (
+            at("entry.c"),
+            interactive_entry_c(source, &event_labels(ll)),
+        ),
+        (at(header), header_text.to_string()),
+    ];
+    files.extend(
+        appkit::SWIFT
+            .iter()
+            .map(|(name, text)| (at(name), text.to_string())),
+    );
+    for (path, text) in &files {
+        std::fs::write(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+    run(
+        Command::new(&clang)
+            .args(["-O2", "-c", "-x", "ir"])
+            .arg(at("program.ll"))
+            .arg("-o")
+            .arg(at("program.o")),
+        &clang,
+    )?;
+    run(
+        Command::new(&clang)
+            .args(["-O2", "-c", "-I"])
+            .arg(dir.path())
+            .arg(at("entry.c"))
+            .arg("-o")
+            .arg(at("entry.o")),
+        &clang,
+    )?;
+    run(
+        Command::new(&swiftc)
+            .args(["-O", "-swift-version", "5", "-module-name", "GoatHost"])
+            .arg("-import-objc-header")
+            .arg(at(header))
+            .args(appkit::SWIFT.iter().map(|(name, _)| at(name)))
+            .args([at("program.o"), at("entry.o")])
+            .arg(&lib)
+            .args([
+                "-framework",
+                "AppKit",
+                "-liconv",
+                "-Xlinker",
+                "-dead_strip",
+                "-o",
+            ])
+            .arg(out),
+        &swiftc,
+    )
 }

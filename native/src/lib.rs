@@ -5,9 +5,13 @@
 //! - [`abi`] mirrors the `goat_host` table and the `goat_instance` the
 //!   generated code reads.
 //! - [`adapter`] serves a table from any Rust [`goat::Host`].
+//! - [`appkit`] holds the Swift and AppKit window host of an interactive
+//!   binary on macOS.
 //! - [`driver`] builds emitted IR into a shared library and runs it.
 //! - [`interactive`] drives an interactive program's exports (ADR 0015),
 //!   including a reload over the same heap.
+//! - [`session`] runs an interactive program for a window host: a worker
+//!   thread, a frame clock and the stuck-update watchdog.
 //! - [`stack`] finds the calling thread's stack, so a runaway recursion ends in
 //!   goat's stack-overflow trap.
 //! - [`standalone`] is the `main` of a binary built by `goat build --native`,
@@ -16,8 +20,10 @@
 
 pub mod abi;
 pub mod adapter;
+pub mod appkit;
 pub mod driver;
 pub mod interactive;
+pub mod session;
 pub mod stack;
 pub mod standalone;
 pub mod turtle;

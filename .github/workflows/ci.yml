@@ -200,6 +200,14 @@ jobs:
       - name: Test goat build --native
         run: cargo test -p goat_cli --test native_build -- --test-threads 2
 
+      # The AppKit host links with swiftc; --headless runs the linked binary
+      # without a window, so the runner needs no display.
+      - name: Build and run an interactive example
+        run: |
+          cargo build -p goat_cli
+          target/debug/goat build --native --canvas examples/canvas/bounce.goat -o "$RUNNER_TEMP/bounce"
+          "$RUNNER_TEMP/bounce" --headless 10
+
   # Keeps the front end and wasm backend buildable for wasm32 so the compiler
   # can run in a browser or embedded host.
   wasm32:
