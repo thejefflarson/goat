@@ -38,6 +38,46 @@ enum Term {
     When(Box<Term>, Box<Term>),
     Bin(Box<Term>, BinOp, Box<Term>),
     Letrec(Vec<(String, Term)>, Box<Term>),
+    /// A tag built from its slots: the group, the tag and one term per slot.
+    Con(usize, usize, Vec<Term>),
+    /// `match scrutinee do arms [else rest] done`: the group, then each arm as
+    /// its tag, the names of the slots it binds and its body.
+    Match(usize, Box<Term>, Vec<Arm>, Option<Box<Term>>),
+}
+
+type Arm = (usize, Vec<String>, Term);
+
+/// A tag group as the declaration `tag Name = K0(slots) | K1 | ...` writes it:
+/// its name and, for each tag, the codes of its slots (0 the group, 1 to 5 `Int`,
+/// `Number`, `Bool`, `Unit` and `String`, 6 and up the `_` parameters, numbered
+/// in the order written).
+struct Group {
+    name: &'static str,
+    tags: &'static [&'static [u32]],
+}
+
+const GROUPS: [Group; 4] = [
+    Group {
+        name: "Shape",
+        tags: &[&[2], &[2, 2], &[]],
+    },
+    Group {
+        name: "Pile",
+        tags: &[&[6, 0], &[]],
+    },
+    Group {
+        name: "Crate",
+        tags: &[&[1, 3, 4, 5, 6]],
+    },
+    Group {
+        name: "Both",
+        tags: &[&[6, 7], &[8]],
+    },
+];
+
+/// The name of a tag: its position as that many ticks, then the group's name.
+fn tag_name(group: usize, tag: usize) -> String {
+    format!("k{}_{}", "i".repeat(tag), GROUPS[group].name)
 }
 
 const STRINGS: [&str; 3] = ["", "hi", "a # b"];
@@ -234,7 +274,59 @@ fn print(term: &Term, style: Style) -> String {
             let base = parenthesise(base, style, needs_parens_as_operand(base));
             format!("{base}.{}", label_name(*label))
         }
+        Term::Con(group, tag, args) => {
+            let args: Vec<String> = args.iter().map(|arg| print(arg, style)).collect();
+            format!("{}({})", tag_name(*group, *tag), args.join(", "))
+        }
+        Term::Match(group, scrutinee, arms, rest) => {
+            let arms: String = arms
+                .iter()
+                .map(|(tag, names, body)| {
+                    let pattern = if names.is_empty() {
+                        tag_name(*group, *tag)
+                    } else {
+                        format!("{}({})", tag_name(*group, *tag), names.join(", "))
+                    };
+                    format!("{pattern} then {} ", print(body, style))
+                })
+                .collect();
+            let rest = rest
+                .as_ref()
+                .map(|body| format!("else {} ", print(body, style)))
+                .unwrap_or_default();
+            format!("match {} do {arms}{rest}done", print(scrutinee, style))
+        }
     }
+}
+
+/// The declaration of a group, as `tag Name = K0(slots) | K1 | ...`.
+fn print_group(group: usize) -> String {
+    let declared = &GROUPS[group];
+    let cases: Vec<String> = declared
+        .tags
+        .iter()
+        .enumerate()
+        .map(|(tag, slots)| {
+            if slots.is_empty() {
+                tag_name(group, tag)
+            } else {
+                let slots: Vec<&str> = slots
+                    .iter()
+                    .map(|code| match code {
+                        0 => declared.name,
+                        1 => "Int",
+                        2 => "Number",
+                        3 => "Bool",
+                        4 => "Unit",
+                        5 => "String",
+                        _ => "_",
+                    })
+                    .collect();
+                format!("{}({})", tag_name(group, tag), slots.join(", "))
+            }
+        })
+        .collect();
+    format!("tag {} = {}", declared.name, cases.join(" | "))
 }
 
 /// The parameters written in one `program(...)`, outermost first, and the body
@@ -272,7 +364,7 @@ fn application_group(term: &Term, style: Style) -> (&Term, Vec<&Term>) {
 struct Rng(u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    fn visit(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -281,7 +373,7 @@ impl Rng {
     }
 
     fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
+        (self.visit() % n as u64) as usize
     }
 }
 
@@ -297,6 +389,8 @@ struct Gen {
     functions: u32,
     /// Whether to generate recursive groups.
     groups: bool,
+    /// Whether to generate tags and matches over [`GROUPS`].
+    tags: bool,
 }
 
 impl Gen {
@@ -320,7 +414,7 @@ impl Gen {
         }
         let mut path = Term::Var(self.scope[self.rng.below(self.scope.len())].clone());
         for _ in 0..self.rng.below(3) {
-            path = Term::Proj(Box::new(path), self.rng.next() as u32 % LABELS);
+            path = Term::Proj(Box::new(path), self.rng.visit() as u32 % LABELS);
         }
         path
     }
@@ -334,7 +428,8 @@ impl Gen {
             return self.leaf();
         }
         let depth = depth + 1;
-        match self.rng.below(16) {
+        let kinds = if self.tags { 20 } else { 16 };
+        match self.rng.below(kinds) {
             0..=2 => self.leaf(),
             3 | 4 => {
                 let name = self.value_name();
@@ -348,7 +443,7 @@ impl Gen {
             8 => {
                 let mut labels: Vec<u32> = Vec::new();
                 for _ in 0..self.rng.below(4) {
-                    let label = self.rng.next() as u32 % LABELS;
+                    let label = self.rng.visit() as u32 % LABELS;
                     if !labels.contains(&label) {
                         labels.push(label);
                     }
@@ -357,18 +452,18 @@ impl Gen {
             }
             9 => {
                 let base = self.term(depth);
-                Term::Proj(Box::new(base), self.rng.next() as u32 % LABELS)
+                Term::Proj(Box::new(base), self.rng.visit() as u32 % LABELS)
             }
             15 => {
                 let receiver = self.path();
                 let method =
-                    Term::Proj(Box::new(receiver.clone()), self.rng.next() as u32 % LABELS);
+                    Term::Proj(Box::new(receiver.clone()), self.rng.visit() as u32 % LABELS);
                 let called = Term::App(Box::new(method), Box::new(receiver));
                 Term::App(Box::new(called), Box::new(self.term(depth)))
             }
             13 => {
                 let base = self.term(depth);
-                let label = self.rng.next() as u32 % LABELS;
+                let label = self.rng.visit() as u32 % LABELS;
                 Term::Spread(Box::new(base), label, Box::new(self.term(depth)))
             }
             10 => Term::If(
@@ -378,11 +473,44 @@ impl Gen {
             ),
             11 => Term::When(Box::new(self.term(depth)), Box::new(self.term(depth))),
             12 if self.groups => self.group(depth),
+            16 | 17 if self.tags => self.constructed(depth),
+            18 | 19 if self.tags => self.matched(depth),
             _ => {
                 let op = OPERATORS[self.rng.below(OPERATORS.len())];
                 Term::Bin(Box::new(self.term(depth)), op, Box::new(self.term(depth)))
             }
         }
+    }
+
+    /// A tag of a group, with one term for each of its slots.
+    fn constructed(&mut self, depth: u32) -> Term {
+        let group = self.rng.below(GROUPS.len());
+        let tag = self.rng.below(GROUPS[group].tags.len());
+        let slots = GROUPS[group].tags[tag].len();
+        Term::Con(group, tag, (0..slots).map(|_| self.term(depth)).collect())
+    }
+
+    /// A match over a group: a distinct tag for each arm, binding a name for
+    /// each slot of the tag, and an `else` or not.
+    fn matched(&mut self, depth: u32) -> Term {
+        let group = self.rng.below(GROUPS.len());
+        let tags = GROUPS[group].tags.len();
+        let scrutinee = self.term(depth);
+        let mut arms: Vec<Arm> = Vec::new();
+        for tag in 0..tags {
+            if arms.is_empty() || self.rng.below(2) == 0 {
+                let names: Vec<String> = (0..GROUPS[group].tags[tag].len())
+                    .map(|_| self.value_name())
+                    .collect();
+                let mark = self.scope.len();
+                self.scope.extend(names.iter().cloned());
+                let body = self.term(depth);
+                self.scope.truncate(mark);
+                arms.push((tag, names, body));
+            }
+        }
+        let rest = (self.rng.below(2) == 0).then(|| Box::new(self.term(depth)));
+        Term::Match(group, Box::new(scrutinee), arms, rest)
     }
 
     /// Members named `g<n>` (a name used nowhere else), each a function over
@@ -480,6 +608,16 @@ fn intern_labels(term: &mut Term, seen: &mut Vec<u32>) {
         Term::Proj(base, label) => {
             intern_labels(base, seen);
             intern(label, seen);
+        }
+        Term::Con(_, _, args) => args.iter_mut().for_each(|arg| intern_labels(arg, seen)),
+        Term::Match(_, scrutinee, arms, rest) => {
+            intern_labels(scrutinee, seen);
+            for (_, _, body) in arms {
+                intern_labels(body, seen);
+            }
+            if let Some(body) = rest {
+                intern_labels(body, seen);
+            }
         }
     }
 }
@@ -644,6 +782,7 @@ fn printed_core_terms_parse_back_as_the_same_term() {
         scope: Vec::new(),
         functions: 0,
         groups: true,
+        tags: false,
     };
     for case in 0..CASES {
         builder.functions = 0;
@@ -680,6 +819,15 @@ fn ungroup(term: &Term) -> Term {
         Term::Letrec(members, body) => members.iter().rev().fold(ungroup(body), |rest, (n, f)| {
             Term::Let(n.clone(), boxed(f), Box::new(rest))
         }),
+        Term::Con(group, tag, args) => Term::Con(*group, *tag, args.iter().map(ungroup).collect()),
+        Term::Match(group, scrutinee, arms, rest) => Term::Match(
+            *group,
+            boxed(scrutinee),
+            arms.iter()
+                .map(|(tag, names, body)| (*tag, names.clone(), ungroup(body)))
+                .collect(),
+            rest.as_ref().map(|body| boxed(body)),
+        ),
     }
 }
 
@@ -852,6 +1000,36 @@ fn canonical(term: &Term, scope: &mut Vec<(String, String)>, depth: usize) -> Te
             Box::new(canonical(value, scope, depth)),
         ),
         Term::Proj(base, label) => Term::Proj(Box::new(canonical(base, scope, depth)), *label),
+        Term::Con(group, tag, args) => Term::Con(
+            *group,
+            *tag,
+            args.iter()
+                .map(|arg| canonical(arg, scope, depth))
+                .collect(),
+        ),
+        Term::Match(group, scrutinee, arms, rest) => {
+            let scrutinee = canonical(scrutinee, scope, depth);
+            let arms = arms
+                .iter()
+                .map(|(tag, names, body)| {
+                    // The payload is a binder of its own, then one for each slot.
+                    let mark = scope.len();
+                    let canon: Vec<String> = (0..names.len())
+                        .map(|slot| format!("v{}", depth + 1 + slot))
+                        .collect();
+                    for (name, canon) in names.iter().zip(&canon) {
+                        scope.push((name.clone(), canon.clone()));
+                    }
+                    let body = canonical(body, scope, depth + 1 + names.len());
+                    scope.truncate(mark);
+                    (*tag, canon, body)
+                })
+                .collect();
+            let rest = rest
+                .as_ref()
+                .map(|body| Box::new(canonical(body, scope, depth)));
+            Term::Match(*group, Box::new(scrutinee), arms, rest)
+        }
     }
 }
 
@@ -940,6 +1118,44 @@ fn coq_term(term: &Term, scope: &mut Vec<(Vec<String>, bool)>) -> String {
             coq_term(value, scope)
         ),
         Term::Proj(base, label) => format!("(e_proj {} {label})", coq_term(base, scope)),
+        Term::Con(group, tag, args) => {
+            let payload = if args.is_empty() {
+                "e_unit".to_string()
+            } else {
+                let mut list = String::from("fs_nil");
+                for (slot, arg) in args.iter().enumerate().rev() {
+                    list = format!("(fs_cons {slot} {} {list})", coq_term(arg, scope));
+                }
+                format!("(e_rec {list})")
+            };
+            format!("(e_con {} {tag} {payload})", coq_group(*group))
+        }
+        Term::Match(group, scrutinee, arms, rest) => {
+            let mut list = match rest {
+                Some(body) => format!("(arms_else {})", coq_term(body, scope)),
+                None => "arms_nil".to_string(),
+            };
+            for (tag, names, body) in arms.iter().rev() {
+                // The payload binder first (it has no name), then one for each slot,
+                // each bound by the projection of its position from the payload.
+                let mark = scope.len();
+                scope.push((Vec::new(), false));
+                for name in names {
+                    scope.push((vec![name.clone()], false));
+                }
+                let mut arm = coq_term(body, scope);
+                scope.truncate(mark);
+                for slot in (0..names.len()).rev() {
+                    arm = format!("(e_let (e_proj (e_fvar_b {slot}) {slot}) {arm})");
+                }
+                list = format!("(arms_cons {tag} {arm} {list})");
+            }
+            format!(
+                "(e_match {} {} {list})",
+                coq_group(*group),
+                coq_term(scrutinee, scope)
+            )
+        }
     }
 }
 
@@ -982,6 +1198,12 @@ fn coq_prints(term: &Term, continues: bool) -> bool {
         Term::If(c, t, e) => coq_prints(c, false) && coq_prints(t, false) && coq_prints(e, false),
         Term::Let(_, value, body) => coq_prints(value, false) && coq_prints(body, true),
         Term::Rec(fields) => fields.iter().all(|(_, value)| coq_prints(value, false)),
+        Term::Con(_, _, args) => args.iter().all(|arg| coq_prints(arg, false)),
+        Term::Match(_, scrutinee, arms, rest) => {
+            coq_prints(scrutinee, false)
+                && arms.iter().all(|(_, _, body)| coq_prints(body, false))
+                && rest.as_ref().is_none_or(|body| coq_prints(body, false))
+        }
         Term::Letrec(members, body) => {
             !continues
                 && members
@@ -998,6 +1220,7 @@ fn printer_table() -> String {
         scope: Vec::new(),
         functions: 0,
         groups: true,
+        tags: false,
     };
     let mut rows = Vec::new();
     for _ in 0..TABLE_CASES {
@@ -1027,10 +1250,205 @@ fn printer_table() -> String {
          Open Scope list_scope.\n\n\
          Definition printer_table : list (exp * list tok) := [\n{}\n].\n\n\
          Lemma printer_agrees :\n  \
-         List.map (fun row => print (fst row)) printer_table = List.map snd printer_table.\n\
+         List.map (fun row => print [] (fst row)) printer_table = List.map snd printer_table.\n\
          Proof. vm_compute. reflexivity. Qed.\n",
         rows.join(";\n")
     )
+}
+
+const TAG_SEED: u64 = 0xC0FF_EE5E_ED5E_ED01;
+/// Rows are kept small: the table is checked by evaluation.
+const TAG_ROW_BYTES: usize = 2000;
+const TAG_CASES: usize = 80;
+const TAG_TABLE_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../proofs/GoatPrinterTagTable.v"
+);
+
+/// The Coq name of a group, defined in the table.
+fn coq_group(group: usize) -> String {
+    format!("tag_group_{group}")
+}
+
+/// A group as the Coq `gdecl`: its name as bytes and the slot codes of its tags.
+fn coq_group_literal(group: usize) -> String {
+    let declared = &GROUPS[group];
+    let name: Vec<String> = declared.name.bytes().map(|b| b.to_string()).collect();
+    let tags: Vec<String> = declared
+        .tags
+        .iter()
+        .map(|slots| {
+            let slots: Vec<String> = slots.iter().map(u32::to_string).collect();
+            format!("[{}]", slots.join("; "))
+        })
+        .collect();
+    format!("([{}], [{}])", name.join("; "), tags.join("; "))
+}
+
+fn builds_tags(term: &Term) -> bool {
+    match term {
+        Term::Con(..) | Term::Match(..) => true,
+        Term::Var(_) | Term::Num(_) | Term::Dec(_) | Term::Bool(_) | Term::Str(_) => false,
+        Term::Abs(_, body) | Term::Proj(body, _) => builds_tags(body),
+        Term::App(a, b)
+        | Term::Let(_, a, b)
+        | Term::Spread(a, _, b)
+        | Term::Bin(a, _, b)
+        | Term::When(a, b) => builds_tags(a) || builds_tags(b),
+        Term::If(a, b, c) => builds_tags(a) || builds_tags(b) || builds_tags(c),
+        Term::Rec(fields) => fields.iter().any(|(_, value)| builds_tags(value)),
+        Term::Letrec(members, body) => {
+            members.iter().any(|(_, f)| builds_tags(f)) || builds_tags(body)
+        }
+    }
+}
+
+/// The table for programs with tags: the declarations of every group in
+/// [`GROUPS`], then the expression.
+fn tag_table_terms() -> Vec<Term> {
+    let mut builder = Gen {
+        rng: Rng(TAG_SEED),
+        scope: Vec::new(),
+        functions: 0,
+        groups: true,
+        tags: true,
+    };
+    (0..TAG_CASES)
+        .map(|_| {
+            builder.functions = 0;
+            let mut term = builder.term(0);
+            while !(coq_prints(&term, false)
+                && builds_tags(&term)
+                && coq_term(&term, &mut Vec::new()).len() <= TAG_ROW_BYTES)
+            {
+                term = builder.term(0);
+            }
+            intern_labels(&mut term, &mut Vec::new());
+            term
+        })
+        .collect()
+}
+
+fn tag_printer_table() -> String {
+    let declarations: Vec<String> = (0..GROUPS.len()).map(print_group).collect();
+    let declarations = declarations.join(" ");
+    let rows: Vec<String> = tag_table_terms()
+        .iter()
+        .map(|term| {
+            let expression = print(&canonical(term, &mut Vec::new(), 0), Style::Curried);
+            format!(
+                "  ({}, {})",
+                coq_term(term, &mut Vec::new()),
+                coq_tokens(&expression)
+            )
+        })
+        .collect();
+    let definitions: String = (0..GROUPS.len())
+        .map(|group| {
+            format!(
+                "Definition {} : gdecl := {}.\n\n",
+                coq_group(group),
+                coq_group_literal(group)
+            )
+        })
+        .collect();
+    let groups: Vec<String> = (0..GROUPS.len()).map(coq_group).collect();
+    format!(
+        "(* Generated by checker/tests/core_roundtrip.rs; do not edit. Each row is a\n   \
+         closed core term that builds or matches tags and the token stream the Rust\n   \
+         printer writes for it. The program is the declarations of every group of\n   \
+         [tag_table_groups] (their tokens are [tag_declaration_tokens]) and then\n   \
+         the term. The Coq printer must agree. *)\n\n\
+         From Stdlib Require Import String List.\n\
+         Import ListNotations.\n\
+         Require Import Goat.Goat_ott.\n\
+         Require Import Goat.GoatDefs.\n\
+         Require Import Goat.GoatPeg.\n\
+         Require Import Goat.GoatPrint.\n\
+         Open Scope string_scope.\n\
+         Open Scope list_scope.\n\n\
+         {}Definition tag_table_groups : list gdecl := [\n  {}\n].\n\n\
+         Definition tag_declaration_tokens : list tok := {}.\n\n\
+         Definition tag_printer_table : list (exp * list tok) := [\n{}\n].\n\n\
+         Lemma tag_printer_agrees :\n  \
+         List.map (fun row => print tag_table_groups (fst row)) tag_printer_table\n  \
+         = List.map (fun row => tag_declaration_tokens ++ snd row) tag_printer_table.\n\
+         Proof. reflexivity. Qed.\n",
+        definitions,
+        groups.join(";\n  "),
+        coq_tokens(&declarations),
+        rows.join(";\n")
+    )
+}
+
+#[test]
+fn the_coq_printer_table_for_tags_matches_the_rust_printer() {
+    let generated = tag_printer_table();
+    if std::env::var_os("UPDATE_PRINTER_TABLE").is_some() {
+        std::fs::write(TAG_TABLE_PATH, &generated).expect("write the table");
+    }
+    let committed =
+        std::fs::read_to_string(TAG_TABLE_PATH).expect("proofs/GoatPrinterTagTable.v exists");
+    assert!(
+        committed == generated,
+        "proofs/GoatPrinterTagTable.v is stale; run with UPDATE_PRINTER_TABLE=1 and commit"
+    );
+}
+
+/// The declarations the table writes are groups the Coq printer can spell, and
+/// the table rows use every tag, a match with and without an `else`, and
+/// an arm with no slots.
+#[test]
+fn the_tag_table_covers_every_group_and_form() {
+    fn visit(term: &Term, cons: &mut Vec<(usize, usize)>, matches: &mut [usize; 3]) {
+        match term {
+            Term::Con(group, tag, args) => {
+                if !cons.contains(&(*group, *tag)) {
+                    cons.push((*group, *tag));
+                }
+                args.iter().for_each(|arg| visit(arg, cons, matches));
+            }
+            Term::Match(_, scrutinee, arms, rest) => {
+                matches[0] += 1;
+                matches[1] += usize::from(rest.is_some());
+                matches[2] += arms.iter().filter(|(_, names, _)| names.is_empty()).count();
+                visit(scrutinee, cons, matches);
+                arms.iter()
+                    .for_each(|(_, _, body)| visit(body, cons, matches));
+                rest.iter().for_each(|body| visit(body, cons, matches));
+            }
+            Term::Var(_) | Term::Num(_) | Term::Dec(_) | Term::Bool(_) | Term::Str(_) => {}
+            Term::Abs(_, body) | Term::Proj(body, _) => visit(body, cons, matches),
+            Term::App(a, b)
+            | Term::Let(_, a, b)
+            | Term::Spread(a, _, b)
+            | Term::Bin(a, _, b)
+            | Term::When(a, b) => {
+                visit(a, cons, matches);
+                visit(b, cons, matches);
+            }
+            Term::If(a, b, c) => {
+                visit(a, cons, matches);
+                visit(b, cons, matches);
+                visit(c, cons, matches);
+            }
+            Term::Rec(fields) => fields.iter().for_each(|(_, v)| visit(v, cons, matches)),
+            Term::Letrec(members, body) => {
+                members.iter().for_each(|(_, f)| visit(f, cons, matches));
+                visit(body, cons, matches);
+            }
+        }
+    }
+    let mut cons = Vec::new();
+    let mut matches = [0; 3];
+    for term in tag_table_terms() {
+        visit(&term, &mut cons, &mut matches);
+    }
+    let every_tag: usize = GROUPS.iter().map(|g| g.tags.len()).sum();
+    assert_eq!(cons.len(), every_tag, "every tag is built");
+    assert!(matches[0] > 20, "{} matches", matches[0]);
+    assert!(matches[1] > 5, "{} matches with an else", matches[1]);
+    assert!(matches[2] > 5, "{} arms with no slots", matches[2]);
 }
 
 /// `UPDATE_PRINTER_TABLE=1 cargo test -p goat_checker --test core_roundtrip`
@@ -1172,6 +1590,12 @@ fn the_generated_terms_use_every_operator_string_and_conditional() {
                 visit(body, seen);
             }
             Term::Rec(fields) => fields.iter().for_each(|(_, t)| visit(t, seen)),
+            Term::Con(_, _, args) => args.iter().for_each(|arg| visit(arg, seen)),
+            Term::Match(_, scrutinee, arms, rest) => {
+                visit(scrutinee, seen);
+                arms.iter().for_each(|(_, _, body)| visit(body, seen));
+                rest.iter().for_each(|body| visit(body, seen));
+            }
             Term::Var(_) | Term::Num(_) | Term::Bool(_) => {}
         }
     }
@@ -1180,6 +1604,7 @@ fn the_generated_terms_use_every_operator_string_and_conditional() {
         scope: Vec::new(),
         functions: 0,
         groups: true,
+        tags: false,
     };
     let mut seen = Seen::default();
     for _ in 0..CASES {

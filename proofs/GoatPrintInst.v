@@ -12,6 +12,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatDen.
 Require Import Goat.GoatPrint.
+Require Import Goat.GoatPrintArm.
 Open Scope string_scope.
 Open Scope list_scope.
 
@@ -183,7 +184,9 @@ Lemma close_inst : forall var_of, names_distinct var_of -> forall D,
   (forall fs G k, grp_size G D = None -> scoped_fields G (k + S D) fs ->
      close_fields_rec k (var_of (nm D)) (inst_fields var_of G k (S D) fs)
      = inst_fields var_of G (S k) D fs) /\
-  (forall ars : arms, True).
+  (forall ars : arms, forall w G k, grp_size G D = None -> scoped_arms G (k + S D) w ars ->
+     close_arms_rec k (var_of (nm D)) (inst_arms var_of G k (S D) ars)
+     = inst_arms var_of G (S k) D ars).
 Proof.
   intros var_of Hdist D. pose proof Hdist as (Hnm & Hgm & Hdis).
   apply exp_fields_mutind.
@@ -252,8 +255,14 @@ Proof.
     intros a IHa o b IHb G k HD [Ha Hb]. simpl.
     rewrite (IHa G k HD Ha), (IHb G k HD Hb). reflexivity.
   - intros a IH G k HD Hs. destruct Hs.
-  - intros w tg a IH G k HD Hs. destruct Hs.
-  - intros w a IHa ars IHars G k HD Hs. destruct Hs.
+  - (* tag construction *)
+    intros w tg a IH G k HD [Htg Ha]. cbn [inst_rec close_exp_rec].
+    destruct (payload_scoped _ _ _ Ha) as [-> | Hs]; [ reflexivity | ].
+    rewrite (IH G k HD Hs). reflexivity.
+  - (* match *)
+    intros w a IHa ars IHars G k HD [Ha Hars].
+    destruct ars as [| e | tg b rest]; try (exfalso; exact Hars).
+    cbn [inst_rec close_exp_rec]. rewrite (IHa G k HD Ha), (IHars w G k HD Hars). reflexivity.
   - intros a IHa l b IHb G k HD [Ha Hb]. simpl.
     rewrite (IHa G k HD Ha), (IHb G k HD Hb). reflexivity.
   - intros a IH l G k HD Hs. destruct Hs.
@@ -263,9 +272,10 @@ Proof.
   - intros l e IHe fs IHfs G k HD [He Hfs]. simpl.
     rewrite (IHe G k HD He), (IHfs G k HD Hfs). reflexivity.
   - intros l e IHe fs IHfs G k HD Hs. destruct Hs.
-  - intros; exact I.
-  - intros; exact I.
-  - intros; exact I.
+  - intros w G k HD Hs. reflexivity.
+  - intros e IH w G k HD Hs. cbn [inst_arms close_arms_rec]. rewrite (IH G k HD Hs). reflexivity.
+  - intros tg b IHb ars IHars w G k HD (Htg & Hs & _ & _ & Hr). cbn [inst_arms close_arms_rec].
+    rewrite (IHb G (S k) HD Hs), (IHars w G k HD Hr). reflexivity.
 Qed.
 
 Lemma close_inst_exp : forall var_of G D b,
@@ -340,7 +350,9 @@ Lemma bind_inst : forall var_of, names_distinct var_of -> forall D n,
   (forall fs G k, grp_size G D = Some n -> scoped_fields G (k + S D) fs ->
      bind_group_fields k (List.map var_of (gnames D 0 n)) (inst_fields var_of G k (S D) fs)
      = inst_fields var_of G (S k) D fs) /\
-  (forall ars : arms, True).
+  (forall ars : arms, forall w G k, grp_size G D = Some n -> scoped_arms G (k + S D) w ars ->
+     bind_group_arms k (List.map var_of (gnames D 0 n)) (inst_arms var_of G k (S D) ars)
+     = inst_arms var_of G (S k) D ars).
 Proof.
   intros var_of Hdist D n. pose proof Hdist as (Hnm & Hgm & Hdis).
   apply exp_fields_mutind.
@@ -404,8 +416,14 @@ Proof.
     intros a IHa o b IHb G k HD [Ha Hb]. simpl.
     rewrite (IHa G k HD Ha), (IHb G k HD Hb). reflexivity.
   - intros a IH G k HD Hs. destruct Hs.
-  - intros w tg a IH G k HD Hs. destruct Hs.
-  - intros w a IHa ars IHars G k HD Hs. destruct Hs.
+  - (* tag construction *)
+    intros w tg a IH G k HD [Htg Ha]. cbn [inst_rec bind_group_rec].
+    destruct (payload_scoped _ _ _ Ha) as [-> | Hs]; [ reflexivity | ].
+    rewrite (IH G k HD Hs). reflexivity.
+  - (* match *)
+    intros w a IHa ars IHars G k HD [Ha Hars].
+    destruct ars as [| e | tg b rest]; try (exfalso; exact Hars).
+    cbn [inst_rec bind_group_rec]. rewrite (IHa G k HD Ha), (IHars w G k HD Hars). reflexivity.
   - intros a IHa l b IHb G k HD [Ha Hb]. simpl.
     rewrite (IHa G k HD Ha), (IHb G k HD Hb). reflexivity.
   - intros a IH l G k HD Hs. destruct Hs.
@@ -415,9 +433,10 @@ Proof.
   - intros l e IHe fs IHfs G k HD [He Hfs]. simpl.
     rewrite (IHe G k HD He), (IHfs G k HD Hfs). reflexivity.
   - intros l e IHe fs IHfs G k HD Hs. destruct Hs.
-  - intros; exact I.
-  - intros; exact I.
-  - intros; exact I.
+  - intros w G k HD Hs. reflexivity.
+  - intros e IH w G k HD Hs. cbn [inst_arms bind_group_arms]. rewrite (IH G k HD Hs). reflexivity.
+  - intros tg b IHb ars IHars w G k HD (Htg & Hs & _ & _ & Hr). cbn [inst_arms bind_group_arms].
+    rewrite (IHb G (S k) HD Hs), (IHars w G k HD Hr). reflexivity.
 Qed.
 
 (* The record of a group's members, as the denotation builds it from the

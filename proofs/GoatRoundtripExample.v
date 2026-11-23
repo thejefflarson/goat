@@ -11,6 +11,17 @@ Require Import Goat.GoatRoundtrip.
 Open Scope string_scope.
 Open Scope list_scope.
 
+(* The core without tags: the empty table. *)
+Lemma roundtrip_plain : forall var_of e,
+  names_distinct var_of -> tags_in [] e -> scoped [] 0 e -> Interned e ->
+  exists t, peg (E_rule R_goat) (print [] e) (Ok [t] []) /\ Den_goat var_of [] t e.
+Proof.
+  intros var_of e Hd Ht Hs Hi.
+  destruct (print_parse_roundtrip var_of [] e Hd (conj (Forall_nil _) (NoDup_nil _)) Ht
+              (or_introl eq_refl) Hs Hi) as (t & H1 & H2 & _).
+  exists t. split; assumption.
+Qed.
+
 (* x = 1; {lab0: x}.lab0 *)
 Definition sample : exp :=
   e_let (e_num 1) (e_proj (e_rec (fs_cons 0 (e_fvar_b 0) fs_nil)) 0).
@@ -25,10 +36,10 @@ Qed.
 
 Example sample_roundtrip : forall var_of,
   names_distinct var_of ->
-  exists t, peg (E_rule R_goat) (print sample) (Ok [t] []) /\ Den_goat var_of [] t sample.
+  exists t, peg (E_rule R_goat) (print [] sample) (Ok [t] []) /\ Den_goat var_of [] t sample.
 Proof.
   intros var_of Hdistinct.
-  exact (print_parse_roundtrip var_of sample Hdistinct sample_scoped sample_interned).
+  exact (roundtrip_plain var_of sample Hdistinct ltac:(simpl; tauto) sample_scoped sample_interned).
 Qed.
 
 (* A record whose first label is lab1 is numbered 0 when read back. *)
@@ -54,11 +65,11 @@ Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
 
 Example sample_operations_roundtrip : forall var_of,
   names_distinct var_of ->
-  exists t, peg (E_rule R_goat) (print sample_operations) (Ok [t] []) /\
+  exists t, peg (E_rule R_goat) (print [] sample_operations) (Ok [t] []) /\
             Den_goat var_of [] t sample_operations.
 Proof.
   intros var_of Hdistinct.
-  exact (print_parse_roundtrip var_of sample_operations Hdistinct
+  exact (roundtrip_plain var_of sample_operations Hdistinct ltac:(simpl; tauto)
            sample_operations_scoped sample_operations_interned).
 Qed.
 
@@ -75,11 +86,11 @@ Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
 
 Example sample_float_noelse_roundtrip : forall var_of,
   names_distinct var_of ->
-  exists t, peg (E_rule R_goat) (print sample_float_noelse) (Ok [t] []) /\
+  exists t, peg (E_rule R_goat) (print [] sample_float_noelse) (Ok [t] []) /\
             Den_goat var_of [] t sample_float_noelse.
 Proof.
   intros var_of Hdistinct.
-  exact (print_parse_roundtrip var_of sample_float_noelse Hdistinct
+  exact (roundtrip_plain var_of sample_float_noelse Hdistinct ltac:(simpl; tauto)
            sample_float_noelse_scoped sample_float_noelse_interned).
 Qed.
 
@@ -102,11 +113,11 @@ Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
 
 Example sample_unit_roundtrip : forall var_of,
   names_distinct var_of ->
-  exists t, peg (E_rule R_goat) (print sample_unit) (Ok [t] []) /\
+  exists t, peg (E_rule R_goat) (print [] sample_unit) (Ok [t] []) /\
             Den_goat var_of [] t sample_unit.
 Proof.
   intros var_of Hdistinct.
-  exact (print_parse_roundtrip var_of sample_unit Hdistinct
+  exact (roundtrip_plain var_of sample_unit Hdistinct ltac:(simpl; tauto)
            sample_unit_scoped sample_unit_interned).
 Qed.
 
@@ -122,7 +133,7 @@ Definition sample_group : exp :=
     (e_app (e_proj (e_fvar_b 0) 0) (e_num 1)).
 
 Example sample_group_printed :
-  print sample_group =
+  print [] sample_group =
     [TName "g0_0"; TSym "="; TSym "program"; TSym "("; TName "v1"; TSym ")"; TSym "do";
      TName "g0_1"; TSym "("; TName "v1"; TSym ")"; TSym "done"; TSym ";";
      TName "g0_1"; TSym "="; TSym "program"; TSym "("; TName "v1"; TSym ")"; TSym "do";
@@ -141,11 +152,11 @@ Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
 
 Example sample_group_roundtrip : forall var_of,
   names_distinct var_of ->
-  exists t, peg (E_rule R_goat) (print sample_group) (Ok [t] []) /\
+  exists t, peg (E_rule R_goat) (print [] sample_group) (Ok [t] []) /\
             Den_goat var_of [] t sample_group.
 Proof.
   intros var_of Hdistinct.
-  exact (print_parse_roundtrip var_of sample_group Hdistinct
+  exact (roundtrip_plain var_of sample_group Hdistinct ltac:(simpl; tauto)
            sample_group_scoped sample_group_interned).
 Qed.
 
@@ -163,11 +174,11 @@ Qed.
 
 Example sample_spread_roundtrip : forall var_of,
   names_distinct var_of ->
-  exists t, peg (E_rule R_goat) (print sample_spread) (Ok [t] []) /\
+  exists t, peg (E_rule R_goat) (print [] sample_spread) (Ok [t] []) /\
             Den_goat var_of [] t sample_spread.
 Proof.
   intros var_of Hdistinct.
-  exact (print_parse_roundtrip var_of sample_spread Hdistinct
+  exact (roundtrip_plain var_of sample_spread Hdistinct ltac:(simpl; tauto)
            sample_spread_scoped sample_spread_interned).
 Qed.
 

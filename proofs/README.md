@@ -73,14 +73,17 @@ preservation) is B3 (#71).
 | `GoatLexEdit.v` | The formatter's link (ADR 0041): `edits_preserve_tokens`. Replace whitespace tokens of the lexed text, one after another, by non-empty runs of whitespace that keep a line break after a comment and do not make `start at` out of `start` and the next token, and the text of the result lexes to the result, so its tokens other than whitespace are the original's; `edits_preserve_parse` says it parses the same. An edit that inserts a gap or leaves none can join two tokens and is not covered. |
 | `GoatLexExtract.v` | Extracts `lex` to OCaml for the differential test. |
 | `GoatPegTac.v` | Helper tactics (`pok`, `pfail`) that build derivations of the PEG relation. No theorem lives there. |
-| `GoatPrint.v` | The printer: a closed core term to its parse tree and token stream, binders named by depth (`v0`, `v1`, ...) and a recursive group's members by the depth of the group (`g0_0`, `g0_1`, ...), mirroring the curried style of `checker/tests/core_roundtrip.rs`. It carries the groups in scope (`Grp`: the depth of each group's binder and its member count). |
-| `GoatPrintChain.v`, `GoatPrintPrim.v`, `GoatPrintBlock.v`, `GoatPrintParse.v` | The parse side of T3: a printed chain, each primary and postfix, records and bindings, and every printed block, each with the ordered choices that could commit wrongly shown not to. |
-| `GoatPrintInst.v` | Reading a printed term back: `inst_rec` replaces each bound index by the variable of its binder's name and a projection from a group by the variable of that member; `close_inst` (a binder closes its variable again) and `bind_inst` (binding a group's names turns the member variables back into projections from the group) say the term is recovered. |
-| `GoatPrintDen.v`, `GoatPrintLabels.v`, `GoatPrintTop.v` | The denotation side: the printed tree denotes the term (`print_den`; a group's members are the hoisted functions of its block, `DK_hoist`), the label table is the first-occurrence table of the term's labels, the top rule parses it. |
-| `GoatRoundtrip.v` | **T3** `print_parse_roundtrip`. |
+| `GoatPrint.v` | The printer: a closed core term to its parse tree and token stream, binders named by depth (`v0`, `v1`, ...) and a recursive group's members by the depth of the group (`g0_0`, `g0_1`, ...), mirroring the curried style of `checker/tests/core_roundtrip.rs`. It carries the groups in scope (`Grp`: the depth of each group's binder and its member count). A program is the declarations of the tag groups `D` (a group is a `gdecl`: a name and the slot codes of each tag; the tag at position `tg` is named `k` and `tg` ticks, then `_`, then the group name) and then its expression; a tag built from its payload is a name applied to the slots, and a match writes each arm as the tag's name, the names of its slots and the body. |
+| `GoatPrintChain.v`, `GoatPrintPrim.v`, `GoatPrintBlock.v`, `GoatPrintTag.v`, `GoatPrintDecl.v`, `GoatPrintParse.v` | The parse side of T3: a printed chain, each primary and postfix, records and bindings, a tag's call and a match with its arms, the tag declarations, and every printed block, each with the ordered choices that could commit wrongly shown not to. |
+| `GoatPrintArm.v`, `GoatPrintInd.v` | What the printer needs of a match arm: its term is the bindings of the slots of its payload over a body that does not use the payload (`arm_chain`, `unused`), the body is printed past them (`arm_body`), and an induction principle (`exp_fields_mutind_chain`) whose hypothesis for a tag or an arm covers the payload's slots and the body, which are not children of the term. |
+| `GoatPrintInst.v`, `GoatPrintSlot.v` | Reading a printed term back: `inst_rec` replaces each bound index by the variable of its binder's name and a projection from a group by the variable of that member; `close_inst` (a binder closes its variable again) and `bind_inst` (binding a group's names turns the member variables back into projections from the group) say the term is recovered. `GoatPrintSlot.v` is the arm: the denotation of `Tag(x0, ..., xm) then body` closes the payload's variable and the slots' names, and that is the arm's term (`arm_close`). |
+| `GoatPrintDen.v`, `GoatPrintLabels.v`, `GoatPrintTop.v`, `GoatPrintRecover.v`, `GoatPrintLookup.v` | The denotation side: the printed tree denotes the term (`print_den`; a group's members are the hoisted functions of its block, `DK_hoist`), the label table is the first-occurrence table of the term's labels, the top rule parses it. `GoatPrintRecover.v` and `GoatPrintLookup.v` read the declarations back: the table a printed group builds is its tags in order by name and the group as written (`decl_entries_print`), a name finds its tag (`lookup_cn`), and no name the printer gives a binder is a tag. |
+| `GoatRoundtrip.v` | **T3** `print_parse_roundtrip`, over a declaration table and a term: the text parses, the tree denotes the term over the table its declarations build, and the groups declared are `D`. |
 | `GoatRoundtripExample.v` | Terms meeting T3's hypotheses (a spread, the unit value, and a pair of mutually recursive functions among them), and one failing the label hypothesis. |
 | `GoatPrec.v` | Operator runs (phase 8, stage 3): `resolve`, the fold of a flat run of operands and operators into a term by `prec` (`or` loosest, left-associative, `not` at level 3 taking the operand after it), the same stack algorithm as `lower.rs`. The connectives are derived forms: `a and b` is `if a then b else false`, `a or b` is `if a then true else b`, `not a` is `if a then false else true`, so the calculus does not change. `resolve_total` (a run of operands joined by operators always resolves) and `resolve_lc` (it is locally closed). |
 | `GoatPrecTable.v` | Generated by `checker/tests/precedence.rs`: for every operator pending on lowering's stack and every infix operator that arrives next, whether lowering folds the first, observed by lowering real source. Coq proves `prec` gives the same 210 answers, so `prec` and `lower.rs` cannot drift. |
+| `GoatPrinterTagTable.v` | Generated by `checker/tests/core_roundtrip.rs`: 80 terms that build and match tags (four groups, with every kind of slot, a case with no slots, and an `else`) and the token streams the Rust printer writes after the four declarations; Coq checks its printer agrees. |
+| `GoatTagRoundtripExample.v` | T3 through tags: a program that declares `Shape`, builds a `Circle` and matches on the shapes meets every hypothesis and reads back; two groups of one name, and parameters out of order, are not accepted. |
 | `GoatPrinterTable.v` | Generated by `checker/tests/core_roundtrip.rs`: 200 terms (strings, `Float` literals, `if` with and without an `else`, spreads, operators and recursive groups included) with the token streams the Rust printer writes; Coq checks its printer agrees. |
 | `GoatExample.v` | A fuel-bounded PEG interpreter, sound for the relation, parsing small programs; T1 applied to three of them, the recursive-group program `countdown` shown to denote the `GoatPhase2.v` term that types as an `Int`, and a rest pattern shown to denote two restricts. |
 | `GoatTagExample.v` | Tags, `match` and lists, worked (phase 8, stage 4): the tables the `tag` declarations of GoatPhase3.v's `list_g`, `level` and `shot` build, a list literal shown to denote the term GoatPhase3.v types as a list of Int, and T1 applied to a program that declares a tag and matches on it. |
@@ -1085,10 +1088,9 @@ Boundary:
   that leaves out the `else`, and a binder named like a tag (Den reads the tag).
   Arity, exhaustiveness, a tag outside every group and arms from two groups are
   the checker's errors; `Den` denotes them (the group of the first arm) and T1
-  says only that the term is locally closed. T3 is stated at the empty tag table:
-  the printer writes no tag, so a program that builds or matches one has no
-  printed form yet (`print_parse_roundtrip` is unchanged but for `Den_goat var_of
-  [] t e`); T3 through tags is the part of this stage that remains.
+  says only that the term is locally closed. T3 reaches tags (below): the printer writes the declarations of a table `D`, a
+  tag built from its payload and a match, and the round trip is stated over
+  `(D, e)`.
 - **Loops (stage 5).** `repeat n times do B done`, `for i from a to b do B done`
   and `for x in xs do B done` denote the term lowering builds (`lower.rs`,
   `lower_loop`), over names no source name can spell. A counted loop is
@@ -1230,9 +1232,10 @@ a `var_of` that gives the printer's binder names `v0`, `v1`, ... distinct atoms
   unit value anywhere the grammar has no text for it (it is printed as an empty
   function body, a call with no arguments and a missing `else` only), a group
   that follows a binding or another group in its block, `float(e)` (the
-  elaboration inserts it; there is no source for it), a bare `e_restrict`, tags
-  and `match` (the printer writes no declaration; T3 is stated at the empty
-  tag table), everything T1 leaves out. The Rust printer table
+  elaboration inserts it; there is no source for it), a bare `e_restrict`, list
+  literals and list patterns, a match arm whose body opens with a recursive
+  group, a payload that is not a record of slots labelled by position, a tag
+  whose payload type is not a name or `_`, everything T1 leaves out. The Rust printer table
   (`GoatPrinterTable.v`) has rows for groups (the generator skips a term whose
   group would continue a block, `coq_prints`), so the Coq printer's group form
   is checked against the Rust printer; it has no row for `f()` or an empty
