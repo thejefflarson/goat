@@ -456,6 +456,7 @@ Section CountdownDenotation.
     - exact countdown_member_den.
     - reflexivity.
     - reflexivity.
+    - reflexivity.
     - unfold countdown_rest. apply DK_chain. apply DM_chain.
       eapply DC_head; [ apply name_of | ].
       eapply DP_call with (es := [e_num 2]); [ | apply DP_nil ].
