@@ -5,6 +5,7 @@
 !checker
 !mir
 !wasm
+!llvm
 !goat
 !cli
 !canvas
