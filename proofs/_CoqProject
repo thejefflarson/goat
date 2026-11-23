@@ -37,6 +37,7 @@ GoatUnrollEqb.v
 GoatKnot.v
 GoatInferKnot.v
 GoatCoerce.v
+GoatClose.v
 GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v
