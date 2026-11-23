@@ -937,3 +937,32 @@ fn clang_reads_the_tail_call_programs() {
         }
     }
 }
+
+/// `if true then <inner> else 0`, `levels` deep.
+fn nested_ifs(levels: usize) -> Program {
+    let body = (0..levels).fold(int(1), |inner, _| if_(boolean(true), inner, int(0)));
+    program(vec![func(MTy::Int, body)])
+}
+
+#[test]
+fn nesting_within_the_limit_emits_on_a_test_thread() {
+    emit(&nested_ifs(400)).expect("moderate nesting emits");
+}
+
+#[test]
+fn nesting_past_the_limit_is_a_resource_limit_not_a_crash() {
+    let error = emit(&nested_ifs(5_000)).expect_err("too deep to emit");
+    assert_eq!(error, EmitError::TooComplex);
+    assert!(error.is_resource_limit());
+    assert!(error.to_string().starts_with("program too complex"));
+}
+
+#[test]
+fn long_chains_of_lets_and_operators_emit_without_nesting() {
+    let sum = (0..5_000).fold(int(0), |acc, _| add(acc, int(1)));
+    emit(&program(vec![func(MTy::Int, sum)])).expect("a long operator chain emits");
+    let lets = (0..5_000u32)
+        .rev()
+        .fold(local(4_999), |body, n| let_(n, int(n as i64), body));
+    emit(&program(vec![func(MTy::Int, lets)])).expect("a long block of lets emits");
+}

@@ -3,7 +3,7 @@
 pub use events::{Event, Reloaded, ResetReason};
 pub use goat_checker::hir::{Boundary, Span};
 pub use goat_checker::ty::{Group, Row, Ty};
-pub use goat_checker::{GoatError, Label, Vocab};
+pub use goat_checker::{ErrorKind, GoatError, Label, Vocab};
 pub use goat_mir::{
     Host, HostValue, NoHost, Profile, Scene, SceneCommand, SceneHost, SceneSink, check_color,
 };
@@ -156,7 +156,18 @@ pub fn compile_ll(
     let checked = goat_checker::check_with_vocab(host.prelude(), host.vocab(), source)?;
     let program = goat_mir::mono_for(&checked, profile)?;
     verify_mir(&program)?;
-    goat_llvm::emit(&program).map_err(|e| vec![GoatError::new(Span::new(0, 0), e.to_string())])
+    goat_llvm::emit(&program).map_err(|e| vec![emit_diagnostic(&e)])
+}
+
+/// The diagnostic for an emitter failure: a spanned "program too complex" for a
+/// resource bound, anything else an internal error worded as the emitter does.
+pub fn emit_diagnostic(error: &goat_llvm::EmitError) -> GoatError {
+    let span = Span::new(0, 0);
+    if error.is_resource_limit() {
+        GoatError::too_complex(span, error.to_string())
+    } else {
+        GoatError::new(span, error.to_string())
+    }
 }
 
 /// Like [`compile_for`] on the embedded profile, with the heap and call-depth

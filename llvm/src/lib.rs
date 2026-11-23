@@ -210,6 +210,9 @@ pub enum EmitError {
     UnknownFunc(FuncId),
     UnboundLocal(Local),
     Malformed(&'static str),
+    /// A resource bound, not a fault in the program: it nests deeper than the
+    /// emitter's recursion allows.
+    TooComplex,
 }
 
 impl fmt::Display for EmitError {
@@ -221,7 +224,15 @@ impl fmt::Display for EmitError {
             EmitError::UnknownFunc(id) => write!(f, "unknown function {}", id.0),
             EmitError::UnboundLocal(l) => write!(f, "unbound local {}", l.0),
             EmitError::Malformed(what) => write!(f, "malformed MIR: {what}"),
+            EmitError::TooComplex => write!(f, "program too complex: it nests too deeply"),
         }
+    }
+}
+
+impl EmitError {
+    /// Whether the program hit a resource bound rather than a fault in the compiler.
+    pub fn is_resource_limit(&self) -> bool {
+        matches!(self, EmitError::TooComplex)
     }
 }
 
@@ -280,6 +291,19 @@ impl Val {
         }
     }
 }
+
+/// A `Let`'s binding while its body is lowered: `height` is how many nodes
+/// were waiting beneath the `Let`, so the binding ends when that many remain.
+struct Scope {
+    height: usize,
+    local: Local,
+    shadowed: Option<Val>,
+}
+
+/// How deeply `expr` may nest before the emitter gives up with a diagnostic
+/// instead of overflowing the thread's stack. Chains of `Let`s and operators
+/// are walked iteratively and do not count.
+const MAX_NESTING: usize = 512;
 
 /// `None` is a computation that traps: nothing after it runs.
 type Lowered = Option<Val>;
@@ -564,6 +588,8 @@ struct FuncLower<'m, 'a> {
     /// What runs on entry before the body: loads of spilled arguments.
     prologue: String,
     looped: Option<tail::Loop>,
+    /// How many `expr` calls are open, bounded by `MAX_NESTING`.
+    depth: usize,
 }
 
 impl<'m, 'a> FuncLower<'m, 'a> {
@@ -579,6 +605,7 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             allocas: String::new(),
             prologue: String::new(),
             looped: None,
+            depth: 0,
         }
     }
 
@@ -634,7 +661,65 @@ impl<'m, 'a> FuncLower<'m, 'a> {
         self.line("unreachable".to_string());
     }
 
+    /// Lowers `expr`, failing once nesting passes `MAX_NESTING` so a deep
+    /// program is a diagnostic, not a stack overflow.
     fn expr(&mut self, expr: &Expr) -> Result<Lowered, EmitError> {
+        if self.depth >= MAX_NESTING {
+            return Err(EmitError::TooComplex);
+        }
+        self.depth += 1;
+        let lowered = self.walk(expr);
+        self.depth -= 1;
+        lowered
+    }
+
+    /// Lowers `expr` with an explicit stack of the nodes waiting on an operand,
+    /// so a long chain of `Let`s or operators takes no more stack than a short
+    /// one (see `Expr::leading_operand`). A `Let`'s binding stays in scope
+    /// until its body's value reaches the node below it on the stack.
+    fn walk(&mut self, expr: &Expr) -> Result<Lowered, EmitError> {
+        let mut waiting = Vec::new();
+        let mut scopes: Vec<Scope> = Vec::new();
+        let mut node = expr;
+        loop {
+            while let Some(first) = node.leading_operand() {
+                waiting.push(OperandWait::First(node));
+                node = first;
+            }
+            let mut value = self.leaf(node)?;
+            loop {
+                while scopes
+                    .last()
+                    .is_some_and(|scope| scope.height >= waiting.len())
+                {
+                    let scope = scopes.pop().expect("a scope is open");
+                    match scope.shadowed {
+                        Some(old) => self.locals.insert(scope.local, old),
+                        None => self.locals.remove(&scope.local),
+                    };
+                }
+                let Some(wait) = waiting.pop() else {
+                    return Ok(value);
+                };
+                match self.resume(wait, value, waiting.len(), &mut scopes)? {
+                    OperandStep::Next(next) => {
+                        node = next;
+                        break;
+                    }
+                    OperandStep::Right(wait, next) => {
+                        waiting.push(wait);
+                        node = next;
+                        break;
+                    }
+                    OperandStep::Done(done) => value = done,
+                }
+            }
+        }
+    }
+
+    /// A node `walk` does not step through itself: anything but a `Let` or an
+    /// operator.
+    fn leaf(&mut self, expr: &Expr) -> Result<Lowered, EmitError> {
         Ok(match expr {
             Expr::Const(c) => Some(self.constant(*c)),
             Expr::Local(l) => Some(
@@ -643,45 +728,6 @@ impl<'m, 'a> FuncLower<'m, 'a> {
                     .cloned()
                     .ok_or(EmitError::UnboundLocal(*l))?,
             ),
-            Expr::Let(local, rhs, body) => {
-                let Some(value) = self.expr(rhs)? else {
-                    return Ok(None);
-                };
-                let shadowed = self.locals.insert(*local, value);
-                let result = self.expr(body);
-                match shadowed {
-                    Some(old) => self.locals.insert(*local, old),
-                    None => self.locals.remove(local),
-                };
-                result?
-            }
-            Expr::BinInt(op, a, b) => self
-                .operands(a, b, MTy::Int)?
-                .map(|(a, b)| self.int_op(*op, &a, &b)),
-            Expr::BinFloat(op, a, b) => self
-                .operands(a, b, MTy::Float)?
-                .map(|(a, b)| self.float_op(*op, &a, &b)),
-            Expr::Cmp(op, a, b) => self.compare(*op, a, b)?,
-            Expr::IntToFloat(a) => match self.expr(a)? {
-                Some(v) => {
-                    expect(&v, MTy::Int)?;
-                    let operand = v.operand()?;
-                    let (int, float) = (self.module.int_ty(), self.module.float_ty());
-                    Some(Val::Op(
-                        MTy::Float,
-                        self.emit(format!("sitofp {int} {operand} to {float}")),
-                    ))
-                }
-                None => None,
-            },
-            Expr::FloatFn(function, a) => match self.expr(a)? {
-                Some(v) => {
-                    expect(&v, MTy::Float)?;
-                    Some(self.float_fn(*function, v.operand()?))
-                }
-                None => None,
-            },
-            Expr::If(cond, then, els) => self.branch(cond, then, els)?,
             Expr::CallDirect(callee, args) => self.call(*callee, args, false)?,
             Expr::Trap(message) => {
                 self.trap(message);
@@ -713,6 +759,75 @@ impl<'m, 'a> FuncLower<'m, 'a> {
         })
     }
 
+    /// What the node `wait` does once its operand has `value`; `height` is the
+    /// number of nodes still waiting below it.
+    fn resume<'e>(
+        &mut self,
+        wait: OperandWait<'e, Lowered>,
+        value: Lowered,
+        height: usize,
+        scopes: &mut Vec<Scope>,
+    ) -> Result<OperandStep<'e, Lowered>, EmitError> {
+        let Some(value) = value else {
+            return Ok(OperandStep::Done(None));
+        };
+        let first_operand = |first: Lowered| first.ok_or(EmitError::Malformed("a missing operand"));
+        Ok(match wait {
+            OperandWait::First(Expr::Let(local, _, body)) => {
+                let shadowed = self.locals.insert(*local, value);
+                scopes.push(Scope {
+                    height,
+                    local: *local,
+                    shadowed,
+                });
+                OperandStep::Next(body)
+            }
+            OperandWait::First(Expr::If(_, then, els)) => {
+                OperandStep::Done(self.branch(value, then, els)?)
+            }
+            OperandWait::First(node @ Expr::BinInt(_, _, right)) => {
+                expect(&value, MTy::Int)?;
+                OperandStep::Right(OperandWait::Second(node, Some(value)), right)
+            }
+            OperandWait::First(node @ Expr::BinFloat(_, _, right)) => {
+                expect(&value, MTy::Float)?;
+                OperandStep::Right(OperandWait::Second(node, Some(value)), right)
+            }
+            OperandWait::First(node @ Expr::Cmp(_, _, right)) => {
+                OperandStep::Right(OperandWait::Second(node, Some(value)), right)
+            }
+            OperandWait::First(Expr::IntToFloat(_)) => {
+                expect(&value, MTy::Int)?;
+                let operand = value.operand()?;
+                let (int, float) = (self.module.int_ty(), self.module.float_ty());
+                OperandStep::Done(Some(Val::Op(
+                    MTy::Float,
+                    self.emit(format!("sitofp {int} {operand} to {float}")),
+                )))
+            }
+            OperandWait::First(Expr::FloatFn(function, _)) => {
+                expect(&value, MTy::Float)?;
+                OperandStep::Done(Some(self.float_fn(*function, value.operand()?)))
+            }
+            OperandWait::First(_) => return Err(EmitError::Malformed("not an operator")),
+            OperandWait::Second(Expr::BinInt(op, ..), first) => {
+                let first = first_operand(first)?;
+                expect(&value, MTy::Int)?;
+                OperandStep::Done(Some(self.int_op(*op, first.operand()?, value.operand()?)))
+            }
+            OperandWait::Second(Expr::BinFloat(op, ..), first) => {
+                let first = first_operand(first)?;
+                expect(&value, MTy::Float)?;
+                OperandStep::Done(Some(self.float_op(*op, first.operand()?, value.operand()?)))
+            }
+            OperandWait::Second(Expr::Cmp(op, ..), first) => {
+                let first = first_operand(first)?;
+                OperandStep::Done(Some(self.compare(*op, &first, &value)?))
+            }
+            OperandWait::Second(..) => return Err(EmitError::Malformed("not a binary operator")),
+        })
+    }
+
     fn constant(&self, c: Const) -> Val {
         match c {
             Const::Int(n) => Val::Op(MTy::Int, n.to_string()),
@@ -723,23 +838,6 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             Const::Bool(b) => Val::Op(MTy::Bool, b.to_string()),
             Const::Unit => Val::Unit,
         }
-    }
-
-    fn operands(
-        &mut self,
-        a: &Expr,
-        b: &Expr,
-        ty: MTy,
-    ) -> Result<Option<(String, String)>, EmitError> {
-        let Some(a) = self.expr(a)? else {
-            return Ok(None);
-        };
-        let Some(b) = self.expr(b)? else {
-            return Ok(None);
-        };
-        expect(&a, ty)?;
-        expect(&b, ty)?;
-        Ok(Some((a.operand()?.to_string(), b.operand()?.to_string())))
     }
 
     fn int_op(&mut self, op: IntOp, a: &str, b: &str) -> Val {
@@ -836,13 +934,7 @@ impl<'m, 'a> FuncLower<'m, 'a> {
         Val::Op(MTy::Float, self.emit(format!("{instruction} {t} {a}, {b}")))
     }
 
-    fn compare(&mut self, op: CmpOp, a: &Expr, b: &Expr) -> Result<Lowered, EmitError> {
-        let Some(a) = self.expr(a)? else {
-            return Ok(None);
-        };
-        let Some(b) = self.expr(b)? else {
-            return Ok(None);
-        };
+    fn compare(&mut self, op: CmpOp, a: &Val, b: &Val) -> Result<Val, EmitError> {
         if a.ty() != b.ty() {
             return Err(EmitError::Malformed("comparison operand types differ"));
         }
@@ -875,10 +967,10 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             _ => return Err(EmitError::Malformed("comparison operands")),
         };
         let (x, y) = (a.operand()?, b.operand()?);
-        Ok(Some(Val::Op(
+        Ok(Val::Op(
             MTy::Bool,
             self.emit(format!("{kind} {predicate} {t} {x}, {y}")),
-        )))
+        ))
     }
 
     fn float_fn(&mut self, function: FloatFn, a: &str) -> Val {
@@ -906,10 +998,7 @@ impl<'m, 'a> FuncLower<'m, 'a> {
         }
     }
 
-    fn branch(&mut self, cond: &Expr, then: &Expr, els: &Expr) -> Result<Lowered, EmitError> {
-        let Some(cond) = self.expr(cond)? else {
-            return Ok(None);
-        };
+    fn branch(&mut self, cond: Val, then: &Expr, els: &Expr) -> Result<Lowered, EmitError> {
         expect(&cond, MTy::Bool)?;
         let cond = cond.operand()?.to_string();
         let (then_label, else_label, join) =
