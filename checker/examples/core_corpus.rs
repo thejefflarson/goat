@@ -403,7 +403,6 @@ impl Core {
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Feature {
     ForeignCall,
-    GroupComparison,
     TagsAndMatch,
     Builtin,
     OperatorOperand,
@@ -421,9 +420,6 @@ impl Feature {
         match self {
             Feature::ForeignCall => "outside the calculus: a foreign host call",
             Feature::TagsAndMatch => "outside the calculus: tags and match",
-            Feature::GroupComparison => {
-                "outside the calculus: a comparison in a program with tags, whose Eq sort the algorithm does not decide for groups"
-            }
             Feature::Builtin => "outside the calculus: print or trap",
             Feature::OperatorOperand => {
                 "outside the calculus: arithmetic on non-primitive operands"
@@ -531,8 +527,6 @@ struct Reader<'a> {
     gap: Feature,
     /// The tag groups read so far; a group's position is its name.
     groups: Vec<Arc<Group>>,
-    /// Whether the program builds or matches a tag.
-    tagged: bool,
 }
 
 /// What a name in scope is bound by: a parameter or `let`, one binder; or a
@@ -947,20 +941,6 @@ impl Reader<'_> {
                     op,
                     BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte | BinOp::Eq | BinOp::Ne
                 );
-                let primitive = |this: &Self, e: &Expr| {
-                    matches!(
-                        this.node_ty(e),
-                        Some(Ty::Int | Ty::Float | Ty::Str | Ty::Bool)
-                    )
-                };
-                if comparison
-                    && self.tagged
-                    && self.types.is_some()
-                    && !(primitive(self, lhs) && primitive(self, rhs))
-                {
-                    self.gap = self.gap.min(Feature::GroupComparison);
-                    return None;
-                }
                 self.in_comparison += usize::from(comparison);
                 let operands = (self.read(lhs), self.read(rhs));
                 self.in_comparison -= usize::from(comparison);
@@ -1228,11 +1208,7 @@ pub fn line(source: &str) -> Result<String, Skip> {
         in_comparison: 0,
         gap: Feature::Other,
         groups: Vec::new(),
-        tagged: false,
     };
-    for_each_node(&lowered.root, &mut |e| {
-        reader.tagged |= matches!(e.kind, ExprKind::Tag { .. });
-    });
     let mut core = reader
         .read(&lowered.root)
         .ok_or_else(|| Skip::OutsideFragment(feature_of(&lowered, checked.as_ref(), reader.gap)))?;
