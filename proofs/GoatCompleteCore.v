@@ -311,6 +311,11 @@ Inductive ctyping : denv -> ctx -> exp -> typ -> Prop :=
   | C_Cmp : forall Dd Gd e1 o e2 A,
       kind o = k_cmp -> sat Dd k_Eq A ->
       ctyping Dd Gd e1 A -> ctyping Dd Gd e2 A -> ctyping Dd Gd (e_bin e1 o e2) typ_Bool
+  | C_LetMono : forall Dd Gd e1 e2 T1 T2,
+      is_gen_value e1 = false -> ctyping Dd Gd e1 T1 ->
+      (forall x, x `notin` dom Gd `union` fv_exp e2 ->
+         ctyping Dd ((x ~ sch_mono T1) ++ Gd) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
+      ctyping Dd Gd (e_let e1 e2) T2
   | C_Conv : forall Dd Gd e T T',
       ctyping Dd Gd e T -> teqD Dd T T' -> ctyping Dd Gd e T'.
 
@@ -334,6 +339,7 @@ Proof.
   - apply (T_Bin Dd Gd e1 bop_div e2 typ_Float typ_Float typ_Float); [ assumption | assumption | apply sig_quot ].
   - eapply T_Bin; [ exact IHctyping1 | exact IHctyping2 | ].
     apply sig_cmp; assumption.
+  - apply T_LetMono with (L := dom Gd `union` fv_exp e2) (T1 := T1); [ exact IHctyping | exact H2 ].
   - eapply T_ConvD; eassumption.
 Qed.
 
@@ -418,7 +424,7 @@ Proof. intros o H. unfold is_generic_op. destruct (kind o); try reflexivity. con
 Definition Done (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat) (Sg : sub) (T1 : typ) : Prop :=
   exists s D' n' S2 T e',
     Stable (fun f => infer f D G e n = Some (s, D', T, n', e')) /\
-    Sem D1 Sg n s D' n' S2 /\ TOk n' T /\ teqD D1 (apT S2 T) T1.
+    Sem D1 Sg n s D' n' S2 /\ TOk n' T /\ teqD D1 (apT S2 T) T1 /\ is_gen_value e' = is_gen_value e.
 
 Lemma Done_const : forall D1 G e D n Sg T1 c,
   (forall f, infer (S f) D G e n = Some (sid, D, c, n, e)) ->
@@ -426,7 +432,7 @@ Lemma Done_const : forall D1 G e D n Sg T1 c,
   DOk D n -> KR D D1 Sg -> teqD D1 c T1 -> Done D1 G e D n Sg T1.
 Proof.
   intros D1 G e D n Sg T1 c Hi Hc Hd HK Hteq.
-  exists sid, D, n, Sg, c, e. refine (conj _ (conj (Sem_id D1 Sg D n HK Hd) (conj (TOk_scalar n c Hc) _))).
+  exists sid, D, n, Sg, c, e. refine (conj _ (conj (Sem_id D1 Sg D n HK Hd) (conj (TOk_scalar n c Hc) (conj _ eq_refl)))).
   - exists 1. intros f Hf. destruct f as [|f]; [ lia | exact (Hi f) ].
   - destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact Hteq.
 Qed.
@@ -466,16 +472,17 @@ Proof.
   - (* variable *)
     destruct (CI_lookup Dd Sg Gd G x (sch_mono T) HC H H0) as (T1' & T' & Ea & Eb & Hc).
     assert (ET : T = T1') by (apply (f_equal s_body) in Ea; exact Ea). subst T1'.
-    exists sid, D, n, Sg, T', (e_fvar_f x). refine (conj _ (conj (Sem_id Dd Sg D n HK Hd) (conj _ Hc))).
+    exists sid, D, n, Sg, T', (e_fvar_f x). refine (conj _ (conj (Sem_id Dd Sg D n HK Hd) (conj _ (conj Hc eq_refl)))).
     + exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
       cbn [infer]. rewrite Eb, instantiate_mono. reflexivity.
     + exact (GOk_lookup n G x T' HG Eb).
   - (* numeral *)
     exists sid, (upd D (ea n) k_Literal), (S n), (supd Sg (ea n) T), (typ_Var (ea n)), (e_num i).
-    refine (conj _ (conj (sem_fresh Dd D Sg n k_Literal T Hd HK H0) (conj _ _))).
+    refine (conj _ (conj (sem_fresh Dd D Sg n k_Literal T Hd HK H0) (conj _ (conj _ _)))).
     + exists 1. intros f Hf. destruct f as [|f]; [ lia | reflexivity ].
     + apply TOk_var. apply old_ea. lia.
     + rewrite apT_Var, supd_same. apply teqD_refl.
+    + reflexivity.
   - (* float literal *)
     apply (Done_const Dd G (e_dec d) D n Sg typ_Float typ_Float); try assumption;
       [ intros f; reflexivity | right; left; reflexivity | apply teqD_refl ].
@@ -501,22 +508,23 @@ Proof.
                 (GOk_cons (S n) x _ G HTb (GOk_mono n (S n) G (Nat.le_succ_diag_r n) HG))
                 (CI_cons Dd Sg' Gd G x T1 _ (CI_supd Dd Sg Gd G n T1 HC HG)
                    ltac:(unfold Sg'; rewrite apT_Var, supd_same; apply teqD_refl)))
-      as (s & D' & n' & S2 & T & e' & Hst & Hsem & HT & Heq).
+      as (s & D' & n' & S2 & T & e' & Hst & Hsem & HT & Heq & HgHeq).
     exists s, D', n', S2, (typ_Arrow (apT s (typ_Var (ea n))) T), (e_abs (cl 0 x e')).
     pose proof (Sem_supd Dd Sg T1 n s D' n' S2 Hsem) as Hsem0.
-    refine (conj _ (conj Hsem0 (conj _ _))).
+    refine (conj _ (conj Hsem0 (conj _ (conj _ _)))).
     + pose proof (Stable_below _ Hst) as HSt. stable_run HSt.
       cbn [infer]. change (fresh_var G b) with x. rewrite Hf. reflexivity.
     + apply TOk_arrow; [ exact (TOk_ap _ _ _ _ (proj1 (proj2 (proj2 Hsem))) HTb) | exact HT ].
     + rewrite apT_Arrow. apply teqD_Arrow; [ | exact Heq ].
       pose proof (proj1 (proj2 (proj2 (proj2 Hsem))) (ea n) (old_ea (S n) n (Nat.lt_succ_diag_r n))) as F.
       unfold Sg' in F. rewrite supd_same in F. apply teqD_sym. exact F.
+    + reflexivity.
   - (* call *)
     destruct (IHctyping1 D G n Sg Hd HK HG HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1).
+      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1 & HgHeq1).
     destruct (CI_step _ _ _ _ _ _ _ _ _ Sem1 HC HG) as [HC1 HG1].
     destruct (IHctyping2 D1a (apC s1 G) n1 Sa (Sem_DOk Sem1) (Sem_KR Sem1) HG1 HC1)
-      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & Heq2).
+      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & Heq2 & HgHeq2).
     pose proof (Sem_DOk Sem2) as Hd2.
     pose proof (TOk_ap _ _ _ _ (Sem_SI Sem2) HTa) as HTa2.
     assert (Hle : n2 <= S n2) by lia.
@@ -537,25 +545,26 @@ Proof.
                 (TOk_mono _ _ _ Hle HTa2) HTarr Heq) as (s3 & D3 & n3 & S3 & St3 & Sem3).
     pose proof (Sem_supd Dd Sb T2 n2 s3 D3 n3 S3 Sem3) as Sem3'.
     exists (scomp s3 (scomp s2 s1)), D3, n3, S3, (apT s3 (typ_Var (ea n2))), (e_app e1' e2').
-    refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3') (conj _ _))).
+    refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3') (conj _ (conj _ _)))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 St3))) as HSt. stable_run HSt.
       destruct Hf as (E1 & E2 & E3). cbn [infer]. rewrite E1, E2, E3. reflexivity.
     + exact (TOk_ap _ _ _ _ (Sem_SI Sem3) HTv).
     + pose proof (Sem_F Sem3 (ea n2) (old_ea (S n2) n2 (Nat.lt_succ_diag_r n2))) as F.
       rewrite supd_same in F. apply teqD_sym. exact F.
+    + cbn [is_gen_value]; try reflexivity; try assumption.
   - (* if *)
     destruct (IHctyping1 D G n Sg Hd HK HG HC)
-      as (s1 & D1a & n1 & Sa & Tc & c' & St1 & Sem1 & HTc & Heq1).
+      as (s1 & D1a & n1 & Sa & Tc & c' & St1 & Sem1 & HTc & Heq1 & HgHeq1).
     destruct (CI_step _ _ _ _ _ _ _ _ _ Sem1 HC HG) as [HC1 HG1].
     destruct (unify_step Dd D1a Sa Tc typ_Bool n1 (Sem_DOk Sem1) (Sem_KR Sem1) HTc
                 (TOk_scalar _ _ (or_intror (or_intror (or_introl eq_refl)))) Heq1)
       as (s2 & D1b & n2 & Sb & St2 & Sem2).
     destruct (CI_step _ _ _ _ _ _ _ _ _ Sem2 HC1 HG1) as [HC2 HG2].
     destruct (IHctyping2 D1b (apC s2 (apC s1 G)) n2 Sb (Sem_DOk Sem2) (Sem_KR Sem2) HG2 HC2)
-      as (s3 & D3 & n3 & Sc & Ta & a' & St3 & Sem3 & HTa & Heq2).
+      as (s3 & D3 & n3 & Sc & Ta & a' & St3 & Sem3 & HTa & Heq2 & HgHeq2).
     destruct (CI_step _ _ _ _ _ _ _ _ _ Sem3 HC2 HG2) as [HC3 HG3].
     destruct (IHctyping3 D3 (apC s3 (apC s2 (apC s1 G))) n3 Sc (Sem_DOk Sem3) (Sem_KR Sem3) HG3 HC3)
-      as (s4 & D4 & n4 & Sd & Tb & b' & St4 & Sem4 & HTb & Heq3).
+      as (s4 & D4 & n4 & Sd & Tb & b' & St4 & Sem4 & HTb & Heq3 & HgHeq3).
     pose proof (TOk_ap _ _ _ _ (Sem_SI Sem4) HTa) as HTa4.
     assert (Heq : teqD Dd (apT Sd (apT s4 Ta)) (apT Sd Tb)).
     { eapply teqD_trans; [ apply teqD_sym; apply ap_factor_rf;
@@ -566,7 +575,7 @@ Proof.
     exists (scomp s5 (scomp s4 (scomp s3 (scomp s2 s1)))), D5, n5, Se, (apT s5 Tb), (e_ite c' a' b').
     refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _
       (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3) Sem4)
-      Sem5) (conj _ _))).
+      Sem5) (conj _ (conj _ _)))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3
         (Stable_and _ _ St4 St5))))) as HSt. stable_run HSt.
       destruct Hf as (E1 & E2 & E3 & E4 & E5). cbn [infer]. rewrite E1, E2, E3, E4, E5. reflexivity.
@@ -574,9 +583,10 @@ Proof.
     + eapply teqD_trans; [ apply teqD_sym; apply ap_factor_rf;
         [ exact (proj1 HTb) | intros z Hz; exact (Sem_F Sem5 z (proj2 HTb z Hz)) ] | ].
       exact Heq3.
+    + cbn [is_gen_value]; try reflexivity; try assumption.
   - (* float(e) *)
     destruct (IHctyping D G n Sg Hd HK HG HC)
-      as (s1 & D1a & n1 & Sa & Ta & e' & St1 & Sem1 & HTa & Heq1).
+      as (s1 & D1a & n1 & Sa & Ta & e' & St1 & Sem1 & HTa & Heq1 & HgHeq1).
     assert (Hle : n1 <= S n1) by lia.
     assert (HTv : TOk (S n1) (typ_Var (ea n1))) by (apply TOk_var; apply old_ea; lia).
     assert (Heq : teqD Dd (apT (supd Sa (ea n1) A) Ta) (apT (supd Sa (ea n1) A) (typ_Var (ea n1)))).
@@ -588,17 +598,18 @@ Proof.
     pose proof (Sem_supd Dd Sa A n1 s2 D2 n2 S3 Sem2) as Sem2'.
     destruct (CI_step _ _ _ _ _ _ _ _ _ Sem1 HC HG) as [HC1 HG1].
     exists (scomp s2 s1), D2, n2, S3, typ_Float, (e_tofloat e').
-    refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2') (conj _ _))).
+    refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2') (conj _ (conj _ _)))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
       destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, E2. reflexivity.
     + apply TOk_scalar. right. left. reflexivity.
     + apply teqD_refl.
+    + cbn [is_gen_value]; try reflexivity; try assumption.
   - (* arithmetic *)
     destruct (IHctyping1 D G n Sg Hd HK HG HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1).
+      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1 & HgHeq1).
     destruct (CI_step _ _ _ _ _ _ _ _ _ Sem1 HC HG) as [HC1 HG1].
     destruct (IHctyping2 D1a (apC s1 G) n1 Sa (Sem_DOk Sem1) (Sem_KR Sem1) HG1 HC1)
-      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & Heq2).
+      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & Heq2 & HgHeq2).
     assert (Hle : n2 <= S n2) by lia.
     assert (HTv : TOk (S n2) (typ_Var (ea n2))) by (apply TOk_var; apply old_ea; lia).
     pose proof (TOk_ap _ _ _ _ (Sem_SI Sem2) HTa) as HTa2.
@@ -627,7 +638,7 @@ Proof.
       as (s4 & D4 & n4 & S4 & St4 & Sem4).
     exists (scomp s4 (scomp s3 (scomp s2 s1))), D4, n4, S4, (apT s4 (apT s3 (typ_Var (ea n2)))), (e_bin e1' o e2').
     refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _
-      (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3') Sem4) (conj _ _))).
+      (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3') Sem4) (conj _ (conj _ _)))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3 St4)))) as HSt.
       stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
       rewrite (is_cmp_op_false o H), (is_generic_op_true o H0). cbv beta iota zeta.
@@ -636,12 +647,13 @@ Proof.
     + eapply teqD_trans; [ apply teqD_sym; apply ap_factor_rf;
         [ exact (proj1 HTc3) | intros z Hz; exact (Sem_F Sem4 z (proj2 HTc3 z Hz)) ] | ].
       apply teqD_sym. exact Fc.
+    + cbn [is_gen_value]; try reflexivity; try assumption.
   - (* division *)
     destruct (IHctyping1 D G n Sg Hd HK HG HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1).
+      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1 & HgHeq1).
     destruct (CI_step _ _ _ _ _ _ _ _ _ Sem1 HC HG) as [HC1 HG1].
     destruct (IHctyping2 D1a (apC s1 G) n1 Sa (Sem_DOk Sem1) (Sem_KR Sem1) HG1 HC1)
-      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & Heq2).
+      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & Heq2 & HgHeq2).
     pose proof (TOk_ap _ _ _ _ (Sem_SI Sem2) HTa) as HTa2.
     assert (HTf : forall m, TOk m typ_Float) by (intros m; apply TOk_scalar; right; left; reflexivity).
     assert (Heq : teqD Dd (apT Sb (apT s2 Ta)) (apT Sb typ_Float)).
@@ -659,7 +671,7 @@ Proof.
       as (s4 & D4 & n4 & S4 & St4 & Sem4).
     exists (scomp s4 (scomp s3 (scomp s2 s1))), D4, n4, S4, typ_Float, (e_bin e1' bop_div e2').
     refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _
-      (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3) Sem4) (conj _ _))).
+      (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3) Sem4) (conj _ (conj _ _)))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3 St4)))) as HSt.
       stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
       rewrite (is_cmp_op_false bop_div ltac:(discriminate)).
@@ -667,12 +679,13 @@ Proof.
       rewrite E3, E4. reflexivity.
     + exact (HTf n4).
     + apply teqD_refl.
+    + cbn [is_gen_value]; try reflexivity; try assumption.
   - (* comparison *)
     destruct (IHctyping1 D G n Sg Hd HK HG HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1).
+      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1 & HgHeq1).
     destruct (CI_step _ _ _ _ _ _ _ _ _ Sem1 HC HG) as [HC1 HG1].
     destruct (IHctyping2 D1a (apC s1 G) n1 Sa (Sem_DOk Sem1) (Sem_KR Sem1) HG1 HC1)
-      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & Heq2).
+      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & Heq2 & HgHeq2).
     pose proof (TOk_ap _ _ _ _ (Sem_SI Sem2) HTa) as HTa2.
     assert (Heq : teqD Dd (apT Sb (apT s2 Ta)) (apT Sb Tb)).
     { eapply teqD_trans; [ apply teqD_sym; apply ap_factor_rf;
@@ -695,15 +708,33 @@ Proof.
     pose proof (Sem_supd Dd S3 A n3 s4 D4 n4 S4 Sem4) as Sem4'.
     exists (scomp s4 (scomp s3 (scomp s2 s1))), D4, n4, S4, typ_Bool, (e_bin e1' o e2').
     refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _
-      (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3) Sem4') (conj _ _))).
+      (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3) Sem4') (conj _ (conj _ _)))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3 St4)))) as HSt.
       stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
       rewrite (is_cmp_op_true o H). cbv beta iota zeta. rewrite E3, E4. reflexivity.
     + apply TOk_scalar. right. right. left. reflexivity.
     + apply teqD_refl.
+    + cbn [is_gen_value]; try reflexivity; try assumption.
+  - (* let of a binding that is not a value *)
+    destruct (IHctyping D G n Sg Hd HK HG HC)
+      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1 & Hgv).
+    destruct (CI_step _ _ _ _ _ _ _ _ _ Sem1 HC HG) as [HC1 HG1].
+    rewrite H in Hgv.
+    assert (Hx : fresh_var (apC s1 G) e2 `notin` dom Gd `union` fv_exp e2).
+    { rewrite (CI_dom _ _ _ _ HC). pose proof (dom_apC s1 G).
+      pose proof (fresh_var_notin_dom (apC s1 G) e2). pose proof (fresh_var_notin_fv (apC s1 G) e2). fsetdec. }
+    destruct (H2 _ Hx D1a ((fresh_var (apC s1 G) e2 ~ sch_mono Ta) ++ apC s1 G) n1 Sa
+                (Sem_DOk Sem1) (Sem_KR Sem1) (GOk_cons n1 _ Ta _ HTa HG1)
+                (CI_cons Dd Sa Gd (apC s1 G) _ T1 Ta HC1 Heq1))
+      as (s2 & D2 & n2 & Sb & T & e2' & St2 & Sem2 & HT & Heq2 & Hg2).
+    exists (scomp s2 s1), D2, n2, Sb, T, (e_let e1' (cl 0 (fresh_var (apC s1 G) e2) e2')).
+    refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) (conj HT (conj Heq2 _)))).
+    + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
+      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv. cbv beta iota zeta. rewrite E2. reflexivity.
+    + reflexivity.
   - (* conversion *)
-    destruct (IHctyping D G n Sg Hd HK HG HC) as (s & D' & n' & S2 & T0 & e' & Hst & Hsem & HT & Heq).
-    exists s, D', n', S2, T0, e'. refine (conj Hst (conj Hsem (conj HT _))).
+    destruct (IHctyping D G n Sg Hd HK HG HC) as (s & D' & n' & S2 & T0 & e' & Hst & Hsem & HT & Heq & HgHeq).
+    exists s, D', n', S2, T0, e'. refine (conj Hst (conj Hsem (conj HT (conj _ HgHeq)))).
     eapply teqD_trans; [ exact Heq | exact H0 ].
 Qed.
 
@@ -718,10 +749,33 @@ Theorem infer_complete_core_closed : forall e T, ctyping d_any nil e T ->
 Proof.
   intros e T H.
   destruct (infer_complete_core d_any nil e T H d_any nil 0 sid (d_any_DOk 0) (KR_id d_any)
-              (GOk_nil 0) (CI_nil d_any sid)) as (s & D' & n' & S2 & T' & e' & St & Sem & HT & Heq).
+              (GOk_nil 0) (CI_nil d_any sid)) as (s & D' & n' & S2 & T' & e' & St & Sem & HT & Heq & HgHeq).
   exists D', T', e', S2.
   assert (St' : Stable (fun f => infer_closed_elab f e = Some (D', T', e'))).
   { eapply Stable_mono; [ | exact St ]. intros f Hf. unfold infer_closed_elab. rewrite Hf. reflexivity. }
   refine (conj St' (conj _ (conj (Sem_KR Sem) (conj Heq (proj1 HT))))).
   destruct St' as [f0 Hf0]. exact (proj2 (infer_closed_sound f0 e D' T' e' (Hf0 f0 (le_n f0)))).
+Qed.
+
+(* The identity function has the derivation at [Int -> Int]; the algorithm
+   answers with a type of which that one is an instance. *)
+Example core_identity : exists D T' e' S2,
+  Stable (fun f => infer_closed_elab f (e_abs (e_fvar_b 0)) = Some (D, T', e')) /\
+  erase e' = e_abs (e_fvar_b 0) /\ KR D d_any S2 /\
+  teqD d_any (apT S2 T') (typ_Arrow typ_Int typ_Int) /\ rf T'.
+Proof.
+  apply infer_complete_core_closed. apply C_Abs. intros x Hx. simpl.
+  apply C_Var; [ solve_uniq | apply binds_one_3; reflexivity ].
+Qed.
+
+(* A comparison, which unifies its operands and only then requires the joined
+   type to be [Eq]. *)
+Example core_comparison : exists D T' e' S2,
+  Stable (fun f => infer_closed_elab f (e_abs (e_bin (e_fvar_b 0) bop_eq (e_fvar_b 0))) = Some (D, T', e')) /\
+  erase e' = e_abs (e_bin (e_fvar_b 0) bop_eq (e_fvar_b 0)) /\ KR D d_any S2 /\
+  teqD d_any (apT S2 T') (typ_Arrow typ_Int typ_Bool) /\ rf T'.
+Proof.
+  apply infer_complete_core_closed. apply C_Abs. intros x Hx. simpl.
+  apply C_Cmp with (A := typ_Int); [ reflexivity | simpl; auto | | ];
+    (apply C_Var; [ solve_uniq | apply binds_one_3; reflexivity ]).
 Qed.

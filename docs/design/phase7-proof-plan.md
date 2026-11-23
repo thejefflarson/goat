@@ -1503,6 +1503,90 @@ coercion-free `unify_coD` one.
 | record, projection, spread, restrict | 4 | rows, presence, `rm` |
 | tag, `match`, default arm, list | 3 | `typ_Grp w (spine Ts)`; arm bodies in a context with the payload |
 
+*As built (stage 7.7, `GoatCompleteCore.v`, `GoatCompleteSpn.v`).* L3 is proved for
+the constructs whose types are base types, variables and arrows: variables,
+numerals, `Float`, string, `unit` and boolean constants, `program`, a call, `if`,
+the arithmetic operators, `/`, a comparison, `float(e)` and a `let` whose binding
+is not a value. `let` of a value and `letrec` are not proved (below), nor are the
+record and tag constructs (stage 7.8).
+
+**Statement.** `infer_complete_core`: from `ctyping Dd Gd e T1`, a state
+`(D, G, n)` with `DOk D n`, a substitution `Sg` with `KR D Dd Sg`, `GOk n G` (every
+binding of `G` is a record-free type over atoms below `n`) and `CI Dd Sg Gd G` (at
+each name, the derivation's type is `teqD Dd` to `Sg` of the algorithm's), the run
+of `infer` succeeds from some fuel on (`Stable`) at some `(s, D', T, n', e')`, and
+`Sem Dd Sg n s D' n' S2` holds (the 7.6j step: `KR D' Dd S2`, `DOk D' n'`, the
+images of the old atoms are record-free over atoms below `n'`, `Sg` factors
+through `s` at `teqD Dd`), `T` is record-free over atoms below `n'`,
+`teqD Dd (apT S2 T) T1`, and `is_gen_value e' = is_gen_value e`.
+`infer_complete_core_closed` is the closed case (`G = nil`, `Sg = sid`) with
+`erase e' = e` from `infer_closed_sound`. `core_identity` and `core_comparison` run
+it on two programs.
+
+Adaptations, each a change from the sketch above.
+
+1. **The unifier's hypotheses are gone, not met.** The core's types are
+   record-free, so each unification is `unify_tD_rf_complete` (7.6j), whose only
+   hypotheses are the sorts (`KR`) and the atoms. The hypotheses of
+   `unify_tD_complete_full` that L3 was to meet (`ps`, `Dsrt`/`NN`, `Drow`, `spn`)
+   do not arise: a numeric variable bound to a record is an `Sg` the induction
+   never asks about, because the algorithm's types hold no record. They return with
+   the record constructs of 7.8.
+2. **`ctyping`, a copy of `typing` for these constructs.** It differs in three
+   places. A binder's premise holds at every name fresh for the context and the
+   term, because the algorithm opens a binder at the one name `fresh_var` picked and
+   the induction hypothesis is about the derivation it was given; `typing`'s
+   cofinite premise gives that name only after renaming, and the renaming lemma
+   (`typing_rename_var`) is not an induction hypothesis. The context's bindings are
+   monomorphic (`C_Var` asks for `sch_mono`). And `sig_quot_rec`, the division of two
+   records, is absent: the algorithm unifies the operands of `/` with `Float`, so
+   `{x: 1.0} / {x: 2.0}` has a derivation and no run (the corpus skips it as
+   "arithmetic on non-primitive operands"). `ctyping_typing` embeds it in `typing`;
+   the converse (a `typing` derivation of a core term is a `ctyping` one, by renaming
+   the binders, when it does not use `sig_quot_rec`) is the first step of 7.9.
+3. **`teqD`, not `teq`.** The conclusion is `teqD Dd (apT S2 T) T1`, the
+   conversion `T_ConvD` uses, because the derivation may reach a type through
+   conversion at its environment.
+4. **The context relation is `CI`, not `ctx_le`.** `ctx_le`/`sch_le` compare
+   schemes by their instances, and an instance of `apS Sg sc` substitutes
+   `Sg`'s images under the scheme's binders (`apS` captures). `OkS Sg` rules that
+   out (its images are over even atoms), but the derivation's types may hold any
+   atom, and the substitutions the unifier's completeness returns carry no such
+   fact. With monomorphic bindings there is nothing to capture, and the relation is
+   `teqD` of one type.
+
+**`spn` is a lemma (`GoatCompleteSpn.v`).** The ratification of 7.6m (option (c)):
+goat has no syntax for an unused group parameter, so `spn` holds for every declared
+group. `type_slots_facts`/`cases_slots_facts` show a declaration numbers its `_`
+slots `6 .. 6 + m - 1` in order, each in some tag, and `nparams` counts `m`;
+`declared_gwf` says every group `decl_entries` reads out has that property
+(`gwf`: each `i < nparams w` is used by some tag), and `spn_declared` concludes
+`spn w 0 (spine Ts)` for `Ts` of length `nparams w`, which is the spine W builds
+(`fresh_tys`). The group constructs of 7.8 use it; nothing in 7.7 does.
+
+**What remains of 7.7.**
+
+1. *`let` of a value and `letrec`.* Both generalize, so the algorithm's context
+   holds schemes (`gen_ren`) and the induction compares them with the derivation's
+   (`gen`) by `gen_mono_let`. Its hypotheses are the ones the core did not need.
+   `OkS S2` (images of even atoms are over even atoms) cannot be had from the
+   unifier's step and fails for a derivation whose types hold an odd atom;
+   `kres` into the environment the derivation's first premise lives in
+   (`extr (ext D V k) ..`) needs `Sg`'s images to avoid the atoms `V` the premise
+   re-sorts, which a derivation need not satisfy (its generalized atoms are its own
+   choice); and `frozen` is the context relation read through `ctx_le`.
+   DECISION NEEDED: how to discharge the first two. Options: (a) rename the
+   derivation's atoms to fresh even ones before the induction, a lemma about
+   `typing` (substitution of atoms, `typing_tsubst_gen_mut` is the closest) that
+   the induction then uses once at the top; (b) carry both as hypotheses of the
+   theorem and prove them of the closed case, where the derivation's atoms are the
+   program type's alone; (c) state completeness up to a choice of derivation (the
+   classical form: some derivation of the same term, with fresh generalized atoms,
+   is the instance). (a) is the smallest and keeps the statement. Not started.
+2. *The conversion from `typing`* (above, adaptation 2).
+3. *Records, spread, restrict, tags, `match`, methods* (7.8), with the
+   hypotheses of 7.6 (`ps`, `Dsrt`, `spn`, absent entries waiting on #667).
+
 **Alternatives that lost.** Prove completeness against a separate declarative
 principal-type system and show it equivalent to `typing`: it doubles the rule
 set and the equivalence needs the same lemmas. Replace W with a constraint-based
