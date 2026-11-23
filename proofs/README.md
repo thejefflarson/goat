@@ -135,11 +135,11 @@ well-founded type order; `rec_align` is the record alignment fact it rests on, a
 
 What phase 6 does not prove, and where each gap is tracked:
 
-- **Sort propagation (#623).** W's unifier never changes the kinding environment,
-  so `f = program(x) do same({p: x}, {p: x}) done` (`same` compares) is accepted by
-  the checker and refused by W. The spike (`differential/sort_gap.sh`) found 0 of
-  24295 checker-accepted corpus programs that hit it; five hand-written ones do.
-  Sound side only: W refuses more than the checker.
+- **Sort propagation (#623), closed in phase 7 stage 7.3.** The unifiers return the
+  kinding environment and push a sort onto the variables inside the type a
+  variable binds to (see "Algorithm W with sorted variables"), so
+  `f = program(x) do same({p: x}, {p: x}) done` is accepted by W, as the checker
+  accepts it. The five hand-written programs of #623 are in the corpus.
 - **NaN inside a compound.** The compiler orders a number by `==`, then `<`, else
   greater, so `{x: 0} > {x: NaN}` and `{x: NaN} > {x: 0}` both hold, which breaks
   antisymmetry and contradicts ADR 0036's "a NaN sorts after everything". The model
@@ -692,9 +692,10 @@ defaults outside a finite support (`supp_ok` says both).
   `tsubst_gen_core`, and `sch_equiv`.
 - **Algorithm W is unchanged.** Its environments have no constrained row variable
   (`rtriv D`, part of `DOk`), so `rkres` holds vacuously (`rkres_triv`) and a
-  scheme it builds has `rk_triv`. The unifier's soundness statements take
-  `rtriv D`: its composed substitution respects the sorts only because no row
-  variable carries a kind.
+  scheme it builds has `rk_triv`. The composition of two substitutions (`kres_scomp`)
+  takes `rtriv` of the middle environment for the same reason: no row variable
+  carries a kind, so there is none to respect. Dropping `rtriv` waits on the
+  unifier's row side (lacks on a tail, a restricted row's tail lacking its label).
 - **Statement B.** The row environment is read by `sat` only at a `row_Var`, so
   it extends to recursive types (a `mu` body's row tails are read the same way,
   `sat_open_mut` is unchanged) and to methods (`T_Obj` is typed against the same
@@ -758,11 +759,20 @@ at `Int`. ADR 0038 records the choice.
 `D` gives it. `D` is `Any` on every even atom from the supply number `n` on
 (`DOk`, `GoatInferSort.v`), and only a fresh variable gets a sort, by `upd`.
 
-- **Unification** (`unify_t f D T1 T2 n`) never changes `D`. A variable meets a
-  non-variable type only if the type satisfies the variable's sort (`sat_b`: an
-  `Int` or `Float` satisfies every sort, any other type only `Any`); two
-  variables bind the coarser to the finer (`finer_b`), so the survivor keeps its
-  sort. It returns a substitution that respects `D` (`kres D D (sT s)`).
+- **Unification** (`unify_t f D T1 T2 n`, and `unify_r`, `unify_k`, `unify_kr`,
+  `unify_co`) returns `(s, D', n')`. A variable meets a non-variable type only if
+  the type satisfies the variable's sort (`sat_b`: an `Int` or `Float` satisfies
+  every sort, any other type only `Any`); two variables bind the coarser to the
+  finer (`finer_b`), so the survivor keeps its sort. Before the check the sort is
+  pushed onto the type (`push_sort`, `bind_prop`): each variable inside the type
+  that is coarser than the sort is renamed to a fresh variable of that sort, one
+  fresh atom at a time, and `D'` is `D` updated (`upd`) on those atoms. Each
+  renaming is a `Good` step (`Good_rename`: the new atom is `Any` in `D` by `DOk`,
+  and its sort is finer than the renamed variable's), so `push_sort_good` follows
+  by induction on the variable list and the unifier's statement is `GoodU D n s D'
+  n'`: the supply grows, and from a well-kept `D` the step is `Good` (the
+  implication keeps `teq_dec`, which runs the unifier at supply 0, free of
+  `DOk`). A substitution that respects the sorts is `kres D D' (sT s)`.
 - **A numeral** is a fresh `Literal` variable, **`float(e)`** unifies its operand
   with a fresh `Numeric` variable, and **`+ - *`** unify both operands with one
   fresh `Numeric` variable, the type of the result. So `1 + 1.5` infers `Float`

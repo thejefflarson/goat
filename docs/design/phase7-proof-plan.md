@@ -135,7 +135,7 @@ the theorem already excludes the program, so the gap costs nothing.
 
 | Gap | Size today | Derivable in the rules? | Decision |
 | --- | --- | --- | --- |
-| Sort propagation, #623 | 5 hand-written programs; 0 of 24,295 checker-accepted corpus programs | Yes (`f = program(x) do same({p: x}, {p: x}) done`, `f(1)`) | **Fix first** (stage 7.3) |
+| Sort propagation, #623 | 5 hand-written programs; 0 of 24,295 checker-accepted corpus programs | Yes (`f = program(x) do same({p: x}, {p: x}) done`, `f(1)`) | **Fixed** (stage 7.3, sort half): the unifiers return the environment and push the sort (`push_sort`) |
 | No sort on a row variable (the checker kinds `Eq` on a row tail) | 0 corpus programs; `program(a, b) do (if a == b then 1 else 2) + a.x done` shows it | Only when the row is closed: `sat` is false of an open row. A closed instance derives, and W's principal type needs an `Eq` row variable it cannot express | **Fix first**, with #564 (stage 7.2) |
 | `lacks` on a row variable, #564 | 222 corpus programs (`LacksOnTail`) | No derivation exists, so completeness holds vacuously | **Fix first anyway**: it adds derivations, and proving completeness before adding them means proving it twice (stage 7.2) |
 | `sat_b` answers `Any` only for `mu` and tag groups | 0 in the corpus (the reader skips tags, 185) | Yes: `sat` holds of a comparable tag group, W refuses to bind an `Eq` variable to it | **Fix first** (stage 7.4) |

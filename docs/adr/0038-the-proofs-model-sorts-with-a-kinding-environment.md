@@ -112,10 +112,36 @@ sort mechanism held up: the substitution lemma and `kres` needed no change.
 `cmp_total` (two values of one `Eq` type compare) and `cmp_unerase` (the
 elaboration converse for a comparison) are in the checked-closed list.
 
-Two limits of the decision show here, both on the sound side. The unifier does
-not push a sort onto a variable inside a compound it meets (`unify_t` never
-changes `D`), so `f = program(x) do same({p: x}, {p: x}) done` is accepted by
-the checker and refused by W (#623); the corpus has no such program
-(`differential/sort_gap.sh`). And `sat_b`, the algorithm's decision procedure,
-is conservative on `mu` and tag groups: it gives them `Any` only, so W refuses a
-comparison of a recursive or tag type that `sat` accepts.
+Two limits of the decision show here, both on the sound side. The unifier did
+not push a sort onto a variable inside a compound it meets, so
+`f = program(x) do same({p: x}, {p: x}) done` was accepted by the checker and
+refused by W (#623); the amendment below closes it. And `sat_b`, the algorithm's
+decision procedure, is conservative on `mu` and tag groups: it gives them `Any`
+only, so W refuses a comparison of a recursive or tag type that `sat` accepts.
+
+## Amendment: sort propagation and row kinds (phase 7, 2026-11-22)
+
+**Sort propagation (#623).** The unifiers return the kinding environment. When a
+variable of sort `k` binds to a type, each variable inside the type that is
+coarser than `k` is renamed to a fresh variable of sort `k` (`push_sort`), then
+the type must satisfy `k`. Renaming rather than mutating the environment keeps
+the invariant `Good` relies on, that only a fresh atom ever gets a sort: the
+renaming substitution respects the sorts (`k` is finer than the sort it
+replaces) and the new environment refines the old one on a fresh atom alone.
+The cost was one extra result in every unifier's signature (`unify_t`, `unify_r`,
+`unify_k`, `unify_kr`, `unify_co`, `unify_mem`, `unify_grp`, `tie_obj`) and `infer`
+passing the returned environment on; the soundness statements say `GoodU D n s D'
+n'` (the supply grows, and a well-kept `D` gives a `Good` step), and `unify_sound`,
+`unify_k_sound`, `unify_co_sound` and `infer_sound` keep their other conclusions.
+
+**Row kinds.** The calculus gave a row variable a kind, a sort and a set of
+labels it lacks (`RK`, `drk`; stage 7.2), so a spread onto an open row has a
+derivation when the tail lacks the label (`T_SpreadL`) and an open record
+satisfies `Eq` or `Numeric` when its fields and its tail do. A scheme records the
+kind of each quantified row variable (`s_rk`) and `T_Let` types its body under
+them. A substitution respects the kinds when `rkres D D' sr`. Algorithm W still
+keeps every row variable at `rk_any` (`rtriv D`, part of `DOk`), so `rkres` holds
+vacuously for it; the unifier's row side (a variable that binds to a row
+passes the variable's lacks and sort on to the row's tail, a restricted row's
+tail lacks the removed label, a spread checks the lacks) is the remaining part of
+phase 7 stage 7.3 and is what removes the corpus reader's `LacksOnTail` skip.
