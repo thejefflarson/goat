@@ -382,13 +382,14 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
                           end
                       end
                   else
-                      match unify_coD f' D2 (apT s2 T1) typ_Float n2 with
+                      let Tq := quot_ty (apT s2 T1) T2 in
+                      match unify_coD f' D2 (apT s2 T1) Tq n2 with
                       | None => None
                       | Some (s3, D3, cs1, n3) =>
-                          match unify_coD f' D3 (apT s3 T2) typ_Float n3 with
+                          match unify_coD f' D3 (apT s3 T2) Tq n3 with
                           | None => None
                           | Some (s4, D4, cs2, n4) =>
-                              Some (scomp s4 (scomp s3 (scomp s2 s1)), D4, typ_Float, n4,
+                              Some (scomp s4 (scomp s3 (scomp s2 s1)), D4, Tq, n4,
                                     e_bin (coerce cs1 e1') o (coerce cs2 e2'))
                           end
                       end

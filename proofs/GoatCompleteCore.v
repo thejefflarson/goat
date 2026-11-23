@@ -280,7 +280,8 @@ Qed.
    name fresh for the context and the term (the algorithm opens a binder at the
    one name it chose), the context's bindings monomorphic, and the operators of
    one numeric sort.  The record division of [sig_quot_rec] is not here: the
-   algorithm unifies the operands of [/] with [Float]. *)
+   core's types hold no record, so the algorithm unifies the operands of [/] with
+   [Float]. *)
 Inductive ctyping : denv -> ctx -> exp -> typ -> Prop :=
   | C_Var : forall Dd Gd x T,
       uniq Gd -> binds x (sch_mono T) Gd -> ctyping Dd Gd (e_fvar_f x) T
@@ -419,6 +420,14 @@ Proof. intros o H. unfold is_cmp_op. destruct (kind o); try reflexivity. contrad
 
 Lemma is_generic_op_true : forall o, kind o <> k_quot -> is_generic_op o = true.
 Proof. intros o H. unfold is_generic_op. destruct (kind o); try reflexivity. contradiction. Qed.
+
+Lemma quot_ty_rf : forall T1 T2, rf T1 -> rf T2 -> quot_ty T1 T2 = typ_Float.
+Proof.
+  intros T1 T2 H1 H2. unfold quot_ty.
+  assert (Hn : forall T, rf T -> float_head T = None)
+    by (intros T H; destruct T; first [ reflexivity | (cbn in H; contradiction) ]).
+  rewrite (Hn _ H1), (Hn _ H2). reflexivity.
+Qed.
 
 (* What a run ends with. *)
 Definition Done (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat) (Sg : sub) (T1 : typ) : Prop :=
@@ -676,7 +685,7 @@ Proof.
       stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
       rewrite (is_cmp_op_false bop_div ltac:(discriminate)).
       change (is_generic_op bop_div) with false. cbv beta iota zeta.
-      rewrite E3, E4. reflexivity.
+      rewrite (quot_ty_rf _ _ (proj1 HTa2) (proj1 HTb)), E3, E4. reflexivity.
     + exact (HTf n4).
     + apply teqD_refl.
     + cbn [is_gen_value]; try reflexivity; try assumption.

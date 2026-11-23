@@ -450,7 +450,7 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
         ExprKind::Tag { .. } | ExprKind::Match { .. } => note(Feature::TagsAndMatch),
         ExprKind::Builtin(_) | ExprKind::Trap(_) => note(Feature::Builtin),
         ExprKind::Bin {
-            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::FloorDiv | BinOp::Mod,
+            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod,
             lhs,
             rhs,
         } if non_primitive(lhs) || non_primitive(rhs) => note(Feature::OperatorOperand),
@@ -609,12 +609,13 @@ impl Reader<'_> {
     }
 
     /// The type of an operator's operand, which must be one the calculus has
-    /// an operator signature for. A comparison also takes `Unit` and a record,
-    /// when both operands have one type, so no field needs a coercion.
-    fn operand_ty(&self, expr: &Expr, other: &Expr, comparison: bool) -> Option<Ty> {
+    /// an operator signature for. A comparison or a division also takes `Unit`
+    /// and a record, when both operands have one type, so no field needs a
+    /// coercion.
+    fn operand_ty(&self, expr: &Expr, other: &Expr, same_type: bool) -> Option<Ty> {
         match self.node_ty(expr)? {
             ty @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool) => Some(ty.clone()),
-            ty @ (Ty::Unit | Ty::Record(_)) if comparison && self.node_ty(other) == Some(ty) => {
+            ty @ (Ty::Unit | Ty::Record(_)) if same_type && self.node_ty(other) == Some(ty) => {
                 Some(ty.clone())
             }
             _ => None,
@@ -975,11 +976,13 @@ impl Reader<'_> {
                             .iter()
                             .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
                     if !generic {
+                        let division = *op == BinOp::Div;
                         let (x, y) = (
-                            self.operand_ty(lhs, rhs, comparison)?,
-                            self.operand_ty(rhs, lhs, comparison)?,
+                            self.operand_ty(lhs, rhs, comparison || division)?,
+                            self.operand_ty(rhs, lhs, comparison || division)?,
                         );
                         match (op, x, y) {
+                            (BinOp::Div, Ty::Record(_), _) | (BinOp::Div, _, Ty::Record(_)) => {}
                             (BinOp::Div, ..) => (a, b) = (to_float(a), to_float(b)),
                             (_, Ty::Int, Ty::Int)
                                 if !comparison && self.node_ty(expr) == Some(&Ty::Float) =>
@@ -2138,6 +2141,20 @@ const HANDWRITTEN: &[&str] = &[
     "f = program(r) do s = {...r, id: program(v) do v done}\n a = r == r\n b = r == {k: 1}\n 1 done\n1",
     "f = program(r) do s = {...r, id: program(v) do v done}\n b = r == {k: 1}\n a = r == r\n 1 done\n1",
     "f = program(r, x) do s = {...r, id: x}\n a = r == r\n b = r == {k: 1}\n 1 done\nf({k: 1}, program(v) do v done)",
+    "{x: 1.0, y: 2.0} / {x: 3.0, y: 4.0}",
+    "{x: 1, y: 2} / {x: 3, y: 4}",
+    "{x: 1.0} / {x: 2.0} / {x: 4.0}",
+    "a = {x: 1.0, y: 2.0}\nb = {x: 3.0, y: 4.0}\na / b",
+    "f = program(a) do a / {x: 1.0} done\nf({x: 1.0})",
+    "f = program(a) do {x: 1.0} / a done\nf({x: 1.0})",
+    "f = program(a) do a / a done\nf(2.0)",
+    "f = program(a) do a / a done\nf({x: 1.0})",
+    "f = program(a, b) do a / b done\nf({x: 1.0}, {x: 2.0})",
+    "{x: 1.0} / 2.0",
+    "2.0 / {x: 2.0}",
+    "{x: 1.0} / {y: 2.0}",
+    "{x: 1.0, y: 2.0} / {x: 3.0}",
+    "{x: \"a\"} / {x: \"b\"}",
     "r = {a: 1}\n{x: r.a + 1.5, y: r.a // 2}",
     "r = {a: 1, id: program(v) do v done}\n{p: (r.id)(1), q: (r.id)(true), x: r.a + 1.5}",
     "r = {a: 1, id: program(v) do v done}\ns = {...r, b: 2}\n{p: (s.id)(1), q: (s.id)(true)}",
