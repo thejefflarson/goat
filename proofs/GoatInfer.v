@@ -204,6 +204,18 @@ Fixpoint row_tail (R : row) : option atom :=
   | row_Maybe _ _ _ R' => row_tail R'
   end.
 
+(* The row variable [rewrite_row] may not bind when it rewrites the second row
+   to present the label of the first row's front entry: the tail of the first
+   row, the only variable whose binding there leaves the two rests with a common
+   tail and no unifier (Leijen's side condition).  A variable inside a field of
+   the first row is no obstacle: it is bound, and the field is then compared
+   under the binding. *)
+Definition side_av (R : row) : atoms :=
+  match row_tail R with
+  | Some q => {{ q }}
+  | None => {}
+  end.
+
 Fixpoint row_labels (R : row) : list label :=
   match R with
   | row_Empty | row_Var _ => nil
@@ -403,7 +415,7 @@ with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
           match row_head R1 with
           | None => None
           | Some (l, P, T, R1') =>
-              match rewrite_row l (frv_row R1) D R2 n with
+              match rewrite_row l (side_av R1) D R2 n with
               | None => None
               | Some (P', T', R2', s0, D0, n1) =>
                   match unify_t f' D0 (apT s0 P) P' n1 with
@@ -413,6 +425,80 @@ with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
                       | None => None
                       | Some (s1, D2, n3) =>
                           match unify_r f' D2 (drop_abs (apR s1 (apR sp (apR s0 R1')))) (drop_abs (apR s1 (apR sp R2'))) n3 with
+                          | None => None
+                          | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
+                          end
+                      end
+                  end
+              end
+          end
+      end
+  end.
+
+(* The unifier W calls.  It is [unify_t] with the conversion of rows read at the
+   kinding environment: before two rows are compared each is normalized at the
+   environment the comparison runs in ([nfR], GoatDefs.v), which drops an absent
+   entry whose rest lacks its label by a row variable's kind as well as by
+   syntax.  The checker peels the same entries (an absent entry against its own
+   tail, or two absent entries of one label), and [unify_tD_sound] says the result
+   is [teqD] at the environment it returns. *)
+Fixpoint unify_tD (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f}
+  : option (sub * denv * nat) :=
+  match f with
+  | O => None
+  | S f' =>
+      match T1, T2 with
+      | typ_Int, typ_Int => Some (sid, D, n)
+      | typ_Float, typ_Float => Some (sid, D, n)
+      | typ_Bool, typ_Bool => Some (sid, D, n)
+      | typ_Unit, typ_Unit => Some (sid, D, n)
+      | typ_String, typ_String => Some (sid, D, n)
+      | typ_Var a, typ_Var b =>
+          if Atom.eq_dec a b then Some (sid, D, n)
+          else if finer_b (D b) (D a) then Some (sbT a T2, D, n) else Some (sbT b T1, D, n)
+      | typ_Var a, _ => bind_prop D a T2 n
+      | _, typ_Var b => bind_prop D b T1 n
+      | typ_Arrow A B, typ_Arrow A' B' =>
+          match unify_tD f' D A A' n with
+          | None => None
+          | Some (s1, D1, n1) =>
+              match unify_tD f' D1 (apT s1 B) (apT s1 B') n1 with
+              | None => None
+              | Some (s2, D2, n2) => Some (scomp s2 s1, D2, n2)
+              end
+          end
+      | typ_Record R, typ_Record R' => unify_rD f' D (nfR D R) (nfR D R') n
+      | typ_Grp w A, typ_Grp w' A' =>
+          if gdecl_eq_dec w w' then unify_t f' D A A' n else None
+      | _, _ => None
+      end
+  end
+with unify_rD (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
+  : option (sub * denv * nat) :=
+  match f with
+  | O => None
+  | S f' =>
+      match R1, R2 with
+      | row_Var r, row_Var s =>
+          if Atom.eq_dec r s then Some (sid, D, n) else bind_row D r R2 n
+      | row_Var r, _ => bind_row D r R2 n
+      | _, row_Var s => bind_row D s R1 n
+      | row_Empty, row_Empty => Some (sid, D, n)
+      | row_Empty, row_Maybe _ _ _ _ => unify_rD f' D R2 R1 n
+      | _, _ =>
+          match row_head R1 with
+          | None => None
+          | Some (l, P, T, R1') =>
+              match rewrite_row l (side_av R1) D R2 n with
+              | None => None
+              | Some (P', T', R2', s0, D0, n1) =>
+                  match unify_tD f' D0 (apT s0 P) P' n1 with
+                  | None => None
+                  | Some (sp, D1, n2) =>
+                      match unify_tD f' D1 (apT sp (apT s0 T)) (apT sp T') n2 with
+                      | None => None
+                      | Some (s1, D2, n3) =>
+                          match unify_rD f' D2 (nfR D2 (apR s1 (apR sp (apR s0 R1')))) (nfR D2 (apR s1 (apR sp R2'))) n3 with
                           | None => None
                           | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
                           end

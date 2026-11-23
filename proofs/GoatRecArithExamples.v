@@ -22,6 +22,7 @@ Require Import Goat.GoatRows.
 Require Import Goat.GoatPresence.
 Require Import Goat.GoatRecArith.
 Require Import Goat.GoatMeta.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatPhase1.
 Require Import Goat.GoatSound.
 Require Import Stdlib.Lists.List.
@@ -157,21 +158,19 @@ Proof.
   intros T H. unfold mixed_l, mixed_r in H.
   destruct (bin_inv _ _ _ _ _ _ H) as [A [B [R [H1 [H2 [Hs _]]]]]].
   destruct (rec_inv _ _ _ _ H1) as [Rf [Hft Hq]].
-  destruct (teq_Record_inv _ _ Hq) as [R2 [-> Hr]].
+  destruct (teqD_Record_inv _ _ _ Hq) as [R2 [-> Hr]].
   destruct (bin_sig_record _ bop_add _ _ _ (ltac:(intro Hx; discriminate Hx)) Hs) as [-> [-> Hrow]].
   inversion Hft; subst.
   match goal with Hf : field_typing _ _ (fs_cons ly e_true fs_nil) _ |- _ => inversion Hf; subst end.
   match goal with Ht : typing _ _ e_true _ |- _ => apply true_inv in Ht end.
   match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
-  match goal with
-  | Hr : req (row_Ext lx ?T0 (row_Ext ly ?T1 row_Empty)) R2 |- _ =>
-      destruct (rm_req _ _ Hr ly T1 (row_Ext lx T0 row_Empty)
-                  (rm_ext_skip ly lx T0 (row_Ext ly T1 row_Empty) T1 row_Empty
-                     ltac:(unfold lx, ly; discriminate) (rm_ext_here ly T1 row_Empty)))
-        as [T' [R' [Hrm [Hteq _]]]]
-  end.
-  destruct (rm_row_sig _ _ _ _ _ _ Hrow Hrm) as [Hb _].
-  match goal with Ht : teq typ_Bool ?T1 |- _ =>
+  cbn [nfR] in Hr.
+  destruct (rm_req _ _ Hr ly (nfT d_any T1) (row_Ext lx (nfT d_any T0) row_Empty)
+              (rm_ext_skip ly lx (nfT d_any T0) (row_Ext ly (nfT d_any T1) row_Empty) (nfT d_any T1) row_Empty
+                 ltac:(unfold lx, ly; discriminate) (rm_ext_here ly (nfT d_any T1) row_Empty)))
+    as [T' [R' [Hrm [Hteq _]]]].
+  destruct (rm_row_sig _ _ _ _ _ _ (row_sig_nf _ _ _ Hrow) Hrm) as [Hb _].
+  match goal with Ht : teqD d_any typ_Bool ?T1 |- _ =>
     assert (Hbt : teq typ_Bool T') by (eapply teq_trans; [ exact Ht | exact Hteq ]) end.
   apply teq_Bool_inv in Hbt. subst T'.
   sig_absurd Hb.

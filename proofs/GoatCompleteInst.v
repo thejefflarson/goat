@@ -265,7 +265,7 @@ Proof.
   - apply T_Record; eauto.
   - eapply T_Obj; eauto.
   - eapply T_Proj; eauto.
-  - eapply T_Conv; eauto.
+  - eapply T_ConvD; eauto.
   - apply T_Unit; eauto using ctx_le_uniq.
   - apply T_Str; eauto using ctx_le_uniq.
   - eapply T_If; eauto.

@@ -502,7 +502,9 @@ fn bop_atom(op: BinOp) -> &'static str {
 struct Reader<'a> {
     labels: Vec<String>,
     scope: Vec<Binder>,
-    /// Cleared when a function or call has more than one parameter or argument.
+    /// Cleared when a function or call has more than one parameter or argument,
+    /// and, in a rejected program, when one has none: the reader cannot tell a
+    /// call that matches the arity from one the checker refuses for it.
     unary: bool,
     /// The checker's node types when it accepted the program; a rejected
     /// program has none, so it is read without coercions.
@@ -994,6 +996,7 @@ impl Reader<'_> {
             }
             ExprKind::Var { symbol, .. } => self.var(symbol),
             ExprKind::Func { params, body } if params.is_empty() => {
+                self.unary &= self.types.is_some();
                 let mark = self.scope.len();
                 self.scope.push(Binder::Bound(Symbol::MAX));
                 self.scope.push(Binder::Bound(Symbol::MAX));
@@ -1018,10 +1021,13 @@ impl Reader<'_> {
                         .fold(body?, |body, _| Core::Abs(Box::new(body))),
                 )
             }
-            ExprKind::App { callee, args } if args.is_empty() => Some(Core::App(
-                Box::new(self.read(callee)?),
-                Box::new(Core::Unit),
-            )),
+            ExprKind::App { callee, args } if args.is_empty() => {
+                self.unary &= self.types.is_some();
+                Some(Core::App(
+                    Box::new(self.read(callee)?),
+                    Box::new(Core::Unit),
+                ))
+            }
             ExprKind::App { callee, args } => {
                 self.unary &= args.len() == 1;
                 let params = match self.node_ty(callee) {
@@ -2255,6 +2261,11 @@ const HANDWRITTEN: &[&str] = &[
     "program(w) do\n  t = {...w, x: program(z) do z done}\n  w == {}\ndone",
     "f0 = program(q) do\n  e = q == q\n  {...q, z: 2}\ndone\nprogram(w) do\n  f0({x: {...w, y: 1}})\ndone",
     "f0 = program(q) do\n  e = q == q\n  {...q, z: 2}\ndone\nprogram(w) do\n  v0 = w.x\n  v1 = {...v0, y: {}}\n  f0(w)\ndone",
+    "f0 = program(q) do\n  {...q, z: 1}\ndone\nprogram(w) do\n  {z, ...r0} = w\n  v1 = f0(r0)\n  if true then w else v1 done\ndone",
+    "f1 = program(q) do\n  {...q, z: \"s\"}\ndone\nf0 = program(q) do\n  {x, ...r} = q\n  {...r, z: 1}\ndone\nprogram(v0) do\n  {z, ...r1} = v0\n  v2 = f1(r1)\n  f0(r1)\ndone",
+    "program(u) do\n  {b, ...w} = u\n  v = {a: 1, b: w}\n  if true then v else u done\ndone",
+    "program(u) do\n  {b, ...w} = u\n  v = {a: 1, b: w}\n  if true then u else v done\ndone",
+    "f = program(u) do\n  {b, ...w} = u\n  v = {a: 1, b: w}\n  if true then v else u done\ndone\nf({b: {}, a: 2})",
 ];
 
 /// One program from generator `kind` (taken modulo the four), every choice

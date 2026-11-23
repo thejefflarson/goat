@@ -32,6 +32,7 @@ Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatMu.
 Require Import Goat.GoatMeta.
+Require Import Goat.GoatConv.
 Require Import Stdlib.Lists.List.
 
 (* ================= type-substitution algebra (from L5 groundwork) ========== *)
@@ -402,6 +403,22 @@ Proof.
   - apply sig_cmp; [ assumption | eapply sat_pw; eauto ].
 Qed.
 
+Lemma nf_pw_mut : forall D D2, denv_eq D D2 ->
+  (forall T, nfT D T = nfT D2 T) /\ (forall R, nfR D R = nfR D2 R).
+Proof.
+  intros D D2 H. apply typ_row_mutind; intros; try reflexivity.
+  - cbn [nfT]. rewrite H0, H1. reflexivity.
+  - cbn [nfT]. rewrite H0. reflexivity.
+  - rewrite !nfR_ext, H0, H1. reflexivity.
+  - rewrite !nfR_maybe, H0, H1, H2, (rlacksD_pw D D2 l _ H). reflexivity.
+Qed.
+
+Lemma teqD_pw : forall D D2 T T', denv_eq D D2 -> teqD D T T' -> teqD D2 T T'.
+Proof.
+  intros D D2 T T' H Ht. unfold teqD in *.
+  rewrite <- (proj1 (nf_pw_mut D D2 H)), <- (proj1 (nf_pw_mut D D2 H)). exact Ht.
+Qed.
+
 Lemma typing_pw_mut :
   (forall D G e T, typing D G e T -> forall D2, denv_eq D D2 -> typing D2 G e T) /\
   (forall D G fs R, field_typing D G fs R -> forall D2, denv_eq D D2 -> field_typing D2 G fs R).
@@ -422,7 +439,7 @@ Proof.
   - apply T_Record; eauto.
   - eapply T_Obj; eauto.
   - eapply T_Proj; eauto.
-  - eapply T_Conv; eauto.
+  - eapply T_ConvD; [ eauto | eapply teqD_pw; eauto ].
   - apply T_Unit; auto.
   - apply T_Str; auto.
   - eapply T_If; eauto.
@@ -492,7 +509,7 @@ Proof.
   - (* T_Record *) apply T_Record; eauto.
   - eapply T_Obj; eauto.
   - (* T_Proj *) eapply T_Proj; eauto.
-  - (* T_Conv *) eapply T_Conv; eauto.
+  - (* T_Conv *) eapply T_ConvD; eauto.
   - (* T_Unit *) apply T_Unit; eauto using ctx_equiv_uniq.
   - (* T_Str *) apply T_Str; eauto using ctx_equiv_uniq.
   - (* T_If *) eapply T_If; eauto.
@@ -885,7 +902,7 @@ Proof.
   - apply T_Record; eauto.
   - eapply T_Obj; eauto.
   - eapply T_Proj; eauto.
-  - eapply T_Conv; eauto.
+  - eapply T_ConvD; eauto.
   - (* T_Unit *) apply T_Unit; eauto using ctx_more_gen_uniq.
   - (* T_Str *) apply T_Str; eauto using ctx_more_gen_uniq.
   - (* T_If *) eapply T_If; eauto.
@@ -947,6 +964,66 @@ Qed.
 Lemma teq_ap : forall T T' st sr, teq T T' -> teq (ap_typ st sr T) (ap_typ st sr T').
 Proof. intros. apply teq_ap_mut; auto. Qed.
 
+
+(* ================= conversion at a row environment, under substitution ====== *)
+
+Lemma is_abs_ap_nf : forall D st sr T,
+  is_abs (ap_typ st sr (nfT D T)) = is_abs (ap_typ st sr T).
+Proof. intros. destruct T; reflexivity. Qed.
+
+Lemma rlacksD_ap_nf : forall D D' st sr l R,
+  rlacksD D' l (ap_row st sr (nfR D R)) = rlacksD D' l (ap_row st sr R).
+Proof.
+  intros D D' st sr l R. induction R as [ | | l1 T1 R1 IH | l1 P T1 R1 IH]; try reflexivity.
+  - rewrite nfR_ext. cbn [ap_row rlacksD]. rewrite IH. reflexivity.
+  - rewrite nfR_maybe. destruct (is_abs P && rlacksD D l1 (nfR D R1)) eqn:E.
+    + cbv iota. apply andb_prop in E as [Ea _]. destruct P; cbn in Ea; try discriminate.
+      cbn [ap_row ap_typ rlacksD is_abs]. rewrite IH. destruct (Nat.eqb l l1); reflexivity.
+    + cbv iota. cbn [ap_row rlacksD]. rewrite IH, is_abs_ap_nf. reflexivity.
+Qed.
+
+Lemma teqD_ap_nf_mut : forall D D' st sr, rkres D D' sr ->
+  (forall T, teqD D' (ap_typ st sr T) (ap_typ st sr (nfT D T))) /\
+  (forall R, reqD D' (ap_row st sr R) (ap_row st sr (nfR D R))).
+Proof.
+  intros D D' st sr Hk. apply typ_row_mutind.
+  - intros; apply teqD_refl.
+  - intros; apply teqD_refl.
+  - intros; apply teqD_refl.
+  - intros; apply teqD_refl.
+  - intros; apply teqD_refl.
+  - intros A HA B HB. cbn [nfT ap_typ]. apply teqD_Arrow; assumption.
+  - intros R HR. cbn [nfT ap_typ]. apply teqD_Record. exact HR.
+  - intros; apply teqD_refl.
+  - intros; apply teqD_refl.
+  - intros; apply teqD_refl.
+  - intros; apply teqD_refl.
+  - apply reqD_refl.
+  - intros; apply reqD_refl.
+  - intros l T HT R HR. rewrite nfR_ext. cbn [ap_row]. unfold reqD in *.
+    rewrite !nfR_ext. apply req_head; [ exact HT | exact HR ].
+  - intros l P HP T HT R HR. rewrite nfR_maybe.
+    destruct (is_abs P && rlacksD D l (nfR D R)) eqn:E.
+    + cbv iota. apply andb_prop in E as [Ea Eb]. destruct P; cbn in Ea; try discriminate.
+      cbn [ap_row ap_typ]. unfold reqD in *. rewrite nfR_maybe.
+      assert (Hl : rlacksD D' l (nfR D' (ap_row st sr R)) = true).
+      { rewrite nf_rlacksD. apply (rlacksD_ap D D' st sr l R Hk). rewrite <- (nf_rlacksD D l R). exact Eb. }
+      cbn [is_abs]. rewrite Hl. cbn [andb]. cbv iota. exact HR.
+    + cbv iota. cbn [ap_row]. unfold reqD in *. rewrite !nfR_maybe.
+      rewrite nf_rlacksD, nf_rlacksD, rlacksD_ap_nf, is_abs_ap_nf.
+      destruct (is_abs (ap_typ st sr P) && rlacksD D' l (ap_row st sr R)).
+      * exact HR.
+      * apply req_maybe; [ exact HP | exact HT | exact HR ].
+Qed.
+
+Lemma teqD_ap : forall D D' st sr T T', rkres D D' sr -> teqD D T T' ->
+  teqD D' (ap_typ st sr T) (ap_typ st sr T').
+Proof.
+  intros D D' st sr T T' Hk H.
+  eapply teqD_trans; [ apply (proj1 (teqD_ap_nf_mut D D' st sr Hk)) | ].
+  eapply teqD_trans; [ | apply teqD_sym; apply (proj1 (teqD_ap_nf_mut D D' st sr Hk)) ].
+  apply teq_teqD. apply teq_ap. exact H.
+Qed.
 (* Substitution commutes with the relation: a type or row variable may be
    replaced by a locally closed type without changing the budget. *)
 Lemma unroll_ap_mut : forall st sr, lc_sub st sr ->
