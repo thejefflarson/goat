@@ -271,7 +271,7 @@ Theorem erase_traps : forall e k, traps e k -> traps (erase e) k.
 Proof. apply erase_traps_mut. Qed.
 
 (* A step erasure sees steps the erased term; the converse needs types and is
-   left to the stage that has W return the term. *)
+   [erase_converse] in GoatElabConverse.v. *)
 
 (* ---- the bounded-unrolling equality, T ~~[n] T' ---- *)
 
