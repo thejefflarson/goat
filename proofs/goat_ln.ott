@@ -126,6 +126,7 @@ exp, e :: 'e_' ::= {{ com term }}
 fields, fs :: 'fs_' ::= {{ com record spine (cons-list; duplicates allowed) }}
   | fnil             ::   :: nil
   | l : e ; fs       ::   :: cons
+  | l :m e ; fs      ::   :: meth  {{ com a method field: typed and run as a plain one, its receiver shared by the literal's methods (T_Obj) }}
 
 % The arms of a match, a cons-list in the same mutual block as exp, ending
 % either in nothing (the arms must then name every tag of the group) or in an

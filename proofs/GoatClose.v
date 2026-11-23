@@ -43,6 +43,7 @@ with clf (k : nat) (x : atom) (fs : fields) {struct fs} : fields :=
   match fs with
   | fs_nil => fs_nil
   | fs_cons l e fs' => fs_cons l (cl k x e) (clf k x fs')
+  | fs_meth l e fs' => fs_meth l (cl k x e) (clf k x fs')
   end
 with cla (k : nat) (x : atom) (ars : arms) {struct ars} : arms :=
   match ars with
@@ -68,6 +69,7 @@ with lcef (k : nat) (fs : fields) {struct fs} : Prop :=
   match fs with
   | fs_nil => True
   | fs_cons _ e fs' => lce k e /\ lcef k fs'
+  | fs_meth _ e fs' => lce k e /\ lcef k fs'
   end
 with lcea (k : nat) (ars : arms) {struct ars} : Prop :=
   match ars with

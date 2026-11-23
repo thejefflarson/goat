@@ -57,9 +57,12 @@ Lemma lookup_pi : forall D G fs R l e,
   field_typing D G fs R -> lookup_first l fs = Some e ->
   exists T rest, pi l R = T :: rest.
 Proof.
-  intros D G fs R l e H. induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH];
+  intros D G fs R l e H. induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH];
     intros Hl; simpl in *.
   - discriminate.
+  - destruct (Nat.eqb l l1) eqn:E.
+    + exists T1, (pi l R1). reflexivity.
+    + exact (IH Hl).
   - destruct (Nat.eqb l l1) eqn:E.
     + exists T1, (pi l R1). reflexivity.
     + exact (IH Hl).
@@ -77,12 +80,15 @@ Lemma field_typing_replace : forall D G fs R l v T,
   field_typing D G fs R -> (exists e, lookup_first l fs = Some e) ->
   typing D G v T -> field_typing D G (fs_replace l v fs) (row_replace l T R).
 Proof.
-  intros D G fs R l v T H. induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH];
+  intros D G fs R l v T H. induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH];
     intros [e Hl] Hv; simpl in *.
   - discriminate.
   - destruct (Nat.eqb l l1) eqn:E; simpl.
     + apply FT_cons; assumption.
     + apply FT_cons; [ assumption | apply IH; [ exists e; exact Hl | exact Hv ] ].
+  - destruct (Nat.eqb l l1) eqn:E; simpl.
+    + apply FT_cons; assumption.
+    + apply FT_meth; [ assumption | apply IH; [ exists e; exact Hl | exact Hv ] ].
 Qed.
 
 Lemma row_replace_req : forall D G fs R l T T0 rest,
@@ -90,9 +96,12 @@ Lemma row_replace_req : forall D G fs R l T T0 rest,
   req (row_replace l T R) R.
 Proof.
   intros D G fs R l T T0 rest H. revert T0 rest.
-  induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH];
+  induction H as [D0 G0 Hu | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH];
     intros T0' rest' Hpi Hq; simpl in *.
   - discriminate.
+  - destruct (Nat.eqb l l1) eqn:E; simpl.
+    + inversion Hpi; subst. apply req_head; [ apply teq_sym; assumption | apply req_refl ].
+    + apply req_head; [ apply teq_refl | eapply IH; eassumption ].
   - destruct (Nat.eqb l l1) eqn:E; simpl.
     + inversion Hpi; subst. apply req_head; [ apply teq_sym; assumption | apply req_refl ].
     + apply req_head; [ apply teq_refl | eapply IH; eassumption ].
@@ -101,7 +110,7 @@ Qed.
 (* Preservation of a spread of a record literal. *)
 Lemma spread_step_typing : forall D G fs l v P T R,
   typing D G (e_rec fs) (typ_Record (row_Maybe l P T R)) -> typing D G v T ->
-  typing D G (e_rec (fs_set l v fs)) (typ_Record (row_Ext l T R)).
+  typing D G (e_rec (fs_plain (fs_set l v fs))) (typ_Record (row_Ext l T R)).
 Proof.
   intros D G fs l v P T R Hty Hv.
   destruct (rec_inv _ _ _ _ Hty) as [Rf [Hft Hteq]].
@@ -116,7 +125,8 @@ Proof.
     destruct (field_lookup_some _ _ _ _ _ _ _ Hft Hpi) as [e0 [Hl _]].
     unfold fs_set. rewrite Hl.
     eapply T_Conv.
-    + apply T_Record. apply field_typing_replace; [ exact Hft | exists e0; exact Hl | exact Hv ].
+    + apply T_Record; [ | apply no_meth_plain ].
+      apply field_typing_fs_plain. apply field_typing_replace; [ exact Hft | exists e0; exact Hl | exact Hv ].
     + apply teq_rec. eapply req_trans; [ eapply row_replace_req; eassumption | exact Hex ].
   - (* an extension *)
     assert (Hl : lookup_first l fs = None).
@@ -125,14 +135,15 @@ Proof.
       rewrite Hpi in Hp. discriminate. }
     unfold fs_set. rewrite Hl.
     eapply T_Conv.
-    + apply T_Record. apply FT_cons; eassumption.
+    + apply T_Record; [ | apply no_meth_plain ].
+      apply field_typing_fs_plain. apply FT_cons; eassumption.
     + apply teq_rec. apply req_head; [ apply teq_refl | exact Hr ].
 Qed.
 
 (* Preservation of a restrict of a record literal. *)
 Lemma restrict_step_typing : forall D G fs l R0 T R,
   typing D G (e_rec fs) (typ_Record R0) -> rm l R0 T R ->
-  typing D G (e_rec (fs_drop l fs)) (typ_Record R).
+  typing D G (e_rec (fs_plain (fs_drop l fs))) (typ_Record R).
 Proof.
   intros D G fs l R0 T R Hty Hrm.
   destruct (rec_inv _ _ _ _ Hty) as [Rf [Hft Hteq]].
@@ -140,6 +151,7 @@ Proof.
   inversion Heq; subst R2.
   destruct (rm_req _ _ (req_sym _ _ Hreq) _ _ _ Hrm) as [T' [R' [Hrm' [_ Hq]]]].
   eapply T_Conv.
-  - apply T_Record. eapply field_typing_drop; eassumption.
+  - apply T_Record; [ | apply no_meth_plain ].
+    apply field_typing_fs_plain. eapply field_typing_drop; eassumption.
   - apply teq_rec. apply req_sym. exact Hq.
 Qed.

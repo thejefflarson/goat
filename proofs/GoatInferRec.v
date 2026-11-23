@@ -31,16 +31,18 @@ Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
 
 Lemma EvR_group_row : forall fs n, EvR (group_row fs n).
 Proof.
-  induction fs as [|l e rest IH]; intros n; simpl.
+  induction fs as [|l e rest IH|l e rest IH]; intros n; simpl.
   - apply EvR_Empty.
+  - apply EvR_ext; [ apply EvT_var, ev_ea | apply IH ].
   - apply EvR_ext; [ apply EvT_var, ev_ea | apply IH ].
 Qed.
 
 Lemma is_fn_group_sound : forall fs, is_fn_group fs = true -> fn_group fs.
 Proof.
-  induction fs as [|l e rest IH]; intros H; simpl in H.
+  induction fs as [|l e rest IH|l e rest IH]; intros H; simpl in H.
   - constructor.
   - destruct e; try discriminate. constructor. apply IH. exact H.
+  - discriminate.
 Qed.
 
 (* ---- unifying a group's members ---- *)
@@ -56,6 +58,7 @@ Proof.
   intros D G fs R R' H. revert R'. induction H; intros R' Hp; inversion Hp; subst.
   - apply FT_nil. assumption.
   - eapply FT_cons; [ eapply T_Conv; eauto | eauto ].
+  - eapply FT_meth; [ eapply T_Conv; eauto | eauto ].
 Qed.
 
 Lemma unify_pw_sound : forall f D R1 R2 n s n',
@@ -109,6 +112,27 @@ Proof.
     + apply sch_subst_apS; [ exact Hs0 | exact ((proj2 HG) _ _ Hb) ].
   - exact Hsup.
   - apply tr_compat_cons_mono. apply tr_compat_apC; [ exact Hs0 | exact HG ].
+Qed.
+
+(* The same for fields typed in a context with no binding of their own. *)
+Lemma fields_ap0 : forall D D' s G fs R,
+  OkS s -> WfCtx G -> (exists S, supp_ok D S) -> (exists S', supp_ok D' S') ->
+  kres D D' (sT s) ->
+  field_typing D G fs R -> field_typing D' (apC s G) fs (apR s R).
+Proof.
+  intros D D' s G fs R Hs [Hu Hw] [S HS] [S' HS'] Hk Hty.
+  pose proof Hs as Hs0.
+  destruct Hs as [[A Hsup] [Ht [Hrw [Hfx Hfxr]]]].
+  apply (proj2 typing_tsubst_gen_mut D G fs R Hty (sT s) (sR s) (apC s G) D' A S S').
+  - apply uniq_apC; exact Hu.
+  - exact HS.
+  - exact HS'.
+  - exact Hk.
+  - intros x sc Hb. exists (apS s sc). split.
+    + apply binds_apC; exact Hb.
+    + apply sch_subst_apS; [exact Hs0 | exact (Hw _ _ Hb)].
+  - exact Hsup.
+  - apply tr_compat_apC; [ exact Hs0 | exact (conj Hu Hw) ].
 Qed.
 
 (* A substitution that leaves the context alone, applied to the group's row. *)

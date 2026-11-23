@@ -121,11 +121,13 @@ with field_trees (P : nat) (fs : Goat_ott.fields) {struct fs} : list tree :=
   match fs with
   | fs_nil => []
   | fs_cons l e rest => field_tree l (block P e) :: more_field_trees P rest
+  | fs_meth l e rest => field_tree l (block P e) :: more_field_trees P rest
   end
 with more_field_trees (P : nat) (fs : Goat_ott.fields) {struct fs} : list tree :=
   match fs with
   | fs_nil => []
   | fs_cons l e rest => sym "," :: field_tree l (block P e) :: more_field_trees P rest
+  | fs_meth l e rest => sym "," :: field_tree l (block P e) :: more_field_trees P rest
   end.
 
 Fixpoint flat (t : tree) : list tok :=
@@ -200,6 +202,7 @@ with scoped_fields (n : nat) (fs : Goat_ott.fields) {struct fs} : Prop :=
   match fs with
   | fs_nil => True
   | fs_cons _ e rest => scoped n e /\ scoped_fields n rest
+  | fs_meth _ _ _ => False
   end.
 
 Lemma block_ite_else : forall P c a b,
@@ -235,6 +238,7 @@ with lbls_fields (fs : Goat_ott.fields) {struct fs} : list nat :=
   match fs with
   | fs_nil => []
   | fs_cons l e rest => l :: lbls e ++ lbls_fields rest
+  | fs_meth l e rest => l :: lbls e ++ lbls_fields rest
   end.
 
 (* The labels are already numbered as parsing numbers them: by first

@@ -323,6 +323,7 @@ Proof.
   - eapply T_Letrec with (L := L) (k := k); [ assumption | | intros; eauto ].
     intros p Hp. apply H; auto. apply ext_pw. auto.
   - apply T_Record; eauto.
+  - eapply T_Obj; eauto.
   - eapply T_Proj; eauto.
   - eapply T_Conv; eauto.
   - apply T_Unit; auto.
@@ -338,6 +339,7 @@ Proof.
   - eapply T_Match with (L := L); intros; eauto.
   - apply FT_nil; auto.
   - eapply FT_cons; eauto.
+  - eapply FT_meth; eauto.
 Qed.
 
 Lemma typing_pw : forall D G e T D2, typing D G e T -> (forall a, D a = D2 a) -> typing D2 G e T.
@@ -382,6 +384,7 @@ Proof.
     + intros p Hp. apply H0; auto.
       apply ctx_equiv_cons; auto. apply gen_ctx_equiv; auto.
   - (* T_Record *) apply T_Record; eauto.
+  - eapply T_Obj; eauto.
   - (* T_Proj *) eapply T_Proj; eauto.
   - (* T_Conv *) eapply T_Conv; eauto.
   - (* T_Unit *) apply T_Unit; eauto using ctx_equiv_uniq.
@@ -399,6 +402,7 @@ Proof.
     apply ctx_equiv_cons; auto using sch_equiv_refl.
   - (* FT_nil *) apply FT_nil; eauto using ctx_equiv_uniq.
   - (* FT_cons *) eapply FT_cons; eauto.
+  - eapply FT_meth; eauto.
 Qed.
 
 Lemma typing_sch_equiv_ctx : forall D G G' e T,
@@ -636,6 +640,7 @@ Proof.
     + intros p Hp. apply H0; auto.
       apply ctx_more_gen_cons; [ apply gen_more_gen; assumption | exact H1 ].
   - apply T_Record; eauto.
+  - eapply T_Obj; eauto.
   - eapply T_Proj; eauto.
   - eapply T_Conv; eauto.
   - (* T_Unit *) apply T_Unit; eauto using ctx_more_gen_uniq.
@@ -653,6 +658,7 @@ Proof.
     apply ctx_more_gen_cons; auto using sch_more_gen_refl.
   - apply FT_nil; eauto using ctx_more_gen_uniq.
   - eapply FT_cons; eauto.
+  - eapply FT_meth; eauto.
 Qed.
 
 Lemma typing_ftv_mono : forall D G e T G',
@@ -696,6 +702,44 @@ Qed.
 
 Lemma teq_ap : forall T T' st sr, teq T T' -> teq (ap_typ st sr T) (ap_typ st sr T').
 Proof. intros. apply teq_ap_mut; auto. Qed.
+
+(* Substitution commutes with the relation: a type or row variable may be
+   replaced by a locally closed type without changing the budget. *)
+Lemma unroll_ap_mut : forall st sr, lc_sub st sr ->
+  (forall n T T', unroll_eq n T T' ->
+     unroll_eq n (ap_typ st sr T) (ap_typ st sr T')) /\
+  (forall n R R', unroll_row n R R' ->
+     unroll_row n (ap_row st sr R) (ap_row st sr R')).
+Proof.
+  intros st sr Hlc.
+  apply unroll_mutind; intros; cbn [ap_typ ap_row] in *; eauto.
+  - apply UE_teq. apply teq_ap. auto.
+  - rewrite (ap_open st sr B 0 (typ_Mu B) Hlc). cbn [ap_typ]. apply UE_unfold.
+  - rewrite (ap_open st sr B 0 (typ_Mu B) Hlc). cbn [ap_typ]. apply UE_fold.
+  - apply UR_req. apply (proj2 teq_ap_mut). auto.
+Qed.
+
+Theorem unroll_ap : forall st sr n T T', lc_sub st sr ->
+  unroll_eq n T T' -> unroll_eq n (ap_typ st sr T) (ap_typ st sr T').
+Proof. intros st sr n T T' Hlc H. exact (proj1 (unroll_ap_mut st sr Hlc) n T T' H). Qed.
+
+(* The shared receiver survives a substitution: the receiver row, the literal's
+   row and each method's type are all substituted alike. *)
+Lemma ap_row_tail_with : forall st sr R Rt,
+  plain_spine R = true ->
+  ap_row st sr (row_tail_with R Rt) = row_tail_with (ap_row st sr R) (ap_row st sr Rt).
+Proof.
+  intros st sr R Rt. induction R; simpl; intros H; try discriminate; auto.
+  rewrite IHR by exact H. reflexivity.
+Qed.
+
+Lemma meths_shared_ap : forall st sr Rs fs R, lc_sub st sr ->
+  meths_shared Rs fs R -> meths_shared (ap_row st sr Rs) fs (ap_row st sr R).
+Proof.
+  intros st sr Rs fs R Hlc H. induction H; simpl; try constructor; auto.
+  eapply MS_meth; [ | exact IHmeths_shared ].
+  pose proof (unroll_ap st sr _ _ _ Hlc H) as Hu. simpl in Hu. exact Hu.
+Qed.
 
 (* ================= finite-set image under a function ================= *)
 

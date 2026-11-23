@@ -78,6 +78,7 @@ Proof.
   - intros k Hs. reflexivity.
   - intros l e IHe fs IHfs k [He Hfs]. cbn [inst_fields].
     rewrite (IHe k He), (IHfs k Hfs). reflexivity.
+  - intros l e IHe fs IHfs k Hs. destruct Hs.
   - intros; exact I.
   - intros; exact I.
   - intros; exact I.

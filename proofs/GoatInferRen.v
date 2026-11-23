@@ -171,8 +171,11 @@ Proof.
       eapply typing_sch_equiv_ctx; [ exact IH' | ].
       apply ctx_equiv_cons; [ apply gen_swap_mid | apply ctx_equiv_refl ].
   - (* T_Record *)
-    intros D G fs R Hf IH G2 Hg Hy. subst G. cbn [subst_exp].
-    apply T_Record. eapply IH; eauto.
+    intros D G fs R Hf IH Hnm G2 Hg Hy. subst G. cbn [subst_exp].
+    apply T_Record; [ eapply IH; eauto | rewrite (no_meth_marks _ _ (marks_subst_fields fs (e_fvar_f y) x)); exact Hnm ].
+  - (* T_Obj *)
+    intros D G fs R Rt Hf IH Hms G2 Hg Hy. subst G. cbn [subst_exp].
+    apply T_Obj with (Rt := Rt); [ eapply IH; eauto | eapply meths_shared_marks; [ exact Hms | symmetry; apply marks_subst_fields ] ].
   - (* T_Proj *)
     intros D G e l T R Ht IH G2 Hg Hy. subst G. cbn [subst_exp].
     eapply T_Proj. eapply IH; eauto.
@@ -227,6 +230,8 @@ Proof.
   - intros D G Hu G2 Hg Hy. subst G. cbn [subst_fields]. apply FT_nil. eapply uniq_rename_mid; eauto.
   - intros D G l e T fs R Ht IH1 Hf IH2 G2 Hg Hy. subst G. cbn [subst_fields].
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.
+  - intros D G l e T fs R Ht IH1 Hf IH2 G2 Hg Hy. subst G. cbn [subst_fields].
+    eapply FT_meth; [ eapply IH1 | eapply IH2 ]; eauto.
 Qed.
 
 (* The form the algorithm uses: a derivation for the body opened at [x]

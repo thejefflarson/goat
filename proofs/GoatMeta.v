@@ -56,6 +56,7 @@ with lcf_at (n : nat) (fs : fields) {struct fs} : Prop :=
   match fs with
   | fs_nil => True
   | fs_cons _ e fs' => lc_at n e /\ lcf_at n fs'
+  | fs_meth _ e fs' => lc_at n e /\ lcf_at n fs'
   end
 with lca_at (n : nat) (ars : arms) {struct ars} : Prop :=
   match ars with
@@ -108,6 +109,8 @@ Proof.
   - (* fs_nil *) intros; simpl; auto.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs m n Hle [H1 H2]; simpl; split;
       [ apply (IHe m n Hle H1) | apply (IHfs m n Hle H2) ].
+  - (* fs_meth *) intros l e0 IHe fs0 IHfs m n Hle [H1 H2]; simpl; split;
+      [ apply (IHe m n Hle H1) | apply (IHfs m n Hle H2) ].
   - (* arms_nil *) intros; simpl; auto.
   - (* arms_else *) intros e0 IH m n Hle H; simpl in *; apply (IH m n Hle H).
   - (* arms_cons *) intros tg e0 IHe ars IHa m n Hle [H1 H2]; simpl; split;
@@ -158,6 +161,8 @@ Proof.
   - (* unfold *) intros e0 IH n x H; simpl in *; apply (IH n x H).
   - (* fs_nil *) intros; simpl; auto.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs n x H; simpl in *; destruct H as [H1 H2];
+      split; [ apply (IHe n x H1) | apply (IHfs n x H2) ].
+  - (* fs_meth *) intros l e0 IHe fs0 IHfs n x H; simpl in *; destruct H as [H1 H2];
       split; [ apply (IHe n x H1) | apply (IHfs n x H2) ].
   - (* arms_nil *) intros; simpl; auto.
   - (* arms_else *) intros e0 IH n x H; simpl in *; apply (IH n x H).
@@ -215,6 +220,8 @@ Proof.
   - (* unfold *) intros e0 IH n H k w Hle; simpl; f_equal; apply (IH n H k w Hle).
   - (* fs_nil *) intros; simpl; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs n [H1 H2] k w Hle; simpl; f_equal;
+      [ apply (IHe n H1 k w Hle) | apply (IHfs n H2 k w Hle) ].
+  - (* fs_meth *) intros l e0 IHe fs0 IHfs n [H1 H2] k w Hle; simpl; f_equal;
       [ apply (IHe n H1 k w Hle) | apply (IHfs n H2 k w Hle) ].
   - (* arms_nil *) intros; simpl; reflexivity.
   - (* arms_else *) intros e0 IH n H k w Hle; simpl in *; f_equal; apply (IH n H k w Hle).
@@ -289,6 +296,8 @@ Proof.
   - (* unfold *) intros e0 IH x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
   - (* fs_nil *) intros; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs x v k Hfv; simpl in *; f_equal;
+      [ apply IHe | apply IHfs ]; fsetdec.
+  - (* fs_meth *) intros l e0 IHe fs0 IHfs x v k Hfv; simpl in *; f_equal;
       [ apply IHe | apply IHfs ]; fsetdec.
   - (* arms_nil *) intros; reflexivity.
   - (* arms_else *) intros e0 IH x v k Hfv; simpl in *; f_equal; apply IH; fsetdec.
@@ -365,6 +374,8 @@ Proof.
   - (* fs_nil *) intros; reflexivity.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs u x w k Hlc; simpl; f_equal;
       [ apply IHe | apply IHfs ]; auto.
+  - (* fs_meth *) intros l e0 IHe fs0 IHfs u x w k Hlc; simpl; f_equal;
+      [ apply IHe | apply IHfs ]; auto.
   - (* arms_nil *) intros; reflexivity.
   - (* arms_else *) intros e0 IH u x w k Hlc; simpl; f_equal; apply IH; auto.
   - (* arms_cons *) intros tg e0 IHe ars IHa u x w k Hlc; simpl; f_equal;
@@ -437,6 +448,9 @@ Proof.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs u x Hu He. simpl in He |- *.
     apply andb_prop in He. destruct He as [H1 H2].
     rewrite (IHe u x Hu H1), (IHfs u x Hu H2). reflexivity.
+  - (* fs_meth *) intros l e0 IHe fs0 IHfs u x Hu He. simpl in He |- *.
+    apply andb_prop in He. destruct He as [H1 H2].
+    rewrite (IHe u x Hu H1), (IHfs u x Hu H2). reflexivity.
   - (* arms_nil *) intros; exact I.
   - (* arms_else *) intros; exact I.
   - (* arms_cons *) intros; exact I.
@@ -488,6 +502,9 @@ Proof.
   - (* fs_cons *) intros l e0 IHe fs0 IHfs u k Hu He. simpl in He |- *.
     apply andb_prop in He. destruct He as [H1 H2].
     rewrite (IHe u k Hu H1), (IHfs u k Hu H2). reflexivity.
+  - (* fs_meth *) intros l e0 IHe fs0 IHfs u k Hu He. simpl in He |- *.
+    apply andb_prop in He. destruct He as [H1 H2].
+    rewrite (IHe u k Hu H1), (IHfs u k Hu H2). reflexivity.
   - (* arms_nil *) intros; exact I.
   - (* arms_else *) intros; exact I.
   - (* arms_cons *) intros; exact I.
@@ -527,6 +544,7 @@ Proof.
   - intros v Hv IH. simpl. exact IH.
   - intros w tg v Hv IH. simpl. exact IH.
   - intros fs Hrv IH. simpl. exact IH.
+  - intros l v fs Hv IHv Hrv IHrv. simpl. rewrite IHv, IHrv. reflexivity.
   - intros l v fs Hv IHv Hrv IHrv. simpl. rewrite IHv, IHrv. reflexivity.
 Qed.
 
@@ -616,7 +634,8 @@ Proof.
       apply (lcf_at_open_inv fs 0 p). unfold open_fields_wrt_exp in IHfs. apply IHfs; auto.
     + pick fresh p for L.
       apply (lc_at_open_inv e2 0 p). unfold open_exp_wrt_exp in IH2. apply IH2; auto.
-  - (* T_Record *) intros D G fs R Hft IH; simpl; assumption.
+  - (* T_Record *) intros D G fs R Hft IH Hnm; simpl; assumption.
+  - (* T_Obj *) intros D G fs R Rt Hft IH Hms; simpl; assumption.
   - (* T_Proj *) intros D G e l T R Hty IH; simpl; assumption.
   - (* T_Conv *) intros D G e T T' Hty IH Hteq; simpl; assumption.
   - (* T_Unit *) intros; simpl; auto.
@@ -642,6 +661,7 @@ Proof.
       * exact IHdef.
   - (* FT_nil *) intros; simpl; auto.
   - (* FT_cons *) intros D G l e T fs R Hty IH1 Hft IH2; simpl; split; assumption.
+  - (* FT_meth *) intros D G l e T fs R Hty IH1 Hft IH2; simpl; split; assumption.
 Qed.
 
 Lemma typing_regular : forall D G e T, typing D G e T -> lc e.
@@ -663,7 +683,7 @@ Lemma field_lookup_some : forall D G fs R l T rest,
   exists e, lookup_first l fs = Some e /\ typing D G e T.
 Proof.
   intros D G fs R l T rest Hft. revert T rest.
-  induction Hft as [D0 G0 Hu | D0 G0 lbl e0 T1 fs1 R1 Hty0 Hft1 IH];
+  induction Hft as [D0 G0 Hu | D0 G0 lbl e0 T1 fs1 R1 Hty0 Hft1 IH | D0 G0 lbl e0 T1 fs1 R1 Hty0 Hft1 IH];
     intros T0 rest Hpi.
   - (* FT_nil: R = row_Empty, pi = nil *) simpl in Hpi. discriminate.
   - (* FT_cons lbl e0 T1 fs1 R1 *) simpl in *.
@@ -672,6 +692,11 @@ Proof.
       inversion Hpi; subst. exists e0. split; [ reflexivity | assumption ].
     + (* l <> lbl: recurse *)
       destruct (IH _ _ Hpi) as [e1 [Hlook Hty]].
+      exists e1. split; [ assumption | assumption ].
+  - (* FT_meth *) simpl in *.
+    destruct (Nat.eqb l lbl) eqn:E.
+    + inversion Hpi; subst. exists e0. split; [ reflexivity | assumption ].
+    + destruct (IH _ _ Hpi) as [e1 [Hlook Hty]].
       exists e1. split; [ assumption | assumption ].
 Qed.
 
@@ -716,6 +741,10 @@ Proof.
     try solve [ subst; simpl in *; first [ discriminate | contradiction ] ];
     try solve [ inversion Hval ].
   - (* T_Record *)
+    inversion HT; subst.
+    inversion Hval; subst.
+    exists fs, Rq. repeat split; auto using req_refl.
+  - (* T_Obj *)
     inversion HT; subst.
     inversion Hval; subst.
     exists fs, Rq. repeat split; auto using req_refl.
@@ -952,7 +981,8 @@ Proof.
   destruct (bin_sig_record _ _ _ _ _ Hs) as [-> [_ Hrow]].
   destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 [Hf1 Hq1]]]]].
   destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 [Hf2 Hq2]]]]].
-  destruct (zip_typing _ _ o _ _ Hf1 _ _ _ Hf2 Hq1 Hq2 Hrow) as [fs [Ro [Hz _]]].
+  destruct (zip_typing _ _ o _ _ (field_typing_fs_plain _ _ _ _ Hf1) (no_meth_plain fs1) _ _ _
+              (field_typing_fs_plain _ _ _ _ Hf2) Hq1 Hq2 Hrow) as [fs [Ro [Hz _]]].
   right. right. exists (e_rec fs). apply st_binrec; assumption.
 Qed.
 
@@ -1052,7 +1082,13 @@ Proof.
   - (* Case: a record.  Finished if every field is; otherwise a field steps
        or traps.  The field list has its own companion claim (second half of
        the statement), which [IH] provides. *)
-    intros D G fs R Hft IH HG; subst.
+    intros D G fs R Hft IH Hnm HG; subst.
+    destruct (IH eq_refl) as [Hrv | [[fs' Hs] | [k Hk]]].
+    + left; auto.
+    + right; left. exists (e_rec fs'). apply st_rec; auto.
+    + right; right. exists k. apply tr_rec; auto.
+  - (* Case: a record literal with methods runs as a plain one. *)
+    intros D G fs R Rt Hft IH Hms HG; subst.
     destruct (IH eq_refl) as [Hrv | [[fs' Hs] | [k Hk]]].
     + left; auto.
     + right; left. exists (e_rec fs'). apply st_rec; auto.
@@ -1117,7 +1153,7 @@ Proof.
     right. destruct (IH1 eq_refl) as [Hv1 | [[e1' Hs1] | [k Hk1]]].
     + destruct (canon_record _ _ _ _ Hv1 Ht1) as [fs [R0 [-> [Hrv _]]]].
       destruct (IH2 eq_refl) as [Hv2 | [[e2' Hs2] | [k Hk2]]].
-      * left. exists (e_rec (fs_set l e2 fs)). apply st_spread; auto.
+      * left. exists (e_rec (fs_plain (fs_set l e2 fs))). apply st_spread; auto.
       * left. exists (e_spread (e_rec fs) l e2'). apply st_spread2; auto.
       * right. exists k. apply tr_spread2; auto.
     + left. exists (e_spread e1' l e2). apply st_spread1; auto.
@@ -1127,7 +1163,7 @@ Proof.
     intros D G e l R0 T R Ht IH Hrm HG; subst.
     right. destruct (IH eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
     + destruct (canon_record _ _ _ _ Hv Ht) as [fs [Rf [-> [Hrv _]]]].
-      left. exists (e_rec (fs_drop l fs)). apply st_restrict; auto.
+      left. exists (e_rec (fs_plain (fs_drop l fs))). apply st_restrict; auto.
     + left. exists (e_restrict e' l). apply st_restrict1; auto.
     + right. exists k. apply tr_restrict; auto.
   - (* Case: [fold e].  A fold of a finished value is finished; otherwise
@@ -1181,6 +1217,14 @@ Proof.
       * right; right. exists k. apply trf_cons; auto.
     + right; left. exists (fs_cons l e' fs). apply stf_here; auto.
     + right; right. exists k. apply trf_here; auto.
+  - (* FT_meth *) intros D G l e T fs R Hty IH1 Hft IH2 HG; subst.
+    destruct (IH1 eq_refl) as [Hv | [[e' Hs] | [k Hk]]].
+    + destruct (IH2 eq_refl) as [Hrv | [[fs' Hs'] | [k Hk']]].
+      * left; auto.
+      * right; left. exists (fs_meth l e fs'). apply stf_meth_cons; auto.
+      * right; right. exists k. apply trf_meth_cons; auto.
+    + right; left. exists (fs_meth l e' fs). apply stf_meth_here; auto.
+    + right; right. exists k. apply trf_meth_here; auto.
 Qed.
 
 (* Progress, in its final form: a closed, well-typed program is a value, can
@@ -1288,8 +1332,22 @@ Proof.
   induction H; try discriminate He.
   - (* T_Record *) inversion He; subst. exists R.
     split; auto using teq_refl.
+  - (* T_Obj *) inversion He; subst. exists R.
+    split; auto using teq_refl.
   - (* T_Conv *) destruct (IHtyping He) as [R [Hft Hteq]].
     exists R. split; try assumption. eauto using teq_trans.
+Qed.
+
+Lemma rec_inv_ok : forall D G fs T,
+  typing D G (e_rec fs) T ->
+  exists R, field_typing D G fs R /\ rec_ok fs R /\ teq (typ_Record R) T.
+Proof.
+  intros D G fs T H. remember (e_rec fs) as e0 eqn:He.
+  induction H; try discriminate He.
+  - inversion He; subst. exists R. repeat split; auto using teq_refl. left. assumption.
+  - inversion He; subst. exists R. repeat split; auto using teq_refl. right. exists Rt. assumption.
+  - destruct (IHtyping He) as [R [Hft [Hok Hteq]]].
+    exists R. repeat split; try assumption. eauto using teq_trans.
 Qed.
 
 Lemma ite_inv : forall D G e1 e2 e3 T,
