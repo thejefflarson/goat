@@ -61,7 +61,7 @@
 use goat_checker::captures::for_each_node;
 use goat_checker::check_with_prelude;
 use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, MatchArm, Symbol};
-use goat_checker::lower::{Lowered, lower};
+use goat_checker::lower::{Lowered, lower, lower_with_prelude};
 use goat_checker::ty::{Group, Row, Ty, TypeVar};
 use goat_checker::{Checked, ErrorKind};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -73,6 +73,7 @@ const GENERATED: usize = 4000;
 const GENERATED_TYPED: usize = 6000;
 const GENERATED_GROUPS: usize = 8000;
 const GENERATED_SPREADS: usize = 3000;
+const GENERATED_LISTS: usize = 4000;
 const TYPED_DEPTH: u32 = 4;
 /// Each seed drives all three generators, so a change to one stream cannot
 /// hide a mismatch another seed's programs would show.
@@ -828,6 +829,18 @@ impl Reader<'_> {
         Some(Core::Con(decl, tag, read))
     }
 
+    /// What lowering's `Trap` is to the calculus: `letrec f = program(x) do f(x) done in f()`,
+    /// a term of every type that never returns, as the checker types a trap.
+    fn diverge(&mut self) -> Core {
+        let label = self.label("@trap");
+        let call = |depth| Core::Proj(Box::new(Core::Var(depth)), label);
+        let step = Core::App(Box::new(call(1)), Box::new(Core::Var(0)));
+        Core::Letrec(
+            vec![(label, Core::Abs(Box::new(step)))],
+            Box::new(Core::App(Box::new(call(0)), Box::new(Core::Unit))),
+        )
+    }
+
     /// Each arm binds the payload as one variable and each name as a `let` of
     /// its slot, in the arm's body; the `else` binds nothing.
     fn match_arms(
@@ -870,6 +883,10 @@ impl Reader<'_> {
             read.push((tag, body));
         }
         let otherwise = match else_branch {
+            Some(Expr {
+                kind: ExprKind::Trap(_),
+                ..
+            }) => Some(Box::new(self.diverge())),
             Some(body) => Some(Box::new(self.read(body)?)),
             None => None,
         };
@@ -1201,13 +1218,23 @@ fn is_method(expr: &Expr) -> bool {
         if params.first().is_some_and(|p| p.name == "self"))
 }
 
+/// What the real prelude declares of lists, for a program that writes `[a, ...r]`
+/// or `[x, y]` without declaring the tags itself.
+const LIST_PRELUDE: &str = "tag List = Empty | Link(_, List)\n";
+
 /// The line for `source`, or why it is not a program of the fragment.
 pub fn line(source: &str) -> Result<String, Skip> {
-    let lowered = lower(source).map_err(|_| Skip::Rejected)?;
+    let (lowered, prelude) = match lower(source) {
+        Ok(lowered) if lowered.errors.is_empty() => (lowered, ""),
+        _ => (
+            lower_with_prelude(LIST_PRELUDE, source).map_err(|_| Skip::Rejected)?,
+            LIST_PRELUDE,
+        ),
+    };
     if !lowered.errors.is_empty() {
         return Err(Skip::Rejected);
     }
-    let checked = check_with_prelude("", source);
+    let checked = check_with_prelude(prelude, source);
     let errors = checked.as_ref().err();
     let flagged = |kind| errors.is_some_and(|es| es.iter().any(|e| e.kind == kind));
     let (method_flag, resource_limit) = (
@@ -1924,6 +1951,93 @@ impl SpreadGen {
     }
 }
 
+/// Programs that take lists apart with list patterns: a `match` of several arms,
+/// a destructuring from a parameter and from a literal (the lengths that fit
+/// and the ones that do not), and parameters that are patterns. The patterns
+/// take zero to three items and perhaps a rest name; the bodies add the items
+/// up, so the results are numbers and the lowering's decision tree is what the
+/// checker must type the same way the model does.
+struct ListGen {
+    rng: Rng,
+}
+
+impl ListGen {
+    /// A pattern over the names in `pool`: the names of the items it takes,
+    /// and its text. The rest name is `rest`.
+    fn pattern(
+        &mut self,
+        pool: &[&'static str],
+        rest: &'static str,
+    ) -> (Vec<&'static str>, String) {
+        let items = pool[..self.rng.below(pool.len() + 1)].to_vec();
+        let mut parts: Vec<String> = items.iter().map(|n| (*n).to_string()).collect();
+        if self.rng.below(2) == 0 {
+            parts.push(format!("...{rest}"));
+        }
+        let trailing = if !parts.is_empty() && self.rng.below(5) == 0 {
+            ","
+        } else {
+            ""
+        };
+        (items, format!("[{}{trailing}]", parts.join(", ")))
+    }
+
+    fn body(&mut self, names: &[&'static str]) -> String {
+        let mut terms: Vec<String> = names.iter().map(|n| (*n).to_string()).collect();
+        if terms.is_empty() || self.rng.below(3) == 0 {
+            terms.push(self.rng.below(10).to_string());
+        }
+        terms.join(" + ")
+    }
+
+    fn literal(&mut self) -> String {
+        let items: Vec<String> = (0..self.rng.below(4))
+            .map(|_| self.rng.below(10).to_string())
+            .collect();
+        format!("[{}]", items.join(", "))
+    }
+
+    fn program(&mut self) -> String {
+        const FIRST: [&str; 3] = ["a", "b", "c"];
+        const SECOND: [&str; 3] = ["d", "e", "f"];
+        match self.rng.below(6) {
+            0 | 1 => {
+                let mut arms = String::new();
+                for _ in 0..1 + self.rng.below(4) {
+                    let (items, pattern) = self.pattern(&FIRST, "r");
+                    let body = self.body(&items);
+                    arms.push_str(&format!("    {pattern} then {body}\n"));
+                }
+                if self.rng.below(3) == 0 {
+                    arms.push_str(&format!("    else {}\n", self.rng.below(10)));
+                }
+                let arg = self.literal();
+                format!("f = program(xs) do\n  match xs do\n{arms}  done\ndone\nf({arg})")
+            }
+            2 | 5 => {
+                let (items, pattern) = self.pattern(&FIRST, "r");
+                let body = self.body(&items);
+                let arg = self.literal();
+                format!("f = program(xs) do\n  {pattern} = xs\n  {body}\ndone\nf({arg})")
+            }
+            3 => {
+                let (items, pattern) = self.pattern(&FIRST, "r");
+                let body = self.body(&items);
+                let value = self.literal();
+                format!("{pattern} = {value}\n{body}")
+            }
+            _ => {
+                let (first, p) = self.pattern(&FIRST, "r");
+                let (second, q) = self.pattern(&SECOND, "s");
+                let names: Vec<&str> = first.iter().chain(&second).copied().collect();
+                let body = self.body(&names);
+                let (x, y) = (self.literal(), self.literal());
+                format!("f = program({p}, {q}) do {body} done\nf({x}, {y})")
+            }
+        }
+    }
+}
+
 /// Programs the repository's sources may not hold: let-polymorphism, row
 /// polymorphism, rejections, and calls with several arguments.
 const HANDWRITTEN: &[&str] = &[
@@ -2165,6 +2279,13 @@ fn main() {
         };
         for _ in 0..GENERATED_SPREADS {
             sources.push(spread_gen.program());
+        }
+
+        let mut list_gen = ListGen {
+            rng: Rng::seeded(seed ^ 0x0115_7A77),
+        };
+        for _ in 0..GENERATED_LISTS {
+            sources.push(list_gen.program());
         }
     }
 
