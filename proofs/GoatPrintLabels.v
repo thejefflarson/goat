@@ -71,12 +71,20 @@ Proof.
   - intros d P. cbn [block lbls]. occ_simp. reflexivity.
   - intros P. cbn [block]. occ_simp. reflexivity.
   - intros P. cbn [block]. occ_simp. reflexivity.
-  - intros b IH P. cbn [block lbls]. unfold function_tree. occ_simp. exact (IH (S P)).
-  - intros f IHf a IHa P. cbn [block lbls]. rewrite occs_app, List.map_app.
-    unfold call_tree. occ_simp. rewrite IHa.
-    destruct f; cbn [as_callee as_operand]; first
-      [ unfold paren_kids; occ_simp; try rewrite IHf; reflexivity
-      | rewrite IHf; reflexivity ].
+  - intros b IH P. cbn [lbls].
+    destruct (block_abs_cases P b) as [(-> & E) | (_ & E)]; rewrite E.
+    + unfold function_empty_tree. occ_simp. reflexivity.
+    + unfold function_tree. occ_simp. exact (IH (S P)).
+  - intros f IHf a IHa P. cbn [lbls]. rewrite List.map_app.
+    destruct (block_app_cases P f a) as [(-> & E) | (_ & E)]; rewrite E; rewrite occs_app.
+    + unfold call_unit_tree. occ_simp. cbn [lbls List.map]. rewrite ?List.app_nil_r.
+      destruct f; cbn [as_callee as_operand]; first
+        [ unfold paren_kids; occ_simp; try rewrite IHf; reflexivity
+        | rewrite IHf; reflexivity ].
+    + unfold call_tree. occ_simp. rewrite IHa.
+      destruct f; cbn [as_callee as_operand]; first
+        [ unfold paren_kids; occ_simp; try rewrite IHf; reflexivity
+        | rewrite IHf; reflexivity ].
   - intros v IHv b IHb P. cbn [block lbls]. unfold decl_tree.
     rewrite List.map_app. occ_simp.
     rewrite IHb.

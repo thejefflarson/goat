@@ -105,10 +105,13 @@ Proof.
   - intros k Hs. reflexivity.
   - (* abs *)
     intros b IH k Hs. simpl in Hs. simpl.
+    destruct Hs as [-> | Hs]; [ reflexivity | ].
     rewrite (IH (S k) Hs). reflexivity.
   - (* app *)
     intros a IHa b IHb k [Ha Hb]. simpl.
-    rewrite (IHa k Ha), (IHb k Hb). reflexivity.
+    rewrite (IHa k Ha).
+    destruct Hb as [-> | Hb]; [ reflexivity | ].
+    rewrite (IHb k Hb). reflexivity.
   - (* let *)
     intros a IHa b IHb k [Ha Hb]. simpl.
     rewrite (IHa k Ha), (IHb (S k) Hb). reflexivity.
@@ -263,6 +266,15 @@ Proof.
   - apply DP_nil.
 Qed.
 
+Lemma den_chain_call_unit : forall var_of tbl cs e0,
+  Den_chain var_of tbl cs e0 -> ~ ends_in_access cs ->
+  Den_chain var_of tbl (cs ++ [call_unit_tree]) (e_app e0 e_unit).
+Proof.
+  intros var_of tbl cs e0 Hc Hend.
+  eapply den_chain_snoc; [ exact Hc | | intros _; exact Hend ].
+  unfold call_unit_tree. apply DP_call_unit. apply DP_nil.
+Qed.
+
 Lemma den_chain_access : forall var_of tbl cs e0 l,
   Den_chain var_of tbl cs e0 -> LabelsOK tbl [l] ->
   Den_chain var_of tbl (cs ++ [access_tree l]) (e_proj e0 l).
@@ -283,9 +295,15 @@ Proof.
     | (apply (ends_access_last [sym "("; Node R_expr _]); intros c Hc; discriminate Hc)
     | (apply (ends_access_last []); intros c Hc; discriminate Hc)
     | (apply ends_access_last; intros c Hc; discriminate Hc) ]; fail).
-  destruct (block_ite_cases P f1 f2 f3) as [(-> & E) | (_ & E)];
-    cbn [as_callee as_operand]; rewrite E;
-    apply (ends_access_last []); intros c Hc; discriminate Hc.
+  - destruct (block_abs_cases P f) as [(-> & E) | (_ & E)];
+      cbn [as_callee as_operand]; rewrite E;
+      apply (ends_access_last []); intros c Hc; discriminate Hc.
+  - destruct (block_app_cases P f1 f2) as [(-> & E) | (_ & E)];
+      cbn [as_callee as_operand]; rewrite E;
+      apply ends_access_last; intros c Hc; discriminate Hc.
+  - destruct (block_ite_cases P f1 f2 f3) as [(-> & E) | (_ & E)];
+      cbn [as_callee as_operand]; rewrite E;
+      apply (ends_access_last []); intros c Hc; discriminate Hc.
 Qed.
 
 Lemma den_pack : forall var_of tbl P e x,
@@ -345,8 +363,16 @@ Proof.
              by (rewrite <- Hc; apply in_or_app; right; left; reflexivity);
            destruct Hin as [Hin | []]; destruct o; discriminate Hin
        end) ]; fail).
-  cbn [as_value] in Hc.
-  destruct (block_ite_cases P v1 v2 v3) as [(_ & E) | (_ & E)]; rewrite E in Hc; discriminate Hc.
+  - cbn [as_value] in Hc.
+    destruct (block_app_cases P v1 v2) as [(_ & E) | (_ & E)]; rewrite E in Hc.
+    + assert (Hin : In call_unit_tree [Node R_function c])
+        by (rewrite <- Hc; apply in_or_app; right; left; reflexivity).
+      destruct Hin as [Hin | []]; discriminate Hin.
+    + assert (Hin : In (call_tree (block P v2)) [Node R_function c])
+        by (rewrite <- Hc; apply in_or_app; right; left; reflexivity).
+      destruct Hin as [Hin | []]; discriminate Hin.
+  - cbn [as_value] in Hc.
+    destruct (block_ite_cases P v1 v2 v3) as [(_ & E) | (_ & E)]; rewrite E in Hc; discriminate Hc.
 Qed.
 
 (* ---- the main lemma ---- *)
@@ -389,6 +415,19 @@ Proof.
     apply den_pack; exact Hchain.
   - (* program *)
     intros b IH P Hs Hl.
+    destruct (block_abs_cases P b) as [(-> & E) | (Hne & E)]; rewrite E.
+    { assert (Hfun : Den var_of tbl (function_empty_tree P)
+                       (curry [var_of (nm P)] e_unit)).
+      { unfold function_empty_tree. eapply D_function_empty with (xs := [nm P]).
+        apply DPa_one. }
+      assert (Hcurry : curry [var_of (nm P)] e_unit = inst var_of P (e_abs e_unit))
+        by reflexivity.
+      rewrite Hcurry in Hfun.
+      assert (Hchain : Den_chain var_of tbl [function_empty_tree P]
+                         (inst var_of P (e_abs e_unit)))
+        by (apply den_chain_single; exact Hfun).
+      rewrite <- E. apply den_pack. rewrite E. exact Hchain. }
+    destruct Hs as [Hs | Hs]; [ exfalso; exact (Hne Hs) | ].
     destruct (IH (S P) Hs Hl) as [Hblock _].
     assert (Hfun : Den var_of tbl (function_tree P (block (S P) b))
                      (curry [var_of (nm P)] (inst var_of (S P) b))).
@@ -399,20 +438,28 @@ Proof.
                      = inst var_of P (e_abs b)).
     { simpl. rewrite (close_inst_exp var_of P b Hdist Hs). reflexivity. }
     rewrite Hcurry in Hfun.
-    assert (Hchain : Den_chain var_of tbl (block P (e_abs b)) (inst var_of P (e_abs b)))
+    assert (Hchain : Den_chain var_of tbl [function_tree P (block (S P) b)]
+                       (inst var_of P (e_abs b)))
       by (apply den_chain_single; exact Hfun).
-    apply den_pack; exact Hchain.
+    rewrite <- E. apply den_pack. rewrite E. exact Hchain.
   - (* call *)
     intros f IHf a IHa P [Hf Ha] Hl.
     destruct (IHf P Hf (labelsok_app_l _ _ _ Hl)) as [Hbf [_ Hcf]].
-    destruct (IHa P Ha (labelsok_app_r _ _ _ Hl)) as [Hba _].
     assert (Hop : Den_chain var_of tbl (as_callee f (block P f)) (inst var_of P f)).
     { destruct f; cbn [as_callee as_operand];
         first [ apply den_chain_paren; exact Hbf | exact (Hcf I eq_refl) ]. }
-    assert (Hchain : Den_chain var_of tbl (block P (e_app f a)) (inst var_of P (e_app f a))).
+    destruct (block_app_cases P f a) as [(-> & E) | (Hne & E)]; rewrite E.
+    { assert (Hchain : Den_chain var_of tbl (as_callee f (block P f) ++ [call_unit_tree])
+                         (inst var_of P (e_app f e_unit)))
+        by exact (den_chain_call_unit var_of tbl _ _ Hop (callee_not_access P f)).
+      rewrite <- E. apply den_pack. rewrite E. exact Hchain. }
+    destruct Ha as [Ha | Ha]; [ exfalso; exact (Hne Ha) | ].
+    destruct (IHa P Ha (labelsok_app_r _ _ _ Hl)) as [Hba _].
+    assert (Hchain : Den_chain var_of tbl (as_callee f (block P f) ++ [call_tree (block P a)])
+                       (inst var_of P (e_app f a))).
     { exact (den_chain_call var_of tbl _ _ _ _ Hop (D_expr_g _ _ _ _ Hba)
                (callee_not_access P f)). }
-    apply den_pack; exact Hchain.
+    rewrite <- E. apply den_pack. rewrite E. exact Hchain.
   - (* binding *)
     intros v IHv b IHb P [Hv Hb] Hl.
     destruct (IHv P Hv (labelsok_app_l _ _ _ Hl)) as [Hbv [Hmv _]].

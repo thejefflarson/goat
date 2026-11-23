@@ -176,11 +176,17 @@ Proof.
     exact (chain_prim _ prim_false).
   - (* program *)
     intros b IHb n P Hs. apply blk_chain; [ exact I | ].
-    exact (chain_prim _ (prim_function _ _ (expr_parses _ _ (IHb (S n) (S P) Hs)))).
+    destruct (block_abs_cases P b) as [(-> & E) | (Hne & E)]; rewrite E.
+    + exact (chain_prim _ (prim_function_empty _)).
+    + destruct Hs as [Hs | Hs]; [ exfalso; exact (Hne Hs) | ].
+      exact (chain_prim _ (prim_function _ _ (expr_parses _ _ (IHb (S n) (S P) Hs)))).
   - (* call *)
     intros f IHf a IHa n P [Hf Ha]. apply blk_chain; [ exact I | ].
-    exact (chain_snoc _ _ (callee_chain _ _ (IHf n P Hf))
-             (post_call _ (expr_parses _ _ (IHa n P Ha)))).
+    destruct (block_app_cases P f a) as [(-> & E) | (Hne & E)]; rewrite E.
+    + exact (chain_snoc _ _ (callee_chain _ _ (IHf n P Hf)) post_call_unit).
+    + destruct Ha as [Ha | Ha]; [ exfalso; exact (Hne Ha) | ].
+      exact (chain_snoc _ _ (callee_chain _ _ (IHf n P Hf))
+               (post_call _ (expr_parses _ _ (IHa n P Ha)))).
   - (* binding *)
     intros v IHv b IHb n P [Hv Hb].
     destruct (IHb (S n) (S P) Hb) as [Hfin [Hch Hstar]].

@@ -56,8 +56,12 @@ Proof.
   - intros d k Hs. reflexivity.
   - intros k Hs. reflexivity.
   - intros k Hs. reflexivity.
-  - intros b IH k Hs. simpl in Hs. cbn [inst_rec]. rewrite (IH (S k) Hs). reflexivity.
-  - intros a IHa b IHb k [Ha Hb]. cbn [inst_rec]. rewrite (IHa k Ha), (IHb k Hb). reflexivity.
+  - intros b IH k Hs. simpl in Hs. cbn [inst_rec].
+    destruct Hs as [-> | Hs]; [ reflexivity | ].
+    rewrite (IH (S k) Hs). reflexivity.
+  - intros a IHa b IHb k [Ha Hb]. cbn [inst_rec]. rewrite (IHa k Ha).
+    destruct Hb as [-> | Hb]; [ reflexivity | ].
+    rewrite (IHb k Hb). reflexivity.
   - intros a IHa b IHb k [Ha Hb]. cbn [inst_rec]. rewrite (IHa k Ha), (IHb (S k) Hb). reflexivity.
   - intros fs IHfs b IHb k Hs. destruct Hs.
   - intros fs IH k Hs. simpl in Hs. cbn [inst_rec]. rewrite (IH k Hs). reflexivity.

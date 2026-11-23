@@ -73,6 +73,8 @@ Definition decl_tree (P : nat) (v : list tree) : tree :=
 Definition call_tree (b : list tree) : tree :=
   Node R_call [sym "("; Node R_arguments [Node R_expr b]; sym ")"].
 
+Definition call_unit_tree : tree := Node R_call [sym "("; sym ")"].
+
 Definition access_tree (l : label) : tree := Node R_access [sym "."; ident (lname l)].
 
 Definition field_tree (l : label) (b : list tree) : tree :=
@@ -94,6 +96,10 @@ Definition function_tree (P : nat) (b : list tree) : tree :=
   Node R_function [sym "program"; sym "("; Node R_params [ident (nm P)];
                    sym ")"; sym "do"; Node R_expr b; sym "done"].
 
+Definition function_empty_tree (P : nat) : tree :=
+  Node R_function [sym "program"; sym "("; Node R_params [ident (nm P)];
+                   sym ")"; sym "do"; sym "done"].
+
 (* [block P e]: the children of the expression node holding [e] at depth [P].
    [field_trees P fs]: a record's fields, each after the first behind a comma. *)
 Fixpoint block (P : nat) (e : exp) {struct e} : list tree :=
@@ -104,7 +110,9 @@ Fixpoint block (P : nat) (e : exp) {struct e} : list tree :=
   | e_dec d => [Node R_number [Leaf (TDec d)]]
   | e_true => [Node R_boolean [Node R_true_lit [sym "true"]]]
   | e_false => [Node R_boolean [Node R_false_lit [sym "false"]]]
+  | e_abs e_unit => [function_empty_tree P]
   | e_abs b => [function_tree P (block (S P) b)]
+  | e_app f e_unit => as_callee f (block P f) ++ [call_unit_tree]
   | e_app f a => as_callee f (block P f) ++ [call_tree (block P a)]
   | e_let v b => decl_tree P (as_value v (block P v)) :: block (S P) b
   | e_rec fs => [Node R_record ((sym "{" :: field_trees P fs) ++ [sym "}"])]
@@ -195,8 +203,8 @@ Fixpoint scoped (n : nat) (e : exp) {struct e} : Prop :=
   | e_spread a _ b => scoped n a /\ scoped n b
   | e_ite c a b => scoped n c /\ scoped n a /\ (b = e_unit \/ scoped n b)
   | e_bin a _ b => scoped n a /\ scoped n b
-  | e_abs b => scoped (S n) b
-  | e_app f a => scoped n f /\ scoped n a
+  | e_abs b => b = e_unit \/ scoped (S n) b
+  | e_app f a => scoped n f /\ (a = e_unit \/ scoped n a)
   | e_let v b => scoped n v /\ scoped (S n) b
   | e_rec fs => scoped_fields n fs
   | e_proj f _ => scoped n f
@@ -217,6 +225,22 @@ Lemma block_ite_cases : forall P c a b,
   \/ (b <> e_unit /\ block P (e_ite c a b) = [cond_tree (block P c) (block P a) (block P b)]).
 Proof.
   intros P c a b. destruct b;
+    first [ (left; split; reflexivity) | (right; split; [ discriminate | reflexivity ]) ].
+Qed.
+
+Lemma block_abs_cases : forall P b,
+  (b = e_unit /\ block P (e_abs b) = [function_empty_tree P])
+  \/ (b <> e_unit /\ block P (e_abs b) = [function_tree P (block (S P) b)]).
+Proof.
+  intros P b. destruct b;
+    first [ (left; split; reflexivity) | (right; split; [ discriminate | reflexivity ]) ].
+Qed.
+
+Lemma block_app_cases : forall P f a,
+  (a = e_unit /\ block P (e_app f a) = as_callee f (block P f) ++ [call_unit_tree])
+  \/ (a <> e_unit /\ block P (e_app f a) = as_callee f (block P f) ++ [call_tree (block P a)]).
+Proof.
+  intros P f a. destruct a;
     first [ (left; split; reflexivity) | (right; split; [ discriminate | reflexivity ]) ].
 Qed.
 
