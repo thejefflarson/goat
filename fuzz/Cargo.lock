@@ -664,17 +664,8 @@ dependencies = [
  "goat_checker",
  "goat_llvm",
  "goat_mir",
- "goat_parser",
  "goat_wasm",
  "wasmtime",
-]
-
-[[package]]
-name = "goat_canvas"
-version = "0.1.0"
-dependencies = [
- "goat",
- "goat_checker",
 ]
 
 [[package]]
@@ -689,11 +680,8 @@ name = "goat_cli"
 version = "0.1.0"
 dependencies = [
  "goat",
- "goat_canvas",
- "goat_checker",
  "goat_mir",
  "goat_native",
- "goat_parser",
  "tempfile",
 ]
 
