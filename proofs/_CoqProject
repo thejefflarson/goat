@@ -49,6 +49,7 @@ GoatCompleteGen.v
 GoatCompleteMono.v
 GoatCompleteLet.v
 GoatSatTeq.v
+GoatRowNf.v
 GoatCompleteRows.v
 GoatCompleteUnify.v
 GoatCompleteSorts.v
