@@ -91,7 +91,12 @@ export interface Loop {
   // data are freed. A model that cannot be refreshed starts over from the new
   // `init`, and the reason says why. Throws, leaving the old program running,
   // if the new one cannot start.
-  reload(next: InteractiveExports): Reloaded;
+  //
+  // If the snapshot or refresh traps, the old model is half consumed and
+  // nothing can reach it, so the heap is abandoned whole: `restart` rewinds
+  // the shared heap (`resetHosted`) and instantiates the new module over it
+  // again, and the program starts from that instance's `init`.
+  reload(next: InteractiveExports, restart: () => InteractiveExports): Reloaded;
   // Delivers a host event as if the page had raised it; ignored if unsubscribed.
   send(event: HostEvent): void;
   readonly running: boolean;
@@ -201,11 +206,12 @@ export function startLoop(initial: InteractiveExports, env: LoopEnv): Loop {
     if (next !== undefined) model = next;
   };
 
-  const reload = (next: InteractiveExports): Reloaded => {
+  const reload = (first: InteractiveExports, restart: () => InteractiveExports): Reloaded => {
     if (!running) throw new Error(NOT_RUNNING_MESSAGE);
     const call = <T>(f: () => T): T => (env.around ? env.around(f) : f());
+    let next = first;
     // A new module that cannot start throws here, and the old one keeps running.
-    const fresh = call(() => next.goat_setup());
+    let fresh = call(() => next.goat_setup());
     const old = exports;
     const started = env.now();
 
@@ -220,20 +226,32 @@ export function startLoop(initial: InteractiveExports, env: LoopEnv): Loop {
       trapped = true;
     }
     let outcome: Reloaded;
-    if (rebuilt !== 0) {
+    if (trapped) {
+      try {
+        next = restart();
+        fresh = call(() => next.goat_setup());
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e));
+        return { outcome: "reset", reason: { kind: "reshaped", args: [] } };
+      }
+      model = fresh;
+      outcome = { outcome: "reset", reason: { kind: "reshaped", args: [] } };
+    } else if (rebuilt !== 0) {
       call(() => next.goat_release_model(fresh));
       model = rebuilt;
       outcome = { outcome: "refreshed" };
     } else {
       model = fresh;
-      outcome = { outcome: "reset", reason: trapped ? { kind: "reshaped", args: [] } : readReason(next) };
+      outcome = { outcome: "reset", reason: readReason(next) };
     }
     exports = next;
     wanted = new Set(subscriptions(next));
-    guarded(() => {
-      old.goat_shutdown();
-      old.goat_free_static();
-    });
+    if (!trapped) {
+      guarded(() => {
+        old.goat_shutdown();
+        old.goat_free_static();
+      });
+    }
     if (running && env.now() - started > FRAME_BUDGET_MS) fail(STUCK_MESSAGE);
     return outcome;
   };
@@ -283,6 +301,8 @@ export function startLoop(initial: InteractiveExports, env: LoopEnv): Loop {
 // Where a reloadable module expects the heap to begin; mirrors
 // `goat_wasm::HOSTED_HEAP_START`.
 const HOSTED_HEAP_START = 232;
+// Where the allocator's free-list table begins; mirrors `goat_wasm::DATA_BASE`.
+const HOSTED_TABLE_START = 8;
 
 // The memory and allocator state every reloadable module of one program shares,
 // so a model built by one is valid in the next (ADR 0015, addendum).
@@ -297,6 +317,15 @@ export function createHosted(): Hosted {
   return { memory: new WebAssembly.Memory({ initial: 1 }), heap: cell(HOSTED_HEAP_START), live: cell(0) };
 }
 
+// Forgets every object in the shared heap: empties the free lists, rewinds the
+// bump pointer and clears the live count. Only for a heap whose every instance
+// has been abandoned.
+export function resetHosted(hosted: Hosted): void {
+  new Uint8Array(hosted.memory.buffer, HOSTED_TABLE_START, HOSTED_HEAP_START - HOSTED_TABLE_START).fill(0);
+  hosted.heap.value = HOSTED_HEAP_START;
+  hosted.live.value = 0;
+}
+
 export function isReloadableModule(module: WebAssembly.Module): boolean {
   return WebAssembly.Module.imports(module).some((i) => i.module === "goat" && i.name === "memory");
 }
@@ -309,9 +338,19 @@ export async function instantiateWithScene(
   scene: Scene,
   hosted?: Hosted,
 ): Promise<InteractiveExports> {
+  return instantiateCompiled(await WebAssembly.compile(moduleBytes), scene, hosted);
+}
+
+// `instantiateWithScene` for a module already compiled, which a reload can do
+// again without waiting.
+export function instantiateCompiled(
+  module: WebAssembly.Module,
+  scene: Scene,
+  hosted?: Hosted,
+): InteractiveExports {
   let memory: WebAssembly.Memory | undefined = hosted?.memory;
   const host = createHost(() => memory!);
-  const { instance } = await WebAssembly.instantiate(moduleBytes, {
+  const instance = new WebAssembly.Instance(module, {
     goat: { ...host.imports.goat, ...hosted },
     ...sceneImports(() => memory!, scene),
   });

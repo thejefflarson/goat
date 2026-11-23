@@ -10,6 +10,8 @@ import {
   type LoopCanvas,
   STUCK_MESSAGE,
   createHosted,
+  instantiateCompiled,
+  resetHosted,
   isInteractiveModule,
   isReloadableModule,
   startLoop,
@@ -248,15 +250,12 @@ test("a host that supplies `around` sees every call into goat, even one that tra
   assert.equal(calls.open, calls.closed);
 });
 
+type LiveExports = InteractiveExports & { goat_live_allocs(): number };
+
 async function instantiateLive(source: string, hosted: Hosted, scene = new RecordingScene()) {
   const result = await compileLive(compiler, source);
   if (!result.ok) assert.fail(result.diagnostics);
-  const host = createHost(() => hosted.memory);
-  const { instance } = await WebAssembly.instantiate(result.module, {
-    goat: { ...host.imports.goat, ...hosted },
-    ...sceneImports(() => hosted.memory, scene),
-  });
-  return instance.exports as InteractiveExports & { goat_live_allocs(): number };
+  return instantiateCompiled(await WebAssembly.compile(result.module), scene, hosted) as LiveExports;
 }
 
 const counter = (extra: string, drawn: string) => `
@@ -276,7 +275,16 @@ async function liveProgram(source: string) {
   const first = await instantiateLive(source, hosted, scene);
   const page = fakeEnv();
   const loop = startLoop(first, page.env);
-  const reload = async (next: string) => loop.reload(await instantiateLive(next, hosted, scene));
+  const reload = async (next: string) => {
+    const result = await compileLive(compiler, next);
+    if (!result.ok) assert.fail(result.diagnostics);
+    const compiled = await WebAssembly.compile(result.module);
+    const instantiate = () => instantiateCompiled(compiled, scene, hosted) as LiveExports;
+    return loop.reload(instantiate(), () => {
+      resetHosted(hosted);
+      return instantiate();
+    });
+  };
   return { hosted, scene, page, loop, first, reload };
 }
 
@@ -394,5 +402,27 @@ test("a reloaded program that cannot start leaves the old one running", async ()
   assert.equal(loop.running, true);
   page.frame(16);
   assert.deepEqual(lineEnds(scene), [10]);
+  assert.deepEqual(page.errors, []);
+});
+
+const nested = (name: string) => `
+tag Chain = Leaf | Wrap(Chain)
+build = program(n, acc) do
+  if n == 0 then acc else build(n - 1, Wrap(acc)) done
+done
+init = {name: "${name}", items: build(2000000, Leaf)}
+update = program(model, event) do match event do KeyDown(key) then model else model done done
+draw = program(model) do [Text({x: 0, y: 0, text: model.name, color: "red"})] done
+`;
+
+test("a trap while carrying the model over resets the heap and the program starts over", async () => {
+  const { hosted, scene, page, loop, reload } = await liveProgram(nested("old"));
+  const outcome = await reload(nested("new"));
+  assert.deepEqual(outcome, { outcome: "reset", reason: { kind: "reshaped", args: [] } });
+  assert.equal(loop.running, true);
+  page.frame(16);
+  assert.ok(scene.commands.some((c) => c.kind === "text" && c.text === "new"));
+  loop.stop();
+  assert.equal(hosted.live.value, 0, "the half-consumed old model leaked");
   assert.deepEqual(page.errors, []);
 });
