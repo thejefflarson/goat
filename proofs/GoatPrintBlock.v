@@ -22,6 +22,7 @@ Fixpoint AllExpr (P : nat) (fs : Goat_ott.fields) : Prop :=
   match fs with
   | fs_nil => True
   | fs_cons _ e rest => ExprParses (block P e) /\ AllExpr P rest
+  | fs_meth _ e rest => ExprParses (block P e) /\ AllExpr P rest
   end.
 
 Lemma stopE_more_fields : forall P fs r,
@@ -34,8 +35,13 @@ Lemma more_fields_parse : forall fs P r,
       (flats (more_field_trees P fs) ++ TSym "}" :: r)
       (Ok (more_field_trees P fs) (TSym "}" :: r)).
 Proof.
-  induction fs as [| l e rest IH]; intros P r Hall.
+  induction fs as [| l e rest IH | l e rest IH]; intros P r Hall.
   - pok nope.
+  - destruct Hall as [He Hrest].
+    cbn [more_field_trees]. unfold field_tree. flat_simp. rewrite <- ?app_assoc.
+    pok ltac:(first
+      [ exact (IH _ _ Hrest)
+      | (eapply He; apply stopE_more_fields) ]).
   - destruct Hall as [He Hrest].
     cbn [more_field_trees]. unfold field_tree. flat_simp. rewrite <- ?app_assoc.
     pok ltac:(first
@@ -116,8 +122,13 @@ Proof.
   refine (conj _ (conj _ _)).
   - flat_simp. plain_head.
   - exact I.
-  - destruct fs as [| l e rest]; cbn [field_trees].
+  - destruct fs as [| l e rest | l e rest]; cbn [field_trees].
     + flat_simp. pok nope.
+    + destruct Hall as [He Hrest].
+      unfold field_tree. flat_simp. rewrite <- ?app_assoc.
+      pok ltac:(first
+        [ exact (more_fields_parse _ _ _ Hrest)
+        | (eapply He; apply stopE_more_fields) ]).
     + destruct Hall as [He Hrest].
       unfold field_tree. flat_simp. rewrite <- ?app_assoc.
       pok ltac:(first

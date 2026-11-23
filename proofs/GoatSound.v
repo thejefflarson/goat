@@ -1297,8 +1297,14 @@ Proof.
         -- exact Hsupp.
         -- apply Hcx.
       * apply ctx_equiv_cons; [ exact Hbr | apply ctx_equiv_refl ].
-  - (* T_Record *) intros D G fs R Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
-    apply T_Record. eapply IH; eauto.
+  - (* T_Record *) intros D G fs R Ht IH Hnm st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    apply T_Record; [ eapply IH; eauto | exact Hnm ].
+  - (* T_Obj: the receiver row, the literal's row and every method's type are substituted alike *)
+    intros D G fs R Rt Ht IH Hms st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    pose proof (proj2 (proj2 Hsupp)) as Hl.
+    apply T_Obj with (Rt := ap_row st sr Rt); [ eapply IH; eauto | ].
+    rewrite <- (ap_row_tail_with st sr R Rt (field_typing_plain_spine _ _ _ _ Ht)).
+    apply meths_shared_ap; assumption.
   - (* T_Proj *) intros D G e l T R Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
     eapply T_Proj. simpl in IH. eapply IH; eauto.
   - (* T_Conv *) intros D G e T T' Ht IH Hte st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
@@ -1360,6 +1366,8 @@ Proof.
   - intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl. apply FT_nil; auto.
   - intros D G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.
+  - intros D G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    eapply FT_meth; [ eapply IH1 | eapply IH2 ]; eauto.
 Qed.
 
 Lemma kres_id : forall D, kres D D idt.
@@ -1681,7 +1689,9 @@ Proof.
         simpl_alist. reflexivity.
       * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
         apply gen_more_gen; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
-  - (* T_Record *) intros D G fs R Hr IH Sd HSd Hag G2 Heq; subst. simpl. apply T_Record.
+  - (* T_Record *) intros D G fs R Hr IH Hnm Sd HSd Hag G2 Heq; subst. simpl. apply T_Record; [ | rewrite (no_meth_marks _ _ (marks_subst_fields fs u x)); exact Hnm ].
+    apply (IH Sd HSd Hag G2); reflexivity.
+  - (* T_Obj *) intros D G fs R Rt Hr IH Hms Sd HSd Hag G2 Heq; subst. simpl. apply T_Obj with (Rt := Rt); [ | eapply meths_shared_marks; [ exact Hms | symmetry; apply marks_subst_fields ] ].
     apply (IH Sd HSd Hag G2); reflexivity.
   - (* T_Proj *) intros D G e l T R Hr IH Sd HSd Hag G2 Heq; subst. simpl. eapply T_Proj.
     apply (IH Sd HSd Hag G2); reflexivity.
@@ -1726,6 +1736,9 @@ Proof.
       apply (IHdef e1 Hd0 Sd HSd Hag G2); reflexivity.
   - (* FT_nil *) intros D G Huq Sd HSd Hag G2 Heq; subst. simpl. apply FT_nil. solve_uniq.
   - (* FT_cons *) intros D G l e T fs R Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl. eapply FT_cons.
+    + apply (IH1 Sd HSd Hag G2); reflexivity.
+    + apply (IH2 Sd HSd Hag G2); reflexivity.
+  - (* FT_meth *) intros D G l e T fs R Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl. eapply FT_meth.
     + apply (IH1 Sd HSd Hag G2); reflexivity.
     + apply (IH2 Sd HSd Hag G2); reflexivity.
 Qed.
@@ -1847,7 +1860,7 @@ Qed.
    of the operands. *)
 Lemma binrec_typing : forall D G o fs1 fs2 fs A B R,
   bin_sig D o A B R -> typing D G (e_rec fs1) A -> typing D G (e_rec fs2) B ->
-  rec_zip o fs1 fs2 fs -> typing D G (e_rec fs) R.
+  rec_zip o (fs_plain fs1) (fs_plain fs2) fs -> typing D G (e_rec fs) R.
 Proof.
   intros D G o fs1 fs2 fs A B R Hs H1 H2 Hz.
   destruct (rec_inv _ _ _ _ H1) as [Rf1 [Hf1 Hq1]].
@@ -1855,9 +1868,10 @@ Proof.
   destruct (teq_Record_inv _ _ Hq1) as [R1 [-> Hr1]].
   destruct (bin_sig_record _ _ _ _ _ Hs) as [-> [-> Hrow]].
   destruct (teq_Record_inv _ _ Hq2) as [R2 [Heq Hr2]]. inversion Heq; subst R2.
-  destruct (zip_typing _ _ o _ _ Hf1 _ _ _ Hf2 Hr1 Hr2 Hrow) as [fs' [Ro [Hz' [Hf Hq]]]].
+  destruct (zip_typing _ _ o _ _ (field_typing_fs_plain _ _ _ _ Hf1) (no_meth_plain fs1) _ _ _
+              (field_typing_fs_plain _ _ _ _ Hf2) Hr1 Hr2 Hrow) as [fs' [Ro [Hz' [Hf Hq]]]].
   rewrite (rec_zip_det _ _ _ _ Hz _ Hz').
-  eapply T_Conv; [ apply T_Record; exact Hf | apply teq_rec; exact Hq ].
+  eapply T_Conv; [ apply T_Record; [ exact Hf | eapply rec_zip_no_meth; exact Hz' ] | apply teq_rec; exact Hq ].
 Qed.
 
 Scheme step_mut := Induction for step Sort Prop
@@ -1868,10 +1882,19 @@ Lemma is_gen_fs_replace : forall l v fs,
   is_gen_value v = true -> is_gen_fields fs = true ->
   is_gen_fields (fs_replace l v fs) = true.
 Proof.
-  intros l v. induction fs as [|l' e fs IH]; intros Hv Hfs; simpl in *; [ exact Hfs | ].
-  apply andb_prop in Hfs. destruct Hfs as [He Hfs].
-  destruct (Nat.eqb l l'); simpl; [ rewrite Hv | rewrite He ]; [ exact Hfs | ].
-  rewrite (IH Hv Hfs). reflexivity.
+  intros l v. induction fs as [|l' e fs IH|l' e fs IH]; intros Hv Hfs; simpl in *; [ exact Hfs | | ].
+  - apply andb_prop in Hfs. destruct Hfs as [He Hfs].
+    destruct (Nat.eqb l l'); simpl; [ rewrite Hv | rewrite He ]; [ exact Hfs | ].
+    rewrite (IH Hv Hfs). reflexivity.
+  - apply andb_prop in Hfs. destruct Hfs as [He Hfs].
+    destruct (Nat.eqb l l'); simpl; [ rewrite Hv | rewrite He ]; [ exact Hfs | ].
+    rewrite (IH Hv Hfs). reflexivity.
+Qed.
+
+Lemma is_gen_fs_plain : forall fs, is_gen_fields fs = true -> is_gen_fields (fs_plain fs) = true.
+Proof.
+  induction fs as [|l e fs IH|l e fs IH]; intros H; simpl in *; auto;
+    apply andb_prop in H; destruct H as [He Hfs]; rewrite He, (IH Hfs); reflexivity.
 Qed.
 
 Lemma is_gen_fs_set : forall l v fs,
@@ -1903,13 +1926,19 @@ Proof.
     apply andb_prop in Hgen. destruct Hgen as [H1 H2]. rewrite H1, (IH H2). reflexivity.
   - (* st_spread *) intros fs l v Hrv Hv Hgen. simpl in Hgen |- *.
     apply andb_prop in Hgen. destruct Hgen as [H1 H2].
-    apply is_gen_fs_set; [ exact H2 | exact H1 ].
+    apply is_gen_fs_plain. apply is_gen_fs_set; [ exact H2 | exact H1 ].
   - (* st_fold1 *) intros e e' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
   - (* st_con1 *) intros w tg e e' Hstep IH Hgen. simpl in Hgen |- *. exact (IH Hgen).
   - (* stf_here *) intros l e e' fs Hstep IH Hgen. simpl in Hgen |- *.
     apply andb_prop in Hgen. destruct Hgen as [He Hfs].
     rewrite (IH He), Hfs. reflexivity.
   - (* stf_cons *) intros l v fs fs' Hv Hstep IH Hgen. simpl in Hgen |- *.
+    apply andb_prop in Hgen. destruct Hgen as [Hv0 Hfs].
+    rewrite Hv0, (IH Hfs). reflexivity.
+  - (* stf_meth_here *) intros l e e' fs Hstep IH Hgen. simpl in Hgen |- *.
+    apply andb_prop in Hgen. destruct Hgen as [He Hfs].
+    rewrite (IH He), Hfs. reflexivity.
+  - (* stf_meth_cons *) intros l v fs fs' Hv Hstep IH Hgen. simpl in Hgen |- *.
     apply andb_prop in Hgen. destruct Hgen as [Hv0 Hfs].
     rewrite Hv0, (IH Hfs). reflexivity.
 Qed.
@@ -2029,7 +2058,9 @@ Proof.
     rewrite <- subst_intro_fields in Hmem by exact Hpf.
     assert (Hrec : typing (ext D V k) G
               (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))) (typ_Record R))
-      by (apply T_Record; exact Hmem).
+      by (apply T_Record; [ exact Hmem | ];
+          rewrite (no_meth_marks _ fs); [ apply fn_group_no_meth; exact Hfg | ];
+          unfold open_fields_wrt_exp; apply marks_open_fields).
     assert (Hrecgen : is_gen_value
               (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))) = true).
     { simpl. apply is_gen_open_fields; [ exact Hgengrp | apply fn_group_gen; exact Hfg ]. }
@@ -2057,8 +2088,8 @@ Proof.
     eapply teq_trans; [ exact Hteq1 | exact Hteq ].
   - (* st_rec: a field inside a record stepped.  Congruence. *)
     intros fs fs' Hstep IHf D S G T HS Hty.
-    apply rec_inv in Hty. destruct Hty as [R [Hft Hteq]].
-    eapply T_Conv; [ eapply T_Record; eapply IHf; [ exact HS | exact Hft ] | exact Hteq ].
+    apply rec_inv_ok in Hty. destruct Hty as [R [Hft [Hok Hteq]]].
+    eapply T_Conv; [ apply T_rec_ok; [ eapply IHf; [ exact HS | exact Hft ] | eapply rec_ok_marks; [ exact Hok | symmetry; eapply marks_step_fields; exact Hstep ] ] | exact Hteq ].
   - (* st_ite1: the condition of an [if] stepped. *)
     intros e1 e1' e2 e3 Hstep IH D S G T HS Hty.
     apply ite_inv in Hty. destruct Hty as [T' [H1 [H2 [H3 Hteq]]]].
@@ -2195,6 +2226,14 @@ Proof.
     intros l v fs fs' Hv Hstep IHf D S G R HS Hft.
     inversion Hft; subst.
     eapply FT_cons; [ eassumption | eapply IHf; [ exact HS | eassumption ] ].
+  - (* stf_meth_here *)
+    intros l e e' fs Hstep IH D S G R HS Hft.
+    inversion Hft; subst.
+    eapply FT_meth; [ eapply IH; [ exact HS | eassumption ] | eassumption ].
+  - (* stf_meth_cons *)
+    intros l v fs fs' Hv Hstep IHf D S G R HS Hft.
+    inversion Hft; subst.
+    eapply FT_meth; [ eassumption | eapply IHf; [ exact HS | eassumption ] ].
 Qed.
 
 (* The headline form of the induction above: with just the first half of the

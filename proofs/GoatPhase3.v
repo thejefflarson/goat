@@ -38,7 +38,7 @@ Definition hit3 : exp := e_con shot 1 (e_rec (fs_cons 0 (e_num 3) fs_nil)).
 Example hit3_types : typing d_any nil hit3 (typ_Grp shot (spine [])).
 Proof.
   unfold hit3. apply T_Con; [ simpl; lia | ].
-  cbn. apply T_Record. eapply FT_cons;
+  cbn. apply T_Record; [ | reflexivity ]. eapply FT_cons;
     [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
 Qed.
 
@@ -65,7 +65,7 @@ Lemma link_types : forall h t T,
   typing d_any nil (link h t) (typ_Grp list_g (spine [T])).
 Proof.
   intros h t T Hh Ht. unfold link. apply T_Con; [ simpl; lia | ].
-  cbn. apply T_Record. eapply FT_cons; [ exact Hh | ].
+  cbn. apply T_Record; [ | reflexivity ]. eapply FT_cons; [ exact Hh | ].
   eapply FT_cons; [ exact Ht | apply FT_nil; solve_uniq ].
 Qed.
 

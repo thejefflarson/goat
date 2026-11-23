@@ -1,8 +1,10 @@
 (* The inference algorithm for the core calculus: Hindley-Milner algorithm W
    with Leijen's row unification over scoped labels (ADR 0037, decision 2).
 
-   This file holds only the algorithm, so that it extracts to OCaml (see
-   [GoatExtract.v]).  GoatInferSound.v proves it sound against [typing].
+   This file holds the unifier and the pieces of the algorithm, so that they
+   extract to OCaml (see [GoatExtract.v]); the algorithm itself, which calls
+   them, is in GoatInferW.v, and GoatInferSound.v proves it sound against
+   [typing].
    A type variable carries a sort (ADR 0038), read from a kinding environment
    the algorithm threads.
 
@@ -420,12 +422,14 @@ Fixpoint is_fn_group (fs : fields) : bool :=
   | fs_nil => true
   | fs_cons _ (e_abs _) rest => is_fn_group rest
   | fs_cons _ _ _ => false
+  | fs_meth _ _ _ => false
   end.
 
 Fixpoint nfields (fs : fields) : nat :=
   match fs with
   | fs_nil => 0
   | fs_cons _ _ rest => S (nfields rest)
+  | fs_meth _ _ rest => S (nfields rest)
   end.
 
 (* The row of a group's members, each at a fresh type variable numbered from [n]. *)
@@ -433,6 +437,16 @@ Fixpoint group_row (fs : fields) (n : nat) : row :=
   match fs with
   | fs_nil => row_Empty
   | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
+  | fs_meth l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
+  end.
+
+(* The row a method literal's receiver has: the slots of [group_row], then the
+   row variable [tl] for what a use adds (ADR 0034 decision 2). *)
+Fixpoint obj_row (fs : fields) (n : nat) (tl : row) : row :=
+  match fs with
+  | fs_nil => tl
+  | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (obj_row rest (S n) tl)
+  | fs_meth l _ rest => row_Ext l (typ_Var (ea n)) (obj_row rest (S n) tl)
   end.
 
 (* The number of parameters a group declares: the largest [6 + j] among its
@@ -468,322 +482,3 @@ Definition is_generic_op (o : bop) : bool :=
 
 Definition fresh_var (G : ctx) (e : exp) : atom :=
   fresh (AtomSetImpl.elements (dom G `union` fv_exp e)).
-
-(* [infer f D G e n] returns the substitution, the kinding environment the
-   result type lives in, the type, and the next unused variable number.  The
-   environment [D] has [Any] on every even atom from [n] on, so a fresh
-   variable is [Any] unless the algorithm gives it a sort with [upd]. *)
-Fixpoint infer (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
-  : option (sub * denv * typ * nat) :=
-  match f with
-  | O => None
-  | S f' =>
-      match e with
-      | e_fvar_b _ => None
-      | e_fvar_f x =>
-          match lookup x G with
-          | None => None
-          | Some s => let (p, n1) := instantiate D s n in
-                      let (T, D1) := p in Some (sid, D1, T, n1)
-          end
-      | e_num _ => Some (sid, upd D (ea n) k_Literal, typ_Var (ea n), S n)
-      | e_dec _ => Some (sid, D, typ_Float, n)
-      | e_unit => Some (sid, D, typ_Unit, n)
-      | e_str _ => Some (sid, D, typ_String, n)
-      | e_true => Some (sid, D, typ_Bool, n)
-      | e_false => Some (sid, D, typ_Bool, n)
-      | e_abs b =>
-          let x := fresh_var G b in
-          let beta := typ_Var (ea n) in
-          match infer f' lenient ora D ((x ~ sch_mono beta) ++ G) (open_exp_wrt_exp b (e_fvar_f x)) (S n) with
-          | None => None
-          | Some (s, D1, T, n1) => Some (s, D1, typ_Arrow (apT s beta) T, n1)
-          end
-      | e_app e1 e2 =>
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              match infer f' lenient ora D1 (apC s1 G) e2 n1 with
-              | None => None
-              | Some (s2, D2, T2, n2) =>
-                  let beta := typ_Var (ea n2) in
-                  match unify_t f' D2 (apT s2 T1) (typ_Arrow T2 beta) (S n2) with
-                  | None => None
-                  | Some (s3, n3) =>
-                      Some (scomp s3 (scomp s2 s1), D2, apT s3 beta, n3)
-                  end
-              end
-          end
-      | e_let e1 e2 =>
-          if is_gen_value e1 then
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              let G1 := apC s1 G in
-              let sc := gen_ren D1 (pin_ctx (let_pin D1 e1 T1) G1) T1 in
-              let x := fresh_var G1 e2 in
-              match infer f' lenient ora D1 ((x ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
-              | None => None
-              | Some (s2, D2, T2, n2) => Some (scomp s2 s1, D2, T2, n2)
-              end
-          end
-          else
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              let x := fresh_var (apC s1 G) e2 in
-              match infer f' lenient ora D1 ((x ~ sch_mono T1) ++ apC s1 G) (open_exp_wrt_exp e2 (e_fvar_f x)) n1 with
-              | None => None
-              | Some (s2, D2, T2, n2) => Some (scomp s2 s1, D2, T2, n2)
-              end
-          end
-      | e_letrec fs e2 =>
-          if is_fn_group fs then
-          let R0 := group_row fs n in
-          let p := fresh_var G (e_rec fs) in
-          match infer_fields f' lenient ora D
-                  ((p ~ sch_mono (typ_Record R0)) ++ G)
-                  (open_fields_wrt_exp fs (e_fvar_f p)) (n + nfields fs) with
-          | None => None
-          | Some (s1, D1, R1, n1) =>
-              match unify_pw f' D1 R1 (apR s1 R0) n1 with
-              | None => None
-              | Some (s2, n2) =>
-                  let s := scomp s2 s1 in
-                  let G1 := apC s G in
-                  let sc := gen_ren D1 G1 (typ_Record (apR s R0)) in
-                  let q := fresh_var G1 e2 in
-                  match infer f' lenient ora D1 ((q ~ sc) ++ G1) (open_exp_wrt_exp e2 (e_fvar_f q)) n2 with
-                  | None => None
-                  | Some (s3, D3, T, n3) => Some (scomp s3 s, D3, T, n3)
-                  end
-              end
-          end
-          else None
-      | e_rec fs =>
-          match infer_fields f' lenient ora D G fs n with
-          | None => None
-          | Some (s, D1, R, n1) => Some (s, D1, typ_Record R, n1)
-          end
-      | e_proj e1 l =>
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              let a := typ_Var (ea n1) in
-              let r := row_Var (ea (S n1)) in
-              match unify_t f' D1 T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
-              | None => None
-              | Some (s2, n2) => Some (scomp s2 s1, D1, apT s2 a, n2)
-              end
-          end
-      | e_ite c a b =>
-          match infer f' lenient ora D G c n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              match unify_t f' D1 T1 typ_Bool n1 with
-              | None => None
-              | Some (s2, n2) =>
-                  match infer f' lenient ora D1 (apC s2 (apC s1 G)) a n2 with
-                  | None => None
-                  | Some (s3, D3, T2, n3) =>
-                      match infer f' lenient ora D3 (apC s3 (apC s2 (apC s1 G))) b n3 with
-                      | None => None
-                      | Some (s4, D4, T3, n4) =>
-                          match unify_t f' D4 (apT s4 T2) T3 n4 with
-                          | None => None
-                          | Some (s5, n5) =>
-                              Some (scomp s5 (scomp s4 (scomp s3 (scomp s2 s1))), D4, apT s5 T3, n5)
-                          end
-                      end
-                  end
-              end
-          end
-      | e_con w tg e1 =>
-          if Nat.ltb tg (length w) then
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              let Ts := fresh_tys n1 (nparams w) in
-              match unify_t f' D1 T1 (tag_payload w Ts tg) (n1 + nparams w) with
-              | None => None
-              | Some (s2, n2) =>
-                  Some (scomp s2 s1, D1, apT s2 (typ_Grp w (spine Ts)), n2)
-              end
-          end
-          else None
-      | e_match w e1 ars =>
-          if arms_wf_b w ars then
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              let Ts := fresh_tys n1 (nparams w) in
-              match unify_t f' D1 T1 (typ_Grp w (spine Ts)) (n1 + nparams w) with
-              | None => None
-              | Some (s2, n2) =>
-                  match infer_arms f' lenient ora D1 (apC s2 (apC s1 G)) w (map (apT s2) Ts)
-                          (fresh_var G (e_match w e1 ars)) (typ_Var (ea n2)) ars (S n2) with
-                  | None => None
-                  | Some (s3, D3, T3, n3) => Some (scomp s3 (scomp s2 s1), D3, T3, n3)
-                  end
-              end
-          end
-          else None
-      | e_spread e1 l e2 =>
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              match infer f' lenient ora D1 (apC s1 G) e2 n1 with
-              | None => None
-              | Some (s2, D2, T2, n2) =>
-                  let p := typ_Var (ea n2) in
-                  let r := row_Var (ea (S n2)) in
-                  match unify_t f' D2 (apT s2 T1) (typ_Record (row_Maybe l p T2 r)) (n2 + 2) with
-                  | None => None
-                  | Some (s3, n3) =>
-                      Some (scomp s3 (scomp s2 s1), D2,
-                            apT s3 (typ_Record (row_Ext l T2 r)), n3)
-                  end
-              end
-          end
-      | e_restrict e1 l =>
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              let a := typ_Var (ea n1) in
-              let r := row_Var (ea (S n1)) in
-              match unify_t f' D1 T1 (typ_Record (row_Ext l a r)) (n1 + 2) with
-              | None => None
-              | Some (s2, n2) => Some (scomp s2 s1, D1, apT s2 (typ_Record r), n2)
-              end
-          end
-      | e_fold _ => None
-      | e_unfold _ => None
-      | e_tofloat e1 =>
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              let D1' := upd D1 (ea n1) k_Literal in
-              match unify_t f' D1' T1 (typ_Var (ea n1)) (S n1) with
-              | None => None
-              | Some (s2, n2) => Some (scomp s2 s1, D1', typ_Float, n2)
-              end
-          end
-      | e_bin e1 o e2 =>
-          match infer f' lenient ora D G e1 n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              match infer f' lenient ora D1 (apC s1 G) e2 n1 with
-              | None => None
-              | Some (s2, D2, T2, n2) =>
-                  if is_generic_op o then
-                      let D2' := upd D2 (ea n2) k_Numeric in
-                      let c := typ_Var (ea n2) in
-                      match unify_t f' D2' (apT s2 T1) c (S n2) with
-                      | None => None
-                      | Some (s3, n3) =>
-                          match unify_t f' D2' (apT s3 T2) (apT s3 c) n3 with
-                          | None => None
-                          | Some (s4, n4) =>
-                              Some (scomp s4 (scomp s3 (scomp s2 s1)), D2',
-                                    apT s4 (apT s3 c), n4)
-                          end
-                      end
-                  else
-                  match bin_arg lenient ora D2 o (apT s2 T1) T2 with
-                  | None => None
-                  | Some T =>
-                      match unify_t f' D2 (apT s2 T1) T n2 with
-                      | None => None
-                      | Some (s3, n3) =>
-                          match unify_t f' D2 (apT s3 T2) T n3, bin_res lenient o T with
-                          | Some (s4, n4), Some R =>
-                              Some (scomp s4 (scomp s3 (scomp s2 s1)), D2, R, n4)
-                          | _, _ => None
-                          end
-                      end
-                  end
-              end
-          end
-      end
-  end
-with infer_fields (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (fs : fields) (n : nat) {struct f}
-  : option (sub * denv * row * nat) :=
-  match f with
-  | O => None
-  | S f' =>
-      match fs with
-      | fs_nil => Some (sid, D, row_Empty, n)
-      | fs_cons l e rest =>
-          match infer f' lenient ora D G e n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              match infer_fields f' lenient ora D1 (apC s1 G) rest n1 with
-              | None => None
-              | Some (s2, D2, R2, n2) =>
-                  Some (scomp s2 s1, D2, row_Ext l (apT s2 T1) R2, n2)
-              end
-          end
-      end
-  end
-
-(* The arms of a match, in order, against a result type [res] each arm's type
-   is unified with.  Each tag's payload binder is [x], typed by the slot
-   record of its tag at the group's parameters [Ts]. *)
-with infer_arms (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G : ctx) (w : gdecl) (Ts : list typ) (x : var)
-       (res : typ) (ars : arms) (n : nat) {struct f}
-  : option (sub * denv * typ * nat) :=
-  match f with
-  | O => None
-  | S f' =>
-      match ars with
-      | arms_nil => Some (sid, D, res, n)
-      | arms_else e =>
-          match infer f' lenient ora D G e n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              match unify_t f' D1 (apT s1 res) T1 n1 with
-              | None => None
-              | Some (s2, n2) => Some (scomp s2 s1, D1, apT s2 T1, n2)
-              end
-          end
-      | arms_cons tg e rest =>
-          match infer f' lenient ora D ((x ~ sch_mono (tag_payload w Ts tg)) ++ G)
-                  (open_exp_wrt_exp e (e_fvar_f x)) n with
-          | None => None
-          | Some (s1, D1, T1, n1) =>
-              match unify_t f' D1 (apT s1 res) T1 n1 with
-              | None => None
-              | Some (s2, n2) =>
-                  match infer_arms f' lenient ora D1 (apC (scomp s2 s1) G) w
-                          (map (apT (scomp s2 s1)) Ts) x (apT s2 T1) rest n2 with
-                  | None => None
-                  | Some (s3, D3, T3, n3) => Some (scomp s3 (scomp s2 s1), D3, T3, n3)
-                  end
-              end
-          end
-      end
-  end.
-
-(* A comparison the first run left pending is settled at the concrete type its
-   final substitution gave the variable, else at Int. *)
-Definition resolved (s : sub) (a : atom) : typ :=
-  let T := apT s (typ_Var a) in if cmp_ty T then T else typ_Int.
-
-(* A program is a closed term; the result is its type, with the sorts of its
-   free variables.  A variable left free in a program's type is one the
-   program's derivations may instantiate at any type of its sort. *)
-Definition infer_closed_env (fuel : nat) (e : exp) : option (denv * typ) :=
-  match infer fuel true (fun _ => typ_Int) d_any nil e 0 with
-  | None => None
-  | Some (s0, _, _, _) =>
-      match infer fuel false (resolved s0) d_any nil e 0 with
-      | None => None
-      | Some (_, D, T, _) => Some (D, T)
-      end
-  end.
-
-Definition infer_closed (fuel : nat) (e : exp) : option typ :=
-  match infer_closed_env fuel e with
-  | None => None
-  | Some (_, T) => Some T
-  end.

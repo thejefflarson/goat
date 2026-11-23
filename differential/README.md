@@ -17,6 +17,21 @@ ADR 0037 (decision 6) ties the inference algorithm proved in `proofs/` to
 Run it with `make -C proofs differential` (it is part of `make -C proofs ci`
 and of the `coq` workflow).
 
+## Recursive types
+
+A program in which the checker gives some node a recursive type (`Ty::Rec`) is
+a mode `R` line, or a mode `K` line when a `Rec` body holds a record with an
+open row (a row variable that must itself be tied into the knot). Its verdict
+is the root type written with `(mu mK. T)` for a recursive type, `mK` naming the
+binder by its depth. The driver reads that text and the algorithm's type as
+regular trees and compares them by bisimulation with assumed pairs: a pair of
+recursive types met again is taken as equal, and the variables of the two sides
+correspond one to one. A program the algorithm refuses is counted, not compared:
+a recursive group whose members need a knot (`g = program(p) do {a: p, b: g(p)}
+done`; the algorithm unifies the members of a group with `unify_t`) and a row
+that must knot (a `K` line). Any other difference is a mismatch and fails the
+run.
+
 ## Which programs are compared
 
 Every goat source the repository holds: `examples/*.goat`, the `goat` blocks of
@@ -31,7 +46,14 @@ booleans, functions, calls, `if` with an `else`, the twelve binary operators on
 Int, Float, String and Bool, `let` of any value, `letrec` groups of
 functions, record literals with distinct labels, and field access, binding every
 name it uses. Dot calls, `::` and `self` are read as the `proj`, `app` and `let` lowering rewrote them to, and the method flag
-is erased from the type column. Anything else (the prelude, tags, an operator on records or on Unit) is outside the
+is erased from the type column. A function with `self` first, written directly as a field of a record literal, is a
+method: the reader writes it `(meth e)`, the calculus's `fs_meth`, and a literal with a method is typed by `T_Obj`, which gives
+all its methods one receiver (ADR 0034 decision 2). The checker ties a method's receiver to its record
+(`{x: 0, bump: program(self) do {...self, x: self.x + 1} done}` is `mu m. {x: Number, bump: (m -> m) | v}`), and the
+algorithm does the same by giving every method one record of slots for the literal's fields and a row variable for what a
+use adds, unified with the fields' types afterwards (`tie_obj`); so these programs are compared, and a literal whose
+methods need different receivers is rejected by both (`lit = {a: program(self) do self.x done, b: program(self) do self.y done}`
+then `lit.a()`). Anything else (the prelude, tags, an operator on records or on Unit) is outside the
 calculus and skipped.
 
 The generic operators are compared. `+ - *` on operands the checker leaves as
@@ -46,7 +68,7 @@ generalizes a function and a bare numeral over every variable of its type, and
 any other syntactic value over every variable but the `Literal` ones, which stay
 shared and open to `Float`, as the checker does (ADR 0038). A spread of
 syntactic values is one too, as in the checker's `is_syntactic_value`.
-Three kinds of
+A few kinds of
 program are skipped, each because the calculus and the checker differ on it:
 
 - a comparison at a parameter's generic type (`program(a, b) do a == b done`,
@@ -62,19 +84,11 @@ program are skipped, each because the calculus and the checker differ on it:
   so `FORCED` in `core_corpus.rs` pins such programs as compared anyway;
 - a rest pattern with no fields (`program({...r}) do r done`): the checker types
   it as a record, and the calculus has no way to say that without a label;
-- a program in which the checker infers a recursive type, which the algorithm
-  does not (a record that holds a function of a recursive group by name, as
-  `{stop: true, g: h}` inside `h`, is one: it is compared when the checker
-  accepts it with a finite type and counted under the kind below when it does
-  not, so it has no skip reason of its own);
 - a program the checker rejects over the method flag (a dot call on a plain
   function, `::` on a method or on a data field, a field a method in one record
   and plain in the other), which the calculus does not track; the checker marks
   these errors with `ErrorKind::MethodFlag`, and the reader skips them under their
   own count;
-- a record literal with two or more methods, counted under its own skip: the
-  checker gives the methods one shared receiver type, and the calculus's rules
-  would type each apiece, so they accept programs the checker rejects;
 - a program the checker gives up on as too complex (`ErrorKind::ResourceLimit`),
   which a budget decides and not the types;
 - the cases the README already listed: the prelude, tags.
@@ -82,10 +96,16 @@ program are skipped, each because the calculus and the checker differ on it:
 A further kind is counted apart from these. When the checker types a program in
 the fragment with a recursive type (a `Ty::Rec` anywhere, `Ty::is_recursive`, as for `(p.moved)(p)`), the
 corpus writes it as an `R` line and the driver prints it as "skipped for a
-recursive type", with no comparison. The algorithm never builds a `mu`
-(`infer_mu_free`, `proofs/GoatInferMuFree.v`), so it cannot agree on such a
-program. The count tells the reader whether the fragment still reaches
-recursive types.
+recursive type", with no comparison, and says for how many of them the
+algorithm infers a type. The algorithm ties a knot where a variable meets a
+type that mentions it and writes the head `fold` or `unfold` a mu type that
+meets its unrolling needs (`proofs/GoatCoerce.v`, `proofs/GoatInferW.v`); a
+difference below a function type or a record field would need an
+eta-expansion, so it refuses the program (a deep coercion), and a recursive
+group whose members need a recursive type is outside what it elaborates yet.
+The canonical type cannot write a `mu`, so the two sides are not compared; the
+count tells the reader whether the fragment still reaches recursive types and
+how far the algorithm follows it.
 
 ## Where `float(e)` goes
 

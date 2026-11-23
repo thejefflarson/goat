@@ -7,7 +7,7 @@
    opaque lemmas whose bodies extraction must read, and the extractor reserves
    a double underscore that the generated syntax uses. *)
 
-Require Import Goat.GoatInfer.
+Require Import Goat.GoatInferW.
 Require Import Stdlib.extraction.ExtrOcamlNatInt.
 Require Import Stdlib.extraction.ExtrOcamlZInt.
 
