@@ -11,8 +11,12 @@
 
    [Surf l Q] says a row can present [l] (some presence, field and rest).  It
    holds exactly when the row has an entry for [l] or a closed tail, so it is
-   inherited by the rest of a row after an entry for another label.  It is the
-   one fact about [Sg] the walk needs, at the row variable.
+   inherited by the rest of a row after an entry for another label.  [SurfP l Q]
+   says it can present [l] with a presence that is no [Bool]; the walk takes
+   that, because the front entry the unifier rewrites to is present, and two
+   presentations of one label agree on a present one ([row_cancel]), so the
+   walk never meets the absent presentation whose field the sort of a row
+   variable does not constrain.
 
    Axiom- and admit-free. *)
 

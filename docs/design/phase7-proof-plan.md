@@ -1252,7 +1252,7 @@ variables or nothing; `rw_facts`: the presence, field and rest it returns are in
 the fragment, with every entry present under `S2`). `unify_rD_rw` unfolds the
 arm.
 
-**What remains of 7.6.**
+**What remains of 7.6** (as of 7.6k; stage 7.6l below supersedes it).
 
 1. *Absent entries.* The hypothesis `ps` is the strong side of the ratified
    list. Dropping it brings back (i) to (iv) of the 7.6f ruling as predicates on
@@ -1283,6 +1283,121 @@ and `Dtriv` are properties of `Sg` and the environment at the call, so L3 has to
 show them of the substitution it builds, which fails for a program with a numeric
 literal or operator in scope (a `Numeric` sort) and for one that restricts a
 record.
+
+*As built (stage 7.6l, `GoatCompleteRfRows.v`, `GoatCompleteRewrite.v`,
+`GoatCompleteBind.v`, `GoatCompleteBindRow.v`).* The trivial environment is gone
+and the plain unifier runs beside the one W calls. Groups are not done.
+
+**What is proved.** `unify_tD_complete_full` and `unify_rD_complete_full` take
+`KR D DT Sg` (the sort of each variable's image, the kind of each row variable's
+image, the labels it lacks) and `Dsrt D Sg` in place of `Dtriv D`, and `Pkg`
+promises `Dsrt D' S2` and `KR D' DT S2` at the environment the step returns. A
+type variable may have any of the four sorts. `Dsrt` is two conditions: `Drow D`
+(every row variable's sort is `Any` or `Eq`) and `NN D Sg` (`Sg` sends no
+`Numeric` variable to a record). The same theorems conclude that the plain
+unifier (`unify_t`, `unify_r`) succeeds with the same result at the same fuel
+(one `Stable` of a conjunction), which is the prerequisite for the group arm:
+`unify_t` reads rows through `drop_abs`, `drop_abs_ps` says it is the identity on
+a row whose entries are all present, and each leaf (`stable2_*`) is stated for
+both.
+
+**Leaves.**
+
+- *`bind_prop`, `bind_row`: the fresh variables of `push_sort`.* `RenN n n' r`:
+  `r` sends each atom below `n` to itself or to a fresh atom in `[n, n')`, types
+  and rows alike; `RenN_comp` composes two, `RenN_push`, `RenN_push_r` and
+  `RenN_tail` are the three stages. `bind_prop_unfold`, `bind_row_unfold`,
+  `bind_row_core_unfold` and `bind_row_fin_unfold` read the stages off a successful
+  call, `pkg_close_T` and `pkg_close_R` close the last one (the images of the old
+  atoms are renamings except the bound atom, whose image is the renamed type or
+  row, in the fragment with every entry present by `ren_ap_T`/`ren_ap_R`/`ren_ps_T`/
+  `ren_ps_R`). Existence comes from `bind_prop_sorted_complete` and
+  `bind_row_sorted_complete`, which now take a Boolean choosing the conversion of
+  their hypothesis and factoring (`teqX`, `reqX`: `true` is the old statement at
+  `teqD`/`reqD`, `false` is plain `teq`/`req`); the plain form is what `Pkg`
+  needs, because an image of `Sg` may hold an absent entry that `reqD` would
+  normalize away.
+- *`bind_prop` at `Any` and `Eq`* (`pkg_bind_prop_ae`): the field condition is
+  `ps_fld` (every presence is `Unit`, which satisfies both sorts). A variable of
+  sort `Numeric` is never renamed at these sorts (`push_sort_keeps`, `finer_b
+  Numeric Any = finer_b Numeric Eq = true`), and `push_sort_sorts` says a pushed
+  sort is only ever the pushed one, so `NN` passes to `S2`.
+- *`bind_prop` at `Numeric` and `Literal`* (`pkg_bind_prop_nl`): the type is `Int`
+  or `Float`. An arrow satisfies neither sort, a record satisfies no `Literal`, and
+  a record bound to a `Numeric` variable is excluded by `NN`; the other scalars
+  fail `sat`. A scalar has no variable, so no sort is pushed and the step is
+  `bind_prop_scalar`.
+- *`bind_row`* (`pkg_bind_row`): the sort is `Any` or `Eq` (`Drow`), so the field
+  condition is `ps_fld` again, `ps_lacks` makes the lacks check and the
+  presence-to-`Bool` step vacuous (an entry of a label the kind lacks cannot be
+  present), and the joined kind of the renamed tail has a sort `Drow` allows
+  (`Drow_join`).
+- *`rewrite_row`* (`pkg_rewrite`): `rewrite_row_complete` no longer takes the
+  field condition at the tail (`Hfield`). `rewrite_row_spec` takes `SurfP`, a row
+  that presents the label with a presence that is not `Bool`, and two presentations
+  of one label agree on a present one (`row_cancel`), so the walk never reaches the
+  absent presentation whose field the sort of the row variable does not constrain.
+  The hypothesis was unsatisfiable at a sort other than `Any` (take the absent
+  presentation `l ^ Bool : T1` with `T1` unfit, which `req_abs` makes a
+  presentation of any row), so no program with a sorted row variable at the tail
+  could have met it. The three shapes of `rewrite_row` (`rw_shape`): the closed
+  end and the lacking-label case give presence `Bool`, which the present front
+  entry contradicts; the row-variable case binds one row variable to an entry of
+  three fresh variables.
+
+**The Numeric presence hypothesis, as carried.** `fld`'s second half asks `sat DT
+k (Sg P) = sat DT k Unit` for each presence variable `P` of a type bound at sort
+`k`, which holds exactly for `Any` and `Eq`. `bind_prop` at `Numeric` renames a
+presence variable to a `Numeric` one, the extension `S2` has to send that
+variable to `Unit`, and `Unit` does not satisfy `Numeric`, so no `S2` respects
+the new environment. The hypothesis `NN` is stronger than that corner: it excludes every record
+bound to a `Numeric` variable, with presences or not (`{x: 1} + {x: 2}`), and
+`Drow` excludes `Numeric` and `Literal` rows. The programs it covers are the ones
+whose numerals and operators meet scalars, which is what L3's core constructs
+(variable, application, `let`, projection, numerals, comparison) build.
+DECISION NEEDED: `NN` and `Drow` are sufficient but not necessary. Options: (a)
+accept them as the stage-7.6l result (chosen: they are conditions on `Sg` and the
+environment that L3 can read off the typing derivation, and the corner they leave
+is the numeric record); (b) state the weaker condition (a `Numeric` or `Literal`
+variable is not bound to a type with a presence variable), which needs the
+extension `S2` to agree with `Sg` on the old atoms through every leaf, and `NN`
+over the atoms of the types in play rather than over the environment.
+
+**What remains of 7.6.**
+
+1. *Absent entries (waits on #667).* The hypothesis `ps` is the strong side of
+   the ratified list. Dropping it brings back (i) to (iv) of the 7.6f ruling as
+   predicates on `Sg` at each leaf, the lexicographic measure (an absent entry has
+   size 0; `rewrite_row_front`'s absent-pair alternative), the `Empty`/`Maybe`
+   swap arm, and `fld_pull`/an occurs analogue to carry them to the recursive
+   calls with `S2`; the field condition's first half (`apT S P = Bool -> sat DT k
+   (apT S T)`) is vacuous under `ps` and returns with them, and so does `Hfield`
+   at a presentation `Sg` makes absent. The conversion question of the 7.6i item
+   2 returns too: an image of `Sg` may hold an absent entry, so `reqD` is not
+   `req`, and the plain forms of the leaves (`teqX false`, `reqX false`) have to
+   give way to `reqD` ones or `Sg` has to be replaced by its normalization. A
+   principal-verdicts change in #667 changes how W treats an absent presence, so
+   none of this is started.
+2. *Groups outside `mu`.* The group arm of `unify_tD` hands its payload to
+   `unify_t`, which now succeeds beside it on the fragment, so the call has its
+   completeness. What blocks adding `typ_Grp w A` to the fragment is not the
+   unifier: `pf` (`GoatCompleteBind.v`) excludes `typ_Grp`, and the sorted leaves
+   (`sat_ren_mut`, `sat_reach_mut`, `fld`, `lcb_ap_var`, `ftv_ren`) are stated
+   for `pf`, so `bind_prop` of a variable to a type with a group inside has no
+   completeness lemma; `po` is `False` at `typ_Grp` and `tsz` is 1, so the occurs
+   check cannot be derived for a variable inside a payload, and the measure of
+   the induction does not fall from a group to its payload. The extension is
+   `pf`/`sat`/`po`/`tsz` for groups (the 7.6e closed fragment has `cp` for
+   them), then `ps` and `atT` on a payload and the `nfT` identity on a group
+   (`nfT` does not enter one, so `S` is carried as it is, with no `nfS D1 S`).
+3. *Statement A's hypotheses, as they stand after 7.6l.* Carried through the
+   induction and proved of every step: the occurs-under-present condition (7.6j,
+   `ps_po`, `ps_pos_row`), the sorts (`KR`), `Drow` and `NN` (the numeric
+   hypothesis above), and the presence variable at `Numeric` (`NN` and `Drow`
+   together). Dropped: `Hfield` at the tail of `rewrite_row` (for a present front
+   entry). Waiting on #667, because each concerns an entry `Sg` makes absent: the
+   four pairs of the 7.6f ruling, `fld` at an absent entry, and `Hfield` at an
+   absent presentation.
 
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):

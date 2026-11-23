@@ -1,19 +1,36 @@
-(* Completeness of algorithm W, stage 7.6k: the unifier on records with row
-   variables and present entries (docs/design/phase7-proof-plan.md).
+(* Completeness of algorithm W, stages 7.6k and 7.6l: the unifier on records with
+   row variables and present entries, at sorted environments
+   (docs/design/phase7-proof-plan.md).
 
    The fragment is [pf] types (base types, variables, arrows, records of rows
    with plain fields, presence entries and row variables) in which every
    presence entry is present under the substitution [Sg] ([ps]: the image of
-   its presence is [Unit]), and the environment is trivial ([Dtriv]: every type
-   variable has sort [Any], every row variable the kind [rk_any]).  With a
-   trivial environment no sort is pushed, so [bind_prop] and [bind_row] rename
-   nothing but the tail of a row, and every substitution respects it; with every
-   entry present no occurrence hides behind an absent entry, the guard and the
-   field condition never bind, and the unifier's normalization of rows is the
-   identity.  The substitution [Sg] is arbitrary, and the unifier is read at
-   plain [teq]/[req].
+   its presence is [Unit]).  The environment is the one [Sg] respects ([KR D DT
+   Sg]: the sort of each variable's image, the kind of each row variable's image,
+   the labels a row variable lacks) and satisfies two conditions on the sorts
+   ([Dsrt]): the sorts of the row variables are [Any] or [Eq], and [Sg] sends no
+   [Numeric] variable to a record.  A type variable has any sort.  [bind_prop]
+   and [bind_row] push the sort of the variable they bind onto the variables of
+   the type or row, renaming each coarser one to a fresh variable of the sort
+   ([push_sort], [push_sort_r]); [Pkg] says the images of the old atoms are
+   renamings of the old atoms to atoms below the new supply, except the one
+   bound atom, and the extension [S2] of [Sg] to the fresh variables respects
+   the new environment.  With every entry present no occurrence hides behind an
+   absent entry, the guard and the field condition never bind, the unifier's
+   normalization of rows is the identity ([nfR] at the environment for
+   [unify_tD], [drop_abs] for [unify_t]), and the unifier is read at plain
+   [teq]/[req].
 
-   Absent entries and sorts are the hypotheses this stage does not discharge;
+   The two conditions on the sorts are what the presence variables ask.  Each
+   presence entry of a type bound at sort [k] puts a presence variable under the
+   sort ([fld]), whose image [Unit] satisfies [Any] and [Eq] only.  A row
+   variable carries a sort onto the rows it is bound to, so its sort is [Any] or
+   [Eq]; a type variable of sort [Numeric] or [Literal] is bound to a scalar
+   (neither an arrow nor, at [Literal], a record), which has no variable to push
+   the sort onto, and [Sg] sends no [Numeric] variable to a record, so no entry
+   is under it.
+
+   Absent entries and groups are the hypotheses this stage does not discharge;
    they are listed in the plan under what remains of 7.6.
 
    Axiom- and admit-free. *)
