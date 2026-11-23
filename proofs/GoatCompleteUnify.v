@@ -1,5 +1,6 @@
-(* Completeness of algorithm W, stage 7.6, part L2: the plain unifier finds a
-   most general unifier (docs/design/phase7-proof-plan.md).
+(* Completeness of algorithm W, stage 7.6, part L2: the unifier W calls
+   ([unify_tD], [unify_rD]) finds a most general unifier
+   (docs/design/phase7-proof-plan.md).
 
    The fragment is the types with no recursion, no tag group and no row
    variable: base types, variables, arrows, and, when [b] is [true], records
@@ -7,23 +8,28 @@
    entry), fields again in the fragment.  Substitution images are arbitrary:
    the variables stand for any type, and an image may hold a presence entry or
    a row variable the unifier never sees.  What is assumed of the substitution
-   [S] is that it unifies the two types up to [teq] and respects the sorts
-   ([kres D D1 (sT S)]).  The unifier then succeeds, from some fuel on
-   ([Stable]), with a substitution [s] that is in the fragment and that [S]
-   factors through ([Fac S s]: [S x] is [teq] to [S] applied to [s x]).  No
-   variable is renamed or invented (a variable's sort is pushed only onto a
-   record's variables, and only a record under a sorted variable needs it; with
-   [b = true] every sort is [Any]), so the environment and the supply come back
-   unchanged and the factoring substitution is [S] itself.
+   [S] is that it unifies the two types up to [teqD D1], the conversion at the
+   environment [S] lands in, and respects the sorts ([kres D D1 (sT S)]).  The
+   unifier then succeeds, from some fuel on ([Stable]), with a substitution [s]
+   that is in the fragment and that [S] factors through ([FacD D1 S s]: [S x]
+   is [teqD D1] to [S] applied to [s x]).  No variable is renamed or invented
+   (with [b = true] every sort is [Any], so no sort is pushed), so the
+   environment and the supply come back unchanged and the factoring
+   substitution is [S] itself.  [GoatCompleteSorts.v] has the invention for the
+   cases this leaves out.
 
-   The measure is the size of the image ([tsz], [GoatCompleteRows.v]), which
-   [teq] and [req] preserve; the factoring lemma carries it from [S x] to [S]
-   applied to [s x]. *)
+   The induction is for [nfS D1 S], the substitution whose images are the
+   normal forms of [S]'s ([nfT D1]): on a type of the fragment, normalizing the
+   image of [S] is applying [nfS D1 S] ([nf_ap]), and an image that is its own
+   normal form makes [teqD D1] plain [teq].  The measure is the size of the
+   image ([tsz], [GoatCompleteRows.v]), which [teq] and [req] preserve; the
+   factoring lemma carries it from [S x] to [S] applied to [s x]. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
 Require Import Goat.GoatInferUnify.
@@ -252,7 +258,7 @@ Qed.
 Lemma unify_var_nonvar : forall b S (D D1 : denv) a T (n : nat),
   (b = true -> forall c, D c = k_Any) -> kres D D1 (sT S) ->
   cp b T -> (forall v, T <> typ_Var v) -> teq (sT S a) (apT S T) ->
-  exists s, Res b S s /\ Stable (fun f => unify_t f D (typ_Var a) T n = Some (s, D, n)).
+  exists s, Res b S s /\ Stable (fun f => unify_tD f D (typ_Var a) T n = Some (s, D, n)).
 Proof.
   intros b S D D1 a T n Hs Hk HT Hv Heq.
   pose proof (bind_prop_complete b S D D1 a T n Hs Hk HT Hv Heq) as E.
@@ -264,7 +270,7 @@ Qed.
 Lemma unify_nonvar_var : forall b S (D D1 : denv) a T (n : nat),
   (b = true -> forall c, D c = k_Any) -> kres D D1 (sT S) ->
   cp b T -> (forall v, T <> typ_Var v) -> teq (apT S T) (sT S a) ->
-  exists s, Res b S s /\ Stable (fun f => unify_t f D T (typ_Var a) n = Some (s, D, n)).
+  exists s, Res b S s /\ Stable (fun f => unify_tD f D T (typ_Var a) n = Some (s, D, n)).
 Proof.
   intros b S D D1 a T n Hs Hk HT Hv Heq.
   apply teq_sym in Heq.
@@ -275,18 +281,18 @@ Proof.
 Qed.
 
 Lemma unify_var_var : forall b S (D : denv) a a' (n : nat), teq (sT S a) (sT S a') ->
-  exists s, Res b S s /\ Stable (fun f => unify_t f D (typ_Var a) (typ_Var a') n = Some (s, D, n)).
+  exists s, Res b S s /\ Stable (fun f => unify_tD f D (typ_Var a) (typ_Var a') n = Some (s, D, n)).
 Proof.
   intros b S D a a' n Heq. destruct (Atom.eq_dec a a') as [->|Hne].
   - exists sid. split; [ apply Res_sid | exists 1; intros f Hf; destruct f as [|f]; [ lia | ] ].
-    cbn [unify_t]. destruct (Atom.eq_dec a' a'); [ reflexivity | congruence ].
+    cbn [unify_tD]. destruct (Atom.eq_dec a' a'); [ reflexivity | congruence ].
   - destruct (finer_b (D a') (D a)) eqn:Ef.
     + exists (sbT a (typ_Var a')). split; [ exact (Res_sbT b S a (typ_Var a') I Heq) | ].
       exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-      cbn [unify_t]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
+      cbn [unify_tD]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
     + exists (sbT a' (typ_Var a)). split; [ exact (Res_sbT b S a' (typ_Var a) I (teq_sym _ _ Heq)) | ].
       exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-      cbn [unify_t]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
+      cbn [unify_tD]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
 Qed.
 
 Lemma apT_Arrow : forall S A B, apT S (typ_Arrow A B) = typ_Arrow (apT S A) (apT S B).
@@ -297,19 +303,22 @@ Proof. reflexivity. Qed.
 
 Lemma unify_scalar_same : forall b S (D : denv) c (n : nat),
   (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) ->
-  exists s, Res b S s /\ Stable (fun f => unify_t f D c c n = Some (s, D, n)).
+  exists s, Res b S s /\ Stable (fun f => unify_tD f D c c n = Some (s, D, n)).
 Proof.
   intros b S D c n Hc. exists sid. split; [ apply Res_sid | exists 1; intros f Hf ].
   destruct f as [|f]; [ lia | ].
   destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; reflexivity.
 Qed.
 
-(* A closed row has no presence entry, so there is nothing to drop. *)
-Lemma drop_abs_crow : forall b R, crow b R -> drop_abs R = R.
+(* A type of the fragment is its own normal form: it has no presence entry to
+   drop, whatever the environment. *)
+Lemma nf_cp : forall b D,
+  (forall T, cp b T -> nfT D T = T) /\ (forall R, crow b R -> nfR D R = R).
 Proof.
-  intros b R. induction R as [| r | l T R IH | l P T R IH]; simpl; intros C;
-    try reflexivity; try contradiction.
-  f_equal. apply IH. exact (proj2 C).
+  intros b D. apply typ_row_mutind; simpl; try (intros; reflexivity); try (intros; contradiction).
+  - intros A IHA B IHB [HA HB]. rewrite (IHA HA), (IHB HB). reflexivity.
+  - intros R IH [_ HR]. rewrite (IH HR). reflexivity.
+  - intros l T IHT R IHR [HT HR]. try rewrite nfR_ext; rewrite (IHT HT), (IHR HR). reflexivity.
 Qed.
 
 (* ---- the theorem ---- *)
@@ -320,10 +329,10 @@ Theorem unify_complete_aux : forall b S (D D1 : denv),
   (b = true -> forall c, D c = k_Any) -> kres D D1 (sT S) -> forall m,
   (forall T1 T2 n, cp b T1 -> cp b T2 -> tsz (apT S T1) < m ->
      teq (apT S T1) (apT S T2) ->
-     exists s, Res b S s /\ Stable (fun f => unify_t f D T1 T2 n = Some (s, D, n))) /\
+     exists s, Res b S s /\ Stable (fun f => unify_tD f D T1 T2 n = Some (s, D, n))) /\
   (forall R1 R2 n, crow b R1 -> crow b R2 -> rsz (apR S R1) < m ->
      req (apR S R1) (apR S R2) ->
-     exists s, Res b S s /\ Stable (fun f => unify_r f D R1 R2 n = Some (s, D, n))).
+     exists s, Res b S s /\ Stable (fun f => unify_rD f D R1 R2 n = Some (s, D, n))).
 Proof.
   intros b S D D1 Hs Hk. induction m as [|m IH]; [ split; intros; lia | ].
   destruct IH as [IHt IHr]. split.
@@ -355,7 +364,7 @@ Proof.
       exists (scomp s2 s1). split; [ exact (Res_comp b S s1 s2 Hr1 Hr2) | ].
       eapply Stable_mono; [ | exact (Stable_below _ (Stable_and _ _ E1 E2)) ].
       intros [|f] Hf; [ contradiction | ]. destruct Hf as [Ha Hb].
-      cbn [unify_t]. rewrite Ha, Hb. reflexivity.
+      cbn [unify_tD]. rewrite Ha, Hb. reflexivity.
     + (* Record, Record *)
       destruct C1 as [Hb CR], C2 as [_ CR'].
       rewrite apT_Record in Hlt. simpl in Hlt.
@@ -364,8 +373,8 @@ Proof.
       destruct (IHr R R' n CR CR' ltac:(lia) H1) as (s & Hr & E).
       exists s. split; [ exact Hr | ].
       eapply Stable_mono; [ | exact (Stable_below _ E) ].
-      intros [|f] Hf; [ contradiction | ]. cbn [unify_t].
-      rewrite (drop_abs_crow b R CR), (drop_abs_crow b R' CR'). exact Hf.
+      intros [|f] Hf; [ contradiction | ]. cbn [unify_tD].
+      rewrite (proj2 (nf_cp b D) R CR), (proj2 (nf_cp b D) R' CR'). exact Hf.
     + (* Var, Var *)
       apply unify_var_var. exact Hteq.
   - (* rows *)
@@ -419,70 +428,94 @@ Proof.
         as (s2 & Hr2 & E3).
       exists (scomp s2 (scomp s1 (scomp sid sid))). split.
       { apply Res_comp; [ apply Res_comp; [ apply Res_comp; apply Res_sid | exact Hr1 ] | exact Hr2 ]. }
-      assert (E0 : Stable (fun f => unify_t f D (apT sid typ_Unit) typ_Unit n = Some (sid, D, n))).
+      assert (E0 : Stable (fun f => unify_tD f D (apT sid typ_Unit) typ_Unit n = Some (sid, D, n))).
       { exists 1. intros [|f] Hf; [ lia | ]. rewrite apT_id. reflexivity. }
-      assert (E1' : Stable (fun f => unify_t f D (apT sid (apT sid T)) (apT sid T') n = Some (s1, D, n))).
+      assert (E1' : Stable (fun f => unify_tD f D (apT sid (apT sid T)) (apT sid T') n = Some (s1, D, n))).
       { eapply Stable_mono; [ | exact E1 ]. intros f Hf. rewrite !apT_id. exact Hf. }
-      assert (E3' : Stable (fun f => unify_r f D (drop_abs (apR s1 (apR sid (apR sid R1'))))
-                                       (drop_abs (apR s1 (apR sid (rm_l l R2)))) n = Some (s2, D, n))).
+      assert (E3' : Stable (fun f => unify_rD f D (nfR D (apR s1 (apR sid (apR sid R1'))))
+                                       (nfR D (apR s1 (apR sid (rm_l l R2)))) n = Some (s2, D, n))).
       { eapply Stable_mono; [ | exact E3 ]. intros f Hf. rewrite !apR_id.
-        rewrite (drop_abs_crow b _ (proj2 (cp_ap b s1 Hc1) _ CR1)),
-                (drop_abs_crow b _ (proj2 (cp_ap b s1 Hc1) _ CRm)). exact Hf. }
+        rewrite (proj2 (nf_cp b D) _ (proj2 (cp_ap b s1 Hc1) _ CR1)),
+                (proj2 (nf_cp b D) _ (proj2 (cp_ap b s1 Hc1) _ CRm)). exact Hf. }
       eapply Stable_mono; [ | exact (Stable_below _ (Stable_and _ _ E0 (Stable_and _ _ E1' E3'))) ].
       intros [|f] Hf; [ contradiction | ]. destruct Hf as (Hu0 & Hu1 & Hu3).
       pose proof (rewrite_row_found l (frv_row (row_Ext l T R1')) D R2 n T' Hx2 Eg2) as Erw.
-      subst R2. cbn [unify_r row_head]. rewrite Erw. cbn iota beta. rewrite Hu0. cbn iota beta.
+      subst R2. cbn [unify_rD row_head]. rewrite Erw. cbn iota beta. rewrite Hu0. cbn iota beta.
       rewrite Hu1. cbn iota beta. rewrite Hu3. reflexivity.
 Qed.
 
-(* ---- statements ---- *)
+(* ---- statements, up to conversion at the environment ----
 
-Theorem unify_t_complete : forall b S (D D1 : denv) T1 T2 n,
-  (b = true -> forall c, D c = k_Any) -> kres D D1 (sT S) ->
-  cp b T1 -> cp b T2 -> teq (apT S T1) (apT S T2) ->
-  exists s, Res b S s /\ Stable (fun f => unify_t f D T1 T2 n = Some (s, D, n)).
+   The hypotheses and the factoring are stated in [teqD D1], the conversion at
+   the environment the substitution lands in.  An image of [S] on a fragment
+   type is read through its normal form, and normalizing is itself a
+   substitution on the fragment ([nf_ap]): [S] followed by [nfT D1] is [nfS D1
+   S] applied.  So the statements for [S] come from the induction above for
+   [nfS D1 S], whose images are their own normal forms. *)
+
+Definition nfS (D1 : denv) (S : sub) : sub := Sub (fun a => nfT D1 (sT S a)) (sR S).
+
+Lemma nf_ap : forall b D1 S,
+  (forall T, cp b T -> nfT D1 (apT S T) = apT (nfS D1 S) T) /\
+  (forall R, crow b R -> nfR D1 (apR S R) = apR (nfS D1 S) R).
 Proof.
-  intros b S D D1 T1 T2 n Hs Hk C1 C2 Hteq.
-  exact (proj1 (unify_complete_aux b S D D1 Hs Hk (Datatypes.S (tsz (apT S T1)))) T1 T2 n C1 C2
-           (Nat.lt_succ_diag_r _) Hteq).
+  intros b D1 S. unfold apT, apR. apply typ_row_mutind; simpl;
+    try (intros; reflexivity); try (intros; contradiction).
+  - intros A IHA B IHB [HA HB]. rewrite (IHA HA), (IHB HB). reflexivity.
+  - intros R IH [_ HR]. rewrite (IH HR). reflexivity.
+  - intros l T IHT R IHR [HT HR]. try rewrite nfR_ext; rewrite (IHT HT), (IHR HR). reflexivity.
 Qed.
 
-Theorem unify_r_complete : forall b S (D D1 : denv) R1 R2 n,
+Lemma kres_nfS : forall D D1 S, kres D D1 (sT S) -> kres D D1 (sT (nfS D1 S)).
+Proof.
+  intros D D1 S Hk a. cbn [sT nfS]. apply (proj2 (sat_nf D1 (D a) _)). apply Hk.
+Qed.
+
+(* [S x] is [teqD] to [S] applied to [s x]. *)
+Definition FacD (D1 : denv) (S s : sub) : Prop := forall x, teqD D1 (sT S x) (apT S (sT s x)).
+
+Lemma FacD_of_Res : forall b D1 S s, Res b (nfS D1 S) s -> CpS b s /\ FacD D1 S s.
+Proof.
+  intros b D1 S s [Hc Hf]. split; [ exact Hc | ].
+  intros x. unfold teqD. rewrite (proj1 (nf_ap b D1 S) _ (proj1 Hc x)).
+  exact (Hf x).
+Qed.
+
+Theorem unify_tD_complete : forall b S (D D1 : denv) T1 T2 n,
   (b = true -> forall c, D c = k_Any) -> kres D D1 (sT S) ->
-  crow b R1 -> crow b R2 -> req (apR S R1) (apR S R2) ->
-  exists s, Res b S s /\ Stable (fun f => unify_r f D R1 R2 n = Some (s, D, n)).
+  cp b T1 -> cp b T2 -> teqD D1 (apT S T1) (apT S T2) ->
+  exists s, CpS b s /\ FacD D1 S s /\ Stable (fun f => unify_tD f D T1 T2 n = Some (s, D, n)).
+Proof.
+  intros b S D D1 T1 T2 n Hs Hk C1 C2 Hteq.
+  unfold teqD in Hteq. rewrite (proj1 (nf_ap b D1 S) _ C1), (proj1 (nf_ap b D1 S) _ C2) in Hteq.
+  pose proof (kres_nfS D D1 S Hk) as Hk'.
+  pose proof (proj1 (unify_complete_aux b (nfS D1 S) D D1 Hs Hk' (Datatypes.S (tsz (apT (nfS D1 S) T1))))
+                T1 T2 n C1 C2 (Nat.lt_succ_diag_r _) Hteq) as (s & Hr & E).
+  exists s. destruct (FacD_of_Res b D1 S s Hr) as [Hc Hf]. exact (conj Hc (conj Hf E)).
+Qed.
+
+Theorem unify_rD_complete : forall b S (D D1 : denv) R1 R2 n,
+  (b = true -> forall c, D c = k_Any) -> kres D D1 (sT S) ->
+  crow b R1 -> crow b R2 -> reqD D1 (apR S R1) (apR S R2) ->
+  exists s, CpS b s /\ FacD D1 S s /\ Stable (fun f => unify_rD f D R1 R2 n = Some (s, D, n)).
 Proof.
   intros b S D D1 R1 R2 n Hs Hk C1 C2 Hreq.
-  exact (proj2 (unify_complete_aux b S D D1 Hs Hk (Datatypes.S (rsz (apR S R1)))) R1 R2 n C1 C2
-           (Nat.lt_succ_diag_r _) Hreq).
+  unfold reqD in Hreq. rewrite (proj2 (nf_ap b D1 S) _ C1), (proj2 (nf_ap b D1 S) _ C2) in Hreq.
+  pose proof (kres_nfS D D1 S Hk) as Hk'.
+  pose proof (proj2 (unify_complete_aux b (nfS D1 S) D D1 Hs Hk' (Datatypes.S (rsz (apR (nfS D1 S) R1))))
+                R1 R2 n C1 C2 (Nat.lt_succ_diag_r _) Hreq) as (s & Hr & E).
+  exists s. destruct (FacD_of_Res b D1 S s Hr) as [Hc Hf]. exact (conj Hc (conj Hf E)).
 Qed.
 
 (* The coercion-aware unifier, through which W calls the plain one, returns the
    same unifier and no coercion. *)
-Theorem unify_co_complete : forall b S (D D1 : denv) T1 T2 n,
+Theorem unify_coD_complete : forall b S (D D1 : denv) T1 T2 n,
   (b = true -> forall c, D c = k_Any) -> kres D D1 (sT S) ->
-  cp b T1 -> cp b T2 -> teq (apT S T1) (apT S T2) ->
-  exists s, Res b S s /\ Stable (fun f => unify_co f D T1 T2 n = Some (s, D, nil, n)).
+  cp b T1 -> cp b T2 -> teqD D1 (apT S T1) (apT S T2) ->
+  exists s, CpS b s /\ FacD D1 S s /\ Stable (fun f => unify_coD f D T1 T2 n = Some (s, D, nil, n)).
 Proof.
   intros b S D D1 T1 T2 n Hs Hk C1 C2 Hteq.
-  destruct (unify_t_complete b S D D1 T1 T2 n Hs Hk C1 C2 Hteq) as (s & Hr & [f0 Hf]).
-  exists s. split; [ exact Hr | ].
-  exact (unify_co_stable f0 D T1 T2 n s D n (Hf f0 (le_n _))).
-Qed.
-
-(* ---- what the fragment leaves out ----
-
-   Rows with a tail variable.  The unifier rewrites a row variable that lacks
-   the label (to an absent entry) and one whose sort is finer than [Any] (the
-   field variable takes the sort), so the fresh variables [rewrite_row] and
-   [bind_row] invent are all that stands between the statements above and such
-   rows: the invention of the factoring substitution for them is not proved. *)
-
-Example rewrite_row_lacking : forall l m B r av (D : denv) n,
-  l <> m -> AtomSetImpl.mem r av = false -> rk_lacks (drk D r) l = true ->
-  rewrite_row l av D (row_Ext m B (row_Var r)) n <> None.
-Proof.
-  intros l m B r av D n Hne Hm Hl. simpl.
-  destruct (Nat.eqb l m) eqn:E; [ apply Nat.eqb_eq in E; congruence | ].
-  cbn iota. rewrite Hm, Hl. discriminate.
+  destruct (unify_tD_complete b S D D1 T1 T2 n Hs Hk C1 C2 Hteq) as (s & Hc & Hf & [f0 Hu]).
+  exists s. split; [ exact Hc | split; [ exact Hf | ] ].
+  exact (unify_coD_stable f0 D T1 T2 n s D n (Hu f0 (le_n _))).
 Qed.

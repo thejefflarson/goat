@@ -13,10 +13,10 @@
    first search to a [Some] that replaces the fallback's.  What a completeness
    proof needs is the weaker, composable statement that a run is [Stable]: it
    gives the same [Some] at every fuel from some point on.  [Stable] is closed
-   under conjunction and under a shift of the fuel, and [unify_co_stable] says
-   that a plain unifier success is a stable coercion-free [unify_co] success,
-   which is the only way the plain fragment (no [fold], [unfold], or method)
-   ever calls it. *)
+   under conjunction and under a shift of the fuel, and [unify_coD_stable] says
+   that a unifier success is a stable coercion-free [unify_coD] success, which
+   is the only way the plain fragment (no [fold], [unfold], or method) ever
+   calls it. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
@@ -73,6 +73,35 @@ Lemma unify_r_mono : forall f g D R1 R2 n r, f <= g ->
   unify_r f D R1 R2 n = Some r -> unify_r g D R1 R2 n = Some r.
 Proof. intros f g D R1 R2 n r Hle H. exact (proj2 (unify_mono_pair f g Hle) _ _ _ _ _ H). Qed.
 
+(* The unifier W calls reads rows at the kinding environment ([unify_tD]); on a
+   tag group it hands the payload to the plain one, so its monotonicity leans on
+   [unify_t_mono]. *)
+Lemma unifyD_mono_pair : forall f g, f <= g ->
+  (forall D T1 T2 n r, unify_tD f D T1 T2 n = Some r -> unify_tD g D T1 T2 n = Some r) /\
+  (forall D R1 R2 n r, unify_rD f D R1 R2 n = Some r -> unify_rD g D R1 R2 n = Some r).
+Proof.
+  induction f as [|f IH]; intros g Hle; [ split; intros; discriminate | ].
+  destruct g as [|g]; [ lia | ]. apply le_S_n in Hle.
+  destruct (IH g Hle) as [IHt IHr]. split.
+  - intros D T1 T2 n r H.
+    destruct T1, T2; cbn [unify_tD] in H |- *; try discriminate H; try exact H;
+      mono_run IHt IHr;
+      first [ exact H | exact (IHt _ _ _ _ _ H) | exact (IHr _ _ _ _ _ H)
+            | exact (unify_t_mono _ _ _ _ _ _ _ Hle H) ].
+  - intros D R1 R2 n r H.
+    destruct R1, R2; cbn [unify_rD] in H |- *; try discriminate H; try exact H;
+      mono_run IHt IHr;
+      first [ exact H | exact (IHt _ _ _ _ _ H) | exact (IHr _ _ _ _ _ H) ].
+Qed.
+
+Lemma unify_tD_mono : forall f g D T1 T2 n r, f <= g ->
+  unify_tD f D T1 T2 n = Some r -> unify_tD g D T1 T2 n = Some r.
+Proof. intros f g D T1 T2 n r Hle H. exact (proj1 (unifyD_mono_pair f g Hle) _ _ _ _ _ H). Qed.
+
+Lemma unify_rD_mono : forall f g D R1 R2 n r, f <= g ->
+  unify_rD f D R1 R2 n = Some r -> unify_rD g D R1 R2 n = Some r.
+Proof. intros f g D R1 R2 n r Hle H. exact (proj2 (unifyD_mono_pair f g Hle) _ _ _ _ _ H). Qed.
+
 (* ---- what stays true of the rest ---- *)
 
 Lemma teq_dec_mono : forall f g D T T', f <= g ->
@@ -111,22 +140,22 @@ Qed.
 Lemma Stable_const : forall P : Prop, P -> Stable (fun _ => P).
 Proof. intros P H. exists 0. intros; exact H. Qed.
 
-(* A fuel at which the plain unifier succeeds is a fuel from which it, and
-   [unify_co] through it, succeeds in the same way and without a coercion. *)
-Lemma unify_t_stable : forall f D T1 T2 n r,
-  unify_t f D T1 T2 n = Some r -> Stable (fun g => unify_t g D T1 T2 n = Some r).
-Proof. intros f D T1 T2 n r H. exists f. intros g Hg. exact (unify_t_mono f g _ _ _ _ _ Hg H). Qed.
+(* A fuel at which the unifier succeeds is a fuel from which it, and
+   [unify_coD] through it, succeeds in the same way and without a coercion. *)
+Lemma unify_tD_stable : forall f D T1 T2 n r,
+  unify_tD f D T1 T2 n = Some r -> Stable (fun g => unify_tD g D T1 T2 n = Some r).
+Proof. intros f D T1 T2 n r H. exists f. intros g Hg. exact (unify_tD_mono f g _ _ _ _ _ Hg H). Qed.
 
-Lemma unify_r_stable : forall f D R1 R2 n r,
-  unify_r f D R1 R2 n = Some r -> Stable (fun g => unify_r g D R1 R2 n = Some r).
-Proof. intros f D R1 R2 n r H. exists f. intros g Hg. exact (unify_r_mono f g _ _ _ _ _ Hg H). Qed.
+Lemma unify_rD_stable : forall f D R1 R2 n r,
+  unify_rD f D R1 R2 n = Some r -> Stable (fun g => unify_rD g D R1 R2 n = Some r).
+Proof. intros f D R1 R2 n r H. exists f. intros g Hg. exact (unify_rD_mono f g _ _ _ _ _ Hg H). Qed.
 
-Lemma unify_co_stable : forall f D T1 T2 n s D' n',
-  unify_t f D T1 T2 n = Some (s, D', n') ->
-  Stable (fun g => unify_co g D T1 T2 n = Some (s, D', nil, n')).
+Lemma unify_coD_stable : forall f D T1 T2 n s D' n',
+  unify_tD f D T1 T2 n = Some (s, D', n') ->
+  Stable (fun g => unify_coD g D T1 T2 n = Some (s, D', nil, n')).
 Proof.
   intros f D T1 T2 n s D' n' H. exists f. intros g Hg.
-  unfold unify_co. rewrite (unify_t_mono f g _ _ _ _ _ Hg H). reflexivity.
+  unfold unify_coD. rewrite (unify_tD_mono f g _ _ _ _ _ Hg H). reflexivity.
 Qed.
 
 (* One construct, to show the pieces compose: an application whose two
