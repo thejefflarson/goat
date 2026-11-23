@@ -1,13 +1,14 @@
 (* Phase 3 of ADR 0037: worked examples for tag groups, construction and
    `match` (docs/design/closed-tags-plan.md, docs/design/phase3-proof-plan.md).
 
-   A group is declared by the slots of each of its tags (GoatDefs.v): code 0 is
+   A group is declared by its name, as bytes, and the slots of each of its tags
+   (GoatDefs.v), so two groups of one shape are two types: code 0 is
    the group itself, 1 to 5 are Int, Float, Bool, Unit, String, and 6 + j is
    the group's implicit parameter j (a `_`).  So, in goat source:
 
-     tag Shot  = Miss | Hit(Int)          shot   = [[]; [1]]
-     tag Level = Low | Medium | High      level  = [[]; []; []]
-     tag List  = Empty | Link(_, List)    list_g = [[]; [6; 0]]
+     tag Shot  = Miss | Hit(Int)          shot   = ("Shot", [[]; [1]])
+     tag Level = Low | Medium | High      level  = ("Level", [[]; []; []])
+     tag List  = Empty | Link(_, List)    list_g = ("List", [[]; [6; 0]])
 
    The accepted examples fail to compile if a rule is dropped.  The rejected
    ones fail if exhaustiveness, or the one type per parameter that makes a
@@ -26,9 +27,9 @@ Require Import Stdlib.Lists.List.
 Import ListNotations.
 From Stdlib Require Import Lia.
 
-Definition shot : gdecl := [ []; [1] ].
-Definition level : gdecl := [ []; []; [] ].
-Definition list_g : gdecl := [ []; [6; 0] ].
+Definition shot : gdecl := ([83; 104; 111; 116], [ []; [1] ]).
+Definition level : gdecl := ([76; 101; 118; 101; 108], [ []; []; [] ]).
+Definition list_g : gdecl := ([76; 105; 115; 116], [ []; [6; 0] ]).
 
 (* ---- construction ---- *)
 
@@ -167,6 +168,25 @@ Proof.
   intros T H. destruct (con_inv _ _ _ _ _ _ H) as [Ts [Hlt _]]. simpl in Hlt. lia.
 Qed.
 
+
+(* Groups are nominal: two declarations of one shape are two groups, and
+   `if c then Ping else Pong` has no type when Ping and Pong are in different
+   ones. *)
+Definition group_a : gdecl := ([65], [ [] ]).
+Definition group_b : gdecl := ([66], [ [] ]).
+
+Example same_shape_groups_differ : typ_Grp group_a (spine []) <> typ_Grp group_b (spine []).
+Proof. discriminate. Qed.
+
+Example ping_or_pong_rejected : forall T,
+  ~ typing d_any nil (e_ite e_true (e_con group_a 0 e_unit) (e_con group_b 0 e_unit)) T.
+Proof.
+  intros T H. destruct (ite_inv _ _ _ _ _ _ H) as [T' [_ [H2 [H3 _]]]].
+  destruct (con_inv _ _ _ _ _ _ H2) as [Ts [_ [_ Ha]]].
+  destruct (con_inv _ _ _ _ _ _ H3) as [Ts' [_ [_ Hb]]].
+  pose proof (teq_trans _ _ _ Ha (teq_sym _ _ Hb)) as Hab.
+  apply teq_Grp_inv in Hab. destruct Hab as [A' [E _]]. injection E as E. discriminate E.
+Qed.
 
 (* A group is generic but does not mix: the parameter is one type throughout a
    value.  Link(true, Link("a", Empty)) has no derivation, because the tail

@@ -77,8 +77,9 @@ let bop_of = function
   | o -> failwith ("unknown operator " ^ o)
 
 let gdecl_of = function
-  | List (Atom "grp" :: tags) ->
-      List.map (function List codes -> List.map int_of codes | _ -> failwith "malformed group") tags
+  | List (Atom "grp" :: name :: tags) ->
+      ( [ int_of name ],
+        List.map (function List codes -> List.map int_of codes | _ -> failwith "malformed group") tags )
   | _ -> failwith "malformed group"
 
 let rec fields_of fields =

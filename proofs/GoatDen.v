@@ -461,12 +461,21 @@ Fixpoint cases_slots (g : option string) (j : nat) (cases : list (list tree)) {s
       (case_name c, cs) :: cases_slots g j1 rest
   end.
 
+(* A group's name as bytes: the declared group name, else the first case's name,
+   so each declaration is its own group (a tag belongs to exactly one). *)
+Definition decl_name (cs : list tree) (cases : list (string * list nat)) : list nat :=
+  let n := match decl_group cs with
+           | Some g => g
+           | None => match cases with (c, _) :: _ => c | [] => ""%string end
+           end in
+  List.map Ascii.nat_of_ascii (String.list_ascii_of_string n).
+
 (* What one `tag` declaration adds to the table. *)
 Definition decl_entries (d : tree) : tagtab :=
   match d with
   | Node R_tag_decl cs =>
       let cases := cases_slots (decl_group cs) 0 (decl_cases cs) in
-      let w := List.map snd cases in
+      let w : gdecl := (decl_name cs cases, List.map snd cases) in
       List.map (fun ic => (fst (snd ic), (w, fst ic)))
                (List.combine (List.seq 0 (List.length cases)) cases)
   | _ => []

@@ -784,7 +784,7 @@ Qed.
    payload is typed at that spine's parameters. *)
 Lemma canon_grp : forall D G v w A,
   value v -> typing D G v (typ_Grp w A) ->
-  exists tg v' Ts, v = e_con w tg v' /\ value v' /\ tg < length w /\
+  exists tg v' Ts, v = e_con w tg v' /\ value v' /\ tg < length (gtags w) /\
     teq A (spine Ts) /\ typing D G v' (tag_payload w Ts tg).
 Proof.
   intros D G v w A Hval Hty.
@@ -809,7 +809,7 @@ Qed.
 
 Lemma canon_grp_spine : forall D G v w Ts,
   value v -> typing D G v (typ_Grp w (spine Ts)) ->
-  exists tg v', v = e_con w tg v' /\ value v' /\ tg < length w /\
+  exists tg v', v = e_con w tg v' /\ value v' /\ tg < length (gtags w) /\
     typing D G v' (tag_payload w Ts tg).
 Proof.
   intros D G v w Ts Hval Hty.
@@ -1100,7 +1100,7 @@ Qed.
 
 Lemma spine_sat_nth : forall D w As j,
   spine_sat D w j (spine As) -> forall i,
-  (exists cs, In cs w /\ In (6 + (j + i)) cs) -> sat D k_Eq (nth i As typ_Unit).
+  (exists cs, In cs (gtags w) /\ In (6 + (j + i)) cs) -> sat D k_Eq (nth i As typ_Unit).
 Proof.
   intros D w As. induction As as [ | T As IH ]; intros j Hs i Hu.
   - destruct i; simpl; right; reflexivity.
@@ -1110,7 +1110,7 @@ Proof.
 Qed.
 
 Lemma sat_slot : forall D w As c,
-  sat D k_Eq (typ_Grp w (spine As)) -> (exists cs, In cs w /\ In c cs) ->
+  sat D k_Eq (typ_Grp w (spine As)) -> (exists cs, In cs (gtags w) /\ In c cs) ->
   sat D k_Eq (slot_ty w As c).
 Proof.
   intros D w As c Hg Hu. unfold slot_ty.
@@ -1120,7 +1120,7 @@ Proof.
 Qed.
 
 Lemma rsat_slots : forall D w As cs i,
-  sat D k_Eq (typ_Grp w (spine As)) -> (forall c, In c cs -> exists cs', In cs' w /\ In c cs') ->
+  sat D k_Eq (typ_Grp w (spine As)) -> (forall c, In c cs -> exists cs', In cs' (gtags w) /\ In c cs') ->
   rsat D k_Eq (slots_row w As i cs).
 Proof.
   intros D w As cs. induction cs as [ | c cs IH ]; intros i Hg Hu; simpl.
@@ -1131,11 +1131,11 @@ Proof.
 Qed.
 
 Lemma sat_tag_payload : forall D w As tg,
-  sat D k_Eq (typ_Grp w (spine As)) -> tg < length w ->
+  sat D k_Eq (typ_Grp w (spine As)) -> tg < length (gtags w) ->
   sat D k_Eq (tag_payload w As tg).
 Proof.
   intros D w As tg Hg Hlt. unfold tag_payload.
-  destruct (nth_error w tg) as [cs | ] eqn:E; [ | right; reflexivity ].
+  destruct (nth_error (gtags w) tg) as [cs | ] eqn:E; [ | right; reflexivity ].
   unfold payload_ty. destruct cs as [ | c cs ]; [ right; reflexivity | ].
   change (rsat D k_Eq (slots_row w As 0 (c :: cs))). apply rsat_slots; [ exact Hg | ].
   intros c' Hc'. exists (c :: cs). split; [ eapply nth_error_In; exact E | exact Hc' ].
@@ -1741,7 +1741,7 @@ Qed.
 
 Lemma con_inv : forall D G w tg e T,
   typing D G (e_con w tg e) T ->
-  exists Ts, tg < length w /\ typing D G e (tag_payload w Ts tg) /\
+  exists Ts, tg < length (gtags w) /\ typing D G e (tag_payload w Ts tg) /\
     teq (typ_Grp w (spine Ts)) T.
 Proof.
   intros D G w tg e T H. remember (e_con w tg e) as e0 eqn:He.

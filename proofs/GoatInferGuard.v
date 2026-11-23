@@ -334,7 +334,7 @@ Qed.
 
 Lemma mg_tag_payload : forall w Ts tg, Forall mg Ts -> mg (tag_payload w Ts tg).
 Proof.
-  intros w Ts tg H. unfold tag_payload. destruct (nth_error w tg) as [cs|]; [|exact I].
+  intros w Ts tg H. unfold tag_payload. destruct (nth_error (gtags w) tg) as [cs|]; [|exact I].
   unfold payload_ty. destruct cs; [ exact I | cbn [mg]; apply mg_slots_row; exact H ].
 Qed.
 
@@ -582,7 +582,7 @@ Proof.
       dC H E2. injection H as <- <- <- <- <-.
       pose proof (unify_co_gsub _ _ _ _ _ _ _ _ E2 M1 I) as S2.
       exact (conj (gs_comp _ _ S2 S1) I).
-    + destruct (Nat.ltb tg (length w)); [|discriminate].
+    + destruct (Nat.ltb tg (length (gtags w))); [|discriminate].
       dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       match type of H with context [fresh_tys ?m (nparams w)] => pose proof (mg_fresh_tys (nparams w) m) as HTs end.
       dC H E2. injection H as <- <- <- <- <-.

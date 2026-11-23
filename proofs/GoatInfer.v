@@ -169,9 +169,6 @@ Definition row_head (R : row) : option (label * typ * typ * row) :=
   | _ => None
   end.
 
-Definition gdecl_eq_dec (w w' : gdecl) : {w = w'} + {w <> w'} :=
-  list_eq_dec (list_eq_dec Nat.eq_dec) w w'.
-
 Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f} : option (sub * nat) :=
   match f with
   | O => None
@@ -378,7 +375,7 @@ Fixpoint obj_row (fs : fields) (n : nat) (tl : row) : row :=
 (* The number of parameters a group declares: the largest [6 + j] among its
    slot codes, less five. *)
 Definition nparams (w : gdecl) : nat :=
-  fold_right (fun cs a => fold_right (fun c b => Nat.max (c - 5) b) a cs) 0 w.
+  fold_right (fun cs a => fold_right (fun c b => Nat.max (c - 5) b) a cs) 0 (gtags w).
 
 (* [k] fresh variables, from atom [n]. *)
 Fixpoint fresh_tys (n k : nat) : list typ :=
@@ -397,10 +394,10 @@ Fixpoint nodup_b (l : list nat) : bool :=
    and either has an else or names them all ([arms_wf]). *)
 Definition arms_wf_b (w : gdecl) (ars : arms) : bool :=
   nodup_b (arms_idx ars)
-  && forallb (fun tg => Nat.ltb tg (length w)) (arms_idx ars)
+  && forallb (fun tg => Nat.ltb tg (length (gtags w))) (arms_idx ars)
   && match arms_default ars with
      | Some _ => true
-     | None => forallb (fun tg => existsb (Nat.eqb tg) (arms_idx ars)) (seq 0 (length w))
+     | None => forallb (fun tg => existsb (Nat.eqb tg) (arms_idx ars)) (seq 0 (length (gtags w)))
      end.
 
 Definition is_generic_op (o : bop) : bool :=
