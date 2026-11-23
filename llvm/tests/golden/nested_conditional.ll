@@ -10,7 +10,7 @@ declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 @goat.text.1 = private unnamed_addr constant [5 x i8] c"never"
 
 
-define i64 @goat_entry(ptr %inst) nounwind {
+define tailcc i64 @goat_entry(ptr %inst) nounwind {
 entry:
   %v1 = icmp sgt i64 2, 1
   br i1 %v1, label %then2, label %else3
@@ -69,7 +69,7 @@ run:
   store ptr %host, ptr %host_slot
   %ctx_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
   store ptr %ctx, ptr %ctx_slot
-  %v = call i64 @goat_entry(ptr %inst)
+  %v = call tailcc i64 @goat_entry(ptr %inst)
   %print_slot = getelementptr inbounds %goat_host, ptr %host, i32 0, i32 3
   %print = load ptr, ptr %print_slot
   call void %print(ptr %ctx, i64 %v) nounwind

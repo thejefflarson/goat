@@ -7,7 +7,7 @@
 
 
 
-define double @goat_entry(ptr %inst) nounwind {
+define tailcc double @goat_entry(ptr %inst) nounwind {
 entry:
   %v1 = fcmp olt double 0x4008000000000000, 0x4014000000000000
   br i1 %v1, label %then2, label %else3
@@ -39,7 +39,7 @@ run:
   store ptr %host, ptr %host_slot
   %ctx_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
   store ptr %ctx, ptr %ctx_slot
-  %v = call double @goat_entry(ptr %inst)
+  %v = call tailcc double @goat_entry(ptr %inst)
   %print_slot = getelementptr inbounds %goat_host, ptr %host, i32 0, i32 1
   %print = load ptr, ptr %print_slot
   call void %print(ptr %ctx, double %v) nounwind

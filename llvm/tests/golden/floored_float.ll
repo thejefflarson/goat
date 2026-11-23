@@ -95,7 +95,7 @@ end:
   ret double %m
 }
 
-define double @goat_entry(ptr %inst) nounwind {
+define tailcc double @goat_entry(ptr %inst) nounwind {
 entry:
   %v1 = call double @goat.float_floor_div(double 0x401E000000000000, double 0xC000000000000000)
   %v2 = call double @goat.float_floor_mod(double 0x401E000000000000, double 0xC000000000000000)
@@ -121,7 +121,7 @@ run:
   store ptr %host, ptr %host_slot
   %ctx_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
   store ptr %ctx, ptr %ctx_slot
-  %v = call double @goat_entry(ptr %inst)
+  %v = call tailcc double @goat_entry(ptr %inst)
   %print_slot = getelementptr inbounds %goat_host, ptr %host, i32 0, i32 1
   %print = load ptr, ptr %print_slot
   call void %print(ptr %ctx, double %v) nounwind

@@ -9,13 +9,13 @@ declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 @goat.text.0 = private unnamed_addr constant [23 x i8] c"this number got too big"
 
 
-define i64 @goat_entry(ptr %inst) nounwind {
+define tailcc i64 @goat_entry(ptr %inst) nounwind {
 entry:
-  %v1 = call i64 @goat_f1(ptr %inst, i64 20, i64 22)
+  %v1 = call tailcc i64 @goat_f1(ptr %inst, i64 20, i64 22)
   ret i64 %v1
 }
 
-define internal i64 @goat_f1(ptr %inst, i64 %l0, i64 %l1) nounwind {
+define internal tailcc i64 @goat_f1(ptr %inst, i64 %l0, i64 %l1) nounwind {
 entry:
   %v1 = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 %l0, i64 %l1)
   %v2 = extractvalue { i64, i1 } %v1, 1
@@ -52,7 +52,7 @@ run:
   store ptr %host, ptr %host_slot
   %ctx_slot = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
   store ptr %ctx, ptr %ctx_slot
-  %v = call i64 @goat_entry(ptr %inst)
+  %v = call tailcc i64 @goat_entry(ptr %inst)
   %print_slot = getelementptr inbounds %goat_host, ptr %host, i32 0, i32 3
   %print = load ptr, ptr %print_slot
   call void %print(ptr %ctx, i64 %v) nounwind

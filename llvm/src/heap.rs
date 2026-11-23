@@ -7,7 +7,12 @@
 //! the target's pointer or number width, so a layout's size depends only on its
 //! slot count (ADR 0010). A record is `[header][slot...]`; a variant is
 //! `[header][tag: u32][pad: u32][slot...]`; a string is
-//! `[header][len: u32][bytes...]`. A pointer slot holds the address as an `i64`.
+//! `[header][len: u32][bytes...]`; a closure is
+//! `[header][drop id: u32][pad: u32][code: i64][capture slot...]`. A pointer
+//! slot holds the address as an `i64`, and a closure's code word is its
+//! function's address, which `ptrtoint` makes the same width on every target.
+//! A closure carries its own drop id because its type names a signature, not
+//! the captures that decide what dies with it.
 //!
 //! The allocator keeps its state in the `goat_instance`: the bump offset, the
 //! free-list heads and the live and total allocation counts. A free block has
@@ -23,6 +28,9 @@ pub(crate) const VARIANT_BASE: usize = 4;
 pub(crate) const TAG_AT: u32 = 8;
 pub(crate) const STR_LEN_AT: u32 = 8;
 pub(crate) const STR_BYTES_AT: u32 = 12;
+pub(crate) const CLOSURE_DROP_AT: u32 = 8;
+pub(crate) const CLOSURE_CODE_AT: u32 = 16;
+pub(crate) const CLOSURE_BASE: usize = 5;
 const LINK_AT: u32 = 8;
 const IMMORTAL: i32 = -1;
 const POISON: i32 = -2;
@@ -56,6 +64,7 @@ pub(crate) enum Runtime {
 enum DropKind {
     Record(LayoutId),
     Variant(LayoutId),
+    Closure(FuncId),
 }
 
 #[derive(Default)]
@@ -186,7 +195,9 @@ impl<'a> Module<'a> {
     pub(crate) fn drop_id(&mut self, kind: HeapKind) -> Result<u32, EmitError> {
         let (drop, holds) = match kind {
             HeapKind::Str => return Ok(0),
-            HeapKind::Closure(_) => return Err(EmitError::Unsupported("closures")),
+            HeapKind::Closure(_) => {
+                return Err(EmitError::Malformed("a closure holds its own drop id"));
+            }
             HeapKind::Record(l) => match self.program.layouts.get(l.0 as usize) {
                 Some(Layout::Record(tys)) => (DropKind::Record(l), holds_references(tys)),
                 _ => return Err(EmitError::Malformed("record layout")),
@@ -204,12 +215,45 @@ impl<'a> Module<'a> {
         if !holds {
             return Ok(0);
         }
+        Ok(self.drop_id_of(drop))
+    }
+
+    fn drop_id_of(&mut self, drop: DropKind) -> u32 {
         let index = self.heap.drops.iter().position(|d| *d == drop);
         let index = index.unwrap_or_else(|| {
             self.heap.drops.push(drop);
             self.heap.drops.len() - 1
         });
-        Ok(index as u32 + 1)
+        index as u32 + 1
+    }
+
+    /// The struct type of the closures made from `f`, and its capture types.
+    pub(crate) fn closure_layout(&mut self, f: FuncId) -> Result<(String, &'a [MTy]), EmitError> {
+        let env = self.closure_env(f)?;
+        let name = format!("goat.c{}", f.0);
+        let base = ["i32", "i32", "i32", "i32", "i64"];
+        Ok((self.type_name(name, &base, &env.captures), &env.captures))
+    }
+
+    /// The drop id stored in the closures made from `f`.
+    pub(crate) fn closure_drop_id(&mut self, f: FuncId) -> Result<u32, EmitError> {
+        let (_, captures) = self.closure_layout(f)?;
+        Ok(if holds_references(captures) {
+            self.drop_id_of(DropKind::Closure(f))
+        } else {
+            0
+        })
+    }
+
+    /// The immortal closure of `f`, which captures nothing.
+    pub(crate) fn static_closure(&mut self, f: FuncId) -> String {
+        let code = self.func_name(f);
+        self.intern_static(format!("closure {}", f.0), |name| {
+            format!(
+                "{name} = private unnamed_addr constant {{ i32, i32, i32, i32, i64 }} \
+                 {{ i32 {IMMORTAL}, i32 0, i32 0, i32 0, i64 ptrtoint (ptr {code} to i64) }}"
+            )
+        })
     }
 
     fn intern_static(&mut self, key: String, define: impl FnOnce(&str) -> String) -> String {
@@ -609,6 +653,10 @@ impl<'a> Module<'a> {
         let kind = self.heap.drops[id as usize - 1];
         let mut body = DropBody::new();
         match kind {
+            DropKind::Closure(f) => {
+                let (ty, tys) = self.closure_layout(f)?;
+                self.drop_fields(&mut body, &ty, CLOSURE_BASE, tys)?;
+            }
             DropKind::Record(l) => {
                 let (ty, tys) = self.record_layout(l)?;
                 self.drop_fields(&mut body, &ty, RECORD_BASE, tys)?;
@@ -670,7 +718,10 @@ impl<'a> Module<'a> {
         for (i, field) in tys.iter().enumerate() {
             let MTy::Ptr(kind) = field else { continue };
             let at = field_index(narrow, base, tys, i);
-            let id = self.drop_id(*kind)?;
+            let id = match kind {
+                HeapKind::Closure(_) => None,
+                _ => Some(self.drop_id(*kind)?),
+            };
             body.next += 1;
             let n = body.next;
             let message = self.trap_lines(DOUBLE_RELEASE, &format!("twice{n}"));
@@ -700,14 +751,22 @@ impl<'a> Module<'a> {
             let skipped = body.block.clone();
             body.start(&format!("push{n}"));
             body.line(format!("store i32 {before}, ptr {child}"));
+            let tag = match id {
+                Some(id) => (id << DROP_ID_SHIFT).to_string(),
+                None => {
+                    body.line(format!(
+                        "%cid{n}.at = getelementptr inbounds i8, ptr {child}, i64 {CLOSURE_DROP_AT}"
+                    ));
+                    body.line(format!("%cid{n} = load i32, ptr %cid{n}.at"));
+                    body.line(format!("%shifted{n} = shl i32 %cid{n}, {DROP_ID_SHIFT}"));
+                    format!("%shifted{n}")
+                }
+            };
             body.line(format!(
                 "%pad{n}.at = getelementptr inbounds i8, ptr {child}, i64 4"
             ));
             body.line(format!("%pad{n} = load i32, ptr %pad{n}.at"));
-            body.line(format!(
-                "%tagged{n} = or i32 %pad{n}, {}",
-                id << DROP_ID_SHIFT
-            ));
+            body.line(format!("%tagged{n} = or i32 %pad{n}, {tag}"));
             body.line(format!("store i32 %tagged{n}, ptr %pad{n}.at"));
             body.line(format!("%at{n} = ptrtoint ptr {child} to i64"));
             body.line(format!("%base{n} = ptrtoint ptr %heap to i64"));
