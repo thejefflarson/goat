@@ -177,9 +177,13 @@ above states it, with these additions that the work settled.
 Not proved, and still open. Each is sound (W or the calculus refuses more than the
 checker accepts) and the differential test counts it:
 
-- 11 recursive programs W refuses: a row knot (6), a deep coercion (3), a
-  `unify_k` failure with no occurs check (1), and a group member that needs a
-  `fold` around its whole lambda (1) (#606).
+- 11 recursive programs W refuses (#606; corpus lines 7, 18, 291, 254, 299, 300,
+  288, 292, 301, 312, 315): a row variable meeting a row that contains it (3) and
+  a tail variable inside the other row (3), both refused after a prototype row
+  knot because the sides differ by an unrolling below a record with an open row,
+  which has no coercion; a deep coercion (3); two mus for one regular tree
+  (`step(ball).x`), which needs a coinductive equality (1); and a group member
+  that needs a `fold` around its whole lambda (1).
 - No `lacks` sort on a row variable, so a spread over a row-variable tail has no
   derivation (#564).
 - No theorem that `{...lit, x: 1}.a()`, a method literal spread and then called,
