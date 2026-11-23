@@ -972,7 +972,10 @@ Proof.
     destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R1 [E ->]]]].
     + subst. split; assumption.
     + destruct (IHR _ _ E Hs) as [Hb1 Hs1]. split; [ exact Hb1 | simpl; split; assumption ].
-  - simpl in Hs. subst. split; [ apply sat_any | apply rsat_any ].
+  - simpl in Hs. destruct Hs as [Hb Hs].
+    destruct (rm_maybe_inv _ _ _ _ _ _ _ Hrm) as [[E1 [E2 [E3 E4]]] | [Hne [R1 [E ->]]]].
+    + subst. split; [ | exact Hs ]. destruct Hb as [Hb | Hb]; [ discriminate Hb | exact Hb ].
+    + destruct (IHR _ _ E Hs) as [Hb1 Hs1]. split; [ exact Hb1 | simpl; split; assumption ].
 Qed.
 
 (* Two records of one row, and a label of the first: the second has the label
@@ -1090,7 +1093,9 @@ Proof.
   - exact I.
   - assumption.
   - destruct H1 as [H1 H2]. split; [ exact (proj1 H n H1) | exact (H0 n H2) ].
-  - assumption.
+  - destruct H2 as [[Hp | Hs] Hq]; split;
+      [ left; rewrite Hp; reflexivity | exact (H1 n Hq)
+      | right; exact (proj1 H0 n Hs) | exact (H1 n Hq) ].
 Qed.
 
 Lemma sat_eq_unroll : forall D B,

@@ -279,6 +279,15 @@ Proof.
       exact (conj H0 (conj H1 (conj (mg_apT _ _ Hs0 HP') (conj (mg_apT _ _ Hs0 HT') H2)))).
 Qed.
 
+Lemma mgr_drop_abs : forall R, mgr R -> mgr (drop_abs R).
+Proof.
+  induction R as [| r | l T R IH | l P T R IH]; simpl; intros H; try exact H.
+  - destruct H as [H1 H2]. split; [ exact H1 | apply IH; exact H2 ].
+  - destruct H as [H1 [H2 H3]].
+    destruct (is_abs P && rlacks l (drop_abs R)); [ apply IH; exact H3 | ].
+    simpl. split; [ exact H1 | split; [ exact H2 | apply IH; exact H3 ] ].
+Qed.
+
 Theorem unify_t_gsub : forall f,
   (forall D T1 T2 n s D' n', unify_t f D T1 T2 n = Some (s, D', n') ->
      mg T1 -> mg T2 -> gsub s) /\
@@ -302,7 +311,7 @@ Proof.
       refine (gs_comp _ _ _ Hs1).
       eapply IHt; [ exact E2 | apply mg_apT; [ exact Hs1 | exact (proj2 H1) ]
                              | apply mg_apT; [ exact Hs1 | exact (proj2 H2) ] ].
-    + eapply IHr; [exact H | exact H1 | exact H2].
+    + eapply IHr; [exact H | apply mgr_drop_abs; exact H1 | apply mgr_drop_abs; exact H2].
     + destruct (gdecl_eq_dec _ _); [|discriminate].
       eapply IHt; [exact H | exact H1 | exact H2].
   - intros D R1 R2 n s D' n' H H1 H2. simpl in H.
@@ -319,7 +328,7 @@ Proof.
                    match unify_t f D1 (apT sp (apT s0 T)) (apT sp T') n2 with
                    | None => None
                    | Some (s1, D2, n3) =>
-                       match unify_r f D2 (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 with
+                       match unify_r f D2 (drop_abs (apR s1 (apR sp (apR s0 R1')))) (drop_abs (apR s1 (apR sp R2'))) n3 with
                        | None => None
                        | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
                        end
@@ -332,7 +341,7 @@ Proof.
       destruct (rewrite_row l (frv_row R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
       destruct (unify_t f D0 (apT s0 P) P' n1) as [[[sp D1] n2]|] eqn:Eu0; [|discriminate].
       destruct (unify_t f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1; [|discriminate].
-      destruct (unify_r f D2 (apR s1 (apR sp (apR s0 R1''))) (apR s1 (apR sp R2'')) n3)
+      destruct (unify_r f D2 (drop_abs (apR s1 (apR sp (apR s0 R1'')))) (drop_abs (apR s1 (apR sp R2''))) n3)
         as [[[s2 D3] n4]|] eqn:Eu2; [|discriminate].
       injection Hg as <- <- <-.
       destruct (row_head_mg _ _ _ _ _ Eh Hg1) as [HP [HT HR1]].
@@ -341,8 +350,8 @@ Proof.
       pose proof (IHt _ _ _ _ _ _ _ Eu0 (mg_apT _ _ S0 HP) M0) as Sp.
       pose proof (IHt _ _ _ _ _ _ _ Eu1 (mg_apT _ _ Sp (mg_apT _ _ S0 HT)) (mg_apT _ _ Sp M1)) as S1.
       pose proof (IHr _ _ _ _ _ _ _ Eu2
-                    (mg_apR _ _ S1 (mg_apR _ _ Sp (mg_apR _ _ S0 HR1)))
-                    (mg_apR _ _ S1 (mg_apR _ _ Sp M2))) as S2.
+                    (mgr_drop_abs _ (mg_apR _ _ S1 (mg_apR _ _ Sp (mg_apR _ _ S0 HR1))))
+                    (mgr_drop_abs _ (mg_apR _ _ S1 (mg_apR _ _ Sp M2)))) as S2.
       exact (gs_comp _ _ S2 (gs_comp _ _ S1 (gs_comp _ _ Sp S0))). }
     destruct R1 as [|r|l T R1'|lm Pm Tm Rm]; destruct R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2];
       try (exact (Hgen _ _ H1 H2 _ _ _ H)).
