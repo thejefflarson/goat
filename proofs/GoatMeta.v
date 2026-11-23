@@ -770,7 +770,7 @@ Proof.
   induction Hty; intros Hval B0 Heq;
     try solve [ inversion Hval ];
     try solve [ apply teq_thead in Heq; simpl in Heq; discriminate ].
-  - (* T_Num *) destruct T; simpl in *; try discriminate;
+  - (* T_Num *) destruct T; simpl in *; try discriminate; try contradiction;
       apply teq_thead in Heq; simpl in Heq; discriminate.
   - (* T_Conv *) apply IHHty; auto. eapply teq_trans; eassumption.
   - (* T_Fold *) inversion Hval; subst.
@@ -793,7 +793,7 @@ Proof.
   induction Hty; intros w0 A0 HT Hval;
     try discriminate HT; try solve [ inversion Hval ].
   - (* T_Num: a numeral never has a group type *)
-    subst. simpl in *. discriminate.
+    subst. simpl in *. contradiction.
   - (* T_Conv *) subst.
     match goal with
     | H : teq ?B (typ_Grp _ _) |- _ =>
@@ -1007,6 +1007,20 @@ Proof.
           | (simpl in *; discriminate) ].
 Qed.
 
+Lemma cmp_rel_con_inv : forall w tg1 tg2 a b c,
+  cmp_rel (e_con w tg1 a) (e_con w tg2 b) c ->
+  (tg1 = tg2 /\ cmp_rel a b c) \/ (tg1 < tg2 /\ c = Lt) \/ (tg2 < tg1 /\ c = Gt).
+Proof.
+  intros w tg1 tg2 a b c H.
+  remember (e_con w tg1 a) as x eqn:Ex. remember (e_con w tg2 b) as y eqn:Ey.
+  destruct H; try discriminate.
+  - subst. match goal with Hf : fl_pair _ _ |- _ => inversion Hf end.
+  - subst. match goal with Hb : val_bool (e_con _ _ _) = _ |- _ => discriminate Hb end.
+  - injection Ex as E1 E2 E3. injection Ey as F1 F2 F3. subst. left. split; [ reflexivity | assumption ].
+  - injection Ex as E1 E2 E3. injection Ey as F1 F2 F3. subst. right; left. split; [ assumption | reflexivity ].
+  - injection Ex as E1 E2 E3. injection Ey as F1 F2 F3. subst. right; right. split; [ assumption | reflexivity ].
+Qed.
+
 Lemma cr_fields_total : forall labs fs1 fs2,
   (forall l, In l labs -> exists v1 v2 c,
      lookup_first l fs1 = Some v1 /\ lookup_first l fs2 = Some v2 /\ cmp_rel v1 v2 c) ->
@@ -1022,45 +1036,166 @@ Proof.
     + exists Gt. eapply cf_ne; [ exact E1 | exact E2 | exact Hc | discriminate ].
 Qed.
 
-Definition cmp_total_at (D : denv) (T : typ) : Prop :=
-  forall G v1 v2, sat D k_Eq T -> value v1 -> value v2 ->
-  typing D G v1 T -> typing D G v2 T -> exists c, cmp_rel v1 v2 c.
+(* ------------------------------------------------------------------ *)
+(* Comparison is total on values of an Eq type.  Tag groups and recursive *)
+(* types do not shrink the type across their recursive slot, so the       *)
+(* induction is on the size of the first value.                           *)
+(* ------------------------------------------------------------------ *)
 
-Lemma cmp_total_mut : forall D,
-  (forall T, cmp_total_at D T) /\
-  (forall R, forall l T R', rm l R T R' -> cmp_total_at D T).
+Fixpoint vsize (e : exp) : nat :=
+  match e with
+  | e_fold v => S (vsize v)
+  | e_con _ _ v => S (vsize v)
+  | e_rec fs => S (fsize fs)
+  | _ => 1
+  end
+with fsize (fs : fields) : nat :=
+  match fs with
+  | fs_nil => 0
+  | fs_cons _ e fs' => vsize e + fsize fs'
+  | fs_meth _ e fs' => vsize e + fsize fs'
+  end.
+
+Lemma lookup_first_vsize : forall l fs w,
+  lookup_first l fs = Some w -> vsize w <= fsize fs.
 Proof.
-  intros D. apply typ_row_mutind; unfold cmp_total_at; simpl.
+  intros l fs. induction fs as [ | l' e fs IH | l' e fs IH ]; simpl; intros w H.
+  - discriminate.
+  - destruct (Nat.eqb l l'); [ inversion H; subst; lia | specialize (IH _ H); lia ].
+  - destruct (Nat.eqb l l'); [ inversion H; subst; lia | specialize (IH _ H); lia ].
+Qed.
+
+(* An [Eq] type stays [Eq] when a bound index is replaced by an [Eq] type. *)
+Lemma sat_open_mut : forall D U,
+  sat D k_Eq U ->
+  (forall T, (forall n, sat D k_Eq T -> sat D k_Eq (open_typ n U T)) /\
+             (forall n w j, spine_sat D w j T -> spine_sat D w j (open_typ n U T))) /\
+  (forall R n, rsat D k_Eq R -> rsat D k_Eq (open_row n U R)).
+Proof.
+  intros D U HU. apply typ_row_mutind; simpl; intros.
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - destruct H as [H1 _], H0 as [_ H0]. split; [ intros; assumption | ].
+    intros n w j [Hu Hs]. split; [ intros Hc; exact (H1 n (Hu Hc)) | exact (H0 n w (S j) Hs) ].
+  - split; [ intros n; exact (H n) | intros; contradiction ].
+  - split; intros; first [ assumption | contradiction ].
+  - split; [ | intros; contradiction ]. intros n Hs.
+    destruct (lt_eq_lt_dec i n) as [[Hlt | Heq] | Hgt]; simpl; assumption.
+  - split; [ intros n Hs; exact (proj1 H (S n) Hs) | intros; contradiction ].
+  - split; [ intros n Hs; exact (proj2 H n w 0 Hs) | intros; contradiction ].
+  - exact I.
+  - contradiction.
+  - destruct H1 as [H1 H2]. split; [ exact (proj1 H n H1) | exact (H0 n H2) ].
+  - contradiction.
+Qed.
+
+Lemma sat_eq_unroll : forall D B,
+  sat D k_Eq (typ_Mu B) -> sat D k_Eq (open_typ 0 (typ_Mu B) B).
+Proof.
+  intros D B H. exact (proj1 (proj1 (sat_open_mut D (typ_Mu B) H) B) 0 H).
+Qed.
+
+Lemma spine_sat_nth : forall D w As j,
+  spine_sat D w j (spine As) -> forall i,
+  (exists cs, In cs w /\ In (6 + (j + i)) cs) -> sat D k_Eq (nth i As typ_Unit).
+Proof.
+  intros D w As. induction As as [ | T As IH ]; intros j Hs i Hu.
+  - destruct i; simpl; right; reflexivity.
+  - simpl in Hs. destruct Hs as [Hh Ht]. destruct i as [ | i ]; simpl.
+    + apply Hh. rewrite Nat.add_0_r in Hu. exact Hu.
+    + apply (IH (S j) Ht i). replace (6 + (S j + i)) with (6 + (j + S i)) by lia. exact Hu.
+Qed.
+
+Lemma sat_slot : forall D w As c,
+  sat D k_Eq (typ_Grp w (spine As)) -> (exists cs, In cs w /\ In c cs) ->
+  sat D k_Eq (slot_ty w As c).
+Proof.
+  intros D w As c Hg Hu. unfold slot_ty.
+  destruct c as [ | [ | [ | [ | [ | [ | c ] ] ] ] ] ];
+    first [ exact Hg | exact I | (right; reflexivity) | idtac ].
+  simpl. rewrite Nat.sub_0_r. exact (spine_sat_nth D w As 0 Hg c Hu).
+Qed.
+
+Lemma rsat_slots : forall D w As cs i,
+  sat D k_Eq (typ_Grp w (spine As)) -> (forall c, In c cs -> exists cs', In cs' w /\ In c cs') ->
+  rsat D k_Eq (slots_row w As i cs).
+Proof.
+  intros D w As cs. induction cs as [ | c cs IH ]; intros i Hg Hu; simpl.
+  - exact I.
+  - split.
+    + apply sat_slot; [ exact Hg | apply Hu; left; reflexivity ].
+    + apply IH; [ exact Hg | intros c' Hc'; apply Hu; right; exact Hc' ].
+Qed.
+
+Lemma sat_tag_payload : forall D w As tg,
+  sat D k_Eq (typ_Grp w (spine As)) -> tg < length w ->
+  sat D k_Eq (tag_payload w As tg).
+Proof.
+  intros D w As tg Hg Hlt. unfold tag_payload.
+  destruct (nth_error w tg) as [cs | ] eqn:E; [ | right; reflexivity ].
+  unfold payload_ty. destruct cs as [ | c cs ]; [ right; reflexivity | ].
+  change (rsat D k_Eq (slots_row w As 0 (c :: cs))). apply rsat_slots; [ exact Hg | ].
+  intros c' Hc'. exists (c :: cs). split; [ eapply nth_error_In; exact E | exact Hc' ].
+Qed.
+
+Lemma teq_spine_exists : forall Ts A,
+  teq A (spine Ts) -> exists As, A = spine As /\ Forall2 teq As Ts.
+Proof.
+  induction Ts as [ | T Ts IH ]; intros A H; simpl in H.
+  - apply teq_sym in H. apply teq_Unit_inv in H. subst. exists nil. split; constructor.
+  - apply teq_sym in H. apply teq_Arrow_inv in H. destruct H as [A1 [A2 [E [H1 H2]]]]. subst.
+    destruct (IH A2 (teq_sym _ _ H2)) as [As [E Hf]]. subst.
+    exists (A1 :: As). split; [ reflexivity | constructor; [ apply teq_sym; exact H1 | exact Hf ] ].
+Qed.
+
+(* No value has a bound index for its type. *)
+Lemma canon_bvar : forall D G v T,
+  value v -> typing D G v T -> thead_tag T = 8 -> False.
+Proof.
+  intros D G v T Hval Hty. revert Hval. induction Hty; intros Hval Hh;
+    try solve [ inversion Hval ];
+    try solve [ simpl in Hh; discriminate ].
+  - destruct T; simpl in Hh; try discriminate.
+    match goal with Hs : sat _ k_Literal _ |- _ =>
+      simpl in Hs; destruct Hs as [Hs | Hs]; discriminate Hs end.
+  - apply IHHty; [ exact Hval | ].
+    match goal with Hq : teq _ _ |- _ => rewrite (teq_thead _ _ Hq) end. exact Hh.
+Qed.
+
+Lemma cmp_total_size : forall n D G T v1 v2,
+  vsize v1 < n -> sat D k_Eq T -> value v1 -> value v2 ->
+  typing D G v1 T -> typing D G v2 T -> exists c, cmp_rel v1 v2 c.
+Proof.
+  induction n as [ | n IH ]; intros D G T v1 v2 Hn; [ lia | ].
+  intros Hs Hv1 Hv2 H1 H2.
+  destruct T as [ | | | | | T1 T2 | R | a | i | B | w A ].
   - (* Int *)
-    intros G v1 v2 _ Hv1 Hv2 H1 H2.
     destruct (canon_base _ _ _ _ Hv1 H1) as [C1 _]. destruct (C1 (teq_refl _)) as [a ->].
     destruct (canon_base _ _ _ _ Hv2 H2) as [C2 _]. destruct (C2 (teq_refl _)) as [b ->].
     eexists. apply cr_int.
   - (* Float *)
-    intros G v1 v2 _ Hv1 Hv2 H1 H2.
     destruct (canon_base _ _ _ _ Hv1 H1) as [_ [C1 _]].
     destruct (canon_base _ _ _ _ Hv2 H2) as [_ [C2 _]].
     destruct (C1 (teq_refl _)) as [[a ->] | [x ->]]; destruct (C2 (teq_refl _)) as [[b ->] | [y ->]];
       first [ (eexists; apply cr_int) | (exists Eq; apply cr_float; constructor) ].
   - (* Bool *)
-    intros G v1 v2 _ Hv1 Hv2 H1 H2.
     destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [_ C1]]].
     destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [_ C2]]].
     destruct (C1 (teq_refl _)) as [-> | ->]; destruct (C2 (teq_refl _)) as [-> | ->];
       (eexists; eapply cr_bool; reflexivity).
   - (* Unit *)
-    intros G v1 v2 _ Hv1 Hv2 H1 H2.
     rewrite (canon_unit _ _ _ _ Hv1 H1 (teq_refl _)), (canon_unit _ _ _ _ Hv2 H2 (teq_refl _)).
     eexists. apply cr_unit.
   - (* String *)
-    intros G v1 v2 _ Hv1 Hv2 H1 H2.
     destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [C1 _]]]. destruct (C1 (teq_refl _)) as [p ->].
     destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [C2 _]]]. destruct (C2 (teq_refl _)) as [q ->].
     eexists. apply cr_str.
   - (* Arrow *)
-    intros T1 _ T2 _ G v1 v2 Hs. discriminate Hs.
+    discriminate Hs.
   - (* Record: the labels of the first record, each read in both *)
-    intros R IH G v1 v2 Hs Hv1 Hv2 H1 H2.
     destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 [Hf1 Hq1]]]]].
     destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 [Hf2 Hq2]]]]].
     assert (Hall : forall l, In l (rec_labels fs1) -> exists w1 w2 c,
@@ -1069,31 +1204,41 @@ Proof.
       destruct (rec_align _ _ _ _ _ _ _ Hr1 Hr2 Hf1 Hf2 Hq1 Hq2 l Hl)
         as [T' [R'' [w1 [w2 [Hrm [E1 [E2 [Hw1 [Hw2 [Ht1 Ht2]]]]]]]]]].
       destruct (rm_sat D k_Eq _ _ _ _ Hrm Hs) as [Hst _].
-      destruct (IH _ _ _ Hrm G w1 w2 Hst Hw1 Hw2 Ht1 Ht2) as [c Hc].
+      pose proof (lookup_first_vsize _ _ _ E1) as Hsz. simpl in Hn.
+      destruct (IH D G T' w1 w2 ltac:(lia) Hst Hw1 Hw2 Ht1 Ht2) as [c Hc].
       exists w1, w2, c. auto. }
     destruct (cr_fields_total _ _ _ Hall) as [c Hf].
     exists c. apply cr_rec. exact Hf.
   - (* Var: a value at a variable's type is a numeral *)
-    intros a G v1 v2 _ Hv1 Hv2 H1 H2.
     destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
     destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
     eexists. apply cr_int.
-  - intros i G v1 v2 Hs. discriminate Hs.
-  - intros T _ G v1 v2 Hs. discriminate Hs.
-  - intros w T _ G v1 v2 Hs. discriminate Hs.
-  - (* row Empty *)
-    intros l T R' Hrm. exfalso. eapply rm_empty_inv; eassumption.
-  - intros r l T R' Hrm. exfalso. eapply rm_var_inv; eassumption.
-  - (* row Ext *)
-    intros l0 T0 IHT R0 IHR l T R' Hrm.
-    destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R1 [E ->]]]].
-    + subst. exact IHT.
-    + exact (IHR _ _ _ E).
-  - (* row Maybe *)
-    intros l0 T1 _ T2 IHT R0 IHR l T R' Hrm.
-    destruct (rm_maybe_inv _ _ _ _ _ _ _ Hrm) as [[E1 [E2 [E3 E4]]] | [Hne [R1 [E ->]]]].
-    + subst. exact IHT.
-    + exact (IHR _ _ _ E).
+  - (* Bvar *)
+    exfalso. exact (canon_bvar _ _ _ _ Hv1 H1 eq_refl).
+  - (* Mu: compare what the folds hold *)
+    destruct (canon_mu _ _ _ _ _ Hv1 H1 (teq_refl _)) as [u1 [-> [Hu1 Hy1]]].
+    destruct (canon_mu _ _ _ _ _ Hv2 H2 (teq_refl _)) as [u2 [-> [Hu2 Hy2]]].
+    simpl in Hn.
+    destruct (IH D G _ u1 u2 ltac:(lia) (sat_eq_unroll _ _ Hs) Hu1 Hu2 Hy1 Hy2) as [c Hc].
+    exists c. apply cr_fold. exact Hc.
+  - (* Grp: tags by position, then payload *)
+    destruct (canon_grp _ _ _ _ _ Hv1 H1) as [tg1 [u1 [Ts1 [-> [Hu1 [Hl1 [Hq1 Hy1]]]]]]].
+    destruct (canon_grp _ _ _ _ _ Hv2 H2) as [tg2 [u2 [Ts2 [-> [Hu2 [Hl2 [Hq2 Hy2]]]]]]].
+    destruct (teq_spine_exists _ _ Hq1) as [As [-> Hf1]].
+    destruct (teq_spine_exists _ _ Hq2) as [As2 [Es Hf2]].
+    apply spine_inj in Es. subst As2.
+    assert (Hg : sat D k_Eq (typ_Grp w (spine As))) by exact Hs.
+    destruct (Nat.lt_trichotomy tg1 tg2) as [Hlt | [Heq | Hgt]].
+    + eexists. apply cr_con_lt. exact Hlt.
+    + subst tg2. simpl in Hn.
+      assert (Hy1' : typing D G u1 (tag_payload w As tg1))
+        by (eapply T_Conv; [ exact Hy1 | apply teq_sym; apply teq_tag_payload; exact Hf1 ]).
+      assert (Hy2' : typing D G u2 (tag_payload w As tg1))
+        by (eapply T_Conv; [ exact Hy2 | apply teq_sym; apply teq_tag_payload; exact Hf2 ]).
+      destruct (IH D G _ u1 u2 ltac:(lia) (sat_tag_payload _ _ _ _ Hg Hl1) Hu1 Hu2 Hy1' Hy2')
+        as [c Hc].
+      exists c. apply cr_con_eq. exact Hc.
+    + eexists. apply cr_con_gt. exact Hgt.
 Qed.
 
 (* Two values of one type that satisfies Eq compare to some result.  The type
@@ -1103,7 +1248,7 @@ Lemma cmp_total : forall D G A v1 v2,
   typing D G v1 A -> typing D G v2 A -> exists c, cmp_rel v1 v2 c.
 Proof.
   intros D G A v1 v2 Hs Hv1 Hv2 H1 H2.
-  exact (proj1 (cmp_total_mut D) A G v1 v2 Hs Hv1 Hv2 H1 H2).
+  exact (cmp_total_size (S (vsize v1)) D G A v1 v2 (Nat.lt_succ_diag_r _) Hs Hv1 Hv2 H1 H2).
 Qed.
 
 (* An operator applied to two values of the types its signature wants either
@@ -1122,7 +1267,7 @@ Proof.
   destruct Hs as [ D0 o A Hk Hsat | D0 | D0 o A Hk Hsat | D0 R0 Hr | D0 o B Hk HB ].
   - (* [+ - *] on two numbers of one Numeric type *)
     destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity);
-      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat).
+      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat); try contradiction.
     + (* Int: in range it steps, out of range it traps *)
       destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
       apply ring_nums; assumption.
@@ -1145,7 +1290,7 @@ Proof.
     + apply bs_float; [ right; reflexivity | constructor ].
   - (* [//] and [%] on two numbers of one Numeric type *)
     destruct A; simpl in Hsat; try discriminate; try (exfalso; eapply HnR; reflexivity);
-      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat).
+      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat); try contradiction.
     + (* Int: a zero divisor traps, and so does a quotient out of range *)
       destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
       apply whole_nums; assumption.
@@ -1161,29 +1306,9 @@ Proof.
       apply whole_nums; assumption.
   - (* [/] on records is not a scalar operation *)
     exfalso. eapply HnR. reflexivity.
-  - (* a comparison of two values of one Eq type, but not a record *)
-    destruct B; simpl in HB; try (exfalso; eapply HnR; reflexivity);
-      try (destruct HB as [HB | HB]; discriminate HB); try discriminate HB.
-    + destruct (Hint _ Hv1 H1) as [a ->]. destruct (Hint _ Hv2 H2) as [b ->].
-      left. eexists. apply bs_cmp; [ assumption | apply cr_int ].
-    + destruct (Hflt _ Hv1 H1) as [[a ->] | [x ->]]; destruct (Hflt _ Hv2 H2) as [[b ->] | [y ->]];
-        left.
-      * eexists. apply bs_cmp; [ assumption | apply cr_int ].
-      * exists (of_bool true). apply bs_cmp_float; [ assumption | constructor ].
-      * exists (of_bool true). apply bs_cmp_float; [ assumption | constructor ].
-      * exists (of_bool true). apply bs_cmp_float; [ assumption | constructor ].
-    + destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [_ C1]]].
-      destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [_ C2]]].
-      destruct (C1 (teq_refl _)) as [-> | ->]; destruct (C2 (teq_refl _)) as [-> | ->];
-        (left; eexists; apply bs_cmp; [ exact Hk | eapply cr_bool; reflexivity ]).
-    + rewrite (canon_unit _ _ _ _ Hv1 H1 (teq_refl _)), (canon_unit _ _ _ _ Hv2 H2 (teq_refl _)).
-      left. eexists. apply bs_cmp; [ assumption | apply cr_unit ].
-    + destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [C1 _]]]. destruct (C1 (teq_refl _)) as [p ->].
-      destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [C2 _]]]. destruct (C2 (teq_refl _)) as [q ->].
-      left. eexists. apply bs_cmp; [ assumption | apply cr_str ].
-    + destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
-      destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
-      left. eexists. apply bs_cmp; [ assumption | apply cr_int ].
+  - (* a comparison of two values of one Eq type *)
+    destruct (cmp_total _ _ _ _ _ HB Hv1 Hv2 H1 H2) as [c Hc].
+    left. eexists. apply bs_cmp; [ exact Hk | exact Hc ].
 Qed.
 
 (* An operator applied to two values of the types its signature wants either
@@ -1664,8 +1789,8 @@ Qed.
 Lemma teq_sat_iff : forall T T', teq T T' -> forall D k, (k = k_Any \/ k = k_Literal) ->
   (sat D k T <-> sat D k T').
 Proof.
-  induction 1; intros D kk Hk; try (simpl; tauto).
-  - destruct kk; simpl; first [ tauto | (exfalso; destruct Hk as [Hk | Hk]; discriminate Hk) ].
+  induction 1; intros D kk Hk; try (simpl; tauto);
+    try (destruct kk; simpl; first [ tauto | (exfalso; destruct Hk as [Hk | Hk]; discriminate Hk) ]; fail).
   - rewrite (IHteq1 D kk Hk). apply IHteq2. exact Hk.
   - symmetry. apply IHteq. exact Hk.
 Qed.

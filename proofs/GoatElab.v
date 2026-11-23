@@ -197,6 +197,10 @@ Proof.
   - apply cr_str.
   - rewrite (erase_val_bool _ _ e), (erase_val_bool _ _ e0). eapply cr_bool; eassumption.
   - apply cr_unit.
+  - assumption.
+  - apply cr_con_eq. assumption.
+  - apply cr_con_lt. assumption.
+  - apply cr_con_gt. assumption.
   - apply cr_rec. rewrite erase_rec_labels. assumption.
   - apply cf_nil.
   - eapply cf_eq; [ rewrite erase_lookup_first, e; reflexivity | rewrite erase_lookup_first, e0; reflexivity | | ]; assumption.

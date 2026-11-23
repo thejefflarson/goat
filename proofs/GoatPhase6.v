@@ -1,8 +1,10 @@
-(* Phase 6 stages 1a and 1b: the Eq sort and record comparison.  A comparison
-   takes two operands of one type that satisfies Eq, so a generic comparison
-   types at a variable of that sort, Unit compares, a function does not, and
-   two records compare label by label.  The accepted examples fail to compile
-   if a rule is dropped, and the rejected ones if a rule is loosened. *)
+(* Phase 6 stages 1a to 1c: the Eq sort, record comparison, and comparison of
+   tag groups and recursive types.  A comparison takes two operands of one
+   type that satisfies Eq, so a generic comparison types at a variable of that
+   sort, Unit compares, a function does not, two records compare label by
+   label, two tags of one group compare by position and then by payload, and a
+   fold compares as what it holds.  The accepted examples fail to compile if a
+   rule is dropped, and the rejected ones if a rule is loosened. *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
@@ -14,8 +16,10 @@ Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatPhase1.
 Require Import Goat.GoatRecArithExamples.
+Require Import Goat.GoatPhase3.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
+From Stdlib Require Import Lia.
 
 (* () == () *)
 Example unit_equality_types :
@@ -248,3 +252,220 @@ Proof. simpl. repeat split; first [ exact I | (right; reflexivity) ]. Qed.
 Example record_with_function_is_not_eq :
   ~ sat d_any k_Eq (typ_Record (row_Ext lx (typ_Arrow typ_Int typ_Int) row_Empty)).
 Proof. simpl. intros [H _]. discriminate H. Qed.
+
+(* ---- stage 1c: tags compare by position, then by payload ---- *)
+
+(* tag Level = Low | Medium | High *)
+Definition low : exp := e_con level 0 e_unit.
+Definition medium : exp := e_con level 1 e_unit.
+Definition high : exp := e_con level 2 e_unit.
+
+Example level_is_eq : sat d_any k_Eq (typ_Grp level (spine [])).
+Proof. exact I. Qed.
+
+Lemma level_types : forall tg, tg < 3 ->
+  typing d_any nil (e_con level tg e_unit) (typ_Grp level (spine [])).
+Proof.
+  intros tg Hlt. destruct tg as [ | [ | [ | tg ] ] ]; [ | | | lia ];
+    (apply T_Con; [ simpl; lia | cbn; apply T_Unit; solve_uniq ]).
+Qed.
+
+Example level_compare_types : forall o, kind o = k_cmp ->
+  typing d_any nil (e_bin low o high) typ_Bool.
+Proof.
+  intros o Hk.
+  eapply T_Bin with (A := typ_Grp level (spine [])) (B := typ_Grp level (spine []));
+    [ apply level_types; lia | apply level_types; lia | apply sig_cmp; [ exact Hk | exact I ] ].
+Qed.
+
+Example low_lt_medium : bin_step bop_lt low medium e_true.
+Proof. refine (bs_cmp bop_lt _ _ Lt eq_refl _). apply cr_con_lt. lia. Qed.
+
+Example medium_lt_high : bin_step bop_lt medium high e_true.
+Proof. refine (bs_cmp bop_lt _ _ Lt eq_refl _). apply cr_con_lt. lia. Qed.
+
+Example high_gt_low : bin_step bop_gt high low e_true.
+Proof. refine (bs_cmp bop_gt _ _ Gt eq_refl _). apply cr_con_gt. lia. Qed.
+
+Example medium_equals_medium : bin_step bop_eq medium medium e_true.
+Proof. refine (bs_cmp bop_eq _ _ Eq eq_refl _). apply cr_con_eq. apply cr_unit. Qed.
+
+(* Position decides, so High is not below Low. *)
+Example high_not_lt_low : ~ bin_step bop_lt high low e_true.
+Proof.
+  intros H. inversion H; subst;
+    first [ (match goal with Hf : fl_pair _ _ |- _ => inversion Hf end) | idtac ].
+  match goal with Hc : cmp_rel _ _ _ |- _ =>
+    destruct (cmp_rel_con_inv _ _ _ _ _ _ Hc) as [[E _] | [[Hl ->] | [Hg ->]]];
+      [ discriminate E | lia | simpl in *; discriminate ] end.
+Qed.
+
+(* ---- lists: Empty < Link, then head, then tail ---- *)
+
+Definition lst_1_9 : exp := link (e_num 1) (link (e_num 9) empty_l).
+Definition lst_2 : exp := link (e_num 2) empty_l.
+Definition lst_1_2 : exp := link (e_num 1) (link (e_num 2) empty_l).
+Definition lst_1_2_0 : exp := link (e_num 1) (link (e_num 2) (link (e_num 0) empty_l)).
+Definition lst_1 : exp := link (e_num 1) empty_l.
+
+Example list_is_eq_at_int : sat d_any k_Eq (typ_Grp list_g (spine [typ_Int])).
+Proof. simpl. split; [ intros _; exact I | exact I ]. Qed.
+
+Lemma list_int_types : forall l, l = lst_1_9 \/ l = lst_2 \/ l = lst_1_2 \/ l = lst_1_2_0 \/ l = lst_1 \/ l = empty_l ->
+  typing d_any nil l (typ_Grp list_g (spine [typ_Int])).
+Proof.
+  intros l H. destruct H as [-> | [-> | [-> | [-> | [-> | ->]]]]];
+    unfold lst_1_9, lst_2, lst_1_2, lst_1_2_0, lst_1;
+    repeat first [ apply link_types | apply empty_is_every_list | (apply T_Num; [ solve_uniq | exact I ]) ].
+Qed.
+
+Example lists_compare_types : typing d_any nil (e_bin lst_1_9 bop_lt lst_2) typ_Bool.
+Proof.
+  eapply T_Bin with (A := typ_Grp list_g (spine [typ_Int])) (B := typ_Grp list_g (spine [typ_Int]));
+    [ apply list_int_types; tauto | apply list_int_types; tauto
+    | apply sig_cmp; [ reflexivity | exact list_is_eq_at_int ] ].
+Qed.
+
+(* [1, 9] < [2]: the heads decide. *)
+Example list_head_decides : bin_step bop_lt lst_1_9 lst_2 e_true.
+Proof.
+  refine (bs_cmp bop_lt _ _ Lt eq_refl _).
+  unfold lst_1_9, lst_2, link. apply cr_con_eq. apply cr_rec. unfold rec_labels. simpl.
+  eapply cf_ne; [ reflexivity | reflexivity | exact (cr_int 1 2) | discriminate ].
+Qed.
+
+(* [] < [1]: Empty is the first tag. *)
+Example empty_lt_one : bin_step bop_lt empty_l lst_1 e_true.
+Proof.
+  refine (bs_cmp bop_lt _ _ Lt eq_refl _).
+  unfold empty_l, lst_1, link. apply cr_con_lt. lia.
+Qed.
+
+(* [1, 2] < [1, 2, 0]: a prefix comes first. *)
+Example list_prefix_first : bin_step bop_lt lst_1_2 lst_1_2_0 e_true.
+Proof.
+  refine (bs_cmp bop_lt _ _ Lt eq_refl _).
+  unfold lst_1_2, lst_1_2_0, link. apply cr_con_eq. apply cr_rec. unfold rec_labels. simpl.
+  eapply cf_eq; [ reflexivity | reflexivity | exact (cr_int 1 1) | ].
+  eapply cf_ne; [ reflexivity | reflexivity | | discriminate ].
+  apply cr_con_eq. apply cr_rec. unfold rec_labels. simpl.
+  eapply cf_eq; [ reflexivity | reflexivity | exact (cr_int 2 2) | ].
+  eapply cf_ne; [ reflexivity | reflexivity | | discriminate ].
+  unfold empty_l. apply cr_con_lt. lia.
+Qed.
+
+(* Any two lists of Int compare: totality reaches a group that contains itself. *)
+Example lists_have_a_result : exists c, cmp_rel lst_1_9 lst_2 c.
+Proof.
+  eapply cmp_total with (D := d_any) (G := nil) (A := typ_Grp list_g (spine [typ_Int]));
+    [ exact list_is_eq_at_int | | | apply list_int_types; tauto | apply list_int_types; tauto ].
+  - unfold lst_1_9, link, empty_l. repeat first [ constructor | assumption ].
+  - unfold lst_2, link, empty_l. repeat first [ constructor | assumption ].
+Qed.
+
+(* A list of functions is not Eq; a group that never mentions its parameter is
+   Eq whatever the parameter. *)
+Example list_of_functions_is_not_eq :
+  ~ sat d_any k_Eq (typ_Grp list_g (spine [typ_Arrow typ_Int typ_Int])).
+Proof.
+  simpl. intros [H _]. discriminate (H (ex_intro _ [6; 0] (conj (or_intror (or_introl eq_refl)) (or_introl eq_refl)))).
+Qed.
+
+Example unused_parameter_is_unconstrained :
+  sat d_any k_Eq (typ_Grp shot (spine [typ_Arrow typ_Int typ_Int])).
+Proof.
+  simpl. split; [ | exact I ].
+  intros [cs [Hcs H6]]. simpl in Hcs. destruct Hcs as [<- | [<- | []]];
+    simpl in H6; first [ contradiction | (destruct H6 as [H6 | []]; discriminate H6) ].
+Qed.
+
+(* ---- a recursive tree: mu t. {v: Int; kids: List t} ---- *)
+
+Definition tree_body : typ :=
+  typ_Record (row_Ext 0 typ_Int (row_Ext 1 (typ_Grp list_g (spine [typ_Bvar 0])) row_Empty)).
+Definition tree_t : typ := typ_Mu tree_body.
+
+Example tree_is_eq : sat d_any k_Eq tree_t.
+Proof.
+  unfold tree_t, tree_body. simpl. repeat split; first [ exact I | (right; reflexivity) | (intros _; right; reflexivity) ].
+Qed.
+
+Example tree_with_a_function_is_not_eq :
+  ~ sat d_any k_Eq (typ_Mu (typ_Record (row_Ext 0 (typ_Arrow (typ_Bvar 0) (typ_Bvar 0)) row_Empty))).
+Proof. simpl. intros [H _]. discriminate H. Qed.
+
+Example tree_closed : lct 0 tree_t.
+Proof. unfold tree_t, tree_body. simpl. repeat split; first [ exact I | lia ]. Qed.
+
+Example tree_guarded : guarded tree_body.
+Proof. unfold guarded, tree_body. simpl. repeat split; auto. Qed.
+
+Example tree_unrolls :
+  open_typ 0 tree_t tree_body =
+  typ_Record (row_Ext 0 typ_Int (row_Ext 1 (typ_Grp list_g (spine [tree_t])) row_Empty)).
+Proof. reflexivity. Qed.
+
+Definition node (n : num) (kids : exp) : exp :=
+  e_fold (e_rec (fs_cons 0 (e_num n) (fs_cons 1 kids fs_nil))).
+Arguments node n%_znum_scope kids.
+
+Lemma node_types : forall n kids,
+  typing d_any nil kids (typ_Grp list_g (spine [tree_t])) ->
+  typing d_any nil (node n kids) tree_t.
+Proof.
+  intros n kids Hk. unfold node. apply T_Fold; [ apply tree_closed | apply tree_guarded | ].
+  change (typ_Mu tree_body) with tree_t. rewrite tree_unrolls.
+  apply T_Record; [ | reflexivity ]. eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | ].
+  eapply FT_cons; [ exact Hk | apply FT_nil; solve_uniq ].
+Qed.
+
+Definition leaf (n : num) : exp := node n empty_l.
+Arguments leaf n%_znum_scope.
+
+Lemma leaf_types : forall n, typing d_any nil (leaf n) tree_t.
+Proof. intros n. apply node_types. apply empty_is_every_list. Qed.
+
+Lemma one_kid_types : forall t, typing d_any nil t tree_t ->
+  typing d_any nil (link t empty_l) (typ_Grp list_g (spine [tree_t])).
+Proof. intros t Ht. apply link_types; [ exact Ht | apply empty_is_every_list ]. Qed.
+
+Example tree_compare_types :
+  typing d_any nil (e_bin (leaf 1) bop_lt (node 1 (link (leaf 0) empty_l))) typ_Bool.
+Proof.
+  eapply T_Bin with (A := tree_t) (B := tree_t);
+    [ apply leaf_types | apply node_types, one_kid_types, leaf_types
+    | apply sig_cmp; [ reflexivity | exact tree_is_eq ] ].
+Qed.
+
+(* A leaf is below a node with a kid at the same value: Empty < Link. *)
+Example leaf_lt_node : bin_step bop_lt (leaf 1) (node 1 (link (leaf 0) empty_l)) e_true.
+Proof.
+  refine (bs_cmp bop_lt _ _ Lt eq_refl _).
+  unfold leaf, node. apply cr_fold. apply cr_rec. unfold rec_labels. simpl.
+  eapply cf_eq; [ reflexivity | reflexivity | exact (cr_int 1 1) | ].
+  eapply cf_ne; [ reflexivity | reflexivity | | discriminate ].
+  unfold empty_l, link. apply cr_con_lt. lia.
+Qed.
+
+(* Two trees compare through their kids: the comparison goes under the fold and
+   through the list. *)
+Example kids_decide : bin_step bop_lt (node 1 (link (leaf 3) empty_l)) (node 1 (link (leaf 4) empty_l)) e_true.
+Proof.
+  refine (bs_cmp bop_lt _ _ Lt eq_refl _).
+  unfold node, leaf, link, empty_l. apply cr_fold. apply cr_rec. unfold rec_labels. simpl.
+  eapply cf_eq; [ reflexivity | reflexivity | exact (cr_int 1 1) | ].
+  eapply cf_ne; [ reflexivity | reflexivity | | discriminate ].
+  apply cr_con_eq. apply cr_rec. unfold rec_labels. simpl.
+  eapply cf_ne; [ reflexivity | reflexivity | | discriminate ].
+  apply cr_fold. apply cr_rec. unfold rec_labels. simpl.
+  eapply cf_ne; [ reflexivity | reflexivity | exact (cr_int 3 4) | discriminate ].
+Qed.
+
+Example trees_have_a_result :
+  exists c, cmp_rel (leaf 1) (node 1 (link (leaf 0) empty_l)) c.
+Proof.
+  eapply cmp_total with (D := d_any) (G := nil) (A := tree_t);
+    [ exact tree_is_eq | | | apply leaf_types | apply node_types, one_kid_types, leaf_types ].
+  - unfold leaf, node, empty_l. repeat constructor.
+  - unfold leaf, node, link, empty_l. repeat constructor.
+Qed.

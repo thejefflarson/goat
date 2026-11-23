@@ -21,11 +21,13 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatPresence.
 Require Import Goat.GoatMu.
+Require Import Goat.GoatTags.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatElab.
 Require Import Stdlib.Lists.List.
+From Stdlib Require Import Lia.
 Import ListNotations.
 
 (* ---- running inside a context ---- *)
@@ -127,14 +129,14 @@ Ltac base_type :=
         | right; right; right; right; eexists; reflexivity ].
 
 Lemma bin_operand : forall D G o A B R v,
-  bin_sig D o A B R -> value v -> typing D G v A ->
+  bin_sig D o A B R -> kind o <> k_cmp -> value v -> typing D G v A ->
   (exists gs, v = e_rec gs /\ rec_value gs) \/ lit v.
 Proof.
-  intros D G o A B R v Hs Hv Hty.
+  intros D G o A B R v Hs Hnk Hv Hty.
   assert (Hnum : forall A0, sat D k_Numeric A0 -> typing D G v A0 ->
             (exists gs, v = e_rec gs /\ rec_value gs) \/ lit v).
   { intros A0 Hsat Ht. destruct A0; simpl in Hsat; try discriminate Hsat;
-      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat).
+      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat); try contradiction.
     - right. eapply canon_lit; [ eassumption | eassumption | base_type ].
     - right. eapply canon_lit; [ eassumption | eassumption | base_type ].
     - left. destruct (canon_record _ _ _ _ Hv Ht) as [gs [Rx [-> [Hrv _]]]]. eauto.
@@ -144,15 +146,7 @@ Proof.
   - right. eapply canon_lit; [ eassumption | eassumption | base_type ].
   - eapply Hnum; eassumption.
   - left. destruct (canon_record _ _ _ _ Hv Hty) as [gs [Rx [-> [Hrv _]]]]. eauto.
-  - match goal with Hs0 : sat D k_Eq ?X |- _ => destruct X; simpl in Hs0;
-      try (destruct Hs0 as [Hs0 | Hs0]; discriminate Hs0); try discriminate Hs0 end.
-    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
-    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
-    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
-    + right. rewrite (canon_unit _ _ _ _ Hv Hty (teq_refl _)). exact I.
-    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
-    + left. destruct (canon_record _ _ _ _ Hv Hty) as [gs [Rx [-> [Hrv _]]]]. eauto.
-    + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
+  - exfalso. congruence.
 Qed.
 
 (* ---- a comparison of erased values is a comparison of the values ---- *)
@@ -185,59 +179,66 @@ Proof.
     eapply Hall; [ left; reflexivity | exact F1 | exact F2 | exact Hr ].
 Qed.
 
-Definition cmp_unerase_at (D : denv) (T : typ) : Prop :=
-  forall G v1 v2, sat D k_Eq T -> value v1 -> value v2 ->
-  typing D G v1 T -> typing D G v2 T ->
-  forall c, cmp_rel (erase v1) (erase v2) c -> cmp_rel v1 v2 c.
-
 Lemma lit_unerase : forall v1 v2 c, lit v1 -> lit v2 ->
   cmp_rel (erase v1) (erase v2) c -> cmp_rel v1 v2 c.
 Proof. intros v1 v2 c L1 L2 H. rewrite (erase_lit _ L1), (erase_lit _ L2) in H. exact H. Qed.
 
-Lemma cmp_unerase_mut : forall D,
-  (forall T, cmp_unerase_at D T) /\
-  (forall R, forall l T R', rm l R T R' -> cmp_unerase_at D T).
+(* Comparing erased values is comparing the values: the induction is on the
+   size of the first value, as for totality, because a tag group's recursive
+   slot and a [mu] body do not shrink the type. *)
+Lemma cmp_unerase_size : forall n D G T v1 v2,
+  vsize v1 < n -> sat D k_Eq T -> value v1 -> value v2 ->
+  typing D G v1 T -> typing D G v2 T ->
+  forall c, cmp_rel (erase v1) (erase v2) c -> cmp_rel v1 v2 c.
 Proof.
-  intros D. apply typ_row_mutind; unfold cmp_unerase_at; simpl.
-  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
-    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
-  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
-    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
-  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
-    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
-  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
-    rewrite (canon_unit _ _ _ _ Hv1 H1 (teq_refl _)), (canon_unit _ _ _ _ Hv2 H2 (teq_refl _)).
-    apply lit_unerase; exact I.
-  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
-    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
-  - intros T1 _ T2 _ G v1 v2 Hs. discriminate Hs.
-  - intros R IH G v1 v2 Hs Hv1 Hv2 H1 H2 c Hc.
+  induction n as [ | n IH ]; intros D G T v1 v2 Hn; [ lia | ].
+  intros Hs Hv1 Hv2 H1 H2 c Hc.
+  destruct T as [ | | | | | T1 T2 | R | a | i | B | w A ].
+  - refine (lit_unerase _ _ _ _ _ Hc); (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - refine (lit_unerase _ _ _ _ _ Hc); (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - refine (lit_unerase _ _ _ _ _ Hc); (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - pose proof (canon_unit _ _ _ _ Hv1 H1 (teq_refl _)) as E1.
+    pose proof (canon_unit _ _ _ _ Hv2 H2 (teq_refl _)) as E2. subst v1 v2.
+    refine (lit_unerase _ _ _ _ _ Hc); exact I.
+  - refine (lit_unerase _ _ _ _ _ Hc); (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - discriminate Hs.
+  - (* Record *)
     destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 [Hf1 Hq1]]]]].
     destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 [Hf2 Hq2]]]]].
     cbn [erase] in Hc. apply cmp_rel_rec_inv in Hc. rewrite erase_rec_labels in Hc.
     apply cr_rec.
     eapply cr_fields_unerase; [ exact Hc | reflexivity | reflexivity | ].
     intros l w1 w2 Hl E1 E2 c' Hc'.
+    pose proof (lookup_first_vsize _ _ _ E1) as Hsz. simpl in Hn.
     destruct (rec_align _ _ _ _ _ _ _ Hr1 Hr2 Hf1 Hf2 Hq1 Hq2 l Hl)
       as [T' [R'' [w1' [w2' [Hrm [E1' [E2' [Hw1 [Hw2 [Ht1 Ht2]]]]]]]]]].
     rewrite E1 in E1'. rewrite E2 in E2'. inversion E1'; inversion E2'; subst.
     destruct (rm_sat D k_Eq _ _ _ _ Hrm Hs) as [Hst _].
-    exact (IH _ _ _ Hrm G _ _ Hst Hw1 Hw2 Ht1 Ht2 c' Hc').
-  - intros a G v1 v2 _ Hv1 Hv2 H1 H2 c.
-    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
-  - intros i G v1 v2 Hs. discriminate Hs.
-  - intros T _ G v1 v2 Hs. discriminate Hs.
-  - intros w T _ G v1 v2 Hs. discriminate Hs.
-  - intros l T R' Hrm. exfalso. eapply rm_empty_inv; eassumption.
-  - intros r l T R' Hrm. exfalso. eapply rm_var_inv; eassumption.
-  - intros l0 T0 IHT R0 IHR l T R' Hrm.
-    destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R1 [E ->]]]].
-    + subst. exact IHT.
-    + exact (IHR _ _ _ E).
-  - intros l0 T1 _ T2 IHT R0 IHR l T R' Hrm.
-    destruct (rm_maybe_inv _ _ _ _ _ _ _ Hrm) as [[E1 [E2 [E3 E4]]] | [Hne [R1 [E ->]]]].
-    + subst. exact IHT.
-    + exact (IHR _ _ _ E).
+    refine (IH D G T' _ _ _ Hst Hw1 Hw2 Ht1 Ht2 c' Hc'). lia.
+  - refine (lit_unerase _ _ _ _ _ Hc); (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - exfalso. exact (canon_bvar _ _ _ _ Hv1 H1 eq_refl).
+  - (* Mu *)
+    destruct (canon_mu _ _ _ _ _ Hv1 H1 (teq_refl _)) as [u1 [-> [Hu1 Hy1]]].
+    destruct (canon_mu _ _ _ _ _ Hv2 H2 (teq_refl _)) as [u2 [-> [Hu2 Hy2]]].
+    cbn [erase] in Hc. simpl in Hn.
+    apply cr_fold.
+    exact (IH D G _ u1 u2 ltac:(lia) (sat_eq_unroll _ _ Hs) Hu1 Hu2 Hy1 Hy2 c Hc).
+  - (* Grp *)
+    destruct (canon_grp _ _ _ _ _ Hv1 H1) as [tg1 [u1 [Ts1 [-> [Hu1 [Hl1 [Hq1 Hy1]]]]]]].
+    destruct (canon_grp _ _ _ _ _ Hv2 H2) as [tg2 [u2 [Ts2 [-> [Hu2 [Hl2 [Hq2 Hy2]]]]]]].
+    destruct (teq_spine_exists _ _ Hq1) as [As [-> Hf1]].
+    destruct (teq_spine_exists _ _ Hq2) as [As2 [Es Hf2]].
+    apply spine_inj in Es. subst As2.
+    assert (Hg : sat D k_Eq (typ_Grp w (spine As))) by exact Hs.
+    cbn [erase] in Hc. simpl in Hn.
+    destruct (cmp_rel_con_inv _ _ _ _ _ _ Hc) as [[Heq Hc'] | [[Hlt ->] | [Hgt ->]]];
+      [ | apply cr_con_lt; exact Hlt | apply cr_con_gt; exact Hgt ].
+    subst tg1. apply cr_con_eq.
+    assert (Hy1' : typing D G u1 (tag_payload w As tg2))
+      by (eapply T_Conv; [ exact Hy1 | apply teq_sym; apply teq_tag_payload; exact Hf1 ]).
+    assert (Hy2' : typing D G u2 (tag_payload w As tg2))
+      by (eapply T_Conv; [ exact Hy2 | apply teq_sym; apply teq_tag_payload; exact Hf2 ]).
+    exact (IH D G _ u1 u2 ltac:(lia) (sat_tag_payload _ _ _ _ Hg Hl2) Hu1 Hu2 Hy1' Hy2' _ Hc').
 Qed.
 
 Lemma cmp_unerase : forall D G A v1 v2,
@@ -245,28 +246,34 @@ Lemma cmp_unerase : forall D G A v1 v2,
   forall c, cmp_rel (erase v1) (erase v2) c -> cmp_rel v1 v2 c.
 Proof.
   intros D G A v1 v2 Hs Hv1 Hv2 H1 H2 c.
-  exact (proj1 (cmp_unerase_mut D) A G v1 v2 Hs Hv1 Hv2 H1 H2 c).
+  exact (cmp_unerase_size (S (vsize v1)) D G A v1 v2 (Nat.lt_succ_diag_r _) Hs Hv1 Hv2 H1 H2 c).
 Qed.
 
-Lemma bin_step_lit_or_rec : forall o a b v, bin_step o a b v ->
-  (lit a /\ lit b) \/ (exists fs1 fs2, a = e_rec fs1 /\ b = e_rec fs2).
+Lemma cmp_holds_any : forall o b, kind o = k_cmp -> exists c, cmp_holds o c = b.
 Proof.
-  intros o a b v H. inversion H; subst;
-    repeat match goal with
-           | Hp : fl_pair ?x ?y |- _ => inversion Hp; subst; clear Hp
-           | Hc : cmp_rel ?x ?y _ |- _ => inversion Hc; subst; clear Hc
-           | Hv : val_bool ?x = Some _ |- _ => destruct x; cbn in Hv; try discriminate; clear Hv
-           end;
-    first [ (left; split; exact I) | (right; do 2 eexists; split; reflexivity) ].
+  intros o b H. destruct o; try (simpl in H; discriminate H);
+    destruct b; first [ (exists Lt; reflexivity) | (exists Eq; reflexivity) | (exists Gt; reflexivity) ].
 Qed.
 
-Lemma bin_step_rec_inv : forall o fs1 fs2 v, bin_step o (e_rec fs1) (e_rec fs2) v ->
-  exists c, kind o = k_cmp /\ cmp_rel (e_rec fs1) (e_rec fs2) c /\ v = of_bool (cmp_holds o c).
+(* A step of two erased operands is a comparison, whatever the operands, or an
+   arithmetic step on literals. *)
+Lemma bin_step_cmp_or_lit : forall o a b v, bin_step o a b v ->
+  (exists c, kind o = k_cmp /\ cmp_rel a b c /\ v = of_bool (cmp_holds o c)) \/
+  (kind o <> k_cmp /\ lit a /\ lit b).
 Proof.
-  intros o fs1 fs2 v H. inversion H; subst;
-    first [ (match goal with Hc : cmp_rel _ _ ?c |- _ =>
-               exists c; repeat split; first [ assumption | reflexivity ] end)
-          | (match goal with Hf : fl_pair _ _ |- _ => inversion Hf end) ].
+  intros o a b v H. inversion H; subst.
+  - right. refine (conj _ (conj I I)); intros Hk; congruence.
+  - right. refine (conj _ (conj I I)); intros Hk; congruence.
+  - match goal with Hp : fl_pair _ _ |- _ =>
+      inversion Hp; subst; right; refine (conj _ (conj I I));
+      intros Hk; match goal with Hd : _ \/ _ |- _ => destruct Hd end; congruence end.
+  - match goal with Hp : fl_pair _ _ |- _ =>
+      inversion Hp; subst; right; refine (conj _ (conj I I)); intros Hk; congruence end.
+  - right. refine (conj _ (conj I I)); intros Hk; congruence.
+  - match goal with Hk : kind ?o' = k_cmp, Hp : fl_pair ?x ?y, Hb : bin_step _ _ _ (of_bool ?bb) |- _ =>
+      left; destruct (cmp_holds_any o' bb Hk) as [c' Hc']; exists c'; repeat split;
+      [ exact Hk | apply cr_float; exact Hp | now rewrite Hc' ] end.
+  - left. eexists. refine (conj _ (conj _ eq_refl)); eassumption.
 Qed.
 
 Lemma bin_step_lit_result : forall o a b v, bin_step o a b v -> lit v.
@@ -461,14 +468,14 @@ Proof.
 Qed.
 
 Lemma reach_operand : forall D S e o A B R, supp_ok D S ->
-  bin_sig D o A B R -> typing D nil e A -> value (erase e) ->
+  bin_sig D o A B R -> kind o <> k_cmp -> typing D nil e A -> value (erase e) ->
   exists v, multistep e v /\ erase v = erase e /\
     ((exists gs, v = e_rec gs /\ rec_value gs) \/ lit v).
 Proof.
-  intros D S e o A B R HS Hs Ht Hv.
+  intros D S e o A B R HS Hs Hnk Ht Hv.
   destruct (value_reach D S e _ HS Ht Hv) as [v [Hm [Hvv Hev]]].
   exists v. repeat split; [ exact Hm | exact Hev | ].
-  eapply bin_operand; [ exact Hs | exact Hvv | eapply preservation_multi; eassumption ].
+  eapply bin_operand; [ exact Hs | exact Hnk | exact Hvv | eapply preservation_multi; eassumption ].
 Qed.
 
 Lemma rec_zip_unerase : forall o fs1' fs2' fs, rec_zip o fs1' fs2' fs ->
@@ -652,9 +659,22 @@ Proof.
     + assert (Hv1 : value (erase e1)) by assumption.
       assert (Hv2 : value (erase e2)) by assumption.
       lazymatch goal with Hbs : bin_step o (erase e1) (erase e2) r |- _ =>
-        destruct (bin_step_lit_or_rec _ _ _ _ Hbs) as [[La Lb] | [fs1 [fs2 [Ea Eb]]]];
-        [ destruct (reach_operand D S e1 o A A R HS Hsig H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
-          destruct (reach_operand D S e2 o A A R HS Hsig H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
+        destruct (bin_step_cmp_or_lit _ _ _ _ Hbs) as [[c [Hk [Hcr ->]]] | [Hnk [La Lb]]];
+        [ destruct (value_reach D S e1 _ HS H1 Hv1) as [v1 [Hm1 [Hvv1 Hev1]]];
+          destruct (value_reach D S e2 _ HS H2 Hv2) as [v2 [Hm2 [Hvv2 Hev2]]];
+          assert (Hcr2 : cmp_rel v1 v2 c)
+            by (eapply cmp_unerase;
+                [ exact (bin_sig_cmp_sat _ _ _ _ _ Hsig Hk) | exact Hvv1 | exact Hvv2
+                | exact (preservation_multi _ _ _ _ _ HS H1 Hm1)
+                | exact (preservation_multi _ _ _ _ _ HS H2 Hm2)
+                | rewrite Hev1, Hev2; exact Hcr ]);
+          exists (of_bool (cmp_holds o c)); split;
+          [ eapply multistep_trans; [ apply ms_bin1; exact Hm1 | ];
+            eapply multistep_trans; [ apply ms_bin2; [ exact Hvv1 | exact Hm2 ] | ];
+            eapply ms_step; [ apply st_bin; [ exact Hvv1 | exact Hvv2 | apply (bs_cmp o _ _ c Hk Hcr2) ] | apply ms_refl ]
+          | apply erase_of_bool ]
+        | destruct (reach_operand D S e1 o A A R HS Hsig Hnk H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
+          destruct (reach_operand D S e2 o A A R HS Hsig Hnk H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
           pose proof (operand_lit _ _ Hk1 Hev1 La) as E1;
           pose proof (operand_lit _ _ Hk2 Hev2 Lb) as E2;
           pose proof (erase_lit _ (bin_step_lit_result _ _ _ _ Hbs)) as Er;
@@ -662,33 +682,14 @@ Proof.
           eapply multistep_trans; [ apply ms_bin1; exact Hm1 | ];
           eapply multistep_trans; [ apply ms_bin2; [ rewrite E1; apply lit_value; exact La | exact Hm2 ] | ];
           rewrite E1, E2;
-          eapply ms_step; [ apply st_bin; [ apply lit_value; exact La | apply lit_value; exact Lb | exact Hbs ] | apply ms_refl ]
-        | assert (Hbr : bin_step o (e_rec fs1) (e_rec fs2) r) by (rewrite <- Ea, <- Eb; exact Hbs);
-          destruct (bin_step_rec_inv _ _ _ _ Hbr) as [c [Hk [Hcr ->]]];
-          destruct (reach_operand D S e1 o A A R HS Hsig H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
-          destruct (reach_operand D S e2 o A A R HS Hsig H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
-          destruct Hk1 as [[gs1 [-> Hg1]] | L1];
-          [ | rewrite (erase_lit _ L1), Ea in Hev1; rewrite Hev1 in L1; cbn [lit] in L1; contradiction ];
-          destruct Hk2 as [[gs2 [-> Hg2]] | L2];
-          [ | rewrite (erase_lit _ L2), Eb in Hev2; rewrite Hev2 in L2; cbn [lit] in L2; contradiction ];
-          assert (Hcr2 : cmp_rel (e_rec gs1) (e_rec gs2) c)
-            by (eapply cmp_unerase;
-                [ exact (bin_sig_cmp_sat _ _ _ _ _ Hsig Hk) | apply v_rec; exact Hg1 | apply v_rec; exact Hg2
-                | exact (preservation_multi _ _ _ _ _ HS H1 Hm1)
-                | exact (preservation_multi _ _ _ _ _ HS H2 Hm2)
-                | rewrite Hev1, Hev2, Ea, Eb; exact Hcr ]);
-          exists (of_bool (cmp_holds o c)); split;
-          [ eapply multistep_trans; [ apply ms_bin1; exact Hm1 | ];
-            eapply multistep_trans; [ apply ms_bin2; [ apply v_rec; exact Hg1 | exact Hm2 ] | ];
-            eapply ms_step; [ apply st_bin; [ apply v_rec; exact Hg1 | apply v_rec; exact Hg2 | apply (bs_cmp o _ _ c Hk Hcr2) ] | apply ms_refl ]
-          | apply erase_of_bool ] ]
+          eapply ms_step; [ apply st_bin; [ apply lit_value; exact La | apply lit_value; exact Lb | exact Hbs ] | apply ms_refl ] ]
       end.
     + lazymatch goal with
         Ha : erase e1 = e_rec ?fs1, Hb : erase e2 = e_rec ?fs2, Hz : rec_zip o (fs_plain ?fs1) (fs_plain ?fs2) ?fs |- _ =>
         assert (Hv1 : value (erase e1)) by (rewrite Ha; apply v_rec; assumption);
         assert (Hv2 : value (erase e2)) by (rewrite Hb; apply v_rec; assumption);
-        destruct (reach_operand D S e1 o A A R HS Hsig H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
-        destruct (reach_operand D S e2 o A A R HS Hsig H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
+        destruct (reach_operand D S e1 o A A R HS Hsig ltac:(assumption) H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
+        destruct (reach_operand D S e2 o A A R HS Hsig ltac:(assumption) H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
         destruct Hk1 as [[gs1 [-> Hg1]] | L1];
         [ | rewrite (erase_lit _ L1), Ha in Hev1; rewrite Hev1 in L1; cbn [lit] in L1; contradiction ];
         destruct Hk2 as [[gs2 [-> Hg2]] | L2];

@@ -226,21 +226,34 @@ Definition denv := typvar -> sort.
    [Int] or [Float] satisfies every sort; a variable satisfies the sorts its
    own (in [D]) is finer than.  A closed record whose fields all satisfy [k]
    satisfies [k], for [Numeric] (ADR 0012) and for [Eq] (ADR 0036), and is
-   never [Literal]: a numeral is a number.  [String], [Bool] and [Unit] are [Eq] and [Any].  A
-   function is neither, and the remaining types satisfy only [Any]. *)
+   never [Literal]: a numeral is a number.  [String], [Bool] and [Unit] are
+   [Eq] and [Any].  A function is neither.  A recursive type and a tag group
+   are [Eq] when their parts are: inside a [mu] body a bound index counts as
+   [Eq] (the recursion is the body itself), and a group is [Eq] when every
+   parameter its declaration uses is ([spine_sat]); the group's own recursion
+   and its concrete slots are [Eq] by themselves. *)
 Fixpoint sat (D : denv) (k : sort) (T : typ) {struct T} : Prop :=
   match T with
   | typ_Int | typ_Float => True
   | typ_Var a => finer (D a) k
   | typ_Record R =>
       match k with k_Any => True | k_Eq | k_Numeric => rsat D k R | k_Literal => False end
-  | typ_String | typ_Bool | typ_Unit => k = k_Any \/ k = k_Eq
-  | _ => k = k_Any
+  | typ_String | typ_Bool | typ_Unit | typ_Bvar _ => k = k_Any \/ k = k_Eq
+  | typ_Mu B => match k with k_Any => True | k_Eq => sat D k_Eq B | _ => False end
+  | typ_Grp w A => match k with k_Any => True | k_Eq => spine_sat D w 0 A | _ => False end
+  | typ_Arrow _ _ => k = k_Any
   end
 with rsat (D : denv) (k : sort) (R : row) {struct R} : Prop :=
   match R with
   | row_Empty => True
   | row_Ext _ T R' => sat D k T /\ rsat D k R'
+  | _ => False
+  end
+with spine_sat (D : denv) (w : gdecl) (j : nat) (A : typ) {struct A} : Prop :=
+  match A with
+  | typ_Arrow T A' =>
+      ((exists cs, In cs w /\ In (6 + j) cs) -> sat D k_Eq T) /\ spine_sat D w (S j) A'
+  | typ_Unit => True
   | _ => False
   end.
 
@@ -690,7 +703,8 @@ Definition rec_labels (fs : fields) : list label := sort_labels (fs_labels fs).
 (* The three-way result of comparing two values (ADR 0036).  Two records
    compare field by field in label order, each label read as its first field
    in either record, so the order the fields are written in does not matter.
-   A Float inside a record relates to every result: a NaN's place is not
+   Two tags of one group compare by position in the declaration, then by
+   payload; a [fold] compares as what it folds.  A Float inside a value relates to every result: a NaN's place is not
    modelled. *)
 Inductive cmp_rel : exp -> exp -> comparison -> Prop :=
  | cr_int : forall a b, cmp_rel (e_num a) (e_num b) (z_cmp a b)
@@ -699,6 +713,13 @@ Inductive cmp_rel : exp -> exp -> comparison -> Prop :=
  | cr_bool : forall x y a b,
      val_bool x = Some a -> val_bool y = Some b -> cmp_rel x y (bool_compare a b)
  | cr_unit : cmp_rel e_unit e_unit Eq
+ | cr_fold : forall v1 v2 c, cmp_rel v1 v2 c -> cmp_rel (e_fold v1) (e_fold v2) c
+ | cr_con_eq : forall w tg v1 v2 c,
+     cmp_rel v1 v2 c -> cmp_rel (e_con w tg v1) (e_con w tg v2) c
+ | cr_con_lt : forall w tg1 tg2 v1 v2,
+     tg1 < tg2 -> cmp_rel (e_con w tg1 v1) (e_con w tg2 v2) Lt
+ | cr_con_gt : forall w tg1 tg2 v1 v2,
+     tg2 < tg1 -> cmp_rel (e_con w tg1 v1) (e_con w tg2 v2) Gt
  | cr_rec : forall fs1 fs2 c,
      cr_fields (rec_labels fs1) fs1 fs2 c -> cmp_rel (e_rec fs1) (e_rec fs2) c
 with cr_fields : list label -> fields -> fields -> comparison -> Prop :=
@@ -800,9 +821,11 @@ Proof.
   - intros R H k k' Hf. destruct k, k'; try (inversion Hf; fail);
       first [ (intros _; exact I) | (intros H0; contradiction) | exact (H _ _ Hf) ].
   - intros a k k' Hf H. eapply finer_trans; eassumption.
-  - intros i k k' Hf. apply finer_anyonly. exact Hf.
-  - intros T _ k k' Hf. apply finer_anyonly. exact Hf.
-  - intros w T _ k k' Hf. apply finer_anyonly. exact Hf.
+  - intros i k k' Hf. apply finer_eqany. exact Hf.
+  - intros T IH k k' Hf. destruct k, k'; try (inversion Hf; fail);
+      first [ (intros _; exact I) | (intros H0; contradiction) | exact (IH _ _ Hf) ].
+  - intros w T _ k k' Hf. destruct k, k'; try (inversion Hf; fail);
+      first [ (intros _; exact I) | (intros H0; contradiction) | (intros H0; exact H0) ].
   - intros k k' Hf _. exact I.
   - intros r k k' Hf H. contradiction.
   - intros l T H R H0 k k' Hf [H1 H2]. split; [ eapply H; eassumption | eapply H0; eassumption ].
@@ -815,21 +838,35 @@ Proof. intros D k k' T Hf H. exact (proj1 (sat_finer_mut D) T k k' Hf H). Qed.
 (* A kind-respecting substitution keeps a type within its sort. *)
 Lemma sat_ap_mut : forall D D' st sr,
   kres D D' st ->
-  (forall T k, sat D k T -> sat D' k (ap_typ st sr T)) /\
+  (forall T, (forall k, sat D k T -> sat D' k (ap_typ st sr T)) /\
+             (forall w j, spine_sat D w j T -> spine_sat D' w j (ap_typ st sr T))) /\
   (forall R k, rsat D k R -> rsat D' k (ap_row st sr R)).
 Proof.
   intros D D' st sr Hk. apply typ_row_mutind; simpl; intros.
-  all: first
-    [ assumption | exact I | contradiction
-    | (destruct k; simpl in *; auto; contradiction)
-    | (eapply sat_finer; [ exact H | apply Hk ])
-    | (destruct H1 as [H1 H2]; split; auto)
-    | (destruct H2 as [H2 H3]; split; auto) ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - split; intros; first [ assumption | exact I | contradiction ].
+  - destruct H as [H1 _], H0 as [_ H0]. split; [ intros; assumption | ].
+    intros w j [Hu Hs]. split; [ intros Hc; exact (H1 k_Eq (Hu Hc)) | exact (H0 w (S j) Hs) ].
+  - split; [ | intros; contradiction ]. intros k. destruct k; simpl;
+      first [ (intros _; exact I) | (intros HH; contradiction) | exact (H _) ].
+  - split; [ intros k Hs; eapply sat_finer; [ exact Hs | apply Hk ] | intros; contradiction ].
+  - split; intros; first [ assumption | contradiction ].
+  - split; [ | intros; contradiction ]. intros k Hs. destruct k; try exact I; try contradiction.
+    exact (proj1 H k_Eq Hs).
+  - split; [ | intros; contradiction ]. intros k Hs. destruct k; try exact I; try contradiction.
+    exact (proj2 H w 0 Hs).
+  - exact I.
+  - contradiction.
+  - destruct H1 as [H1 H2]. split; [ exact (proj1 H k H1) | exact (H0 k H2) ].
+  - contradiction.
 Qed.
 
 Lemma sat_ap : forall D D' k T st sr,
   kres D D' st -> sat D k T -> sat D' k (ap_typ st sr T).
-Proof. intros. eapply (proj1 (sat_ap_mut D D' st sr H)); eassumption. Qed.
+Proof. intros. eapply (proj1 (proj1 (sat_ap_mut D D' st sr H) T)); eassumption. Qed.
 
 Lemma sat_any : forall D T, sat D k_Any T.
 Proof.
