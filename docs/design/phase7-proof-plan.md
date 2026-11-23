@@ -1175,7 +1175,7 @@ factoring (`ap_factor_rf`) and the atoms and plainness from `SI`
 new supply). Not stated for `unify_t`: the arms are the same, and the copy is
 the same size as the one above.
 
-**What remains of 7.6.**
+**What remains of 7.6** (as of 7.6j; stage 7.6k below supersedes it).
 
 1. *The row arms of the induction.* Add records to the induction above: the
    fragment gains rows with variables and presence entries, `SI` gains the row
@@ -1195,6 +1195,94 @@ the same size as the one above.
    (above), and the plain induction for rows with variables is a second copy of
    item 1.
 3. *`unify_t` on the record-free fragment,* the copy of `GoatCompleteRf.v`.
+
+*As built (stage 7.6k, `GoatCompleteRfRows.v`).* Items 1 and 3 of the 7.6j
+list are done for a restricted hypothesis set; the full set is open. DECISION
+NEEDED, below.
+
+**What is proved.** `unify_tD_complete_full` and `unify_rD_complete_full`: for
+mu-free, group-free types and rows (`pf`/`prf`: base types, variables, arrows,
+records of plain fields, presence entries and row variables) with every atom
+below the supply (`atT`/`atR`), a substitution `Sg` that unifies the two at
+plain `teq`/`req`, a trivial environment (`Dtriv`) and `DOk D n`, the unifier
+succeeds from some fuel on (`Stable`) and `Pkg Sg n s D' n' S2` holds. Every arm
+of `unify_tD` and `unify_rD` is in the induction: the variable and scalar
+leaves, `bind_prop`, the record arm, `bind_row` on either side, and the rewrite
+with `S2 ∘ s1 ∘ sp ∘ s0` threaded (`rw_arm`). The `Empty`/`Maybe` swap and a
+row that is empty against one with an entry are contradictions (`rsz`).
+
+**The two restrictions.**
+
+- *Every entry is present* (`ps`/`psr`). A `Maybe l P T R` entry satisfies `Sg P
+  = Unit`; a plain field is present. With every entry present, the four absent
+  pairs of the 7.6f ruling cannot arise, the guard never binds, the field
+  condition's absent half is vacuous, `nfR` is the identity on every row in play
+  (`ps_nf`), `po`/`pos` follow from the entries (`ps_po`, `ps_pos_row`; a
+  variable that `Sg` sends to `Unit` is excluded, which the unifier equation
+  does: `Unit` is not an arrow or a record), and the measure needs no entry
+  count: `rsz` falls by the front entry. The lexicographic measure of the 7.6j
+  list is not needed here; it is needed for absent entries.
+- *A trivial environment* (`Dtriv`: every type variable has sort `Any`, every row
+  variable the kind `rk_any`). No sort is pushed, so `bind_prop` is
+  `sbT a T` (`bind_prop_any`), `bind_row` renames only the tail of its row
+  (`bind_row_triv_none`, `bind_row_triv_some`), every substitution respects the
+  environment (`KR_triv`), and the field condition at a sort is `sat_any`. The
+  closed fragment's `unify_tD_complete` makes the same assumption for records
+  (`b = true -> forall c, D c = k_Any`). The sorted leaves
+  (`bind_row_pres_complete`, `bind_prop_pres_complete`) are not used; only
+  `rewrite_row_complete` is, at the trivial environment.
+
+**What carries the hypotheses.** `Pkg Sg n s D' n' S2` is one step's promise: the
+supply grows, `DOk` and `Dtriv` hold at the result, the images `s x` of the old
+type atoms and `s q` of the old row atoms are in the fragment over atoms below
+`n'` with every entry present under `S2`, and `Sg` factors through `s` by `S2`
+at plain `teq`/`req`. `Pkg_comp` composes two steps; `pkg_ap_T`/`pkg_ap_R` carry
+a type or row of the fragment through a step (`pf_ap`, `atT_ap`, and `ps_pull`,
+the analogue of `fld_pull` for the presence hypothesis); `pkg_fac_T`/`pkg_fac_R`
+factor `Sg` through it. Plain `teq`/`req` is enough because `Sg`'s images are
+never normalized: with every entry present, `nfR` does nothing to the rows the
+calls pass, and the plain `rewrite_row_complete` takes a plain `req`, so item 2
+of the 7.6i list (the conversion at the environment) does not arise here.
+`Pkg_sem` reads a step at `KR`, `teqD`, `reqD`.
+
+**Leaves.** `pkg_bind_prop`, `pkg_bind_row` (tail renamed to `ea n`; `S2` is `Sg`
+with `ea n` sent to the old tail's image), and `pkg_rewrite` (`rw_shape`: the type
+variables are untouched, and the row variable is bound to an entry of three fresh
+variables or nothing; `rw_facts`: the presence, field and rest it returns are in
+the fragment, with every entry present under `S2`). `unify_rD_rw` unfolds the
+arm.
+
+**What remains of 7.6.**
+
+1. *Absent entries.* The hypothesis `ps` is the strong side of the ratified
+   list. Dropping it brings back (i) to (iv) of the 7.6f ruling as predicates on
+   `Sg` at each leaf, the lexicographic measure (an absent entry has size 0;
+   `rewrite_row_front`'s absent-pair alternative), the `Empty`/`Maybe` swap arm,
+   and `fld_pull`/an occurs analogue to carry them to the recursive calls with
+   `S2`. The conversion question of the 7.6i item 2 returns with it: an image of
+   `Sg` may then hold an absent entry, so `reqD` is not `req`.
+2. *Sorts.* `Dtriv` is the assumption to drop. `bind_prop_sorted_complete`,
+   `bind_row_pres_complete` and `rewrite_row_complete` are proved for sorted
+   environments, but `Pkg` then needs the fresh variables of `push_sort`
+   (`SI` of the 7.6j induction: `bind_prop_SI`, `push_sort_new`) and the
+   presence variable at `Numeric` (`fld`'s second half) as a hypothesis carried
+   through the steps.
+3. *Groups outside `mu`.* The group arm of `unify_tD` hands its payload to the
+   plain `unify_t`; the induction needs the plain unifier beside it (the 7.6e
+   adaptation) and `S` beside `nfS D1 S`. Not started.
+4. *`unify_t` on the fragment,* the copy of this induction for the plain unifier.
+
+DECISION NEEDED: the hypothesis set of `unify_tD_complete_full` is stronger than
+the ratified list (every entry present, trivial environment). Options: (a) accept
+it as the stage-7.6k result and take absent entries and sorts as separate stages
+(chosen: each is a self-contained extension of `Pkg` and the arms, and the
+present, trivial case is the one L3's core constructs (variables, application,
+`let`, projection) reach first); (b) hold the stage until the ratified list is
+covered. The shape of statement A's hypothesis for L3 is the open point: `ps`
+and `Dtriv` are properties of `Sg` and the environment at the call, so L3 has to
+show them of the substitution it builds, which fails for a program with a numeric
+literal or operator in scope (a `Numeric` sort) and for one that restricts a
+record.
 
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):
