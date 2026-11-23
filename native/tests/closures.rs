@@ -8,7 +8,7 @@ mod support;
 
 use common::*;
 use goat::{EmbeddedLimits, HostInterface, NoHost, Profile, STACK_OVERFLOW};
-use goat_llvm::{EmitOptions, emit, emit_with_options};
+use goat_llvm::{Abi, EmitOptions, emit, emit_with_options};
 use goat_mir::*;
 use goat_native::{Library, Run, build, clang_available};
 use support::interpreted;
@@ -22,8 +22,7 @@ macro_rules! need_clang {
     };
 }
 
-/// Source programs whose functions never end in a call, since the native
-/// backend has no tail calls yet: each result is added to 0 or used further.
+/// Source programs that return what their closures compute.
 const CORPUS: &[&str] = &[
     "add = program(a) do program(b) do a + b done done\n\
      add_ten = add(10)\nanswer = add_ten(5)\nanswer + 0",
@@ -306,17 +305,21 @@ fn a_desktop_program_has_no_depth_bound() {
 }
 
 #[test]
-fn a_tail_call_still_falls_back_with_a_reason() {
-    need_clang!();
-    let source = "loop = program(n) do if n < 1 then 7 else loop(n - 1) done done\nloop(10)";
-    let host = HostInterface::new(goat_checker::PRELUDE);
-    let error = build(Profile::Desktop, source, &host)
-        .err()
-        .expect("tail calls are not lowered yet");
+fn a_target_without_tail_calls_says_why() {
+    let source = "f = program(n) do n + 1 done\ng = program(n) do f(n) done\ng(1)";
+    let checked = goat_checker::check(source).expect("type-checks");
+    let program = goat_mir::mono_for(&checked, Profile::Desktop).expect("monomorphizes");
+    let options = EmitOptions {
+        abi: Abi {
+            musttail: false,
+            ..Abi::DEFAULT
+        },
+        ..EmitOptions::default()
+    };
+    let error = emit_with_options(&program, options).expect_err("a tail call needs musttail");
     assert!(
-        error
-            .unsupported()
-            .is_some_and(|r| r.contains("tail calls")),
+        error.to_string().contains("guaranteed tail calls"),
         "{error}"
     );
+    assert!(emit(&program).is_ok());
 }

@@ -63,8 +63,8 @@ fn compiled_source_parses_with_clang() {
 fn an_unsupported_construct_is_a_compiler_error() {
     let errors = compile_ll(
         Profile::Desktop,
-        "loop = program(i) do if i == 0 then 0 else loop(i - 1) done done\nloop(3)",
-        &host(),
+        include_str!("../../examples/interactive.goat"),
+        &HostInterface::new(goat_checker::PRELUDE),
     )
     .unwrap_err();
     assert!(

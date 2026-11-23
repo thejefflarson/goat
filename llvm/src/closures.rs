@@ -50,43 +50,6 @@ impl FuncLower<'_, '_> {
         Ok(Some(Val::Op(MTy::Ptr(kind), object)))
     }
 
-    pub(crate) fn call_closure(
-        &mut self,
-        closure: &Expr,
-        args: &[Expr],
-    ) -> Result<Lowered, EmitError> {
-        let Some(callee) = self.expr(closure)? else {
-            return Ok(None);
-        };
-        let Val::Op(MTy::Ptr(HeapKind::Closure(sig)), env) = callee else {
-            return Err(EmitError::Malformed("callee is not a closure"));
-        };
-        let sig = self
-            .module
-            .program
-            .sigs
-            .get(sig.0 as usize)
-            .ok_or(EmitError::Malformed("unknown signature"))?;
-        if sig.params.len() != args.len() {
-            return Err(EmitError::Malformed("closure call arity"));
-        }
-        let mut passed = vec!["ptr %inst".to_string(), format!("ptr {env}")];
-        for (arg, ty) in args.iter().zip(&sig.params) {
-            let Some(value) = self.expr(arg)? else {
-                return Ok(None);
-            };
-            expect(&value, *ty)?;
-            if let Some(llty) = self.module.llty(*ty)? {
-                passed.push(format!("{llty} {}", value.operand()?));
-            }
-        }
-        let word = self.load_i64_at(&env, CLOSURE_CODE_AT);
-        let code = self.emit(format!("inttoptr i64 {word} to ptr"));
-        let ret = self.module.ret_ty(sig.ret)?;
-        let call = format!("call tailcc {ret} {code}({})", passed.join(", "));
-        Ok(Some(self.bound_call(call, sig.ret)))
-    }
-
     /// A new reference to capture `i` of the closure this body runs as.
     pub(crate) fn capture(&mut self, i: usize) -> Result<Val, EmitError> {
         let env = self

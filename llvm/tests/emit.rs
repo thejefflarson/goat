@@ -12,6 +12,7 @@ use std::process::Command;
 const CHECKED: EmitOptions = EmitOptions {
     poison_freed: true,
     call_depth: goat_llvm::DEFAULT_CALL_DEPTH,
+    abi: goat_llvm::Abi::DEFAULT,
 };
 
 fn ll(p: &Program) -> String {
@@ -20,7 +21,12 @@ fn ll(p: &Program) -> String {
 }
 
 fn golden(name: &str, p: &Program) {
-    let actual = ll(p);
+    golden_with(name, p, CHECKED);
+}
+
+fn golden_with(name: &str, p: &Program, options: EmitOptions) {
+    assert_eq!(verify(p), Ok(()));
+    let actual = emit_with_options(p, options).expect("program emits");
     let path = format!("{}/tests/golden/{name}.ll", env!("CARGO_MANIFEST_DIR"));
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         std::fs::write(&path, &actual).unwrap();
@@ -214,19 +220,13 @@ fn emitted_ir_has_no_undefined_behavior_flags_or_triple() {
 
 #[test]
 fn unsupported_nodes_are_internal_errors() {
-    let p = program(vec![func(
-        MTy::Int,
-        Expr::TailCall(Callee::Direct(FuncId(0)), vec![]),
-    )]);
+    let p = program(vec![func(MTy::Int, Expr::MethodKey(Local(0)))]);
     let err = emit(&p).unwrap_err();
-    assert_eq!(err, EmitError::Unsupported("tail calls"));
+    assert_eq!(err, EmitError::Unsupported("method sites"));
     assert!(
         err.to_string()
             .contains("not yet supported by the native backend")
     );
-
-    let p = program(vec![func(MTy::Int, Expr::MethodKey(Local(0)))]);
-    assert_eq!(emit(&p), Err(EmitError::Unsupported("method sites")));
 }
 
 /// A record built and read, a variant matched, and a string read: every kind of
@@ -805,4 +805,131 @@ fn the_layout_probe_reads_in_clang() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+fn compiled(profile: Profile, source: &str) -> Program {
+    let checked = goat_checker::check(source).expect("type-checks");
+    let program = goat_mir::mono_for(&checked, profile).expect("monomorphizes");
+    assert_eq!(verify(&program), Ok(()), "{source}");
+    program
+}
+
+const COUNT: &str = "count = program(n, acc) do if n == 0 then acc else count(n - 1, acc + 1) done done\n\
+                     count(10, 0) + 0";
+
+const PARITY: &str = "is_even = program(n) do if n < 1 then true else is_odd(n - 1, 0) done done\n\
+                      is_odd = program(n, flag) do if n < 1 then false else is_even(n - 1) done done\n\
+                      if is_even(10) then 1 else 0 done";
+
+const BOUNCE: &str = "bounce = program(f, n, a, b, c, d, g, h) do if n < 1 then a else f(n - 1, a + 1, b, c, d, g, h) done done\n\
+                      go = program(n, a, b, c, d, g, h) do bounce(program(m, a, b, c, d, g, h) do go(m, a, b, c, d, g, h) done, n, a, b, c, d, g, h) done\n\
+                      go(10, 0, 0, 0, 0, 0, 0) + 0";
+
+fn abi(int_registers: usize, float_registers: usize, musttail: bool) -> EmitOptions {
+    EmitOptions {
+        abi: goat_llvm::Abi {
+            int_registers,
+            float_registers,
+            musttail,
+        },
+        ..CHECKED
+    }
+}
+
+#[test]
+fn a_self_tail_call_is_a_loop() {
+    let ir = emit_with_options(&compiled(Profile::Desktop, COUNT), CHECKED).unwrap();
+    assert!(ir.contains("br label %loop"), "{ir}");
+    assert!(ir.contains("phi i64"), "{ir}");
+    assert!(!ir.contains("musttail"), "{ir}");
+    golden("tail_self_loop", &compiled(Profile::Desktop, COUNT));
+}
+
+#[test]
+fn functions_joined_by_tail_calls_are_one_function_with_a_switch() {
+    let program = compiled(Profile::Desktop, PARITY);
+    let ir = emit_with_options(&program, CHECKED).unwrap();
+    assert!(
+        ir.contains("tailcc i1 @goat_g0(ptr %inst, i32 %in_which"),
+        "{ir}"
+    );
+    assert!(ir.contains("switch i32 %which"), "{ir}");
+    assert!(!ir.contains("musttail"), "{ir}");
+    assert!(!ir.contains("define internal tailcc i1 @goat_f"), "{ir}");
+    golden("tail_group", &program);
+}
+
+#[test]
+fn a_tail_call_through_a_closure_is_musttail() {
+    let ir = emit_with_options(&compiled(Profile::Desktop, BOUNCE), CHECKED).unwrap();
+    assert!(ir.contains("musttail call tailcc i64 %"), "{ir}");
+}
+
+#[test]
+fn arguments_past_the_register_budget_go_through_the_spill_area() {
+    let program = compiled(Profile::Desktop, BOUNCE);
+    let spill_slot = goat_llvm::INSTANCE_FIELDS
+        .iter()
+        .position(|(field, _)| *field == "spill")
+        .unwrap();
+    let spill = format!("i32 0, i32 {spill_slot}, i32");
+    let roomy = emit_with_options(&program, abi(16, 16, true)).unwrap();
+    let cramped = emit_with_options(&program, abi(3, 1, true)).unwrap();
+    assert!(!roomy.contains(&spill), "{roomy}");
+    assert!(cramped.contains(&spill), "{cramped}");
+    golden_with("tail_spill", &program, abi(3, 1, true));
+}
+
+#[test]
+fn a_call_with_more_arguments_than_the_spill_area_holds_is_unsupported() {
+    let many = "f = program(a, b, c, d, e, g, h, i, j, k, l, m) do a + b + c + d + e + g + h + i + j + k + l + m done\n\
+                f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)";
+    let program = compiled(Profile::Desktop, many);
+    assert!(matches!(
+        emit_with_options(&program, abi(2, 1, true)),
+        Err(EmitError::Unsupported(_))
+    ));
+    assert!(emit_with_options(&program, CHECKED).is_ok());
+}
+
+#[test]
+fn a_target_without_tail_calls_refuses_the_ones_that_are_not_loops() {
+    let options = abi(6, 8, false);
+    let error = emit_with_options(&compiled(Profile::Desktop, BOUNCE), options).unwrap_err();
+    assert!(
+        error.to_string().contains("guaranteed tail calls"),
+        "{error}"
+    );
+    for source in [COUNT, PARITY] {
+        assert!(emit_with_options(&compiled(Profile::Desktop, source), options).is_ok());
+    }
+}
+
+#[test]
+fn clang_reads_the_tail_call_programs() {
+    let Some(clang) = clang() else { return };
+    for (name, source, options) in [
+        ("count", COUNT, CHECKED),
+        ("parity", PARITY, CHECKED),
+        ("bounce", BOUNCE, CHECKED),
+        ("bounce_tight", BOUNCE, abi(3, 1, true)),
+    ] {
+        for profile in [Profile::Desktop, Profile::Embedded] {
+            let ir = emit_with_options(&compiled(profile, source), options).unwrap();
+            let path = scratch("tail").join(format!("{name}.ll"));
+            std::fs::write(&path, ir).unwrap();
+            for target in ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"] {
+                let out = Command::new(clang)
+                    .args(["-target", target, "-x", "ir", "-c", "-o", "/dev/null"])
+                    .arg(&path)
+                    .output()
+                    .unwrap();
+                assert!(
+                    out.status.success(),
+                    "{name} on {profile:?} for {target}: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
+    }
 }

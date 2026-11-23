@@ -13,10 +13,9 @@
 //! counting and drop loop that serve them are in `heap`; closures are in
 //! `closures`; host output and foreign calls are in `host_calls`.
 //!
-//! Every goat function and closure body uses LLVM's `tailcc` convention, so a
-//! tail call can become `musttail` without changing a signature. A function
-//! takes the instance first, then (for a closure body) its environment, then
-//! its arguments.
+//! Every goat function and closure body uses LLVM's `tailcc` convention. A
+//! function takes the instance first, then (for a closure body) its
+//! environment, then its arguments. Tail calls are in `tail`.
 //!
 //! The IR never carries `nsw`, `nuw`, fast-math flags or TBAA: arithmetic that
 //! can overflow goes through the `llvm.s*.with.overflow` intrinsics and
@@ -31,10 +30,12 @@ mod closures;
 mod heap;
 mod heap_nodes;
 mod host_calls;
+mod tail;
 
 use heap::{Heap, Runtime};
 
 pub use heap::FREE_LISTS;
+pub use tail::{Abi, SPILL_WORDS};
 
 /// The function the program's entry is emitted as.
 pub const ENTRY: &str = "goat_entry";
@@ -68,6 +69,9 @@ pub struct EmitOptions {
     /// Calls that may be waiting on a result at once on the embedded profile
     /// (ADR 0026); a desktop program has no bound and ignores it.
     pub call_depth: u32,
+    /// The target's register file and tail-call support, which decide how a
+    /// `tailcc` signature passes its arguments.
+    pub abi: Abi,
 }
 
 impl Default for EmitOptions {
@@ -75,6 +79,7 @@ impl Default for EmitOptions {
         EmitOptions {
             poison_freed: cfg!(debug_assertions),
             call_depth: DEFAULT_CALL_DEPTH,
+            abi: Abi::DEFAULT,
         }
     }
 }
@@ -217,7 +222,13 @@ pub fn emit_with_options(program: &Program, options: EmitOptions) -> Result<Stri
     let mut module = Module::new(program, options);
     let mut functions = String::new();
     for (index, func) in program.funcs.iter().enumerate() {
-        functions.push_str(&FuncLower::new(&mut module, FuncId(index as u32), func).lower()?);
+        let id = FuncId(index as u32);
+        let lowered = match module.plan.group_of(id) {
+            Some((group, 0)) => FuncLower::new(&mut module, id, func).lower_group(group)?,
+            Some(_) => continue,
+            None => FuncLower::new(&mut module, id, func).lower()?,
+        };
+        functions.push_str(&lowered);
         functions.push('\n');
     }
     functions.push_str(&module.main_export()?);
@@ -274,6 +285,7 @@ struct Module<'a> {
     texts: BTreeMap<String, usize>,
     helpers: BTreeSet<Helper>,
     declarations: BTreeSet<String>,
+    plan: tail::Plan,
 }
 
 impl<'a> Module<'a> {
@@ -285,6 +297,7 @@ impl<'a> Module<'a> {
             texts: BTreeMap::new(),
             helpers: BTreeSet::new(),
             declarations: BTreeSet::new(),
+            plan: tail::Plan::new(program, program.profile == Profile::Embedded),
         }
     }
 
@@ -306,13 +319,7 @@ impl<'a> Module<'a> {
 
     /// The LLVM type of a value, `None` for the erased `Unit`.
     fn llty(&self, ty: MTy) -> Result<Option<&'static str>, EmitError> {
-        match ty {
-            MTy::Int => Ok(Some(self.int_ty())),
-            MTy::Float => Ok(Some(self.float_ty())),
-            MTy::Bool => Ok(Some("i1")),
-            MTy::Unit => Ok(None),
-            MTy::Ptr(_) => Ok(Some("ptr")),
-        }
+        Ok(tail::llvm_type(self.narrow(), ty))
     }
 
     fn ret_ty(&self, ty: MTy) -> Result<&'static str, EmitError> {
@@ -533,6 +540,9 @@ struct FuncLower<'m, 'a> {
     /// `alloca`s, which belong in the entry block so a loop does not grow the
     /// stack.
     allocas: String,
+    /// What runs on entry before the body: loads of spilled arguments.
+    prologue: String,
+    looped: Option<tail::Loop>,
 }
 
 impl<'m, 'a> FuncLower<'m, 'a> {
@@ -546,50 +556,9 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             block: "entry".to_string(),
             locals: BTreeMap::new(),
             allocas: String::new(),
+            prologue: String::new(),
+            looped: None,
         }
-    }
-
-    fn lower(mut self) -> Result<String, EmitError> {
-        let id = self.id;
-        let mut params = vec!["ptr %inst".to_string()];
-        if let Some(env) = &self.func.env {
-            if id == self.module.program.entry {
-                return Err(EmitError::Malformed("the entry function has an env"));
-            }
-            params.push("ptr %env".to_string());
-            let ty = MTy::Ptr(HeapKind::Closure(env.sig));
-            self.locals
-                .insert(env.local, Val::Op(ty, "%env".to_string()));
-        }
-        for (local, ty) in &self.func.params {
-            let value = match self.module.llty(*ty)? {
-                Some(llty) => {
-                    params.push(format!("{llty} %l{}", local.0));
-                    Val::Op(*ty, format!("%l{}", local.0))
-                }
-                None => Val::Unit,
-            };
-            self.locals.insert(*local, value);
-        }
-        let ret = self.module.ret_ty(self.func.ret)?;
-        let func = self.func;
-        match self.expr(&func.body)? {
-            Some(Val::Op(_, op)) => self.line(format!("ret {ret} {op}")),
-            Some(Val::Unit) => self.line("ret void".to_string()),
-            None => {}
-        }
-        let linkage = if id == self.module.program.entry {
-            ""
-        } else {
-            "internal "
-        };
-        Ok(format!(
-            "define {linkage}tailcc {ret} {}({}) nounwind {{\nentry:\n{}{}}}\n",
-            self.module.func_name(id),
-            params.join(", "),
-            self.allocas,
-            self.body
-        ))
     }
 
     fn line(&mut self, text: String) {
@@ -692,14 +661,17 @@ impl<'m, 'a> FuncLower<'m, 'a> {
                 None => None,
             },
             Expr::If(cond, then, els) => self.branch(cond, then, els)?,
-            Expr::CallDirect(callee, args) => self.call(*callee, args)?,
+            Expr::CallDirect(callee, args) => self.call(*callee, args, false)?,
             Expr::Trap(message) => {
                 self.trap(message);
                 None
             }
             Expr::Switch(x, arms, default) => self.switch(*x, arms, default)?,
-            Expr::TailCall(..) => return Err(EmitError::Unsupported("tail calls")),
-            Expr::CallClosure(closure, args) => self.call_closure(closure, args)?,
+            Expr::TailCall(Callee::Direct(callee), args) => self.call(*callee, args, true)?,
+            Expr::TailCall(Callee::Closure(closure), args) => {
+                self.call_closure(closure, args, true)?
+            }
+            Expr::CallClosure(closure, args) => self.call_closure(closure, args, false)?,
             Expr::MakeClosure(f, captures) => self.make_closure(*f, captures)?,
             Expr::Capture(i) => Some(self.capture(*i)?),
             Expr::MethodKey(_) => return Err(EmitError::Unsupported("method sites")),
@@ -959,35 +931,6 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             ty,
             self.emit(format!("phi {llty} {incoming}")),
         )))
-    }
-
-    fn call(&mut self, callee: FuncId, args: &[Expr]) -> Result<Lowered, EmitError> {
-        let target = self
-            .module
-            .program
-            .funcs
-            .get(callee.0 as usize)
-            .ok_or(EmitError::UnknownFunc(callee))?;
-        if target.params.len() != args.len() {
-            return Err(EmitError::Malformed("call arity"));
-        }
-        let mut passed = vec!["ptr %inst".to_string()];
-        for (arg, (_, ty)) in args.iter().zip(&target.params) {
-            let Some(value) = self.expr(arg)? else {
-                return Ok(None);
-            };
-            expect(&value, *ty)?;
-            if let Some(llty) = self.module.llty(*ty)? {
-                passed.push(format!("{llty} {}", value.operand()?));
-            }
-        }
-        let ret = self.module.ret_ty(target.ret)?;
-        let call = format!(
-            "call tailcc {ret} {}({})",
-            self.module.func_name(callee),
-            passed.join(", ")
-        );
-        Ok(Some(self.bound_call(call, target.ret)))
     }
 
     /// Emits `call`, which waits on a result and returns `ret`. On the

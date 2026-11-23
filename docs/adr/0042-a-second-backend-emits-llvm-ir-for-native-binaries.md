@@ -166,5 +166,37 @@ checks. Where it differs:
   it after, and traps with the stack-overflow message past
   `EmitOptions::call_depth` (default 1024), at the same call and with the same
   blamed site as the embedded wasm build. The desktop profile keeps no count.
-- **Not yet.** Tail calls and method sites (`MethodKey`) still fall back with a
-  reason.
+- **Not yet.** Method sites (`MethodKey`) and the thumbv6m trampoline still
+  fall back with a reason.
+
+### Amendment 2026-11-22: tail calls
+
+- **Loops.** A function whose body tail-calls itself, directly or (for a
+  closure body) through its own environment, has a `loop` block that holds a
+  `phi` per parameter; the tail call branches back to it.
+- **Merged groups.** The functions of a strongly connected component of the
+  direct-tail-call graph become one `@goat_gN(inst, which, slots...)` with a
+  `switch` on `which`. A member's parameters take slots by LLVM type, so
+  members with different signatures share registers. A call to a member, tail
+  or not, goes to the group's function and names the member in `which`; the
+  members have no function of their own. The entry and closure bodies are not
+  members.
+- **Everything else** is `musttail call tailcc` followed by `ret`, direct or
+  through a closure's code pointer.
+- **Register rule.** `EmitOptions::abi` gives the integer and float argument
+  registers a `tailcc` signature may use. The default is 6 and 8: x86-64's six
+  integer registers, and the eight vector registers both desktop targets have
+  (aarch64 has eight integer registers, so the default leaves two spare). The
+  instance, the environment and `which` count against the integer budget. An
+  argument past a class's budget travels as an `i64` word in
+  `goat_instance.spill`, which the caller stores after it has evaluated every
+  argument and the callee loads before it runs anything. A call that needs more
+  than `SPILL_WORDS` (8) words is `Unsupported`.
+  `native/tests/ll/tailcc_stack_arguments.ll` keeps the miscompile as a
+  regression file; its test prints whether the local clang still has the bug,
+  and the rule holds either way. Apple clang 21 (2026-11-22) still miscompiles
+  it at -O1 and -O2.
+- **No guaranteed tail calls.** `Abi::musttail` is false for thumbv6m: a tail
+  call that is not a loop is then `Unsupported`, until the M4 trampoline.
+- **Embedded Arm.** The default budget is the 64-bit one. A Thumb-2 build,
+  which has four integer argument registers, sets `int_registers` to 4.
