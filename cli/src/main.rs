@@ -2,10 +2,14 @@
 //!
 //! - `goat check FILE`   parse and type-check, printing the program's type.
 //! - `goat build FILE [-o OUT]`  compile to a WebAssembly module.
-//! - `goat build --native FILE [-o OUT]`  compile to a native executable: LLVM
-//!   IR linked by clang with `libgoat_native.a`, found beside this executable
-//!   or at `$GOAT_NATIVE_LIB` (build it with `cargo build -p goat_native`).
-//!   `$GOAT_CLANG` names the clang to use. The executable takes `-o OUT.svg`.
+//! - `goat build --native [--canvas] FILE [-o OUT]`  compile to a native
+//!   executable: LLVM IR linked by clang with `libgoat_native.a`, found beside
+//!   this executable or at `$GOAT_NATIVE_LIB` (build it with
+//!   `cargo build -p goat_native`). `$GOAT_CLANG` names the clang to use. The
+//!   executable takes `-o OUT.svg`. An interactive program (`init`, `update`,
+//!   `draw`) opens a window on macOS, where `swiftc` (`$GOAT_SWIFTC`) builds
+//!   its AppKit host; `--canvas` writes it in the canvas vocabulary (`Frame`,
+//!   `Dot`, ...) instead of the turtle's.
 //! - `goat run FILE [-o OUT.svg] [--timeout MS]`  compile and run under
 //!   wasmtime; `-o` saves the turtle's drawing as an SVG. A program runs as
 //!   long as it likes unless `--timeout` bounds it; `Ctrl-C` stops it either way.
@@ -20,6 +24,7 @@
 //! (ADR 0029).
 
 use goat::{EmbeddedLimits, Profile};
+use goat_cli::native_build::Vocabulary;
 use goat_cli::turtle::TurtleHost;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -50,10 +55,20 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Some("build") if args.get(2).map(String::as_str) == Some("--native") => {
-            let file = args
-                .get(3)
-                .ok_or("usage: goat build --native FILE [-o OUT]")?;
-            build_native(file, parse_out_flag(&args[4..]))
+            let vocabulary = if args.iter().any(|a| a == "--canvas") {
+                Vocabulary::Canvas
+            } else {
+                Vocabulary::Turtle
+            };
+            let rest: Vec<String> = args[3..]
+                .iter()
+                .filter(|a| *a != "--canvas")
+                .cloned()
+                .collect();
+            let file = rest
+                .first()
+                .ok_or("usage: goat build --native [--canvas] FILE [-o OUT]")?;
+            build_native(file, parse_out_flag(&rest[1..]), vocabulary)
         }
         Some("build") => {
             let file = args.get(2).ok_or("usage: goat build FILE [-o OUT]")?;
@@ -94,13 +109,14 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 /// stdout, reports a trap as `goat run` does, and takes `-o FILE.svg` for the
 /// turtle's drawing. The executable is `OUT`, or the file's name without its
 /// extension.
-fn build_native(file: &str, out: Option<PathBuf>) -> Result<ExitCode, String> {
+fn build_native(
+    file: &str,
+    out: Option<PathBuf>,
+    vocabulary: Vocabulary,
+) -> Result<ExitCode, String> {
     let source = read(file)?;
-    let ll = goat_cli::native_build::emit_ir(&source)
+    let ll = goat_cli::native_build::emit_ir(&source, vocabulary)
         .map_err(|errors| render_errors(file, &source, &errors))?;
-    if goat_cli::native_build::is_interactive(&ll) {
-        return Err("goat build --native does not support interactive programs yet".to_string());
-    }
     let out = out.unwrap_or_else(|| Path::new(file).with_extension(""));
     goat_cli::native_build::link(&ll, &source, &out)?;
     eprintln!("goat: wrote {}", out.display());

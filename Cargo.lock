@@ -694,6 +694,7 @@ version = "0.1.0"
 dependencies = [
  "bolero",
  "goat",
+ "goat_canvas",
  "goat_checker",
  "goat_mir",
  "goat_native",
@@ -724,6 +725,7 @@ name = "goat_native"
 version = "0.1.0"
 dependencies = [
  "goat",
+ "goat_canvas",
  "goat_checker",
  "goat_llvm",
  "goat_mir",

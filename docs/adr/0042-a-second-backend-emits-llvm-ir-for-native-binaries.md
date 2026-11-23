@@ -259,3 +259,44 @@ checks. Where it differs:
 - **Preemption.** M1 has none: the timeout of ADR 0021 is wasmtime's epoch,
   and a native loop that never returns runs until the host kills the process.
   A host that needs one runs the program on its own thread.
+
+### Amendment 2026-11-23: the macOS window host
+
+An interactive program built with `goat build --native` opens an AppKit window
+on macOS (owner, 2026-11-23: platform-native, not a cross-platform Rust windowing
+stack; Linux gets its own thin host later, behind the same `goat_host` table).
+Everywhere else the build still refuses, saying the window host is macOS only.
+
+- **Swift, linked by `swiftc`.** The host is Swift (`native/appkit/`). `goat build`
+  compiles the program's IR and a generated `entry.c` with clang, then has `swiftc`
+  compile the host and link everything with `libgoat_native.a`, so the Swift
+  runtime links with no extra step. Objective-C was not needed. The Swift files
+  and the C header ship inside `goat_native` as strings (`goat_native::appkit`), so
+  the `goat` executable needs no files beside it other than the library.
+- **Who does what.** Rust runs the program; Swift draws and takes input.
+  `goat_native::session` starts a worker thread with its own `goat_instance`,
+  runs `setup`, `update` and `draw`, delivers a frame event every 16 ms and each
+  key or pointer event through the program's `goat_event_<Label>` constructors,
+  and hands the host one `scene.frame` buffer per `draw`. The entry code gives the
+  session the exports as a `GoatProgram` table: the exports `goat_llvm` emitted are
+  found by name only in the generated `entry.c`, so the shared staticlib never
+  references a symbol a non-interactive program lacks. The session knows both the
+  canvas labels (`Frame`, `KeyPress`, `MouseMove`, ...) and the turtle's (`Tick`,
+  `KeyDown`, `PointerMove`, ...); `goat build --native --canvas` compiles against
+  the canvas vocabulary.
+- **Drawing.** `Frame.swift` ports `mir/src/frame.rs`'s decoder. The buffer is
+  the program's output, so every read is bounds-checked, a malformed frame is an
+  error, and colors pass the same alphanumeric-or-`#` rule as `check_color`.
+  `Painter.swift` follows `web/scene.ts` with Core Graphics.
+- **Trap.** The trap entry in the table reports the rendered message
+  (`goat::render_trap`) to the host and parks the worker for good; the window
+  shows the message over the picture.
+- **Watchdog (ADR 0021).** The session times each call into the program on a
+  separate thread. A call that outlives its budget (one second, ten for `setup`;
+  `$GOAT_STUCK_MS` replaces the first) is reported as stuck and its thread is
+  parked with a signal, since a thread spinning in generated code cannot be asked
+  to stop. The process stays up and shows the message.
+- **Headless mode.** The binary accepts `--headless N [--key K]... [--png FILE]`,
+  which runs without a window, prints the last picture's shapes and exits; a trap
+  or a stuck call prints its message and exits 1. The tests drive it, since a
+  window needs a display.
