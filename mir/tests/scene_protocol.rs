@@ -8,7 +8,8 @@ use goat_checker::Vocab;
 use goat_checker::hir::Boundary;
 use goat_checker::ty::Ty;
 use goat_checker::vocab::{Leaf, SceneCalls, shape_leaves};
-use goat_mir::{Host, SceneHost};
+use goat_mir::frame::{Calls, Wire};
+use goat_mir::{Host, SceneCommand, SceneHost};
 use std::collections::BTreeMap;
 
 type Table = BTreeMap<String, Vec<String>>;
@@ -108,4 +109,54 @@ fn the_color_allowlist_is_one_rule() {
         let error = goat_mir::check_color(bad).unwrap_err();
         assert!(error.contains("color wants a name"), "{bad}: {error}");
     }
+}
+
+fn frame_of(name: &str, params: &[Wire], values: &[u8]) -> Vec<u8> {
+    let mut calls = Calls::default();
+    let index = calls.index(name, params);
+    let mut bytes = calls.header();
+    bytes.push(index);
+    bytes.extend(values);
+    bytes
+}
+
+fn text(s: &str) -> Vec<u8> {
+    let mut bytes = (s.len() as u32).to_le_bytes().to_vec();
+    bytes.extend(s.as_bytes());
+    bytes
+}
+
+#[test]
+fn a_frame_replays_into_the_sink_with_every_color_checked() {
+    let mut host = SceneHost::default();
+    let ok = frame_of("polyline_begin", &[Wire::Str], &text("red"));
+    host.frame(&ok).unwrap();
+    assert_eq!(
+        host.commands,
+        [SceneCommand::PolylineBegin("red".to_string())]
+    );
+    let bad = frame_of("polyline_begin", &[Wire::Str], &text("\"/><script>"));
+    assert!(host.frame(&bad).unwrap_err().contains("color wants a name"));
+}
+
+#[test]
+fn a_malformed_frame_is_an_error_and_never_a_panic() {
+    let mut host = SceneHost::default();
+    let circle = [Wire::Float, Wire::Float, Wire::Float, Wire::Str];
+    let values = [[0u8; 24].as_slice(), &text("red")].concat();
+    let whole = frame_of("circle", &circle, &values);
+    host.frame(&whole).unwrap();
+    let record = whole.len() - 1 - values.len();
+    for len in 0..whole.len() {
+        let cut = host.frame(&whole[..len]);
+        assert_eq!(cut.is_ok(), len == record, "cut at {len}");
+    }
+    let unknown = frame_of("sparkle", &[], &[]);
+    assert!(host.frame(&unknown).unwrap_err().contains("sparkle"));
+    let wrong_types = frame_of("circle", &[Wire::Str], &text("red"));
+    assert!(host.frame(&wrong_types).is_err());
+    let huge = frame_of("polyline_begin", &[Wire::Str], &u32::MAX.to_le_bytes());
+    assert!(host.frame(&huge).is_err());
+    assert!(host.frame(&[]).is_err());
+    assert!(host.frame(&[0xFF; 64]).is_err());
 }

@@ -303,3 +303,45 @@ derived arithmetic inlined, so that `q.p + q.v` reads the four scalars from one
 cell; scalar replacement alone gains nothing here, because the `*` result already
 reuses `q.v`'s cell. Still open: reuse of the particle's own cell for the new
 particle, and list cells in `change_each`.
+
+## After batching a frame's shapes into one host call (issue 576)
+
+`draw` used to make one `scene.*` host call per shape (1,000 `scene.circle`
+calls in this benchmark). The glue now encodes the frame's shapes into one buffer
+in the module's memory and makes one `scene.frame(ptr, len)` call (ADR 0015,
+second addendum). The host decodes the buffer and still drives its per-shape
+handlers, so the host's own work (color check, finite check, the counting scene)
+is unchanged; what disappears is the boundary crossing and the per-call
+argument marshaling, and what appears is the encode in the module and the decode
+in the host. `draw` still returns `List(Shape)`.
+
+`draw` time, median of 300 frames, 1,000 particles, Apple M1 Pro, master at
+`806c10f` against this change built and run the same way on the same machine in
+one session (the update step is unchanged and omitted):
+
+| `draw` | before | after |
+|---|---|---|
+| wasmtime `full`, 1,000 shapes | 235 us | 136 us (-42%) |
+| wasmtime `full-10k`, 10,000 shapes | 2,544 us | 1,351 us (-47%) |
+| wasmtime `full-100k`, 100,000 shapes | 24,057 us | 13,427 us (-44%) |
+| V8 `full`, 1,000 shapes | 268-280 us | 173-177 us (-36%) |
+| V8 `full-10k` | 2,791-2,852 us | 1,840-2,106 us (-27% to -35%) |
+| V8 `full-100k` | 27,612-27,945 us | 18,463-19,143 us (-31%) |
+
+`draw-build`, which builds the `Dot` list and sends nothing, is 71-72 us
+(wasmtime) and 44-46 us (V8) in both trees, so the host share of a frame's draw
+falls from about 164 us to 65 us under wasmtime and from about 225 us to about 128
+us under V8. In V8 the remaining cost is the decode and the host's per-shape
+work in JavaScript, not the boundary. Two changes to the decoder moved V8
+`full` draw from 225 us to 173 us: a loop instead of `TextDecoder.decode` for
+strings of 24 bytes or fewer that are ASCII (a color is `"red"`), and parsing
+the frame's call declarations once per distinct header instead of once per
+frame.
+
+A frame of this benchmark is a 14-byte header (one declared call, `circle`) and
+35 bytes per shape (the call index, three `f64`s, a length and `"tomato"`), so
+1,000 shapes encode to about 35 KB. The buffer is allocated by a
+frame's first write, grows by doubling, and is freed when the frame is handed
+over, so a program that draws nothing holds nothing between frames.
+
+To reproduce, run the three commands under "Reproducing" against each tree.

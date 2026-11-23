@@ -161,6 +161,7 @@ fn mentioned(e: &Expr, f: &mut impl FnMut(Local)) {
             f(*b);
         }
         Expr::CallForeign(_, args) => args.iter().for_each(|x| f(*x)),
+        Expr::Frame(FrameOp::Put(items)) => items.iter().filter_map(FrameItem::local).for_each(f),
         Expr::Const(_)
         | Expr::Let(..)
         | Expr::BinInt(..)
@@ -178,6 +179,7 @@ fn mentioned(e: &Expr, f: &mut impl FnMut(Local)) {
         | Expr::AllocVariant(..)
         | Expr::StrLit(_)
         | Expr::Write(Write::Number(_) | Write::Lit(_) | Write::End)
+        | Expr::Frame(FrameOp::Reset | FrameOp::Present)
         | Expr::Trap(_)
         | Expr::Site(..) => {}
     }

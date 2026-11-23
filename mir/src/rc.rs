@@ -231,6 +231,20 @@ impl<'p> Cx<'p> {
                 }
             }
             Expr::Write(Write::Lit(_) | Write::End) => Out::new(e.clone()),
+            Expr::Frame(FrameOp::Put(items)) => {
+                let mut live = after.clone();
+                let mut out = Out::new(e.clone());
+                for item in items.iter().rev() {
+                    if let Some(arg) = item.local() {
+                        let borrowed = self.borrow(Expr::Const(Const::Unit), arg, &live);
+                        live.extend(borrowed.uses.iter().copied());
+                        out.uses.extend(borrowed.uses);
+                        out.pending.extend(borrowed.pending);
+                    }
+                }
+                out
+            }
+            Expr::Frame(FrameOp::Reset | FrameOp::Present) => Out::new(e.clone()),
             Expr::CallForeign(_, args) => {
                 let mut live = after.clone();
                 let mut out = Out::new(e.clone());

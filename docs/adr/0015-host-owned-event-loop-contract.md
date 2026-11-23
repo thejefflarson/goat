@@ -96,6 +96,9 @@ pointers, so they are carved out of that drop/print path.
 
 ### 3. `draw` returns data; the compiler streams it to the host
 
+> Amended by the second addendum below: the shapes reach the host in one
+> `scene.frame` call per frame, not one `scene.*` call per shape.
+
 `draw(model) -> List(Shape)`. The host cannot read a goat list, so the compiler
 emits the `goat_draw` wrapper that walks the `Empty | Link(head, tail)` list and,
 for each shape, switches on its tag, reads its payload record, and calls the
@@ -270,3 +273,143 @@ to start, the old one keeps running.
   reload, and it is not counted by `goat_live_allocs`.
 - A model that survives a reload is only as valid as the fingerprint: it
   compares layouts, not meaning.
+
+## Addendum (2026-11-22): a frame's shapes reach the host in one call
+
+- Status: accepted (2026-11-22)
+- Context: #576, which the owner approved on the condition that batching is a
+  host-side change and `draw` still returns shapes. §3 above makes one `scene.*`
+  host call per shape. In the particle benchmark of
+  `docs/design/record-arithmetic-performance.md` those calls were 41% of a
+  frame under wasmtime and 63% under V8. ADR 0020 gives each shape the scene
+  call or calls it streams through. This addendum changes the transport, not
+  the vocabulary and not the language.
+
+### 1. One `scene.frame(ptr, len)` per frame, inside the bracket
+
+The `goat_draw` glue still walks the `List(Shape)` that `draw` returned. It no
+longer calls a host import per shape. It encodes each shape into one buffer in
+the module's linear memory and, when the walk ends, makes one call:
+
+```
+scene.begin()
+scene.frame(ptr: i32, len: i32)    // omitted when the picture can hold no shape
+scene.end()
+```
+
+`ptr` and `len` name bytes of the module's own exported `memory`. They are
+valid for the duration of the call only: the module frees the buffer when the
+call returns. `scene.begin` and `scene.end` are unchanged. The glue's shape
+budget (100,000 shapes plus vertices) is unchanged; see §4 for the byte bound.
+
+### 2. The encoding, version 1
+
+A frame declares the scene calls it makes, then makes them, so a host needs no
+table of the vocabulary's calls. All integers are little-endian.
+
+```
+frame  = version:u8  ncalls:u8  call{ncalls}  record*
+call   = name_len:u8  name:utf8  nparams:u8  wire:u8{nparams}
+record = call_index:u8  value{nparams of the indexed call}
+value  = Int: i64 | Float: f64 | Bool: u8 (0 or 1) | Str: len:u32, then len bytes
+```
+
+- A `wire` is the ASCII byte `i`, `f`, `b` or `s`: the type of one leaf of a
+  shape payload (ADR 0020's `Leaf`s: `Int`, `Float`, `Bool`, `String`).
+- A `call` is one of the names a shape's `SceneCalls` gives (`Call(name)`, or
+  `begin`, `element` and `end` of a `Stream`), with the types of the leaves it
+  takes. It is declared once per frame, in the order the glue first uses it, so
+  the numbering is the glue's, not the vocabulary's.
+- A `record` is one scene call: a shape that streams through `Call(name)` is
+  one record; a `Stream` shape is a `begin` record over the leaves outside its
+  list, one `element` record per list element, and an `end` record. The records
+  appear in the order `draw`'s list holds the shapes.
+- `Int` is 64 bits on every profile and `Float` is `f64`, so a host reads the
+  same bytes whatever the program's `Profile`. (An interactive program is
+  desktop-profile only, so this costs nothing today.)
+- A string is copied into the buffer, not referred to. The frame is then
+  self-contained: the interpreter, which has no linear memory, produces the same
+  bytes as the wasm backend, and a host reads no pointer into the guest's heap.
+  Strings that repeat across shapes (a color) are repeated.
+- The header is the same bytes in every frame of a module, so a host may parse
+  it once and reuse the result for any frame that starts with the same bytes.
+
+A host replays a frame as the calls it encodes, in order. That is the whole of
+decoding: the per-shape call a host already implements (`SceneSink::circle`,
+`Scene::circle` in `web/scene.ts`) is what the record means. A host with a
+vocabulary of its own needs only to implement the names its vocabulary uses.
+
+### 3. Versioning
+
+`version` is 1. A host rejects any other value. Adding a call to a vocabulary
+needs no version change, because the frame declares it and a host that does not
+implement the name rejects the frame before replaying any of it. Adding a wire
+type, changing a width, or changing the order of the header's fields is a new
+version. The version is reversible in the sense §Reversible above means: it is
+data on top of the ABI, and the compiler and the hosts of one release change
+together.
+
+### 4. The frame is the program's output, so hosts bound-check every read
+
+A host MUST treat the bytes as untrusted. Each host rejects, rather than
+panics on, each of:
+
+- a `(ptr, len)` that is not inside the module's memory (checked with
+  overflow-safe arithmetic on unsigned 32-bit values);
+- a frame that ends inside a header or inside a value, including a string whose
+  length exceeds the bytes left;
+- a version other than 1, a `wire` byte other than `i f b s`, a call name that
+  is not UTF-8, a `call_index` the header did not declare, and a call name the
+  host does not implement.
+
+A string's bytes that are not valid UTF-8 are replaced, as they were when the
+host read a goat string through `scene.text`. Colors and coordinates are still
+checked per call after decoding (ADR 0014's allowlist, finite numbers), so a
+frame cannot pass a value a per-call import would have refused.
+
+The buffer is bounded at 16 MiB (`goat_mir::frame::LIMIT`). A write that would
+pass it traps the program with "this picture is too big", on both backends. The
+glue's shape budget remains, so a picture can still trap on either bound.
+
+### 5. Where the buffer lives and who frees it
+
+The buffer is a block of the module's heap. The first write of a frame
+allocates it, a later write that does not fit doubles it, and `scene.frame`'s
+return frees it, so a module holds no buffer between frames and a hot reload
+(addendum above) has nothing to carry. Three MIR nodes carry it (`Expr::Frame`
+with `Reset`, `Put` and `Present`); `Reset` at the start of a frame frees a
+buffer that a trapped frame left behind. `goat_live_allocs` is zero between
+frames.
+
+### 6. What each host does
+
+| Host | Receives the frame by |
+|---|---|
+| wasmtime (`goat/src/native`) | `link_frame` hands the host a slice of the guest's memory, no copy; `Host::frame(&[u8])` |
+| MIR interpreter | the same bytes from its own buffer, through `Host::frame` |
+| Rust `SceneSink` hosts (`SceneHost`, `Scene<S>`, the canvas SVG sink, the editor's highlight and format) | `Host::frame` replays through `mir/src/frame.rs`'s `replay` into the sink's per-shape methods |
+| Web canvas, highlighter, formatter, theme (`web/scene.ts`) | `sceneImports(...).scene.frame` decodes with `web/frame.ts` and calls the `Scene` methods |
+| Apple editor | the web build in a WKWebView, so the same decoder |
+| Board hosts (WAMR) | none: an interactive program is not built for the embedded profile (ADR 0026), and no board host draws a scene |
+
+`Host::frame` has a default that returns an error, so a host that provides no
+`scene.frame` fails at link time rather than running a program that draws into
+nothing.
+
+### Consequences
+
+- A host sees `begin`, the shapes in order, `end`, as before. One observable
+  change: a `draw` that traps part-way through the walk used to leave the host
+  with `begin` and the shapes drawn so far; now it leaves `begin` alone,
+  because nothing reaches the host until the walk is done. The program stops
+  either way, and the host already had to cope with a frame that never ends.
+- The per-shape imports (`scene.circle` and the rest) are no longer imported by
+  a compiled module. The web runtime keeps them so a module built before this
+  change still runs; the Rust hosts never needed them for a module built after.
+- A shape payload with a leaf that is not `Int`, `Float`, `Bool` or `String` was
+  already rejected by `Vocab::validate`; it now also rejects a vocabulary of
+  more than 255 distinct scene calls or a call with more than 255 values.
+- Measured under wasmtime, `draw` of 1,000 shapes fell from 235 us to 136 us,
+  and under V8 from about 270 us to about 175 us
+  (`docs/design/record-arithmetic-performance.md`). Under V8 what is left is
+  the decode and the host's own per-shape work, not the boundary.

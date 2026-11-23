@@ -469,6 +469,37 @@ impl Vocab {
                 ));
             }
         }
+        self.validate_scene_calls()
+    }
+
+    /// A frame names its scene calls with one-byte lengths and indexes.
+    fn validate_scene_calls(&self) -> Result<(), String> {
+        let mut names = HashSet::new();
+        for shape in &self.shapes {
+            let called: Vec<&String> = match &shape.scene {
+                SceneCalls::Call(name) => vec![name],
+                SceneCalls::Stream {
+                    begin,
+                    element,
+                    end,
+                } => vec![begin, element, end],
+            };
+            names.extend(called.iter().copied());
+            let width = shape_leaves(&shape.payload).map_or(0, |s| {
+                s.head
+                    .len()
+                    .max(s.list.map_or(0, |list| list.element.len()))
+            });
+            if called.iter().any(|name| name.len() > 255) || width > 255 {
+                return Err(format!(
+                    "the `{}` shape's scene calls are too long to encode in a frame",
+                    shape.name
+                ));
+            }
+        }
+        if names.len() > 255 {
+            return Err("a host may name at most 255 scene calls".to_string());
+        }
         Ok(())
     }
 }
@@ -631,5 +662,21 @@ mod tests {
         });
         let error = vocab.validate().unwrap_err();
         assert!(error.contains("two different types"), "{error}");
+    }
+
+    #[test]
+    fn a_vocabulary_that_names_more_scene_calls_than_a_frame_can_index_is_ill_formed() {
+        let mut vocab = Vocab::empty();
+        vocab.shapes = (0..256)
+            .map(|n| ShapeTag {
+                name: format!("S{n}"),
+                payload: record([("x", Ty::Int)]),
+                scene: SceneCalls::Call(format!("call{n}")),
+            })
+            .collect();
+        let error = vocab.validate().unwrap_err();
+        assert!(error.contains("255 scene calls"), "{error}");
+        vocab.shapes.pop();
+        assert_eq!(vocab.validate(), Ok(()));
     }
 }
