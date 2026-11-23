@@ -2,6 +2,10 @@
 //!
 //! - `goat check FILE`   parse and type-check, printing the program's type.
 //! - `goat build FILE [-o OUT]`  compile to a WebAssembly module.
+//! - `goat build --native FILE [-o OUT]`  compile to a native executable: LLVM
+//!   IR linked by clang with `libgoat_native.a`, found beside this executable
+//!   or at `$GOAT_NATIVE_LIB` (build it with `cargo build -p goat_native`).
+//!   `$GOAT_CLANG` names the clang to use. The executable takes `-o OUT.svg`.
 //! - `goat run FILE [-o OUT.svg] [--timeout MS]`  compile and run under
 //!   wasmtime; `-o` saves the turtle's drawing as an SVG. A program runs as
 //!   long as it likes unless `--timeout` bounds it; `Ctrl-C` stops it either way.
@@ -45,6 +49,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             println!("{ty}");
             Ok(ExitCode::SUCCESS)
         }
+        Some("build") if args.get(2).map(String::as_str) == Some("--native") => {
+            let file = args
+                .get(3)
+                .ok_or("usage: goat build --native FILE [-o OUT]")?;
+            build_native(file, parse_out_flag(&args[4..]))
+        }
         Some("build") => {
             let file = args.get(2).ok_or("usage: goat build FILE [-o OUT]")?;
             let out = parse_out_flag(&args[3..]).unwrap_or_else(|| default_output(file));
@@ -73,11 +83,28 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("fmt") => format_files(&args[2..]),
         _ => {
             eprintln!(
-                "usage: goat <check|build|run|fmt> FILE [-o OUT] [--target desktop|embedded] [--board c6|c3|rp2040] [--timeout MS]"
+                "usage: goat <check|build|run|fmt> [--native] FILE [-o OUT] [--target desktop|embedded] [--board c6|c3|rp2040] [--timeout MS]"
             );
             Ok(ExitCode::FAILURE)
         }
     }
+}
+
+/// `goat build --native`: link the program into an executable that prints to
+/// stdout, reports a trap as `goat run` does, and takes `-o FILE.svg` for the
+/// turtle's drawing. The executable is `OUT`, or the file's name without its
+/// extension.
+fn build_native(file: &str, out: Option<PathBuf>) -> Result<ExitCode, String> {
+    let source = read(file)?;
+    let ll = goat_cli::native_build::emit_ir(&source)
+        .map_err(|errors| render_errors(file, &source, &errors))?;
+    if goat_cli::native_build::is_interactive(&ll) {
+        return Err("goat build --native does not support interactive programs yet".to_string());
+    }
+    let out = out.unwrap_or_else(|| Path::new(file).with_extension(""));
+    goat_cli::native_build::link(&ll, &source, &out)?;
+    eprintln!("goat: wrote {}", out.display());
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `goat fmt`: format each file, or with `--check` only report the ones that
@@ -129,24 +156,11 @@ fn run_program(
     if let Err(stopped) = finished.result {
         return Err(goat::render_trap(source, &stopped.message, stopped.site));
     }
-    match out {
-        Some(_) if turtle.commands.is_empty() => {
-            eprintln!("goat: the program used no turtle commands, so no SVG was written");
-            Ok(ExitCode::FAILURE)
-        }
-        Some(path) => {
-            fs::write(&path, turtle.to_svg())
-                .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-            eprintln!("goat: wrote {}", path.display());
-            Ok(ExitCode::SUCCESS)
-        }
-        None => {
-            if !turtle.commands.is_empty() {
-                eprintln!("goat: the turtle drew something; pass -o FILE.svg to save it");
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-    }
+    Ok(if turtle.finish(out.as_deref()) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 fn read(file: &str) -> Result<String, String> {

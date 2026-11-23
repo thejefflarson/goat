@@ -29,7 +29,16 @@ Types are inferred (Hindley-Milner), so you never write a type annotation.
 goat run program.goat      # compile to wasm and run it, printing the result
 goat build program.goat -o out.wasm   # just emit the wasm module
 goat check program.goat    # type-check only
+goat build --native program.goat -o out   # a standalone native executable
 ```
+
+`goat build --native` emits LLVM IR and has clang link it with `libgoat_native.a`
+(build it with `cargo build -p goat_native`; the CLI looks beside its own
+executable, or at `$GOAT_NATIVE_LIB`). `$GOAT_CLANG` picks the clang; otherwise
+it tries `clang-23`, `clang-17`, then `clang`. The executable prints to stdout,
+reports a trap on stderr as `goat run` does and exits non-zero, and takes
+`-o OUT.svg` to save the turtle's drawing. Interactive programs are not
+supported yet.
 
 The program's result is its **final expression**. The runtime prints that value
 when it is a number or a boolean. (A record, list or function result prints

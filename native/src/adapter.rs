@@ -6,6 +6,7 @@
 use crate::abi::*;
 use goat::{Host, HostValue};
 use std::ffi::c_void;
+use std::io::Write;
 
 /// What `ctx` points at while a program runs.
 pub struct Adapter<H> {
@@ -13,6 +14,8 @@ pub struct Adapter<H> {
     /// The lines the program has printed, and the one it is still writing.
     pub lines: Vec<String>,
     line: String,
+    /// Whether a finished line goes straight to stdout instead of `lines`.
+    echo: bool,
     trap: unsafe extern "C" fn(Ctx, *const u8, u64) -> !,
     /// The message of a trap the host raised, kept alive for the trap call.
     halt: String,
@@ -28,10 +31,17 @@ impl<H: Host> Adapter<H> {
             host,
             lines: Vec::new(),
             line: String::new(),
+            echo: false,
             trap,
             halt: String::new(),
             returned: String::new(),
         }
+    }
+
+    /// Prints each line to stdout as the program finishes it, keeping none.
+    pub fn echoing(mut self) -> Adapter<H> {
+        self.echo = true;
+        self
     }
 
     /// Changes the way out of generated code, for a host that runs several
@@ -72,7 +82,13 @@ impl<H: Host> Adapter<H> {
     }
 
     fn finish_line(&mut self) {
-        self.lines.push(std::mem::take(&mut self.line));
+        let line = std::mem::take(&mut self.line);
+        if self.echo {
+            // A closed pipe ends the output, not the program.
+            let _ = writeln!(std::io::stdout().lock(), "{line}");
+        } else {
+            self.lines.push(line);
+        }
     }
 
     fn call(&mut self, module: &str, name: &str, args: &[HostValue]) -> HostValue {

@@ -681,6 +681,8 @@ version = "0.1.0"
 dependencies = [
  "goat",
  "goat_mir",
+ "goat_native",
+ "tempfile",
 ]
 
 [[package]]
