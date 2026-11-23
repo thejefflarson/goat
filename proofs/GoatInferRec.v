@@ -183,36 +183,26 @@ Proof.
   - rewrite <- Hrow. apply tr_compat_cons_mono. exact HG.
 Qed.
 
-(* Extending the environment on odd atoms only refines it. *)
-Lemma kres_ext_odd : forall D n V k,
-  DOk D n -> (forall a, a `in` V -> od a) -> kres D (ext D V k) idt.
-Proof.
-  intros D n V k HD Hodd a. unfold idt. cbn [sat].
-  destruct (AtomSetImpl.mem a V) eqn:Em.
-  - apply AtomSetFacts.mem_iff in Em. rewrite (ext_in _ _ _ _ Em).
-    rewrite (DOk_odd D n a HD (Hodd a Em)). apply finer_any.
-  - rewrite ext_out; [ apply finer_refl | apply AtomSetFacts.not_mem_iff; exact Em ].
-Qed.
-
 (* The renaming that generalizes the group's type, applied to its members. *)
 Lemma fields_gen_ren : forall D n G p R fs,
   DOk D n ->
   field_typing D ((p ~ sch_mono (typ_Record R)) ++ G) fs R ->
-  field_typing (ext D (s_tq (gen_ren D G (typ_Record R))) (s_sk (gen_ren D G (typ_Record R))))
+  field_typing (Dgen D G (typ_Record R))
     ((p ~ sch_mono (s_body (gen_ren D G (typ_Record R)))) ++ G) fs
     (ap_row (rename_t (gen_vars_t G (typ_Record R))) (rename_r (gen_vars_r G (typ_Record R))) R).
 Proof.
   intros D n G p R fs HD Hty.
   rewrite gen_body. simpl.
   destruct (DOk_supp D n HD) as [S HS].
-  apply fields_tsubst_fix with (D := D) (S := S) (S' := S `union` s_tq (gen_ren D G (typ_Record R))).
+  apply fields_tsubst_fix with (D := D) (S := S)
+    (S' := S `union` s_tq (gen_ren D G (typ_Record R)) `union` s_rq (gen_ren D G (typ_Record R))).
   - exact Hty.
   - exact HS.
-  - apply supp_ok_ext_set. exact HS.
+  - apply supp_ok_ext2. exact HS.
   - apply (kres_rename D G (typ_Record R) n HD).
-  - apply (kres_ext_odd D n). exact HD. intros a Ha. exact (gen_ren_od_t D G (typ_Record R) a Ha).
-  - apply rkres_triv. exact (DOk_rtriv D n HD).
-  - apply rkres_triv. exact (DOk_rtriv D n HD).
+  - exact (proj1 (KR_Dgen D G (typ_Record R) n HD)).
+  - apply (rkres_rename D G (typ_Record R) n HD).
+  - exact (proj2 (KR_Dgen D G (typ_Record R) n HD)).
   - intros a Ha. unfold rename_t. destruct (in_dec Atom.eq_dec a (gen_vars_t G (typ_Record R))) as [Hin|Hin];
       [ apply In_la in Hin; destruct Hin as [_ Hin]; contradiction | reflexivity ].
   - intros a Ha. unfold rename_r. destruct (in_dec Atom.eq_dec a (gen_vars_r G (typ_Record R))) as [Hin|Hin];

@@ -259,8 +259,7 @@ Qed.
 
 Definition WfSch (s : scheme) : Prop :=
   (forall a, a `in` s_tq s -> od a) /\ (forall r, r `in` s_rq s -> od r) /\
-  EvS (ftv_sch s) /\ EvS (frv_sch s) /\
-  (forall r, r `in` s_rq s -> s_rk s r = rk_any).
+  EvS (ftv_sch s) /\ EvS (frv_sch s).
 
 Definition WfCtx (G : ctx) : Prop :=
   uniq G /\ forall x s, binds x s G -> WfSch s.
@@ -284,10 +283,10 @@ Qed.
 
 Lemma WfSch_ap : forall s sc, OkS s -> WfSch sc -> WfSch (apS s sc).
 Proof.
-  intros s sc Hs (Hq & Hr & Hf & Hfr & Hrk).
+  intros s sc Hs (Hq & Hr & Hf & Hfr).
   pose proof Hs as Hs0.
   destruct Hs as [_ [Ht [Hrw [Hfx Hfxr]]]].
-  unfold WfSch, apS. simpl. split; [exact Hq|]. split; [exact Hr|]. split; [ | split; [ | exact Hrk ] ].
+  unfold WfSch, apS. simpl. split; [exact Hq|]. split; [exact Hr|]. split.
   - intros a Ha. unfold ftv_sch in Ha. simpl in Ha.
     apply AtomSetFacts.diff_iff in Ha. destruct Ha as [Ha Hnq].
     apply ftv_ap_typ in Ha. destruct Ha as [[b [Hb Ha]]|[p [Hp Ha]]].

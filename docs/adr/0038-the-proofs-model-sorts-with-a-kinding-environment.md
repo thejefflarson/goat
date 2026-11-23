@@ -139,9 +139,18 @@ labels it lacks (`RK`, `drk`; stage 7.2), so a spread onto an open row has a
 derivation when the tail lacks the label (`T_SpreadL`) and an open record
 satisfies `Eq` or `Numeric` when its fields and its tail do. A scheme records the
 kind of each quantified row variable (`s_rk`) and `T_Let` types its body under
-them. A substitution respects the kinds when `rkres D D' sr`. Algorithm W still
-keeps every row variable at `rk_any` (`rtriv D`, part of `DOk`), so `rkres` holds
-vacuously for it; the unifier's row side (a variable that binds to a row
-passes the variable's lacks and sort on to the row's tail, a restricted row's
-tail lacks the removed label, a spread checks the lacks) is the remaining part of
-phase 7 stage 7.3 and is what removes the corpus reader's `LacksOnTail` skip.
+them. A substitution respects the kinds when `rkres D D' sr`. Algorithm W carries them (stage 7.3b): `DOk`
+no longer says every row variable is unconstrained, only that every variable
+the algorithm has not used is, and a substitution's respect for the kinds
+(`KR`: `kres` and `rkres` together) is part of every step (`Good`). A row
+variable that binds to a row passes its sort and lacks to the row's tail, which
+is renamed to a fresh variable of the joined kind (a lacks set is a function, so
+two kinds cannot be compared, and the renaming is made whether or not one
+subsumes the other); `rewrite_row` refuses a row variable that lacks the label;
+`restrict` gives its tail the removed label; a spread tries `T_SpreadL` and
+falls back to the presence-variable `T_Spread`; and `gen_ren` and `inst_den`
+record and restore each quantified row variable's kind. A sort pushed onto the
+variables inside a type a variable binds to also reaches its row variables
+(`push_sort_r`), so a comparison of records with an open row has a type, as the
+checker gives it. The corpus reader no longer skips a program for a lacks fact on
+a row tail (`LacksOnTail`).
