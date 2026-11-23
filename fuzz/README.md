@@ -1,10 +1,15 @@
 # Fuzzing
 
-Two tiers drive two targets. `check_never_panics` runs `goat_checker::check` on
+Two tiers drive the targets. `check_never_panics` runs `goat_checker::check` on
 arbitrary input and requires that nothing panics. `differential_interp_vs_wasm`
 runs generated terminating, well-typed programs through the MIR interpreter and
 through wasm under wasmtime, and requires equal output and zero live
 allocations.
+
+`differential_checker_vs_w` compares the checker with the extracted, proven
+inference algorithm on fuzzed programs; it needs the driver built from the Rocq
+extraction (`GOAT_W_DRIVER`) and is described in `differential/README.md`, "The
+nightly fuzz".
 
 ## CI tier (no nightly, no extra tools)
 

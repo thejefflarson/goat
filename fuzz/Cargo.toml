@@ -23,3 +23,11 @@ members = ["."]
 [profile.fuzz]
 inherits = "dev"
 debug-assertions = true
+
+# differential_checker_vs_w runs the checker and its prelude once per program;
+# unoptimized, that is a few programs a second.
+[profile.fuzz.package.goat_checker]
+opt-level = 2
+
+[profile.fuzz.package.goat_parser]
+opt-level = 2
