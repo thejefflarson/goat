@@ -47,8 +47,11 @@ GoatCompleteInst.v
 GoatCompleteGen.v
 GoatCompleteMono.v
 GoatCompleteLet.v
+<<<<<<< HEAD
 GoatCompleteRows.v
 GoatCompleteUnify.v
+=======
+>>>>>>> c32c424230e3f2762ee7cd906ec22a458dfd5ddb
 GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v
@@ -59,6 +62,8 @@ GoatShape.v
 GoatParse.v
 GoatExample.v
 GoatTagExample.v
+GoatLoopExample.v
+GoatBlockExample.v
 GoatLex.v
 GoatLexSpec.v
 GoatLexBarrier.v

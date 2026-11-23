@@ -117,7 +117,8 @@ Theorem parse_text_denotes : forall hs hc var_of ptbl s ts,
   Forall core_tree ts ->
   Forall Complete ts ->
   Forall (goat_known ptbl) ts ->
-  exists t e, ts = [t] /\ Den_goat var_of ptbl t e /\ lc_exp e /\ lc e.
+  exists t, ts = [t]
+    /\ (Reject t \/ exists e, Den_goat var_of ptbl t e /\ lc_exp e /\ lc e).
 Proof.
   intros hs hc var_of ptbl s ts (ks & rest & _ & Hparse) Hcore Hcomplete Hknown.
   exact (parse_denotes_lc var_of ptbl ks ts rest Hparse Hcore Hcomplete Hknown).
@@ -141,7 +142,8 @@ Theorem parse_text_denotes_xid : forall var_of ptbl s ts,
   Forall core_tree ts ->
   Forall Complete ts ->
   Forall (goat_known ptbl) ts ->
-  exists t e, ts = [t] /\ Den_goat var_of ptbl t e /\ lc_exp e /\ lc e.
+  exists t, ts = [t]
+    /\ (Reject t \/ exists e, Den_goat var_of ptbl t e /\ lc_exp e /\ lc e).
 Proof.
   intros var_of ptbl s ts.
   exact (parse_text_denotes xid_start_hi xid_cont_hi var_of ptbl s ts).

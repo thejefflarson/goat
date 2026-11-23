@@ -46,13 +46,14 @@ Proof.
     by exact (labels_print e).
   assert (Hlabels : LabelsOK (labels t) (lbls e))
     by (rewrite Htable; exact Hinterned).
-  assert (Hblock : Den_block var_of (labels t) (block 0 e) (inst var_of 0 e))
+  assert (Hblock : BlkG var_of (labels t) (block 0 e) (inst var_of 0 e))
     by exact (proj1 (proj1 (print_den var_of (labels t) Hdistinct) e 0 Hscoped Hlabels)).
   assert (Hinst : inst var_of 0 e = e)
     by exact (proj1 (inst_closed var_of) e 0 Hscoped).
   assert (Hexpr : Den var_of (labels t) (Node R_expr (block 0 e)) e)
-    by (rewrite <- Hinst at 2; apply D_expr; exact Hblock).
+    by (rewrite <- Hinst at 2; apply D_expr_g; exact Hblock).
   assert (Hden : Den_goat var_of [] t e)
-    by (exists [], (block 0 e); split; [ reflexivity | split; [ apply Forall_nil | exact Hexpr ] ]).
+    by (exists [], [Node R_expr (block 0 e)];
+        split; [ reflexivity | split; [ apply Forall_nil | apply DBo_some; exact Hexpr ] ]).
   exists t. split; [ exact Hparse | exact Hden ].
 Qed.
