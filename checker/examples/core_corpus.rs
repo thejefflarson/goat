@@ -61,10 +61,10 @@
 use goat_checker::captures::for_each_node;
 use goat_checker::check_with_prelude;
 use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, MatchArm, Symbol};
-use goat_checker::lower::{Lowered, lower};
+use goat_checker::lower::{Lowered, lower, lower_with_prelude};
 use goat_checker::ty::{Group, Row, Ty, TypeVar};
 use goat_checker::{Checked, ErrorKind};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
 use std::sync::Arc;
@@ -73,6 +73,7 @@ const GENERATED: usize = 4000;
 const GENERATED_TYPED: usize = 6000;
 const GENERATED_GROUPS: usize = 8000;
 const GENERATED_SPREADS: usize = 3000;
+const GENERATED_LISTS: usize = 4000;
 const TYPED_DEPTH: u32 = 4;
 /// Each seed drives all three generators, so a change to one stream cannot
 /// hide a mismatch another seed's programs would show.
@@ -830,6 +831,18 @@ impl Reader<'_> {
         Some(Core::Con(decl, tag, read))
     }
 
+    /// What lowering's `Trap` is to the calculus: `letrec f = program(x) do f(x) done in f()`,
+    /// a term of every type that never returns, as the checker types a trap.
+    fn diverge(&mut self) -> Core {
+        let label = self.label("@trap");
+        let call = |depth| Core::Proj(Box::new(Core::Var(depth)), label);
+        let step = Core::App(Box::new(call(1)), Box::new(Core::Var(0)));
+        Core::Letrec(
+            vec![(label, Core::Abs(Box::new(step)))],
+            Box::new(Core::App(Box::new(call(0)), Box::new(Core::Unit))),
+        )
+    }
+
     /// Each arm binds the payload as one variable and each name as a `let` of
     /// its slot, in the arm's body; the `else` binds nothing.
     fn match_arms(
@@ -872,6 +885,10 @@ impl Reader<'_> {
             read.push((tag, body));
         }
         let otherwise = match else_branch {
+            Some(Expr {
+                kind: ExprKind::Trap(_),
+                ..
+            }) => Some(Box::new(self.diverge())),
             Some(body) => Some(Box::new(self.read(body)?)),
             None => None,
         };
@@ -1098,6 +1115,7 @@ impl Reader<'_> {
 /// fragment's types.
 struct Canon<'a> {
     labels: &'a [String],
+    groups: &'a [Arc<Group>],
     vars: Vec<u32>,
     binders: Vec<u32>,
     open_in_rec: bool,
@@ -1125,6 +1143,10 @@ impl Canon<'_> {
                 Some(depth) => write!(out, "m{depth}").unwrap(),
                 None => write!(out, "v{}", self.var(*v)).unwrap(),
             },
+            Ty::Variant(_) => self.group(ty, None, out)?,
+            Ty::Rec(binder, body) if matches!(&**body, Ty::Variant(_)) => {
+                self.group(body, Some(*binder), out)?
+            }
             Ty::Rec(binder, body) => {
                 write!(out, "(mu m{}. ", self.binders.len()).unwrap();
                 self.binders.push(*binder);
@@ -1194,9 +1216,90 @@ impl Canon<'_> {
                 }
                 out.push('}');
             }
-            _ => return None,
         }
         Some(())
+    }
+
+    /// A declared group's closed type as `(grp N T0 T1 ...)`: the group's
+    /// number and the types in its parameter slots. The group's own recursion
+    /// is not written, as the calculus's group type has no binder for it; a
+    /// `binder` a parameter mentions (`f = program(x) do Wrap(f(x)) done`) is
+    /// written as the `mu` around the group.
+    fn group(&mut self, ty: &Ty, binder: Option<TypeVar>, out: &mut String) -> Option<()> {
+        let Ty::Variant(row) = ty else { return None };
+        let tags = closed_fields(row)?;
+        let (name, group) = self.groups.iter().enumerate().find(|(_, g)| {
+            g.tags.len() == tags.len()
+                && g.tags.iter().all(|(t, _)| tags.iter().any(|(l, _)| l == t))
+        })?;
+        let mut params = vec![None; group.params];
+        for (tag, pattern) in &group.tags {
+            let actual = tags.iter().find(|(l, _)| l == tag)?.1;
+            read_params(pattern, actual, &mut params);
+        }
+        let params = params.into_iter().collect::<Option<Vec<_>>>()?;
+        let knot = binder.filter(|b| {
+            params.iter().any(|p| {
+                let mut free = BTreeSet::new();
+                p.free_vars(&mut free);
+                free.contains(b)
+            })
+        });
+        if let Some(binder) = knot {
+            write!(out, "(mu m{}. ", self.binders.len()).unwrap();
+            self.binders.push(binder);
+        }
+        write!(out, "(grp {name}").unwrap();
+        let mut written = Some(());
+        for param in params {
+            out.push(' ');
+            written = written.and_then(|()| self.ty(param, out));
+        }
+        out.push(')');
+        if knot.is_some() {
+            self.binders.pop();
+            out.push(')');
+        }
+        written
+    }
+}
+
+/// The fields of a closed row, in order; `None` when it is open or has a
+/// presence entry.
+fn closed_fields(row: &Row) -> Option<Vec<(&str, &Ty)>> {
+    let mut fields = Vec::new();
+    let mut at = row;
+    loop {
+        match at {
+            Row::Empty => return Some(fields),
+            Row::Extend {
+                label, field, rest, ..
+            } => {
+                fields.push((label.as_str(), &**field));
+                at = rest;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// The parts of `actual` that stand where `pattern`, a tag's payload type in a
+/// group, holds one of the group's parameters.
+fn read_params<'a>(pattern: &Ty, actual: &'a Ty, params: &mut [Option<&'a Ty>]) {
+    match (pattern, actual) {
+        (&Ty::Var(v), _) if v < Group::SELF && Group::SELF - 1 - v < params.len() as TypeVar => {
+            params[(Group::SELF - 1 - v) as usize].get_or_insert(actual);
+        }
+        (Ty::Record(wanted), Ty::Record(given)) => {
+            if let (Some(wanted), Some(given)) = (closed_fields(wanted), closed_fields(given)) {
+                for (label, field) in wanted {
+                    if let Some((_, part)) = given.iter().find(|(l, _)| *l == label) {
+                        read_params(field, part, params);
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1207,13 +1310,23 @@ fn is_method(expr: &Expr) -> bool {
         if params.first().is_some_and(|p| p.name == "self"))
 }
 
+/// What the real prelude declares of lists, for a program that writes `[a, ...r]`
+/// or `[x, y]` without declaring the tags itself.
+const LIST_PRELUDE: &str = "tag List = Empty | Link(_, List)\n";
+
 /// The line for `source`, or why it is not a program of the fragment.
 pub fn line(source: &str) -> Result<String, Skip> {
-    let lowered = lower(source).map_err(|_| Skip::Rejected)?;
+    let (lowered, prelude) = match lower(source) {
+        Ok(lowered) if lowered.errors.is_empty() => (lowered, ""),
+        _ => (
+            lower_with_prelude(LIST_PRELUDE, source).map_err(|_| Skip::Rejected)?,
+            LIST_PRELUDE,
+        ),
+    };
     if !lowered.errors.is_empty() {
         return Err(Skip::Rejected);
     }
-    let checked = check_with_prelude("", source);
+    let checked = check_with_prelude(prelude, source);
     let errors = checked.as_ref().err();
     let flagged = |kind| errors.is_some_and(|es| es.iter().any(|e| e.kind == kind));
     let (method_flag, resource_limit) = (
@@ -1248,6 +1361,7 @@ pub fn line(source: &str) -> Result<String, Skip> {
             checked.typed.node_types.values().any(|ty| {
                 let mut canon = Canon {
                     labels: &reader.labels,
+                    groups: &reader.groups,
                     vars: Vec::new(),
                     binders: Vec::new(),
                     open_in_rec: false,
@@ -1260,6 +1374,7 @@ pub fn line(source: &str) -> Result<String, Skip> {
         Some(checked) => {
             let mut canon = Canon {
                 labels: &reader.labels,
+                groups: &reader.groups,
                 vars: Vec::new(),
                 binders: Vec::new(),
                 open_in_rec: false,
@@ -1930,6 +2045,93 @@ impl SpreadGen {
     }
 }
 
+/// Programs that take lists apart with list patterns: a `match` of several arms,
+/// a destructuring from a parameter and from a literal (the lengths that fit
+/// and the ones that do not), and parameters that are patterns. The patterns
+/// take zero to three items and perhaps a rest name; the bodies add the items
+/// up, so the results are numbers and the lowering's decision tree is what the
+/// checker must type the same way the model does.
+struct ListGen {
+    rng: Rng,
+}
+
+impl ListGen {
+    /// A pattern over the names in `pool`: the names of the items it takes,
+    /// and its text. The rest name is `rest`.
+    fn pattern(
+        &mut self,
+        pool: &[&'static str],
+        rest: &'static str,
+    ) -> (Vec<&'static str>, String) {
+        let items = pool[..self.rng.below(pool.len() + 1)].to_vec();
+        let mut parts: Vec<String> = items.iter().map(|n| (*n).to_string()).collect();
+        if self.rng.below(2) == 0 {
+            parts.push(format!("...{rest}"));
+        }
+        let trailing = if !parts.is_empty() && self.rng.below(5) == 0 {
+            ","
+        } else {
+            ""
+        };
+        (items, format!("[{}{trailing}]", parts.join(", ")))
+    }
+
+    fn body(&mut self, names: &[&'static str]) -> String {
+        let mut terms: Vec<String> = names.iter().map(|n| (*n).to_string()).collect();
+        if terms.is_empty() || self.rng.below(3) == 0 {
+            terms.push(self.rng.below(10).to_string());
+        }
+        terms.join(" + ")
+    }
+
+    fn literal(&mut self) -> String {
+        let items: Vec<String> = (0..self.rng.below(4))
+            .map(|_| self.rng.below(10).to_string())
+            .collect();
+        format!("[{}]", items.join(", "))
+    }
+
+    fn program(&mut self) -> String {
+        const FIRST: [&str; 3] = ["a", "b", "c"];
+        const SECOND: [&str; 3] = ["d", "e", "f"];
+        match self.rng.below(6) {
+            0 | 1 => {
+                let mut arms = String::new();
+                for _ in 0..1 + self.rng.below(4) {
+                    let (items, pattern) = self.pattern(&FIRST, "r");
+                    let body = self.body(&items);
+                    arms.push_str(&format!("    {pattern} then {body}\n"));
+                }
+                if self.rng.below(3) == 0 {
+                    arms.push_str(&format!("    else {}\n", self.rng.below(10)));
+                }
+                let arg = self.literal();
+                format!("f = program(xs) do\n  match xs do\n{arms}  done\ndone\nf({arg})")
+            }
+            2 | 5 => {
+                let (items, pattern) = self.pattern(&FIRST, "r");
+                let body = self.body(&items);
+                let arg = self.literal();
+                format!("f = program(xs) do\n  {pattern} = xs\n  {body}\ndone\nf({arg})")
+            }
+            3 => {
+                let (items, pattern) = self.pattern(&FIRST, "r");
+                let body = self.body(&items);
+                let value = self.literal();
+                format!("{pattern} = {value}\n{body}")
+            }
+            _ => {
+                let (first, p) = self.pattern(&FIRST, "r");
+                let (second, q) = self.pattern(&SECOND, "s");
+                let names: Vec<&str> = first.iter().chain(&second).copied().collect();
+                let body = self.body(&names);
+                let (x, y) = (self.literal(), self.literal());
+                format!("f = program({p}, {q}) do {body} done\nf({x}, {y})")
+            }
+        }
+    }
+}
+
 /// Programs the repository's sources may not hold: let-polymorphism, row
 /// polymorphism, rejections, and calls with several arguments.
 const HANDWRITTEN: &[&str] = &[
@@ -2173,6 +2375,13 @@ fn main() {
         };
         for _ in 0..GENERATED_SPREADS {
             sources.push(spread_gen.program());
+        }
+
+        let mut list_gen = ListGen {
+            rng: Rng::seeded(seed ^ 0x0115_7A77),
+        };
+        for _ in 0..GENERATED_LISTS {
+            sources.push(list_gen.program());
         }
     }
 

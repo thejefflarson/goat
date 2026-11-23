@@ -23,7 +23,11 @@ position, and an arm body has its payload variable as index 0 with each name a `
 of its slot. Not read: a host-provided tag, a payload type that is not a name or `_`,
 and a comparison in a
 program with tags (the algorithm does not decide the `Eq` sort of a group,
-stage 7.4). A program whose result is a group has no type the corpus writes.
+stage 7.4). A group in a type is written `(grp N T0 T1 ...)`: the group's number (the
+one its terms carry) and the types in its parameter slots, `(mu mK. (grp ...))` when a
+parameter mentions the group's own recursive binder (`f = program(x) do Wrap(f(x)) done`).
+The driver reads it as `Typ_Grp w A`, `A` being the spine of the parameters, and compares
+group types like any other (`TGrp`).
 
 Run it with `make -C proofs differential` (it is part of `make -C proofs ci`
 and of the `coq` workflow).

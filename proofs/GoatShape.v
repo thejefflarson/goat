@@ -12,6 +12,7 @@ Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
 Require Import Goat.GoatPrec.
 Require Import Goat.GoatDen.
+Require Import Goat.GoatDenRun.
 From Stdlib Require Import Lia.
 Open Scope string_scope.
 Open Scope list_scope.
@@ -21,7 +22,7 @@ Definition core_rule (r : rule) : bool :=
   | R_goat | R_expr | R_value | R_declaration | R_local | R_function | R_params
   | R_call | R_arguments | R_access | R_take | R_name | R_number | R_boolean | R_true_lit
   | R_false_lit | R_record | R_field | R_spread | R_string | R_conditional
-  | R_destructure | R_record_pattern | R_rest_binding
+  | R_destructure | R_record_pattern | R_list_pattern | R_rest_binding
   | R_plus | R_minus | R_multiply | R_floor_divide | R_divide | R_remainder
   | R_equal | R_not_equal | R_lte | R_lt | R_gte | R_gt
   | R_and_op | R_or_op | R_not_op | R_negation
@@ -262,8 +263,10 @@ Qed.
 (* A parameter is a name or a record pattern; the fragment reads only names. *)
 Definition not_pattern (t : tree) : Prop := forall c, t <> Node R_record_pattern c.
 
-Lemma shape_param : forall ts,
-  gen (E_rule R__param) ts -> Forall not_pattern ts -> exists x, ts = [ident x].
+Lemma shape_param_head : forall ts,
+  gen (E_rule R__param) ts -> Forall not_pattern ts ->
+  (exists x, ts = [ident x])
+  \/ (exists ps, ts = [Node R_list_pattern ps] /\ gen (body R_list_pattern) ps).
 Proof.
   intros ts Hx Hplain.
   pose proof (gen_splice_inv Hx eq_refl) as Halt. simpl in Halt.
@@ -271,22 +274,25 @@ Proof.
   - exfalso. destruct (gen_node_of Hrec eq_refl) as (c & -> & _).
     inversion Hplain as [| ? ? Hc _]; subst. exact (Hc c eq_refl).
   - destruct (gen_alt_inv Hrest) as [Hlist | Hname].
-    + exfalso. exact (gen_outside Hlist eq_refl eq_refl).
-    + exact (gen_ident _ Hname).
+    + destruct (gen_node_of Hlist eq_refl) as (ps & -> & Hb).
+      right. exists ps. split; [ reflexivity | exact Hb ].
+    + left. exact (gen_ident _ Hname).
 Qed.
 
-Lemma shape_params : forall cs,
+Lemma shape_params_head : forall cs,
   gen (body R_params) cs -> Forall not_pattern cs ->
-  exists x tail,
-    cs = ident x :: tail
+  exists h tail,
+    cs = h ++ tail
+    /\ ((exists x, h = [ident x])
+        \/ (exists ps, h = [Node R_list_pattern ps] /\ gen (body R_list_pattern) ps))
     /\ gen (E_star (E_seq (E_term (T_text ",")) (E_rule R__param))) tail
     /\ Forall not_pattern tail.
 Proof.
   intros cs H Hplain. simpl in H.
   split_seq H as (tsx & tail & -> & Hx & Htail).
   apply Forall_app in Hplain as [Hplainx Hplaint].
-  destruct (shape_param _ Hx Hplainx) as (x & ->).
-  exists x, tail. split; [ reflexivity | split; assumption ].
+  exists tsx, tail. split; [ reflexivity | ].
+  split; [ exact (shape_param_head _ Hx Hplainx) | split; assumption ].
 Qed.
 
 Lemma shape_arguments : forall cs,
@@ -509,14 +515,95 @@ Proof.
     split; [ reflexivity | apply DPS_rest; exact Hfin ].
 Qed.
 
+Lemma pat_lmore : forall star,
+  gen (E_star (E_seq (E_term (T_text ",")) (E_rule R_name))) star ->
+  forall opt_rest fin,
+    (opt_rest = [] \/ exists r, opt_rest = [sym ","; rest_node r]) ->
+    (fin = [] \/ fin = [sym ","]) ->
+    exists xs ro, Den_lpat_more (star ++ opt_rest ++ fin ++ [sym "]"]) xs ro.
+Proof.
+  intros star H.
+  apply (gen_star_ind (E_seq (E_term (T_text ",")) (E_rule R_name))
+           (fun star => forall opt_rest fin,
+              (opt_rest = [] \/ exists r, opt_rest = [sym ","; rest_node r]) ->
+              (fin = [] \/ fin = [sym ","]) ->
+              exists xs ro, Den_lpat_more (star ++ opt_rest ++ fin ++ [sym "]"]) xs ro));
+    [ | | exact H ].
+  - intros opt_rest fin Hopt Hfin. simpl.
+    destruct Hopt as [-> | (r & ->)]; destruct Hfin as [-> | ->].
+    + exists [], None. apply DLM_end.
+    + exists [], None. apply DLM_trail.
+    + exists [], (Some r). exact (DLM_rest r [] (or_introl eq_refl)).
+    + exists [], (Some r). exact (DLM_rest r [sym ","] (or_intror eq_refl)).
+  - intros ts1 ts2 Hstep IH opt_rest fin Hopt Hfin.
+    split_seq Hstep as (tscomma & tsname & -> & Hcomma & Hname).
+    text_inv Hcomma. subst.
+    destruct (gen_ident _ Hname) as (y & ->).
+    destruct (IH opt_rest fin Hopt Hfin) as (xs & ro & Hmore).
+    exists (y :: xs), ro. simpl. apply DLM_name. exact Hmore.
+Qed.
+
+Lemma shape_list_pattern : forall cs,
+  gen (body R_list_pattern) cs -> exists xs ro, Den_lpat cs xs ro.
+Proof.
+  intros cs H. simpl in H.
+  split_seq H as (tsl & ts1 & -> & Hl & H1). text_leaf Hl.
+  split_seq H1 as (tsa & tsr & -> & Ha & Hr). text_leaf Hr.
+  destruct (gen_opt_inv Ha) as [Hin | ->].
+  - split_seq Hin as (tsb & tsc & -> & Hb & Hc).
+    assert (Hfin : tsc = [] \/ tsc = [sym ","]).
+    { destruct (gen_opt_inv Hc) as [Hcomma | ->].
+      - text_inv Hcomma. subst. right. reflexivity.
+      - left. reflexivity. }
+    destruct (gen_alt_inv Hb) as [Hnamed | Hrest].
+    + split_seq Hnamed as (tsx & ts3 & -> & Hx & H3).
+      destruct (gen_ident _ Hx) as (x & ->).
+      split_seq H3 as (tstar & topt & -> & Hstar & Hopt).
+      assert (Hopt' : topt = [] \/ exists r, topt = [sym ","; rest_node r]).
+      { destruct (gen_opt_inv Hopt) as [Hs | ->].
+        - split_seq Hs as (tscomma & tsrest & -> & Hcomma & Hrest).
+          text_inv Hcomma. subst.
+          destruct (shape_rest_binding _ Hrest) as (r & ->).
+          right. exists r. reflexivity.
+        - left. reflexivity. }
+      destruct (pat_lmore _ Hstar topt tsc Hopt' Hfin) as (xs & ro & Hmore).
+      exists (x :: xs), ro.
+      assert (Hs : Den_lpat_start (ident x :: tstar ++ topt ++ tsc ++ [sym "]"]) (x :: xs) ro)
+        by (apply DLS_name; exact Hmore).
+      pose proof (DLP_start _ _ _ Hs) as Hp.
+      match goal with
+      | |- Den_lpat ?c _ _ =>
+          assert (Hc' : c = sym "[" :: ident x :: tstar ++ topt ++ tsc ++ [sym "]"])
+            by (simpl; rewrite <- ?app_assoc; reflexivity);
+          rewrite Hc'; exact Hp
+      end.
+    + destruct (shape_rest_binding _ Hrest) as (r & ->).
+      exists [], (Some r).
+      assert (Hs : Den_lpat_start (rest_node r :: tsc ++ [sym "]"]) [] (Some r))
+        by (apply DLS_rest; exact Hfin).
+      pose proof (DLP_start _ _ _ Hs) as Hp.
+      match goal with
+      | |- Den_lpat ?c _ _ =>
+          assert (Hc' : c = sym "[" :: rest_node r :: tsc ++ [sym "]"])
+            by (simpl; rewrite <- ?app_assoc; reflexivity);
+          rewrite Hc'; exact Hp
+      end.
+  - exists [], None. exact DLP_empty.
+Qed.
+
 Lemma shape_destructure : forall cs,
   gen (body R_destructure) cs ->
-  exists ps xs ro vs semi bs,
+  (exists ps xs ro vs semi bs,
     cs = [Node R_record_pattern (sym "{" :: ps); sym "="; Node R_value vs]
            ++ semi ++ bs
     /\ (semi = [] \/ semi = [sym ";"])
     /\ Den_pat_start ps xs ro
-    /\ loop_body_shape bs.
+    /\ loop_body_shape bs)
+  \/ (exists ps vs semi bs,
+    cs = [Node R_list_pattern ps; sym "="; Node R_value vs] ++ semi ++ bs
+    /\ (semi = [] \/ semi = [sym ";"])
+    /\ gen (body R_list_pattern) ps
+    /\ loop_body_shape bs).
 Proof.
   intros cs H. simpl in H.
   split_seq H as (tspat & ts1 & -> & Hpat & H1).
@@ -525,15 +612,20 @@ Proof.
   split_seq H3 as (tssemi & tsb & -> & Hsemi & Hb).
   apply gen_expect_inv in Hv.
   destruct (gen_node_of Hv eq_refl) as (vs & -> & _).
-  destruct (gen_alt_inv Hpat) as [Hrec | Hlist]; [ | exfalso; exact (gen_outside Hlist eq_refl eq_refl) ].
-  destruct (gen_node_of Hrec eq_refl) as (cp & -> & Hbodyp).
-  destruct (shape_record_pattern cp Hbodyp) as (ps & xs & ro & -> & Hps).
-  destruct (gen_opt_inv Hsemi) as [Hs | ->].
-  - text_inv Hs. subst.
-    exists ps, xs, ro, vs, [sym ";"], tsb.
-    split; [ reflexivity | split; [ right; reflexivity | split; [ exact Hps | exact (gen_loop_body tsb Hb) ] ] ].
-  - exists ps, xs, ro, vs, [], tsb.
-    split; [ reflexivity | split; [ left; reflexivity | split; [ exact Hps | exact (gen_loop_body tsb Hb) ] ] ].
+  assert (Hsm : tssemi = [] \/ tssemi = [sym ";"]).
+  { destruct (gen_opt_inv Hsemi) as [Hs | ->].
+    - text_inv Hs. subst. right. reflexivity.
+    - left. reflexivity. }
+  destruct (gen_alt_inv Hpat) as [Hrec | Hlist].
+  - left.
+    destruct (gen_node_of Hrec eq_refl) as (cp & -> & Hbodyp).
+    destruct (shape_record_pattern cp Hbodyp) as (ps & xs & ro & -> & Hps).
+    exists ps, xs, ro, vs, tssemi, tsb.
+    split; [ reflexivity | split; [ exact Hsm | split; [ exact Hps | exact (gen_loop_body tsb Hb) ] ] ].
+  - right.
+    destruct (gen_node_of Hlist eq_refl) as (cp & -> & Hbodyp).
+    exists cp, vs, tssemi, tsb.
+    split; [ reflexivity | split; [ exact Hsm | split; [ exact Hbodyp | exact (gen_loop_body tsb Hb) ] ] ].
 Qed.
 
 Lemma shape_string : forall cs, gen (body R_string) cs -> cs = [Leaf TStr].
@@ -768,7 +860,9 @@ Qed.
 Lemma shape_arm : forall cs,
   gen (body R_arm) cs ->
   (exists p b, cs = [Node R_pattern p; sym "then"; Node R_expr b])
-  \/ (exists p b, cs = [Node R_literal_pattern p; sym "then"; Node R_expr b]).
+  \/ (exists p b, cs = [Node R_literal_pattern p; sym "then"; Node R_expr b])
+  \/ (exists p b, cs = [Node R_list_pattern p; sym "then"; Node R_expr b]
+                  /\ gen (body R_list_pattern) p).
 Proof.
   intros cs H. simpl in H.
   split_seq H as (tsp & ts1 & -> & Hp & H1).
@@ -776,9 +870,11 @@ Proof.
   apply gen_expect_inv in Hthen. text_leaf Hthen.
   apply gen_expect_inv in Hb.
   destruct (gen_node_of Hb eq_refl) as (b & -> & _).
-  destruct (gen_alt_inv Hp) as [Hlist | Hp1]; [ exfalso; exact (gen_outside Hlist eq_refl eq_refl) | ].
+  destruct (gen_alt_inv Hp) as [Hlist | Hp1].
+  { destruct (gen_node_of Hlist eq_refl) as (p & -> & Hbp). right. right. exists p, b.
+    split; [ reflexivity | exact Hbp ]. }
   destruct (gen_alt_inv Hp1) as [Hlit | Hpat].
-  - destruct (gen_node_of Hlit eq_refl) as (p & -> & _). right. exists p, b. reflexivity.
+  - destruct (gen_node_of Hlit eq_refl) as (p & -> & _). right. left. exists p, b. reflexivity.
   - destruct (gen_node_of Hpat eq_refl) as (p & -> & _). left. exists p, b. reflexivity.
 Qed.
 
@@ -1047,13 +1143,18 @@ Definition is_tag_arm (t : tree) : bool :=
 Definition is_lit_arm (t : tree) : bool :=
   match t with Node R_arm (Node R_literal_pattern _ :: _) => true | _ => false end.
 
+Definition is_list_arm (t : tree) : bool :=
+  match t with Node R_arm (Node R_list_pattern _ :: _) => true | _ => false end.
+
 (* A match has an arm, and its arms are all tag patterns, or all literals with
-   an else (the fragment has no bool match that omits it). *)
+   an else (the fragment has no bool match that omits it), or all list patterns
+   (with an else or without). *)
 Definition match_ok (cs : list tree) : Prop :=
   has R_arm cs /\
   (Forall (fun t => is_arm_node t = true -> is_tag_arm t = true) cs
    \/ (Forall (fun t => is_arm_node t = true -> is_lit_arm t = true) cs
-       /\ In (sym "else") cs)).
+       /\ In (sym "else") cs)
+   \/ Forall (fun t => is_arm_node t = true -> is_list_arm t = true) cs).
 
 Definition complete_node (r : rule) (cs : list tree) : Prop :=
   match r with
@@ -1090,6 +1191,10 @@ Inductive core_tree : tree -> Prop :=
   | Core_node : forall r cs,
       core_rule r = true -> Forall core_tree cs -> core_tree (Node r cs).
 
+(* The tags a list pattern is matched against: [Empty] and [Link] of one group. *)
+Definition list_tags_in (tt : tagtab) : Prop :=
+  exists w tge tgl, tag_lookup tt "Empty" = Some (w, tge) /\ tag_lookup tt "Link" = Some (w, tgl).
+
 (* The names the program resolves exist in the table: the tag of a pattern, and
    the list tags a list literal builds. *)
 Definition known_node (tt : tagtab) (r : rule) (cs : list tree) : Prop :=
@@ -1100,8 +1205,8 @@ Definition known_node (tt : tagtab) (r : rule) (cs : list tree) : Prop :=
       | _ => True
       end
   | R_list => tag_lookup tt "Empty" <> None /\ tag_lookup tt "Link" <> None
-  | R_each_loop =>
-      exists w tge tgl, tag_lookup tt "Empty" = Some (w, tge) /\ tag_lookup tt "Link" = Some (w, tgl)
+  | R_each_loop => list_tags_in tt
+  | R_list_pattern => list_tags_in tt
   | _ => True
   end.
 
@@ -1250,6 +1355,32 @@ Proof.
     + specialize (IH Hx). fsetdec.
 Qed.
 
+Lemma den_lps_rename : forall seen ps prms, Den_lps seen ps prms ->
+  forall ns, length ns = length (lp_sources prms) ->
+  exists prms', Den_lps seen ps prms' /\ lp_sources prms' = ns
+                /\ lp_names prms' = lp_names prms /\ lp_longest prms' = lp_longest prms.
+Proof.
+  intros seen ps prms H. induction H; intros ns Hlen; simpl in Hlen.
+  - destruct ns; [ | simpl in Hlen; discriminate ].
+    exists [LP_name x]. repeat split. apply DLPS_name_last.
+  - destruct ns as [| s' [| ? ?]]; simpl in Hlen; try discriminate.
+    exists [LP_list s' xs ro]. repeat split. apply DLPS_list_last. assumption.
+  - destruct (IHDen_lps ns Hlen) as (prms' & Hd & Hsrc & Hnames & Hlong).
+    exists (LP_name x :: prms').
+    split; [ apply DLPS_name_more; exact Hd | ].
+    split; [ simpl; exact Hsrc | ].
+    split; [ simpl; rewrite Hnames; reflexivity | ].
+    simpl. exact Hlong.
+  - destruct ns as [| s' ns]; [ simpl in Hlen; discriminate | ].
+    simpl in Hlen. injection Hlen as Hlen.
+    destruct (IHDen_lps ns Hlen) as (prms' & Hd & Hsrc & Hnames & Hlong).
+    exists (LP_list s' xs ro :: prms').
+    split; [ apply DLPS_list_more; assumption | ].
+    split; [ simpl; rewrite Hsrc; reflexivity | ].
+    split; [ simpl; rewrite Hnames; reflexivity | ].
+    simpl. rewrite Hlong. reflexivity.
+Qed.
+
 Section Totality.
 
   Context {TT : TagTable}.
@@ -1271,8 +1402,11 @@ Section Totality.
             match cs with
             | Node R_pattern _ :: _ => exists w tg b, Den_arm var_of tbl t w tg b
             | Node R_literal_pattern _ :: _ => exists l b, Den_lit_arm var_of tbl t l b
+            | Node R_list_pattern _ :: _ =>
+                list_tags_in tags /\ exists row, Den_larm var_of tbl t row
             | _ => True
             end
+        | R_list_pattern => list_tags_in tags /\ exists xs ro, Den_lpat cs xs ro
         | R_pattern => exists t' xs, Den_tpat cs t' xs
         | R_labels => exists xs, Den_labels cs xs
         | R_literal_pattern => exists c e, cs = [c] /\ Den var_of tbl c e
@@ -1288,7 +1422,9 @@ Section Totality.
                  cs = [sym "("; Node R_arguments args; sym ")"]
                  /\ Den_args var_of tbl args es
         | R_arguments => exists es, Den_args var_of tbl cs es
-        | R_params => exists xs, Den_params var_of tbl cs xs
+        | R_params =>
+            (exists xs, Den_params var_of tbl cs xs)
+            \/ (list_tags_in tags /\ exists prms, Den_lps false cs prms)
         | _ => True
         end
     end.
@@ -1568,26 +1704,73 @@ Section Totality.
     exists xs, gs, b. apply DK_skip. exact H.
   Qed.
 
+  Lemma not_ops_head : forall nots,
+    gen (E_star (E_rule R_not_op)) nots ->
+    nots = [] \/ exists c r, nots = Node R_not_op c :: r.
+  Proof.
+    intros nots H.
+    apply (gen_star_ind (E_rule R_not_op)
+             (fun nots => nots = [] \/ exists c r, nots = Node R_not_op c :: r));
+      [ | | exact H ].
+    - left. reflexivity.
+    - intros ts1 ts2 H1 _. destruct (gen_node_of H1 eq_refl) as (c & -> & _).
+      right. exists c, ts2. reflexivity.
+  Qed.
+
+  (* A statement opens with a tree that is not a function declaration. *)
+  Lemma statement_head : forall ss,
+    gen (E_rule R__statement) ss ->
+    exists t ss', ss = t :: ss' /\ fn_decl_name t = None.
+  Proof.
+    intros ss H.
+    pose proof (statement_math _ H) as Hmath.
+    split_seq Hmath as (tso & tsm & -> & Hop & _).
+    destruct (operand_shape _ Hop) as (nots & t & -> & Hnots & Hterm).
+    destruct (not_ops_head nots Hnots) as [-> | (c & r & ->)];
+      [ | eexists; eexists; split; [ reflexivity | reflexivity ] ].
+    destruct (term_shape _ Hterm) as [(c & ->) | (prim & posts & -> & Hprim & _)].
+    - eexists; eexists; split; [ reflexivity | reflexivity ].
+    - destruct (primary_shape _ Hprim) as [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | (c & ->)]]]]]]]]]]]]]];
+        (eexists; eexists; split; [ reflexivity | reflexivity ]).
+  Qed.
+
+  (* A run of function declarations is one block step whatever follows it, so
+     long as what follows does not open with another function declaration. *)
   Lemma decls_blk : forall ds,
     Forall (fun t => exists c, t = Node R_declaration c) ds ->
     Forall TotKind ds ->
-    forall k, BlkTot k -> BlkTot (ds ++ k).
+    forall k, BlkTot k -> fn_run_names var_of k = [] -> BlkTot (ds ++ k).
   Proof.
-    intros ds Hds. induction Hds as [| d ds [c ->] _ IH]; intros Hkids k Hk; [ exact Hk | ].
-    inversion Hkids as [| ? ? Hd Hkids']; subst. simpl in Hd.
-    destruct Hd as (x & v & Hdecl).
-    specialize (IH Hkids' k Hk).
-    intros ctx fin. rewrite <- app_comm_cons.
-    destruct (is_fn_decl (Node R_declaration c)) eqn:Hfn.
-    - destruct (mentions_any ctx v) eqn:Hm.
-      + destruct (IH (var_of x :: ctx) (e_fvar_f (var_of x))) as (xs & gs & b & H).
-        exists xs, gs, (fn_place (var_of x) v b).
-        eapply DK_late; eassumption.
-      + destruct (IH ctx (e_fvar_f (var_of x))) as (xs & gs & b & H).
-        exists (x :: xs), (v :: gs), b.
-        eapply DK_hoist; eassumption.
-    - destruct (IH (var_of x :: ctx) (e_fvar_f (var_of x))) as (xs & gs & b & H).
-      exists xs, gs, (e_let v (close_exp (var_of x) b)).
+    intros ds. remember (length ds) as n eqn:Hn. revert ds Hn.
+    induction n as [n IH] using lt_wf_ind.
+    intros ds Hn Hds Hkids k Hk Hrun.
+    destruct ds as [| d ds']; [ exact Hk | ].
+    inversion Hds as [| dd dds [c Hc] Hds'].
+    subst d.
+    destruct (fn_decl_name (Node R_declaration c)) eqn:Hname.
+    - destruct (run_decompose var_of (Node R_declaration c) ds' ltac:(rewrite Hname; discriminate))
+        as (fr & tl & Heq & Hfrne & Hfr & Htl).
+      rewrite Heq in Hds, Hkids, Hn.
+      apply Forall_app in Hds as [Hdfr Hdtl]. apply Forall_app in Hkids as [Hkfr Hktl].
+      assert (Hlen : length tl < n).
+      { rewrite Hn, length_app. destruct fr; [ contradiction | simpl; lia ]. }
+      assert (Htlk : BlkTot (tl ++ k)) by exact (IH (length tl) Hlen tl eq_refl Hdtl Hktl k Hk Hrun).
+      destruct (fdecls_of var_of tbl fr) as (xs & vs & Hfd).
+      { rewrite Forall_forall in Hfr, Hkfr, Hdfr |- *. intros t Ht. split.
+        - exact (fn_decl_name_decl t (Hfr t Ht)).
+        - destruct (Hdfr t Ht) as [c' ->]. exact (Hkfr _ Ht). }
+      rewrite Heq. rewrite app_assoc.
+      intros ctx fin.
+      exact (run_blk var_of tbl fr xs vs Hfd (tl ++ k) (run_names_app var_of tl k Htl Hrun) Htlk ctx fin).
+    - inversion Hkids as [| ? ? Hd Hkids']. simpl in Hd.
+      destruct Hd as (y & v & Hdecl).
+      assert (Hfn : is_fn_decl (Node R_declaration c) = false).
+      { rewrite (decl_name_is var_of tbl _ _ _ Hdecl) in Hname.
+        destruct (is_fn_decl (Node R_declaration c)); [ discriminate Hname | reflexivity ]. }
+      assert (Hrest := IH (length ds') ltac:(simpl in Hn; lia) ds' eq_refl Hds' Hkids' k Hk Hrun).
+      intros ctx fin. rewrite <- app_comm_cons.
+      destruct (Hrest (var_of y :: ctx) (e_fvar_f (var_of y))) as (xs & gs & b & Hb).
+      exists xs, gs, (e_let v (close_exp (var_of y) b)).
       eapply DK_value; eassumption.
   Qed.
 
@@ -1614,7 +1797,11 @@ Section Totality.
       assert (Hstar : gen (E_star (E_rule R_declaration)) ds)
         by (rewrite Hsplit; apply G_star_cons; assumption).
       rewrite app_assoc.
-      apply decls_blk; [ exact (declaration_nodes ds Hstar) | exact Hkds | ].
+      assert (Hrun : fn_run_names var_of (ss ++ k) = []).
+      { destruct Hss as [Hst | ->].
+        - destruct (statement_head ss Hst) as (t & ss' & -> & Ht). simpl. rewrite Ht. reflexivity.
+        - destruct Hk as [-> | (k' & -> & _)]; reflexivity. }
+      apply decls_blk; [ exact (declaration_nodes ds Hstar) | exact Hkds | | exact Hrun ].
       destruct Hss as [Hst | ->].
       + exact (stmt_blk ss Hst Hkss k Hk).
       + simpl. exact (cont_blk k Hk).
@@ -1703,25 +1890,61 @@ Section Totality.
     exact (args_den fin tail Hfin Htail Hktail _ _ Hden).
   Qed.
 
-  Lemma params_den : forall tail,
+  Definition dummy_atom : termvar := proj1_sig (atom_fresh empty).
+
+  Definition param_head (h : list tree) : Prop :=
+    (exists x, h = [ident x])
+    \/ (exists ps xs ro, h = [Node R_list_pattern ps] /\ Den_lpat ps xs ro /\ list_tags_in tags).
+
+  Definition params_read (seen : bool) (ps : list tree) : Prop :=
+    (seen = false /\ exists xs, Den_params var_of tbl ps xs)
+    \/ (list_tags_in tags /\ exists prms, Den_lps seen ps prms).
+
+  Lemma params_total : forall tail,
     gen (E_star (E_seq (E_term (T_text ",")) (E_rule R__param))) tail ->
-    Forall not_pattern tail ->
-    forall x, exists xs, Den_params var_of tbl (ident x :: tail) (x :: xs).
+    Forall not_pattern tail -> Forall (TotKind) tail ->
+    forall h seen, param_head h -> (seen = true -> list_tags_in tags) ->
+    params_read seen (h ++ tail).
   Proof.
     intros tail H.
     apply (gen_star_ind (E_seq (E_term (T_text ",")) (E_rule R__param))
-             (fun tail => Forall not_pattern tail -> forall x,
-                exists xs, Den_params var_of tbl (ident x :: tail) (x :: xs)));
+             (fun tail => Forall not_pattern tail -> Forall (TotKind) tail ->
+                forall h seen, param_head h -> (seen = true -> list_tags_in tags) ->
+                params_read seen (h ++ tail)));
       [ | | exact H ].
-    - intros _ x. exists []. apply DPa_one.
-    - intros ts1 ts2 Hstep IH Hplain x.
+    - intros _ _ h seen [(x & ->) | (ps & xs & ro & -> & Hp & Hlt)] Hseen;
+        unfold params_read; rewrite app_nil_r.
+      + destruct seen.
+        * right. split; [ exact (Hseen eq_refl) | ].
+          exists [LP_name x]. apply DLPS_name_last.
+        * left. split; [ reflexivity | exists [x]; apply DPa_one ].
+      + right. split; [ exact Hlt | ].
+        exists [LP_list dummy_atom xs ro]. apply DLPS_list_last. exact Hp.
+    - intros ts1 ts2 Hstep IH Hplain Hkids h seen Hh Hseen.
       apply Forall_app in Hplain as [Hplain1 Hplain2].
+      apply Forall_app in Hkids as [Hkids1 Hkids2].
       split_seq Hstep as (tscomma & tsparam & -> & Hcomma & Hparam).
       text_inv Hcomma. subst.
       inversion Hplain1 as [| ? ? _ Hplainp]; subst.
-      destruct (shape_param _ Hparam Hplainp) as (y & ->).
-      destruct (IH Hplain2 y) as (ys & Hys).
-      exists (y :: ys). simpl. apply DPa_more. exact Hys.
+      inversion Hkids1 as [| ? ? _ Hkidsp]; subst.
+      assert (Hhd : param_head tsparam).
+      { destruct (shape_param_head _ Hparam Hplainp) as [(y & ->) | (ps' & -> & Hb')].
+        - left. exists y. reflexivity.
+        - right. inversion Hkidsp as [| ? ? Hk _]; subst. simpl in Hk.
+          destruct Hk as [Hlt (xs & ro & Hp)]. exists ps', xs, ro.
+          split; [ reflexivity | split; assumption ]. }
+      destruct Hh as [(x & ->) | (ps & xs & ro & -> & Hp & Hlt)].
+      + pose proof (IH Hplain2 Hkids2 tsparam seen Hhd Hseen) as Hnext.
+        unfold params_read in *. cbn [app].
+        destruct Hnext as [[Hs (ys & Hys)] | [Hlt (prms & Hprms)]].
+        * left. split; [ exact Hs | exists (x :: ys) ]. apply DPa_more. exact Hys.
+        * right. split; [ exact Hlt | exists (LP_name x :: prms) ].
+          apply DLPS_name_more. exact Hprms.
+      + pose proof (IH Hplain2 Hkids2 tsparam true Hhd (fun _ => Hlt)) as Hnext.
+        unfold params_read in *. cbn [app].
+        destruct Hnext as [[Hs _] | [_ (prms & Hprms)]]; [ discriminate Hs | ].
+        right. split; [ exact Hlt | exists (LP_list dummy_atom xs ro :: prms) ].
+        apply DLPS_list_more; assumption.
   Qed.
 
   Lemma sep_den : forall fin tail,
@@ -1766,6 +1989,14 @@ Section Totality.
     - intros Hin. apply Hs. fsetdec.
     - intros x Hx Heq. apply Hs. rewrite Heq. apply AtomSetImpl.union_3.
       exact (in_used_vars var_of names x Hx).
+  Qed.
+
+  Lemma fresh_s_fs : forall a k,
+    exists s fs, length fs = k /\ fresh_apart a (s :: fs).
+  Proof.
+    intros a k. destruct (exists_fresh a (S k)) as ([| s fs] & Hlen & Hf);
+      simpl in Hlen; [ discriminate | ].
+    exists s, fs. split; [ lia | exact Hf ].
   Qed.
 
 End Totality.
@@ -1974,12 +2205,25 @@ Section Steps.
     - destruct (atom_fresh (fv_exp body)) as [s Hs].
       simpl. exists (unit_arg s body).
       exact (D_function_unit var_of tbl kw bs body s Hbody Hs).
-    - inversion Hkps as [| ? ? Hps _]; subst. simpl in Hps. destruct Hps as (xs & Hxs).
-      destruct Hbs as [-> | (cb & ->)].
-      + simpl. exists (curry (List.map var_of xs) e_unit).
-        exact (D_function_empty var_of tbl kw ps xs Hxs).
-      + inversion Hbody; subst. simpl. exists (curry (List.map var_of xs) body).
-        apply D_function; assumption.
+    - inversion Hkps as [| ? ? Hps _]; subst. simpl in Hps.
+      destruct Hps as [(xs & Hxs) | ((w & tge & tgl & HE & HL) & prms & Hprms)].
+      + destruct Hbs as [-> | (cb & ->)].
+        * simpl. exists (curry (List.map var_of xs) e_unit).
+          exact (D_function_empty var_of tbl kw ps xs Hxs).
+        * inversion Hbody; subst. simpl. exists (curry (List.map var_of xs) body).
+          apply D_function; assumption.
+      + destruct (exists_fresh (fv_exp body `union` atoms_of (List.map var_of (lp_names prms)))
+                    (length (lp_sources prms) + 3 * S (lp_longest prms)))
+          as (ns & Hlen & Hfresh).
+        set (k := length (lp_sources prms)) in *.
+        destruct (den_lps_rename _ _ _ Hprms (firstn k ns)
+                    ltac:(rewrite length_firstn; lia))
+          as (prms' & Hprms' & Hsrc & Hnames & Hlong).
+        simpl. eexists.
+        apply (D_function_lp var_of tbl kw ps prms' bs body w tge tgl (skipn k ns)
+                 Hprms' Hbody HE HL).
+        * rewrite Hsrc, Hnames, firstn_skipn. exact Hfresh.
+        * rewrite length_skipn, Hlong. lia.
   Qed.
 
   Lemma step_record : Step R_record.
@@ -2027,23 +2271,49 @@ Section Steps.
   Lemma step_destructure : StepO R_destructure.
   Proof.
     intros cs H _ Hkids.
-    destruct (shape_destructure cs H) as (ps & xs & ro & vs & semi & bs & -> & Hsemi & Hpat & Hbs).
-    assert (Hv : TotKind var_of tbl (Node R_value vs)).
-    { rewrite Forall_forall in Hkids. apply Hkids. apply in_or_app. left. in_list. }
-    apply Forall_app in Hkids as [_ Hk1]. apply Forall_app in Hk1 as [_ Hkbs].
-    simpl in Hv. destruct Hv as (v & Hdv).
-    destruct Hbs as [-> | (cb & ->)].
-    - destruct (fresh_source var_of e_unit (xs ++ match ro with Some r => [r] | None => [] end))
-        as (s & _ & Hdistinct).
-      simpl. exists (e_let v (close_exp s (unpack var_of tbl s xs ro
-                                             (e_fvar_f (var_of (last_name xs ro)))))).
-      rewrite app_nil_r.
-      eapply D_destructure_end; eassumption.
-    - inversion Hkbs as [| ? ? Hb _]; subst. simpl in Hb. destruct Hb as (body & Hdb).
-      destruct (fresh_source var_of body (xs ++ match ro with Some r => [r] | None => [] end))
-        as (s & Hfresh & Hdistinct).
-      simpl. exists (e_let v (close_exp s (unpack var_of tbl s xs ro body))).
-      eapply D_destructure; eassumption.
+    destruct (shape_destructure cs H) as
+      [(ps & xs & ro & vs & semi & bs & -> & Hsemi & Hpat & Hbs)
+      | (ps & vs & semi & bs & -> & Hsemi & Hbp & Hbs)].
+    - assert (Hv : TotKind var_of tbl (Node R_value vs)).
+      { rewrite Forall_forall in Hkids. apply Hkids. apply in_or_app. left. in_list. }
+      apply Forall_app in Hkids as [_ Hk1]. apply Forall_app in Hk1 as [_ Hkbs].
+      simpl in Hv. destruct Hv as (v & Hdv).
+      destruct Hbs as [-> | (cb & ->)].
+      + destruct (fresh_source var_of e_unit (xs ++ match ro with Some r => [r] | None => [] end))
+          as (s & _ & Hdistinct).
+        simpl. exists (e_let v (close_exp s (unpack var_of tbl s xs ro
+                                               (e_fvar_f (var_of (last_name xs ro)))))).
+        rewrite app_nil_r.
+        eapply D_destructure_end; eassumption.
+      + inversion Hkbs as [| ? ? Hb _]; subst. simpl in Hb. destruct Hb as (body & Hdb).
+        destruct (fresh_source var_of body (xs ++ match ro with Some r => [r] | None => [] end))
+          as (s & Hfresh & Hdistinct).
+        simpl. exists (e_let v (close_exp s (unpack var_of tbl s xs ro body))).
+        eapply D_destructure; eassumption.
+    - assert (Hp : TotKind var_of tbl (Node R_list_pattern ps)).
+      { rewrite Forall_forall in Hkids. apply Hkids. in_list. }
+      assert (Hv : TotKind var_of tbl (Node R_value vs)).
+      { rewrite Forall_forall in Hkids. apply Hkids. apply in_or_app. left. in_list. }
+      apply Forall_app in Hkids as [_ Hk1]. apply Forall_app in Hk1 as [_ Hkbs].
+      simpl in Hp. destruct Hp as [(w & tge & tgl & HE & HL) (xs & ro & Hlp)].
+      simpl in Hv. destruct Hv as (v & Hdv).
+      destruct (loop_body_den bs Hbs Hkbs) as (body & Hbody).
+      set (names := atoms_of (List.map var_of (xs ++ match ro with Some r => [r] | None => [] end))).
+      assert (Htree : forall Hno : (forall es, lit_items w tge tgl v = Some es ->
+                                     fits_b (List.length es) (List.length xs) (has_rest ro) = false),
+                exists e, Den var_of tbl (Node R_destructure
+                  ([Node R_list_pattern ps; sym "="; Node R_value vs] ++ semi ++ bs)) e).
+      { intros Hno.
+        destruct (fresh_s_fs (fv_exp body `union` names) (3 * S (List.length xs)))
+          as (s & fs & Hlen & Hf).
+        eexists. eapply D_destr_list with (s := s) (fs := fs); eassumption. }
+      simpl. destruct (lit_items w tge tgl v) as [es | ] eqn:Hlit.
+      + destruct (fits_b (List.length es) (List.length xs) (has_rest ro)) eqn:Hfit.
+        * destruct (exists_fresh (fv_exp v `union` fv_exp body `union` names) (List.length es))
+            as (ss & Hlen & Hf).
+          eexists. eapply D_destr_lit with (ss := ss); eassumption.
+        * apply Htree. intros es' Hes'. try rewrite Hlit in Hes'. injection Hes' as <-. exact Hfit.
+      + apply Htree. intros es Hes. try rewrite Hlit in Hes. discriminate Hes.
   Qed.
 
   Lemma step_local : StepO R_local.
@@ -2119,10 +2389,19 @@ Section Steps.
 
   Lemma step_params : StepO R_params.
   Proof.
-    intros cs H Hplain _.
-    destruct (shape_params cs H Hplain) as (x & tail & -> & Htail & Hplaint).
-    destruct (params_den var_of tbl tail Htail Hplaint x) as (xs & Hxs).
-    simpl. exists (x :: xs). exact Hxs.
+    intros cs H Hplain Hkids.
+    destruct (shape_params_head cs H Hplain) as (h & tail & -> & Hh & Htail & Hplaint).
+    apply Forall_app in Hkids as [Hkh Hkt].
+    assert (Hhead : param_head h).
+    { destruct Hh as [(x & ->) | (ps & -> & Hb)].
+      - left. exists x. reflexivity.
+      - right. inversion Hkh as [| ? ? Hk _]; subst. simpl in Hk.
+        destruct Hk as [Hlt (xs & ro & Hp)]. exists ps, xs, ro.
+        split; [ reflexivity | split; assumption ]. }
+    destruct (params_total var_of tbl tail Htail Hplaint Hkt h false Hhead
+                (fun Hf => ltac:(discriminate Hf))) as [[_ Hxs] | Hl].
+    - simpl. left. exact Hxs.
+    - simpl. right. exact Hl.
   Qed.
 
   Lemma var_or_not : forall e : exp,
@@ -2168,7 +2447,7 @@ Section Steps.
   Lemma step_arm : Step R_arm.
   Proof.
     intros cs H Hcomplete Hknown _ Hkids.
-    destruct (shape_arm cs H) as [(p & b & ->) | (p & b & ->)].
+    destruct (shape_arm cs H) as [(p & b & ->) | [(p & b & ->) | (p & b & -> & _)]].
     - rewrite Forall_forall in Hkids.
       assert (Hp : TotKind var_of tbl (Node R_pattern p)) by (apply Hkids; in_list).
       assert (Hb : TotKind var_of tbl (Node R_expr b)) by (apply Hkids; in_list).
@@ -2184,6 +2463,18 @@ Section Steps.
       assert (Hb : TotKind var_of tbl (Node R_expr b)) by (apply Hkids; in_list).
       simpl in Hp, Hb. destruct Hp as (c & l & Hc & Hl). destruct Hb as (body & Hbody).
       subst p. simpl. exists l, body. apply DLA; assumption.
+    - rewrite Forall_forall in Hkids.
+      assert (Hp : TotKind var_of tbl (Node R_list_pattern p)) by (apply Hkids; in_list).
+      assert (Hb : TotKind var_of tbl (Node R_expr b)) by (apply Hkids; in_list).
+      simpl in Hp, Hb. destruct Hp as [Hlt (xs & ro & Hlp)]. destruct Hb as (body & Hbody).
+      simpl. split; [ exact Hlt | ].
+      exists {| lr_items := xs; lr_rest := ro; lr_body := body |}.
+      apply DLA_arm; assumption.
+  Qed.
+
+  Lemma step_list_pattern : Step R_list_pattern.
+  Proof.
+    intros cs H _ Hknown _ _. simpl. split; [ exact Hknown | exact (shape_list_pattern cs H) ].
   Qed.
 
   Lemma tag_arms_den : forall arms,
@@ -2210,6 +2501,32 @@ Section Steps.
       destruct Hk as (w & tg & b & Harm).
       exists (arms_cons tg b ars). simpl.
       apply DAr_cons with (w := w); assumption.
+  Qed.
+
+  Lemma list_arms_den : forall arms,
+    gen (E_star (E_rule R_arm)) arms ->
+    Forall (TotKind var_of tbl) arms -> Forall (fun t => is_list_arm t = true) arms ->
+    forall els rows o, Den_larms var_of tbl els rows o ->
+    exists rows', Den_larms var_of tbl (arms ++ els) rows' o.
+  Proof.
+    intros arms H.
+    apply (gen_star_ind (E_rule R_arm)
+             (fun arms => Forall (TotKind var_of tbl) arms -> Forall (fun t => is_list_arm t = true) arms ->
+                forall els rows o, Den_larms var_of tbl els rows o ->
+                exists rows', Den_larms var_of tbl (arms ++ els) rows' o));
+      [ | | exact H ].
+    - intros _ _ els rows o Hels. exists rows. exact Hels.
+    - intros ts1 ts2 H1 IH Hk Hlist els rows o Hels.
+      apply Forall_app in Hk as [Hk1 Hk2]. apply Forall_app in Hlist as [Hl1 Hl2].
+      destruct (IH Hk2 Hl2 els rows o Hels) as (rows' & Hrows).
+      destruct (gen_node_of H1 eq_refl) as (c & -> & _).
+      inversion Hk1 as [| ? ? Hk _]; subst.
+      inversion Hl1 as [| ? ? Hl _]; subst.
+      destruct c as [| [kp | rp cp] crest]; [ discriminate Hl | discriminate Hl | ].
+      destruct rp; try discriminate Hl. simpl in Hk.
+      destruct Hk as [_ (row & Harm)].
+      exists (row :: rows'). simpl.
+      apply DLRs_cons; assumption.
   Qed.
 
   Lemma lit_arms_den : forall arms,
@@ -2279,7 +2596,7 @@ Section Steps.
     { exfalso. destruct Hels as [-> | (c2 & ->)]; absurd_has Harm_in. }
     pose proof Hnodes0 as Hnodes. rewrite Forall_forall in Hnodes.
     destruct (Hnodes a (or_introl eq_refl)) as (cc & Ha). subst a.
-    destruct Hkind as [Htag | [Hlit Helse]].
+    destruct Hkind as [Htag | [[Hlit Helse] | Hlist]].
     - assert (Htagarms : Forall (fun t => is_tag_arm t = true) (Node R_arm cc :: rest)).
       { rewrite Forall_forall. intros t Ht. destruct (Hnodes t Ht) as (cc' & ->).
         rewrite Forall_forall in Htag. apply Htag.
@@ -2309,6 +2626,36 @@ Section Steps.
         * eexists. eapply D_match_lit_var; eassumption.
         * destruct (atom_fresh (fv_rows rows `union` fv_exp e2)) as (s & Hs).
           eexists. eapply D_match_lit_let; eassumption.
+    - assert (Hlistarms : Forall (fun t => is_list_arm t = true) (Node R_arm cc :: rest)).
+      { rewrite Forall_forall. intros t Ht. destruct (Hnodes t Ht) as (cc' & ->).
+        rewrite Forall_forall in Hlist. apply Hlist.
+        - apply in_or_app. right. apply in_or_app. left. exact Ht.
+        - reflexivity. }
+      assert (Hend' : exists o, Den_larms var_of tbl els [] o).
+      { destruct Hels as [-> | (c2 & ->)].
+        - exists None. apply DLRs_end.
+        - assert (Hc2 : TotKind var_of tbl (Node R_expr c2)).
+          { apply Hkids. apply in_or_app. right. apply in_or_app. right.
+            apply in_or_app. left. in_list. }
+          simpl in Hc2. destruct Hc2 as (e2 & Hden2).
+          exists (Some e2). apply DLRs_else. exact Hden2. }
+      destruct Hend' as (o & Hend').
+      destruct (list_arms_den _ Harms Harmsk Hlistarms _ _ _ Hend') as (rows & Hrows).
+      simpl in Hrows.
+      assert (Hfirst : TotKind var_of tbl (Node R_arm cc)).
+      { inversion Harmsk; assumption. }
+      assert (Hcc : exists p crest, cc = Node R_list_pattern p :: crest).
+      { rewrite Forall_forall in Hlistarms.
+        specialize (Hlistarms (Node R_arm cc) (or_introl eq_refl)).
+        destruct cc as [| [kp | rp cp] crest]; try discriminate Hlistarms.
+        destruct rp; try discriminate Hlistarms. exists cp, crest. reflexivity. }
+      destruct Hcc as (p & crest & Hcc). subst cc. simpl in Hfirst.
+      destruct Hfirst as [(w & tge & tgl & HE & HL) _].
+      destruct (fresh_s_fs (fv_exp e `union` lr_fv rows `union` opt_fv o
+                              `union` atoms_of (List.map var_of (lr_names rows)))
+                  (3 * S (lr_longest rows))) as (s & fs & Hlen & Hf).
+      rewrite app_shape. simpl.
+      eexists. eapply D_match_list; eassumption.
   Qed.
 
   Lemma step_repeat : StepO R_repeat_loop.
@@ -2369,7 +2716,7 @@ Section Steps.
         | exact (lift _ step_arguments) | exact (lift _ step_params)
         | exact (lift _ step_pattern) | exact (lift _ step_labels)
         | exact (lift _ step_literal_pattern)
-        | exact step_list | exact step_arm | exact step_match
+        | exact step_list | exact step_arm | exact step_match | exact step_list_pattern
         | exact (lift _ step_repeat) | exact (lift _ step_count) | exact step_each
         | (intros cs _ _ _ _ _; exact I) ].
   Qed.

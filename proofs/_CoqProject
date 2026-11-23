@@ -57,12 +57,15 @@ GoatGrammar.v
 GoatPeg.v
 GoatPrec.v
 GoatDen.v
+GoatDenRun.v
 GoatShape.v
 GoatParse.v
 GoatExample.v
 GoatTagExample.v
 GoatLoopExample.v
 GoatBlockExample.v
+GoatGroupExample.v
+GoatListExample.v
 GoatLex.v
 GoatLexSpec.v
 GoatLexBarrier.v

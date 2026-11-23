@@ -65,6 +65,8 @@ preservation) is B3 (#71).
 | `GoatGrammar.v` | Generated from `grammar/goat.peg` by `parser/examples/emit_coq.rs` (`make gen-grammar`); `make check-grammar` fails on drift. Never hand-edited. |
 | `GoatPeg.v` | Ford-style relational PEG semantics of the generated grammar over a token stream, and **T2** `peg_deterministic`. |
 | `GoatDen.v` | The denotation of core-fragment parse trees as Ott terms (curried, locally nameless via `close_exp`, labels interned by first occurrence, a block's leading function bindings grouped as a `letrec` by `bind_group`, a record with a spread as the nest `spread_nest`, a rest pattern as the lets and restricts of `unpack`, tags resolved through a table of declared tags, `match` arms read as the calculus reads them, a list literal as `Link` and `Empty`), and its local closure. |
+| `GoatDenRun.v` | Runs of function declarations in a block (phase 8, group placement): the least closed prefix of a run (`run_split`, `run_prefix`), `run_blk` (a run always denotes something, for the totality of T1) and `hoist_run` (a run that uses no earlier value is hoisted, however it splits, which the printer's group needs). |
+| `GoatDenRun.v` | Runs of function declarations in a block (phase 8, group placement): the least closed prefix of a run (`run_split`, `run_prefix`), `run_blk` (a run always denotes something, which totality needs) and `hoist_run` (a run that uses no earlier value is hoisted, however it splits, which the printer's group needs). |
 | `GoatShape.v` | The forests the core rules can produce, the shape of each core node's children, and totality: every valid, complete core tree whose tags are declared has a denotation. |
 | `GoatParse.v` | **T1** `parse_denotes_lc`, with the two-pass tag table (`Den_goat`, `goat_known`). |
 | `GoatLex.v` | The lexer (phase 8, stage 1, ADR 0030 amendment): `lex` from a list of Unicode code points to tokens. Each class of token is a function that returns how many code points it matches; the lexer takes the longest, the earlier class on a tie, and an unmatched code point is a token of its own. The two Unicode predicates for code points of 128 and up are arguments; ASCII is decided in the model. Tied to `parser::lexer::lex` by `make differential` (`differential/lex_driver.ml`). |
@@ -87,6 +89,8 @@ preservation) is B3 (#71).
 | `GoatTagExample.v` | Tags, `match` and lists, worked (phase 8, stage 4): the tables the `tag` declarations of GoatPhase3.v's `list_g`, `level` and `shot` build, a list literal shown to denote the term GoatPhase3.v types as a list of Int, and T1 applied to a program that declares a tag and matches on it. |
 | `GoatLoopExample.v` | Loops, worked (phase 8, stage 5): `repeat`, `for ... from ... to` and `for ... in` each shown to denote the tail-recursive term of `GoatDen.v` (`counted`, `each_term`), and T1 applied to a program that runs each. |
 | `GoatBlockExample.v` | The block, worked (phase 8, stage 6): an empty program, a program that ends in a binding, `a; b`, `program()`, `f()`, and a function written after a value it uses, each shown to denote a locally closed term. |
+| `GoatGroupExample.v` | Function groups, worked (phase 8, group placement): two functions that name each other are one group, hoisted when neither uses a value (`DK_group_hoist`) and placed after the value one of them uses otherwise (`DK_group_late`). |
+| `GoatListExample.v` | List patterns, worked (phase 8, stage 8): a `match` of list arms, a destructuring from a value that is not a literal, one from a literal and a function with a pattern parameter each parse, and T1 applies. |
 | `GoatAssumptions.v` | `make check-assumptions` fails unless T1, T2, T3, `progress`, `preservation`, `soundness`, `infer_closed_sound`, `erase_step`, `erase_traps`, `coerce_typing`, `infer_elab_sound`, `unroll_eqb_sound`, `erase_converse`, `erase_converse_multistep`, `knot_unrolls`, `unify_k_sound`, `coerce_dec_sound`, `unify_co_sound`, `infer_guarded`, `lex_concat`, `step_longest`, `word_boundary`, `parse_text_denotes`, `edits_preserve_tokens` and `edits_preserve_parse` print "Closed under the global context", and `parse_text_denotes_xid` rests on exactly the two Unicode parameters. |
 | `_CoqProject`, `Makefile` | Build. |
 
@@ -554,9 +558,17 @@ by the differential test), and `make check-assumptions` requires it to rest on
 those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 44773 programs written, 43348 compared with 0 mismatches, 1412 skipped
-by the driver, and the lexer differential 78622 sources, 4351140 tokens, 0
-disagreements. Inferring a recursive group before the value bindings between its
+commit: 51585 programs written, 50158 compared with 0 mismatches, 1412 skipped
+by the driver, and the lexer differential 88336 sources, 4863064 tokens, 0
+disagreements. Phase 8 stage 8 reads list patterns (below): the reader lowers a
+program that needs lists with the prelude's `tag List` declaration (they were
+"does not lower"), reads lowering's trap as `diverge` where it is the `else` of a
+match, and a generator writes 12000 programs of list patterns. 39 programs of the
+repository's sources and 6695 generated ones are compared that were not; 70 more
+of the sources use a list in the type of the result: the corpus now writes a group
+type `(grp N T0 ...)` (`(mu mK. (grp ...))` when a parameter mentions the group's
+own binder) and the driver compares it (`Typ_Grp`), so 69 of those 71 programs are
+compared and 2 are recursive-type programs the algorithm refuses; 25 are host tags. Inferring a recursive group before the value bindings between its
 members (#628) brought in 59 of the 65 programs it used to skip; the other 6 use
 a later feature or are real cycles the checker rejects. The reader numbers labels
 in name order, which wrote 206 more programs than before (a corpus line repeats
@@ -572,9 +584,9 @@ corpus reader's skips, by the feature that keeps a program outside the calculus
 
 | Count | Skip |
 | ---: | --- |
-| 5233 | does not lower (the checker rejects it before typing) |
-| 99 | tags and `match` |
-| 43 | an inferred type the corpus cannot write |
+| 8224 | does not lower (the checker rejects it before typing; 3000 of them generated list patterns with an arm no earlier arm leaves reachable) |
+| 124 | tags and `match` |
+| 113 | an inferred type the corpus cannot write |
 | 41 | `print` or `trap` |
 | 23 | the checker rejects a method used as a plain function or the reverse (`MethodFlag`) |
 | 18 | a foreign host call |
@@ -1026,8 +1038,8 @@ Boundary:
   (`unpack`: a rest pattern with k labels is k restricts), where `s` is a
   variable the program does not use, as lowering's fresh symbol is. Complete trees
   keep a spread first in its record and at most one (lowering reports the rest),
-  a destructure needs its body, and a function parameter is a name (a record
-  pattern there, and every list pattern, stay outside the fragment). T1 covers
+  a destructure needs its body, and a function parameter is a name or a list
+  pattern (a record pattern there stays outside the fragment). T1 covers
   all of it. T3 covers the spread: the printer writes `{...(base), lab: v}` with
   the base always parenthesised, so a name there cannot read as the rest binding
   of a record pattern. A bare `restrict` has no text of its own (a rest pattern
@@ -1079,9 +1091,7 @@ Boundary:
   the table can encode, a `match` to arms of one kind (tag or literal) with an
   `else` after literals, and `Known` (hypothesis of T1, `goat_known`) says each
   arm's tag and the list tags are in the table. T1 covers all of it. What stays
-  outside the fragment: list patterns (in a `match`, a destructure or a
-  parameter, which lowering compiles to a decision tree of `Empty` and `Link`
-  matches), payload types other than a name or `_` (`[Int]`, `{x: Int}`,
+  outside the fragment: payload types other than a name or `_` (`[Int]`, `{x: Int}`,
   function types), an `else` with no arm, a literal `match` on `true` and `false`
   that leaves out the `else`, and a binder named like a tag (Den reads the tag).
   Arity, exhaustiveness, a tag outside every group and arms from two groups are
@@ -1090,6 +1100,39 @@ Boundary:
   the printer writes no tag, so a program that builds or matches one has no
   printed form yet (`print_parse_roundtrip` is unchanged but for `Den_goat var_of
   [] t e`); T3 through tags is the part of this stage that remains.
+- **List patterns (stage 8).** Lowering compiles a list pattern to a decision
+  tree of matches on the prelude's `Empty` and `Link` (`build_list_tree`), and
+  `Den` reads the same tree. `ltree` (`GoatDen.v`) takes the arms in order, each
+  an `lrow` (the names for its leading items, the name for what follows them, its
+  body). The tree is a `match` on the scrutinee with an `Empty` arm, the first arm
+  that has taken all its items, and a `Link` arm that binds the payload to a fresh
+  variable and the item and the rest to its two slots, then goes on below the
+  `Link` with the arms that still apply (an arm that has taken its items goes on
+  only if it has a rest name; a first arm that has taken its items and has a rest
+  name is the whole tree, `lp_catch_all`). A name is a `let` of the list node the
+  tree took apart to reach the arm (`lp_leaf`). A match with fewer than two arms
+  takes the `else`: a `match`'s own, or for a destructuring the trap. The trap is
+  `diverge` in the calculus, `letrec f = program(x) do f(x) done in f()`, a term
+  of every type that never returns: the checker types a trap at a fresh variable
+  and `T_Match` asks the arms to be exhaustive or to end in an `else`. The fresh
+  names (a payload, an item and a rest for each `Link` level, and the source of an
+  unbound scrutinee or a parameter) are distinct and apart from everything the
+  tree wraps (`fresh_apart`; `exists_fresh` makes totality produce them). `lmatch`
+  reads a variable scrutinee directly and binds any other once, when an arm has no
+  items and a rest name (`D_match_list`). `[a, b] = v body` is the one-arm tree
+  over a fresh variable bound to `v` (`D_destr_list`); when `v` is a list literal
+  whose length fits the pattern it binds each name to its item directly (`lit_bind`,
+  `D_destr_lit`: the items first, in order, to fresh names; then each pattern name;
+  then the rest name to the list of the spare ones), and `lit_items` decides
+  literal-ness on the denoted term (the table's `Link` and `Empty`, however
+  written) and `fits_b` the fit. A parameter that is a list pattern is a fresh
+  parameter, unpacked in order around the body by a one-arm tree each
+  (`D_function_lp`, `lps_wrap`, `Den_lps`); a tree's fresh names are used inside
+  that tree only, so they repeat across the trees. `Complete` admits a `match` of
+  list arms with an `else` or without, and `Known` asks `Empty` and `Link` to be
+  in the table, in one group, for each list pattern. A record pattern as a
+  parameter stays outside the fragment. T1 covers all of it.
+  `checker/tests/list_pattern_shape.rs` pins the HIR lowering gives each form.
 - **Loops (stage 5).** `repeat n times do B done`, `for i from a to b do B done`
   and `for x in xs do B done` denote the term lowering builds (`lower.rs`,
   `lower_loop`), over names no source name can spell. A counted loop is
@@ -1134,7 +1177,7 @@ Boundary:
   a production for (`core_rule` in `GoatShape.v`, checked against
   `parser/tests/rule_map.rs` by a Rust test), minus the shapes ADR 0030 excludes
   (`Complete` in `GoatShape.v`), which is now only what no `Den` rule reads yet:
-  a record pattern or any list pattern as a parameter, a payload type with no
+  a record pattern as a parameter, a payload type with no
   slot code, and a `match` whose arms mix kinds or are literals with no `else`.
   Shapes lowering reports are `Reject`.
 - **The block (phase 8 stage 6).** `Den_blk ctx fin cs xs gs b` reads a block
@@ -1150,13 +1193,34 @@ Boundary:
   variables is a name in `ctx` (`mentions_any`, computed over the denoted term;
   `DK_hoist`), and otherwise stays where it is written, as a plain `let`, or as a
   group of one when it names itself (`fn_place`, `DK_late`). A binding that is an
-  operand reads the same way (`D_local_fn`). `program()` takes one hidden
+  operand reads the same way (`D_local_fn`).
+  Functions that name each other are placed together (group placement). A
+  group is the least prefix of a run of consecutive function declarations
+  (`Den_fdecls`) such that a mention crosses every cut inside it (`run_linked`: a
+  member before the cut names one after it) and no member names a function after
+  it (`fn_run_names` of the continuation, computed on trees). `DK_hoist` and
+  `DK_late` take a function that names no later function of its run, so the
+  rules are one function placed alone; `DK_group_hoist` and `DK_group_late`
+  take two or more members: hoisted when none uses a name in `ctx`, else all
+  placed at the run as one `wrap_group`, each member's name added to `ctx` for
+  the rest. `function_groups` in `checker/examples/core_corpus.rs` (the reader,
+  which places a group after the last value its members mention) and the
+  checker's `settle` are the reference; `checker/tests/group_placement.rs` pins
+  their behaviour. Totality is `run_blk` (`GoatDenRun.v`): a run always has a
+  least closed prefix, found by strong induction on its length, and what follows
+  a run does not open with a function declaration (`statement_head`). `program()` takes one hidden
   parameter pinned to the unit value (`unit_arg`: the parameter is compared with
   the unit value, so its type is `Unit -> t`, which is what the checker's function
   of no parameters has), and `f()` applies `f` to the unit value; `Tag()` is `Tag`.
-  Mutually recursive functions that both use a value are each placed alone, so a
-  call from one to the other is a free name: a gap in what `Den` says, not in
-  `lc`. `block_shape.rs` pins the HIR lowering gives each form.
+  Two residuals in what `Den` says about placement, neither in `lc`. A
+  forward mention across a value binding (`f` names `g` with a value between
+  them) stays a free name: a group is only consecutive functions, where the
+  checker's `function_groups` and the reader also glue across values. And a member
+  that no cut links to the rest of its prefix (`a` names `c`, `b` between them
+  names neither) stays in the prefix's group where the checker infers it alone
+  (`an_unlinked_member_between_two_linked_ones_is_still_typed_apart`); a hoisted
+  run denotes the same either way, a late one a letrec of one member more.
+  `block_shape.rs` pins the HIR lowering gives each form.
 - **The lexer is trusted.** The input is a list of tokens; nothing is said about
   how characters become tokens. A text terminal matches a punctuation or keyword
   token by its spelling, and a name token by its spelling when the word is
