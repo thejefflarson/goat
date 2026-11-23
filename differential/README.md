@@ -17,6 +17,21 @@ ADR 0037 (decision 6) ties the inference algorithm proved in `proofs/` to
 Run it with `make -C proofs differential` (it is part of `make -C proofs ci`
 and of the `coq` workflow).
 
+## Recursive types
+
+A program in which the checker gives some node a recursive type (`Ty::Rec`) is
+a mode `R` line, or a mode `K` line when a `Rec` body holds a record with an
+open row (a row variable that must itself be tied into the knot). Its verdict
+is the root type written with `(mu mK. T)` for a recursive type, `mK` naming the
+binder by its depth. The driver reads that text and the algorithm's type as
+regular trees and compares them by bisimulation with assumed pairs: a pair of
+recursive types met again is taken as equal, and the variables of the two sides
+correspond one to one. A program the algorithm refuses is counted, not compared:
+a recursive group whose members need a knot (`g = program(p) do {a: p, b: g(p)}
+done`; the algorithm unifies the members of a group with `unify_t`) and a row
+that must knot (a `K` line). Any other difference is a mismatch and fails the
+run.
+
 ## Which programs are compared
 
 Every goat source the repository holds: `examples/*.goat`, the `goat` blocks of
@@ -62,11 +77,13 @@ program are skipped, each because the calculus and the checker differ on it:
   so `FORCED` in `core_corpus.rs` pins such programs as compared anyway;
 - a rest pattern with no fields (`program({...r}) do r done`): the checker types
   it as a record, and the calculus has no way to say that without a label;
-- a program in which the checker infers a recursive type, which the algorithm
-  does not (a record that holds a function of a recursive group by name, as
-  `{stop: true, g: h}` inside `h`, is one: it is compared when the checker
-  accepts it with a finite type and counted under the kind below when it does
-  not, so it has no skip reason of its own);
+- a program whose root type is a recursive type that a method's `self` makes:
+  the checker ties a method's receiver to its record (`{x: 0, bump: program(self)
+  do {...self, x: self.x + 1} done}` is `mu m. {x: Number, bump: (m -> m) | v}`),
+  and the calculus types the receiver apart, as a function of any record with an
+  `x`. Both are right in their own system, so the reader skips these under their
+  own count. A program that uses such a record but whose root type is finite is
+  compared;
 - a program the checker rejects over the method flag (a dot call on a plain
   function, `::` on a method or on a data field, a field a method in one record
   and plain in the other), which the calculus does not track; the checker marks

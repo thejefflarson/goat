@@ -41,6 +41,13 @@
 //! Every other program outside the fragment is counted under one `Feature` it
 //! uses, the first in that enum's order.
 //!
+//! A program in which the checker gives some node a recursive type is mode `R`
+//! (mode `K` when the recursive type's body holds a record with an open row),
+//! and its verdict writes a recursive type as `(mu mK. T)`, `mK` naming the
+//! binder by its depth. A program with a method whose recursive type reaches
+//! the root is skipped: the checker ties a method's `self` to its record, and
+//! the calculus does not.
+//!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
 
 use goat_checker::captures::for_each_node;
@@ -294,6 +301,7 @@ enum Skip {
     Rejected,
     OutsideFragment(Feature),
     SharedReceiver,
+    RecursiveReceiver,
     MethodFlag,
     ResourceLimit,
     GenericComparison,
@@ -305,6 +313,9 @@ impl Skip {
             Skip::Rejected => "does not lower",
             Skip::OutsideFragment(feature) => feature.describe(),
             Skip::SharedReceiver => "a record literal with two or more methods",
+            Skip::RecursiveReceiver => {
+                "a method's receiver, which the checker ties to its record in a recursive type"
+            }
             Skip::MethodFlag => {
                 "the checker rejects a method used as a plain function or the reverse"
             }
@@ -787,6 +798,8 @@ impl Reader<'_> {
 struct Canon<'a> {
     labels: &'a [String],
     vars: Vec<u32>,
+    binders: Vec<u32>,
+    open_in_rec: bool,
 }
 
 impl Canon<'_> {
@@ -807,7 +820,18 @@ impl Canon<'_> {
             Ty::Str => out.push_str("String"),
             Ty::Unit => out.push_str("Unit"),
             Ty::Bool => out.push_str("Bool"),
-            Ty::Var(v) => write!(out, "v{}", self.var(*v)).unwrap(),
+            Ty::Var(v) => match self.binders.iter().rposition(|b| b == v) {
+                Some(depth) => write!(out, "m{depth}").unwrap(),
+                None => write!(out, "v{}", self.var(*v)).unwrap(),
+            },
+            Ty::Rec(binder, body) => {
+                write!(out, "(mu m{}. ", self.binders.len()).unwrap();
+                self.binders.push(*binder);
+                let written = self.ty(body, out);
+                self.binders.pop();
+                written?;
+                out.push(')');
+            }
             Ty::Func(params, ret) => {
                 for param in params {
                     out.push('(');
@@ -845,6 +869,7 @@ impl Canon<'_> {
                     }
                 };
                 fields.sort_by_key(|(id, ..)| *id);
+                self.open_in_rec |= tail.is_some() && !self.binders.is_empty();
                 out.push('{');
                 for (i, (id, pres, field)) in fields.iter().enumerate() {
                     if i > 0 {
@@ -914,10 +939,9 @@ fn lacks_on_tail(root: &Expr, types: &HashMap<ExprId, Ty>) -> bool {
     found
 }
 
-/// Whether a record literal has two or more methods, which the checker types
-/// with one receiver they share and the calculus's rules would type apiece.
-fn shares_receiver(root: &Expr) -> bool {
-    let mut found = false;
+/// The most methods any record literal in the program has.
+fn most_methods(root: &Expr) -> usize {
+    let mut most = 0;
     for_each_node(root, &mut |e| {
         if let ExprKind::Record { fields } = &e.kind {
             let methods = fields
@@ -927,10 +951,10 @@ fn shares_receiver(root: &Expr) -> bool {
                         if params.first().is_some_and(|p| p.name == "self"))
                 })
                 .count();
-            found |= methods >= 2;
+            most = most.max(methods);
         }
     });
-    found
+    most
 }
 
 /// The line for `source`, or why it is not a program of the fragment. A
@@ -980,7 +1004,8 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
     if method_flag {
         return Err(Skip::MethodFlag);
     }
-    if shares_receiver(&lowered.root) {
+    let methods = most_methods(&lowered.root);
+    if methods >= 2 {
         return Err(Skip::SharedReceiver);
     }
     if reader.generic_comparison && !forced {
@@ -989,12 +1014,33 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
     let recursive = checked
         .as_ref()
         .is_some_and(|checked| checked.typed.node_types.values().any(Ty::is_recursive));
+    let row_knot = recursive
+        && checked.as_ref().is_some_and(|checked| {
+            checked.typed.node_types.values().any(|ty| {
+                let mut canon = Canon {
+                    labels: &reader.labels,
+                    vars: Vec::new(),
+                    binders: Vec::new(),
+                    open_in_rec: false,
+                };
+                canon.ty(ty, &mut String::new());
+                canon.open_in_rec
+            })
+        });
+    if methods >= 1
+        && checked
+            .as_ref()
+            .is_some_and(|c| c.typed.root_ty.is_recursive())
+    {
+        return Err(Skip::RecursiveReceiver);
+    }
     let verdict = match &checked {
-        Some(_) if recursive => "REC".to_string(),
         Some(checked) => {
             let mut canon = Canon {
                 labels: &reader.labels,
                 vars: Vec::new(),
+                binders: Vec::new(),
+                open_in_rec: false,
             };
             let mut text = String::from("OK ");
             canon
@@ -1006,7 +1052,9 @@ fn line(source: &str, forced: bool) -> Result<String, Skip> {
     };
     let mut sexp = String::new();
     core.sexp(&mut sexp);
-    let mode = if recursive {
+    let mode = if row_knot {
+        'K'
+    } else if recursive {
         'R'
     } else if reader.unary {
         'U'

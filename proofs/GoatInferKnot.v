@@ -33,6 +33,7 @@ Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatElab.
 Require Import Goat.GoatUnrollEqb.
 Require Import Goat.GoatKnot.
+Require Import Goat.GoatGuard.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 From Stdlib Require Import Lia.
@@ -41,11 +42,15 @@ From Stdlib Require Import Lia.
 (* The algorithm                                                        *)
 (* ------------------------------------------------------------------ *)
 
-(* Bind [a] to [T].  A type with a free index is refused.  If [a] occurs in
-   [T] the binding is a knot, which needs every mention of [a] guarded and the
-   knot to have the sort of [a]. *)
+(* Bind [a] to [T].  A type with a free index, or with a recursive type inside
+   whose body is not guarded, is refused (the second never happens to a type
+   the algorithm built; the check makes every image of a substitution this
+   unifier returns guarded without a hypothesis on its inputs, [unify_k_guard]).
+   If [a] occurs in [T] the binding is a knot, which needs every mention of [a]
+   guarded and the knot to have the sort of [a]. *)
 Definition bind_k (D : denv) (a : atom) (T : typ) (n : nat) : option (sub * nat) :=
   if negb (lcb 0 T) then None
+  else if negb (mgb T) then None
   else if AtomSetImpl.mem a (ftv_typ T) then
     if gdb false false a T && sat_b D (D a) (knot a T)
     then Some (sbT a (knot a T), n) else None
@@ -101,8 +106,8 @@ with unify_kr (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f} : option (
       match R1, R2 with
       | row_Var r, row_Var s =>
           if Atom.eq_dec r s then Some (sid, n) else Some (sbR r R2, n)
-      | row_Var r, _ => if occR r R2 then None else Some (sbR r R2, n)
-      | _, row_Var s => if occR s R1 then None else Some (sbR s R1, n)
+      | row_Var r, _ => if occR r R2 then None else if mgbr R2 then Some (sbR r R2, n) else None
+      | _, row_Var s => if occR s R1 then None else if mgbr R1 then Some (sbR s R1, n) else None
       | row_Empty, row_Empty => Some (sid, n)
       | row_Empty, row_Maybe _ _ _ _ => unify_kr f' D R2 R1 n
       | _, _ =>
@@ -214,6 +219,30 @@ Proof.
   refine (conj Hs (conj _ (conj Hk Hl))). exists 0. apply UR_req. exact Ht.
 Qed.
 
+Lemma var_left_Rk : forall D a R n s n',
+  (if occR a R then (None : option (sub * nat))
+   else if mgbr R then Some (sbR a R, n) else None) = Some (s, n') ->
+  EvR (row_Var a) -> EvR R ->
+  OkS s /\ req (apR s (row_Var a)) (apR s R) /\ kres D D (sT s) /\ n <= n'.
+Proof.
+  intros D a R n s n' H Ha HR.
+  destruct (occR a R) eqn:Eo; [discriminate|].
+  destruct (mgbr R) eqn:Em; [|discriminate].
+  refine (var_left_R D a R n s n' _ Ha HR). rewrite Eo. exact H.
+Qed.
+
+Lemma var_right_Rk : forall D b R n s n',
+  (if occR b R then (None : option (sub * nat))
+   else if mgbr R then Some (sbR b R, n) else None) = Some (s, n') ->
+  EvR R -> EvR (row_Var b) ->
+  OkS s /\ req (apR s R) (apR s (row_Var b)) /\ kres D D (sT s) /\ n <= n'.
+Proof.
+  intros D b R n s n' H HR Hb.
+  destruct (occR b R) eqn:Eo; [discriminate|].
+  destruct (mgbr R) eqn:Em; [|discriminate].
+  refine (var_right_R D b R n s n' _ HR Hb). rewrite Eo. exact H.
+Qed.
+
 (* ------------------------------------------------------------------ *)
 (* The specification                                                    *)
 (* ------------------------------------------------------------------ *)
@@ -240,6 +269,7 @@ Lemma bind_k_sound : forall D a T n,
 Proof.
   intros D a T n s n' H Ha HT. unfold bind_k in H.
   destruct (lcb 0 T) eqn:Elc; cbn [negb] in H; [ | discriminate ].
+  destruct (mgb T) eqn:Emg; cbn [negb] in H; [ | discriminate ].
   destruct (AtomSetImpl.mem a (ftv_typ T)) eqn:Emem.
   - destruct (gdb false false a T && sat_b D (D a) (knot a T)) eqn:Eg; [ | discriminate ].
     inversion H; subst; clear H.
@@ -474,8 +504,8 @@ Proof.
                         (kres_scomp D D D (scomp sp s0) s1
                            (kres_scomp D D D s0 sp (Hk0 D) Hkp) Hk1) Hk2) | lia ]. }
     destruct R1 as [| r | l T R1' | lm Pm Tm Rm]; destruct R2 as [| q | l2 T2 R2' | lm2 Pm2 Tm2 Rm2];
-      try (intros s n' H H1 H2; apply lift_req; exact (var_left_R _ _ _ _ _ _ H H1 H2));
-      try (intros s n' H H1 H2; apply lift_req; exact (var_right_R _ _ _ _ _ _ H H1 H2));
+      try (intros s n' H H1 H2; apply lift_req; exact (var_left_Rk _ _ _ _ _ _ H H1 H2));
+      try (intros s n' H H1 H2; apply lift_req; exact (var_right_Rk _ _ _ _ _ _ H H1 H2));
       try apply Hgen.
     + intros s n' H H1 H2. inversion H; subst.
       apply lift_req. split; [apply OkS_id | split; [apply req_refl | split; [ exact (kres_id D) | lia ]]].
@@ -503,25 +533,25 @@ Qed.
 (* ------------------------------------------------------------------ *)
 
 Lemma bind_k_ties : forall D a T n,
-  lcb 0 T = true -> AtomSetImpl.mem a (ftv_typ T) = true ->
+  lcb 0 T = true -> mgb T = true -> AtomSetImpl.mem a (ftv_typ T) = true ->
   gdb false false a T = true -> sat_b D (D a) (knot a T) = true ->
   bind_k D a T n = Some (sbT a (knot a T), n).
 Proof.
-  intros D a T n Hlc Hm Hg Hs. unfold bind_k. rewrite Hlc, Hm, Hg, Hs. reflexivity.
+  intros D a T n Hlc Hmg Hm Hg Hs. unfold bind_k. rewrite Hlc, Hmg, Hm, Hg, Hs. reflexivity.
 Qed.
 
 Lemma bind_k_unguarded : forall D a T n,
-  lcb 0 T = true -> AtomSetImpl.mem a (ftv_typ T) = true ->
+  lcb 0 T = true -> mgb T = true -> AtomSetImpl.mem a (ftv_typ T) = true ->
   gdb false false a T = false -> bind_k D a T n = None.
 Proof.
-  intros D a T n Hlc Hm Hg. unfold bind_k. rewrite Hlc, Hm, Hg. reflexivity.
+  intros D a T n Hlc Hmg Hm Hg. unfold bind_k. rewrite Hlc, Hmg, Hm, Hg. reflexivity.
 Qed.
 
 Lemma bind_k_sorted : forall D a T n,
-  lcb 0 T = true -> AtomSetImpl.mem a (ftv_typ T) = true ->
+  lcb 0 T = true -> mgb T = true -> AtomSetImpl.mem a (ftv_typ T) = true ->
   sat_b D (D a) (knot a T) = false -> bind_k D a T n = None.
 Proof.
-  intros D a T n Hlc Hm Hs. unfold bind_k. rewrite Hlc, Hm, Hs. rewrite Bool.andb_false_r. reflexivity.
+  intros D a T n Hlc Hmg Hm Hs. unfold bind_k. rewrite Hlc, Hmg, Hm, Hs. rewrite Bool.andb_false_r. reflexivity.
 Qed.
 
 (* ------------------------------------------------------------------ *)
@@ -563,7 +593,7 @@ Proof.
   intros a.
   change (unify_k 10 d_any (typ_Var a) (ball_of (typ_Var a)) 0)
     with (bind_k d_any a (ball_of (typ_Var a)) 0).
-  rewrite (bind_k_ties d_any a (ball_of (typ_Var a)) 0 eq_refl (mem_ball a) (guard_ball a) eq_refl).
+  rewrite (bind_k_ties d_any a (ball_of (typ_Var a)) 0 eq_refl eq_refl (mem_ball a) (guard_ball a) eq_refl).
   unfold solved_at, apT, sbT. simpl. unfold knot, ball_ty, ball_of.
   cbn [abs_typ abs_row]. same_atoms. reflexivity.
 Qed.
@@ -574,7 +604,7 @@ Proof.
   intros a.
   change (unify_k 10 d_any (ball_of (typ_Var a)) (typ_Var a) 0)
     with (bind_k d_any a (ball_of (typ_Var a)) 0).
-  rewrite (bind_k_ties d_any a (ball_of (typ_Var a)) 0 eq_refl (mem_ball a) (guard_ball a) eq_refl).
+  rewrite (bind_k_ties d_any a (ball_of (typ_Var a)) 0 eq_refl eq_refl (mem_ball a) (guard_ball a) eq_refl).
   unfold solved_at, apT, sbT. simpl. unfold knot, ball_ty, ball_of.
   cbn [abs_typ abs_row]. same_atoms. reflexivity.
 Qed.
@@ -599,7 +629,7 @@ Proof.
   intros a.
   change (unify_k 10 d_any (typ_Var a) (typ_Record (row_Ext 0 (typ_Var a) row_Empty)) 0)
     with (bind_k d_any a (typ_Record (row_Ext 0 (typ_Var a) row_Empty)) 0).
-  rewrite (bind_k_unguarded d_any a (typ_Record (row_Ext 0 (typ_Var a) row_Empty)) 0 eq_refl).
+  rewrite (bind_k_unguarded d_any a (typ_Record (row_Ext 0 (typ_Var a) row_Empty)) 0 eq_refl eq_refl).
   - reflexivity.
   - apply AtomSetFacts.mem_iff. simpl. fsetdec.
   - cbn. same_atoms. reflexivity.
@@ -611,7 +641,7 @@ Proof.
   intros a.
   change (unify_k 10 (upd d_any a k_Numeric) (typ_Var a) (ball_of (typ_Var a)) 0)
     with (bind_k (upd d_any a k_Numeric) a (ball_of (typ_Var a)) 0).
-  rewrite (bind_k_sorted (upd d_any a k_Numeric) a (ball_of (typ_Var a)) 0 eq_refl (mem_ball a)).
+  rewrite (bind_k_sorted (upd d_any a k_Numeric) a (ball_of (typ_Var a)) 0 eq_refl eq_refl (mem_ball a)).
   - reflexivity.
   - unfold upd. same_atoms. reflexivity.
 Qed.
