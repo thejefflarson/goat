@@ -111,6 +111,22 @@ Decided (owner, on #457): the lexer stays trusted until phases 3 to 6 land and i
 then verified once; T3 for `letrec` is deferred to the tail of phase 8; the
 exclusion of a function binding after a value binding stands.
 
+Amended (phase 8, stage 1): decision 2 no longer holds. `proofs/GoatLex.v` models
+the lexer as a function `lex` from source text (a list of Unicode code points) to
+tokens, and `proofs/GoatLexText.v` restates T1 over text: a source that `lex`
+turns into a token stream the PEG parses denotes a locally closed term
+(`parse_text_denotes`). "Verified" means a Coq model tied to `parser::lexer` by a
+differential test, as the inference algorithm is (ADR 0037, decision 6): `lex` is
+extracted, and `make -C proofs differential` compares its tokens with
+`parser::lexer::lex`, kind and span, on every `.goat` file of the repo, every
+program the corpus generators write and a fixed-seed fuzz of lexer fragments. The
+model rests on one declared parameter pair, `xid_start_hi` and `xid_cont_hi`:
+whether a code point of 128 or more may start or continue an identifier. They
+stand for the tables of `unicode_ident`, which the Coq development does not copy;
+the differential test feeds the extracted `lex` the Rust tables and compares.
+ASCII is decided inside the model. The Rust lexer itself is not verified, and a
+source is a list of code points, so UTF-8 decoding is the host's.
+
 T1 covers all of this. T3 covers `Float` literals and the `if` without an
 `else` (the printer writes `e_ite c a e_unit` without the `else`), and no longer
 prints a function as the bare value of a binding: it parenthesises it, because a

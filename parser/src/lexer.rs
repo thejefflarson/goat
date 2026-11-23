@@ -384,6 +384,20 @@ mod tests {
         );
     }
 
+    /// The Coq model of the lexer (`proofs/GoatLex.v`) decides ASCII itself and
+    /// takes only the tables for code points of 128 and up as parameters.
+    #[test]
+    fn ascii_identifier_characters_are_letters_digits_and_underscore() {
+        for c in (0u8..128).map(char::from) {
+            assert_eq!(is_xid_start(c), c.is_ascii_alphabetic(), "{c:?}");
+            assert_eq!(
+                is_xid_continue(c),
+                c.is_ascii_alphanumeric() || c == '_',
+                "{c:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_keyword_prefix_is_a_name() {
         use TokenKind::*;
