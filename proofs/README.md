@@ -554,8 +554,8 @@ by the differential test), and `make check-assumptions` requires it to rest on
 those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 51507 programs written, 50082 compared with 0 mismatches, 1412 skipped
-by the driver, and the lexer differential 88320 sources, 4862158 tokens, 0
+commit: 51514 programs written, 50089 compared with 0 mismatches, 1412 skipped
+by the driver, and the lexer differential 88325 sources, 4862394 tokens, 0
 disagreements. Phase 8 stage 8 reads list patterns (below): the reader lowers a
 program that needs lists with the prelude's `tag List` declaration (they were
 "does not lower"), reads lowering's trap as `diverge` where it is the `else` of a
