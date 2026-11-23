@@ -111,6 +111,54 @@ Proof.
   cbn in H. rewrite E in H. exact H.
 Qed.
 
+(* The row can present [l] with a presence that is no [Bool]: an entry [l] is
+   present, which is all the unifier asks of the rewritten row when the front entry
+   it unifies with is present. *)
+Definition SurfP (l : label) (Q : row) : Prop :=
+  exists P T R0, req Q (row_Maybe l P T R0) /\ is_abs P = false.
+
+Lemma SurfP_empty : forall l, SurfP l row_Empty -> False.
+Proof.
+  intros l (P & T & R0 & Hq & Hna).
+  assert (Hb : req (row_Maybe l typ_Bool typ_Bool row_Empty) row_Empty) by (apply req_abs; reflexivity).
+  pose proof (row_cancel _ _ _ _ _ _ _ (req_trans _ _ _ (req_sym _ _ Hq) (req_sym _ _ Hb))) as [_ Hc].
+  destruct Hc as [[Hp _]|[Hp _]].
+  - rewrite (teq_is_abs _ _ Hp) in Hna. discriminate Hna.
+  - rewrite Hp in Hna. discriminate Hna.
+Qed.
+
+(* Skipping an entry for another label keeps the presence, because two presentations
+   of one label agree on a present one ([row_cancel]). *)
+Lemma SurfP_ext : forall l l' X Q, l' <> l -> SurfP l (row_Ext l' X Q) -> SurfP l Q.
+Proof.
+  intros l l' X Q Hne (P & T & R0 & Hq & Hna).
+  assert (Hs : Surf l Q) by (eapply Surf_ext; [ exact Hne | exists P, T, R0; exact Hq ]).
+  destruct Hs as (P2 & T2 & R2 & Hq2).
+  exists P2, T2, R2. split; [ exact Hq2 | ].
+  assert (H1 : req (row_Ext l' X Q) (row_Maybe l P2 T2 (row_Ext l' X R2))).
+  { eapply req_trans; [ apply req_head; [ apply teq_refl | exact Hq2 ] | ].
+    apply req_sym. apply req_swap_em. congruence. }
+  pose proof (row_cancel _ _ _ _ _ _ _ (req_trans _ _ _ (req_sym _ _ H1) Hq)) as [_ Hc].
+  destruct Hc as [[Hp _]|[_ Hp]].
+  - rewrite (teq_is_abs _ _ Hp). exact Hna.
+  - rewrite Hp in Hna. discriminate Hna.
+Qed.
+
+Lemma SurfP_maybe : forall l l' P' X Q, l' <> l -> SurfP l (row_Maybe l' P' X Q) -> SurfP l Q.
+Proof.
+  intros l l' P' X Q Hne (P & T & R0 & Hq & Hna).
+  assert (Hs : Surf l Q) by (eapply Surf_maybe; [ exact Hne | exists P, T, R0; exact Hq ]).
+  destruct Hs as (P2 & T2 & R2 & Hq2).
+  exists P2, T2, R2. split; [ exact Hq2 | ].
+  assert (H1 : req (row_Maybe l' P' X Q) (row_Maybe l P2 T2 (row_Maybe l' P' X R2))).
+  { eapply req_trans; [ apply req_maybe; [ apply teq_refl | apply teq_refl | exact Hq2 ] | ].
+    apply req_sym. apply req_swap_mm. congruence. }
+  pose proof (row_cancel _ _ _ _ _ _ _ (req_trans _ _ _ (req_sym _ _ H1) Hq)) as [_ Hc].
+  destruct Hc as [[Hp _]|[_ Hp]].
+  - rewrite (teq_is_abs _ _ Hp). exact Hna.
+  - rewrite Hp in Hna. discriminate Hna.
+Qed.
+
 (* ---- the walk ---- *)
 
 Lemma DOk_two : forall D n K, DOk D n -> DOk (rupd D (ea (Datatypes.S n)) K) (n + 2).
@@ -132,11 +180,7 @@ Ltac fin5 := refine (conj _ (conj _ (conj _ (conj _ (conj _ _))))).
 Theorem rewrite_row_spec : forall l av R D n D1 Sg,
   DOk D n -> KR D D1 Sg ->
   (forall x, x `in` ftv_row R -> old n x) -> (forall q, q `in` frv_row R -> old n q) ->
-  Surf l (apR Sg R) ->
-  (forall r, row_tail R = Some r -> forall P0 T0 R0,
-     req (sR Sg r) (row_Maybe l P0 T0 R0) ->
-     rk_lacks (drk D r) l = false -> P0 = typ_Bool ->
-     sat D1 (rk_sort (drk D r)) T0) ->
+  SurfP l (apR Sg R) ->
   forall P' T' R' s0 D0 n1, rewrite_row l av D R n = Some (P', T', R', s0, D0, n1) ->
   exists S2, KR D0 D1 S2 /\ n <= n1 /\ DOk D0 n1 /\
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s0 x))) /\
@@ -144,25 +188,15 @@ Theorem rewrite_row_spec : forall l av R D n D1 Sg,
     req (apR Sg R) (row_Maybe l (apT S2 P') (apT S2 T') (apR S2 R')).
 Proof.
   intros l av R. induction R as [ | r | l' T' R IHR | l' P1 T' R IHR ];
-    intros D n D1 Sg Hd HK Hx Hq Hsurf Hfld P' T0 R' s0 D0 n1 E.
-  - (* the closed end: the label is absent *)
-    cbn [rewrite_row] in E. inversion E; subst P' T0 R' s0 D0 n1. clear E.
-    exists (supd Sg (ea n) typ_Bool). split; [ | split; [ lia | split; [ eapply DOk_mono; [ exact Hd | lia ] | split; [ | split ] ] ] ].
-    + split.
-      * intros a. cbn [sT supd dsort]. destruct (Atom.eq_dec a (ea n)) as [-> | Hne].
-        -- rewrite (DOk_ea D n n Hd (le_n n)). apply sat_any.
-        -- exact (proj1 HK a).
-      * intros q. exact (proj2 HK q).
-    + intros x Hxo. cbn [sT sid idt apT ap_typ supd]. rewrite (dec_diff _ _ _ _ _ (Hxo n (le_n n))).
-      apply teq_refl.
-    + intros q _. cbn [sR sid idr apR ap_row supd]. apply req_refl.
-    + cbn [apR ap_row]. cbn [apT ap_typ supd sT]. rewrite dec_same.
-      apply req_sym. apply req_abs. reflexivity.
+    intros D n D1 Sg Hd HK Hx Hq Hsurf P' T0 R' s0 D0 n1 E.
+  - (* the closed end: no entry presents the label *)
+    exfalso. exact (SurfP_empty l Hsurf).
   - (* the row variable *)
     assert (Hm : AtomSetImpl.mem r av = false).
     { cbn [rewrite_row] in E. destruct (AtomSetImpl.mem r av); [ discriminate | reflexivity ]. }
-    destruct Hsurf as (P0 & T1 & R0 & Hreq).
-    pose proof (Hfld r eq_refl P0 T1 R0 Hreq) as Hf.
+    destruct Hsurf as (P0 & T1 & R0 & Hreq & Hna).
+    assert (Hf : rk_lacks (drk D r) l = false -> P0 = typ_Bool -> sat D1 (rk_sort (drk D r)) T1)
+      by (intros _ H; subst P0; discriminate Hna).
     destruct (rewrite_row_var_complete l av D n r D1 Sg P0 T1 R0 Hd HK Hm Hreq Hf)
       as (P1 & T2 & R1 & s1 & D2 & n2 & S2 & E2 & HK2 & Hn & HP & HT & HR & Hs1 & Hs2).
     rewrite E2 in E. inversion E; subst P1 T2 R1 s1 D2 n2. clear E.
@@ -187,10 +221,10 @@ Proof.
       destruct (rewrite_row l av D R n) as [[[[[[P0 T1] R3] s] D2] n2] | ] eqn:E1;
         [ | discriminate ].
       inversion E; subst P' T0 R' s0 D0 n1. clear E.
-      cbn [apR ap_row] in Hsurf. pose proof (Surf_ext _ _ _ _ (not_eq_sym Ell) Hsurf) as Hs.
+      cbn [apR ap_row] in Hsurf. pose proof (SurfP_ext _ _ _ _ (not_eq_sym Ell) Hsurf) as Hs.
       destruct (IHR D n D1 Sg Hd HK
                   (fun x Hx' => Hx x ltac:(simpl; fsetdec)) (fun q Hq' => Hq q ltac:(simpl; fsetdec))
-                  Hs Hfld P0 T1 R3 s D2 n2 E1)
+                  Hs P0 T1 R3 s D2 n2 E1)
         as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hinv).
       exists S2. fin5; try assumption.
       cbn [apR ap_row]. eapply req_trans.
@@ -209,10 +243,10 @@ Proof.
       destruct (rewrite_row l av D R n) as [[[[[[P0 T1] R3] s] D2] n2] | ] eqn:E1;
         [ | discriminate ].
       inversion E; subst P' T0 R' s0 D0 n1. clear E.
-      cbn [apR ap_row] in Hsurf. pose proof (Surf_maybe _ _ _ _ _ (not_eq_sym Ell) Hsurf) as Hs.
+      cbn [apR ap_row] in Hsurf. pose proof (SurfP_maybe _ _ _ _ _ (not_eq_sym Ell) Hsurf) as Hs.
       destruct (IHR D n D1 Sg Hd HK
                   (fun x Hx' => Hx x ltac:(simpl; fsetdec)) (fun q Hq' => Hq q ltac:(simpl; fsetdec))
-                  Hs Hfld P0 T1 R3 s D2 n2 E1)
+                  Hs P0 T1 R3 s D2 n2 E1)
         as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hinv).
       exists S2. fin5; try assumption.
       cbn [apR ap_row]. eapply req_trans.
@@ -230,11 +264,7 @@ Qed.
 Corollary rewrite_row_front : forall l av R D n D1 Sg P0 T0 R0,
   DOk D n -> KR D D1 Sg ->
   (forall x, x `in` ftv_row R -> old n x) -> (forall q, q `in` frv_row R -> old n q) ->
-  req (apR Sg R) (row_Maybe l P0 T0 R0) ->
-  (forall r, row_tail R = Some r -> forall P1 T1 R1,
-     req (sR Sg r) (row_Maybe l P1 T1 R1) ->
-     rk_lacks (drk D r) l = false -> P1 = typ_Bool ->
-     sat D1 (rk_sort (drk D r)) T1) ->
+  req (apR Sg R) (row_Maybe l P0 T0 R0) -> is_abs P0 = false ->
   forall P' T' R' s0 D0 n1, rewrite_row l av D R n = Some (P', T', R', s0, D0, n1) ->
   exists S2, KR D0 D1 S2 /\ n <= n1 /\ DOk D0 n1 /\
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s0 x))) /\
@@ -243,9 +273,9 @@ Corollary rewrite_row_front : forall l av R D n D1 Sg P0 T0 R0,
     ((teq (apT S2 P') P0 /\ teq (apT S2 T') T0) \/
      (is_abs (apT S2 P') = true /\ is_abs P0 = true)).
 Proof.
-  intros l av R D n D1 Sg P0 T0 R0 Hd HK Hx Hq Hreq Hfld P' T' R' s0 D0 n1 E.
+  intros l av R D n D1 Sg P0 T0 R0 Hd HK Hx Hq Hreq Hna P' T' R' s0 D0 n1 E.
   destruct (rewrite_row_spec l av R D n D1 Sg Hd HK Hx Hq
-              (ex_intro _ P0 (ex_intro _ T0 (ex_intro _ R0 Hreq))) Hfld P' T' R' s0 D0 n1 E)
+              (ex_intro _ P0 (ex_intro _ T0 (ex_intro _ R0 (conj Hreq Hna)))) P' T' R' s0 D0 n1 E)
     as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hinv).
   pose proof (row_cancel _ _ _ _ _ _ _ (req_trans _ _ _ (req_sym _ _ Hinv) Hreq)) as [Hr Hc].
   exists S2. refine (conj HK2 (conj Hn (conj Hd2 (conj Hf1 (conj Hf2 (conj Hr _)))))).
@@ -264,10 +294,6 @@ Theorem rewrite_row_complete : forall Sg R1 R2 l P T R1' D n D1,
   req (apR Sg R1) (apR Sg R2) ->
   DOk D n -> KR D D1 Sg ->
   (forall x, x `in` ftv_row R2 -> old n x) -> (forall q, q `in` frv_row R2 -> old n q) ->
-  (forall r, row_tail R2 = Some r -> forall P1 T1 R0,
-     req (sR Sg r) (row_Maybe l P1 T1 R0) ->
-     rk_lacks (drk D r) l = false -> P1 = typ_Bool ->
-     sat D1 (rk_sort (drk D r)) T1) ->
   exists P' T' R2' s0 D0 n1 S2,
     rewrite_row l (side_av R1) D R2 n = Some (P', T', R2', s0, D0, n1) /\
     KR D0 D1 S2 /\ n <= n1 /\ DOk D0 n1 /\
@@ -275,7 +301,7 @@ Theorem rewrite_row_complete : forall Sg R1 R2 l P T R1' D n D1,
     (forall q, old n q -> req (sR Sg q) (apR S2 (sR s0 q))) /\
     teq (apT S2 P') (apT Sg P) /\ teq (apT S2 T') (apT Sg T) /\ req (apR S2 R2') (apR Sg R1').
 Proof.
-  intros Sg R1 R2 l P T R1' D n D1 Hh HP Hreq Hd HK Hx Hq Hfld.
+  intros Sg R1 R2 l P T R1' D n D1 Hh HP Hreq Hd HK Hx Hq.
   pose proof (side_guard_passes Sg R1 R2 l P T R1' D n Hh HP Hreq) as Hnn.
   destruct (rewrite_row l (side_av R1) D R2 n) as [[[[[[P' T'] R2'] s0] D0] n1] | ] eqn:E;
     [ | contradiction ].
@@ -285,8 +311,8 @@ Proof.
       inversion Hh; subst; cbn [apR ap_row].
     - cbn [apT ap_typ]. apply req_sym. apply req_pre.
     - apply req_refl. }
-  destruct (rewrite_row_front l (side_av R1) R2 D n D1 Sg _ _ _ Hd HK Hx Hq Hfront Hfld
-              P' T' R2' s0 D0 n1 E)
+  destruct (rewrite_row_front l (side_av R1) R2 D n D1 Sg _ _ _ Hd HK Hx Hq Hfront
+              (eq_trans (teq_is_abs _ _ HP) eq_refl) P' T' R2' s0 D0 n1 E)
     as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hr & Hc).
   exists P', T', R2', s0, D0, n1, S2.
   refine (conj eq_refl (conj HK2 (conj Hn (conj Hd2 (conj Hf1 (conj Hf2 _)))))).

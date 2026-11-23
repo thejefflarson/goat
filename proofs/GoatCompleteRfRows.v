@@ -764,9 +764,7 @@ Lemma pkg_rewrite : forall (D : denv) Sg R1 R2 l P T R1' n,
 Proof.
   intros D Sg R1 R2 l P T R1' n Hd Ht Hk Hh HP Hreq HR AR PR.
   assert (HPt : teq (apT Sg P) typ_Unit) by (rewrite HP; apply teq_refl).
-  destruct (rewrite_row_complete Sg R1 R2 l P T R1' D n DT Hh HPt Hreq Hd Hk
-              (proj1 AR) (proj2 AR)
-              (fun r _ P1 T1 R0 _ _ _ => ltac:(rewrite (proj2 Ht r); apply sat_any)))
+  destruct (rewrite_row_complete Sg R1 R2 l P T R1' D n DT Hh HPt Hreq Hd Hk (proj1 AR) (proj2 AR))
     as (P' & T' & R2' & s0 & D0 & n1 & S2 & E & Hk0 & Hn & Hd0 & Hf1 & Hf2 & HPP & HTT & HRR).
   destruct (rw_shape l (side_av R1) R2 D n P' T' R2' s0 D0 n1 Ht E) as (_ & Ht0 & Hsh0).
   assert (HPU : apT S2 P' = typ_Unit).

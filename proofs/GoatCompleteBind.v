@@ -379,18 +379,36 @@ Proof.
   apply (proj2 (sat_nf D k T)). exact Hs.
 Qed.
 
+(* The theorem below reads its hypothesis and states its factoring at one of two
+   conversions: [teqD] at the environment ([b = true]), or plain [teq] ([b = false]),
+   which a caller whose types carry no absent entry to normalize needs. *)
+Definition teqX (b : bool) (D : denv) (T T' : typ) : Prop :=
+  if b then teqD D T T' else teq T T'.
+
+Lemma teqX_refl : forall b D T, teqX b D T T.
+Proof. intros [] D T; [ apply teqD_refl | apply teq_refl ]. Qed.
+
+Lemma sat_teqX : forall b D k T T', teqX b D T T' -> sat D k T -> sat D k T'.
+Proof.
+  intros [] D k T T' H Hs; [ exact (sat_teqD D k T T' H Hs) | exact (sat_teq D k T T' H Hs) ].
+Qed.
+
+Section PropX.
+
+Variable bx : bool.
+
 Theorem bind_prop_sorted_complete : forall (D D1 : denv) Sg a T n,
   DOk D n -> KR D D1 Sg -> old n a -> a `notin` ftv_typ T ->
   (forall b, b `in` ftv_typ T -> old n b) -> (forall q, q `in` frv_typ T -> old n q) ->
-  pf T -> lcb 0 T = true -> fld D1 Sg (D a) T -> teqD D1 (sT Sg a) (apT Sg T) ->
+  pf T -> lcb 0 T = true -> fld D1 Sg (D a) T -> teqX bx D1 (sT Sg a) (apT Sg T) ->
   exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
     n <= n' /\ DOk D' n' /\
-    (forall x, old n x -> teqD D1 (sT Sg x) (apT S2 (sT s x))) /\
+    (forall x, old n x -> teqX bx D1 (sT Sg x) (apT S2 (sT s x))) /\
     (forall r, old n r -> sR Sg r = apR S2 (sR s r)).
 Proof.
   intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hpf Hlc Hfld Heq.
   assert (Hsa : sat D1 (D a) (apT Sg T)).
-  { apply (sat_teqD D1 (D a) (sT Sg a) (apT Sg T) Heq). exact (proj1 HK a). }
+  { apply (sat_teqX bx D1 (D a) (sT Sg a) (apT Sg T) Heq). exact (proj1 HK a). }
   destruct (sat_reach_mut D1 Sg (D a)) as [Hrt _].
   destruct (Hrt T Hpf Hfld Hsa) as [Hreach_t Hreach_r].
   assert (Holdl : forall b, In b (AtomSetImpl.elements (ftv_typ T)) -> old n b)
@@ -465,15 +483,15 @@ Proof.
   eexists. exists D2, n2, S2b. split; [ reflexivity | ]. split; [ exact K2 | ].
   split; [ lia | split; [ exact (push_sort_r_dok _ _ _ _ _ _ _ Er Hd1) | split ] ].
   - intros x Hx. destruct (Atom.eq_dec x a) as [->|Hne].
-    + change (teqD D1 (sT Sg a) (apT S2b (apT (sbT a T') (apT sr (sT sp a))))).
+    + change (teqX bx D1 (sT Sg a) (apT S2b (apT (sbT a T') (apT sr (sT sp a))))).
       rewrite (P3 a Hnl), Hrv, Hsv. cbn [sT sbT]. rewrite dec_same.
       rewrite Hagree. exact Heq.
-    + change (teqD D1 (sT Sg x) (apT S2b (apT (sbT a T') (apT sr (sT sp x))))).
+    + change (teqX bx D1 (sT Sg x) (apT S2b (apT (sbT a T') (apT sr (sT sp x))))).
       destruct (P4 x) as (y & Ey & Hy). rewrite Ey, Hrv, Hsv.
       assert (Hya : y <> a).
       { intros ->. destruct Hy as [Hy|[m [Hm Hy]]]; [ apply Hne; symmetry; exact Hy | exact (Ha m Hm Hy) ]. }
       cbn [sT sbT]. rewrite (dec_diff _ _ _ _ _ Hya).
-      rewrite (F1 x Hx), Ey, Hsv, Hsv, T2. apply teqD_refl.
+      rewrite (F1 x Hx), Ey, Hsv, Hsv, T2. apply teqX_refl.
   - intros r Hr. change (sR Sg r = apR S2b (apR (sbT a T') (apR sr (sR sp r)))).
     rewrite (P1 r). destruct (Q5 r) as [r' E'].
     assert (Hrr : apR sr (row_Var r) = row_Var r') by (unfold apR; simpl; exact E').
@@ -482,3 +500,5 @@ Proof.
     pose proof (Rq r (fun m Hm => Hr m ltac:(lia))) as E. rewrite R1, E' in E.
     exact E.
 Qed.
+
+End PropX.
