@@ -23,15 +23,18 @@ Require Import Stdlib.Lists.List.
 
 Lemma spread_inv : forall D G e1 l e2 T,
   typing D G (e_spread e1 l e2) T ->
-  exists P T0 R, typing D G e1 (typ_Record (row_Maybe l P T0 R)) /\
-    typing D G e2 T0 /\ teq (typ_Record (row_Ext l T0 R)) T.
+  exists T0 R, typing D G e2 T0 /\ teq (typ_Record (row_Ext l T0 R)) T /\
+    ((exists P, typing D G e1 (typ_Record (row_Maybe l P T0 R))) \/
+     (typing D G e1 (typ_Record R) /\ rlacksD D l R = true)).
 Proof.
   intros D G e1 l e2 T H. remember (e_spread e1 l e2) as e0 eqn:He.
   induction H; try discriminate He.
-  - (* T_Conv *) destruct (IHtyping He) as [P [T0 [R [H1 [H2 H3]]]]].
-    exists P, T0, R. repeat split; try assumption. eauto using teq_trans.
-  - (* T_Spread *) inversion He; subst. do 3 eexists.
-    repeat split; try eassumption; apply teq_refl.
+  - (* T_Conv *) destruct (IHtyping He) as [T0 [R [H1 [H2 H3]]]].
+    exists T0, R. repeat split; try assumption. eauto using teq_trans.
+  - (* T_Spread *) inversion He; subst. exists T, R.
+    repeat split; [ eassumption | apply teq_refl | left; eexists; eassumption ].
+  - (* T_SpreadL *) inversion He; subst. exists T, R.
+    repeat split; [ eassumption | apply teq_refl | right; split; eassumption ].
 Qed.
 
 Lemma restrict_inv : forall D G e l T,
@@ -154,4 +157,34 @@ Proof.
   - apply T_Record; [ | apply no_meth_plain ].
     apply field_typing_fs_plain. eapply field_typing_drop; eassumption.
   - apply teq_rec. apply req_sym. exact Hq.
+Qed.
+
+
+(* A row variable's kind in the environment says nothing of a row with no
+   variable: its labels are read off the row. *)
+Lemma rlacksD_closed : forall D l R, rtail R = row_Empty -> rlacksD D l R = rlacks l R.
+Proof.
+  intros D l R. induction R as [|r|l' T R IH|l' P T R IH]; simpl; intros H; try discriminate;
+    try reflexivity; rewrite (IH H); reflexivity.
+Qed.
+
+Lemma plain_spine_rtail : forall R, plain_spine R = true -> rtail R = row_Empty.
+Proof. intros R. induction R; simpl; intros H; try discriminate; auto. Qed.
+
+(* Preservation of a spread whose base row lacks the label by its kind: the
+   base is a record literal, so its row has no variable, and the kind's claim
+   is the row's own. *)
+Lemma spread_step_typing_L : forall D G fs l v T R,
+  typing D G (e_rec fs) (typ_Record R) -> rlacksD D l R = true -> typing D G v T ->
+  typing D G (e_rec (fs_plain (fs_set l v fs))) (typ_Record (row_Ext l T R)).
+Proof.
+  intros D G fs l v T R Hty Hl Hv.
+  destruct (rec_inv _ _ _ _ Hty) as [Rf [Hft Hteq]].
+  destruct (teq_Record_inv _ _ Hteq) as [R2 [Heq Hreq]].
+  inversion Heq; subst R2.
+  assert (Ht : rtail R = row_Empty).
+  { rewrite <- (req_rtail _ _ Hreq). apply plain_spine_rtail. eapply field_typing_plain_spine; exact Hft. }
+  rewrite (rlacksD_closed D l R Ht) in Hl.
+  eapply spread_step_typing with (P := typ_Bool); [ | exact Hv ].
+  eapply T_Conv; [ exact Hty | apply teq_rec; apply req_sym; apply req_abs; exact Hl ].
 Qed.
