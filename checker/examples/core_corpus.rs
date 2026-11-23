@@ -501,7 +501,9 @@ fn bop_atom(op: BinOp) -> &'static str {
 struct Reader<'a> {
     labels: Vec<String>,
     scope: Vec<Binder>,
-    /// Cleared when a function or call has more than one parameter or argument.
+    /// Cleared when a function or call has more than one parameter or argument,
+    /// and, in a rejected program, when one has none: the reader cannot tell a
+    /// call that matches the arity from one the checker refuses for it.
     unary: bool,
     /// The checker's node types when it accepted the program; a rejected
     /// program has none, so it is read without coercions.
@@ -977,6 +979,7 @@ impl Reader<'_> {
             }
             ExprKind::Var { symbol, .. } => self.var(symbol),
             ExprKind::Func { params, body } if params.is_empty() => {
+                self.unary &= self.types.is_some();
                 let mark = self.scope.len();
                 self.scope.push(Binder::Bound(Symbol::MAX));
                 self.scope.push(Binder::Bound(Symbol::MAX));
@@ -1001,10 +1004,13 @@ impl Reader<'_> {
                         .fold(body?, |body, _| Core::Abs(Box::new(body))),
                 )
             }
-            ExprKind::App { callee, args } if args.is_empty() => Some(Core::App(
-                Box::new(self.read(callee)?),
-                Box::new(Core::Unit),
-            )),
+            ExprKind::App { callee, args } if args.is_empty() => {
+                self.unary &= self.types.is_some();
+                Some(Core::App(
+                    Box::new(self.read(callee)?),
+                    Box::new(Core::Unit),
+                ))
+            }
             ExprKind::App { callee, args } => {
                 self.unary &= args.len() == 1;
                 let params = match self.node_ty(callee) {
