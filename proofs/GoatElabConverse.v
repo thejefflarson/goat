@@ -19,6 +19,7 @@ Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatRows.
+Require Import Goat.GoatPresence.
 Require Import Goat.GoatMu.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSubst.
@@ -99,16 +100,6 @@ Definition lit (x : exp) : Prop :=
 Lemma erase_lit : forall x, lit x -> erase x = x.
 Proof. intros x H. destruct x; try contradiction; reflexivity. Qed.
 
-Lemma bin_step_lit : forall o a b v, bin_step o a b v -> lit a /\ lit b.
-Proof.
-  intros o a b v H. inversion H; subst;
-    repeat match goal with
-           | Hp : fl_pair ?x ?y |- _ => inversion Hp; subst; clear Hp
-           | Hc : cmp_rel ?x ?y _ |- _ => inversion Hc; subst; clear Hc
-           | Hv : val_bool ?x = Some _ |- _ => destruct x; cbn in Hv; try discriminate; clear Hv
-           end;
-    split; exact I.
-Qed.
 
 Lemma bin_sig_same : forall D o A B R, bin_sig D o A B R -> B = A.
 Proof. intros D o A B R H. inversion H; reflexivity. Qed.
@@ -162,6 +153,134 @@ Proof.
     + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
     + left. destruct (canon_record _ _ _ _ Hv Hty) as [gs [Rx [-> [Hrv _]]]]. eauto.
     + right. eapply canon_lit; [ eassumption | eassumption | base_type ].
+Qed.
+
+(* ---- a comparison of erased values is a comparison of the values ---- *)
+
+Lemma lookup_erase : forall l fs v,
+  lookup_first l (erase_fields fs) = Some v ->
+  exists w, lookup_first l fs = Some w /\ erase w = v.
+Proof.
+  intros l fs v H. rewrite erase_lookup_first in H.
+  destruct (lookup_first l fs) as [w|]; cbn [option_map] in H; [ | discriminate H ].
+  inversion H; subst. exists w. split; reflexivity.
+Qed.
+
+Lemma cr_fields_unerase : forall labs fs1' fs2' c, cr_fields labs fs1' fs2' c ->
+  forall fs1 fs2, fs1' = erase_fields fs1 -> fs2' = erase_fields fs2 ->
+  (forall l w1 w2, In l labs -> lookup_first l fs1 = Some w1 -> lookup_first l fs2 = Some w2 ->
+     forall c', cmp_rel (erase w1) (erase w2) c' -> cmp_rel w1 w2 c') ->
+  cr_fields labs fs1 fs2 c.
+Proof.
+  intros labs fs1' fs2' c H. induction H as [ fa fb | l ls fs1' fs2' v1 v2 c E1 E2 Hr Hf IH | l ls fs1' fs2' v1 v2 c E1 E2 Hr Hn ];
+    intros fs1 fs2 -> -> Hall.
+  - apply cf_nil.
+  - destruct (lookup_erase _ _ _ E1) as [w1 [F1 <-]]. destruct (lookup_erase _ _ _ E2) as [w2 [F2 <-]].
+    eapply cf_eq; [ exact F1 | exact F2 | | ].
+    + eapply Hall; [ left; reflexivity | exact F1 | exact F2 | exact Hr ].
+    + eapply IH; [ reflexivity | reflexivity | ].
+      intros l' w1' w2' Hin. eapply Hall. right. exact Hin.
+  - destruct (lookup_erase _ _ _ E1) as [w1 [F1 <-]]. destruct (lookup_erase _ _ _ E2) as [w2 [F2 <-]].
+    eapply cf_ne; [ exact F1 | exact F2 | | exact Hn ].
+    eapply Hall; [ left; reflexivity | exact F1 | exact F2 | exact Hr ].
+Qed.
+
+Definition cmp_unerase_at (D : denv) (T : typ) : Prop :=
+  forall G v1 v2, sat D k_Eq T -> value v1 -> value v2 ->
+  typing D G v1 T -> typing D G v2 T ->
+  forall c, cmp_rel (erase v1) (erase v2) c -> cmp_rel v1 v2 c.
+
+Lemma lit_unerase : forall v1 v2 c, lit v1 -> lit v2 ->
+  cmp_rel (erase v1) (erase v2) c -> cmp_rel v1 v2 c.
+Proof. intros v1 v2 c L1 L2 H. rewrite (erase_lit _ L1), (erase_lit _ L2) in H. exact H. Qed.
+
+Lemma cmp_unerase_mut : forall D,
+  (forall T, cmp_unerase_at D T) /\
+  (forall R, forall l T R', rm l R T R' -> cmp_unerase_at D T).
+Proof.
+  intros D. apply typ_row_mutind; unfold cmp_unerase_at; simpl.
+  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
+    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
+    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
+    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
+    rewrite (canon_unit _ _ _ _ Hv1 H1 (teq_refl _)), (canon_unit _ _ _ _ Hv2 H2 (teq_refl _)).
+    apply lit_unerase; exact I.
+  - intros G v1 v2 _ Hv1 Hv2 H1 H2 c.
+    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - intros T1 _ T2 _ G v1 v2 Hs. discriminate Hs.
+  - intros R IH G v1 v2 Hs Hv1 Hv2 H1 H2 c Hc.
+    destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 [Hf1 Hq1]]]]].
+    destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 [Hf2 Hq2]]]]].
+    cbn [erase] in Hc. apply cmp_rel_rec_inv in Hc. rewrite erase_rec_labels in Hc.
+    apply cr_rec.
+    eapply cr_fields_unerase; [ exact Hc | reflexivity | reflexivity | ].
+    intros l w1 w2 Hl E1 E2 c' Hc'.
+    destruct (rec_align _ _ _ _ _ _ _ Hr1 Hr2 Hf1 Hf2 Hq1 Hq2 l Hl)
+      as [T' [R'' [w1' [w2' [Hrm [E1' [E2' [Hw1 [Hw2 [Ht1 Ht2]]]]]]]]]].
+    rewrite E1 in E1'. rewrite E2 in E2'. inversion E1'; inversion E2'; subst.
+    destruct (rm_sat D k_Eq _ _ _ _ Hrm Hs) as [Hst _].
+    exact (IH _ _ _ Hrm G _ _ Hst Hw1 Hw2 Ht1 Ht2 c' Hc').
+  - intros a G v1 v2 _ Hv1 Hv2 H1 H2 c.
+    apply lit_unerase; (eapply canon_lit; [ eassumption | eassumption | base_type ]).
+  - intros i G v1 v2 Hs. discriminate Hs.
+  - intros T _ G v1 v2 Hs. discriminate Hs.
+  - intros w T _ G v1 v2 Hs. discriminate Hs.
+  - intros l T R' Hrm. exfalso. eapply rm_empty_inv; eassumption.
+  - intros r l T R' Hrm. exfalso. eapply rm_var_inv; eassumption.
+  - intros l0 T0 IHT R0 IHR l T R' Hrm.
+    destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R1 [E ->]]]].
+    + subst. exact IHT.
+    + exact (IHR _ _ _ E).
+  - intros l0 T1 _ T2 IHT R0 IHR l T R' Hrm.
+    destruct (rm_maybe_inv _ _ _ _ _ _ _ Hrm) as [[E1 [E2 [E3 E4]]] | [Hne [R1 [E ->]]]].
+    + subst. exact IHT.
+    + exact (IHR _ _ _ E).
+Qed.
+
+Lemma cmp_unerase : forall D G A v1 v2,
+  sat D k_Eq A -> value v1 -> value v2 -> typing D G v1 A -> typing D G v2 A ->
+  forall c, cmp_rel (erase v1) (erase v2) c -> cmp_rel v1 v2 c.
+Proof.
+  intros D G A v1 v2 Hs Hv1 Hv2 H1 H2 c.
+  exact (proj1 (cmp_unerase_mut D) A G v1 v2 Hs Hv1 Hv2 H1 H2 c).
+Qed.
+
+Lemma bin_step_lit_or_rec : forall o a b v, bin_step o a b v ->
+  (lit a /\ lit b) \/ (exists fs1 fs2, a = e_rec fs1 /\ b = e_rec fs2).
+Proof.
+  intros o a b v H. inversion H; subst;
+    repeat match goal with
+           | Hp : fl_pair ?x ?y |- _ => inversion Hp; subst; clear Hp
+           | Hc : cmp_rel ?x ?y _ |- _ => inversion Hc; subst; clear Hc
+           | Hv : val_bool ?x = Some _ |- _ => destruct x; cbn in Hv; try discriminate; clear Hv
+           end;
+    first [ (left; split; exact I) | (right; do 2 eexists; split; reflexivity) ].
+Qed.
+
+Lemma bin_step_rec_inv : forall o fs1 fs2 v, bin_step o (e_rec fs1) (e_rec fs2) v ->
+  exists c, kind o = k_cmp /\ cmp_rel (e_rec fs1) (e_rec fs2) c /\ v = of_bool (cmp_holds o c).
+Proof.
+  intros o fs1 fs2 v H. inversion H; subst;
+    first [ (match goal with Hc : cmp_rel _ _ ?c |- _ =>
+               exists c; repeat split; first [ assumption | reflexivity ] end)
+          | (match goal with Hf : fl_pair _ _ |- _ => inversion Hf end) ].
+Qed.
+
+Lemma bin_step_lit_result : forall o a b v, bin_step o a b v -> lit v.
+Proof.
+  intros o a b v H. inversion H; subst;
+    first [ exact I | (unfold of_bool; destruct (cmp_holds o _); exact I)
+          | (unfold of_bool; destruct c; exact I) ].
+Qed.
+
+Lemma bin_sig_cmp_sat : forall D o A B R,
+  bin_sig D o A B R -> kind o = k_cmp -> sat D k_Eq A.
+Proof.
+  intros D o A B R H Hk. inversion H; subst; try assumption; exfalso;
+    first [ congruence | (simpl in Hk; discriminate Hk) ].
 Qed.
 
 (* ---- a term whose erasure is a value reaches a value ---- *)
@@ -352,12 +471,6 @@ Proof.
   eapply bin_operand; [ exact Hs | exact Hvv | eapply preservation_multi; eassumption ].
 Qed.
 
-Lemma rec_value_lookup : forall l fs w, rec_value fs -> lookup_first l fs = Some w -> value w.
-Proof.
-  intros l fs w H. induction H; cbn [lookup_first]; intros Hl; [ discriminate | | ];
-    destruct (Nat.eqb l l0); first [ injection Hl as <-; assumption | auto ].
-Qed.
-
 Lemma rec_zip_unerase : forall o fs1' fs2' fs, rec_zip o fs1' fs2' fs ->
   forall gs1 gs2, fs_plain (erase_fields gs1) = fs1' -> fs_plain (erase_fields gs2) = fs2' ->
   exists gs, rec_zip o (fs_plain gs1) (fs_plain gs2) gs /\ erase_fields gs = fs.
@@ -539,17 +652,36 @@ Proof.
     + assert (Hv1 : value (erase e1)) by assumption.
       assert (Hv2 : value (erase e2)) by assumption.
       lazymatch goal with Hbs : bin_step o (erase e1) (erase e2) r |- _ =>
-        destruct (bin_step_lit _ _ _ _ Hbs) as [La Lb];
-        destruct (reach_operand D S e1 o A A R HS Hsig H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
-        destruct (reach_operand D S e2 o A A R HS Hsig H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
-        pose proof (operand_lit _ _ Hk1 Hev1 La) as E1;
-        pose proof (operand_lit _ _ Hk2 Hev2 Lb) as E2;
-        destruct (erase_bin_step _ _ _ _ Hbs) as [_ [_ Er]];
-        exists r; split; [ | exact Er ];
-        eapply multistep_trans; [ apply ms_bin1; exact Hm1 | ];
-        eapply multistep_trans; [ apply ms_bin2; [ rewrite E1; apply lit_value; exact La | exact Hm2 ] | ];
-        rewrite E1, E2;
-        eapply ms_step; [ apply st_bin; [ apply lit_value; exact La | apply lit_value; exact Lb | exact Hbs ] | apply ms_refl ]
+        destruct (bin_step_lit_or_rec _ _ _ _ Hbs) as [[La Lb] | [fs1 [fs2 [Ea Eb]]]];
+        [ destruct (reach_operand D S e1 o A A R HS Hsig H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
+          destruct (reach_operand D S e2 o A A R HS Hsig H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
+          pose proof (operand_lit _ _ Hk1 Hev1 La) as E1;
+          pose proof (operand_lit _ _ Hk2 Hev2 Lb) as E2;
+          pose proof (erase_lit _ (bin_step_lit_result _ _ _ _ Hbs)) as Er;
+          exists r; split; [ | exact Er ];
+          eapply multistep_trans; [ apply ms_bin1; exact Hm1 | ];
+          eapply multistep_trans; [ apply ms_bin2; [ rewrite E1; apply lit_value; exact La | exact Hm2 ] | ];
+          rewrite E1, E2;
+          eapply ms_step; [ apply st_bin; [ apply lit_value; exact La | apply lit_value; exact Lb | exact Hbs ] | apply ms_refl ]
+        | assert (Hbr : bin_step o (e_rec fs1) (e_rec fs2) r) by (rewrite <- Ea, <- Eb; exact Hbs);
+          destruct (bin_step_rec_inv _ _ _ _ Hbr) as [c [Hk [Hcr ->]]];
+          destruct (reach_operand D S e1 o A A R HS Hsig H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
+          destruct (reach_operand D S e2 o A A R HS Hsig H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
+          destruct Hk1 as [[gs1 [-> Hg1]] | L1];
+          [ | rewrite (erase_lit _ L1), Ea in Hev1; rewrite Hev1 in L1; cbn [lit] in L1; contradiction ];
+          destruct Hk2 as [[gs2 [-> Hg2]] | L2];
+          [ | rewrite (erase_lit _ L2), Eb in Hev2; rewrite Hev2 in L2; cbn [lit] in L2; contradiction ];
+          assert (Hcr2 : cmp_rel (e_rec gs1) (e_rec gs2) c)
+            by (eapply cmp_unerase;
+                [ exact (bin_sig_cmp_sat _ _ _ _ _ Hsig Hk) | apply v_rec; exact Hg1 | apply v_rec; exact Hg2
+                | exact (preservation_multi _ _ _ _ _ HS H1 Hm1)
+                | exact (preservation_multi _ _ _ _ _ HS H2 Hm2)
+                | rewrite Hev1, Hev2, Ea, Eb; exact Hcr ]);
+          exists (of_bool (cmp_holds o c)); split;
+          [ eapply multistep_trans; [ apply ms_bin1; exact Hm1 | ];
+            eapply multistep_trans; [ apply ms_bin2; [ apply v_rec; exact Hg1 | exact Hm2 ] | ];
+            eapply ms_step; [ apply st_bin; [ apply v_rec; exact Hg1 | apply v_rec; exact Hg2 | apply (bs_cmp o _ _ c Hk Hcr2) ] | apply ms_refl ]
+          | apply erase_of_bool ] ]
       end.
     + lazymatch goal with
         Ha : erase e1 = e_rec ?fs1, Hb : erase e2 = e_rec ?fs2, Hz : rec_zip o (fs_plain ?fs1) (fs_plain ?fs2) ?fs |- _ =>
@@ -569,23 +701,6 @@ Proof.
           eapply multistep_trans; [ apply ms_bin2; [ apply v_rec; exact Hg1 | exact Hm2 ] | ];
           eapply ms_step; [ apply st_binrec; eassumption | apply ms_refl ]
         | cbn [erase]; rewrite Hge; reflexivity ]
-      end.
-    + lazymatch goal with
-        Ha : erase e1 = e_rec ?fs1, Hb : erase e2 = e_rec ?fs2, Hk : kind o = k_cmp |- _ =>
-        assert (Hv1 : value (erase e1)) by (rewrite Ha; apply v_rec; assumption);
-        assert (Hv2 : value (erase e2)) by (rewrite Hb; apply v_rec; assumption);
-        destruct (reach_operand D S e1 o A A R HS Hsig H1 Hv1) as [v1 [Hm1 [Hev1 Hk1]]];
-        destruct (reach_operand D S e2 o A A R HS Hsig H2 Hv2) as [v2 [Hm2 [Hev2 Hk2]]];
-        destruct Hk1 as [[gs1 [-> Hg1]] | L1];
-        [ | rewrite (erase_lit _ L1), Ha in Hev1; rewrite Hev1 in L1; cbn [lit] in L1; contradiction ];
-        destruct Hk2 as [[gs2 [-> Hg2]] | L2];
-        [ | rewrite (erase_lit _ L2), Hb in Hev2; rewrite Hev2 in L2; cbn [lit] in L2; contradiction ];
-        match goal with |- context [of_bool (cmp_holds o ?c)] =>
-          exists (of_bool (cmp_holds o c)); split;
-          [ eapply multistep_trans; [ apply ms_bin1; exact Hm1 | ];
-            eapply multistep_trans; [ apply ms_bin2; [ apply v_rec; exact Hg1 | exact Hm2 ] | ];
-            eapply ms_step; [ apply st_cmprec; assumption | apply ms_refl ]
-          | apply erase_of_bool ] end
       end.
   - (* spread *) intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2 S HS HG r Hs. subst G.
     cbn [erase] in Hs. inversion Hs; subst; flip_erased.

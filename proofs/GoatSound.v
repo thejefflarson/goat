@@ -616,7 +616,7 @@ Definition dperm (g : atom -> atom) (D : denv) : denv := fun a => D (g a).
 
 Lemma sat_ren_mut : forall g gr D, (forall a, g (g a) = a) ->
   (forall T k, sat D k T -> sat (dperm g D) k (ap_typ (fun a => typ_Var (g a)) (fun r => row_Var (gr r)) T)) /\
-  (forall R, rsat D R -> rsat (dperm g D) (ap_row (fun a => typ_Var (g a)) (fun r => row_Var (gr r)) R)).
+  (forall R k, rsat D k R -> rsat (dperm g D) k (ap_row (fun a => typ_Var (g a)) (fun r => row_Var (gr r)) R)).
 Proof.
   intros g gr D Hi. apply typ_row_mutind; simpl; intros.
   all: first
@@ -888,7 +888,7 @@ Qed.
 Lemma sat_ext_mono_mut : forall D V k S,
   supp_ok D S -> (forall a, a `in` V -> a `notin` S) ->
   (forall T k0, sat D k0 T -> sat (ext D V k) k0 T) /\
-  (forall R, rsat D R -> rsat (ext D V k) R).
+  (forall R k1, rsat D k1 R -> rsat (ext D V k) k1 R).
 Proof.
   intros D V k S Hs Hv. apply typ_row_mutind; simpl; intros.
   all: first
@@ -1837,11 +1837,17 @@ Lemma bin_step_typing : forall D G o v1 v2 v A B R,
 Proof.
   intros D G o v1 v2 v A B R Hs Hv1 Hv2 H1 H2 Hb.
   assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
+  destruct (kind_cmp_dec o) as [Hc | Hnc].
+  { (* a comparison is a Bool whatever its operands are *)
+    inversion Hs; subst; try (exfalso; first [ congruence | (simpl in Hc; discriminate) ]).
+    inversion Hb; subst;
+      try (exfalso; first [ congruence
+        | (match goal with Hd : kind _ = _ \/ kind _ = _ |- _ => destruct Hd; congruence end) ]).
+    all: apply typing_of_bool; exact Hu. }
   assert (HnR : forall R0, A <> typ_Record R0).
   { intros R0 HA. subst A.
     destruct (canon_record _ _ _ _ Hv1 H1) as [fs [Rf [-> _]]].
-    inversion Hb; subst; try (simpl in *; discriminate);
-      try (match goal with Hc : cmp_rel _ _ _ |- _ => inversion Hc; subst; simpl in *; discriminate end);
+    inversion Hb; subst; try congruence; try (simpl in *; discriminate);
       try (match goal with Hf : fl_pair _ _ |- _ => inversion Hf end). }
   destruct Hb; inversion Hs; subst;
     try (exfalso; eapply HnR; reflexivity);
@@ -2124,14 +2130,6 @@ Proof.
     destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
     eapply T_Conv;
       [ exact (binrec_typing _ _ _ _ _ _ _ _ _ Hnc Hs H1 H2 Hz) | exact Hteq ].
-  - (* st_cmprec: a comparison of two records is a Bool, which is what the
-       comparison signature gives. *)
-    intros fs1 o fs2 c Hk Hv1 Hv2 D S G T HS Hty.
-    destruct (bin_inv _ _ _ _ _ _ Hty) as [A [B [R [H1 [H2 [Hs Hteq]]]]]].
-    assert (Hu : uniq G) by (eapply typing_uniq; exact H1).
-    inversion Hs; subst;
-      try (exfalso; first [ congruence | (simpl in Hk; discriminate Hk) ]).
-    eapply T_Conv; [ apply typing_of_bool; exact Hu | exact Hteq ].
   - (* st_tofloat1: the operand of a coercion stepped. *)
     intros e e' Hstep IH D S G T HS Hty.
     destruct (tofloat_inv _ _ _ _ Hty) as [A [H1 [Hsat Hteq]]].

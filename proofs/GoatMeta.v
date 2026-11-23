@@ -906,6 +906,206 @@ Proof.
     + right. exists trap_overflow. apply bt_whole_overflow; assumption.
 Qed.
 
+(* ---- Two values of one Eq type compare ---- *)
+
+Lemma rec_value_lookup : forall l fs v,
+  rec_value fs -> lookup_first l fs = Some v -> value v.
+Proof.
+  intros l fs v H. induction H as [ | l0 v0 fs0 Hv Hr IH | l0 v0 fs0 Hv Hr IH ]; simpl; intros Hl.
+  - discriminate Hl.
+  - destruct (Nat.eqb l l0); [ inversion Hl; subst; exact Hv | exact (IH Hl) ].
+  - destruct (Nat.eqb l l0); [ inversion Hl; subst; exact Hv | exact (IH Hl) ].
+Qed.
+
+Lemma ins_label_in : forall x l ls, In x (ins_label l ls) <-> l = x \/ In x ls.
+Proof.
+  intros x l ls. induction ls as [ | l' ls IH ]; simpl.
+  - tauto.
+  - destruct (Nat.ltb l l') eqn:Hlt.
+    + simpl. tauto.
+    + destruct (Nat.eqb l l') eqn:Heq.
+      * apply Nat.eqb_eq in Heq. subst. simpl. tauto.
+      * simpl. rewrite IH. tauto.
+Qed.
+
+Lemma sort_labels_in : forall x ls, In x (sort_labels ls) <-> In x ls.
+Proof.
+  intros x ls. induction ls as [ | l ls IH ]; simpl.
+  - tauto.
+  - rewrite ins_label_in, IH. tauto.
+Qed.
+
+Lemma rec_labels_lookup : forall l fs,
+  In l (rec_labels fs) -> exists v, lookup_first l fs = Some v.
+Proof.
+  intros l fs. unfold rec_labels. rewrite sort_labels_in.
+  induction fs as [ | l0 e fs IH | l0 e fs IH ]; simpl; [ tauto | | ];
+    (intros [H | H]; [ subst; rewrite Nat.eqb_refl; eauto
+                     | destruct (Nat.eqb l l0); [ eauto | exact (IH H) ] ]).
+Qed.
+
+Lemma field_typing_of_lookup : forall D G fs R,
+  field_typing D G fs R -> forall l v, lookup_first l fs = Some v ->
+  exists T R', rm l R T R' /\ typing D G v T.
+Proof.
+  intros D G fs R H. induction H as [ | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH | D0 G0 l1 e1 T1 fs1 R1 Hty Hft IH ];
+    intros l v Hl; simpl in Hl.
+  - discriminate Hl.
+  - destruct (Nat.eqb l l1) eqn:E.
+    + apply Nat.eqb_eq in E. subst. inversion Hl; subst. eexists; eexists; split; [ apply rm_ext_here | exact Hty ].
+    + apply Nat.eqb_neq in E. destruct (IH _ _ Hl) as [T [R' [Hrm Hv]]].
+      eexists; eexists; split; [ apply rm_ext_skip; eassumption | exact Hv ].
+  - destruct (Nat.eqb l l1) eqn:E.
+    + apply Nat.eqb_eq in E. subst. inversion Hl; subst. eexists; eexists; split; [ apply rm_ext_here | exact Hty ].
+    + apply Nat.eqb_neq in E. destruct (IH _ _ Hl) as [T [R' [Hrm Hv]]].
+      eexists; eexists; split; [ apply rm_ext_skip; eassumption | exact Hv ].
+Qed.
+
+Lemma rm_sat : forall D k R l T R',
+  rm l R T R' -> rsat D k R -> sat D k T /\ rsat D k R'.
+Proof.
+  intros D k R l. induction R using row_ind4; intros T0 R0 Hrm Hs.
+  - exfalso. eapply rm_empty_inv; eassumption.
+  - exfalso. eapply rm_var_inv; eassumption.
+  - simpl in Hs. destruct Hs as [Hb Hs].
+    destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R1 [E ->]]]].
+    + subst. split; assumption.
+    + destruct (IHR _ _ E Hs) as [Hb1 Hs1]. split; [ exact Hb1 | simpl; split; assumption ].
+  - simpl in Hs. contradiction.
+Qed.
+
+(* Two records of one row, and a label of the first: the second has the label
+   too, and both read it at one type of the row.  This is what lets two
+   records written in different field orders, or with a shadowed duplicate,
+   compare label by label. *)
+Lemma rec_align : forall D G R fs1 fs2 R1 R2,
+  rec_value fs1 -> rec_value fs2 ->
+  field_typing D G fs1 R1 -> field_typing D G fs2 R2 -> req R1 R -> req R2 R ->
+  forall l, In l (rec_labels fs1) ->
+  exists T R' w1 w2, rm l R T R' /\
+    lookup_first l fs1 = Some w1 /\ lookup_first l fs2 = Some w2 /\
+    value w1 /\ value w2 /\ typing D G w1 T /\ typing D G w2 T.
+Proof.
+  intros D G R fs1 fs2 R1 R2 Hr1 Hr2 Hf1 Hf2 Hq1 Hq2 l Hl.
+  destruct (rec_labels_lookup _ _ Hl) as [w1 E1].
+  destruct (field_typing_of_lookup _ _ _ _ Hf1 _ _ E1) as [T1 [R1' [Hrm1 Hw1]]].
+  destruct (rm_req _ _ Hq1 _ _ _ Hrm1) as [T' [R'' [Hrm [Ht _]]]].
+  destruct (rm_req _ _ (req_sym _ _ Hq2) _ _ _ Hrm) as [T2 [R2' [Hrm2 [Ht2 _]]]].
+  destruct (field_typing_lookup_rm _ _ _ _ _ _ _ Hf2 Hrm2) as [w2 [E2 Hw2]].
+  exists T', R'', w1, w2. repeat split; try assumption.
+  - exact (rec_value_lookup _ _ _ Hr1 E1).
+  - exact (rec_value_lookup _ _ _ Hr2 E2).
+  - eapply T_Conv; [ exact Hw1 | exact Ht ].
+  - eapply T_Conv; [ exact Hw2 | apply teq_sym; exact Ht2 ].
+Qed.
+
+Lemma cmp_rel_rec_inv : forall fs1 fs2 c,
+  cmp_rel (e_rec fs1) (e_rec fs2) c -> cr_fields (rec_labels fs1) fs1 fs2 c.
+Proof.
+  intros fs1 fs2 c H. inversion H; subst;
+    first [ assumption | (match goal with Hf : fl_pair _ _ |- _ => inversion Hf end)
+          | (simpl in *; discriminate) ].
+Qed.
+
+Lemma cr_fields_total : forall labs fs1 fs2,
+  (forall l, In l labs -> exists v1 v2 c,
+     lookup_first l fs1 = Some v1 /\ lookup_first l fs2 = Some v2 /\ cmp_rel v1 v2 c) ->
+  exists c, cr_fields labs fs1 fs2 c.
+Proof.
+  intros labs fs1 fs2. induction labs as [ | l labs IH ]; intros H.
+  - exists Eq. apply cf_nil.
+  - destruct (H l (or_introl eq_refl)) as [v1 [v2 [c1 [E1 [E2 Hc]]]]].
+    destruct (IH (fun l' Hin => H l' (or_intror Hin))) as [c Hf].
+    destruct c1.
+    + exists c. eapply cf_eq; eassumption.
+    + exists Lt. eapply cf_ne; [ exact E1 | exact E2 | exact Hc | discriminate ].
+    + exists Gt. eapply cf_ne; [ exact E1 | exact E2 | exact Hc | discriminate ].
+Qed.
+
+Definition cmp_total_at (D : denv) (T : typ) : Prop :=
+  forall G v1 v2, sat D k_Eq T -> value v1 -> value v2 ->
+  typing D G v1 T -> typing D G v2 T -> exists c, cmp_rel v1 v2 c.
+
+Lemma cmp_total_mut : forall D,
+  (forall T, cmp_total_at D T) /\
+  (forall R, forall l T R', rm l R T R' -> cmp_total_at D T).
+Proof.
+  intros D. apply typ_row_mutind; unfold cmp_total_at; simpl.
+  - (* Int *)
+    intros G v1 v2 _ Hv1 Hv2 H1 H2.
+    destruct (canon_base _ _ _ _ Hv1 H1) as [C1 _]. destruct (C1 (teq_refl _)) as [a ->].
+    destruct (canon_base _ _ _ _ Hv2 H2) as [C2 _]. destruct (C2 (teq_refl _)) as [b ->].
+    eexists. apply cr_int.
+  - (* Float *)
+    intros G v1 v2 _ Hv1 Hv2 H1 H2.
+    destruct (canon_base _ _ _ _ Hv1 H1) as [_ [C1 _]].
+    destruct (canon_base _ _ _ _ Hv2 H2) as [_ [C2 _]].
+    destruct (C1 (teq_refl _)) as [[a ->] | [x ->]]; destruct (C2 (teq_refl _)) as [[b ->] | [y ->]];
+      first [ (eexists; apply cr_int) | (exists Eq; apply cr_float; constructor) ].
+  - (* Bool *)
+    intros G v1 v2 _ Hv1 Hv2 H1 H2.
+    destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [_ C1]]].
+    destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [_ C2]]].
+    destruct (C1 (teq_refl _)) as [-> | ->]; destruct (C2 (teq_refl _)) as [-> | ->];
+      (eexists; eapply cr_bool; reflexivity).
+  - (* Unit *)
+    intros G v1 v2 _ Hv1 Hv2 H1 H2.
+    rewrite (canon_unit _ _ _ _ Hv1 H1 (teq_refl _)), (canon_unit _ _ _ _ Hv2 H2 (teq_refl _)).
+    eexists. apply cr_unit.
+  - (* String *)
+    intros G v1 v2 _ Hv1 Hv2 H1 H2.
+    destruct (canon_base _ _ _ _ Hv1 H1) as [_ [_ [C1 _]]]. destruct (C1 (teq_refl _)) as [p ->].
+    destruct (canon_base _ _ _ _ Hv2 H2) as [_ [_ [C2 _]]]. destruct (C2 (teq_refl _)) as [q ->].
+    eexists. apply cr_str.
+  - (* Arrow *)
+    intros T1 _ T2 _ G v1 v2 Hs. discriminate Hs.
+  - (* Record: the labels of the first record, each read in both *)
+    intros R IH G v1 v2 Hs Hv1 Hv2 H1 H2.
+    destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 [Hf1 Hq1]]]]].
+    destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 [Hf2 Hq2]]]]].
+    assert (Hall : forall l, In l (rec_labels fs1) -> exists w1 w2 c,
+              lookup_first l fs1 = Some w1 /\ lookup_first l fs2 = Some w2 /\ cmp_rel w1 w2 c).
+    { intros l Hl.
+      destruct (rec_align _ _ _ _ _ _ _ Hr1 Hr2 Hf1 Hf2 Hq1 Hq2 l Hl)
+        as [T' [R'' [w1 [w2 [Hrm [E1 [E2 [Hw1 [Hw2 [Ht1 Ht2]]]]]]]]]].
+      destruct (rm_sat D k_Eq _ _ _ _ Hrm Hs) as [Hst _].
+      destruct (IH _ _ _ Hrm G w1 w2 Hst Hw1 Hw2 Ht1 Ht2) as [c Hc].
+      exists w1, w2, c. auto. }
+    destruct (cr_fields_total _ _ _ Hall) as [c Hf].
+    exists c. apply cr_rec. exact Hf.
+  - (* Var: a value at a variable's type is a numeral *)
+    intros a G v1 v2 _ Hv1 Hv2 H1 H2.
+    destruct (canon_var _ _ _ _ _ Hv1 H1 (teq_refl _)) as [n1 ->].
+    destruct (canon_var _ _ _ _ _ Hv2 H2 (teq_refl _)) as [n2 ->].
+    eexists. apply cr_int.
+  - intros i G v1 v2 Hs. discriminate Hs.
+  - intros T _ G v1 v2 Hs. discriminate Hs.
+  - intros w T _ G v1 v2 Hs. discriminate Hs.
+  - (* row Empty *)
+    intros l T R' Hrm. exfalso. eapply rm_empty_inv; eassumption.
+  - intros r l T R' Hrm. exfalso. eapply rm_var_inv; eassumption.
+  - (* row Ext *)
+    intros l0 T0 IHT R0 IHR l T R' Hrm.
+    destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R1 [E ->]]]].
+    + subst. exact IHT.
+    + exact (IHR _ _ _ E).
+  - (* row Maybe *)
+    intros l0 T1 _ T2 IHT R0 IHR l T R' Hrm.
+    destruct (rm_maybe_inv _ _ _ _ _ _ _ Hrm) as [[E1 [E2 [E3 E4]]] | [Hne [R1 [E ->]]]].
+    + subst. exact IHT.
+    + exact (IHR _ _ _ E).
+Qed.
+
+(* Two values of one type that satisfies Eq compare to some result.  The type
+   may hold variables: a value at a variable's type is a numeral. *)
+Lemma cmp_total : forall D G A v1 v2,
+  sat D k_Eq A -> value v1 -> value v2 ->
+  typing D G v1 A -> typing D G v2 A -> exists c, cmp_rel v1 v2 c.
+Proof.
+  intros D G A v1 v2 Hs Hv1 Hv2 H1 H2.
+  exact (proj1 (cmp_total_mut D) A G v1 v2 Hs Hv1 Hv2 H1 H2).
+Qed.
+
 (* An operator applied to two values of the types its signature wants either
    computes a value or raises a defined error. *)
 Lemma bin_progress_scalar : forall D G o v1 v2 A B R,
@@ -1002,11 +1202,11 @@ Proof.
     try (destruct (bin_progress_scalar _ _ _ _ _ _ _ _ Hs Hv1 Hv2 H1 H2
            (fun R0 H => ltac:(discriminate H))) as [Hb | Hb]; [ left | right; left ]; exact Hb).
   destruct (kind_cmp_dec o) as [Hc | Hnc].
-  - (* two records compare *)
+  - (* two records compare, field by field *)
     inversion Hs; subst; try (simpl in Hc; discriminate Hc); try congruence.
-    destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 _]]]].
-    destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 _]]]].
-    right. right. eexists. apply (st_cmprec _ _ _ Eq); assumption.
+    match goal with HB : sat D k_Eq _ |- _ =>
+      destruct (cmp_total _ _ _ _ _ HB Hv1 Hv2 H1 H2) as [c Hcmp] end.
+    left. eexists. apply bs_cmp; [ exact Hc | exact Hcmp ].
   - destruct (bin_sig_record _ _ _ _ _ Hnc Hs) as [-> [_ Hrow]].
   destruct (canon_record _ _ _ _ Hv1 H1) as [fs1 [Rf1 [-> [Hr1 [Hf1 Hq1]]]]].
   destruct (canon_record _ _ _ _ Hv2 H2) as [fs2 [Rf2 [-> [Hr2 [Hf2 Hq2]]]]].

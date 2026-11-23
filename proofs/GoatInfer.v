@@ -87,14 +87,14 @@ Fixpoint sat_b (D : denv) (k : sort) (T : typ) {struct T} : bool :=
   | typ_Int | typ_Float => true
   | typ_Var a => finer_b (D a) k
   | typ_Record R =>
-      match k with k_Any => true | k_Eq | k_Numeric => rsat_b D R | k_Literal => false end
+      match k with k_Any => true | k_Eq | k_Numeric => rsat_b D k R | k_Literal => false end
   | typ_String | typ_Bool | typ_Unit => match k with k_Any | k_Eq => true | _ => false end
   | _ => match k with k_Any => true | _ => false end
   end
-with rsat_b (D : denv) (R : row) {struct R} : bool :=
+with rsat_b (D : denv) (k : sort) (R : row) {struct R} : bool :=
   match R with
   | row_Empty => true
-  | row_Ext _ T R' => sat_b D k_Numeric T && rsat_b D R'
+  | row_Ext _ T R' => sat_b D k T && rsat_b D k R'
   | _ => false
   end.
 

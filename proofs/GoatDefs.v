@@ -224,23 +224,23 @@ Definition denv := typvar -> sort.
 
 (* [sat D k T]: T may stand where a variable of sort [k] stands.  A concrete
    [Int] or [Float] satisfies every sort; a variable satisfies the sorts its
-   own (in [D]) is finer than.  A closed record whose fields are all [Numeric]
-   is [Numeric] and [Eq] too, field by field (ADR 0012), and never [Literal]:
-   a numeral is a number.  [String], [Bool] and [Unit] are [Eq] and [Any].  A
+   own (in [D]) is finer than.  A closed record whose fields all satisfy [k]
+   satisfies [k], for [Numeric] (ADR 0012) and for [Eq] (ADR 0036), and is
+   never [Literal]: a numeral is a number.  [String], [Bool] and [Unit] are [Eq] and [Any].  A
    function is neither, and the remaining types satisfy only [Any]. *)
 Fixpoint sat (D : denv) (k : sort) (T : typ) {struct T} : Prop :=
   match T with
   | typ_Int | typ_Float => True
   | typ_Var a => finer (D a) k
   | typ_Record R =>
-      match k with k_Any => True | k_Eq | k_Numeric => rsat D R | k_Literal => False end
+      match k with k_Any => True | k_Eq | k_Numeric => rsat D k R | k_Literal => False end
   | typ_String | typ_Bool | typ_Unit => k = k_Any \/ k = k_Eq
   | _ => k = k_Any
   end
-with rsat (D : denv) (R : row) {struct R} : Prop :=
+with rsat (D : denv) (k : sort) (R : row) {struct R} : Prop :=
   match R with
   | row_Empty => True
-  | row_Ext _ T R' => sat D k_Numeric T /\ rsat D R'
+  | row_Ext _ T R' => sat D k T /\ rsat D k R'
   | _ => False
   end.
 
@@ -663,17 +663,54 @@ Inductive fl_pair : exp -> exp -> Prop :=
 
 #[export] Hint Constructors fl_pair : core.
 
-(* The three-way result of comparing two scalar values (ADR 0036).  Two
-   records compare by [st_cmprec], to any result, until their order is
+Fixpoint fs_labels (fs : fields) : list label :=
+  match fs with
+  | fs_nil => nil
+  | fs_cons l _ fs' | fs_meth l _ fs' => l :: fs_labels fs'
+  end.
+
+Fixpoint ins_label (l : label) (ls : list label) : list label :=
+  match ls with
+  | nil => l :: nil
+  | l' :: ls' =>
+      if Nat.ltb l l' then l :: ls
+      else if Nat.eqb l l' then ls
+      else l' :: ins_label l ls'
+  end.
+
+Fixpoint sort_labels (ls : list label) : list label :=
+  match ls with
+  | nil => nil
+  | l :: ls' => ins_label l (sort_labels ls')
+  end.
+
+(* The labels of a record, each once, in ascending order. *)
+Definition rec_labels (fs : fields) : list label := sort_labels (fs_labels fs).
+
+(* The three-way result of comparing two values (ADR 0036).  Two records
+   compare field by field in label order, each label read as its first field
+   in either record, so the order the fields are written in does not matter.
+   A Float inside a record relates to every result: a NaN's place is not
    modelled. *)
 Inductive cmp_rel : exp -> exp -> comparison -> Prop :=
  | cr_int : forall a b, cmp_rel (e_num a) (e_num b) (z_cmp a b)
+ | cr_float : forall x y c, fl_pair x y -> cmp_rel x y c
  | cr_str : forall p q, cmp_rel (e_str p) (e_str q) (str_compare p q)
  | cr_bool : forall x y a b,
      val_bool x = Some a -> val_bool y = Some b -> cmp_rel x y (bool_compare a b)
- | cr_unit : cmp_rel e_unit e_unit Eq.
+ | cr_unit : cmp_rel e_unit e_unit Eq
+ | cr_rec : forall fs1 fs2 c,
+     cr_fields (rec_labels fs1) fs1 fs2 c -> cmp_rel (e_rec fs1) (e_rec fs2) c
+with cr_fields : list label -> fields -> fields -> comparison -> Prop :=
+ | cf_nil : forall fs1 fs2, cr_fields nil fs1 fs2 Eq
+ | cf_eq : forall l ls fs1 fs2 v1 v2 c,
+     lookup_first l fs1 = Some v1 -> lookup_first l fs2 = Some v2 ->
+     cmp_rel v1 v2 Eq -> cr_fields ls fs1 fs2 c -> cr_fields (l :: ls) fs1 fs2 c
+ | cf_ne : forall l ls fs1 fs2 v1 v2 c,
+     lookup_first l fs1 = Some v1 -> lookup_first l fs2 = Some v2 ->
+     cmp_rel v1 v2 c -> c <> Eq -> cr_fields (l :: ls) fs1 fs2 c.
 
-#[export] Hint Constructors cmp_rel : core.
+#[export] Hint Constructors cmp_rel cr_fields : core.
 
 (* What an operator computes from two values.  A relation, because a Float
    operation is unspecified: any Float, or for a comparison any Bool.  Every
@@ -739,20 +776,47 @@ Proof.
   all: inversion H2; subst; auto.
 Qed.
 
-Lemma sat_finer : forall D k k' T, finer k' k -> sat D k' T -> sat D k T.
+Lemma finer_eqany : forall k k', finer k' k ->
+  (k' = k_Any \/ k' = k_Eq) -> (k = k_Any \/ k = k_Eq).
 Proof.
-  intros D k k' T Hf H. destruct T; simpl in *; try exact I.
-  all: try (eapply finer_trans; eauto; fail).
-  all: destruct k, k'; try (inversion Hf; fail); simpl in *;
-    first [ exact I | assumption | (destruct H as [H|H]; discriminate)
-          | (left; reflexivity) | (right; reflexivity) | discriminate | contradiction ].
+  intros k k' Hf H. destruct k, k'; try (inversion Hf; fail);
+    first [ (left; reflexivity) | (right; reflexivity) | (destruct H as [H|H]; discriminate) ].
 Qed.
+
+Lemma finer_anyonly : forall k k', finer k' k -> k' = k_Any -> k = k_Any.
+Proof. intros k k' Hf H. subst. inversion Hf; reflexivity. Qed.
+
+Lemma sat_finer_mut : forall D,
+  (forall T k k', finer k' k -> sat D k' T -> sat D k T) /\
+  (forall R k k', finer k' k -> rsat D k' R -> rsat D k R).
+Proof.
+  intros D. apply typ_row_mutind; simpl.
+  - intros k k' Hf _. exact I.
+  - intros k k' Hf _. exact I.
+  - intros k k' Hf. apply finer_eqany. exact Hf.
+  - intros k k' Hf. apply finer_eqany. exact Hf.
+  - intros k k' Hf. apply finer_eqany. exact Hf.
+  - intros T1 _ T2 _ k k' Hf. apply finer_anyonly. exact Hf.
+  - intros R H k k' Hf. destruct k, k'; try (inversion Hf; fail);
+      first [ (intros _; exact I) | (intros H0; contradiction) | exact (H _ _ Hf) ].
+  - intros a k k' Hf H. eapply finer_trans; eassumption.
+  - intros i k k' Hf. apply finer_anyonly. exact Hf.
+  - intros T _ k k' Hf. apply finer_anyonly. exact Hf.
+  - intros w T _ k k' Hf. apply finer_anyonly. exact Hf.
+  - intros k k' Hf _. exact I.
+  - intros r k k' Hf H. contradiction.
+  - intros l T H R H0 k k' Hf [H1 H2]. split; [ eapply H; eassumption | eapply H0; eassumption ].
+  - intros l T1 _ T2 _ R _ k k' Hf H. contradiction.
+Qed.
+
+Lemma sat_finer : forall D k k' T, finer k' k -> sat D k' T -> sat D k T.
+Proof. intros D k k' T Hf H. exact (proj1 (sat_finer_mut D) T k k' Hf H). Qed.
 
 (* A kind-respecting substitution keeps a type within its sort. *)
 Lemma sat_ap_mut : forall D D' st sr,
   kres D D' st ->
   (forall T k, sat D k T -> sat D' k (ap_typ st sr T)) /\
-  (forall R, rsat D R -> rsat D' (ap_row st sr R)).
+  (forall R k, rsat D k R -> rsat D' k (ap_row st sr R)).
 Proof.
   intros D D' st sr Hk. apply typ_row_mutind; simpl; intros.
   all: first
@@ -859,9 +923,6 @@ Inductive step : exp -> exp -> Prop :=
  | st_binrec : forall fs1 o fs2 fs,
      kind o <> k_cmp -> rec_value fs1 -> rec_value fs2 -> rec_zip o (fs_plain fs1) (fs_plain fs2) fs ->
      step (e_bin (e_rec fs1) o (e_rec fs2)) (e_rec fs)
- | st_cmprec : forall fs1 o fs2 c,
-     kind o = k_cmp -> rec_value fs1 -> rec_value fs2 ->
-     step (e_bin (e_rec fs1) o (e_rec fs2)) (of_bool (cmp_holds o c))
  | st_tofloat1 : forall e e', step e e' -> step (e_tofloat e) (e_tofloat e')
  | st_tofloat : forall z d, step (e_tofloat (e_num z)) (e_dec d)
  | st_tofloat_dec : forall d, step (e_tofloat (e_dec d)) (e_dec d)

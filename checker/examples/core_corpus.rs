@@ -217,7 +217,6 @@ enum Feature {
     Builtin,
     Connective,
     Loop,
-    Ordering,
     OperatorOperand,
     SplitGroup,
     EmptyRest,
@@ -240,7 +239,6 @@ impl Feature {
             Feature::Builtin => "outside the calculus: print or trap",
             Feature::Connective => "outside the calculus: and, or, not",
             Feature::Loop => "outside the calculus: a loop (repeat, for)",
-            Feature::Ordering => "outside the calculus: a comparison of non-primitive operands",
             Feature::OperatorOperand => {
                 "outside the calculus: arithmetic on non-primitive operands"
             }
@@ -289,14 +287,11 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
         {
             note(Feature::Loop)
         }
-        ExprKind::Bin { op, lhs, rhs } if non_primitive(lhs) || non_primitive(rhs) => {
-            note(match op {
-                BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte | BinOp::Eq | BinOp::Ne => {
-                    Feature::Ordering
-                }
-                _ => Feature::OperatorOperand,
-            })
-        }
+        ExprKind::Bin {
+            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::FloorDiv | BinOp::Mod,
+            lhs,
+            rhs,
+        } if non_primitive(lhs) || non_primitive(rhs) => note(Feature::OperatorOperand),
         _ => {}
     });
     first
@@ -433,10 +428,14 @@ impl Reader<'_> {
     }
 
     /// The type of an operator's operand, which must be one the calculus has
-    /// an operator signature for.
-    fn operand_ty(&self, expr: &Expr) -> Option<Ty> {
+    /// an operator signature for. A comparison also takes `Unit` and a record,
+    /// when both operands have one type, so no field needs a coercion.
+    fn operand_ty(&self, expr: &Expr, other: &Expr, comparison: bool) -> Option<Ty> {
         match self.node_ty(expr)? {
             ty @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool) => Some(ty.clone()),
+            ty @ (Ty::Unit | Ty::Record(_)) if comparison && self.node_ty(other) == Some(ty) => {
+                Some(ty.clone())
+            }
             _ => None,
         }
     }
@@ -677,7 +676,10 @@ impl Reader<'_> {
                             .iter()
                             .any(|e| matches!(self.node_ty(e), Some(Ty::Var(_))));
                     if !generic {
-                        let (x, y) = (self.operand_ty(lhs)?, self.operand_ty(rhs)?);
+                        let (x, y) = (
+                            self.operand_ty(lhs, rhs, comparison)?,
+                            self.operand_ty(rhs, lhs, comparison)?,
+                        );
                         match (op, x, y) {
                             (BinOp::Div, ..) => (a, b) = (to_float(a), to_float(b)),
                             (_, Ty::Int, Ty::Int)
