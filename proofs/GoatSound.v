@@ -993,7 +993,8 @@ Proof.
   intros D D2 l R [_ Hr]. induction R as [|r|l' T R IH|l' P T R IH]; simpl; auto.
   - destruct (Hr r) as [E|E]; [ rewrite E; auto | rewrite E; simpl; intros H; discriminate H ].
   - intros H. apply Bool.andb_true_iff in H as [H1 H2]. rewrite H1. apply IH. exact H2.
-  - intros H. apply Bool.andb_true_iff in H as [H1 H2]. rewrite H1. apply IH. exact H2.
+  - destruct (Nat.eqb l l'); [ | exact IH ].
+    intros H. apply Bool.andb_true_iff in H as [H1 H2]. rewrite H1. apply IH. exact H2.
 Qed.
 
 Lemma rkok_mono : forall D D2 K R, env_mono D D2 -> rkok D K R -> rkok D2 K R.

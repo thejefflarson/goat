@@ -2048,6 +2048,11 @@ const HANDWRITTEN: &[&str] = &[
     "program(w) do\n  t = {...w, x: 1}\n  u = if true then w else {} done\n  w == w\ndone",
     "program(w) do\n  t = {...w, x: program(z) do z done}\n  u = if true then w else {} done\n  w == w\ndone",
     "f0 = program(q) do\n  v1 = {...q, x: 1}\n  q\ndone\nprogram(w) do\n  v3 = f0({y: 1})\n  {...v3, x: \"s\"}\ndone",
+    "f = program(q) do\n  {...q, x: 1}\ndone\ng = program(p) do\n  {x, ...r} = p\n  f(r)\ndone\n1",
+    "f0 = program(q) do\n  {...q, y: true}\ndone\nprogram(w) do\n  e0 = w.x\n  e1 = w == w\n  f0(w)\ndone",
+    "program(w) do\n  t = {...w, x: program(z) do z done}\n  w == {}\ndone",
+    "f0 = program(q) do\n  e = q == q\n  {...q, z: 2}\ndone\nprogram(w) do\n  f0({x: {...w, y: 1}})\ndone",
+    "f0 = program(q) do\n  e = q == q\n  {...q, z: 2}\ndone\nprogram(w) do\n  v0 = w.x\n  v1 = {...v0, y: {}}\n  f0(w)\ndone",
 ];
 
 /// One program from generator `kind` (taken modulo the four), every choice

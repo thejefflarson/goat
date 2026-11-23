@@ -299,13 +299,16 @@ with rfsat (R : row) {struct R} : Prop :=
   end.
 
 (* [rlacksD D l R]: the row [R] has no field labeled [l]; a row variable lacks
-   what its kind in [D] says.  With no variable in [R] it is [rlacks]. *)
+   what its kind in [D] says.  An absent entry ([Bool] presence) for [l] is no
+   field, so it does not break the lack: a row variable that lacks [l] can be
+   refined to [l^Bool : a | r'] and still lack it. *)
 Fixpoint rlacksD (D : denv) (l : label) (R : row) {struct R} : bool :=
   match R with
   | row_Empty => true
   | row_Var r => rk_lacks (drk D r) l
   | row_Ext l' _ R' => negb (Nat.eqb l l') && rlacksD D l R'
-  | row_Maybe l' _ _ R' => negb (Nat.eqb l l') && rlacksD D l R'
+  | row_Maybe l' P _ R' =>
+      if Nat.eqb l l' then is_abs P && rlacksD D l R' else rlacksD D l R'
   end.
 
 (* A row has a kind in [D]: it satisfies the sort and lacks the labels. *)
@@ -973,7 +976,11 @@ Proof.
   apply typ_row_mutind; simpl; intros; try exact I; try discriminate; auto.
   - exact (proj2 (Hr r) l H).
   - apply Bool.andb_true_iff in H1 as [H1 H2]. rewrite H1. auto.
-  - apply Bool.andb_true_iff in H2 as [H2 H3]. rewrite H2. auto.
+  - destruct (Nat.eqb l l0).
+    + apply Bool.andb_true_iff in H2 as [H2 H3].
+      match type of H2 with is_abs ?P = true => destruct P; try discriminate H2 end.
+      simpl. auto.
+    + auto.
 Qed.
 
 Lemma rlacksD_ap : forall D D' st sr l R,

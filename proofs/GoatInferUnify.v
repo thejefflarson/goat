@@ -157,6 +157,23 @@ Proof.
       * intros x. unfold scomp, tcomp. simpl. unfold sbR. simpl. unfold idt. simpl. exact (Hft x).
 Qed.
 
+Lemma push_sort_r_fix : forall l D k n s D' n',
+  push_sort_r D k l n = (s, D', n') -> forall x, ~ In x l -> sR s x = row_Var x.
+Proof.
+  induction l as [|b l IH]; intros D k n s D' n' H x Hx; cbn [push_sort_r] in H.
+  - inversion H; subst; clear H. reflexivity.
+  - destruct (finer_b (rk_sort (drk D b)) k).
+    + apply (IH _ _ _ _ _ _ H). intros Hin. apply Hx. right. exact Hin.
+    + destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (S n)) as [[s1 D1] n1] eqn:E.
+      inversion H; subst; clear H.
+      assert (Hxb : x <> b) by (intros ->; apply Hx; left; reflexivity).
+      assert (Hxl : ~ In x l) by (intros Hin; apply Hx; right; exact Hin).
+      pose proof (IH _ _ _ _ _ _ E x Hxl) as Hs1.
+      unfold scomp, rcomp. simpl. unfold sbR. simpl.
+      destruct (Atom.eq_dec x b) as [->|_]; [ exfalso; apply Hxb; reflexivity | ].
+      exact Hs1.
+Qed.
+
 Lemma bind_prop_sound : forall D a T n s D' n',
   bind_prop D a T n = Some (s, D', n') -> EvT (typ_Var a) -> EvT T ->
   OkS s /\ teq (apT s (typ_Var a)) (apT s T) /\ GoodU D n s D' n'.
@@ -310,35 +327,68 @@ Proof.
     split; [ rewrite apR_id; apply req_sym; apply req_abs; reflexivity | ].
     exact (GoodU_same _ n sid (S n) OkS_id (KR_id _) (le_S _ _ (le_n n))).
   - destruct (AtomSetImpl.mem r av); [discriminate|].
-    destruct (rk_lacks (drk D r) l) eqn:El; [discriminate|].
-    destruct (rk_sort (drk D r)) eqn:Es; try discriminate.
-    inversion H; subst; clear H.
     assert (Hr : ev r) by exact (ev_var_R r HR).
-    assert (HEv : EvR (row_Maybe l (typ_Var (ea n)) (typ_Var (ea (S n))) (row_Var (ea (n + 2))))).
-    { apply EvR_maybe; [ apply EvT_var, ev_ea | apply EvT_var, ev_ea | apply EvR_var, ev_ea ]. }
-    assert (Hs : OkS (sbR r (row_Maybe l (typ_Var (ea n)) (typ_Var (ea (S n))) (row_Var (ea (n + 2))))))
-      by (apply OkS_sbR; [ auto | auto | exact (conj I (conj I I)) ]).
-    split; [ exact Hs | ].
-    split; [ apply EvT_var, ev_ea | ].
-    split; [ apply EvT_var, ev_ea | ].
-    split; [ apply EvR_var, ev_ea | ].
-    split.
-    { unfold apR, sbR; simpl. destruct (Atom.eq_dec r r); [|contradiction].
-      apply req_refl. }
-    split; [ lia | intros Hd ].
-    replace (n + 3) with (S (n + 2)) by lia.
-    pose proof (Good_pre D n (n + 2) sid (rupd D (ea (n + 2)) (drk D r)) (S (n + 2))
-                  ltac:(lia) Hd (Good_rupd D (n + 2) (drk D r) (DOk_mono D n (n + 2) Hd ltac:(lia))))
-      as (_ & _ & Hd' & Hl & Hi & _).
-    refine (conj Hd (conj Hs (conj Hd' (conj Hl (conj Hi (conj (proj1 Hi) _)))))).
-    intros r0. unfold sbR. cbn [sR].
-    destruct (Atom.eq_dec r0 r) as [->|Hne].
-    + split.
-      * rewrite Es. apply rsat_any.
-      * intros l' Hl'. cbn [rlacksD]. rewrite rupd_same. apply Bool.andb_true_iff. split; [ | exact Hl' ].
-        apply Bool.negb_true_iff. apply Bool.not_true_is_false. intros Heq.
-        apply Nat.eqb_eq in Heq. subst l'. rewrite El in Hl'. discriminate Hl'.
-    + exact (proj2 Hi r0).
+    destruct (rk_lacks (drk D r) l) eqn:El.
+    + (* the row variable lacks [l]: it becomes [l ^ Bool : a ; r'] *)
+      inversion H; subst; clear H.
+      assert (HEv : EvR (row_Maybe l typ_Bool (typ_Var (ea n)) (row_Var (ea (S n))))).
+      { apply EvR_maybe; [ exact EvT_Bool | apply EvT_var, ev_ea | apply EvR_var, ev_ea ]. }
+      assert (Hs : OkS (sbR r (row_Maybe l typ_Bool (typ_Var (ea n)) (row_Var (ea (S n))))))
+        by (apply OkS_sbR; [ auto | auto | exact (conj I (conj I I)) ]).
+      split; [ exact Hs | ].
+      split; [ exact EvT_Bool | ].
+      split; [ apply EvT_var, ev_ea | ].
+      split; [ apply EvR_var, ev_ea | ].
+      split.
+      { unfold apR, sbR; simpl. destruct (Atom.eq_dec r r); [|contradiction].
+        apply req_refl. }
+      split; [ lia | intros Hd ].
+      pose proof (Good_pre D n (S n) sid (rupd D (ea (S n)) (drk D r)) (S (S n))
+                    ltac:(lia) Hd (Good_rupd D (S n) (drk D r) (DOk_mono D n (S n) Hd ltac:(lia))))
+        as (_ & _ & Hd' & Hl & Hi & _).
+      replace (n + 2) with (S (S n)) by lia.
+      refine (conj Hd (conj Hs (conj Hd' (conj Hl (conj Hi (conj (proj1 Hi) _)))))).
+      intros r0. unfold sbR. cbn [sR].
+      destruct (Atom.eq_dec r0 r) as [->|Hne].
+      * split.
+        -- cbn [rsat]. split; [ left; reflexivity | ]. cbn [rsat]. rewrite rupd_same. apply finer_refl.
+        -- intros l' Hl'. cbn [rlacksD]. destruct (Nat.eqb l' l) eqn:Ell; cbn [rlacksD].
+           ++ apply Nat.eqb_eq in Ell. subst l'. cbn [is_abs]. rewrite rupd_same. exact Hl'.
+           ++ rewrite rupd_same. exact Hl'.
+      * exact (proj2 Hi r0).
+    + (* the row variable has a kind: its sort reaches the field variable *)
+      inversion H; subst; clear H.
+      assert (HEv : EvR (row_Maybe l (typ_Var (ea n)) (typ_Var (ea (S n))) (row_Var (ea (n + 2))))).
+      { apply EvR_maybe; [ apply EvT_var, ev_ea | apply EvT_var, ev_ea | apply EvR_var, ev_ea ]. }
+      assert (Hs : OkS (sbR r (row_Maybe l (typ_Var (ea n)) (typ_Var (ea (S n))) (row_Var (ea (n + 2))))))
+        by (apply OkS_sbR; [ auto | auto | exact (conj I (conj I I)) ]).
+      split; [ exact Hs | ].
+      split; [ apply EvT_var, ev_ea | ].
+      split; [ apply EvT_var, ev_ea | ].
+      split; [ apply EvR_var, ev_ea | ].
+      split.
+      { unfold apR, sbR; simpl. destruct (Atom.eq_dec r r); [|contradiction].
+        apply req_refl. }
+      split; [ lia | intros Hd ].
+      replace (n + 3) with (S (n + 2)) by lia.
+      pose proof (Good_pre D n (S n) sid (upd D (ea (S n)) (rk_sort (drk D r))) (S (S n))
+                    ltac:(lia) Hd (Good_upd D (S n) (rk_sort (drk D r)) (DOk_mono D n (S n) Hd ltac:(lia))))
+        as G1.
+      pose proof (Good_rupd (upd D (ea (S n)) (rk_sort (drk D r))) (n + 2) (drk D r)
+                    (DOk_mono _ (S (S n)) (n + 2) (Good_dok _ _ _ _ _ G1) ltac:(lia))) as G2.
+      pose proof (Good_lift _ _ _ _ _ _ _ G1 (Good_pre _ (S (S n)) (n + 2) _ _ _ ltac:(lia)
+                    (Good_dok _ _ _ _ _ G1) G2)) as G3.
+      destruct G3 as (_ & _ & Hd' & Hl & Hi & _).
+      refine (conj Hd (conj Hs (conj Hd' (conj Hl (conj Hi (conj (proj1 Hi) _)))))).
+      intros r0. unfold sbR. cbn [sR].
+      destruct (Atom.eq_dec r0 r) as [->|Hne].
+      * split.
+        -- cbn [rsat]. split; [ right; cbn [sat]; unfold rupd; cbn [dsort]; rewrite upd_same; apply finer_refl | ].
+           cbn [rsat]. rewrite rupd_same. apply finer_refl.
+        -- intros l' Hl'. cbn [rlacksD]. destruct (Nat.eqb l' l) eqn:Ell; cbn [rlacksD].
+           ++ apply Nat.eqb_eq in Ell. subst l'. rewrite El in Hl'. discriminate Hl'.
+           ++ rewrite rupd_same. exact Hl'.
+      * exact (proj2 Hi r0).
   - destruct (Nat.eqb l l') eqn:El.
     + inversion H; subst; clear H. apply Nat.eqb_eq in El; subst l'.
       destruct (EvR_ext_inv _ _ _ HR) as [HT HR''].
@@ -430,15 +480,15 @@ Proof.
   intros D K R. induction R as [| r | l' T R IH | l' P T R IH]; intros Ht Hok l Hl; cbn [rlacksD].
   - reflexivity.
   - exact (Ht r eq_refl l Hl).
-  - unfold lacks_ok in Hok. cbn [row_labels forallb] in Hok. apply Bool.andb_true_iff in Hok as [H1 H2].
+  - cbn [lacks_ok] in Hok. apply Bool.andb_true_iff in Hok as [H1 H2].
     apply Bool.andb_true_iff. split.
     + apply Bool.negb_true_iff. apply Bool.not_true_is_false. intros Heq.
       apply Nat.eqb_eq in Heq. subst l'. apply Bool.negb_true_iff in H1. rewrite Hl in H1. discriminate H1.
     + apply IH; [ exact Ht | exact H2 | exact Hl ].
-  - unfold lacks_ok in Hok. cbn [row_labels forallb] in Hok. apply Bool.andb_true_iff in Hok as [H1 H2].
-    apply Bool.andb_true_iff. split.
-    + apply Bool.negb_true_iff. apply Bool.not_true_is_false. intros Heq.
-      apply Nat.eqb_eq in Heq. subst l'. apply Bool.negb_true_iff in H1. rewrite Hl in H1. discriminate H1.
+  - cbn [lacks_ok] in Hok. apply Bool.andb_true_iff in Hok as [H1 H2].
+    destruct (Nat.eqb l l') eqn:Heq.
+    + apply Nat.eqb_eq in Heq. subst l'. rewrite Hl in H1. cbn in H1.
+      apply Bool.andb_true_iff. split; [ exact H1 | apply IH; [ exact Ht | exact H2 | exact Hl ] ].
     + apply IH; [ exact Ht | exact H2 | exact Hl ].
 Qed.
 
@@ -518,11 +568,11 @@ Proof.
     + exact (rkok_self _ r0).
 Qed.
 
-Lemma bind_row_sound : forall D r R n s D' n',
-  bind_row D r R n = Some (s, D', n') -> EvR (row_Var r) -> EvR R ->
+Lemma bind_row_core_sound : forall D r R n s D' n',
+  bind_row_core D r R n = Some (s, D', n') -> EvR (row_Var r) -> EvR R ->
   OkS s /\ req (apR s (row_Var r)) (apR s R) /\ GoodU D n s D' n'.
 Proof.
-  intros D r R n s D' n' H Hr HR. unfold bind_row in H.
+  intros D r R n s D' n' H Hr HR. unfold bind_row_core in H.
   destruct (occR r R) eqn:Eo; [ discriminate | ].
   destruct (row_tail R) as [q|] eqn:Et.
   - assert (Hq : q `in` frv_row R) by exact (row_tail_frv _ _ Et).
@@ -555,6 +605,69 @@ Proof.
   - refine (bind_row_fin_sound _ _ _ _ D n _ _ _ _ H Hr HR OkS_id (GoodU_id D n) eq_refl _).
     intros t Ht. exfalso. unfold apR in Ht. simpl in Ht.
     rewrite (row_tail_ap_none _ _ _ Et) in Ht. discriminate Ht.
+Qed.
+
+Lemma abs_vars_ftv : forall K R p, In p (abs_vars K R) -> p `in` ftv_row R.
+Proof.
+  intros K R p. induction R as [| r | l' T R IH | l' P T R IH]; intros H.
+  - contradiction.
+  - contradiction.
+  - cbn [abs_vars] in H. apply IH in H. cbn [ftv_row]. fsetdec.
+  - cbn [ftv_row]. destruct P as [| | | | | | | a | | |]; cbn [abs_vars] in H;
+      try (apply IH in H; fsetdec).
+    destruct (rk_lacks K l').
+    + destruct H as [<-|H]; [ simpl; fsetdec | apply IH in H; simpl; fsetdec ].
+    + apply IH in H. simpl. fsetdec.
+Qed.
+
+Lemma bool_sub_ok : forall D ps, (forall p, In p ps -> ev p) ->
+  forallb (fun p => sat_b D (D p) typ_Bool) ps = true ->
+  OkS (bool_sub ps) /\ KR D D (bool_sub ps) /\ (forall r, sR (bool_sub ps) r = row_Var r).
+Proof.
+  intros D ps. induction ps as [|p ps IH]; intros Hev Hf; cbn [bool_sub].
+  - exact (conj OkS_id (conj (KR_id D) (fun r => eq_refl))).
+  - cbn [forallb] in Hf. apply Bool.andb_true_iff in Hf as [Hp Hf].
+    destruct (IH (fun q Hq => Hev q (or_intror Hq)) Hf) as (Hs & Hk & Hr).
+    refine (conj (OkS_comp _ _ Hs (OkS_sbT p typ_Bool (Hev p (or_introl eq_refl)) EvT_Bool I)) (conj _ _)).
+    + exact (KR_comp _ _ _ _ _ (KR_sbT D p typ_Bool (sat_b_sound _ _ _ Hp)) Hk).
+    + intros r. unfold scomp, rcomp. simpl. unfold sbT, idr. simpl. exact (Hr r).
+Qed.
+
+Lemma bind_row_sound : forall D r R n s D' n',
+  bind_row D r R n = Some (s, D', n') -> EvR (row_Var r) -> EvR R ->
+  OkS s /\ req (apR s (row_Var r)) (apR s R) /\ GoodU D n s D' n'.
+Proof.
+  intros D r R n s D' n' H Hr HR. unfold bind_row in H. cbn zeta in H.
+  destruct (forallb (fun p => sat_b D (D p) typ_Bool) (abs_vars (drk D r) R)) eqn:Ef; [ | discriminate ].
+  destruct (occR r (apR (bool_sub (abs_vars (drk D r) R)) R)) eqn:Eo; [ discriminate | ].
+  destruct (push_sort_r D (rk_sort (drk D r))
+              (AtomSetImpl.elements (frv_row (apR (bool_sub (abs_vars (drk D r) R)) R))) n)
+    as [[sr D1] n1] eqn:Ep.
+  destruct (bind_row_core D1 r (apR sr (apR (bool_sub (abs_vars (drk D r) R)) R)) n1)
+    as [[[s1 D2] n2]|] eqn:E; [ | discriminate ].
+  inversion H; subst; clear H.
+  destruct (bool_sub_ok D _ (fun p Hp => (proj1 HR) p (abs_vars_ftv _ _ _ Hp)) Ef)
+    as (Hs0 & Hk0 & Hr0).
+  set (R0 := apR (bool_sub (abs_vars (drk D r) R)) R) in *.
+  assert (HR0 : EvR R0) by (apply EvR_ap; assumption).
+  assert (Hevr : forall b, In b (AtomSetImpl.elements (frv_row R0)) -> ev b).
+  { intros b Hb. apply (proj2 HR0). apply AtomSetFacts.elements_iff.
+    apply SetoidList.In_InA; [ exact eq_equivalence | exact Hb ]. }
+  destruct (push_sort_r_good _ _ _ _ _ _ _ Ep Hevr) as (Hsr & Hgr & _).
+  assert (Hnr : ~ In r (AtomSetImpl.elements (frv_row R0))).
+  { intros Hin. destruct (occR_false _ _ Eo) as [Hnot _]. apply Hnot.
+    apply AtomSetFacts.elements_iff. apply SetoidList.In_InA; [ exact eq_equivalence | exact Hin ]. }
+  pose proof (push_sort_r_fix _ _ _ _ _ _ _ Ep r Hnr) as Hfr.
+  destruct (bind_row_core_sound _ _ _ _ _ _ _ E Hr (EvR_ap _ _ Hsr HR0)) as (Hs1 & Hreq & Hg).
+  refine (conj (OkS_comp _ _ Hs1 (OkS_comp _ _ Hsr Hs0)) (conj _ _)).
+  - rewrite <- !apR_comp.
+    assert (Ev : apR sr (apR (bool_sub (abs_vars (drk D r) R)) (row_Var r)) = row_Var r).
+    { assert (E1 : apR (bool_sub (abs_vars (drk D r) R)) (row_Var r) = row_Var r)
+        by (unfold apR; simpl; apply Hr0).
+      rewrite E1. unfold apR. simpl. exact Hfr. }
+    rewrite Ev. exact Hreq.
+  - eapply GoodU_comp; [ eapply GoodU_comp; [ | exact Hgr ] | exact Hg ].
+    apply GoodU_same; [ exact Hs0 | exact Hk0 | exact (le_n _) ].
 Qed.
 
 Lemma unify_sound : forall f,

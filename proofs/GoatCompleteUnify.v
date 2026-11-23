@@ -470,26 +470,19 @@ Proof.
   exact (unify_co_stable f0 D T1 T2 n s D n (Hf f0 (le_n _))).
 Qed.
 
-(* ---- what the fragment leaves out, and why ----
+(* ---- what the fragment leaves out ----
 
-   One fact about the definitions, not about the proof, keeps the statements
-   above from reaching rows with a tail variable
-   (docs/design/phase7-proof-plan.md, stage 7.6b). *)
+   Rows with a tail variable.  The unifier rewrites a row variable that lacks
+   the label (to an absent entry) and one whose sort is finer than [Any] (the
+   field variable takes the sort), so the fresh variables [rewrite_row] and
+   [bind_row] invent are all that stands between the statements above and such
+   rows: the invention of the factoring substitution for them is not proved. *)
 
-(* [rewrite_row] gives up at a row variable that lacks the label, although the
-   label is then absent from it and a presence of [Bool] would do.  Unifying
-   [l^p : a | r'] with [m : B | r], where [r] lacks [l], therefore fails
-   ([unify_r] takes the first row's head and rewrites the second), though
-   [p := Bool], [r' := m : B], [r := {}] unifies them.  The checker accepts the
-   programs this stops, but [req] cannot relate [l ^ Bool : a ; r] to [r] for a
-   row variable that lacks [l] ([req_abs] needs the syntactic [rlacks]), so W has
-   no typing derivation to be sound against until the calculus reads [rlacksD D]
-   there. *)
-Example rewrite_row_lacks_gap : forall l m B r av (D : denv) n,
+Example rewrite_row_lacking : forall l m B r av (D : denv) n,
   l <> m -> AtomSetImpl.mem r av = false -> rk_lacks (drk D r) l = true ->
-  rewrite_row l av D (row_Ext m B (row_Var r)) n = None.
+  rewrite_row l av D (row_Ext m B (row_Var r)) n <> None.
 Proof.
   intros l m B r av D n Hne Hm Hl. simpl.
   destruct (Nat.eqb l m) eqn:E; [ apply Nat.eqb_eq in E; congruence | ].
-  cbn iota. rewrite Hm, Hl. reflexivity.
+  cbn iota. rewrite Hm, Hl. discriminate.
 Qed.

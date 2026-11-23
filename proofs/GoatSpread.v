@@ -160,20 +160,20 @@ Proof.
 Qed.
 
 
-(* A row variable's kind in the environment says nothing of a row with no
-   variable: its labels are read off the row. *)
-Lemma rlacksD_closed : forall D l R, rtail R = row_Empty -> rlacksD D l R = rlacks l R.
+(* A row that lacks a label has no field-carrying entry for it. *)
+Lemma rlacksD_pi : forall D l R, rlacksD D l R = true -> pi l R = nil.
 Proof.
-  intros D l R. induction R as [|r|l' T R IH|l' P T R IH]; simpl; intros H; try discriminate;
-    try reflexivity; rewrite (IH H); reflexivity.
+  intros D l R. induction R as [|r|l' T R IH|l' P T R IH]; simpl; intros H; try reflexivity.
+  - apply Bool.andb_true_iff in H as [H1 H2].
+    destruct (Nat.eqb l l'); [ discriminate H1 | apply IH; exact H2 ].
+  - destruct (Nat.eqb l l') eqn:E; simpl.
+    + apply Bool.andb_true_iff in H as [H1 H2].
+      destruct P; try discriminate H1. simpl. apply IH. exact H2.
+    + apply IH. exact H.
 Qed.
 
-Lemma plain_spine_rtail : forall R, plain_spine R = true -> rtail R = row_Empty.
-Proof. intros R. induction R; simpl; intros H; try discriminate; auto. Qed.
-
 (* Preservation of a spread whose base row lacks the label by its kind: the
-   base is a record literal, so its row has no variable, and the kind's claim
-   is the row's own. *)
+   base is a record literal, so it carries no field for the label either. *)
 Lemma spread_step_typing_L : forall D G fs l v T R,
   typing D G (e_rec fs) (typ_Record R) -> rlacksD D l R = true -> typing D G v T ->
   typing D G (e_rec (fs_plain (fs_set l v fs))) (typ_Record (row_Ext l T R)).
@@ -182,9 +182,16 @@ Proof.
   destruct (rec_inv _ _ _ _ Hty) as [Rf [Hft Hteq]].
   destruct (teq_Record_inv _ _ Hteq) as [R2 [Heq Hreq]].
   inversion Heq; subst R2.
-  assert (Ht : rtail R = row_Empty).
-  { rewrite <- (req_rtail _ _ Hreq). apply plain_spine_rtail. eapply field_typing_plain_spine; exact Hft. }
-  rewrite (rlacksD_closed D l R Ht) in Hl.
-  eapply spread_step_typing with (P := typ_Bool); [ | exact Hv ].
-  eapply T_Conv; [ exact Hty | apply teq_rec; apply req_sym; apply req_abs; exact Hl ].
+  assert (Hpi : pi l Rf = nil).
+  { pose proof (req_pi _ _ Hreq l) as Hp. rewrite (rlacksD_pi _ _ _ Hl) in Hp.
+    inversion Hp. reflexivity. }
+  assert (Hlk : lookup_first l fs = None).
+  { destruct (lookup_first l fs) as [e|] eqn:E; [ | reflexivity ].
+    destruct (lookup_pi _ _ _ _ _ _ Hft E) as [T0 [rest Hp]].
+    rewrite Hpi in Hp. discriminate. }
+  unfold fs_set. rewrite Hlk.
+  eapply T_Conv.
+  - apply T_Record; [ | apply no_meth_plain ].
+    apply field_typing_fs_plain. apply FT_cons; eassumption.
+  - apply teq_rec. apply req_head; [ apply teq_refl | exact Hreq ].
 Qed.

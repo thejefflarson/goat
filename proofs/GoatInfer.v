@@ -211,8 +211,13 @@ Fixpoint row_labels (R : row) : list label :=
   | row_Maybe l _ _ R' => l :: row_labels R'
   end.
 
-Definition lacks_ok (K : rkind) (R : row) : bool :=
-  forallb (fun l => negb (rk_lacks K l)) (row_labels R).
+(* A row may mention a label the kind lacks only as an absent entry. *)
+Fixpoint lacks_ok (K : rkind) (R : row) {struct R} : bool :=
+  match R with
+  | row_Empty | row_Var _ => true
+  | row_Ext l _ R' => negb (rk_lacks K l) && lacks_ok K R'
+  | row_Maybe l P _ R' => (negb (rk_lacks K l) || is_abs P) && lacks_ok K R'
+  end.
 
 (* The second half of [bind_row]: after [sq] renamed the tail of [R] (leaving
    [D0] and the supply [n0]), the sort of [r] reaches the type variables of the
@@ -234,7 +239,7 @@ Definition bind_row_fin (r : atom) (R : row) (sq : sub) (D0 : denv) (n0 : nat)
    a function, so the two cannot be compared), the sort of [r] reaches the
    type variables of the fields, and the renamed row must satisfy the sort and
    lack the labels [r] lacks. *)
-Definition bind_row (D : denv) (r : atom) (R : row) (n : nat) : option (sub * denv * nat) :=
+Definition bind_row_core (D : denv) (r : atom) (R : row) (n : nat) : option (sub * denv * nat) :=
   if occR r R then None
   else
     match row_tail R with
@@ -244,31 +249,74 @@ Definition bind_row (D : denv) (r : atom) (R : row) (n : nat) : option (sub * de
           (rupd D (ea n) (rk_join (drk D r) (drk D q))) (S n)
     end.
 
+(* The presence variables of the entries of [R] for labels the kind of the
+   row variable lacks: the row variable can be bound to [R] only if they are
+   absent, so each is bound to [Bool] first (a presence is nothing else when
+   its field is no field). *)
+Fixpoint abs_vars (K : rkind) (R : row) {struct R} : list atom :=
+  match R with
+  | row_Ext _ _ R' => abs_vars K R'
+  | row_Maybe l (typ_Var p) _ R' => if rk_lacks K l then p :: abs_vars K R' else abs_vars K R'
+  | row_Maybe _ _ _ R' => abs_vars K R'
+  | _ => nil
+  end.
+
+Fixpoint bool_sub (ps : list atom) : sub :=
+  match ps with
+  | nil => sid
+  | p :: ps' => scomp (bool_sub ps') (sbT p typ_Bool)
+  end.
+
+(* Bind the row variable [r] to [R]: the presence of an entry for a label [r]
+   lacks becomes [Bool], if the presence variable's sort allows it; the sort of
+   [r] reaches the row variables inside [R] (a nested record's tail is as
+   sorted as the field it sits in); and then [R] is bound as [bind_row_core]
+   does. *)
+Definition bind_row (D : denv) (r : atom) (R : row) (n : nat) : option (sub * denv * nat) :=
+  let ps := abs_vars (drk D r) R in
+  if forallb (fun p => sat_b D (D p) typ_Bool) ps then
+    let R0 := apR (bool_sub ps) R in
+    if occR r R0 then None
+    else
+      match push_sort_r D (rk_sort (drk D r)) (AtomSetImpl.elements (frv_row R0)) n with
+      | (sr, D1, n1) =>
+          match bind_row_core D1 r (apR sr R0) n1 with
+          | Some (s, D', n') => Some (scomp s (scomp sr (bool_sub ps)), D', n')
+          | None => None
+          end
+      end
+  else None.
+
 (* Rewrite [R] so that it presents label [l] first, with a presence:
    [Some (P, T, R', s, D', n')] with [s R] equivalent to [l ^ P : T ; R'].  A
    field [R] has gives presence [Unit], a closed row that has none gives [Bool]
    (the absent field's type is a fresh variable, and [l] is absent from the
    rest), and a row variable is bound to [l ^ p : a ; r'] for a fresh presence
-   variable [p] and a fresh row variable [r'] of the kind it had.  A row
-   variable that lacks [l], or whose sort is finer than [Any] (a presence entry
-   has none), cannot be rewritten.  [av] holds the row variables the row
-   variable at the tail of [R] may not be (Leijen's side condition). *)
+   variable [p], a fresh field variable [a] of the sort the row variable has (the
+   field of an unresolved presence takes the sort of its row), and a fresh row
+   variable [r'] of the kind it had.  A row variable that lacks [l] is bound to
+   [l ^ Bool : a ; r'] in the same way: [r'] lacks what [r] did, so the binding
+   keeps the kind, and the entry is absent from the start.  [av] holds the row
+   variables the row variable at the tail of [R] may not be (Leijen's side
+   condition). *)
 Fixpoint rewrite_row (l : label) (av : atoms) (D : denv) (R : row) (n : nat)
   : option (typ * typ * row * sub * denv * nat) :=
   match R with
   | row_Empty => Some (typ_Bool, typ_Var (ea n), row_Empty, sid, D, S n)
   | row_Var r =>
       if AtomSetImpl.mem r av then None
-      else if rk_lacks (drk D r) l then None
       else
-        match rk_sort (drk D r) with
-        | k_Any =>
-            let p := typ_Var (ea n) in
-            let a := typ_Var (ea (S n)) in
-            let r' := row_Var (ea (n + 2)) in
-            Some (p, a, r', sbR r (row_Maybe l p a r'), rupd D (ea (n + 2)) (drk D r), n + 3)
-        | _ => None
-        end
+        let K := drk D r in
+        if rk_lacks K l then
+          let a := typ_Var (ea n) in
+          let r' := row_Var (ea (S n)) in
+          Some (typ_Bool, a, r', sbR r (row_Maybe l typ_Bool a r'), rupd D (ea (S n)) K, n + 2)
+        else
+          let p := typ_Var (ea n) in
+          let a := typ_Var (ea (S n)) in
+          let r' := row_Var (ea (n + 2)) in
+          Some (p, a, r', sbR r (row_Maybe l p a r'),
+                rupd (upd D (ea (S n)) (rk_sort K)) (ea (n + 2)) K, n + 3)
   | row_Ext l' T' R'' =>
       if Nat.eqb l l' then Some (typ_Unit, T', R'', sid, D, n)
       else
@@ -541,6 +589,12 @@ Definition arms_wf_b (w : gdecl) (ars : arms) : bool :=
 
 Definition is_generic_op (o : bop) : bool :=
   match kind o with k_quot => false | _ => true end.
+
+(* A comparison unifies its two operands first and only then requires the
+   joined type to be [Eq], as the checker does ([join_operands]); the
+   arithmetic operators demand the sort of the left operand first. *)
+Definition is_cmp_op (o : bop) : bool :=
+  match kind o with k_cmp => true | _ => false end.
 
 Definition fresh_var (G : ctx) (e : exp) : atom :=
   fresh (AtomSetImpl.elements (dom G `union` fv_exp e)).
