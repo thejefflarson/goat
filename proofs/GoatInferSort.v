@@ -313,7 +313,10 @@ Proof.
   - intros l T [IHT _] R IHR k [Hs1 Hs2] Hv. split.
     + apply IHT; [ exact Hs1 | intros b Hb; apply Hv; fsetdec ].
     + apply IHR; [ exact Hs2 | intros b Hb; apply Hv; fsetdec ].
-  - intros l P _ T _ R _ k Hs Hv. exact Hs.
+  - intros l P _ T [IHT _] R IHR k [Hs1 Hs2] Hv. split.
+    + destruct Hs1 as [Hp | Hs1]; [ left; exact Hp | right ].
+      apply IHT; [ exact Hs1 | intros b Hb; apply Hv; fsetdec ].
+    + apply IHR; [ exact Hs2 | intros b Hb; apply Hv; fsetdec ].
 Qed.
 
 Lemma sat_ext_out : forall D V k0 k T,
@@ -637,7 +640,13 @@ Proof.
   - intros l T [IHT _] R IHR k. rewrite Bool.andb_true_iff. split.
     + intros [H1 H2]. split; [ apply IHT; exact H1 | apply IHR; exact H2 ].
     + intros [H1 H2]. split; [ apply IHT; exact H1 | apply IHR; exact H2 ].
-  - intros l P _ T _ R _ k. destruct k; split; intros H; first [ reflexivity | discriminate ].
+  - intros l P _ T [IHT _] R IHR k. rewrite Bool.andb_true_iff, Bool.orb_true_iff. split.
+    + intros [[Hp | H1] H2]; split;
+        [ left; destruct P; try discriminate Hp; reflexivity | apply IHR; exact H2
+        | right; apply IHT; exact H1 | apply IHR; exact H2 ].
+    + intros [[Hp | H1] H2]; split;
+        [ left; subst; reflexivity | apply IHR; exact H2
+        | right; apply IHT; exact H1 | apply IHR; exact H2 ].
 Qed.
 
 Lemma sat_b_iff : forall D k T, sat_b D k T = true <-> sat D k T.

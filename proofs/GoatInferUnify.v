@@ -231,6 +231,49 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------------ *)
+(* Dropping absent entries                                              *)
+(* ------------------------------------------------------------------ *)
+
+Lemma req_drop_abs : forall R, req R (drop_abs R).
+Proof.
+  induction R as [| r | l T R IH | l P T R IH]; simpl.
+  - apply req_empty.
+  - apply req_var.
+  - apply req_head; [ apply teq_refl | exact IH ].
+  - destruct (is_abs P && rlacks l (drop_abs R)) eqn:E.
+    + apply Bool.andb_true_iff in E as [Ha Hl]. destruct P; try discriminate Ha.
+      eapply req_trans; [ apply req_maybe; [ apply teq_refl | apply teq_refl | exact IH ] | ].
+      apply req_abs. exact Hl.
+    + apply req_maybe; [ apply teq_refl | apply teq_refl | exact IH ].
+Qed.
+
+Lemma drop_abs_fv : forall R,
+  ftv_row (drop_abs R) [<=] ftv_row R /\ frv_row (drop_abs R) [<=] frv_row R.
+Proof.
+  induction R as [| r | l T R IH | l P T R IH]; simpl.
+  - split; fsetdec.
+  - split; fsetdec.
+  - destruct IH as [H1 H2]. split; fsetdec.
+  - destruct IH as [H1 H2].
+    destruct (is_abs P && rlacks l (drop_abs R)); split; simpl; fsetdec.
+Qed.
+
+Lemma EvR_drop_abs : forall R, EvR R -> EvR (drop_abs R).
+Proof.
+  intros R [H1 H2]. destruct (drop_abs_fv R) as [F1 F2].
+  split; intros b Hb; [ apply H1 | apply H2 ]; [ apply F1 | apply F2 ]; exact Hb.
+Qed.
+
+Lemma req_via_drop : forall s R R',
+  req (apR s (drop_abs R)) (apR s (drop_abs R')) -> req (apR s R) (apR s R').
+Proof.
+  intros s R R' H.
+  eapply req_trans; [ apply req_apR; exact (req_drop_abs R) | ].
+  eapply req_trans; [ exact H | ].
+  apply req_sym. apply req_apR. exact (req_drop_abs R').
+Qed.
+
+(* ------------------------------------------------------------------ *)
 (* Rewriting a row to present a label first                             *)
 (* ------------------------------------------------------------------ *)
 
@@ -291,7 +334,7 @@ Proof.
     intros r0. unfold sbR. cbn [sR].
     destruct (Atom.eq_dec r0 r) as [->|Hne].
     + split.
-      * cbn [rsat]. rewrite Es. reflexivity.
+      * rewrite Es. apply rsat_any.
       * intros l' Hl'. cbn [rlacksD]. rewrite rupd_same. apply Bool.andb_true_iff. split; [ | exact Hl' ].
         apply Bool.negb_true_iff. apply Bool.not_true_is_false. intros Heq.
         apply Nat.eqb_eq in Heq. subst l'. rewrite El in Hl'. discriminate Hl'.
@@ -551,8 +594,8 @@ Proof.
         - exact Ht2. }
       exact (GoodU_comp _ _ _ _ _ _ _ _ Hg1 Hg2).
     + (* Record, Record *)
-      destruct (IHr _ _ _ _ _ _ _ H) as (Hs & Hr & Hg); [exact H1 | exact H2 | ].
-      split; [exact Hs | split; [apply teq_rec; exact Hr | exact Hg]].
+      destruct (IHr _ _ _ _ _ _ _ H) as (Hs & Hr & Hg); [exact (EvR_drop_abs _ H1) | exact (EvR_drop_abs _ H2) | ].
+      split; [exact Hs | split; [apply teq_rec; exact (req_via_drop _ _ _ Hr) | exact Hg]].
     + (* Var, Var *)
       destruct (Atom.eq_dec a b) as [->|Hne].
       * inversion H; subst. split; [apply OkS_id | split; [apply teq_refl | exact (GoodU_id _ _) ]].
@@ -591,7 +634,7 @@ Proof.
                    match unify_t f D1 (apT sp (apT s0 T)) (apT sp T') n2 with
                    | None => None
                    | Some (s1, D2, n3) =>
-                       match unify_r f D2 (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 with
+                       match unify_r f D2 (drop_abs (apR s1 (apR sp (apR s0 R1')))) (drop_abs (apR s1 (apR sp R2'))) n3 with
                        | None => None
                        | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
                        end
@@ -605,7 +648,7 @@ Proof.
       destruct (rewrite_row l (frv_row R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
       destruct (unify_t f D0 (apT s0 P) P' n1) as [[[sp D1] n2]|] eqn:Eu0; [|discriminate].
       destruct (unify_t f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1; [|discriminate].
-      destruct (unify_r f D2 (apR s1 (apR sp (apR s0 R1''))) (apR s1 (apR sp R2'')) n3)
+      destruct (unify_r f D2 (drop_abs (apR s1 (apR sp (apR s0 R1'')))) (drop_abs (apR s1 (apR sp R2''))) n3)
         as [[[s2 D3] n4]|] eqn:Eu2; [|discriminate].
       inversion Hg; subst; clear Hg.
       destruct (row_head_sound _ _ _ _ _ Eh Hg1) as (HP & HT & HR1' & Hhd).
@@ -614,8 +657,9 @@ Proof.
       destruct (IHt _ _ _ _ _ _ _ Eu1 (EvT_ap sp _ Hsp (EvT_ap s0 T Hs0 HT)) (EvT_ap sp T' Hsp HT'))
         as (Hs1 & Ht1 & Hg1').
       destruct (IHr _ _ _ _ _ _ _ Eu2
-                  (EvR_ap s1 _ Hs1 (EvR_ap sp _ Hsp (EvR_ap s0 R1'' Hs0 HR1')))
-                  (EvR_ap s1 _ Hs1 (EvR_ap sp _ Hsp HR2'))) as (Hs2 & Hr2 & Hg2').
+                  (EvR_drop_abs _ (EvR_ap s1 _ Hs1 (EvR_ap sp _ Hsp (EvR_ap s0 R1'' Hs0 HR1'))))
+                  (EvR_drop_abs _ (EvR_ap s1 _ Hs1 (EvR_ap sp _ Hsp HR2')))) as (Hs2 & Hr2' & Hg2').
+      pose proof (req_via_drop _ _ _ Hr2') as Hr2.
       split; [ apply OkS_comp; [ exact Hs2 | apply OkS_comp; [ exact Hs1 | apply OkS_comp; auto ] ] | ].
       split; [ exact (row_step_req s0 sp s1 s2 R1' R2' _ _ _ _ _ _ _ Hhd Hrw Htp Ht1 Hr2) | ].
       exact (GoodU_comp _ _ _ _ _ _ _ _

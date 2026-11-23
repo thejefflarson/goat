@@ -22,15 +22,19 @@ Fixpoint row_sig (D : denv) (o : bop) (R : row) {struct R} : Prop :=
   | row_Empty => True
   | row_Ext _ T R' => bin_sig D o T T T /\ row_sig D o R'
   | row_Var r => finer (rk_sort (drk D r)) k_Numeric
-  | row_Maybe _ _ _ _ => False
+  | row_Maybe _ P T R' => (P = typ_Bool \/ bin_sig D o T T T) /\ row_sig D o R'
   end.
 
 Lemma rsat_row_sig : forall D o R,
   (kind o = k_ring \/ kind o = k_whole) -> rsat D k_Numeric R -> row_sig D o R.
 Proof.
-  intros D o R Hk. induction R using row_ind4; simpl; intros H; try contradiction; try discriminate; auto.
-  destruct H as [H1 H2]. split; [ | auto ].
-  destruct Hk as [Hk | Hk]; [ apply sig_ring | apply sig_whole ]; assumption.
+  intros D o R Hk. induction R using row_ind4; simpl; intros H.
+  - exact I.
+  - exact H.
+  - destruct H as [H1 H2]. split; [ | auto ].
+    destruct Hk as [Hk | Hk]; [ apply sig_ring | apply sig_whole ]; assumption.
+  - destruct H as [[Hp | H1] H2]; split; [ left; exact Hp | auto | | auto ].
+    right. destruct Hk as [Hk | Hk]; [ apply sig_ring | apply sig_whole ]; assumption.
 Qed.
 
 Lemma rfsat_row_sig : forall D R, rfsat R -> row_sig D bop_div R.
@@ -65,7 +69,10 @@ Proof.
     destruct (rm_ext_inv _ _ _ _ _ _ Hrm) as [[E1 [E2 E3]] | [Hne [R1 [E ->]]]].
     + subst. split; assumption.
     + destruct (IHR _ _ Hs E) as [Hb1 Hs1]. split; [ exact Hb1 | simpl; split; assumption ].
-  - simpl in Hs. contradiction.
+  - simpl in Hs. destruct Hs as [Hb Hs].
+    destruct (rm_maybe_inv _ _ _ _ _ _ _ Hrm) as [[E1 [E2 [E3 E4]]] | [Hne [R1 [E ->]]]].
+    + subst. split; [ | exact Hs ]. destruct Hb as [Hb | Hb]; [ discriminate Hb | exact Hb ].
+    + destruct (IHR _ _ Hs E) as [Hb1 Hs1]. split; [ exact Hb1 | simpl; split; assumption ].
 Qed.
 
 (* A row is its first [l] field in front of what is left. *)
@@ -81,7 +88,12 @@ Proof.
     + pose proof (IHR _ _ Hs E) as Hq.
       eapply req_trans; [ apply req_head; [ apply teq_refl | exact Hq ] | ].
       apply req_swap. auto.
-  - simpl in Hs. contradiction.
+  - simpl in Hs. destruct Hs as [Hb Hs].
+    destruct (rm_maybe_inv _ _ _ _ _ _ _ Hrm) as [[E1 [E2 [E3 E4]]] | [Hne [R1 [E ->]]]].
+    + subst. apply req_pre.
+    + pose proof (IHR _ _ Hs E) as Hq.
+      eapply req_trans; [ apply req_maybe; [ apply teq_refl | apply teq_refl | exact Hq ] | ].
+      apply req_swap_em. auto.
 Qed.
 
 Lemma field_typing_lookup_rm : forall D G fs R l T R',
