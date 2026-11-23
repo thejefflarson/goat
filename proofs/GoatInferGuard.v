@@ -387,6 +387,112 @@ Proof.
     + exact (bind_row_gsub _ _ _ _ _ _ _ H H1).
 Qed.
 
+Lemma mg_nf_mut : forall D,
+  (forall T, mg T -> mg (nfT D T)) /\ (forall R, mgr R -> mgr (nfR D R)).
+Proof.
+  intros D. apply typ_row_mutind.
+  - intros _. exact I.
+  - intros _. exact I.
+  - intros _. exact I.
+  - intros _. exact I.
+  - intros _. exact I.
+  - intros A HA B HB [H1 H2]. cbn [nfT mg]. split; [ apply HA; exact H1 | apply HB; exact H2 ].
+  - intros R HR H. cbn [nfT mg] in *. apply HR. exact H.
+  - intros a _. exact I.
+  - intros i _. exact I.
+  - intros B HB H. exact H.
+  - intros w A HA H. exact H.
+  - intros _. exact I.
+  - intros r _. exact I.
+  - intros l T HT R HR [H1 H2]. rewrite nfR_ext. cbn [mgr]. split; [ apply HT; exact H1 | apply HR; exact H2 ].
+  - intros l P HP T HT R HR [H1 [H2 H3]]. rewrite nfR_maybe.
+    destruct (is_abs P && rlacksD D l (nfR D R)); cbv iota.
+    + apply HR. exact H3.
+    + cbn [mgr]. split; [ apply HP; exact H1 | split; [ apply HT; exact H2 | apply HR; exact H3 ] ].
+Qed.
+
+Lemma mgr_nfR : forall D R, mgr R -> mgr (nfR D R).
+Proof. intros D R H. exact (proj2 (mg_nf_mut D) R H). Qed.
+
+Theorem unify_tD_gsub : forall f,
+  (forall D T1 T2 n s D' n', unify_tD f D T1 T2 n = Some (s, D', n') ->
+     mg T1 -> mg T2 -> gsub s) /\
+  (forall D R1 R2 n s D' n', unify_rD f D R1 R2 n = Some (s, D', n') ->
+     mgr R1 -> mgr R2 -> gsub s).
+Proof.
+  induction f as [|f IH]; [ refine (conj _ _); intros; discriminate | ].
+  destruct IH as [IHt IHr].
+  refine (conj _ _).
+  - intros D T1 T2 n s D' n' H H1 H2. simpl in H.
+    destruct T1, T2; try discriminate;
+      try (injection H as <- <- <-; exact gs_id);
+      try (exact (bind_prop_gsub _ _ _ _ _ _ _ H H2));
+      try (exact (bind_prop_gsub _ _ _ _ _ _ _ H H1));
+      try (destruct (Atom.eq_dec _ _); [injection H as <- <- <-; exact gs_id|];
+           destruct (finer_b _ _); injection H as <- <- <-; apply gs_sbT; exact I).
+    + destruct (unify_tD f D T1_1 T2_1 n) as [[[s1 D1] n1]|] eqn:E1; [|discriminate].
+      destruct (unify_tD f D1 (apT s1 T1_2) (apT s1 T2_2) n1) as [[[s2 D2] n2]|] eqn:E2; [|discriminate].
+      injection H as <- <- <-.
+      pose proof (IHt _ _ _ _ _ _ _ E1 (proj1 H1) (proj1 H2)) as Hs1.
+      refine (gs_comp _ _ _ Hs1).
+      eapply IHt; [ exact E2 | apply mg_apT; [ exact Hs1 | exact (proj2 H1) ]
+                             | apply mg_apT; [ exact Hs1 | exact (proj2 H2) ] ].
+    + eapply IHr; [exact H | apply mgr_nfR; exact H1 | apply mgr_nfR; exact H2].
+    + destruct (gdecl_eq_dec _ _); [|discriminate].
+      exact (proj1 (unify_t_gsub f) _ _ _ _ _ _ _ H H1 H2).
+  - intros D R1 R2 n s D' n' H H1 H2. simpl in H.
+    assert (Hgen : forall R1 R2, mgr R1 -> mgr R2 -> forall s D' n',
+      (match row_head R1 with
+       | None => None
+       | Some (l, P, T, R1') =>
+           match rewrite_row l (frv_row R1) D R2 n with
+           | None => None
+           | Some (P', T', R2', s0, D0, n1) =>
+               match unify_tD f D0 (apT s0 P) P' n1 with
+               | None => None
+               | Some (sp, D1, n2) =>
+                   match unify_tD f D1 (apT sp (apT s0 T)) (apT sp T') n2 with
+                   | None => None
+                   | Some (s1, D2, n3) =>
+                       match unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R1')))) (nfR D2 (apR s1 (apR sp R2'))) n3 with
+                       | None => None
+                       | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
+                       end
+                   end
+               end
+           end
+       end) = Some (s, D', n') -> gsub s).
+    { intros R1' R2' Hg1 Hg2 s' D'' n'' Hg.
+      destruct (row_head R1') as [[[[l P] T] R1'']|] eqn:Eh; [|discriminate].
+      destruct (rewrite_row l (frv_row R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
+      destruct (unify_tD f D0 (apT s0 P) P' n1) as [[[sp D1] n2]|] eqn:Eu0; [|discriminate].
+      destruct (unify_tD f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1; [|discriminate].
+      destruct (unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R1'')))) (nfR D2 (apR s1 (apR sp R2''))) n3)
+        as [[[s2 D3] n4]|] eqn:Eu2; [|discriminate].
+      injection Hg as <- <- <-.
+      destruct (row_head_mg _ _ _ _ _ Eh Hg1) as [HP [HT HR1]].
+      destruct (rewrite_row_mg _ _ _ _ _ _ _ _ _ _ _ Erw Hg2) as [M0 [M1 M2]].
+      pose proof (rewrite_row_gsub _ _ _ _ _ _ _ _ _ _ _ Erw) as S0.
+      pose proof (IHt _ _ _ _ _ _ _ Eu0 (mg_apT _ _ S0 HP) M0) as Sp.
+      pose proof (IHt _ _ _ _ _ _ _ Eu1 (mg_apT _ _ Sp (mg_apT _ _ S0 HT)) (mg_apT _ _ Sp M1)) as S1.
+      pose proof (IHr _ _ _ _ _ _ _ Eu2
+                    (mgr_nfR _ _ (mg_apR _ _ S1 (mg_apR _ _ Sp (mg_apR _ _ S0 HR1))))
+                    (mgr_nfR _ _ (mg_apR _ _ S1 (mg_apR _ _ Sp M2)))) as S2.
+      exact (gs_comp _ _ S2 (gs_comp _ _ S1 (gs_comp _ _ Sp S0))). }
+    destruct R1 as [|r|l T R1'|lm Pm Tm Rm]; destruct R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2];
+      try (exact (Hgen _ _ H1 H2 _ _ _ H)).
+    + injection H as <- <- <-. exact gs_id.
+    + exact (bind_row_gsub _ _ _ _ _ _ _ H H1).
+    + eapply IHr; [exact H | exact H2 | exact H1].
+    + exact (bind_row_gsub _ _ _ _ _ _ _ H H2).
+    + destruct (Atom.eq_dec r r2); [injection H as <- <- <-; exact gs_id|].
+      exact (bind_row_gsub _ _ _ _ _ _ _ H H2).
+    + exact (bind_row_gsub _ _ _ _ _ _ _ H H2).
+    + exact (bind_row_gsub _ _ _ _ _ _ _ H H2).
+    + exact (bind_row_gsub _ _ _ _ _ _ _ H H1).
+    + exact (bind_row_gsub _ _ _ _ _ _ _ H H1).
+Qed.
+
 Lemma group_row_mg : forall fs n, mgr (group_row fs n).
 Proof.
   induction fs as [|l e rest IH|l e rest IH]; intros n; simpl.
@@ -445,6 +551,18 @@ Proof.
     injection H as <- <- <- <-. exact (proj1 (unify_k_gsub f) _ _ _ _ _ _ _ E2).
 Qed.
 
+Lemma unify_coD_gsub : forall f D T1 T2 n s D' cs n',
+  unify_coD f D T1 T2 n = Some (s, D', cs, n') -> mg T1 -> mg T2 -> gsub s.
+Proof.
+  intros f D T1 T2 n s D' cs n' H H1 H2. unfold unify_coD in H.
+  destruct (unify_tD f D T1 T2 n) as [[[s0 D0] n0]|] eqn:E1.
+  - injection H as <- <- <- <-. exact (proj1 (unify_tD_gsub f) _ _ _ _ _ _ _ E1 H1 H2).
+  - destruct (unify_k f D T1 T2 n) as [[[s0 D0] n0]|] eqn:E2; [|discriminate].
+    destruct (coerce_dec f D0 (apT s0 T1) (apT s0 T2)); [|discriminate].
+    injection H as <- <- <- <-. exact (proj1 (unify_k_gsub f) _ _ _ _ _ _ _ E2).
+Qed.
+
+
 Lemma inst_sub_gsub : forall sc n, gsub (inst_sub sc n).
 Proof.
   intros sc n. unfold inst_sub. split; [ split | split ]; intros x; simpl;
@@ -492,8 +610,8 @@ Ltac dA H E :=
     destruct (infer_arms f D G w Ts x r a n) as [[[[[? ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
 
 Ltac dC H E :=
-  match type of H with context [unify_co ?f ?D ?A ?B ?n] =>
-    destruct (unify_co f D A B n) as [[[[? ?] ?] ?]|] eqn:E; [|discriminate H] end.
+  match type of H with context [unify_coD ?f ?D ?A ?B ?n] =>
+    destruct (unify_coD f D A B n) as [[[[? ?] ?] ?]|] eqn:E; [|discriminate H] end.
 
 Ltac dP H E :=
   match type of H with context [unify_grp ?f ?D ?fs ?A ?B ?n] =>
@@ -575,11 +693,11 @@ Lemma spread_present_guard : forall f D2 s1 s2 T1 T2 l e1' e2' n2 s D' T n' e',
   gsub s2 -> gsub s1 -> mg (apT s2 T1) -> mg T2 -> gsub s /\ mg T.
 Proof.
   intros f D2 s1 s2 T1 T2 l e1' e2' n2 s D' T n' e' H S2 S1 M1 M2. unfold spread_present in H.
-  destruct (unify_co f D2 (apT s2 T1)
+  destruct (unify_coD f D2 (apT s2 T1)
               (typ_Record (row_Maybe l (typ_Var (ea n2)) T2 (row_Var (ea (S n2))))) (n2 + 2))
     as [[[[s3 D3] cs] n3]|] eqn:E; [|discriminate].
   injection H as <- <- <- <- <-.
-  pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E M1 (conj I (conj M2 I))) as S3.
+  pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E M1 (conj I (conj M2 I))) as S3.
   exact (conj (gs_comp _ _ S3 (gs_comp _ _ S2 S1))
               (mg_apT _ (typ_Record (row_Ext _ _ (row_Var _))) S3 (conj M2 I))).
 Qed.
@@ -613,7 +731,7 @@ Proof.
       dI H E2. destruct (IHi _ _ _ _ _ _ _ _ _ E2 (mg_apC _ _ S1 HG)) as [S2 M2].
       dC H E3.
       injection H as <- <- <- <- <-.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) (conj M2 I)) as S3.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) (conj M2 I)) as S3.
       exact (conj (gs_comp _ _ S3 (gs_comp _ _ S2 S1)) (mg_apT _ (typ_Var _) S3 I)).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       match type of H with context [if is_gen_value ?e then _ else _] => destruct (is_gen_value e) end.
@@ -650,72 +768,72 @@ Proof.
                     (mg_apT _ (typ_Record (group_row fs n)) (gs_comp _ _ S2 S1) (group_row_mg fs n))).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dC H E2. injection H as <- <- <- <- <-.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E2 M1 (conj I I)) as S2.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E2 M1 (conj I I)) as S2.
       exact (conj (gs_comp _ _ S2 S1) (mg_apT _ (typ_Var _) S2 I)).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dC H E2.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E2 M1 I) as S2.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E2 M1 I) as S2.
       dI H E3. destruct (IHi _ _ _ _ _ _ _ _ _ E3 (mg_apC _ _ S2 (mg_apC _ _ S1 HG))) as [S3 M2].
       dI H E4. destruct (IHi _ _ _ _ _ _ _ _ _ E4
                            (mg_apC _ _ S3 (mg_apC _ _ S2 (mg_apC _ _ S1 HG)))) as [S4 M3].
       dC H E5. injection H as <- <- <- <- <-.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E5 (mg_apT _ _ S4 M2) M3) as S5.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E5 (mg_apT _ _ S4 M2) M3) as S5.
       exact (conj (gs_comp _ _ S5 (gs_comp _ _ S4 (gs_comp _ _ S3 (gs_comp _ _ S2 S1))))
                   (mg_apT _ _ S5 M3)).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dI H E2. destruct (IHi _ _ _ _ _ _ _ _ _ E2 (mg_apC _ _ S1 HG)) as [S2 M2].
       destruct (is_cmp_op o).
       { dC H E3.
-        pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) M2) as S3.
+        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) M2) as S3.
         dC H E4. injection H as <- <- <- <- <-.
-        pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) I) as S4.
+        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) I) as S4.
         exact (conj (gs_comp _ _ S4 (gs_comp _ _ S3 (gs_comp _ _ S2 S1))) I). }
       destruct (is_generic_op o).
       * dC H E3.
-        pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) I) as S3.
+        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) I) as S3.
         dC H E4. injection H as <- <- <- <- <-.
-        pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) (mg_apT _ (typ_Var _) S3 I)) as S4.
+        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) (mg_apT _ (typ_Var _) S3 I)) as S4.
         exact (conj (gs_comp _ _ S4 (gs_comp _ _ S3 (gs_comp _ _ S2 S1)))
                     (mg_bin_res _ _ (mg_apT _ _ S4 (mg_apT _ (typ_Var _) S3 I)))).
       * dC H E3.
-        pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) I) as S3.
+        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) I) as S3.
         dC H E4. injection H as <- <- <- <- <-.
-        pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) I) as S4.
+        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) I) as S4.
         exact (conj (gs_comp _ _ S4 (gs_comp _ _ S3 (gs_comp _ _ S2 S1))) I).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dC H E2. injection H as <- <- <- <- <-.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E2 M1 I) as S2.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E2 M1 I) as S2.
       exact (conj (gs_comp _ _ S2 S1) I).
     + destruct (Nat.ltb tg (length (gtags w))); [|discriminate].
       dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       match type of H with context [fresh_tys ?m (nparams w)] => pose proof (mg_fresh_tys (nparams w) m) as HTs end.
       dC H E2. injection H as <- <- <- <- <-.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E2 M1 (mg_tag_payload _ _ _ HTs)) as S2.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E2 M1 (mg_tag_payload _ _ _ HTs)) as S2.
       exact (conj (gs_comp _ _ S2 S1) (mg_apT _ (typ_Grp _ (spine _)) S2 (mg_spine _ HTs))).
     + destruct (arms_wf_b w ars); [|discriminate].
       dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dC H E2.
       match type of H with context [fresh_tys ?m (nparams w)] => pose proof (mg_fresh_tys (nparams w) m) as HTs end.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E2 M1 (mg_spine _ HTs)) as S2.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E2 M1 (mg_spine _ HTs)) as S2.
       dA H E3. injection H as <- <- <- <- <-.
       destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ _ E3 (mg_apC _ _ S2 (mg_apC _ _ S1 HG))
                   (mg_map _ _ S2 HTs) I) as [S3 M3].
       exact (conj (gs_comp _ _ S3 (gs_comp _ _ S2 S1)) M3).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dI H E2. destruct (IHi _ _ _ _ _ _ _ _ _ E2 (mg_apC _ _ S1 HG)) as [S2 M2].
-      match type of H with context [unify_co ?f ?D ?A ?B ?n] =>
-        destruct (unify_co f D A B n) as [[[[? ?] ?] ?]|] eqn:E3 end.
+      match type of H with context [unify_coD ?f ?D ?A ?B ?n] =>
+        destruct (unify_coD f D A B n) as [[[[? ?] ?] ?]|] eqn:E3 end.
       * match type of H with context [if rlacksD ?a ?b ?c then _ else _] =>
           destruct (rlacksD a b c) end.
         -- injection H as <- <- <- <- <-.
-           pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) I) as S3.
+           pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) I) as S3.
            exact (conj (gs_comp _ _ S3 (gs_comp _ _ S2 S1))
                        (mg_apT _ (typ_Record (row_Ext _ _ (row_Var _))) S3 (conj M2 I))).
         -- exact (spread_present_guard _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ H S2 S1 (mg_apT _ _ S2 M1) M2).
       * exact (spread_present_guard _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ H S2 S1 (mg_apT _ _ S2 M1) M2).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dC H E2. injection H as <- <- <- <- <-.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E2 M1 (conj I I)) as S2.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E2 M1 (conj I I)) as S2.
       exact (conj (gs_comp _ _ S2 S1) (mg_apT _ (typ_Record (row_Var _)) S2 I)).
   - intros D G fs n s D' R n' fs' H HG.
     destruct fs as [|l e rest|l e rest]; simpl in H; [injection H as <- <- <- <- <-; exact (conj gs_id I)| | discriminate H].
@@ -728,13 +846,13 @@ Proof.
     + injection H as <- <- <- <- <-. exact (conj gs_id Hres).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dC H E2. injection H as <- <- <- <- <-.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E2 M1 (mg_apT _ _ S1 Hres)) as S2.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E2 M1 (mg_apT _ _ S1 Hres)) as S2.
       exact (conj (gs_comp _ _ S2 S1) (mg_apT _ _ S2 (mg_apT _ _ S1 Hres))).
     + dI H E1.
       destruct (IHi _ _ _ _ _ _ _ _ _ E1
                   (mg_cons _ (sch_mono (tag_payload w Ts tg)) _ (mg_tag_payload _ _ _ HTs) HG)) as [S1 M1].
       dC H E2.
-      pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E2 M1 (mg_apT _ _ S1 Hres)) as S2.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E2 M1 (mg_apT _ _ S1 Hres)) as S2.
       pose proof (gs_comp _ _ S2 S1) as S12.
       dA H E3. injection H as <- <- <- <- <-.
       destruct (IHa _ _ _ _ _ _ _ _ _ _ _ _ _ E3 (mg_apC _ _ S12 HG) (mg_map _ _ S12 HTs)

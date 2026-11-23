@@ -514,6 +514,72 @@ of `S2` for `rewrite_row`'s and `bind_row`'s fresh variables. Tag groups stay
 out: `sat` on a group is `sat_b`-decidable (stage 7.4) but the fragment's
 `Res`/`Fac` need the group's spine in the induction.
 
+*As built (stage 7.6d, `GoatConv.v`).* The residual of stage 7.6c is closed: an
+absent entry against its own tail, and two absent entries of one label with
+different field types, now unify. The fuzz failure of the 30,000-iteration gate is
+fixed as well.
+
+**The fuzz failure.** `g1 = program(p4) do g1(p4) done; {lab0: g1((1 // 1)), lab1:
+g1()}` has W accept what the checker rejects (a call with no argument to a function
+of one parameter). The gap was the corpus reader, not W and not the calculus: it
+writes `f()` as a call of `f` on `unit`, and it compared the checker's rejection with
+W's verdict for every program that had only one-parameter functions and calls
+(mode `U`). A rejected program carries no node types, so the reader cannot tell
+`f()` at the arity of `f` from `f()` that the checker refuses for its arity, and W
+reads the unit argument as an ordinary one. A zero-parameter function or call in a
+rejected program now clears `unary`, so the driver skips its rejection (mode `N`);
+an accepted program is read as before. The nightly fuzz runs to date (the
+latest scheduled one is 2026-11-22) list four targets and do not include
+`differential_checker_vs_w`, so this failure had not turned the nightly red; the
+scheduled runs failed in the `goat_wamr` C build.
+
+**Conversion at the environment.** `nfT D` normalizes a type: inside arrows and
+records it drops each `Maybe` entry whose presence is `Bool` and whose normalized
+rest `rlacksD D` its label. `teqD D T T'` is `teq (nfT D T) (nfT D T')`, so it holds
+of every `teq` pair (`teq_teqD`: `req_abs` is the case of an entry whose rest lacks
+the label by syntax, and the swap and presence cases need the order of dropping,
+which is inner entry first) and of an absent entry against a tail variable `D` gives
+the label to. `T_Conv` is `T_ConvD`, whose premise is `teqD D`; `T_Conv` the lemma
+keeps every construction that has a plain `teq`. `mu` and tag groups are opaque to
+`nfT`: a binder's body has bound indices that `rlacksD` cannot read, so a recursive
+type or a tag payload converts as `teq` does, and the unifier keeps the plain
+`unify_t` for a payload. The two choices cost the same corner, an absent entry
+inside a tag payload or a recursive type, which stays a driver skip or a refusal
+as before.
+
+What the proofs needed is in `GoatConv.v` and the first-field lemmas of `GoatSpread.v`: the relation is an equivalence
+containing `teq`; a type's own normal form is `teqD` to it (`nfT_idem`); `sat`, the
+operator signatures, `pi`, `rm` and the first field of a record read the same
+before and after normalizing (`sat_nf`, `row_sig_nf`, `pi_nf`, `rm_nf`); and the
+inversions of `teq` (arrow, record, `mu`, group, a base type) have `teqD` versions
+(`teqD_Record_inv`, `teqD_Record_pi`). Canonical forms return the literal's row
+equivalent to the normal form of the type's row (`canon_record`); preservation of a
+spread, a restrict and a field access normalizes both sides and ends in `req` on
+normal forms (`presence_invD`, `spread_step_typing`, `restrict_step_typing`);
+the substitution lemma needs `teqD D' (ap T) (ap T')` from `teqD D T T'` under
+`rkres D D'` (`teqD_ap`: an entry dropped at `D` is dropped at `D'`, `rlacksD_ap`).
+
+**W.** `unify_tD` and `unify_rD` are `unify_t` and `unify_r` with `nfR D` for the
+`drop_abs` of 7.6b and 7.6c, taken at the environment the comparison runs in;
+`unify_tD_sound` says the two types are `teqD` at the environment returned, from the
+`Good` facts of the steps (`lift_teqD`, `req_via_nfD`, `row_step_reqD`). `unify_coD`
+puts the coercions after that conversion (`chainD D cs T T'` is a `teqD D` and then
+`chain`); `coerce_typingD` and `chainD_apT` carry it through a substitution, and
+`infer` calls `unify_coD` everywhere except where a recursive group or a method
+literal meets its slots. Those keep the plain unifier, because a method's type is
+related to its slot's by `unroll_eq`, which has no environment. `infer_sound`
+and `infer_guarded` are re-proved against `unify_coD`. `drop_abs` and the
+completeness results of 7.6 stay stated about `unify_t`, which the algorithm no
+longer calls for plain unification; moving them to `unify_tD` is the next step of
+the completeness induction.
+
+**Results.** The two programs of the 7.6c residual are in `HANDWRITTEN` and compare
+with 0 mismatches; the whole corpus compares 43,358 programs with 0 mismatches. A
+fresh random search (seeds 11 to 14, 3,000 programs each, functions, calls,
+restricts, rest patterns, spreads, `if`, `==`, projections) compared 11,869 programs
+with 0 mismatches, where 7.6c left 4 of about 12,500. The 30,000-iteration fuzz
+target passes, and so does a 120,000-iteration run.
+
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):
 

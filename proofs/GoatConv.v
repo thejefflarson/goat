@@ -332,3 +332,17 @@ Proof.
   rewrite pi_nf in Hpi. destruct (map_cons_inv _ _ _ _ _ _ Hpi) as (T0 & rest0 & E0 & E1 & _).
   exists T0, rest0. split; [ exact E0 | ]. unfold teqD. rewrite E1. exact Ht.
 Qed.
+
+Lemma reqD_maybe : forall D l P1 T1 R1 P2 T2 R2,
+  teqD D P1 P2 -> teqD D T1 T2 -> reqD D R1 R2 ->
+  reqD D (row_Maybe l P1 T1 R1) (row_Maybe l P2 T2 R2).
+Proof.
+  intros D l P1 T1 R1 P2 T2 R2 HP HT HR. unfold reqD in *. rewrite !nfR_maybe.
+  assert (Ha : is_abs P1 = is_abs P2).
+  { pose proof (teq_is_abs _ _ HP) as H. rewrite !nfT_is_abs in H. exact H. }
+  assert (Hl : rlacksD D l (nfR D R1) = rlacksD D l (nfR D R2)).
+  { exact (req_rlacksD _ _ HR D l). }
+  rewrite Ha, Hl. destruct (is_abs P2 && rlacksD D l (nfR D R2)); cbv iota.
+  - exact HR.
+  - apply req_maybe; assumption.
+Qed.
