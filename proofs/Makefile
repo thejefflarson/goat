@@ -68,11 +68,11 @@ check-grammar: ../grammar/goat.peg
 check-assumptions: coq
 	@out=$$(rocq compile -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
 	n=$$(echo "$$out" | grep -c '^Closed under the global context'); \
-	if [ "$$n" != "19" ]; then \
-	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound and infer_guarded closed under the global context:"; \
+	if [ "$$n" != "21" ]; then \
+	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total and cmp_unerase closed under the global context:"; \
 	  echo "$$out"; exit 1; \
 	fi; \
-	echo "check-assumptions: T1, T2, T3, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound and infer_guarded are closed -- ok."
+	echo "check-assumptions: T1, T2, T3, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total and cmp_unerase are closed -- ok."
 
 # Frozen-admit guard: fail if the `Admitted.` count in the sources drifts from
 # EXPECTED_ADMITS, so a green proof build never hides an open lemma.

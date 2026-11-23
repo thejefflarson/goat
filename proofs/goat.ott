@@ -410,8 +410,9 @@ e --> e' :: :: red :: 'red_'
 
   % [[o]] applied to two literals of one type: Int arithmetic gives an Int in
   % the 64-bit range, a Float operation gives any Float (a Float comparison any
-  % boolean), an Int or String or boolean comparison gives a boolean (strings
-  % bytewise, false before true).
+  % boolean), a comparison of two Int, String, boolean, Unit, record, tag or
+  % folded values gives the boolean cmp_rel asks for (strings bytewise, false
+  % before true, record fields in label order, tags by position then payload).
   ------------------------------ :: Op
   v1 o v2 --> eval ( o , v1 , v2 )
 
@@ -496,6 +497,10 @@ o : T1 , T2 => T :: :: sig :: 'sig_'
   ---------------------------- :: WholeFloat
   o : Float , Float => Float
 
-  % o is one of < <= > >= == !=; T is Int, Float, String or Bool
+  % o is one of < <= > >= == !=; T satisfies the sort Eq (GoatDefs.sat): Int,
+  % Float, String, Bool, Unit, a variable of sort Eq, a record of Eq fields, a
+  % tag group whose payloads are Eq, or a recursive type whose body is. A type
+  % with a function inside it does not. The result is the one cmp_rel relates
+  % the operands to (GoatDefs.cmp_rel, ADR 0036).
   ---------------------------- :: Cmp
   o : T , T => Bool

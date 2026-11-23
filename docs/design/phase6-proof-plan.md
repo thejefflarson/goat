@@ -448,6 +448,20 @@ finished term; the cost is small and is the only change that makes the bridge tr
 in the programs the test reads). The same holds for tag position: the reader must
 write the prelude group `List = Empty | Link` with `Empty` first.
 
+**Stage 3 result.** The reader renumbers labels in sorted-name order
+(`Reader::number_labels_by_name`, applied to the finished term and the label
+table, so the term and the verdict agree). The corpus kept all of its programs
+and every checker verdict (OK or ERR) and skip count was unchanged; the program
+count grew from 44174 to 44380 only because the corpus drops a program whose
+line (mode, term, verdict) repeats an earlier one, and sorted numbering tells
+apart programs that differed only in label names. The differential reports 0
+mismatches. The tag-position half of the bridge has no corpus programs until
+the tags reader lands (185 skipped); the calculus's tag rank is by position, as
+the checker's is by declaration. Gaps left open, each recorded in
+`proofs/README.md`: sort propagation (#623), NaN inside a compound (section 9,
+question 1), W's `sat_b` answering `Any` only for `mu` and tag groups, and the
+order laws (stage 1d).
+
 ## 7. Interactions
 
 - **#525 and #510.** The two-run W (`lenient`, `ora`) exists because a comparison
