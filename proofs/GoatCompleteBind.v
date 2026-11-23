@@ -25,6 +25,7 @@ Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatConv.
 Require Import Goat.GoatSubst.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
@@ -370,17 +371,25 @@ Qed.
 
 (* ---- [bind_prop] with sorts ---- *)
 
+(* The sort of a variable's image carries across conversion at the
+   environment: [nfT D] only drops absent entries, which no sort reads. *)
+Lemma sat_teqD : forall D k T T', teqD D T T' -> sat D k T -> sat D k T'.
+Proof.
+  intros D k T T' H Hs. apply (proj1 (sat_nf D k T')). apply (sat_teq D k _ _ H).
+  apply (proj2 (sat_nf D k T)). exact Hs.
+Qed.
+
 Theorem bind_prop_sorted_complete : forall (D D1 : denv) Sg a T n,
   DOk D n -> KR D D1 Sg -> old n a -> a `notin` ftv_typ T ->
   (forall b, b `in` ftv_typ T -> old n b) -> (forall q, q `in` frv_typ T -> old n q) ->
-  pf T -> lcb 0 T = true -> fld D1 Sg (D a) T -> teq (sT Sg a) (apT Sg T) ->
+  pf T -> lcb 0 T = true -> fld D1 Sg (D a) T -> teqD D1 (sT Sg a) (apT Sg T) ->
   exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
-    (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s x))) /\
+    (forall x, old n x -> teqD D1 (sT Sg x) (apT S2 (sT s x))) /\
     (forall r, old n r -> sR Sg r = apR S2 (sR s r)).
 Proof.
   intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hpf Hlc Hfld Heq.
   assert (Hsa : sat D1 (D a) (apT Sg T)).
-  { apply (sat_teq D1 (D a) (sT Sg a) (apT Sg T) Heq). exact (proj1 HK a). }
+  { apply (sat_teqD D1 (D a) (sT Sg a) (apT Sg T) Heq). exact (proj1 HK a). }
   destruct (sat_reach_mut D1 Sg (D a)) as [Hrt _].
   destruct (Hrt T Hpf Hfld Hsa) as [Hreach_t Hreach_r].
   assert (Holdl : forall b, In b (AtomSetImpl.elements (ftv_typ T)) -> old n b)
@@ -454,15 +463,15 @@ Proof.
       symmetry. exact E. }
   eexists. exists D2, n2, S2b. split; [ reflexivity | ]. split; [ exact K2 | split ].
   - intros x Hx. destruct (Atom.eq_dec x a) as [->|Hne].
-    + change (teq (sT Sg a) (apT S2b (apT (sbT a T') (apT sr (sT sp a))))).
+    + change (teqD D1 (sT Sg a) (apT S2b (apT (sbT a T') (apT sr (sT sp a))))).
       rewrite (P3 a Hnl), Hrv, Hsv. cbn [sT sbT]. rewrite dec_same.
       rewrite Hagree. exact Heq.
-    + change (teq (sT Sg x) (apT S2b (apT (sbT a T') (apT sr (sT sp x))))).
+    + change (teqD D1 (sT Sg x) (apT S2b (apT (sbT a T') (apT sr (sT sp x))))).
       destruct (P4 x) as (y & Ey & Hy). rewrite Ey, Hrv, Hsv.
       assert (Hya : y <> a).
       { intros ->. destruct Hy as [Hy|[m [Hm Hy]]]; [ apply Hne; symmetry; exact Hy | exact (Ha m Hm Hy) ]. }
       cbn [sT sbT]. rewrite (dec_diff _ _ _ _ _ Hya).
-      rewrite (F1 x Hx), Ey, Hsv, Hsv, T2. apply teq_refl.
+      rewrite (F1 x Hx), Ey, Hsv, Hsv, T2. apply teqD_refl.
   - intros r Hr. change (sR Sg r = apR S2b (apR (sbT a T') (apR sr (sR sp r)))).
     rewrite (P1 r). destruct (Q5 r) as [r' E'].
     assert (Hrr : apR sr (row_Var r) = row_Var r') by (unfold apR; simpl; exact E').
