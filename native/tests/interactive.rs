@@ -202,3 +202,18 @@ fn a_reload_that_cannot_keep_the_model_says_why_and_restarts() {
     assert_eq!(reason.args, ["n", "Int", "String"]);
     assert_eq!(live, 0, "leaked");
 }
+
+#[test]
+fn an_optimized_build_runs_and_counts_allocations() {
+    need_clang!();
+    let ll = goat::compile_ll(goat::Profile::Desktop, EXAMPLE, &HostInterface::turtle())
+        .expect("compiles");
+    let optimized = Library::build_with(&ll, &["-O2"]).expect("builds at -O2");
+    let mut program: Interactive<SceneHost> =
+        Interactive::new(optimized, SceneHost::default()).expect("starts");
+    let setup = program.allocations();
+    assert!(program.send(&Event::Tick(16.0)).expect("event runs"));
+    program.draw().expect("draw runs");
+    assert!(program.allocations() > setup);
+    assert_eq!(program.finish().expect("tears down").1, 0);
+}

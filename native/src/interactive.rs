@@ -246,6 +246,11 @@ impl<H: Host> Guest<H> {
         self.core.instance.heap_used()
     }
 
+    /// Every allocation the program has made, freed or not.
+    pub fn allocations(&self) -> u64 {
+        self.core.instance.allocations()
+    }
+
     pub fn host_mut(&mut self) -> &mut H {
         &mut self.core.adapter.host
     }
@@ -453,6 +458,11 @@ impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
     /// How far the heap has grown, in bytes.
     pub fn heap_end(&self) -> u64 {
         self.guest.heap_end()
+    }
+
+    /// Every allocation the program has made, freed or not.
+    pub fn allocations(&self) -> u64 {
+        self.guest.allocations()
     }
 
     /// The sink the frames stream to.
