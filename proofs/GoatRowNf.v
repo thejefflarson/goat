@@ -17,7 +17,7 @@
    completeness surfaces the first entry of a label ([extract_req]), the
    constructive swap argument [GoatRows.v] leaves out.
 
-   Cancellation ([req_cancel]) is what the unifier's completeness needs: two
+   Cancellation ([row_cancel]) is what the unifier's completeness needs: two
    rows that begin with the same label are [req] only if their rests are, and
    then either the presences and field types agree or both entries are absent
    (an absent field's type is no information).  In goat source:
@@ -347,7 +347,7 @@ Proof.
   - inversion H; subst. left. split; assumption.
 Qed.
 
-Theorem req_cancel : forall l P A X Q B Y,
+Theorem row_cancel : forall l P A X Q B Y,
   req (row_Maybe l P A X) (row_Maybe l Q B Y) ->
   req X Y /\ ((teq P Q /\ teq A B) \/ (is_abs P = true /\ is_abs Q = true)).
 Proof.
@@ -370,24 +370,24 @@ Proof.
 Qed.
 
 (* Plain fields cancel too: [req_pre] reads one as a [Unit] presence. *)
-Corollary req_cancel_ext : forall l A X B Y,
+Corollary row_cancel_ext : forall l A X B Y,
   req (row_Ext l A X) (row_Ext l B Y) -> teq A B /\ req X Y.
 Proof.
   intros l A X B Y H.
   assert (H' : req (row_Maybe l typ_Unit A X) (row_Maybe l typ_Unit B Y)).
   { eapply req_trans; [ apply req_pre | ].
     eapply req_trans; [ exact H | apply req_sym; apply req_pre ]. }
-  apply req_cancel in H' as [Hr [[_ Ht] | [Hu _]]]; [ split; assumption | simpl in Hu; discriminate Hu ].
+  apply row_cancel in H' as [Hr [[_ Ht] | [Hu _]]]; [ split; assumption | simpl in Hu; discriminate Hu ].
 Qed.
 
 (* A presence entry against a plain field: the presence is [Unit]. *)
-Corollary req_cancel_mixed : forall l P A X B Y,
+Corollary row_cancel_mixed : forall l P A X B Y,
   req (row_Maybe l P A X) (row_Ext l B Y) -> P = typ_Unit /\ teq A B /\ req X Y.
 Proof.
   intros l P A X B Y H.
   assert (H' : req (row_Maybe l P A X) (row_Maybe l typ_Unit B Y)).
   { eapply req_trans; [ exact H | apply req_sym; apply req_pre ]. }
-  apply req_cancel in H' as [Hr [[HP Ht] | [_ Hu]]].
+  apply row_cancel in H' as [Hr [[HP Ht] | [_ Hu]]].
   - apply teq_sym in HP. apply teq_Unit_inv in HP.
     split; [ exact HP | split; assumption ].
   - simpl in Hu. discriminate Hu.

@@ -675,6 +675,101 @@ entry. Not run against the checker; the corner is read off the definitions.
    records of the fragment.
 6. *Tag groups, `mu`, methods* (above, and statement B).
 
+*As built (stage 7.6f, `GoatRowNf.v`, `GoatCompleteSide.v`).* Item 1 is done.
+Item 2 is refuted as stated, and the refutation changes what items 3 to 5 can
+claim. Items 3 to 6 are not started: the induction needs W's guards settled
+first (below).
+
+**Item 1: the row normal form (`GoatRowNf.v`, about 400 lines).** `raw l R` is
+the list of entries of label `l` in `R`, each a (presence, field type) pair, a
+plain field having presence `Unit`. `ents l R` is `raw l R` with the absent
+entries at the end of the list dropped when the tail is closed (`rtail R` is
+`row_Empty`): `req_abs` drops an absent entry exactly when nothing of its label
+follows it and the tail is closed, so the trailing run goes, and an open tail
+keeps every entry. `req_iff_nf` says `req R1 R2` iff `rtail R1 = rtail R2` and,
+at every label, `Forall2 ent_eq (ents l R1) (ents l R2)` (`ent_eq`: `teq` on the
+presence and on the field type).
+
+- *Soundness* (`req_nf`) is an induction on `req` in the style of `req_pres`,
+  carried by `cons_t` (the list after putting an entry in front, which drops it
+  again if it is absent and last under a closed tail).
+- *Completeness* normalizes both rows (`nf_exists`: each row is `req` to one whose
+  `raw` lists are its `ents`, by dropping the absent entries `req_abs` allows) and
+  then compares rows with no droppable entry entry by entry (`req_of_raw`) by
+  surfacing the first entry of a label (`extract_req`, with `req_swap_em`,
+  `req_swap_mm`, `req_pre`). This is the swap-congruence obligation the 7.1 plan
+  left out, with presence entries and a tail variable.
+- *Cancellation* (`row_cancel`): `req (l ^ P : A ; X) (l ^ Q : B ; Y)` gives `req
+  X Y` and either `teq P Q` and `teq A B`, or both presences are `Bool`. The
+  second disjunct is not slack: `l ^ Bool : Int ; {}` and `l ^ Bool : String ; {}`
+  are both `req` to `{}`, so an absent field's type carries no information (the
+  reason `unify_rD` drops absent entries before comparing, 7.6c). `row_cancel_ext`
+  (plain fields: `teq A B`, `req X Y`) and `row_cancel_mixed` (a presence entry
+  against a plain field: the presence is `Unit`) follow. The theory has no
+  hypothesis on the tail or on the presences, so it covers a tail variable and
+  presence variables (rigid: `req` has no substitution).
+
+**Item 2: Leijen's side condition does not hold of the checker's `av`.**
+`rewrite_row` refuses the tail variable of the second row when it is in
+`frv_row R1`, every row variable of the first row. `leijen_tail` proves the
+original condition: when both rows end in the same variable, the second has no
+entry of `l`, and the first has a present one, no substitution makes them `req`
+(`cnt`, the number of present entries of a label, is `req`-invariant, `raw_ap`
+says a substitution adds the same entries to both through the common tail, and
+the first has one more). Two unifiable pairs `unify_rD` refuses show the guard is
+wider than that, both proved by `unify_rD ... = None` and an explicit `req` of the
+images:
+
+- `side_blocks_nested`: `{l0: Int, l1: {...r}}` against `{l1: c, ...r}`, unified
+  by `r := {l0: Int}`, `c := {l0: Int}`. The variable occurs in a field type of
+  the first row, not in its tail, and there is no cycle. (The first row's head is
+  `l0`, the second has no `l0`, and its tail is in `frv_row R1`.)
+- `side_blocks_absent`: `{l0^p: Int, ...r}` against `{l1^q: Int, ...r}`, unified
+  by `p := Bool`, `q := Bool`, `r := {}`: the substituted rows are both `{}`.
+
+So "the side condition never blocks a unifiable pair" is false of W. The size
+argument works for a present head and a common tail (`leijen_tail`) and fails for
+a nested occurrence and for a head whose presence a unifier makes absent.
+
+**Item 3: the occurs checks have the same shape.** `bind_row_blocks_absent_tail`:
+`r` against `{l0^p: Int, ...r}` is unified by `p := Bool`, `r := {}`, and
+`bind_row`'s first `occR` check refuses it. `bind_prop_blocks_absent`: `a` against
+`{l0^Bool: a}` is unified by `a := {}`, and `bind_prop` refuses it (`unify_tD`
+normalizes a record only against a record, so the type `bind_prop` gets is not in
+normal form). These are the occurs check reading a variable inside an absent entry
+as an occurrence, where the calculus reads the entry as no field.
+
+**DECISION NEEDED: what does completeness of the unifier claim for rows with
+absent entries?** Statement A's induction (item 4) needs, at each `rewrite_row`
+and `bind_row`, that the guard passes when `S` unifies. The four theorems above
+say it does not, in two ways. Options:
+  (a) Change W so the guards read the normal form: `rewrite_row`'s `av` becomes
+      `{row_tail R1}` when the first entry is present (the original Leijen
+      condition, which `leijen_tail` justifies), and the occurs checks in
+      `bind_row`/`bind_prop` run on `nfT`/`nfR` of the bound type, so an
+      absent entry is not an occurrence. W is the proof's model of the checker, so
+      the Rust checker takes the same change (or is shown to agree), and the
+      differential and soundness proofs are redone for the new guards. This keeps
+      statement A as written. I recommend it.
+  (b) State statement A for derivations whose rows meet neither shape: a
+      hypothesis on the unifier `S` that no absent entry of the problem has a
+      variable of the problem behind it. It keeps W and the checker and weakens
+      the theorem by a premise no program can be checked against.
+  What I chose: neither is in this PR; the four theorems record the gap, and
+  items 3 to 5 wait on the owner's choice, because (a) changes `GoatInfer.v` and
+  the soundness lemmas that name `rewrite_row`'s `av` (`rewrite_row_sound`).
+  Whether the Rust checker is blocked on the same pairs is not run; the shapes
+  need a presence variable that a later constraint makes `Bool`, and the checker
+  peels absent entries as it goes (`peel`), which may bind them before the
+  guard sees them. #667 is the place to find out.
+
+**Not started: items 3 to 6.** With the guards in question the induction with
+`(D', n', S2)` would be proved for the wrong statement. The pieces that do not
+depend on the choice are in `GoatCompleteSorts.v` (the invention) and now
+`GoatRowNf.v` (the cancellation `rewrite_row_var_complete` takes as a hypothesis:
+`row_cancel` gives it, from `req (S R1) (S R2)` once the first row's front entry
+is surfaced).
+
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):
 
