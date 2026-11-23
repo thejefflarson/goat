@@ -494,14 +494,11 @@ impl Gen {
     /// each slot of the tag, and an `else` or not.
     fn matched(&mut self, depth: u32) -> Term {
         let group = self.rng.below(GROUPS.len());
-        let tags = GROUPS[group].tags.len();
         let scrutinee = self.term(depth);
         let mut arms: Vec<Arm> = Vec::new();
-        for tag in 0..tags {
+        for (tag, slots) in GROUPS[group].tags.iter().enumerate() {
             if arms.is_empty() || self.rng.below(2) == 0 {
-                let names: Vec<String> = (0..GROUPS[group].tags[tag].len())
-                    .map(|_| self.value_name())
-                    .collect();
+                let names: Vec<String> = (0..slots.len()).map(|_| self.value_name()).collect();
                 let mark = self.scope.len();
                 self.scope.extend(names.iter().cloned());
                 let body = self.term(depth);
