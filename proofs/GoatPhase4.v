@@ -40,14 +40,14 @@ Definition row_xy : row := row_Ext lx typ_Int row_y.
 
 Example xy_types : typing d_any nil xy (typ_Record row_xy).
 Proof.
-  unfold xy, row_xy, row_y. apply T_Record. eapply FT_cons;
+  unfold xy, row_xy, row_y. apply T_Record; [ | reflexivity ]. eapply FT_cons;
     [ apply T_Num; [ solve_uniq | exact I ] | ].
   eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
 Qed.
 
 Example only_y_types : typing d_any nil only_y (typ_Record row_y).
 Proof.
-  unfold only_y, row_y. apply T_Record. eapply FT_cons;
+  unfold only_y, row_y. apply T_Record; [ | reflexivity ]. eapply FT_cons;
     [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
 Qed.
 

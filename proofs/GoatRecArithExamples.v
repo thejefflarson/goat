@@ -39,7 +39,7 @@ Definition row_x : row := row_Ext lx typ_Int row_Empty.
 
 Example xrec_types : forall n, typing d_any nil (xrec (e_num n)) (typ_Record row_x).
 Proof.
-  intros n. unfold xrec, row_x. apply T_Record. eapply FT_cons;
+  intros n. unfold xrec, row_x. apply T_Record; [ | reflexivity ]. eapply FT_cons;
     [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
 Qed.
 
@@ -77,7 +77,7 @@ Definition outer_r : exp := e_rec (fs_cons lx (e_num 5) (fs_cons lp inner_r fs_n
 
 Example inner_l_types : typing d_any nil inner_l (typ_Record row_inner).
 Proof.
-  unfold inner_l, row_inner. apply T_Record. eapply FT_cons;
+  unfold inner_l, row_inner. apply T_Record; [ | reflexivity ]. eapply FT_cons;
     [ apply T_Num; [ solve_uniq | exact I ] | ].
   eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
 Qed.
@@ -86,14 +86,14 @@ Example inner_r_types : typing d_any nil inner_r (typ_Record row_inner).
 Proof.
   unfold inner_r, row_inner.
   eapply T_Conv with (T := typ_Record (row_Ext ly typ_Int (row_Ext lx typ_Int row_Empty))).
-  - apply T_Record. eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | ].
+  - apply T_Record; [ | reflexivity ]. eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | ].
     eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
   - apply teq_rec. apply req_swap. unfold lx, ly. discriminate.
 Qed.
 
 Example outer_l_types : typing d_any nil outer_l (typ_Record row_outer).
 Proof.
-  unfold outer_l, row_outer. apply T_Record. eapply FT_cons; [ exact inner_l_types | ].
+  unfold outer_l, row_outer. apply T_Record; [ | reflexivity ]. eapply FT_cons; [ exact inner_l_types | ].
   eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | apply FT_nil; solve_uniq ].
 Qed.
 
@@ -102,7 +102,7 @@ Proof.
   unfold outer_r, row_outer.
   eapply T_Conv with (T := typ_Record (row_Ext lx typ_Int
                              (row_Ext lp (typ_Record row_inner) row_Empty))).
-  - apply T_Record. eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | ].
+  - apply T_Record; [ | reflexivity ]. eapply FT_cons; [ apply T_Num; [ solve_uniq | exact I ] | ].
     eapply FT_cons; [ exact inner_r_types | apply FT_nil; solve_uniq ].
   - apply teq_rec. apply req_swap. unfold lx, lp. discriminate.
 Qed.

@@ -31,16 +31,18 @@ Proof. split; intros a Ha; simpl in Ha; fsetdec. Qed.
 
 Lemma EvR_group_row : forall fs n, EvR (group_row fs n).
 Proof.
-  induction fs as [|l e rest IH]; intros n; simpl.
+  induction fs as [|l e rest IH|l e rest IH]; intros n; simpl.
   - apply EvR_Empty.
+  - apply EvR_ext; [ apply EvT_var, ev_ea | apply IH ].
   - apply EvR_ext; [ apply EvT_var, ev_ea | apply IH ].
 Qed.
 
 Lemma is_fn_group_sound : forall fs, is_fn_group fs = true -> fn_group fs.
 Proof.
-  induction fs as [|l e rest IH]; intros H; simpl in H.
+  induction fs as [|l e rest IH|l e rest IH]; intros H; simpl in H.
   - constructor.
   - destruct e; try discriminate. constructor. apply IH. exact H.
+  - discriminate.
 Qed.
 
 (* ---- unifying a group's members ---- *)
@@ -56,6 +58,7 @@ Proof.
   intros D G fs R R' H. revert R'. induction H; intros R' Hp; inversion Hp; subst.
   - apply FT_nil. assumption.
   - eapply FT_cons; [ eapply T_Conv; eauto | eauto ].
+  - eapply FT_meth; [ eapply T_Conv; eauto | eauto ].
 Qed.
 
 Lemma unify_pw_sound : forall f D R1 R2 n s n',

@@ -50,6 +50,7 @@ with inst_fields (var_of : string -> termvar) (k D : nat) (fs : Goat_ott.fields)
   match fs with
   | fs_nil => fs_nil
   | fs_cons l e rest => fs_cons l (inst_rec var_of k D e) (inst_fields var_of k D rest)
+  | fs_meth l e rest => fs_meth l (inst_rec var_of k D e) (inst_fields var_of k D rest)
   end
 with inst_arms (var_of : string -> termvar) (k D : nat) (ars : arms) {struct ars} : arms :=
   match ars with
@@ -138,6 +139,8 @@ Proof.
   - intros k Hs. reflexivity.
   - intros l e IHe fs IHfs k [He Hfs]. simpl.
     rewrite (IHe k He), (IHfs k Hfs). reflexivity.
+  - (* a method field is not a term of the printed fragment *)
+    intros l e IHe fs IHfs k Hs. destruct Hs.
   - intros; exact I.
   - intros; exact I.
   - intros; exact I.
@@ -536,6 +539,8 @@ Proof.
     split; [ exact Hitems' | ].
     cbn [more_field_trees]. simpl. apply DS_more.
     exact Hitems'.
+  - (* a method field is not a term of the printed fragment *)
+    intros l e IHe rest IHrest P Hs Hl. destruct Hs.
   - intros; exact I.
   - intros; exact I.
   - intros; exact I.

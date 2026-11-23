@@ -319,8 +319,10 @@ Proof.
 Qed.
 Lemma group_row_mg : forall fs n, mgr (group_row fs n).
 Proof.
-  induction fs as [|l e rest IH]; intros n; simpl; [exact I|].
-  split; [exact I | apply IH].
+  induction fs as [|l e rest IH|l e rest IH]; intros n; simpl.
+  - exact I.
+  - split; [exact I | apply IH].
+  - split; [exact I | apply IH].
 Qed.
 
 Lemma mg_spine : forall Ts, Forall mg Ts -> mg (spine Ts).
@@ -562,7 +564,7 @@ Proof.
       pose proof (unify_co_gsub _ _ _ _ _ _ _ _ E2 M1 (conj I I)) as S2.
       exact (conj (gs_comp _ _ S2 S1) (mg_apT _ (typ_Record (row_Var _)) S2 I)).
   - intros D G fs n s D' R n' fs' H HG.
-    destruct fs as [|l e rest]; simpl in H; [injection H as <- <- <- <- <-; exact (conj gs_id I)|].
+    destruct fs as [|l e rest|l e rest]; simpl in H; [injection H as <- <- <- <- <-; exact (conj gs_id I)| | discriminate H].
     dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
     dF H E2. destruct (IHf _ _ _ _ _ _ _ _ _ E2 (mg_apC _ _ S1 HG)) as [S2 M2].
     injection H as <- <- <- <- <-.

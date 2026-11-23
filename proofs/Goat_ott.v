@@ -26,6 +26,24 @@ Inductive bop : Set :=  (* binary operator *)
  | bop_eq : bop (* == *)
  | bop_ne : bop (* != *).
 
+Inductive typ : Set :=  (* monotype *)
+ | typ_Int : typ
+ | typ_Float : typ
+ | typ_Bool : typ
+ | typ_Unit : typ
+ | typ_String : typ
+ | typ_Arrow (T1:typ) (T2:typ) (* unary (curried) function; see header *)
+ | typ_Record (R:row)
+ | typ_Var (a:typvar)
+ | typ_Bvar (i:bidx) (* index of an enclosing mu; no sort (ADR 0038) *)
+ | typ_Mu (T:typ) (* iso-recursive type; the body counts the mu as index 0 *)
+ | typ_Grp (w:gdecl) (T:typ) (* a value of the tag group w; T spells the group's implicit parameters as a spine (GoatGroup.v) *)
+with row : Set :=  (* row (scoped labels, duplicates allowed) *)
+ | row_Empty : row
+ | row_Var (r:rowvar)
+ | row_Ext (l:label) (T:typ) (R:row)
+ | row_Maybe (l:label) (T1:typ) (T2:typ) (R:row) (* the field l at T2, present or absent as T1 says (Unit present, Bool absent, a variable unknown) *).
+
 Inductive exp : Set :=  (* term *)
  | e_fvar_b (_:nat) (* variable *)
  | e_fvar_f (x:termvar) (* variable *)
@@ -53,28 +71,11 @@ Inductive exp : Set :=  (* term *)
 with fields : Set :=  (* record spine (cons-list; duplicates allowed) *)
  | fs_nil : fields
  | fs_cons (l:label) (e:exp) (fs:fields)
+ | fs_meth (l:label) (e:exp) (fs:fields) (* a method field: typed and run as a plain one, its receiver shared by the literal's methods (T_Obj) *)
 with arms : Set :=  (* the arms of a match *)
  | arms_nil : arms (* no else: the arms are exhaustive *)
  | arms_else (e:exp) (* the tags no arm names *)
  | arms_cons (tg:tagidx) (e:exp) (ars:arms) (* arm for tag tg; x is the payload *).
-
-Inductive typ : Set :=  (* monotype *)
- | typ_Int : typ
- | typ_Float : typ
- | typ_Bool : typ
- | typ_Unit : typ
- | typ_String : typ
- | typ_Arrow (T1:typ) (T2:typ) (* unary (curried) function; see header *)
- | typ_Record (R:row)
- | typ_Var (a:typvar)
- | typ_Bvar (i:bidx) (* index of an enclosing mu; no sort (ADR 0038) *)
- | typ_Mu (T:typ) (* iso-recursive type; the body counts the mu as index 0 *)
- | typ_Grp (w:gdecl) (T:typ) (* a value of the tag group w; T spells the group's implicit parameters as a spine (GoatGroup.v) *)
-with row : Set :=  (* row (scoped labels, duplicates allowed) *)
- | row_Empty : row
- | row_Var (r:rowvar)
- | row_Ext (l:label) (T:typ) (R:row)
- | row_Maybe (l:label) (T1:typ) (T2:typ) (R:row) (* the field l at T2, present or absent as T1 says (Unit present, Bool absent, a variable unknown) *).
 
 (* EXPERIMENTAL *)
 (** auxiliary functions on the new list types *)
@@ -92,6 +93,7 @@ with open_fields_wrt_exp_rec (k:nat) (e5:exp) (fs5:fields) {struct fs5}: fields 
   match fs5 with
   | fs_nil => fs_nil 
   | (fs_cons l e fs) => fs_cons l (open_exp_wrt_exp_rec k e5 e) (open_fields_wrt_exp_rec k e5 fs)
+  | (fs_meth l e fs) => fs_meth l (open_exp_wrt_exp_rec k e5 e) (open_fields_wrt_exp_rec k e5 fs)
 end
 with open_exp_wrt_exp_rec (k:nat) (e_5:exp) (e__6:exp) {struct e__6}: exp :=
   match e__6 with
@@ -152,6 +154,10 @@ with lc_fields : fields -> Prop :=    (* defn lc_fields *)
      (lc_exp e) ->
      (lc_fields fs) ->
      (lc_fields (fs_cons l e fs))
+ | lc_fs_meth : forall (l:label) (e:exp) (fs:fields),
+     (lc_exp e) ->
+     (lc_fields fs) ->
+     (lc_fields (fs_meth l e fs))
 with lc_exp : exp -> Prop :=    (* defn lc_exp *)
  | lc_e_fvar_f : forall (x:termvar),
      (lc_exp (e_fvar_f x))
@@ -231,6 +237,7 @@ with fv_fields (fs5:fields) : vars :=
   match fs5 with
   | fs_nil => {}
   | (fs_cons l e fs) => (fv_exp e) \u (fv_fields fs)
+  | (fs_meth l e fs) => (fv_exp e) \u (fv_fields fs)
 end
 with fv_exp (e_5:exp) : vars :=
   match e_5 with
@@ -270,6 +277,7 @@ with subst_fields (e5:exp) (x5:termvar) (fs5:fields) {struct fs5} : fields :=
   match fs5 with
   | fs_nil => fs_nil 
   | (fs_cons l e fs) => fs_cons l (subst_exp e5 x5 e) (subst_fields e5 x5 fs)
+  | (fs_meth l e fs) => fs_meth l (subst_exp e5 x5 e) (subst_fields e5 x5 fs)
 end
 with subst_exp (e_5:exp) (x5:termvar) (e__6:exp) {struct e__6} : exp :=
   match e__6 with

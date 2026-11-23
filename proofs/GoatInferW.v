@@ -290,6 +290,7 @@ with infer_fields (f : nat) (lenient : bool) (ora : atom -> typ) (D : denv) (G :
                   Some (scomp s2 s1, D2, row_Ext l (apT s2 T1) R2, n2, fs_cons l e' rest')
               end
           end
+      | fs_meth _ _ _ => None
       end
   end
 

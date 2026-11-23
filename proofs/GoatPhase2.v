@@ -103,7 +103,7 @@ Proof.
       [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_mono_self ].
   - intros f Hf.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
-    apply T_Record. eapply FT_cons.
+    apply T_Record; [ | reflexivity ]. eapply FT_cons.
     + eapply T_App; [ | apply T_Num; [ solve_uniq | ] ].
       * apply T_Var with (s := gen nil (typ_Arrow (typ_Var a0) (typ_Var a0)) (fun _ => k_Any));
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_id_at; exact I ].

@@ -422,12 +422,14 @@ Fixpoint is_fn_group (fs : fields) : bool :=
   | fs_nil => true
   | fs_cons _ (e_abs _) rest => is_fn_group rest
   | fs_cons _ _ _ => false
+  | fs_meth _ _ _ => false
   end.
 
 Fixpoint nfields (fs : fields) : nat :=
   match fs with
   | fs_nil => 0
   | fs_cons _ _ rest => S (nfields rest)
+  | fs_meth _ _ rest => S (nfields rest)
   end.
 
 (* The row of a group's members, each at a fresh type variable numbered from [n]. *)
@@ -435,6 +437,7 @@ Fixpoint group_row (fs : fields) (n : nat) : row :=
   match fs with
   | fs_nil => row_Empty
   | fs_cons l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
+  | fs_meth l _ rest => row_Ext l (typ_Var (ea n)) (group_row rest (S n))
   end.
 
 (* The number of parameters a group declares: the largest [6 + j] among its

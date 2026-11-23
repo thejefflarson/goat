@@ -46,6 +46,7 @@ with close_fields_rec (k : nat) (x : termvar) (fs : fields) {struct fs} : fields
   match fs with
   | fs_nil => fs_nil
   | fs_cons l e fs' => fs_cons l (close_exp_rec k x e) (close_fields_rec k x fs')
+  | fs_meth l e fs' => fs_meth l (close_exp_rec k x e) (close_fields_rec k x fs')
   end
 with close_arms_rec (k : nat) (x : termvar) (ars : arms) {struct ars} : arms :=
   match ars with
@@ -107,6 +108,7 @@ with bind_group_fields (k : nat) (names : list termvar) (fs : fields) {struct fs
   match fs with
   | fs_nil => fs_nil
   | fs_cons l e fs' => fs_cons l (bind_group_rec k names e) (bind_group_fields k names fs')
+  | fs_meth l e fs' => fs_meth l (bind_group_rec k names e) (bind_group_fields k names fs')
   end
 with bind_group_arms (k : nat) (names : list termvar) (ars : arms) {struct ars} : arms :=
   match ars with
@@ -184,6 +186,9 @@ Proof.
   - (* field list *)
     intros l e IHe fs IHfs k x [He Hfs]. simpl.
     split; [ exact (IHe k x He) | exact (IHfs k x Hfs) ].
+  - (* method field *)
+    intros l e IHe fs IHfs k x [He Hfs]. simpl.
+    split; [ exact (IHe k x He) | exact (IHfs k x Hfs) ].
   - intros k x _. exact I.
   - (* else *)
     intros e IH k x He. simpl in *. exact (IH k x He).
@@ -229,6 +234,8 @@ Proof.
   - intros a IH k names Ha. simpl in *. exact (IH k names Ha).
   - intros a IH k names Ha. simpl in *. exact (IH k names Ha).
   - intros k names _. exact I.
+  - intros l e IHe fs IHfs k names [He Hfs]. simpl.
+    split; [ exact (IHe k names He) | exact (IHfs k names Hfs) ].
   - intros l e IHe fs IHfs k names [He Hfs]. simpl.
     split; [ exact (IHe k names He) | exact (IHfs k names Hfs) ].
   - intros k names _. exact I.
@@ -339,14 +346,17 @@ Fixpoint spread_nest (b : exp) (fs : fields) {struct fs} : exp :=
   match fs with
   | fs_nil => b
   | fs_cons l e rest => spread_nest (e_spread b l e) rest
+  | fs_meth l e rest => spread_nest (e_spread b l e) rest
   end.
 
 Definition restricts (b : exp) (ls : list label) : exp := fold_left e_restrict ls b.
 
 Lemma lc_spread_nest : forall fs b, lc b -> lcf fs -> lc (spread_nest b fs).
 Proof.
-  induction fs as [| l e rest IH]; intros b Hb Hfs; simpl.
+  induction fs as [| l e rest IH | l e rest IH]; intros b Hb Hfs; simpl.
   - exact Hb.
+  - destruct Hfs as [He Hrest].
+    apply IH; [ exact (conj Hb He) | exact Hrest ].
   - destruct Hfs as [He Hrest].
     apply IH; [ exact (conj Hb He) | exact Hrest ].
 Qed.
@@ -762,6 +772,7 @@ with size_fields (fs : fields) : nat :=
   match fs with
   | fs_nil => 1
   | fs_cons _ e fs' => S (size e + size_fields fs')
+  | fs_meth _ e fs' => S (size e + size_fields fs')
   end
 with size_arms (ars : arms) : nat :=
   match ars with
@@ -802,6 +813,7 @@ Proof.
   - (* unfold *) rewrite H. reflexivity.
   - reflexivity.
   - (* cons *) rewrite H, H0. reflexivity.
+  - (* cons *) rewrite H, H0. reflexivity.
   - reflexivity.
   - (* else *) rewrite H. reflexivity.
   - (* arm *) rewrite H, H0. reflexivity.
@@ -838,6 +850,7 @@ Proof.
   - (* fold *) apply H. assumption.
   - (* unfold *) apply H. assumption.
   - exact I.
+  - (* cons *) destruct H1 as [He Hfs]. split; [ apply H | apply H0 ]; assumption.
   - (* cons *) destruct H1 as [He Hfs]. split; [ apply H | apply H0 ]; assumption.
   - exact I.
   - (* else *) apply H. assumption.
@@ -928,10 +941,12 @@ Proof.
     + (* unfold *)
       apply lc_e_unfold. apply IHe; [ lia | exact Hlc ].
   - destruct IH as [IHe [IHfs IHars]].
-    destruct t as [| l e fs]; unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
+    destruct t as [| l e fs | l e fs]; unfold lc, lcf in Hlc; simpl in Hsize, Hlc.
     + apply lc_fs_nil.
     + destruct Hlc as [He Hfs].
       apply lc_fs_cons; [ apply IHe | apply IHfs ]; try assumption; lia.
+    + destruct Hlc as [He Hfs].
+      apply lc_fs_meth; [ apply IHe | apply IHfs ]; try assumption; lia.
   - destruct IH as [IHe [IHfs IHars]].
     destruct t as [| e | tg e ars]; unfold lca in Hlc; simpl in Hsize, Hlc.
     + apply lc_arms_nil.

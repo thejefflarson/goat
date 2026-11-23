@@ -236,6 +236,8 @@ Proof.
   - intros n P Hs. exact I.
   - intros l e IHe rest IHrest n P [He Hrest].
     split; [ exact (expr_parses _ _ (IHe n P He)) | exact (IHrest n P Hrest) ].
+  - (* a method field is not a term of the printed fragment *)
+    intros l e IHe rest IHrest n P Hs. destruct Hs.
   - intros; exact I.
   - intros; exact I.
   - intros; exact I.

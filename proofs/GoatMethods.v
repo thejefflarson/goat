@@ -108,7 +108,7 @@ Lemma ball_record_types : typing d_any nil
   (e_rec (fs_cons l_moved (e_abs (bump (e_fvar_b 0))) (fs_cons l_x (e_num 1) fs_nil)))
   (typ_Record P_row).
 Proof.
-  apply T_Record. eapply FT_cons.
+  apply T_Record; [ | reflexivity ]. eapply FT_cons.
   - apply T_Abs with (L := {}). intros s Hs.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec]. unfold bump.
     exact (bump_types s).

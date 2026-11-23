@@ -462,7 +462,7 @@ Proof.
     + apply Hs. apply finer_lit.
   - intros f Hf.
     cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
-    apply T_Record. eapply FT_cons.
+    apply T_Record; [ | reflexivity ]. eapply FT_cons.
     + eapply T_App; [ | apply T_Num; [ solve_uniq | ] ].
       * apply T_Var with (s := gen nil (typ_Arrow (typ_Var ga) (typ_Var ga)) k_lit);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_at_lit; exact I ].
@@ -550,7 +550,7 @@ Proof.
     + apply finer_refl.
     + simpl. apply AtomSetFacts.diff_iff. split; [ fsetdec | fsetdec ].
   - intros f Hf. cbn [open_exp_wrt_exp open_exp_wrt_exp_rec open_fields_wrt_exp_rec].
-    apply T_Record. eapply FT_cons.
+    apply T_Record; [ | reflexivity ]. eapply FT_cons.
     + eapply T_Bin with (A := typ_Float); [ | apply T_Dec; solve_uniq | apply sig_ring ].
       * apply T_Var with (s := gen nil (typ_Var ga) k_lit);
           [ solve_uniq | apply binds_cons_2; reflexivity | apply inst_numeral_at; exact I ].

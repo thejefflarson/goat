@@ -479,7 +479,7 @@ Qed.
 Lemma is_fn_group_open_rec : forall fs k u,
   is_fn_group fs = true -> is_fn_group (open_fields_wrt_exp_rec k u fs) = true.
 Proof.
-  induction fs as [|l e rest IH]; intros k u H; simpl in *; [ reflexivity | ].
+  induction fs as [|l e rest IH|l e rest IH]; intros k u H; simpl in *; [ reflexivity | | discriminate H ].
   destruct e; try discriminate H. simpl. apply IH. exact H.
 Qed.
 
@@ -487,7 +487,7 @@ Lemma infer_fields_fn_group : forall f lz ora D G fs n s D' R n' fs',
   is_fn_group fs = true -> infer_fields f lz ora D G fs n = Some (s, D', R, n', fs') ->
   fn_group fs'.
 Proof.
-  intros f lz ora D G fs. revert f D G. induction fs as [|l e rest IH]; intros f D G n s D' R n' fs' Hg H;
+  intros f lz ora D G fs. revert f D G. induction fs as [|l e rest IH|l e rest IH]; intros f D G n s D' R n' fs' Hg H;
     destruct f as [|f]; try discriminate H; cbn [infer_fields] in H.
   - inversion H; subst. constructor.
   - destruct e; try discriminate Hg. cbn [is_fn_group] in Hg.
@@ -497,6 +497,18 @@ Proof.
     inversion H; subst.
     destruct (infer_abs_shape _ _ _ _ _ _ _ _ _ _ _ _ E1) as [b' ->].
     constructor. exact (IH _ _ _ _ _ _ _ _ _ Hg E2).
+Qed.
+
+Lemma infer_fields_no_meth : forall f lz ora D G fs n s D' R n' fs',
+  infer_fields f lz ora D G fs n = Some (s, D', R, n', fs') -> no_meth fs' = true.
+Proof.
+  intros f lz ora D G fs. revert f D G. induction fs as [|l e rest IH|l e rest IH];
+    intros f D G n s D' R n' fs' H; destruct f as [|f]; try discriminate H; cbn [infer_fields] in H.
+  - inversion H; subst. reflexivity.
+  - destruct (infer f lz ora D G e n) as [[[[[s1 D1] T1] n1] e1']|]; [ | discriminate H ].
+    destruct (infer_fields f lz ora D1 (apC s1 G) rest n1) as [[[[[s2 D2] R2] n2] rest']|] eqn:E2;
+      [ | discriminate H ].
+    inversion H; subst. cbn [no_meth]. exact (IH _ _ _ _ _ _ _ _ _ E2).
 Qed.
 
 Lemma fn_group_clf : forall fs k x, fn_group fs -> fn_group (clf k x fs).
@@ -782,7 +794,7 @@ Proof.
       split; [exact Gd0|]. split; [ apply EvT_Record; exact HR0 | ].
       refine (conj _ (conj _ Hlc_Hty)).
       2: { cbn [erase]. rewrite Her_Hty. reflexivity. }
-      apply T_Record. exact Hty.
+      apply T_Record; [ exact Hty | eapply infer_fields_no_meth; exact Ei ].
     + (* projection *)
       destruct (infer f false ora D G e1 n) as [[[[[s1 D1] T1] n1] us1]|] eqn:E1; [|discriminate].
       destruct (unify_co f D1 T1 (typ_Record (row_Ext l (typ_Var (ea n1)) (row_Var (ea (S n1)))))
@@ -1093,7 +1105,7 @@ Proof.
         apply (typing_ap_G D1 n1 s2 D1 n2 _ _ _ Gd2 HG1). exact Hty1.
       * unfold rm. simpl. rewrite Nat.eqb_refl. reflexivity.
   - intros D G fs n s D' R n' fs' H HG HD. cbn [infer_fields] in H.
-    destruct fs as [| l e rest]; try discriminate H.
+    destruct fs as [| l e rest | l e rest]; try discriminate H.
     + inversion H; try subst s; try subst D'; try subst R; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
       split; [apply Good_id; exact HD|]. split; [apply EvR_Empty|].
       refine (conj _ (conj eq_refl I)).

@@ -449,7 +449,9 @@ Inductive value : exp -> Prop :=
 with rec_value : fields -> Prop :=
  | rv_nil : rec_value fs_nil
  | rv_cons : forall l v fs,
-     value v -> rec_value fs -> rec_value (fs_cons l v fs).
+     value v -> rec_value fs -> rec_value (fs_cons l v fs)
+ | rv_meth : forall l v fs,
+     value v -> rec_value fs -> rec_value (fs_meth l v fs).
 
 #[export] Hint Constructors value rec_value : core.
 
@@ -458,6 +460,23 @@ Fixpoint lookup_first (l : label) (fs : fields) : option exp :=
   match fs with
   | fs_nil => None
   | fs_cons l' e fs' => if Nat.eqb l l' then Some e else lookup_first l fs'
+  | fs_meth l' e fs' => if Nat.eqb l l' then Some e else lookup_first l fs'
+  end.
+
+(* A record's method markers only steer typing (T_Obj); running a record, and
+   a spread or restrict of it, ignore them, and the record they build is plain. *)
+Fixpoint fs_plain (fs : fields) : fields :=
+  match fs with
+  | fs_nil => fs_nil
+  | fs_cons l e fs' => fs_cons l e (fs_plain fs')
+  | fs_meth l e fs' => fs_cons l e (fs_plain fs')
+  end.
+
+Fixpoint no_meth (fs : fields) : bool :=
+  match fs with
+  | fs_nil => true
+  | fs_cons _ _ fs' => no_meth fs'
+  | fs_meth _ _ _ => false
   end.
 
 (* A spread sets the first field labeled [l] to [v] when there is one, and puts
@@ -468,6 +487,8 @@ Fixpoint fs_replace (l : label) (v : exp) (fs : fields) {struct fs} : fields :=
   | fs_nil => fs_nil
   | fs_cons l' e fs' =>
       if Nat.eqb l l' then fs_cons l' v fs' else fs_cons l' e (fs_replace l v fs')
+  | fs_meth l' e fs' =>
+      if Nat.eqb l l' then fs_cons l' v fs' else fs_meth l' e (fs_replace l v fs')
   end.
 
 Definition fs_set (l : label) (v : exp) (fs : fields) : fields :=
@@ -481,6 +502,8 @@ Fixpoint fs_drop (l : label) (fs : fields) {struct fs} : fields :=
   | fs_nil => fs_nil
   | fs_cons l' e fs' =>
       if Nat.eqb l l' then fs' else fs_cons l' e (fs_drop l fs')
+  | fs_meth l' e fs' =>
+      if Nat.eqb l l' then fs' else fs_meth l' e (fs_drop l fs')
   end.
 
 (* The first [l] of a row: its type and the row without it.  Entries of other
@@ -532,6 +555,7 @@ with is_gen_fields (fs : fields) {struct fs} : bool :=
   match fs with
   | fs_nil => true
   | fs_cons _ e fs' => is_gen_value e && is_gen_fields fs'
+  | fs_meth _ e fs' => is_gen_value e && is_gen_fields fs'
   end.
 
 (* The members of a recursive group are functions, as in the checker, where a
@@ -828,7 +852,7 @@ Inductive step : exp -> exp -> Prop :=
      value v1 -> value v2 -> bin_step o v1 v2 v ->
      step (e_bin v1 o v2) v
  | st_binrec : forall fs1 o fs2 fs,
-     rec_value fs1 -> rec_value fs2 -> rec_zip o fs1 fs2 fs ->
+     rec_value fs1 -> rec_value fs2 -> rec_zip o (fs_plain fs1) (fs_plain fs2) fs ->
      step (e_bin (e_rec fs1) o (e_rec fs2)) (e_rec fs)
  | st_tofloat1 : forall e e', step e e' -> step (e_tofloat e) (e_tofloat e')
  | st_tofloat : forall z d, step (e_tofloat (e_num z)) (e_dec d)
@@ -839,11 +863,11 @@ Inductive step : exp -> exp -> Prop :=
      value v1 -> step e2 e2' -> step (e_spread v1 l e2) (e_spread v1 l e2')
  | st_spread : forall fs l v,
      rec_value fs -> value v ->
-     step (e_spread (e_rec fs) l v) (e_rec (fs_set l v fs))
+     step (e_spread (e_rec fs) l v) (e_rec (fs_plain (fs_set l v fs)))
  | st_restrict1 : forall e e' l,
      step e e' -> step (e_restrict e l) (e_restrict e' l)
  | st_restrict : forall fs l,
-     rec_value fs -> step (e_restrict (e_rec fs) l) (e_rec (fs_drop l fs))
+     rec_value fs -> step (e_restrict (e_rec fs) l) (e_rec (fs_plain (fs_drop l fs)))
  | st_fold1 : forall e e', step e e' -> step (e_fold e) (e_fold e')
  | st_unfold1 : forall e e', step e e' -> step (e_unfold e) (e_unfold e')
  | st_unfold_fold : forall v, value v -> step (e_unfold (e_fold v)) v
@@ -860,7 +884,11 @@ with step_fields : fields -> fields -> Prop :=
  | stf_here : forall l e e' fs,
      step e e' -> step_fields (fs_cons l e fs) (fs_cons l e' fs)
  | stf_cons : forall l v fs fs',
-     value v -> step_fields fs fs' -> step_fields (fs_cons l v fs) (fs_cons l v fs').
+     value v -> step_fields fs fs' -> step_fields (fs_cons l v fs) (fs_cons l v fs')
+ | stf_meth_here : forall l e e' fs,
+     step e e' -> step_fields (fs_meth l e fs) (fs_meth l e' fs)
+ | stf_meth_cons : forall l v fs fs',
+     value v -> step_fields fs fs' -> step_fields (fs_meth l v fs) (fs_meth l v fs').
 
 #[export] Hint Constructors step step_fields : core.
 
@@ -891,9 +919,68 @@ Inductive traps : exp -> trap_kind -> Prop :=
 with traps_fields : fields -> trap_kind -> Prop :=
  | trf_here : forall l e fs k, traps e k -> traps_fields (fs_cons l e fs) k
  | trf_cons : forall l v fs k,
-     value v -> traps_fields fs k -> traps_fields (fs_cons l v fs) k.
+     value v -> traps_fields fs k -> traps_fields (fs_cons l v fs) k
+ | trf_meth_here : forall l e fs k, traps e k -> traps_fields (fs_meth l e fs) k
+ | trf_meth_cons : forall l v fs k,
+     value v -> traps_fields fs k -> traps_fields (fs_meth l v fs) k.
 
 #[export] Hint Constructors traps traps_fields : core.
+
+(* [unroll_eq n T T'] holds when T and T' are equal after at most [n]
+   unrollings of a mu on either side, at any depth of the types.  Equality
+   up to [teq] is free, and budgets add along a chain of equalities.  A
+   reordering or a presence rewrite of rows is [req], which is free too.  There
+   is no mu/mu congruence rule: two unequal mus are compared by unrolling. *)
+Inductive unroll_eq : nat -> typ -> typ -> Prop :=
+ | UE_teq : forall n T T', teq T T' -> unroll_eq n T T'
+ | UE_trans : forall m n T1 T2 T3,
+     unroll_eq m T1 T2 -> unroll_eq n T2 T3 -> unroll_eq (m + n) T1 T3
+ | UE_unfold : forall n B, unroll_eq (S n) (typ_Mu B) (open_typ 0 (typ_Mu B) B)
+ | UE_fold : forall n B, unroll_eq (S n) (open_typ 0 (typ_Mu B) B) (typ_Mu B)
+ | UE_arrow : forall n T1 T1' T2 T2',
+     unroll_eq n T1 T1' -> unroll_eq n T2 T2' ->
+     unroll_eq n (typ_Arrow T1 T2) (typ_Arrow T1' T2')
+ | UE_record : forall n R R', unroll_row n R R' -> unroll_eq n (typ_Record R) (typ_Record R')
+ | UE_grp : forall n w T T', unroll_eq n T T' -> unroll_eq n (typ_Grp w T) (typ_Grp w T')
+with unroll_row : nat -> row -> row -> Prop :=
+ | UR_req : forall n R R', req R R' -> unroll_row n R R'
+ | UR_trans : forall m n R1 R2 R3,
+     unroll_row m R1 R2 -> unroll_row n R2 R3 -> unroll_row (m + n) R1 R3
+ | UR_ext : forall n l T T' R R',
+     unroll_eq n T T' -> unroll_row n R R' ->
+     unroll_row n (row_Ext l T R) (row_Ext l T' R')
+ | UR_maybe : forall n l P P' T T' R R',
+     unroll_eq n P P' -> unroll_eq n T T' -> unroll_row n R R' ->
+     unroll_row n (row_Maybe l P T R) (row_Maybe l P' T' R').
+
+#[export] Hint Constructors unroll_eq unroll_row : core.
+
+Scheme unroll_eq_ind' := Induction for unroll_eq Sort Prop
+  with unroll_row_ind' := Induction for unroll_row Sort Prop.
+Combined Scheme unroll_mutind from unroll_eq_ind', unroll_row_ind'.
+
+(* The methods of a record literal share one receiver (ADR 0034 decision 2):
+   the literal's own fields at their types, and a row [Rt] for what a use
+   adds.  [row_tail_with R Rt] is [R] with [Rt] for its empty tail, and
+   [meths_shared Rs fs R] says each method field of [fs], whose type in the
+   row [R] is [T], is a function of that receiver [Rs], up to unrolling. *)
+Fixpoint row_tail_with (R Rt : row) {struct R} : row :=
+  match R with
+  | row_Empty => Rt
+  | row_Var a => row_Var a
+  | row_Ext l T R' => row_Ext l T (row_tail_with R' Rt)
+  | row_Maybe l P T R' => row_Maybe l P T (row_tail_with R' Rt)
+  end.
+
+Inductive meths_shared (Rs : row) : fields -> row -> Prop :=
+ | MS_nil : meths_shared Rs fs_nil row_Empty
+ | MS_cons : forall l e fs T R,
+     meths_shared Rs fs R -> meths_shared Rs (fs_cons l e fs) (row_Ext l T R)
+ | MS_meth : forall l e fs T R n Rr,
+     unroll_eq n T (typ_Arrow (typ_Record Rs) Rr) ->
+     meths_shared Rs fs R -> meths_shared Rs (fs_meth l e fs) (row_Ext l T R).
+
+#[export] Hint Constructors meths_shared : core.
 
 (* ================================================================== *)
 (* Declarative typing (section 4), mutual with record-field typing.      *)
@@ -937,7 +1024,11 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
         typing D ((p ~ gen G (typ_Record R) k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T) ->
      typing D G (e_letrec fs e2) T
  | T_Record : forall D G fs R,
-     field_typing D G fs R -> typing D G (e_rec fs) (typ_Record R)
+     field_typing D G fs R -> no_meth fs = true ->
+     typing D G (e_rec fs) (typ_Record R)
+ | T_Obj : forall D G fs R Rt,
+     field_typing D G fs R -> meths_shared (row_tail_with R Rt) fs R ->
+     typing D G (e_rec fs) (typ_Record R)
  | T_Proj : forall D G e l T R,
      typing D G e (typ_Record (row_Ext l T R)) -> typing D G (e_proj e l) T
  | T_Conv : forall D G e T T',
@@ -982,9 +1073,106 @@ with field_typing : denv -> ctx -> fields -> row -> Prop :=
  | FT_nil : forall D G, uniq G -> field_typing D G fs_nil row_Empty
  | FT_cons : forall D G l e T fs R,
      typing D G e T -> field_typing D G fs R ->
-     field_typing D G (fs_cons l e fs) (row_Ext l T R).
+     field_typing D G (fs_cons l e fs) (row_Ext l T R)
+ | FT_meth : forall D G l e T fs R,
+     typing D G e T -> field_typing D G fs R ->
+     field_typing D G (fs_meth l e fs) (row_Ext l T R).
 
 #[export] Hint Constructors typing field_typing : core.
+
+Lemma no_meth_plain : forall fs, no_meth (fs_plain fs) = true.
+Proof. induction fs as [|l e fs IH|l e fs IH]; simpl; auto. Qed.
+
+Lemma fs_plain_no_meth : forall fs, no_meth fs = true -> fs_plain fs = fs.
+Proof. induction fs as [|l e fs IH|l e fs IH]; simpl; intros H; try discriminate; first [ reflexivity | rewrite IH; auto ]. Qed.
+
+Lemma lookup_first_plain : forall l fs, lookup_first l (fs_plain fs) = lookup_first l fs.
+Proof. induction fs as [|l' e fs IH|l' e fs IH]; simpl; auto; destruct (Nat.eqb l l'); auto. Qed.
+
+Lemma rec_value_plain : forall fs, rec_value fs -> rec_value (fs_plain fs).
+Proof. intros fs H. induction H; simpl; auto. Qed.
+
+Lemma field_typing_fs_plain : forall D G fs R,
+  field_typing D G fs R -> field_typing D G (fs_plain fs) R.
+Proof. intros D G fs R H. induction H; simpl; auto. Qed.
+
+(* The row of a record literal is a spine of [Ext] entries ending in [Empty]. *)
+Fixpoint plain_spine (R : row) : bool :=
+  match R with
+  | row_Empty => true
+  | row_Ext _ _ R' => plain_spine R'
+  | _ => false
+  end.
+
+Lemma field_typing_plain_spine : forall D G fs R,
+  field_typing D G fs R -> plain_spine R = true.
+Proof. intros D G fs R H. induction H; simpl; auto. Qed.
+
+(* Which fields of a spine are methods.  Substitution and a step in a field
+   keep it, and it is all that [no_meth] and [meths_shared] read. *)
+Fixpoint marks (fs : fields) : list (bool * label) :=
+  match fs with
+  | fs_nil => nil
+  | fs_cons l _ fs' => (false, l) :: marks fs'
+  | fs_meth l _ fs' => (true, l) :: marks fs'
+  end.
+
+Lemma no_meth_marks : forall fs fs', marks fs = marks fs' -> no_meth fs = no_meth fs'.
+Proof.
+  induction fs as [|l e fs IH|l e fs IH]; intros [|l' e' fs'|l' e' fs'] H; simpl in *;
+    try discriminate; try reflexivity;
+    injection H as _ H; apply IH; exact H.
+Qed.
+
+Lemma meths_shared_marks : forall Rs fs R fs',
+  meths_shared Rs fs R -> marks fs = marks fs' -> meths_shared Rs fs' R.
+Proof.
+  intros Rs fs R fs' H. revert fs'. induction H; intros fs' Hm;
+    destruct fs' as [|l' e' fs'|l' e' fs']; try discriminate Hm.
+  - apply MS_nil.
+  - simpl in Hm. injection Hm as Hl Hm. subst. apply MS_cons. auto.
+  - simpl in Hm. injection Hm as Hl Hm. subst. eapply MS_meth; [ exact H | auto ].
+Qed.
+
+Lemma marks_subst_fields : forall fs u x, marks (subst_fields u x fs) = marks fs.
+Proof.
+  induction fs as [|l e fs IH|l e fs IH]; intros; simpl; auto; rewrite IH; reflexivity.
+Qed.
+
+Lemma fs_plain_drop : forall l fs, fs_plain (fs_drop l fs) = fs_drop l (fs_plain fs).
+Proof.
+  intros l. induction fs as [|l' e fs IH|l' e fs IH]; simpl; auto;
+    destruct (Nat.eqb l l'); simpl; auto; rewrite IH; reflexivity.
+Qed.
+
+Lemma marks_open_fields : forall fs k u, marks (open_fields_wrt_exp_rec k u fs) = marks fs.
+Proof.
+  induction fs as [|l e fs IH|l e fs IH]; intros; simpl; auto; rewrite IH; reflexivity.
+Qed.
+
+Lemma fn_group_no_meth : forall fs, fn_group fs -> no_meth fs = true.
+Proof. intros fs H. induction H; simpl; auto. Qed.
+
+(* A record literal is typed by T_Record when it has no method field and by
+   T_Obj otherwise; [rec_ok] is the side condition either rule asks. *)
+Definition rec_ok (fs : fields) (R : row) : Prop :=
+  no_meth fs = true \/ exists Rt, meths_shared (row_tail_with R Rt) fs R.
+
+Lemma rec_ok_marks : forall fs R fs', rec_ok fs R -> marks fs = marks fs' -> rec_ok fs' R.
+Proof.
+  intros fs R fs' [H | [Rt H]] Hm.
+  - left. rewrite <- (no_meth_marks _ _ Hm). exact H.
+  - right. exists Rt. eapply meths_shared_marks; eauto.
+Qed.
+
+Lemma T_rec_ok : forall D G fs R,
+  field_typing D G fs R -> rec_ok fs R -> typing D G (e_rec fs) (typ_Record R).
+Proof.
+  intros D G fs R Hf [H | [Rt H]]; [ apply T_Record | eapply T_Obj ]; eauto.
+Qed.
+
+Lemma marks_step_fields : forall fs fs', step_fields fs fs' -> marks fs' = marks fs.
+Proof. intros fs fs' H. induction H; simpl; try rewrite IHstep_fields; reflexivity. Qed.
 
 (* Reflexive-transitive closure, for the soundness corollary. *)
 Inductive multistep : exp -> exp -> Prop :=
