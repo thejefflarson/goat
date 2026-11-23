@@ -270,6 +270,20 @@ parameter's type hits it. Stage 2 closes it (Q3, option B); the 6 corpus program
 in section 1 do not need it, because their compound operands hold only numerals
 (`Literal` is finer than `Eq`).
 
+**Measured (stage 2 spike, `differential/sort_gap.sh`).** The script patches a
+scratch copy of the extracted algorithm so that `sat_b` accepts a variable of any
+sort inside a type, and `rsat_b` a row variable, then reruns each program the
+checker accepts and the algorithm refuses. Of 24295 checker-accepted corpus
+programs the algorithm refuses 11, all recursive-type programs; none passes under
+either leniency, so **0 corpus programs hit the inner-variable gap and 0 hit a
+row-variable sort**. The gap is real: appended to the hand-written list, the five
+programs `f = program(x) do same({p: x}, {p: x}) done` then `f(1)` (and variants
+with two fields, `add` for `Numeric`, and an inline `{p: x} == {p: x}`) each make
+the checker accept and W refuse, so the differential reports 5 mismatches. No
+generator or source in the corpus builds one, so stage 2's propagation (Q3, B)
+would change no corpus verdict; whether to pay for it (every `unify_*` statement
+and its callers in `infer` change) is a completeness choice, not a soundness one.
+
 ## 3. Proof-model decisions and the alternatives they beat
 
 **Q1. How to say what `<` does on a non-primitive value.**
