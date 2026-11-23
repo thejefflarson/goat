@@ -188,8 +188,9 @@ checker accepts) and the differential test counts it:
   derivation (#564).
 - No theorem that `{...lit, x: 1}.a()`, a method literal spread and then called,
   has no derivation; the checker and W both reject it.
-- The 65 programs with a recursive group a value binding uses before its last
-  member, which the reader skips.
+- (Closed by #628.) The 65 programs with a recursive group a value binding uses
+  before its last member are compared: the checker now infers and generalizes
+  the group before it types that value.
 
 Decision 3's elaboration theorem is therefore proved for the programs W accepts,
 and W's completeness against the checker is measured and not proved, as

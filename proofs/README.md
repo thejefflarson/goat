@@ -525,8 +525,10 @@ two meet in Algorithm W, which returns the elaborated term:
 axioms.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 44380 programs written, 42958 compared with 0 mismatches, 1411 skipped
-by the driver. The reader numbers labels in name order, which wrote 206 more
+commit: 44439 programs written, 43017 compared with 0 mismatches, 1411 skipped
+by the driver. Inferring a recursive group before the value bindings between its
+members (#628) brought in 59 of the 65 programs it used to skip; the other 6 use
+a later feature or are real cycles the checker rejects. The reader numbers labels in name order, which wrote 206 more
 programs than before (a corpus line repeats only if its term, mode and verdict do)
 and changed no checker verdict. Of the 43 programs whose checker type is recursive, 32 are compared
 and 11 refused. The corpus reader's skips, by the feature that keeps a program
@@ -534,13 +536,12 @@ outside the calculus (the first of a fixed order that it uses):
 
 | Count | Skip |
 | ---: | --- |
-| 4984 | does not lower (the checker rejects it before typing) |
+| 4992 | does not lower (the checker rejects it before typing) |
 | 222 | a spread onto a row variable that lacks the label (`LacksOnTail`, #564) |
 | 185 | tags and `match` |
-| 65 | a recursive group a value binding uses before its last member (`SplitGroup`) |
 | 41 | `print` or `trap` |
 | 37 | a program that ends in a binding |
-| 23 | a function or call with no parameters |
+| 29 | a function or call with no parameters |
 | 21 | `and`, `or`, `not` |
 | 19 | the checker rejects a method used as a plain function or the reverse (`MethodFlag`) |
 | 18 | a foreign host call |
@@ -548,7 +549,7 @@ outside the calculus (the first of a fixed order that it uses):
 | 4 | an `if` without an `else` |
 | 4 | a numeral of 2^30 or more |
 | 2 | a rest pattern with no fields |
-| 2 | none of the above |
+| 6 | none of the above, among them the real cycles (a group member reading a value that calls the group), which the checker rejects |
 
 `MethodsAndDotCalls`, `SharedReceiver` and `ResourceLimit` are no longer skips
 and `RecursiveType` is a compared class, not a skip.
@@ -604,10 +605,10 @@ the programs and records no mismatch.
 - **No non-derivation of `{...lit, x: 1}.a()`.** The checker and W both reject a
   method literal spread and then called, but the calculus has no theorem that no
   derivation exists: it needs an inversion lemma for `unroll_eq`.
-- **65 `SplitGroup` programs.** A recursive group that a value binding uses before
-  the group's last member. The checker types the use at the member's monomorphic
-  type; the hoisted `letrec` types it at the generalized one, so the two sides
-  disagree by construction and the reader skips them.
+- **Recursive groups split by a value binding (#628).** The checker infers and
+  generalizes a whole recursive group before it types a value binding that sits
+  between its members, which is the hoisted `letrec` the reader writes, so the
+  65 programs that used to be skipped (`SplitGroup`) are compared.
 
 ## Loops and foreign calls (decided)
 

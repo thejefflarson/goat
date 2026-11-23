@@ -139,7 +139,9 @@ itself, or that is in a group with functions that mention each other, is read
 as a `letrec` (`T_Letrec`) of the group, which the checker generalizes after
 typing all its members (`Infer::settle`); the corpus writer groups the
 members with the same rule. A group whose functions are not next to each other
-in their block, with a value binding between them, is skipped. The group
+in their block, with a value binding between them, is read as one `letrec`
+placed before the value bindings that use it, which is where the checker infers
+it. The group
 generator writes blocks of such functions, with computed values around them, at
 any depth.
 
@@ -177,9 +179,7 @@ onto a row variable that lacks the label (below); `print` or `trap`; `and`, `or`
 which lowering gives every `repeat` and `for`); a comparison, then arithmetic,
 on operands that are not `Int`, `Float`, `String` or `Bool`. After those come
 the reasons that are about the shape of a program and not a missing feature: a
-recursive group that a value binding uses before the group's last member (the
-checker types the use at the member's monomorphic type, the hoisted `letrec` at
-its generalized one), a rest pattern with no fields, an inferred type the corpus cannot write, an `if` without an `else`, a function or call with no parameters,
+rest pattern with no fields, an inferred type the corpus cannot write, an `if` without an `else`, a function or call with no parameters,
 a program that ends in a binding, a numeral of 2^30 or more, and `none of the
 above`. A program using two features counts only under the earlier, so when a
 phase lands its count falls to 0 and its programs either join the compared set
