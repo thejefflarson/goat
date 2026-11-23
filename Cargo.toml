@@ -10,7 +10,8 @@ members = [
     "cli",
     "canvas",
     "wamr",
-    "web", "native",
+    "web",
+    "native",
 ]
 
 # Optimized test code: the fuzz and differential suites are CPU-bound, and
