@@ -241,6 +241,12 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn borrow_as(&mut self, local: Local, want: MTy) {
+        if let Some(found) = self.borrow(local) {
+            self.expect(Ty::Val(found), want);
+        }
+    }
+
     fn borrow_str(&mut self, local: Local) -> Option<()> {
         match self.borrow(local)? {
             MTy::Ptr(HeapKind::Str) => Some(()),
@@ -671,6 +677,26 @@ impl<'a> Checker<'a> {
                         return self.err(ErrorKind::UnknownData(*d));
                     }
                     Write::Lit(_) | Write::End => {}
+                }
+                Ty::Val(MTy::Unit)
+            }
+            Expr::Frame(op) => {
+                if let FrameOp::Put(items) = op {
+                    for item in items {
+                        match *item {
+                            FrameItem::Byte(_) => {}
+                            FrameItem::Lit(d) if self.program.data.get(d.0 as usize).is_none() => {
+                                return self.err(ErrorKind::UnknownData(d));
+                            }
+                            FrameItem::Lit(_) => {}
+                            FrameItem::Str(x) => {
+                                self.borrow_str(x);
+                            }
+                            FrameItem::Int(x) => self.borrow_as(x, MTy::Int),
+                            FrameItem::Float(x) => self.borrow_as(x, MTy::Float),
+                            FrameItem::Bool(x) => self.borrow_as(x, MTy::Bool),
+                        }
+                    }
                 }
                 Ty::Val(MTy::Unit)
             }

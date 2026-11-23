@@ -5,6 +5,7 @@
 use goat_checker::ty::{Group, Row, Ty};
 use goat_checker::vocab::{Decode, EventTag, SceneCalls, ShapeTag, payload_list};
 use goat_checker::{Vocab, check_with_vocab};
+use goat_mir::frame::Wire;
 use goat_mir::*;
 
 fn record<const N: usize>(fields: [(&str, Ty); N]) -> Ty {
@@ -98,14 +99,27 @@ fn lower(vocab: &Vocab, source: &str) -> Program {
     program
 }
 
-fn import(program: &Program, name: &str) -> Vec<MTy> {
-    program
-        .foreign
-        .iter()
-        .find(|f| f.module == "scene" && f.name == name)
-        .unwrap_or_else(|| panic!("scene.{name} is not imported: {:?}", program.foreign))
-        .params
-        .clone()
+/// The scene calls the program's frames declare, with the types of their values.
+fn declared(program: &Program) -> Vec<(String, Vec<Wire>)> {
+    let mut header = None;
+    for func in &program.funcs {
+        func.body.for_each_node(&mut |e| {
+            if let Expr::Frame(FrameOp::Put(items)) = e
+                && let [FrameItem::Lit(data)] = items.as_slice()
+            {
+                header = Some(program.data[data.0 as usize].clone());
+            }
+        });
+    }
+    frame::declared(&header.expect("the program encodes frames")).expect("a header")
+}
+
+fn import(program: &Program, name: &str) -> Vec<Wire> {
+    declared(program)
+        .into_iter()
+        .find(|(call, _)| call == name)
+        .unwrap_or_else(|| panic!("{name} is not a call the frames declare"))
+        .1
 }
 
 fn ctor_params(program: &Program, label: &str) -> Vec<MTy> {
@@ -124,9 +138,9 @@ fn ctor_params(program: &Program, label: &str) -> Vec<MTy> {
 #[test]
 fn a_shape_streams_through_the_scene_imports_its_vocabulary_names() {
     let program = lower(&toy(), PROGRAM);
-    assert_eq!(import(&program, "led"), [MTy::Int, MTy::Bool]);
-    assert_eq!(import(&program, "strip_begin"), [MTy::Ptr(HeapKind::Str)]);
-    assert_eq!(import(&program, "pixel"), [MTy::Int; 3]);
+    assert_eq!(import(&program, "led"), [Wire::Int, Wire::Bool]);
+    assert_eq!(import(&program, "strip_begin"), [Wire::Str]);
+    assert_eq!(import(&program, "pixel"), [Wire::Int; 3]);
     assert_eq!(import(&program, "strip_end"), []);
     let turtle_calls = [
         "line",
@@ -138,10 +152,9 @@ fn a_shape_streams_through_the_scene_imports_its_vocabulary_names() {
         "text",
     ];
     assert!(
-        program
-            .foreign
+        declared(&program)
             .iter()
-            .all(|f| !turtle_calls.contains(&f.name.as_str()))
+            .all(|(name, _)| !turtle_calls.contains(&name.as_str()))
     );
 }
 
@@ -216,8 +229,8 @@ fn the_turtle_streams_the_scene_calls_it_always_has() {
                   draw = program(model) do [Line({x1: 0, y1: 0, x2: 1, y2: 1, color: \"red\"}), \
                   Polyline({points: [{x: 0, y: 0}], color: \"blue\"})] done\n";
     let program = lower(&turtle, source);
-    let float = MTy::Float;
-    let string = MTy::Ptr(HeapKind::Str);
+    let float = Wire::Float;
+    let string = Wire::Str;
     assert_eq!(
         import(&program, "line"),
         [float, float, float, float, string]
@@ -235,8 +248,8 @@ fn the_turtle_streams_circle_rect_and_text_as_single_scene_calls() {
                   Rect({x: 0, y: 0, w: 1, h: 1, color: \"red\"}), \
                   Text({x: 0, y: 0, text: \"hi\", color: \"red\"})] done\n";
     let program = lower(&Vocab::turtle(), source);
-    let float = MTy::Float;
-    let string = MTy::Ptr(HeapKind::Str);
+    let float = Wire::Float;
+    let string = Wire::Str;
     assert_eq!(import(&program, "circle"), [float, float, float, string]);
     assert_eq!(
         import(&program, "rect"),

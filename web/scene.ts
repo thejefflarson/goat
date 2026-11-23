@@ -1,7 +1,9 @@
 // Picture and event plumbing for interactive goat modules (ADR 0015), the
 // browser half of mir/src/host.rs (`SceneHost`) and cli/src/lib.rs (`Guest`).
 //
-//   imports  scene.{begin,end,line,polyline_begin,vertex,polyline_end,circle,rect,text,span,swatch}
+//   imports  scene.{begin,end,frame}, and the per-shape calls (line, polyline_begin,
+//            vertex, polyline_end, circle, rect, text, span, edit, swatch) a
+//            frame replays; see frame.ts
 //   exports  goat_setup, goat_update, goat_draw, goat_release_model,
 //            goat_shutdown, goat_alloc, goat_event_<Tag> per handled event
 //
@@ -9,6 +11,7 @@
 // for exactly the events the module can build. The requestAnimationFrame loop
 // that drives them is separate; this file is what each turn of it calls.
 
+import { FrameDecoder, type FrameHandler, type FrameValue } from "./frame.ts";
 import { checkColor, readString } from "./runtime.ts";
 
 const STR_LEN = 8;
@@ -73,6 +76,7 @@ export interface SceneImports {
   scene: {
     begin(): void;
     end(): void;
+    frame(ptr: number, len: number): void;
     line(x1: number, y1: number, x2: number, y2: number, color: number): void;
     polyline_begin(color: number): void;
     vertex(x: number, y: number): void;
@@ -91,28 +95,57 @@ function finite(name: string, x: number): number {
   return x;
 }
 
-// The scene.* imports over `scene`. A color outside ADR 0014's allowlist and a
-// non-finite coordinate throw, which traps the program like turtle.color does.
+// The scene calls a frame replays, over decoded values. A color outside ADR
+// 0014's allowlist and a non-finite coordinate throw, which traps the program
+// like turtle.color does.
+function sceneCalls(scene: Scene): Record<string, FrameHandler> {
+  const num = (name: string, a: FrameValue[], at: number) => finite(name, a[at] as number);
+  return {
+    begin: () => scene.begin(),
+    end: () => scene.end(),
+    line: (a) =>
+      scene.line(num("line", a, 0), num("line", a, 1), num("line", a, 2), num("line", a, 3), checkColor(a[4] as string)),
+    polyline_begin: (a) => scene.polylineBegin(checkColor(a[0] as string)),
+    vertex: (a) => scene.vertex(num("vertex", a, 0), num("vertex", a, 1)),
+    polyline_end: () => scene.polylineEnd(),
+    circle: (a) => scene.circle(num("circle", a, 0), num("circle", a, 1), num("circle", a, 2), checkColor(a[3] as string)),
+    rect: (a) =>
+      scene.rect(num("rect", a, 0), num("rect", a, 1), num("rect", a, 2), num("rect", a, 3), checkColor(a[4] as string)),
+    text: (a) => scene.text(num("text", a, 0), num("text", a, 1), a[2] as string, checkColor(a[3] as string)),
+    span: (a) => scene.span(a[0] as number, a[1] as number, a[2] as string),
+    edit: (a) => scene.edit(a[0] as number, a[1] as number, a[2] as number, a[3] as number),
+    swatch: (a) => scene.swatch(a[0] as string, a[1] as string, a[2] as string),
+  };
+}
+
+// The scene.* imports over `scene`. `frame` replays a frame's bytes, which the
+// module wrote into its own memory, as the per-shape calls it encodes; the
+// per-shape imports stay for modules that make those calls themselves.
 export function sceneImports(memory: () => WebAssembly.Memory, scene: Scene): SceneImports {
-  const color = (ptr: number) => checkColor(readString(memory(), ptr));
+  const calls = sceneCalls(scene);
+  const decoder = new FrameDecoder((name) => calls[name]);
+  const str = (ptr: number) => readString(memory(), ptr);
   return {
     scene: {
       begin: () => scene.begin(),
       end: () => scene.end(),
-      line: (x1, y1, x2, y2, ptr) =>
-        scene.line(finite("line", x1), finite("line", y1), finite("line", x2), finite("line", y2), color(ptr)),
-      polyline_begin: (ptr) => scene.polylineBegin(color(ptr)),
-      vertex: (x, y) => scene.vertex(finite("vertex", x), finite("vertex", y)),
+      frame: (ptr, len) => {
+        const data = memory().buffer;
+        const start = ptr >>> 0;
+        const length = len >>> 0;
+        if (start + length > data.byteLength) throw new Error("frame out of bounds");
+        decoder.replay(new Uint8Array(data, start, length));
+      },
+      line: (x1, y1, x2, y2, ptr) => calls.line!([x1, y1, x2, y2, str(ptr)]),
+      polyline_begin: (ptr) => calls.polyline_begin!([str(ptr)]),
+      vertex: (x, y) => calls.vertex!([x, y]),
       polyline_end: () => scene.polylineEnd(),
-      circle: (x, y, r, ptr) => scene.circle(finite("circle", x), finite("circle", y), finite("circle", r), color(ptr)),
-      rect: (x, y, w, h, ptr) =>
-        scene.rect(finite("rect", x), finite("rect", y), finite("rect", w), finite("rect", h), color(ptr)),
-      text: (x, y, textPtr, ptr) =>
-        scene.text(finite("text", x), finite("text", y), readString(memory(), textPtr), color(ptr)),
-      span: (from, to, ptr) => scene.span(Number(from), Number(to), readString(memory(), ptr)),
-      edit: (from, to, newlines, indent) => scene.edit(Number(from), Number(to), Number(newlines), Number(indent)),
-      swatch: (role, light, dark) =>
-        scene.swatch(readString(memory(), role), readString(memory(), light), readString(memory(), dark)),
+      circle: (x, y, r, ptr) => calls.circle!([x, y, r, str(ptr)]),
+      rect: (x, y, w, h, ptr) => calls.rect!([x, y, w, h, str(ptr)]),
+      text: (x, y, textPtr, ptr) => calls.text!([x, y, str(textPtr), str(ptr)]),
+      span: (from, to, ptr) => calls.span!([Number(from), Number(to), str(ptr)]),
+      edit: (from, to, newlines, indent) => calls.edit!([Number(from), Number(to), Number(newlines), Number(indent)]),
+      swatch: (role, light, dark) => calls.swatch!([str(role), str(light), str(dark)]),
     },
   };
 }

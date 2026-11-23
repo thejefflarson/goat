@@ -3,7 +3,7 @@
 //! The two must agree on the model after every event and on the scene `draw`
 //! streams, command for command, and leave nothing allocated.
 
-use goat::{SceneCommand, SceneHost};
+use goat::{Boundary, HostValue, SceneCommand, SceneHost};
 use goat_cli::Guest;
 use goat_mir::{HeapKind, Layout, MTy, Program, Session, Value};
 use std::time::{Duration, Instant};
@@ -646,4 +646,99 @@ fn update_reuses_the_models_cell_on_both_backends_and_nothing_leaks() {
     guest.call::<_, ()>("goat_release_model", model).unwrap();
     guest.call::<_, ()>("goat_shutdown", ()).unwrap();
     assert_eq!(guest.live_allocs().unwrap(), 0, "wasm leaked");
+}
+
+/// A host that keeps the raw bytes of each frame it is handed.
+#[derive(Default)]
+struct Frames {
+    scene: SceneHost,
+    frames: Vec<Vec<u8>>,
+}
+
+impl goat::Host for Frames {
+    fn signature(&self, module: &str, name: &str) -> Option<(Vec<Boundary>, Boundary)> {
+        self.scene.signature(module, name)
+    }
+
+    fn call(&mut self, module: &str, name: &str, args: &[HostValue]) -> Result<HostValue, String> {
+        self.scene.call(module, name, args)
+    }
+
+    fn frame(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.frames.push(bytes.to_vec());
+        self.scene.frame(bytes)
+    }
+}
+
+#[test]
+fn each_draw_hands_the_host_one_frame_and_both_backends_encode_the_same_bytes() {
+    let program = program(SHAPES);
+    let mut host = Frames::default();
+    let (mut session, model) = Session::setup(&program, &mut host).expect("setup runs");
+    session.draw(model).expect("draw runs");
+    session.draw(model).expect("draw runs");
+    session.release_model(model).unwrap();
+    session.shutdown().unwrap();
+    let interpreted = host.frames;
+
+    let wasm = goat_wasm::emit(&program).expect("program emits");
+    let mut guest = Guest::new(&wasm, Frames::default()).expect("module instantiates");
+    let model: i32 = guest.call("goat_setup", ()).expect("setup runs");
+    for _ in 0..2 {
+        guest.call::<_, ()>("goat_draw", model).expect("draw runs");
+    }
+    guest.call::<_, ()>("goat_release_model", model).unwrap();
+    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
+    assert_eq!(guest.live_allocs().unwrap(), 0, "leaked");
+    let compiled = guest.into_host().frames;
+
+    assert_eq!(interpreted.len(), 2, "one frame call per draw");
+    assert_eq!(compiled, interpreted);
+    assert_eq!(interpreted[0][0], goat_mir::frame::VERSION);
+}
+
+fn heavy(shapes: usize, text_bytes: usize) -> String {
+    format!(
+        "init = {{n: 0}}\n\
+         update = program(model, event) do match event do Tick(dt) then model done done\n\
+         grow = program(n, acc) do\n\
+           if n == 0 then acc\n\
+           else grow(n - 1, Link(Text({{x: 0, y: 0, text: \"{}\", color: \"red\"}}), acc)) done\n\
+         done\n\
+         draw = program(model) do grow({shapes}, []) done\n",
+        "x".repeat(text_bytes)
+    )
+}
+
+#[test]
+fn a_picture_past_the_frame_size_limit_traps_on_both_backends() {
+    let program = program(&heavy(20_000, 1_000));
+    let mut host = SceneHost::default();
+    let (mut session, model) = Session::setup(&program, &mut host).expect("setup runs");
+    let error = session.draw(model).expect_err("too big");
+    assert!(format!("{error:?}").contains("too big"), "{error:?}");
+
+    let wasm = goat_wasm::emit(&program).expect("program emits");
+    let mut guest = Guest::new(&wasm, SceneHost::default()).expect("module instantiates");
+    let model: i32 = guest.call("goat_setup", ()).expect("setup runs");
+    let error = guest
+        .call::<_, ()>("goat_draw", model)
+        .expect_err("too big");
+    assert!(error.contains("too big"), "{error}");
+}
+
+#[test]
+fn a_picture_under_the_limit_that_outgrows_the_buffer_draws_whole() {
+    let program = program(&heavy(2_000, 1_000));
+    let mut host = Frames::default();
+    let (mut session, model) = Session::setup(&program, &mut host).expect("setup runs");
+    session.draw(model).expect("draw runs");
+    let interpreted = host.frames;
+    assert!(interpreted[0].len() > 2_000_000);
+
+    let wasm = goat_wasm::emit(&program).expect("program emits");
+    let mut guest = Guest::new(&wasm, Frames::default()).expect("module instantiates");
+    let model: i32 = guest.call("goat_setup", ()).expect("setup runs");
+    guest.call::<_, ()>("goat_draw", model).expect("draw runs");
+    assert_eq!(guest.into_host().frames, interpreted);
 }

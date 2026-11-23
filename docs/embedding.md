@@ -62,9 +62,11 @@ Known gaps in the facade, each a reason not to mark more as stable:
 
 - `Interactive<S, E>` is generic over the event type `E: HostEvent`, which
   defaults to the turtle's `Event`; the canvas host drives its own events
-  through it. Drawing is still the fixed `scene.*` wire protocol into a
-  `SceneSink`, so a vocabulary whose shapes do not stream through those calls
-  still needs a `Guest` with its own `Host`. Because `E` is a default and not
+  through it. Drawing is still the fixed set of scene calls into a
+  `SceneSink`, delivered as one encoded frame per draw that `Host::frame`
+  replays (ADR 0015, second addendum), so a vocabulary whose shapes do not
+  stream through those calls still needs a `Guest` with its own `Host` that
+  implements `Host::frame`. Because `E` is a default and not
   inferred, a program that never calls `send` must name it
   (`Interactive<Sink>`). The `HostEvent` trait is new and may change.
 
