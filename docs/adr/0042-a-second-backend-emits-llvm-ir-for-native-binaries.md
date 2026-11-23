@@ -55,6 +55,14 @@ pop them on return.
    host through a `goat_host` table of function pointers named one-to-one after
    the wasm imports. Each target supplies a host library: `main` and the loop,
    the memory region, the trap, number formatting and the vocabulary bindings.
+   The generated code keeps no global state: its heap, live count, call-depth
+   counter and tail-call spill area live in a `goat_instance` the host allocates,
+   and every export takes the table, its context pointer and the instance. So an
+   app can embed compiled goat code and run several programs in one process, as
+   it can run several Lua states (owner, 2026-11-22). The table and the instance
+   both start with a version and only grow at the end. A standalone binary's
+   `main` builds the table and the instance itself. `foreign "c"` calls (M5) are
+   direct calls and do not go through the table.
 4. **Tail calls.** On every target, a self tail call becomes a loop, and a group
    of functions joined by direct tail calls merges into one function that
    switches on the member to run. A remaining tail call is `musttail call tailcc`
@@ -94,8 +102,12 @@ pop them on return.
   Tools; `goat build --native` says so when it is missing.
 - A board on the native path gets its whole spare RAM as heap rather than whole
   64 KiB wasm pages, and carries no runtime in flash.
-- The new one-way door is the native host ABI: the `goat_host` table and the
-  export names. It stays one-to-one with the wasm imports and exports.
+- The new one-way door is the native host ABI: the `goat_host` table, the
+  `goat_instance` layout rule and the export names. The table stays one-to-one
+  with the wasm imports and exports.
+- CI runs the native suites on the self-hosted Linux runners (clang installed in
+  the job) and on GitHub's `macos-latest`, path-filtered to backend and host
+  changes; macOS has no self-hosted runner.
 
 ### Reversible
 
