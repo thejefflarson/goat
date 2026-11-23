@@ -2163,6 +2163,8 @@ const HANDWRITTEN: &[&str] = &[
     "{...{x: 1}, y: true, z: \"s\"}",
     "f = program(p) do {...p, a: true} done\nf({a: false, b: 1})",
     "program(p) do {...p, a: p.b} done",
+    "program(p, q) do\n  x = {...p, a: 1}\n  y = {...q, a: 2}\n  if true then p else q done\ndone",
+    "program(p, q) do\n  x = {...p, a: 1}\n  y = {...q, a: \"x\"}\n  if true then p else q done\ndone",
     "program(p, q) do {...p, x: q.x} done",
     "program(p) do if true then {...p, x: 1} else p done",
     "program(p) do {...{...p, a: 1}, b: true} done",
@@ -2266,6 +2268,9 @@ const HANDWRITTEN: &[&str] = &[
     "f0 = program(q) do\n  e = q == q\n  {...q, z: 2}\ndone\nprogram(w) do\n  v0 = w.x\n  v1 = {...v0, y: {}}\n  f0(w)\ndone",
     "f0 = program(q) do\n  {...q, z: 1}\ndone\nprogram(w) do\n  {z, ...r0} = w\n  v1 = f0(r0)\n  if true then w else v1 done\ndone",
     "f1 = program(q) do\n  {...q, z: \"s\"}\ndone\nf0 = program(q) do\n  {x, ...r} = q\n  {...r, z: 1}\ndone\nprogram(v0) do\n  {z, ...r1} = v0\n  v2 = f1(r1)\n  f0(r1)\ndone",
+    "program(u) do\n  {b, ...w} = u\n  v = {a: 1, b: w}\n  if true then v else u done\ndone",
+    "program(u) do\n  {b, ...w} = u\n  v = {a: 1, b: w}\n  if true then u else v done\ndone",
+    "f = program(u) do\n  {b, ...w} = u\n  v = {a: 1, b: w}\n  if true then v else u done\ndone\nf({b: {}, a: 2})",
 ];
 
 /// One program from generator `kind` (taken modulo the four), every choice
