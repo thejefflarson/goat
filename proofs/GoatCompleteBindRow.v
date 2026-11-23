@@ -13,7 +13,7 @@
    - the renamed row must satisfy the sort and lack what [r] lacks
      ([bind_row_fin]).
 
-   Given a substitution [Sg] that unifies [r] with [R] up to [req],
+   Given a substitution [Sg] that unifies [r] with [R] up to [reqD DT],
    [bind_row_sorted_complete] shows the run succeeds and that the extension
    [S2] of [Sg] to the fresh variables factors [Sg] through the result.
    Hypotheses, in the order [bind_prop_sorted_complete] has them: the atoms of

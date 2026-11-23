@@ -1068,7 +1068,7 @@ D1` (the shape `FacD` has in the closed fragment), or replace `Sg` by a
 substitution whose row images are `nfR D1` of `Sg`'s (`nfS` normalizes the type
 images only) and show it still respects the environments.
 
-**What remains of 7.6.**
+**What remains of 7.6** (as of 7.6i; stage 7.6j below supersedes it).
 
 1. *The induction.* `unify_tD`/`unify_rD` complete for mu-free types and rows
    with variables and presence entries, with `(D', n', S2)` threaded. Leaves,
@@ -1107,10 +1107,94 @@ images only) and show it still respects the environments.
   field of an entry `Sg` makes absent satisfies the sort of the variable; #667).
 - *The presence variable at `Numeric`* (`fld`'s second half): `push_sort` renames
   it to a variable of the sort, whose image `Unit` does not satisfy `Numeric`.
-- *The occurs-under-present condition* of item 3 above, until the size lemma
-  replaces it.
+- *The occurs-under-present condition* (stage 7.6j): every occurrence of the
+  bound variable in the type or row is under a present entry (`po`, `pos` in
+  `GoatCompleteOcc.v`). This is the ratified exclusion of the pairs (ii) and
+  (iii) above, stated as a hypothesis on `Sg`; the size lemma turns it into the
+  occurs check passing. An occurrence in a presence position does not count (the
+  sizes do not read a presence), so a variable bound to a type holding it only as
+  the presence of one of its own entries is excluded too.
 - *Plainness:* the types and rows are mu-free and group-free (`pf`/`prf`),
   locally closed, with every atom below the supply.
+
+*As built (stage 7.6j, `GoatCompleteOcc.v`, `GoatCompleteUnifyPlain.v`,
+`GoatCompleteRf.v`).* The row induction (items 1 and 3 of the list above) is not
+done and L2 is not closed. What is done is the restatement at the environment,
+the size lemma, plain completeness on the closed fragment, and the induction on
+the record-free fragment, which carries the threading the row arms will reuse.
+
+**Restatement at the environment.** `bind_row_sorted_complete` takes
+`reqD DT (sR Sg r) (apR Sg R)` and concludes `reqD DT (sR Sg q) (apR S2 (sR s q))`
+for the old row variables (the type atoms stay plain `teq`, which implies
+`teqD`). `bind_prop_sorted_complete` takes and concludes `teqD`, because the
+record arm of the induction calls it on a field of a row that `unify_rD` has
+normalized, where `teqD` is what the hypothesis is. `rsat_reqD`, `rkok_reqD` and
+`sat_teqD` carry a sort and a kind across the conversion (`nfR`/`nfT` only drop
+absent entries, which no sort reads). `bind_prop_sorted_complete` also concludes
+`n <= n'` and `DOk D' n'`, which the next call needs and the old conclusion left
+to `bind_prop_sound`.
+
+**The occurs-under-present size lemma (`GoatCompleteOcc.v`).** `po S vt vr T`:
+a type variable satisfying `vt`, or a row variable satisfying `vr`, occurs in `T`
+with every entry above it present under `S` (its presence image is not `Bool`);
+`pos` is the same through at least one present entry. `po_size` and `pos_size`
+bound `rsz`/`tsz` of the image below by the size of the variable's image, and
+`nf_sz` says `nfT`/`nfR` leave `tsz`/`rsz` alone, so `bind_row_occ` and
+`bind_prop_occ` conclude `r notin frv_row R` and `a notin ftv_typ T` from the
+unifier (`reqD`/`teqD`) and the occurrence hypothesis. `bind_row_pres_complete`
+and `bind_prop_pres_complete` are the two theorems with the hypothesis in place
+of the stronger one. The lemma needs the entry to be present: `Maybe l p T (Var r)`
+with `p := Bool` is the blocked pair (ii), and `pos` is false of it.
+
+**Plain completeness on the closed fragment (`GoatCompleteUnifyPlain.v`).**
+`unify_t_complete` and `unify_r_complete`: the same fragment (`cp`, `crow`) and
+substitutions (`Res`) as `unify_complete_aux`, with `drop_abs` for `nfR D` and
+plain `teq`/`req` hypotheses. It is a copy of the induction with the function
+names changed (about 170 lines): the arms differ only in the row normalization,
+which is the identity on a closed row of fields. The group arm of `unify_tD` needs
+it for the payload, but does not follow from it alone: the `nfS` reduction of
+`unify_tD_complete` (the induction runs for `nfS D1 S`) does not give the payload
+call its plain hypothesis (`nfT` does not go inside a group, so `apT (nfS D1 S)
+(Grp w A)` is not `apT S (Grp w A)`). The induction has to carry `S` for the
+payload calls and `nfS D1 S` for the rest, or state the group case at `S`.
+
+**The induction on record-free types (`GoatCompleteRf.v`).**
+`unify_tD_rf_complete`: for types of base types, variables and arrows (`rf`), a
+substitution `Sg` with `KR D DT Sg` and `teqD DT (Sg T1) (Sg T2)`, `DOk D n` and
+every atom below the supply, `unify_tD` succeeds from some fuel on with `(s, D',
+n')`, and an `S2` with `Sem`: `KR D' DT S2`, `DOk D' n'`, `SI n n' s` (the supply
+grows, the images of the old variables are record-free over atoms below `n'`, no
+row variable moves), `teqD DT (Sg x) (S2 (s x))` for the old `x`, and `S2` agrees
+with `Sg` on the old row variables. Neither the occurs check nor the field
+condition is a hypothesis: with no entry in a type every occurrence is present
+(`rf_po`) and no field is absent. The measure is `tsz (apT Sg T1)`; the arrow case
+runs the second call at `(D1, n1, S2)` on `apT s1 B`, with the hypothesis from the
+factoring (`ap_factor_rf`) and the atoms and plainness from `SI`
+(`SI_comp` composes two steps). `bind_prop_SI` proves `SI` for `bind_prop` (with
+`push_sort_new`: a renamed type variable goes to itself or to an atom below the
+new supply). Not stated for `unify_t`: the arms are the same, and the copy is
+the same size as the one above.
+
+**What remains of 7.6.**
+
+1. *The row arms of the induction.* Add records to the induction above: the
+   fragment gains rows with variables and presence entries, `SI` gains the row
+   images (record and row-variable atoms below the supply, plain and locally
+   closed rows), and `Sem` is stated at `reqD` for rows. The four arms of
+   `unify_rD` call leaves that are proved: `bind_row_pres_complete` (either
+   side), `rewrite_row_complete` and `row_cancel` for the rewrite, with `S2 ∘ s1 ∘
+   sp ∘ s0` threaded. The measure is lexicographic: `rsz` counts no absent entry,
+   so the entry count breaks the tie at one. The fuel is `Stable`. The
+   hypotheses on `Sg` are the ones listed above, quantified as predicates on the
+   substitution at each leaf (`po`/`pos` for the occurs checks, `fld`/`frld` for
+   the field condition); they have to be carried to the recursive calls with the
+   new substitution `S2`, by `fld_pull` and an analogue for `po` that has not
+   been written.
+2. *Groups outside `mu`.* `unify_t_complete` exists for the closed fragment; the
+   group arm of `unify_tD` needs the induction to carry `S` beside `nfS D1 S`
+   (above), and the plain induction for rows with variables is a second copy of
+   item 1.
+3. *`unify_t` on the record-free fragment,* the copy of `GoatCompleteRf.v`.
 
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):
