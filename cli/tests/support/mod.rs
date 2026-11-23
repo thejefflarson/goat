@@ -25,6 +25,50 @@ pub fn uses_wamr() -> bool {
     module_path!().starts_with("wamr::") || std::env::var("GOAT_RUNTIME").as_deref() == Ok("wamr")
 }
 
+/// Whether `compiled` programs run on the native backend: `GOAT_RUNTIME=native`.
+pub fn uses_native() -> bool {
+    std::env::var("GOAT_RUNTIME").as_deref() == Ok("native")
+}
+
+/// What `src` prints and leaves allocated when built by the native backend, or
+/// `None` (after saying why on stderr) when the backend does not cover it yet or
+/// there is no clang, so the caller runs it on wasm instead.
+fn run_native(
+    profile: Profile,
+    src: &str,
+    host: &goat::HostInterface,
+) -> Option<(Vec<String>, u32)> {
+    if !goat_native::clang_available() {
+        eprintln!("native: skipped, clang is not available: {src:?}");
+        return None;
+    }
+    // The emitter recurses over the program, so a very deep one needs more
+    // stack than a test thread has.
+    let built = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(1 << 29)
+            .spawn_scoped(scope, || goat_native::build(profile, src, host))
+            .expect("a build thread")
+            .join()
+            .expect("the native build does not panic")
+    });
+    let library = match built {
+        Ok(library) => library,
+        Err(error) => match error.unsupported() {
+            Some(reason) => {
+                eprintln!("native: skipped, {reason}: {src:?}");
+                return None;
+            }
+            None => panic!("native build failed for {src:?}: {error}"),
+        },
+    };
+    let run = library.run(NoHost).expect("native program runs");
+    if let Err(stopped) = run.result {
+        panic!("native program trapped for {src:?}: {}", stopped.message);
+    }
+    Some((run.printed, run.live_allocs))
+}
+
 /// Run `wasm` under the runtime this suite is checking.
 pub fn execute(wasm: &[u8]) -> Result<goat_cli::Run, String> {
     if uses_wamr() {
@@ -116,8 +160,13 @@ pub fn compiled_with_prelude(prelude: &str, src: &str) -> (Vec<String>, u32) {
 }
 
 pub fn compiled_on(profile: Profile, prelude: &str, src: &str) -> (Vec<String>, u32) {
-    let (wasm, _) = goat::compile_for(profile, src, &goat::HostInterface::new(prelude))
-        .expect("program compiles");
+    let host = goat::HostInterface::new(prelude);
+    if uses_native()
+        && let Some(native) = run_native(profile, src, &host)
+    {
+        return native;
+    }
+    let (wasm, _) = goat::compile_for(profile, src, &host).expect("program compiles");
     let run = execute(&wasm).expect("wasm runs");
     (run.printed, run.live_allocs)
 }

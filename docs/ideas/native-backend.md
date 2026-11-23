@@ -158,6 +158,14 @@ the milestones.
   named one-to-one after the wasm imports, so the test driver plugs in the
   existing Rust `Host` implementations. User `foreign "c"` declarations become
   direct calls later.
+  **Layout (v1).** `goat_host` is `{ u32 version, then one function pointer
+  per name in goat_llvm::HOST_FUNCTIONS }`; every entry takes the `ctx` the
+  export received first, a string is a pointer and a `u64` byte length, and a
+  frame (`scene_frame`) is the bytes of `mir/src/frame.rs`. `goat_instance` is
+  `{ u32 version, live, depth, site_start, site_end; ptr heap; u64 heap_size;
+  ptr host, ctx; [8 x u64] spill }`, laid out as C does. `goat_main(host, ctx,
+  inst) -> i32` returns 1 or 2 when the table or the instance is older than the
+  code. `goat_native` mirrors both and a test compares offsets with clang's.
 - **D4. Tail calls.** On every target, a self tail call becomes a loop (a direct
   call to the same function, or a closure calling itself through its own `env`),
   and a group of mutually recursive functions joined by direct tail calls merges
