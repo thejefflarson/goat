@@ -1,7 +1,7 @@
 (* What algorithm W needs to be sound at a recursive group (GoatInfer.v,
    [e_letrec]): the group is inferred with its name bound monomorphically to a
    row of fresh variables, the members' types are unified with those variables
-   one by one ([unify_pw]), and the group's name is generalized for the body.
+   one by one ([unify_grp]), and the group's name is generalized for the body.
    These lemmas carry a derivation of the members across the unifier, across
    the renaming that generalizes, and across the name the body opens with. *)
 
@@ -59,31 +59,6 @@ Proof.
   - apply FT_nil. assumption.
   - eapply FT_cons; [ eapply T_Conv; eauto | eauto ].
   - eapply FT_meth; [ eapply T_Conv; eauto | eauto ].
-Qed.
-
-Lemma unify_pw_sound : forall f D R1 R2 n s n',
-  unify_pw f D R1 R2 n = Some (s, n') -> EvR R1 -> EvR R2 ->
-  OkS s /\ pw_teq (apR s R1) (apR s R2) /\ kres D D (sT s) /\ n <= n'.
-Proof.
-  induction f as [|f IH]; intros D R1 R2 n s n' H H1 H2; [discriminate|].
-  cbn [unify_pw] in H.
-  destruct R1 as [|r|l T R1'|lm Pm Tm Rm]; destruct R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2]; try discriminate H.
-  - inversion H; subst.
-    split; [apply OkS_id | split; [rewrite apR_id; apply pw_nil | split; [ exact (kres_id D) | lia ]]].
-  - destruct (Nat.eqb l l2) eqn:Hl; [|discriminate].
-    apply Nat.eqb_eq in Hl; subst l2.
-    destruct (unify_t f D T T2 n) as [[s1 n1]|] eqn:E1; [|discriminate].
-    destruct (unify_pw f D (apR s1 R1') (apR s1 R2') n1) as [[s2 n2]|] eqn:E2; [|discriminate].
-    inversion H; subst; clear H.
-    destruct (EvR_ext_inv _ _ _ H1) as [HT HR1].
-    destruct (EvR_ext_inv _ _ _ H2) as [HT2 HR2].
-    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E1 HT HT2) as (Hs1 & Hteq & Hk1 & Hl1).
-    destruct (IH _ _ _ _ _ _ E2 (EvR_ap s1 _ Hs1 HR1) (EvR_ap s1 _ Hs1 HR2)) as (Hs2 & Hpw & Hk2 & Hl2).
-    split; [ apply OkS_comp; assumption | ].
-    split.
-    { rewrite !apR_Ext. rewrite <- !apT_comp, <- !apR_comp.
-      apply pw_cons; [ apply teq_apT; exact Hteq | exact Hpw ]. }
-    split; [ exact (kres_scomp D D D s1 s2 Hk1 Hk2) | lia ].
 Qed.
 
 (* ---- members under a substitution ---- *)
