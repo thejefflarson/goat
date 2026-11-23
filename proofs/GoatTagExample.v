@@ -147,13 +147,16 @@ Proof.
   all: comp_close.
 Qed.
 
+Lemma shapes_accepted : Forall Accepted shapes_ts.
+Proof. acc_all. Qed.
+
 (* T1 applies to it, with the table the declaration builds. *)
 Example shapes_denotes_lc : forall var_of,
   exists t e, shapes_ts = [t] /\ Den_goat var_of [] t e /\ lc_exp e /\ lc e.
 Proof.
   intros var_of.
-  exact (parse_denotes_lc var_of [] shapes shapes_ts [] shapes_parse
-           shapes_core shapes_complete shapes_known).
+  exact (parse_denotes_accepted var_of [] shapes shapes_ts [] shapes_parse
+           shapes_core shapes_complete shapes_known shapes_accepted).
 Qed.
 
 (* `tag A = Ping` and `tag B = Pong` have one shape and are two groups. *)

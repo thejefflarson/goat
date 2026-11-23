@@ -22,7 +22,7 @@ const RULES: &[(&str, Class)] = &[
     ("group_name", Core("e_con")),
     ("tag_case", Core("e_con")),
     ("expr", Core("e")),
-    ("sequel", Outside),
+    ("sequel", Core("e_let")),
     ("_part", Core("e_letrec")),
     ("_statement", Core("e")),
     ("_more_math", Core("e_bin")),

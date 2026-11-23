@@ -154,20 +154,12 @@ Proof.
   repeat first
     [ apply Forall_nil | apply Forall_cons | apply Cp_leaf | apply Cp_node ];
     simpl; try exact I.
-  - (* the program has an expression *) eexists. in_list.
-  - (* the block does not end in a binding; its one
-       function binding leads *)
-    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
-  - (* the function has parameters and a body *)
-    split; eexists; in_list.
-  - (* the parameter is a name, not a record pattern *)
-    intros c Hc; discriminate Hc.
-  - (* the body is a single name *)
-    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
-  - (* the call has arguments *) eexists. in_list.
-  - (* the argument is a single number *)
-    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
+  (* the parameter is a name, not a record pattern *)
+  intros c Hc; discriminate Hc.
 Qed.
+
+Lemma application_accepted : Forall Accepted [application_tree].
+Proof. acc_all. Qed.
 
 (* T1 applies to a concrete program: f = program(y) do y done  f(1). *)
 Example application_denotes_lc : forall var_of,
@@ -175,8 +167,8 @@ Example application_denotes_lc : forall var_of,
     [application_tree] = [t] /\ Den_goat var_of [] t e /\ lc_exp e /\ lc e.
 Proof.
   intros var_of.
-  exact (parse_denotes_lc var_of [] application [application_tree] []
-           application_parses application_core application_complete application_known).
+  exact (parse_denotes_accepted var_of [] application [application_tree] []
+           application_parses application_core application_complete application_known application_accepted).
 Qed.
 
 (* A dot call on a variable passes the variable first: x.f(1) is (x.f)(x, 1). *)
@@ -288,14 +280,17 @@ Proof.
     | solve [ in_list ] ].
 Qed.
 
+Lemma conditional_accepted : Forall Accepted [conditional_tree].
+Proof. acc_all. Qed.
+
 (* T1 applies to the conditional program. *)
 Example conditional_denotes_lc : forall var_of,
   exists t e,
     [conditional_tree] = [t] /\ Den_goat var_of [] t e /\ lc_exp e /\ lc e.
 Proof.
   intros var_of.
-  exact (parse_denotes_lc var_of [] conditional_program [conditional_tree] []
-           conditional_parses conditional_core conditional_complete conditional_known).
+  exact (parse_denotes_accepted var_of [] conditional_program [conditional_tree] []
+           conditional_parses conditional_core conditional_complete conditional_known conditional_accepted).
 Qed.
 
 (* The operation denotes the term with the operator the tree names. *)
@@ -381,13 +376,16 @@ Proof.
     | solve [ intros c Hc; discriminate Hc ] ].
 Qed.
 
+Lemma countdown_accepted : Forall Accepted [countdown_tree].
+Proof. acc_all. Qed.
+
 Example countdown_denotes_lc : forall var_of,
   exists t e,
     [countdown_tree] = [t] /\ Den_goat var_of [] t e /\ lc_exp e /\ lc e.
 Proof.
   intros var_of.
-  exact (parse_denotes_lc var_of [] countdown_program [countdown_tree] []
-           countdown_parses countdown_core countdown_complete countdown_known).
+  exact (parse_denotes_accepted var_of [] countdown_program [countdown_tree] []
+           countdown_parses countdown_core countdown_complete countdown_known countdown_accepted).
 Qed.
 
 Section CountdownDenotation.
@@ -452,15 +450,13 @@ Section CountdownDenotation.
                 (bind_group [c] (e_app (e_fvar_f c) (e_num 2)))).
   Proof.
     apply expr_of_block.
-    change (countdown_decl :: countdown_rest) with ([countdown_decl] ++ countdown_rest).
-    apply (DB_group var_of [] [countdown_decl] ["countdown"] [curry [n] inner]
-             countdown_rest (e_app (e_fvar_f c) (e_num 2))).
-    - apply DDs_cons with (x := "countdown") (v := curry [n] inner).
-      + exact countdown_member_den.
-      + reflexivity.
-      + apply DDs_nil.
-    - discriminate.
-    - unfold countdown_rest. apply DB_chain. apply DM_chain.
+    apply (DB_top var_of [] (countdown_decl :: countdown_rest) ["countdown"] [curry [n] inner]
+             (e_app (e_fvar_f c) (e_num 2))).
+    eapply DK_hoist.
+    - exact countdown_member_den.
+    - reflexivity.
+    - reflexivity.
+    - unfold countdown_rest. apply DK_chain. apply DM_chain.
       eapply DC_head; [ apply name_of | ].
       eapply DP_call with (es := [e_num 2]); [ | apply DP_nil ].
       apply DA_last. apply expr_of. apply DM_chain. apply chain1. apply (number_of 2).
@@ -487,8 +483,8 @@ Example countdown_denotes_the_group : forall var_of,
   Den_goat var_of [] countdown_tree countdown.
 Proof.
   intros var_of Hne. unfold Den_goat.
-  exists [], (countdown_decl :: countdown_rest).
-  split; [ reflexivity | split; [ apply Forall_nil | ] ].
+  exists [], [Node R_expr (countdown_decl :: countdown_rest)].
+  split; [ reflexivity | split; [ apply Forall_nil | apply DBo_some ] ].
   assert (Hlabels : labels countdown_tree = []) by (vm_compute; reflexivity).
   rewrite Hlabels.
   rewrite <- (countdown_group_is_the_phase_2_term var_of Hne).
@@ -577,17 +573,18 @@ Proof.
   repeat first
     [ apply Forall_nil | apply Forall_cons | apply Cp_leaf | apply Cp_node ];
     simpl; try exact I.
-  - eexists. in_list.
-  - split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
 Qed.
+
+Lemma run_accepted : Forall Accepted [run_tree].
+Proof. acc_all. Qed.
 
 Example run_denotes_lc : forall var_of,
   exists t e,
     [run_tree] = [t] /\ Den_goat var_of [] t e /\ lc_exp e /\ lc e.
 Proof.
   intros var_of.
-  exact (parse_denotes_lc var_of [] run_program [run_tree] []
-           run_parses run_core run_complete run_known).
+  exact (parse_denotes_accepted var_of [] run_program [run_tree] []
+           run_parses run_core run_complete run_known run_accepted).
 Qed.
 
 (* The run resolves by precedence: multiplication nests inside the sum, the sum

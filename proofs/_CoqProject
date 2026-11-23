@@ -53,6 +53,7 @@ GoatParse.v
 GoatExample.v
 GoatTagExample.v
 GoatLoopExample.v
+GoatBlockExample.v
 GoatLex.v
 GoatLexSpec.v
 GoatLexBarrier.v

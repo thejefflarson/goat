@@ -219,6 +219,18 @@ Proof.
     simpl. eapply DP_call; [ eassumption | ].
     apply IHDen_posts; [ exact Hp | ].
     intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ Hend)).
+  - (* call with no arguments *)
+    simpl. apply DP_call_unit.
+    apply IHDen_posts; [ exact Hp | ].
+    intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ Hend)).
+  - (* dot call on a path, no other arguments *)
+    simpl. apply DP_dot_path_unit; [ assumption | ].
+    apply IHDen_posts; [ exact Hp | ].
+    intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ (ends_cons _ _ Hend))).
+  - (* dot call on another receiver, no other arguments *)
+    simpl. eapply DP_dot_bind_unit; [ eassumption | ].
+    apply IHDen_posts; [ exact Hp | ].
+    intros Hstarts Hend. exact (Hcall Hstarts (ends_cons _ _ (ends_cons _ _ Hend))).
 Qed.
 
 Lemma den_chain_snoc : forall var_of tbl cs e0 post e',
@@ -235,6 +247,7 @@ Proof.
     intros Hstarts Hend.
     exact (Hcall Hstarts (ends_cons _ _ (ends_cons _ _ (ends_cons _ _ Hend)))).
   - (* a tag: the printer's table has none *) discriminate.
+  - discriminate.
   - discriminate.
 Qed.
 
@@ -277,12 +290,12 @@ Qed.
 
 Lemma den_pack : forall var_of tbl P e x,
   Den_chain var_of tbl (block P e) x ->
-  Den_block var_of tbl (block P e) x /\
+  BlkG var_of tbl (block P e) x /\
   (NonLet e -> Den_math var_of tbl (block P e) x) /\
   (NonLet e -> bin_end e = false -> Den_chain var_of tbl (block P e) x).
 Proof.
   intros var_of tbl P e x H. repeat split.
-  - apply DB_chain. apply DM_chain. exact H.
+  - intros ctx fin. apply DK_chain. apply DM_chain. exact H.
   - intros _. apply DM_chain. exact H.
   - intros _ _. exact H.
 Qed.
@@ -292,10 +305,10 @@ Lemma den_chain_single : forall var_of tbl t e,
 Proof. intros var_of tbl t e H. eapply DC_head; [ exact H | apply DP_nil ]. Qed.
 
 Lemma den_chain_paren : forall var_of tbl b e,
-  Den_block var_of tbl b e -> Den_chain var_of tbl (paren_kids b) e.
+  BlkG var_of tbl b e -> Den_chain var_of tbl (paren_kids b) e.
 Proof.
   intros var_of tbl b e H. unfold paren_kids.
-  eapply DC_paren; [ apply D_expr; exact H | apply DP_nil ].
+  eapply DC_paren; [ apply D_expr_g; exact H | apply DP_nil ].
 Qed.
 
 (* A printed binding's value is never a bare function literal, so the binding is
@@ -340,7 +353,7 @@ Qed.
 
 Lemma print_den : forall var_of tbl, names_distinct var_of ->
   (forall e P, scoped P e -> LabelsOK tbl (lbls e) ->
-     Den_block var_of tbl (block P e) (inst var_of P e) /\
+     BlkG var_of tbl (block P e) (inst var_of P e) /\
      (NonLet e -> Den_math var_of tbl (block P e) (inst var_of P e)) /\
      (NonLet e -> bin_end e = false -> Den_chain var_of tbl (block P e) (inst var_of P e))) /\
   (forall fs P, scoped_fields P fs -> LabelsOK tbl (lbls_fields fs) ->
@@ -381,7 +394,7 @@ Proof.
                      (curry [var_of (nm P)] (inst var_of (S P) b))).
     { unfold function_tree. eapply D_function with (xs := [nm P]).
       - apply DPa_one.
-      - apply D_expr. exact Hblock. }
+      - apply D_expr_g. exact Hblock. }
     assert (Hcurry : curry [var_of (nm P)] (inst var_of (S P) b)
                      = inst var_of P (e_abs b)).
     { simpl. rewrite (close_inst_exp var_of P b Hdist Hs). reflexivity. }
@@ -397,7 +410,7 @@ Proof.
     { destruct f; cbn [as_callee as_operand];
         first [ apply den_chain_paren; exact Hbf | exact (Hcf I eq_refl) ]. }
     assert (Hchain : Den_chain var_of tbl (block P (e_app f a)) (inst var_of P (e_app f a))).
-    { exact (den_chain_call var_of tbl _ _ _ _ Hop (D_expr _ _ _ _ Hba)
+    { exact (den_chain_call var_of tbl _ _ _ _ Hop (D_expr_g _ _ _ _ Hba)
                (callee_not_access P f)). }
     apply den_pack; exact Hchain.
   - (* binding *)
@@ -415,7 +428,7 @@ Proof.
                    = e_let (inst var_of P v) (close_exp (var_of (nm P)) (inst var_of (S P) b))).
     { unfold inst at 1. simpl. rewrite (close_inst_exp var_of P b Hdist Hb). reflexivity. }
     rewrite Hlet. cbn [block].
-    eapply DB_decl; [ exact Hdecl | apply value_not_fn | exact Hbb ].
+    intros ctx fin. eapply DK_value; [ exact Hdecl | apply value_not_fn | exact (Hbb _ _) ].
   - (* recursive group: not a term of the printed fragment *)
     intros fs IHfs b IHb P Hs. destruct Hs.
   - (* record *)
@@ -451,7 +464,7 @@ Proof.
     destruct (block_ite_cases P c a b) as [(-> & E) | (Hne & E)]; rewrite E.
     + assert (Hcond : Den var_of tbl (cond_tree_noelse (block P c) (block P a))
                         (e_ite (inst var_of P c) (inst var_of P a) e_unit)).
-      { unfold cond_tree_noelse. apply D_cond_noelse; apply D_expr; assumption. }
+      { unfold cond_tree_noelse. apply D_cond_noelse; apply D_expr_g; assumption. }
       assert (Hchain : Den_chain var_of tbl [cond_tree_noelse (block P c) (block P a)]
                          (e_ite (inst var_of P c) (inst var_of P a) e_unit))
         by (apply den_chain_single; exact Hcond).
@@ -461,7 +474,7 @@ Proof.
       destruct (IHb P Hb (labelsok_app_r _ _ _ (labelsok_app_r _ _ _ Hl))) as [Hbb _].
       assert (Hcond : Den var_of tbl (cond_tree (block P c) (block P a) (block P b))
                         (e_ite (inst var_of P c) (inst var_of P a) (inst var_of P b))).
-      { unfold cond_tree. apply D_cond; apply D_expr; assumption. }
+      { unfold cond_tree. apply D_cond; apply D_expr_g; assumption. }
       assert (Hchain : Den_chain var_of tbl [cond_tree (block P c) (block P a) (block P b)]
                          (e_ite (inst var_of P c) (inst var_of P a) (inst var_of P b)))
         by (apply den_chain_single; exact Hcond).
@@ -479,7 +492,7 @@ Proof.
         first [ apply den_chain_paren; exact Hbb | exact (Hcb I eq_refl) ]. }
     assert (Hmath : Den_math var_of tbl (block P (e_bin a o b)) (inst var_of P (e_bin a o b))).
     { cbn [block]. exact (DM_bin var_of tbl _ _ o _ _ H1 H2). }
-    split; [ apply DB_chain; exact Hmath
+    split; [ intros ctx fin; apply DK_chain; exact Hmath
            | split; [ intros _; exact Hmath | intros _ Hx; discriminate Hx ] ].
   - (* coercion: not a term of the printed fragment *)
     intros a IH P Hs Hl. destruct Hs.
@@ -497,9 +510,9 @@ Proof.
     destruct (IHa P Ha Hla) as [Hbase _].
     destruct (IHb P Hb Hlb) as [Hbv _].
     assert (Hbasep : Den var_of tbl (Node R_expr (paren_kids (block P a))) (inst var_of P a))
-      by (apply D_expr; apply DB_chain; apply DM_chain; apply den_chain_paren; exact Hbase).
+      by (apply D_expr_g; intros ctx fin; apply DK_chain; apply DM_chain; apply den_chain_paren; exact Hbase).
     assert (Hfield : Den_field var_of tbl (field_tree l (block P b)) (lname l) (inst var_of P b)).
-    { unfold field_tree. apply DF. apply D_expr. exact Hbv. }
+    { unfold field_tree. apply DF. apply D_expr_g. exact Hbv. }
     assert (Hsep : Den_sep var_of tbl [sym ","; field_tree l (block P b); sym "}"]
                      (fs_cons (lab tbl (lname l)) (inst var_of P b) fs_nil)).
     { apply DS_more. exact (DI_field var_of tbl _ _ _ _ _ Hfield (DS_end var_of tbl)). }
@@ -531,7 +544,7 @@ Proof.
     destruct (IHe P He Hle) as [Hbe _].
     destruct (IHrest P Hrest Hlrest) as [Hitems Hsep].
     assert (Hfield : Den_field var_of tbl (field_tree l (block P e)) (lname l) (inst var_of P e)).
-    { unfold field_tree. apply DF. apply D_expr. exact Hbe. }
+    { unfold field_tree. apply DF. apply D_expr_g. exact Hbe. }
     assert (Hitems' : Den_items var_of tbl
                         (field_trees P (fs_cons l e rest) ++ [sym "}"])
                         (inst_fields var_of 0 P (fs_cons l e rest))).
