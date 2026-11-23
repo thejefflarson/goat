@@ -76,7 +76,7 @@ const RULES: &[(&str, Class)] = &[
     ("infer_type", Core("e_con")),
     ("destructure", Core("e_let|e_proj|e_restrict")),
     ("record_pattern", Core("e_let|e_proj")),
-    ("list_pattern", Outside),
+    ("list_pattern", Core("e_let|e_match")),
     ("rest_binding", Core("e_restrict")),
     ("function", Core("e_abs")),
     ("params", Core("e_abs")),

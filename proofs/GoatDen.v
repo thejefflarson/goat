@@ -765,6 +765,460 @@ Definition last_name (xs : list string) (ro : option string) : string :=
   | None => List.last xs ""
   end.
 
+(* ---- list patterns: the decision tree of [Empty] and [Link] matches ---- *)
+
+(* One arm of a list match: the names it takes from the front, the name for
+   what follows them if there is one, and what runs once it has matched. *)
+Record lrow := { lr_items : list string; lr_rest : option string; lr_body : exp }.
+
+(* How far an arm has matched on the way down the tree: the variables its
+   leading items were read from, and the variable the list after them is. *)
+Record lprog := { lp_row : lrow; lp_bound : list termvar; lp_from : termvar }.
+
+(* A parameter of a function: a name, or a list pattern unpacked from a fresh
+   variable. *)
+Inductive lp : Set :=
+  | LP_name : string -> lp
+  | LP_list : termvar -> list string -> option string -> lp.
+
+(* What lowering's trap is to the calculus: a term of every type that never
+   returns. *)
+Definition diverge : exp :=
+  e_letrec (fs_cons 0 (e_abs (e_app (e_proj (e_fvar_b 1) 0) (e_fvar_b 0))) fs_nil)
+           (e_app (e_proj (e_fvar_b 0) 0) e_unit).
+
+Lemma lc_diverge : lc diverge.
+Proof. unfold lc, diverge. simpl. repeat split; lia. Qed.
+
+Definition lr_fv (rows : list lrow) : atoms :=
+  fold_right (fun r acc => fv_exp (lr_body r) `union` acc) empty rows.
+
+Definition lr_names (rows : list lrow) : list string :=
+  flat_map (fun r => (lr_items r ++ match lr_rest r with Some n => [n] | None => [] end)%list) rows.
+
+Definition lr_longest (rows : list lrow) : nat :=
+  fold_right (fun r acc => Nat.max (length (lr_items r)) acc) 0 rows.
+
+Definition opt_fv (o : option exp) : atoms :=
+  match o with Some e => fv_exp e | None => empty end.
+
+(* Fresh names a tree draws on: distinct, and none among the atoms [a] the
+   parts it wraps already use. *)
+Definition fresh_apart (a : atoms) (ns : list termvar) : Prop :=
+  NoDup ns /\ forall n, List.In n ns -> ~ AtomSetImpl.In n a.
+
+Lemma exists_fresh : forall (a : atoms) (k : nat),
+  exists ns, length ns = k /\ fresh_apart a ns.
+Proof.
+  intros a k. induction k as [| k (ns & Hlen & Hnodup & Hns)].
+  - exists []. split; [ reflexivity | split; [ apply NoDup_nil | intros n [] ] ].
+  - destruct (atom_fresh (a `union` atoms_of ns)) as [n Hn].
+    exists (n :: ns). split; [ simpl; rewrite Hlen; reflexivity | ].
+    split.
+    + apply NoDup_cons; [ | exact Hnodup ].
+      intros Hin. apply Hn. apply in_atoms_of in Hin. fsetdec.
+    + intros m [<- | Hm].
+      * intros Hin. apply Hn. fsetdec.
+      * exact (Hns m Hm).
+Qed.
+
+Definition grp_eqb (a b : gdecl) : bool :=
+  if list_eq_dec Nat.eq_dec (fst a) (fst b) then
+    if list_eq_dec (list_eq_dec Nat.eq_dec) (snd a) (snd b) then true else false
+  else false.
+
+(* A list literal [a, b] is [Link(a, Link(b, Empty))] (or the same tags written
+   out): its items, when the term is one. *)
+Fixpoint lit_items (w : gdecl) (tge tgl : nat) (e : exp) {struct e} : option (list exp) :=
+  match e with
+  | e_con w' tg e0 =>
+      if grp_eqb w w' then
+        if Nat.eqb tg tge then match e0 with e_unit => Some [] | _ => None end
+        else if Nat.eqb tg tgl then
+          match e0 with
+          | e_rec (fs_cons 0 x (fs_cons 1 tl fs_nil)) =>
+              match lit_items w tge tgl tl with Some es => Some (x :: es) | None => None end
+          | _ => None
+          end
+        else None
+      else None
+  | _ => None
+  end.
+
+Lemma lc_lit_items : forall w tge tgl e es,
+  lit_items w tge tgl e = Some es -> lc e -> Forall lc es.
+Proof.
+  intros w tge tgl. fix IH 1. intros e es H Hlc.
+  destruct e; simpl in H; try discriminate H.
+  destruct (grp_eqb w w0); [ | discriminate H ].
+  destruct (Nat.eqb tg tge).
+  - destruct e; try discriminate H. injection H as <-. apply Forall_nil.
+  - destruct (Nat.eqb tg tgl); [ | discriminate H ].
+    destruct e; try discriminate H.
+    destruct fs as [| l x fs1 | l x fs1]; try discriminate H.
+    destruct l as [| [| l]]; try discriminate H.
+    destruct fs1 as [| l1 tl fs2 | l1 tl fs2]; try discriminate H.
+    destruct l1 as [| [| l1]]; try discriminate H.
+    destruct fs2; try discriminate H.
+    destruct (lit_items w tge tgl tl) as [es1 | ] eqn:Htl; [ | discriminate H ].
+    injection H as <-. destruct Hlc as [Hx [Htl' _]].
+    apply Forall_cons; [ exact Hx | exact (IH tl es1 Htl Htl') ].
+Qed.
+
+(* The items of a literal fit a pattern that takes [k] of them, and for a
+   pattern with a rest name, any more. *)
+Definition fits_b (n k : nat) (has_rest : bool) : bool :=
+  Nat.eqb n k || (has_rest && Nat.leb k n).
+
+Definition has_rest (ro : option string) : bool :=
+  match ro with Some _ => true | None => false end.
+
+Section ListTree.
+
+  Variable var_of : string -> termvar.
+
+  Definition lp_done (p : lprog) : bool :=
+    Nat.eqb (length (lp_bound p)) (length (lr_items (lp_row p))).
+
+  Definition lp_catch_all (p : lprog) : bool :=
+    lp_done p && has_rest (lr_rest (lp_row p)).
+
+  (* An arm's body, with the names its pattern bound read off the list nodes
+     the tree took apart to reach it. *)
+  Definition lp_leaf (p : lprog) : exp :=
+    let r := lp_row p in
+    fold_right
+      (fun nf acc => e_let (e_fvar_f (snd nf)) (close_exp (var_of (fst nf)) acc))
+      (lr_body r)
+      (List.combine (lr_items r) (lp_bound p)
+         ++ match lr_rest r with Some n => [(n, lp_from p)] | None => [] end)%list.
+
+  (* A [Link] arm binds its payload to [sp], and the item and the rest to the
+     payload's two slots. *)
+  Definition link_bind (sp h t : termvar) (body : exp) : exp :=
+    close_exp sp
+      (e_let (e_proj (e_fvar_f sp) 0)
+         (close_exp h (e_let (e_proj (e_fvar_f sp) 1) (close_exp t body)))).
+
+  (* What an arm that has matched its items goes on with below a [Link]. *)
+  Definition lp_deeper (h t : termvar) (p : lprog) : list lprog :=
+    if lp_done p then
+      (if has_rest (lr_rest (lp_row p)) then [p] else [])
+    else [{| lp_row := lp_row p; lp_bound := (lp_bound p ++ [h])%list; lp_from := t |}].
+
+  Definition tail_arms (other : option exp) : arms :=
+    match other with Some o => arms_else o | None => arms_nil end.
+
+  (* The match on [scr] for the arms in [live], tried in order, as nested
+     matches on [Empty] and [Link]; [fs] holds three fresh names for each [Link]
+     level (the payload, the item, the rest). A match with fewer than two arms
+     takes [other] as its [else]. *)
+  Fixpoint ltree (w : gdecl) (tge tgl : nat) (other : option exp) (fs : list termvar)
+    (scr : exp) (live : list lprog) {struct fs} : option exp :=
+    match live with
+    | [] => None
+    | first :: _ =>
+        if lp_catch_all first then Some (lp_leaf first)
+        else
+          let empty := match find lp_done live with Some p => Some (lp_leaf p) | None => None end in
+          let link :=
+            match fs with
+            | sp :: h :: t :: fs' =>
+                match ltree w tge tgl other fs' (e_fvar_f t) (flat_map (lp_deeper h t) live) with
+                | Some body => Some (link_bind sp h t body)
+                | None => None
+                end
+            | _ => None
+            end in
+          match empty, link with
+          | Some eb, Some lb =>
+              Some (e_match w scr (arms_cons tge eb (arms_cons tgl lb arms_nil)))
+          | Some eb, None => Some (e_match w scr (arms_cons tge eb (tail_arms other)))
+          | None, Some lb => Some (e_match w scr (arms_cons tgl lb (tail_arms other)))
+          | None, None => None
+          end
+    end.
+
+  Definition ltree_or_unit (w : gdecl) (tge tgl : nat) (other : option exp) (fs : list termvar)
+    (scr : exp) (rows : list lrow) (src : termvar) : exp :=
+    match ltree w tge tgl other fs scr
+            (List.map (fun r => {| lp_row := r; lp_bound := []; lp_from := src |}) rows) with
+    | Some e => e
+    | None => e_unit
+    end.
+
+  (* A [...rest] with no items before it names the scrutinee itself, so a
+     scrutinee that is not a variable is bound first. *)
+  Definition needs_name (rows : list lrow) : bool :=
+    existsb (fun r => match lr_items r, lr_rest r with [], Some _ => true | _, _ => false end) rows.
+
+  Definition lmatch (w : gdecl) (tge tgl : nat) (other : option exp) (fs : list termvar)
+    (rows : list lrow) (scr : exp) (s : termvar) : exp :=
+    match scr with
+    | e_fvar_f x => ltree_or_unit w tge tgl other fs scr rows x
+    | _ =>
+        if needs_name rows
+        then e_let scr (close_exp s (ltree_or_unit w tge tgl other fs (e_fvar_f s) rows s))
+        else ltree_or_unit w tge tgl other fs scr rows s
+    end.
+
+  Lemma lc_lp_leaf : forall p, lc (lr_body (lp_row p)) -> lc (lp_leaf p).
+  Proof.
+    intros p Hb. unfold lp_leaf.
+    generalize (List.combine (lr_items (lp_row p)) (lp_bound p)
+                  ++ match lr_rest (lp_row p) with Some n => [(n, lp_from p)] | None => [] end)%list as l.
+    intros l. induction l as [| [n f] l IH]; simpl; [ exact Hb | ].
+    assert (Hclose : lc_at 1 (close_exp (var_of n)
+              (fold_right (fun nf acc => e_let (e_fvar_f (snd nf)) (close_exp (var_of (fst nf)) acc))
+                          (lr_body (lp_row p)) l)))
+      by (apply (proj1 lc_close_mut); exact IH).
+    exact (conj I Hclose).
+  Qed.
+
+  Lemma lc_link_bind : forall sp h t body, lc body -> lc_at 1 (link_bind sp h t body).
+  Proof.
+    intros sp h t body Hbody. unfold link_bind.
+    assert (H1 : lc_at 1 (close_exp t body)) by (apply (proj1 lc_close_mut); exact Hbody).
+    assert (Hy : lc (e_let (e_proj (e_fvar_f sp) 1) (close_exp t body))) by exact (conj I H1).
+    assert (H2 : lc_at 1 (close_exp h (e_let (e_proj (e_fvar_f sp) 1) (close_exp t body))))
+      by (apply (proj1 lc_close_mut); exact Hy).
+    assert (Hx : lc (e_let (e_proj (e_fvar_f sp) 0)
+                       (close_exp h (e_let (e_proj (e_fvar_f sp) 1) (close_exp t body)))))
+      by exact (conj I H2).
+    apply (proj1 lc_close_mut). exact Hx.
+  Qed.
+
+  Lemma lc_tail_arms : forall other, (forall o, other = Some o -> lc o) -> lca (tail_arms other).
+  Proof.
+    intros other H. destruct other as [o | ]; simpl; [ exact (H o eq_refl) | exact I ].
+  Qed.
+
+  Lemma ltree_eq : forall w tge tgl other fs scr live,
+    ltree w tge tgl other fs scr live =
+    match live with
+    | [] => None
+    | first :: _ =>
+        if lp_catch_all first then Some (lp_leaf first)
+        else
+          let empty := match find lp_done live with Some p => Some (lp_leaf p) | None => None end in
+          let link :=
+            match fs with
+            | sp :: h :: t :: fs' =>
+                match ltree w tge tgl other fs' (e_fvar_f t) (flat_map (lp_deeper h t) live) with
+                | Some body => Some (link_bind sp h t body)
+                | None => None
+                end
+            | _ => None
+            end in
+          match empty, link with
+          | Some eb, Some lb =>
+              Some (e_match w scr (arms_cons tge eb (arms_cons tgl lb arms_nil)))
+          | Some eb, None => Some (e_match w scr (arms_cons tge eb (tail_arms other)))
+          | None, Some lb => Some (e_match w scr (arms_cons tgl lb (tail_arms other)))
+          | None, None => None
+          end
+    end.
+  Proof. intros. destruct fs as [| a [| b [| c fs']]]; reflexivity. Qed.
+
+  Lemma lc_ltree : forall n w tge tgl other fs scr live e,
+    length fs <= n ->
+    lc scr -> Forall (fun p => lc (lr_body (lp_row p))) live ->
+    (forall o, other = Some o -> lc o) ->
+    ltree w tge tgl other fs scr live = Some e -> lc e.
+  Proof.
+    induction n as [| n IH]; intros w tge tgl other fs scr live e Hlen Hscr Hlive Hother H.
+    - destruct fs as [| a fs]; [ | simpl in Hlen; lia ].
+      rewrite ltree_eq in H. destruct live as [| first rest]; [ discriminate H | ].
+      destruct (lp_catch_all first).
+      + injection H as <-. inversion Hlive; subst. apply lc_lp_leaf. assumption.
+      + destruct (find lp_done (first :: rest)) as [p | ] eqn:Hfind;
+          cbn in H; [ | discriminate H ].
+        injection H as <-. apply find_some in Hfind as [Hin _].
+        rewrite Forall_forall in Hlive. specialize (Hlive p Hin).
+        exact (conj Hscr (conj (lc_at_mono _ 0 1 (Nat.le_0_l 1) (lc_lp_leaf p Hlive)) (lc_tail_arms other Hother))).
+    - rewrite ltree_eq in H. destruct live as [| first rest]; [ discriminate H | ].
+      destruct (lp_catch_all first) eqn:Hcatch.
+      + injection H as <-. inversion Hlive; subst. apply lc_lp_leaf. assumption.
+      + set (live := first :: rest) in *.
+        assert (Hempty : forall eb,
+                  (match find lp_done live with Some p => Some (lp_leaf p) | None => None end)
+                    = Some eb -> lc_at 1 eb).
+        { intros eb He. destruct (find lp_done live) as [p | ] eqn:Hfind; [ | discriminate He ].
+          injection He as <-. apply find_some in Hfind as [Hin _].
+          rewrite Forall_forall in Hlive.
+          exact (lc_at_mono _ 0 1 (Nat.le_0_l 1) (lc_lp_leaf p (Hlive p Hin))). }
+        assert (Hlink : forall lb,
+                  (match fs with
+                   | sp :: h :: t :: fs' =>
+                       match ltree w tge tgl other fs' (e_fvar_f t) (flat_map (lp_deeper h t) live) with
+                       | Some body => Some (link_bind sp h t body)
+                       | None => None
+                       end
+                   | _ => None
+                   end) = Some lb -> lc_at 1 lb).
+        { intros lb Hl. destruct fs as [| sp [| h [| t fs']]]; try discriminate Hl.
+          destruct (ltree w tge tgl other fs' (e_fvar_f t) (flat_map (lp_deeper h t) live))
+            as [body | ] eqn:Hbody; [ | discriminate Hl ].
+          injection Hl as <-. apply lc_link_bind.
+          refine (IH w tge tgl other fs' (e_fvar_f t) _ body _ I _ Hother Hbody).
+          - simpl in Hlen. lia.
+          - rewrite Forall_forall. intros q Hq. apply in_flat_map in Hq as (p & Hp & Hq).
+            rewrite Forall_forall in Hlive. specialize (Hlive p Hp).
+            unfold lp_deeper in Hq. destruct (lp_done p).
+            + destruct (has_rest (lr_rest (lp_row p))); simpl in Hq;
+                [ destruct Hq as [<- | []]; exact Hlive | destruct Hq ].
+            + simpl in Hq. destruct Hq as [<- | []]. exact Hlive. }
+        revert H.
+        destruct (match find lp_done live with Some p => Some (lp_leaf p) | None => None end)
+          as [eb | ] eqn:He;
+        destruct (match fs with
+                  | sp :: h :: t :: fs' =>
+                      match ltree w tge tgl other fs' (e_fvar_f t) (flat_map (lp_deeper h t) live) with
+                      | Some body => Some (link_bind sp h t body)
+                      | None => None
+                      end
+                  | _ => None
+                  end) as [lb | ] eqn:Hl; intros H; try discriminate H;
+        injection H as <-;
+        pose proof (lc_tail_arms other Hother) as Hta.
+        * exact (conj Hscr (conj (Hempty eb eq_refl) (conj (Hlink lb eq_refl) I))).
+        * exact (conj Hscr (conj (Hempty eb eq_refl) Hta)).
+        * exact (conj Hscr (conj (Hlink lb eq_refl) Hta)).
+  Qed.
+
+  Lemma lc_ltree_or_unit : forall w tge tgl other fs scr rows src,
+    lc scr -> Forall (fun r => lc (lr_body r)) rows ->
+    (forall o, other = Some o -> lc o) ->
+    lc (ltree_or_unit w tge tgl other fs scr rows src).
+  Proof.
+    intros w tge tgl other fs scr rows src Hscr Hrows Hother. unfold ltree_or_unit.
+    destruct (ltree w tge tgl other fs scr _) as [e | ] eqn:H; [ | exact I ].
+    refine (lc_ltree (length fs) w tge tgl other fs scr _ e (le_n _) Hscr _ Hother H).
+    rewrite Forall_forall in *. intros p Hp. apply in_map_iff in Hp as (r & <- & Hr).
+    exact (Hrows r Hr).
+  Qed.
+
+  Lemma lc_lmatch : forall w tge tgl other fs rows scr s,
+    lc scr -> Forall (fun r => lc (lr_body r)) rows ->
+    (forall o, other = Some o -> lc o) ->
+    lc (lmatch w tge tgl other fs rows scr s).
+  Proof.
+    intros w tge tgl other fs rows scr s Hscr Hrows Hother. unfold lmatch.
+    assert (Hdir : forall src, lc (ltree_or_unit w tge tgl other fs scr rows src))
+      by (intros src; exact (lc_ltree_or_unit _ _ _ _ _ _ _ _ Hscr Hrows Hother)).
+    assert (Hlet : lc (e_let scr (close_exp s (ltree_or_unit w tge tgl other fs (e_fvar_f s) rows s)))).
+    { assert (Hin : lc_at 1 (close_exp s (ltree_or_unit w tge tgl other fs (e_fvar_f s) rows s)))
+        by (apply (proj1 lc_close_mut); exact (lc_ltree_or_unit w tge tgl other fs (e_fvar_f s) rows s I Hrows Hother)).
+      exact (conj Hscr Hin). }
+    destruct scr; try (destruct (needs_name rows); [ exact Hlet | exact (Hdir s) ]).
+    exact (Hdir _).
+  Qed.
+
+  (* [[a, b] = [x, y]]: the items are bound first, in order, to fresh names;
+     each pattern name takes one, and a rest name takes the list of the spare. *)
+  Definition lit_named (w : gdecl) (tge tgl : nat) (ss : list termvar) (xs : list string)
+    (ro : option string) (body : exp) : exp :=
+    fold_right
+      (fun nf acc => e_let (e_fvar_f (snd nf)) (close_exp (var_of (fst nf)) acc))
+      (match ro with
+       | None => body
+       | Some r =>
+           e_let (list_of w tge w tgl (List.map e_fvar_f (skipn (length xs) ss)))
+                 (close_exp (var_of r) body)
+       end)
+      (List.combine xs (firstn (length xs) ss)).
+
+  Definition lit_bind (w : gdecl) (tge tgl : nat) (ss : list termvar) (es : list exp)
+    (xs : list string) (ro : option string) (body : exp) : exp :=
+    fold_right (fun se acc => e_let (snd se) (close_exp (fst se) acc))
+      (lit_named w tge tgl ss xs ro body) (List.combine ss es).
+
+  Lemma lc_lit_bind : forall w tge tgl ss es xs ro body,
+    lc body -> Forall lc es -> lc (lit_bind w tge tgl ss es xs ro body).
+  Proof.
+    intros w tge tgl ss es xs ro body Hbody Hes. unfold lit_bind.
+    assert (Hbase : lc (match ro with
+                        | None => body
+                        | Some r => e_let (list_of w tge w tgl (List.map e_fvar_f (skipn (length xs) ss)))
+                                          (close_exp (var_of r) body)
+                        end)).
+    { destruct ro as [r | ]; [ | exact Hbody ].
+      assert (Hc : lc_at 1 (close_exp (var_of r) body))
+        by (apply (proj1 lc_close_mut); exact Hbody).
+      refine (conj _ Hc).
+      apply lc_list_of. rewrite Forall_forall. intros e He.
+      apply in_map_iff in He as (x & <- & _). exact I. }
+    assert (Hnamed : lc (lit_named w tge tgl ss xs ro body)).
+    { unfold lit_named.
+      generalize (List.combine xs (firstn (length xs) ss)) as l.
+      intros l. induction l as [| [n f] l IH]; simpl; [ exact Hbase | ].
+      assert (Hclose : lc_at 1 (close_exp (var_of n)
+                (fold_right (fun nf acc => e_let (e_fvar_f (snd nf)) (close_exp (var_of (fst nf)) acc))
+                            (match ro with
+                             | None => body
+                             | Some r => e_let (list_of w tge w tgl (List.map e_fvar_f (skipn (length xs) ss)))
+                                               (close_exp (var_of r) body)
+                             end) l)))
+        by (apply (proj1 lc_close_mut); exact IH).
+      exact (conj I Hclose). }
+    clear Hbase. revert Hnamed. generalize (lit_named w tge tgl ss xs ro body) as base.
+    revert ss. induction Hes as [| e es He Hes IH]; intros ss base Hbase.
+    - destruct ss; exact Hbase.
+    - destruct ss as [| s ss]; [ exact Hbase | ]. simpl.
+      assert (Hclose : lc_at 1 (close_exp s
+                (fold_right (fun se acc => e_let (snd se) (close_exp (fst se) acc)) base (List.combine ss es))))
+        by (apply (proj1 lc_close_mut); exact (IH ss base Hbase)).
+      exact (conj He Hclose).
+  Qed.
+
+  Definition lp_var (p : lp) : termvar :=
+    match p with LP_name x => var_of x | LP_list s _ _ => s end.
+
+  (* A function's list-pattern parameters, unpacked in order around its body,
+     each from its own fresh variable by the match of a pattern with one arm
+     (what falls through is the trap). *)
+  Definition lps_wrap (w : gdecl) (tge tgl : nat) (fs : list termvar) (prms : list lp)
+    (body : exp) : exp :=
+    fold_right
+      (fun p acc =>
+         match p with
+         | LP_name _ => acc
+         | LP_list s xs ro =>
+             ltree_or_unit w tge tgl (Some diverge) fs (e_fvar_f s)
+               [{| lr_items := xs; lr_rest := ro; lr_body := acc |}] s
+         end)
+      body prms.
+
+  Lemma lc_lps_wrap : forall w tge tgl fs prms body,
+    lc body -> lc (lps_wrap w tge tgl fs prms body).
+  Proof.
+    intros w tge tgl fs prms body Hbody. unfold lps_wrap.
+    induction prms as [| [x | s xs ro] prms IH]; simpl; [ exact Hbody | exact IH | ].
+    apply lc_ltree_or_unit; [ exact I | | ].
+    - apply Forall_cons; [ exact IH | apply Forall_nil ].
+    - intros o Ho. injection Ho as <-. exact lc_diverge.
+  Qed.
+
+End ListTree.
+
+(* The sources of a function's list-pattern parameters, and every name its
+   parameters and patterns spell. *)
+Definition lp_sources (prms : list lp) : list termvar :=
+  flat_map (fun p => match p with LP_list s _ _ => [s] | LP_name _ => [] end) prms.
+
+Definition lp_names (prms : list lp) : list string :=
+  flat_map (fun p => match p with
+                     | LP_name x => [x]
+                     | LP_list _ xs ro => (xs ++ match ro with Some r => [r] | None => [] end)%list
+                     end) prms.
+
+Definition lp_longest (prms : list lp) : nat :=
+  fold_right (fun p acc => match p with
+                           | LP_list _ xs _ => Nat.max (length xs) acc
+                           | LP_name _ => acc
+                           end) 0 prms.
+
+
 Section Denotation.
 
   Context {TT : TagTable}.
@@ -845,6 +1299,48 @@ Section Denotation.
     | DTP_labels : forall t ls xs,
         Den_labels ls xs ->
         Den_tpat [ident t; sym "("; Node R_labels ls; sym ")"] t xs.
+
+  (* The children of a list pattern: the brackets around the names, an optional
+     rest binding and an optional trailing comma, or nothing at all. *)
+  Inductive Den_lpat_start : list tree -> list string -> option string -> Prop :=
+    | DLS_rest : forall r fin,
+        (fin = [] \/ fin = [sym ","]) ->
+        Den_lpat_start (rest_node r :: fin ++ [sym "]"]) [] (Some r)
+    | DLS_name : forall x ts xs ro,
+        Den_lpat_more ts xs ro ->
+        Den_lpat_start (ident x :: ts) (x :: xs) ro
+  with Den_lpat_more : list tree -> list string -> option string -> Prop :=
+    | DLM_end :
+        Den_lpat_more [sym "]"] [] None
+    | DLM_trail :
+        Den_lpat_more [sym ","; sym "]"] [] None
+    | DLM_rest : forall r fin,
+        (fin = [] \/ fin = [sym ","]) ->
+        Den_lpat_more (sym "," :: rest_node r :: fin ++ [sym "]"]) [] (Some r)
+    | DLM_name : forall x ts xs ro,
+        Den_lpat_more ts xs ro ->
+        Den_lpat_more (sym "," :: ident x :: ts) (x :: xs) ro.
+
+  Inductive Den_lpat : list tree -> list string -> option string -> Prop :=
+    | DLP_empty : Den_lpat [sym "["; sym "]"] [] None
+    | DLP_start : forall ps xs ro,
+        Den_lpat_start ps xs ro -> Den_lpat (sym "[" :: ps) xs ro.
+
+  (* A function's parameters when some of them are list patterns: [seen] says
+     whether one came before, and the whole must hold at least one. *)
+  Inductive Den_lps : bool -> list tree -> list lp -> Prop :=
+    | DLPS_name_last : forall x,
+        Den_lps true [ident x] [LP_name x]
+    | DLPS_list_last : forall seen s ps xs ro,
+        Den_lpat ps xs ro ->
+        Den_lps seen [Node R_list_pattern ps] [LP_list s xs ro]
+    | DLPS_name_more : forall seen x rest prms,
+        Den_lps seen rest prms ->
+        Den_lps seen (ident x :: sym "," :: rest) (LP_name x :: prms)
+    | DLPS_list_more : forall seen s ps xs ro rest prms,
+        Den_lpat ps xs ro ->
+        Den_lps true rest prms ->
+        Den_lps seen (Node R_list_pattern ps :: sym "," :: rest) (LP_list s xs ro :: prms).
 
   Inductive Den : tree -> exp -> Prop :=
     | D_num : forall n,
@@ -1018,6 +1514,61 @@ Section Denotation.
                ([Node R_for_kw [sym "for"]; ident x; Node R_in_kw [Leaf ki];
                  Node R_expr cl; sym "do"] ++ bs ++ [sym "done"]))
             (each_term w tge tgl g r sp tp (var_of x) xs b)
+    | D_match_list : forall cs1 e a rest rows other w tge tgl fs s,
+        Den (Node R_expr cs1) e ->
+        Den_larms (a :: rest) rows other ->
+        tag_lookup tags "Empty" = Some (w, tge) ->
+        tag_lookup tags "Link" = Some (w, tgl) ->
+        fresh_apart (fv_exp e `union` lr_fv rows `union` opt_fv other
+                       `union` atoms_of (List.map var_of (lr_names rows))) (s :: fs) ->
+        length fs = 3 * S (lr_longest rows) ->
+        Den (Node R_match_expr
+               ([sym "match"; Node R_expr cs1; sym "do"] ++ a :: rest ++ [sym "done"]))
+            (lmatch var_of w tge tgl other fs rows e s)
+    | D_destr_list : forall ps xs ro vs semi bs v body w tge tgl s fs,
+        Den_lpat ps xs ro ->
+        (semi = [] \/ semi = [sym ";"]) ->
+        Den (Node R_value vs) v ->
+        Den_body bs body ->
+        tag_lookup tags "Empty" = Some (w, tge) ->
+        tag_lookup tags "Link" = Some (w, tgl) ->
+        (forall es, lit_items w tge tgl v = Some es ->
+                    fits_b (List.length es) (List.length xs) (has_rest ro) = false) ->
+        fresh_apart (fv_exp body `union` atoms_of (List.map var_of (xs ++ match ro with Some r => [r] | None => [] end)))
+                    (s :: fs) ->
+        length fs = 3 * S (List.length xs) ->
+        Den (Node R_destructure
+               ([Node R_list_pattern ps; sym "="; Node R_value vs] ++ semi ++ bs))
+            (e_let v (close_exp s
+               (ltree_or_unit var_of w tge tgl (Some diverge) fs (e_fvar_f s)
+                  [{| lr_items := xs; lr_rest := ro; lr_body := body |}] s)))
+    | D_destr_lit : forall ps xs ro vs semi bs v body w tge tgl es ss,
+        Den_lpat ps xs ro ->
+        (semi = [] \/ semi = [sym ";"]) ->
+        Den (Node R_value vs) v ->
+        Den_body bs body ->
+        tag_lookup tags "Empty" = Some (w, tge) ->
+        tag_lookup tags "Link" = Some (w, tgl) ->
+        lit_items w tge tgl v = Some es ->
+        fits_b (List.length es) (List.length xs) (has_rest ro) = true ->
+        fresh_apart (fv_exp v `union` fv_exp body
+                       `union` atoms_of (List.map var_of (xs ++ match ro with Some r => [r] | None => [] end)))
+                    ss ->
+        List.length ss = List.length es ->
+        Den (Node R_destructure
+               ([Node R_list_pattern ps; sym "="; Node R_value vs] ++ semi ++ bs))
+            (lit_bind var_of w tge tgl ss es xs ro body)
+    | D_function_lp : forall kw ps prms bs body w tge tgl fs,
+        Den_lps false ps prms ->
+        Den_body bs body ->
+        tag_lookup tags "Empty" = Some (w, tge) ->
+        tag_lookup tags "Link" = Some (w, tgl) ->
+        fresh_apart (fv_exp body `union` atoms_of (List.map var_of (lp_names prms)))
+                    (lp_sources prms ++ fs) ->
+        length fs = 3 * S (lp_longest prms) ->
+        Den (Node R_function ([Leaf kw; sym "("; Node R_params ps; sym ")"; sym "do"]
+                                ++ bs ++ [sym "done"]))
+            (curry (List.map (lp_var var_of) prms) (lps_wrap var_of w tge tgl fs prms body))
   with Den_decl : tree -> string -> exp -> Prop :=
     | DD_plain : forall x cs v,
         Den (Node R_value cs) v ->
@@ -1219,7 +1770,22 @@ Section Denotation.
         Den_body [] e_unit
     | DBo_some : forall cs e,
         Den (Node R_expr cs) e ->
-        Den_body [Node R_expr cs] e.
+        Den_body [Node R_expr cs] e
+  with Den_larm : tree -> lrow -> Prop :=
+    | DLA_arm : forall ps xs ro cs body,
+        Den_lpat ps xs ro ->
+        Den (Node R_expr cs) body ->
+        Den_larm (Node R_arm [Node R_list_pattern ps; sym "then"; Node R_expr cs])
+                 {| lr_items := xs; lr_rest := ro; lr_body := body |}
+  with Den_larms : list tree -> list lrow -> option exp -> Prop :=
+    | DLRs_end : Den_larms [] [] None
+    | DLRs_else : forall cs e,
+        Den (Node R_expr cs) e ->
+        Den_larms [sym "else"; Node R_expr cs] [] (Some e)
+    | DLRs_cons : forall a row rest rows o,
+        Den_larm a row ->
+        Den_larms rest rows o ->
+        Den_larms (a :: rest) (row :: rows) o.
 
 End Denotation.
 
@@ -1281,11 +1847,13 @@ with Den_arm_ind' := Induction for Den_arm Sort Prop
 with Den_arms_ind' := Induction for Den_arms Sort Prop
 with Den_lit_arm_ind' := Induction for Den_lit_arm Sort Prop
 with Den_lit_arms_ind' := Induction for Den_lit_arms Sort Prop
-with Den_body_ind' := Induction for Den_body Sort Prop.
+with Den_body_ind' := Induction for Den_body Sort Prop
+with Den_larm_ind' := Induction for Den_larm Sort Prop
+with Den_larms_ind' := Induction for Den_larms Sort Prop.
 Combined Scheme Den_mutind from Den_ind', Den_decl_ind', Den_block_ind',
   Den_blk_ind', Den_math_ind', Den_opd_ind', Den_run_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
   Den_items_ind', Den_sep_ind', Den_field_ind', Den_arm_ind', Den_arms_ind',
-  Den_lit_arm_ind', Den_lit_arms_ind', Den_body_ind'.
+  Den_lit_arm_ind', Den_lit_arms_ind', Den_body_ind', Den_larm_ind', Den_larms_ind'.
 
 (* ---- T1, the denotation half: whatever a derivation denotes is locally closed ---- *)
 
@@ -1309,7 +1877,10 @@ Lemma den_lc : forall `{TT : TagTable} var_of tbl,
   (forall a l b, Den_lit_arm var_of tbl a l b -> lc l /\ lc b) /\
   (forall cs rows els, Den_lit_arms var_of tbl cs rows els ->
      Forall (fun r => lc (fst r) /\ lc (snd r)) rows /\ lc els) /\
-  (forall cs e, Den_body var_of tbl cs e -> lc e).
+  (forall cs e, Den_body var_of tbl cs e -> lc e) /\
+  (forall a row, Den_larm var_of tbl a row -> lc (lr_body row)) /\
+  (forall cs rows o, Den_larms var_of tbl cs rows o ->
+     Forall (fun r => lc (lr_body r)) rows /\ (forall e, o = Some e -> lc e)).
 Proof.
   intros TT var_of tbl.
   apply Den_mutind.
@@ -1394,6 +1965,26 @@ Proof.
   - (* for x in xs *)
     intros x ki cl xs bs b w tge tgl g r sp tp Hi He Hl Hx IHx Hb IHb Happ.
     exact (lc_each_term w tge tgl g r sp tp (var_of x) xs b IHx IHb).
+  - (* a match on list patterns: the decision tree *)
+    intros cs1 e a rest rows other w tge tgl fs s He IHe Harms IHarms Hl1 Hl2 Hfresh Hlen.
+    destruct IHarms as [IHrows IHother].
+    exact (lc_lmatch var_of w tge tgl other fs rows e s IHe IHrows IHother).
+  - (* a list pattern destructured from a value that is not a literal that fits *)
+    intros ps xs ro vs semi bs v body w tge tgl s fs Hpat Hsemi Hv IHv Hb IHb Hl1 Hl2 Hlit Hfresh Hlen.
+    assert (Htree : lc_at 1 (close_exp s
+              (ltree_or_unit var_of w tge tgl (Some diverge) fs (e_fvar_f s)
+                 [{| lr_items := xs; lr_rest := ro; lr_body := body |}] s)))
+      by (apply (proj1 lc_close_mut);
+          apply lc_ltree_or_unit; [ exact I | | ];
+          [ apply Forall_cons; [ exact IHb | apply Forall_nil ]
+          | intros o Ho; injection Ho as <-; exact lc_diverge ]).
+    exact (conj IHv Htree).
+  - (* a list pattern destructured from a literal that fits *)
+    intros ps xs ro vs semi bs v body w tge tgl es ss Hpat Hsemi Hv IHv Hb IHb Hl1 Hl2 Hlit Hfits Hfresh Hlen.
+    exact (lc_lit_bind var_of w tge tgl ss es xs ro body IHb (lc_lit_items w tge tgl v es Hlit IHv)).
+  - (* a function with list-pattern parameters *)
+    intros kw ps prms bs body w tge tgl fs Hps Hb IHb Hl1 Hl2 Hfresh Hlen.
+    exact (lc_curry _ _ (lc_lps_wrap var_of w tge tgl fs prms body IHb)).
   - (* decl, plain *) intros x cs v Hv IH. exact IH.
   - (* decl, with semicolon *) intros x cs v Hv IH. exact IH.
   - (* block, the group around its body *)
@@ -1512,6 +2103,13 @@ Proof.
     exact (conj (Forall_cons (l, b) (conj IHl IHb) IHrows) IHels).
   - (* loop body, none *) exact I.
   - (* loop body, one *) intros cs e He IH. exact IH.
+  - (* list arm *) intros ps xs ro cs body Hpat Hb IH. exact IH.
+  - (* list arms, none *) split; [ apply Forall_nil | intros e H; discriminate H ].
+  - (* list arms, else *)
+    intros cs e He IH. split; [ apply Forall_nil | intros e' H; injection H as <-; exact IH ].
+  - (* list arms, one more *)
+    intros a row rest rows o Ha IHa Hrest [IHrows IHo].
+    exact (conj (Forall_cons row IHa IHrows) IHo).
 Qed.
 
 (* ---- the generated local-closure predicate ---- *)
