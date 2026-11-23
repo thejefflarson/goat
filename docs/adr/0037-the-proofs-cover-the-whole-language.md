@@ -196,6 +196,28 @@ Decision 3's elaboration theorem is therefore proved for the programs W accepts,
 and W's completeness against the checker is measured and not proved, as
 decision 6 accepts for the algorithm.
 
+## Amendment (2026-11-23): what phase 8 proved, and what it did not
+
+Phase 8 (#457, stages 1 to 8) extended the parser claim from the core fragment to
+the whole grammar except `foreign` declarations and the structured type syntax
+(phase 6b).
+
+- **T1 over text, as a dichotomy.** A source the lexer model and the PEG accept
+  denotes a locally closed term or is a shape lowering reports (`Reject`).
+  `parse_text_denotes` and `parse_fuel_denotes_lc` are in `GoatAssumptions.v`; the
+  first rests on the two Unicode identifier predicates only
+  (`parse_text_denotes_xid`, last in the file).
+- **T2** is for any grammar; **T3** covers the printable core, grown through
+  stages 3 to 7 to the operators, tags and `match`, lists and recursive groups,
+  over a tag table.
+- **The parser is executable.** `parse_fuel` with `pf_sound` is extracted and
+  compared with `parser::interp::parse` (decision 6's stance: tied by testing,
+  not verified). The lexer is tied the same way.
+- **Not proved.** Lowering, the Rust interpreter and lexer, recovery (a Rust test
+  holds that valid input recovers to the strict tree), the Unicode tables, the
+  formatter's style, `foreign` and the structured type syntax, and the equality of `Den`'s
+  function groups with the checker's `settle` (`proofs/README.md`).
+
 ## Consequences
 
 - Language work slows by the cost of each proof, and the first PR to touch a

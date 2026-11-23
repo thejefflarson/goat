@@ -68,6 +68,8 @@ preservation) is B3 (#71).
 | `GoatDenRun.v` | Runs of function declarations in a block (phase 8, group placement): the least closed prefix of a run (`run_split`, `run_prefix`), `run_blk` (a run always denotes something, which totality needs) and `hoist_run` (a run that uses no earlier value is hoisted, however it splits, which the printer's group needs). |
 | `GoatShape.v` | The forests the core rules can produce, the shape of each core node's children, and totality: every valid, complete core tree whose tags are declared has a denotation. |
 | `GoatParse.v` | **T1** `parse_denotes_lc`, with the two-pass tag table (`Den_goat`, `goat_known`). |
+| `GoatPegExec.v` | The executable parser (phase 8, stage 8): `pf`, the PEG interpreter with a fuel bound on the depth of its recursion, and `pf_sound` (an answer of `pf` is an answer of the relation `peg`); `parse_fuel` is `pf` at the top rule, and `parse_fuel_denotes_lc` is T1 for a stream it accepts. Out of fuel is `None`, so there is no completeness theorem and T1 needs none. |
+| `GoatPegExtract.v` | Extracts `parse_fuel` and `rule_name` to OCaml for the parser differential (`differential/parse_driver.ml`). |
 | `GoatLex.v` | The lexer (phase 8, stage 1, ADR 0030 amendment): `lex` from a list of Unicode code points to tokens. Each class of token is a function that returns how many code points it matches; the lexer takes the longest, the earlier class on a tie, and an unmatched code point is a token of its own. The two Unicode predicates for code points of 128 and up are arguments; ASCII is decided in the model. Tied to `parser::lexer::lex` by `make differential` (`differential/lex_driver.ml`). |
 | `GoatLexSpec.v` | What makes `lex` a lexer: `lex_concat` (the tokens spell the source, no gap, no overlap) and `lex_nonempty`; `step_longest` (the token is the longest any class matches) and `step_class` (a class matches it, no earlier class matches that much); `word_boundary` (a keyword or `true`/`false` is never followed by an identifier character, so `done` is a keyword and `doner` a name); a name and a whitespace run are maximal (`name_maximal`, `whitespace_maximal`). |
 | `GoatLexBarrier.v`, `GoatLexStep.v` | Whitespace is a barrier: a class of token that holds no whitespace reads the input only up to the first whitespace code point, so two inputs that agree up to it give it the same match (`number_stable`, `name_sm_stable`, `word_len_stable`, `prefix_len_stable`). `step_stab`: the token at the start of `x ++ z` is the token at the start of `x ++ z'` when it ends inside `x` and `z`, `z'` start with whitespace or are empty, with two guards for the classes that can reach into `z'` (a comment, and `start at`). |
@@ -246,7 +248,8 @@ the printer parenthesises a function that is a binding's value. T1 covers groups
 `GoatExample.v` shows one program parsing to the group `GoatPhase2.v` types. T3
 does not (decided: deferred to the tail of phase 8): the printer does not write a
 `letrec`, which would need the group's projections printed as bare member names.
-The lexer stays trusted until phases 3 to 6 land, then is verified once (decided).
+The lexer is modelled and tied to `parser::lexer` by a differential test (phase 8
+stage 1), and T1 is stated over text.
 
 ## Phase 3 (ADR 0037, amended): iso-recursive types
 
@@ -545,14 +548,14 @@ two meet in Algorithm W, which returns the elaborated term:
   repeats the receiver (`DP_dot_path`), another receiver binds a hidden `let`
   (`DP_dot_bind`), and `r::f(a)` is `(r.f)(a)` (`DP_take`). See "The parser claim".
 
-**Theorems checked closed** (`GoatAssumptions.v`, `make check-assumptions`, 27):
+**Theorems checked closed** (`GoatAssumptions.v`, `make check-assumptions`, 29):
 `peg_deterministic`, `parse_denotes_lc`, `print_parse_roundtrip`, `progress`,
 `preservation`, `soundness`, `infer_closed_sound`, `erase_step`, `erase_traps`,
 `coerce_typing`, `infer_elab_sound`, `unroll_eqb_sound`, `erase_converse`,
 `erase_converse_multistep`, `knot_unrolls`, `unify_k_sound`, `coerce_dec_sound`,
 `unify_co_sound`, `infer_guarded`, `cmp_total`, `cmp_unerase`, `lex_concat`,
-`step_longest`, `word_boundary`, `parse_text_denotes`, `edits_preserve_tokens` and
-`edits_preserve_parse`. 0 admits, no axioms. The lexer theorems hold for any answer
+`step_longest`, `word_boundary`, `parse_text_denotes`, `edits_preserve_tokens`,
+`edits_preserve_parse`, `pf_sound` and `parse_fuel_denotes_lc`. 0 admits, no axioms. The lexer theorems hold for any answer
 of the two Unicode predicates; `parse_text_denotes_xid` is the same T1 at the two
 declared parameters `xid_start_hi` and `xid_cont_hi` (whether a code point of 128
 or more may start or continue an identifier: the tables of `unicode_ident`, checked
@@ -560,9 +563,11 @@ by the differential test), and `make check-assumptions` requires it to rest on
 those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 51585 programs written, 50158 compared with 0 mismatches, 1412 skipped
-by the driver, and the lexer differential 88336 sources, 4863064 tokens, 0
-disagreements. Phase 8 stage 8 reads list patterns (below): the reader lowers a
+commit: 51590 programs written, 50163 compared with 0 mismatches, 1412 skipped
+by the driver, and the lexer differential 88405 sources, 4864168 tokens, 0
+disagreements, and the parser differential (phase 8 stage 8: `parse_fuel`
+extracted and compared with `parser::interp::parse`, tree for tree) 156357 sources (69025 of which parse), 7875014 tokens,
+0 disagreements. Phase 8 stage 8 reads list patterns (below): the reader lowers a
 program that needs lists with the prelude's `tag List` declaration (they were
 "does not lower"), reads lowering's trap as `diverge` where it is the `else` of a
 match, and a generator writes 12000 programs of list patterns. 39 programs of the
@@ -1027,7 +1032,7 @@ untypeable, which `docs/semantics.md` section 8 states as the language's limit.
 `peg_deterministic` (T2): a token stream has at most one parse. `parse_denotes_lc`
 (T1): every parse of the top rule `goat` whose tree is in the core fragment is
 either a tree lowering reports (`Reject`: a record whose spread is not first, or
-that has a second) or denotes a term that is both `lc` (the local closure the
+that has a second, and a `match` whose arms mix tag, literal and list patterns) or denotes a term that is both `lc` (the local closure the
 soundness proof uses) and the generated `lc_exp`. `parse_denotes_accepted` is the
 second half on its own, for a tree `Accepted` (no `Reject` shape in it).
 
@@ -1177,10 +1182,15 @@ Boundary:
 - **Core fragment only.** The rules of `grammar/goat.peg` that `goat_ln.ott` has
   a production for (`core_rule` in `GoatShape.v`, checked against
   `parser/tests/rule_map.rs` by a Rust test), minus the shapes ADR 0030 excludes
-  (`Complete` in `GoatShape.v`), which is now only what no `Den` rule reads yet:
-  a record pattern as a parameter, a payload type with no
-  slot code, and a `match` whose arms mix kinds or are literals with no `else`.
-  Shapes lowering reports are `Reject`.
+  (`Complete` in `GoatShape.v`), which is now only what no `Den` rule reads yet
+  and lowering accepts: a record pattern as a parameter, a payload type with no
+  slot code, a `match` with no arm, and literal arms with no `else` (a bool
+  match naming both `true` and `false` needs none). Shapes lowering reports are
+  `Reject`: the spread shapes, and a `match` whose arms are not all tag patterns,
+  all literals or all list patterns (`arms_agree`; lowering reports the first arm
+  of the wrong kind, `lowering_rejects_a_match_that_mixes_pattern_kinds`, and
+  accepts a match of one kind, `lowering_accepts_a_match_of_one_pattern_kind`).
+  `Accepted` is the complement, and `reject_or_accepted` is the dichotomy.
 - **The block (phase 8 stage 6).** `Den_blk ctx fin cs xs gs b` reads a block
   from its start: `ctx` holds the value bindings and late functions so far, `fin`
   is what the block is if it ends here, `xs` and `gs` are the functions hoisted
@@ -1220,20 +1230,46 @@ Boundary:
   that no cut links to the rest of its prefix (`a` names `c`, `b` between them
   names neither) stays in the prefix's group where the checker infers it alone
   (`an_unlinked_member_between_two_linked_ones_is_still_typed_apart`); a hoisted
-  run denotes the same either way, a late one a letrec of one member more.
-  `block_shape.rs` pins the HIR lowering gives each form.
-- **The lexer is trusted.** The input is a list of tokens; nothing is said about
-  how characters become tokens. A text terminal matches a punctuation or keyword
-  token by its spelling, and a name token by its spelling when the word is
-  `contextual` (`from`, `to`, `in`, `foreign`; names elsewhere), so a rule can
-  spell them out. No core rule does; `gen` has `G_word` for the match, and the
-  printer proof shows a printed name is never `foreign`.
+  run denotes the same either way, a late one a letrec of one member more. The
+  checker's grouping is by shared type variables (`settle`), not by mentions, so
+  matching it exactly is a statement about inference rather than about the parse
+  tree; it stays open. `block_shape.rs` pins the HIR lowering gives each form,
+  and `group_placement.rs` the forward mention across a value
+  (`a_forward_mention_across_a_value_still_joins_the_group`).
+- **The lexer.** `parse_text_denotes` states T1 over source text (`GoatLexText.v`),
+  with `lex` tied to `parser::lexer` by the lexer differential. A text terminal
+  matches a punctuation or keyword token by its spelling, and a name token by its
+  spelling when the word is `contextual` (`from`, `to`, `in`, `foreign`; names
+  elsewhere), so a rule can spell them out. The loop rules do; `gen` has `G_word`
+  for the match, and the printer proof shows a printed name is never `foreign`.
+- **The executable parser (phase 8 stage 8).** `parse_fuel` (`GoatPegExec.v`) runs
+  the generated grammar over a token stream; `pf_sound` says its answers are the
+  relation's, so T1 and T2 apply to what it returns (`parse_fuel_denotes_lc`).
+  `make differential` extracts it and compares its tree, node for node, with
+  `parser::interp::parse` on every source the lexer differential reads (every
+  `.goat` file, every program the corpus generators write, the lexer fuzz) and on
+  token-level breakages of every seventeenth program that parses (a token
+  dropped, doubled, or swapped with the next), so rejections are compared too.
+  Both interpreters read the same generated grammar, so this pins the Rust
+  interpreter's ordered choice, repetition and end-of-input behaviour to the
+  relation's. The one difference by design is the Rust nesting cap
+  (`MAX_NESTING`, a source that hits it is not written); the model has fuel
+  instead.
 - **Recovery annotations are not in the generated grammar.** They change nothing
-  about valid input.
+  about valid input, and a Rust test holds the converse: on every valid program of
+  the corpus `parse_recovering` returns the tree `parse` does, token for token and
+  node for node with trivia included, no diagnostic and no `ERROR` or `MISSING`
+  node (`valid_input_recovers_to_the_strict_tree_with_no_diagnostics`). Recovery has
+  no semantics to prove.
+- **Shadowed names.** A name bound twice in one run resolves to the nearest earlier
+  binding, by name, as `ctx` does; lowering gives each binding its own symbol, and
+  `block_shape.rs` pins that a use refers to the nearest earlier binding and that a
+  function keeps the binding it was written after.
 - **Not verified:** the Rust interpreter `parser/src/interp.rs`, the lowering
-  `checker/src/lower.rs`, and every rule outside the fragment. Connecting them to
-  these theorems stays a testing argument (`rule_map.rs`,
-  `checker/tests/core_roundtrip.rs`).
+  `checker/src/lower.rs`, the Rust lexer, and the rules outside the fragment
+  (`foreign` and the structured type syntax, which wait for phase 6b). Connecting the Rust to
+  these theorems is a testing argument (`rule_map.rs`,
+  `checker/tests/core_roundtrip.rs`, the lexer and parser differentials).
 
 Side conditions. Duplicate record labels and repeated parameters are lowering
 errors that `goat_ln.ott` allows (ADR 0030). `goat_ln.ott` is unchanged; they are

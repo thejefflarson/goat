@@ -131,7 +131,7 @@ fn main() {
             continue;
         }
         parsed += 1;
-        if parsed % BREAK_EVERY != 0 || source.len() > 4000 {
+        if !parsed.is_multiple_of(BREAK_EVERY) || source.len() > 4000 {
             continue;
         }
         let count = lex(&source).iter().filter(|t| !t.is_trivia()).count();

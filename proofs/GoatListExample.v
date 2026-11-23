@@ -52,6 +52,28 @@ Definition param_program : list tok :=
    TSym "..."; TName "r"; TSym "]"; TSym ","; TName "n"; TSym ")"; TSym "do"; TName "a";
    TSym "done"].
 
+(* `match [1, 2] do [] then 0 5 then 1 else 2 done`: a list arm and a literal arm. *)
+Definition mixed_program : list tok :=
+  [TSym "match"; TSym "["; TNum 1; TSym ","; TNum 2; TSym "]"; TSym "do";
+   TSym "["; TSym "]"; TSym "then"; TNum 0;
+   TNum 5; TSym "then"; TNum 1;
+   TSym "else"; TNum 2; TSym "done"].
+
+Definition mixed_ts : list tree :=
+  match run 900 (E_rule R_goat) mixed_program with Some (Ok ts _) => ts | _ => [] end.
+
+Example mixed_parses : peg (E_rule R_goat) mixed_program (Ok mixed_ts []).
+Proof. apply (run_sound 900). reflexivity. Qed.
+
+(* Lowering reports a `match` that mixes list and literal patterns, so the tree
+   denotes no term and T1's other branch holds. *)
+Example mixed_rejected : Forall Reject mixed_ts.
+Proof.
+  unfold mixed_ts. cbv.
+  apply Forall_cons; [ | apply Forall_nil ].
+  find_reject.
+Qed.
+
 Definition match_ts : list tree :=
   match run 900 (E_rule R_goat) match_program with Some (Ok ts _) => ts | _ => [] end.
 Definition destructure_ts : list tree :=
@@ -76,12 +98,9 @@ Lemma literal_core : Forall core_tree literal_ts. Proof. core_all. Qed.
 Lemma param_core : Forall core_tree param_ts. Proof. core_all. Qed.
 
 Ltac match_list :=
-  unfold match_ok; split;
+  unfold match_read; split;
   [ unfold has; eexists; in_list
-  | right; right;
-    repeat (apply Forall_cons;
-            [ first [ (intros H; discriminate H) | (intros _; reflexivity) ] | ]);
-    apply Forall_nil ].
+  | intros Hall; first [ solve [ in_list ] | (exfalso; arm_of_another_kind Hall) ] ].
 
 Ltac comp_list := first [ match_list | (intros c Hc; discriminate Hc) | comp_close' ].
 

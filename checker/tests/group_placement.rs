@@ -75,3 +75,16 @@ fn an_unlinked_member_between_two_linked_ones_is_still_typed_apart() {
          {p: b(1), q: b(\"s\"), r: a(true)}",
     );
 }
+
+/// The checker glues a forward mention across a value binding; `Den_blk` reads
+/// a group only among consecutive functions, so `g` stays a free name there
+/// (the residual recorded in `proofs/README.md`).
+#[test]
+fn a_forward_mention_across_a_value_still_joins_the_group() {
+    rejected(
+        "f = program(x) do {a: g(1), b: g(\"s\")} done\n\
+         v = 1\n\
+         g = program(y) do y done\n\
+         f(0)",
+    );
+}
