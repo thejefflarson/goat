@@ -439,7 +439,7 @@ Proof.
                 (proj2 (nf_cp b D) _ (proj2 (cp_ap b s1 Hc1) _ CRm)). exact Hf. }
       eapply Stable_mono; [ | exact (Stable_below _ (Stable_and _ _ E0 (Stable_and _ _ E1' E3'))) ].
       intros [|f] Hf; [ contradiction | ]. destruct Hf as (Hu0 & Hu1 & Hu3).
-      pose proof (rewrite_row_found l (frv_row (row_Ext l T R1')) D R2 n T' Hx2 Eg2) as Erw.
+      pose proof (rewrite_row_found l (side_av (row_Ext l T R1')) D R2 n T' Hx2 Eg2) as Erw.
       subst R2. cbn [unify_rD row_head]. rewrite Erw. cbn iota beta. rewrite Hu0. cbn iota beta.
       rewrite Hu1. cbn iota beta. rewrite Hu3. reflexivity.
 Qed.

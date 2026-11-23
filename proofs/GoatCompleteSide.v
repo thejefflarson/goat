@@ -10,27 +10,29 @@
    first has one more present entry of the label than the second, and a
    substitution adds the same entries to both through their common tail.
 
-   The condition is not complete for the checker's [av] ([frv_row R1], every
-   row variable of the first row) in two ways, both proved below as
-   unifiable pairs [unify_rD] refuses:
-
-   - a row variable that tails the second row and occurs only inside a field
-     of the first ([side_blocks_nested]):
+   [rewrite_row]'s [av] is the tail of the first row ([side_av]).  The
+   checker's earlier [av], every row variable of the first row, refused a
+   unifiable pair whose second row ends in a variable that occurs only inside a
+   field of the first:
        {l0: Int, l1: {...r}}  against  {l1: c, ...r}
-     is unified by [r := {l0: Int}] and [c := {l0: Int}], and the refusal is not
-     a cycle: the variable occurs in a field type, not in the first row's tail.
-   - a first entry whose presence is a variable ([side_blocks_absent]):
+   is unified by [r := {l0: Int}] and [c := {l0: Int}] ([nested_sub_unifies]),
+   the variable is in a field type and not in the first row's tail, and the
+   checker accepts the program that unifies them, so [side_av] reads the tail
+   alone ([side_passes_nested]).  [side_guard_passes] is the completeness of
+   that guard: a unifier of two rows whose first entry it makes present never
+   meets it.
+
+   What stays is the first entry whose presence is a variable the unifier makes
+   absent ([side_blocks_absent]):
        {l0^p: Int, ...r}  against  {l1^q: Int, ...r}
-     is unified by [p := Bool], [q := Bool], [r := {}]: both rows are the empty
-     row once their entries are absent.
-
-   The occurs checks of [bind_row] and [bind_prop] read a variable behind an
-   absent entry as an occurrence, and refuse unifiable pairs the same way
-   ([bind_row_blocks_absent_tail], [bind_prop_blocks_absent]).
-
-   So a completeness theorem for rows with a tail variable cannot say that
-   [rewrite_row] never refuses a unifiable pair.  The plan records what it
-   says instead. *)
+   is unified by [p := Bool], [q := Bool], [r := {}]: both rows are the empty
+   row once their entries are absent.  The occurs checks of [bind_row] and
+   [bind_prop] read a variable behind an absent entry as an occurrence, and
+   refuse unifiable pairs the same way ([bind_row_blocks_absent_tail],
+   [bind_prop_blocks_absent]).  The checker has no guard to compare with there
+   (it ties a recursive type, or refuses), and the triage found no goat
+   program that reaches either pair, so the plan states the induction with a
+   hypothesis that excludes them (option (b) of the stage 7.6f decision). *)
 
 Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
@@ -121,20 +123,26 @@ Definition nested_R1 (r : atom) : row :=
 
 Definition nested_R2 (r c : atom) : row := row_Ext 1 (typ_Var c) (row_Var r).
 
-Theorem side_blocks_nested : forall (r c : atom) D n f,
-  req (apR (nested_sub r c) (nested_R1 r)) (apR (nested_sub r c) (nested_R2 r c)) /\
-  unify_rD f D (nested_R1 r) (nested_R2 r c) n = None.
+Lemma nested_sub_unifies : forall (r c : atom),
+  req (apR (nested_sub r c) (nested_R1 r)) (apR (nested_sub r c) (nested_R2 r c)).
 Proof.
-  intros r c D n f. split.
-  - unfold nested_R1, nested_R2, nested_sub, apR. simpl.
-    destruct (Atom.eq_dec r r) as [_ | N]; [ | congruence ].
-    destruct (Atom.eq_dec c c) as [_ | N]; [ | congruence ].
-    apply req_sym. apply req_swap. discriminate.
-  - destruct f as [ | f ]; [ reflexivity | ].
-    simpl. unfold nested_R1, nested_R2. cbn [row_head rewrite_row]. simpl.
-    match goal with |- context [AtomSetImpl.mem r ?S] =>
-      assert (Hm : AtomSetImpl.mem r S = true) by (apply AtomSetImpl.mem_1; fsetdec); rewrite Hm
-    end. reflexivity.
+  intros r c.
+  unfold nested_R1, nested_R2, nested_sub, apR. simpl.
+  destruct (Atom.eq_dec r r) as [_ | N]; [ | congruence ].
+  destruct (Atom.eq_dec c c) as [_ | N]; [ | congruence ].
+  apply req_sym. apply req_swap. discriminate.
+Qed.
+
+(* The guard [side_av] reads only the tail of the first row, so it lets the
+   rewrite of the second row bind [r]. *)
+Theorem side_passes_nested : forall (r c : atom) D n,
+  rewrite_row 0 (side_av (nested_R1 r)) D (nested_R2 r c) n <> None.
+Proof.
+  intros r c D n. unfold nested_R1, nested_R2, side_av.
+  cbn [rewrite_row row_tail Nat.eqb].
+  destruct (AtomSetImpl.mem r {}) eqn:Hm;
+    [ exfalso; apply AtomSetImpl.mem_2 in Hm; fsetdec | ].
+  destruct (rk_lacks (drk D r) 0); discriminate.
 Qed.
 
 (* [p := Bool], [q := Bool] and [r := {}]. *)
@@ -157,7 +165,7 @@ Proof.
     eapply req_trans; [ apply req_abs; reflexivity | ].
     apply req_sym. apply req_abs. reflexivity.
   - destruct f as [ | f ]; [ reflexivity | ].
-    simpl. cbn [row_head rewrite_row]. simpl.
+    simpl. cbn [row_head rewrite_row]. unfold side_av. simpl.
     match goal with |- context [AtomSetImpl.mem r ?S] =>
       assert (Hm : AtomSetImpl.mem r S = true) by (apply AtomSetImpl.mem_1; fsetdec); rewrite Hm
     end. reflexivity.
@@ -200,4 +208,49 @@ Proof.
     match goal with |- context [AtomSetImpl.mem a ?S] =>
       assert (Hm : AtomSetImpl.mem a S = true) by (apply AtomSetImpl.mem_1; simpl; fsetdec); rewrite Hm
     end. reflexivity.
+Qed.
+
+(* ---- the guard never blocks a unifiable pair whose front is present ---- *)
+
+(* [rewrite_row] fails only at the guard: at the tail variable of a row that
+   has no entry of the label. *)
+Lemma rewrite_row_total : forall l av D R n,
+  (raw l R = nil -> forall r, row_tail R = Some r -> AtomSetImpl.mem r av = false) ->
+  rewrite_row l av D R n <> None.
+Proof.
+  intros l av D R. induction R as [ | r | l' T R IH | l' P T R IH ]; intros n H; cbn [rewrite_row].
+  - discriminate.
+  - destruct (AtomSetImpl.mem r av) eqn:Hm.
+    + exfalso. rewrite (H eq_refl r eq_refl) in Hm. discriminate.
+    + destruct (rk_lacks (drk D r) l); discriminate.
+  - destruct (Nat.eqb l l') eqn:E; [ discriminate | ].
+    destruct (rewrite_row l av D R n) as [[[[[[P0 T0] R3] s] D1] n1]|] eqn:E2; [ discriminate | ].
+    exfalso. refine (IH n _ E2). intros Hn r' Hr'. apply H; [ simpl; rewrite E; exact Hn | exact Hr' ].
+  - destruct (Nat.eqb l l') eqn:E; [ discriminate | ].
+    destruct (rewrite_row l av D R n) as [[[[[[P0 T0] R3] s] D1] n1]|] eqn:E2; [ discriminate | ].
+    exfalso. refine (IH n _ E2). intros Hn r' Hr'. apply H; [ simpl; rewrite E; exact Hn | exact Hr' ].
+Qed.
+
+(* A substitution that unifies two rows, the first of which starts with an
+   entry it makes present, never meets the guard [side_av]: the second row has
+   the label, or its tail is not the tail of the first (a common tail is
+   [leijen_tail]).  A front entry with a presence variable that the
+   substitution makes absent is the case this leaves out
+   ([side_blocks_absent]). *)
+Theorem side_guard_passes : forall S R1 R2 l P T R1' D n,
+  row_head R1 = Some (l, P, T, R1') -> teq (apT S P) typ_Unit ->
+  req (apR S R1) (apR S R2) -> rewrite_row l (side_av R1) D R2 n <> None.
+Proof.
+  intros S R1 R2 l P T R1' D n Hh HP Hreq. apply rewrite_row_total.
+  intros Hnil r Hr. unfold side_av.
+  destruct (row_tail R1) as [q|] eqn:Hq.
+  - destruct (Atom.eq_dec q r) as [->|Hne].
+    + exfalso.
+      assert (Hraw : exists es, raw l R1 = (P, T) :: es).
+      { destruct R1 as [ | | l0 T0 R0 | l0 P0 T0 R0 ]; simpl in Hh; try discriminate;
+          inversion Hh; subst; simpl; rewrite Nat.eqb_refl; eexists; reflexivity. }
+      destruct Hraw as [es Hraw].
+      exact (leijen_tail S R1 R2 r l P T es Hq Hr Hraw Hnil HP Hreq).
+    + apply AtomSetFacts.not_mem_iff. intros Hin. apply Hne. fsetdec.
+  - apply AtomSetFacts.not_mem_iff. intros Hin. fsetdec.
 Qed.

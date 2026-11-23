@@ -214,7 +214,7 @@ Proof.
       (match row_head R1 with
        | None => None
        | Some (l, P, T, R1') =>
-           match rewrite_row l (frv_row R1) D R2 n with
+           match rewrite_row l (side_av R1) D R2 n with
            | None => None
            | Some (P', T', R2', s0, D0, n1) =>
                match unify_k f D0 (apT s0 P) P' n1 with
@@ -233,7 +233,7 @@ Proof.
        end) = Some (s, D', n') -> gsub s).
     { intros R1' R2' Hg.
       destruct (row_head R1') as [[[[l P] T] R1'']|]; [|discriminate].
-      destruct (rewrite_row l (frv_row R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
+      destruct (rewrite_row l (side_av R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
       destruct (unify_k f D0 (apT s0 P) P' n1) as [[[sp D1] n2]|] eqn:Eu0; [|discriminate].
       destruct (unify_k f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1; [|discriminate].
       destruct (unify_kr f D2 (apR s1 (apR sp (apR s0 R1''))) (apR s1 (apR sp R2'')) n3)
@@ -339,7 +339,7 @@ Proof.
       (match row_head R1 with
        | None => None
        | Some (l, P, T, R1') =>
-           match rewrite_row l (frv_row R1) D R2 n with
+           match rewrite_row l (side_av R1) D R2 n with
            | None => None
            | Some (P', T', R2', s0, D0, n1) =>
                match unify_t f D0 (apT s0 P) P' n1 with
@@ -358,7 +358,7 @@ Proof.
        end) = Some (s, D', n') -> gsub s).
     { intros R1' R2' Hg1 Hg2 s' D'' n'' Hg.
       destruct (row_head R1') as [[[[l P] T] R1'']|] eqn:Eh; [|discriminate].
-      destruct (rewrite_row l (frv_row R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
+      destruct (rewrite_row l (side_av R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
       destruct (unify_t f D0 (apT s0 P) P' n1) as [[[sp D1] n2]|] eqn:Eu0; [|discriminate].
       destruct (unify_t f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1; [|discriminate].
       destruct (unify_r f D2 (drop_abs (apR s1 (apR sp (apR s0 R1'')))) (drop_abs (apR s1 (apR sp R2''))) n3)
@@ -445,7 +445,7 @@ Proof.
       (match row_head R1 with
        | None => None
        | Some (l, P, T, R1') =>
-           match rewrite_row l (frv_row R1) D R2 n with
+           match rewrite_row l (side_av R1) D R2 n with
            | None => None
            | Some (P', T', R2', s0, D0, n1) =>
                match unify_tD f D0 (apT s0 P) P' n1 with
@@ -464,7 +464,7 @@ Proof.
        end) = Some (s, D', n') -> gsub s).
     { intros R1' R2' Hg1 Hg2 s' D'' n'' Hg.
       destruct (row_head R1') as [[[[l P] T] R1'']|] eqn:Eh; [|discriminate].
-      destruct (rewrite_row l (frv_row R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
+      destruct (rewrite_row l (side_av R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
       destruct (unify_tD f D0 (apT s0 P) P' n1) as [[[sp D1] n2]|] eqn:Eu0; [|discriminate].
       destruct (unify_tD f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1; [|discriminate].
       destruct (unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R1'')))) (nfR D2 (apR s1 (apR sp R2''))) n3)
