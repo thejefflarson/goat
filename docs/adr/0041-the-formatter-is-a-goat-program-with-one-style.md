@@ -83,6 +83,14 @@ text. It can return data.
 5. **Hosts.** `goat fmt FILE...` rewrites each file in place; `goat fmt --check
    FILE...` changes nothing and fails if any file is not formatted. The web editor
    has a Format command and a shortcut. The Apple editor is a follow-up.
+   The edit list is untrusted program output, so each host (`format::apply`,
+   `acceptEdits`) accepts an edit only on the conditions of `gap_guard` in
+   `proofs/GoatLexEdit.v`, which `edits_preserve_tokens` shows keep every token:
+   the replaced range holds only the lexer's four whitespace characters (space,
+   tab, line feed, carriage return; U+00A0 and other Unicode spaces lex as
+   unrecognized tokens); a gap after a `#` comment is replaced by one that keeps
+   a line break; and a gap after `start` is not made one space before `at`. An
+   edit that fails any condition refuses the whole format with an error.
 6. **The repo is formatted.** Every `.goat` file in the repo is a fixed point of
    the formatter, and the corpus test fails when one is not.
 

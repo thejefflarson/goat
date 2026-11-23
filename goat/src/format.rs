@@ -5,6 +5,7 @@
 
 use crate::native::{Guest, HostEvent, Interactive};
 use crate::{Host, HostInterface, SceneCommand, SceneHost, compile};
+use goat_parser::lexer::{Token, TokenKind, lex};
 use std::time::Duration;
 
 const FORMATTER: &str = include_str!("../../editor/format.goat");
@@ -97,10 +98,45 @@ impl Formatter {
 const MAX_NEWLINES: usize = 8;
 const MAX_INDENT: usize = 256;
 
+/// The lexer's whitespace (`parser/src/lexer.rs`); Unicode spaces such as
+/// U+00A0 are `char::is_whitespace` but lex as unrecognized tokens.
+const LEXER_WHITESPACE: [char; 4] = [' ', '\t', '\n', '\r'];
+
+/// The conditions under which replacing a whitespace gap keeps every token
+/// (ADR 0041, `gap_guard`): a gap after a comment keeps a line break, and a
+/// gap after `start` is not made one space before `at`.
+fn guard_gap(source: &str, tokens: &[Token], edit: &Edit) -> Result<(), String> {
+    let Ok(before) = tokens.binary_search_by_key(&edit.from, |t| t.end) else {
+        return Ok(());
+    };
+    let before = tokens[before];
+    if before.kind == TokenKind::Comment && edit.newlines == 0 {
+        return Err(format!(
+            "an edit over {}..{} would join the line after a comment into it",
+            edit.from, edit.to
+        ));
+    }
+    let makes_start_at = edit.newlines == 0
+        && edit.indent == 1
+        && &source[before.start..before.end] == "start"
+        && tokens
+            .binary_search_by_key(&edit.to, |t| t.start)
+            .is_ok_and(|i| &source[tokens[i].start..tokens[i].end] == "at");
+    if makes_start_at {
+        return Err(format!(
+            "an edit over {}..{} would make `start at` out of two words",
+            edit.from, edit.to
+        ));
+    }
+    Ok(())
+}
+
 /// `source` with `edits` applied. The edits must be in order, inside the text,
-/// on character boundaries and over whitespace only: the formatter changes how
-/// a program is laid out and never what it says.
+/// on character boundaries and over the lexer's whitespace only, and must pass
+/// `guard_gap`: the formatter changes how a program is laid out and never what
+/// it says. Any other edit refuses the whole format.
 pub fn apply(source: &str, edits: &[Edit]) -> Result<String, String> {
+    let tokens = lex(source);
     let mut out = String::with_capacity(source.len());
     let mut at = 0;
     for edit in edits {
@@ -114,12 +150,13 @@ pub fn apply(source: &str, edits: &[Edit]) -> Result<String, String> {
                 edit.from, edit.to, edit.newlines, edit.indent
             ));
         }
-        if !gap.chars().all(char::is_whitespace) {
+        if !gap.chars().all(|c| LEXER_WHITESPACE.contains(&c)) {
             return Err(format!(
-                "an edit over {}..{} is not whitespace",
+                "an edit over {}..{} is not whitespace the lexer reads",
                 edit.from, edit.to
             ));
         }
+        guard_gap(source, &tokens, edit)?;
         out.push_str(&source[at..edit.from]);
         out.push_str(&"\n".repeat(edit.newlines));
         out.push_str(&" ".repeat(edit.indent));
