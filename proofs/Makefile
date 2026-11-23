@@ -92,7 +92,7 @@ differential: coq
 	mkdir $(DIFF_DIR)
 	cd $(DIFF_DIR) && rocq compile -R .. Goat ../GoatExtract.v
 	cp ../differential/driver.ml $(DIFF_DIR)/
-	cd $(DIFF_DIR) && ocamlfind ocamlopt -w -a goat_infer.mli goat_infer.ml driver.ml -o driver
+	cd $(DIFF_DIR) && ocamlfind ocamlopt -w -a -package unix -linkpkg goat_infer.mli goat_infer.ml driver.ml -o driver
 	$(CORPUS) > $(DIFF_DIR)/corpus.tsv
 	$(DIFF_DIR)/driver $(DIFF_DIR)/corpus.tsv
 

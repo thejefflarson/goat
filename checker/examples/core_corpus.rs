@@ -253,8 +253,8 @@ impl Core {
 /// order of the proof phases that will bring each in: a count falls to 0 when
 /// its phase lands, and its programs then show up under the next feature they
 /// use, or are compared.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum Feature {
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Feature {
     ForeignCall,
     TagsAndMatch,
     LacksOnTail,
@@ -342,8 +342,8 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
 }
 
 /// Why a program is left out of the differential test.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum Skip {
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Skip {
     Rejected,
     OutsideFragment(Feature),
     MethodFlag,
@@ -351,7 +351,7 @@ enum Skip {
 }
 
 impl Skip {
-    fn describe(self) -> &'static str {
+    pub fn describe(self) -> &'static str {
         match self {
             Skip::Rejected => "does not lower",
             Skip::OutsideFragment(feature) => feature.describe(),
@@ -1001,7 +1001,7 @@ fn is_method(expr: &Expr) -> bool {
 }
 
 /// The line for `source`, or why it is not a program of the fragment.
-fn line(source: &str) -> Result<String, Skip> {
+pub fn line(source: &str) -> Result<String, Skip> {
     let lowered = lower(source).map_err(|_| Skip::Rejected)?;
     if !lowered.errors.is_empty() {
         return Err(Skip::Rejected);
@@ -1212,18 +1212,53 @@ fn markdown_blocks(text: &str) -> Vec<String> {
     blocks
 }
 
-struct Rng(u64);
+pub struct Rng {
+    state: u64,
+    tape: Vec<u8>,
+    pos: usize,
+}
 
 impl Rng {
+    pub fn seeded(seed: u64) -> Rng {
+        Rng {
+            state: seed,
+            tape: Vec::new(),
+            pos: 0,
+        }
+    }
+
+    /// Draws each choice from `tape` while it lasts, so a fuzzer that mutates
+    /// the bytes mutates the choices. Past the end the stream is seeded from
+    /// the tape's own bytes, so a program is still a function of its input.
+    pub fn from_tape(tape: &[u8]) -> Rng {
+        let seed = tape.iter().fold(0xCBF2_9CE4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01B3)
+        });
+        Rng {
+            state: seed,
+            tape: tape.to_vec(),
+            pos: 0,
+        }
+    }
+
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.state;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
     }
 
     fn below(&mut self, n: usize) -> usize {
+        if let Some(&low) = self.tape.get(self.pos) {
+            self.pos += 1;
+            if n <= 256 {
+                return usize::from(low) % n;
+            }
+            let high = self.tape.get(self.pos).copied().unwrap_or(0);
+            self.pos += 1;
+            return (usize::from(low) | usize::from(high) << 8) % n;
+        }
         (self.next() % n as u64) as usize
     }
 }
@@ -1810,6 +1845,44 @@ const HANDWRITTEN: &[&str] = &[
     "f = program(p) do\n  {x, ...r} = p\n  r\ndone\nf({x: 1, y: true})",
 ];
 
+/// One program from generator `kind` (taken modulo the four), every choice
+/// read from `tape`; the nightly fuzz target mutates the tape.
+pub fn generate_from_tape(kind: u8, tape: &[u8]) -> String {
+    let rng = Rng::from_tape(tape);
+    match kind % 4 {
+        0 => {
+            Gen {
+                rng,
+                scope: Vec::new(),
+                functions: 0,
+            }
+            .term(0)
+            .0
+        }
+        1 => {
+            let mut typed_gen = TypedGen {
+                rng,
+                scope: Vec::new(),
+                names: 0,
+                fault: false,
+            };
+            typed_gen.fault = typed_gen.rng.below(4) == 0;
+            let ty = PRIMS[typed_gen.rng.below(PRIMS.len())];
+            typed_gen.term(ty, 0)
+        }
+        2 => {
+            let mut group_gen = GroupGen {
+                rng,
+                names: 0,
+                careful: false,
+            };
+            group_gen.careful = group_gen.rng.below(2) == 0;
+            group_gen.block(0, &[], &[])
+        }
+        _ => SpreadGen { rng }.program(),
+    }
+}
+
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut sources: Vec<String> = Vec::new();
@@ -1844,7 +1917,7 @@ fn main() {
 
     for seed in SEEDS {
         let mut gen_ = Gen {
-            rng: Rng(seed),
+            rng: Rng::seeded(seed),
             scope: Vec::new(),
             functions: 0,
         };
@@ -1854,7 +1927,7 @@ fn main() {
         }
 
         let mut typed_gen = TypedGen {
-            rng: Rng(seed ^ 0xA5A5),
+            rng: Rng::seeded(seed ^ 0xA5A5),
             scope: Vec::new(),
             names: 0,
             fault: false,
@@ -1867,7 +1940,7 @@ fn main() {
         }
 
         let mut group_gen = GroupGen {
-            rng: Rng(seed ^ 0x5EED),
+            rng: Rng::seeded(seed ^ 0x5EED),
             names: 0,
             careful: false,
         };
@@ -1878,7 +1951,7 @@ fn main() {
         }
 
         let mut spread_gen = SpreadGen {
-            rng: Rng(seed ^ 0x5B4E),
+            rng: Rng::seeded(seed ^ 0x5B4E),
         };
         for _ in 0..GENERATED_SPREADS {
             sources.push(spread_gen.program());
