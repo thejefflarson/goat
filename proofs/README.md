@@ -551,7 +551,7 @@ those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
 commit: 44773 programs written, 43348 compared with 0 mismatches, 1412 skipped
-by the driver, and the lexer differential 78617 sources, 4351098 tokens, 0
+by the driver, and the lexer differential 78622 sources, 4351140 tokens, 0
 disagreements. Inferring a recursive group before the value bindings between its
 members (#628) brought in 59 of the 65 programs it used to skip; the other 6 use
 a later feature or are real cycles the checker rejects. The reader numbers labels
