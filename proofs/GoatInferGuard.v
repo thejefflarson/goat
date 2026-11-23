@@ -223,13 +223,11 @@ Theorem unify_t_gsub : forall f,
   (forall D T1 T2 n s n', unify_t f D T1 T2 n = Some (s, n') ->
      mg T1 -> mg T2 -> gsub s) /\
   (forall D R1 R2 n s n', unify_r f D R1 R2 n = Some (s, n') ->
-     mgr R1 -> mgr R2 -> gsub s) /\
-  (forall D R1 R2 n s n', unify_pw f D R1 R2 n = Some (s, n') ->
      mgr R1 -> mgr R2 -> gsub s).
 Proof.
-  induction f as [|f IH]; [ refine (conj _ (conj _ _)); intros; discriminate | ].
-  destruct IH as [IHt [IHr IHp]].
-  refine (conj _ (conj _ _)).
+  induction f as [|f IH]; [ refine (conj _ _); intros; discriminate | ].
+  destruct IH as [IHt IHr].
+  refine (conj _ _).
   - intros D T1 T2 n s n' H H1 H2. simpl in H.
     destruct T1, T2; try discriminate;
       try (injection H as <- <-; exact gs_id);
@@ -304,18 +302,6 @@ Proof.
       apply gs_sbR; [ exact (proj2 (occR_false _ _ Eo)) | exact H1 ].
     + destruct (occR r2 _) eqn:Eo; [discriminate|]. injection H as <- <-.
       apply gs_sbR; [ exact (proj2 (occR_false _ _ Eo)) | exact H1 ].
-  - intros D R1 R2 n s n' H H1 H2. simpl in H.
-    destruct R1 as [|r|l T R1'|lm Pm Tm Rm], R2 as [|r2|l2 T2 R2'|lm2 Pm2 Tm2 Rm2]; try discriminate.
-    + injection H as <- <-. exact gs_id.
-    + destruct (Nat.eqb l l2); [|discriminate].
-      destruct (unify_t f D T T2 n) as [[s1 n1]|] eqn:E1; [|discriminate].
-      destruct (unify_pw f D (apR s1 R1') (apR s1 R2') n1) as [[s2 n2]|] eqn:E2; [|discriminate].
-      injection H as <- <-.
-      destruct H1 as [H1a H1b]. destruct H2 as [H2a H2b].
-      pose proof (IHt _ _ _ _ _ _ E1 H1a H2a) as Hs1.
-      refine (gs_comp _ _ _ Hs1).
-      eapply IHp; [ exact E2 | apply mg_apR; [ exact Hs1 | exact H1b ]
-                             | apply mg_apR; [ exact Hs1 | exact H2b ] ].
 Qed.
 Lemma group_row_mg : forall fs n, mgr (group_row fs n).
 Proof.

@@ -55,7 +55,7 @@ the implementation diverge, §8 flags it.
 - **iso-recursive types** (ADR 0037, decision 3): the type `μ.τ` with explicit
   `fold(e)` and `unfold(e)` terms, restricted to **guarded** recursion (§4).
   The checker's equi-recursive types are related to these by an elaboration
-  theorem that lands in phase 5 (§9).
+  theorem (§9, phase 5).
 
 Values are immutable: record values and closures (program literals) are values,
 and there is no mutable reference, cell, or assignment in the language.
@@ -225,7 +225,7 @@ syntactic congruence and a type equal to a `μ` is a `μ` (L2). That is what mak
 the recursion iso-recursive: a value of type `μ.τ` and a value of its unrolling
 are different things, and `fold` and `unfold` are the explicit passages between
 them (§4). The checker's types are equi-recursive (a type equals its unrolling,
-ADR 0032); the elaboration theorem of phase 5 (§9) inserts the `fold`s and
+ADR 0032); the elaboration theorem (§9, phase 5) inserts the `fold`s and
 `unfold`s that connect the two.
 
 The checker realizes `≅` operationally through `rewrite_row`
@@ -860,17 +860,37 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
   substitution lemma need finite-support hypotheses on every substitution, and
   Ott's generated open and closure for types would go unused); the bound index
   has no sort, and a `μ` satisfies only `Any`; the parser fragment is unchanged,
-  since `μ`, `fold` and `unfold` have no surface syntax. **Left to phase 5
-  proper:** the elaboration theorem (every program the checker's algorithm
-  accepts elaborates, by inserting `fold`s and `unfold`s, into one the
-  iso-recursive rules accept), extending algorithm W to produce a `μ` (it
-  rejects `fold` and `unfold` today, and its occurs check refuses to bind a
-  variable to a type with a free index, so it stays sound), and the type of an
-  open-extensible recursive receiver (ADR 0034 decision 3: intended reading is
-  `∀ r. μ t. {moved: (t) → t; x: Int ; r}`, instantiated at the extension and
-  refolded by the elaborator; it needs methods and `self`). Phase 3's tag
-  signature `Δ` must keep closed payload types in the sense of `lc` (a payload
+  since `μ`, `fold` and `unfold` have no surface syntax. Phase 3's tag
+  signature `Δ` keeps closed payload types in the sense of `lc` (a payload
   under a `μ` mentions an index), not "no free variables".
+- **The elaboration theorem and methods (phase 5, ADR 0037 decision 3 and its
+  2026-11-22 amendment).** The theorem is the soundness of Algorithm W with W
+  returning the elaborated term (`proofs/GoatElab.v`, `proofs/GoatInferW.v`):
+  if W accepts `e` it returns `e'` and `τ` with `e' : τ` in the iso-recursive
+  rules and `erase e' = e`, where `erase` drops `fold` and `unfold`. A step or
+  trap of `e'` is a step or trap of `e`, or an `unfold(fold v) ⟶ v` that
+  erasure cannot see, and a step of `e` is reached by `e'` (`erase_step`,
+  `erase_traps`, `erase_converse`). W ties a knot where a variable meets a type
+  that mentions it and every mention is guarded, decides type equality up to a
+  bounded number of unrollings (`τ ~~[n] τ'`), and repairs a mismatch between a
+  recursive type and its unrolling with one `fold` or `unfold` at the node (a
+  head coercion); every recursive type it returns is guarded
+  (`infer_guarded`). A record literal with methods is typed by one rule
+  (`T-Obj`) that gives all its methods the literal's one receiver (ADR 0034
+  decision 2), the type of the open-extensible recursive receiver; and a dot
+  call on any receiver is in the parser fragment (ADR 0030, ADR 0031).
+  **Not proved: completeness.** W refuses a recursive program whose knot needs
+  a row variable to tie into itself, whose mismatch lies below a function type
+  or a record field (a deep coercion, which would need an eta-expansion), or
+  whose group member needs a `fold` around its whole lambda: 11 of the 42
+  recursive-type programs in the differential corpus (#606), each sound and
+  refused. The calculus has no `lacks` sort on a row variable, so a spread over
+  a row-variable tail has no derivation (#564). A literal whose methods need
+  different receivers (`{...lit, x: 1}.a()`) is rejected by the checker and by
+  W, but the calculus has no theorem that it has no derivation. A recursive
+  group that a value binding uses before its last member is outside the
+  comparison, because the checker types the use at the member's monomorphic
+  type (65 programs). `proofs/README.md` has the current counts.
 - **Spread and restrict (phase 4, ADR 0033, ADR 0037).** A row entry
   `l ^ P : T ; R` holds the field `l` at `T` when its presence `P` is `Unit`,
   holds none when `P` is `Bool` and `R` has no `l`, and is stuck when `P` is a

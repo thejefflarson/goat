@@ -237,30 +237,6 @@ with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f} : option (s
       end
   end.
 
-(* Unify two rows field by field: they list the same labels in the same
-   order, as the row of a recursive group's members does against the types its
-   members were inferred at. *)
-Fixpoint unify_pw (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f} : option (sub * nat) :=
-  match f with
-  | O => None
-  | S f' =>
-      match R1, R2 with
-      | row_Empty, row_Empty => Some (sid, n)
-      | row_Ext l T R1', row_Ext l' T' R2' =>
-          if Nat.eqb l l' then
-            match unify_t f' D T T' n with
-            | None => None
-            | Some (s1, n1) =>
-                match unify_pw f' D (apR s1 R1') (apR s1 R2') n1 with
-                | None => None
-                | Some (s2, n2) => Some (scomp s2 s1, n2)
-                end
-            end
-          else None
-      | _, _ => None
-      end
-  end.
-
 (* ------------------------------------------------------------------ *)
 (* Instantiation and generalization                                     *)
 (* ------------------------------------------------------------------ *)
