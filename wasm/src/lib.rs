@@ -15,7 +15,7 @@ mod frame;
 
 use allocator::FreeList;
 
-const DATA_BASE: u32 = 8;
+pub const DATA_BASE: u32 = 8;
 const PAGE_BYTES: u32 = 65536;
 const PRINT_NUMBER: u32 = 0;
 const PRINT_BOOL: u32 = 1;

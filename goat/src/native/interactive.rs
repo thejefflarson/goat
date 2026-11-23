@@ -93,9 +93,10 @@ impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
     /// start, the old one is left running.
     pub fn reload(&mut self, wasm: &[u8]) -> Result<Reloaded, String> {
         let guest = &mut self.guest;
-        let (old, new) = (guest.instance, guest.spawn(wasm)?);
-        let fresh: i32 = guest.on(new, |guest| guest.call("goat_setup", ()))?;
+        let (old, mut new) = (guest.instance, guest.spawn(wasm)?);
+        let mut fresh: i32 = guest.on(new, |guest| guest.call("goat_setup", ()))?;
 
+        let mut abandoned = false;
         let (model, outcome) = match self.model.take() {
             None => (fresh, Reloaded::Reset(ResetReason::reshaped())),
             Some(model) => {
@@ -120,12 +121,24 @@ impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
                         })?;
                         (rebuilt, Reloaded::Refreshed)
                     }
-                    Err(_) => (fresh, Reloaded::Reset(ResetReason::reshaped())),
+                    Err(_) => {
+                        // A trap leaves the old model half-consumed and
+                        // unreachable, so nothing in the heap is worth
+                        // keeping, `fresh` included: start the heap over and
+                        // set the new module up in it again.
+                        guest.reset_heap()?;
+                        new = guest.spawn(wasm)?;
+                        fresh = guest.on(new, |guest| guest.call("goat_setup", ()))?;
+                        abandoned = true;
+                        (fresh, Reloaded::Reset(ResetReason::reshaped()))
+                    }
                 }
             }
         };
-        guest.on(old, |guest| guest.call::<_, ()>("goat_shutdown", ()))?;
-        guest.on(old, |guest| guest.call::<_, ()>("goat_free_static", ()))?;
+        if !abandoned {
+            guest.on(old, |guest| guest.call::<_, ()>("goat_shutdown", ()))?;
+            guest.on(old, |guest| guest.call::<_, ()>("goat_free_static", ()))?;
+        }
 
         guest.instance = new;
         guest.store.data_mut().sites = site_table(wasm);
