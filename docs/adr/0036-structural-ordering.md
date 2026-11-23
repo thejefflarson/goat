@@ -50,9 +50,21 @@ records needs an order on more than numbers.
    `StrLen` and `StrByte`. The last field of a record, the payload of a tag
    and the rest of a list are tail calls, so ordering a long list uses constant
    stack. The interpreter and wasm run the derived MIR with no new primitive.
-5. **Floats inside a larger value.** The three-way test is `==`, then `<`,
-   else greater, so a NaN field sorts after everything. A bare `Float < Float`
-   keeps IEEE semantics (any comparison with NaN is false).
+5. **Floats inside a larger value.** The derived three-way test on a `Float`
+   leaf (a record field, a list element, a tag payload, at any depth) is: `<`
+   gives -1, `>` gives 1, `==` gives 0, and otherwise at least one side is NaN.
+   Then a NaN against a NaN is 0 and a NaN against any other `Float` is greater
+   when the NaN is on the left and less when it is on the right. So NaN equals
+   itself and sorts after every other `Float` (infinity included), the same in
+   both directions, and the order is total: `{x: NaN} > {x: 0.0}`, `{x: 0.0} <
+   {x: NaN}`, `{x: NaN} <= {x: NaN}`, and `sort` puts NaN records last. All
+   three runtimes get this from the one derived MIR function. The bare
+   operators keep IEEE semantics: `NaN < x`, `NaN <= x`, `NaN > x`, `NaN >= x`
+   and `NaN == x` are all false, including with itself, because a bare
+   `Float` compare is one MIR `Cmp`. Structural `==` on compounds also stays
+   IEEE at its leaves, so `{x: NaN} == {x: NaN}` is false while `{x: NaN} <=
+   {x: NaN}` is true: ordering is a total order, equality is not reflexive on
+   NaN.
 
 ## Consequences
 
