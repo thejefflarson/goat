@@ -1231,6 +1231,34 @@ Section Denotation.
   Definition sym (s : string) : tree := Leaf (TSym s).
   Definition ident (x : string) : tree := Node R_name [Leaf (TName x)].
 
+  (* The names of the function declarations that open [cs], up to the first
+     tree that is not one: the functions a block's next function may mention
+     ahead of their declarations. *)
+  Definition fn_decl_name (d : tree) : option string :=
+    match d with
+    | Node R_declaration (Node R_name [Leaf (TName x)] :: _) =>
+        if is_fn_decl d then Some x else None
+    | _ => None
+    end.
+
+  Fixpoint fn_run_names (cs : list tree) : list termvar :=
+    match cs with
+    | d :: cs' => match fn_decl_name d with
+                  | Some x => var_of x :: fn_run_names cs'
+                  | None => []
+                  end
+    | [] => []
+    end.
+
+  (* A run of function declarations is one group when every cut between two of
+     its members is crossed by a mention: a member before the cut names one
+     after it. *)
+  Definition cut_linked (ns : list termvar) (vs : list exp) (j : nat) : bool :=
+    existsb (mentions_any (skipn j ns)) (firstn j vs).
+
+  Definition run_linked (ns : list termvar) (vs : list exp) : Prop :=
+    forall j, 0 < j -> j < length ns -> cut_linked ns vs j = true.
+
   Definition rest_node (r : string) : tree := Node R_rest_binding [sym "..."; ident r].
 
   (* The children of a record pattern after its brace: the names, then an
@@ -1602,14 +1630,39 @@ Section Denotation.
         Den_decl d x v ->
         is_fn_decl d = true ->
         mentions_any ctx v = false ->
+        mentions_any (fn_run_names rest) v = false ->
         Den_blk ctx (e_fvar_f (var_of x)) rest xs gs b ->
         Den_blk ctx fin (d :: rest) (x :: xs) (v :: gs) b
     | DK_late : forall ctx fin d rest x v xs gs b,
         Den_decl d x v ->
         is_fn_decl d = true ->
         mentions_any ctx v = true ->
+        mentions_any (fn_run_names rest) v = false ->
         Den_blk (var_of x :: ctx) (e_fvar_f (var_of x)) rest xs gs b ->
         Den_blk ctx fin (d :: rest) xs gs (fn_place (var_of x) v b)
+    | DK_group_hoist : forall ctx fin ds rest xs vs ys gs b,
+        Den_fdecls ds xs vs ->
+        1 < length ds ->
+        run_linked (List.map var_of xs) vs ->
+        existsb (mentions_any (fn_run_names rest)) vs = false ->
+        existsb (mentions_any ctx) vs = false ->
+        Den_blk ctx (e_fvar_f (var_of (List.last xs ""))) rest ys gs b ->
+        Den_blk ctx fin (ds ++ rest) (xs ++ ys) (vs ++ gs) b
+    | DK_group_late : forall ctx fin ds rest xs vs ys gs b,
+        Den_fdecls ds xs vs ->
+        1 < length ds ->
+        run_linked (List.map var_of xs) vs ->
+        existsb (mentions_any (fn_run_names rest)) vs = false ->
+        existsb (mentions_any ctx) vs = true ->
+        Den_blk (List.map var_of xs ++ ctx) (e_fvar_f (var_of (List.last xs ""))) rest ys gs b ->
+        Den_blk ctx fin (ds ++ rest) ys gs (wrap_group (List.map var_of xs) vs b)
+  with Den_fdecls : list tree -> list string -> list exp -> Prop :=
+    | DF_nil : Den_fdecls [] [] []
+    | DF_cons : forall d x v ds xs vs,
+        Den_decl d x v ->
+        is_fn_decl d = true ->
+        Den_fdecls ds xs vs ->
+        Den_fdecls (d :: ds) (x :: xs) (v :: vs)
   with Den_math : list tree -> exp -> Prop :=
     | DM_run : forall cs is e,
         Den_run cs is ->
@@ -1833,6 +1886,7 @@ Scheme Den_ind' := Induction for Den Sort Prop
 with Den_decl_ind' := Induction for Den_decl Sort Prop
 with Den_block_ind' := Induction for Den_block Sort Prop
 with Den_blk_ind' := Induction for Den_blk Sort Prop
+with Den_fdecls_ind' := Induction for Den_fdecls Sort Prop
 with Den_math_ind' := Induction for Den_math Sort Prop
 with Den_opd_ind' := Induction for Den_opd Sort Prop
 with Den_run_ind' := Induction for Den_run Sort Prop
@@ -1851,7 +1905,7 @@ with Den_body_ind' := Induction for Den_body Sort Prop
 with Den_larm_ind' := Induction for Den_larm Sort Prop
 with Den_larms_ind' := Induction for Den_larms Sort Prop.
 Combined Scheme Den_mutind from Den_ind', Den_decl_ind', Den_block_ind',
-  Den_blk_ind', Den_math_ind', Den_opd_ind', Den_run_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
+  Den_blk_ind', Den_fdecls_ind', Den_math_ind', Den_opd_ind', Den_run_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
   Den_items_ind', Den_sep_ind', Den_field_ind', Den_arm_ind', Den_arms_ind',
   Den_lit_arm_ind', Den_lit_arms_ind', Den_body_ind', Den_larm_ind', Den_larms_ind'.
 
@@ -1862,6 +1916,7 @@ Lemma den_lc : forall `{TT : TagTable} var_of tbl,
   (forall d x v, Den_decl var_of tbl d x v -> lc v) /\
   (forall cs e, Den_block var_of tbl cs e -> lc e) /\
   (forall ctx fin cs xs gs b, Den_blk var_of tbl ctx fin cs xs gs b -> lc fin -> lc b /\ Forall lc gs) /\
+  (forall ds xs vs, Den_fdecls var_of tbl ds xs vs -> Forall lc vs) /\
   (forall cs e, Den_math var_of tbl cs e -> lc e) /\
   (forall cs is, Den_opd var_of tbl cs is -> Forall item_lc is) /\
   (forall cs is, Den_run var_of tbl cs is -> Forall item_lc is) /\
@@ -2004,13 +2059,24 @@ Proof.
       by (apply (proj1 lc_close_mut); exact IHb).
     split; [ exact (conj IHd Hclose) | exact IHgs ].
   - (* block, a function joins the group *)
-    intros ctx fin d rest x v xs gs b Hd IHd _ _ Hrest IHrest Hfin.
+    intros ctx fin d rest x v xs gs b Hd IHd _ _ _ Hrest IHrest Hfin.
     destruct (IHrest I) as [IHb IHgs].
     split; [ exact IHb | exact (Forall_cons v IHd IHgs) ].
   - (* block, a function after a value it uses *)
-    intros ctx fin d rest x v xs gs b Hd IHd _ _ Hrest IHrest Hfin.
+    intros ctx fin d rest x v xs gs b Hd IHd _ _ _ Hrest IHrest Hfin.
     destruct (IHrest I) as [IHb IHgs].
     split; [ exact (lc_fn_place (var_of x) v b IHd IHb) | exact IHgs ].
+  - (* block, a group of functions that use no earlier value *)
+    intros ctx fin ds rest xs vs ys gs b Hds IHds _ _ _ _ Hrest IHrest Hfin.
+    destruct (IHrest I) as [IHb IHgs].
+    split; [ exact IHb | apply Forall_app; split; [ exact IHds | exact IHgs ] ].
+  - (* block, a group of functions, one of which uses an earlier value *)
+    intros ctx fin ds rest xs vs ys gs b Hds IHds _ _ _ _ Hrest IHrest Hfin.
+    destruct (IHrest I) as [IHb IHgs].
+    split; [ exact (lc_wrap_group _ vs b IHb IHds) | exact IHgs ].
+  - (* function declarations, none *) exact (Forall_nil _).
+  - (* function declarations, one more *)
+    intros d x v ds xs vs Hd IHd _ _ IHds. exact (Forall_cons v IHd IHds).
   - (* math: the run resolved *)
     intros cs is e Hrun IH Hres. exact (resolve_lc is e IH Hres).
   - (* operand, a chain *)

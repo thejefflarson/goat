@@ -64,7 +64,7 @@ use goat_checker::hir::{BinOp, Expr, ExprId, ExprKind, MatchArm, Symbol};
 use goat_checker::lower::{Lowered, lower, lower_with_prelude};
 use goat_checker::ty::{Group, Row, Ty, TypeVar};
 use goat_checker::{Checked, ErrorKind};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
 use std::sync::Arc;
@@ -1109,6 +1109,7 @@ impl Reader<'_> {
 /// fragment's types.
 struct Canon<'a> {
     labels: &'a [String],
+    groups: &'a [Arc<Group>],
     vars: Vec<u32>,
     binders: Vec<u32>,
     open_in_rec: bool,
@@ -1136,6 +1137,10 @@ impl Canon<'_> {
                 Some(depth) => write!(out, "m{depth}").unwrap(),
                 None => write!(out, "v{}", self.var(*v)).unwrap(),
             },
+            Ty::Variant(_) => self.group(ty, None, out)?,
+            Ty::Rec(binder, body) if matches!(&**body, Ty::Variant(_)) => {
+                self.group(body, Some(*binder), out)?
+            }
             Ty::Rec(binder, body) => {
                 write!(out, "(mu m{}. ", self.binders.len()).unwrap();
                 self.binders.push(*binder);
@@ -1205,9 +1210,90 @@ impl Canon<'_> {
                 }
                 out.push('}');
             }
-            _ => return None,
         }
         Some(())
+    }
+
+    /// A declared group's closed type as `(grp N T0 T1 ...)`: the group's
+    /// number and the types in its parameter slots. The group's own recursion
+    /// is not written, as the calculus's group type has no binder for it; a
+    /// `binder` a parameter mentions (`f = program(x) do Wrap(f(x)) done`) is
+    /// written as the `mu` around the group.
+    fn group(&mut self, ty: &Ty, binder: Option<TypeVar>, out: &mut String) -> Option<()> {
+        let Ty::Variant(row) = ty else { return None };
+        let tags = closed_fields(row)?;
+        let (name, group) = self.groups.iter().enumerate().find(|(_, g)| {
+            g.tags.len() == tags.len()
+                && g.tags.iter().all(|(t, _)| tags.iter().any(|(l, _)| l == t))
+        })?;
+        let mut params = vec![None; group.params];
+        for (tag, pattern) in &group.tags {
+            let actual = tags.iter().find(|(l, _)| l == tag)?.1;
+            read_params(pattern, actual, &mut params);
+        }
+        let params = params.into_iter().collect::<Option<Vec<_>>>()?;
+        let knot = binder.filter(|b| {
+            params.iter().any(|p| {
+                let mut free = BTreeSet::new();
+                p.free_vars(&mut free);
+                free.contains(b)
+            })
+        });
+        if let Some(binder) = knot {
+            write!(out, "(mu m{}. ", self.binders.len()).unwrap();
+            self.binders.push(binder);
+        }
+        write!(out, "(grp {name}").unwrap();
+        let mut written = Some(());
+        for param in params {
+            out.push(' ');
+            written = written.and_then(|()| self.ty(param, out));
+        }
+        out.push(')');
+        if knot.is_some() {
+            self.binders.pop();
+            out.push(')');
+        }
+        written
+    }
+}
+
+/// The fields of a closed row, in order; `None` when it is open or has a
+/// presence entry.
+fn closed_fields(row: &Row) -> Option<Vec<(&str, &Ty)>> {
+    let mut fields = Vec::new();
+    let mut at = row;
+    loop {
+        match at {
+            Row::Empty => return Some(fields),
+            Row::Extend {
+                label, field, rest, ..
+            } => {
+                fields.push((label.as_str(), &**field));
+                at = rest;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// The parts of `actual` that stand where `pattern`, a tag's payload type in a
+/// group, holds one of the group's parameters.
+fn read_params<'a>(pattern: &Ty, actual: &'a Ty, params: &mut [Option<&'a Ty>]) {
+    match (pattern, actual) {
+        (&Ty::Var(v), _) if v < Group::SELF && Group::SELF - 1 - v < params.len() as TypeVar => {
+            params[(Group::SELF - 1 - v) as usize].get_or_insert(actual);
+        }
+        (Ty::Record(wanted), Ty::Record(given)) => {
+            if let (Some(wanted), Some(given)) = (closed_fields(wanted), closed_fields(given)) {
+                for (label, field) in wanted {
+                    if let Some((_, part)) = given.iter().find(|(l, _)| *l == label) {
+                        read_params(field, part, params);
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1269,6 +1355,7 @@ pub fn line(source: &str) -> Result<String, Skip> {
             checked.typed.node_types.values().any(|ty| {
                 let mut canon = Canon {
                     labels: &reader.labels,
+                    groups: &reader.groups,
                     vars: Vec::new(),
                     binders: Vec::new(),
                     open_in_rec: false,
@@ -1281,6 +1368,7 @@ pub fn line(source: &str) -> Result<String, Skip> {
         Some(checked) => {
             let mut canon = Canon {
                 labels: &reader.labels,
+                groups: &reader.groups,
                 vars: Vec::new(),
                 binders: Vec::new(),
                 open_in_rec: false,

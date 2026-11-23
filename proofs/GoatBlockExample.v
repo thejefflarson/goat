@@ -158,7 +158,7 @@ Proof.
   { eapply DK_value.
     - apply DD_plain. apply num_den.
     - reflexivity.
-    - eapply DK_late; [ exact Hg | reflexivity | exact Hcaptures | exact Hcall ]. }
+    - eapply DK_late; [ exact Hg | reflexivity | exact Hcaptures | reflexivity | exact Hcall ]. }
   eexists. split.
   - apply D_expr. apply (DB_top var_of [] _ [] [] _ Hblk).
   - eapply den_lc_of. apply D_expr. apply (DB_top var_of [] _ [] [] _ Hblk).
