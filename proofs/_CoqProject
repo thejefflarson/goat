@@ -42,6 +42,11 @@ GoatCoerce.v
 GoatClose.v
 GoatInferW.v
 GoatInferGuard.v
+GoatCompleteFuel.v
+GoatCompleteInst.v
+GoatCompleteGen.v
+GoatCompleteMono.v
+GoatCompleteLet.v
 GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v
