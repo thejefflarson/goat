@@ -4,9 +4,12 @@
 //! streams, command for command, and leave nothing allocated.
 
 use goat::{Boundary, HostValue, SceneCommand, SceneHost};
-use goat_cli::Guest;
+use goat_cli::Guest as WasmGuest;
 use goat_mir::{HeapKind, Layout, MTy, Program, Session, Value};
 use std::time::{Duration, Instant};
+
+#[allow(dead_code)]
+mod support;
 
 const EXAMPLE: &str = include_str!("../../examples/interactive.goat");
 const SHAPES: &str = include_str!("../../examples/shapes.goat");
@@ -96,6 +99,139 @@ fn program(source: &str) -> Program {
     program
 }
 
+fn native() -> bool {
+    support::uses_native() && goat_native::clang_available()
+}
+
+/// The raw exports of a compiled program, on the backend this run checks:
+/// native under `GOAT_RUNTIME=native`, else wasm. A model or an event is the
+/// address (native) or offset (wasm) the program gave.
+enum Driver<H: goat::Host + 'static> {
+    Wasm(WasmGuest<H>),
+    Native(goat_native::Guest<H>),
+}
+
+impl<H: goat::Host + 'static> Driver<H> {
+    fn new(program: &Program, host: H) -> Driver<H> {
+        if native() {
+            let library = goat_native::build_program(program).expect("program builds natively");
+            Driver::Native(goat_native::Guest::new(library, host).expect("library loads"))
+        } else {
+            let wasm = goat_wasm::emit(program).expect("program emits");
+            Driver::Wasm(WasmGuest::new(&wasm, host).expect("module instantiates"))
+        }
+    }
+
+    fn subscribed(&mut self, label: &str) -> bool {
+        match self {
+            Driver::Wasm(g) => g.exports().contains(&format!("goat_event_{label}")),
+            Driver::Native(g) => g.subscriptions().iter().any(|s| s == label),
+        }
+    }
+
+    fn setup(&mut self) -> Result<usize, String> {
+        match self {
+            Driver::Wasm(g) => g.call::<_, i32>("goat_setup", ()).map(|m| m as usize),
+            Driver::Native(g) => g.setup(),
+        }
+    }
+
+    fn event(&mut self, event: &Event) -> Result<usize, String> {
+        let label = event.label();
+        match self {
+            Driver::Wasm(g) => {
+                let name = format!("goat_event_{label}");
+                match event {
+                    Event::Tick(dt) => g.call::<_, i32>(&name, *dt),
+                    Event::KeyDown(key) | Event::KeyUp(key) => {
+                        let key = g.string(key)?;
+                        g.call(&name, key)
+                    }
+                    Event::Pointer(_, x, y) => g.call(&name, (*x, *y)),
+                }
+                .map(|e| e as usize)
+            }
+            Driver::Native(g) => {
+                use goat_native::interactive::Arg;
+                match event {
+                    Event::Tick(dt) => g.event(&label, &[Arg::Float(*dt)]),
+                    Event::KeyDown(key) | Event::KeyUp(key) => {
+                        let key = g.string(key)?;
+                        g.event(&label, &[Arg::Object(key)])
+                    }
+                    Event::Pointer(_, x, y) => g.event(&label, &[Arg::Float(*x), Arg::Float(*y)]),
+                }
+            }
+        }
+    }
+
+    fn update(&mut self, model: usize, event: usize) -> Result<usize, String> {
+        match self {
+            Driver::Wasm(g) => g
+                .call::<_, i32>("goat_update", (model as i32, event as i32))
+                .map(|m| m as usize),
+            Driver::Native(g) => g.update(model, event),
+        }
+    }
+
+    fn draw(&mut self, model: usize) -> Result<(), String> {
+        match self {
+            Driver::Wasm(g) => g.call::<_, ()>("goat_draw", model as i32),
+            Driver::Native(g) => g.draw(model),
+        }
+    }
+
+    fn release_model(&mut self, model: usize) {
+        match self {
+            Driver::Wasm(g) => g.call::<_, ()>("goat_release_model", model as i32).unwrap(),
+            Driver::Native(g) => g.release_model(model).unwrap(),
+        }
+    }
+
+    fn shutdown(&mut self) {
+        match self {
+            Driver::Wasm(g) => g.call::<_, ()>("goat_shutdown", ()).unwrap(),
+            Driver::Native(g) => g.shutdown().unwrap(),
+        }
+    }
+
+    fn live(&mut self) -> u32 {
+        match self {
+            Driver::Wasm(g) => g.live_allocs().unwrap(),
+            Driver::Native(g) => g.live_allocs(),
+        }
+    }
+
+    /// Slot `slot` of the model, a number of type `ty`.
+    fn number(&mut self, model: usize, slot: usize, ty: MTy) -> f64 {
+        let at = HEADER + SLOT * slot;
+        let bytes = match self {
+            Driver::Wasm(g) => g.read(model + at, 8).expect("model readable"),
+            // SAFETY: `model` is a live object the program returned, and the
+            // slot lies inside it.
+            Driver::Native(g) => unsafe { g.read(model, at, 8) },
+        };
+        let bytes = bytes.try_into().unwrap();
+        match ty {
+            MTy::Int => i64::from_le_bytes(bytes) as f64,
+            _ => f64::from_le_bytes(bytes),
+        }
+    }
+
+    fn into_host(self) -> H {
+        match self {
+            Driver::Wasm(g) => g.into_host(),
+            Driver::Native(g) => g.into_host(),
+        }
+    }
+}
+
+/// A key press: the event constructor, then `update`.
+fn press(driver: &mut Driver<SceneHost>, model: usize, key: &'static str) -> Result<usize, String> {
+    let event = driver.event(&Event::KeyDown(key))?;
+    driver.update(model, event)
+}
+
 /// What one backend did with a script.
 #[derive(Debug, PartialEq)]
 struct Trace {
@@ -154,40 +290,30 @@ fn interpreted(program: &Program, script: &[Event], numbers: usize) -> Trace {
 }
 
 fn compiled(program: &Program, script: &[Event], numbers: usize) -> Trace {
-    let wasm = goat_wasm::emit(program).expect("program emits");
-    let mut guest = Guest::new(&wasm, SceneHost::default()).expect("module instantiates");
-    let exports = guest.exports();
-    let mut model: i32 = guest.call("goat_setup", ()).expect("setup runs");
+    let mut driver = Driver::new(program, SceneHost::default());
+    let mut model = driver.setup().expect("setup runs");
     let slots = model_slots(program);
     let mut models = Vec::new();
-    let handled = |e: &&Event| exports.contains(&format!("goat_event_{}", e.label()));
-    for event in script.iter().filter(handled) {
-        let name = format!("goat_event_{}", event.label());
-        let built: i32 = match event {
-            Event::Tick(dt) => guest.call(&name, *dt),
-            Event::KeyDown(key) | Event::KeyUp(key) => {
-                let key = guest.string(key).unwrap();
-                guest.call(&name, key)
-            }
-            Event::Pointer(_, x, y) => guest.call(&name, (*x, *y)),
-        }
-        .expect("event constructs");
-        model = guest
-            .call("goat_update", (model, built))
-            .expect("update runs");
-        guest.call::<_, ()>("goat_draw", model).expect("draw runs");
+    let handled: Vec<&Event> = script
+        .iter()
+        .filter(|e| driver.subscribed(&e.label()))
+        .collect();
+    for event in handled {
+        let built = driver.event(event).expect("event constructs");
+        model = driver.update(model, built).expect("update runs");
+        driver.draw(model).expect("draw runs");
         models.push(
             (0..numbers)
-                .map(|i| number(&mut guest, model, i, slots[i]))
+                .map(|i| driver.number(model, i, slots[i]))
                 .collect(),
         );
     }
-    guest.call::<_, ()>("goat_release_model", model).unwrap();
-    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
-    let live = guest.live_allocs().unwrap() as usize;
+    driver.release_model(model);
+    driver.shutdown();
+    let live = driver.live() as usize;
     Trace {
         models,
-        scene: guest.into_host().commands,
+        scene: driver.into_host().commands,
         live,
     }
 }
@@ -201,17 +327,6 @@ fn model_slots(program: &Program) -> Vec<MTy> {
     match &program.layouts[layout.0 as usize] {
         Layout::Record(fields) => fields.clone(),
         Layout::Variant(_) => panic!("the model is a record"),
-    }
-}
-
-fn number(guest: &mut Guest<SceneHost>, model: i32, slot: usize, ty: MTy) -> f64 {
-    let bytes = guest
-        .read(model as usize + HEADER + SLOT * slot, 8)
-        .expect("model readable");
-    let bytes = bytes.try_into().unwrap();
-    match ty {
-        MTy::Int => i64::from_le_bytes(bytes) as f64,
-        _ => f64::from_le_bytes(bytes),
     }
 }
 
@@ -425,16 +540,15 @@ fn an_interactive_module_exports_the_contract_and_not_an_entry() {
 
 #[test]
 fn setup_hands_the_host_a_model_with_count_one() {
-    let wasm = goat::compile_turtle(EXAMPLE).expect("compiles");
-    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
-    let model: i32 = guest.call("goat_setup", ()).unwrap();
-    assert_eq!(number(&mut guest, model, 1, MTy::Float), 0.0);
-    guest.call::<_, ()>("goat_draw", model).unwrap();
-    guest.call::<_, ()>("goat_draw", model).unwrap();
-    guest.call::<_, ()>("goat_release_model", model).unwrap();
-    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
-    assert_eq!(guest.live_allocs().unwrap(), 0);
-    assert_eq!(guest.into_host().commands.len(), 2 * 8);
+    let mut driver = Driver::new(&program(EXAMPLE), SceneHost::default());
+    let model = driver.setup().unwrap();
+    assert_eq!(driver.number(model, 1, MTy::Float), 0.0);
+    driver.draw(model).unwrap();
+    driver.draw(model).unwrap();
+    driver.release_model(model);
+    driver.shutdown();
+    assert_eq!(driver.live(), 0);
+    assert_eq!(driver.into_host().commands.len(), 2 * 8);
 }
 
 const TOO_MANY_POINTS: &str = r#"
@@ -461,10 +575,9 @@ fn a_picture_past_the_per_frame_cap_traps() {
         "{error:?}"
     );
 
-    let wasm = goat_wasm::emit(&program).unwrap();
-    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
-    let model: i32 = guest.call("goat_setup", ()).unwrap();
-    let error = guest.call::<_, ()>("goat_draw", model).unwrap_err();
+    let mut driver = Driver::new(&program, SceneHost::default());
+    let model = driver.setup().unwrap();
+    let error = driver.draw(model).unwrap_err();
     assert!(error.contains("trapped"), "{error}");
 }
 
@@ -472,10 +585,9 @@ fn a_picture_past_the_per_frame_cap_traps() {
 fn a_color_outside_the_allowlist_traps() {
     let source = SKETCH.replace("#0a0", "red; alert(1)");
     let program = program(&source);
-    let wasm = goat_wasm::emit(&program).unwrap();
-    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
-    let model: i32 = guest.call("goat_setup", ()).unwrap();
-    let error = guest.call::<_, ()>("goat_draw", model).unwrap_err();
+    let mut driver = Driver::new(&program, SceneHost::default());
+    let model = driver.setup().unwrap();
+    let error = driver.draw(model).unwrap_err();
     assert!(error.contains("trapped"), "{error}");
 }
 
@@ -560,7 +672,7 @@ draw = program(model) do [] done
 fn an_update_that_never_returns_traps_under_a_timeout() {
     let wasm = goat::compile_turtle(SPINNING).expect("compiles");
     let mut guest =
-        Guest::with_timeout(&wasm, SceneHost::default(), Duration::from_millis(100)).unwrap();
+        WasmGuest::with_timeout(&wasm, SceneHost::default(), Duration::from_millis(100)).unwrap();
     let model: i32 = guest.call("goat_setup", ()).unwrap();
     let tick: i32 = guest.call("goat_event_Tick", 16.0f64).unwrap();
     let error = guest
@@ -569,34 +681,29 @@ fn an_update_that_never_returns_traps_under_a_timeout() {
     assert!(error.contains("looks stuck"), "{error}");
 }
 
-fn press(guest: &mut Guest<SceneHost>, model: i32, key: &str) -> Result<i32, String> {
-    let key = guest.string(key)?;
-    let event: i32 = guest.call("goat_event_KeyDown", key)?;
-    guest.call("goat_update", (model, event))
-}
-
 #[test]
 fn ordinary_updates_run_many_times_with_no_bound() {
-    let wasm = goat::compile_turtle(ARROW_DRAW).expect("compiles");
-    let mut guest = Guest::new(&wasm, SceneHost::default()).unwrap();
-    let mut model: i32 = guest.call("goat_setup", ()).unwrap();
+    let mut driver = Driver::new(&program(ARROW_DRAW), SceneHost::default());
+    let mut model = driver.setup().unwrap();
     for _ in 0..2_000 {
-        model = press(&mut guest, model, "ArrowRight").unwrap();
+        model = press(&mut driver, model, "ArrowRight").unwrap();
     }
-    guest.call::<_, ()>("goat_release_model", model).unwrap();
-    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
-    assert_eq!(guest.live_allocs().unwrap(), 0);
+    driver.release_model(model);
+    driver.shutdown();
+    assert_eq!(driver.live(), 0);
 }
 
 #[test]
 fn the_timeout_restarts_with_every_call() {
     let wasm = goat::compile_turtle(ARROW_DRAW).expect("compiles");
     let timeout = Duration::from_millis(100);
-    let mut guest = Guest::with_timeout(&wasm, SceneHost::default(), timeout).unwrap();
+    let mut guest = WasmGuest::with_timeout(&wasm, SceneHost::default(), timeout).unwrap();
     let mut model: i32 = guest.call("goat_setup", ()).unwrap();
     let started = Instant::now();
     while started.elapsed() < 3 * timeout {
-        model = press(&mut guest, model, "ArrowRight").unwrap();
+        let key = guest.string("ArrowRight").unwrap();
+        let event: i32 = guest.call("goat_event_KeyDown", key).unwrap();
+        model = guest.call("goat_update", (model, event)).unwrap();
     }
 }
 
@@ -634,18 +741,17 @@ fn update_reuses_the_models_cell_on_both_backends_and_nothing_leaks() {
     session.release_model(model).unwrap();
     assert_eq!(session.shutdown().unwrap(), 0, "interpreter leaked");
 
-    let wasm = goat_wasm::emit(&program).expect("program emits");
-    let mut guest = Guest::new(&wasm, SceneHost::default()).expect("module instantiates");
-    let mut model: i32 = guest.call("goat_setup", ()).expect("setup runs");
+    let mut driver = Driver::new(&program, SceneHost::default());
+    let mut model = driver.setup().expect("setup runs");
     let first = model;
     for _ in 0..50 {
-        model = press(&mut guest, model, "a").expect("update runs");
-        assert_eq!(model, first, "wasm allocated a fresh model");
+        model = press(&mut driver, model, "a").expect("update runs");
+        assert_eq!(model, first, "the compiled program allocated a fresh model");
     }
-    assert_eq!(number(&mut guest, model, 0, MTy::Int), 50.0);
-    guest.call::<_, ()>("goat_release_model", model).unwrap();
-    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
-    assert_eq!(guest.live_allocs().unwrap(), 0, "wasm leaked");
+    assert_eq!(driver.number(model, 0, MTy::Int), 50.0);
+    driver.release_model(model);
+    driver.shutdown();
+    assert_eq!(driver.live(), 0, "the compiled program leaked");
 }
 
 /// A host that keeps the raw bytes of each frame it is handed.
@@ -681,16 +787,15 @@ fn each_draw_hands_the_host_one_frame_and_both_backends_encode_the_same_bytes() 
     session.shutdown().unwrap();
     let interpreted = host.frames;
 
-    let wasm = goat_wasm::emit(&program).expect("program emits");
-    let mut guest = Guest::new(&wasm, Frames::default()).expect("module instantiates");
-    let model: i32 = guest.call("goat_setup", ()).expect("setup runs");
+    let mut driver = Driver::new(&program, Frames::default());
+    let model = driver.setup().expect("setup runs");
     for _ in 0..2 {
-        guest.call::<_, ()>("goat_draw", model).expect("draw runs");
+        driver.draw(model).expect("draw runs");
     }
-    guest.call::<_, ()>("goat_release_model", model).unwrap();
-    guest.call::<_, ()>("goat_shutdown", ()).unwrap();
-    assert_eq!(guest.live_allocs().unwrap(), 0, "leaked");
-    let compiled = guest.into_host().frames;
+    driver.release_model(model);
+    driver.shutdown();
+    assert_eq!(driver.live(), 0, "leaked");
+    let compiled = driver.into_host().frames;
 
     assert_eq!(interpreted.len(), 2, "one frame call per draw");
     assert_eq!(compiled, interpreted);
@@ -718,12 +823,9 @@ fn a_picture_past_the_frame_size_limit_traps_on_both_backends() {
     let error = session.draw(model).expect_err("too big");
     assert!(format!("{error:?}").contains("too big"), "{error:?}");
 
-    let wasm = goat_wasm::emit(&program).expect("program emits");
-    let mut guest = Guest::new(&wasm, SceneHost::default()).expect("module instantiates");
-    let model: i32 = guest.call("goat_setup", ()).expect("setup runs");
-    let error = guest
-        .call::<_, ()>("goat_draw", model)
-        .expect_err("too big");
+    let mut driver = Driver::new(&program, SceneHost::default());
+    let model = driver.setup().expect("setup runs");
+    let error = driver.draw(model).expect_err("too big");
     assert!(error.contains("too big"), "{error}");
 }
 
@@ -736,9 +838,8 @@ fn a_picture_under_the_limit_that_outgrows_the_buffer_draws_whole() {
     let interpreted = host.frames;
     assert!(interpreted[0].len() > 2_000_000);
 
-    let wasm = goat_wasm::emit(&program).expect("program emits");
-    let mut guest = Guest::new(&wasm, Frames::default()).expect("module instantiates");
-    let model: i32 = guest.call("goat_setup", ()).expect("setup runs");
-    guest.call::<_, ()>("goat_draw", model).expect("draw runs");
-    assert_eq!(guest.into_host().frames, interpreted);
+    let mut driver = Driver::new(&program, Frames::default());
+    let model = driver.setup().expect("setup runs");
+    driver.draw(model).expect("draw runs");
+    assert_eq!(driver.into_host().frames, interpreted);
 }

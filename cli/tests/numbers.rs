@@ -20,11 +20,7 @@ fn interp_error(src: &str) -> InterpError {
 }
 
 fn wasm_error(src: &str) -> String {
-    let wasm = goat::compile_turtle(src).expect("compiles");
-    match support::execute(&wasm) {
-        Ok(_) => panic!("the program should trap: {src}"),
-        Err(error) => error,
-    }
+    support::trap_text(src)
 }
 
 fn assert_traps(src: &str, message: &str) {

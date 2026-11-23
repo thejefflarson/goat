@@ -127,13 +127,7 @@ fn run_program(
     }
     let turtle = finished.host;
     if let Err(stopped) = finished.result {
-        return Err(match stopped.site {
-            Some((start, end)) => {
-                let blame = goat::GoatError::new(goat::Span::new(start, end), stopped.message);
-                format!("trap: {}", blame.render(source))
-            }
-            None => format!("trap: {}", stopped.message),
-        });
+        return Err(goat::render_trap(source, &stopped.message, stopped.site));
     }
     match out {
         Some(_) if turtle.commands.is_empty() => {

@@ -1,15 +1,17 @@
 ; goat native backend: textual LLVM IR
 
 %goat_host = type { i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }
-%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64], i64, i64, [55 x ptr] }
+%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64], i64, i64, [55 x ptr], ptr, ptr, ptr, ptr, ptr, i32, i32, ptr }
 %goat_value = type { i32, i64, i64 }
 
+declare ptr @llvm.frameaddress.p0(i32 immarg)
 declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
 declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
 
-@goat.text.0 = private unnamed_addr constant [23 x i8] c"this number got too big"
-@goat.text.1 = private unnamed_addr constant [31 x i8] c"a heap block was released twice"
+@goat.text.0 = private unnamed_addr constant [36 x i8] c"the program called itself too deeply"
+@goat.text.1 = private unnamed_addr constant [23 x i8] c"this number got too big"
+@goat.text.2 = private unnamed_addr constant [31 x i8] c"a heap block was released twice"
 
 
 @goat.static.0 = private unnamed_addr constant { i32, i32, i32, i32, i64 } { i32 -1, i32 0, i32 0, i32 0, i64 ptrtoint (ptr @goat_f4 to i64) }
@@ -25,26 +27,43 @@ entry:
   store i64 0, ptr %v4
   %v5 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 9, i32 4
   store i64 0, ptr %v5
-  %v6 = call tailcc i64 @goat_f1(ptr %inst, i64 10, i64 0)
-  %v7 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 3
-  store i32 238, ptr %v7
-  %v8 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 4
-  store i32 266, ptr %v8
-  %v9 = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 %v6, i64 0)
-  %v10 = extractvalue { i64, i1 } %v9, 1
-  br i1 %v10, label %trap11, label %go12
-trap11:
-  %v13 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 7
-  %v14 = load ptr, ptr %v13
-  %v15 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
-  %v16 = load ptr, ptr %v15
-  %v17 = getelementptr inbounds %goat_host, ptr %v14, i32 0, i32 9
-  %v18 = load ptr, ptr %v17
-  call void %v18(ptr %v16, ptr @goat.text.0, i64 23) noreturn nounwind
+  %v6 = call ptr @llvm.frameaddress.p0(i32 0)
+  %v7 = ptrtoint ptr %v6 to i64
+  %v8 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 20
+  %v9 = load ptr, ptr %v8
+  %v10 = ptrtoint ptr %v9 to i64
+  %v11 = icmp ult i64 %v7, %v10
+  br i1 %v11, label %trap12, label %go13
+trap12:
+  %v14 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 7
+  %v15 = load ptr, ptr %v14
+  %v16 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
+  %v17 = load ptr, ptr %v16
+  %v18 = getelementptr inbounds %goat_host, ptr %v15, i32 0, i32 9
+  %v19 = load ptr, ptr %v18
+  call void %v19(ptr %v17, ptr @goat.text.0, i64 36) noreturn nounwind
   unreachable
-go12:
-  %v19 = extractvalue { i64, i1 } %v9, 0
-  ret i64 %v19
+go13:
+  %v20 = call tailcc i64 @goat_f1(ptr %inst, i64 10, i64 0)
+  %v21 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 3
+  store i32 238, ptr %v21
+  %v22 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 4
+  store i32 266, ptr %v22
+  %v23 = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 %v20, i64 0)
+  %v24 = extractvalue { i64, i1 } %v23, 1
+  br i1 %v24, label %trap25, label %go26
+trap25:
+  %v27 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 7
+  %v28 = load ptr, ptr %v27
+  %v29 = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 8
+  %v30 = load ptr, ptr %v29
+  %v31 = getelementptr inbounds %goat_host, ptr %v28, i32 0, i32 9
+  %v32 = load ptr, ptr %v31
+  call void %v32(ptr %v30, ptr @goat.text.1, i64 23) noreturn nounwind
+  unreachable
+go26:
+  %v33 = extractvalue { i64, i1 } %v23, 0
+  ret i64 %v33
 }
 
 define internal tailcc i64 @goat_f1(ptr %inst, i64 %l0, i64 %l1) nounwind {
@@ -111,7 +130,7 @@ trap23:
   %v28 = load ptr, ptr %v27
   %v29 = getelementptr inbounds %goat_host, ptr %v26, i32 0, i32 9
   %v30 = load ptr, ptr %v29
-  call void %v30(ptr %v28, ptr @goat.text.0, i64 23) noreturn nounwind
+  call void %v30(ptr %v28, ptr @goat.text.1, i64 23) noreturn nounwind
   unreachable
 go24:
   %v31 = extractvalue { i64, i1 } %v21, 0
@@ -129,7 +148,7 @@ trap36:
   %v41 = load ptr, ptr %v40
   %v42 = getelementptr inbounds %goat_host, ptr %v39, i32 0, i32 9
   %v43 = load ptr, ptr %v42
-  call void %v43(ptr %v41, ptr @goat.text.0, i64 23) noreturn nounwind
+  call void %v43(ptr %v41, ptr @goat.text.1, i64 23) noreturn nounwind
   unreachable
 go37:
   %v44 = extractvalue { i64, i1 } %v34, 0
@@ -221,7 +240,7 @@ bad_host:
   ret i32 1
 check_instance:
   %instance_version = load i32, ptr %inst
-  %instance_old = icmp ult i32 %instance_version, 2
+  %instance_old = icmp ult i32 %instance_version, 3
   br i1 %instance_old, label %bad_instance, label %run
 bad_instance:
   ret i32 2
@@ -257,7 +276,7 @@ twice:
   %ctx.twice = load ptr, ptr %ctx.twice.at
   %trap.twice.at = getelementptr inbounds %goat_host, ptr %host.twice, i32 0, i32 9
   %trap.twice = load ptr, ptr %trap.twice.at
-  call void %trap.twice(ptr %ctx.twice, ptr @goat.text.1, i64 31) noreturn nounwind
+  call void %trap.twice(ptr %ctx.twice, ptr @goat.text.2, i64 31) noreturn nounwind
   unreachable
 go:
   %class.at = getelementptr inbounds i8, ptr %block, i64 4
@@ -327,7 +346,7 @@ twice:
   %ctx.twice = load ptr, ptr %ctx.twice.at
   %trap.twice.at = getelementptr inbounds %goat_host, ptr %host.twice, i32 0, i32 9
   %trap.twice = load ptr, ptr %trap.twice.at
-  call void %trap.twice(ptr %ctx.twice, ptr @goat.text.1, i64 31) noreturn nounwind
+  call void %trap.twice(ptr %ctx.twice, ptr @goat.text.2, i64 31) noreturn nounwind
   unreachable
 dec:
   %n = sub i32 %rc, 1

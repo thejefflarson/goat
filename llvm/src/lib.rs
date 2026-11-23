@@ -27,9 +27,11 @@ use std::fmt::{self, Write as _};
 use goat_mir::*;
 
 mod closures;
+mod frames;
 mod heap;
 mod heap_nodes;
 mod host_calls;
+mod interactive;
 mod tail;
 
 use heap::{Heap, Runtime};
@@ -51,7 +53,7 @@ pub const STATUS_INSTANCE_VERSION: i32 = 2;
 
 /// The oldest `goat_host` and `goat_instance` this emitter's code runs against.
 pub const HOST_VERSION: u32 = 1;
-pub const INSTANCE_VERSION: u32 = 2;
+pub const INSTANCE_VERSION: u32 = 3;
 
 /// The call depth the embedded profile allows by default, as the wasm
 /// backend's `EmbeddedLimits::default()` does.
@@ -119,6 +121,12 @@ pub const HOST_FUNCTIONS: &[&str] = &[
 /// allocator, 8-byte aligned; `heap_top` is the bump offset into it, `allocs`
 /// counts every allocation, and `free` holds the head of each size class's free
 /// list. The host starts `heap_top`, `allocs` and `free` at zero.
+///
+/// An interactive program keeps its stored closures (`update`, `draw`,
+/// `sites`) and the last failed refresh's `reason` in the instance, and the
+/// frame buffer in `frame`, `frame_len` and `frame_cap`; all start null or
+/// zero. `stack_limit` is the lowest address the desktop profile may run its
+/// stack down to, or null for no check.
 pub const INSTANCE_FIELDS: &[(&str, &str)] = &[
     ("version", "i32"),
     ("live", "i32"),
@@ -133,6 +141,14 @@ pub const INSTANCE_FIELDS: &[(&str, &str)] = &[
     ("heap_top", "i64"),
     ("allocs", "i64"),
     ("free", "[55 x ptr]"),
+    ("update", "ptr"),
+    ("draw", "ptr"),
+    ("sites", "ptr"),
+    ("reason", "ptr"),
+    ("frame", "ptr"),
+    ("frame_len", "i32"),
+    ("frame_cap", "i32"),
+    ("stack_limit", "ptr"),
 ];
 
 /// The index of `name` among the fields of the `goat_host` type, where
@@ -216,8 +232,10 @@ pub fn emit(program: &Program) -> Result<String, EmitError> {
 }
 
 pub fn emit_with_options(program: &Program, options: EmitOptions) -> Result<String, EmitError> {
-    if program.interactive.is_some() {
-        return Err(EmitError::Unsupported("interactive programs"));
+    if program.interactive.is_some() && program.profile == Profile::Embedded {
+        return Err(EmitError::Unsupported(
+            "an interactive program on the embedded profile",
+        ));
     }
     let mut module = Module::new(program, options);
     let mut functions = String::new();
@@ -231,7 +249,10 @@ pub fn emit_with_options(program: &Program, options: EmitOptions) -> Result<Stri
         functions.push_str(&lowered);
         functions.push('\n');
     }
-    functions.push_str(&module.main_export()?);
+    functions.push_str(&match &program.interactive {
+        Some(interactive) => module.interactive_exports(interactive)?,
+        None => module.main_export()?,
+    });
     let (definitions, runtime) = module.heap_text()?;
     functions.push_str(&runtime);
     Ok(module.finish(&definitions, &functions))
@@ -674,8 +695,8 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             Expr::CallClosure(closure, args) => self.call_closure(closure, args, false)?,
             Expr::MakeClosure(f, captures) => self.make_closure(*f, captures)?,
             Expr::Capture(i) => Some(self.capture(*i)?),
-            Expr::MethodKey(_) => return Err(EmitError::Unsupported("method sites")),
-            Expr::Frame(_) => return Err(EmitError::Unsupported("scene frames")),
+            Expr::MethodKey(closure) => self.method_key(*closure)?,
+            Expr::Frame(op) => self.frame_op(op)?,
             Expr::CallForeign(f, args) => self.call_foreign(*f, args)?,
             Expr::Write(write) => self.write(write)?,
             Expr::Site(start, end) => {
@@ -933,10 +954,30 @@ impl<'m, 'a> FuncLower<'m, 'a> {
         )))
     }
 
+    /// Traps when the stack pointer is below the instance's `stack_limit`,
+    /// which the host derives from the goat thread's stack. A null limit is
+    /// address 0, which nothing is below.
+    fn check_stack(&mut self) {
+        let frame = self
+            .module
+            .intrinsic("frameaddress.p0", "ptr", "i32 immarg");
+        let here = self.emit(format!("call ptr {frame}(i32 0)"));
+        let here = self.emit(format!("ptrtoint ptr {here} to i64"));
+        let limit = self.instance_field("stack_limit");
+        let limit = self.emit(format!("load ptr, ptr {limit}"));
+        let limit = self.emit(format!("ptrtoint ptr {limit} to i64"));
+        let over = self.emit(format!("icmp ult i64 {here}, {limit}"));
+        self.trap_if(&over, STACK_OVERFLOW);
+    }
+
     /// Emits `call`, which waits on a result and returns `ret`. On the
     /// embedded profile it also counts the call in the instance's `depth` and
-    /// traps past the bound, as the wasm backend does (ADR 0026).
+    /// traps past the bound, as the wasm backend does (ADR 0026); the desktop
+    /// profile checks the stack pointer instead.
     fn bound_call(&mut self, call: String, ret: MTy) -> Val {
+        if !self.module.narrow() {
+            self.check_stack();
+        }
         let depth = self.module.narrow().then(|| self.instance_field("depth"));
         if let Some(depth) = &depth {
             let before = self.emit(format!("load i32, ptr {depth}"));

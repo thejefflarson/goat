@@ -1,5 +1,6 @@
 //! The goat compiler pipeline: source text to a WebAssembly module.
 
+pub use events::{Event, Reloaded, ResetReason};
 pub use goat_checker::hir::{Boundary, Span};
 pub use goat_checker::ty::{Group, Row, Ty};
 pub use goat_checker::{GoatError, Label, Vocab};
@@ -8,6 +9,7 @@ pub use goat_mir::{
 };
 pub use goat_wasm::{EmbeddedLimits, STACK_OVERFLOW};
 
+mod events;
 #[cfg(feature = "native")]
 pub mod format;
 #[cfg(feature = "native")]
@@ -218,6 +220,18 @@ fn verify_mir(program: &goat_mir::Program) -> Result<(), Vec<GoatError>> {
             ),
         )]
     })
+}
+
+/// How a halted program is reported: `trap: ` and the message, blamed on the
+/// user's source range (byte offsets) when the trap came from code they wrote.
+pub fn render_trap(source: &str, message: &str, site: Option<(usize, usize)>) -> String {
+    match site {
+        Some((start, end)) => {
+            let blame = GoatError::new(Span::new(start, end), message.to_string());
+            format!("trap: {}", blame.render(source))
+        }
+        None => format!("trap: {message}"),
+    }
 }
 
 /// Format a number the way the program's `print` shows it: whole values within

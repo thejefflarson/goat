@@ -15,14 +15,14 @@ impl<'a> FuncLower<'_, 'a> {
         }
     }
 
-    fn string(&self, x: Local) -> Result<String, EmitError> {
+    pub(crate) fn string(&self, x: Local) -> Result<String, EmitError> {
         match self.pointer(x)? {
             (operand, HeapKind::Str) => Ok(operand),
             _ => Err(EmitError::Malformed("expected a string")),
         }
     }
 
-    fn int_operand(&self, x: Local) -> Result<String, EmitError> {
+    pub(crate) fn int_operand(&self, x: Local) -> Result<String, EmitError> {
         match self.locals.get(&x) {
             Some(Val::Op(MTy::Int, operand)) => Ok(operand.clone()),
             Some(_) => Err(EmitError::Malformed("expected an Int")),

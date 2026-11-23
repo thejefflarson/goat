@@ -91,6 +91,14 @@ pub struct GoatInstance {
     pub heap_top: u64,
     pub allocs: u64,
     pub free: [*mut u8; FREE_LISTS],
+    pub update: *mut u8,
+    pub draw: *mut u8,
+    pub sites: *mut u8,
+    pub reason: *mut u8,
+    pub frame: *mut u8,
+    pub frame_len: u32,
+    pub frame_cap: u32,
+    pub stack_limit: *const u8,
 }
 
 pub fn instance_offsets() -> Vec<(&'static str, usize)> {
@@ -108,6 +116,14 @@ pub fn instance_offsets() -> Vec<(&'static str, usize)> {
         ("heap_top", offset_of!(GoatInstance, heap_top)),
         ("allocs", offset_of!(GoatInstance, allocs)),
         ("free", offset_of!(GoatInstance, free)),
+        ("update", offset_of!(GoatInstance, update)),
+        ("draw", offset_of!(GoatInstance, draw)),
+        ("sites", offset_of!(GoatInstance, sites)),
+        ("reason", offset_of!(GoatInstance, reason)),
+        ("frame", offset_of!(GoatInstance, frame)),
+        ("frame_len", offset_of!(GoatInstance, frame_len)),
+        ("frame_cap", offset_of!(GoatInstance, frame_cap)),
+        ("stack_limit", offset_of!(GoatInstance, stack_limit)),
     ]
 }
 
@@ -135,6 +151,14 @@ impl GoatInstance {
             heap_top: 0,
             allocs: 0,
             free: [std::ptr::null_mut(); FREE_LISTS],
+            update: std::ptr::null_mut(),
+            draw: std::ptr::null_mut(),
+            sites: std::ptr::null_mut(),
+            reason: std::ptr::null_mut(),
+            frame: std::ptr::null_mut(),
+            frame_len: 0,
+            frame_cap: 0,
+            stack_limit: std::ptr::null(),
         }
     }
 }
@@ -208,6 +232,67 @@ impl Instance {
     pub fn site(&self) -> Option<(usize, usize)> {
         (self.raw.site_start != u32::MAX)
             .then_some((self.raw.site_start as usize, self.raw.site_end as usize))
+    }
+}
+
+/// What one compiled module of an interactive program keeps in the instance:
+/// the closures `setup` stored and the reason of the last failed refresh. A
+/// host running two modules over one heap (a reload) keeps one of these for
+/// each and puts the running module's in the instance around its calls.
+#[derive(Clone, Copy)]
+pub struct ModuleState {
+    update: *mut u8,
+    draw: *mut u8,
+    sites: *mut u8,
+    reason: *mut u8,
+}
+
+impl Default for ModuleState {
+    fn default() -> ModuleState {
+        let none = std::ptr::null_mut();
+        ModuleState {
+            update: none,
+            draw: none,
+            sites: none,
+            reason: none,
+        }
+    }
+}
+
+impl Instance {
+    pub fn module_state(&self) -> ModuleState {
+        ModuleState {
+            update: self.raw.update,
+            draw: self.raw.draw,
+            sites: self.raw.sites,
+            reason: self.raw.reason,
+        }
+    }
+
+    pub fn set_module_state(&mut self, state: ModuleState) {
+        self.raw.update = state.update;
+        self.raw.draw = state.draw;
+        self.raw.sites = state.sites;
+        self.raw.reason = state.reason;
+    }
+
+    /// Where generated code stops running its stack down: see [`crate::stack`].
+    pub fn set_stack_limit(&mut self, limit: *const u8) {
+        self.raw.stack_limit = limit;
+    }
+
+    /// Copies `bytes` to `at`, which must lie inside the blocks the allocator
+    /// has handed out.
+    pub fn write(&mut self, at: usize, bytes: &[u8]) -> Result<(), String> {
+        let base = self.raw.heap as usize;
+        let used = self.raw.heap_top as usize;
+        let end = at.checked_add(bytes.len());
+        if at < base || end.is_none_or(|end| end > base + used) {
+            return Err("write outside the heap".to_string());
+        }
+        // SAFETY: the range lies inside the heap this instance owns.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), at as *mut u8, bytes.len()) };
+        Ok(())
     }
 }
 
