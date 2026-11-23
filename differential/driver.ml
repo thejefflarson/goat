@@ -340,8 +340,48 @@ let trees_equal a b =
 
 let fuel = 100_000
 
-let () =
-  let path = if Array.length Sys.argv > 1 then Sys.argv.(1) else "-" in
+(* What the algorithm and the checker say about one program.  `Differs` carries
+   a class, so a caller can tell a refusal from a wrong type: `w-refuses` (the
+   checker accepts, the algorithm does not), `w-accepts` (the reverse) and
+   `type` (both accept, the types differ); and the algorithm's answer. *)
+type outcome =
+  | Compared of char
+  | Skipped of char
+  | Refused of char
+  | Differs of string * string
+
+let judge mode sexp verdict =
+  let solved = infer_closed_env fuel (exp_of (parse_sexp sexp)) in
+  let ours =
+    match solved with
+    | Some (d, t) -> (try "OK " ^ canonical_type d t with Match_failure _ -> "OK ?")
+    | None -> "ERR"
+  in
+  let classify () =
+    if verdict = "ERR" then "w-accepts" else if ours = "ERR" then "w-refuses" else "type"
+  in
+  let exact () = if ours = verdict then Compared mode.[0] else Differs (classify (), ours) in
+  match mode with
+  | "U" -> exact ()
+  | "N" -> if verdict = "ERR" then Skipped 'N' else exact ()
+  | "R" | "K" -> (
+      match solved with
+      | None -> Refused mode.[0]
+      | Some (d, t) ->
+          let theirs = String.sub verdict 3 (String.length verdict - 3) in
+          if verdict <> "ERR" && trees_equal (tree_of_typ d t) (tree_of_text theirs)
+          then Compared mode.[0]
+          else Differs (classify (), ours))
+  | _ -> failwith ("unknown mode " ^ mode)
+
+let one_line s = String.map (fun c -> if c = '\n' || c = '\t' then ' ' else c) s
+
+let split_line line =
+  match String.split_on_char '\t' line with
+  | mode :: sexp :: verdict :: source -> (mode, sexp, verdict, String.concat "" source)
+  | _ -> failwith "not MODE<TAB>SEXP<TAB>VERDICT<TAB>SOURCE"
+
+let batch path =
   let ic = if path = "-" then stdin else open_in path in
   let unary = ref 0 and curried = ref 0 and skipped = ref 0 and bad = ref 0 in
   let recursive = ref 0 and rec_compared = ref 0 and rec_refused = ref 0 and row_knots = ref 0 in
@@ -350,38 +390,25 @@ let () =
      while true do
        let line = input_line ic in
        incr line_no;
-       match String.split_on_char '\t' line with
-       | mode :: sexp :: verdict :: source ->
-           let solved = infer_closed_env fuel (exp_of (parse_sexp sexp)) in
-           let ours =
-             match solved with
-             | Some (d, t) -> (try "OK " ^ canonical_type d t with Match_failure _ -> "OK ?")
-             | None -> "ERR"
-           in
-           let report () =
-             incr bad;
-             Printf.printf "MISMATCH line %d\n  source:  %s\n  term:    %s\n  rust:    %s\n  coq:     %s\n"
-               !line_no (String.concat "" source) sexp verdict ours
-           in
-           (match mode with
-           | "U" -> incr unary; if ours <> verdict then report ()
-           | "N" when verdict <> "ERR" -> incr curried; if ours <> verdict then report ()
-           | "N" -> incr skipped
-           | "R" | "K" -> (
-               incr recursive;
-               match solved with
-               | None ->
-                   incr (if mode = "K" then row_knots else rec_refused);
-                   let source = String.concat "" source in
-                   Printf.printf "refused line %d: %s\n" !line_no
-                     (if String.length source > 100 then String.sub source 0 100 ^ "..." else source)
-               | Some (d, t) ->
-                   incr rec_compared;
-                   let theirs = String.sub verdict 3 (String.length verdict - 3) in
-                   if verdict = "ERR" || not (trees_equal (tree_of_typ d t) (tree_of_text theirs))
-                   then report ())
-           | _ -> failwith ("unknown mode " ^ mode))
-       | _ -> failwith (Printf.sprintf "line %d is not MODE<TAB>SEXP<TAB>VERDICT<TAB>SOURCE" !line_no)
+       let mode, sexp, verdict, source =
+         try split_line line with Failure _ ->
+           failwith (Printf.sprintf "line %d is not MODE<TAB>SEXP<TAB>VERDICT<TAB>SOURCE" !line_no)
+       in
+       if mode = "R" || mode = "K" then incr recursive;
+       match judge mode sexp verdict with
+       | Compared 'U' -> incr unary
+       | Compared 'N' -> incr curried
+       | Compared _ -> incr rec_compared
+       | Skipped _ -> incr skipped
+       | Refused m ->
+           incr (if m = 'K' then row_knots else rec_refused);
+           Printf.printf "refused line %d: %s\n" !line_no
+             (if String.length source > 100 then String.sub source 0 100 ^ "..." else source)
+       | Differs (_, ours) ->
+           (match mode with "U" -> incr unary | "N" -> incr curried | _ -> incr rec_compared);
+           incr bad;
+           Printf.printf "MISMATCH line %d\n  source:  %s\n  term:    %s\n  rust:    %s\n  coq:     %s\n"
+             !line_no source sexp verdict ours
      done
    with End_of_file -> ());
   Printf.printf
@@ -389,3 +416,55 @@ let () =
      recursive-type programs: %d (compared: %d, refused: %d, of which marked K (a row inside a recursive type): %d), mismatches: %d\n"
     (!unary + !curried + !rec_compared) !unary !curried !skipped !recursive !rec_compared (!rec_refused + !row_knots) !row_knots !bad;
   if !bad > 0 || !unary + !curried = 0 then exit 1
+
+(* `--serve` reads one corpus line per input line and answers each with one
+   line, flushed at once:
+
+       OK                       the two agree
+       SKIP <reason>            not compared (a recursive type the algorithm refuses)
+       MISMATCH <class> <ours> || <theirs>
+       SLOW                     the algorithm ran past `watchdog` seconds
+       ERROR <message>          the line is malformed
+
+   `--plant` inverts the checker's acceptance in every verdict, so each
+   comparison of a U line differs: a harness that cannot see the planted
+   divergence is not looking. *)
+exception Slow
+
+let watchdog = 10.0
+
+let flip verdict = if verdict = "ERR" then "OK Number" else "ERR"
+
+let serve plant =
+  Sys.set_signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Slow));
+  let arm secs =
+    ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.0; it_value = secs })
+  in
+  let reply fmt = Printf.ksprintf (fun s -> print_string s; print_char '\n'; flush stdout) fmt in
+  try
+    while true do
+      let line = input_line stdin in
+      match
+        let mode, sexp, verdict, _ = split_line line in
+        let verdict = if plant then flip verdict else verdict in
+        arm watchdog;
+        let outcome = judge mode sexp verdict in
+        arm 0.0;
+        (outcome, verdict)
+      with
+      | Compared _, _ -> reply "OK"
+      | Skipped _, _ -> reply "SKIP curried-rejection"
+      | Refused m, _ -> reply "SKIP refused-%c" m
+      | Differs (cls, ours), theirs -> reply "MISMATCH %s %s || %s" cls (one_line ours) (one_line theirs)
+      | exception Slow -> reply "SLOW"
+      | exception e ->
+          arm 0.0;
+          reply "ERROR %s" (one_line (Printexc.to_string e))
+    done
+  with End_of_file -> ()
+
+let () =
+  match Array.to_list Sys.argv with
+  | _ :: "--serve" :: rest -> serve (rest = [ "--plant" ])
+  | _ :: path :: _ -> batch path
+  | _ -> batch "-"

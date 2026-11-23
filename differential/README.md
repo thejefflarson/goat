@@ -41,6 +41,71 @@ Any disagreement prints the source and both token lists and fails the run. It
 reads the grammar's ordered classes and the model's longest-match choice as the
 same lexer; if they ever differ, this is where it shows.
 
+## The nightly fuzz
+
+`fuzz/tests/w.rs` (the bolero target `differential_checker_vs_w`, in
+`.github/workflows/nightly-fuzz.yml`) runs the same comparison on programs a
+fuzzer writes. It starts `driver --serve` once as a child process and sends it one
+corpus line per program; the driver answers one line:
+
+- `OK`: the checker and the algorithm agree;
+- `SKIP <reason>`: not compared (`refused-R`, `refused-K`: a recursive-type
+  program the algorithm refuses; `curried-rejection`: a several-parameter
+  program the checker rejects);
+- `MISMATCH <class> <ours> || <theirs>`, where the class is `w-refuses` (the
+  checker accepts, the algorithm does not), `w-accepts` (the reverse) or `type`
+  (both accept, the types differ);
+- `SLOW`: the algorithm ran past 10 seconds (logged, not a failure: it says the
+  algorithm ran out of patience, not that it answered wrongly);
+- `ERROR <message>`: the line is malformed.
+
+A disagreement panics inside the bolero `for_each`, so bolero shrinks the input
+and the nightly's crash upload and `nightly-fuzz` issue take over. The program
+comes from the fuzz bytes: the first byte picks a generator (the typed, group,
+spread and core generators of `core_corpus.rs`, which read their choices from the
+bytes, and `cli/tests/support`'s well-typed generator) or a mutation of one
+(delete, double, swap or replace a token). The target reads each program with
+`core_corpus.rs`'s own `line`, so it compares exactly the fragment the corpus
+does and leaves the rest out as a counted reader skip.
+
+**Known gaps.** The algorithm is not yet complete, so the target excuses a
+`w-refuses` reply for the classes in `GAPS` (`fuzz/tests/w.rs`), each tied to what
+removes it: #623 (stage 7.3), #564 (stage 7.2), `sat_b` answering `Any` only for
+`mu` and tag groups (stage 7.4). A stage that lands deletes its row, and the
+target then fails on the class. A type that differs, or a program the algorithm
+accepts and the checker rejects, is never excused. Recursive-type programs the
+algorithm refuses (#606 and the row knot, stage 7.11) are driver skips, and
+`SplitGroup` and the reader's other skips never reach the comparison. Every
+excused program is counted by class in the target's periodic log line.
+
+**Where the algorithm comes from.** The nightly runs on `ubuntu-latest`, which
+cannot build the Rocq switch, so `coq.yml` uploads the OCaml sources
+(`goat_infer.ml`, `goat_infer.mli`, `driver.ml`) as the artifact
+`goat-w-extracted` on every push to master (and manual dispatch on master) that
+runs the build, and the nightly downloads the latest one and builds the driver
+with `ocamlfind`. A push that could change the checker or the algorithm runs the
+build, so the artifact matches the last such push.
+
+GitHub keeps artifacts 90 days. A repository with no push to master touching
+`proofs/`, `differential/`, `checker/`, `prelude/`, `parser/`, `examples/` or the
+grammar for 90 days has no artifact, and the nightly fails at "Fetch the extracted
+algorithm" with `no unexpired goat-w-extracted artifact`. Run the Coq workflow on
+master (Actions, Coq, Run workflow) to build a new one. A red nightly is the right
+outcome for a differential that cannot run.
+
+**Self-test.** `coq.yml` checks serve mode on every build: it must answer `OK` on a
+corpus program, `MISMATCH w-accepts` under `--plant` (which inverts every
+checker verdict), and `ERROR` on a malformed line.
+
+**Running it locally** after `make -C proofs differential`:
+
+    cd fuzz
+    GOAT_W_DRIVER=$PWD/../proofs/_differential/driver \
+      cargo +nightly bolero test differential_checker_vs_w --engine libfuzzer -T 5m
+
+Add `GOAT_W_PLANT=1` to start the driver with `--plant` and watch bolero catch and
+shrink a divergence.
+
 ## The sort gap spike
 
 `differential/sort_gap.sh` (run it after `make -C proofs differential`) counts the
