@@ -386,6 +386,6 @@ let () =
    with End_of_file -> ());
   Printf.printf
     "programs compared: %d (one-parameter: %d, curried accepts: %d), skipped: %d, \
-     recursive-type programs: %d (compared: %d, refused: %d, of which a row that must knot: %d), mismatches: %d\n"
+     recursive-type programs: %d (compared: %d, refused: %d, of which marked K (a row inside a recursive type): %d), mismatches: %d\n"
     (!unary + !curried + !rec_compared) !unary !curried !skipped !recursive !rec_compared (!rec_refused + !row_knots) !row_knots !bad;
   if !bad > 0 || !unary + !curried = 0 then exit 1
