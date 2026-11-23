@@ -1,4 +1,4 @@
-(* `make check-assumptions` fails unless all eighteen theorems below print "Closed
+(* `make check-assumptions` fails unless all twenty-one theorems below print "Closed
    under the global context". *)
 
 Require Import Goat.GoatPeg.
@@ -35,3 +35,5 @@ Print Assumptions unify_k_sound.
 Print Assumptions coerce_dec_sound.
 Print Assumptions unify_co_sound.
 Print Assumptions infer_guarded.
+Print Assumptions cmp_total.
+Print Assumptions cmp_unerase.

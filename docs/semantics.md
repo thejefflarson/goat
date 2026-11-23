@@ -69,11 +69,10 @@ for the declarative relation (Leijen, Thms 1–2); the declarative relation is
 what the sharp-edge theorem is about.
 
 **Out of the core (modeled by nothing — see §9 for the "why").** Reference
-counting / heap / the Perceus model; variants and `match`; the `Ordered` sort and a real comparison of records (a record comparison
-steps to any `Bool`); the `trap()`
+counting / heap / the Perceus model; variants and `match`; the `Ordered` sort; the `trap()`
 builtin; the 32-bit `Int` of
 the embedded target; IEEE rounding, infinities and NaN (a `Float` is opaque);
-comparison of records and tags (phase 6); rank-2
+rank-2
 inference; `and`, `or`, `not`
 and unary minus; monomorphization.
 
@@ -240,13 +239,15 @@ The judgment `Δ ; Γ ⊢ e : τ` assigns a **monotype** to a term. Schemes appe
 only in the context and are introduced at a binding (`T-Let`) and eliminated at
 a variable (`T-Var`). The instance relation `τ ≺_Δ σ` and the context's
 generalization are defined in §5. `Δ` is a **kinding environment** (ADR 0037):
-it gives each free type variable a *sort*, `Any`, `Numeric` or `Literal`, and
+it gives each free type variable a *sort*, `Any`, `Eq`, `Numeric` or `Literal`, and
 is `Any` outside a finite set of variables. `Δ ⊢ τ : κ` says `τ` may stand
 where a variable of sort `κ` stands: `Int` and `Float` have every sort, a
 variable `a` has the sorts at or above `Δ(a)` (a `Literal` variable is also
-`Numeric`, and every variable is `Any`), a closed record whose fields all have
-sort `Numeric` has sort `Numeric` (ADR 0012), and any other type has sort `Any`
-only. A judgment that omits `Δ` is the one with `Δ` the all-`Any` environment,
+`Numeric`, a `Numeric` one also `Eq`, and every variable is `Any`), a closed
+record whose fields all have sort `Numeric` has sort `Numeric` (ADR 0012), and
+any other type has sort `Any` only, except for `Eq`: `String`, `Bool` and `Unit`
+have it, a record has it when every field does, and a recursive type or a tag
+group has it when its parts do (ADR 0036). A judgment that omits `Δ` is the one with `Δ` the all-`Any` environment,
 which is the one a closed program is typed in.
 
 ```
@@ -283,8 +284,10 @@ The operator signature `⊙ : τ₁, τ₂ ⇒ τ` (ADR 0017, ADR 0036) says whi
 types an operator takes and what it gives. Both operands of an arithmetic or
 comparison operator have one type. `+ - * // %` are generic: the one type may be any
 `Numeric` type, `Int`, `Float`, a `Numeric` variable or a closed record of
-`Numeric` types. A comparison takes one type of sort `Eq`: `Int`, `Float`, `String`,
-`Bool`, `Unit`, an `Eq` variable or a closed record of `Numeric` types.
+`Numeric` types. A comparison takes one type of sort `Eq`: any type with no
+function inside it (ADR 0036). That is `Int`, `Float`, `String`, `Bool`, `Unit`, an
+`Eq` variable, a record of `Eq` fields, a tag group whose payloads are `Eq`, and
+a recursive type whose body is.
 
 ```
  ⊙ ∈ {+, -, *}      Δ ⊢ τ : Numeric         ⊙ ∈ {//, %}      Δ ⊢ τ : Numeric
@@ -294,9 +297,9 @@ comparison operator have one type. `+ - * // %` are generic: the one type may be
 —————————————————————————— (S-Quot)
  / : Float, Float ⇒ Float
 
- ⊙ ∈ {<, <=, >, >=, ==, !=}      τ ∈ {Int, Float, String, Bool}
+ ⊙ ∈ {<, <=, >, >=, ==, !=}      Δ ⊢ τ : Eq
 ——————————————————————————————————————————————————————— (S-Cmp)
-                     ⊙ : τ, τ ⇒ Bool
+                     ⊙ : τ, τ ⇒_Δ Bool
 
 ```
 
@@ -446,9 +449,10 @@ Rule by rule:
   of types. Both rules require the `μ` closed and guarded, so no term has the
   type `μ.(#0) → #0`: there is no `fold` at it, and no `unfold` of a value of it
   (`GoatRecTypes.v`, `no_fold_at_self_application`). A recursive type satisfies
-  only the sort `Any`: a `μ` is never `Numeric` or `Literal`, and an index has
-  no sort of its own, since it stands for a type that is substituted, never for
-  a type variable that is quantified.
+  only the sorts `Any` and `Eq` (when its body is `Eq`): a `μ` is never `Numeric`
+  or `Literal`. Inside a `μ` body an index counts as `Eq`, since the recursion
+  is the body itself; elsewhere it has no sort, since it stands for a type that
+  is substituted, never for a type variable that is quantified.
 
   A worked example in goat source, with the recursion through a record field
   and a function type, as ADR 0034's methods have it:
@@ -589,8 +593,16 @@ one.
   boolean. `float(n)` gives any `Float` (`ST-ToFloat`).
 - **Comparison.** Two `Int`s compare as integers. Two strings compare bytewise
   with a prefix first, and two booleans with `false` before `true` (ADR 0036).
+  Two `()`s are equal. Two records compare field by field in the order of their
+  labels, each label read as its first field in either record, so
+  `{x: 1, y: 2} == {y: 2, x: 1}`. Two values of one tag group compare by the
+  tags' declaration positions, and by their payloads when the tags are equal,
+  so `Empty < Link(1, Empty)`; `fold(v₁)` and `fold(v₂)` compare as `v₁` and
+  `v₂`. These are `cmp_rel` (`GoatDefs.v`), and `cmp_total` proves that two
+  values of one `Eq` type always have a result.
   The result is `true` or `false` as the operator asks (`==` and `!=` ask for
-  equal and unequal).
+  equal and unequal). A `Float` inside a record or tag relates to every result,
+  so the model leaves a NaN's place in the order open (§9).
 
 On any other pair of values `⊙` has no result; canonical forms (L7) show a
 well-typed term never reaches that case. §9 lists where `⊙` departs from the
@@ -926,6 +938,16 @@ makes §7 and §8 stateable (ADR 0008), with its justification and any gap from
     operation, comparison included, is an unspecified function, modeled as a
     relation that allows every result. `0.1 + 0.2 == 0.3` and `x == x` can step
     either way. Soundness holds for every choice, so it holds for the compiler's.
+  - *Comparison of compounds (phase 6, ADR 0036).* `cmp_rel` orders records,
+    tags and recursive values as the compiler's derived comparison does, with
+    one departure: a `Float` leaf inside a compound relates to every result
+    (`cr_float`), so the model does not say where a NaN sorts. The compiler
+    tests `==`, then `<`, else greater, which makes `{x: 0} > {x: NaN}` and
+    `{x: NaN} > {x: 0}` both true; whether that is the order ADR 0036 means is
+    an open owner question (#455). The model also takes labels in the order of
+    their `nat` numbers, which is the checker's alphabetical order only because
+    the differential corpus reader numbers labels in name order; mono is outside
+    the proofs, so that its derived comparison computes `cmp_rel` is trusted.
   - *Float `//` and `%`.* The compiler computes them as Python does (CPython's
     `float_divmod`): `//` is the floor of the quotient of the two doubles and `%`
     takes the divisor's sign, so `7.5 // 2 = 3`, `-7.5 % 2 = 0.5` and
