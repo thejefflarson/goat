@@ -71,6 +71,7 @@ GoatPrintChain.v
 GoatPrintPrim.v
 GoatPrintBlock.v
 GoatPrintParse.v
+GoatPrintInst.v
 GoatPrintDen.v
 GoatPrintLabels.v
 GoatPrintTop.v

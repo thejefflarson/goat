@@ -24,6 +24,7 @@ Require Import Goat.GoatParse.
 Require Import Goat.GoatPrint.
 Require Import Goat.GoatPrintLabels.
 Require Import Goat.GoatPrintParse.
+Require Import Goat.GoatPrintInst.
 Require Import Goat.GoatPrintDen.
 Require Import Goat.GoatPrintTop.
 Open Scope string_scope.
@@ -32,7 +33,7 @@ Open Scope list_scope.
 (* T3 *)
 Theorem print_parse_roundtrip : forall var_of e,
   names_distinct var_of ->
-  scoped 0 e ->
+  scoped [] 0 e ->
   Interned e ->
   exists t,
     peg (E_rule R_goat) (print e) (Ok [t] []) /\
@@ -42,18 +43,19 @@ Proof.
   set (t := print_tree e).
   assert (Hparse : peg (E_rule R_goat) (print e) (Ok [t] []))
     by exact (goat_parses e Hscoped).
-  assert (Htable : labels t = nub_from [] (List.map lname (lbls e)))
+  assert (Htable : labels t = nub_from [] (List.map lname (lbls [] 0 e)))
     by exact (labels_print e).
-  assert (Hlabels : LabelsOK (labels t) (lbls e))
+  assert (Hlabels : LabelsOK (labels t) (lbls [] 0 e))
     by (rewrite Htable; exact Hinterned).
-  assert (Hblock : BlkG var_of (labels t) (block 0 e) (inst var_of 0 e))
-    by exact (proj1 (proj1 (print_den var_of (labels t) Hdistinct) e 0 Hscoped Hlabels)).
-  assert (Hinst : inst var_of 0 e = e)
-    by exact (proj1 (inst_closed var_of) e 0 Hscoped).
-  assert (Hexpr : Den var_of (labels t) (Node R_expr (block 0 e)) e)
-    by (rewrite <- Hinst at 2; apply D_expr_g; exact Hblock).
+  assert (Hexpr0 : Den var_of (labels t) (Node R_expr (block [] 0 e)) (inst var_of [] 0 e))
+    by exact (proj1 (proj1 (print_den var_of (labels t) Hdistinct) e [] 0
+                       (fun L m H => ltac:(discriminate H)) Hscoped Hlabels)).
+  assert (Hinst : inst var_of [] 0 e = e)
+    by exact (proj1 (inst_closed var_of) e [] 0 Hscoped).
+  assert (Hexpr : Den var_of (labels t) (Node R_expr (block [] 0 e)) e)
+    by (rewrite <- Hinst at 2; exact Hexpr0).
   assert (Hden : Den_goat var_of [] t e)
-    by (exists [], [Node R_expr (block 0 e)];
+    by (exists [], [Node R_expr (block [] 0 e)];
         split; [ reflexivity | split; [ apply Forall_nil | apply DBo_some; exact Hexpr ] ]).
   exists t. split; [ exact Hparse | exact Hden ].
 Qed.
