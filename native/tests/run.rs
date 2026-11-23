@@ -5,6 +5,7 @@ use common::*;
 use goat::{Boundary, Host, HostInterface, HostValue, NoHost, Profile};
 use goat_mir::*;
 use goat_native::abi::INSTANCE_VERSION;
+use goat_native::abi::{HOST_VERSION, Instance};
 use goat_native::{Library, NativeError, Stopped, Versions, build, clang_available};
 
 macro_rules! need_clang {
@@ -181,4 +182,35 @@ fn an_unsupported_program_says_why() {
         panic!("a string program built");
     };
     assert!(error.unsupported().is_some(), "{error}");
+}
+
+#[test]
+fn a_trapped_instance_is_refused_until_it_is_reset() {
+    need_clang!();
+    let (trapping, fine) = (library("1 // 0"), library("6 * 7"));
+    let mut instance = Instance::new(4096);
+    let run = trapping
+        .run_in(&mut instance, NoHost, HOST_VERSION)
+        .unwrap();
+    assert!(run.result.is_err());
+    assert!(instance.is_dead());
+
+    for lib in [&trapping, &fine] {
+        let Err(error) = lib.run_in(&mut instance, NoHost, HOST_VERSION) else {
+            panic!("a dead instance ran");
+        };
+        assert!(matches!(error, NativeError::DeadInstance), "{error}");
+        assert!(error.to_string().contains("reset"), "{error}");
+    }
+
+    instance.reset();
+    assert!(!instance.is_dead());
+    let run = fine.run_in(&mut instance, NoHost, HOST_VERSION).unwrap();
+    assert_eq!((run.printed, run.result), (vec!["42".to_string()], Ok(())));
+    let again = fine.run_in(&mut instance, NoHost, HOST_VERSION).unwrap();
+    assert_eq!(again.printed, ["42"], "a live instance runs again");
+
+    let mut fresh = Instance::new(4096);
+    let run = fine.run_in(&mut fresh, NoHost, HOST_VERSION).unwrap();
+    assert_eq!(run.printed, ["42"]);
 }

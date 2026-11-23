@@ -107,7 +107,8 @@ pub fn instance_offsets() -> Vec<(&'static str, usize)> {
 /// the generated code keeps stays valid when this moves.
 pub struct Instance {
     raw: Box<GoatInstance>,
-    _heap: Vec<u128>,
+    heap: Vec<u128>,
+    dead: bool,
 }
 
 impl Instance {
@@ -125,7 +126,43 @@ impl Instance {
             ctx: std::ptr::null_mut(),
             spill: [0; 8],
         });
-        Instance { raw, _heap: heap }
+        Instance {
+            raw,
+            heap,
+            dead: false,
+        }
+    }
+
+    /// Whether a trap ended a run in this instance. A trap can fire in the
+    /// middle of an allocation or a reference-count update, so the instance
+    /// is dead: the host must [`reset`](Self::reset) or drop it, and never call
+    /// into it again.
+    pub fn is_dead(&self) -> bool {
+        self.dead
+    }
+
+    pub(crate) fn mark_dead(&mut self) {
+        self.dead = true;
+    }
+
+    /// Makes the instance as [`Instance::new`] made it: an empty zeroed heap,
+    /// no live blocks, no site, and alive again.
+    pub fn reset(&mut self) {
+        self.heap.fill(0);
+        let (heap, heap_size) = (self.raw.heap, self.raw.heap_size);
+        *self.raw = GoatInstance {
+            version: INSTANCE_VERSION,
+            live: 0,
+            depth: 0,
+            site_start: u32::MAX,
+            site_end: 0,
+            heap,
+            heap_size,
+            host: std::ptr::null(),
+            ctx: std::ptr::null_mut(),
+            spill: [0; 8],
+        };
+        self.dead = false;
     }
 
     pub fn as_ptr(&mut self) -> *mut GoatInstance {
@@ -134,6 +171,10 @@ impl Instance {
 
     pub fn set_version(&mut self, version: u32) {
         self.raw.version = version;
+    }
+
+    pub fn version(&self) -> u32 {
+        self.raw.version
     }
 
     pub fn live(&self) -> u32 {

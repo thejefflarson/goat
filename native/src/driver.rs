@@ -62,6 +62,8 @@ pub enum NativeError {
         found: u32,
         wanted: u32,
     },
+    /// The instance trapped on an earlier run and was not reset.
+    DeadInstance,
 }
 
 impl fmt::Display for NativeError {
@@ -77,6 +79,10 @@ impl fmt::Display for NativeError {
             } => write!(
                 f,
                 "the program needs {what} version {wanted} or later, but was given {found}"
+            ),
+            NativeError::DeadInstance => write!(
+                f,
+                "the instance trapped, so it cannot run again until it is reset"
             ),
         }
     }
@@ -196,6 +202,28 @@ impl Library {
         host: H,
         versions: Versions,
     ) -> Result<Run<H>, NativeError> {
+        let mut instance = Instance::new(64 * 1024);
+        instance.set_version(versions.instance);
+        self.run_in(&mut instance, host, versions.host)
+    }
+
+    /// Runs `goat_main` in `instance`, which a host may reuse across runs while
+    /// it stays alive. A trap kills it ([`Instance::is_dead`]); running a dead
+    /// instance is refused with [`NativeError::DeadInstance`] until
+    /// [`Instance::reset`].
+    pub fn run_in<H: Host>(
+        &self,
+        instance: &mut Instance,
+        host: H,
+        host_version: u32,
+    ) -> Result<Run<H>, NativeError> {
+        if instance.is_dead() {
+            return Err(NativeError::DeadInstance);
+        }
+        let versions = Versions {
+            host: host_version,
+            instance: instance.version(),
+        };
         let load = |e: libloading::Error| NativeError::Load(e.to_string());
         // SAFETY: these symbols have the signatures the emitter and the shim
         // define, and the library outlives the copies.
@@ -209,8 +237,6 @@ impl Library {
         let mut adapter = Adapter::new(host, trap);
         let mut table = adapter.table();
         table.version = versions.host;
-        let mut instance = Instance::new(64 * 1024);
-        instance.set_version(versions.instance);
         let (mut message, mut len) = (std::ptr::null(), 0u64);
         let ctx = adapter.ctx();
         // SAFETY: the table, the context and the instance outlive the call, and
@@ -235,6 +261,7 @@ impl Library {
             _ => {}
         }
         let result = if status == -1 {
+            instance.mark_dead();
             // SAFETY: the shim stored the trap's message, which the library's
             // constants or the adapter keep alive until here.
             let bytes = unsafe { std::slice::from_raw_parts(message, len as usize) };
