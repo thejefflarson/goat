@@ -580,6 +580,22 @@ restricts, rest patterns, spreads, `if`, `==`, projections) compared 11,869 prog
 with 0 mismatches, where 7.6c left 4 of about 12,500. The 30,000-iteration fuzz
 target passes, and so does a 120,000-iteration run.
 
+**Sort order and an open presence (`checker/tests/absent_field_sort.rs`).** A sort
+that reaches a `Maybe` entry whose presence is still a variable constrains the
+field, in the checker and in `rsat_b` alike, because the entry may turn out
+present; one that arrives after the presence is `ABSENT` finds the entry peeled
+and never touches the field. So `program(r) do s = {...r, id: program(v) do v done}; a = r == r; b = r == {k: 1}; 1 done`
+is rejected and the same body with `b` first is accepted, and a field type that
+took an `Eq` sort while its entry was open keeps it after the entry goes absent.
+The verdict is sound (the program that is refused is one the sorts could not
+justify at that moment). The checker and the algorithm agree on the record
+programs above and on the rejected order of the field-type program; its accepted
+order (`f = program(r, x) do s = {...r, id: x}; b = r == {k: 1}; a = r == r; 1 done`,
+called with a function for `x`) is a `w-refuses` the algorithm still has, so it
+is a checker test and not a corpus program. Making it principal needs a sort held on the presence variable and
+discharged when the presence settles, which changes `rsat_b` and `sat_b` and
+their soundness lemmas; it is not done.
+
 *As built (stage 7.6e, `GoatCompleteUnify.v`, `GoatCompleteSorts.v`,
 `GoatCompleteFuel.v`).* The ratified next step, retargeting L2 to the unifier W
 calls, is done; the row-tail half of L2 is not, and what is proved of it is the

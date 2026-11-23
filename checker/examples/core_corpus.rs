@@ -2135,6 +2135,9 @@ impl ListGen {
 /// Programs the repository's sources may not hold: let-polymorphism, row
 /// polymorphism, rejections, and calls with several arguments.
 const HANDWRITTEN: &[&str] = &[
+    "f = program(r) do s = {...r, id: program(v) do v done}\n a = r == r\n b = r == {k: 1}\n 1 done\n1",
+    "f = program(r) do s = {...r, id: program(v) do v done}\n b = r == {k: 1}\n a = r == r\n 1 done\n1",
+    "f = program(r, x) do s = {...r, id: x}\n a = r == r\n b = r == {k: 1}\n 1 done\nf({k: 1}, program(v) do v done)",
     "r = {a: 1}\n{x: r.a + 1.5, y: r.a // 2}",
     "r = {a: 1, id: program(v) do v done}\n{p: (r.id)(1), q: (r.id)(true), x: r.a + 1.5}",
     "r = {a: 1, id: program(v) do v done}\ns = {...r, b: 2}\n{p: (s.id)(1), q: (s.id)(true)}",

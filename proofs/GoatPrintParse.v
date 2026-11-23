@@ -1,7 +1,7 @@
 (* The printed block of every closed term parses as an expression, with every
    ordered choice committing to the right alternative. *)
 
-From Stdlib Require Import String List.
+From Stdlib Require Import String List Arith Lia.
 Import ListNotations.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatProofs.
@@ -13,6 +13,9 @@ Require Import Goat.GoatPrint.
 Require Import Goat.GoatPrintChain.
 Require Import Goat.GoatPrintPrim.
 Require Import Goat.GoatPrintBlock.
+Require Import Goat.GoatPrintTag.
+Require Import Goat.GoatPrintArm.
+Require Import Goat.GoatPrintInd.
 Open Scope string_scope.
 Open Scope list_scope.
 
@@ -231,9 +234,22 @@ Qed.
 Lemma fin_abs : forall G P v, is_abs v -> fin G P v = block G P v.
 Proof. intros G P v H. destruct v; first [ contradiction | reflexivity ]. Qed.
 
-Lemma blk_all : (forall e, Blk e) /\ (forall fs, FieldsOK fs) /\ (forall ars : arms, True).
+Definition ArmsBlk (ars : arms) : Prop :=
+  forall G n w, scoped_arms G n w ars -> ArmsOK G n w ars.
+
+Lemma allexpr_of_blk : forall fs G n i,
+  fields_all Blk fs -> scoped_slots G n i fs -> AllExpr G n fs.
 Proof.
-  apply exp_fields_mutind.
+  induction fs as [| l e rest IH | l e rest IH]; intros G n i Hall Hs; simpl in *.
+  - exact I.
+  - destruct Hall as [He Hall], Hs as (_ & Hse & Hs).
+    exact (conj (expr_parses _ _ _ (He G n Hse)) (IH _ _ _ Hall Hs)).
+  - destruct Hs.
+Qed.
+
+Lemma blk_all : (forall e, Blk e) /\ (forall fs, FieldsOK fs) /\ (forall ars, ArmsBlk ars).
+Proof.
+  apply exp_fields_mutind_chain.
   - (* bound variable *)
     intros i G n Hs. apply blk_chain; [ exact I | ].
     exact (chain_prim _ (prim_name _ (nm_not_foreign _))).
@@ -304,10 +320,25 @@ Proof.
     split; [ exact (binop_chain _ _ _ (IHa G n Ha)) | exact (binop_chain _ _ _ (IHb G n Hb)) ].
   - (* coercion: not a term of the printed fragment *)
     intros a IH G n Hs. destruct Hs.
-  - (* tag construction: not a term of the printed fragment *)
-    intros w tg a IH G n Hs. destruct Hs.
-  - (* match: not a term of the printed fragment *)
-    intros w a IHa ars IHars G n Hs. destruct Hs.
+  - (* tag construction *)
+    intros w tg a IHa Hall G n [Htg Ha].
+    apply blk_chain; [ exact I | ].
+    destruct a; try (exfalso; exact Ha).
+    + destruct fs as [| i x rest | i x rest]; try (exfalso; exact Ha).
+      destruct Ha as (_ & Hx & Hrest).
+      destruct (Hall _ eq_refl) as [Hxall Hrall].
+      exact (chain_snoc [ident (cn w tg)] (con_call G n x rest)
+               (chain_prim _ (prim_name _ (cn_not_foreign w tg)))
+               (post_con_call G n x rest (expr_parses _ _ _ (Hxall G n Hx))
+                  (allexpr_of_blk _ _ _ _ Hrall Hrest))).
+    + exact (chain_snoc [ident (cn w tg)] call_unit_tree
+               (chain_prim _ (prim_name _ (cn_not_foreign w tg))) post_call_unit).
+  - (* match *)
+    intros w a IHa ars IHars G n [Ha Hars].
+    destruct ars as [| e | tg b rest]; try (exfalso; exact Hars).
+    apply blk_chain; [ exact I | ].
+    exact (chain_prim _ (prim_match G n w a _ (expr_parses _ _ _ (IHa G n Ha))
+                           (IHars G n w Hars))).
   - (* spread *)
     intros a IHa l b IHb G n [Ha Hb]. apply blk_chain; [ exact I | ].
     exact (chain_prim _ (prim_spread _ _ _ (expr_parses _ _ _ (IHa G n Ha))
@@ -327,7 +358,17 @@ Proof.
       rewrite <- (fin_abs G n e Hab). exact (proj1 (IHe G n Hv)).
   - (* a method field is not a term of the printed fragment *)
     intros l e IHe rest IHrest. split; intros G n; [ intros Hs | intros i Hs ]; destruct Hs.
-  - intros; exact I.
-  - intros; exact I.
-  - intros; exact I.
+  - (* no arms *)
+    intros G n w Hs. exact I.
+  - (* the arms that remain *)
+    intros e IHe G n w Hs. exact (expr_parses _ _ _ (IHe G n Hs)).
+  - (* an arm *)
+    intros tg b IHb IHc rest IHrest G n w (Htg & Hs & Hch & Hun & Hr).
+    split; [ | exact (IHrest G n w Hr) ].
+    assert (Hch' : arm_chain (arm_arity w tg) 0 b) by exact Hch. clear Hch.
+    unfold arm_block. destruct (arm_arity w tg) as [| m] eqn:Ea.
+    + exact (expr_parses _ _ _ (IHb G (S n) Hs)).
+    + rename Hch' into Hch.
+      rewrite (arm_body_block (S m) 0 b G (S n) (ltac:(lia)) Hch).
+      exact (expr_parses _ _ _ (IHc (S m) G _ (scoped_inner (S m) 0 b G (S n) Hch Hs))).
 Qed.
