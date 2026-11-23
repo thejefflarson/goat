@@ -50,6 +50,7 @@ GoatDen.v
 GoatShape.v
 GoatParse.v
 GoatExample.v
+GoatTagExample.v
 GoatLex.v
 GoatLexSpec.v
 GoatLexBarrier.v

@@ -48,40 +48,63 @@ Fixpoint nub_from (seen l : list string) : list string :=
    a label's index is the number lowering gives it. *)
 Definition labels (t : tree) : list string := nub_from [] (label_occurrences t).
 
-(* The program is its single top-level expression. *)
-Definition Den_goat (var_of : string -> termvar) (t : tree) (e : exp) : Prop :=
-  exists b,
-    t = Node R_goat [Node R_expr b]
-    /\ Den var_of (labels t) (Node R_expr b) e.
+(* The program is its tag declarations, read first into a table that follows the
+   prelude's, and its single top-level expression, read with that table. *)
+Definition Den_goat (var_of : string -> termvar) (ptbl : tagtab) (t : tree) (e : exp) : Prop :=
+  exists decls b,
+    t = Node R_goat (decls ++ [Node R_expr b])
+    /\ Forall (fun d => exists c, d = Node R_tag_decl c) decls
+    /\ @Den (mk_tags (ptbl ++ flat_map decl_entries decls)) var_of (labels t)
+         (Node R_expr b) e.
+
+(* The names the program resolves are in that table. *)
+Definition goat_known (ptbl : tagtab) (t : tree) : Prop :=
+  match t with
+  | Node R_goat cs => Forall (Known (ptbl ++ flat_map decl_entries cs)) cs
+  | _ => True
+  end.
 
 (* T1 *)
-Theorem parse_denotes_lc : forall var_of s ts s',
+Theorem parse_denotes_lc : forall var_of ptbl s ts s',
   peg (E_rule R_goat) s (Ok ts s') ->
   Forall core_tree ts ->
   Forall Complete ts ->
-  exists t e, ts = [t] /\ Den_goat var_of t e /\ lc_exp e /\ lc e.
+  Forall (goat_known ptbl) ts ->
+  exists t e, ts = [t] /\ Den_goat var_of ptbl t e /\ lc_exp e /\ lc e.
 Proof.
-  intros var_of s ts s' Hparse Hcore Hcomplete.
+  intros var_of ptbl s ts s' Hparse Hcore Hcomplete Hknown.
   assert (Hgen : gen (E_rule R_goat) ts)
     by exact (peg_gen _ _ _ Hparse ts s' eq_refl Hcore).
   destruct (gen_node_of Hgen eq_refl) as (cs & Hts & Hbody). subst ts.
   assert (Hroot : Complete (Node R_goat cs)) by (inversion Hcomplete; assumption).
   inversion Hroot as [| ? ? Hhas Hkids_complete]; subst.
   simpl in Hhas.
-  destruct (shape_goat cs Hbody Hhas) as (b & ->).
-  assert (Hvalid_kids : Forall valid [Node R_expr b])
+  destruct (shape_goat cs Hbody Hhas) as (decls & b & -> & Hdecls).
+  assert (Hvalid_kids : Forall valid (decls ++ [Node R_expr b]))
     by exact (gen_valid _ _ Hbody).
+  apply Forall_app in Hvalid_kids as [_ Hvalid_expr'].
   assert (Hvalid_expr : valid (Node R_expr b))
-    by (inversion Hvalid_kids; assumption).
+    by (inversion Hvalid_expr'; assumption).
+  apply Forall_app in Hkids_complete as [_ Hcomplete_expr'].
   assert (Hcomplete_expr : Complete (Node R_expr b))
-    by (inversion Hkids_complete; assumption).
-  set (t := Node R_goat [Node R_expr b]).
-  assert (Hkind : TotKind var_of (labels t) (Node R_expr b))
-    by exact (tot var_of (labels t) _ Hvalid_expr Hcomplete_expr).
+    by (inversion Hcomplete_expr'; assumption).
+  set (t := Node R_goat (decls ++ [Node R_expr b])).
+  set (tt := ptbl ++ flat_map decl_entries decls).
+  assert (Hknown_goat : goat_known ptbl t) by (inversion Hknown; assumption).
+  unfold goat_known, t in Hknown_goat.
+  assert (Htt : ptbl ++ flat_map decl_entries (decls ++ [Node R_expr b]) = tt)
+    by (unfold tt; rewrite flat_map_app; simpl; rewrite app_nil_r; reflexivity).
+  rewrite Htt in Hknown_goat.
+  apply Forall_app in Hknown_goat as [_ Hknown_expr'].
+  assert (Hknown_expr : Known tt (Node R_expr b))
+    by (inversion Hknown_expr'; assumption).
+  assert (Hkind : TotKind (TT := mk_tags tt) var_of (labels t) (Node R_expr b))
+    by exact (@tot (mk_tags tt) var_of (labels t) _ Hvalid_expr Hcomplete_expr Hknown_expr).
   simpl in Hkind. destruct Hkind as (e & Hden).
   assert (Hlc : lc e)
-    by exact (proj1 (den_lc var_of (labels t)) _ _ Hden).
+    by exact (proj1 (@den_lc (mk_tags tt) var_of (labels t)) _ _ Hden).
   assert (Hlc_exp : lc_exp e) by exact (lc_lc_exp e Hlc).
-  assert (Hdenoted : Den_goat var_of t e) by (exists b; split; [ reflexivity | exact Hden ]).
+  assert (Hdenoted : Den_goat var_of ptbl t e)
+    by (exists decls, b; repeat split; [ exact Hdecls | exact Hden ]).
   exists t, e. repeat split; assumption.
 Qed.

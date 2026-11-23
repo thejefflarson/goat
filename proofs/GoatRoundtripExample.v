@@ -25,7 +25,7 @@ Qed.
 
 Example sample_roundtrip : forall var_of,
   names_distinct var_of ->
-  exists t, peg (E_rule R_goat) (print sample) (Ok [t] []) /\ Den_goat var_of t sample.
+  exists t, peg (E_rule R_goat) (print sample) (Ok [t] []) /\ Den_goat var_of [] t sample.
 Proof.
   intros var_of Hdistinct.
   exact (print_parse_roundtrip var_of sample Hdistinct sample_scoped sample_interned).
@@ -55,7 +55,7 @@ Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
 Example sample_operations_roundtrip : forall var_of,
   names_distinct var_of ->
   exists t, peg (E_rule R_goat) (print sample_operations) (Ok [t] []) /\
-            Den_goat var_of t sample_operations.
+            Den_goat var_of [] t sample_operations.
 Proof.
   intros var_of Hdistinct.
   exact (print_parse_roundtrip var_of sample_operations Hdistinct
@@ -76,7 +76,7 @@ Proof. intros n Hn. simpl in Hn. destruct Hn. Qed.
 Example sample_float_noelse_roundtrip : forall var_of,
   names_distinct var_of ->
   exists t, peg (E_rule R_goat) (print sample_float_noelse) (Ok [t] []) /\
-            Den_goat var_of t sample_float_noelse.
+            Den_goat var_of [] t sample_float_noelse.
 Proof.
   intros var_of Hdistinct.
   exact (print_parse_roundtrip var_of sample_float_noelse Hdistinct
@@ -103,7 +103,7 @@ Qed.
 Example sample_spread_roundtrip : forall var_of,
   names_distinct var_of ->
   exists t, peg (E_rule R_goat) (print sample_spread) (Ok [t] []) /\
-            Den_goat var_of t sample_spread.
+            Den_goat var_of [] t sample_spread.
 Proof.
   intros var_of Hdistinct.
   exact (print_parse_roundtrip var_of sample_spread Hdistinct

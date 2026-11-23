@@ -112,14 +112,15 @@ Definition parse_text (hs hc : nat -> bool) (s : list nat) (ts : list tree) : Pr
   exists ks rest, lex_toks hs hc s = Some ks /\ peg (E_rule R_goat) ks (Ok ts rest).
 
 (* T1 over text. *)
-Theorem parse_text_denotes : forall hs hc var_of s ts,
+Theorem parse_text_denotes : forall hs hc var_of ptbl s ts,
   parse_text hs hc s ts ->
   Forall core_tree ts ->
   Forall Complete ts ->
-  exists t e, ts = [t] /\ Den_goat var_of t e /\ lc_exp e /\ lc e.
+  Forall (goat_known ptbl) ts ->
+  exists t e, ts = [t] /\ Den_goat var_of ptbl t e /\ lc_exp e /\ lc e.
 Proof.
-  intros hs hc var_of s ts (ks & rest & _ & Hparse) Hcore Hcomplete.
-  exact (parse_denotes_lc var_of ks ts rest Hparse Hcore Hcomplete).
+  intros hs hc var_of ptbl s ts (ks & rest & _ & Hparse) Hcore Hcomplete Hknown.
+  exact (parse_denotes_lc var_of ptbl ks ts rest Hparse Hcore Hcomplete Hknown).
 Qed.
 
 (* A program a text whitespace or comment edit leaves alone parses the same. *)
@@ -135,11 +136,13 @@ Qed.
 Parameter xid_start_hi : nat -> bool.
 Parameter xid_cont_hi : nat -> bool.
 
-Theorem parse_text_denotes_xid : forall var_of s ts,
+Theorem parse_text_denotes_xid : forall var_of ptbl s ts,
   parse_text xid_start_hi xid_cont_hi s ts ->
   Forall core_tree ts ->
   Forall Complete ts ->
-  exists t e, ts = [t] /\ Den_goat var_of t e /\ lc_exp e /\ lc e.
+  Forall (goat_known ptbl) ts ->
+  exists t e, ts = [t] /\ Den_goat var_of ptbl t e /\ lc_exp e /\ lc e.
 Proof.
-  intros var_of s ts. exact (parse_text_denotes xid_start_hi xid_cont_hi var_of s ts).
+  intros var_of ptbl s ts.
+  exact (parse_text_denotes xid_start_hi xid_cont_hi var_of ptbl s ts).
 Qed.

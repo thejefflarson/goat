@@ -234,6 +234,8 @@ Proof.
     eapply den_posts_snoc; [ eassumption | eassumption | ].
     intros Hstarts Hend.
     exact (Hcall Hstarts (ends_cons _ _ (ends_cons _ _ (ends_cons _ _ Hend)))).
+  - (* a tag: the printer's table has none *) discriminate.
+  - discriminate.
 Qed.
 
 Lemma den_chain_call : forall var_of tbl cs e0 b ea,
@@ -351,7 +353,7 @@ Proof.
   - (* bound index *)
     intros i P Hs Hl.
     assert (Hchain : Den_chain var_of tbl (block P (e_fvar_b i)) (inst var_of P (e_fvar_b i))).
-    { rewrite inst_bvar. apply den_chain_single. apply D_name. }
+    { rewrite inst_bvar. apply den_chain_single. apply D_name. reflexivity. }
     apply den_pack; exact Hchain.
   - intros y P Hs. destruct Hs.
   - intros n P Hs Hl.

@@ -384,7 +384,175 @@ Proof.
   - apply IH. exact Hb.
 Qed.
 
+(* ---- the tag table: declarations read first, tags resolved by name ---- *)
+
+(* A tag name to the group it belongs to (its slot codes, GoatDefs.v) and its
+   position there. The first entry for a name wins, as in lowering, so the
+   prelude's tags precede the program's. *)
+Definition tagtab := list (string * (gdecl * nat)).
+
+Fixpoint tag_lookup (tt : tagtab) (x : string) : option (gdecl * nat) :=
+  match tt with
+  | [] => None
+  | (y, v) :: rest => if String.eqb x y then Some v else tag_lookup rest x
+  end.
+
+Class TagTable := { tags : tagtab }.
+
+#[global] Instance no_tags : TagTable := {| tags := [] |}.
+
+Definition mk_tags (tt : tagtab) : TagTable := {| tags := tt |}.
+
+(* The slot code of a payload type: 0 the group, 1 to 5 Int, Float (`Number`),
+   Bool, Unit, String, and 6 + j the j-th `_` of the declaration. *)
+Definition slot_of (g : option string) (name : string) : nat :=
+  if match g with Some n => String.eqb n name | None => false end then 0
+  else if String.eqb name "Int" then 1
+  else if String.eqb name "Number" then 2
+  else if String.eqb name "Bool" then 3
+  else if String.eqb name "Unit" then 4
+  else if String.eqb name "String" then 5
+  else 0.
+
+Definition type_slot (g : option string) (j : nat) (t : tree) : nat * nat :=
+  match t with
+  | Node R_infer_type _ => (6 + j, S j)
+  | Node R_type_name [Leaf (TName n)] => (slot_of g n, j)
+  | _ => (0, j)
+  end.
+
+Definition is_type_node (t : tree) : bool :=
+  match t with
+  | Node R_infer_type _ | Node R_type_name _ => true
+  | _ => false
+  end.
+
+Fixpoint type_slots (g : option string) (j : nat) (ts : list tree) {struct ts} : list nat * nat :=
+  match ts with
+  | [] => ([], j)
+  | t :: rest =>
+      let (c, j1) := type_slot g j t in
+      let (cs, j2) := type_slots g j1 rest in
+      (c :: cs, j2)
+  end.
+
+Definition case_name (cs : list tree) : string :=
+  match cs with Node R_name [Leaf (TName n)] :: _ => n | _ => "" end.
+
+Fixpoint decl_cases (cs : list tree) : list (list tree) :=
+  match cs with
+  | [] => []
+  | Node R_tag_case c :: rest => c :: decl_cases rest
+  | _ :: rest => decl_cases rest
+  end.
+
+Definition decl_group (cs : list tree) : option string :=
+  match cs with
+  | _ :: Node R_group_name [Node R_name [Leaf (TName g)]] :: _ => Some g
+  | _ => None
+  end.
+
+Fixpoint cases_slots (g : option string) (j : nat) (cases : list (list tree)) {struct cases}
+  : list (string * list nat) :=
+  match cases with
+  | [] => []
+  | c :: rest =>
+      let (cs, j1) := type_slots g j (List.filter is_type_node c) in
+      (case_name c, cs) :: cases_slots g j1 rest
+  end.
+
+(* What one `tag` declaration adds to the table. *)
+Definition decl_entries (d : tree) : tagtab :=
+  match d with
+  | Node R_tag_decl cs =>
+      let cases := cases_slots (decl_group cs) 0 (decl_cases cs) in
+      let w := List.map snd cases in
+      List.map (fun ic => (fst (snd ic), (w, fst ic)))
+               (List.combine (List.seq 0 (List.length cases)) cases)
+  | _ => []
+  end.
+
+Definition is_tag_decl (t : tree) : bool :=
+  match t with Node R_tag_decl _ => true | _ => false end.
+
+(* A tag's payload is the record of its slots, labelled by position. *)
+Fixpoint slot_fields (i : nat) (es : list exp) : fields :=
+  match es with
+  | [] => fs_nil
+  | e :: rest => fs_cons i e (slot_fields (S i) rest)
+  end.
+
+Definition payload (es : list exp) : exp := e_rec (slot_fields 0 es).
+
+(* `[a, b]` is `Link(a, Link(b, Empty))`. *)
+Fixpoint list_of (we : gdecl) (tge : nat) (wl : gdecl) (tgl : nat) (es : list exp) : exp :=
+  match es with
+  | [] => e_con we tge e_unit
+  | e :: rest =>
+      e_con wl tgl (e_rec (fs_cons 0 e (fs_cons 1 (list_of we tge wl tgl rest) fs_nil)))
+  end.
+
+(* An arm `Tag(a, b) then body` binds the payload to one variable and each name
+   to its slot. *)
+Fixpoint slot_lets (var_of : string -> termvar) (s : termvar) (i : nat) (xs : list string)
+  (body : exp) {struct xs} : exp :=
+  match xs with
+  | [] => body
+  | x :: rest =>
+      e_let (e_proj (e_fvar_f s) i)
+            (close_exp (var_of x) (slot_lets var_of s (S i) rest body))
+  end.
+
+(* A match on literals is a chain of equality tests on the scrutinee. *)
+Definition lit_chain (subject : exp) (rows : list (exp * exp)) (els : exp) : exp :=
+  fold_right (fun r tail => e_ite (e_bin subject bop_eq (fst r)) (snd r) tail) els rows.
+
+Fixpoint fv_rows (rows : list (exp * exp)) : atoms :=
+  match rows with
+  | [] => AtomSetImpl.empty
+  | r :: rest => fv_exp (fst r) `union` fv_exp (snd r) `union` fv_rows rest
+  end.
+
+Lemma lc_slot_fields : forall es i, Forall lc es -> lcf (slot_fields i es).
+Proof.
+  intros es i H. revert i.
+  induction H as [| e es He Hes IH]; intros i; simpl; [ exact I | ].
+  exact (conj He (IH (S i))).
+Qed.
+
+Lemma lc_payload : forall es, Forall lc es -> lc (payload es).
+Proof. intros es H. exact (lc_slot_fields es 0 H). Qed.
+
+Lemma lc_list_of : forall we tge wl tgl es,
+  Forall lc es -> lc (list_of we tge wl tgl es).
+Proof.
+  intros we tge wl tgl es H.
+  induction H as [| e es He Hes IH]; simpl; [ exact I | ].
+  exact (conj He (conj IH I)).
+Qed.
+
+Lemma lc_slot_lets : forall var_of xs s i body,
+  lc body -> lc (slot_lets var_of s i xs body).
+Proof.
+  intros var_of xs. induction xs as [| x xs IH]; intros s i body Hbody; simpl.
+  - exact Hbody.
+  - assert (Hclose : lc_at 1 (close_exp (var_of x) (slot_lets var_of s (S i) xs body)))
+      by (apply (proj1 lc_close_mut); exact (IH s (S i) body Hbody)).
+    exact (conj I Hclose).
+Qed.
+
+Lemma lc_lit_chain : forall subject rows els,
+  lc subject -> Forall (fun r => lc (fst r) /\ lc (snd r)) rows -> lc els ->
+  lc (lit_chain subject rows els).
+Proof.
+  intros subject rows els Hs Hrows Hels.
+  induction Hrows as [| r rows [Hl Hb] Hrows IH]; simpl; [ exact Hels | ].
+  exact (conj (conj Hs Hl) (conj Hb IH)).
+Qed.
+
 Section Denotation.
+
+  Context {TT : TagTable}.
 
   Variable var_of : string -> termvar.
   Variable tbl : list string.
@@ -449,6 +617,20 @@ Section Denotation.
       exact (conj I Hclose).
   Qed.
 
+  Inductive Den_labels : list tree -> list string -> Prop :=
+    | DLb_one : forall x, Den_labels [ident x] [x]
+    | DLb_more : forall x rest xs,
+        Den_labels rest xs ->
+        Den_labels (ident x :: sym "," :: rest) (x :: xs).
+
+  (* The children of a tag pattern: the tag, then the names it binds. *)
+  Inductive Den_tpat : list tree -> string -> list string -> Prop :=
+    | DTP_bare : forall t, Den_tpat [ident t] t []
+    | DTP_empty : forall t, Den_tpat [ident t; sym "("; sym ")"] t []
+    | DTP_labels : forall t ls xs,
+        Den_labels ls xs ->
+        Den_tpat [ident t; sym "("; Node R_labels ls; sym ")"] t xs.
+
   Inductive Den : tree -> exp -> Prop :=
     | D_num : forall n,
         Den (Node R_number [Leaf (TNum n)]) (e_num (z_of_nat n))
@@ -459,6 +641,7 @@ Section Denotation.
     | D_false :
         Den (Node R_boolean [Node R_false_lit [sym "false"]]) e_false
     | D_name : forall x,
+        tag_lookup tags x = None ->
         Den (ident x) (e_fvar_f (var_of x))
     | D_expr : forall cs e,
         Den_block cs e ->
@@ -528,6 +711,36 @@ Section Denotation.
         Den (Node R_negation cs) e ->
         Den (Node R_negation [op_tree bop_sub; Node R_negation cs])
             (e_bin (e_num 0) bop_sub e)
+    | D_list_nil : forall we tge,
+        tag_lookup tags "Empty" = Some (we, tge) ->
+        Den (Node R_list [sym "["; sym "]"]) (e_con we tge e_unit)
+    | D_list : forall args es we tge wl tgl,
+        tag_lookup tags "Empty" = Some (we, tge) ->
+        tag_lookup tags "Link" = Some (wl, tgl) ->
+        Den_args args es ->
+        Den (Node R_list [sym "["; Node R_arguments args; sym "]"])
+            (list_of we tge wl tgl es)
+    | D_match_tags : forall cs1 a rest e w tg b ars,
+        Den (Node R_expr cs1) e ->
+        Den_arm a w tg b ->
+        Den_arms rest ars ->
+        Den (Node R_match_expr
+               ([sym "match"; Node R_expr cs1; sym "do"] ++ a :: rest ++ [sym "done"]))
+            (e_match w e (arms_cons tg b ars))
+    | D_match_lit_var : forall cs1 x a rest rows els,
+        Den (Node R_expr cs1) (e_fvar_f x) ->
+        Den_lit_arms (a :: rest) rows els ->
+        Den (Node R_match_expr
+               ([sym "match"; Node R_expr cs1; sym "do"] ++ a :: rest ++ [sym "done"]))
+            (lit_chain (e_fvar_f x) rows els)
+    | D_match_lit_let : forall cs1 e s a rest rows els,
+        Den (Node R_expr cs1) e ->
+        (forall x, e <> e_fvar_f x) ->
+        Den_lit_arms (a :: rest) rows els ->
+        ~ AtomSetImpl.In s (fv_rows rows `union` fv_exp els) ->
+        Den (Node R_match_expr
+               ([sym "match"; Node R_expr cs1; sym "do"] ++ a :: rest ++ [sym "done"]))
+            (e_let e (close_exp s (lit_chain (e_fvar_f s) rows els)))
   with Den_decl : tree -> string -> exp -> Prop :=
     | DD_plain : forall x cs v,
         Den (Node R_value cs) v ->
@@ -589,6 +802,16 @@ Section Denotation.
         Den (Node R_expr cs) e0 ->
         Den_posts e0 rest e ->
         Den_chain (sym "(" :: Node R_expr cs :: sym ")" :: rest) e
+    | DC_tag : forall x w tg rest e,
+        tag_lookup tags x = Some (w, tg) ->
+        ~ starts_call rest ->
+        Den_posts (e_con w tg e_unit) rest e ->
+        Den_chain (ident x :: rest) e
+    | DC_tag_call : forall x w tg args es rest e,
+        tag_lookup tags x = Some (w, tg) ->
+        Den_args args es ->
+        Den_posts (e_con w tg (payload es)) rest e ->
+        Den_chain (ident x :: Node R_call [sym "("; Node R_arguments args; sym ")"] :: rest) e
   with Den_posts : exp -> list tree -> exp -> Prop :=
     | DP_nil : forall e,
         Den_posts e [] e
@@ -652,25 +875,56 @@ Section Denotation.
   with Den_field : tree -> string -> exp -> Prop :=
     | DF : forall l cs e,
         Den (Node R_expr cs) e ->
-        Den_field (Node R_field [ident l; sym ":"; Node R_expr cs]) l e.
+        Den_field (Node R_field [ident l; sym ":"; Node R_expr cs]) l e
+  with Den_arm : tree -> gdecl -> nat -> exp -> Prop :=
+    | DArm : forall pcs t xs cs body w tg s,
+        Den_tpat pcs t xs ->
+        tag_lookup tags t = Some (w, tg) ->
+        Den (Node R_expr cs) body ->
+        ~ AtomSetImpl.In s (fv_exp body) ->
+        (forall x, List.In x xs -> s <> var_of x) ->
+        Den_arm (Node R_arm [Node R_pattern pcs; sym "then"; Node R_expr cs])
+                w tg (close_exp s (slot_lets var_of s 0 xs body))
+  with Den_arms : list tree -> arms -> Prop :=
+    | DAr_nil : Den_arms [] arms_nil
+    | DAr_else : forall cs e,
+        Den (Node R_expr cs) e ->
+        Den_arms [sym "else"; Node R_expr cs] (arms_else e)
+    | DAr_cons : forall a w tg b rest ars,
+        Den_arm a w tg b ->
+        Den_arms rest ars ->
+        Den_arms (a :: rest) (arms_cons tg b ars)
+  with Den_lit_arm : tree -> exp -> exp -> Prop :=
+    | DLA : forall c cs l b,
+        Den c l ->
+        Den (Node R_expr cs) b ->
+        Den_lit_arm (Node R_arm [Node R_literal_pattern [c]; sym "then"; Node R_expr cs]) l b
+  with Den_lit_arms : list tree -> list (exp * exp) -> exp -> Prop :=
+    | DLs_else : forall cs e,
+        Den (Node R_expr cs) e ->
+        Den_lit_arms [sym "else"; Node R_expr cs] [] e
+    | DLs_cons : forall a l b rest rows els,
+        Den_lit_arm a l b ->
+        Den_lit_arms rest rows els ->
+        Den_lit_arms (a :: rest) ((l, b) :: rows) els.
 
 End Denotation.
 
 (* A chain, and one infix operator between two chains, read as before. *)
-Lemma DM_chain : forall var_of tbl cs e,
+Lemma DM_chain : forall `{TT : TagTable} var_of tbl cs e,
   Den_chain var_of tbl cs e -> Den_math var_of tbl cs e.
 Proof.
-  intros var_of tbl cs e H.
+  intros TT var_of tbl cs e H.
   apply (DM_run var_of tbl cs [I_val e] e); [ | reflexivity ].
   apply DR_one. apply DO_val. exact H.
 Qed.
 
-Lemma DM_bin : forall var_of tbl c1 c2 o e1 e2,
+Lemma DM_bin : forall `{TT : TagTable} var_of tbl c1 c2 o e1 e2,
   Den_chain var_of tbl c1 e1 ->
   Den_chain var_of tbl c2 e2 ->
   Den_math var_of tbl (c1 ++ op_tree o :: c2) (e_bin e1 o e2).
 Proof.
-  intros var_of tbl c1 c2 o e1 e2 H1 H2.
+  intros TT var_of tbl c1 c2 o e1 e2 H1 H2.
   apply (DM_run var_of tbl _ [I_val e1; I_op (L_bin o); I_val e2]);
     [ | reflexivity ].
   change (op_tree o) with (lop_tree (L_bin o)).
@@ -691,14 +945,19 @@ with Den_args_ind' := Induction for Den_args Sort Prop
 with Den_params_ind' := Induction for Den_params Sort Prop
 with Den_items_ind' := Induction for Den_items Sort Prop
 with Den_sep_ind' := Induction for Den_sep Sort Prop
-with Den_field_ind' := Induction for Den_field Sort Prop.
+with Den_field_ind' := Induction for Den_field Sort Prop
+with Den_arm_ind' := Induction for Den_arm Sort Prop
+with Den_arms_ind' := Induction for Den_arms Sort Prop
+with Den_lit_arm_ind' := Induction for Den_lit_arm Sort Prop
+with Den_lit_arms_ind' := Induction for Den_lit_arms Sort Prop.
 Combined Scheme Den_mutind from Den_ind', Den_decl_ind', Den_block_ind',
   Den_decls_ind', Den_math_ind', Den_opd_ind', Den_run_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
-  Den_items_ind', Den_sep_ind', Den_field_ind'.
+  Den_items_ind', Den_sep_ind', Den_field_ind', Den_arm_ind', Den_arms_ind',
+  Den_lit_arm_ind', Den_lit_arms_ind'.
 
 (* ---- T1, the denotation half: whatever a derivation denotes is locally closed ---- *)
 
-Lemma den_lc : forall var_of tbl,
+Lemma den_lc : forall `{TT : TagTable} var_of tbl,
   (forall t e, Den var_of tbl t e -> lc e) /\
   (forall d x v, Den_decl var_of tbl d x v -> lc v) /\
   (forall cs e, Den_block var_of tbl cs e -> lc e) /\
@@ -712,15 +971,20 @@ Lemma den_lc : forall var_of tbl,
   (forall ps xs, Den_params var_of tbl ps xs -> True) /\
   (forall cs fs, Den_items var_of tbl cs fs -> lcf fs) /\
   (forall cs fs, Den_sep var_of tbl cs fs -> lcf fs) /\
-  (forall f l e, Den_field var_of tbl f l e -> lc e).
+  (forall f l e, Den_field var_of tbl f l e -> lc e) /\
+  (forall a w tg b, Den_arm var_of tbl a w tg b -> lc_at 1 b) /\
+  (forall cs ars, Den_arms var_of tbl cs ars -> lca ars) /\
+  (forall a l b, Den_lit_arm var_of tbl a l b -> lc l /\ lc b) /\
+  (forall cs rows els, Den_lit_arms var_of tbl cs rows els ->
+     Forall (fun r => lc (fst r) /\ lc (snd r)) rows /\ lc els).
 Proof.
-  intros var_of tbl.
+  intros TT var_of tbl.
   apply Den_mutind.
   - (* num *) intros n. exact I.
   - (* dec *) intros d. exact I.
   - (* true *) exact I.
   - (* false *) exact I.
-  - (* name *) intros x. exact I.
+  - (* name *) intros x _. exact I.
   - (* expr *) intros cs e Hblock IH. exact IH.
   - (* value *) intros cs e Hchain IH. exact IH.
   - (* function *)
@@ -753,6 +1017,22 @@ Proof.
     intros cs e Hchain IH Hbare. exact (conj I IH).
   - (* negation of a negation *)
     intros cs e Hneg IH. exact (conj I IH).
+  - (* empty list *) intros we tge _. exact I.
+  - (* list literal *)
+    intros args es we tge wl tgl _ _ Hargs IH. exact (lc_list_of we tge wl tgl es IH).
+  - (* match on tags *)
+    intros cs1 a rest e w tg b ars He IHe Ha IHa Hrest IHrest.
+    exact (conj IHe (conj IHa IHrest)).
+  - (* match on literals, scrutinee a variable *)
+    intros cs1 x a rest rows els Hs IHs Harms [IHrows IHels].
+    exact (lc_lit_chain (e_fvar_f x) rows els I IHrows IHels).
+  - (* match on literals, scrutinee bound once *)
+    intros cs1 e s a rest rows els He IHe Hnotvar Harms [IHrows IHels] Hfresh.
+    assert (Hchain : lc (lit_chain (e_fvar_f s) rows els))
+      by exact (lc_lit_chain (e_fvar_f s) rows els I IHrows IHels).
+    assert (Hclose : lc_at 1 (close_exp s (lit_chain (e_fvar_f s) rows els)))
+      by (apply (proj1 lc_close_mut); exact Hchain).
+    exact (conj IHe Hclose).
   - (* decl, plain *) intros x cs v Hv IH. exact IH.
   - (* decl, with semicolon *) intros x cs v Hv IH. exact IH.
   - (* block, chain *) intros cs e Hmath IH. exact IH.
@@ -784,6 +1064,11 @@ Proof.
     intros t rest e0 e Ht IHt Hposts IHposts. exact (IHposts IHt).
   - (* chain, parenthesised *)
     intros cs rest e0 e Hexpr IHexpr Hposts IHposts. exact (IHposts IHexpr).
+  - (* chain, a tag with no payload *)
+    intros x w tg rest e Hlookup Hnocall Hposts IHposts. exact (IHposts I).
+  - (* chain, a tag with a payload *)
+    intros x w tg args es rest e Hlookup Hargs IHargs Hposts IHposts.
+    exact (IHposts (lc_payload es IHargs)).
   - (* posts, none *) intros e Hlc. exact Hlc.
   - (* posts, access *)
     intros e l rest e' Hnocall Hrest IHrest Hlc.
@@ -825,6 +1110,19 @@ Proof.
   - (* sep, end *) exact I.
   - (* sep, more *) intros rest fs Hitems IH. exact IH.
   - (* field *) intros l cs e Hexpr IH. exact IH.
+  - (* arm: the payload variable is closed over the slot bindings *)
+    intros pcs t xs cs body w tg s Hpat Hlookup Hbody IHbody Hfresh Hdistinct.
+    exact (proj1 lc_close_mut _ 0 s (lc_slot_lets var_of xs s 0 body IHbody)).
+  - (* arms, none *) exact I.
+  - (* arms, else *) intros cs e He IH. exact IH.
+  - (* arms, one more *)
+    intros a w tg b rest ars Ha IHa Hrest IHrest. exact (conj IHa IHrest).
+  - (* literal arm *) intros c cs l b Hc IHc Hb IHb. exact (conj IHc IHb).
+  - (* literal arms, else *)
+    intros cs e He IH. exact (conj (Forall_nil _) IH).
+  - (* literal arms, one more *)
+    intros a l b rest rows els Ha [IHl IHb] Hrest [IHrows IHels].
+    exact (conj (Forall_cons (l, b) (conj IHl IHb) IHrows) IHels).
 Qed.
 
 (* ---- the generated local-closure predicate ---- *)
