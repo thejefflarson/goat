@@ -14,13 +14,14 @@ ADR 0037 (decision 6) ties the inference algorithm proved in `proofs/` to
 - `driver.ml` runs the extracted algorithm on each term and exits non-zero if
   acceptance differs or the types differ up to renaming of variables.
 
-The reader writes tags and `match` as `(con (grp (c c) ...) tg payload)` and
-`(match (grp ...) scrutinee (tg body) ... (else body))`: a group is the slot codes of
-its tags (`proofs/GoatDefs.v`), a payload is the record of the tag's slots labelled by
+The reader writes tags and `match` as `(con (grp N (c c) ...) tg payload)` and
+`(match (grp N ...) scrutinee (tg body) ... (else body))`: a group is a number that
+names it (its order of first use in the program) and the slot codes of its tags
+(`proofs/GoatDefs.v`), so two groups of one shape are two types, as in the checker. A
+payload is the record of the tag's slots labelled by
 position, and an arm body has its payload variable as index 0 with each name a `let`
 of its slot. Not read: a host-provided tag, a payload type that is not a name or `_`,
-two groups with the same slots (the calculus tells groups apart by their slots alone, so
-`if c then Ping else Pong` with `tag Ping` and `tag Pong` would type), and a comparison in a
+and a comparison in a
 program with tags (the algorithm does not decide the `Eq` sort of a group,
 stage 7.4). A program whose result is a group has no type the corpus writes.
 

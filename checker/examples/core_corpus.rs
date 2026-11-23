@@ -109,19 +109,14 @@ enum Core {
     Spread(Box<Core>, usize, Box<Core>),
     /// `record` with its first `label` taken out.
     Restrict(Box<Core>, usize),
-    /// `Tag(args)`: the tag's group as the slot codes of each of its tags, the
-    /// tag's position, and the values of its slots (none for a bare tag).
-    Con(Vec<Vec<usize>>, usize, Vec<Core>),
+    /// `Tag(args)`: the tag's group, the tag's position, and the values of its
+    /// slots (none for a bare tag).
+    Con(GroupDecl, usize, Vec<Core>),
     /// The `i`th slot of a tag's payload, which an arm reads off its payload.
     Slot(Box<Core>, usize),
     /// `match`: the group, the scrutinee, each arm by its tag's position (its
     /// body binds the payload as index 0), and the `else`.
-    Match(
-        Vec<Vec<usize>>,
-        Box<Core>,
-        Vec<(usize, Core)>,
-        Option<Box<Core>>,
-    ),
+    Match(GroupDecl, Box<Core>, Vec<(usize, Core)>, Option<Box<Core>>),
 }
 
 fn relabel_fields(fields: &mut [(usize, Core)], rank: &[usize]) {
@@ -131,9 +126,13 @@ fn relabel_fields(fields: &mut [(usize, Core)], rank: &[usize]) {
     }
 }
 
-fn group_sexp(group: &[Vec<usize>], out: &mut String) {
-    out.push_str("(grp");
-    for tag in group {
+/// A tag group as the calculus declares it: the number that names it, and the
+/// slot codes of each of its tags. Two groups are one type only when both agree.
+type GroupDecl = (usize, Vec<Vec<usize>>);
+
+fn group_sexp((name, tags): &GroupDecl, out: &mut String) {
+    write!(out, "(grp {name}").unwrap();
+    for tag in tags {
         out.push_str(" (");
         let codes: Vec<String> = tag.iter().map(usize::to_string).collect();
         out.push_str(&codes.join(" "));
@@ -404,7 +403,6 @@ impl Core {
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Feature {
     ForeignCall,
-    SameShapeGroups,
     GroupComparison,
     TagsAndMatch,
     Builtin,
@@ -423,9 +421,6 @@ impl Feature {
         match self {
             Feature::ForeignCall => "outside the calculus: a foreign host call",
             Feature::TagsAndMatch => "outside the calculus: tags and match",
-            Feature::SameShapeGroups => {
-                "outside the calculus: two tag groups with the same slots, which the calculus cannot tell apart"
-            }
             Feature::GroupComparison => {
                 "outside the calculus: a comparison in a program with tags, whose Eq sort the algorithm does not decide for groups"
             }
@@ -534,8 +529,8 @@ struct Reader<'a> {
     /// Why the reader stopped, when the cause is the shape of the program and
     /// not a node the calculus lacks.
     gap: Feature,
-    /// The tag groups read so far, with their slot codes.
-    groups: Vec<(Arc<Group>, Vec<Vec<usize>>)>,
+    /// The tag groups read so far; a group's position is its name.
+    groups: Vec<Arc<Group>>,
     /// Whether the program builds or matches a tag.
     tagged: bool,
 }
@@ -806,24 +801,25 @@ impl Reader<'_> {
         body
     }
 
-    /// The slot codes of `group`. The calculus tells groups apart by their
-    /// slots alone, so a program with two groups of one shape is out.
-    fn group_decl(&mut self, group: &Arc<Group>) -> Option<Vec<Vec<usize>>> {
+    /// `group` as the calculus declares it: numbered by first use, so two
+    /// groups of one shape stay two.
+    fn group_decl(&mut self, group: &Arc<Group>) -> Option<GroupDecl> {
         let slots = group_slots(group)?;
-        if !self.groups.iter().any(|(g, _)| Arc::ptr_eq(g, group)) {
-            if self.groups.iter().any(|(_, other)| *other == slots) {
-                self.gap = self.gap.min(Feature::SameShapeGroups);
-                return None;
+        let name = match self.groups.iter().position(|g| Arc::ptr_eq(g, group)) {
+            Some(name) => name,
+            None => {
+                self.groups.push(group.clone());
+                self.groups.len() - 1
             }
-            self.groups.push((group.clone(), slots.clone()));
-        }
-        Some(slots)
+        };
+        Some((name, slots))
     }
 
     /// `Tag(a, b)` is the tag with a record of its slots, an `Int` made a
     /// `Float` where the slot is one.
     fn tag(&mut self, name: &str, payload: Option<&Expr>, group: &Arc<Group>) -> Option<Core> {
-        let slots = self.group_decl(group)?;
+        let decl = self.group_decl(group)?;
+        let slots = &decl.1;
         let tag = group.tags.iter().position(|(n, _)| n == name)?;
         let values: Vec<&Expr> = match (payload, slots[tag].len()) {
             (None, 0) => Vec::new(),
@@ -844,7 +840,7 @@ impl Reader<'_> {
             }
             read.push(core);
         }
-        Some(Core::Con(slots, tag, read))
+        Some(Core::Con(decl, tag, read))
     }
 
     /// Each arm binds the payload as one variable and each name as a `let` of
@@ -856,7 +852,8 @@ impl Reader<'_> {
         else_branch: Option<&Expr>,
     ) -> Option<Core> {
         let group = arms.first()?.pattern.group.as_ref()?;
-        let slots = self.group_decl(group)?;
+        let decl = self.group_decl(group)?;
+        let slots = &decl.1;
         let scrutinee = self.read(scrutinee)?;
         let mut read = Vec::new();
         for arm in arms {
@@ -891,7 +888,7 @@ impl Reader<'_> {
             Some(body) => Some(Box::new(self.read(body)?)),
             None => None,
         };
-        Some(Core::Match(slots, Box::new(scrutinee), read, otherwise))
+        Some(Core::Match(decl, Box::new(scrutinee), read, otherwise))
     }
 
     fn read(&mut self, expr: &Expr) -> Option<Core> {

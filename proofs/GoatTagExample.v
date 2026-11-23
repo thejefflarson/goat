@@ -155,3 +155,15 @@ Proof.
   exact (parse_denotes_lc var_of [] shapes shapes_ts [] shapes_parse
            shapes_core shapes_complete shapes_known).
 Qed.
+
+(* `tag A = Ping` and `tag B = Pong` have one shape and are two groups. *)
+Definition one_tag_decl (g c : string) : tree :=
+  Node R_tag_decl
+    [Node R_tag_kw [Leaf (TSym "tag")];
+     Node R_group_name [ident g]; Leaf (TSym "=");
+     Node R_tag_case [ident c]].
+
+Example same_shape_decls_are_two_groups :
+  tag_lookup (decl_entries (one_tag_decl "A" "Ping") ++ decl_entries (one_tag_decl "B" "Pong")) "Ping"
+  <> tag_lookup (decl_entries (one_tag_decl "A" "Ping") ++ decl_entries (one_tag_decl "B" "Pong")) "Pong".
+Proof. discriminate. Qed.

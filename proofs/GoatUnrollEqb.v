@@ -28,7 +28,7 @@ From Stdlib Require Import Lia.
 (* ---- syntactic equality ---- *)
 
 Definition gdecl_eqb (w w' : gdecl) : bool :=
-  if list_eq_dec (list_eq_dec Nat.eq_dec) w w' then true else false.
+  if gdecl_eq_dec w w' then true else false.
 
 Fixpoint typ_eqb (T T' : typ) {struct T} : bool :=
   match T, T' with
@@ -54,7 +54,7 @@ with row_eqb (R R' : row) {struct R} : bool :=
 
 Lemma gdecl_eqb_eq : forall w w', gdecl_eqb w w' = true -> w = w'.
 Proof.
-  unfold gdecl_eqb. intros w w'. destruct (list_eq_dec _ w w'); [ auto | discriminate ].
+  unfold gdecl_eqb. intros w w'. destruct (gdecl_eq_dec w w'); [ auto | discriminate ].
 Qed.
 
 Lemma typ_eqb_eq_mut :

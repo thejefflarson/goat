@@ -239,6 +239,14 @@ Record denv : Type := DEnv { dsort : typvar -> sort; drk : rowvar -> rkind }.
 
 Coercion dsort : denv >-> Funclass.
 
+Definition gtags (w : gdecl) : list (list nat) := snd w.
+
+Definition gdecl_eq_dec (w w' : gdecl) : {w = w'} + {w <> w'}.
+Proof.
+  decide equality;
+    repeat (apply list_eq_dec; try apply Nat.eq_dec).
+Defined.
+
 (* [sat D k T]: T may stand where a variable of sort [k] stands.  A concrete
    [Int] or [Float] satisfies every sort; a variable satisfies the sorts its
    own (in [D]) is finer than.  A closed record whose fields all satisfy [k]
@@ -270,7 +278,7 @@ with rsat (D : denv) (k : sort) (R : row) {struct R} : Prop :=
 with spine_sat (D : denv) (w : gdecl) (j : nat) (A : typ) {struct A} : Prop :=
   match A with
   | typ_Arrow T A' =>
-      ((exists cs, In cs w /\ In (6 + j) cs) -> sat D k_Eq T) /\ spine_sat D w (S j) A'
+      ((exists cs, In cs (gtags w) /\ In (6 + j) cs) -> sat D k_Eq T) /\ spine_sat D w (S j) A'
   | typ_Unit => True
   | _ => False
   end.
@@ -458,7 +466,7 @@ Definition payload_ty (w : gdecl) (Ts : list typ) (cs : list nat) : typ :=
 (* The payload type of tag [tg] of [w] at the parameters [Ts]; a tag outside
    the group has none (no construction of one types, see [T_Con]). *)
 Definition tag_payload (w : gdecl) (Ts : list typ) (tg : nat) : typ :=
-  match nth_error w tg with
+  match nth_error (gtags w) tg with
   | Some cs => payload_ty w Ts cs
   | None => typ_Unit
   end.
@@ -487,8 +495,8 @@ Fixpoint arms_idx (ars : arms) {struct ars} : list nat :=
 
 Definition arms_wf (w : gdecl) (ars : arms) : Prop :=
   NoDup (arms_idx ars) /\
-  (forall tg, In tg (arms_idx ars) -> tg < length w) /\
-  (arms_default ars <> None \/ forall tg, tg < length w -> In tg (arms_idx ars)).
+  (forall tg, In tg (arms_idx ars) -> tg < length (gtags w)) /\
+  (arms_default ars <> None \/ forall tg, tg < length (gtags w) -> In tg (arms_idx ars)).
 
 (* ================================================================== *)
 (* Values (section 2).                                                   *)
@@ -1273,7 +1281,7 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
      lct 0 (typ_Mu B) -> guarded B ->
      typing D G e (typ_Mu B) -> typing D G (e_unfold e) (open_typ 0 (typ_Mu B) B)
  | T_Con : forall D G w tg e Ts,
-     tg < length w ->
+     tg < length (gtags w) ->
      typing D G e (tag_payload w Ts tg) ->
      typing D G (e_con w tg e) (typ_Grp w (spine Ts))
  | T_Match : forall (L : vars) D G w Ts e ars T,
