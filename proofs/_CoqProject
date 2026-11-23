@@ -49,7 +49,9 @@ GoatCompleteGen.v
 GoatCompleteMono.v
 GoatCompleteLet.v
 GoatSatTeq.v
+GoatRowNf.v
 GoatCompleteRows.v
+GoatCompleteSide.v
 GoatCompleteUnify.v
 GoatCompleteSorts.v
 GoatElabConverse.v
