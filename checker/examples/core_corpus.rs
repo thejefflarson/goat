@@ -23,7 +23,9 @@
 //! belongs to a group of functions that mention each other, is a `letrec` of
 //! the group (`T_Letrec`), generalized once the whole group is typed, as the
 //! checker does. A group whose functions are not next to each other in their
-//! block (a value binding between them) is outside the fragment.
+//! block (a value binding between them) is written as one `letrec`, placed
+//! after the last binding its members mention and before the value bindings
+//! that use it.
 //!
 //! The calculus has no implicit Int-to-Float widening: elaboration writes
 //! `float(e)` where the checker accepts an Int for a Float (an operand beside a
@@ -262,7 +264,6 @@ pub enum Feature {
     Connective,
     Loop,
     OperatorOperand,
-    SplitGroup,
     EmptyRest,
     UnwritableType,
     IfWithoutElse,
@@ -285,9 +286,6 @@ impl Feature {
             Feature::Loop => "outside the calculus: a loop (repeat, for)",
             Feature::OperatorOperand => {
                 "outside the calculus: arithmetic on non-primitive operands"
-            }
-            Feature::SplitGroup => {
-                "outside the calculus: a recursive group a value binding uses before its last member"
             }
             Feature::EmptyRest => {
                 "outside the calculus: a rest pattern with no fields, which only says its source is a record"
@@ -522,10 +520,7 @@ impl Reader<'_> {
     /// itself, or belongs to a group with another, is a `letrec`; the others
     /// are `let`s. A group is placed after the last binding its members
     /// mention, which is where elaboration hoists it past value bindings that
-    /// split it. A value binding that uses a member before the group's last
-    /// member leaves the group outside the fragment: the checker types that
-    /// use at the member's still-monomorphic type, and the hoisted `letrec`
-    /// would already have generalized it.
+    /// split it; the checker infers the group there too.
     fn block(&mut self, first: &Expr) -> Option<Core> {
         let mut bindings = Vec::new();
         let mut cursor = first;
@@ -569,16 +564,6 @@ impl Reader<'_> {
             .filter(|group| group.len() > 1 || used[members[group[0]]].contains(&symbols[group[0]]))
             .map(|group| group.into_iter().map(|m| members[m]).collect())
             .collect();
-        let used_inside = groups.iter().any(|group| {
-            let last = *group.iter().max().expect("a group has a member");
-            (0..last).any(|i| {
-                !group.contains(&i) && group.iter().any(|&m| used[i].contains(&bindings[m].0))
-            })
-        });
-        if used_inside {
-            self.gap = self.gap.min(Feature::SplitGroup);
-            return None;
-        }
         let units = self.place_groups(&bindings, &used, &groups)?;
         self.chain(&bindings, &groups, &units, tail)
     }
@@ -622,14 +607,12 @@ impl Reader<'_> {
         done(&mut units);
         for i in (0..bindings.len()).filter(|i| !grouped.contains(i)) {
             if !needs(i).iter().all(|u| units.contains(u)) {
-                self.gap = self.gap.min(Feature::SplitGroup);
                 return None;
             }
             units.push(Unit::Value(i));
             done(&mut units);
         }
         if units.len() != groups.len() + bindings.len() - grouped.len() {
-            self.gap = self.gap.min(Feature::SplitGroup);
             return None;
         }
         Some(units)

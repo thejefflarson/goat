@@ -134,6 +134,22 @@ fn mutual_recursion_either_order() {
 }
 
 #[test]
+fn a_value_between_group_members_does_not_pin_them() {
+    let value_between = "show = program(x) do describe(x) done \
+                         n = show(5) \
+                         describe = program(x) do x done \
+                         print(n); \
+                         print(describe(\"hi\"));";
+    let value_after = "show = program(x) do describe(x) done \
+                       describe = program(x) do x done \
+                       n = show(5) \
+                       print(n); \
+                       print(describe(\"hi\"));";
+    assert_eq!(run(value_between), "5\nhi");
+    assert_eq!(run(value_after), "5\nhi");
+}
+
+#[test]
 fn shadowing_value_binding() {
     assert_eq!(run("score = 1  score = score + 1  score"), "2");
 }

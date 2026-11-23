@@ -831,6 +831,137 @@ fn is_bare_numeral(expr: &Expr) -> bool {
     matches!(expr.kind, ExprKind::Int(_))
 }
 
+fn let_parts(binding: &Expr) -> (Symbol, &str, &Expr) {
+    match &binding.kind {
+        ExprKind::Let {
+            symbol,
+            name,
+            value,
+            ..
+        } => (*symbol, name, value),
+        _ => unreachable!("a chain holds only `Let`s"),
+    }
+}
+
+/// The order a block's bindings are inferred in: source order, except that a
+/// value binding that uses a function whose recursive group has members further
+/// down first pulls those members up, with the values they read, so the group
+/// is generalized before the value types its use. A pull that would need the
+/// value itself (a member reading the value that calls the group) is a real
+/// cycle; it is left in source order, and the order check reports it.
+fn group_first_order(chain: &[&Expr]) -> Vec<usize> {
+    let parts: Vec<(Symbol, &Expr)> = chain
+        .iter()
+        .map(|binding| {
+            let (symbol, _, value) = let_parts(binding);
+            (symbol, value)
+        })
+        .collect();
+    let in_order = || (0..parts.len()).collect();
+    let is_member = |at: usize| matches!(parts[at].1.kind, ExprKind::Func { .. });
+    let Some(last_member) = (0..parts.len()).rev().find(|&at| is_member(at)) else {
+        return in_order();
+    };
+    if (0..last_member).all(is_member) {
+        return in_order();
+    }
+    let index: HashMap<Symbol, usize> = parts
+        .iter()
+        .enumerate()
+        .map(|(at, (symbol, _))| (*symbol, at))
+        .collect();
+    let uses: Vec<Vec<usize>> = parts
+        .iter()
+        .map(|(_, value)| {
+            let mut found = BTreeSet::new();
+            for_each_node(value, &mut |e| {
+                if let ExprKind::Var { symbol, .. } = &e.kind
+                    && let Some(&at) = index.get(symbol)
+                {
+                    found.insert(at);
+                }
+            });
+            found.into_iter().collect()
+        })
+        .collect();
+    let mut group: Vec<usize> = (0..parts.len()).collect();
+    for at in (0..parts.len()).filter(|&at| is_member(at)) {
+        for &used in uses[at].iter().filter(|&&used| is_member(used)) {
+            let (a, b) = (group_root(&mut group, at), group_root(&mut group, used));
+            group[a] = b;
+        }
+    }
+
+    let mut order = Vec::with_capacity(parts.len());
+    let mut done = vec![false; parts.len()];
+    for at in 0..parts.len() {
+        if !done[at] && !is_member(at) {
+            let mut wanted = BTreeSet::new();
+            for &used in uses[at].iter().filter(|&&used| is_member(used)) {
+                let root = group_root(&mut group, used);
+                wanted
+                    .extend((0..parts.len()).filter(|&m| {
+                        is_member(m) && !done[m] && group_root(&mut group, m) == root
+                    }));
+            }
+            let mut pulled = Vec::new();
+            let mut visited = done.clone();
+            if wanted
+                .iter()
+                .all(|&member| pull(member, at, &uses, &is_member, &mut visited, &mut pulled))
+            {
+                for at in pulled {
+                    done[at] = true;
+                    order.push(at);
+                }
+            }
+        }
+        if !done[at] {
+            done[at] = true;
+            order.push(at);
+        }
+    }
+    order
+}
+
+fn group_root(group: &mut [usize], mut at: usize) -> usize {
+    while group[at] != at {
+        group[at] = group[group[at]];
+        at = group[at];
+    }
+    at
+}
+
+/// Add `at`, after the values it reads that are still unfinished, to `pulled`.
+/// `false` when one of those is `blocked` (the value that started the pull) or
+/// a value that itself waits on an unfinished function.
+fn pull(
+    at: usize,
+    blocked: usize,
+    uses: &[Vec<usize>],
+    is_member: &impl Fn(usize) -> bool,
+    visited: &mut [bool],
+    pulled: &mut Vec<usize>,
+) -> bool {
+    if visited[at] {
+        return true;
+    }
+    visited[at] = true;
+    for &used in &uses[at] {
+        if used == at || (is_member(at) && is_member(used)) {
+            continue;
+        }
+        if used == blocked || (is_member(used) && !visited[used]) {
+            return false;
+        }
+        if !pull(used, blocked, uses, is_member, visited, pulled) {
+            return false;
+        }
+    }
+    pulled.push(at);
+    true
+}
+
 /// Whether evaluating `expr` can do no work, so its binding may be generalized:
 /// a function, a literal, a name, or a record or variant of such values.
 /// Anything else is computed and keeps one type.
@@ -2944,82 +3075,83 @@ impl Inferer {
     /// The chain of `Let`s from `first`, walked in a loop so a long block costs
     /// no stack. Every `Let` in it has the type of the chain's last expression.
     fn infer_spine(&mut self, first: &Expr) -> Ty {
-        let mut spine = Vec::new();
-        let mut seeded = false;
-        let mut deferred = Deferred::default();
+        let mut chain = Vec::new();
         let mut cursor = first;
-        let ty = loop {
-            let ExprKind::Let {
-                symbol,
-                name,
-                value,
-                rest,
-            } = &cursor.kind
-            else {
-                break self.infer(cursor);
-            };
-            let is_function = matches!(value.kind, ExprKind::Func { .. });
-            if !seeded && is_function {
-                self.seed_function_group(cursor);
-                seeded = true;
-            }
-            match self.pending_members.get(symbol).copied() {
-                Some(block) if is_function => {
-                    let flows_from = self.flows.len();
-                    self.member_frames.push(MemberFrame {
-                        block,
-                        member: *symbol,
-                        uses: Vec::new(),
-                        seen: HashSet::new(),
-                    });
-                    let value_ty = self.infer(value);
-                    let frame = self.member_frames.pop().expect("the frame pushed above");
-                    let seed = self.env[symbol].ty.clone();
-                    self.unify(&value_ty, &seed, value.span);
-                    let flows = self.flows.split_off(flows_from);
-                    self.member_flows.insert(*symbol, flows);
-                    self.settle(&mut deferred, *symbol, &frame.uses);
-                }
-                _ => {
-                    let flows_from = self.flows.len();
-                    let value_ty = self.infer(value);
-                    let rec = match self.unbind_env(symbol) {
-                        Some(seed) => {
-                            self.unify(&value_ty, &seed.ty, value.span);
-                            seed.ty
-                        }
-                        None => value_ty,
-                    };
-                    if is_function || is_syntactic_value(value) {
-                        let flows = self.flows.split_off(flows_from);
-                        self.solve_flows(flows);
-                    }
-                    let bare_numeral = is_bare_numeral(value);
-                    let mut scheme = self.generalize(&rec, is_function || bare_numeral);
-                    if !scheme.vars.is_empty() && !bare_numeral && !is_syntactic_value(value) {
-                        self.restricted.insert(*symbol, name.clone());
-                        scheme = Scheme::mono(scheme.ty);
-                    }
-                    self.bind_env(*symbol, scheme.clone());
-                    self.schemes.insert(*symbol, scheme);
-                }
-            }
-            spine.push((cursor.id, symbol));
+        while let ExprKind::Let { rest, .. } = &cursor.kind {
+            chain.push(cursor);
             match rest {
                 Some(rest) => cursor = rest,
-                None => {
-                    let rest: Vec<Symbol> = deferred.node.keys().copied().collect();
-                    self.generalize_members(rest);
-                    let scheme = self.env[symbol].clone();
-                    break self.instantiate(&scheme);
-                }
+                None => break,
+            }
+        }
+        let tail = (!matches!(cursor.kind, ExprKind::Let { .. })).then_some(cursor);
+        self.seed_function_group(first);
+        let mut deferred = Deferred::default();
+        for at in group_first_order(&chain) {
+            self.infer_binding(chain[at], &mut deferred);
+        }
+        let ty = match tail {
+            Some(tail) => self.infer(tail),
+            None => {
+                let rest: Vec<Symbol> = deferred.node.keys().copied().collect();
+                self.generalize_members(rest);
+                let (symbol, _, _) = let_parts(chain[chain.len() - 1]);
+                let scheme = self.env[&symbol].clone();
+                self.instantiate(&scheme)
             }
         };
-        for (id, symbol) in spine.into_iter().rev() {
-            self.unbind_env(symbol);
-            self.node_types.insert(id, ty.clone());
+        for binding in chain.into_iter().rev() {
+            self.unbind_env(&let_parts(binding).0);
+            self.node_types.insert(binding.id, ty.clone());
         }
         ty
+    }
+
+    fn infer_binding(&mut self, binding: &Expr, deferred: &mut Deferred) {
+        let (symbol, name, value) = let_parts(binding);
+        let symbol = &symbol;
+        let is_function = matches!(value.kind, ExprKind::Func { .. });
+        match self.pending_members.get(symbol).copied() {
+            Some(block) if is_function => {
+                let flows_from = self.flows.len();
+                self.member_frames.push(MemberFrame {
+                    block,
+                    member: *symbol,
+                    uses: Vec::new(),
+                    seen: HashSet::new(),
+                });
+                let value_ty = self.infer(value);
+                let frame = self.member_frames.pop().expect("the frame pushed above");
+                let seed = self.env[symbol].ty.clone();
+                self.unify(&value_ty, &seed, value.span);
+                let flows = self.flows.split_off(flows_from);
+                self.member_flows.insert(*symbol, flows);
+                self.settle(deferred, *symbol, &frame.uses);
+            }
+            _ => {
+                let flows_from = self.flows.len();
+                let value_ty = self.infer(value);
+                let rec = match self.unbind_env(symbol) {
+                    Some(seed) => {
+                        self.unify(&value_ty, &seed.ty, value.span);
+                        seed.ty
+                    }
+                    None => value_ty,
+                };
+                if is_function || is_syntactic_value(value) {
+                    let flows = self.flows.split_off(flows_from);
+                    self.solve_flows(flows);
+                }
+                let bare_numeral = is_bare_numeral(value);
+                let mut scheme = self.generalize(&rec, is_function || bare_numeral);
+                if !scheme.vars.is_empty() && !bare_numeral && !is_syntactic_value(value) {
+                    self.restricted.insert(*symbol, name.to_string());
+                    scheme = Scheme::mono(scheme.ty);
+                }
+                self.bind_env(*symbol, scheme.clone());
+                self.schemes.insert(*symbol, scheme);
+            }
+        }
     }
 
     /// Record that the function binding `symbol`'s body mentions the pending

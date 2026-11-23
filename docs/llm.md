@@ -179,7 +179,10 @@ apply(double, 21)   # 42
 ```
 
 Functions defined together in a scope are **mutually recursive** — order does
-not matter; each can call the others and itself.
+not matter; each can call the others and itself. That includes the values
+between them: a function may be defined above or below a value that uses it,
+and the whole group is typed before such a value is, so the value does not
+fix the types the functions can take.
 
 ### Closures
 
