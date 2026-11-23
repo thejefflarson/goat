@@ -1143,8 +1143,50 @@ Proof.
       destruct (IHe _ _ _ _ _ _ _ _ _ E2 HG1 HD1) as (Gd2 & HT2 & Hty2 & Her_Hty2 & Hlc_Hty2).
       pose proof Gd2 as (_ & Hs2 & HD2 & _).
       pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
+      destruct (is_cmp_op o) eqn:Hcmp.
+      { (* a comparison: the operands meet first, then the joined type must be [Eq] *)
+        assert (Hk : kind o = k_cmp)
+          by (unfold is_cmp_op in Hcmp; destruct (kind o); first [ reflexivity | discriminate Hcmp ]).
+        destruct (unify_co f D2 (apT s2 T1) T2 n2) as [[[[s3 Du3] cs3] n3]|] eqn:E3; [|discriminate].
+        set (D3' := upd Du3 (ea n3) k_Eq) in *.
+        destruct (unify_co f D3' (apT s3 T2) (typ_Var (ea n3)) (S n3)) as [[[[s4 Du4] cs4] n4]|] eqn:E4; [|discriminate].
+        inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
+        assert (HN : D3' (ea n3) = k_Eq) by (unfold D3'; apply upd_same).
+        assert (HEc : EvT (typ_Var (ea n3))) by (apply EvT_var, ev_ea).
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E3 (EvT_ap s2 T1 Hs2 HT1) HT2)
+          as (Hs3 & Hch3 & Hgu3).
+        pose proof (GoodU_pre D2 n2 _ s3 Du3 n3 HD2 Hgu3 ltac:(lia)) as Gd3.
+        pose proof (WfCtx_ap s3 _ Hs3 HG2) as HG3.
+        pose proof (Good_upd Du3 n3 k_Eq (Good_dok _ _ _ _ _ Gd3)) as GdU.
+        fold D3' in GdU.
+        assert (HD3' : DOk D3' (S n3)) by (destruct GdU as (_ & _ & H2 & _); exact H2).
+        destruct (unify_co_sound _ _ _ _ _ _ _ _ _ E4 (EvT_ap s3 T2 Hs3 HT2) HEc)
+          as (Hs4 & Hch4 & Hgu4).
+        pose proof ((proj2 Hgu4) HD3') as Gd4.
+        split.
+        { exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3)
+                   (Good_lift _ _ _ _ _ _ _ GdU Gd4)). }
+        split; [ exact EvT_Bool | ].
+        refine (conj _ (conj _ _)).
+        2: { cbn [erase]. rewrite !erase_coerce, Her_Hty1, Her_Hty2. reflexivity. }
+        2: { cbn [lce]. split; [ apply lce_coerce, lce_coerce; assumption | apply lce_coerce; assumption ]. }
+        rewrite <- !apC_comp.
+        assert (Hsat : sat Du4 k_Eq (apT s4 (typ_Var (ea n3)))).
+        { pose proof (Good_kres _ _ _ _ _ Gd4 (ea n3)) as H3. rewrite HN in H3. exact H3. }
+        eapply T_Bin with (A := apT s4 (typ_Var (ea n3))).
+        -- eapply coerce_typing; [ exact Hch4 | ].
+           eapply coerce_typing; [ exact (chain_apT s4 _ _ _ Hs4 Hch3) | ].
+           apply (typing_ap_G D3' (S n3) s4 Du4 n4 _ _ _ Gd4 HG3).
+           apply (typing_refine Du3 n3 D3' (S n3) _ _ _ GdU HG3).
+           apply (typing_ap_G D2 n2 s3 Du3 n3 _ _ _ Gd3 HG2).
+           apply (typing_ap_G D1 n1 s2 D2 n2 _ _ _ Gd2 HG1). exact Hty1.
+        -- eapply coerce_typing; [ exact Hch4 | ].
+           apply (typing_ap_G D3' (S n3) s4 Du4 n4 _ _ _ Gd4 HG3).
+           apply (typing_refine Du3 n3 D3' (S n3) _ _ _ GdU HG3).
+           apply (typing_ap_G D2 n2 s3 Du3 n3 _ _ _ Gd3 HG2). exact Hty2.
+        -- apply sig_cmp; assumption. }
       destruct (is_generic_op o) eqn:Hring.
-      * (* [+ - * // %] and a comparison: both operands at one variable's type, of the operator's sort *)
+      * (* [+ - * // %]: both operands at one variable's type, of the operator's sort *)
         assert (Hko : kind o = k_ring \/ kind o = k_whole \/ kind o = k_cmp)
           by (unfold is_generic_op in Hring; destruct (kind o); [ left; reflexivity | discriminate | right; left; reflexivity | right; right; reflexivity ]).
         set (D2' := upd D2 (ea n2) (generic_sort o)) in *.

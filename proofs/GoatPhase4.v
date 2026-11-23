@@ -166,10 +166,8 @@ Proof.
     destruct (teq_Record_inv _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.
     inversion Hft; subst.
     match goal with Hf : field_typing _ _ fs_nil _ |- _ => inversion Hf; subst end.
-    pose proof (req_rtail _ _ Hreq) as Ht. simpl in Ht.
-    rewrite (rlacksD_closed d_any lx R (eq_sym Ht)) in Hl.
     pose proof (req_pi _ _ Hreq lx) as Hp. simpl in Hp.
-    rewrite (rlacks_pi R lx Hl) in Hp. inversion Hp. }
+    rewrite (rlacksD_pi d_any lx R Hl) in Hp. inversion Hp. }
   apply str_inv in H2.
   destruct (rec_inv _ _ _ _ H1) as [Rf [Hft Hteq]].
   destruct (teq_Record_inv _ _ Hteq) as [R2 [E Hreq]]. inversion E; subst R2.

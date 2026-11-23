@@ -420,9 +420,9 @@ fix is a conversion that reads `rlacksD D`: a `teqD D` (or two typing rules,
 `T_Absent` in both directions, with `rlacksD D l R = true`) used by `T_Conv`, and
 `unify_sound` stated in it; every induction on `typing` (progress, preservation,
 substitution, `GoatElab`, the cases of W) gains the case. That is a stage of its own
-(7.6c) and the ruling's "fix W" cannot be met without it. `rewrite_row_lacks_gap`
-stays as the statement. The program is not in `HANDWRITTEN` (it would fail the
-differential); the nightly will find it as `w-refuses`.
+(7.6c) and the ruling's "fix W" cannot be met without it. Stage 7.6c fixes it
+another way (below): `rewrite_row_lacks_gap` is gone and the program is in
+`HANDWRITTEN`.
 
 **Two more W gaps the search found, same shape (checker accepts, W refuses), not
 fixed.**
@@ -440,6 +440,71 @@ fixed.**
   refused by W (the sort reaches `w`'s unresolved `Maybe` before `{}` settles it).
   Arithmetic requires the sort of the left operand first in the checker too, so
   only the comparison order differs.
+
+*As built (stage 7.6c).* The three gaps above are closed; each witness is in
+`HANDWRITTEN` and compares with 0 mismatches.
+
+**Finding 2, by refining the row variable instead of converting.** The ruling asked
+for a conversion that reads `rlacksD D`. A smaller change does the same work:
+`rewrite_row` at a row variable `r` that lacks `l` returns `(Bool, a, r', s, ...)`
+with `s = [r := l ^ Bool : a ; r']`, where `r'` is fresh and has the kind of `r`.
+The two rows then agree syntactically (`req_refl`), so `unify_sound` keeps its
+statement in `req`, and neither `T_Conv`, nor `typing`, nor any induction on it
+changes. Two definitions follow the refinement. `rlacksD D l R` now reads an absent
+entry (`Bool` presence) for `l` as no field, so `l ^ Bool : a ; r'` still lacks
+`l` and `rkok` holds of the new binding (`rlacksD_ap`, `rlacksD_mono` gain the
+case); `spread_step_typing_L` no longer goes through `rlacks` and uses `rlacksD_pi`
+(a row that lacks a label has no field-carrying entry for it) instead.
+`lacks_ok` allows an absent entry for a lacked label for the same reason. The
+refinement keeps the checker's answer: the driver prints a `Bool` entry as nothing,
+so `r'` is `r` up to renaming. It is also the most general unifier: a `S` that
+unifies the rows sends `r` to a row `R` that lacks `l`, and `l ^ Bool : a ; R` is
+`req` to `R` by `req_abs`.
+
+The same refinement is needed when the *other* row is the variable. `r` against
+`l ^ p : a ; R'` (`unify_r`'s `row_Var` arms, `bind_row`) used to fail `lacks_ok`
+before it could ask for `p := Bool`. `bind_row` is now a wrapper: it binds each
+presence variable of an entry for a label `r` lacks to `Bool` (`abs_vars`,
+`bool_sub`, kept only when the variable's sort admits `Bool`), then pushes the sort
+of `r` onto the row variables inside `R` (`push_sort_r`, as `bind_prop` does for a
+type), then calls the old definition (`bind_row_core`). `bind_row_sound` and
+`bind_row_gsub` keep their statements. The witness is `f = program(q) do {...q, x:
+1} done; g = program(p) do {x, ...r} = p; f(r) done`.
+
+**Sorted row tail.** `rewrite_row` at a row variable of any sort binds it to `l ^
+p : a ; r'`; the fresh field variable `a` takes the sort of the row variable
+(`upd`) and `r'` keeps its kind (`rupd`). `rewrite_row_sound` carries both through
+`GoodU` (`Good_upd`, `Good_rupd`, `Good_lift`); the new clause of `rsat` for a
+`Maybe` entry is what makes `rkok` hold of the binding.
+
+**Operand order.** A comparison (`is_cmp_op`) unifies the two operands first and
+then unifies the left operand's joined type with a fresh variable of sort `Eq`, as
+the checker's `join_operands` does; the arithmetic operators keep the sort of the
+left operand first. `infer_sound` has a case for it (`sig_cmp`, the coercions of the
+two unifications composed on the left operand) and `infer_guarded` one.
+
+*A fourth gap, found by the search: a variable's sort reaches the row variables
+inside its row.* `bind_row` pushed the sort onto the type variables of `R` and
+not onto its nested row variables, so `f0 = program(q) do e = q == q; {...q, z: 2}
+done; program(w) do f0({x: {...w, y: 1}}) done` was refused. It is fixed with the
+`push_sort_r` above.
+
+*What stays open.* Four of the ~12,500 accepted programs of the random search (four
+seeds, about 3,100 accepted each, `if`, `==`, spreads, restricts, rest patterns,
+functions and calls) still disagree, all `w-refuses`, all one shape: an absent
+entry against its own tail. After `f0(r0)` binds `r0`'s row to `z ^ Bool : N ; r'`,
+a later unification meets `z ^ Bool : N ; r'` and `r'` (the smallest:
+`f0 = program(q) do {...q, z: 1} done; program(w) do {z, ...r0} = w; v1 = f0(r0);
+if true then w else v1 done done`), or meets two absent entries for one label with
+different field types (`f1 = program(q) do {...q, z: "s"} done; f0 = program(q) do
+{x, ...r} = q; {...r, z: 1} done; program(v0) do {z, ...r1} = v0; v2 = f1(r1);
+f0(r1) done`). The checker peels the absent entry whenever its tail lacks the label.
+Neither side can be rewritten to the other: `req_abs` needs the syntactic `rlacks`,
+and `bind_row`'s occurs check (finding 3) refuses `r' := z ^ Bool : N ; r'`. This
+is the conversion the ruling described (`teqD D`, or `req_abs` reading `rlacksD D`),
+and it is not built: the refinement above removes the entry from the rows W builds
+at a rewrite, but not from the rows two earlier calls left behind. Finding 3 is
+therefore not "no program needs it".
 
 **What L2 gains.** `sat_teq` removes the first of the two definitions that stopped
 L2 (sorted variables under a record: a pushed sort now survives any

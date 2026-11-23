@@ -110,10 +110,8 @@ Proof.
   intros l av D R. induction R as [|r|l' T' R'' IH|l' P' T' R'' IH]; intros n P T R' s D' n' H; simpl in H.
   - injection H as <- <- <- <- <- <-. exact gs_id.
   - destruct (AtomSetImpl.mem r av); [discriminate|].
-    destruct (rk_lacks (drk D r) l); [discriminate|].
-    destruct (rk_sort (drk D r)); try discriminate.
-    injection H as <- <- <- <- <- <-.
-    apply gs_sbR; repeat (split || exact I).
+    destruct (rk_lacks (drk D r) l); injection H as <- <- <- <- <- <-;
+      apply gs_sbR; repeat (split || exact I).
   - destruct (Nat.eqb l l'); [ injection H as <- <- <- <- <- <-; exact gs_id | ].
     destruct (rewrite_row l av D R'' n) as [[[[[[P0 T0] R3] s0] D1] n1]|] eqn:E; [|discriminate].
     injection H as <- <- <- <- <- <-. exact (IH _ _ _ _ _ _ _ E).
@@ -138,14 +136,38 @@ Proof.
            (gs_comp _ _ Hsp Hsq)).
 Qed.
 
-Lemma bind_row_gsub : forall D r R n s D' n',
-  bind_row D r R n = Some (s, D', n') -> mgr R -> gsub s.
+Lemma bind_row_core_gsub : forall D r R n s D' n',
+  bind_row_core D r R n = Some (s, D', n') -> mgr R -> gsub s.
 Proof.
-  intros D r R n s D' n' H HR. unfold bind_row in H.
+  intros D r R n s D' n' H HR. unfold bind_row_core in H.
   destruct (occR r R); [ discriminate | ].
   destruct (row_tail R) as [q|].
   - exact (bind_row_fin_gsub _ _ _ _ _ _ _ _ H (gs_sbR q (row_Var (ea n)) I I) HR).
   - exact (bind_row_fin_gsub _ _ _ _ _ _ _ _ H gs_id HR).
+Qed.
+
+Lemma gs_bool_sub : forall ps, gsub (bool_sub ps).
+Proof.
+  induction ps as [|p ps IH]; cbn [bool_sub]; [ exact gs_id | ].
+  exact (gs_comp _ _ IH (gs_sbT p typ_Bool I I)).
+Qed.
+
+Lemma bind_row_gsub : forall D r R n s D' n',
+  bind_row D r R n = Some (s, D', n') -> mgr R -> gsub s.
+Proof.
+  intros D r R n s D' n' H HR. unfold bind_row in H. cbn zeta in H.
+  destruct (forallb (fun p => sat_b D (D p) typ_Bool) (abs_vars (drk D r) R)); [ | discriminate ].
+  destruct (occR r (apR (bool_sub (abs_vars (drk D r) R)) R)); [ discriminate | ].
+  destruct (push_sort_r D (rk_sort (drk D r))
+              (AtomSetImpl.elements (frv_row (apR (bool_sub (abs_vars (drk D r) R)) R))) n)
+    as [[sr D1] n1] eqn:Ep.
+  destruct (bind_row_core D1 r (apR sr (apR (bool_sub (abs_vars (drk D r) R)) R)) n1)
+    as [[[s1 D2] n2]|] eqn:E; [ | discriminate ].
+  inversion H; subst; clear H.
+  pose proof (push_sort_r_gsub _ _ _ _ _ _ _ Ep) as Hsr.
+  pose proof (gs_bool_sub (abs_vars (drk D r) R)) as Hs0.
+  exact (gs_comp _ _ (bind_row_core_gsub _ _ _ _ _ _ _ E (mg_apR _ _ Hsr (mg_apR _ _ Hs0 HR)))
+           (gs_comp _ _ Hsr Hs0)).
 Qed.
 
 Theorem unify_k_gsub : forall f,
@@ -258,9 +280,7 @@ Proof.
   intros l av D R. induction R as [|r|l' T' R'' IH|l' P' T' R'' IH]; intros n P T R' s D' n' H HR; simpl in H.
   - injection H as <- <- <- <- <- <-. exact (conj I (conj I I)).
   - destruct (AtomSetImpl.mem r av); [discriminate|].
-    destruct (rk_lacks (drk D r) l); [discriminate|].
-    destruct (rk_sort (drk D r)); try discriminate.
-    injection H as <- <- <- <- <- <-. exact (conj I (conj I I)).
+    destruct (rk_lacks (drk D r) l); injection H as <- <- <- <- <- <-; exact (conj I (conj I I)).
   - destruct HR as [HT' HR''].
     destruct (Nat.eqb l l').
     + injection H as <- <- <- <- <- <-. exact (conj I (conj HT' HR'')).
@@ -644,6 +664,12 @@ Proof.
                   (mg_apT _ _ S5 M3)).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dI H E2. destruct (IHi _ _ _ _ _ _ _ _ _ E2 (mg_apC _ _ S1 HG)) as [S2 M2].
+      destruct (is_cmp_op o).
+      { dC H E3.
+        pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) M2) as S3.
+        dC H E4. injection H as <- <- <- <- <-.
+        pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) I) as S4.
+        exact (conj (gs_comp _ _ S4 (gs_comp _ _ S3 (gs_comp _ _ S2 S1))) I). }
       destruct (is_generic_op o).
       * dC H E3.
         pose proof (unify_co_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) I) as S3.

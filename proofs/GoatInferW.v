@@ -354,7 +354,20 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
               match infer f' D1 (apC s1 G) e2 n1 with
               | None => None
               | Some (s2, D2, T2, n2, e2') =>
-                  if is_generic_op o then
+                  if is_cmp_op o then
+                      match unify_co f' D2 (apT s2 T1) T2 n2 with
+                      | None => None
+                      | Some (s3, D3, cs1, n3) =>
+                          let D3' := upd D3 (ea n3) k_Eq in
+                          let c := typ_Var (ea n3) in
+                          match unify_co f' D3' (apT s3 T2) c (S n3) with
+                          | None => None
+                          | Some (s4, D4, cs2, n4) =>
+                              Some (scomp s4 (scomp s3 (scomp s2 s1)), D4, typ_Bool, n4,
+                                    e_bin (coerce cs2 (coerce cs1 e1')) o (coerce cs2 e2'))
+                          end
+                      end
+                  else if is_generic_op o then
                       let D2' := upd D2 (ea n2) (generic_sort o) in
                       let c := typ_Var (ea n2) in
                       match unify_co f' D2' (apT s2 T1) c (S n2) with
