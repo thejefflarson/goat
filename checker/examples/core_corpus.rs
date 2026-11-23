@@ -12,7 +12,9 @@
 //! sources and tests) plus generators run at fixed seeds. A program is kept when it is
 //! in the fragment of `proofs/goat_ln.ott`: numerals, Float literals, strings,
 //! unit, booleans, functions, calls, `if` with an `else`, the twelve binary
-//! operators on Int, Float, String and Bool, `let` of any value, record
+//! operators on Int, Float, String and Bool, `and`, `or` and `not` (read as the
+//! `if` they are derived forms of: `a and b` is `if a then b else false`,
+//! `a or b` is `if a then true else b`, `not a` is `if a then false else true`), `let` of any value, record
 //! literals with distinct labels, field access, spread (`{...p, x: v}`) and
 //! rest patterns, using only names it binds.
 //! The calculus generalizes a `let` of a syntactic value (`is_gen_value` in
@@ -265,7 +267,6 @@ pub enum Feature {
     TagsAndMatch,
     LacksOnTail,
     Builtin,
-    Connective,
     Loop,
     OperatorOperand,
     EmptyRest,
@@ -286,7 +287,6 @@ impl Feature {
                 "outside the calculus: a spread onto a row variable that lacks the label"
             }
             Feature::Builtin => "outside the calculus: print or trap",
-            Feature::Connective => "outside the calculus: and, or, not",
             Feature::Loop => "outside the calculus: a loop (repeat, for)",
             Feature::OperatorOperand => {
                 "outside the calculus: arithmetic on non-primitive operands"
@@ -327,7 +327,6 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
         ExprKind::Func { params, .. } if params.is_empty() => note(Feature::NoParameters),
         ExprKind::Tag { .. } | ExprKind::Match { .. } => note(Feature::TagsAndMatch),
         ExprKind::Builtin(_) | ExprKind::Trap(_) => note(Feature::Builtin),
-        ExprKind::And { .. } | ExprKind::Or { .. } | ExprKind::Not(_) => note(Feature::Connective),
         ExprKind::Let { name, value, .. }
             if name == LOOP_BINDING && matches!(value.kind, ExprKind::Func { .. }) =>
         {
@@ -702,6 +701,21 @@ impl Reader<'_> {
                     Box::new(branch(self, else_branch)?),
                 ))
             }
+            ExprKind::And { lhs, rhs } => Some(Core::If(
+                Box::new(self.read(lhs)?),
+                Box::new(self.read(rhs)?),
+                Box::new(Core::Bool(false)),
+            )),
+            ExprKind::Or { lhs, rhs } => Some(Core::If(
+                Box::new(self.read(lhs)?),
+                Box::new(Core::Bool(true)),
+                Box::new(self.read(rhs)?),
+            )),
+            ExprKind::Not(operand) => Some(Core::If(
+                Box::new(self.read(operand)?),
+                Box::new(Core::Bool(false)),
+                Box::new(Core::Bool(true)),
+            )),
             ExprKind::Bin { op, lhs, rhs } => {
                 let comparison = matches!(
                     op,

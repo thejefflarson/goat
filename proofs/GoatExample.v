@@ -11,6 +11,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
+Require Import Goat.GoatPrec.
 Require Import Goat.GoatDen.
 Require Import Goat.GoatShape.
 Require Import Goat.GoatParse.
@@ -150,21 +151,16 @@ Proof.
   - (* the program has an expression *) eexists. in_list.
   - (* the block does not end in a binding; its one
        function binding leads *)
-    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-         | split; [ left; reflexivity | exact I ] ].
-  - (* the bound value has no operator *)
-    left; reflexivity.
+    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
   - (* the function has parameters and a body *)
     split; eexists; in_list.
   - (* the parameter is a name, not a record pattern *)
     intros c Hc; discriminate Hc.
   - (* the body is a single name *)
-    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-         | split; [ left; reflexivity | exact I ] ].
+    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
   - (* the call has arguments *) eexists. in_list.
   - (* the argument is a single number *)
-    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-         | split; [ left; reflexivity | exact I ] ].
+    split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
 Qed.
 
 (* T1 applies to a concrete program: f = program(y) do y done  f(1). *)
@@ -276,10 +272,7 @@ Proof.
     simpl; try exact I.
   all: first
     [ solve [ eexists; in_list ]
-    | solve [ split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-                     | split; [ first [ left; reflexivity | right; reflexivity ]
-                              | exact I ] ] ]
-    | solve [ first [ left; reflexivity | right; reflexivity ] ]
+    | solve [ split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ] ]
     | solve [ in_list ] ].
 Qed.
 
@@ -363,10 +356,7 @@ Proof.
     simpl; try exact I.
   all: first
     [ solve [ eexists; in_list ]
-    | solve [ split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast
-                     | split; [ first [ left; reflexivity | right; reflexivity ]
-                              | exact I ] ] ]
-    | solve [ first [ left; reflexivity | right; reflexivity ] ]
+    | solve [ split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ] ]
     | solve [ split; [ exact I | left; reflexivity ] ]
     | solve [ split; eexists; in_list ]
     | solve [ in_list ]
@@ -527,3 +517,104 @@ Proof.
   - simpl. intros Hin. apply Hr. apply AtomSetImpl.singleton_1 in Hin. symmetry. exact Hin.
   - simpl. intros z [<- | [<- | [<- | []]]]; assumption.
 Qed.
+
+(* ---- operator runs, connectives and negation (stage 3) ---- *)
+
+(* not true and 1 + 2 * 3 < -4: a prefix not, a connective, three levels of
+   arithmetic and comparison, and a negative literal. *)
+Definition run_program : list tok :=
+  [TSym "not"; TSym "true"; TSym "and"; TNum 1; TSym "+"; TNum 2; TSym "*"; TNum 3;
+   TSym "<"; TSym "-"; TNum 4].
+
+Definition run_tree : tree :=
+  Node R_goat
+    [Node R_expr
+       [not_tree; Node R_boolean [Node R_true_lit [sym "true"]];
+        Node R_and_op [sym "and"];
+        Node R_number [Leaf (TNum 1)]; Node R_plus [sym "+"];
+        Node R_number [Leaf (TNum 2)]; Node R_multiply [sym "*"];
+        Node R_number [Leaf (TNum 3)]; Node R_lt [sym "<"];
+        Node R_negation [op_tree bop_sub; Node R_number [Leaf (TNum 4)]]]].
+
+Example run_parses :
+  peg (E_rule R_goat) run_program (Ok [run_tree] []).
+Proof. apply (run_sound 800). vm_compute. reflexivity. Qed.
+
+Lemma run_core : Forall core_tree [run_tree].
+Proof.
+  repeat first
+    [ apply Forall_nil | apply Forall_cons | apply Core_leaf
+    | (apply Core_node; [ reflexivity | ]) ].
+Qed.
+
+Lemma run_complete : Forall Complete [run_tree].
+Proof.
+  repeat first
+    [ apply Forall_nil | apply Forall_cons | apply Cp_leaf | apply Cp_node ];
+    simpl; try exact I.
+  - eexists. in_list.
+  - split; [ intros [c Hlast]; simpl in Hlast; discriminate Hlast | exact I ].
+Qed.
+
+Example run_denotes_lc : forall var_of,
+  exists t e,
+    [run_tree] = [t] /\ Den_goat var_of t e /\ lc_exp e /\ lc e.
+Proof.
+  intros var_of.
+  exact (parse_denotes_lc var_of run_program [run_tree] []
+           run_parses run_core run_complete).
+Qed.
+
+(* The run resolves by precedence: multiplication nests inside the sum, the sum
+   inside the comparison, and the comparison is [and]'s right operand, while
+   [not] takes only [true]. *)
+Example run_resolves_by_precedence :
+  resolve [I_not; I_val e_true; I_op L_and; I_val (e_num 1); I_op (L_bin bop_add);
+           I_val (e_num 2); I_op (L_bin bop_mul); I_val (e_num 3);
+           I_op (L_bin bop_lt); I_val (e_num (-4))]
+  = Some (e_ite (e_ite e_true e_false e_true)
+            (e_bin (e_bin (e_num 1) bop_add (e_bin (e_num 2) bop_mul (e_num 3)))
+               bop_lt (e_num (-4)))
+            e_false).
+Proof. reflexivity. Qed.
+
+(* A run of two operators of different levels, read from the tree. *)
+Example run_denotes_nested_operation : forall var_of tbl,
+  Den_math var_of tbl
+    [Node R_number [Leaf (TNum 1)]; op_tree bop_add;
+     Node R_number [Leaf (TNum 2)]; op_tree bop_mul;
+     Node R_number [Leaf (TNum 3)]]
+    (e_bin (e_num 1) bop_add (e_bin (e_num 2) bop_mul (e_num 3))).
+Proof.
+  intros var_of tbl.
+  assert (Hnum : forall n, Den_opd var_of tbl [Node R_number [Leaf (TNum n)]]
+                             [I_val (e_num (z_of_nat n))])
+    by (intros n; apply DO_val; eapply DC_head; [ apply D_num | apply DP_nil ]).
+  apply (DM_run var_of tbl _
+           [I_val (e_num 1); I_op (L_bin bop_add); I_val (e_num 2);
+            I_op (L_bin bop_mul); I_val (e_num 3)]); [ | reflexivity ].
+  apply (DR_more var_of tbl [Node R_number [Leaf (TNum 1)]] [I_val (e_num 1)]
+           (L_bin bop_add)
+           [Node R_number [Leaf (TNum 2)]; op_tree bop_mul; Node R_number [Leaf (TNum 3)]]
+           [I_val (e_num 2); I_op (L_bin bop_mul); I_val (e_num 3)]);
+    [ exact (Hnum 1) | discriminate | ].
+  apply (DR_more var_of tbl [Node R_number [Leaf (TNum 2)]] [I_val (e_num 2)]
+           (L_bin bop_mul) [Node R_number [Leaf (TNum 3)]] [I_val (e_num 3)]);
+    [ exact (Hnum 2) | discriminate | apply DR_one; exact (Hnum 3) ].
+Qed.
+
+(* -x is 0 - x; a bare -4 is the literal. *)
+Example negation_is_zero_minus : forall var_of tbl,
+  Den var_of tbl (Node R_negation [op_tree bop_sub; ident "x"])
+    (e_bin (e_num 0) bop_sub (e_fvar_f (var_of "x"))).
+Proof.
+  intros var_of tbl.
+  apply D_neg_chain.
+  - eapply DC_head; [ apply D_name | apply DP_nil ].
+  - intros [c H]. discriminate H.
+Qed.
+
+Example negative_literal : forall var_of tbl,
+  Den var_of tbl (Node R_negation [op_tree bop_sub; Node R_number [Leaf (TNum 4)]])
+    (e_num (-4)).
+Proof. intros var_of tbl. apply D_neg_int. Qed.

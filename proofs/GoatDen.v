@@ -12,6 +12,7 @@ Require Export Goat.GoatLit.
 Require Import Goat.GoatNum.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
+Require Import Goat.GoatPrec.
 Open Scope string_scope.
 
 (* ---- closing a variable, and the n-ary forms curried ---- *)
@@ -329,6 +330,21 @@ Definition op_text (o : bop) : string :=
 
 Definition op_tree (o : bop) : tree := Node (op_rule o) [Leaf (TSym (op_text o))].
 
+Definition not_tree : tree := Node R_not_op [Leaf (TSym "not")].
+
+(* The tree an operator of a run makes. *)
+Definition lop_tree (o : lop) : tree :=
+  match o with
+  | L_or => Node R_or_op [Leaf (TSym "or")]
+  | L_and => Node R_and_op [Leaf (TSym "and")]
+  | L_bin o' => op_tree o'
+  | L_not => not_tree
+  end.
+
+(* [-3] is one literal, as in lowering; any other [-x] is [0 - x]. *)
+Definition bare_number (cs : list tree) : Prop :=
+  exists c, cs = [Node R_number c].
+
 (* A declaration whose value is exactly a function literal is a member of the
    block's recursive group (ADR 0003); a parenthesised function is a value. *)
 Definition fn_value (cs : list tree) : bool :=
@@ -498,6 +514,20 @@ Section Denotation.
         Den (Node R_conditional [sym "if"; Node R_expr cs1; sym "then";
                                  Node R_expr cs2; sym "done"])
             (e_ite e1 e2 e_unit)
+    | D_neg_int : forall n,
+        Den (Node R_negation [op_tree bop_sub; Node R_number [Leaf (TNum n)]])
+            (e_num (Stdlib.ZArith.BinInt.Z.opp (z_of_nat n)))
+    | D_neg_dec : forall d,
+        Den (Node R_negation [op_tree bop_sub; Node R_number [Leaf (TDec d)]])
+            (e_dec d)
+    | D_neg_chain : forall cs e,
+        Den_chain cs e ->
+        ~ bare_number cs ->
+        Den (Node R_negation (op_tree bop_sub :: cs)) (e_bin (e_num 0) bop_sub e)
+    | D_neg_neg : forall cs e,
+        Den (Node R_negation cs) e ->
+        Den (Node R_negation [op_tree bop_sub; Node R_negation cs])
+            (e_bin (e_num 0) bop_sub e)
   with Den_decl : tree -> string -> exp -> Prop :=
     | DD_plain : forall x cs v,
         Den (Node R_value cs) v ->
@@ -530,13 +560,26 @@ Section Denotation.
         Den_decls ds xs vs ->
         Den_decls (d :: ds) (x :: xs) (v :: vs)
   with Den_math : list tree -> exp -> Prop :=
-    | DM_chain : forall cs e,
-        Den_chain cs e ->
+    | DM_run : forall cs is e,
+        Den_run cs is ->
+        resolve is = Some e ->
         Den_math cs e
-    | DM_bin : forall c1 c2 o e1 e2,
-        Den_chain c1 e1 ->
-        Den_chain c2 e2 ->
-        Den_math (c1 ++ op_tree o :: c2) (e_bin e1 o e2)
+  with Den_opd : list tree -> list item -> Prop :=
+    | DO_val : forall cs e,
+        Den_chain cs e ->
+        Den_opd cs [I_val e]
+    | DO_not : forall cs is,
+        Den_opd cs is ->
+        Den_opd (not_tree :: cs) (I_not :: is)
+  with Den_run : list tree -> list item -> Prop :=
+    | DR_one : forall cs is,
+        Den_opd cs is ->
+        Den_run cs is
+    | DR_more : forall c1 is1 o c2 is2,
+        Den_opd c1 is1 ->
+        o <> L_not ->
+        Den_run c2 is2 ->
+        Den_run (c1 ++ lop_tree o :: c2) (is1 ++ I_op o :: is2)
   with Den_chain : list tree -> exp -> Prop :=
     | DC_head : forall t rest e0 e,
         Den t e0 ->
@@ -613,11 +656,35 @@ Section Denotation.
 
 End Denotation.
 
+(* A chain, and one infix operator between two chains, read as before. *)
+Lemma DM_chain : forall var_of tbl cs e,
+  Den_chain var_of tbl cs e -> Den_math var_of tbl cs e.
+Proof.
+  intros var_of tbl cs e H.
+  apply (DM_run var_of tbl cs [I_val e] e); [ | reflexivity ].
+  apply DR_one. apply DO_val. exact H.
+Qed.
+
+Lemma DM_bin : forall var_of tbl c1 c2 o e1 e2,
+  Den_chain var_of tbl c1 e1 ->
+  Den_chain var_of tbl c2 e2 ->
+  Den_math var_of tbl (c1 ++ op_tree o :: c2) (e_bin e1 o e2).
+Proof.
+  intros var_of tbl c1 c2 o e1 e2 H1 H2.
+  apply (DM_run var_of tbl _ [I_val e1; I_op (L_bin o); I_val e2]);
+    [ | reflexivity ].
+  change (op_tree o) with (lop_tree (L_bin o)).
+  apply (DR_more var_of tbl c1 [I_val e1] (L_bin o) c2 [I_val e2]);
+    [ apply DO_val; exact H1 | discriminate | apply DR_one; apply DO_val; exact H2 ].
+Qed.
+
 Scheme Den_ind' := Induction for Den Sort Prop
 with Den_decl_ind' := Induction for Den_decl Sort Prop
 with Den_block_ind' := Induction for Den_block Sort Prop
 with Den_decls_ind' := Induction for Den_decls Sort Prop
 with Den_math_ind' := Induction for Den_math Sort Prop
+with Den_opd_ind' := Induction for Den_opd Sort Prop
+with Den_run_ind' := Induction for Den_run Sort Prop
 with Den_chain_ind' := Induction for Den_chain Sort Prop
 with Den_posts_ind' := Induction for Den_posts Sort Prop
 with Den_args_ind' := Induction for Den_args Sort Prop
@@ -626,7 +693,7 @@ with Den_items_ind' := Induction for Den_items Sort Prop
 with Den_sep_ind' := Induction for Den_sep Sort Prop
 with Den_field_ind' := Induction for Den_field Sort Prop.
 Combined Scheme Den_mutind from Den_ind', Den_decl_ind', Den_block_ind',
-  Den_decls_ind', Den_math_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
+  Den_decls_ind', Den_math_ind', Den_opd_ind', Den_run_ind', Den_chain_ind', Den_posts_ind', Den_args_ind', Den_params_ind',
   Den_items_ind', Den_sep_ind', Den_field_ind'.
 
 (* ---- T1, the denotation half: whatever a derivation denotes is locally closed ---- *)
@@ -637,6 +704,8 @@ Lemma den_lc : forall var_of tbl,
   (forall cs e, Den_block var_of tbl cs e -> lc e) /\
   (forall cs xs vs, Den_decls var_of tbl cs xs vs -> Forall lc vs) /\
   (forall cs e, Den_math var_of tbl cs e -> lc e) /\
+  (forall cs is, Den_opd var_of tbl cs is -> Forall item_lc is) /\
+  (forall cs is, Den_run var_of tbl cs is -> Forall item_lc is) /\
   (forall cs e, Den_chain var_of tbl cs e -> lc e) /\
   (forall e0 cs e, Den_posts var_of tbl e0 cs e -> lc e0 -> lc e) /\
   (forall cs es, Den_args var_of tbl cs es -> Forall lc es) /\
@@ -678,6 +747,12 @@ Proof.
     intros cs1 cs2 cs3 e1 e2 e3 H1 IH1 H2 IH2 H3 IH3. exact (conj IH1 (conj IH2 IH3)).
   - (* conditional, no else: the missing branch is the unit value *)
     intros cs1 cs2 e1 e2 H1 IH1 H2 IH2. exact (conj IH1 (conj IH2 I)).
+  - (* negation of a whole number *) intros n. exact I.
+  - (* negation of a decimal *) intros d. exact I.
+  - (* negation: 0 - x *)
+    intros cs e Hchain IH Hbare. exact (conj I IH).
+  - (* negation of a negation *)
+    intros cs e Hneg IH. exact (conj I IH).
   - (* decl, plain *) intros x cs v Hv IH. exact IH.
   - (* decl, with semicolon *) intros x cs v Hv IH. exact IH.
   - (* block, chain *) intros cs e Hmath IH. exact IH.
@@ -694,9 +769,17 @@ Proof.
   - (* decls, none *) apply Forall_nil.
   - (* decls, one more *)
     intros d x v ds xs vs Hd IHd _ Hds IHds. exact (Forall_cons v IHd IHds).
-  - (* math, chain *) intros cs e Hchain IH. exact IH.
-  - (* math, binary operation *)
-    intros c1 c2 o e1 e2 H1 IH1 H2 IH2. exact (conj IH1 IH2).
+  - (* math: the run resolved *)
+    intros cs is e Hrun IH Hres. exact (resolve_lc is e IH Hres).
+  - (* operand, a chain *)
+    intros cs e Hchain IH. exact (Forall_cons (I_val e) IH (Forall_nil _)).
+  - (* operand, behind a not *)
+    intros cs is Hopd IH. exact (Forall_cons I_not I IH).
+  - (* run, one operand *)
+    intros cs is Hopd IH. exact IH.
+  - (* run, an operator and more *)
+    intros c1 is1 o c2 is2 Hopd IH1 Hne Hrun IH2.
+    apply Forall_app. split; [ exact IH1 | exact (Forall_cons (I_op o) I IH2) ].
   - (* chain, head *)
     intros t rest e0 e Ht IHt Hposts IHposts. exact (IHposts IHt).
   - (* chain, parenthesised *)

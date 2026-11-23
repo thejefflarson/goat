@@ -45,6 +45,7 @@ GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v
 GoatPeg.v
+GoatPrec.v
 GoatDen.v
 GoatShape.v
 GoatParse.v
@@ -66,4 +67,5 @@ GoatPrintLabels.v
 GoatPrintTop.v
 GoatRoundtrip.v
 GoatPrinterTable.v
+GoatPrecTable.v
 GoatRoundtripExample.v
