@@ -44,12 +44,29 @@ fn both(p: &Program) -> (Vec<String>, Vec<String>) {
         Err(interp::InterpError::Trap(message)) => vec![format!("trap: {message}")],
         Err(other) => panic!("interpreter error {other:?}"),
     };
+    (oracle, compiled(p))
+}
+
+/// What the program prints under the runtime this suite checks: wasm, or the
+/// native backend with `GOAT_RUNTIME=native`, built on this test's own thread.
+fn compiled(p: &Program) -> Vec<String> {
+    if std::env::var("GOAT_RUNTIME").as_deref() == Ok("native") {
+        if !goat_native::clang_available() {
+            eprintln!("native: skipped, clang is not available");
+            return vec![];
+        }
+        let library = goat_native::build_program(p).expect("program builds");
+        let run = library.run(goat::NoHost).expect("native program runs");
+        return match run.result {
+            Ok(()) => run.printed,
+            Err(stopped) => vec![format!("trap: {}", stopped.message)],
+        };
+    }
     let bytes = goat_wasm::emit(p).expect("program emits");
-    let compiled = match goat_cli::run(&bytes) {
+    match goat_cli::run(&bytes) {
         Ok(run) => run.printed,
         Err(trap) => vec![trap],
-    };
-    (oracle, compiled)
+    }
 }
 
 fn render(line: &[Piece]) -> String {
@@ -213,4 +230,38 @@ fn a_trap_in_the_last_link_of_a_division_chain() {
         agree(&entry(MTy::Int, divide(DEPTH, 0))),
         [format!("trap: {DIVISION_BY_ZERO}")]
     );
+}
+
+#[test]
+fn a_right_leaning_chain_agrees() {
+    let body = chain(DEPTH, int(0), |acc, _| add(int(1), acc));
+    assert_eq!(agree(&entry(MTy::Int, body)), [DEPTH.to_string()]);
+}
+
+#[test]
+fn a_long_block_of_lets_agrees() {
+    let last = DEPTH as u32 - 1;
+    let body = (0..=last)
+        .rev()
+        .fold(local(last), |body, n| let_(n, int(n as i64), body));
+    assert_eq!(agree(&entry(MTy::Int, body)), [last.to_string()]);
+}
+
+/// `if true then <inner> else 0`, `levels` deep: each level nests one native
+/// call deeper however the emitter walks chains.
+fn nested_ifs(levels: usize) -> Program {
+    let nest = chain(levels, int(1), |inner, _| if_(boolean(true), inner, int(0)));
+    entry(MTy::Int, let_(0, Expr::Site(3, 9), nest))
+}
+
+#[test]
+fn nesting_past_the_native_limit_is_a_spanned_diagnostic_not_a_crash() {
+    let errors = match goat_native::build_program(&nested_ifs(5_000)) {
+        Err(goat_native::BuildError::Compile(errors)) => errors,
+        _ => panic!("the build should stop at the emitter"),
+    };
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].message.starts_with("program too complex"));
+    assert_eq!(errors[0].kind, goat::ErrorKind::ResourceLimit);
+    assert_eq!((errors[0].span.start, errors[0].span.end), (3, 9));
 }
