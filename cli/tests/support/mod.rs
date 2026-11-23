@@ -30,23 +30,6 @@ pub fn uses_native() -> bool {
     std::env::var("GOAT_RUNTIME").as_deref() == Ok("native")
 }
 
-/// Builds `src` for the native backend on a thread with room for the emitter's
-/// recursion over a very deep program.
-fn build_native(
-    profile: Profile,
-    src: &str,
-    host: &goat::HostInterface,
-) -> Result<goat_native::Library, goat_native::BuildError> {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(1 << 29)
-            .spawn_scoped(scope, || goat_native::build(profile, src, host))
-            .expect("a build thread")
-            .join()
-            .expect("the native build does not panic")
-    })
-}
-
 /// What `src` prints and leaves allocated when built by the native backend, or
 /// `None` (after saying why on stderr) when the backend does not cover it yet or
 /// there is no clang, so the caller runs it on wasm instead.
@@ -59,7 +42,7 @@ fn run_native(
         eprintln!("native: skipped, clang is not available: {src:?}");
         return None;
     }
-    let library = match build_native(profile, src, host) {
+    let library = match goat_native::build(profile, src, host) {
         Ok(library) => library,
         Err(error) => match error.unsupported() {
             Some(reason) => {
@@ -69,7 +52,7 @@ fn run_native(
             None => panic!("native build failed for {src:?}: {error}"),
         },
     };
-    // Deep recursion needs more stack than a test thread has, as the emitter does.
+    // Deep recursion in the program needs more stack than a test thread has.
     let run = std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(1 << 30)
@@ -91,7 +74,7 @@ fn run_native(
 pub fn trap_text(src: &str) -> String {
     let host = goat::HostInterface::turtle();
     if uses_native() && goat_native::clang_available() {
-        let library = build_native(Profile::Desktop, src, &host)
+        let library = goat_native::build(Profile::Desktop, src, &host)
             .unwrap_or_else(|e| panic!("native build failed for {src:?}: {e}"));
         let run = library.run(NoHost).expect("native program runs");
         return match run.result {
