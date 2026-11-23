@@ -78,15 +78,14 @@ Proof.
     + unfold function_empty_tree. occ_simp. reflexivity.
     + unfold function_tree. occ_simp. exact (IH G (S P)).
   - intros f IHf a IHa G P. cbn [lbls]. rewrite List.map_app.
-    destruct (block_app_cases G P f a) as [(-> & E) | (_ & E)]; rewrite E; rewrite occs_app.
-    + unfold call_unit_tree. occ_simp. cbn [lbls List.map]. rewrite ?List.app_nil_r.
+    assert (Hc : occs (callee_of G P f (block G P f)) = List.map lname (lbls G P f)).
+    { unfold callee_of. destruct (is_group_proj G P f); [ exact (IHf G P) | ].
       destruct f; cbn [as_callee as_operand]; first
         [ unfold paren_kids; occ_simp; try rewrite IHf; reflexivity
-        | rewrite IHf; reflexivity ].
-    + unfold call_tree. occ_simp. rewrite IHa.
-      destruct f; cbn [as_callee as_operand]; first
-        [ unfold paren_kids; occ_simp; try rewrite IHf; reflexivity
-        | rewrite IHf; reflexivity ].
+        | rewrite IHf; reflexivity ]. }
+    destruct (block_app_cases G P f a) as [(-> & E) | (_ & E)]; rewrite E; rewrite occs_app, Hc.
+    + unfold call_unit_tree. occ_simp. cbn [lbls List.map]. rewrite ?List.app_nil_r. reflexivity.
+    + unfold call_tree. occ_simp. rewrite IHa. reflexivity.
   - intros v IHv b IHb G P. cbn [block lbls]. unfold decl_tree, decl_named.
     rewrite List.map_app. occ_simp.
     rewrite IHb.

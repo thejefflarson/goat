@@ -111,11 +111,10 @@ Proof.
 Qed.
 
 (* Two mutually recursive functions, then a call of the first:
-   g0_0 = program(v1) do (g0_1)(v1) done; g0_1 = program(v1) do (g0_0)(v1) done; (g0_0)(1).
+   g0_0 = program(v1) do g0_1(v1) done; g0_1 = program(v1) do g0_0(v1) done; g0_0(1).
    The group is first in its block, so its members are the block's hoisted
    functions, and a member's name stands for the projection of that member from
-   the group's binder (a projection callee is parenthesised, as for any field
-   access). *)
+   the group's binder. *)
 Definition sample_group : exp :=
   e_letrec
     (fs_cons 0 (e_abs (e_app (e_proj (e_fvar_b 1) 1) (e_fvar_b 0)))
@@ -125,10 +124,10 @@ Definition sample_group : exp :=
 Example sample_group_printed :
   print sample_group =
     [TName "g0_0"; TSym "="; TSym "program"; TSym "("; TName "v1"; TSym ")"; TSym "do";
-     TSym "("; TName "g0_1"; TSym ")"; TSym "("; TName "v1"; TSym ")"; TSym "done"; TSym ";";
+     TName "g0_1"; TSym "("; TName "v1"; TSym ")"; TSym "done"; TSym ";";
      TName "g0_1"; TSym "="; TSym "program"; TSym "("; TName "v1"; TSym ")"; TSym "do";
-     TSym "("; TName "g0_0"; TSym ")"; TSym "("; TName "v1"; TSym ")"; TSym "done"; TSym ";";
-     TSym "("; TName "g0_0"; TSym ")"; TSym "("; TNum 1; TSym ")"].
+     TName "g0_0"; TSym "("; TName "v1"; TSym ")"; TSym "done"; TSym ";";
+     TName "g0_0"; TSym "("; TNum 1; TSym ")"].
 Proof. reflexivity. Qed.
 
 Example sample_group_scoped : scoped [] 0 sample_group.

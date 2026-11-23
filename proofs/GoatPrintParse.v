@@ -143,12 +143,16 @@ Proof.
     | exact (proj1 (proj2 HB) eq_refl) ].
 Qed.
 
-Lemma callee_chain : forall G P f, BlkAt G P f -> Chain (as_callee f (block G P f)).
+Lemma callee_chain : forall G P f, BlkAt G P f -> Chain (callee_of G P f (block G P f)).
 Proof.
-  intros G P f HB. destruct f; cbn [as_callee as_operand];
-    first
-    [ exact (chain_prim _ (prim_paren _ (expr_parses G P _ HB)))
-    | exact (proj1 (proj2 HB) eq_refl) ].
+  intros G P f HB. unfold callee_of. destruct (is_group_proj G P f) eqn:EG.
+  - destruct (is_group_proj_true G P f EG) as (g & l & L & -> & EL).
+    rewrite (block_proj_group G P g l L EL).
+    exact (chain_prim _ (prim_name _ (gm_not_foreign _ _))).
+  - destruct f; cbn [as_callee as_operand];
+      first
+      [ exact (chain_prim _ (prim_paren _ (expr_parses G P _ HB)))
+      | exact (proj1 (proj2 HB) eq_refl) ].
 Qed.
 
 Lemma value_fin : forall G P v, BlkAt G P v -> Fin (as_value v (block G P v)).

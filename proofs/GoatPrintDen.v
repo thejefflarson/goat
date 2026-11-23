@@ -147,23 +147,28 @@ Qed.
 
 (* No operand of a call ends in an access: a projection callee is
    parenthesised. *)
-Lemma callee_not_access : forall G P f, ~ ends_in_access (as_callee f (block G P f)).
+Lemma callee_not_access : forall G P f,
+  ~ ends_in_access (callee_of G P f (block G P f)).
 Proof.
-  intros G P f. destruct f; try (cbn [as_callee as_operand block paren_kids];
+  intros G P f. unfold callee_of. destruct (is_group_proj G P f) eqn:EG.
+  - destruct (is_group_proj_true G P f EG) as (g & l & L & -> & EL).
+    rewrite (block_proj_group G P g l L EL).
+    apply (ends_access_last []); intros c Hc; discriminate Hc.
+  - destruct f; try (cbn [as_callee as_operand block paren_kids];
     first
     [ (intros [init [c H]]; destruct init; discriminate H)
     | (apply (ends_access_last [sym "("; Node R_expr _]); intros c Hc; discriminate Hc)
     | (apply (ends_access_last []); intros c Hc; discriminate Hc)
     | (apply ends_access_last; intros c Hc; discriminate Hc) ]; fail).
-  - destruct (block_abs_cases G P f) as [(-> & E) | (_ & E)];
-      cbn [as_callee as_operand]; rewrite E;
-      apply (ends_access_last []); intros c Hc; discriminate Hc.
-  - destruct (block_app_cases G P f1 f2) as [(-> & E) | (_ & E)];
-      cbn [as_callee as_operand]; rewrite E;
-      apply ends_access_last; intros c Hc; discriminate Hc.
-  - destruct (block_ite_cases G P f1 f2 f3) as [(-> & E) | (_ & E)];
-      cbn [as_callee as_operand]; rewrite E;
-      apply (ends_access_last []); intros c Hc; discriminate Hc.
+    + destruct (block_abs_cases G P f) as [(-> & E) | (_ & E)];
+        cbn [as_callee as_operand]; rewrite E;
+        apply (ends_access_last []); intros c Hc; discriminate Hc.
+    + destruct (block_app_cases G P f1 f2) as [(-> & E) | (_ & E)];
+        cbn [as_callee as_operand]; rewrite E;
+        apply ends_access_last; intros c Hc; discriminate Hc.
+    + destruct (block_ite_cases G P f1 f2 f3) as [(-> & E) | (_ & E)];
+        cbn [as_callee as_operand]; rewrite E;
+        apply (ends_access_last []); intros c Hc; discriminate Hc.
 Qed.
 
 Lemma den_pack : forall var_of tbl G P e x,
@@ -432,17 +437,20 @@ Proof.
   - (* call *)
     intros f IHf a IHa G P HG [Hf Ha] Hl.
     destruct (IHf G P HG Hf (labelsok_app_l _ _ _ Hl)) as [Hef [_ [_ Hcf]]].
-    assert (Hop : Den_chain var_of tbl (as_callee f (block G P f)) (inst var_of G P f)).
-    { destruct f; cbn [as_callee as_operand];
-        first [ apply den_chain_paren; exact Hef | exact (Hcf I eq_refl) ]. }
+    assert (Hop : Den_chain var_of tbl (callee_of G P f (block G P f)) (inst var_of G P f)).
+    { unfold callee_of. destruct (is_group_proj G P f) eqn:EG.
+      - destruct (is_group_proj_true G P f EG) as (g & l & L & -> & EL).
+        exact (Hcf I eq_refl).
+      - destruct f; cbn [as_callee as_operand];
+          first [ apply den_chain_paren; exact Hef | exact (Hcf I eq_refl) ]. }
     destruct (block_app_cases G P f a) as [(-> & E) | (Hne & E)]; rewrite E.
-    { assert (Hchain : Den_chain var_of tbl (as_callee f (block G P f) ++ [call_unit_tree])
+    { assert (Hchain : Den_chain var_of tbl (callee_of G P f (block G P f) ++ [call_unit_tree])
                          (inst var_of G P (e_app f e_unit)))
         by exact (den_chain_call_unit var_of tbl _ _ Hop (callee_not_access G P f)).
       rewrite <- E. apply den_pack. rewrite E. exact Hchain. }
     destruct Ha as [Ha | Ha]; [ exfalso; exact (Hne Ha) | ].
     destruct (IHa G P HG Ha (labelsok_app_r _ _ _ Hl)) as [Hea _].
-    assert (Hchain : Den_chain var_of tbl (as_callee f (block G P f) ++ [call_tree (block G P a)])
+    assert (Hchain : Den_chain var_of tbl (callee_of G P f (block G P f) ++ [call_tree (block G P a)])
                        (inst var_of G P (e_app f a))).
     { exact (den_chain_call var_of tbl _ _ _ _ Hop Hea (callee_not_access G P f)). }
     rewrite <- E. apply den_pack. rewrite E. exact Hchain.

@@ -60,6 +60,14 @@ Definition proj_level (G : Grp) (P : nat) (f : exp) : option nat :=
 Definition is_abs (e : exp) : Prop :=
   match e with e_abs _ => True | _ => False end.
 
+(* Whether a callee is a projection of a group's member, which is printed as
+   the member's name. *)
+Definition is_group_proj (G : Grp) (P : nat) (f : exp) : bool :=
+  match f with
+  | e_proj g _ => match proj_level G P g with Some _ => true | None => false end
+  | _ => false
+  end.
+
 (* ---- the printer, as a parse tree ---- *)
 
 Definition paren_kids (b : list tree) : list tree := [sym "("; Node R_expr b; sym ")"].
@@ -99,6 +107,10 @@ Definition as_value (e : exp) (b : list tree) : list tree :=
   | e_let _ _ | e_letrec _ _ | e_abs _ => paren_kids b
   | _ => b
   end.
+
+(* A callee is parenthesised as [as_callee] says, unless it is a member's name. *)
+Definition callee_of (G : Grp) (P : nat) (f : exp) (b : list tree) : list tree :=
+  if is_group_proj G P f then b else as_callee f b.
 
 Definition decl_named (x : string) (v : list tree) : tree :=
   Node R_declaration [ident x; sym "="; Node R_value v; sym ";"].
@@ -152,8 +164,8 @@ Fixpoint block (G : Grp) (P : nat) (e : exp) {struct e} : list tree :=
   | e_false => [Node R_boolean [Node R_false_lit [sym "false"]]]
   | e_abs e_unit => [function_empty_tree P]
   | e_abs b => [function_tree P (block G (S P) b)]
-  | e_app f e_unit => as_callee f (block G P f) ++ [call_unit_tree]
-  | e_app f a => as_callee f (block G P f) ++ [call_tree (block G P a)]
+  | e_app f e_unit => callee_of G P f (block G P f) ++ [call_unit_tree]
+  | e_app f a => callee_of G P f (block G P f) ++ [call_tree (block G P a)]
   | e_let v b => decl_tree P (as_value v (block G P v)) :: block G (S P) b
   | e_rec fs => [Node R_record ((sym "{" :: field_trees G P fs) ++ [sym "}"])]
   | e_proj f l =>
@@ -308,9 +320,9 @@ Proof.
 Qed.
 
 Lemma block_app_cases : forall G P f a,
-  (a = e_unit /\ block G P (e_app f a) = as_callee f (block G P f) ++ [call_unit_tree])
+  (a = e_unit /\ block G P (e_app f a) = callee_of G P f (block G P f) ++ [call_unit_tree])
   \/ (a <> e_unit /\
-      block G P (e_app f a) = as_callee f (block G P f) ++ [call_tree (block G P a)]).
+      block G P (e_app f a) = callee_of G P f (block G P f) ++ [call_tree (block G P a)]).
 Proof.
   intros G P f a. destruct a;
     first [ (left; split; reflexivity) | (right; split; [ discriminate | reflexivity ]) ].
@@ -319,6 +331,17 @@ Qed.
 Lemma block_ite_unit : forall G P c a,
   block G P (e_ite c a e_unit) = [cond_tree_noelse (block G P c) (block G P a)].
 Proof. reflexivity. Qed.
+
+Lemma is_group_proj_true : forall G P f,
+  is_group_proj G P f = true ->
+  exists g l L, f = e_proj g l /\ proj_level G P g = Some L.
+Proof.
+  intros G P f H. destruct f; try discriminate H.
+  unfold is_group_proj in H.
+  match type of H with context [proj_level _ _ ?g] =>
+    destruct (proj_level G P g) eqn:E; [ | discriminate H ];
+    do 3 eexists; split; [ reflexivity | exact E ] end.
+Qed.
 
 Lemma block_proj_group : forall G P f l L,
   proj_level G P f = Some L -> block G P (e_proj f l) = [ident (gm L l)].
