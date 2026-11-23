@@ -401,7 +401,7 @@ Lemma casch_gen_sch_equiv : forall st sr g gr s Ct Cr,
             (Sch (AtomSetImpl.diff (ftv_typ (ap_typ st sr (ren_typ g gr (s_body s)))) Ct)
                  (AtomSetImpl.diff (frv_typ (ap_typ st sr (ren_typ g gr (s_body s)))) Cr)
                  (ap_typ st sr (ren_typ g gr (s_body s)))
-                 (s_sk (casch st sr g gr s))).
+                 (s_sk (casch st sr g gr s)) (s_rk (casch st sr g gr s))).
 Proof.
   intros st sr g gr s Ct Cr Hgi Hgri Hgf Hgrf Hsubt Hsubr Hfx1 Hfx2 HfreshT HfreshR
     HcT_t HcT_r HcR_t HcR_r.
@@ -411,7 +411,7 @@ Proof.
   { intro b. unfold ren_typ. apply (proj1 (Ftv_ren_mut g g gr Hgi Hgi)). }
   assert (HRren : forall b, b `in` frv_typ (ren_typ g gr (s_body s)) <-> gr b `in` frv_typ (s_body s)).
   { intro b. unfold ren_typ. apply (proj1 (Frv_ren_mut g gr gr Hgri Hgri)). }
-  unfold sch_equiv, casch; simpl. split; [| split; [| split]].
+  unfold sch_equiv, casch; simpl. split; [| split; [| split; [| split]]].
   - (* s_tq: amap g (s_tq s) [=] diff (ftv B) Ct *)
     apply AtomSetProperties.subset_antisym; intros a Ha.
     + (* amap g (s_tq s) subset diff (ftv B) Ct *)
@@ -508,6 +508,7 @@ Proof.
            exfalso. apply HaC. fsetdec.
   - reflexivity.
   - intros a Ha. reflexivity.
+  - intros r Hr. reflexivity.
 Qed.
 
 (* ===================== context substitution relation ==================== *)
@@ -516,7 +517,7 @@ Qed.
    environments the substitution respects, each instance of the scheme maps to
    an instance of the substituted scheme. *)
 Definition sch_subst (st:tsub) (sr:rsub) (s s':scheme) : Prop :=
-  forall D D', kres D D' st -> forall W, inst D W s -> inst D' (ap_typ st sr W) s'.
+  forall D D', kres D D' st -> rkres D D' sr -> forall W, inst D W s -> inst D' (ap_typ st sr W) s'.
 
 (* The context-substitution relation: every binding of [G] has a corresponding
    binding in [G'] whose scheme absorbs the substituted instances.  [G'] may
@@ -559,7 +560,7 @@ Qed.
 Lemma sch_subst_mono : forall st sr T,
   sch_subst st sr (sch_mono T) (sch_mono (ap_typ st sr T)).
 Proof.
-  intros st sr T D D' Hk W HW. apply inst_mono_eq in HW. subst W. apply inst_mono_self.
+  intros st sr T D D' Hk Hr W HW. apply inst_mono_eq in HW. subst W. apply inst_mono_self.
 Qed.
 
 (* a substitution fixing a scheme's free vars preserves its instances pointwise:
@@ -570,10 +571,10 @@ Lemma sch_subst_fix : forall st sr s,
   lc_sub st sr ->
   sch_subst st sr s s.
 Proof.
-  intros st sr s Hf Hfr Hl D D' Hk W [pt [pr [Hpt [Hpr [HW [Hsat Hpl]]]]]].
+  intros st sr s Hf Hfr Hl D D' Hk Hkr W [pt [pr [Hpt [Hpr [HW [Hsat [Hrks Hpl]]]]]]].
   exists (fun a => if AtomSetImpl.mem a (s_tq s) then ap_typ st sr (pt a) else typ_Var a),
          (fun r => if AtomSetImpl.mem r (s_rq s) then ap_row st sr (pr r) else row_Var r).
-  split; [| split; [| split; [| split]]].
+  split; [| split; [| split; [| split; [| split]]]].
   - intros a Ha. destruct (AtomSetImpl.mem a (s_tq s)) eqn:Em;
       [apply AtomSetFacts.mem_iff in Em; contradiction|reflexivity].
   - intros r Hr. destruct (AtomSetImpl.mem r (s_rq s)) eqn:Em;
@@ -593,7 +594,10 @@ Proof.
         rewrite (Hfr r H). reflexivity.
   - intros a Ha. assert (Hm : AtomSetImpl.mem a (s_tq s) = true)
       by (apply AtomSetFacts.mem_iff; exact Ha).
-    rewrite Hm. eapply sat_ap; [ exact Hk | apply Hsat; exact Ha ].
+    rewrite Hm. eapply sat_ap; [ exact Hk | exact Hkr | apply Hsat; exact Ha ].
+  - intros r Hr. assert (Hm : AtomSetImpl.mem r (s_rq s) = true)
+      by (apply AtomSetFacts.mem_iff; exact Hr).
+    rewrite Hm. eapply rkok_ap; [ exact Hk | exact Hkr | apply Hrks; exact Hr ].
   - split.
     + intros a. cbv beta. destruct (AtomSetImpl.mem a (s_tq s));
         [ apply ap_lc; [ exact Hl | apply (proj1 Hpl) ] | exact I ].
@@ -612,13 +616,26 @@ Lemma ren_lcr : forall g gr R k, lcr k R -> lcr k (ren_row g gr R).
 Proof. intros. unfold ren_row. apply ap_lcr; [ apply lc_sub_ren | assumption ]. Qed.
 
 (* The environment seen through a renaming of its atoms. *)
-Definition dperm (g : atom -> atom) (D : denv) : denv := fun a => D (g a).
+Definition dperm (g gr : atom -> atom) (D : denv) : denv :=
+  DEnv (fun a => D (g a)) (fun r => drk D (gr r)).
 
-Lemma sat_ren : forall g gr D k T, (forall a, g (g a) = a) ->
-  sat D k T -> sat (dperm g D) k (ren_typ g gr T).
+Lemma kres_ren : forall g gr D, (forall a, g (g a) = a) ->
+  kres D (dperm g gr D) (fun a => typ_Var (g a)).
 Proof.
-  intros g gr D k T Hi H. unfold ren_typ. eapply sat_ap; [ | exact H ].
-  intros a. simpl. unfold dperm. rewrite Hi. apply finer_refl.
+  intros g gr D Hi a. simpl. unfold dperm. simpl. rewrite Hi. apply finer_refl.
+Qed.
+
+Lemma rkres_ren : forall g gr D, (forall r, gr (gr r) = r) ->
+  rkres D (dperm g gr D) (fun r => row_Var (gr r)).
+Proof.
+  intros g gr D Hi r. unfold rkok. simpl. unfold dperm. simpl. rewrite Hi.
+  split; [ apply finer_refl | intros l H; exact H ].
+Qed.
+
+Lemma sat_ren : forall g gr D k T, (forall a, g (g a) = a) -> (forall r, gr (gr r) = r) ->
+  sat D k T -> sat (dperm g gr D) k (ren_typ g gr T).
+Proof.
+  intros g gr D k T Hi Hri H. unfold ren_typ. eapply sat_ap; [ apply kres_ren; exact Hi | apply rkres_ren; exact Hri | exact H ].
 Qed.
 
 (* renaming a scheme's instance along a bijection fixing the scheme's free vars
@@ -626,13 +643,13 @@ Qed.
 Lemma inst_ren_same : forall g gr D s W,
   (forall a, a `in` ftv_sch s -> g a = a) ->
   (forall r, r `in` frv_sch s -> gr r = r) ->
-  (forall a, g (g a) = a) ->
-  inst D W s -> inst (dperm g D) (ren_typ g gr W) s.
+  (forall a, g (g a) = a) -> (forall r, gr (gr r) = r) ->
+  inst D W s -> inst (dperm g gr D) (ren_typ g gr W) s.
 Proof.
-  intros g gr D s W Hgf Hgrf Hgi [pt [pr [Hpt [Hpr [HW [Hsat Hpl]]]]]].
+  intros g gr D s W Hgf Hgrf Hgi Hgri [pt [pr [Hpt [Hpr [HW [Hsat [Hrks Hpl]]]]]]].
   exists (fun a => if AtomSetImpl.mem a (s_tq s) then ren_typ g gr (pt a) else typ_Var a),
          (fun r => if AtomSetImpl.mem r (s_rq s) then ren_row g gr (pr r) else row_Var r).
-  split; [| split; [| split; [| split]]].
+  split; [| split; [| split; [| split; [| split]]]].
   - intros a Ha. destruct (AtomSetImpl.mem a (s_tq s)) eqn:Em;
       [apply AtomSetFacts.mem_iff in Em; contradiction|reflexivity].
   - intros r Hr. destruct (AtomSetImpl.mem r (s_rq s)) eqn:Em;
@@ -652,7 +669,11 @@ Proof.
         rewrite (Hgrf r H). reflexivity.
   - intros a Ha. assert (Hm : AtomSetImpl.mem a (s_tq s) = true)
       by (apply AtomSetFacts.mem_iff; exact Ha).
-    rewrite Hm. apply sat_ren; [ exact Hgi | apply Hsat; exact Ha ].
+    rewrite Hm. apply sat_ren; [ exact Hgi | exact Hgri | apply Hsat; exact Ha ].
+  - intros r Hr. assert (Hm : AtomSetImpl.mem r (s_rq s) = true)
+      by (apply AtomSetFacts.mem_iff; exact Hr).
+    rewrite Hm. unfold ren_row.
+    eapply rkok_ap; [ apply kres_ren; exact Hgi | apply rkres_ren; exact Hgri | apply Hrks; exact Hr ].
   - split.
     + intros a. cbv beta. destruct (AtomSetImpl.mem a (s_tq s));
         [ apply ren_lc; apply (proj1 Hpl) | exact I ].
@@ -672,24 +693,28 @@ Qed.
 (* the context-substitution relation is stable under precomposing [st,sr] with a
    renaming that fixes the context's free variables. *)
 Lemma ctx_subst_precomp : forall st sr g gr G G',
-  (forall a, g (g a) = a) ->
+  (forall a, g (g a) = a) -> (forall r, gr (gr r) = r) ->
   ctx_subst st sr G G' ->
   (forall a, a `in` ftv_ctx G -> g a = a) ->
   (forall r, r `in` frv_ctx G -> gr r = r) ->
   ctx_subst (fun a => st (g a)) (fun r => sr (gr r)) G G'.
 Proof.
-  intros st sr g gr G G' Hgi HG Hgf Hgrf x s Hb.
+  intros st sr g gr G G' Hgi Hgri HG Hgf Hgrf x s Hb.
   destruct (HG x s Hb) as [s' [Hb' Hss]]. exists s'. split; [exact Hb'|].
-  intros D D' Hk W HW.
-  assert (Hk2 : kres (dperm g D) D' st).
+  intros D D' Hk Hkr W HW.
+  assert (Hk2 : kres (dperm g gr D) D' st).
   { intros a. unfold dperm. unfold kres in Hk. specialize (Hk (g a)). simpl in Hk.
-    rewrite Hgi in Hk. exact Hk. }
-  rewrite ap_precomp. apply (Hss _ _ Hk2). apply inst_ren_same.
+    simpl. rewrite Hgi in Hk. exact Hk. }
+  assert (Hkr2 : rkres (dperm g gr D) D' sr).
+  { intros r. unfold dperm. unfold rkres in Hkr. specialize (Hkr (gr r)). simpl in Hkr.
+    simpl. rewrite Hgri in Hkr. exact Hkr. }
+  rewrite ap_precomp. apply (Hss _ _ Hk2 Hkr2). apply inst_ren_same.
   - intros a Ha. apply Hgf.
     assert (ftv_sch s [<=] ftv_ctx G) by (eapply binds_ftv_sch; eauto). fsetdec.
   - intros r Hr. apply Hgrf.
     assert (frv_sch s [<=] frv_ctx G) by (eapply binds_frv_sch; eauto). fsetdec.
   - exact Hgi.
+  - exact Hgri.
   - exact HW.
 Qed.
 
@@ -723,10 +748,10 @@ Qed.
 Lemma typing_uniq : forall D G e T, typing D G e T -> uniq G.
 Proof. intros. eapply (proj1 typing_uniq_mut); eauto. Qed.
 
-Lemma ftv_sch_gen_sub : forall G T k, ftv_sch (gen G T k) [<=] ftv_ctx G.
+Lemma ftv_sch_gen_sub : forall G T k rk, ftv_sch (gen G T k rk) [<=] ftv_ctx G.
 Proof. intros. unfold ftv_sch, gen; simpl. fsetdec. Qed.
 
-Lemma frv_sch_gen_sub : forall G T k, frv_sch (gen G T k) [<=] frv_ctx G.
+Lemma frv_sch_gen_sub : forall G T k rk, frv_sch (gen G T k rk) [<=] frv_ctx G.
 Proof. intros. unfold frv_sch, gen; simpl. fsetdec. Qed.
 
 (* a substitution fixing the context's free vars relates the context to itself *)
@@ -867,19 +892,71 @@ Qed.
    satisfying it when the extension only touches atoms outside [S]. *)
 Lemma supp_ok_ext : forall D S V k, supp_ok D S -> supp_ok (ext D V k) (S `union` V).
 Proof.
-  intros D S V k Hs a Ha. unfold ext.
+  intros D S V k Hs a Ha. unfold ext. simpl.
   destruct (AtomSetImpl.mem a V) eqn:Em.
   - apply AtomSetFacts.mem_iff in Em. exfalso. apply Ha. fsetdec.
   - apply Hs. fsetdec.
 Qed.
 
-Lemma sat_ext_mono_mut : forall D V k S,
-  supp_ok D S -> (forall a, a `in` V -> a `notin` S) ->
-  (forall T, (forall k0, sat D k0 T -> sat (ext D V k) k0 T) /\
-             (forall w j, spine_sat D w j T -> spine_sat (ext D V k) w j T)) /\
-  (forall R k1, rsat D k1 R -> rsat (ext D V k) k1 R).
+Lemma supp_ok_extr : forall D S V rk, supp_ok D S -> supp_ok (extr D V rk) (S `union` V).
 Proof.
-  intros D V k S Hs Hv. apply typ_row_mutind; simpl.
+  intros D S V rk Hs a Ha. unfold extr. simpl.
+  destruct (AtomSetImpl.mem a V) eqn:Em.
+  - apply AtomSetFacts.mem_iff in Em. exfalso. apply Ha. fsetdec.
+  - apply Hs. fsetdec.
+Qed.
+
+Lemma supp_ok_sub : forall D S S2, supp_ok D S -> S [<=] S2 -> supp_ok D S2.
+Proof. intros D S S2 H Hs a Ha. apply H. intro Hc. apply Ha. apply Hs. exact Hc. Qed.
+
+Lemma supp_ok_ext2 : forall D S V k Vr rk, supp_ok D S ->
+  supp_ok (extr (ext D V k) Vr rk) (S `union` V `union` Vr).
+Proof.
+  intros D S V k Vr rk H. eapply supp_ok_sub; [ apply supp_ok_extr; apply supp_ok_ext; exact H | ].
+  intros a Ha. fsetdec.
+Qed.
+
+(* An environment that gives variables outside a finite support their
+   unconstrained kind and then adds constraints on atoms of that support only
+   keeps every satisfied sort and every lacked label: an atom it changes was
+   unconstrained before. *)
+Definition env_mono (D D2 : denv) : Prop :=
+  (forall a, D2 a = D a \/ D a = k_Any) /\
+  (forall r, drk D2 r = drk D r \/ drk D r = rk_any).
+
+Lemma env_mono_trans : forall D1 D2 D3, env_mono D1 D2 -> env_mono D2 D3 -> env_mono D1 D3.
+Proof.
+  intros D1 D2 D3 [A1 B1] [A2 B2]. split.
+  - intros a. destruct (A2 a) as [E2|E2]; destruct (A1 a) as [E1|E1];
+      first [ (left; congruence) | (right; exact E1) | (right; congruence) ].
+  - intros r. destruct (B2 r) as [E2|E2]; destruct (B1 r) as [E1|E1];
+      first [ (left; congruence) | (right; exact E1) | (right; congruence) ].
+Qed.
+
+Lemma env_mono_ext_d : forall (D : denv) V (k : sort_fn), (forall a, a `in` V -> D a = k_Any) -> env_mono D (ext D V k).
+Proof.
+  intros D V k H. split.
+  - intros a. unfold ext. simpl. destruct (AtomSetImpl.mem a V) eqn:Em.
+    + apply AtomSetFacts.mem_iff in Em. right. apply H. exact Em.
+    + left. reflexivity.
+  - intros r. left. reflexivity.
+Qed.
+
+Lemma env_mono_extr_d : forall (D : denv) V (rk : rkind_fn), (forall r, r `in` V -> drk D r = rk_any) -> env_mono D (extr D V rk).
+Proof.
+  intros D V rk H. split.
+  - intros a. left. reflexivity.
+  - intros r. unfold extr. simpl. destruct (AtomSetImpl.mem r V) eqn:Em.
+    + apply AtomSetFacts.mem_iff in Em. right. apply H. exact Em.
+    + left. reflexivity.
+Qed.
+
+Lemma sat_mono_mut : forall D D2, env_mono D D2 ->
+  (forall T, (forall k0, sat D k0 T -> sat D2 k0 T) /\
+             (forall w j, spine_sat D w j T -> spine_sat D2 w j T)) /\
+  (forall R k1, rsat D k1 R -> rsat D2 k1 R).
+Proof.
+  intros D D2 [Hd Hr]. apply typ_row_mutind; simpl.
   - split; intros; first [ assumption | exact I | contradiction ].
   - split; intros; first [ assumption | exact I | contradiction ].
   - split; intros; first [ assumption | exact I | contradiction ].
@@ -890,26 +967,37 @@ Proof.
   - intros R IH. split; [ | intros; contradiction ]. intros k0. destruct k0; simpl;
       first [ (intros _; exact I) | (intros HH; contradiction) | exact (IH _) ].
   - intros a. split; [ | intros; contradiction ]. intros k0 H.
-    unfold ext; destruct (AtomSetImpl.mem a V) eqn:Em;
-      [ apply AtomSetFacts.mem_iff in Em; rewrite (Hs a (Hv a Em)) in H;
-        inversion H; subst; apply finer_any
-      | exact H ].
+    destruct (Hd a) as [E|E]; [ rewrite E; exact H | rewrite E in H; inversion H; subst; apply finer_any ].
   - intros i. split; intros; first [ assumption | contradiction ].
   - intros B IH. split; [ | intros; contradiction ]. intros k0 Hs'. destruct k0; try exact I; try contradiction.
     exact (proj1 IH k_Eq Hs').
   - intros w A IH. split; [ | intros; contradiction ]. intros k0 Hs'. destruct k0; try exact I; try contradiction.
     exact (proj2 IH w 0 Hs').
   - intros k1 _. exact I.
-  - intros r k1 Hs'. contradiction.
+  - intros r k1 Hs'. destruct (Hr r) as [E|E]; [ rewrite E; exact Hs' | rewrite E in Hs'; simpl in Hs'; inversion Hs'; subst; apply finer_any ].
   - intros l T [IHT _] R IHR k1 [Hs1 Hs2]. split; [ exact (IHT k1 Hs1) | exact (IHR k1 Hs2) ].
-  - intros l P _ T _ R _ k1 Hs'. contradiction.
+  - intros l P _ T _ R _ k1 Hs'. exact Hs'.
 Qed.
 
-Lemma sat_ext_mono : forall D V k S k0 T,
-  supp_ok D S -> (forall a, a `in` V -> a `notin` S) ->
-  sat D k0 T -> sat (ext D V k) k0 T.
+Lemma sat_mono : forall D D2 k0 T, env_mono D D2 -> sat D k0 T -> sat D2 k0 T.
+Proof. intros D D2 k0 T Hm H. exact (proj1 (proj1 (sat_mono_mut D D2 Hm) T) k0 H). Qed.
+
+Lemma rsat_mono : forall D D2 k0 R, env_mono D D2 -> rsat D k0 R -> rsat D2 k0 R.
+Proof. intros D D2 k0 R Hm H. exact (proj2 (sat_mono_mut D D2 Hm) R k0 H). Qed.
+
+Lemma rlacksD_mono : forall D D2 l R, env_mono D D2 ->
+  rlacksD D l R = true -> rlacksD D2 l R = true.
 Proof.
-  intros D V k S k0 T Hs Hv H. exact (proj1 (proj1 (sat_ext_mono_mut D V k S Hs Hv) T) k0 H).
+  intros D D2 l R [_ Hr]. induction R as [|r|l' T R IH|l' P T R IH]; simpl; auto.
+  - destruct (Hr r) as [E|E]; [ rewrite E; auto | rewrite E; simpl; intros H; discriminate H ].
+  - intros H. apply Bool.andb_true_iff in H as [H1 H2]. rewrite H1. apply IH. exact H2.
+  - intros H. apply Bool.andb_true_iff in H as [H1 H2]. rewrite H1. apply IH. exact H2.
+Qed.
+
+Lemma rkok_mono : forall D D2 K R, env_mono D D2 -> rkok D K R -> rkok D2 K R.
+Proof.
+  intros D D2 K R Hm [H1 H2]. split; [ eapply rsat_mono; eauto | ].
+  intros l Hl. eapply rlacksD_mono; [ exact Hm | apply H2; exact Hl ].
 Qed.
 
 (* The renaming step shared by every binder that generalizes ([let] and a
@@ -918,27 +1006,33 @@ Qed.
    returns the composed substitution under which the bound term is typed, the
    sorts that term is typed under, the substituted scheme, and the facts the
    body needs about it. *)
-Lemma tsubst_gen_core : forall G T1 k st sr G' A D D' S S',
-  supp_ok D S -> supp_ok D' S' -> kres D D' st ->
+Lemma tsubst_gen_core : forall G T1 k rk st sr G' A D D' S S',
+  supp_ok D S -> supp_ok D' S' -> kres D D' st -> rkres D D' sr ->
   ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
-  exists (s' : scheme) (st1 : tsub) (sr1 : rsub) (A1 N : atoms) (k' : sort_fn),
-    kres (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k) (ext D' N k') st1 /\
+  exists (s' : scheme) (st1 : tsub) (sr1 : rsub) (A1 N Nr : atoms) (k' : sort_fn) (rk' : rkind_fn),
+    kres (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k)
+              (AtomSetImpl.diff (frv_typ T1) (frv_ctx G)) rk)
+         (extr (ext D' N k') Nr rk') st1 /\
+    rkres (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)) k)
+                (AtomSetImpl.diff (frv_typ T1) (frv_ctx G)) rk)
+          (extr (ext D' N k') Nr rk') sr1 /\
     ctx_subst st1 sr1 G G' /\ tr_supp st1 sr1 A1 /\ tr_compat st1 sr1 G G' /\
     N [=] AtomSetImpl.diff (ftv_typ (ap_typ st1 sr1 T1)) (ftv_ctx G') /\
-    supp_ok (ext D' N k') (S' `union` N) /\
-    sch_subst st sr (gen G T1 k) s' /\
-    sch_equiv s' (gen G' (ap_typ st1 sr1 T1) k') /\
-    (forall x, tr_compat st sr ((x ~ gen G T1 k) ++ G) ((x ~ s') ++ G')) /\
+    Nr [=] AtomSetImpl.diff (frv_typ (ap_typ st1 sr1 T1)) (frv_ctx G') /\
+    supp_ok (extr (ext D' N k') Nr rk') (S' `union` N `union` Nr) /\
+    sch_subst st sr (gen G T1 k rk) s' /\
+    sch_equiv s' (gen G' (ap_typ st1 sr1 T1) k' rk') /\
+    (forall x, tr_compat st sr ((x ~ gen G T1 k rk) ++ G) ((x ~ s') ++ G')) /\
     (forall H H', ctx_subst st sr H H' ->
        ftv_ctx H [<=] ftv_ctx G -> frv_ctx H [<=] frv_ctx G ->
        ctx_subst st1 sr1 H H') /\
     (forall a, a `in` ftv_ctx G -> st1 a = st a) /\
     (forall r, r `in` frv_ctx G -> sr1 r = sr r).
 Proof.
-  intros G T1 k st sr G' A D D' S S' HS HS' Hk Hcs Hsupp Hcompat.
+  intros G T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
   destruct Hsupp as [HsuppT [HsuppR HlcS]].
   destruct Hcompat as [HcT [HcFr [HcRt HcRfr]]].
-  set (s := gen G T1 k).
+  set (s := gen G T1 k rk).
   set (V := AtomSetImpl.diff (ftv_typ T1) (ftv_ctx G)).
   assert (HsTQ : s_tq s = V) by reflexivity.
   (* [Bav] is the set of names to AVOID: everything mentioned by the
@@ -995,11 +1089,12 @@ Proof.
   { intros p r Hr Hp. assert (frv_row (sr r) [<=] frv_ctx G') by (apply HcRfr; fsetdec).
     assert (p `notin` Bav) by (apply HgrF; exact Hp). unfold Bav in *. fsetdec. }
   assert (Hcaschinst : sch_subst st sr s (casch st sr g gr s)).
-  { intros D1 D1' Hk1 W HW.
+  { intros D1 D1' Hk1 Hkr1 W HW.
     exact (casch_inst st sr g gr s Hginv Hgrinv HgfixS HgrfixS HstQ HsrQ Hnc1 Hnc2 Hnc3 Hnc4 HlcS
-             D1 D1' Hk1 W HW). }
+             D1 D1' Hk1 Hkr1 W HW). }
   assert (Hbridge : sch_equiv (casch st sr g gr s)
-                      (gen G' (ap_typ st sr (ren_typ g gr (s_body s))) (fun a => s_sk s (g a)))).
+                      (gen G' (ap_typ st sr (ren_typ g gr (s_body s))) (fun a => s_sk s (g a))
+                              (fun r => s_rk s (gr r)))).
   { unfold gen. apply casch_gen_sch_equiv.
     - exact Hginv.
     - exact Hgrinv.
@@ -1018,35 +1113,62 @@ Proof.
   set (A2 := A `union` s_tq s `union` lset Ng `union` s_rq s `union` lset Ngr).
   assert (HbodyT1 : s_body s = T1) by (unfold s, gen; reflexivity).
   set (NS := amap g V).
+  set (NR := amap gr (s_rq s)).
   set (k' := fun a => k (g a)).
+  set (rk' := fun r => rk (gr r)).
+  assert (Hmono : env_mono D' (extr (ext D' NS k') NR rk')).
+  { eapply env_mono_trans.
+    - apply env_mono_ext_d. intros a Ha.
+      assert (HaQ : a `in` amap g (s_tq s)) by (rewrite HsTQ; exact Ha).
+      assert (Hb : a `notin` Bav) by (apply HgF; exact HaQ).
+      assert (Hn : a `notin` S') by (unfold Bav in Hb; fsetdec). exact (proj1 (HS' a Hn)).
+    - apply env_mono_extr_d. intros r Hr. rewrite ext_drk.
+      assert (Hb : r `notin` Bav) by (apply HgrF; exact Hr).
+      assert (Hn : r `notin` S') by (unfold Bav in Hb; fsetdec). exact (proj2 (HS' r Hn)). }
   assert (Hap1 : ap_typ (fun a : Atom.atom => st (g a)) (fun r : Atom.atom => sr (gr r)) T1
                  = ap_typ st sr (ren_typ g gr T1))
     by apply ap_precomp.
   assert (HEq : NS [=] AtomSetImpl.diff (ftv_typ (ap_typ (fun a : Atom.atom => st (g a)) (fun r : Atom.atom => sr (gr r)) T1))
                                         (ftv_ctx G')).
   { rewrite Hap1. exact (proj1 Hbridge). }
-  exists (casch st sr g gr s), (fun a => st (g a)), (fun r => sr (gr r)), A2, NS, k'.
-  refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _)))))))))) ).
+  exists (casch st sr g gr s), (fun a => st (g a)), (fun r => sr (gr r)), A2, NS, NR, k', rk'.
+  refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _))))))))))))).
   - (* the bound term's substitution respects the sorts *)
-    intros a.
+    intros a. rewrite extr_dsort.
     destruct (AtomSetImpl.mem a V) eqn:EV.
     + apply AtomSetFacts.mem_iff in EV.
       assert (HgaNS : g a `in` NS) by (apply amap_in; exists a; auto).
       assert (HgaQ : g a `in` amap g (s_tq s)) by (rewrite HsTQ; exact HgaNS).
       rewrite (ext_in D V k a EV). cbv beta. rewrite (HstQ (g a) HgaQ). cbn [sat].
-      rewrite (ext_in D' NS k' (g a) HgaNS). unfold k'. rewrite Hginv. apply finer_refl.
+      rewrite extr_dsort. rewrite (ext_in D' NS k' (g a) HgaNS). unfold k'. rewrite Hginv. apply finer_refl.
     + apply AtomSetFacts.not_mem_iff in EV.
       rewrite (ext_out D V k a EV).
       destruct (List.in_dec Atom.eq_dec a Ng) as [HIn|HNIn].
       * assert (a `notin` S) by (pose proof (HgNB a HIn); unfold Bav in H; fsetdec).
-        rewrite (HS a H). apply sat_any.
+        rewrite (proj1 (HS a H)). apply sat_any.
       * assert (Hga : g a = a) by (apply Hgfix; [ rewrite HsTQ; exact EV | exact HNIn ]).
-        cbv beta. rewrite Hga. apply (sat_ext_mono D' NS k' S' _ _ HS').
-        -- intros b Hb. assert (HbQ : b `in` amap g (s_tq s)) by (rewrite HsTQ; exact Hb).
-           assert (b `notin` Bav) by (apply HgF; exact HbQ). unfold Bav in H. fsetdec.
-        -- apply Hk.
+        cbv beta. rewrite Hga. eapply sat_mono; [ exact Hmono | apply Hk ].
+  - (* the bound term's row substitution respects the kinds *)
+    intros r. cbv beta.
+    destruct (AtomSetImpl.mem r (s_rq s)) eqn:EV.
+    + apply AtomSetFacts.mem_iff in EV.
+      assert (HgrNR : gr r `in` NR) by (apply amap_in; exists r; auto).
+      assert (HgrQ : gr r `in` amap gr (s_rq s)) by exact HgrNR.
+      rewrite (extr_in _ _ _ r) by (unfold s, gen in EV; simpl in EV; exact EV).
+      rewrite (HsrQ (gr r) HgrQ).
+      pose proof (rkok_self (extr (ext D' NS k') NR rk') (gr r)) as Hself.
+      rewrite (extr_in (ext D' NS k') NR rk' (gr r) HgrNR) in Hself. unfold rk' in Hself.
+      rewrite Hgrinv in Hself. exact Hself.
+    + apply AtomSetFacts.not_mem_iff in EV.
+      rewrite (extr_out _ _ _ r) by (unfold s, gen in EV; simpl in EV; exact EV).
+      rewrite ext_drk.
+      destruct (List.in_dec Atom.eq_dec r Ngr) as [HIn|HNIn].
+      * assert (r `notin` S) by (pose proof (HgrNB r HIn); unfold Bav in H; fsetdec).
+        rewrite (proj2 (HS r H)). apply rkok_any.
+      * assert (Hgr : gr r = r) by (apply Hgrfix; [ exact EV | exact HNIn ]).
+        rewrite Hgr. eapply rkok_mono; [ exact Hmono | apply Hkr ].
   - (* the bound term is typed under the substitution run after the renaming *)
-    apply ctx_subst_precomp; [ exact Hginv | exact Hcs | exact HgfixG | exact HgrfixG ].
+    apply ctx_subst_precomp; [ exact Hginv | exact Hgrinv | exact Hcs | exact HgfixG | exact HgrfixG ].
   - (* tr_supp *)
     split; [ | split ].
     + intros a Ha. unfold A2 in Ha.
@@ -1065,7 +1187,8 @@ Proof.
     + intros r Hr. cbv beta. rewrite (HgrfixG r Hr). apply HcRt; exact Hr.
     + intros r Hr. cbv beta. rewrite (HgrfixG r Hr). apply HcRfr; exact Hr.
   - exact HEq.
-  - apply supp_ok_ext. exact HS'.
+  - rewrite Hap1. exact (proj1 (proj2 Hbridge)).
+  - exact (supp_ok_ext2 _ _ _ _ _ _ HS').
   - exact Hcaschinst.
   - (* the substituted scheme is the generalization over the target context *)
     rewrite Hap1. exact Hbridge.
@@ -1082,7 +1205,7 @@ Proof.
   - (* any context the substitution relates, inside [G], is related under the
        renamed substitution too *)
     intros H H' Hs HHt HHr.
-    apply ctx_subst_precomp; [ exact Hginv | exact Hs | | ].
+    apply ctx_subst_precomp; [ exact Hginv | exact Hgrinv | exact Hs | | ].
     + intros a Ha. apply HgfixG. apply HHt. exact Ha.
     + intros r Hr. apply HgrfixG. apply HHr. exact Hr.
   - intros a Ha. cbv beta. rewrite (HgfixG a Ha). reflexivity.
@@ -1093,31 +1216,38 @@ Qed.
    the generalization is over the context extended with a binding of [Tm], and
    the bound term and the body are still typed over [G] alone, so the facts
    about [G] come from [tsubst_gen_core]'s agreement outputs. *)
-Lemma tsubst_gen_pin : forall G Tm T1 k st sr G' A D D' S S',
-  supp_ok D S -> supp_ok D' S' -> kres D D' st ->
+Lemma tsubst_gen_pin : forall G Tm T1 k rk st sr G' A D D' S S',
+  supp_ok D S -> supp_ok D' S' -> kres D D' st -> rkres D D' sr ->
   ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
-  exists (s' : scheme) (st1 : tsub) (sr1 : rsub) (A1 N : atoms) (k' : sort_fn),
-    kres (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k) (ext D' N k') st1 /\
+  exists (s' : scheme) (st1 : tsub) (sr1 : rsub) (A1 N Nr : atoms) (k' : sort_fn) (rk' : rkind_fn),
+    kres (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k)
+              (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm G))) rk)
+         (extr (ext D' N k') Nr rk') st1 /\
+    rkres (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k)
+                (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm G))) rk)
+          (extr (ext D' N k') Nr rk') sr1 /\
     ctx_subst st1 sr1 G G' /\ tr_supp st1 sr1 A1 /\ tr_compat st1 sr1 G G' /\
     N [=] AtomSetImpl.diff (ftv_typ (ap_typ st1 sr1 T1))
                            (ftv_ctx (pin_ctx (ap_typ st sr Tm) G')) /\
-    supp_ok (ext D' N k') (S' `union` N) /\
-    sch_subst st sr (gen (pin_ctx Tm G) T1 k) s' /\
-    sch_equiv s' (gen (pin_ctx (ap_typ st sr Tm) G') (ap_typ st1 sr1 T1) k') /\
-    (forall x, tr_compat st sr ((x ~ gen (pin_ctx Tm G) T1 k) ++ G) ((x ~ s') ++ G')).
+    Nr [=] AtomSetImpl.diff (frv_typ (ap_typ st1 sr1 T1))
+                            (frv_ctx (pin_ctx (ap_typ st sr Tm) G')) /\
+    supp_ok (extr (ext D' N k') Nr rk') (S' `union` N `union` Nr) /\
+    sch_subst st sr (gen (pin_ctx Tm G) T1 k rk) s' /\
+    sch_equiv s' (gen (pin_ctx (ap_typ st sr Tm) G') (ap_typ st1 sr1 T1) k' rk') /\
+    (forall x, tr_compat st sr ((x ~ gen (pin_ctx Tm G) T1 k rk) ++ G) ((x ~ s') ++ G')).
 Proof.
-  intros G Tm T1 k st sr G' A D D' S S' HS HS' Hk Hcs Hsupp Hcompat.
+  intros G Tm T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat.
   pose proof (ctx_subst_cons st sr pin_name (sch_mono Tm) (sch_mono (ap_typ st sr Tm)) G G'
                 (sch_subst_mono st sr Tm) Hcs) as Hcsp.
   pose proof (tr_compat_cons_mono st sr G G' pin_name Tm Hcompat) as Hcp.
-  destruct (tsubst_gen_core (pin_ctx Tm G) T1 k st sr (pin_ctx (ap_typ st sr Tm) G') A D D' S S'
-              HS HS' Hk Hcsp Hsupp Hcp)
-    as [s' [st1 [sr1 [A1 [N [k' [Hk1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HS1 [Hsi [Hbr [Hcx [Hctx [Hagt Hagr]]]]]]]]]]]]]]]]].
+  destruct (tsubst_gen_core (pin_ctx Tm G) T1 k rk st sr (pin_ctx (ap_typ st sr Tm) G') A D D' S S'
+              HS HS' Hk Hkr Hcsp Hsupp Hcp)
+    as [s' [st1 [sr1 [A1 [N [Nr [k' [rk' [Hk1 [Hkr1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HNr [HS1 [Hsi [Hbr [Hcx [Hctx [Hagt Hagr]]]]]]]]]]]]]]]]]]]]].
   assert (HGp : ftv_ctx G [<=] ftv_ctx (pin_ctx Tm G)) by (rewrite ftv_pin_ctx; fsetdec).
   assert (HGpr : frv_ctx G [<=] frv_ctx (pin_ctx Tm G)) by (rewrite frv_pin_ctx; fsetdec).
-  exists s', st1, sr1, A1, N, k'.
-  refine (conj Hk1 (conj (Hctx G G' Hcs HGp HGpr) (conj Hsupp1 (conj _ (conj HN (conj HS1
-            (conj Hsi (conj Hbr _)))))))).
+  exists s', st1, sr1, A1, N, Nr, k', rk'.
+  refine (conj Hk1 (conj Hkr1 (conj (Hctx G G' Hcs HGp HGpr) (conj Hsupp1 (conj _ (conj HN (conj HNr (conj HS1
+            (conj Hsi (conj Hbr _)))))))))).
   - destruct Hcompat as [c1 [c2 [c3 c4]]].
     refine (conj _ (conj _ (conj _ _))).
     + intros a Ha. rewrite (Hagt a (HGp a Ha)). apply c1. exact Ha.
@@ -1127,8 +1257,8 @@ Proof.
   - intros x.
     destruct Hcompat as [c1 [c2 [c3 c4]]].
     destruct (Hcp) as [d1 [d2 [d3 d4]]].
-    pose proof (ftv_sch_gen_sub (pin_ctx Tm G) T1 k) as Hsubt.
-    pose proof (frv_sch_gen_sub (pin_ctx Tm G) T1 k) as Hsubr.
+    pose proof (ftv_sch_gen_sub (pin_ctx Tm G) T1 k rk) as Hsubt.
+    pose proof (frv_sch_gen_sub (pin_ctx Tm G) T1 k rk) as Hsubr.
     set (T1' := ap_typ st1 sr1 T1).
     assert (Hs't : forall z, z `in` ftv_typ T1' -> z `in` ftv_ctx (pin_ctx (ap_typ st sr Tm) G') ->
                      z `in` ftv_sch s').
@@ -1199,30 +1329,31 @@ Qed.
    named [IH], [IH1], [IH2] below. *)
 Lemma typing_tsubst_gen_mut :
   (forall D G e T, typing D G e T -> forall st sr G' D' A S S',
-      uniq G' -> supp_ok D S -> supp_ok D' S' -> kres D D' st ->
+      uniq G' -> supp_ok D S -> supp_ok D' S' -> kres D D' st -> rkres D D' sr ->
       ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
       typing D' G' e (ap_typ st sr T)) /\
   (forall D G fs R, field_typing D G fs R -> forall st sr G' D' A S S',
-      uniq G' -> supp_ok D S -> supp_ok D' S' -> kres D D' st ->
+      uniq G' -> supp_ok D S -> supp_ok D' S' -> kres D D' st -> rkres D D' sr ->
       ctx_subst st sr G G' -> tr_supp st sr A -> tr_compat st sr G G' ->
       field_typing D' G' fs (ap_row st sr R)).
 Proof.
   apply typing_field_mutind.
   - (* T_Var: the scheme in [G] has a matching scheme in [G'], and any instance
        of the first becomes an instance of the second. *)
-    intros D G x s T Hu Hb Hi st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+    intros D G x s T Hu Hb Hi st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     destruct (ctx_subst_binds _ _ _ _ _ _ Hcs Hb) as [s' [Hb' Hss]].
-    apply T_Var with (s := s'); auto. apply (Hss D D' Hk). exact Hi.
-  - intros D G n T Hu Hs st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+    apply T_Var with (s := s'); auto. apply (Hss D D' Hk Hkr). exact Hi.
+  - intros D G n T Hu Hs st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     apply T_Num; auto. eapply sat_ap; eauto.
-  - intros D G d Hu st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. apply T_Dec; auto.
-  - intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. apply T_True; auto.
-  - intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. apply T_False; auto.
+  - intros D G d Hu st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. apply T_Dec; auto.
+  - intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. apply T_True; auto.
+  - intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. apply T_False; auto.
   - (* T_Abs: the body is typed with the parameter added at [T1]. *)
-    intros L D G e T1 T2 Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    intros L D G e T1 T2 Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     apply T_Abs with (L := L `union` dom G'). intros x Hx.
     apply (IH x ltac:(fsetdec) st sr ((x ~ sch_mono (ap_typ st sr T1)) ++ G') D' A S S').
     + constructor; [ assumption | fsetdec ].
+    + assumption.
     + assumption.
     + assumption.
     + assumption.
@@ -1230,25 +1361,31 @@ Proof.
     + assumption.
     + apply tr_compat_cons_mono; assumption.
   - (* T_App: nothing is bound. *)
-    intros D G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+    intros D G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     simpl in *. eapply T_App; [ eapply IH1 | eapply IH2 ]; eauto.
   - (* T_Let: the renaming of the generalized variables is [tsubst_gen_core];
        here we rebuild the [let] around it. *)
-    intros L0 D G e1 e2 T1 T2 k Tm Hgv Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
-    destruct (tsubst_gen_pin G Tm T1 k st sr G' A D D' S S' HS HS' Hk Hcs Hsupp Hcompat)
-      as [s' [st1 [sr1 [A1 [N [k' [Hk1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HS1 [Hsi [Hbr Hcx]]]]]]]]]]]]]].
-    apply T_Let with (L := L0 `union` dom G') (T1 := ap_typ st1 sr1 T1) (k := k')
+    intros L0 D G e1 e2 T1 T2 k rk Tm Hgv Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
+    destruct (tsubst_gen_pin G Tm T1 k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat)
+      as [s' [st1 [sr1 [A1 [N [Nr [k' [rk' [Hk1 [Hkr1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HNr [HS1 [Hsi [Hbr Hcx]]]]]]]]]]]]]]]]]].
+    apply T_Let with (L := L0 `union` dom G') (T1 := ap_typ st1 sr1 T1) (k := k') (rk := rk')
       (Tm := ap_typ st sr Tm);
       [ assumption | | ].
     + eapply typing_pw.
-      * apply (IH1 st1 sr1 G' (ext D' N k') A1
-                 (S `union` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) (S' `union` N)
-                 Hu' (supp_ok_ext _ _ _ _ HS) HS1 Hk1 Hcs1 Hsupp1 Hcompat1).
-      * intros a. apply ext_set_eq. exact HN.
+      * apply (IH1 st1 sr1 G' (extr (ext D' N k') Nr rk') A1
+                 (S `union` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))
+                    `union` AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm G)))
+                 (S' `union` N `union` Nr)
+                 Hu' (supp_ok_ext2 _ _ _ _ _ _ HS) HS1 Hk1 Hkr1 Hcs1 Hsupp1 Hcompat1).
+      * apply denv_eq_trans with (D2 := extr (ext D' (AtomSetImpl.diff (ftv_typ (ap_typ st1 sr1 T1))
+                                         (ftv_ctx (pin_ctx (ap_typ st sr Tm) G'))) k') Nr rk').
+        -- apply extr_pw. apply ext_set_eq_d. exact HN.
+        -- apply extr_set_eq. exact HNr.
     + intros x Hx.
       apply typing_sch_equiv_ctx with (G := (x ~ s') ++ G').
       * apply (IH2 x ltac:(fsetdec) st sr ((x ~ s') ++ G') D' A S S').
         -- constructor; [ assumption | fsetdec ].
+        -- assumption.
         -- assumption.
         -- assumption.
         -- assumption.
@@ -1257,7 +1394,7 @@ Proof.
         -- apply Hcx.
       * apply ctx_equiv_cons; [ exact Hbr | apply ctx_equiv_refl ].
   - (* T_LetMono: the binding is monomorphic, so it is the function case. *)
-    intros L0 D G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+    intros L0 D G e1 e2 T1 T2 Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     apply T_LetMono with (L := L0 `union` dom G') (T1 := ap_typ st sr T1);
       [ eapply IH1; eauto | ].
     intros x Hx.
@@ -1266,29 +1403,36 @@ Proof.
     + assumption.
     + assumption.
     + assumption.
+    + assumption.
     + apply ctx_subst_cons; [ apply sch_subst_mono | assumption ].
     + assumption.
     + apply tr_compat_cons_mono; assumption.
   - (* T_Letrec: the members are typed with the group's record type [R]
        monomorphic, and the body with the group generalized like a [let]. *)
-    intros L0 D G fs e2 R T k Hfg Hfs IHfs Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
-    destruct (tsubst_gen_core G (typ_Record R) k st sr G' A D D' S S' HS HS' Hk Hcs Hsupp Hcompat)
-      as [s' [st1 [sr1 [A1 [N [k' [Hk1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HS1 [Hsi [Hbr [Hcx _]]]]]]]]]]]]]]].
-    apply T_Letrec with (L := L0 `union` dom G') (R := ap_row st1 sr1 R) (k := k');
+    intros L0 D G fs e2 R T k rk Hfg Hfs IHfs Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
+    destruct (tsubst_gen_core G (typ_Record R) k rk st sr G' A D D' S S' HS HS' Hk Hkr Hcs Hsupp Hcompat)
+      as [s' [st1 [sr1 [A1 [N [Nr [k' [rk' [Hk1 [Hkr1 [Hcs1 [Hsupp1 [Hcompat1 [HN [HNr [HS1 [Hsi [Hbr [Hcx _]]]]]]]]]]]]]]]]]]].
+    apply T_Letrec with (L := L0 `union` dom G') (R := ap_row st1 sr1 R) (k := k') (rk := rk');
       [ assumption | | ].
     + intros p Hp.
       eapply field_typing_pw.
       * apply (IHfs p ltac:(fsetdec) st1 sr1
-                 ((p ~ sch_mono (ap_typ st1 sr1 (typ_Record R))) ++ G') (ext D' N k') A1
-                 (S `union` AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)) (S' `union` N)).
+                 ((p ~ sch_mono (ap_typ st1 sr1 (typ_Record R))) ++ G') (extr (ext D' N k') Nr rk') A1
+                 (S `union` AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)
+                    `union` AtomSetImpl.diff (frv_typ (typ_Record R)) (frv_ctx G))
+                 (S' `union` N `union` Nr)).
         -- constructor; [ assumption | fsetdec ].
-        -- apply supp_ok_ext. exact HS.
+        -- apply supp_ok_ext2. exact HS.
         -- exact HS1.
         -- exact Hk1.
+        -- exact Hkr1.
         -- apply ctx_subst_cons; [ apply sch_subst_mono | assumption ].
         -- assumption.
         -- apply tr_compat_cons_mono; assumption.
-      * intros a. apply ext_set_eq. exact HN.
+      * apply denv_eq_trans with (D2 := extr (ext D' (AtomSetImpl.diff (ftv_typ (ap_typ st1 sr1 (typ_Record R)))
+                                         (ftv_ctx G')) k') Nr rk').
+        -- apply extr_pw. apply ext_set_eq_d. exact HN.
+        -- apply extr_set_eq. exact HNr.
     + intros p Hp.
       apply typing_sch_equiv_ctx with (G := (p ~ s') ++ G').
       * apply (IH2 p ltac:(fsetdec) st sr ((p ~ s') ++ G') D' A S S').
@@ -1296,60 +1440,65 @@ Proof.
         -- assumption.
         -- assumption.
         -- assumption.
+        -- assumption.
         -- apply ctx_subst_cons; [ exact Hsi | exact Hcs ].
         -- exact Hsupp.
         -- apply Hcx.
       * apply ctx_equiv_cons; [ exact Hbr | apply ctx_equiv_refl ].
-  - (* T_Record *) intros D G fs R Ht IH Hnm st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+  - (* T_Record *) intros D G fs R Ht IH Hnm st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     apply T_Record; [ eapply IH; eauto | exact Hnm ].
   - (* T_Obj: the receiver row, the literal's row and every method's type are substituted alike *)
-    intros D G fs R Rt Ht IH Hms st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    intros D G fs R Rt Ht IH Hms st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     pose proof (proj2 (proj2 Hsupp)) as Hl.
     apply T_Obj with (Rt := ap_row st sr Rt); [ eapply IH; eauto | ].
     rewrite <- (ap_row_tail_with st sr R Rt (field_typing_plain_spine _ _ _ _ Ht)).
     apply meths_shared_ap; assumption.
-  - (* T_Proj *) intros D G e l T R Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+  - (* T_Proj *) intros D G e l T R Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     eapply T_Proj. simpl in IH. eapply IH; eauto.
-  - (* T_Conv *) intros D G e T T' Ht IH Hte st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+  - (* T_Conv *) intros D G e T T' Ht IH Hte st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     eapply T_Conv; [ eapply IH; eauto | apply teq_ap; auto ].
-  - (* T_Unit *) intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl. apply T_Unit; auto.
-  - (* T_Str *) intros D G q Hu st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl. apply T_Str; auto.
+  - (* T_Unit *) intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl. apply T_Unit; auto.
+  - (* T_Str *) intros D G q Hu st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl. apply T_Str; auto.
   - (* T_If *)
-    intros D G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+    intros D G e1 e2 e3 T Ht1 IH1 Ht2 IH2 Ht3 IH3 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     simpl in *. eapply T_If; [ eapply IH1 | eapply IH2 | eapply IH3 ]; eauto.
   - (* T_ToFloat: the operand's sort carries over; [Float] is closed. *)
-    intros D G e A0 Ht IH Hs st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    intros D G e A0 Ht IH Hs st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     eapply T_ToFloat; [ eapply IH; eauto | eapply sat_ap; eauto ].
   - (* T_Bin: the signature is stable under a kind-respecting substitution. *)
-    intros D G e1 o e2 A0 B0 R0 Ht1 IH1 Ht2 IH2 Hs st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+    intros D G e1 o e2 A0 B0 R0 Ht1 IH1 Ht2 IH2 Hs st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     eapply T_Bin; [ eapply IH1; eauto | eapply IH2; eauto | eapply bin_sig_ap; eauto ].
   - (* T_Spread: the entry's types are substituted, its label is not. *)
-    intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    intros D G e1 l e2 P T R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     eapply T_Spread; [ eapply IH1; eauto | eapply IH2; eauto ].
+  - (* T_SpreadL: a row that lacks the label by its kind still lacks it after a
+       substitution that respects the kinds. *)
+    intros D G e1 l e2 T R Ht1 IH1 Hl Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
+    eapply T_SpreadL; [ eapply IH1; eauto | eapply rlacksD_ap; eassumption | eapply IH2; eauto ].
   - (* T_Restrict: [rm] is stable under substitution. *)
-    intros D G e l R0 T R Ht IH Hrm st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    intros D G e l R0 T R Ht IH Hrm st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     eapply T_Restrict; [ eapply IH; eauto | eapply rm_ap; eauto ].
   - (* T_Fold: the substitution commutes with unrolling because its images are closed *)
-    intros D G e B Hlc Hg Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    intros D G e B Hlc Hg Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     pose proof (proj2 (proj2 Hsupp)) as Hl.
     apply T_Fold; [ apply ap_lc; assumption | apply guarded_ap; assumption | ].
     pose proof (ap_open st sr B 0 (typ_Mu B) Hl) as E. simpl in E. rewrite <- E.
     eapply IH; eauto.
   - (* T_Unfold *)
-    intros D G e B Hlc Hg Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+    intros D G e B Hlc Hg Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     pose proof (proj2 (proj2 Hsupp)) as Hl.
     rewrite (ap_open st sr B 0 (typ_Mu B) Hl).
     apply T_Unfold; [ apply ap_lc; assumption | apply guarded_ap; assumption | ].
     eapply IH; eauto.
   - (* T_Con: the payload type depends on the parameters alone, and a
        substitution acts on the parameters. *)
-    intros D G w tg e Ts Hlt Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+    intros D G w tg e Ts Hlt Ht IH st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     rewrite ap_spine. apply T_Con; [ exact Hlt | ].
     rewrite <- ap_tag_payload. eapply IH; eauto.
   - (* T_Match: the arms bind the payload at its substituted type, as a
        function binds its parameter. *)
     intros L D G w Ts e ars T Ht IHe Hwf Harm IHarm Hdef IHdef
-      st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat.
+      st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat.
     apply T_Match with (L := L `union` dom G') (w := w) (Ts := map (ap_typ st sr) Ts).
     + rewrite <- ap_spine.
       change (typing D' G' e (ap_typ st sr (typ_Grp w (spine Ts)))).
@@ -1362,19 +1511,23 @@ Proof.
       * assumption.
       * assumption.
       * assumption.
+      * assumption.
       * apply ctx_subst_cons; [ apply sch_subst_mono | assumption ].
       * assumption.
       * apply tr_compat_cons_mono; assumption.
     + intros e0 Hd. eapply IHdef; eauto.
-  - intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl. apply FT_nil; auto.
-  - intros D G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+  - intros D G Hu st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl. apply FT_nil; auto.
+  - intros D G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     eapply FT_cons; [ eapply IH1 | eapply IH2 ]; eauto.
-  - intros D G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hcs Hsupp Hcompat. simpl.
+  - intros D G l e T fs R Ht1 IH1 Ht2 IH2 st sr G' D' A S S' Hu' HS HS' Hk Hkr Hcs Hsupp Hcompat. simpl.
     eapply FT_meth; [ eapply IH1 | eapply IH2 ]; eauto.
 Qed.
 
 Lemma kres_id : forall D, kres D D idt.
 Proof. intros D a. unfold idt. simpl. apply finer_refl. Qed.
+
+Lemma rkres_id : forall D, rkres D D idr.
+Proof. intros D r. unfold idr. apply rkok_self. Qed.
 
 (* L4 (weakening): inserting a middle block preserves typing -- the identity
    substitution into a larger context, via the general lemma.
@@ -1396,6 +1549,7 @@ Proof.
   - exact HS.
   - exact HS.
   - apply kres_id.
+  - apply rkres_id.
   - apply ctx_subst_weaken. intros x s Hb. apply binds_weaken; exact Hb.
   - split; [ intros a Ha; reflexivity | split; [ intros r Hr; reflexivity | apply lc_sub_id ] ].
   - unfold tr_compat. repeat split; intros a Ha.
@@ -1413,55 +1567,74 @@ Qed.
 
 (* A derivation moves between two kinding environments that agree on the
    variables the context and the type mention.  Any other variable the
-   derivation uses internally is replaced by [Int], which satisfies every
-   sort; it is only variables in the finite support of the source environment
-   that can carry a sort, so only those need replacing. *)
-Lemma typing_denv_agree : forall D0 D Sd0 Sd S0 G e T,
+   derivation uses internally is replaced by [Int] (a type variable) or by the
+   empty row (a row variable): [Int] satisfies every sort and the empty row
+   every kind.  Only variables in the finite support of the source environment
+   can carry a constraint, so only those need replacing. *)
+Lemma typing_denv_agree : forall D0 D Sd0 Sd ST SR G e T,
   typing D0 G e T -> supp_ok D0 Sd0 -> supp_ok D Sd ->
-  ftv_ctx G [<=] S0 -> ftv_typ T [<=] S0 ->
-  (forall a, a `in` S0 -> D a = D0 a) ->
+  ftv_ctx G [<=] ST -> ftv_typ T [<=] ST ->
+  frv_ctx G [<=] SR -> frv_typ T [<=] SR ->
+  (forall a, a `in` ST -> D a = D0 a) ->
+  (forall r, r `in` SR -> drk D r = drk D0 r) ->
   typing D G e T.
 Proof.
-  intros D0 D Sd0 Sd S0 G e T Hty HS0 HS HG HT Hag.
-  set (A := AtomSetImpl.diff Sd0 S0).
+  intros D0 D Sd0 Sd ST SR G e T Hty HS0 HS HG HT HGr HTr Hag Hagr.
+  set (A := AtomSetImpl.diff Sd0 ST).
+  set (AR := AtomSetImpl.diff Sd0 SR).
   set (st := fun a : typvar => if AtomSetImpl.mem a A then typ_Int else typ_Var a).
-  assert (Hst : forall a, a `in` S0 -> st a = typ_Var a).
+  set (sr := fun r : rowvar => if AtomSetImpl.mem r AR then row_Empty else row_Var r).
+  assert (Hst : forall a, a `in` ST -> st a = typ_Var a).
   { intros a Ha. unfold st. destruct (AtomSetImpl.mem a A) eqn:Em; [ | reflexivity ].
     apply AtomSetFacts.mem_iff in Em. unfold A in Em. apply AtomSetFacts.diff_iff in Em. tauto. }
-  assert (Heq : ap_typ st idr T = T).
+  assert (Hsr : forall r, r `in` SR -> sr r = row_Var r).
+  { intros r Hr. unfold sr. destruct (AtomSetImpl.mem r AR) eqn:Em; [ | reflexivity ].
+    apply AtomSetFacts.mem_iff in Em. unfold AR in Em. apply AtomSetFacts.diff_iff in Em. tauto. }
+  assert (Heq : ap_typ st sr T = T).
   { apply ap_typ_fix.
     - intros a Ha. apply Hst. apply HT. exact Ha.
-    - intros r Hr. reflexivity. }
-  assert (Hlcst : lc_sub st idr).
-  { split; [ | intros r; exact I ]. intros a. unfold st.
-    destruct (AtomSetImpl.mem a A); exact I. }
+    - intros r Hr. apply Hsr. apply HTr. exact Hr. }
+  assert (Hlcst : lc_sub st sr).
+  { split.
+    - intros a. unfold st. destruct (AtomSetImpl.mem a A); exact I.
+    - intros r. unfold sr. destruct (AtomSetImpl.mem r AR); exact I. }
   rewrite <- Heq.
-  apply (proj1 typing_tsubst_gen_mut D0 G e T Hty st idr G D A Sd0 Sd).
+  apply (proj1 typing_tsubst_gen_mut D0 G e T Hty st sr G D (A `union` AR) Sd0 Sd).
   - eapply typing_uniq; exact Hty.
   - exact HS0.
   - exact HS.
   - intros a. unfold st. destruct (AtomSetImpl.mem a A) eqn:Em.
     + simpl. exact I.
     + apply AtomSetFacts.not_mem_iff in Em. simpl.
-      destruct (AtomSetImpl.mem a S0) eqn:Em2.
+      destruct (AtomSetImpl.mem a ST) eqn:Em2.
       * apply AtomSetFacts.mem_iff in Em2. rewrite (Hag a Em2). apply finer_refl.
       * assert (Hnot : a `notin` Sd0).
         { intro Hc. apply Em. unfold A. apply AtomSetFacts.diff_iff. split; [ exact Hc | ].
           apply AtomSetFacts.not_mem_iff in Em2. exact Em2. }
-        rewrite (HS0 a Hnot). apply finer_any.
+        rewrite (proj1 (HS0 a Hnot)). apply finer_any.
+  - intros r. unfold sr. destruct (AtomSetImpl.mem r AR) eqn:Em.
+    + split; [ simpl; exact I | intros l _; reflexivity ].
+    + apply AtomSetFacts.not_mem_iff in Em.
+      destruct (AtomSetImpl.mem r SR) eqn:Em2.
+      * apply AtomSetFacts.mem_iff in Em2. rewrite <- (Hagr r Em2). apply rkok_self.
+      * assert (Hnot : r `notin` Sd0).
+        { intro Hc. apply Em. unfold AR. apply AtomSetFacts.diff_iff. split; [ exact Hc | ].
+          apply AtomSetFacts.not_mem_iff in Em2. exact Em2. }
+        rewrite (proj2 (HS0 r Hnot)). apply rkok_any.
   - apply ctx_subst_fix; [ | | exact Hlcst ].
     + intros a Ha. apply Hst. apply HG. exact Ha.
-    + intros r Hr. reflexivity.
+    + intros r Hr. apply Hsr. apply HGr. exact Hr.
   - split; [ | split ].
     + intros a Ha. unfold st. destruct (AtomSetImpl.mem a A) eqn:Em; [ | reflexivity ].
-      apply AtomSetFacts.mem_iff in Em. contradiction.
-    + intros r Hr. reflexivity.
+      apply AtomSetFacts.mem_iff in Em. exfalso. apply Ha. fsetdec.
+    + intros r Hr. unfold sr. destruct (AtomSetImpl.mem r AR) eqn:Em; [ | reflexivity ].
+      apply AtomSetFacts.mem_iff in Em. exfalso. apply Hr. fsetdec.
     + exact Hlcst.
   - unfold tr_compat. repeat split; intros a Ha.
     + rewrite (Hst a (HG a Ha)). simpl. fsetdec.
     + rewrite (Hst a (HG a Ha)). simpl. fsetdec.
-    + unfold idr; simpl. fsetdec.
-    + unfold idr; simpl. fsetdec.
+    + rewrite (Hsr a (HGr a Ha)). simpl. fsetdec.
+    + rewrite (Hsr a (HGr a Ha)). simpl. fsetdec.
 Qed.
 
 (* Every variable is [Any] in [d_any], so a substitution that fixes the
@@ -1475,9 +1648,10 @@ Proof.
   intros G e T st sr A Hty Hsupp Hfa Hfr.
   apply (proj1 typing_tsubst_gen_mut d_any G e T Hty st sr G d_any A {} {}).
   - eapply typing_uniq; exact Hty.
-  - intros a _. reflexivity.
-  - intros a _. reflexivity.
+  - intros a _. split; reflexivity.
+  - intros a _. split; reflexivity.
   - intros a. apply sat_any.
+  - intros r. apply rkok_any.
   - apply ctx_subst_fix; [ assumption | assumption | exact (proj2 (proj2 Hsupp)) ].
   - exact Hsupp.
   - unfold tr_compat. repeat split.
@@ -1489,24 +1663,30 @@ Qed.
 
 (* A value typed at the body of a generalization has every instance of the
    generalization.  The bound term is typed under the environment extended
-   with the sorts the scheme records; the instance is typed in an environment
-   that agrees with the ambient one on the context. *)
-Lemma typing_inst_gen : forall D0 D Sd0 Sd G P v T1 k W,
+   with the sorts and kinds the scheme records; the instance is typed in an
+   environment that agrees with the ambient one on the context. *)
+Lemma typing_inst_gen : forall D0 D Sd0 Sd G P v T1 k rk W,
   ftv_ctx G [<=] ftv_ctx P -> frv_ctx G [<=] frv_ctx P ->
-  typing (ext D0 (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx P)) k) G v T1 ->
-  inst D W (gen P T1 k) ->
+  typing (extr (ext D0 (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx P)) k)
+               (AtomSetImpl.diff (frv_typ T1) (frv_ctx P)) rk) G v T1 ->
+  inst D W (gen P T1 k rk) ->
   supp_ok D0 Sd0 -> supp_ok D Sd ->
-  (forall a, a `in` ftv_ctx G `union` ftv_sch (gen P T1 k) -> D a = D0 a) ->
+  (forall a, a `in` ftv_ctx G `union` ftv_sch (gen P T1 k rk) -> D a = D0 a) ->
+  (forall r, r `in` frv_ctx G `union` frv_sch (gen P T1 k rk) -> drk D r = drk D0 r) ->
   typing D G v W.
 Proof.
-  intros D0 D Sd0 Sd G P v T1 k W HGP HGPr Hv [st [sr [Hst [Hsr [HW [Hsat Hlcs]]]]]] HS0 HS Hag.
-  cbn [gen s_tq s_rq s_body s_sk] in Hst, Hsr, HW, Hsat.
+  intros D0 D Sd0 Sd G P v T1 k rk W HGP HGPr Hv [st [sr [Hst [Hsr [HW [Hsat [Hrks Hlcs]]]]]]] HS0 HS Hag Hagr.
+  cbn [gen s_tq s_rq s_body s_sk s_rk] in Hst, Hsr, HW, Hsat, Hrks.
   set (V := AtomSetImpl.diff (ftv_typ T1) (ftv_ctx P)) in *.
   set (Vr := AtomSetImpl.diff (frv_typ T1) (frv_ctx P)) in *.
-  set (A := AtomSetImpl.diff Sd0 (ftv_ctx G `union` ftv_sch (gen P T1 k))).
+  set (A := AtomSetImpl.diff Sd0 (ftv_ctx G `union` ftv_sch (gen P T1 k rk))).
+  set (AR := AtomSetImpl.diff Sd0 (frv_ctx G `union` frv_sch (gen P T1 k rk))).
   set (st' := fun a : typvar =>
         if AtomSetImpl.mem a V then st a
         else if AtomSetImpl.mem a A then typ_Int else typ_Var a).
+  set (sr' := fun r : rowvar =>
+        if AtomSetImpl.mem r Vr then sr r
+        else if AtomSetImpl.mem r AR then row_Empty else row_Var r).
   assert (Hst'G : forall a, a `in` ftv_ctx G -> st' a = typ_Var a).
   { intros a Ha. unfold st'.
     destruct (AtomSetImpl.mem a V) eqn:E1.
@@ -1515,55 +1695,89 @@ Proof.
     - destruct (AtomSetImpl.mem a A) eqn:E2; [ | reflexivity ].
       apply AtomSetFacts.mem_iff in E2. unfold A in E2. apply AtomSetFacts.diff_iff in E2.
       exfalso. apply (proj2 E2). apply AtomSetFacts.union_iff. left. exact Ha. }
-  assert (Hlc' : lc_sub st' sr).
-  { split; [ | exact (proj2 Hlcs) ]. intros a. unfold st'.
-    destruct (AtomSetImpl.mem a V); [ exact (proj1 Hlcs a) | ].
-    destruct (AtomSetImpl.mem a A); exact I. }
-  assert (HW' : W = ap_typ st' sr T1).
+  assert (Hsr'G : forall r, r `in` frv_ctx G -> sr' r = row_Var r).
+  { intros r Hr. unfold sr'.
+    destruct (AtomSetImpl.mem r Vr) eqn:E1.
+    - apply AtomSetFacts.mem_iff in E1. unfold Vr in E1. apply AtomSetFacts.diff_iff in E1.
+      exfalso. apply (proj2 E1). apply HGPr. exact Hr.
+    - destruct (AtomSetImpl.mem r AR) eqn:E2; [ | reflexivity ].
+      apply AtomSetFacts.mem_iff in E2. unfold AR in E2. apply AtomSetFacts.diff_iff in E2.
+      exfalso. apply (proj2 E2). apply AtomSetFacts.union_iff. left. exact Hr. }
+  assert (Hlc' : lc_sub st' sr').
+  { split.
+    - intros a. unfold st'.
+      destruct (AtomSetImpl.mem a V); [ exact (proj1 Hlcs a) | ].
+      destruct (AtomSetImpl.mem a A); exact I.
+    - intros r. unfold sr'.
+      destruct (AtomSetImpl.mem r Vr); [ exact (proj2 Hlcs r) | ].
+      destruct (AtomSetImpl.mem r AR); exact I. }
+  assert (HW' : W = ap_typ st' sr' T1).
   { rewrite HW. apply ap_typ_ext.
     - intros a Ha. unfold st'. destruct (AtomSetImpl.mem a V) eqn:E1; [ reflexivity | ].
       apply AtomSetFacts.not_mem_iff in E1.
-      assert (HaS : a `in` ftv_ctx G `union` ftv_sch (gen P T1 k)).
+      assert (HaS : a `in` ftv_ctx G `union` ftv_sch (gen P T1 k rk)).
       { apply AtomSetFacts.union_iff. right. unfold ftv_sch, gen; simpl.
         apply AtomSetFacts.diff_iff. split; [ exact Ha | exact E1 ]. }
       rewrite (Hst a ltac:(intro Hc; apply E1; exact Hc)).
       destruct (AtomSetImpl.mem a A) eqn:E2; [ | reflexivity ].
       apply AtomSetFacts.mem_iff in E2. unfold A in E2. apply AtomSetFacts.diff_iff in E2.
       exfalso. exact (proj2 E2 HaS).
-    - intros r Hr. reflexivity. }
+    - intros r Hr. unfold sr'. destruct (AtomSetImpl.mem r Vr) eqn:E1; [ reflexivity | ].
+      apply AtomSetFacts.not_mem_iff in E1.
+      assert (HrS : r `in` frv_ctx G `union` frv_sch (gen P T1 k rk)).
+      { apply AtomSetFacts.union_iff. right. unfold frv_sch, gen; simpl.
+        apply AtomSetFacts.diff_iff. split; [ exact Hr | exact E1 ]. }
+      rewrite (Hsr r ltac:(intro Hc; apply E1; exact Hc)).
+      destruct (AtomSetImpl.mem r AR) eqn:E2; [ | reflexivity ].
+      apply AtomSetFacts.mem_iff in E2. unfold AR in E2. apply AtomSetFacts.diff_iff in E2.
+      exfalso. exact (proj2 E2 HrS). }
   rewrite HW'.
-  apply (proj1 typing_tsubst_gen_mut _ G v T1 Hv st' sr G D (V `union` A `union` Vr)
-           (Sd0 `union` V) Sd).
+  apply (proj1 typing_tsubst_gen_mut _ G v T1 Hv st' sr' G D (V `union` A `union` Vr `union` AR)
+           (Sd0 `union` V `union` Vr) Sd).
   - eapply typing_uniq; exact Hv.
-  - apply supp_ok_ext. exact HS0.
+  - exact (supp_ok_ext2 _ _ _ _ _ _ HS0).
   - exact HS.
-  - intros a. unfold st'. destruct (AtomSetImpl.mem a V) eqn:E1.
+  - intros a. rewrite extr_dsort. unfold st'. destruct (AtomSetImpl.mem a V) eqn:E1.
     + apply AtomSetFacts.mem_iff in E1. rewrite (ext_in D0 V k a E1). apply Hsat. exact E1.
     + apply AtomSetFacts.not_mem_iff in E1. rewrite (ext_out D0 V k a E1).
       destruct (AtomSetImpl.mem a A) eqn:E2.
       * simpl. exact I.
       * apply AtomSetFacts.not_mem_iff in E2. simpl.
-        destruct (AtomSetProperties.In_dec a (ftv_ctx G `union` ftv_sch (gen P T1 k))) as [H|H].
+        destruct (AtomSetProperties.In_dec a (ftv_ctx G `union` ftv_sch (gen P T1 k rk))) as [H|H].
         -- rewrite (Hag a H). apply finer_refl.
         -- assert (Hnot : a `notin` Sd0).
            { intro Hc. apply E2. unfold A. apply AtomSetFacts.diff_iff. split; assumption. }
-           rewrite (HS0 a Hnot). apply finer_any.
+           rewrite (proj1 (HS0 a Hnot)). apply finer_any.
+  - intros r. unfold sr'. destruct (AtomSetImpl.mem r Vr) eqn:E1.
+    + apply AtomSetFacts.mem_iff in E1. rewrite (extr_in _ _ _ r E1). apply Hrks. exact E1.
+    + apply AtomSetFacts.not_mem_iff in E1. rewrite (extr_out _ _ _ r E1). rewrite ext_drk.
+      destruct (AtomSetImpl.mem r AR) eqn:E2.
+      * split; [ simpl; exact I | intros l _; reflexivity ].
+      * apply AtomSetFacts.not_mem_iff in E2.
+        destruct (AtomSetProperties.In_dec r (frv_ctx G `union` frv_sch (gen P T1 k rk))) as [H|H].
+        -- rewrite <- (Hagr r H). apply rkok_self.
+        -- assert (Hnot : r `notin` Sd0).
+           { intro Hc. apply E2. unfold AR. apply AtomSetFacts.diff_iff. split; assumption. }
+           rewrite (proj2 (HS0 r Hnot)). apply rkok_any.
   - apply ctx_subst_fix; [ | | exact Hlc' ].
     + intros a Ha. apply Hst'G. exact Ha.
-    + intros r Hr. apply Hsr. intro Hc. apply AtomSetFacts.diff_iff in Hc.
-      apply (proj2 Hc). apply HGPr. exact Hr.
+    + intros r Hr. apply Hsr'G. exact Hr.
   - split; [ | split; [ | exact Hlc' ] ].
     + intros a Ha. unfold st'.
       destruct (AtomSetImpl.mem a V) eqn:E1.
       * apply AtomSetFacts.mem_iff in E1. exfalso. apply Ha. fsetdec.
       * destruct (AtomSetImpl.mem a A) eqn:E2; [ | reflexivity ].
         apply AtomSetFacts.mem_iff in E2. exfalso. apply Ha. fsetdec.
-    + intros r Hr. apply Hsr. intro Hc. apply Hr. fsetdec.
+    + intros r Hr. unfold sr'.
+      destruct (AtomSetImpl.mem r Vr) eqn:E1.
+      * apply AtomSetFacts.mem_iff in E1. exfalso. apply Hr. fsetdec.
+      * destruct (AtomSetImpl.mem r AR) eqn:E2; [ | reflexivity ].
+        apply AtomSetFacts.mem_iff in E2. exfalso. apply Hr. fsetdec.
   - unfold tr_compat. repeat split; intros a Ha.
     + rewrite (Hst'G a Ha). simpl. fsetdec.
     + rewrite (Hst'G a Ha). simpl. fsetdec.
-    + rewrite (Hsr a ltac:(intro Hc; apply AtomSetFacts.diff_iff in Hc; apply (proj2 Hc); apply HGPr; exact Ha)). simpl. fsetdec.
-    + rewrite (Hsr a ltac:(intro Hc; apply AtomSetFacts.diff_iff in Hc; apply (proj2 Hc); apply HGPr; exact Ha)). simpl. fsetdec.
+    + rewrite (Hsr'G a Ha). simpl. fsetdec.
+    + rewrite (Hsr'G a Ha). simpl. fsetdec.
 Qed.
 
 (* ================================================================== *)
@@ -1593,10 +1807,20 @@ Lemma ftv_ctx_mid_pin : forall Tm G2 x s G1,
   ftv_ctx (pin_ctx Tm (G2 ++ G1)) [<=] ftv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)).
 Proof. intros. rewrite !ftv_pin_ctx, !ftv_ctx_app. simpl. fsetdec. Qed.
 
+Lemma frv_ctx_mid : forall G2 x s G1,
+  frv_ctx (G2 ++ G1) [<=] frv_ctx (G2 ++ (x ~ s) ++ G1).
+Proof. intros. rewrite !frv_ctx_app. simpl. fsetdec. Qed.
+
+Lemma frv_ctx_mid_pin : forall Tm G2 x s G1,
+  frv_ctx (pin_ctx Tm (G2 ++ G1)) [<=] frv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)).
+Proof. intros. rewrite !frv_pin_ctx, !frv_ctx_app. simpl. fsetdec. Qed.
+
 Lemma typing_subst_gen_mut : forall x s u G1 (Agree : denv -> Prop),
   is_gen_value u = true -> lc u ->
   (forall D V k, (forall a, a `in` V -> a `notin` ftv_ctx G1 `union` ftv_sch s) ->
      Agree D -> Agree (ext D V k)) ->
+  (forall D V rk, (forall r, r `in` V -> r `notin` frv_ctx G1 `union` frv_sch s) ->
+     Agree D -> Agree (extr D V rk)) ->
   (forall D Sd T, supp_ok D Sd -> Agree D -> inst D T s -> typing D G1 u T) ->
   (forall D Gm e T, typing D Gm e T -> forall Sd, supp_ok D Sd -> Agree D ->
      forall G2, Gm = G2 ++ (x ~ s) ++ G1 ->
@@ -1605,7 +1829,7 @@ Lemma typing_subst_gen_mut : forall x s u G1 (Agree : denv -> Prop),
      forall G2, Gm = G2 ++ (x ~ s) ++ G1 ->
      field_typing D (G2 ++ G1) (subst_fields u x fs) R).
 Proof.
-  intros x s u G1 Agree Hgu Hlc Hext Hinst.
+  intros x s u G1 Agree Hgu Hlc Hext Hextr Hinst.
   (* the generalizing binders only see variables the whole context mentions *)
   assert (HV : forall G2 T V, V = AtomSetImpl.diff (ftv_typ T) (ftv_ctx (G2 ++ (x ~ s) ++ G1)) ->
                 forall a, a `in` V -> a `notin` ftv_ctx G1 `union` ftv_sch s).
@@ -1616,6 +1840,15 @@ Proof.
             forall a, a `in` V -> a `notin` ftv_ctx G1 `union` ftv_sch s).
   { intros Tm G2 T V HVe a Ha. subst V. apply AtomSetFacts.diff_iff in Ha as [_ Hn].
     rewrite ftv_pin_ctx, ftv_ctx_app in Hn. simpl in Hn. fsetdec. }
+  assert (HVr : forall G2 T V, V = AtomSetImpl.diff (frv_typ T) (frv_ctx (G2 ++ (x ~ s) ++ G1)) ->
+                forall r, r `in` V -> r `notin` frv_ctx G1 `union` frv_sch s).
+  { intros G2 T V HVe r Hr. subst V. apply AtomSetFacts.diff_iff in Hr as [_ Hn].
+    rewrite frv_ctx_app in Hn. simpl in Hn. fsetdec. }
+  assert (HVrp : forall Tm G2 T V,
+            V = AtomSetImpl.diff (frv_typ T) (frv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1))) ->
+            forall r, r `in` V -> r `notin` frv_ctx G1 `union` frv_sch s).
+  { intros Tm G2 T V HVe r Hr. subst V. apply AtomSetFacts.diff_iff in Hr as [_ Hn].
+    rewrite frv_pin_ctx, frv_ctx_app in Hn. simpl in Hn. fsetdec. }
   apply typing_field_mutind.
   - (* T_Var *) intros D G y s0 T Huq Hb Hi Sd HSd Hag G2 Heq; subst.
     destruct (y == x) as [Hx|Hx].
@@ -1641,23 +1874,31 @@ Proof.
   - (* T_App *) intros D G e1 e2 T1 T2 Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl. eapply T_App.
     + apply (IH1 Sd HSd Hag G2); reflexivity.
     + apply (IH2 Sd HSd Hag G2); reflexivity.
-  - (* T_Let *) intros L D G e1 e2 T1 T2 k Tm Hgv Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
+  - (* T_Let *) intros L D G e1 e2 T1 T2 k rk Tm Hgv Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
     set (V := AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)))).
+    set (Vr := AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)))).
     apply T_Let with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (T1 := T1)
-      (k := kup D V k) (Tm := Tm).
+      (k := kup D V k) (rk := rkup D Vr rk) (Tm := Tm).
     + apply is_gen_subst; assumption.
     + eapply typing_pw.
-      * apply (IH1 (Sd `union` V) (supp_ok_ext _ _ _ _ HSd)
-                 (Hext D V k (HVp Tm G2 T1 V eq_refl) Hag) G2); reflexivity.
-      * intros a. apply ext_kup. intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
-        apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
-        intro Hd. apply Hc. apply ftv_ctx_mid_pin. exact Hd.
+      * apply (IH1 (Sd `union` V `union` Vr) (supp_ok_ext2 _ _ _ _ _ _ HSd)
+                 (Hextr _ Vr rk (HVrp Tm G2 T1 Vr eq_refl) (Hext D V k (HVp Tm G2 T1 V eq_refl) Hag)) G2);
+          reflexivity.
+      * apply denv_eq_trans with (D2 := extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm (G2 ++ G1))))
+                                         (kup D V k)) Vr rk).
+        -- apply extr_pw. apply ext_kup_d. intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
+           apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
+           intro Hd. apply Hc. apply ftv_ctx_mid_pin. exact Hd.
+        -- apply extr_rkup; [ intros; reflexivity | ].
+           intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
+           apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
+           intro Hd. apply Hc. apply frv_ctx_mid_pin. exact Hd.
     + intros x0 Hx0.
       rewrite <- (subst_open_var e2 u x x0) by (first [ fsetdec | exact Hlc ]).
       eapply typing_ftv_mono.
-      * rewrite_env (((x0 ~ gen (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)) T1 k) ++ G2) ++ G1).
+      * rewrite_env (((x0 ~ gen (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)) T1 k rk) ++ G2) ++ G1).
         apply (IH2 x0 ltac:(fsetdec) Sd HSd Hag
-                 ((x0 ~ gen (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)) T1 k) ++ G2)).
+                 ((x0 ~ gen (pin_ctx Tm (G2 ++ (x ~ s) ++ G1)) T1 k rk) ++ G2)).
         simpl_alist. reflexivity.
       * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
         apply gen_more_gen; rewrite ?ftv_pin_ctx, ?frv_pin_ctx, ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
@@ -1668,27 +1909,35 @@ Proof.
       rewrite <- (subst_open_var e2 u x x0) by (first [ fsetdec | exact Hlc ]).
       rewrite_env (((x0 ~ sch_mono T1) ++ G2) ++ G1).
       apply (IH2 x0 ltac:(fsetdec) Sd HSd Hag ((x0 ~ sch_mono T1) ++ G2)). simpl_alist. reflexivity.
-  - (* T_Letrec *) intros L D G fs e2 R T k Hfg Hfs IHfs Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
+  - (* T_Letrec *) intros L D G fs e2 R T k rk Hfg Hfs IHfs Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
     set (V := AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx (G2 ++ (x ~ s) ++ G1))).
+    set (Vr := AtomSetImpl.diff (frv_typ (typ_Record R)) (frv_ctx (G2 ++ (x ~ s) ++ G1))).
     apply T_Letrec with (L := L `union` dom (G2 ++ G1) `union` {{x}} `union` fv_exp u) (R := R)
-      (k := kup D V k).
+      (k := kup D V k) (rk := rkup D Vr rk).
     + apply fn_group_subst; assumption.
     + intros p Hp.
       rewrite <- (subst_open_fields_var fs u x p) by (first [ fsetdec | exact Hlc ]).
       eapply field_typing_pw.
       * rewrite_env (((p ~ sch_mono (typ_Record R)) ++ G2) ++ G1).
-        apply (IHfs p ltac:(fsetdec) (Sd `union` V) (supp_ok_ext _ _ _ _ HSd)
-                 (Hext D V k (HV G2 (typ_Record R) V eq_refl) Hag)
+        apply (IHfs p ltac:(fsetdec) (Sd `union` V `union` Vr) (supp_ok_ext2 _ _ _ _ _ _ HSd)
+                 (Hextr _ Vr rk (HVr G2 (typ_Record R) Vr eq_refl)
+                    (Hext D V k (HV G2 (typ_Record R) V eq_refl) Hag))
                  ((p ~ sch_mono (typ_Record R)) ++ G2)). simpl_alist. reflexivity.
-      * intros a. apply ext_kup. intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
-        apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
-        intro Hd. apply Hc. apply ftv_ctx_mid. exact Hd.
+      * apply denv_eq_trans with (D2 := extr (ext D (AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx (G2 ++ G1)))
+                                         (kup D V k)) Vr rk).
+        -- apply extr_pw. apply ext_kup_d. intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
+           apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
+           intro Hd. apply Hc. apply ftv_ctx_mid. exact Hd.
+        -- apply extr_rkup; [ intros; reflexivity | ].
+           intros b Hb. apply AtomSetFacts.diff_iff in Hb as [Hb Hc].
+           apply AtomSetFacts.diff_iff. split; [ exact Hb | ].
+           intro Hd. apply Hc. apply frv_ctx_mid. exact Hd.
     + intros p Hp.
       rewrite <- (subst_open_var e2 u x p) by (first [ fsetdec | exact Hlc ]).
       eapply typing_ftv_mono.
-      * rewrite_env (((p ~ gen (G2 ++ (x ~ s) ++ G1) (typ_Record R) k) ++ G2) ++ G1).
+      * rewrite_env (((p ~ gen (G2 ++ (x ~ s) ++ G1) (typ_Record R) k rk) ++ G2) ++ G1).
         apply (IH2 p ltac:(fsetdec) Sd HSd Hag
-                 ((p ~ gen (G2 ++ (x ~ s) ++ G1) (typ_Record R) k) ++ G2)).
+                 ((p ~ gen (G2 ++ (x ~ s) ++ G1) (typ_Record R) k rk) ++ G2)).
         simpl_alist. reflexivity.
       * simpl_alist. apply ctx_more_gen_cons; [ | apply ctx_more_gen_refl ].
         apply gen_more_gen; rewrite ?ftv_ctx_app, ?frv_ctx_app; simpl; fsetdec.
@@ -1711,6 +1960,8 @@ Proof.
     eapply T_Bin; [ apply (IH1 Sd HSd Hag G2) | apply (IH2 Sd HSd Hag G2) | exact Hs ]; reflexivity.
   - (* T_Spread *) intros D G e1 l e2 P T R Hr1 IH1 Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
     eapply T_Spread; [ apply (IH1 Sd HSd Hag G2) | apply (IH2 Sd HSd Hag G2) ]; reflexivity.
+  - (* T_SpreadL *) intros D G e1 l e2 T R Hr1 IH1 Hl Hr2 IH2 Sd HSd Hag G2 Heq; subst. simpl.
+    eapply T_SpreadL; [ apply (IH1 Sd HSd Hag G2) | exact Hl | apply (IH2 Sd HSd Hag G2) ]; reflexivity.
   - (* T_Restrict *) intros D G e l R0 T R Hr IH Hrm Sd HSd Hag G2 Heq; subst. simpl.
     eapply T_Restrict; [ apply (IH Sd HSd Hag G2); reflexivity | exact Hrm ].
   - (* T_Fold *) intros D G e B Hlc0 Hg Hr IH Sd HSd Hag G2 Heq; subst. simpl.
@@ -1756,15 +2007,24 @@ Lemma typing_subst : forall D Sd G x U e T u,
 Proof.
   intros D Sd G x U e T u HS Hty Hgu Hu.
   set (S0 := ftv_ctx G `union` ftv_sch (sch_mono U)).
+  set (SR := frv_ctx G `union` frv_sch (sch_mono U)).
   refine (proj1 (typing_subst_gen_mut x (sch_mono U) u G
-                   (fun D' => forall a, a `in` S0 -> D' a = D a)
-                   Hgu (typing_regular _ _ _ _ Hu) _ _) D _ e T Hty Sd HS _ nil eq_refl).
-  - intros D' V k Hv Hag a Ha. rewrite ext_out; [ apply Hag; exact Ha | intro Hav; exact (Hv a Hav Ha) ].
-  - intros D' Sd' T' HS' Hag Hi. apply inst_mono_eq in Hi. subst T'.
-    eapply typing_denv_agree with (D0 := D) (Sd0 := Sd) (S0 := S0); [ exact Hu | exact HS | exact HS' | | | exact Hag ].
+                   (fun D' => (forall a, a `in` S0 -> D' a = D a) /\ (forall r, r `in` SR -> drk D' r = drk D r))
+                   Hgu (typing_regular _ _ _ _ Hu) _ _ _) D _ e T Hty Sd HS _ nil eq_refl).
+  - intros D' V k Hv [Hag Hagr]. split.
+    + intros a Ha. rewrite ext_out; [ apply Hag; exact Ha | intro Hav; exact (Hv a Hav Ha) ].
+    + intros r Hr. rewrite ext_drk. apply Hagr. exact Hr.
+  - intros D' V rk Hv [Hag Hagr]. split.
+    + intros a Ha. rewrite extr_dsort. apply Hag. exact Ha.
+    + intros r Hr. rewrite extr_out; [ apply Hagr; exact Hr | intro Hrv; exact (Hv r Hrv Hr) ].
+  - intros D' Sd' T' HS' [Hag Hagr] Hi. apply inst_mono_eq in Hi. subst T'.
+    eapply typing_denv_agree with (D0 := D) (Sd0 := Sd) (ST := S0) (SR := SR);
+      [ exact Hu | exact HS | exact HS' | | | | | exact Hag | exact Hagr ].
     + unfold S0. fsetdec.
     + unfold S0. rewrite ftv_sch_mono. fsetdec.
-  - intros a Ha. reflexivity.
+    + unfold SR. fsetdec.
+    + unfold SR. rewrite frv_sch_mono. fsetdec.
+  - split; intros; reflexivity.
 Qed.
 
 Lemma field_typing_subst : forall D Sd G x U fs R u,
@@ -1776,40 +2036,56 @@ Lemma field_typing_subst : forall D Sd G x U fs R u,
 Proof.
   intros D Sd G x U fs R u HS Hty Hgu Hu.
   set (S0 := ftv_ctx G `union` ftv_sch (sch_mono U)).
+  set (SR := frv_ctx G `union` frv_sch (sch_mono U)).
   refine (proj2 (typing_subst_gen_mut x (sch_mono U) u G
-                   (fun D' => forall a, a `in` S0 -> D' a = D a)
-                   Hgu (typing_regular _ _ _ _ Hu) _ _) D _ fs R Hty Sd HS _ nil eq_refl).
-  - intros D' V k Hv Hag a Ha. rewrite ext_out; [ apply Hag; exact Ha | intro Hav; exact (Hv a Hav Ha) ].
-  - intros D' Sd' T' HS' Hag Hi. apply inst_mono_eq in Hi. subst T'.
-    eapply typing_denv_agree with (D0 := D) (Sd0 := Sd) (S0 := S0); [ exact Hu | exact HS | exact HS' | | | exact Hag ].
+                   (fun D' => (forall a, a `in` S0 -> D' a = D a) /\ (forall r, r `in` SR -> drk D' r = drk D r))
+                   Hgu (typing_regular _ _ _ _ Hu) _ _ _) D _ fs R Hty Sd HS _ nil eq_refl).
+  - intros D' V k Hv [Hag Hagr]. split.
+    + intros a Ha. rewrite ext_out; [ apply Hag; exact Ha | intro Hav; exact (Hv a Hav Ha) ].
+    + intros r Hr. rewrite ext_drk. apply Hagr. exact Hr.
+  - intros D' V rk Hv [Hag Hagr]. split.
+    + intros a Ha. rewrite extr_dsort. apply Hag. exact Ha.
+    + intros r Hr. rewrite extr_out; [ apply Hagr; exact Hr | intro Hrv; exact (Hv r Hrv Hr) ].
+  - intros D' Sd' T' HS' [Hag Hagr] Hi. apply inst_mono_eq in Hi. subst T'.
+    eapply typing_denv_agree with (D0 := D) (Sd0 := Sd) (ST := S0) (SR := SR);
+      [ exact Hu | exact HS | exact HS' | | | | | exact Hag | exact Hagr ].
     + unfold S0. fsetdec.
     + unfold S0. rewrite ftv_sch_mono. fsetdec.
-  - intros a Ha. reflexivity.
+    + unfold SR. fsetdec.
+    + unfold SR. rewrite frv_sch_mono. fsetdec.
+  - split; intros; reflexivity.
 Qed.
 
 (* L6b: a [let]-bound name is replaced by its value.  The bound term was typed
-   under the environment extended with the sorts the scheme records, and every
-   instance of the scheme is typed through [typing_inst_gen]. *)
-Lemma typing_subst_poly : forall D Sd G P x T1 k e T2 v,
+   under the environment extended with the sorts and kinds the scheme records,
+   and every instance of the scheme is typed through [typing_inst_gen]. *)
+Lemma typing_subst_poly : forall D Sd G P x T1 k rk e T2 v,
   ftv_ctx G [<=] ftv_ctx P -> frv_ctx G [<=] frv_ctx P ->
   supp_ok D Sd ->
-  typing D ((x ~ gen P T1 k) ++ G) e T2 ->
+  typing D ((x ~ gen P T1 k rk) ++ G) e T2 ->
   is_gen_value v = true ->
-  typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx P)) k) G v T1 ->
+  typing (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx P)) k)
+               (AtomSetImpl.diff (frv_typ T1) (frv_ctx P)) rk) G v T1 ->
   typing D G (subst_exp v x e) T2.
 Proof.
-  intros D Sd G P x T1 k e T2 v HGP HGPr HS Hty Hgv Hv.
-  set (S0 := ftv_ctx G `union` ftv_sch (gen P T1 k)).
-  refine (proj1 (typing_subst_gen_mut x (gen P T1 k) v G
-                   (fun D' => forall a, a `in` S0 -> D' a = D a)
-                   Hgv (typing_regular _ _ _ _ Hv) _ _) D _ e T2 Hty Sd HS _ nil eq_refl).
-  - intros D' V k' Hvv Hag a Ha. rewrite ext_out; [ apply Hag; exact Ha | intro Hav; exact (Hvv a Hav Ha) ].
-  - intros D' Sd' T' HS' Hag Hi.
+  intros D Sd G P x T1 k rk e T2 v HGP HGPr HS Hty Hgv Hv.
+  set (S0 := ftv_ctx G `union` ftv_sch (gen P T1 k rk)).
+  set (SR := frv_ctx G `union` frv_sch (gen P T1 k rk)).
+  refine (proj1 (typing_subst_gen_mut x (gen P T1 k rk) v G
+                   (fun D' => (forall a, a `in` S0 -> D' a = D a) /\ (forall r, r `in` SR -> drk D' r = drk D r))
+                   Hgv (typing_regular _ _ _ _ Hv) _ _ _) D _ e T2 Hty Sd HS _ nil eq_refl).
+  - intros D' V k' Hvv [Hag Hagr]. split.
+    + intros a Ha. rewrite ext_out; [ apply Hag; exact Ha | intro Hav; exact (Hvv a Hav Ha) ].
+    + intros r Hr. rewrite ext_drk. apply Hagr. exact Hr.
+  - intros D' V rk' Hvv [Hag Hagr]. split.
+    + intros a Ha. rewrite extr_dsort. apply Hag. exact Ha.
+    + intros r Hr. rewrite extr_out; [ apply Hagr; exact Hr | intro Hrv; exact (Hvv r Hrv Hr) ].
+  - intros D' Sd' T' HS' [Hag Hagr] Hi.
     eapply typing_inst_gen with (D0 := D) (Sd0 := Sd) (P := P);
-      [ exact HGP | exact HGPr | exact Hv | exact Hi | exact HS | exact HS' | ].
-    intros a Ha.
-    apply Hag. unfold S0. fsetdec.
-  - intros a Ha. reflexivity.
+      [ exact HGP | exact HGPr | exact Hv | exact Hi | exact HS | exact HS' | | ].
+    + intros a Ha. apply Hag. unfold S0. fsetdec.
+    + intros r Hr. apply Hagr. unfold SR. fsetdec.
+  - split; intros; reflexivity.
 Qed.
 
 (* The result of a comparison of two literals of one base type is a boolean. *)
@@ -1825,8 +2101,13 @@ Proof.
   - eapply teq_trans; [ apply IHtyping; exact He | assumption ].
 Qed.
 
-Lemma ext_idem : forall D V k a, ext (ext D V k) V k a = ext D V k a.
-Proof. intros. unfold ext. destruct (AtomSetImpl.mem a V); reflexivity. Qed.
+Lemma ext_idem_d : forall D V k Vr rk,
+  denv_eq (extr (ext (extr (ext D V k) Vr rk) V k) Vr rk) (extr (ext D V k) Vr rk).
+Proof.
+  intros D V k Vr rk. split.
+  - intros a. unfold ext, extr. simpl. destruct (AtomSetImpl.mem a V); reflexivity.
+  - intros r. unfold ext, extr. simpl. destruct (AtomSetImpl.mem r Vr); reflexivity.
+Qed.
 
 (* An operator's result has the type its signature gives.  Pairing each way
    the operator can compute ([bin_step]) with each signature, almost every pair
@@ -2005,7 +2286,7 @@ Proof.
     assert (HxL : x `notin` L) by fsetdec.
     assert (Hxe : x `notin` fv_exp e2) by fsetdec.
     assert (Hopen : typing D G (subst_exp v x (open_exp_wrt_exp e2 (e_fvar_f x))) T2).
-    { destruct Hty1 as [[_ [k [Tm [Hty1 Hbody]]]] | [Hty1 Hbody]].
+    { destruct Hty1 as [[_ [k [rk [Tm [Hty1 Hbody]]]]] | [Hty1 Hbody]].
       - eapply typing_subst_poly with (P := pin_ctx Tm G);
           [ rewrite ftv_pin_ctx; fsetdec | rewrite frv_pin_ctx; fsetdec | exact HS
           | apply Hbody; exact HxL | apply value_gen; exact Hv | exact Hty1 ].
@@ -2017,10 +2298,10 @@ Proof.
        environment, which is still [Any] outside a finite set. *)
     intros e1 e1' e2 Hstep IH D S G T HS Hty.
     apply let_inv in Hty. destruct Hty as [L [T1 [T2 [Hty1 Hteq]]]].
-    destruct Hty1 as [[Hgv [k [Tm [Hty1 Hbody]]]] | [Hty1 Hbody]].
-    + eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1) (k := k) (Tm := Tm);
+    destruct Hty1 as [[Hgv [k [rk [Tm [Hty1 Hbody]]]]] | [Hty1 Hbody]].
+    + eapply T_Conv; [ eapply T_Let with (L := L) (T1 := T1) (k := k) (rk := rk) (Tm := Tm);
                        [ eapply step_gen; eassumption
-                       | eapply IH; [ apply supp_ok_ext; exact HS | exact Hty1 ]
+                       | eapply IH; [ apply supp_ok_ext2; exact HS | exact Hty1 ]
                        | exact Hbody ]
                      | exact Hteq ].
     + eapply T_Conv; [ eapply T_LetMono with (L := L) (T1 := T1);
@@ -2034,8 +2315,9 @@ Proof.
        and substituting it for the name in the body is the polymorphic
        substitution lemma. *)
     intros fs e2 Hfg D S G T HS Hty.
-    destruct (letrec_inv _ _ _ _ _ Hty) as [L [R [T2 [k [Hfg' [Hfs [Hbody Hteq]]]]]]].
+    destruct (letrec_inv _ _ _ _ _ Hty) as [L [R [T2 [k [rk [Hfg' [Hfs [Hbody Hteq]]]]]]]].
     set (V := AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)).
+    set (Vr := AtomSetImpl.diff (frv_typ (typ_Record R)) (frv_ctx G)).
     pick fresh p for (L \u fv_exp e2 \u fv_fields fs).
     assert (HpL : p `notin` L) by fsetdec.
     assert (Hpe : p `notin` fv_exp e2) by fsetdec.
@@ -2043,30 +2325,34 @@ Proof.
     assert (Hu : uniq G).
     { pose proof (proj2 typing_uniq_mut _ _ _ _ (Hfs p HpL)) as Hup.
       eapply uniq_cons_1; exact Hup. }
-    assert (HSV : supp_ok (ext D V k) (S `union` V)) by (apply supp_ok_ext; exact HS).
-    assert (Hgrp : typing (ext D V k) G (e_letrec fs (e_fvar_b 0)) (typ_Record R)).
-    { apply T_Letrec with (L := L) (R := R) (k := k); [ exact Hfg' | | ].
+    assert (HSV : supp_ok (extr (ext D V k) Vr rk) (S `union` V `union` Vr))
+      by (apply supp_ok_ext2; exact HS).
+    assert (Hgrp : typing (extr (ext D V k) Vr rk) G (e_letrec fs (e_fvar_b 0)) (typ_Record R)).
+    { apply T_Letrec with (L := L) (R := R) (k := k) (rk := rk); [ exact Hfg' | | ].
       - intros q Hq. eapply field_typing_pw; [ exact (Hfs q Hq) | ].
-        intros a. symmetry. apply ext_idem.
+        apply denv_eq_sym. apply ext_idem_d.
       - intros q Hq. unfold open_exp_wrt_exp. cbn [open_exp_wrt_exp_rec].
-        apply T_Var with (s := gen G (typ_Record R) k).
+        apply T_Var with (s := gen G (typ_Record R) k rk).
         + pose proof (proj2 typing_uniq_mut _ _ _ _ (Hfs q Hq)) as Huq.
           apply uniq_cons_3; [ eapply uniq_cons_1; exact Huq | eapply uniq_cons_2; exact Huq ].
         + apply binds_cons_2; reflexivity.
-        + exists idt, idr. split; [ | split; [ | split; [ | split ] ] ].
+        + exists idt, idr. split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
           * intros a _. reflexivity.
           * intros r _. reflexivity.
           * symmetry. apply ap_typ_pointwise_id; reflexivity.
           * intros a Ha. cbn [gen s_tq s_sk] in Ha |- *. unfold idt. cbn [sat].
-            rewrite (ext_in D V k a Ha). apply finer_refl.
+            rewrite extr_dsort. rewrite (ext_in D V k a Ha). apply finer_refl.
+          * intros r Hr. cbn [gen s_rq s_rk] in Hr |- *. unfold idr.
+            pose proof (rkok_self (extr (ext D V k) Vr rk) r) as Hself.
+            rewrite (extr_in _ _ _ r Hr) in Hself. exact Hself.
           * apply lc_sub_id. }
     assert (Hgengrp : is_gen_value (e_letrec fs (e_fvar_b 0)) = true).
     { simpl. rewrite (fn_group_gen _ Hfg). reflexivity. }
-    assert (Hmem : field_typing (ext D V k) G
+    assert (Hmem : field_typing (extr (ext D V k) Vr rk) G
               (subst_fields (e_letrec fs (e_fvar_b 0)) p (open_fields_wrt_exp fs (e_fvar_f p))) R)
       by (eapply field_typing_subst; [ exact HSV | apply Hfs; exact HpL | exact Hgengrp | exact Hgrp ]).
     rewrite <- subst_intro_fields in Hmem by exact Hpf.
-    assert (Hrec : typing (ext D V k) G
+    assert (Hrec : typing (extr (ext D V k) Vr rk) G
               (e_rec (open_fields_wrt_exp fs (e_letrec fs (e_fvar_b 0)))) (typ_Record R))
       by (apply T_Record; [ exact Hmem | ];
           rewrite (no_meth_marks _ fs); [ apply fn_group_no_meth; exact Hfg | ];
@@ -2150,20 +2436,25 @@ Proof.
     eapply T_Conv; [ apply T_Dec; exact Hu | exact Hteq ].
   - (* st_spread1: the base of a spread stepped. *)
     intros e1 e1' l e2 Hstep IH D S G T HS Hty.
-    destruct (spread_inv _ _ _ _ _ _ Hty) as [P [T0 [R [H1 [H2 Hteq]]]]].
-    eapply T_Conv;
-      [ eapply T_Spread; [ eapply IH; [ exact HS | exact H1 ] | exact H2 ] | exact Hteq ].
+    destruct (spread_inv _ _ _ _ _ _ Hty) as [T0 [R [H2 [Hteq [[P H1] | [H1 Hl]]]]]].
+    + eapply T_Conv;
+        [ eapply T_Spread; [ eapply IH; [ exact HS | exact H1 ] | exact H2 ] | exact Hteq ].
+    + eapply T_Conv;
+        [ eapply T_SpreadL; [ eapply IH; [ exact HS | exact H1 ] | exact Hl | exact H2 ] | exact Hteq ].
   - (* st_spread2: the new value of a spread stepped. *)
     intros v1 l e2 e2' Hv Hstep IH D S G T HS Hty.
-    destruct (spread_inv _ _ _ _ _ _ Hty) as [P [T0 [R [H1 [H2 Hteq]]]]].
-    eapply T_Conv;
-      [ eapply T_Spread; [ exact H1 | eapply IH; [ exact HS | exact H2 ] ] | exact Hteq ].
+    destruct (spread_inv _ _ _ _ _ _ Hty) as [T0 [R [H2 [Hteq [[P H1] | [H1 Hl]]]]]].
+    + eapply T_Conv;
+        [ eapply T_Spread; [ exact H1 | eapply IH; [ exact HS | exact H2 ] ] | exact Hteq ].
+    + eapply T_Conv;
+        [ eapply T_SpreadL; [ exact H1 | exact Hl | eapply IH; [ exact HS | exact H2 ] ] | exact Hteq ].
   - (* st_spread: a spread of a finished record sets or adds the field.  The
        base's type says which, and [spread_step_typing] shows either way the
        result has the type the rule gives. *)
     intros fs l v Hrv Hv D S G T HS Hty.
-    destruct (spread_inv _ _ _ _ _ _ Hty) as [P [T0 [R [H1 [H2 Hteq]]]]].
-    eapply T_Conv; [ eapply spread_step_typing; eassumption | exact Hteq ].
+    destruct (spread_inv _ _ _ _ _ _ Hty) as [T0 [R [H2 [Hteq [[P H1] | [H1 Hl]]]]]].
+    + eapply T_Conv; [ eapply spread_step_typing; eassumption | exact Hteq ].
+    + eapply T_Conv; [ eapply spread_step_typing_L; eassumption | exact Hteq ].
   - (* st_restrict1: the operand of a restrict stepped. *)
     intros e e' l Hstep IH D S G T HS Hty.
     destruct (restrict_inv _ _ _ _ _ Hty) as [R0 [T0 [R [H1 [H2 Hteq]]]]].
@@ -2288,7 +2579,7 @@ Proof.
        That gives exactly what we need about [e3]. *)
     apply IH with (T := T).
     apply (preservation d_any {} nil e1 e2 T); [ | exact Hty | exact Hstep ].
-    intros a _. reflexivity.
+    intros a _. split; reflexivity.
 Qed.
 
 (* The same fact phrased with the name [stuck] (not a value, no step possible,

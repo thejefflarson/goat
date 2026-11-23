@@ -248,26 +248,26 @@ Qed.
 (* ------------------------------------------------------------------ *)
 
 Definition Spec (D : denv) (n : nat) (T1 T2 : typ) (r : option (sub * nat)) : Prop :=
-  forall s n', r = Some (s, n') -> EvT T1 -> EvT T2 ->
+  rtriv D -> forall s n', r = Some (s, n') -> EvT T1 -> EvT T2 ->
     OkS s /\ (exists m, unroll_eq m (apT s T1) (apT s T2)) /\ kres D D (sT s) /\ n <= n'.
 
 Definition SpecR (D : denv) (n : nat) (R1 R2 : row) (r : option (sub * nat)) : Prop :=
-  forall s n', r = Some (s, n') -> EvR R1 -> EvR R2 ->
+  rtriv D -> forall s n', r = Some (s, n') -> EvR R1 -> EvR R2 ->
     OkS s /\ (exists m, unroll_row m (apR s R1) (apR s R2)) /\ kres D D (sT s) /\ n <= n'.
 
 Lemma spec_none : forall D n T1 T2, Spec D n T1 T2 None.
-Proof. intros D n T1 T2 s n' H. discriminate. Qed.
+Proof. intros D n T1 T2 Hrt s n' H. discriminate. Qed.
 
 Lemma spec_base : forall D n T, Spec D n T T (Some (sid, n)).
 Proof.
-  intros D n T s n' H _ _. inversion H; subst; clear H.
+  intros D n T Hrt s n' H _ _. inversion H; subst; clear H.
   apply lift_teq. split; [ apply OkS_id | split; [ apply teq_refl | split; [ exact (kres_id D) | lia ] ] ].
 Qed.
 
 Lemma bind_k_sound : forall D a T n,
   Spec D n (typ_Var a) T (bind_k D a T n).
 Proof.
-  intros D a T n s n' H Ha HT. unfold bind_k in H.
+  intros D a T n Hrt s n' H Ha HT. unfold bind_k in H.
   destruct (lcb 0 T) eqn:Elc; cbn [negb] in H; [ | discriminate ].
   destruct (mgb T) eqn:Emg; cbn [negb] in H; [ | discriminate ].
   destruct (AtomSetImpl.mem a (ftv_typ T)) eqn:Emem.
@@ -294,8 +294,8 @@ Qed.
 Lemma bind_k_sound_right : forall D b T n,
   Spec D n T (typ_Var b) (bind_k D b T n).
 Proof.
-  intros D b T n s n' H HT Hb.
-  destruct (bind_k_sound D b T n s n' H Hb HT) as (Hs & [m Hm] & Hk & Hl).
+  intros D b T n Hrt s n' H HT Hb.
+  destruct (bind_k_sound D b T n Hrt s n' H Hb HT) as (Hs & [m Hm] & Hk & Hl).
   refine (conj Hs (conj _ (conj Hk Hl))). exists m. apply unroll_sym. exact Hm.
 Qed.
 
@@ -304,7 +304,7 @@ Lemma spec_var_var : forall D n a b,
     (if Atom.eq_dec a b then Some (sid, n)
      else if finer_b (D b) (D a) then Some (sbT a (typ_Var b), n) else Some (sbT b (typ_Var a), n)).
 Proof.
-  intros D n a b s n' H H1 H2.
+  intros D n a b Hrt s n' H H1 H2.
   destruct (Atom.eq_dec a b) as [->|Hne].
   - inversion H; subst. apply lift_teq.
     split; [apply OkS_id | split; [apply teq_refl | split; [ exact (kres_id D) | lia ]]].
@@ -333,9 +333,9 @@ Qed.
 Lemma spec_unfold_left : forall D n B T2 r,
   Spec D n (open_typ 0 (typ_Mu B) B) T2 r -> Spec D n (typ_Mu B) T2 r.
 Proof.
-  intros D n B T2 r Hs s n' E H1 H2.
+  intros D n B T2 r Hs Hrt s n' E H1 H2.
   assert (H1' : EvT (open_typ 0 (typ_Mu B) B)) by (apply EvT_open; exact H1).
-  destruct (Hs s n' E H1' H2) as (Hok & [m Hm] & Hk & Hl).
+  destruct (Hs Hrt s n' E H1' H2) as (Hok & [m Hm] & Hk & Hl).
   refine (conj Hok (conj _ (conj Hk Hl))). exists (1 + m).
   assert (Eap : apT s (open_typ 0 (typ_Mu B) B) = open_typ 0 (typ_Mu (apT s B)) (apT s B)).
   { unfold apT. rewrite (ap_open (sT s) (sR s) B 0 (typ_Mu B) (OkS_lc s Hok)). reflexivity. }
@@ -347,9 +347,9 @@ Qed.
 Lemma spec_unfold_right : forall D n B T1 r,
   Spec D n T1 (open_typ 0 (typ_Mu B) B) r -> Spec D n T1 (typ_Mu B) r.
 Proof.
-  intros D n B T1 r Hs s n' E H1 H2.
+  intros D n B T1 r Hs Hrt s n' E H1 H2.
   assert (H2' : EvT (open_typ 0 (typ_Mu B) B)) by (apply EvT_open; exact H2).
-  destruct (Hs s n' E H1 H2') as (Hok & [m Hm] & Hk & Hl).
+  destruct (Hs Hrt s n' E H1 H2') as (Hok & [m Hm] & Hk & Hl).
   refine (conj Hok (conj _ (conj Hk Hl))). exists (m + 1).
   assert (Eap : apT s (open_typ 0 (typ_Mu B) B) = open_typ 0 (typ_Mu (apT s B)) (apT s B)).
   { unfold apT. rewrite (ap_open (sT s) (sR s) B 0 (typ_Mu B) (OkS_lc s Hok)). reflexivity. }
@@ -396,7 +396,7 @@ Theorem unify_k_sound : forall f,
   (forall D T1 T2 n, Spec D n T1 T2 (unify_k f D T1 T2 n)) /\
   (forall D R1 R2 n, SpecR D n R1 R2 (unify_kr f D R1 R2 n)).
 Proof.
-  induction f as [|f IH]; [ split; intros; intros s n' H; discriminate | ].
+  induction f as [|f IH]; [ split; intros; intros Hrt s n' H; discriminate | ].
   destruct IH as [IHt IHr].
   split.
   - intros D T1 T2 n. cbn [unify_k].
@@ -410,14 +410,14 @@ Proof.
       try (apply spec_unfold_left; apply IHt);
       try (apply spec_unfold_right; apply IHt).
     + (* Arrow, Arrow *)
-      intros s n' H H1 H2.
+      intros Hrt s n' H H1 H2.
       destruct (unify_k f D A A' n) as [[s1 n1]|] eqn:E1; [|discriminate].
       destruct (unify_k f D (apT s1 B) (apT s1 B') n1) as [[s2 n2]|] eqn:E2; [|discriminate].
       inversion H; subst; clear H.
       destruct (EvT_arrow_inv _ _ H1) as [EA EB].
       destruct (EvT_arrow_inv _ _ H2) as [EA' EB'].
-      destruct (IHt D A A' n _ _ E1 EA EA') as (Hs1 & [m1 Ht1] & Hk1 & Hl1).
-      destruct (IHt D _ _ n1 _ _ E2 (EvT_ap s1 B Hs1 EB) (EvT_ap s1 B' Hs1 EB'))
+      destruct (IHt D A A' n Hrt _ _ E1 EA EA') as (Hs1 & [m1 Ht1] & Hk1 & Hl1).
+      destruct (IHt D _ _ n1 Hrt _ _ E2 (EvT_ap s1 B Hs1 EB) (EvT_ap s1 B' Hs1 EB'))
         as (Hs2 & [m2 Ht2] & Hk2 & Hl2).
       split; [ apply OkS_comp; auto | ].
       split.
@@ -429,17 +429,17 @@ Proof.
         rewrite <- !apT_comp. apply UE_arrow.
         - apply (unroll_mono m1); [ lia | exact (unroll_apT s2 _ _ _ Hs2 Ht1) ].
         - apply (unroll_mono m2); [ lia | exact Ht2 ]. }
-      split; [ exact (kres_scomp D D D s1 s2 Hk1 Hk2) | lia ].
+      split; [ exact (kres_scomp D D D s1 s2 Hrt Hk1 Hk2) | lia ].
     + (* Record, Record *)
-      intros s n' H H1 H2.
-      destruct (IHr D R R' n s n' H H1 H2) as (Hs & [m Hr] & Hk & Hl).
+      intros Hrt s n' H H1 H2.
+      destruct (IHr D R R' n Hrt s n' H H1 H2) as (Hs & [m Hr] & Hk & Hl).
       refine (conj Hs (conj _ (conj Hk Hl))). exists m. apply UE_record. exact Hr.
     + (* Bvar, Bvar *)
       destruct (Nat.eqb i i') eqn:Ei.
       * apply Nat.eqb_eq in Ei. subst. apply spec_base.
       * apply spec_none.
     + (* Mu, Mu *)
-      intros s n' H H1 H2.
+      intros Hrt s n' H H1 H2.
       destruct (match unify_k f D B1 B1' n with
                 | Some (s0, n1) => if typ_eqb (apT s0 B1) (apT s0 B1') then Some (s0, n1) else None
                 | None => None
@@ -448,16 +448,16 @@ Proof.
         destruct (unify_k f D B1 B1' n) as [[s0 n1]|] eqn:Eu; [ | discriminate Ein ].
         destruct (typ_eqb (apT s0 B1) (apT s0 B1')) eqn:Eeq; [ | discriminate Ein ].
         inversion Ein; subst; clear Ein.
-        destruct (IHt D B1 B1' n s n' Eu H1 H2) as (Hok & _ & Hk & Hl).
+        destruct (IHt D B1 B1' n Hrt s n' Eu H1 H2) as (Hok & _ & Hk & Hl).
         refine (conj Hok (conj _ (conj Hk Hl))). exists 0. apply UE_teq.
         change (apT s (typ_Mu B1)) with (typ_Mu (apT s B1)).
         change (apT s (typ_Mu B1')) with (typ_Mu (apT s B1')).
         rewrite (proj1 typ_eqb_eq_mut _ _ Eeq). apply teq_refl.
-      * exact (spec_unfold_left D n B1 (typ_Mu B1') _ (IHt D _ _ n) s n' H H1 H2).
+      * exact (spec_unfold_left D n B1 (typ_Mu B1') _ (IHt D _ _ n) Hrt s n' H H1 H2).
     + (* Grp, Grp *)
       destruct (gdecl_eq_dec w1 w1') as [->|]; [ | apply spec_none ].
-      intros s n' H H1 H2.
-      destruct (IHt D A1 A1' n s n' H H1 H2) as (Hs & [m Ht] & Hk & Hl).
+      intros Hrt s n' H H1 H2.
+      destruct (IHt D A1 A1' n Hrt s n' H H1 H2) as (Hs & [m Ht] & Hk & Hl).
       refine (conj Hs (conj _ (conj Hk Hl))). exists m. apply UE_grp. exact Ht.
   - intros D R1 R2 n. cbn [unify_kr].
     assert (Hgen : forall R1 R2,
@@ -482,7 +482,7 @@ Proof.
                end
            end
        end)).
-    { intros R1' R2' s' n'' Hg Hg1 Hg2.
+    { intros R1' R2' Hrt s' n'' Hg Hg1 Hg2.
       destruct (row_head R1') as [[[[l P] T] R1'']|] eqn:Eh; [|discriminate].
       destruct (rewrite_row l (frv_row R1') R2' n) as [[[[[P' T'] R2''] s0] n1]|] eqn:Erw; [|discriminate].
       destruct (unify_k f D (apT s0 P) P' n1) as [[sp n2]|] eqn:Eu0; [|discriminate].
@@ -492,29 +492,29 @@ Proof.
       inversion Hg; subst; clear Hg.
       destruct (row_head_sound _ _ _ _ _ Eh Hg1) as (HP & HT & HR1' & Hhd).
       destruct (rewrite_row_sound _ _ _ _ _ _ _ _ _ Erw Hg2) as (Hs0 & HP' & HT' & HR2' & Hrw & Hk0 & Hl0).
-      destruct (IHt D _ _ n1 sp n2 Eu0 (EvT_ap s0 P Hs0 HP) HP') as (Hsp & [mp Htp] & Hkp & Hlp).
-      destruct (IHt D _ _ n2 s1 n3 Eu1 (EvT_ap sp _ Hsp (EvT_ap s0 T Hs0 HT)) (EvT_ap sp T' Hsp HT'))
+      destruct (IHt D _ _ n1 Hrt sp n2 Eu0 (EvT_ap s0 P Hs0 HP) HP') as (Hsp & [mp Htp] & Hkp & Hlp).
+      destruct (IHt D _ _ n2 Hrt s1 n3 Eu1 (EvT_ap sp _ Hsp (EvT_ap s0 T Hs0 HT)) (EvT_ap sp T' Hsp HT'))
         as (Hs1 & [mt Ht1] & Hk1 & Hl1).
-      destruct (IHr D _ _ n3 _ _ Eu2
+      destruct (IHr D _ _ n3 Hrt _ _ Eu2
                   (EvR_ap s1 _ Hs1 (EvR_ap sp _ Hsp (EvR_ap s0 R1'' Hs0 HR1')))
                   (EvR_ap s1 _ Hs1 (EvR_ap sp _ Hsp HR2'))) as (Hs2 & [mr Hr2] & Hk2 & Hl2).
       split; [ apply OkS_comp; [ exact Hs2 | apply OkS_comp; [ exact Hs1 | apply OkS_comp; auto ] ] | ].
       split; [ exact (row_step_unroll s0 sp s1 s2 R1' R2' _ _ _ _ _ _ _ mp mt mr Hs2 Hs1 Hhd Hrw Htp Ht1 Hr2) | ].
-      split; [ exact (kres_scomp D D D (scomp s1 (scomp sp s0)) s2
-                        (kres_scomp D D D (scomp sp s0) s1
-                           (kres_scomp D D D s0 sp (Hk0 D) Hkp) Hk1) Hk2) | lia ]. }
+      split; [ exact (kres_scomp D D D (scomp s1 (scomp sp s0)) s2 Hrt
+                        (kres_scomp D D D (scomp sp s0) s1 Hrt
+                           (kres_scomp D D D s0 sp Hrt (Hk0 D) Hkp) Hk1) Hk2) | lia ]. }
     destruct R1 as [| r | l T R1' | lm Pm Tm Rm]; destruct R2 as [| q | l2 T2 R2' | lm2 Pm2 Tm2 Rm2];
-      try (intros s n' H H1 H2; apply lift_req; exact (var_left_Rk _ _ _ _ _ _ H H1 H2));
-      try (intros s n' H H1 H2; apply lift_req; exact (var_right_Rk _ _ _ _ _ _ H H1 H2));
+      try (intros Hrt s n' H H1 H2; apply lift_req; exact (var_left_Rk _ _ _ _ _ _ H H1 H2));
+      try (intros Hrt s n' H H1 H2; apply lift_req; exact (var_right_Rk _ _ _ _ _ _ H H1 H2));
       try apply Hgen.
-    + intros s n' H H1 H2. inversion H; subst.
+    + intros Hrt s n' H H1 H2. inversion H; subst.
       apply lift_req. split; [apply OkS_id | split; [apply req_refl | split; [ exact (kres_id D) | lia ]]].
     + (* Empty, Maybe: the same equation read the other way *)
-      intros s n' H H1 H2.
-      destruct (IHr D _ _ n s n' H H2 H1) as (Hs & [m Hr] & Hk & Hl).
+      intros Hrt s n' H H1 H2.
+      destruct (IHr D _ _ n Hrt s n' H H2 H1) as (Hs & [m Hr] & Hk & Hl).
       refine (conj Hs (conj _ (conj Hk Hl))). exists m. apply unroll_row_sym. exact Hr.
     + (* Var, Var *)
-      intros s n' H H1 H2.
+      intros Hrt s n' H H1 H2.
       destruct (Atom.eq_dec r q) as [->|Hne].
       * inversion H; subst. apply lift_req.
         split; [apply OkS_id | split; [apply req_refl | split; [ exact (kres_id D) | lia ]]].
@@ -643,7 +643,7 @@ Proof.
     with (bind_k (upd d_any a k_Numeric) a (ball_of (typ_Var a)) 0).
   rewrite (bind_k_sorted (upd d_any a k_Numeric) a (ball_of (typ_Var a)) 0 eq_refl eq_refl (mem_ball a)).
   - reflexivity.
-  - unfold upd. same_atoms. reflexivity.
+  - unfold upd. simpl. same_atoms. reflexivity.
 Qed.
 
 Example mu_meets_its_unrolling :

@@ -61,14 +61,14 @@ Definition teq_dec (f : nat) (D : denv) (T T' : typ) : bool :=
      | None => false
      end.
 
-Lemma teq_dec_sound : forall f D T T',
+Lemma teq_dec_sound : forall f D T T', rtriv D ->
   EvT T -> EvT T' -> teq_dec f D T T' = true -> teq T T'.
 Proof.
-  intros f D T T' H1 H2 H. unfold teq_dec in H. apply Bool.orb_true_iff in H as [H | H].
+  intros f D T T' Hrt H1 H2 H. unfold teq_dec in H. apply Bool.orb_true_iff in H as [H | H].
   - apply typ_eqb_teq; exact H.
   - destruct (unify_t f D T T' 0) as [[s n']|] eqn:E; [ | discriminate ].
     apply Bool.andb_true_iff in H as [Ha Hb].
-    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ E H1 H2) as (_ & Ht & _).
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ Hrt E H1 H2) as (_ & Ht & _).
     rewrite (proj1 typ_eqb_eq_mut _ _ Ha), (proj1 typ_eqb_eq_mut _ _ Hb) in Ht. exact Ht.
 Qed.
 
@@ -130,16 +130,16 @@ Proof.
   - apply ch_fold; [ exact Hl | exact Hg | constructor ].
 Qed.
 
-Theorem coerce_dec_sound : forall f D, rec_chain (coerce_dec f D).
+Theorem coerce_dec_sound : forall f D, rtriv D -> rec_chain (coerce_dec f D).
 Proof.
-  induction f as [|f IH]; intros D T T' cs H1 H2 H; cbn [coerce_dec] in H.
+  induction f as [|f IH]; intros D Hrt T T' cs H1 H2 H; cbn [coerce_dec] in H.
   all: destruct (teq_dec _ D T T') eqn:E.
   - inversion H; subst. eapply ch_conv; [ eapply teq_dec_sound; eassumption | constructor ].
   - discriminate.
   - inversion H; subst. eapply ch_conv; [ eapply teq_dec_sound; eassumption | constructor ].
   - destruct (co_unfold (coerce_dec f D) T T') as [cs0|] eqn:Eu.
-    + inversion H; subst. eapply co_unfold_sound; [ apply IH | exact H1 | exact H2 | exact Eu ].
-    + eapply co_fold_sound; [ apply IH | exact H1 | exact H2 | exact H ].
+    + inversion H; subst. eapply co_unfold_sound; [ apply (IH D Hrt) | exact H1 | exact H2 | exact Eu ].
+    + eapply co_fold_sound; [ apply (IH D Hrt) | exact H1 | exact H2 | exact H ].
 Qed.
 
 (* ---- the unifier W calls ---- *)
@@ -164,22 +164,22 @@ Definition unify_co (f : nat) (D : denv) (T1 T2 : typ) (n : nat)
       end
   end.
 
-Theorem unify_co_sound : forall f D T1 T2 n s cs n',
+Theorem unify_co_sound : forall f D T1 T2 n s cs n', rtriv D ->
   unify_co f D T1 T2 n = Some (s, cs, n') -> EvT T1 -> EvT T2 ->
   OkS s /\ chain cs (apT s T1) (apT s T2) /\ kres D D (sT s) /\ n <= n'.
 Proof.
-  intros f D T1 T2 n s cs n' H H1 H2. unfold unify_co in H.
+  intros f D T1 T2 n s cs n' Hrt H H1 H2. unfold unify_co in H.
   destruct (unify_t f D T1 T2 n) as [[s0 n0]|] eqn:Et.
   - inversion H; subst; clear H.
-    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ Et H1 H2) as (Hs & Ht & Hk & Hl).
+    destruct ((proj1 (unify_sound f)) _ _ _ _ _ _ Hrt Et H1 H2) as (Hs & Ht & Hk & Hl).
     refine (conj Hs (conj _ (conj Hk Hl))).
     eapply ch_conv; [ exact Ht | constructor ].
   - destruct (unify_k f D T1 T2 n) as [[s0 n0]|] eqn:E; [ | discriminate ].
     destruct (coerce_dec f D (apT s0 T1) (apT s0 T2)) as [cs0|] eqn:Ec; [ | discriminate ].
     inversion H; subst; clear H.
-    destruct ((proj1 (unify_k_sound f)) D T1 T2 n s n' E H1 H2) as (Hs & _ & Hk & Hl).
+    destruct ((proj1 (unify_k_sound f)) D T1 T2 n Hrt s n' E H1 H2) as (Hs & _ & Hk & Hl).
     refine (conj Hs (conj _ (conj Hk Hl))).
-    exact (coerce_dec_sound f D _ _ _ (EvT_ap s T1 Hs H1) (EvT_ap s T2 Hs H2) Ec).
+    exact (coerce_dec_sound f D Hrt _ _ _ (EvT_ap s T1 Hs H1) (EvT_ap s T2 Hs H2) Ec).
 Qed.
 
 (* A chain survives a substitution whose images are closed: the coercions stay,

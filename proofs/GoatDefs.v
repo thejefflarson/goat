@@ -220,7 +220,24 @@ Inductive finer : sort -> sort -> Prop :=
 #[export] Hint Constructors finer : core.
 
 Definition sort_fn := typvar -> sort.
-Definition denv := typvar -> sort.
+
+(* A row variable has a kind too (ADR 0038, the row-variable amendment): a
+   sort, which says what its fields must satisfy ([Eq] or [Numeric] when the
+   record it tails is compared or does arithmetic), and the set of labels it
+   lacks, which a spread that adds a field needs.  Like a type variable's sort
+   it comes from the kinding environment, and a quantified row variable's kind
+   is recorded in its scheme. *)
+Record rkind : Type := RK { rk_sort : sort; rk_lacks : label -> bool }.
+
+Definition rk_any : rkind := RK k_Any (fun _ => false).
+
+Definition rkind_fn := rowvar -> rkind.
+
+Definition rk_triv : rkind_fn := fun _ => rk_any.
+
+Record denv : Type := DEnv { dsort : typvar -> sort; drk : rowvar -> rkind }.
+
+Coercion dsort : denv >-> Funclass.
 
 (* [sat D k T]: T may stand where a variable of sort [k] stands.  A concrete
    [Int] or [Float] satisfies every sort; a variable satisfies the sorts its
@@ -247,7 +264,8 @@ with rsat (D : denv) (k : sort) (R : row) {struct R} : Prop :=
   match R with
   | row_Empty => True
   | row_Ext _ T R' => sat D k T /\ rsat D k R'
-  | _ => False
+  | row_Var r => finer (rk_sort (drk D r)) k
+  | row_Maybe _ _ _ _ => k = k_Any
   end
 with spine_sat (D : denv) (w : gdecl) (j : nat) (A : typ) {struct A} : Prop :=
   match A with
@@ -272,17 +290,39 @@ with rfsat (R : row) {struct R} : Prop :=
   | _ => False
   end.
 
+(* [rlacksD D l R]: the row [R] has no field labeled [l]; a row variable lacks
+   what its kind in [D] says.  With no variable in [R] it is [rlacks]. *)
+Fixpoint rlacksD (D : denv) (l : label) (R : row) {struct R} : bool :=
+  match R with
+  | row_Empty => true
+  | row_Var r => rk_lacks (drk D r) l
+  | row_Ext l' _ R' => negb (Nat.eqb l l') && rlacksD D l R'
+  | row_Maybe l' _ _ R' => negb (Nat.eqb l l') && rlacksD D l R'
+  end.
+
+(* A row has a kind in [D]: it satisfies the sort and lacks the labels. *)
+Definition rkok (D : denv) (K : rkind) (R : row) : Prop :=
+  rsat D (rk_sort K) R /\ forall l, rk_lacks K l = true -> rlacksD D l R = true.
+
 (* A substitution from one environment to another gives each variable a type
-   of its sort. *)
+   of its sort, and each row variable a row of its kind. *)
 Definition kres (D D' : denv) (st : tsub) : Prop := forall a, sat D' (D a) (st a).
 
-(* The environment D, extended on V by the sorts k. *)
+Definition rkres (D D' : denv) (sr : rsub) : Prop := forall r, rkok D' (drk D r) (sr r).
+
+(* The environment D, extended on V by the sorts k, and on Vr by the kinds rk. *)
 Definition ext (D : denv) (V : atoms) (k : sort_fn) : denv :=
-  fun a => if AtomSetImpl.mem a V then k a else D a.
+  DEnv (fun a => if AtomSetImpl.mem a V then k a else D a) (drk D).
 
-Definition supp_ok (D : denv) (S : atoms) : Prop := forall a, a `notin` S -> D a = k_Any.
+Definition extr (D : denv) (Vr : atoms) (rk : rkind_fn) : denv :=
+  DEnv (dsort D) (fun r => if AtomSetImpl.mem r Vr then rk r else drk D r).
 
-Definition d_any : denv := fun _ => k_Any.
+(* Outside [S], every atom, as a type variable and as a row variable, is
+   unconstrained. *)
+Definition supp_ok (D : denv) (S : atoms) : Prop :=
+  forall a, a `notin` S -> D a = k_Any /\ drk D a = rk_any.
+
+Definition d_any : denv := DEnv (fun _ => k_Any) (fun _ => rk_any).
 
 (* ================================================================== *)
 (* Type schemes (section 5): a quantified set of type and row variables  *)
@@ -294,10 +334,11 @@ Record scheme : Type := Sch {
   s_tq : atoms;
   s_rq : atoms;
   s_body : typ;
-  s_sk : sort_fn
+  s_sk : sort_fn;
+  s_rk : rkind_fn
 }.
 
-Definition sch_mono (T : typ) : scheme := Sch {} {} T (fun _ => k_Any).
+Definition sch_mono (T : typ) : scheme := Sch {} {} T (fun _ => k_Any) (fun _ => rk_any).
 
 (* Free variables of a scheme: free in the body and not quantified. *)
 Definition ftv_sch (s : scheme) : atoms := AtomSetImpl.diff (ftv_typ (s_body s)) (s_tq s).
@@ -340,6 +381,7 @@ Definition inst (D : denv) (T : typ) (s : scheme) : Prop :=
     (forall r, r `notin` s_rq s -> sr r = row_Var r) /\
     T = ap_typ st sr (s_body s) /\
     (forall a, a `in` s_tq s -> sat D (s_sk s a) (st a)) /\
+    (forall r, r `in` s_rq s -> rkok D (s_rk s r) (sr r)) /\
     lc_sub st sr.
 
 (* ================================================================== *)
@@ -347,10 +389,10 @@ Definition inst (D : denv) (T : typ) (s : scheme) : Prop :=
 (* the type but not in the context.                                        *)
 (* ================================================================== *)
 
-Definition gen (G : ctx) (T : typ) (k : sort_fn) : scheme :=
+Definition gen (G : ctx) (T : typ) (k : sort_fn) (rk : rkind_fn) : scheme :=
   Sch (AtomSetImpl.diff (ftv_typ T) (ftv_ctx G))
       (AtomSetImpl.diff (frv_typ T) (frv_ctx G))
-      T k.
+      T k rk.
 
 (* A [let] may keep some variables of its binding monomorphic by generalizing
    over the context extended with a binding of a type [Tm] that mentions them
@@ -827,9 +869,9 @@ Proof.
   - intros w T _ k k' Hf. destruct k, k'; try (inversion Hf; fail);
       first [ (intros _; exact I) | (intros H0; contradiction) | (intros H0; exact H0) ].
   - intros k k' Hf _. exact I.
-  - intros r k k' Hf H. contradiction.
+  - intros r k k' Hf H. eapply finer_trans; eassumption.
   - intros l T H R H0 k k' Hf [H1 H2]. split; [ eapply H; eassumption | eapply H0; eassumption ].
-  - intros l T1 _ T2 _ R _ k k' Hf H. contradiction.
+  - intros l T1 _ T2 _ R _ k k' Hf H. eapply finer_anyonly; eassumption.
 Qed.
 
 Lemma sat_finer : forall D k k' T, finer k' k -> sat D k' T -> sat D k T.
@@ -837,12 +879,12 @@ Proof. intros D k k' T Hf H. exact (proj1 (sat_finer_mut D) T k k' Hf H). Qed.
 
 (* A kind-respecting substitution keeps a type within its sort. *)
 Lemma sat_ap_mut : forall D D' st sr,
-  kres D D' st ->
+  kres D D' st -> rkres D D' sr ->
   (forall T, (forall k, sat D k T -> sat D' k (ap_typ st sr T)) /\
              (forall w j, spine_sat D w j T -> spine_sat D' w j (ap_typ st sr T))) /\
   (forall R k, rsat D k R -> rsat D' k (ap_row st sr R)).
 Proof.
-  intros D D' st sr Hk. apply typ_row_mutind; simpl; intros.
+  intros D D' st sr Hk Hr. apply typ_row_mutind; simpl; intros.
   - split; intros; first [ assumption | exact I | contradiction ].
   - split; intros; first [ assumption | exact I | contradiction ].
   - split; intros; first [ assumption | exact I | contradiction ].
@@ -859,19 +901,63 @@ Proof.
   - split; [ | intros; contradiction ]. intros k Hs. destruct k; try exact I; try contradiction.
     exact (proj2 H w 0 Hs).
   - exact I.
-  - contradiction.
+  - exact (proj2 (sat_finer_mut D') (sr r) k _ H (proj1 (Hr r))).
   - destruct H1 as [H1 H2]. split; [ exact (proj1 H k H1) | exact (H0 k H2) ].
-  - contradiction.
+  - exact H2.
 Qed.
 
 Lemma sat_ap : forall D D' k T st sr,
-  kres D D' st -> sat D k T -> sat D' k (ap_typ st sr T).
-Proof. intros. eapply (proj1 (proj1 (sat_ap_mut D D' st sr H) T)); eassumption. Qed.
+  kres D D' st -> rkres D D' sr -> sat D k T -> sat D' k (ap_typ st sr T).
+Proof. intros. eapply (proj1 (proj1 (sat_ap_mut D D' st sr H H0) T)); eassumption. Qed.
 
 Lemma sat_any : forall D T, sat D k_Any T.
 Proof.
   intros D T. destruct T; simpl;
     first [ exact I | reflexivity | (left; reflexivity) | apply finer_any ].
+Qed.
+
+Lemma rsat_any : forall D R, rsat D k_Any R.
+Proof.
+  intros D R. induction R; simpl; auto using sat_any, finer_any.
+Qed.
+
+(* Every row variable of [R] has the kind the row-variable kind [rk_any]
+   says, so an environment that gives every row variable that kind lets any
+   row satisfy it. *)
+Lemma rkok_any : forall D R, rkok D rk_any R.
+Proof.
+  intros D R. split; [ apply rsat_any | intros l H; discriminate H ].
+Qed.
+
+Lemma rkok_self : forall D r, rkok D (drk D r) (row_Var r).
+Proof.
+  intros D r. split; [ simpl; apply finer_refl | intros l H; simpl; exact H ].
+Qed.
+
+(* A row that lacks a label still lacks it after a substitution that respects
+   the row variables' kinds. *)
+Lemma rlacksD_ap_mut : forall (D D' : denv) (st : tsub) (sr : rsub) (l : label),
+  rkres D D' sr ->
+  (forall T : typ, True) /\
+  (forall R, rlacksD D l R = true -> rlacksD D' l (ap_row st sr R) = true).
+Proof.
+  intros D D' st sr l Hr.
+  apply typ_row_mutind; simpl; intros; try exact I; try discriminate; auto.
+  - exact (proj2 (Hr r) l H).
+  - apply Bool.andb_true_iff in H1 as [H1 H2]. rewrite H1. auto.
+  - apply Bool.andb_true_iff in H2 as [H2 H3]. rewrite H2. auto.
+Qed.
+
+Lemma rlacksD_ap : forall D D' st sr l R,
+  rkres D D' sr -> rlacksD D l R = true -> rlacksD D' l (ap_row st sr R) = true.
+Proof. intros. apply (proj2 (rlacksD_ap_mut D D' st sr l H)); auto. Qed.
+
+Lemma rkok_ap : forall (D D' : denv) (st : tsub) (sr : rsub) (K : rkind) (R : row),
+  kres D D' st -> rkres D D' sr -> rkok D K R -> rkok D' K (ap_row st sr R).
+Proof.
+  intros D D' st sr K R Hk Hr [H1 H2]. split.
+  - exact (proj2 (sat_ap_mut D D' st sr Hk Hr) R _ H1).
+  - intros l Hl. eapply rlacksD_ap; [ exact Hr | apply H2; exact Hl ].
 Qed.
 
 (* A closed record of [Float]s has no variables to substitute. *)
@@ -886,10 +972,10 @@ Qed.
 
 (* The signature of an operator at the substituted types. *)
 Lemma bin_sig_ap : forall D D' o A B R st sr,
-  kres D D' st -> bin_sig D o A B R ->
+  kres D D' st -> rkres D D' sr -> bin_sig D o A B R ->
   bin_sig D' o (ap_typ st sr A) (ap_typ st sr B) (ap_typ st sr R).
 Proof.
-  intros D D' o A B R st sr Hk H.
+  intros D D' o A B R st sr Hk Hr H.
   destruct H; simpl.
   - apply sig_ring; [ assumption | eapply sat_ap; eassumption ].
   - apply sig_quot.
@@ -1109,25 +1195,27 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
      typing D G e1 (typ_Arrow T1 T2) ->
      typing D G e2 T1 ->
      typing D G (e_app e1 e2) T2
- | T_Let : forall (L : vars) D G e1 e2 T1 T2 (k : sort_fn) (Tm : typ),
+ | T_Let : forall (L : vars) D G e1 e2 T1 T2 (k : sort_fn) (rk : rkind_fn) (Tm : typ),
      is_gen_value e1 = true ->
-     typing (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k) G e1 T1 ->
+     typing (extr (ext D (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm G))) k)
+                  (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm G))) rk) G e1 T1 ->
      (forall x, x `notin` L ->
-        typing D ((x ~ gen (pin_ctx Tm G) T1 k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
+        typing D ((x ~ gen (pin_ctx Tm G) T1 k rk) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
      typing D G (e_let e1 e2) T2
  | T_LetMono : forall (L : vars) D G e1 e2 T1 T2,
      typing D G e1 T1 ->
      (forall x, x `notin` L ->
         typing D ((x ~ sch_mono T1) ++ G) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
      typing D G (e_let e1 e2) T2
- | T_Letrec : forall (L : vars) D G fs e2 R T (k : sort_fn),
+ | T_Letrec : forall (L : vars) D G fs e2 R T (k : sort_fn) (rk : rkind_fn),
      fn_group fs ->
      (forall p, p `notin` L ->
-        field_typing (ext D (AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)) k)
+        field_typing (extr (ext D (AtomSetImpl.diff (ftv_typ (typ_Record R)) (ftv_ctx G)) k)
+                           (AtomSetImpl.diff (frv_typ (typ_Record R)) (frv_ctx G)) rk)
           ((p ~ sch_mono (typ_Record R)) ++ G)
           (open_fields_wrt_exp fs (e_fvar_f p)) R) ->
      (forall p, p `notin` L ->
-        typing D ((p ~ gen G (typ_Record R) k) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T) ->
+        typing D ((p ~ gen G (typ_Record R) k rk) ++ G) (open_exp_wrt_exp e2 (e_fvar_f p)) T) ->
      typing D G (e_letrec fs e2) T
  | T_Record : forall D G fs R,
      field_typing D G fs R -> no_meth fs = true ->
@@ -1151,6 +1239,10 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
      typing D G (e_bin e1 o e2) R
  | T_Spread : forall D G e1 l e2 P T R,
      typing D G e1 (typ_Record (row_Maybe l P T R)) ->
+     typing D G e2 T ->
+     typing D G (e_spread e1 l e2) (typ_Record (row_Ext l T R))
+ | T_SpreadL : forall D G e1 l e2 T R,
+     typing D G e1 (typ_Record R) -> rlacksD D l R = true ->
      typing D G e2 T ->
      typing D G (e_spread e1 l e2) (typ_Record (row_Ext l T R))
  | T_Restrict : forall D G e l R0 T R,
