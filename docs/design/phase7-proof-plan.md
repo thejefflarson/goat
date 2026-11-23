@@ -770,6 +770,114 @@ depend on the choice are in `GoatCompleteSorts.v` (the invention) and now
 `row_cancel` gives it, from `req (S R1) (S R2)` once the first row's front entry
 is surfaced).
 
+*As built (stage 7.6g, `GoatCompleteBind.v`, `GoatCompleteSide.v`, `GoatInfer.v`).*
+The triage the 7.6f ruling asked for is done, one of the four pairs moved W, and
+item 5 is proved for plain types. Items 3, 4 and 6 are not started.
+
+**Triage: the four blocked pairs run as goat programs.** Each row says what
+`goat check` does and what the extracted W does on the program.
+
+| pair | program | checker | W (before) | decision |
+|---|---|---|---|---|
+| `side_blocks_nested` | `program(u) do {b, ...w} = u; v = {a: 1, b: w}; if true then v else u done done` | accepts, `({b: {a: Number}, a: Number}) -> ...` | refuses (`w-refuses` mismatch) | option (a), done |
+| `side_blocks_absent` | none found | not reached | refuses | option (b) |
+| `bind_row_blocks_absent_tail` | none found | not reached | refuses | option (b) |
+| `bind_prop_blocks_absent` | none found | not reached | refuses | option (b) |
+
+The nested pair is `{a: Int, b: {...r}}` against `{b: c, ...r}`, reached by a
+rest pattern (`w` has the row `r`, the tail of `u`) and a record that puts `w` in
+a field. The checker's own probe (a temporary `eprintln!` in `unify_row`, not
+committed) printed exactly that pair, and the two-parameter and one-parameter
+forms of the program are now in `HANDWRITTEN`.
+
+For the other three, every route a program has to a presence variable goes
+through a spread (`{...p, a: v}` gives `p` the row `{a ^ pres: type of v, ...r}`)
+or a rest pattern, and each such variable's row tail is fresh at the point the
+entry is made. A common tail with two different fronts then needs a unification
+that binds it, and the binding resolves the presence (to present, or by the
+checker's `peel`) before the pair can be formed. I tried about fifteen programs
+(spreads of two parameters then merged, spreads then rest patterns, a spread
+whose new field is the record itself) and instrumented the checker over the
+51,587-program corpus plus those: no program formed a blocked pair of the
+second, third or fourth kind. What the instrumentation did find were programs
+with infinite types (`g2 = program(p) do {lab0: p, lab1: g2(p)} done`) where the
+guard's shape appears and the checker refuses for the infinite type, which is
+no evidence against W. The checker also has no guard to compare against in
+these three: where a variable occurs behind an entry, it ties a recursive type
+(`{...s, next: s}`) or refuses (`this record would have to contain itself`).
+So there is no verdict to post to #667 for them. They stay as hypotheses in
+statement A (option (b)), and the corpus search is the place to look again.
+
+**Option (a), the guard.** `side_av R1` (`GoatInfer.v`) is the tail variable of
+the first row and nothing else; the four call sites of `rewrite_row` in
+`unify_t`/`unify_r` and their copies in the guard, knot and soundness files read
+it in place of `frv_row R1`. Every lemma about `rewrite_row` is generic in `av`
+(`rewrite_row_sound`, `rewrite_row_gsub`, `rewrite_row_mg` all quantify over it),
+so the soundness proofs needed no change beyond the name. The differential
+compares the same 50,158 programs with 0 mismatches, so no program the checker
+refuses is now accepted by W. A first-row front with a variable presence takes
+the same `av`; if its presence is made absent the pair is the second one above,
+and a run that does not resolve it recurses until the fuel runs out.
+
+`GoatCompleteSide.v`: `side_blocks_nested` is replaced by `nested_sub_unifies`
+(the unifier) and `side_passes_nested` (`rewrite_row` does not meet the guard);
+`rewrite_row_total` says `rewrite_row` fails only at the guard; and
+`side_guard_passes` is the completeness of the guard: if `S` unifies two rows and
+the first starts with an entry `S` makes present (`teq (S P) Unit`), then
+`rewrite_row l (side_av R1) D R2 n <> None`, by `leijen_tail` when the tails
+agree. The hypothesis on the front entry is the option (b) hypothesis, and it is
+all the statement needs of the second pair.
+
+**Item 5: `bind_prop` with sorts (`GoatCompleteBind.v`).**
+`bind_prop_sorted_complete`: if `S` unifies `a` and `T`, `T` is plain (`pf`: no
+recursive type, group or index), the atoms of `a` and `T` are below the supply,
+`a` is not in `T`, and `T` is locally closed, then `bind_prop D a T n` succeeds
+and the extension `S2` of `S` to the fresh variables respects the new
+environment (`KR D' D1 S2`), `S x` is `teq` to `S2 (s x)` for every old type
+variable, and `S r` is `S2 (s r)` for every old row variable. Parts:
+
+- `push_sort_facts`, `push_sort_r_facts`, `push_sort_dok`, `push_sort_r_dok`:
+  what the two renamings leave behind (they send a variable to a variable, a row
+  variable to a row variable, the fresh ones are at or above the supply, the sorts
+  of old atoms are unchanged, and every renamed variable's image has the sort).
+- `sat_reach_mut`: the sort reaches the variables of a type that satisfies it, so
+  `push_sort_complete` and `push_sort_r_complete` get their sort hypotheses.
+- `sat_ren_mut`: a plain type whose variables are sent to variables of the finer
+  sort satisfies the sort when its image does, which is how `sat_b` on the
+  renamed type succeeds. Both lemmas take the field condition `fld`.
+- `lcb_ap_var`, `ftv_ren`: the occurs check after the renaming.
+
+**The field condition (`fld`), a second form of the #667 corner.** For every
+entry `l ^ P : F` of `T`: if `S` makes `P` absent then the image of `F` satisfies
+the sort, and the image of `P` satisfies it. The first half is the `Hfield`
+hypothesis of `rewrite_row_var_complete` at `bind_prop`: `rsat` leaves the field
+of an absent entry unconstrained and `sat_b` checks it, so an `S` that makes the
+entry absent over a function field, under `Eq`, unifies a pair `bind_prop`
+refuses. The second half is new and comes from the presence variable being in
+`ftv T`: `push_sort` renames it to a variable of the sort, whose image `Unit`
+does not satisfy `Numeric`. The calculus has no arithmetic on records (the
+corpus skips them: "arithmetic on non-primitive operands"), and `Eq` holds of
+`Unit` and `Bool`, so the second half is automatic for `Any` and `Eq`. Both
+halves stay hypotheses of statement A until #667 settles the first.
+
+**Not done.**
+3. *`bind_row` end to end.* The pieces: `abs_vars`/`bool_sub` (an entry for a
+   lacked label has presence `Bool` under `S`, from `rlacksD` of `S r`, so `S`
+   factors through `bool_sub`), one `push_sort_r` on the row, the tail renaming
+   (`bind_row_tail_complete`, done), one `push_sort` on the field variables, and
+   three occurs checks. The same machinery as `bind_prop_sorted_complete` carries
+   it: the composite renaming, `sat_ren_mut` on the row, and the agreement
+   lemma. The occurs checks are the third and fourth blocked pairs: a row whose
+   tail is `r` itself and whose entries are all absent unifies and is refused, so
+   the lemma takes the option (b) hypothesis (the row has a present entry, or `r`
+   is not its tail).
+4. *The induction with `S2`*, and the `unify_tD`/`unify_rD` completeness it
+   threads through `row_cancel` and `GoatCompleteSorts.v`. Nothing in the
+   plan changed here: `unify_complete_aux` is stated for closed rows and every
+   sort `Any`, and carrying `(D', n', S2)` through each call is the largest step
+   left. It needs items 3 and 5 as lemmas, which is why they come first.
+6. *Groups outside `mu`.*
+
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):
 

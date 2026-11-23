@@ -54,6 +54,7 @@ GoatCompleteRows.v
 GoatCompleteSide.v
 GoatCompleteUnify.v
 GoatCompleteSorts.v
+GoatCompleteBind.v
 GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v

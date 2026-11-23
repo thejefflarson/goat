@@ -204,6 +204,18 @@ Fixpoint row_tail (R : row) : option atom :=
   | row_Maybe _ _ _ R' => row_tail R'
   end.
 
+(* The row variable [rewrite_row] may not bind when it rewrites the second row
+   to present the label of the first row's front entry: the tail of the first
+   row, the only variable whose binding there leaves the two rests with a common
+   tail and no unifier (Leijen's side condition).  A variable inside a field of
+   the first row is no obstacle: it is bound, and the field is then compared
+   under the binding. *)
+Definition side_av (R : row) : atoms :=
+  match row_tail R with
+  | Some q => {{ q }}
+  | None => {}
+  end.
+
 Fixpoint row_labels (R : row) : list label :=
   match R with
   | row_Empty | row_Var _ => nil
@@ -403,7 +415,7 @@ with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
           match row_head R1 with
           | None => None
           | Some (l, P, T, R1') =>
-              match rewrite_row l (frv_row R1) D R2 n with
+              match rewrite_row l (side_av R1) D R2 n with
               | None => None
               | Some (P', T', R2', s0, D0, n1) =>
                   match unify_t f' D0 (apT s0 P) P' n1 with
@@ -477,7 +489,7 @@ with unify_rD (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
           match row_head R1 with
           | None => None
           | Some (l, P, T, R1') =>
-              match rewrite_row l (frv_row R1) D R2 n with
+              match rewrite_row l (side_av R1) D R2 n with
               | None => None
               | Some (P', T', R2', s0, D0, n1) =>
                   match unify_tD f' D0 (apT s0 P) P' n1 with
