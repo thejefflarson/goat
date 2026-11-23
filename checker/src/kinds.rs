@@ -18,6 +18,9 @@ pub enum Kind {
     /// The type of a whole-number literal: `Ordered`, and `Int` unless the
     /// context makes it `Float` (ADR 0017).
     Literal,
+    /// What `/` works at: `Numeric`, and a scalar of this kind is a `Float`,
+    /// never an `Int` (ADR 0012).
+    Quot,
 }
 
 /// The set of constraints on one variable. `Numeric`, `Ordered` and `Literal`
@@ -29,6 +32,7 @@ pub struct Kinds {
     numeric: bool,
     ordered: bool,
     literal: bool,
+    quot: bool,
 }
 
 impl Kinds {
@@ -43,6 +47,10 @@ impl Kinds {
             Kind::Numeric => self.numeric = true,
             Kind::Ordered => self.ordered = true,
             Kind::Literal => self.literal = true,
+            Kind::Quot => {
+                self.numeric = true;
+                self.quot = true;
+            }
         }
         self
     }
@@ -54,6 +62,7 @@ impl Kinds {
             (self.numeric, Kind::Numeric),
             (self.ordered, Kind::Ordered),
             (self.literal, Kind::Literal),
+            (self.quot, Kind::Quot),
         ]
         .into_iter()
         .filter_map(|(set, kind)| set.then_some(kind))
@@ -79,6 +88,11 @@ impl Kinds {
     /// or a `Numeric`, which a record of numbers also satisfies.
     pub fn can_be_number(self) -> bool {
         self.numeric || self.ordered || self.literal
+    }
+
+    /// Whether a scalar this variable becomes is a `Float`, not an `Int`.
+    pub fn is_quot(self) -> bool {
+        self.quot
     }
 
     pub fn appendable(self) -> bool {
@@ -131,7 +145,7 @@ impl Violation {
                     format!("can't compare `{whole}`{with}: it has a function inside")
                 }
             }
-            Kind::Numeric => {
+            Kind::Numeric | Kind::Quot => {
                 let op = op.map_or_else(|| "arithmetic".to_string(), |op| format!("`{op}`"));
                 format!("{op} needs numbers or records of numbers, but this is `{whole}`")
             }

@@ -2482,12 +2482,16 @@ impl Inferer {
                 result
             }
             (Ty::Var(v), _) => self.add_kind(KindMap::Ty, *v, kind),
-            (Ty::Int | Ty::Float, Kind::Eq | Kind::Numeric | Kind::Ordered | Kind::Literal) => {
-                Ok(())
-            }
+            (Ty::Int, Kind::Quot) => fail(&ty),
+            (
+                Ty::Int | Ty::Float,
+                Kind::Eq | Kind::Numeric | Kind::Ordered | Kind::Literal | Kind::Quot,
+            ) => Ok(()),
             (Ty::Str, Kind::Eq | Kind::Appendable) => Ok(()),
             (Ty::Bool | Ty::Unit, Kind::Eq) => Ok(()),
-            (Ty::Record(row), Kind::Eq | Kind::Numeric) => self.constrain_row(row, kind, bound),
+            (Ty::Record(row), Kind::Eq | Kind::Numeric | Kind::Quot) => {
+                self.constrain_row(row, kind, bound)
+            }
             (Ty::Variant(row), Kind::Eq) => self.constrain_row(row, kind, bound),
             (Ty::Variant(row), Kind::Appendable) => self.constrain_list(row),
             (Ty::Rec(binder, body), Kind::Eq) => {
@@ -3533,7 +3537,9 @@ impl Inferer {
             }
         }
         for (var, scalar) in solution.bound {
+            let floor = self.kinds.get(&var).is_some_and(|kinds| kinds.is_quot());
             let ty = match scalar {
+                Scalar::Int if floor => Ty::Float,
                 Scalar::Int => Ty::Int,
                 Scalar::Float => Ty::Float,
             };
@@ -3844,8 +3850,10 @@ impl Inferer {
         Some(slot)
     }
 
-    /// `/` always yields a `Float`, whatever its operands are. A record of
-    /// numbers divides field by field, so each field has to be a `Float`.
+    /// `/` always yields a `Float`; a record of numbers divides field by field,
+    /// so each field has to be a `Float`. Operands that are not yet known to be
+    /// numbers or a record are joined as `+` joins them, at the kind `Quot`: the
+    /// result is their shared type, and a scalar it settles to is a `Float`.
     fn type_division(
         &mut self,
         op: BinOp,
@@ -3858,10 +3866,14 @@ impl Inferer {
                 self.require_float_fields(&lhs_ty, lhs.span);
             }
             lhs_ty
-        } else {
+        } else if self.is_certainly_number(&lhs_ty) || self.is_certainly_number(&rhs_ty) {
             self.require(&lhs_ty, Kind::Ordered, op, lhs.span);
             self.require(&rhs_ty, Kind::Ordered, op, rhs.span);
             Ty::Float
+        } else if self.require(&lhs_ty, Kind::Quot, op, lhs.span) {
+            self.join_operands(((lhs, lhs_ty), (rhs, rhs_ty)), Some(Kinds::of(Kind::Quot)))
+        } else {
+            lhs_ty
         }
     }
 
@@ -4121,7 +4133,8 @@ impl Inferer {
             .map(|(var, _)| *var)
             .collect();
         for var in undecided {
-            self.bind_var(var, Rc::new(Ty::Int));
+            let floor = self.kinds.get(&var).is_some_and(|kinds| kinds.is_quot());
+            self.bind_var(var, Rc::new(if floor { Ty::Float } else { Ty::Int }));
         }
     }
 
