@@ -9,6 +9,7 @@ GoatPresence.v
 GoatRecArith.v
 GoatMu.v
 GoatTags.v
+GoatConv.v
 GoatMeta.v
 GoatSpread.v
 GoatSubst.v

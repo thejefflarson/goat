@@ -196,7 +196,7 @@ Proof.
     eapply T_Proj. eapply IH; eauto.
   - (* T_Conv *)
     intros D G e T T' Ht IH Hteq G2 Hg Hy. subst G.
-    eapply T_Conv; [ eapply IH; eauto | exact Hteq ].
+    eapply T_ConvD; [ eapply IH; eauto | exact Hteq ].
   - intros D G Hu G2 Hg Hy. subst G. cbn [subst_exp]. apply T_Unit. eapply uniq_rename_mid; eauto.
   - intros D G q Hu G2 Hg Hy. subst G. cbn [subst_exp]. apply T_Str. eapply uniq_rename_mid; eauto.
   - (* T_If *)

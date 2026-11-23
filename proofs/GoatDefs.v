@@ -311,6 +311,29 @@ Fixpoint rlacksD (D : denv) (l : label) (R : row) {struct R} : bool :=
       if Nat.eqb l l' then is_abs P && rlacksD D l R' else rlacksD D l R'
   end.
 
+(* Conversion at a row environment.  [nfT D T] drops, from every row of [T]
+   outside a [mu] or a tag group, each entry whose presence is [Bool] and whose
+   rest [D] says lacks its label: such an entry is no field ([req_abs] with the
+   lack read from [D]).  [teqD D] is [teq] of the two normal forms, so it holds
+   of every [teq] pair and also of an absent entry against its own tail when
+   that tail is a row variable [D] gives the label to. *)
+Fixpoint nfT (D : denv) (T : typ) {struct T} : typ :=
+  match T with
+  | typ_Arrow A B => typ_Arrow (nfT D A) (nfT D B)
+  | typ_Record R => typ_Record (nfR D R)
+  | _ => T
+  end
+with nfR (D : denv) (R : row) {struct R} : row :=
+  match R with
+  | row_Empty | row_Var _ => R
+  | row_Ext l T R' => row_Ext l (nfT D T) (nfR D R')
+  | row_Maybe l P T R' =>
+      let R'' := nfR D R' in
+      if is_abs P && rlacksD D l R'' then R'' else row_Maybe l (nfT D P) (nfT D T) R''
+  end.
+
+Definition teqD (D : denv) (T T' : typ) : Prop := teq (nfT D T) (nfT D T').
+
 (* A row has a kind in [D]: it satisfies the sort and lacks the labels. *)
 Definition rkok (D : denv) (K : rkind) (R : row) : Prop :=
   rsat D (rk_sort K) R /\ forall l, rk_lacks K l = true -> rlacksD D l R = true.
@@ -1261,8 +1284,8 @@ Inductive typing : denv -> ctx -> exp -> typ -> Prop :=
      typing D G (e_rec fs) (typ_Record R)
  | T_Proj : forall D G e l T R,
      typing D G e (typ_Record (row_Ext l T R)) -> typing D G (e_proj e l) T
- | T_Conv : forall D G e T T',
-     typing D G e T -> teq T T' -> typing D G e T'
+ | T_ConvD : forall D G e T T',
+     typing D G e T -> teqD D T T' -> typing D G e T'
  | T_Unit : forall D G, uniq G -> typing D G e_unit typ_Unit
  | T_Str : forall D G q, uniq G -> typing D G (e_str q) typ_String
  | T_If : forall D G e1 e2 e3 T,
@@ -1313,6 +1336,139 @@ with field_typing : denv -> ctx -> fields -> row -> Prop :=
      field_typing D G (fs_meth l e fs) (row_Ext l T R).
 
 #[export] Hint Constructors typing field_typing : core.
+
+Lemma rlacks_rlacksD : forall D l R, rlacks l R = true -> rlacksD D l R = true.
+Proof.
+  intros D l. induction R; simpl; intros H; try reflexivity; try discriminate.
+  - apply andb_prop in H as [H1 H2]. rewrite H1. simpl. auto.
+  - apply andb_prop in H as [H1 H2]. apply negb_true_iff in H1. rewrite H1. auto.
+Qed.
+
+Lemma nfT_is_abs : forall D T, is_abs (nfT D T) = is_abs T.
+Proof. intros. destruct T; reflexivity. Qed.
+
+Lemma nf_rlacksD : forall D l R, rlacksD D l (nfR D R) = rlacksD D l R.
+Proof.
+  intros D l. induction R as [ | | l0 t R IHR | l0 t t0 R IHR]; try reflexivity.
+  - cbn [nfR rlacksD]. rewrite IHR. reflexivity.
+  - cbn [nfR]. destruct (is_abs t && rlacksD D l0 (nfR D R)) eqn:Ec.
+    + apply andb_prop in Ec as [Ha Hr]. cbn [rlacksD]. rewrite IHR.
+      destruct (Nat.eqb l l0); [ rewrite Ha; reflexivity | reflexivity ].
+    + cbn [rlacksD]. rewrite nfT_is_abs, IHR. reflexivity.
+Qed.
+
+Lemma req_rlacksD_mut :
+  (forall T T' : typ, teq T T' -> True) /\
+  (forall R R', req R R' -> forall D l, rlacksD D l R = rlacksD D l R').
+Proof.
+  apply teq_req_mutind; intros; try exact I.
+  - reflexivity.
+  - reflexivity.
+  - rename H0 into IH. cbn [rlacksD]. rewrite (IH D l0). reflexivity.
+  - cbn [rlacksD].
+    destruct (Nat.eqb l0 l) eqn:E1; destruct (Nat.eqb l0 l') eqn:E2; simpl; try reflexivity;
+      try (apply Nat.eqb_eq in E1; apply Nat.eqb_eq in E2; congruence).
+  - rename H1 into IH. cbn [rlacksD]. rewrite (IH D l0). apply teq_is_abs in t. rewrite t. reflexivity.
+  - cbn [rlacksD]. destruct (Nat.eqb l0 l); reflexivity.
+  - cbn [rlacksD]. destruct (Nat.eqb l0 l); reflexivity.
+  - cbn [rlacksD].
+    destruct (Nat.eqb l0 l) eqn:E1; destruct (Nat.eqb l0 l') eqn:E2; simpl; try reflexivity;
+      try (apply Nat.eqb_eq in E1; apply Nat.eqb_eq in E2; congruence).
+  - cbn [rlacksD].
+    destruct (Nat.eqb l0 l) eqn:E1; destruct (Nat.eqb l0 l') eqn:E2; simpl; try reflexivity;
+      try (apply Nat.eqb_eq in E1; apply Nat.eqb_eq in E2; congruence).
+  - etransitivity; [ apply H | apply H0 ].
+  - symmetry. apply H.
+Qed.
+
+Lemma req_rlacksD : forall R R', req R R' -> forall D l, rlacksD D l R = rlacksD D l R'.
+Proof. intros. apply (proj2 req_rlacksD_mut); assumption. Qed.
+
+Lemma nfR_ext : forall D l T R,
+  nfR D (row_Ext l T R) = row_Ext l (nfT D T) (nfR D R).
+Proof. reflexivity. Qed.
+
+Lemma nfR_maybe : forall D l P T R,
+  nfR D (row_Maybe l P T R) =
+    if is_abs P && rlacksD D l (nfR D R) then nfR D R
+    else row_Maybe l (nfT D P) (nfT D T) (nfR D R).
+Proof. reflexivity. Qed.
+
+Lemma rlacksD_maybe_ne : forall D l l' P T R, l <> l' ->
+  rlacksD D l (row_Maybe l' P T R) = rlacksD D l R.
+Proof.
+  intros. cbn [rlacksD]. apply Nat.eqb_neq in H. rewrite H. reflexivity.
+Qed.
+
+Lemma rlacksD_ext_ne : forall D l l' T R, l <> l' ->
+  rlacksD D l (row_Ext l' T R) = rlacksD D l R.
+Proof.
+  intros. cbn [rlacksD]. apply Nat.eqb_neq in H. rewrite H. reflexivity.
+Qed.
+
+Lemma rlacksD_if_maybe : forall D l l', l <> l' ->
+  forall (b : bool) P T R1,
+  rlacksD D l (if b then R1 else row_Maybe l' P T R1) = rlacksD D l R1.
+Proof. intros. destruct b; [ reflexivity | apply rlacksD_maybe_ne; exact H ]. Qed.
+
+Lemma teq_nf_mut :
+  (forall T T', teq T T' -> forall D, teq (nfT D T) (nfT D T')) /\
+  (forall R R', req R R' -> forall D, req (nfR D R) (nfR D R')).
+Proof.
+  apply teq_req_mutind.
+  - intros D. apply teq_refl.
+  - intros D. apply teq_refl.
+  - intros D. apply teq_refl.
+  - intros D. apply teq_refl.
+  - intros D. apply teq_refl.
+  - intros a D. apply teq_refl.
+  - intros T1 T2 T1' T2' H1 IH1 H2 IH2 D. cbn [nfT]. apply teq_arrow; auto.
+  - intros i D. apply teq_refl.
+  - intros T T' H IH D. cbn [nfT]. apply teq_mu; exact H.
+  - intros w T T' H IH D. cbn [nfT]. apply teq_grp; exact H.
+  - intros R R' H IH D. cbn [nfT]. apply teq_rec; apply IH.
+  - intros T1 T3 T2 H1 IH1 H2 IH2 D. eapply teq_trans; [ apply IH1 | apply IH2 ].
+  - intros T2 T1 H IH D. apply teq_sym; apply IH.
+  - intros D. apply req_refl.
+  - intros r D. apply req_refl.
+  - intros l T R T' R' H1 IH1 H2 IH2 D. rewrite !nfR_ext. apply req_head; auto.
+  - intros l T l' T' R Hne D. rewrite !nfR_ext. apply req_swap; exact Hne.
+  - intros l T1 T2 R T1' T2' R' H1 IH1 H2 IH2 H3 IH3 D.
+    rewrite !nfR_maybe.
+    assert (Hl : rlacksD D l (nfR D R) = rlacksD D l (nfR D R')).
+    { rewrite !nf_rlacksD. apply req_rlacksD; exact H3. }
+    rewrite Hl, (teq_is_abs _ _ H1).
+    destruct (is_abs T1' && rlacksD D l (nfR D R')).
+    + apply IH3.
+    + apply req_maybe; [ apply IH1 | apply IH2 | apply IH3 ].
+  - intros l T R D. rewrite nfR_maybe, nfR_ext. cbn [is_abs andb nfT]. apply req_pre.
+  - intros l T R H D. rewrite nfR_maybe.
+    assert (Hd : rlacksD D l (nfR D R) = true)
+      by (rewrite nf_rlacksD; apply rlacks_rlacksD; exact H).
+    rewrite Hd. cbn [is_abs andb]. apply req_refl.
+  - intros l T1 T l' T' R Hne D. rewrite nfR_maybe, !nfR_ext, nfR_maybe.
+    rewrite (rlacksD_ext_ne D l l' (nfT D T') (nfR D R) Hne).
+    destruct (is_abs T1 && rlacksD D l (nfR D R)).
+    + apply req_refl.
+    + apply req_swap_em; exact Hne.
+  - intros l T1 T l' T1' T' R Hne D. rewrite !nfR_maybe.
+    rewrite (rlacksD_if_maybe D l l' Hne), (rlacksD_if_maybe D l' l (not_eq_sym Hne)).
+    destruct (is_abs T1' && rlacksD D l' (nfR D R)) eqn:E1;
+      destruct (is_abs T1 && rlacksD D l (nfR D R)) eqn:E2; cbv iota;
+      try apply req_refl.
+    apply req_swap_mm; exact Hne.
+  - intros R1 R3 R2 H1 IH1 H2 IH2 D. eapply req_trans; [ apply IH1 | apply IH2 ].
+  - intros R2 R1 H IH D. apply req_sym; apply IH.
+Qed.
+
+Lemma teq_teqD : forall D T T', teq T T' -> teqD D T T'.
+Proof. intros. apply (proj1 teq_nf_mut); assumption. Qed.
+
+Lemma T_Conv : forall D G e T T',
+  typing D G e T -> teq T T' -> typing D G e T'.
+Proof. intros. eapply T_ConvD; [ eassumption | apply teq_teqD; assumption ]. Qed.
+
+#[export] Hint Resolve T_Conv : core.
 
 Lemma no_meth_plain : forall fs, no_meth (fs_plain fs) = true.
 Proof. induction fs as [|l e fs IH|l e fs IH]; simpl; auto. Qed.

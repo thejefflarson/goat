@@ -33,6 +33,7 @@ Require Import Goat.GoatKnot.
 Require Import Goat.GoatInferKnot.
 Require Import Goat.GoatCoerce.
 Require Import Goat.GoatInferW.
+Require Import Goat.GoatConv.
 Require Import Stdlib.Lists.List.
 From Stdlib Require Import Lia.
 Import ListNotations.
@@ -571,14 +572,14 @@ Proof.
   intros D G e e' T A H Hty. destruct H as [e T A Ht | b X Y X' Y' cs Hx Hc].
   - eapply T_Conv; eassumption.
   - destruct (abs_inv _ _ _ _ Hty) as (L & T1 & T2 & Hbody & Hteq).
-    destruct (teq_Arrow_inv _ _ _ Hteq) as (A1 & B1 & Heq & Ha & Hb).
+    destruct (teqD_Arrow_inv _ _ _ _ Hteq) as (A1 & B1 & Heq & Ha & Hb).
     injection Heq as <- <-.
     eapply T_Conv; [ | apply teq_arrow; [ exact Hx | apply teq_refl ] ].
-    eapply T_Conv; [ | apply teq_arrow; [ exact Ha | apply teq_refl ] ].
+    eapply T_ConvD; [ | apply teqD_Arrow; [ exact Ha | apply teqD_refl ] ].
     apply (T_Abs L). intros x Hx0.
     unfold open_exp_wrt_exp. rewrite open_coerce.
-    eapply coerce_typing; [ | exact (Hbody x Hx0) ].
-    eapply ch_conv; [ exact Hb | exact Hc ].
+    eapply coerce_typing; [ exact Hc | ].
+    eapply T_ConvD; [ exact (Hbody x Hx0) | exact Hb ].
 Qed.
 
 Lemma pw_co_typing : forall D G fs R R' fs',
