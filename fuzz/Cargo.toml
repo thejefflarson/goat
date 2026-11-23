@@ -9,6 +9,7 @@ bolero = "=0.13.4"
 goat = { path = "../goat" }
 goat_cli = { path = "../cli" }
 goat_mir = { path = "../mir" }
+goat_native = { path = "../native" }
 goat_parser = { path = "../parser" }
 goat_wamr = { path = "../wamr" }
 

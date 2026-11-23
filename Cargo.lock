@@ -695,6 +695,7 @@ dependencies = [
  "goat",
  "goat_checker",
  "goat_mir",
+ "goat_native",
  "goat_wamr",
  "goat_wasm",
  "tempfile",
@@ -715,6 +716,18 @@ name = "goat_mir"
 version = "0.1.0"
 dependencies = [
  "goat_checker",
+]
+
+[[package]]
+name = "goat_native"
+version = "0.1.0"
+dependencies = [
+ "goat",
+ "goat_checker",
+ "goat_llvm",
+ "goat_mir",
+ "libloading",
+ "tempfile",
 ]
 
 [[package]]
@@ -871,6 +884,16 @@ name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
+
+[[package]]
+name = "libloading"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1832accd5a4ca2795ace4d05d15c4039be15b62d3b950eff99746a990e3cc10"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
 
 [[package]]
 name = "libm"

@@ -62,7 +62,12 @@ pop them on return.
    it can run several Lua states (owner, 2026-11-22). The table and the instance
    both start with a version and only grow at the end. A standalone binary's
    `main` builds the table and the instance itself. `foreign "c"` calls (M5) are
-   direct calls and do not go through the table.
+   direct calls and do not go through the table. A trap does not return: the
+   host's trap entry leaves generated code, by `longjmp` to the host's call
+   site for an in-process host, or by printing and exiting for a standalone
+   `main`. After a trap the `goat_instance` is dead, because the trap can fire
+   in the middle of an allocation or a reference-count update. The host must
+   reset or discard it and never call into it again.
 4. **Tail calls.** On every target, a self tail call becomes a loop, and a group
    of functions joined by direct tail calls merges into one function that
    switches on the member to run. A remaining tail call is `musttail call tailcc`
