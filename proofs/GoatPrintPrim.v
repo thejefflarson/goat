@@ -115,6 +115,21 @@ Proof.
       [ (eapply Hc; constructor) | (eapply Ht; constructor) | (eapply He; constructor) ]).
 Qed.
 
+Lemma prim_function_empty : forall P, PrimOK [function_empty_tree P].
+Proof.
+  intros P r Hne. unfold function_empty_tree. flat_simp. refine (conj _ (conj _ _)).
+  - plain_head.
+  - exact I.
+  - pok nope.
+Qed.
+
+Lemma post_call_unit : PostOK call_unit_tree.
+Proof.
+  split.
+  - intros r. unfold call_unit_tree. flat_simp. simpl. discriminate.
+  - intros r. unfold call_unit_tree. flat_simp. pok nope.
+Qed.
+
 Lemma prim_conditional_noelse : forall c t,
   ExprParses c -> ExprParses t -> PrimOK [cond_tree_noelse c t].
 Proof.

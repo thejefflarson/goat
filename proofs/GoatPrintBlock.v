@@ -18,34 +18,34 @@ Open Scope list_scope.
 (* ---- records ---- *)
 
 (* Every field value of the record parses as an expression. *)
-Fixpoint AllExpr (P : nat) (fs : Goat_ott.fields) : Prop :=
+Fixpoint AllExpr (G : Grp) (P : nat) (fs : Goat_ott.fields) : Prop :=
   match fs with
   | fs_nil => True
-  | fs_cons _ e rest => ExprParses (block P e) /\ AllExpr P rest
-  | fs_meth _ e rest => ExprParses (block P e) /\ AllExpr P rest
+  | fs_cons _ e rest => ExprParses (block G P e) /\ AllExpr G P rest
+  | fs_meth _ e rest => ExprParses (block G P e) /\ AllExpr G P rest
   end.
 
-Lemma stopE_more_fields : forall P fs r,
-  StopE (flats (more_field_trees P fs) ++ TSym "}" :: r).
-Proof. intros P fs r. destruct fs; flat_simp; constructor. Qed.
+Lemma stopE_more_fields : forall G P fs r,
+  StopE (flats (more_field_trees G P fs) ++ TSym "}" :: r).
+Proof. intros G P fs r. destruct fs; flat_simp; constructor. Qed.
 
-Lemma more_fields_parse : forall fs P r,
-  AllExpr P fs ->
+Lemma more_fields_parse : forall fs G P r,
+  AllExpr G P fs ->
   peg (E_star (E_seq (E_term (T_text ",")) (E_rule R__record_item)))
-      (flats (more_field_trees P fs) ++ TSym "}" :: r)
-      (Ok (more_field_trees P fs) (TSym "}" :: r)).
+      (flats (more_field_trees G P fs) ++ TSym "}" :: r)
+      (Ok (more_field_trees G P fs) (TSym "}" :: r)).
 Proof.
-  induction fs as [| l e rest IH | l e rest IH]; intros P r Hall.
+  induction fs as [| l e rest IH | l e rest IH]; intros G P r Hall.
   - pok nope.
   - destruct Hall as [He Hrest].
     cbn [more_field_trees]. unfold field_tree. flat_simp. rewrite <- ?app_assoc.
     pok ltac:(first
-      [ exact (IH _ _ Hrest)
+      [ exact (IH _ _ _ Hrest)
       | (eapply He; apply stopE_more_fields) ]).
   - destruct Hall as [He Hrest].
     cbn [more_field_trees]. unfold field_tree. flat_simp. rewrite <- ?app_assoc.
     pok ltac:(first
-      [ exact (IH _ _ Hrest)
+      [ exact (IH _ _ _ Hrest)
       | (eapply He; apply stopE_more_fields) ]).
 Qed.
 
@@ -114,11 +114,11 @@ Proof.
       | exact (field_item _ _ _ Hf (StopE_rbrace _)) ]).
 Qed.
 
-Lemma prim_record : forall P fs,
-  AllExpr P fs ->
-  PrimOK [Node R_record ((sym "{" :: field_trees P fs) ++ [sym "}"])].
+Lemma prim_record : forall G P fs,
+  AllExpr G P fs ->
+  PrimOK [Node R_record ((sym "{" :: field_trees G P fs) ++ [sym "}"])].
 Proof.
-  intros P fs Hall r Hne.
+  intros G P fs Hall r Hne.
   refine (conj _ (conj _ _)).
   - flat_simp. plain_head.
   - exact I.
@@ -127,11 +127,11 @@ Proof.
     + destruct Hall as [He Hrest].
       unfold field_tree. flat_simp. rewrite <- ?app_assoc.
       pok ltac:(first
-        [ exact (more_fields_parse _ _ _ Hrest)
+        [ exact (more_fields_parse _ _ _ _ Hrest)
         | (eapply He; apply stopE_more_fields) ]).
     + destruct Hall as [He Hrest].
       unfold field_tree. flat_simp. rewrite <- ?app_assoc.
       pok ltac:(first
-        [ exact (more_fields_parse _ _ _ Hrest)
+        [ exact (more_fields_parse _ _ _ _ Hrest)
         | (eapply He; apply stopE_more_fields) ]).
 Qed.
