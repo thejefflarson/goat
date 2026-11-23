@@ -250,10 +250,8 @@ fn a_long_block_of_lets_agrees() {
 /// `if true then <inner> else 0`, `levels` deep: each level nests one native
 /// call deeper however the emitter walks chains.
 fn nested_ifs(levels: usize) -> Program {
-    entry(
-        MTy::Int,
-        chain(levels, int(1), |inner, _| if_(boolean(true), inner, int(0))),
-    )
+    let nest = chain(levels, int(1), |inner, _| if_(boolean(true), inner, int(0)));
+    entry(MTy::Int, let_(0, Expr::Site(3, 9), nest))
 }
 
 #[test]
@@ -265,4 +263,5 @@ fn nesting_past_the_native_limit_is_a_spanned_diagnostic_not_a_crash() {
     assert_eq!(errors.len(), 1);
     assert!(errors[0].message.starts_with("program too complex"));
     assert_eq!(errors[0].kind, goat::ErrorKind::ResourceLimit);
+    assert_eq!((errors[0].span.start, errors[0].span.end), (3, 9));
 }

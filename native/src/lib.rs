@@ -67,7 +67,7 @@ impl std::error::Error for BuildError {}
 /// Emits `program`, already monomorphized, for the native backend and loads it.
 pub fn build_program(program: &goat_mir::Program) -> Result<Library, BuildError> {
     let ll = goat_llvm::emit(program)
-        .map_err(|e| BuildError::Compile(vec![goat::emit_diagnostic(&e)]))?;
+        .map_err(|e| BuildError::Compile(vec![goat::emit_diagnostic(&e, goat::Span::new(0, 0))]))?;
     Library::build(&ll).map_err(BuildError::Native)
 }
 

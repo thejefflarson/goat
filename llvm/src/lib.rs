@@ -212,7 +212,8 @@ pub enum EmitError {
     Malformed(&'static str),
     /// A resource bound, not a fault in the program: it nests deeper than the
     /// emitter's recursion allows.
-    TooComplex,
+    /// Carries the source range of the last `Site` emitted before the limit.
+    TooComplex(Option<(usize, usize)>),
 }
 
 impl fmt::Display for EmitError {
@@ -224,15 +225,23 @@ impl fmt::Display for EmitError {
             EmitError::UnknownFunc(id) => write!(f, "unknown function {}", id.0),
             EmitError::UnboundLocal(l) => write!(f, "unbound local {}", l.0),
             EmitError::Malformed(what) => write!(f, "malformed MIR: {what}"),
-            EmitError::TooComplex => write!(f, "program too complex: it nests too deeply"),
+            EmitError::TooComplex(_) => write!(f, "program too complex: it nests too deeply"),
         }
     }
 }
 
 impl EmitError {
     /// Whether the program hit a resource bound rather than a fault in the compiler.
+    /// The source range to blame for a resource limit, when a `Site` was seen.
+    pub fn site(&self) -> Option<(usize, usize)> {
+        match self {
+            EmitError::TooComplex(site) => *site,
+            _ => None,
+        }
+    }
+
     pub fn is_resource_limit(&self) -> bool {
-        matches!(self, EmitError::TooComplex)
+        matches!(self, EmitError::TooComplex(_))
     }
 }
 
@@ -325,6 +334,8 @@ impl Helper {
 
 struct Module<'a> {
     program: &'a Program,
+    /// The source range of the last `Site` lowered, to blame a resource limit on.
+    last_site: Option<(usize, usize)>,
     options: EmitOptions,
     heap: Heap,
     texts: BTreeMap<String, usize>,
@@ -337,6 +348,7 @@ impl<'a> Module<'a> {
     fn new(program: &'a Program, options: EmitOptions) -> Self {
         Module {
             program,
+            last_site: None,
             options,
             heap: Heap::default(),
             texts: BTreeMap::new(),
@@ -665,7 +677,7 @@ impl<'m, 'a> FuncLower<'m, 'a> {
     /// program is a diagnostic, not a stack overflow.
     fn expr(&mut self, expr: &Expr) -> Result<Lowered, EmitError> {
         if self.depth >= MAX_NESTING {
-            return Err(EmitError::TooComplex);
+            return Err(EmitError::TooComplex(self.module.last_site));
         }
         self.depth += 1;
         let lowered = self.walk(expr);
@@ -746,6 +758,7 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             Expr::CallForeign(f, args) => self.call_foreign(*f, args)?,
             Expr::Write(write) => self.write(write)?,
             Expr::Site(start, end) => {
+                self.module.last_site = Some((*start, *end));
                 let too_long = || EmitError::Unsupported("a source over 4 GiB");
                 let start = u32::try_from(*start).map_err(|_| too_long())?;
                 let end = u32::try_from(*end).map_err(|_| too_long())?;

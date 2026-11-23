@@ -952,8 +952,12 @@ fn nesting_within_the_limit_emits_on_a_test_thread() {
 #[test]
 fn nesting_past_the_limit_is_a_resource_limit_not_a_crash() {
     let error = emit(&nested_ifs(5_000)).expect_err("too deep to emit");
-    assert_eq!(error, EmitError::TooComplex);
+    assert_eq!(error, EmitError::TooComplex(None));
     assert!(error.is_resource_limit());
+
+    let blamed = |body| emit(&program(vec![func(MTy::Int, body)])).expect_err("too deep");
+    let deep = (0..5_000).fold(int(1), |inner, _| if_(boolean(true), inner, int(0)));
+    assert_eq!(blamed(let_(0, Expr::Site(3, 9), deep)).site(), Some((3, 9)));
     assert!(error.to_string().starts_with("program too complex"));
 }
 

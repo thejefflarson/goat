@@ -156,13 +156,17 @@ pub fn compile_ll(
     let checked = goat_checker::check_with_vocab(host.prelude(), host.vocab(), source)?;
     let program = goat_mir::mono_for(&checked, profile)?;
     verify_mir(&program)?;
-    goat_llvm::emit(&program).map_err(|e| vec![emit_diagnostic(&e)])
+    goat_llvm::emit(&program).map_err(|e| vec![emit_diagnostic(&e, Span::new(0, source.len()))])
 }
 
-/// The diagnostic for an emitter failure: a spanned "program too complex" for a
-/// resource bound, anything else an internal error worded as the emitter does.
-pub fn emit_diagnostic(error: &goat_llvm::EmitError) -> GoatError {
-    let span = Span::new(0, 0);
+/// The diagnostic for an emitter failure: a "program too complex" for a
+/// resource bound, blamed on the last source site the emitter passed (else on
+/// `whole`, the program's span), anything else an internal error worded as the
+/// emitter does.
+pub fn emit_diagnostic(error: &goat_llvm::EmitError, whole: Span) -> GoatError {
+    let span = error
+        .site()
+        .map_or(whole, |(start, end)| Span::new(start, end));
     if error.is_resource_limit() {
         GoatError::too_complex(span, error.to_string())
     } else {
