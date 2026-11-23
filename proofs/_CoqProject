@@ -33,6 +33,8 @@ GoatRecArithExamples.v
 GoatRecTypes.v
 GoatElab.v
 GoatInferElab.v
+GoatUnrollEqb.v
+GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v
 GoatPeg.v

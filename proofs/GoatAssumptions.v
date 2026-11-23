@@ -1,4 +1,4 @@
-(* `make check-assumptions` fails unless all twelve theorems below print "Closed
+(* `make check-assumptions` fails unless all fifteen theorems below print "Closed
    under the global context". *)
 
 Require Import Goat.GoatPeg.
@@ -10,6 +10,8 @@ Require Import Goat.GoatInferSound.
 Require Import Goat.GoatInferMuFree.
 Require Import Goat.GoatElab.
 Require Import Goat.GoatInferElab.
+Require Import Goat.GoatUnrollEqb.
+Require Import Goat.GoatElabConverse.
 
 Print Assumptions peg_deterministic.
 Print Assumptions parse_denotes_lc.
@@ -23,3 +25,6 @@ Print Assumptions erase_step.
 Print Assumptions erase_traps.
 Print Assumptions coerce_typing.
 Print Assumptions infer_elab_sound.
+Print Assumptions unroll_eqb_sound.
+Print Assumptions erase_converse.
+Print Assumptions erase_converse_multistep.
