@@ -177,15 +177,20 @@ above states it, with these additions that the work settled.
 Not proved, and still open. Each is sound (W or the calculus refuses more than the
 checker accepts) and the differential test counts it:
 
-- 11 recursive programs W refuses: a row knot (6), a deep coercion (3), a
-  `unify_k` failure with no occurs check (1), and a group member that needs a
-  `fold` around its whole lambda (1) (#606).
+- 11 recursive programs W refuses (#606; corpus lines 7, 18, 291, 254, 299, 300,
+  288, 292, 301, 312, 315): a row variable meeting a row that contains it (3) and
+  a tail variable inside the other row (3), both refused after a prototype row
+  knot because the sides differ by an unrolling below a record with an open row,
+  which has no coercion; a deep coercion (3); two mus for one regular tree
+  (`step(ball).x`), which needs a coinductive equality (1); and a group member
+  that needs a `fold` around its whole lambda (1).
 - No `lacks` sort on a row variable, so a spread over a row-variable tail has no
   derivation (#564).
 - No theorem that `{...lit, x: 1}.a()`, a method literal spread and then called,
   has no derivation; the checker and W both reject it.
-- The 65 programs with a recursive group a value binding uses before its last
-  member, which the reader skips.
+- (Closed by #628.) The 65 programs with a recursive group a value binding uses
+  before its last member are compared: the checker now infers and generalizes
+  the group before it types that value.
 
 Decision 3's elaboration theorem is therefore proved for the programs W accepts,
 and W's completeness against the checker is measured and not proved, as

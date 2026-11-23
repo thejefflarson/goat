@@ -17,6 +17,95 @@ ADR 0037 (decision 6) ties the inference algorithm proved in `proofs/` to
 Run it with `make -C proofs differential` (it is part of `make -C proofs ci`
 and of the `coq` workflow).
 
+## The lexer
+
+`proofs/GoatLexExtract.v` extracts the Coq lexer `lex` (`proofs/GoatLex.v`) to
+OCaml, and `lex_driver.ml` compares it with `parser::lexer::lex` token for token,
+kind and span, with spans counted in code points (the model reads a list of
+Unicode code points; the Rust lexer reads UTF-8). `parser/examples/lex_dump.rs`
+writes what the Rust lexer says:
+
+- the Unicode identifier tables, from `unicode_ident`, as ranges of the code
+  points of 128 and up (`X` lines). The Coq development declares the two
+  predicates and does not copy the tables, so this is where they are checked: the
+  driver gives `lex` these tables, and first checks that the model's own ASCII
+  answers are the same as the tables';
+- one line per source (`L` lines): every `.goat` file of the repo, every program
+  `core_corpus --sources` collects (the examples, the code blocks of `docs/llm.md`,
+  every string literal of the checker and parser sources, and the four generators
+  at three seeds, whether or not the program is in the fragment), and a
+  fixed-seed fuzz of lexer fragments (unterminated strings, `1e+`, `start at`,
+  names of 255 characters, non-ASCII identifiers, code points no token takes).
+
+Any disagreement prints the source and both token lists and fails the run. It
+reads the grammar's ordered classes and the model's longest-match choice as the
+same lexer; if they ever differ, this is where it shows.
+
+## The nightly fuzz
+
+`fuzz/tests/w.rs` (the bolero target `differential_checker_vs_w`, in
+`.github/workflows/nightly-fuzz.yml`) runs the same comparison on programs a
+fuzzer writes. It starts `driver --serve` once as a child process and sends it one
+corpus line per program; the driver answers one line:
+
+- `OK`: the checker and the algorithm agree;
+- `SKIP <reason>`: not compared (`refused-R`, `refused-K`: a recursive-type
+  program the algorithm refuses; `curried-rejection`: a several-parameter
+  program the checker rejects);
+- `MISMATCH <class> <ours> || <theirs>`, where the class is `w-refuses` (the
+  checker accepts, the algorithm does not), `w-accepts` (the reverse) or `type`
+  (both accept, the types differ);
+- `SLOW`: the algorithm ran past 10 seconds (logged, not a failure: it says the
+  algorithm ran out of patience, not that it answered wrongly);
+- `ERROR <message>`: the line is malformed.
+
+A disagreement panics inside the bolero `for_each`, so bolero shrinks the input
+and the nightly's crash upload and `nightly-fuzz` issue take over. The program
+comes from the fuzz bytes: the first byte picks a generator (the typed, group,
+spread and core generators of `core_corpus.rs`, which read their choices from the
+bytes, and `cli/tests/support`'s well-typed generator) or a mutation of one
+(delete, double, swap or replace a token). The target reads each program with
+`core_corpus.rs`'s own `line`, so it compares exactly the fragment the corpus
+does and leaves the rest out as a counted reader skip.
+
+**Known gaps.** The algorithm is not yet complete, so the target excuses a
+`w-refuses` reply for the classes in `GAPS` (`fuzz/tests/w.rs`), each tied to what
+removes it: #623 (stage 7.3), #564 (stage 7.2), `sat_b` answering `Any` only for
+`mu` and tag groups (stage 7.4). A stage that lands deletes its row, and the
+target then fails on the class. A type that differs, or a program the algorithm
+accepts and the checker rejects, is never excused. Recursive-type programs the
+algorithm refuses (#606 and the row knot, stage 7.11) are driver skips, and
+`SplitGroup` and the reader's other skips never reach the comparison. Every
+excused program is counted by class in the target's periodic log line.
+
+**Where the algorithm comes from.** The nightly runs on `ubuntu-latest`, which
+cannot build the Rocq switch, so `coq.yml` uploads the OCaml sources
+(`goat_infer.ml`, `goat_infer.mli`, `driver.ml`) as the artifact
+`goat-w-extracted` on every push to master (and manual dispatch on master) that
+runs the build, and the nightly downloads the latest one and builds the driver
+with `ocamlfind`. A push that could change the checker or the algorithm runs the
+build, so the artifact matches the last such push.
+
+GitHub keeps artifacts 90 days. A repository with no push to master touching
+`proofs/`, `differential/`, `checker/`, `prelude/`, `parser/`, `examples/` or the
+grammar for 90 days has no artifact, and the nightly fails at "Fetch the extracted
+algorithm" with `no unexpired goat-w-extracted artifact`. Run the Coq workflow on
+master (Actions, Coq, Run workflow) to build a new one. A red nightly is the right
+outcome for a differential that cannot run.
+
+**Self-test.** `coq.yml` checks serve mode on every build: it must answer `OK` on a
+corpus program, `MISMATCH w-accepts` under `--plant` (which inverts every
+checker verdict), and `ERROR` on a malformed line.
+
+**Running it locally** after `make -C proofs differential`:
+
+    cd fuzz
+    GOAT_W_DRIVER=$PWD/../proofs/_differential/driver \
+      cargo +nightly bolero test differential_checker_vs_w --engine libfuzzer -T 5m
+
+Add `GOAT_W_PLANT=1` to start the driver with `--plant` and watch bolero catch and
+shrink a divergence.
+
 ## The sort gap spike
 
 `differential/sort_gap.sh` (run it after `make -C proofs differential`) counts the
@@ -34,7 +123,7 @@ is the root type written with `(mu mK. T)` for a recursive type, `mK` naming the
 binder by its depth. The driver reads that text and the algorithm's type as
 regular trees and compares them by bisimulation with assumed pairs: a pair of
 recursive types met again is taken as equal, and the variables of the two sides
-correspond one to one. A program the algorithm refuses is counted, not compared. A recursive group whose members need a knot (`g = program(p) do {a: p, b: g(p)} done`) is compared: `unify_grp` puts the fold under the member's lambda. What W still refuses is a `K` line, a method program the reader's heuristic marks as holding a row variable inside a recursive type. The heuristic is not the cause. Instrumenting the extracted algorithm (a throwaway patch that logs each `None`; not committed) on the 11 `K` lines gave: a row variable meeting a row that contains it (`occR`) in 3, `rewrite_row` finding the tail variable inside the other row in 3, a deep coercion (the coercion sits below a record field or a function type, `{...ball, size: 10}.moved()`) in 3, `unify_k` failing after `bind_k` refused a type with a free index in 1, and, in the last, a recursive group whose member would need a `fold` around the whole lambda, which `T_Letrec` does not allow. Only the first six are the row knot. Any other difference is a mismatch and fails the
+correspond one to one. A program the algorithm refuses is counted, not compared. A recursive group whose members need a knot (`g = program(p) do {a: p, b: g(p)} done`) is compared: `unify_grp` puts the fold under the member's lambda. What W still refuses is a `K` line, a method program the reader's heuristic marks as holding a row variable inside a recursive type. The heuristic is not the cause, and neither is the row knot alone: instrumenting the extracted algorithm (a throwaway patch that logs each `None`; not committed) on the 11 `K` lines, and prototyping a row-knot case for `unify_kr`, gave a row variable meeting a row that contains it (`occR`) in 3, `rewrite_row` finding the tail variable inside the other row in 3, a deep coercion (the difference sits below a record field or a function type, `{...ball, size: 10}.moved()`) in 3, `step(ball).x` in 1 (two mus for one regular tree, with the knot in two places, and no assumed-pairs set), and, in the last, a recursive group whose member would need a `fold` around the whole lambda, which `T_Letrec` does not allow. With the prototype the first six unify and then fail in `coerce_dec`, because the sides differ by one unrolling below a record whose row has a variable tail, which has no coercion. `proofs/README.md` ("Known incompleteness") has the detail. Any other difference is a mismatch and fails the
 run.
 
 ## Which programs are compared
@@ -139,7 +228,9 @@ itself, or that is in a group with functions that mention each other, is read
 as a `letrec` (`T_Letrec`) of the group, which the checker generalizes after
 typing all its members (`Infer::settle`); the corpus writer groups the
 members with the same rule. A group whose functions are not next to each other
-in their block, with a value binding between them, is skipped. The group
+in their block, with a value binding between them, is read as one `letrec`
+placed before the value bindings that use it, which is where the checker infers
+it. The group
 generator writes blocks of such functions, with computed values around them, at
 any depth.
 
@@ -177,9 +268,7 @@ onto a row variable that lacks the label (below); `print` or `trap`; `and`, `or`
 which lowering gives every `repeat` and `for`); a comparison, then arithmetic,
 on operands that are not `Int`, `Float`, `String` or `Bool`. After those come
 the reasons that are about the shape of a program and not a missing feature: a
-recursive group that a value binding uses before the group's last member (the
-checker types the use at the member's monomorphic type, the hoisted `letrec` at
-its generalized one), a rest pattern with no fields, an inferred type the corpus cannot write, an `if` without an `else`, a function or call with no parameters,
+rest pattern with no fields, an inferred type the corpus cannot write, an `if` without an `else`, a function or call with no parameters,
 a program that ends in a binding, a numeral of 2^30 or more, and `none of the
 above`. A program using two features counts only under the earlier, so when a
 phase lands its count falls to 0 and its programs either join the compared set

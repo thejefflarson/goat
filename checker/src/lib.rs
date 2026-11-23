@@ -1525,6 +1525,38 @@ mod tests {
     }
 
     #[test]
+    fn a_value_between_group_members_leaves_the_group_generic() {
+        for src in [
+            "show = program(x) do describe(x) done  n = show(5)  \
+             describe = program(x) do x done  describe(\"hi\")",
+            "show = program(x) do describe(x) done  describe = program(x) do x done  \
+             n = show(5)  describe(\"hi\")",
+        ] {
+            assert_eq!(type_of(src).unwrap(), "String", "{src}");
+        }
+    }
+
+    #[test]
+    fn a_value_reading_a_group_still_types_what_it_reads() {
+        let src = "show = program(x) do describe(x) done  n = show(5)  \
+                   describe = program(x) do x done  n + 1";
+        assert_eq!(exact_type_of(src), "Int");
+        let src = "show = program(x) do describe(x) done  n = show(5)  \
+                   describe = program(x) do x done  show(n) + n";
+        assert_eq!(exact_type_of(src), "Int");
+    }
+
+    #[test]
+    fn a_group_member_reading_the_value_that_calls_the_group_is_a_cycle() {
+        let src = "show = program(x) do describe(x) done  n = show(5)  \
+                   describe = program(x) do n done  n";
+        assert_eq!(
+            order_error(src),
+            ("`show` uses `n` before it is defined".to_string(), "show")
+        );
+    }
+
+    #[test]
     fn function_run_before_a_value_it_reads_is_rejected() {
         let src = "f = program() do g() done  x = f()  m = 5  g = program() do m done  x";
         let errors = check(src).err().expect("rejected");

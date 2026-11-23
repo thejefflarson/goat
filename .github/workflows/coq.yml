@@ -86,3 +86,54 @@ jobs:
       - name: Build proofs under Rocq
         if: steps.changes.outputs.build == 'true'
         run: opam exec --switch=rocq-9 -- make -C proofs ci
+
+      # The nightly fuzz differential (nightly-fuzz.yml) runs the extracted
+      # algorithm as `driver --serve`. These checks keep that mode from going
+      # vacuous: it must agree on a real program, see a planted divergence
+      # (`--plant` inverts the checker's verdict), and answer a malformed line
+      # with ERROR instead of hanging or dying.
+      - name: Self-test the driver's serve mode
+        if: steps.changes.outputs.build == 'true'
+        run: |
+          set -u
+          d=proofs/_differential
+          line=$(awk -F'\t' '$1 == "U" && $3 ~ /^OK/ { print; exit }' "$d/corpus.tsv")
+          [ -n "$line" ] || { echo "::error::the corpus has no accepted one-parameter program"; exit 1; }
+          reply=$(printf '%s\n' "$line" | timeout 60 "$d/driver" --serve)
+          [ "$reply" = OK ] || { echo "::error::serve mode answered '$reply' on a program the batch run agrees on"; exit 1; }
+          reply=$(printf '%s\n' "$line" | timeout 60 "$d/driver" --serve --plant)
+          case "$reply" in
+            "MISMATCH w-accepts"*) ;;
+            *) echo "::error::a planted divergence was not caught; serve mode answered '$reply'"; exit 1 ;;
+          esac
+          reply=$(printf 'not a corpus line\n' | timeout 60 "$d/driver" --serve)
+          case "$reply" in
+            ERROR*) ;;
+            *) echo "::error::a malformed line was answered '$reply', not ERROR"; exit 1 ;;
+          esac
+
+      # The nightly job runs on ubuntu-latest and cannot build the Rocq switch,
+      # so it builds the driver from these OCaml sources instead. Master only:
+      # a pull request must not supply the sources the nightly compiles. The
+      # sources match the last push that could change what the checker or the
+      # algorithm does, because every such push runs this job.
+      - name: Stage the extracted algorithm for the nightly fuzz
+        if: >-
+          steps.changes.outputs.build == 'true'
+          && github.ref == 'refs/heads/master'
+          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: |
+          mkdir w-extracted
+          cp proofs/_differential/goat_infer.ml proofs/_differential/goat_infer.mli differential/driver.ml w-extracted/
+
+      - name: Publish the extracted algorithm
+        if: >-
+          steps.changes.outputs.build == 'true'
+          && github.ref == 'refs/heads/master'
+          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@v7
+        with:
+          name: goat-w-extracted
+          path: w-extracted/
+          retention-days: 90
+          if-no-files-found: error

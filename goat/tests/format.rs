@@ -349,3 +349,49 @@ fn a_broken_record_inside_a_call_closes_at_the_indent_of_the_line_that_opened_it
     assert_eq!(formats(source), expected);
     assert_eq!(formats(expected), expected);
 }
+
+fn edit(from: usize, to: usize, newlines: usize, indent: usize) -> Edit {
+    Edit {
+        from,
+        to,
+        newlines,
+        indent,
+    }
+}
+
+#[test]
+fn an_edit_that_would_make_start_at_is_refused() {
+    let error = apply("start  at 1\n", &[edit(5, 7, 0, 1)]).unwrap_err();
+    assert!(error.contains("start at"), "{error}");
+    assert_eq!(
+        apply("start  at 1\n", &[edit(5, 7, 0, 3)]).unwrap(),
+        "start   at 1\n"
+    );
+    assert_eq!(
+        apply("xstart  at 1\n", &[edit(6, 8, 0, 1)]).unwrap(),
+        "xstart at 1\n"
+    );
+}
+
+#[test]
+fn a_gap_after_a_comment_must_keep_a_line_break() {
+    let source = "a = 1 # one\nb = 2\n";
+    let error = apply(source, &[edit(11, 12, 0, 1)]).unwrap_err();
+    assert!(error.contains("comment"), "{error}");
+    assert!(apply(source, &[edit(11, 12, 0, 0)]).is_err());
+    assert_eq!(
+        apply(source, &[edit(11, 12, 2, 0)]).unwrap(),
+        "a = 1 # one\n\nb = 2\n"
+    );
+    assert_eq!(
+        apply(source, &[edit(5, 6, 0, 2)]).unwrap(),
+        "a = 1  # one\nb = 2\n"
+    );
+}
+
+#[test]
+fn only_the_lexers_whitespace_may_be_replaced() {
+    let error = apply("a =\u{a0}1\n", &[edit(3, 5, 0, 1)]).unwrap_err();
+    assert!(error.contains("not whitespace"), "{error}");
+    assert!(apply("a =\u{2003}1\n", &[edit(3, 6, 0, 1)]).is_err());
+}

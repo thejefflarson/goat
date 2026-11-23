@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 const SUBSCRIPTIONS: &str = "goat_subscriptions";
 
 /// Where a string object keeps its length and its bytes (`docs/mir.md`).
-const STR_LEN: usize = 8;
-const STR_BYTES: usize = 12;
+pub(crate) const STR_LEN: usize = 8;
+pub(crate) const STR_BYTES: usize = 12;
 
 const STOPPED: &str = "the program has stopped";
 
@@ -268,7 +268,7 @@ fn check_versions<H: Host>(module: &mut Module, core: &mut Core<H>) -> Result<()
     }
 }
 
-fn subscriptions(library: &Library) -> Vec<String> {
+pub(crate) fn subscriptions(library: &Library) -> Vec<String> {
     let Ok(start) = library.symbol::<*const u8>(SUBSCRIPTIONS) else {
         return Vec::new();
     };

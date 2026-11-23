@@ -19,10 +19,13 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
-        target: [differential_interp_vs_wasm, check_never_panics, compile_never_panics, parse_recovery_holds_its_invariants]
+        target: [differential_interp_vs_wasm, check_never_panics, compile_never_panics, parse_recovery_holds_its_invariants, differential_checker_vs_w]
     steps:
       - uses: actions/checkout@v7
 
@@ -45,6 +48,33 @@ jobs:
           restore-keys: |
             fuzz-corpus-${{ matrix.target }}-
 
+      # differential_checker_vs_w runs the extracted, proven inference algorithm
+      # as a child process. The Coq workflow uploads its OCaml sources on every
+      # push to master that could change them (coq.yml); this builds the driver
+      # from the latest one, since this runner cannot build the Rocq switch.
+      - name: Fetch the extracted algorithm
+        if: matrix.target == 'differential_checker_vs_w'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=goat-w-extracted&per_page=10" \
+            --jq '[.artifacts[] | select(.expired | not)][0].workflow_run.id // empty')
+          if [ -z "$run_id" ]; then
+            echo "::error::no unexpired goat-w-extracted artifact. GitHub keeps artifacts 90 days, so a repository with no push to master touching proofs/, differential/, checker/, prelude/, parser/, examples/ or the grammar for 90 days has none. Run the Coq workflow on master (Actions, Coq, Run workflow) to build a new one."
+            exit 1
+          fi
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name goat-w-extracted --dir w-extracted
+
+      - name: Build the differential driver
+        if: matrix.target == 'differential_checker_vs_w'
+        working-directory: w-extracted
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ocaml-nox ocaml-findlib
+          ocamlfind ocamlopt -w -a -package unix -linkpkg goat_infer.mli goat_infer.ml driver.ml -o driver
+          echo "GOAT_W_DRIVER=$PWD/driver" >> "$GITHUB_ENV"
+
       - name: Fuzz
         working-directory: fuzz
         run: cargo +nightly bolero test ${{ matrix.target }} --engine libfuzzer -T "$FUZZ_BUDGET"
@@ -65,6 +95,16 @@ jobs:
         with:
           name: crashes-${{ matrix.target }}
           path: fuzz/tests/__fuzz__/
+          if-no-files-found: ignore
+
+      # A crash of differential_checker_vs_w replays with the driver built from
+      # these sources, so a developer needs no Rocq switch to reproduce it.
+      - name: Upload the extracted algorithm beside the crash
+        if: failure() && matrix.target == 'differential_checker_vs_w'
+        uses: actions/upload-artifact@v7
+        with:
+          name: crashes-differential_checker_vs_w-driver-sources
+          path: w-extracted/*.ml*
           if-no-files-found: ignore
 
   # A red nightly run is easy to miss in email, so a crash opens a tracking issue

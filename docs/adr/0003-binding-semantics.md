@@ -61,3 +61,12 @@ right of `score = …` is ambiguous. ML resolves this with an explicit
   not.
 - Out of scope: cross-scope mutual recursion and recursive *values* (lazy
   `letrec` over data) remain unsupported.
+- A value binding between the members of a recursive group does not fix their
+  types. The checker infers and generalizes the whole group first, pulling in
+  the later members and the values they read, then types the value, as if the
+  group were a `letrec` hoisted above it. So `show = program(x) do describe(x)
+  done  n = show(5)  describe = program(x) do x done  describe("hi")` checks:
+  `n` uses the generalized `show`. When a member reads the value that calls the
+  group (`describe` reading `n`), the group cannot be typed first; that is the
+  use-before-definition error above, now also what the checker reports when it
+  cannot reorder.

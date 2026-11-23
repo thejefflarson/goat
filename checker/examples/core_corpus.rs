@@ -23,7 +23,9 @@
 //! belongs to a group of functions that mention each other, is a `letrec` of
 //! the group (`T_Letrec`), generalized once the whole group is typed, as the
 //! checker does. A group whose functions are not next to each other in their
-//! block (a value binding between them) is outside the fragment.
+//! block (a value binding between them) is written as one `letrec`, placed
+//! after the last binding its members mention and before the value bindings
+//! that use it.
 //!
 //! The calculus has no implicit Int-to-Float widening: elaboration writes
 //! `float(e)` where the checker accepts an Int for a Float (an operand beside a
@@ -49,6 +51,10 @@
 //! gives the methods of one literal a single receiver (`T_Obj`).
 //!
 //!     cargo run -q -p goat_checker --example core_corpus > corpus.tsv
+//!
+//! With `--sources` it writes every source it collected, whether or not it is
+//! in the fragment, one per line as decimal code points: the programs the
+//! lexer's differential test reads (`parser/examples/lex_dump.rs`).
 
 use goat_checker::captures::for_each_node;
 use goat_checker::check_with_prelude;
@@ -253,8 +259,8 @@ impl Core {
 /// order of the proof phases that will bring each in: a count falls to 0 when
 /// its phase lands, and its programs then show up under the next feature they
 /// use, or are compared.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum Feature {
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Feature {
     ForeignCall,
     TagsAndMatch,
     LacksOnTail,
@@ -262,7 +268,6 @@ enum Feature {
     Connective,
     Loop,
     OperatorOperand,
-    SplitGroup,
     EmptyRest,
     UnwritableType,
     IfWithoutElse,
@@ -285,9 +290,6 @@ impl Feature {
             Feature::Loop => "outside the calculus: a loop (repeat, for)",
             Feature::OperatorOperand => {
                 "outside the calculus: arithmetic on non-primitive operands"
-            }
-            Feature::SplitGroup => {
-                "outside the calculus: a recursive group a value binding uses before its last member"
             }
             Feature::EmptyRest => {
                 "outside the calculus: a rest pattern with no fields, which only says its source is a record"
@@ -342,8 +344,8 @@ fn feature_of(lowered: &Lowered, checked: Option<&Checked>, gap: Feature) -> Fea
 }
 
 /// Why a program is left out of the differential test.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum Skip {
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Skip {
     Rejected,
     OutsideFragment(Feature),
     MethodFlag,
@@ -351,7 +353,7 @@ enum Skip {
 }
 
 impl Skip {
-    fn describe(self) -> &'static str {
+    pub fn describe(self) -> &'static str {
         match self {
             Skip::Rejected => "does not lower",
             Skip::OutsideFragment(feature) => feature.describe(),
@@ -522,10 +524,7 @@ impl Reader<'_> {
     /// itself, or belongs to a group with another, is a `letrec`; the others
     /// are `let`s. A group is placed after the last binding its members
     /// mention, which is where elaboration hoists it past value bindings that
-    /// split it. A value binding that uses a member before the group's last
-    /// member leaves the group outside the fragment: the checker types that
-    /// use at the member's still-monomorphic type, and the hoisted `letrec`
-    /// would already have generalized it.
+    /// split it; the checker infers the group there too.
     fn block(&mut self, first: &Expr) -> Option<Core> {
         let mut bindings = Vec::new();
         let mut cursor = first;
@@ -569,16 +568,6 @@ impl Reader<'_> {
             .filter(|group| group.len() > 1 || used[members[group[0]]].contains(&symbols[group[0]]))
             .map(|group| group.into_iter().map(|m| members[m]).collect())
             .collect();
-        let used_inside = groups.iter().any(|group| {
-            let last = *group.iter().max().expect("a group has a member");
-            (0..last).any(|i| {
-                !group.contains(&i) && group.iter().any(|&m| used[i].contains(&bindings[m].0))
-            })
-        });
-        if used_inside {
-            self.gap = self.gap.min(Feature::SplitGroup);
-            return None;
-        }
         let units = self.place_groups(&bindings, &used, &groups)?;
         self.chain(&bindings, &groups, &units, tail)
     }
@@ -622,14 +611,12 @@ impl Reader<'_> {
         done(&mut units);
         for i in (0..bindings.len()).filter(|i| !grouped.contains(i)) {
             if !needs(i).iter().all(|u| units.contains(u)) {
-                self.gap = self.gap.min(Feature::SplitGroup);
                 return None;
             }
             units.push(Unit::Value(i));
             done(&mut units);
         }
         if units.len() != groups.len() + bindings.len() - grouped.len() {
-            self.gap = self.gap.min(Feature::SplitGroup);
             return None;
         }
         Some(units)
@@ -1001,7 +988,7 @@ fn is_method(expr: &Expr) -> bool {
 }
 
 /// The line for `source`, or why it is not a program of the fragment.
-fn line(source: &str) -> Result<String, Skip> {
+pub fn line(source: &str) -> Result<String, Skip> {
     let lowered = lower(source).map_err(|_| Skip::Rejected)?;
     if !lowered.errors.is_empty() {
         return Err(Skip::Rejected);
@@ -1212,18 +1199,53 @@ fn markdown_blocks(text: &str) -> Vec<String> {
     blocks
 }
 
-struct Rng(u64);
+pub struct Rng {
+    state: u64,
+    tape: Vec<u8>,
+    pos: usize,
+}
 
 impl Rng {
+    pub fn seeded(seed: u64) -> Rng {
+        Rng {
+            state: seed,
+            tape: Vec::new(),
+            pos: 0,
+        }
+    }
+
+    /// Draws each choice from `tape` while it lasts, so a fuzzer that mutates
+    /// the bytes mutates the choices. Past the end the stream is seeded from
+    /// the tape's own bytes, so a program is still a function of its input.
+    pub fn from_tape(tape: &[u8]) -> Rng {
+        let seed = tape.iter().fold(0xCBF2_9CE4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01B3)
+        });
+        Rng {
+            state: seed,
+            tape: tape.to_vec(),
+            pos: 0,
+        }
+    }
+
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.state;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
     }
 
     fn below(&mut self, n: usize) -> usize {
+        if let Some(&low) = self.tape.get(self.pos) {
+            self.pos += 1;
+            if n <= 256 {
+                return usize::from(low) % n;
+            }
+            let high = self.tape.get(self.pos).copied().unwrap_or(0);
+            self.pos += 1;
+            return (usize::from(low) | usize::from(high) << 8) % n;
+        }
         (self.next() % n as u64) as usize
     }
 }
@@ -1810,6 +1832,44 @@ const HANDWRITTEN: &[&str] = &[
     "f = program(p) do\n  {x, ...r} = p\n  r\ndone\nf({x: 1, y: true})",
 ];
 
+/// One program from generator `kind` (taken modulo the four), every choice
+/// read from `tape`; the nightly fuzz target mutates the tape.
+pub fn generate_from_tape(kind: u8, tape: &[u8]) -> String {
+    let rng = Rng::from_tape(tape);
+    match kind % 4 {
+        0 => {
+            Gen {
+                rng,
+                scope: Vec::new(),
+                functions: 0,
+            }
+            .term(0)
+            .0
+        }
+        1 => {
+            let mut typed_gen = TypedGen {
+                rng,
+                scope: Vec::new(),
+                names: 0,
+                fault: false,
+            };
+            typed_gen.fault = typed_gen.rng.below(4) == 0;
+            let ty = PRIMS[typed_gen.rng.below(PRIMS.len())];
+            typed_gen.term(ty, 0)
+        }
+        2 => {
+            let mut group_gen = GroupGen {
+                rng,
+                names: 0,
+                careful: false,
+            };
+            group_gen.careful = group_gen.rng.below(2) == 0;
+            group_gen.block(0, &[], &[])
+        }
+        _ => SpreadGen { rng }.program(),
+    }
+}
+
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut sources: Vec<String> = Vec::new();
@@ -1844,7 +1904,7 @@ fn main() {
 
     for seed in SEEDS {
         let mut gen_ = Gen {
-            rng: Rng(seed),
+            rng: Rng::seeded(seed),
             scope: Vec::new(),
             functions: 0,
         };
@@ -1854,7 +1914,7 @@ fn main() {
         }
 
         let mut typed_gen = TypedGen {
-            rng: Rng(seed ^ 0xA5A5),
+            rng: Rng::seeded(seed ^ 0xA5A5),
             scope: Vec::new(),
             names: 0,
             fault: false,
@@ -1867,7 +1927,7 @@ fn main() {
         }
 
         let mut group_gen = GroupGen {
-            rng: Rng(seed ^ 0x5EED),
+            rng: Rng::seeded(seed ^ 0x5EED),
             names: 0,
             careful: false,
         };
@@ -1878,11 +1938,19 @@ fn main() {
         }
 
         let mut spread_gen = SpreadGen {
-            rng: Rng(seed ^ 0x5B4E),
+            rng: Rng::seeded(seed ^ 0x5B4E),
         };
         for _ in 0..GENERATED_SPREADS {
             sources.push(spread_gen.program());
         }
+    }
+
+    if std::env::args().any(|arg| arg == "--sources") {
+        for source in &sources {
+            let code_points: Vec<String> = source.chars().map(|c| (c as u32).to_string()).collect();
+            println!("{}", code_points.join(" "));
+        }
+        return;
     }
 
     let mut seen = HashSet::new();

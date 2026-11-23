@@ -316,8 +316,8 @@ impl Mono<'_> {
         Expr::Cmp(op, Box::new(order), Box::new(int(0)))
     }
 
-    /// -1, 0 or 1 as `a` is before, equal to or after `b`. A `Float` NaN is
-    /// after everything, itself included.
+    /// -1, 0 or 1 as `a` is before, equal to or after `b`. A `Float` NaN equals
+    /// itself here and is after every other `Float`, so the order is total.
     fn compare(&mut self, cx: &mut FnCx, ty: &Ty, a: Expr, b: Expr, tail: bool) -> Expr {
         match ty.unfold_head() {
             scalar @ (Ty::Int | Ty::Float) => {
@@ -334,15 +334,47 @@ impl Mono<'_> {
                         Box::new(Expr::Local(r)),
                     ))
                 };
-                let order = Expr::If(
-                    test(CmpOp::Eq),
-                    Box::new(int(0)),
-                    Box::new(Expr::If(
+                let order = if scalar == Ty::Int {
+                    Expr::If(
+                        test(CmpOp::Eq),
+                        Box::new(int(0)),
+                        Box::new(Expr::If(
+                            test(CmpOp::Lt),
+                            Box::new(int(-1)),
+                            Box::new(int(1)),
+                        )),
+                    )
+                } else {
+                    // Only a NaN fails all three tests, and `l != l` spots it.
+                    let l_is_nan = Box::new(Expr::Cmp(
+                        CmpOp::Ne,
+                        Box::new(Expr::Local(l)),
+                        Box::new(Expr::Local(l)),
+                    ));
+                    let r_is_nan = Box::new(Expr::Cmp(
+                        CmpOp::Ne,
+                        Box::new(Expr::Local(r)),
+                        Box::new(Expr::Local(r)),
+                    ));
+                    let unordered = Expr::If(
+                        l_is_nan,
+                        Box::new(Expr::If(r_is_nan, Box::new(int(0)), Box::new(int(1)))),
+                        Box::new(int(-1)),
+                    );
+                    Expr::If(
                         test(CmpOp::Lt),
                         Box::new(int(-1)),
-                        Box::new(int(1)),
-                    )),
-                );
+                        Box::new(Expr::If(
+                            test(CmpOp::Gt),
+                            Box::new(int(1)),
+                            Box::new(Expr::If(
+                                test(CmpOp::Eq),
+                                Box::new(int(0)),
+                                Box::new(unordered),
+                            )),
+                        )),
+                    )
+                };
                 Self::bind_pair(l, r, a, b, order)
             }
             Ty::Bool => {
