@@ -203,6 +203,42 @@ fn a_reload_that_cannot_keep_the_model_says_why_and_restarts() {
     assert_eq!(live, 0, "leaked");
 }
 
+/// A model whose list is `depth` links deep, so the snapshot and refresh
+/// recurse past the stack bound.
+fn nested(depth: usize, tag: &str) -> String {
+    format!(
+        r#"
+tag Chain = Leaf | Wrap(Chain)
+build = program(n, acc) do
+  if n == 0 then acc else build(n - 1, Wrap(acc)) done
+done
+init = {{name: "{tag}", items: build({depth}, Leaf)}}
+update = program(model, event) do match event do Tick(dt) then model done done
+draw = program(model) do [Text({{x: 0, y: 0, text: model.name, color: "red"}})] done
+"#
+    )
+}
+
+#[test]
+fn a_trap_while_refreshing_resets_in_a_fresh_instance_as_wasm_does() {
+    need_clang!();
+    let (old, new) = (nested(2_000_000, "old"), nested(2_000_000, "new"));
+    let mut program: Interactive<SceneHost> =
+        Interactive::new(library(&old), SceneHost::default()).unwrap();
+    let outcome = program.reload(library(&new)).expect("reload runs");
+
+    let wasm = |source: &str| goat::compile_reloadable(source, &HostInterface::turtle()).unwrap();
+    let mut oracle: Wasm<SceneHost> = Wasm::new(&wasm(&old), SceneHost::default()).unwrap();
+    assert_eq!(oracle.reload(&wasm(&new)).unwrap(), outcome);
+    assert_eq!(outcome, Reloaded::Reset(goat::ResetReason::reshaped()));
+
+    program.draw().unwrap();
+    let (sink, live) = program.finish().unwrap();
+    assert_eq!(live, 0);
+    oracle.draw().unwrap();
+    assert_eq!(oracle.finish().unwrap().0.commands, sink.commands);
+}
+
 #[test]
 fn an_optimized_build_runs_and_counts_allocations() {
     need_clang!();
