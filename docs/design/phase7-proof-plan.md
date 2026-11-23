@@ -1544,6 +1544,7 @@ Adaptations, each a change from the sketch above.
    "arithmetic on non-primitive operands"). `ctyping_typing` embeds it in `typing`;
    the converse (a `typing` derivation of a core term is a `ctyping` one, by renaming
    the binders, when it does not use `sig_quot_rec`) is the first step of 7.9.
+   Stage 7.7b below settles why `sig_quot_rec` stays out.
 3. **`teqD`, not `teq`.** The conclusion is `teqD Dd (apT S2 T) T1`, the
    conversion `T_ConvD` uses, because the derivation may reach a type through
    conversion at its environment.
@@ -1586,6 +1587,68 @@ slots `6 .. 6 + m - 1` in order, each in some tag, and `nparams` counts `m`;
 2. *The conversion from `typing`* (above, adaptation 2).
 3. *Records, spread, restrict, tags, `match`, methods* (7.8), with the
    hypotheses of 7.6 (`ps`, `Dsrt`, `spn`, absent entries waiting on #667).
+
+*As built (stage 7.7b, `GoatInfer.v`, `GoatInferW.v`, `GoatInferSound.v`,
+`GoatInferGuard.v`, `GoatCompleteCore.v`).* Stage 7.7b triaged record `/` and
+fixed W; the `let` of a value, `letrec` and the conversion are not started.
+
+**Record `/` (`sig_quot_rec`), triaged against the checker.** Ratification of
+7.7 ruled: where the checker accepts, W must; where it refuses, tighten the
+calculus. `infer.rs` (`type_division`) is neither one nor the other, because its
+rule reads the operands' types as they stand when it reaches the operator:
+
+| Program | Checker |
+| --- | --- |
+| `{x: 1.0, y: 2.0} / {x: 3.0, y: 4.0}` and with `Int` fields | accepts, `{x: Number, y: Number}` |
+| a name bound to a record, `a / b` | accepts |
+| `f = program(a) do a / {x: 1.0} done`, `f({x: 1.0})`, and with the record on the left | accepts (a record on either side fixes the shape) |
+| `{x: 1.0} / 2.0`, `2.0 / {x: 2.0}`, `{x: 1.0} / {y: 2.0}`, `{x: 1.0, y: 2.0} / {x: 3.0}` | refuses |
+| `f = program(a) do a / a done`, `f({x: 1.0})` and `f = program(a, b) do a / b done` at records | refuses: no operand is a record at the operator, so `/` fixes `Float` |
+
+So there are two answers. *The record cases the checker accepts: W was
+incomplete, and is fixed.* `quot_ty T1 T2` (`GoatInfer.v`) is the type `/` works
+at: the record of the same labels at `Float` when the left operand (or, failing
+that, the right) is a closed record, and `Float` otherwise. W unifies both
+operands with it and returns it; the unifier's coercions turn an `Int` field into
+a `Float` one, as the checker widens. `infer_sound` derives it with
+`sig_quot_rec` (`quot_ty_facts`: the type is closed under substitution, even and
+a `Float` record; `quot_ty_mg` in `GoatInferGuard.v` for the guard invariant). The
+corpus reader no longer skips `/` on record operands (it still skips `+ - * // %`
+on them), writes no `float(e)` around them, and `HANDWRITTEN` holds the programs
+of the table.
+
+*The function cases the checker refuses stay a gap between calculus and checker.*
+`program(a) do a / a done` applied to a record has a `typing` derivation (the
+parameter at a record type, `sig_quot_rec`) and no checker run, which reads `a`
+as a variable at the operator and fixes `Float`. No declarative rule can say "the
+operand's head is known here": which names are known depends on the order the
+checker walks the term. Tightening `sig_quot_rec` therefore cannot make the
+calculus equal the checker. Soundness does not need it (W infers less than the
+calculus derives), and the core's L3 is unaffected (`ctyping` has no
+`sig_quot_rec`, and `quot_ty_rf` shows that for record-free operand types
+`quot_ty` is `Float`, so the division case of `infer_complete_core` changes by one
+rewrite). It returns for 7.8: the record constructs' `ctyping` needs a
+`sig_quot_rec` rule whose operand type is a record at the operator in W's order
+(a closed record literal, or a variable the context binds to one), and
+completeness is stated for that rule, not for `typing`'s. DECISION NEEDED: the
+owner may prefer instead to make the checker's rule order-independent (join the
+operands' shapes after inference, the way `join_operands` joins `+`), which would
+let `sig_quot_rec` stand as it is and close the gap; that changes checker
+acceptance (`f(a) = a / a` at a record would pass), which this stage does not do.
+
+**The atom-renaming lemma (option (a)), what it has to say.** Renaming a
+derivation's free atoms to even ones is `typing_ap` at an injective renaming with
+the sorts moved along (`kres`), and is routine. It does not give what the `let`
+case needs. The unifier's substitution `Sg` collects the types of every
+sub-derivation already walked, so it mentions the atoms a `T_Let` generalizes
+inside an earlier `let`, and a later `let` that reuses the same atom as its `V`
+meets an `Sg` whose images hold it. The lemma has to produce a derivation in
+which every `T_Let`/`T_Letrec` generalized set is disjoint from every atom outside
+that binding's own first premise, and even. That is a normal form for `typing`
+(prove by induction on the derivation, freshening each generalized set with
+`mk_rename`, the way `typing_tsubst_gen_mut` already does for `T_Let`), stated
+as a new inductive judgement or as a size-indexed lemma with an avoid set. It is
+the first thing 7.7c does.
 
 **Alternatives that lost.** Prove completeness against a separate declarative
 principal-type system and show it equivalent to `typing`: it doubles the rule

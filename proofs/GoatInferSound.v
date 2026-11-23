@@ -91,6 +91,42 @@ Proof.
     first [ apply EvT_Int | apply EvT_Float | apply EvT_String | apply EvT_Bool ].
 Qed.
 
+Lemma float_row_facts : forall R R', float_row R = Some R' ->
+  (forall s, apR s R' = R') /\ EvR R' /\ rfsat R'.
+Proof.
+  induction R as [| | l T R IH |]; intros R' H; cbn [float_row] in H; try discriminate.
+  - injection H as <-. refine (conj _ (conj EvR_Empty I)).
+    intros s. reflexivity.
+  - destruct (float_row R) as [R''|] eqn:E; [|discriminate]. injection H as <-.
+    destruct (IH _ eq_refl) as (H1 & H2 & H3).
+    refine (conj _ (conj _ _)).
+    + intros s. rewrite apR_Ext, H1. rewrite (ground_ap s typ_Float (or_intror (or_introl eq_refl))). reflexivity.
+    + apply EvR_ext; [ apply EvT_Float | exact H2 ].
+    + cbn [rfsat]. exact (conj I H3).
+Qed.
+
+Lemma quot_ty_facts : forall T1 T2,
+  (forall s, apT s (quot_ty T1 T2) = quot_ty T1 T2) /\ EvT (quot_ty T1 T2) /\
+  (forall D, bin_sig D bop_div (quot_ty T1 T2) (quot_ty T1 T2) (quot_ty T1 T2)).
+Proof.
+  assert (Hf : forall T F, float_head T = Some F ->
+    (forall s, apT s F = F) /\ EvT F /\ (forall D, bin_sig D bop_div F F F)).
+  { intros T F H. destruct T; cbn [float_head] in H; try discriminate.
+    destruct (float_row R) as [R'|] eqn:E; [|discriminate]. injection H as <-.
+    destruct (float_row_facts R R' E) as (H1 & H2 & H3).
+    refine (conj _ (conj _ _)).
+    + intros s. change (apT s (typ_Record R')) with (typ_Record (apR s R')). rewrite H1. reflexivity.
+    + apply EvT_Record. exact H2.
+    + intros D. apply sig_quot_rec. exact H3. }
+  intros T1 T2. unfold quot_ty.
+  destruct (float_head T1) as [F|] eqn:E1; [ exact (Hf _ _ E1) | ].
+  destruct (float_head T2) as [F|] eqn:E2; [ exact (Hf _ _ E2) | ].
+  refine (conj _ (conj _ _)).
+  - intros s. exact (ground_ap s _ (or_intror (or_introl eq_refl))).
+  - apply EvT_Float.
+  - intros D. apply sig_quot.
+Qed.
+
 Lemma EvT_arrow : forall A B, EvT A -> EvT B -> EvT (typ_Arrow A B).
 Proof.
   intros A B [H1 H2] [H3 H4]. split; intros a Ha; simpl in Ha;
@@ -1241,14 +1277,13 @@ Proof.
            apply (typing_refine D2 n2 D2' (S n2) _ _ _ GdU HG2). exact Hty2.
         -- unfold bin_res, generic_sort in *. destruct Hko as [Hko | [Hko | Hko]]; rewrite Hko in *;
              first [ (apply sig_ring; assumption) | (apply sig_whole; assumption) | (apply sig_cmp; assumption) ].
-      * (* [/]: both operands at Float *)
+      * (* [/]: both operands at Float, or at the float record of a record operand *)
         assert (Ho : o = bop_div)
           by (unfold is_generic_op in Hring; destruct o; first [ reflexivity | (cbn in Hring; discriminate Hring) ]).
-        destruct (unify_coD f D2 (apT s2 T1) typ_Float n2) as [[[[s3 Du3] cs3] n3]|] eqn:E4; [|discriminate].
-        destruct (unify_coD f Du3 (apT s3 T2) typ_Float n3) as [[[[s4 Du4] cs4] n4]|] eqn:E5; [|discriminate].
+        destruct (quot_ty_facts (apT s2 T1) T2) as (Hqa & HTa & Hqs).
+        destruct (unify_coD f D2 (apT s2 T1) (quot_ty (apT s2 T1) T2) n2) as [[[[s3 Du3] cs3] n3]|] eqn:E4; [|discriminate].
+        destruct (unify_coD f Du3 (apT s3 T2) (quot_ty (apT s2 T1) T2) n3) as [[[[s4 Du4] cs4] n4]|] eqn:E5; [|discriminate].
         inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst fs'; try subst ars'; clear H.
-        assert (Hg : ground typ_Float) by (right; left; reflexivity).
-        pose proof (ground_EvT _ Hg) as HTa.
         destruct (unify_coD_sound _ _ _ _ _ _ _ _ _ E4 ltac:(dok) (EvT_ap s2 T1 Hs2 HT1) HTa)
           as (Hs3 & Hch3 & Hgu3).
         pose proof (GoodU_pre D2 n2 _ s3 Du3 n3 HD2 Hgu3 ltac:(lia)) as Gd3.
@@ -1257,8 +1292,8 @@ Proof.
           as (Hs4 & Hch4 & Hgu4).
         pose proof ((proj2 Hgu4) (Good_dok _ _ _ _ _ Gd3)) as Gd4.
         pose proof (WfCtx_ap s4 _ Hs4 HG3) as HG4.
-        rewrite (ground_ap s3 _ Hg) in Hch3.
-        rewrite (ground_ap s4 _ Hg) in Hch4.
+        rewrite (Hqa s3) in Hch3.
+        rewrite (Hqa s4) in Hch4.
         split.
         { exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) Gd4). }
         split; [ exact HTa | ].
@@ -1266,9 +1301,9 @@ Proof.
         2: { cbn [erase]. rewrite !erase_coerce, Her_Hty1, Her_Hty2. reflexivity. }
         2: { cbn [lce]. split; apply lce_coerce; assumption. }
         rewrite <- !apC_comp.
-        eapply T_Bin; [ | | rewrite Ho; apply sig_quot ].
+        eapply T_Bin; [ | | rewrite Ho; apply Hqs ].
         -- pose proof (chainD_apT s4 _ _ _ _ _ _ _ Gd4 Hch3) as Hch3'.
-           rewrite (ground_ap s4 _ Hg) in Hch3'.
+           rewrite (Hqa s4) in Hch3'.
            eapply coerce_typingD; [ exact Hch3' | ].
            apply (typing_ap_G Du3 n3 s4 Du4 n4 _ _ _ Gd4 HG3).
            apply (typing_ap_G D2 n2 s3 Du3 n3 _ _ _ Gd3 HG2).

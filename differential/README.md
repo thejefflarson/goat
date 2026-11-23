@@ -246,7 +246,8 @@ proven algorithm to accept the result. It writes `float(e)` around
 - the Int operand of `< <= > >= == !=` whose other operand is a Float, and the
   Int operand of `+ - *` in the same position;
 - each operand of `/`, Int or Float (a quotient takes Floats, and `float(e)` is
-  the identity on a Float);
+  the identity on a Float), but not an operand of `/` that is a record: the
+  algorithm coerces the fields;
 - an Int argument to a call whose callee's parameter is a Float, including a
   parameter the checker settled as a Float by joining the call's arguments
   (`f(7 // 2, 2.5)` for `f = program(a, b) do a + b done`);
