@@ -11,6 +11,7 @@ Require Import Goat.GoatProofs.
 Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
 Require Import Goat.GoatDen.
+Require Import Goat.GoatDenRun.
 Require Import Goat.GoatPrint.
 Require Import Goat.GoatPrintParse.
 Require Import Goat.GoatPrintInst.
@@ -381,6 +382,50 @@ Proof.
           | exact (block_con_not_fn _ _ _ _ _ _ Hc) ].
 Qed.
 
+(* A printed block that is not a group does not open with a function
+   declaration, so a group's members are the whole of their run. *)
+Lemma head_as_operand : forall var_of f b,
+  (match f with e_letrec _ _ => True | _ => fn_run_names var_of b = [] end) ->
+  fn_run_names var_of (as_operand f b) = [].
+Proof. intros var_of f b H. destruct f; first [ reflexivity | exact H ]. Qed.
+
+Lemma head_as_binop : forall var_of f b,
+  (match f with e_letrec _ _ => True | _ => fn_run_names var_of b = [] end) ->
+  fn_run_names var_of (as_binop f b) = [].
+Proof. intros var_of f b H. destruct f; first [ reflexivity | exact H ]. Qed.
+
+Lemma head_callee_of : forall var_of G P f,
+  (match f with e_letrec _ _ => True | _ => fn_run_names var_of (block G P f) = [] end) ->
+  fn_run_names var_of (callee_of G P f (block G P f)) = [].
+Proof.
+  intros var_of G P f H. unfold callee_of. destruct (is_group_proj G P f) eqn:E.
+  - destruct f; try discriminate E. exact H.
+  - unfold as_callee. destruct f; first [ reflexivity | exact H ].
+Qed.
+
+Lemma block_run : forall var_of e G P,
+  match e with e_letrec _ _ => True | _ => fn_run_names var_of (block G P e) = [] end.
+Proof.
+  intros var_of e. induction e; intros G P; try exact I; try reflexivity.
+  - destruct e; reflexivity.
+  - destruct e2; cbn [block]; (apply run_names_app; [ exact (head_callee_of var_of G P e1 (IHe1 G P)) | reflexivity ]).
+  - cbn [block fn_run_names]. rewrite (fn_decl_name_nonfn _ (value_not_fn G P e1)). reflexivity.
+  - cbn [block]. destruct (proj_level G P e) eqn:E; [ reflexivity | ].
+    apply run_names_app; [ exact (head_as_operand var_of e _ (IHe G P)) | reflexivity ].
+  - destruct e3; reflexivity.
+  - cbn [block]. apply run_names_app;
+      [ exact (head_as_binop var_of e1 _ (IHe1 G P)) | destruct o; reflexivity ].
+  - destruct e; try (destruct fs); reflexivity.
+Qed.
+
+Lemma block_run_nonrec : forall var_of e G P,
+  NonRec e -> fn_run_names var_of (block G P e) = [].
+Proof.
+  intros var_of e G P H. pose proof (block_run var_of e G P) as Hb.
+  destruct e; first [ exact Hb | contradiction ].
+Qed.
+
+
 Lemma is_fn_decl_abs : forall x G P v,
   is_abs v -> is_fn_decl (decl_named x (block G P v)) = true.
 Proof.
@@ -608,10 +653,8 @@ Lemma print_den : forall var_of tbl, names_distinct var_of -> forall D, TableOf 
         Den_sep var_of tbl (more_field_trees G P fs ++ [sym "}"]) (inst_fields var_of G 0 P fs)) /\
      (forall G P i, GOK G (S P) -> scoped_group G (S P) i fs -> tags_in_fields D fs ->
         LabelsOK tbl (lbls_members G P fs) ->
-        forall rest xs gs b, (forall fin, Den_blk var_of tbl [] fin rest xs gs b) ->
-          forall fin, Den_blk var_of tbl [] fin (member_trees G P i fs ++ rest)
-            (gnames P i (flen fs) ++ xs)
-            (List.map (inst var_of G (S P)) (fvals fs) ++ gs) b)) /\
+        Den_fdecls var_of tbl (member_trees G P i fs)
+          (gnames P i (flen fs)) (List.map (inst var_of G (S P)) (fvals fs)))) /\
   (forall ars, forall w G P, List.In w D -> GOK G P -> scoped_arms G P w ars ->
      tags_in_arms D ars -> LabelsOK tbl (lbls_arms G P w ars) ->
      Den_arms var_of tbl (arm_trees G P w ars) (inst_arms var_of G 0 P ars) /\
@@ -722,8 +765,12 @@ Proof.
     assert (Hl' : LabelsOK tbl (lbls_members ((P, flen fs) :: G) P fs
                                 ++ lbls ((P, flen fs) :: G) (S P) b)) by exact Hl.
     destruct (IHb _ (S P) HG' Hb Htb (labelsok_app_r _ _ _ Hl')) as [_ [Hbb _]].
-    pose proof (IHmem ((P, flen fs) :: G) P 0 HG' Hgrp Htfs (labelsok_app_l _ _ _ Hl')
-                  (block ((P, flen fs) :: G) (S P) b) [] [] (inst var_of ((P, flen fs) :: G) (S P) b)
+    pose proof (hoist_run var_of tbl [] _ _ _
+                  (IHmem ((P, flen fs) :: G) P 0 HG' Hgrp Htfs (labelsok_app_l _ _ _ Hl'))
+                  (mentions_none _)
+                  (block ((P, flen fs) :: G) (S P) b)
+                  (block_run_nonrec var_of b ((P, flen fs) :: G) (S P) Hnr)
+                  [] [] (inst var_of ((P, flen fs) :: G) (S P) b)
                   (fun fin => Hbb Hnr [] fin) e_unit) as Hmem.
     rewrite !app_nil_r in Hmem.
     assert (Hden : Den var_of tbl (Node R_expr (block G P (e_letrec fs b)))
@@ -901,7 +948,7 @@ Proof.
     + intros G P HG Hs Ht Hl. split.
       * apply DI_end.
       * apply DS_end.
-    + intros G P i HG Hs Ht Hl rest xs gs b Hrest fin. exact (Hrest fin).
+    + intros G P i HG Hs Ht Hl. apply DF_nil.
   - (* a field, then the rest *)
     intros l e IHe rest [IHrest IHmem]. split.
     + intros G P HG [He Hrest] [Hte Htrest] Hl.
@@ -926,7 +973,7 @@ Proof.
       split; [ exact Hitems' | ].
       cbn [more_field_trees]. simpl. apply DS_more.
       exact Hitems'.
-    + intros G P i HG (Hli & Hab & Hv & Hrest) [Hte Htrest] Hl rest0 xs gs b Hr fin.
+    + intros G P i HG (Hli & Hab & Hv & Hrest) [Hte Htrest] Hl.
       assert (Hl' : LabelsOK tbl (lbls G (S P) e ++ lbls_members G P rest)) by exact Hl.
       destruct (IHe G (S P) HG Hv Hte (labelsok_app_l _ _ _ Hl')) as [_ [_ [Hmv _]]].
       assert (Hm : Den_math var_of tbl (block G (S P) e) (inst var_of G (S P) e))
@@ -935,9 +982,9 @@ Proof.
                         (inst var_of G (S P) e)).
       { apply DD_semi. apply D_value. exact Hm. }
       cbn [member_trees flen gnames fvals List.map app].
-      eapply DK_hoist;
-        [ exact Hdecl | exact (is_fn_decl_abs _ _ _ _ Hab) | reflexivity | ].
-      exact (IHmem G P (S i) HG Hrest Htrest (labelsok_app_r _ _ _ Hl') rest0 xs gs b Hr _).
+      apply DF_cons;
+        [ exact Hdecl | exact (is_fn_decl_abs _ _ _ _ Hab) | ].
+      exact (IHmem G P (S i) HG Hrest Htrest (labelsok_app_r _ _ _ Hl')).
   - (* a method field is not a term of the printed fragment *)
     intros l e IHe rest IHrest. split; [ intros G P HG Hs | intros G P i HG Hs ]; destruct Hs.
   - (* no arms *)

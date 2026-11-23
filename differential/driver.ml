@@ -127,6 +127,12 @@ and arms_of arms =
 
 (* ---- the canonical type ---- *)
 
+(* A group's number and the types in its parameter slots: the group type's
+   argument is the spine [T0 -> T1 -> ... -> Unit]. *)
+let group_parts w a =
+  let rec params = function Typ_Arrow (t, rest) -> t :: params rest | _ -> [] in
+  match fst w with [ n ] -> (n, params a) | _ -> failwith "malformed group"
+
 (* Fields in label order (a stable sort, so equal labels keep their order, which
    is the scoped-label equivalence), variables numbered by first occurrence. *)
 let canonical_type d t =
@@ -188,6 +194,11 @@ let canonical_type d t =
         match d.dsort a with
         | K_Literal -> Buffer.add_string b "Number"
         | _ -> Buffer.add_string b (Printf.sprintf "v%d" (name a)))
+    | Typ_Grp (w, a) ->
+        let n, params = group_parts w a in
+        Buffer.add_string b (Printf.sprintf "(grp %d" n);
+        List.iter (fun p -> Buffer.add_char b ' '; typ p) params;
+        Buffer.add_char b ')'
   in
   typ t;
   Buffer.contents b
@@ -202,6 +213,7 @@ type tree =
   | TVar of int
   | TBound of int
   | TMu of int * tree
+  | TGrp of int * tree list
 
 (* The canonical text of a recursive type: `canonical_type`'s grammar with
    `(mu mK. T)` and `mK` added. *)
@@ -235,7 +247,14 @@ let tree_of_text s =
       | 'm' -> incr pos; TBound (number ())
       | '(' ->
           incr pos;
-          if looking_at "mu m" then begin
+          if looking_at "grp " then begin
+            eat "grp ";
+            let k = number () in
+            let params = ref [] in
+            while looking_at " " do eat " "; params := typ () :: !params done;
+            eat ")";
+            TGrp (k, List.rev !params)
+          end else if looking_at "mu m" then begin
             eat "mu m";
             let k = number () in
             eat ". ";
@@ -302,7 +321,9 @@ let tree_of_typ d t =
         match d.dsort a with K_Literal -> TNum | _ -> TVar (Atom.nat_of a))
     | Typ_Bvar i -> TBound (depth - 1 - i)
     | Typ_Mu b -> TMu (depth, typ (depth + 1) b)
-    | Typ_Grp _ -> failwith "tag group"
+    | Typ_Grp (w, a) ->
+        let n, params = group_parts w a in
+        TGrp (n, List.map (typ depth) params)
   in
   typ 0 t
 
@@ -321,6 +342,7 @@ let trees_equal a b =
     | TMu (j, body) when j = k -> TMu (j, body)
     | TMu (j, body) -> TMu (j, subst k u body)
     | TArrow (x, y) -> TArrow (subst k u x, subst k u y)
+    | TGrp (n, ps) -> TGrp (n, List.map (subst k u) ps)
     | TRecord (fields, tail) ->
         TRecord (List.map (fun (l, p, t) -> (l, p, subst k u t)) fields, tail)
     | t -> t
@@ -334,6 +356,7 @@ let trees_equal a b =
     | _, TMu (k, body) -> assumed := (a, b) :: !assumed; go a (subst k b body)
     | TNum, TNum | TFloat, TFloat | TBool, TBool | TUnit, TUnit | TStr, TStr -> true
     | TArrow (x, y), TArrow (x', y') -> go x x' && go y y'
+    | TGrp (n, ps), TGrp (n', ps') -> n = n' && List.length ps = List.length ps' && List.for_all2 go ps ps'
     | TRecord (f, t), TRecord (f', t') ->
         List.length f = List.length f'
         && List.for_all2

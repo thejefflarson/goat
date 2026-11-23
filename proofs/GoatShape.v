@@ -12,6 +12,7 @@ Require Import Goat.GoatGrammar.
 Require Import Goat.GoatPeg.
 Require Import Goat.GoatPrec.
 Require Import Goat.GoatDen.
+Require Import Goat.GoatDenRun.
 From Stdlib Require Import Lia.
 Open Scope string_scope.
 Open Scope list_scope.
@@ -1703,26 +1704,73 @@ Section Totality.
     exists xs, gs, b. apply DK_skip. exact H.
   Qed.
 
+  Lemma not_ops_head : forall nots,
+    gen (E_star (E_rule R_not_op)) nots ->
+    nots = [] \/ exists c r, nots = Node R_not_op c :: r.
+  Proof.
+    intros nots H.
+    apply (gen_star_ind (E_rule R_not_op)
+             (fun nots => nots = [] \/ exists c r, nots = Node R_not_op c :: r));
+      [ | | exact H ].
+    - left. reflexivity.
+    - intros ts1 ts2 H1 _. destruct (gen_node_of H1 eq_refl) as (c & -> & _).
+      right. exists c, ts2. reflexivity.
+  Qed.
+
+  (* A statement opens with a tree that is not a function declaration. *)
+  Lemma statement_head : forall ss,
+    gen (E_rule R__statement) ss ->
+    exists t ss', ss = t :: ss' /\ fn_decl_name t = None.
+  Proof.
+    intros ss H.
+    pose proof (statement_math _ H) as Hmath.
+    split_seq Hmath as (tso & tsm & -> & Hop & _).
+    destruct (operand_shape _ Hop) as (nots & t & -> & Hnots & Hterm).
+    destruct (not_ops_head nots Hnots) as [-> | (c & r & ->)];
+      [ | eexists; eexists; split; [ reflexivity | reflexivity ] ].
+    destruct (term_shape _ Hterm) as [(c & ->) | (prim & posts & -> & Hprim & _)].
+    - eexists; eexists; split; [ reflexivity | reflexivity ].
+    - destruct (primary_shape _ Hprim) as [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | [(c & ->) | (c & ->)]]]]]]]]]]]]]];
+        (eexists; eexists; split; [ reflexivity | reflexivity ]).
+  Qed.
+
+  (* A run of function declarations is one block step whatever follows it, so
+     long as what follows does not open with another function declaration. *)
   Lemma decls_blk : forall ds,
     Forall (fun t => exists c, t = Node R_declaration c) ds ->
     Forall TotKind ds ->
-    forall k, BlkTot k -> BlkTot (ds ++ k).
+    forall k, BlkTot k -> fn_run_names var_of k = [] -> BlkTot (ds ++ k).
   Proof.
-    intros ds Hds. induction Hds as [| d ds [c ->] _ IH]; intros Hkids k Hk; [ exact Hk | ].
-    inversion Hkids as [| ? ? Hd Hkids']; subst. simpl in Hd.
-    destruct Hd as (x & v & Hdecl).
-    specialize (IH Hkids' k Hk).
-    intros ctx fin. rewrite <- app_comm_cons.
-    destruct (is_fn_decl (Node R_declaration c)) eqn:Hfn.
-    - destruct (mentions_any ctx v) eqn:Hm.
-      + destruct (IH (var_of x :: ctx) (e_fvar_f (var_of x))) as (xs & gs & b & H).
-        exists xs, gs, (fn_place (var_of x) v b).
-        eapply DK_late; eassumption.
-      + destruct (IH ctx (e_fvar_f (var_of x))) as (xs & gs & b & H).
-        exists (x :: xs), (v :: gs), b.
-        eapply DK_hoist; eassumption.
-    - destruct (IH (var_of x :: ctx) (e_fvar_f (var_of x))) as (xs & gs & b & H).
-      exists xs, gs, (e_let v (close_exp (var_of x) b)).
+    intros ds. remember (length ds) as n eqn:Hn. revert ds Hn.
+    induction n as [n IH] using lt_wf_ind.
+    intros ds Hn Hds Hkids k Hk Hrun.
+    destruct ds as [| d ds']; [ exact Hk | ].
+    inversion Hds as [| dd dds [c Hc] Hds'].
+    subst d.
+    destruct (fn_decl_name (Node R_declaration c)) eqn:Hname.
+    - destruct (run_decompose var_of (Node R_declaration c) ds' ltac:(rewrite Hname; discriminate))
+        as (fr & tl & Heq & Hfrne & Hfr & Htl).
+      rewrite Heq in Hds, Hkids, Hn.
+      apply Forall_app in Hds as [Hdfr Hdtl]. apply Forall_app in Hkids as [Hkfr Hktl].
+      assert (Hlen : length tl < n).
+      { rewrite Hn, length_app. destruct fr; [ contradiction | simpl; lia ]. }
+      assert (Htlk : BlkTot (tl ++ k)) by exact (IH (length tl) Hlen tl eq_refl Hdtl Hktl k Hk Hrun).
+      destruct (fdecls_of var_of tbl fr) as (xs & vs & Hfd).
+      { rewrite Forall_forall in Hfr, Hkfr, Hdfr |- *. intros t Ht. split.
+        - exact (fn_decl_name_decl t (Hfr t Ht)).
+        - destruct (Hdfr t Ht) as [c' ->]. exact (Hkfr _ Ht). }
+      rewrite Heq. rewrite app_assoc.
+      intros ctx fin.
+      exact (run_blk var_of tbl fr xs vs Hfd (tl ++ k) (run_names_app var_of tl k Htl Hrun) Htlk ctx fin).
+    - inversion Hkids as [| ? ? Hd Hkids']. simpl in Hd.
+      destruct Hd as (y & v & Hdecl).
+      assert (Hfn : is_fn_decl (Node R_declaration c) = false).
+      { rewrite (decl_name_is var_of tbl _ _ _ Hdecl) in Hname.
+        destruct (is_fn_decl (Node R_declaration c)); [ discriminate Hname | reflexivity ]. }
+      assert (Hrest := IH (length ds') ltac:(simpl in Hn; lia) ds' eq_refl Hds' Hkids' k Hk Hrun).
+      intros ctx fin. rewrite <- app_comm_cons.
+      destruct (Hrest (var_of y :: ctx) (e_fvar_f (var_of y))) as (xs & gs & b & Hb).
+      exists xs, gs, (e_let v (close_exp (var_of y) b)).
       eapply DK_value; eassumption.
   Qed.
 
@@ -1749,7 +1797,11 @@ Section Totality.
       assert (Hstar : gen (E_star (E_rule R_declaration)) ds)
         by (rewrite Hsplit; apply G_star_cons; assumption).
       rewrite app_assoc.
-      apply decls_blk; [ exact (declaration_nodes ds Hstar) | exact Hkds | ].
+      assert (Hrun : fn_run_names var_of (ss ++ k) = []).
+      { destruct Hss as [Hst | ->].
+        - destruct (statement_head ss Hst) as (t & ss' & -> & Ht). simpl. rewrite Ht. reflexivity.
+        - destruct Hk as [-> | (k' & -> & _)]; reflexivity. }
+      apply decls_blk; [ exact (declaration_nodes ds Hstar) | exact Hkds | | exact Hrun ].
       destruct Hss as [Hst | ->].
       + exact (stmt_blk ss Hst Hkss k Hk).
       + simpl. exact (cont_blk k Hk).
