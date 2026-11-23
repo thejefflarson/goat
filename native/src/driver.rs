@@ -183,6 +183,11 @@ pub fn clang_available() -> bool {
 impl Library {
     /// Compiles `ll`, textual LLVM IR from `goat_llvm`, and loads the result.
     pub fn build(ll: &str) -> Result<Library, NativeError> {
+        Self::build_with(ll, &[])
+    }
+
+    /// Like [`Library::build`], passing `flags` (such as `-O2`) to clang.
+    pub fn build_with(ll: &str, flags: &[&str]) -> Result<Library, NativeError> {
         let dir = TempDir::new().map_err(|e| NativeError::Clang(e.to_string()))?;
         let (ll_path, shim_path) = (dir.path().join("program.ll"), dir.path().join("shim.c"));
         let output = dir.path().join(if cfg!(target_os = "macos") {
@@ -194,7 +199,9 @@ impl Library {
             std::fs::write(path, text).map_err(|e| NativeError::Clang(e.to_string()))?;
         }
         let out = Command::new(clang())
-            .args(["-shared", "-fPIC", "-x", "ir"])
+            .args(["-shared", "-fPIC"])
+            .args(flags)
+            .args(["-x", "ir"])
             .arg(&ll_path)
             .args(["-x", "c"])
             .arg(&shim_path)

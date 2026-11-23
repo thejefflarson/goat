@@ -665,6 +665,7 @@ dependencies = [
  "goat_checker",
  "goat_llvm",
  "goat_mir",
+ "goat_native",
  "goat_parser",
  "goat_wasm",
  "wasmtime",
