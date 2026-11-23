@@ -717,6 +717,8 @@ version = "0.1.0"
 dependencies = [
  "goat",
  "goat_llvm",
+ "goat_mir",
+ "libc",
  "libloading",
  "tempfile",
 ]
