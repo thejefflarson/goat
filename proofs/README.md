@@ -539,7 +539,7 @@ by the differential test), and `make check-assumptions` requires it to rest on
 those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 44659 programs written, 43239 compared with 0 mismatches, 1411 skipped
+commit: 44680 programs written, 43258 compared with 0 mismatches, 1411 skipped
 by the driver. Inferring a recursive group before the value bindings between its
 members (#628) brought in 59 of the 65 programs it used to skip; the other 6 use
 a later feature or are real cycles the checker rejects. The reader numbers labels in name order, which wrote 206 more
@@ -550,7 +550,7 @@ outside the calculus (the first of a fixed order that it uses):
 
 | Count | Skip |
 | ---: | --- |
-| 5087 | does not lower (the checker rejects it before typing) |
+| 5149 | does not lower (the checker rejects it before typing) |
 | 185 | tags and `match` |
 | 41 | `print` or `trap` |
 | 37 | a program that ends in a binding |
