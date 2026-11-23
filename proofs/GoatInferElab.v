@@ -11,8 +11,9 @@
    Two facts the earlier statement of this file leaned on are gone with the
    knot-tying unifier.  W now builds recursive types, so no theorem says its
    types are free of them ([infer_mu_free] held for the unifier that never
-   bound a variable to a type containing it); stage 4.4 replaces it with a
-   fact about guardedness.  And [e'] is no longer the identity, so the
+   bound a variable to a type containing it); [infer_guarded]
+   (GoatInferGuard.v) says instead that every recursive type in them is
+   guarded.  And [e'] is no longer the identity, so the
    syntactic fact "W accepts no [fold] or [unfold]" is no longer how [erase]
    is shown to fix it: [infer_closed_sound] proves [erase e' = e] directly. *)
 
