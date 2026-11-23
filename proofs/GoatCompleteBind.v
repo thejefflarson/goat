@@ -384,6 +384,7 @@ Theorem bind_prop_sorted_complete : forall (D D1 : denv) Sg a T n,
   (forall b, b `in` ftv_typ T -> old n b) -> (forall q, q `in` frv_typ T -> old n q) ->
   pf T -> lcb 0 T = true -> fld D1 Sg (D a) T -> teqD D1 (sT Sg a) (apT Sg T) ->
   exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
+    n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teqD D1 (sT Sg x) (apT S2 (sT s x))) /\
     (forall r, old n r -> sR Sg r = apR S2 (sR s r)).
 Proof.
@@ -461,7 +462,8 @@ Proof.
       rewrite (P1 q). unfold apR at 2. simpl.
       pose proof (Rq q (fun m Hm => Hoq q Hq m ltac:(lia))) as E. rewrite R1 in E.
       symmetry. exact E. }
-  eexists. exists D2, n2, S2b. split; [ reflexivity | ]. split; [ exact K2 | split ].
+  eexists. exists D2, n2, S2b. split; [ reflexivity | ]. split; [ exact K2 | ].
+  split; [ lia | split; [ exact (push_sort_r_dok _ _ _ _ _ _ _ Er Hd1) | split ] ].
   - intros x Hx. destruct (Atom.eq_dec x a) as [->|Hne].
     + change (teqD D1 (sT Sg a) (apT S2b (apT (sbT a T') (apT sr (sT sp a))))).
       rewrite (P3 a Hnl), Hrv, Hsv. cbn [sT sbT]. rewrite dec_same.
