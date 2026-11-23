@@ -9,6 +9,10 @@
 //! `(host, ctx, instance)`, checks that the table and the instance are at least
 //! as new as the code, and returns a nonzero status when they are not.
 //!
+//! Heap values (records, variants, strings) and the allocator, reference
+//! counting and drop loop that serve them are in `heap`; host output and
+//! foreign calls are in `host_calls`.
+//!
 //! The IR never carries `nsw`, `nuw`, fast-math flags or TBAA: arithmetic that
 //! can overflow goes through the `llvm.s*.with.overflow` intrinsics and
 //! branches to the trap.
@@ -17,6 +21,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Write as _};
 
 use goat_mir::*;
+
+mod heap;
+mod heap_nodes;
+mod host_calls;
+
+use heap::{Heap, Runtime};
+
+pub use heap::FREE_LISTS;
 
 /// The function the program's entry is emitted as.
 pub const ENTRY: &str = "goat_entry";
@@ -32,7 +44,26 @@ pub const STATUS_INSTANCE_VERSION: i32 = 2;
 
 /// The oldest `goat_host` and `goat_instance` this emitter's code runs against.
 pub const HOST_VERSION: u32 = 1;
-pub const INSTANCE_VERSION: u32 = 1;
+pub const INSTANCE_VERSION: u32 = 2;
+
+/// Knobs on the emitted code that do not change what a program means.
+#[derive(Clone, Copy, Debug)]
+pub struct EmitOptions {
+    /// `free` fills a released block with `0xFE`, so a compiler reference-count
+    /// bug reads poison instead of stale data. It costs time on every release,
+    /// so it defaults to debug builds (which include the test and fuzz
+    /// profiles), as the wasm backend's option does. The reference-count checks
+    /// that trap on a double release or a write to a freed block are always on.
+    pub poison_freed: bool,
+}
+
+impl Default for EmitOptions {
+    fn default() -> Self {
+        EmitOptions {
+            poison_freed: cfg!(debug_assertions),
+        }
+    }
+}
 
 /// The `goat_host` fields after `version`, in order, each a function pointer
 /// whose first argument is the `ctx` the export received. They match the wasm
@@ -65,7 +96,10 @@ pub const HOST_FUNCTIONS: &[&str] = &[
 
 /// The `goat_instance` fields and their LLVM types, in order. `host` and `ctx`
 /// are what the last export call received; `site_start` is `u32::MAX` while no
-/// site is current.
+/// site is current. `heap` and `heap_size` are the region the host gives the
+/// allocator, 8-byte aligned; `heap_top` is the bump offset into it, `allocs`
+/// counts every allocation, and `free` holds the head of each size class's free
+/// list. The host starts `heap_top`, `allocs` and `free` at zero.
 pub const INSTANCE_FIELDS: &[(&str, &str)] = &[
     ("version", "i32"),
     ("live", "i32"),
@@ -77,6 +111,9 @@ pub const INSTANCE_FIELDS: &[(&str, &str)] = &[
     ("host", "ptr"),
     ("ctx", "ptr"),
     ("spill", "[8 x i64]"),
+    ("heap_top", "i64"),
+    ("allocs", "i64"),
+    ("free", "[55 x ptr]"),
 ];
 
 /// The index of `name` among the fields of the `goat_host` type, where
@@ -99,7 +136,8 @@ fn type_definitions() -> String {
     let fields: Vec<_> = INSTANCE_FIELDS.iter().map(|(_, ty)| *ty).collect();
     let pointers = vec!["ptr"; HOST_FUNCTIONS.len()].join(", ");
     format!(
-        "%goat_host = type {{ i32, {pointers} }}\n%goat_instance = type {{ {} }}\n",
+        "%goat_host = type {{ i32, {pointers} }}\n%goat_instance = type {{ {} }}\n\
+         %goat_value = type {{ i32, i64, i64 }}\n",
         fields.join(", ")
     )
 }
@@ -155,17 +193,23 @@ impl fmt::Display for EmitError {
 impl std::error::Error for EmitError {}
 
 pub fn emit(program: &Program) -> Result<String, EmitError> {
+    emit_with_options(program, EmitOptions::default())
+}
+
+pub fn emit_with_options(program: &Program, options: EmitOptions) -> Result<String, EmitError> {
     if program.interactive.is_some() {
         return Err(EmitError::Unsupported("interactive programs"));
     }
-    let mut module = Module::new(program);
+    let mut module = Module::new(program, options);
     let mut functions = String::new();
     for (index, func) in program.funcs.iter().enumerate() {
         functions.push_str(&FuncLower::new(&mut module, func).lower(FuncId(index as u32))?);
         functions.push('\n');
     }
     functions.push_str(&module.main_export()?);
-    Ok(module.finish(&functions))
+    let (definitions, runtime) = module.heap_text()?;
+    functions.push_str(&runtime);
+    Ok(module.finish(&definitions, &functions))
 }
 
 /// A lowered value; `Unit` is erased and has no operand.
@@ -211,16 +255,20 @@ impl Helper {
 
 struct Module<'a> {
     program: &'a Program,
-    traps: BTreeMap<String, usize>,
+    options: EmitOptions,
+    heap: Heap,
+    texts: BTreeMap<String, usize>,
     helpers: BTreeSet<Helper>,
     declarations: BTreeSet<String>,
 }
 
 impl<'a> Module<'a> {
-    fn new(program: &'a Program) -> Self {
+    fn new(program: &'a Program, options: EmitOptions) -> Self {
         Module {
             program,
-            traps: BTreeMap::new(),
+            options,
+            heap: Heap::default(),
+            texts: BTreeMap::new(),
             helpers: BTreeSet::new(),
             declarations: BTreeSet::new(),
         }
@@ -249,7 +297,7 @@ impl<'a> Module<'a> {
             MTy::Float => Ok(Some(self.float_ty())),
             MTy::Bool => Ok(Some("i1")),
             MTy::Unit => Ok(None),
-            MTy::Ptr(_) => Err(EmitError::Unsupported("heap values")),
+            MTy::Ptr(_) => Ok(Some("ptr")),
         }
     }
 
@@ -265,10 +313,12 @@ impl<'a> Module<'a> {
         }
     }
 
-    fn trap_message(&mut self, message: &str) -> (usize, usize) {
-        let next = self.traps.len();
-        let index = *self.traps.entry(message.to_string()).or_insert(next);
-        (index, message.len())
+    /// The constant holding `text`, as the index of its `@goat.text.N` and its
+    /// length in bytes. Trap messages and foreign names are texts.
+    fn text_constant(&mut self, text: &str) -> (usize, usize) {
+        let next = self.texts.len();
+        let index = *self.texts.entry(text.to_string()).or_insert(next);
+        (index, text.len())
     }
 
     /// Declares `llvm.{name}` and returns its callee name.
@@ -312,6 +362,18 @@ impl<'a> Module<'a> {
         );
         let call = format!("call {ret} @{ENTRY}(ptr %inst)");
         let (printer, arg) = match root.ret {
+            MTy::Ptr(HeapKind::Str) => {
+                let (len_at, bytes_at) = (heap::STR_LEN_AT, heap::STR_BYTES_AT);
+                let _ = writeln!(
+                    out,
+                    "  %v = {call}\n  \
+                     %len_slot = getelementptr inbounds i8, ptr %v, i64 {len_at}\n  \
+                     %len32 = load i32, ptr %len_slot\n  \
+                     %len = zext i32 %len32 to i64\n  \
+                     %bytes = getelementptr inbounds i8, ptr %v, i64 {bytes_at}"
+                );
+                ("print_string", "ptr %bytes, i64 %len".to_string())
+            }
             MTy::Unit => {
                 let _ = writeln!(out, "  {call}");
                 ("", String::new())
@@ -336,7 +398,7 @@ impl<'a> Module<'a> {
                 let _ = writeln!(out, "  %v = {call}\n  %w = zext i1 %v to i32");
                 ("print_bool", "i32 %w".to_string())
             }
-            MTy::Ptr(_) => return Err(EmitError::Unsupported("heap values")),
+            MTy::Ptr(_) => return Err(EmitError::Unsupported("a root that is not a string")),
         };
         if !printer.is_empty() {
             let slot = host_slot(printer);
@@ -351,7 +413,7 @@ impl<'a> Module<'a> {
         Ok(out)
     }
 
-    fn finish(self, functions: &str) -> String {
+    fn finish(self, definitions: &str, functions: &str) -> String {
         let mut out = String::from("; goat native backend: textual LLVM IR\n\n");
         out.push_str(&type_definitions());
         out.push('\n');
@@ -359,17 +421,18 @@ impl<'a> Module<'a> {
             out.push_str(declaration);
         }
         out.push('\n');
-        let mut messages: Vec<_> = self.traps.iter().collect();
-        messages.sort_by_key(|(_, index)| **index);
-        for (message, index) in messages {
+        let mut texts: Vec<_> = self.texts.iter().collect();
+        texts.sort_by_key(|(_, index)| **index);
+        for (text, index) in texts {
             let _ = writeln!(
                 out,
-                "@goat.trap.{index} = private unnamed_addr constant [{} x i8] c\"{}\"",
-                message.len(),
-                escape(message)
+                "@goat.text.{index} = private unnamed_addr constant [{} x i8] c\"{}\"",
+                text.len(),
+                escape_bytes(text.as_bytes())
             );
         }
         out.push('\n');
+        out.push_str(definitions);
         for helper in &self.helpers {
             out.push_str(&floored(*helper, self.narrow()));
             out.push('\n');
@@ -379,9 +442,9 @@ impl<'a> Module<'a> {
     }
 }
 
-fn escape(text: &str) -> String {
+fn escape_bytes(bytes: &[u8]) -> String {
     let mut out = String::new();
-    for byte in text.bytes() {
+    for &byte in bytes {
         if byte == b' ' || (byte.is_ascii_graphic() && byte != b'"' && byte != b'\\') {
             out.push(byte as char);
         } else {
@@ -452,6 +515,9 @@ struct FuncLower<'m, 'a> {
     next: u32,
     block: String,
     locals: BTreeMap<Local, Val>,
+    /// `alloca`s, which belong in the entry block so a loop does not grow the
+    /// stack.
+    allocas: String,
 }
 
 impl<'m, 'a> FuncLower<'m, 'a> {
@@ -463,6 +529,7 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             next: 0,
             block: "entry".to_string(),
             locals: BTreeMap::new(),
+            allocas: String::new(),
         }
     }
 
@@ -494,9 +561,10 @@ impl<'m, 'a> FuncLower<'m, 'a> {
             "internal "
         };
         Ok(format!(
-            "define {linkage}{ret} {}({}) nounwind {{\nentry:\n{}}}\n",
+            "define {linkage}{ret} {}({}) nounwind {{\nentry:\n{}{}}}\n",
             self.module.func_name(id),
             params.join(", "),
+            self.allocas,
             self.body
         ))
     }
@@ -545,18 +613,10 @@ impl<'m, 'a> FuncLower<'m, 'a> {
     }
 
     fn trap(&mut self, message: &str) {
-        let (index, len) = self.module.trap_message(message);
-        let host = self.instance_field("host");
-        let host = self.emit(format!("load ptr, ptr {host}"));
-        let ctx = self.instance_field("ctx");
-        let ctx = self.emit(format!("load ptr, ptr {ctx}"));
-        let slot = host_slot("trap");
-        let slot = self.emit(format!(
-            "getelementptr inbounds %goat_host, ptr {host}, i32 0, i32 {slot}"
-        ));
-        let trap = self.emit(format!("load ptr, ptr {slot}"));
+        let (index, len) = self.module.text_constant(message);
+        let (trap, ctx) = self.host_entry("trap");
         self.line(format!(
-            "call void {trap}(ptr {ctx}, ptr @goat.trap.{index}, i64 {len}) noreturn nounwind"
+            "call void {trap}(ptr {ctx}, ptr @goat.text.{index}, i64 {len}) noreturn nounwind"
         ));
         self.line("unreachable".to_string());
     }
@@ -614,14 +674,17 @@ impl<'m, 'a> FuncLower<'m, 'a> {
                 self.trap(message);
                 None
             }
-            Expr::Switch(..) => return Err(EmitError::Unsupported("match")),
+            Expr::Switch(x, arms, default) => self.switch(*x, arms, default)?,
             Expr::TailCall(..) => return Err(EmitError::Unsupported("tail calls")),
-            Expr::CallClosure(..) | Expr::MakeClosure(..) | Expr::Capture(_) => {
+            Expr::CallClosure(..)
+            | Expr::MakeClosure(..)
+            | Expr::Capture(_)
+            | Expr::MethodKey(_) => {
                 return Err(EmitError::Unsupported("closures"));
             }
-            Expr::CallForeign(..) | Expr::Write(_) => {
-                return Err(EmitError::Unsupported("host calls"));
-            }
+            Expr::Frame(_) => return Err(EmitError::Unsupported("scene frames")),
+            Expr::CallForeign(f, args) => self.call_foreign(*f, args)?,
+            Expr::Write(write) => self.write(write)?,
             Expr::Site(start, end) => {
                 let too_long = || EmitError::Unsupported("a source over 4 GiB");
                 let start = u32::try_from(*start).map_err(|_| too_long())?;
@@ -632,7 +695,7 @@ impl<'m, 'a> FuncLower<'m, 'a> {
                 }
                 Some(Val::Unit)
             }
-            _ => return Err(EmitError::Unsupported("heap values")),
+            _ => return self.heap_expr(expr),
         })
     }
 
@@ -849,6 +912,12 @@ impl<'m, 'a> FuncLower<'m, 'a> {
                 arms.push((value, from));
             }
         }
+        self.join(arms, join)
+    }
+
+    /// Continues in `join`, where `arms` (each a value and the block it ends
+    /// in) come together; `None` when every arm traps.
+    fn join(&mut self, arms: Vec<(Val, String)>, join: String) -> Result<Lowered, EmitError> {
         let Some((first, _)) = arms.first() else {
             return Ok(None);
         };

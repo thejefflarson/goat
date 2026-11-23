@@ -66,6 +66,7 @@ fn run_native(
     if let Err(stopped) = run.result {
         panic!("native program trapped for {src:?}: {}", stopped.message);
     }
+    eprintln!("native: ran");
     Some((run.printed, run.live_allocs))
 }
 

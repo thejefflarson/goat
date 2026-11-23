@@ -1,12 +1,14 @@
 ; goat native backend: textual LLVM IR
 
 %goat_host = type { i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }
-%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64] }
+%goat_instance = type { i32, i32, i32, i32, i32, ptr, i64, ptr, ptr, [8 x i64], i64, i64, [55 x ptr] }
+%goat_value = type { i32, i64, i64 }
 
 declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 
-@goat.trap.0 = private unnamed_addr constant [16 x i8] c"division by zero"
-@goat.trap.1 = private unnamed_addr constant [23 x i8] c"this number got too big"
+@goat.text.0 = private unnamed_addr constant [16 x i8] c"division by zero"
+@goat.text.1 = private unnamed_addr constant [23 x i8] c"this number got too big"
+
 
 define i64 @goat_entry(ptr %inst) nounwind {
 entry:
@@ -19,7 +21,7 @@ trap2:
   %v7 = load ptr, ptr %v6
   %v8 = getelementptr inbounds %goat_host, ptr %v5, i32 0, i32 9
   %v9 = load ptr, ptr %v8
-  call void %v9(ptr %v7, ptr @goat.trap.0, i64 16) noreturn nounwind
+  call void %v9(ptr %v7, ptr @goat.text.0, i64 16) noreturn nounwind
   unreachable
 go3:
   %v10 = icmp eq i64 7, -9223372036854775808
@@ -33,7 +35,7 @@ trap13:
   %v18 = load ptr, ptr %v17
   %v19 = getelementptr inbounds %goat_host, ptr %v16, i32 0, i32 9
   %v20 = load ptr, ptr %v19
-  call void %v20(ptr %v18, ptr @goat.trap.1, i64 23) noreturn nounwind
+  call void %v20(ptr %v18, ptr @goat.text.1, i64 23) noreturn nounwind
   unreachable
 go14:
   %v21 = sdiv i64 7, -2
@@ -46,7 +48,7 @@ trap23:
   %v28 = load ptr, ptr %v27
   %v29 = getelementptr inbounds %goat_host, ptr %v26, i32 0, i32 9
   %v30 = load ptr, ptr %v29
-  call void %v30(ptr %v28, ptr @goat.trap.0, i64 16) noreturn nounwind
+  call void %v30(ptr %v28, ptr @goat.text.0, i64 16) noreturn nounwind
   unreachable
 go24:
   %v31 = icmp eq i64 7, -9223372036854775808
@@ -60,7 +62,7 @@ trap34:
   %v39 = load ptr, ptr %v38
   %v40 = getelementptr inbounds %goat_host, ptr %v37, i32 0, i32 9
   %v41 = load ptr, ptr %v40
-  call void %v41(ptr %v39, ptr @goat.trap.1, i64 23) noreturn nounwind
+  call void %v41(ptr %v39, ptr @goat.text.1, i64 23) noreturn nounwind
   unreachable
 go35:
   %v42 = srem i64 7, -2
@@ -81,7 +83,7 @@ trap52:
   %v57 = load ptr, ptr %v56
   %v58 = getelementptr inbounds %goat_host, ptr %v55, i32 0, i32 9
   %v59 = load ptr, ptr %v58
-  call void %v59(ptr %v57, ptr @goat.trap.1, i64 23) noreturn nounwind
+  call void %v59(ptr %v57, ptr @goat.text.1, i64 23) noreturn nounwind
   unreachable
 go53:
   %v60 = extractvalue { i64, i1 } %v50, 0
@@ -94,7 +96,7 @@ trap62:
   %v67 = load ptr, ptr %v66
   %v68 = getelementptr inbounds %goat_host, ptr %v65, i32 0, i32 9
   %v69 = load ptr, ptr %v68
-  call void %v69(ptr %v67, ptr @goat.trap.0, i64 16) noreturn nounwind
+  call void %v69(ptr %v67, ptr @goat.text.0, i64 16) noreturn nounwind
   unreachable
 go63:
   %v70 = icmp eq i64 -2, -1
@@ -116,7 +118,7 @@ trap81:
   %v86 = load ptr, ptr %v85
   %v87 = getelementptr inbounds %goat_host, ptr %v84, i32 0, i32 9
   %v88 = load ptr, ptr %v87
-  call void %v88(ptr %v86, ptr @goat.trap.1, i64 23) noreturn nounwind
+  call void %v88(ptr %v86, ptr @goat.text.1, i64 23) noreturn nounwind
   unreachable
 go82:
   %v89 = extractvalue { i64, i1 } %v79, 0
@@ -132,7 +134,7 @@ bad_host:
   ret i32 1
 check_instance:
   %instance_version = load i32, ptr %inst
-  %instance_old = icmp ult i32 %instance_version, 1
+  %instance_old = icmp ult i32 %instance_version, 2
   br i1 %instance_old, label %bad_instance, label %run
 bad_instance:
   ret i32 2

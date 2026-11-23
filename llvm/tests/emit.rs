@@ -2,14 +2,18 @@
 mod common;
 
 use common::*;
-use goat_llvm::{EmitError, emit};
+use goat_llvm::{EmitError, EmitOptions, emit, emit_with_options};
 use goat_mir::*;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Goldens and runs use checked builds whatever the profile the tests were
+/// compiled with, so they read the same everywhere.
+const CHECKED: EmitOptions = EmitOptions { poison_freed: true };
+
 fn ll(p: &Program) -> String {
     assert_eq!(verify(p), Ok(()));
-    emit(p).expect("program emits")
+    emit_with_options(p, CHECKED).expect("program emits")
 }
 
 fn golden(name: &str, p: &Program) {
@@ -168,7 +172,10 @@ fn emitted_ir_has_no_undefined_behavior_flags_or_triple() {
         floored_float(),
         conversions(),
         calls(),
+        heap(),
+        strings(),
         embedded(division()),
+        embedded(heap()),
     ];
     for p in all {
         let text = ll(&p);
@@ -211,8 +218,98 @@ fn unsupported_nodes_are_internal_errors() {
             .contains("not yet supported by the native backend")
     );
 
-    let p = program(vec![func(record_ty(), alloc_record(1))]);
-    assert_eq!(emit(&p), Err(EmitError::Unsupported("heap values")));
+    let p = program(vec![func(MTy::Int, Expr::MakeClosure(FuncId(0), vec![]))]);
+    assert_eq!(emit(&p), Err(EmitError::Unsupported("closures")));
+}
+
+/// A record built and read, a variant matched, and a string read: every kind of
+/// heap value, so the runtime they need is emitted.
+fn heap() -> Program {
+    let body = let_(
+        0,
+        alloc_record(40),
+        let_(
+            1,
+            Expr::Field(Local(0), 0),
+            let_(
+                2,
+                drop_(0),
+                let_(
+                    3,
+                    Expr::AllocVariant(VARIANT, 1, vec![local(1)]),
+                    let_(
+                        4,
+                        Expr::Switch(
+                            Local(3),
+                            vec![(1, Expr::Payload(Local(3), 1, 0))],
+                            Box::new(int(0)),
+                        ),
+                        let_(5, drop_(3), local(4)),
+                    ),
+                ),
+            ),
+        ),
+    );
+    program(vec![func(MTy::Int, body)])
+}
+
+fn strings() -> Program {
+    let body = let_(
+        0,
+        Expr::StrLit(DataId(0)),
+        let_(
+            1,
+            int(2),
+            let_(
+                2,
+                add(Expr::StrLen(Local(0)), Expr::StrByte(Local(0), Local(1))),
+                let_(3, drop_(0), local(2)),
+            ),
+        ),
+    );
+    let mut p = program(vec![func(MTy::Int, body)]);
+    p.data = vec![b"h\xc3\xa9llo".to_vec()];
+    p
+}
+
+#[test]
+fn heap_programs_match_golden() {
+    golden("heap", &heap());
+    golden("strings", &strings());
+}
+
+#[test]
+fn poison_is_emitted_only_when_asked_for() {
+    let p = heap();
+    let poisoned = emit_with_options(&p, EmitOptions { poison_freed: true }).unwrap();
+    let plain = emit_with_options(
+        &p,
+        EmitOptions {
+            poison_freed: false,
+        },
+    )
+    .unwrap();
+    assert!(poisoned.contains("llvm.memset"), "{poisoned}");
+    assert!(!plain.contains("llvm.memset"), "{plain}");
+    for ir in [&poisoned, &plain] {
+        assert!(ir.contains("a heap block was released twice"));
+        assert!(ir.contains("a freed heap block was written to"));
+    }
+}
+
+#[test]
+fn heap_ir_keeps_its_state_in_the_instance() {
+    for p in [heap(), strings(), embedded(heap())] {
+        let ir = ll(&p);
+        assert!(
+            !ir.lines()
+                .any(|l| l.starts_with('@') && l.contains(" global ")),
+            "{ir}"
+        );
+        for line in ir.lines().filter(|l| l.starts_with("define ")) {
+            assert!(line.contains(" nounwind "), "{line}");
+        }
+    }
 }
 
 fn clang() -> Option<&'static str> {
@@ -244,6 +341,10 @@ fn clang_reads_every_program() {
         ("floored_float", floored_float()),
         ("conversions", conversions()),
         ("calls", calls()),
+        ("heap", heap()),
+        ("strings", strings()),
+        ("embedded_heap", embedded(heap())),
+        ("embedded_strings", embedded(strings())),
         ("embedded", embedded(checked_int())),
         ("embedded_division", embedded(division())),
         ("embedded_floored", embedded(floored_float())),
@@ -274,6 +375,7 @@ struct host { uint32_t version; void *fns[SLOTS]; };
 struct instance {
     uint32_t version, live, depth, site_start, site_end;
     void *heap; uint64_t heap_size; void *host; void *ctx; uint64_t spill[8];
+    uint64_t heap_top, allocs; void *free_lists[FREE_LISTS];
 };
 static void trap(void *ctx, const char *message, uint64_t len) {
     struct instance *inst = ctx;
@@ -319,6 +421,7 @@ fn run(clang: &str, name: &str, p: &Program, ret: Ret) -> String {
         .arg(format!("-DFMT={fmt}"))
         .arg(format!("-DCAST={cast}"))
         .arg(format!("-DSLOTS={}", goat_llvm::HOST_FUNCTIONS.len()))
+        .arg(format!("-DFREE_LISTS={}", goat_llvm::FREE_LISTS))
         .arg(format!("-DTRAP_SLOT={}", trap_slot()))
         .arg(&c_path)
         .args(["-x", "ir"])

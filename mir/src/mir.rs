@@ -258,6 +258,10 @@ pub const INT_OVERFLOW: &str = "this number got too big";
 /// What a program traps with when calls (a deeply nested comparison included)
 /// nest past what the runtime can hold, on every backend.
 pub const STACK_OVERFLOW: &str = "the program called itself too deeply";
+
+/// What a program traps with when its heap budget is used up (or a request is
+/// too large for any allocator to serve).
+pub const HEAP_BUDGET_EXHAUSTED: &str = "the program ran out of memory";
 pub const DIVISION_BY_ZERO: &str = "division by zero";
 pub const NOT_A_WHOLE_NUMBER: &str = "this number can't be made a whole number";
 
