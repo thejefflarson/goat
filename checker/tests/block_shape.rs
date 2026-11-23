@@ -134,3 +134,77 @@ fn a_function_binding_as_an_operand_is_a_binding() {
         "(+ 1 (let f (fn (x) x) (f 2)))"
     );
 }
+
+/// The block with each name followed by the number of the binding it is, in the
+/// order bindings first appear, so two bindings of one name differ.
+fn resolved(e: &Expr, numbers: &mut Vec<u32>) -> String {
+    fn number(numbers: &mut Vec<u32>, symbol: u32) -> usize {
+        match numbers.iter().position(|s| *s == symbol) {
+            Some(at) => at,
+            None => {
+                numbers.push(symbol);
+                numbers.len() - 1
+            }
+        }
+    }
+    match &e.kind {
+        ExprKind::Int(n) => n.to_string(),
+        ExprKind::Var { symbol, name } => format!("{name}#{}", number(numbers, *symbol)),
+        ExprKind::Bin { lhs, rhs, .. } => {
+            format!("(+ {} {})", resolved(lhs, numbers), resolved(rhs, numbers))
+        }
+        ExprKind::Let {
+            symbol,
+            name,
+            value,
+            rest,
+        } => {
+            let value = resolved(value, numbers);
+            let bound = format!("{name}#{}", number(numbers, *symbol));
+            let rest = rest
+                .as_ref()
+                .map_or(String::new(), |r| format!(" {}", resolved(r, numbers)));
+            format!("(let {bound} {value}{rest})")
+        }
+        ExprKind::Func { params, body } => {
+            let names: Vec<_> = params
+                .iter()
+                .map(|p| format!("{}#{}", p.name, number(numbers, p.symbol)))
+                .collect();
+            format!("(fn ({}) {})", names.join(" "), resolved(body, numbers))
+        }
+        ExprKind::App { callee, args } => {
+            let mut parts = vec![resolved(callee, numbers)];
+            parts.extend(args.iter().map(|a| resolved(a, numbers)));
+            format!("({})", parts.join(" "))
+        }
+        other => panic!("a shadowing test lowers to no {other:?}"),
+    }
+}
+
+/// `ctx` in `proofs/GoatDen.v` resolves a name by its text, so a name bound
+/// twice in one run is read as the nearest earlier binding; lowering agrees by
+/// giving each binding its own symbol.
+#[test]
+fn a_name_bound_twice_in_one_run_is_two_bindings_and_a_use_is_the_nearest() {
+    let root = lowered_root("x = 1\nx = x + 1\nx");
+    assert_eq!(
+        resolved(&root, &mut Vec::new()),
+        "(let x#0 1 (let x#1 (+ x#0 1) x#1))"
+    );
+}
+
+#[test]
+fn a_function_keeps_the_binding_it_was_written_after() {
+    let root = lowered_root("x = 1\nf = program(y) do x done\nx = 2\nf(0) + x");
+    assert_eq!(
+        resolved(&root, &mut Vec::new()),
+        "(let x#0 1 (let f#2 (fn (y#1) x#0) (let x#3 2 (+ (f#2 0) x#3))))"
+    );
+}
+
+#[test]
+fn a_rebinding_may_change_the_type() {
+    let source = "x = 1\nx = \"one\"\nx";
+    assert!(goat_checker::check_with_prelude("", source).is_ok());
+}

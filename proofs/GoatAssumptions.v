@@ -24,6 +24,7 @@ Require Import Goat.GoatInferGuard.
 Require Import Goat.GoatLexSpec.
 Require Import Goat.GoatLexText.
 Require Import Goat.GoatLexEdit.
+Require Import Goat.GoatPegExec.
 
 Print Assumptions peg_deterministic.
 Print Assumptions parse_denotes_lc.
@@ -52,4 +53,6 @@ Print Assumptions word_boundary.
 Print Assumptions parse_text_denotes.
 Print Assumptions edits_preserve_tokens.
 Print Assumptions edits_preserve_parse.
+Print Assumptions pf_sound.
+Print Assumptions parse_fuel_denotes_lc.
 Print Assumptions parse_text_denotes_xid.

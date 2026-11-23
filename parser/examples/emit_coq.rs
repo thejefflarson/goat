@@ -81,6 +81,10 @@ fn main() {
         )
         .unwrap();
     }
+    out.push_str("  end.\n\nDefinition rule_name (r : rule) : string :=\n  match r with\n");
+    for rule in &grammar.rules {
+        writeln!(out, "  | {} => \"{}\"", constructor(&rule.name), rule.name).unwrap();
+    }
     out.push_str("  end.\n");
     print!("{out}");
 }

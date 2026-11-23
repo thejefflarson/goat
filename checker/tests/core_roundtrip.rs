@@ -1667,6 +1667,56 @@ fn lowering_accepts_a_spread_first_in_its_record() {
     }
 }
 
+/// `Rj_match` in `proofs/GoatShape.v`: lowering reports a `match` whose arms
+/// mix tag, literal and list patterns, at the first arm of the wrong kind.
+#[test]
+fn lowering_rejects_a_match_that_mixes_pattern_kinds() {
+    let tags = "tag T = A | B\ntag List = Empty | Link(_, List)\n";
+    for (body, message, at) in [
+        (
+            "match A do 1 then 2 A then 3 else 4 done",
+            "can't mix literal patterns",
+            "A then 3",
+        ),
+        (
+            "match [1] do [] then 0 5 then 1 else 2 done",
+            "can't mix list patterns",
+            "5 then 1",
+        ),
+        (
+            "match [1] do [] then 0 A then 1 done",
+            "can't mix list patterns",
+            "A then 1",
+        ),
+    ] {
+        let source = format!("{tags}{body}");
+        let errors = lower(&source).expect("parses").errors;
+        let error = errors
+            .iter()
+            .find(|e| e.message.contains(message))
+            .unwrap_or_else(|| panic!("{source:?}: {errors:?}"));
+        assert!(
+            at.starts_with(&source[error.span.start..error.span.end]),
+            "{source:?}: the error is spanned at the pattern, not {:?}",
+            &source[error.span.start..error.span.end]
+        );
+    }
+}
+
+/// The counterpart: a `match` whose arms are all of one kind lowers without an
+/// error, so a tree outside `Rj_match` is not reported.
+#[test]
+fn lowering_accepts_a_match_of_one_pattern_kind() {
+    for source in [
+        "tag T = A | B\nmatch A do A then 1 B then 2 done",
+        "match 3 do 1 then 2 4 then 5 else 6 done",
+        "tag List = Empty | Link(_, List)\nmatch [1] do [] then 0 [a, ...r] then a done",
+    ] {
+        let errors = lower(source).expect("parses").errors;
+        assert!(errors.is_empty(), "{source:?}: {errors:?}");
+    }
+}
+
 /// `{x, y, ...r} = p` reads `p` once, binds each name to its field, and binds
 /// `r` to the source without those labels: the rest pattern with k labels is k
 /// restricts of one source (proofs/GoatDen.v, `unpack`).

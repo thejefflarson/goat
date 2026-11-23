@@ -1146,21 +1146,38 @@ Definition is_lit_arm (t : tree) : bool :=
 Definition is_list_arm (t : tree) : bool :=
   match t with Node R_arm (Node R_list_pattern _ :: _) => true | _ => false end.
 
-(* A match has an arm, and its arms are all tag patterns, or all literals with
-   an else (the fragment has no bool match that omits it), or all list patterns
-   (with an else or without). *)
+Definition arms_all (p : tree -> bool) (cs : list tree) : Prop :=
+  Forall (fun t => is_arm_node t = true -> p t = true) cs.
+
+(* The arms of a match are of one kind: all tag patterns, all literals, or all
+   list patterns. Lowering reports a match that mixes them. *)
+Definition arms_agree (cs : list tree) : Prop :=
+  arms_all is_tag_arm cs \/ arms_all is_lit_arm cs \/ arms_all is_list_arm cs.
+
+(* What the model reads of a match beyond that: it has an arm, and literal arms
+   have an else (the fragment has no bool match that omits it). *)
+Definition match_read (cs : list tree) : Prop :=
+  has R_arm cs /\ (arms_all is_lit_arm cs -> In (sym "else") cs).
+
 Definition match_ok (cs : list tree) : Prop :=
   has R_arm cs /\
-  (Forall (fun t => is_arm_node t = true -> is_tag_arm t = true) cs
-   \/ (Forall (fun t => is_arm_node t = true -> is_lit_arm t = true) cs
-       /\ In (sym "else") cs)
-   \/ Forall (fun t => is_arm_node t = true -> is_list_arm t = true) cs).
+  (arms_all is_tag_arm cs
+   \/ (arms_all is_lit_arm cs /\ In (sym "else") cs)
+   \/ arms_all is_list_arm cs).
+
+Lemma match_ok_of : forall cs, arms_agree cs -> match_read cs -> match_ok cs.
+Proof.
+  intros cs [Htag | [Hlit | Hlist]] [Harm Helse]; split; try exact Harm.
+  - left. exact Htag.
+  - right; left. split; [ exact Hlit | exact (Helse Hlit) ].
+  - right; right. exact Hlist.
+Qed.
 
 Definition complete_node (r : rule) (cs : list tree) : Prop :=
   match r with
   | R_params => Forall not_pattern cs
   | R_tag_decl => Forall (case_ok (decl_group cs)) cs
-  | R_match_expr => match_ok cs
+  | R_match_expr => match_read cs
   | _ => True
   end.
 
@@ -1170,14 +1187,17 @@ Inductive Complete : tree -> Prop :=
       complete_node r cs -> Forall Complete cs -> Complete (Node r cs).
 
 (* The shapes of a parse tree that lowering reports as a diagnostic, so that
-   no term is denoted: a record whose spread is not first, or has a second. *)
+   no term is denoted: a record whose spread is not first, or has a second, and
+   a match whose arms mix tag, literal and list patterns. *)
 Inductive Reject : tree -> Prop :=
   | Rj_spread : forall cs, ~ spread_first cs -> Reject (Node R_record cs)
+  | Rj_match : forall cs, ~ arms_agree cs -> Reject (Node R_match_expr cs)
   | Rj_child : forall r cs c, In c cs -> Reject c -> Reject (Node r cs).
 
 Definition accepted_node (r : rule) (cs : list tree) : Prop :=
   match r with
   | R_record => spread_first cs
+  | R_match_expr => arms_agree cs
   | _ => True
   end.
 
@@ -2040,6 +2060,23 @@ Proof.
   destruct r2; exact (Fdec _).
 Qed.
 
+Lemma arms_all_dec : forall p cs, {arms_all p cs} + {~ arms_all p cs}.
+Proof.
+  intros p cs. apply Forall_dec. intros t.
+  destruct (is_arm_node t) eqn:E; [ | left; intros H; discriminate H ].
+  destruct (p t) eqn:F; [ left; intros _; reflexivity | ].
+  right. intros H. specialize (H eq_refl). congruence.
+Qed.
+
+Lemma arms_agree_dec : forall cs, {arms_agree cs} + {~ arms_agree cs}.
+Proof.
+  intros cs. unfold arms_agree.
+  destruct (arms_all_dec is_tag_arm cs) as [H1 | N1]; [ left; left; exact H1 | ].
+  destruct (arms_all_dec is_lit_arm cs) as [H2 | N2]; [ left; right; left; exact H2 | ].
+  destruct (arms_all_dec is_list_arm cs) as [H3 | N3]; [ left; right; right; exact H3 | ].
+  right. intros [H | [H | H]]; contradiction.
+Qed.
+
 (* Every parse tree is one lowering reports, or one it accepts. *)
 Lemma reject_or_accepted : forall t, Reject t \/ Accepted t.
 Proof.
@@ -2057,16 +2094,46 @@ Proof.
     destruct Hkids as [(c & Hin & Hr) | Hall].
     + left. exact (Rj_child r cs c Hin Hr).
     + destruct r; try (right; apply Ac_node; [ exact I | exact Hall ]).
-      destruct (spread_first_dec cs) as [Hs | Hns].
-      * right. apply Ac_node; [ exact Hs | exact Hall ].
-      * left. apply Rj_spread. exact Hns.
+      * destruct (spread_first_dec cs) as [Hs | Hns].
+        -- right. apply Ac_node; [ exact Hs | exact Hall ].
+        -- left. apply Rj_spread. exact Hns.
+      * destruct (arms_agree_dec cs) as [Hs | Hns].
+        -- right. apply Ac_node; [ exact Hs | exact Hall ].
+        -- left. apply Rj_match. exact Hns.
 Qed.
+
+Ltac arms_of_one_kind :=
+  solve
+    [ repeat (apply Forall_cons;
+              [ first [ (intros H; discriminate H) | (intros _; reflexivity) ] | ]);
+      apply Forall_nil ].
+
+(* A match with an arm that is not of the kind [H] says every arm is: a
+   contradiction. *)
+Ltac arm_of_another_kind H :=
+  unfold arms_all in H;
+  repeat (match goal with H0 : Forall _ (_ :: _) |- _ => inversion H0 as [|? ? ? ?]; clear H0 end);
+  match goal with
+  | Hx : is_arm_node _ = true -> _ = true |- _ =>
+      specialize (Hx eq_refl); discriminate Hx
+  end.
+
+Lemma reject_in : forall r cs, Exists Reject cs -> Reject (Node r cs).
+Proof. intros r cs H. apply Exists_exists in H as (c & Hin & Hr). exact (Rj_child r cs c Hin Hr). Qed.
+
+(* A mixed match somewhere in the tree. *)
+Ltac find_reject :=
+  first
+  [ (apply Rj_match; intros [H | [H | H]]; arm_of_another_kind H)
+  | (apply reject_in; first [ (apply Exists_cons_hd; find_reject) | (apply Exists_cons_tl; find_reject) ]) ].
 
 Ltac acc_all :=
   cbv;
   repeat first
     [ apply Forall_nil | apply Forall_cons | apply Ac_leaf | apply Ac_node ];
-  simpl; try exact I.
+  simpl; try exact I;
+  try first [ (left; arms_of_one_kind) | (right; left; arms_of_one_kind)
+            | (right; right; arms_of_one_kind) ].
 
 Ltac in_list := simpl; repeat first [ left; reflexivity | right ].
 
@@ -2573,8 +2640,9 @@ Section Steps.
 
   Lemma step_match : Step R_match_expr.
   Proof.
-    intros cs H Hcomplete Hknown _ Hkids. simpl in Hcomplete.
-    destruct Hcomplete as [Harm_in Hkind].
+    intros cs H Hcomplete Hknown Hagree Hkids. simpl in Hcomplete, Hagree.
+    destruct (match_ok_of cs Hagree Hcomplete) as [Harm_in Hkind].
+    unfold arms_all in Hkind.
     destruct (shape_match cs H) as (c & arms & els & Hcs & Harms & Hels).
     subst cs.
     pose proof (arm_nodes arms Harms) as Hnodes0.

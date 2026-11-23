@@ -136,6 +136,7 @@ Ltac comp_close :=
   | (apply Forall_cons;
      [ first [ (intros H; discriminate H) | (intros _; reflexivity) ] | comp_close ])
   | (split; [ comp_close | comp_close ])
+  | (intros Hall; first [ solve [ in_list ] | (exfalso; arm_of_another_kind Hall) ])
   | (left; comp_close) ].
 
 Lemma shapes_complete : Forall Complete shapes_ts.

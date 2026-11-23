@@ -56,6 +56,27 @@ Any disagreement prints the source and both token lists and fails the run. It
 reads the grammar's ordered classes and the model's longest-match choice as the
 same lexer; if they ever differ, this is where it shows.
 
+## The parser
+
+`proofs/GoatPegExtract.v` extracts the executable parser `parse_fuel`
+(`proofs/GoatPegExec.v`, with `pf_sound`) and the generated `rule_name`, and
+`parse_driver.ml` compares its tree with `parser::interp::parse`, node for node.
+`parser/examples/parse_dump.rs` reads the lexer differential's sources (`lex_dump`'s
+output, the same files, generated programs and fuzz) and writes, per source, a
+`P` line: the parser's tokens (a name `I<text>`, a number `N`, a string `S`,
+anything else `Y<text>`, with space, tab, line break and `%` in a text written as
+`%` and two hex digits) and the Rust tree as nested parentheses (`ERR` when `parse`
+fails). Every seventeenth source that parses also gets up to eight token positions
+broken three ways (the token dropped, doubled, or swapped with the next), so the
+comparison covers rejections and backtracking as well as accepted trees.
+
+The two read the same generated grammar. What this pins is the Rust interpreter's
+ordered choice, repetition, `$` and contextual-word matching against the
+relation's semantics. A source `parse` refuses only for nesting (`MAX_NESTING`) is
+not written; the model has fuel in its place (`400 * (tokens + 8)` in the driver).
+Running out of fuel, a different tree, or a parse on one side only prints the
+tokens and both results and fails the run.
+
 ## The nightly fuzz
 
 `fuzz/tests/w.rs` (the bolero target `differential_checker_vs_w`, in

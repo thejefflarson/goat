@@ -148,6 +148,43 @@ phases 3 to 6 (tags, variants, `match`, lists, spread, loops, destructuring,
 `foreign`) and to constructs outside the numbered phases (`and`, `or`, `not`,
 unary minus, statement sequencing with `;`).
 
+## Amendment: phase 8 close-out (#457)
+
+The core fragment is now the whole grammar except `foreign` declarations and the
+structured type syntax (`foreign_kw`, `foreign_decl`, `foreign_name`, `fn_type`,
+`list_type`, `record_type`, `field_type`), which wait for phase 6b of #435: the
+calculus has no foreign constant. The amendments above
+list what each stage added; this one records the final claim.
+
+- **T1 is a dichotomy over text.** For a source that `lex` turns into a token
+  stream the PEG parses, the tree either is one lowering reports (`Reject`) or
+  denotes a locally closed term. `Reject` is a record whose spread is not first or
+  that has a second, and a `match` whose arms mix tag, literal and list patterns;
+  each is a diagnostic in `lower.rs`, and `checker/tests/core_roundtrip.rs` checks
+  that lowering reports them and accepts the one-kind and spread-first forms. What
+  remains outside `Reject` and outside `Den` (`Complete`) is valid goat the model
+  does not read: a record pattern as a parameter, a payload type with no slot
+  code, a `match` with no arm, and literal arms with no `else`.
+- **A block that ends in a binding is the value of that binding.** `x = 1` is the
+  number `1`, because that is what lowering and the checker do (the checker gives
+  such a program the type of the binding; the type differential found it). A block
+  that ends in `a;` is the unit value, and so is an empty program or body.
+- **The parser has an executable form.** `parse_fuel` (`proofs/GoatPegExec.v`) is a
+  fuel-bounded interpreter of the generated grammar and `pf_sound` says what it
+  returns the relation derives. It is extracted and compared, tree for tree, with
+  `parser::interp::parse` by `make differential`, which ties the Rust
+  interpreter's ordered choice, repetition and end-of-input handling to the
+  relation. Recovery stays outside the claim: a Rust test holds that on valid
+  input `parse_recovering` returns `parse`'s tree with no diagnostic.
+- **Decisions 2 and 5 no longer hold,** apart from the rules above. The lexer is verified in the sense of the stage 1 amendment, with
+  `xid_start_hi` and `xid_cont_hi` the only parameters (`GoatAssumptions.v` lists
+  them last).
+- **Open.** The checker types a function group by shared type variables, so a
+  member that no mention links to the rest of its run is typed alone where `Den`
+  places the whole least prefix as one `letrec` (`proofs/README.md`, the block
+  bullet). A forward mention across a value binding stays a free name in `Den`.
+  Neither affects T1.
+
 ## Consequences
 
 - The real parser and lowering disagreed with the Ott core in three places. They
