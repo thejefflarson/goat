@@ -163,7 +163,7 @@ Theorem bind_row_pres_complete : forall (D DT : denv) Sg r R n,
     (forall q, old n q -> reqD DT (sR Sg q) (apR S2 (sR s q))).
 Proof.
   intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hocc Hfld Hreq.
-  exact (bind_row_sorted_complete D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc
+  exact (bind_row_sorted_complete true D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc
            (bind_row_occ Sg DT r R Hreq Hocc) Hfld Hreq).
 Qed.
 
@@ -179,6 +179,6 @@ Theorem bind_prop_pres_complete : forall (D D1 : denv) Sg a T n,
     (forall r, old n r -> sR Sg r = apR S2 (sR s r)).
 Proof.
   intros D D1 Sg a T n Hd HK Ha Hv Hot Hoq Hpf Hlc Hocc Hfld Heq.
-  exact (bind_prop_sorted_complete D D1 Sg a T n Hd HK Ha
+  exact (bind_prop_sorted_complete true D D1 Sg a T n Hd HK Ha
            (bind_prop_occ Sg D1 a T Hv Heq Hocc) Hot Hoq Hpf Hlc Hfld Heq).
 Qed.

@@ -1,19 +1,36 @@
-(* Completeness of algorithm W, stage 7.6k: the unifier on records with row
-   variables and present entries (docs/design/phase7-proof-plan.md).
+(* Completeness of algorithm W, stages 7.6k and 7.6l: the unifier on records with
+   row variables and present entries, at sorted environments
+   (docs/design/phase7-proof-plan.md).
 
    The fragment is [pf] types (base types, variables, arrows, records of rows
    with plain fields, presence entries and row variables) in which every
    presence entry is present under the substitution [Sg] ([ps]: the image of
-   its presence is [Unit]), and the environment is trivial ([Dtriv]: every type
-   variable has sort [Any], every row variable the kind [rk_any]).  With a
-   trivial environment no sort is pushed, so [bind_prop] and [bind_row] rename
-   nothing but the tail of a row, and every substitution respects it; with every
-   entry present no occurrence hides behind an absent entry, the guard and the
-   field condition never bind, and the unifier's normalization of rows is the
-   identity.  The substitution [Sg] is arbitrary, and the unifier is read at
-   plain [teq]/[req].
+   its presence is [Unit]).  The environment is the one [Sg] respects ([KR D DT
+   Sg]: the sort of each variable's image, the kind of each row variable's image,
+   the labels a row variable lacks) and satisfies two conditions on the sorts
+   ([Dsrt]): the sorts of the row variables are [Any] or [Eq], and [Sg] sends no
+   [Numeric] variable to a record.  A type variable has any sort.  [bind_prop]
+   and [bind_row] push the sort of the variable they bind onto the variables of
+   the type or row, renaming each coarser one to a fresh variable of the sort
+   ([push_sort], [push_sort_r]); [Pkg] says the images of the old atoms are
+   renamings of the old atoms to atoms below the new supply, except the one
+   bound atom, and the extension [S2] of [Sg] to the fresh variables respects
+   the new environment.  With every entry present no occurrence hides behind an
+   absent entry, the guard and the field condition never bind, the unifier's
+   normalization of rows is the identity ([nfR] at the environment for
+   [unify_tD], [drop_abs] for [unify_t]), and the unifier is read at plain
+   [teq]/[req].
 
-   Absent entries and sorts are the hypotheses this stage does not discharge;
+   The two conditions on the sorts are what the presence variables ask.  Each
+   presence entry of a type bound at sort [k] puts a presence variable under the
+   sort ([fld]), whose image [Unit] satisfies [Any] and [Eq] only.  A row
+   variable carries a sort onto the rows it is bound to, so its sort is [Any] or
+   [Eq]; a type variable of sort [Numeric] or [Literal] is bound to a scalar
+   (neither an arrow nor, at [Literal], a record), which has no variable to push
+   the sort onto, and [Sg] sends no [Numeric] variable to a record, so no entry
+   is under it.
+
+   Absent entries and groups are the hypotheses this stage does not discharge;
    they are listed in the plan under what remains of 7.6.
 
    Axiom- and admit-free. *)
@@ -31,6 +48,7 @@ Require Import Goat.GoatInferSort.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatCompleteFuel.
 Require Import Goat.GoatCompleteRows.
+Require Import Goat.GoatSatTeq.
 Require Import Goat.GoatCompleteSorts.
 Require Import Goat.GoatCompleteBind.
 Require Import Goat.GoatCompleteBindRow.
@@ -45,17 +63,94 @@ Import ListNotations.
 
 (* ---- the environment ---- *)
 
-Definition Dtriv (D : denv) : Prop :=
-  (forall a, D a = k_Any) /\
-  (forall r, rk_sort (drk D r) = k_Any /\ forall l, rk_lacks (drk D r) l = false).
+(* The row kinds keep their lacks sets and their sorts are [Any] or [Eq]: a row
+   variable's sort is pushed onto the presence variables of the rows it is bound to,
+   and a presence variable's image [Unit] satisfies exactly these two sorts.  This is
+   the Numeric presence hypothesis, on the rows: a row of sort [Numeric] or [Literal]
+   is not in the fragment. *)
+Definition Drow (D : denv) : Prop :=
+  forall r, rk_sort (drk D r) = k_Any \/ rk_sort (drk D r) = k_Eq.
 
-Lemma KR_triv : forall D DT S, Dtriv D -> KR D DT S.
+(* A type variable of sort [Numeric] is not sent to a record.  A record is
+   [Numeric] only through its fields, and the presence variables of its entries would
+   be pushed to [Numeric] by [bind_prop], where [Unit] does not satisfy it. *)
+Definition NN (D : denv) (S : sub) : Prop :=
+  forall y, D y = k_Numeric -> forall R, sT S y <> typ_Record R.
+
+(* What the sorts of the environment ask of a substitution, beyond [KR]. *)
+Definition Dsrt (D : denv) (S : sub) : Prop := Drow D /\ NN D S.
+
+Lemma Drow_rupd : forall D a K, Drow D -> (rk_sort K = k_Any \/ rk_sort K = k_Eq) -> Drow (rupd D a K).
 Proof.
-  intros D DT S [Ha Hr]. split.
-  - intros a. rewrite Ha. apply sat_any.
-  - intros r. destruct (Hr r) as [Hs Hl]. split.
-    + rewrite Hs. apply rsat_any.
-    + intros l Hl'. rewrite Hl in Hl'. discriminate Hl'.
+  intros D a K Hr Hk q. cbn [rupd drk]. destruct (Atom.eq_dec q a); [ exact Hk | apply Hr ].
+Qed.
+
+Lemma Drow_join : forall D r q, Drow D ->
+  rk_sort (rk_join (drk D r) (drk D q)) = k_Any \/ rk_sort (rk_join (drk D r) (drk D q)) = k_Eq.
+Proof.
+  intros D r q Hr. unfold rk_join. cbn [rk_sort].
+  destruct (finer_b (rk_sort (drk D r)) (rk_sort (drk D q))); apply Hr.
+Qed.
+
+Lemma push_sort_drow : forall l D k n sp D' n',
+  push_sort D k l n = (sp, D', n') -> Drow D -> Drow D'.
+Proof. intros l D k n sp D' n' H Hd. unfold Drow. rewrite (push_sort_drk _ _ _ _ _ _ _ H). exact Hd. Qed.
+
+Lemma push_sort_r_drow : forall l D k n sr D' n',
+  push_sort_r D k l n = (sr, D', n') -> Drow D -> (k = k_Any \/ k = k_Eq) -> Drow D'.
+Proof.
+  induction l as [|b l IH]; intros D k n sr D' n' H Hd Hk; cbn [push_sort_r] in H.
+  - inversion H; subst. exact Hd.
+  - destruct (finer_b (rk_sort (drk D b)) k).
+    + exact (IH _ _ _ _ _ _ H Hd Hk).
+    + destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (S n))
+        as [[s1 D1] n1] eqn:E.
+      inversion H; subst. exact (IH _ _ _ _ _ _ E (Drow_rupd D (ea n) (RK k (rk_lacks (drk D b))) Hd Hk) Hk).
+Qed.
+
+(* [push_sort] leaves a variable whose sort is already as fine as [k] where it is, and
+   changes a sort only to [k]. *)
+Lemma push_sort_keeps : forall l D k n sp D' n',
+  push_sort D k l n = (sp, D', n') -> forall x, finer_b (D x) k = true -> old n x -> sT sp x = typ_Var x.
+Proof.
+  induction l as [|b l IH]; intros D k n sp D' n' H x Hf Hx; cbn [push_sort] in H.
+  - inversion H; subst. reflexivity.
+  - destruct (finer_b (D b) k) eqn:Efb.
+    + exact (IH _ _ _ _ _ _ H x Hf Hx).
+    + destruct (push_sort (upd D (ea n) k) k l (S n)) as [[s1 D1] n1] eqn:E.
+      inversion H; subst.
+      change (apT s1 (sT (sbT b (typ_Var (ea n))) x) = typ_Var x).
+      cbn [sT sbT]. destruct (Atom.eq_dec x b) as [->|Hne].
+      * rewrite Efb in Hf. discriminate Hf.
+      * change (sT s1 x = typ_Var x). apply (IH _ _ _ _ _ _ E x).
+        -- cbn [upd dsort]. destruct (Atom.eq_dec x (ea n)) as [E2|_]; [ exfalso; exact (Hx n (le_n n) E2) | exact Hf ].
+        -- intros m Hm. apply Hx. lia.
+Qed.
+
+Lemma push_sort_sorts : forall l D k n sp D' n',
+  push_sort D k l n = (sp, D', n') -> forall y, D' y = D y \/ D' y = k.
+Proof.
+  induction l as [|b l IH]; intros D k n sp D' n' H y; cbn [push_sort] in H.
+  - inversion H; subst. left. reflexivity.
+  - destruct (finer_b (D b) k).
+    + exact (IH _ _ _ _ _ _ H y).
+    + destruct (push_sort (upd D (ea n) k) k l (S n)) as [[s1 D1] n1] eqn:E.
+      inversion H; subst.
+      destruct (IH _ _ _ _ _ _ E y) as [H1|H1]; [ | right; exact H1 ].
+      rewrite H1. cbn [upd dsort]. destruct (Atom.eq_dec y (ea n)); [ right; reflexivity | left; reflexivity ].
+Qed.
+
+Lemma numeric_old : forall D n y, DOk D n -> D y = k_Numeric -> old n y.
+Proof.
+  intros D n y Hd Hy m Hm E. subst y. rewrite (DOk_ea D n m Hd Hm) in Hy. discriminate Hy.
+Qed.
+
+(* A record stays a record up to conversion, so a substitution that sends no variable
+   of a sort to a record keeps to it across [teq]. *)
+Lemma teq_not_record : forall X Y, teq X Y -> (forall R, X <> typ_Record R) -> forall R, Y <> typ_Record R.
+Proof.
+  intros X Y H HX R EY. pose proof (teq_thead _ _ H) as Hh. subst Y.
+  destruct X; simpl in Hh; try discriminate Hh. exact (HX _ eq_refl).
 Qed.
 
 (* ---- atoms below the supply ---- *)
@@ -270,22 +365,26 @@ Proof.
     left. split; [ exact Hap | ]. destruct Hp as [[_ H]|H]; [ left; exact H | right; exact H ].
 Qed.
 
+Section Sorted.
+
+Variable DT : denv.
+
 (* ---- what a step promises the next one ---- *)
 
 (* [s] is the step's substitution, [S2] extends [Sg] to its fresh variables: the
-   supply grows, the images of the old atoms are in the fragment over atoms below
-   the new supply with every entry present under [S2], and [Sg] factors through
-   [s] by [S2]. *)
+   supply grows, [S2] respects the environment the step returns, the images of
+   the old atoms are in the fragment over atoms below the new supply with every
+   entry present under [S2], and [Sg] factors through [s] by [S2]. *)
 Definition Pkg (Sg : sub) (n : nat) (s : sub) (D' : denv) (n' : nat) (S2 : sub) : Prop :=
-  n <= n' /\ DOk D' n' /\ Dtriv D' /\
+  n <= n' /\ DOk D' n' /\ Dsrt D' S2 /\ KR D' DT S2 /\
   (forall x, old n x -> pf (sT s x) /\ atT n' (sT s x) /\ ps S2 (sT s x) /\
      teq (sT Sg x) (apT S2 (sT s x))) /\
   (forall q, old n q -> prf (sR s q) /\ atR n' (sR s q) /\ psr S2 (sR s q) /\
      req (sR Sg q) (apR S2 (sR s q))).
 
-Lemma Pkg_id : forall Sg D n, DOk D n -> Dtriv D -> Pkg Sg n sid D n Sg.
+Lemma Pkg_id : forall Sg D n, DOk D n -> Dsrt D Sg -> KR D DT Sg -> Pkg Sg n sid D n Sg.
 Proof.
-  intros Sg D n Hd Ht. refine (conj (le_n n) (conj Hd (conj Ht (conj _ _)))).
+  intros Sg D n Hd Ht Hk. refine (conj (le_n n) (conj Hd (conj Ht (conj Hk (conj _ _))))).
   - intros x Hx. cbn [sT sid idt]. refine (conj I (conj _ (conj I (teq_refl _)))).
     split; intros y Hy; simpl in Hy; [ | fsetdec ].
     apply AtomSetFacts.singleton_iff in Hy. subst. exact Hx.
@@ -306,7 +405,7 @@ Qed.
 Lemma pkg_ap_T : forall Sg n s D' n' S2 T, Pkg Sg n s D' n' S2 -> pf T -> atT n T -> ps Sg T ->
   pf (apT s T) /\ atT n' (apT s T) /\ ps S2 (apT s T).
 Proof.
-  intros Sg n s D' n' S2 T (Hl & Hd & Ht & Hx & Hq) HT [A1 A2] PT.
+  intros Sg n s D' n' S2 T (Hl & Hd & Ht & Hk & Hx & Hq) HT [A1 A2] PT.
   refine (conj _ (conj _ _)).
   - apply (proj1 (pf_ap s)); [ exact HT | intros x Hx'; exact (proj1 (Hx x (A1 x Hx')))
                               | intros q Hq'; exact (proj1 (Hq q (A2 q Hq'))) ].
@@ -320,7 +419,7 @@ Qed.
 Lemma pkg_ap_R : forall Sg n s D' n' S2 R, Pkg Sg n s D' n' S2 -> prf R -> atR n R -> psr Sg R ->
   prf (apR s R) /\ atR n' (apR s R) /\ psr S2 (apR s R).
 Proof.
-  intros Sg n s D' n' S2 R (Hl & Hd & Ht & Hx & Hq) HR [A1 A2] PR.
+  intros Sg n s D' n' S2 R (Hl & Hd & Ht & Hk & Hx & Hq) HR [A1 A2] PR.
   refine (conj _ (conj _ _)).
   - apply (proj2 (pf_ap s)); [ exact HR | intros x Hx'; exact (proj1 (Hx x (A1 x Hx')))
                               | intros q Hq'; exact (proj1 (Hq q (A2 q Hq'))) ].
@@ -334,7 +433,7 @@ Qed.
 Lemma pkg_fac_T : forall Sg n s D' n' S2 T, Pkg Sg n s D' n' S2 -> atT n T ->
   teq (apT Sg T) (apT S2 (apT s T)).
 Proof.
-  intros Sg n s D' n' S2 T (Hl & Hd & Ht & Hx & Hq) [A1 A2].
+  intros Sg n s D' n' S2 T (Hl & Hd & Ht & Hk & Hx & Hq) [A1 A2].
   apply ap_factor; [ intros x Hx'; exact (proj2 (proj2 (proj2 (Hx x (A1 x Hx')))))
                    | intros q Hq'; exact (proj2 (proj2 (proj2 (Hq q (A2 q Hq'))))) ].
 Qed.
@@ -342,7 +441,7 @@ Qed.
 Lemma pkg_fac_R : forall Sg n s D' n' S2 R, Pkg Sg n s D' n' S2 -> atR n R ->
   req (apR Sg R) (apR S2 (apR s R)).
 Proof.
-  intros Sg n s D' n' S2 R (Hl & Hd & Ht & Hx & Hq) [A1 A2].
+  intros Sg n s D' n' S2 R (Hl & Hd & Ht & Hk & Hx & Hq) [A1 A2].
   apply ap_factor_row; [ intros x Hx'; exact (proj2 (proj2 (proj2 (Hx x (A1 x Hx')))))
                        | intros q Hq'; exact (proj2 (proj2 (proj2 (Hq q (A2 q Hq'))))) ].
 Qed.
@@ -351,9 +450,9 @@ Lemma Pkg_comp : forall Sg n s1 D1 n1 S2 s2 D2 n2 S3,
   Pkg Sg n s1 D1 n1 S2 -> Pkg S2 n1 s2 D2 n2 S3 -> Pkg Sg n (scomp s2 s1) D2 n2 S3.
 Proof.
   intros Sg n s1 D1 n1 S2 s2 D2 n2 S3 P1 P2.
-  destruct P1 as (Hl1 & Hd1 & Ht1 & Hx1 & Hq1).
-  assert (P2' := P2). destruct P2 as (Hl2 & Hd2 & Ht2 & Hx2 & Hq2).
-  refine (conj (Nat.le_trans _ _ _ Hl1 Hl2) (conj Hd2 (conj Ht2 (conj _ _)))).
+  destruct P1 as (Hl1 & Hd1 & Ht1 & Hk1 & Hx1 & Hq1).
+  assert (P2' := P2). destruct P2 as (Hl2 & Hd2 & Ht2 & Hk2 & Hx2 & Hq2).
+  refine (conj (Nat.le_trans _ _ _ Hl1 Hl2) (conj Hd2 (conj Ht2 (conj Hk2 (conj _ _))))).
   - intros x Hx. destruct (Hx1 x Hx) as (Hpf & Hat & Hps & Hf).
     change (pf (apT s2 (sT s1 x)) /\ atT n2 (apT s2 (sT s1 x)) /\ ps S3 (apT s2 (sT s1 x)) /\
             teq (sT Sg x) (apT S3 (apT s2 (sT s1 x)))).
@@ -368,29 +467,328 @@ Proof.
     exact (req_trans _ _ _ Hf (pkg_fac_R S2 n1 s2 D2 n2 S3 _ P2' Hat)).
 Qed.
 
+(* ---- the field condition holds when every entry is present ---- *)
+
+Lemma ps_pres : forall S P, pf P -> apT S P = typ_Unit -> ps S P.
+Proof.
+  intros S P HP E. destruct (pres_shape S P HP E) as [-> | [v [-> _]]]; exact I.
+Qed.
+
+(* With every entry present, the field condition at [Any] or [Eq] has nothing to say:
+   no entry is absent, and a presence variable's image [Unit] satisfies both sorts. *)
+Lemma ps_fld : forall S k, (k = k_Any \/ k = k_Eq) ->
+  (forall T, pf T -> ps S T -> fld DT S k T) /\ (forall R, prf R -> psr S R -> frld DT S k R).
+Proof.
+  intros S k Hk. apply typ_row_mutind; simpl; try (intros; exact I); try (intros; contradiction).
+  - intros A IHA B IHB [HA HB] [PA PB]. exact (conj (IHA HA PA) (IHB HB PB)).
+  - intros R IH HR PR. exact (IH HR PR).
+  - intros l T IHT R IHR [HT HR] [PT PR]. exact (conj (IHT HT PT) (IHR HR PR)).
+  - intros l P IHP T IHT R IHR [HP [HT HR]] [PP [PT PR]].
+    refine (conj _ (conj _ (conj (IHP HP (ps_pres S P HP PP)) (conj (IHT HT PT) (IHR HR PR))))).
+    + intros H. rewrite PP in H. discriminate H.
+    + rewrite PP. exact Hk.
+Qed.
+
+(* A row whose entries are all present under [Sg] never mentions a label its kind lacks:
+   the kind's lacks set is respected by [Sg r], so [bind_row] finds nothing to make
+   absent. *)
+Lemma ps_lacks : forall Sg K R, prf R -> psr Sg R -> LK DT K (apR Sg R) ->
+  abs_vars K R = nil.
+Proof.
+  intros Sg K R. induction R as [ | r | l T R IH | l P T R IH ]; intros HR PR HL.
+  - reflexivity.
+  - reflexivity.
+  - rewrite apR_Ext in HL. pose proof (IH (proj2 HR) (proj2 PR) (LK_ext _ _ _ _ _ HL)) as H1.
+    cbn [abs_vars]. exact H1.
+  - destruct HR as [HP [HT HR']]. destruct PR as [PP [PT PR']].
+    rewrite apR_Maybe in HL. pose proof (IH HR' PR' (LK_maybe _ _ _ _ _ _ HL)) as H1.
+    assert (Hk : rk_lacks K l = false).
+    { destruct (rk_lacks K l) eqn:Ek; [ | reflexivity ]. exfalso.
+      pose proof (HL l Ek) as H. cbn [rlacksD] in H. rewrite Nat.eqb_refl in H.
+      apply andb_prop in H. destruct H as [H _].
+      change (ap_typ (sT Sg) (sR Sg) P) with (apT Sg P) in H. rewrite PP in H. discriminate H. }
+    destruct P; cbn [abs_vars]; try rewrite Hk; exact H1.
+Qed.
+
+(* ---- renamings by fresh atoms ---- *)
+
+(* [RenN n n' r]: [r] sends each atom below [n] to itself or to a fresh atom in [n, n'). *)
+Definition RenN (n n' : nat) (r : sub) : Prop :=
+  n <= n' /\
+  (forall x, old n x -> exists y, sT r x = typ_Var y /\
+     (y = x \/ exists m, n <= m /\ m < n' /\ y = ea m)) /\
+  (forall q, old n q -> exists q', sR r q = row_Var q' /\
+     (q' = q \/ exists m, n <= m /\ m < n' /\ q' = ea m)).
+
+Lemma RenN_id : forall n, RenN n n sid.
+Proof.
+  intros n. refine (conj (le_n n) (conj _ _)).
+  - intros x _. exists x. split; [ reflexivity | left; reflexivity ].
+  - intros q _. exists q. split; [ reflexivity | left; reflexivity ].
+Qed.
+
+Lemma old_ren : forall n n' x y, n <= n' -> old n x ->
+  (y = x \/ exists m, n <= m /\ m < n' /\ y = ea m) -> old n' y.
+Proof.
+  intros n n' x y Hl Hx [->|[m [H1 [H2 ->]]]]; [ exact (old_le n n' _ Hl Hx) | exact (old_ea n' m H2) ].
+Qed.
+
+Lemma RenN_comp : forall n n1 n2 r1 r2, RenN n n1 r1 -> RenN n1 n2 r2 -> RenN n n2 (scomp r2 r1).
+Proof.
+  intros n n1 n2 r1 r2 (Hl1 & T1 & R1) (Hl2 & T2 & R2).
+  refine (conj (Nat.le_trans _ _ _ Hl1 Hl2) (conj _ _)).
+  - intros x Hx. destruct (T1 x Hx) as (y & Ey & Hy).
+    destruct (T2 y (old_ren n n1 x y Hl1 Hx Hy)) as (z & Ez & Hz).
+    exists z. split.
+    + change (apT r2 (sT r1 x) = typ_Var z). rewrite Ey. exact Ez.
+    + destruct Hz as [Hz|[m [H1 [H2 H3]]]].
+      * destruct Hy as [Hy|[m [H1 [H2 H3]]]].
+        -- left. rewrite Hz, Hy. reflexivity.
+        -- right. exists m. split; [ exact H1 | split; [ lia | rewrite Hz; exact H3 ] ].
+      * right. exists m. split; [ lia | split; [ exact H2 | exact H3 ] ].
+  - intros q Hq. destruct (R1 q Hq) as (y & Ey & Hy).
+    destruct (R2 y (old_ren n n1 q y Hl1 Hq Hy)) as (z & Ez & Hz).
+    exists z. split.
+    + change (apR r2 (sR r1 q) = row_Var z). rewrite Ey. exact Ez.
+    + destruct Hz as [Hz|[m [H1 [H2 H3]]]].
+      * destruct Hy as [Hy|[m [H1 [H2 H3]]]].
+        -- left. rewrite Hz, Hy. reflexivity.
+        -- right. exists m. split; [ exact H1 | split; [ lia | rewrite Hz; exact H3 ] ].
+      * right. exists m. split; [ lia | split; [ exact H2 | exact H3 ] ].
+Qed.
+
+Lemma RenN_push : forall l D k n sp D' n',
+  push_sort D k l n = (sp, D', n') -> (forall c, In c l -> old n c) -> RenN n n' sp.
+Proof.
+  intros l D k n sp D' n' H Hold.
+  destruct (push_sort_facts _ _ _ _ _ _ _ H Hold) as (P1 & P2 & P3 & P4 & _ & _).
+  refine (conj P2 (conj _ _)).
+  - intros x _. destruct (P4 x) as (y & Ey & _). exists y. split; [ exact Ey | ].
+    exact (push_sort_new _ _ _ _ _ _ _ H Hold x y Ey).
+  - intros q _. exists q. split; [ exact (P1 q) | left; reflexivity ].
+Qed.
+
+Lemma RenN_push_r : forall l D k n sr D' n',
+  push_sort_r D k l n = (sr, D', n') -> (forall c, In c l -> old n c) -> RenN n n' sr.
+Proof.
+  intros l D k n sr D' n' H Hold.
+  destruct (push_sort_r_facts _ _ _ _ _ _ _ H Hold) as (Q1 & Q2 & _ & _ & Q5 & _ & _).
+  refine (conj Q2 (conj _ _)).
+  - intros x _. exists x. split; [ exact (Q1 x) | left; reflexivity ].
+  - intros q Hq. destruct (Q5 q) as (q' & Eq'). exists q'. split; [ exact Eq' | ].
+    exact (push_sort_r_new _ _ _ _ _ _ _ H Hold q q' Hq Eq').
+Qed.
+
+Lemma RenN_tail : forall n q, RenN n (S n) (sbR q (row_Var (ea n))).
+Proof.
+  intros n q. refine (conj (le_S n n (le_n n)) (conj _ _)).
+  - intros x _. exists x. split; [ reflexivity | left; reflexivity ].
+  - intros q0 _. cbn [sR sbR]. destruct (Atom.eq_dec q0 q) as [_|_].
+    + exists (ea n). split; [ reflexivity | right; exists n; split; [ apply le_n | split; [ lia | reflexivity ] ] ].
+    + exists q0. split; [ reflexivity | left; reflexivity ].
+Qed.
+
+Lemma atT_V : forall n y, old n y -> atT n (typ_Var y).
+Proof.
+  intros n y Hy. split; simpl; intros z Hz; [ | fsetdec ].
+  apply AtomSetFacts.singleton_iff in Hz. subst. exact Hy.
+Qed.
+
+Lemma atR_V : forall n y, old n y -> atR n (row_Var y).
+Proof.
+  intros n y Hy. split; simpl; intros z Hz; [ fsetdec | ].
+  apply AtomSetFacts.singleton_iff in Hz. subst. exact Hy.
+Qed.
+
+(* A type or row of the fragment keeps its place under a renaming. *)
+Lemma ren_ap_T : forall n n' rho T, RenN n n' rho -> pf T -> atT n T ->
+  pf (apT rho T) /\ atT n' (apT rho T).
+Proof.
+  intros n n' rho T (Hl & Rt & Rr) PT [A1 A2]. split.
+  - apply (proj1 (pf_ap rho)); [ exact PT | | ].
+    + intros x Hx. destruct (Rt x (A1 x Hx)) as (y & Ey & _). rewrite Ey. exact I.
+    + intros q Hq. destruct (Rr q (A2 q Hq)) as (q' & Eq' & _). rewrite Eq'. exact I.
+  - apply atT_ap.
+    + intros x Hx. destruct (Rt x (A1 x Hx)) as (y & Ey & Hy). rewrite Ey.
+      exact (atT_V n' y (old_ren n n' x y Hl (A1 x Hx) Hy)).
+    + intros q Hq. destruct (Rr q (A2 q Hq)) as (q' & Eq' & Hq'). rewrite Eq'.
+      exact (atR_V n' q' (old_ren n n' q q' Hl (A2 q Hq) Hq')).
+Qed.
+
+Lemma ren_ap_R : forall n n' rho R, RenN n n' rho -> prf R -> atR n R ->
+  prf (apR rho R) /\ atR n' (apR rho R).
+Proof.
+  intros n n' rho R (Hl & Rt & Rr) PR [A1 A2]. split.
+  - apply (proj2 (pf_ap rho)); [ exact PR | | ].
+    + intros x Hx. destruct (Rt x (A1 x Hx)) as (y & Ey & _). rewrite Ey. exact I.
+    + intros q Hq. destruct (Rr q (A2 q Hq)) as (q' & Eq' & _). rewrite Eq'. exact I.
+  - apply atR_ap.
+    + intros x Hx. destruct (Rt x (A1 x Hx)) as (y & Ey & Hy). rewrite Ey.
+      exact (atT_V n' y (old_ren n n' x y Hl (A1 x Hx) Hy)).
+    + intros q Hq. destruct (Rr q (A2 q Hq)) as (q' & Eq' & Hq'). rewrite Eq'.
+      exact (atR_V n' q' (old_ren n n' q q' Hl (A2 q Hq) Hq')).
+Qed.
+
+(* The presence of every entry is carried along a renaming by [S2] when [S2] after the
+   renaming is [Sg] on the atoms. *)
+Lemma ren_ps_T : forall Sg S2 rho n n' T, RenN n n' rho -> pf T -> atT n T -> ps Sg T ->
+  (forall x, x `in` ftv_typ T -> teq (sT Sg x) (apT S2 (sT rho x))) -> ps S2 (apT rho T).
+Proof.
+  intros Sg S2 rho n n' T (Hl & Rt & Rr) PT [A1 A2] PS Hf.
+  apply (proj1 (ps_pull Sg S2 rho)); [ exact PT | exact PS | | ].
+  - intros x Hx. destruct (Rt x (A1 x Hx)) as (y & Ey & _).
+    refine (conj (Hf x Hx) _). rewrite Ey. exact I.
+  - intros q Hq. destruct (Rr q (A2 q Hq)) as (q' & Eq' & _). rewrite Eq'. exact I.
+Qed.
+
+Lemma ren_ps_R : forall Sg S2 rho n n' R, RenN n n' rho -> prf R -> atR n R -> psr Sg R ->
+  (forall x, x `in` ftv_row R -> teq (sT Sg x) (apT S2 (sT rho x))) -> psr S2 (apR rho R).
+Proof.
+  intros Sg S2 rho n n' R (Hl & Rt & Rr) PR [A1 A2] PS Hf.
+  apply (proj2 (ps_pull Sg S2 rho)); [ exact PR | exact PS | | ].
+  - intros x Hx. destruct (Rt x (A1 x Hx)) as (y & Ey & _).
+    refine (conj (Hf x Hx) _). rewrite Ey. exact I.
+  - intros q Hq. destruct (Rr q (A2 q Hq)) as (q' & Eq' & _). rewrite Eq'. exact I.
+Qed.
+
 (* ---- binding a type variable ---- *)
 
-Lemma pkg_bind_prop : forall (D : denv) Sg a T n,
-  DOk D n -> Dtriv D -> old n a -> pf T -> atT n T -> ps Sg T -> (forall v, T <> typ_Var v) ->
-  teq (sT Sg a) (apT Sg T) ->
-  exists s, bind_prop D a T n = Some (s, D, n) /\ Pkg Sg n s D n Sg.
+Lemma bind_prop_unfold : forall D a T n s D' n',
+  bind_prop D a T n = Some (s, D', n') ->
+  exists sp D1 n1 sr,
+    push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n = (sp, D1, n1) /\
+    push_sort_r D1 (D1 a) (AtomSetImpl.elements (frv_typ T)) n1 = (sr, D', n') /\
+    s = scomp (sbT a (apT sr (apT sp T))) (scomp sr sp).
 Proof.
-  intros D Sg a T n Hd Ht Ha HT AT PT Hv Heq.
-  assert (Hocc : a `notin` ftv_typ T).
-  { intros Hin.
-    assert (Hne : sT Sg a <> typ_Unit).
-    { intros Hu. rewrite Hu in Heq. pose proof (teq_thead _ _ Heq) as Hh.
-      destruct T; simpl in Hin; try fsetdec; try (exfalso; exact (Hv _ eq_refl));
-        unfold apT in Hh; cbn [ap_typ thead_tag] in Hh; discriminate Hh. }
-    refine (bind_prop_occ Sg D a T Hv (teq_teqD _ _ _ Heq) _ Hin).
-    intros Hin'. exact (proj1 (ps_po Sg a Hne) T HT PT Hin'). }
-  assert (Ho : occT a T = false).
-  { unfold occT. apply Bool.orb_false_iff. split.
-    - apply AtomSetFacts.not_mem_iff. exact Hocc.
-    - rewrite (proj1 pf_lcb T HT 0). reflexivity. }
-  exists (scomp (sbT a T) (scomp sid sid)). split.
-  - exact (bind_prop_any D a T n (proj1 Ht a) Ho).
-  - refine (conj (le_n n) (conj Hd (conj Ht (conj _ _)))).
+  intros D a T n s D' n' H. unfold bind_prop in H. destruct (occT a T); [ discriminate | ].
+  destruct (push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n) as [[sp D1] n1] eqn:E1.
+  destruct (push_sort_r D1 (D1 a) (AtomSetImpl.elements (frv_typ T)) n1) as [[sr D2] n2] eqn:E2.
+  cbv zeta in H.
+  destruct (occT a (apT sr (apT sp T))); [ discriminate | ].
+  destruct (sat_b D2 (D2 a) (apT sr (apT sp T))); [ | discriminate ].
+  inversion H; subst. exists sp, D1, n1, sr. repeat split; first [ assumption | reflexivity ].
+Qed.
+
+(* The step that binds [a] to [T] renamed by [rho]: the images of the old atoms are
+   renamings, except [a], whose image is the renamed type. *)
+Lemma pkg_close_T : forall Sg S2 n n' a T rho s,
+  RenN n n' rho -> old n a -> pf T -> atT n T -> ps Sg T -> a `notin` ftv_typ T ->
+  (forall x, sT s x = apT (sbT a (apT rho T)) (sT rho x)) ->
+  (forall q, sR s q = apR (sbT a (apT rho T)) (sR rho q)) ->
+  (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s x))) ->
+  (forall q, old n q -> req (sR Sg q) (apR S2 (sR s q))) ->
+  (forall x, old n x -> pf (sT s x) /\ atT n' (sT s x) /\ ps S2 (sT s x) /\
+     teq (sT Sg x) (apT S2 (sT s x))) /\
+  (forall q, old n q -> prf (sR s q) /\ atR n' (sR s q) /\ psr S2 (sR s q) /\
+     req (sR Sg q) (apR S2 (sR s q))).
+Proof.
+  intros Sg S2 n n' a T rho s Rho Ha HT AT PT Hna Hsx Hsr Fx Fr.
+  pose proof Rho as (Hl & Rt & Rr).
+  destruct (ren_ap_T n n' rho T Rho HT AT) as [P1 A1].
+  assert (Hother : forall x, x `in` ftv_typ T -> sT s x = sT rho x).
+  { intros x Hx. rewrite (Hsx x). destruct (Rt x (proj1 AT x Hx)) as (y & Ey & Hy). rewrite Ey.
+    change (apT (sbT a (apT rho T)) (typ_Var y)) with (sT (sbT a (apT rho T)) y). cbn [sT sbT].
+    destruct (Atom.eq_dec y a) as [Hya|Hya]; [ exfalso | reflexivity ].
+    destruct Hy as [Hyx|[m [H1 [H2 H3]]]].
+    - apply Hna. rewrite <- Hya, Hyx. exact Hx.
+    - exact (Ha m H1 (eq_trans (eq_sym Hya) H3)). }
+  assert (PS : ps S2 (apT rho T)).
+  { refine (ren_ps_T Sg S2 rho n n' T Rho HT AT PT _). intros x Hx.
+    pose proof (Fx x (proj1 AT x Hx)) as F. rewrite (Hother x Hx) in F. exact F. }
+  split.
+  - intros x Hx. destruct (Rt x Hx) as (y & Ey & Hy).
+    pose proof (Fx x Hx) as F.
+    assert (Esx : sT s x = if Atom.eq_dec y a then apT rho T else typ_Var y).
+    { rewrite (Hsx x), Ey.
+      change (apT (sbT a (apT rho T)) (typ_Var y)) with (sT (sbT a (apT rho T)) y). cbn [sT sbT]. reflexivity. }
+    rewrite Esx in F |- *.
+    revert F. destruct (Atom.eq_dec y a) as [Hya|Hya]; intro F.
+    + exact (conj P1 (conj A1 (conj PS F))).
+    + exact (conj I (conj (atT_V n' y (old_ren n n' x y Hl Hx Hy)) (conj I F))).
+  - intros q Hq. destruct (Rr q Hq) as (q' & Eq' & Hq').
+    assert (Esr : sR s q = row_Var q').
+    { rewrite (Hsr q), Eq'.
+      change (apR (sbT a (apT rho T)) (row_Var q')) with (sR (sbT a (apT rho T)) q'). reflexivity. }
+    pose proof (Fr q Hq) as F. rewrite Esr in F |- *.
+    exact (conj I (conj (atR_V n' q' (old_ren n n' q q' Hl Hq Hq')) (conj I F))).
+Qed.
+
+(* A variable of sort [Any] or [Eq] bound to a type of the fragment: the sort is
+   pushed onto the variables of the type, which are renamed to fresh ones. *)
+Lemma pkg_bind_prop_ae : forall (D : denv) Sg a T n,
+  DOk D n -> Dsrt D Sg -> KR D DT Sg -> old n a -> pf T -> atT n T -> ps Sg T ->
+  a `notin` ftv_typ T -> (D a = k_Any \/ D a = k_Eq) -> teq (sT Sg a) (apT Sg T) ->
+  exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ Pkg Sg n s D' n' S2.
+Proof.
+  intros D Sg a T n Hd Hs Hk Ha HT AT PT Hocc HaE Heq.
+  assert (Hlc : lcb 0 T = true) by exact (proj1 pf_lcb T HT 0).
+  assert (Hfld : fld DT Sg (D a) T) by exact (proj1 (ps_fld Sg (D a) HaE) T HT PT).
+  destruct (bind_prop_sorted_complete false D DT Sg a T n Hd Hk Ha Hocc (proj1 AT) (proj2 AT) HT Hlc Hfld Heq)
+    as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr).
+  destruct (bind_prop_unfold D a T n s D' n' E) as (sp & D1 & n1 & sr & Ep & Er & Es).
+  assert (Holdl : forall b, In b (AtomSetImpl.elements (ftv_typ T)) -> old n b)
+    by (intros b Hb; apply (proj1 AT); apply in_elts; exact Hb).
+  assert (R1 : RenN n n1 sp) by exact (RenN_push _ _ _ _ _ _ _ Ep Holdl).
+  assert (Holdr : forall q, In q (AtomSetImpl.elements (frv_typ T)) -> old n1 q).
+  { intros q Hq. exact (old_le n n1 q (proj1 R1) (proj2 AT q (proj1 (in_elts _ _) Hq))). }
+  assert (R2 : RenN n1 n' sr) by exact (RenN_push_r _ _ _ _ _ _ _ Er Holdr).
+  assert (Rho : RenN n n' (scomp sr sp)) by exact (RenN_comp _ _ _ _ _ R1 R2).
+  destruct (push_sort_facts _ _ _ _ _ _ _ Ep Holdl) as (_ & _ & _ & _ & P5 & _).
+  destruct (push_sort_r_facts _ _ _ _ _ _ _ Er Holdr) as (Q1 & _ & Q3 & _ & _ & _ & _).
+  assert (HD1a : D1 a = D a) by exact (P5 a Ha).
+  assert (Hrow1 : Drow D1) by exact (push_sort_drow _ _ _ _ _ _ _ Ep (proj1 Hs)).
+  assert (Hrow' : Drow D') by exact (push_sort_r_drow _ _ _ _ _ _ _ Er Hrow1 (eq_ind_r (fun k => k = k_Any \/ k = k_Eq) HaE HD1a)).
+  assert (Hcomp : apT sr (apT sp T) = apT (scomp sr sp) T) by exact (apT_comp sr sp T).
+  rewrite Hcomp in Es.
+  destruct (pkg_close_T Sg S2 n n' a T (scomp sr sp) s Rho Ha HT AT PT Hocc
+              (fun x => ltac:(rewrite Es; reflexivity)) (fun q => ltac:(rewrite Es; reflexivity))
+              Fx (fun q Hq => ltac:(rewrite (Fr q Hq); apply req_refl))) as [Ct Cr].
+  assert (HNN : NN D' S2).
+  { intros y Hy R.
+    assert (HD'y : D1 y = k_Numeric).
+    { change (dsort D' y = k_Numeric) in Hy. rewrite Q3 in Hy. exact Hy. }
+    destruct (push_sort_sorts _ _ _ _ _ _ _ Ep y) as [H1|H1].
+    2: { rewrite H1 in HD'y. destruct HaE as [E1|E1]; rewrite E1 in HD'y; discriminate HD'y. }
+    rewrite H1 in HD'y.
+    pose proof (numeric_old D n y Hd HD'y) as Hyo.
+    assert (Hya : y <> a) by (intros ->; destruct HaE as [E1|E1]; rewrite E1 in HD'y; discriminate HD'y).
+    assert (Hspy : sT sp y = typ_Var y).
+    { refine (push_sort_keeps _ _ _ _ _ _ _ Ep y _ Hyo). rewrite HD'y. destruct HaE as [E1|E1]; rewrite E1; reflexivity. }
+    assert (Hsy : sT s y = typ_Var y).
+    { rewrite Es. change (apT (sbT a (apT (scomp sr sp) T)) (apT sr (sT sp y)) = typ_Var y).
+      rewrite Hspy. change (apT sr (typ_Var y)) with (sT sr y). rewrite (Q1 y).
+      change (apT (sbT a (apT (scomp sr sp) T)) (typ_Var y)) with (sT (sbT a (apT (scomp sr sp) T)) y).
+      cbn [sT sbT]. destruct (Atom.eq_dec y a) as [E1|_]; [ exfalso; exact (Hya E1) | reflexivity ]. }
+    pose proof (Fx y Hyo) as F. rewrite Hsy in F.
+    exact (teq_not_record _ _ F (proj2 Hs y HD'y) R). }
+  exists s, D', n', S2. refine (conj E _).
+  exact (conj Hl (conj Hd' (conj (conj Hrow' HNN) (conj Hk' (conj Ct Cr))))).
+Qed.
+
+(* A variable of sort [Numeric] or [Literal] is bound to a scalar: the type can be
+   neither an arrow nor a [Literal] record, and the substitution sends no [Numeric]
+   variable to a record.  No sort is pushed, because a scalar has no variable. *)
+Lemma pkg_bind_prop_nl : forall (D : denv) Sg a T n,
+  DOk D n -> Dsrt D Sg -> KR D DT Sg -> old n a -> pf T -> atT n T -> ps Sg T ->
+  (forall v, T <> typ_Var v) -> (D a = k_Numeric \/ D a = k_Literal) -> teq (sT Sg a) (apT Sg T) ->
+  exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ Pkg Sg n s D' n' S2.
+Proof.
+  intros D Sg a T n Hd Hs Hk Ha HT AT PT Hv HaN Heq.
+  assert (Hsat : sat DT (D a) (apT Sg T)) by exact (sat_teq DT (D a) _ _ Heq (proj1 Hk a)).
+  assert (Hsc : T = typ_Int \/ T = typ_Float).
+  { destruct T as [ | | | | | A B | R | x | i | B | w A ]; try (left; reflexivity); try (right; reflexivity);
+      try (simpl in HT; contradiction); try (exfalso; exact (Hv _ eq_refl));
+      try (exfalso; destruct HaN as [E|E]; rewrite E in Hsat; simpl in Hsat;
+           first [ discriminate Hsat | (destruct Hsat as [H|H]; discriminate H) ]; fail).
+    exfalso. destruct HaN as [E|E]; rewrite E in Hsat; simpl in Hsat.
+    - exact (teq_not_record _ _ Heq (proj2 Hs a E) (apR Sg R) eq_refl).
+    - exact Hsat. }
+  assert (Hsb : sat_b D (D a) T = true) by (destruct Hsc as [ -> | -> ]; reflexivity).
+  assert (Hscl : T = typ_Int \/ T = typ_Float \/ T = typ_Bool \/ T = typ_Unit \/ T = typ_String)
+    by (destruct Hsc as [H|H]; [ left; exact H | right; left; exact H ]).
+  exists (scomp (sbT a T) (scomp sid sid)), D, n, Sg. split.
+  - exact (bind_prop_scalar D a T n Hscl Hsb).
+  - refine (conj (le_n n) (conj Hd (conj Hs (conj Hk (conj _ _))))).
     + intros x Hx. change (pf (apT (sbT a T) (typ_Var x)) /\ atT n (apT (sbT a T) (typ_Var x)) /\
         ps Sg (apT (sbT a T) (typ_Var x)) /\ teq (sT Sg x) (apT Sg (apT (sbT a T) (typ_Var x)))).
       change (apT (sbT a T) (typ_Var x)) with (sT (sbT a T) x). cbn [sT sbT].
@@ -405,105 +803,122 @@ Proof.
       apply AtomSetFacts.singleton_iff in Hy. subst. exact Hq.
 Qed.
 
+Lemma pkg_bind_prop : forall (D : denv) Sg a T n,
+  DOk D n -> Dsrt D Sg -> KR D DT Sg -> old n a -> pf T -> atT n T -> ps Sg T -> (forall v, T <> typ_Var v) ->
+  teq (sT Sg a) (apT Sg T) ->
+  exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ Pkg Sg n s D' n' S2.
+Proof.
+  intros D Sg a T n Hd Hs Hk Ha HT AT PT Hv Heq.
+  assert (Hocc : a `notin` ftv_typ T).
+  { intros Hin.
+    assert (Hne : sT Sg a <> typ_Unit).
+    { intros Hu. rewrite Hu in Heq. pose proof (teq_thead _ _ Heq) as Hh.
+      destruct T; simpl in Hin; try fsetdec; try (exfalso; exact (Hv _ eq_refl));
+        unfold apT in Hh; cbn [ap_typ thead_tag] in Hh; discriminate Hh. }
+    refine (bind_prop_occ Sg D a T Hv (teq_teqD _ _ _ Heq) _ Hin).
+    intros Hin'. exact (proj1 (ps_po Sg a Hne) T HT PT Hin'). }
+  destruct (D a) eqn:Eda.
+  - exact (pkg_bind_prop_ae D Sg a T n Hd Hs Hk Ha HT AT PT Hocc (or_introl Eda) Heq).
+  - exact (pkg_bind_prop_ae D Sg a T n Hd Hs Hk Ha HT AT PT Hocc (or_intror Eda) Heq).
+  - exact (pkg_bind_prop_nl D Sg a T n Hd Hs Hk Ha HT AT PT Hv (or_introl Eda) Heq).
+  - exact (pkg_bind_prop_nl D Sg a T n Hd Hs Hk Ha HT AT PT Hv (or_intror Eda) Heq).
+Qed.
+
 (* ---- binding a row variable ---- *)
 
-Lemma rsat_b_any : forall D R, rsat_b D k_Any R = true.
+Lemma bind_row_fin_unfold : forall r R sq D0 n0 s D' n',
+  bind_row_fin r R sq D0 n0 = Some (s, D', n') ->
+  exists sp, push_sort D0 (rk_sort (drk D0 r)) (AtomSetImpl.elements (ftv_row (apR sq R))) n0 = (sp, D', n') /\
+    s = scomp (sbR r (apR sp (apR sq R))) (scomp sp sq).
 Proof.
-  intros D. induction R; simpl; try reflexivity.
-  - apply finer_b_any.
-  - rewrite sat_b_any, IHR. reflexivity.
-  - rewrite sat_b_any, IHR. rewrite Bool.orb_true_r. reflexivity.
+  intros r R sq D0 n0 s D' n' H. unfold bind_row_fin in H. cbv zeta in H.
+  destruct (push_sort D0 (rk_sort (drk D0 r)) (AtomSetImpl.elements (ftv_row (apR sq R))) n0)
+    as [[sp D1] n1] eqn:E.
+  destruct (occR r (apR sp (apR sq R))); [ discriminate | ].
+  destruct (rsat_b D1 (rk_sort (drk D1 r)) (apR sp (apR sq R)) && lacks_ok (drk D1 r) (apR sp (apR sq R)));
+    [ | discriminate ].
+  inversion H; subst. exists sp. split; first [ assumption | reflexivity ].
 Qed.
 
-Lemma abs_vars_nil : forall K R, (forall l, rk_lacks K l = false) -> abs_vars K R = nil.
+Lemma bind_row_core_unfold : forall D r R n s D' n',
+  bind_row_core D r R n = Some (s, D', n') ->
+  (bind_row_fin r R sid D n = Some (s, D', n')) \/
+  (exists q, bind_row_fin r R (sbR q (row_Var (ea n))) (rupd D (ea n) (rk_join (drk D r) (drk D q))) (S n)
+               = Some (s, D', n')).
 Proof.
-  intros K R H. induction R as [ | | l T R IH | l P T R IH ]; simpl; try reflexivity; try exact IH.
-  destruct P; try exact IH. rewrite H. exact IH.
+  intros D r R n s D' n' H. unfold bind_row_core in H. destruct (occR r R); [ discriminate | ].
+  destruct (row_tail R) as [q|].
+  - right. exists q. exact H.
+  - left. exact H.
 Qed.
 
-Lemma lacks_ok_triv : forall K R, (forall l, rk_lacks K l = false) -> lacks_ok K R = true.
+Lemma bind_row_unfold : forall D r R n s D' n',
+  bind_row D r R n = Some (s, D', n') -> abs_vars (drk D r) R = nil ->
+  exists sr D1 n1 s',
+    push_sort_r D (rk_sort (drk D r)) (AtomSetImpl.elements (frv_row R)) n = (sr, D1, n1) /\
+    bind_row_core D1 r (apR sr R) n1 = Some (s', D', n') /\
+    s = scomp s' (scomp sr sid).
 Proof.
-  intros K R H. induction R; simpl; try reflexivity; rewrite H; simpl; exact IHR.
+  intros D r R n s D' n' H Hav. unfold bind_row in H. cbv zeta in H. rewrite Hav in H.
+  cbn [forallb bool_sub] in H. rewrite apR_id in H.
+  destruct (occR r R); [ discriminate | ].
+  destruct (push_sort_r D (rk_sort (drk D r)) (AtomSetImpl.elements (frv_row R)) n) as [[sr D1] n1] eqn:E1.
+  destruct (bind_row_core D1 r (apR sr R) n1) as [[[s1 D2] n2]|] eqn:E2; [ | discriminate ].
+  inversion H; subst. exists sr, D1, n1, s1. repeat split; first [ assumption | reflexivity ].
 Qed.
 
-Lemma bind_row_triv_none : forall D r R n, Dtriv D -> occR r R = false -> row_tail R = None ->
-  bind_row D r R n = Some (scomp (scomp (sbR r R) (scomp sid sid)) (scomp sid sid), D, n).
+Lemma sT_comp3 : forall A B C x, sT (scomp (scomp A B) C) x = apT A (sT (scomp B C) x).
 Proof.
-  intros D r R n [Hs Hr] Ho Htl. destruct (Hr r) as [Hrs Hrl].
-  unfold bind_row. rewrite (abs_vars_nil _ R Hrl). cbn [forallb bool_sub].
-  rewrite apR_id. rewrite Ho. rewrite Hrs, push_sort_r_any. cbn match.
-  unfold bind_row_core. rewrite apR_id. rewrite Ho, Htl. unfold bind_row_fin.
-  rewrite apR_id. rewrite Hrs, push_sort_any. cbn match. rewrite apR_id. rewrite Ho.
-  rewrite Hrs, rsat_b_any, (lacks_ok_triv _ _ Hrl). reflexivity.
+  intros A B C x. change (apT (scomp A B) (sT C x) = apT A (apT B (sT C x))).
+  rewrite <- apT_comp. reflexivity.
 Qed.
 
-Lemma frv_ren_tail : forall q z R p,
-  p `in` frv_row (apR (sbR q (row_Var z)) R) -> p = z \/ p `in` frv_row R.
+Lemma sR_comp3 : forall A B C q, sR (scomp (scomp A B) C) q = apR A (sR (scomp B C) q).
 Proof.
-  intros q z R p Hp. destruct (proj2 frv_ap_mut _ _ _ _ Hp) as [[b [Hb Hpb]]|[q' [Hq' Hpq]]].
-  - exfalso. simpl in Hpb. fsetdec.
-  - cbn [sR sbR] in Hpq. destruct (Atom.eq_dec q' q) as [->|Hne]; simpl in Hpq;
-      apply AtomSetFacts.singleton_iff in Hpq.
-    + left. symmetry. exact Hpq.
-    + right. subst. exact Hq'.
+  intros A B C q. change (apR (scomp A B) (sR C q) = apR A (apR B (sR C q))).
+  rewrite <- apR_comp. reflexivity.
 Qed.
 
-Lemma Dtriv_rupd_join : forall D n r q, Dtriv D ->
-  Dtriv (rupd D (ea n) (rk_join (drk D r) (drk D q))).
+(* The step that binds [r] to [R] renamed by [rho]: the images of the old atoms are
+   renamings, except [r], whose image is the renamed row. *)
+Lemma pkg_close_R : forall Sg S2 n n' r R rho s,
+  RenN n n' rho -> old n r -> prf R -> atR n R -> psr Sg R ->
+  (forall x, sT s x = apT (sbR r (apR rho R)) (sT rho x)) ->
+  (forall q, sR s q = apR (sbR r (apR rho R)) (sR rho q)) ->
+  (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s x))) ->
+  (forall q, old n q -> req (sR Sg q) (apR S2 (sR s q))) ->
+  (forall x, old n x -> pf (sT s x) /\ atT n' (sT s x) /\ ps S2 (sT s x) /\
+     teq (sT Sg x) (apT S2 (sT s x))) /\
+  (forall q, old n q -> prf (sR s q) /\ atR n' (sR s q) /\ psr S2 (sR s q) /\
+     req (sR Sg q) (apR S2 (sR s q))).
 Proof.
-  intros D n r q [Hs Hr]. split.
-  - intros a. cbn [rupd dsort]. apply Hs.
-  - intros b. cbn [rupd drk]. destruct (Atom.eq_dec b (ea n)) as [->|Hne]; [ | apply Hr ].
-    destruct (Hr r) as [Hrs Hrl], (Hr q) as [Hqs Hql]. unfold rk_join. cbn [rk_sort rk_lacks].
-    rewrite Hrs, Hqs. cbn [finer_b]. split; [ reflexivity | ]. intros l. rewrite Hrl, Hql. reflexivity.
-Qed.
-
-Lemma bind_row_triv_some : forall D r R n q, Dtriv D -> old n r -> prf R -> occR r R = false ->
-  row_tail R = Some q ->
-  bind_row D r R n = Some (scomp (scomp (sbR r (apR (sbR q (row_Var (ea n))) R))
-                                    (scomp sid (sbR q (row_Var (ea n))))) (scomp sid sid),
-                           rupd D (ea n) (rk_join (drk D r) (drk D q)), S n).
-Proof.
-  intros D r R n q HD Hold HR Ho Htl. destruct HD as [Hs Hr]. destruct (Hr r) as [Hrs Hrl].
-  pose proof (Hold n (le_n n)) as Hrn.
-  assert (Hocc : occR r (apR (sbR q (row_Var (ea n))) R) = false).
-  { unfold occR. apply Bool.orb_false_iff. split.
-    - apply AtomSetFacts.not_mem_iff. intros Hin. destruct (frv_ren_tail _ _ _ _ Hin) as [E|Hin'].
-      + exact (Hrn E).
-      + apply (proj1 (occR_false _ _ Ho)). exact Hin'.
-    - rewrite (proj2 pf_lcb _ (proj2 (pf_ap (sbR q (row_Var (ea n)))) R HR
-                  (fun x _ => I) (fun p _ => ltac:(cbn [sR sbR]; destruct (Atom.eq_dec p q); exact I))) 0).
-      reflexivity. }
-  assert (Hd0 : Dtriv (rupd D (ea n) (rk_join (drk D r) (drk D q)))) by (apply Dtriv_rupd_join; split; assumption).
-  destruct Hd0 as [Hs0 Hr0]. destruct (Hr0 r) as [Hrs0 Hrl0].
-  unfold bind_row. rewrite (abs_vars_nil _ R Hrl). cbn [forallb bool_sub].
-  rewrite apR_id. rewrite Ho. rewrite Hrs, push_sort_r_any. cbn match.
-  unfold bind_row_core. rewrite apR_id. rewrite Ho, Htl. unfold bind_row_fin. cbn zeta.
-  rewrite Hrs0, push_sort_any. cbn match. rewrite apR_id. rewrite Hocc.
-  rewrite Hrs0, rsat_b_any, (lacks_ok_triv _ _ Hrl0). reflexivity.
-Qed.
-
-Lemma bind_row_s_T : forall r R1 sq x, sT sq x = typ_Var x ->
-  sT (scomp (scomp (sbR r R1) (scomp sid sq)) (scomp sid sid)) x = typ_Var x.
-Proof.
-  intros r R1 sq x H. unfold scomp, tcomp. simpl. rewrite H. reflexivity.
-Qed.
-
-Lemma bind_row_s_R : forall r R1 q z q',
-  sR (scomp (scomp (sbR r R1) (scomp sid (sbR q (row_Var z)))) (scomp sid sid)) q' =
-  if Atom.eq_dec q' q then (if Atom.eq_dec z r then R1 else row_Var z)
-  else if Atom.eq_dec q' r then R1 else row_Var q'.
-Proof.
-  intros r R1 q z q'. cbn [sR scomp rcomp]. unfold rcomp. cbn [sR sT sid sbR idr idt ap_row].
-  destruct (Atom.eq_dec q' q); cbn [ap_row]; cbn [sR sbR]; reflexivity.
+  intros Sg S2 n n' r R rho s Rho Hr HR AR PR Hsx Hsr Fx Fr.
+  pose proof Rho as (Hl & Rt & Rr).
+  destruct (ren_ap_R n n' rho R Rho HR AR) as [P1 A1].
+  assert (Hty : forall x, old n x -> sT s x = sT rho x).
+  { intros x Hx. rewrite (Hsx x). destruct (Rt x Hx) as (y & Ey & _). rewrite Ey. reflexivity. }
+  assert (PS : psr S2 (apR rho R)).
+  { refine (ren_ps_R Sg S2 rho n n' R Rho HR AR PR _). intros x Hx.
+    pose proof (Fx x (proj1 AR x Hx)) as F. rewrite (Hty x (proj1 AR x Hx)) in F. exact F. }
+  split.
+  - intros x Hx. destruct (Rt x Hx) as (y & Ey & Hy).
+    pose proof (Fx x Hx) as F. rewrite (Hty x Hx), Ey in F |- *.
+    exact (conj I (conj (atT_V n' y (old_ren n n' x y Hl Hx Hy)) (conj I F))).
+  - intros q Hq. destruct (Rr q Hq) as (q' & Eq' & Hq').
+    pose proof (Fr q Hq) as F. rewrite (Hsr q), Eq' in F |- *.
+    change (apR (sbR r (apR rho R)) (row_Var q')) with (sR (sbR r (apR rho R)) q') in F |- *.
+    cbn [sR sbR] in F |- *.
+    revert F. destruct (Atom.eq_dec q' r) as [Hqr|Hqr]; intro F.
+    + exact (conj P1 (conj A1 (conj PS F))).
+    + exact (conj I (conj (atR_V n' q' (old_ren n n' q q' Hl Hq Hq')) (conj I F))).
 Qed.
 
 Lemma pkg_bind_row : forall (D : denv) Sg r R n,
-  DOk D n -> Dtriv D -> old n r -> prf R -> atR n R -> psr Sg R ->
+  DOk D n -> Dsrt D Sg -> KR D DT Sg -> old n r -> prf R -> atR n R -> psr Sg R ->
   (forall q, R = row_Var q -> q <> r) -> req (sR Sg r) (apR Sg R) ->
   exists s D' n' S2, bind_row D r R n = Some (s, D', n') /\ Pkg Sg n s D' n' S2.
 Proof.
-  intros D Sg r R n Hd Ht Hr HR AR PR Hvar Hreq.
+  intros D Sg r R n Hd Hae Hk Hr HR AR PR Hvar Hreq.
   assert (Hnot : r `notin` frv_row R).
   { intros Hin. destruct R as [ | q | l T R' | l P T R' ].
     - simpl in Hin. fsetdec.
@@ -512,114 +927,118 @@ Proof.
                (fun Hin' => ps_pos_row Sg r _ HR PR Hin' (fun q E => ltac:(discriminate E))) Hin).
     - exact (bind_row_occ Sg D r _ (req_reqD D _ _ Hreq)
                (fun Hin' => ps_pos_row Sg r _ HR PR Hin' (fun q E => ltac:(discriminate E))) Hin). }
-  assert (Ho : occR r R = false).
-  { unfold occR. apply Bool.orb_false_iff. split.
-    - apply AtomSetFacts.not_mem_iff. exact Hnot.
-    - rewrite (proj2 pf_lcb R HR 0). reflexivity. }
-  destruct (row_tail R) as [q|] eqn:Htl.
-  - pose proof (row_tail_in R q Htl) as Hqin. assert (Hqr : q <> r) by (intros ->; exact (Hnot Hqin)).
-    set (sq := sbR q (row_Var (ea n))).
-    set (S2 := srupd Sg (ea n) (sR Sg q)).
-    set (R1 := apR sq R).
-    assert (Hsq : forall x, sT sq x = typ_Var x) by (intros x; reflexivity).
-    assert (HR1 : prf R1 /\ atR (S n) R1 /\ psr S2 R1).
-    { refine (conj _ (conj _ _)).
-      - apply (proj2 (pf_ap sq)); [ exact HR | intros x _; exact I
-          | intros p _; subst sq; cbn [sR sbR]; destruct (Atom.eq_dec p q); exact I ].
-      - apply atR_ap.
-        + intros x Hx. rewrite Hsq. split; simpl; intros y Hy; [ | fsetdec ].
-          apply AtomSetFacts.singleton_iff in Hy. subst. exact (old_le n (S n) _ (le_S n n (le_n n)) (proj1 AR _ Hx)).
-        + intros p Hp. subst sq. cbn [sR sbR]. destruct (Atom.eq_dec p q) as [->|Hne]; split; simpl; intros y Hy;
-            try fsetdec; apply AtomSetFacts.singleton_iff in Hy; subst.
-          * exact (old_ea (S n) n (le_n (S n))).
-          * exact (old_le n (S n) _ (le_S n n (le_n n)) (proj2 AR _ Hp)).
-      - apply (proj2 (ps_pull Sg S2 sq)); [ exact HR | exact PR
-          | intros x _; rewrite Hsq; exact (conj (teq_refl _) I)
-          | intros p _; subst sq; cbn [sR sbR]; destruct (Atom.eq_dec p q); exact I ]. }
-    assert (Hag : apR S2 R1 = apR Sg R).
-    { apply (proj2 (ap_agree Sg S2 sq)).
-      - intros x _. rewrite Hsq. reflexivity.
-      - intros p Hp. subst sq S2. cbn [sR sbR srupd]. destruct (Atom.eq_dec p q) as [->|Hne].
-        + change (apR (srupd Sg (ea n) (sR Sg q)) (row_Var (ea n)))
-            with (sR (srupd Sg (ea n) (sR Sg q)) (ea n)).
-          cbn [sR srupd]. rewrite dec_same. reflexivity.
-        + change (apR (srupd Sg (ea n) (sR Sg q)) (row_Var p)) with (sR (srupd Sg (ea n) (sR Sg q)) p).
-          cbn [sR srupd]. destruct (Atom.eq_dec p (ea n)) as [E|]; [ | reflexivity ].
-          exfalso. exact (proj2 AR p Hp n (le_n n) E). }
-    exists (scomp (scomp (sbR r R1) (scomp sid sq)) (scomp sid sid)),
-           (rupd D (ea n) (rk_join (drk D r) (drk D q))), (S n), S2.
-    split; [ exact (bind_row_triv_some D r R n q Ht Hr HR Ho Htl) | ].
-    refine (conj (le_S n n (le_n n)) (conj (DOk_rupd D n _ Hd) (conj (Dtriv_rupd_join D n r q Ht) (conj _ _)))).
-    + intros x Hx. rewrite (bind_row_s_T r R1 sq x (Hsq x)).
-      refine (conj I (conj _ (conj I _))).
-      * split; simpl; intros y Hy; [ | fsetdec ].
-        apply AtomSetFacts.singleton_iff in Hy. subst.
-        exact (old_le n (S n) _ (le_S n n (le_n n)) Hx).
-      * apply teq_refl.
-    + intros q' Hq'. unfold sq. rewrite (bind_row_s_R r R1 q (ea n) q').
-      destruct (Atom.eq_dec q' q) as [->|Hne].
-      * destruct (Atom.eq_dec (ea n) r) as [E|_]; [ exfalso; exact (Hr n (le_n n) (eq_sym E)) | ].
-        refine (conj I (conj _ (conj I _))).
-        -- split; simpl; intros y Hy; [ fsetdec | ]. apply AtomSetFacts.singleton_iff in Hy. subst.
-           exact (old_ea (S n) n (le_n (S n))).
-        -- change (req (sR Sg q) (sR S2 (ea n))). subst S2. cbn [sR srupd].
-           destruct (Atom.eq_dec (ea n) (ea n)); [ apply req_refl | congruence ].
-      * destruct (Atom.eq_dec q' r) as [->|Hne'].
-        -- refine (conj (proj1 HR1) (conj (proj1 (proj2 HR1)) (conj (proj2 (proj2 HR1)) _))).
-           rewrite Hag. exact Hreq.
-        -- refine (conj I (conj _ (conj I _))).
-           ++ split; simpl; intros y Hy; [ fsetdec | ]. apply AtomSetFacts.singleton_iff in Hy. subst.
-              exact (old_le n (S n) _ (le_S n n (le_n n)) Hq').
-           ++ change (req (sR Sg q') (sR S2 q')). subst S2. cbn [sR srupd].
-              destruct (Atom.eq_dec q' (ea n)) as [E|_]; [ exfalso; exact (Hq' n (le_n n) E) | apply req_refl ].
-  - exists (scomp (scomp (sbR r R) (scomp sid sid)) (scomp sid sid)), D, n, Sg.
-    split; [ exact (bind_row_triv_none D r R n Ht Ho Htl) | ].
-    refine (conj (le_n n) (conj Hd (conj Ht (conj _ _)))).
-    + intros x Hx. change (pf (typ_Var x) /\ atT n (typ_Var x) /\ ps Sg (typ_Var x) /\
-        teq (sT Sg x) (apT Sg (typ_Var x))).
-      refine (conj I (conj _ (conj I (teq_refl _)))). split; simpl; intros y Hy; [ | fsetdec ].
-      apply AtomSetFacts.singleton_iff in Hy. subst. exact Hx.
-    + intros q' Hq'. cbn [sR scomp rcomp]. unfold rcomp. cbn [sR sT sid sbR idr idt ap_row].
-      destruct (Atom.eq_dec q' r) as [->|Hne].
-      * exact (conj HR (conj AR (conj PR Hreq))).
-      * refine (conj I (conj _ (conj I (req_refl _)))). split; simpl; intros y Hy; [ fsetdec | ].
-        apply AtomSetFacts.singleton_iff in Hy. subst. exact Hq'.
+  assert (Hlc : lcrb 0 R = true) by exact (proj2 pf_lcb R HR 0).
+  assert (Hrk : rkok DT (drk D r) (apR Sg R))
+    by exact (rkok_reqD DT _ _ _ (req_reqD DT _ _ Hreq) (proj2 Hk r)).
+  assert (Hav : abs_vars (drk D r) R = nil) by exact (ps_lacks Sg (drk D r) R HR PR (LK_rkok _ _ _ Hrk)).
+  assert (Hfld : frld DT Sg (rk_sort (drk D r)) R)
+    by exact (proj2 (ps_fld Sg _ (proj1 Hae r)) R HR PR).
+  destruct (bind_row_sorted_complete false D DT Sg r R n Hd Hk Hr (proj1 AR) (proj2 AR) HR Hlc Hnot Hfld Hreq)
+    as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr).
+  destruct (bind_row_unfold D r R n s D' n' E Hav) as (sr & D1 & n1 & s' & Er & Ec & Es).
+  assert (Holdr : forall q, In q (AtomSetImpl.elements (frv_row R)) -> old n q)
+    by (intros q Hq; apply (proj2 AR); apply in_elts; exact Hq).
+  assert (Rsr : RenN n n1 sr) by exact (RenN_push_r _ _ _ _ _ _ _ Er Holdr).
+  destruct (push_sort_r_facts _ _ _ _ _ _ _ Er Holdr) as (Q1 & _ & Q3 & _ & Q5 & _ & _).
+  assert (Hrsr : rren sr) by exact (conj Q1 Q5).
+  assert (Hae1 : Drow D1) by exact (push_sort_r_drow _ _ _ _ _ _ _ Er (proj1 Hae) (proj1 Hae r)).
+  assert (Hcase : exists sq D0 n0, rren sq /\ RenN n1 n0 sq /\ Drow D0 /\ (forall y, D0 y = D1 y) /\
+            bind_row_fin r (apR sr R) sq D0 n0 = Some (s', D', n')).
+  { destruct (bind_row_core_unfold _ _ _ _ _ _ _ Ec) as [Ef|[q Ef]].
+    - exists sid, D1, n1. exact (conj rren_sid (conj (RenN_id n1) (conj Hae1 (conj (fun y => eq_refl) Ef)))).
+    - exists (sbR q (row_Var (ea n1))), (rupd D1 (ea n1) (rk_join (drk D1 r) (drk D1 q))), (S n1).
+      exact (conj (rren_sbR q (ea n1)) (conj (RenN_tail n1 q)
+               (conj (Drow_rupd _ _ _ Hae1 (Drow_join D1 r q Hae1)) (conj (fun y => eq_refl) Ef)))). }
+  destruct Hcase as (sq & D0 & n0 & Hrsq & Rsq & Hae0 & HD0 & Ef).
+  destruct (bind_row_fin_unfold _ _ _ _ _ _ _ _ Ef) as (sp & Epp & Es').
+  assert (Holdp : forall c, In c (AtomSetImpl.elements (ftv_row (apR sq (apR sr R)))) -> old n0 c).
+  { intros c Hc. apply in_elts in Hc.
+    rewrite (proj2 (ftv_rren sq Hrsq)), (proj2 (ftv_rren sr Hrsr)) in Hc.
+    exact (old_le n n0 c (Nat.le_trans _ _ _ (proj1 Rsr) (proj1 Rsq)) (proj1 AR c Hc)). }
+  assert (Rsp : RenN n0 n' sp) by exact (RenN_push _ _ _ _ _ _ _ Epp Holdp).
+  assert (Hae' : Drow D') by exact (push_sort_drow _ _ _ _ _ _ _ Epp Hae0).
+  assert (Rsr' : RenN n n1 (scomp sr sid)) by exact (RenN_comp _ _ _ _ _ (RenN_id n) Rsr).
+  assert (Rspq : RenN n1 n' (scomp sp sq)) by exact (RenN_comp _ _ _ _ _ Rsq Rsp).
+  assert (Rho : RenN n n' (scomp (scomp sp sq) (scomp sr sid))) by exact (RenN_comp _ _ _ _ _ Rsr' Rspq).
+  assert (HR1 : apR sp (apR sq (apR sr R)) = apR (scomp (scomp sp sq) (scomp sr sid)) R).
+  { rewrite <- apR_comp, <- apR_comp, <- apR_comp, apR_id. reflexivity. }
+  rewrite HR1 in Es'.
+  assert (Hs : s = scomp (scomp (sbR r (apR (scomp (scomp sp sq) (scomp sr sid)) R)) (scomp sp sq))
+                         (scomp sr sid)).
+  { rewrite Es, Es'. reflexivity. }
+  exists s, D', n', S2. refine (conj E _).
+  destruct (pkg_close_R Sg S2 n n' r R (scomp (scomp sp sq) (scomp sr sid)) s Rho Hr HR AR PR
+              (fun x => ltac:(rewrite Hs, sT_comp3; reflexivity))
+              (fun q => ltac:(rewrite Hs, sR_comp3; reflexivity))
+              Fx Fr) as [Ct Cr].
+  assert (HNN : NN D' S2).
+  { intros y Hy R'.
+    destruct (push_sort_sorts _ _ _ _ _ _ _ Epp y) as [H1|H1].
+    2: { rewrite H1 in Hy. destruct (Hae0 r) as [E1|E1]; rewrite E1 in Hy; discriminate Hy. }
+    rewrite H1, (HD0 y) in Hy. change (dsort D1 y = k_Numeric) in Hy. rewrite Q3 in Hy.
+    change (D y = k_Numeric) in Hy.
+    pose proof (numeric_old D n y Hd Hy) as Hyo.
+    assert (Hyo0 : old n0 y) by exact (old_le n n0 y (Nat.le_trans _ _ _ (proj1 Rsr) (proj1 Rsq)) Hyo).
+    assert (Hspy : sT sp y = typ_Var y).
+    { refine (push_sort_keeps _ _ _ _ _ _ _ Epp y _ Hyo0).
+      assert (HD1y : D1 y = k_Numeric) by (change (dsort D1 y = k_Numeric); rewrite Q3; exact Hy).
+      rewrite (HD0 y), HD1y. destruct (Hae0 r) as [E1|E1]; rewrite E1; reflexivity. }
+    assert (Hrho_y : sT (scomp (scomp sp sq) (scomp sr sid)) y = typ_Var y).
+    { change (apT (scomp sp sq) (apT sr (typ_Var y)) = typ_Var y).
+      change (apT sr (typ_Var y)) with (sT sr y). rewrite (proj1 Hrsr y).
+      change (apT (scomp sp sq) (typ_Var y)) with (sT (scomp sp sq) y).
+      change (sT (scomp sp sq) y) with (apT sp (sT sq y)). rewrite (proj1 Hrsq y).
+      change (apT sp (typ_Var y)) with (sT sp y). exact Hspy. }
+    assert (Hsy : sT s y = typ_Var y).
+    { rewrite Hs, sT_comp3, Hrho_y.
+      change (apT (sbR r (apR (scomp (scomp sp sq) (scomp sr sid)) R)) (typ_Var y)) with
+        (sT (sbR r (apR (scomp (scomp sp sq) (scomp sr sid)) R)) y). reflexivity. }
+    pose proof (Fx y Hyo) as F. rewrite Hsy in F.
+    exact (teq_not_record _ _ F (proj2 Hae y Hy) R'). }
+  exact (conj Hl (conj Hd' (conj (conj Hae' HNN) (conj Hk' (conj Ct Cr))))).
 Qed.
 
 (* ---- rewriting a row to present a label ---- *)
 
-(* What [rewrite_row] does to the type variables and the supply, in a trivial environment:
+(* What [rewrite_row] does to the type variables and the supply, with every sort [Any]:
    nothing to the type variables, and either nothing to the row variables or one row
-   variable bound to an entry of fresh variables. *)
-Lemma rw_shape : forall l av R D n P' T' R' s0 D0 n1, Dtriv D ->
+   variable bound to an entry of fresh variables; or the entry it presents is absent. *)
+Lemma rw_shape : forall l av R D n P' T' R' s0 D0 n1, Drow D ->
   rewrite_row l av D R n = Some (P', T', R', s0, D0, n1) ->
-  n <= n1 /\ Dtriv D0 /\
-  (s0 = sid \/ exists r, r `in` frv_row R /\ P' = typ_Var (ea n) /\ T' = typ_Var (ea (S n)) /\
+  n <= n1 /\ Drow D0 /\ (forall y, D0 y = k_Numeric -> D y = k_Numeric) /\
+  (P' = typ_Bool \/ s0 = sid \/
+   exists r, r `in` frv_row R /\ P' = typ_Var (ea n) /\ T' = typ_Var (ea (S n)) /\
      n1 = n + 3 /\
      s0 = sbR r (row_Maybe l (typ_Var (ea n)) (typ_Var (ea (S n))) (row_Var (ea (n + 2))))).
 Proof.
   intros l av R. induction R as [ | r | l' T R IH | l' P T R IH ]; intros D n P' T' R' s0 D0 n1 HD E;
     cbn [rewrite_row] in E.
-  - inversion E; subst. refine (conj _ (conj HD (or_introl eq_refl))). lia.
+  - inversion E; subst. refine (conj _ (conj HD (conj (fun y H => H) (or_introl eq_refl)))). lia.
   - destruct (AtomSetImpl.mem r av); [ discriminate | ]. cbn zeta in E.
-    destruct HD as [Hs Hr]. destruct (Hr r) as [Hrs Hrl]. rewrite (Hrl l) in E. inversion E; subst.
-    refine (conj _ (conj _ (or_intror (ex_intro _ r (conj _ (conj eq_refl (conj eq_refl (conj eq_refl eq_refl)))))))).
-    + lia.
-    + split.
-      * intros a. cbn [rupd upd dsort]. destruct (Atom.eq_dec a (ea (S n))) as [->|Hne];
-          [ exact Hrs | apply Hs ].
-      * intros b. cbn [rupd drk]. destruct (Atom.eq_dec b (ea (n + 2))) as [->|Hne]; [ | apply Hr ].
-        split; [ exact Hrs | exact Hrl ].
-    + simpl. fsetdec.
-  - destruct (Nat.eqb l l'); [ inversion E; subst; exact (conj (le_n _) (conj HD (or_introl eq_refl))) | ].
+    pose proof (HD r) as Hrs.
+    destruct (rk_lacks (drk D r) l) eqn:Hl; inversion E; subst.
+    + refine (conj _ (conj _ (conj _ (or_introl eq_refl)))).
+      * lia.
+      * apply Drow_rupd; [ exact HD | exact Hrs ].
+      * intros y H. exact H.
+    + refine (conj _ (conj _ (conj _ (or_intror (or_intror (ex_intro _ r (conj _ (conj eq_refl (conj eq_refl (conj eq_refl eq_refl)))))))))).
+      * lia.
+      * apply Drow_rupd; [ intros q; cbn [upd drk]; apply HD | exact Hrs ].
+      * intros y H. cbn [rupd upd dsort] in H. destruct (Atom.eq_dec y (ea (S n))) as [->|Hne].
+        -- destruct Hrs as [E1|E1]; rewrite E1 in H; discriminate H.
+        -- exact H.
+      * simpl. fsetdec.
+  - destruct (Nat.eqb l l'); [ inversion E; subst; exact (conj (le_n _) (conj HD (conj (fun y H => H) (or_intror (or_introl eq_refl))))) | ].
     destruct (rewrite_row l av D R n) as [[[[[[P0 T0] R3] s] D1] n2]|] eqn:E1; [ | discriminate ].
-    inversion E; subst. destruct (IH _ _ _ _ _ _ _ _ HD E1) as (H1 & H2 & H3).
-    refine (conj H1 (conj H2 _)). destruct H3 as [H3|(r & Hr & H3)]; [ left; exact H3 | right ].
+    inversion E; subst. destruct (IH _ _ _ _ _ _ _ _ HD E1) as (H1 & H2 & H2' & H3).
+    refine (conj H1 (conj H2 (conj H2' _))).
+    destruct H3 as [H3|[H3|(r & Hr & H3)]]; [ left; exact H3 | right; left; exact H3 | right; right ].
     exists r. split; [ simpl; fsetdec | exact H3 ].
-  - destruct (Nat.eqb l l'); [ inversion E; subst; exact (conj (le_n _) (conj HD (or_introl eq_refl))) | ].
+  - destruct (Nat.eqb l l'); [ inversion E; subst; exact (conj (le_n _) (conj HD (conj (fun y H => H) (or_intror (or_introl eq_refl))))) | ].
     destruct (rewrite_row l av D R n) as [[[[[[P0 T0] R3] s] D1] n2]|] eqn:E1; [ | discriminate ].
-    inversion E; subst. destruct (IH _ _ _ _ _ _ _ _ HD E1) as (H1 & H2 & H3).
-    refine (conj H1 (conj H2 _)). destruct H3 as [H3|(r & Hr & H3)]; [ left; exact H3 | right ].
+    inversion E; subst. destruct (IH _ _ _ _ _ _ _ _ HD E1) as (H1 & H2 & H2' & H3).
+    refine (conj H1 (conj H2 (conj H2' _))).
+    destruct H3 as [H3|[H3|(r & Hr & H3)]]; [ left; exact H3 | right; left; exact H3 | right; right ].
     exists r. split; [ simpl; fsetdec | exact H3 ].
 Qed.
 
@@ -667,7 +1086,7 @@ Qed.
 (* The pieces [rewrite_row] returns are in the fragment, over the new supply, with every
    entry present under the extension [S2]. *)
 Lemma rw_facts : forall l av Sg S2 s0 D0 n n1, Pkg Sg n s0 D0 n1 S2 ->
-  forall R D P' T' R', Dtriv D -> rewrite_row l av D R n = Some (P', T', R', s0, D0, n1) ->
+  forall R D P' T' R', Drow D -> rewrite_row l av D R n = Some (P', T', R', s0, D0, n1) ->
     prf R -> atR n R -> psr Sg R ->
     pf P' /\ atT n1 P' /\ pf T' /\ atT n1 T' /\ ps S2 T' /\ prf R' /\ atR n1 R' /\ psr S2 R'.
 Proof.
@@ -679,11 +1098,15 @@ Proof.
     + exact (atT_var _ _ (Nat.lt_succ_diag_r n)).
     + split; simpl; intros; fsetdec.
   - destruct (AtomSetImpl.mem r av); [ discriminate | ]. cbn zeta in E.
-    destruct HD as [Hs Hr]. destruct (Hr r) as [Hrs Hrl]. rewrite (Hrl l) in E. inversion E; subst.
-    refine (conj I (conj _ (conj I (conj _ (conj I (conj I (conj _ I))))))).
-    + exact (atT_var (n + 3) n ltac:(lia)).
-    + exact (atT_var (n + 3) (S n) ltac:(lia)).
-    + exact (atR_var (n + 3) (n + 2) ltac:(lia)).
+    destruct (rk_lacks (drk D r) l) eqn:Hl; inversion E; subst.
+    + refine (conj I (conj _ (conj I (conj _ (conj I (conj I (conj _ I))))))).
+      * apply atT_scalar; intros; simpl; fsetdec.
+      * exact (atT_var (n + 2) n ltac:(lia)).
+      * exact (atR_var (n + 2) (S n) ltac:(lia)).
+    + refine (conj I (conj _ (conj I (conj _ (conj I (conj I (conj _ I))))))).
+      * exact (atT_var (n + 3) n ltac:(lia)).
+      * exact (atT_var (n + 3) (S n) ltac:(lia)).
+      * exact (atR_var (n + 3) (n + 2) ltac:(lia)).
   - destruct (Nat.eqb l l') eqn:Ell.
     + inversion E; subst. destruct HR as [HT HR']. destruct (atR_ext_inv _ _ _ _ AR) as [AT AR'].
       destruct PR as [PT PR'].
@@ -715,7 +1138,7 @@ Proof.
 Qed.
 
 Lemma pkg_rewrite : forall (D : denv) Sg R1 R2 l P T R1' n,
-  DOk D n -> Dtriv D -> row_head R1 = Some (l, P, T, R1') -> apT Sg P = typ_Unit ->
+  DOk D n -> Dsrt D Sg -> KR D DT Sg -> row_head R1 = Some (l, P, T, R1') -> apT Sg P = typ_Unit ->
   req (apR Sg R1) (apR Sg R2) -> prf R2 -> atR n R2 -> psr Sg R2 ->
   exists P' T' R2' s0 D0 n1 S2,
     rewrite_row l (side_av R1) D R2 n = Some (P', T', R2', s0, D0, n1) /\ Pkg Sg n s0 D0 n1 S2 /\
@@ -723,19 +1146,25 @@ Lemma pkg_rewrite : forall (D : denv) Sg R1 R2 l P T R1' n,
     prf R2' /\ atR n1 R2' /\ psr S2 R2' /\
     teq (apT S2 T') (apT Sg T) /\ req (apR S2 R2') (apR Sg R1').
 Proof.
-  intros D Sg R1 R2 l P T R1' n Hd Ht Hh HP Hreq HR AR PR.
+  intros D Sg R1 R2 l P T R1' n Hd Ht Hk Hh HP Hreq HR AR PR.
   assert (HPt : teq (apT Sg P) typ_Unit) by (rewrite HP; apply teq_refl).
-  destruct (rewrite_row_complete Sg R1 R2 l P T R1' D n D Hh HPt Hreq Hd (KR_triv D D Sg Ht)
-              (proj1 AR) (proj2 AR)
-              (fun r _ P1 T1 R0 _ _ _ => ltac:(rewrite (proj1 (proj2 Ht r)); apply sat_any)))
-    as (P' & T' & R2' & s0 & D0 & n1 & S2 & E & _ & Hn & Hd0 & Hf1 & Hf2 & HPP & HTT & HRR).
-  destruct (rw_shape l (side_av R1) R2 D n P' T' R2' s0 D0 n1 Ht E) as (_ & Ht0 & Hsh).
+  destruct (rewrite_row_complete Sg R1 R2 l P T R1' D n DT Hh HPt Hreq Hd Hk (proj1 AR) (proj2 AR))
+    as (P' & T' & R2' & s0 & D0 & n1 & S2 & E & Hk0 & Hn & Hd0 & Hf1 & Hf2 & HPP & HTT & HRR).
+  destruct (rw_shape l (side_av R1) R2 D n P' T' R2' s0 D0 n1 (proj1 Ht) E) as (_ & Hrow0 & Hnum & Hsh0).
   assert (HPU : apT S2 P' = typ_Unit).
   { rewrite HP in HPP. exact (teq_Unit_inv _ (teq_sym _ _ HPP)). }
+  assert (Hsh : s0 = sid \/ exists r, r `in` frv_row R2 /\ P' = typ_Var (ea n) /\ T' = typ_Var (ea (S n)) /\
+     n1 = n + 3 /\
+     s0 = sbR r (row_Maybe l (typ_Var (ea n)) (typ_Var (ea (S n))) (row_Var (ea (n + 2))))).
+  { destruct Hsh0 as [-> | H]; [ | exact H ]. exfalso. unfold apT in HPU. cbn [ap_typ] in HPU. discriminate HPU. }
   assert (Hsx : forall x, sT s0 x = typ_Var x).
   { intros x. destruct Hsh as [-> | (r & _ & _ & _ & _ & ->)]; reflexivity. }
+  assert (Ht0 : Dsrt D0 S2).
+  { refine (conj Hrow0 _). intros y Hy. pose proof (numeric_old D n y Hd (Hnum y Hy)) as Hold.
+    pose proof (Hf1 y Hold) as F. rewrite (Hsx y) in F.
+    exact (teq_not_record _ _ F (proj2 Ht y (Hnum y Hy))). }
   assert (Hpk : Pkg Sg n s0 D0 n1 S2).
-  { refine (conj Hn (conj Hd0 (conj Ht0 (conj _ _)))).
+  { refine (conj Hn (conj Hd0 (conj Ht0 (conj Hk0 (conj _ _))))).
     - intros x Hx. rewrite (Hsx x). refine (conj I (conj _ (conj I _))).
       + split; simpl; intros y Hy; [ | fsetdec ]. apply AtomSetFacts.singleton_iff in Hy. subst.
         exact (old_le n n1 _ Hn Hx).
@@ -756,7 +1185,7 @@ Proof.
           -- split; simpl; intros y Hy; [ fsetdec | ]. apply AtomSetFacts.singleton_iff in Hy. destruct Hy.
              exact (old_le n n1 _ Hn Hq).
           -- pose proof (Hf2 q Hq) as Hf. cbn [sR sbR] in Hf. rewrite (dec_diff _ _ _ _ _ Hne) in Hf. exact Hf. }
-  destruct (rw_facts l (side_av R1) Sg S2 s0 D0 n n1 Hpk R2 D P' T' R2' Ht E HR AR PR)
+  destruct (rw_facts l (side_av R1) Sg S2 s0 D0 n n1 Hpk R2 D P' T' R2' (proj1 Ht) E HR AR PR)
     as (F1 & F2 & F3 & F4 & F5 & F6 & F7 & F8).
   exists P', T', R2', s0, D0, n1, S2. exact (conj E (conj Hpk (conj HPU (conj F1 (conj F2 (conj F3 (conj F4 (conj F5 (conj F6 (conj F7 (conj F8 (conj HTT HRR)))))))))))).
 Qed.
@@ -764,22 +1193,19 @@ Qed.
 (* ---- the induction ---- *)
 
 Definition UT (m : nat) : Prop := forall (Sg : sub) (D : denv) T1 T2 n,
-  tsz (apT Sg T1) < m -> DOk D n -> Dtriv D -> pf T1 -> pf T2 -> atT n T1 -> atT n T2 ->
+  tsz (apT Sg T1) < m -> DOk D n -> Dsrt D Sg -> KR D DT Sg -> pf T1 -> pf T2 -> atT n T1 -> atT n T2 ->
   ps Sg T1 -> ps Sg T2 -> teq (apT Sg T1) (apT Sg T2) ->
-  exists s D' n' S2, Stable (fun f => unify_tD f D T1 T2 n = Some (s, D', n')) /\ Pkg Sg n s D' n' S2.
+  exists s D' n' S2, Stable (fun f => unify_tD f D T1 T2 n = Some (s, D', n') /\
+                                       unify_t f D T1 T2 n = Some (s, D', n')) /\ Pkg Sg n s D' n' S2.
 
 Definition UR (m : nat) : Prop := forall (Sg : sub) (D : denv) R1 R2 n,
-  rsz (apR Sg R1) < m -> DOk D n -> Dtriv D -> prf R1 -> prf R2 -> atR n R1 -> atR n R2 ->
+  rsz (apR Sg R1) < m -> DOk D n -> Dsrt D Sg -> KR D DT Sg -> prf R1 -> prf R2 -> atR n R1 -> atR n R2 ->
   psr Sg R1 -> psr Sg R2 -> req (apR Sg R1) (apR Sg R2) ->
-  exists s D' n' S2, Stable (fun f => unify_rD f D R1 R2 n = Some (s, D', n')) /\ Pkg Sg n s D' n' S2.
+  exists s D' n' S2, Stable (fun f => unify_rD f D R1 R2 n = Some (s, D', n') /\
+                                       unify_r f D R1 R2 n = Some (s, D', n')) /\ Pkg Sg n s D' n' S2.
 
 Lemma tsz_pos : forall T, 1 <= tsz T.
 Proof. intros T. destruct T; simpl; lia. Qed.
-
-Lemma ps_pres : forall S P, pf P -> apT S P = typ_Unit -> ps S P.
-Proof.
-  intros S P HP E. destruct (pres_shape S P HP E) as [-> | [v [-> _]]]; exact I.
-Qed.
 
 (* The first entry of a row of the fragment whose entries are all present. *)
 Lemma row_front : forall Sg n R1 l P T R1', row_head R1 = Some (l, P, T, R1') ->
@@ -800,10 +1226,10 @@ Proof.
     reflexivity.
 Qed.
 
-Lemma Pkg_sbT : forall Sg D n a a', DOk D n -> Dtriv D -> old n a' ->
+Lemma Pkg_sbT : forall Sg D n a a', DOk D n -> Dsrt D Sg -> KR D DT Sg -> old n a' ->
   teq (sT Sg a) (sT Sg a') -> Pkg Sg n (sbT a (typ_Var a')) D n Sg.
 Proof.
-  intros Sg D n a a' Hd Ht Ha' Heq. refine (conj (le_n n) (conj Hd (conj Ht (conj _ _)))).
+  intros Sg D n a a' Hd Ht Hk Ha' Heq. refine (conj (le_n n) (conj Hd (conj Ht (conj Hk (conj _ _))))).
   - intros x Hx. cbn [sT sbT]. destruct (Atom.eq_dec x a) as [->|Hne].
     + refine (conj I (conj _ (conj I Heq))). split; simpl; intros y Hy; [ | fsetdec ].
       apply AtomSetFacts.singleton_iff in Hy. destruct Hy. exact Ha'.
@@ -813,22 +1239,84 @@ Proof.
     split; simpl; intros y Hy; [ fsetdec | ]. apply AtomSetFacts.singleton_iff in Hy. destruct Hy. exact Hq.
 Qed.
 
-Lemma stable_rbind_l : forall D r R n res, bind_row D r R n = Some res ->
-  (forall s, R = row_Var s -> s <> r) ->
-  Stable (fun f => unify_rD f D (row_Var r) R n = Some res).
+(* The unifier [unify_tD] reads rows at the environment and [unify_t] reads them
+   plain, and the two agree on every call the induction makes: each leaf below is
+   stated for both, and the induction concludes both from one run. *)
+Lemma stable2_bind_l : forall D a T n r,
+  bind_prop D a T n = Some r -> (forall v, T <> typ_Var v) ->
+  Stable (fun f => unify_tD f D (typ_Var a) T n = Some r /\ unify_t f D (typ_Var a) T n = Some r).
 Proof.
-  intros D r R n res E Hv. exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-  destruct R as [ | s | l T R' | l P T R' ]; cbn [unify_rD]; try exact E.
-  destruct (Atom.eq_dec r s) as [->|Hne]; [ exfalso; exact (Hv s eq_refl eq_refl) | exact E ].
+  intros D a T n r E Hv. exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+  destruct T; try (exfalso; exact (Hv _ eq_refl)); exact (conj E E).
 Qed.
 
-Lemma stable_rbind_r : forall D s R n res, bind_row D s R n = Some res ->
+Lemma stable2_bind_r : forall D a T n r,
+  bind_prop D a T n = Some r -> (forall v, T <> typ_Var v) ->
+  Stable (fun f => unify_tD f D T (typ_Var a) n = Some r /\ unify_t f D T (typ_Var a) n = Some r).
+Proof.
+  intros D a T n r E Hv. exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+  destruct T; try (exfalso; exact (Hv _ eq_refl)); exact (conj E E).
+Qed.
+
+Lemma stable2_scalar : forall D c n,
+  (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) ->
+  Stable (fun f => unify_tD f D c c n = Some (sid, D, n) /\ unify_t f D c c n = Some (sid, D, n)).
+Proof.
+  intros D c n Hc. exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+  destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; split; reflexivity.
+Qed.
+
+Lemma stable2_varvar : forall D a a' n,
+  Stable (fun f => unify_tD f D (typ_Var a) (typ_Var a') n =
+    Some (if Atom.eq_dec a a' then sid else if finer_b (D a') (D a) then sbT a (typ_Var a') else sbT a' (typ_Var a), D, n) /\
+    unify_t f D (typ_Var a) (typ_Var a') n =
+    Some (if Atom.eq_dec a a' then sid else if finer_b (D a') (D a) then sbT a (typ_Var a') else sbT a' (typ_Var a), D, n)).
+Proof.
+  intros D a a' n. exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+  cbn [unify_tD unify_t]. destruct (Atom.eq_dec a a') as [->|Hne]; [ split; reflexivity | ].
+  destruct (finer_b (D a') (D a)); split; reflexivity.
+Qed.
+
+Lemma stable2_rbind_l : forall D r R n res, bind_row D r R n = Some res ->
+  (forall s, R = row_Var s -> s <> r) ->
+  Stable (fun f => unify_rD f D (row_Var r) R n = Some res /\ unify_r f D (row_Var r) R n = Some res).
+Proof.
+  intros D r R n res E Hv. exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+  destruct R as [ | s | l T R' | l P T R' ]; cbn [unify_rD unify_r]; try exact (conj E E).
+  destruct (Atom.eq_dec r s) as [->|Hne]; [ exfalso; exact (Hv s eq_refl eq_refl) | exact (conj E E) ].
+Qed.
+
+Lemma stable2_rbind_r : forall D s R n res, bind_row D s R n = Some res ->
   (forall r, R <> row_Var r) ->
-  Stable (fun f => unify_rD f D R (row_Var s) n = Some res).
+  Stable (fun f => unify_rD f D R (row_Var s) n = Some res /\ unify_r f D R (row_Var s) n = Some res).
 Proof.
   intros D s R n res E Hv. exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-  destruct R as [ | r | l T R' | l P T R' ]; cbn [unify_rD]; try exact E.
+  destruct R as [ | r | l T R' | l P T R' ]; cbn [unify_rD unify_r]; try exact (conj E E).
   exfalso. exact (Hv r eq_refl).
+Qed.
+
+Lemma drop_abs_ps : forall S R, prf R -> psr S R -> drop_abs R = R.
+Proof.
+  intros S R. induction R as [ | r | l T R IH | l P T R IH ]; intros HR PR; try reflexivity.
+  - cbn [drop_abs]. rewrite (IH (proj2 HR) (proj2 PR)). reflexivity.
+  - destruct HR as [HP [HT HR']]. destruct PR as [PP [PT PR']]. cbn [drop_abs].
+    rewrite (IH HR' PR'). rewrite (pres_not_abs S P HP PP). reflexivity.
+Qed.
+
+Lemma unify_r_rw : forall f D R1 R2 n l P T R1' P' T' R2' s0 D0 n1 sp D1 n2 s1 D2 n3 s2 D3 n4,
+  row_head R1 = Some (l, P, T, R1') -> (forall r, R1 <> row_Var r) -> (forall s, R2 <> row_Var s) ->
+  rewrite_row l (side_av R1) D R2 n = Some (P', T', R2', s0, D0, n1) ->
+  unify_t f D0 (apT s0 P) P' n1 = Some (sp, D1, n2) ->
+  unify_t f D1 (apT sp (apT s0 T)) (apT sp T') n2 = Some (s1, D2, n3) ->
+  unify_r f D2 (drop_abs (apR s1 (apR sp (apR s0 R1')))) (drop_abs (apR s1 (apR sp R2'))) n3 = Some (s2, D3, n4) ->
+  unify_r (S f) D R1 R2 n = Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4).
+Proof.
+  intros f D R1 R2 n l P T R1' P' T' R2' s0 D0 n1 sp D1 n2 s1 D2 n3 s2 D3 n4 Hh Hn1 Hn2 E E1 E2 E3.
+  destruct R1 as [ | r | l0 T0 R0 | l0 P0 T0 R0 ]; try (exfalso; exact (Hn1 r eq_refl));
+    simpl in Hh; try discriminate; inversion Hh; subst;
+    destruct R2 as [ | s | l2 T2 R2'' | l2 P2 T2 R2'' ]; try (exfalso; exact (Hn2 s eq_refl));
+    cbn [unify_r row_head]; rewrite E; cbn iota beta; rewrite E1; cbn iota beta; rewrite E2; cbn iota beta;
+    rewrite E3; reflexivity.
 Qed.
 
 Lemma unify_rD_rw : forall f D R1 R2 n l P T R1' P' T' R2' s0 D0 n1 sp D1 n2 s1 D2 n3 s2 D3 n4,
@@ -852,18 +1340,19 @@ Qed.
    the substitution threaded. *)
 Lemma rw_arm : forall m, UT m -> UR m -> forall Sg D R1 R2 n l P T R1',
   row_head R1 = Some (l, P, T, R1') -> (forall r, R1 <> row_Var r) -> (forall s, R2 <> row_Var s) ->
-  rsz (apR Sg R1) < S m -> DOk D n -> Dtriv D -> prf R1 -> prf R2 -> atR n R1 -> atR n R2 ->
+  rsz (apR Sg R1) < S m -> DOk D n -> Dsrt D Sg -> KR D DT Sg -> prf R1 -> prf R2 -> atR n R1 -> atR n R2 ->
   psr Sg R1 -> psr Sg R2 -> req (apR Sg R1) (apR Sg R2) ->
-  exists s D' n' S2, Stable (fun f => unify_rD f D R1 R2 n = Some (s, D', n')) /\ Pkg Sg n s D' n' S2.
+  exists s D' n' S2, Stable (fun f => unify_rD f D R1 R2 n = Some (s, D', n') /\
+                                       unify_r f D R1 R2 n = Some (s, D', n')) /\ Pkg Sg n s D' n' S2.
 Proof.
-  intros m IHt IHr Sg D R1 R2 n l P T R1' Hh Hn1 Hn2 Hlt Hd Ht HR1 HR2 AR1 AR2 PR1 PR2 Hreq.
+  intros m IHt IHr Sg D R1 R2 n l P T R1' Hh Hn1 Hn2 Hlt Hd Ht Hk HR1 HR2 AR1 AR2 PR1 PR2 Hreq.
   destruct (row_front Sg n R1 l P T R1' Hh HR1 AR1 PR1)
     as (HP & Pp & Pt & Pr1' & Ap & At & Ar1' & Pst & Psr1' & Hsz).
-  destruct (pkg_rewrite D Sg R1 R2 l P T R1' n Hd Ht Hh HP Hreq HR2 AR2 PR2)
+  destruct (pkg_rewrite D Sg R1 R2 l P T R1' n Hd Ht Hk Hh HP Hreq HR2 AR2 PR2)
     as (P' & T' & R2' & s0 & D0 & n1 & S2 & E & K0 & HPU & Pp' & Ap' & Pt' & At' & Pst' & Pr2' & Ar2' & Psr2' & HT'eq & HR'eq).
   pose proof (tsz_pos (apT Sg T)) as Hpos.
   assert (Hm2 : tsz (apT Sg T) + rsz (apR Sg R1') < m) by lia.
-  pose proof K0 as K0'. destruct K0 as (Hl0 & Hd0 & Ht0 & _).
+  pose proof K0 as K0'. destruct K0 as (Hl0 & Hd0 & Ht0 & Hk0 & _).
   pose proof (ps_pres Sg P Pp HP) as PsP.
   destruct (pkg_ap_T Sg n s0 D0 n1 S2 P K0' Pp Ap PsP) as (A1 & A2 & A3).
   (* the presences *)
@@ -872,9 +1361,9 @@ Proof.
   assert (hA : teq (apT S2 (apT s0 P)) (apT S2 P')).
   { rewrite HPU. eapply teq_trans; [ apply teq_sym; exact (pkg_fac_T Sg n s0 D0 n1 S2 P K0' Ap) | ].
     rewrite HP. apply teq_refl. }
-  destruct (IHt S2 D0 (apT s0 P) P' n1 mA Hd0 Ht0 A1 Pp' A2 Ap' A3 (ps_pres S2 P' Pp' HPU) hA)
+  destruct (IHt S2 D0 (apT s0 P) P' n1 mA Hd0 Ht0 Hk0 A1 Pp' A2 Ap' A3 (ps_pres S2 P' Pp' HPU) hA)
     as (sp & D1 & n2 & S3 & EA & KA).
-  pose proof KA as KA'. destruct KA as (Hl1 & Hd1 & Ht1 & _).
+  pose proof KA as KA'. destruct KA as (Hl1 & Hd1 & Ht1 & Hk1 & _).
   (* the fields *)
   destruct (pkg_ap_T Sg n s0 D0 n1 S2 T K0' Pt At Pst) as (B1 & B2 & B3).
   destruct (pkg_ap_T S2 n1 sp D1 n2 S3 (apT s0 T) KA' B1 B2 B3) as (C1 & C2 & C3).
@@ -887,9 +1376,9 @@ Proof.
     eapply teq_trans; [ apply teq_sym; exact (pkg_fac_T Sg n s0 D0 n1 S2 T K0' At) | ].
     eapply teq_trans; [ apply teq_sym; exact HT'eq | ].
     exact (pkg_fac_T S2 n1 sp D1 n2 S3 _ KA' At'). }
-  destruct (IHt S3 D1 (apT sp (apT s0 T)) (apT sp T') n2 mB Hd1 Ht1 C1 C1' C2 C2' C3 C3' hB)
+  destruct (IHt S3 D1 (apT sp (apT s0 T)) (apT sp T') n2 mB Hd1 Ht1 Hk1 C1 C1' C2 C2' C3 C3' hB)
     as (s1 & D2 & n3 & S4 & EB & KB).
-  pose proof KB as KB'. destruct KB as (Hl2 & Hd2 & Ht2 & _).
+  pose proof KB as KB'. destruct KB as (Hl2 & Hd2 & Ht2 & Hk2 & _).
   (* the rests *)
   destruct (pkg_ap_R Sg n s0 D0 n1 S2 R1' K0' Pr1' Ar1' Psr1') as (E1 & E2 & E3).
   destruct (pkg_ap_R S2 n1 sp D1 n2 S3 _ KA' E1 E2 E3) as (F1 & F2 & F3).
@@ -907,18 +1396,24 @@ Proof.
   assert (mC : rsz (apR S4 (apR s1 (apR sp (apR s0 R1')))) < m).
   { rewrite <- (req_rsz _ _ Hf1). lia. }
   destruct (IHr S4 D2 (apR s1 (apR sp (apR s0 R1'))) (apR s1 (apR sp R2')) n3 mC
-              (proj1 (proj2 KB')) (proj1 (proj2 (proj2 KB'))) G1 G1' G2 G2' G3 G3'
+              Hd2 Ht2 Hk2 G1 G1' G2 G2' G3 G3'
               (req_trans _ _ _ (req_sym _ _ Hf1) Hf2))
     as (s2 & D3 & n4 & S5 & EC & KC).
   exists (scomp s2 (scomp s1 (scomp sp s0))), D3, n4, S5. split.
   - assert (EC' : Stable (fun f => unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R1'))))
-                                    (nfR D2 (apR s1 (apR sp R2'))) n3 = Some (s2, D3, n4))).
-    { eapply Stable_mono; [ | exact EC ]. intros f Hf.
-      rewrite (proj2 (ps_nf D2 S4) _ G1 G3), (proj2 (ps_nf D2 S4) _ G1' G3'). exact Hf. }
+                                    (nfR D2 (apR s1 (apR sp R2'))) n3 = Some (s2, D3, n4) /\
+                                  unify_r f D2 (drop_abs (apR s1 (apR sp (apR s0 R1'))))
+                                    (drop_abs (apR s1 (apR sp R2'))) n3 = Some (s2, D3, n4))).
+    { eapply Stable_mono; [ | exact EC ]. intros f [Hu1 Hu2].
+      rewrite (proj2 (ps_nf D2 S4) _ G1 G3), (proj2 (ps_nf D2 S4) _ G1' G3').
+      rewrite (drop_abs_ps S4 _ G1 G3), (drop_abs_ps S4 _ G1' G3'). exact (conj Hu1 Hu2). }
     eapply Stable_mono; [ | exact (Stable_below _ (Stable_and _ _ EA (Stable_and _ _ EB EC'))) ].
-    intros [|f] Hf; [ contradiction | ]. destruct Hf as (Ha & Hb & Hc).
-    exact (unify_rD_rw f D R1 R2 n l P T R1' P' T' R2' s0 D0 n1 sp D1 n2 s1 D2 n3 s2 D3 n4
-             Hh Hn1 Hn2 E Ha Hb Hc).
+    intros [|f] Hf; [ contradiction | ].
+    destruct Hf as ((Ha1 & Ha2) & (Hb1 & Hb2) & (Hc1 & Hc2)). split.
+    + exact (unify_rD_rw f D R1 R2 n l P T R1' P' T' R2' s0 D0 n1 sp D1 n2 s1 D2 n3 s2 D3 n4
+               Hh Hn1 Hn2 E Ha1 Hb1 Hc1).
+    + exact (unify_r_rw f D R1 R2 n l P T R1' P' T' R2' s0 D0 n1 sp D1 n2 s1 D2 n3 s2 D3 n4
+               Hh Hn1 Hn2 E Ha2 Hb2 Hc2).
   - exact (Pkg_comp _ _ _ _ _ _ _ _ _ _ (Pkg_comp _ _ _ _ _ _ _ _ _ _ (Pkg_comp _ _ _ _ _ _ _ _ _ _ K0' KA') KB') KC).
 Qed.
 
@@ -939,31 +1434,34 @@ Proof.
   rewrite Hsz. discriminate.
 Qed.
 
-Lemma row_case_var_l : forall Sg D r R2 n, DOk D n -> Dtriv D -> prf R2 -> atR n (row_Var r) -> atR n R2 ->
+Lemma row_case_var_l : forall Sg D r R2 n, DOk D n -> Dsrt D Sg -> KR D DT Sg -> prf R2 -> atR n (row_Var r) -> atR n R2 ->
   psr Sg R2 -> req (apR Sg (row_Var r)) (apR Sg R2) ->
-  exists s D' n' S2, Stable (fun f => unify_rD f D (row_Var r) R2 n = Some (s, D', n')) /\ Pkg Sg n s D' n' S2.
+  exists s D' n' S2, Stable (fun f => unify_rD f D (row_Var r) R2 n = Some (s, D', n') /\
+                                       unify_r f D (row_Var r) R2 n = Some (s, D', n')) /\ Pkg Sg n s D' n' S2.
 Proof.
-  intros Sg D r R2 n Hd Ht HR2 AR1 AR2 PR2 Hreq.
+  intros Sg D r R2 n Hd Ht Hk HR2 AR1 AR2 PR2 Hreq.
   assert (Hr : old n r) by (apply (proj2 AR1 r); simpl; fsetdec).
   assert (H : R2 = row_Var r \/ (forall s, R2 = row_Var s -> s <> r)).
   { destruct R2 as [ | s | l T R' | l P T R' ]; try (right; intros s E; discriminate E).
     destruct (Atom.eq_dec s r) as [->|Hne]; [ left; reflexivity | right; intros s' E; inversion E; congruence ]. }
   destruct H as [-> | Hvar].
-  - exists sid, D, n, Sg. split; [ | exact (Pkg_id Sg D n Hd Ht) ].
-    exists 1. intros [|f] Hf; [ lia | ]. cbn [unify_rD]. destruct (Atom.eq_dec r r); [ reflexivity | congruence ].
-  - destruct (pkg_bind_row D Sg r R2 n Hd Ht Hr HR2 AR2 PR2 Hvar Hreq) as (s & D' & n' & S2 & E & K).
-    exists s, D', n', S2. exact (conj (stable_rbind_l D r R2 n _ E Hvar) K).
+  - exists sid, D, n, Sg. split; [ | exact (Pkg_id Sg D n Hd Ht Hk) ].
+    exists 1. intros [|f] Hf; [ lia | ]. cbn [unify_rD unify_r].
+    destruct (Atom.eq_dec r r); [ split; reflexivity | congruence ].
+  - destruct (pkg_bind_row D Sg r R2 n Hd Ht Hk Hr HR2 AR2 PR2 Hvar Hreq) as (s & D' & n' & S2 & E & K).
+    exists s, D', n', S2. exact (conj (stable2_rbind_l D r R2 n _ E Hvar) K).
 Qed.
 
-Lemma row_case_var_r : forall Sg D R1 s n, DOk D n -> Dtriv D -> prf R1 -> atR n R1 -> atR n (row_Var s) ->
+Lemma row_case_var_r : forall Sg D R1 s n, DOk D n -> Dsrt D Sg -> KR D DT Sg -> prf R1 -> atR n R1 -> atR n (row_Var s) ->
   psr Sg R1 -> (forall r, R1 <> row_Var r) -> req (apR Sg R1) (apR Sg (row_Var s)) ->
-  exists s0 D' n' S2, Stable (fun f => unify_rD f D R1 (row_Var s) n = Some (s0, D', n')) /\ Pkg Sg n s0 D' n' S2.
+  exists s0 D' n' S2, Stable (fun f => unify_rD f D R1 (row_Var s) n = Some (s0, D', n') /\
+                                        unify_r f D R1 (row_Var s) n = Some (s0, D', n')) /\ Pkg Sg n s0 D' n' S2.
 Proof.
-  intros Sg D R1 s n Hd Ht HR1 AR1 AR2 PR1 Hnv Hreq.
+  intros Sg D R1 s n Hd Ht Hk HR1 AR1 AR2 PR1 Hnv Hreq.
   assert (Hs : old n s) by (apply (proj2 AR2 s); simpl; fsetdec).
-  destruct (pkg_bind_row D Sg s R1 n Hd Ht Hs HR1 AR1 PR1 (fun q E => ltac:(exfalso; exact (Hnv q E)))
+  destruct (pkg_bind_row D Sg s R1 n Hd Ht Hk Hs HR1 AR1 PR1 (fun q E => ltac:(exfalso; exact (Hnv q E)))
               (req_sym _ _ Hreq)) as (s0 & D' & n' & S2 & E & K).
-  exists s0, D', n', S2. exact (conj (stable_rbind_r D s R1 n _ E Hnv) K).
+  exists s0, D', n', S2. exact (conj (stable2_rbind_r D s R1 n _ E Hnv) K).
 Qed.
 
 Ltac neq := intros ? Hnv; discriminate Hnv.
@@ -973,20 +1471,20 @@ Proof.
   induction m as [|m IH].
   - split; [ intros Sg D T1 T2 n Hlt | intros Sg D R1 R2 n Hlt ]; lia.
   - destruct IH as [IHt IHr]. split.
-    + intros Sg D T1 T2 n Hlt Hd Ht P1 P2 A1 A2 S1 S2 Hteq.
+    + intros Sg D T1 T2 n Hlt Hd Ht Hk P1 P2 A1 A2 S1 S2 Hteq.
       destruct T1 as [ | | | | | A B | R | a | i | B1 | w A1' ]; try (simpl in P1; contradiction);
       destruct T2 as [ | | | | | A' B' | R' | a' | i' | B1' | w' A1'' ];
         try (simpl in P2; contradiction);
         try (exfalso; pose proof (teq_thead _ _ Hteq) as Hh; unfold apT in Hh;
              cbn [ap_typ thead_tag] in Hh; discriminate Hh).
-      all: try (exists sid, D, n, Sg; split; [ apply stable_scalar; tauto | exact (Pkg_id Sg D n Hd Ht) ]; fail).
-      all: try (destruct (pkg_bind_prop D Sg a _ n Hd Ht (proj1 A1 a ltac:(simpl; fsetdec)) P2 A2 S2 ltac:(neq) Hteq)
-                  as (s & E & K);
-                exists s, D, n, Sg; split; [ exact (stable_bind_l D a _ n _ E ltac:(neq)) | exact K ]; fail).
-      all: try (destruct (pkg_bind_prop D Sg a' _ n Hd Ht (proj1 A2 a' ltac:(simpl; fsetdec)) P1 A1 S1 ltac:(neq)
+      all: try (exists sid, D, n, Sg; split; [ apply stable2_scalar; tauto | exact (Pkg_id Sg D n Hd Ht Hk) ]; fail).
+      all: try (destruct (pkg_bind_prop D Sg a _ n Hd Ht Hk (proj1 A1 a ltac:(simpl; fsetdec)) P2 A2 S2 ltac:(neq) Hteq)
+                  as (s & D' & n' & S3 & E & K);
+                exists s, D', n', S3; split; [ exact (stable2_bind_l D a _ n _ E ltac:(neq)) | exact K ]; fail).
+      all: try (destruct (pkg_bind_prop D Sg a' _ n Hd Ht Hk (proj1 A2 a' ltac:(simpl; fsetdec)) P1 A1 S1 ltac:(neq)
                             (teq_sym _ _ Hteq))
-                  as (s & E & K);
-                exists s, D, n, Sg; split; [ exact (stable_bind_r D a' _ n _ E ltac:(neq)) | exact K ]; fail).
+                  as (s & D' & n' & S3 & E & K);
+                exists s, D', n', S3; split; [ exact (stable2_bind_r D a' _ n _ E ltac:(neq)) | exact K ]; fail).
       * (* Arrow, Arrow *)
         destruct P1 as [PA PB], P2 as [PA' PB'], S1 as [SA SB], S2 as [SA' SB'].
         destruct (atT_arrow_inv _ _ _ A1) as [AA AB]. destruct (atT_arrow_inv _ _ _ A2) as [AA' AB'].
@@ -994,106 +1492,117 @@ Proof.
         change (apT Sg (typ_Arrow A' B')) with (typ_Arrow (apT Sg A') (apT Sg B')) in Hteq.
         cbn [tsz] in Hlt.
         destruct (teq_Arrow_inv _ _ _ Hteq) as (X & Y & EX & H1 & H2). injection EX as <- <-.
-        destruct (IHt Sg D A A' n ltac:(lia) Hd Ht PA PA' AA AA' SA SA' H1) as (s1 & D1 & n1 & S3 & E1 & K1).
-        pose proof K1 as K1'. destruct K1 as (Hl1 & Hd1 & Ht1 & _).
+        destruct (IHt Sg D A A' n ltac:(lia) Hd Ht Hk PA PA' AA AA' SA SA' H1) as (s1 & D1 & n1 & S3 & E1 & K1).
+        pose proof K1 as K1'. destruct K1 as (Hl1 & Hd1 & Ht1 & Hk1 & _).
         destruct (pkg_ap_T Sg n s1 D1 n1 S3 B K1' PB AB SB) as (B1 & B2 & B3).
         destruct (pkg_ap_T Sg n s1 D1 n1 S3 B' K1' PB' AB' SB') as (B1' & B2' & B3').
         pose proof (pkg_fac_T Sg n s1 D1 n1 S3 B K1' AB) as FB.
         pose proof (pkg_fac_T Sg n s1 D1 n1 S3 B' K1' AB') as FB'.
-        destruct (IHt S3 D1 (apT s1 B) (apT s1 B') n1 ltac:(rewrite <- (teq_tsz _ _ FB); lia) Hd1 Ht1
+        destruct (IHt S3 D1 (apT s1 B) (apT s1 B') n1 ltac:(rewrite <- (teq_tsz _ _ FB); lia) Hd1 Ht1 Hk1
                     B1 B1' B2 B2' B3 B3'
                     (teq_trans _ _ _ (teq_sym _ _ FB) (teq_trans _ _ _ H2 FB')))
           as (s2 & D2 & n2 & S4 & E2 & K2).
         exists (scomp s2 s1), D2, n2, S4. split.
         -- eapply Stable_mono; [ | exact (Stable_below _ (Stable_and _ _ E1 E2)) ].
-           intros [|f] Hf; [ contradiction | ]. destruct Hf as [Ha Hb].
-           cbn [unify_tD]. rewrite Ha, Hb. reflexivity.
+           intros [|f] Hf; [ contradiction | ]. destruct Hf as [(Ha1 & Ha2) (Hb1 & Hb2)].
+           cbn [unify_tD unify_t]. rewrite Ha1, Hb1, Ha2, Hb2. split; reflexivity.
         -- exact (Pkg_comp _ _ _ _ _ _ _ _ _ _ K1' K2).
       * (* Record, Record *)
         change (apT Sg (typ_Record R)) with (typ_Record (apR Sg R)) in Hlt, Hteq.
         change (apT Sg (typ_Record R')) with (typ_Record (apR Sg R')) in Hteq.
         cbn [tsz] in Hlt.
         destruct (teq_Record_inv _ _ Hteq) as (X & EX & H1). injection EX as <-.
-        destruct (IHr Sg D R R' n ltac:(lia) Hd Ht P1 P2 (atT_record_inv _ _ A1) (atT_record_inv _ _ A2)
+        destruct (IHr Sg D R R' n ltac:(lia) Hd Ht Hk P1 P2 (atT_record_inv _ _ A1) (atT_record_inv _ _ A2)
                     S1 S2 H1) as (s & D' & n' & S3 & E & K).
         exists s, D', n', S3. split; [ | exact K ].
         eapply Stable_mono; [ | exact (Stable_below _ E) ].
-        intros [|f] Hf; [ contradiction | ]. cbn [unify_tD].
-        rewrite (proj2 (ps_nf D Sg) R P1 S1), (proj2 (ps_nf D Sg) R' P2 S2). exact Hf.
+        intros [|f] Hf; [ contradiction | ]. cbn [unify_tD unify_t].
+        rewrite (proj2 (ps_nf D Sg) R P1 S1), (proj2 (ps_nf D Sg) R' P2 S2),
+          (drop_abs_ps Sg R P1 S1), (drop_abs_ps Sg R' P2 S2). exact Hf.
       * (* Var, Var *)
         destruct (Atom.eq_dec a a') as [->|Hne].
-        -- exists sid, D, n, Sg. split; [ | exact (Pkg_id Sg D n Hd Ht) ].
-           eapply Stable_mono; [ | exact (stable_varvar D a' a' n) ].
-           intros f Hf. rewrite Hf. destruct (Atom.eq_dec a' a'); [ reflexivity | congruence ].
+        -- exists sid, D, n, Sg. split; [ | exact (Pkg_id Sg D n Hd Ht Hk) ].
+           eapply Stable_mono; [ | exact (stable2_varvar D a' a' n) ].
+           intros f [Hf1 Hf2]. rewrite Hf1, Hf2. destruct (Atom.eq_dec a' a'); [ split; reflexivity | congruence ].
         -- destruct (finer_b (D a') (D a)) eqn:Ef.
            ++ exists (sbT a (typ_Var a')), D, n, Sg. split.
-              ** eapply Stable_mono; [ | exact (stable_varvar D a a' n) ].
-                 intros f Hf. rewrite Hf. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
-              ** exact (Pkg_sbT Sg D n a a' Hd Ht (proj1 A2 a' ltac:(simpl; fsetdec)) Hteq).
+              ** eapply Stable_mono; [ | exact (stable2_varvar D a a' n) ].
+                 intros f [Hf1 Hf2]. rewrite Hf1, Hf2. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef.
+                 split; reflexivity.
+              ** exact (Pkg_sbT Sg D n a a' Hd Ht Hk (proj1 A2 a' ltac:(simpl; fsetdec)) Hteq).
            ++ exists (sbT a' (typ_Var a)), D, n, Sg. split.
-              ** eapply Stable_mono; [ | exact (stable_varvar D a a' n) ].
-                 intros f Hf. rewrite Hf. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
-              ** exact (Pkg_sbT Sg D n a' a Hd Ht (proj1 A1 a ltac:(simpl; fsetdec)) (teq_sym _ _ Hteq)).
-    + intros Sg D R1 R2 n Hlt Hd Ht HR1 HR2 AR1 AR2 PR1 PR2 Hreq.
+              ** eapply Stable_mono; [ | exact (stable2_varvar D a a' n) ].
+                 intros f [Hf1 Hf2]. rewrite Hf1, Hf2. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef.
+                 split; reflexivity.
+              ** exact (Pkg_sbT Sg D n a' a Hd Ht Hk (proj1 A1 a ltac:(simpl; fsetdec)) (teq_sym _ _ Hteq)).
+    + intros Sg D R1 R2 n Hlt Hd Ht Hk HR1 HR2 AR1 AR2 PR1 PR2 Hreq.
       destruct R1 as [ | r | l T R1' | l P T R1' ].
       * destruct R2 as [ | s | l2 T2 R2' | l2 P2 T2 R2' ].
-        -- exists sid, D, n, Sg. split; [ | exact (Pkg_id Sg D n Hd Ht) ].
-           exists 1. intros [|f] Hf; [ lia | reflexivity ].
-        -- exact (row_case_var_r Sg D row_Empty s n Hd Ht HR1 AR1 AR2 PR1 ltac:(neq) Hreq).
+        -- exists sid, D, n, Sg. split; [ | exact (Pkg_id Sg D n Hd Ht Hk) ].
+           exists 1. intros [|f] Hf; [ lia | split; reflexivity ].
+        -- exact (row_case_var_r Sg D row_Empty s n Hd Ht Hk HR1 AR1 AR2 PR1 ltac:(neq) Hreq).
         -- exfalso. exact (front_nonempty Sg n (row_Ext l2 T2 R2') l2 typ_Unit T2 R2' eq_refl HR2 AR2 PR2 (eq_sym (req_rsz _ _ Hreq))).
         -- exfalso. exact (front_nonempty Sg n (row_Maybe l2 P2 T2 R2') l2 P2 T2 R2' eq_refl HR2 AR2 PR2 (eq_sym (req_rsz _ _ Hreq))).
-      * exact (row_case_var_l Sg D r R2 n Hd Ht HR2 AR1 AR2 PR2 Hreq).
+      * exact (row_case_var_l Sg D r R2 n Hd Ht Hk HR2 AR1 AR2 PR2 Hreq).
       * destruct R2 as [ | s | l2 T2 R2' | l2 P2 T2 R2' ].
         -- exfalso. exact (front_nonempty Sg n (row_Ext l T R1') l typ_Unit T R1' eq_refl HR1 AR1 PR1 (req_rsz _ _ Hreq)).
-        -- exact (row_case_var_r Sg D _ s n Hd Ht HR1 AR1 AR2 PR1 ltac:(neq) Hreq).
-        -- exact (rw_arm m IHt IHr Sg D (row_Ext l T R1') (row_Ext l2 T2 R2') n l typ_Unit T R1' eq_refl ltac:(neq) ltac:(neq) Hlt Hd Ht HR1 HR2
+        -- exact (row_case_var_r Sg D _ s n Hd Ht Hk HR1 AR1 AR2 PR1 ltac:(neq) Hreq).
+        -- exact (rw_arm m IHt IHr Sg D (row_Ext l T R1') (row_Ext l2 T2 R2') n l typ_Unit T R1' eq_refl ltac:(neq) ltac:(neq) Hlt Hd Ht Hk HR1 HR2
                     AR1 AR2 PR1 PR2 Hreq).
-        -- exact (rw_arm m IHt IHr Sg D (row_Ext l T R1') (row_Maybe l2 P2 T2 R2') n l typ_Unit T R1' eq_refl ltac:(neq) ltac:(neq) Hlt Hd Ht HR1 HR2
+        -- exact (rw_arm m IHt IHr Sg D (row_Ext l T R1') (row_Maybe l2 P2 T2 R2') n l typ_Unit T R1' eq_refl ltac:(neq) ltac:(neq) Hlt Hd Ht Hk HR1 HR2
                     AR1 AR2 PR1 PR2 Hreq).
       * destruct R2 as [ | s | l2 T2 R2' | l2 P2 T2 R2' ].
         -- exfalso. exact (front_nonempty Sg n (row_Maybe l P T R1') l P T R1' eq_refl HR1 AR1 PR1 (req_rsz _ _ Hreq)).
-        -- exact (row_case_var_r Sg D _ s n Hd Ht HR1 AR1 AR2 PR1 ltac:(neq) Hreq).
-        -- exact (rw_arm m IHt IHr Sg D (row_Maybe l P T R1') (row_Ext l2 T2 R2') n l P T R1' eq_refl ltac:(neq) ltac:(neq) Hlt Hd Ht HR1 HR2
+        -- exact (row_case_var_r Sg D _ s n Hd Ht Hk HR1 AR1 AR2 PR1 ltac:(neq) Hreq).
+        -- exact (rw_arm m IHt IHr Sg D (row_Maybe l P T R1') (row_Ext l2 T2 R2') n l P T R1' eq_refl ltac:(neq) ltac:(neq) Hlt Hd Ht Hk HR1 HR2
                     AR1 AR2 PR1 PR2 Hreq).
-        -- exact (rw_arm m IHt IHr Sg D (row_Maybe l P T R1') (row_Maybe l2 P2 T2 R2') n l P T R1' eq_refl ltac:(neq) ltac:(neq) Hlt Hd Ht HR1 HR2
+        -- exact (rw_arm m IHt IHr Sg D (row_Maybe l P T R1') (row_Maybe l2 P2 T2 R2') n l P T R1' eq_refl ltac:(neq) ltac:(neq) Hlt Hd Ht Hk HR1 HR2
                     AR1 AR2 PR1 PR2 Hreq).
 Qed.
 
 (* A step's promise read at the conversion the rest of the development states it in. *)
-Corollary Pkg_sem : forall DT Sg n s D' n' S2, Pkg Sg n s D' n' S2 ->
+Corollary Pkg_sem : forall Sg n s D' n' S2, Pkg Sg n s D' n' S2 ->
   KR D' DT S2 /\ DOk D' n' /\ n <= n' /\
   (forall x, old n x -> teqD DT (sT Sg x) (apT S2 (sT s x))) /\
   (forall q, old n q -> reqD DT (sR Sg q) (apR S2 (sR s q))).
 Proof.
-  intros DT Sg n s D' n' S2 (Hl & Hd & Ht & Hx & Hq).
-  refine (conj (KR_triv D' DT S2 Ht) (conj Hd (conj Hl (conj _ _)))).
+  intros Sg n s D' n' S2 (Hl & Hd & Ht & Hk & Hx & Hq).
+  refine (conj Hk (conj Hd (conj Hl (conj _ _)))).
   - intros x Hx'. exact (teq_teqD _ _ _ (proj2 (proj2 (proj2 (Hx x Hx'))))).
   - intros q Hq'. exact (req_reqD _ _ _ (proj2 (proj2 (proj2 (Hq q Hq'))))).
 Qed.
 
 (* The unifier W calls is complete on the types of the fragment: given a substitution
-   under which every presence entry is present and which unifies the two types, in a
-   trivial environment, it succeeds from some fuel on, and [Sg] factors through its
-   result by an extension [S2] of [Sg] to the fresh variables, whose images are in the
-   fragment over atoms below the new supply. *)
+   under which every presence entry is present and which unifies the two types, in an
+   environment whose row kinds are [Any] or [Eq] and that [Sg] respects (the labels a
+   row variable lacks, the sorts of the type variables, and no [Numeric] variable sent
+   to a record), it succeeds from some fuel on, and [Sg] factors through its result by
+   an extension [S2] of [Sg] to the fresh variables, which respects the environment
+   the unifier returns and whose images are in the fragment over atoms below the new
+   supply.  The plain unifier [unify_t] succeeds with the same result at the same
+   fuel: the group arm of [unify_tD] hands its payload to it. *)
 Theorem unify_tD_complete_full : forall (D : denv) Sg T1 T2 n,
-  DOk D n -> Dtriv D -> pf T1 -> pf T2 -> atT n T1 -> atT n T2 ->
+  DOk D n -> Dsrt D Sg -> KR D DT Sg -> pf T1 -> pf T2 -> atT n T1 -> atT n T2 ->
   ps Sg T1 -> ps Sg T2 -> teq (apT Sg T1) (apT Sg T2) ->
-  exists s D' n' S2, Stable (fun f => unify_tD f D T1 T2 n = Some (s, D', n')) /\
+  exists s D' n' S2, Stable (fun f => unify_tD f D T1 T2 n = Some (s, D', n') /\
+                                       unify_t f D T1 T2 n = Some (s, D', n')) /\
     Pkg Sg n s D' n' S2.
 Proof.
-  intros D Sg T1 T2 n Hd Ht P1 P2 A1 A2 S1 S2 Hteq.
+  intros D Sg T1 T2 n Hd Ht Hk P1 P2 A1 A2 S1 S2 Hteq.
   exact (proj1 (unify_pres_aux (S (tsz (apT Sg T1)))) Sg D T1 T2 n (Nat.lt_succ_diag_r _)
-           Hd Ht P1 P2 A1 A2 S1 S2 Hteq).
+           Hd Ht Hk P1 P2 A1 A2 S1 S2 Hteq).
 Qed.
 
 Theorem unify_rD_complete_full : forall (D : denv) Sg R1 R2 n,
-  DOk D n -> Dtriv D -> prf R1 -> prf R2 -> atR n R1 -> atR n R2 ->
+  DOk D n -> Dsrt D Sg -> KR D DT Sg -> prf R1 -> prf R2 -> atR n R1 -> atR n R2 ->
   psr Sg R1 -> psr Sg R2 -> req (apR Sg R1) (apR Sg R2) ->
-  exists s D' n' S2, Stable (fun f => unify_rD f D R1 R2 n = Some (s, D', n')) /\
+  exists s D' n' S2, Stable (fun f => unify_rD f D R1 R2 n = Some (s, D', n') /\
+                                       unify_r f D R1 R2 n = Some (s, D', n')) /\
     Pkg Sg n s D' n' S2.
 Proof.
-  intros D Sg R1 R2 n Hd Ht P1 P2 A1 A2 S1 S2 Hreq.
+  intros D Sg R1 R2 n Hd Ht Hk P1 P2 A1 A2 S1 S2 Hreq.
   exact (proj2 (unify_pres_aux (S (rsz (apR Sg R1)))) Sg D R1 R2 n (Nat.lt_succ_diag_r _)
-           Hd Ht P1 P2 A1 A2 S1 S2 Hreq).
+           Hd Ht Hk P1 P2 A1 A2 S1 S2 Hreq).
 Qed.
+
+End Sorted.
