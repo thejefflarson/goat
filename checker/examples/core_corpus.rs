@@ -2160,6 +2160,8 @@ const HANDWRITTEN: &[&str] = &[
     "{...{x: 1}, y: true, z: \"s\"}",
     "f = program(p) do {...p, a: true} done\nf({a: false, b: 1})",
     "program(p) do {...p, a: p.b} done",
+    "program(p, q) do\n  x = {...p, a: 1}\n  y = {...q, a: 2}\n  if true then p else q done\ndone",
+    "program(p, q) do\n  x = {...p, a: 1}\n  y = {...q, a: \"x\"}\n  if true then p else q done\ndone",
     "program(p, q) do {...p, x: q.x} done",
     "program(p) do if true then {...p, x: 1} else p done",
     "program(p) do {...{...p, a: 1}, b: true} done",

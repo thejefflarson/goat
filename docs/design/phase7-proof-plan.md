@@ -962,7 +962,7 @@ unifier with different field images, or W compares the field types only when the
 presences are not both unresolved. Chosen here: the hypothesis (option (b)); no
 change to W.
 
-**What remains of 7.6.**
+**What remains of 7.6** (as of 7.6h; stage 7.6i below supersedes it).
 
 1. *`rewrite_row` for a whole second row.* `rewrite_row_var_complete` is the
    leaf at a row variable. The closed leaf (a row with no entry of the label
@@ -991,6 +991,126 @@ change to W.
    beside the environment-reading one (the 7.6e adaptation).
 5. *The occurrence under a present entry,* above, and the hypotheses of statement
    A: the four pairs, `fld`, and the presence variable at `Numeric`.
+
+*As built (stage 7.6i, `GoatCompleteRewrite.v`, `core_corpus.rs`).* Item 1 of the
+7.6h list is done and `field_blocks_absent` is triaged. The unifier induction
+(items 3 and 4) is not started, and L2 is not closed.
+
+**Triage: `field_blocks_absent` run as a goat program.** The pair is
+`l0^p: Int` against `l0^q: String` with both presences unresolved when the two
+entries are compared. Two spreads give the entries (`{...p, a: 1}` puts
+`a ^ pres: Number` in the row of `p`), and `if true then p else q done` unifies
+the two rows.
+
+| program | checker | W |
+|---|---|---|
+| `program(p, q) do {...p, a: 1}; {...q, a: "x"}; if true then p else q done done` (statements on separate lines) | refuses: `type mismatch: expected Number, found String` at `q` | refuses (the field types differ) |
+| the same with `a: 2` | accepts, `({a: Number \| t5}, {a: Number \| t5}) -> {a: Number \| t5}` | accepts |
+
+The checker compares the field types of two fronts unconditionally: the `Maybe`
+arm of `unify_row` (`checker/src/infer.rs`) calls `unify_presence`, then
+`unify_ty` on the fields, then recurses. A later constraint cannot make the
+presences absent before a comparison that has already run, and `peel` drops an
+entry only when its presence is already absent when the row is read. So the
+checker refuses every program that forms the pair, and the verdict is the
+option (b) one: no program reaches the pair with the checker accepting, W is
+unchanged, and statement A keeps a hypothesis excluding it. Both programs are in
+`HANDWRITTEN` (50,161 programs compared, 0 mismatches).
+
+**Item 1: `rewrite_row` on a whole second row (`GoatCompleteRewrite.v`).**
+`rewrite_row_spec` quantifies over the row: if `Sg` respects the environments
+(`KR D D1 Sg`), the atoms of `R` are below the supply, `Sg R` can present `l`
+(`Surf l (apR Sg R)`) and `rewrite_row l av D R n = Some (P', T', R', s0, D0,
+n1)`, then there is an `S2` with `KR D0 D1 S2`, `n <= n1`, `DOk D0 n1`, `Sg`
+factoring through `s0` (`teq` on type atoms, `req` on row atoms below the
+supply), and the invariant `req (apR Sg R) (l ^ S2 P' : S2 T' ; S2 R')`. The
+caller reads presence, field and rest off the invariant with `row_cancel`
+(`rewrite_row_front`). Design points:
+
+- *The invariant, not a target.* Stating the result as an equation to a given
+  `l ^ P0 : T0 ; R0` would need the entry surfaced through every skipped entry
+  with `extract_req` and a swap lemma per constructor, and would break at a
+  closed tail where `req_abs` drops absent entries. The invariant carries the
+  entry in front at every step: the `Ext` and `Maybe` steps are `req_head` or
+  `req_maybe` (the skipped entry's type converts by `ap_factor`) followed by
+  `req_swap_em` or `req_swap_mm`; the found entry is `req_pre` or `req_refl`;
+  the closed end is `req_abs`.
+- *`Surf`.* `Surf l Q` (`Q` is `req` to some `l ^ P : T ; R0`) holds exactly when
+  `raw l Q <> nil` or the tail is `row_Empty` (`Surf_iff`, from `req_nf`,
+  `extract_req` and `rlacks_iff`), so an entry for another label passes it down
+  (`Surf_ext`, `Surf_maybe`). Only the row-variable leaf uses it, to get the
+  `req (sR Sg r) (l ^ P0 : T0 ; R0)` that `rewrite_row_var_complete` needs.
+- *The guard is a separate fact.* `rewrite_row_spec` takes success as a
+  hypothesis; `side_guard_passes` (7.6g) supplies it. `rewrite_row_complete`
+  combines them for the call `unify_rD` makes: given `Sg` unifying `R1` and `R2`
+  and a front entry of `R1` that `Sg` makes present, the rewrite of `R2` at
+  `side_av R1` succeeds, presence and field of the rewritten entry equal `Sg`'s
+  image of the front entry up to `teq` (the absent-pair alternative of
+  `row_cancel` is contradicted by the present front), and the rests are `req`.
+- *Field condition at the tail.* The one hypothesis beyond the unifier's: at the
+  tail variable `r`, for each presentation `l ^ P1 : T1` of `Sg r`, if `r` does
+  not lack `l` and `P1` is `Bool` then `T1` satisfies the sort of `r`. This is the
+  `Hfield` corner of `rewrite_row_var_complete`, the same #667 shape as `fld`.
+- `ap_cong_on`: substitutions that agree up to conversion on the atoms of a type
+  give converted images (the factoring of a skipped entry's type; also what the
+  induction's composite factoring needs).
+
+**Item 2: the conversion at the environment.** The commutation the 7.6h list
+asks for holds up to `req` and is already an instance of `teqD_ap_nf_mut`
+(`nfR_ap_nfR`: `req (nfR D1 (apR Sg (nfR D R))) (nfR D1 (apR Sg R))`); the
+induction states its hypothesis as `reqD D1` of the images and does not need
+syntactic equality. What does not follow is the plain `req (sR Sg r) (apR Sg R)`
+that `bind_row_sorted_complete` takes: `reqD D1` of a bare variable's image
+against a row is `req` only after `nfR D1` on both sides, and `nfR D1 (sR Sg r)`
+need not equal `sR Sg r`. Two ways to close it, neither done: state
+`bind_row_sorted_complete` at `reqD D1` with its factoring conclusion at `reqD
+D1` (the shape `FacD` has in the closed fragment), or replace `Sg` by a
+substitution whose row images are `nfR D1` of `Sg`'s (`nfS` normalizes the type
+images only) and show it still respects the environments.
+
+**What remains of 7.6.**
+
+1. *The induction.* `unify_tD`/`unify_rD` complete for mu-free types and rows
+   with variables and presence entries, with `(D', n', S2)` threaded. Leaves,
+   all proved: `bind_prop_sorted_complete`, `bind_row_sorted_complete` (modulo
+   item 2 above), `rewrite_row_complete`, `row_cancel`, and
+   `push_sort_complete`. To do: the invariant over the atoms (both types and the
+   images of `Sg` below the supply, `old`), a measure that does not fall at an
+   absent entry (`rsz` counts none, so a lexicographic measure with the entry
+   count), `Stable` fuel (GoatCompleteFuel.v), and the four arms of `unify_rD`
+   (`bind_row` on either side, `Empty` against `Maybe` by the swap, the
+   rewrite). The arm after the rewrite recurses on the rests with `S2 ∘ s1 ∘ sp ∘
+   s0` threaded, so each recursive call needs `KR`, the atoms and the entry
+   hypothesis for the new substitution (`ap_factor` and `ap_agree`).
+2. *Groups outside `mu`.* The group arm of `unify_tD` hands its payload to the
+   plain `unify_t`, so it needs the plain unifier's completeness beside the
+   environment-reading one (the 7.6e adaptation).
+3. *The occurrence under a present entry.* `bind_row_sorted_complete` assumes
+   `r` is not in `frv_row R`, stronger than the ratified hypothesis by the cases
+   no unifier admits (`leijen_tail` for the tail; a field needs the `tsz_occ`
+   size argument extended to rows with variables). Statement A needs the lemma
+   that discharges them.
+
+**Statement A's hypotheses, as they stand.**
+
+- *The four absent-entry pairs (option (b), ratified).* A unifier `Sg` of the two
+  rows never (i) makes the front entry of `R1` absent through a presence
+  variable while the tails of `R1` and `R2` share a variable the guard then
+  blocks (`side_blocks_absent`; the proved `side_guard_passes` assumes
+  `teq (apT Sg P) Unit`); (ii) binds a row variable `r` to a row ending in `r`
+  whose entries it makes absent (`bind_row_blocks_absent_tail`); (iii) binds a
+  type variable to a record holding the variable behind an entry it makes absent
+  (`bind_prop_blocks_absent`); (iv) unifies two entries of one label that it makes
+  absent with different field images (`field_blocks_absent`, triaged above: the
+  checker refuses it too).
+- *`fld`/`frld`* at `bind_prop`, `bind_row` and the tail of `rewrite_row` (the
+  field of an entry `Sg` makes absent satisfies the sort of the variable; #667).
+- *The presence variable at `Numeric`* (`fld`'s second half): `push_sort` renames
+  it to a variable of the sort, whose image `Unit` does not satisfy `Numeric`.
+- *The occurs-under-present condition* of item 3 above, until the size lemma
+  replaces it.
+- *Plainness:* the types and rows are mu-free and group-free (`pf`/`prf`),
+  locally closed, with every atom below the supply.
 
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):
