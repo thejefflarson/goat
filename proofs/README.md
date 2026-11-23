@@ -549,8 +549,8 @@ by the differential test), and `make check-assumptions` requires it to rest on
 those two and nothing else.
 
 **What the differential test covers.** `make -C proofs differential` on this
-commit: 44772 programs written, 43347 compared with 0 mismatches, 1412 skipped
-by the driver, and the lexer differential 78614 sources, 4351034 tokens, 0
+commit: 44773 programs written, 43348 compared with 0 mismatches, 1412 skipped
+by the driver, and the lexer differential 78617 sources, 4351098 tokens, 0
 disagreements. Inferring a recursive group before the value bindings between its
 members (#628) brought in 59 of the 65 programs it used to skip; the other 6 use
 a later feature or are real cycles the checker rejects. The reader numbers labels
@@ -567,14 +567,13 @@ corpus reader's skips, by the feature that keeps a program outside the calculus
 
 | Count | Skip |
 | ---: | --- |
-| 5229 | does not lower (the checker rejects it before typing) |
-| 96 | tags and `match` |
+| 5233 | does not lower (the checker rejects it before typing) |
+| 99 | tags and `match` |
 | 43 | an inferred type the corpus cannot write |
 | 41 | `print` or `trap` |
 | 23 | the checker rejects a method used as a plain function or the reverse (`MethodFlag`) |
 | 18 | a foreign host call |
 | 7 | arithmetic on non-primitive operands |
-| 4 | a comparison in a program with tags, whose `Eq` sort the algorithm does not decide for groups |
 | 4 | a numeral of 2^30 or more |
 | 2 | a rest pattern with no fields |
 | 12 | none of the above, among them the real cycles (a group member reading a value that calls the group), which the checker rejects |
