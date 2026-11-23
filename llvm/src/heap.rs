@@ -58,6 +58,9 @@ pub(crate) enum Runtime {
     StrChars,
     StrCopy,
     StrChar,
+    FrameReserve,
+    FrameReset,
+    FramePresent,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -91,6 +94,9 @@ impl Runtime {
             Runtime::StrChars => "@goat.str_chars",
             Runtime::StrCopy => "@goat.str_copy",
             Runtime::StrChar => "@goat.str_char",
+            Runtime::FrameReserve => "@goat.frame_reserve",
+            Runtime::FrameReset => "@goat.frame_reset",
+            Runtime::FramePresent => "@goat.frame_present",
         }
     }
 
@@ -102,6 +108,9 @@ impl Runtime {
             Runtime::Release => &[Runtime::DropLoop],
             Runtime::StrCopy => &[Runtime::Alloc],
             Runtime::StrChar => &[Runtime::StrCopy],
+            Runtime::FrameReserve => &[Runtime::Alloc, Runtime::Free],
+            Runtime::FrameReset => &[Runtime::Free],
+            Runtime::FramePresent => &[Runtime::FrameReset],
             _ => &[],
         }
     }
@@ -377,6 +386,9 @@ impl<'a> Module<'a> {
                 Runtime::StrChars => self.str_chars_function(),
                 Runtime::StrCopy => self.str_copy_function(),
                 Runtime::StrChar => self.str_char_function(),
+                Runtime::FrameReserve => self.frame_reserve_function(),
+                Runtime::FrameReset => self.frame_reset_function(),
+                Runtime::FramePresent => self.frame_present_function(),
             };
             functions.push_str(&text);
             functions.push('\n');
@@ -395,7 +407,7 @@ impl<'a> Module<'a> {
 
     /// The lines of a trap with `message` from a function whose instance is
     /// `%inst`; `tag` keeps the local names apart within the function.
-    fn trap_lines(&mut self, message: &str, tag: &str) -> String {
+    pub(crate) fn trap_lines(&mut self, message: &str, tag: &str) -> String {
         let (index, len) = self.text_constant(message);
         let (host, ctx, slot) = (
             instance_slot("host"),
@@ -414,7 +426,7 @@ impl<'a> Module<'a> {
         )
     }
 
-    fn instance_at(slot: &str, field: &str) -> String {
+    pub(crate) fn instance_at(slot: &str, field: &str) -> String {
         format!(
             "  %{slot}.at = getelementptr inbounds %goat_instance, ptr %inst, i32 0, i32 {}\n",
             instance_slot(field)
@@ -680,9 +692,11 @@ impl<'a> Module<'a> {
                     .collect();
                 let switched = body.block.clone();
                 body.line(format!("switch i32 %tag, label %out [{cases} ]"));
-                let mut ends = vec![(body.pending.clone(), switched)];
+                let entry_pending = body.pending.clone();
+                let mut ends = vec![(entry_pending.clone(), switched)];
                 for tag in arms {
                     body.start(&format!("arm{tag}"));
+                    body.pending = entry_pending.clone();
                     let (ty, tys) = self.variant_layout(l, tag)?;
                     self.drop_fields(&mut body, &ty, VARIANT_BASE, tys)?;
                     body.line("br label %out".to_string());

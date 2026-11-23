@@ -180,8 +180,8 @@ fn a_trap_names_the_site_stored_in_the_instance() {
 fn an_unsupported_program_says_why() {
     let interactive = include_str!("../../examples/interactive.goat");
     let host = HostInterface::new(goat_checker::PRELUDE);
-    let Err(error) = build(Profile::Desktop, interactive, &host) else {
-        panic!("an interactive program built");
+    let Err(error) = build(Profile::Embedded, interactive, &host) else {
+        panic!("an embedded interactive program built");
     };
     assert!(error.unsupported().is_some(), "{error}");
 }

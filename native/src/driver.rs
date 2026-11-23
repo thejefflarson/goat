@@ -5,12 +5,14 @@
 //!
 //! A trap must leave generated code without returning into it. This driver
 //! links a small C shim whose `goat_shim_trap` is the table's trap entry: it
-//! `longjmp`s back to `goat_shim_run`, which reports the message.
+//! `longjmp`s back to `goat_shim_guard`, which reports the message. Every call
+//! into generated code runs under that guard.
 
 use crate::abi::{Ctx, GoatHost, GoatInstance, HOST_VERSION, INSTANCE_VERSION, Instance};
 use crate::adapter::Adapter;
 use goat::Host;
 use libloading::Library as Dylib;
+use std::ffi::c_void;
 use std::fmt;
 use std::path::Path;
 use std::process::Command;
@@ -35,18 +37,21 @@ void goat_shim_trap(void *ctx, const uint8_t *message, uint64_t len) {
     longjmp(current->env, 1);
 }
 
-typedef int32_t (*entry)(const void *, void *, void *);
+typedef void (*body)(void *);
 
-int32_t goat_shim_run(entry main, const void *host, void *ctx, void *inst,
-                      const uint8_t **message, uint64_t *len) {
+int32_t goat_shim_guard(body run, void *arg, const uint8_t **message, uint64_t *len) {
     frame mine = {.message = 0, .len = 0};
     frame *outer = current;
     current = &mine;
-    int32_t status = setjmp(mine.env) == 0 ? main(host, ctx, inst) : -1;
+    int32_t trapped = 1;
+    if (setjmp(mine.env) == 0) {
+        run(arg);
+        trapped = 0;
+    }
     current = outer;
     *message = mine.message;
     *len = mine.len;
-    return status;
+    return trapped;
 }
 "#;
 
@@ -102,6 +107,14 @@ pub struct Stopped {
     pub site: Option<(usize, usize)>,
 }
 
+impl Stopped {
+    /// The report `goat run` prints for a halt in `source`: `trap: 2:1:
+    /// message` and the line it names (`goat::render_trap`).
+    pub fn render(&self, source: &str) -> String {
+        goat::render_trap(source, &self.message, self.site)
+    }
+}
+
 /// What one run left behind.
 pub struct Run<H> {
     pub printed: Vec<String>,
@@ -131,19 +144,27 @@ impl Default for Versions {
 }
 
 type Main = unsafe extern "C" fn(*const GoatHost, Ctx, *mut GoatInstance) -> i32;
-type Shim = unsafe extern "C" fn(
-    Main,
-    *const GoatHost,
-    Ctx,
-    *mut GoatInstance,
-    *mut *const u8,
-    *mut u64,
-) -> i32;
-type Trap = unsafe extern "C" fn(Ctx, *const u8, u64) -> !;
+type Body = unsafe extern "C" fn(*mut c_void);
+type Guard = unsafe extern "C" fn(Body, *mut c_void, *mut *const u8, *mut u64) -> i32;
+pub(crate) type Trap = unsafe extern "C" fn(Ctx, *const u8, u64) -> !;
 
 /// A compiled program, loaded.
 pub struct Library {
     dylib: Dylib,
+}
+
+/// A call to run under the shim's guard, and what it returned.
+struct Call<F, R> {
+    run: Option<F>,
+    result: Option<R>,
+}
+
+unsafe extern "C" fn body<F: FnOnce() -> R, R>(arg: *mut c_void) {
+    // SAFETY: `arg` is the `Call` that `Library::guarded` holds on its stack
+    // for the length of the guarded call.
+    let call = unsafe { &mut *arg.cast::<Call<F, R>>() };
+    let run = call.run.take().expect("the guarded call runs once");
+    call.result = Some(run());
 }
 
 /// The clang to run: `$CLANG`, or the one on `PATH`.
@@ -230,53 +251,40 @@ impl Library {
             host: host_version,
             instance: instance.version(),
         };
-        let load = |e: libloading::Error| NativeError::Load(e.to_string());
-        // SAFETY: these symbols have the signatures the emitter and the shim
-        // define, and the library outlives the copies.
-        let (main, shim, trap) = unsafe {
-            (
-                *self.dylib.get::<Main>(b"goat_main\0").map_err(load)?,
-                *self.dylib.get::<Shim>(b"goat_shim_run\0").map_err(load)?,
-                *self.dylib.get::<Trap>(b"goat_shim_trap\0").map_err(load)?,
-            )
-        };
-        let mut adapter = Adapter::new(host, trap);
+        let main: Main = self.symbol("goat_main")?;
+        let mut adapter = Adapter::new(host, self.symbol("goat_shim_trap")?);
         let mut table = adapter.table();
         table.version = versions.host;
-        let (mut message, mut len) = (std::ptr::null(), 0u64);
         let ctx = adapter.ctx();
+        instance.set_stack_limit(crate::stack::limit());
+        let raw = instance.as_ptr();
         // SAFETY: the table, the context and the instance outlive the call, and
-        // the shim returns here whether the program finishes or traps.
-        let status = unsafe { shim(main, &table, ctx, instance.as_ptr(), &mut message, &mut len) };
-        match status {
-            0 => {}
-            1 => {
+        // the guard returns here whether the program finishes or traps.
+        let outcome = self.guarded(|| unsafe { main(&table, ctx, raw) })?;
+        let result = match outcome {
+            Ok(0) => Ok(()),
+            Ok(1) => {
                 return Err(NativeError::Version {
                     what: "goat_host",
                     found: versions.host,
                     wanted: HOST_VERSION,
                 });
             }
-            2 => {
+            Ok(2) => {
                 return Err(NativeError::Version {
                     what: "goat_instance",
                     found: versions.instance,
                     wanted: INSTANCE_VERSION,
                 });
             }
-            _ => {}
-        }
-        let result = if status == -1 {
-            instance.mark_dead();
-            // SAFETY: the shim stored the trap's message, which the library's
-            // constants or the adapter keep alive until here.
-            let bytes = unsafe { std::slice::from_raw_parts(message, len as usize) };
-            Err(Stopped {
-                message: String::from_utf8_lossy(bytes).into_owned(),
-                site: instance.site(),
-            })
-        } else {
-            Ok(())
+            Ok(_) => Ok(()),
+            Err(message) => {
+                instance.mark_dead();
+                Err(Stopped {
+                    message: String::from_utf8_lossy(&message).into_owned(),
+                    site: instance.site(),
+                })
+            }
         };
         Ok(Run {
             printed: std::mem::take(&mut adapter.lines),
@@ -285,6 +293,43 @@ impl Library {
             host: adapter.host,
             result,
         })
+    }
+
+    /// The function exported (or the table of the shim) as `name`.
+    pub(crate) fn symbol<T: Copy>(&self, name: &str) -> Result<T, NativeError> {
+        // SAFETY: the caller names the type the symbol has, and the library
+        // outlives the copy.
+        unsafe { self.dylib.get::<T>(name.as_bytes()) }
+            .map(|symbol| *symbol)
+            .map_err(|e| NativeError::Load(e.to_string()))
+    }
+
+    /// Runs `run` where a trap can leave it: `Ok` with its result, or `Err`
+    /// with the message of the trap that ended it.
+    pub(crate) fn guarded<F: FnOnce() -> R, R>(
+        &self,
+        run: F,
+    ) -> Result<Result<R, Vec<u8>>, NativeError> {
+        let guard: Guard = self.symbol("goat_shim_guard")?;
+        let mut call = Call {
+            run: Some(run),
+            result: None,
+        };
+        let (mut message, mut len) = (std::ptr::null(), 0u64);
+        // SAFETY: `call` outlives the guard, which runs `body` once and
+        // returns here whether it finishes or a trap leaves it.
+        let trapped =
+            unsafe { guard(body::<F, R>, (&raw mut call).cast(), &mut message, &mut len) };
+        if trapped == 0 {
+            return Ok(Ok(call.result.take().expect("the call finished")));
+        }
+        // SAFETY: the shim stored the trap's message, which the library's
+        // constants or the host's adapter keep alive until here.
+        let bytes = match len {
+            0 => &[],
+            _ => unsafe { std::slice::from_raw_parts(message, len as usize) },
+        };
+        Ok(Err(bytes.to_vec()))
     }
 
     /// The layout of the emitter's structs as clang computes it: see

@@ -220,9 +220,13 @@ fn emitted_ir_has_no_undefined_behavior_flags_or_triple() {
 
 #[test]
 fn unsupported_nodes_are_internal_errors() {
-    let p = program(vec![func(MTy::Int, Expr::MethodKey(Local(0)))]);
+    let frame = Expr::Frame(FrameOp::Put(vec![FrameItem::Byte(1)]));
+    let p = embedded(program(vec![func(MTy::Int, let_(0, frame, int(0)))]));
     let err = emit(&p).unwrap_err();
-    assert_eq!(err, EmitError::Unsupported("method sites"));
+    assert_eq!(
+        err,
+        EmitError::Unsupported("a frame on the embedded profile")
+    );
     assert!(
         err.to_string()
             .contains("not yet supported by the native backend")

@@ -34,6 +34,12 @@ impl<H: Host> Adapter<H> {
         }
     }
 
+    /// Changes the way out of generated code, for a host that runs several
+    /// compiled modules (each with its own) over one adapter.
+    pub fn set_trap(&mut self, trap: unsafe extern "C" fn(Ctx, *const u8, u64) -> !) {
+        self.trap = trap;
+    }
+
     pub fn ctx(&mut self) -> Ctx {
         (self as *mut Adapter<H>).cast::<c_void>()
     }

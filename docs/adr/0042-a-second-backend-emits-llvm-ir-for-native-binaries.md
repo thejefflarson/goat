@@ -200,3 +200,62 @@ checks. Where it differs:
   call that is not a loop is then `Unsupported`, until the M4 trampoline.
 - **Embedded Arm.** The default budget is the 64-bit one. A Thumb-2 build,
   which has four integer argument registers, sets `int_registers` to 4.
+
+### Amendment 2026-11-22: traps, interactive programs and the desktop stack
+
+- **Trap text.** Generated code passes the trap entry the bare message, and the
+  host reads the blamed range from the instance's `site_start` and `site_end`
+  and renders it against the source it holds. goat_native's `Stopped` carries
+  both, and `goat::render_trap` words them (`trap: 2:1: first of an empty
+  list`, with the source line) exactly as the wasm CLI does. The emitter never
+  sees the source: embedding line and column text in the code would cost flash
+  on a board and tie the binary to one file, so the pre-rendered form is the
+  host's to build.
+- **Instance version 3.** The instance grows at its end by `update`, `draw`,
+  `sites` and `reason` (the closures `goat_setup` stores and the reason of a
+  failed refresh), `frame`, `frame_len` and `frame_cap` (the frame buffer) and
+  `stack_limit`. All start null or zero.
+- **Interactive exports.** An interactive program has no `goat_main`. It
+  exports ADR 0015's names, each taking `(host, ctx, instance)` first and
+  returning a zero value without running when either struct is older than the
+  code: `goat_setup`, `goat_update`, `goat_draw`, `goat_release_model`,
+  `goat_shutdown`, `goat_snapshot`, `goat_refresh`, `goat_reason_part`,
+  `goat_free_static` (a no-op: static data lives in the library) and
+  `goat_event_<Tag>`, plus `goat_alloc` for the host's strings, `goat_attach`
+  (the version checks alone, returning a status) and `goat_subscriptions` (the
+  event labels, NUL-separated and closed by an empty one). The embedded profile
+  stays out, as it is for wasm.
+- **Frames.** `draw` encodes into the instance's `frame` block through
+  `frame_reserve`, `frame_reset` and `frame_present`, which follow
+  `wasm/src/frame.rs`, and `present` calls the table's `scene_frame` once. The
+  bytes are `mir/src/frame.rs`'s, so a host replays them with the same decoder
+  it uses for wasm.
+- **Method sites.** `MethodKey` compares the closure's code word with each
+  site function's address and yields the key's string constant, or traps with
+  "this closure is not a method".
+- **Reload.** Two modules run over one instance. The fields a module keeps
+  (`update`, `draw`, `sites`, `reason`) are saved per module by the host and put
+  in the instance around that module's calls (`ModuleState`), the way each wasm
+  module has its own globals. The old library is unloaded after
+  `goat_shutdown` and `goat_free_static`. A trap during a reload kills the
+  instance, so the reload fails; a wasm reload would carry on with a reset.
+- **Desktop stack.** The desktop profile traps with the stack-overflow message
+  when the stack pointer is below `stack_limit`, checked at each non-tail call
+  by comparing `llvm.frameaddress` with the field. The host sets the limit
+  before every call into generated code to the low end of the calling thread's
+  stack plus 256 KiB, which leaves room for the host functions the program
+  calls and for the frame that trips the check (`goat_native::stack`, from
+  `pthread_getattr_np` or `pthread_get_stackaddr_np`). A null limit turns the
+  check off. This replaces "the desktop profile keeps no count" above and
+  blames the same site as wasm. The embedded profile keeps the depth counter.
+  - Why not a depth counter: the stack a call needs depends on the callee's
+    frame, so a bound derived from the stack's size is either too small for
+    shallow frames or too large for fat ones; the address is exact.
+  - Why not a guard-page handler: it needs a process-wide signal handler, which
+    an embedding application may own, and leaving a faulting frame by `longjmp`
+    from a signal handler is not defined for the code the fault interrupted.
+  - Cost: one load and one compare per non-tail call, and a frame pointer in
+    functions that call.
+- **Preemption.** M1 has none: the timeout of ADR 0021 is wasmtime's epoch,
+  and a native loop that never returns runs until the host kills the process.
+  A host that needs one runs the program on its own thread.

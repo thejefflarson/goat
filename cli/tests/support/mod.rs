@@ -30,6 +30,23 @@ pub fn uses_native() -> bool {
     std::env::var("GOAT_RUNTIME").as_deref() == Ok("native")
 }
 
+/// Builds `src` for the native backend on a thread with room for the emitter's
+/// recursion over a very deep program.
+fn build_native(
+    profile: Profile,
+    src: &str,
+    host: &goat::HostInterface,
+) -> Result<goat_native::Library, goat_native::BuildError> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(1 << 29)
+            .spawn_scoped(scope, || goat_native::build(profile, src, host))
+            .expect("a build thread")
+            .join()
+            .expect("the native build does not panic")
+    })
+}
+
 /// What `src` prints and leaves allocated when built by the native backend, or
 /// `None` (after saying why on stderr) when the backend does not cover it yet or
 /// there is no clang, so the caller runs it on wasm instead.
@@ -42,17 +59,7 @@ fn run_native(
         eprintln!("native: skipped, clang is not available: {src:?}");
         return None;
     }
-    // The emitter recurses over the program, so a very deep one needs more
-    // stack than a test thread has.
-    let built = std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(1 << 29)
-            .spawn_scoped(scope, || goat_native::build(profile, src, host))
-            .expect("a build thread")
-            .join()
-            .expect("the native build does not panic")
-    });
-    let library = match built {
+    let library = match build_native(profile, src, host) {
         Ok(library) => library,
         Err(error) => match error.unsupported() {
             Some(reason) => {
@@ -62,11 +69,41 @@ fn run_native(
             None => panic!("native build failed for {src:?}: {error}"),
         },
     };
-    let run = library.run(NoHost).expect("native program runs");
+    // Deep recursion needs more stack than a test thread has, as the emitter does.
+    let run = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(1 << 30)
+            .spawn_scoped(scope, || library.run(NoHost).expect("native program runs"))
+            .expect("a run thread")
+            .join()
+            .expect("the native run does not panic")
+    });
     if let Err(stopped) = run.result {
-        panic!("native program trapped for {src:?}: {}", stopped.message);
+        panic!("native program stopped for {src:?}: {}", stopped.message);
     }
     Some((run.printed, run.live_allocs))
+}
+
+/// The text of the halt `src` ends in, as `goat_cli::run` words it
+/// (`trap: message`), on the runtime this suite is checking. A program that
+/// does not halt is a failure. The native run keeps the test thread's own
+/// stack, so a runaway recursion ends in the stack-overflow trap.
+pub fn trap_text(src: &str) -> String {
+    let host = goat::HostInterface::turtle();
+    if uses_native() && goat_native::clang_available() {
+        let library = build_native(Profile::Desktop, src, &host)
+            .unwrap_or_else(|e| panic!("native build failed for {src:?}: {e}"));
+        let run = library.run(NoHost).expect("native program runs");
+        return match run.result {
+            Ok(()) => panic!("the program should halt: {src}"),
+            Err(stopped) => format!("trap: {}", stopped.message),
+        };
+    }
+    let wasm = goat::compile_turtle(src).expect("compiles");
+    match execute(&wasm) {
+        Ok(_) => panic!("the program should halt: {src}"),
+        Err(error) => error,
+    }
 }
 
 /// Run `wasm` under the runtime this suite is checking.
@@ -201,13 +238,7 @@ pub fn agree_or_trap(src: &str) {
     let program = goat_mir::mono_for(&checked, default_profile()).expect("program monomorphizes");
     match interp::run(&program) {
         Err(InterpError::Trap(message)) => {
-            let (wasm, _) =
-                goat::compile_for(default_profile(), src, &goat::HostInterface::turtle())
-                    .expect("program compiles");
-            let Err(error) = execute(&wasm) else {
-                panic!("wasm did not trap like the interpreter: {src}");
-            };
-            assert_eq!(error, format!("trap: {message}"), "{src}");
+            assert_eq!(trap_text(src), format!("trap: {message}"), "{src}");
         }
         _ => {
             run(src);

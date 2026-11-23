@@ -276,7 +276,7 @@ impl<'a> FuncLower<'_, 'a> {
     /// The callee, its leading arguments and the rest of them, for a direct
     /// call. A member of a group is called through the group's function, naming
     /// the member in `which`.
-    fn direct_target(
+    pub(crate) fn direct_target(
         &self,
         callee: FuncId,
         values: &[Val],
@@ -386,7 +386,12 @@ impl<'a> FuncLower<'_, 'a> {
     }
 
     /// Emits `call`: a tail call, or one that waits on a result.
-    fn finish_call(&mut self, call: String, ret: MTy, tail: bool) -> Result<Lowered, EmitError> {
+    pub(crate) fn finish_call(
+        &mut self,
+        call: String,
+        ret: MTy,
+        tail: bool,
+    ) -> Result<Lowered, EmitError> {
         if !tail {
             return Ok(Some(self.bound_call(call, ret)));
         }
@@ -458,7 +463,7 @@ impl<'a> FuncLower<'_, 'a> {
     /// The text of a call's arguments: `prefix` (the instance and whatever else
     /// is passed first), then each operand, with the ones past the register
     /// budget stored to the spill area instead.
-    fn call_arguments(
+    pub(crate) fn call_arguments(
         &mut self,
         prefix: Vec<String>,
         operands: &[(&'static str, String)],

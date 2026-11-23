@@ -6,10 +6,11 @@ edition = "2024"
 [dependencies]
 goat = { version = "0.1.0", path = "../goat" }
 goat_llvm = { version = "0.1.0", path = "../llvm" }
+goat_mir = { version = "0.1.0", path = "../mir" }
+libc = "0.2.191"
 libloading = "0.9.1"
 tempfile = "3.27.0"
 
 [dev-dependencies]
 goat = { path = "../goat", features = ["native"] }
 goat_checker = { path = "../checker" }
-goat_mir = { path = "../mir" }

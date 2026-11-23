@@ -6,12 +6,19 @@
 //!   generated code reads.
 //! - [`adapter`] serves a table from any Rust [`goat::Host`].
 //! - [`driver`] builds emitted IR into a shared library and runs it.
+//! - [`interactive`] drives an interactive program's exports (ADR 0015),
+//!   including a reload over the same heap.
+//! - [`stack`] finds the calling thread's stack, so a runaway recursion ends in
+//!   goat's stack-overflow trap.
 
 pub mod abi;
 pub mod adapter;
 pub mod driver;
+pub mod interactive;
+pub mod stack;
 
 pub use driver::{Library, NativeError, Run, Stopped, Versions, clang_available};
+pub use interactive::{Guest, Interactive, Object};
 
 use goat::{GoatError, HostInterface, Profile};
 use std::fmt;
@@ -51,6 +58,14 @@ impl fmt::Display for BuildError {
 }
 
 impl std::error::Error for BuildError {}
+
+/// Emits `program`, already monomorphized, for the native backend and loads it.
+pub fn build_program(program: &goat_mir::Program) -> Result<Library, BuildError> {
+    let ll = goat_llvm::emit(program).map_err(|e| {
+        BuildError::Compile(vec![GoatError::new(goat::Span::new(0, 0), e.to_string())])
+    })?;
+    Library::build(&ll).map_err(BuildError::Native)
+}
 
 /// Compiles `source` for the native backend and loads it.
 pub fn build(profile: Profile, source: &str, host: &HostInterface) -> Result<Library, BuildError> {

@@ -62,7 +62,7 @@ fn compiled_source_parses_with_clang() {
 #[test]
 fn an_unsupported_construct_is_a_compiler_error() {
     let errors = compile_ll(
-        Profile::Desktop,
+        Profile::Embedded,
         include_str!("../../examples/interactive.goat"),
         &HostInterface::new(goat_checker::PRELUDE),
     )

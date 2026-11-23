@@ -4,10 +4,13 @@
 //! and on wasm; the two must stream the same pictures and give the same reason
 //! for every reset, and leave nothing allocated.
 
-use goat::native::{Event, Interactive, Reloaded};
-use goat::{HostInterface, SceneCommand, SceneHost};
-use goat_mir::{Program, Session, Value};
-use std::time::Instant;
+use goat::native::Interactive as WasmInteractive;
+use goat::{Event, HostInterface, Reloaded, SceneCommand, SceneHost};
+use goat_mir::{Session, Value};
+use std::time::{Duration, Instant};
+
+#[allow(dead_code)]
+mod support;
 
 #[derive(Clone, Copy)]
 enum Step {
@@ -26,20 +29,107 @@ struct Trace {
     outcomes: Vec<Option<Vec<String>>>,
 }
 
-fn compile(source: &str) -> Program {
+fn compile(source: &str) -> goat_mir::Program {
     let checked = goat_checker::check(source).unwrap_or_else(|e| panic!("{source}\n{e:?}"));
     let program = goat_mir::mono(&checked).expect("program monomorphizes");
     assert_eq!(goat_mir::verify(&program), Ok(()));
     program
 }
 
-fn reloadable(source: &str) -> Vec<u8> {
-    goat::compile_reloadable(source, &HostInterface::turtle())
-        .unwrap_or_else(|e| panic!("{source}\n{e:?}"))
+/// A program ready to load into either backend, compiled when it is loaded.
+struct Module(String);
+
+fn reloadable(source: &str) -> Module {
+    Module(source.to_string())
+}
+
+fn native() -> bool {
+    support::uses_native() && goat_native::clang_available()
+}
+
+impl Module {
+    fn wasm(&self) -> Vec<u8> {
+        goat::compile_reloadable(&self.0, &HostInterface::turtle())
+            .unwrap_or_else(|e| panic!("{}\n{e:?}", self.0))
+    }
+
+    fn library(&self) -> goat_native::Library {
+        goat_native::build(goat::Profile::Desktop, &self.0, &HostInterface::turtle())
+            .unwrap_or_else(|e| panic!("{}\n{e}", self.0))
+    }
+}
+
+/// A running program on the backend this run checks: wasm, or native under
+/// `GOAT_RUNTIME=native`.
+enum Running {
+    Wasm(WasmInteractive<SceneHost>),
+    Native(goat_native::Interactive<SceneHost>),
+}
+
+impl Running {
+    fn new(module: &Module) -> Result<Running, String> {
+        Ok(if native() {
+            Running::Native(goat_native::Interactive::new(
+                module.library(),
+                SceneHost::default(),
+            )?)
+        } else {
+            Running::Wasm(WasmInteractive::new(&module.wasm(), SceneHost::default())?)
+        })
+    }
+
+    fn send(&mut self, event: &Event) -> Result<bool, String> {
+        match self {
+            Running::Wasm(p) => p.send(event),
+            Running::Native(p) => p.send(event),
+        }
+    }
+
+    fn draw(&mut self) -> Result<(), String> {
+        match self {
+            Running::Wasm(p) => p.draw(),
+            Running::Native(p) => p.draw(),
+        }
+    }
+
+    fn reload(&mut self, module: &Module) -> Result<Reloaded, String> {
+        match self {
+            Running::Wasm(p) => p.reload(&module.wasm()),
+            Running::Native(p) => p.reload(module.library()),
+        }
+    }
+
+    fn live_allocs(&mut self) -> Result<u32, String> {
+        match self {
+            Running::Wasm(p) => p.live_allocs(),
+            Running::Native(p) => Ok(p.live_allocs()),
+        }
+    }
+
+    fn heap_end(&mut self) -> Result<u64, String> {
+        match self {
+            Running::Wasm(p) => p.heap_end().map(u64::from),
+            Running::Native(p) => Ok(p.heap_end()),
+        }
+    }
+
+    fn carry_time(&self) -> Duration {
+        match self {
+            Running::Wasm(p) => p.carry_time(),
+            Running::Native(p) => p.carry_time(),
+        }
+    }
+
+    fn finish(self) -> Result<(SceneHost, u32), String> {
+        match self {
+            Running::Wasm(p) => p.finish(),
+            Running::Native(p) => p.finish(),
+        }
+    }
 }
 
 fn interpreted(sources: &[&str], steps: &[Step]) -> Trace {
-    let programs: Vec<Program> = sources.iter().map(|s| compile(s)).collect();
+    let programs: Vec<goat_mir::Program> = sources.iter().map(|s| compile(s)).collect();
     let mut host = SceneHost::default();
     let mut outcomes = Vec::new();
     let (mut session, mut model) = Session::setup(&programs[0], &mut host).expect("setup runs");
@@ -68,9 +158,8 @@ fn interpreted(sources: &[&str], steps: &[Step]) -> Trace {
 }
 
 fn compiled(sources: &[&str], steps: &[Step]) -> Trace {
-    let modules: Vec<Vec<u8>> = sources.iter().map(|s| reloadable(s)).collect();
-    let mut program: Interactive<SceneHost> =
-        Interactive::new(&modules[0], SceneHost::default()).expect("starts");
+    let modules: Vec<Module> = sources.iter().map(|s| reloadable(s)).collect();
+    let mut program = Running::new(&modules[0]).expect("starts");
     let mut outcomes = Vec::new();
     for step in steps {
         match *step {
@@ -432,8 +521,7 @@ fn a_record_held_in_two_places_is_rebuilt_once() {
     assert_eq!(after[0], after[1], "the refreshed model shares it too");
 
     let live = |source: &str| {
-        let mut program: Interactive<SceneHost> =
-            Interactive::new(&reloadable(source), SceneHost::default()).unwrap();
+        let mut program = Running::new(&reloadable(source)).unwrap();
         let before = program.live_allocs().unwrap();
         program.reload(&reloadable(source)).unwrap();
         let after = program.live_allocs().unwrap();
@@ -514,8 +602,7 @@ fn ten_thousand_balls_reload_in_well_under_a_frame_and_every_method_is_rebound()
     let old = many_balls(10_000);
     let new = old.replace("speed = 1", "speed = 10");
     let (old, new) = (reloadable(&old), reloadable(&new));
-    let mut program: Interactive<SceneHost> =
-        Interactive::new(&old, SceneHost::default()).expect("starts");
+    let mut program = Running::new(&old).expect("starts");
     assert!(program.send(&Event::Tick(16.0)).unwrap());
     let heap_before = program.heap_end().unwrap();
     let started = Instant::now();
@@ -553,11 +640,10 @@ fn ten_thousand_balls_reload_in_well_under_a_frame_and_every_method_is_rebound()
 #[test]
 fn repeated_reloads_return_the_live_count_and_the_heap_high_water_mark_to_where_they_began() {
     let source = many_balls(200);
-    let edits: Vec<Vec<u8>> = (1..=8)
+    let edits: Vec<Module> = (1..=8)
         .map(|round| reloadable(&source.replace("speed = 1", &format!("speed = {round}"))))
         .collect();
-    let mut program: Interactive<SceneHost> =
-        Interactive::new(&reloadable(&source), SceneHost::default()).expect("starts");
+    let mut program = Running::new(&reloadable(&source)).expect("starts");
     let mut marks = Vec::new();
     for module in &edits {
         assert!(program.send(&Event::Tick(16.0)).unwrap());
@@ -574,11 +660,10 @@ fn repeated_reloads_return_the_live_count_and_the_heap_high_water_mark_to_where_
 #[test]
 fn a_reset_also_frees_the_old_modules_static_data() {
     let source = BALLS;
-    let reset: Vec<Vec<u8>> = (1..=6)
+    let reset: Vec<Module> = (1..=6)
         .map(|round| reloadable(&BALLS.replace("make_ball", &format!("make_{round}"))))
         .collect();
-    let mut program: Interactive<SceneHost> =
-        Interactive::new(&reloadable(source), SceneHost::default()).expect("starts");
+    let mut program = Running::new(&reloadable(source)).expect("starts");
     let mut marks = Vec::new();
     for module in &reset {
         assert!(matches!(
