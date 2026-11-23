@@ -10,12 +10,17 @@
 //!   including a reload over the same heap.
 //! - [`stack`] finds the calling thread's stack, so a runaway recursion ends in
 //!   goat's stack-overflow trap.
+//! - [`standalone`] is the `main` of a binary built by `goat build --native`,
+//!   linked from this crate's staticlib.
+//! - [`turtle`] is the headless turtle host that binary and `goat run` share.
 
 pub mod abi;
 pub mod adapter;
 pub mod driver;
 pub mod interactive;
 pub mod stack;
+pub mod standalone;
+pub mod turtle;
 
 pub use driver::{Library, NativeError, Run, Stopped, Versions, clang_available};
 pub use interactive::{Guest, Interactive, Object};

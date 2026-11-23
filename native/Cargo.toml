@@ -3,6 +3,9 @@ name = "goat_native"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["rlib", "staticlib"]
+
 [dependencies]
 goat = { version = "0.1.0", path = "../goat" }
 goat_llvm = { version = "0.1.0", path = "../llvm" }

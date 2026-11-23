@@ -3,4 +3,6 @@
 
 pub use goat::native::{Finished, Guest, Run, Stopped, execute, run, run_to_end, run_with_host};
 
-pub mod turtle;
+pub use goat_native::turtle;
+
+pub mod native_build;

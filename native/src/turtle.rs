@@ -8,6 +8,7 @@
 use goat::Boundary::{self, Number, Str, Unit};
 use goat::{Host, HostValue};
 use std::fmt::Write;
+use std::path::Path;
 
 /// A bound on a runaway program's memory, not on any honest drawing.
 const MAX_COMMANDS: usize = 1_000_000;
@@ -85,6 +86,34 @@ struct Stroke<'a> {
 }
 
 impl TurtleHost {
+    /// Reports what a finished run drew, as `goat run` does: with `out`, the
+    /// SVG is saved there; without it, a drawing earns a hint. False when the
+    /// process should exit non-zero.
+    pub fn finish(&self, out: Option<&Path>) -> bool {
+        match out {
+            Some(_) if self.commands.is_empty() => {
+                eprintln!("goat: the program used no turtle commands, so no SVG was written");
+                false
+            }
+            Some(path) => match std::fs::write(path, self.to_svg()) {
+                Ok(()) => {
+                    eprintln!("goat: wrote {}", path.display());
+                    true
+                }
+                Err(e) => {
+                    eprintln!("goat: cannot write {}: {e}", path.display());
+                    false
+                }
+            },
+            None => {
+                if !self.commands.is_empty() {
+                    eprintln!("goat: the turtle drew something; pass -o FILE.svg to save it");
+                }
+                true
+            }
+        }
+    }
+
     pub fn to_svg(&self) -> String {
         let strokes = self.strokes();
         let mut svg = format!(

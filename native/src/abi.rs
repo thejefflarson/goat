@@ -136,6 +136,12 @@ pub struct Instance {
 }
 
 impl GoatInstance {
+    /// The source range the program last named as the user's code running, as
+    /// byte offsets, or `None` if it named none.
+    pub fn site(&self) -> Option<(usize, usize)> {
+        (self.site_start != u32::MAX).then_some((self.site_start as usize, self.site_end as usize))
+    }
+
     fn empty(heap: *mut u8, heap_size: u64) -> GoatInstance {
         GoatInstance {
             version: INSTANCE_VERSION,
@@ -230,8 +236,7 @@ impl Instance {
     /// The source range the program last named as the user's code running, as
     /// byte offsets, or `None` if it named none.
     pub fn site(&self) -> Option<(usize, usize)> {
-        (self.raw.site_start != u32::MAX)
-            .then_some((self.raw.site_start as usize, self.raw.site_end as usize))
+        self.raw.site()
     }
 }
 
