@@ -47,6 +47,8 @@ GoatCompleteInst.v
 GoatCompleteGen.v
 GoatCompleteMono.v
 GoatCompleteLet.v
+GoatCompleteRows.v
+GoatCompleteUnify.v
 GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v

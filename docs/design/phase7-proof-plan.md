@@ -299,6 +299,71 @@ what it unifies:
   position is `Eq` through a record field, a `mu` body and a tag payload, and
   `Numeric` through a record field. About 500 lines, after stage 7.2 and 7.3.
 
+*As built (stage 7.6, `GoatCompleteRows.v`, `GoatCompleteUnify.v`).* The
+fragment is base types, variables, arrows and, with `b = true`, records of closed
+rows (a spine of `Ext` fields, no tail variable, no presence entry) whose fields
+are in the fragment; substitution images are arbitrary. `unify_t_complete`,
+`unify_r_complete` and `unify_co_complete` say: if `S` makes two such types (rows)
+`teq` (`req`) and respects the sorts (`kres D D1 (sT S)`), then from some fuel on
+(`Stable`) the unifier returns an `s` in the fragment through which `S` factors
+(`Fac S s`: `teq (S x) (S (s x))` for every `x`). Four adaptations.
+
+1. **No renaming, so `S2 = S`.** Nothing in the fragment makes `push_sort`,
+   `push_sort_r` or the fresh row variable of `rewrite_row` run (a sort is pushed
+   only onto a record's variables, and a closed row is never rewritten through a
+   variable), so the environment and the supply come back unchanged and `S`
+   factors through the answer itself. The `S2 . s` of the plan's statement
+   appears only when a variable is invented, which is the part that is not
+   proved.
+2. **The measure is the size of the image, made `teq`-invariant.** `tsz` and `rsz`
+   count `Arrow`, `Record` and `Ext` nodes and give an absent presence size zero,
+   so `teq` and `req` preserve them (`teq_req_size`, a case per rule). The plan's
+   (variables, size) pair is not needed: the second call of the arrow case
+   unifies `s1 B` and `s1 B'`, whose image under `S` is `teq` to that of `B`, so
+   its size is that of `B`, below the whole.
+3. **The `req` inversion is the field-list characterization, by swaps.** For a
+   closed spine, equal field lists at every label (`pi`) make two rows `req`
+   (`req_of_pi`): the first entry of a label surfaces by `req_swap`
+   (`surface_req`), the rest is the induction. This is the converse of
+   `req_pres` that `GoatRows.v` leaves open, and it is what cancels the head in
+   `unify_r`'s recursion (`req_cancel`). It needs no Leijen-style measure: the
+   rows are closed, so the label count falls by one at each step.
+4. **Sorts are general for types without records and trivial with them.** For
+   `b = false` the sort environment is arbitrary: a sorted variable binds to a
+   scalar only if the scalar has the sort (`sat_scalar`), and to an arrow only at
+   `Any`, which `kres` forces. With records (`b = true`) every variable must be
+   `Any`.
+
+What is not proved, and why. Each item is a fact about the definitions, so it
+wants a decision before the proof, not more proof.
+
+- **`sat` is not invariant under `teq`.** `Record {l^Unit : Int}` is `teq` to
+  `Record {l : Int}` (`req_pre`) and only the second is `Eq`
+  (`sat_not_teq_invariant`). A sorted variable bound to a record then pushes its
+  sort onto the field variables, and `S` need not respect the pushed sort on them,
+  so `S` does not factor through the answer in `kres`. The sorted-variable-under-a-
+  record half of the plan's sort bullet needs `sat` to see through presence, or
+  the completeness statement to assume that the images satisfy the sorts up to
+  `teq`.
+- **`rewrite_row` fails at a row variable that lacks the label**, where `Bool`
+  presence (the label is absent from it) would do (`rewrite_row_lacks_gap`).
+  `l^p : a | r'` against `m : B | r` with `r` lacking `l` has the unifier
+  `p := Bool, r' := m : B, r := {}` and `unify_r` returns `None`. Row-tail
+  completeness is false until `rewrite_row` returns `(Bool, a, r, sid)` there.
+- **`bind_row`'s occurs check rejects an absent presence.** `r` against
+  `l^p : a | r` has the unifier `p := Bool, r := {}` (`req_abs`), and `occR`
+  returns `None`.
+- **`sat_b` is conservative on `Grp` and `Maybe`**: it is `false` for an `Eq` or
+  `Numeric` sort where `sat` can hold, so a sorted variable bound to a tag group
+  or to a row with a presence entry is refused. Tag groups are therefore left out
+  of the fragment.
+
+Sizes: `GoatCompleteRows.v` 177 lines and `GoatCompleteUnify.v` 498, against the
+2,000 estimated for the whole of L2. Left for later stages: rows with a tail
+variable and presence entries (`rewrite_row`'s fresh variables, `bind_row`'s
+`rk_join`, the invention of `S2` on them), sorts pushed under a record, and the
+mu-free tag group.
+
 **L3, W's cases.** One lemma per construct, each mechanical once L0 to L2 exist
 (the soundness proof has the same case list):
 
