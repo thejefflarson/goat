@@ -10,3 +10,4 @@ build/
 *.p12
 *.cer
 /*.entitlements
+/Frameworks/

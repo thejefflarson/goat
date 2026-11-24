@@ -17,12 +17,15 @@ hosts/apple/
     EditorScreen.swift     editor + canvas + problems panel + toolbar
   project.yml            XcodeGen spec; the .xcodeproj is generated, not committed
   scripts/stage-web.sh   builds goat_web.wasm + the embed page into Resources/web
+  scripts/stage-engine.sh builds engine/ (goat_apple) into Frameworks/GoatEngine.xcframework
+  engine/                the native goat engine behind include/goat_engine.h (ADR 0043)
 ```
 
 ## Build
 
 ```sh
 hosts/apple/scripts/stage-web.sh          # cargo + npm; fills hosts/apple/Resources/web
+hosts/apple/scripts/stage-engine.sh       # cargo, 4 Apple targets; builds Frameworks/GoatEngine.xcframework
 cd hosts/apple && xcodegen generate       # brew install xcodegen
 xcodebuild -project Goat.xcodeproj -scheme Goat-macOS -destination 'platform=macOS' build
 xcodebuild -project Goat.xcodeproj -scheme Goat-iOS -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
@@ -32,6 +35,15 @@ swift test --package-path GoatKit
 xcodebuild test -project Goat.xcodeproj -scheme GoatKitTests-macOS -destination 'platform=macOS' \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES ENABLE_USER_SCRIPT_SANDBOXING=NO
 ```
+
+`stage-engine.sh` builds `goat_apple` in release for `aarch64`/`x86_64-apple-darwin` (joined with
+`lipo` into one macOS slice), `aarch64-apple-ios` and `aarch64-apple-ios-sim`, with
+`MACOSX_DEPLOYMENT_TARGET=13.0` and `IPHONEOS_DEPLOYMENT_TARGET=17.0`. Install the targets first
+(`rustup target add` each). The iOS simulator slice is arm64 only. The xcframework's headers carry a
+module map, so Swift writes `import GoatEngine`. `check-staged.sh` fails the app builds when the
+xcframework is missing or older than `engine/src`, `engine/include` or `engine/Cargo.toml` (a change
+in the compiler crates it depends on is not detected; rerun the script). `EngineLinkTests` links
+the engine under `xcodebuild test`; `swift test` skips it, since SwiftPM has no `GoatEngine` module.
 
 `EngineWebViewTests` drives the real `Engine` through an off-screen `WKWebView`
 (boot, compile, draw, check the canvas pixels) and prints what the page logged
@@ -144,7 +156,7 @@ the arrow keys.
 
 ## Open decisions
 
-Bundle id `com.thejefflarson.goat`, minimum macOS 13 / iOS 16, unsigned by default.
+Bundle id `com.thejefflarson.goat`, minimum macOS 13 / iOS 17, unsigned by default.
 Distribution signing and entitlements beyond the macOS sandbox (user-selected files,
 no network) are not set.
 

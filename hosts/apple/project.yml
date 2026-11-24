@@ -8,7 +8,7 @@ options:
   preGenCommand: "test -e 'Local.xcconfig' || cp 'Local.xcconfig.example' 'Local.xcconfig'"
   deploymentTarget:
     macOS: "13.0"
-    iOS: "16.0"
+    iOS: "17.0"
 configFiles:
   Debug: Local.xcconfig
 settings:
@@ -20,7 +20,8 @@ settings:
 # Both apps share App/ and the GoatKit sources, built here as a framework per
 # platform (the GoatKit package is the same code for `swift test`).
 # Resources/web is staged by scripts/stage-web.sh: web/embed.html, its modules
-# and goat_web.wasm.
+# and goat_web.wasm. Frameworks/GoatEngine.xcframework is staged by
+# scripts/stage-engine.sh: the goat engine (engine/) as a static library per slice.
 schemes:
   GoatKitTests-macOS:
     build:
@@ -40,6 +41,8 @@ targets:
     type: framework
     platform: macOS
     sources: [GoatKit/Sources/GoatKit]
+    dependencies:
+      - framework: Frameworks/GoatEngine.xcframework
     settings:
       base: &framework
         PRODUCT_NAME: GoatKit
@@ -49,6 +52,8 @@ targets:
     type: framework
     platform: iOS
     sources: [GoatKit/Sources/GoatKit]
+    dependencies:
+      - framework: Frameworks/GoatEngine.xcframework
     settings:
       base: *framework
   Goat-macOS:
@@ -136,6 +141,7 @@ targets:
     dependencies:
       - target: GoatTestHost-macOS
       - target: GoatKit-macOS
+      - framework: Frameworks/GoatEngine.xcframework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat.kit.tests
