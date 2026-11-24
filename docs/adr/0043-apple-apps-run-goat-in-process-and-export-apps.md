@@ -73,3 +73,46 @@ wants full macOS and iOS apps.
   quarantined: since macOS Sequoia, the user allows it once under Privacy &
   Security → Open Anyway. Notarization would remove that step, but it needs a
   paid Developer ID, which is deferred with distribution.
+
+## Amendment (2026-11-24): spike S2 — the sandboxed editor can write and sign an export
+
+Decision 4's player export needs two things inside the App Sandbox: writing a
+bundle into a folder the user picked, and signing the copy ad hoc. Spike S2
+tested both with `exportBundle(template:to:)` in `GoatKit` (`ExportBundle.swift`),
+which copies the `.app` tree with `FileManager` and runs
+`/usr/bin/codesign --force --deep --sign - <bundle>` through `Process`.
+`ExportBundleTests` runs it inside `GoatTestHost-macOS`, which carries
+`Goat-macOS`'s entitlements, and checks `codesign --verify --deep --strict`.
+It passes on the `apple.yml` CI runner (`xcodebuild test -scheme
+GoatKitTests-macOS`, ad hoc signed so the sandbox applies); a test asserts the
+host's `APP_SANDBOX_CONTAINER_ID` is set, so the pass is a sandboxed pass.
+
+What this shows:
+
+- **`Process` and `codesign` work in the sandbox.** A sandboxed app may spawn
+  `/usr/bin/codesign`; the child inherits the sandbox and needs no extra
+  entitlement. Writing the bundle needs only
+  `com.apple.security.files.user-selected.read-write`, which `Goat-macOS`
+  already has. No temporary-exception entitlement is required.
+- **The signature covers the whole tree, so sign last.** Adding
+  `Contents/Resources/program.goat` to a signed bundle makes `--verify` fail;
+  the export must write `program.goat` and `Info.plist` changes first, then
+  sign. `exportBundle` signs once, so the player export should write its files
+  into the copy before that call (the function will take a prepare closure
+  when the real export lands).
+- **What the test cannot cover.** A test cannot show `NSSavePanel`, so it
+  writes under the container's temporary directory, which the sandbox always
+  allows. With a real panel, the app receives a URL inside a folder the user
+  chose, with its security scope open; the copy and the child `codesign` write
+  there. We expect the child to write under the parent's scope, but a
+  scope-open write by a spawned child is not proved by CI. The first real
+  Export App… implementation must run this once by hand (save panel, then
+  `codesign --verify`) before the ticket closes. Keep the scope open
+  (`startAccessingSecurityScopedResource`) until `codesign` exits.
+- **Quarantine is unchanged.** Files the app writes are not quarantined, so an
+  export made and run on the same Mac opens without a prompt.
+
+Fallback decision: the `apple-codesign` crate (in-process signing) is not
+needed and is not adopted. It would add a macOS-only dependency and a Rust-to-
+Swift seam for a task `/usr/bin/codesign` already does. It remains the fallback
+if a future macOS release blocks a sandboxed `Process` launch of `codesign`.

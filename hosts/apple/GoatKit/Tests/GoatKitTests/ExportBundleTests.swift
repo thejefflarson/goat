@@ -43,6 +43,11 @@ final class ExportBundleTests: XCTestCase {
         return codesign.terminationStatus
     }
 
+    func testTheTestHostRunsSandboxedSoTheExportsAboveAreProvedInsideIt() throws {
+        try XCTSkipUnless(Bundle.main.bundleIdentifier == "com.thejefflarson.goat.testhost")
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"])
+    }
+
     func testAnExportedCopyVerifies() throws {
         let template = try makeTemplate()
         let exported = scratch.appendingPathComponent("Out.app")
