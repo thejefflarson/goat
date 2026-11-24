@@ -63,3 +63,26 @@ becomes a closure over it.
 - Records print with labels in layout (sorted) order.
 - `print` is a normal `Unit`-returning call, so the RC pass and the "erase Unit
   values, keep calls" rule preserve it with no effect marker.
+
+## Amendment (2026-11-23): `/` is decided like `+`
+
+The checker used to decide `/` at the operator, from the operand types it had
+seen so far: a record on either side fixed record division, anything else fixed
+`Float`. So the verdict depended on unification order:
+`(program(a) do a / a done)({x: 1.0})` was refused, while `{x: 1.0} / {x: 3.0}`
+was accepted, although both type.
+
+`/` now joins its operands the way `+` does (`join_operands`), with a sort of its
+own. A `Quot` variable (`Kind::Quot`) stands for the type of a quotient: it
+settles to `Float`, or to a record whose fields are all `Quot`. `Quot` is finer
+than `Numeric` (every quotient type is a number) and incomparable with `Literal`,
+because a numeral may be an `Int` and a quotient may not; a `Literal` and a
+`Quot` variable that unify meet at `Float`. The operator then yields the joined
+type, and an `Int` operand still converts to `Float` where the join is `Float`
+(ADR 0017). The checker therefore accepts and rejects `/` the same in either
+statement order.
+
+A function whose operands stay open is polymorphic over the quotient types:
+`program(a, b) do a / b done` now prints as `(t4, t4) -> t4` with `t4` a `Quot`
+variable, where it printed `(Number, Number) -> Number` before. A program whose
+operands are concrete types prints as it did.
