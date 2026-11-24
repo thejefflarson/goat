@@ -18,11 +18,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Add wasm32 target
-        run: rustup target add wasm32-unknown-unknown
+      - name: Add Rust targets
+        run: >
+          rustup target add wasm32-unknown-unknown aarch64-apple-darwin x86_64-apple-darwin
+          aarch64-apple-ios aarch64-apple-ios-sim
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: apple-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: apple-${{ runner.os }}-
 
       - name: Stage the drawing engine
         run: hosts/apple/scripts/stage-web.sh
+
+      - name: Stage the native engine
+        run: hosts/apple/scripts/stage-engine.sh
 
       - name: Test GoatKit
         run: swift test --package-path hosts/apple/GoatKit
