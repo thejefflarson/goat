@@ -712,7 +712,7 @@ Proof.
   intros f D n G l e1 e2 s1 D1 T1 n1 e1' s2 D2 T2 n2 e2' s D' T n' e' H HG
     Gd1 HT1 Hty1 Her1 Hlc1 Gd2 HT2 Hty2 Her2 Hlc2.
   unfold spread_present in H.
-  destruct (unify_coD f D2 (apT s2 T1)
+  destruct (unify_coD f (rupd D2 (ea (S n2)) (RK k_Any (Nat.eqb l))) (apT s2 T1)
               (typ_Record (row_Maybe l (typ_Var (ea n2)) T2 (row_Var (ea (S n2))))) (n2 + 2))
     as [[[[s3 Du3] cs3] n3]|] eqn:E3; [|discriminate].
   inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; clear H.
@@ -722,9 +722,15 @@ Proof.
   pose proof (WfCtx_ap s2 _ Hs2 HG1) as HG2.
   assert (Hrow : EvT (typ_Record (row_Maybe l (typ_Var (ea n2)) T2 (row_Var (ea (S n2)))))).
   { apply EvT_Record, EvR_maybe; [ apply EvT_var, ev_ea | exact HT2 | apply EvR_var, ev_ea ]. }
-  destruct (unify_coD_sound _ _ _ _ _ _ _ _ _ E3 ltac:(dok) (EvT_ap s2 T1 Hs2 HT1) Hrow)
+  pose proof (Good_pre D2 n2 (S n2) sid (rupd D2 (ea (S n2)) (RK k_Any (Nat.eqb l))) (S (S n2))
+                (le_S _ _ (le_n n2)) HD2
+                (Good_rupd D2 (S n2) (RK k_Any (Nat.eqb l)) (DOk_mono D2 n2 (S n2) HD2 (le_S _ _ (le_n n2)))))
+    as GdU.
+  destruct (unify_coD_sound _ _ _ _ _ _ _ _ _ E3 (DOk_mono _ _ (n2 + 2) (Good_dok _ _ _ _ _ GdU) ltac:(lia))
+              (EvT_ap s2 T1 Hs2 HT1) Hrow)
     as (Hs3 & Hch & Hgu3).
-  pose proof (GoodU_pre D2 n2 _ s3 Du3 n3 HD2 Hgu3 ltac:(lia)) as Gd3.
+  pose proof (GoodU_pre _ (S (S n2)) _ s3 Du3 n3 (Good_dok _ _ _ _ _ GdU) Hgu3 ltac:(lia)) as Gd3'.
+  pose proof (Good_lift _ _ _ _ _ _ _ GdU Gd3') as Gd3.
   split; [ exact (Good_comp _ _ _ _ _ _ _ _ (Good_comp _ _ _ _ _ _ _ _ Gd1 Gd2) Gd3) | ].
   split.
   { apply EvT_ap; [ exact Hs3 | ]. apply EvT_Record, EvR_ext; [ exact HT2 | apply EvR_var, ev_ea ]. }

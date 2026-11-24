@@ -194,3 +194,33 @@ sort only if the presence settles present) is not a sort of the calculus, and
 its absence is the one order dependence that remains for a variable field. ADR
 0033's amendment of the same date states the rule and what is left.
 
+## Amendment: two open entries whose field types clash (phase 7, 2026-11-24)
+
+`unify_rD` pairs the front entry of one row with the entry of the same label in
+the other. When the two presences are still the same variable `p`, the field
+types `clash` (different heads, or a scalar against a variable whose sort it does
+not satisfy), `p`'s sort allows `Bool` and both rests lack the label
+(`rlacksD`), `absent_clash` names `p`: the unifier binds it to `Bool`
+(`bool_sub [p]`) and unifies the rests, which `nfR` reads without the entry. The
+field types are not unified. `unify_tD_sound` handles the arm with
+`row_step_reqD_abs`: both entries are absent after the substitution, and an
+absent entry whose rest lacks its label is dropped (`reqD_drop_abs`). The lack
+survives the later substitutions because `rkres` respects the kinds
+(`rlacksD_ap`). `unify_rD_gsub` and `unifyD_mono_pair` carry the arm
+(`absent_clash_tD_none`: a clash is a failure at every fuel, so the fallback does
+not depend on the fuel).
+
+`spread_present` gives the fresh tail of the base's row the kind that lacks the
+spread's label (`rupd` at the supply, as `e_restrict` does), the fact the checker
+already holds; `spread_present_sound` is `e_restrict`'s step. The plain unifier
+`unify_t` and the knot unifier `unify_k` are unchanged: a program that needs a
+knot and a clash is refused as before.
+
+Statement A keeps its hypothesis that no two compared entries are absent under
+the unifier with different field images (`field_blocks_absent` in
+`GoatCompleteSide.v`), now for the pair W still unifies: two variable fields
+(the theorem says the unifier makes the two variables equal, so a unifier that
+makes them different is not an instance of it). The pair that clashes
+(`field_clash_absent`) is found by W and needs no hypothesis, but the induction
+of `GoatCompleteRfRows.v` does not use that, so the hypothesis stays as stated.
+

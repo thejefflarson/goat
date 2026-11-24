@@ -1033,6 +1033,14 @@ option (b) one: no program reaches the pair with the checker accepting, W is
 unchanged, and statement A keeps a hypothesis excluding it. Both programs are in
 `HANDWRITTEN` (50,161 programs compared, 0 mismatches).
 
+*Update (2026-11-24, #667 step 3).* Both programs above now check in the checker
+and in W when the field types clash: the `a: 1` against `a: "x"` program is
+accepted, in either order of the spreads and either order against a statement
+that settles the presence. W decides the two entries absent (`absent_clash`) when
+the field types clash by shape and both rests lack the label, and its spread
+declares the lack on its tail. `field_blocks_absent` is the pair W still unifies,
+two variable field types; the hypothesis of statement A stays for it.
+
 **Item 1: `rewrite_row` on a whole second row (`GoatCompleteRewrite.v`).**
 `rewrite_row_spec` quantifies over the row: if `Sg` respects the environments
 (`KR D D1 Sg`), the atoms of `R` are below the supply, `Sg R` can present `l`
@@ -1117,8 +1125,9 @@ images only) and show it still respects the environments.
   whose entries it makes absent (`bind_row_blocks_absent_tail`); (iii) binds a
   type variable to a record holding the variable behind an entry it makes absent
   (`bind_prop_blocks_absent`); (iv) unifies two entries of one label that it makes
-  absent with different field images (`field_blocks_absent`, triaged above: the
-  checker refuses it too).
+  absent with different field images (`field_blocks_absent`, triaged above; since
+  2026-11-24 W finds the pair when the field types clash, `field_clash_absent`, and
+  the hypothesis is needed only for two variable field types).
 - *`fld`/`frld`* at `bind_prop`, `bind_row` and the tail of `rewrite_row` (the
   field of an entry `Sg` makes absent satisfies the sort of the variable; #667).
 - *The presence variable at `Numeric`* (`fld`'s second half): `push_sort` renames

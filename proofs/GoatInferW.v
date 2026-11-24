@@ -116,11 +116,13 @@ Fixpoint unify_grp (f : nat) (D : denv) (fs : fields) (R1 R2 : row) (n : nat) {s
 
 (* A spread onto a record whose row is not known to lack the label: the label
    is a presence-variable field of the base's row, there or not, and a present
-   one in the result.  A base whose row variable lacks the label is typed by
-   [infer] directly: its row is the one the spread's result extends. *)
+   one in the result.  The rest of the base's row lacks the label, as no row
+   holds a label twice (ADR 0033).  A base whose row variable lacks the label
+   is typed by [infer] directly: its row is the one the spread's result
+   extends. *)
 Definition spread_present (f : nat) (D2 : denv) (s1 s2 : sub) (T1 T2 : typ) (l : label)
   (e1' e2' : exp) (n2 : nat) : option (sub * denv * typ * nat * exp) :=
-  match unify_coD f D2 (apT s2 T1)
+  match unify_coD f (rupd D2 (ea (S n2)) (RK k_Any (Nat.eqb l))) (apT s2 T1)
           (typ_Record (row_Maybe l (typ_Var (ea n2)) T2 (row_Var (ea (S n2))))) (n2 + 2) with
   | None => None
   | Some (s3, D3, cs, n3) =>

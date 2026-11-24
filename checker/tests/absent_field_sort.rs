@@ -70,6 +70,9 @@ fn a_field_that_turns_out_absent_leaves_its_type_free_when_settled_first() {
     assert!(checks(&settled_first));
 }
 
+/// Deciding two open entries absent when their field types clash does not reach
+/// this program: `{...r, id: x}` gives `r`'s entry `x`'s own type, so the sort
+/// lands on `x` and no second entry is unified (ADR 0033).
 #[test]
 fn a_variable_field_keeps_the_sort_it_took_before() {
     let call = "f({k: 1}, program(v) do v done)";

@@ -290,3 +290,64 @@ Nothing is accepted that was accepted before with another type: the four corpus
 programs that changed (two orders of a function field compared before and after
 the presence settles, two with a second spread) were all refused.
 
+## Amendment: two open entries whose field types clash are absent (2026-11-24)
+
+Two records that may both have a field `a`, whose presences nothing has settled,
+meet in one type:
+
+```
+program(p, q) do
+  x = {...p, a: 1}
+  y = {...q, a: "x"}
+  if true then p else q done
+done
+```
+
+`p` has `a^pp: Number` and `q` has `a^pq: String`. The program has a typing: `p` and
+`q` both lack `a`, so the spreads only extend them, and the `if` joins two
+records without the field. The checker's `unify_row` compared the two field types
+as soon as it paired the entries, before anything could make the presences
+absent, and refused. A later statement that settled `p` absent first (`p == {k:
+1}`) made the same program check, so the verdict depended on the order (owner
+decision 2026-11-23: it must not).
+
+Decision:
+
+1. **Two open entries of one label whose field types can never be the same are
+   absent.** Both presences are joined and bound absent, the field types are not
+   unified, and the rests are unified as before. "Can never be the same" is
+   decided by shape, with no unification attempted (a failed attempt would leave
+   bindings behind): the two types are scalars or a function or a record with
+   different heads (`Int` against `String`, `String` against a function), or one
+   is a variable whose constraints a scalar cannot meet (a numeral's type, a
+   `Number`, against `String`). The shape test is `clash` in
+   `proofs/GoatInfer.v` and `heads_clash`/`fields_clash` in the checker.
+2. **Both rests must lack the label.** An absent entry is no field only when the
+   rest of its row has no entry of the label (`req_abs`). A spread gives its
+   rest that fact (its row variable lacks `a`, as the checker already records),
+   so algorithm W's spread now declares it too (`spread_present`).
+3. **A later use of the field says why it is absent.** `p.a` after the `if`
+   reports "`a` is a `Number` in one record and a `String` in the other, so
+   neither can have it", at the join, with a note at the use.
+4. **The order dependence that remains is the variable field.** Two entries
+   whose field types could still become the same (two type variables, a numeral
+   against a function) are unified when they meet, as before: unifying them
+   makes the two variables one, so a later use that needs them different is
+   refused, where it is accepted if a statement settles the presences absent
+   first (`variable_fields_are_still_joined_before_a_presence_settles`). A
+   deferral of the unification to the moment a presence settles present would fix
+   it, but the calculus has no judgment that holds an equation on a presence, for
+   the reason the sort amendment above gives; and `a_variable_field_keeps_the_sort_it_took_before`
+   is not a case of it at all (see below).
+
+`a_variable_field_keeps_the_sort_it_took_before` stays pinned. It never unifies
+two open entries: the sort lands on the field type of `{...r, id: x}`, which is
+`x`'s own type, because the spread's new value and the entry it updates share one
+type. Deferring a unification of two entries does not touch it. Making it
+order-independent needs the entry to keep a field type of its own and the
+equation `field ~ x` to wait on the presence, the held constraint of the
+calculus, which is a separate stage.
+
+Nothing is accepted that was accepted before with another type: the one corpus
+program that changed (the program above) was refused.
+
