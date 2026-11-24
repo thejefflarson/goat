@@ -32,6 +32,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatConv.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
+Require Import Goat.GoatInferSort.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatCoerce.
 Require Import Goat.GoatCompleteFuel.
@@ -226,7 +227,7 @@ Lemma sat_scalar : forall (D D1 : denv) a c,
 Proof.
   intros D D1 a c Hc Hs.
   destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; simpl in Hs |- *; try reflexivity;
-    destruct (D a); simpl in Hs |- *; try reflexivity; destruct Hs as [H|H]; discriminate H.
+    destruct (D a); simpl in Hs |- *; try reflexivity; first [ contradiction | (destruct Hs as [H|H]; discriminate H) ].
 Qed.
 
 Lemma bind_prop_complete : forall b S (D D1 : denv) a T (n : nat),
@@ -280,19 +281,86 @@ Proof.
   destruct T; try (exfalso; exact (Hv _ eq_refl)); exact E.
 Qed.
 
+Lemma teq_var_eq : forall T1 T2, teq T1 T2 -> forall a b, T1 = typ_Var a -> T2 = typ_Var b -> a = b.
+Proof.
+  intros T1 T2 H. induction H; intros a0 b0 E1 E2; try discriminate E1; try discriminate E2.
+  - injection E1 as <-. injection E2 as <-. reflexivity.
+  - pose proof (teq_thead _ _ H) as Hh. rewrite E1 in Hh.
+    destruct T2 as [ | | | | | | | c | | | ]; simpl in Hh; try discriminate.
+    transitivity c; [ eapply IHteq1; [ exact E1 | reflexivity ] | eapply IHteq2; [ reflexivity | exact E2 ] ].
+  - symmetry. eapply IHteq; eassumption.
+Qed.
+
+(* A [Literal] variable and a [Quot] variable that a substitution unifies are
+   both its [Float]. *)
+Lemma incomparable_float : forall (D D1 : denv) S a a',
+  kres D D1 (sT S) -> teq (sT S a) (sT S a') ->
+  finer_b (D a') (D a) = false -> finer_b (D a) (D a') = false -> teq (sT S a) typ_Float.
+Proof.
+  intros D D1 S a a' Hk Heq Ef Ef2.
+  assert (Hlq : forall x y, teq (sT S x) (sT S y) -> D x = k_Literal -> D y = k_Quot -> teq (sT S x) typ_Float).
+  { intros x y Hxy Hx Hy. pose proof (Hk x) as Hsx. pose proof (Hk y) as Hsy.
+    rewrite Hx in Hsx. rewrite Hy in Hsy.
+    destruct (sT S x) as [ | | | | | A B | R | v | i | B | w A ] eqn:ESx; simpl in Hsx; try contradiction;
+      try (destruct Hsx as [H0|H0]; discriminate H0); try discriminate Hsx.
+    - exfalso. rewrite (teq_Int_inv _ Hxy) in Hsy. simpl in Hsy. exact Hsy.
+    - apply teq_refl.
+    - destruct (sT S y) as [ | | | | | A' B' | R' | v' | i' | B' | w' A' ] eqn:ESy;
+        pose proof (teq_thead _ _ Hxy) as Hh; simpl in Hh; try discriminate.
+      pose proof (teq_var_eq _ _ Hxy v v' eq_refl eq_refl) as ->.
+      exfalso. simpl in Hsy. inversion Hsx; inversion Hsy; congruence. }
+  destruct (finer_b_cmp _ _ Ef2 Ef) as [[H1 H2] | [H1 H2]].
+  - exact (Hlq a a' Heq H1 H2).
+  - exact (teq_trans _ _ _ Heq (Hlq a' a (teq_sym _ _ Heq) H2 H1)).
+Qed.
+
+(* The same at conversion in the environment: both variables' types are [Float]
+   up to [teqD]. *)
+Lemma incomparable_float_D : forall (D D1 : denv) S a a',
+  kres D D1 (sT S) -> teqD D1 (sT S a) (sT S a') ->
+  finer_b (D a') (D a) = false -> finer_b (D a) (D a') = false -> teqD D1 (sT S a) typ_Float.
+Proof.
+  intros D D1 S a a' Hk Heq Ef Ef2.
+  assert (Hlq : forall x y, teqD D1 (sT S x) (sT S y) -> D x = k_Literal -> D y = k_Quot ->
+                  teqD D1 (sT S x) typ_Float).
+  { intros x y Hxy Hx Hy. pose proof (Hk x) as Hsx. pose proof (Hk y) as Hsy.
+    rewrite Hx in Hsx. rewrite Hy in Hsy.
+    destruct (sT S x) as [ | | | | | A B | R | v | i | B | w A ] eqn:ESx; simpl in Hsx; try contradiction;
+      try (destruct Hsx as [H0|H0]; discriminate H0); try discriminate Hsx.
+    - exfalso. rewrite (teqD_Int_inv _ _ Hxy) in Hsy. simpl in Hsy. exact Hsy.
+    - apply teqD_refl.
+    - destruct (sT S y) as [ | | | | | A' B' | R' | v' | i' | B' | w' A' ] eqn:ESy;
+        pose proof (teqD_thead _ _ _ Hxy) as Hh; simpl in Hh; try discriminate.
+      pose proof (teq_var_eq _ _ Hxy v v' eq_refl eq_refl) as ->.
+      exfalso. simpl in Hsy. inversion Hsx; inversion Hsy; congruence. }
+  destruct (finer_b_cmp _ _ Ef2 Ef) as [[H1 H2] | [H1 H2]].
+  - exact (Hlq a a' Heq H1 H2).
+  - exact (teqD_trans _ _ _ _ Heq (Hlq a' a (teqD_sym _ _ _ Heq) H2 H1)).
+Qed.
+
 Lemma unify_var_var : forall b S (D : denv) a a' (n : nat), teq (sT S a) (sT S a') ->
+  (finer_b (D a') (D a) = false -> finer_b (D a) (D a') = false -> teq (sT S a) typ_Float) ->
   exists s, Res b S s /\ Stable (fun f => unify_tD f D (typ_Var a) (typ_Var a') n = Some (s, D, n)).
 Proof.
-  intros b S D a a' n Heq. destruct (Atom.eq_dec a a') as [->|Hne].
+  intros b S D a a' n Heq Hmeet. destruct (Atom.eq_dec a a') as [->|Hne].
   - exists sid. split; [ apply Res_sid | exists 1; intros f Hf; destruct f as [|f]; [ lia | ] ].
     cbn [unify_tD]. destruct (Atom.eq_dec a' a'); [ reflexivity | congruence ].
   - destruct (finer_b (D a') (D a)) eqn:Ef.
     + exists (sbT a (typ_Var a')). split; [ exact (Res_sbT b S a (typ_Var a') I Heq) | ].
       exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
       cbn [unify_tD]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
-    + exists (sbT a' (typ_Var a)). split; [ exact (Res_sbT b S a' (typ_Var a) I (teq_sym _ _ Heq)) | ].
-      exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-      cbn [unify_tD]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
+    + destruct (finer_b (D a) (D a')) eqn:Ef2.
+      * exists (sbT a' (typ_Var a)). split; [ exact (Res_sbT b S a' (typ_Var a) I (teq_sym _ _ Heq)) | ].
+        exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+        cbn [unify_tD]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef, Ef2. reflexivity.
+      * pose proof (Hmeet eq_refl eq_refl) as Hf1.
+        assert (Hf2 : teq (sT S a') typ_Float) by exact (teq_trans _ _ _ (teq_sym _ _ Heq) Hf1).
+        exists (meet_float a a'). split.
+        -- unfold meet_float. apply Res_comp.
+           ++ exact (Res_sbT b S a typ_Float I Hf1).
+           ++ exact (Res_sbT b S a' typ_Float I Hf2).
+        -- exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+           cbn [unify_tD]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef, Ef2. reflexivity.
 Qed.
 
 Lemma apT_Arrow : forall S A B, apT S (typ_Arrow A B) = typ_Arrow (apT S A) (apT S B).
@@ -376,7 +444,7 @@ Proof.
       intros [|f] Hf; [ contradiction | ]. cbn [unify_tD].
       rewrite (proj2 (nf_cp b D) R CR), (proj2 (nf_cp b D) R' CR'). exact Hf.
     + (* Var, Var *)
-      apply unify_var_var. exact Hteq.
+      apply unify_var_var; [ exact Hteq | intros E1 E2; exact (incomparable_float D D1 S a a' Hk Hteq E1 E2) ].
   - (* rows *)
     intros R1 R2 n C1 C2 Hlt Hreq.
     destruct R1 as [ | r | l T R1' | l P T R1' ]; try (simpl in C1; contradiction);

@@ -299,7 +299,7 @@ Proof.
     + intros Hc. apply (IH1 k_Eq (Hu Hc)). intros b Hb. apply Hv. fsetdec.
     + apply (IH2 w (S j) Hs). intros b Hb. apply Hv. fsetdec.
   - intros R IH. split; [ | intros; contradiction ]. intros k.
-    destruct k; [ intros _ _; exact I | | | intros HH; contradiction ];
+    destruct k; [ intros _ _; exact I | | | intros HH; contradiction | ];
       (intros Hs Hv; apply IH; assumption).
   - intros a. split; [ | intros; contradiction ]. intros k Hs Hv.
     rewrite ext_out; [ assumption | apply Hv; fsetdec ].
@@ -572,15 +572,22 @@ Qed.
 (* ------------------------------------------------------------------ *)
 
 Lemma finer_b_sound : forall k1 k2, finer_b k1 k2 = true -> finer k1 k2.
-Proof. intros [] []; simpl; intros H; try discriminate; constructor. Qed.
+Proof.
+  intros [] []; simpl; intros H; try discriminate;
+    first [ apply finer_refl | apply finer_any | (apply finer_lit; discriminate)
+          | apply finer_numeric_eq | apply finer_quot_numeric | apply finer_quot_eq ].
+Qed.
 
-Lemma finer_b_total : forall k1 k2, finer_b k1 k2 = false -> finer k2 k1.
-Proof. intros [] []; simpl; intros H; try discriminate; constructor. Qed.
+(* The sorts are a chain but for [Literal] and [Quot], whose variables meet at
+   [Float]. *)
+Lemma finer_b_cmp : forall k1 k2, finer_b k1 k2 = false -> finer_b k2 k1 = false ->
+  (k1 = k_Literal /\ k2 = k_Quot) \/ (k1 = k_Quot /\ k2 = k_Literal).
+Proof. intros [] []; simpl; intros H1 H2; first [ discriminate | (left; split; reflexivity) | (right; split; reflexivity) ]. Qed.
 
 Lemma finer_b_iff : forall k1 k2, finer_b k1 k2 = true <-> finer k1 k2.
 Proof.
   intros k1 k2. split; [ apply finer_b_sound | ].
-  destruct k1, k2; simpl; intros H; try reflexivity; inversion H.
+  destruct k1, k2; simpl; intros H; try reflexivity; inversion H; try congruence.
 Qed.
 
 Lemma slot_used_iff : forall w j,
@@ -596,7 +603,7 @@ Qed.
 
 Ltac sort_cases :=
   intros k; destruct k; split; intros H;
-  first [ (left; reflexivity) | (right; reflexivity) | discriminate | reflexivity | exact I
+  first [ (left; reflexivity) | (right; reflexivity) | discriminate | reflexivity | exact I | contradiction
         | (destruct H as [H | H]; discriminate) ].
 
 Lemma sat_b_iff_mut : forall D,
@@ -623,17 +630,17 @@ Proof.
         -- right. apply IH1. apply H1. apply slot_used_iff. exact Eu.
         -- left. reflexivity.
   - intros R IH. split.
-    + intros k. destruct k; [ split; intros _; [ exact I | reflexivity ] | apply IH | apply IH | split; [ discriminate | contradiction ] ].
+    + intros k. destruct k; [ split; intros _; [ exact I | reflexivity ] | apply IH | apply IH | split; [ discriminate | contradiction ] | apply IH ].
     + intros w j. split; intros H; [ discriminate | contradiction ].
   - intros a. split.
     + intros k. apply finer_b_iff.
     + intros w j. split; intros H; [ discriminate | contradiction ].
   - intros i. split; [ sort_cases | intros w j; split; intros H; [ discriminate | contradiction ] ].
   - intros B [IH _]. split.
-    + intros k. destruct k; [ split; intros _; [ exact I | reflexivity ] | apply IH | split; [ discriminate | contradiction ] | split; [ discriminate | contradiction ] ].
+    + intros k. destruct k; [ split; intros _; [ exact I | reflexivity ] | apply IH | split; [ discriminate | contradiction ] | split; [ discriminate | contradiction ] | split; [ discriminate | contradiction ] ].
     + intros w j. split; intros H; [ discriminate | contradiction ].
   - intros w A [_ IH]. split.
-    + intros k. destruct k; [ split; intros _; [ exact I | reflexivity ] | apply IH | split; [ discriminate | contradiction ] | split; [ discriminate | contradiction ] ].
+    + intros k. destruct k; [ split; intros _; [ exact I | reflexivity ] | apply IH | split; [ discriminate | contradiction ] | split; [ discriminate | contradiction ] | split; [ discriminate | contradiction ] ].
     + intros w' j. split; intros H; [ discriminate | contradiction ].
   - intros k. split; intros _; [ exact I | reflexivity ].
   - intros r k. apply finer_b_iff.

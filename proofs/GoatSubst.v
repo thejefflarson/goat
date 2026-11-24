@@ -397,9 +397,8 @@ Lemma bin_sig_pw : forall D D2 o A B R, denv_eq D D2 -> bin_sig D o A B R -> bin
 Proof.
   intros D D2 o A B R H Hs. destruct Hs.
   - apply sig_ring; [ assumption | eapply sat_pw; eauto ].
-  - apply sig_quot.
+  - apply sig_quot. eapply sat_pw; eauto.
   - apply sig_whole; [ assumption | eapply sat_pw; eauto ].
-  - apply sig_quot_rec; assumption.
   - apply sig_cmp; [ assumption | eapply sat_pw; eauto ].
 Qed.
 

@@ -279,9 +279,8 @@ Qed.
 (* [typing] restricted to the constructs here, with a binder's premise at every
    name fresh for the context and the term (the algorithm opens a binder at the
    one name it chose), the context's bindings monomorphic, and the operators of
-   one numeric sort.  The record division of [sig_quot_rec] is not here: the
-   core's types hold no record, so the algorithm unifies the operands of [/] with
-   [Float]. *)
+   one sort ([generic_sort]: [Numeric], and [Quot] for [/]); the core's types
+   hold no record, so a [Quot] type here is a [Float]. *)
 Inductive ctyping : denv -> ctx -> exp -> typ -> Prop :=
   | C_Var : forall Dd Gd x T,
       uniq Gd -> binds x (sch_mono T) Gd -> ctyping Dd Gd (e_fvar_f x) T
@@ -304,11 +303,8 @@ Inductive ctyping : denv -> ctx -> exp -> typ -> Prop :=
   | C_ToFloat : forall Dd Gd e A,
       ctyping Dd Gd e A -> sat Dd k_Literal A -> ctyping Dd Gd (e_tofloat e) typ_Float
   | C_Arith : forall Dd Gd e1 o e2 A,
-      kind o <> k_cmp -> kind o <> k_quot -> sat Dd k_Numeric A ->
+      kind o <> k_cmp -> sat Dd (generic_sort o) A ->
       ctyping Dd Gd e1 A -> ctyping Dd Gd e2 A -> ctyping Dd Gd (e_bin e1 o e2) A
-  | C_Quot : forall Dd Gd e1 e2,
-      ctyping Dd Gd e1 typ_Float -> ctyping Dd Gd e2 typ_Float ->
-      ctyping Dd Gd (e_bin e1 bop_div e2) typ_Float
   | C_Cmp : forall Dd Gd e1 o e2 A,
       kind o = k_cmp -> sat Dd k_Eq A ->
       ctyping Dd Gd e1 A -> ctyping Dd Gd e2 A -> ctyping Dd Gd (e_bin e1 o e2) typ_Bool
@@ -335,9 +331,11 @@ Proof.
   - apply T_If; assumption.
   - eapply T_ToFloat; eassumption.
   - eapply T_Bin; [ exact IHctyping1 | exact IHctyping2 | ].
-    destruct (kind o) eqn:Ek; try contradiction;
-      [ apply sig_ring | apply sig_whole ]; assumption.
-  - apply (T_Bin Dd Gd e1 bop_div e2 typ_Float typ_Float typ_Float); [ assumption | assumption | apply sig_quot ].
+    unfold generic_sort in H0. destruct (kind o) eqn:Ek; try contradiction.
+    + apply sig_ring; assumption.
+    + assert (Ho : o = bop_div) by (destruct o; first [ reflexivity | discriminate Ek ]).
+      rewrite Ho. apply sig_quot. assumption.
+    + apply sig_whole; assumption.
   - eapply T_Bin; [ exact IHctyping1 | exact IHctyping2 | ].
     apply sig_cmp; assumption.
   - apply T_LetMono with (L := dom Gd `union` fv_exp e2) (T1 := T1); [ exact IHctyping | exact H2 ].
@@ -409,25 +407,11 @@ Proof.
   - intros q _. reflexivity.
 Qed.
 
-Lemma generic_sort_arith : forall o, kind o <> k_cmp -> generic_sort o = k_Numeric.
-Proof. intros o H. unfold generic_sort. destruct (kind o); [ reflexivity | reflexivity | reflexivity | contradiction ]. Qed.
-
 Lemma is_cmp_op_true : forall o, kind o = k_cmp -> is_cmp_op o = true.
 Proof. intros o H. unfold is_cmp_op. rewrite H. reflexivity. Qed.
 
 Lemma is_cmp_op_false : forall o, kind o <> k_cmp -> is_cmp_op o = false.
 Proof. intros o H. unfold is_cmp_op. destruct (kind o); try reflexivity. contradiction. Qed.
-
-Lemma is_generic_op_true : forall o, kind o <> k_quot -> is_generic_op o = true.
-Proof. intros o H. unfold is_generic_op. destruct (kind o); try reflexivity. contradiction. Qed.
-
-Lemma quot_ty_rf : forall T1 T2, rf T1 -> rf T2 -> quot_ty T1 T2 = typ_Float.
-Proof.
-  intros T1 T2 H1 H2. unfold quot_ty.
-  assert (Hn : forall T, rf T -> float_head T = None)
-    by (intros T H; destruct T; first [ reflexivity | (cbn in H; contradiction) ]).
-  rewrite (Hn _ H1), (Hn _ H2). reflexivity.
-Qed.
 
 (* What a run ends with. *)
 Definition Done (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat) (Sg : sub) (T1 : typ) : Prop :=
@@ -622,7 +606,7 @@ Proof.
     assert (Hle : n2 <= S n2) by lia.
     assert (HTv : TOk (S n2) (typ_Var (ea n2))) by (apply TOk_var; apply old_ea; lia).
     pose proof (TOk_ap _ _ _ _ (Sem_SI Sem2) HTa) as HTa2.
-    assert (Hg : sat Dd (generic_sort o) A) by (rewrite (generic_sort_arith o H); exact H1).
+    assert (Hg : sat Dd (generic_sort o) A) by exact H0.
     assert (Heq : teqD Dd (apT (supd Sb (ea n2) A) (apT s2 Ta)) (apT (supd Sb (ea n2) A) (typ_Var (ea n2)))).
     { rewrite (apT_supd Sb (ea n2) A _ (proj1 HTa2) (fun Hin => proj2 HTa2 _ Hin n2 (le_n n2) eq_refl)),
         apT_Var, supd_same.
@@ -650,44 +634,12 @@ Proof.
       (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3') Sem4) (conj _ (conj _ _)))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3 St4)))) as HSt.
       stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
-      rewrite (is_cmp_op_false o H), (is_generic_op_true o H0). cbv beta iota zeta.
+      rewrite (is_cmp_op_false o H). cbv beta iota zeta.
       rewrite E3, E4. rewrite (bin_res_arith o _ H). reflexivity.
     + exact (TOk_ap _ _ _ _ (Sem_SI Sem4) HTc3).
     + eapply teqD_trans; [ apply teqD_sym; apply ap_factor_rf;
         [ exact (proj1 HTc3) | intros z Hz; exact (Sem_F Sem4 z (proj2 HTc3 z Hz)) ] | ].
       apply teqD_sym. exact Fc.
-    + cbn [is_gen_value]; try reflexivity; try assumption.
-  - (* division *)
-    destruct (IHctyping1 D G n Sg Hd HK HG HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & Heq1 & HgHeq1).
-    destruct (CI_step _ _ _ _ _ _ _ _ _ Sem1 HC HG) as [HC1 HG1].
-    destruct (IHctyping2 D1a (apC s1 G) n1 Sa (Sem_DOk Sem1) (Sem_KR Sem1) HG1 HC1)
-      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & Heq2 & HgHeq2).
-    pose proof (TOk_ap _ _ _ _ (Sem_SI Sem2) HTa) as HTa2.
-    assert (HTf : forall m, TOk m typ_Float) by (intros m; apply TOk_scalar; right; left; reflexivity).
-    assert (Heq : teqD Dd (apT Sb (apT s2 Ta)) (apT Sb typ_Float)).
-    { eapply teqD_trans; [ apply teqD_sym; apply ap_factor_rf;
-        [ exact (proj1 HTa) | intros z Hz; exact (Sem_F Sem2 z (proj2 HTa z Hz)) ] | ].
-      exact Heq1. }
-    destruct (unify_step Dd D2 Sb _ _ n2 (Sem_DOk Sem2) (Sem_KR Sem2) HTa2 (HTf n2) Heq)
-      as (s3 & D3 & n3 & S3 & St3 & Sem3).
-    pose proof (TOk_ap _ _ _ _ (Sem_SI Sem3) HTb) as HTb3.
-    assert (Heq' : teqD Dd (apT S3 (apT s3 Tb)) (apT S3 typ_Float)).
-    { eapply teqD_trans; [ apply teqD_sym; apply ap_factor_rf;
-        [ exact (proj1 HTb) | intros z Hz; exact (Sem_F Sem3 z (proj2 HTb z Hz)) ] | ].
-      exact Heq2. }
-    destruct (unify_step Dd D3 S3 _ _ n3 (Sem_DOk Sem3) (Sem_KR Sem3) HTb3 (HTf n3) Heq')
-      as (s4 & D4 & n4 & S4 & St4 & Sem4).
-    exists (scomp s4 (scomp s3 (scomp s2 s1))), D4, n4, S4, typ_Float, (e_bin e1' bop_div e2').
-    refine (conj _ (conj (Sem_comp _ _ _ _ _ _ _ _ _ _ _
-      (Sem_comp _ _ _ _ _ _ _ _ _ _ _ (Sem_comp _ _ _ _ _ _ _ _ _ _ _ Sem1 Sem2) Sem3) Sem4) (conj _ (conj _ _)))).
-    + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3 St4)))) as HSt.
-      stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
-      rewrite (is_cmp_op_false bop_div ltac:(discriminate)).
-      change (is_generic_op bop_div) with false. cbv beta iota zeta.
-      rewrite (quot_ty_rf _ _ (proj1 HTa2) (proj1 HTb)), E3, E4. reflexivity.
-    + exact (HTf n4).
-    + apply teqD_refl.
     + cbn [is_gen_value]; try reflexivity; try assumption.
   - (* comparison *)
     destruct (IHctyping1 D G n Sg Hd HK HG HC)

@@ -160,21 +160,25 @@ Theorem bind_row_pres_complete : forall (D DT : denv) Sg r R n,
   DOk D n -> KR D DT Sg -> old n r ->
   (forall x, x `in` ftv_row R -> old n x) -> (forall q, q `in` frv_row R -> old n q) ->
   prf R -> lcrb 0 R = true ->
+  (forall x, x `in` ftv_row R -> cmpb (D x) (rk_sort (drk D r))) ->
+  (forall q, q `in` frv_row R -> cmpb (rk_sort (drk D q)) (rk_sort (drk D r))) ->
   (r `in` frv_row R -> pos Sg (fun _ => False) (eq r) R) ->
   frld DT Sg (rk_sort (drk D r)) R -> reqD DT (sR Sg r) (apR Sg R) ->
   exists s D' n' S2, bind_row D r R n = Some (s, D', n') /\ KR D' DT S2 /\ n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s x))) /\
     (forall q, old n q -> reqD DT (sR Sg q) (apR S2 (sR s q))).
 Proof.
-  intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hocc Hfld Hreq.
+  intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hcb Hcq Hocc Hfld Hreq.
   exact (bind_row_sorted_complete true D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc
-           (bind_row_occ Sg DT r R Hreq Hocc) Hfld Hreq).
+           (bind_row_occ Sg DT r R Hreq Hocc) Hcb Hcq Hfld Hreq).
 Qed.
 
 Theorem bind_prop_pres_complete : forall (D D1 : denv) Sg a T n,
   DOk D n -> KR D D1 Sg -> old n a -> (forall v, T <> typ_Var v) ->
   (forall b, b `in` ftv_typ T -> old n b) -> (forall q, q `in` frv_typ T -> old n q) ->
   pf T -> lcb 0 T = true ->
+  (forall b, b `in` ftv_typ T -> cmpb (D b) (D a)) ->
+  (forall q, q `in` frv_typ T -> cmpb (rk_sort (drk D q)) (D a)) ->
   (a `in` ftv_typ T -> po Sg (eq a) (fun _ => False) T) ->
   fld D1 Sg (D a) T -> teqD D1 (sT Sg a) (apT Sg T) ->
   exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
@@ -182,7 +186,7 @@ Theorem bind_prop_pres_complete : forall (D D1 : denv) Sg a T n,
     (forall x, old n x -> teqD D1 (sT Sg x) (apT S2 (sT s x))) /\
     (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2.
 Proof.
-  intros D D1 Sg a T n Hd HK Ha Hv Hot Hoq Hpf Hlc Hocc Hfld Heq.
+  intros D D1 Sg a T n Hd HK Ha Hv Hot Hoq Hpf Hlc Hcb Hcq Hocc Hfld Heq.
   exact (bind_prop_sorted_complete true D D1 Sg a T n Hd HK Ha
-           (bind_prop_occ Sg D1 a T Hv Heq Hocc) Hot Hoq Hpf Hlc Hfld Heq).
+           (bind_prop_occ Sg D1 a T Hv Heq Hocc) Hot Hoq Hcb Hcq Hpf Hlc Hfld Heq).
 Qed.
