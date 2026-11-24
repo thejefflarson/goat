@@ -9,7 +9,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled, edited]
   push:
-    branches: [master]
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

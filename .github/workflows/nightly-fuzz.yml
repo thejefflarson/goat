@@ -50,7 +50,7 @@ jobs:
 
       # differential_checker_vs_w runs the extracted, proven inference algorithm
       # as a child process. The Coq workflow uploads its OCaml sources on every
-      # push to master that could change them (coq.yml); this builds the driver
+      # push to main that could change them (coq.yml); this builds the driver
       # from the latest one, since this runner cannot build the Rocq switch.
       - name: Fetch the extracted algorithm
         if: matrix.target == 'differential_checker_vs_w'
@@ -61,7 +61,7 @@ jobs:
           run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=goat-w-extracted&per_page=10" \
             --jq '[.artifacts[] | select(.expired | not)][0].workflow_run.id // empty')
           if [ -z "$run_id" ]; then
-            echo "::error::no unexpired goat-w-extracted artifact. GitHub keeps artifacts 90 days, so a repository with no push to master touching proofs/, differential/, checker/, prelude/, parser/, examples/ or the grammar for 90 days has none. Run the Coq workflow on master (Actions, Coq, Run workflow) to build a new one."
+            echo "::error::no unexpired goat-w-extracted artifact. GitHub keeps artifacts 90 days, so a repository with no push to main touching proofs/, differential/, checker/, prelude/, parser/, examples/ or the grammar for 90 days has none. Run the Coq workflow on main (Actions, Coq, Run workflow) to build a new one."
             exit 1
           fi
           gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name goat-w-extracted --dir w-extracted

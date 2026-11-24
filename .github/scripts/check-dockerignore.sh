@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The editor image's build context is allowlist-only (web/Dockerfile.dockerignore).
 # A workspace member or Dockerfile COPY source missing from it fails the image
-# build on master only, after merge. Fail here instead.
+# build on main only, after merge. Fail here instead.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
