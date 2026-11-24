@@ -7,7 +7,8 @@ The editor, Run control, file open/save and problem list are native. A
 
 ```
 hosts/apple/
-  App/GoatApp.swift      @main; a DocumentGroup of .goat files (native open/save, Files on iOS)
+  App/GoatApp.swift      @main; a DocumentGroup of .goat files on macOS, the document browser on iOS
+  App/DocumentBrowser.swift   iOS only: UIDocumentBrowserViewController that creates into local Documents
   GoatKit/               shared code; a SwiftPM package (for `swift test`) and, via project.yml,
                          a framework per platform
     Engine.swift           owns the web view; run/stop in, EngineMessages out
@@ -63,22 +64,29 @@ Automatic signing then needs your Apple ID in Xcode (Settings > Accounts), and f
 build a registered device; headless `xcodebuild` also needs `-allowProvisioningUpdates` the
 first time. Pass `CODE_SIGNING_ALLOWED=NO` to build unsigned while a team is set.
 
-## Create Document on the iOS simulator
+## Creating documents on iOS
 
-Tapping **Create Document** in the iOS 26.5 simulator intermittently shows "Unable to
-Import Document (com.apple.DocumentManager error 1)". The type declarations are not the
-cause: the UTI resolves and conforms to `public.plain-text`, existing `.goat` files open
-with their contents, and an app whose document type is stock `public.plain-text` fails the
-same way. On a failure the file is still written; the Files service then cannot resolve a
-bookmark for the item it just moved (`NSFileProviderErrorDomain` -1005, "NonExistentItemIdentifier").
-Open the file from the browser instead.
+`DocumentGroup` cannot choose where a new document goes, and the browser it wraps
+moves the new file through the Files import step. That step failed with
+`com.apple.DocumentManager` error 1 (the Files service could not resolve a bookmark
+for the item it had just moved), and with iCloud Drive as the default location it
+stalled on unsynced items and left the browser ignoring **+**.
 
-On a device, creating in iCloud Drive while it is mid-sync stalls the same import step,
-and the browser then ignores every further **+** until relaunch. The iOS app sets
-`LSSupportsOpeningDocumentsInPlace` so the browser opens documents where they live
-instead of importing a copy (the Xcode document-app default); `check-doc-types.sh`
-guards it. `DocumentGroup` cannot choose the default save location, so creating in
-**On My iPhone** remains the dependable path.
+On iOS the app therefore hosts its own `UIDocumentBrowserViewController`
+(`App/DocumentBrowser.swift`). **Create Document** writes `Untitled.goat` (or
+`Untitled 2.goat`, and so on) into the app's local Documents folder, "On My iPhone",
+through `LocalDocuments.create`, and hands the URL back with import mode `.none`, so
+the browser opens the file where it is. Nothing touches ubiquity, so creating does
+not wait on iCloud. A `UIDocument` subclass loads and autosaves the text, and the
+editor is presented over the browser with a Done button. macOS keeps `DocumentGroup`.
+
+The browser still opens documents in place (`LSSupportsOpeningDocumentsInPlace`,
+guarded by `check-doc-types.sh`), so files picked from iCloud Drive or other
+providers are edited where they live.
+
+`UITests/EditorSmokeTests` has a create test (`CreateDocumentTests`) that taps
+**Create Document** in the real browser, without `-goat-ui-smoke`, and waits for the
+editor.
 
 ## The bridge
 
