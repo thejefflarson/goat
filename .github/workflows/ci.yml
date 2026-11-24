@@ -117,6 +117,15 @@ jobs:
       - name: Doctests
         run: cargo test --doc
 
+      # The wasmtime suites again on the Pulley interpreter (ADR 0043), which
+      # iOS requires. It reuses the build above (the lane is a runtime switch,
+      # so nothing recompiles) and covers only the packages that run wasm under
+      # wasmtime. The whole workspace passes under it in 3 minutes on a laptop.
+      - name: Test on Pulley
+        env:
+          GOAT_RUNTIME: pulley
+        run: cargo nextest run --profile ci --test-threads 2 -p goat -p goat_canvas -p goat_cli
+
       - name: Check the standalone fuzz crate builds
         if: needs.changes.outputs.fuzz == 'true'
         # fuzz/ is not a workspace member, so the clippy/test steps above never
