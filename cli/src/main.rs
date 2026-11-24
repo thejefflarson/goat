@@ -3,10 +3,11 @@
 //! - `goat check FILE`   parse and type-check, printing the program's type.
 //! - `goat build FILE [-o OUT]`  compile to a WebAssembly module.
 //! - `goat build --native [--turtle|--canvas] FILE [-o OUT]`  compile to a native
-//!   executable: LLVM IR linked by clang with `libgoat_native.a`, found beside
-//!   this executable or at `$GOAT_NATIVE_LIB` (build it with
-//!   `cargo build -p goat_native`). `$GOAT_CLANG` names the clang to use. The
-//!   executable takes `-o OUT.svg`. An interactive program (`init`, `update`,
+//!   executable: LLVM IR linked by clang with `libgoat_native.a`, which this
+//!   executable carries; `$GOAT_NATIVE_LIB` or a copy beside it takes
+//!   precedence. `$GOAT_CLANG` names the clang to use. The
+//!   executable takes `-o OUT.svg`. With `-o NAME.app` an interactive program
+//!   becomes a signed macOS app bundle (ADR 0043). An interactive program (`init`, `update`,
 //!   `draw`) opens a window on macOS, where `swiftc` (`$GOAT_SWIFTC`) builds
 //!   its AppKit host. The vocabulary is the canvas's (`Frame`, `Dot`, ...) or
 //!   the turtle's, read from the names the program uses; a program that names
@@ -36,6 +37,10 @@ use std::time::Duration;
 use std::{env, fs};
 
 fn main() -> ExitCode {
+    goat_cli::native_build::embed_static_lib(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/libgoat_native.a"
+    )));
     let args: Vec<String> = env::args().collect();
     match run(&args) {
         Ok(code) => code,
@@ -122,7 +127,11 @@ fn build_native(
     let ll = goat_cli::native_build::emit_ir(source, vocabulary)
         .map_err(|errors| render_errors(file, source, &errors))?;
     let out = out.unwrap_or_else(|| Path::new(file).with_extension(""));
-    goat_cli::native_build::link(&ll, source, &out)?;
+    if goat_cli::native_build::is_app_path(&out) {
+        goat_cli::native_build::bundle(&ll, source, &out)?;
+    } else {
+        goat_cli::native_build::link(&ll, source, &out)?;
+    }
     eprintln!("goat: wrote {}", out.display());
     Ok(ExitCode::SUCCESS)
 }

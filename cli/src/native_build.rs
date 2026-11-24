@@ -4,6 +4,7 @@
 use goat::Profile;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 const STATIC_LIB: &str = "libgoat_native.a";
 const CLANG_CANDIDATES: [&str; 3] = ["clang-23", "clang-17", "clang"];
@@ -72,21 +73,45 @@ fn runs(clang: &str) -> bool {
         .is_ok_and(|out| out.status.success())
 }
 
-/// The runtime library: `$GOAT_NATIVE_LIB`, else the one beside this executable.
-pub fn find_static_lib() -> Result<PathBuf, String> {
-    let path = match std::env::var_os("GOAT_NATIVE_LIB") {
-        Some(path) => PathBuf::from(path),
-        None => std::env::current_exe()
-            .map_err(|e| format!("cannot find the goat executable: {e}"))?
-            .with_file_name(STATIC_LIB),
-    };
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(format!(
-            "{} not found; build it with `cargo build -p goat_native`, or point GOAT_NATIVE_LIB at it",
-            path.display()
-        ))
+/// The runtime library the `goat` binary carries, set once at startup. Empty
+/// when the build script could not build it.
+static EMBEDDED_LIB: OnceLock<&'static [u8]> = OnceLock::new();
+
+pub fn embed_static_lib(bytes: &'static [u8]) {
+    let _ = EMBEDDED_LIB.set(bytes);
+}
+
+/// The runtime library: `$GOAT_NATIVE_LIB`, else one beside this executable,
+/// else the copy the binary carries, written into `scratch`.
+pub fn find_static_lib(scratch: &Path) -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("GOAT_NATIVE_LIB") {
+        let path = PathBuf::from(path);
+        return if path.is_file() {
+            Ok(path)
+        } else {
+            Err(format!(
+                "GOAT_NATIVE_LIB is {}, which is not a file",
+                path.display()
+            ))
+        };
+    }
+    let beside = std::env::current_exe()
+        .map_err(|e| format!("cannot find the goat executable: {e}"))?
+        .with_file_name(STATIC_LIB);
+    if beside.is_file() {
+        return Ok(beside);
+    }
+    match EMBEDDED_LIB.get() {
+        Some(bytes) if !bytes.is_empty() => {
+            let path = scratch.join(STATIC_LIB);
+            std::fs::write(&path, bytes)
+                .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            Ok(path)
+        }
+        _ => Err(format!(
+            "{} not found and this goat carries no copy; build it with `cargo build -p goat_native`, or point GOAT_NATIVE_LIB at it",
+            beside.display()
+        )),
     }
 }
 
@@ -109,13 +134,151 @@ fn entry_c(source: &str) -> String {
     )
 }
 
+/// The bundle identifier of the app named `name`: `local.goat.` and the name
+/// in lowercase ASCII letters, digits and hyphens.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn bundle_identifier(name: &str) -> String {
+    let slug: Vec<String> = name
+        .to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect();
+    let slug = if slug.is_empty() {
+        "app".to_string()
+    } else {
+        slug.join("-")
+    };
+    format!("local.goat.{slug}")
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// The `Info.plist` of the app `name`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn info_plist(name: &str) -> String {
+    let (id, name) = (bundle_identifier(name), xml_escape(name));
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>{name}</string>
+	<key>CFBundleIdentifier</key>
+	<string>{id}</string>
+	<key>CFBundleName</key>
+	<string>{name}</string>
+	<key>CFBundleDisplayName</key>
+	<string>{name}</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
+"#
+    )
+}
+
+/// Whether `out` names an app bundle.
+pub fn is_app_path(out: &Path) -> bool {
+    out.extension().is_some_and(|ext| ext == "app")
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn bundle(_: &str, _: &str, _: &Path) -> Result<(), String> {
+    Err("goat build --native writes .app bundles on macOS only".to_string())
+}
+
+/// Removes the bundle at `app` if goat made it, and refuses anything else there
+/// (another app, a file, a symlink) so a mistyped `-o` cannot delete it. A
+/// symlink is never followed.
+#[cfg(target_os = "macos")]
+fn clear_previous_bundle(app: &Path) -> Result<(), String> {
+    let Ok(meta) = std::fs::symlink_metadata(app) else {
+        return Ok(());
+    };
+    let made_by_goat = meta.is_dir()
+        && std::fs::read_to_string(app.join("Contents/Info.plist")).is_ok_and(|plist| {
+            plist
+                .split_once("<key>CFBundleIdentifier</key>")
+                .and_then(|(_, rest)| rest.split_once("<string>"))
+                .is_some_and(|(_, id)| id.starts_with("local.goat."))
+        });
+    if !made_by_goat {
+        return Err(format!(
+            "{} already exists and wasn't made by goat; choose another name or remove it yourself",
+            app.display()
+        ));
+    }
+    std::fs::remove_dir_all(app).map_err(|e| format!("cannot replace {}: {e}", app.display()))
+}
+
+/// Writes the interactive program `ll` as the app bundle `app`: the executable,
+/// an `Info.plist`, the default icon, all signed ad hoc so macOS will run it.
+#[cfg(target_os = "macos")]
+pub fn bundle(ll: &str, source: &str, app: &Path) -> Result<(), String> {
+    use goat_native::appkit;
+    if !is_interactive(ll) {
+        return Err(
+            "a .app needs an interactive program (one with init, update and draw); \
+             a run-once program builds as a plain executable, so drop the .app from -o"
+                .to_string(),
+        );
+    }
+    let name = app
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .ok_or_else(|| format!("{} has no name to give the app", app.display()))?;
+    const CODESIGN: &str = "/usr/bin/codesign";
+    if !Path::new(CODESIGN).is_file() {
+        return Err(format!(
+            "goat build --native needs {CODESIGN} to sign a .app, which is missing"
+        ));
+    }
+    clear_previous_bundle(app)?;
+    let (macos, resources) = (app.join("Contents/MacOS"), app.join("Contents/Resources"));
+    for dir in [&macos, &resources] {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+    }
+    link_interactive(ll, source, &macos.join(name))?;
+    for (path, bytes) in [
+        (
+            app.join("Contents/Info.plist"),
+            info_plist(name).into_bytes(),
+        ),
+        (resources.join("AppIcon.icns"), appkit::ICON.to_vec()),
+    ] {
+        std::fs::write(&path, bytes)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+    run(
+        Command::new(CODESIGN)
+            .args(["--force", "--sign", "-"])
+            .arg(app),
+        "codesign",
+    )
+}
+
 /// Links `ll`, the IR of `source`, into the executable `out`.
 pub fn link(ll: &str, source: &str, out: &Path) -> Result<(), String> {
     if is_interactive(ll) {
         return link_interactive(ll, source, out);
     }
-    let (clang, lib) = (find_clang()?, find_static_lib()?);
+    let clang = find_clang()?;
     let dir = tempfile::tempdir().map_err(|e| format!("cannot make a temporary directory: {e}"))?;
+    let lib = find_static_lib(dir.path())?;
     let (ll_path, c_path) = (dir.path().join("program.ll"), dir.path().join("entry.c"));
     for (path, text) in [(&ll_path, ll), (&c_path, &entry_c(source))] {
         std::fs::write(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -218,8 +381,9 @@ fn run(command: &mut Command, name: &str) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn link_interactive(ll: &str, source: &str, out: &Path) -> Result<(), String> {
     use goat_native::appkit;
-    let (clang, swiftc, lib) = (find_clang()?, find_swiftc()?, find_static_lib()?);
+    let (clang, swiftc) = (find_clang()?, find_swiftc()?);
     let dir = tempfile::tempdir().map_err(|e| format!("cannot make a temporary directory: {e}"))?;
+    let lib = find_static_lib(dir.path())?;
     let at = |name: &str| dir.path().join(name);
     let (header, header_text) = appkit::HEADER;
     let mut files = vec![
