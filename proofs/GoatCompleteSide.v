@@ -213,7 +213,7 @@ Proof.
     destruct (Atom.eq_dec r r) as [_ | N]; [ | congruence ].
     apply req_sym. eapply req_trans; [ apply req_abs; reflexivity | apply req_empty ].
   - destruct f as [ | f ]; [ reflexivity | ].
-    cbn [unify_rD]. unfold bind_row. simpl.
+    cbn [unify_rD]. unfold bind_row, bind_row0. simpl.
     match goal with |- context [occR r ?R] =>
       assert (Ho : occR r R = true)
         by (unfold occR; apply Bool.orb_true_iff; left; apply AtomSetImpl.mem_1; simpl; fsetdec);
@@ -231,7 +231,7 @@ Proof.
   intros a D n. split.
   - unfold apT, sbT. simpl. destruct (Atom.eq_dec a a) as [_ | N]; [ | congruence ].
     apply teq_rec. apply req_sym. apply req_abs. reflexivity.
-  - unfold bind_prop, occT.
+  - unfold bind_prop, bind_prop0, occT.
     match goal with |- context [AtomSetImpl.mem a ?S] =>
       assert (Hm : AtomSetImpl.mem a S = true) by (apply AtomSetImpl.mem_1; simpl; fsetdec); rewrite Hm
     end. reflexivity.

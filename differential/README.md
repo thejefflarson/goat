@@ -115,7 +115,9 @@ field type differs). Three classes of `w-refuses` are known and not yet excused
 here, because no predicate over a program tells them apart: a row variable that
 lacks the label meeting a presence entry for it, a sorted row tail rewritten to
 present a label, and a comparison whose second operand settles a presence the
-first leaves open (`docs/design/phase7-proof-plan.md`, stage 7.6b). A stage that lands deletes its row, and the
+first leaves open when the field is a type variable, which takes the sort as its
+own (a function field decides its entry absent, ADR 0033, `HANDWRITTEN` holds
+both orders; `docs/design/phase7-proof-plan.md`, stage 7.6b). A stage that lands deletes its row, and the
 target then fails on the class. A type that differs, or a program the algorithm
 accepts and the checker rejects, is never excused. Recursive-type programs the
 algorithm refuses (#606 and the row knot, stage 7.11) are driver skips, and

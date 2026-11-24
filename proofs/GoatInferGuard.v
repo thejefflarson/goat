@@ -80,19 +80,40 @@ Proof.
       exact (gs_comp _ _ (IH _ _ _ _ _ _ E) (gs_sbR b (row_Var (ea n)) I I)).
 Qed.
 
-Lemma bind_prop_gsub : forall D a T n s D' n',
-  bind_prop D a T n = Some (s, D', n') -> mg T -> gsub s.
+Lemma bind_prop0_gsub : forall D a T n s D' n',
+  bind_prop0 D a T n = Some (s, D', n') -> mg T -> gsub s.
 Proof.
-  intros D a T n s D' n' H HT. unfold bind_prop in H.
+  intros D a T n s D' n' H HT. unfold bind_prop0 in H.
   destruct (occT a T); [ discriminate | ].
-  destruct (push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n) as [[sp D1] n1] eqn:Ep.
-  destruct (push_sort_r D1 (D1 a) (AtomSetImpl.elements (frv_typ T)) n1) as [[sr D2] n2] eqn:Epr.
+  destruct (push_sort D (D a) (AtomSetImpl.elements (ftv_live T)) n) as [[sp D1] n1] eqn:Ep.
+  destruct (push_sort_r D1 (D1 a) (AtomSetImpl.elements (frv_live T)) n1) as [[sr D2] n2] eqn:Epr.
   cbn zeta in H. destruct (occT a (apT sr (apT sp T))) eqn:Eo; [ discriminate | ].
   destruct (sat_b D2 (D2 a) (apT sr (apT sp T))); [ | discriminate ]. inversion H; subst; clear H.
   pose proof (push_sort_gsub _ _ _ _ _ _ _ Ep) as Hsp.
   pose proof (push_sort_r_gsub _ _ _ _ _ _ _ Epr) as Hsr.
   exact (gs_comp _ _ (gs_sbT _ _ (proj2 (occT_false _ _ Eo)) (mg_apT _ _ Hsr (mg_apT _ _ Hsp HT)))
            (gs_comp _ _ Hsr Hsp)).
+Qed.
+
+Lemma gs_bool_sub : forall ps, gsub (bool_sub ps).
+Proof.
+  induction ps as [|p ps IH]; cbn [bool_sub]; [ exact gs_id | ].
+  exact (gs_comp _ _ IH (gs_sbT p typ_Bool I I)).
+Qed.
+
+Lemma bind_prop_gsub : forall D a T n s D' n',
+  bind_prop D a T n = Some (s, D', n') -> mg T -> gsub s.
+Proof.
+  intros D a T n s D' n' H HT. unfold bind_prop in H.
+  destruct (bind_prop0 D a T n) as [r|] eqn:E0.
+  - inversion H; subst; clear H. exact (bind_prop0_gsub _ _ _ _ _ _ _ E0 HT).
+  - destruct (occT a T); [ discriminate | ].
+    destruct (forced (D a) T) as [|p0 ps0]; [ discriminate | ].
+    destruct (forallb (fun p => sat_b D (D p) typ_Bool) (p0 :: ps0)); [ | discriminate ].
+    destruct (bind_prop0 D a (apT (bool_sub (p0 :: ps0)) T) n) as [[[s1 D1] n1]|] eqn:E1; [ | discriminate ].
+    injection H as <- <- <-.
+    change (gsub (scomp s1 (bool_sub (p0 :: ps0)))).
+    exact (gs_comp _ _ (bind_prop0_gsub _ _ _ _ _ _ _ E1 (mg_apT _ _ (gs_bool_sub _) HT)) (gs_bool_sub _)).
 Qed.
 
 Lemma bind_k_gsub : forall D a T n s D' n',
@@ -153,16 +174,10 @@ Proof.
   - exact (bind_row_fin_gsub _ _ _ _ _ _ _ _ H gs_id HR).
 Qed.
 
-Lemma gs_bool_sub : forall ps, gsub (bool_sub ps).
+Lemma bind_row0_gsub : forall D r R n s D' n',
+  bind_row0 D r R n = Some (s, D', n') -> mgr R -> gsub s.
 Proof.
-  induction ps as [|p ps IH]; cbn [bool_sub]; [ exact gs_id | ].
-  exact (gs_comp _ _ IH (gs_sbT p typ_Bool I I)).
-Qed.
-
-Lemma bind_row_gsub : forall D r R n s D' n',
-  bind_row D r R n = Some (s, D', n') -> mgr R -> gsub s.
-Proof.
-  intros D r R n s D' n' H HR. unfold bind_row in H. cbn zeta in H.
+  intros D r R n s D' n' H HR. unfold bind_row0 in H. cbn zeta in H.
   destruct (forallb (fun p => sat_b D (D p) typ_Bool) (abs_vars (drk D r) R)); [ | discriminate ].
   destruct (occR r (apR (bool_sub (abs_vars (drk D r) R)) R)); [ discriminate | ].
   destruct (push_sort_r D (rk_sort (drk D r))
@@ -175,6 +190,20 @@ Proof.
   pose proof (gs_bool_sub (abs_vars (drk D r) R)) as Hs0.
   exact (gs_comp _ _ (bind_row_core_gsub _ _ _ _ _ _ _ E (mg_apR _ _ Hsr (mg_apR _ _ Hs0 HR)))
            (gs_comp _ _ Hsr Hs0)).
+Qed.
+
+Lemma bind_row_gsub : forall D r R n s D' n',
+  bind_row D r R n = Some (s, D', n') -> mgr R -> gsub s.
+Proof.
+  intros D r R n s D' n' H HR. unfold bind_row in H.
+  destruct (bind_row0 D r R n) as [x|] eqn:E0.
+  - inversion H; subst; clear H. exact (bind_row0_gsub _ _ _ _ _ _ _ E0 HR).
+  - destruct (forced_row (rk_sort (drk D r)) R) as [|p0 ps0]; [ discriminate | ].
+    destruct (forallb (fun p => sat_b D (D p) typ_Bool) (p0 :: ps0)); [ | discriminate ].
+    destruct (bind_row0 D r (apR (bool_sub (p0 :: ps0)) R) n) as [[[s1 D1] n1]|] eqn:E1; [ | discriminate ].
+    injection H as <- <- <-.
+    change (gsub (scomp s1 (bool_sub (p0 :: ps0)))).
+    exact (gs_comp _ _ (bind_row0_gsub _ _ _ _ _ _ _ E1 (mg_apR _ _ (gs_bool_sub _) HR)) (gs_bool_sub _)).
 Qed.
 
 Theorem unify_k_gsub : forall f,

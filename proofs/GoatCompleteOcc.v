@@ -176,7 +176,7 @@ Qed.
 Theorem bind_prop_pres_complete : forall (D D1 : denv) Sg a T n,
   DOk D n -> KR D D1 Sg -> old n a -> (forall v, T <> typ_Var v) ->
   (forall b, b `in` ftv_typ T -> old n b) -> (forall q, q `in` frv_typ T -> old n q) ->
-  pf T -> lcb 0 T = true ->
+  pf T -> lcb 0 T = true -> na T = true ->
   (forall b, b `in` ftv_typ T -> cmpb (D b) (D a)) ->
   (forall q, q `in` frv_typ T -> cmpb (rk_sort (drk D q)) (D a)) ->
   (a `in` ftv_typ T -> po Sg (eq a) (fun _ => False) T) ->
@@ -186,7 +186,7 @@ Theorem bind_prop_pres_complete : forall (D D1 : denv) Sg a T n,
     (forall x, old n x -> teqD D1 (sT Sg x) (apT S2 (sT s x))) /\
     (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2.
 Proof.
-  intros D D1 Sg a T n Hd HK Ha Hv Hot Hoq Hpf Hlc Hcb Hcq Hocc Hfld Heq.
+  intros D D1 Sg a T n Hd HK Ha Hv Hot Hoq Hpf Hlc Hna Hcb Hcq Hocc Hfld Heq.
   exact (bind_prop_sorted_complete true D D1 Sg a T n Hd HK Ha
-           (bind_prop_occ Sg D1 a T Hv Heq Hocc) Hot Hoq Hcb Hcq Hpf Hlc Hfld Heq).
+           (bind_prop_occ Sg D1 a T Hv Heq Hocc) Hot Hoq Hcb Hcq Hpf Hlc Hna Hfld Heq).
 Qed.

@@ -495,6 +495,15 @@ struct Flow {
     span: Span,
 }
 
+/// A field taken as absent because its type can never meet a constraint (a
+/// function in a record that is compared), with the error that constraint
+/// would have raised had the field been present.
+struct ForcedAbsent {
+    label: String,
+    span: Span,
+    message: String,
+}
+
 #[derive(Default)]
 struct Inferer {
     next: TypeVar,
@@ -590,6 +599,11 @@ struct Inferer {
     /// `...` override) would resurface in `rest`, while the runtime layout
     /// keeps one `x` per record.
     lacks: HashMap<TypeVar, BTreeSet<String>>,
+    /// The operator and place of the constraint being applied, so a field it
+    /// decides is absent can say why when a later use needs it.
+    sort_site: Option<(Span, Option<&'static str>)>,
+    /// Fields decided absent because their type can never meet a constraint.
+    forced_absent: Vec<ForcedAbsent>,
     /// The constraints each unbound type variable must satisfy once it is
     /// bound. Binding a variable checks them against its type and hands them
     /// on to the variables inside it.
@@ -1970,8 +1984,15 @@ impl Inferer {
                 if let Some(kinds) = self.row_kinds.remove(x) {
                     for kind_to_check in kinds.iter() {
                         let mut seen = Vec::new();
-                        if let Err(violation) = self.constrain_row(&bound, kind_to_check, &mut seen)
-                        {
+                        self.sort_site = Some((span, None));
+                        let verdict = self.constrain_row(
+                            &bound,
+                            kind_to_check,
+                            &mut seen,
+                            matches!(kind, RowKind::Record).then_some(&*bound),
+                        );
+                        self.sort_site = None;
+                        if let Err(violation) = verdict {
                             self.report_violation(
                                 span,
                                 &violation,
@@ -2440,6 +2461,12 @@ impl Inferer {
 
     #[cold]
     fn report_hidden_label(&mut self, span: Span, label: &str) {
+        if let Some(forced) = self.forced_absent.iter().find(|f| f.label == label) {
+            let error = GoatError::new(forced.span, forced.message.clone())
+                .with_label(span, format!("`{label}` is needed here"));
+            self.errors.push(error);
+            return;
+        }
         self.errors.push(GoatError::new(
             span,
             format!(
@@ -2490,9 +2517,9 @@ impl Inferer {
             (Ty::Str, Kind::Eq | Kind::Appendable) => Ok(()),
             (Ty::Bool | Ty::Unit, Kind::Eq) => Ok(()),
             (Ty::Record(row), Kind::Eq | Kind::Numeric | Kind::Quot) => {
-                self.constrain_row(row, kind, bound)
+                self.constrain_row(row, kind, bound, Some(row))
             }
-            (Ty::Variant(row), Kind::Eq) => self.constrain_row(row, kind, bound),
+            (Ty::Variant(row), Kind::Eq) => self.constrain_row(row, kind, bound, None),
             (Ty::Variant(row), Kind::Appendable) => self.constrain_list(row),
             (Ty::Rec(binder, body), Kind::Eq) => {
                 bound.push(*binder);
@@ -2508,19 +2535,85 @@ impl Inferer {
         }
     }
 
+    /// A field whose presence is still open takes the constraint on its type,
+    /// unless that type could never meet it: then the field is absent, the one
+    /// way the record can satisfy the constraint. `whole` is the record's row
+    /// when it is one that may be decided that way.
     fn constrain_row(
         &mut self,
         row: &Row,
         kind: Kind,
         bound: &mut Vec<TypeVar>,
+        whole: Option<&Row>,
     ) -> Result<(), Violation> {
         match self.resolve_row(row) {
             Row::Empty => Ok(()),
             Row::Var(v) => self.add_kind(KindMap::Row, v, kind),
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                rest,
+                ..
+            } if whole.is_some() && self.never_meets(&field, kind) => {
+                if let Some(whole) = whole {
+                    self.note_forced(&label, &field, kind, whole);
+                }
+                self.subst.insert(pres, Rc::new(ABSENT));
+                self.constrain_row(&rest, kind, bound, whole)
+            }
             Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
                 self.constrain_kind(&field, kind, bound)?;
-                self.constrain_row(&rest, kind, bound)
+                self.constrain_row(&rest, kind, bound, whole)
             }
+        }
+    }
+
+    /// Remember why `label` was taken as absent: the error the constraint would
+    /// have raised on a record with that field.
+    fn note_forced(&mut self, label: &str, field: &Ty, kind: Kind, whole: &Row) {
+        let Some((span, op)) = self.sort_site else {
+            return;
+        };
+        let violation = Violation {
+            kind,
+            offender: Offender::Type(field.clone()),
+        };
+        let shown = self.shown(&Ty::Record(whole.clone()));
+        self.forced_absent.push(ForcedAbsent {
+            label: label.to_string(),
+            span,
+            message: violation.message(&shown, op),
+        });
+    }
+
+    /// Whether `ty` fails `kind` by its own shape, whatever its variables turn
+    /// out to be and whichever of its open fields end up present.
+    fn never_meets(&self, ty: &Ty, kind: Kind) -> bool {
+        match (self.resolve(ty), kind) {
+            (Ty::Var(_) | Ty::Variant(_), _) => false,
+            (Ty::Int, Kind::Quot) => true,
+            (
+                Ty::Int | Ty::Float,
+                Kind::Eq | Kind::Numeric | Kind::Ordered | Kind::Literal | Kind::Quot,
+            ) => false,
+            (Ty::Str, Kind::Eq | Kind::Appendable) => false,
+            (Ty::Bool | Ty::Unit, Kind::Eq) => false,
+            (Ty::Record(row), Kind::Eq | Kind::Numeric | Kind::Quot) => {
+                self.row_never_meets(&row, kind)
+            }
+            (Ty::Rec(_, body), Kind::Eq) => self.never_meets(&body, kind),
+            _ => true,
+        }
+    }
+
+    fn row_never_meets(&self, row: &Row, kind: Kind) -> bool {
+        match self.resolve_row(row) {
+            Row::Extend { field, rest, .. } => {
+                self.never_meets(&field, kind) || self.row_never_meets(&rest, kind)
+            }
+            Row::Maybe { rest, .. } => self.row_never_meets(&rest, kind),
+            Row::Empty | Row::Var(_) => false,
         }
     }
 
@@ -2577,7 +2670,10 @@ impl Inferer {
     /// Require `ty` to satisfy `kind` for the operator `op` at `span`. Returns
     /// whether it does.
     fn require(&mut self, ty: &Ty, kind: Kind, op: BinOp, span: Span) -> bool {
-        match self.constrain(ty, Kinds::of(kind)) {
+        self.sort_site = Some((span, Some(op.symbol())));
+        let verdict = self.constrain(ty, Kinds::of(kind));
+        self.sort_site = None;
+        match verdict {
             Ok(()) => true,
             Err(violation) => {
                 self.report_violation(span, &violation, ty, Some(op.symbol()));
