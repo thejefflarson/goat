@@ -1887,6 +1887,48 @@ fresh instance atoms to the derivation's instance.
    is an instance of the algorithm's scheme, which needs `sch_leP` against `sch_mono`.
 4. *`letrec`, records, spread, restrict, tags, `match`, methods* (7.8), as before.
 
+*As built (stage 7.7g, `GoatCompleteConv.v`).* Stage 7.7g did items 1 and 2 of 7.7f's list
+for the monomorphic core: the even renaming while descending, and the conversion into
+`ctyping`. A `let` of a value is not converted.
+
+**Record-free derivations are a hypothesis.** `typing` lets a derivation choose a record
+type for a call's parameter, an operand or a bound variable of a core term (`(fun g => 1)
+(fun x => x)` types with `g : {l: Int} -> {l: Int}`), and `ctyping` takes `PEv`, which
+includes record-free, at every type a rule invents. Renaming atoms cannot remove a
+record, so the conversion's input is the class `rtyping`: the monomorphic core with
+`rf` at each invented type. `rtyping_typing` shows it is a restriction of `typing` at
+`d_any`. Converting every `typing` derivation of a record-free program would erase the
+records of the derivation's inner types, which is not a substitution of atoms; it
+belongs with 7.8, where records enter the fragment. DECISION NEEDED: whether 7.8
+proves that erasure or extends `ctyping` past `rf`; chosen here: the class.
+
+**Renaming while descending.** The kinding environment of a monomorphic core
+derivation is `d_any` throughout, where every atom is sorted `Any`, so any atom map
+respects the sorts (`kres_any`) and `rtyping_ren` renames a derivation, context and
+all, by `rn g`. At a premise that introduces a type, `swap_even` takes the finite
+swap `mk_rename_even` gives for the type's atoms outside the context's and the
+judgement's own, and `rtyping_ctyping` renames the premises by it. The renamed
+premises are new derivations, not subderivations, so the induction is on the size of
+the term (as in `typing_normal`). A binder's premise is renamed per fresh name.
+
+**Record division.** No exclusion remains. `R_Arith` takes `sat d_any (generic_sort o) A`
+with `A` record-free, which is the generic `Quot` case for `/`; a record operand is
+outside `rf`, so `sig_quot_rec` never arises.
+
+**`T_ConvD`.** `rtyping` has no conversion rule: at record-free types `teqD` is equality
+(`teqD_rf_eq`), so a conversion changes nothing.
+
+**What remains of 7.7.**
+
+1. *`let` of a value in the conversion.* `C_Let` needs `rtyping` over a general
+   environment (the premise lives at `extr (ext D V k) ..`), a scheme in the context
+   and the instance of a scheme at each variable; the swap must fix the sorted atoms
+   `V` and the body's context relates to the renamed `gen` by `sch_equiv`, which
+   `typing_sch_equiv_ctx` gives for `typing` and is still to be proved for the class.
+   `T_LetMono` on a value is likewise not covered.
+2. *`typing` to `rtyping`.* Only for derivations that are record-free (above).
+3. *`letrec`, records, spread, restrict, tags, `match`, methods* (7.8), as before.
+
 ## 5. Staged PR plan
 
 Sizes are estimates in lines of Coq (Rust or YAML where stated), counting churn in

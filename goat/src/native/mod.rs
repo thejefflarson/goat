@@ -307,7 +307,7 @@ pub fn run(wasm: &[u8]) -> Result<Run, String> {
 }
 
 /// How often a timeout's ticker advances the epoch.
-const EPOCH_TICK: Duration = Duration::from_millis(10);
+const EPOCH_TICK: Duration = Duration::from_millis(5);
 
 /// A wall-clock bound on each call into a guest, enforced by wasmtime's epoch
 /// interruption: a thread advances the engine's epoch every [`EPOCH_TICK`] and
@@ -324,9 +324,19 @@ impl Deadline {
         let stop = Arc::new(AtomicBool::new(false));
         let (ticker, halt) = (engine.clone(), Arc::clone(&stop));
         std::thread::spawn(move || {
+            // Ticks follow the clock, not a chain of sleeps: each sleep
+            // overshoots, and chained overshoots would stretch a deadline of
+            // many ticks well past its timeout.
+            let started = std::time::Instant::now();
+            let mut ticked = 0u32;
             while !halt.load(Ordering::Relaxed) {
                 std::thread::sleep(EPOCH_TICK);
-                ticker.increment_epoch();
+                let due = u32::try_from(started.elapsed().as_nanos() / EPOCH_TICK.as_nanos())
+                    .unwrap_or(u32::MAX);
+                for _ in ticked..due {
+                    ticker.increment_epoch();
+                }
+                ticked = ticked.max(due);
             }
         });
         Deadline {

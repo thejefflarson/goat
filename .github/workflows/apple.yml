@@ -6,7 +6,7 @@ on:
   pull_request:
     paths: ["hosts/apple/**", "web/**", ".github/workflows/apple.yml"]
   push:
-    branches: [master]
+    branches: [main]
     paths: ["hosts/apple/**", "web/**", ".github/workflows/apple.yml"]
 
 permissions:

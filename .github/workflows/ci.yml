@@ -2,14 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     tags: ['v*.*.*']
   pull_request:
   # Nightly, so the oldest supported clang (17) is exercised even on quiet days.
   schedule:
     - cron: "30 6 * * *"
 
-# Cancel superseded PR runs so a fast push doesn't pile up jobs; master and tag
+# Cancel superseded PR runs so a fast push doesn't pile up jobs; main and tag
 # runs always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -149,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Every PR runs the latest clang; the floor (17) runs on master and nightly.
+        # Every PR runs the latest clang; the floor (17) runs on main and nightly.
         clang: ${{ fromJSON(github.event_name == 'pull_request' && '["clang-23"]' || '["clang-17", "clang-23"]') }}
     env:
       RUSTC_WRAPPER: sccache
@@ -214,7 +214,7 @@ jobs:
       - name: Build and run an interactive example
         run: |
           cargo build -p goat_cli
-          target/debug/goat build --native --canvas examples/canvas/bounce.goat -o "$RUNNER_TEMP/bounce"
+          target/debug/goat build --native examples/canvas/bounce.goat -o "$RUNNER_TEMP/bounce"
           "$RUNNER_TEMP/bounce" --headless 10
 
   # Keeps the front end and wasm backend buildable for wasm32 so the compiler

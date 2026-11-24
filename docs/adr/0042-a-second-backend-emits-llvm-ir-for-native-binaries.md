@@ -301,3 +301,9 @@ Everywhere else the build still refuses, saying the window host is macOS only.
   which runs without a window, prints the last picture's shapes and exits; a trap
   or a stuck call prints its message and exits 1. The tests drive it, since a
   window needs a display.
+- **App bundles (ADR 0043).** When `-o` ends in `.app`, `goat build --native`
+  writes `Contents/MacOS/<name>` (this same host), an `Info.plist`
+  (`local.goat.<slug>` identifier, macOS 13.0 minimum, high-resolution capable),
+  and a default `AppIcon.icns` that `goat_native::appkit::ICON` carries, then signs
+  the bundle ad hoc with `/usr/bin/codesign --force --sign -`. A run-once program
+  refuses `.app`, as does a non-macOS host.

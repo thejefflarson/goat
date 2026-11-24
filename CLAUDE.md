@@ -19,9 +19,8 @@ wrong state unrepresentable *before* you reach for a comment.
 
 ## Working norms
 
-- **Branches.** Mainline is `master`. Work on short-lived feature branches off
-  `master`, open a PR to `master`, and merge on green. (The earlier `revival`
-  integration branch has been folded into `master` and retired.)
+- **Branches.** Mainline is `main`. Work on short-lived feature branches off
+  `main`, open a PR to `main`, and merge on green.
 - **Tracker.** GitHub issues (`thejefflarson/goat`). Decisions that outlive a
   ticket go in `docs/adr/`.
 - **Gates (CI-enforced).** `cargo fmt --all -- --check`,

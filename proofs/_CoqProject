@@ -67,6 +67,7 @@ GoatCompleteNf.v
 GoatCompleteDrk.v
 GoatCompleteCtx.v
 GoatCompleteSpn.v
+GoatCompleteConv.v
 GoatElabConverse.v
 GoatMethods.v
 GoatGrammar.v

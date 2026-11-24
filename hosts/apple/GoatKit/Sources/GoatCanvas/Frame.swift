@@ -5,12 +5,17 @@ import Foundation
 // buffer is the program's output, so every read is bounds-checked and a bad
 // frame is an error, never a crash.
 
-struct Point: Equatable {
-    var x: Double
-    var y: Double
+public struct Point: Equatable {
+    public var x: Double
+    public var y: Double
+
+    public init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
 }
 
-enum Shape: Equatable {
+public enum Shape: Equatable {
     case line(Point, Point, color: String)
     case polyline([Point], color: String)
     case circle(Point, radius: Double, color: String)
@@ -18,16 +23,16 @@ enum Shape: Equatable {
     case text(Point, String, color: String)
 }
 
-struct FrameError: Error, Equatable, CustomStringConvertible {
-    let description: String
+public struct FrameError: Error, Equatable, CustomStringConvertible {
+    public let description: String
     init(_ description: String) { self.description = description }
 }
 
-enum Frame {
-    static let version: UInt8 = 1
+public enum Frame {
+    public static let version: UInt8 = 1
 
     /// The most bytes one frame may hold, as in `frame.rs`.
-    static let limit = 1 << 24
+    public static let limit = 1 << 24
 
     private enum Wire: UInt8 {
         case int = 0x69  // i
@@ -64,7 +69,7 @@ enum Frame {
     }
 
     /// The shapes `bytes` draws, in order. An empty frame is a blank picture.
-    static func decode(_ bytes: [UInt8]) throws -> [Shape] {
+    public static func decode(_ bytes: [UInt8]) throws -> [Shape] {
         guard bytes.count <= limit else { throw FrameError("this picture is too big") }
         if bytes.isEmpty { return [] }
         var reader = Reader(bytes: bytes)

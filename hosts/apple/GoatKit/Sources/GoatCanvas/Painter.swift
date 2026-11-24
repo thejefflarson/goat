@@ -6,15 +6,15 @@ import Foundation
 /// canvas: origin top left with y down, one-point round-capped lines, circles
 /// and rectangles filled, text filled from its top left corner in 16-point
 /// sans-serif.
-enum Painter {
+public enum Painter {
     /// The picture's size in its own units; every goat canvas is this big.
-    static let size = CGSize(width: 400, height: 300)
+    public static let size = CGSize(width: 400, height: 300)
 
     private static let font = CTFontCreateWithName("Helvetica" as CFString, 16, nil)
 
     /// Paints `shapes` into `context`, which already maps the picture's units
     /// onto its pixels with y down.
-    static func paint(_ shapes: [Shape], in context: CGContext) {
+    public static func paint(_ shapes: [Shape], in context: CGContext) {
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineWidth(1)

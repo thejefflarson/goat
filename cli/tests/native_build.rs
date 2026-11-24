@@ -19,25 +19,6 @@ fn clang_present() -> bool {
         .is_ok_and(|out| out.status.success())
 }
 
-/// The profile directory the `goat` binary sits in, where `libgoat_native.a`
-/// belongs. Cargo builds the staticlib only for its own package, so a test run
-/// of this crate builds it first.
-fn static_lib() -> PathBuf {
-    let profile_dir = Path::new(GOAT).parent().expect("target profile directory");
-    let lib = profile_dir.join("libgoat_native.a");
-    if !lib.exists() {
-        let mut build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-        build
-            .args(["build", "-p", "goat_native", "--target-dir"])
-            .arg(profile_dir.parent().expect("target directory"));
-        if profile_dir.ends_with("release") {
-            build.arg("--release");
-        }
-        assert!(build.status().expect("run cargo").success());
-    }
-    lib
-}
-
 fn build_native(dir: &Path, name: &str, source: &str) -> Result<PathBuf, String> {
     build_native_with(dir, name, source, &[])
 }
@@ -57,7 +38,7 @@ fn build_native_with(
         .arg(&program)
         .arg("-o")
         .arg(&exe)
-        .env("GOAT_NATIVE_LIB", static_lib())
+        .env_remove("GOAT_NATIVE_LIB")
         .output()
         .expect("run goat");
     if out.status.success() {
@@ -156,6 +137,20 @@ fn build_native_reads_the_vocabulary_from_the_program_and_obeys_the_flags() {
     let canvas = std::fs::read_to_string("../examples/canvas/sky.goat").unwrap();
     let forced = build_native_with(dir.path(), "sky", &canvas, &["--turtle"]).unwrap_err();
     assert!(forced.contains("error(s)"), "{forced}");
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn an_app_is_refused_off_macos() {
+    needs_clang!();
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(GOAT)
+        .args(["build", "--native", SPIRAL, "-o"])
+        .arg(dir.path().join("Spiral.app"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("macOS only"));
 }
 
 /// The AppKit window host (macOS only). Every test runs the binary with
@@ -283,6 +278,155 @@ mod window_host {
             [0.0, 0.0, 10.0, 0.0]
         );
     }
+
+    fn codesign_present() -> bool {
+        Path::new("/usr/bin/codesign").is_file()
+    }
+
+    fn build_app(dir: &Path, source_file: &str, app: &str) -> Output {
+        Command::new(GOAT)
+            .args(["build", "--native", source_file, "-o"])
+            .arg(dir.join(app))
+            .env_remove("GOAT_NATIVE_LIB")
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_app_bundle_has_the_layout_the_plist_and_a_valid_signature() {
+        needs_clang!();
+        if !codesign_present() {
+            eprintln!("skipped: codesign is not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let built = build_app(
+            dir.path(),
+            "../examples/canvas/bounce.goat",
+            "Bounce Ball.app",
+        );
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let app = dir.path().join("Bounce Ball.app");
+        let exe = app.join("Contents/MacOS/Bounce Ball");
+        assert!(exe.is_file());
+        let icon = std::fs::read(app.join("Contents/Resources/AppIcon.icns")).unwrap();
+        assert_eq!(&icon[..4], b"icns");
+
+        let plist = app.join("Contents/Info.plist");
+        assert!(
+            Command::new("/usr/bin/plutil")
+                .arg("-lint")
+                .arg(&plist)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        let key = |key: &str| {
+            let out = Command::new("/usr/bin/plutil")
+                .args(["-extract", key, "raw", "-o", "-"])
+                .arg(&plist)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{key} is missing");
+            String::from_utf8(out.stdout)
+                .unwrap()
+                .trim_end()
+                .to_string()
+        };
+        for (name, value) in [
+            ("CFBundleExecutable", "Bounce Ball"),
+            ("CFBundleIdentifier", "local.goat.bounce-ball"),
+            ("CFBundleName", "Bounce Ball"),
+            ("CFBundleDisplayName", "Bounce Ball"),
+            ("CFBundlePackageType", "APPL"),
+            ("CFBundleIconFile", "AppIcon"),
+            ("LSMinimumSystemVersion", "13.0"),
+            ("NSHighResolutionCapable", "true"),
+        ] {
+            assert_eq!(key(name), value, "{name}");
+        }
+
+        let verified = Command::new("/usr/bin/codesign")
+            .args(["--verify", "--strict"])
+            .arg(&app)
+            .output()
+            .unwrap();
+        assert!(
+            verified.status.success(),
+            "{}",
+            String::from_utf8_lossy(&verified.stderr)
+        );
+        let ran = headless(&exe, &["3"]);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        assert!(String::from_utf8_lossy(&ran.stdout).contains("circle"));
+    }
+
+    #[test]
+    fn a_run_once_program_refuses_an_app() {
+        needs_clang!();
+        let dir = tempfile::tempdir().unwrap();
+        let built = build_app(dir.path(), SPIRAL, "Spiral.app");
+        assert!(!built.status.success());
+        let error = String::from_utf8_lossy(&built.stderr);
+        assert!(
+            error.contains("a .app needs an interactive program"),
+            "{error}"
+        );
+        assert!(!dir.path().join("Spiral.app").exists());
+    }
+
+    #[test]
+    fn only_a_bundle_goat_made_is_replaced() {
+        needs_clang!();
+        if !codesign_present() {
+            eprintln!("skipped: codesign is not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bounce = "../examples/canvas/bounce.goat";
+        let ok = |out: &Output| out.status.success();
+        assert!(ok(&build_app(dir.path(), bounce, "Game.app")));
+        let again = build_app(dir.path(), bounce, "Game.app");
+        assert!(ok(&again), "{}", String::from_utf8_lossy(&again.stderr));
+
+        let foreign = dir.path().join("Foreign.app");
+        std::fs::create_dir_all(foreign.join("Contents")).unwrap();
+        std::fs::write(foreign.join("keep"), "mine").unwrap();
+        std::fs::write(
+            foreign.join("Contents/Info.plist"),
+            "<plist><dict><key>CFBundleIdentifier</key><string>com.apple.Safari</string></dict></plist>",
+        )
+        .unwrap();
+        let bare = dir.path().join("Bare.app");
+        std::fs::create_dir(&bare).unwrap();
+        std::fs::write(bare.join("keep"), "mine").unwrap();
+        let target = dir.path().join("Target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("keep"), "mine").unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join("Link.app")).unwrap();
+
+        for (name, kept) in [
+            ("Foreign.app", foreign.join("keep")),
+            ("Bare.app", bare.join("keep")),
+            ("Link.app", target.join("keep")),
+        ] {
+            let refused = build_app(dir.path(), bounce, name);
+            let error = String::from_utf8_lossy(&refused.stderr);
+            assert!(!ok(&refused), "{name} was replaced");
+            assert!(error.contains("wasn't made by goat"), "{error}");
+            assert_eq!(std::fs::read_to_string(kept).unwrap(), "mine", "{name}");
+        }
+        assert!(dir.path().join("Link.app").is_symlink());
+    }
 }
 
 #[test]
@@ -294,7 +438,7 @@ fn a_clang_that_does_not_run_is_named() {
         .args(["build", "--native"])
         .arg(&program)
         .env("GOAT_CLANG", "no-such-clang")
-        .env("GOAT_NATIVE_LIB", static_lib())
+        .env_remove("GOAT_NATIVE_LIB")
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -324,4 +468,49 @@ fn a_missing_clang_says_how_to_install_it() {
         stderr.contains("needs clang") && stderr.contains(fix),
         "{stderr}"
     );
+}
+
+#[test]
+fn a_plain_build_of_the_cli_carries_the_runtime_library() {
+    needs_clang!();
+    let dir = tempfile::tempdir().unwrap();
+    let copy = dir.path().join("goat");
+    std::fs::copy(GOAT, &copy).unwrap();
+    assert!(!dir.path().join("libgoat_native.a").exists());
+    let program = dir.path().join("hello.goat");
+    std::fs::write(&program, "print(\"alone\")").unwrap();
+    let exe = dir.path().join("hello");
+    let out = Command::new(&copy)
+        .args(["build", "--native"])
+        .arg(&program)
+        .arg("-o")
+        .arg(&exe)
+        .env_remove("GOAT_NATIVE_LIB")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ran = Command::new(exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "alone\n");
+}
+
+#[test]
+fn a_missing_library_override_is_named() {
+    needs_clang!();
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("p.goat");
+    std::fs::write(&program, "print(1)").unwrap();
+    let out = Command::new(GOAT)
+        .args(["build", "--native"])
+        .arg(&program)
+        .arg("-o")
+        .arg(dir.path().join("p"))
+        .env("GOAT_NATIVE_LIB", dir.path().join("nope.a"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("GOAT_NATIVE_LIB is"));
 }
