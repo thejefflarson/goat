@@ -9,8 +9,11 @@ struct GoatApp: App {
         }
         #else
         DocumentGroup(newDocument: GoatDocument()) { file in
-            EditorScreen(document: file.$document)
+            EditorScreen(
+                document: file.$document,
+                name: file.fileURL?.deletingPathExtension().lastPathComponent ?? "Untitled")
         }
+        .commands { ExportCommands() }
         #endif
     }
 }

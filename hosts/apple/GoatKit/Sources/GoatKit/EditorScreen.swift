@@ -2,43 +2,23 @@
 #if canImport(GoatEngine)
 import SwiftUI
 
-#if os(macOS)
-private struct CanvasView: NSViewRepresentable {
-    let engine: Engine
-    func makeNSView(context: Context) -> CanvasHostView {
-        let view = CanvasHostView(frames: engine.frames)
-        view.onKey = { [engine] in engine.key($0, down: $1) }
-        view.onPointer = { [engine] in engine.pointer($0, x: $1, y: $2) }
-        return view
-    }
-    func updateNSView(_ view: CanvasHostView, context: Context) {}
-}
-#else
-private struct CanvasView: UIViewRepresentable {
-    let engine: Engine
-    func makeUIView(context: Context) -> CanvasHostView {
-        let view = CanvasHostView(frames: engine.frames)
-        view.onKey = { [engine] in engine.key($0, down: $1) }
-        view.onPointer = { [engine] in engine.pointer($0, x: $1, y: $2) }
-        return view
-    }
-    func updateUIView(_ view: CanvasHostView, context: Context) {}
-}
-#endif
-
 /// The editor window: native source editor and Run control beside the
 /// engine's canvas, with problems and printed output below. The editor stays
 /// editable while a program runs.
 public struct EditorScreen: View {
     @Binding var document: GoatDocument
+    private let name: String
     @StateObject private var engine = Engine()
+    @State private var ranSource: String?
 
-    public init(document: Binding<GoatDocument>) {
+    public init(document: Binding<GoatDocument>, name: String = "Untitled") {
         _document = document
+        self.name = name
     }
 
     init(document: Binding<GoatDocument>, engine: Engine) {
         _document = document
+        name = "Untitled"
         _engine = StateObject(wrappedValue: engine)
     }
 
@@ -61,9 +41,13 @@ public struct EditorScreen: View {
             ProblemsPanel(
                 phase: engine.phase, diagnostics: engine.diagnostics, output: engine.output, reload: engine.reload)
         }
+        #if os(macOS)
+        .focusedSceneValue(\.exportMenu, exportMenu)
+        #endif
         .toolbar {
             ToolbarItemGroup {
                 Button {
+                    ranSource = document.text
                     engine.run(source: document.text)
                 } label: {
                     Label("Run", systemImage: "play.fill")
@@ -81,6 +65,17 @@ public struct EditorScreen: View {
         }
     }
 
+    #if os(macOS)
+    private var exportMenu: ExportMenu {
+        ExportMenu(
+            canExport: ExportGate.canExport(
+                ranSource: ranSource, current: document.text, phase: engine.phase,
+                diagnostics: engine.diagnostics),
+            exportApp: { [name, text = document.text] in ExportFlow.exportPlayer(name: name, program: text) },
+            exportNativeApp: { [name] in ExportFlow.exportNative(name: name) })
+    }
+    #endif
+
     /// Editing makes the reported problems stale, so they clear with the first keystroke.
     private var sourceBinding: Binding<String> {
         Binding(
@@ -93,6 +88,16 @@ public struct EditorScreen: View {
 
     private var highlights: [NSRange] {
         engine.diagnostics.compactMap { $0.range(in: document.text) }
+    }
+}
+
+/// A program can be exported once it has run clean: the text on screen is the text
+/// that last ran, it is running or finished, and it reported no problems.
+enum ExportGate {
+    static func canExport(
+        ranSource: String?, current: String, phase: Engine.Phase, diagnostics: [Diagnostic]
+    ) -> Bool {
+        ranSource == current && diagnostics.isEmpty && (phase == .running || phase == .finished)
     }
 }
 

@@ -20,6 +20,7 @@ hosts/apple/
     CanvasHostView.swift   NSView / UIView that draws the frames and forwards keys and pointer
     CodeEditor.swift       NSTextView / UITextView with smart quotes off, error highlights
     EditorScreen.swift     editor + canvas + problems panel + toolbar
+  Player/PlayerApp.swift  GoatPlayer-macOS: the engine and canvas without the editor, for exported apps
   project.yml            XcodeGen spec; the .xcodeproj is generated, not committed
   scripts/stage-engine.sh builds engine/ (goat_apple) into Frameworks/GoatEngine.xcframework
   engine/                the native goat engine behind include/goat_engine.h (ADR 0043)
@@ -138,11 +139,30 @@ engine's phase as its accessibility value (`finished` once a run-once program dr
    Build Configuration). The first launch needs the developer certificate trusted on the phone
    (Settings > General > VPN & Device Management) and Developer Mode on.
 
+## Export App…
+
+On macOS, File > Export App… saves the program as `Name.app`. It is enabled once the program
+has run without problems and is unchanged since. `GoatPlayer.app` is built beside Goat and
+embedded in Goat's `Contents/Resources`; the export copies it, writes `program.goat` to its
+Resources, sets `CFBundleName`, `CFBundleDisplayName` and `CFBundleIdentifier`
+(`local.goat.<slug>`; `CFBundleExecutable` stays `GoatPlayer`), and signs the copy ad hoc,
+last, because the signature seals every file. The player reads `program.goat` at launch and
+titles its window with the app's name; a program error shows as one line under the canvas.
+Like `goat build --native`, an export replaces an app already at that path only if its bundle
+identifier starts with `local.goat.`, and refuses anything else. The save panel's security
+scope stays open until `codesign` exits.
+
+File > Export Native App… appears when the Command Line Tools are installed
+(`/Library/Developer/CommandLineTools/usr/bin/clang`). The sandbox forbids the app from running
+`xcrun`, `clang` or a `goat` binary, and ADR 0043 keeps the sandbox, so it only explains this
+and shows the `goat build --native` command to run in Terminal. Building natively from the
+editor needs a compiler service outside the sandbox and is a follow-up.
+
 ## App Store 2.5.2
 
 The app never downloads or generates code outside what the user types: source is
-always visible and editable in the native editor, including while a program runs,
-and nothing exports a program as a separate app.
+always visible and editable in the native editor, including while a program runs.
+Export App… (macOS only) copies a player that runs the same program the user wrote.
 
 Game-style programs read keys from the canvas, so click the picture before using
 the arrow keys.
