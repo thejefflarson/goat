@@ -35,9 +35,13 @@ final class GoatBrowserController: UIDocumentBrowserViewController, UIDocumentBr
         didRequestDocumentCreationWithHandler importHandler: @escaping (URL?, UIDocumentBrowserViewController.ImportMode) -> Void
     ) {
         do {
-            importHandler(try LocalDocuments.create(in: LocalDocuments.directory()), .none)
+            let url = try LocalDocuments.create(in: LocalDocuments.directory())
+            importHandler(url, .none)
+            // `.none` tells the browser the file is already in place, so it reports nothing back.
+            open(url)
         } catch {
             importHandler(nil, .none)
+            alert("Could not create the document", message: error.localizedDescription)
         }
     }
 
@@ -64,11 +68,15 @@ final class GoatBrowserController: UIDocumentBrowserViewController, UIDocumentBr
         present(alert, animated: true)
     }
 
+    private var isOpening = false
+
     private func open(_ url: URL) {
-        guard presentedViewController == nil else { return }
+        guard presentedViewController == nil, !isOpening else { return }
+        isOpening = true
         let document = GoatUIDocument(fileURL: url)
         document.open { [weak self] success in
             guard let self else { return }
+            self.isOpening = false
             guard success else { return self.alert("Could not open \(url.lastPathComponent)") }
             let editor = UIHostingController(
                 rootView: DocumentEditor(document: document) { [weak self] in
