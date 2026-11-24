@@ -684,14 +684,40 @@ Qed.
 
 (* ---- binding a type variable ---- *)
 
+Lemma ps_na : forall Sg,
+  (forall T, pf T -> ps Sg T -> na T = true) /\
+  (forall R, prf R -> psr Sg R -> nar R = true).
+Proof.
+  intros Sg. apply typ_row_mutind; cbn [pf prf ps psr na nar].
+  - intros _ _. reflexivity.
+  - intros _ _. reflexivity.
+  - intros _ _. reflexivity.
+  - intros _ _. reflexivity.
+  - intros _ _. reflexivity.
+  - intros A IHA B IHB [HA HB] [PA PB]. rewrite (IHA HA PA), (IHB HB PB). reflexivity.
+  - intros R IH H1 H2. exact (IH H1 H2).
+  - intros a _ _. reflexivity.
+  - intros i H. contradiction.
+  - intros B IH H. contradiction.
+  - intros w A IH [HA _] PA. exact (IH HA PA).
+  - intros _ _. reflexivity.
+  - intros r _ _. reflexivity.
+  - intros l T IHT R IHR [HT HR] [PT PR]. rewrite (IHT HT PT), (IHR HR PR). reflexivity.
+  - intros l P IHP T IHT R IHR [HP [HT HR]] [PU [PT PR]].
+    rewrite (pres_not_abs Sg P HP PU), (IHT HT PT), (IHR HR PR). cbn [negb andb].
+    destruct (pres_shape Sg P HP PU) as [->|[v [-> _]]]; reflexivity.
+Qed.
+
 Lemma bind_prop_unfold : forall D a T n s D' n',
-  bind_prop D a T n = Some (s, D', n') ->
+  bind_prop0 D a T n = Some (s, D', n') -> na T = true ->
   exists sp D1 n1 sr,
     push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n = (sp, D1, n1) /\
     push_sort_r D1 (D1 a) (AtomSetImpl.elements (frv_typ T)) n1 = (sr, D', n') /\
     s = scomp (sbT a (apT sr (apT sp T))) (scomp sr sp).
 Proof.
-  intros D a T n s D' n' H. unfold bind_prop in H. destruct (occT a T); [ discriminate | ].
+  intros D a T n s D' n' H Hna. unfold bind_prop0 in H.
+  destruct ((proj1 na_live_mut) T Hna) as [Hlt Hlr]. rewrite Hlt, Hlr in H.
+  destruct (occT a T); [ discriminate | ].
   destruct (push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n) as [[sp D1] n1] eqn:E1.
   destruct (push_sort_r D1 (D1 a) (AtomSetImpl.elements (frv_typ T)) n1) as [[sr D2] n2] eqn:E2.
   cbv zeta in H.
@@ -754,10 +780,11 @@ Proof.
   intros D Sg a T n Hd Hs Hk Ha HT AT PT Hocc HaE Heq.
   assert (Hlc : lcb 0 T = true) by exact (proj1 pf_lcb T HT 0).
   assert (Hfld : fld DT Sg (D a) T) by exact (proj1 (ps_fld Sg (D a) HaE) T HT PT).
-  destruct (bind_prop_sorted_complete false D DT Sg a T n Hd Hk Ha Hocc (proj1 AT) (proj2 AT)
-              (fun b _ => cmpb_any_eq _ _ HaE) (fun q _ => cmpb_any_eq _ _ HaE) HT Hlc Hfld Heq)
+  assert (Hna : na T = true) by exact (proj1 (ps_na Sg) T HT PT).
+  destruct (bind_prop0_sorted_complete false D DT Sg a T n Hd Hk Ha Hocc (proj1 AT) (proj2 AT)
+              (fun b _ => cmpb_any_eq _ _ HaE) (fun q _ => cmpb_any_eq _ _ HaE) HT Hlc Hna Hfld Heq)
     as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr & _).
-  destruct (bind_prop_unfold D a T n s D' n' E) as (sp & D1 & n1 & sr & Ep & Er & Es).
+  destruct (bind_prop_unfold D a T n s D' n' E Hna) as (sp & D1 & n1 & sr & Ep & Er & Es).
   assert (Holdl : forall b, In b (AtomSetImpl.elements (ftv_typ T)) -> old n b)
     by (intros b Hb; apply (proj1 AT); apply in_elts; exact Hb).
   assert (R1 : RenN n n1 sp) by exact (RenN_push _ _ _ _ _ _ _ Ep Holdl
@@ -794,7 +821,7 @@ Proof.
       cbn [sT sbT]. destruct (Atom.eq_dec y a) as [E1|_]; [ exfalso; exact (Hya E1) | reflexivity ]. }
     pose proof (Fx y Hyo) as F. rewrite Hsy in F.
     exact (teq_not_record _ _ F (proj2 Hs y HD'y) R). }
-  exists s, D', n', S2. refine (conj E _).
+  exists s, D', n', S2. refine (conj (bind_prop_of0 _ _ _ _ _ E) _).
   exact (conj Hl (conj Hd' (conj (conj Hrow' HNN) (conj Hk' (conj Ct Cr))))).
 Qed.
 
@@ -887,13 +914,13 @@ Proof.
 Qed.
 
 Lemma bind_row_unfold : forall D r R n s D' n',
-  bind_row D r R n = Some (s, D', n') -> abs_vars (drk D r) R = nil ->
+  bind_row0 D r R n = Some (s, D', n') -> abs_vars (drk D r) R = nil ->
   exists sr D1 n1 s',
     push_sort_r D (rk_sort (drk D r)) (AtomSetImpl.elements (frv_row R)) n = (sr, D1, n1) /\
     bind_row_core D1 r (apR sr R) n1 = Some (s', D', n') /\
     s = scomp s' (scomp sr sid).
 Proof.
-  intros D r R n s D' n' H Hav. unfold bind_row in H. cbv zeta in H. rewrite Hav in H.
+  intros D r R n s D' n' H Hav. unfold bind_row0 in H. cbv zeta in H. rewrite Hav in H.
   cbn [forallb bool_sub] in H. rewrite apR_id in H.
   destruct (occR r R); [ discriminate | ].
   destruct (push_sort_r D (rk_sort (drk D r)) (AtomSetImpl.elements (frv_row R)) n) as [[sr D1] n1] eqn:E1.
@@ -967,7 +994,7 @@ Proof.
   assert (Hav : abs_vars (drk D r) R = nil) by exact (ps_lacks Sg (drk D r) R HR PR (LK_rkok _ _ _ Hrk)).
   assert (Hfld : frld DT Sg (rk_sort (drk D r)) R)
     by exact (proj2 (ps_fld Sg _ (proj1 (proj1 Hae) r)) R HR PR).
-  destruct (bind_row_sorted_complete false D DT Sg r R n Hd Hk Hr (proj1 AR) (proj2 AR) HR Hlc Hnot
+  destruct (bind_row0_sorted_complete false D DT Sg r R n Hd Hk Hr (proj1 AR) (proj2 AR) HR Hlc Hnot
               (fun x _ => cmpb_any_eq _ _ (proj1 (proj1 Hae) r)) (fun q _ => cmpb_any_eq _ _ (proj1 (proj1 Hae) r))
               Hfld Hreq)
     as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr).
@@ -1003,7 +1030,7 @@ Proof.
   assert (Hs : s = scomp (scomp (sbR r (apR (scomp (scomp sp sq) (scomp sr sid)) R)) (scomp sp sq))
                          (scomp sr sid)).
   { rewrite Es, Es'. reflexivity. }
-  exists s, D', n', S2. refine (conj E _).
+  exists s, D', n', S2. refine (conj (bind_row_of0 _ _ _ _ _ E) _).
   destruct (pkg_close_R Sg S2 n n' r R (scomp (scomp sp sq) (scomp sr sid)) s Rho Hr HR AR PR
               (fun x => ltac:(rewrite Hs, sT_comp3; reflexivity))
               (fun q => ltac:(rewrite Hs, sR_comp3; reflexivity))

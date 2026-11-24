@@ -848,6 +848,21 @@ at `Int`. ADR 0038 records the choice.
   n'`: the supply grows, and from a well-kept `D` the step is `Good` (the
   implication keeps `teq_dec`, which runs the unifier at supply 0, free of
   `DOk`). A substitution that respects the sorts is `kres D D' (sT s)`.
+- **A sort and an open presence entry.** A sort that reaches an entry whose
+  presence is a variable and whose field can never meet it (`perm_b`: a function,
+  or a type of the wrong shape, whatever its variables) leaves one choice, that
+  the entry is absent. `bind_prop` and `bind_row` try the binding first
+  (`bind_prop0`, `bind_row0`) and, when it fails, bind the presence variables
+  `forced`/`forced_row` name to `Bool`, if their own sorts allow it, and try
+  again: the same step `bind_row` makes for a label the row variable lacks
+  (`bool_sub_ok`), so `bind_prop_sound` and `bind_row_sound` compose
+  `bind_prop0_sound`/`bind_row0_sound` with it and the guard lemmas
+  (`bind_prop_gsub`) follow. `bind_prop0` pushes the sort onto the variables
+  outside the fields of absent entries only (`ftv_live`, `frv_live`); the
+  completeness lemmas carry the hypothesis `na T` (no entry is absent) that makes
+  the two lists agree (`na_live_mut`), which `ps` gives them. A sort conditional
+  on a presence variable is not in the calculus, so a variable field takes the
+  sort as before (ADR 0033, amendment of 2026-11-23).
 - **A numeral** is a fresh `Literal` variable, **`float(e)`** unifies its operand
   with a fresh `Numeric` variable, and **`+ - *`** unify both operands with one
   fresh `Numeric` variable, the type of the result. So `1 + 1.5` infers `Float`

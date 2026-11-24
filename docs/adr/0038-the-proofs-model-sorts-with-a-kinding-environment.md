@@ -180,3 +180,17 @@ fragment's environment condition `Drow` adds that no variable has the sort
 `Quot`; the record-free core, which W's arithmetic rule uses, has no such
 restriction. A quotient over records of `Quot` variables is outside the proven
 unification fragment, as `Numeric` variables bound to records already are.
+
+## Amendment: a sort and an open presence entry (phase 7, 2026-11-23)
+
+The sort of a variable reaches the fields of the record it binds to, and an entry
+whose presence is still a variable used to take it on its field whether or not
+the entry turns out present. `bind_prop` and `bind_row` now bind to `Bool` the
+presence variables of entries whose field can never meet the sort (`forced`),
+when the plain binding fails, and `push_sort` skips the variables that sit only
+in the fields of entries already absent (`ftv_live`). The kinding environment is
+unchanged: a sort conditional on a presence variable (the entry's field takes the
+sort only if the presence settles present) is not a sort of the calculus, and
+its absence is the one order dependence that remains for a variable field. ADR
+0033's amendment of the same date states the rule and what is left.
+

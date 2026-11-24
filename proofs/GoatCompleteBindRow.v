@@ -730,14 +730,14 @@ Qed.
 
 (* ---- [bind_row] ---- *)
 
-Theorem bind_row_sorted_complete : forall (D DT : denv) Sg r R n,
+Theorem bind_row0_sorted_complete : forall (D DT : denv) Sg r R n,
   DOk D n -> KR D DT Sg -> old n r ->
   (forall x, x `in` ftv_row R -> old n x) -> (forall q, q `in` frv_row R -> old n q) ->
   prf R -> lcrb 0 R = true -> r `notin` frv_row R ->
   (forall x, x `in` ftv_row R -> cmpb (D x) (rk_sort (drk D r))) ->
   (forall q, q `in` frv_row R -> cmpb (rk_sort (drk D q)) (rk_sort (drk D r))) ->
   frld DT Sg (rk_sort (drk D r)) R -> reqX bx DT (sR Sg r) (apR Sg R) ->
-  exists s D' n' S2, bind_row D r R n = Some (s, D', n') /\ KR D' DT S2 /\ n <= n' /\ DOk D' n' /\
+  exists s D' n' S2, bind_row0 D r R n = Some (s, D', n') /\ KR D' DT S2 /\ n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s x))) /\
     (forall q, old n q -> reqX bx DT (sR Sg q) (apR S2 (sR s q))).
 Proof.
@@ -749,7 +749,7 @@ Proof.
   assert (Hchk : forallb (fun p => sat_b D (D p) typ_Bool) ps = true).
   { apply forallb_forall. intros p Hp. apply sat_b_iff.
     pose proof (proj1 HK p) as H. rewrite (Hps p Hp) in H. exact H. }
-  unfold bind_row. cbn zeta. fold ps. rewrite Hchk.
+  unfold bind_row0. cbn zeta. fold ps. rewrite Hchk.
   set (R0 := apR (bool_sub ps) R).
   destruct (bool_sub_agree Sg ps Hps) as [A0t A0r].
   assert (Hu1 := bool_sub_T_cases ps). assert (Hu2 := bool_sub_R ps).
@@ -791,6 +791,23 @@ Proof.
     + rewrite (bool_sub_out ps x Hin). exact (Ft x Hx).
   - intros q Hq. change (reqX bx DT (sR Sg q) (apR S2 (apR s (apR sr (sR (bool_sub ps) q))))).
     rewrite Hu2. exact (Fr q Hq).
+Qed.
+
+Theorem bind_row_sorted_complete : forall (D DT : denv) Sg r R n,
+  DOk D n -> KR D DT Sg -> old n r ->
+  (forall x, x `in` ftv_row R -> old n x) -> (forall q, q `in` frv_row R -> old n q) ->
+  prf R -> lcrb 0 R = true -> r `notin` frv_row R ->
+  (forall x, x `in` ftv_row R -> cmpb (D x) (rk_sort (drk D r))) ->
+  (forall q, q `in` frv_row R -> cmpb (rk_sort (drk D q)) (rk_sort (drk D r))) ->
+  frld DT Sg (rk_sort (drk D r)) R -> reqX bx DT (sR Sg r) (apR Sg R) ->
+  exists s D' n' S2, bind_row D r R n = Some (s, D', n') /\ KR D' DT S2 /\ n <= n' /\ DOk D' n' /\
+    (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s x))) /\
+    (forall q, old n q -> reqX bx DT (sR Sg q) (apR S2 (sR s q))).
+Proof.
+  intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hnr Hcb Hcq Hfld Hreq.
+  destruct (bind_row0_sorted_complete D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hnr Hcb Hcq Hfld Hreq)
+    as (s & D' & n' & S2 & H0 & Hrest).
+  exists s, D', n', S2. split; [ exact (bind_row_of0 _ _ _ _ _ H0) | exact Hrest ].
 Qed.
 
 End RowX.

@@ -194,15 +194,52 @@ Fixpoint push_sort_r (D : denv) (k : sort) (l : list atom) (n : nat) {struct l}
       else push_sort_r D k l' n
   end.
 
+(* The variables of a type outside the field types of absent entries.  An
+   absent entry's field is no field ([req_abs]), so a sort that reaches the
+   type does not reach the variables in it. *)
+Fixpoint ftv_live (T : typ) {struct T} : atoms :=
+  match T with
+  | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String | typ_Bvar _ => {}
+  | typ_Arrow A B => ftv_live A `union` ftv_live B
+  | typ_Record R => ftv_live_row R
+  | typ_Var a => {{a}}
+  | typ_Mu B => ftv_live B
+  | typ_Grp _ A => ftv_live A
+  end
+with ftv_live_row (R : row) {struct R} : atoms :=
+  match R with
+  | row_Empty | row_Var _ => {}
+  | row_Ext _ T R' => ftv_live T `union` ftv_live_row R'
+  | row_Maybe _ P T R' =>
+      if is_abs P then ftv_live_row R' else ftv_live P `union` (ftv_live T `union` ftv_live_row R')
+  end.
+
+Fixpoint frv_live (T : typ) {struct T} : atoms :=
+  match T with
+  | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String | typ_Bvar _ | typ_Var _ => {}
+  | typ_Arrow A B => frv_live A `union` frv_live B
+  | typ_Record R => frv_live_row R
+  | typ_Mu B => frv_live B
+  | typ_Grp _ A => frv_live A
+  end
+with frv_live_row (R : row) {struct R} : atoms :=
+  match R with
+  | row_Empty => {}
+  | row_Var s => {{s}}
+  | row_Ext _ T R' => frv_live T `union` frv_live_row R'
+  | row_Maybe _ P T R' =>
+      if is_abs P then frv_live_row R' else frv_live P `union` (frv_live T `union` frv_live_row R')
+  end.
+
 (* Bind [a] to [T], at the sort of [a]: the sort is pushed onto the type and
    the row variables of [T], and the renamed [T] must satisfy it.  The occurs
    check runs before the renaming, which never touches [a], and after it. *)
-Definition bind_prop (D : denv) (a : atom) (T : typ) (n : nat) : option (sub * denv * nat) :=
+Definition bind_prop0 (D : denv) (a : atom) (T : typ) (n : nat) : option (sub * denv * nat) :=
   if occT a T then None
   else
-    match push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n with
+    match push_sort D (D a) (AtomSetImpl.elements (ftv_live T)) n with
     | (sp, D1, n1) =>
-        match push_sort_r D1 (D1 a) (AtomSetImpl.elements (frv_typ T)) n1 with
+        match push_sort_r D1 (D1 a) (AtomSetImpl.elements (frv_live T)) n1 with
         | (sr, D2, n2) =>
             let T' := apT sr (apT sp T) in
             if occT a T' then None
@@ -299,7 +336,7 @@ Fixpoint bool_sub (ps : list atom) : sub :=
    [r] reaches the row variables inside [R] (a nested record's tail is as
    sorted as the field it sits in); and then [R] is bound as [bind_row_core]
    does. *)
-Definition bind_row (D : denv) (r : atom) (R : row) (n : nat) : option (sub * denv * nat) :=
+Definition bind_row0 (D : denv) (r : atom) (R : row) (n : nat) : option (sub * denv * nat) :=
   let ps := abs_vars (drk D r) R in
   if forallb (fun p => sat_b D (D p) typ_Bool) ps then
     let R0 := apR (bool_sub ps) R in
@@ -313,6 +350,110 @@ Definition bind_row (D : denv) (r : atom) (R : row) (n : nat) : option (sub * de
           end
       end
   else None.
+
+(* Whether a type could satisfy sort [k] if every type variable did and every
+   entry with a presence variable were absent: the one way a sort that reaches
+   an entry cannot be met is by the field's own shape, and a field that cannot
+   be sorted can only be absent. *)
+Definition is_pvar (P : typ) : bool := match P with typ_Var _ => true | _ => false end.
+
+Fixpoint perm_b (k : sort) (T : typ) {struct T} : bool :=
+  match T with
+  | typ_Int => match k with k_Quot => false | _ => true end
+  | typ_Float => true
+  | typ_Var _ => true
+  | typ_Record R =>
+      match k with k_Any => true | k_Eq | k_Numeric | k_Quot => rperm_b k R | k_Literal => false end
+  | typ_String | typ_Bool | typ_Unit | typ_Bvar _ => match k with k_Any | k_Eq => true | _ => false end
+  | typ_Mu B => match k with k_Any => true | k_Eq => perm_b k_Eq B | _ => false end
+  | typ_Grp _ _ => true
+  | typ_Arrow _ _ => match k with k_Any => true | _ => false end
+  end
+with rperm_b (k : sort) (R : row) {struct R} : bool :=
+  match R with
+  | row_Empty | row_Var _ => true
+  | row_Ext _ T R' => perm_b k T && rperm_b k R'
+  | row_Maybe _ P T R' => (is_pvar P || is_abs P || perm_b k T) && rperm_b k R'
+  end.
+
+(* The presence variables of the entries a sort [k] reaches whose field cannot
+   satisfy it. *)
+Fixpoint forced (k : sort) (T : typ) {struct T} : list atom :=
+  match T with
+  | typ_Record R =>
+      match k with k_Eq | k_Numeric | k_Quot => forced_row k R | _ => nil end
+  | typ_Mu B => match k with k_Eq => forced k_Eq B | _ => nil end
+  | _ => nil
+  end
+with forced_row (k : sort) (R : row) {struct R} : list atom :=
+  match R with
+  | row_Ext _ T R' => forced k T ++ forced_row k R'
+  | row_Maybe _ (typ_Var p) T R' =>
+      (if perm_b k T then forced k T else p :: nil) ++ forced_row k R'
+  | row_Maybe _ P T R' => (if is_abs P then nil else forced k T) ++ forced_row k R'
+  | _ => nil
+  end.
+
+(* A sort that reaches an entry whose presence is still a variable and whose
+   field cannot satisfy it leaves one choice, that the entry is absent.  So when
+   binding fails, the presence variables of such entries are bound to [Bool]
+   first (the variable's own sort must allow it) and the binding is tried again
+   on what is left. *)
+Definition bind_prop (D : denv) (a : atom) (T : typ) (n : nat) : option (sub * denv * nat) :=
+  match bind_prop0 D a T n with
+  | Some r => Some r
+  | None =>
+      if occT a T then None
+      else
+        match forced (D a) T with
+        | nil => None
+        | ps =>
+            if forallb (fun p => sat_b D (D p) typ_Bool) ps then
+              match bind_prop0 D a (apT (bool_sub ps) T) n with
+              | Some (s, D', n') => Some (scomp s (bool_sub ps), D', n')
+              | None => None
+              end
+            else None
+        end
+  end.
+
+Definition bind_row (D : denv) (r : atom) (R : row) (n : nat) : option (sub * denv * nat) :=
+  match bind_row0 D r R n with
+  | Some x => Some x
+  | None =>
+      match forced_row (rk_sort (drk D r)) R with
+      | nil => None
+      | ps =>
+          if forallb (fun p => sat_b D (D p) typ_Bool) ps then
+            match bind_row0 D r (apR (bool_sub ps) R) n with
+            | Some (s, D', n') => Some (scomp s (bool_sub ps), D', n')
+            | None => None
+            end
+          else None
+      end
+  end.
+
+Lemma bind_prop_of0 : forall D a T n r, bind_prop0 D a T n = Some r -> bind_prop D a T n = Some r.
+Proof. intros D a T n r H. unfold bind_prop. rewrite H. reflexivity. Qed.
+
+Lemma bind_row_of0 : forall D r R n x, bind_row0 D r R n = Some x -> bind_row D r R n = Some x.
+Proof. intros D r R n x H. unfold bind_row. rewrite H. reflexivity. Qed.
+
+(* A type none of whose entries is absent: every variable of it is live. *)
+Fixpoint na (T : typ) {struct T} : bool :=
+  match T with
+  | typ_Arrow A B => na A && na B
+  | typ_Record R => nar R
+  | typ_Mu B => na B
+  | typ_Grp _ A => na A
+  | _ => true
+  end
+with nar (R : row) {struct R} : bool :=
+  match R with
+  | row_Ext _ T R' => na T && nar R'
+  | row_Maybe _ P T R' => negb (is_abs P) && na P && na T && nar R'
+  | _ => true
+  end.
 
 (* Rewrite [R] so that it presents label [l] first, with a presence:
    [Some (P, T, R', s, D', n')] with [s R] equivalent to [l ^ P : T ; R'].  A
