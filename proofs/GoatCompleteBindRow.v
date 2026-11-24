@@ -450,6 +450,7 @@ Lemma bind_row_fin_complete : forall (D0 DT : denv) Sg0 r R Rx sq n0,
   (forall x, x `in` ftv_row Rx -> old n0 x) ->
   prf Rx -> lcrb 0 Rx = true -> r `notin` frv_row Rx ->
   (forall q, q `in` frv_row Rx -> finer (rk_sort (drk D0 q)) (rk_sort (drk D0 r))) ->
+  (forall x, x `in` ftv_row Rx -> cmpb (D0 x) (rk_sort (drk D0 r))) ->
   frld DT Sg0 (rk_sort (drk D0 r)) Rx -> lacks_ok (drk D0 r) Rx = true ->
   reqX bx DT (sR Sg0 r) (apR Sg0 Rx) ->
   exists s D' n' S2, bind_row_fin r R sq D0 n0 = Some (s, D', n') /\ KR D' DT S2 /\
@@ -457,7 +458,7 @@ Lemma bind_row_fin_complete : forall (D0 DT : denv) Sg0 r R Rx sq n0,
     (forall x, old n0 x -> teq (sT Sg0 x) (apT S2 (sT s x))) /\
     (forall q, old n0 q -> reqX bx DT (sR Sg0 q) (apR S2 (sR s q))).
 Proof.
-  intros D0 DT Sg0 r R Rx sq n0 HRx Hd HK Hsq Hr Hsqr Hsqinv Hsqag Hold Hpf Hlc Hnr Hrf Hfld Hlo Hreq.
+  intros D0 DT Sg0 r R Rx sq n0 HRx Hd HK Hsq Hr Hsqr Hsqinv Hsqag Hold Hpf Hlc Hnr Hrf Hcb Hfld Hlo Hreq.
   assert (Hrsat : rsat DT (rk_sort (drk D0 r)) (apR Sg0 Rx)).
   { apply (rsat_reqX bx DT _ (sR Sg0 r) _ Hreq). exact (proj1 (proj2 HK r)). }
   destruct (sat_reach_mut DT Sg0 (rk_sort (drk D0 r))) as [_ Hrr].
@@ -486,7 +487,7 @@ Proof.
   rewrite Hocc. cbn iota. rewrite Hdrk.
   assert (Hsat : rsat D1 (rk_sort (drk D0 r)) (apR sp Rx)).
   { apply (proj2 (sat_ren_mut D1 DT Sg0 sp (rk_sort (drk D0 r))) Rx Hpf Hfld).
-    - intros x Hx. destruct (P6 x (proj2 (in_elts _ _) Hx)) as (y & Ey & Hf).
+    - intros x Hx. destruct (P6 x (proj2 (in_elts _ _) Hx) (Hcb x Hx)) as (y & Ey & Hf).
       exists y. split; [ exact Ey | apply finer_b_iff; exact Hf ].
     - intros q Hq. exists q. split; [ apply P1 | ]. rewrite Hdrk. exact (Hrf q Hq).
     - exact Hrsat. }
@@ -555,6 +556,7 @@ Lemma bind_row_core_complete : forall (D DT : denv) Sg r R n,
   (forall x, x `in` ftv_row R -> old n x) -> (forall q, q `in` frv_row R -> old n q) ->
   prf R -> lcrb 0 R = true -> r `notin` frv_row R ->
   (forall q, q `in` frv_row R -> finer (rk_sort (drk D q)) (rk_sort (drk D r))) ->
+  (forall x, x `in` ftv_row R -> cmpb (D x) (rk_sort (drk D r))) ->
   frld DT Sg (rk_sort (drk D r)) R -> lacks_ok (drk D r) R = true ->
   reqX bx DT (sR Sg r) (apR Sg R) ->
   exists s D' n' S2, bind_row_core D r R n = Some (s, D', n') /\ KR D' DT S2 /\
@@ -562,7 +564,7 @@ Lemma bind_row_core_complete : forall (D DT : denv) Sg r R n,
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s x))) /\
     (forall q, old n q -> reqX bx DT (sR Sg q) (apR S2 (sR s q))).
 Proof.
-  intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hnr Hrf Hfld Hlo Hreq.
+  intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hnr Hrf Hcb Hfld Hlo Hreq.
   assert (Hocc : occR r R = false).
   { unfold occR. apply Bool.orb_false_iff. split.
     - apply AtomSetFacts.not_mem_iff. exact Hnr.
@@ -621,6 +623,7 @@ Proof.
                         [ apply finer_refl | exact (Hrf q Hqin) ]
                       | injection E as <-; unfold D0; rewrite (rupd_other D (ea n) _ q0
                           (fun E2 => Hoq q0 Hq0 n (le_n n) E2)); exact (Hrf q0 Hq0) ])
+                ltac:(intros x Hx; rewrite (proj2 (ftv_rren sq Hvs)) in Hx; rewrite HD0r; exact (Hcb x Hx))
                 ltac:(rewrite HD0r; refine (proj2 (fld_pull DT Sg S2b _ sq (fun x => I) _) R Hpf Hfld _ _);
                       [ intros q0; subst sq; cbn [sR sbR]; destruct (Atom.eq_dec q0 q); exact I
                       | intros x _; apply Hagt
@@ -636,7 +639,7 @@ Proof.
   - destruct (bind_row_fin_complete D DT Sg r R R sid n (apR_id R) Hd HK rren_sid Hr eq_refl
                 ltac:(intros q0 E; cbn [sR sid idr] in E; injection E as ->; reflexivity)
                 ltac:(intros q0 _; reflexivity)
-                Hot Hpf Hlc Hnr Hrf Hfld Hlo Hreq)
+                Hot Hpf Hlc Hnr Hrf Hcb Hfld Hlo Hreq)
       as (s & D' & n' & S2 & E & K & Hn & Hd' & Ft & Fr).
     exists s, D', n', S2. exact (conj E (conj K (conj Hn (conj Hd' (conj Ft Fr))))).
 Qed.
@@ -647,6 +650,8 @@ Lemma bind_row_mid_complete : forall (D DT : denv) Sg r R n,
   DOk D n -> KR D DT Sg -> old n r ->
   (forall x, x `in` ftv_row R -> old n x) -> (forall q, q `in` frv_row R -> old n q) ->
   prf R -> lcrb 0 R = true -> r `notin` frv_row R ->
+  (forall x, x `in` ftv_row R -> cmpb (D x) (rk_sort (drk D r))) ->
+  (forall q, q `in` frv_row R -> cmpb (rk_sort (drk D q)) (rk_sort (drk D r))) ->
   frld DT Sg (rk_sort (drk D r)) R -> lacks_ok (drk D r) R = true ->
   reqX bx DT (sR Sg r) (apR Sg R) ->
   exists sr D1 n1 s D' n' S2,
@@ -655,7 +660,7 @@ Lemma bind_row_mid_complete : forall (D DT : denv) Sg r R n,
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT (scomp s sr) x))) /\
     (forall q, old n q -> reqX bx DT (sR Sg q) (apR S2 (sR (scomp s sr) q))).
 Proof.
-  intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hnr Hfld Hlo Hreq.
+  intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hnr Hcb Hcq Hfld Hlo Hreq.
   assert (Hrsat : rsat DT (rk_sort (drk D r)) (apR Sg R)).
   { apply (rsat_reqX bx DT _ (sR Sg r) _ Hreq). exact (proj1 (proj2 HK r)). }
   destruct (sat_reach_mut DT Sg (rk_sort (drk D r))) as [_ Hrr].
@@ -696,8 +701,10 @@ Proof.
                     destruct (Qn q0 r (Hoq q0 Hq0) E) as [->|[m [H1 [H2 H3]]]];
                     [ exact (Hnr Hq0) | exact (Hr m H1 H3) ])
               ltac:(intros z Hz; destruct (frv_vren_in sr (rren_vren sr Hvs) R z Hz) as (q0 & Hq0 & E);
-                    destruct (Q7 q0 (proj2 (in_elts _ _) Hq0)) as (q' & E' & Hf);
+                    destruct (Q7 q0 (proj2 (in_elts _ _) Hq0) (Hcq q0 Hq0)) as (q' & E' & Hf);
                     rewrite E in E'; injection E' as <-; rewrite HD1r; apply finer_b_iff; exact Hf)
+              ltac:(intros x Hx; rewrite (proj2 (ftv_rren sr Hvs)) in Hx; rewrite HD1r;
+                    change (cmpb (dsort D1 x) (rk_sort (drk D r))); rewrite Q3; exact (Hcb x Hx))
               ltac:(rewrite HD1r; refine (proj2 (fld_pull DT Sg S2a _ sr ltac:(intros x; rewrite (Q1 x); exact I) _) R Hpf Hfld _ _);
                     [ intros q0; destruct (Q5 q0) as [q' ->]; exact I
                     | intros x _; apply Hagt
@@ -723,12 +730,14 @@ Theorem bind_row_sorted_complete : forall (D DT : denv) Sg r R n,
   DOk D n -> KR D DT Sg -> old n r ->
   (forall x, x `in` ftv_row R -> old n x) -> (forall q, q `in` frv_row R -> old n q) ->
   prf R -> lcrb 0 R = true -> r `notin` frv_row R ->
+  (forall x, x `in` ftv_row R -> cmpb (D x) (rk_sort (drk D r))) ->
+  (forall q, q `in` frv_row R -> cmpb (rk_sort (drk D q)) (rk_sort (drk D r))) ->
   frld DT Sg (rk_sort (drk D r)) R -> reqX bx DT (sR Sg r) (apR Sg R) ->
   exists s D' n' S2, bind_row D r R n = Some (s, D', n') /\ KR D' DT S2 /\ n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s x))) /\
     (forall q, old n q -> reqX bx DT (sR Sg q) (apR S2 (sR s q))).
 Proof.
-  intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hnr Hfld Hreq.
+  intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hnr Hcb Hcq Hfld Hreq.
   assert (HLK : LK DT (drk D r) (apR Sg R)).
   { apply LK_rkok. exact (rkok_reqX bx DT _ _ _ Hreq (proj2 HK r)). }
   set (ps := abs_vars (drk D r) R).
@@ -760,6 +769,7 @@ Proof.
   rewrite Hocc. cbn iota.
   destruct (bind_row_mid_complete D DT Sg r R0 n Hd HK Hr
               (fun x Hx => Hot x (Hftv x Hx)) (fun q Hq => Hoq q (Hfrv q Hq)) Hpf0 Hlc0 Hnr0
+              (fun x Hx => Hcb x (Hftv x Hx)) (fun q Hq => Hcq q (Hfrv q Hq))
               ltac:(refine (proj2 (fld_pull DT Sg Sg _ (bool_sub ps) _ _) R Hpf Hfld _ _);
                     [ intros x; destruct (Hu1 x) as [E|E]; rewrite E; exact I
                     | intros q; rewrite Hu2; exact I

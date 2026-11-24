@@ -52,6 +52,11 @@ Qed.
 
 Definition cmpb (k1 k2 : sort) : Prop := finer_b k1 k2 = true \/ finer_b k2 k1 = true.
 
+Lemma cmpb_any_eq : forall k k', (k = k_Any \/ k = k_Eq) -> cmpb k' k.
+Proof.
+  intros k k' [Hk|Hk]; rewrite Hk; destruct k'; first [ (left; reflexivity) | (right; reflexivity) ].
+Qed.
+
 Lemma push_sort_facts : forall l D k n sp D' n',
   push_sort D k l n = (sp, D', n') -> (forall b, In b l -> old n b) ->
   (forall r, sR sp r = row_Var r) /\ n <= n' /\

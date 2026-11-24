@@ -32,6 +32,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatConv.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
+Require Import Goat.GoatInferSort.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatCoerce.
 Require Import Goat.GoatCompleteFuel.
@@ -286,7 +287,7 @@ Proof.
   - injection E1 as <-. injection E2 as <-. reflexivity.
   - pose proof (teq_thead _ _ H) as Hh. rewrite E1 in Hh.
     destruct T2 as [ | | | | | | | c | | | ]; simpl in Hh; try discriminate.
-    transitivity c; [ eapply IHteq1 | eapply IHteq2 ]; reflexivity.
+    transitivity c; [ eapply IHteq1; [ exact E1 | reflexivity ] | eapply IHteq2; [ reflexivity | exact E2 ] ].
   - symmetry. eapply IHteq; eassumption.
 Qed.
 
@@ -300,7 +301,8 @@ Proof.
   assert (Hlq : forall x y, teq (sT S x) (sT S y) -> D x = k_Literal -> D y = k_Quot -> teq (sT S x) typ_Float).
   { intros x y Hxy Hx Hy. pose proof (Hk x) as Hsx. pose proof (Hk y) as Hsy.
     rewrite Hx in Hsx. rewrite Hy in Hsy.
-    destruct (sT S x) as [ | | | | | A B | R | v | i | B | w A ] eqn:ESx; simpl in Hsx; try contradiction.
+    destruct (sT S x) as [ | | | | | A B | R | v | i | B | w A ] eqn:ESx; simpl in Hsx; try contradiction;
+      try (destruct Hsx as [H0|H0]; discriminate H0); try discriminate Hsx.
     - exfalso. rewrite (teq_Int_inv _ Hxy) in Hsy. simpl in Hsy. exact Hsy.
     - apply teq_refl.
     - destruct (sT S y) as [ | | | | | A' B' | R' | v' | i' | B' | w' A' ] eqn:ESy;
@@ -309,7 +311,31 @@ Proof.
       exfalso. simpl in Hsy. inversion Hsx; inversion Hsy; congruence. }
   destruct (finer_b_cmp _ _ Ef2 Ef) as [[H1 H2] | [H1 H2]].
   - exact (Hlq a a' Heq H1 H2).
-  - exact (teq_sym _ _ (Hlq a' a (teq_sym _ _ Heq) H2 H1)) .
+  - exact (teq_trans _ _ _ Heq (Hlq a' a (teq_sym _ _ Heq) H2 H1)).
+Qed.
+
+(* The same at conversion in the environment: both variables' types are [Float]
+   up to [teqD]. *)
+Lemma incomparable_float_D : forall (D D1 : denv) S a a',
+  kres D D1 (sT S) -> teqD D1 (sT S a) (sT S a') ->
+  finer_b (D a') (D a) = false -> finer_b (D a) (D a') = false -> teqD D1 (sT S a) typ_Float.
+Proof.
+  intros D D1 S a a' Hk Heq Ef Ef2.
+  assert (Hlq : forall x y, teqD D1 (sT S x) (sT S y) -> D x = k_Literal -> D y = k_Quot ->
+                  teqD D1 (sT S x) typ_Float).
+  { intros x y Hxy Hx Hy. pose proof (Hk x) as Hsx. pose proof (Hk y) as Hsy.
+    rewrite Hx in Hsx. rewrite Hy in Hsy.
+    destruct (sT S x) as [ | | | | | A B | R | v | i | B | w A ] eqn:ESx; simpl in Hsx; try contradiction;
+      try (destruct Hsx as [H0|H0]; discriminate H0); try discriminate Hsx.
+    - exfalso. rewrite (teqD_Int_inv _ _ Hxy) in Hsy. simpl in Hsy. exact Hsy.
+    - apply teqD_refl.
+    - destruct (sT S y) as [ | | | | | A' B' | R' | v' | i' | B' | w' A' ] eqn:ESy;
+        pose proof (teqD_thead _ _ _ Hxy) as Hh; simpl in Hh; try discriminate.
+      pose proof (teq_var_eq _ _ Hxy v v' eq_refl eq_refl) as ->.
+      exfalso. simpl in Hsy. inversion Hsx; inversion Hsy; congruence. }
+  destruct (finer_b_cmp _ _ Ef2 Ef) as [[H1 H2] | [H1 H2]].
+  - exact (Hlq a a' Heq H1 H2).
+  - exact (teqD_trans _ _ _ _ Heq (Hlq a' a (teqD_sym _ _ _ Heq) H2 H1)).
 Qed.
 
 Lemma unify_var_var : forall b S (D : denv) a a' (n : nat), teq (sT S a) (sT S a') ->

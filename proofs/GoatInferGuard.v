@@ -602,28 +602,6 @@ Proof.
   - intros r. unfold rename_r. destruct (in_dec Atom.eq_dec r _); exact I.
 Qed.
 
-Lemma float_row_mg : forall R R', float_row R = Some R' -> mgr R'.
-Proof.
-  induction R as [| | l T R IH |]; intros R' H; cbn [float_row] in H; try discriminate.
-  - injection H as <-. exact I.
-  - destruct (float_row R) as [R''|] eqn:E; [|discriminate]. injection H as <-.
-    cbn [mgr]. exact (conj I (IH _ eq_refl)).
-Qed.
-
-Lemma float_head_mg : forall T F, float_head T = Some F -> mg F.
-Proof.
-  intros T F H. destruct T; cbn [float_head] in H; try discriminate.
-  destruct (float_row R) as [R'|] eqn:E; [|discriminate]. injection H as <-.
-  cbn [mg]. exact (float_row_mg _ _ E).
-Qed.
-
-Lemma quot_ty_mg : forall T1 T2, mg (quot_ty T1 T2).
-Proof.
-  intros T1 T2. unfold quot_ty.
-  destruct (float_head T1) as [F|] eqn:E1; [ exact (float_head_mg _ _ E1) | ].
-  destruct (float_head T2) as [F|] eqn:E2; [ exact (float_head_mg _ _ E2) | exact I ].
-Qed.
-
 Lemma mg_bin_res : forall o T, mg T -> mg (bin_res o T).
 Proof. intros o T H. unfold bin_res. destruct (kind o); first [ exact H | exact I ]. Qed.
 

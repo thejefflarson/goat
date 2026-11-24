@@ -33,6 +33,7 @@ Require Import Goat.GoatInferSort.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatCompleteFuel.
 Require Import Goat.GoatCompleteRows.
+Require Import Goat.GoatCompleteUnify.
 Require Import Goat.GoatCompleteSorts.
 Require Import Goat.GoatCompleteBind.
 Require Import Goat.GoatCompleteBindRow.
@@ -125,7 +126,9 @@ Proof.
   - inversion H; subst. change (typ_Var x = typ_Var y) in E. injection E as <-. left. reflexivity.
   - destruct (finer_b (D b) k).
     + exact (IH _ _ _ _ _ _ H (fun c Hc => Hold c (or_intror Hc)) x y E).
-    + destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E1.
+    + destruct (finer_b k (D b));
+        [ | exact (IH _ _ _ _ _ _ H (fun c Hc => Hold c (or_intror Hc)) x y E) ].
+      destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E1.
       inversion H; subst.
       assert (Hold' : forall c, In c l -> old (Datatypes.S n) c).
       { intros c Hc m Hm. apply (Hold c (or_intror Hc)). lia. }
@@ -250,8 +253,15 @@ Lemma sem_bind : forall DT (D : denv) Sg a T n,
 Proof.
   intros DT D Sg a T n Hd HK Ha Hrf Hv Hot Heq.
   destruct (rf_facts T Hrf) as (Hpf & Hlc & Hfrv & Hfld & _).
+  assert (Hcb : forall b, b `in` ftv_typ T -> cmpb (D b) (D a)).
+  { intros b Hb. left.
+    destruct T as [ | | | | | T1 T2 | | | | | ]; try (simpl in Hrf; contradiction);
+      try (exfalso; exact (Hv _ eq_refl)); try (simpl in Hb; fsetdec).
+    assert (Hsa : sat DT (D a) (apT Sg (typ_Arrow T1 T2))).
+    { apply (sat_teqD DT (D a) (sT Sg a) _ Heq). exact (proj1 HK a). }
+    cbn in Hsa. rewrite Hsa. destruct (D b); reflexivity. }
   destruct (bind_prop_pres_complete D DT Sg a T n Hd HK Ha Hv Hot (fun q Hq => ltac:(exfalso; exact (Hfrv q Hq)))
-              Hpf Hlc (rf_po Sg a T Hrf) (Hfld DT Sg (D a)) Heq)
+              Hpf Hlc Hcb (fun q Hq => ltac:(exfalso; exact (Hfrv q Hq))) (rf_po Sg a T Hrf) (Hfld DT Sg (D a)) Heq)
     as (s & D' & n' & S2 & E & K & Hl & Hd' & F & Fr & Im).
   exists s, D', n', S2. refine (conj E (conj (conj K (conj Hd' (conj _ (conj F _)))) Im)).
   - exact (bind_prop_SI D a T n s D' n' E Hd Ha Hrf Hot).
@@ -286,11 +296,42 @@ Qed.
 
 Lemma stable_varvar : forall D a a' n,
   Stable (fun f => unify_tD f D (typ_Var a) (typ_Var a') n =
-    Some (if Atom.eq_dec a a' then sid else if finer_b (D a') (D a) then sbT a (typ_Var a') else sbT a' (typ_Var a), D, n)).
+    Some (if Atom.eq_dec a a' then sid else if finer_b (D a') (D a) then sbT a (typ_Var a')
+          else if finer_b (D a) (D a') then sbT a' (typ_Var a) else meet_float a a', D, n)).
 Proof.
   intros D a a' n. exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
   cbn [unify_tD]. destruct (Atom.eq_dec a a') as [->|Hne]; [ reflexivity | ].
-  destruct (finer_b (D a') (D a)); reflexivity.
+  destruct (finer_b (D a') (D a)); [ reflexivity | ].
+  destruct (finer_b (D a) (D a')); reflexivity.
+Qed.
+
+Lemma meet_float_sT : forall a b x,
+  ((x = a \/ x = b) /\ sT (meet_float a b) x = typ_Float) \/ sT (meet_float a b) x = typ_Var x.
+Proof.
+  intros a b x. unfold meet_float.
+  change (((x = a \/ x = b) /\ apT (sbT b typ_Float) (sT (sbT a typ_Float) x) = typ_Float) \/
+          apT (sbT b typ_Float) (sT (sbT a typ_Float) x) = typ_Var x).
+  cbn [sT sbT]. destruct (Atom.eq_dec x a) as [->|Hne]; [ left; split; [ left; reflexivity | reflexivity ] | ].
+  change (((x = a \/ x = b) /\ sT (sbT b typ_Float) x = typ_Float) \/ sT (sbT b typ_Float) x = typ_Var x).
+  cbn [sT sbT]. destruct (Atom.eq_dec x b) as [->|Hnb]; [ left; split; [ right; reflexivity | reflexivity ] | right; reflexivity ].
+Qed.
+
+(* Two variables the unifier meets at [Float]: neither sort is finer, and both
+   images are [Float]. *)
+Lemma Sem_meet : forall DT Sg D n a b, KR D DT Sg -> DOk D n ->
+  teqD DT (sT Sg a) typ_Float -> teqD DT (sT Sg b) typ_Float ->
+  Sem DT Sg n (meet_float a b) D n Sg.
+Proof.
+  intros DT Sg D n a b HK Hd Ha Hb. refine (conj HK (conj Hd (conj _ (conj _ _)))).
+  - split; [ lia | split ].
+    + intros x Hx. destruct (meet_float_sT a b x) as [[_ E]|E]; rewrite E; split; try exact I;
+        intros y Hy; simpl in Hy; [ fsetdec | apply AtomSetFacts.singleton_iff in Hy; subst; exact Hx ].
+    + intros q _. reflexivity.
+  - intros x _. destruct (meet_float_sT a b x) as [[[H0|H0] E]|E]; try subst x; rewrite E.
+    + exact Ha.
+    + exact Hb.
+    + apply teqD_refl.
+  - intros q _. reflexivity.
 Qed.
 
 Ltac nv := intros ? Hnv; discriminate Hnv.
@@ -360,10 +401,17 @@ Proof.
         { eapply Stable_mono; [ | exact (stable_varvar D a a' n) ].
           intros f Hf. rewrite Hf. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity. }
         exact (conj (Sem_sbT DT Sg D n a a' HK Hd (A2 a' ltac:(simpl; fsetdec)) Hteq) (Img_refl Sg)).
-      * exists (sbT a' (typ_Var a)), D, n, Sg. split.
-        { eapply Stable_mono; [ | exact (stable_varvar D a a' n) ].
-          intros f Hf. rewrite Hf. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity. }
-        exact (conj (Sem_sbT DT Sg D n a' a HK Hd (A1 a ltac:(simpl; fsetdec)) (teqD_sym _ _ _ Hteq)) (Img_refl Sg)).
+      * destruct (finer_b (D a) (D a')) eqn:Ef2.
+        -- exists (sbT a' (typ_Var a)), D, n, Sg. split.
+           { eapply Stable_mono; [ | exact (stable_varvar D a a' n) ].
+             intros f Hf. rewrite Hf. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef, Ef2. reflexivity. }
+           exact (conj (Sem_sbT DT Sg D n a' a HK Hd (A1 a ltac:(simpl; fsetdec)) (teqD_sym _ _ _ Hteq)) (Img_refl Sg)).
+        -- pose proof (incomparable_float_D D DT Sg a a' (proj1 HK) Hteq Ef Ef2) as Hf1.
+           pose proof (teqD_trans _ _ _ _ (teqD_sym _ _ _ Hteq) Hf1) as Hf2.
+           exists (meet_float a a'), D, n, Sg. split.
+           { eapply Stable_mono; [ | exact (stable_varvar D a a' n) ].
+             intros f Hf. rewrite Hf. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef, Ef2. reflexivity. }
+           exact (conj (Sem_meet DT Sg D n a a' HK Hd Hf1 Hf2) (Img_refl Sg)).
 Qed.
 
 (* The unifier W calls is complete on record-free types: given a substitution
