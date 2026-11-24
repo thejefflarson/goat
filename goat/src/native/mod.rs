@@ -332,7 +332,23 @@ fn engine() -> Result<Engine, String> {
     let mut config = Config::new();
     config.wasm_tail_call(true);
     config.epoch_interruption(true);
+    if std::env::var("GOAT_RUNTIME").as_deref() == Ok("pulley") {
+        pulley(&mut config).map_err(|e| format!("pulley: {e}"))?;
+    }
     Engine::new(&config).map_err(|e| format!("engine: {e}"))
+}
+
+/// Configure `config` for wasmtime's Pulley interpreter, the way an iOS host
+/// must: Pulley needs no executable memory and no signal handlers, so every
+/// bounds check is explicit and a 64 MiB reservation with no guard region
+/// bounds each memory.
+pub fn pulley(config: &mut Config) -> wasmtime::Result<()> {
+    config
+        .target("pulley64")?
+        .signals_based_traps(false)
+        .memory_reservation(64 << 20)
+        .memory_guard_size(0);
+    Ok(())
 }
 
 /// What `module` imports from the host, answered from `host`.
@@ -795,5 +811,45 @@ impl<H: Host + 'static> Guest<H> {
 
     pub fn into_host(self) -> H {
         self.store.into_data().host
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TAIL_LOOP: &str = r#"(module
+        (func $spin (param i64) (return_call $spin (i64.add (local.get 0) (i64.const 1))))
+        (func (export "run") (call $spin (i64.const 0))))"#;
+
+    #[test]
+    fn an_epoch_stops_a_tail_call_loop_on_the_pulley_interpreter() {
+        let mut config = Config::new();
+        config.wasm_tail_call(true).epoch_interruption(true);
+        pulley(&mut config).unwrap();
+        let engine = Engine::new(&config).unwrap();
+        assert!(engine.is_pulley());
+        let module = Module::new(&engine, TAIL_LOOP).unwrap();
+        let mut store = Store::new(&engine, ());
+        store.set_epoch_deadline(1);
+        let instance = Instance::new(&mut store, &module, &[]).unwrap();
+        let run = instance
+            .get_typed_func::<(), ()>(&mut store, "run")
+            .unwrap();
+        let ticker = engine.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            ticker.increment_epoch();
+        });
+        let started = std::time::Instant::now();
+        let error = run.call(&mut store, ()).unwrap_err();
+        assert!(interrupted(&error), "{error:#}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn the_pulley_lane_selects_the_interpreter() {
+        let selected = std::env::var("GOAT_RUNTIME").as_deref() == Ok("pulley");
+        assert_eq!(engine().unwrap().is_pulley(), selected);
     }
 }

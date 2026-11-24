@@ -1,0 +1,17 @@
+[package]
+name = "goat_pulley_spike"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+goat = { path = "../goat", features = ["native"] }
+goat_canvas = { path = "../canvas" }
+
+# Separate from the main workspace: it is built for iOS, and keeps the editor
+# image context and the workspace gates unchanged.
+[workspace]
