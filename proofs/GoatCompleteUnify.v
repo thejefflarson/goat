@@ -200,7 +200,7 @@ Proof. intros D T. destruct T; simpl; first [ reflexivity | apply finer_b_any ].
 Lemma bind_prop_any : forall (D : denv) a T (n : nat), D a = k_Any -> occT a T = false ->
   bind_prop D a T n = Some (scomp (sbT a T) (scomp sid sid), D, n).
 Proof.
-  intros D a T n Ha Ho. unfold bind_prop. rewrite Ho, Ha, push_sort_any.
+  intros D a T n Ha Ho. apply bind_prop_of0. unfold bind_prop0. rewrite Ho, Ha, push_sort_any.
   cbn match. rewrite Ha, push_sort_r_any. cbn match. rewrite !apT_id, Ho, Ha, sat_b_any.
   reflexivity.
 Qed.
@@ -213,11 +213,13 @@ Proof.
   intros D a c n Hc Hs.
   assert (Hf : ftv_typ c = empty /\ frv_typ c = empty)
     by (destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; split; reflexivity).
+  assert (Hl : ftv_live c = empty /\ frv_live c = empty)
+    by (destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; split; reflexivity).
   assert (Ho : occT a c = false).
   { unfold occT. rewrite (proj1 Hf). apply Bool.orb_false_iff. split.
     - apply AtomSetFacts.not_mem_iff. fsetdec.
     - destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; reflexivity. }
-  unfold bind_prop. rewrite Ho, (proj1 Hf), (proj2 Hf), AtomSetProperties.elements_empty.
+  apply bind_prop_of0. unfold bind_prop0. rewrite Ho, (proj1 Hl), (proj2 Hl), AtomSetProperties.elements_empty.
   cbn [push_sort push_sort_r]. cbn iota. rewrite !apT_id, Ho, Hs. reflexivity.
 Qed.
 

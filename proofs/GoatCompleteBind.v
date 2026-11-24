@@ -536,18 +536,18 @@ Section PropX.
 
 Variable bx : bool.
 
-Theorem bind_prop_sorted_complete : forall (D D1 : denv) Sg a T n,
+Theorem bind_prop0_sorted_complete : forall (D D1 : denv) Sg a T n,
   DOk D n -> KR D D1 Sg -> old n a -> a `notin` ftv_typ T ->
   (forall b, b `in` ftv_typ T -> old n b) -> (forall q, q `in` frv_typ T -> old n q) ->
   (forall b, b `in` ftv_typ T -> cmpb (D b) (D a)) ->
   (forall q, q `in` frv_typ T -> cmpb (rk_sort (drk D q)) (D a)) ->
-  pf T -> lcb 0 T = true -> fld D1 Sg (D a) T -> teqX bx D1 (sT Sg a) (apT Sg T) ->
-  exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
+  pf T -> lcb 0 T = true -> na T = true -> fld D1 Sg (D a) T -> teqX bx D1 (sT Sg a) (apT Sg T) ->
+  exists s D' n' S2, bind_prop0 D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
     n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teqX bx D1 (sT Sg x) (apT S2 (sT s x))) /\
     (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2.
 Proof.
-  intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hcb Hcq Hpf Hlc Hfld Heq.
+  intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hcb Hcq Hpf Hlc Hna0 Hfld Heq.
   assert (Hsa : sat D1 (D a) (apT Sg T)).
   { apply (sat_teqX bx D1 (D a) (sT Sg a) (apT Sg T) Heq). exact (proj1 HK a). }
   destruct (sat_reach_mut D1 Sg (D a)) as [Hrt _].
@@ -561,7 +561,8 @@ Proof.
   { unfold occT. apply Bool.orb_false_iff. split.
     - apply AtomSetFacts.not_mem_iff. exact Hna.
     - rewrite Hlc. reflexivity. }
-  unfold bind_prop. rewrite Hocc.
+  unfold bind_prop0. rewrite Hocc.
+  destruct ((proj1 na_live_mut) T Hna0) as [Hlt Hlr]. rewrite Hlt, Hlr.
   destruct (push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n) as [[sp D1'] n1] eqn:Ep.
   destruct (push_sort_facts _ _ _ _ _ _ _ Ep Holdl) as (P1 & P2 & P3 & P4' & P5 & P6').
   assert (Hall : allcmp D (D a) (AtomSetImpl.elements (ftv_typ T)))
@@ -645,6 +646,23 @@ Proof.
     pose proof (Rq r (fun m Hm => Hr m ltac:(lia))) as E. rewrite R1, E' in E.
     exact E.
   - exact (Img_trans _ _ _ I1 (Img_sT _ _ T2)).
+Qed.
+
+Theorem bind_prop_sorted_complete : forall (D D1 : denv) Sg a T n,
+  DOk D n -> KR D D1 Sg -> old n a -> a `notin` ftv_typ T ->
+  (forall b, b `in` ftv_typ T -> old n b) -> (forall q, q `in` frv_typ T -> old n q) ->
+  (forall b, b `in` ftv_typ T -> cmpb (D b) (D a)) ->
+  (forall q, q `in` frv_typ T -> cmpb (rk_sort (drk D q)) (D a)) ->
+  pf T -> lcb 0 T = true -> na T = true -> fld D1 Sg (D a) T -> teqX bx D1 (sT Sg a) (apT Sg T) ->
+  exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
+    n <= n' /\ DOk D' n' /\
+    (forall x, old n x -> teqX bx D1 (sT Sg x) (apT S2 (sT s x))) /\
+    (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2.
+Proof.
+  intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hcb Hcq Hpf Hlc Hna0 Hfld Heq.
+  destruct (bind_prop0_sorted_complete D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hcb Hcq Hpf Hlc Hna0 Hfld Heq)
+    as (s & D' & n' & S2 & H0 & Hrest).
+  exists s, D', n', S2. split; [ exact (bind_prop_of0 _ _ _ _ _ H0) | exact Hrest ].
 Qed.
 
 End PropX.

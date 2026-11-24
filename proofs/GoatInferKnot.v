@@ -621,7 +621,7 @@ Proof.
   intros a.
   change (unify_t 10 d_any (typ_Var a) (ball_of (typ_Var a)) 0)
     with (bind_prop d_any a (ball_of (typ_Var a)) 0).
-  unfold bind_prop.
+  unfold bind_prop, bind_prop0.
   assert (H : occT a (ball_of (typ_Var a)) = true).
   { unfold occT. rewrite (mem_ball a). reflexivity. }
   rewrite H. reflexivity.

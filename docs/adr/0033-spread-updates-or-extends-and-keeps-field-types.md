@@ -242,3 +242,51 @@ the two-method model check) and open a new issue for the three-method blow-up.
 The Coq work is not on the critical path: the proof core has no spread, so the
 small job (forbid duplicate labels) can follow the Rust change and the large
 job waits for spread to enter the proof core.
+
+## Amendment: a sort that no field type can meet makes an open entry absent (2026-11-23)
+
+A sort that reaches a record (`==` takes `Eq`, arithmetic `Numeric`, `/` `Quot`)
+reads each entry by its presence: a present field must meet the sort, an absent
+one is no field and is skipped. An entry whose presence is still a variable took
+the sort on its field as if it were present. So `r == r` over `{id^p: fn | ρ}`
+was refused when it came before the statement that settled `p` absent, and
+accepted after it: the verdict depended on unification order.
+
+Decision (owner, 2026-11-23: verdicts must not depend on unification order):
+
+1. **An open entry whose field type can never meet the sort is absent.** The
+   field fails the sort by its own shape (a function, or a `String` where a
+   number is needed), whatever its type variables become and whichever of its own
+   open entries end up present. The record can satisfy the sort no other way, so
+   the sort binds the presence to absent at once. `forced` and `perm_b` in
+   `proofs/GoatInfer.v` decide it; the checker's `constrain_row` and
+   `never_meets` do the same, through records and `mu` bodies and not through
+   tag groups.
+2. **A variable field still takes the sort.** `l^p: x` with `x` a variable gets
+   `x` sorted as before, because the sort would have to wait on `p` (be
+   discharged on the field when `p` settles present, dropped when it settles
+   absent) and the calculus has no way to say so: `sat`, the substitution lemma,
+   the renaming of kinding environments (`dperm`), the schemes' recorded sorts
+   and the unifiers' invariant `Good` would each need a constraint conditional
+   on a presence variable, and `typing_tsubst_gen_mut` would need it respected by
+   every substitution. The cost is the order dependence that remains: a
+   function passed for `x` after `r == r` came before the statement that settles
+   `p` absent is refused (`a_variable_field_keeps_the_sort_it_took_before`),
+   accepted when `p` settles first.
+3. **Variables inside an absent entry's field are not sorted.** The sort is
+   pushed onto the variables of the type a variable binds to (`push_sort`),
+   leaving out those that sit only in the field of an entry whose presence is
+   `Bool` (`ftv_live`, `frv_live`), as the checker never sees them.
+4. **The refusal keeps its words.** When a later use needs the field the sort
+   took as absent (`r.id` after `r == r`), the checker reports the comparison's
+   own error, at the comparison, with a note at the use, rather than the hidden
+   label error the absent field would raise.
+
+Algorithm W binds first as before and, when that fails, binds the presence
+variables `forced` names to `Bool` (the sort of each must allow `Bool`) and binds
+again (`bind_prop`, `bind_row`; soundness as for the presences `bind_row` already
+binds for a label the row variable lacks: `bind_prop_sound`, `bind_row_sound`).
+Nothing is accepted that was accepted before with another type: the four corpus
+programs that changed (two orders of a function field compared before and after
+the presence settles, two with a second spread) were all refused.
+
