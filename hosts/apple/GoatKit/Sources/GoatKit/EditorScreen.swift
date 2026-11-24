@@ -16,13 +16,72 @@ private struct CanvasView: NSViewRepresentable {
 #else
 private struct CanvasView: UIViewRepresentable {
     let engine: Engine
+    var margin = CGColor(gray: 1, alpha: 1)
+    var onTouchDown: () -> Void = {}
+    var onSwipeDown: (() -> Void)?
+
     func makeUIView(context: Context) -> CanvasHostView {
         let view = CanvasHostView(frames: engine.frames)
+        view.margin = margin
         view.onKey = { [engine] in engine.key($0, down: $1) }
-        view.onPointer = { [engine] in engine.pointer($0, x: $1, y: $2) }
+        view.onPointer = { [engine, onTouchDown] kind, x, y in
+            if kind == .down { onTouchDown() }
+            engine.pointer(kind, x: x, y: y)
+        }
+        view.onSwipeDown = onSwipeDown
         return view
     }
     func updateUIView(_ view: CanvasHostView, context: Context) {}
+}
+
+/// Play mode: the canvas edge to edge on black, with a Close button that shows on
+/// a touch and fades after a few seconds; swiping down closes too. The program
+/// keeps running behind it, so leaving Play returns to the editor with the same
+/// picture, not a restart.
+private struct PlayCanvas: View {
+    let engine: Engine
+    let close: () -> Void
+    @State private var closeVisible = true
+    @State private var fade: Task<Void, Never>?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.black
+            CanvasView(
+                engine: engine, margin: CGColor(gray: 0, alpha: 1), onTouchDown: reveal, onSwipeDown: close
+            )
+            .accessibilityLabel("drawing")
+            .accessibilityValue(engine.phase.accessibilityValue)
+            .accessibilityIdentifier("canvas")
+            if closeVisible {
+                Button(action: close) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.largeTitle)
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .black.opacity(0.6))
+                        .padding(16)
+                }
+                .accessibilityLabel("Close")
+                .accessibilityIdentifier("closePlay")
+                .transition(.opacity)
+            }
+        }
+        .ignoresSafeArea()
+        .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
+        .onAppear(perform: reveal)
+        .onDisappear { fade?.cancel() }
+    }
+
+    private func reveal() {
+        withAnimation { closeVisible = true }
+        fade?.cancel()
+        fade = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            withAnimation { closeVisible = false }
+        }
+    }
 }
 #endif
 
@@ -32,6 +91,9 @@ private struct CanvasView: UIViewRepresentable {
 public struct EditorScreen: View {
     @Binding var document: GoatDocument
     @StateObject private var engine = Engine()
+    #if os(iOS)
+    @State private var playing = false
+    #endif
 
     public init(document: Binding<GoatDocument>) {
         _document = document
@@ -43,6 +105,19 @@ public struct EditorScreen: View {
     }
 
     public var body: some View {
+        #if os(iOS)
+        if playing {
+            PlayCanvas(engine: engine) { playing = false }
+                .toolbar(.hidden, for: .navigationBar)
+        } else {
+            editor
+        }
+        #else
+        editor
+        #endif
+    }
+
+    private var editor: some View {
         VStack(spacing: 0) {
             GeometryReader { geometry in
                 let layout = geometry.size.width > geometry.size.height
@@ -77,6 +152,15 @@ public struct EditorScreen: View {
                 }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(engine.phase != .running)
+                #if os(iOS)
+                Button {
+                    engine.run(source: document.text)
+                    playing = true
+                } label: {
+                    Label("Play", systemImage: "rectangle.expand.vertical")
+                }
+                .disabled(!engine.phase.canRun)
+                #endif
             }
         }
     }
