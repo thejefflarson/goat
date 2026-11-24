@@ -148,6 +148,122 @@ fn entry_c(source: &str) -> String {
     )
 }
 
+/// The bundle identifier of the app named `name`: `local.goat.` and the name
+/// in lowercase ASCII letters, digits and hyphens.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn bundle_identifier(name: &str) -> String {
+    let slug: Vec<String> = name
+        .to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect();
+    let slug = if slug.is_empty() {
+        "app".to_string()
+    } else {
+        slug.join("-")
+    };
+    format!("local.goat.{slug}")
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// The `Info.plist` of the app `name`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn info_plist(name: &str) -> String {
+    let (id, name) = (bundle_identifier(name), xml_escape(name));
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>{name}</string>
+	<key>CFBundleIdentifier</key>
+	<string>{id}</string>
+	<key>CFBundleName</key>
+	<string>{name}</string>
+	<key>CFBundleDisplayName</key>
+	<string>{name}</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
+"#
+    )
+}
+
+/// Whether `out` names an app bundle.
+pub fn is_app_path(out: &Path) -> bool {
+    out.extension().is_some_and(|ext| ext == "app")
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn bundle(_: &str, _: &str, _: &Path) -> Result<(), String> {
+    Err("goat build --native writes .app bundles on macOS only".to_string())
+}
+
+/// Writes the interactive program `ll` as the app bundle `app`: the executable,
+/// an `Info.plist`, the default icon, all signed ad hoc so macOS will run it.
+#[cfg(target_os = "macos")]
+pub fn bundle(ll: &str, source: &str, app: &Path) -> Result<(), String> {
+    use goat_native::appkit;
+    if !is_interactive(ll) {
+        return Err(
+            "a .app needs an interactive program (one with init, update and draw); \
+             a run-once program builds as a plain executable, so drop the .app from -o"
+                .to_string(),
+        );
+    }
+    let name = app
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .ok_or_else(|| format!("{} has no name to give the app", app.display()))?;
+    const CODESIGN: &str = "/usr/bin/codesign";
+    if !Path::new(CODESIGN).is_file() {
+        return Err(format!(
+            "goat build --native needs {CODESIGN} to sign a .app, which is missing"
+        ));
+    }
+    if app.is_dir() {
+        std::fs::remove_dir_all(app)
+            .map_err(|e| format!("cannot replace {}: {e}", app.display()))?;
+    }
+    let (macos, resources) = (app.join("Contents/MacOS"), app.join("Contents/Resources"));
+    for dir in [&macos, &resources] {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+    }
+    link_interactive(ll, source, &macos.join(name))?;
+    for (path, bytes) in [
+        (
+            app.join("Contents/Info.plist"),
+            info_plist(name).into_bytes(),
+        ),
+        (resources.join("AppIcon.icns"), appkit::ICON.to_vec()),
+    ] {
+        std::fs::write(&path, bytes)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+    run(
+        Command::new(CODESIGN)
+            .args(["--force", "--sign", "-"])
+            .arg(app),
+        "codesign",
+    )
+}
+
 /// Links `ll`, the IR of `source`, into the executable `out`.
 pub fn link(ll: &str, source: &str, out: &Path) -> Result<(), String> {
     if is_interactive(ll) {

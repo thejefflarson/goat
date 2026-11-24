@@ -139,6 +139,20 @@ fn build_native_reads_the_vocabulary_from_the_program_and_obeys_the_flags() {
     assert!(forced.contains("error(s)"), "{forced}");
 }
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn an_app_is_refused_off_macos() {
+    needs_clang!();
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(GOAT)
+        .args(["build", "--native", SPIRAL, "-o"])
+        .arg(dir.path().join("Spiral.app"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("macOS only"));
+}
+
 /// The AppKit window host (macOS only). Every test runs the binary with
 /// `--headless`, which needs no display: the program runs and its pictures are
 /// decoded as the window would draw them.
@@ -263,6 +277,111 @@ mod window_host {
             numbers(&String::from_utf8_lossy(&ran.stdout), "line"),
             [0.0, 0.0, 10.0, 0.0]
         );
+    }
+
+    fn codesign_present() -> bool {
+        Path::new("/usr/bin/codesign").is_file()
+    }
+
+    fn build_app(dir: &Path, source_file: &str, app: &str) -> Output {
+        Command::new(GOAT)
+            .args(["build", "--native", source_file, "-o"])
+            .arg(dir.join(app))
+            .env_remove("GOAT_NATIVE_LIB")
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_app_bundle_has_the_layout_the_plist_and_a_valid_signature() {
+        needs_clang!();
+        if !codesign_present() {
+            eprintln!("skipped: codesign is not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let built = build_app(
+            dir.path(),
+            "../examples/canvas/bounce.goat",
+            "Bounce Ball.app",
+        );
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let app = dir.path().join("Bounce Ball.app");
+        let exe = app.join("Contents/MacOS/Bounce Ball");
+        assert!(exe.is_file());
+        let icon = std::fs::read(app.join("Contents/Resources/AppIcon.icns")).unwrap();
+        assert_eq!(&icon[..4], b"icns");
+
+        let plist = app.join("Contents/Info.plist");
+        assert!(
+            Command::new("/usr/bin/plutil")
+                .arg("-lint")
+                .arg(&plist)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        let key = |key: &str| {
+            let out = Command::new("/usr/bin/plutil")
+                .args(["-extract", key, "raw", "-o", "-"])
+                .arg(&plist)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{key} is missing");
+            String::from_utf8(out.stdout)
+                .unwrap()
+                .trim_end()
+                .to_string()
+        };
+        for (name, value) in [
+            ("CFBundleExecutable", "Bounce Ball"),
+            ("CFBundleIdentifier", "local.goat.bounce-ball"),
+            ("CFBundleName", "Bounce Ball"),
+            ("CFBundleDisplayName", "Bounce Ball"),
+            ("CFBundlePackageType", "APPL"),
+            ("CFBundleIconFile", "AppIcon"),
+            ("LSMinimumSystemVersion", "13.0"),
+            ("NSHighResolutionCapable", "true"),
+        ] {
+            assert_eq!(key(name), value, "{name}");
+        }
+
+        let verified = Command::new("/usr/bin/codesign")
+            .args(["--verify", "--strict"])
+            .arg(&app)
+            .output()
+            .unwrap();
+        assert!(
+            verified.status.success(),
+            "{}",
+            String::from_utf8_lossy(&verified.stderr)
+        );
+        let ran = headless(&exe, &["3"]);
+        assert!(
+            ran.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        assert!(String::from_utf8_lossy(&ran.stdout).contains("circle"));
+    }
+
+    #[test]
+    fn a_run_once_program_refuses_an_app() {
+        needs_clang!();
+        let dir = tempfile::tempdir().unwrap();
+        let built = build_app(dir.path(), SPIRAL, "Spiral.app");
+        assert!(!built.status.success());
+        let error = String::from_utf8_lossy(&built.stderr);
+        assert!(
+            error.contains("a .app needs an interactive program"),
+            "{error}"
+        );
+        assert!(!dir.path().join("Spiral.app").exists());
     }
 }
 

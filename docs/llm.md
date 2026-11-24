@@ -30,6 +30,7 @@ goat run program.goat      # compile to wasm and run it, printing the result
 goat build program.goat -o out.wasm   # just emit the wasm module
 goat check program.goat    # type-check only
 goat build --native program.goat -o out   # a standalone native executable
+goat build --native game.goat -o Game.app # a signed macOS app bundle (interactive programs)
 ```
 
 `goat build --native` emits LLVM IR and has clang link it with `libgoat_native.a`,
@@ -37,8 +38,11 @@ which the `goat` binary carries (`cargo build -p goat_cli` builds it in; a copy
 beside the executable or at `$GOAT_NATIVE_LIB` takes precedence). `$GOAT_CLANG` picks the clang; otherwise
 it tries `clang-23`, `clang-17`, then `clang`. The executable prints to stdout,
 reports a trap on stderr as `goat run` does and exits non-zero, and takes
-`-o OUT.svg` to save the turtle's drawing. Interactive programs are not
-supported yet.
+`-o OUT.svg` to save the turtle's drawing. An interactive program opens an
+AppKit window on macOS. When `-o` ends in `.app`, the build writes a macOS app
+bundle (`Contents/MacOS/<name>`, `Info.plist`, a default icon) and signs it ad
+hoc with `/usr/bin/codesign`; a run-once program refuses `.app`, and so does any
+non-macOS host.
 
 The program's result is its **final expression**. The runtime prints that value
 when it is a number or a boolean. (A record, list or function result prints
