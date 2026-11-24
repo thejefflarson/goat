@@ -36,7 +36,7 @@ public struct GoatDocument: FileDocument {
         FileWrapper(regularFileWithContents: Data(text.utf8))
     }
 
-    static func decode(_ data: Data) throws -> String {
+    public static func decode(_ data: Data) throws -> String {
         guard let text = String(data: data, encoding: .utf8) else {
             throw CocoaError(.fileReadInapplicableStringEncoding)
         }

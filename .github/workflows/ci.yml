@@ -214,7 +214,7 @@ jobs:
       - name: Build and run an interactive example
         run: |
           cargo build -p goat_cli
-          target/debug/goat build --native --canvas examples/canvas/bounce.goat -o "$RUNNER_TEMP/bounce"
+          target/debug/goat build --native examples/canvas/bounce.goat -o "$RUNNER_TEMP/bounce"
           "$RUNNER_TEMP/bounce" --headless 10
 
   # Keeps the front end and wasm backend buildable for wasm32 so the compiler
