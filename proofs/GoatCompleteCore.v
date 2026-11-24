@@ -13,9 +13,9 @@
    run returns is [teqD D1] to the derivation's under [S2].  Nothing is asked of
    [Sg] off the live atoms: each call to the unifier ([unify_stepL]) rebuilds a
    full substitution ([restr]) that agrees with [Sg] on [L] and sends the other
-   atoms to [Int], which satisfies every sort, and then reads the result back on
+   atoms to [Float], which satisfies every sort, and then reads the result back on
    the live atoms.  The allowed set [P] of images rides along: the unifier's
-   extension invents no type ([Img]), and [Int] is in [P], so [P] holds of every
+   extension invents no type ([Img]), and [Float] is in [P], so [P] holds of every
    image of the live atoms the run returns.
 
    [let] of a value and [letrec] are not here: they generalize, so the algorithm's
@@ -571,15 +571,15 @@ Proof.
 Qed.
 
 (* The full substitution the unifier's completeness needs: [Sg] on the live
-   atoms, and [Int], which satisfies every sort, elsewhere. *)
+   atoms, and [Float], which satisfies every sort, elsewhere. *)
 Definition restr (L : atoms) (Sg : sub) : sub :=
-  Sub (fun a => if AtomSetImpl.mem a L then sT Sg a else typ_Int) (sR Sg).
+  Sub (fun a => if AtomSetImpl.mem a L then sT Sg a else typ_Float) (sR Sg).
 
 Lemma restr_in : forall L Sg a, a `in` L -> sT (restr L Sg) a = sT Sg a.
 Proof. intros L Sg a Ha. cbn [restr sT]. rewrite (AtomSetImpl.mem_1 Ha). reflexivity. Qed.
 
 Lemma unify_stepL : forall P DT D Sg L T1 T2 n,
-  P typ_Int -> DOk D n -> LOld n L -> Live P L D DT Sg -> rkres D DT (sR Sg) ->
+  P typ_Float -> DOk D n -> LOld n L -> Live P L D DT Sg -> rkres D DT (sR Sg) ->
   rf T1 -> rf T2 -> ftv_typ T1 [<=] L -> ftv_typ T2 [<=] L ->
   teqD DT (apT Sg T1) (apT Sg T2) ->
   exists s D' n' S2,
@@ -615,9 +615,8 @@ Qed.
 (* [typing] restricted to the constructs here, with a binder's premise at every
    name fresh for the context and the term (the algorithm opens a binder at the
    one name it chose), the context's bindings monomorphic, and the operators of
-   one numeric sort.  The record division of [sig_quot_rec] is not here: the
-   core's types hold no record, so the algorithm unifies the operands of [/] with
-   [Float].  [P] is the allowed set: the types a rule invents (a parameter's, a
+   one sort ([generic_sort]: [Numeric], and [Quot] for [/]); the core's types
+   hold no record, so a [Quot] type here is a [Float].  [P] is the allowed set: the types a rule invents (a parameter's, a
    numeral's, a call's result, an operator's) are in it. *)
 Inductive ctyping (P : typ -> Prop) : denv -> ctx -> exp -> typ -> Prop :=
   | C_Var : forall Dd Gd x T,
@@ -641,11 +640,8 @@ Inductive ctyping (P : typ -> Prop) : denv -> ctx -> exp -> typ -> Prop :=
   | C_ToFloat : forall Dd Gd e A,
       ctyping P Dd Gd e A -> sat Dd k_Literal A -> P A -> ctyping P Dd Gd (e_tofloat e) typ_Float
   | C_Arith : forall Dd Gd e1 o e2 A,
-      kind o <> k_cmp -> kind o <> k_quot -> sat Dd k_Numeric A -> P A ->
+      kind o <> k_cmp -> sat Dd (generic_sort o) A -> P A ->
       ctyping P Dd Gd e1 A -> ctyping P Dd Gd e2 A -> ctyping P Dd Gd (e_bin e1 o e2) A
-  | C_Quot : forall Dd Gd e1 e2,
-      ctyping P Dd Gd e1 typ_Float -> ctyping P Dd Gd e2 typ_Float ->
-      ctyping P Dd Gd (e_bin e1 bop_div e2) typ_Float
   | C_Cmp : forall Dd Gd e1 o e2 A,
       kind o = k_cmp -> sat Dd k_Eq A -> P A ->
       ctyping P Dd Gd e1 A -> ctyping P Dd Gd e2 A -> ctyping P Dd Gd (e_bin e1 o e2) typ_Bool
@@ -672,9 +668,11 @@ Proof.
   - apply T_If; assumption.
   - eapply T_ToFloat; eassumption.
   - eapply T_Bin; [ exact IHctyping1 | exact IHctyping2 | ].
-    destruct (kind o) eqn:Ek; try contradiction;
-      [ apply sig_ring | apply sig_whole ]; assumption.
-  - apply (T_Bin Dd Gd e1 bop_div e2 typ_Float typ_Float typ_Float); [ assumption | assumption | apply sig_quot ].
+    unfold generic_sort in H0. destruct (kind o) eqn:Ek; try contradiction.
+    + apply sig_ring; assumption.
+    + assert (Ho : o = bop_div) by (destruct o; first [ reflexivity | discriminate Ek ]).
+      rewrite Ho. apply sig_quot. assumption.
+    + apply sig_whole; assumption.
   - eapply T_Bin; [ exact IHctyping1 | exact IHctyping2 | ].
     apply sig_cmp; assumption.
   - apply T_LetMono with (L := dom Gd `union` fv_exp e2) (T1 := T1); [ exact IHctyping | exact H2 ].
@@ -711,27 +709,11 @@ Proof.
 Qed.
 
 
-Lemma generic_sort_arith : forall o, kind o <> k_cmp -> generic_sort o = k_Numeric.
-Proof. intros o H. unfold generic_sort. destruct (kind o); [ reflexivity | reflexivity | reflexivity | contradiction ]. Qed.
-
 Lemma is_cmp_op_true : forall o, kind o = k_cmp -> is_cmp_op o = true.
 Proof. intros o H. unfold is_cmp_op. rewrite H. reflexivity. Qed.
 
 Lemma is_cmp_op_false : forall o, kind o <> k_cmp -> is_cmp_op o = false.
 Proof. intros o H. unfold is_cmp_op. destruct (kind o); try reflexivity. contradiction. Qed.
-
-Lemma is_generic_op_true : forall o, kind o <> k_quot -> is_generic_op o = true.
-Proof. intros o H. unfold is_generic_op. destruct (kind o); try reflexivity. contradiction. Qed.
-
-Lemma quot_ty_rf : forall T1 T2, rf T1 -> rf T2 -> quot_ty T1 T2 = typ_Float.
-Proof.
-  intros T1 T2 H1 H2. unfold quot_ty.
-  assert (Hn : forall T, rf T -> float_head T = None)
-    by (intros T H; destruct T; first [ reflexivity | (cbn in H; contradiction) ]).
-  rewrite (Hn _ H1), (Hn _ H2). reflexivity.
-Qed.
-
-
 
 (* What a run ends with. *)
 Definition Done (P : typ -> Prop) (L : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat)
@@ -781,7 +763,7 @@ Qed.
 
 (* ---- the induction ---- *)
 
-Theorem infer_complete_core : forall P, P typ_Int -> forall D1 G1 e T1, ctyping P D1 G1 e T1 ->
+Theorem infer_complete_core : forall P, P typ_Float -> forall D1 G1 e T1, ctyping P D1 G1 e T1 ->
   forall D G n Sg L, DOk D n -> LOld n L -> Live P L D D1 Sg -> rkres D D1 (sR Sg) ->
     GOk n G -> GLive L G -> CI D1 Sg G1 G -> Done P L D1 G e D n Sg T1.
 Proof.
@@ -794,8 +776,7 @@ Proof.
     | Dd Gd e1 e2 T1 T2 HPT2 H1 IH1 H2 IH2
     | Dd Gd e1 e2 e3 T H1 IH1 H2 IH2 H3 IH3
     | Dd Gd e A H1 IH1 Hs HPA
-    | Dd Gd e1 o e2 A Hk1 Hk2 Hs HPA H1 IH1 H2 IH2
-    | Dd Gd e1 e2 H1 IH1 H2 IH2
+    | Dd Gd e1 o e2 A Hk1 Hs HPA H1 IH1 H2 IH2
     | Dd Gd e1 o e2 A Hk Hs HPA H1 IH1 H2 IH2
     | Dd Gd e1 e2 T1 T2 Hv H1 IH1 H2 IH2
     | Dd Gd e T T' H1 IH1 Hteq ];
@@ -1012,7 +993,7 @@ Proof.
     assert (HsubTb : ftv_typ Tb [<=] Ln) by exact (ftv_lnext s2 L1 Tb).
     assert (HsubTa2 : ftv_typ (apT s2 Ta) [<=] Ln)
       by (intros y Hy; exact (limg_lnext s2 L1 Tb y (limg_ap s2 Ta L1 (proj1 HTa) HsubTa y Hy))).
-    assert (Hg : sat Dd (generic_sort o) A) by (rewrite (generic_sort_arith o Hk1); exact Hs).
+    assert (Hg : sat Dd (generic_sort o) A) by exact Hs.
     assert (HLv3 : Live P (Ln `union` {{ ea n2 }}) (upd D2 (ea n2) (generic_sort o)) Dd (supd Sb (ea n2) A)).
     { refine (Live_fresh P Ln D2 (upd D2 (ea n2) (generic_sort o)) Dd Sb n2 (generic_sort o) A HLo2 HLv2 Hg HPA
                 (upd_same _ _ _) (fun a Ha => upd_other D2 (ea n2) (generic_sort o) a (fun E => HLo2 a Ha n2 (le_n n2) E))). }
@@ -1050,58 +1031,12 @@ Proof.
     refine (conj _ (conj (SemL_comp P L (limg s3 Lu) Dd Sg n _ D3 n3 S3 s4 D4 n4 S4 HLo Sem123 Hc3 Sem4) (conj _ (conj _ (conj _ _))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3 St4)))) as HSt.
       stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
-      rewrite (is_cmp_op_false o Hk1), (is_generic_op_true o Hk2). cbv beta iota zeta.
+      rewrite (is_cmp_op_false o Hk1). cbv beta iota zeta.
       rewrite E3, E4. rewrite (bin_res_arith o _ Hk1). reflexivity.
     + exact (TOk_ap _ _ _ _ (SemL_SI Sem4) HTc3).
     + exact (SemL_live_ap P (limg s3 Lu) Dd S3 n3 s4 D4 n4 S4 _ Sem4 (proj1 HTc3) (limg_ap s3 (typ_Var (ea n2)) Lu I (ftv_var_fresh n2 Ln))).
     + eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P (limg s3 Lu) Dd S3 n3 s4 D4 n4 S4 _ Sem4 (proj1 HTc3) (limg_ap s3 (typ_Var (ea n2)) Lu I (ftv_var_fresh n2 Ln))) | ].
       apply teqD_sym. exact Fc.
-    + cbn [is_gen_value]; try reflexivity; try assumption.
-  - (* division *)
-    destruct (IH1 D G n Sg L Hd HLo HLv HRk HG HGL HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & LvTa & Heq1 & HgHeq1).
-    destruct (next_facts P Dd Gd Sg n L s1 D1a n1 Sa Ta G HLo Sem1 HTa LvTa HG HGL HC)
-      as (HLo1 & HLv1 & HG1 & HGL1 & HC1).
-    set (L1 := lnext s1 L Ta) in *.
-    destruct (IH2 D1a (apC s1 G) n1 Sa L1 (SemL_DOk Sem1) HLo1 HLv1 (SemL_rk Sem1) HG1 HGL1 HC1)
-      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & LvTb & Heq2 & HgHeq2).
-    destruct (next_facts P Dd Gd Sa n1 L1 s2 D2 n2 Sb Tb (apC s1 G) HLo1 Sem2 HTb LvTb HG1 HGL1 HC1)
-      as (HLo2 & HLv2 & _ & _ & _).
-    set (Ln := lnext s2 L1 Tb) in *.
-    pose proof (TOk_ap _ _ _ _ (SemL_SI Sem2) HTa) as HTa2.
-    assert (HsubTa : ftv_typ Ta [<=] L1) by exact (ftv_lnext s1 L Ta).
-    assert (HsubTb : ftv_typ Tb [<=] Ln) by exact (ftv_lnext s2 L1 Tb).
-    assert (HsubTa2 : ftv_typ (apT s2 Ta) [<=] Ln)
-      by (intros y Hy; exact (limg_lnext s2 L1 Tb y (limg_ap s2 Ta L1 (proj1 HTa) HsubTa y Hy))).
-    assert (HsubF : forall L', ftv_typ typ_Float [<=] L') by (intros L'; exact (sub_scalar typ_Float L' (or_intror (or_introl eq_refl)))).
-    assert (Heq : teqD Dd (apT Sb (apT s2 Ta)) (apT Sb typ_Float)).
-    { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P L1 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
-      exact Heq1. }
-    destruct (unify_stepL P Dd D2 Sb Ln (apT s2 Ta) typ_Float n2 HPI (SemL_DOk Sem2) HLo2 HLv2 (SemL_rk Sem2)
-                (proj1 HTa2) I HsubTa2 (HsubF Ln) Heq) as (s3 & D3 & n3 & S3 & St3 & Sem3).
-    pose proof (TOk_ap _ _ _ _ (SemL_SI Sem3) HTb) as HTb3.
-    assert (Heq' : teqD Dd (apT S3 (apT s3 Tb)) (apT S3 typ_Float)).
-    { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P Ln Dd Sb n2 s3 D3 n3 S3 Tb Sem3 (proj1 HTb) HsubTb) | ].
-      exact Heq2. }
-    assert (HLo3 : LOld n3 (limg s3 Ln)) by exact (limg_old _ _ _ _ HLo2 (SemL_SI Sem3)).
-    destruct (unify_stepL P Dd D3 S3 (limg s3 Ln) (apT s3 Tb) typ_Float n3 HPI (SemL_DOk Sem3) HLo3
-                (SemL_live Sem3) (SemL_rk Sem3) (proj1 HTb3) I (limg_ap s3 Tb Ln (proj1 HTb) HsubTb)
-                (HsubF _) Heq') as (s4 & D4 & n4 & S4 & St4 & Sem4).
-    pose proof (SemL_comp P L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2) as Sem12.
-    pose proof (limg_chain n n1 s1 s2 L L1 Ln HLo (SemL_SI Sem1) (limg_lnext s1 L Ta) (limg_lnext s2 L1 Tb)) as Hc2.
-    pose proof (SemL_comp P L Ln Dd Sg n (scomp s2 s1) D2 n2 Sb s3 D3 n3 S3 HLo Sem12 Hc2 Sem3) as Sem123.
-    pose proof (SI_comp _ _ _ _ _ (SemL_SI Sem1) (SemL_SI Sem2)) as SI12.
-    pose proof (limg_chain n n2 (scomp s2 s1) s3 L Ln (limg s3 Ln) HLo SI12 Hc2 (fun _ H => H)) as Hc3.
-    exists (scomp s4 (scomp s3 (scomp s2 s1))), D4, n4, S4, typ_Float, (e_bin e1' bop_div e2').
-    refine (conj _ (conj (SemL_comp P L (limg s3 Ln) Dd Sg n _ D3 n3 S3 s4 D4 n4 S4 HLo Sem123 Hc3 Sem4) (conj _ (conj _ (conj _ _))))).
-    + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3 St4)))) as HSt.
-      stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
-      rewrite (is_cmp_op_false bop_div ltac:(discriminate)).
-      change (is_generic_op bop_div) with false. cbv beta iota zeta.
-      rewrite (quot_ty_rf _ _ (proj1 HTa2) (proj1 HTb)), E3, E4. reflexivity.
-    + apply TOk_scalar. right. left. reflexivity.
-    + apply Live_scalar. right. left. reflexivity.
-    + apply teqD_refl.
     + cbn [is_gen_value]; try reflexivity; try assumption.
   - (* comparison *)
     destruct (IH1 D G n Sg L Hd HLo HLv HRk HG HGL HC)

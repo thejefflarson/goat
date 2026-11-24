@@ -70,7 +70,9 @@ Fixpoint unify_k (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f}
       | typ_Bvar i, typ_Bvar j => if Nat.eqb i j then Some (sid, D, n) else None
       | typ_Var a, typ_Var b =>
           if Atom.eq_dec a b then Some (sid, D, n)
-          else if finer_b (D b) (D a) then Some (sbT a T2, D, n) else Some (sbT b T1, D, n)
+          else if finer_b (D b) (D a) then Some (sbT a T2, D, n)
+          else if finer_b (D a) (D b) then Some (sbT b T1, D, n)
+          else Some (meet_float a b, D, n)
       | typ_Var a, _ => bind_k D a T2 n
       | _, typ_Var b => bind_k D b T1 n
       | typ_Mu B1, typ_Mu B2 =>
@@ -298,7 +300,9 @@ Qed.
 Lemma spec_var_var : forall D n a b,
   Spec D n (typ_Var a) (typ_Var b)
     (if Atom.eq_dec a b then Some (sid, D, n)
-     else if finer_b (D b) (D a) then Some (sbT a (typ_Var b), D, n) else Some (sbT b (typ_Var a), D, n)).
+     else if finer_b (D b) (D a) then Some (sbT a (typ_Var b), D, n)
+     else if finer_b (D a) (D b) then Some (sbT b (typ_Var a), D, n)
+     else Some (meet_float a b, D, n)).
 Proof.
   intros D n a b s D' n' H H1 H2.
   destruct (Atom.eq_dec a b) as [->|Hne].
@@ -318,10 +322,15 @@ Proof.
       destruct (sound_bindT a (typ_Var b) (ev_var_T a H1) H2 Eoa) as [Hs Ht].
       split; [exact Hs|]. split; [exact Ht|].
       apply GoodU_same; [ exact Hs | apply KR_sbT; simpl; apply finer_b_sound; exact Ef | lia ].
-    + inversion H; subst; clear H.
-      destruct (sound_bindT b (typ_Var a) (ev_var_T b H2) H1 Eob) as [Hs Ht].
-      split; [exact Hs|]. split; [apply teq_sym; exact Ht|].
-      apply GoodU_same; [ exact Hs | apply KR_sbT; simpl; apply finer_b_total; exact Ef | lia ].
+    + destruct (finer_b (D a) (D b)) eqn:Ef2.
+      * inversion H; subst; clear H.
+        destruct (sound_bindT b (typ_Var a) (ev_var_T b H2) H1 Eob) as [Hs Ht].
+        split; [exact Hs|]. split; [apply teq_sym; exact Ht|].
+        apply GoodU_same; [ exact Hs | apply KR_sbT; simpl; apply finer_b_sound; exact Ef2 | lia ].
+      * inversion H; subst; clear H.
+        destruct (sound_meet D' a b H1 H2 Hne) as [Hs [Ht Hk]].
+        split; [exact Hs|]. split; [exact Ht|].
+        apply GoodU_same; [ exact Hs | exact Hk | lia ].
 Qed.
 
 (* A mu that meets another head is unrolled: the result for the unrolling is

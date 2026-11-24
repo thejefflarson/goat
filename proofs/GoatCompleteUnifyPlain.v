@@ -56,19 +56,28 @@ Proof.
   destruct T; try (exfalso; exact (Hv _ eq_refl)); exact E.
 Qed.
 
-Lemma unify_t_var_var : forall b S (D : denv) a a' (n : nat), teq (sT S a) (sT S a') ->
+Lemma unify_t_var_var : forall b S (D D1 : denv) a a' (n : nat), kres D D1 (sT S) -> teq (sT S a) (sT S a') ->
   exists s, Res b S s /\ Stable (fun f => unify_t f D (typ_Var a) (typ_Var a') n = Some (s, D, n)).
 Proof.
-  intros b S D a a' n Heq. destruct (Atom.eq_dec a a') as [->|Hne].
+  intros b S D D1 a a' n Hk Heq. destruct (Atom.eq_dec a a') as [->|Hne].
   - exists sid. split; [ apply Res_sid | exists 1; intros f Hf; destruct f as [|f]; [ lia | ] ].
     cbn [unify_t]. destruct (Atom.eq_dec a' a'); [ reflexivity | congruence ].
   - destruct (finer_b (D a') (D a)) eqn:Ef.
     + exists (sbT a (typ_Var a')). split; [ exact (Res_sbT b S a (typ_Var a') I Heq) | ].
       exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
       cbn [unify_t]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
-    + exists (sbT a' (typ_Var a)). split; [ exact (Res_sbT b S a' (typ_Var a) I (teq_sym _ _ Heq)) | ].
-      exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-      cbn [unify_t]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity.
+    + destruct (finer_b (D a) (D a')) eqn:Ef2.
+      * exists (sbT a' (typ_Var a)). split; [ exact (Res_sbT b S a' (typ_Var a) I (teq_sym _ _ Heq)) | ].
+        exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+        cbn [unify_t]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef, Ef2. reflexivity.
+      * pose proof (incomparable_float D D1 S a a' Hk Heq Ef Ef2) as Hf1.
+        pose proof (teq_trans _ _ _ (teq_sym _ _ Heq) Hf1) as Hf2.
+        exists (meet_float a a'). split.
+        -- unfold meet_float. apply Res_comp.
+           ++ exact (Res_sbT b S a typ_Float I Hf1).
+           ++ exact (Res_sbT b S a' typ_Float I Hf2).
+        -- exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+           cbn [unify_t]. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef, Ef2. reflexivity.
 Qed.
 
 Lemma unify_t_scalar_same : forall b S (D : denv) c (n : nat),
@@ -135,7 +144,7 @@ Proof.
       intros [|f] Hf; [ contradiction | ]. cbn [unify_t].
       rewrite (drop_abs_crow b R CR), (drop_abs_crow b R' CR'). exact Hf.
     + (* Var, Var *)
-      apply unify_t_var_var. exact Hteq.
+      exact (unify_t_var_var b S D D1 _ _ n Hk Hteq).
   - (* rows *)
     intros R1 R2 n C1 C2 Hlt Hreq.
     destruct R1 as [ | r | l T R1' | l P T R1' ]; try (simpl in C1; contradiction);

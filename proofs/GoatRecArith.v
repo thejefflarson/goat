@@ -37,13 +37,14 @@ Proof.
     right. destruct Hk as [Hk | Hk]; [ apply sig_ring | apply sig_whole ]; assumption.
 Qed.
 
-Lemma rfsat_row_sig : forall D R, rfsat R -> row_sig D bop_div R.
+Lemma rsat_row_sig_quot : forall D R, rsat D k_Quot R -> row_sig D bop_div R.
 Proof.
-  intros D R. induction R using row_ind4; simpl; intros H; try contradiction; auto.
-  destruct H as [H1 H2]. split; [ | auto ].
-  destruct T; simpl in H1; try contradiction.
-  - apply sig_quot.
-  - apply sig_quot_rec; exact H1.
+  intros D R. induction R using row_ind4; simpl; intros H.
+  - exact I.
+  - eapply finer_trans; [ exact H | apply finer_quot_numeric ].
+  - destruct H as [H1 H2]. split; [ | auto ]. apply sig_quot. exact H1.
+  - destruct H as [[Hp | H1] H2]; split; [ left; exact Hp | auto | | auto ].
+    right. apply sig_quot. exact H1.
 Qed.
 
 (* An operator on records takes records of one row, and every field of the row
@@ -54,8 +55,8 @@ Lemma bin_sig_record : forall D o R B X, kind o <> k_cmp ->
 Proof.
   intros D o R B X Hnc H. inversion H; subst.
   - repeat split. apply rsat_row_sig; [ left; assumption | assumption ].
+  - repeat split. apply rsat_row_sig_quot; assumption.
   - repeat split. apply rsat_row_sig; [ right; assumption | assumption ].
-  - repeat split. apply rfsat_row_sig; assumption.
   - contradiction.
 Qed.
 

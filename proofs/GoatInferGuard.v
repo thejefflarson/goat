@@ -51,13 +51,19 @@ Qed.
 
 (* ---- the knot-tying unifier ---- *)
 
+Lemma gsub_meet : forall a b, gsub (meet_float a b).
+Proof. intros a b. exact (gs_comp _ _ (gs_sbT b typ_Float I I) (gs_sbT a typ_Float I I)). Qed.
+
 Lemma push_sort_gsub : forall l D k n s D' n', push_sort D k l n = (s, D', n') -> gsub s.
 Proof.
   induction l as [|b l IH]; intros D k n s D' n' H; cbn [push_sort] in H.
   - inversion H; subst; clear H. exact gs_id.
   - destruct (finer_b (D b) k).
     + exact (IH _ _ _ _ _ _ H).
-    + destruct (push_sort (upd D (ea n) k) k l (S n)) as [[s1 D1] n1] eqn:E.
+    + destruct (finer_b k (D b));
+        [ | destruct (push_sort D k l n) as [[s1 D1] n1] eqn:E1; inversion H; subst; clear H;
+            exact (gs_comp _ _ (IH _ _ _ _ _ _ E1) (gs_sbT b typ_Float I I)) ].
+      destruct (push_sort (upd D (ea n) k) k l (S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst; clear H.
       exact (gs_comp _ _ (IH _ _ _ _ _ _ E) (gs_sbT b (typ_Var (ea n)) I I)).
 Qed.
@@ -68,7 +74,8 @@ Proof.
   - inversion H; subst; clear H. exact gs_id.
   - destruct (finer_b (rk_sort (drk D b)) k).
     + exact (IH _ _ _ _ _ _ H).
-    + destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (S n)) as [[s1 D1] n1] eqn:E.
+    + destruct (finer_b k (rk_sort (drk D b))); [ | exact (IH _ _ _ _ _ _ H) ].
+      destruct (push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D b)))) k l (S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst; clear H.
       exact (gs_comp _ _ (IH _ _ _ _ _ _ E) (gs_sbR b (row_Var (ea n)) I I)).
 Qed.
@@ -193,7 +200,8 @@ Proof.
       exact (IHr _ _ _ _ _ _ _ H).
     + (* Var, Var *)
       destruct (Atom.eq_dec a b) as [->|]; [ injection H as <- <- <-; exact gs_id | ].
-      destruct (finer_b (D b) (D a)); injection H as <- <- <-; apply gs_sbT; exact I.
+      destruct (finer_b (D b) (D a)); [ injection H as <- <- <-; apply gs_sbT; exact I | ].
+      destruct (finer_b (D a) (D b)); injection H as <- <- <-; [ apply gs_sbT; exact I | apply gsub_meet ].
     + (* Bvar, Bvar *)
       destruct (Nat.eqb i i'); [ injection H as <- <- <-; exact gs_id | discriminate ].
     + (* Mu, Mu *)
@@ -323,7 +331,8 @@ Proof.
       try (exact (bind_prop_gsub _ _ _ _ _ _ _ H H2));
       try (exact (bind_prop_gsub _ _ _ _ _ _ _ H H1));
       try (destruct (Atom.eq_dec _ _); [injection H as <- <- <-; exact gs_id|];
-           destruct (finer_b _ _); injection H as <- <- <-; apply gs_sbT; exact I).
+           destruct (finer_b _ _); [ injection H as <- <- <-; apply gs_sbT; exact I | ];
+           destruct (finer_b _ _); injection H as <- <- <-; [ apply gs_sbT; exact I | apply gsub_meet ]).
     + destruct (unify_t f D T1_1 T2_1 n) as [[[s1 D1] n1]|] eqn:E1; [|discriminate].
       destruct (unify_t f D1 (apT s1 T1_2) (apT s1 T2_2) n1) as [[[s2 D2] n2]|] eqn:E2; [|discriminate].
       injection H as <- <- <-.
@@ -429,7 +438,8 @@ Proof.
       try (exact (bind_prop_gsub _ _ _ _ _ _ _ H H2));
       try (exact (bind_prop_gsub _ _ _ _ _ _ _ H H1));
       try (destruct (Atom.eq_dec _ _); [injection H as <- <- <-; exact gs_id|];
-           destruct (finer_b _ _); injection H as <- <- <-; apply gs_sbT; exact I).
+           destruct (finer_b _ _); [ injection H as <- <- <-; apply gs_sbT; exact I | ];
+           destruct (finer_b _ _); injection H as <- <- <-; [ apply gs_sbT; exact I | apply gsub_meet ]).
     + destruct (unify_tD f D T1_1 T2_1 n) as [[[s1 D1] n1]|] eqn:E1; [|discriminate].
       destruct (unify_tD f D1 (apT s1 T1_2) (apT s1 T2_2) n1) as [[[s2 D2] n2]|] eqn:E2; [|discriminate].
       injection H as <- <- <-.
@@ -592,28 +602,6 @@ Proof.
       destruct (in_dec _ _ _); exact I.
   - intros a. unfold rename_t. destruct (in_dec Atom.eq_dec a _); exact I.
   - intros r. unfold rename_r. destruct (in_dec Atom.eq_dec r _); exact I.
-Qed.
-
-Lemma float_row_mg : forall R R', float_row R = Some R' -> mgr R'.
-Proof.
-  induction R as [| | l T R IH |]; intros R' H; cbn [float_row] in H; try discriminate.
-  - injection H as <-. exact I.
-  - destruct (float_row R) as [R''|] eqn:E; [|discriminate]. injection H as <-.
-    cbn [mgr]. exact (conj I (IH _ eq_refl)).
-Qed.
-
-Lemma float_head_mg : forall T F, float_head T = Some F -> mg F.
-Proof.
-  intros T F H. destruct T; cbn [float_head] in H; try discriminate.
-  destruct (float_row R) as [R'|] eqn:E; [|discriminate]. injection H as <-.
-  cbn [mg]. exact (float_row_mg _ _ E).
-Qed.
-
-Lemma quot_ty_mg : forall T1 T2, mg (quot_ty T1 T2).
-Proof.
-  intros T1 T2. unfold quot_ty.
-  destruct (float_head T1) as [F|] eqn:E1; [ exact (float_head_mg _ _ E1) | ].
-  destruct (float_head T2) as [F|] eqn:E2; [ exact (float_head_mg _ _ E2) | exact I ].
 Qed.
 
 Lemma mg_bin_res : forall o T, mg T -> mg (bin_res o T).
@@ -810,18 +798,12 @@ Proof.
         dC H E4. injection H as <- <- <- <- <-.
         pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) I) as S4.
         exact (conj (gs_comp _ _ S4 (gs_comp _ _ S3 (gs_comp _ _ S2 S1))) I). }
-      destruct (is_generic_op o).
-      * dC H E3.
-        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) I) as S3.
-        dC H E4. injection H as <- <- <- <- <-.
-        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) (mg_apT _ (typ_Var _) S3 I)) as S4.
-        exact (conj (gs_comp _ _ S4 (gs_comp _ _ S3 (gs_comp _ _ S2 S1)))
-                    (mg_bin_res _ _ (mg_apT _ _ S4 (mg_apT _ (typ_Var _) S3 I)))).
-      * dC H E3.
-        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) (quot_ty_mg _ _)) as S3.
-        dC H E4. injection H as <- <- <- <- <-.
-        pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) (quot_ty_mg _ _)) as S4.
-        exact (conj (gs_comp _ _ S4 (gs_comp _ _ S3 (gs_comp _ _ S2 S1))) (quot_ty_mg _ _)).
+      dC H E3.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E3 (mg_apT _ _ S2 M1) I) as S3.
+      dC H E4. injection H as <- <- <- <- <-.
+      pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E4 (mg_apT _ _ S3 M2) (mg_apT _ (typ_Var _) S3 I)) as S4.
+      exact (conj (gs_comp _ _ S4 (gs_comp _ _ S3 (gs_comp _ _ S2 S1)))
+                  (mg_bin_res _ _ (mg_apT _ _ S4 (mg_apT _ (typ_Var _) S3 I)))).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ E1 HG) as [S1 M1].
       dC H E2. injection H as <- <- <- <- <-.
       pose proof (unify_coD_gsub _ _ _ _ _ _ _ _ _ E2 M1 I) as S2.

@@ -1822,11 +1822,11 @@ restatement.
   result type's atoms, which the caller adds to its live set.
 
 **The unifier call (`unify_stepL`).** `unify_tD_rf_complete_img` wants a full `KR`.
-`restr L Sg` is `Sg` on `L` and `Int` elsewhere; `Int` satisfies every sort (`sat` at
-`typ_Int` is `True`), so `restr L Sg` respects every sort, agrees with `Sg` on `L`
-(`restr_in`, `apT_agree`) and has `Int` among its images. The unifier's extension `S2`
+`restr L Sg` is `Sg` on `L` and `Float` elsewhere; `Float` satisfies every sort (`sat` at
+`typ_Float` is `True`; `Int` no longer does, since the `Quot` sort), so `restr L Sg` respects every sort, agrees with `Sg` on `L`
+(`restr_in`, `apT_agree`) and has `Float` among its images. The unifier's extension `S2`
 then sends every atom to an image of `restr L Sg` (`Img`), so `P` holds of all of `S2`
-once `P typ_Int` and `P` on `Sg`'s live images do (`Img_bound`). This is `Img` relative
+once `P typ_Float` and `P` on `Sg`'s live images do (`Img_bound`). This is `Img` relative
 to an allowed set, inside `SemL`, as 7.7d asked, and no decision on membership in `L`
 beyond `AtomSetImpl.mem` is needed (no classical axiom).
 
@@ -2113,3 +2113,10 @@ Most serious first.
 6. **Fuel as a stand-in.** The theorem says `exists fuel`; the driver's 100,000 is a
    guess. The `SLOW` and fuel-exhaustion counts in the nightly report say when it
    is too low.
+
+**Record `/` after the principality decision (2026-11-23).** The `quot_ty` rule
+above made a verdict depend on unification order (`(program(a) do a / a done)({x:
+1.0})` was refused). `/` is now decided like `+`: its operands share one fresh
+variable of the sort `Quot`, so `quot_ty` and `float_head` are gone, `sig_quot`
+takes the sort, and the checker's `type_division` joins the operands
+(`join_operands`). See ADR 0012 and ADR 0038 (amendments).

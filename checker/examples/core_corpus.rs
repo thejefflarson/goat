@@ -970,7 +970,12 @@ impl Reader<'_> {
                     let generic = (comparison
                         || matches!(
                             op,
-                            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::FloorDiv | BinOp::Mod
+                            BinOp::Add
+                                | BinOp::Sub
+                                | BinOp::Mul
+                                | BinOp::Div
+                                | BinOp::FloorDiv
+                                | BinOp::Mod
                         ))
                         && [lhs, rhs]
                             .iter()
@@ -2150,6 +2155,17 @@ const HANDWRITTEN: &[&str] = &[
     "f = program(a) do a / a done\nf(2.0)",
     "f = program(a) do a / a done\nf({x: 1.0})",
     "f = program(a, b) do a / b done\nf({x: 1.0}, {x: 2.0})",
+    "(program(a) do a / a done)({x: 1.0})",
+    "(program(a) do a / a done)({x: 1})",
+    "(program(a) do a / a done)(3)",
+    "f = program(a) do a / a done\nf(3)",
+    "f = program(a) do a / 1 done\nf({x: 1.0})",
+    "f = program(a) do a / 1 done\nf(2)",
+    "f = program(a) do 1 / a done\nf({x: 1.0})",
+    "f = program(a) do a / 2 done\nf(2.0)",
+    "f = program(a, b) do a / b done\nf(1, 2)",
+    "f = program(a) do a / a done\n{p: f(2.0), q: f({x: 1.0})}",
+    "{x: 9} / {x: 3}",
     "{x: 1.0} / 2.0",
     "2.0 / {x: 2.0}",
     "{x: 1.0} / {y: 2.0}",

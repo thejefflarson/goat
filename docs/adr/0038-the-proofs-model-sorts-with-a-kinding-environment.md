@@ -154,3 +154,29 @@ variables inside a type a variable binds to also reaches its row variables
 (`push_sort_r`), so a comparison of records with an open row has a type, as the
 checker gives it. The corpus reader no longer skips a program for a lacks fact on
 a row tail (`LacksOnTail`).
+
+**Division is a generic operator over a `Quot` sort (amendment, 2026-11-23).** The
+calculus gave `/` its own signature, `Float` and `Float` to `Float` or a record
+of them (`sig_quot_rec`), and algorithm W decided it at the operator from the
+operand types it saw. That made a verdict depend on unification order, so a
+program that types (`(program(a) do a / a done)({x: 1.0})`) was refused. `sort`
+gained `k_Quot`: `sat` holds for `Float` and for a record whose fields satisfy
+`Quot`, and fails for `Int`. The order is `finer k_Quot k_Numeric` and
+`finer k_Quot k_Eq`; `Literal` and `Quot` are incomparable, and two variables of
+those sorts that a substitution unifies are both its `Float`. `bin_sig` has one
+rule, `sig_quot` over `Quot`, and `generic_sort bop_div = k_Quot`, so W types `/`
+exactly as it types `+`: one fresh variable of the operator's sort, both operands
+unified with it. Unification of two variables with neither sort finer binds both
+to `Float` (`meet_float`), and `push_sort` leaves a variable alone when its sort
+and the pushed one are incomparable.
+
+The unification completeness theorems carry two consequences. `bind_prop` and
+`bind_row` take the hypothesis that each variable they push a sort onto has a
+sort comparable with it (`cmpb`): the sorts form a chain apart from
+`Literal`/`Quot`, and the record-free and row fragments the theorems cover have
+no `Quot` variable bound to a record, so the hypothesis holds there (a sort `Any`
+or `Eq` compares with every sort, and a bound arrow forces `Any`). The row
+fragment's environment condition `Drow` adds that no variable has the sort
+`Quot`; the record-free core, which W's arithmetic rule uses, has no such
+restriction. A quotient over records of `Quot` variables is outside the proven
+unification fragment, as `Numeric` variables bound to records already are.

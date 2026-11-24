@@ -194,7 +194,7 @@ Proof.
     cbn [unify_rD row_head rewrite_row Nat.eqb]. cbn iota beta.
     destruct f as [ | f ]; [ reflexivity | ].
     cbn [unify_tD apT ap_typ sT sid idt]. destruct (Atom.eq_dec p q); [ congruence | ].
-    destruct (finer_b (D q) (D p)); cbn iota beta;
+    destruct (finer_b (D q) (D p)); cbn iota beta; try (destruct (finer_b (D p) (D q)); cbn iota beta);
       destruct f as [ | f ]; reflexivity.
 Qed.
 

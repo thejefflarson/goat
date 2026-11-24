@@ -134,19 +134,17 @@ Lemma bin_operand : forall D G o A B R v,
   (exists gs, v = e_rec gs /\ rec_value gs) \/ lit v.
 Proof.
   intros D G o A B R v Hs Hnk Hv Hty.
-  assert (Hnum : forall A0, sat D k_Numeric A0 -> typing D G v A0 ->
+  assert (Hnum : forall k A0, (k = k_Numeric \/ k = k_Quot) -> sat D k A0 -> typing D G v A0 ->
             (exists gs, v = e_rec gs /\ rec_value gs) \/ lit v).
-  { intros A0 Hsat Ht. destruct A0; simpl in Hsat; try discriminate Hsat;
-      try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat); try contradiction.
-    - right. eapply canon_lit; [ eassumption | eassumption | base_type ].
-    - right. eapply canon_lit; [ eassumption | eassumption | base_type ].
-    - left. destruct (canon_record _ _ _ _ Hv Ht) as [gs [Rx [-> [Hrv _]]]]. eauto.
-    - right. eapply canon_lit; [ eassumption | eassumption | base_type ]. }
+  { intros k A0 Hk Hsat Ht. destruct Hk as [-> | ->];
+      (destruct A0; simpl in Hsat; try discriminate Hsat;
+        try (destruct Hsat as [Hsat | Hsat]; discriminate Hsat); try contradiction;
+        first [ (right; eapply canon_lit; [ eassumption | eassumption | base_type ])
+              | (left; destruct (canon_record _ _ _ _ Hv Ht) as [gs [Rx [-> [Hrv _]]]]; eauto) ]). }
   inversion Hs; subst.
-  - eapply Hnum; eassumption.
-  - right. eapply canon_lit; [ eassumption | eassumption | base_type ].
-  - eapply Hnum; eassumption.
-  - left. destruct (canon_record _ _ _ _ Hv Hty) as [gs [Rx [-> [Hrv _]]]]. eauto.
+  - eapply Hnum; [ left; reflexivity | eassumption | eassumption ].
+  - eapply Hnum; [ right; reflexivity | eassumption | eassumption ].
+  - eapply Hnum; [ left; reflexivity | eassumption | eassumption ].
   - exfalso. congruence.
 Qed.
 

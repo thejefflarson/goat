@@ -82,8 +82,10 @@ Definition rupd (D : denv) (r : atom) (K : rkind) : denv :=
 Definition finer_b (k1 k2 : sort) : bool :=
   match k1, k2 with
   | _, k_Any => true
+  | k_Literal, k_Quot => false
   | k_Literal, _ => true
   | k_Numeric, (k_Numeric | k_Eq) => true
+  | k_Quot, (k_Quot | k_Numeric | k_Eq) => true
   | k_Eq, k_Eq => true
   | _, _ => false
   end.
@@ -96,10 +98,11 @@ Definition rk_join (K1 K2 : rkind) : rkind :=
 
 Fixpoint sat_b (D : denv) (k : sort) (T : typ) {struct T} : bool :=
   match T with
-  | typ_Int | typ_Float => true
+  | typ_Int => match k with k_Quot => false | _ => true end
+  | typ_Float => true
   | typ_Var a => finer_b (D a) k
   | typ_Record R =>
-      match k with k_Any => true | k_Eq | k_Numeric => rsat_b D k R | k_Literal => false end
+      match k with k_Any => true | k_Eq | k_Numeric | k_Quot => rsat_b D k R | k_Literal => false end
   | typ_String | typ_Bool | typ_Unit | typ_Bvar _ => match k with k_Any | k_Eq => true | _ => false end
   | typ_Mu B => match k with k_Any => true | k_Eq => sat_b D k_Eq B | _ => false end
   | typ_Grp w A => match k with k_Any => true | k_Eq => spine_sat_b D w 0 A | _ => false end
@@ -148,19 +151,30 @@ Definition occT (a : atom) (T : typ) : bool :=
 Definition occR (r : atom) (R : row) : bool :=
   AtomSetImpl.mem r (frv_row R) || negb (lcrb 0 R).
 
+(* A [Literal] variable and a [Quot] variable have no finer sort between them:
+   the numeral may be an [Int] and the quotient's type may not, so both
+   are [Float]. *)
+Definition meet_float (a b : atom) : sub := scomp (sbT b typ_Float) (sbT a typ_Float).
+
 (* The sort [k] reaches the variables inside the type a variable of sort [k] is
    bound to: each variable of [l] that is coarser than [k] is renamed to a fresh
-   variable of sort [k], one fresh atom at a time.  The substitution it returns
-   is the renaming, and the environment has the fresh variables' sorts. *)
+   variable of sort [k], one fresh atom at a time.  A variable whose sort has
+   neither [k] nor itself finer ([Literal] against [Quot]) is a [Float], the
+   one type both accept.  The substitution it returns is the renaming, and the
+   environment has the fresh variables' sorts. *)
 Fixpoint push_sort (D : denv) (k : sort) (l : list atom) (n : nat) {struct l}
   : sub * denv * nat :=
   match l with
   | nil => (sid, D, n)
   | b :: l' =>
       if finer_b (D b) k then push_sort D k l' n
-      else
+      else if finer_b k (D b) then
         match push_sort (upd D (ea n) k) k l' (S n) with
         | (s, D', n') => (scomp s (sbT b (typ_Var (ea n))), D', n')
+        end
+      else
+        match push_sort D k l' n with
+        | (s, D', n') => (scomp s (sbT b typ_Float), D', n')
         end
   end.
 
@@ -173,10 +187,11 @@ Fixpoint push_sort_r (D : denv) (k : sort) (l : list atom) (n : nat) {struct l}
   | nil => (sid, D, n)
   | q :: l' =>
       if finer_b (rk_sort (drk D q)) k then push_sort_r D k l' n
-      else
+      else if finer_b k (rk_sort (drk D q)) then
         match push_sort_r (rupd D (ea n) (RK k (rk_lacks (drk D q)))) k l' (S n) with
         | (s, D', n') => (scomp s (sbR q (row_Var (ea n))), D', n')
         end
+      else push_sort_r D k l' n
   end.
 
 (* Bind [a] to [T], at the sort of [a]: the sort is pushed onto the type and
@@ -381,7 +396,9 @@ Fixpoint unify_t (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f}
       | typ_String, typ_String => Some (sid, D, n)
       | typ_Var a, typ_Var b =>
           if Atom.eq_dec a b then Some (sid, D, n)
-          else if finer_b (D b) (D a) then Some (sbT a T2, D, n) else Some (sbT b T1, D, n)
+          else if finer_b (D b) (D a) then Some (sbT a T2, D, n)
+          else if finer_b (D a) (D b) then Some (sbT b T1, D, n)
+          else Some (meet_float a b, D, n)
       | typ_Var a, _ => bind_prop D a T2 n
       | _, typ_Var b => bind_prop D b T1 n
       | typ_Arrow A B, typ_Arrow A' B' =>
@@ -455,7 +472,9 @@ Fixpoint unify_tD (f : nat) (D : denv) (T1 T2 : typ) (n : nat) {struct f}
       | typ_String, typ_String => Some (sid, D, n)
       | typ_Var a, typ_Var b =>
           if Atom.eq_dec a b then Some (sid, D, n)
-          else if finer_b (D b) (D a) then Some (sbT a T2, D, n) else Some (sbT b T1, D, n)
+          else if finer_b (D b) (D a) then Some (sbT a T2, D, n)
+          else if finer_b (D a) (D b) then Some (sbT b T1, D, n)
+          else Some (meet_float a b, D, n)
       | typ_Var a, _ => bind_prop D a T2 n
       | _, typ_Var b => bind_prop D b T1 n
       | typ_Arrow A B, typ_Arrow A' B' =>
@@ -602,42 +621,15 @@ Definition let_pin (D : denv) (e : exp) (T : typ) : typ :=
 (* Algorithm W                                                          *)
 (* ------------------------------------------------------------------ *)
 
-(* How a binary operator types its operands.  [/] takes Floats ([quot_ty]).  Every other
-   operator is generic: both operands get one fresh variable's type, which is
-   [Numeric] for [+ - * // %] and [Eq] for a comparison (ADR 0036), and a
-   comparison gives a [Bool] whatever that type is. *)
+(* How a binary operator types its operands: both get one fresh variable's
+   type, which is [Numeric] for [+ - * // %], [Quot] for [/] (a [Float] or a
+   record of them, whatever the operands settle to) and [Eq] for a comparison
+   (ADR 0036).  A comparison gives a [Bool] whatever that type is. *)
 Definition generic_sort (o : bop) : sort :=
-  match kind o with k_cmp => k_Eq | _ => k_Numeric end.
+  match kind o with k_cmp => k_Eq | k_quot => k_Quot | _ => k_Numeric end.
 
 Definition bin_res (o : bop) (A : typ) : typ :=
   match kind o with k_cmp => typ_Bool | _ => A end.
-
-(* The type [/] works at.  The checker takes the divisor's shape from a record
-   operand, left first (ADR 0012): a closed record becomes the record of the
-   same labels at [Float], and anything else is [Float]. *)
-Fixpoint float_row (R : row) : option row :=
-  match R with
-  | row_Empty => Some row_Empty
-  | row_Ext l _ R' =>
-      match float_row R' with
-      | Some R'' => Some (row_Ext l typ_Float R'')
-      | None => None
-      end
-  | _ => None
-  end.
-
-Definition float_head (T : typ) : option typ :=
-  match T with
-  | typ_Record R =>
-      match float_row R with Some R' => Some (typ_Record R') | None => None end
-  | _ => None
-  end.
-
-Definition quot_ty (T1 T2 : typ) : typ :=
-  match float_head T1 with
-  | Some F => F
-  | None => match float_head T2 with Some F => F | None => typ_Float end
-  end.
 
 (* A recursive group's members are functions. *)
 Fixpoint is_fn_group (fs : fields) : bool :=
@@ -699,9 +691,6 @@ Definition arms_wf_b (w : gdecl) (ars : arms) : bool :=
      | Some _ => true
      | None => forallb (fun tg => existsb (Nat.eqb tg) (arms_idx ars)) (seq 0 (length (gtags w)))
      end.
-
-Definition is_generic_op (o : bop) : bool :=
-  match kind o with k_quot => false | _ => true end.
 
 (* A comparison unifies its two operands first and only then requires the
    joined type to be [Eq], as the checker does ([join_operands]); the
