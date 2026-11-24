@@ -279,9 +279,8 @@ Qed.
 (* [typing] restricted to the constructs here, with a binder's premise at every
    name fresh for the context and the term (the algorithm opens a binder at the
    one name it chose), the context's bindings monomorphic, and the operators of
-   one numeric sort.  The record division of [sig_quot_rec] is not here: the
-   core's types hold no record, so the algorithm unifies the operands of [/] with
-   [Float]. *)
+   one sort ([generic_sort]: [Numeric], and [Quot] for [/]); the core's types
+   hold no record, so a [Quot] type here is a [Float]. *)
 Inductive ctyping : denv -> ctx -> exp -> typ -> Prop :=
   | C_Var : forall Dd Gd x T,
       uniq Gd -> binds x (sch_mono T) Gd -> ctyping Dd Gd (e_fvar_f x) T

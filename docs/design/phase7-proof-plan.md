@@ -2054,3 +2054,10 @@ Most serious first.
 6. **Fuel as a stand-in.** The theorem says `exists fuel`; the driver's 100,000 is a
    guess. The `SLOW` and fuel-exhaustion counts in the nightly report say when it
    is too low.
+
+**Record `/` after the principality decision (2026-11-23).** The `quot_ty` rule
+above made a verdict depend on unification order (`(program(a) do a / a done)({x:
+1.0})` was refused). `/` is now decided like `+`: its operands share one fresh
+variable of the sort `Quot`, so `quot_ty` and `float_head` are gone, `sig_quot`
+takes the sort, and the checker's `type_division` joins the operands
+(`join_operands`). See ADR 0012 and ADR 0038 (amendments).
