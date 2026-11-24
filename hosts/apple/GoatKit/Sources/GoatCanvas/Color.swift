@@ -3,9 +3,9 @@ import Foundation
 
 /// The colors a goat program names: CSS color names and `#hex` codes, the
 /// words the web canvas understands.
-enum Color {
+public enum Color {
     /// The color `text` names, or nil when it names none.
-    static func parse(_ text: String) -> CGColor? {
+    public static func parse(_ text: String) -> CGColor? {
         if text.hasPrefix("#") { return hex(text.dropFirst()) }
         if text.lowercased() == "transparent" { return CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0) }
         guard let code = names[text.lowercased()] else { return nil }
