@@ -2,27 +2,30 @@
    (docs/design/phase7-proof-plan.md).
 
    L3 for the constructs whose types are base types, variables and arrows:
-   variables, constants, [program], a call, [if], the operators, a comparison
-   and [float(e)].  A derivation [ctyping P D1 G1 e T1] of one of them, a context
-   [G] of the algorithm that [G1] instantiates ([CI]), a set [L] of live atoms (the
-   ones [G] and the pending types mention) and a substitution [Sg] that respects
-   the sorts on [L] ([Live P L D D1 Sg]) give a run of [infer] that succeeds from
-   some fuel on and a step [SemL] to the derivation's side: the extension [S2] of
-   [Sg] respects the sorts the run ends with on the images of the live atoms, [Sg]
-   factors through the run's substitution at [teqD D1] on [L], and the type the
-   run returns is [teqD D1] to the derivation's under [S2].  Nothing is asked of
-   [Sg] off the live atoms: each call to the unifier ([unify_stepL]) rebuilds a
-   full substitution ([restr]) that agrees with [Sg] on [L] and sends the other
-   atoms to [Float], which satisfies every sort, and then reads the result back on
-   the live atoms.  The allowed set [P] of images rides along: the unifier's
-   extension invents no type ([Img]), and [Float] is in [P], so [P] holds of every
-   image of the live atoms the run returns.
+   variables, constants, [program], a call, [if], the operators, a comparison,
+   [float(e)], and [let] (of a value, which generalizes, and of anything else,
+   which does not).  A derivation [ctyping Av D1 G1 e T1] of one of them, a
+   context [G] of the algorithm that [G1] instantiates ([CI], GoatCompleteCtx.v),
+   a set [L] of live atoms (the ones [G] and the pending types mention) and a
+   substitution [Sg] that respects the sorts on [L] ([Live PEv L D D1 Sg]) give a
+   run of [infer] that succeeds from some fuel on and a step [SemL] to the
+   derivation's side: the extension [S2] of [Sg] respects the sorts the run ends
+   with on the images of the live atoms, [Sg] factors through the run's
+   substitution at [teqD D1] on [L], and the type the run returns is [teqD D1]
+   to the derivation's under [S2].
 
-   [let] of a value and [letrec] are not here: they generalize, so the algorithm's
-   context holds schemes, and the comparison of a scheme with the derivation's
-   ([gen_mono_let], GoatCompleteLet.v) needs the derivation's substitutions to
-   keep clear of the quantified atoms.  Here every binding is monomorphic, so
-   the context relation is [teqD] of the instance of each type.
+   [ctyping] follows the normal form of GoatCompleteNf.v ([ntyping]): each rule
+   hands its premises the atoms of its own judgement and of its siblings' types
+   ([bg]), and a [let] of a value generalizes atoms that are even and outside
+   that set.  The induction carries the same set as [Avoid]: the images of the
+   live atoms stay inside it, so the premise of a generalizing [let], read at an
+   environment that re-sorts the generalized atoms, sees the same sorts on
+   everything the run holds live.  What a binder generalizes is dead afterwards:
+   the body is compared with the live atoms that are not generalized
+   ([gen_mono_let], GoatCompleteLet.v).
+
+   Types here are record-free ([PEv]): a derivation's instances, and the types
+   its rules invent, are over even atoms.  [letrec] and records are 7.8.
 
    Axiom- and admit-free. *)
 
@@ -32,10 +35,14 @@ Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatConv.
 Require Import Goat.GoatSubst.
+Require Import Goat.GoatMu.
+Require Import Goat.GoatMeta.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
 Require Import Goat.GoatInferSort.
+Require Import Goat.GoatInferGen.
+Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatInferW.
 Require Import Goat.GoatInferSound.
 Require Import Goat.GoatCoerce.
@@ -46,617 +53,97 @@ Require Import Goat.GoatCompleteBind.
 Require Import Goat.GoatCompleteRf.
 Require Import Goat.GoatCompleteRfRows.
 Require Import Goat.GoatCompleteSorts.
+Require Import Goat.GoatCompleteInst.
+Require Import Goat.GoatCompleteGen.
+Require Import Goat.GoatCompleteMono.
+Require Import Goat.GoatCompleteLet.
+Require Import Goat.GoatCompleteNf.
+Require Import Goat.GoatCompleteDrk.
+Require Import Goat.GoatCompleteCtx.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 
-
-(* ---- extending a substitution at one atom ---- *)
-
-Definition supd (Sg : sub) (a : atom) (U : typ) : sub :=
-  Sub (fun b => if Atom.eq_dec b a then U else sT Sg b) (sR Sg).
-
-Lemma supd_same : forall Sg a U, sT (supd Sg a U) a = U.
-Proof. intros. cbn [supd sT]. destruct (Atom.eq_dec a a); [ reflexivity | contradiction ]. Qed.
-
-Lemma supd_other : forall Sg a U b, b <> a -> sT (supd Sg a U) b = sT Sg b.
-Proof. intros. cbn [supd sT]. destruct (Atom.eq_dec b a); [ contradiction | reflexivity ]. Qed.
-
-Lemma apT_Arrow : forall s A B, apT s (typ_Arrow A B) = typ_Arrow (apT s A) (apT s B).
-Proof. reflexivity. Qed.
-
-Lemma apT_Var : forall s a, apT s (typ_Var a) = sT s a.
-Proof. reflexivity. Qed.
-
-Lemma apT_supd : forall Sg a U T, rf T -> a `notin` ftv_typ T -> apT (supd Sg a U) T = apT Sg T.
-Proof.
-  intros Sg a U T. induction T; simpl; intros H Hn; try contradiction; try reflexivity.
-  - destruct H as [H1 H2]. rewrite !apT_Arrow.
-    rewrite (IHT1 H1 ltac:(fsetdec)), (IHT2 H2 ltac:(fsetdec)). reflexivity.
-  - rewrite !apT_Var. rewrite supd_other by fsetdec. reflexivity.
-Qed.
-
-
-(* ---- record-free types over atoms below a supply ---- *)
-
-Definition TOk (n : nat) (T : typ) : Prop :=
-  rf T /\ forall a, a `in` ftv_typ T -> old n a.
-
-Lemma TOk_mono : forall n n' T, n <= n' -> TOk n T -> TOk n' T.
-Proof. intros n n' T Hl [H1 H2]. split; [ exact H1 | intros a Ha; exact (old_le _ _ _ Hl (H2 a Ha)) ]. Qed.
-
-Lemma TOk_var : forall n a, old n a -> TOk n (typ_Var a).
-Proof.
-  intros n a Ha. split; [ exact I | intros b Hb; simpl in Hb;
-    apply AtomSetFacts.singleton_iff in Hb; subst; exact Ha ].
-Qed.
-
-Lemma TOk_arrow : forall n A B, TOk n A -> TOk n B -> TOk n (typ_Arrow A B).
-Proof.
-  intros n A B [A1 A2] [B1 B2]. split; [ exact (conj A1 B1) | ].
-  intros a Ha. simpl in Ha. apply AtomSetFacts.union_iff in Ha.
-  destruct Ha as [Ha|Ha]; [ exact (A2 a Ha) | exact (B2 a Ha) ].
-Qed.
-
-Lemma TOk_arrow_inv : forall n A B, TOk n (typ_Arrow A B) -> TOk n A /\ TOk n B.
-Proof.
-  intros n A B [[A1 B1] H]. split; split; try assumption;
-    intros a Ha; apply H; simpl; apply AtomSetFacts.union_iff; [ left | right ]; exact Ha.
-Qed.
-
-Lemma TOk_scalar : forall n c,
-  (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) -> TOk n c.
-Proof.
-  intros n c Hc. split.
-  - destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact I.
-  - intros a Ha. destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; simpl in Ha; fsetdec.
-Qed.
-
-Lemma TOk_ap : forall n n' s T, SI n n' s -> TOk n T -> TOk n' (apT s T).
-Proof.
-  intros n n' s T (Hl & Hx & _) [H1 H2]. split.
-  - apply rf_ap; [ exact H1 | intros x Hxi; exact (proj1 (Hx x (H2 x Hxi))) ].
-  - intros y Hy. destruct (ftv_ap_rf s T y H1 Hy) as (x & Hxi & Hyx).
-    exact (proj2 (Hx x (H2 x Hxi)) y Hyx).
-Qed.
-
-(* ---- steps ---- *)
-
-Lemma SI_weaken : forall n0 n1 n' s, n0 <= n1 -> SI n1 n' s -> SI n0 n' s.
-Proof.
-  intros n0 n1 n' s Hl (Hl1 & Hx & Hr). split; [ lia | split ].
-  - intros x Hx0. exact (Hx x (old_le _ _ _ Hl Hx0)).
-  - intros q Hq. exact (Hr q (old_le _ _ _ Hl Hq)).
-Qed.
-
-Lemma SI_id_le : forall n n', n <= n' -> SI n n' sid.
-Proof.
-  intros n n' Hl. split; [ exact Hl | split; intros x Hx; [ | reflexivity ] ].
-  cbn [sT sid idt]. split; [ exact I | ].
-  intros y Hy. simpl in Hy. apply AtomSetFacts.singleton_iff in Hy. subst. exact (old_le _ _ _ Hl Hx).
-Qed.
-
-
-(* ---- the contexts ---- *)
-
-(* Every binding of the algorithm's context is a record-free type over atoms
-   below the supply. *)
-Definition GOk (n : nat) (G : ctx) : Prop :=
-  Forall (fun b => exists T, snd b = sch_mono T /\ TOk n T) G.
-
-(* The derivation's context holds, at each name, the type that the algorithm's
-   is under [Sg], up to [teqD]. *)
-Definition CI (D1 : denv) (Sg : sub) (G1 G : ctx) : Prop :=
-  Forall2 (fun b1 b => fst b1 = fst b /\
-     exists T1 T, snd b1 = sch_mono T1 /\ snd b = sch_mono T /\ teqD D1 (apT Sg T) T1) G1 G.
-
-Lemma GOk_nil : forall n, GOk n nil.
-Proof. intros n. constructor. Qed.
-
-Lemma GOk_cons : forall n x T G, TOk n T -> GOk n G -> GOk n ((x ~ sch_mono T) ++ G).
-Proof. intros n x T G HT HG. constructor; [ exists T; split; [ reflexivity | exact HT ] | exact HG ]. Qed.
-
-Lemma GOk_mono : forall n n' G, n <= n' -> GOk n G -> GOk n' G.
-Proof.
-  intros n n' G Hl H. induction H as [|b G [T [E HT]] _ IH]; constructor.
-  - exists T. split; [ exact E | exact (TOk_mono _ _ _ Hl HT) ].
-  - exact IH.
-Qed.
-
-Lemma apS_mono : forall s T, apS s (sch_mono T) = sch_mono (apT s T).
-Proof. reflexivity. Qed.
-
-Lemma GOk_apC : forall n n' s G, SI n n' s -> GOk n G -> GOk n' (apC s G).
-Proof.
-  intros n n' s G HI H. rewrite apC_map. induction H as [|[y sc] G [T [E HT]] _ IH]; simpl in *.
-  - constructor.
-  - constructor; [ | exact IH ].
-    simpl in E. subst sc. exists (apT s T). split; [ reflexivity | exact (TOk_ap _ _ _ _ HI HT) ].
-Qed.
-
-Lemma CI_nil : forall D1 Sg, CI D1 Sg nil nil.
-Proof. intros. constructor. Qed.
-
-Lemma CI_cons : forall D1 Sg G1 G x T1 T,
-  CI D1 Sg G1 G -> teqD D1 (apT Sg T) T1 ->
-  CI D1 Sg ((x ~ sch_mono T1) ++ G1) ((x ~ sch_mono T) ++ G).
-Proof.
-  intros D1 Sg G1 G x T1 T H Ht. constructor; [ | exact H ].
-  simpl. split; [ reflexivity | exists T1, T; repeat split; exact Ht ].
-Qed.
-
-Lemma CI_dom : forall D1 Sg G1 G, CI D1 Sg G1 G -> dom G1 [=] dom G.
-Proof.
-  intros D1 Sg G1 G H. induction H as [|[x s1] [y s] G1 G [Hk _] _ IH]; simpl in *; [ reflexivity | ].
-  subst y. rewrite IH. reflexivity.
-Qed.
-
-
-Lemma CI_lookup : forall D1 Sg G1 G x sc1,
-  CI D1 Sg G1 G -> uniq G1 -> binds x sc1 G1 ->
-  exists T1 T, sc1 = sch_mono T1 /\ lookup x G = Some (sch_mono T) /\ teqD D1 (apT Sg T) T1.
-Proof.
-  intros D1 Sg G1 G x sc1 H. induction H as [|[y s1] [z sc] G1 G [Hk [T1 [T [E1 [E2 Ht]]]]] _ IH]; intros Hu Hb.
-  - inversion Hb.
-  - simpl in *. subst z. apply binds_cons_1 in Hb. destruct Hb as [[Hxy Hs]|Hb].
-    + subst x sc1. exists T1, T. split; [ exact E1 | ]. split; [ | exact Ht ].
-      cbn [lookup]. destruct (Atom.eq_dec y y); [ rewrite E2; reflexivity | contradiction ].
-    + inversion Hu; subst.
-      destruct (IH ltac:(assumption) Hb) as (T1' & T' & Ea & Eb & Hc). exists T1', T'.
-      split; [ exact Ea | ]. split; [ | exact Hc ].
-      cbn [lookup]. destruct (Atom.eq_dec x y) as [->|_]; [ | exact Eb ].
-      exfalso. apply binds_In in Hb. contradiction.
-Qed.
-
-
-
-
-(* ---- live atoms ---- *)
-
-(* The atoms a run still reads, those the context and the pending types mention,
-   are the only ones whose sorts the derivation's substitution has to respect:
-   the algorithm may generalize any other, and what the substitution does to a
-   generalized atom is the derivation's own business.  [limg s L] is the atoms of
-   the images of the atoms of [L]. *)
-Definition limg (s : sub) (L : atoms) : atoms :=
-  aset (flat_map (fun x => AtomSetImpl.elements (ftv_typ (sT s x))) (AtomSetImpl.elements L)).
-
-Lemma limg_in : forall s L y,
-  y `in` limg s L <-> exists x, x `in` L /\ y `in` ftv_typ (sT s x).
-Proof.
-  intros s L y. unfold limg. rewrite aset_in, in_flat_map. split.
-  - intros (x & Hx & Hy). exists x. split; [ apply in_elts; exact Hx | apply in_elts; exact Hy ].
-  - intros (x & Hx & Hy). exists x. split; [ apply in_elts; exact Hx | apply in_elts; exact Hy ].
-Qed.
-
-Definition LOld (n : nat) (L : atoms) : Prop := forall a, a `in` L -> old n a.
-
-Lemma limg_mono : forall s L1 L2, L1 [<=] L2 -> limg s L1 [<=] limg s L2.
-Proof.
-  intros s L1 L2 H y Hy. apply limg_in in Hy. destruct Hy as (x & Hx & Hy).
-  apply limg_in. exists x. split; [ apply H; exact Hx | exact Hy ].
-Qed.
-
-Lemma limg_sid : forall L, limg sid L [<=] L.
-Proof.
-  intros L y Hy. apply limg_in in Hy. destruct Hy as (x & Hx & Hy).
-  cbn [sT sid idt] in Hy. simpl in Hy. apply AtomSetFacts.singleton_iff in Hy. subst. exact Hx.
-Qed.
-
-Lemma limg_old : forall n n' s L, LOld n L -> SI n n' s -> LOld n' (limg s L).
-Proof.
-  intros n n' s L Ho (_ & HI & _) y Hy. apply limg_in in Hy. destruct Hy as (x & Hx & Hy).
-  exact (proj2 (HI x (Ho x Hx)) y Hy).
-Qed.
-
-Lemma limg_scomp : forall n n1 s1 s2 L, LOld n L -> SI n n1 s1 ->
-  limg (scomp s2 s1) L [<=] limg s2 (limg s1 L).
-Proof.
-  intros n n1 s1 s2 L Ho (_ & HI & _) y Hy. apply limg_in in Hy. destruct Hy as (x & Hx & Hy).
-  change (y `in` ftv_typ (apT s2 (sT s1 x))) in Hy.
-  destruct (ftv_ap_rf s2 _ y (proj1 (HI x (Ho x Hx))) Hy) as (z & Hz & Hyz).
-  apply limg_in. exists z. split; [ apply limg_in; exists x; split; assumption | exact Hyz ].
-Qed.
-
-Lemma limg_chain : forall n n1 s1 s2 L Lm Lm', LOld n L -> SI n n1 s1 ->
-  limg s1 L [<=] Lm -> limg s2 Lm [<=] Lm' -> limg (scomp s2 s1) L [<=] Lm'.
-Proof.
-  intros n n1 s1 s2 L Lm Lm' Ho HI H1 H2 y Hy.
-  apply H2. apply (limg_mono s2 _ _ H1). exact (limg_scomp n n1 s1 s2 L Ho HI y Hy).
-Qed.
-
-Lemma limg_ap : forall s T L, rf T -> ftv_typ T [<=] L -> ftv_typ (apT s T) [<=] limg s L.
-Proof.
-  intros s T L Hrf Hs y Hy. destruct (ftv_ap_rf s T y Hrf Hy) as (x & Hx & Hyx).
-  apply limg_in. exists x. split; [ apply Hs; exact Hx | exact Hyx ].
-Qed.
-
-(* What a run hands on: the old live atoms' images and the result type's atoms. *)
-Definition lnext (s : sub) (L : atoms) (T : typ) : atoms := limg s L `union` ftv_typ T.
-
-Lemma limg_lnext : forall s L T, limg s L [<=] lnext s L T.
-Proof. intros s L T y Hy. unfold lnext. fsetdec. Qed.
-
-Lemma ftv_lnext : forall s L T, ftv_typ T [<=] lnext s L T.
-Proof. intros s L T y Hy. unfold lnext. fsetdec. Qed.
-
-(* [Live P L D Dd S]: on the live atoms, [S] sends each atom to a type of the
-   sort [D] gives it, read in [Dd], and to a type [P] allows.  [P] is the allowed
-   set of images (evenness, in the use that needs it). *)
-Definition Live (P : typ -> Prop) (L : atoms) (D Dd : denv) (S : sub) : Prop :=
-  forall a, a `in` L -> sat Dd (D a) (sT S a) /\ P (sT S a).
-
-Lemma Live_mono : forall P L1 L2 D Dd S, L1 [<=] L2 -> Live P L2 D Dd S -> Live P L1 D Dd S.
-Proof. intros P L1 L2 D Dd S H HL a Ha. exact (HL a (H a Ha)). Qed.
-
-Lemma Live_union : forall P L1 L2 D Dd S, Live P L1 D Dd S -> Live P L2 D Dd S ->
-  Live P (L1 `union` L2) D Dd S.
-Proof.
-  intros P L1 L2 D Dd S H1 H2 a Ha. apply AtomSetFacts.union_iff in Ha.
-  destruct Ha as [Ha|Ha]; [ exact (H1 a Ha) | exact (H2 a Ha) ].
-Qed.
-
-Lemma Live_empty : forall P D Dd S, Live P {} D Dd S.
-Proof. intros P D Dd S a Ha. exfalso. revert Ha. fsetdec. Qed.
-
-Lemma Live_scalar : forall P c (D Dd : denv) S,
-  (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) ->
-  Live P (ftv_typ c) D Dd S.
-Proof.
-  intros P c D Dd S Hc a Ha. exfalso.
-  destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; simpl in Ha; revert Ha; fsetdec.
-Qed.
-
-Lemma Live_var : forall P a (D Dd : denv) S, sat Dd (D a) (sT S a) -> P (sT S a) ->
-  Live P (ftv_typ (typ_Var a)) D Dd S.
-Proof.
-  intros P a D Dd S Hs HP b Hb. simpl in Hb. apply AtomSetFacts.singleton_iff in Hb. subst b.
-  exact (conj Hs HP).
-Qed.
-
-(* The substitution may change at an atom the live set does not hold. *)
-Lemma Live_fresh : forall P L (D D' DT : denv) Sg n k U, LOld n L -> Live P L D DT Sg -> sat DT k U -> P U ->
-  D' (ea n) = k -> (forall a, a `in` L -> D' a = D a) ->
-  Live P (L `union` {{ ea n }}) D' DT (supd Sg (ea n) U).
-Proof.
-  intros P L D D' DT Sg n k U Ho HL Hs HPU Hk Hag a Ha. apply AtomSetFacts.union_iff in Ha.
-  destruct Ha as [Ha|Ha].
-  - assert (Hne : a <> ea n) by (intro E; exact (Ho a Ha n (le_n n) E)).
-    rewrite supd_other by exact Hne. rewrite (Hag a Ha). exact (HL a Ha).
-  - apply AtomSetFacts.singleton_iff in Ha. subst a. rewrite supd_same, Hk. exact (conj Hs HPU).
-Qed.
-
-Lemma LOld_fresh : forall n L, LOld n L -> LOld (S n) (L `union` {{ ea n }}).
-Proof.
-  intros n L Ho a Ha. apply AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
-  - exact (old_le _ _ _ (Nat.le_succ_diag_r n) (Ho a Ha)).
-  - apply AtomSetFacts.singleton_iff in Ha. subst a. apply old_ea. lia.
-Qed.
-
-Lemma LOld_union : forall n L1 L2, LOld n L1 -> LOld n L2 -> LOld n (L1 `union` L2).
-Proof.
-  intros n L1 L2 H1 H2 a Ha. apply AtomSetFacts.union_iff in Ha.
-  destruct Ha as [Ha|Ha]; [ exact (H1 a Ha) | exact (H2 a Ha) ].
-Qed.
-
-Lemma LOld_ftv : forall n T, TOk n T -> LOld n (ftv_typ T).
-Proof. intros n T [_ H] a Ha. exact (H a Ha). Qed.
-
-Lemma LOld_mono : forall n n' L, n <= n' -> LOld n L -> LOld n' L.
-Proof. intros n n' L Hl H a Ha. exact (old_le _ _ _ Hl (H a Ha)). Qed.
-
-Lemma LOld_sub : forall n L1 L2, L1 [<=] L2 -> LOld n L2 -> LOld n L1.
-Proof. intros n L1 L2 H Ho a Ha. exact (Ho a (H a Ha)). Qed.
-
-Lemma apT_agree : forall S S' T, rf T ->
-  (forall a, a `in` ftv_typ T -> sT S a = sT S' a) -> apT S T = apT S' T.
-Proof.
-  intros S S' T. induction T; simpl; intros H Hn; try contradiction; try reflexivity.
-  - destruct H as [H1 H2]. rewrite !apT_Arrow.
-    rewrite (IHT1 H1 (fun a Ha => Hn a ltac:(fsetdec))), (IHT2 H2 (fun a Ha => Hn a ltac:(fsetdec))).
-    reflexivity.
-  - rewrite !apT_Var. apply Hn. fsetdec.
-Qed.
-
-(* ---- a step, on the live atoms ---- *)
-
-(* [Sg] factors through the step [s] by [S2], on the live atoms [L]; [S2]
-   respects the sorts the run ends with, and sends the images of the live atoms
-   to types [P] allows. *)
-Definition SemL (P : typ -> Prop) (L : atoms) (DT : denv) (Sg : sub) (n : nat) (s : sub)
-  (D' : denv) (n' : nat) (S2 : sub) : Prop :=
-  rkres D' DT (sR S2) /\ Live P (limg s L) D' DT S2 /\ DOk D' n' /\ SI n n' s /\
-  (forall x, x `in` L -> teqD DT (sT Sg x) (apT S2 (sT s x))) /\
-  (forall q, old n q -> sR S2 q = sR Sg q).
-
-Lemma SemL_rk : forall P L DT Sg n s D' n' S2, SemL P L DT Sg n s D' n' S2 -> rkres D' DT (sR S2).
-Proof. intros P L DT Sg n s D' n' S2 H. exact (proj1 H). Qed.
-
-Lemma SemL_live : forall P L DT Sg n s D' n' S2, SemL P L DT Sg n s D' n' S2 ->
-  Live P (limg s L) D' DT S2.
-Proof. intros P L DT Sg n s D' n' S2 H. exact (proj1 (proj2 H)). Qed.
-
-Lemma SemL_DOk : forall P L DT Sg n s D' n' S2, SemL P L DT Sg n s D' n' S2 -> DOk D' n'.
-Proof. intros P L DT Sg n s D' n' S2 H. exact (proj1 (proj2 (proj2 H))). Qed.
-
-Lemma SemL_SI : forall P L DT Sg n s D' n' S2, SemL P L DT Sg n s D' n' S2 -> SI n n' s.
-Proof. intros P L DT Sg n s D' n' S2 H. exact (proj1 (proj2 (proj2 (proj2 H)))). Qed.
-
-Lemma SemL_F : forall P L DT Sg n s D' n' S2, SemL P L DT Sg n s D' n' S2 ->
-  forall x, x `in` L -> teqD DT (sT Sg x) (apT S2 (sT s x)).
-Proof. intros P L DT Sg n s D' n' S2 H. exact (proj1 (proj2 (proj2 (proj2 (proj2 H))))). Qed.
-
-Arguments SemL_rk {P L DT Sg n s D' n' S2} H.
-Arguments SemL_live {P L DT Sg n s D' n' S2} H.
-Arguments SemL_DOk {P L DT Sg n s D' n' S2} H.
-Arguments SemL_SI {P L DT Sg n s D' n' S2} H.
-Arguments SemL_F {P L DT Sg n s D' n' S2} H x _.
-
-(* A record-free type over live atoms factors through the step. *)
-Lemma SemL_factor : forall P L DT Sg n s D' n' S2 T, SemL P L DT Sg n s D' n' S2 ->
-  rf T -> ftv_typ T [<=] L -> teqD DT (apT Sg T) (apT S2 (apT s T)).
-Proof.
-  intros P L DT Sg n s D' n' S2 T H Hrf Hs. apply ap_factor_rf; [ exact Hrf | ].
-  intros z Hz. exact (SemL_F H z (Hs z Hz)).
-Qed.
-
-Lemma SemL_live_ap : forall P L DT Sg n s D' n' S2 T, SemL P L DT Sg n s D' n' S2 ->
-  rf T -> ftv_typ T [<=] L -> Live P (ftv_typ (apT s T)) D' DT S2.
-Proof.
-  intros P L DT Sg n s D' n' S2 T H Hrf Hs. eapply Live_mono; [ | exact (SemL_live H) ].
-  exact (limg_ap s T L Hrf Hs).
-Qed.
-
-Lemma SemL_mono : forall P L1 L2 DT Sg n s D' n' S2, L1 [<=] L2 ->
-  SemL P L2 DT Sg n s D' n' S2 -> SemL P L1 DT Sg n s D' n' S2.
-Proof.
-  intros P L1 L2 DT Sg n s D' n' S2 Hsub (R & V & Hd & HI & F & Q).
-  refine (conj R (conj (Live_mono _ _ _ _ _ _ (limg_mono s _ _ Hsub) V) (conj Hd (conj HI (conj _ Q))))).
-  intros x Hx. exact (F x (Hsub x Hx)).
-Qed.
-
-(* A step from a substitution that agrees with [Sg] on the live atoms, which lie
-   below a smaller supply, is a step from [Sg]. *)
-Lemma SemL_weaken : forall P L DT Sg Sg' n0 n1 s D' n' S2,
-  n0 <= n1 -> LOld n0 L -> SemL P L DT Sg' n1 s D' n' S2 ->
-  (forall x, x `in` L -> sT Sg' x = sT Sg x) -> (forall q, old n0 q -> sR Sg' q = sR Sg q) ->
-  SemL P L DT Sg n0 s D' n' S2.
-Proof.
-  intros P L DT Sg Sg' n0 n1 s D' n' S2 Hl Ho (R & V & Hd & HI & F & Q) Ex Er.
-  refine (conj R (conj V (conj Hd (conj (SI_weaken _ _ _ _ Hl HI) (conj _ _))))).
-  - intros x Hx. rewrite <- (Ex x Hx). exact (F x Hx).
-  - intros q Hq. rewrite <- (Er q Hq). exact (Q q (old_le _ _ _ Hl Hq)).
-Qed.
-
-Lemma SemL_id : forall P L DT Sg D n, rkres D DT (sR Sg) -> Live P L D DT Sg -> DOk D n ->
-  SemL P L DT Sg n sid D n Sg.
-Proof.
-  intros P L DT Sg D n Hr HL Hd. refine (conj Hr (conj _ (conj Hd (conj (SI_id n) (conj _ _))))).
-  - intros a Ha. exact (HL a (limg_sid L a Ha)).
-  - intros x _. apply teqD_refl.
-  - intros q _. reflexivity.
-Qed.
-
-(* A fresh variable of sort [k], sent to [U]. *)
-Lemma SemL_fresh : forall P L DT D Sg n k U, rkres D DT (sR Sg) -> Live P L D DT Sg -> DOk D n ->
-  LOld n L -> SemL P L DT Sg n sid (upd D (ea n) k) (S n) (supd Sg (ea n) U).
-Proof.
-  intros P L DT D Sg n k U Hr HL Hd Ho.
-  refine (conj _ (conj _ (conj (DOk_upd D n k Hd) (conj (SI_id_le n (S n) (Nat.le_succ_diag_r n)) (conj _ _))))).
-  - intros r. cbn [sR supd drk upd]. exact (Hr r).
-  - intros a Ha. pose proof (limg_sid L a Ha) as Ha'.
-    assert (Hne : a <> ea n) by (intro E; exact (Ho a Ha' n (le_n n) E)).
-    rewrite upd_other by exact Hne. rewrite supd_other by exact Hne. exact (HL a Ha').
-  - intros x Hx. cbn [sid sT idt]. change (teqD DT (sT Sg x) (sT (supd Sg (ea n) U) x)).
-    rewrite supd_other by (intro E; exact (Ho x Hx n (le_n n) E)). apply teqD_refl.
-  - intros q _. reflexivity.
-Qed.
-
-(* The step that ran past the fresh atom is a step from the old substitution. *)
-Lemma SemL_unfresh : forall P Ln DT Sg n U s D' n' S2, LOld n Ln ->
-  SemL P (Ln `union` {{ ea n }}) DT (supd Sg (ea n) U) (S n) s D' n' S2 ->
-  SemL P Ln DT Sg n s D' n' S2.
-Proof.
-  intros P Ln DT Sg n U s D' n' S2 Ho H.
-  refine (SemL_weaken P Ln DT Sg (supd Sg (ea n) U) n (S n) s D' n' S2 (Nat.le_succ_diag_r n) Ho
-            (SemL_mono P Ln _ DT _ _ s D' n' S2 _ H) _ _).
-  - intros x Hx. fsetdec.
-  - intros x Hx. apply supd_other. intro E. exact (Ho x Hx n (le_n n) E).
-  - intros q _. reflexivity.
-Qed.
-
-Lemma SemL_comp : forall P L Lm DT Sg n s D1 n1 S1 s' D2 n2 S2, LOld n L ->
-  SemL P L DT Sg n s D1 n1 S1 -> limg s L [<=] Lm ->
-  SemL P Lm DT S1 n1 s' D2 n2 S2 -> SemL P L DT Sg n (scomp s' s) D2 n2 S2.
-Proof.
-  intros P L Lm DT Sg n s D1 n1 S1 s' D2 n2 S2 Ho (R1 & V1 & Hd1 & I1 & F1 & Q1) Hsub
-    (R2 & V2 & Hd2 & I2 & F2 & Q2).
-  refine (conj R2 (conj _ (conj Hd2 (conj (SI_comp _ _ _ _ _ I1 I2) (conj _ _))))).
-  - intros y Hy. apply V2. exact (limg_mono s' _ _ Hsub y (limg_scomp n n1 s s' L Ho I1 y Hy)).
-  - intros x Hx. eapply teqD_trans; [ exact (F1 x Hx) | ].
-    pose proof (proj1 (proj2 I1) x (Ho x Hx)) as [Hrf _].
-    change (teqD DT (apT S1 (sT s x)) (apT S2 (apT s' (sT s x)))).
-    apply ap_factor_rf; [ exact Hrf | intros z Hz; apply F2; apply Hsub; apply limg_in; exists x; split; assumption ].
-  - intros q Hq. rewrite (Q2 q (old_le _ _ _ (proj1 I1) Hq)). exact (Q1 q Hq).
-Qed.
-
-(* ---- the contexts, on the live atoms ---- *)
-
-(* The types of the context's bindings lie over live atoms. *)
-Definition GLive (L : atoms) (G : ctx) : Prop :=
-  Forall (fun b => exists T, snd b = sch_mono T /\ ftv_typ T [<=] L) G.
-
-Lemma GLive_nil : forall L, GLive L nil.
-Proof. intros L. constructor. Qed.
-
-Lemma GLive_cons : forall L x T G, ftv_typ T [<=] L -> GLive L G -> GLive L ((x ~ sch_mono T) ++ G).
-Proof. intros L x T G HT HG. constructor; [ exists T; split; [ reflexivity | exact HT ] | exact HG ]. Qed.
-
-Lemma GLive_mono : forall L1 L2 G, L1 [<=] L2 -> GLive L1 G -> GLive L2 G.
-Proof.
-  intros L1 L2 G Hl H. induction H as [|b G [T [E HT]] _ IH]; constructor.
-  - exists T. split; [ exact E | intros a Ha; apply Hl; apply HT; exact Ha ].
-  - exact IH.
-Qed.
-
-Lemma GLive_lookup : forall L G x T, GLive L G -> lookup x G = Some (sch_mono T) -> ftv_typ T [<=] L.
-Proof.
-  intros L G x T H. induction H as [|[y sc] G [T0 [E HT]] _ IH]; intros Hl; [ discriminate Hl | ].
-  cbn [lookup] in Hl. destruct (Atom.eq_dec x y) as [_|_].
-  - cbn [snd] in E. subst sc. injection Hl as Hl. subst T0. exact HT.
-  - exact (IH Hl).
-Qed.
-
-Lemma GLive_apC : forall n n' s L G, SI n n' s -> GOk n G -> GLive L G ->
-  GLive (limg s L) (apC s G).
-Proof.
-  intros n n' s L G HI HG HL. rewrite apC_map. revert HG.
-  induction HL as [|[y sc] G [T [E HT]] _ IH]; intros HG; simpl.
-  - constructor.
-  - inversion HG as [|b G' [T' [E' [HT' HTa]]] HG' Eb]; subst. simpl in *.
-    rewrite E in E'. apply (f_equal s_body) in E'. cbn [sch_mono s_body] in E'. subst T'.
-    constructor; [ | exact (IH HG') ].
-    exists (apT s T). split; [ simpl; rewrite E; reflexivity | ].
-    intros a Ha. destruct (ftv_ap_rf s T a HT' Ha) as (x & Hx & Hax).
-    apply limg_in. exists x. split; [ apply HT; exact Hx | exact Hax ].
-Qed.
-
-
-(* The substitution may change off the live atoms. *)
-Lemma CI_agree : forall D1 Sg Sg' G1 G L n, CI D1 Sg G1 G -> GOk n G -> GLive L G ->
-  (forall a, a `in` L -> sT Sg' a = sT Sg a) -> CI D1 Sg' G1 G.
-Proof.
-  intros D1 Sg Sg' G1 G L n H. induction H as [|[x s1] [y s] G1 G [Hk [T1 [T [E1 [E2 Ht]]]]] _ IH]; intros HO HG Hag.
-  - constructor.
-  - inversion HG as [|b G' [T' [E' HTa]] HG' Eb]; subst.
-    inversion HO as [|b2 G2 [T2 [E2' [HT2 HT2o]]] HO' Eb2]; subst. simpl in *. subst y.
-    constructor; [ | exact (IH HO' HG' Hag) ].
-    simpl. split; [ reflexivity | ]. exists T1, T. repeat split; try assumption.
-    rewrite E' in E2. apply (f_equal s_body) in E2. cbn [sch_mono s_body] in E2. subst T'.
-    rewrite E' in E2'. apply (f_equal s_body) in E2'. cbn [sch_mono s_body] in E2'. subst T2.
-    rewrite (apT_agree Sg' Sg T HT2 (fun a Ha => Hag a (HTa a Ha))). exact Ht.
-Qed.
-
-Lemma CI_stepL : forall P L DT Sg n s D' n' S2 G1 G,
-  SemL P L DT Sg n s D' n' S2 -> CI DT Sg G1 G -> GOk n G -> GLive L G ->
-  CI DT S2 G1 (apC s G) /\ GOk n' (apC s G) /\ GLive (limg s L) (apC s G).
-Proof.
-  intros P L DT Sg n s D' n' S2 G1 G Hs HC HG HL.
-  refine (conj _ (conj (GOk_apC _ _ _ _ (SemL_SI Hs) HG) (GLive_apC _ _ _ _ _ (SemL_SI Hs) HG HL))).
-  rewrite apC_map. revert HG HL.
-  induction HC as [|[x s1] [y sc] G1 G [Hk [T1 [T [E1 [E2 Ht]]]]] _ IH]; intros HG HL.
-  - constructor.
-  - inversion HG as [|b G' [T' [E' [HT' HTa]]] HG' Eb]; subst.
-    inversion HL as [|b2 G2 [T2 [E2' HT2]] HL' Eb2]; subst. simpl in *. subst y.
-    constructor; [ | exact (IH HG' HL') ].
-    simpl. split; [ reflexivity | ].
-    rewrite E2 in E'. apply (f_equal s_body) in E'. cbn [sch_mono s_body] in E'. subst T'.
-    rewrite E2 in E2'. apply (f_equal s_body) in E2'. cbn [sch_mono s_body] in E2'. subst T2.
-    exists T1, (apT s T). split; [ exact E1 | split; [ rewrite E2; reflexivity | ] ].
-    eapply teqD_trans; [ | exact Ht ]. apply teqD_sym. exact (SemL_factor P L DT Sg n s D' n' S2 T Hs HT' HT2).
-Qed.
-
-Lemma next_facts : forall P Dd Gd Sg n L s D1 n1 S1 T G,
-  LOld n L -> SemL P L Dd Sg n s D1 n1 S1 -> TOk n1 T -> Live P (ftv_typ T) D1 Dd S1 ->
-  GOk n G -> GLive L G -> CI Dd Sg Gd G ->
-  LOld n1 (lnext s L T) /\ Live P (lnext s L T) D1 Dd S1 /\ GOk n1 (apC s G) /\
-  GLive (lnext s L T) (apC s G) /\ CI Dd S1 Gd (apC s G).
-Proof.
-  intros P Dd Gd Sg n L s D1 n1 S1 T G Ho Hs HT Lv HG HL HC.
-  destruct (CI_stepL P L Dd Sg n s D1 n1 S1 Gd G Hs HC HG HL) as (HC1 & HG1 & HL1).
-  refine (conj (LOld_union _ _ _ (limg_old _ _ _ _ Ho (SemL_SI Hs)) (LOld_ftv _ _ HT)) (conj _ (conj HG1 (conj _ HC1)))).
-  - exact (Live_union _ _ _ _ _ _ (SemL_live Hs) Lv).
-  - exact (GLive_mono _ _ _ (limg_lnext s L T) HL1).
-Qed.
-
-(* The full substitution the unifier's completeness needs: [Sg] on the live
-   atoms, and [Float], which satisfies every sort, elsewhere. *)
-Definition restr (L : atoms) (Sg : sub) : sub :=
-  Sub (fun a => if AtomSetImpl.mem a L then sT Sg a else typ_Float) (sR Sg).
-
-Lemma restr_in : forall L Sg a, a `in` L -> sT (restr L Sg) a = sT Sg a.
-Proof. intros L Sg a Ha. cbn [restr sT]. rewrite (AtomSetImpl.mem_1 Ha). reflexivity. Qed.
-
-Lemma unify_stepL : forall P DT D Sg L T1 T2 n,
-  P typ_Float -> DOk D n -> LOld n L -> Live P L D DT Sg -> rkres D DT (sR Sg) ->
-  rf T1 -> rf T2 -> ftv_typ T1 [<=] L -> ftv_typ T2 [<=] L ->
-  teqD DT (apT Sg T1) (apT Sg T2) ->
-  exists s D' n' S2,
-    Stable (fun f => unify_coD f D T1 T2 n = Some (s, D', nil, n')) /\ SemL P L DT Sg n s D' n' S2.
-Proof.
-  intros P DT D Sg L T1 T2 n HPI Hd Ho HL Hr R1 R2 S1 S2 Heq.
-  assert (HK : KR D DT (restr L Sg)).
-  { split.
-    - intros a. cbn [restr sT]. destruct (AtomSetImpl.mem a L) eqn:E.
-      + exact (proj1 (HL a (AtomSetImpl.mem_2 E))).
-      + simpl. exact I.
-    - exact Hr. }
-  assert (HPall : forall z, P (sT (restr L Sg) z)).
-  { intros z. cbn [restr sT]. destruct (AtomSetImpl.mem z L) eqn:E.
-    - exact (proj2 (HL z (AtomSetImpl.mem_2 E))).
-    - exact HPI. }
-  assert (Heq' : teqD DT (apT (restr L Sg) T1) (apT (restr L Sg) T2)).
-  { rewrite (apT_agree (restr L Sg) Sg T1 R1 (fun a Ha => restr_in L Sg a (S1 a Ha))),
-            (apT_agree (restr L Sg) Sg T2 R2 (fun a Ha => restr_in L Sg a (S2 a Ha))). exact Heq. }
-  destruct (unify_tD_rf_complete_img DT D (restr L Sg) T1 T2 n Hd HK R1 R2
-              (fun x Hx => Ho x (S1 x Hx)) (fun x Hx => Ho x (S2 x Hx)) Heq')
-    as (s & D' & n' & S3 & [f0 Hf0] & (K & Hd' & HI & F & Q) & Im).
-  exists s, D', n', S3. split.
-  - exact (unify_coD_stable f0 D T1 T2 n s D' n' (Hf0 f0 (le_n f0))).
-  - refine (conj (proj2 K) (conj _ (conj Hd' (conj HI (conj _ Q))))).
-    + intros a _. exact (conj (proj1 K a) (Img_bound P _ S3 Im HPall a)).
-    + intros x Hx. rewrite <- (restr_in L Sg x Hx). exact (F x (Ho x Hx)).
-Qed.
-
-
 (* ---- the derivations of the core constructs ---- *)
 
-(* [typing] restricted to the constructs here, with a binder's premise at every
-   name fresh for the context and the term (the algorithm opens a binder at the
-   one name it chose), the context's bindings monomorphic, and the operators of
-   one sort ([generic_sort]: [Numeric], and [Quot] for [/]); the core's types
-   hold no record, so a [Quot] type here is a [Float].  [P] is the allowed set: the types a rule invents (a parameter's, a
-   numeral's, a call's result, an operator's) are in it. *)
-Inductive ctyping (P : typ -> Prop) : denv -> ctx -> exp -> typ -> Prop :=
-  | C_Var : forall Dd Gd x T,
-      uniq Gd -> binds x (sch_mono T) Gd -> ctyping P Dd Gd (e_fvar_f x) T
-  | C_Num : forall Dd Gd i T, uniq Gd -> sat Dd k_Literal T -> P T -> ctyping P Dd Gd (e_num i) T
-  | C_Dec : forall Dd Gd d, uniq Gd -> ctyping P Dd Gd (e_dec d) typ_Float
-  | C_True : forall Dd Gd, uniq Gd -> ctyping P Dd Gd e_true typ_Bool
-  | C_False : forall Dd Gd, uniq Gd -> ctyping P Dd Gd e_false typ_Bool
-  | C_Unit : forall Dd Gd, uniq Gd -> ctyping P Dd Gd e_unit typ_Unit
-  | C_Str : forall Dd Gd q, uniq Gd -> ctyping P Dd Gd (e_str q) typ_String
-  | C_Abs : forall Dd Gd e T1 T2, P T1 ->
-      (forall x, x `notin` dom Gd `union` fv_exp e ->
-         ctyping P Dd ((x ~ sch_mono T1) ++ Gd) (open_exp_wrt_exp e (e_fvar_f x)) T2) ->
-      ctyping P Dd Gd (e_abs e) (typ_Arrow T1 T2)
-  | C_App : forall Dd Gd e1 e2 T1 T2, P T2 ->
-      ctyping P Dd Gd e1 (typ_Arrow T1 T2) -> ctyping P Dd Gd e2 T1 ->
-      ctyping P Dd Gd (e_app e1 e2) T2
-  | C_If : forall Dd Gd e1 e2 e3 T,
-      ctyping P Dd Gd e1 typ_Bool -> ctyping P Dd Gd e2 T -> ctyping P Dd Gd e3 T ->
-      ctyping P Dd Gd (e_ite e1 e2 e3) T
-  | C_ToFloat : forall Dd Gd e A,
-      ctyping P Dd Gd e A -> sat Dd k_Literal A -> P A -> ctyping P Dd Gd (e_tofloat e) typ_Float
-  | C_Arith : forall Dd Gd e1 o e2 A,
-      kind o <> k_cmp -> sat Dd (generic_sort o) A -> P A ->
-      ctyping P Dd Gd e1 A -> ctyping P Dd Gd e2 A -> ctyping P Dd Gd (e_bin e1 o e2) A
-  | C_Cmp : forall Dd Gd e1 o e2 A,
-      kind o = k_cmp -> sat Dd k_Eq A -> P A ->
-      ctyping P Dd Gd e1 A -> ctyping P Dd Gd e2 A -> ctyping P Dd Gd (e_bin e1 o e2) typ_Bool
-  | C_LetMono : forall Dd Gd e1 e2 T1 T2,
-      is_gen_value e1 = false -> ctyping P Dd Gd e1 T1 ->
-      (forall x, x `notin` dom Gd `union` fv_exp e2 ->
-         ctyping P Dd ((x ~ sch_mono T1) ++ Gd) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
-      ctyping P Dd Gd (e_let e1 e2) T2
-  | C_Conv : forall Dd Gd e T T',
-      ctyping P Dd Gd e T -> teqD Dd T T' -> ctyping P Dd Gd e T'.
-
-Theorem ctyping_typing : forall P D G e T, ctyping P D G e T -> typing D G e T.
+Lemma PEv_scalar : forall c,
+  (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) -> PEv c.
 Proof.
-  intros P D G e T H. induction H.
-  - eapply T_Var; [ exact H | exact H0 | apply inst_mono_self ].
+  intros c Hc. split.
+  - split; intros a Ha; exfalso; destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; simpl in Ha; revert Ha; fsetdec.
+  - destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact I.
+Qed.
+
+(* [typing] restricted to the constructs here, in the normal form of
+   GoatCompleteNf.v: a binder's premise at every name fresh for the context and
+   the term (the algorithm opens a binder at the one name it chose), the
+   operators of one sort ([generic_sort]: [Numeric], and [Quot] for [/]); the
+   core's types hold no record, so a [Quot] type here is a [Float].  A
+   variable's type is an instance whose images are [PEv], and so is each type a
+   rule invents (a parameter's, a numeral's, a call's result, an operator's). *)
+Inductive ctyping : atoms -> denv -> ctx -> exp -> typ -> Prop :=
+  | C_Var : forall Av Dd Gd x s T,
+      uniq Gd -> binds x s Gd -> s_rq s [=] {} -> instP Dd T s -> ctyping Av Dd Gd (e_fvar_f x) T
+  | C_Num : forall Av Dd Gd i T, uniq Gd -> sat Dd k_Literal T -> PEv T -> ctyping Av Dd Gd (e_num i) T
+  | C_Dec : forall Av Dd Gd d, uniq Gd -> ctyping Av Dd Gd (e_dec d) typ_Float
+  | C_True : forall Av Dd Gd, uniq Gd -> ctyping Av Dd Gd e_true typ_Bool
+  | C_False : forall Av Dd Gd, uniq Gd -> ctyping Av Dd Gd e_false typ_Bool
+  | C_Unit : forall Av Dd Gd, uniq Gd -> ctyping Av Dd Gd e_unit typ_Unit
+  | C_Str : forall Av Dd Gd q, uniq Gd -> ctyping Av Dd Gd (e_str q) typ_String
+  | C_Abs : forall Av Dd Gd e T1 T2, PEv T1 ->
+      (forall x, x `notin` dom Gd `union` fv_exp e ->
+         ctyping (bg Av Gd (typ_Arrow T1 T2)) Dd ((x ~ sch_mono T1) ++ Gd)
+                 (open_exp_wrt_exp e (e_fvar_f x)) T2) ->
+      ctyping Av Dd Gd (e_abs e) (typ_Arrow T1 T2)
+  | C_App : forall Av Dd Gd e1 e2 T1 T2, PEv T2 ->
+      ctyping (bg Av Gd T2 `union` ats T1) Dd Gd e1 (typ_Arrow T1 T2) ->
+      ctyping (bg Av Gd T2 `union` ats T1) Dd Gd e2 T1 ->
+      ctyping Av Dd Gd (e_app e1 e2) T2
+  | C_If : forall Av Dd Gd e1 e2 e3 T,
+      ctyping (bg Av Gd T) Dd Gd e1 typ_Bool -> ctyping (bg Av Gd T) Dd Gd e2 T ->
+      ctyping (bg Av Gd T) Dd Gd e3 T ->
+      ctyping Av Dd Gd (e_ite e1 e2 e3) T
+  | C_ToFloat : forall Av Dd Gd e A,
+      ctyping (bg Av Gd typ_Float `union` ats A) Dd Gd e A -> sat Dd k_Literal A -> PEv A ->
+      ctyping Av Dd Gd (e_tofloat e) typ_Float
+  | C_Arith : forall Av Dd Gd e1 o e2 A,
+      kind o <> k_cmp -> sat Dd (generic_sort o) A -> PEv A ->
+      ctyping (bg Av Gd A `union` ats A `union` ats A) Dd Gd e1 A ->
+      ctyping (bg Av Gd A `union` ats A `union` ats A) Dd Gd e2 A ->
+      ctyping Av Dd Gd (e_bin e1 o e2) A
+  | C_Cmp : forall Av Dd Gd e1 o e2 A,
+      kind o = k_cmp -> sat Dd k_Eq A -> PEv A ->
+      ctyping (bg Av Gd typ_Bool `union` ats A `union` ats A) Dd Gd e1 A ->
+      ctyping (bg Av Gd typ_Bool `union` ats A `union` ats A) Dd Gd e2 A ->
+      ctyping Av Dd Gd (e_bin e1 o e2) typ_Bool
+  | C_LetMono : forall Av Dd Gd e1 e2 T1 T2,
+      is_gen_value e1 = false ->
+      ctyping (bg Av Gd T2 `union` ats T1) Dd Gd e1 T1 ->
+      (forall x, x `notin` dom Gd `union` fv_exp e2 ->
+         ctyping (bg Av Gd T2 `union` ats T1) Dd ((x ~ sch_mono T1) ++ Gd)
+                 (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
+      ctyping Av Dd Gd (e_let e1 e2) T2
+  | C_Let : forall Av Dd Gd e1 e2 T1 T2 (k : sort_fn) (rk : rkind_fn) (Tm : typ),
+      is_gen_value e1 = true -> rf T1 ->
+      lit_pinned e1 (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm Gd))) k ->
+      (forall a, a `in` AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm Gd)) ->
+         ev a /\ a `notin` bg Av Gd T2) ->
+      ctyping (bg Av Gd T2)
+        (extr (ext Dd (AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm Gd))) k)
+              (AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm Gd))) rk) Gd e1 T1 ->
+      (forall x, x `notin` dom Gd `union` fv_exp e2 ->
+         ctyping (bg Av Gd T2) Dd ((x ~ gen (pin_ctx Tm Gd) T1 k rk) ++ Gd)
+                 (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
+      ctyping Av Dd Gd (e_let e1 e2) T2
+  | C_Conv : forall Av Dd Gd e T T',
+      ctyping (bg Av Gd T' `union` ats T) Dd Gd e T -> teqD Dd T T' ->
+      ctyping Av Dd Gd e T'.
+
+Theorem ctyping_typing : forall Av D G e T, ctyping Av D G e T -> typing D G e T.
+Proof.
+  intros Av D G e T H. induction H.
+  - eapply T_Var; [ exact H | exact H0 | exact (instP_inst _ _ _ H2) ].
   - apply T_Num; assumption.
   - apply T_Dec; assumption.
   - apply T_True; assumption.
@@ -676,16 +163,29 @@ Proof.
   - eapply T_Bin; [ exact IHctyping1 | exact IHctyping2 | ].
     apply sig_cmp; assumption.
   - apply T_LetMono with (L := dom Gd `union` fv_exp e2) (T1 := T1); [ exact IHctyping | exact H2 ].
+  - apply T_Let with (L := dom Gd `union` fv_exp e2) (T1 := T1) (k := k) (rk := rk) (Tm := Tm); assumption.
   - eapply T_ConvD; eassumption.
 Qed.
 
 (* ---- what each case of the induction uses ---- *)
 
-Lemma GOk_lookup : forall n G x T, GOk n G -> lookup x G = Some (sch_mono T) -> TOk n T.
+Lemma bg_av : forall Av G T, Av [<=] bg Av G T.
+Proof. intros Av G T. unfold bg. fsetdec. Qed.
+
+Lemma bg_ats : forall Av G T, ats T [<=] bg Av G T.
+Proof. intros Av G T. unfold bg. fsetdec. Qed.
+
+Lemma bg_ftv : forall Av G T, ftv_typ T [<=] bg Av G T.
+Proof. intros Av G T. unfold bg, ats. fsetdec. Qed.
+
+Lemma ats_ftv : forall T, ftv_typ T [<=] ats T.
+Proof. intros T. unfold ats. fsetdec. Qed.
+
+Lemma GOk_lookup : forall n G x sc, GOk n G -> lookup x G = Some sc -> SOk n sc.
 Proof.
-  intros n G x T H. induction H as [|[y sc] G [T0 [E HT]] _ IH]; intros Hl; [ discriminate Hl | ].
+  intros n G x sc H. induction H as [|[y s0] G Hb _ IH]; intros Hl; [ discriminate Hl | ].
   cbn [lookup] in Hl. destruct (Atom.eq_dec x y) as [_|_].
-  - cbn [snd] in E. subst sc. injection Hl as Hl. subst T0. exact HT.
+  - injection Hl as Hl. subst s0. exact Hb.
   - exact (IH Hl).
 Qed.
 
@@ -708,7 +208,6 @@ Proof.
   rewrite Ei, Ed, E, E'. simpl. repeat rewrite Nat.add_0_r. reflexivity.
 Qed.
 
-
 Lemma is_cmp_op_true : forall o, kind o = k_cmp -> is_cmp_op o = true.
 Proof. intros o H. unfold is_cmp_op. rewrite H. reflexivity. Qed.
 
@@ -716,22 +215,26 @@ Lemma is_cmp_op_false : forall o, kind o <> k_cmp -> is_cmp_op o = false.
 Proof. intros o H. unfold is_cmp_op. destruct (kind o); try reflexivity. contradiction. Qed.
 
 (* What a run ends with. *)
-Definition Done (P : typ -> Prop) (L : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat)
+Definition Done (L : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat)
   (Sg : sub) (T1 : typ) : Prop :=
   exists s D' n' S2 T e',
     Stable (fun f => infer f D G e n = Some (s, D', T, n', e')) /\
-    SemL P L D1 Sg n s D' n' S2 /\ TOk n' T /\ Live P (ftv_typ T) D' D1 S2 /\
-    teqD D1 (apT S2 T) T1 /\ is_gen_value e' = is_gen_value e.
+    SemL PEv L D1 Sg n s D' n' S2 /\ TOk n' T /\ EvT T /\ Live PEv (ftv_typ T) D' D1 S2 /\
+    RA D' /\ teqD D1 (apT S2 T) T1 /\ is_gen_value e' = is_gen_value e /\ let_open e' = let_open e.
 
-Lemma Done_const : forall P L D1 G e D n Sg T1 c,
+Lemma EvT_scalar : forall c,
+  (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) -> EvT c.
+Proof. intros c Hc. exact (proj1 (PEv_scalar c Hc)). Qed.
+
+Lemma Done_const : forall L D1 G e D n Sg T1 c,
   (forall f, infer (S f) D G e n = Some (sid, D, c, n, e)) ->
   (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) ->
-  DOk D n -> rkres D D1 (sR Sg) -> Live P L D D1 Sg -> teqD D1 c T1 -> Done P L D1 G e D n Sg T1.
+  DOk D n -> RA D -> Live PEv L D D1 Sg -> teqD D1 c T1 -> Done L D1 G e D n Sg T1.
 Proof.
-  intros P L D1 G e D n Sg T1 c Hi Hc Hd Hr HL Hteq.
+  intros L D1 G e D n Sg T1 c Hi Hc Hd HRA HL Hteq.
   exists sid, D, n, Sg, c, e.
-  refine (conj _ (conj (SemL_id P L D1 Sg D n Hr HL Hd) (conj (TOk_scalar n c Hc)
-    (conj (Live_scalar P c D D1 Sg Hc) (conj _ eq_refl))))).
+  refine (conj _ (conj (SemL_id PEv L D1 Sg D n (rkres_RA D D1 (sR Sg) HRA) HL Hd) (conj (TOk_scalar n c Hc)
+    (conj (EvT_scalar c Hc) (conj (Live_scalar PEv c D D1 Sg Hc) (conj HRA (conj _ (conj eq_refl eq_refl)))))))).
   - exists 1. intros f Hf. destruct f as [|f]; [ lia | exact (Hi f) ].
   - destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact Hteq.
 Qed.
@@ -761,54 +264,424 @@ Proof.
   intros c L Hc y Hy. exfalso. destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; simpl in Hy; revert Hy; fsetdec.
 Qed.
 
+Lemma EvT_var_ea : forall n, EvT (typ_Var (ea n)).
+Proof. intros n. apply EvT_var. apply ev_ea. Qed.
+
+(* ---- a variable bound to a scheme ---- *)
+
+(* The extension of [Sg] that sends the fresh atoms [ea (n + i)], one per
+   quantified atom, to the instance's images. *)
+Definition fsub (Sg : sub) (n : nat) (lq : list atom) (st : tsub) : sub :=
+  Sub (fun b => fold_right (fun a acc => if Atom.eq_dec b (ea (n + idx a lq)) then st a else acc) (sT Sg b) lq)
+      (sR Sg).
+
+Lemma fsub_at : forall Sg n lq st a, In a lq -> sT (fsub Sg n lq st) (ea (n + idx a lq)) = st a.
+Proof.
+  intros Sg n lq st a Ha. cbn [fsub sT].
+  apply (sel_at (fun a => ea (n + idx a lq)) st (ea (n + idx a lq)) (sT Sg (ea (n + idx a lq))) lq a Ha eq_refl).
+  intros a' Ha' E. apply ea_inj in E. assert (Hi : idx a' lq = idx a lq) by lia.
+  rewrite (idx_inj a' a lq Ha' Ha Hi). reflexivity.
+Qed.
+
+Lemma fsub_out : forall Sg n lq st b,
+  (forall a, In a lq -> b <> ea (n + idx a lq)) -> sT (fsub Sg n lq st) b = sT Sg b.
+Proof.
+  intros Sg n lq st b H. cbn [fsub sT].
+  exact (sel_out (fun a => ea (n + idx a lq)) st b (sT Sg b) lq H).
+Qed.
+
+Lemma inst_den_at : forall D sc n a, In a (AtomSetImpl.elements (s_tq sc)) ->
+  inst_den D sc n (ea (n + idx a (AtomSetImpl.elements (s_tq sc)))) = s_sk sc a.
+Proof.
+  intros D sc n a Ha. unfold inst_den. cbn [dsort].
+  apply (sel_at (fun a => ea (n + idx a (AtomSetImpl.elements (s_tq sc)))) (s_sk sc)
+           (ea (n + idx a (AtomSetImpl.elements (s_tq sc)))) _ _ a Ha eq_refl).
+  intros a' Ha' E. apply ea_inj in E.
+  assert (Hi : idx a' (AtomSetImpl.elements (s_tq sc)) = idx a (AtomSetImpl.elements (s_tq sc))) by lia.
+  rewrite (idx_inj a' a _ Ha' Ha Hi). reflexivity.
+Qed.
+
+Lemma inst_den_out : forall D sc n b,
+  (forall a, In a (AtomSetImpl.elements (s_tq sc)) -> b <> ea (n + idx a (AtomSetImpl.elements (s_tq sc)))) ->
+  inst_den D sc n b = D b.
+Proof.
+  intros D sc n b H. unfold inst_den. cbn [dsort].
+  exact (sel_out (fun a => ea (n + idx a (AtomSetImpl.elements (s_tq sc)))) (s_sk sc) b (D b) _ H).
+Qed.
+
+Lemma apT_sid : forall T, apT sid T = T.
+Proof. intros T. unfold apT, sid. cbn [sT sR]. apply ap_typ_pointwise_id; reflexivity. Qed.
+
+(* A variable the algorithm's context binds to a scheme, which the derivation's
+   scheme instantiates: the algorithm instantiates at fresh atoms, and the
+   extension sends those to the derivation's instance. *)
+Lemma var_sch_done : forall L Dd D G n Sg x sd sc T,
+  DOk D n -> RA D -> LOld n L -> LEv L -> Live PEv L D Dd Sg -> GOk n G -> GLive L G ->
+  lookup x G = Some sc -> SchI Dd Sg sd sc -> instP Dd T sd ->
+  Done L Dd G (e_fvar_f x) D n Sg T.
+Proof.
+  intros L Dd D G n Sg x sd sc T Hd HRA HLo HLE HLv HG HGL Hlk Hsch Hi.
+  pose proof (GOk_lookup n G x sc HG Hlk) as Hso.
+  pose proof Hso as (Hw & Hrq & Hrf & Hold).
+  pose proof (GLive_lookup L G x sc HGL Hlk) as Hfl.
+  pose proof (proj2 (proj2 Hsch) Dd (fun _ _ => eq_refl) (fun _ _ => eq_refl) T Hi) as Hi2.
+  destruct Hi2 as (st & sr & t1 & t2 & t3 & t4 & t5 & t6 & t7 & t8).
+  cbn [apS s_tq s_rq s_sk s_rk s_body] in t1, t2, t3, t4, t5, t7, t8.
+  set (lq := AtomSetImpl.elements (s_tq sc)) in *.
+  set (S2 := fsub Sg n lq st).
+  set (T0 := apT (inst_sub sc n) (s_body sc)).
+  set (D1 := inst_den D sc n).
+  set (n1 := n + length lq + length (AtomSetImpl.elements (s_rq sc))).
+  assert (Hinst : instantiate D sc n = (T0, D1, n1)) by reflexivity.
+  destruct (instantiate_sound D sc n T0 D1 n1 Hinst Hw Hd) as (_ & HE0 & Hd1 & _).
+  assert (Hlr : AtomSetImpl.elements (s_rq sc) = nil)
+    by (apply elements_none; intros q Hq; apply Hrq in Hq; revert Hq; fsetdec).
+  assert (Hn1 : n1 = n + length lq) by (unfold n1; rewrite Hlr; simpl; lia).
+  assert (HRA1 : RA D1) by (intros r; unfold D1, inst_den; cbn [drk]; rewrite Hlr; simpl; exact (HRA r)).
+  assert (HoldD : forall b, old n b -> forall a, In a lq -> b <> ea (n + idx a lq)).
+  { intros b Hb a Ha E. exact (Hb (n + idx a lq) (Nat.le_add_r n (idx a lq)) E). }
+  assert (F2 : forall b, old n b -> sT S2 b = sT Sg b)
+    by (intros b Hb; exact (fsub_out Sg n lq st b (HoldD b Hb))).
+  assert (HD1o : forall b, old n b -> D1 b = D b)
+    by (intros b Hb; exact (inst_den_out D sc n b (HoldD b Hb))).
+  assert (Hbody : forall y, y `in` ftv_typ T0 ->
+            (exists a, In a lq /\ y = ea (n + idx a lq)) \/ y `in` ftv_sch sc).
+  { intros y Hy. unfold T0 in Hy. destruct (ftv_ap_rf (inst_sub sc n) _ y Hrf Hy) as (b & Hb & Hyb).
+    destruct (in_dec_set b (s_tq sc)) as [Hq|Hq].
+    - left. exists b. split; [ apply In_elements; exact Hq | ].
+      cbn [inst_sub sT] in Hyb. destruct (in_dec Atom.eq_dec b (AtomSetImpl.elements (s_tq sc))) as [Hin|Hin].
+      + simpl in Hyb. apply AtomSetFacts.singleton_iff in Hyb. exact (eq_sym Hyb).
+      + exfalso. apply Hin. apply In_elements. exact Hq.
+    - right. cbn [inst_sub sT] in Hyb. destruct (in_dec Atom.eq_dec b (AtomSetImpl.elements (s_tq sc))) as [Hin|Hin].
+      + exfalso. apply Hq. apply In_elements. exact Hin.
+      + simpl in Hyb. apply AtomSetFacts.singleton_iff in Hyb. subst y.
+        unfold ftv_sch. apply AtomSetFacts.diff_iff. split; assumption. }
+  assert (P4 : apT S2 T0 = T).
+  { unfold T0. rewrite apT_comp. rewrite t3.
+    change (ap_typ st sr (apT (sfix (s_tq sc) Sg) (s_body sc)))
+      with (apT (Sub st sr) (apT (sfix (s_tq sc) Sg) (s_body sc))).
+    rewrite apT_comp. apply apT_agree; [ exact Hrf | ].
+    intros b Hb.
+    change (sT (scomp S2 (inst_sub sc n)) b) with (apT S2 (sT (inst_sub sc n) b)).
+    change (sT (scomp (Sub st sr) (sfix (s_tq sc) Sg)) b) with (apT (Sub st sr) (sT (sfix (s_tq sc) Sg) b)).
+    destruct (in_dec_set b (s_tq sc)) as [Hq|Hq].
+    - rewrite sfix_in by exact Hq.
+      assert (Hin : In b lq) by (apply In_elements; exact Hq).
+      assert (Hr : sT (inst_sub sc n) b = typ_Var (ea (n + idx b lq))).
+      { cbn [inst_sub sT]. destruct (in_dec Atom.eq_dec b (AtomSetImpl.elements (s_tq sc))) as [H|H];
+          [ reflexivity | contradiction ]. }
+      rewrite Hr. change (sT S2 (ea (n + idx b lq)) = st b). exact (fsub_at Sg n lq st b Hin).
+    - rewrite sfix_out by exact Hq.
+      assert (Hbf : b `in` ftv_sch sc) by (unfold ftv_sch; apply AtomSetFacts.diff_iff; split; assumption).
+      assert (Hr : sT (inst_sub sc n) b = typ_Var b).
+      { cbn [inst_sub sT]. destruct (in_dec Atom.eq_dec b (AtomSetImpl.elements (s_tq sc))) as [H|H];
+          [ exfalso; apply Hq; apply In_elements; exact H | reflexivity ]. }
+      rewrite Hr. change (sT S2 b = apT (Sub st sr) (sT Sg b)).
+      rewrite (F2 b (Hold b Hbf)).
+      pose proof (HLv b (Hfl b Hbf)) as [_ [HEb HRb]].
+      assert (Hag : apT (Sub st sr) (sT Sg b) = apT sid (sT Sg b)).
+      { apply apT_agree; [ exact HRb | ]. intros c Hc. cbn [sT sid idt]. apply t1. intro Hcq.
+        exact (ev_od c (proj1 HEb c Hc) ((proj1 Hw) c Hcq)). }
+      rewrite Hag. rewrite apT_sid. reflexivity. }
+  assert (HrfT0 : rf T0).
+  { unfold T0. apply rf_ap; [ exact Hrf | ]. intros b _. cbn [inst_sub sT].
+    destruct (in_dec Atom.eq_dec b (AtomSetImpl.elements (s_tq sc))); exact I. }
+  assert (HTo : TOk n1 T0).
+  { split; [ exact HrfT0 | ]. intros y Hy. destruct (Hbody y Hy) as [(a & Ha & ->)|Hf].
+    - intros m Hm E. apply ea_inj in E. pose proof (idx_lt a lq Ha). lia.
+    - exact (old_le n n1 y ltac:(lia) (Hold y Hf)). }
+  exists sid, D1, n1, S2, T0, (e_fvar_f x).
+  refine (conj _ (conj _ (conj HTo (conj HE0 (conj _ (conj HRA1 (conj _ (conj eq_refl eq_refl)))))))).
+  - exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+    cbn [infer]. rewrite Hlk. rewrite Hinst. reflexivity.
+  - refine (conj (rkres_RA D1 Dd (sR S2) HRA1) (conj _ (conj Hd1 (conj (SI_id_le n n1 ltac:(lia)) (conj _ (conj _ OkS_id)))))).
+    + intros a Ha. pose proof (limg_sid L a Ha) as Ha'.
+      rewrite (HD1o a (HLo a Ha')). rewrite (F2 a (HLo a Ha')). exact (HLv a Ha').
+    + intros x0 Hx. cbn [sid sT idt]. change (teqD Dd (sT Sg x0) (sT S2 x0)).
+      rewrite (F2 x0 (HLo x0 Hx)). apply teqD_refl.
+    + intros q _. reflexivity.
+  - intros y Hy. destruct (Hbody y Hy) as [(a & Ha & ->)|Hf].
+    + assert (Haq : a `in` s_tq sc) by (apply In_elements; exact Ha).
+      change (sat Dd (D1 (ea (n + idx a lq))) (sT S2 (ea (n + idx a lq))) /\ PEv (sT S2 (ea (n + idx a lq)))).
+      assert (E1 : D1 (ea (n + idx a lq)) = s_sk sc a) by exact (inst_den_at D sc n a Ha).
+      assert (E2 : sT S2 (ea (n + idx a lq)) = st a) by exact (fsub_at Sg n lq st a Ha).
+      rewrite E1, E2.
+      exact (conj (t4 a Haq) (t7 a Haq)).
+    + pose proof (Hfl y Hf) as HyL.
+      change (sat Dd (D1 y) (sT S2 y) /\ PEv (sT S2 y)).
+      rewrite (HD1o y (HLo y HyL)). rewrite (F2 y (HLo y HyL)). exact (HLv y HyL).
+  - rewrite P4. apply teqD_refl.
+Qed.
+
+(* ---- reading the derivation at another environment ---- *)
+
+(* A [let] re-sorts the atoms it generalizes in its first premise, and leaves every
+   row kind alone; conversion between types reads the environment only through
+   the row kinds. *)
+Lemma rlacksD_drk : forall D D2 l R, (forall r, drk D r = drk D2 r) -> rlacksD D l R = rlacksD D2 l R.
+Proof.
+  intros D D2 l R Hr. induction R as [|r|l' T R IH|l' P T R IH]; simpl; auto;
+    [ rewrite Hr; reflexivity | rewrite IH; reflexivity | rewrite IH; reflexivity ].
+Qed.
+
+Lemma nf_drk_mut : forall D D2, (forall r, drk D r = drk D2 r) ->
+  (forall T, nfT D T = nfT D2 T) /\ (forall R, nfR D R = nfR D2 R).
+Proof.
+  intros D D2 H. apply typ_row_mutind; intros; try reflexivity.
+  - cbn [nfT]. rewrite H0, H1. reflexivity.
+  - cbn [nfT]. rewrite H0. reflexivity.
+  - rewrite !nfR_ext, H0, H1. reflexivity.
+  - rewrite !nfR_maybe, H0, H1, H2, (rlacksD_drk D D2 l _ H). reflexivity.
+Qed.
+
+Lemma teqD_drk : forall D D2 T T', (forall r, drk D r = drk D2 r) -> teqD D T T' -> teqD D2 T T'.
+Proof.
+  intros D D2 T T' H Ht. unfold teqD in *.
+  rewrite <- (proj1 (nf_drk_mut D D2 H)), <- (proj1 (nf_drk_mut D D2 H)). exact Ht.
+Qed.
+
+Lemma sch_leP_env : forall (D D2 : denv) s s',
+  (forall a, a `in` ftv_sch s -> D2 a = D a) ->
+  (forall r, r `in` frv_sch s -> drk D2 r = drk D r) ->
+  sch_leP D s s' -> sch_leP D2 s s'.
+Proof.
+  intros D D2 s s' Hv Hr (A & B & C). split; [ exact A | split; [ exact B | ] ].
+  intros D' Hd Hdr T H. apply (C D'); [ | | exact H ].
+  - intros a Ha. rewrite (Hd a Ha). apply Hv. exact Ha.
+  - intros r Hrr. rewrite (Hdr r Hrr). apply Hr. exact Hrr.
+Qed.
+
+Lemma CI_env : forall (Dd Dg : denv) Sg G1 G, CI Dd Sg G1 G ->
+  (forall a, a `in` ftv_ctx G1 -> Dg a = Dd a) -> (forall r, drk Dg r = drk Dd r) ->
+  CI Dg Sg G1 G.
+Proof.
+  intros Dd Dg Sg G1 G H Hs Hr.
+  induction H as [|[x s1] [y sc] G1 G [Hk Hrel] _ IH]; [ constructor | ].
+  constructor.
+  - simpl in *. split; [ exact Hk | ]. destruct Hrel as [(T1 & T & E1 & E2 & Ht)|Hsch].
+    + left. exists T1, T. split; [ exact E1 | split; [ exact E2 | ] ].
+      exact (teqD_drk Dd Dg _ _ (fun r => eq_sym (Hr r)) Ht).
+    + right. refine (sch_leP_env Dd Dg _ _ _ _ Hsch).
+      * intros a Ha. apply Hs. apply AtomSetFacts.union_iff. left. exact Ha.
+      * intros r Hrr. apply Hr.
+  - apply IH. intros a Ha. apply Hs. simpl. apply AtomSetFacts.union_iff. right. exact Ha.
+Qed.
+
+Lemma Live_env : forall L (D Dd Dg : denv) Sg, Live PEv L D Dd Sg ->
+  (forall x, x `in` L -> forall c, c `in` ftv_typ (sT Sg x) -> Dg c = Dd c) ->
+  (forall r, drk Dg r = drk Dd r) -> Live PEv L D Dg Sg.
+Proof.
+  intros L D Dd Dg Sg H Hs Hr a Ha. destruct (H a Ha) as [Hsat HP]. split; [ | exact HP ].
+  eapply sat_loc; [ intros c Hc; exact (Hs a Ha c Hc) | intros r _; exact (Hr r) | exact Hsat ].
+Qed.
+
+(* A step read at the extended environment. *)
+Lemma SemL_env : forall L (Dg Dd : denv) Sg n s (D' : denv) n' S2, SemL PEv L Dg Sg n s D' n' S2 -> RA D' ->
+  (forall x, x `in` limg s L -> forall c, c `in` ftv_typ (sT S2 x) -> Dd c = Dg c) ->
+  (forall r, drk Dd r = drk Dg r) -> SemL PEv L Dd Sg n s D' n' S2.
+Proof.
+  intros L Dg Dd Sg n s D' n' S2 (R & V & Hd & HI & F & Q & Ok) HRA Hs Hr.
+  refine (conj (rkres_RA D' Dd (sR S2) HRA) (conj _ (conj Hd (conj HI (conj _ (conj Q Ok)))))).
+  - intros a Ha. destruct (V a Ha) as [Hsat HP]. split; [ | exact HP ].
+    eapply sat_loc; [ intros c Hc; exact (Hs a Ha c Hc) | intros r _; exact (Hr r) | exact Hsat ].
+  - intros x Hx. exact (teqD_drk Dg Dd _ _ (fun r => eq_sym (Hr r)) (F x Hx)).
+Qed.
+
+(* The step's extension may change at atoms the step does not read. *)
+Lemma SemL_agree : forall P L DT Sg n s D' n' S2 S2', LOld n L ->
+  SemL P L DT Sg n s D' n' S2 ->
+  (forall y, y `in` limg s L -> sT S2' y = sT S2 y) -> sR S2' = sR S2 ->
+  SemL P L DT Sg n s D' n' S2'.
+Proof.
+  intros P L DT Sg n s D' n' S2 S2' Ho (R & V & Hd & HI & F & Q & Ok) Hag HsR.
+  refine (conj _ (conj _ (conj Hd (conj HI (conj _ (conj _ Ok)))))).
+  - intros r. rewrite HsR. exact (R r).
+  - intros a Ha. rewrite (Hag a Ha). exact (V a Ha).
+  - intros x Hx. pose proof (proj1 (proj1 (proj2 HI) x (Ho x Hx))) as Hrf.
+    pose proof (F x Hx) as F'.
+    assert (Hea : apT S2' (sT s x) = apT S2 (sT s x)).
+    { apply apT_agree; [ exact Hrf | ]. intros y Hy. apply Hag. apply limg_in. exists x. split; assumption. }
+    rewrite Hea. exact F'.
+  - intros q Hq. rewrite HsR. exact (Q q Hq).
+Qed.
+
+Lemma GOk_frv : forall n G, GOk n G -> forall r, r `notin` frv_ctx G.
+Proof.
+  intros n G H. induction H as [|[x s] G Hb _ IH]; intros r; simpl; [ fsetdec | ].
+  destruct Hb as (_ & _ & Hrf & _). pose proof (IH r) as Hn.
+  assert (Hs : r `notin` frv_sch s).
+  { unfold frv_sch. intro Hr. apply AtomSetFacts.diff_iff in Hr. destruct Hr as [Hr _].
+    exact (proj1 (proj2 (proj2 (rf_facts _ Hrf))) r Hr). }
+  fsetdec.
+Qed.
+
+(* The derivation's context holds every atom the images of the algorithm's
+   context mention. *)
+Lemma CI_ftv : forall (D1 : denv) Sg G1 G n L (Dx : denv), CI D1 Sg G1 G -> GOk n G -> GLive L G -> Live PEv L Dx D1 Sg ->
+  forall a, a `in` ftv_ctx G -> ftv_typ (sT Sg a) [<=] ftv_ctx G1.
+Proof.
+  intros D1 Sg G1 G n L Dx H. induction H as [|[x s1] [y sc] G1 G [Hk Hrel] _ IH]; intros HO HG HLv a Ha.
+  - simpl in Ha. fsetdec.
+  - inversion HO as [|b G' Hsc HO' Eb]; subst. inversion HG as [|b2 G2 HL2 HG' Eb2]; subst.
+    simpl in *. subst y. apply AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
+    + intros c Hc. apply AtomSetFacts.union_iff. left.
+      destruct Hrel as [(T1 & T & E1 & E2 & Ht)|Hsch].
+      * subst s1 sc. pose proof (SOk_mono_inv _ _ Hsc) as HT.
+        assert (Haf : a `in` ftv_typ T) by exact (proj1 (ftv_sch_mono T a) Ha).
+        pose proof (HLv a (HL2 a Ha)) as [_ [_ Hra]].
+        assert (HrfA : rf (apT Sg T)).
+        { apply rf_ap; [ exact (proj1 HT) | intros w Hw; exact (proj2 (proj2 (HLv w (HL2 w (proj2 (ftv_sch_mono T w) Hw))))) ]. }
+        rewrite (teqD_rf_eq _ _ _ HrfA Ht) in *. apply (proj2 (ftv_sch_mono _ c)).
+        exact (ftv_ap_in1 (sT Sg) (sR Sg) T c a Haf Hc).
+      * destruct Hsc as (Hw & Hr & Hrf & Hold).
+        destruct Hsch as (A & _ & _). apply A.
+        unfold ftv_sch. cbn [apS s_body s_tq]. apply AtomSetFacts.diff_iff. split.
+        -- assert (Haf : a `in` ftv_typ (s_body sc))
+             by (unfold ftv_sch in Ha; apply AtomSetFacts.diff_iff in Ha; exact (proj1 Ha)).
+           assert (Haq : a `notin` s_tq sc)
+             by (unfold ftv_sch in Ha; apply AtomSetFacts.diff_iff in Ha; exact (proj2 Ha)).
+           assert (Hs : sT (sfix (s_tq sc) Sg) a = sT Sg a) by (apply sfix_out; exact Haq).
+           assert (Hc' : c `in` ftv_typ (sT (sfix (s_tq sc) Sg) a)) by (rewrite Hs; exact Hc).
+           exact (ftv_ap_in1 (sT (sfix (s_tq sc) Sg)) (sR (sfix (s_tq sc) Sg)) (s_body sc) c a Haf Hc').
+        -- intro Hcq. pose proof (HLv a (HL2 a Ha)) as [_ [HEa _]].
+           exact (ev_od c (proj1 HEa c Hc) ((proj1 Hw) c Hcq)).
+    + intros c Hc. apply AtomSetFacts.union_iff. right. exact (IH HO' HG' HLv a Ha c Hc).
+Qed.
+
+Lemma ats_arrow_eq : forall A B, ats (typ_Arrow A B) [=] ats A `union` ats B.
+Proof. intros A B. unfold ats. simpl. fsetdec. Qed.
+
+Lemma Avoid_limg : forall B L D DT Sg n s D' n' S2, LOld n L -> Avoid B L Sg -> Live PEv L D DT Sg ->
+  SemL PEv L DT Sg n s D' n' S2 -> Avoid B (limg s L) S2.
+Proof.
+  intros B L D DT Sg n s D' n' S2 Ho HAv HLv Hs x Hx.
+  apply limg_in in Hx. destruct Hx as (y & Hy & Hxy).
+  pose proof (SemL_F Hs y Hy) as Hf. pose proof (proj2 (HLv y Hy)) as Hpy.
+  assert (Heq2 : apT S2 (sT s y) = sT Sg y) by exact (teqD_rf_eq _ _ _ (proj2 Hpy) Hf).
+  intros z Hz. apply (HAv y Hy). rewrite <- Heq2.
+  exact (ftv_ap_in1 (sT S2) (sR S2) (sT s y) z x Hxy Hz).
+Qed.
+
+Lemma sub_ur : forall A B C : atoms, A [<=] C -> A [<=] B `union` C.
+Proof. intros A B C H y Hy. apply AtomSetFacts.union_iff. right. exact (H y Hy). Qed.
+
+Lemma ftv_sch_in_bg : forall X x s G T, ftv_sch s [<=] bg X ((x ~ s) ++ G) T.
+Proof. intros X x s G T y Hy. unfold bg, atc. simpl. fsetdec. Qed.
+
+Lemma fresh_notin_Gd : forall (D1 : denv) Sg Gd G s e2, CI D1 Sg Gd G ->
+  fresh_var (apC s G) e2 `notin` dom Gd `union` fv_exp e2.
+Proof.
+  intros D1 Sg Gd G s e2 HC. rewrite (CI_dom _ _ _ _ HC). pose proof (dom_apC s G).
+  pose proof (fresh_var_notin_dom (apC s G) e2). pose proof (fresh_var_notin_fv (apC s G) e2). fsetdec.
+Qed.
+
+Lemma sub_id : forall A : atoms, A [<=] A.
+Proof. intros A y Hy. exact Hy. Qed.
+
+Lemma ftv_arrow_in_X : forall Av Gd T1 T2,
+  ftv_typ (typ_Arrow T1 T2) [<=] bg Av Gd T2 `union` ats T1.
+Proof.
+  intros Av Gd T1 T2 y Hy. pose proof (ats_arrow_eq T1 T2). pose proof (ats_ftv (typ_Arrow T1 T2) y Hy).
+  unfold bg. fsetdec.
+Qed.
+
+Lemma bg_ats_in : forall Av G T, ats T [<=] bg Av G T.
+Proof. exact bg_ats. Qed.
+
+Lemma GLive_ftv_ctx : forall L G, GLive L G -> ftv_ctx G [<=] L.
+Proof.
+  intros L G H. induction H as [|[x s] G Hs _ IH]; simpl; [ fsetdec | ].
+  intros a Ha. apply AtomSetFacts.union_iff in Ha.
+  destruct Ha as [Ha|Ha]; [ exact (Hs a Ha) | exact (IH a Ha) ].
+Qed.
+
+(* What the algorithm's generalization of an even, record-free type is. *)
+Lemma gen_ren_sc : forall D G Ta n, TOk n Ta -> EvT Ta ->
+  SOk n (gen_ren D G Ta) /\ ftv_sch (gen_ren D G Ta) [<=] ftv_typ Ta /\
+  (forall a, a `in` ftv_sch (gen_ren D G Ta) -> a `in` ftv_ctx G).
+Proof.
+  intros D G Ta n [Hrf Hold] HE.
+  assert (Hfrv : forall q, q `notin` frv_typ Ta) by exact (proj1 (proj2 (proj2 (rf_facts Ta Hrf)))).
+  assert (Hfs : forall a, a `in` ftv_sch (gen_ren D G Ta) -> a `in` ftv_typ Ta /\ a `in` ftv_ctx G).
+  { intros a Ha. unfold ftv_sch in Ha. apply AtomSetFacts.diff_iff in Ha. destruct Ha as [Ha Hn].
+    destruct (body_ftv D G Ta a Ha) as [Hq|[Hb Hnl]]; [ contradiction | ].
+    split; [ exact Hb | ]. destruct (in_dec_set a (ftv_ctx G)) as [H|H]; [ exact H | exfalso; apply Hnl; apply In_la; auto ]. }
+  refine (conj (conj (gen_ren_wf D G Ta HE) (conj _ (conj _ _))) (conj _ _)).
+  - intros a; split.
+    + intro Ha. apply gen_ren_rq in Ha. destruct Ha as (b & Hb & _). apply In_lr in Hb.
+      exfalso. exact (Hfrv b (proj1 Hb)).
+    + intro Ha. exfalso. revert Ha. fsetdec.
+  - rewrite gen_body. refine (rf_ap (Sub (rename_t _) (rename_r _)) Ta Hrf _).
+    intros x _. cbn [sT]. unfold rename_t. destruct (in_dec Atom.eq_dec x _); exact I.
+  - intros a Ha. exact (Hold a (proj1 (Hfs a Ha))).
+  - intros a Ha. exact (proj1 (Hfs a Ha)).
+  - intros a Ha. exact (proj2 (Hfs a Ha)).
+Qed.
+
+Lemma apS_sfix_fixed : forall sc S, rf (s_body sc) -> (forall q, q `in` s_tq sc -> sT S q = typ_Var q) ->
+  apS (sfix (s_tq sc) S) sc = apS S sc.
+Proof.
+  intros sc S Hrf Hfix. unfold apS. cbn [s_tq s_rq s_sk s_rk s_body]. f_equal.
+  apply apT_agree; [ exact Hrf | ].
+  intros b Hb. destruct (in_dec_set b (s_tq sc)) as [Hq|Hq].
+  - rewrite sfix_in by exact Hq. symmetry. exact (Hfix b Hq).
+  - rewrite sfix_out by exact Hq. reflexivity.
+Qed.
+
 (* ---- the induction ---- *)
 
-Theorem infer_complete_core : forall P, P typ_Float -> forall D1 G1 e T1, ctyping P D1 G1 e T1 ->
-  forall D G n Sg L, DOk D n -> LOld n L -> Live P L D D1 Sg -> rkres D D1 (sR Sg) ->
-    GOk n G -> GLive L G -> CI D1 Sg G1 G -> Done P L D1 G e D n Sg T1.
+Theorem infer_complete_core : forall Av D1 G1 e T1, ctyping Av D1 G1 e T1 ->
+  forall D G n Sg L, DOk D n -> RA D -> LOld n L -> LEv L -> Live PEv L D D1 Sg ->
+    Avoid (bg Av G1 T1) L Sg -> GOk n G -> GLive L G -> CI D1 Sg G1 G ->
+    Done L D1 G e D n Sg T1.
 Proof.
-  intros P HPI Dd Gd e T1 H.
+  intros Av Dd Gd e T1 H.
   induction H as
-    [ Dd Gd x T Hu Hb
-    | Dd Gd i T Hu Hs HPT
-    | Dd Gd d Hu | Dd Gd Hu | Dd Gd Hu | Dd Gd Hu | Dd Gd q Hu
-    | Dd Gd b T1 T2 HPT1 Hb IH
-    | Dd Gd e1 e2 T1 T2 HPT2 H1 IH1 H2 IH2
-    | Dd Gd e1 e2 e3 T H1 IH1 H2 IH2 H3 IH3
-    | Dd Gd e A H1 IH1 Hs HPA
-    | Dd Gd e1 o e2 A Hk1 Hs HPA H1 IH1 H2 IH2
-    | Dd Gd e1 o e2 A Hk Hs HPA H1 IH1 H2 IH2
-    | Dd Gd e1 e2 T1 T2 Hv H1 IH1 H2 IH2
-    | Dd Gd e T T' H1 IH1 Hteq ];
-    intros D G n Sg L Hd HLo HLv HRk HG HGL HC.
+    [ Av Dd Gd x s T Hu Hb Hrq Hi
+    | Av Dd Gd i T Hu Hs HPT
+    | Av Dd Gd d Hu | Av Dd Gd Hu | Av Dd Gd Hu | Av Dd Gd Hu | Av Dd Gd q Hu
+    | Av Dd Gd b T1 T2 HPT1 Hb IH
+    | Av Dd Gd e1 e2 T1 T2 HPT2 H1 IH1 H2 IH2
+    | Av Dd Gd e1 e2 e3 T H1 IH1 H2 IH2 H3 IH3
+    | Av Dd Gd e A H1 IH1 Hs HPA
+    | Av Dd Gd e1 o e2 A Hk1 Hs HPA H1 IH1 H2 IH2
+    | Av Dd Gd e1 o e2 A Hk Hs HPA H1 IH1 H2 IH2
+    | Av Dd Gd e1 e2 T1 T2 Hv H1 IH1 H2 IH2
+    | Av Dd Gd e1 e2 T1 T2 k rk Tm Hgv Hrf1 Hlit HevA H1 IH1 Hb IHb
+    | Av Dd Gd e T T' H1 IH1 Hteq ];
+    intros D G n Sg L Hd HRA HLo HLE HLv HAv HG HGL HC.
   - (* variable *)
-    destruct (CI_lookup Dd Sg Gd G x (sch_mono T) HC Hu Hb) as (T1' & T' & Ea & Eb & Hc).
-    assert (ET : T = T1') by (apply (f_equal s_body) in Ea; exact Ea). subst T1'.
-    pose proof (GLive_lookup L G x T' HGL Eb) as Hsub.
-    exists sid, D, n, Sg, T', (e_fvar_f x).
-    refine (conj _ (conj (SemL_id P L Dd Sg D n HRk HLv Hd) (conj _ (conj _ (conj Hc eq_refl))))).
-    + exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-      cbn [infer]. rewrite Eb, instantiate_mono. reflexivity.
-    + exact (GOk_lookup n G x T' HG Eb).
-    + exact (Live_mono P _ _ D Dd Sg Hsub HLv).
+    destruct (CI_lookup Dd Sg Gd G x s HC Hu Hb) as (sc & Hlk & [(T1' & T' & E1 & E2 & Hc) | Hsch]).
+    + subst s sc.
+      pose proof (inst_mono_eq _ _ _ (instP_inst _ _ _ Hi)) as ET. subst T.
+      pose proof (GOk_lookup n G x _ HG Hlk) as Hso.
+      pose proof (SOk_mono_inv _ _ Hso) as HTo. pose proof (SOk_mono_ev _ _ Hso) as HTe.
+      pose proof (GLive_lookup L G x _ HGL Hlk) as Hsub.
+      exists sid, D, n, Sg, T', (e_fvar_f x).
+      refine (conj _ (conj (SemL_id PEv L Dd Sg D n (rkres_RA D Dd (sR Sg) HRA) HLv Hd)
+                (conj HTo (conj HTe (conj _ (conj HRA (conj Hc (conj eq_refl eq_refl)))))))).
+      * exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
+        cbn [infer]. rewrite Hlk, instantiate_mono. reflexivity.
+      * exact (Live_mono PEv _ _ D Dd Sg (fun a Ha => Hsub a (proj2 (ftv_sch_mono T' a) Ha)) HLv).
+    + exact (var_sch_done L Dd D G n Sg x s sc T Hd HRA HLo HLE HLv HG HGL Hlk Hsch Hi).
   - (* numeral *)
     exists sid, (upd D (ea n) k_Literal), (S n), (supd Sg (ea n) T), (typ_Var (ea n)), (e_num i).
-    refine (conj _ (conj (SemL_fresh P L Dd D Sg n k_Literal T HRk HLv Hd HLo) (conj _ (conj _ (conj _ _))))).
+    refine (conj _ (conj (SemL_fresh PEv L Dd D Sg n k_Literal T (rkres_RA D Dd (sR Sg) HRA) HLv Hd HLo)
+              (conj _ (conj (EvT_var_ea n) (conj _ (conj (RA_upd D (ea n) k_Literal HRA) (conj _ (conj eq_refl eq_refl)))))))).
     + exists 1. intros f Hf. destruct f as [|f]; [ lia | reflexivity ].
     + apply TOk_var. apply old_ea. lia.
     + apply Live_var; rewrite ?upd_same, ?supd_same; assumption.
     + rewrite apT_Var, supd_same. apply teqD_refl.
-    + reflexivity.
   - (* float literal *)
-    apply (Done_const P L Dd G (e_dec d) D n Sg typ_Float typ_Float); try assumption;
+    apply (Done_const L Dd G (e_dec d) D n Sg typ_Float typ_Float); try assumption;
       [ intros f; reflexivity | right; left; reflexivity | apply teqD_refl ].
-  - apply (Done_const P L Dd G e_true D n Sg typ_Bool typ_Bool); try assumption;
+  - apply (Done_const L Dd G e_true D n Sg typ_Bool typ_Bool); try assumption;
       [ intros f; reflexivity | right; right; left; reflexivity | apply teqD_refl ].
-  - apply (Done_const P L Dd G e_false D n Sg typ_Bool typ_Bool); try assumption;
+  - apply (Done_const L Dd G e_false D n Sg typ_Bool typ_Bool); try assumption;
       [ intros f; reflexivity | right; right; left; reflexivity | apply teqD_refl ].
-  - apply (Done_const P L Dd G e_unit D n Sg typ_Unit typ_Unit); try assumption;
+  - apply (Done_const L Dd G e_unit D n Sg typ_Unit typ_Unit); try assumption;
       [ intros f; reflexivity | right; right; right; left; reflexivity | apply teqD_refl ].
-  - apply (Done_const P L Dd G (e_str q) D n Sg typ_String typ_String); try assumption;
+  - apply (Done_const L Dd G (e_str q) D n Sg typ_String typ_String); try assumption;
       [ intros f; reflexivity | right; right; right; right; reflexivity | apply teqD_refl ].
   - (* program *)
     set (x := fresh_var G b).
@@ -823,39 +696,53 @@ Proof.
     assert (HsV : ftv_typ (typ_Var (ea n)) [<=] L') by exact (ftv_var_fresh n L).
     assert (Hag : forall a, a `in` L -> sT Sg' a = sT Sg a).
     { intros a Ha. unfold Sg'. apply supd_other. intro E. exact (HLo a Ha n (le_n n) E). }
-    assert (HLv' : Live P L' D Dd Sg').
-    { exact (Live_fresh P L D D Dd Sg n (D (ea n)) T1 HLo HLv Hsat HPT1 eq_refl (fun _ _ => eq_refl)). }
+    assert (HLv' : Live PEv L' D Dd Sg').
+    { exact (Live_fresh PEv L D D Dd Sg n (D (ea n)) T1 HLo HLv Hsat HPT1 eq_refl (fun _ _ => eq_refl)). }
+    assert (HAv' : Avoid (bg (bg Av Gd (typ_Arrow T1 T2)) ((x ~ sch_mono T1) ++ Gd) T2) L' Sg').
+    { apply Avoid_fresh; [ exact HLo | exact (Avoid_mono _ _ _ _ (bg_av _ _ _) HAv) | ].
+      intros y Hy. apply bg_av. apply bg_ftv. simpl. apply AtomSetFacts.union_iff. left. exact Hy. }
     destruct (IH x Hx D ((x ~ sch_mono (typ_Var (ea n))) ++ G) (S n) Sg' L'
-                (DOk_mono D n (S n) Hd (Nat.le_succ_diag_r n)) (LOld_fresh n L HLo) HLv' HRk
-                (GOk_cons (S n) x _ G HTb (GOk_mono n (S n) G (Nat.le_succ_diag_r n) HG))
+                (DOk_mono D n (S n) Hd (Nat.le_succ_diag_r n)) HRA (LOld_fresh n L HLo) (LEv_fresh n L HLE)
+                HLv' HAv'
+                (GOk_cons (S n) x _ G HTb (EvT_var_ea n) (GOk_mono n (S n) G (Nat.le_succ_diag_r n) HG))
                 (GLive_cons L' x _ G HsV (GLive_mono L L' G HsL HGL))
                 (CI_cons Dd Sg' Gd G x T1 _ (CI_agree Dd Sg Sg' Gd G L n HC HG HGL Hag)
                    ltac:(unfold Sg'; rewrite apT_Var, supd_same; apply teqD_refl)))
-      as (s & D' & n' & S2 & T & e' & Hst & Hsem & HT & LvT & Heq & HgHeq).
+      as (s & D' & n' & S2 & T & e' & Hst & Hsem & HT & HE & LvT & HRA' & Heq & HgHeq & HlHeq).
     exists s, D', n', S2, (typ_Arrow (apT s (typ_Var (ea n))) T), (e_abs (cl 0 x e')).
-    pose proof (SemL_weaken P L Dd Sg Sg' n (S n) s D' n' S2 (Nat.le_succ_diag_r n) HLo
-      (SemL_mono P L L' Dd Sg' (S n) s D' n' S2 HsL Hsem) Hag (fun _ _ => eq_refl)) as Hsem0.
-    refine (conj _ (conj Hsem0 (conj _ (conj _ (conj _ _))))).
+    pose proof (SemL_weaken PEv L Dd Sg Sg' n (S n) s D' n' S2 (Nat.le_succ_diag_r n) HLo
+      (SemL_mono PEv L L' Dd Sg' (S n) s D' n' S2 HsL Hsem) Hag (fun _ _ => eq_refl)) as Hsem0.
+    refine (conj _ (conj Hsem0 (conj _ (conj _ (conj _ (conj HRA' (conj _ (conj _ _)))))))).
     + pose proof (Stable_below _ Hst) as HSt. stable_run HSt.
       cbn [infer]. change (fresh_var G b) with x. rewrite Hf. reflexivity.
     + apply TOk_arrow; [ exact (TOk_ap _ _ _ _ (SemL_SI Hsem) HTb) | exact HT ].
+    + exact (EvT_arrow _ _ (EvT_ap s _ (SemL_OkS Hsem) (EvT_var_ea n)) HE).
     + cbn [ftv_typ]. apply Live_union; [ | exact LvT ].
-      refine (SemL_live_ap P L' Dd Sg' (S n) s D' n' S2 (typ_Var (ea n)) Hsem I _).
+      refine (SemL_live_ap PEv L' Dd Sg' (S n) s D' n' S2 (typ_Var (ea n)) Hsem I _).
       exact HsV.
     + rewrite apT_Arrow. apply teqD_Arrow; [ | exact Heq ].
       pose proof (SemL_F Hsem (ea n) (in_fresh n L)) as F.
       unfold Sg' in F. rewrite supd_same in F. apply teqD_sym. exact F.
     + reflexivity.
+    + reflexivity.
   - (* call *)
-    destruct (IH1 D G n Sg L Hd HLo HLv HRk HG HGL HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & LvTa & Heq1 & HgHeq1).
-    destruct (next_facts P Dd Gd Sg n L s1 D1a n1 Sa Ta G HLo Sem1 HTa LvTa HG HGL HC)
-      as (HLo1 & HLv1 & HG1 & HGL1 & HC1).
+    assert (HAvX : Avoid (bg Av Gd T2 `union` ats T1) L Sg)
+      by exact (Avoid_mono _ _ _ _ (sub_ul _ _ _ (sub_id _)) HAv).
+    assert (HAv1 : Avoid (bg (bg Av Gd T2 `union` ats T1) Gd (typ_Arrow T1 T2)) L Sg)
+      by exact (Avoid_mono _ _ _ _ (bg_av _ _ _) HAvX).
+    destruct (IH1 D G n Sg L Hd HRA HLo HLE HLv HAv1 HG HGL HC)
+      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & HEa & LvTa & HRA1 & Heq1 & HgHeq1 & HlHeq1).
+    destruct (next_facts Dd Gd D Sg n L s1 D1a n1 Sa Ta G HLo HLE HLv Sem1 HTa HEa LvTa HG HGL HC)
+      as (HLo1 & HLE1 & HLv1 & HG1 & HGL1 & HC1).
     set (L2 := lnext s1 L Ta) in *.
-    destruct (IH2 D1a (apC s1 G) n1 Sa L2 (SemL_DOk Sem1) HLo1 HLv1 (SemL_rk Sem1) HG1 HGL1 HC1)
-      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & LvTb & Heq2 & HgHeq2).
-    destruct (next_facts P Dd Gd Sa n1 L2 s2 D2 n2 Sb Tb (apC s1 G) HLo1 Sem2 HTb LvTb HG1 HGL1 HC1)
-      as (HLo2 & HLv2 & _ & _ & _).
+    assert (HAv2 : Avoid (bg (bg Av Gd T2 `union` ats T1) Gd T1) L2 Sa).
+    { refine (Avoid_mono _ _ _ _ (bg_av _ _ _) _).
+      exact (Avoid_next _ _ L D Dd Sg n s1 D1a n1 Sa Ta (typ_Arrow T1 T2) HLo HAvX HLv Sem1 HTa LvTa Heq1
+                (sub_id _) (ftv_arrow_in_X Av Gd T1 T2)). }
+    destruct (IH2 D1a (apC s1 G) n1 Sa L2 (SemL_DOk Sem1) HRA1 HLo1 HLE1 HLv1 HAv2 HG1 HGL1 HC1)
+      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & HEb & LvTb & HRA2 & Heq2 & HgHeq2 & HlHeq2).
+    destruct (next_facts Dd Gd D1a Sa n1 L2 s2 D2 n2 Sb Tb (apC s1 G) HLo1 HLE1 HLv1 Sem2 HTb HEb LvTb HG1 HGL1 HC1)
+      as (HLo2 & HLE2 & HLv2 & _ & _ & _).
     set (Ln := lnext s2 L2 Tb) in *.
     pose proof (SemL_DOk Sem2) as Hd2.
     pose proof (TOk_ap _ _ _ _ (SemL_SI Sem2) HTa) as HTa2.
@@ -868,124 +755,160 @@ Proof.
     assert (HsubTa2 : ftv_typ (apT s2 Ta) [<=] Ln)
       by (intros y Hy; exact (limg_lnext s2 L2 Tb y (limg_ap s2 Ta L2 (proj1 HTa) HsubTa y Hy))).
     set (Lu := Ln `union` {{ ea n2 }}).
-    assert (HLv3 : Live P Lu D2 Dd (supd Sb (ea n2) T2)).
-    { exact (Live_fresh P Ln D2 D2 Dd Sb n2 k_Any T2 HLo2 HLv2 (sat_any _ _) HPT2
+    assert (HLv3 : Live PEv Lu D2 Dd (supd Sb (ea n2) T2)).
+    { exact (Live_fresh PEv Ln D2 D2 Dd Sb n2 k_Any T2 HLo2 HLv2 (sat_any _ _) HPT2
                (DOk_ea D2 n2 n2 Hd2 (le_n n2)) (fun _ _ => eq_refl)). }
     assert (Heq : teqD Dd (apT (supd Sb (ea n2) T2) (apT s2 Ta))
                           (apT (supd Sb (ea n2) T2) (typ_Arrow Tb (typ_Var (ea n2))))).
     { rewrite (apT_supd Sb (ea n2) T2 _ (proj1 HTa2) (fun Hin => proj2 HTa2 _ Hin n2 (le_n n2) eq_refl)).
       rewrite apT_Arrow, (apT_supd Sb (ea n2) T2 Tb (proj1 HTb) (fun Hin => proj2 HTb _ Hin n2 (le_n n2) eq_refl)),
         apT_Var, supd_same.
-      eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P L2 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
+      eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv L2 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
       eapply teqD_trans; [ exact Heq1 | ]. apply teqD_Arrow; [ apply teqD_sym; exact Heq2 | apply teqD_refl ]. }
-    destruct (unify_stepL P Dd D2 (supd Sb (ea n2) T2) Lu (apT s2 Ta) (typ_Arrow Tb (typ_Var (ea n2))) (S n2)
-                HPI (DOk_mono D2 n2 (S n2) Hd2 Hle) (LOld_fresh n2 Ln HLo2) HLv3 (SemL_rk Sem2)
+    destruct (unify_stepL PEv Dd D2 (supd Sb (ea n2) T2) Lu (apT s2 Ta) (typ_Arrow Tb (typ_Var (ea n2))) (S n2)
+                PEv_float (DOk_mono D2 n2 (S n2) Hd2 Hle) HRA2 (LOld_fresh n2 Ln HLo2) (LEv_fresh n2 Ln HLE2) HLv3
                 (proj1 HTa2) (conj (proj1 HTb) I)
                 (sub_ul _ _ _ HsubTa2)
                 (ftv_arrow_sub _ _ _ (sub_ul _ _ _ HsubTb) (ftv_var_fresh n2 Ln)) Heq)
-      as (s3 & D3 & n3 & S3 & St3 & Sem3).
-    pose proof (SemL_unfresh P Ln Dd Sb n2 T2 s3 D3 n3 S3 HLo2 Sem3) as Sem3'.
-    pose proof (SemL_comp P L L2 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2) as Sem12.
+      as (s3 & D3 & n3 & S3 & St3 & Sem3 & HRA3).
+    pose proof (SemL_unfresh PEv Ln Dd Sb n2 T2 s3 D3 n3 S3 HLo2 Sem3) as Sem3'.
+    pose proof (SemL_comp PEv L L2 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2) as Sem12.
     pose proof (limg_chain n n1 s1 s2 L L2 Ln HLo (SemL_SI Sem1) (limg_lnext s1 L Ta) (limg_lnext s2 L2 Tb)) as Hc2.
     exists (scomp s3 (scomp s2 s1)), D3, n3, S3, (apT s3 (typ_Var (ea n2))), (e_app e1' e2').
-    refine (conj _ (conj (SemL_comp P L Ln Dd Sg n (scomp s2 s1) D2 n2 Sb s3 D3 n3 S3 HLo Sem12 Hc2 Sem3') (conj _ (conj _ (conj _ _))))).
+    refine (conj _ (conj (SemL_comp PEv L Ln Dd Sg n (scomp s2 s1) D2 n2 Sb s3 D3 n3 S3 HLo Sem12 Hc2 Sem3')
+              (conj _ (conj _ (conj _ (conj HRA3 (conj _ (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 St3))) as HSt. stable_run HSt.
       destruct Hf as (E1 & E2 & E3). cbn [infer]. rewrite E1, E2, E3. reflexivity.
     + exact (TOk_ap _ _ _ _ (SemL_SI Sem3) HTv).
-    + refine (SemL_live_ap P Lu Dd _ (S n2) s3 D3 n3 S3 (typ_Var (ea n2)) Sem3 I _).
+    + exact (EvT_ap s3 _ (SemL_OkS Sem3) (EvT_var_ea n2)).
+    + refine (SemL_live_ap PEv Lu Dd _ (S n2) s3 D3 n3 S3 (typ_Var (ea n2)) Sem3 I _).
       exact (ftv_var_fresh n2 Ln).
     + pose proof (SemL_F Sem3 (ea n2) (in_fresh n2 Ln)) as F.
       rewrite supd_same in F. apply teqD_sym. exact F.
     + cbn [is_gen_value]; try reflexivity; try assumption.
+    + cbn [let_open]; reflexivity.
   - (* if *)
-    destruct (IH1 D G n Sg L Hd HLo HLv HRk HG HGL HC)
-      as (s1 & D1a & n1 & Sa & Tc & c' & St1 & Sem1 & HTc & LvTc & Heq1 & HgHeq1).
-    destruct (next_facts P Dd Gd Sg n L s1 D1a n1 Sa Tc G HLo Sem1 HTc LvTc HG HGL HC)
-      as (HLo1 & HLv1 & HG1 & HGL1 & HC1).
+    assert (HAv1 : Avoid (bg (bg Av Gd T) Gd typ_Bool) L Sg).
+    { refine (Avoid_mono _ _ _ _ (bg_av _ _ _) HAv). }
+    destruct (IH1 D G n Sg L Hd HRA HLo HLE HLv HAv1 HG HGL HC)
+      as (s1 & D1a & n1 & Sa & Tc & c' & St1 & Sem1 & HTc & HEc & LvTc & HRA1 & Heq1 & HgHeq1 & HlHeq1).
+    destruct (next_facts Dd Gd D Sg n L s1 D1a n1 Sa Tc G HLo HLE HLv Sem1 HTc HEc LvTc HG HGL HC)
+      as (HLo1 & HLE1 & HLv1 & HG1 & HGL1 & HC1).
     set (L1 := lnext s1 L Tc) in *.
-    destruct (unify_stepL P Dd D1a Sa L1 Tc typ_Bool n1 HPI (SemL_DOk Sem1) HLo1 HLv1 (SemL_rk Sem1)
+    destruct (unify_stepL PEv Dd D1a Sa L1 Tc typ_Bool n1 PEv_float (SemL_DOk Sem1) HRA1 HLo1 HLE1 HLv1
                 (proj1 HTc) I (ftv_lnext s1 L Tc) (sub_scalar typ_Bool L1 (or_intror (or_intror (or_introl eq_refl)))) Heq1)
-      as (s2 & D1b & n2 & Sb & St2 & Sem2).
-    destruct (CI_stepL P L1 Dd Sa n1 s2 D1b n2 Sb Gd (apC s1 G) Sem2 HC1 HG1 HGL1) as (HC2 & HG2 & HGL2).
+      as (s2 & D1b & n2 & Sb & St2 & Sem2 & HRA2).
+    destruct (CI_stepL L1 D1a Dd Sa n1 s2 D1b n2 Sb Gd (apC s1 G) Sem2 HLv1 HLE1 HC1 HG1 HGL1) as (HC2 & HG2 & HGL2).
     set (Lb := limg s2 L1).
     assert (HLob : LOld n2 Lb) by exact (limg_old _ _ _ _ HLo1 (SemL_SI Sem2)).
-    destruct (IH2 D1b (apC s2 (apC s1 G)) n2 Sb Lb (SemL_DOk Sem2) HLob (SemL_live Sem2) (SemL_rk Sem2) HG2 HGL2 HC2)
-      as (s3 & D3 & n3 & Sc & Ta & a' & St3 & Sem3 & HTa & LvTa & Heq2 & HgHeq2).
-    destruct (next_facts P Dd Gd Sb n2 Lb s3 D3 n3 Sc Ta (apC s2 (apC s1 G)) HLob Sem3 HTa LvTa HG2 HGL2 HC2)
-      as (HLo3 & HLv3 & HG3 & HGL3 & HC3).
+    assert (HLEb : LEv Lb) by exact (limg_ev s2 L1 (SemL_OkS Sem2) HLE1).
+    assert (HAvA : Avoid (bg Av Gd T) L1 Sa).
+    { refine (Avoid_next (bg Av Gd T) (bg Av Gd T) L D Dd Sg n s1 D1a n1 Sa Tc typ_Bool HLo
+                (Avoid_mono _ _ _ _ (fun y Hy => Hy) HAv) HLv Sem1 HTc LvTc Heq1 (fun y Hy => Hy) _).
+      intros y Hy. simpl in Hy. apply AtomSetFacts.empty_iff in Hy. contradiction. }
+    assert (HAvb : Avoid (bg Av Gd T) Lb Sb)
+      by exact (Avoid_limg _ L1 D1a Dd Sa n1 s2 D1b n2 Sb HLo1 HAvA HLv1 Sem2).
+    destruct (IH2 D1b (apC s2 (apC s1 G)) n2 Sb Lb (SemL_DOk Sem2) HRA2 HLob HLEb (SemL_live Sem2)
+                (Avoid_mono _ _ _ _ (bg_av _ _ _) HAvb) HG2 HGL2 HC2)
+      as (s3 & D3 & n3 & Sc & Ta & a' & St3 & Sem3 & HTa & HEa & LvTa & HRA3 & Heq2 & HgHeq2 & HlHeq2).
+    destruct (next_facts Dd Gd D1b Sb n2 Lb s3 D3 n3 Sc Ta (apC s2 (apC s1 G)) HLob HLEb (SemL_live Sem2) Sem3 HTa HEa LvTa
+                HG2 HGL2 HC2)
+      as (HLo3 & HLE3 & HLv3 & HG3 & HGL3 & HC3).
     set (L3 := lnext s3 Lb Ta) in *.
-    destruct (IH3 D3 (apC s3 (apC s2 (apC s1 G))) n3 Sc L3 (SemL_DOk Sem3) HLo3 HLv3 (SemL_rk Sem3) HG3 HGL3 HC3)
-      as (s4 & D4 & n4 & Sd & Tb & b' & St4 & Sem4 & HTb & LvTb & Heq3 & HgHeq3).
-    destruct (next_facts P Dd Gd Sc n3 L3 s4 D4 n4 Sd Tb (apC s3 (apC s2 (apC s1 G))) HLo3 Sem4 HTb LvTb HG3 HGL3 HC3)
-      as (HLo4 & HLv4 & _ & _ & _).
+    assert (HAv3 : Avoid (bg Av Gd T) L3 Sc).
+    { refine (Avoid_next (bg Av Gd T) (bg Av Gd T) Lb D1b Dd Sb n2 s3 D3 n3 Sc Ta T HLob HAvb (SemL_live Sem2) Sem3 HTa LvTa
+                Heq2 (fun y Hy => Hy) _).
+      apply bg_ftv. }
+    destruct (IH3 D3 (apC s3 (apC s2 (apC s1 G))) n3 Sc L3 (SemL_DOk Sem3) HRA3 HLo3 HLE3 HLv3
+                (Avoid_mono _ _ _ _ (bg_av _ _ _) HAv3) HG3 HGL3 HC3)
+      as (s4 & D4 & n4 & Sd & Tb & b' & St4 & Sem4 & HTb & HEb & LvTb & HRA4 & Heq3 & HgHeq3 & HlHeq3).
+    destruct (next_facts Dd Gd D3 Sc n3 L3 s4 D4 n4 Sd Tb (apC s3 (apC s2 (apC s1 G))) HLo3 HLE3 HLv3 Sem4 HTb HEb LvTb
+                HG3 HGL3 HC3)
+      as (HLo4 & HLE4 & HLv4 & _ & _ & _).
     set (L4 := lnext s4 L3 Tb) in *.
     pose proof (TOk_ap _ _ _ _ (SemL_SI Sem4) HTa) as HTa4.
     assert (HsubTa : ftv_typ Ta [<=] L3) by exact (ftv_lnext s3 Lb Ta).
     assert (HsubTa4 : ftv_typ (apT s4 Ta) [<=] L4)
       by (intros y Hy; exact (limg_lnext s4 L3 Tb y (limg_ap s4 Ta L3 (proj1 HTa) HsubTa y Hy))).
     assert (Heq : teqD Dd (apT Sd (apT s4 Ta)) (apT Sd Tb)).
-    { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P L3 Dd Sc n3 s4 D4 n4 Sd Ta Sem4 (proj1 HTa) HsubTa) | ].
+    { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv L3 Dd Sc n3 s4 D4 n4 Sd Ta Sem4 (proj1 HTa) HsubTa) | ].
       eapply teqD_trans; [ exact Heq2 | apply teqD_sym; exact Heq3 ]. }
-    destruct (unify_stepL P Dd D4 Sd L4 (apT s4 Ta) Tb n4 HPI (SemL_DOk Sem4) HLo4 HLv4 (SemL_rk Sem4)
+    destruct (unify_stepL PEv Dd D4 Sd L4 (apT s4 Ta) Tb n4 PEv_float (SemL_DOk Sem4) HRA4 HLo4 HLE4 HLv4
                 (proj1 HTa4) (proj1 HTb) HsubTa4 (ftv_lnext s4 L3 Tb) Heq)
-      as (s5 & D5 & n5 & Se & St5 & Sem5).
-    pose proof (SemL_comp P L L1 Dd Sg n s1 D1a n1 Sa s2 D1b n2 Sb HLo Sem1 (limg_lnext s1 L Tc)
+      as (s5 & D5 & n5 & Se & St5 & Sem5 & HRA5).
+    pose proof (SemL_comp PEv L L1 Dd Sg n s1 D1a n1 Sa s2 D1b n2 Sb HLo Sem1 (limg_lnext s1 L Tc)
       Sem2) as Sem12.
     pose proof (limg_chain n n1 s1 s2 L L1 Lb HLo (SemL_SI Sem1) (limg_lnext s1 L Tc) (fun _ H => H)) as Hc2.
-    pose proof (SemL_comp P L Lb Dd Sg n (scomp s2 s1) D1b n2 Sb s3 D3 n3 Sc HLo Sem12 Hc2 Sem3) as Sem123.
+    pose proof (SemL_comp PEv L Lb Dd Sg n (scomp s2 s1) D1b n2 Sb s3 D3 n3 Sc HLo Sem12 Hc2 Sem3) as Sem123.
     pose proof (SI_comp _ _ _ _ _ (SemL_SI Sem1) (SemL_SI Sem2)) as SI12.
     pose proof (limg_chain n n2 (scomp s2 s1) s3 L Lb L3 HLo SI12 Hc2 (limg_lnext s3 Lb Ta)) as Hc3.
-    pose proof (SemL_comp P L L3 Dd Sg n (scomp s3 (scomp s2 s1)) D3 n3 Sc s4 D4 n4 Sd HLo Sem123 Hc3 Sem4) as Sem1234.
+    pose proof (SemL_comp PEv L L3 Dd Sg n (scomp s3 (scomp s2 s1)) D3 n3 Sc s4 D4 n4 Sd HLo Sem123 Hc3 Sem4) as Sem1234.
     pose proof (SI_comp _ _ _ _ _ SI12 (SemL_SI Sem3)) as SI123.
     pose proof (limg_chain n n3 (scomp s3 (scomp s2 s1)) s4 L L3 L4 HLo SI123 Hc3 (limg_lnext s4 L3 Tb)) as Hc4.
     exists (scomp s5 (scomp s4 (scomp s3 (scomp s2 s1)))), D5, n5, Se, (apT s5 Tb), (e_ite c' a' b').
-    refine (conj _ (conj (SemL_comp P L L4 Dd Sg n _ D4 n4 Sd s5 D5 n5 Se HLo Sem1234 Hc4 Sem5) (conj _ (conj _ (conj _ _))))).
+    refine (conj _ (conj (SemL_comp PEv L L4 Dd Sg n _ D4 n4 Sd s5 D5 n5 Se HLo Sem1234 Hc4 Sem5)
+              (conj _ (conj _ (conj _ (conj HRA5 (conj _ (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3
         (Stable_and _ _ St4 St5))))) as HSt. stable_run HSt.
       destruct Hf as (E1 & E2 & E3 & E4 & E5). cbn [infer]. rewrite E1, E2, E3, E4, E5. reflexivity.
     + exact (TOk_ap _ _ _ _ (SemL_SI Sem5) HTb).
-    + exact (SemL_live_ap P L4 Dd Sd n4 s5 D5 n5 Se Tb Sem5 (proj1 HTb) (ftv_lnext s4 L3 Tb)).
-    + eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P L4 Dd Sd n4 s5 D5 n5 Se Tb Sem5 (proj1 HTb) (ftv_lnext s4 L3 Tb)) | ].
+    + exact (EvT_ap s5 _ (SemL_OkS Sem5) HEb).
+    + exact (SemL_live_ap PEv L4 Dd Sd n4 s5 D5 n5 Se Tb Sem5 (proj1 HTb) (ftv_lnext s4 L3 Tb)).
+    + eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv L4 Dd Sd n4 s5 D5 n5 Se Tb Sem5 (proj1 HTb) (ftv_lnext s4 L3 Tb)) | ].
       exact Heq3.
     + cbn [is_gen_value]; try reflexivity; try assumption.
+    + cbn [let_open]; reflexivity.
   - (* float(e) *)
-    destruct (IH1 D G n Sg L Hd HLo HLv HRk HG HGL HC)
-      as (s1 & D1a & n1 & Sa & Ta & e' & St1 & Sem1 & HTa & LvTa & Heq1 & HgHeq1).
-    destruct (next_facts P Dd Gd Sg n L s1 D1a n1 Sa Ta G HLo Sem1 HTa LvTa HG HGL HC)
-      as (HLo1 & HLv1 & _ & _ & _).
+    assert (HAv1 : Avoid (bg (bg Av Gd typ_Float `union` ats A) Gd A) L Sg)
+      by exact (Avoid_mono _ _ _ _ (bg_av _ _ _) (Avoid_mono _ _ _ _ (sub_ul _ _ _ (sub_id _)) HAv)).
+    destruct (IH1 D G n Sg L Hd HRA HLo HLE HLv HAv1 HG HGL HC)
+      as (s1 & D1a & n1 & Sa & Ta & e' & St1 & Sem1 & HTa & HEa & LvTa & HRA1 & Heq1 & HgHeq1 & HlHeq1).
+    destruct (next_facts Dd Gd D Sg n L s1 D1a n1 Sa Ta G HLo HLE HLv Sem1 HTa HEa LvTa HG HGL HC)
+      as (HLo1 & HLE1 & HLv1 & _ & _ & _).
     set (L1 := lnext s1 L Ta) in *.
     assert (Hle : n1 <= S n1) by lia.
     assert (HTv : TOk (S n1) (typ_Var (ea n1))) by (apply TOk_var; apply old_ea; lia).
     assert (HsubTa : ftv_typ Ta [<=] L1) by exact (ftv_lnext s1 L Ta).
-    assert (HLv2 : Live P (L1 `union` {{ ea n1 }}) (upd D1a (ea n1) k_Literal) Dd (supd Sa (ea n1) A)).
-    { refine (Live_fresh P L1 D1a (upd D1a (ea n1) k_Literal) Dd Sa n1 k_Literal A HLo1 HLv1 Hs HPA
+    assert (HLv2 : Live PEv (L1 `union` {{ ea n1 }}) (upd D1a (ea n1) k_Literal) Dd (supd Sa (ea n1) A)).
+    { refine (Live_fresh PEv L1 D1a (upd D1a (ea n1) k_Literal) Dd Sa n1 k_Literal A HLo1 HLv1 Hs HPA
                 (upd_same _ _ _) (fun a Ha => upd_other D1a (ea n1) k_Literal a (fun E => HLo1 a Ha n1 (le_n n1) E))). }
     assert (Heq : teqD Dd (apT (supd Sa (ea n1) A) Ta) (apT (supd Sa (ea n1) A) (typ_Var (ea n1)))).
     { rewrite (apT_supd Sa (ea n1) A Ta (proj1 HTa) (fun Hin => proj2 HTa _ Hin n1 (le_n n1) eq_refl)),
         apT_Var, supd_same. exact Heq1. }
-    destruct (unify_stepL P Dd (upd D1a (ea n1) k_Literal) (supd Sa (ea n1) A) (L1 `union` {{ ea n1 }})
-                Ta (typ_Var (ea n1)) (S n1) HPI (DOk_upd D1a n1 k_Literal (SemL_DOk Sem1))
-                (LOld_fresh n1 L1 HLo1) HLv2 (fun r => SemL_rk Sem1 r) (proj1 HTa) I
-                (sub_ul _ _ _ HsubTa) (ftv_var_fresh n1 L1) Heq) as (s2 & D2 & n2 & S3 & St2 & Sem2).
-    pose proof (SemL_unfresh P L1 Dd Sa n1 A s2 D2 n2 S3 HLo1 Sem2) as Sem2'.
+    destruct (unify_stepL PEv Dd (upd D1a (ea n1) k_Literal) (supd Sa (ea n1) A) (L1 `union` {{ ea n1 }})
+                Ta (typ_Var (ea n1)) (S n1) PEv_float (DOk_upd D1a n1 k_Literal (SemL_DOk Sem1)) (RA_upd _ _ _ HRA1)
+                (LOld_fresh n1 L1 HLo1) (LEv_fresh n1 L1 HLE1) HLv2 (proj1 HTa) I
+                (sub_ul _ _ _ HsubTa) (ftv_var_fresh n1 L1) Heq) as (s2 & D2 & n2 & S3 & St2 & Sem2 & HRA2).
+    pose proof (SemL_unfresh PEv L1 Dd Sa n1 A s2 D2 n2 S3 HLo1 Sem2) as Sem2'.
     exists (scomp s2 s1), D2, n2, S3, typ_Float, (e_tofloat e').
-    refine (conj _ (conj (SemL_comp P L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 S3 HLo Sem1 (limg_lnext s1 L Ta) Sem2') (conj _ (conj _ (conj _ _))))).
+    refine (conj _ (conj (SemL_comp PEv L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 S3 HLo Sem1 (limg_lnext s1 L Ta) Sem2')
+              (conj _ (conj _ (conj _ (conj HRA2 (conj _ (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
       destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, E2. reflexivity.
     + apply TOk_scalar. right. left. reflexivity.
+    + apply EvT_scalar. right. left. reflexivity.
     + apply Live_scalar. right. left. reflexivity.
     + apply teqD_refl.
     + cbn [is_gen_value]; try reflexivity; try assumption.
+    + cbn [let_open]; reflexivity.
   - (* arithmetic *)
-    destruct (IH1 D G n Sg L Hd HLo HLv HRk HG HGL HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & LvTa & Heq1 & HgHeq1).
-    destruct (next_facts P Dd Gd Sg n L s1 D1a n1 Sa Ta G HLo Sem1 HTa LvTa HG HGL HC)
-      as (HLo1 & HLv1 & HG1 & HGL1 & HC1).
+    assert (HAvX : Avoid (bg Av Gd A `union` ats A `union` ats A) L Sg)
+      by exact (Avoid_mono _ _ _ _ (sub_ul _ _ _ (sub_id _)) HAv).
+    assert (HAv1 : Avoid (bg (bg Av Gd A `union` ats A `union` ats A) Gd A) L Sg)
+      by exact (Avoid_mono _ _ _ _ (bg_av _ _ _) HAvX).
+    destruct (IH1 D G n Sg L Hd HRA HLo HLE HLv HAv1 HG HGL HC)
+      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & HEa & LvTa & HRA1 & Heq1 & HgHeq1 & HlHeq1).
+    destruct (next_facts Dd Gd D Sg n L s1 D1a n1 Sa Ta G HLo HLE HLv Sem1 HTa HEa LvTa HG HGL HC)
+      as (HLo1 & HLE1 & HLv1 & HG1 & HGL1 & HC1).
     set (L1 := lnext s1 L Ta) in *.
-    destruct (IH2 D1a (apC s1 G) n1 Sa L1 (SemL_DOk Sem1) HLo1 HLv1 (SemL_rk Sem1) HG1 HGL1 HC1)
-      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & LvTb & Heq2 & HgHeq2).
-    destruct (next_facts P Dd Gd Sa n1 L1 s2 D2 n2 Sb Tb (apC s1 G) HLo1 Sem2 HTb LvTb HG1 HGL1 HC1)
-      as (HLo2 & HLv2 & _ & _ & _).
+    assert (HAv2 : Avoid (bg (bg Av Gd A `union` ats A `union` ats A) Gd A) L1 Sa).
+    { refine (Avoid_mono _ _ _ _ (bg_av _ _ _) _).
+      exact (Avoid_next _ _ L D Dd Sg n s1 D1a n1 Sa Ta A HLo HAvX HLv Sem1 HTa LvTa Heq1 (sub_id _)
+               (fun y Hy => sub_ur _ _ _ (sub_ul _ _ _ (sub_id _)) y (ats_ftv A y Hy))). }
+    destruct (IH2 D1a (apC s1 G) n1 Sa L1 (SemL_DOk Sem1) HRA1 HLo1 HLE1 HLv1 HAv2 HG1 HGL1 HC1)
+      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & HEb & LvTb & HRA2 & Heq2 & HgHeq2 & HlHeq2).
+    destruct (next_facts Dd Gd D1a Sa n1 L1 s2 D2 n2 Sb Tb (apC s1 G) HLo1 HLE1 HLv1 Sem2 HTb HEb LvTb HG1 HGL1 HC1)
+      as (HLo2 & HLE2 & HLv2 & _ & _ & _).
     set (Ln := lnext s2 L1 Tb) in *.
     assert (HTv : TOk (S n2) (typ_Var (ea n2))) by (apply TOk_var; apply old_ea; lia).
     pose proof (TOk_ap _ _ _ _ (SemL_SI Sem2) HTa) as HTa2.
@@ -994,60 +917,72 @@ Proof.
     assert (HsubTa2 : ftv_typ (apT s2 Ta) [<=] Ln)
       by (intros y Hy; exact (limg_lnext s2 L1 Tb y (limg_ap s2 Ta L1 (proj1 HTa) HsubTa y Hy))).
     assert (Hg : sat Dd (generic_sort o) A) by exact Hs.
-    assert (HLv3 : Live P (Ln `union` {{ ea n2 }}) (upd D2 (ea n2) (generic_sort o)) Dd (supd Sb (ea n2) A)).
-    { refine (Live_fresh P Ln D2 (upd D2 (ea n2) (generic_sort o)) Dd Sb n2 (generic_sort o) A HLo2 HLv2 Hg HPA
+    assert (HLv3 : Live PEv (Ln `union` {{ ea n2 }}) (upd D2 (ea n2) (generic_sort o)) Dd (supd Sb (ea n2) A)).
+    { refine (Live_fresh PEv Ln D2 (upd D2 (ea n2) (generic_sort o)) Dd Sb n2 (generic_sort o) A HLo2 HLv2 Hg HPA
                 (upd_same _ _ _) (fun a Ha => upd_other D2 (ea n2) (generic_sort o) a (fun E => HLo2 a Ha n2 (le_n n2) E))). }
     assert (Heq : teqD Dd (apT (supd Sb (ea n2) A) (apT s2 Ta)) (apT (supd Sb (ea n2) A) (typ_Var (ea n2)))).
     { rewrite (apT_supd Sb (ea n2) A _ (proj1 HTa2) (fun Hin => proj2 HTa2 _ Hin n2 (le_n n2) eq_refl)),
         apT_Var, supd_same.
-      eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P L1 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
+      eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv L1 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
       exact Heq1. }
-    destruct (unify_stepL P Dd (upd D2 (ea n2) (generic_sort o)) (supd Sb (ea n2) A) (Ln `union` {{ ea n2 }})
-                (apT s2 Ta) (typ_Var (ea n2)) (S n2) HPI (DOk_upd D2 n2 _ (SemL_DOk Sem2))
-                (LOld_fresh n2 Ln HLo2) HLv3 (fun r => SemL_rk Sem2 r) (proj1 HTa2) I
-                (sub_ul _ _ _ HsubTa2) (ftv_var_fresh n2 Ln) Heq) as (s3 & D3 & n3 & S3 & St3 & Sem3).
-    pose proof (SemL_unfresh P Ln Dd Sb n2 A s3 D3 n3 S3 HLo2 Sem3) as Sem3'.
+    destruct (unify_stepL PEv Dd (upd D2 (ea n2) (generic_sort o)) (supd Sb (ea n2) A) (Ln `union` {{ ea n2 }})
+                (apT s2 Ta) (typ_Var (ea n2)) (S n2) PEv_float (DOk_upd D2 n2 _ (SemL_DOk Sem2)) (RA_upd _ _ _ HRA2)
+                (LOld_fresh n2 Ln HLo2) (LEv_fresh n2 Ln HLE2) HLv3 (proj1 HTa2) I
+                (sub_ul _ _ _ HsubTa2) (ftv_var_fresh n2 Ln) Heq) as (s3 & D3 & n3 & S3 & St3 & Sem3 & HRA3).
+    pose proof (SemL_unfresh PEv Ln Dd Sb n2 A s3 D3 n3 S3 HLo2 Sem3) as Sem3'.
     set (Lu := Ln `union` {{ ea n2 }}) in *.
     pose proof (TOk_ap _ _ _ _ (SemL_SI Sem3) HTv) as HTc3.
     pose proof (TOk_ap _ _ _ _ (SemL_SI Sem3') HTb) as HTb3.
     assert (Fc : teqD Dd A (apT S3 (apT s3 (typ_Var (ea n2))))).
     { pose proof (SemL_F Sem3 (ea n2) (in_fresh n2 Ln)) as F. rewrite supd_same in F. exact F. }
     assert (Heq' : teqD Dd (apT S3 (apT s3 Tb)) (apT S3 (apT s3 (typ_Var (ea n2))))).
-    { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P Ln Dd Sb n2 s3 D3 n3 S3 Tb Sem3' (proj1 HTb) HsubTb) | ].
+    { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv Ln Dd Sb n2 s3 D3 n3 S3 Tb Sem3' (proj1 HTb) HsubTb) | ].
       eapply teqD_trans; [ exact Heq2 | exact Fc ]. }
     assert (HLo3 : LOld n3 (limg s3 Lu)) by exact (limg_old _ _ _ _ (LOld_fresh n2 Ln HLo2) (SemL_SI Sem3)).
-    destruct (unify_stepL P Dd D3 S3 (limg s3 Lu) (apT s3 Tb) (apT s3 (typ_Var (ea n2))) n3 HPI (SemL_DOk Sem3)
-                HLo3 (SemL_live Sem3) (SemL_rk Sem3) (proj1 HTb3) (proj1 HTc3)
+    assert (HLE3 : LEv (limg s3 Lu)) by exact (limg_ev s3 Lu (SemL_OkS Sem3) (LEv_fresh n2 Ln HLE2)).
+    destruct (unify_stepL PEv Dd D3 S3 (limg s3 Lu) (apT s3 Tb) (apT s3 (typ_Var (ea n2))) n3 PEv_float (SemL_DOk Sem3)
+                HRA3 HLo3 HLE3 (SemL_live Sem3) (proj1 HTb3) (proj1 HTc3)
                 (limg_ap s3 Tb Lu (proj1 HTb) (sub_ul _ _ _ HsubTb))
                 (limg_ap s3 (typ_Var (ea n2)) Lu I (ftv_var_fresh n2 Ln)) Heq')
-      as (s4 & D4 & n4 & S4 & St4 & Sem4).
-    pose proof (SemL_comp P L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2) as Sem12.
+      as (s4 & D4 & n4 & S4 & St4 & Sem4 & HRA4).
+    pose proof (SemL_comp PEv L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2) as Sem12.
     pose proof (limg_chain n n1 s1 s2 L L1 Ln HLo (SemL_SI Sem1) (limg_lnext s1 L Ta) (limg_lnext s2 L1 Tb)) as Hc2.
-    pose proof (SemL_comp P L Ln Dd Sg n (scomp s2 s1) D2 n2 Sb s3 D3 n3 S3 HLo Sem12 Hc2 Sem3') as Sem123.
+    pose proof (SemL_comp PEv L Ln Dd Sg n (scomp s2 s1) D2 n2 Sb s3 D3 n3 S3 HLo Sem12 Hc2 Sem3') as Sem123.
     pose proof (SI_comp _ _ _ _ _ (SemL_SI Sem1) (SemL_SI Sem2)) as SI12.
     pose proof (limg_chain n n2 (scomp s2 s1) s3 L Ln (limg s3 Lu) HLo SI12 Hc2
       (limg_mono s3 _ _ (sub_ul _ _ _ (fun _ H => H)))) as Hc3.
     exists (scomp s4 (scomp s3 (scomp s2 s1))), D4, n4, S4, (apT s4 (apT s3 (typ_Var (ea n2)))), (e_bin e1' o e2').
-    refine (conj _ (conj (SemL_comp P L (limg s3 Lu) Dd Sg n _ D3 n3 S3 s4 D4 n4 S4 HLo Sem123 Hc3 Sem4) (conj _ (conj _ (conj _ _))))).
+    refine (conj _ (conj (SemL_comp PEv L (limg s3 Lu) Dd Sg n _ D3 n3 S3 s4 D4 n4 S4 HLo Sem123 Hc3 Sem4)
+              (conj _ (conj _ (conj _ (conj HRA4 (conj _ (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3 St4)))) as HSt.
       stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
       rewrite (is_cmp_op_false o Hk1). cbv beta iota zeta.
       rewrite E3, E4. rewrite (bin_res_arith o _ Hk1). reflexivity.
     + exact (TOk_ap _ _ _ _ (SemL_SI Sem4) HTc3).
-    + exact (SemL_live_ap P (limg s3 Lu) Dd S3 n3 s4 D4 n4 S4 _ Sem4 (proj1 HTc3) (limg_ap s3 (typ_Var (ea n2)) Lu I (ftv_var_fresh n2 Ln))).
-    + eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P (limg s3 Lu) Dd S3 n3 s4 D4 n4 S4 _ Sem4 (proj1 HTc3) (limg_ap s3 (typ_Var (ea n2)) Lu I (ftv_var_fresh n2 Ln))) | ].
+    + exact (EvT_ap s4 _ (SemL_OkS Sem4) (EvT_ap s3 _ (SemL_OkS Sem3) (EvT_var_ea n2))).
+    + exact (SemL_live_ap PEv (limg s3 Lu) Dd S3 n3 s4 D4 n4 S4 _ Sem4 (proj1 HTc3) (limg_ap s3 (typ_Var (ea n2)) Lu I (ftv_var_fresh n2 Ln))).
+    + eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv (limg s3 Lu) Dd S3 n3 s4 D4 n4 S4 _ Sem4 (proj1 HTc3) (limg_ap s3 (typ_Var (ea n2)) Lu I (ftv_var_fresh n2 Ln))) | ].
       apply teqD_sym. exact Fc.
     + cbn [is_gen_value]; try reflexivity; try assumption.
+    + cbn [let_open]; reflexivity.
   - (* comparison *)
-    destruct (IH1 D G n Sg L Hd HLo HLv HRk HG HGL HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & LvTa & Heq1 & HgHeq1).
-    destruct (next_facts P Dd Gd Sg n L s1 D1a n1 Sa Ta G HLo Sem1 HTa LvTa HG HGL HC)
-      as (HLo1 & HLv1 & HG1 & HGL1 & HC1).
+    assert (HAvX : Avoid (bg Av Gd typ_Bool `union` ats A `union` ats A) L Sg)
+      by exact (Avoid_mono _ _ _ _ (sub_ul _ _ _ (sub_id _)) HAv).
+    assert (HAv1 : Avoid (bg (bg Av Gd typ_Bool `union` ats A `union` ats A) Gd A) L Sg)
+      by exact (Avoid_mono _ _ _ _ (bg_av _ _ _) HAvX).
+    destruct (IH1 D G n Sg L Hd HRA HLo HLE HLv HAv1 HG HGL HC)
+      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & HEa & LvTa & HRA1 & Heq1 & HgHeq1 & HlHeq1).
+    destruct (next_facts Dd Gd D Sg n L s1 D1a n1 Sa Ta G HLo HLE HLv Sem1 HTa HEa LvTa HG HGL HC)
+      as (HLo1 & HLE1 & HLv1 & HG1 & HGL1 & HC1).
     set (L1 := lnext s1 L Ta) in *.
-    destruct (IH2 D1a (apC s1 G) n1 Sa L1 (SemL_DOk Sem1) HLo1 HLv1 (SemL_rk Sem1) HG1 HGL1 HC1)
-      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & LvTb & Heq2 & HgHeq2).
-    destruct (next_facts P Dd Gd Sa n1 L1 s2 D2 n2 Sb Tb (apC s1 G) HLo1 Sem2 HTb LvTb HG1 HGL1 HC1)
-      as (HLo2 & HLv2 & _ & _ & _).
+    assert (HAv2 : Avoid (bg (bg Av Gd typ_Bool `union` ats A `union` ats A) Gd A) L1 Sa).
+    { refine (Avoid_mono _ _ _ _ (bg_av _ _ _) _).
+      exact (Avoid_next _ _ L D Dd Sg n s1 D1a n1 Sa Ta A HLo HAvX HLv Sem1 HTa LvTa Heq1 (sub_id _)
+               (fun y Hy => sub_ur _ _ _ (sub_ul _ _ _ (sub_id _)) y (ats_ftv A y Hy))). }
+    destruct (IH2 D1a (apC s1 G) n1 Sa L1 (SemL_DOk Sem1) HRA1 HLo1 HLE1 HLv1 HAv2 HG1 HGL1 HC1)
+      as (s2 & D2 & n2 & Sb & Tb & e2' & St2 & Sem2 & HTb & HEb & LvTb & HRA2 & Heq2 & HgHeq2 & HlHeq2).
+    destruct (next_facts Dd Gd D1a Sa n1 L1 s2 D2 n2 Sb Tb (apC s1 G) HLo1 HLE1 HLv1 Sem2 HTb HEb LvTb HG1 HGL1 HC1)
+      as (HLo2 & HLE2 & HLv2 & _ & _ & _).
     set (Ln := lnext s2 L1 Tb) in *.
     pose proof (TOk_ap _ _ _ _ (SemL_SI Sem2) HTa) as HTa2.
     assert (HsubTa : ftv_typ Ta [<=] L1) by exact (ftv_lnext s1 L Ta).
@@ -1055,101 +990,278 @@ Proof.
     assert (HsubTa2 : ftv_typ (apT s2 Ta) [<=] Ln)
       by (intros y Hy; exact (limg_lnext s2 L1 Tb y (limg_ap s2 Ta L1 (proj1 HTa) HsubTa y Hy))).
     assert (Heq : teqD Dd (apT Sb (apT s2 Ta)) (apT Sb Tb)).
-    { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P L1 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
+    { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv L1 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
       eapply teqD_trans; [ exact Heq1 | apply teqD_sym; exact Heq2 ]. }
-    destruct (unify_stepL P Dd D2 Sb Ln (apT s2 Ta) Tb n2 HPI (SemL_DOk Sem2) HLo2 HLv2 (SemL_rk Sem2)
-                (proj1 HTa2) (proj1 HTb) HsubTa2 HsubTb Heq) as (s3 & D3 & n3 & S3 & St3 & Sem3).
+    destruct (unify_stepL PEv Dd D2 Sb Ln (apT s2 Ta) Tb n2 PEv_float (SemL_DOk Sem2) HRA2 HLo2 HLE2 HLv2
+                (proj1 HTa2) (proj1 HTb) HsubTa2 HsubTb Heq) as (s3 & D3 & n3 & S3 & St3 & Sem3 & HRA3).
     pose proof (TOk_ap _ _ _ _ (SemL_SI Sem3) HTb) as HTb3.
     assert (HTv : TOk (S n3) (typ_Var (ea n3))) by (apply TOk_var; apply old_ea; lia).
     assert (HLo3 : LOld n3 (limg s3 Ln)) by exact (limg_old _ _ _ _ HLo2 (SemL_SI Sem3)).
+    assert (HLE3 : LEv (limg s3 Ln)) by exact (limg_ev s3 Ln (SemL_OkS Sem3) HLE2).
     assert (HsubTb3 : ftv_typ (apT s3 Tb) [<=] limg s3 Ln) by exact (limg_ap s3 Tb Ln (proj1 HTb) HsubTb).
-    assert (HLv4 : Live P (limg s3 Ln `union` {{ ea n3 }}) (upd D3 (ea n3) k_Eq) Dd (supd S3 (ea n3) A)).
-    { refine (Live_fresh P (limg s3 Ln) D3 (upd D3 (ea n3) k_Eq) Dd S3 n3 k_Eq A HLo3 (SemL_live Sem3) Hs HPA
+    assert (HLv4 : Live PEv (limg s3 Ln `union` {{ ea n3 }}) (upd D3 (ea n3) k_Eq) Dd (supd S3 (ea n3) A)).
+    { refine (Live_fresh PEv (limg s3 Ln) D3 (upd D3 (ea n3) k_Eq) Dd S3 n3 k_Eq A HLo3 (SemL_live Sem3) Hs HPA
                 (upd_same _ _ _) (fun a Ha => upd_other D3 (ea n3) k_Eq a (fun E => HLo3 a Ha n3 (le_n n3) E))). }
     assert (Heq' : teqD Dd (apT (supd S3 (ea n3) A) (apT s3 Tb)) (apT (supd S3 (ea n3) A) (typ_Var (ea n3)))).
     { rewrite (apT_supd S3 (ea n3) A _ (proj1 HTb3) (fun Hin => proj2 HTb3 _ Hin n3 (le_n n3) eq_refl)),
         apT_Var, supd_same.
-      eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor P Ln Dd Sb n2 s3 D3 n3 S3 Tb Sem3 (proj1 HTb) HsubTb) | ].
+      eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv Ln Dd Sb n2 s3 D3 n3 S3 Tb Sem3 (proj1 HTb) HsubTb) | ].
       exact Heq2. }
-    destruct (unify_stepL P Dd (upd D3 (ea n3) k_Eq) (supd S3 (ea n3) A) (limg s3 Ln `union` {{ ea n3 }})
-                (apT s3 Tb) (typ_Var (ea n3)) (S n3) HPI (DOk_upd D3 n3 k_Eq (SemL_DOk Sem3))
-                (LOld_fresh n3 _ HLo3) HLv4 (fun r => SemL_rk Sem3 r) (proj1 HTb3) I
-                (sub_ul _ _ _ HsubTb3) (ftv_var_fresh n3 _) Heq') as (s4 & D4 & n4 & S4 & St4 & Sem4).
-    pose proof (SemL_unfresh P (limg s3 Ln) Dd S3 n3 A s4 D4 n4 S4 HLo3 Sem4) as Sem4'.
-    pose proof (SemL_comp P L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2) as Sem12.
+    destruct (unify_stepL PEv Dd (upd D3 (ea n3) k_Eq) (supd S3 (ea n3) A) (limg s3 Ln `union` {{ ea n3 }})
+                (apT s3 Tb) (typ_Var (ea n3)) (S n3) PEv_float (DOk_upd D3 n3 k_Eq (SemL_DOk Sem3)) (RA_upd _ _ _ HRA3)
+                (LOld_fresh n3 _ HLo3) (LEv_fresh n3 _ HLE3) HLv4 (proj1 HTb3) I
+                (sub_ul _ _ _ HsubTb3) (ftv_var_fresh n3 _) Heq') as (s4 & D4 & n4 & S4 & St4 & Sem4 & HRA4).
+    pose proof (SemL_unfresh PEv (limg s3 Ln) Dd S3 n3 A s4 D4 n4 S4 HLo3 Sem4) as Sem4'.
+    pose proof (SemL_comp PEv L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2) as Sem12.
     pose proof (limg_chain n n1 s1 s2 L L1 Ln HLo (SemL_SI Sem1) (limg_lnext s1 L Ta) (limg_lnext s2 L1 Tb)) as Hc2.
-    pose proof (SemL_comp P L Ln Dd Sg n (scomp s2 s1) D2 n2 Sb s3 D3 n3 S3 HLo Sem12 Hc2 Sem3) as Sem123.
+    pose proof (SemL_comp PEv L Ln Dd Sg n (scomp s2 s1) D2 n2 Sb s3 D3 n3 S3 HLo Sem12 Hc2 Sem3) as Sem123.
     pose proof (SI_comp _ _ _ _ _ (SemL_SI Sem1) (SemL_SI Sem2)) as SI12.
     pose proof (limg_chain n n2 (scomp s2 s1) s3 L Ln (limg s3 Ln) HLo SI12 Hc2 (fun _ H => H)) as Hc3.
     exists (scomp s4 (scomp s3 (scomp s2 s1))), D4, n4, S4, typ_Bool, (e_bin e1' o e2').
-    refine (conj _ (conj (SemL_comp P L (limg s3 Ln) Dd Sg n _ D3 n3 S3 s4 D4 n4 S4 HLo Sem123 Hc3 Sem4') (conj _ (conj _ (conj _ _))))).
+    refine (conj _ (conj (SemL_comp PEv L (limg s3 Ln) Dd Sg n _ D3 n3 S3 s4 D4 n4 S4 HLo Sem123 Hc3 Sem4')
+              (conj _ (conj _ (conj _ (conj HRA4 (conj _ (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 (Stable_and _ _ St3 St4)))) as HSt.
       stable_run HSt. destruct Hf as (E1 & E2 & E3 & E4). cbn [infer]. rewrite E1, E2.
       rewrite (is_cmp_op_true o Hk). cbv beta iota zeta. rewrite E3, E4. reflexivity.
     + apply TOk_scalar. right. right. left. reflexivity.
+    + apply EvT_scalar. right. right. left. reflexivity.
     + apply Live_scalar. right. right. left. reflexivity.
     + apply teqD_refl.
     + cbn [is_gen_value]; try reflexivity; try assumption.
+    + cbn [let_open]; reflexivity.
   - (* let of a binding that is not a value *)
-    destruct (IH1 D G n Sg L Hd HLo HLv HRk HG HGL HC)
-      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & LvTa & Heq1 & Hgv).
-    destruct (next_facts P Dd Gd Sg n L s1 D1a n1 Sa Ta G HLo Sem1 HTa LvTa HG HGL HC)
-      as (HLo1 & HLv1 & HG1 & HGL1 & HC1).
+    assert (HAvX : Avoid (bg Av Gd T2 `union` ats T1) L Sg)
+      by exact (Avoid_mono _ _ _ _ (sub_ul _ _ _ (sub_id _)) HAv).
+    assert (HAv1 : Avoid (bg (bg Av Gd T2 `union` ats T1) Gd T1) L Sg)
+      by exact (Avoid_mono _ _ _ _ (bg_av _ _ _) HAvX).
+    destruct (IH1 D G n Sg L Hd HRA HLo HLE HLv HAv1 HG HGL HC)
+      as (s1 & D1a & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & HEa & LvTa & HRA1 & Heq1 & Hgv & Hlo1).
+    destruct (next_facts Dd Gd D Sg n L s1 D1a n1 Sa Ta G HLo HLE HLv Sem1 HTa HEa LvTa HG HGL HC)
+      as (HLo1 & HLE1 & HLv1 & HG1 & HGL1 & HC1).
     set (L1 := lnext s1 L Ta) in *.
     rewrite Hv in Hgv.
+    assert (HAvX2 : Avoid (bg Av Gd T2 `union` ats T1) L1 Sa).
+    { exact (Avoid_next _ _ L D Dd Sg n s1 D1a n1 Sa Ta T1 HLo HAvX HLv Sem1 HTa LvTa Heq1 (sub_id _)
+               (fun y Hy => sub_ur _ _ _ (ats_ftv T1) y Hy)). }
+    assert (HAv2 : Avoid (bg (bg Av Gd T2 `union` ats T1) Gd T1) L1 Sa)
+      by exact (Avoid_mono _ _ _ _ (bg_av _ _ _) HAvX2).
     assert (Hx : fresh_var (apC s1 G) e2 `notin` dom Gd `union` fv_exp e2).
     { rewrite (CI_dom _ _ _ _ HC). pose proof (dom_apC s1 G).
       pose proof (fresh_var_notin_dom (apC s1 G) e2). pose proof (fresh_var_notin_fv (apC s1 G) e2). fsetdec. }
+    assert (HAv3 : Avoid (bg (bg Av Gd T2 `union` ats T1) ((fresh_var (apC s1 G) e2 ~ sch_mono T1) ++ Gd) T2) L1 Sa).
+    { exact (Avoid_mono _ _ _ _ (bg_av _ _ _) HAvX2). }
     destruct (IH2 _ Hx D1a ((fresh_var (apC s1 G) e2 ~ sch_mono Ta) ++ apC s1 G) n1 Sa L1
-                (SemL_DOk Sem1) HLo1 HLv1 (SemL_rk Sem1) (GOk_cons n1 _ Ta _ HTa HG1)
+                (SemL_DOk Sem1) HRA1 HLo1 HLE1 HLv1 HAv3 (GOk_cons n1 _ Ta _ HTa HEa HG1)
                 (GLive_cons L1 _ Ta _ (ftv_lnext s1 L Ta) HGL1)
                 (CI_cons Dd Sa Gd (apC s1 G) _ T1 Ta HC1 Heq1))
-      as (s2 & D2 & n2 & Sb & T & e2' & St2 & Sem2 & HT & LvT & Heq2 & Hg2).
+      as (s2 & D2 & n2 & Sb & T & e2' & St2 & Sem2 & HT & HE & LvT & HRA2 & Heq2 & Hg2 & Hl2).
     exists (scomp s2 s1), D2, n2, Sb, T, (e_let e1' (cl 0 (fresh_var (apC s1 G) e2) e2')).
-    refine (conj _ (conj (SemL_comp P L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2)
-      (conj HT (conj LvT (conj Heq2 _))))).
+    refine (conj _ (conj (SemL_comp PEv L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2)
+      (conj HT (conj HE (conj LvT (conj HRA2 (conj Heq2 (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
       destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv. cbv beta iota zeta. rewrite E2. reflexivity.
     + reflexivity.
+    + reflexivity.
+  - (* let of a value *)
+    pose proof (proj1 (proj2 (proj2 (rf_facts T1 Hrf1)))) as Hfrv1.
+    set (Vt := AtomSetImpl.diff (ftv_typ T1) (ftv_ctx (pin_ctx Tm Gd))) in *.
+    set (Vr := AtomSetImpl.diff (frv_typ T1) (frv_ctx (pin_ctx Tm Gd))) in *.
+    set (Dg := extr (ext Dd Vt k) Vr rk) in *.
+    assert (Hdsort : forall c, c `notin` Vt -> Dg c = Dd c)
+      by (intros c Hc; unfold Dg; rewrite extr_dsort; exact (ext_out _ _ _ _ Hc)).
+    assert (Hdrk : forall r, drk Dg r = drk Dd r).
+    { intros r. unfold Dg. rewrite extr_out; [ apply ext_drk | ].
+      intro Hr. unfold Vr in Hr. apply AtomSetFacts.diff_iff in Hr. exact (Hfrv1 r (proj1 Hr)). }
+    assert (HGdV : forall a, a `in` ftv_ctx Gd -> a `notin` Vt).
+    { intros a Ha Hv. unfold Vt in Hv. apply AtomSetFacts.diff_iff in Hv. apply (proj2 Hv).
+      apply (proj2 (ftv_pin_ctx Tm Gd a)). apply AtomSetFacts.union_iff. right. exact Ha. }
+    assert (HVt : forall c, c `in` Vt -> c `notin` bg Av Gd T2) by (intros c Hc; exact (proj2 (HevA c Hc))).
+    assert (HAvT : forall x0, x0 `in` L -> forall c, c `in` ftv_typ (sT Sg x0) -> Dg c = Dd c).
+    { intros x0 Hx0 c Hc. apply Hdsort. intro Hcv. exact (HVt c Hcv (HAv x0 Hx0 c Hc)). }
+    assert (HLvg : Live PEv L D Dg Sg) by exact (Live_env L D Dd Dg Sg HLv HAvT Hdrk).
+    assert (HCg : CI Dg Sg Gd G)
+      by exact (CI_env Dd Dg Sg Gd G HC (fun a Ha => Hdsort a (HGdV a Ha)) Hdrk).
+    destruct (IH1 D G n Sg L Hd HRA HLo HLE HLvg (Avoid_mono _ _ _ _ (bg_av _ _ _) HAv) HG HGL HCg)
+      as (s1 & D1 & n1 & Sa & Ta & e1' & St1 & Sem1 & HTa & HEa & LvTa & HRA1 & Heq1 & Hgv1 & Hlo1).
+    destruct (next_facts Dg Gd D Sg n L s1 D1 n1 Sa Ta G HLo HLE HLvg Sem1 HTa HEa LvTa HG HGL HCg)
+      as (HLo1 & HLE1 & HLv1 & HG1 & HGL1 & HC1).
+    destruct (CI_stepL L D Dg Sg n s1 D1 n1 Sa Gd G Sem1 HLvg HLE HCg HG HGL) as (_ & _ & HGLl).
+    assert (Hgv1' : is_gen_value e1' = true) by (rewrite Hgv1; exact Hgv).
+    assert (HrfA : rf (apT Sa Ta)).
+    { apply rf_ap; [ exact (proj1 HTa) | intros w Hw; exact (proj2 (proj2 (LvTa w Hw))) ]. }
+    pose proof (teqD_rf_eq _ _ _ HrfA Heq1) as ET.
+    pose proof (SemL_OkS Sem1) as Hok1.
+    destruct (gen_ren_sc D1 (pin_ctx (let_pin D1 e1' Ta) (apC s1 G)) Ta n1 HTa HEa) as (Hsc & Hscf & Hscc).
+    set (G1 := apC s1 G) in *.
+    set (sc := gen_ren D1 (pin_ctx (let_pin D1 e1' Ta) G1) Ta) in *.
+    set (L1 := lnext s1 L Ta) in *.
+    set (Lb := limg s1 L `union` ftv_sch sc).
+    assert (HlimL : limg s1 L [<=] Lb) by (intros y Hy; apply AtomSetFacts.union_iff; left; exact Hy).
+    assert (HscLb : ftv_sch sc [<=] Lb) by (intros y Hy; apply AtomSetFacts.union_iff; right; exact Hy).
+    assert (HLbL1 : Lb [<=] L1).
+    { intros y Hy. apply AtomSetFacts.union_iff in Hy. destruct Hy as [Hy|Hy];
+        [ exact (limg_lnext s1 L Ta y Hy) | exact (ftv_lnext s1 L Ta y (Hscf y Hy)) ]. }
+    assert (HQ : forall b, b `in` s_tq sc -> b `notin` L1).
+    { intros b Hbq HbL. exact (ev_od b (HLE1 b HbL) ((proj1 (proj1 Hsc)) b Hbq)). }
+    assert (HSa'a : forall y, y `in` L1 -> sT (sfix (s_tq sc) Sa) y = sT Sa y).
+    { intros y Hy. apply sfix_out. intro Hq. exact (HQ y Hq Hy). }
+    assert (HG1ctx : ftv_ctx G1 [<=] limg s1 L) by exact (GLive_ftv_ctx _ _ HGLl).
+    assert (HfzG1 : frozen (sfix (s_tq sc) Sa) G1 Gd).
+    { split.
+      - intros a Ha. assert (HaL : a `in` L1) by exact (limg_lnext s1 L Ta a (HG1ctx a Ha)).
+        split.
+        + rewrite (HSa'a a HaL).
+          exact (CI_ftv Dg Sa Gd G1 n1 L1 D1 HC1 HG1 HGL1 HLv1 a Ha).
+        + intros c Hc. exfalso.
+          rewrite (HSa'a a HaL) in Hc.
+          exact (proj1 (proj2 (proj2 (rf_facts _ (proj2 (proj2 (HLv1 a HaL)))))) c Hc).
+      - intros r Hr. exfalso. exact (GOk_frv n1 G1 HG1 r Hr). }
+    assert (EqS : apT (sfix (s_tq sc) Sa) Ta = T1).
+    { rewrite ET. apply apT_agree; [ exact (proj1 HTa) | ]. intros a Ha. apply HSa'a. exact (ftv_lnext s1 L Ta a Ha). }
+    assert (Hlit' : lit_pinned e1' (AtomSetImpl.diff (ftv_typ (apT (sfix (s_tq sc) Sa) Ta)) (ftv_ctx (pin_ctx Tm Gd))) k).
+    { rewrite EqS. intros Ho. apply Hlit. rewrite <- Hlo1. exact Ho. }
+    assert (Hk' : forall b, b `in` ftv_typ Ta ->
+      sat (extr (ext Dd (AtomSetImpl.diff (ftv_typ (apT (sfix (s_tq sc) Sa) Ta)) (ftv_ctx (pin_ctx Tm Gd))) k)
+            (AtomSetImpl.diff (frv_typ (apT (sfix (s_tq sc) Sa) Ta)) (frv_ctx (pin_ctx Tm Gd))) rk)
+          (dsort D1 b) (sT (sfix (s_tq sc) Sa) b)).
+    { intros b Hbq. rewrite EqS. rewrite (HSa'a b (ftv_lnext s1 L Ta b Hbq)).
+      exact (proj1 (HLv1 b (ftv_lnext s1 L Ta b Hbq))). }
+    pose proof (let_frozen Dd D1 (sfix (s_tq sc) Sa) G1 Gd Tm Ta e1' k rk HfzG1 Hlit' Hk') as Hfzp.
+    assert (HfrvTa : forall q, q `notin` frv_typ Ta) by exact (proj1 (proj2 (proj2 (rf_facts Ta (proj1 HTa))))).
+    assert (Hsch : sch_leP Dd (gen (pin_ctx Tm Gd) T1 k rk) (apS (sfix (s_tq sc) Sa) sc)).
+    { pose proof (gen_mono_let Dd D1 (sfix (s_tq sc) Sa) G1 Gd Tm Ta e1' k rk HfzG1
+        (fun b Hbq => sfix_in _ _ b Hbq)
+        (fun r Hr => False_rect _ (proj1 (AtomSetFacts.empty_iff r) (proj1 (proj1 (proj2 Hsc) r) Hr)))
+        (fun a Ha => ltac:(
+           assert (HaL : a `in` L1);
+           [ apply (proj1 (ftv_pin_ctx (let_pin D1 e1' Ta) G1 a)) in Ha;
+             apply AtomSetFacts.union_iff in Ha; destruct Ha as [Ha|Ha];
+             [ exact (ftv_lnext s1 L Ta a (let_pin_ftv D1 e1' Ta a Ha)) | exact (limg_lnext s1 L Ta a (HG1ctx a Ha)) ]
+           | rewrite (HSa'a a HaL); exact (proj1 (proj2 (HLv1 a HaL))) ]))
+        (fun r Hr => ltac:(
+           exfalso; apply (proj1 (frv_pin_ctx (let_pin D1 e1' Ta) G1 r)) in Hr;
+           apply AtomSetFacts.union_iff in Hr; destruct Hr as [Hr|Hr];
+           [ exact (let_pin_frv D1 e1' Ta r Hr) | exact (GOk_frv n1 G1 HG1 r Hr) ]))
+        (fun a Ha => ltac:(
+           rewrite (HSa'a a (ftv_lnext s1 L Ta a Ha)); exact (proj2 (HLv1 a (ftv_lnext s1 L Ta a Ha)))))
+        (fun r Hr => ltac:(exfalso; exact (HfrvTa r Hr)))
+        Hlit' Hk'
+        (fun r Hr => ltac:(exfalso; exact (HfrvTa r Hr)))) as Hg.
+      rewrite EqS in Hg. exact Hg. }
+    assert (Hsch2 : SchI Dd (sfix (s_tq sc) Sa) (gen (pin_ctx Tm Gd) T1 k rk) sc).
+    { unfold SchI. rewrite apS_sfix_fixed; [ exact Hsch | exact (proj1 (proj2 (proj2 Hsc))) | ].
+      intros q Hq. exact (sfix_in _ _ q Hq). }
+    assert (HAvl : Avoid (bg Av Gd T2) (limg s1 L) Sa) by exact (Avoid_limg _ L D Dg Sg n s1 D1 n1 Sa HLo HAv HLvg Sem1).
+    assert (HnotVt : forall y, y `in` Lb -> forall c, c `in` ftv_typ (sT Sa y) -> c `notin` Vt).
+    { intros y Hy c Hc Hcv. apply AtomSetFacts.union_iff in Hy. destruct Hy as [Hy|Hy].
+      - exact (HVt c Hcv (HAvl y Hy c Hc)).
+      - pose proof (proj1 Hfzp y (Hscc y Hy)) as [Hf _].
+        assert (Hc' : c `in` ftv_typ (sT (sfix (s_tq sc) Sa) y))
+          by (rewrite (HSa'a y (ftv_lnext s1 L Ta y (Hscf y Hy))); exact Hc).
+        pose proof (Hf c Hc') as Hin. unfold Vt in Hcv. apply AtomSetFacts.diff_iff in Hcv.
+        exact (proj2 Hcv Hin). }
+    assert (HLvb : Live PEv Lb D1 Dd (sfix (s_tq sc) Sa)).
+    { intros y Hy. assert (HyL : y `in` L1) by exact (HLbL1 y Hy).
+      rewrite (HSa'a y HyL). destruct (HLv1 y HyL) as [Hs Hp]. split; [ | exact Hp ].
+      eapply sat_loc; [ | | exact Hs ].
+      - intros c Hc. exact (eq_sym (Hdsort c (HnotVt y Hy c Hc))).
+      - intros r _. exact (eq_sym (Hdrk r)). }
+    assert (Sem1e : SemL PEv L Dd Sg n s1 D1 n1 Sa).
+    { refine (SemL_env L Dg Dd Sg n s1 D1 n1 Sa Sem1 HRA1 _ (fun r => eq_sym (Hdrk r))).
+      intros x0 Hx0 c Hc. exact (eq_sym (Hdsort c (fun Hv => HVt c Hv (HAvl x0 Hx0 c Hc)))). }
+    assert (Sem1' : SemL PEv L Dd Sg n s1 D1 n1 (sfix (s_tq sc) Sa)).
+    { refine (SemL_agree PEv L Dd Sg n s1 D1 n1 Sa (sfix (s_tq sc) Sa) HLo Sem1e _ eq_refl).
+      intros y Hy. apply HSa'a. exact (limg_lnext s1 L Ta y Hy). }
+    assert (HCd : CI Dd Sa Gd G1)
+      by exact (CI_env Dg Dd Sa Gd G1 HC1 (fun a Ha => eq_sym (Hdsort a (HGdV a Ha))) (fun r => eq_sym (Hdrk r))).
+    assert (HCd' : CI Dd (sfix (s_tq sc) Sa) Gd G1)
+      by exact (CI_agree Dd Sa (sfix (s_tq sc) Sa) Gd G1 L1 n1 HCd HG1 HGL1 HSa'a).
+    assert (Hx : fresh_var G1 e2 `notin` dom Gd `union` fv_exp e2) by exact (fresh_notin_Gd Dd Sg Gd G s1 e2 HC).
+    assert (HAvb : Avoid (bg (bg Av Gd T2) ((fresh_var G1 e2 ~ gen (pin_ctx Tm Gd) T1 k rk) ++ Gd) T2) Lb
+                     (sfix (s_tq sc) Sa)).
+    { intros y Hy c Hc. apply AtomSetFacts.union_iff in Hy as Hy'. destruct Hy' as [Hy'|Hy'].
+      - assert (HyL : y `in` L1) by exact (HLbL1 y Hy).
+        rewrite (HSa'a y HyL) in Hc. apply bg_av. exact (HAvl y Hy' c Hc).
+      - assert (HyL : y `in` L1) by exact (HLbL1 y Hy).
+        rewrite (HSa'a y HyL) in Hc.
+        apply ftv_sch_in_bg. apply (proj1 Hsch). unfold ftv_sch. cbn [apS s_body s_tq].
+        apply AtomSetFacts.diff_iff. split.
+        + assert (Hyb : y `in` ftv_typ (s_body sc))
+            by (unfold ftv_sch in Hy'; apply AtomSetFacts.diff_iff in Hy'; exact (proj1 Hy')).
+          assert (Hc2 : c `in` ftv_typ (sT (sfix (s_tq sc) Sa) y)) by (rewrite (HSa'a y HyL); exact Hc).
+          exact (ftv_ap_in1 (sT (sfix (s_tq sc) Sa)) (sR (sfix (s_tq sc) Sa)) (s_body sc) c y Hyb Hc2).
+        + intro Hcq. exact (ev_od c (proj1 (proj1 (proj2 (HLv1 y HyL))) c Hc) ((proj1 (proj1 Hsc)) c Hcq)). }
+    destruct (IHb (fresh_var G1 e2) Hx D1 ((fresh_var G1 e2 ~ sc) ++ G1) n1 (sfix (s_tq sc) Sa) Lb
+                (SemL_DOk Sem1) HRA1 (LOld_sub n1 Lb L1 HLbL1 HLo1) (LEv_sub Lb L1 HLbL1 HLE1) HLvb HAvb
+                (GOk_cons_sch n1 _ sc G1 Hsc HG1)
+                (GLive_cons_sch Lb _ sc G1 HscLb (GLive_mono _ _ _ HlimL HGLl))
+                (CI_cons_sch Dd (sfix (s_tq sc) Sa) Gd G1 _ _ sc HCd' Hsch2))
+      as (s2 & D2 & n2 & Sb & T & e2' & St2 & Sem2 & HT & HE & LvT & HRA2 & Heq2 & Hg2 & Hl2).
+    exists (scomp s2 s1), D2, n2, Sb, T, (e_let e1' (cl 0 (fresh_var G1 e2) e2')).
+    refine (conj _ (conj (SemL_comp PEv L Lb Dd Sg n s1 D1 n1 (sfix (s_tq sc) Sa) s2 D2 n2 Sb HLo Sem1' HlimL Sem2)
+      (conj HT (conj HE (conj LvT (conj HRA2 (conj Heq2 (conj _ _)))))))).
+    + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
+      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv1'. cbv beta iota zeta.
+      unfold sc, G1 in E2. rewrite E2. reflexivity.
+    + reflexivity.
+    + reflexivity.
   - (* conversion *)
-    destruct (IH1 D G n Sg L Hd HLo HLv HRk HG HGL HC)
-      as (s & D' & n' & S2 & T0 & e' & Hst & Hsem & HT & LvT & Heq & HgHeq).
-    exists s, D', n', S2, T0, e'. refine (conj Hst (conj Hsem (conj HT (conj LvT (conj _ HgHeq))))).
+    assert (HAv1 : Avoid (bg (bg Av Gd T' `union` ats T) Gd T) L Sg)
+      by exact (Avoid_mono _ _ _ _ (bg_av _ _ _) (Avoid_mono _ _ _ _ (sub_ul _ _ _ (sub_id _)) HAv)).
+    destruct (IH1 D G n Sg L Hd HRA HLo HLE HLv HAv1 HG HGL HC)
+      as (s & D' & n' & S2 & T0 & e' & Hst & Hsem & HT & HE & LvT & HRA' & Heq & HgHeq & HlHeq).
+    exists s, D', n', S2, T0, e'.
+    refine (conj Hst (conj Hsem (conj HT (conj HE (conj LvT (conj HRA' (conj _ (conj HgHeq HlHeq)))))))).
     eapply teqD_trans; [ exact Heq | exact Hteq ].
 Qed.
-
 
 (* The closed program: a derivation of a core program at the program judgment
    gives a run of the closed entry point from some fuel on, whose result is a
    principal type of the derivation's, and whose elaborated term erases to the
    program. *)
-Theorem infer_complete_core_closed : forall e T, ctyping (fun _ => True) d_any nil e T ->
+Theorem infer_complete_core_closed : forall e T, ctyping {} d_any nil e T ->
   exists D T' e' S2,
     Stable (fun f => infer_closed_elab f e = Some (D, T', e')) /\ erase e' = e /\
-    Live (fun _ => True) (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
+    Live PEv (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
     teqD d_any (apT S2 T') T /\ rf T'.
 Proof.
   intros e T H.
-  destruct (infer_complete_core (fun _ => True) I d_any nil e T H d_any nil 0 sid {}
-              (d_any_DOk 0) (fun a Ha => ltac:(exfalso; revert Ha; fsetdec)) (Live_empty _ _ _ _)
-              (proj2 (KR_id d_any)) (GOk_nil 0) (GLive_nil {}) (CI_nil d_any sid))
-    as (s & D' & n' & S2 & T' & e' & St & Sem & HT & LvT & Heq & HgHeq).
+  destruct (infer_complete_core {} d_any nil e T H d_any nil 0 sid {}
+              (d_any_DOk 0) RA_d_any (fun a Ha => ltac:(exfalso; revert Ha; fsetdec)) LEv_empty
+              (Live_empty _ _ _ _) (Avoid_empty _ _) (GOk_nil 0) (GLive_nil {}) (CI_nil d_any sid))
+    as (s & D' & n' & S2 & T' & e' & St & Sem & HT & HE & LvT & HRA & Heq & HgHeq & HlHeq).
   exists D', T', e', S2.
   assert (St' : Stable (fun f => infer_closed_elab f e = Some (D', T', e'))).
   { eapply Stable_mono; [ | exact St ]. intros f Hf. unfold infer_closed_elab. rewrite Hf. reflexivity. }
-  refine (conj St' (conj _ (conj LvT (conj (SemL_rk Sem) (conj Heq (proj1 HT)))))).
+  refine (conj St' (conj _ (conj LvT (conj (rkres_RA D' d_any (sR S2) HRA) (conj Heq (proj1 HT)))))).
   destruct St' as [f0 Hf0]. exact (proj2 (infer_closed_sound f0 e D' T' e' (Hf0 f0 (le_n f0)))).
+Qed.
+
+Lemma instP_mono : forall D T, PEv T -> instP D T (sch_mono T).
+Proof.
+  intros D T HP. exists idt, idr.
+  refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _))))))).
+  - intros a _. reflexivity.
+  - intros r _. reflexivity.
+  - symmetry. apply ap_typ_pointwise_id; reflexivity.
+  - intros a Ha. simpl in Ha. fsetdec.
+  - intros r Hr. simpl in Hr. fsetdec.
+  - apply lc_sub_id.
+  - intros a Ha. simpl in Ha. fsetdec.
+  - intros r Hr. simpl in Hr. fsetdec.
 Qed.
 
 (* The identity function has the derivation at [Int -> Int]; the algorithm
    answers with a type of which that one is an instance. *)
 Example core_identity : exists D T' e' S2,
   Stable (fun f => infer_closed_elab f (e_abs (e_fvar_b 0)) = Some (D, T', e')) /\
-  erase e' = e_abs (e_fvar_b 0) /\ Live (fun _ => True) (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
+  erase e' = e_abs (e_fvar_b 0) /\ Live PEv (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
   teqD d_any (apT S2 T') (typ_Arrow typ_Int typ_Int) /\ rf T'.
 Proof.
-  apply infer_complete_core_closed. apply C_Abs; [ exact I | ]. intros x Hx. simpl.
-  apply C_Var; [ solve_uniq | apply binds_one_3; reflexivity ].
+  apply infer_complete_core_closed.
+  assert (HI : PEv typ_Int) by (apply PEv_scalar; left; reflexivity).
+  apply C_Abs; [ exact HI | ]. intros x Hx. simpl.
+  refine (C_Var _ _ _ _ (sch_mono typ_Int) typ_Int _ _ _ (instP_mono _ _ HI)); [ solve_uniq | apply binds_one_3; reflexivity | simpl; fsetdec ].
 Qed.
 
 (* A comparison, which unifies its operands and only then requires the joined
@@ -1157,10 +1269,12 @@ Qed.
 Example core_comparison : exists D T' e' S2,
   Stable (fun f => infer_closed_elab f (e_abs (e_bin (e_fvar_b 0) bop_eq (e_fvar_b 0))) = Some (D, T', e')) /\
   erase e' = e_abs (e_bin (e_fvar_b 0) bop_eq (e_fvar_b 0)) /\
-  Live (fun _ => True) (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
+  Live PEv (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
   teqD d_any (apT S2 T') (typ_Arrow typ_Int typ_Bool) /\ rf T'.
 Proof.
-  apply infer_complete_core_closed. apply C_Abs; [ exact I | ]. intros x Hx. simpl.
-  apply C_Cmp with (A := typ_Int); [ reflexivity | simpl; auto | exact I | | ];
-    (apply C_Var; [ solve_uniq | apply binds_one_3; reflexivity ]).
+  apply infer_complete_core_closed.
+  assert (HI : PEv typ_Int) by (apply PEv_scalar; left; reflexivity).
+  apply C_Abs; [ exact HI | ]. intros x Hx. simpl.
+  apply C_Cmp with (A := typ_Int); [ reflexivity | simpl; auto | exact HI | | ];
+    (refine (C_Var _ _ _ _ (sch_mono typ_Int) typ_Int _ _ _ (instP_mono _ _ HI)); [ solve_uniq | apply binds_one_3; reflexivity | simpl; fsetdec ]).
 Qed.

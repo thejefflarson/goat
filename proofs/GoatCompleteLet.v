@@ -34,6 +34,25 @@ Proof.
   intros D e T a. unfold let_pin. destruct (let_open e); [ simpl; fsetdec | apply frv_pin_of ].
 Qed.
 
+(* The variables the algorithm keeps free at a [let], the context's and the
+   pin's, go to variables the derivation keeps free. *)
+Lemma let_frozen : forall (D Dal : denv) (S2 : sub) (Ga Gd : ctx) (Tm T' : typ) e
+  (k : sort_fn) (rk : rkind_fn),
+  frozen S2 Ga Gd ->
+  lit_pinned e (AtomSetImpl.diff (ftv_typ (apT S2 T')) (ftv_ctx (pin_ctx Tm Gd))) k ->
+  (forall b, b `in` ftv_typ T' ->
+     sat (extr (ext D (AtomSetImpl.diff (ftv_typ (apT S2 T')) (ftv_ctx (pin_ctx Tm Gd))) k)
+               (AtomSetImpl.diff (frv_typ (apT S2 T')) (frv_ctx (pin_ctx Tm Gd))) rk) (dsort Dal b) (sT S2 b)) ->
+  frozen S2 (pin_ctx (let_pin Dal e T') Ga) (pin_ctx Tm Gd).
+Proof.
+  intros D Dal S2 Ga Gd Tm T' e k rk Hfz Hlit Hk.
+  apply frozen_pin; [ exact Hfz | | ].
+  - intros a Ha. destruct (let_open e) eqn:Eo.
+    + unfold let_pin in Ha. rewrite Eo in Ha. simpl in Ha. fsetdec.
+    + exact (let_pin_frozen D Dal S2 _ e T' k rk Eo Hlit Hk a Ha).
+  - intros r Hr0. exfalso. apply (let_pin_frv Dal e T' r Hr0).
+Qed.
+
 Theorem gen_mono_let : forall (D Dal : denv) (S2 : sub) (Ga Gd : ctx) (Tm T' : typ) e
   (k : sort_fn) (rk : rkind_fn),
   frozen S2 Ga Gd ->
@@ -54,12 +73,6 @@ Theorem gen_mono_let : forall (D Dal : denv) (S2 : sub) (Ga Gd : ctx) (Tm T' : t
             (apS S2 (gen_ren Dal (pin_ctx (let_pin Dal e T') Ga) T')).
 Proof.
   intros D Dal S2 Ga Gd Tm T' e k rk Hfz HFt HFr HEt HEr HPt HPr Hlit Hk Hr.
-  pose proof (ftv_pin_ctx (let_pin Dal e T') Ga) as A1.
-  pose proof (frv_pin_ctx (let_pin Dal e T') Ga) as A2.
   refine (gen_mono D Dal S2 _ _ T' k rk _ HFt HFr HEt HEr HPt HPr Hk Hr).
-  apply frozen_pin; [ exact Hfz | | ].
-  - intros a Ha. destruct (let_open e) eqn:Eo.
-    + unfold let_pin in Ha. rewrite Eo in Ha. simpl in Ha. fsetdec.
-    + exact (let_pin_frozen D Dal S2 _ e T' k rk Eo Hlit Hk a Ha).
-  - intros r Hr0. exfalso. apply (let_pin_frv Dal e T' r Hr0).
+  exact (let_frozen D Dal S2 Ga Gd Tm T' e k rk Hfz Hlit Hk).
 Qed.
