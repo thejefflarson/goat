@@ -17,10 +17,19 @@ fn main() {
     let out_dir = std::env::var_os("OUT_DIR").expect("OUT_DIR");
     let out_dir = Path::new(&out_dir);
     let embedded = out_dir.join("libgoat_native.a");
-    if let Err(reason) = build(out_dir, &embedded) {
+    if clippy_run() {
+        std::fs::write(&embedded, []).expect("write the empty library");
+    } else if let Err(reason) = build(out_dir, &embedded) {
         println!("cargo:warning=goat build --native will not work from this binary: {reason}");
         std::fs::write(&embedded, []).expect("write the empty library");
     }
+}
+
+/// Clippy type-checks without linking, so the archive would go unused; skipping
+/// the nested build also keeps it from waiting on cargo locks the outer run holds.
+fn clippy_run() -> bool {
+    std::env::var_os("RUSTC_WORKSPACE_WRAPPER")
+        .is_some_and(|wrapper| wrapper.to_string_lossy().contains("clippy"))
 }
 
 fn build(out_dir: &Path, embedded: &Path) -> Result<(), String> {
@@ -38,9 +47,6 @@ fn build(out_dir: &Path, embedded: &Path) -> Result<(), String> {
         .arg("--target-dir")
         .arg(&target_dir)
         .env_remove("RUSTC_WORKSPACE_WRAPPER")
-        .env_remove("CARGO_MAKEFLAGS")
-        .env_remove("MAKEFLAGS")
-        .env_remove("MFLAGS")
         .env_remove("CARGO_BUILD_TARGET_DIR")
         .env("CARGO_BUILD_BUILD_DIR", &target_dir);
     if release {
