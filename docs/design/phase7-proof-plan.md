@@ -1796,6 +1796,65 @@ the live-atom restatement.
    with `rf` operands (so `sig_quot_rec` is out, as ratified); after item 3.
 6. *Records, spread, restrict, tags, `match`, methods* (7.8), as before.
 
+*As built (stage 7.7e, `GoatCompleteCore.v`).* Stage 7.7e did the first of the four
+items 7.7d listed: `infer_complete_core` is restated over live atoms. The even
+derivations, `let` of a value and the conversion are not started; the list at the end
+says what each needs.
+
+**Live atoms.** The statement no longer asks the derivation's substitution `Sg` to
+respect the sorts at every atom. It takes a finite set `L` of live atoms (the atoms the
+context and the pending types mention) and asks `Live P L D D1 Sg`: on each atom of `L`,
+`Sg` sends the atom to a type of the sort `D` gives it (read in `D1`) and that `P`
+allows. Rows keep the full `rkres`, since the fragment has none. Four notions carry the
+restatement.
+
+* `limg s L`, the atoms of the images of `L` under a step `s`, computed from
+  `AtomSetImpl.elements` so that membership is decidable (`limg_in`); `lnext s L T`
+  adds the atoms of the result type.
+* `SemL P L DT Sg n s D' n' S2`, the 7.6j step on `L`: `S2` respects the sorts and `P`
+  on `limg s L`, `Sg` factors through `s` by `S2` at `teqD DT` on `L`, and the supply,
+  step and row facts as before. It composes (`SemL_comp`, with the middle set a
+  superset of `limg s L`, using `limg_scomp`/`limg_chain`), weakens past a fresh atom
+  (`SemL_weaken`, `SemL_unfresh`) and restricts to a smaller set (`SemL_mono`).
+* `GLive L G`, the context's types lie over `L`; `CI_stepL` and `next_facts` hand the
+  next premise its context, live set and `CI` after a step.
+* `Done P L D1 G e D n Sg T1` also returns `Live P (ftv T) D' D1 S2`, the sorts at the
+  result type's atoms, which the caller adds to its live set.
+
+**The unifier call (`unify_stepL`).** `unify_tD_rf_complete_img` wants a full `KR`.
+`restr L Sg` is `Sg` on `L` and `Int` elsewhere; `Int` satisfies every sort (`sat` at
+`typ_Int` is `True`), so `restr L Sg` respects every sort, agrees with `Sg` on `L`
+(`restr_in`, `apT_agree`) and has `Int` among its images. The unifier's extension `S2`
+then sends every atom to an image of `restr L Sg` (`Img`), so `P` holds of all of `S2`
+once `P typ_Int` and `P` on `Sg`'s live images do (`Img_bound`). This is `Img` relative
+to an allowed set, inside `SemL`, as 7.7d asked, and no decision on membership in `L`
+beyond `AtomSetImpl.mem` is needed (no classical axiom).
+
+**`ctyping P`.** The derivation carries the allowed set: `C_Abs`, `C_Num`, `C_App`,
+`C_ToFloat`, `C_Arith` and `C_Cmp` require `P` of the type they invent (the ones the
+induction sends a fresh atom to with `supd`). `ctyping_typing` forgets `P`. The closed
+case takes `P := fun _ => True`, `L` empty and `Sg = sid`, and its conclusion changes from
+`KR D d_any S2` to `Live` on the atoms of the returned type plus `rkres`: the full
+`KR` is no longer a consequence, and no caller needed it. With `L` empty the odd
+atoms in `sid`'s images are no longer in the way of `P := EvT`.
+
+**What remains of 7.7.**
+
+1. *Even derivations.* A top-level renaming of a `typing` derivation to even atoms (so
+   `P := EvT` holds of each type it invents), with the finite atom bound it needs,
+   giving `OkS` for the extensions. The allowed-set plumbing it needs is now in place;
+   the renaming is a statement about `typing` (an injective `typing_ap`) that nothing
+   states yet. It belongs with the conversion (item 3), which has to produce the
+   derivation with `P`.
+2. *`let` of a value.* `gen_mono_let` with `frozen` from `ctx_le`; `KR` for the
+   premise's environment from `Live` and `Av` (7.7c, item 1b); the continuation's
+   `Live` at `Dd` (item 1c) is now what the restatement gives, because the generalized
+   atoms are dead after the binder and are not in `L`. It needs `ntyping`'s premises
+   as a `ctyping` rule with schemes.
+3. *The conversion from `typing`* through `ntyping` into a `ctyping` with schemes, with
+   `rf` operands (no `sig_quot_rec`); after items 1 and 2.
+4. *`letrec`, records, spread, restrict, tags, `match`, methods* (7.8), as before.
+
 ## 5. Staged PR plan
 
 Sizes are estimates in lines of Coq (Rust or YAML where stated), counting churn in
