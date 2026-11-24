@@ -10,6 +10,8 @@ hosts/apple/
   App/GoatApp.swift      @main; a DocumentGroup of .goat files (native open/save, Files on iOS)
   GoatKit/               shared code; a SwiftPM package (for `swift test`) and, via project.yml,
                          a framework per platform
+    (Sources/GoatCanvas: Frame, Painter and Color, the one renderer; `goat build --native`
+     embeds the same files via goat_native::appkit)
     Engine.swift           owns the web view; run/stop in, EngineMessages out
     EngineMessage.swift    the web view -> native protocol (JSON strings)
     AssetSchemeHandler.swift, AssetPath.swift   serves Resources/web over goat-app://

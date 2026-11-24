@@ -21,7 +21,9 @@ fn the_frame_decoder_colors_and_painter_pass_their_swift_tests() {
         eprintln!("skipped: swiftc is not installed");
         return;
     }
-    let appkit = Path::new(env!("CARGO_MANIFEST_DIR")).join("appkit");
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let appkit = manifest.join("appkit");
+    let canvas = manifest.join("../hosts/apple/GoatKit/Sources/GoatCanvas");
     let dir = tempfile::tempdir().unwrap();
     let exe = dir.path().join("frame-tests");
     let built = Command::new(&swiftc)
@@ -32,7 +34,7 @@ fn the_frame_decoder_colors_and_painter_pass_their_swift_tests() {
             "-module-name",
             "Tests",
         ])
-        .args(PURE.map(|file| appkit.join(file)))
+        .args(PURE.map(|file| canvas.join(file)))
         .arg(appkit.join("tests/main.swift"))
         .arg("-o")
         .arg(&exe)
