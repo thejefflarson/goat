@@ -672,6 +672,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "goat_apple"
+version = "0.1.0"
+dependencies = [
+ "goat",
+ "goat_detect",
+ "goat_mir",
+ "serde_json",
+ "wasmtime",
+]
+
+[[package]]
 name = "goat_canvas"
 version = "0.1.0"
 dependencies = [
@@ -696,6 +707,7 @@ dependencies = [
  "goat",
  "goat_canvas",
  "goat_checker",
+ "goat_detect",
  "goat_mir",
  "goat_native",
  "goat_parser",
@@ -704,6 +716,16 @@ dependencies = [
  "tempfile",
  "wasm-encoder 0.263.0",
  "wasmtime",
+]
+
+[[package]]
+name = "goat_detect"
+version = "0.1.0"
+dependencies = [
+ "goat",
+ "goat_canvas",
+ "goat_checker",
+ "goat_parser",
 ]
 
 [[package]]

@@ -197,14 +197,32 @@ pub fn compile_reloadable(source: &str, host: &HostInterface) -> Result<Vec<u8>,
 /// [`compile`] for a live editor: an interactive program comes out reloadable
 /// (see [`compile_reloadable`]), a run-once program as the plain module.
 pub fn compile_live(source: &str, host: &HostInterface) -> Result<Vec<u8>, Vec<GoatError>> {
-    compile_with(Profile::Desktop, source, host, |program| {
-        if program.interactive.is_some() {
+    compile_live_program(source, host).map(|live| live.wasm)
+}
+
+/// A module [`compile_live`] made, and which kind it is.
+pub struct LiveProgram {
+    pub wasm: Vec<u8>,
+    /// The program defines `update` and `draw` and is driven by its host;
+    /// otherwise it runs once through.
+    pub interactive: bool,
+}
+
+/// [`compile_live`], also saying whether the program is interactive.
+pub fn compile_live_program(
+    source: &str,
+    host: &HostInterface,
+) -> Result<LiveProgram, Vec<GoatError>> {
+    let mut interactive = false;
+    let (wasm, _) = compile_with(Profile::Desktop, source, host, |program| {
+        interactive = program.interactive.is_some();
+        if interactive {
             goat_wasm::emit_reloadable(program)
         } else {
             goat_wasm::emit(program)
         }
-    })
-    .map(|(wasm, _)| wasm)
+    })?;
+    Ok(LiveProgram { wasm, interactive })
 }
 
 fn compile_with(

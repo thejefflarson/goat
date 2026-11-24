@@ -50,8 +50,8 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          rust='^(Cargo\.(toml|lock)$|rust-toolchain|\.cargo/|\.config/|parser/|checker/|mir/|wasm/|llvm/|wamr/|goat/|cli/|canvas/|web/|fuzz/|differential/|firmware/|prelude/|editor/|examples/|grammar/|docs/llm\.md$|proofs/(goat_ln\.ott|GoatShape\.v|GoatPrinterTable\.v)$|\.github/workflows/ci\.yml$|\.github/scripts/)'
-          fuzz='^(Cargo\.(toml|lock)$|rust-toolchain|\.cargo/|\.config/|parser/|checker/|mir/|wamr/|goat/|cli/|fuzz/|prelude/|grammar/|examples/|\.github/workflows/ci\.yml$)'
+          rust='^(Cargo\.(toml|lock)$|rust-toolchain|\.cargo/|\.config/|parser/|checker/|mir/|wasm/|llvm/|wamr/|goat/|cli/|canvas/|detect/|hosts/apple/engine/|web/|fuzz/|differential/|firmware/|prelude/|editor/|examples/|grammar/|docs/llm\.md$|proofs/(goat_ln\.ott|GoatShape\.v|GoatPrinterTable\.v)$|\.github/workflows/ci\.yml$|\.github/scripts/)'
+          fuzz='^(Cargo\.(toml|lock)$|rust-toolchain|\.cargo/|\.config/|parser/|checker/|mir/|wamr/|goat/|cli/|detect/|fuzz/|prelude/|grammar/|examples/|\.github/workflows/ci\.yml$)'
           native='^(llvm/|native/|mir/|cli/src/native_build\.rs$|\.github/workflows/ci\.yml$)'
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "No usable base; running everything."
@@ -261,7 +261,7 @@ jobs:
       - name: Build for wasm32
         run: >
           cargo build -p goat_parser -p goat_checker -p goat_mir -p goat_wasm -p goat_llvm
-          -p goat -p goat_web --target wasm32-unknown-unknown
+          -p goat -p goat_detect -p goat_web --target wasm32-unknown-unknown
 
       - name: Build and record the compiler artifact
         run: |

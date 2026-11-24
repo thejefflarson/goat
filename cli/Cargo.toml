@@ -12,6 +12,7 @@ path = "src/main.rs"
 goat = { version = "0.1.0", path = "../goat", features = ["native"] }
 goat_canvas = { version = "0.1.0", path = "../canvas" }
 goat_checker = { version = "0.1.0", path = "../checker" }
+goat_detect = { version = "0.1.0", path = "../detect" }
 goat_mir = { version = "0.1.0", path = "../mir" }
 goat_native = { version = "0.1.0", path = "../native" }
 goat_parser = { version = "0.1.0", path = "../parser" }
