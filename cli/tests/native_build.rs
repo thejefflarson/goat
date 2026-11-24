@@ -19,25 +19,6 @@ fn clang_present() -> bool {
         .is_ok_and(|out| out.status.success())
 }
 
-/// The profile directory the `goat` binary sits in, where `libgoat_native.a`
-/// belongs. Cargo builds the staticlib only for its own package, so a test run
-/// of this crate builds it first.
-fn static_lib() -> PathBuf {
-    let profile_dir = Path::new(GOAT).parent().expect("target profile directory");
-    let lib = profile_dir.join("libgoat_native.a");
-    if !lib.exists() {
-        let mut build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-        build
-            .args(["build", "-p", "goat_native", "--target-dir"])
-            .arg(profile_dir.parent().expect("target directory"));
-        if profile_dir.ends_with("release") {
-            build.arg("--release");
-        }
-        assert!(build.status().expect("run cargo").success());
-    }
-    lib
-}
-
 fn build_native(dir: &Path, name: &str, source: &str) -> Result<PathBuf, String> {
     build_native_with(dir, name, source, &[])
 }
@@ -57,7 +38,7 @@ fn build_native_with(
         .arg(&program)
         .arg("-o")
         .arg(&exe)
-        .env("GOAT_NATIVE_LIB", static_lib())
+        .env_remove("GOAT_NATIVE_LIB")
         .output()
         .expect("run goat");
     if out.status.success() {
@@ -294,7 +275,7 @@ fn a_clang_that_does_not_run_is_named() {
         .args(["build", "--native"])
         .arg(&program)
         .env("GOAT_CLANG", "no-such-clang")
-        .env("GOAT_NATIVE_LIB", static_lib())
+        .env_remove("GOAT_NATIVE_LIB")
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -324,4 +305,49 @@ fn a_missing_clang_says_how_to_install_it() {
         stderr.contains("needs clang") && stderr.contains(fix),
         "{stderr}"
     );
+}
+
+#[test]
+fn a_plain_build_of_the_cli_carries_the_runtime_library() {
+    needs_clang!();
+    let dir = tempfile::tempdir().unwrap();
+    let copy = dir.path().join("goat");
+    std::fs::copy(GOAT, &copy).unwrap();
+    assert!(!dir.path().join("libgoat_native.a").exists());
+    let program = dir.path().join("hello.goat");
+    std::fs::write(&program, "print(\"alone\")").unwrap();
+    let exe = dir.path().join("hello");
+    let out = Command::new(&copy)
+        .args(["build", "--native"])
+        .arg(&program)
+        .arg("-o")
+        .arg(&exe)
+        .env_remove("GOAT_NATIVE_LIB")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ran = Command::new(exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "alone\n");
+}
+
+#[test]
+fn a_missing_library_override_is_named() {
+    needs_clang!();
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("p.goat");
+    std::fs::write(&program, "print(1)").unwrap();
+    let out = Command::new(GOAT)
+        .args(["build", "--native"])
+        .arg(&program)
+        .arg("-o")
+        .arg(dir.path().join("p"))
+        .env("GOAT_NATIVE_LIB", dir.path().join("nope.a"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("GOAT_NATIVE_LIB is"));
 }

@@ -32,9 +32,9 @@ goat check program.goat    # type-check only
 goat build --native program.goat -o out   # a standalone native executable
 ```
 
-`goat build --native` emits LLVM IR and has clang link it with `libgoat_native.a`
-(build it with `cargo build -p goat_native`; the CLI looks beside its own
-executable, or at `$GOAT_NATIVE_LIB`). `$GOAT_CLANG` picks the clang; otherwise
+`goat build --native` emits LLVM IR and has clang link it with `libgoat_native.a`,
+which the `goat` binary carries (`cargo build -p goat_cli` builds it in; a copy
+beside the executable or at `$GOAT_NATIVE_LIB` takes precedence). `$GOAT_CLANG` picks the clang; otherwise
 it tries `clang-23`, `clang-17`, then `clang`. The executable prints to stdout,
 reports a trap on stderr as `goat run` does and exits non-zero, and takes
 `-o OUT.svg` to save the turtle's drawing. Interactive programs are not
