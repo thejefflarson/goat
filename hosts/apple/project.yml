@@ -19,9 +19,12 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 # Both apps share App/ and the GoatKit sources, built here as a framework per
 # platform (the GoatKit package is the same code for `swift test`).
-# Resources/web is staged by scripts/stage-web.sh: web/embed.html, its modules
-# and goat_web.wasm. Frameworks/GoatEngine.xcframework is staged by
-# scripts/stage-engine.sh: the goat engine (engine/) as a static library per slice.
+# Frameworks/GoatEngine.xcframework is staged by scripts/stage-engine.sh: the
+# goat engine (engine/) as a static library per slice. GoatCanvas, the renderer,
+# comes from the GoatKit package.
+packages:
+  GoatKitPackage:
+    path: GoatKit
 schemes:
   GoatKitTests-macOS:
     build:
@@ -42,6 +45,8 @@ targets:
     platform: macOS
     sources: [GoatKit/Sources/GoatKit]
     dependencies:
+      - package: GoatKitPackage
+        product: GoatCanvas
       - framework: Frameworks/GoatEngine.xcframework
         embed: false
     settings:
@@ -54,6 +59,8 @@ targets:
     platform: iOS
     sources: [GoatKit/Sources/GoatKit]
     dependencies:
+      - package: GoatKitPackage
+        product: GoatCanvas
       - framework: Frameworks/GoatEngine.xcframework
         embed: false
     settings:
@@ -61,33 +68,23 @@ targets:
   Goat-macOS:
     type: application
     platform: macOS
-    sources:
-      - App
-      - path: Resources/web
-        type: folder
-        buildPhase: resources
-        optional: true
+    sources: [App]
     dependencies:
       - target: GoatKit-macOS
     preBuildScripts:
-      - name: Check staged web assets
+      - name: Check staged engine
         script: '"$SRCROOT/scripts/check-staged.sh"'
         basedOnDependencyAnalysis: false
         # Declared so the phase reads its script and the files it stats under
         # ENABLE_USER_SCRIPT_SANDBOXING (Xcode's recommended default).
         inputFiles:
           - $(SRCROOT)/scripts/check-staged.sh
-          - $(SRCROOT)/Resources/web/embed.html
-          - $(SRCROOT)/Resources/web/goat_web.wasm
+          - $(SRCROOT)/Frameworks/GoatEngine.xcframework/Info.plist
     entitlements:
       path: Goat-macOS.entitlements
       properties: &sandbox
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
-        com.apple.security.cs.allow-jit: true
-        # WebKit's web content and networking processes crash without it, even
-        # though the page loads only the bundled goat-app:// scheme.
-        com.apple.security.network.client: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat
@@ -112,21 +109,12 @@ targets:
             UTTypeTagSpecification:
               public.filename-extension: [goat]
               public.mime-type: [text/x-goat]
-  # A windowless app that runs the web view tests inside the same sandbox and
+  # A windowless app that runs the engine tests inside the same sandbox and
   # signing settings as Goat-macOS, without ever showing the editor.
   GoatTestHost-macOS:
     type: application
     platform: macOS
-    sources:
-      - TestHost
-      - path: Resources/web
-        type: folder
-        buildPhase: resources
-        optional: true
-    preBuildScripts:
-      - name: Check staged web assets
-        script: '"$SRCROOT/scripts/check-staged.sh"'
-        basedOnDependencyAnalysis: false
+    sources: [TestHost]
     entitlements:
       path: GoatTestHost-macOS.entitlements
       properties: *sandbox
@@ -143,6 +131,8 @@ targets:
     dependencies:
       - target: GoatTestHost-macOS
       - target: GoatKit-macOS
+      - package: GoatKitPackage
+        product: GoatCanvas
       - framework: Frameworks/GoatEngine.xcframework
         embed: false
     settings:
@@ -164,24 +154,18 @@ targets:
   Goat-iOS:
     type: application
     platform: iOS
-    sources:
-      - App
-      - path: Resources/web
-        type: folder
-        buildPhase: resources
-        optional: true
+    sources: [App]
     dependencies:
       - target: GoatKit-iOS
     preBuildScripts:
-      - name: Check staged web assets
+      - name: Check staged engine
         script: '"$SRCROOT/scripts/check-staged.sh"'
         basedOnDependencyAnalysis: false
         # Declared so the phase reads its script and the files it stats under
         # ENABLE_USER_SCRIPT_SANDBOXING (Xcode's recommended default).
         inputFiles:
           - $(SRCROOT)/scripts/check-staged.sh
-          - $(SRCROOT)/Resources/web/embed.html
-          - $(SRCROOT)/Resources/web/goat_web.wasm
+          - $(SRCROOT)/Frameworks/GoatEngine.xcframework/Info.plist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat

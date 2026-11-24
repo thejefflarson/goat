@@ -4,10 +4,10 @@ name: apple
 # signing identity is needed to prove the targets compile and bundle.
 on:
   pull_request:
-    paths: ["hosts/apple/**", "web/**", ".github/workflows/apple.yml"]
+    paths: ["hosts/apple/**", ".github/workflows/apple.yml"]
   push:
     branches: [main]
-    paths: ["hosts/apple/**", "web/**", ".github/workflows/apple.yml"]
+    paths: ["hosts/apple/**", ".github/workflows/apple.yml"]
 
 permissions:
   contents: read
@@ -20,7 +20,7 @@ jobs:
 
       - name: Add Rust targets
         run: >
-          rustup target add wasm32-unknown-unknown aarch64-apple-darwin x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
           aarch64-apple-ios aarch64-apple-ios-sim
 
       - uses: actions/cache@v6
@@ -31,9 +31,6 @@ jobs:
             target
           key: apple-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: apple-${{ runner.os }}-
-
-      - name: Stage the drawing engine
-        run: hosts/apple/scripts/stage-web.sh
 
       - name: Stage the native engine
         run: hosts/apple/scripts/stage-engine.sh
@@ -51,7 +48,7 @@ jobs:
 
       # Ad-hoc signed, not unsigned: the sandbox entitlements only take effect on a
       # signed host, and the sandbox is what this test exists to exercise.
-      - name: Test the engine in a sandboxed web view
+      - name: Test the engine in the sandbox
         run: >
           xcodebuild test -project hosts/apple/Goat.xcodeproj -scheme GoatKitTests-macOS
           -destination 'platform=macOS' CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES

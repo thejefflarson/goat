@@ -1,11 +1,11 @@
-#if os(macOS)
+#if os(macOS) && canImport(GoatEngine)
 import SwiftUI
 import XCTest
 
 @testable import GoatKit
 
 /// Lays `EditorScreen` out at phone and iPad sizes (both orientations) and checks
-/// that the editor and canvas each keep a usable area while the load overlay is up.
+/// that the editor and canvas each keep a usable area.
 @MainActor
 final class EditorLayoutTests: XCTestCase {
     private let sizes: [(name: String, size: CGSize)] = [
@@ -33,11 +33,10 @@ final class EditorLayoutTests: XCTestCase {
     }
 
     func testEditorAndCanvasKeepAUsableAreaAtPhoneAndPadSizes() {
-        let engine = Engine(assets: nil)
-        engine.webViewWebContentProcessDidTerminate(engine.webView)
+        let engine = Engine()
         for (name, size) in sizes {
             let all = descendants(of: laidOut(size, engine: engine))
-            let canvas = all.first { String(describing: type(of: $0)).contains("CanvasContainer") }
+            let canvas = all.first { String(describing: type(of: $0)).contains("CanvasHostView") }
             let editor = all.first { $0 is NSTextView }
             XCTAssertNotNil(canvas, name)
             XCTAssertNotNil(editor, name)
@@ -50,10 +49,9 @@ final class EditorLayoutTests: XCTestCase {
         }
     }
 
-    func testTheCanvasHoldsTheWebViewBehindTheLoadOverlay() {
-        let engine = Engine(assets: nil)
-        let host = laidOut(CGSize(width: 390, height: 844), engine: engine)
-        XCTAssertTrue(descendants(of: host).contains { $0 === engine.webView })
+    func testTheCanvasIsTheNativeView() {
+        let host = laidOut(CGSize(width: 390, height: 844), engine: Engine())
+        XCTAssertTrue(descendants(of: host).contains { $0 is CanvasHostView })
     }
 }
 #endif

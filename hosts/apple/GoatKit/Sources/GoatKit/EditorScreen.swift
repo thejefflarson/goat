@@ -1,55 +1,37 @@
+// SwiftPM's `swift test` has no GoatEngine module; only the Xcode project links it.
+#if canImport(GoatEngine)
 import SwiftUI
 
 #if os(macOS)
-private typealias PlatformView = NSView
-#else
-private typealias PlatformView = UIView
-#endif
-
-/// Hosts the engine's current web view, swapping it in place when the watchdog
-/// replaces it.
-private final class CanvasContainer: PlatformView {
-    func show(_ webView: PlatformView) {
-        guard subviews.first !== webView else { return }
-        subviews.forEach { $0.removeFromSuperview() }
-        webView.frame = bounds
-        #if os(macOS)
-        webView.autoresizingMask = [.width, .height]
-        #else
-        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        #endif
-        addSubview(webView)
-    }
-}
-
-#if os(macOS)
 private struct CanvasView: NSViewRepresentable {
-    let webView: NSView
-    func makeNSView(context: Context) -> CanvasContainer {
-        let container = CanvasContainer()
-        container.show(webView)
-        return container
+    let engine: Engine
+    func makeNSView(context: Context) -> CanvasHostView {
+        let view = CanvasHostView(frames: engine.frames)
+        view.onKey = { [engine] in engine.key($0, down: $1) }
+        view.onPointer = { [engine] in engine.pointer($0, x: $1, y: $2) }
+        return view
     }
-    func updateNSView(_ container: CanvasContainer, context: Context) { container.show(webView) }
+    func updateNSView(_ view: CanvasHostView, context: Context) {}
 }
 #else
 private struct CanvasView: UIViewRepresentable {
-    let webView: UIView
-    func makeUIView(context: Context) -> CanvasContainer {
-        let container = CanvasContainer()
-        container.show(webView)
-        return container
+    let engine: Engine
+    func makeUIView(context: Context) -> CanvasHostView {
+        let view = CanvasHostView(frames: engine.frames)
+        view.onKey = { [engine] in engine.key($0, down: $1) }
+        view.onPointer = { [engine] in engine.pointer($0, x: $1, y: $2) }
+        return view
     }
-    func updateUIView(_ container: CanvasContainer, context: Context) { container.show(webView) }
+    func updateUIView(_ view: CanvasHostView, context: Context) {}
 }
 #endif
 
-/// The editor window: native source editor and Run control beside the web
-/// view's canvas, with problems and printed output below. The editor stays
+/// The editor window: native source editor and Run control beside the
+/// engine's canvas, with problems and printed output below. The editor stays
 /// editable while a program runs.
 public struct EditorScreen: View {
     @Binding var document: GoatDocument
-    @StateObject private var engine = Engine(assets: Bundle.main.url(forResource: "web", withExtension: nil))
+    @StateObject private var engine = Engine()
 
     public init(document: Binding<GoatDocument>) {
         _document = document
@@ -68,15 +50,16 @@ public struct EditorScreen: View {
                 layout {
                     CodeEditor(text: sourceBinding, highlights: highlights)
                     Divider()
-                    CanvasView(webView: engine.webView)
+                    CanvasView(engine: engine)
                         .accessibilityLabel("drawing")
                         .accessibilityValue(engine.phase.accessibilityValue)
                         .accessibilityIdentifier("canvas")
-                        .overlay { LoadOverlay(phase: engine.phase, retry: engine.retry) }
+                        .overlay { LoadOverlay(phase: engine.phase) }
                 }
             }
             Divider()
-            ProblemsPanel(phase: engine.phase, diagnostics: engine.diagnostics, output: engine.output)
+            ProblemsPanel(
+                phase: engine.phase, diagnostics: engine.diagnostics, output: engine.output, reload: engine.reload)
         }
         .toolbar {
             ToolbarItemGroup {
@@ -122,19 +105,17 @@ extension Engine.Phase {
         case .ready: "ready"
         case .running: "running"
         case .finished: "finished"
-        case .failed, .loadFailed: "failed"
+        case .failed: "failed"
         }
     }
 }
 
-/// Covers the canvas until the page is ready, so the user never sees a bare white web view.
+/// Covers the canvas until the engine is ready, so Run is never offered before it works.
 struct LoadOverlay: View {
     let phase: Engine.Phase
-    let retry: () -> Void
 
     var body: some View {
-        switch phase {
-        case .loading:
+        if phase == .loading {
             VStack(spacing: 12) {
                 ProgressView()
                 Text("Loading…")
@@ -142,17 +123,6 @@ struct LoadOverlay: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.background)
             .accessibilityElement(children: .combine)
-        case .loadFailed(let message):
-            VStack(spacing: 12) {
-                Text(message).multilineTextAlignment(.center)
-                Button("Retry", action: retry)
-                    .buttonStyle(.borderedProminent)
-            }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.background)
-        default:
-            EmptyView()
         }
     }
 }
@@ -161,6 +131,7 @@ private struct ProblemsPanel: View {
     let phase: Engine.Phase
     let diagnostics: [Diagnostic]
     let output: [String]
+    let reload: Reload?
 
     var body: some View {
         ScrollView {
@@ -172,6 +143,10 @@ private struct ProblemsPanel: View {
                 }
                 if diagnostics.isEmpty, case .failed(let message) = phase {
                     Text(message).foregroundStyle(.red)
+                }
+                if let reload {
+                    Text(reload.summary)
+                        .accessibilityLabel("reloaded: \(reload.keptModel ? "kept" : "reset")")
                 }
                 if !output.isEmpty {
                     Text(output.joined(separator: "\n"))
@@ -191,3 +166,4 @@ private struct ProblemsPanel: View {
             ? "\(diagnostic.line):\(diagnostic.column): \(diagnostic.message)" : diagnostic.message
     }
 }
+#endif

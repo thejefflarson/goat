@@ -1,9 +1,10 @@
 # goat for macOS and iOS
 
 A SwiftUI app with two targets (`Goat-macOS`, `Goat-iOS`) sharing one codebase.
-The editor, Run control, file open/save and problem list are native. A
-`WKWebView` is only the compile-and-draw engine: it loads `web/embed.html`
-(a canvas and `goat_web.wasm`, no editor UI) from the app bundle, offline.
+The editor, Run control, file open/save, problem list and canvas are native. Programs run in
+this process on the goat engine (`engine/`, ADR 0043): it compiles to the Pulley interpreter,
+so the app needs no JIT entitlement, and its frames are drawn with Core Graphics by the same
+`GoatCanvas` renderer `goat build --native` embeds.
 
 ```
 hosts/apple/
@@ -13,13 +14,13 @@ hosts/apple/
                          a framework per platform
     (Sources/GoatCanvas: Frame, Painter and Color, the one renderer; `goat build --native`
      embeds the same files via goat_native::appkit)
-    Engine.swift           owns the web view; run/stop in, EngineMessages out
-    EngineMessage.swift    the web view -> native protocol (JSON strings)
-    AssetSchemeHandler.swift, AssetPath.swift   serves Resources/web over goat-app://
+    Engine.swift           owns the C engine; run/stop/key/pointer in, EngineMessages and frames out
+    EngineMessage.swift    the engine -> app control messages (JSON), including `reloaded`
+    FrameSlot.swift        the latest picture, handed from the engine's thread to the canvas view
+    CanvasHostView.swift   NSView / UIView that draws the frames and forwards keys and pointer
     CodeEditor.swift       NSTextView / UITextView with smart quotes off, error highlights
     EditorScreen.swift     editor + canvas + problems panel + toolbar
   project.yml            XcodeGen spec; the .xcodeproj is generated, not committed
-  scripts/stage-web.sh   builds goat_web.wasm + the embed page into Resources/web
   scripts/stage-engine.sh builds engine/ (goat_apple) into Frameworks/GoatEngine.xcframework
   engine/                the native goat engine behind include/goat_engine.h (ADR 0043)
 ```
@@ -27,14 +28,13 @@ hosts/apple/
 ## Build
 
 ```sh
-hosts/apple/scripts/stage-web.sh          # cargo + npm; fills hosts/apple/Resources/web
 hosts/apple/scripts/stage-engine.sh       # cargo, 4 Apple targets; builds Frameworks/GoatEngine.xcframework
 cd hosts/apple && xcodegen generate       # brew install xcodegen
 xcodebuild -project Goat.xcodeproj -scheme Goat-macOS -destination 'platform=macOS' build
 xcodebuild -project Goat.xcodeproj -scheme Goat-iOS -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 # ^ CODE_SIGNING_ALLOWED=NO is valid for simulator and CI only; it must not be used for real-device or distribution builds.
 swift test --package-path GoatKit
-# the same tests inside the sandbox; ad-hoc signing makes the entitlements apply
+# the same tests plus the engine tests inside the sandbox; ad-hoc signing makes the entitlements apply
 xcodebuild test -project Goat.xcodeproj -scheme GoatKitTests-macOS -destination 'platform=macOS' \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES ENABLE_USER_SCRIPT_SANDBOXING=NO
 ```
@@ -45,15 +45,16 @@ xcodebuild test -project Goat.xcodeproj -scheme GoatKitTests-macOS -destination 
 (`rustup target add` each). The iOS simulator slice is arm64 only. The xcframework's headers carry a
 module map, so Swift writes `import GoatEngine`. `check-staged.sh` fails the app builds when the
 xcframework is missing or older than `engine/src`, `engine/include` or `engine/Cargo.toml` (a change
-in the compiler crates it depends on is not detected; rerun the script). `EngineLinkTests` links
-the engine under `xcodebuild test`; `swift test` skips it, since SwiftPM has no `GoatEngine` module.
+in the compiler crates it depends on is not detected; rerun the script). SwiftPM has no
+`GoatEngine` module, so `swift test` builds and tests only what does not need the engine
+(`Engine.swift` and `EditorScreen.swift` are compiled out); everything that runs the engine is
+tested under `xcodebuild test`.
 
-`EngineWebViewTests` drives the real `Engine` through an off-screen `WKWebView`
-(boot, compile, draw, check the canvas pixels) and prints what the page logged
-when a step fails. Under `swift test` it runs unsandboxed; under `xcodebuild test`
-it runs inside `GoatTestHost-macOS`, a windowless app with `Goat-macOS`'s entitlements,
-which is where a missing entitlement shows up. An unsigned build is unsandboxed, so it
-cannot catch one.
+`NativeEngineTests` drives the real `Engine`: the starter program's pixels land on the
+canvas view, a stuck program shows its message and Run works again, and a second Run
+keeps the model (`reloaded kept`). `EngineLinkTests` checks the raw C seam. Under
+`xcodebuild test` they run inside `GoatTestHost-macOS`, a windowless app with `Goat-macOS`'s
+sandbox entitlements. An unsigned build is unsandboxed, so it cannot catch a missing one.
 
 `UITests/EditorSmokeTests` (scheme `Goat-iOS`, `xcodebuild test` against an iOS simulator)
 launches the Debug app with `-goat-ui-smoke`, which opens the editor on the starter program
@@ -102,58 +103,40 @@ providers are edited where they live.
 **Create Document** in the real browser, without `-goat-ui-smoke`, and waits for the
 editor.
 
-## The bridge
+## The engine seam
 
-- Native to web: `Engine.run(source:)` calls `window.goat.run(source)` through
-  `callAsyncJavaScript` with the source as an argument, never spliced into script
-  text. `stop()` calls `window.goat.stop()`.
-- Web to native: `web/embed-main.ts` posts `JSON.stringify(EngineMessage)` to the
-  `goat` script message handler: `ready`, `diagnostics` (line, column, length,
-  message), `output` (printed lines), `state` (`running`, `finished`, `failed`).
-  `EngineMessage.decode` drops anything oversized or unrecognized, and the handler
-  only accepts messages from the bundled page's main frame.
-- The page loads through a private `goat-app://app/` URL scheme (file URLs would
-  block module scripts and the wasm fetch). The web view cancels every other
-  navigation and the page's CSP is `default-src 'none'`.
+`Engine` owns a `goat_engine` (`engine/include/goat_engine.h`) and speaks to it:
 
-## Loading and load failure
+- App to engine: `run(source:)`, `stop()`, `key(_:down:)` and `pointer(_:x:y:)`, none of which
+  waits for the program. A second `run` while a program is running is a reload (ADR 0035).
+- Engine to app: control messages as JSON (`EngineMessage`: `ready`, `diagnostics`, `output`,
+  `state`, `reloaded`) and frames, on a thread the engine owns. Control messages queue in order
+  and are handled on the main actor. A frame is decoded where it arrives and left in a
+  `FrameSlot`, so a frame the canvas never got to draw is replaced by a newer one.
+- `reloaded` shows under the problems panel: "Reloaded: your program's data was kept." or
+  "...started over because ...", with the engine's reason.
+- Budgets (1 s a frame, 10 s for setup, a reload or a run-once program) are the engine's, not
+  the app's: a program over budget comes back as a `failed` state, shown in the problems panel,
+  and the next Run starts clean (ADR 0021).
+- Releasing the `Engine` frees the C engine, which waits for a callback in flight; callbacks
+  never wait on the main actor, so that cannot deadlock.
 
-`EditorScreen` covers the canvas with "Loading…" and keeps Run disabled until the
-page sends `ready`. If `ready` has not arrived after `Engine.defaultLoadBudget`
-(20 s), a navigation fails, or the web content process terminates, the phase
-becomes `.loadFailed` and the overlay offers Retry, which builds a new web view.
-This is separate from the watchdog below, which only bounds a running program.
-`Engine` logs each phase (web view created, `didStartProvisionalNavigation`,
-`didFinishNavigation`, `ready`, first `state=running`) with elapsed time to
-`os_log` under subsystem `com.thejefflarson.goat`, category `engine`.
+The canvas draws the 400 by 300 picture centered at its own proportions; the keyboard goes to it
+after a click or tap, with key names as `KeyboardEvent.key` has them. The canvas reports the
+engine's phase as its accessibility value (`finished` once a run-once program drew).
 
-## Stopping a runaway program (ADR 0021)
+## Running on a device
 
-goat runs on the web view's main thread, which nothing on the page can interrupt,
-so the native app owns preemption (`Watchdog.swift`, `Engine.swift`):
-
-1. `web/beat.ts` posts a `beat` before and after every call into goat. The count
-   is odd while goat runs and even while the page is idle; `call` says which
-   budget applies (`frame` for `setup`/`update`/`draw`, `once` for a run-once program).
-2. `WatchdogTimer` polls only while a call is open. A call open past its budget
-   (1 s per frame, 10 s run-once, the same numbers as the browser supervisor)
-   makes `Engine` drop the web view, build a new one on a non-persistent data
-   store, and show "your program got stuck" / "your program was stopped". Idle
-   programs are never stopped. The program does not restart on its own; Run does.
-3. Nothing else bounds a program: goat modules carry no fuel. The page only runs
-   goat on its own thread when the `goat` message handler exists, which is how it
-   knows this watchdog is listening; a page with neither that nor cross-origin
-   isolation refuses to run.
-
-Untested without a Mac at runtime: that releasing a web view kills a content
-process stuck in wasm, and that a `beat` posted just before the page blocks still
-reaches the app. If the second fails the watchdog never fires and a runaway
-program hangs the web view.
-
-`crossOriginIsolated` (COOP/COEP on `AssetSchemeHandler`, so the browser's worker
-supervisor could run here) is not used. Whether WebKit isolates a custom-scheme
-page, and serves a module worker and wasm from one, is unverified; try it on a Mac
-before relying on it. The page picks the worker path by itself when isolated.
+1. `rustup target add aarch64-apple-ios aarch64-apple-ios-sim aarch64-apple-darwin x86_64-apple-darwin`
+   and `brew install xcodegen`.
+2. `hosts/apple/scripts/stage-engine.sh` (a few minutes; it builds four slices).
+3. `cp hosts/apple/Local.xcconfig.example hosts/apple/Local.xcconfig` and set
+   `DEVELOPMENT_TEAM` in it (see Signing). The file is gitignored.
+4. `cd hosts/apple && xcodegen generate && open Goat.xcodeproj`.
+5. Pick the `Goat-iOS` scheme and your phone, then Run (Debug builds are fine for a frame-time
+   number, but profile with Release for a fair one: Product > Scheme > Edit Scheme > Run >
+   Build Configuration). The first launch needs the developer certificate trusted on the phone
+   (Settings > General > VPN & Device Management) and Developer Mode on.
 
 ## App Store 2.5.2
 
@@ -167,15 +150,6 @@ the arrow keys.
 ## Open decisions
 
 Bundle id `com.thejefflarson.goat`, minimum macOS 13 / iOS 17, unsigned by default.
-Distribution signing and entitlements beyond the macOS sandbox (user-selected files,
-no network) are not set.
-
-For App Store submission the minimum additional entitlements are:
-
-- **`com.apple.security.cs.allow-jit`** — required for WKWebView's JIT compiler on
-  macOS (already in `project.yml`); Apple requires a written justification in App
-  Review notes.
-- **Hardened Runtime** (`ENABLE_HARDENED_RUNTIME = YES`) — required for macOS
-  notarization and App Store distribution (already in `project.yml`).
-
-Any entitlement beyond the two above requires explicit Apple review justification.
+Distribution signing is not set up. The macOS sandbox carries only app-sandbox and
+user-selected read-write files: the engine interprets (Pulley), so no JIT entitlement, and it
+never touches the network, so no network entitlement. Hardened Runtime is on for notarization.
