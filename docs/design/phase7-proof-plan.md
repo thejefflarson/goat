@@ -1838,21 +1838,53 @@ case takes `P := fun _ => True`, `L` empty and `Sg = sid`, and its conclusion ch
 `KR` is no longer a consequence, and no caller needed it. With `L` empty the odd
 atoms in `sid`'s images are no longer in the way of `P := EvT`.
 
+*As built (stage 7.7f, `GoatCompleteCore.v`, `GoatCompleteCtx.v`, `GoatCompleteDrk.v`,
+`GoatCompleteMono.v`, `GoatCompleteLet.v`).* Stage 7.7f did items 1 and 2 of 7.7e's list
+except the renaming to even atoms: `ctyping` carries schemes and a `let` of a value, and
+`infer_complete_core` proves it.
+
+**`ctyping Av`.** `ctyping` mirrors `ntyping` on the core: each rule hands its premises
+the same `bg` set, `C_Var` takes an instance of the context's scheme whose images are
+`PEv` (`instP`), and `C_Let` is `N_Let` with `rf T1`. `P` is now fixed: `PEv T` is
+`EvT T /\ rf T`, so the derivation's instances and invented types are record-free and
+over even atoms. Record-free is what makes `teqD` an equality on everything the
+induction compares (`teqD_rf_eq`), which the avoid argument below needs.
+
+**The context carries schemes (`GoatCompleteCtx.v`).** A binding is a monotype or a
+scheme `gen_ren` made (`SOk`: well formed, no quantified row, record-free body).
+`CI` relates it to the derivation's binding by `teqD` or by `SchI`: `sch_leP` (`sch_le`
+on instances whose images are `PEv`) against the algorithm's scheme read at the
+substitution with its quantified odd atoms fixed (`sfix`). `SemL` also carries
+`OkS s`. Three more invariants ride along: `LEv L` (live atoms are even), `RA D` (every
+row variable of the algorithm's environment has the trivial kind), and `Avoid B L Sg`
+(the images of live atoms mention only atoms in `B`, the set `ntyping` hands the node).
+
+**Rows.** `unify_tD_rf_drk` (`GoatCompleteDrk.v`): a record-free unification makes no
+row variable and changes no row kind. With `RA D`, `rkres` holds at any environment, so
+the `let` premise's environment, which re-sorts only type atoms, needs no transfer
+lemma for rows.
+
+**`let` of a value.** The premise runs at the derivation's extended environment; the
+live atoms' images avoid the generalized atoms, so `Live` moves between the two
+environments (`Live_env`, `CI_env`, `SemL_env`). `gen_mono` is restated over what it
+uses (`sch_leP`; the quantified atoms fixed; the live images `PEv`), and the body runs
+with the extension that fixes the quantified atoms, over the live atoms that are not
+generalized. `var_sch_done` is the variable case at a scheme: the extension sends the
+fresh instance atoms to the derivation's instance.
+
 **What remains of 7.7.**
 
-1. *Even derivations.* A top-level renaming of a `typing` derivation to even atoms (so
-   `P := EvT` holds of each type it invents), with the finite atom bound it needs,
-   giving `OkS` for the extensions. The allowed-set plumbing it needs is now in place;
-   the renaming is a statement about `typing` (an injective `typing_ap`) that nothing
-   states yet. It belongs with the conversion (item 3), which has to produce the
-   derivation with `P`.
-2. *`let` of a value.* `gen_mono_let` with `frozen` from `ctx_le`; `KR` for the
-   premise's environment from `Live` and `Av` (7.7c, item 1b); the continuation's
-   `Live` at `Dd` (item 1c) is now what the restatement gives, because the generalized
-   atoms are dead after the binder and are not in `L`. It needs `ntyping`'s premises
-   as a `ctyping` rule with schemes.
-3. *The conversion from `typing`* through `ntyping` into a `ctyping` with schemes, with
-   `rf` operands (no `sig_quot_rec`); after items 1 and 2.
+1. *Even derivations.* A top-level renaming of a `typing` derivation to even atoms.
+   `PEv` must hold of each type a rule invents and of each instance, which is a
+   statement about every type in the derivation, not its conclusion. The bound on the
+   derivation's atoms that an injective `typing_ap` needs is not stated anywhere; the
+   conversion may instead rename on the way down, extending a finite partial renaming
+   at each premise.
+2. *The conversion* `typing` -> `ntyping` -> `ctyping` for core terms. `C_Let` takes
+   `rf T1` and `PEv` instances: a derivation that gives a function a record type
+   before generalizing is outside it. `letrec` and records are 7.8.
+3. *`let` of a value at a monotype* (`T_LetMono` on a value): the derivation's monotype
+   is an instance of the algorithm's scheme, which needs `sch_leP` against `sch_mono`.
 4. *`letrec`, records, spread, restrict, tags, `match`, methods* (7.8), as before.
 
 ## 5. Staged PR plan

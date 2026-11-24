@@ -64,6 +64,8 @@ GoatCompleteRfRows.v
 GoatCompleteCore.v
 GoatCompleteFresh.v
 GoatCompleteNf.v
+GoatCompleteDrk.v
+GoatCompleteCtx.v
 GoatCompleteSpn.v
 GoatElabConverse.v
 GoatMethods.v
