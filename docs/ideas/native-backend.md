@@ -228,8 +228,10 @@ and `f32` keep this to soft-float helpers libgcc has, plus `fmodf`.
   exact.
 - **The speed gain** was unmeasured here; see "Results: the particles
   benchmark" below.
-- **Packaging.** The CLI finds `libgoat_native.a` next to its own executable or
-  through `GOAT_NATIVE_LIB`. A missing clang gets an actionable message.
+- **Packaging.** The CLI carries `libgoat_native.a` (its build script builds the
+  staticlib and the binary embeds it), so `cargo build -p goat_cli` or `cargo
+  install` is enough; a copy next to the executable or `GOAT_NATIVE_LIB` takes
+  precedence. A missing clang gets an actionable message.
 
 ## Results: the particles benchmark
 

@@ -4,6 +4,7 @@
 use goat::{HostInterface, Profile};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 const STATIC_LIB: &str = "libgoat_native.a";
 const CLANG_CANDIDATES: [&str; 3] = ["clang-23", "clang-17", "clang"];
@@ -86,21 +87,45 @@ fn runs(clang: &str) -> bool {
         .is_ok_and(|out| out.status.success())
 }
 
-/// The runtime library: `$GOAT_NATIVE_LIB`, else the one beside this executable.
-pub fn find_static_lib() -> Result<PathBuf, String> {
-    let path = match std::env::var_os("GOAT_NATIVE_LIB") {
-        Some(path) => PathBuf::from(path),
-        None => std::env::current_exe()
-            .map_err(|e| format!("cannot find the goat executable: {e}"))?
-            .with_file_name(STATIC_LIB),
-    };
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(format!(
-            "{} not found; build it with `cargo build -p goat_native`, or point GOAT_NATIVE_LIB at it",
-            path.display()
-        ))
+/// The runtime library the `goat` binary carries, set once at startup. Empty
+/// when the build script could not build it.
+static EMBEDDED_LIB: OnceLock<&'static [u8]> = OnceLock::new();
+
+pub fn embed_static_lib(bytes: &'static [u8]) {
+    let _ = EMBEDDED_LIB.set(bytes);
+}
+
+/// The runtime library: `$GOAT_NATIVE_LIB`, else one beside this executable,
+/// else the copy the binary carries, written into `scratch`.
+pub fn find_static_lib(scratch: &Path) -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("GOAT_NATIVE_LIB") {
+        let path = PathBuf::from(path);
+        return if path.is_file() {
+            Ok(path)
+        } else {
+            Err(format!(
+                "GOAT_NATIVE_LIB is {}, which is not a file",
+                path.display()
+            ))
+        };
+    }
+    let beside = std::env::current_exe()
+        .map_err(|e| format!("cannot find the goat executable: {e}"))?
+        .with_file_name(STATIC_LIB);
+    if beside.is_file() {
+        return Ok(beside);
+    }
+    match EMBEDDED_LIB.get() {
+        Some(bytes) if !bytes.is_empty() => {
+            let path = scratch.join(STATIC_LIB);
+            std::fs::write(&path, bytes)
+                .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            Ok(path)
+        }
+        _ => Err(format!(
+            "{} not found and this goat carries no copy; build it with `cargo build -p goat_native`, or point GOAT_NATIVE_LIB at it",
+            beside.display()
+        )),
     }
 }
 
@@ -128,8 +153,9 @@ pub fn link(ll: &str, source: &str, out: &Path) -> Result<(), String> {
     if is_interactive(ll) {
         return link_interactive(ll, source, out);
     }
-    let (clang, lib) = (find_clang()?, find_static_lib()?);
+    let clang = find_clang()?;
     let dir = tempfile::tempdir().map_err(|e| format!("cannot make a temporary directory: {e}"))?;
+    let lib = find_static_lib(dir.path())?;
     let (ll_path, c_path) = (dir.path().join("program.ll"), dir.path().join("entry.c"));
     for (path, text) in [(&ll_path, ll), (&c_path, &entry_c(source))] {
         std::fs::write(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -232,8 +258,9 @@ fn run(command: &mut Command, name: &str) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn link_interactive(ll: &str, source: &str, out: &Path) -> Result<(), String> {
     use goat_native::appkit;
-    let (clang, swiftc, lib) = (find_clang()?, find_swiftc()?, find_static_lib()?);
+    let (clang, swiftc) = (find_clang()?, find_swiftc()?);
     let dir = tempfile::tempdir().map_err(|e| format!("cannot make a temporary directory: {e}"))?;
+    let lib = find_static_lib(dir.path())?;
     let at = |name: &str| dir.path().join(name);
     let (header, header_text) = appkit::HEADER;
     let mut files = vec![
