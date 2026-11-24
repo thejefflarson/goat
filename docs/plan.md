@@ -36,8 +36,8 @@ turtle.**
   microcontrollers (Phase 12). Microcontrollers run native release builds and
   WAMR for hot-swap development (ADR 0042).
 - **Two backends, both emitted from MIR** (ADR 0042):
-  - **WebAssembly**, with `wasm-encoder`: the web editor, the iOS web view,
-    desktop `goat run`, live coding and hot reload, and any host that embeds a
+  - **WebAssembly**, with `wasm-encoder`: the web editor, desktop
+    `goat run`, live coding and hot reload, and any host that embeds a
     wasm runtime. It keeps the sandbox that makes goat embeddable.
   - **Native, through textual LLVM IR** that the system clang compiles and links
     into a self-contained binary: desktop (macOS, Linux) first, then the boards
@@ -64,9 +64,9 @@ turtle.**
   | Mode | How | Where |
   |---|---|---|
   | JIT | wasmtime (Cranelift) | CLI, desktop hosts, hot reload |
-  | JIT | browser engine | web, iOS web view |
+  | JIT | browser engine | web |
   | AOT | wasmtime precompiled modules (`.cwasm`) | servers, desktop, fast startup |
-  | Interpreter | wasmtime Pulley, `wasm3`, WAMR | JIT-banned hosts loading scripts at runtime |
+  | Interpreter | wasmtime Pulley, `wasm3`, WAMR | JIT-banned hosts loading scripts at runtime (the Apple apps, Phase 10) |
 
 - **The compiler is a library first:** `goat::compile(source, host_interface)
   -> wasm`, with the CLI as one client. Compiler crates must build for
@@ -611,8 +611,8 @@ Turtle (`turtle.goat`, Logo names): `forward`, `back`, `left`, `right`,
 
 ## Phase 8.5 — FFI (host imports)
 
-FFI = wasm imports. The "foreign" side is the host: JS in the browser and the iOS web
-view, Rust in the wasmtime CLI. Turtle graphics is the first user.
+FFI = wasm imports. The "foreign" side is the host: JS in the browser, Swift
+and Rust in the Apple apps, Rust in the wasmtime CLI. Turtle graphics is the first user.
 
 **Direction: WIT and the Component Model.** A host describes its API in WIT,
 whose types (records, variants, lists, options, results) map almost 1:1 onto
@@ -733,14 +733,43 @@ loop:
   (no allocation, no RC, no closures, numbers only, bounded loops) compiled
   AOT to run in interrupt context.
 
-## Phase 10 — iOS and desktop shells
+## Phase 10 — Apple apps
 
-- [ ] iOS: Swift app hosting `WKWebView` with the `web/` bundle. App Store
-      guideline 2.5.2 allows educational apps to run user code if the source
-      is fully viewable and editable — editor always reachable, no "export an
-      app" features.
-- [ ] Desktop: Tauri (or similar) wrapping `web/`.
-- [ ] Both shells implement the Phase 9.5 host-loop contract.
+One SwiftUI app with macOS and iOS targets (`hosts/apple`, see its
+[README](../hosts/apple/README.md)). The apps run goat in-process on wasmtime's
+Pulley interpreter, not in a web view, and draw with one Swift renderer
+(`GoatCanvas`). [ADR 0043](adr/0043-apple-apps-run-goat-in-process-and-export-apps.md)
+records why; it replaced the earlier plan of a `WKWebView` over the `web/`
+bundle and a Tauri desktop shell.
+
+- [x] **In-process engine.** `goat_apple` wraps `goat::native::Interactive`
+      behind the C header `goat_engine.h`, staged as `GoatEngine.xcframework`.
+      Reload keeps the model and epoch preemption bounds each frame (ADR 0021,
+      ADR 0035). Pulley needs no JIT, so the sandbox carries no JIT or network
+      entitlement.
+- [x] **One renderer.** Frame, Painter and Color are the `GoatCanvas` SwiftPM
+      target, shared by the editor, exported apps and `goat build --native`.
+- [x] **Native editor** on both platforms: editor, problems, Run, file open
+      and save.
+- [x] **iOS Play mode:** a full-screen canvas, with the editor one tap away.
+- [x] **Export App… (macOS):** File → Export App… copies a prebuilt, signed
+      `GoatPlayer.app`, writes the program into it and signs the copy ad hoc.
+      It works with no toolchain and refuses a program that has diagnostics.
+- [x] **`goat build --native -o Name.app`:** writes a signed bundle from the
+      CLI.
+- [ ] **One-click native export.** Compile the program through the LLVM path
+      (ADR 0042) from the editor when the Command Line Tools are present.
+      Waits on the distribution decision.
+- [ ] **iOS: export an Xcode project** from the Mac. No app on an iPhone can
+      build another app.
+- [ ] **Notarization.** Removes the one-time Open Anyway step for a copied
+      app. Needs a paid Developer ID, so it waits with distribution.
+- [ ] **Distribution** (App Store or Developer ID) is undecided. The apps stay
+      sandboxed so both stay open. App Store guideline 2.5.2 allows
+      educational apps to run user code when the source is viewable and
+      editable, so the editor stays reachable.
+- [ ] **Desktop beyond macOS** (Windows, Linux) has no shell yet; `goat run`
+      and the web editor cover them.
 
 ## Phase 11 — Embedding and live coding
 
