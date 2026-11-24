@@ -3,9 +3,15 @@ import SwiftUI
 
 struct GoatApp: App {
     var body: some Scene {
+        #if os(iOS)
+        WindowGroup {
+            DocumentBrowser().ignoresSafeArea()
+        }
+        #else
         DocumentGroup(newDocument: GoatDocument()) { file in
             EditorScreen(document: file.$document)
         }
+        #endif
     }
 }
 
