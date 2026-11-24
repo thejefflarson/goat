@@ -1,7 +1,7 @@
 name: Security Review
 on:
   # PRs that touch code only — skip docs-only PRs (ADRs, markdown, papers).
-  # No push/master run (the PR already reviewed the diff) and no weekly scan.
+  # No push/main run (the PR already reviewed the diff) and no weekly scan.
   pull_request:
     paths-ignore:
       - '**/*.md'

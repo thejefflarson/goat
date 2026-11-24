@@ -10,7 +10,7 @@ name: Coq
 # job: the toolchain is slow to build and must never gate or slow the per-PR Rust
 # critical path.
 #
-# Trigger: every PR and push to master, so the `coq` check always reports and
+# Trigger: every PR and push to main, so the `coq` check always reports and
 # can be required in branch protection (ADR 0037). The job diffs the changed
 # files itself and skips the build, still succeeding, when nothing the Coq build
 # depends on changed (proofs/, the grammar, the parser, or this workflow; and,
@@ -20,7 +20,7 @@ name: Coq
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -120,7 +120,7 @@ jobs:
       - name: Stage the extracted algorithm for the nightly fuzz
         if: >-
           steps.changes.outputs.build == 'true'
-          && github.ref == 'refs/heads/master'
+          && github.ref == 'refs/heads/main'
           && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: |
           mkdir w-extracted
@@ -129,7 +129,7 @@ jobs:
       - name: Publish the extracted algorithm
         if: >-
           steps.changes.outputs.build == 'true'
-          && github.ref == 'refs/heads/master'
+          && github.ref == 'refs/heads/main'
           && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v7
         with:

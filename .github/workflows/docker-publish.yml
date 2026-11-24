@@ -4,7 +4,7 @@ name: Publish editor image
 # by nginx. Publishing an image does not deploy it.
 on:
   push:
-    branches: [master]
+    branches: [main]
     tags: ['v*.*.*']
     # The image is built from the web/Dockerfile context allowlist
     # (web/Dockerfile.dockerignore). Path filters are not evaluated for tags.
