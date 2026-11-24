@@ -43,6 +43,7 @@ targets:
     sources: [GoatKit/Sources/GoatKit]
     dependencies:
       - framework: Frameworks/GoatEngine.xcframework
+        embed: false
     settings:
       base: &framework
         PRODUCT_NAME: GoatKit
@@ -54,6 +55,7 @@ targets:
     sources: [GoatKit/Sources/GoatKit]
     dependencies:
       - framework: Frameworks/GoatEngine.xcframework
+        embed: false
     settings:
       base: *framework
   Goat-macOS:
@@ -142,6 +144,7 @@ targets:
       - target: GoatTestHost-macOS
       - target: GoatKit-macOS
       - framework: Frameworks/GoatEngine.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thejefflarson.goat.kit.tests
