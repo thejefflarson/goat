@@ -6,6 +6,7 @@ pub use crate::events::{Event, Reloaded, ResetReason};
 use crate::{Host, Scene, SceneSink};
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
+use wasmtime::Engine;
 
 const EVENT_PREFIX: &str = "goat_event_";
 
@@ -70,6 +71,34 @@ impl<S: SceneSink + 'static, E: HostEvent> Interactive<S, E> {
     /// `timeout`.
     pub fn with_timeout(wasm: &[u8], sink: S, timeout: Duration) -> Result<Self, String> {
         Self::start(Guest::with_timeout(wasm, Scene(sink), timeout)?)
+    }
+
+    /// Like `with_timeout`, on `engine` rather than a default one, and with no
+    /// memory growing past `heap_limit` bytes.
+    pub fn in_engine(
+        engine: &Engine,
+        wasm: &[u8],
+        sink: S,
+        timeout: Duration,
+        heap_limit: Option<usize>,
+    ) -> Result<Self, String> {
+        Self::start(Guest::in_engine(
+            engine,
+            wasm,
+            Scene(sink),
+            timeout,
+            heap_limit,
+        )?)
+    }
+
+    /// Change how long each later call into the program may run.
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.guest.set_timeout(timeout);
+    }
+
+    /// The lines the program has finished printing since the last call.
+    pub fn take_output(&mut self) -> Vec<String> {
+        self.guest.take_output()
     }
 
     fn start(mut guest: Guest<Scene<S>>) -> Result<Self, String> {

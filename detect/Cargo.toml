@@ -1,0 +1,11 @@
+[package]
+name = "goat_detect"
+version = "0.1.0"
+authors = ["Jeff Larson <thejefflarson@gmail.com>"]
+edition = "2024"
+
+[dependencies]
+goat = { version = "0.1.0", path = "../goat" }
+goat_canvas = { version = "0.1.0", path = "../canvas", default-features = false }
+goat_checker = { version = "0.1.0", path = "../checker" }
+goat_parser = { version = "0.1.0", path = "../parser" }

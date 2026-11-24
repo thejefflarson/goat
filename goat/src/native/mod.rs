@@ -12,7 +12,10 @@ use crate::{Boundary, Host, HostValue, NoHost};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use wasmtime::{Caller, Config, Engine, ExternType, Instance, Linker, Module, Store, Trap, Val};
+use wasmtime::{
+    Caller, Config, Engine, ExternType, Instance, Linker, Module, ResourceLimiter, Store,
+    StoreLimits, StoreLimitsBuilder, Trap, Val,
+};
 
 mod interactive;
 
@@ -67,6 +70,53 @@ struct State<H> {
     /// The source range of each site number, from the module's `goat.sites`.
     sites: Vec<(usize, usize)>,
     stopped: Option<Stopped>,
+    heap: HeapLimit,
+}
+
+/// What a program says when the host's heap limit stops its growth.
+pub const OUT_OF_MEMORY: &str = "the program used more memory than it may";
+
+/// A byte limit on every memory the guest grows, which remembers refusing
+/// one: the program then traps on its own failed `memory.grow`, with nothing
+/// in the trap to say why.
+struct HeapLimit {
+    limits: StoreLimits,
+    exhausted: bool,
+}
+
+impl HeapLimit {
+    fn new(bytes: Option<usize>) -> HeapLimit {
+        let mut limits = StoreLimitsBuilder::new();
+        if let Some(bytes) = bytes {
+            limits = limits.memory_size(bytes);
+        }
+        HeapLimit {
+            limits: limits.build(),
+            exhausted: false,
+        }
+    }
+}
+
+impl ResourceLimiter for HeapLimit {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        let allowed = self.limits.memory_growing(current, desired, maximum)?;
+        self.exhausted |= !allowed;
+        Ok(allowed)
+    }
+
+    fn table_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        self.limits.table_growing(current, desired, maximum)
+    }
 }
 
 /// The ranges in a module's `goat.sites` custom section, in site-number order.
@@ -257,7 +307,7 @@ pub fn run(wasm: &[u8]) -> Result<Run, String> {
 }
 
 /// How often a timeout's ticker advances the epoch.
-const EPOCH_TICK: Duration = Duration::from_millis(10);
+const EPOCH_TICK: Duration = Duration::from_millis(5);
 
 /// A wall-clock bound on each call into a guest, enforced by wasmtime's epoch
 /// interruption: a thread advances the engine's epoch every [`EPOCH_TICK`] and
@@ -274,20 +324,38 @@ impl Deadline {
         let stop = Arc::new(AtomicBool::new(false));
         let (ticker, halt) = (engine.clone(), Arc::clone(&stop));
         std::thread::spawn(move || {
+            // Ticks follow the clock, not a chain of sleeps: each sleep
+            // overshoots, and chained overshoots would stretch a deadline of
+            // many ticks well past its timeout.
+            let started = std::time::Instant::now();
+            let mut ticked = 0u32;
             while !halt.load(Ordering::Relaxed) {
                 std::thread::sleep(EPOCH_TICK);
-                ticker.increment_epoch();
+                let due = u32::try_from(started.elapsed().as_nanos() / EPOCH_TICK.as_nanos())
+                    .unwrap_or(u32::MAX);
+                for _ in ticked..due {
+                    ticker.increment_epoch();
+                }
+                ticked = ticked.max(due);
             }
         });
-        // One extra tick, because the first falls anywhere in the first interval.
-        let ticks = u64::try_from(timeout.as_nanos().div_ceil(EPOCH_TICK.as_nanos()))
-            .unwrap_or(u64::MAX)
-            .saturating_add(1);
         Deadline {
             timeout,
-            ticks,
+            ticks: Self::ticks_for(timeout),
             stop,
         }
+    }
+
+    /// One extra tick, because the first falls anywhere in the first interval.
+    fn ticks_for(timeout: Duration) -> u64 {
+        u64::try_from(timeout.as_nanos().div_ceil(EPOCH_TICK.as_nanos()))
+            .unwrap_or(u64::MAX)
+            .saturating_add(1)
+    }
+
+    fn set(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+        self.ticks = Self::ticks_for(timeout);
     }
 
     fn stuck(&self) -> String {
@@ -328,14 +396,27 @@ fn blamed_site<T>(store: &mut Store<State<T>>, instance: &Instance) -> Option<(u
     store.data().sites.get(index).copied()
 }
 
-fn engine() -> Result<Engine, String> {
+/// The settings every goat engine needs: tail calls, and epochs so a host can
+/// stop a call that runs too long. A host that wants a different runtime, as
+/// [`pulley`] does, changes the config before building its engine.
+pub fn engine_config() -> Config {
     let mut config = Config::new();
     config.wasm_tail_call(true);
     config.epoch_interruption(true);
+    config
+}
+
+fn engine() -> Result<Engine, String> {
+    let mut config = engine_config();
     if std::env::var("GOAT_RUNTIME").as_deref() == Ok("pulley") {
         pulley(&mut config).map_err(|e| format!("pulley: {e}"))?;
     }
-    Engine::new(&config).map_err(|e| format!("engine: {e}"))
+    build_engine(&config)
+}
+
+/// An engine built from `config`, which should start from [`engine_config`].
+pub fn build_engine(config: &Config) -> Result<Engine, String> {
+    Engine::new(config).map_err(|e| format!("engine: {e}"))
 }
 
 /// Configure `config` for wasmtime's Pulley interpreter, the way an iOS host
@@ -545,22 +626,25 @@ fn instantiate_in<H: Host + 'static>(
 
 /// A module instantiated with its imports answered from `host`.
 fn instantiate<H: Host + 'static>(
+    engine: &Engine,
     wasm: &[u8],
     host: H,
     timeout: Option<Duration>,
+    heap_limit: Option<usize>,
 ) -> Result<Guest<H>, String> {
-    let engine = engine()?;
-    let module = load(&engine, wasm)?;
+    let module = load(engine, wasm)?;
     let mut store = Store::new(
-        &engine,
+        engine,
         State {
             output: Output::default(),
             host,
             sites: site_table(wasm),
             stopped: None,
+            heap: HeapLimit::new(heap_limit),
         },
     );
-    let deadline = timeout.map(|timeout| Deadline::start(&engine, timeout));
+    store.limiter(|state| &mut state.heap);
+    let deadline = timeout.map(|timeout| Deadline::start(engine, timeout));
     arm(&mut store, deadline.as_ref());
     let mut hosted = None;
     let instance = instantiate_in(&mut store, &module, &mut hosted)?;
@@ -601,12 +685,24 @@ pub fn run_to_end_within<H: Host + 'static>(
     host: H,
     timeout: Option<Duration>,
 ) -> Result<Finished<H>, String> {
+    run_to_end_in(&engine()?, wasm, host, timeout, None)
+}
+
+/// Like `run_to_end_within`, on `engine` rather than a default one, and with
+/// no memory growing past `heap_limit` bytes.
+pub fn run_to_end_in<H: Host + 'static>(
+    engine: &Engine,
+    wasm: &[u8],
+    host: H,
+    timeout: Option<Duration>,
+    heap_limit: Option<usize>,
+) -> Result<Finished<H>, String> {
     let Guest {
         mut store,
         instance,
         deadline,
         ..
-    } = instantiate(wasm, host, timeout)?;
+    } = instantiate(engine, wasm, host, timeout, heap_limit)?;
     let entry = instance
         .get_typed_func::<(), ()>(&mut store, "goat_entry")
         .map_err(|e| format!("missing entry point: {e}"))?;
@@ -620,6 +716,10 @@ pub fn run_to_end_within<H: Host + 'static>(
         }
         Err(error) => Err(match store.data_mut().stopped.take() {
             Some(stopped) => stopped,
+            None if store.data().heap.exhausted => Stopped {
+                message: OUT_OF_MEMORY.into(),
+                site: blamed_site(&mut store, &instance),
+            },
             None if out_of_stack(&error) => Stopped {
                 message: goat_wasm::STACK_OVERFLOW.into(),
                 site: blamed_site(&mut store, &instance),
@@ -659,13 +759,38 @@ pub struct Guest<H: Host + 'static> {
 
 impl<H: Host + 'static> Guest<H> {
     pub fn new(wasm: &[u8], host: H) -> Result<Guest<H>, String> {
-        instantiate(wasm, host, None)
+        instantiate(&engine()?, wasm, host, None, None)
     }
 
     /// Like `new`, but each call into the guest is stopped with a trap once it
     /// has run longer than `timeout`.
     pub fn with_timeout(wasm: &[u8], host: H, timeout: Duration) -> Result<Guest<H>, String> {
-        instantiate(wasm, host, Some(timeout))
+        instantiate(&engine()?, wasm, host, Some(timeout), None)
+    }
+
+    /// Like `with_timeout`, on `engine` rather than a default one, and with no
+    /// memory growing past `heap_limit` bytes. This is how a host picks the
+    /// runtime, as [`pulley`] does.
+    pub fn in_engine(
+        engine: &Engine,
+        wasm: &[u8],
+        host: H,
+        timeout: Duration,
+        heap_limit: Option<usize>,
+    ) -> Result<Guest<H>, String> {
+        instantiate(engine, wasm, host, Some(timeout), heap_limit)
+    }
+
+    /// Change how long each later call may run.
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        if let Some(deadline) = &mut self.deadline {
+            deadline.set(timeout);
+        }
+    }
+
+    /// The lines the program has finished printing since the last call.
+    pub fn take_output(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.store.data_mut().output.lines)
     }
 
     /// Instantiate a recompiled `wasm` over this guest's heap without making
@@ -744,10 +869,14 @@ impl<H: Host + 'static> Guest<H> {
                 Some(deadline) if interrupted(&error) => {
                     format!("{name} stopped: {}", deadline.stuck())
                 }
+                _ if self.store.data().heap.exhausted => format!("{name} trapped: {OUT_OF_MEMORY}"),
                 _ if out_of_stack(&error) => {
                     format!("{name} trapped: {}", goat_wasm::STACK_OVERFLOW)
                 }
-                _ => format!("{name} trapped: {error:#}"),
+                _ => match self.store.data_mut().stopped.take() {
+                    Some(stopped) => format!("{name} trapped: {}", stopped.message),
+                    None => format!("{name} trapped: {error:#}"),
+                },
             })
     }
 

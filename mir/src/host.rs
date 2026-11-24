@@ -120,6 +120,17 @@ pub trait SceneSink {
     /// They are the program's words, not checked here: the host that reads a
     /// theme validates them. Hosts that read no theme ignore it.
     fn swatch(&mut self, _role: &str, _light: &str, _dark: &str) {}
+
+    /// A whole frame, as the bytes a compiled `draw` encoded (see
+    /// [`frame`]). The default replays them as the per-shape calls above; a
+    /// sink that draws from the encoding itself overrides this and skips the
+    /// replay.
+    fn frame(&mut self, bytes: &[u8]) -> Result<(), String>
+    where
+        Self: Sized,
+    {
+        scene_frame(self, bytes)
+    }
 }
 
 /// A sink as a host: answers the `scene.*` imports by calling the sink.
@@ -135,7 +146,7 @@ impl<S: SceneSink> Host for Scene<S> {
     }
 
     fn frame(&mut self, bytes: &[u8]) -> Result<(), String> {
-        scene_frame(&mut self.0, bytes)
+        self.0.frame(bytes)
     }
 }
 

@@ -12,6 +12,8 @@ members = [
     "wamr",
     "web",
     "native",
+    "detect",
+    "hosts/apple/engine",
 ]
 
 # Optimized test code: the fuzz and differential suites are CPU-bound, and

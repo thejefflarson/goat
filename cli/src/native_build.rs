@@ -1,7 +1,7 @@
 //! `goat build --native`: compile a program to LLVM IR, then have clang link it
 //! with the standalone runtime in `libgoat_native.a` (ADR 0042).
 
-use goat::{HostInterface, Profile};
+use goat::Profile;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -20,21 +20,7 @@ const MISSING_CLANG: &str = "run `xcode-select --install` to get Apple's clang";
 const MISSING_CLANG: &str =
     "install clang with your package manager (for example `apt install clang`)";
 
-/// The vocabulary a program is written in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Vocabulary {
-    Turtle,
-    Canvas,
-}
-
-impl Vocabulary {
-    pub fn interface(self) -> HostInterface {
-        match self {
-            Vocabulary::Turtle => HostInterface::turtle(),
-            Vocabulary::Canvas => goat_canvas::interface(),
-        }
-    }
-}
+pub use goat_detect::Vocabulary;
 
 /// The program's LLVM IR, or why the backend has none.
 pub fn emit_ir(source: &str, vocabulary: Vocabulary) -> Result<String, Vec<goat::GoatError>> {
