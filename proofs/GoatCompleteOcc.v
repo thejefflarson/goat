@@ -25,6 +25,7 @@ Require Import Goat.GoatInferSub.
 Require Import Goat.GoatInferSort.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatCompleteRows.
+Require Import Goat.GoatCompleteSorts.
 Require Import Goat.GoatCompleteBind.
 Require Import Goat.GoatCompleteBindRow.
 Require Import Stdlib.micromega.Lia.
@@ -179,7 +180,7 @@ Theorem bind_prop_pres_complete : forall (D D1 : denv) Sg a T n,
   exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
     n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teqD D1 (sT Sg x) (apT S2 (sT s x))) /\
-    (forall r, old n r -> sR Sg r = apR S2 (sR s r)).
+    (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2.
 Proof.
   intros D D1 Sg a T n Hd HK Ha Hv Hot Hoq Hpf Hlc Hocc Hfld Heq.
   exact (bind_prop_sorted_complete true D D1 Sg a T n Hd HK Ha

@@ -246,14 +246,14 @@ Qed.
 Lemma sem_bind : forall DT (D : denv) Sg a T n,
   DOk D n -> KR D DT Sg -> old n a -> rf T -> (forall v, T <> typ_Var v) ->
   (forall b, b `in` ftv_typ T -> old n b) -> teqD DT (sT Sg a) (apT Sg T) ->
-  exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ Sem DT Sg n s D' n' S2.
+  exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ Sem DT Sg n s D' n' S2 /\ Img Sg S2.
 Proof.
   intros DT D Sg a T n Hd HK Ha Hrf Hv Hot Heq.
   destruct (rf_facts T Hrf) as (Hpf & Hlc & Hfrv & Hfld & _).
   destruct (bind_prop_pres_complete D DT Sg a T n Hd HK Ha Hv Hot (fun q Hq => ltac:(exfalso; exact (Hfrv q Hq)))
               Hpf Hlc (rf_po Sg a T Hrf) (Hfld DT Sg (D a)) Heq)
-    as (s & D' & n' & S2 & E & K & Hl & Hd' & F & Fr).
-  exists s, D', n', S2. refine (conj E (conj K (conj Hd' (conj _ (conj F _))))).
+    as (s & D' & n' & S2 & E & K & Hl & Hd' & F & Fr & Im).
+  exists s, D', n', S2. refine (conj E (conj (conj K (conj Hd' (conj _ (conj F _)))) Im)).
   - exact (bind_prop_SI D a T n s D' n' E Hd Ha Hrf Hot).
   - intros q Hq. pose proof (Fr q Hq) as E1.
     pose proof (proj2 (proj2 (bind_prop_SI D a T n s D' n' E Hd Ha Hrf Hot)) q Hq) as E2.
@@ -300,7 +300,7 @@ Theorem unify_rf_complete_aux : forall (DT : denv) m (D : denv) Sg T1 T2 n,
   (forall x, x `in` ftv_typ T1 -> old n x) -> (forall x, x `in` ftv_typ T2 -> old n x) ->
   teqD DT (apT Sg T1) (apT Sg T2) ->
   exists s D' n' S2, Stable (fun f => unify_tD f D T1 T2 n = Some (s, D', n')) /\
-    Sem DT Sg n s D' n' S2.
+    Sem DT Sg n s D' n' S2 /\ Img Sg S2.
 Proof.
   intros DT m. induction m as [|m IH]; intros D Sg T1 T2 n Hlt Hd HK C1 C2 A1 A2 Hteq; [ lia | ].
   destruct T1 as [ | | | | | A B | R | a | i | B1 | w A1' ]; try (simpl in C1; contradiction);
@@ -308,7 +308,7 @@ Proof.
     try (simpl in C2; contradiction);
     try (exfalso; pose proof (teqD_thead _ _ _ Hteq) as Ht; unfold apT in Ht;
          cbn [ap_typ thead_tag] in Ht; discriminate Ht).
-  all: try (exists sid, D, n, Sg; split; [ apply stable_scalar; tauto | exact (Sem_id DT Sg D n HK Hd) ]; fail).
+  all: try (exists sid, D, n, Sg; split; [ apply stable_scalar; tauto | exact (conj (Sem_id DT Sg D n HK Hd) (Img_refl Sg)) ]; fail).
   all: try (destruct (sem_bind DT D Sg a _ n Hd HK (A1 a ltac:(simpl; fsetdec)) C2 ltac:(nv) A2 Hteq)
               as (s & D' & n' & S2 & E & Hs);
             exists s, D', n', S2; split; [ exact (stable_bind_l D a _ n _ E ltac:(nv)) | exact Hs ]; fail).
@@ -326,7 +326,7 @@ Proof.
     assert (AB' : forall x, x `in` ftv_typ B' -> old n x) by (intros x Hx; apply A2; simpl; fsetdec).
     destruct (IH D Sg A A' n ltac:(lia) Hd HK CA CA'
                 (fun x Hx => A1 x ltac:(simpl; fsetdec)) (fun x Hx => A2 x ltac:(simpl; fsetdec)) H1)
-      as (s1 & D1 & n1 & S2 & E1 & K1 & Hd1 & (Hl1 & I1 & Q1) & F1 & R1).
+      as (s1 & D1 & n1 & S2 & E1 & (K1 & Hd1 & (Hl1 & I1 & Q1) & F1 & R1) & Im1).
     pose proof (ap_factor_rf DT Sg S2 s1 B CB (fun x Hx => F1 x (AB x Hx))) as FB.
     pose proof (ap_factor_rf DT Sg S2 s1 B' CB' (fun x Hx => F1 x (AB' x Hx))) as FB'.
     assert (Hrf1 : forall T, rf T -> (forall x, x `in` ftv_typ T -> old n x) ->
@@ -339,12 +339,12 @@ Proof.
     destruct (IH D1 S2 (apT s1 B) (apT s1 B') n1
                 ltac:(rewrite <- (teqD_tsz _ _ _ FB); lia) Hd1 K1 RB RB' OB OB'
                 (teqD_trans _ _ _ _ (teqD_sym _ _ _ FB) (teqD_trans _ _ _ _ H2 FB')))
-      as (s2 & D2 & n2 & S3 & E2 & K2 & Hd2 & I2 & F2 & R2).
+      as (s2 & D2 & n2 & S3 & E2 & (K2 & Hd2 & I2 & F2 & R2) & Im2).
     exists (scomp s2 s1), D2, n2, S3. split.
     + eapply Stable_mono; [ | exact (Stable_below _ (Stable_and _ _ E1 E2)) ].
       intros [|f] Hf; [ contradiction | ]. destruct Hf as [Ha Hb].
       cbn [unify_tD]. rewrite Ha, Hb. reflexivity.
-    + refine (conj K2 (conj Hd2 (conj (SI_comp _ _ _ _ _ (conj Hl1 (conj I1 Q1)) I2) (conj _ _)))).
+    + refine (conj (conj K2 (conj Hd2 (conj (SI_comp _ _ _ _ _ (conj Hl1 (conj I1 Q1)) I2) (conj _ _)))) (Img_trans _ _ _ Im1 Im2)).
       * intros x Hx. change (teqD DT (sT Sg x) (apT S3 (apT s2 (sT s1 x)))).
         destruct (I1 x Hx) as [Hrx Hox].
         eapply teqD_trans; [ exact (F1 x Hx) | ].
@@ -352,24 +352,36 @@ Proof.
       * intros q Hq. rewrite (R2 q (old_le n n1 q Hl1 Hq)). exact (R1 q Hq).
   - (* Var, Var *)
     destruct (Atom.eq_dec a a') as [->|Hne].
-    + exists sid, D, n, Sg. split; [ | exact (Sem_id DT Sg D n HK Hd) ].
+    + exists sid, D, n, Sg. split; [ | exact (conj (Sem_id DT Sg D n HK Hd) (Img_refl Sg)) ].
       eapply Stable_mono; [ | exact (stable_varvar D a' a' n) ].
       intros f Hf. rewrite Hf. destruct (Atom.eq_dec a' a'); [ reflexivity | congruence ].
     + destruct (finer_b (D a') (D a)) eqn:Ef.
       * exists (sbT a (typ_Var a')), D, n, Sg. split.
         { eapply Stable_mono; [ | exact (stable_varvar D a a' n) ].
           intros f Hf. rewrite Hf. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity. }
-        exact (Sem_sbT DT Sg D n a a' HK Hd (A2 a' ltac:(simpl; fsetdec)) Hteq).
+        exact (conj (Sem_sbT DT Sg D n a a' HK Hd (A2 a' ltac:(simpl; fsetdec)) Hteq) (Img_refl Sg)).
       * exists (sbT a' (typ_Var a)), D, n, Sg. split.
         { eapply Stable_mono; [ | exact (stable_varvar D a a' n) ].
           intros f Hf. rewrite Hf. destruct (Atom.eq_dec a a'); [ congruence | ]. rewrite Ef. reflexivity. }
-        exact (Sem_sbT DT Sg D n a' a HK Hd (A1 a ltac:(simpl; fsetdec)) (teqD_sym _ _ _ Hteq)).
+        exact (conj (Sem_sbT DT Sg D n a' a HK Hd (A1 a ltac:(simpl; fsetdec)) (teqD_sym _ _ _ Hteq)) (Img_refl Sg)).
 Qed.
 
 (* The unifier W calls is complete on record-free types: given a substitution
    that respects the sorts and unifies the two types up to [teqD DT], it
    succeeds from some fuel on, and [Sg] factors through its result by an
    extension [S2] of [Sg] to the fresh variables. *)
+Theorem unify_tD_rf_complete_img : forall (DT D : denv) Sg T1 T2 n,
+  DOk D n -> KR D DT Sg -> rf T1 -> rf T2 ->
+  (forall x, x `in` ftv_typ T1 -> old n x) -> (forall x, x `in` ftv_typ T2 -> old n x) ->
+  teqD DT (apT Sg T1) (apT Sg T2) ->
+  exists s D' n' S2, Stable (fun f => unify_tD f D T1 T2 n = Some (s, D', n')) /\
+    Sem DT Sg n s D' n' S2 /\ Img Sg S2.
+Proof.
+  intros DT D Sg T1 T2 n Hd HK C1 C2 A1 A2 Hteq.
+  exact (unify_rf_complete_aux DT (Datatypes.S (tsz (apT Sg T1))) D Sg T1 T2 n
+           (Nat.lt_succ_diag_r _) Hd HK C1 C2 A1 A2 Hteq).
+Qed.
+
 Theorem unify_tD_rf_complete : forall (DT D : denv) Sg T1 T2 n,
   DOk D n -> KR D DT Sg -> rf T1 -> rf T2 ->
   (forall x, x `in` ftv_typ T1 -> old n x) -> (forall x, x `in` ftv_typ T2 -> old n x) ->
@@ -378,6 +390,22 @@ Theorem unify_tD_rf_complete : forall (DT D : denv) Sg T1 T2 n,
     Sem DT Sg n s D' n' S2.
 Proof.
   intros DT D Sg T1 T2 n Hd HK C1 C2 A1 A2 Hteq.
-  exact (unify_rf_complete_aux DT (Datatypes.S (tsz (apT Sg T1))) D Sg T1 T2 n
-           (Nat.lt_succ_diag_r _) Hd HK C1 C2 A1 A2 Hteq).
+  destruct (unify_tD_rf_complete_img DT D Sg T1 T2 n Hd HK C1 C2 A1 A2 Hteq)
+    as (s & D' & n' & S2 & St & Hs & _).
+  exists s, D', n', S2. exact (conj St Hs).
+Qed.
+
+(* Given even images, the extension's images are even: the unifier adds no atom
+   to those [Sg] already uses, which is the bound [OkS] asks of a step. *)
+Corollary unify_tD_rf_complete_even : forall (DT D : denv) Sg T1 T2 n,
+  DOk D n -> KR D DT Sg -> rf T1 -> rf T2 ->
+  (forall x, x `in` ftv_typ T1 -> old n x) -> (forall x, x `in` ftv_typ T2 -> old n x) ->
+  teqD DT (apT Sg T1) (apT Sg T2) -> (forall z, EvT (sT Sg z)) ->
+  exists s D' n' S2, Stable (fun f => unify_tD f D T1 T2 n = Some (s, D', n')) /\
+    Sem DT Sg n s D' n' S2 /\ forall y, EvT (sT S2 y).
+Proof.
+  intros DT D Sg T1 T2 n Hd HK C1 C2 A1 A2 Hteq Hev.
+  destruct (unify_tD_rf_complete_img DT D Sg T1 T2 n Hd HK C1 C2 A1 A2 Hteq)
+    as (s & D' & n' & S2 & St & Hs & Im).
+  exists s, D', n', S2. exact (conj St (conj Hs (Img_bound EvT Sg S2 Im Hev))).
 Qed.
