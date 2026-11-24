@@ -55,8 +55,8 @@ final class EngineLinkTests: XCTestCase {
         let source = Array(
             """
             init = {n: 0}
-            update = program(m, e) do m done
-            draw = program(m) do [Line({x1: 0, y1: 0, x2: 10, y2: 0, color: "red"})] done
+            update = program(m, e) do match e do KeyDown(k) then {n: m.n + 1} else m done done
+            draw = program(m) do [Line({x1: 0, y1: 0, x2: m.n, y2: 0, color: "red"})] done
             """.utf8)
         source.withUnsafeBufferPointer { goat_engine_run(engine, $0.baseAddress, $0.count) }
         XCTAssertTrue(heard.wait { heard.frames > 0 }, "heard \(heard.controls)")
