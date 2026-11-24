@@ -1,12 +1,38 @@
 import Foundation
 
-/// Which budget applies to the call into goat that a `beat` brackets: one frame's
-/// `setup`/`update`/`draw`, or a whole run-once program.
-public enum BeatCall: String, Decodable, Sendable {
-    case frame, once
+/// What running a program again did to the one already live: the model was kept,
+/// or the program started over for `reason` (ADR 0035).
+public struct Reload: Equatable, Sendable {
+    public struct Reason: Decodable, Equatable, Sendable {
+        public let kind: String
+        public let args: [String]
+    }
+
+    /// Nil when the model was kept.
+    public let reason: Reason?
+
+    public var keptModel: Bool { reason == nil }
+
+    public var summary: String {
+        guard let reason else { return "Reloaded: your program's data was kept." }
+        return "Reloaded: your program started over because \(reason.explanation)."
+    }
 }
 
-/// What the web view's engine (web/embed.ts) reports to the native side.
+extension Reload.Reason {
+    var explanation: String {
+        switch (kind, args.count) {
+        case ("field_added", 1): "the field \(args[0]) is new"
+        case ("type_changed", 3): "\(args[0]) changed from \(args[1]) to \(args[2])"
+        case ("method_lost", 1): "the method \(args[0]) is gone"
+        case ("method_added", 1): "the method \(args[0]) is new"
+        case ("reshaped", _): "its data changed shape"
+        default: ([kind] + args).joined(separator: " ")
+        }
+    }
+}
+
+/// What the native engine (hosts/apple/engine, goat_engine.h) reports to the app.
 public enum EngineMessage: Equatable, Sendable {
     public enum State: String, Decodable, Sendable {
         case running, finished, failed
@@ -16,11 +42,9 @@ public enum EngineMessage: Equatable, Sendable {
     case diagnostics([Diagnostic])
     case output([String])
     case state(State, message: String?)
-    /// Odd `count` means goat was entered, even means it was left (web/beat.ts).
-    case beat(count: Int, call: BeatCall)
+    case reloaded(Reload)
 
-    /// The page is not trusted to be well-formed, so anything oversized or
-    /// unrecognized decodes to nil.
+    /// Anything oversized or unrecognized decodes to nil.
     public static let maxBodyBytes = 4 * 1024 * 1024
 
     public static func decode(_ body: Any) -> EngineMessage? {
@@ -31,7 +55,7 @@ public enum EngineMessage: Equatable, Sendable {
 
 extension EngineMessage: Decodable {
     private enum Keys: String, CodingKey {
-        case type, diagnostics, lines, state, message, count, call
+        case type, diagnostics, lines, state, message, outcome, reason
     }
 
     public init(from decoder: Decoder) throws {
@@ -47,10 +71,17 @@ extension EngineMessage: Decodable {
             self = .state(
                 try values.decode(State.self, forKey: .state),
                 message: try values.decodeIfPresent(String.self, forKey: .message))
-        case "beat":
-            self = .beat(
-                count: try values.decode(Int.self, forKey: .count),
-                call: try values.decode(BeatCall.self, forKey: .call))
+        case "reloaded":
+            switch try values.decode(String.self, forKey: .outcome) {
+            case "kept":
+                self = .reloaded(Reload(reason: nil))
+            case "reset":
+                let reason = try values.decodeIfPresent(Reload.Reason.self, forKey: .reason)
+                self = .reloaded(Reload(reason: reason ?? Reload.Reason(kind: "its code changed", args: [])))
+            case let other:
+                throw DecodingError.dataCorruptedError(
+                    forKey: .outcome, in: values, debugDescription: "unknown reload outcome \(other)")
+            }
         case let other:
             throw DecodingError.dataCorruptedError(
                 forKey: .type, in: values, debugDescription: "unknown message type \(other)")

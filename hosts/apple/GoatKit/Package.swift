@@ -10,8 +10,8 @@ let package = Package(
     ],
     targets: [
         .target(name: "GoatCanvas"),
-        .target(name: "GoatKit"),
+        .target(name: "GoatKit", dependencies: ["GoatCanvas"]),
         .testTarget(name: "GoatCanvasTests", dependencies: ["GoatCanvas"]),
-        .testTarget(name: "GoatKitTests", dependencies: ["GoatKit"]),
+        .testTarget(name: "GoatKitTests", dependencies: ["GoatKit", "GoatCanvas"]),
     ]
 )
