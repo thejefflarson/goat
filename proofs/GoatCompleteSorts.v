@@ -19,6 +19,7 @@ Require Import Metalib.Metatheory.
 Require Import Goat.Goat_ott.
 Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
+Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
 Require Import Goat.GoatInferSort.
@@ -80,8 +81,20 @@ Proof.
     + exact (IH D n k Sg D1 Hd HK (fun b' H => Hs b' (or_intror H))
                (fun b' H => Hnew b' (or_intror H)) sp D' n' E).
     + destruct (finer_b k (D b)) eqn:Ef2;
-        [ | exact (IH D n k Sg D1 Hd HK (fun b' H => Hs b' (or_intror H))
-                     (fun b' H => Hnew b' (or_intror H)) sp D' n' E) ].
+        [ | destruct (push_sort D k l n) as [[s D''] n''] eqn:E1;
+            inversion E; subst sp D' n';
+            destruct (IH D n k Sg D1 Hd HK (fun b' H => Hs b' (or_intror H))
+                        (fun b' H => Hnew b' (or_intror H)) s D'' n'' E1) as (S2 & H1 & H2 & H3 & H5);
+            exists S2; refine (conj H1 (conj H2 (conj _ H5)));
+            intros x Hx;
+            change (sT Sg x = apT S2 (apT s (sT (sbT b typ_Float) x))); cbn [sT sbT];
+            destruct (Atom.eq_dec x b) as [->|Hne];
+            [ change (sT Sg b = apT S2 typ_Float);
+              pose proof (proj1 HK b) as Hsb; pose proof (Hs b (or_introl eq_refl)) as Hsk;
+              destruct (finer_b_cmp _ _ Ef2 Ef) as [[Hk1 Hk2]|[Hk1 Hk2]];
+              [ rewrite Hk2 in Hsb; rewrite Hk1 in Hsk; exact (quot_literal_float D1 _ Hsb Hsk)
+              | rewrite Hk2 in Hsb; rewrite Hk1 in Hsk; exact (quot_literal_float D1 _ Hsk Hsb) ]
+            | exact (H3 x Hx) ] ].
       destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s D''] n''] eqn:E1.
       inversion E; subst sp D' n'.
       set (S' := supd Sg (ea n) (sT Sg b)).

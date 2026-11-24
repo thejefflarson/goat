@@ -127,7 +127,11 @@ Proof.
   - destruct (finer_b (D b) k).
     + exact (IH _ _ _ _ _ _ H (fun c Hc => Hold c (or_intror Hc)) x y E).
     + destruct (finer_b k (D b));
-        [ | exact (IH _ _ _ _ _ _ H (fun c Hc => Hold c (or_intror Hc)) x y E) ].
+        [ | destruct (push_sort D k l n) as [[s1 D1] n1] eqn:E1; inversion H; subst;
+            change (apT s1 (sT (sbT b typ_Float) x) = typ_Var y) in E; cbn [sT sbT] in E;
+            destruct (Atom.eq_dec x b) as [->|Hne];
+            [ simpl in E; discriminate E
+            | exact (IH _ _ _ _ _ _ E1 (fun c Hc => Hold c (or_intror Hc)) x y E) ] ].
       destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E1.
       inversion H; subst.
       assert (Hold' : forall c, In c l -> old (Datatypes.S n) c).
@@ -155,15 +159,17 @@ Qed.
 
 Lemma bind_prop_SI : forall D a T n s D' n',
   bind_prop D a T n = Some (s, D', n') -> DOk D n -> old n a -> rf T ->
-  (forall b, b `in` ftv_typ T -> old n b) -> SI n n' s.
+  (forall b, b `in` ftv_typ T -> old n b) ->
+  (forall b, b `in` ftv_typ T -> cmpb (D b) (D a)) -> SI n n' s.
 Proof.
-  intros D a T n s D' n' H Hd Ha Hrf Hot.
+  intros D a T n s D' n' H Hd Ha Hrf Hot Hcb.
   destruct (rf_facts T Hrf) as (_ & _ & Hfrv & _ & _).
   unfold bind_prop in H. destruct (occT a T); [ discriminate | ].
   assert (Holdl : forall b, In b (AtomSetImpl.elements (ftv_typ T)) -> old n b)
     by (intros b Hb; apply Hot; apply in_elts; exact Hb).
   destruct (push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n) as [[sp D1] n1] eqn:Ep.
-  destruct (push_sort_facts _ _ _ _ _ _ _ Ep Holdl) as (P1 & P2 & P3 & P4 & P5 & P6).
+  destruct (push_sort_facts _ _ _ _ _ _ _ Ep Holdl) as (P1 & P2 & P3 & P4' & P5 & P6).
+  pose proof (P4' (fun b Hb => Hcb b (proj1 (in_elts _ _) Hb))) as P4.
   rewrite (elements_empty_of _ Hfrv) in H. cbn [push_sort_r] in H.
   set (T' := apT sid (apT sp T)) in H.
   destruct (occT a T'); [ discriminate | ]. destruct (sat_b D1 (D1 a) T'); [ | discriminate ].
@@ -264,9 +270,9 @@ Proof.
               Hpf Hlc Hcb (fun q Hq => ltac:(exfalso; exact (Hfrv q Hq))) (rf_po Sg a T Hrf) (Hfld DT Sg (D a)) Heq)
     as (s & D' & n' & S2 & E & K & Hl & Hd' & F & Fr & Im).
   exists s, D', n', S2. refine (conj E (conj (conj K (conj Hd' (conj _ (conj F _)))) Im)).
-  - exact (bind_prop_SI D a T n s D' n' E Hd Ha Hrf Hot).
+  - exact (bind_prop_SI D a T n s D' n' E Hd Ha Hrf Hot Hcb).
   - intros q Hq. pose proof (Fr q Hq) as E1.
-    pose proof (proj2 (proj2 (bind_prop_SI D a T n s D' n' E Hd Ha Hrf Hot)) q Hq) as E2.
+    pose proof (proj2 (proj2 (bind_prop_SI D a T n s D' n' E Hd Ha Hrf Hot Hcb)) q Hq) as E2.
     rewrite E2 in E1. symmetry. exact E1.
 Qed.
 

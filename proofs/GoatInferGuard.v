@@ -60,7 +60,9 @@ Proof.
   - inversion H; subst; clear H. exact gs_id.
   - destruct (finer_b (D b) k).
     + exact (IH _ _ _ _ _ _ H).
-    + destruct (finer_b k (D b)); [ | exact (IH _ _ _ _ _ _ H) ].
+    + destruct (finer_b k (D b));
+        [ | destruct (push_sort D k l n) as [[s1 D1] n1] eqn:E1; inversion H; subst; clear H;
+            exact (gs_comp _ _ (IH _ _ _ _ _ _ E1) (gs_sbT b typ_Float I I)) ].
       destruct (push_sort (upd D (ea n) k) k l (S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst; clear H.
       exact (gs_comp _ _ (IH _ _ _ _ _ _ E) (gs_sbT b (typ_Var (ea n)) I I)).

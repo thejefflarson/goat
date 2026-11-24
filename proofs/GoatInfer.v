@@ -158,8 +158,10 @@ Definition meet_float (a b : atom) : sub := scomp (sbT b typ_Float) (sbT a typ_F
 
 (* The sort [k] reaches the variables inside the type a variable of sort [k] is
    bound to: each variable of [l] that is coarser than [k] is renamed to a fresh
-   variable of sort [k], one fresh atom at a time.  The substitution it returns
-   is the renaming, and the environment has the fresh variables' sorts. *)
+   variable of sort [k], one fresh atom at a time.  A variable whose sort has
+   neither [k] nor itself finer ([Literal] against [Quot]) is a [Float], the
+   one type both accept.  The substitution it returns is the renaming, and the
+   environment has the fresh variables' sorts. *)
 Fixpoint push_sort (D : denv) (k : sort) (l : list atom) (n : nat) {struct l}
   : sub * denv * nat :=
   match l with
@@ -170,7 +172,10 @@ Fixpoint push_sort (D : denv) (k : sort) (l : list atom) (n : nat) {struct l}
         match push_sort (upd D (ea n) k) k l' (S n) with
         | (s, D', n') => (scomp s (sbT b (typ_Var (ea n))), D', n')
         end
-      else push_sort D k l' n
+      else
+        match push_sort D k l' n with
+        | (s, D', n') => (scomp s (sbT b typ_Float), D', n')
+        end
   end.
 
 (* The sort [k] also reaches the row variables inside that type: each row

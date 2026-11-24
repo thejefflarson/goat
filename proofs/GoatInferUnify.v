@@ -138,8 +138,18 @@ Proof.
            destruct (Atom.eq_dec x b) as [->|Hne]; [ exfalso; apply Hx; left; reflexivity | ].
            apply Hfx. intros Hin. apply Hx. right. exact Hin.
         -- intros r. unfold scomp, rcomp. simpl. unfold sbT. simpl. unfold idr. simpl. exact (Hfr r).
-      * destruct (IH D k n s D' n' H (fun c Hc => Hev c (or_intror Hc))) as (Hs & Hg & Hfx & Hfr).
-        refine (conj Hs (conj Hg (conj _ Hfr))). intros x Hx. apply Hfx. intros Hin. apply Hx. right. exact Hin.
+      * destruct (push_sort D k l n) as [[s1 D1] n1] eqn:E.
+        inversion H; subst; clear H.
+        destruct (IH _ _ _ _ _ _ E (fun c Hc => Hev c (or_intror Hc))) as (Hs1 & Hg1 & Hfx & Hfr).
+        assert (Hb : ev b) by (apply Hev; left; reflexivity).
+        assert (Hs0 : OkS (sbT b typ_Float))
+          by (apply OkS_sbT; [ exact Hb | (split; intros x Hx; simpl in Hx; fsetdec) | exact I ]).
+        refine (conj (OkS_comp _ _ Hs1 Hs0) (conj _ (conj _ _))).
+        -- exact (GoodU_comp _ _ _ _ _ _ _ _ (GoodU_same D n (sbT b typ_Float) n Hs0 (KR_sbT D b typ_Float I) (le_n n)) Hg1).
+        -- intros x Hx. unfold scomp, tcomp. simpl. unfold sbT. simpl.
+           destruct (Atom.eq_dec x b) as [->|Hne]; [ exfalso; apply Hx; left; reflexivity | ].
+           apply Hfx. intros Hin. apply Hx. right. exact Hin.
+        -- intros r. unfold scomp, rcomp. simpl. unfold sbT. simpl. unfold idr. simpl. exact (Hfr r).
 Qed.
 
 Lemma Good_rename_r : forall D n q K, DOk D n -> ev q ->
@@ -547,7 +557,8 @@ Proof.
   - inversion H; subst; reflexivity.
   - destruct (finer_b (D b) k).
     + exact (IH _ _ _ _ _ _ H).
-    + destruct (finer_b k (D b)); [ | exact (IH _ _ _ _ _ _ H) ].
+    + destruct (finer_b k (D b));
+        [ | destruct (push_sort D k l n) as [[s1 D1] n1] eqn:E1; inversion H; subst; exact (IH _ _ _ _ _ _ E1) ].
       destruct (push_sort (upd D (ea n) k) k l (S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst; clear H. exact (IH _ _ _ _ _ _ E).
 Qed.

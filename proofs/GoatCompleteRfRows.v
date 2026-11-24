@@ -108,7 +108,8 @@ Proof.
   - inversion H; subst. left. reflexivity.
   - destruct (finer_b (D b) k).
     + exact (IH _ _ _ _ _ _ H y).
-    + destruct (finer_b k (D b)); [ | exact (IH _ _ _ _ _ _ H y) ].
+    + destruct (finer_b k (D b));
+        [ | destruct (push_sort D k l n) as [[s1 D1] n1] eqn:E1; inversion H; subst; exact (IH _ _ _ _ _ _ E1 y) ].
       destruct (push_sort (upd D (ea n) k) k l (S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst.
       destruct (IH _ _ _ _ _ _ E y) as [Hy|Hy]; [ | right; exact Hy ].
@@ -147,7 +148,11 @@ Proof.
   - inversion H; subst. reflexivity.
   - destruct (finer_b (D b) k) eqn:Efb.
     + exact (IH _ _ _ _ _ _ H x Hf Hx).
-    + destruct (finer_b k (D b)); [ | exact (IH _ _ _ _ _ _ H x Hf Hx) ].
+    + destruct (finer_b k (D b));
+        [ | destruct (push_sort D k l n) as [[s1 D1] n1] eqn:E1; inversion H; subst;
+            change (apT s1 (sT (sbT b typ_Float) x) = typ_Var x); cbn [sT sbT];
+            destruct (Atom.eq_dec x b) as [->|Hne];
+            [ rewrite Efb in Hf; discriminate Hf | exact (IH _ _ _ _ _ _ E1 x Hf Hx) ] ].
       destruct (push_sort (upd D (ea n) k) k l (S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst.
       change (apT s1 (sT (sbT b (typ_Var (ea n))) x) = typ_Var x).
@@ -583,10 +588,11 @@ Proof.
 Qed.
 
 Lemma RenN_push : forall l D k n sp D' n',
-  push_sort D k l n = (sp, D', n') -> (forall c, In c l -> old n c) -> RenN n n' sp.
+  push_sort D k l n = (sp, D', n') -> (forall c, In c l -> old n c) -> allcmp D k l -> RenN n n' sp.
 Proof.
-  intros l D k n sp D' n' H Hold.
-  destruct (push_sort_facts _ _ _ _ _ _ _ H Hold) as (P1 & P2 & P3 & P4 & _ & _).
+  intros l D k n sp D' n' H Hold Hall.
+  destruct (push_sort_facts _ _ _ _ _ _ _ H Hold) as (P1 & P2 & P3 & P4' & _ & _).
+  pose proof (P4' Hall) as P4.
   refine (conj P2 (conj _ _)).
   - intros x _. destruct (P4 x) as (y & Ey & _). exists y. split; [ exact Ey | ].
     exact (push_sort_new _ _ _ _ _ _ _ H Hold x y Ey).
@@ -754,7 +760,8 @@ Proof.
   destruct (bind_prop_unfold D a T n s D' n' E) as (sp & D1 & n1 & sr & Ep & Er & Es).
   assert (Holdl : forall b, In b (AtomSetImpl.elements (ftv_typ T)) -> old n b)
     by (intros b Hb; apply (proj1 AT); apply in_elts; exact Hb).
-  assert (R1 : RenN n n1 sp) by exact (RenN_push _ _ _ _ _ _ _ Ep Holdl).
+  assert (R1 : RenN n n1 sp) by exact (RenN_push _ _ _ _ _ _ _ Ep Holdl
+                                          (fun b _ => cmpb_any_eq _ _ HaE)).
   assert (Holdr : forall q, In q (AtomSetImpl.elements (frv_typ T)) -> old n1 q).
   { intros q Hq. exact (old_le n n1 q (proj1 R1) (proj2 AT q (proj1 (in_elts _ _) Hq))). }
   assert (R2 : RenN n1 n' sr) by exact (RenN_push_r _ _ _ _ _ _ _ Er Holdr).
@@ -984,7 +991,8 @@ Proof.
   { intros c Hc. apply in_elts in Hc.
     rewrite (proj2 (ftv_rren sq Hrsq)), (proj2 (ftv_rren sr Hrsr)) in Hc.
     exact (old_le n n0 c (Nat.le_trans _ _ _ (proj1 Rsr) (proj1 Rsq)) (proj1 AR c Hc)). }
-  assert (Rsp : RenN n0 n' sp) by exact (RenN_push _ _ _ _ _ _ _ Epp Holdp).
+  assert (Rsp : RenN n0 n' sp) by exact (RenN_push _ _ _ _ _ _ _ Epp Holdp
+                                           (fun b _ => cmpb_any_eq _ _ (proj1 Hae0 r))).
   assert (Hae' : Drow D') by exact (push_sort_drow _ _ _ _ _ _ _ Epp Hae0 (proj1 Hae0 r)).
   assert (Rsr' : RenN n n1 (scomp sr sid)) by exact (RenN_comp _ _ _ _ _ (RenN_id n) Rsr).
   assert (Rspq : RenN n1 n' (scomp sp sq)) by exact (RenN_comp _ _ _ _ _ Rsq Rsp).

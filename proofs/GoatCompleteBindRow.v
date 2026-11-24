@@ -240,7 +240,8 @@ Proof.
   - inversion H; subst. reflexivity.
   - destruct (finer_b (D b) k).
     + exact (IH _ _ _ _ _ _ H).
-    + destruct (finer_b k (D b)); [ | exact (IH _ _ _ _ _ _ H) ].
+    + destruct (finer_b k (D b));
+        [ | destruct (push_sort D k l n) as [[s1 D1] n1] eqn:E1; inversion H; subst; exact (IH _ _ _ _ _ _ E1) ].
       destruct (push_sort (upd D (ea n) k) k l (Datatypes.S n)) as [[s1 D1] n1] eqn:E.
       inversion H; subst. exact (IH _ _ _ _ _ _ E).
 Qed.
@@ -468,7 +469,10 @@ Proof.
     by (intros b Hb; apply Hold; apply in_elts; exact Hb).
   destruct (push_sort D0 (rk_sort (drk D0 r)) (AtomSetImpl.elements (ftv_row Rx)) n0)
     as [[sp D1] n1] eqn:Ep.
-  destruct (push_sort_facts _ _ _ _ _ _ _ Ep Holdl) as (P1 & P2 & P3 & P4 & P5 & P6).
+  destruct (push_sort_facts _ _ _ _ _ _ _ Ep Holdl) as (P1 & P2 & P3 & P4' & P5 & P6').
+  assert (Hall : allcmp D0 (rk_sort (drk D0 r)) (AtomSetImpl.elements (ftv_row Rx)))
+    by (intros b Hb; exact (Hcb b (proj1 (in_elts _ _) Hb))).
+  pose proof (P4' Hall) as P4. pose proof (P6' Hall) as P6.
   pose proof (push_sort_dok _ _ _ _ _ _ _ Ep Hd) as Hd1.
   pose proof (push_sort_drk _ _ _ _ _ _ _ Ep) as Hdrk.
   destruct (push_sort_complete _ _ _ _ Sg0 DT Hd HK
@@ -487,7 +491,7 @@ Proof.
   rewrite Hocc. cbn iota. rewrite Hdrk.
   assert (Hsat : rsat D1 (rk_sort (drk D0 r)) (apR sp Rx)).
   { apply (proj2 (sat_ren_mut D1 DT Sg0 sp (rk_sort (drk D0 r))) Rx Hpf Hfld).
-    - intros x Hx. destruct (P6 x (proj2 (in_elts _ _) Hx) (Hcb x Hx)) as (y & Ey & Hf).
+    - intros x Hx. destruct (P6 x (proj2 (in_elts _ _) Hx)) as (y & Ey & Hf).
       exists y. split; [ exact Ey | apply finer_b_iff; exact Hf ].
     - intros q Hq. exists q. split; [ apply P1 | ]. rewrite Hdrk. exact (Hrf q Hq).
     - exact Hrsat. }
