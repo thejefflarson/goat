@@ -66,21 +66,32 @@ Proof.
         apply rfS_comp; [ exact (IH _ _ _ _ _ _ E) | apply rfS_sbT; exact I ].
 Qed.
 
+Lemma frv_live_rf : forall T, rf T -> forall q, q `notin` frv_live T.
+Proof.
+  induction T; simpl; intros H q; try contradiction; try fsetdec.
+  destruct H as [H1 H2]. specialize (IHT1 H1 q). specialize (IHT2 H2 q). fsetdec.
+Qed.
+
+Lemma forced_rf : forall k T, rf T -> forced k T = nil.
+Proof. intros k T. destruct T; simpl; intros H; try contradiction; reflexivity. Qed.
+
 Lemma bind_prop_rf : forall D a T n s D' n',
   bind_prop D a T n = Some (s, D', n') -> rf T -> drk D' = drk D /\ rfS s.
 Proof.
   intros D a T n s D' n' H HT. unfold bind_prop in H.
-  destruct (occT a T); [ discriminate | ].
-  destruct (push_sort D (D a) (AtomSetImpl.elements (ftv_typ T)) n) as [[sp D1] n1] eqn:Ep.
-  pose proof (proj1 (proj2 (proj2 (rf_facts T HT)))) as Hfrv.
-  rewrite (elements_empty_of _ Hfrv) in H. cbn [push_sort_r] in H.
-  destruct (occT a (apT sid (apT sp T))); [ discriminate | ].
-  destruct (sat_b D1 (D1 a) (apT sid (apT sp T))); [ | discriminate ].
-  inversion H; subst; clear H.
-  split.
-  - exact (push_sort_drk _ _ _ _ _ _ _ Ep).
-  - apply rfS_comp; [ apply rfS_sbT | apply rfS_comp; [ apply rfS_id | exact (push_sort_rfS _ _ _ _ _ _ _ Ep) ] ].
-    apply rfS_apT; [ apply rfS_id | apply rfS_apT; [ exact (push_sort_rfS _ _ _ _ _ _ _ Ep) | exact HT ] ].
+  destruct (bind_prop0 D a T n) as [[[s0 D0] n0]|] eqn:E0.
+  - inversion H; subst; clear H. unfold bind_prop0 in E0.
+    destruct (occT a T); [ discriminate | ].
+    destruct (push_sort D (D a) (AtomSetImpl.elements (ftv_live T)) n) as [[sp D1] n1] eqn:Ep.
+    rewrite (elements_empty_of _ (frv_live_rf T HT)) in E0. cbn [push_sort_r] in E0.
+    destruct (occT a (apT sid (apT sp T))); [ discriminate | ].
+    destruct (sat_b D1 (D1 a) (apT sid (apT sp T))); [ | discriminate ].
+    inversion E0; subst; clear E0.
+    split.
+    + exact (push_sort_drk _ _ _ _ _ _ _ Ep).
+    + apply rfS_comp; [ apply rfS_sbT | apply rfS_comp; [ apply rfS_id | exact (push_sort_rfS _ _ _ _ _ _ _ Ep) ] ].
+      apply rfS_apT; [ apply rfS_id | apply rfS_apT; [ exact (push_sort_rfS _ _ _ _ _ _ _ Ep) | exact HT ] ].
+  - destruct (occT a T); [ discriminate | ]. rewrite (forced_rf _ _ HT) in H. discriminate H.
 Qed.
 
 (* A record-free unification run changes no row kind and builds a record-free
