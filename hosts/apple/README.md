@@ -20,6 +20,8 @@ hosts/apple/
     CanvasHostView.swift   NSView / UIView that draws the frames and forwards keys and pointer
     CodeEditor.swift       NSTextView / UITextView with smart quotes off, error highlights
     EditorScreen.swift     editor + canvas + problems panel + toolbar
+  Player/PlayerApp.swift  GoatPlayer-macOS: the engine and canvas without the editor, for exported apps
+                         (also carries AppIcon.icns from native/appkit, the goat head)
   project.yml            XcodeGen spec; the .xcodeproj is generated, not committed
   scripts/stage-engine.sh builds engine/ (goat_apple) into Frameworks/GoatEngine.xcframework
   engine/                the native goat engine behind include/goat_engine.h (ADR 0043)
@@ -143,11 +145,46 @@ engine's phase as its accessibility value (`finished` once a run-once program dr
    Build Configuration). The first launch needs the developer certificate trusted on the phone
    (Settings > General > VPN & Device Management) and Developer Mode on.
 
+## Export App…
+
+On macOS, File > Export App… saves the program as `Name.app`. It is enabled once the program
+has run without problems and is unchanged since. `GoatPlayer.app` is built beside Goat and
+embedded in Goat's `Contents/Resources`; the export copies it, writes `program.goat` to its
+Resources, sets `CFBundleName`, `CFBundleDisplayName` and `CFBundleIdentifier`
+(`local.goat.<slug>`; `CFBundleExecutable` stays `GoatPlayer`), and signs the copy ad hoc,
+last, because the signature seals every file. The player reads `program.goat` at launch and
+titles its window with the app's name; a program error shows as one line under the canvas.
+Like `goat build --native`, an export replaces an app already at that path only if its bundle
+identifier starts with `local.goat.`, and refuses anything else. The save panel's security
+scope stays open until `codesign` exits.
+
+The exported app carries the same default icon as `goat build --native` bundles
+(`native/appkit/AppIcon.icns`, named by `CFBundleIconFile` in `GoatPlayer`'s Info.plist).
+
+File > Export Native App… appears when the Command Line Tools are installed
+(`/Library/Developer/CommandLineTools/usr/bin/clang`). It does not build anything: the sandbox
+forbids the app from running `xcrun`, `clang` or a `goat` binary, and ADR 0043 keeps the sandbox,
+so the item explains this and shows the command to run in Terminal:
+`goat build --native Name.goat -o Name.app`. A one-click native export would need a compiler
+helper outside the sandbox (possible only with Developer ID distribution) or dropping the
+sandbox; both wait on the distribution decision (ADR 0043).
+
+## Play mode on iOS
+
+The toolbar's Play button runs the program and replaces the editor with the canvas alone, edge to
+edge on black, with the status bar and home indicator hidden. Touches reach the program. A Close
+button appears on any touch and fades after three seconds; swiping down also leaves. Leaving does
+not stop the program, so the editor shows the same picture and Stop is one tap away. macOS has no
+Play button: its canvas already sits beside the editor.
+
 ## App Store 2.5.2
 
-The app never downloads or generates code outside what the user types: source is
-always visible and editable in the native editor, including while a program runs,
-and nothing exports a program as a separate app.
+Guideline 2.5.2 forbids an app from downloading or executing code that changes the app's
+features. Goat runs only the program the user typed: source is always visible and editable in the
+native editor, including while a program runs, and the engine never fetches anything (the apps
+have no network entitlement). Programs are interpreted in this process (Pulley), so the apps need
+no JIT entitlement. iOS has no export. On macOS, Export App… copies a player that runs the same
+program the user wrote, to a file the user chose.
 
 Game-style programs read keys from the canvas, so click the picture before using
 the arrow keys.

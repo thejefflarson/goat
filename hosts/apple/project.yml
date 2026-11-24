@@ -71,6 +71,12 @@ targets:
     sources: [App]
     dependencies:
       - target: GoatKit-macOS
+      # Export App… copies this template out of Contents/Resources.
+      - target: GoatPlayer-macOS
+        embed: true
+        link: false
+        copy:
+          destination: resources
     preBuildScripts:
       - name: Check staged engine
         script: '"$SRCROOT/scripts/check-staged.sh"'
@@ -109,12 +115,42 @@ targets:
             UTTypeTagSpecification:
               public.filename-extension: [goat]
               public.mime-type: [text/x-goat]
+  # The exported app: the engine and the canvas without the editor. It runs
+  # Contents/Resources/program.goat; Export App… copies it and writes that file.
+  GoatPlayer-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - Player
+      # The icon `goat build --native` bundles carry.
+      - path: ../../native/appkit/AppIcon.icns
+        buildPhase: resources
+    dependencies:
+      - target: GoatKit-macOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.goat.player
+        PRODUCT_NAME: GoatPlayer
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Info-Player.plist
+      properties:
+        CFBundleDisplayName: GoatPlayer
+        CFBundleIconFile: AppIcon
+        LSMinimumSystemVersion: "13.0"
+        NSHighResolutionCapable: true
   # A windowless app that runs the engine tests inside the same sandbox and
   # signing settings as Goat-macOS, without ever showing the editor.
   GoatTestHost-macOS:
     type: application
     platform: macOS
     sources: [TestHost]
+    dependencies:
+      - target: GoatPlayer-macOS
+        embed: true
+        link: false
+        copy:
+          destination: resources
     entitlements:
       path: GoatTestHost-macOS.entitlements
       properties: *sandbox
