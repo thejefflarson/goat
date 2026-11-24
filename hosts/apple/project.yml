@@ -120,17 +120,25 @@ targets:
   GoatPlayer-macOS:
     type: application
     platform: macOS
-    sources: [Player]
+    sources:
+      - Player
+      # The icon `goat build --native` bundles carry.
+      - path: ../../native/appkit/AppIcon.icns
+        buildPhase: resources
     dependencies:
       - target: GoatKit-macOS
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: local.goat.player
         PRODUCT_NAME: GoatPlayer
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: GoatPlayer
-        INFOPLIST_KEY_LSMinimumSystemVersion: "13.0"
-        INFOPLIST_KEY_NSHighResolutionCapable: YES
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Info-Player.plist
+      properties:
+        CFBundleDisplayName: GoatPlayer
+        CFBundleIconFile: AppIcon
+        LSMinimumSystemVersion: "13.0"
+        NSHighResolutionCapable: true
   # A windowless app that runs the engine tests inside the same sandbox and
   # signing settings as Goat-macOS, without ever showing the editor.
   GoatTestHost-macOS:

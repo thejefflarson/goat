@@ -2,6 +2,58 @@
 #if canImport(GoatEngine)
 import SwiftUI
 
+#if os(iOS)
+/// Play mode: the canvas edge to edge on black, with a Close button that shows on
+/// a touch and fades after a few seconds; swiping down closes too. The program
+/// keeps running behind it, so leaving Play returns to the editor with the same
+/// picture, not a restart.
+private struct PlayCanvas: View {
+    let engine: Engine
+    let close: () -> Void
+    @State private var closeVisible = true
+    @State private var fade: Task<Void, Never>?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.black
+            CanvasView(
+                engine: engine, margin: CGColor(gray: 0, alpha: 1), onTouchDown: reveal, onSwipeDown: close
+            )
+            .accessibilityLabel("drawing")
+            .accessibilityValue(engine.phase.accessibilityValue)
+            .accessibilityIdentifier("canvas")
+            if closeVisible {
+                Button(action: close) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.largeTitle)
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .black.opacity(0.6))
+                        .padding(16)
+                }
+                .accessibilityLabel("Close")
+                .accessibilityIdentifier("closePlay")
+                .transition(.opacity)
+            }
+        }
+        .ignoresSafeArea()
+        .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
+        .onAppear(perform: reveal)
+        .onDisappear { fade?.cancel() }
+    }
+
+    private func reveal() {
+        withAnimation { closeVisible = true }
+        fade?.cancel()
+        fade = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            withAnimation { closeVisible = false }
+        }
+    }
+}
+#endif
+
 /// The editor window: native source editor and Run control beside the
 /// engine's canvas, with problems and printed output below. The editor stays
 /// editable while a program runs.
@@ -10,6 +62,9 @@ public struct EditorScreen: View {
     private let name: String
     @StateObject private var engine = Engine()
     @State private var ranSource: String?
+    #if os(iOS)
+    @State private var playing = false
+    #endif
 
     public init(document: Binding<GoatDocument>, name: String = "Untitled") {
         _document = document
@@ -23,6 +78,19 @@ public struct EditorScreen: View {
     }
 
     public var body: some View {
+        #if os(iOS)
+        if playing {
+            PlayCanvas(engine: engine) { playing = false }
+                .toolbar(.hidden, for: .navigationBar)
+        } else {
+            editor
+        }
+        #else
+        editor
+        #endif
+    }
+
+    private var editor: some View {
         VStack(spacing: 0) {
             GeometryReader { geometry in
                 let layout = geometry.size.width > geometry.size.height
@@ -61,6 +129,15 @@ public struct EditorScreen: View {
                 }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(engine.phase != .running)
+                #if os(iOS)
+                Button {
+                    engine.run(source: document.text)
+                    playing = true
+                } label: {
+                    Label("Play", systemImage: "rectangle.expand.vertical")
+                }
+                .disabled(!engine.phase.canRun)
+                #endif
             }
         }
     }

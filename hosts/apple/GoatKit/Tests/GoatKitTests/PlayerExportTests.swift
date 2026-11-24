@@ -90,6 +90,9 @@ final class PlayerExportTests: XCTestCase {
         XCTAssertTrue(
             FileManager.default.fileExists(
                 atPath: out.appendingPathComponent("Contents/Frameworks/GoatKit.framework").path))
+        XCTAssertEqual(try info(of: out)["CFBundleIconFile"] as? String, "AppIcon")
+        let icon = try Data(contentsOf: out.appendingPathComponent("Contents/Resources/AppIcon.icns"))
+        XCTAssertEqual(icon.prefix(4), Data("icns".utf8))
     }
 
     func testAForeignAppAtTheDestinationIsRefusedAndLeftAlone() throws {

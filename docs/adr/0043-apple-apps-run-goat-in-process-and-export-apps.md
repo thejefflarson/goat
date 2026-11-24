@@ -219,3 +219,26 @@ Fallback decision: the `apple-codesign` crate (in-process signing) is not
 needed and is not adopted. It would add a macOS-only dependency and a Rust-to-
 Swift seam for a task `/usr/bin/codesign` already does. It remains the fallback
 if a future macOS release blocks a sandboxed `Process` launch of `codesign`.
+
+## Amendment (2026-11-24): what shipped
+
+- **iOS document browser.** iOS hosts its own `UIDocumentBrowserViewController`
+  instead of `DocumentGroup`. **Create Document** writes `Untitled.goat` into the
+  app's local Documents folder and opens it in place. `DocumentGroup` moved new
+  files through the Files import step, which failed with
+  `com.apple.DocumentManager` error 1 and stalled on iCloud Drive. macOS keeps
+  `DocumentGroup`.
+- **Export App… is enabled after a clean run with the text unchanged since.** A
+  program edited after its last run, or one that reported diagnostics, cannot be
+  exported, so the player always carries a program the user has seen run.
+- **Native export from the editor is deferred to the distribution decision.**
+  The sandbox forbids running `xcrun`, `clang` or a `goat` binary, so the editor
+  detects the Command Line Tools and shows the `goat build --native` command to
+  run in Terminal. A one-click native export needs a compiler helper outside the
+  sandbox, which only Developer ID distribution permits, or dropping the sandbox
+  (decision 7).
+- **Exported players carry the default icon** that `goat build --native`
+  bundles use, `AppIcon.icns`.
+- **Play mode (decision 6).** Play runs the program and shows only its canvas,
+  full screen. Leaving Play keeps the program running, so the editor shows the
+  same picture, and Stop stays one tap away. macOS has no Play button.
