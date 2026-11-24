@@ -61,6 +61,11 @@ launches the Debug app with `-goat-ui-smoke`, which opens the editor on the star
 without the document browser, taps Run, and waits for the canvas (identifier `canvas`) to
 report the value `finished`.
 
+`PlayModeTests` (same file) taps Play on iOS, expects the canvas to fill the window with the editor
+gone, and leaves by the Close button and by swiping down. Play runs the program and shows only its
+canvas on black; leaving keeps the program running, so the editor shows the same picture. macOS has
+no Play button (its canvas already sits beside the editor).
+
 `scripts/check-doc-types.sh` (run in CI after `xcodegen generate`) fails if the
 document type, the exported UTI and `UTType.goatSource` stop naming the same identifier.
 

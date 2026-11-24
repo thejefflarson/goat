@@ -27,12 +27,18 @@ enum CanvasLayout {
         return CGPoint(x: (point.x - origin.x) / scale, y: (point.y - origin.y) / scale)
     }
 
-    /// Paints `shapes` onto a white page in a context with y down.
-    static func draw(_ shapes: [Shape], in context: CGContext, bounds: CGSize) {
-        context.setFillColor(CGColor(gray: 1, alpha: 1))
+    /// Paints `shapes` onto a white page in a context with y down; `margin` fills
+    /// whatever the page does not cover.
+    static func draw(
+        _ shapes: [Shape], in context: CGContext, bounds: CGSize, margin: CGColor = CGColor(gray: 1, alpha: 1)
+    ) {
+        context.setFillColor(margin)
         context.fill(CGRect(origin: .zero, size: bounds))
         let (origin, scale) = fit(bounds)
         guard scale > 0 else { return }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(
+            CGRect(origin: origin, size: CGSize(width: Painter.size.width * scale, height: Painter.size.height * scale)))
         context.saveGState()
         defer { context.restoreGState() }
         context.translateBy(x: origin.x, y: origin.y)
@@ -117,6 +123,8 @@ final class CanvasHostView: UIView {
     private let frames: FrameSlot
     var onKey: (String, Bool) -> Void = { _, _ in }
     var onPointer: (PointerKind, Double, Double) -> Void = { _, _, _ in }
+    var onSwipeDown: (() -> Void)?
+    var margin = CGColor(gray: 1, alpha: 1)
 
     init(frames: FrameSlot) {
         self.frames = frames
@@ -124,7 +132,13 @@ final class CanvasHostView: UIView {
         contentMode = .redraw
         isOpaque = true
         frames.onUndrawn { [weak self] in self?.setNeedsDisplay() }
+        let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swiped))
+        swipe.direction = .down
+        swipe.cancelsTouchesInView = false
+        addGestureRecognizer(swipe)
     }
+
+    @objc private func swiped() { onSwipeDown?() }
 
     required init?(coder: NSCoder) { fatalError("not loaded from a nib") }
 
@@ -132,7 +146,7 @@ final class CanvasHostView: UIView {
 
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
-        CanvasLayout.draw(frames.take(), in: context, bounds: bounds.size)
+        CanvasLayout.draw(frames.take(), in: context, bounds: bounds.size, margin: margin)
     }
 
     private static let named: [UIKeyboardHIDUsage: String] = [

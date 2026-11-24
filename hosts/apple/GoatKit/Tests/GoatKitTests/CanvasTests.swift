@@ -42,6 +42,19 @@ final class CanvasLayoutTests: XCTestCase {
         XCTAssertEqual(CanvasLayout.canvasPoint(CGPoint(x: 0, y: 150), in: size), .zero)
     }
 
+    func testTheMarginAroundThePageTakesTheGivenColor() throws {
+        let size = CGSize(width: 800, height: 900)
+        let context = try XCTUnwrap(
+            CGContext(
+                data: nil, width: 800, height: 900, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        CanvasLayout.draw([], in: context, bounds: size, margin: CGColor(gray: 0, alpha: 1))
+        let data = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        let stride = context.bytesPerRow
+        XCTAssertEqual(data[0], 0)
+        XCTAssertEqual(data[450 * stride + 400 * 4], 255)
+    }
+
     func testAnEmptyViewMapsEverythingToTheOrigin() {
         XCTAssertEqual(CanvasLayout.canvasPoint(CGPoint(x: 5, y: 5), in: .zero), .zero)
     }
