@@ -11,6 +11,9 @@
 /// The C interface between the Swift host and [`crate::session`].
 pub const HEADER: (&str, &str) = ("goat_host.h", include_str!("../appkit/goat_host.h"));
 
+/// The default icon of an exported `.app`, an `.icns` file.
+pub const ICON: &[u8] = include_bytes!("../appkit/AppIcon.icns");
+
 /// The Swift files of the host, by file name.
 pub const SWIFT: [(&str, &str); 7] = [
     (
