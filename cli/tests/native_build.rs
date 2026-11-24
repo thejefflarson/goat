@@ -383,6 +383,50 @@ mod window_host {
         );
         assert!(!dir.path().join("Spiral.app").exists());
     }
+
+    #[test]
+    fn only_a_bundle_goat_made_is_replaced() {
+        needs_clang!();
+        if !codesign_present() {
+            eprintln!("skipped: codesign is not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bounce = "../examples/canvas/bounce.goat";
+        let ok = |out: &Output| out.status.success();
+        assert!(ok(&build_app(dir.path(), bounce, "Game.app")));
+        let again = build_app(dir.path(), bounce, "Game.app");
+        assert!(ok(&again), "{}", String::from_utf8_lossy(&again.stderr));
+
+        let foreign = dir.path().join("Foreign.app");
+        std::fs::create_dir_all(foreign.join("Contents")).unwrap();
+        std::fs::write(foreign.join("keep"), "mine").unwrap();
+        std::fs::write(
+            foreign.join("Contents/Info.plist"),
+            "<plist><dict><key>CFBundleIdentifier</key><string>com.apple.Safari</string></dict></plist>",
+        )
+        .unwrap();
+        let bare = dir.path().join("Bare.app");
+        std::fs::create_dir(&bare).unwrap();
+        std::fs::write(bare.join("keep"), "mine").unwrap();
+        let target = dir.path().join("Target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("keep"), "mine").unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join("Link.app")).unwrap();
+
+        for (name, kept) in [
+            ("Foreign.app", foreign.join("keep")),
+            ("Bare.app", bare.join("keep")),
+            ("Link.app", target.join("keep")),
+        ] {
+            let refused = build_app(dir.path(), bounce, name);
+            let error = String::from_utf8_lossy(&refused.stderr);
+            assert!(!ok(&refused), "{name} was replaced");
+            assert!(error.contains("wasn't made by goat"), "{error}");
+            assert_eq!(std::fs::read_to_string(kept).unwrap(), "mine", "{name}");
+        }
+        assert!(dir.path().join("Link.app").is_symlink());
+    }
 }
 
 #[test]

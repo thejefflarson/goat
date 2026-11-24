@@ -214,6 +214,30 @@ pub fn bundle(_: &str, _: &str, _: &Path) -> Result<(), String> {
     Err("goat build --native writes .app bundles on macOS only".to_string())
 }
 
+/// Removes the bundle at `app` if goat made it, and refuses anything else there
+/// (another app, a file, a symlink) so a mistyped `-o` cannot delete it. A
+/// symlink is never followed.
+#[cfg(target_os = "macos")]
+fn clear_previous_bundle(app: &Path) -> Result<(), String> {
+    let Ok(meta) = std::fs::symlink_metadata(app) else {
+        return Ok(());
+    };
+    let made_by_goat = meta.is_dir()
+        && std::fs::read_to_string(app.join("Contents/Info.plist")).is_ok_and(|plist| {
+            plist
+                .split_once("<key>CFBundleIdentifier</key>")
+                .and_then(|(_, rest)| rest.split_once("<string>"))
+                .is_some_and(|(_, id)| id.starts_with("local.goat."))
+        });
+    if !made_by_goat {
+        return Err(format!(
+            "{} already exists and wasn't made by goat; choose another name or remove it yourself",
+            app.display()
+        ));
+    }
+    std::fs::remove_dir_all(app).map_err(|e| format!("cannot replace {}: {e}", app.display()))
+}
+
 /// Writes the interactive program `ll` as the app bundle `app`: the executable,
 /// an `Info.plist`, the default icon, all signed ad hoc so macOS will run it.
 #[cfg(target_os = "macos")]
@@ -237,10 +261,7 @@ pub fn bundle(ll: &str, source: &str, app: &Path) -> Result<(), String> {
             "goat build --native needs {CODESIGN} to sign a .app, which is missing"
         ));
     }
-    if app.is_dir() {
-        std::fs::remove_dir_all(app)
-            .map_err(|e| format!("cannot replace {}: {e}", app.display()))?;
-    }
+    clear_previous_bundle(app)?;
     let (macos, resources) = (app.join("Contents/MacOS"), app.join("Contents/Resources"));
     for dir in [&macos, &resources] {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
