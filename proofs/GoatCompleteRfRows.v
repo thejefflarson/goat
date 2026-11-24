@@ -738,7 +738,7 @@ Proof.
   assert (Hlc : lcb 0 T = true) by exact (proj1 pf_lcb T HT 0).
   assert (Hfld : fld DT Sg (D a) T) by exact (proj1 (ps_fld Sg (D a) HaE) T HT PT).
   destruct (bind_prop_sorted_complete false D DT Sg a T n Hd Hk Ha Hocc (proj1 AT) (proj2 AT) HT Hlc Hfld Heq)
-    as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr).
+    as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr & _).
   destruct (bind_prop_unfold D a T n s D' n' E) as (sp & D1 & n1 & sr & Ep & Er & Es).
   assert (Holdl : forall b, In b (AtomSetImpl.elements (ftv_typ T)) -> old n b)
     by (intros b Hb; apply (proj1 AT); apply in_elts; exact Hb).
