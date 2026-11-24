@@ -472,7 +472,7 @@ Proof.
   pose proof (push_sort_drk _ _ _ _ _ _ _ Ep) as Hdrk.
   destruct (push_sort_complete _ _ _ _ Sg0 DT Hd HK
               (fun b Hb => Hreach_t b (proj1 (in_elts _ _) Hb)) Holdl sp D1 n1 Ep)
-    as (S2 & K2 & R2 & F2).
+    as (S2 & K2 & R2 & F2 & _).
   assert (Hvp : forall x, exists y, sT sp x = typ_Var y)
     by (intros x; destruct (P4 x) as (y & E & _); exists y; exact E).
   assert (Hsrx : forall q, exists q', sR sp q = row_Var q') by (intros q; exists q; apply P1).

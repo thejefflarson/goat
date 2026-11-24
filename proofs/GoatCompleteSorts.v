@@ -40,17 +40,42 @@ Lemma dec_diff : forall (A : Type) (a b : atom) (X Y : A),
   a <> b -> (if Atom.eq_dec a b then X else Y) = Y.
 Proof. intros. destruct (Atom.eq_dec a b); [ exfalso; congruence | reflexivity ]. Qed.
 
+(* The extension [S2] sends each atom to a type [Sg] sends some atom to: it
+   invents no type, so a bound on the atoms of [Sg]'s images bounds [S2]'s. *)
+Definition Img (Sg S2 : sub) : Prop := forall y, exists z, sT S2 y = sT Sg z.
+
+Lemma Img_refl : forall Sg, Img Sg Sg.
+Proof. intros Sg y. exists y. reflexivity. Qed.
+
+Lemma Img_trans : forall S1 S2 S3, Img S1 S2 -> Img S2 S3 -> Img S1 S3.
+Proof.
+  intros S1 S2 S3 H12 H23 y. destruct (H23 y) as [z Hz]. destruct (H12 z) as [w Hw].
+  exists w. rewrite Hz. exact Hw.
+Qed.
+
+Lemma Img_supd : forall Sg a b, Img Sg (supd Sg a (sT Sg b)).
+Proof.
+  intros Sg a b y. cbn [supd sT]. destruct (Atom.eq_dec y a) as [_|_]; [ exists b | exists y ]; reflexivity.
+Qed.
+
+Lemma Img_bound : forall (P : typ -> Prop) Sg S2,
+  Img Sg S2 -> (forall z, P (sT Sg z)) -> forall y, P (sT S2 y).
+Proof. intros P Sg S2 H HP y. destruct (H y) as [z ->]. exact (HP z). Qed.
+
+Lemma Img_sT : forall Sg S2, sT S2 = sT Sg -> Img Sg S2.
+Proof. intros Sg S2 H y. exists y. rewrite H. reflexivity. Qed.
+
 Lemma push_sort_complete : forall l D n k Sg D1,
   DOk D n -> KR D D1 Sg ->
   (forall b, In b l -> sat D1 k (sT Sg b)) ->
   (forall b, In b l -> forall m, n <= m -> b <> ea m) ->
   forall sp D' n', push_sort D k l n = (sp, D', n') ->
   exists S2, KR D' D1 S2 /\ sR S2 = sR Sg /\
-    (forall x, (forall m, n <= m -> x <> ea m) -> sT Sg x = apT S2 (sT sp x)).
+    (forall x, (forall m, n <= m -> x <> ea m) -> sT Sg x = apT S2 (sT sp x)) /\ Img Sg S2.
 Proof.
   induction l as [|b l IH]; intros D n k Sg D1 Hd HK Hs Hnew sp D' n' E.
   - cbn [push_sort] in E. inversion E; subst. exists Sg.
-    split; [ exact HK | split; [ reflexivity | intros x _; reflexivity ] ].
+    split; [ exact HK | split; [ reflexivity | split; [ intros x _; reflexivity | apply Img_refl ] ] ].
   - cbn [push_sort] in E. destruct (finer_b (D b) k) eqn:Ef.
     + exact (IH D n k Sg D1 Hd HK (fun b' H => Hs b' (or_intror H))
                (fun b' H => Hnew b' (or_intror H)) sp D' n' E).
@@ -73,8 +98,8 @@ Proof.
       assert (Hnew' : forall b', In b' l -> forall m, Datatypes.S n <= m -> b' <> ea m).
       { intros b' H m Hm. apply (Hnew b' (or_intror H)). lia. }
       destruct (IH (upd D (ea n) k) (Datatypes.S n) k S' D1 (DOk_upd D n k Hd) HK' Hs' Hnew'
-                  s D'' n'' E1) as (S2 & H1 & H2 & H3).
-      exists S2. split; [ exact H1 | split; [ rewrite H2; reflexivity | ] ].
+                  s D'' n'' E1) as (S2 & H1 & H2 & H3 & H5).
+      exists S2. split; [ exact H1 | split; [ rewrite H2; reflexivity | split; [ | exact (Img_trans _ _ _ (Img_supd Sg (ea n) b) H5) ] ] ].
       intros x Hx.
       assert (Hn : forall m, Datatypes.S n <= m -> ea n <> ea m)
         by (intros m Hm Heq; apply ea_inj in Heq; lia).

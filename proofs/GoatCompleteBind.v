@@ -521,7 +521,7 @@ Theorem bind_prop_sorted_complete : forall (D D1 : denv) Sg a T n,
   exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
     n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teqX bx D1 (sT Sg x) (apT S2 (sT s x))) /\
-    (forall r, old n r -> sR Sg r = apR S2 (sR s r)).
+    (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2.
 Proof.
   intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hcb Hcq Hpf Hlc Hfld Heq.
   assert (Hsa : sat D1 (D a) (apT Sg T)).
@@ -543,7 +543,7 @@ Proof.
   pose proof (push_sort_dok _ _ _ _ _ _ _ Ep Hd) as Hd1.
   destruct (push_sort_complete _ _ _ _ Sg D1 Hd HK
               (fun b Hb => Hreach_t b (proj1 (in_elts _ _) Hb)) Holdl sp D1' n1 Ep)
-    as (S2a & K1 & R1 & F1).
+    as (S2a & K1 & R1 & F1 & I1).
   rewrite (P5 a Ha). cbn match.
   destruct (push_sort_r D1' (D a) (AtomSetImpl.elements (frv_typ T)) n1) as [[sr D2] n2] eqn:Er.
   assert (Holdr1 : forall q, In q (AtomSetImpl.elements (frv_typ T)) -> old n1 q).
@@ -599,7 +599,7 @@ Proof.
       pose proof (Rq q (fun m Hm => Hoq q Hq m ltac:(lia))) as E. rewrite R1 in E.
       symmetry. exact E. }
   eexists. exists D2, n2, S2b. split; [ reflexivity | ]. split; [ exact K2 | ].
-  split; [ lia | split; [ exact (push_sort_r_dok _ _ _ _ _ _ _ Er Hd1) | split ] ].
+  split; [ lia | split; [ exact (push_sort_r_dok _ _ _ _ _ _ _ Er Hd1) | split; [ | split ] ] ].
   - intros x Hx. destruct (Atom.eq_dec x a) as [->|Hne].
     + change (teqX bx D1 (sT Sg a) (apT S2b (apT (sbT a T') (apT sr (sT sp a))))).
       rewrite (P3 a Hnl), Hrv, Hsv. cbn [sT sbT]. rewrite dec_same.
@@ -617,6 +617,7 @@ Proof.
     rewrite Hrr, Hb.
     pose proof (Rq r (fun m Hm => Hr m ltac:(lia))) as E. rewrite R1, E' in E.
     exact E.
+  - exact (Img_trans _ _ _ I1 (Img_sT _ _ T2)).
 Qed.
 
 End PropX.

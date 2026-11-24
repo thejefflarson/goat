@@ -1711,7 +1711,7 @@ Two choices, each a change from the sketch above.
    premises would then need a renaming lemma for the normal form. The passed-down
    set needs none.
 
-**What remains of 7.7.**
+**What remains of 7.7** (as of 7.7c; stage 7.7d below supersedes it).
 
 1. *`let` of a value and `letrec` in L3.* Three things stand between the normal
    form and `gen_mono_let`, none of them about the derivation's shape.
@@ -1747,6 +1747,54 @@ Two choices, each a change from the sketch above.
    (ii) keep `typing`'s rule and add a head-known hypothesis to the conversion.
    (i) is the smaller, and is what the conversion should do until 7.8; chosen.
 3. *Records, spread, restrict, tags, `match`, methods* (7.8), as before.
+
+*As built (stage 7.7d, `GoatCompleteSorts.v`, `GoatCompleteBind.v`, `GoatCompleteOcc.v`,
+`GoatCompleteRf.v`).* Stage 7.7d proved the first of the three things 7.7c's item 1
+needs, the bound on the atoms of the unifier's extension `S2`. It did not restate
+`infer_complete_core` over live atoms, add `let` of a value or `letrec`, or build
+the conversion; the list below says why and what order they go in.
+
+**`Img`, the extension invents no type.** `Img Sg S2` says every image of `S2` is
+an image of `Sg`: `forall y, exists z, sT S2 y = sT Sg z`. It is reflexive and
+transitive (`Img_refl`, `Img_trans`), and `Img_bound` turns any predicate that holds
+of all of `Sg`'s images into one that holds of all of `S2`'s. The unifier's `S2` is
+built from `Sg` by `supd` at the fresh atoms `push_sort` makes, each sent to the
+image of the atom it renames, so the proof is a conjunct threaded through
+`push_sort_complete`, `bind_prop_sorted_complete`, `bind_prop_pres_complete`,
+`sem_bind` and `unify_rf_complete_aux` (whose arrow case composes by `Img_trans`).
+`unify_tD_rf_complete_img` adds it to `unify_tD_rf_complete` (which keeps its
+statement), and `unify_tD_rf_complete_even` is the consequence `OkS` needs: if all
+of `Sg`'s images are even, so are all of `S2`'s. `Img` is a conjunct beside `Sem`,
+not inside it, because `Sem_supd` takes a step from `supd Sg (ea n) U` to a step
+from `Sg`, and `U` is no image of `Sg`; folding `Img` into `Sem` needs a predicate
+parameter (`Img` relative to an allowed set of types) that 7.7e introduces with
+the live-atom restatement.
+
+**What remains of 7.7.**
+
+1. *Live atoms.* `KR D Dd Sg` is for every atom, but the unifier's completeness
+   needs it for every atom and `let` needs it for none of the dead ones: restate
+   `KR`, `CI` and the factoring over the live atoms, and rebuild a full `Sg'`
+   (agreeing with `Sg` on the live atoms, a witness of each sort elsewhere) before
+   each call to `unify_tD_rf_complete_img`. With `Img` relative to an allowed set,
+   this is the change to `Sem`, `Done` and the twelve cases of
+   `infer_complete_core`; it comes first.
+2. *Even derivations.* `OkS S2` needs `Sg`'s images even; the closed case starts at
+   `sid`, but `supd Sg (ea n) T1` at an arrow parameter or a `T_Num` instance puts
+   the derivation's own types in the images. A top-level renaming of the whole
+   derivation to even atoms (`typing_ap` at an injective map, with a bound on the
+   derivation's atoms that nothing yet states) is needed.
+3. *`let` of a value.* `gen_mono_let` with `frozen` from `ctx_le`, `KR` for the
+   premise's environment from the live-atom `KR` and `Av` (7.7c, item 1b), the
+   continuation's `KR` at `Dd` (item 1c).
+4. *`letrec`.* `T_Letrec`'s premise is `field_typing` at `typ_Record R`, and the
+   scheme it binds is over a record type, so a `letrec` is not in the record-free
+   fragment; it belongs with 7.8 and needs the hypotheses of 7.6 (`ps`, `Dsrt`,
+   `spn`). DECISION NEEDED: the ticket listed `letrec` with 7.7d; it cannot be
+   done over `rf` types. Chosen: move it to 7.8.
+5. *The conversion from `typing`* through `ntyping` into a `ctyping` with schemes,
+   with `rf` operands (so `sig_quot_rec` is out, as ratified); after item 3.
+6. *Records, spread, restrict, tags, `match`, methods* (7.8), as before.
 
 ## 5. Staged PR plan
 
