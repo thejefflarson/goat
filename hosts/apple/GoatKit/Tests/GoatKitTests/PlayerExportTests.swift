@@ -161,7 +161,7 @@ final class PlayerProgramTests: XCTestCase {
     }
 
     private func bundle(program: Data?, info: [String: Any]) throws -> Bundle {
-        let app = scratch.appendingPathComponent("App.app")
+        let app = scratch.appendingPathComponent("\(UUID().uuidString).app")
         let resources = app.appendingPathComponent("Contents/Resources")
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
         if let program { try program.write(to: resources.appendingPathComponent("program.goat")) }
@@ -178,7 +178,6 @@ final class PlayerProgramTests: XCTestCase {
         XCTAssertEqual(
             PlayerProgram.load(from: try bundle(program: nil, info: ["CFBundleName": "Game"])),
             .failure(.missing))
-        try FileManager.default.removeItem(at: scratch.appendingPathComponent("App.app"))
         XCTAssertEqual(
             PlayerProgram.load(from: try bundle(program: Data([0xff, 0xfe]), info: ["CFBundleName": "Game"])),
             .failure(.unreadable))
@@ -189,7 +188,6 @@ final class PlayerProgramTests: XCTestCase {
         let both = try bundle(
             program: nil, info: ["CFBundleName": "Plain", "CFBundleDisplayName": "My Game"])
         XCTAssertEqual(PlayerProgram.appName(in: both), "My Game")
-        try FileManager.default.removeItem(at: scratch.appendingPathComponent("App.app"))
         let nameOnly = try bundle(program: nil, info: ["CFBundleName": "Plain"])
         XCTAssertEqual(PlayerProgram.appName(in: nameOnly), "Plain")
     }
