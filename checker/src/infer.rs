@@ -3963,13 +3963,23 @@ impl Inferer {
             }
             lhs_ty
         } else if self.is_certainly_number(&lhs_ty) || self.is_certainly_number(&rhs_ty) {
-            self.require(&lhs_ty, Kind::Ordered, op, lhs.span);
-            self.require(&rhs_ty, Kind::Ordered, op, rhs.span);
+            self.require_quotient_operand(&lhs_ty, op, lhs.span);
+            self.require_quotient_operand(&rhs_ty, op, rhs.span);
             Ty::Float
         } else if self.require(&lhs_ty, Kind::Quot, op, lhs.span) {
             self.join_operands(((lhs, lhs_ty), (rhs, rhs_ty)), Some(Kinds::of(Kind::Quot)))
         } else {
             lhs_ty
+        }
+    }
+
+    /// A scalar operand of `/` that is still a variable is a `Quot`, as it is
+    /// when joined beside another variable, so a function that divides its
+    /// parameter by a numeral takes a `Float`; a settled `Int` or `Float` only
+    /// has to be a number.
+    fn require_quotient_operand(&mut self, ty: &Ty, op: BinOp, span: Span) {
+        if self.require(ty, Kind::Ordered, op, span) && matches!(self.resolve(ty), Ty::Var(_)) {
+            self.require(ty, Kind::Quot, op, span);
         }
     }
 
