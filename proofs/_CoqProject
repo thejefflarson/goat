@@ -25,6 +25,8 @@ GoatInferGen.v
 GoatInferRec.v
 GoatInferSound.v
 GoatHeldSound.v
+GoatHeldV.v
+GoatHeldLet.v
 GoatInferRen.v
 GoatInferUnify.v
 GoatPhase1.v
