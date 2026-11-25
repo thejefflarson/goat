@@ -82,6 +82,18 @@ Fixpoint dis (k f : nat) (D : denv) (H : list heq) (n : nat) {struct k}
   end
   end.
 
+(* An equation whose presence is a variable of the context: a later statement
+   of the enclosing function can still settle it, so a binding that holds such
+   an equation does not discharge or generalize it. *)
+Definition pres_owned (G : ctx) (H : list heq) : bool :=
+  existsb (fun h => match h_pres h with
+                    | typ_Var p => AtomSetImpl.mem p (ftv_ctx G)
+                    | _ => false
+                    end) H.
+
+Lemma pres_owned_nil : forall G, pres_owned G nil = false.
+Proof. reflexivity. Qed.
+
 (* The discharge of a program's equations at the top: nothing to do for none. *)
 Definition dis_top (f : nat) (D : denv) (H : list heq) (n : nat)
   : option (sub * denv * nat) :=

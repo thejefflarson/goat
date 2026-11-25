@@ -848,7 +848,7 @@ Proof.
                   (conj (mg_apT _ (typ_Var _) S3 I)
                         (mgH_app _ _ (mgH_ap _ _ S3 (mgH_ap _ _ S2 HH1)) (mgH_ap _ _ S3 HH2)))).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ _ E1 HG) as (S1 & M1 & HH1).
-      match type of H with context [if is_gen_value ?e then _ else _] => destruct (is_gen_value e) end.
+      match type of H with context [if is_gen_value ?e && negb (pres_owned ?g ?h) then _ else _] => destruct (is_gen_value e && negb (pres_owned g h)) end.
       * match type of H with context [dis ?k ?f0 ?D0 ?H0 ?n0] =>
           destruct (dis k f0 D0 H0 n0) as [[[dd Dd] nd]|] eqn:Ed; [ | discriminate H ] end.
         dI H E2.

@@ -587,7 +587,7 @@ Proof.
       exact (V_app _ _ _ _ _ _ _ _ _ Vf (V_push _ _ _ _ _ _ _ _ _ Gd3 Hv2)).
     + (* let *)
       destruct (infer f D G e1 n) as [[[[[[s1 D1] T1] n1] us1] H1]|] eqn:E1; [|discriminate].
-      destruct (is_gen_value us1) eqn:Hgv.
+      destruct (is_gen_value us1 && negb (pres_owned (apC s1 G) H1)) eqn:Hgv0.
       2: { (* a computed value: monomorphic *)
       destruct (infer f D1 ((fresh_var (apC s1 G) e2 ~ sch_mono T1) ++ apC s1 G)
                   (open_exp_wrt_exp e2 (e_fvar_f (fresh_var (apC s1 G) e2))) n1)
@@ -608,6 +608,8 @@ Proof.
       rewrite <- apC_comp.
       rewrite apC_cons_mono in Hv2.
       exact (V_letmono_step _ _ _ _ _ _ _ _ _ _ _ _ _ Gd2 Hv1 Hv2 Hlc_Hty2 (fresh_var_notin_dom (apC s1 G) e2)). }
+      assert (Hgv : is_gen_value us1 = true)
+        by (apply Bool.andb_true_iff in Hgv0 as [Hgv _]; exact Hgv).
       destruct (dis (S (length H1)) f D1 H1 n1) as [[[d Dd] nd]|] eqn:Edis; [|discriminate].
       destruct (infer f Dd
                   ((fresh_var (apC d (apC s1 G)) e2

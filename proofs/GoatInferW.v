@@ -191,7 +191,7 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
           match infer f' D G e1 n with
           | None => None
           | Some (s1, D1, T1, n1, e1', H1) =>
-              if is_gen_value e1' then
+              if is_gen_value e1' && negb (pres_owned (apC s1 G) H1) then
               match dis (S (length H1)) f' D1 H1 n1 with
               | None => None
               | Some (d, Dd, nd) =>

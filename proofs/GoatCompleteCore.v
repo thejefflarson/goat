@@ -44,6 +44,7 @@ Require Import Goat.GoatInferSort.
 Require Import Goat.GoatInferGen.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatInferW.
+Require Import Goat.GoatHeld.
 Require Import Goat.GoatInferSound.
 Require Import Goat.GoatHeldSound.
 Require Import Goat.GoatInferHeld.
@@ -1076,7 +1077,7 @@ Proof.
     refine (conj _ (conj (SemL_comp PEv L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2)
       (conj HT (conj HE (conj LvT (conj HRA2 (conj Heq2 (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
-      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv. cbv beta iota zeta. rewrite E2. reflexivity.
+      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv. cbn [andb]. cbv beta iota zeta. rewrite E2. reflexivity.
     + reflexivity.
     + reflexivity.
   - (* let of a value *)
@@ -1220,7 +1221,7 @@ Proof.
                             (fun y Hy => HlimL y (Hlsid y Hy)) Sem2)
       (conj HT (conj HE (conj LvT (conj HRA2 (conj Heq2 (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
-      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv1'. cbn [length]. rewrite dis_nil.
+      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv1', pres_owned_nil. cbn [negb andb]. cbn [length]. rewrite dis_nil.
       cbv beta iota zeta. rewrite apT_sid, apC_sid.
       unfold sc, G1 in E2. rewrite E2. reflexivity.
     + reflexivity.
