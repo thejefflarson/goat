@@ -1084,6 +1084,71 @@ Proof.
   - exact Hr.
 Qed.
 
+Lemma bool_sub_one : forall p, sT (bool_sub (p :: nil)) p = typ_Bool.
+Proof.
+  intros p. cbn [bool_sub]. unfold scomp, tcomp. simpl. unfold sbT. simpl.
+  destruct (Atom.eq_dec p p) as [_|N]; [ reflexivity | congruence ].
+Qed.
+
+Lemma absent_clash_inv : forall D l P T T' R1 R2 p,
+  absent_clash D l P T T' R1 R2 = Some p ->
+  P = typ_Var p /\ sat_b D (D p) typ_Bool = true /\
+  rlacksD D l R1 = true /\ rlacksD D l R2 = true.
+Proof.
+  intros D l P T T' R1 R2 p H. unfold absent_clash in H.
+  destruct P as [| | | | | | | q | | | ]; try discriminate H.
+  destruct (clash D T T' && sat_b D (D q) typ_Bool && rlacksD D l R1 && rlacksD D l R2) eqn:E;
+    [ | discriminate H ].
+  injection H as <-.
+  apply Bool.andb_true_iff in E as [E Hr2]. apply Bool.andb_true_iff in E as [E Hr1].
+  apply Bool.andb_true_iff in E as [_ Hs].
+  exact (conj eq_refl (conj Hs (conj Hr1 Hr2))).
+Qed.
+
+Lemma reqD_drop_abs : forall D l T C, rlacksD D l C = true ->
+  reqD D (row_Maybe l typ_Bool T C) C.
+Proof.
+  intros D l T C H. unfold reqD. rewrite nfR_maybe. cbn [is_abs].
+  rewrite (nf_rlacksD D l C), H. cbn iota. apply req_refl.
+Qed.
+
+Lemma row_step_reqD_abs : forall s0 sp sb s2 R1 R2 l P T R1' P' T' R2' D1 n2 D3 n4 p,
+  Good D1 n2 sb D1 n2 -> Good D1 n2 s2 D3 n4 ->
+  req R1 (row_Maybe l P T R1') ->
+  req (apR s0 R2) (row_Maybe l P' T' R2') ->
+  apT sp (apT s0 P) = typ_Var p -> sT sb p = typ_Bool ->
+  teqD D1 (apT sp (apT s0 P)) (apT sp P') ->
+  rlacksD D1 l (apR sp (apR s0 R1')) = true -> rlacksD D1 l (apR sp R2') = true ->
+  reqD D3 (apR s2 (apR sb (apR sp (apR s0 R1')))) (apR s2 (apR sb (apR sp R2'))) ->
+  reqD D3 (apR (scomp s2 (scomp sb (scomp sp s0))) R1) (apR (scomp s2 (scomp sb (scomp sp s0))) R2).
+Proof.
+  intros s0 sp sb s2 R1 R2 l P T R1' P' T' R2' D1 n2 D3 n4 p Gb G2 H1 H2 Hp Hb Htp Hl1 Hl2 Hr.
+  rewrite <- !apR_comp.
+  eapply reqD_trans.
+  { apply req_reqD. exact (req_apR s2 _ _ (req_apR sb _ _ (req_apR sp _ _ (req_apR s0 _ _ H1)))). }
+  eapply reqD_trans; [ | apply reqD_sym; apply req_reqD;
+    exact (req_apR s2 _ _ (req_apR sb _ _ (req_apR sp _ _ H2))) ].
+  rewrite !apR_Maybe.
+  assert (E1 : apT s2 (apT sb (apT sp (apT s0 P))) = typ_Bool).
+  { rewrite Hp. change (apT sb (typ_Var p)) with (sT sb p). rewrite Hb. reflexivity. }
+  assert (E2 : apT s2 (apT sb (apT sp P')) = typ_Bool).
+  { rewrite Hp in Htp.
+    pose proof (lift_teqD _ _ _ _ _ _ _ G2 (lift_teqD _ _ _ _ _ _ _ Gb Htp)) as Hq.
+    change (apT sb (typ_Var p)) with (sT sb p) in Hq. rewrite Hb in Hq.
+    change (apT s2 typ_Bool) with typ_Bool in Hq.
+    exact (teqD_Bool_inv _ _ Hq). }
+  rewrite E1, E2.
+  assert (Hk1 : rlacksD D3 l (apR s2 (apR sb (apR sp (apR s0 R1')))) = true).
+  { exact (rlacksD_ap D1 D3 (sT s2) (sR s2) l _ (Good_rkres _ _ _ _ _ G2)
+             (rlacksD_ap D1 D1 (sT sb) (sR sb) l _ (Good_rkres _ _ _ _ _ Gb) Hl1)). }
+  assert (Hk2 : rlacksD D3 l (apR s2 (apR sb (apR sp R2'))) = true).
+  { exact (rlacksD_ap D1 D3 (sT s2) (sR s2) l _ (Good_rkres _ _ _ _ _ G2)
+             (rlacksD_ap D1 D1 (sT sb) (sR sb) l _ (Good_rkres _ _ _ _ _ Gb) Hl2)). }
+  eapply reqD_trans; [ exact (reqD_drop_abs _ _ _ _ Hk1) | ].
+  eapply reqD_trans; [ exact Hr | ].
+  apply reqD_sym. exact (reqD_drop_abs _ _ _ _ Hk2).
+Qed.
+
 Lemma unify_tD_sound : forall f,
   (forall D T1 T2 n s D' n', unify_tD f D T1 T2 n = Some (s, D', n') -> DOk D n ->
      EvT T1 -> EvT T2 ->
@@ -1170,7 +1235,18 @@ Proof.
                | None => None
                | Some (sp, D1, n2) =>
                    match unify_tD f D1 (apT sp (apT s0 T)) (apT sp T') n2 with
-                   | None => None
+                   | None =>
+                       match absent_clash D1 l (apT sp (apT s0 P)) (apT sp (apT s0 T)) (apT sp T')
+                               (apR sp (apR s0 R1')) (apR sp R2') with
+                       | None => None
+                       | Some p =>
+                           match unify_rD f D1 (nfR D1 (apR (bool_sub (p :: nil)) (apR sp (apR s0 R1'))))
+                                   (nfR D1 (apR (bool_sub (p :: nil)) (apR sp R2'))) n2 with
+                           | None => None
+                           | Some (s2, D3, n4) =>
+                               Some (scomp s2 (scomp (bool_sub (p :: nil)) (scomp sp s0)), D3, n4)
+                           end
+                       end
                    | Some (s1, D2, n3) =>
                        match unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R1')))) (nfR D2 (apR s1 (apR sp R2'))) n3 with
                        | None => None
@@ -1185,7 +1261,40 @@ Proof.
       destruct (row_head R1') as [[[[l P] T] R1'']|] eqn:Eh; [|discriminate].
       destruct (rewrite_row l (side_av R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
       destruct (unify_tD f D0 (apT s0 P) P' n1) as [[[sp D1] n2]|] eqn:Eu0; [|discriminate].
-      destruct (unify_tD f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1; [|discriminate].
+      destruct (unify_tD f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1.
+      2: { destruct (absent_clash D1 l (apT sp (apT s0 P)) (apT sp (apT s0 T)) (apT sp T')
+                       (apR sp (apR s0 R1'')) (apR sp R2'')) as [p|] eqn:Eac; [ | discriminate Hg ].
+           destruct (unify_rD f D1 (nfR D1 (apR (bool_sub (p :: nil)) (apR sp (apR s0 R1''))))
+                       (nfR D1 (apR (bool_sub (p :: nil)) (apR sp R2''))) n2)
+             as [[[s2 D3] n4]|] eqn:Eu2; [ | discriminate Hg ].
+           inversion Hg; subst; clear Hg.
+           destruct (absent_clash_inv _ _ _ _ _ _ _ _ Eac) as (EP & Hsat & Hl1 & Hl2).
+           destruct (row_head_sound _ _ _ _ _ Eh Hg1) as (HP & HT & HR1' & Hhd).
+           destruct (rewrite_row_sound _ _ _ _ _ _ _ _ _ _ _ Erw Hg2) as (Hs0 & HP' & HT' & HR2' & Hrw & Hg0).
+           pose proof (GoodU_Good _ _ _ _ _ HD Hg0) as G0.
+           destruct (IHt _ _ _ _ _ _ _ Eu0 (Good_DOk _ _ _ _ _ G0) (EvT_ap s0 P Hs0 HP) HP') as (Hsp & Htp & Hgp).
+           pose proof (GoodU_Good _ _ _ _ _ (Good_DOk _ _ _ _ _ G0) Hgp) as Gp.
+           assert (Hevp : ev p).
+           { apply ev_var_T. rewrite <- EP. exact (EvT_ap sp _ Hsp (EvT_ap s0 P Hs0 HP)). }
+           assert (Hf : forallb (fun q => sat_b D1 (D1 q) typ_Bool) (p :: nil) = true)
+             by (cbn [forallb]; rewrite Hsat; reflexivity).
+           destruct (bool_sub_ok D1 (p :: nil) (fun q Hq => ltac:(destruct Hq as [<-|[]]; exact Hevp)) Hf)
+             as (Hsb & Hkb & Hrb).
+           pose proof (Good_unify D1 n2 (bool_sub (p :: nil)) n2 Hsb Hkb (le_n n2) (Good_DOk _ _ _ _ _ Gp)) as Gb.
+           assert (Hgb : GoodU D1 n2 (bool_sub (p :: nil)) D1 n2)
+             by exact (GoodU_same D1 n2 _ n2 Hsb Hkb (le_n n2)).
+           assert (HR1x : EvR (apR sp (apR s0 R1''))) by exact (EvR_ap sp _ Hsp (EvR_ap s0 R1'' Hs0 HR1')).
+           assert (HR2x : EvR (apR sp R2'')) by exact (EvR_ap sp _ Hsp HR2').
+           destruct (IHr _ _ _ _ _ _ _ Eu2 (Good_DOk _ _ _ _ _ Gp)
+                       (EvR_nfR _ _ (EvR_ap _ _ Hsb HR1x)) (EvR_nfR _ _ (EvR_ap _ _ Hsb HR2x)))
+             as (Hs2 & Hr2' & Hg2').
+           pose proof (GoodU_Good _ _ _ _ _ (Good_DOk _ _ _ _ _ Gp) Hg2') as G2.
+           pose proof (req_via_nfD _ _ _ _ _ (Good_rkres _ _ _ _ _ G2) Hr2') as Hr2.
+           split; [ apply OkS_comp; [ exact Hs2 | apply OkS_comp; [ exact Hsb | apply OkS_comp; auto ] ] | ].
+           split; [ | exact (GoodU_comp _ _ _ _ _ _ _ _
+                       (GoodU_comp _ _ _ _ _ _ _ _ (GoodU_comp _ _ _ _ _ _ _ _ Hg0 Hgp) Hgb) Hg2') ].
+           exact (row_step_reqD_abs s0 sp (bool_sub (p :: nil)) s2 R1' R2' _ _ _ _ _ _ _ _ _ _ _ _ Gb G2
+                    Hhd Hrw EP (bool_sub_one p) Htp Hl1 Hl2 Hr2). }
       destruct (unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R1'')))) (nfR D2 (apR s1 (apR sp R2''))) n3)
         as [[[s2 D3] n4]|] eqn:Eu2; [|discriminate].
       inversion Hg; subst; clear Hg.

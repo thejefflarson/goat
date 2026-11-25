@@ -688,6 +688,29 @@ enum Peel<'r> {
     Present(Row),
 }
 
+/// A type with no parts: `Int`, `Float`, `String`, `Bool` or `Unit`.
+fn is_scalar(ty: &Ty) -> bool {
+    matches!(ty, Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit)
+}
+
+/// Whether two types have different heads, so no substitution makes them
+/// equal. A variable, a recursive type and a variant never clash by head.
+fn heads_clash(a: &Ty, b: &Ty) -> bool {
+    fn code(ty: &Ty) -> Option<u8> {
+        match ty {
+            Ty::Int => Some(0),
+            Ty::Float => Some(1),
+            Ty::Bool => Some(2),
+            Ty::Unit => Some(3),
+            Ty::Str => Some(4),
+            Ty::Func(..) => Some(5),
+            Ty::Record(_) => Some(6),
+            Ty::Var(_) | Ty::Variant(_) | Ty::Rec(..) => None,
+        }
+    }
+    matches!((code(a), code(b)), (Some(x), Some(y)) if x != y)
+}
+
 /// `row`'s first field when it is `label`: whether it is there (a presence),
 /// its type, its method flag, and the rest of the row.
 fn front<'r>(row: &'r Row, label: &str) -> Option<(Ty, &'r Ty, &'r Ty, &'r Row)> {
@@ -2015,17 +2038,29 @@ impl Inferer {
                 _,
             ) => match front(b, label) {
                 Some((b_pres, b_field, b_method, b_rest)) => {
-                    self.unify_presence(&Ty::Var(*pres), &b_pres, span);
-                    self.unify_method(label, method, b_method, span);
-                    self.unify_ty(field, b_field, span);
+                    let pres_ty = Ty::Var(*pres);
+                    if self.must_be_absent(label, &pres_ty, field, rest, &b_pres, b_field, b_rest) {
+                        self.settle_absent(label, (&pres_ty, field), (&b_pres, b_field), span);
+                    } else {
+                        self.unify_presence(&pres_ty, &b_pres, span);
+                        self.unify_method(label, method, b_method, span);
+                        self.unify_ty(field, b_field, span);
+                    }
                     self.unify_row(rest, b_rest, span, kind);
                 }
                 None => match self.surface_bounded(label, b, true, span) {
                     Err(Spent) => {}
                     Ok(Some((b_pres, b_field, b_method, b_rest))) => {
-                        self.unify_presence(&Ty::Var(*pres), &b_pres, span);
-                        self.unify_method(label, method, &b_method, span);
-                        self.unify_ty(field, &b_field, span);
+                        let pres_ty = Ty::Var(*pres);
+                        if self.must_be_absent(
+                            label, &pres_ty, field, rest, &b_pres, &b_field, &b_rest,
+                        ) {
+                            self.settle_absent(label, (&pres_ty, field), (&b_pres, &b_field), span);
+                        } else {
+                            self.unify_presence(&pres_ty, &b_pres, span);
+                            self.unify_method(label, method, &b_method, span);
+                            self.unify_ty(field, &b_field, span);
+                        }
                         self.unify_row(rest, &b_rest, span, kind);
                     }
                     Ok(None) => {
@@ -2401,6 +2436,84 @@ impl Inferer {
                 )
                 .of_kind(ErrorKind::MethodFlag),
             ),
+        }
+    }
+
+    /// Whether two entries of `label` whose presences are both still open can
+    /// only be absent: their field types have different heads, so a present
+    /// entry would need two types that never unify, and an absent entry is no
+    /// field because each rest lacks the label. Field types that could still
+    /// become the same are unified as before.
+    #[allow(clippy::too_many_arguments)]
+    fn must_be_absent(
+        &self,
+        label: &str,
+        a_pres: &Ty,
+        a_field: &Ty,
+        a_rest: &Row,
+        b_pres: &Ty,
+        b_field: &Ty,
+        b_rest: &Row,
+    ) -> bool {
+        matches!(self.head(a_pres).deref(), Ty::Var(_))
+            && matches!(self.head(b_pres).deref(), Ty::Var(_))
+            && self.fields_clash(a_field, b_field)
+            && self.row_lacks(a_rest, label)
+            && self.row_lacks(b_rest, label)
+    }
+
+    /// Whether no substitution makes two field types equal, by their heads or
+    /// by a variable's constraints a scalar cannot meet (a numeral's type is not
+    /// a `String`).
+    fn fields_clash(&self, a: &Ty, b: &Ty) -> bool {
+        let (a, b) = (self.head(a), self.head(b));
+        match (&*a, &*b) {
+            (Ty::Var(v), t) | (t, Ty::Var(v)) => {
+                is_scalar(t)
+                    && self
+                        .kinds
+                        .get(v)
+                        .is_some_and(|kinds| kinds.iter().any(|kind| self.never_meets(t, kind)))
+            }
+            (x, y) => heads_clash(x, y),
+        }
+    }
+
+    /// Join two open presences and decide them absent, remembering why for a
+    /// later use of the field.
+    fn settle_absent(
+        &mut self,
+        label: &str,
+        (a_pres, a_field): (&Ty, &Ty),
+        (b_pres, b_field): (&Ty, &Ty),
+        span: Span,
+    ) {
+        let (shown_a, shown_b) = (self.shown(a_field), self.shown(b_field));
+        self.forced_absent.push(ForcedAbsent {
+            label: label.to_string(),
+            span,
+            message: format!(
+                "`{label}` is a `{shown_a}` in one record and a `{shown_b}` in the other, so neither can have it"
+            ),
+        });
+        self.unify_presence(a_pres, b_pres, span);
+        if let Ty::Var(pres) = self.resolve(a_pres) {
+            self.subst.insert(pres, Rc::new(ABSENT));
+        }
+    }
+
+    /// Whether `row` has no field `label`, by a closed end or by a row
+    /// variable that never gains it.
+    fn row_lacks(&self, row: &Row, label: &str) -> bool {
+        match self.resolve_spine(row) {
+            Row::Empty => true,
+            Row::Var(v) => self
+                .lacks
+                .get(&v)
+                .is_some_and(|banned| banned.contains(label)),
+            Row::Extend { label: l, rest, .. } | Row::Maybe { label: l, rest, .. } => {
+                l != label && self.row_lacks(&rest, label)
+            }
         }
     }
 

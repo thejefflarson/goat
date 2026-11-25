@@ -491,7 +491,18 @@ Proof.
                | None => None
                | Some (sp, D1, n2) =>
                    match unify_tD f D1 (apT sp (apT s0 T)) (apT sp T') n2 with
-                   | None => None
+                   | None =>
+                       match absent_clash D1 l (apT sp (apT s0 P)) (apT sp (apT s0 T)) (apT sp T')
+                               (apR sp (apR s0 R1')) (apR sp R2') with
+                       | None => None
+                       | Some p =>
+                           match unify_rD f D1 (nfR D1 (apR (bool_sub (p :: nil)) (apR sp (apR s0 R1'))))
+                                   (nfR D1 (apR (bool_sub (p :: nil)) (apR sp R2'))) n2 with
+                           | None => None
+                           | Some (s2, D3, n4) =>
+                               Some (scomp s2 (scomp (bool_sub (p :: nil)) (scomp sp s0)), D3, n4)
+                           end
+                       end
                    | Some (s1, D2, n3) =>
                        match unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R1')))) (nfR D2 (apR s1 (apR sp R2'))) n3 with
                        | None => None
@@ -505,7 +516,22 @@ Proof.
       destruct (row_head R1') as [[[[l P] T] R1'']|] eqn:Eh; [|discriminate].
       destruct (rewrite_row l (side_av R1') D R2' n) as [[[[[[P' T'] R2''] s0] D0] n1]|] eqn:Erw; [|discriminate].
       destruct (unify_tD f D0 (apT s0 P) P' n1) as [[[sp D1] n2]|] eqn:Eu0; [|discriminate].
-      destruct (unify_tD f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1; [|discriminate].
+      destruct (unify_tD f D1 (apT sp (apT s0 T)) (apT sp T') n2) as [[[s1 D2] n3]|] eqn:Eu1.
+      2: { destruct (absent_clash D1 l (apT sp (apT s0 P)) (apT sp (apT s0 T)) (apT sp T')
+                       (apR sp (apR s0 R1'')) (apR sp R2'')) as [p|] eqn:Eac; [ | discriminate Hg ].
+           destruct (unify_rD f D1 (nfR D1 (apR (bool_sub (p :: nil)) (apR sp (apR s0 R1''))))
+                       (nfR D1 (apR (bool_sub (p :: nil)) (apR sp R2''))) n2)
+             as [[[s2 D3] n4]|] eqn:Eu2; [ | discriminate Hg ].
+           injection Hg as <- <- <-.
+           destruct (row_head_mg _ _ _ _ _ Eh Hg1) as [HP [HT HR1]].
+           destruct (rewrite_row_mg _ _ _ _ _ _ _ _ _ _ _ Erw Hg2) as [M0 [M1 M2]].
+           pose proof (rewrite_row_gsub _ _ _ _ _ _ _ _ _ _ _ Erw) as S0.
+           pose proof (IHt _ _ _ _ _ _ _ Eu0 (mg_apT _ _ S0 HP) M0) as Sp.
+           pose proof (gs_bool_sub (p :: nil)) as Sb.
+           pose proof (IHr _ _ _ _ _ _ _ Eu2
+                         (mgr_nfR _ _ (mg_apR _ _ Sb (mg_apR _ _ Sp (mg_apR _ _ S0 HR1))))
+                         (mgr_nfR _ _ (mg_apR _ _ Sb (mg_apR _ _ Sp M2)))) as S2.
+           exact (gs_comp _ _ S2 (gs_comp _ _ Sb (gs_comp _ _ Sp S0))). }
       destruct (unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R1'')))) (nfR D2 (apR s1 (apR sp R2''))) n3)
         as [[[s2 D3] n4]|] eqn:Eu2; [|discriminate].
       injection Hg as <- <- <-.
@@ -732,7 +758,7 @@ Lemma spread_present_guard : forall f D2 s1 s2 T1 T2 l e1' e2' n2 s D' T n' e',
   gsub s2 -> gsub s1 -> mg (apT s2 T1) -> mg T2 -> gsub s /\ mg T.
 Proof.
   intros f D2 s1 s2 T1 T2 l e1' e2' n2 s D' T n' e' H S2 S1 M1 M2. unfold spread_present in H.
-  destruct (unify_coD f D2 (apT s2 T1)
+  destruct (unify_coD f (rupd D2 (ea (S n2)) (RK k_Any (Nat.eqb l))) (apT s2 T1)
               (typ_Record (row_Maybe l (typ_Var (ea n2)) T2 (row_Var (ea (S n2))))) (n2 + 2))
     as [[[[s3 D3] cs] n3]|] eqn:E; [|discriminate].
   injection H as <- <- <- <- <-.

@@ -593,6 +593,53 @@ with unify_r (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
       end
   end.
 
+(* Two types that no unifier makes equal, seen without looking inside them: a
+   scalar against a type with another head, or against a variable whose sort a
+   scalar of that kind does not satisfy (a numeral's type is a [Literal]
+   variable, so a [String] clashes with it). *)
+Definition is_scalar_typ (T : typ) : bool :=
+  match T with
+  | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String => true
+  | _ => false
+  end.
+
+Definition head_code (T : typ) : option nat :=
+  match T with
+  | typ_Int => Some 0
+  | typ_Float => Some 1
+  | typ_Bool => Some 2
+  | typ_Unit => Some 3
+  | typ_String => Some 4
+  | typ_Arrow _ _ => Some 5
+  | typ_Record _ => Some 6
+  | _ => None
+  end.
+
+Definition clash (D : denv) (A B : typ) : bool :=
+  match A, B with
+  | typ_Var a, _ => is_scalar_typ B && negb (sat_b D (D a) B)
+  | _, typ_Var b => is_scalar_typ A && negb (sat_b D (D b) A)
+  | _, _ =>
+      match head_code A, head_code B with
+      | Some a, Some b => negb (Nat.eqb a b)
+      | _, _ => false
+      end
+  end.
+
+(* Two entries of one label whose presence is still a variable [p], with field
+   types that can never be the same, can only be absent: a present entry would
+   need the two to unify.  They are decided absent when [p]'s sort allows [Bool]
+   and both rests lack the label, so that an absent entry is no field whatever
+   its field type says ([req_abs]).  Field types that could still be the same
+   are unified as before. *)
+Definition absent_clash (D : denv) (l : label) (P T T' : typ) (R1 R2 : row) : option atom :=
+  match P with
+  | typ_Var p =>
+      if clash D T T' && sat_b D (D p) typ_Bool && rlacksD D l R1 && rlacksD D l R2
+      then Some p else None
+  | _ => None
+  end.
+
 (* The unifier W calls.  It is [unify_t] with the conversion of rows read at the
    kinding environment: before two rows are compared each is normalized at the
    environment the comparison runs in ([nfR], GoatDefs.v), which drops an absent
@@ -656,7 +703,18 @@ with unify_rD (f : nat) (D : denv) (R1 R2 : row) (n : nat) {struct f}
                   | None => None
                   | Some (sp, D1, n2) =>
                       match unify_tD f' D1 (apT sp (apT s0 T)) (apT sp T') n2 with
-                      | None => None
+                      | None =>
+                          match absent_clash D1 l (apT sp (apT s0 P)) (apT sp (apT s0 T)) (apT sp T')
+                                  (apR sp (apR s0 R1')) (apR sp R2') with
+                          | None => None
+                          | Some p =>
+                              match unify_rD f' D1 (nfR D1 (apR (bool_sub (p :: nil)) (apR sp (apR s0 R1'))))
+                                      (nfR D1 (apR (bool_sub (p :: nil)) (apR sp R2'))) n2 with
+                              | None => None
+                              | Some (s2, D3, n4) =>
+                                  Some (scomp s2 (scomp (bool_sub (p :: nil)) (scomp sp s0)), D3, n4)
+                              end
+                          end
                       | Some (s1, D2, n3) =>
                           match unify_rD f' D2 (nfR D2 (apR s1 (apR sp (apR s0 R1')))) (nfR D2 (apR s1 (apR sp R2'))) n3 with
                           | None => None

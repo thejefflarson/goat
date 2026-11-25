@@ -171,31 +171,99 @@ Proof.
     end. reflexivity.
 Qed.
 
-(* Two entries of one label that a unifier makes absent, with different field
-   types: [l0^p: Int] against [l0^q: String] is unified by [p := Bool] and
-   [q := Bool] (both rows are the empty row), and W refuses it, because it
-   pairs the two entries and compares their field types.  An absent entry's
-   field type carries no information ([row_cancel]), so statement A's
-   hypothesis on the unifier covers this pair too. *)
-Theorem field_blocks_absent : forall (p q : atom) D n f, p <> q ->
+(* One fuel step of [unify_rD] on two entries, stated so that a proof rewrites
+   with it instead of unfolding the fuel-indexed recursion, which [cbn] would
+   expand at every inner call. *)
+Lemma unify_rD_maybe_step : forall f D l P T R l' P' T' R' n,
+  unify_rD (S f) D (row_Maybe l P T R) (row_Maybe l' P' T' R') n =
+  match rewrite_row l (side_av (row_Maybe l P T R)) D (row_Maybe l' P' T' R') n with
+  | None => None
+  | Some (P2, T2, R2', s0, D0, n1) =>
+      match unify_tD f D0 (apT s0 P) P2 n1 with
+      | None => None
+      | Some (sp, D1, n2) =>
+          match unify_tD f D1 (apT sp (apT s0 T)) (apT sp T2) n2 with
+          | None =>
+              match absent_clash D1 l (apT sp (apT s0 P)) (apT sp (apT s0 T)) (apT sp T2)
+                      (apR sp (apR s0 R)) (apR sp R2') with
+              | None => None
+              | Some p =>
+                  match unify_rD f D1 (nfR D1 (apR (bool_sub (p :: nil)) (apR sp (apR s0 R))))
+                          (nfR D1 (apR (bool_sub (p :: nil)) (apR sp R2'))) n2 with
+                  | None => None
+                  | Some (s2, D3, n4) =>
+                      Some (scomp s2 (scomp (bool_sub (p :: nil)) (scomp sp s0)), D3, n4)
+                  end
+              end
+          | Some (s1, D2, n3) =>
+              match unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R)))) (nfR D2 (apR s1 (apR sp R2'))) n3 with
+              | None => None
+              | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
+              end
+          end
+      end
+  end.
+Proof. reflexivity. Qed.
+
+(* Two entries of one label that a unifier makes absent, with field types that
+   clash: [l0^p: Int] against [l0^q: String] is unified by [p := Bool] and
+   [q := Bool] (both rows are the empty row).  W decides such a pair absent
+   ([absent_clash]) and finds the unifier, so the hypothesis of statement A on
+   the unifier does not have to exclude this pair. *)
+Theorem field_clash_absent : forall (p q : atom) n, p <> q ->
   req (apR (absent_sub p q p) (row_Maybe 0 (typ_Var p) typ_Int row_Empty))
       (apR (absent_sub p q p) (row_Maybe 0 (typ_Var q) typ_String row_Empty)) /\
-  unify_rD f D (row_Maybe 0 (typ_Var p) typ_Int row_Empty)
-               (row_Maybe 0 (typ_Var q) typ_String row_Empty) n = None.
+  unify_rD 4 d_any (row_Maybe 0 (typ_Var p) typ_Int row_Empty)
+                   (row_Maybe 0 (typ_Var q) typ_String row_Empty) n <> None.
 Proof.
-  intros p q D n f Hpq. split.
+  intros p q n Hpq. split.
   - unfold apR, absent_sub. simpl.
     destruct (Atom.eq_dec p p) as [_ | N]; [ | congruence ].
     destruct (Atom.eq_dec q p) as [E | _]; [ congruence | ].
     destruct (Atom.eq_dec q q) as [_ | N]; [ | congruence ].
     eapply req_trans; [ apply req_abs; reflexivity | ].
     apply req_sym. apply req_abs. reflexivity.
-  - destruct f as [ | f ]; [ reflexivity | ].
-    cbn [unify_rD row_head rewrite_row Nat.eqb]. cbn iota beta.
-    destruct f as [ | f ]; [ reflexivity | ].
+  - rewrite unify_rD_maybe_step. cbn [rewrite_row Nat.eqb]. cbn iota beta.
     cbn [unify_tD apT ap_typ sT sid idt]. destruct (Atom.eq_dec p q); [ congruence | ].
-    destruct (finer_b (D q) (D p)); cbn iota beta; try (destruct (finer_b (D p) (D q)); cbn iota beta);
-      destruct f as [ | f ]; reflexivity.
+    cbn [finer_b d_any dsort]. cbn iota beta.
+    unfold absent_clash. cbn.
+    match goal with |- context [if ?c then _ else _] => destruct c as [_|N]; [ | congruence ] end.
+    cbn. discriminate.
+Qed.
+
+Lemma sbT_ne : forall x T y, y <> x -> sT (sbT x T) y = typ_Var y.
+Proof.
+  intros x T y H. unfold sbT. simpl.
+  destruct (Atom.eq_dec y x); [ congruence | reflexivity ].
+Qed.
+
+(* A field whose type is a variable does not clash: W unifies it with the other
+   side's field type before either presence is settled, so a unifier that makes
+   both entries absent and the two variables different
+   ([p := Bool], [q := Bool], [a := Int], [b := String]) is not an instance of
+   what W finds.  Statement A keeps its hypothesis for this pair. *)
+Theorem field_blocks_absent : forall (p q a b : atom) n s D' n',
+  p <> q -> a <> b -> a <> p -> b <> p ->
+  unify_rD 5 d_any (row_Maybe 0 (typ_Var p) (typ_Var a) row_Empty)
+                   (row_Maybe 0 (typ_Var q) (typ_Var b) row_Empty) n = Some (s, D', n') ->
+  apT s (typ_Var a) = apT s (typ_Var b).
+Proof.
+  intros p q a b n s D' n' Hpq Hab Hap Hbp H.
+  rewrite unify_rD_maybe_step in H.
+  cbn [rewrite_row Nat.eqb unify_tD apT ap_typ sT sid idt] in H.
+  destruct (Atom.eq_dec p q) as [ | _ ]; [ congruence | ].
+  cbn [finer_b d_any dsort] in H. cbn iota beta in H.
+  cbn [apT ap_typ] in H.
+  rewrite (sbT_ne p (typ_Var q) a Hap), (sbT_ne p (typ_Var q) b Hbp) in H.
+  cbn iota beta in H.
+  destruct (Atom.eq_dec a b) as [ | _ ]; [ congruence | ].
+  cbn [finer_b d_any dsort] in H. cbn iota beta in H.
+  cbn [apR ap_row nfR] in H. cbn [unify_rD] in H. cbn iota beta in H.
+  inversion H; subst; clear H.
+  unfold apT. simpl.
+  cbn [GoatSubst.tcomp idt ap_typ].
+  repeat (simpl; match goal with |- context [if ?c then _ else _] => destruct c; try congruence end).
+  all: simpl; reflexivity.
 Qed.
 
 (* ---- the occurs checks block unifiable pairs the same way ---- *)

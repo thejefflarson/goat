@@ -32,11 +32,49 @@ Import ListNotations.
 
 (* ---- the plain unifier ---- *)
 
+(* Types that [clash] unify at no fuel, so the entries [absent_clash] decides
+   absent are decided so at every fuel. *)
+Lemma bind_prop_scalar_none : forall D a T n, is_scalar_typ T = true -> sat_b D (D a) T = false ->
+  bind_prop D a T n = None.
+Proof.
+  intros D a T n Hs Hn.
+  destruct T; try discriminate Hs; clear Hs; unfold bind_prop, bind_prop0, occT;
+    cbn [ftv_typ frv_typ ftv_live frv_live];
+    rewrite ?AtomSetFacts.empty_b; rewrite ?AtomSetProperties.elements_empty;
+    cbn [orb push_sort push_sort_r apT ap_typ sid idt idr];
+    cbn [sat_b] in Hn; destruct (D a) eqn:Ek; cbn in Hn; try discriminate Hn; cbn;
+    rewrite ?AtomSetFacts.empty_b; try reflexivity.
+Qed.
+
+Lemma clash_unify_tD : forall D A B, clash D A B = true -> forall g D' n, D' = D ->
+  unify_tD g D' A B n = None.
+Proof.
+  intros D A B H g D' n ->. destruct g as [|g]; [ reflexivity | ].
+  destruct A as [| | | | | A1 A2 | R | a | i | B1 | w A1 ];
+    destruct B as [| | | | | B1' B2 | R' | b | i' | B2 | w' A1' ]; cbn [clash] in H;
+    try discriminate H; cbn [unify_tD]; try reflexivity.
+  all: try (apply bind_prop_scalar_none; apply Bool.andb_true_iff in H as [Hs Hn];
+            [ exact Hs | apply Bool.negb_true_iff; exact Hn ]).
+  all: try (cbn [head_code Nat.eqb negb] in H; discriminate H).
+Qed.
+
+Lemma absent_clash_tD_none : forall D l P T T' R1 R2 p,
+  absent_clash D l P T T' R1 R2 = Some p -> forall g n, unify_tD g D T T' n = None.
+Proof.
+  intros D l P T T' R1 R2 p H g n. unfold absent_clash in H.
+  destruct P; try discriminate H.
+  destruct (clash D T T') eqn:Ec; [ | discriminate H ].
+  exact (clash_unify_tD D T T' Ec g D n eq_refl).
+Qed.
+
 (* A scrutinee's value at fuel [f] is its value at fuel [S f], one level at a
    time; [mono_run] walks the two unfoldings together. *)
 Ltac mono_run IHt IHr :=
   repeat (
     match goal with
+    | E : absent_clash ?D _ _ ?T ?T' _ _ = Some _ |- context [unify_tD ?g ?D ?T ?T' ?n] =>
+        rewrite (absent_clash_tD_none _ _ _ _ _ _ _ _ E g n);
+        cbv iota beta
     | H : context [match ?x with _ => _ end] |- _ =>
         let E := fresh "E" in
         destruct x eqn:E;
