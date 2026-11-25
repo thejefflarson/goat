@@ -954,6 +954,7 @@ Proof.
   - apply req_maybe; auto.
   - apply req_pre.
   - apply req_abs. apply rlacks_ap; auto.
+  - apply req_absf.
   - apply req_swap_em; auto.
   - apply req_swap_mm; auto.
   - eapply req_trans; eauto.

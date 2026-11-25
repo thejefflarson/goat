@@ -1384,3 +1384,12 @@ changes under `proofs/**` (or to the workflow), plus manual dispatch, so
 ordinary Rust PRs do not pay for a Coq image. It is intended as an
 informational check, not a required one — promote it in branch protection once
 the development stabilizes.
+
+## Held equations, step 1: `req_absf` (ADR 0033 amendment, D6)
+
+An absent entry's field type is no information: `l ^ Bool : T ; R ~= l ^ Bool : T' ; R`
+(`req_absf`, goat_ln.ott). Every induction over `req` gained its case (`GoatRows`,
+`GoatDefs`, `GoatSubst`, `GoatSatTeq`, `GoatPresence` via `r0_absf`, `GoatRowNf` where
+`ent_eq` now ignores the field of an absent entry; `row_cancel` keeps its statement).
+Nothing else changed: W is still the pre-held-equations algorithm, so the differential
+reports 6 mismatches on the held-equation corpus programs until W holds the equations.

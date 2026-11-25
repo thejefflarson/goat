@@ -1379,6 +1379,7 @@ Proof.
   - rename H1 into IH. cbn [rlacksD]. rewrite (IH D l0). apply teq_is_abs in t. rewrite t. reflexivity.
   - cbn [rlacksD]. destruct (Nat.eqb l0 l); reflexivity.
   - cbn [rlacksD]. destruct (Nat.eqb l0 l); reflexivity.
+  - cbn [rlacksD]. reflexivity.
   - cbn [rlacksD].
     destruct (Nat.eqb l0 l) eqn:E1; destruct (Nat.eqb l0 l') eqn:E2; simpl; try reflexivity;
       try (apply Nat.eqb_eq in E1; apply Nat.eqb_eq in E2; congruence).
@@ -1454,6 +1455,8 @@ Proof.
     assert (Hd : rlacksD D l (nfR D R) = true)
       by (rewrite nf_rlacksD; apply rlacks_rlacksD; exact H).
     rewrite Hd. cbn [is_abs andb]. apply req_refl.
+  - intros l T R T' D. rewrite !nfR_maybe. cbn [is_abs andb].
+    destruct (rlacksD D l (nfR D R)); [ apply req_refl | apply req_absf ].
   - intros l T1 T l' T' R Hne D. rewrite nfR_maybe, !nfR_ext, nfR_maybe.
     rewrite (rlacksD_ext_ne D l l' (nfT D T') (nfR D R) Hne).
     destruct (is_abs T1 && rlacksD D l (nfR D R)).

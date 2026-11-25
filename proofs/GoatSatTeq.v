@@ -58,6 +58,7 @@ Proof.
   - intros l T R _ k. split.
     + intros [_ H]. exact H.
     + intros H. split; [ left; reflexivity | exact H ].
+  - intros l T T' R k. split; intros [_ H]; (split; [ left; reflexivity | exact H ]).
   - intros l T1 T l' T' R _ k. tauto.
   - intros l T1 T l' T1' T' R _ k. tauto.
   - intros R1 R3 R2 _ IH12 _ IH23 k. rewrite (IH12 k). apply IH23.
