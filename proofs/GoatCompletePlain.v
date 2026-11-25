@@ -32,9 +32,11 @@ Require Import Goat.GoatInferW.
 Require Import Goat.GoatElab.
 Require Import Goat.GoatCompleteFuel.
 Require Import Goat.GoatCompleteRf.
+Require Import Goat.GoatCompleteFresh.
 Require Import Goat.GoatCompleteMono.
 Require Import Goat.GoatCompleteCtx.
 Require Import Goat.GoatCompleteCore.
+Require Import Goat.GoatCompleteCoreW.
 Require Import Goat.GoatCompleteConv.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
@@ -177,16 +179,96 @@ Proof.
   - rewrite <- (teqD_psi _ _ _ H0). exact IHmtyping.
 Qed.
 
+(* ---- substitution on a record-free type ---- *)
+
+Fixpoint rs (f : atom -> typ) (T : typ) : typ :=
+  match T with
+  | typ_Var a => f a
+  | typ_Arrow A B => typ_Arrow (rs f A) (rs f B)
+  | _ => T
+  end.
+
+Lemma ap_rs : forall st sr T, rf T -> ap_typ st sr T = rs st T.
+Proof.
+  intros st sr T. induction T; simpl; intros H; try contradiction; try reflexivity.
+  destruct H as [H1 H2]. rewrite (IHT1 H1), (IHT2 H2). reflexivity.
+Qed.
+
+Lemma rs_comp : forall f h T, rs f (rs h T) = rs (fun a => rs f (h a)) T.
+Proof. intros f h. induction T; simpl; try reflexivity. rewrite IHT1, IHT2. reflexivity. Qed.
+
+Lemma rs_agree : forall f f' T, (forall a, a `in` ftv_typ T -> f a = f' a) -> rs f T = rs f' T.
+Proof.
+  intros f f' T. induction T; simpl; intros H; try reflexivity.
+  - rewrite (IHT1 (fun a Ha => H a ltac:(fsetdec))), (IHT2 (fun a Ha => H a ltac:(fsetdec))). reflexivity.
+  - apply H. fsetdec.
+Qed.
+
+Lemma rs_var : forall T, rs typ_Var T = T.
+Proof. induction T; simpl; try reflexivity. rewrite IHT1, IHT2. reflexivity. Qed.
+
+Lemma rnT_rs : forall g T, rf T -> rnT g T = rs (fun a => typ_Var (g a)) T.
+Proof. intros g T H. unfold rnT. exact (ap_rs _ _ _ H). Qed.
+
+Lemma rs_rf : forall f T, rf T -> (forall a, a `in` ftv_typ T -> rf (f a)) -> rf (rs f T).
+Proof.
+  intros f T. induction T; simpl; intros H Hf; try contradiction; try exact I.
+  - destruct H as [H1 H2]. split; [ apply IHT1 | apply IHT2 ]; try assumption;
+      intros a Ha; apply Hf; fsetdec.
+  - apply Hf. fsetdec.
+Qed.
+
+Lemma rnT_invol : forall g T, (forall x, g (g x) = x) -> rf T -> rnT g (rnT g T) = T.
+Proof.
+  intros g T Hg H. rewrite (rnT_rs g T H). rewrite (rnT_rs g _ (rs_rf (fun a => typ_Var (g a)) T H (fun a _ => I))).
+  rewrite rs_comp. rewrite <- (rs_var T) at 2. apply rs_agree. intros a _. simpl. rewrite Hg. reflexivity.
+Qed.
+
 (* ---- the closed program ---- *)
 
+(* A swap of atoms that makes a record-free type even, undone by itself. *)
+Lemma even_swap_inv : forall T : typ, rf T ->
+  exists g, (forall x, g (g x) = x) /\ PEv (rnT g T).
+Proof.
+  intros T Hrf.
+  destruct (mk_rename_even (ftv_typ T) (ftv_typ T)) as (f & N & Hinv & HNB & HNV & HVN & Hfix & HNev).
+  exists f. split; [ exact Hinv | ].
+  split; [ | apply rf_rnT; exact Hrf ].
+  apply ev_rnT; [ exact Hrf | ]. intros a Ha. apply HNev. apply HVN. exact Ha.
+Qed.
+
 (* A monomorphic derivation of a core program, at any type, gives a run of the
-   closed entry point whose result is a principal type of the derivation's type
-   with each record, recursive type and tag group replaced by [Float], up to a
-   renaming of its atoms to even ones.  On a record-free type [psi] is the
-   identity, so the derivation's own type is an instance of the result. *)
-Theorem infer_complete_core_plain_mono : forall e T, mtyping nil e T ->
-  exists g D T' e' S2, PEv (rnT g (psi T)) /\
+   closed entry point, from some fuel on, whose result is a principal type of
+   the derivation's type with each record, recursive type and tag group
+   replaced by [Float]: that type is an instance of the result, under a
+   substitution that respects the sorts [D] gives the result's atoms.  On a
+   record-free type [psi] is the identity, so the derivation's own type is the
+   instance. *)
+Theorem infer_complete_core_plain : forall e T, mtyping nil e T ->
+  exists D T' e' S,
     Stable (fun f => infer_closed_elab f e = Some (D, T', e')) /\ erase e' = e /\
-    Live PEv (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
-    teqD d_any (apT S2 T') (rnT g (psi T)) /\ rf T'.
-Proof. intros e T H. exact (infer_complete_core_mono e (psi T) (mtyping_rtyping nil e T H)). Qed.
+    kres D d_any (sT S) /\ rkres D d_any (sR S) /\ teqD d_any (apT S T') (psi T) /\ rf T'.
+Proof.
+  intros e T H.
+  destruct (even_swap_inv (psi T) (rf_psi T)) as (g & Hg & HP).
+  pose proof (rtyping_ren _ _ _ (mtyping_rtyping nil e T H) g) as H'.
+  change (mren g (mpsi nil)) with (@nil (atom * typ)) in H'.
+  pose proof (rtyping_ctyping _ _ _ H' (fun x U Hin => match Hin with end) HP {}) as Hc.
+  destruct (infer_complete_core_closed e (rnT g (psi T)) Hc)
+    as (D & T' & e' & S2 & Hs & He & Hl & Hr & Ht & Hf).
+  assert (Hlf : forall a, a `in` ftv_typ T' -> rf (sT S2 a)) by (intros a Ha; exact (proj2 (proj2 (Hl a Ha)))).
+  set (S := Sub (fun a => if AtomSetImpl.mem a (ftv_typ T') then rnT g (sT S2 a) else typ_Float) (sR S2)).
+  exists D, T', e', S.
+  assert (HS : apT S T' = rnT g (apT S2 T')).
+  { unfold apT. cbn [sT sR S]. rewrite (ap_rs _ _ _ Hf), (ap_rs _ _ _ Hf).
+    rewrite (rnT_rs g _ (rs_rf _ _ Hf Hlf)), rs_comp. apply rs_agree. intros a Ha. simpl.
+    pose proof (Hlf a Ha) as Hfa. apply AtomSetFacts.mem_iff in Ha. rewrite Ha. rewrite (rnT_rs g _ Hfa).
+    reflexivity. }
+  refine (conj Hs (conj He (conj _ (conj Hr (conj _ Hf))))).
+  - intros a. cbn [sT S]. destruct (AtomSetImpl.mem a (ftv_typ T')) eqn:Em.
+    + apply AtomSetFacts.mem_iff in Em. exact (sat_rnT g _ _ (proj1 (Hl a Em))).
+    + exact I.
+  - rewrite HS.
+    pose proof (teqD_rf_eq d_any (apT S2 T') (rnT g (psi T)) (rf_ap S2 T' Hf Hlf) Ht) as Eq.
+    rewrite <- Eq. rewrite (rnT_invol g _ Hg (rf_psi T)). apply teq_teqD. apply teq_refl.
+Qed.
