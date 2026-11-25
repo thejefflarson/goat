@@ -1428,3 +1428,31 @@ the typing rule over `V` (`V_app`, `V_if`, `V_spread_h`, `V_spreadL`, `V_obj`, `
 over `V`. `infer_closed_sound` keeps its statement. `infer_guard` carries `mgH` for the
 equations (`dis_gsub`), and completeness (`GoatCompleteCore`) reads the equations of a
 spread-free program as `nil`.
+
+## Held equations, step 4: instances re-hold, lets keep what the context owns (H1c)
+
+Two changes to `infer`, both sound over plain contexts (no scheme carries an equation):
+
+- **A use of a scheme re-holds** (`rh_t`, `GoatHeld.v`; `GoatHeldInst.v`). The variable case
+  instantiates, then gives each open entry whose presence is one of the use's fresh atoms
+  (`inst_pres`) a field variable of its own and the equation `p => y = F`. `rh_sound_mut`:
+  once those equations are solved the re-held type is the instance up to `teqD` (`req_absf`
+  when the presence is absent, the equation otherwise), so the case is `V_leaf` plus
+  `V_conv_sol`. A recursive type is left as it is. `rh_nil_mut` and `rh_rf` make it the
+  identity on a mono scheme and on the record-free fragment, which is all completeness needs.
+  `rh_mg_mut` keeps the types guarded (`infer_guard`).
+- **A `let` whose bound term holds an equation on a presence of the context stays
+  monomorphic** (`pres_owned`). Its equations stay held and the body sees the bound term at
+  one type, exactly as for a computed value (`V_letmono_step`). A `let` whose equations are
+  all on presences the context does not mention decides them with `dis`, as before. Spread-free
+  programs hold no equations, so completeness only rewrites `pres_owned_nil`.
+
+What this does not do (R2). The checker generalizes such a `let` and carries the equation in
+the scheme (`carried`). Soundness for that needs the calculus context to depend on the
+solution: when the presence settles present, the scheme's quantified variable is bound to the
+context's field and must not be generalized, so the body's derivation uses a less general
+scheme than the one the algorithm bound. `V` states every derivation in `apC S Gs`, which has
+no room for that; it would need `V` over a context realized at `S` and the carried
+equations as a parallel input of `infer`. Until then the proven algorithm refuses a function
+bound under a parameter's row whose uses need two types (differential lines 622 and 623).
+

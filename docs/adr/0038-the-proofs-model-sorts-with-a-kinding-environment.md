@@ -235,4 +235,7 @@ they read the entry's field as the entry's field. The checker's `constrain_row`
 decides an entry absent when a value held on its presence can never meet the
 sort (a function against `Eq`), which is the monotone clash `forced`. The
 calculus change this needs (`req_absf`) and W's residual are not part of this
-change.
+change. Both have since landed in `proofs/` (`proofs/README.md`, "Held
+equations"); a use of a scheme re-holds its open entries' equations
+(`GoatHeldInst.v`), and the carried equations of a generalizing `let` are open
+(ADR 0033, proofs status).

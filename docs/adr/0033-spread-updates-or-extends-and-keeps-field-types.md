@@ -405,7 +405,15 @@ Programs. The three pinned tests (`a_variable_field_keeps_the_sort_it_took_befor
 and the instantiation program and the nested-function program do too. The corpus
 before and after differ in exactly one program (`ERR` to `OK`).
 
-Not yet done: algorithm W, the proofs of its soundness with a residual of held
-equations, the calculus conversion `req_absf` (an absent entry's field type is
-irrelevant) and the restated completeness. Until they land the proven algorithm
-refuses the programs above that the checker accepts.
+Proofs status. The calculus conversion `req_absf` (an absent entry's field type
+is irrelevant), algorithm W holding the equations (rules 1, 2 and 4), W's
+soundness over them, and the restated completeness have landed. W also does
+rule 3: a use re-holds the equations of its scheme's open entries. W departs
+from rule 5 in one way: a `let` whose bound term holds an equation on a
+presence of the environment stays monomorphic instead of carrying the equation
+in its scheme. The proven algorithm therefore refuses a function bound under a
+parameter's row whose uses need two types (`g(1); g("s")` with
+`g = program(x) do {...r, id: x} done`), which the checker accepts. Carrying
+needs the soundness statement over contexts that depend on the solution (a
+presence that settles present binds the scheme's quantified variable); it is
+open.
