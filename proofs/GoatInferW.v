@@ -138,6 +138,10 @@ Definition spread_present (f : nat) (D2 : denv) (s1 s2 : sub) (T1 T2 : typ) (l :
               apH s3 (Heq l (typ_Var (ea n2)) (typ_Var (ea (n2 + 2))) T2 (row_Var (ea (S n2))) :: nil))
   end.
 
+(* The atoms a use of the scheme [s] gives its quantified variables. *)
+Definition inst_pres (s : scheme) (n : nat) : list atom :=
+  map (fun i => ea (n + i)) (seq 0 (length (AtomSetImpl.elements (s_tq s)))).
+
 (* [infer f D G e n] returns the substitution, the kinding environment the
    result type lives in, the type, the next unused variable number, the
    elaborated term, and the equations it holds ([heq], GoatHeld.v), stated of
@@ -155,7 +159,9 @@ Fixpoint infer (f : nat) (D : denv) (G : ctx) (e : exp) (n : nat) {struct f}
           match lookup x G with
           | None => None
           | Some s => let (p, n1) := instantiate D s n in
-                      let (T, D1) := p in Some (sid, D1, T, n1, e, nil)
+                      let (T, D1) := p in
+                      let '(T', H, n2) := rh_t (inst_pres s n) T n1 in
+                      Some (sid, D1, T', n2, e, H)
           end
       | e_num _ => Some (sid, upd D (ea n) k_Literal, typ_Var (ea n), S n, e, nil)
       | e_dec _ => Some (sid, D, typ_Float, n, e, nil)

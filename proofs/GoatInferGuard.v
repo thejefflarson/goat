@@ -814,6 +814,41 @@ Proof.
     exact (mgH_ap _ _ S3 Hnew).
 Qed.
 
+(* Re-holding the open entries of an instance keeps it guarded. *)
+Lemma rh_mg_mut : forall ps,
+  (forall T m T' H m', rh_t ps T m = (T', H, m') -> mg T -> mg T' /\ mgH H) /\
+  (forall R m R' H m', rh_r ps R m = (R', H, m') -> mgr R -> mgr R' /\ mgH H).
+Proof.
+  intros ps. apply typ_row_mutind; cbn [rh_t rh_r];
+    try (intros; match goal with E : (_, _, _) = (_, _, _) |- _ => inversion E; subst end;
+         split; [ assumption | exact mgH_nil ]; fail).
+  - intros A HA B HB m T' H m' E Hm.
+    destruct (rh_t ps A m) as [[A' H1] m1] eqn:E1.
+    destruct (rh_t ps B m1) as [[B' H2] m2] eqn:E2. inversion E; subst; clear E.
+    destruct Hm as [MA0 MB0].
+    destruct (HA _ _ _ _ E1 MA0) as (MA & GA). destruct (HB _ _ _ _ E2 MB0) as (MB & GB).
+    exact (conj (conj MA MB) (mgH_app _ _ GA GB)).
+  - intros R HR m T' H m' E Hm.
+    destruct (rh_r ps R m) as [[R1 H1] m1] eqn:E1. inversion E; subst; clear E.
+    exact (HR _ _ _ _ E1 Hm).
+  - intros l T HT R HR m R' H m' E Hm.
+    destruct (rh_t ps T m) as [[T1 H1] m1] eqn:E1.
+    destruct (rh_r ps R m1) as [[R1 H2] m2] eqn:E2. inversion E; subst; clear E.
+    destruct Hm as [MT0 MR0].
+    destruct (HT _ _ _ _ E1 MT0) as (MT & GT). destruct (HR _ _ _ _ E2 MR0) as (MR & GR).
+    exact (conj (conj MT MR) (mgH_app _ _ GT GR)).
+  - intros l P HP T HT R HR m R' H m' E Hm.
+    destruct (rh_t ps T m) as [[F1 H1] m1] eqn:E1.
+    destruct (rh_r ps R m1) as [[R1 H2] m2] eqn:E2.
+    destruct Hm as (MP & MF0 & MR0).
+    destruct (HT _ _ _ _ E1 MF0) as (MF & GF). destruct (HR _ _ _ _ E2 MR0) as (MR & GR).
+    destruct (fresh_pres ps P); inversion E; subst; clear E.
+    + refine (conj (conj MP (conj I MR)) _).
+      apply mgH_app; [ exact GF | apply mgH_app; [ exact GR | ] ].
+      constructor; [ | constructor ]. exact (conj MP (conj I (conj MF MR))).
+    + exact (conj (conj MP (conj MF MR)) (mgH_app _ _ GF GR)).
+Qed.
+
 Theorem infer_guard : forall f,
   (forall D G e n s D' T n' e' Hq, infer f D G e n = Some (s, D', T, n', e', Hq) ->
      mg_ctx G -> gsub s /\ mg T /\ mgH Hq) /\
@@ -833,8 +868,12 @@ Proof.
       cbn [infer infer_fields infer_arms infer_obj] in H; try discriminate H;
       try (injection H as <- <- <- <- <- <-; exact (conj gs_id (conj I mgH_nil))).
     + destruct (lookup x G) as [sc|] eqn:EL; [|discriminate].
+      destruct (instantiate D sc n) as [[T0 D1] n1] eqn:Hi.
+      destruct (rh_t (inst_pres sc n) T0 n1) as [[T1 H1] n2] eqn:ER.
       injection H as <- <- <- <- <- <-.
-      exact (conj gs_id (conj (mg_apT _ _ (inst_sub_gsub sc n) (lookup_mg _ _ _ EL HG)) mgH_nil)).
+      destruct (proj1 (rh_mg_mut _) _ _ _ _ _ ER
+                  (instantiate_mg _ _ _ _ _ _ Hi (lookup_mg _ _ _ EL HG))) as (M & HM).
+      exact (conj gs_id (conj M HM)).
     + dI H E1.
       injection H as <- <- <- <- <- <-.
       destruct (IHi _ _ _ _ _ _ _ _ _ _ E1 (mg_cons _ (sch_mono (typ_Var (ea n))) _ I HG)) as (S1 & M1 & HH1).

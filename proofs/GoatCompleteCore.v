@@ -45,6 +45,7 @@ Require Import Goat.GoatInferGen.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatInferW.
 Require Import Goat.GoatHeld.
+Require Import Goat.GoatHeldInst.
 Require Import Goat.GoatInferSound.
 Require Import Goat.GoatHeldSound.
 Require Import Goat.GoatInferHeld.
@@ -209,6 +210,20 @@ Proof.
   assert (Ed : inst_den D (sch_mono T) n = D).
   { unfold inst_den. rewrite E, E'. destruct D. reflexivity. }
   rewrite Ei, Ed, E, E'. simpl. repeat rewrite Nat.add_0_r. reflexivity.
+Qed.
+
+Lemma inst_pres_mono : forall T n, inst_pres (sch_mono T) n = nil.
+Proof.
+  intros T n. unfold inst_pres.
+  assert (E : AtomSetImpl.elements (s_tq (sch_mono T)) = nil)
+    by (apply elements_none; intros q; cbn [sch_mono s_tq]; fsetdec).
+  rewrite E. reflexivity.
+Qed.
+
+Lemma rf_rf_ty : forall T, rf T -> rf_ty T.
+Proof.
+  induction T; cbn [rf rf_ty]; intros H; try contradiction; try exact I;
+    try (split; [ apply IHT1 | apply IHT2 ]; tauto).
 Qed.
 
 Lemma is_cmp_op_true : forall o, kind o = k_cmp -> is_cmp_op o = true.
@@ -411,7 +426,7 @@ Proof.
   exists sid, D1, n1, S2, T0, (e_fvar_f x).
   refine (conj _ (conj _ (conj HTo (conj HE0 (conj _ (conj HRA1 (conj _ (conj eq_refl eq_refl)))))))).
   - exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-    cbn [infer]. rewrite Hlk. rewrite Hinst. reflexivity.
+    cbn [infer]. rewrite Hlk. rewrite Hinst. rewrite (rh_rf _ _ _ (rf_rf_ty _ HrfT0)). reflexivity.
   - refine (conj (rkres_RA D1 Dd (sR S2) HRA1) (conj _ (conj Hd1 (conj (SI_id_le n n1 ltac:(lia)) (conj _ (conj _ OkS_id)))))).
     + intros a Ha. pose proof (limg_sid L a Ha) as Ha'.
       rewrite (HD1o a (HLo a Ha')). rewrite (F2 a (HLo a Ha')). exact (HLv a Ha').
@@ -679,7 +694,7 @@ Proof.
       refine (conj _ (conj (SemL_id PEv L Dd Sg D n (rkres_RA D Dd (sR Sg) HRA) HLv Hd)
                 (conj HTo (conj HTe (conj _ (conj HRA (conj Hc (conj eq_refl eq_refl)))))))).
       * exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-        cbn [infer]. rewrite Hlk, instantiate_mono. reflexivity.
+        cbn [infer]. rewrite Hlk, instantiate_mono, inst_pres_mono, rh_t_nil. reflexivity.
       * exact (Live_mono PEv _ _ D Dd Sg (fun a Ha => Hsub a (proj2 (ftv_sch_mono T' a) Ha)) HLv).
     + exact (var_sch_done L Dd D G n Sg x s sc T Hd HRA HLo HLE HLv HG HGL Hlk Hsch Hi).
   - (* numeral *)

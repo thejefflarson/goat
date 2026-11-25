@@ -27,6 +27,7 @@ GoatInferSound.v
 GoatHeldSound.v
 GoatHeldV.v
 GoatHeldLet.v
+GoatHeldInst.v
 GoatInferHeld.v
 GoatInferRen.v
 GoatInferUnify.v

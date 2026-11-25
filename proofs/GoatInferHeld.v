@@ -42,6 +42,7 @@ Require Import Goat.GoatInferSound.
 Require Import Goat.GoatHeldSound.
 Require Import Goat.GoatHeldV.
 Require Import Goat.GoatHeldLet.
+Require Import Goat.GoatHeldInst.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Lists.List.
@@ -84,28 +85,11 @@ Lemma V_leaf : forall G D n e T,
   WfCtx G -> typing D G e T -> V (apC sid G) D n e T nil.
 Proof. intros. rewrite apC_sid. apply V_typing; assumption. Qed.
 
-Lemma HOk_nil : HOk nil.
-Proof. constructor. Qed.
-
-Lemma HOk_app : forall H1 H2, HOk H1 -> HOk H2 -> HOk (H1 ++ H2).
-Proof. intros H1 H2. unfold HOk. rewrite Forall_app. tauto. Qed.
 
 (* ------------------------------------------------------------------ *)
 (* A spread onto an open entry                                           *)
 (* ------------------------------------------------------------------ *)
 
-(* An entry whose presence is absent, or whose field types are equal, is the
-   same entry: the conversion the held equation licenses. *)
-Lemma teqD_maybe_fld : forall D l P A B R,
-  (P = typ_Bool \/ teqD D A B) ->
-  teqD D (typ_Record (row_Maybe l P A R)) (typ_Record (row_Maybe l P B R)).
-Proof.
-  intros D l P A B R Hc. unfold teqD. cbn [nfT]. apply teq_rec.
-  rewrite !nfR_maybe. destruct (is_abs P && rlacksD D l (nfR D R)) eqn:Hd; [ apply req_refl | ].
-  destruct Hc as [-> | Ht].
-  - cbn [nfT]. apply req_absf.
-  - apply req_maybe; [ apply teq_refl | exact Ht | apply req_refl ].
-Qed.
 
 Lemma V_spread_h : forall Gs D n e1 e2 l p y T2 r H1 H2,
   V Gs D n e1 (typ_Record (row_Maybe l p y r)) H1 -> V Gs D n e2 T2 H2 ->
@@ -512,15 +496,22 @@ Proof.
     + (* variable *)
       destruct (lookup x G) as [sc|] eqn:Hl; [|discriminate].
       destruct (instantiate D sc n) as [[T0 D1] n1] eqn:Hi.
+      destruct (rh_t (inst_pres sc n) T0 n1) as [[T1 H1] n2] eqn:Hrh.
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst Hq; clear H.
       pose proof (lookup_binds _ _ _ Hl) as Hb.
       destruct (instantiate_sound _ _ _ _ _ _ Hi ((proj2 HG) _ _ Hb) HD) as (Hinst & Hev & HD1 & Hk).
       assert (Hle : n <= n1) by (unfold instantiate in Hi; inversion Hi; lia).
-      split; [ exact (conj HD (conj OkS_id (conj HD1 (conj Hle (conj Hk Hk))))) | ].
-      split; [exact Hev|]. split; [ exact HOk_nil | ].
+      assert (Hps : forall a, In a (inst_pres sc n) -> ev a).
+      { intros a Ha. unfold inst_pres in Ha. apply in_map_iff in Ha as (i & <- & _).
+        exists (n + i). reflexivity. }
+      destruct ((proj1 (rh_ev_mut _ Hps)) _ _ _ _ _ Hrh Hev) as (Hev' & HH' & Hle').
+      split; [ exact (conj HD (conj OkS_id (conj (DOk_mono D1 n1 n2 HD1 Hle') (conj (Nat.le_trans _ _ _ Hle Hle') (conj Hk Hk))))) | ].
+      split; [exact Hev'|]. split; [ exact HH' | ].
       refine (conj _ (conj eq_refl I)).
-      apply V_leaf; [ exact HG | ].
-      eapply T_Var; [ exact (proj1 HG) | exact Hb | exact Hinst ].
+      apply V_conv_sol with (T := T0).
+      * apply V_leaf; [ exact HG | ].
+        eapply T_Var; [ exact (proj1 HG) | exact Hb | exact Hinst ].
+      * intros S0 D'' n'' _ Hs. exact ((proj1 (rh_sound_mut _ D'' S0)) _ _ _ _ _ Hrh Hs).
     + (* numeral *)
       inversion H; try subst s; try subst D'; try subst T; try subst n'; try subst e'; try subst Hq; clear H.
       split; [ apply Good_upd; exact HD | ].

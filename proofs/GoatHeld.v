@@ -94,6 +94,44 @@ Definition pres_owned (G : ctx) (H : list heq) : bool :=
 Lemma pres_owned_nil : forall G, pres_owned G nil = false.
 Proof. reflexivity. Qed.
 
+(* A use of a scheme re-holds what its entries held.  The presences [ps] are the
+   fresh atoms the use gave the scheme's quantified presences; each open entry
+   of the instance whose presence is one of them gets a field of its own, a
+   fresh variable, and the equation that it is the field it had when the
+   presence is present.  A recursive type is left as it is. *)
+Definition fresh_pres (ps : list atom) (P : typ) : bool :=
+  match P with
+  | typ_Var a => if in_dec Atom.eq_dec a ps then true else false
+  | _ => false
+  end.
+
+Fixpoint rh_t (ps : list atom) (T : typ) (m : nat) {struct T} : typ * list heq * nat :=
+  match T with
+  | typ_Arrow A B =>
+      let '(A', H1, m1) := rh_t ps A m in
+      let '(B', H2, m2) := rh_t ps B m1 in
+      (typ_Arrow A' B', H1 ++ H2, m2)
+  | typ_Record R =>
+      let '(R', H, m1) := rh_r ps R m in
+      (typ_Record R', H, m1)
+  | _ => (T, nil, m)
+  end
+with rh_r (ps : list atom) (R : row) (m : nat) {struct R} : row * list heq * nat :=
+  match R with
+  | row_Empty | row_Var _ => (R, nil, m)
+  | row_Ext l T R0 =>
+      let '(T', H1, m1) := rh_t ps T m in
+      let '(R', H2, m2) := rh_r ps R0 m1 in
+      (row_Ext l T' R', H1 ++ H2, m2)
+  | row_Maybe l P F R0 =>
+      let '(F', H1, m1) := rh_t ps F m in
+      let '(R', H2, m2) := rh_r ps R0 m1 in
+      if fresh_pres ps P then
+        (row_Maybe l P (typ_Var (ea m2)) R',
+         H1 ++ H2 ++ Heq l P (typ_Var (ea m2)) F' R' :: nil, S m2)
+      else (row_Maybe l P F' R', H1 ++ H2, m2)
+  end.
+
 (* The discharge of a program's equations at the top: nothing to do for none. *)
 Definition dis_top (f : nat) (D : denv) (H : list heq) (n : nat)
   : option (sub * denv * nat) :=
