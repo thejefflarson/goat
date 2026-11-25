@@ -2180,6 +2180,31 @@ substitution.
 - What the `psA` unifier needs, in order: the front entry absent in `row_front` and `rw_arm` (the other row presents the label with presence `Bool`, a plain field is impossible, and scoped duplicates need `cnt`), the `absent_clash` branch of `unify_rD`, `bind_row`/`bind_prop` with `po` replaced by a hypothesis on the absent entries, and `ps_nf` (false for a presence that is syntactically `Bool`, which `nfR` drops). Then `Pkg`/`SemG` change their `ps` to `psA`, which touches `GoatCompleteLive.v`, `GoatCompleteBound.v`, `GoatCompleteHeld.v`, and the DoneQ/CtxP/VarP/Rehold migration above, which compiled and is a mechanical replay.
 - DECISION NEEDED: this is several stages, not one, and the four pairs remain hypotheses of statement A (now live ones). Either accept that, or change W's guards (the option (a) of 7.6f, which the owner declined for these three) so that the hypotheses disappear.
 
+*Stage 7.8l (partial; `GoatCompletePsAUnify.v`).* This stage did the part of the `psA` move that needs no new unifier argument, and found what the rest needs. Nothing that already compiled changed.
+
+- `PkgA` is `Pkg` with `psA` for `ps`. `Pkg_PkgA` embeds every `Pkg` (by `ps_psA`), so the proved `unify_tD_complete_full` already yields a `PkgA` at its `ps` inputs. `PkgA_id`, `PkgA_comp`, `pkg_apA_T`/`pkg_apA_R` (the step applied to a `psA` type, by `psA_pull`) and `pkg_facA_T`/`pkg_facA_R` are proved, so a consumer can state its step at `PkgA` and compose steps.
+- `row_frontA` reads the front entry of a `psA` row: presence `Unit` or `Bool`, the field in the fragment, and `rsz` is `S (tsz T + rsz R')` when the front is present and `rsz R'` when it is absent. The absent case is why the induction's measure must change: an absent front removes no size, so `rw_arm` cannot take its two recursive calls from `rsz (apR Sg R1) < S m` alone. The measure needs the entry count as a second component (`cnt` of `GoatCompleteSide.v` counts the present entries of a label).
+- `na_nf`, `na_drop_abs`: a type with no syntactic `Bool` presence (`na`) is its own normal form under `nfT`/`nfR` and `drop_abs`. This is the `psA` form of `ps_nf`: `ps` implied `na` through `pres_not_abs`, `psA` does not, so the unifier at `psA` has to carry `na` of its types through `PkgA` (not proved: a step that binds a presence variable to `Bool` puts the constant in a presence, so `PkgA` cannot promise `na` of the images unconditionally).
+
+What stops the unifier at `psA`, stated as the next stage's first task and not attempted: `rewrite_row_spec`/`rewrite_row_front` (`GoatCompleteRewrite.v`) assume the entry of the label that `Sg R2` has is not absent (`is_abs P0 = false`, the `Surf` predicate). With an absent front the rewrite has to be read for an entry that is absent in `Sg R2`, which can be the closed row's `Bool` presence, a `Maybe` entry whose presence `Sg` sends to `Bool`, or (if the front label recurs later in `R1'`) a present entry further in; the last is expected to need `cnt`: `req_abs` drops an absent entry only when its rest lacks the label, so an absent front followed by a present entry of its label is not removable, and the two rows have to agree on the number of present entries of the label (not proved here). So `rewrite_row_spec` needs an absent-entry alternative, and `rewrite_row_total` needs the guard hypothesis of pair (i) in place of `side_guard_passes`.
+
+**Statement A's hypotheses after 7.8l.** The ratified list, as live hypotheses of the unifier at `psA` (none is vacuous any more, because `ps` excluded every absent entry):
+
+1. `side_blocks_absent` (guard pair): the front entry of `R1` is absent through a presence variable and the tails of `R1` and `R2` share a row variable, which the guard `side_av` refuses though `Sg` unifies them.
+2. `bind_row_blocks_absent_tail`: a row variable `r` is bound to a row ending in `r` whose entries `Sg` makes absent; the occurs check of `bind_row` reads the tail as an occurrence.
+3. `bind_prop_blocks_absent`: a type variable is bound to a record that holds it behind an entry `Sg` makes absent; the occurs check of `bind_prop` refuses it.
+4. `field_blocks_absent`: two entries of one label, both absent under `Sg`, whose field types are variables `Sg` keeps apart; W unifies the fields before the presences are settled.
+5. `fld`'s first half (`apT S P = Bool -> sat D1 k (apT S T)`): `req_absf` frees the field's image but `push_sort` still checks the field's structure, so it is provable only for a field that is a variable, at sorts `Any` and `Eq`.
+
+Pairs 2 and 3 are stated by `po`/`pos` of `GoatCompleteOcc.v` (an occurrence under a present entry only). `fld`'s second half (the presence variable at `Numeric`) is carried by `NN`/`Drow`, as before.
+
+**What remains of 7.8, after 7.8l.**
+
+1. *The unifier at `psA`.* `rewrite_row_spec` for an absent entry (above); `row_front`/`rw_arm` with an absent front (`row_frontA` gives its shape; the measure gains the entry count); the `absent_clash` branch of `unify_rD` (decide the front absent: `P := Bool`, then the rests under `bool_sub`); `bind_row`/`bind_prop` with `po` replaced by the hypotheses of pairs 2 and 3; `pkg_close_T`/`pkg_close_R` and `ren_ps_T`/`ren_ps_R` at `psA`; `ps_lacks` at `psA` (`abs_vars` is not `nil` when an entry is absent: the labels an absent entry makes absent are the labels the row variable's kind may lack).
+2. *Move `Pkg` and `SemG` to `psA`* (`GoatCompleteLive.v`, `GoatCompleteBound.v`), then `HEq`/`HOkC` and `dis_complete` (`GoatCompleteHeld.v`).
+3. *Replay the 7.8k migration:* `GPsP`, `ps_stepP`, `DoneP`/`DoneQ`, `rh_struct`/`hok`, `ps_heqs`/`ps_pack`, `ps_inst_mut`, and drop `HPU` from `var_sch_doneQ`.
+4. The items under "What remains of 7.8" below (the `ctyping` rebuild, constructs, the conversion from `typing`, `Quot` on records) are unchanged.
+
 **What remains of 7.8.**
 
 Stage 7.8d did the unifier half: `unify_stepG` (`GoatCompleteLive.v`) gives the step in every
