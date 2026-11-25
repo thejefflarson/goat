@@ -512,3 +512,17 @@ Proof.
              Ex (fun q Hq0 => F2R q (HLRo q Hq0))).
   - eapply teq_trans; [ exact TT | ]. rewrite P4. apply teq_sym. exact Heq.
 Qed.
+
+(* What an instance of the comparison's scheme [apS (sfixS sc Sg) sc] records,
+   read on [sc]: the quantifiers, sorts and kinds are [sc]'s, and a presence atom
+   of [sc]'s body is one of the comparison scheme's. *)
+Lemma instQ_cls : forall Pt D T sc Sg,
+  instQ Pt D T (apS (sfixS sc Sg) sc) ->
+  exists st sr, instAt Pt D T (apS (sfixS sc Sg) sc) st sr /\
+    RowSorts sc /\ NNI sc st /\ PresI sc st.
+Proof.
+  intros Pt D T sc Sg (st & sr & Hi & Hrs & Hnn & Hpi).
+  exists st, sr. refine (conj Hi (conj Hrs (conj Hnn _))).
+  intros a Ha Hq. apply (Hpi a Ha). cbn [apS s_body].
+  exact (proj1 (qpr_ap_fwd (sfixS sc Sg) a (sfixS_tin sc Sg a Ha)) _ Hq).
+Qed.
