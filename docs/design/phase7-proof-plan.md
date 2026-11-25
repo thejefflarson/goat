@@ -2046,38 +2046,65 @@ induction itself is not rebuilt.
   over the fragment: the run's `SemG`, `pf`/`atT`/`ps` of its type, and `HOkC` of the held
   equations it returns; `DoneG_const` is the constants case.
 
+*As built (stage 7.8e, partial, `GoatCompleteBound.v`).* The bound-transfer lemma and
+the step lemmas the rebuilt induction needs are proved; the induction itself is not
+rebuilt, because the rebuild runs into two obstacles the earlier notes did not see.
+
+- `er_ap_sub`: if `pf T` and every entry of `T` is present under `S` (`ps S T`), the
+  representative `erT (apT S T)` mentions every atom that `erT (sT S x)` mentions for a
+  variable `x` of `T`, and every atom that `erR (sR S r)` mentions for a row variable `r`
+  (rows are the second half of the statement). With `er_inv` this moves a bound across a
+  conversion. `AvoidE B L LR Sg` is `Avoid` stated on representatives (type atoms of live
+  atoms and of live row variables); `AvoidE_limg` and `AvoidE_next` are the two steps the
+  induction takes with it, `AvoidE_mono`, `_sub`, `_empty`, `_fresh` and `_agree` the
+  structural ones. They replace `Avoid_limg` and `Avoid_next` and use `teqD_rf_eq` nowhere.
+- `SemW` is `SemG` without its last clause, the bound that a bound on `Sg`'s live images
+  survives (`CovL`). That clause cannot compose: the second step's live set holds the atoms
+  of the first step's result type, which are not images of live atoms (a fresh numeral atom
+  is sent to whatever the derivation chose), so `SemG_comp`'s hypothesis `Hm` fails for an
+  arbitrary bound. `AvoidE` carries the bound the induction needs. `SemW_of_G`, `_id`,
+  `_fresh`, `_mono`, `_weaken`, `_unfresh`, `_comp`, `_live_ap`, `_factor` and the lnT/lnR
+  pair (`lnT s L LR T`, `lnR s L LR T`: the live type atoms and row variables handed on)
+  are the structural lemmas the cases use, with `LR` threaded beside `L`.
+
 **What remains of 7.8.**
 
-Stage 7.8d did the unifier half of item 1 and stopped at the point where the
-invariants must stop assuming a record-free derivation. `unify_stepL_G`
-(`GoatCompleteLiveRf.v`) is `unify_stepL` proved from `unify_stepG`, and
-`infer_complete_core` now calls it in every case that unifies (call, `if`,
-`float(e)`, the operators, comparison). It stays the record-free theorem: nothing
-else depends on it, and it is the corollary the generalized induction must keep
-deriving. `SemG_fresh_row` and `LiveG_fresh_pres` are the row-variable and
-presence-atom analogues of `SemG_fresh`.
+Stage 7.8d did the unifier half: `unify_stepL_G` (`GoatCompleteLiveRf.v`) is `unify_stepL`
+proved from `unify_stepG`, and `infer_complete_core` calls it in every case that unifies.
+`SemG_fresh_row` and `LiveG_fresh_pres` are the row-variable and presence-atom analogues of
+`SemG_fresh`.
 
-1. *The induction past `rf`.* `GoatCompleteCtx.v` and `GoatCompleteCore.v` still use
-   `SemL`, `TOk`, `SOk`, `GOk`, `SI` and `Done`, all record-free. Rebuild them on
-   `SemG`/`DoneG`: `TOk n T` becomes `pf`/`atT`/`ps`, `SOk n sc` asks `pf (s_body sc)`
-   and `atT`, `CI`, `GLive` and `CI_stepL` carry presence through `PLive_step`,
-   `ctyping` asks `PEv` only of the atoms (`ev`) where it asked it of a record-free
-   type, and `Done` returns `HOkC` of what the run holds. The obstacle is `Avoid` and
-   `teqD_rf_eq`. The record-free proof turns `teqD (apT S1 T) Tp` into an equality
-   (`teqD_rf_eq`) to move a bound on `Tp`'s atoms to `apT S1 T`'s; over `pf` types the
-   factoring is only `teq`, and `teq` does not fix the free atoms (a presence entry
-   `Maybe l v T R` with `v` sent to `Unit` is `teq` to `Ext l T R`). The replacement is
-   the `BndL`/`Cov` clause of `SemG` for the old atoms, and for the atoms of the
-   result type a bound on the atoms of `apT S1 T` read from the derivation's
-   type; that statement is the design point to settle before the rewrite.
-2. *Constructs.* Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows with
+1. *Schemes over the fragment.* `SchI` is `sch_leP`, whose `instP` is an equation
+   (`T = ap_typ st sr body`) and whose first two conjuncts say the free atoms of the
+   algorithm's scheme lie in the derivation's. After a step the algorithm's scheme is
+   `apS (sfix S2) (apS s sc)` and the derivation's side is `apS (sfix Sg) sc`; over the
+   fragment their bodies are `teq`, not equal (an absent field is free), and the first may
+   mention atoms the second does not. `CI_stepL` proves them equal with `teqD_rf_eq`, and
+   `er_ap_sub` does not repair that: it bounds the atoms of the representative, while
+   `sch_leP`, `frozen` and `gen_mono_let` (GoatCompleteMono.v) compare the atoms of the
+   body. Needed: a scheme comparison up to `teq` whose inclusions are on representatives
+   (`sch_leT`: an instance of the derivation's scheme is `teq` to an instance of the
+   algorithm's), with `gen_mono_let` and `frozen` restated for it, and `CI_env`,
+   `CI_ftv` and `var_sch_done` following.
+2. *The induction past `rf`.* With item 1 settled, rebuild `GoatCompleteCtx.v` and
+   `GoatCompleteCore.v` on `SemW`/`LiveG`/`AvoidE`: `TOk n T` becomes `pf`/`atT` with `ps S T`
+   carried beside it (a monotype in the context needs `ps Sg` too, for the variable case),
+   `GOk`, `GLive` and `CI_stepL` thread the live row variables, and `Done` returns `HOkC`
+   of what the run holds. The core's derivations hold no equation, so the run's equations
+   are `nil` there and the `let` of a value needs only `dis_nil`; a general `Done` needs
+   `dis_complete` at the `let`. `infer_complete_core_closed` stays as the corollary; its
+   `Live PEv` and `rkres` conclusions come from `rf_back` (GoatCompleteLiveRf.v) and from
+   replacing `sR S2` by the empty row substitution, which satisfies every row kind.
+   `unify_stepL`, `unify_tD_rf_complete_img` and `unify_stepL_G` retire when the
+   core stops calling them.
+3. *Constructs.* Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows with
    a tail variable by `rewrite_row_complete`), spread (`spread_present`'s equation,
    discharged by `dis_complete` at a `let` or the top), restrict, tags and `match` (`spn`
    is a lemma), then `letrec` through `V_letrec`'s shape. `ctyping` extends past `rf`
    (ratified) instead of proving an erasure.
-3. *The conversion from `typing`.* Unchanged from 7.7g, extended with the new rules; it also
+4. *The conversion from `typing`.* Unchanged from 7.7g, extended with the new rules; it also
    chooses the presence atoms of `PLive`.
-4. *`Quot` on records.* Option B, above.
+5. *`Quot` on records.* Option B, above.
 
 ## 5. Staged PR plan
 
