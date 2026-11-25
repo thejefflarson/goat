@@ -130,5 +130,6 @@ GoatCompleteMonoT.v
 GoatCompleteCtxT.v
 GoatCompleteCtxW.v
 GoatCompleteCoreW.v
+GoatCompleteSchQ.v
 GoatCompleteCtxP.v
 GoatCompleteVarP.v
