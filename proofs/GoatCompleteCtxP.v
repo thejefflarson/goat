@@ -61,6 +61,7 @@ Require Import Goat.GoatCompleteSchT.
 Require Import Goat.GoatCompleteMonoT.
 Require Import Goat.GoatCompleteCtxT.
 Require Import Goat.GoatCompleteCtxW.
+Require Import Goat.GoatCompleteSchQ.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Lists.List.
@@ -109,10 +110,49 @@ Qed.
 Lemma apR_Var : forall S r, apR S (row_Var r) = sR S r.
 Proof. reflexivity. Qed.
 
+(* [sfixS] for the presence check: a quantified atom is sent to [Unit], so the
+   entries whose presence is a quantified atom are skipped, and the instance
+   ([PresI]) is what makes them present.  The quantified rows stay as they are. *)
+Definition sfixU (sc : scheme) (S : sub) : sub :=
+  Sub (fun a => if AtomSetImpl.mem a (s_tq sc) then typ_Unit else sT S a)
+      (fun r => if AtomSetImpl.mem r (s_rq sc) then row_Var r else sR S r).
+
+Lemma sfixU_tin : forall sc S a, a `in` s_tq sc -> sT (sfixU sc S) a = typ_Unit.
+Proof. intros sc S a Ha. cbn [sfixU sT]. rewrite (AtomSetImpl.mem_1 Ha). reflexivity. Qed.
+
+Lemma sfixU_tout : forall sc S a, a `notin` s_tq sc -> sT (sfixU sc S) a = sT S a.
+Proof.
+  intros sc S a Ha. cbn [sfixU sT]. destruct (AtomSetImpl.mem a (s_tq sc)) eqn:E; [ | reflexivity ].
+  exfalso. apply Ha. apply AtomSetFacts.mem_iff. exact E.
+Qed.
+
+Lemma sfixU_rin : forall sc S r, r `in` s_rq sc -> sR (sfixU sc S) r = row_Var r.
+Proof. intros sc S r Hr. cbn [sfixU sR]. rewrite (AtomSetImpl.mem_1 Hr). reflexivity. Qed.
+
+Lemma sfixU_rout : forall sc S r, r `notin` s_rq sc -> sR (sfixU sc S) r = sR S r.
+Proof.
+  intros sc S r Hr. cbn [sfixU sR]. destruct (AtomSetImpl.mem r (s_rq sc)) eqn:E; [ | reflexivity ].
+  exfalso. apply Hr. apply AtomSetFacts.mem_iff. exact E.
+Qed.
+
+Lemma sfixU_ev_ap : forall sc S T, WfSch sc -> EvT T -> apT (sfixU sc S) T = apT S T.
+Proof.
+  intros sc S T (Hq & Hr & _) [Ht Hv]. unfold apT. apply ap_typ_ext.
+  - intros a Ha. apply sfixU_tout. intro Hq'. exact (ev_od a (Ht a Ha) (Hq a Hq')).
+  - intros r Hr'. apply sfixU_rout. intro Hq'. exact (ev_od r (Hv r Hr') (Hr r Hq')).
+Qed.
+
+Lemma sfixU_ev_apR : forall sc S R, WfSch sc -> EvR R -> apR (sfixU sc S) R = apR S R.
+Proof.
+  intros sc S R (Hq & Hr & _) [Ht Hv]. unfold apR. apply (proj2 ap_ext_mut).
+  - intros a Ha. apply sfixU_tout. intro Hq'. exact (ev_od a (Ht a Ha) (Hq a Hq')).
+  - intros r Hr'. apply sfixU_rout. intro Hq'. exact (ev_od r (Hv r Hr') (Hr r Hq')).
+Qed.
+
 (* ---- the contexts ---- *)
 
 Definition SchIP (Pt : typ -> Prop) (D1 : denv) (Sg : sub) (sd sc : scheme) : Prop :=
-  sch_leT Pt D1 sd (apS (sfixS sc Sg) sc).
+  sch_leQ Pt D1 sd (apS (sfixS sc Sg) sc).
 
 Definition CIP (Pt : typ -> Prop) (D1 : denv) (Sg : sub) (G1 G : ctx) : Prop :=
   Forall2 (fun b1 b => fst b1 = fst b /\
@@ -133,7 +173,7 @@ Definition GLiveP (L LR : atoms) (G : ctx) : Prop :=
 (* Every entry of a body is present under the substitution that fixes the
    scheme's quantifiers. *)
 Definition GPsP (Sg : sub) (G : ctx) : Prop :=
-  Forall (fun b => ps (sfixS (snd b) Sg) (s_body (snd b))) G.
+  Forall (fun b => ps (sfixU (snd b) Sg) (s_body (snd b))) G.
 
 Lemma SOkP_mono_le : forall n n' sc, n <= n' -> SOkP n sc -> SOkP n' sc.
 Proof.
@@ -222,11 +262,11 @@ Lemma GPsP_cons_mono : forall Sg x T G, pf T -> ps Sg T -> GPsP Sg G -> GPsP Sg 
 Proof.
   intros Sg x T G Hp Hs HG. constructor; [ | exact HG ]. cbn [snd s_body].
   refine (proj1 (ps_agree Sg _) T Hp _ Hs). intros y _.
-  cbn [sfixS sT sch_mono s_tq]. destruct (AtomSetImpl.mem y {}) eqn:E; [ | reflexivity ].
+  cbn [sfixU sT sch_mono s_tq]. destruct (AtomSetImpl.mem y {}) eqn:E; [ | reflexivity ].
   exfalso. apply AtomSetFacts.mem_iff in E. revert E. fsetdec.
 Qed.
 
-Lemma GPsP_cons_sch : forall Sg x sc G, ps (sfixS sc Sg) (s_body sc) -> GPsP Sg G -> GPsP Sg ((x ~ sc) ++ G).
+Lemma GPsP_cons_sch : forall Sg x sc G, ps (sfixU sc Sg) (s_body sc) -> GPsP Sg G -> GPsP Sg ((x ~ sc) ++ G).
 Proof. intros Sg x sc G H HG. constructor; [ exact H | exact HG ]. Qed.
 
 Lemma GPsP_of_rf : forall Sg n G, GOk n G -> GPsP Sg G.
@@ -355,32 +395,113 @@ Proof.
   - intros a Ha. exact (limgR_old n n' s S2 L LR (SemW_SIg _ _ _ _ _ _ _ _ _ _ _ H) a (Hfr a Ha)).
 Qed.
 
+(* The step on a scheme, read through [sfixU]: the same as [sfixS_step] on the
+   atoms and rows of the body, since an even type does not meet what a scheme
+   quantifies, and a quantified atom is [Unit] on both sides. *)
+Lemma sfixU_step : forall L LR DT Sg n s D' n' S2 sc,
+  SemW evA evA L LR DT Sg n s D' n' S2 -> LEv L -> LEv LR -> WfSch sc ->
+  ftv_sch sc [<=] L -> frv_sch sc [<=] LR ->
+  (forall y, y `in` ftv_typ (s_body sc) ->
+     teq (sT (sfixU sc Sg) y) (apT (sfixU sc S2) (sT s y))) /\
+  (forall q, q `in` frv_typ (s_body sc) ->
+     req (sR (sfixU sc Sg) q) (apR (sfixU sc S2) (sR s q))).
+Proof.
+  intros L LR DT Sg n s D' n' S2 sc H HL HR Hw Hl Hr.
+  pose proof (sfixS_step L LR DT Sg n s D' n' S2 sc H HL HR Hw Hl Hr) as (Fx & Fr).
+  pose proof (SemW_OkS _ _ _ _ _ _ _ _ _ _ _ H) as Hok. destruct Hok as (_ & Ht & Hrw & Hfx & Hfxr).
+  pose proof Hw as (Hq & Hrq & _). split.
+  - intros y Hy. destruct (in_dec_set y (s_tq sc)) as [Hyq|Hyq].
+    + rewrite (Hfx y (not_ev_od y (Hq y Hyq))), apT_Var, !sfixU_tin by exact Hyq. apply teq_refl.
+    + assert (Hf : y `in` ftv_sch sc) by (unfold ftv_sch; apply AtomSetFacts.diff_iff; split; assumption).
+      rewrite sfixU_tout by exact Hyq. rewrite (sfixU_ev_ap sc S2 _ Hw (Ht y (HL y (Hl y Hf)))).
+      pose proof (Fx y Hy) as E. rewrite sfixS_tout in E by exact Hyq.
+      rewrite (sfixS_ev_ap sc S2 _ Hw (Ht y (HL y (Hl y Hf)))) in E. exact E.
+  - intros q Hqf. destruct (in_dec_set q (s_rq sc)) as [Hqq|Hqq].
+    + rewrite (Hfxr q (not_ev_od q (Hrq q Hqq))), apR_Var, !sfixU_rin by exact Hqq. apply req_refl.
+    + assert (Hf : q `in` frv_sch sc) by (unfold frv_sch; apply AtomSetFacts.diff_iff; split; assumption).
+      rewrite sfixU_rout by exact Hqq. rewrite (sfixU_ev_apR sc S2 _ Hw (Hrw q (HR q (Hr q Hf)))).
+      pose proof (Fr q Hqf) as E. rewrite sfixS_rout in E by exact Hqq.
+      rewrite (sfixS_ev_apR sc S2 _ Hw (Hrw q (HR q (Hr q Hf)))) in E. exact E.
+Qed.
+
 (* A body whose entries are present under [Sg] stays so under the extension. *)
 Lemma ps_stepP : forall L LR DT Sg n s D' n' S2 sc,
   SemW evA evA L LR DT Sg n s D' n' S2 -> LEv L -> LEv LR -> WfSch sc -> pf (s_body sc) ->
   ftv_sch sc [<=] L -> frv_sch sc [<=] LR ->
-  ps (sfixS sc Sg) (s_body sc) -> ps (sfixS sc S2) (apT s (s_body sc)).
+  ps (sfixU sc Sg) (s_body sc) -> ps (sfixU sc S2) (apT s (s_body sc)).
 Proof.
   intros L LR DT Sg n s D' n' S2 sc H HL HR Hw Hp Hl Hr Hps.
-  pose proof (sfixS_step L LR DT Sg n s D' n' S2 sc H HL HR Hw Hl Hr) as (Fx & Fr).
+  pose proof (sfixU_step L LR DT Sg n s D' n' S2 sc H HL HR Hw Hl Hr) as (Fx & Fr).
   pose proof (SemW_OkS _ _ _ _ _ _ _ _ _ _ _ H) as Hs. destruct Hs as (_ & Ht & Hrw & Hfx & Hfxr).
   pose proof (SemW_SIg _ _ _ _ _ _ _ _ _ _ _ H) as SI. destruct SI as (_ & SIx & SIq).
   pose proof Hw as (Hq & Hrq & _).
-  apply (proj1 (ps_pull (sfixS sc Sg) (sfixS sc S2) s)); [ exact Hp | exact Hps | | ].
+  apply (proj1 (ps_pull (sfixU sc Sg) (sfixU sc S2) s)); [ exact Hp | exact Hps | | ].
   - intros y Hy. refine (conj (Fx y Hy) _). destruct (in_dec_set y (s_tq sc)) as [Hyq|Hyq].
     + rewrite (Hfx y (not_ev_od y (Hq y Hyq))). exact I.
     + assert (Hf : y `in` ftv_sch sc) by (unfold ftv_sch; apply AtomSetFacts.diff_iff; split; assumption).
       destruct (SIx y (Hl y Hf)) as (Pf & _ & Ps).
-      refine (proj1 (ps_agree S2 (sfixS sc S2)) _ Pf _ Ps).
-      intros z Hz. symmetry. apply sfixS_tout. intro Hzq.
+      refine (proj1 (ps_agree S2 (sfixU sc S2)) _ Pf _ Ps).
+      intros z Hz. symmetry. apply sfixU_tout. intro Hzq.
       exact (ev_od z (proj1 (Ht y (HL y (Hl y Hf))) z Hz) (Hq z Hzq)).
   - intros q Hq'. destruct (in_dec_set q (s_rq sc)) as [Hqq|Hqq].
     + rewrite (Hfxr q (not_ev_od q (Hrq q Hqq))). exact I.
     + assert (Hf : q `in` frv_sch sc) by (unfold frv_sch; apply AtomSetFacts.diff_iff; split; assumption).
       destruct (SIq q (Hr q Hf)) as (Pf & _ & Ps).
-      refine (proj2 (ps_agree S2 (sfixS sc S2)) _ Pf _ Ps).
-      intros z Hz. symmetry. apply sfixS_tout. intro Hzq.
+      refine (proj2 (ps_agree S2 (sfixU sc S2)) _ Pf _ Ps).
+      intros z Hz. symmetry. apply sfixU_tout. intro Hzq.
       exact (ev_od z (proj1 (Hrw q (HR q (Hr q Hf))) z Hz) (Hq z Hzq)).
+Qed.
+
+(* A presence atom the algorithm's scheme has after a step, where the step fixes
+   the quantifiers and sends the rest to even atoms, is one the comparison's
+   scheme had before it ([sch_leQ_conv] asks this). *)
+Lemma qpr_step : forall L LR DT Sg n s D' n' S2 sc a,
+  SemW evA evA L LR DT Sg n s D' n' S2 -> LEv L -> LEv LR -> SOkP n sc ->
+  ftv_sch sc [<=] L -> frv_sch sc [<=] LR -> a `in` s_tq sc ->
+  qprT a (apT (sfixS sc S2) (apT s (s_body sc))) -> qprT a (apT (sfixS sc Sg) (s_body sc)).
+Proof.
+  intros L LR DT Sg n s D' n' S2 sc a H HL HR Hsc Hl Hr Ha Hqa.
+  pose proof (SOkP_apS L LR DT Sg n s D' n' S2 sc H Hsc Hl Hr) as (Hso & Hfl & Hfr).
+  pose proof Hsc as (Hw & Hp & _ & _). pose proof Hw as (Hq & Hrq & _).
+  pose proof (SemW_OkS _ _ _ _ _ _ _ _ _ _ _ H) as Hok. destruct Hok as (_ & Ht & Hrw & Hfx & Hfxr).
+  pose proof (SemW_live _ _ _ _ _ _ _ _ _ _ _ H) as HLv.
+  pose proof (proj1 (proj1 (proj2 (proj2 HLv)))) as BT.
+  pose proof (proj2 (proj1 (proj2 (proj2 HLv)))) as BR.
+  assert (Hoda : od a) by exact (Hq a Ha).
+  assert (HaS : sT s a = typ_Var a) by exact (Hfx a (not_ev_od a Hoda)).
+  assert (HevT : forall x, x `in` L -> forall b, b `in` ftv_typ (sT s x) -> ev b).
+  { intros x Hx b Hb. apply (limgT_ev s L LR (SemW_OkS _ _ _ _ _ _ _ _ _ _ _ H) HL HR).
+    apply limgT_in. left. exists x. split; assumption. }
+  assert (HevR : forall q, q `in` LR -> forall b, b `in` ftv_row (sR s q) -> ev b).
+  { intros q Hq0 b Hb. apply (limgT_ev s L LR (SemW_OkS _ _ _ _ _ _ _ _ _ _ _ H) HL HR).
+    apply limgT_in. right. exists q. split; assumption. }
+  assert (H1 : qprT a (apT s (s_body sc))).
+  { refine (proj1 (qpr_ap_mut (sfixS sc S2) a (sfixS_tin sc S2 a Ha)) _ (proj1 (proj2 Hso)) _ _ Hqa).
+    - intros x Hx Hax. destruct (in_dec_set x (s_tq sc)) as [Hxq|Hxq].
+      + rewrite (sfixS_tin sc S2 x Hxq) in Hax. simpl in Hax. apply AtomSetFacts.singleton_iff in Hax.
+        exact Hax.
+      + exfalso. rewrite (sfixS_tout sc S2 x Hxq) in Hax.
+        assert (Hxf : x `in` ftv_sch (apS s sc))
+          by (unfold ftv_sch; cbn [apS s_body s_tq]; apply AtomSetFacts.diff_iff; split; [ exact Hx | exact Hxq ]).
+        exact (ev_od a (proj1 (BT x (Hfl x Hxf)) a Hax) Hoda).
+    - intros q Hq1 Hax. destruct (in_dec_set q (s_rq sc)) as [Hqq|Hqq].
+      + rewrite (sfixS_rin sc S2 q Hqq) in Hax. simpl in Hax. revert Hax. fsetdec.
+      + rewrite (sfixS_rout sc S2 q Hqq) in Hax.
+        assert (Hqf : q `in` frv_sch (apS s sc))
+          by (unfold frv_sch; cbn [apS s_body s_rq]; apply AtomSetFacts.diff_iff; split; [ exact Hq1 | exact Hqq ]).
+        exact (ev_od a (proj1 (BR q (Hfr q Hqf)) a Hax) Hoda). }
+  assert (H2 : qprT a (s_body sc)).
+  { refine (proj1 (qpr_ap_mut s a HaS) _ Hp _ _ H1).
+    - intros x Hx Hax. destruct (in_dec_set x (s_tq sc)) as [Hxq|Hxq].
+      + rewrite (Hfx x (not_ev_od x (Hq x Hxq))) in Hax. simpl in Hax. apply AtomSetFacts.singleton_iff in Hax.
+        exact Hax.
+      + exfalso. assert (Hxf : x `in` ftv_sch sc) by (unfold ftv_sch; apply AtomSetFacts.diff_iff; split; assumption).
+        exact (ev_od a (HevT x (Hl x Hxf) a Hax) Hoda).
+    - intros q Hq1 Hax. destruct (in_dec_set q (s_rq sc)) as [Hqq|Hqq].
+      + rewrite (Hfxr q (not_ev_od q (Hrq q Hqq))) in Hax. simpl in Hax. revert Hax. fsetdec.
+      + assert (Hqf : q `in` frv_sch sc) by (unfold frv_sch; apply AtomSetFacts.diff_iff; split; assumption).
+        exact (ev_od a (HevR q (Hr q Hqf) a Hax) Hoda). }
+  exact (proj1 (qpr_ap_fwd (sfixS sc Sg) a (sfixS_tin sc Sg a Ha)) _ H2).
 Qed.
 
 (* The run's step on the context: the derivation's bindings are still
@@ -413,11 +534,13 @@ Proof.
       * intros q Hq. exact (SemW_FR _ _ _ _ _ _ _ _ _ _ _ H q (HR2 q (proj2 (frv_sch_mono T q) Hq))).
     + right. unfold SchIP in Hsch |- *.
       change (sfixS (apS s sc) S2) with (sfixS sc S2).
-      refine (sch_leT_trans _ _ _ _ _ Hsch _).
-      apply sch_leT_conv; try reflexivity.
-      cbn [apS s_body]. apply ap_factor.
-      * exact (proj1 (sfixS_step L LR DT Sg n s D' n' S2 sc H HL HR Hw HL2 HR2)).
-      * exact (proj2 (sfixS_step L LR DT Sg n s D' n' S2 sc H HL HR Hw HL2 HR2)).
+      refine (sch_leQ_trans _ _ _ _ _ Hsch _).
+      apply sch_leQ_conv; try reflexivity.
+      * cbn [apS s_body]. apply ap_factor.
+        -- exact (proj1 (sfixS_step L LR DT Sg n s D' n' S2 sc H HL HR Hw HL2 HR2)).
+        -- exact (proj2 (sfixS_step L LR DT Sg n s D' n' S2 sc H HL HR Hw HL2 HR2)).
+      * intros a Ha Hqa. cbn [apS s_tq s_body] in *.
+        exact (qpr_step L LR DT Sg n s D' n' S2 sc a H HL HR Hsc HL2 HR2 Ha Hqa).
   - constructor; [ exact Hso | exact IG ].
   - constructor; [ exact (conj Hfl Hfr) | exact ILv ].
   - constructor; [ | exact IPS ]. cbn [snd apS s_body].

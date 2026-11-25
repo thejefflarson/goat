@@ -2165,6 +2165,13 @@ substitution.
   Proposal: return the type packed with the equations' types (`ftv`/`frv` of the pack are the
   live set), so `next_factsP` and `SemW_factor` apply unchanged.
 
+*As built (stage 7.8j; `GoatCompleteSchQ.v`, `GoatCompleteRehold.v`, `GoatCompleteDoneQ.v`, `GoatCompleteVarP.v`, `GoatCompleteCtxP.v`).* The three rulings of 7.8i are carried out and `var_sch_doneP` is replaced by `var_sch_doneQ`, which covers a scheme that quantifies presences.
+
+- Decision 1. `GPsP` is now `ps (sfixU sc Sg) body`, where `sfixU` sends a quantified atom to `Unit`: an entry whose presence is a quantified atom is skipped by the check, and present because the instance sends the atom to `Unit`. `instQ` records, for each quantified atom that is the presence of an entry of the body (`qprT`), that the image is `Unit` or `Bool` (`PresI`). `rh_t` re-holds one equation per such entry; `rhf_t` lists the original fields in the order of the equations, `fvx` sends the field variable `ea (m + j)` to the image of the `j`th field, and `rh_teq` shows that the rewritten type is convertible to the original (`req_maybe` needs no fact about the presence) and that every equation is solved. `rh_struct` and `rhf_atoms` give the fragment and atom facts. `HOkC` of the held equations is then `rh_teq` plus `rh_struct`.
+- Decision 2. `instQ` records `RowSorts` (each quantified row has sort `Any` or `Eq`, the `Drow` of the instantiated environment) and `NNI` (a quantified `Numeric`/`Quot` atom is not sent to a record). `sch_leQ` is `sch_leT` over `instQ`; `SchIP`/`CIP` use it, `CI_stepP` carries it through a step (`sch_leQ_conv` asks that the presence atoms do not grow, `qpr_step`), and `instQ_cls` reads an instance of the comparison scheme as the hypotheses of `var_sch_doneQ`. `var_sch_doneQ` no longer takes `HNN`/`HRK` as separate facts of the context.
+- Decision 3. `DoneQ` states the type facts of the result of `pack T H` (the result type with the equations' field and value types). `HOkC_stepW` moves the equations along a `SemW` over any live set that contains `heqs_ty H` (`EqLive`), by `SemG_ap_T` and `SemW_factor`; `seq_Q` composes two runs (`SemW_comp` and the equations of the first moved along the second step, beside the second's), which is the step call, `let`, `if` and the operators share.
+- DECISION NEEDED: a quantified presence the instance sends to `Bool` makes `ps S2 T` false for the run's type, and `DoneP` (hence `DoneQ`) states `ps`. The equations are solved for any image (`rh_teq` does not look at the presence, and `HOkC` skips an equation whose presence is `Bool`), but `var_sch_doneQ` takes `st a = Unit` for the quantified presence atoms (`HPU`), which `PresI` weakens to `Unit` or `Bool`. A derivation that uses a scheme at a record without the field is outside the fragment as stated. Options: (a) leave the fragment as it is and have the conversion from `typing` choose presence atoms so that every instance is present; (b) let `ps` accept `Bool` and have `unify_tD_complete_full` read the absent entries through `req_absf`. I chose (a), the smaller change.
+
 **What remains of 7.8.**
 
 Stage 7.8d did the unifier half: `unify_stepG` (`GoatCompleteLive.v`) gives the step in every
@@ -2175,7 +2182,7 @@ analogues of `SemG_fresh`.
 1. *Schemes over the fragment* (done in 7.8f).
 2. *The induction past `rf`.* Done: the context invariants and their step (7.8h,
    `GoatCompleteCtxP.v`). Left:
-   - `var_sch_doneP`: done for the instance that re-holds nothing (7.8i); the quantified-presence case waits on the decisions above. Originally: a variable at a scheme that quantifies rows and presences. It differs
+   - `var_sch_doneQ`: done (7.8j), including the quantified-presence case (the open question is the `Bool` image above). Originally: a variable at a scheme that quantifies rows and presences. It differs
      from `var_sch_doneT` in three places: `instantiate` also gives the quantified rows fresh
      variables (`inst_den` and the row half of `fsub`, with `rkok` of the derivation's rows), the
      run returns the equations `rh_t (inst_pres sc n)` holds (one `Heq` per entry whose
@@ -2185,8 +2192,8 @@ analogues of `SemG_fresh`.
      `pf`, `rf T1` in `C_Let` becomes `pf`, and the `Live PEv` and `TOk` clauses of the cases
      become `LiveG evA evA` and `pf`/`atT`/`ps`. Each existing case then reads `SemW` for
      `SemC` (the rf facts `SemC` adds are the part that goes) and `next_factsP` for
-     `next_factsW`; `DoneW` becomes `DoneP`, and a general `let` discharges the held equations
-     it receives with `dis_complete`.
+     `next_factsW`; `DoneW` becomes `DoneQ`, each binary construct composes its premises with `seq_Q` and applies `next_factsP` to `pack T H` (7.8j), and a general `let` discharges the held equations
+     it receives with `dis_complete`. Not started: the `ctyping` rebuild itself, and the `ctyping` cases for `let` (generalization over the fragment, `gen_mono_letT` past `rf`), `if`, call and the operators on `DoneQ`.
 3. *Constructs* (next). Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows with
    a tail variable by `rewrite_row_complete`; the projection's row unification is
    `unify_tD_complete_full`), spread (`spread_present`'s equation, discharged by `dis_complete`
