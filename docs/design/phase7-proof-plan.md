@@ -2121,6 +2121,28 @@ rebuilt on `SemW`, `LiveG`, `AvoidE` and `CIT`, and the old `SemL`, `CI`, `Done`
 - `infer_complete_core_closed` keeps its statement. Its `rkres` conclusion replaces the
   extension's row substitution by the empty row, which satisfies every row kind.
 
+*As built (stage 7.8h, partial, `GoatCompleteCtxP.v`).* The invariants of the core's
+induction are generalized past `rf`; the induction itself is not yet rebuilt on them.
+
+- A step needs no new definition: `SemW evA evA L LR` already carries `pf`/`atT`/`ps` of the
+  images of the live atoms and the live row variables (`SIg`), and `LiveG evA evA` carries
+  their evenness. `DoneP` is `DoneG` with `SemW` in place of `SemG` (which does not compose,
+  7.8e) and returns `HOkC` of the equations the run holds; `DoneP_const` is its constants
+  case and `DoneP_of_DoneW` embeds the record-free core's conclusion, so the record-free
+  theorem will be a corollary of the rebuilt induction rather than a second proof.
+- `sfixS sc S` fixes the atoms and the rows `sc` quantifies (`sfix` fixed only atoms). The
+  derivation's substitution is `restrG`-shaped off the live sets, so it sends a quantified
+  row to the empty row; `SchIP` and `CIP` compare through `sfixS`. `sfixS_step` is
+  `sfix_step_teq` for atoms and rows: on the body's atoms and rows `Sg` is the extension after
+  `s` up to conversion, because `OkS s` fixes what is odd and the images of live atoms and rows
+  are even.
+- `SOkP`/`GOkP` (well formed scheme, `pf` body, free atoms and free rows below the supply),
+  `GLiveP L LR` (free atoms in `L`, free rows in `LR`) and `GPsP Sg` (each body's entries
+  present under `sfixS sc Sg`) replace `SOk`/`GOk`/`GLive`/`GPsT`, with `GOkP_of_GOk` as the
+  embedding. `SOkP_apS` keeps a binding inside them under a step; `ps_stepP` moves the
+  presence of a body's entries along the step with `ps_pull`; `CI_stepP` is `CI_stepW` on all
+  four, and `next_factsP` is `next_factsW` with the row sets `lnT`/`lnR`.
+
 **What remains of 7.8.**
 
 Stage 7.8d did the unifier half: `unify_stepG` (`GoatCompleteLive.v`) gives the step in every
@@ -2129,19 +2151,25 @@ and `LiveG_fresh_pres` (`GoatCompleteLiveRf.v`) are the row-variable and presenc
 analogues of `SemG_fresh`.
 
 1. *Schemes over the fragment* (done in 7.8f).
-2. *The induction past `rf`* (core done in 7.8g). The core's induction still carries the
-   record-free invariants (`Live PEv`, `TOk`, `GOk`, `GLive`, `rf` bodies of the context, no
-   live row variable), and uses `pf`/`atT`/`ps` and the row variables only at the `SemW`
-   interface. Letting a record in turns those clauses into `pf`/`atT`/`ps` with `GPsT`
-   carried through the steps (`CI_stepW` gains the `ps_pull` of `sfix_step_teq`),
-   `GOk`/`GLive` over live row variables (a scheme may quantify rows, so `var_sch_doneT`
-   instantiates them), and `DoneW` returning `HOkC` of the equations the run holds, where a
-   general `let` needs `dis_complete`.
+2. *The induction past `rf`.* Done: the context invariants and their step (7.8h,
+   `GoatCompleteCtxP.v`). Left:
+   - `var_sch_doneP`, a variable at a scheme that quantifies rows and presences. It differs
+     from `var_sch_doneT` in three places: `instantiate` also gives the quantified rows fresh
+     variables (`inst_den` and the row half of `fsub`, with `rkok` of the derivation's rows), the
+     run returns the equations `rh_t (inst_pres sc n)` holds (one `Heq` per entry whose
+     presence is a fresh quantified presence, with a fresh field variable the extension sends
+     to the entry's field), and `HOkC` of them is the `HEq` clause at that extension.
+   - The `ctyping` of `GoatCompleteCore.v` rebuilt over the fragment: `PEv` becomes `EvT` with
+     `pf`, `rf T1` in `C_Let` becomes `pf`, and the `Live PEv` and `TOk` clauses of the cases
+     become `LiveG evA evA` and `pf`/`atT`/`ps`. Each existing case then reads `SemW` for
+     `SemC` (the rf facts `SemC` adds are the part that goes) and `next_factsP` for
+     `next_factsW`; `DoneW` becomes `DoneP`, and a general `let` discharges the held equations
+     it receives with `dis_complete`.
 3. *Constructs* (next). Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows with
-   a tail variable by `rewrite_row_complete`), spread (`spread_present`'s equation,
-   discharged by `dis_complete` at a `let` or the top), restrict, tags and `match` (`spn`
-   is a lemma), then `letrec` through `V_letrec`'s shape. `ctyping` extends past `rf`
-   (ratified) instead of proving an erasure.
+   a tail variable by `rewrite_row_complete`; the projection's row unification is
+   `unify_tD_complete_full`), spread (`spread_present`'s equation, discharged by `dis_complete`
+   at a `let` or the top), restrict, tags and `match` (`spn` is a lemma), then `letrec` through
+   `V_letrec`'s shape. `ctyping` extends past `rf` (ratified) instead of proving an erasure.
 4. *The conversion from `typing`.* Unchanged from 7.7g, extended with the new rules; it also
    chooses the presence atoms of `PLive`.
 5. *`Quot` on records.* Option B, above.
