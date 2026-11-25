@@ -133,4 +133,5 @@ GoatCompleteCoreW.v
 GoatCompleteSchQ.v
 GoatCompleteRehold.v
 GoatCompleteCtxP.v
+GoatCompleteDoneQ.v
 GoatCompleteVarP.v
