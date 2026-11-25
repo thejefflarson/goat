@@ -1946,6 +1946,60 @@ outside `rf`, so `sig_quot_rec` never arises.
 2. *`typing` to `rtyping`.* Only for derivations that are record-free (above).
 3. *`letrec`, records, spread, restrict, tags, `match`, methods* (7.8), as before.
 
+*As built (stage 7.8a, `GoatCompleteHeld.v`).* Stage 7.8 is split; this is its first
+piece, the completeness of the discharge of held equations. Records, projection, spread,
+restrict, tags, `match` and `letrec` in the L3 induction are not started, and the list at
+the end says what each needs.
+
+**The discharge is the unifier iterated.** `dis` skips an equation whose presence is
+already `Bool` and otherwise unifies the field variable with the value's type, so
+`dis_complete` is `unify_tD_complete_full` down the list, carrying the remaining equations
+through each step (`HOkC_step`, by `pkg_ap_T` and `pkg_fac_T`). Its hypothesis on an
+equation `dis` unifies is `HEq Sg n h`: field and value are in the fragment (`pf`, `atT`,
+`ps`) and `Sg` makes them one type (plain `teq`). The conclusion is the unifier's:
+from some unifier fuel on `dis k` succeeds with `(s, D', n')`, and `Pkg Sg n s D' n' S2`
+holds, so `Sg` factors through `s` by an extension that respects the environment `dis`
+returns. `dis_top_complete` is the case `k = S (length H)`.
+`infer_closed_elab_m_held` is the closed entry point: a `Stable` run of `infer gm` that
+returns `(s, D, T, n, e', H)`, with `HOkC Sg n H` and `atT n T`, gives a `Stable` run of
+`infer_closed_elab_m gm` returning `apT d T`, and `teq (apT Sg T) (apT S2 (apT d T))`.
+The `gm` flag needs nothing from the proof: `infer_closed_elab_of_true` says a successful
+speculating run is the closed run's answer, and `infer_closed_elab_of_false` that a
+successful non-speculating run gives some answer (the speculating run may succeed with a
+different one first). A spread-free program holds `nil`, for which `dis_top_nil` is the
+identity and the core theorem already reads it.
+
+**What `HEq` leaves out.** An equation that `Sg` solves only because it makes the
+presence `Bool`, with the field and value types differing, is outside `HEq`; `dis` meets
+it through the failure of `unify_tD` and then `clash_d`, `sat_b` and `rlacksD`, and proving
+that branch needs the unifier's failure on a clash, not only its success. The hypothesis
+list of statement A therefore keeps, for held equations: (i) the field of an equation
+whose presence ends `Bool` is `teq` to its value (`HEq`'s last conjunct, which the first
+half of `fld` and `field_blocks_absent` already assumed in a different form), and (ii) the
+two W-stricter cases of the `gm` run recorded in the README (a function bound under a
+parameter's row whose presence ends present and whose uses need two types; two such
+`let`s of different outcome). Nothing in the list shrank: held equations made the
+discharge a theorem about `dis`, not the first half of `fld`, which belongs to absent
+entries (`ps`) and returns when `ps` is dropped.
+
+**What remains of 7.8.**
+
+1. *The induction past `rf`.* `Done` fixes the equations to `nil`, `SemL` and `GOk`
+   carry record-free images (`SI`), `unify_stepL` calls `unify_tD_rf_complete_img`, and
+   every `ctyping` rule asks `PEv` (even and record-free) of the types it invents. The
+   extension replaces `rf` by `pf`/`ps`/`atT` at those places, `Done` returns `HOkC` of
+   the held equations at the extension, and `unify_stepL` is built on
+   `unify_tD_complete_full`. That theorem has no `Img` conjunct (the extension `S2` sends
+   no atom to a type that is not an image of `Sg`), which `Live`/`Avoid` need for the
+   even-atoms and `Avoid` invariants; threading `Img` through `Pkg` and its leaves
+   (`pkg_bind_prop`, `pkg_bind_row`, `pkg_rewrite`) is the first step.
+2. *Constructs.* Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows
+   with a tail variable by `rewrite_row_complete`), spread (`spread_present`'s equation,
+   discharged by `dis_complete` at a `let` or the top), restrict, tags and `match` (`spn`
+   is a lemma), then `letrec` through `V_letrec`'s shape. `ctyping` extends past `rf`
+   (ratified) instead of proving an erasure.
+3. *The conversion from `typing`.* Unchanged from 7.7g, extended with the new rules.
+
 ## 5. Staged PR plan
 
 Sizes are estimates in lines of Coq (Rust or YAML where stated), counting churn in

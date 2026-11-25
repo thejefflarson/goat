@@ -62,6 +62,7 @@ preservation) is B3 (#71).
 | `GoatCompleteNf.v` | Stage 7.7c, L3: a normal form for `typing`. `ntyping Av D G e T` is `typing` with, at each `T_Let` and `T_Letrec`, generalized atoms that are even and outside `Av`, where each rule hands its premises the atoms of its own judgement and of its siblings. `typing_normal` (every derivation over an environment of finite support has one, at the same judgement and any `Av`, by induction on the size of the term) and `ntyping_typing` (the converse). |
 | `GoatCompleteConv.v` | Stage 7.7g. Even derivations and the conversion for the monomorphic core. `rtyping`: `typing` at `d_any` restricted to variables, constants, `program`, a call, `if`, the operators, a comparison, `float(e)` and `let` of a non-value, with every type record-free. `rtyping_typing` forgets the restriction; `rtyping_ren` renames a whole derivation by an atom map. `swap_even` (from `mk_rename_even`) renames a premise's invented type to fresh even atoms while fixing the context and the judgement's type, and `rtyping_ctyping` converts by induction on the size of the term, because the premise it converts is the renamed one. `infer_complete_core_mono` is the closed case: the derivation's type up to an even renaming is a principal type's instance. A `let` of a value (schemes) and `letrec` are not here. |
 | `GoatCompleteSpn.v` | Stage 7.7. `spn` as a lemma: `declared_gwf` (every group `decl_entries` reads out uses each of its `nparams` parameters in some tag, from `type_slots_facts`, `cases_slots_facts`, `nparams_le`) and `spn_declared` (`spn w 0 (spine Ts)` for `Ts` of length `nparams w`). |
+| `GoatCompleteHeld.v` | Stage 7.8a. The discharge of held equations is complete: `dis_complete`/`dis_top_complete` (the unifier's completeness iterated over the equations, `HOkC`/`HEq`/`HOkC_step`), `infer_closed_elab_m_held` (the closed entry point) and `infer_closed_elab_of_true`/`_of_false` (the `gm` pair). |
 | `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, and **Progress**. |
 | `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), the free-variable facts of a bijective renaming, and `gen_more_gen` (generalizing over a smaller context quantifies more, at the sorts the extra atoms already had). What `GoatBij`/`GoatHM`/`GoatSound` build on. |
 | `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`) feeding the T-Let freshening (#151). |
@@ -1500,3 +1501,13 @@ stays open (the flag is per run, not per `let`). Neither is in the corpus. Closi
 needs `V` over a context realized at `S` (the scheme generalized at the solution, with
 the equation's variables pinned when the presence is not absent) and the carried
 equations as a parallel input of `infer`; `V_let_own` is the absent half of that proof.
+
+## Held equations, step 6: the discharge is complete (`GoatCompleteHeld`, stage 7.8a)
+
+`dis_complete`: if `Sg` makes the field and value of each equation `dis` would unify one
+type (`HOkC`), both in the unifier's fragment, then from some fuel on `dis` succeeds and
+`Sg` factors through its result (`Pkg`). `infer_closed_elab_m_held` carries that to the
+closed entry point and `infer_closed_elab_of_true`/`_of_false` to the `gm` pair. An
+equation solved only by an absent presence over differing types (the `clash_d` branch) is
+not covered. The L3 induction past record-free types is not yet built; the plan lists
+what remains.
