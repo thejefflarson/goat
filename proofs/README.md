@@ -1393,3 +1393,15 @@ An absent entry's field type is no information: `l ^ Bool : T ; R ~= l ^ Bool : 
 `ent_eq` now ignores the field of an absent entry; `row_cancel` keeps its statement).
 Nothing else changed: W is still the pre-held-equations algorithm, so the differential
 reports 6 mismatches on the held-equation corpus programs until W holds the equations.
+
+## Held equations, step 2: the soundness library (`GoatHeldSound`, `GoatHeldV`, `GoatHeldLet`)
+
+`dis_sound`: a run of `dis` over even equations from a well-kept environment is a `Good`
+step whose substitution solves them (`Sol`). `V Gs D n e T H` says `e` has type `T` in
+`Gs` after every `Good` step `S` from `(D, n)` that solves the equations `H`; `V_push`
+moves it along a step the algorithm took (`Sol_apH`: `S` solves `apH t H` exactly when
+`S o t` solves `H`). `GoatHeldV` states the typing rules, coercion, binder renaming and
+`let` over a single state; `V_let`/`V_letrec` (`GoatHeldLet`) are the generalizing proofs
+of `infer_sound` with the later substitution abstracted, and `V_let_dis` first discharges
+the bound term's equations with `dis_sound`. `VF*` is the same for field lists. Nothing
+here touches W or `infer_sound`.
