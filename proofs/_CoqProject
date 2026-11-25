@@ -17,6 +17,7 @@ GoatBij.v
 GoatHM.v
 GoatSound.v
 GoatInfer.v
+GoatHeld.v
 GoatInferSub.v
 GoatInferSort.v
 GoatInferTyp.v
