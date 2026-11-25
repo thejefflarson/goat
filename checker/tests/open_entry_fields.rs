@@ -95,11 +95,11 @@ fn equal_field_types_keep_the_field() {
     assert!(checks(&source));
 }
 
-/// What the rule does not decide, so the verdict still depends on the order: two
-/// variable field types are unified when the entries meet, before a later
-/// statement settles the presence absent (ADR 0033).
+/// Two variable field types are not unified when the entries meet: each entry
+/// keeps its own field, held until the presence settles, so the verdict is the
+/// same whether a later statement settles the presence first (ADR 0033).
 #[test]
-fn variable_fields_are_still_joined_before_a_presence_settles() {
+fn variable_fields_are_joined_only_when_the_presence_settles() {
     let tail = "z = u + 1\n w = v == \"s\"\n 1";
     let spreads = "x = {...p, a: u}\n y = {...q, a: v}\n";
     let joined_first = format!(
@@ -108,16 +108,55 @@ fn variable_fields_are_still_joined_before_a_presence_settles() {
     let settled_first = format!(
         "f = program(p, q, u, v) do b = p == {{k: 1}}\n {spreads} if true then p else q done;\n {tail} done\n1"
     );
-    assert!(!checks(&joined_first));
+    assert!(checks(&joined_first));
     assert!(checks(&settled_first));
 }
 
-/// A function field against a numeral's type is not decided either: the
-/// numeral's type is a variable and a function is not a scalar.
+/// A field that a later read makes present is joined for real: `u` is a number
+/// and `v` a string, in either order.
 #[test]
-fn a_function_field_against_a_numeral_is_still_unified() {
+fn variable_fields_of_a_present_field_are_refused_in_either_order() {
+    let tail = "z = u + 1\n w = v == \"s\"\n 1";
+    let spreads = "x = {...p, a: u}\n y = {...q, a: v}\n";
+    let read_first = format!(
+        "f = program(p, q, u, v) do t = p.a\n {spreads} if true then p else q done;\n {tail} done\n1"
+    );
+    let read_last = format!(
+        "f = program(p, q, u, v) do {spreads} if true then p else q done;\n {tail}\n t = p.a\n t done\n1"
+    );
+    assert!(!checks(&read_first));
+    assert!(!checks(&read_last));
+}
+
+/// A function field against a numeral's type is decided the same way: a
+/// function is not a number, so the entries can only be absent.
+#[test]
+fn a_function_field_against_a_numeral_is_absent() {
     let source = program(
         "x = {...p, a: program(v) do v done}\n y = {...q, a: 1}\n if true then p else q done",
     );
-    assert!(!checks(&source));
+    assert!(checks(&source));
+    let swapped = program(
+        "y = {...q, a: 1}\n x = {...p, a: program(v) do v done}\n if true then p else q done",
+    );
+    assert!(checks(&swapped));
+}
+
+/// Two types no head tells apart, so nothing decides the field absent: the
+/// equations are unified together and cannot hold. The verdict is the same in
+/// either spread order and with the field read first or last.
+#[test]
+fn jointly_conflicting_fields_are_refused_in_every_order() {
+    let a = "x = {...p, a: {n: 1, s: \"a\"}}\n";
+    let b = "y = {...q, a: {n: \"b\", s: 2}}\n";
+    for spreads in [format!("{a} {b}"), format!("{b} {a}")] {
+        let plain = program(&format!("{spreads} if true then p else q done"));
+        let read_first = program(&format!("t = p.a\n {spreads} if true then p else q done"));
+        let read_last = program(&format!(
+            "{spreads} r = if true then p else q done\n t = p.a\n t"
+        ));
+        assert!(!checks(&plain), "{plain}");
+        assert!(!checks(&read_first), "{read_first}");
+        assert!(!checks(&read_last), "{read_last}");
+    }
 }
