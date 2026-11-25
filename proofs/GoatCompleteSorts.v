@@ -24,6 +24,7 @@ Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
 Require Import Goat.GoatInferSort.
 Require Import Goat.GoatSatTeq.
+Require Import Goat.GoatCompleteEr.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 From Stdlib Require Import Lia.
@@ -65,6 +66,74 @@ Proof. intros P Sg S2 H HP y. destruct (H y) as [z ->]. exact (HP z). Qed.
 
 Lemma Img_sT : forall Sg S2, sT S2 = sT Sg -> Img Sg S2.
 Proof. intros Sg S2 H y. exists y. rewrite H. reflexivity. Qed.
+
+(* The same for rows: each row [S2] sends a row variable to is a row [Sg] sends
+   some row variable to. *)
+Definition RImg (Sg S2 : sub) : Prop := forall r, exists q, sR S2 r = sR Sg q.
+
+Lemma RImg_refl : forall Sg, RImg Sg Sg.
+Proof. intros Sg r. exists r. reflexivity. Qed.
+
+Lemma RImg_trans : forall S1 S2 S3, RImg S1 S2 -> RImg S2 S3 -> RImg S1 S3.
+Proof.
+  intros S1 S2 S3 H12 H23 r. destruct (H23 r) as [q Hq]. destruct (H12 q) as [w Hw].
+  exists w. rewrite Hq. exact Hw.
+Qed.
+
+Lemma RImg_sR : forall Sg S2, sR S2 = sR Sg -> RImg Sg S2.
+Proof. intros Sg S2 H r. exists r. rewrite H. reflexivity. Qed.
+
+(* What an extension may mention.  If the images [Sg] gives to types and rows
+   mention type variables only from [E] and row variables only from [F], [Cov]
+   says the extension's images do too.  [Img] and [RImg] say the extension's
+   images are images of [Sg]; [Cov] is weaker, and it is what a step through
+   [rewrite_row] can promise, because the field a row variable is bound to is
+   known only up to [teq] and need not be an image of any atom. *)
+Definition Bnd (E F : atom -> Prop) (S : sub) : Prop :=
+  (forall z a, a `in` ftv_typ (sT S z) -> E a) /\ (forall z q, q `in` frv_typ (sT S z) -> F q) /\
+  (forall r a, a `in` ftv_row (sR S r) -> E a) /\ (forall r q, q `in` frv_row (sR S r) -> F q).
+
+Definition Cov (Sg S2 : sub) : Prop := forall E F, Bnd E F Sg -> Bnd E F S2.
+
+Lemma Cov_refl : forall Sg, Cov Sg Sg.
+Proof. intros Sg E F H. exact H. Qed.
+
+Lemma Cov_trans : forall S1 S2 S3, Cov S1 S2 -> Cov S2 S3 -> Cov S1 S3.
+Proof. intros S1 S2 S3 H12 H23 E F H. exact (H23 E F (H12 E F H)). Qed.
+
+Lemma Cov_of_imgs : forall Sg S2, Img Sg S2 -> RImg Sg S2 -> Cov Sg S2.
+Proof.
+  intros Sg S2 HI HR E F (B1 & B2 & B3 & B4). refine (conj _ (conj _ (conj _ _))).
+  - intros z a Ha. destruct (HI z) as [w Hw]. rewrite Hw in Ha. exact (B1 w a Ha).
+  - intros z q Hq. destruct (HI z) as [w Hw]. rewrite Hw in Hq. exact (B2 w q Hq).
+  - intros r a Ha. destruct (HR r) as [w Hw]. rewrite Hw in Ha. exact (B3 w a Ha).
+  - intros r q Hq. destruct (HR r) as [w Hw]. rewrite Hw in Hq. exact (B4 w q Hq).
+Qed.
+
+Lemma Bnd_supd : forall E F S a U, Bnd E F S ->
+  (forall x, x `in` ftv_typ U -> E x) -> (forall q, q `in` frv_typ U -> F q) -> Bnd E F (supd S a U).
+Proof.
+  intros E F S a U (B1 & B2 & B3 & B4) HE HF. refine (conj _ (conj _ (conj _ _))).
+  - intros z x Hx. cbn [supd sT] in Hx. destruct (Atom.eq_dec z a) as [_|_]; [ exact (HE x Hx) | exact (B1 z x Hx) ].
+  - intros z q Hq. cbn [supd sT] in Hq. destruct (Atom.eq_dec z a) as [_|_]; [ exact (HF q Hq) | exact (B2 z q Hq) ].
+  - exact B3.
+  - exact B4.
+Qed.
+
+Lemma Bnd_srupd : forall E F S r R, Bnd E F S ->
+  (forall x, x `in` ftv_row R -> E x) -> (forall q, q `in` frv_row R -> F q) -> Bnd E F (srupd S r R).
+Proof.
+  intros E F S r R (B1 & B2 & B3 & B4) HE HF. refine (conj _ (conj _ (conj _ _))).
+  - exact B1.
+  - exact B2.
+  - intros z x Hx. cbn [srupd sR] in Hx. destruct (Atom.eq_dec z r) as [_|_]; [ exact (HE x Hx) | exact (B3 z x Hx) ].
+  - intros z q Hq. cbn [srupd sR] in Hq. destruct (Atom.eq_dec z r) as [_|_]; [ exact (HF q Hq) | exact (B4 z q Hq) ].
+Qed.
+
+(* The atoms of a presence, a field and a row lie in [E] and [F]. *)
+Definition AIn (E F : atom -> Prop) (P T : typ) (R : row) : Prop :=
+  (forall x, x `in` ftv_typ P -> E x) /\ (forall x, x `in` ftv_typ T -> E x) /\ (forall x, x `in` ftv_row R -> E x) /\
+  (forall q, q `in` frv_typ P -> F q) /\ (forall q, q `in` frv_typ T -> F q) /\ (forall q, q `in` frv_row R -> F q).
 
 Lemma push_sort_complete : forall l D n k Sg D1,
   DOk D n -> KR D D1 Sg ->
@@ -132,11 +201,11 @@ Lemma push_sort_r_complete : forall l D n k Sg D1,
   (forall q, In q l -> forall m, n <= m -> q <> ea m) ->
   forall sr D' n', push_sort_r D k l n = (sr, D', n') ->
   exists S2, KR D' D1 S2 /\ sT S2 = sT Sg /\
-    (forall r, (forall m, n <= m -> r <> ea m) -> sR Sg r = apR S2 (sR sr r)).
+    (forall r, (forall m, n <= m -> r <> ea m) -> sR Sg r = apR S2 (sR sr r)) /\ RImg Sg S2.
 Proof.
   induction l as [|q l IH]; intros D n k Sg D1 Hd HK Hs Hnew sr D' n' E.
   - cbn [push_sort_r] in E. inversion E; subst. exists Sg.
-    split; [ exact HK | split; [ reflexivity | intros x _; reflexivity ] ].
+    split; [ exact HK | split; [ reflexivity | split; [ intros x _; reflexivity | apply RImg_refl ] ] ].
   - cbn [push_sort_r] in E. destruct (finer_b (rk_sort (drk D q)) k) eqn:Ef.
     + exact (IH D n k Sg D1 Hd HK (fun b' H => Hs b' (or_intror H))
                (fun b' H => Hnew b' (or_intror H)) sr D' n' E).
@@ -161,8 +230,11 @@ Proof.
       assert (Hnew' : forall q', In q' l -> forall m, Datatypes.S n <= m -> q' <> ea m).
       { intros q' H m Hm. apply (Hnew q' (or_intror H)). lia. }
       destruct (IH (rupd D (ea n) (RK k (rk_lacks (drk D q)))) (Datatypes.S n) k S' D1
-                  (DOk_rupd D n _ Hd) HK' Hs' Hnew' s D'' n'' E1) as (S2 & H1 & H2 & H3).
+                  (DOk_rupd D n _ Hd) HK' Hs' Hnew' s D'' n'' E1) as (S2 & H1 & H2 & H3 & H5).
       exists S2. split; [ exact H1 | split; [ rewrite H2; reflexivity | ] ].
+      assert (HRI : RImg Sg S').
+      { intros r. cbn [sR S' srupd]. destruct (Atom.eq_dec r (ea n)) as [_|_]; [ exists q | exists r ]; reflexivity. }
+      split; [ | exact (RImg_trans _ _ _ HRI H5) ].
       intros r Hr.
       assert (Hn : forall m, Datatypes.S n <= m -> ea n <> ea m)
         by (intros m Hm Heq; apply ea_inj in Heq; lia).
@@ -221,7 +293,8 @@ Lemma rewrite_row_var_complete : forall l av D n r D1 Sg P0 T0 R0,
     KR D0 D1 S2 /\ n <= n1 /\
     apT S2 P' = P0 /\ apT S2 T' = T0 /\ apR S2 R' = R0 /\
     (forall x, (forall m, n <= m -> x <> ea m) -> sT Sg x = apT S2 (sT s0 x)) /\
-    (forall q, (forall m, n <= m -> q <> ea m) -> req (sR Sg q) (apR S2 (sR s0 q))).
+    (forall q, (forall m, n <= m -> q <> ea m) -> req (sR Sg q) (apR S2 (sR s0 q))) /\
+    (forall E F, Bnd E F Sg -> AIn E F P0 T0 R0 -> Bnd E F S2).
 Proof.
   intros l av D n r D1 Sg P0 T0 R0 Hd HK Hav Hreq Hfield.
   assert (Hrk : rkok D1 (drk D r) (row_Maybe l P0 T0 R0)).
@@ -239,7 +312,7 @@ Proof.
     exists typ_Bool, (typ_Var (ea n)), (row_Var (ea (Datatypes.S n))),
       (sbR r (row_Maybe l typ_Bool (typ_Var (ea n)) (row_Var (ea (Datatypes.S n))))),
       (rupd D (ea (Datatypes.S n)) (drk D r)), (n + 2), S2.
-    refine (conj eq_refl (conj _ (conj _ (conj eq_refl (conj _ (conj _ (conj _ _))))))).
+    refine (conj eq_refl (conj _ (conj _ (conj eq_refl (conj _ (conj _ (conj _ (conj _ _)))))))).
     + split.
       * intros a. cbn [sT S2 srupd supd dsort rupd]. destruct (Atom.eq_dec a (ea n)) as [->|Hne].
         -- rewrite (DOk_ea D n n Hd (le_n n)). apply sat_any.
@@ -257,13 +330,15 @@ Proof.
         rewrite dec_same. exact Hreq.
       * cbn [apR S2 sR srupd ap_row]. rewrite (dec_diff _ _ _ _ _ (Hfresh (Datatypes.S n) ltac:(lia) q Hq)).
         apply req_refl.
+    + intros E F HB (_ & AT & AR & _ & FT & FR).
+      exact (Bnd_srupd E F _ _ _ (Bnd_supd E F _ _ _ HB AT FT) AR FR).
   - set (S2 := srupd (supd (supd Sg (ea n) P0) (ea (Datatypes.S n)) T0) (ea (n + 2)) R0).
     assert (HT0 : sat D1 (rk_sort (drk D r)) T0).
     { destruct Hrk as [[[H|H] _] _]; [ subst; exact (Hfield eq_refl eq_refl) | exact H ]. }
     exists (typ_Var (ea n)), (typ_Var (ea (Datatypes.S n))), (row_Var (ea (n + 2))),
       (sbR r (row_Maybe l (typ_Var (ea n)) (typ_Var (ea (Datatypes.S n))) (row_Var (ea (n + 2))))),
       (rupd (upd D (ea (Datatypes.S n)) (rk_sort (drk D r))) (ea (n + 2)) (drk D r)), (n + 3), S2.
-    refine (conj eq_refl (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _))))))).
+    refine (conj eq_refl (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _)))))))).
     + split.
       * intros a. cbn [sT S2 srupd supd dsort rupd upd].
         destruct (Atom.eq_dec a (ea (Datatypes.S n))) as [->|Hne2'].
@@ -290,6 +365,49 @@ Proof.
         exact Hreq.
       * cbn [apR S2 sR srupd ap_row]. rewrite (dec_diff _ _ _ _ _ (Hfresh (n + 2) ltac:(lia) q Hq)).
         apply req_refl.
+    + intros E F HB (AP & AT & AR & FP & FT & FR).
+      exact (Bnd_srupd E F _ _ _ (Bnd_supd E F _ _ _ (Bnd_supd E F _ _ _ HB AP FP) AT FT) AR FR).
+Qed.
+
+(* The fresh variables take canonical representatives, so the extension
+   mentions only atoms [Sg] does: the field the row's image presents is known
+   only up to [teq], and an arbitrary representative of its class can carry
+   atoms the image does not.  The presence is present, which rules out the
+   variable lacking the label. *)
+Lemma rewrite_row_var_canon : forall l av D n r D1 Sg P0 T0 R0,
+  DOk D n -> KR D D1 Sg -> AtomSetImpl.mem r av = false ->
+  req (sR Sg r) (row_Maybe l P0 T0 R0) -> is_abs P0 = false ->
+  exists P' T' R' s0 D0 n1 S2,
+    rewrite_row l av D (row_Var r) n = Some (P', T', R', s0, D0, n1) /\
+    KR D0 D1 S2 /\ n <= n1 /\
+    req (row_Maybe l (apT S2 P') (apT S2 T') (apR S2 R')) (row_Maybe l P0 T0 R0) /\
+    (forall x, (forall m, n <= m -> x <> ea m) -> sT Sg x = apT S2 (sT s0 x)) /\
+    (forall q, (forall m, n <= m -> q <> ea m) -> req (sR Sg q) (apR S2 (sR s0 q))) /\
+    Cov Sg S2.
+Proof.
+  intros l av D n r D1 Sg P0 T0 R0 Hd HK Hav Hreq Hna.
+  pose proof (proj1 er_teq P0) as HP. pose proof (proj1 er_teq T0) as HT. pose proof (proj2 er_teq R0) as HR.
+  assert (Hq : req (row_Maybe l (erT P0) (erT T0) (erR R0)) (row_Maybe l P0 T0 R0))
+    by (apply req_maybe; assumption).
+  assert (Hna' : is_abs (erT P0) = false) by exact (er_not_abs P0 Hna).
+  destruct (rewrite_row_var_complete l av D n r D1 Sg (erT P0) (erT T0) (erR R0) Hd HK Hav
+              (req_trans _ _ _ Hreq (req_sym _ _ Hq))
+              (fun _ H => ltac:(exfalso; rewrite H in Hna'; discriminate Hna')))
+    as (P' & T' & R' & s0 & D0 & n1 & S2 & E & K & Hn & HP' & HT' & HR' & F1 & F2 & Hb).
+  exists P', T', R', s0, D0, n1, S2.
+  refine (conj E (conj K (conj Hn (conj _ (conj F1 (conj F2 _)))))).
+  - rewrite HP', HT', HR'. exact Hq.
+  - intros E0 F0 HB. refine (Hb E0 F0 HB _). destruct HB as (B1 & B2 & B3 & B4).
+    pose proof (proj2 er_inv _ _ Hreq) as [Hf Hr]. cbn [erR] in Hf, Hr.
+    rewrite Hna in Hf, Hr. cbn [ftv_row frv_row] in Hf, Hr.
+    pose proof (proj2 er_sub (sR Sg r)) as [Hs1 Hs2].
+    refine (conj _ (conj _ (conj _ (conj _ (conj _ _))))).
+    + intros x Hx. apply (B3 r x). apply Hs1. apply (proj2 (Hf x)). fsetdec.
+    + intros x Hx. apply (B3 r x). apply Hs1. apply (proj2 (Hf x)). fsetdec.
+    + intros x Hx. apply (B3 r x). apply Hs1. apply (proj2 (Hf x)). fsetdec.
+    + intros x Hx. apply (B4 r x). apply Hs2. apply (proj2 (Hr x)). fsetdec.
+    + intros x Hx. apply (B4 r x). apply Hs2. apply (proj2 (Hr x)). fsetdec.
+    + intros x Hx. apply (B4 r x). apply Hs2. apply (proj2 (Hr x)). fsetdec.
 Qed.
 
 (* ---- the fresh variable of [bind_row] ---- *)

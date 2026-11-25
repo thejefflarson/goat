@@ -1982,6 +1982,35 @@ parameter's row whose presence ends present and whose uses need two types; two s
 discharge a theorem about `dis`, not the first half of `fld`, which belongs to absent
 entries (`ps`) and returns when `ps` is dropped.
 
+*As built (stage 7.8b, step 1: what a step promises about the atoms it mentions,
+`GoatCompleteEr.v`, `GoatCompleteSorts.v` and the files that carry `Pkg`).* The
+plan's first step was to thread `Img` (the extension `S2` sends each atom to an image
+`sT Sg z`) through `Pkg`. `Img` is false at `rewrite_row`: the fresh field variable
+takes the field type of the entry that `req (sR Sg r) (Maybe l P0 T0 R0)` presents, a
+type `teq` to a field of `Sg`'s image but not an image of any atom, and, because
+`req_absf` makes the field of an absent entry free, a type that can mention atoms the
+image does not. What `Live` and `Avoid` need is only a bound on the atoms, so the step
+now promises `Cov` instead:
+
+- `Bnd E F S` says the images `S` gives to types and rows mention only type variables
+  satisfying `E` and row variables satisfying `F`; `Cov Sg S2` says `Bnd E F Sg` implies
+  `Bnd E F S2` for every `E` and `F`. `Pkg` carries `Cov Sg S2`; `Pkg_comp` composes it
+  (`Cov_trans`). The leaves that rename (`push_sort`, `push_sort_r`, the tail variable of
+  `bind_row`) have `Img` and its row analogue `RImg`, and `Cov_of_imgs` reads them as `Cov`.
+- `rewrite_row_var_canon` picks the canonical representative `erT` of the presented
+  field, presence and rest: `erT` replaces the field of each absent entry by `Unit`
+  (`GoatCompleteEr.v`), is `teq` to its argument (`er_teq`), mentions no atom its argument
+  does not (`er_sub`), and mentions the same atoms for `teq` types (`er_inv`, by
+  induction on `teq` and `req`). So the fresh variables' atoms lie in `ftv_row (sR Sg r)`
+  and `frv_row (sR Sg r)`, and `rewrite_row_spec` and `rewrite_row_complete` return
+  `Cov`. The presence is present (`is_abs P0 = false`), which also rules out the case
+  where the row variable lacks the label; the statement it replaces gave the three
+  equalities `apT S2 P' = P0` and so on, which the canonical choice weakens to one
+  `req` of the rebuilt entry.
+
+With `Cov`, an invariant of the form "every image mentions only even atoms" or "only
+atoms in `B`" survives a step: apply `Bnd` with `E` the even atoms, or the members of `B`.
+
 **What remains of 7.8.**
 
 1. *The induction past `rf`.* `Done` fixes the equations to `nil`, `SemL` and `GOk`
@@ -1989,10 +2018,26 @@ entries (`ps`) and returns when `ps` is dropped.
    every `ctyping` rule asks `PEv` (even and record-free) of the types it invents. The
    extension replaces `rf` by `pf`/`ps`/`atT` at those places, `Done` returns `HOkC` of
    the held equations at the extension, and `unify_stepL` is built on
-   `unify_tD_complete_full`. That theorem has no `Img` conjunct (the extension `S2` sends
-   no atom to a type that is not an image of `Sg`), which `Live`/`Avoid` need for the
-   even-atoms and `Avoid` invariants; threading `Img` through `Pkg` and its leaves
-   (`pkg_bind_prop`, `pkg_bind_row`, `pkg_rewrite`) is the first step.
+   `unify_tD_complete_full`, the invariant of `Avoid` and the even atoms read through `Cov`.
+   Three things were found in reading the induction for this and are not yet done:
+   - `Drow D` asks `D y <> Quot` for every atom, and the core's `/` makes `generic_sort`
+     `Quot` and gives a fresh atom that sort, so `unify_tD_complete_full` does not apply
+     to a run that divides. A `Quot` atom bound to a scalar is the case of
+     `pkg_bind_prop_nl` with `Float` as the only scalar; a `Quot` atom bound to a record
+     is the head-known rule that 7.7 left to 7.8 (`sat Quot` of a record is `rsat Quot` of
+     its row, so a record of floats is `Quot`, and the presence variables of an entry
+     pushed to `Quot` cannot be `Unit`). DECISION NEEDED: either `NN` extends to `Quot`
+     (a `Quot` atom is never sent to a record, which loses `/` on records) or the
+     fragment's `Quot` atoms are bound only to rows of literal entries (no presence
+     variable); the first is the smaller and is what I would build.
+   - The live set `L` holds type atoms only. A generalized run has live row variables
+     too, with their own `Live`/`Avoid` clauses (`Bnd`'s `F` and the row images
+     `sR Sg`), and `restr` needs a row analogue that sends the other row variables to
+     the empty row.
+   - `ps Sg T` is about the entries of `T` itself, so the algorithm's types may mention a
+     presence variable only if `Sg` sends it to `Unit`: the invariant `Live` carries
+     needs a clause for the presence atoms of `L`, and the conversion from `typing` has
+     to choose them.
 2. *Constructs.* Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows
    with a tail variable by `rewrite_row_complete`), spread (`spread_present`'s equation,
    discharged by `dis_complete` at a `let` or the top), restrict, tags and `match` (`spn`
