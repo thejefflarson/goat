@@ -56,7 +56,6 @@ Require Import Goat.GoatCompleteSchQ.
 Require Import Goat.GoatCompleteRehold.
 Require Import Goat.GoatCompleteCtxP.
 Require Import Goat.GoatCompleteDoneQ.
-Require Import Goat.GoatCompletePsA.
 Require Import Goat.GoatCompleteCore.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
@@ -166,40 +165,40 @@ Section InstPs.
 
 Variables (sc : scheme) (Sg S1 : sub) (n : nat).
 
-Lemma psA_inst_mut :
+Lemma ps_inst_mut :
   (forall b, old n b -> sT S1 b = sT Sg b) ->
-  (forall T, pf T -> psA (sfixU sc Sg) T -> (forall a, a `in` ftv_typ T -> a `notin` s_tq sc -> old n a) ->
-     (forall v, v `in` s_tq sc -> qprT v T -> sT S1 (ea (n + idx v (AtomSetImpl.elements (s_tq sc)))) = typ_Unit \/ sT S1 (ea (n + idx v (AtomSetImpl.elements (s_tq sc)))) = typ_Bool) ->
-     psA S1 (apT (inst_sub sc n) T)) /\
-  (forall R, prf R -> psAr (sfixU sc Sg) R -> (forall a, a `in` ftv_row R -> a `notin` s_tq sc -> old n a) ->
-     (forall v, v `in` s_tq sc -> qprR v R -> sT S1 (ea (n + idx v (AtomSetImpl.elements (s_tq sc)))) = typ_Unit \/ sT S1 (ea (n + idx v (AtomSetImpl.elements (s_tq sc)))) = typ_Bool) ->
-     psAr S1 (apR (inst_sub sc n) R)).
+  (forall T, pf T -> ps (sfixU sc Sg) T -> (forall a, a `in` ftv_typ T -> a `notin` s_tq sc -> old n a) ->
+     (forall v, v `in` s_tq sc -> qprT v T -> sT S1 (ea (n + idx v (AtomSetImpl.elements (s_tq sc)))) = typ_Unit) ->
+     ps S1 (apT (inst_sub sc n) T)) /\
+  (forall R, prf R -> psr (sfixU sc Sg) R -> (forall a, a `in` ftv_row R -> a `notin` s_tq sc -> old n a) ->
+     (forall v, v `in` s_tq sc -> qprR v R -> sT S1 (ea (n + idx v (AtomSetImpl.elements (s_tq sc)))) = typ_Unit) ->
+     psr S1 (apR (inst_sub sc n) R)).
 Proof.
   intros HS2.
-  apply typ_row_mutind; cbn [pf prf psA psAr]; try (intros; contradiction).
+  apply typ_row_mutind; cbn [pf prf ps psr]; try (intros; contradiction).
   - intros _ _ _ _. exact I.
   - intros _ _ _ _. exact I.
   - intros _ _ _ _. exact I.
   - intros _ _ _ _. exact I.
   - intros _ _ _ _. exact I.
-  - intros A IHA B IHB [PA PB] [SA SB] Ho HU. rewrite apT_Arrow. cbn [psA]. split.
+  - intros A IHA B IHB [PA PB] [SA SB] Ho HU. rewrite apT_Arrow. cbn [ps]. split.
     + exact (IHA PA SA (fun a Ha Hq => Ho a (proj2 (AtomSetFacts.union_iff _ _ _) (or_introl Ha)) Hq)
                (fun v Hv Hq => HU v Hv (or_introl Hq))).
     + exact (IHB PB SB (fun a Ha Hq => Ho a (proj2 (AtomSetFacts.union_iff _ _ _) (or_intror Ha)) Hq)
                (fun v Hv Hq => HU v Hv (or_intror Hq))).
   - intros R IH HR PR Ho HU. change (apT (inst_sub sc n) (typ_Record R)) with (typ_Record (apR (inst_sub sc n) R)).
-    cbn [psA]. exact (IH HR PR Ho HU).
+    cbn [ps]. exact (IH HR PR Ho HU).
   - intros a _ _ _ _. rewrite apT_Var. unfold inst_sub. cbn [sT].
     destruct (in_dec Atom.eq_dec a (AtomSetImpl.elements (s_tq sc))); exact I.
   - intros w A IH [HA _] PA Ho HU.
-    change (apT (inst_sub sc n) (typ_Grp w A)) with (typ_Grp w (apT (inst_sub sc n) A)). cbn [psA].
+    change (apT (inst_sub sc n) (typ_Grp w A)) with (typ_Grp w (apT (inst_sub sc n) A)). cbn [ps].
     exact (IH HA PA Ho HU).
   - intros _ _ _ _. exact I.
   - intros r _ _ _ _. rewrite apR_Var. unfold inst_sub. cbn [sR].
     destruct (in_dec Atom.eq_dec r (AtomSetImpl.elements (s_rq sc))); exact I.
   - intros l T IHT R IHR [HT HR] [PT PR] Ho HU.
     change (apR (inst_sub sc n) (row_Ext l T R)) with (row_Ext l (apT (inst_sub sc n) T) (apR (inst_sub sc n) R)).
-    cbn [psAr]. split.
+    cbn [psr]. split.
     + exact (IHT HT PT (fun a Ha Hq => Ho a (proj2 (AtomSetFacts.union_iff _ _ _) (or_introl Ha)) Hq)
                (fun v Hv Hq => HU v Hv (or_introl Hq))).
     + exact (IHR HR PR (fun a Ha Hq => Ho a (proj2 (AtomSetFacts.union_iff _ _ _) (or_intror Ha)) Hq)
@@ -207,10 +206,9 @@ Proof.
   - intros l P IHP T IHT R IHR [HP [HT HR]] [PP [PT PR]] Ho HU.
     change (apR (inst_sub sc n) (row_Maybe l P T R))
       with (row_Maybe l (apT (inst_sub sc n) P) (apT (inst_sub sc n) T) (apR (inst_sub sc n) R)).
-    cbn [psAr]. refine (conj _ (conj _ _)).
-    + destruct (presA_shape (sfixU sc Sg) P HP PP) as [->|[->|(v & -> & Hv)]].
-      * left. reflexivity.
-      * right. reflexivity.
+    cbn [psr]. refine (conj _ (conj _ _)).
+    + destruct (pres_shape (sfixU sc Sg) P HP PP) as [->|(v & -> & Hv)].
+      * reflexivity.
       * destruct (in_dec_set v (s_tq sc)) as [Hvq|Hvq].
         -- rewrite apT_Var. cbn [inst_sub sT].
            destruct (in_dec Atom.eq_dec v (AtomSetImpl.elements (s_tq sc))) as [Hin|Hin].
@@ -241,9 +239,9 @@ End InstPs.
 Lemma var_sch_doneQ : forall (Pt : typ -> Prop) L LR Dd D G n Sg x sc (st : tsub) (sr : rsub) T,
   (forall X, Pt X -> EvT X) ->
   DOk D n -> Drow D -> LOld n L -> LOld n LR -> LiveG evA evA L LR D Dd Sg ->
-  GOkP n G -> GLiveP L LR G -> lookup x G = Some sc -> psA (sfixU sc Sg) (s_body sc) ->
+  GOkP n G -> GLiveP L LR G -> lookup x G = Some sc -> ps (sfixU sc Sg) (s_body sc) ->
   RowSorts sc -> NNI sc st ->
-  (forall a, a `in` s_tq sc -> qprT a (s_body sc) -> st a = typ_Unit \/ st a = typ_Bool) ->
+  (forall a, a `in` s_tq sc -> qprT a (s_body sc) -> st a = typ_Unit) ->
   (forall a, a `notin` s_tq sc -> st a = typ_Var a) ->
   (forall r, r `notin` s_rq sc -> sr r = row_Var r) ->
   (forall a, a `in` s_tq sc -> sat Dd (s_sk sc a) (st a)) ->
@@ -331,9 +329,9 @@ Proof.
     by (intros a Ha; exact (fsubP_at Sg n lq lr st sr a Ha)).
   assert (Srat : forall r, In r lr -> sR S1 (ea (n + length lq + idx r lr)) = sr r)
     by (intros r Hr; exact (fsubP_rat Sg n lq lr st sr r Hr)).
-  assert (HpsT1 : psA S1 T0).
-  { refine (proj1 (psA_inst_mut sc Sg S1 n F2) _ Hpf HPS Hold' _).
-    intros v Hv Hqv. change (sT S1 (ea (n + idx v lq)) = typ_Unit \/ sT S1 (ea (n + idx v lq)) = typ_Bool). rewrite (Sat v (proj2 (In_elements v (s_tq sc)) Hv)). exact (HPU v Hv Hqv). }
+  assert (HpsT1 : ps S1 T0).
+  { refine (proj1 (ps_inst_mut sc Sg S1 n F2) _ Hpf HPS Hold' _).
+    intros v Hv Hqv. change (sT S1 (ea (n + idx v lq)) = typ_Unit). rewrite (Sat v (proj2 (In_elements v (s_tq sc)) Hv)). exact (HPU v Hv Hqv). }
   assert (P4 : apT S1 T0 = ap_typ st sr (apT (sfixS sc Sg) (s_body sc))).
   { unfold T0. rewrite apT_comp.
     change (ap_typ st sr (apT (sfixS sc Sg) (s_body sc))) with (apT (Sub st sr) (apT (sfixS sc Sg) (s_body sc))).
@@ -423,8 +421,8 @@ Proof.
   destruct (rh_teq (inst_pres sc n) S1 S2 n1 n2 Tab HO2 HOr2 HF2) as [RT _].
   destruct (RT T0 HpfT0 HatT0 n1 (le_n n1) ltac:(lia) Htab) as [TT TF].
   rewrite Hrh in TT, TF. simpl in TT, TF.
-  assert (HpsT0 : psA S2 T0).
-  { refine (proj1 (psA_agree S1 S2) T0 HpfT0 _ HpsT1).
+  assert (HpsT0 : ps S2 T0).
+  { refine (proj1 (ps_agree S1 S2) T0 HpfT0 _ HpsT1).
     intros y Hy. symmetry. apply HO2. exact (proj1 HatT0 y Hy). }
   destruct (proj1 (rh_struct (inst_pres sc n) S2) T0 HpfT0 HpsT0 n1) as (pT' & psT' & le12 & AtC' & frv' & Fh).
   rewrite Hrh in pT', psT', le12, AtC', frv', Fh. simpl in pT', psT', le12, AtC', frv', Fh.
@@ -485,8 +483,8 @@ Proof.
   assert (Hpfpk : pf (pack T' H)).
   { split; [ exact pT' | ]. apply pf_heqs. eapply Forall_impl; [ | exact Fh ].
     intros h (A & B & _). exact (conj A B). }
-  assert (Hpspk : psA S2 (pack T' H)).
-  { split; [ exact psT' | ]. apply psA_heqs. eapply Forall_impl; [ | exact Fh ].
+  assert (Hpspk : ps S2 (pack T' H)).
+  { split; [ exact psT' | ]. apply ps_heqs. eapply Forall_impl; [ | exact Fh ].
     intros h (_ & _ & C & (k & _ & _ & Ef) & _). split; [ rewrite Ef; exact I | exact C ]. }
   assert (HOk : HOkC S2 n2 H).
   { unfold HOkC. apply Forall_forall. intros h Hh _.

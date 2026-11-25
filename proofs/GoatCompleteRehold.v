@@ -28,7 +28,6 @@ Require Import Goat.GoatInferW.
 Require Import Goat.GoatHeld.
 Require Import Goat.GoatCompleteBind.
 Require Import Goat.GoatCompleteRfRows.
-Require Import Goat.GoatCompletePsA.
 Require Import Goat.GoatCompleteCtx.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
@@ -252,7 +251,7 @@ Proof.
 Qed.
 
 Definition hok (S : sub) (Y Yr : atoms) (m m' : nat) (h : heq) : Prop :=
-  pf (h_fld h) /\ pf (h_val h) /\ psA S (h_val h) /\
+  pf (h_fld h) /\ pf (h_val h) /\ ps S (h_val h) /\
   (exists k, m <= k /\ k < m' /\ h_fld h = typ_Var (ea k)) /\
   AtC (ftv_typ (h_val h)) m m' Y /\ frv_typ (h_val h) [<=] Yr.
 
@@ -276,18 +275,18 @@ Proof.
 Qed.
 
 Lemma rh_struct : forall pl S,
-  (forall T, pf T -> psA S T -> forall m,
-     pf (fst (fst (rh_t pl T m))) /\ psA S (fst (fst (rh_t pl T m))) /\ m <= snd (rh_t pl T m) /\
+  (forall T, pf T -> ps S T -> forall m,
+     pf (fst (fst (rh_t pl T m))) /\ ps S (fst (fst (rh_t pl T m))) /\ m <= snd (rh_t pl T m) /\
      AtC (ftv_typ (fst (fst (rh_t pl T m)))) m (snd (rh_t pl T m)) (ftv_typ T) /\
      frv_typ (fst (fst (rh_t pl T m))) [<=] frv_typ T /\
      Forall (hok S (ftv_typ T) (frv_typ T) m (snd (rh_t pl T m))) (snd (fst (rh_t pl T m)))) /\
-  (forall R, prf R -> psAr S R -> forall m,
-     prf (fst (fst (rh_r pl R m))) /\ psAr S (fst (fst (rh_r pl R m))) /\ m <= snd (rh_r pl R m) /\
+  (forall R, prf R -> psr S R -> forall m,
+     prf (fst (fst (rh_r pl R m))) /\ psr S (fst (fst (rh_r pl R m))) /\ m <= snd (rh_r pl R m) /\
      AtC (ftv_row (fst (fst (rh_r pl R m)))) m (snd (rh_r pl R m)) (ftv_row R) /\
      frv_row (fst (fst (rh_r pl R m))) [<=] frv_row R /\
      Forall (hok S (ftv_row R) (frv_row R) m (snd (rh_r pl R m))) (snd (fst (rh_r pl R m)))).
 Proof.
-  intros pl S. apply typ_row_mutind; cbn [pf prf psA psAr]; try (intros; contradiction);
+  intros pl S. apply typ_row_mutind; cbn [pf prf ps psr]; try (intros; contradiction);
     try (intros _ _ m; cbn [rh_t rh_r fst snd]; refine (conj _ (conj _ (conj (le_n m) (conj _ (conj _ _)))));
          [ try exact I | try exact I | | | constructor ];
          [ intros b Hb; left; exact Hb | intros b Hb; exact Hb ]; fail).

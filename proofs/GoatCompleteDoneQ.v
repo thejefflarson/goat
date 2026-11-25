@@ -33,7 +33,6 @@ Require Import Goat.GoatCompleteLive.
 Require Import Goat.GoatCompleteBound.
 Require Import Goat.GoatCompleteCtxW.
 Require Import Goat.GoatCompleteCtxP.
-Require Import Goat.GoatCompletePsA.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 
@@ -90,7 +89,7 @@ Proof.
   simpl. exact (conj (conj A B) (IH F')).
 Qed.
 
-Lemma psA_heqs : forall S H, Forall (fun h => psA S (h_fld h) /\ psA S (h_val h)) H -> psA S (heqs_ty H).
+Lemma ps_heqs : forall S H, Forall (fun h => ps S (h_fld h) /\ ps S (h_val h)) H -> ps S (heqs_ty H).
 Proof.
   induction H as [|h H IH]; intros F; [ exact I | ]. inversion F as [|? ? (A & B) F']; subst.
   simpl. exact (conj (conj A B) (IH F')).
@@ -99,7 +98,7 @@ Qed.
 Lemma pf_pack : forall T H, pf (pack T H) <-> pf T /\ pf (heqs_ty H).
 Proof. intros T H. reflexivity. Qed.
 
-Lemma psA_pack : forall S T H, psA S (pack T H) <-> psA S T /\ psA S (heqs_ty H).
+Lemma ps_pack : forall S T H, ps S (pack T H) <-> ps S T /\ ps S (heqs_ty H).
 Proof. intros S T H. reflexivity. Qed.
 
 Lemma ftv_pack : forall T H, ftv_typ (pack T H) [=] ftv_typ T `union` ftv_typ (heqs_ty H).
@@ -112,7 +111,7 @@ Proof. intros T H. reflexivity. Qed.
 
 (* [DoneP] (GoatCompleteCtxP.v) with the result's type facts stated of
    [pack T H]: the run's step is a [SemW], the packed type is in the fragment
-   (every entry present or absent, [psA]), and the equations the run holds are ones [dis]
+   with every entry present, and the equations the run holds are ones [dis]
    discharges.  A run that holds no equation is a [DoneP]'s with [pack T nil]
    the result type applied to [Unit]. *)
 Definition DoneQ (L LR : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat)
@@ -120,7 +119,7 @@ Definition DoneQ (L LR : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : 
   exists s D' n' S2 T e' H,
     Stable (fun f => infer true f D G e n = Some (s, D', T, n', e', H)) /\
     SemW evA evA L LR D1 Sg n s D' n' S2 /\
-    pf (pack T H) /\ atT n' (pack T H) /\ psA S2 (pack T H) /\ EvT (pack T H) /\
+    pf (pack T H) /\ atT n' (pack T H) /\ ps S2 (pack T H) /\ EvT (pack T H) /\
     LiveG evA evA (ftv_typ (pack T H)) (frv_typ (pack T H)) D' D1 S2 /\
     HOkC S2 n' H /\ teq (apT S2 T) T1 /\ is_gen_value e' = is_gen_value e /\ let_open e' = let_open e.
 

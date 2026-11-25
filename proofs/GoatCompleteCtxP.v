@@ -62,7 +62,6 @@ Require Import Goat.GoatCompleteMonoT.
 Require Import Goat.GoatCompleteCtxT.
 Require Import Goat.GoatCompleteCtxW.
 Require Import Goat.GoatCompleteSchQ.
-Require Import Goat.GoatCompletePsA.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Lists.List.
@@ -174,7 +173,7 @@ Definition GLiveP (L LR : atoms) (G : ctx) : Prop :=
 (* Every entry of a body is present under the substitution that fixes the
    scheme's quantifiers. *)
 Definition GPsP (Sg : sub) (G : ctx) : Prop :=
-  Forall (fun b => psA (sfixU (snd b) Sg) (s_body (snd b))) G.
+  Forall (fun b => ps (sfixU (snd b) Sg) (s_body (snd b))) G.
 
 Lemma SOkP_mono_le : forall n n' sc, n <= n' -> SOkP n sc -> SOkP n' sc.
 Proof.
@@ -259,21 +258,21 @@ Qed.
 Lemma GPsP_nil : forall Sg, GPsP Sg nil.
 Proof. intros Sg. constructor. Qed.
 
-Lemma GPsP_cons_mono : forall Sg x T G, pf T -> psA Sg T -> GPsP Sg G -> GPsP Sg ((x ~ sch_mono T) ++ G).
+Lemma GPsP_cons_mono : forall Sg x T G, pf T -> ps Sg T -> GPsP Sg G -> GPsP Sg ((x ~ sch_mono T) ++ G).
 Proof.
   intros Sg x T G Hp Hs HG. constructor; [ | exact HG ]. cbn [snd s_body].
-  refine (proj1 (psA_agree Sg _) T Hp _ Hs). intros y _.
+  refine (proj1 (ps_agree Sg _) T Hp _ Hs). intros y _.
   cbn [sfixU sT sch_mono s_tq]. destruct (AtomSetImpl.mem y {}) eqn:E; [ | reflexivity ].
   exfalso. apply AtomSetFacts.mem_iff in E. revert E. fsetdec.
 Qed.
 
-Lemma GPsP_cons_sch : forall Sg x sc G, psA (sfixU sc Sg) (s_body sc) -> GPsP Sg G -> GPsP Sg ((x ~ sc) ++ G).
+Lemma GPsP_cons_sch : forall Sg x sc G, ps (sfixU sc Sg) (s_body sc) -> GPsP Sg G -> GPsP Sg ((x ~ sc) ++ G).
 Proof. intros Sg x sc G H HG. constructor; [ exact H | exact HG ]. Qed.
 
 Lemma GPsP_of_rf : forall Sg n G, GOk n G -> GPsP Sg G.
 Proof.
   intros Sg n G H. induction H as [|b G (Hw & Hr & Hrf & Ho) _ IH]; constructor; [ | exact IH ].
-  exact (proj1 (ps_psA _) _ (ps_rf _ _ Hrf)).
+  exact (ps_rf _ _ Hrf).
 Qed.
 
 Lemma CIP_nil : forall Pt D1 Sg, CIP Pt D1 Sg nil nil.
@@ -429,26 +428,26 @@ Qed.
 Lemma ps_stepP : forall L LR DT Sg n s D' n' S2 sc,
   SemW evA evA L LR DT Sg n s D' n' S2 -> LEv L -> LEv LR -> WfSch sc -> pf (s_body sc) ->
   ftv_sch sc [<=] L -> frv_sch sc [<=] LR ->
-  psA (sfixU sc Sg) (s_body sc) -> psA (sfixU sc S2) (apT s (s_body sc)).
+  ps (sfixU sc Sg) (s_body sc) -> ps (sfixU sc S2) (apT s (s_body sc)).
 Proof.
   intros L LR DT Sg n s D' n' S2 sc H HL HR Hw Hp Hl Hr Hps.
   pose proof (sfixU_step L LR DT Sg n s D' n' S2 sc H HL HR Hw Hl Hr) as (Fx & Fr).
   pose proof (SemW_OkS _ _ _ _ _ _ _ _ _ _ _ H) as Hs. destruct Hs as (_ & Ht & Hrw & Hfx & Hfxr).
   pose proof (SemW_SIg _ _ _ _ _ _ _ _ _ _ _ H) as SI. destruct SI as (_ & SIx & SIq).
   pose proof Hw as (Hq & Hrq & _).
-  apply (proj1 (psA_pull (sfixU sc Sg) (sfixU sc S2) s)); [ exact Hp | exact Hps | | ].
+  apply (proj1 (ps_pull (sfixU sc Sg) (sfixU sc S2) s)); [ exact Hp | exact Hps | | ].
   - intros y Hy. refine (conj (Fx y Hy) _). destruct (in_dec_set y (s_tq sc)) as [Hyq|Hyq].
     + rewrite (Hfx y (not_ev_od y (Hq y Hyq))). exact I.
     + assert (Hf : y `in` ftv_sch sc) by (unfold ftv_sch; apply AtomSetFacts.diff_iff; split; assumption).
       destruct (SIx y (Hl y Hf)) as (Pf & _ & Ps).
-      refine (proj1 (psA_agree S2 (sfixU sc S2)) _ Pf _ (proj1 (ps_psA _) _ Ps)).
+      refine (proj1 (ps_agree S2 (sfixU sc S2)) _ Pf _ Ps).
       intros z Hz. symmetry. apply sfixU_tout. intro Hzq.
       exact (ev_od z (proj1 (Ht y (HL y (Hl y Hf))) z Hz) (Hq z Hzq)).
   - intros q Hq'. destruct (in_dec_set q (s_rq sc)) as [Hqq|Hqq].
     + rewrite (Hfxr q (not_ev_od q (Hrq q Hqq))). exact I.
     + assert (Hf : q `in` frv_sch sc) by (unfold frv_sch; apply AtomSetFacts.diff_iff; split; assumption).
       destruct (SIq q (Hr q Hf)) as (Pf & _ & Ps).
-      refine (proj2 (psA_agree S2 (sfixU sc S2)) _ Pf _ (proj2 (ps_psA _) _ Ps)).
+      refine (proj2 (ps_agree S2 (sfixU sc S2)) _ Pf _ Ps).
       intros z Hz. symmetry. apply sfixU_tout. intro Hzq.
       exact (ev_od z (proj1 (Hrw q (HR q (Hr q Hf))) z Hz) (Hq z Hzq)).
 Qed.
@@ -590,7 +589,7 @@ Definition DoneP (L LR : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : 
   exists s D' n' S2 T e' H,
     Stable (fun f => infer true f D G e n = Some (s, D', T, n', e', H)) /\
     SemW evA evA L LR D1 Sg n s D' n' S2 /\
-    pf T /\ atT n' T /\ psA S2 T /\ EvT T /\ LiveG evA evA (ftv_typ T) (frv_typ T) D' D1 S2 /\
+    pf T /\ atT n' T /\ ps S2 T /\ EvT T /\ LiveG evA evA (ftv_typ T) (frv_typ T) D' D1 S2 /\
     HOkC S2 n' H /\ teq (apT S2 T) T1 /\ is_gen_value e' = is_gen_value e /\ let_open e' = let_open e.
 
 Lemma DoneP_const : forall L LR D1 G e D n Sg T1 c,
@@ -633,6 +632,6 @@ Proof.
   pose proof (TOk_frag n' S2 T HT) as (Hp & Ha & Hs).
   assert (Hfrv : frv_typ T [<=] {})
     by (intros q Hq; exfalso; exact (proj1 (proj2 (proj2 (rf_facts T (proj1 HT)))) q Hq)).
-  refine (conj Hst (conj (SemC_W Hsem) (conj Hp (conj Ha (conj (proj1 (ps_psA S2) _ Hs) (conj HE (conj _ (conj (Forall_nil _) (conj Heq (conj Hg Hl)))))))))).
+  refine (conj Hst (conj (SemC_W Hsem) (conj Hp (conj Ha (conj Hs (conj HE (conj _ (conj (Forall_nil _) (conj Heq (conj Hg Hl)))))))))).
   exact (LiveG_mono _ _ _ _ _ _ _ _ _ (fun y Hy => Hy) Hfrv (LvE_of_Live _ _ _ _ Lv)).
 Qed.
