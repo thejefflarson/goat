@@ -320,10 +320,11 @@ Proof.
     by (intros b Hb; exact (inst_rden_out D sc n b (HoldR b Hb))).
   assert (Hrow1 : Drow D1).
   { intros r. destruct (key_dec (fun r0 => ea (n + length lq + idx r0 lr)) r lr) as [[r' [Hr' Hb]]|Hn].
-    - rewrite Hb. change (rk_sort (drk D1 (ea (n + length lq + idx r' lr))) = k_Any \/ _).
-      rewrite (inst_rden_at D sc n r' Hr'). exact (HRK r' (proj1 (In_elements r' (s_rq sc)) Hr')).
-    - change (rk_sort (drk D1 r) = k_Any \/ rk_sort (drk D1 r) = k_Eq).
-      rewrite (inst_rden_out D sc n r Hn). exact (Hrow r). }
+    - rewrite Hb. pose proof (inst_rden_at D sc n r' Hr') as E.
+      exact (eq_ind _ (fun K => rk_sort K = k_Any \/ rk_sort K = k_Eq)
+               (HRK r' (proj1 (In_elements r' (s_rq sc)) Hr')) _ (eq_sym E)).
+    - pose proof (inst_rden_out D sc n r Hn) as E.
+      exact (eq_ind _ (fun K => rk_sort K = k_Any \/ rk_sort K = k_Eq) (Hrow r) _ (eq_sym E)). }
   assert (Hbody : forall y, y `in` ftv_typ T0 ->
             (exists a, In a lq /\ y = ea (n + idx a lq)) \/ y `in` ftv_sch sc).
   { intros y Hy. unfold T0, apT in Hy. destruct (ftv_ap_typ _ _ _ _ Hy) as [(b & Hb & Hyb)|(p & Hp & Hyp)].
@@ -390,10 +391,10 @@ Proof.
         assert (Hbf : b `in` ftv_sch sc) by (unfold ftv_sch; apply AtomSetFacts.diff_iff; split; assumption).
         assert (Hr : sT (inst_sub sc n) b = typ_Var b) by exact (inst_old_var sc n b Hbq).
         rewrite Hr, apT_Var, (F2 b (Hold b Hbf)).
-        pose proof (proj1 (proj2 (proj2 HLv)) b (Hfl b Hbf)) as (HEb & HRb).
+        pose proof (proj1 (proj1 (proj2 (proj2 HLv))) b (Hfl b Hbf)) as (HEb & HRb).
         symmetry. apply ap_fix_typ.
-        * intros c Hc. apply Ht1. intro Hcq. exact (ev_od c (HEb c Hc) ((proj1 Hq) c Hcq)).
-        * intros c Hc. apply Ht2. intro Hcq. exact (ev_od c (HRb c Hc) ((proj1 Hrq) c Hcq)).
+        * intros c Hc. apply Ht1. intro Hcq. exact (ev_od c (HEb c Hc) (Hq c Hcq)).
+        * intros c Hc. apply Ht2. intro Hcq. exact (ev_od c (HRb c Hc) (Hrq c Hcq)).
     - intros b Hb.
       change (apR S2 (sR (inst_sub sc n) b) = apR (Sub st sr) (sR (sfixS sc Sg) b)).
       destruct (in_dec_set b (s_rq sc)) as [Hbq|Hbq].
@@ -409,36 +410,44 @@ Proof.
         { cbn [inst_sub sR]. destruct (in_dec Atom.eq_dec b (AtomSetImpl.elements (s_rq sc))) as [H|H];
             [ exfalso; apply Hbq; apply In_elements; exact H | reflexivity ]. }
         rewrite Hr, apR_Var, (F2R b (Holdr b Hbf)).
-        pose proof (proj2 (proj2 (proj2 HLv)) b (Hfr b Hbf)) as (HEb & HRb).
+        pose proof (proj2 (proj1 (proj2 (proj2 HLv))) b (Hfr b Hbf)) as (HEb & HRb).
         change (sR Sg b = apR (Sub st sr) (sR Sg b)). symmetry. apply ap_fix_row.
-        * intros c Hc. apply Ht1. intro Hcq. exact (ev_od c (HEb c Hc) ((proj1 Hq) c Hcq)).
-        * intros c Hc. apply Ht2. intro Hcq. exact (ev_od c (HRb c Hc) ((proj1 Hrq) c Hcq)). }
+        * intros c Hc. apply Ht1. intro Hcq. exact (ev_od c (HEb c Hc) (Hq c Hcq)).
+        * intros c Hc. apply Ht2. intro Hcq. exact (ev_od c (HRb c Hc) (Hrq c Hcq)). }
   assert (HLv1 : LiveG evA evA L LR D1 Dd S2).
   { pose proof (LiveG_env evA evA L LR D D1 Dd Sg HLv (fun a Ha => HD1o a (HLo a Ha))
                   (fun q Hq0 => HD1r q (HLRo q Hq0))) as H1.
     exact (LiveG_agree evA evA L LR D1 Dd Sg S2 H1 (fun a Ha => F2 a (HLo a Ha)) (fun q Hq0 => F2R q (HLRo q Hq0))). }
+  assert (Eat : forall a, In a lq -> D1 (ea (n + idx a lq)) = s_sk sc a)
+    by (intros a Ha; exact (inst_den_at D sc n a Ha)).
+  assert (Erat : forall r, In r lr -> drk D1 (ea (n + length lq + idx r lr)) = s_rk sc r)
+    by (intros r Hr; exact (inst_rden_at D sc n r Hr)).
+  assert (Sat : forall a, In a lq -> sT S2 (ea (n + idx a lq)) = st a)
+    by (intros a Ha; exact (fsubP_at Sg n lq lr st sr a Ha)).
+  assert (Srat : forall r, In r lr -> sR S2 (ea (n + length lq + idx r lr)) = sr r)
+    by (intros r Hr; exact (fsubP_rat Sg n lq lr st sr r Hr)).
   assert (HLvT : LiveG evA evA (ftv_typ T0) (frv_typ T0) D1 Dd S2).
   { destruct HLv1 as (SL & RL & (BT & BR) & NL).
     refine (conj _ (conj _ (conj (conj _ _) _))).
     - intros y Hy. destruct (Hbody y Hy) as [(a & Ha & ->)|Hf].
       + assert (Haq : a `in` s_tq sc) by (apply In_elements; exact Ha).
-        rewrite (inst_den_at D sc n a Ha), (fsubP_at Sg n lq lr st sr a Ha). exact (Ht4 a Haq).
+        rewrite (Eat a Ha), (Sat a Ha). exact (Ht4 a Haq).
       + exact (SL y (Hfl y Hf)).
     - intros q Hy. destruct (Hbodyr q Hy) as [(r & Hr & ->)|Hf].
       + assert (Hrq' : r `in` s_rq sc) by (apply In_elements; exact Hr).
-        rewrite (inst_rden_at D sc n r Hr), (fsubP_rat Sg n lq lr st sr r Hr). exact (Ht5 r Hrq').
+        rewrite (Erat r Hr), (Srat r Hr). exact (Ht5 r Hrq').
       + exact (RL q (Hfr q Hf)).
     - intros y Hy. destruct (Hbody y Hy) as [(a & Ha & ->)|Hf].
       + assert (Haq : a `in` s_tq sc) by (apply In_elements; exact Ha).
-        rewrite (fsubP_at Sg n lq lr st sr a Ha). exact (HPt _ (Ht7 a Haq)).
+        rewrite (Sat a Ha). exact (HPt _ (Ht7 a Haq)).
       + exact (BT y (Hfl y Hf)).
     - intros q Hy. destruct (Hbodyr q Hy) as [(r & Hr & ->)|Hf].
       + assert (Hrq' : r `in` s_rq sc) by (apply In_elements; exact Hr).
-        rewrite (fsubP_rat Sg n lq lr st sr r Hr). exact (Ht8 r Hrq').
+        rewrite (Srat r Hr). exact (Ht8 r Hrq').
       + exact (BR q (Hfr q Hf)).
     - intros y Hy. destruct (Hbody y Hy) as [(a & Ha & ->)|Hf].
       + assert (Haq : a `in` s_tq sc) by (apply In_elements; exact Ha).
-        rewrite (inst_den_at D sc n a Ha), (fsubP_at Sg n lq lr st sr a Ha). exact (HNN a Haq).
+        rewrite (Eat a Ha), (Sat a Ha). exact (HNN a Haq).
       + exact (NL y (Hfl y Hf)). }
   exists sid, D1, n1, S2, T0, (e_fvar_f x), nil.
   refine (conj _ (conj _ (conj HpfT0 (conj HatT0 (conj HpsT0 (conj HE0 (conj HLvT (conj (Forall_nil _)
