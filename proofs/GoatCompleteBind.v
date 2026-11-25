@@ -545,7 +545,7 @@ Theorem bind_prop0_sorted_complete : forall (D D1 : denv) Sg a T n,
   exists s D' n' S2, bind_prop0 D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
     n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teqX bx D1 (sT Sg x) (apT S2 (sT s x))) /\
-    (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2.
+    (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2 /\ Cov Sg S2.
 Proof.
   intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hcb Hcq Hpf Hlc Hna0 Hfld Heq.
   assert (Hsa : sat D1 (D a) (apT Sg T)).
@@ -579,7 +579,7 @@ Proof.
   destruct (push_sort_r_facts _ _ _ _ _ _ _ Er Holdr1) as (Q1 & Q2 & Q3 & Q4 & Q5 & Q6 & Q7).
   destruct (push_sort_r_complete _ _ _ (D a) S2a D1 Hd1 K1
               (fun q Hq => ltac:(rewrite R1; exact (Hreach_r q (proj1 (in_elts _ _) Hq)))) Holdr1
-              sr D2 n2 Er) as (S2b & K2 & T2 & Rq).
+              sr D2 n2 Er) as (S2b & K2 & T2 & Rq & RI).
   assert (Hvp : forall x, exists y, sT sp x = typ_Var y)
     by (intros x; destruct (P4 x) as (y & E & _); exists y; exact E).
   assert (Hsrx : forall r, exists r', sR sp r = row_Var r')
@@ -645,7 +645,8 @@ Proof.
     rewrite Hrr, Hb.
     pose proof (Rq r (fun m Hm => Hr m ltac:(lia))) as E. rewrite R1, E' in E.
     exact E.
-  - exact (Img_trans _ _ _ I1 (Img_sT _ _ T2)).
+  - assert (Hi : Img Sg S2b) by exact (Img_trans _ _ _ I1 (Img_sT _ _ T2)).
+    refine (conj Hi (Cov_of_imgs _ _ Hi (RImg_trans _ _ _ (RImg_sR _ _ R1) RI))).
 Qed.
 
 Theorem bind_prop_sorted_complete : forall (D D1 : denv) Sg a T n,
@@ -657,7 +658,7 @@ Theorem bind_prop_sorted_complete : forall (D D1 : denv) Sg a T n,
   exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
     n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teqX bx D1 (sT Sg x) (apT S2 (sT s x))) /\
-    (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2.
+    (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2 /\ Cov Sg S2.
 Proof.
   intros D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hcb Hcq Hpf Hlc Hna0 Hfld Heq.
   destruct (bind_prop0_sorted_complete D D1 Sg a T n Hd HK Ha Hna Hot Hoq Hcb Hcq Hpf Hlc Hna0 Hfld Heq)

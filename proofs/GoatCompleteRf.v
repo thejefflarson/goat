@@ -287,7 +287,7 @@ Proof.
     cbn in Hsa. rewrite Hsa. destruct (D b); reflexivity. }
   destruct (bind_prop_pres_complete D DT Sg a T n Hd HK Ha Hv Hot (fun q Hq => ltac:(exfalso; exact (Hfrv q Hq)))
               Hpf Hlc (proj1 (rf_live T Hrf)) Hcb (fun q Hq => ltac:(exfalso; exact (Hfrv q Hq))) (rf_po Sg a T Hrf) (Hfld DT Sg (D a)) Heq)
-    as (s & D' & n' & S2 & E & K & Hl & Hd' & F & Fr & Im).
+    as (s & D' & n' & S2 & E & K & Hl & Hd' & F & Fr & Im & _).
   exists s, D', n', S2. refine (conj E (conj (conj K (conj Hd' (conj _ (conj F _)))) Im)).
   - exact (bind_prop_SI D a T n s D' n' E Hd Ha Hrf Hot Hcb).
   - intros q Hq. pose proof (Fr q Hq) as E1.

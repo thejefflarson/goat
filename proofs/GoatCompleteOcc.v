@@ -166,7 +166,7 @@ Theorem bind_row_pres_complete : forall (D DT : denv) Sg r R n,
   frld DT Sg (rk_sort (drk D r)) R -> reqD DT (sR Sg r) (apR Sg R) ->
   exists s D' n' S2, bind_row D r R n = Some (s, D', n') /\ KR D' DT S2 /\ n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s x))) /\
-    (forall q, old n q -> reqD DT (sR Sg q) (apR S2 (sR s q))).
+    (forall q, old n q -> reqD DT (sR Sg q) (apR S2 (sR s q))) /\ Cov Sg S2.
 Proof.
   intros D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc Hcb Hcq Hocc Hfld Hreq.
   exact (bind_row_sorted_complete true D DT Sg r R n Hd HK Hr Hot Hoq Hpf Hlc
@@ -184,7 +184,7 @@ Theorem bind_prop_pres_complete : forall (D D1 : denv) Sg a T n,
   exists s D' n' S2, bind_prop D a T n = Some (s, D', n') /\ KR D' D1 S2 /\
     n <= n' /\ DOk D' n' /\
     (forall x, old n x -> teqD D1 (sT Sg x) (apT S2 (sT s x))) /\
-    (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2.
+    (forall r, old n r -> sR Sg r = apR S2 (sR s r)) /\ Img Sg S2 /\ Cov Sg S2.
 Proof.
   intros D D1 Sg a T n Hd HK Ha Hv Hot Hoq Hpf Hlc Hna Hcb Hcq Hocc Hfld Heq.
   exact (bind_prop_sorted_complete true D D1 Sg a T n Hd HK Ha

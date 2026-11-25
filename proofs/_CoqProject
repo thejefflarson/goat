@@ -60,6 +60,7 @@ GoatRowNf.v
 GoatCompleteRows.v
 GoatCompleteSide.v
 GoatCompleteUnify.v
+GoatCompleteEr.v
 GoatCompleteSorts.v
 GoatCompleteBind.v
 GoatCompleteBindRow.v
