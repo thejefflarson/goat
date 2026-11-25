@@ -47,6 +47,7 @@ Require Import Goat.GoatCompleteNf.
 Require Import Goat.GoatCompleteCtx.
 Require Import Goat.GoatCompleteCore.
 Require Import Goat.GoatCompleteCoreW.
+Require Import Goat.GoatCompleteCEq.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.micromega.Lia.
 Import ListNotations.
@@ -199,7 +200,7 @@ Inductive rtyping : list (atom * typ) -> exp -> typ -> Prop :=
       rtyping Gm e1 A -> rtyping Gm e2 A -> rtyping Gm (e_bin e1 o e2) A
   | R_Cmp : forall Gm e1 o e2 A, kind o = k_cmp -> sat d_any k_Eq A -> rf A ->
       rtyping Gm e1 A -> rtyping Gm e2 A -> rtyping Gm (e_bin e1 o e2) typ_Bool
-  | R_LetMono : forall Gm e1 e2 T1 T2, is_gen_value e1 = false -> rf T1 -> rf T2 ->
+  | R_LetMono : forall Gm e1 e2 T1 T2, rf T1 -> rf T2 ->
       rtyping Gm e1 T1 ->
       (forall x, x `notin` dom (mctx Gm) `union` fv_exp e2 ->
          rtyping ((x, T1) :: Gm) (open_exp_wrt_exp e2 (e_fvar_f x)) T2) ->
@@ -268,9 +269,9 @@ Proof.
                    | exact (IHrtyping1 g) | exact (IHrtyping2 g) ].
   - apply R_Cmp with (A := rnT g A); [ assumption | apply sat_rnT; assumption | apply rf_rnT; assumption
                    | exact (IHrtyping1 g) | exact (IHrtyping2 g) ].
-  - apply R_LetMono with (T1 := rnT g T1); [ assumption | apply rf_rnT; assumption | apply rf_rnT; assumption
+  - apply R_LetMono with (T1 := rnT g T1); [ apply rf_rnT; assumption | apply rf_rnT; assumption
                    | exact (IHrtyping g) | ].
-    intros x Hx. rewrite dom_mctx_mren in Hx. exact (H4 x Hx g).
+    intros x Hx. rewrite dom_mctx_mren in Hx. exact (H3 x Hx g).
 Qed.
 
 (* ---- the conversion ---- *)
@@ -302,6 +303,40 @@ Proof.
     + apply mren_fix; [ intros a Ha; apply Hg; fsetdec | exact HG ].
 Qed.
 
+(* A [let] of a value whose binding stays monomorphic: pinning the binding's own
+   type generalizes nothing, and the scheme [gen] builds is the monotype's. *)
+Lemma gen_empty : forall Tm G a, ~ a `in` AtomSetImpl.diff (ftv_typ Tm) (ftv_ctx (pin_ctx Tm G)).
+Proof.
+  intros Tm G a Ha. apply AtomSetFacts.diff_iff in Ha. destruct Ha as [H1 H2]. apply H2.
+  pose proof (ftv_pin_ctx Tm G a) as E. apply E. apply AtomSetFacts.union_iff. left. exact H1.
+Qed.
+
+Lemma gen_empty_r : forall Tm G r, rf Tm -> ~ r `in` AtomSetImpl.diff (frv_typ Tm) (frv_ctx (pin_ctx Tm G)).
+Proof.
+  intros Tm G r Hrf Hr. apply AtomSetFacts.diff_iff in Hr. destruct Hr as [H1 _].
+  exact (proj1 (proj2 (proj2 (rf_facts _ Hrf))) r H1).
+Qed.
+
+Lemma sch_mono_gen : forall Tm G k rk, rf Tm -> sch_equiv (sch_mono Tm) (gen (pin_ctx Tm G) Tm k rk).
+Proof.
+  intros Tm G k rk Hrf. unfold sch_equiv, sch_mono, gen. simpl.
+  refine (conj _ (conj _ (conj eq_refl (conj _ _)))).
+  - split; [ intros Ha; exfalso; revert Ha; fsetdec | intros Ha; exfalso; exact (gen_empty _ _ _ Ha) ].
+  - split; [ intros Ha; exfalso; revert Ha; fsetdec | intros Ha; exfalso; exact (gen_empty_r _ _ _ Hrf Ha) ].
+  - intros a Ha. exfalso. revert Ha. fsetdec.
+  - intros r Hr. exfalso. revert Hr. fsetdec.
+Qed.
+
+Lemma denv_eq_extr_empty : forall D V Vr k rk, (forall a, ~ a `in` V) -> (forall r, ~ r `in` Vr) ->
+  denv_eq D (extr (ext D V k) Vr rk).
+Proof.
+  intros D V Vr k rk HV HVr. split.
+  - intros a. cbn [extr ext dsort]. destruct (AtomSetImpl.mem a V) eqn:E; [ | reflexivity ].
+    exfalso. apply (HV a). apply AtomSetFacts.mem_iff. exact E.
+  - intros r. cbn [extr ext drk]. destruct (AtomSetImpl.mem r Vr) eqn:E; [ | reflexivity ].
+    exfalso. apply (HVr r). apply AtomSetFacts.mem_iff. exact E.
+Qed.
+
 Lemma rtyping_ctyping_n : forall n e, esz e < n -> forall Gm T, rtyping Gm e T ->
   GEv Gm -> PEv T -> forall Av, ctyping Av d_any (mctx Gm) e T.
 Proof.
@@ -310,7 +345,7 @@ Proof.
   destruct Hr as [G0 x T0 Hu Hin Hrf | G0 i T0 Hu Hs0 Hrf | G0 d Hu | G0 Hu | G0 Hu | G0 Hu | G0 q Hu
                  | G0 e0 T1 T2 Hf1 Hf2 Hb | G0 e1 e2 T1 T2 Hf1 Hf2 Hr1 Hr2 | G0 e1 e2 e3 T0 Hr1 Hr2 Hr3
                  | G0 e0 A Hf Hs0 Hr1 | G0 e1 o e2 A Hk Hs0 Hf Hr1 Hr2 | G0 e1 o e2 A Hk Hs0 Hf Hr1 Hr2
-                 | G0 e1 e2 T1 T2 Hg Hf1 Hf2 Hr1 Hb]; simpl in Hs.
+                 | G0 e1 e2 T1 T2 Hf1 Hf2 Hr1 Hb]; simpl in Hs.
   - eapply C_Var; [ eassumption | apply binds_mctx; eassumption | cbn [sch_mono s_rq]; fsetdec
                   | apply instP_mono; exact HT ].
   - apply C_Num; assumption.
@@ -350,13 +385,28 @@ Proof.
     + exact (IH e2 ltac:(lia) _ _ H2' HG HP1 _).
   - destruct (swap_even G0 T2 T1 HG HT Hf1) as (g & hT & hm & HP1).
     pose proof (rtyping_ren _ _ _ Hr1 g) as H1'. rewrite hm in H1'.
-    eapply C_LetMono with (T1 := rnT g T1); [ assumption | | ].
-    + exact (IH e1 ltac:(lia) _ _ H1' HG HP1 _).
-    + intros x Hx.
+    assert (Hbody : forall x, x `notin` dom (mctx G0) `union` fv_exp e2 -> forall Av',
+      ctyping Av' d_any ((x ~ sch_mono (rnT g T1)) ++ mctx G0) (open_exp_wrt_exp e2 (e_fvar_f x)) T2).
+    { intros x Hx Av'.
       pose proof (rtyping_ren _ _ _ (Hb x Hx) g) as H2'.
       change (mren g ((x, T1) :: G0)) with ((x, rnT g T1) :: mren g G0) in H2'. rewrite hm, hT in H2'.
       refine (IH _ _ _ _ H2' (GEv_cons _ _ _ HP1 HG) HT _).
-      rewrite esz_open. lia.
+      rewrite esz_open. lia. }
+    destruct (is_gen_value e1) eqn:Eg.
+    + eapply C_Let with (Tm := rnT g T1) (k := fun _ => k_Any) (rk := fun _ => rk_any);
+        [ exact Eg | exact (proj2 HP1) | | | | ].
+      * intros _ a Ha. exfalso. exact (gen_empty _ _ _ Ha).
+      * intros a Ha. exfalso. exact (gen_empty _ _ _ Ha).
+      * refine (ctyping_equiv _ _ _ _ _
+                  (IH e1 ltac:(lia) _ _ H1' HG HP1 (bg Av (mctx G0) T2)) _ _ _ _ _ (ctx_equiv_refl _)); [ fsetdec | ].
+        apply denv_eq_extr_empty; [ intros a Ha; exact (gen_empty _ _ _ Ha) | intros r Hr; exact (gen_empty_r _ _ _ (proj2 HP1) Hr) ].
+      * intros x Hx.
+        refine (ctyping_equiv _ _ _ _ _ (Hbody x Hx (bg Av (mctx G0) T2)) _ _ _ _ _ _); [ fsetdec | apply denv_eq_refl | ].
+        apply ctx_equiv_cons; [ | apply ctx_equiv_refl ].
+        apply sch_mono_gen. exact (proj2 HP1).
+    + eapply C_LetMono with (T1 := rnT g T1); [ exact Eg | | ].
+      * exact (IH e1 ltac:(lia) _ _ H1' HG HP1 _).
+      * intros x Hx. exact (Hbody x Hx _).
 Qed.
 
 Theorem rtyping_ctyping : forall Gm e T, rtyping Gm e T -> GEv Gm -> PEv T ->
