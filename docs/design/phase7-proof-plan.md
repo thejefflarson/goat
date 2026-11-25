@@ -1041,6 +1041,14 @@ the field types clash by shape and both rests lack the label, and its spread
 declares the lack on its tail. `field_blocks_absent` is the pair W still unifies,
 two variable field types; the hypothesis of statement A stays for it.
 
+*Update (2026-11-24, #667 held equations).* W now holds the spread's equations,
+re-holds them at each use of a scheme, and generalizes a `let` under a parameter's
+row when the presences it holds end absent (`absent_req`, `V_let_own`); the
+differential has no mismatch left on the held-equation corpus programs. What
+stays open is the case where such a presence ends present and a variable the
+equation does not mention needs two types, and a program mixing two such `let`s
+whose presences end differently (`proofs/README.md`, "Held equations", step 5).
+
 **Item 1: `rewrite_row` on a whole second row (`GoatCompleteRewrite.v`).**
 `rewrite_row_spec` quantifies over the row: if `Sg` respects the environments
 (`KR D D1 Sg`), the atoms of `R` are below the supply, `Sg R` can present `l`

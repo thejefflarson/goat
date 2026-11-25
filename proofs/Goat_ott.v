@@ -381,6 +381,8 @@ with req : row -> row -> Prop :=    (* defn req *)
  | req_abs : forall (l:label) (T:typ) (R:row),
       (rlacks  l   R  = true)  ->
      req (row_Maybe l typ_Bool T R) R
+ | req_absf : forall (l:label) (T:typ) (R:row) (T':typ),
+     req (row_Maybe l typ_Bool T R) (row_Maybe l typ_Bool T' R)
  | req_swap_em : forall (l:label) (T1 T:typ) (l':label) (T':typ) (R:row),
       l  <>  l'  ->
      req (row_Maybe l T1 T (row_Ext l' T' R)) (row_Ext l' T' (row_Maybe l T1 T R))

@@ -24,6 +24,7 @@ Require Import Goat.GoatDefs.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferW.
 Require Import Goat.GoatInferSound.
+Require Import Goat.GoatInferHeld.
 Require Import Goat.GoatElab.
 Require Import Stdlib.Lists.List.
 Import ListNotations.

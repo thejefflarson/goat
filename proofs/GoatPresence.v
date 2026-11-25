@@ -39,6 +39,7 @@ Inductive req0 : row -> row -> Prop :=
      l <> l' ->
      req0 (row_Maybe l P T (row_Maybe l' P' T' R))
           (row_Maybe l' P' T' (row_Maybe l P T R))
+ | r0_absf : forall l T T' R, req0 (row_Maybe l typ_Bool T R) (row_Maybe l typ_Bool T' R)
  | r0_trans : forall R1 R2 R3, req0 R1 R2 -> req0 R2 R3 -> req0 R1 R3
  | r0_sym : forall R1 R2, req0 R1 R2 -> req0 R2 R1.
 
@@ -47,7 +48,7 @@ Inductive req0 : row -> row -> Prop :=
 Lemma req0_req : forall R1 R2, req0 R1 R2 -> req R1 R2.
 Proof.
   induction 1; eauto using req_empty, req_var, req_head, req_swap, req_maybe,
-    req_swap_em, req_swap_mm, req_trans, req_sym.
+    req_swap_em, req_swap_mm, req_absf, req_trans, req_sym.
 Qed.
 
 (* Reflexivity, as for [req]: induction on the row. *)
@@ -87,6 +88,7 @@ Proof.
       try reflexivity.
   - destruct (Nat.eqb l0 l) eqn:E1; destruct (Nat.eqb l0 l') eqn:E2; simpl;
       try reflexivity.
+  - reflexivity.
   - rewrite (IHreq0_1 l0). apply IHreq0_2.
   - symmetry. apply IHreq0.
 Qed.
@@ -171,7 +173,8 @@ Proof.
   destruct P; destruct P'; simpl;
     try (apply teq_thead in HP; simpl in HP; discriminate);
     try (apply r0_maybe; assumption).
-  - rewrite <- Hl. destruct (rlacks l R); [ exact HR | apply r0_maybe; assumption ].
+  - rewrite <- Hl. destruct (rlacks l R); [ exact HR | ].
+    eapply r0_trans; [ apply r0_absf | apply r0_maybe; [ apply teq_refl | apply teq_refl | assumption ] ].
   - apply r0_head; assumption.
 Qed.
 
@@ -251,6 +254,7 @@ Proof.
     - apply req0_refl.
     - assert (Hl : rlacks l (nf R) = true) by (apply rlacks_nf; assumption).
       simpl. rewrite Hl. apply req0_refl.
+    - cbn [nfm]. destruct (rlacks l (nf R)); [ apply req0_refl | apply r0_absf ].
     - apply nfm_swap_em; assumption.
     - apply nfm_swap_mm; assumption.
     - eapply r0_trans; eassumption.
@@ -491,6 +495,16 @@ Proof.
       exists T0, (row_Maybe l typ_Bool T R0).
       split; [ apply rm_maybe_skip; assumption | split; [ apply teq_refl | ] ].
       apply req_sym, req_abs. eapply rm_rlacks; eassumption.
+  - (* absf *)
+    intros l T R T'. split.
+    + intros l0 T0 R0 Hrm. may_inv Hrm Hn1 Rx1 Hm1.
+      * discriminate.
+      * exists T0, (row_Maybe l typ_Bool T' Rx1).
+        split; [ apply rm_maybe_skip; assumption | split; [ apply teq_refl | apply req_absf ] ].
+    + intros l0 T0 R0 Hrm. may_inv Hrm Hn1 Rx1 Hm1.
+      * discriminate.
+      * exists T0, (row_Maybe l typ_Bool T Rx1).
+        split; [ apply rm_maybe_skip; assumption | split; [ apply teq_refl | apply req_absf ] ].
   - (* swap_em *)
     intros l P T l' T' R Hne. pose proof (not_eq_sym Hne) as Hne'. split.
     + intros l0 T0 R0 Hrm. may_inv Hrm Hn1 Rx1 Hm1.

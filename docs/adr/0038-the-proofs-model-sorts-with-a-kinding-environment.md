@@ -224,3 +224,18 @@ makes them different is not an instance of it). The pair that clashes
 (`field_clash_absent`) is found by W and needs no hypothesis, but the induction
 of `GoatCompleteRfRows.v` does not use that, so the hypothesis stays as stated.
 
+
+## Amendment (2026-11-24, issue 667): a sort lands on the entry's own field
+
+A sort that reaches a record whose entry `l^p` is still open now lands on the
+entry's own field variable, not on the type of the spread's value. The value
+reaches the field only through the held equation `p => y = T` (ADR 0033,
+amendment of the same date), so `rsat_b` and `sat_b` need no hold of their own:
+they read the entry's field as the entry's field. The checker's `constrain_row`
+decides an entry absent when a value held on its presence can never meet the
+sort (a function against `Eq`), which is the monotone clash `forced`. The
+calculus change this needs (`req_absf`) and W's residual are not part of this
+change. Both have since landed in `proofs/` (`proofs/README.md`, "Held
+equations"); a use of a scheme re-holds its open entries' equations
+(`GoatHeldInst.v`). A generalizing `let` over an owned equation is proven where the
+presence ends absent (`GoatHeldOwn.v`, ADR 0033, proofs status).

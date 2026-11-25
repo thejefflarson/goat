@@ -1399,3 +1399,104 @@ changes under `proofs/**` (or to the workflow), plus manual dispatch, so
 ordinary Rust PRs do not pay for a Coq image. It is intended as an
 informational check, not a required one — promote it in branch protection once
 the development stabilizes.
+
+## Held equations, step 1: `req_absf` (ADR 0033 amendment, D6)
+
+An absent entry's field type is no information: `l ^ Bool : T ; R ~= l ^ Bool : T' ; R`
+(`req_absf`, goat_ln.ott). Every induction over `req` gained its case (`GoatRows`,
+`GoatDefs`, `GoatSubst`, `GoatSatTeq`, `GoatPresence` via `r0_absf`, `GoatRowNf` where
+`ent_eq` now ignores the field of an absent entry; `row_cancel` keeps its statement).
+Nothing else changed: W is still the pre-held-equations algorithm, so the differential
+reports 6 mismatches on the held-equation corpus programs until W holds the equations.
+
+## Held equations, step 2: the soundness library (`GoatHeldSound`, `GoatHeldV`, `GoatHeldLet`)
+
+`dis_sound`: a run of `dis` over even equations from a well-kept environment is a `Good`
+step whose substitution solves them (`Sol`). `V Gs D n e T H` says `e` has type `T` in
+`Gs` after every `Good` step `S` from `(D, n)` that solves the equations `H`; `V_push`
+moves it along a step the algorithm took (`Sol_apH`: `S` solves `apH t H` exactly when
+`S o t` solves `H`). `GoatHeldV` states the typing rules, coercion, binder renaming and
+`let` over a single state; `V_let`/`V_letrec` (`GoatHeldLet`) are the generalizing proofs
+of `infer_sound` with the later substitution abstracted, and `V_let_dis` first discharges
+the bound term's equations with `dis_sound`. `VF*` is the same for field lists. Nothing
+here touches W or `infer_sound`.
+
+## Held equations, step 3: W holds the equations (`GoatInferW`, `GoatInferHeld`)
+
+`infer` (and `infer_fields`, `infer_obj`, `infer_arms`) returns a sixth component, the list of
+equations `H` it holds, stated of the types at the state it returns. A spread onto an open
+row or entry (`spread_present`) gives the entry a fresh field variable `y` and holds
+`p => y = T2`; every other construct concatenates its children's equations after applying
+the later substitutions to them (`apH`). A generalizing `let` and a recursive group call
+`dis` (fuel `S (length H)`) on the equations of the bound term, generalize `apT d T` over
+`apC d G` at the environment `dis` returns, and return the substitution `s2 o d o s1`.
+`infer_closed_elab` discharges what is left with `dis_top`. Equations whose presence the
+context owns are not carried yet: `dis` unifies them as present at the `let` (that is the
+R2 work, H1c).
+
+`infer_sound` is restated in `GoatInferHeld` (it needs `V`, which `GoatHeldV` states over
+`GoatInferSound`'s lemmas): a result's equations satisfy `HOk`, and
+`V (apC s G) D' n' e' T H` says the type is derivable under every `Good` step that solves
+`H`. Each construct pushes its children's `V`s to the state it returns (`V_push`) and applies
+the typing rule over `V` (`V_app`, `V_if`, `V_spread_h`, `V_spreadL`, `V_obj`, `V_match`,
+`V_let_dis`, `V_letrec`, ...). `tie_obj_V` is `tie_obj_sound` over `V`; `VA` is `arms_typ`
+over `V`. `infer_closed_sound` keeps its statement. `infer_guard` carries `mgH` for the
+equations (`dis_gsub`), and completeness (`GoatCompleteCore`) reads the equations of a
+spread-free program as `nil`.
+
+## Held equations, step 4: instances re-hold, lets keep what the context owns (H1c)
+
+Two changes to `infer`, both sound over plain contexts (no scheme carries an equation):
+
+- **A use of a scheme re-holds** (`rh_t`, `GoatHeld.v`; `GoatHeldInst.v`). The variable case
+  instantiates, then gives each open entry whose presence is one of the use's fresh atoms
+  (`inst_pres`) a field variable of its own and the equation `p => y = F`. `rh_sound_mut`:
+  once those equations are solved the re-held type is the instance up to `teqD` (`req_absf`
+  when the presence is absent, the equation otherwise), so the case is `V_leaf` plus
+  `V_conv_sol`. A recursive type is left as it is. `rh_nil_mut` and `rh_rf`
+  (`GoatCompleteCore`) make it the identity on a mono scheme and on the record-free
+  fragment, which is all completeness needs.
+  `rh_mg_mut` keeps the types guarded (`infer_guard`).
+- **A `let` whose bound term holds an equation on a presence of the context stays
+  monomorphic** (`pres_owned`). Its equations stay held and the body sees the bound term at
+  one type, exactly as for a computed value (`V_letmono_step`). A `let` whose equations are
+  all on presences the context does not mention decides them with `dis`, as before. Spread-free
+  programs hold no equations, so completeness only rewrites `pres_owned_nil`.
+
+## Held equations, step 5: a `let` under a parameter's row speculates absent (H1d)
+
+The checker generalizes a `let` whose bound term holds an equation on a presence of the
+context and carries the equation in the scheme (ADR 0033, rule 5); when the presence
+settles present, the scheme's quantified variable is bound to the context's field and
+stops being generalizable. The calculus derivation of that depends on the solution, which
+`V` (a derivation in `apC S Gs` for every solving step `S`) cannot state. W takes the
+two cases the solution can have apart instead:
+
+- **Absent** (`GoatHeldOwn.v`, `V_let_own`). The `let` splits the equations of the bound
+  term into those on presences the context owns (`owned_h`) and the rest. The rest are
+  discharged with `dis` as before. The owned ones are replaced by `absent_req`, an
+  equation `p => Bool = Unit` whose rest names the label, so it is solved exactly when
+  `p` ends `Bool` and `dis` never decides `p` for it. The scheme is generalized from
+  the bound term's type with each owned presence made `Bool` (`own_sub`, a `bool_sub` in
+  the type only; the context keeps `p` free), so the body sees the function at its full
+  generality. `V_let_own` proves it: a step that satisfies the requirements sets those
+  presences `Bool` already, so `S` equals `S o t` for `t` the `bool_sub`; `V` of the
+  bound term at `t o d` then types it with its equations vacuous, and
+  `let_typing_gen` generalizes at that state.
+- **Present.** `infer` takes a flag `gm`. With it unset, a `let` that holds an owned
+  equation stays monomorphic, as in step 4, and holds the equations.
+  `infer_closed_elab` runs with the flag set first and, when that run fails (some owned
+  presence did not end absent, so `dis_top` cannot solve `absent_req`), again with it
+  unset. Each run is sound by itself (`infer_closed_elab_m_sound`); spread-free
+  programs hold no equations, so completeness reads the flag set and the `let` as before.
+
+What this does not do. The checker pins only the variables of the equation when the
+presence ends present; W pins the whole function (it is monomorphic in that run). Two
+differences remain, both in the known class of W refusing what the checker accepts: a
+function bound under a parameter's row whose presence ends present and whose uses need
+two types for a variable the equation does not mention, and a program with two such
+`let`s, one needing generality because its presence ends absent and one whose presence
+stays open (the flag is per run, not per `let`). Neither is in the corpus. Closing them
+needs `V` over a context realized at `S` (the scheme generalized at the solution, with
+the equation's variables pinned when the presence is not absent) and the carried
+equations as a parallel input of `infer`; `V_let_own` is the absent half of that proof.

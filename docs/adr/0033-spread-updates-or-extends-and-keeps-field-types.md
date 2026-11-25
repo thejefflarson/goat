@@ -351,3 +351,76 @@ calculus, which is a separate stage.
 Nothing is accepted that was accepted before with another type: the one corpus
 program that changed (the program above) was refused.
 
+
+## Amendment (2026-11-24, issue 667): held equations
+
+The two programs the previous amendment left order-dependent (a sort on a
+variable field, and two variable fields that meet before a presence settles)
+share a cause: the entry `l^p: y` that a spread leaves in an open row shared its
+field type with the spread's value, so a sort or a unification reached the value
+whether or not `p` ever turned out present. Owner decision 2026-11-24: fix it
+holistically.
+
+Decision (checker, `held` in `infer.rs`):
+
+1. **An open entry's field is its own variable `y`.** A spread onto an open row
+   or an open entry writes `l^p: y` and holds the equation `p => y = T`, where
+   `T` is the spread value's type. The result of the spread has `l: T`. Sorts
+   land on `y` unconditionally, so two open entries meeting unify `y` with `z`.
+2. **Discharge by the final state of `p`.** Present: `y` is unified with `T`
+   (the error is ADR 0033's "keeps each field's type", at the spread value).
+   Absent: the equation is dropped. Joined with `q`: the equations of the
+   representative are decided together. A monotone clash test (`fields_clash`,
+   now also a sorted variable against any type its sort can never meet, such as
+   `Eq` against a function) over the items of those equations decides `p` absent
+   when the rests lack `l`. The checker sweeps after each statement and before
+   generalizing; the eager checks in `constrain_row` stay for the message.
+3. **Instantiation re-holds.** A use of a scheme gives each entry whose presence
+   the scheme quantifies a fresh `y'` and holds `p' => y' = F'`.
+4. **At a generalizing binding, free presences are decided once.** A presence
+   the environment does not mention and that is still open is treated as possibly
+   present: its remaining equations are unified together and a conflict is an
+   error. A value-restricted binding decides nothing. The end of the program is a
+   binding with an empty environment.
+5. **Equations whose presence the environment owns travel with the scheme.** A
+   function that spreads onto a parameter of its caller keeps the equation in
+   its scheme (`carried`), and the original stays held for the caller. A use
+   adds its own equation, so `g(1); g("s")` is accepted in either order when the
+   caller's record turns out to lack `l`, and refused in either order when it has
+   it. If the presence settles present, the original equation binds the scheme's
+   quantified variable, which stops being generalizable (`instantiate` skips
+   bound quantified variables).
+6. **A spread whose value mentions its own record's row keeps the old path.** The
+   field is the value itself and the knot error is unchanged.
+
+Printed types and messages keep their form (`{id?: T | ...}`, no guards).
+
+R1 stays: a function generalized with an open, constrained presence gets one
+deterministic, non-principal type (rule 4 chooses "possibly present"); it does
+not depend on order.
+
+Programs. The three pinned tests (`a_variable_field_keeps_the_sort_it_took_before`,
+`variable_fields_are_still_joined_before_a_presence_settles`,
+`a_function_field_against_a_numeral_is_still_unified`) now hold in both orders,
+and the instantiation program and the nested-function program do too. The corpus
+before and after differ in exactly one program (`ERR` to `OK`).
+
+Proofs status. The calculus conversion `req_absf` (an absent entry's field type
+is irrelevant), algorithm W holding the equations (rules 1, 2 and 4), W's
+soundness over them, and the restated completeness have landed. W also does
+rule 3: a use re-holds the equations of its scheme's open entries.
+
+Rule 5 is proven in the case where the presences end absent. A `let` whose bound
+term holds an equation on a presence of the environment generalizes the bound term
+with those presences read as `Bool` and holds, in place of the equations, the
+requirement that they end `Bool` (`absent_req`, `V_let_own` in `GoatHeldOwn.v`).
+`infer_closed_elab` runs with that bet first and, when it fails (a presence did not
+end absent), again with such a `let` kept monomorphic. This accepts
+`g(1); g("s")` with `g = program(x) do {...r, id: x} done` when `r` turns out to
+lack `id`, in either order, as the checker does. It does not model the checker's
+pinning when the presence ends present: there the checker keeps generalizing the
+variables the equation does not mention, and W makes the whole function
+monomorphic. A program that needs that, or one with two such `let`s whose
+presences end differently, is a W gap in the README's known class (the checker
+accepts, W refuses). Closing it needs the soundness statement over contexts
+realized at the solution (`proofs/README.md`, "Held equations", step 5).

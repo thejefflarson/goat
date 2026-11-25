@@ -286,6 +286,8 @@ Proof.
     split; [ reflexivity | intros l0; simpl; rewrite Bool.andb_true_r; apply Forall2_teq_refl ].
   - (* abs *)
     split; [ reflexivity | intros l0; simpl; rewrite Bool.andb_false_r; apply Forall2_teq_refl ].
+  - (* absf *)
+    split; [ reflexivity | intros l0; simpl; destruct (Nat.eqb l0 l); simpl; apply Forall2_teq_refl ].
   - (* swap_em: l <> l' *)
     split.
     + reflexivity.

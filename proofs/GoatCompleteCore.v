@@ -44,7 +44,11 @@ Require Import Goat.GoatInferSort.
 Require Import Goat.GoatInferGen.
 Require Import Goat.GoatInferUnify.
 Require Import Goat.GoatInferW.
+Require Import Goat.GoatHeld.
+Require Import Goat.GoatHeldInst.
 Require Import Goat.GoatInferSound.
+Require Import Goat.GoatHeldSound.
+Require Import Goat.GoatInferHeld.
 Require Import Goat.GoatCoerce.
 Require Import Goat.GoatClose.
 Require Import Goat.GoatElab.
@@ -208,17 +212,47 @@ Proof.
   rewrite Ei, Ed, E, E'. simpl. repeat rewrite Nat.add_0_r. reflexivity.
 Qed.
 
+Lemma inst_pres_mono : forall T n, inst_pres (sch_mono T) n = nil.
+Proof.
+  intros T n. unfold inst_pres.
+  assert (E : AtomSetImpl.elements (s_tq (sch_mono T)) = nil)
+    by (apply elements_none; intros q; cbn [sch_mono s_tq]; fsetdec).
+  rewrite E. reflexivity.
+Qed.
+
+(* A type of the record-free fragment has no entry to re-hold. *)
+Lemma rh_rf : forall ps T m, rf T -> rh_t ps T m = (T, nil, m).
+Proof.
+  intros ps T. induction T; intros m H; cbn [rf] in H; try contradiction; try reflexivity.
+  destruct H as [HA HB]. cbn [rh_t]. rewrite (IHT1 m HA), (IHT2 m HB). reflexivity.
+Qed.
+
 Lemma is_cmp_op_true : forall o, kind o = k_cmp -> is_cmp_op o = true.
 Proof. intros o H. unfold is_cmp_op. rewrite H. reflexivity. Qed.
 
 Lemma is_cmp_op_false : forall o, kind o <> k_cmp -> is_cmp_op o = false.
 Proof. intros o H. unfold is_cmp_op. destruct (kind o); try reflexivity. contradiction. Qed.
 
+(* A step followed by the identity step is the same step, as far as the
+   semantics sees: the generalizing [let] composes the discharge of its
+   equations, which is the identity when it holds none. *)
+Lemma SemL_sid_after : forall P L DT Sg n s D1 n1 S1,
+  LOld n L -> SemL P L DT Sg n s D1 n1 S1 ->
+  SemL P L DT Sg n (scomp sid s) D1 n1 S1 /\ limg (scomp sid s) L [<=] limg s L.
+Proof.
+  intros P L DT Sg n s D1 n1 S1 Ho H. split.
+  - exact (SemL_comp P L (limg s L) DT Sg n s D1 n1 S1 sid D1 n1 S1 Ho H (fun y Hy => Hy)
+             (SemL_id P (limg s L) DT S1 D1 n1 (SemL_rk H)
+                (SemL_live H) (SemL_DOk H))).
+  - intros y Hy. apply (limg_sid (limg s L)).
+    exact (limg_scomp n n1 s sid L Ho (SemL_SI H) y Hy).
+Qed.
+
 (* What a run ends with. *)
 Definition Done (L : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat)
   (Sg : sub) (T1 : typ) : Prop :=
   exists s D' n' S2 T e',
-    Stable (fun f => infer f D G e n = Some (s, D', T, n', e')) /\
+    Stable (fun f => infer true f D G e n = Some (s, D', T, n', e', nil)) /\
     SemL PEv L D1 Sg n s D' n' S2 /\ TOk n' T /\ EvT T /\ Live PEv (ftv_typ T) D' D1 S2 /\
     RA D' /\ teqD D1 (apT S2 T) T1 /\ is_gen_value e' = is_gen_value e /\ let_open e' = let_open e.
 
@@ -227,7 +261,7 @@ Lemma EvT_scalar : forall c,
 Proof. intros c Hc. exact (proj1 (PEv_scalar c Hc)). Qed.
 
 Lemma Done_const : forall L D1 G e D n Sg T1 c,
-  (forall f, infer (S f) D G e n = Some (sid, D, c, n, e)) ->
+  (forall f, infer true (S f) D G e n = Some (sid, D, c, n, e, nil)) ->
   (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) ->
   DOk D n -> RA D -> Live PEv L D D1 Sg -> teqD D1 c T1 -> Done L D1 G e D n Sg T1.
 Proof.
@@ -393,7 +427,7 @@ Proof.
   exists sid, D1, n1, S2, T0, (e_fvar_f x).
   refine (conj _ (conj _ (conj HTo (conj HE0 (conj _ (conj HRA1 (conj _ (conj eq_refl eq_refl)))))))).
   - exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-    cbn [infer]. rewrite Hlk. rewrite Hinst. reflexivity.
+    cbn [infer]. rewrite Hlk. rewrite Hinst. rewrite (rh_rf _ _ _ HrfT0). reflexivity.
   - refine (conj (rkres_RA D1 Dd (sR S2) HRA1) (conj _ (conj Hd1 (conj (SI_id_le n n1 ltac:(lia)) (conj _ (conj _ OkS_id)))))).
     + intros a Ha. pose proof (limg_sid L a Ha) as Ha'.
       rewrite (HD1o a (HLo a Ha')). rewrite (F2 a (HLo a Ha')). exact (HLv a Ha').
@@ -630,6 +664,9 @@ Qed.
 
 (* ---- the induction ---- *)
 
+Lemma own_sub_nil : forall d, own_sub d nil = sid.
+Proof. reflexivity. Qed.
+
 Theorem infer_complete_core : forall Av D1 G1 e T1, ctyping Av D1 G1 e T1 ->
   forall D G n Sg L, DOk D n -> RA D -> LOld n L -> LEv L -> Live PEv L D D1 Sg ->
     Avoid (bg Av G1 T1) L Sg -> GOk n G -> GLive L G -> CI D1 Sg G1 G ->
@@ -661,7 +698,7 @@ Proof.
       refine (conj _ (conj (SemL_id PEv L Dd Sg D n (rkres_RA D Dd (sR Sg) HRA) HLv Hd)
                 (conj HTo (conj HTe (conj _ (conj HRA (conj Hc (conj eq_refl eq_refl)))))))).
       * exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-        cbn [infer]. rewrite Hlk, instantiate_mono. reflexivity.
+        cbn [infer]. rewrite Hlk, instantiate_mono, inst_pres_mono, rh_t_nil. reflexivity.
       * exact (Live_mono PEv _ _ D Dd Sg (fun a Ha => Hsub a (proj2 (ftv_sch_mono T' a) Ha)) HLv).
     + exact (var_sch_done L Dd D G n Sg x s sc T Hd HRA HLo HLE HLv HG HGL Hlk Hsch Hi).
   - (* numeral *)
@@ -1059,7 +1096,7 @@ Proof.
     refine (conj _ (conj (SemL_comp PEv L L1 Dd Sg n s1 D1a n1 Sa s2 D2 n2 Sb HLo Sem1 (limg_lnext s1 L Ta) Sem2)
       (conj HT (conj HE (conj LvT (conj HRA2 (conj Heq2 (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
-      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv. cbv beta iota zeta. rewrite E2. reflexivity.
+      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv. cbn [andb]. cbv beta iota zeta. rewrite E2. reflexivity.
     + reflexivity.
     + reflexivity.
   - (* let of a value *)
@@ -1197,11 +1234,14 @@ Proof.
                 (GLive_cons_sch Lb _ sc G1 HscLb (GLive_mono _ _ _ HlimL HGLl))
                 (CI_cons_sch Dd (sfix (s_tq sc) Sa) Gd G1 _ _ sc HCd' Hsch2))
       as (s2 & D2 & n2 & Sb & T & e2' & St2 & Sem2 & HT & HE & LvT & HRA2 & Heq2 & Hg2 & Hl2).
-    exists (scomp s2 s1), D2, n2, Sb, T, (e_let e1' (cl 0 (fresh_var G1 e2) e2')).
-    refine (conj _ (conj (SemL_comp PEv L Lb Dd Sg n s1 D1 n1 (sfix (s_tq sc) Sa) s2 D2 n2 Sb HLo Sem1' HlimL Sem2)
+    destruct (SemL_sid_after PEv L Dd Sg n s1 D1 n1 (sfix (s_tq sc) Sa) HLo Sem1') as (Sem1s & Hlsid).
+    exists (scomp s2 (scomp sid s1)), D2, n2, Sb, T, (e_let e1' (cl 0 (fresh_var G1 e2) e2')).
+    refine (conj _ (conj (SemL_comp PEv L Lb Dd Sg n (scomp sid s1) D1 n1 (sfix (s_tq sc) Sa) s2 D2 n2 Sb HLo Sem1s
+                            (fun y Hy => HlimL y (Hlsid y Hy)) Sem2)
       (conj HT (conj HE (conj LvT (conj HRA2 (conj Heq2 (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
-      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv1'. cbv beta iota zeta.
+      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv1'. cbn [orb andb filter length]. rewrite dis_nil.
+      cbv beta iota zeta. rewrite own_sub_nil, !apT_sid, !apC_sid.
       unfold sc, G1 in E2. rewrite E2. reflexivity.
     + reflexivity.
     + reflexivity.
@@ -1232,7 +1272,7 @@ Proof.
     as (s & D' & n' & S2 & T' & e' & St & Sem & HT & HE & LvT & HRA & Heq & HgHeq & HlHeq).
   exists D', T', e', S2.
   assert (St' : Stable (fun f => infer_closed_elab f e = Some (D', T', e'))).
-  { eapply Stable_mono; [ | exact St ]. intros f Hf. unfold infer_closed_elab. rewrite Hf. reflexivity. }
+  { eapply Stable_mono; [ | exact St ]. intros f Hf. unfold infer_closed_elab, infer_closed_elab_m. rewrite Hf. rewrite dis_top_nil. cbv iota. rewrite apT_sid. reflexivity. }
   refine (conj St' (conj _ (conj LvT (conj (rkres_RA D' d_any (sR S2) HRA) (conj Heq (proj1 HT)))))).
   destruct St' as [f0 Hf0]. exact (proj2 (infer_closed_sound f0 e D' T' e' (Hf0 f0 (le_n f0)))).
 Qed.

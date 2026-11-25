@@ -38,17 +38,32 @@ Import ListNotations.
 
 (* ---- entries and the normal form ---- *)
 
+(* An absent entry's field type is no information ([req_absf]). *)
 Definition ent_eq (e e' : typ * typ) : Prop :=
-  teq (fst e) (fst e') /\ teq (snd e) (snd e').
+  teq (fst e) (fst e') /\ (is_abs (fst e) = true \/ teq (snd e) (snd e')).
 
 Lemma ent_eq_refl : forall e, ent_eq e e.
-Proof. intros e. split; apply teq_refl. Qed.
+Proof. intros e. split; [ apply teq_refl | right; apply teq_refl ]. Qed.
+
+Lemma ent_mk : forall P T P' T', teq P P' -> teq T T' -> ent_eq (P, T) (P', T').
+Proof. intros. split; [ assumption | right; assumption ]. Qed.
 
 Lemma ent_eq_sym : forall e e', ent_eq e e' -> ent_eq e' e.
-Proof. intros e e' [H1 H2]. split; apply teq_sym; assumption. Qed.
+Proof.
+  intros e e' [H1 [H2 | H2]]; split; try (apply teq_sym; assumption).
+  - left. rewrite <- (teq_is_abs _ _ H1). exact H2.
+  - right. apply teq_sym; assumption.
+Qed.
 
 Lemma ent_eq_trans : forall e e' e'', ent_eq e e' -> ent_eq e' e'' -> ent_eq e e''.
-Proof. intros e e' e'' [H1 H2] [H3 H4]. split; eapply teq_trans; eauto. Qed.
+Proof.
+  intros e e' e'' [H1 H1'] [H3 H3'].
+  split; [ eapply teq_trans; eauto | ].
+  destruct H1' as [Ha | H2]; [ left; exact Ha | ].
+  destruct (is_abs (fst e)) eqn:Ea; [ left; reflexivity | right ].
+  assert (Hn' : is_abs (fst e') = false) by (rewrite <- (teq_is_abs _ _ H1); exact Ea).
+  destruct H3' as [Hb | H4]; [ congruence | eapply teq_trans; eauto ].
+Qed.
 
 Lemma Forall2_ent_refl : forall l, Forall2 ent_eq l l.
 Proof. induction l; constructor; auto using ent_eq_refl. Qed.
@@ -156,7 +171,7 @@ Proof.
   - (* head *)
     destruct IHreq as [Ht Hl]. split; [ exact Ht | ]. intros l0.
     rewrite !ents_ext. rewrite <- Ht. destruct (Nat.eqb l0 l); [ | apply Hl ].
-    apply cons_t_Forall2; [ split; [ apply teq_refl | assumption ] | apply Hl ].
+    apply cons_t_Forall2; [ apply ent_mk; [ apply teq_refl | assumption ] | apply Hl ].
   - (* swap *)
     split; [ reflexivity | ]. intros l0. unfold ents. simpl.
     destruct (Nat.eqb l0 l) eqn:E1; destruct (Nat.eqb l0 l') eqn:E2; try apply Forall2_ent_refl.
@@ -164,7 +179,7 @@ Proof.
   - (* maybe *)
     destruct IHreq as [Ht Hl]. split; [ exact Ht | ]. intros l0.
     rewrite !ents_maybe. rewrite <- Ht. destruct (Nat.eqb l0 l); [ | apply Hl ].
-    apply cons_t_Forall2; [ split; assumption | apply Hl ].
+    apply cons_t_Forall2; [ apply ent_mk; assumption | apply Hl ].
   - (* pre *)
     split; [ reflexivity | ]. intros l0. unfold ents. simpl. apply Forall2_ent_refl.
   - (* abs *)
@@ -174,6 +189,9 @@ Proof.
     destruct (Nat.eqb l0 l) eqn:E; simpl.
     + apply Nat.eqb_eq in E. subst l0. rewrite Hr. simpl. constructor.
     + apply Forall2_ent_refl.
+  - (* absf *)
+    split; [ reflexivity | ]. intros l0. rewrite !ents_maybe. destruct (Nat.eqb l0 l); [ | apply Forall2_ent_refl ].
+    apply cons_t_Forall2; [ split; [ apply teq_refl | left; reflexivity ] | apply Forall2_ent_refl ].
   - (* swap_em *)
     split; [ reflexivity | ]. intros l0. unfold ents. simpl.
     destruct (Nat.eqb l0 l) eqn:E1; destruct (Nat.eqb l0 l') eqn:E2; try apply Forall2_ent_refl.
@@ -255,6 +273,7 @@ Proof.
       - rewrite Hr0. exact Hrest.
       - rewrite (Hm0 m Hne). specialize (H m). simpl in H.
         apply Nat.eqb_neq in Hne. rewrite Hne in H. exact H. }
+    destruct HT as [HT | HT]; [ discriminate HT | ].
     eapply req_trans; [ apply req_sym; apply req_pre | ].
     eapply req_trans; [ apply req_maybe; [ apply teq_refl | exact HT | exact Hreq ] | ].
     apply req_sym. exact Hq.
@@ -269,8 +288,14 @@ Proof.
       - rewrite Hr0. exact Hrest.
       - rewrite (Hm0 m Hne). specialize (H m). simpl in H.
         apply Nat.eqb_neq in Hne. rewrite Hne in H. exact H. }
-    eapply req_trans; [ apply req_maybe; [ exact HP | exact HT | exact Hreq ] | ].
-    apply req_sym. exact Hq.
+    destruct HT as [Hab | HT].
+    + assert (HP0 : P = typ_Bool) by (destruct P; simpl in Hab; try discriminate; reflexivity). subst P.
+      apply teq_Bool_inv in HP. subst P2.
+      eapply req_trans; [ apply req_maybe; [ apply teq_refl | apply teq_refl | exact Hreq ] | ].
+      eapply req_trans; [ apply (req_absf l T R0 T2) | ].
+      apply req_sym. exact Hq.
+    + eapply req_trans; [ apply req_maybe; [ exact HP | exact HT | exact Hreq ] | ].
+      apply req_sym. exact Hq.
 Qed.
 
 (* Every row is [req] to one whose entry lists are its normal form. *)
@@ -356,7 +381,9 @@ Proof.
                               (cons_t (rtail X) (Q, B) (ents l Y))).
   { specialize (H l). rewrite !ents_maybe, Nat.eqb_refl in H. rewrite <- Ht in H. exact H. }
   destruct (cons_t_inv _ _ _ _ _ Hl) as [[He Hrest] | (Ha & Hb & Hn1 & Hn2)].
-  - split; [ | left; exact He ].
+  - split; [ | destruct He as [HPQ [Hab | HAB]]; simpl in HPQ;
+      [ right; split; [ exact Hab | rewrite <- (teq_is_abs _ _ HPQ); exact Hab ]
+      | left; split; assumption ] ].
     apply req_iff_nf. split; [ exact Ht | ]. intros m.
     destruct (Nat.eq_dec m l) as [-> | Hne]; [ exact Hrest | ].
     specialize (H m). rewrite !ents_maybe in H.

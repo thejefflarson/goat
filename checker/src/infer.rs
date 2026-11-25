@@ -38,7 +38,7 @@ use crate::lower::{DotCall, SELF_NAME, Take};
 use crate::ty::{self, ABSENT, Group, METHOD, PLAIN, PRESENT, Row, Scheme, Ty, TypeVar};
 use crate::vocab::{Vocab, list};
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -320,7 +320,9 @@ fn infer_with_variable_markers(
         ..Inferer::default()
     };
     let ty = inf.infer(root);
+    inf.decide_held();
     inf.solve_all_flows();
+    inf.sweep_held();
     if let (true, Some(contract)) = (inf.errors.is_empty(), interactive) {
         inf.check_contract(contract, vocab);
     }
@@ -504,6 +506,27 @@ struct ForcedAbsent {
     message: String,
 }
 
+/// A spread onto a record whose field is not known to be there: when the
+/// presence `pres` of the open entry settles present, the entry's own field
+/// type `field` must equal the type `value` the spread wrote; when it settles
+/// absent the equation is dropped (ADR 0033).
+#[derive(Clone)]
+struct Held {
+    label: String,
+    pres: TypeVar,
+    field: Ty,
+    value: Ty,
+    rest: Row,
+    span: Span,
+    copied: Copied,
+}
+
+/// What a scheme brings to each use besides its type.
+struct Carried {
+    held: Vec<Held>,
+    reheld: bool,
+}
+
 #[derive(Default)]
 struct Inferer {
     next: TypeVar,
@@ -604,6 +627,12 @@ struct Inferer {
     sort_site: Option<(Span, Option<&'static str>)>,
     /// Fields decided absent because their type can never meet a constraint.
     forced_absent: Vec<ForcedAbsent>,
+    /// The equations spreads onto open entries hold until the entry's presence
+    /// settles.
+    held: Vec<Held>,
+    /// The equations and open entries each generalized binding hands to its
+    /// uses.
+    carried: HashMap<Symbol, Carried>,
     /// The constraints each unbound type variable must satisfy once it is
     /// bound. Binding a variable checks them against its type and hands them
     /// on to the variables inside it.
@@ -686,11 +715,6 @@ enum Peel<'r> {
     /// A field known present, as a plain field, the rest left unresolved:
     /// resolving the whole row here would walk it with no budget.
     Present(Row),
-}
-
-/// A type with no parts: `Int`, `Float`, `String`, `Bool` or `Unit`.
-fn is_scalar(ty: &Ty) -> bool {
-    matches!(ty, Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Unit)
 }
 
 /// Whether two types have different heads, so no substitution makes them
@@ -2468,13 +2492,20 @@ impl Inferer {
     fn fields_clash(&self, a: &Ty, b: &Ty) -> bool {
         let (a, b) = (self.head(a), self.head(b));
         match (&*a, &*b) {
-            (Ty::Var(v), t) | (t, Ty::Var(v)) => {
-                is_scalar(t)
-                    && self
-                        .kinds
-                        .get(v)
-                        .is_some_and(|kinds| kinds.iter().any(|kind| self.never_meets(t, kind)))
-            }
+            (Ty::Var(v), Ty::Var(w)) => match (self.kinds.get(v), self.kinds.get(w)) {
+                (Some(x), Some(y)) if v != w => {
+                    let mut joined = *x;
+                    for kind in y.iter() {
+                        joined = joined.with(kind);
+                    }
+                    joined.conflicts()
+                }
+                _ => false,
+            },
+            (Ty::Var(v), t) | (t, Ty::Var(v)) => self
+                .kinds
+                .get(v)
+                .is_some_and(|kinds| kinds.iter().any(|kind| self.never_meets(t, kind))),
             (x, y) => heads_clash(x, y),
         }
     }
@@ -2668,9 +2699,14 @@ impl Inferer {
                 field,
                 rest,
                 ..
-            } if whole.is_some() && self.never_meets(&field, kind) => {
+            } if whole.is_some()
+                && (self.never_meets(&field, kind) || self.held_offender(pres, kind).is_some()) =>
+            {
                 if let Some(whole) = whole {
-                    self.note_forced(&label, &field, kind, whole);
+                    let offender = self
+                        .held_offender(pres, kind)
+                        .unwrap_or_else(|| (*field).clone());
+                    self.note_forced(&label, &offender, kind, whole);
                 }
                 self.subst.insert(pres, Rc::new(ABSENT));
                 self.constrain_row(&rest, kind, bound, whole)
@@ -2680,6 +2716,20 @@ impl Inferer {
                 self.constrain_row(&rest, kind, bound, whole)
             }
         }
+    }
+
+    /// The type a spread wrote into an entry of presence `pres` that can never
+    /// meet `kind`: the entry can only be absent.
+    fn held_offender(&self, pres: TypeVar, kind: Kind) -> Option<Ty> {
+        if self.held.is_empty() {
+            return None;
+        }
+        let pres = self.resolve(&Ty::Var(pres));
+        self.held
+            .iter()
+            .filter(|h| self.resolve(&Ty::Var(h.pres)) == pres)
+            .find(|h| self.never_meets(&h.value, kind))
+            .map(|h| h.value.clone())
     }
 
     /// Remember why `label` was taken as absent: the error the constraint would
@@ -2795,14 +2845,20 @@ impl Inferer {
         }
     }
 
-    fn instantiate(&mut self, scheme: &Scheme) -> Ty {
+    fn instantiate(&mut self, scheme: &Scheme, symbol: Option<Symbol>) -> Ty {
         let mut binders = Vec::new();
         scheme.ty.rec_binders(&mut binders);
-        let mapping: HashMap<TypeVar, TypeVar> = scheme
+        let carried = symbol.is_some_and(|symbol| self.carried.contains_key(&symbol));
+        let quantified: Vec<TypeVar> = scheme
             .vars
             .iter()
             .chain(&binders)
-            .map(|v| (*v, self.fresh_id()))
+            .copied()
+            .filter(|v| !carried || !(self.subst.contains_key(v) || self.row_subst.contains_key(v)))
+            .collect();
+        let mapping: HashMap<TypeVar, TypeVar> = quantified
+            .into_iter()
+            .map(|v| (v, self.fresh_id()))
             .collect();
         for (old, new) in &mapping {
             match self.origins.get(old).copied() {
@@ -2819,7 +2875,121 @@ impl Inferer {
                 self.row_kinds.insert(*new, kinds);
             }
         }
-        subst_vars(&scheme.ty, &mapping)
+        let Some(carried) = symbol.and_then(|symbol| self.carried.get(&symbol)) else {
+            return subst_vars(&scheme.ty, &mapping);
+        };
+        let reheld = carried.reheld;
+        for h in carried.held.clone() {
+            self.held.push(Held {
+                field: subst_vars(&h.field, &mapping),
+                value: subst_vars(&h.value, &mapping),
+                rest: subst_row(&h.rest, &mapping),
+                ..h
+            });
+        }
+        if reheld {
+            self.reheld_ty(&scheme.ty, &mapping)
+        } else {
+            subst_vars(&scheme.ty, &mapping)
+        }
+    }
+
+    /// `ty` renamed by `mapping`, with each entry whose presence the mapping
+    /// renames given a field of its own and a held equation to the renamed
+    /// field: a use of the scheme is as open as the entry was (ADR 0033).
+    fn reheld_ty(&mut self, ty: &Ty, mapping: &HashMap<TypeVar, TypeVar>) -> Ty {
+        match ty {
+            Ty::Var(v) => Ty::Var(mapping.get(v).copied().unwrap_or(*v)),
+            Ty::Func(args, ret) => Ty::Func(
+                args.iter().map(|a| self.reheld_ty(a, mapping)).collect(),
+                Arc::new(self.reheld_ty(ret, mapping)),
+            ),
+            Ty::Record(row) => Ty::Record(self.reheld_row(row, mapping)),
+            Ty::Variant(row) => Ty::Variant(self.reheld_row(row, mapping)),
+            Ty::Rec(binder, body) => Ty::Rec(
+                mapping.get(binder).copied().unwrap_or(*binder),
+                Arc::new(self.reheld_ty(body, mapping)),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    fn reheld_row(&mut self, row: &Row, mapping: &HashMap<TypeVar, TypeVar>) -> Row {
+        match row {
+            Row::Empty => Row::Empty,
+            Row::Var(v) => Row::Var(mapping.get(v).copied().unwrap_or(*v)),
+            Row::Extend {
+                label,
+                field,
+                method,
+                at,
+                rest,
+            } => Row::Extend {
+                label: label.clone(),
+                field: Arc::new(self.reheld_ty(field, mapping)),
+                method: Arc::new(self.reheld_ty(method, mapping)),
+                at: *at,
+                rest: Arc::new(self.reheld_row(rest, mapping)),
+            },
+            Row::Maybe {
+                label,
+                pres,
+                field,
+                method,
+                rest,
+            } => {
+                let renamed = mapping.get(pres).copied();
+                let pres = renamed.unwrap_or(*pres);
+                let field = self.reheld_ty(field, mapping);
+                let method = Arc::new(self.reheld_ty(method, mapping));
+                let rest = Arc::new(self.reheld_row(rest, mapping));
+                let field = if renamed.is_some() {
+                    let own = self.fresh();
+                    let span = self.cursor.unwrap_or(Span::new(0, 0));
+                    self.hold(label, pres, &own, &field, &rest, span, &Copied::Instance);
+                    own
+                } else {
+                    field
+                };
+                Row::Maybe {
+                    label: label.clone(),
+                    pres,
+                    field: Arc::new(field),
+                    method,
+                    rest,
+                }
+            }
+        }
+    }
+
+    /// Keep with `symbol`'s scheme what a use of it must hold again: the
+    /// equations whose presence the environment owns and that mention its
+    /// quantified variables, and whether its type has entries to open.
+    fn carry(&mut self, symbol: Symbol, scheme: &Scheme) {
+        if scheme.vars.is_empty() {
+            return;
+        }
+        let quantified: BTreeSet<TypeVar> = scheme.vars.iter().copied().collect();
+        let mentions = |inf: &Inferer, ty: &Ty| {
+            let mut vars = BTreeSet::new();
+            inf.resolve(ty).free_vars(&mut vars);
+            vars.iter().any(|v| quantified.contains(v))
+        };
+        let held: Vec<Held> = self
+            .held
+            .iter()
+            .filter(|h| mentions(self, &h.field) || mentions(self, &h.value))
+            .map(|h| Held {
+                field: self.resolve(&h.field),
+                value: self.resolve(&h.value),
+                rest: self.resolve_row(&h.rest),
+                ..h.clone()
+            })
+            .collect();
+        let reheld = has_open_entry(&scheme.ty, &quantified);
+        if !held.is_empty() || reheld {
+            self.carried.insert(symbol, Carried { held, reheld });
+        }
     }
 
     /// A value that is neither a function nor a bare numeral keeps its
@@ -3310,7 +3480,7 @@ impl Inferer {
                 self.generalize_members(rest);
                 let (symbol, _, _) = let_parts(chain[chain.len() - 1]);
                 let scheme = self.env[&symbol].clone();
-                self.instantiate(&scheme)
+                self.instantiate(&scheme, Some(symbol))
             }
         };
         for binding in chain.into_iter().rev() {
@@ -3356,15 +3526,22 @@ impl Inferer {
                     self.solve_flows(flows);
                 }
                 let bare_numeral = is_bare_numeral(value);
+                if is_function || bare_numeral || is_syntactic_value(value) {
+                    self.decide_held();
+                } else {
+                    self.sweep_held();
+                }
                 let mut scheme = self.generalize(&rec, is_function || bare_numeral);
                 if !scheme.vars.is_empty() && !bare_numeral && !is_syntactic_value(value) {
                     self.restricted.insert(*symbol, name.to_string());
                     scheme = Scheme::mono(scheme.ty);
                 }
+                self.carry(*symbol, &scheme);
                 self.bind_env(*symbol, scheme.clone());
                 self.schemes.insert(*symbol, scheme);
             }
         }
+        self.sweep_held();
     }
 
     /// Record that the function binding `symbol`'s body mentions the pending
@@ -3434,8 +3611,10 @@ impl Inferer {
             .iter()
             .filter_map(|m| Some((*m, self.unbind_env(m)?.ty)))
             .collect();
+        self.decide_held();
         for (symbol, ty) in seeds {
             let scheme = self.generalize(&ty, true);
+            self.carry(symbol, &scheme);
             self.bind_env(symbol, scheme.clone());
             self.schemes.insert(symbol, scheme);
             self.pending_members.remove(&symbol);
@@ -3487,7 +3666,7 @@ impl Inferer {
                     self.note_member_use(*symbol);
                 }
                 match self.env.get(symbol).cloned() {
-                    Some(scheme) => self.instantiate(&scheme),
+                    Some(scheme) => self.instantiate(&scheme, Some(*symbol)),
                     None => self.fresh(),
                 }
             }
@@ -4734,12 +4913,12 @@ impl Inferer {
                 rest,
             } => {
                 if l == label {
-                    self.keep_field_type(label, &field, &ty, span, copied);
+                    self.hold(label, pres, &field, &ty, &rest, span, copied);
                     self.unify_method(label, &method, &flag, span);
                     Row::Extend {
                         at: Default::default(),
                         label: l,
-                        field,
+                        field: Arc::new(ty),
                         method,
                         rest,
                     }
@@ -4780,10 +4959,20 @@ impl Inferer {
                     }
                     // Through unify, not a bare bind: `{...s, next: s}` puts
                     // `s`'s own row variable in the field, which needs a knot.
+                    // A field that mentions its own record's row would need a
+                    // knot the moment the entry exists, not when it turns out
+                    // present.
+                    let field = if self.occurs_deep(v, &ty) {
+                        ty.clone()
+                    } else {
+                        let field = self.fresh();
+                        self.hold(label, pres, &field, &ty, &rest, span, copied);
+                        field
+                    };
                     let maybe = Row::Maybe {
                         label: label.to_string(),
                         pres,
-                        field: Arc::new(ty.clone()),
+                        field: Arc::new(field),
                         method: Arc::new(flag.clone()),
                         rest: Arc::new(rest.clone()),
                     };
@@ -4811,6 +5000,9 @@ impl Inferer {
     /// already has it at `old`. A mismatch says so in the kid's terms when both
     /// types are known.
     fn keep_field_type(&mut self, label: &str, old: &Ty, new: &Ty, span: Span, copied: &Copied) {
+        if matches!(copied, Copied::Instance) {
+            return self.unify(old, new, span);
+        }
         let (shown_old, shown_new) = (self.shown(old), self.shown(new));
         let before = self.errors.len();
         self.unify(old, new, span);
@@ -4823,7 +5015,9 @@ impl Inferer {
             self.errors.truncate(before);
             let (in_record, spread_of) = match copied {
                 Copied::Named(name) => (format!("`{name}`"), name.as_str()),
-                Copied::Anonymous => ("the record being copied".to_string(), "record"),
+                Copied::Anonymous | Copied::Instance => {
+                    ("the record being copied".to_string(), "record")
+                }
             };
             self.errors.push(GoatError::new(
                 span,
@@ -4832,6 +5026,138 @@ impl Inferer {
                 ),
             ));
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn hold(
+        &mut self,
+        label: &str,
+        pres: TypeVar,
+        field: &Ty,
+        value: &Ty,
+        rest: &Row,
+        span: Span,
+        copied: &Copied,
+    ) {
+        self.held.push(Held {
+            label: label.to_string(),
+            pres,
+            field: field.clone(),
+            value: value.clone(),
+            rest: rest.clone(),
+            span,
+            copied: copied.clone(),
+        });
+    }
+
+    /// Apply the held equations whose presence has settled present, drop the
+    /// ones that settled absent, and decide absent each presence whose
+    /// equations can never hold together. Repeats while that settles more.
+    fn sweep_held(&mut self) {
+        while !self.held.is_empty() {
+            let mut open = Vec::new();
+            let mut progressed = false;
+            for mut h in std::mem::take(&mut self.held) {
+                match self.resolve(&Ty::Var(h.pres)) {
+                    present if present == PRESENT => {
+                        progressed = true;
+                        self.keep_field_type(&h.label, &h.field, &h.value, h.span, &h.copied);
+                    }
+                    absent if absent == ABSENT => progressed = true,
+                    Ty::Var(q) => {
+                        h.pres = q;
+                        open.push(h);
+                    }
+                    _ => {}
+                }
+            }
+            progressed |= self.decide_clashing(&mut open);
+            self.held = open;
+            if !progressed {
+                break;
+            }
+        }
+    }
+
+    /// Decide absent each presence in `open` whose equations clash: two of the
+    /// types they equate can never be the same, so the entries can only be
+    /// absent, which needs each rest to lack the label. The decided
+    /// equations leave `open`.
+    fn decide_clashing(&mut self, open: &mut Vec<Held>) -> bool {
+        let mut groups: BTreeMap<TypeVar, Vec<usize>> = BTreeMap::new();
+        for (at, h) in open.iter().enumerate() {
+            groups.entry(h.pres).or_default().push(at);
+        }
+        let mut decided = Vec::new();
+        for (pres, members) in groups {
+            let items: Vec<&Ty> = members
+                .iter()
+                .flat_map(|&at| [&open[at].field, &open[at].value])
+                .collect();
+            let Some((a, b)) = self.clashing_pair(&items) else {
+                continue;
+            };
+            let label = open[members[0]].label.clone();
+            if !members
+                .iter()
+                .all(|&at| self.row_lacks(&open[at].rest, &open[at].label))
+            {
+                continue;
+            }
+            let (shown_a, shown_b) = (self.shown(&a), self.shown(&b));
+            self.forced_absent.push(ForcedAbsent {
+                label: label.clone(),
+                span: open[members[0]].span,
+                message: format!(
+                    "`{label}` is a `{shown_a}` in one record and a `{shown_b}` in the other, so neither can have it"
+                ),
+            });
+            self.subst.insert(pres, Rc::new(ABSENT));
+            decided.extend(members);
+        }
+        if decided.is_empty() {
+            return false;
+        }
+        let mut at = 0;
+        open.retain(|_| {
+            let keep = !decided.contains(&at);
+            at += 1;
+            keep
+        });
+        true
+    }
+
+    /// Two of `items` that no substitution makes equal.
+    fn clashing_pair(&self, items: &[&Ty]) -> Option<(Ty, Ty)> {
+        for (i, a) in items.iter().enumerate() {
+            for b in &items[i + 1..] {
+                if self.fields_clash(a, b) {
+                    return Some(((*a).clone(), (*b).clone()));
+                }
+            }
+        }
+        None
+    }
+
+    /// Decide what the held equations of presences still open mean at a
+    /// binding that generalizes: a presence the environment does not mention
+    /// is treated as possibly present, so its equations are unified together
+    /// (an equation that cannot hold is an error). The environment's own
+    /// presences keep theirs for a later statement.
+    fn decide_held(&mut self) {
+        self.sweep_held();
+        if self.held.is_empty() {
+            return;
+        }
+        self.sync_env_vars();
+        let held = std::mem::take(&mut self.held);
+        let (kept, free): (Vec<Held>, Vec<Held>) =
+            held.into_iter().partition(|h| self.env_mentions(h.pres));
+        self.held = kept;
+        for h in free {
+            self.keep_field_type(&h.label, &h.field, &h.value, h.span, &h.copied);
+        }
+        self.sweep_held();
     }
 
     /// `record` minus `labels`: the record must have each, and the result is
@@ -5341,9 +5667,13 @@ fn tag_list(tags: &[String], conjunction: &str) -> String {
 }
 
 /// What a spread copies, for the message when it would change a field's type.
+#[derive(Clone)]
 enum Copied {
     Named(String),
     Anonymous,
+    /// An open entry of a scheme's type, held again at a use of the scheme:
+    /// the mismatch is the plain one.
+    Instance,
 }
 
 fn count(n: usize, noun: &str) -> String {
@@ -5357,6 +5687,27 @@ fn occurs_row(var: TypeVar, row: &Row) -> bool {
         Row::Extend { field, rest, .. } | Row::Maybe { field, rest, .. } => {
             occurs(var, field) || occurs_row(var, rest)
         }
+    }
+}
+
+/// Whether `ty` has an entry whose presence variable is in `vars`.
+fn has_open_entry(ty: &Ty, vars: &BTreeSet<TypeVar>) -> bool {
+    fn in_row(row: &Row, vars: &BTreeSet<TypeVar>) -> bool {
+        match row {
+            Row::Empty | Row::Var(_) => false,
+            Row::Extend { field, rest, .. } => has_open_entry(field, vars) || in_row(rest, vars),
+            Row::Maybe {
+                pres, field, rest, ..
+            } => vars.contains(pres) || has_open_entry(field, vars) || in_row(rest, vars),
+        }
+    }
+    match ty {
+        Ty::Func(args, ret) => {
+            args.iter().any(|a| has_open_entry(a, vars)) || has_open_entry(ret, vars)
+        }
+        Ty::Record(row) | Ty::Variant(row) => in_row(row, vars),
+        Ty::Rec(_, body) => has_open_entry(body, vars),
+        _ => false,
     }
 }
 
@@ -5633,8 +5984,8 @@ mod tests {
             vars: vec![7],
             ty: Ty::func(vec![chain(5, "A", Row::Var(7))], Ty::Var(7)),
         };
-        let first = inf.instantiate(&scheme);
-        let second = inf.instantiate(&scheme);
+        let first = inf.instantiate(&scheme, None);
+        let second = inf.instantiate(&scheme, None);
         let binder = |t: &Ty| match t {
             Ty::Func(args, _) => match &args[0] {
                 Ty::Rec(b, body) => {
