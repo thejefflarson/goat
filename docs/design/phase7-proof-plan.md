@@ -2048,16 +2048,28 @@ induction itself is not rebuilt.
 
 **What remains of 7.8.**
 
-1. *The induction past `rf`.* `GoatCompleteCtx.v` and `GoatCompleteCore.v` still use `SemL`,
-   `TOk`, `SOk`, `GOk`, `SI` and `Done`, all record-free. Rebuild them on `SemG`/`DoneG`:
-   `TOk n T` becomes `pf`/`atT`/`ps`, `SOk n sc` asks `pf (s_body sc)` and `atT`, `CI`,
-   `GLive` and `CI_stepL` carry presence through `PLive_step`, `Avoid_next` reads the bound
-   through `CovL`, and `ctyping` asks `PEv` only of the atoms (`ev`) where it asked it of a
-   record-free type. Each case of `infer_complete_core` (variable, constants, `program`,
-   call, `if`, the operators, comparison, `to_float`, `let` and `let` of a value) then calls
-   `unify_stepG` where it called `unify_stepL`, and `Done` returns `HOkC` of what the run
-   holds. The row analogue of `SemG_fresh` (a fresh row variable) and the version of
-   `SemG_fresh` at a presence atom are not written.
+Stage 7.8d did the unifier half of item 1 and stopped at the point where the
+invariants must stop assuming a record-free derivation. `unify_stepL_G`
+(`GoatCompleteLiveRf.v`) is `unify_stepL` proved from `unify_stepG`, and
+`infer_complete_core` now calls it in every case that unifies (call, `if`,
+`float(e)`, the operators, comparison). It stays the record-free theorem: nothing
+else depends on it, and it is the corollary the generalized induction must keep
+deriving. `SemG_fresh_row` and `LiveG_fresh_pres` are the row-variable and
+presence-atom analogues of `SemG_fresh`.
+
+1. *The induction past `rf`.* `GoatCompleteCtx.v` and `GoatCompleteCore.v` still use
+   `SemL`, `TOk`, `SOk`, `GOk`, `SI` and `Done`, all record-free. Rebuild them on
+   `SemG`/`DoneG`: `TOk n T` becomes `pf`/`atT`/`ps`, `SOk n sc` asks `pf (s_body sc)`
+   and `atT`, `CI`, `GLive` and `CI_stepL` carry presence through `PLive_step`,
+   `ctyping` asks `PEv` only of the atoms (`ev`) where it asked it of a record-free
+   type, and `Done` returns `HOkC` of what the run holds. The obstacle is `Avoid` and
+   `teqD_rf_eq`. The record-free proof turns `teqD (apT S1 T) Tp` into an equality
+   (`teqD_rf_eq`) to move a bound on `Tp`'s atoms to `apT S1 T`'s; over `pf` types the
+   factoring is only `teq`, and `teq` does not fix the free atoms (a presence entry
+   `Maybe l v T R` with `v` sent to `Unit` is `teq` to `Ext l T R`). The replacement is
+   the `BndL`/`Cov` clause of `SemG` for the old atoms, and for the atoms of the
+   result type a bound on the atoms of `apT S1 T` read from the derivation's
+   type; that statement is the design point to settle before the rewrite.
 2. *Constructs.* Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows with
    a tail variable by `rewrite_row_complete`), spread (`spread_present`'s equation,
    discharged by `dis_complete` at a `let` or the top), restrict, tags and `match` (`spn`

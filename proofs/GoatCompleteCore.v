@@ -64,6 +64,7 @@ Require Import Goat.GoatCompleteLet.
 Require Import Goat.GoatCompleteNf.
 Require Import Goat.GoatCompleteDrk.
 Require Import Goat.GoatCompleteCtx.
+Require Import Goat.GoatCompleteLiveRf.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Lists.List.
@@ -802,8 +803,7 @@ Proof.
         apT_Var, supd_same.
       eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv L2 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
       eapply teqD_trans; [ exact Heq1 | ]. apply teqD_Arrow; [ apply teqD_sym; exact Heq2 | apply teqD_refl ]. }
-    destruct (unify_stepL PEv Dd D2 (supd Sb (ea n2) T2) Lu (apT s2 Ta) (typ_Arrow Tb (typ_Var (ea n2))) (S n2)
-                PEv_float (DOk_mono D2 n2 (S n2) Hd2 Hle) HRA2 (LOld_fresh n2 Ln HLo2) (LEv_fresh n2 Ln HLE2) HLv3
+    destruct (unify_stepL_G Dd D2 (supd Sb (ea n2) T2) Lu (apT s2 Ta) (typ_Arrow Tb (typ_Var (ea n2))) (S n2)  (DOk_mono D2 n2 (S n2) Hd2 Hle) HRA2 (LOld_fresh n2 Ln HLo2) (LEv_fresh n2 Ln HLE2) HLv3
                 (proj1 HTa2) (conj (proj1 HTb) I)
                 (sub_ul _ _ _ HsubTa2)
                 (ftv_arrow_sub _ _ _ (sub_ul _ _ _ HsubTb) (ftv_var_fresh n2 Ln)) Heq)
@@ -832,7 +832,7 @@ Proof.
     destruct (next_facts Dd Gd D Sg n L s1 D1a n1 Sa Tc G HLo HLE HLv Sem1 HTc HEc LvTc HG HGL HC)
       as (HLo1 & HLE1 & HLv1 & HG1 & HGL1 & HC1).
     set (L1 := lnext s1 L Tc) in *.
-    destruct (unify_stepL PEv Dd D1a Sa L1 Tc typ_Bool n1 PEv_float (SemL_DOk Sem1) HRA1 HLo1 HLE1 HLv1
+    destruct (unify_stepL_G Dd D1a Sa L1 Tc typ_Bool n1  (SemL_DOk Sem1) HRA1 HLo1 HLE1 HLv1
                 (proj1 HTc) I (ftv_lnext s1 L Tc) (sub_scalar typ_Bool L1 (or_intror (or_intror (or_introl eq_refl)))) Heq1)
       as (s2 & D1b & n2 & Sb & St2 & Sem2 & HRA2).
     destruct (CI_stepL L1 D1a Dd Sa n1 s2 D1b n2 Sb Gd (apC s1 G) Sem2 HLv1 HLE1 HC1 HG1 HGL1) as (HC2 & HG2 & HGL2).
@@ -870,7 +870,7 @@ Proof.
     assert (Heq : teqD Dd (apT Sd (apT s4 Ta)) (apT Sd Tb)).
     { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv L3 Dd Sc n3 s4 D4 n4 Sd Ta Sem4 (proj1 HTa) HsubTa) | ].
       eapply teqD_trans; [ exact Heq2 | apply teqD_sym; exact Heq3 ]. }
-    destruct (unify_stepL PEv Dd D4 Sd L4 (apT s4 Ta) Tb n4 PEv_float (SemL_DOk Sem4) HRA4 HLo4 HLE4 HLv4
+    destruct (unify_stepL_G Dd D4 Sd L4 (apT s4 Ta) Tb n4  (SemL_DOk Sem4) HRA4 HLo4 HLE4 HLv4
                 (proj1 HTa4) (proj1 HTb) HsubTa4 (ftv_lnext s4 L3 Tb) Heq)
       as (s5 & D5 & n5 & Se & St5 & Sem5 & HRA5).
     pose proof (SemL_comp PEv L L1 Dd Sg n s1 D1a n1 Sa s2 D1b n2 Sb HLo Sem1 (limg_lnext s1 L Tc)
@@ -912,8 +912,8 @@ Proof.
     assert (Heq : teqD Dd (apT (supd Sa (ea n1) A) Ta) (apT (supd Sa (ea n1) A) (typ_Var (ea n1)))).
     { rewrite (apT_supd Sa (ea n1) A Ta (proj1 HTa) (fun Hin => proj2 HTa _ Hin n1 (le_n n1) eq_refl)),
         apT_Var, supd_same. exact Heq1. }
-    destruct (unify_stepL PEv Dd (upd D1a (ea n1) k_Literal) (supd Sa (ea n1) A) (L1 `union` {{ ea n1 }})
-                Ta (typ_Var (ea n1)) (S n1) PEv_float (DOk_upd D1a n1 k_Literal (SemL_DOk Sem1)) (RA_upd _ _ _ HRA1)
+    destruct (unify_stepL_G Dd (upd D1a (ea n1) k_Literal) (supd Sa (ea n1) A) (L1 `union` {{ ea n1 }})
+                Ta (typ_Var (ea n1)) (S n1)  (DOk_upd D1a n1 k_Literal (SemL_DOk Sem1)) (RA_upd _ _ _ HRA1)
                 (LOld_fresh n1 L1 HLo1) (LEv_fresh n1 L1 HLE1) HLv2 (proj1 HTa) I
                 (sub_ul _ _ _ HsubTa) (ftv_var_fresh n1 L1) Heq) as (s2 & D2 & n2 & S3 & St2 & Sem2 & HRA2).
     pose proof (SemL_unfresh PEv L1 Dd Sa n1 A s2 D2 n2 S3 HLo1 Sem2) as Sem2'.
@@ -962,8 +962,8 @@ Proof.
         apT_Var, supd_same.
       eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv L1 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
       exact Heq1. }
-    destruct (unify_stepL PEv Dd (upd D2 (ea n2) (generic_sort o)) (supd Sb (ea n2) A) (Ln `union` {{ ea n2 }})
-                (apT s2 Ta) (typ_Var (ea n2)) (S n2) PEv_float (DOk_upd D2 n2 _ (SemL_DOk Sem2)) (RA_upd _ _ _ HRA2)
+    destruct (unify_stepL_G Dd (upd D2 (ea n2) (generic_sort o)) (supd Sb (ea n2) A) (Ln `union` {{ ea n2 }})
+                (apT s2 Ta) (typ_Var (ea n2)) (S n2)  (DOk_upd D2 n2 _ (SemL_DOk Sem2)) (RA_upd _ _ _ HRA2)
                 (LOld_fresh n2 Ln HLo2) (LEv_fresh n2 Ln HLE2) HLv3 (proj1 HTa2) I
                 (sub_ul _ _ _ HsubTa2) (ftv_var_fresh n2 Ln) Heq) as (s3 & D3 & n3 & S3 & St3 & Sem3 & HRA3).
     pose proof (SemL_unfresh PEv Ln Dd Sb n2 A s3 D3 n3 S3 HLo2 Sem3) as Sem3'.
@@ -977,7 +977,7 @@ Proof.
       eapply teqD_trans; [ exact Heq2 | exact Fc ]. }
     assert (HLo3 : LOld n3 (limg s3 Lu)) by exact (limg_old _ _ _ _ (LOld_fresh n2 Ln HLo2) (SemL_SI Sem3)).
     assert (HLE3 : LEv (limg s3 Lu)) by exact (limg_ev s3 Lu (SemL_OkS Sem3) (LEv_fresh n2 Ln HLE2)).
-    destruct (unify_stepL PEv Dd D3 S3 (limg s3 Lu) (apT s3 Tb) (apT s3 (typ_Var (ea n2))) n3 PEv_float (SemL_DOk Sem3)
+    destruct (unify_stepL_G Dd D3 S3 (limg s3 Lu) (apT s3 Tb) (apT s3 (typ_Var (ea n2))) n3  (SemL_DOk Sem3)
                 HRA3 HLo3 HLE3 (SemL_live Sem3) (proj1 HTb3) (proj1 HTc3)
                 (limg_ap s3 Tb Lu (proj1 HTb) (sub_ul _ _ _ HsubTb))
                 (limg_ap s3 (typ_Var (ea n2)) Lu I (ftv_var_fresh n2 Ln)) Heq')
@@ -1029,7 +1029,7 @@ Proof.
     assert (Heq : teqD Dd (apT Sb (apT s2 Ta)) (apT Sb Tb)).
     { eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv L1 Dd Sa n1 s2 D2 n2 Sb Ta Sem2 (proj1 HTa) HsubTa) | ].
       eapply teqD_trans; [ exact Heq1 | apply teqD_sym; exact Heq2 ]. }
-    destruct (unify_stepL PEv Dd D2 Sb Ln (apT s2 Ta) Tb n2 PEv_float (SemL_DOk Sem2) HRA2 HLo2 HLE2 HLv2
+    destruct (unify_stepL_G Dd D2 Sb Ln (apT s2 Ta) Tb n2  (SemL_DOk Sem2) HRA2 HLo2 HLE2 HLv2
                 (proj1 HTa2) (proj1 HTb) HsubTa2 HsubTb Heq) as (s3 & D3 & n3 & S3 & St3 & Sem3 & HRA3).
     pose proof (TOk_ap _ _ _ _ (SemL_SI Sem3) HTb) as HTb3.
     assert (HTv : TOk (S n3) (typ_Var (ea n3))) by (apply TOk_var; apply old_ea; lia).
@@ -1044,8 +1044,8 @@ Proof.
         apT_Var, supd_same.
       eapply teqD_trans; [ apply teqD_sym; exact (SemL_factor PEv Ln Dd Sb n2 s3 D3 n3 S3 Tb Sem3 (proj1 HTb) HsubTb) | ].
       exact Heq2. }
-    destruct (unify_stepL PEv Dd (upd D3 (ea n3) k_Eq) (supd S3 (ea n3) A) (limg s3 Ln `union` {{ ea n3 }})
-                (apT s3 Tb) (typ_Var (ea n3)) (S n3) PEv_float (DOk_upd D3 n3 k_Eq (SemL_DOk Sem3)) (RA_upd _ _ _ HRA3)
+    destruct (unify_stepL_G Dd (upd D3 (ea n3) k_Eq) (supd S3 (ea n3) A) (limg s3 Ln `union` {{ ea n3 }})
+                (apT s3 Tb) (typ_Var (ea n3)) (S n3)  (DOk_upd D3 n3 k_Eq (SemL_DOk Sem3)) (RA_upd _ _ _ HRA3)
                 (LOld_fresh n3 _ HLo3) (LEv_fresh n3 _ HLE3) HLv4 (proj1 HTb3) I
                 (sub_ul _ _ _ HsubTb3) (ftv_var_fresh n3 _) Heq') as (s4 & D4 & n4 & S4 & St4 & Sem4 & HRA4).
     pose proof (SemL_unfresh PEv (limg s3 Ln) Dd S3 n3 A s4 D4 n4 S4 HLo3 Sem4) as Sem4'.
