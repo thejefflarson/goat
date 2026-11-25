@@ -236,3 +236,158 @@ Proof.
 Qed.
 
 End Teq.
+
+(* ---- the rewritten type and its equations stay in the fragment ---- *)
+
+Definition AtC (X : atoms) (m m' : nat) (Y : atoms) : Prop :=
+  forall b, b `in` X -> b `in` Y \/ exists k, m <= k /\ k < m' /\ b = ea k.
+
+Lemma AtC_mono : forall X X' m1 m1' m2 m2' Y Y',
+  X [<=] X' -> m2 <= m1 -> m1' <= m2' -> Y [<=] Y' -> AtC X' m1 m1' Y -> AtC X m2 m2' Y'.
+Proof.
+  intros X X' m1 m1' m2 m2' Y Y' HX H1 H2 HY H b Hb. destruct (H b (HX b Hb)) as [Hy|(k & A & B & C)].
+  - left. apply HY. exact Hy.
+  - right. exists k. repeat split; try lia. exact C.
+Qed.
+
+Definition hok (S : sub) (Y Yr : atoms) (m m' : nat) (h : heq) : Prop :=
+  pf (h_fld h) /\ pf (h_val h) /\ ps S (h_val h) /\
+  (exists k, m <= k /\ k < m' /\ h_fld h = typ_Var (ea k)) /\
+  AtC (ftv_typ (h_val h)) m m' Y /\ frv_typ (h_val h) [<=] Yr.
+
+Lemma hok_mono : forall S Y Y' Yr Yr' m1 m1' m2 m2' h,
+  Y [<=] Y' -> Yr [<=] Yr' -> m2 <= m1 -> m1' <= m2' ->
+  hok S Y Yr m1 m1' h -> hok S Y' Yr' m2 m2' h.
+Proof.
+  intros S Y Y' Yr Yr' m1 m1' m2 m2' h HY HYr H1 H2 (A & B & C & (k & D1 & D2 & D3) & E & F).
+  refine (conj A (conj B (conj C (conj _ (conj _ _))))).
+  - exists k. repeat split; try lia. exact D3.
+  - exact (AtC_mono _ _ _ _ _ _ _ _ (fun x Hx => Hx) H1 H2 HY E).
+  - intros x Hx. apply HYr. apply F. exact Hx.
+Qed.
+
+Lemma Forall_hok_mono : forall S Y Y' Yr Yr' m1 m1' m2 m2' H,
+  Y [<=] Y' -> Yr [<=] Yr' -> m2 <= m1 -> m1' <= m2' ->
+  Forall (hok S Y Yr m1 m1') H -> Forall (hok S Y' Yr' m2 m2') H.
+Proof.
+  intros S Y Y' Yr Yr' m1 m1' m2 m2' H HY HYr H1 H2 HF. eapply Forall_impl; [ | exact HF ].
+  intros h Hh. exact (hok_mono S Y Y' Yr Yr' m1 m1' m2 m2' h HY HYr H1 H2 Hh).
+Qed.
+
+Lemma rh_struct : forall pl S,
+  (forall T, pf T -> ps S T -> forall m,
+     pf (fst (fst (rh_t pl T m))) /\ ps S (fst (fst (rh_t pl T m))) /\ m <= snd (rh_t pl T m) /\
+     AtC (ftv_typ (fst (fst (rh_t pl T m)))) m (snd (rh_t pl T m)) (ftv_typ T) /\
+     frv_typ (fst (fst (rh_t pl T m))) [<=] frv_typ T /\
+     Forall (hok S (ftv_typ T) (frv_typ T) m (snd (rh_t pl T m))) (snd (fst (rh_t pl T m)))) /\
+  (forall R, prf R -> psr S R -> forall m,
+     prf (fst (fst (rh_r pl R m))) /\ psr S (fst (fst (rh_r pl R m))) /\ m <= snd (rh_r pl R m) /\
+     AtC (ftv_row (fst (fst (rh_r pl R m)))) m (snd (rh_r pl R m)) (ftv_row R) /\
+     frv_row (fst (fst (rh_r pl R m))) [<=] frv_row R /\
+     Forall (hok S (ftv_row R) (frv_row R) m (snd (rh_r pl R m))) (snd (fst (rh_r pl R m)))).
+Proof.
+  intros pl S. apply typ_row_mutind; cbn [pf prf ps psr]; try (intros; contradiction);
+    try (intros _ _ m; cbn [rh_t rh_r fst snd]; refine (conj _ (conj _ (conj (le_n m) (conj _ (conj _ _)))));
+         [ try exact I | try exact I | | | constructor ];
+         [ intros b Hb; left; exact Hb | intros b Hb; exact Hb ]; fail).
+  - intros A IHA B IHB [PA PB] [SA SB] m. cbn [rh_t].
+    destruct (rh_t pl A m) as [[A' H1] m1] eqn:E1. destruct (rh_t pl B m1) as [[B' H2] m2] eqn:E2.
+    destruct (IHA PA SA m) as (pA & sA & lA & cA & rA & hA). rewrite E1 in pA, sA, lA, cA, rA, hA. simpl in *.
+    destruct (IHB PB SB m1) as (pB & sB & lB & cB & rB & hB). rewrite E2 in pB, sB, lB, cB, rB, hB. simpl in *.
+    refine (conj (conj pA pB) (conj (conj sA sB) (conj _ (conj _ (conj _ _))))); [ lia | | | ].
+    + intros b Hb. apply AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb].
+      * destruct (cA b Hb) as [Y|(k & K1 & K2 & K3)]; [ left; apply AtomSetFacts.union_iff; left; exact Y | right; exists k; repeat split; try lia; exact K3 ].
+      * destruct (cB b Hb) as [Y|(k & K1 & K2 & K3)]; [ left; apply AtomSetFacts.union_iff; right; exact Y | right; exists k; repeat split; try lia; exact K3 ].
+    + intros b Hb. apply AtomSetFacts.union_iff in Hb. apply AtomSetFacts.union_iff. destruct Hb as [Hb|Hb]; [ left; apply rA; exact Hb | right; apply rB; exact Hb ].
+    + apply Forall_app. split.
+      * eapply Forall_hok_mono; [ | | | | exact hA ]; try lia; intros x Hx; apply AtomSetFacts.union_iff; left; exact Hx.
+      * eapply Forall_hok_mono; [ | | | | exact hB ]; try lia; intros x Hx; apply AtomSetFacts.union_iff; right; exact Hx.
+  - intros R IH HR SR m. cbn [rh_t].
+    destruct (rh_r pl R m) as [[R' H] m1] eqn:E. destruct (IH HR SR m) as (p & s & l & c & r & h). rewrite E in p, s, l, c, r, h. simpl in *.
+    exact (conj p (conj s (conj l (conj c (conj r h))))).
+  - intros a _ _ m. cbn [rh_t fst snd]. refine (conj I (conj I (conj (le_n m) (conj _ (conj _ _))))); [ intros b Hb; left; exact Hb | intros b Hb; exact Hb | constructor ].
+  - intros w A IH [HA Hn] SA m. cbn [rh_t fst snd]. refine (conj (conj HA Hn) (conj SA (conj (le_n m) (conj _ (conj _ _))))).
+    + intros b Hb. left. exact Hb.
+    + intros b Hb. exact Hb.
+    + constructor.
+  - intros r _ _ m. cbn [rh_r fst snd]. refine (conj I (conj I (conj (le_n m) (conj _ (conj _ _))))); [ intros b Hb; left; exact Hb | intros b Hb; exact Hb | constructor ].
+  - intros l T IHT R IHR [PT PR] [ST SR] m. cbn [rh_r].
+    destruct (rh_t pl T m) as [[T' H1] m1] eqn:E1. destruct (rh_r pl R m1) as [[R' H2] m2] eqn:E2.
+    destruct (IHT PT ST m) as (pA & sA & lA & cA & rA & hA). rewrite E1 in pA, sA, lA, cA, rA, hA. simpl in *.
+    destruct (IHR PR SR m1) as (pB & sB & lB & cB & rB & hB). rewrite E2 in pB, sB, lB, cB, rB, hB. simpl in *.
+    refine (conj (conj pA pB) (conj (conj sA sB) (conj _ (conj _ (conj _ _))))); [ lia | | | ].
+    + intros b Hb. apply AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb].
+      * destruct (cA b Hb) as [Y|(k & K1 & K2 & K3)]; [ left; apply AtomSetFacts.union_iff; left; exact Y | right; exists k; repeat split; try lia; exact K3 ].
+      * destruct (cB b Hb) as [Y|(k & K1 & K2 & K3)]; [ left; apply AtomSetFacts.union_iff; right; exact Y | right; exists k; repeat split; try lia; exact K3 ].
+    + intros b Hb. apply AtomSetFacts.union_iff in Hb. apply AtomSetFacts.union_iff. destruct Hb as [Hb|Hb]; [ left; apply rA; exact Hb | right; apply rB; exact Hb ].
+    + apply Forall_app. split.
+      * eapply Forall_hok_mono; [ | | | | exact hA ]; try lia; intros x Hx; apply AtomSetFacts.union_iff; left; exact Hx.
+      * eapply Forall_hok_mono; [ | | | | exact hB ]; try lia; intros x Hx; apply AtomSetFacts.union_iff; right; exact Hx.
+  - intros l P IHP T IHT R IHR [PP [PT PR]] [SP [ST SR]] m. cbn [rh_r].
+    destruct (rh_t pl T m) as [[T' H1] m1] eqn:E1. destruct (rh_r pl R m1) as [[R' H2] m2] eqn:E2.
+    destruct (IHT PT ST m) as (pA & sA & lA & cA & rA & hA). rewrite E1 in pA, sA, lA, cA, rA, hA. simpl in *.
+    destruct (IHR PR SR m1) as (pB & sB & lB & cB & rB & hB). rewrite E2 in pB, sB, lB, cB, rB, hB. simpl in *.
+    destruct (fresh_pres pl P) eqn:Ef; cbn [fst snd].
+    + refine (conj (conj PP (conj I pB)) (conj (conj SP (conj I sB)) (conj _ (conj _ (conj _ _))))).
+      * lia.
+      * intros b Hb. apply AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb].
+        { left. apply AtomSetFacts.union_iff. left. exact Hb. }
+        apply AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb].
+        { right. exists m2. repeat split; try lia. simpl in Hb. apply AtomSetFacts.singleton_iff in Hb. symmetry. exact Hb. }
+        destruct (cB b Hb) as [Y|(k & K1 & K2 & K3)].
+        { left. apply AtomSetFacts.union_iff. right. apply AtomSetFacts.union_iff. right. exact Y. }
+        { right. exists k. repeat split; try lia. exact K3. }
+      * intros b Hb. apply AtomSetFacts.union_iff in Hb. apply AtomSetFacts.union_iff. destruct Hb as [Hb|Hb].
+        { left. exact Hb. }
+        apply AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb]; [ simpl in Hb; fsetdec | ].
+        right. apply AtomSetFacts.union_iff. right. apply rB. exact Hb.
+      * apply Forall_app. split.
+        { eapply Forall_hok_mono; [ | | | | exact hA ]; try lia; intros x Hx; apply AtomSetFacts.union_iff; right; apply AtomSetFacts.union_iff; left; exact Hx. }
+        apply Forall_app. split.
+        { eapply Forall_hok_mono; [ | | | | exact hB ]; try lia; intros x Hx; apply AtomSetFacts.union_iff; right; apply AtomSetFacts.union_iff; right; exact Hx. }
+        constructor; [ | constructor ].
+        refine (conj I (conj pA (conj sA (conj _ (conj _ _))))).
+        { exists m2. repeat split; try lia. }
+        { intros b Hb. destruct (cA b Hb) as [Y|(k & K1 & K2 & K3)].
+          - left. apply AtomSetFacts.union_iff. right. apply AtomSetFacts.union_iff. left. exact Y.
+          - right. exists k. repeat split; try lia. exact K3. }
+        { intros x Hx. apply AtomSetFacts.union_iff. right. apply AtomSetFacts.union_iff. left. apply rA. exact Hx. }
+    + refine (conj (conj PP (conj pA pB)) (conj (conj SP (conj sA sB)) (conj _ (conj _ (conj _ _))))).
+      * lia.
+      * intros b Hb. apply AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb].
+        { left. apply AtomSetFacts.union_iff. left. exact Hb. }
+        apply AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb].
+        { destruct (cA b Hb) as [Y|(k & K1 & K2 & K3)].
+          - left. apply AtomSetFacts.union_iff. right. apply AtomSetFacts.union_iff. left. exact Y.
+          - right. exists k. repeat split; try lia. exact K3. }
+        { destruct (cB b Hb) as [Y|(k & K1 & K2 & K3)].
+          - left. apply AtomSetFacts.union_iff. right. apply AtomSetFacts.union_iff. right. exact Y.
+          - right. exists k. repeat split; try lia. exact K3. }
+      * intros b Hb. apply AtomSetFacts.union_iff in Hb. apply AtomSetFacts.union_iff. destruct Hb as [Hb|Hb].
+        { left. exact Hb. }
+        apply AtomSetFacts.union_iff in Hb. destruct Hb as [Hb|Hb]; right; apply AtomSetFacts.union_iff; [ left; apply rA | right; apply rB ]; exact Hb.
+      * apply Forall_app. split.
+        { eapply Forall_hok_mono; [ | | | | exact hA ]; try lia; intros x Hx; apply AtomSetFacts.union_iff; right; apply AtomSetFacts.union_iff; left; exact Hx. }
+        { eapply Forall_hok_mono; [ | | | | exact hB ]; try lia; intros x Hx; apply AtomSetFacts.union_iff; right; apply AtomSetFacts.union_iff; right; exact Hx. }
+Qed.
+
+(* The original fields are subterms. *)
+Lemma rhf_atoms : forall pl,
+  (forall T m F, In F (rhf_t pl T m) -> ftv_typ F [<=] ftv_typ T /\ frv_typ F [<=] frv_typ T) /\
+  (forall R m F, In F (rhf_r pl R m) -> ftv_typ F [<=] ftv_row R /\ frv_typ F [<=] frv_row R).
+Proof.
+  intros pl. apply typ_row_mutind; cbn [rhf_t rhf_r]; try (intros; contradiction);
+    try (intros; match goal with H : In _ nil |- _ => inversion H end; fail).
+  - intros A IHA B IHB m F H. apply in_app_iff in H. simpl.
+    destruct H as [H|H]; [ destruct (IHA m F H) | destruct (IHB _ F H) ]; split; fsetdec.
+  - intros R IH m F H. exact (IH m F H).
+  - intros l T IHT R IHR m F H. apply in_app_iff in H. simpl.
+    destruct H as [H|H]; [ destruct (IHT m F H) | destruct (IHR _ F H) ]; split; fsetdec.
+  - intros l P IHP T IHT R IHR m F H. apply in_app_iff in H. simpl.
+    destruct H as [H|H].
+    + destruct (IHT m F H). split; fsetdec.
+    + apply in_app_iff in H. destruct H as [H|H].
+      * destruct (IHR _ F H). split; fsetdec.
+      * destruct (fresh_pres pl P); [ | contradiction ]. destruct H as [<-|H]; [ | contradiction ].
+        split; fsetdec.
+Qed.
