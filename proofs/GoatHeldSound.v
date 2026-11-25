@@ -105,7 +105,7 @@ Qed.
 Lemma dis_nil : forall k f D n, dis (S k) f D nil n = Some (sid, D, n).
 Proof. reflexivity. Qed.
 
-Lemma dis_top_nil : forall f D T n, dis_top f D T nil n = Some (D, T).
+Lemma dis_top_nil : forall f D n, dis_top f D nil n = Some (sid, D, n).
 Proof. reflexivity. Qed.
 
 Lemma dis_sound : forall k f D H n d D' n',

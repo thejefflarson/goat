@@ -82,14 +82,7 @@ Fixpoint dis (k f : nat) (D : denv) (H : list heq) (n : nat) {struct k}
   end
   end.
 
-(* The equations after the discharge of a run: nothing to do for none. *)
-Definition dis_top (f : nat) (D : denv) (T : typ) (H : list heq) (n : nat)
-  : option (denv * typ) :=
-  match H with
-  | nil => Some (D, T)
-  | _ =>
-      match dis (S (length H)) f D H n with
-      | None => None
-      | Some (d, D', _) => Some (D', apT d T)
-      end
-  end.
+(* The discharge of a program's equations at the top: nothing to do for none. *)
+Definition dis_top (f : nat) (D : denv) (H : list heq) (n : nat)
+  : option (sub * denv * nat) :=
+  dis (S (length H)) f D H n.
