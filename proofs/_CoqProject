@@ -74,6 +74,7 @@ GoatCompleteFresh.v
 GoatCompleteNf.v
 GoatCompleteDrk.v
 GoatCompleteCtx.v
+GoatCompleteLive.v
 GoatCompleteSpn.v
 GoatCompleteConv.v
 GoatCompleteHeld.v

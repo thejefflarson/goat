@@ -64,6 +64,7 @@ preservation) is B3 (#71).
 | `GoatCompleteSpn.v` | Stage 7.7. `spn` as a lemma: `declared_gwf` (every group `decl_entries` reads out uses each of its `nparams` parameters in some tag, from `type_slots_facts`, `cases_slots_facts`, `nparams_le`) and `spn_declared` (`spn w 0 (spine Ts)` for `Ts` of length `nparams w`). |
 | `GoatCompleteEr.v` | Stage 7.8b. Canonical representatives of a conversion class: `erT`/`erR` replace the field of each absent entry by `Unit` (`req_absf` makes it free), `er_teq` (the representative is `teq` to its argument), `er_sub` (it mentions no atom its argument does not) and `er_inv` (`teq` types have the same atoms in their representatives). `rewrite_row_var_canon` (`GoatCompleteSorts.v`) uses it so that a step's extension mentions only atoms the substitution does (`Cov`, carried by `Pkg`). |
 | `GoatCompleteHeld.v` | Stage 7.8a. The discharge of held equations is complete: `dis_complete`/`dis_top_complete` (the unifier's completeness iterated over the equations, `HOkC`/`HEq`/`HOkC_step`), `infer_closed_elab_m_held` (the closed entry point) and `infer_closed_elab_of_true`/`_of_false` (the `gm` pair). |
+| `GoatCompleteLive.v` | Stage 7.8c. What a step carries past record-free types. `LiveG E F L LR D Dd S` (the live type atoms and row variables: sort or kind, the atoms the images mention satisfy `E` and `F`, `NN` on the live atoms), `restrG` (the full substitution the unifier needs: `Sg` on the live atoms, `Float` and the empty row elsewhere), `unify_stepG` (the unifier's step on `pf` types from `unify_tD_complete_full`), `SemG` (the step, with `SIg`, the factoring on live atoms and rows and the bounds carried through `Cov`) with `SemG_id`, `SemG_comp`, `SemG_fresh`, `PLive` (presence atoms sent to `Unit`, `psA_ps`, `PLive_step`) and `DoneG` (`Done` over the fragment, returning `HOkC` of the held equations) with `DoneG_const`. |
 | `GoatMeta.v` | The metatheory: locally-nameless infrastructure (via a computable `lc_at`), `typing_regular`, canonical forms (L7), typing inversions, and **Progress**. |
 | `GoatSubst.v` | The Hindley–Milner substitution-algebra groundwork: the type/row-substitution algebra and `teq_ap`, the structural L4 lemmas (`typing_sch_equiv_ctx`, `typing_ftv_mono`), the free-variable facts of a bijective renaming, and `gen_more_gen` (generalizing over a smaller context quantifies more, at the sorts the extra atoms already had). What `GoatBij`/`GoatHM`/`GoatSound` build on. |
 | `GoatBij.v` | Freshening infrastructure (finite-atom permutations, `mk_rename`) feeding the T-Let freshening (#151). |
@@ -1512,3 +1513,19 @@ closed entry point and `infer_closed_elab_of_true`/`_of_false` to the `gm` pair.
 equation solved only by an absent presence over differing types (the `clash_d` branch) is
 not covered. The L3 induction past record-free types is not yet built; the plan lists
 what remains.
+
+## The step past record-free types (`GoatCompleteLive`, stage 7.8c)
+
+`NN` now covers `Quot` as well as `Numeric` (a `Quot` atom is never sent to a record) and
+`Drow` no longer asks `D y <> Quot`. A `Quot` atom is then bound to `Float` like a
+`Numeric` one (`pkg_bind_prop_nl`), and a `Literal` variable against a `Quot` variable is
+`meet_float` (`Pkg_meet`, from `lit_quot_float`). Record division is outside the theorem:
+it needs a `Quot` atom bound to a record, whose presence variables would be pushed to
+`Quot`, where `Unit` does not satisfy it.
+
+`GoatCompleteLive.v` states the induction's live clauses over the fragment and proves the
+unifier's step from `unify_tD_complete_full`; the cases of `infer_complete_core` are not yet
+rebuilt on it. `Live P` and `Avoid` become `LiveG E F` over type atoms and row variables,
+where predicates `E` and `F` on the atoms an image mentions replace the allowed set of
+images `P`: the extension renames (`Cov`) but invents no atom, so a bound on atoms survives
+a step where "record-free" does not.

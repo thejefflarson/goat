@@ -2011,39 +2011,61 @@ now promises `Cov` instead:
 With `Cov`, an invariant of the form "every image mentions only even atoms" or "only
 atoms in `B`" survives a step: apply `Bnd` with `E` the even atoms, or the members of `B`.
 
+*As built (stage 7.8c, step 1: the step past record-free types, `GoatCompleteLive.v`,
+`GoatCompleteRfRows.v`).* Three of the four items the list below named are done; the
+induction itself is not rebuilt.
+
+- *`Quot` (option A, ratified).* `NN D S` covers the sorts `Numeric` and `Quot` (`NQ`), and
+  `Drow` drops its `Quot` conjunct. `pkg_bind_prop_nl` takes `Quot` (a `Quot` atom is bound to
+  `Float`, never `Int`, never a record), the two `NN` proofs push through `nq_old`, and the
+  var-var case of the unifier meets a `Literal` atom against a `Quot` atom with `meet_float`
+  (`lit_quot_float`, `Pkg_float`, `Pkg_meet`): the two images are one type that is both
+  `Literal` and `Quot`, which is `Float`. Record division is excluded from completeness as a
+  stated hypothesis; option B (a `Quot` atom bound only to rows of literal entries) is a
+  follow-up.
+- *Live row variables.* `RLive LR D Dd S` (a live row variable goes to a row of its kind) and
+  the row half of `BndL` replace the global `rkres` of `SemL`, and `restrG L LR Sg` sends the
+  other row variables to the empty row (`rkok_empty`), so `KR_restrG` needs nothing off the
+  live sets. The allowed set of images `P` becomes two predicates `E` (type atoms) and `F`
+  (row variables) on the atoms an image mentions: the extension renames, so a bound on atoms
+  survives a step (`Cov`, `Bnd_restrG`) where "the image is record-free" does not. `limgT`
+  and `limgR` are the atoms of the images of the live type atoms and row variables.
+- *Live presence atoms.* `PLive LP S` says `S` sends the presence atoms `LP` to `Unit`;
+  `psA LP T` (the presence of each entry is `Unit` or an atom of `LP`) gives `ps S T`
+  (`psA_ps`), and `PLive_step` carries it through a step: the image of a presence atom is
+  `Unit` or a variable the extension sends to `Unit` (`pres_shape`), so `limg s LP` is again
+  presence atoms. `PLive_fresh` adds a fresh one.
+- *The step.* `unify_stepG` is `unify_stepL` on `unify_tD_complete_full`: from `LiveG`, `pf`
+  types over live atoms and rows with every entry present under `Sg`, and `teq` images, it
+  returns the unifier's run and a `SemG`. `SemG` is `SemL` with `SIg` (the live images are in
+  the fragment, atoms below the new supply, entries present under the extension), the
+  factoring on live atoms and rows at plain `teq`/`req`, and `CovL` (a bound on the live
+  images of `Sg` survives). `SemG_id`, `SemG_comp` (with the one hypothesis `Hm`, that
+  `Sg`'s bounds reach the first step's end on the larger live set the second step reads) and
+  `SemG_fresh` with `LiveG_fresh` are the structural lemmas the cases use. `DoneG` is `Done`
+  over the fragment: the run's `SemG`, `pf`/`atT`/`ps` of its type, and `HOkC` of the held
+  equations it returns; `DoneG_const` is the constants case.
+
 **What remains of 7.8.**
 
-1. *The induction past `rf`.* `Done` fixes the equations to `nil`, `SemL` and `GOk`
-   carry record-free images (`SI`), `unify_stepL` calls `unify_tD_rf_complete_img`, and
-   every `ctyping` rule asks `PEv` (even and record-free) of the types it invents. The
-   extension replaces `rf` by `pf`/`ps`/`atT` at those places, `Done` returns `HOkC` of
-   the held equations at the extension, and `unify_stepL` is built on
-   `unify_tD_complete_full`, the invariant of `Avoid` and the even atoms read through `Cov`.
-   Three things were found in reading the induction for this and are not yet done:
-   - `Drow D` asks `D y <> Quot` for every atom, and the core's `/` makes `generic_sort`
-     `Quot` and gives a fresh atom that sort, so `unify_tD_complete_full` does not apply
-     to a run that divides. A `Quot` atom bound to a scalar is the case of
-     `pkg_bind_prop_nl` with `Float` as the only scalar; a `Quot` atom bound to a record
-     is the head-known rule that 7.7 left to 7.8 (`sat Quot` of a record is `rsat Quot` of
-     its row, so a record of floats is `Quot`, and the presence variables of an entry
-     pushed to `Quot` cannot be `Unit`). DECISION NEEDED: either `NN` extends to `Quot`
-     (a `Quot` atom is never sent to a record, which loses `/` on records) or the
-     fragment's `Quot` atoms are bound only to rows of literal entries (no presence
-     variable); the first is the smaller and is what I would build.
-   - The live set `L` holds type atoms only. A generalized run has live row variables
-     too, with their own `Live`/`Avoid` clauses (`Bnd`'s `F` and the row images
-     `sR Sg`), and `restr` needs a row analogue that sends the other row variables to
-     the empty row.
-   - `ps Sg T` is about the entries of `T` itself, so the algorithm's types may mention a
-     presence variable only if `Sg` sends it to `Unit`: the invariant `Live` carries
-     needs a clause for the presence atoms of `L`, and the conversion from `typing` has
-     to choose them.
-2. *Constructs.* Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows
-   with a tail variable by `rewrite_row_complete`), spread (`spread_present`'s equation,
+1. *The induction past `rf`.* `GoatCompleteCtx.v` and `GoatCompleteCore.v` still use `SemL`,
+   `TOk`, `SOk`, `GOk`, `SI` and `Done`, all record-free. Rebuild them on `SemG`/`DoneG`:
+   `TOk n T` becomes `pf`/`atT`/`ps`, `SOk n sc` asks `pf (s_body sc)` and `atT`, `CI`,
+   `GLive` and `CI_stepL` carry presence through `PLive_step`, `Avoid_next` reads the bound
+   through `CovL`, and `ctyping` asks `PEv` only of the atoms (`ev`) where it asked it of a
+   record-free type. Each case of `infer_complete_core` (variable, constants, `program`,
+   call, `if`, the operators, comparison, `to_float`, `let` and `let` of a value) then calls
+   `unify_stepG` where it called `unify_stepL`, and `Done` returns `HOkC` of what the run
+   holds. The row analogue of `SemG_fresh` (a fresh row variable) and the version of
+   `SemG_fresh` at a presence atom are not written.
+2. *Constructs.* Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows with
+   a tail variable by `rewrite_row_complete`), spread (`spread_present`'s equation,
    discharged by `dis_complete` at a `let` or the top), restrict, tags and `match` (`spn`
    is a lemma), then `letrec` through `V_letrec`'s shape. `ctyping` extends past `rf`
    (ratified) instead of proving an erasure.
-3. *The conversion from `typing`.* Unchanged from 7.7g, extended with the new rules.
+3. *The conversion from `typing`.* Unchanged from 7.7g, extended with the new rules; it also
+   chooses the presence atoms of `PLive`.
+4. *`Quot` on records.* Option B, above.
 
 ## 5. Staged PR plan
 
