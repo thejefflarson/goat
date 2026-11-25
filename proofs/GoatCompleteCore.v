@@ -220,10 +220,11 @@ Proof.
   rewrite E. reflexivity.
 Qed.
 
-Lemma rf_rf_ty : forall T, rf T -> rf_ty T.
+(* A type of the record-free fragment has no entry to re-hold. *)
+Lemma rh_rf : forall ps T m, rf T -> rh_t ps T m = (T, nil, m).
 Proof.
-  induction T; cbn [rf rf_ty]; intros H; try contradiction; try exact I;
-    try (split; [ apply IHT1 | apply IHT2 ]; tauto).
+  intros ps T. induction T; intros m H; cbn [rf] in H; try contradiction; try reflexivity.
+  destruct H as [HA HB]. cbn [rh_t]. rewrite (IHT1 m HA), (IHT2 m HB). reflexivity.
 Qed.
 
 Lemma is_cmp_op_true : forall o, kind o = k_cmp -> is_cmp_op o = true.
@@ -426,7 +427,7 @@ Proof.
   exists sid, D1, n1, S2, T0, (e_fvar_f x).
   refine (conj _ (conj _ (conj HTo (conj HE0 (conj _ (conj HRA1 (conj _ (conj eq_refl eq_refl)))))))).
   - exists 1. intros f Hf. destruct f as [|f]; [ lia | ].
-    cbn [infer]. rewrite Hlk. rewrite Hinst. rewrite (rh_rf _ _ _ (rf_rf_ty _ HrfT0)). reflexivity.
+    cbn [infer]. rewrite Hlk. rewrite Hinst. rewrite (rh_rf _ _ _ HrfT0). reflexivity.
   - refine (conj (rkres_RA D1 Dd (sR S2) HRA1) (conj _ (conj Hd1 (conj (SI_id_le n n1 ltac:(lia)) (conj _ (conj _ OkS_id)))))).
     + intros a Ha. pose proof (limg_sid L a Ha) as Ha'.
       rewrite (HD1o a (HLo a Ha')). rewrite (F2 a (HLo a Ha')). exact (HLv a Ha').

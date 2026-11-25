@@ -55,21 +55,6 @@ Qed.
 Lemma rh_t_nil : forall T m, rh_t nil T m = (T, nil, m).
 Proof. exact (proj1 rh_nil_mut). Qed.
 
-(* A type of the record-free fragment has no entry to open. *)
-Fixpoint rf_ty (T : typ) : Prop :=
-  match T with
-  | typ_Int | typ_Float | typ_Bool | typ_Unit | typ_String | typ_Var _ => True
-  | typ_Arrow A B => rf_ty A /\ rf_ty B
-  | _ => False
-  end.
-
-Lemma rh_rf : forall ps T m, rf_ty T -> rh_t ps T m = (T, nil, m).
-Proof.
-  intros ps T. induction T; intros m H; cbn [rf_ty] in H; try contradiction;
-    try reflexivity.
-  destruct H as [HA HB]. cbn [rh_t]. rewrite (IHT1 m HA), (IHT2 m HB). reflexivity.
-Qed.
-
 (* ------------------------------------------------------------------ *)
 (* Even types, even equations                                           *)
 (* ------------------------------------------------------------------ *)

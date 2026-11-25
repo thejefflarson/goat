@@ -1438,8 +1438,9 @@ Two changes to `infer`, both sound over plain contexts (no scheme carries an equ
   (`inst_pres`) a field variable of its own and the equation `p => y = F`. `rh_sound_mut`:
   once those equations are solved the re-held type is the instance up to `teqD` (`req_absf`
   when the presence is absent, the equation otherwise), so the case is `V_leaf` plus
-  `V_conv_sol`. A recursive type is left as it is. `rh_nil_mut` and `rh_rf` make it the
-  identity on a mono scheme and on the record-free fragment, which is all completeness needs.
+  `V_conv_sol`. A recursive type is left as it is. `rh_nil_mut` and `rh_rf`
+  (`GoatCompleteCore`) make it the identity on a mono scheme and on the record-free
+  fragment, which is all completeness needs.
   `rh_mg_mut` keeps the types guarded (`infer_guard`).
 - **A `let` whose bound term holds an equation on a presence of the context stays
   monomorphic** (`pres_owned`). Its equations stay held and the body sees the bound term at
