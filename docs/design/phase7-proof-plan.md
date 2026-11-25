@@ -2067,6 +2067,34 @@ rebuilt, because the rebuild runs into two obstacles the earlier notes did not s
   pair (`lnT s L LR T`, `lnR s L LR T`: the live type atoms and row variables handed on)
   are the structural lemmas the cases use, with `LR` threaded beside `L`.
 
+*As built (stage 7.8f, `GoatCompleteSchT.v`, `GoatCompleteMonoT.v`, `GoatCompleteCtxT.v`).*
+Item 1 of the list below is done; the induction is not rebuilt.
+
+- `sch_leT Pt D sd sa` compares schemes up to conversion. `instT Pt` is `instP` with the
+  image class `Pt` in place of `PEv` (`instT PEv` is `instP`), and `sch_leT` says: the free
+  atoms of the algorithm's scheme, read on the representatives `erT` and `erR`
+  (`ftv_schE`, `frv_schE`), are free in the derivation's, and every instance of the
+  derivation's scheme, in an environment that agrees with `D` on those atoms, is `teq` to an
+  instance of the algorithm's. It has refl, trans, `_inst`, `_env`, `_ext` and `_extr`, and
+  `sch_leP_T` embeds `sch_leP` on record-free schemes.
+- `gen_monoT` is `gen_mono` for it. The derivation's type `T1` is only `teq` to the image
+  `apT S2 T'`; with `pf T'` and `ps S2 T'` the representatives of the images of `T'`'s
+  variables lie inside the representative of the image (`er_ap_sub`, now also on row
+  variables of the representatives: `er_ap_sub_frv`), which `er_inv` moves to `T1`
+  (`vis_of_ps`). The witness for a quantified atom is the image of its representative, so the
+  instance the proof builds differs from the derivation's only inside absent fields, and
+  `ap_cong_on` and `teq_ap` show the two instances `teq`. The image class `Pt` is a
+  parameter closed under `erT`, `typ_Var` of even atoms and `ap_typ`, so both `PEv` and
+  evenness with local closure fit.
+- `frozenE` is `frozen` on representatives (`frozen_E`, `frozenE_pin`). `gen_mono_letT`
+  restates `gen_mono_let` (`let_frozenT`, `let_pin_frozenT`: a pinned variable's image is a
+  number type or a `Literal` variable, which the representative of the image mentions).
+- `CIT` is `CI` over `sch_leT`, with a monotype binding compared at plain `teq`. `CIT_env`
+  needs no environment hypothesis on monotypes. `CIT_frozen` reads `frozenE Sg G G1` off
+  `CIT` given `GPsT Sg G` (well formed schemes whose bodies are `pf` and whose entries are
+  present under `Sg` with the quantified atoms fixed) and evenness of the images. `SchIT_inst`
+  is the scheme step of `var_sch_done`.
+
 **What remains of 7.8.**
 
 Stage 7.8d did the unifier half: `unify_stepL_G` (`GoatCompleteLiveRf.v`) is `unify_stepL`
@@ -2074,19 +2102,8 @@ proved from `unify_stepG`, and `infer_complete_core` calls it in every case that
 `SemG_fresh_row` and `LiveG_fresh_pres` are the row-variable and presence-atom analogues of
 `SemG_fresh`.
 
-1. *Schemes over the fragment.* `SchI` is `sch_leP`, whose `instP` is an equation
-   (`T = ap_typ st sr body`) and whose first two conjuncts say the free atoms of the
-   algorithm's scheme lie in the derivation's. After a step the algorithm's scheme is
-   `apS (sfix S2) (apS s sc)` and the derivation's side is `apS (sfix Sg) sc`; over the
-   fragment their bodies are `teq`, not equal (an absent field is free), and the first may
-   mention atoms the second does not. `CI_stepL` proves them equal with `teqD_rf_eq`, and
-   `er_ap_sub` does not repair that: it bounds the atoms of the representative, while
-   `sch_leP`, `frozen` and `gen_mono_let` (GoatCompleteMono.v) compare the atoms of the
-   body. Needed: a scheme comparison up to `teq` whose inclusions are on representatives
-   (`sch_leT`: an instance of the derivation's scheme is `teq` to an instance of the
-   algorithm's), with `gen_mono_let` and `frozen` restated for it, and `CI_env`,
-   `CI_ftv` and `var_sch_done` following.
-2. *The induction past `rf`.* With item 1 settled, rebuild `GoatCompleteCtx.v` and
+1. *Schemes over the fragment* (done in 7.8f, below).
+2. *The induction past `rf`.* Rebuild `GoatCompleteCtx.v` and
    `GoatCompleteCore.v` on `SemW`/`LiveG`/`AvoidE`: `TOk n T` becomes `pf`/`atT` with `ps S T`
    carried beside it (a monotype in the context needs `ps Sg` too, for the variable case),
    `GOk`, `GLive` and `CI_stepL` thread the live row variables, and `Done` returns `HOkC`
@@ -2096,7 +2113,14 @@ proved from `unify_stepG`, and `infer_complete_core` calls it in every case that
    `Live PEv` and `rkres` conclusions come from `rf_back` (GoatCompleteLiveRf.v) and from
    replacing `sR S2` by the empty row substitution, which satisfies every row kind.
    `unify_stepL`, `unify_tD_rf_complete_img` and `unify_stepL_G` retire when the
-   core stops calling them.
+   core stops calling them. What 7.8f leaves of this item: `CI_stepW` (the step on `CIT`: the
+   bodies `apT (sfix S2) (apT s body)` and `apT (sfix Sg) body` are `teq` by `ap_factor`, and
+   the representatives' atoms need `er_ap_sub` with `ps`, where `CI_stepL` used
+   `teqD_rf_eq`); `DoneW`, `Done` over `SemW` with `pf`/`atT`/`ps` and `HOkC S2 n nil`, and
+   `var_sch_doneT` assembling it from `SchIT_inst` (`fsub` extends `Sg` by the instance, and
+   `ps S2 T0` follows from the instance's presence, since `apT S2 T0` is the instance
+   itself); `GOkT`/`GLiveT` with the row variables; then the case-by-case rebuild of
+   `infer_complete_core` and its closed corollary.
 3. *Constructs.* Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows with
    a tail variable by `rewrite_row_complete`), spread (`spread_present`'s equation,
    discharged by `dis_complete` at a `let` or the top), restrict, tags and `match` (`spn`
