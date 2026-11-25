@@ -31,6 +31,7 @@ Require Import Goat.GoatRows.
 Require Import Goat.GoatDefs.
 Require Import Goat.GoatConv.
 Require Import Goat.GoatSubst.
+Require Import Goat.GoatSound.
 Require Import Goat.GoatInfer.
 Require Import Goat.GoatInferSub.
 Require Import Goat.GoatInferSort.
@@ -40,6 +41,7 @@ Require Import Goat.GoatCompleteBind.
 Require Import Goat.GoatCompleteRf.
 Require Import Goat.GoatCompleteRfRows.
 Require Import Goat.GoatCompleteSorts.
+Require Import Goat.GoatCompleteRewrite.
 Require Import Goat.GoatCompleteCtx.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
@@ -159,30 +161,29 @@ Proof.
                                                  | right; exists q; split; [ apply Hr; exact Hq | exact Hy ] ].
 Qed.
 
-(* What a step does to the atoms below the supply: the images of the old atoms are
-   in the fragment over the atoms below the new supply, with every presence entry
-   present under the extension.  This is the part of [Pkg] the next step reads. *)
-Definition SIg (n n' : nat) (s S2 : sub) : Prop :=
+(* What a step does to the live atoms and rows: their images are in the fragment
+   over the atoms below the new supply, with every presence entry present under
+   the extension.  This is the part of [Pkg] the next step reads; it is stated on
+   the live set because the factoring through a step is. *)
+Definition SIg (n n' : nat) (s S2 : sub) (L LR : atoms) : Prop :=
   n <= n' /\
-  (forall x, old n x -> pf (sT s x) /\ atT n' (sT s x) /\ ps S2 (sT s x)) /\
-  (forall q, old n q -> prf (sR s q) /\ atR n' (sR s q) /\ psr S2 (sR s q)).
+  (forall x, x `in` L -> pf (sT s x) /\ atT n' (sT s x) /\ ps S2 (sT s x)) /\
+  (forall q, q `in` LR -> prf (sR s q) /\ atR n' (sR s q) /\ psr S2 (sR s q)).
 
-Lemma limgT_old : forall n n' s S2 L LR, LOld n L -> LOld n LR -> SIg n n' s S2 ->
-  LOld n' (limgT s L LR).
+Lemma limgT_old : forall n n' s S2 L LR, SIg n n' s S2 L LR -> LOld n' (limgT s L LR).
 Proof.
-  intros n n' s S2 L LR Ho Hro (_ & Hx & Hq) y Hy. apply limgT_in in Hy.
+  intros n n' s S2 L LR (_ & Hx & Hq) y Hy. apply limgT_in in Hy.
   destruct Hy as [(x & Hx' & Hy)|(q & Hq' & Hy)].
-  - exact (proj1 (proj1 (proj2 (Hx x (Ho x Hx')))) y Hy).
-  - exact (proj1 (proj1 (proj2 (Hq q (Hro q Hq')))) y Hy).
+  - exact (proj1 (proj1 (proj2 (Hx x Hx'))) y Hy).
+  - exact (proj1 (proj1 (proj2 (Hq q Hq'))) y Hy).
 Qed.
 
-Lemma limgR_old : forall n n' s S2 L LR, LOld n L -> LOld n LR -> SIg n n' s S2 ->
-  LOld n' (limgR s L LR).
+Lemma limgR_old : forall n n' s S2 L LR, SIg n n' s S2 L LR -> LOld n' (limgR s L LR).
 Proof.
-  intros n n' s S2 L LR Ho Hro (_ & Hx & Hq) y Hy. apply limgR_in in Hy.
+  intros n n' s S2 L LR (_ & Hx & Hq) y Hy. apply limgR_in in Hy.
   destruct Hy as [(x & Hx' & Hy)|(q & Hq' & Hy)].
-  - exact (proj2 (proj1 (proj2 (Hx x (Ho x Hx')))) y Hy).
-  - exact (proj2 (proj1 (proj2 (Hq q (Hro q Hq')))) y Hy).
+  - exact (proj2 (proj1 (proj2 (Hx x Hx'))) y Hy).
+  - exact (proj2 (proj1 (proj2 (Hq q Hq'))) y Hy).
 Qed.
 
 Lemma limgT_ev : forall s L LR, OkS s -> LEv L -> LEv LR -> LEv (limgT s L LR).
@@ -201,6 +202,21 @@ Proof.
   - exact (proj2 (Hr q (HR q Hq)) y Hy).
 Qed.
 
+Lemma BndL_of_Bnd : forall E F L LR S, Bnd E F S -> BndL E F L LR S.
+Proof.
+  intros E F L LR S (H1 & H2 & H3 & H4). refine (conj _ _).
+  - intros a _. exact (conj (H1 a) (H2 a)).
+  - intros q _. exact (conj (H3 q) (H4 q)).
+Qed.
+
+Lemma BndL_mono : forall E F L1 L2 LR1 LR2 S, L1 [<=] L2 -> LR1 [<=] LR2 ->
+  BndL E F L2 LR2 S -> BndL E F L1 LR1 S.
+Proof.
+  intros E F L1 L2 LR1 LR2 S Hl Hr (Ht & Hq). split.
+  - intros a Ha. exact (Ht a (Hl a Ha)).
+  - intros q Hq'. exact (Hq q (Hr q Hq')).
+Qed.
+
 (* ---- a step, on the live atoms and rows ---- *)
 
 (* The step [s] from [Sg] to [S2]: [S2] respects the sorts and kinds the run ends
@@ -208,10 +224,10 @@ Qed.
    and rows, and keeps every bound on the atoms the images of [Sg] mention. *)
 Definition SemG (E F : atom -> Prop) (L LR : atoms) (DT : denv) (Sg : sub) (n : nat) (s : sub)
   (D' : denv) (n' : nat) (S2 : sub) : Prop :=
-  DOk D' n' /\ Drow D' /\ LiveG E F (limgT s L LR) (limgR s L LR) D' DT S2 /\ SIg n n' s S2 /\
+  DOk D' n' /\ Drow D' /\ LiveG E F (limgT s L LR) (limgR s L LR) D' DT S2 /\ SIg n n' s S2 L LR /\
   (forall x, x `in` L -> teq (sT Sg x) (apT S2 (sT s x))) /\
   (forall q, q `in` LR -> req (sR Sg q) (apR S2 (sR s q))) /\
-  (forall E' F', BndL E' F' L LR Sg -> Bnd E' F' S2) /\ OkS s.
+  (forall E' F', BndL E' F' L LR Sg -> BndL E' F' (limgT s L LR) (limgR s L LR) S2) /\ OkS s.
 
 Lemma SemG_DOk : forall E F L LR DT Sg n s D' n' S2, SemG E F L LR DT Sg n s D' n' S2 -> DOk D' n'.
 Proof. intros E F L LR DT Sg n s D' n' S2 H. exact (proj1 H). Qed.
@@ -220,7 +236,7 @@ Lemma SemG_live : forall E F L LR DT Sg n s D' n' S2, SemG E F L LR DT Sg n s D'
   LiveG E F (limgT s L LR) (limgR s L LR) D' DT S2.
 Proof. intros E F L LR DT Sg n s D' n' S2 H. exact (proj1 (proj2 (proj2 H))). Qed.
 
-Lemma SemG_SIg : forall E F L LR DT Sg n s D' n' S2, SemG E F L LR DT Sg n s D' n' S2 -> SIg n n' s S2.
+Lemma SemG_SIg : forall E F L LR DT Sg n s D' n' S2, SemG E F L LR DT Sg n s D' n' S2 -> SIg n n' s S2 L LR.
 Proof. intros E F L LR DT Sg n s D' n' S2 H. exact (proj1 (proj2 (proj2 (proj2 H)))). Qed.
 
 Lemma SemG_OkS : forall E F L LR DT Sg n s D' n' S2, SemG E F L LR DT Sg n s D' n' S2 -> OkS s.
@@ -347,12 +363,14 @@ Proof.
               (EvT_sub L LR T1 HLE HRE S1 Q1) (EvT_sub L LR T2 HLE HRE S2 Q2)) as (Hok & _ & _).
   assert (Hbnd : forall E' F', BndL E' F' L LR Sg -> Bnd E' F' S3)
     by (intros E' F' HB; exact (Cv E' F' (Bnd_restrG E' F' L LR Sg HB))).
+  assert (Hbl : forall E' F', BndL E' F' L LR Sg -> BndL E' F' (limgT s L LR) (limgR s L LR) S3)
+    by (intros E' F' HB; exact (BndL_of_Bnd E' F' _ _ S3 (Hbnd E' F' HB))).
   exists s, D', n', S3. split; [ exists f1; exact Hf1 | ].
-  assert (HSI : SIg n n' s S3).
+  assert (HSI : SIg n n' s S3 L LR).
   { refine (conj Hl (conj _ _)).
-    - intros x Hx. destruct (Fx x Hx) as (A & B & C & _). exact (conj A (conj B C)).
-    - intros q Hq. destruct (Fr q Hq) as (A & B & C & _). exact (conj A (conj B C)). }
-  refine (conj Hd' (conj (proj1 Ht') (conj _ (conj HSI (conj _ (conj _ (conj Hbnd Hok))))))).
+    - intros x Hx. destruct (Fx x (Ho x Hx)) as (A & B & C & _). exact (conj A (conj B C)).
+    - intros q Hq. destruct (Fr q (Hro q Hq)) as (A & B & C & _). exact (conj A (conj B C)). }
+  refine (conj Hd' (conj (proj1 Ht') (conj _ (conj HSI (conj _ (conj _ (conj Hbl Hok))))))).
   - destruct HL as (_ & _ & HB & _). pose proof (Hbnd E F HB) as (Bt & Bt2 & Br & Br2).
     refine (conj _ (conj _ (conj (conj _ _) _))).
     + intros a _. exact (proj1 Hk' a).
@@ -423,4 +441,230 @@ Proof.
   destruct (pres_shape S2 (sT s a) (Hpf a Ha) E) as [E1|(v & E1 & Hv)].
   - rewrite E1 in Hy. simpl in Hy. fsetdec.
   - rewrite E1 in Hy. simpl in Hy. apply AtomSetFacts.singleton_iff in Hy. subst y. exact Hv.
+Qed.
+
+(* ---- the steps compose ---- *)
+
+Lemma limg_scompG : forall s s' L LR,
+  limgT (scomp s' s) L LR [<=] limgT s' (limgT s L LR) (limgR s L LR) /\
+  limgR (scomp s' s) L LR [<=] limgR s' (limgT s L LR) (limgR s L LR).
+Proof.
+  intros s s' L LR. split.
+  - intros y Hy. apply limgT_in in Hy. apply limgT_in.
+    destruct Hy as [(x & Hx & Hy)|(q & Hq & Hy)].
+    + change (y `in` ftv_typ (apT s' (sT s x))) in Hy.
+      destruct (ftv_ap_typ _ _ _ _ Hy) as [(b & Hb & Hyb)|(p & Hp & Hyp)].
+      * left. exists b. split; [ apply limgT_in; left; exists x; split; assumption | exact Hyb ].
+      * right. exists p. split; [ apply limgR_in; left; exists x; split; assumption | exact Hyp ].
+    + change (y `in` ftv_row (apR s' (sR s q))) in Hy.
+      destruct (proj2 ftv_ap_mut _ _ _ _ Hy) as [(b & Hb & Hyb)|(p & Hp & Hyp)].
+      * left. exists b. split; [ apply limgT_in; right; exists q; split; assumption | exact Hyb ].
+      * right. exists p. split; [ apply limgR_in; right; exists q; split; assumption | exact Hyp ].
+  - intros y Hy. apply limgR_in in Hy. apply limgR_in.
+    destruct Hy as [(x & Hx & Hy)|(q & Hq & Hy)].
+    + change (y `in` frv_typ (apT s' (sT s x))) in Hy.
+      destruct (frv_ap_typ _ _ _ _ Hy) as [(b & Hb & Hyb)|(p & Hp & Hyp)].
+      * left. exists b. split; [ apply limgT_in; left; exists x; split; assumption | exact Hyb ].
+      * right. exists p. split; [ apply limgR_in; left; exists x; split; assumption | exact Hyp ].
+    + change (y `in` frv_row (apR s' (sR s q))) in Hy.
+      destruct (proj2 frv_ap_mut _ _ _ _ Hy) as [(b & Hb & Hyb)|(p & Hp & Hyp)].
+      * left. exists b. split; [ apply limgT_in; right; exists q; split; assumption | exact Hyb ].
+      * right. exists p. split; [ apply limgR_in; right; exists q; split; assumption | exact Hyp ].
+Qed.
+
+Lemma SemG_id : forall E F L LR DT Sg D n, DOk D n -> Drow D -> LOld n L -> LOld n LR ->
+  LiveG E F L LR D DT Sg -> SemG E F L LR DT Sg n sid D n Sg.
+Proof.
+  intros E F L LR DT Sg D n Hd Hrow Ho Hro HL.
+  assert (Hsub : limgT sid L LR [<=] L /\ limgR sid L LR [<=] LR).
+  { split; intros y Hy.
+    - apply limgT_in in Hy. destruct Hy as [(x & Hx & Hy)|(q & Hq & Hy)].
+      + cbn [sT sid idt] in Hy. simpl in Hy. apply AtomSetFacts.singleton_iff in Hy. subst y. exact Hx.
+      + cbn [sR sid idr] in Hy. simpl in Hy. fsetdec.
+    - apply limgR_in in Hy. destruct Hy as [(x & Hx & Hy)|(q & Hq & Hy)].
+      + cbn [sT sid idt] in Hy. simpl in Hy. fsetdec.
+      + cbn [sR sid idr] in Hy. simpl in Hy. apply AtomSetFacts.singleton_iff in Hy. subst y. exact Hq. }
+  refine (conj Hd (conj Hrow (conj (LiveG_mono _ _ _ _ _ _ _ _ _ (proj1 Hsub) (proj2 Hsub) HL)
+            (conj _ (conj _ (conj _ (conj _ OkS_id))))))).
+  - refine (conj (le_n n) (conj _ _)).
+    + intros x Hx. cbn [sT sid idt]. exact (conj I (conj (atT_V DT n x (Ho x Hx)) I)).
+    + intros q Hq. cbn [sR sid idr]. exact (conj I (conj (atR_V DT n q (Hro q Hq)) I)).
+  - intros x _. cbn [sid sT idt]. change (teq (sT Sg x) (sT Sg x)). apply teq_refl.
+  - intros q _. cbn [sid sR idr]. change (req (sR Sg q) (sR Sg q)). apply req_refl.
+  - intros E' F' HB. exact (BndL_mono E' F' _ _ _ _ Sg (proj1 Hsub) (proj2 Hsub) HB).
+Qed.
+
+(* A type of the fragment over live atoms keeps its place under a step whose images
+   of the live atoms are in the fragment, and factors through it. *)
+Lemma SemG_ap_T : forall S1 S2 s' n1 n2 Lm LRm T,
+  SIg n1 n2 s' S2 Lm LRm ->
+  ftv_typ T [<=] Lm -> frv_typ T [<=] LRm -> pf T -> ps S1 T ->
+  (forall y, y `in` Lm -> teq (sT S1 y) (apT S2 (sT s' y))) ->
+  pf (apT s' T) /\ atT n2 (apT s' T) /\ ps S2 (apT s' T).
+Proof.
+  intros S1 S2 s' n1 n2 Lm LRm T (_ & Hx & Hq) Ht Hr HT PT Fx.
+  refine (conj _ (conj _ _)).
+  - apply (proj1 (pf_ap s')); [ exact HT | intros y Hy; exact (proj1 (Hx y (Ht y Hy)))
+                              | intros q Hq'; exact (proj1 (Hq q (Hr q Hq'))) ].
+  - apply atT_ap; [ intros y Hy; exact (proj1 (proj2 (Hx y (Ht y Hy))))
+                  | intros q Hq'; exact (proj1 (proj2 (Hq q (Hr q Hq')))) ].
+  - apply (proj1 (ps_pull S1 S2 s')); [ exact HT | exact PT
+      | intros y Hy; exact (conj (Fx y (Ht y Hy)) (proj2 (proj2 (Hx y (Ht y Hy)))))
+      | intros q Hq'; exact (proj2 (proj2 (Hq q (Hr q Hq')))) ].
+Qed.
+
+Lemma SemG_ap_R : forall S1 S2 s' n1 n2 Lm LRm R,
+  SIg n1 n2 s' S2 Lm LRm ->
+  ftv_row R [<=] Lm -> frv_row R [<=] LRm -> prf R -> psr S1 R ->
+  (forall y, y `in` Lm -> teq (sT S1 y) (apT S2 (sT s' y))) ->
+  prf (apR s' R) /\ atR n2 (apR s' R) /\ psr S2 (apR s' R).
+Proof.
+  intros S1 S2 s' n1 n2 Lm LRm R (_ & Hx & Hq) Ht Hr HR PR Fx.
+  refine (conj _ (conj _ _)).
+  - apply (proj2 (pf_ap s')); [ exact HR | intros y Hy; exact (proj1 (Hx y (Ht y Hy)))
+                              | intros q Hq'; exact (proj1 (Hq q (Hr q Hq'))) ].
+  - apply atR_ap; [ intros y Hy; exact (proj1 (proj2 (Hx y (Ht y Hy))))
+                  | intros q Hq'; exact (proj1 (proj2 (Hq q (Hr q Hq')))) ].
+  - apply (proj2 (ps_pull S1 S2 s')); [ exact HR | exact PR
+      | intros y Hy; exact (conj (Fx y (Ht y Hy)) (proj2 (proj2 (Hx y (Ht y Hy)))))
+      | intros q Hq'; exact (proj2 (proj2 (Hq q (Hr q Hq')))) ].
+Qed.
+
+(* A step followed by a step from the substitution it ends with.  The second
+   step's live set [Lm] holds the images of the first and may hold more (the
+   result types' atoms); [Hm] says [Sg]'s bounds reach the first step's end on
+   [Lm], as the derivation's own bounds do for the types it adds. *)
+Lemma SemG_comp : forall E F L LR Lm LRm DT Sg n s D1 n1 S1 s' D2 n2 S2,
+  SemG E F L LR DT Sg n s D1 n1 S1 -> limgT s L LR [<=] Lm -> limgR s L LR [<=] LRm ->
+  SemG E F Lm LRm DT S1 n1 s' D2 n2 S2 ->
+  (forall E' F', BndL E' F' L LR Sg -> BndL E' F' Lm LRm S1) ->
+  SemG E F L LR DT Sg n (scomp s' s) D2 n2 S2.
+Proof.
+  intros E F L LR Lm LRm DT Sg n s D1 n1 S1 s' D2 n2 S2
+    (Hd1 & Hw1 & Hv1 & HI1 & Fx1 & Fr1 & Cv1 & Ok1) HsT HsR
+    (Hd2 & Hw2 & Hv2 & HI2 & Fx2 & Fr2 & Cv2 & Ok2) Hm.
+  destruct (limg_scompG s s' L LR) as [GT GR].
+  destruct HI1 as (Hl1 & Hx1 & Hq1). pose proof HI2 as HI2'. destruct HI2 as (Hl2 & Hx2 & Hq2).
+  assert (Tx : forall x, x `in` L -> ftv_typ (sT s x) [<=] Lm).
+  { intros x Hx y Hy. apply HsT. apply limgT_in. left. exists x. split; assumption. }
+  assert (Rx : forall x, x `in` L -> frv_typ (sT s x) [<=] LRm).
+  { intros x Hx y Hy. apply HsR. apply limgR_in. left. exists x. split; assumption. }
+  assert (Tq : forall q, q `in` LR -> ftv_row (sR s q) [<=] Lm).
+  { intros q Hq y Hy. apply HsT. apply limgT_in. right. exists q. split; assumption. }
+  assert (Rq : forall q, q `in` LR -> frv_row (sR s q) [<=] LRm).
+  { intros q Hq y Hy. apply HsR. apply limgR_in. right. exists q. split; assumption. }
+  refine (conj Hd2 (conj Hw2 (conj _ (conj _ (conj _ (conj _ (conj _ (OkS_comp _ _ Ok2 Ok1)))))))).
+  - exact (LiveG_mono _ _ _ _ _ _ _ _ _
+             (fun y Hy => limgT_mono s' _ _ _ _ HsT HsR y (GT y Hy))
+             (fun y Hy => limgR_mono s' _ _ _ _ HsT HsR y (GR y Hy)) Hv2).
+  - refine (conj (Nat.le_trans _ _ _ Hl1 Hl2) (conj _ _)).
+    + intros x Hx. destruct (Hx1 x Hx) as (P & A & PS).
+      exact (SemG_ap_T S1 S2 s' n1 n2 Lm LRm (sT s x) HI2' (Tx x Hx) (Rx x Hx) P PS Fx2).
+    + intros q Hq. destruct (Hq1 q Hq) as (P & A & PS).
+      exact (SemG_ap_R S1 S2 s' n1 n2 Lm LRm (sR s q) HI2' (Tq q Hq) (Rq q Hq) P PS Fx2).
+  - intros x Hx. change (teq (sT Sg x) (apT S2 (apT s' (sT s x)))).
+    eapply teq_trans; [ exact (Fx1 x Hx) | ].
+    apply ap_factor; [ intros y Hy; exact (Fx2 y (Tx x Hx y Hy)) | intros q Hq; exact (Fr2 q (Rx x Hx q Hq)) ].
+  - intros q Hq. change (req (sR Sg q) (apR S2 (apR s' (sR s q)))).
+    eapply req_trans; [ exact (Fr1 q Hq) | ].
+    apply ap_factor_row; [ intros y Hy; exact (Fx2 y (Tq q Hq y Hy)) | intros r Hr; exact (Fr2 r (Rq q Hq r Hr)) ].
+  - intros E' F' HB.
+    exact (BndL_mono E' F' _ _ _ _ S2 GT GR
+             (BndL_mono E' F' _ _ _ _ S2 (limgT_mono s' _ _ _ _ HsT HsR) (limgR_mono s' _ _ _ _ HsT HsR)
+                (Cv2 E' F' (Hm E' F' HB)))).
+Qed.
+
+(* ---- fresh atoms ---- *)
+
+Lemma LiveG_env : forall E F L LR (D D' Dd : denv) S,
+  LiveG E F L LR D Dd S -> (forall a, a `in` L -> D' a = D a) -> (forall q, q `in` LR -> drk D' q = drk D q) ->
+  LiveG E F L LR D' Dd S.
+Proof.
+  intros E F L LR D D' Dd S (Hs & Hq & Hb & Hn) Ea Er.
+  refine (conj _ (conj _ (conj Hb _))).
+  - intros a Ha. rewrite (Ea a Ha). exact (Hs a Ha).
+  - intros q Hq'. rewrite (Er q Hq'). exact (Hq q Hq').
+  - intros a Ha. rewrite (Ea a Ha). exact (Hn a Ha).
+Qed.
+
+Lemma BndL_agree : forall E F L LR S S',
+  BndL E F L LR S -> (forall a, a `in` L -> sT S' a = sT S a) -> (forall q, q `in` LR -> sR S' q = sR S q) ->
+  BndL E F L LR S'.
+Proof.
+  intros E F L LR S S' (Ht & Hr) Ea Er. split.
+  - intros a Ha. rewrite (Ea a Ha). exact (Ht a Ha).
+  - intros q Hq. rewrite (Er q Hq). exact (Hr q Hq).
+Qed.
+
+(* A fresh type atom of sort [k] sent to [U] joins the live atoms when [U] satisfies
+   the sort, mentions only atoms the bounds allow, and is no record at a sort
+   [NN] keeps off records. *)
+Lemma LiveG_fresh : forall E F L LR (D D' DT : denv) Sg n k U,
+  LOld n L -> LiveG E F L LR D DT Sg -> sat DT k U ->
+  (forall b, b `in` ftv_typ U -> E b) -> (forall q, q `in` frv_typ U -> F q) ->
+  (NQ k -> forall R, U <> typ_Record R) ->
+  D' (ea n) = k -> (forall a, a `in` L -> D' a = D a) -> (forall q, drk D' q = drk D q) ->
+  LiveG E F (L `union` {{ ea n }}) LR D' DT (supd Sg (ea n) U).
+Proof.
+  intros E F L LR D D' DT Sg n k U Ho HL Hs HE HF HN Hk Hag Hdr.
+  assert (Hne : forall a, a `in` L -> a <> ea n) by (intros a Ha E0; exact (Ho a Ha n (le_n n) E0)).
+  pose proof (LiveG_agree E F L LR D DT Sg (supd Sg (ea n) U) HL
+                (fun a Ha => supd_other Sg (ea n) U a (Hne a Ha)) (fun q _ => eq_refl)) as HL1.
+  pose proof (LiveG_env E F L LR D D' DT _ HL1 Hag (fun q _ => Hdr q)) as HL2.
+  destruct HL2 as (S2 & Q2 & (T2 & B2) & N2).
+  refine (conj _ (conj _ (conj (conj _ B2) _))).
+  - intros a Ha. apply AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha]; [ exact (S2 a Ha) | ].
+    apply AtomSetFacts.singleton_iff in Ha. subst a. rewrite supd_same, Hk. exact Hs.
+  - intros q Hq. exact (Q2 q Hq).
+  - intros a Ha. apply AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha]; [ exact (T2 a Ha) | ].
+    apply AtomSetFacts.singleton_iff in Ha. subst a. rewrite supd_same. exact (conj HE HF).
+  - intros a Ha. apply AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha]; [ exact (N2 a Ha) | ].
+    apply AtomSetFacts.singleton_iff in Ha. subst a. rewrite supd_same, Hk. exact HN.
+Qed.
+
+(* A fresh type atom: the identity step to the extended environment and substitution. *)
+Lemma SemG_fresh : forall E F L LR DT D Sg n k U,
+  DOk D n -> Drow D -> LOld n L -> LOld n LR -> LiveG E F L LR D DT Sg ->
+  SemG E F L LR DT Sg n sid (upd D (ea n) k) (S n) (supd Sg (ea n) U).
+Proof.
+  intros E F L LR DT D Sg n k U Hd Hrow Ho Hro HL.
+  assert (Hne : forall a, a `in` L -> a <> ea n) by (intros a Ha E0; exact (Ho a Ha n (le_n n) E0)).
+  assert (Hsub : limgT sid L LR [<=] L /\ limgR sid L LR [<=] LR).
+  { split; intros y Hy.
+    - apply limgT_in in Hy. destruct Hy as [(x & Hx & Hy)|(q & Hq & Hy)].
+      + cbn [sT sid idt] in Hy. simpl in Hy. apply AtomSetFacts.singleton_iff in Hy. subst y. exact Hx.
+      + cbn [sR sid idr] in Hy. simpl in Hy. fsetdec.
+    - apply limgR_in in Hy. destruct Hy as [(x & Hx & Hy)|(q & Hq & Hy)].
+      + cbn [sT sid idt] in Hy. simpl in Hy. fsetdec.
+      + cbn [sR sid idr] in Hy. simpl in Hy. apply AtomSetFacts.singleton_iff in Hy. subst y. exact Hq. }
+  pose proof (LiveG_env E F L LR D (upd D (ea n) k) DT Sg HL
+                (fun a Ha => upd_other D (ea n) k a (Hne a Ha)) (fun q _ => eq_refl)) as HL1.
+  pose proof (LiveG_agree E F L LR _ DT Sg (supd Sg (ea n) U) HL1
+                (fun a Ha => supd_other Sg (ea n) U a (Hne a Ha)) (fun q _ => eq_refl)) as HL2.
+  refine (conj (DOk_upd D n k Hd) (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ OkS_id))))))).
+  - intros r. cbn [upd drk]. exact (Hrow r).
+  - exact (LiveG_mono _ _ _ _ _ _ _ _ _ (proj1 Hsub) (proj2 Hsub) HL2).
+  - refine (conj (Nat.le_succ_diag_r n) (conj _ _)).
+    + intros x Hx. cbn [sT sid idt].
+      exact (conj I (conj (atT_V DT (S n) x (old_le n (S n) x (Nat.le_succ_diag_r n) (Ho x Hx))) I)).
+    + intros q Hq. cbn [sR sid idr].
+      exact (conj I (conj (atR_V DT (S n) q (old_le n (S n) q (Nat.le_succ_diag_r n) (Hro q Hq))) I)).
+  - intros x Hx. cbn [sid sT idt]. change (teq (sT Sg x) (sT (supd Sg (ea n) U) x)).
+    rewrite (supd_other Sg (ea n) U x (Hne x Hx)). apply teq_refl.
+  - intros q Hq. cbn [sid sR idr]. change (req (sR Sg q) (sR (supd Sg (ea n) U) q)).
+    cbn [supd sR]. apply req_refl.
+  - intros E' F' HB.
+    exact (BndL_agree E' F' _ _ Sg (supd Sg (ea n) U)
+             (BndL_mono E' F' _ _ _ _ Sg (proj1 Hsub) (proj2 Hsub) HB)
+             (fun a Ha => supd_other Sg (ea n) U a (Hne a (proj1 Hsub a Ha))) (fun q _ => eq_refl)).
+Qed.
+
+(* A fresh presence atom: a type atom of sort [Any] sent to [Unit]. *)
+Lemma PLive_fresh : forall LP (Sg : sub) n,
+  PLive LP Sg -> (forall a, a `in` LP -> a <> ea n) ->
+  PLive (LP `union` {{ ea n }}) (supd Sg (ea n) typ_Unit).
+Proof.
+  intros LP Sg n HP Hne a Ha. apply AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
+  - rewrite (supd_other Sg (ea n) typ_Unit a (Hne a Ha)). exact (HP a Ha).
+  - apply AtomSetFacts.singleton_iff in Ha. subst a. apply supd_same.
 Qed.
