@@ -203,6 +203,20 @@ Proof.
   apply FT_cons; [ exact (V1 S D'' n'' Hg Hs1) | exact (V2 S D'' n'' Hg Hs2) ].
 Qed.
 
+Lemma V_record : forall Gs D n fs R H,
+  VF Gs D n fs R H -> no_meth fs = true -> V Gs D n (e_rec fs) (typ_Record R) H.
+Proof.
+  intros Gs D n fs R H HV Hnm S D'' n'' Hg Hs. apply T_Record; [ exact (HV S D'' n'' Hg Hs) | exact Hnm ].
+Qed.
+
+Lemma V_spread : forall Gs D n e1 e2 l P T R H1 H2,
+  V Gs D n e1 (typ_Record (row_Maybe l P T R)) H1 -> V Gs D n e2 T H2 ->
+  V Gs D n (e_spread e1 l e2) (typ_Record (row_Ext l T R)) (H1 ++ H2).
+Proof.
+  intros Gs D n e1 e2 l P T R H1 H2 V1 V2 S D'' n'' Hg Hs. apply Sol_app in Hs as [Hs1 Hs2].
+  eapply T_Spread; [ exact (V1 S D'' n'' Hg Hs1) | exact (V2 S D'' n'' Hg Hs2) ].
+Qed.
+
 Lemma VF_dis : forall k f Gs D n fs R H d D' n',
   VF Gs D n fs R H -> dis k f D H n = Some (d, D', n') -> DOk D n -> HOk H ->
   Good D n d D' n' /\ field_typing D' (apC d Gs) fs (apR d R).
