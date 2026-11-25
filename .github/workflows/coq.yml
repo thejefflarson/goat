@@ -83,6 +83,10 @@ jobs:
             *) echo "::error::expected Rocq 9.1.x in switch rocq-9, got: $v"; exit 1 ;;
           esac
 
+      # Serial on purpose: the runner pod has a 6Gi limit and the kernel kills
+      # the whole pod, runner agent included, when it is exceeded. Peak on main
+      # is 1.0 GB for the largest file and under 1.1 GB for the whole target
+      # (proofs/README.md, Memory); -j2 would add one more such process.
       - name: Build proofs under Rocq
         if: steps.changes.outputs.build == 'true'
         run: opam exec --switch=rocq-9 -- make -C proofs ci
