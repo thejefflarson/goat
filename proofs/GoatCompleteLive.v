@@ -43,6 +43,8 @@ Require Import Goat.GoatCompleteRfRows.
 Require Import Goat.GoatCompleteSorts.
 Require Import Goat.GoatCompleteRewrite.
 Require Import Goat.GoatCompleteCtx.
+Require Import Goat.GoatCompleteHeld.
+Require Import Goat.GoatInferW.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Lists.List.
@@ -667,4 +669,41 @@ Proof.
   intros LP Sg n HP Hne a Ha. apply AtomSetFacts.union_iff in Ha. destruct Ha as [Ha|Ha].
   - rewrite (supd_other Sg (ea n) typ_Unit a (Hne a Ha)). exact (HP a Ha).
   - apply AtomSetFacts.singleton_iff in Ha. subst a. apply supd_same.
+Qed.
+
+(* ---- what a run ends with ---- *)
+
+(* The induction's conclusion over the fragment: the run succeeds from some fuel
+   on, its step is a [SemG], its type is in the fragment with every entry present
+   under the extension, and the equations it holds are ones [dis] discharges
+   ([HOkC], GoatCompleteHeld.v).  [DoneG] is [Done] of GoatCompleteCore.v with the
+   record-free clauses replaced and the held equations returned. *)
+Definition DoneG (E F : atom -> Prop) (L LR : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat)
+  (Sg : sub) (T1 : typ) : Prop :=
+  exists s D' n' S2 T e' H,
+    Stable (fun f => infer true f D G e n = Some (s, D', T, n', e', H)) /\
+    SemG E F L LR D1 Sg n s D' n' S2 /\
+    pf T /\ atT n' T /\ ps S2 T /\ EvT T /\ LiveG E F (ftv_typ T) (frv_typ T) D' D1 S2 /\
+    HOkC S2 n' H /\ teq (apT S2 T) T1 /\ is_gen_value e' = is_gen_value e /\ let_open e' = let_open e.
+
+Lemma DoneG_const : forall E F L LR D1 G e D n Sg T1 c,
+  (forall f, infer true (S f) D G e n = Some (sid, D, c, n, e, nil)) ->
+  (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) ->
+  DOk D n -> Drow D -> LOld n L -> LOld n LR -> LiveG E F L LR D D1 Sg -> teq c T1 ->
+  DoneG E F L LR D1 G e D n Sg T1.
+Proof.
+  intros E F L LR D1 G e D n Sg T1 c Hi Hc Hd Hrow Ho Hro HL Hteq.
+  assert (Hnone : ftv_typ c [<=] {} /\ frv_typ c [<=] {}).
+  { destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; simpl; split; fsetdec. }
+  exists sid, D, n, Sg, c, e, nil.
+  refine (conj _ (conj (SemG_id E F L LR D1 Sg D n Hd Hrow Ho Hro HL) _)).
+  - exists 1. intros f Hf. destruct f as [|f]; [ lia | exact (Hi f) ].
+  - refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj (Forall_nil _) (conj _ (conj eq_refl eq_refl)))))))).
+    + destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact I.
+    + split; intros y Hy; exfalso; [ pose proof (proj1 Hnone y Hy) as H0 | pose proof (proj2 Hnone y Hy) as H0 ]; revert H0; fsetdec.
+    + destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact I.
+    + split; intros y Hy; exfalso; [ pose proof (proj1 Hnone y Hy) as H0 | pose proof (proj2 Hnone y Hy) as H0 ]; revert H0; fsetdec.
+    + exact (LiveG_mono _ _ _ _ _ _ _ _ _ (proj1 Hnone) (proj2 Hnone) (LiveG_empty E F D D1 Sg)).
+    + change (teq (apT Sg c) T1).
+      destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact Hteq.
 Qed.
