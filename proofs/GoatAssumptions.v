@@ -13,6 +13,7 @@ Require Import Goat.GoatRoundtrip.
 Require Import Goat.GoatMeta.
 Require Import Goat.GoatSound.
 Require Import Goat.GoatInferSound.
+Require Import Goat.GoatInferHeld.
 Require Import Goat.GoatElab.
 Require Import Goat.GoatInferElab.
 Require Import Goat.GoatUnrollEqb.

@@ -1405,3 +1405,26 @@ moves it along a step the algorithm took (`Sol_apH`: `S` solves `apH t H` exactl
 of `infer_sound` with the later substitution abstracted, and `V_let_dis` first discharges
 the bound term's equations with `dis_sound`. `VF*` is the same for field lists. Nothing
 here touches W or `infer_sound`.
+
+## Held equations, step 3: W holds the equations (`GoatInferW`, `GoatInferHeld`)
+
+`infer` (and `infer_fields`, `infer_obj`, `infer_arms`) returns a sixth component, the list of
+equations `H` it holds, stated of the types at the state it returns. A spread onto an open
+row or entry (`spread_present`) gives the entry a fresh field variable `y` and holds
+`p => y = T2`; every other construct concatenates its children's equations after applying
+the later substitutions to them (`apH`). A generalizing `let` and a recursive group call
+`dis` (fuel `S (length H)`) on the equations of the bound term, generalize `apT d T` over
+`apC d G` at the environment `dis` returns, and return the substitution `s2 o d o s1`.
+`infer_closed_elab` discharges what is left with `dis_top`. Equations whose presence the
+context owns are not carried yet: `dis` unifies them as present at the `let` (that is the
+R2 work, H1c).
+
+`infer_sound` is restated in `GoatInferHeld` (it needs `V`, which `GoatHeldV` states over
+`GoatInferSound`'s lemmas): a result's equations satisfy `HOk`, and
+`V (apC s G) D' n' e' T H` says the type is derivable under every `Good` step that solves
+`H`. Each construct pushes its children's `V`s to the state it returns (`V_push`) and applies
+the typing rule over `V` (`V_app`, `V_if`, `V_spread_h`, `V_spreadL`, `V_obj`, `V_match`,
+`V_let_dis`, `V_letrec`, ...). `tie_obj_V` is `tie_obj_sound` over `V`; `VA` is `arms_typ`
+over `V`. `infer_closed_sound` keeps its statement. `infer_guard` carries `mgH` for the
+equations (`dis_gsub`), and completeness (`GoatCompleteCore`) reads the equations of a
+spread-free program as `nil`.
