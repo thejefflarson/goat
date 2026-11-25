@@ -128,3 +128,4 @@ GoatCompleteBound.v
 GoatCompleteSchT.v
 GoatCompleteMonoT.v
 GoatCompleteCtxT.v
+GoatCompleteCtxW.v
