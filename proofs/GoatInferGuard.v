@@ -664,16 +664,16 @@ Lemma mg_bin_res : forall o T, mg T -> mg (bin_res o T).
 Proof. intros o T H. unfold bin_res. destruct (kind o); first [ exact H | exact I ]. Qed.
 
 Ltac dI H E :=
-  match type of H with context [infer ?f ?D ?G ?e ?n] =>
-    destruct (infer f D G e n) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
+  match type of H with context [infer ?g ?f ?D ?G ?e ?n] =>
+    destruct (infer g f D G e n) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
 
 Ltac dF H E :=
-  match type of H with context [infer_fields ?f ?D ?G ?e ?n] =>
-    destruct (infer_fields f D G e n) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
+  match type of H with context [infer_fields ?g ?f ?D ?G ?e ?n] =>
+    destruct (infer_fields g f D G e n) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
 
 Ltac dA H E :=
-  match type of H with context [infer_arms ?f ?D ?G ?w ?Ts ?x ?r ?a ?n] =>
-    destruct (infer_arms f D G w Ts x r a n) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
+  match type of H with context [infer_arms ?g ?f ?D ?G ?w ?Ts ?x ?r ?a ?n] =>
+    destruct (infer_arms g f D G w Ts x r a n) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
 
 Ltac dC H E :=
   match type of H with context [unify_coD ?f ?D ?A ?B ?n] =>
@@ -692,8 +692,8 @@ Proof.
 Qed.
 
 Ltac dO H E :=
-  match type of H with context [infer_obj ?f ?D ?G ?p ?Tp ?e ?n] =>
-    destruct (infer_obj f D G p Tp e n) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
+  match type of H with context [infer_obj ?g ?f ?D ?G ?p ?Tp ?e ?n] =>
+    destruct (infer_obj g f D G p Tp e n) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E; [|discriminate H] end.
 
 Ltac dT H E :=
   match type of H with context [tie_obj ?f ?D ?fs ?R ?Rsl ?n] =>
@@ -793,6 +793,20 @@ Proof.
       exact (gs_comp _ _ (IH _ _ _ _ _ _ _ Ed (mgH_ap _ _ (gs_bool_sub (p :: nil)) HH')) (gs_bool_sub (p :: nil))).
 Qed.
 
+Lemma mgH_filter : forall (P : heq -> bool) H, mgH H -> mgH (filter P H).
+Proof.
+  intros P H. unfold mgH. rewrite !Forall_forall. intros HH h Hh.
+  apply filter_In in Hh as [Hh _]. exact (HH h Hh).
+Qed.
+
+Lemma mgH_absent_req : forall H, mgH H -> mgH (map absent_req H).
+Proof.
+  intros H. unfold mgH. rewrite !Forall_forall. intros HH h' Hh'.
+  apply in_map_iff in Hh' as [h [<- Hh]].
+  destruct (HH h Hh) as (Hp & _ & _ & _). cbn [absent_req h_pres h_fld h_val h_rest].
+  exact (conj Hp (conj I (conj I (conj I I)))).
+Qed.
+
 Lemma spread_present_guard : forall f D2 s1 s2 T1 T2 l e1' e2' n2 H1 H2 s D' T n' e' Hq,
   spread_present f D2 s1 s2 T1 T2 l e1' e2' n2 H1 H2 = Some (s, D', T, n', e', Hq) ->
   gsub s2 -> gsub s1 -> mg (apT s2 T1) -> mg T2 -> mgH H1 -> mgH H2 -> gsub s /\ mg T /\ mgH Hq.
@@ -849,15 +863,18 @@ Proof.
     + exact (conj (conj MP (conj MF MR)) (mgH_app _ _ GF GR)).
 Qed.
 
+Section Gm.
+Variable gm : bool.
+
 Theorem infer_guard : forall f,
-  (forall D G e n s D' T n' e' Hq, infer f D G e n = Some (s, D', T, n', e', Hq) ->
+  (forall D G e n s D' T n' e' Hq, infer gm f D G e n = Some (s, D', T, n', e', Hq) ->
      mg_ctx G -> gsub s /\ mg T /\ mgH Hq) /\
-  (forall D G fs n s D' R n' fs' Hq, infer_fields f D G fs n = Some (s, D', R, n', fs', Hq) ->
+  (forall D G fs n s D' R n' fs' Hq, infer_fields gm f D G fs n = Some (s, D', R, n', fs', Hq) ->
      mg_ctx G -> gsub s /\ mgr R /\ mgH Hq) /\
   (forall D G w Ts x res ars n s D' T n' ars' Hq,
-     infer_arms f D G w Ts x res ars n = Some (s, D', T, n', ars', Hq) ->
+     infer_arms gm f D G w Ts x res ars n = Some (s, D', T, n', ars', Hq) ->
      mg_ctx G -> Forall mg Ts -> mg res -> gsub s /\ mg T /\ mgH Hq) /\
-  (forall D G p Tp fs n s D' R n' fs' Hq, infer_obj f D G p Tp fs n = Some (s, D', R, n', fs', Hq) ->
+  (forall D G p Tp fs n s D' R n' fs' Hq, infer_obj gm f D G p Tp fs n = Some (s, D', R, n', fs', Hq) ->
      mg_ctx G -> mg Tp -> gsub s /\ mgr R /\ mgH Hq).
 Proof.
   induction f as [|f IH]; [refine (conj _ (conj _ (conj _ _))); intros; discriminate|].
@@ -887,16 +904,17 @@ Proof.
                   (conj (mg_apT _ (typ_Var _) S3 I)
                         (mgH_app _ _ (mgH_ap _ _ S3 (mgH_ap _ _ S2 HH1)) (mgH_ap _ _ S3 HH2)))).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ _ E1 HG) as (S1 & M1 & HH1).
-      match type of H with context [if is_gen_value ?e && negb (pres_owned ?g ?h) then _ else _] => destruct (is_gen_value e && negb (pres_owned g h)) end.
+      match type of H with context [if is_gen_value ?e && (gm || negb (pres_owned ?g ?h)) then _ else _] => destruct (is_gen_value e && (gm || negb (pres_owned g h))) end.
       * match type of H with context [dis ?k ?f0 ?D0 ?H0 ?n0] =>
           destruct (dis k f0 D0 H0 n0) as [[[dd Dd] nd]|] eqn:Ed; [ | discriminate H ] end.
         dI H E2.
         injection H as <- <- <- <- <- <-.
-        pose proof (dis_gsub _ _ _ _ _ _ _ _ Ed HH1) as Sd.
+        pose proof (dis_gsub _ _ _ _ _ _ _ _ Ed (mgH_filter _ _ HH1)) as Sd.
         destruct (IHi _ _ _ _ _ _ _ _ _ _ E2
-                    (mg_cons _ _ _ (gen_ren_mg _ _ _ (mg_apT _ _ Sd M1))
+                    (mg_cons _ _ _ (gen_ren_mg _ _ _ (mg_apT _ _ (gs_bool_sub _) (mg_apT _ _ Sd M1)))
                        (mg_apC _ _ Sd (mg_apC _ _ S1 HG)))) as (S2 & M2 & HH2).
-        exact (conj (gs_comp _ _ S2 (gs_comp _ _ Sd S1)) (conj M2 HH2)).
+        exact (conj (gs_comp _ _ S2 (gs_comp _ _ Sd S1))
+                    (conj M2 (mgH_app _ _ (mgH_ap _ _ S2 (mgH_absent_req _ (mgH_ap _ _ Sd (mgH_filter _ _ HH1)))) HH2))).
       * dI H E2.
         injection H as <- <- <- <- <- <-.
         destruct (IHi _ _ _ _ _ _ _ _ _ _ E2 (mg_cons _ (sch_mono _) _ M1 (mg_apC _ _ S1 HG))) as (S2 & M2 & HH2).
@@ -921,8 +939,8 @@ Proof.
     + destruct (no_meth fs) eqn:Hnm; try (rewrite Hnm in H).
       * dF H E1. injection H as <- <- <- <- <- <-.
         destruct (IHf _ _ _ _ _ _ _ _ _ _ E1 HG) as (S1 & M1 & HH1). exact (conj S1 (conj M1 HH1)).
-      * match type of H with context [infer_obj ?f0 ?D0 ?G0 ?p0 ?Tp0 ?e0 ?n0] =>
-          destruct (infer_obj f0 D0 G0 p0 Tp0 e0 n0) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E1; [|discriminate H] end.
+      * match type of H with context [infer_obj gm ?f0 ?D0 ?G0 ?p0 ?Tp0 ?e0 ?n0] =>
+          destruct (infer_obj gm f0 D0 G0 p0 Tp0 e0 n0) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E1; [|discriminate H] end.
         match type of H with context [tie_obj ?f0 ?D0 ?fs0 ?R0 ?Rsl0 ?n0] =>
           destruct (tie_obj f0 D0 fs0 R0 Rsl0 n0) as [[[[? ?] ?] ?]|] eqn:E2; [|discriminate H] end.
         injection H as <- <- <- <- <- <-.
@@ -1030,16 +1048,16 @@ Proof.
     destruct fs as [|l e rest|l e rest]; cbn [infer infer_fields infer_arms infer_obj] in H; try discriminate H.
     + injection H as <- <- <- <- <- <-. exact (conj gs_id (conj I mgH_nil)).
     + dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ _ E1 HG) as (S1 & M1 & HH1).
-      match type of H with context [infer_obj ?f0 ?D0 ?G0 ?p0 ?Tp0 ?e0 ?n0] =>
-        destruct (infer_obj f0 D0 G0 p0 Tp0 e0 n0) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E2; [|discriminate H] end.
+      match type of H with context [infer_obj gm ?f0 ?D0 ?G0 ?p0 ?Tp0 ?e0 ?n0] =>
+        destruct (infer_obj gm f0 D0 G0 p0 Tp0 e0 n0) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E2; [|discriminate H] end.
       destruct (IHo _ _ _ _ _ _ _ _ _ _ _ _ E2 (mg_apC _ _ S1 HG) (mg_apT _ _ S1 HTp)) as (S2 & M2 & HH2).
       injection H as <- <- <- <- <- <-.
       exact (conj (gs_comp _ _ S2 S1) (conj (conj (mg_apT _ _ S2 M1) M2)
                                             (mgH_app _ _ (mgH_ap _ _ S2 HH1) HH2))).
     + destruct e; try discriminate H.
       dI H E1. destruct (IHi _ _ _ _ _ _ _ _ _ _ E1 (mg_cons _ (sch_mono Tp) _ HTp HG)) as (S1 & M1 & HH1).
-      match type of H with context [infer_obj ?f0 ?D0 ?G0 ?p0 ?Tp0 ?e0 ?n0] =>
-        destruct (infer_obj f0 D0 G0 p0 Tp0 e0 n0) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E2; [|discriminate H] end.
+      match type of H with context [infer_obj gm ?f0 ?D0 ?G0 ?p0 ?Tp0 ?e0 ?n0] =>
+        destruct (infer_obj gm f0 D0 G0 p0 Tp0 e0 n0) as [[[[[[? ?] ?] ?] ?] ?]|] eqn:E2; [|discriminate H] end.
       destruct (IHo _ _ _ _ _ _ _ _ _ _ _ _ E2 (mg_apC _ _ S1 HG) (mg_apT _ _ S1 HTp)) as (S2 & M2 & HH2).
       injection H as <- <- <- <- <- <-.
       exact (conj (gs_comp _ _ S2 S1)
@@ -1047,17 +1065,29 @@ Proof.
                         (mgH_app _ _ (mgH_ap _ _ S2 HH1) HH2))).
 Qed.
 
+End Gm.
+
 (* Every recursive type inside a type the algorithm infers for a closed
    program has a guarded body. *)
+Lemma infer_closed_elab_m_guarded : forall gm fuel e D T e',
+  infer_closed_elab_m gm fuel e = Some (D, T, e') -> mg T.
+Proof.
+  intros gm fuel e D T e' H. unfold infer_closed_elab_m in H.
+  destruct (infer gm fuel d_any nil e 0) as [[[[[[s D1] T1] n] e1] Hq]|] eqn:E; [|discriminate].
+  destruct (dis_top fuel D1 Hq n) as [[[d D2] n2]|] eqn:Ed; [|discriminate].
+  injection H as <- <- <-.
+  destruct (proj1 (infer_guard gm fuel) _ _ _ _ _ _ _ _ _ _ E mg_ctx_nil) as (S1 & M1 & HH1).
+  unfold dis_top in Ed.
+  exact (mg_apT _ _ (dis_gsub _ _ _ _ _ _ _ _ Ed HH1) M1).
+Qed.
+
 Theorem infer_guarded : forall fuel e D T e',
   infer_closed_elab fuel e = Some (D, T, e') -> mg T.
 Proof.
   intros fuel e D T e' H. unfold infer_closed_elab in H.
-  destruct (infer fuel d_any nil e 0) as [[[[[[s D1] T1] n] e1] Hq]|] eqn:E; [|discriminate].
-  destruct (dis_top fuel D1 Hq n) as [[[d D2] n2]|] eqn:Ed; [|discriminate].
-  injection H as <- <- <-.
-  destruct (proj1 (infer_guard fuel) _ _ _ _ _ _ _ _ _ _ E mg_ctx_nil) as (S1 & M1 & HH1).
-  exact (mg_apT _ _ (dis_gsub _ _ _ _ _ _ _ _ Ed HH1) M1).
+  destruct (infer_closed_elab_m true fuel e) as [r|] eqn:E1.
+  - inversion H; subst. exact (infer_closed_elab_m_guarded _ _ _ _ _ _ E1).
+  - exact (infer_closed_elab_m_guarded _ _ _ _ _ _ H).
 Qed.
 
 Corollary infer_closed_env_guarded : forall fuel e D T,

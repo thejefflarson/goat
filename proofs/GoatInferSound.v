@@ -361,12 +361,15 @@ Qed.
 
 (* The members of a recursive group stay functions through elaboration: the
    algorithm builds a function's elaboration as a function. *)
+Section Gm.
+Variable gm : bool.
+
 Lemma infer_abs_shape : forall f D G b n s D' T n' e' H,
-  infer f D G (e_abs b) n = Some (s, D', T, n', e', H) -> exists b', e' = e_abs b'.
+  infer gm f D G (e_abs b) n = Some (s, D', T, n', e', H) -> exists b', e' = e_abs b'.
 Proof.
   intros f D G b n s D' T n' e' Hh H. destruct f as [|f]; [ discriminate H | ].
   cbn [infer] in H.
-  destruct (infer f D ((fresh_var G b ~ sch_mono (typ_Var (ea n))) ++ G)
+  destruct (infer gm f D ((fresh_var G b ~ sch_mono (typ_Var (ea n))) ++ G)
               (open_exp_wrt_exp b (e_fvar_f (fresh_var G b))) (S n))
     as [[[[[[s0 D1] T0] n0] b0] H0]|]; [ | discriminate H ].
   inversion H; subst. eexists. reflexivity.
@@ -380,15 +383,15 @@ Proof.
 Qed.
 
 Lemma infer_fields_fn_group : forall f D G fs n s D' R n' fs' H,
-  is_fn_group fs = true -> infer_fields f D G fs n = Some (s, D', R, n', fs', H) ->
+  is_fn_group fs = true -> infer_fields gm f D G fs n = Some (s, D', R, n', fs', H) ->
   fn_group fs'.
 Proof.
   intros f D G fs. revert f D G. induction fs as [|l e rest IH|l e rest IH]; intros f D G n s D' R n' fs' Hh Hg H;
     destruct f as [|f]; try discriminate H; cbn [infer_fields] in H.
   - inversion H; subst. constructor.
   - destruct e; try discriminate Hg. cbn [is_fn_group] in Hg.
-    destruct (infer f D G (e_abs e) n) as [[[[[[s1 D1] T1] n1] e1'] H1]|] eqn:E1; [ | discriminate H ].
-    destruct (infer_fields f D1 (apC s1 G) rest n1) as [[[[[[s2 D2] R2] n2] rest'] H2]|] eqn:E2;
+    destruct (infer gm f D G (e_abs e) n) as [[[[[[s1 D1] T1] n1] e1'] H1]|] eqn:E1; [ | discriminate H ].
+    destruct (infer_fields gm f D1 (apC s1 G) rest n1) as [[[[[[s2 D2] R2] n2] rest'] H2]|] eqn:E2;
       [ | discriminate H ].
     inversion H; subst.
     destruct (infer_abs_shape _ _ _ _ _ _ _ _ _ _ _ E1) as [b' ->].
@@ -396,16 +399,18 @@ Proof.
 Qed.
 
 Lemma infer_fields_no_meth : forall f D G fs n s D' R n' fs' H,
-  infer_fields f D G fs n = Some (s, D', R, n', fs', H) -> no_meth fs' = true.
+  infer_fields gm f D G fs n = Some (s, D', R, n', fs', H) -> no_meth fs' = true.
 Proof.
   intros f D G fs. revert f D G. induction fs as [|l e rest IH|l e rest IH];
     intros f D G n s D' R n' fs' Hh H; destruct f as [|f]; try discriminate H; cbn [infer_fields] in H.
   - inversion H; subst. reflexivity.
-  - destruct (infer f D G e n) as [[[[[[s1 D1] T1] n1] e1'] H1]|]; [ | discriminate H ].
-    destruct (infer_fields f D1 (apC s1 G) rest n1) as [[[[[[s2 D2] R2] n2] rest'] H2]|] eqn:E2;
+  - destruct (infer gm f D G e n) as [[[[[[s1 D1] T1] n1] e1'] H1]|]; [ | discriminate H ].
+    destruct (infer_fields gm f D1 (apC s1 G) rest n1) as [[[[[[s2 D2] R2] n2] rest'] H2]|] eqn:E2;
       [ | discriminate H ].
     inversion H; subst. cbn [no_meth]. exact (IH _ _ _ _ _ _ _ _ _ _ E2).
 Qed.
+
+End Gm.
 
 Lemma fn_group_clf : forall fs k x, fn_group fs -> fn_group (clf k x fs).
 Proof.

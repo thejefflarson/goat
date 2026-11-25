@@ -715,6 +715,46 @@ Proof.
     + intros r. unfold scomp, rcomp. simpl. unfold sbT, idr. simpl. exact (Hr r).
 Qed.
 
+Lemma bool_sub_in : forall ps x, In x ps -> sT (bool_sub ps) x = typ_Bool.
+Proof.
+  induction ps as [|p ps IH]; intros x Hx; [ destruct Hx | ].
+  change (ap_typ (sT (bool_sub ps)) (sR (bool_sub ps)) (sT (sbT p typ_Bool) x) = typ_Bool).
+  cbn [sT sbT]. destruct (Atom.eq_dec x p) as [->|Hne]; [ reflexivity | ].
+  destruct Hx as [E|Hx]; [ exfalso; apply Hne; symmetry; exact E | exact (IH x Hx) ].
+Qed.
+
+Lemma bool_sub_out : forall ps x, ~ In x ps -> sT (bool_sub ps) x = typ_Var x.
+Proof.
+  induction ps as [|p ps IH]; intros x Hx; [ reflexivity | ].
+  change (ap_typ (sT (bool_sub ps)) (sR (bool_sub ps)) (sT (sbT p typ_Bool) x) = typ_Var x).
+  cbn [sT sbT]. destruct (Atom.eq_dec x p) as [->|Hne].
+  - exfalso. apply Hx. left. reflexivity.
+  - exact (IH x (fun H => Hx (or_intror H))).
+Qed.
+
+Lemma bool_sub_R : forall ps q, sR (bool_sub ps) q = row_Var q.
+Proof.
+  induction ps as [|p ps IH]; intros q; [ reflexivity | ].
+  change (ap_row (sT (bool_sub ps)) (sR (bool_sub ps)) (sR (sbT p typ_Bool) q) = row_Var q).
+  cbn [sR sbT]. exact (IH q).
+Qed.
+
+Lemma bool_sub_T_cases : forall ps x, sT (bool_sub ps) x = typ_Var x \/ sT (bool_sub ps) x = typ_Bool.
+Proof.
+  intros ps x. destruct (in_dec Atom.eq_dec x ps) as [H|H];
+    [ right; exact (bool_sub_in ps x H) | left; exact (bool_sub_out ps x H) ].
+Qed.
+
+Lemma bool_sub_agree : forall Sg ps, (forall p, In p ps -> sT Sg p = typ_Bool) ->
+  (forall x, sT Sg x = apT Sg (sT (bool_sub ps) x)) /\ (forall q, sR Sg q = apR Sg (sR (bool_sub ps) q)).
+Proof.
+  intros Sg ps H. split.
+  - intros x. destruct (in_dec Atom.eq_dec x ps) as [Hin|Hin].
+    + rewrite (bool_sub_in ps x Hin). exact (H x Hin).
+    + rewrite (bool_sub_out ps x Hin). reflexivity.
+  - intros q. rewrite bool_sub_R. reflexivity.
+Qed.
+
 Lemma bind_row0_sound : forall D r R n s D' n',
   bind_row0 D r R n = Some (s, D', n') -> EvR (row_Var r) -> EvR R ->
   OkS s /\ req (apR s (row_Var r)) (apR s R) /\ GoodU D n s D' n'.

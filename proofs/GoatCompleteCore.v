@@ -252,7 +252,7 @@ Qed.
 Definition Done (L : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat)
   (Sg : sub) (T1 : typ) : Prop :=
   exists s D' n' S2 T e',
-    Stable (fun f => infer f D G e n = Some (s, D', T, n', e', nil)) /\
+    Stable (fun f => infer true f D G e n = Some (s, D', T, n', e', nil)) /\
     SemL PEv L D1 Sg n s D' n' S2 /\ TOk n' T /\ EvT T /\ Live PEv (ftv_typ T) D' D1 S2 /\
     RA D' /\ teqD D1 (apT S2 T) T1 /\ is_gen_value e' = is_gen_value e /\ let_open e' = let_open e.
 
@@ -261,7 +261,7 @@ Lemma EvT_scalar : forall c,
 Proof. intros c Hc. exact (proj1 (PEv_scalar c Hc)). Qed.
 
 Lemma Done_const : forall L D1 G e D n Sg T1 c,
-  (forall f, infer (S f) D G e n = Some (sid, D, c, n, e, nil)) ->
+  (forall f, infer true (S f) D G e n = Some (sid, D, c, n, e, nil)) ->
   (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) ->
   DOk D n -> RA D -> Live PEv L D D1 Sg -> teqD D1 c T1 -> Done L D1 G e D n Sg T1.
 Proof.
@@ -663,6 +663,9 @@ Proof.
 Qed.
 
 (* ---- the induction ---- *)
+
+Lemma own_sub_nil : forall d, own_sub d nil = sid.
+Proof. reflexivity. Qed.
 
 Theorem infer_complete_core : forall Av D1 G1 e T1, ctyping Av D1 G1 e T1 ->
   forall D G n Sg L, DOk D n -> RA D -> LOld n L -> LEv L -> Live PEv L D D1 Sg ->
@@ -1237,8 +1240,8 @@ Proof.
                             (fun y Hy => HlimL y (Hlsid y Hy)) Sem2)
       (conj HT (conj HE (conj LvT (conj HRA2 (conj Heq2 (conj _ _)))))))).
     + pose proof (Stable_below _ (Stable_and _ _ St1 St2)) as HSt. stable_run HSt.
-      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv1', pres_owned_nil. cbn [negb andb]. cbn [length]. rewrite dis_nil.
-      cbv beta iota zeta. rewrite apT_sid, apC_sid.
+      destruct Hf as (E1 & E2). cbn [infer]. rewrite E1, Hgv1'. cbn [orb andb filter length]. rewrite dis_nil.
+      cbv beta iota zeta. rewrite own_sub_nil, !apT_sid, !apC_sid.
       unfold sc, G1 in E2. rewrite E2. reflexivity.
     + reflexivity.
     + reflexivity.
@@ -1269,7 +1272,7 @@ Proof.
     as (s & D' & n' & S2 & T' & e' & St & Sem & HT & HE & LvT & HRA & Heq & HgHeq & HlHeq).
   exists D', T', e', S2.
   assert (St' : Stable (fun f => infer_closed_elab f e = Some (D', T', e'))).
-  { eapply Stable_mono; [ | exact St ]. intros f Hf. unfold infer_closed_elab. rewrite Hf. rewrite dis_top_nil. cbv iota. rewrite apT_sid. reflexivity. }
+  { eapply Stable_mono; [ | exact St ]. intros f Hf. unfold infer_closed_elab, infer_closed_elab_m. rewrite Hf. rewrite dis_top_nil. cbv iota. rewrite apT_sid. reflexivity. }
   refine (conj St' (conj _ (conj LvT (conj (rkres_RA D' d_any (sR S2) HRA) (conj Heq (proj1 HT)))))).
   destruct St' as [f0 Hf0]. exact (proj2 (infer_closed_sound f0 e D' T' e' (Hf0 f0 (le_n f0)))).
 Qed.

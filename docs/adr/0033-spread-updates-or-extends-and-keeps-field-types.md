@@ -408,12 +408,19 @@ before and after differ in exactly one program (`ERR` to `OK`).
 Proofs status. The calculus conversion `req_absf` (an absent entry's field type
 is irrelevant), algorithm W holding the equations (rules 1, 2 and 4), W's
 soundness over them, and the restated completeness have landed. W also does
-rule 3: a use re-holds the equations of its scheme's open entries. W departs
-from rule 5 in one way: a `let` whose bound term holds an equation on a
-presence of the environment stays monomorphic instead of carrying the equation
-in its scheme. The proven algorithm therefore refuses a function bound under a
-parameter's row whose uses need two types (`g(1); g("s")` with
-`g = program(x) do {...r, id: x} done`), which the checker accepts. Carrying
-needs the soundness statement over contexts that depend on the solution (a
-presence that settles present binds the scheme's quantified variable); it is
-open.
+rule 3: a use re-holds the equations of its scheme's open entries.
+
+Rule 5 is proven in the case where the presences end absent. A `let` whose bound
+term holds an equation on a presence of the environment generalizes the bound term
+with those presences read as `Bool` and holds, in place of the equations, the
+requirement that they end `Bool` (`absent_req`, `V_let_own` in `GoatHeldOwn.v`).
+`infer_closed_elab` runs with that bet first and, when it fails (a presence did not
+end absent), again with such a `let` kept monomorphic. This accepts
+`g(1); g("s")` with `g = program(x) do {...r, id: x} done` when `r` turns out to
+lack `id`, in either order, as the checker does. It does not model the checker's
+pinning when the presence ends present: there the checker keeps generalizing the
+variables the equation does not mention, and W makes the whole function
+monomorphic. A program that needs that, or one with two such `let`s whose
+presences end differently, is a W gap in the README's known class (the checker
+accepts, W refuses). Closing it needs the soundness statement over contexts
+realized at the solution (`proofs/README.md`, "Held equations", step 5).

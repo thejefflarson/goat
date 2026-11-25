@@ -237,5 +237,5 @@ sort (a function against `Eq`), which is the monotone clash `forced`. The
 calculus change this needs (`req_absf`) and W's residual are not part of this
 change. Both have since landed in `proofs/` (`proofs/README.md`, "Held
 equations"); a use of a scheme re-holds its open entries' equations
-(`GoatHeldInst.v`), and the carried equations of a generalizing `let` are open
-(ADR 0033, proofs status).
+(`GoatHeldInst.v`). A generalizing `let` over an owned equation is proven where the
+presence ends absent (`GoatHeldOwn.v`, ADR 0033, proofs status).

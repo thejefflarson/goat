@@ -200,16 +200,16 @@ Qed.
 (* One construct, to show the pieces compose: an application whose two
    operands and whose unification each succeed from some fuel on succeeds from
    some fuel on. *)
-Lemma infer_app_stable : forall D G e1 e2 n s1 D1 T1 n1 e1' H1 s2 D2 T2 n2 e2' H2 s3 D3 cs n3,
-  Stable (fun f => infer f D G e1 n = Some (s1, D1, T1, n1, e1', H1)) ->
-  Stable (fun f => infer f D1 (apC s1 G) e2 n1 = Some (s2, D2, T2, n2, e2', H2)) ->
+Lemma infer_app_stable : forall gm D G e1 e2 n s1 D1 T1 n1 e1' H1 s2 D2 T2 n2 e2' H2 s3 D3 cs n3,
+  Stable (fun f => infer gm f D G e1 n = Some (s1, D1, T1, n1, e1', H1)) ->
+  Stable (fun f => infer gm f D1 (apC s1 G) e2 n1 = Some (s2, D2, T2, n2, e2', H2)) ->
   Stable (fun f => unify_coD f D2 (apT s2 T1) (typ_Arrow T2 (typ_Var (ea n2))) (S n2)
                      = Some (s3, D3, cs, n3)) ->
-  Stable (fun f => infer f D G (e_app e1 e2) n =
+  Stable (fun f => infer gm f D G (e_app e1 e2) n =
     Some (scomp s3 (scomp s2 s1), D3, apT s3 (typ_Var (ea n2)), n3, e_app (coerce cs e1') e2',
           apH s3 (apH s2 H1) ++ apH s3 H2)).
 Proof.
-  intros D G e1 e2 n s1 D1 T1 n1 e1' H1 s2 D2 T2 n2 e2' H2 s3 D3 cs n3 St1 St2 St3.
+  intros gm D G e1 e2 n s1 D1 T1 n1 e1' H1 s2 D2 T2 n2 e2' H2 s3 D3 cs n3 St1 St2 St3.
   pose proof (Stable_below _ (Stable_and _ _ St1 (Stable_and _ _ St2 St3))) as H.
   eapply Stable_mono; [ | exact H ].
   intros [|f] Hf; [ contradiction | ]. destruct Hf as (E1 & E2 & E3).

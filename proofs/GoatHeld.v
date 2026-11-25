@@ -83,16 +83,32 @@ Fixpoint dis (k f : nat) (D : denv) (H : list heq) (n : nat) {struct k}
   end.
 
 (* An equation whose presence is a variable of the context: a later statement
-   of the enclosing function can still settle it, so a binding that holds such
-   an equation does not discharge or generalize it. *)
-Definition pres_owned (G : ctx) (H : list heq) : bool :=
-  existsb (fun h => match h_pres h with
-                    | typ_Var p => AtomSetImpl.mem p (ftv_ctx G)
-                    | _ => false
-                    end) H.
+   of the enclosing function can still settle it. *)
+Definition owned_h (G : ctx) (h : heq) : bool :=
+  match h_pres h with
+  | typ_Var p => AtomSetImpl.mem p (ftv_ctx G)
+  | _ => false
+  end.
+
+Definition pres_owned (G : ctx) (H : list heq) : bool := existsb (owned_h G) H.
 
 Lemma pres_owned_nil : forall G, pres_owned G nil = false.
 Proof. reflexivity. Qed.
+
+(* A binding that holds an equation on a presence of the context can neither
+   discharge nor decide it.  When the algorithm may speculate, it generalizes
+   the bound term as if every such presence were absent ([own_sub] makes them
+   [Bool], in the type only) and holds [absent_req] in place of the equation: a
+   requirement that is satisfied exactly when the presence ends up [Bool], and
+   that [dis] never discharges by deciding the presence itself, because its
+   rest names the label. *)
+Definition own_atoms (H : list heq) : list atom :=
+  flat_map (fun h => match h_pres h with typ_Var p => p :: nil | _ => nil end) H.
+
+Definition own_sub (d : sub) (Ho : list heq) : sub := bool_sub (own_atoms (apH d Ho)).
+
+Definition absent_req (h : heq) : heq :=
+  Heq (h_lbl h) (h_pres h) typ_Bool typ_Unit (row_Ext (h_lbl h) typ_Unit row_Empty).
 
 (* A use of a scheme re-holds what its entries held.  The presences [ps] are the
    fresh atoms the use gave the scheme's quantified presences; each open entry
