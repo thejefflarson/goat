@@ -403,17 +403,22 @@ Variable DT : denv.
 (* [s] is the step's substitution, [S2] extends [Sg] to its fresh variables: the
    supply grows, [S2] respects the environment the step returns, the images of
    the old atoms are in the fragment over atoms below the new supply with every
-   entry present under [S2], and [Sg] factors through [s] by [S2]. *)
+   entry present under [S2], [Sg] factors through [s] by [S2], and [S2]
+   mentions no atom [Sg]'s images do not ([Cov]).  [Cov] is what bounds the
+   atoms of [S2]'s images by a bound on [Sg]'s: it holds although the field a
+   row variable is bound to is only [teq] to a field of [Sg]'s image, because
+   [rewrite_row_var_canon] picks the canonical representative. *)
 Definition Pkg (Sg : sub) (n : nat) (s : sub) (D' : denv) (n' : nat) (S2 : sub) : Prop :=
   n <= n' /\ DOk D' n' /\ Dsrt D' S2 /\ KR D' DT S2 /\
   (forall x, old n x -> pf (sT s x) /\ atT n' (sT s x) /\ ps S2 (sT s x) /\
      teq (sT Sg x) (apT S2 (sT s x))) /\
   (forall q, old n q -> prf (sR s q) /\ atR n' (sR s q) /\ psr S2 (sR s q) /\
-     req (sR Sg q) (apR S2 (sR s q))).
+     req (sR Sg q) (apR S2 (sR s q))) /\
+  Cov Sg S2.
 
 Lemma Pkg_id : forall Sg D n, DOk D n -> Dsrt D Sg -> KR D DT Sg -> Pkg Sg n sid D n Sg.
 Proof.
-  intros Sg D n Hd Ht Hk. refine (conj (le_n n) (conj Hd (conj Ht (conj Hk (conj _ _))))).
+  intros Sg D n Hd Ht Hk. refine (conj (le_n n) (conj Hd (conj Ht (conj Hk (conj _ (conj _ (Cov_refl Sg))))))).
   - intros x Hx. cbn [sT sid idt]. refine (conj I (conj _ (conj I (teq_refl _)))).
     split; intros y Hy; simpl in Hy; [ | fsetdec ].
     apply AtomSetFacts.singleton_iff in Hy. subst. exact Hx.
@@ -434,7 +439,7 @@ Qed.
 Lemma pkg_ap_T : forall Sg n s D' n' S2 T, Pkg Sg n s D' n' S2 -> pf T -> atT n T -> ps Sg T ->
   pf (apT s T) /\ atT n' (apT s T) /\ ps S2 (apT s T).
 Proof.
-  intros Sg n s D' n' S2 T (Hl & Hd & Ht & Hk & Hx & Hq) HT [A1 A2] PT.
+  intros Sg n s D' n' S2 T (Hl & Hd & Ht & Hk & Hx & Hq & _) HT [A1 A2] PT.
   refine (conj _ (conj _ _)).
   - apply (proj1 (pf_ap s)); [ exact HT | intros x Hx'; exact (proj1 (Hx x (A1 x Hx')))
                               | intros q Hq'; exact (proj1 (Hq q (A2 q Hq'))) ].
@@ -448,7 +453,7 @@ Qed.
 Lemma pkg_ap_R : forall Sg n s D' n' S2 R, Pkg Sg n s D' n' S2 -> prf R -> atR n R -> psr Sg R ->
   prf (apR s R) /\ atR n' (apR s R) /\ psr S2 (apR s R).
 Proof.
-  intros Sg n s D' n' S2 R (Hl & Hd & Ht & Hk & Hx & Hq) HR [A1 A2] PR.
+  intros Sg n s D' n' S2 R (Hl & Hd & Ht & Hk & Hx & Hq & _) HR [A1 A2] PR.
   refine (conj _ (conj _ _)).
   - apply (proj2 (pf_ap s)); [ exact HR | intros x Hx'; exact (proj1 (Hx x (A1 x Hx')))
                               | intros q Hq'; exact (proj1 (Hq q (A2 q Hq'))) ].
@@ -462,7 +467,7 @@ Qed.
 Lemma pkg_fac_T : forall Sg n s D' n' S2 T, Pkg Sg n s D' n' S2 -> atT n T ->
   teq (apT Sg T) (apT S2 (apT s T)).
 Proof.
-  intros Sg n s D' n' S2 T (Hl & Hd & Ht & Hk & Hx & Hq) [A1 A2].
+  intros Sg n s D' n' S2 T (Hl & Hd & Ht & Hk & Hx & Hq & _) [A1 A2].
   apply ap_factor; [ intros x Hx'; exact (proj2 (proj2 (proj2 (Hx x (A1 x Hx')))))
                    | intros q Hq'; exact (proj2 (proj2 (proj2 (Hq q (A2 q Hq'))))) ].
 Qed.
@@ -470,7 +475,7 @@ Qed.
 Lemma pkg_fac_R : forall Sg n s D' n' S2 R, Pkg Sg n s D' n' S2 -> atR n R ->
   req (apR Sg R) (apR S2 (apR s R)).
 Proof.
-  intros Sg n s D' n' S2 R (Hl & Hd & Ht & Hk & Hx & Hq) [A1 A2].
+  intros Sg n s D' n' S2 R (Hl & Hd & Ht & Hk & Hx & Hq & _) [A1 A2].
   apply ap_factor_row; [ intros x Hx'; exact (proj2 (proj2 (proj2 (Hx x (A1 x Hx')))))
                        | intros q Hq'; exact (proj2 (proj2 (proj2 (Hq q (A2 q Hq'))))) ].
 Qed.
@@ -479,9 +484,9 @@ Lemma Pkg_comp : forall Sg n s1 D1 n1 S2 s2 D2 n2 S3,
   Pkg Sg n s1 D1 n1 S2 -> Pkg S2 n1 s2 D2 n2 S3 -> Pkg Sg n (scomp s2 s1) D2 n2 S3.
 Proof.
   intros Sg n s1 D1 n1 S2 s2 D2 n2 S3 P1 P2.
-  destruct P1 as (Hl1 & Hd1 & Ht1 & Hk1 & Hx1 & Hq1).
-  assert (P2' := P2). destruct P2 as (Hl2 & Hd2 & Ht2 & Hk2 & Hx2 & Hq2).
-  refine (conj (Nat.le_trans _ _ _ Hl1 Hl2) (conj Hd2 (conj Ht2 (conj Hk2 (conj _ _))))).
+  destruct P1 as (Hl1 & Hd1 & Ht1 & Hk1 & Hx1 & Hq1 & Cv1).
+  assert (P2' := P2). destruct P2 as (Hl2 & Hd2 & Ht2 & Hk2 & Hx2 & Hq2 & Cv2).
+  refine (conj (Nat.le_trans _ _ _ Hl1 Hl2) (conj Hd2 (conj Ht2 (conj Hk2 (conj _ (conj _ (Cov_trans _ _ _ Cv1 Cv2))))))).
   - intros x Hx. destruct (Hx1 x Hx) as (Hpf & Hat & Hps & Hf).
     change (pf (apT s2 (sT s1 x)) /\ atT n2 (apT s2 (sT s1 x)) /\ ps S3 (apT s2 (sT s1 x)) /\
             teq (sT Sg x) (apT S3 (apT s2 (sT s1 x)))).
@@ -783,7 +788,7 @@ Proof.
   assert (Hna : na T = true) by exact (proj1 (ps_na Sg) T HT PT).
   destruct (bind_prop0_sorted_complete false D DT Sg a T n Hd Hk Ha Hocc (proj1 AT) (proj2 AT)
               (fun b _ => cmpb_any_eq _ _ HaE) (fun q _ => cmpb_any_eq _ _ HaE) HT Hlc Hna Hfld Heq)
-    as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr & _).
+    as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr & _ & Cv).
   destruct (bind_prop_unfold D a T n s D' n' E Hna) as (sp & D1 & n1 & sr & Ep & Er & Es).
   assert (Holdl : forall b, In b (AtomSetImpl.elements (ftv_typ T)) -> old n b)
     by (intros b Hb; apply (proj1 AT); apply in_elts; exact Hb).
@@ -822,7 +827,7 @@ Proof.
     pose proof (Fx y Hyo) as F. rewrite Hsy in F.
     exact (teq_not_record _ _ F (proj2 Hs y HD'y) R). }
   exists s, D', n', S2. refine (conj (bind_prop_of0 _ _ _ _ _ E) _).
-  exact (conj Hl (conj Hd' (conj (conj Hrow' HNN) (conj Hk' (conj Ct Cr))))).
+  exact (conj Hl (conj Hd' (conj (conj Hrow' HNN) (conj Hk' (conj Ct (conj Cr Cv)))))).
 Qed.
 
 (* A variable of sort [Numeric] or [Literal] is bound to a scalar: the type can be
@@ -848,7 +853,7 @@ Proof.
     by (destruct Hsc as [H|H]; [ left; exact H | right; left; exact H ]).
   exists (scomp (sbT a T) (scomp sid sid)), D, n, Sg. split.
   - exact (bind_prop_scalar D a T n Hscl Hsb).
-  - refine (conj (le_n n) (conj Hd (conj Hs (conj Hk (conj _ _))))).
+  - refine (conj (le_n n) (conj Hd (conj Hs (conj Hk (conj _ (conj _ (Cov_refl Sg))))))).
     + intros x Hx. change (pf (apT (sbT a T) (typ_Var x)) /\ atT n (apT (sbT a T) (typ_Var x)) /\
         ps Sg (apT (sbT a T) (typ_Var x)) /\ teq (sT Sg x) (apT Sg (apT (sbT a T) (typ_Var x)))).
       change (apT (sbT a T) (typ_Var x)) with (sT (sbT a T) x). cbn [sT sbT].
@@ -997,7 +1002,7 @@ Proof.
   destruct (bind_row0_sorted_complete false D DT Sg r R n Hd Hk Hr (proj1 AR) (proj2 AR) HR Hlc Hnot
               (fun x _ => cmpb_any_eq _ _ (proj1 (proj1 Hae) r)) (fun q _ => cmpb_any_eq _ _ (proj1 (proj1 Hae) r))
               Hfld Hreq)
-    as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr).
+    as (s & D' & n' & S2 & E & Hk' & Hl & Hd' & Fx & Fr & Cv).
   destruct (bind_row_unfold D r R n s D' n' E Hav) as (sr & D1 & n1 & s' & Er & Ec & Es).
   assert (Holdr : forall q, In q (AtomSetImpl.elements (frv_row R)) -> old n q)
     by (intros q Hq; apply (proj2 AR); apply in_elts; exact Hq).
@@ -1059,7 +1064,7 @@ Proof.
         (sT (sbR r (apR (scomp (scomp sp sq) (scomp sr sid)) R)) y). reflexivity. }
     pose proof (Fx y Hyo) as F. rewrite Hsy in F.
     exact (teq_not_record _ _ F (proj2 Hae y Hy) R'). }
-  exact (conj Hl (conj Hd' (conj (conj Hae' HNN) (conj Hk' (conj Ct Cr))))).
+  exact (conj Hl (conj Hd' (conj (conj Hae' HNN) (conj Hk' (conj Ct (conj Cr Cv)))))).
 Qed.
 
 (* ---- rewriting a row to present a label ---- *)
@@ -1216,7 +1221,7 @@ Proof.
   intros D Sg R1 R2 l P T R1' n Hd Ht Hk Hh HP Hreq HR AR PR.
   assert (HPt : teq (apT Sg P) typ_Unit) by (rewrite HP; apply teq_refl).
   destruct (rewrite_row_complete Sg R1 R2 l P T R1' D n DT Hh HPt Hreq Hd Hk (proj1 AR) (proj2 AR))
-    as (P' & T' & R2' & s0 & D0 & n1 & S2 & E & Hk0 & Hn & Hd0 & Hf1 & Hf2 & HPP & HTT & HRR).
+    as (P' & T' & R2' & s0 & D0 & n1 & S2 & E & Hk0 & Hn & Hd0 & Hf1 & Hf2 & HPP & HTT & HRR & Hcv0).
   destruct (rw_shape l (side_av R1) R2 D n P' T' R2' s0 D0 n1 (proj1 Ht) E) as (_ & Hrow0 & Hnum & Hsh0).
   assert (HPU : apT S2 P' = typ_Unit).
   { rewrite HP in HPP. exact (teq_Unit_inv _ (teq_sym _ _ HPP)). }
@@ -1231,7 +1236,7 @@ Proof.
     pose proof (Hf1 y Hold) as F. rewrite (Hsx y) in F.
     exact (teq_not_record _ _ F (proj2 Ht y (Hnum y Hy))). }
   assert (Hpk : Pkg Sg n s0 D0 n1 S2).
-  { refine (conj Hn (conj Hd0 (conj Ht0 (conj Hk0 (conj _ _))))).
+  { refine (conj Hn (conj Hd0 (conj Ht0 (conj Hk0 (conj _ (conj _ Hcv0)))))).
     - intros x Hx. rewrite (Hsx x). refine (conj I (conj _ (conj I _))).
       + split; simpl; intros y Hy; [ | fsetdec ]. apply AtomSetFacts.singleton_iff in Hy. subst.
         exact (old_le n n1 _ Hn Hx).
@@ -1296,7 +1301,7 @@ Qed.
 Lemma Pkg_sbT : forall Sg D n a a', DOk D n -> Dsrt D Sg -> KR D DT Sg -> old n a' ->
   teq (sT Sg a) (sT Sg a') -> Pkg Sg n (sbT a (typ_Var a')) D n Sg.
 Proof.
-  intros Sg D n a a' Hd Ht Hk Ha' Heq. refine (conj (le_n n) (conj Hd (conj Ht (conj Hk (conj _ _))))).
+  intros Sg D n a a' Hd Ht Hk Ha' Heq. refine (conj (le_n n) (conj Hd (conj Ht (conj Hk (conj _ (conj _ (Cov_refl Sg))))))).
   - intros x Hx. cbn [sT sbT]. destruct (Atom.eq_dec x a) as [->|Hne].
     + refine (conj I (conj _ (conj I Heq))). split; simpl; intros y Hy; [ | fsetdec ].
       apply AtomSetFacts.singleton_iff in Hy. destruct Hy. exact Ha'.
@@ -1653,10 +1658,26 @@ Corollary Pkg_sem : forall Sg n s D' n' S2, Pkg Sg n s D' n' S2 ->
   (forall x, old n x -> teqD DT (sT Sg x) (apT S2 (sT s x))) /\
   (forall q, old n q -> reqD DT (sR Sg q) (apR S2 (sR s q))).
 Proof.
-  intros Sg n s D' n' S2 (Hl & Hd & Ht & Hk & Hx & Hq).
+  intros Sg n s D' n' S2 (Hl & Hd & Ht & Hk & Hx & Hq & _).
   refine (conj Hk (conj Hd (conj Hl (conj _ _)))).
   - intros x Hx'. exact (teq_teqD _ _ _ (proj2 (proj2 (proj2 (Hx x Hx'))))).
   - intros q Hq'. exact (req_reqD _ _ _ (proj2 (proj2 (proj2 (Hq q Hq'))))).
+Qed.
+
+(* A bound on the atoms the images of [Sg] mention bounds the extension's. *)
+Corollary Pkg_bnd : forall Sg n s D' n' S2 E F, Pkg Sg n s D' n' S2 -> Bnd E F Sg -> Bnd E F S2.
+Proof.
+  intros Sg n s D' n' S2 E F (_ & _ & _ & _ & _ & _ & Cv) HB. exact (Cv E F HB).
+Qed.
+
+Corollary Pkg_ftv : forall Sg n s D' n' S2 (B : atoms), Pkg Sg n s D' n' S2 ->
+  (forall z, ftv_typ (sT Sg z) [<=] B) -> (forall r, ftv_row (sR Sg r) [<=] B) ->
+  forall y, ftv_typ (sT S2 y) [<=] B.
+Proof.
+  intros Sg n s D' n' S2 B HP Ht Hr y a Ha.
+  pose proof (Pkg_bnd Sg n s D' n' S2 (fun a => a `in` B) (fun _ => True) HP
+                (conj (fun z a Ha => Ht z a Ha) (conj (fun _ _ _ => I) (conj (fun r a Ha => Hr r a Ha) (fun _ _ _ => I)))))
+    as (B1 & _). exact (B1 y a Ha).
 Qed.
 
 (* The unifier W calls is complete on the types of the fragment: given a substitution

@@ -179,7 +179,7 @@ Proof.
   apply DOk_rupd. apply DOk_upd. eapply DOk_mono; [ exact H | lia ].
 Qed.
 
-Ltac fin5 := refine (conj _ (conj _ (conj _ (conj _ (conj _ _))))).
+Ltac fin5 := refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _)))))).
 
 Theorem rewrite_row_spec : forall l av R D n D1 Sg,
   DOk D n -> KR D D1 Sg ->
@@ -189,7 +189,7 @@ Theorem rewrite_row_spec : forall l av R D n D1 Sg,
   exists S2, KR D0 D1 S2 /\ n <= n1 /\ DOk D0 n1 /\
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s0 x))) /\
     (forall q, old n q -> req (sR Sg q) (apR S2 (sR s0 q))) /\
-    req (apR Sg R) (row_Maybe l (apT S2 P') (apT S2 T') (apR S2 R')).
+    req (apR Sg R) (row_Maybe l (apT S2 P') (apT S2 T') (apR S2 R')) /\ Cov Sg S2.
 Proof.
   intros l av R. induction R as [ | r | l' T' R IHR | l' P1 T' R IHR ];
     intros D n D1 Sg Hd HK Hx Hq Hsurf P' T0 R' s0 D0 n1 E.
@@ -199,10 +199,8 @@ Proof.
     assert (Hm : AtomSetImpl.mem r av = false).
     { cbn [rewrite_row] in E. destruct (AtomSetImpl.mem r av); [ discriminate | reflexivity ]. }
     destruct Hsurf as (P0 & T1 & R0 & Hreq & Hna).
-    assert (Hf : rk_lacks (drk D r) l = false -> P0 = typ_Bool -> sat D1 (rk_sort (drk D r)) T1)
-      by (intros _ H; subst P0; discriminate Hna).
-    destruct (rewrite_row_var_complete l av D n r D1 Sg P0 T1 R0 Hd HK Hm Hreq Hf)
-      as (P1 & T2 & R1 & s1 & D2 & n2 & S2 & E2 & HK2 & Hn & HP & HT & HR & Hs1 & Hs2).
+    destruct (rewrite_row_var_canon l av D n r D1 Sg P0 T1 R0 Hd HK Hm Hreq Hna)
+      as (P1 & T2 & R1 & s1 & D2 & n2 & S2 & E2 & HK2 & Hn & Hcv & Hs1 & Hs2 & Hcov).
     rewrite E2 in E. inversion E; subst P1 T2 R1 s1 D2 n2. clear E.
     exists S2. fin5.
     + exact HK2.
@@ -213,11 +211,12 @@ Proof.
       * apply DOk_three. exact Hd.
     + intros x Hxo. rewrite (Hs1 x Hxo). apply teq_refl.
     + intros q Hqo. exact (Hs2 q Hqo).
-    + cbn [apR ap_row]. rewrite HP, HT, HR. exact Hreq.
+    + cbn [apR ap_row]. exact (req_trans _ _ _ Hreq (req_sym _ _ Hcv)).
+    + exact Hcov.
   - (* a plain field *)
     cbn [rewrite_row] in E. destruct (Nat.eqb l l') eqn:Ell.
     + apply Nat.eqb_eq in Ell. subst l'. inversion E; subst. clear E.
-      exists Sg. fin5; try assumption; try apply le_n.
+      exists Sg. fin5; try assumption; try apply le_n; try apply Cov_refl.
       * intros x _. cbn [sT sid idt apT ap_typ]. apply teq_refl.
       * intros q _. cbn [sR sid idr apR ap_row]. apply req_refl.
       * cbn [apR ap_row apT ap_typ]. apply req_sym. apply req_pre.
@@ -229,7 +228,7 @@ Proof.
       destruct (IHR D n D1 Sg Hd HK
                   (fun x Hx' => Hx x ltac:(simpl; fsetdec)) (fun q Hq' => Hq q ltac:(simpl; fsetdec))
                   Hs P0 T1 R3 s D2 n2 E1)
-        as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hinv).
+        as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hinv & HCov).
       exists S2. fin5; try assumption.
       cbn [apR ap_row]. eapply req_trans.
       { apply req_head; [ | exact Hinv ].
@@ -239,7 +238,7 @@ Proof.
   - (* a presence entry *)
     cbn [rewrite_row] in E. destruct (Nat.eqb l l') eqn:Ell.
     + apply Nat.eqb_eq in Ell. subst l'. inversion E; subst. clear E.
-      exists Sg. fin5; try assumption; try apply le_n.
+      exists Sg. fin5; try assumption; try apply le_n; try apply Cov_refl.
       * intros x _. cbn [sT sid idt apT ap_typ]. apply teq_refl.
       * intros q _. cbn [sR sid idr apR ap_row]. apply req_refl.
       * cbn [apR ap_row]. apply req_refl.
@@ -251,7 +250,7 @@ Proof.
       destruct (IHR D n D1 Sg Hd HK
                   (fun x Hx' => Hx x ltac:(simpl; fsetdec)) (fun q Hq' => Hq q ltac:(simpl; fsetdec))
                   Hs P0 T1 R3 s D2 n2 E1)
-        as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hinv).
+        as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hinv & HCov).
       exists S2. fin5; try assumption.
       cbn [apR ap_row]. eapply req_trans.
       { apply req_maybe; [ | | exact Hinv ].
@@ -275,14 +274,14 @@ Corollary rewrite_row_front : forall l av R D n D1 Sg P0 T0 R0,
     (forall q, old n q -> req (sR Sg q) (apR S2 (sR s0 q))) /\
     req (apR S2 R') R0 /\
     ((teq (apT S2 P') P0 /\ teq (apT S2 T') T0) \/
-     (is_abs (apT S2 P') = true /\ is_abs P0 = true)).
+     (is_abs (apT S2 P') = true /\ is_abs P0 = true)) /\ Cov Sg S2.
 Proof.
   intros l av R D n D1 Sg P0 T0 R0 Hd HK Hx Hq Hreq Hna P' T' R' s0 D0 n1 E.
   destruct (rewrite_row_spec l av R D n D1 Sg Hd HK Hx Hq
               (ex_intro _ P0 (ex_intro _ T0 (ex_intro _ R0 (conj Hreq Hna)))) P' T' R' s0 D0 n1 E)
-    as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hinv).
+    as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hinv & HCov).
   pose proof (row_cancel _ _ _ _ _ _ _ (req_trans _ _ _ (req_sym _ _ Hinv) Hreq)) as [Hr Hc].
-  exists S2. refine (conj HK2 (conj Hn (conj Hd2 (conj Hf1 (conj Hf2 (conj Hr _)))))).
+  exists S2. refine (conj HK2 (conj Hn (conj Hd2 (conj Hf1 (conj Hf2 (conj Hr (conj _ HCov))))))).
   destruct Hc as [[H1 H2] | [H1 H2]]; [ left; split; assumption | right; split; assumption ].
 Qed.
 
@@ -303,7 +302,7 @@ Theorem rewrite_row_complete : forall Sg R1 R2 l P T R1' D n D1,
     KR D0 D1 S2 /\ n <= n1 /\ DOk D0 n1 /\
     (forall x, old n x -> teq (sT Sg x) (apT S2 (sT s0 x))) /\
     (forall q, old n q -> req (sR Sg q) (apR S2 (sR s0 q))) /\
-    teq (apT S2 P') (apT Sg P) /\ teq (apT S2 T') (apT Sg T) /\ req (apR S2 R2') (apR Sg R1').
+    teq (apT S2 P') (apT Sg P) /\ teq (apT S2 T') (apT Sg T) /\ req (apR S2 R2') (apR Sg R1') /\ Cov Sg S2.
 Proof.
   intros Sg R1 R2 l P T R1' D n D1 Hh HP Hreq Hd HK Hx Hq.
   pose proof (side_guard_passes Sg R1 R2 l P T R1' D n Hh HP Hreq) as Hnn.
@@ -317,11 +316,11 @@ Proof.
     - apply req_refl. }
   destruct (rewrite_row_front l (side_av R1) R2 D n D1 Sg _ _ _ Hd HK Hx Hq Hfront
               (eq_trans (teq_is_abs _ _ HP) eq_refl) P' T' R2' s0 D0 n1 E)
-    as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hr & Hc).
+    as (S2 & HK2 & Hn & Hd2 & Hf1 & Hf2 & Hr & Hc & HCov).
   exists P', T', R2', s0, D0, n1, S2.
   refine (conj eq_refl (conj HK2 (conj Hn (conj Hd2 (conj Hf1 (conj Hf2 _)))))).
   destruct Hc as [[H1 H2] | [H1 H2]].
-  - exact (conj H1 (conj H2 Hr)).
+  - exact (conj H1 (conj H2 (conj Hr HCov))).
   - exfalso. rewrite (teq_is_abs _ _ HP) in H2. discriminate H2.
 Qed.
 
