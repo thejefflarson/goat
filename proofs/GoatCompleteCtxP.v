@@ -423,3 +423,92 @@ Proof.
   - constructor; [ | exact IPS ]. cbn [snd apS s_body].
     exact (ps_stepP L LR DT Sg n s D' n' S2 sc H HL HR Hw Hp HL2 HR2 HP3).
 Qed.
+
+(* ---- what a run hands the next premise ---- *)
+
+Lemma EvT_frv : forall T, EvT T -> LEv (frv_typ T).
+Proof. intros T [_ H] a Ha. exact (H a Ha). Qed.
+
+Lemma next_factsP : forall Pt Dd Gd Sg n L LR s D1 n1 S1 T G,
+  LEv L -> LEv LR -> SemW evA evA L LR Dd Sg n s D1 n1 S1 ->
+  pf T -> atT n1 T -> EvT T -> LiveG evA evA (ftv_typ T) (frv_typ T) D1 Dd S1 ->
+  GOkP n G -> GLiveP L LR G -> GPsP Sg G -> CIP Pt Dd Sg Gd G ->
+  LOld n1 (lnT s L LR T) /\ LOld n1 (lnR s L LR T) /\ LEv (lnT s L LR T) /\ LEv (lnR s L LR T) /\
+  LiveG evA evA (lnT s L LR T) (lnR s L LR T) D1 Dd S1 /\
+  GOkP n1 (apC s G) /\ GLiveP (lnT s L LR T) (lnR s L LR T) (apC s G) /\ GPsP S1 (apC s G) /\
+  CIP Pt Dd S1 Gd (apC s G).
+Proof.
+  intros Pt Dd Gd Sg n L LR s D1 n1 S1 T G HL HR Hs Hp [Ha Hq] HE Lv HG HGL HPS HC.
+  destruct (CI_stepP Pt L LR Dd Sg n s D1 n1 S1 Gd G Hs HL HR HC HG HGL HPS) as (HC1 & HG1 & HL1 & HP1).
+  pose proof (SemW_SIg _ _ _ _ _ _ _ _ _ _ _ Hs) as SI.
+  pose proof (SemW_OkS _ _ _ _ _ _ _ _ _ _ _ Hs) as Hok.
+  refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj HG1 (conj _ (conj HP1 HC1)))))))).
+  - intros a Hin. apply AtomSetFacts.union_iff in Hin.
+    destruct Hin as [Hin|Hin]; [ exact (limgT_old n n1 s S1 L LR SI a Hin) | exact (Ha a Hin) ].
+  - intros a Hin. apply AtomSetFacts.union_iff in Hin.
+    destruct Hin as [Hin|Hin]; [ exact (limgR_old n n1 s S1 L LR SI a Hin) | exact (Hq a Hin) ].
+  - apply LEv_union; [ exact (limgT_ev s L LR Hok HL HR) | exact (LEv_ftv T HE) ].
+  - apply LEv_union; [ exact (limgR_ev s L LR Hok HL HR) | exact (EvT_frv T HE) ].
+  - exact (LiveG_union _ _ _ _ _ _ _ _ _ (SemW_live _ _ _ _ _ _ _ _ _ _ _ Hs) Lv).
+  - exact (GLiveP_mono _ _ _ _ _ (limgT_lnT s L LR T) (limgR_lnR s L LR T) HL1).
+Qed.
+
+(* ---- what a run ends with ---- *)
+
+(* The induction's conclusion over the fragment: the run succeeds from some
+   fuel on, its step is a [SemW] on the live atoms and rows, its type is in the
+   fragment with every entry present under the extension, and the equations it
+   holds are ones [dis] discharges ([HOkC], GoatCompleteHeld.v).  It is
+   [DoneG] (GoatCompleteLive.v) with [SemW], which composes, in place of
+   [SemG]. *)
+Definition DoneP (L LR : atoms) (D1 : denv) (G : ctx) (e : exp) (D : denv) (n : nat)
+  (Sg : sub) (T1 : typ) : Prop :=
+  exists s D' n' S2 T e' H,
+    Stable (fun f => infer true f D G e n = Some (s, D', T, n', e', H)) /\
+    SemW evA evA L LR D1 Sg n s D' n' S2 /\
+    pf T /\ atT n' T /\ ps S2 T /\ EvT T /\ LiveG evA evA (ftv_typ T) (frv_typ T) D' D1 S2 /\
+    HOkC S2 n' H /\ teq (apT S2 T) T1 /\ is_gen_value e' = is_gen_value e /\ let_open e' = let_open e.
+
+Lemma DoneP_const : forall L LR D1 G e D n Sg T1 c,
+  (forall f, infer true (S f) D G e n = Some (sid, D, c, n, e, nil)) ->
+  (c = typ_Int \/ c = typ_Float \/ c = typ_Bool \/ c = typ_Unit \/ c = typ_String) ->
+  DOk D n -> Drow D -> LOld n L -> LOld n LR -> LiveG evA evA L LR D D1 Sg -> teq c T1 ->
+  DoneP L LR D1 G e D n Sg T1.
+Proof.
+  intros L LR D1 G e D n Sg T1 c Hi Hc Hd Hrow Ho Hro HL Hteq.
+  assert (Hnone : ftv_typ c [<=] {} /\ frv_typ c [<=] {}).
+  { destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; simpl; split; fsetdec. }
+  exists sid, D, n, Sg, c, e, nil.
+  refine (conj _ (conj (SemW_id evA evA L LR D1 Sg D n Hd Hrow Ho Hro HL) _)).
+  - exists 1. intros f Hf. destruct f as [|f]; [ lia | exact (Hi f) ].
+  - refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj (Forall_nil _) (conj _ (conj eq_refl eq_refl)))))))).
+    + destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact I.
+    + split; intros y Hy; exfalso; [ pose proof (proj1 Hnone y Hy) as H0 | pose proof (proj2 Hnone y Hy) as H0 ]; revert H0; fsetdec.
+    + destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact I.
+    + split; intros y Hy; exfalso; [ pose proof (proj1 Hnone y Hy) as H0 | pose proof (proj2 Hnone y Hy) as H0 ]; revert H0; fsetdec.
+    + exact (LiveG_mono _ _ _ _ _ _ _ _ _ (proj1 Hnone) (proj2 Hnone) (LiveG_empty evA evA D D1 Sg)).
+    + change (teq (apT Sg c) T1).
+      destruct Hc as [ -> | [ -> | [ -> | [ -> | -> ] ] ] ]; exact Hteq.
+Qed.
+
+(* A record-free type is in the fragment, below the supply, and every entry of
+   it is present. *)
+Lemma TOk_frag : forall n S T, TOk n T -> pf T /\ atT n T /\ ps S T.
+Proof.
+  intros n S T [Hrf Hold]. refine (conj (proj1 (rf_facts T Hrf)) (conj _ (ps_rf S T Hrf))).
+  split; [ exact Hold | intros q Hq; exfalso; exact (proj1 (proj2 (proj2 (rf_facts T Hrf))) q Hq) ].
+Qed.
+
+(* A record-free core conclusion is a conclusion over the fragment: the step is
+   a [SemW], the type is in the fragment, and the run holds no equation. *)
+Lemma DoneP_of_DoneW : forall L D1 G e D n Sg T1,
+  DoneW L D1 G e D n Sg T1 -> DoneP L {} D1 G e D n Sg T1.
+Proof.
+  intros L D1 G e D n Sg T1 (s & D' & n' & S2 & T & e' & Hst & Hsem & HT & HE & Lv & Heq & Hg & Hl).
+  exists s, D', n', S2, T, e', nil.
+  pose proof (TOk_frag n' S2 T HT) as (Hp & Ha & Hs).
+  assert (Hfrv : frv_typ T [<=] {})
+    by (intros q Hq; exfalso; exact (proj1 (proj2 (proj2 (rf_facts T (proj1 HT)))) q Hq)).
+  refine (conj Hst (conj (SemC_W Hsem) (conj Hp (conj Ha (conj Hs (conj HE (conj _ (conj (Forall_nil _) (conj Heq (conj Hg Hl)))))))))).
+  exact (LiveG_mono _ _ _ _ _ _ _ _ _ (fun y Hy => Hy) Hfrv (LvE_of_Live _ _ _ _ Lv)).
+Qed.
