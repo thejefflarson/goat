@@ -6,7 +6,7 @@
 # `make check-admits` fail unless proofs/*.v holds exactly the tracked admits.
 # `make gen-grammar`  regenerate GoatGrammar.v from grammar/goat.peg.
 # `make check-grammar` fail if GoatGrammar.v is stale against grammar/goat.peg.
-# `make check-assumptions` fail unless T1, T2, T3, progress, preservation, soundness, the inference soundness theorem, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total, cmp_unerase and the lexer theorems are closed (T1 over text rests on the two Unicode parameters alone).
+# `make check-assumptions` fail unless T1, T2, T3, progress, preservation, soundness, the inference soundness theorem, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total, cmp_unerase, infer_complete_core_plain and the lexer theorems are closed (T1 over text rests on the two Unicode parameters alone).
 # `make differential` extract the proven inference algorithm, the lexer and the parser, and compare them with the Rust checker, lexer and parser.
 # `make ci`           check Ott and grammar sync + admit count, compile, check assumptions, differential.
 # `make clean`        remove generated build artifacts.
@@ -72,8 +72,8 @@ check-grammar: ../grammar/goat.peg
 check-assumptions: coq
 	@out=$$(rocq compile -R . Goat GoatAssumptions.v) || { echo "$$out"; exit 1; }; \
 	n=$$(echo "$$out" | grep -c '^Closed under the global context'); \
-	if [ "$$n" != "29" ]; then \
-	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total, cmp_unerase, lex_concat, step_longest, word_boundary, parse_text_denotes, edits_preserve_tokens, edits_preserve_parse, pf_sound and parse_fuel_denotes_lc closed under the global context:"; \
+	if [ "$$n" != "30" ]; then \
+	  echo "ERROR: expected peg_deterministic, parse_denotes_lc, print_parse_roundtrip, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total, cmp_unerase, lex_concat, step_longest, word_boundary, parse_text_denotes, edits_preserve_tokens, edits_preserve_parse, pf_sound, parse_fuel_denotes_lc and infer_complete_core_plain closed under the global context:"; \
 	  echo "$$out"; exit 1; \
 	fi; \
 	axioms=$$(echo "$$out" | sed -n '/^Axioms:/,$$p' | grep -v '^Axioms:' | sed 's/ :.*//' | sort | tr '\n' ' '); \
@@ -81,7 +81,7 @@ check-assumptions: coq
 	  echo "ERROR: parse_text_denotes_xid must rest on exactly xid_start_hi and xid_cont_hi, found: $$axioms"; \
 	  echo "$$out"; exit 1; \
 	fi; \
-	echo "check-assumptions: T1, T2, T3, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total, cmp_unerase, lex_concat, step_longest, word_boundary, parse_text_denotes, edits_preserve_tokens, edits_preserve_parse, pf_sound and parse_fuel_denotes_lc are closed, and the lexer's T1 at the Unicode tables rests on xid_start_hi and xid_cont_hi alone -- ok."
+	echo "check-assumptions: T1, T2, T3, progress, preservation, soundness, infer_closed_sound, erase_step, erase_traps, coerce_typing, infer_elab_sound, unroll_eqb_sound, erase_converse, erase_converse_multistep, knot_unrolls, unify_k_sound, coerce_dec_sound, unify_co_sound, infer_guarded, cmp_total, cmp_unerase, lex_concat, step_longest, word_boundary, parse_text_denotes, edits_preserve_tokens, edits_preserve_parse, pf_sound, parse_fuel_denotes_lc and infer_complete_core_plain are closed, and the lexer's T1 at the Unicode tables rests on xid_start_hi and xid_cont_hi alone -- ok."
 
 # Frozen-admit guard: fail if the `Admitted.` count in the sources drifts from
 # EXPECTED_ADMITS, so a green proof build never hides an open lemma.

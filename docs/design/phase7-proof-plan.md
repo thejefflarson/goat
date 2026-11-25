@@ -2203,6 +2203,16 @@ analogues of `SemG_fresh`.
    chooses the presence atoms of `PLive`.
 5. *`Quot` on records.* Option B, above.
 
+*As built (stage 7.9, `GoatCompletePlain.v`, `GoatCompleteCEq.v`).* The closed
+statement is `infer_complete_core_plain`, over the monomorphic core only (ADR 0037's
+amendment of 2026-11-25 says what it covers). `ctyping_equiv` moves a `ctyping`
+across equal environments, which lets a `let` of a value whose binding is used at
+one type convert with nothing generalized (pinning the binding's own type). The
+collapse is `psi`, which sends every record, recursive type and tag group to
+`Float`: unlike a fresh variable it needs no sort in the environment and no name
+that respects `teq`. It does not extend under a quantifier, so the polymorphic
+`let`, `letrec` and everything with records stay with the differential and the fuzz.
+
 ## 5. Staged PR plan
 
 Sizes are estimates in lines of Coq (Rust or YAML where stated), counting churn in

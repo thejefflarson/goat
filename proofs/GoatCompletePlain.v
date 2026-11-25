@@ -59,9 +59,6 @@ Proof.
   destruct H as [H1 H2]. rewrite (IHT1 H1), (IHT2 H2). reflexivity.
 Qed.
 
-Lemma psi_psi : forall T, psi (psi T) = psi T.
-Proof. intros T. apply psi_rf, rf_psi. Qed.
-
 Lemma teq_psi : forall T T', teq T T' -> psi T = psi T'.
 Proof.
   intros T T' H.

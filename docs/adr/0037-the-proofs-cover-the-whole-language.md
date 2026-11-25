@@ -218,6 +218,42 @@ the whole grammar except `foreign` declarations and the structured type syntax
   formatter's style, `foreign` and the structured type syntax, and the equality of `Den`'s
   function groups with the checker's `settle` (`proofs/README.md`).
 
+## Amendment (2026-11-25): what the completeness theorem proves, and what it does not
+
+Phase 7 (#456) proved algorithm W complete for a fragment of the language, as
+`infer_complete_core_plain` (`proofs/GoatAssumptions.v`, closed under the global
+context).
+
+- **Proved.** Take a closed program built from variables, constants, `program`,
+  a call, `if`, the operators, a comparison, `float(e)` and `let`, and a
+  derivation of it in the monomorphic core (`mtyping`, `GoatCompletePlain.v`): the
+  rules of `typing` at `d_any` with every `let` binding a monotype (a binding of
+  a value too, so long as it is used at one type) and the conversion rule, over
+  any types, records and recursive types included. Then the algorithm succeeds
+  from some fuel on, its elaborated term erases to the program, and its result
+  `T'` is record-free with a substitution, respecting the sorts the run ends
+  with, that sends `T'` to `psi T`, where `psi` replaces each record, recursive
+  type and tag group in the derivation's type `T` by `Float`. On a record-free `T`
+  the substitution sends `T'` to `T` itself. The collapse is sound because
+  `Float` satisfies every sort, `teq` keeps the head of a type (so two
+  convertible types have one image), and a program without records, tags,
+  `fold` or `unfold` never builds or takes apart a value of such a type.
+- **Not proved.** A `let` whose binding is used at two types (a scheme with a
+  quantifier), the `Numeric`- or `Eq`-polymorphic `let`, `letrec`, records and
+  their projection, spread and restrict, tags and `match`, recursive types and
+  methods. The algorithm's incompleteness table (`docs/design/phase7-proof-plan.md`
+  section 3) stands for them, and so does its measurement: the corpus
+  differential (`make differential`) and the nightly fuzz (stage 7.10) compare
+  the checker with the extracted algorithm on what the theorem does not reach.
+  A rejection by the algorithm of a program outside the fragment is therefore
+  still a finding for those tests, not a theorem.
+- **Why the collapse stops at the monomorphic core.** A scheme is a type with
+  quantified variables, and sending every record to `Float` is a substitution
+  only on monotypes: under a quantifier it changes which variables occur, hence
+  which atoms the `let` generalizes and which the premise's environment sorts.
+  The polymorphic `let` needs a collapse that keeps the quantifier and a
+  renaming of a scheme's atoms; neither is in this stage.
+
 ## Consequences
 
 - Language work slows by the cost of each proof, and the first PR to touch a

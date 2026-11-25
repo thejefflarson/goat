@@ -13,8 +13,11 @@
    variable's type are chosen by the derivation, and [typing] lets it choose a
    record type for any of them, which no record-free derivation can use; the
    record-free condition is therefore a hypothesis on the derivation, stated by
-   the class.  A [let] of a value generalizes, and its conversion renames the
-   generalized atoms and the instances through schemes; it is not here.
+   the class (GoatCompletePlain.v collapses it away for a monomorphic derivation).
+   A [let] binds a monotype: of a value too, whose conversion pins the binding's
+   own type so that nothing is generalized.  A [let] whose binding is used at
+   two types generalizes, and its conversion would rename the generalized atoms
+   and the instances through schemes; it is not here.
 
    [rtyping_ren] renames a whole derivation by an atom map (the kinding
    environment is [d_any], where every atom is sorted [Any], so no sort
