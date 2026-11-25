@@ -938,6 +938,21 @@ make ci     # check the committed Goat_ott.v matches the source, then compile
 metalib installs onto Rocq's `user-contrib` path, so no extra `-R` is needed for
 it; `_CoqProject` maps this directory to the logical name `Goat`.
 
+### Memory
+
+Each `.v` file compiles in one `rocq compile` process (the process shows up as
+`rocqworker --kind=compile`; there are no proof workers unless `-async-proofs on`
+is passed, which makes a file slower and larger). Measured on `main` (macOS,
+`/usr/bin/time -l`, 2026-11-24), the largest process is `GoatPrinterTable.v` at
+about 1.0 GB, the next ten are 0.5 to 0.7 GB, and the whole `make ci` stays
+under 1.1 GB. The CI pod has a 6 GiB limit and also runs the OCaml and cargo
+steps, so a single file above about 3 GB is a defect in that file: look for a
+`cbn`/`simpl`/`vm_compute` that unfolds a fuel-indexed function such as
+`unify_rD` at a concrete fuel, or a `Qed` that re-checks the unfolded term.
+Build flags do not fix it (`-async-proofs off` and `OCAMLRUNPARAM=o=40`
+changed nothing measurable). Measure a suspect file with
+`/usr/bin/time -l rocq compile -R . Goat File.v` (`-v` on Linux GNU time).
+
 ## Why two Ott files
 
 `goat.ott` is the readable typeset spec and must stay in lockstep with
