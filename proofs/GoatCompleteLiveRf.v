@@ -1,16 +1,11 @@
 (* Completeness of algorithm W, stage 7.8d: the record-free induction on the
    unifier's step over the fragment (docs/design/phase7-proof-plan.md).
 
-   [unify_stepL_G] is [unify_stepL] (GoatCompleteCtx.v) for the record-free
-   induction of GoatCompleteCore.v, proved from [unify_stepG] (GoatCompleteLive.v)
-   instead of from the record-free unifier lemma.  The induction reads a step as
-   a [SemL]: the images of the live atoms are record-free, no row variable moves,
-   and the extension keeps the derivation's rows.  [unify_stepG] gives the step
-   over [pf] types; here a derivation whose types are record-free ([Live PEv])
-   pulls record-freeness back through the factoring: a [pf] type whose image
-   under a substitution is record-free is record-free and its variables are sent
-   to record-free types ([rf_back]).  A record-free unifier run moves no row
-   variable ([unify_tD_rf_rr]).
+   A record-free run moves no row variable ([unify_tD_rf_rr]), and a [pf] type
+   whose image under a substitution is record-free is record-free and its
+   variables are sent to record-free types ([rf_back]); the record-free
+   induction ([unify_stepC], GoatCompleteCtxW.v) reads [unify_stepG]
+   (GoatCompleteLive.v) through them.
 
    The fresh row variable and the fresh presence atom, which a step past records
    introduces, are the analogues of [SemG_fresh] at the end.
@@ -142,71 +137,6 @@ Qed.
 
 Lemma teq_rf_eq : forall T T', rf T -> teq T T' -> T' = T.
 Proof. intros T T' H Ht. exact (teqD_rf_eq d_any T T' H (teq_teqD d_any T T' Ht)). Qed.
-
-(* ---- the unifier's step, for the record-free induction ---- *)
-
-Lemma unify_stepL_G : forall DT D Sg L T1 T2 n,
-  DOk D n -> RA D -> LOld n L -> LEv L -> Live PEv L D DT Sg ->
-  rf T1 -> rf T2 -> ftv_typ T1 [<=] L -> ftv_typ T2 [<=] L ->
-  teqD DT (apT Sg T1) (apT Sg T2) ->
-  exists s D' n' S2,
-    Stable (fun f => unify_coD f D T1 T2 n = Some (s, D', nil, n')) /\
-    SemL PEv L DT Sg n s D' n' S2 /\ RA D'.
-Proof.
-  intros DT D Sg L T1 T2 n Hd HRA Ho HLE HL R1 R2 S1 S2 Heq.
-  set (E := fun a : atom => ev a).
-  assert (Hrow : Drow D) by (intros r; left; rewrite (HRA r); reflexivity).
-  assert (HoE : LOld n {}) by (intros a Ha; exfalso; revert Ha; fsetdec).
-  assert (HLG : LiveG E E L {} D DT Sg).
-  { refine (conj _ (conj _ (conj (conj _ _) _))).
-    - intros a Ha. exact (proj1 (HL a Ha)).
-    - intros q Hq. exfalso. revert Hq. fsetdec.
-    - intros a Ha. destruct (proj2 (HL a Ha)) as [[Hf Hq] _]. exact (conj Hf Hq).
-    - intros q Hq. exfalso. revert Hq. fsetdec.
-    - intros a Ha _ R E0. pose proof (proj2 (proj2 (HL a Ha))) as Hr.
-      rewrite E0 in Hr. simpl in Hr. exact Hr. }
-  assert (Hfrv : forall T, rf T -> frv_typ T [<=] {}).
-  { intros T H q Hq. exfalso. exact (proj1 (proj2 (proj2 (rf_facts T H))) q Hq). }
-  pose proof (proj1 (rf_facts T1 R1)) as P1. pose proof (proj1 (rf_facts T2 R2)) as P2.
-  assert (Hrf1 : rf (apT Sg T1)).
-  { apply rf_ap; [ exact R1 | intros x Hx; exact (proj2 (proj2 (HL x (S1 x Hx)))) ]. }
-  assert (Heq' : teq (apT Sg T1) (apT Sg T2)).
-  { rewrite (teqD_rf_eq DT _ _ Hrf1 Heq). apply teq_refl. }
-  destruct (unify_stepG E E DT D Sg L {} T1 T2 n Hd Hrow Ho HoE HLE LEv_empty HLG P1 P2
-              S1 (Hfrv T1 R1) S2 (Hfrv T2 R2) (ps_rf Sg T1 R1) (ps_rf Sg T2 R2) Heq')
-    as (s & D' & n' & S3 & St & Sem & [f0 Hf0] & Pk).
-  destruct Pk as (Hl & Hd' & Ht' & Hk' & Fx & Fr & Cv).
-  destruct (unify_tD_rf_drk f0 D T1 T2 n s D' n' (Hf0 f0 (le_n f0)) R1 R2) as [Hdrk _].
-  pose proof (unify_tD_rf_rr f0 D T1 T2 n s D' n' (Hf0 f0 (le_n f0)) R1 R2) as Hrr.
-  assert (HRA' : RA D') by exact (RA_of_drk D D' Hdrk HRA).
-  set (S2' := Sub (sT S3) (sR Sg)).
-  assert (Hrfr : forall x, rf (sT (restrG L {} Sg) x)).
-  { intros x. cbn [restrG sT]. destruct (AtomSetImpl.mem x L) eqn:E0;
-      [ exact (proj2 (proj2 (HL x (AtomSetImpl.mem_2 E0)))) | exact I ]. }
-  assert (Hfac : forall x, old n x -> apT S3 (sT s x) = sT (restrG L {} Sg) x).
-  { intros x Hx. exact (teq_rf_eq _ _ (Hrfr x) (proj2 (proj2 (proj2 (Fx x Hx))))). }
-  assert (Hrfs : forall x, old n x -> rf (sT s x) /\ forall y, y `in` ftv_typ (sT s x) -> rf (sT S3 y)).
-  { intros x Hx. apply rf_back; [ exact (proj1 (Fx x Hx)) | rewrite (Hfac x Hx); exact (Hrfr x) ]. }
-  pose proof (SemG_live _ _ _ _ _ _ _ _ _ _ _ Sem) as (Sat & _ & (Bt & _) & _).
-  exists s, D', n', S2'. refine (conj St (conj _ HRA')).
-  refine (conj _ (conj _ (conj Hd' (conj _ (conj _ (conj _ _)))))).
-  - exact (rkres_RA D' DT (sR S2') HRA').
-  - intros a Ha.
-    destruct (proj1 (limg_in s L a) Ha) as (x & Hx & Hay).
-    assert (Hal : a `in` limgT s L {}) by (apply limgT_in; left; exists x; split; assumption).
-    refine (conj (Sat a Hal) (conj (Bt a Hal) _)).
-    exact (proj2 (Hrfs x (Ho x Hx)) a Hay).
-  - refine (conj Hl (conj _ _)).
-    + intros x Hx. refine (conj (proj1 (Hrfs x Hx)) _).
-      intros y Hy. exact (proj1 (proj1 (proj2 (Fx x Hx))) y Hy).
-    + intros q Hq. exact (Hrr q).
-  - intros x Hx.
-    rewrite (apT_agree S2' S3 (sT s x) (proj1 (Hrfs x (Ho x Hx))) (fun a _ => eq_refl)).
-    apply teq_teqD. rewrite <- (restrG_in L {} Sg x Hx).
-    exact (proj2 (proj2 (proj2 (Fx x (Ho x Hx))))).
-  - intros q _. reflexivity.
-  - exact (SemG_OkS _ _ _ _ _ _ _ _ _ _ _ Sem).
-Qed.
 
 (* ---- fresh row variables and presence atoms ---- *)
 

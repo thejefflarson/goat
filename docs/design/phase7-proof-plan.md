@@ -2095,33 +2095,49 @@ Item 1 of the list below is done; the induction is not rebuilt.
   present under `Sg` with the quantified atoms fixed) and evenness of the images. `SchIT_inst`
   is the scheme step of `var_sch_done`.
 
+*As built (stage 7.8g, `GoatCompleteCtxW.v`, `GoatCompleteCoreW.v`).* The core's induction is
+rebuilt on `SemW`, `LiveG`, `AvoidE` and `CIT`, and the old `SemL`, `CI`, `Done`,
+`unify_stepL`, `unify_stepL_G` and the unifier's record-free induction
+(`unify_tD_rf_complete_img` and its wrappers) are gone.
+
+- `SemC L DT Sg n s D' n' S2` is a `SemW evA evA L {} DT Sg n s D' n' S2` (no live row
+  variable), together with two facts the record-free core reads off a conversion: the step
+  sends each live atom to a record-free type, and `Live PEv (limg s L) D' DT S2` holds. A
+  convertible pair of record-free types is equal (`teq_rf_eq`), so these two facts are what
+  replaces `teqD_rf_eq`. `SemC_id`, `SemC_fresh`, `SemC_unfresh`, `SemC_comp`, `SemC_env`,
+  `SemC_agree` and `SemC_sid_after` are the calculus of `SemL`, over `SemW_id`, `SemW_comp`
+  and the rest; `unify_stepC` is `unify_stepG` read at record-free types (`rf_back`,
+  `unify_tD_rf_rr`).
+- `CI_stepW` is the step on `CIT`. A scheme's bodies `apT (sfix q S2) (apT s body)` and
+  `apT (sfix q Sg) body` are `teq` by `ap_factor` (`sfix_step_teq`), and `sch_leT_conv` moves a
+  `sch_leT` across two schemes with the same quantifiers and `teq` bodies, because `er_inv`
+  fixes the atoms of the representatives. `CIT_ftv` is `CI_ftv` over representatives (the
+  bodies and images are record-free, so `erT` is the identity: `er_rf`).
+- `DoneW` returns the run's step as a `SemC`, `TOk n' T`, `EvT T`, `Live PEv (ftv T)` and
+  `teq (apT S2 T) T1`. It does not return `HOkC`: the run holds no equation (its `infer` result
+  ends in `nil`), `DoneW_frag` states the `pf`/`atT`/`ps`/`HOkC S2 n' nil` facts of the type, and
+  the `let` of a value needs only `dis_nil`. `var_sch_doneT` is `var_sch_done` from
+  `SchIT_inst`; `gen_mono_letT` closes the `let`.
+- `infer_complete_core_closed` keeps its statement. Its `rkres` conclusion replaces the
+  extension's row substitution by the empty row, which satisfies every row kind.
+
 **What remains of 7.8.**
 
-Stage 7.8d did the unifier half: `unify_stepL_G` (`GoatCompleteLiveRf.v`) is `unify_stepL`
-proved from `unify_stepG`, and `infer_complete_core` calls it in every case that unifies.
-`SemG_fresh_row` and `LiveG_fresh_pres` are the row-variable and presence-atom analogues of
-`SemG_fresh`.
+Stage 7.8d did the unifier half: `unify_stepG` (`GoatCompleteLive.v`) gives the step in every
+case that unifies, and 7.8g's `unify_stepC` reads it at record-free types. `SemG_fresh_row`
+and `LiveG_fresh_pres` (`GoatCompleteLiveRf.v`) are the row-variable and presence-atom
+analogues of `SemG_fresh`.
 
-1. *Schemes over the fragment* (done in 7.8f, below).
-2. *The induction past `rf`.* Rebuild `GoatCompleteCtx.v` and
-   `GoatCompleteCore.v` on `SemW`/`LiveG`/`AvoidE`: `TOk n T` becomes `pf`/`atT` with `ps S T`
-   carried beside it (a monotype in the context needs `ps Sg` too, for the variable case),
-   `GOk`, `GLive` and `CI_stepL` thread the live row variables, and `Done` returns `HOkC`
-   of what the run holds. The core's derivations hold no equation, so the run's equations
-   are `nil` there and the `let` of a value needs only `dis_nil`; a general `Done` needs
-   `dis_complete` at the `let`. `infer_complete_core_closed` stays as the corollary; its
-   `Live PEv` and `rkres` conclusions come from `rf_back` (GoatCompleteLiveRf.v) and from
-   replacing `sR S2` by the empty row substitution, which satisfies every row kind.
-   `unify_stepL`, `unify_tD_rf_complete_img` and `unify_stepL_G` retire when the
-   core stops calling them. What 7.8f leaves of this item: `CI_stepW` (the step on `CIT`: the
-   bodies `apT (sfix S2) (apT s body)` and `apT (sfix Sg) body` are `teq` by `ap_factor`, and
-   the representatives' atoms need `er_ap_sub` with `ps`, where `CI_stepL` used
-   `teqD_rf_eq`); `DoneW`, `Done` over `SemW` with `pf`/`atT`/`ps` and `HOkC S2 n nil`, and
-   `var_sch_doneT` assembling it from `SchIT_inst` (`fsub` extends `Sg` by the instance, and
-   `ps S2 T0` follows from the instance's presence, since `apT S2 T0` is the instance
-   itself); `GOkT`/`GLiveT` with the row variables; then the case-by-case rebuild of
-   `infer_complete_core` and its closed corollary.
-3. *Constructs.* Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows with
+1. *Schemes over the fragment* (done in 7.8f).
+2. *The induction past `rf`* (core done in 7.8g). The core's induction still carries the
+   record-free invariants (`Live PEv`, `TOk`, `GOk`, `GLive`, `rf` bodies of the context, no
+   live row variable), and uses `pf`/`atT`/`ps` and the row variables only at the `SemW`
+   interface. Letting a record in turns those clauses into `pf`/`atT`/`ps` with `GPsT`
+   carried through the steps (`CI_stepW` gains the `ps_pull` of `sfix_step_teq`),
+   `GOk`/`GLive` over live row variables (a scheme may quantify rows, so `var_sch_doneT`
+   instantiates them), and `DoneW` returning `HOkC` of the equations the run holds, where a
+   general `let` needs `dis_complete`.
+3. *Constructs* (next). Record literal and projection (`C_Rec`, `C_Proj` over `ps` types, rows with
    a tail variable by `rewrite_row_complete`), spread (`spread_present`'s equation,
    discharged by `dis_complete` at a `let` or the top), restrict, tags and `match` (`spn`
    is a lemma), then `letrec` through `V_letrec`'s shape. `ctyping` extends past `rf`

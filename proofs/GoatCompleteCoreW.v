@@ -291,7 +291,7 @@ Qed.
 
 (* ---- the induction ---- *)
 
-Theorem infer_complete_coreW : forall Av D1 G1 e T1, ctyping Av D1 G1 e T1 ->
+Theorem infer_complete_core : forall Av D1 G1 e T1, ctyping Av D1 G1 e T1 ->
   forall D G n Sg L, DOk D n -> Drow D -> LOld n L -> LEv L -> Live PEv L D D1 Sg ->
     AvoidE (bg Av G1 T1) L {} Sg -> GOk n G -> GLive L G -> CIT PEv D1 Sg G1 G ->
     DoneW L D1 G e D n Sg T1.
@@ -898,14 +898,14 @@ Qed.
    principal type of the derivation's, and whose elaborated term erases to the
    program.  The run holds no live row variable, so the extension may send
    every row variable to the empty row, which satisfies every row kind. *)
-Theorem infer_complete_core_closedW : forall e T, ctyping {} d_any nil e T ->
+Theorem infer_complete_core_closed : forall e T, ctyping {} d_any nil e T ->
   exists D T' e' S2,
     Stable (fun f => infer_closed_elab f e = Some (D, T', e')) /\ erase e' = e /\
     Live PEv (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
     teqD d_any (apT S2 T') T /\ rf T'.
 Proof.
   intros e T H.
-  destruct (infer_complete_coreW {} d_any nil e T H d_any nil 0 sid {}
+  destruct (infer_complete_core {} d_any nil e T H d_any nil 0 sid {}
               (d_any_DOk 0) (Drow_of_RA _ RA_d_any) (LOld_nil 0) LEv_empty
               (Live_empty _ _ _ _) (AvoidE_empty _ _) (GOk_nil 0) (GLive_nil {}) (CIT_nil PEv d_any sid))
     as (s & D' & n' & S2 & T' & e' & St & Sem & HT & HE & LvT & Heq & HgHeq & HlHeq).
@@ -919,4 +919,46 @@ Proof.
   - intros r. cbn [sR S2']. exact (rkok_empty d_any _).
   - apply teq_teqD. unfold S2'.
     rewrite (apT_agree (Sub (sT S2) (fun _ => row_Empty)) S2 T' (proj1 HT) (fun _ _ => eq_refl)). exact Heq.
+Qed.
+
+Lemma instP_mono : forall D T, PEv T -> instP D T (sch_mono T).
+Proof.
+  intros D T HP. exists idt, idr.
+  refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ (conj _ _))))))).
+  - intros a _. reflexivity.
+  - intros r _. reflexivity.
+  - symmetry. apply ap_typ_pointwise_id; reflexivity.
+  - intros a Ha. simpl in Ha. fsetdec.
+  - intros r Hr. simpl in Hr. fsetdec.
+  - apply lc_sub_id.
+  - intros a Ha. simpl in Ha. fsetdec.
+  - intros r Hr. simpl in Hr. fsetdec.
+Qed.
+
+(* The identity function has the derivation at [Int -> Int]; the algorithm
+   answers with a type of which that one is an instance. *)
+Example core_identity : exists D T' e' S2,
+  Stable (fun f => infer_closed_elab f (e_abs (e_fvar_b 0)) = Some (D, T', e')) /\
+  erase e' = e_abs (e_fvar_b 0) /\ Live PEv (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
+  teqD d_any (apT S2 T') (typ_Arrow typ_Int typ_Int) /\ rf T'.
+Proof.
+  apply infer_complete_core_closed.
+  assert (HI : PEv typ_Int) by (apply PEv_scalar; left; reflexivity).
+  apply C_Abs; [ exact HI | ]. intros x Hx. simpl.
+  refine (C_Var _ _ _ _ (sch_mono typ_Int) typ_Int _ _ _ (instP_mono _ _ HI)); [ solve_uniq | apply binds_one_3; reflexivity | simpl; fsetdec ].
+Qed.
+
+(* A comparison, which unifies its operands and only then requires the joined
+   type to be [Eq]. *)
+Example core_comparison : exists D T' e' S2,
+  Stable (fun f => infer_closed_elab f (e_abs (e_bin (e_fvar_b 0) bop_eq (e_fvar_b 0))) = Some (D, T', e')) /\
+  erase e' = e_abs (e_bin (e_fvar_b 0) bop_eq (e_fvar_b 0)) /\
+  Live PEv (ftv_typ T') D d_any S2 /\ rkres D d_any (sR S2) /\
+  teqD d_any (apT S2 T') (typ_Arrow typ_Int typ_Bool) /\ rf T'.
+Proof.
+  apply infer_complete_core_closed.
+  assert (HI : PEv typ_Int) by (apply PEv_scalar; left; reflexivity).
+  apply C_Abs; [ exact HI | ]. intros x Hx. simpl.
+  apply C_Cmp with (A := typ_Int); [ reflexivity | simpl; auto | exact HI | | ];
+    (refine (C_Var _ _ _ _ (sch_mono typ_Int) typ_Int _ _ _ (instP_mono _ _ HI)); [ solve_uniq | apply binds_one_3; reflexivity | simpl; fsetdec ]).
 Qed.
