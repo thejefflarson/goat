@@ -2143,6 +2143,28 @@ induction are generalized past `rf`; the induction itself is not yet rebuilt on 
   presence of a body's entries along the step with `ps_pull`; `CI_stepP` is `CI_stepW` on all
   four, and `next_factsP` is `next_factsW` with the row sets `lnT`/`lnR`.
 
+*As built (stage 7.8i, partial, `GoatCompleteVarP.v`).* `var_sch_doneP` is the variable case over the
+fragment, concluding `DoneP`. It takes the derivation's instance unpacked (`st`, `sr`, with the
+sorts, kinds and evenness `instT` records) and `teq T (ap_typ st sr (apT (sfixS sc Sg) body))`.
+`fsubP` is `fsub` for atoms and rows. `SemW_ext` is the identity step to a larger environment and
+substitution.
+
+- Under `GPsP` an instance re-holds nothing. `GPsP` asks `apT (sfixS sc Sg) P = Unit` for every
+  entry's presence `P`, and `sfixS` sends a quantified atom to itself, so no entry's presence is a
+  quantified atom; `rh_t` then returns the instance unchanged (`rh_none_mut`) and `DoneP`'s `H` is
+  `nil`. The brief's re-held equations with fresh field variables cannot occur under this invariant.
+- DECISION NEEDED: a generalizing `let` of a record with a presence atom outside the context
+  would quantify that atom, and `GPsP` fails for the new scheme. Either `GPsP` skips entries whose
+  presence is quantified (then `rh_t` does re-hold, and the derivation's instance must send the
+  quantified presence to `Unit`, which `instT` does not record), or the `let` pins such atoms.
+- DECISION NEEDED: `instT`/`sch_leT` do not record that a quantified `Numeric`/`Quot` atom is not
+  sent to a record (`NNL`), nor the kind of each quantified row; `var_sch_doneP` takes both as
+  hypotheses. They belong in the class `Pt` or in `sch_leT`.
+- DECISION NEEDED: `HOkC` does not step along a `SemW` (it needs `Pkg`), because an equation's
+  atoms need not be live (a re-held equation's value atoms may occur only in the equation).
+  Proposal: return the type packed with the equations' types (`ftv`/`frv` of the pack are the
+  live set), so `next_factsP` and `SemW_factor` apply unchanged.
+
 **What remains of 7.8.**
 
 Stage 7.8d did the unifier half: `unify_stepG` (`GoatCompleteLive.v`) gives the step in every
@@ -2153,7 +2175,7 @@ analogues of `SemG_fresh`.
 1. *Schemes over the fragment* (done in 7.8f).
 2. *The induction past `rf`.* Done: the context invariants and their step (7.8h,
    `GoatCompleteCtxP.v`). Left:
-   - `var_sch_doneP`, a variable at a scheme that quantifies rows and presences. It differs
+   - `var_sch_doneP`: done for the instance that re-holds nothing (7.8i); the quantified-presence case waits on the decisions above. Originally: a variable at a scheme that quantifies rows and presences. It differs
      from `var_sch_doneT` in three places: `instantiate` also gives the quantified rows fresh
      variables (`inst_den` and the row half of `fsub`, with `rkok` of the derivation's rows), the
      run returns the equations `rh_t (inst_pres sc n)` holds (one `Heq` per entry whose
