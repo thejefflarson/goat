@@ -75,6 +75,7 @@ GoatCompleteNf.v
 GoatCompleteDrk.v
 GoatCompleteCtx.v
 GoatCompleteLive.v
+GoatCompleteLiveRf.v
 GoatCompleteSpn.v
 GoatCompleteConv.v
 GoatCompleteHeld.v

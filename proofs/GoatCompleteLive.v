@@ -340,7 +340,9 @@ Theorem unify_stepG : forall E F (DT D : denv) Sg L LR T1 T2 n,
   ps Sg T1 -> ps Sg T2 -> teq (apT Sg T1) (apT Sg T2) ->
   exists s D' n' S2,
     Stable (fun f => unify_coD f D T1 T2 n = Some (s, D', nil, n')) /\
-    SemG E F L LR DT Sg n s D' n' S2.
+    SemG E F L LR DT Sg n s D' n' S2 /\
+    Stable (fun f => unify_tD f D T1 T2 n = Some (s, D', n')) /\
+    Pkg DT (restrG L LR Sg) n s D' n' S2.
 Proof.
   intros E F DT D Sg L LR T1 T2 n Hd Hrow Ho Hro HLE HRE HL P1 P2 S1 Q1 S2 Q2 PS1 PS2 Heq.
   set (S := restrG L LR Sg).
@@ -368,6 +370,7 @@ Proof.
   assert (Hbl : forall E' F', BndL E' F' L LR Sg -> BndL E' F' (limgT s L LR) (limgR s L LR) S3)
     by (intros E' F' HB; exact (BndL_of_Bnd E' F' _ _ S3 (Hbnd E' F' HB))).
   exists s, D', n', S3. split; [ exists f1; exact Hf1 | ].
+  split; [ | split; [ exists f0; intros f Hf; exact (proj1 (Hf0 f Hf)) | exact Pk ] ].
   assert (HSI : SIg n n' s S3 L LR).
   { refine (conj Hl (conj _ _)).
     - intros x Hx. destruct (Fx x (Ho x Hx)) as (A & B & C & _). exact (conj A (conj B C)).
