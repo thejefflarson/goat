@@ -77,6 +77,18 @@ fn a_quotient_of_a_record_and_a_number_is_refused_in_either_order() {
 }
 
 #[test]
+fn a_parameter_divided_by_a_numeral_is_a_float() {
+    for source in [
+        "f = program(x) do y = x / 2\n x done\nf(3)",
+        "f = program(x) do y = 2 / x\n x done\nf(3)",
+        "f = program(x) do y = x / 2.0\n x done\nf(3)",
+        "v1 = program(v2) do v3 = ((v2) / (214))\n0 + (if false then v2 else v2 done) done\nv4 = program(v5, v6) do v5 done\n0 + (v1(230))",
+    ] {
+        assert_eq!(exact_type_of(source).as_deref(), Ok("Float"), "{source}");
+    }
+}
+
+#[test]
 fn an_int_field_is_refused_where_a_quotient_type_is_needed() {
     assert_eq!(
         exact_type_of("{x: round(2.5)} / {x: round(1.5)}").unwrap_err(),
