@@ -137,3 +137,5 @@ GoatCompleteRehold.v
 GoatCompleteCtxP.v
 GoatCompleteDoneQ.v
 GoatCompleteVarP.v
+GoatCompleteRewriteA.v
+GoatCompleteAbsPreds.v
