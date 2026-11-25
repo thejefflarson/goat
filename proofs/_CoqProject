@@ -78,6 +78,8 @@ GoatCompleteLive.v
 GoatCompleteLiveRf.v
 GoatCompleteSpn.v
 GoatCompleteConv.v
+GoatCompleteCEq.v
+GoatCompletePlain.v
 GoatCompleteHeld.v
 GoatElabConverse.v
 GoatMethods.v
