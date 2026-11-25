@@ -131,3 +131,4 @@ GoatCompleteCtxT.v
 GoatCompleteCtxW.v
 GoatCompleteCoreW.v
 GoatCompleteCtxP.v
+GoatCompleteVarP.v
