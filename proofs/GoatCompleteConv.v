@@ -46,6 +46,7 @@ Require Import Goat.GoatCompleteMono.
 Require Import Goat.GoatCompleteNf.
 Require Import Goat.GoatCompleteCtx.
 Require Import Goat.GoatCompleteCore.
+Require Import Goat.GoatCompleteCoreW.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.micromega.Lia.
 Import ListNotations.
