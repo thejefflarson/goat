@@ -85,7 +85,7 @@ jobs:
 
       - name: Build proofs under Rocq
         if: steps.changes.outputs.build == 'true'
-        run: opam exec --switch=rocq-9 -- make -C proofs ci
+        run: opam exec --switch=rocq-9 -- make -C proofs -j2 ci
 
       # The nightly fuzz differential (nightly-fuzz.yml) runs the extracted
       # algorithm as `driver --serve`. These checks keep that mode from going
