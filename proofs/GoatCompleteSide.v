@@ -171,6 +171,40 @@ Proof.
     end. reflexivity.
 Qed.
 
+(* One fuel step of [unify_rD] on two entries, stated so that a proof rewrites
+   with it instead of unfolding the fuel-indexed recursion, which [cbn] would
+   expand at every inner call. *)
+Lemma unify_rD_maybe_step : forall f D l P T R l' P' T' R' n,
+  unify_rD (S f) D (row_Maybe l P T R) (row_Maybe l' P' T' R') n =
+  match rewrite_row l (side_av (row_Maybe l P T R)) D (row_Maybe l' P' T' R') n with
+  | None => None
+  | Some (P2, T2, R2', s0, D0, n1) =>
+      match unify_tD f D0 (apT s0 P) P2 n1 with
+      | None => None
+      | Some (sp, D1, n2) =>
+          match unify_tD f D1 (apT sp (apT s0 T)) (apT sp T2) n2 with
+          | None =>
+              match absent_clash D1 l (apT sp (apT s0 P)) (apT sp (apT s0 T)) (apT sp T2)
+                      (apR sp (apR s0 R)) (apR sp R2') with
+              | None => None
+              | Some p =>
+                  match unify_rD f D1 (nfR D1 (apR (bool_sub (p :: nil)) (apR sp (apR s0 R))))
+                          (nfR D1 (apR (bool_sub (p :: nil)) (apR sp R2'))) n2 with
+                  | None => None
+                  | Some (s2, D3, n4) =>
+                      Some (scomp s2 (scomp (bool_sub (p :: nil)) (scomp sp s0)), D3, n4)
+                  end
+              end
+          | Some (s1, D2, n3) =>
+              match unify_rD f D2 (nfR D2 (apR s1 (apR sp (apR s0 R)))) (nfR D2 (apR s1 (apR sp R2'))) n3 with
+              | None => None
+              | Some (s2, D3, n4) => Some (scomp s2 (scomp s1 (scomp sp s0)), D3, n4)
+              end
+          end
+      end
+  end.
+Proof. reflexivity. Qed.
+
 (* Two entries of one label that a unifier makes absent, with field types that
    clash: [l0^p: Int] against [l0^q: String] is unified by [p := Bool] and
    [q := Bool] (both rows are the empty row).  W decides such a pair absent
@@ -189,7 +223,7 @@ Proof.
     destruct (Atom.eq_dec q q) as [_ | N]; [ | congruence ].
     eapply req_trans; [ apply req_abs; reflexivity | ].
     apply req_sym. apply req_abs. reflexivity.
-  - cbn [unify_rD row_head rewrite_row Nat.eqb]. cbn iota beta.
+  - rewrite unify_rD_maybe_step. cbn [rewrite_row Nat.eqb]. cbn iota beta.
     cbn [unify_tD apT ap_typ sT sid idt]. destruct (Atom.eq_dec p q); [ congruence | ].
     cbn [finer_b d_any dsort]. cbn iota beta.
     unfold absent_clash. cbn.
@@ -215,7 +249,8 @@ Theorem field_blocks_absent : forall (p q a b : atom) n s D' n',
   apT s (typ_Var a) = apT s (typ_Var b).
 Proof.
   intros p q a b n s D' n' Hpq Hab Hap Hbp H.
-  cbn [unify_rD row_head rewrite_row Nat.eqb unify_tD apT ap_typ sT sid idt] in H.
+  rewrite unify_rD_maybe_step in H.
+  cbn [rewrite_row Nat.eqb unify_tD apT ap_typ sT sid idt] in H.
   destruct (Atom.eq_dec p q) as [ | _ ]; [ congruence | ].
   cbn [finer_b d_any dsort] in H. cbn iota beta in H.
   cbn [apT ap_typ] in H.
