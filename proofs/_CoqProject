@@ -124,3 +124,4 @@ GoatPrinterTagTable.v
 GoatPrecTable.v
 GoatRoundtripExample.v
 GoatTagRoundtripExample.v
+GoatCompleteBound.v
