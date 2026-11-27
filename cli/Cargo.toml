@@ -24,4 +24,4 @@ goat_checker = { path = "../checker" }
 goat_wamr = { path = "../wamr" }
 goat_wasm = { path = "../wasm" }
 wasm-encoder = "0.263.0"
-wasmtime = "50.0.1"
+wasmtime = "51.0.0"

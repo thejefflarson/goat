@@ -13,4 +13,4 @@ goat = { version = "0.1.0", path = "../../../goat", features = ["native"] }
 goat_detect = { version = "0.1.0", path = "../../../detect" }
 goat_mir = { version = "0.1.0", path = "../../../mir" }
 serde_json = "1.0.154"
-wasmtime = { version = "50.0.1", default-features = false, features = ["runtime", "cranelift", "pulley", "std"] }
+wasmtime = { version = "51.0.0", default-features = false, features = ["runtime", "cranelift", "pulley", "std"] }

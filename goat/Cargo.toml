@@ -10,7 +10,7 @@ goat_llvm = { version = "0.1.0", path = "../llvm" }
 goat_mir = { path = "../mir" }
 goat_parser = { version = "0.1.0", path = "../parser" }
 goat_wasm = { path = "../wasm" }
-wasmtime = { version = "50.0.1", optional = true, features = ["cranelift", "pulley", "runtime", "std"], default-features = false }
+wasmtime = { version = "51.0.0", optional = true, features = ["cranelift", "pulley", "runtime", "std"], default-features = false }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
